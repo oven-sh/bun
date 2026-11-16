@@ -73,10 +73,6 @@ impl Data {
 }
 
 impl RouteBundle {
-    /// Note: takes `&mut SourceMapStore` rather than `&mut DevServer` —
-    /// only `dev.source_maps` is touched, and the two keystone
-    /// `DevServer` structs (`dev_server::DevServer`)
-    /// both expose that field but cannot be named here without a cycle.
     pub(crate) fn invalidate_client_bundle(
         &mut self,
         source_maps: &mut source_map_store::SourceMapStore,

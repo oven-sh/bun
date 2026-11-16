@@ -379,17 +379,17 @@ pub use bundle_v2::dispatch;
 // Erased handle to `bake::DevServer`.
 bun_dispatch::link_interface! {
     pub DevServerHandle[Bake] {
-        fn barrel_needed_exports() -> *mut bun_collections::StringArrayHashMap<bun_collections::StringHashMap<()>>;
         fn insert_stale_owner(abs_path: &[u8], graph: bake_types::Graph) -> bake_types::OwnerPacked;
-        fn finalize_bundle(bv2: *mut bundle_v2::BundleV2<'_>, result: bundle_v2::DevServerOutput<'_>) -> Result<(), crate::Error>;
-        fn handle_parse_task_failure(err: crate::Error, graph: bake_types::Graph, abs_path: &[u8], log: &bun_ast::Log, bv2: *mut bundle_v2::BundleV2<'_>) -> Result<(), crate::Error>;
-        fn put_or_overwrite_asset(path: *const (), contents: &[u8], content_hash: u64) -> Result<(), crate::Error>;
+        fn handle_parse_task_failure(err: crate::Error, graph: bake_types::Graph, abs_path: &[u8], log: &bun_ast::Log, bv2: &mut bundle_v2::BundleV2<'_>) -> Result<(), crate::Error>;
+        fn put_or_overwrite_asset(path: &bun_fs::Path<'_>, contents: &[u8], content_hash: u64) -> Result<(), crate::Error>;
         fn track_resolution_failure(import_source: &[u8], specifier: &[u8], renderer: bake_types::Graph, loader: bun_ast::Loader) -> Result<(), crate::Error>;
         fn is_file_cached(abs_path: &[u8], side: bake_types::Graph) -> Option<bake_types::CacheEntry>;
         fn asset_hash(abs_path: &[u8]) -> Option<u64>;
-        fn current_bundle_start_data() -> *mut ();
-        fn register_barrel_with_deferrals(path: &[u8]) -> Result<(), crate::Error>;
-        fn register_barrel_export(barrel_path: &[u8], alias: &[u8]);
+        // Counts the tasks that are on the pool, or whose results are on the way back.
+        fn increment_parse_task_counter();
+        fn decrement_parse_task_counter();
+        // Nothing is pending: `finish_from_bake_dev_server` is next, once the caller has returned.
+        fn on_scan_complete();
     }
 }
 

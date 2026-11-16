@@ -14,7 +14,7 @@ pub(super) struct RequestEnsureRouteBundledCtx<'a> {
 impl RequestEnsureRouteBundledCtx<'_> {
     fn on_defer(
         &mut self,
-        dev: &mut DevServer,
+        dev: &mut StateGuard<'_>,
         bundle_field: BundleQueueType,
     ) -> JsResult<Deferral> {
         let req = ::core::mem::replace(&mut self.req, ReqOrSaved::Aborted);
@@ -27,19 +27,20 @@ impl RequestEnsureRouteBundledCtx<'_> {
         )?)
     }
 
-    fn on_loaded(&mut self, dev: &mut DevServer) -> JsResult<()> {
+    fn on_loaded(&mut self, mut dev: StateGuard<'_>) -> JsResult<Option<FrameworkRequest>> {
         match self.kind {
             deferred_request::HandlerKind::ServerHandler => {
                 let req = match ::core::mem::replace(&mut self.req, ReqOrSaved::Aborted) {
                     ReqOrSaved::Req(r) => SavedRequestUnion::Stack(r),
                     ReqOrSaved::Aborted => unreachable!(),
                 };
-                dev.on_framework_request_with_bundle(self.route_bundle_index, req, self.resp)
+                dev.prepare_framework_request(self.route_bundle_index, &req)
+                    .map(Some)
             }
             deferred_request::HandlerKind::BundledHtmlPage => {
                 let method = self.req.method();
                 dev.on_html_request_with_bundle(self.route_bundle_index, self.resp, method);
-                Ok(())
+                Ok(None)
             }
         }
     }
@@ -67,26 +68,26 @@ enum Deferral {
     Answered,
 }
 
+/// Returns the request that is left to dispatch, if any.
 pub(super) fn ensure_route_is_bundled(
-    dev: &mut DevServer,
+    mut dev: StateGuard<'_>,
     route_bundle_index: route_bundle::Index,
     ctx: &mut RequestEnsureRouteBundledCtx<'_>,
-) -> JsResult<()> {
+) -> JsResult<Option<FrameworkRequest>> {
     debug_assert!(dev.magic == Magic::Valid);
-    debug_assert!(dev.server.is_some());
     let mut state = dev.route_bundle_ptr(route_bundle_index).server_state;
     'sw: loop {
         match state {
             route_bundle::State::Unqueued => {
                 // We already are bundling something, defer the request
                 if dev.current_bundle.is_some() {
-                    if ctx.on_defer(dev, BundleQueueType::NextBundle)? == Deferral::Answered {
-                        return Ok(());
+                    if ctx.on_defer(&mut dev, BundleQueueType::NextBundle)? == Deferral::Answered {
+                        return Ok(None);
                     }
                     dev.next_bundle.route_queue.put(route_bundle_index, ())?;
                     dev.route_bundle_ptr(route_bundle_index).server_state =
                         route_bundle::State::DeferredToNextBundle;
-                    return Ok(());
+                    return Ok(None);
                 }
 
                 // No current bundle, we'll create a bundle with just this route, but first:
@@ -118,10 +119,8 @@ pub(super) fn ensure_route_is_bundled(
                                     });
                                 dev.has_tailwind_plugin_hack = has_tailwind;
 
-                                let load_result: crate::server::GetOrStartLoadResult = dev
-                                    .server
-                                    .as_ref()
-                                    .expect("infallible: server bound")
+                                let server = dev.server;
+                                let load_result: crate::server::GetOrStartLoadResult = server
                                     .get_or_load_plugins(
                                         crate::server::ServePluginsCallback::DevServer,
                                     );
@@ -146,19 +145,20 @@ pub(super) fn ensure_route_is_bundled(
                             break 'plugin;
                         }
                         PluginState::Pending => {
-                            if ctx.on_defer(dev, BundleQueueType::NextBundle)? == Deferral::Answered
+                            if ctx.on_defer(&mut dev, BundleQueueType::NextBundle)?
+                                == Deferral::Answered
                             {
-                                return Ok(());
+                                return Ok(None);
                             }
                             dev.next_bundle.route_queue.put(route_bundle_index, ())?;
                             dev.route_bundle_ptr(route_bundle_index).server_state =
                                 route_bundle::State::DeferredToNextBundle;
-                            return Ok(());
+                            return Ok(None);
                         }
                         PluginState::Err => {
                             // TODO: render plugin error page
                             ctx.on_plugin_error()?;
-                            return Ok(());
+                            return Ok(None);
                         }
                         PluginState::Loaded => break 'plugin,
                     }
@@ -186,16 +186,17 @@ pub(super) fn ensure_route_is_bundled(
                 }
 
                 // A bundle moves a route out of `Bundling` only through the requests that wait for it.
-                if ctx.on_defer(dev, BundleQueueType::NextBundle)? == Deferral::Answered {
-                    return Ok(());
+                if ctx.on_defer(&mut dev, BundleQueueType::NextBundle)? == Deferral::Answered {
+                    return Ok(None);
                 }
                 dev.next_bundle.route_queue.put(route_bundle_index, ())?;
                 dev.route_bundle_ptr(route_bundle_index).server_state =
                     route_bundle::State::Bundling;
 
-                dev.start_async_bundle(entry_points, false, Instant::now())
-                    .expect("oom");
-                return Ok(());
+                let dev_server = dev.dev_server;
+                drop(dev);
+                dev_server.start_async_bundle(entry_points, false, Instant::now());
+                return Ok(None);
             }
             route_bundle::State::DeferredToNextBundle => {
                 debug_assert!(
@@ -204,20 +205,21 @@ pub(super) fn ensure_route_is_bundled(
                         .get(&route_bundle_index)
                         .is_some()
                 );
-                ctx.on_defer(dev, BundleQueueType::NextBundle)?;
-                return Ok(());
+                ctx.on_defer(&mut dev, BundleQueueType::NextBundle)?;
+                return Ok(None);
             }
             route_bundle::State::Bundling => {
                 debug_assert!(dev.current_bundle.is_some());
-                ctx.on_defer(dev, BundleQueueType::CurrentBundle)?;
-                return Ok(());
+                ctx.on_defer(&mut dev, BundleQueueType::CurrentBundle)?;
+                return Ok(None);
             }
             route_bundle::State::PossibleBundlingFailures => {
                 if !dev.graphs.bundling_failures.is_empty() {
                     // Trace the graph to see if there are any failures that are
                     // reachable by this route.
-                    match check_route_failures(dev, route_bundle_index, ctx.to_dev_response())? {
-                        CheckResult::Stop => return Ok(()),
+                    match check_route_failures(&mut dev, route_bundle_index, ctx.to_dev_response())?
+                    {
+                        CheckResult::Stop => return Ok(None),
                         CheckResult::Ok => {} // Errors were cleared or not in the way.
                         CheckResult::Rebuild => {
                             state = route_bundle::State::Unqueued;
@@ -230,10 +232,7 @@ pub(super) fn ensure_route_is_bundled(
                 state = route_bundle::State::Loaded;
                 continue 'sw;
             }
-            route_bundle::State::Loaded => {
-                ctx.on_loaded(dev)?;
-                return Ok(());
-            }
+            route_bundle::State::Loaded => return ctx.on_loaded(dev),
         }
     }
 }
@@ -252,7 +251,7 @@ impl ReqOrSaved<'_> {
     }
 }
 
-impl DevServer {
+impl StateGuard<'_> {
     fn defer_request(
         &mut self,
         bundle_field: BundleQueueType,
@@ -283,11 +282,12 @@ impl DevServer {
             }
             deferred_request::HandlerKind::ServerHandler => {
                 let global = self.vm().global();
-                let Some(saved) = self
-                    .server
-                    .as_ref()
-                    .unwrap()
-                    .prepare_and_save_js_request_context(req, resp, global, Some(method))?
+                let Some(saved) = self.server.prepare_and_save_js_request_context(
+                    req,
+                    resp,
+                    global,
+                    Some(method),
+                )?
                 else {
                     return Ok(Deferral::Answered);
                 };
@@ -308,11 +308,10 @@ enum CheckResult {
 }
 
 pub(super) fn trace_route_failures(
-    dev: &mut DevServer,
+    dev: &mut DevServerState,
     route_bundle_index: route_bundle::Index,
 ) -> crate::Result<GraphTraceState> {
     let mut gts = dev.graphs.init_graph_trace_state(0)?;
-    let _lock_guard = dev.graph_safety_lock.guard();
     match &dev.route_bundles[route_bundle_index.get() as usize].data {
         route_bundle::Data::Framework(fw) => {
             dev.trace_all_route_imports(fw.route_index, &mut gts, TraceImportGoal::FindErrors)?
@@ -326,12 +325,11 @@ pub(super) fn trace_route_failures(
 }
 
 fn check_route_failures(
-    dev: &mut DevServer,
+    dev: &mut DevServerState,
     route_bundle_index: route_bundle::Index,
     resp: AnyResponse,
 ) -> crate::Result<CheckResult> {
     let gts = trace_route_failures(dev, route_bundle_index)?;
-    let _lock_guard = dev.graph_safety_lock.guard();
     if !gts.failures.is_empty() {
         // See comment on this field for information
         if !dev.assume_perfect_incremental_bundling {
@@ -361,7 +359,7 @@ fn check_route_failures(
 
 impl DevServer {
     pub(crate) fn respond_for_html_bundle(
-        &mut self,
+        &self,
         html: bun_ptr::ThisPtr<HTMLBundleRoute>,
         req: &mut Request,
         resp: AnyResponse,
@@ -370,7 +368,8 @@ impl DevServer {
             host_forbidden(resp);
             return Ok(());
         }
-        let route_bundle_index = self
+        let mut dev = self.state_mut();
+        let route_bundle_index = dev
             .get_or_put_route_bundle(route_bundle::UnresolvedIndex::Html(html))
             .map_err(|_| AllocError)?;
         let mut ctx = RequestEnsureRouteBundledCtx {
@@ -380,8 +379,8 @@ impl DevServer {
             route_bundle_index,
         };
         let rbi = ctx.route_bundle_index;
-        match ensure_route_is_bundled(self, rbi, &mut ctx) {
-            Ok(()) => {}
+        match ensure_route_is_bundled(dev, rbi, &mut ctx) {
+            Ok(_) => {}
             // This is the dev server's entry from Bun.serve's static-route
             // trampoline (`StaticRouteLike`, which otherwise never enters
             // JS): what bundling left pending is folded at this boundary.
@@ -392,7 +391,9 @@ impl DevServer {
         }
         Ok(())
     }
+}
 
+impl DevServerState {
     pub(super) fn get_or_put_route_bundle(
         &mut self,
         route: route_bundle::UnresolvedIndex,
@@ -406,8 +407,6 @@ impl DevServer {
         if let Some(bundle_index) = index_location.get() {
             return Ok(bundle_index);
         }
-
-        let _g = self.graph_safety_lock.guard();
 
         // A file delivers its html to one route bundle only: a route `server.reload()` re-registers reuses it.
         if let route_bundle::UnresolvedIndex::Html(html) = route {
@@ -472,7 +471,7 @@ impl DevServer {
     }
 }
 
-impl DevServer {
+impl DevServerState {
     pub(crate) fn route_to_bundle_index_slow(
         &mut self,
         pattern: &[u8],

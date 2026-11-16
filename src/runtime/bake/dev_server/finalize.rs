@@ -1,5 +1,6 @@
 //! Finishing a bundle: applying results to the graphs and sending hot updates.
 
+use super::bundle::BundlePass;
 use super::*;
 
 pub(crate) struct HotUpdateContext<'a> {
@@ -66,20 +67,25 @@ impl<'a> HotUpdateContext<'a> {
     }
 }
 
-fn finalize_bundle_cleanup(dev: &mut DevServer, had_sent_hmr_event: bool) {
-    // Held to the end: a stopped server frees `dev` with its last request.
-    let (script_requests, _pending_request) = match &mut dev.current_bundle {
-        Some(current_bundle) => {
-            drain_current_bundle_requests(current_bundle);
-            (
-                ::core::mem::take(&mut current_bundle.script_requests),
-                current_bundle.pending_request.take(),
-            )
-        }
-        None => (Vec::new(), None),
-    };
-    // Drops the bundle, then the arena it borrows.
-    dev.current_bundle = None;
+/// The server can free `dev_server` when the result drops.
+fn finalize_bundle_cleanup(
+    dev_server: &DevServer,
+    pass: BundlePass,
+    had_sent_hmr_event: bool,
+) -> PendingRequest {
+    let requests = ::core::mem::take(&mut dev_server.state_mut().current_bundle_mut().requests);
+    drain_current_bundle_requests(requests);
+
+    let mut dev = dev_server.state_mut();
+    let CurrentBundle {
+        script_requests,
+        pending_request,
+        ..
+    } = dev
+        .current_bundle
+        .take()
+        .expect("infallible: bundle active");
+    pass.end(&mut dev);
     dev.log.clear_and_free();
 
     let _ = dev.graphs.assets.reindex_if_needed(); // not fatal
@@ -118,9 +124,11 @@ fn finalize_bundle_cleanup(dev: &mut DevServer, had_sent_hmr_event: bool) {
         );
     }
 
-    dev.start_next_bundle_if_present();
+    drop(dev);
+    dev_server.start_next_bundle_if_present();
 
     // If the call above started another bundle, its cleanup releases the batch.
+    let mut dev = dev_server.state_mut();
     if matches!(
         dev.testing_batch_events,
         TestingBatchEvents::ReleaseAfterBundle(_)
@@ -131,59 +139,69 @@ fn finalize_bundle_cleanup(dev: &mut DevServer, had_sent_hmr_event: bool) {
         else {
             unreachable!()
         };
-        dev.release_testing_batch(batch);
+        drop(dev);
+        dev_server.release_testing_batch(batch);
     }
+    pending_request
 }
 
-pub(super) fn drain_current_bundle_requests(current_bundle: &mut CurrentBundle) {
-    if current_bundle.requests.first().is_some() {
+pub(super) fn drain_current_bundle_requests(mut requests: deferred_request::List) {
+    if requests.first().is_some() {
         // cannot be an assertion because in the case of OOM, the request list was not drained.
         bun_core::debug!(
             "current_bundle.requests.first != null. this leaves pending requests without an error page!",
         );
     }
-    current_bundle.requests.fail_all();
+    requests.fail_all();
 }
 
-/// Called at the end of BundleV2 to index bundle contents into the `IncrementalGraph`s
-/// This function does not recover DevServer state if it fails (allocation failure)
-pub(super) fn finalize_bundle(
-    dev: &mut DevServer,
-    bv2: &mut BundleV2,
-    result: bundler::bundle_v2::DevServerOutput,
-) -> JsResult<()> {
-    debug_assert!(dev.magic == Magic::Valid);
-    let mut had_sent_hmr_event = false;
-    let finalized = finalize_bundle_inner(dev, bv2, result, &mut had_sent_hmr_event);
-    finalize_bundle_cleanup(dev, had_sent_hmr_event);
-    finalized
+/// Queued when the current bundle has parsed every file. Its `pending_request` keeps the pointer valid.
+impl bun_event_loop::Taskable for DevServer {
+    const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::BakeFinishBundle;
+    /// Nothing is owned.
+    unsafe fn release_unrun(_: *mut Self) {}
+    /// A step of the bundle.
+    unsafe fn context(_: *const Self) -> bun_event_loop::ContextId {
+        bun_event_loop::ContextId::NONE
+    }
 }
 
-/// Drops `result` before `finalize_bundle_cleanup` frees what it borrows.
-fn finalize_bundle_inner(
-    dev: &mut DevServer,
-    bv2: &mut BundleV2,
+impl DevServer {
+    /// Links the current bundle and indexes its contents into the `IncrementalGraph`s.
+    ///
+    /// # Safety
+    /// `this` came off the queue of the thread that owns it.
+    #[inline(never)]
+    pub(crate) unsafe fn finish_bundle(this: *mut Self) -> JsResult<()> {
+        bun_removable_features::removable_definition!(Bundler, Self::finish_bundle);
+        // SAFETY: live until the bundle's `pending_request` drops.
+        let dev_server = unsafe { &*this };
+        let pass = dev_server.state_mut().current_bundle_mut().pass.take();
+        let mut pass = (pass.and_then(|pass| pass.downcast::<BundlePass>().ok()))
+            .expect("a bundle finishes once");
+        let mut had_sent_hmr_event = false;
+        let finalized = pass.with_bundle(|bv2| {
+            let result = bun_core::handle_oom(bv2.finish_from_bake_dev_server());
+            finalize_bundle(dev_server, bv2, result, &mut had_sent_hmr_event)
+        });
+        drop(finalize_bundle_cleanup(
+            dev_server,
+            *pass,
+            had_sent_hmr_event,
+        ));
+        finalized
+    }
+}
+
+fn finalize_bundle(
+    dev_server: &DevServer,
+    bv2: &BundleV2,
     result: bundler::bundle_v2::DevServerOutput,
     had_sent_hmr_event: &mut bool,
 ) -> JsResult<()> {
-    // Note: holding `&mut CurrentBundle` for the rest of the fn locks `*dev`
-    // mutably. Erase to a raw pointer and reborrow at each use site via the
-    // `current_bundle!()` macro.
-    let current_bundle_ptr: *mut CurrentBundle = dev
-        .current_bundle
-        .as_mut()
-        .expect("infallible: bundle active");
-    macro_rules! current_bundle {
-        () => {
-            // SAFETY: `dev.current_bundle` is `Some` for the entire fn body —
-            // it is only set to `None` by `finalize_bundle_cleanup`, which the
-            // caller runs after this fn returns. `dev.current_bundle` is never
-            // reassigned (so the inner `CurrentBundle` is not moved) before then.
-            unsafe { &mut *current_bundle_ptr }
-        };
-    }
-
-    let lock = dev.graph_safety_lock.guard();
+    let mut state = dev_server.state_mut();
+    let dev = &mut *state;
+    debug_assert!(dev.magic == Magic::Valid);
 
     // `[js] | [css; n_css] | [html; ..]`
     let mut chunks = result.chunks;
@@ -291,8 +309,7 @@ fn finalize_bundle_inner(
                     }
                 ));
                 debug_assert!(
-                    dev.server_transpiler.options.source_map
-                        != bundler::options::SourceMapOption::None
+                    bv2.transpiler.options.source_map != bundler::options::SourceMapOption::None
                 );
                 debug_assert!(!part_range.source_index.is_runtime());
                 break 'brk bun_sourcemap::Chunk::init_empty();
@@ -568,7 +585,7 @@ fn finalize_bundle_inner(
             dev.generation,
             dev.graphs.server.current_chunk_parts.len(),
             dev.graphs.client.current_chunk_parts.len(),
-            current_bundle!().timer.elapsed().as_millis(),
+            dev.current_bundle().timer.elapsed().as_millis(),
         );
     }
 
@@ -596,6 +613,18 @@ fn finalize_bundle_inner(
         )?;
 
         let global = dev.global();
+        let register_update = dev.server_register_update_callback.get().unwrap();
+        let client_components_added = dev.make_array_for_server_components_patch(
+            global,
+            &dev.graphs.incremental_result.client_components_added,
+        )?;
+        let client_components_removed = dev.make_array_for_server_components_patch(
+            global,
+            &dev.graphs.incremental_result.client_components_removed,
+        )?;
+        drop(state);
+
+        let vm = dev_server.server.vm();
         let server_modules = if let Some(json) = source_map_json {
             // This memory will be owned by the `DevServerSourceProvider` in C++
             let json: ::core::mem::ManuallyDrop<Vec<u8>> = ::core::mem::ManuallyDrop::new(json);
@@ -608,8 +637,7 @@ fn finalize_bundle_inner(
             ) {
                 Ok(v) => v,
                 Err(err) => {
-                    dev.vm()
-                        .print_error_like_object_to_console(global.take_exception(err));
+                    vm.print_error_like_object_to_console(global.take_exception(err));
                     // Note: `panic!()` would unwind through the
                     // `extern "C"` boundary above (`nounwind` UB), so abort.
                     bun_core::Output::panic(format_args!(
@@ -624,8 +652,7 @@ fn finalize_bundle_inner(
             ) {
                 Ok(v) => v,
                 Err(err) => {
-                    dev.vm()
-                        .print_error_like_object_to_console(global.take_exception(err));
+                    vm.print_error_like_object_to_console(global.take_exception(err));
                     // Note: `panic!()` would unwind through the
                     // `extern "C"` boundary above (`nounwind` UB), so abort.
                     bun_core::Output::panic(format_args!(
@@ -634,32 +661,27 @@ fn finalize_bundle_inner(
                 }
             }
         };
-        let errors = match dev.server_register_update_callback.get().unwrap().call(
+        let errors = match register_update.call(
             global,
             global.to_js_value(),
             &[
                 server_modules,
-                dev.make_array_for_server_components_patch(
-                    global,
-                    &dev.graphs.incremental_result.client_components_added,
-                )?,
-                dev.make_array_for_server_components_patch(
-                    global,
-                    &dev.graphs.incremental_result.client_components_removed,
-                )?,
+                client_components_added,
+                client_components_removed,
             ],
         ) {
             Ok(v) => v,
             Err(err) => {
-                dev.vm()
-                    .print_error_like_object_to_console(global.take_exception(err));
+                vm.print_error_like_object_to_console(global.take_exception(err));
                 panic!(
                     "Error thrown in Hot-module-replacement code. This is always a bug in the HMR runtime."
                 );
             }
         };
         let _ = errors; // TODO:
+        state = dev_server.state_mut();
     }
+    let dev = &mut *state;
 
     let mut route_bits = DynamicBitSet::init_empty(dev.route_bundles.len())?;
     let mut route_bits_client = DynamicBitSet::init_empty(dev.route_bundles.len())?;
@@ -688,7 +710,7 @@ fn finalize_bundle_inner(
 
     // This list of routes affected excludes client code.
     if will_hear_hot_update
-        && current_bundle!().had_reload_event
+        && dev.current_bundle().had_reload_event
         && (dev
             .graphs
             .incremental_result
@@ -938,13 +960,9 @@ fn finalize_bundle_inner(
                     break 'h source_map_store::Key::init(source_map_hash.digest() | 1);
                 };
                 let mut sockets: u32 = 0;
-                for socket_ptr in dev.active_websocket_connections.keys() {
-                    // SAFETY: `*socket_ptr` is a live HmrSocket owned by the
-                    // connection map; shared, statement-scoped.
-                    if unsafe { &**socket_ptr }.is_subscribed(HmrTopic::HotUpdate) {
-                        // SAFETY: as above; the exclusive borrow of the socket's
-                        // map ends when `entry` dies at the end of this block.
-                        let entry = unsafe { &mut (**socket_ptr).referenced_source_maps }
+                for socket in &mut dev.active_websocket_connections {
+                    if socket.is_subscribed(HmrTopic::HotUpdate) {
+                        let entry = (socket.referenced_source_maps)
                             .get_or_put(script_id)
                             .expect("oom");
                         if !entry.found_existing {
@@ -988,11 +1006,10 @@ fn finalize_bundle_inner(
     if !dev.graphs.incremental_result.failures_added.is_empty() {
         dev.bundles_since_last_error = 0;
 
-        // Borrowed from the VM, where the agent lives, so that `dev` stays free below.
-        let vm = dev.vm;
-        let mut inspector_agent = BunFrontendDevServerAgent::of(&vm);
+        let mut inspector_agent = BunFrontendDevServerAgent::of(dev_server.server.vm());
 
-        while let Some(req) = current_bundle!().requests.pop_first() {
+        while let Some(req) = state.current_bundle_mut().requests.pop_first() {
+            let dev = &mut *state;
             let rb = dev.route_bundle_ptr(req.route_bundle_index);
             rb.server_state = route_bundle::State::PossibleBundlingFailures;
 
@@ -1001,16 +1018,20 @@ fn finalize_bundle_inner(
                 continue;
             };
 
-            dev.send_serialized_failures(
+            let sent = dev.send_serialized_failures(
                 resp,
                 dev.graphs.bundling_failures.values(),
                 inspector_agent.take(),
-            )?;
+            );
+            drop(state);
+            drop(handler);
+            sent?;
+            state = dev_server.state_mut();
         }
         if let Some(agent) = inspector_agent {
             let mut buf: Vec<u8> = Vec::new();
-            dev.encode_serialized_failures(
-                dev.graphs.bundling_failures.values(),
+            state.encode_serialized_failures(
+                state.graphs.bundling_failures.values(),
                 &mut buf,
                 Some(agent),
             )?;
@@ -1020,7 +1041,7 @@ fn finalize_bundle_inner(
     }
 
     if dev.graphs.bundling_failures.is_empty() {
-        if current_bundle!().had_reload_event {
+        if dev.current_bundle().had_reload_event {
             let clear_terminal = !bun_output::scope_is_visible!(DevServer)
                 && !dev
                     .vm()
@@ -1042,11 +1063,11 @@ fn finalize_bundle_inner(
             dev.print_memory_line();
         }
 
-        let ms_elapsed = u64::try_from(current_bundle!().timer.elapsed().as_millis()).unwrap();
+        let ms_elapsed = u64::try_from(dev.current_bundle().timer.elapsed().as_millis()).unwrap();
 
         bun_core::pretty_error!(
             "<green>{} in {}ms<r>",
-            if current_bundle!().had_reload_event {
+            if dev.current_bundle().had_reload_event {
                 "Reloaded"
             } else {
                 "Bundled page"
@@ -1060,7 +1081,7 @@ fn finalize_bundle_inner(
             let mut buf = paths::path_buffer_pool::get();
 
             // Compute a file name to display
-            let file_name: Option<&[u8]> = if current_bundle!().had_reload_event {
+            let file_name: Option<&[u8]> = if dev.current_bundle().had_reload_event {
                 if !bv2.graph.entry_points.is_empty() {
                     Some(dev.relative_path(&mut *buf, {
                         use bun_bundler::Graph::InputFileColumns as _;
@@ -1074,7 +1095,7 @@ fn finalize_bundle_inner(
                 }
             } else {
                 'brk: {
-                    let Some(first) = current_bundle!().requests.first() else {
+                    let Some(first) = dev.current_bundle().requests.first() else {
                         break 'brk None;
                     };
                     let route_bundle_index = first.route_bundle_index;
@@ -1117,11 +1138,24 @@ fn finalize_bundle_inner(
         }
     }
 
-    // Release the lock because the underlying handler may acquire one.
-    drop(lock);
-
     // Set the state of all the deferred routes up front
-    for req in current_bundle!().requests.iter() {
+    let requests = ::core::mem::take(&mut dev.current_bundle_mut().requests);
+    let states_set = set_deferred_route_states(dev, &requests);
+    dev.current_bundle_mut().requests = requests;
+    states_set?;
+
+    while let Some(req) = state.current_bundle_mut().requests.pop_first() {
+        answer_deferred_request(state, &req)?;
+        state = dev_server.state_mut();
+    }
+    Ok(())
+}
+
+fn set_deferred_route_states(
+    dev: &mut DevServerState,
+    requests: &deferred_request::List,
+) -> crate::Result<()> {
+    for req in requests.iter() {
         let reaches_failure = !dev.graphs.bundling_failures.is_empty()
             && !trace_route_failures(dev, req.route_bundle_index)?
                 .failures
@@ -1133,39 +1167,55 @@ fn finalize_bundle_inner(
         };
     }
 
-    while let Some(req) = current_bundle!().requests.pop_first() {
-        if dev.route_bundle_ptr(req.route_bundle_index).server_state
-            == route_bundle::State::PossibleBundlingFailures
-        {
-            let failures = trace_route_failures(dev, req.route_bundle_index)?.failures;
-            if !failures.is_empty() {
-                let handler = req.take_handler();
-                if let Some(resp) = handler.detach_response_for_error_page() {
-                    dev.send_serialized_failures(resp, &failures, None)?;
-                }
-                continue;
-            }
+    Ok(())
+}
+
+fn answer_deferred_request(
+    mut dev: StateGuard<'_>,
+    req: &deferred_request::DeferredRequest,
+) -> JsResult<()> {
+    if dev.route_bundle_ptr(req.route_bundle_index).server_state
+        == route_bundle::State::PossibleBundlingFailures
+    {
+        let failures = trace_route_failures(&mut dev, req.route_bundle_index)?.failures;
+        if !failures.is_empty() {
+            let handler = req.take_handler();
+            let sent = (handler.detach_response_for_error_page())
+                .map(|resp| dev.send_serialized_failures(resp, &failures, None));
+            drop(dev);
+            sent.transpose()?;
+            return Ok(());
         }
+    }
 
-        let rb = dev.route_bundle_ptr(req.route_bundle_index);
-        rb.server_state = route_bundle::State::Loaded;
+    let rb = dev.route_bundle_ptr(req.route_bundle_index);
+    rb.server_state = route_bundle::State::Loaded;
 
-        match req.take_handler() {
-            Handler::Aborted => continue,
-            Handler::ServerHandler(saved) => dev.on_framework_request_with_bundle(
-                req.route_bundle_index,
-                SavedRequestUnion::Saved(&saved),
-                saved.response,
-            )?,
-            Handler::BundledHtmlPage(ram) => {
-                dev.on_html_request_with_bundle(req.route_bundle_index, ram.response, ram.method)
-            }
+    match req.take_handler() {
+        Handler::Aborted => {}
+        Handler::ServerHandler(saved) => {
+            let (server, saved_req) = (dev.server, SavedRequestUnion::Saved(&saved));
+            let FrameworkRequest { callback, args } = dev
+                .prepare_framework_request(req.route_bundle_index, &saved_req)
+                .inspect_err(|_| saved.ctx.end_with_internal_server_error())?;
+            server.on_saved_request(saved_req, saved.response, callback, args);
+        }
+        Handler::BundledHtmlPage(ram) => {
+            dev.on_html_request_with_bundle(req.route_bundle_index, ram.response, ram.method)
         }
     }
     Ok(())
 }
 
-impl DevServer {
+impl DevServerState {
+    fn current_bundle(&self) -> &CurrentBundle {
+        (self.current_bundle.as_ref()).expect("infallible: bundle active")
+    }
+
+    fn current_bundle_mut(&mut self) -> &mut CurrentBundle {
+        (self.current_bundle.as_mut()).expect("infallible: bundle active")
+    }
+
     fn make_array_for_server_components_patch(
         &self,
         global: &JSGlobalObject,

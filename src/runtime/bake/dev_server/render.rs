@@ -7,15 +7,19 @@ struct FrameworkRequestArgs {
     route_modules: JSValue,
     client_id: JSValue,
     styles: JSValue,
-    params: JSValue,
 }
 
-impl DevServer {
+/// The arguments of `AnyServer::on_saved_request`, to call it with nothing borrowed.
+pub(super) struct FrameworkRequest {
+    pub(super) callback: JSValue,
+    pub(super) args: [JSValue; 5],
+}
+
+impl DevServerState {
     fn compute_arguments_for_framework_request(
         &mut self,
         global: &JSGlobalObject,
         route_bundle_index: route_bundle::Index,
-        params_js_value: JSValue,
     ) -> JsResult<FrameworkRequestArgs> {
         let route_bundle = &mut self.route_bundles[route_bundle_index.get() as usize];
         debug_assert!(route_bundle.server_state == route_bundle::State::Loaded);
@@ -141,66 +145,57 @@ impl DevServer {
                     break 'arr js;
                 }
             },
-            // params
-            params: params_js_value,
         })
     }
+}
 
-    pub(super) fn on_framework_request_with_bundle(
-        &mut self,
+impl StateGuard<'_> {
+    pub(super) fn prepare_framework_request(
+        mut self,
         route_bundle_index: route_bundle::Index,
-        req: SavedRequestUnion,
-        resp: AnyResponse,
-    ) -> JsResult<()> {
+        req: &SavedRequestUnion,
+    ) -> JsResult<FrameworkRequest> {
         // Extract route params by re-matching the URL
         // TODO: lazy structure caching since we are making these objects a lot
-        let global = self.vm().global();
-        let params_js_value = {
-            let mut params: router::MatchedParams = Default::default();
-            let url_bunstr = match &req {
-                // SAFETY: r is a uws Request ptr valid for the duration of the handler callback
-                SavedRequestUnion::Stack(r) => bun_core::StringView::borrow_utf8((**r).url()),
-                SavedRequestUnion::Saved(data) => bun_core::StringView::new(data.request.url.get()),
-            };
-            let url = url_bunstr.to_utf8();
-            // Extract pathname from URL (remove protocol, host, query, hash)
-            let pathname = extract_pathname_from_url(url.slice());
-            if self.router.match_slow(pathname, &mut params).is_some() {
-                params.to_js(global)?
-            } else {
-                JSValue::NULL
-            }
+        let global = self.global();
+        let mut params: router::MatchedParams = Default::default();
+        let url_bunstr = match req {
+            SavedRequestUnion::Stack(r) => bun_core::StringView::borrow_utf8(r.url()),
+            SavedRequestUnion::Saved(data) => bun_core::StringView::new(data.request.url.get()),
         };
+        let url = url_bunstr.to_utf8();
+        // Extract pathname from URL (remove protocol, host, query, hash)
+        let pathname = extract_pathname_from_url(url.slice());
+        let matched = self.router.match_slow(pathname, &mut params).is_some();
 
-        let server_request_callback = self
+        let callback = self
             .server_fetch_function_callback
             .get()
             .expect("did not initialize server code");
 
-        let args = self.compute_arguments_for_framework_request(
-            global,
-            route_bundle_index,
-            params_js_value,
-        )?;
+        let args = self.compute_arguments_for_framework_request(global, route_bundle_index)?;
 
-        self.server
-            .as_ref()
-            .expect("infallible: server bound")
-            .on_saved_request(
-                req,
-                resp,
-                server_request_callback,
-                [
-                    args.router_type_main,
-                    args.route_modules,
-                    args.client_id,
-                    args.styles,
-                    args.params,
-                ],
-            );
-        Ok(())
+        // `to_js` runs the getters of `Object.prototype`.
+        drop(self);
+        let params = if matched {
+            params.to_js(global)?
+        } else {
+            JSValue::NULL
+        };
+        Ok(FrameworkRequest {
+            callback,
+            args: [
+                args.router_type_main,
+                args.route_modules,
+                args.client_id,
+                args.styles,
+                params,
+            ],
+        })
     }
+}
 
+impl DevServerState {
     pub(super) fn on_html_request_with_bundle(
         &mut self,
         route_bundle_index: route_bundle::Index,
@@ -213,19 +208,15 @@ impl DevServer {
         let blob: bun_ptr::ThisPtr<StaticRoute> = match &route_bundle.data.html().cached_response {
             Some(blob) => blob.this_ptr(),
             None => {
-                let payload = Self::generate_html_payload(
-                    &self.graph_safety_lock,
-                    &mut self.graphs,
-                    route_bundle_index,
-                    route_bundle,
-                )
-                .expect("oom");
+                let payload =
+                    Self::generate_html_payload(&mut self.graphs, route_bundle_index, route_bundle)
+                        .expect("oom");
 
                 let response = StaticRoute::init_from_any_blob(
                     crate::webcore::AnyBlob::from_owned_slice(payload),
                     crate::server::static_route::InitFromBytesOptions {
                         mime_type: Some(&MimeType::HTML),
-                        server: self.server,
+                        server: Some(self.server),
                         ..Default::default()
                     },
                 );
@@ -253,10 +244,9 @@ const SCRIPT_UNREF_PAYLOAD: &str = concat!(
     "</script>",
 );
 
-impl DevServer {
+impl DevServerState {
     /// Takes the fields it needs, so that the caller can keep its borrow of `route_bundle`.
     fn generate_html_payload(
-        graph_safety_lock: &ThreadLock,
         graphs: &mut Graphs,
         route_bundle_index: route_bundle::Index,
         route_bundle: &RouteBundle,
@@ -289,8 +279,6 @@ impl DevServer {
         if !strings::is_all_ascii(display_name) || strings::contains_char(display_name, b'"') {
             display_name = b"page";
         }
-
-        let _lock = graph_safety_lock.guard();
 
         // Prepare bitsets for tracing
         let mut gts = graphs.init_graph_trace_state(0)?;
@@ -472,7 +460,7 @@ impl DevServer {
                     crate::webcore::AnyBlob::from_owned_slice(payload),
                     crate::server::static_route::InitFromBytesOptions {
                         mime_type: Some(&MimeType::JAVASCRIPT),
-                        server: self.server,
+                        server: Some(self.server),
                         ..Default::default()
                     },
                 );
@@ -487,7 +475,7 @@ impl DevServer {
     }
 }
 
-impl DevServer {
+impl DevServerState {
     /// Used to generate the entry point. Unlike incremental patches, this always
     /// contains all needed files for a route.
     fn generate_client_bundle(
@@ -495,8 +483,6 @@ impl DevServer {
         root: route_bundle::TraceRoot,
         script_id: source_map_store::Key,
     ) -> crate::Result<Vec<u8>> {
-        let _lock = self.graph_safety_lock.guard();
-
         // Prepare bitsets
         let mut gts = self.graphs.init_graph_trace_state(0)?;
 
@@ -596,8 +582,6 @@ impl DevServer {
     }
 
     fn generate_css_js_array(&mut self, route_index: router::RouteIndex) -> JsResult<JSValue> {
-        let _lock = self.graph_safety_lock.guard();
-
         // Prepare bitsets
         let mut gts = self.graphs.init_graph_trace_state(0)?;
 

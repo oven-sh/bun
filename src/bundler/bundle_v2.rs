@@ -11,6 +11,8 @@ use core::sync::atomic::AtomicU32;
 use bun_collections::{ArrayHashMap, StringHashMap};
 use bun_core::ThreadLock;
 
+pub use crate::barrel_imports::DevServerBarrels;
+
 // `bake_types` / `dispatch` are canonically defined in `bv2_impl` below
 // (the full versions); re-exported here so the crate-root `lib.rs` modules and
 // the outer `BundleV2` struct see exactly the same types as the impl bodies.
@@ -23,7 +25,7 @@ pub use bv2_impl::{
     EventLoop, ImportTracker, PartRange, StableRef, WrapKind, generic_path_with_pretty_initialized,
     target_from_hashbang,
 };
-pub use bv2_impl::{DevServerInput, DevServerOutput, ImportTrackerIterator, ImportTrackerStatus};
+pub use bv2_impl::{DevServerOutput, ImportTrackerIterator, ImportTrackerStatus};
 // Flatten the impl-body module into this file's namespace so external callers
 // (`bun_runtime::cli::*`, `linker_context::*`) reference items as
 // `bundle_v2::Foo` rather than naming the implementation submodule.
@@ -79,9 +81,12 @@ pub struct BundleV2<'a> {
     /// `Bun.build`. Once it has stopped a request is answered as cancelled instead of reaching them.
     pub plugin_context: bun_event_loop::ContextId,
     /// CYCLEBREAK GENUINE: erased `bake::DevServer` (see `dispatch::DevServerHandle`).
-    /// Populated from `transpiler.options.dev_server` + the runtime-registered vtable at
-    /// construction. All ~15 DevServer call sites go through this.
-    pub dev_server: Option<dispatch::DevServerHandle>,
+    /// `SyncView`: parse tasks share `&BundleV2`, and `bake::DevServer` is `!Sync`.
+    pub(crate) dev_server: SyncView<Option<dispatch::DevServerHandle>>,
+    /// Empty without `dev_server`.
+    pub dev_server_barrels: DevServerBarrels,
+    /// Empty without `dev_server`.
+    css_entry_points: ArrayHashMap<Index, bv2_impl::CssEntryPointMeta>,
     /// Unlike parse failures, these can be created asynchronously and out of order. Empty without `dev_server`.
     resolution_failures: SyncView<ResolutionFailures>,
     /// In-memory files that can be used as entrypoints or imported.
@@ -107,7 +112,7 @@ pub struct BundleV2<'a> {
 
     /// Set true by DevServer. Currently every usage of the transpiler (Bun.build
     /// and `bun build` CLI) runs at the top of an event loop. When this is true,
-    /// a callback is executed after all work is complete (`finishFromBakeDevServer`).
+    /// a callback is executed after all work is complete (`on_scan_complete`).
     pub asynchronous: bool,
     pub(crate) thread_lock: ThreadLock,
 
@@ -209,11 +214,6 @@ impl<'a> BundleV2<'a> {
         let any_loop = self.r#loop.expect("BundleV2.loop must be set to parse");
         // SAFETY: BACKREF — set once in `init` from a loop that outlives the bundle pass.
         unsafe { any_loop.as_ref() }
-    }
-
-    #[inline]
-    pub(crate) fn dev_server_handle(&self) -> Option<&dispatch::DevServerHandle> {
-        self.dev_server.as_ref()
     }
 
     #[inline]
@@ -1388,22 +1388,6 @@ pub mod bv2_impl {
 
         pub use crate::{DevServerHandle, DevServerHandleKind};
 
-        impl DevServerHandle {
-            #[inline]
-            pub(crate) fn put_or_overwrite_asset_erased<P>(
-                &self,
-                path: &P,
-                contents: &[u8],
-                content_hash: u64,
-            ) -> crate::Result<()> {
-                self.put_or_overwrite_asset(
-                    core::ptr::from_ref::<P>(path).cast::<()>(),
-                    contents,
-                    content_hash,
-                )
-            }
-        }
-
         bun_opaque::sealed_handle! {
             /// Opaque `JSC::EncoderStringTable` — one instance shared by every chunk's `encodeCodeBlock` in a `--compile --bytecode` build.
             pub struct EncoderStringTable;
@@ -1858,7 +1842,7 @@ pub mod bv2_impl {
             abs_path: &[u8],
             bake_graph: bake::Graph,
         ) -> Option<usize> {
-            let owner = (self.dev_server?).insert_stale_owner(abs_path, bake_graph);
+            let owner = (*self.dev_server.as_mut())?.insert_stale_owner(abs_path, bake_graph);
             let entry = bun_core::handle_oom(self.resolution_failures.as_mut().get_or_put(owner));
             if !entry.found_existing {
                 *entry.value_ptr = bun_ast::Log::init();
@@ -2498,7 +2482,7 @@ pub mod bv2_impl {
                     Err(err) => {
                         // Only perform directory busting when hot-reloading is enabled
                         if err == _resolver::Error::ModuleNotFound {
-                            if let Some(dev) = &self.dev_server {
+                            if let Some(dev) = *self.dev_server.as_mut() {
                                 if !had_busted_dir_cache {
                                     // Only re-query if we previously had something cached.
                                     if transpiler.resolver.bust_dir_cache_from_specifier(
@@ -2820,7 +2804,7 @@ pub mod bv2_impl {
                     self.graph.estimated_file_loader_count += 1;
                 }
 
-                self.graph.pool().schedule(task);
+                self.schedule_parse_task(task);
             }
             Ok(())
         }
@@ -2903,7 +2887,7 @@ pub mod bv2_impl {
                     self.graph.estimated_file_loader_count += 1;
                 }
 
-                self.graph.pool().schedule(task);
+                self.schedule_parse_task(task);
             }
 
             self.graph
@@ -2963,7 +2947,9 @@ pub mod bv2_impl {
                 // (owning thread == this thread).
                 js_poster: event_loop.and_then(|l| unsafe { l.as_ref() }.js_poster()),
                 plugin_context: bun_event_loop::ContextId::NONE,
-                dev_server: None,
+                dev_server: SyncView::default(),
+                dev_server_barrels: Default::default(),
+                css_entry_points: ArrayHashMap::new(),
                 resolution_failures: SyncView::default(),
                 file_map: None,
                 source_code_length: 0,
@@ -3100,10 +3086,26 @@ pub mod bv2_impl {
                 Self::on_after_decrement_scan_counter
             );
             if self.asynchronous && self.is_done() {
-                let dev = self
-                    .dev_server
-                    .unwrap_or_else(|| panic!("No dev server attached in asynchronous bundle job"));
-                self.finish_from_bake_dev_server(&dev).expect("oom");
+                (self.dev_server.as_mut())
+                    .unwrap_or_else(|| panic!("No dev server attached in asynchronous bundle job"))
+                    .on_scan_complete();
+            }
+        }
+
+        fn schedule_parse_task(&mut self, task: Box<ParseTask<'_>>) {
+            self.increment_parse_task_counter();
+            self.graph.pool().schedule(task);
+        }
+
+        fn increment_parse_task_counter(&mut self) {
+            if let Some(dev_server) = *self.dev_server.as_mut() {
+                dev_server.increment_parse_task_counter();
+            }
+        }
+
+        pub(crate) fn decrement_parse_task_counter(&mut self) {
+            if let Some(dev_server) = *self.dev_server.as_mut() {
+                dev_server.decrement_parse_task_counter();
             }
         }
 
@@ -3177,10 +3179,9 @@ pub mod bv2_impl {
         pub(crate) fn enqueue_entry_points_dev_server(
             &mut self,
             files: &bake_types::EntryPointList,
-            css_data: &mut ArrayHashMap<Index, CssEntryPointMeta>,
         ) -> Result<(), Error> {
             self.enqueue_entry_points_common()?;
-            debug_assert!(self.dev_server.is_some());
+            debug_assert!(self.dev_server.as_mut().is_some());
 
             let num_entry_points = files.set.count();
             self.graph.entry_points.reserve(num_entry_points);
@@ -3245,7 +3246,7 @@ pub mod bv2_impl {
                     Ok(r) => r,
                     Err(err) => {
                         let log = transpiler.log();
-                        let dev = self.dev_server.expect("unreachable");
+                        let dev = self.dev_server.as_mut().expect("unreachable");
                         dev.handle_parse_task_failure(
                             err,
                             if flags.client() {
@@ -3255,7 +3256,7 @@ pub mod bv2_impl {
                             },
                             abs_path,
                             log,
-                            std::ptr::from_mut(self),
+                            self,
                         )
                         .expect("oom");
                         log.reset();
@@ -3275,7 +3276,7 @@ pub mod bv2_impl {
                             break 'brk;
                         };
                         if flags.css() {
-                            css_data.put_no_clobber(
+                            self.css_entry_points.put_no_clobber(
                                 Index::init(source_index),
                                 CssEntryPointMeta {
                                     imported_on_server: false,
@@ -3363,7 +3364,7 @@ pub mod bv2_impl {
             runtime_parse_task.ctx = Some(bun_ptr::ParentRef::from_ref_mut(self));
             runtime_parse_task.loader = Some(Loader::Js);
             self.increment_scan_counter();
-            self.graph.pool().schedule(runtime_parse_task);
+            self.schedule_parse_task(runtime_parse_task);
             Ok(())
         }
 
@@ -3685,7 +3686,7 @@ pub mod bv2_impl {
                     self.graph.estimated_file_loader_count += 1;
                 }
 
-                self.graph.pool().schedule(task);
+                self.schedule_parse_task(task);
             }
 
             Ok(source_index.get())
@@ -3752,7 +3753,7 @@ pub mod bv2_impl {
                     self.graph.estimated_file_loader_count += 1;
                 }
 
-                self.graph.pool().schedule(task);
+                self.schedule_parse_task(task);
             }
             Ok(source_index.get())
         }
@@ -3792,6 +3793,7 @@ pub mod bv2_impl {
             }));
 
             self.increment_scan_counter();
+            self.increment_parse_task_counter();
 
             // SAFETY: a field of the box above, which the task's callback takes back. What the task
             // borrows lives until the bundle is dropped.
@@ -4420,7 +4422,7 @@ pub mod bv2_impl {
                                 bun_ast::SideEffects::NoSideEffectsPureData;
                             this.graph.estimated_file_loader_count += 1;
                         }
-                        this.graph.pool().schedule(parse_task);
+                        this.schedule_parse_task(parse_task);
                         return;
                     }
 
@@ -4476,7 +4478,7 @@ pub mod bv2_impl {
                     };
                     parse_task.loader = Some(code.loader);
                     parse_task.contents_or_fd = parse_task::ContentsOrFd::Contents(source_code);
-                    this.graph.pool().schedule(parse_task);
+                    this.schedule_parse_task(parse_task);
 
                     if let Some(bun_watcher) = &this.transpiler.resolver.watcher {
                         'add_watchers: {
@@ -4513,7 +4515,7 @@ pub mod bv2_impl {
                     }
                 }
                 jsc_api::JSBundler::LoadValue::Err(msg) => {
-                    if let Some(dev) = this.dev_server {
+                    if let Some(dev) = *this.dev_server.as_mut() {
                         let source =
                             &this.graph.input_files.items_source()[source_index.get() as usize];
                         // A stack-allocated Log object containing the singular message
@@ -4575,7 +4577,6 @@ pub mod bv2_impl {
                 resolve.owner,
                 jsc_api::JSBundler::ResolveOwner::Bundle
             ));
-            // Runs last: the decrement can finish a dev server bundle, which frees `this`.
             let mut this = scopeguard::guard(this, |this| this.decrement_scan_counter());
             let this: &mut BundleV2 = &mut **this;
             bun_core::scoped_log!(
@@ -4759,7 +4760,7 @@ pub mod bv2_impl {
                                     this.graph.estimated_file_loader_count += 1;
                                 }
 
-                                this.graph.pool().schedule(task);
+                                this.schedule_parse_task(task);
                             }
                         } else {
                             out_source_index = Some(Index::init(*existing.value_ptr));
@@ -5053,7 +5054,7 @@ pub mod bv2_impl {
         }
 
         fn should_add_watcher(&self, path: &[u8]) -> bool {
-            if self.dev_server.is_some() {
+            if self.transpiler.options.has_dev_server() {
                 strings::index_of(path, b"/node_modules/").is_none()
                     && (if cfg!(windows) {
                         strings::index_of(path, b"\\node_modules\\").is_none()
@@ -5068,41 +5069,18 @@ pub mod bv2_impl {
         /// Dev Server uses this instead to run a subset of the transpiler, and to run it asynchronously.
         pub fn start_from_bake_dev_server(
             &mut self,
+            dev_server: dispatch::DevServerHandle,
             bake_entry_points: &bake_types::EntryPointList,
-        ) -> Result<DevServerInput, Error> {
+        ) -> Result<(), Error> {
+            self.dev_server = SyncView::new(Some(dev_server));
             self.unique_key = generate_unique_key();
-
-            /* arena: help_catch_memory_issues — no-op (mimalloc TLH check) */
-
-            let mut ctx = DevServerInput {
-                css_entry_points: ArrayHashMap::new(),
-            };
-            self.enqueue_entry_points_dev_server(bake_entry_points, &mut ctx.css_entry_points)?;
-
-            /* arena: help_catch_memory_issues — no-op (mimalloc TLH check) */
-
-            Ok(ctx)
+            self.enqueue_entry_points_dev_server(bake_entry_points)
         }
 
-        // The body has deep DevServer field access (current_bundle.start_data,
-        // css_entry_points, etc.). After tier-6 collapse this fn should be hoisted into
-        // bun_runtime::bake (which can name DevServer concretely) and call back into BundleV2
-        // helpers. Until then the entry-point fields are reached through the vtable.
-        pub(crate) fn finish_from_bake_dev_server(
-            &mut self,
-            dev_server: &dispatch::DevServerHandle,
-        ) -> Result<(), AllocError> {
-            // SAFETY: DevServer guarantees `current_bundle` is Some during finish.
-            // The vtable slot returns `*mut ()` derived from the current bundle's `start_data`;
-            // DevServer holds it exclusively for the duration of finalize, so the `&mut DevServerInput`
-            // here is mut-valid and unaliased until this fn returns.
-            let start = unsafe {
-                &mut *dev_server
-                    .current_bundle_start_data()
-                    .cast::<DevServerInput>()
-            };
-
-            /* arena: help_catch_memory_issues — no-op (mimalloc TLH check) */
+        pub fn finish_from_bake_dev_server(&mut self) -> Result<DevServerOutput<'a>, AllocError> {
+            let dev_server =
+                (self.dev_server.as_mut()).expect("set by `start_from_bake_dev_server`");
+            let mut css_entry_points = core::mem::take(&mut self.css_entry_points);
 
             self.dynamic_import_entry_points = ArrayHashMap::new();
             let mut html_files: ArrayHashMap<Index, ()> = ArrayHashMap::new();
@@ -5111,7 +5089,7 @@ pub mod bv2_impl {
             let js_reachable_files: &[Index] = 'reachable_files: {
                 let css_file_count = self.graph.css_file_count as usize;
                 let mut css_total_files: Vec<Index> = Vec::with_capacity(css_file_count);
-                start.css_entry_points.reserve(css_file_count);
+                css_entry_points.reserve(css_file_count);
                 let mut js_files: Vec<Index> =
                     Vec::with_capacity(self.graph.ast.len() - css_file_count - 1);
 
@@ -5156,7 +5134,7 @@ pub mod bv2_impl {
                                     .map_err(|_| AllocError)?;
                                 // Since there is an error, do not treat it as a
                                 // valid CSS chunk.
-                                let _ = start.css_entry_points.swap_remove(&Index::init(
+                                let _ = css_entry_points.swap_remove(&Index::init(
                                     u32::try_from(index).expect("int cast"),
                                 ));
                             }
@@ -5192,8 +5170,7 @@ pub mod bv2_impl {
                                     continue;
                                 }
 
-                                let gop = start
-                                    .css_entry_points
+                                let gop = css_entry_points
                                     .get_or_put(record.source_index)
                                     .expect("oom");
                                 if target != Target::Browser {
@@ -5209,8 +5186,7 @@ pub mod bv2_impl {
                         }
                     } else {
                         // Treat empty CSS files for removal.
-                        let _ = start
-                            .css_entry_points
+                        let _ = css_entry_points
                             .swap_remove(&Index::init(u32::try_from(index).expect("int cast")));
                     }
                 }
@@ -5221,7 +5197,7 @@ pub mod bv2_impl {
                 let css = &self.graph.css_asts;
                 for entry_point in &self.graph.entry_points {
                     if css[entry_point.get() as usize].is_some() {
-                        start.css_entry_points.put(
+                        css_entry_points.put(
                             Index::init(entry_point.get()),
                             CssEntryPointMeta {
                                 imported_on_server: false,
@@ -5292,7 +5268,7 @@ pub mod bv2_impl {
             }
 
             let mut chunks: Vec<Chunk> =
-                Vec::with_capacity(1 + start.css_entry_points.count() + html_files.count());
+                Vec::with_capacity(1 + css_entry_points.count() + html_files.count());
 
             // First is a chunk to contain all JavaScript modules.
             chunks.push(Chunk {
@@ -5312,7 +5288,7 @@ pub mod bv2_impl {
 
             // Then all the distinct CSS bundles (these are JS->CSS, not CSS->CSS)
             let mut css_too_deep = Vec::new();
-            for entry_point in start.css_entry_points.keys() {
+            for entry_point in css_entry_points.keys() {
                 match crate::linker_context::find_imported_files_in_css_order::find_imported_files_in_css_order(&linker, self.arena(), &[*entry_point]) {
                     Ok(order) => chunks.push(Chunk {
                         entry_point: chunk::EntryPoint::non_entry_point(
@@ -5388,23 +5364,18 @@ pub mod bv2_impl {
                         self,
                     )
                     .map_err(|_| AllocError)?;
-                let _ = start.css_entry_points.ordered_remove(&entry_point);
+                let _ = css_entry_points.ordered_remove(&entry_point);
             }
 
             let resolution_failures = core::mem::take(self.resolution_failures.as_mut());
-            dev_server
-                .finalize_bundle(
-                    self,
-                    DevServerOutput {
-                        chunks,
-                        compile_results,
-                        css_code,
-                        linker_graph,
-                        css_file_list: core::mem::take(&mut start.css_entry_points),
-                        resolution_failures,
-                    },
-                )
-                .map_err(|_| AllocError)
+            Ok(DevServerOutput {
+                chunks,
+                compile_results,
+                css_code,
+                linker_graph,
+                css_file_list: css_entry_points,
+                resolution_failures,
+            })
         }
 
         pub(crate) fn enqueue_on_resolve_plugin_if_needed(
@@ -5773,7 +5744,7 @@ pub mod bv2_impl {
                 if import_record
                     .flags
                     .contains(bun_ast::ImportRecordFlags::IS_UNUSED)
-                    && self.dev_server.is_none()
+                    && self.dev_server.as_mut().is_none()
                 {
                     import_record.source_index = Index::INVALID;
                 }
@@ -5820,7 +5791,7 @@ pub mod bv2_impl {
                     // In the dev server, the HMR runtime provides `bun:bake/client` and
                     // `bun:bake/server` to every framework. A production build has their data only
                     // with server components.
-                    if fw.server_components.is_some() || self.dev_server.is_some() {
+                    if fw.server_components.is_some() || self.dev_server.as_mut().is_some() {
                         let is_server = ctx.target.is_server_side();
                         let src = if is_server {
                             &bake::SERVER_VIRTUAL_SOURCE
@@ -5828,7 +5799,7 @@ pub mod bv2_impl {
                             &bake::CLIENT_VIRTUAL_SOURCE
                         };
                         if import_record.path.text == src.path.pretty {
-                            if self.dev_server.is_some() {
+                            if self.dev_server.as_mut().is_some() {
                                 import_record.flags.insert(
                                     bun_ast::ImportRecordFlags::IS_EXTERNAL_WITHOUT_SIDE_EFFECTS,
                                 );
@@ -6058,7 +6029,7 @@ pub mod bv2_impl {
                                             continue 'inner;
                                         }
                                     }
-                                    if let Some(dev) = self.dev_server {
+                                    if let Some(dev) = *self.dev_server.as_mut() {
                                         // Tell DevServer about the resolution failure.
                                         dev.track_resolution_failure(
                                             source.path.text,
@@ -6108,7 +6079,7 @@ pub mod bv2_impl {
                                                         import_record.kind.error_label()
                                                     ),
                                                     bstr::BStr::new(&import_record.path.text),
-                                                    if self.dev_server.is_none() {
+                                                    if self.dev_server.as_mut().is_none() {
                                                         ". To use Node.js builtins, set target to 'node' or 'bun'"
                                                     } else {
                                                         ""
@@ -6131,7 +6102,7 @@ pub mod bv2_impl {
                                                         import_record.kind.error_label()
                                                     ),
                                                     bstr::BStr::new(&import_record.path.text),
-                                                    if self.dev_server.is_none() {
+                                                    if self.dev_server.as_mut().is_none() {
                                                         ". When bundling for Bun, set target to 'bun'"
                                                     } else {
                                                         ""
@@ -6244,7 +6215,7 @@ pub mod bv2_impl {
                     continue;
                 }
 
-                if let Some(dev_server) = self.dev_server_handle() {
+                if let Some(dev_server) = *self.dev_server.as_mut() {
                     'brk: {
                         if path.loader(&self.transpiler.options.loaders) == Some(Loader::Html)
                             && (import_record.loader.is_none()
@@ -6273,14 +6244,16 @@ pub mod bv2_impl {
 
                         import_record.source_index = Index::INVALID;
 
-                        if let Some(entry) = dev_server.is_file_cached(path.text, bake_graph) {
+                        // Barrel files with deferred records must always be re-parsed.
+                        if !(self.dev_server_barrels.files_with_deferrals).contains_key(path.text)
+                            && let Some(entry) = dev_server.is_file_cached(path.text, bake_graph)
+                        {
                             // A cached JSON or text module is also an `Asset`, but it has no asset URL.
                             if loader == Loader::Html
                                 && entry.kind == bake_types::CacheKind::Asset
                                 && let Some(hash) = dev_server.asset_hash(path.text)
                             {
                                 // Overload `path.text` to point to the final URL
-                                // This information cannot be queried while printing because a lock wouldn't get held.
                                 import_record.path.text = path.text;
                                 import_record.path.namespace = b"file";
                                 import_record.path.pretty = self
@@ -6338,10 +6311,10 @@ pub mod bv2_impl {
 
                 let is_html_entrypoint = import_record_loader == Loader::Html
                     && target.is_server_side()
-                    && self.dev_server.is_none();
+                    && self.dev_server.as_mut().is_none();
 
                 if let Some(id) = self.graph.path_to_source_index_map(target).get(path.text) {
-                    if self.dev_server.is_some() && loader != Loader::Html {
+                    if self.dev_server.as_mut().is_some() && loader != Loader::Html {
                         import_record.path =
                             self.graph.input_files.items_source()[id as usize].path;
                     } else {
@@ -6422,7 +6395,7 @@ pub mod bv2_impl {
             // ParseTask.ctx, (b) hoist dev_server check, and (c) scope the map
             // borrow to the `build_graphs` field so later `self.graph.*` writes don't overlap.
             let self_ptr = Some(bun_ptr::ParentRef::from_ref_mut(self));
-            let dev_server_is_none = self.dev_server.is_none();
+            let dev_server_is_none = self.dev_server.as_mut().is_none();
             let ast_arena = self.graph.ast_arena();
             for (key, mut new_task) in resolve_queue {
                 let loader = new_task.loader.unwrap_or_else(|| {
@@ -6496,7 +6469,7 @@ pub mod bv2_impl {
                         self.graph.estimated_file_loader_count += 1;
                     }
 
-                    self.graph.pool().schedule(new_task);
+                    self.schedule_parse_task(new_task);
                 } else if loader.should_copy_for_bundling() {
                     let existing_idx = *existing.value_ptr;
                     self.graph.add_additional_file(
@@ -6553,7 +6526,7 @@ pub mod bv2_impl {
             let input_file_loaders = self.graph.input_files.items_loader();
             debug_assert!(ctx.only_records.is_none_or(<[u32]>::is_sorted));
             let save_import_record_source_index = ctx.only_records.is_some()
-                || self.dev_server.is_none()
+                || self.dev_server.as_mut().is_none()
                 || ctx.loader == Loader::Html
                 || ctx.loader.is_css();
 
@@ -6763,7 +6736,6 @@ pub mod bv2_impl {
                 }
             }
 
-            // By value: `value` must drop before `on_after_decrement_scan_counter`, which can free the bundle.
             match parse_result.value {
                 parse_task::ResultValue::Empty {
                     source_index: empty_source_index,
@@ -6840,13 +6812,11 @@ pub mod bv2_impl {
                     if !result.unique_key_for_additional_file.is_empty()
                         && result.loader.should_copy_for_bundling()
                     {
-                        if let Some(dev) = this.dev_server {
+                        if let Some(dev) = *this.dev_server.as_mut() {
                             let source =
                                 &this.graph.input_files.items_source()[result_source_index];
-                            dev.put_or_overwrite_asset_erased(
+                            dev.put_or_overwrite_asset(
                                 &source.path,
-                                // SAFETY: when shouldCopyForBundling is true, the
-                                // contents are allocated by bun.default_allocator
                                 &source.contents,
                                 result.content_hash_for_additional_file,
                             )
@@ -7063,9 +7033,7 @@ pub mod bv2_impl {
                 }
                 parse_task::ResultValue::Err(err) => {
                     if process_log {
-                        if let Some(dev_server) = this.dev_server {
-                            // Copy out the path slice so the `input_files`
-                            // borrow ends before we coerce `this` to `*mut _`.
+                        if let Some(dev_server) = *this.dev_server.as_mut() {
                             let abs_path: &'a [u8] = this.graph.input_files.items_source()
                                 [err.source_index.get() as usize]
                                 .path
@@ -7076,7 +7044,7 @@ pub mod bv2_impl {
                                     err.target.bake_graph(),
                                     abs_path,
                                     &err.log,
-                                    std::ptr::from_mut(this),
+                                    this,
                                 )
                                 .expect("oom");
                         } else if err.log.has_msgs() {
@@ -7099,7 +7067,7 @@ pub mod bv2_impl {
                         }
                     }
 
-                    if cfg!(debug_assertions) && this.dev_server.is_some() {
+                    if cfg!(debug_assertions) && this.dev_server.as_mut().is_some() {
                         debug_assert!(
                             this.graph.ast.items_parts()[err.source_index.get() as usize].len()
                                 == 0
@@ -7453,11 +7421,6 @@ pub mod bv2_impl {
     pub struct CssEntryPointMeta {
         /// When this is true, a stub file is added to the Server's IncrementalGraph
         pub imported_on_server: bool,
-    }
-
-    /// The lifetime of this structure is tied to the bundler's arena
-    pub struct DevServerInput {
-        pub(crate) css_entry_points: ArrayHashMap<Index, CssEntryPointMeta>,
     }
 
     /// The lifetime of this structure is tied to the bundler's arena

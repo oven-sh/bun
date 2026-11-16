@@ -291,8 +291,7 @@ pub(crate) struct NewServer<const SSL: bool, const DEBUG: bool> {
     /// Shared plugin state; also passed through `JSValue::then` as a promise context.
     pub(crate) plugins: OnceCell<bun_ptr::RefPtr<ServePlugins>>,
 
-    pub(crate) dev_server:
-        core::cell::Cell<Option<bun_ptr::AliasableBox<crate::bake::DevServer::DevServer>>>,
+    pub(crate) dev_server: core::cell::Cell<Option<crate::bake::DevServer::OwnedDevServer>>,
 
     /// Route → index in RouteList.cpp. uWS route handlers keep pointers into this Vec.
     pub(crate) user_routes: JsCell<Vec<UserRoute<SSL, DEBUG>>>,
@@ -513,13 +512,9 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
     /// `dev_server` is `None` while `f` runs, so `f` must not run JS: `reload()` would skip the DevServer.
     pub(crate) fn with_dev_server<R>(
         &self,
-        f: impl FnOnce(&mut crate::bake::DevServer::DevServer) -> R,
+        f: impl FnOnce(&crate::bake::DevServer::DevServer) -> R,
     ) -> Option<R> {
-        self.dev_server.with_taken(|dev| {
-            // SAFETY: JS thread, and nothing else borrows it through the emptied cell. Does not hold
-            // under a uWS, bundler, timer or watcher callback that borrows it through its own pointer.
-            dev.as_ref().map(|dev| f(unsafe { &mut *dev.as_ptr() }))
-        })
+        self.dev_server.with_taken(|dev| dev.as_deref().map(f))
     }
 
     pub(crate) fn h3_alt_svc(&self) -> Option<&[u8]> {
@@ -1973,10 +1968,9 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         // address and the const variant tag; cache it so the per-request
         // `node:http` prologue is a plain field load instead of a tag match +
         // `TaggedPtr::init`.
+        let any_server = AnyServer::from(server.cast_const());
         // SAFETY: `server` is the freshly-boxed `*mut Self`; uniquely owned here.
-        unsafe {
-            (*server).any_server_packed = AnyServer::from(server.cast_const()).to_packed() as usize;
-        }
+        unsafe { (*server).any_server_packed = any_server.to_packed() as usize };
 
         // The bake options (`root`, and the arena the transpilers live in) are in
         // `(*server).config.bake` for the server's lifetime. Initialise
@@ -1989,6 +1983,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         if let Some(bake_options) = &mut config.bake {
             let broadcast = config.broadcast_console_log_from_browser_to_server_for_bake;
             let dev = crate::bake::DevServer::init(crate::bake::DevServer::Options {
+                server: any_server,
                 arena: &bake_options.arena,
                 root: bake_options.root.as_zstr(),
                 // SAFETY: per-thread VM singleton; STATIC lifetime.
@@ -1998,7 +1993,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                 broadcast_console_log_from_browser_to_server: broadcast,
             })?;
             // SAFETY: `server` is uniquely owned here.
-            unsafe { (*server).dev_server.set(Some(dev.into())) };
+            unsafe { (*server).dev_server.set(Some(dev)) };
         }
 
         if SSL {
@@ -2312,7 +2307,8 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                         );
                     });
                     self.with_dev_server(|dev| {
-                        bun_core::handle_oom(dev.html_router.put(&entry.path, r.this_ptr().into()));
+                        let html_router = &mut dev.state_mut().html_router;
+                        bun_core::handle_oom(html_router.put(&entry.path, r.this_ptr().into()));
                     });
                     needs_plugins = true;
                 }
@@ -2354,14 +2350,10 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
 
         // --- 8. Handle DevServer routes & track "/*" coverage ---
         // dev.setRoutes might register its own "/*" HTTP handler
-        let has_dev_server_for_star_path = self.dev_server.with_taken(|dev| {
-            dev.as_ref().is_some_and(|dev| {
-                // SAFETY: see `with_dev_server`. It is dropped after `clear_routes()` or after the app.
-                bun_core::handle_oom(unsafe {
-                    crate::bake::DevServer::DevServer::set_routes(dev.as_ptr(), self)
-                })
-            })
-        });
+        let has_dev_server_for_star_path = self
+            // SAFETY: it is dropped after `clear_routes()` or after the app.
+            .with_dev_server(|dev| unsafe { dev.set_routes(self) })
+            .unwrap_or(false);
         if has_dev_server_for_star_path {
             // Assume dev server "/*" covers all methods if it exists
             star_methods_covered_by_user = http_method::Set::all();
@@ -3630,7 +3622,7 @@ impl AnyServer {
     pub(crate) fn set_inspector_server_id(&self, id: jsc::DebuggerId) {
         any_server_dispatch!(self, |s| {
             s.inspector_server_id.set(id);
-            s.with_dev_server(|dev_server| dev_server.inspector_server_id = id);
+            s.with_dev_server(|dev_server| dev_server.state_mut().inspector_server_id = id);
         })
     }
 
@@ -3719,7 +3711,7 @@ impl AnyServer {
 
     pub(crate) fn with_dev_server<R>(
         &self,
-        f: impl FnOnce(&mut crate::bake::DevServer::DevServer) -> R,
+        f: impl FnOnce(&crate::bake::DevServer::DevServer) -> R,
     ) -> Option<R> {
         any_server_dispatch!(self, |s| s.with_dev_server(f))
     }

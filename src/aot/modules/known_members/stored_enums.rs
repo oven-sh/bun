@@ -172,6 +172,8 @@ impl Search<'_, '_> {
                 BuiltinId::ObjectAssign
                 | BuiltinId::ObjectDefineProperties
                 | BuiltinId::ObjectDefineProperty
+                | BuiltinId::Proxy
+                | BuiltinId::ProxyRevocable
                 | BuiltinId::ReflectDefineProperty
                 | BuiltinId::ReflectDeleteProperty
                 | BuiltinId::ReflectSet,
@@ -188,6 +190,23 @@ impl Search<'_, '_> {
                     self.hold_in_pattern(file, hir[parameter].pat, enumeration);
                 }
             }
+        }
+    }
+
+    fn note_element(&mut self, file: FileId, list: ExprId, enumeration: Sym) {
+        let files = self.members.files;
+        let (hir, bound) = (files.hir(file), files.bound(file));
+        let (_, Parent::Expr(call)) = find_parent(hir, bound, list) else {
+            return;
+        };
+        let ExprKind::Call(site) = hir[call].kind else {
+            return;
+        };
+        let callee = hir.skip_type_assertions(hir[site].callee);
+        let builtin = parsed_source(files, file)
+            .and_then(|source| source.builtins.builtin_of_expression(callee));
+        if builtin == Some(BuiltinId::ReflectConstruct) {
+            self.stored_into.insert(enumeration);
         }
     }
 
@@ -223,6 +242,7 @@ impl Search<'_, '_> {
                 ExprKind::Call(_) | ExprKind::New(_) => {
                     return self.note_argument(file, parent, outermost, enumeration);
                 }
+                ExprKind::Array(_) => return self.note_element(file, parent, enumeration),
                 ExprKind::Assign { target, value, .. } if value == outermost => {
                     let target = hir.skip_type_assertions(target);
                     if let (ExprKind::Ident(_), Binding::Symbol(id)) =

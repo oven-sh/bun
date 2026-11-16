@@ -104,10 +104,10 @@ void ConsoleObject::takeHeapSnapshot(JSC::JSGlobalObject* globalObject, const St
 {
     Bun__ConsoleObject__takeHeapSnapshot(globalObject);
 }
-void ConsoleObject::time(JSGlobalObject* globalObject, const String& label)
+void ConsoleObject::time(JSGlobalObject*, const String& label)
 {
     auto input = Bun::toString(label);
-    Bun__ConsoleObject__time(globalObject, &input);
+    Bun__ConsoleObject__time(&input);
 }
 void ConsoleObject::timeLog(JSGlobalObject* globalObject, const String& label,
     Ref<ScriptArguments>&& arguments)
@@ -124,10 +124,10 @@ void ConsoleObject::timeLog(JSGlobalObject* globalObject, const String& label,
 
     Bun__ConsoleObject__timeLog(globalObject, &input, jsArgs, count);
 }
-void ConsoleObject::timeEnd(JSGlobalObject* globalObject, const String& label)
+void ConsoleObject::timeEnd(JSGlobalObject*, const String& label)
 {
     auto input = Bun::toString(label);
-    Bun__ConsoleObject__timeEnd(globalObject, &input);
+    Bun__ConsoleObject__timeEnd(&input);
 }
 void ConsoleObject::timeStamp(JSGlobalObject*, Ref<ScriptArguments>&&) {}
 void ConsoleObject::record(JSGlobalObject*, Ref<ScriptArguments>&&) {}

@@ -36,8 +36,13 @@ EventNames::EventNames()
 
 const EventNames& eventNames()
 {
-    WTF_THREAD_LOCAL_ALWAYS_DESTROY static thread_local const EventNames names;
-    return names;
+    // Saves the call that finds the thread's value.
+    static thread_local constinit const EventNames* names = nullptr;
+    if (!names) [[unlikely]] {
+        static NeverDestroyed<ThreadSpecific<EventNames>> namesOfThread;
+        names = namesOfThread.get();
+    }
+    return *names;
 }
 
 enum class DOMEventName : uint8_t {

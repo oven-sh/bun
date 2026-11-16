@@ -23,6 +23,7 @@
 
 // #include "ThreadGlobalData.h"
 #include "EventTarget.h"
+#include <wtf/ThreadSpecific.h>
 #include <wtf/text/AtomString.h>
 
 namespace WebCore {
@@ -55,7 +56,7 @@ public:
 
 private:
     EventNames(); // Private to prevent accidental call to EventNames() instead of eventNames().
-    friend const EventNames& eventNames();
+    friend class WTF::ThreadSpecific<EventNames>;
 
     [[maybe_unused]] int dummy; // Needed to make initialization macro work.
 };

@@ -65,7 +65,10 @@ class DOMWrapperWorld;
 #include <wtf/AbstractRefCountedAndCanMakeWeakPtr.h>
 #include <wtf/Function.h>
 #include <wtf/HashSet.h>
+#include <wtf/NeverDestroyed.h>
 #include <wtf/RefPtr.h>
+#include <wtf/UniqueRef.h>
+#include <JavaScriptCore/IsoHeapCellType.h>
 #include <JavaScriptCore/WeakInlines.h>
 #include <wtf/StdLibExtras.h>
 #include <wtf/WeakHashSet.h>
@@ -282,6 +285,9 @@ public:
     // filled on first use so each name is atomized once however many chunks
     // import or export it (BunAnalyzeTranspiledModule.cpp).
     Vector<JSC::Identifier> sharedModuleInfoIdentifiers;
+
+    // "process", "stdout" and "stderr", atomized by the first jsFunctionIsStandardOutputStream.
+    std::array<JSC::Identifier, 3> standardOutputStreamNames;
 
     // Linked list of StrongRootBlock cells backing bun_jsc::Strong handles
     // (see StrongRootBlock.h). Raw pointers into the GC heap: they are rooted

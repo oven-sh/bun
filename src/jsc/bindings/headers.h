@@ -507,8 +507,8 @@ extern "C" SYSV_ABI void Bun__ConsoleObject__count(JSC::JSGlobalObject* arg1, co
 extern "C" SYSV_ABI void Bun__ConsoleObject__countReset(JSC::JSGlobalObject* arg1, const BunString* arg2);
 extern "C" SYSV_ABI void Bun__ConsoleObject__messageWithTypeAndLevel(uint32_t MessageType1, uint32_t MessageLevel2, JSC::JSGlobalObject* arg3, JSC::EncodedJSValue* arg4, size_t arg5);
 extern "C" SYSV_ABI void Bun__ConsoleObject__takeHeapSnapshot(JSC::JSGlobalObject* arg1);
-extern "C" SYSV_ABI void Bun__ConsoleObject__time(JSC::JSGlobalObject* arg1, const BunString* arg2);
-extern "C" SYSV_ABI void Bun__ConsoleObject__timeEnd(JSC::JSGlobalObject* arg1, const BunString* arg2);
+extern "C" SYSV_ABI void Bun__ConsoleObject__time(const BunString* arg2);
+extern "C" SYSV_ABI void Bun__ConsoleObject__timeEnd(const BunString* arg2);
 extern "C" SYSV_ABI void Bun__ConsoleObject__timeLog(JSC::JSGlobalObject* arg1, const BunString* arg2, JSC::EncodedJSValue* arg3, size_t arg4);
 
 #endif

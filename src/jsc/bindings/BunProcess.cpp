@@ -4118,12 +4118,9 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionIsStandardOutputStream, (JSGlobalObject * lex
     auto scope = DECLARE_THROW_SCOPE(vm);
     JSValue value = callFrame->argument(0);
 
-    // A thread has one table of names and one VM, so the three names are looked up once a thread and kept for as long as it lives.
-    WTF_THREAD_LOCAL_ALWAYS_DESTROY static thread_local const Identifier keptNames[] = {
-        Identifier::fromString(vm, "process"_s),
-        Identifier::fromString(vm, "stdout"_s),
-        Identifier::fromString(vm, "stderr"_s),
-    };
+    auto& keptNames = WebCore::clientData(vm)->standardOutputStreamNames;
+    if (keptNames[0].isNull()) [[unlikely]]
+        keptNames = { Identifier::fromString(vm, "process"_s), Identifier::fromString(vm, "stdout"_s), Identifier::fromString(vm, "stderr"_s) };
     PropertyName processName(keptNames[0]);
     auto isPlainValue = [](JSValue own) {
         return own && !own.isGetterSetter() && !own.isCustomGetterSetter();

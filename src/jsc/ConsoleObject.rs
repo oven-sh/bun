@@ -5676,7 +5676,7 @@ thread_local! {
 
 #[unsafe(no_mangle)]
 #[crate::host_call]
-pub(crate) extern "C" fn Bun__ConsoleObject__time(_global: &JSGlobalObject, label: &BunString) {
+pub(crate) extern "C" fn Bun__ConsoleObject__time(label: &BunString) {
     let id = bun_wyhash::hash(&label.to_utf8());
     if !PENDING_TIME_LOGS_LOADED.with(|c| c.get()) {
         PENDING_TIME_LOGS.with_borrow_mut(|m| *m = PendingTimers::default());
@@ -5693,7 +5693,7 @@ pub(crate) extern "C" fn Bun__ConsoleObject__time(_global: &JSGlobalObject, labe
 
 #[unsafe(no_mangle)]
 #[crate::host_call]
-pub(crate) extern "C" fn Bun__ConsoleObject__timeEnd(_global: &JSGlobalObject, label: &BunString) {
+pub(crate) extern "C" fn Bun__ConsoleObject__timeEnd(label: &BunString) {
     if !PENDING_TIME_LOGS_LOADED.with(|c| c.get()) {
         return;
     }

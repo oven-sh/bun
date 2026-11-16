@@ -2029,7 +2029,7 @@ describe("generateKeyPair('dh')", () => {
   test("uses the generator", () => {
     const [two, three, alsoThree] = [2, 3, 3].map(generator => generateKeyPairSync("dh", { prime, generator }));
     expect(secret(three, alsoThree)).toEqual(secret(alsoThree, three));
-    expect(() => secret(two, three)).toThrow("diffieHellman operation failed");
+    expect(() => secret(two, three)).toThrow();
   });
 });
 

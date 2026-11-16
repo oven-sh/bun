@@ -1,7 +1,6 @@
 #pragma once
 
 #include "JavaScriptCore/SubspaceAccess.h"
-#include "../v8/V8Template.h"
 #include "InternalFieldObject.h"
 #include "TemplateProperty.h"
 

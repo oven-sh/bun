@@ -8,7 +8,6 @@
 #include "ExtendedDOMIsoSubspaces.h"
 #include <JavaScriptCore/FastMallocAlignedMemoryAllocator.h>
 #include <JavaScriptCore/HeapInlines.h>
-#include <JavaScriptCore/IsoHeapCellType.h>
 #include <JavaScriptCore/JSDestructibleObjectHeapCellType.h>
 #include <JavaScriptCore/SimpleMarkingConstraint.h>
 #include <JavaScriptCore/SubspaceInlines.h>

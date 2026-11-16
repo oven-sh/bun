@@ -98,8 +98,8 @@ describe("Worker destruction", () => {
         cmd: [
           bunExe(),
           "-e",
-          `new (require("worker_threads").Worker)(${JSON.stringify(worker)}, { eval: true })
-             .on("exit", code => console.log("worker exit " + code));`,
+          `new Worker(URL.createObjectURL(new Blob([${JSON.stringify(worker)}])))
+             .addEventListener("close", ({ code }) => console.log("worker exit " + code));`,
         ],
         env: {
           ...bunEnv,

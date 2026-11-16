@@ -127,6 +127,7 @@ JSC_DECLARE_HOST_FUNCTION(jsMockFunctionMockThrowOnce);
 JSC_DECLARE_HOST_FUNCTION(jsMockFunctionWithImplementationCleanup);
 JSC_DECLARE_HOST_FUNCTION(jsMockFunctionWithImplementation);
 JSC_DECLARE_HOST_FUNCTION(jsMockFunctionReturnThis);
+JSC_DECLARE_HOST_FUNCTION(jsMockFunctionReturnBoundThis);
 JSC_DECLARE_HOST_FUNCTION(jsMockFunctionRejectWithThis);
 JSC_DECLARE_HOST_FUNCTION(jsMockFunctionThrowThis);
 
@@ -1900,8 +1901,10 @@ JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(jsMockFunctionGetMockImplementation, __
     if (JSObject* function = implementation->function.get())
         return JSValue::encode(function);
 
-    JSC::NativeFunction body = jsMockFunctionReturnThis;
-    if (implementation->kind == Kind::RejectedValue)
+    JSC::NativeFunction body = jsMockFunctionReturnBoundThis;
+    if (implementation->kind == Kind::ReturnThis)
+        body = jsMockFunctionReturnThis;
+    else if (implementation->kind == Kind::RejectedValue)
         body = jsMockFunctionRejectWithThis;
     else if (implementation->kind == Kind::ThrowValue)
         body = jsMockFunctionThrowThis;
@@ -1917,6 +1920,11 @@ JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(jsMockFunctionGetMockImplementation, __
 JSC_DEFINE_HOST_FUNCTION(jsMockFunctionReturnThis, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callframe))
 {
     return JSValue::encode(callframe->thisValue().toThis(globalObject, ECMAMode::strict()));
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsMockFunctionReturnBoundThis, (JSC::JSGlobalObject*, JSC::CallFrame* callframe))
+{
+    return JSValue::encode(callframe->thisValue());
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsMockFunctionRejectWithThis, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callframe))
@@ -3269,7 +3277,7 @@ __attribute__((minsize)) static JSC::EncodedJSValue spyOn(JSC::JSGlobalObject* l
 
     switch (access) {
     case SpyAccess::Value: {
-        auto* returnThis = JSC::JSFunction::create(vm, globalObject, 0, String(), jsMockFunctionReturnThis, ImplementationVisibility::Public);
+        auto* returnThis = JSC::JSFunction::create(vm, globalObject, 0, String(), jsMockFunctionReturnBoundThis, ImplementationVisibility::Public);
         getter = JSC::JSBoundFunction::create(vm, globalObject, returnThis, mock, ArgList(), 0, nullptr, makeSource(String(), SourceOrigin(), SourceTaintedOrigin::Untainted));
         RETURN_IF_EXCEPTION(scope, {});
         break;

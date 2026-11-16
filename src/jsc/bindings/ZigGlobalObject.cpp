@@ -91,7 +91,7 @@
 #include "FormatStackTraceForJS.h"
 #include "JSCommonJSModule.h"
 #include "JSCommonJSExtensions.h"
-#include "ConsoleObject.h"
+#include <JavaScriptCore/ConsoleClient.h>
 #include "DOMWrapperWorld-class.h"
 #include "ErrorStackTrace.h"
 #include "IDLTypes.h"
@@ -1580,6 +1580,7 @@ GlobalObject::GlobalObject(JSC::VM& vm, JSC::Structure* structure, WebCore::Scri
 
 GlobalObject::~GlobalObject()
 {
+    static_assert(OBJECT_OFFSETOF(GlobalObject, m_scriptExecutionContext) + sizeof(m_scriptExecutionContext) + alignof(GlobalObject) > sizeof(GlobalObject), "must be the last member");
     m_scriptExecutionContext->globalObjectDestroyed();
 }
 

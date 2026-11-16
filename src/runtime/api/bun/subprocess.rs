@@ -721,16 +721,13 @@ impl Subprocess<'_> {
             }
         }
 
-        let mut stdin: Option<NonNull<FileSink>> = if matches!(self.stdin.get(), Writable::Pipe(_))
+        let mut stdin: Option<RefPtr<FileSink>> = if let Writable::Pipe(pipe) = self.stdin.get()
             && self.flags.get().contains(Flags::IS_STDIN_A_READABLE_STREAM)
         {
-            if let Writable::Pipe(pipe) = self.stdin.get() {
-                Some(pipe.as_non_null())
-            } else {
-                unreachable!()
-            }
+            Some(pipe.clone())
         } else {
-            self.weak_file_sink_stdin_ptr.get()
+            // SAFETY: `self.stdin` or the cached JS sink holds a ref.
+            (self.weak_file_sink_stdin_ptr.get()).map(|p| unsafe { RefPtr::init_ref(p.as_ptr()) })
         };
         let mut existing_stdin_value = JSValue::ZERO;
         if !this_jsvalue.is_empty() {
@@ -775,12 +772,9 @@ impl Subprocess<'_> {
             self.close_readable_pipes();
         }
 
-        if let Some(pipe_ptr) = stdin {
+        if let Some(pipe) = stdin {
             self.weak_file_sink_stdin_ptr.set(None);
             self.update_flags(|f| f.insert(Flags::HAS_STDIN_DESTRUCTOR_CALLED));
-
-            // SAFETY: `self.stdin` or the cached JS sink holds a ref.
-            let pipe = unsafe { RefPtr::init_ref(pipe_ptr.as_ptr()) };
 
             // Detach the source first so onAttachedProcessExit's sync FileSink.onClose cannot
             // re-enter Writable.onClose → pipe.deref() on the still-running pipe.

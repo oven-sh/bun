@@ -700,7 +700,7 @@ static void directStreamOnClose(JSC::VM& vm, JSGlobalObject* globalObject, JSRea
         RETURN_IF_EXCEPTION(scope, );
     }
 
-    // end() detaches the controller cell from the native sink so a later GC of the cell cannot release a reference it does not own.
+    // end() detaches the controller cell from the native sink.
     sinkController->end(globalObject);
     RETURN_IF_EXCEPTION(scope, );
     // Only a sink that closed underneath the source (peer abort, write error) cancels it, not its own end()/close().
@@ -1130,7 +1130,7 @@ static void pumpOnClose(JSC::VM& vm, JSGlobalObject* globalObject, JSReadableSin
     const bool wasClosed = op->m_didThrow || op->m_didClose;
     op->m_didClose = true;
     rsisDetachNativeTransform(globalObject, op);
-    // end() FIRST, before the fallible cancel below, so the controller cell always detaches from the native sink (collecting it attached would release the sink again).
+    // end() FIRST, before the fallible cancel below, so the controller cell always detaches from the native sink.
     sinkController->end(globalObject);
     RETURN_IF_EXCEPTION(scope, );
     if (!wasClosed) {

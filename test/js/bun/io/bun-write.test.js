@@ -1,3 +1,4 @@
+import { createSocketPair } from "bun:internal-for-testing";
 import { describe, expect, it, test } from "bun:test";
 import fs, { mkdirSync } from "fs";
 import {
@@ -1146,9 +1147,10 @@ int posix_fadvise(int fd, off_t offset, off_t len, int advice) {
         }
         // Collect the stream and its sink controller.
         stream = controller = undefined;
-        Bun.gc(true);
-        await nextTask();
-        Bun.gc(true);
+        for (let i = 0; i < 50 && fileSinkInternals.liveCount() > baseline; i++) {
+          Bun.gc(true);
+          await nextTask();
+        }
         console.log(JSON.stringify({ written, onDisk, late, leakedSinks: fileSinkInternals.liveCount() - baseline }));
       `;
       await using proc = Bun.spawn({
@@ -1226,6 +1228,43 @@ int posix_fadvise(int fd, off_t offset, off_t len, int advice) {
       },
     );
 
+    it.skipIf(isWindows)("goes on writing to a socket after a direct stream's pull() fills it and throws", async () => {
+      const [readFd, writeFd] = createSocketPair();
+      const size = 4 * 1024 * 1024;
+      let written;
+      let total = 0;
+      try {
+        const stream = new ReadableStream({
+          type: "direct",
+          pull(controller) {
+            written = Promise.allSettled([controller.write(Buffer.alloc(size, "x"))]);
+            throw new Error("boom");
+          },
+        });
+        await expect(Bun.write(Bun.file(writeFd), stream)).rejects.toThrow("boom");
+        // The sink writes to its own copy.
+        fs.closeSync(writeFd);
+        const chunk = Buffer.alloc(64 * 1024);
+        const deadline = performance.now() + 4000;
+        let closed = false;
+        // Half is more than the socket holds. The rest fails, which closes the sink.
+        while (!closed && total < size / 2 && performance.now() < deadline) {
+          try {
+            const n = fs.readSync(readFd, chunk);
+            closed = n === 0;
+            total += n;
+          } catch (e) {
+            if (e.code !== "EAGAIN") throw e;
+            await new Promise(resolve => setImmediate(resolve));
+          }
+        }
+      } finally {
+        fs.closeSync(readFd);
+      }
+      expect(total).toBeGreaterThanOrEqual(size / 2);
+      expect(await written).toMatchObject([{ status: "rejected", reason: { code: "EPIPE" } }]);
+    });
+
     it("a stream whose source fails rejects with that error", async () => {
       using dir = tempDir("bun-write-stream-reject", {});
       const nextTask = () => new Promise(resolve => setImmediate(resolve));
@@ -1260,8 +1299,7 @@ int posix_fadvise(int fd, off_t offset, off_t len, int advice) {
       await expect(Bun.write(join(String(dir), "upfront.txt"), upfront)).rejects.toThrow("boom");
     });
 
-    // The sink is released when the pump rejects; a controller collected after that must
-    // already be detached. A subprocess, because that GC can be the one at process exit.
+    // A subprocess, because that GC can be the one at process exit.
     it("survives a GC after a direct stream or a generator body fails", async () => {
       using dir = tempDir("bun-write-body-fails-gc", {});
       const fixture = /* js */ `

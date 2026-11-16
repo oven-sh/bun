@@ -707,15 +707,13 @@ pub(crate) unsafe extern "C" fn CompressionStreamCoder__transformInto(
     let result = match step {
         Ok(has_more) => {
             *more = has_more;
-            'write: {
-                // The sink copies what it needs before returning.
-                let handle = controller.sink_handle();
-                if out.is_empty() || handle.is_none() {
-                    break 'write JSValue::UNDEFINED;
-                }
-                handle
-                    .write(&crate::webcore::streams::Result::Temporary(&out))
-                    .to_js(&global.js_thread_of_caller())
+            // The sink copies what it needs before returning.
+            if !out.is_empty()
+                && let Some(wrote) = controller.write_native(&out)
+            {
+                wrote.to_js(&global.js_thread_of_caller())
+            } else {
+                JSValue::UNDEFINED
             }
         }
         Err(e) => {

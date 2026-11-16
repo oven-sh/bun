@@ -1,7 +1,7 @@
 // CSS tests concern bundling bugs with CSS files
 import { expect } from "bun:test";
 import assert from "node:assert";
-import { type Dev, devTest, emptyHtmlFile, imageFixtures } from "../bake-harness";
+import { devTest, emptyHtmlFile, imageFixtures, onResolveCalls, onResolvePluginFiles } from "../bake-harness";
 
 devTest("css file with syntax error does not kill old styles", {
   files: {
@@ -810,38 +810,9 @@ devTest("css import before create project relative", {
     await dev.fetch("/").expect.toContain("HELLO");
   },
 });
-// Two `[serve.static]` plugins: one that declines an import, and one that answers with the path.
-// Each callback prints "onResolve <specifier>".
-const resolvePlugin = {
-  "bunfig.toml": `
-    [serve.static]
-    plugins = ["./plugin.ts"]
-  `,
-  "plugin.ts": `
-    import path from "node:path";
-    export default {
-      name: "resolve-some",
-      setup(build) {
-        build.onResolve({ filter: /declined\\.\\w+$/ }, args => {
-          console.log("onResolve " + args.path);
-        });
-        build.onResolve({ filter: /answered\\.\\w+$/ }, args => {
-          console.log("onResolve " + args.path);
-          return { path: path.resolve(path.dirname(args.importer), args.path) };
-        });
-      },
-    };
-  `,
-};
-// The next `count` calls that `resolvePlugin` printed, sorted.
-const onResolveCalls = async (dev: Dev, count: number) => {
-  const calls: string[] = [];
-  while (calls.length < count) calls.push((await dev.output.waitForLine(/^onResolve (.+)$/))[1]);
-  return calls.sort();
-};
 devTest("stylesheet that a script imports through an onResolve plugin comes back after a failed first build", {
   files: {
-    ...resolvePlugin,
+    ...onResolvePluginFiles,
     "index.html": emptyHtmlFile({
       scripts: ["./app.ts"],
       body: "<h1>Hello</h1>",
@@ -876,7 +847,7 @@ devTest("stylesheet that a script imports through an onResolve plugin comes back
 });
 devTest("stylesheet imported through an onResolve plugin follows its edits", {
   files: {
-    ...resolvePlugin,
+    ...onResolvePluginFiles,
     "index.html": emptyHtmlFile({
       styles: ["./main.css"],
       body: "<h1>Hello</h1>",

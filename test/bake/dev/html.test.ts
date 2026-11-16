@@ -1,7 +1,7 @@
 // HTML tests are tests relating to HTML files themselves.
 import { expect } from "bun:test";
 import { renameSync } from "node:fs";
-import { type Dev, devTest, emptyHtmlFile } from "../bake-harness";
+import { type Dev, devTest, emptyHtmlFile, onResolveCalls, onResolvePluginFiles } from "../bake-harness";
 
 devTest("html file is watched", {
   files: {
@@ -636,33 +636,9 @@ devTest("stylesheet that fails in the same rebuild as its html file comes back o
     await dev.fetch("/").expect.toInclude("<h1>World</h1>");
   },
 });
-// Each `onResolve` callback of a test plugin prints "onResolve <specifier>". These are the next `count` calls, sorted.
-const onResolveCalls = async (dev: Dev, count: number) => {
-  const calls: string[] = [];
-  while (calls.length < count) calls.push((await dev.output.waitForLine(/^onResolve (.+)$/))[1]);
-  return calls.sort();
-};
 devTest("html script that an onResolve plugin resolves loads by its module id", {
   files: {
-    "bunfig.toml": `
-      [serve.static]
-      plugins = ["./plugin.ts"]
-    `,
-    "plugin.ts": `
-      import path from "node:path";
-      export default {
-        name: "resolve-scripts",
-        setup(build) {
-          build.onResolve({ filter: /declined\\.ts$/ }, args => {
-            console.log("onResolve " + args.path);
-          });
-          build.onResolve({ filter: /answered\\.ts$/ }, args => {
-            console.log("onResolve " + args.path);
-            return { path: path.resolve(path.dirname(args.importer), args.path) };
-          });
-        },
-      };
-    `,
+    ...onResolvePluginFiles,
     "index.html": emptyHtmlFile({
       scripts: ["./declined.ts", "./answered.ts"],
     }),
@@ -714,25 +690,12 @@ devTest("html script that an onResolve plugin puts in a namespace loads by its m
 });
 devTest("stylesheet that an onResolve plugin resolves comes back after a failed first build", {
   files: {
-    "bunfig.toml": `
-      [serve.static]
-      plugins = ["./plugin.ts"]
-    `,
-    "plugin.ts": `
-      export default {
-        name: "resolve-styles",
-        setup(build) {
-          build.onResolve({ filter: /styles\\.css$/ }, args => {
-            console.log("onResolve " + args.path);
-          });
-        },
-      };
-    `,
+    ...onResolvePluginFiles,
     "index.html": emptyHtmlFile({
-      styles: ["./styles.css"],
+      styles: ["./declined.css"],
       body: "<h1>Hello</h1>",
     }),
-    "styles.css": `
+    "declined.css": `
       body {
         color: red;
       }}
@@ -740,8 +703,8 @@ devTest("stylesheet that an onResolve plugin resolves comes back after a failed 
   },
   async test(dev) {
     expect((await dev.fetch("/")).status).toBe(500);
-    expect(await onResolveCalls(dev, 1)).toEqual(["./styles.css"]);
-    await dev.write("styles.css", `body { color: red; }`);
+    expect(await onResolveCalls(dev, 1)).toEqual(["./declined.css"]);
+    await dev.write("declined.css", `body { color: red; }`);
     // previously: the page had no stylesheet
     await using c = await dev.client("/");
     await c.style("body").color.expect.toBe("red");

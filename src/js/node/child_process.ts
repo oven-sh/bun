@@ -610,6 +610,8 @@ function spawnSync(file, args, options?): SpawnSyncResult {
       timeout: options.timeout,
       killSignal: options.killSignal,
       maxBuffer: options.maxBuffer,
+      // Private name: stdout and stderr count against one maxBuffer, as in node: https://github.com/nodejs/node/blob/v26.3.0/src/spawn_sync.cc#L648-L655
+      $sharedMaxBuffer: true,
     });
   } catch (err: any) {
     error = err;
@@ -667,7 +669,7 @@ function spawnSync(file, args, options?): SpawnSyncResult {
   }
   if (exitedDueToMaxBuffer && error == null) {
     result.error = new SystemError(
-      "spawnSync " + options.file + " ENOBUFS (stdout or stderr buffer reached maxBuffer size limit)",
+      "spawnSync " + options.file + " ENOBUFS",
       options.file,
       "spawnSync " + options.file,
       enobufsErrorCode(),

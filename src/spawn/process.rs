@@ -613,11 +613,7 @@ impl Process {
     pub fn kill(&self, signal: u8) -> Maybe<()> {
         #[cfg(unix)]
         {
-            // Detached is a deliberate no-op: spawnSync's `read_all()` runs
-            // before `watch_or_reap()` installs the poller; the first
-            // `recv_non_block` returns EAGAIN (yes hasn't written yet) so the
-            // maxBuffer overflow fires from the event-loop poll
-            // tick *after* the Fd poller is armed. Do not widen this match to
+            // Detached is a deliberate no-op: not watched yet, or reaped or given up on with a pid that may be another process's (#44581). Do not widen this match to
             // mask spawn-maxbuf.test.ts — the async-path hang there has a
             // different root cause (poller is already Fd when `on_max_buffer`
             // fires, so this arm is unreachable on that path).

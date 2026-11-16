@@ -902,6 +902,8 @@ pub enum BuiltinName {
     internal,
     /// Private name (`$sharedFd` in builtins); user code cannot set it.
     sharedFd,
+    /// Private name (`$sharedMaxBuffer` in builtins); user code cannot set it.
+    sharedMaxBuffer,
 }
 
 #[allow(non_upper_case_globals)]

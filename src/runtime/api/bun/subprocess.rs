@@ -191,6 +191,8 @@ bitflags::bitflags! {
     #[derive(Clone, Copy, Default)]
     pub struct Flags: u8 {
         const IS_SYNC                      = 1 << 0;
+        /// `stdout_maxbuf` is the one budget of stdout and stderr: the read that passes it closes the other reader.
+        const SHARED_MAX_BUFFER            = 1 << 1;
         const HAS_STDIN_DESTRUCTOR_CALLED  = 1 << 2;
         const FINALIZED                    = 1 << 3;
         const IS_STDIN_A_READABLE_STREAM   = 1 << 5;
@@ -378,6 +380,12 @@ impl Subprocess<'_> {
                         PipeReader::State::Pending => {}
                     }
                 }
+                // As `SyncProcessRunner::Kill()` in Node.js: the read that passes a shared `maxBuffer` closes the other pipe.
+                if self.flags.get().contains(Flags::SHARED_MAX_BUFFER)
+                    && self.exited_due_to_maxbuf.get().is_some()
+                {
+                    self.close_readable_pipes();
+                }
             }
         }
 
@@ -528,7 +536,7 @@ impl Subprocess<'_> {
 
     /// Close still-open stdout/stderr pipe readers after a timeout/maxBuffer
     /// kill; a grandchild may still hold the write end (Node.js
-    /// `SyncProcessRunner::Kill()`). Called outside any reader callback.
+    /// `SyncProcessRunner::Kill()`). In `on_close_io` the ending reader has left its `Readable::Pipe` already.
     pub(crate) fn close_readable_pipes(&self) {
         if matches!(self.stdout.get(), Readable::Pipe(_)) {
             self.stdout.with_mut(|s| s.close());

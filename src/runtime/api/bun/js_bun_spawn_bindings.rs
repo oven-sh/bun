@@ -388,6 +388,7 @@ fn spawn_maybe_sync(
     let mut gid: Option<u32> = None;
     let mut kill_signal: SignalCode = SignalCode::DEFAULT;
     let mut max_buffer: Option<i64> = None;
+    let mut shared_max_buffer = false;
     #[cfg(any(target_os = "linux", target_os = "android"))]
     let mut cgroup: Option<CgroupTarget> = None;
 
@@ -770,6 +771,15 @@ fn spawn_maybe_sync(
                     }
                 }
             }
+
+            // `node:child_process` asks for Node's count: stdout and stderr against the one limit.
+            shared_max_buffer = is_sync
+                && max_buffer.is_some()
+                && matches!(stdio[1], Stdio::Pipe)
+                && matches!(stdio[2], Stdio::Pipe)
+                && args
+                    .fast_get(cx.global(), jsc::BuiltinName::sharedMaxBuffer)?
+                    .is_some_and(|v| v.to_boolean());
 
             if !is_sync {
                 if let Some(terminal_val) = args.get_truthy(cx.global(), "terminal")? {
@@ -1228,7 +1238,11 @@ fn spawn_maybe_sync(
         };
         // SAFETY: both refs are fields of the owner.
         let new = |kind| Some(unsafe { max_buf::OwnerRef::new(max_buffer, kind, owner) });
-        subprocess.stderr_maxbuf.set(new(max_buf::Kind::Stderr));
+        if shared_max_buffer {
+            subprocess.update_flags(|f| f.insert(Subprocess::Flags::SHARED_MAX_BUFFER));
+        } else {
+            subprocess.stderr_maxbuf.set(new(max_buf::Kind::Stderr));
+        }
         subprocess.stdout_maxbuf.set(new(max_buf::Kind::Stdout));
     }
 
@@ -1295,7 +1309,11 @@ fn spawn_maybe_sync(
         event_loop,
         subprocess_nn,
         spawned_stderr,
-        subprocess.stderr_maxbuf.get().as_ref(),
+        if shared_max_buffer {
+            subprocess.stdout_maxbuf.get().as_ref()
+        } else {
+            subprocess.stderr_maxbuf.get().as_ref()
+        },
         is_sync,
     ));
 
@@ -1481,12 +1499,14 @@ fn spawn_maybe_sync(
 
     // Start the readers before the Writable::Buffer stdin writer so that if
     // the writer's start() throws below, on_process_exit drains started readers.
+    // A sync spawn reads in its wait loop, where the child is watched and a read past `maxBuffer` can signal it.
+    let read_now = !is_sync && !lazy;
     if let Readable::Pipe(pipe) = subprocess.stdout.get() {
         // Note: pass `subprocess_nn` (the `NonNull<Subprocess<'static>>`
         // captured above) instead of the live `&mut subprocess`, which would
         // alias with the `&mut subprocess.stdout` borrow held by `pipe`.
         PipeReader::start(&pipe.clone(), subprocess_nn, event_loop, !is_sync && lazy);
-        if (is_sync || !lazy) && matches!(subprocess.stdout.get(), Readable::Pipe(_)) {
+        if read_now && matches!(subprocess.stdout.get(), Readable::Pipe(_)) {
             if let Readable::Pipe(pipe) = subprocess.stdout.get() {
                 Readable::pipe_reader_mut(pipe).read_all();
             }
@@ -1497,7 +1517,7 @@ fn spawn_maybe_sync(
         // Note: see stdout arm above — avoid aliased &mut.
         PipeReader::start(&pipe.clone(), subprocess_nn, event_loop, !is_sync && lazy);
 
-        if (is_sync || !lazy) && matches!(subprocess.stderr.get(), Readable::Pipe(_)) {
+        if read_now && matches!(subprocess.stderr.get(), Readable::Pipe(_)) {
             if let Readable::Pipe(pipe) = subprocess.stderr.get() {
                 Readable::pipe_reader_mut(pipe).read_all();
             }
@@ -1719,7 +1739,11 @@ fn spawn_maybe_sync(
             // Once the wait is being terminated (timeout, maxBuffer, bun:test
             // per-test timeout), stop waiting on pipe EOF; a grandchild may
             // still hold the write end (Node.js SyncProcessRunner::Kill()).
-            if did_timeout || bun_test_fired || subprocess.exited_due_to_maxbuf.get().is_some() {
+            // A shared `maxBuffer` has closed both readers in `on_close_io`.
+            if did_timeout
+                || bun_test_fired
+                || (!shared_max_buffer && subprocess.exited_due_to_maxbuf.get().is_some())
+            {
                 subprocess.close_readable_pipes();
             }
         }

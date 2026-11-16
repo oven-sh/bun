@@ -1134,7 +1134,8 @@ describe("spyOn", () => {
       const count = () => (Bun.gc(true), heapStats().objectTypeCounts.Map ?? 0);
       const before = count();
       const spies = (() => Array.from({ length: 1000 }, () => spyOn(new Map(), "get")))();
-      expect(count() - before).toBeGreaterThanOrEqual(1000);
+      // The counts are of every Map in the heap, so both bounds leave room for 100 that are not this test's.
+      expect(count() - before).toBeGreaterThan(900);
       jest.restoreAllMocks();
       expect(count() - before).toBeLessThan(100);
       expect(spies).toHaveLength(1000);

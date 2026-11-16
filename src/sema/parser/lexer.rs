@@ -57,7 +57,7 @@ pub(crate) struct Lexer<'a> {
     /// `hir::File::comments`
     pub(crate) comments: Vec<Comment>,
     /// Errors that TypeScript's scanner reports about syntax ECMAScript allows outside strict mode: the message code,
-    /// start and end. Only filled in with `is_ecmascript`. Otherwise the text is rejected.
+    /// start and end. Only filled in with `is_ecmascript` or `accepts_legacy_octal`. Otherwise the text is rejected.
     pub(crate) flagged: Vec<(u32, u32, u32)>,
     /// The errors that [`Lexer::error`] reported and the parser hasn't taken yet (`Parser::take_scanner_errors`), in
     /// the order they were reported.
@@ -467,11 +467,12 @@ impl<'a> Lexer<'a> {
     /// Adds an entry to `flagged`. Returns false if the caller has to reject the text instead.
     #[cold]
     fn flag(&mut self, code: u32, start: usize, end: usize) -> bool {
-        if self.is_ecmascript && !self.compiles() {
+        let is_accepted = self.is_ecmascript || self.accepts_legacy_octal;
+        if is_accepted {
             self.flagged.push((code, start as u32, end as u32));
         }
         self.has_legacy_octal |= self.compiles() || self.accepts_legacy_octal;
-        self.is_ecmascript || self.accepts_legacy_octal
+        is_accepted
     }
 
     /// Drops the comments from `pos` on. That text is scanned again, possibly as something else.
@@ -1478,8 +1479,8 @@ impl<'a> Lexer<'a> {
         }
     }
 
-    /// Decodes `\1` to `\377`, `\8` or `\9` at `pos` in a string that `quote` ends. Returns its end.
-    fn legacy_escape(&mut self, pos: usize, quote: u8, text: &mut Vec<u8>) -> Option<usize> {
+    /// Decodes `\1` to `\377`, `\8` or `\9` at `pos`. Returns its end.
+    fn legacy_escape(&mut self, pos: usize, text: &mut Vec<u8>) -> Option<usize> {
         let end = self.end_of_invalid_escape(pos);
         let digits = self.src.get(pos + 1..end)?;
         let (code, c) = match digits.first()? {
@@ -1490,15 +1491,8 @@ impl<'a> Lexer<'a> {
             &c @ (b'8' | b'9') => (1488, u32::from(c)),
             _ => return None,
         };
-        // What `bun run` once reported in all code: an octal escape of one or two digits before an `8`, a `9` or the end of the string.
-        let next = self.at(end);
-        let was_reported_by_bun_run =
-            code == 1487 && digits.len() < 3 && (matches!(next, b'8' | b'9') || next == quote);
         if !self.flag(code, pos, end) {
             return None;
-        }
-        if was_reported_by_bun_run && (self.compiles() || self.accepts_legacy_octal) {
-            self.flagged.push((code, pos as u32, end as u32));
         }
         push_codepoint_wtf8_joined(text, c);
         Some(end)
@@ -1621,7 +1615,7 @@ impl<'a> Lexer<'a> {
                 }
                 Some(b'\\') => match self.escape(pos, &mut text) {
                     Some(end) => pos = end,
-                    None => match self.legacy_escape(pos, quote, &mut text) {
+                    None => match self.legacy_escape(pos, &mut text) {
                         Some(end) => pos = end,
                         None if self.recovers => pos = self.invalid_escape(pos, &mut text, true),
                         None => {

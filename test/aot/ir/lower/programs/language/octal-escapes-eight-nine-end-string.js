@@ -1,8 +1,8 @@
 // RUN: lower
 // OPTIONS: builtin-modules
-// DIAGNOSTIC: TS1487 14
+// DIAGNOSTIC: TS1487 1
 
-// Octal escapes of one or two digits with an 8, a 9 or the end of the string behind them: the build reports each and runs nothing. `bun run` reports only the one in the class body, which is strict code.
+// Octal escapes of one or two digits with an 8, a 9 or the end of the string behind them. `bun run` reports only the one in the class body, which is strict code, and runs nothing. So does the build.
 console.log("never printed");
 console.log("\1".length);
 console.log('\2'.length);

@@ -283,9 +283,12 @@ fn legacy_octal_forms() {
     for (code, form) in forms {
         let strict = format!("\"use strict\"; {form}");
         let in_class = format!("class A {{ static {{ {form} }} }}");
-        expect_compiled(code, &[], &[form, strict.as_str(), in_class.as_str()]);
-        let found = classes_of(form, linted_javascript, code);
-        assert_eq!(found, [TypeScriptGrammar], "{form}");
+        expect_compiled(code, &[], &[form]);
+        expect_compiled(code, &[EarlyError], &[strict.as_str(), in_class.as_str()]);
+        for text in [form, strict.as_str(), in_class.as_str()] {
+            let found = classes_of(text, linted_javascript, code);
+            assert_eq!(found, [TypeScriptGrammar], "{text}");
+        }
     }
 }
 

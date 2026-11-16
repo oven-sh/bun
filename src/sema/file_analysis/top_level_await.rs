@@ -1,5 +1,7 @@
 use crate::fold::{Decisions, TreeNode, push_children};
-use crate::hir::{ExprKind, File, FnBody, FnId, IdList, StmtId, StmtKind, VarKind};
+use crate::hir::{
+    ExprKind, File, FileIn, FnBody, FnId, IdList, StmtId, StmtKind, Storage, VarKind,
+};
 use crate::util::FxHashSet;
 
 pub(crate) fn has_live_top_level_await(hir: &File<'_>, decisions: &Decisions<'_>) -> bool {
@@ -7,7 +9,7 @@ pub(crate) fn has_live_top_level_await(hir: &File<'_>, decisions: &Decisions<'_>
     hir.has_top_level_await() && has_await_below(hir, decisions, roots, Sought::Live)
 }
 
-pub(crate) fn has_written_top_level_await(hir: &File<'_>) -> bool {
+pub(crate) fn has_written_top_level_await<S: Storage>(hir: &FileIn<S>) -> bool {
     let roots = hir.ids(hir.body).map(TreeNode::Stmt).collect();
     hir.has_top_level_await() && has_await_below(hir, &Decisions::default(), roots, Sought::Written)
 }
@@ -28,7 +30,11 @@ pub fn has_live_await(hir: &File<'_>, decisions: &Decisions<'_>, function: FnId)
     has_await_below(hir, decisions, roots, Sought::Live)
 }
 
-fn push_statements_until_exit(hir: &File<'_>, list: IdList<StmtId>, stack: &mut Vec<TreeNode>) {
+fn push_statements_until_exit<S: Storage>(
+    hir: &FileIn<S>,
+    list: IdList<StmtId>,
+    stack: &mut Vec<TreeNode>,
+) {
     for statement in hir.ids(list) {
         stack.push(TreeNode::Stmt(statement));
         if matches!(
@@ -40,8 +46,8 @@ fn push_statements_until_exit(hir: &File<'_>, list: IdList<StmtId>, stack: &mut 
     }
 }
 
-fn has_await_below(
-    hir: &File<'_>,
+fn has_await_below<S: Storage>(
+    hir: &FileIn<S>,
     decisions: &Decisions<'_>,
     roots: Vec<TreeNode>,
     sought: Sought,
@@ -74,7 +80,7 @@ fn has_await_below(
     false
 }
 
-fn is_await_statement(hir: &File<'_>, stmt: StmtId) -> bool {
+fn is_await_statement<S: Storage>(hir: &FileIn<S>, stmt: StmtId) -> bool {
     match hir[stmt].kind {
         StmtKind::ForOf { is_await, .. } => is_await,
         StmtKind::Var(declarations) => {

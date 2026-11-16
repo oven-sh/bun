@@ -210,6 +210,8 @@ struct Outer<'a> {
     mark: Mark,
     src: &'a [u8],
     comments: Vec<Comment>,
+    /// `Lexer::flagged`
+    flagged: Vec<(u32, u32, u32)>,
     comment_directives: usize,
     ignore_comments: usize,
     context: u32,
@@ -841,6 +843,9 @@ impl<'a, const GENERAL: bool, const COMMENTS: bool> Parser<'a, GENERAL, COMMENTS
             // `Lexer::reset` drops the comments after a mark, which would drop real comments for a mark taken inside
             // this one.
             comments: std::mem::take(&mut self.lx.comments),
+            // It drops the entries of `flagged` after that mark too, and the token behind this comment can have one.
+            // An entry of the comment itself is not of the code.
+            flagged: std::mem::take(&mut self.lx.flagged),
             comment_directives: self.lx.comment_directives.len(),
             ignore_comments: self.lx.ignore_comments.len(),
             context: self.context,
@@ -874,6 +879,7 @@ impl<'a, const GENERAL: bool, const COMMENTS: bool> Parser<'a, GENERAL, COMMENTS
         self.lx.set_src(outer.src);
         self.lx.reset(outer.mark);
         self.lx.comments = outer.comments;
+        self.lx.flagged = outer.flagged;
         self.lx
             .comment_directives
             .truncate(outer.comment_directives);

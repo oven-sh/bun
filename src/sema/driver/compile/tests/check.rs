@@ -273,7 +273,7 @@ import "./two.js";
     });
 }
 
-const REFUSED_AFTER_FUNCTION_DIRECTIVE: [&str; 26] = [
+const REFUSED_AFTER_FUNCTION_DIRECTIVE: [&str; 28] = [
     r#"function f(a, a) { "use strict"; }"#,
     r#"function f(public) { "use strict"; }"#,
     r#"function public() { "use strict"; }"#,
@@ -300,11 +300,13 @@ const REFUSED_AFTER_FUNCTION_DIRECTIVE: [&str; 26] = [
     r#"function f() { "use strict"; public = 1; }"#,
     r#"function f() { "use strict"; return public; }"#,
     r#""use strict"; function f() { delete f; }"#,
+    r#"function f() { "use strict"; 010; }"#,
+    r#"function f() { "use strict"; "\010"; }"#,
 ];
 
 const ACCEPTED_WITH_FUNCTION_DIRECTIVE: [&str; 6] = [
-    r#"function f() { "use strict"; 010; }"#,
-    r#"function f() { "use strict"; "\010"; }"#,
+    r#"function f() { "use strict"; } 010;"#,
+    r#"function f() { "\010"; }"#,
     r#"function f() { "use strict"; if (1) function g() {} }"#,
     r#"function f() { "use strict"; l: function g() {} }"#,
     r#"function f() { var public; "use strict"; }"#,

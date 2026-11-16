@@ -1868,26 +1868,25 @@ export class Members { items; constructor() { this.items = []; } }
 //// diagnostic-class/statement-style-sites/tsconfig.json
 ////= lines-2	"noFallthroughCasesInSwitch"	true	"allowUnusedLabels"	false
 //// diagnostic-class/strict-only-sloppy.cjs
-// `with` and `delete` of a name are EarlyError in an ES module and are not reported in sloppy CommonJS. A legacy octal literal is EarlyError in neither: `bun run` prints its value.
+// `with` and `delete` of a name are EarlyError in an ES module and are not reported in sloppy CommonJS. A legacy octal literal is EarlyError in the module alone: in sloppy code `bun run` prints its value.
 var o = {};
 with (o) {}
 var name; delete name;
 var octal = 010;
 module.exports = {};
 //// diagnostic-class/strict-only-strict.mjs
-// `with` and `delete` of a name are EarlyError in an ES module and are not reported in sloppy CommonJS. A legacy octal literal is EarlyError in neither: `bun run` prints its value.
+// `with` and `delete` of a name are EarlyError in an ES module and are not reported in sloppy CommonJS. A legacy octal literal is EarlyError in the module alone: in sloppy code `bun run` prints its value.
 var o = {};
 with (o) {}
 var name; delete name;
 var octal = 010;
 export {};
 //// diagnostic-class/strict-only.queries.txt
-# `with` and `delete` of a name are EarlyError in an ES module and are not reported in sloppy CommonJS. A legacy octal literal is EarlyError in neither: `bun run` prints its value.
+# `with` and `delete` of a name are EarlyError in an ES module and are not reported in sloppy CommonJS. A legacy octal literal is EarlyError in the module alone: in sloppy code `bun run` prints its value.
 strict-only-strict.mjs:3 diagnostic TS1101 = EarlyError StopsBuild
 strict-only-strict.mjs:4 diagnostic TS1102 = EarlyError StopsBuild
+strict-only-strict.mjs:5 diagnostic TS1121 = EarlyError StopsBuild
 
-absent: strict-only-strict.mjs:5 diagnostic TS1121 = EarlyError StopsBuild
-absent: strict-only-strict.mjs:5 diagnostic TS1121 = TypeScriptGrammar StopsBuild
 absent: strict-only-sloppy.cjs:3 diagnostic TS1101 = EarlyError StopsBuild
 absent: strict-only-sloppy.cjs:3 diagnostic TS1101 = TypeScriptGrammar StopsBuild
 absent: strict-only-sloppy.cjs:4 diagnostic TS1102 = EarlyError StopsBuild
@@ -1895,7 +1894,7 @@ absent: strict-only-sloppy.cjs:4 diagnostic TS1102 = TypeScriptGrammar StopsBuil
 absent: strict-only-sloppy.cjs:5 diagnostic TS1121 = EarlyError StopsBuild
 absent: strict-only-sloppy.cjs:5 diagnostic TS1121 = TypeScriptGrammar StopsBuild
 //// diagnostic-class/strict-only.ts
-// `with` and `delete` of a name are EarlyError in an ES module and are not reported in sloppy CommonJS. A legacy octal literal is EarlyError in neither: `bun run` prints its value.
+// `with` and `delete` of a name are EarlyError in an ES module and are not reported in sloppy CommonJS. A legacy octal literal is EarlyError in the module alone: in sloppy code `bun run` prints its value.
 import "./strict-only-sloppy.cjs";
 import "./strict-only-strict.mjs";
 //// diagnostic-class/style-sites/main.queries.txt
@@ -2826,13 +2825,10 @@ var let = 1;
 var public = 1, static = 2, yield = 3;
 function f(eval, arguments) {}
 var implements, interface, package, private, protected;
-// Not listed: eval = 1; arguments = 1; var await; "\01"; ECMAScript allows them in sloppy mode code and bun run's parser rejects them.
-// ECMAScript rejects the next five. bun run starts them: its transpiler prints the value of a legacy octal literal or escape and of "\8".
-function f() { "use strict"; 010; }
-"use strict"; 010;
-"use strict"; var a = "\101";
-class C { m() { 010; } }
-class C { a = "\8"; }
+"\01";
+function f() { "use strict"; } 010;
+class C {} "\101";
+// Not listed: eval = 1; arguments = 1; var await; ECMAScript allows them in sloppy mode code and bun run's parser rejects them.
 //// early-errors/strict-mode.accepted.js
 // Strict mode code allows delete of a property, reserved words as property names, 0o10 and "\0".
 var a = {}; delete a.b;
@@ -2847,7 +2843,7 @@ with ({}) {}
 "\101";
 "\8";
 //// early-errors/strict-mode.rejected.cjs
-// Strict mode code in a CommonJS module: after a "use strict" directive and in a class.
+// Strict mode code in a CommonJS module: after a "use strict" directive and in a class. There a legacy octal literal or escape, 08 and "\8" are errors too.
 "use strict"; with ({}) {}
 function f() { "use strict"; var public; }
 "use strict"; function f(eval) {}
@@ -2855,6 +2851,12 @@ function f() { "use strict"; var public; }
 class C { m() { with ({}) {} } }
 class C { m() { var let; } }
 class C extends (function () { with ({}) {} }) {}
+function f() { "use strict"; 010; }
+"use strict"; 010;
+"use strict"; var a = "\101";
+class C { m() { 010; } }
+class C { a = "\8"; }
+function f() { "\1"; "use strict"; }
 // bun run starts the next two: its transpiler removes the "use strict" directive of a function, so JavaScriptCore reads sloppy mode code.
 function f(eval) { "use strict"; }
 function f() { "use strict"; delete f; }
@@ -2879,6 +2881,11 @@ const f = package => 1;
 [arguments] = [];
 var await;
 function await() {}
+// An import, an export or a top-level await makes the file strict mode code for bun run's parser, which then reports a legacy octal literal or escape, 08 and "\8".
+export {}; 010;
+08; export default 1;
+await 0; "\101";
+"\8"; for await (const a of []) {}
 //// early-errors/super.accepted.js
 // super() in the constructor of a derived class and super.name in a method, an accessor, a field initializer or a static block, also through arrow functions.
 class C extends Object { constructor() { super(); } }

@@ -1,0 +1,3 @@
+// A file with no extension is read as TypeScript. Its legacy octal numbers and escapes are read as in JavaScript.
+const values: (number | string)[] = [016, "\7", 09.5, "\9"];
+(globalThis as any).legacyOctalOfTool = values;

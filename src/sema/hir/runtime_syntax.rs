@@ -5,6 +5,7 @@ use super::{
     VarDeclId, has_body, is_nested_namespace,
 };
 use crate::atom::{Atom, known};
+use crate::file_analysis::has_written_top_level_await;
 use bun_core::strings;
 use std::ops::Range;
 
@@ -81,6 +82,69 @@ impl<S: Storage> FileIn<S> {
         self.modules.get(declaration.idx()).is_some_and(|it| {
             (self.directives(it.body)).any(|directive| directive.1 == known::use_strict)
         })
+    }
+
+    /// True if the parser of `bun run` reads the file as a module: it has an `import` that is not only of types, an
+    /// `export` or a top-level `await`. Without one of them a file can still run as a module. `text` is the text of the
+    /// file.
+    fn is_parsed_as_module_by_bun_run(&self, text: &[u8]) -> bool {
+        // `bun run` hands a text that `bun build` wrote to the engine as it is.
+        let is_written_module =
+            find_transpiled_mark(text).is_some_and(|mark| !is_marked_as_commonjs(&text[mark]));
+        let is_module_statement = |statement: StmtId| match self.stmts.get(statement.idx()) {
+            Some(&Stmt {
+                kind: StmtKind::Import(import),
+                ..
+            }) => !self.is_type_only_import(import),
+            _ => self.is_export_declaration(statement),
+        };
+        is_written_module
+            || self.ids(self.body).any(is_module_statement)
+            || has_written_top_level_await(self)
+    }
+
+    /// True if the parser of `bun run` reads all of the file as strict mode code: as a module, or under a
+    /// `"use strict"` directive. It reads any other file as sloppy mode code, also one that runs as a module.
+    pub fn is_parsed_as_strict_by_bun_run(&self, text: &[u8]) -> bool {
+        self.has_use_strict_directive(FnBody::Block(self.body))
+            || self.is_parsed_as_module_by_bun_run(text)
+    }
+
+    /// The text that the parser of `bun run` reads as strict mode code in a file that it reads as sloppy mode code, in
+    /// no order: each class from its keyword on, and the body of each function and namespace with the directive. The
+    /// name of a method is outside its body, and the decorators in front of `class` are outside the class.
+    pub fn ranges_parsed_as_strict_by_bun_run(&self) -> Vec<(u32, u32)> {
+        let class_start = |class: ClassId| self.classes.get(class.idx()).map(|it| it.text_start);
+        let class_statements = self.stmts.iter().filter_map(|it| match it.kind {
+            StmtKind::Class(class) => Some((class_start(class)?, it.loc.end)),
+            _ => None,
+        });
+        let class_expressions = self.exprs.iter().filter_map(|it| match it.kind {
+            ExprKind::Class(class) => Some((class_start(class)?, it.end)),
+            _ => None,
+        });
+        let function_bodies = self.fns.iter().map(|it| it.body);
+        let namespace_bodies = self.modules.iter().map(|it| FnBody::Block(it.body));
+        let bodies_with_directive = function_bodies
+            .chain(namespace_bodies)
+            .filter(|&body| self.has_use_strict_directive(body))
+            .filter_map(|body| self.range_of_block(body));
+        class_statements
+            .chain(class_expressions)
+            .chain(bodies_with_directive)
+            .collect()
+    }
+
+    /// From the first statement of a block to its last.
+    fn range_of_block(&self, body: FnBody) -> Option<(u32, u32)> {
+        let FnBody::Block(statements) = body else {
+            return None;
+        };
+        let mut statements = self
+            .ids(statements)
+            .filter_map(|it| self.stmts.get(it.idx()));
+        let first = statements.next()?;
+        Some((first.start, statements.next_back().unwrap_or(first).loc.end))
     }
 
     pub fn is_erased_statement(&self, stmt: StmtId) -> bool {

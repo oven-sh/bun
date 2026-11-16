@@ -139,7 +139,7 @@ export function generate(random: Random): string {
         `attempt("eval in a default", function () {\nreturn (function (a = eval("var inDefault = 1; 2"), b = typeof inDefault) {\nreturn [a, b, typeof inDefault];\n})();\n});`,
       ]),
     () =>
-      `attempt("octal", function () {\nreturn [010, 0777, 08, 09.5, 00, "\\101", "\\0", "a\\12b".length, -010, 010 .toString()];\n});`,
+      `attempt("octal", function () {\nreturn [010, 0777, 08, 09.5, 00, "\\101", "\\0", "a\\12b".length, -010, 010 .toString(), "\\1", "\\7", "\\08", "\\8", "\\9"];\n});`,
     () =>
       `attempt("this", function () {\nfunction plain() {\nreturn this;\n}\nreturn [plain() === globalThis, typeof plain.call(1), typeof plain.call("t"), plain.call(null) === globalThis, plain.call(undefined) === globalThis, typeof plain.call(true), typeof plain.call(Symbol.iterator), plain.call(1) == 1, plain.call(1) === 1, [1].map(plain)[0] === globalThis, typeof [1].map(plain, 5)[0], (0, plain)() === globalThis, new plain() instanceof plain];\n});`,
   ];

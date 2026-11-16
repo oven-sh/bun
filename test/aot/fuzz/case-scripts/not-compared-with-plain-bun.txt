@@ -8,7 +8,6 @@ arrays-iterators-sloppy-syntax sloppy-duplicate-parameters
 arrays-iterators-sloppy-syntax sloppy-eval-and-arguments-as-names
 arrays-iterators-sloppy-syntax sloppy-functions-in-blocks
 arrays-iterators-sloppy-syntax sloppy-html-comments-and-legacy-syntax
-arrays-iterators-sloppy-syntax sloppy-octal-literals
 arrays-iterators-sloppy-syntax sloppy-stores-that-fail-in-silence
 buffer-statics-and-host-records buffer-statics-replaced
 exports-reached-from-outside commonjs-main-requires-computed

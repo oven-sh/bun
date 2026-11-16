@@ -1,3 +1,4 @@
+mod tree_legacy_octal;
 mod tree_strictness;
 mod tree_support;
 use tree_support::*;
@@ -183,17 +184,6 @@ const ACCEPTED_JAVASCRIPT: &[&str] = &[
     "await 1;",
     "function f() { var await; }",
     r#"import a from "b" assert { type: "json" };"#,
-];
-
-const LEGACY_OCTAL_FORMS: &[&str] = &[
-    "010;",
-    "08;",
-    r#"x = "\101";"#,
-    r#"x = "\8";"#,
-    r#""use strict"; 010;"#,
-    r#"function f() { "use strict"; 010; }"#,
-    "class A { x = 010; }",
-    "export {}; 010;",
 ];
 
 const REJECTED_JAVASCRIPT: &[&str] = &[
@@ -737,94 +727,6 @@ fn javascript_parses_like_bun_run() {
             };
             assert!(!errors(true).is_empty(), "{text}");
             assert_eq!(errors(true), errors(false), "{text}");
-        });
-    }
-}
-
-#[test]
-fn legacy_octal_forms() {
-    for &text in LEGACY_OCTAL_FORMS {
-        parsed("a.js", text, |_, hir| {
-            assert!(hir.diagnostics.is_empty(), "{text}: {:?}", hir.diagnostics);
-            assert_ne!(hir.rare_syntax & rare::LEGACY_OCTAL, 0, "{text}");
-        });
-    }
-    let without_legacy_octal = [
-        "x = '2024-01-08';",
-        "x = 1; // 010",
-        "x = 1; /* \\1 */",
-        r#"x = "a\\1";"#,
-        r#"x = "\0" + 10.05 + 0x01 + 0o01 + a01;"#,
-    ];
-    for text in without_legacy_octal {
-        parsed("a.js", text, |_, hir| {
-            assert_eq!(hir.rare_syntax & rare::LEGACY_OCTAL, 0, "{text}");
-        });
-    }
-}
-
-#[test]
-fn legacy_octal_forms_without_an_extension() {
-    for &text in LEGACY_OCTAL_FORMS {
-        parsed("bin/tool", text, |_, hir| {
-            assert!(!hir.is_js);
-            assert!(hir.diagnostics.is_empty(), "{text}: {:?}", hir.diagnostics);
-            assert_ne!(hir.rare_syntax & rare::LEGACY_OCTAL, 0, "{text}");
-        });
-        parsed("a.ts", text, |_, hir| {
-            assert!(!hir.diagnostics.is_empty(), "{text}");
-        });
-    }
-    parsed("bin/tool", r#"const x: string = "\033[0m";"#, |_, hir| {
-        assert!(hir.diagnostics.is_empty(), "{:?}", hir.diagnostics);
-    });
-}
-
-#[test]
-fn octal_escapes_that_bun_run_once_reported() {
-    let reported = [
-        (r#"x = "\4";"#, 2),
-        (r#"x = '\1';"#, 2),
-        (r#"x = "a\04";"#, 3),
-        (r#"x = "\00";"#, 3),
-        (r#"x = "\08";"#, 2),
-        (r#"x = "\49a";"#, 2),
-        (r#"x = "\049a";"#, 3),
-        (r#"x = "\478";"#, 3),
-        (r#"x = { "\4": 1 };"#, 2),
-        (r#"function f() { "\4"; }"#, 2),
-    ];
-    for (text, len) in reported {
-        parsed("a.js", text, |_, hir| {
-            let errors = of_class(hir, EarlyError);
-            let [error] = errors[..] else {
-                panic!("{text}: {errors:?}");
-            };
-            let start = text.find('\\').unwrap() as u32;
-            assert_eq!(
-                (error.code, error.start, error.end),
-                (1487, start, start + len),
-                "{text}"
-            );
-            assert_ne!(hir.rare_syntax & rare::LEGACY_OCTAL, 0, "{text}");
-        });
-    }
-    let accepted = [
-        r#"x = "\4a";"#,
-        r#"x = "\4'";"#,
-        r#"x = '\4"';"#,
-        r#"x = "\04a";"#,
-        r#"x = "\033[0m";"#,
-        r#"x = "\377";"#,
-        r#"x = "\3778";"#,
-        r#"x = "\477";"#,
-        r#"x = "\4\"";"#,
-        r#"x = "\0";"#,
-        r#"x = "\8" + "\9" + "\89";"#,
-    ];
-    for text in accepted {
-        parsed("a.js", text, |_, hir| {
-            assert!(hir.diagnostics.is_empty(), "{text}: {:?}", hir.diagnostics);
         });
     }
 }

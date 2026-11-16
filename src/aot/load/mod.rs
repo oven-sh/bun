@@ -16,6 +16,8 @@ pub(crate) mod host;
 pub(crate) mod import_functions;
 pub(crate) mod import_meta_glob;
 pub(crate) mod known_evaluations;
+#[cfg(test)]
+mod legacy_octal_grid;
 pub(crate) mod loader_aliases;
 pub(crate) mod loaders;
 pub(crate) mod locked_builtin_defines;
@@ -24,6 +26,8 @@ pub(crate) mod manual_mocks;
 pub(crate) mod module_paths;
 pub(crate) mod modules_with_queries;
 pub(crate) mod objects_created_below;
+#[cfg(test)]
+mod parser_of_bun_run;
 pub(crate) mod plugin_modules;
 pub mod project;
 pub(crate) mod react_compiler;

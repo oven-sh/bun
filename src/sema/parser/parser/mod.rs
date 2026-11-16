@@ -10,6 +10,7 @@ mod js_syntax;
 pub(crate) mod jsdoc;
 mod json;
 mod jsx;
+mod legacy_octal;
 mod module;
 mod oxc;
 mod pattern;
@@ -746,12 +747,12 @@ impl<'a, const GENERAL: bool, const COMMENTS: bool> Parser<'a, GENERAL, COMMENTS
     fn parse_source(mut self) -> Harvest<'a> {
         self.source_file();
         self.resolve_top_level_comments();
+        if self.has_top_level_await {
+            self.f.rare_syntax |= rare::TOP_LEVEL_AWAIT;
+        }
         self.report_scanner_flagged_errors();
         if !self.lx.private_names.is_empty() {
             self.f.rare_syntax |= rare::ODD_PRIVATE_NAME;
-        }
-        if self.has_top_level_await {
-            self.f.rare_syntax |= rare::TOP_LEVEL_AWAIT;
         }
         if self.lx.has_legacy_octal {
             self.f.rare_syntax |= rare::LEGACY_OCTAL;
@@ -1049,7 +1050,15 @@ impl<'a, const GENERAL: bool, const COMMENTS: bool> Parser<'a, GENERAL, COMMENTS
 
     /// Turns `Lexer::flagged` into diagnostics.
     fn report_scanner_flagged_errors(&mut self) {
-        for (code, start, end) in std::mem::take(&mut self.lx.flagged) {
+        let mut flagged = std::mem::take(&mut self.lx.flagged);
+        if flagged.is_empty() {
+            return;
+        }
+        let is_compiled = self.lx.compiles() || self.lx.accepts_legacy_octal;
+        if is_compiled && !self.has_failed() {
+            legacy_octal::keep_early_errors(&self.f, self.lx.src, &mut flagged);
+        }
+        for (code, start, end) in flagged {
             let raw = self
                 .lx
                 .src
@@ -1075,7 +1084,7 @@ impl<'a, const GENERAL: bool, const COMMENTS: bool> Parser<'a, GENERAL, COMMENTS
             };
             let arguments = [argument.as_slice()];
             let arguments = &arguments[..usize::from(!argument.is_empty())];
-            match self.lx.compiles() || self.lx.accepts_legacy_octal {
+            match is_compiled {
                 true => self.flag_early_error(code, (start, end), arguments),
                 false => self.flag(DiagnosticKind::Grammar, code, (start, end), arguments),
             }

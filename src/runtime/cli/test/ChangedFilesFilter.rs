@@ -305,8 +305,7 @@ pub(crate) fn filter<'a>(
 }
 
 #[cfg(not(windows))]
-const TRIGGER_FILE_ENV_VAR_Z: &ZStr =
-    ZStr::from_static(b"BUN_INTERNAL_TEST_CHANGED_TRIGGER_FILE\0");
+const TRIGGER_FILE_ENV_VAR_Z: &ZStr = bun_core::zstr!("BUN_INTERNAL_TEST_CHANGED_TRIGGER_FILE");
 
 /// Make sure the trigger-file env var is set (generating a fresh temp
 /// path if this is the first process in the --watch chain) and return the path.

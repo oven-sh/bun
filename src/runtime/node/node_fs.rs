@@ -834,7 +834,7 @@ fn create_unnamed_file(contents: &[u8]) -> Maybe<FD> {
     #[cfg(any(target_os = "linux", target_os = "android"))]
     if sys::can_use_memfd()
         && let Ok(writable) =
-            sys::memfd_create(c"bun-embedded-file", sys::MemfdFlags::NonExecutable)
+            sys::memfd_create(c"bun-embedded-file".into(), sys::MemfdFlags::NonExecutable)
     {
         let path =
             bun_core::ZBox::from_vec(format!("/proc/self/fd/{}", writable.native()).into_bytes());
@@ -932,16 +932,16 @@ fn open_embedded_folder(flags: i32, path: &[u8]) -> Maybe<FD> {
             opened
         }
         // A container often has no folder that can be written.
-        Err(err) => open(ZStr::from_static(PERMANENT_FOLDER)).map_err(|_| err),
+        Err(err) => open(PERMANENT_FOLDER).map_err(|_| err),
     };
     opened.map_err(|err| err.with_path_and_syscall(path, sys::Tag::open))
 }
 
 /// A folder that is there without a disk. Nobody makes, removes or changes anything through a descriptor of it.
 #[cfg(any(target_os = "linux", target_os = "android"))]
-const PERMANENT_FOLDER: &[u8] = b"/proc/self/fdinfo\0";
+const PERMANENT_FOLDER: &ZStr = bun_core::zstr!("/proc/self/fdinfo");
 #[cfg(not(any(target_os = "linux", target_os = "android", windows)))]
-const PERMANENT_FOLDER: &[u8] = b"/var/empty\0";
+const PERMANENT_FOLDER: &ZStr = bun_core::zstr!("/var/empty");
 
 /// Local shim for `Maybe(void)::aborted` (node.rs:302). `bun_sys::Maybe` is
 /// `core::result::Result`, which has no `aborted()` constructor; inline the
@@ -1120,7 +1120,7 @@ impl CpPendingDirs {
         self.names.extend_from_slice(name);
     }
 
-    /// Writes the next directory's NUL-terminated src/dest paths into the buffers
+    /// Writes the next directory's src/dest paths into the buffers
     /// and their lengths into `src_len`/`dest_len`. Returns false if none are pending.
     fn pop_into(
         &mut self,
@@ -1137,10 +1137,8 @@ impl CpPendingDirs {
         let dd = dir.parent_dest_len as usize;
         src_buf[sd] = paths::SEP as OSPathChar;
         src_buf[sd + 1..sd + 1 + name.len()].copy_from_slice(name);
-        src_buf[sd + 1 + name.len()] = 0;
         dest_buf[dd] = paths::SEP as OSPathChar;
         dest_buf[dd + 1..dd + 1 + name.len()].copy_from_slice(name);
-        dest_buf[dd + 1 + name.len()] = 0;
         *src_len = (sd + 1 + name.len()) as PathInt;
         *dest_len = (dd + 1 + name.len()) as PathInt;
         self.names.truncate(dir.name_start as usize);
@@ -1386,7 +1384,7 @@ mod _async_tasks {
                     let refusal = refuse_open_for_write(named.slice(), args.flags.as_int());
                     let answer: Option<Maybe<ret::Open>> = refusal.map(Err);
                     let path = if strings::eql_comptime(named.slice(), b"/dev/null") {
-                        ZStr::from_static(b"\\\\.\\NUL\0")
+                        bun_core::zstr!("\\\\.\\NUL")
                     } else {
                         // SAFETY (R-2): single-JS-thread `JsCell` projection of the
                         // scratch path buffer; the borrow is held only across the
@@ -2783,9 +2781,9 @@ mod _async_tasks {
         fn cp_async_one_directory(
             nodefs: &mut NodeFS,
             this: *mut Self,
-            src_buf: &OSPathBuffer,
+            src_buf: &mut OSPathBuffer,
             src_dir_len: PathInt,
-            dest_buf: &OSPathBuffer,
+            dest_buf: &mut OSPathBuffer,
             dest_dir_len: PathInt,
             pending: &mut CpPendingDirs,
         ) -> Maybe<()> {
@@ -2795,12 +2793,9 @@ mod _async_tasks {
             // `cp_task` pointers stored in subtasks retain mutable provenance for
             // the `Box` that `on_subtask_done` reclaims.
             let this_ref = unsafe { &*this };
-            // SAFETY: callers NUL-terminate at src_dir_len/dest_dir_len before calling.
-            // Platform-generic — `OSPathBuffer` is `[u16;N]` on Windows, `[u8;N]` on POSIX,
-            // so reconstruct as `&OSPathSliceZ`.
-            let src = unsafe { OSPathSliceZ::from_raw(src_buf.as_ptr(), src_dir_len as usize) };
-            // SAFETY: dest_buf[dest_dir_len] == 0 written by caller
-            let dest = unsafe { OSPathSliceZ::from_raw(dest_buf.as_ptr(), dest_dir_len as usize) };
+            let (src_cap, dest_cap) = (src_buf.len(), dest_buf.len());
+            let src = OSPathSliceZ::nul_terminate(src_buf, src_dir_len as usize);
+            let dest = OSPathSliceZ::nul_terminate(dest_buf, dest_dir_len as usize);
 
             #[cfg(target_os = "macos")]
             {
@@ -2867,15 +2862,13 @@ mod _async_tasks {
                 // The accumulated path for deep directory trees can exceed the fixed
                 // OSPathBuffer. Bail out with ENAMETOOLONG instead of writing past the
                 // end of the buffer and corrupting the stack.
-                if (src_dir_len as usize) + 1 + cname.len() >= src_buf.len()
-                    || (dest_dir_len as usize) + 1 + cname.len() >= dest_buf.len()
+                if (src_dir_len as usize) + 1 + cname.len() >= src_cap
+                    || (dest_dir_len as usize) + 1 + cname.len() >= dest_cap
                 {
                     return Err(sys::Error {
                         errno: E::ENAMETOOLONG as _,
                         syscall: sys::Tag::copyfile,
-                        path: nodefs
-                            .os_path_into_sync_error_buf(&src_buf[..src_dir_len as usize])
-                            .into(),
+                        path: nodefs.os_path_into_sync_error_buf(src).into(),
                         ..Default::default()
                     });
                 }
@@ -2893,12 +2886,12 @@ mod _async_tasks {
                         // Allocate a path buffer for the path data
                         let mut path_buf = vec![0 as OSPathChar; total].into_boxed_slice();
 
-                        path_buf[..sd].copy_from_slice(&src_buf[..sd]);
+                        path_buf[..sd].copy_from_slice(src);
                         path_buf[sd] = paths::SEP as OSPathChar;
                         path_buf[sd + 1..sd + 1 + cname.len()].copy_from_slice(cname);
                         path_buf[sd + 1 + cname.len()] = 0;
                         let dest_off = sd + 1 + cname.len() + 1;
-                        path_buf[dest_off..dest_off + dd].copy_from_slice(&dest_buf[..dd]);
+                        path_buf[dest_off..dest_off + dd].copy_from_slice(dest);
                         path_buf[dest_off + dd] = paths::SEP as OSPathChar;
                         path_buf[dest_off + dd + 1..dest_off + dd + 1 + cname.len()]
                             .copy_from_slice(cname);
@@ -6345,8 +6338,7 @@ impl NodeFS {
         // iterate backwards until creating the directory works successfully
         while i > 0 {
             if bun_paths::is_sep_native_t::<OSPathChar>((&path[..])[i as usize]) {
-                working_mem[i as usize] = 0;
-                let parent = OSPathSliceZ::from_buf(working_mem, i as usize);
+                let parent = OSPathSliceZ::nul_terminate(working_mem, i as usize);
                 match mkdir_os_path(parent, mode) {
                     Err(err) => {
                         // The SEP-restore must NOT happen before the errno match:
@@ -6417,8 +6409,7 @@ impl NodeFS {
         // after we find one that works, we go forward _after_ the first working directory
         while i < len {
             if bun_paths::is_sep_native_t::<OSPathChar>((&path[..])[i as usize]) {
-                working_mem[i as usize] = 0;
-                let parent = OSPathSliceZ::from_buf(working_mem, i as usize);
+                let parent = OSPathSliceZ::nul_terminate(working_mem, i as usize);
                 match mkdir_os_path(parent, mode) {
                     Err(err) => {
                         working_mem[i as usize] = paths::SEP as OSPathChar;
@@ -6443,11 +6434,9 @@ impl NodeFS {
             i += 1;
         }
 
-        working_mem[len as usize] = 0;
-
         // Our final directory will not have a trailing separator
         // so we have to create it once again
-        let final_ = OSPathSliceZ::from_buf(working_mem, len as usize);
+        let final_ = OSPathSliceZ::nul_terminate(working_mem, len as usize);
         match mkdir_os_path(final_, mode) {
             Err(err) => match err.get_errno() {
                 E::EEXIST => {}
@@ -6547,8 +6536,7 @@ impl NodeFS {
             return Err(error);
         }
         let path = if cfg!(windows) && named.slice() == b"/dev/null" {
-            // SAFETY: literal is NUL-terminated; len excludes the sentinel.
-            ZStr::from_static(b"\\\\.\\NUL\0")
+            bun_core::zstr!("\\\\.\\NUL")
         } else {
             named.slice_z(&mut self.sync_error_buf)
         };
@@ -7825,7 +7813,7 @@ impl NodeFS {
                 if let Some(error) = refuse_open_for_write(p.slice(), args.flag.as_int()) {
                     return Err(error);
                 }
-                let path = p.slice_z_with_force_copy::<true>(pathbuf);
+                let path = p.slice_z(pathbuf);
                 // O_TRUNC is dropped on purpose: keeping the existing blocks
                 // allocated makes rewriting a large file cheaper, and the resize
                 // below sets the final size. O_APPEND writes at EOF, so it keeps it.
@@ -8385,15 +8373,12 @@ impl NodeFS {
                         Err(_) => panic!("failed to resolve current working directory"),
                     };
                     let dir = bun_core::dirname(new_path).unwrap_or(new_path);
-                    let src_len =
-                        paths::resolve_path::join_abs_string_buf::<paths::platform::Windows>(
+                    let src_z =
+                        paths::resolve_path::join_abs_string_buf_z::<paths::platform::Windows>(
                             &to_buf[..cwd_len],
                             &mut self.sync_error_buf[..],
                             &[dir, target_path],
-                        )
-                        .len();
-                    self.sync_error_buf[src_len] = 0;
-                    let src_z = ZStr::from_buf(&self.sync_error_buf[..], src_len);
+                        );
                     break 'auto_detect match sys::directory_exists_at(FD::INVALID, src_z) {
                         Err(_) => ResolvedLinkType::File,
                         Ok(is_dir) => {
@@ -8427,21 +8412,17 @@ impl NodeFS {
                         )
                         .len();
                     self.sync_error_buf[0..4].copy_from_slice(&paths::windows::LONG_PATH_PREFIX_U8);
-                    self.sync_error_buf[4 + target_len] = 0;
-                    break 'target ZStr::from_buf(&self.sync_error_buf[..], 4 + target_len);
+                    break 'target ZStr::nul_terminate(&mut self.sync_error_buf, 4 + target_len);
                 }
                 if paths::is_absolute(target_path) {
                     // This normalizes slashes and adds the long path prefix
-                    break 'target args
-                        .target_path
-                        .slice_z_with_force_copy::<true>(&mut self.sync_error_buf);
+                    break 'target args.target_path.slice_z(&mut self.sync_error_buf);
                 }
                 self.sync_error_buf[..target_path.len()].copy_from_slice(target_path);
-                self.sync_error_buf[target_path.len()] = 0;
                 paths::resolve_path::dangerously_convert_path_to_windows_in_place::<u8>(
                     &mut self.sync_error_buf[..target_path.len()],
                 );
-                break 'target ZStr::from_buf(&self.sync_error_buf[..], target_path.len());
+                break 'target ZStr::nul_terminate(&mut self.sync_error_buf, target_path.len());
             };
             return match Syscall::symlink_uv(
                 processed_target,
@@ -8754,10 +8735,8 @@ impl NodeFS {
         let cp_flags = &args.flags;
         let sd = src_dir_len as usize;
         let dd = dest_dir_len as usize;
-        src_buf[sd] = 0;
-        dest_buf[dd] = 0;
-        let src = OSPathSliceZ::from_buf(&src_buf[..], sd);
-        let dest = OSPathSliceZ::from_buf(&dest_buf[..], dd);
+        let src = OSPathSliceZ::nul_terminate(src_buf, sd);
+        let dest = OSPathSliceZ::nul_terminate(dest_buf, dd);
 
         #[cfg(windows)]
         {
@@ -8862,9 +8841,8 @@ impl NodeFS {
         let cp_flags = &args.flags;
         let sd = src_dir_len as usize;
         let dd = dest_dir_len as usize;
-        // The caller NUL-terminated both buffers at `sd`/`dd`.
-        let src = OSPathSliceZ::from_buf(&src_buf[..], sd);
-        let dest = OSPathSliceZ::from_buf(&dest_buf[..], dd);
+        let src = OSPathSliceZ::nul_terminate(src_buf, sd);
+        let dest = OSPathSliceZ::nul_terminate(dest_buf, dd);
 
         #[cfg(target_os = "macos")]
         'try_with_clonefile: {
@@ -9023,9 +9001,7 @@ impl NodeFS {
                 return Err(err.with_path(&self.sync_error_buf[..src.len()]));
             }
         };
-        target_buf[link_len] = 0;
-        // SAFETY: NUL written at `target_buf[link_len]`.
-        let link_target = ZStr::from_buf(&target_buf[..], link_len);
+        let link_target = ZStr::nul_terminate(&mut target_buf, link_len);
         if paths::is_absolute(link_target.as_bytes()) {
             return Syscall::symlink(link_target, dest);
         }
@@ -9038,14 +9014,9 @@ impl NodeFS {
             return Syscall::symlink(link_target, dest);
         };
         let cwd = &cwd_buf[..cwd_len];
-        let resolved_buf_len = resolved_buf.len();
-        let Some(resolved) =
-            paths::resolve_path::join_abs_string_buf_checked::<paths::platform::Posix>(
-                cwd,
-                &mut resolved_buf[..resolved_buf_len - 1],
-                &[src_dir, link_target.as_bytes()],
-            )
-        else {
+        let Some(resolved) = paths::resolve_path::join_abs_string_buf_z_checked::<
+            paths::platform::Posix,
+        >(cwd, &mut resolved_buf, &[src_dir, link_target.as_bytes()]) else {
             self.sync_error_buf[..src.len()].copy_from_slice(src.as_bytes());
             return Err(sys::Error {
                 errno: E::ENAMETOOLONG as _,
@@ -9054,10 +9025,7 @@ impl NodeFS {
                 ..Default::default()
             });
         };
-        let resolved_len = resolved.len();
-        resolved_buf[resolved_len] = 0;
-        // SAFETY: NUL written at `resolved_buf[resolved_len]`.
-        Syscall::symlink(ZStr::from_buf(&resolved_buf[..], resolved_len), dest)
+        Syscall::symlink(resolved, dest)
     }
 
     /// This is `copyFile`, but it copies symlinks as-is
@@ -10095,9 +10063,7 @@ fn dt_open_dir(parent: &sys::Dir, name: &[u8]) -> Result<sys::Dir, E> {
     let mut path_buf = bun_paths::path_buffer_pool::get();
     let len = name.len().min(path_buf.len() - 1);
     path_buf[..len].copy_from_slice(&name[..len]);
-    path_buf[len] = 0;
-    // SAFETY: NUL written at [len].
-    let z = ZStr::from_buf(&path_buf[..], len);
+    let z = ZStr::nul_terminate(&mut path_buf, len);
     match Syscall::openat(
         parent.fd,
         z,
@@ -10114,9 +10080,7 @@ fn dt_delete_file(parent: &sys::Dir, name: &[u8]) -> Result<(), E> {
     let mut path_buf = bun_paths::path_buffer_pool::get();
     let len = name.len().min(path_buf.len() - 1);
     path_buf[..len].copy_from_slice(&name[..len]);
-    path_buf[len] = 0;
-    // SAFETY: NUL written at [len].
-    let z = ZStr::from_buf(&path_buf[..], len);
+    let z = ZStr::nul_terminate(&mut path_buf, len);
     match Syscall::unlinkat(parent.fd, z) {
         Ok(()) => Ok(()),
         Err(e) => {
@@ -10154,9 +10118,7 @@ fn dt_delete_dir(parent: &sys::Dir, name: &[u8]) -> Result<(), E> {
     let mut path_buf = bun_paths::path_buffer_pool::get();
     let len = name.len().min(path_buf.len() - 1);
     path_buf[..len].copy_from_slice(&name[..len]);
-    path_buf[len] = 0;
-    // SAFETY: NUL written at [len].
-    let z = ZStr::from_buf(&path_buf[..], len);
+    let z = ZStr::nul_terminate(&mut path_buf, len);
     #[cfg(unix)]
     let flags: i32 = libc::AT_REMOVEDIR;
     #[cfg(not(unix))]

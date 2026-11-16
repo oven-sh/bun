@@ -473,9 +473,8 @@ impl InstallCompletionsCommand {
                             let len = dir.len() + name.len();
                             zshrc_filepath[..dir.len()].copy_from_slice(dir);
                             zshrc_filepath[dir.len()..len].copy_from_slice(name);
-                            zshrc_filepath[len] = 0;
                             if let Ok(f) = bun_sys::open_file_absolute_z(
-                                bun_core::ZStr::from_buf(&zshrc_filepath[..], len),
+                                bun_core::ZStr::nul_terminate(&mut zshrc_filepath, len),
                                 bun_sys::OpenFlags::READ_WRITE,
                             ) {
                                 break 'zshrc f;

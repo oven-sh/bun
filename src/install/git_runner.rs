@@ -791,7 +791,7 @@ impl Drop for GitSubprocess {
 impl GitSubprocess {
     fn start(manager: &mut PackageManager, task: NonNull<Task::Task>) {
         let cache_dir = manager.get_cache_directory();
-        let event_loop = EventLoopHandle::from_any(&manager.event_loop);
+        let event_loop = manager.event_loop;
         // SAFETY: a queued git task is live and idle until its runner hands it on.
         let name = match unsafe { &task.as_ref().job } {
             Job::GitClone { request, .. } => &request.name,

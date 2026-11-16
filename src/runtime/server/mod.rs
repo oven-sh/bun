@@ -14,6 +14,8 @@ use bun_uws_sys::app::c as uws_app_c;
 use bun_jsc::{JSGlobalObject, JSValue, JsCell, JsCellRefExt as _, JsResult};
 use bun_ptr::AsCtxPtr;
 
+use crate::webcore::Request;
+
 // ─── httplog ─────────────────────────────────────────────────────────────────
 // Output.scoped(.Server, .visible) — debug-build no-op until bun_output wires.
 macro_rules! httplog {
@@ -372,43 +374,44 @@ fn any_response_from<const SSL: bool>(resp: *mut uws_sys::NewAppResponse<SSL>) -
 pub(crate) type ServerRequestContext<const SSL: bool, const DEBUG: bool> =
     request_context::RequestContext<NewServer<SSL, DEBUG>, SSL, DEBUG, false>;
 
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub(crate) enum CreateJsRequest {
-    Yes,
-    /// `Bun__ServerRouteList__callRoute` makes the wrapper, which takes over the ref.
-    No,
-    Bake,
-}
+type ServerDispatch<const SSL: bool, const DEBUG: bool> =
+    request_context::Dispatch<NewServer<SSL, DEBUG>, SSL, DEBUG, false>;
 
 /// A `Request` while the uWS callback that lent it a `uws::Request` is on the stack.
 pub(crate) struct DispatchedRequest {
-    /// The wrapper, which owns `native`'s ref. Zero until there is one.
+    /// The wrapper, which owns `native`'s ref.
     pub(crate) js: JSValue,
-    pub(crate) native: bun_ptr::ThisPtr<crate::webcore::Request>,
+    pub(crate) native: bun_ptr::ThisPtr<Request>,
 }
 
 impl DispatchedRequest {
-    fn new(
-        request: bun_ptr::RefPtr<crate::webcore::Request>,
-        create_js_request: CreateJsRequest,
+    fn new(request: bun_ptr::RefPtr<Request>, global: &jsc::JSGlobalObject) -> Self {
+        Self {
+            native: request.this_ptr(),
+            js: Request::to_js(request, global),
+        }
+    }
+
+    fn for_bake(request: bun_ptr::RefPtr<Request>, global: &jsc::JSGlobalObject) -> Self {
+        Self {
+            native: request.this_ptr(),
+            js: Request::to_js_for_bake(request, global),
+        }
+    }
+
+    /// `call` makes the wrapper, stores it in its second argument and returns what the handler returned.
+    fn call_route(
+        request: bun_ptr::RefPtr<Request>,
         global: &jsc::JSGlobalObject,
-    ) -> Option<Self> {
-        let native = request.this_ptr();
-        let js = match create_js_request {
-            CreateJsRequest::Yes => crate::webcore::Request::to_js(request, global),
-            CreateJsRequest::Bake => {
-                match crate::webcore::Request::to_js_for_bake(request, global) {
-                    Ok(v) => v,
-                    Err(jsc::JsError::OutOfMemory) => bun_core::out_of_memory(),
-                    Err(_) => return None,
-                }
-            }
-            CreateJsRequest::No => {
-                let _ = request.into_raw();
-                JSValue::ZERO
-            }
+        call: impl FnOnce(bun_ptr::RefPtr<Request>, &mut JSValue) -> JSValue,
+    ) -> (Self, JSValue) {
+        let mut this = Self {
+            native: request.this_ptr(),
+            js: JSValue::ZERO,
         };
-        Some(Self { js, native })
+        let response_value = jsc::from_js_host_call(global, || call(request, &mut this.js))
+            .unwrap_or_else(|err| global.take_exception(err));
+        (this, response_value)
     }
 }
 
@@ -419,39 +422,30 @@ impl Drop for DispatchedRequest {
     }
 }
 
-/// Bundle of the JS-side `Request`, the heap
-/// `webcore::Request`, and the per-request `RequestContext`. Only the HTTP/1
-/// instantiation is materialized; H3
-/// callers never `save()` and the H3 dispatch
-/// path is private to `set_routes`.
-pub(crate) struct PreparedRequest<const SSL: bool, const DEBUG: bool> {
-    pub(crate) request: DispatchedRequest,
-    pub ctx: request_context::Dispatch<NewServer<SSL, DEBUG>, SSL, DEBUG, false>,
-}
-
-impl<const SSL: bool, const DEBUG: bool> PreparedRequest<SSL, DEBUG> {
+impl DispatchedRequest {
     /// Used by DevServer to defer calling
     /// the JS handler until the bundle is actually ready.
-    pub(crate) fn save(
+    fn save<const SSL: bool, const DEBUG: bool>(
         self,
+        dispatch: &ServerDispatch<SSL, DEBUG>,
         global: &jsc::JSGlobalObject,
         req: &mut uws_sys::Request,
         resp: *mut uws_sys::NewAppResponse<SSL>,
     ) -> SavedRequest {
-        let ctx = AnyRequestContext::init(&raw const *self.ctx);
+        let ctx = AnyRequestContext::init(&raw const **dispatch);
         // Before `to_async`, which releases the context of a request that is already aborted.
         let ctx = any_request_context::AnyRequestContextRef::new(ctx);
         // By saving a request, all information from `req` must be
         // copied since the provided uws.Request will be re-used for
         // future requests (stack allocated).
-        self.ctx.to_async(
+        dispatch.to_async(
             std::ptr::from_mut::<uws_sys::Request>(req).cast::<c_void>(),
-            &self.request.native,
+            &self.native,
         );
 
         SavedRequest {
-            js_request: jsc::Strong::create(self.request.js, global),
-            request: self.request.native,
+            js_request: jsc::Strong::create(self.js, global),
+            request: self.native,
             ctx,
             response: any_response_from::<SSL>(resp),
         }
@@ -653,7 +647,7 @@ pub(crate) fn protect_handler_shadows(config: &ServerConfig) -> [bun_jsc::js_val
 /// wrapper's WriteBarrier slot". If `*shadow` is unset (empty/undefined/null),
 /// normalize it to `ZERO` and clear the slot; otherwise apply the
 /// async-context wrap and write the wrapped fn into both the slot and
-/// `*shadow`. Every call site already holds a live wrapper (`ptr_to_js` on
+/// `*shadow`. Every call site already holds a live wrapper (the new one on
 /// serve, `this` on reload / setOnClientError), so `server_js`
 /// is always valid. Keeping the is-empty check, the wrap step, and the
 /// shadow↔slot pairing in one helper is what stops the serve / reload / ws /
@@ -798,9 +792,8 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         &self,
         req: &mut uws_sys::Request,
         resp: *mut uws_sys::NewAppResponse<SSL>,
-        create_js_request: CreateJsRequest,
         method: Option<bun_http_types::Method::Method>,
-    ) -> Option<PreparedRequest<SSL, DEBUG>> {
+    ) -> Option<(bun_ptr::RefPtr<Request>, ServerDispatch<SSL, DEBUG>)> {
         jsc::mark_binding!();
         // S008: `Response<SSL>` is a ZST opaque — safe `*mut → &mut` deref.
         let resp_ref = bun_opaque::opaque_deref_mut(resp);
@@ -963,10 +956,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             }
         }
 
-        Some(PreparedRequest {
-            request: DispatchedRequest::new(request, create_js_request, global)?,
-            ctx: ctx_ref,
-        })
+        Some((request, ctx_ref))
     }
 
     /// Invoke the user's route handler for a
@@ -989,37 +979,36 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             server_body::respond_stopped_503(bun_opaque::opaque_deref_mut(resp));
             return;
         };
-        let prepared: PreparedRequest<SSL, DEBUG> = match &req {
+        let global = self.global_this();
+        let (request, ctx) = match &req {
             SavedRequestUnion::Stack(r) => {
                 // reshaped for borrowck — decouple the inner
                 // `&mut uws::Request` lifetime from the `req` match guard.
                 let r = std::ptr::from_ref::<uws::Request>(*r).cast_mut();
-                match self.prepare_js_request_context(
+                let Some((request, ctx)) = self.prepare_js_request_context(
                     // S008: `uws::Request` is an `opaque_ffi!` ZST — safe deref.
                     bun_opaque::opaque_deref_mut(r),
                     resp,
-                    CreateJsRequest::Bake,
                     None,
-                ) {
-                    Some(p) => p,
-                    None => return,
-                }
+                ) else {
+                    return;
+                };
+                (DispatchedRequest::for_bake(request, global), ctx)
             }
-            SavedRequestUnion::Saved(data) => PreparedRequest {
-                request: DispatchedRequest {
+            SavedRequestUnion::Saved(data) => (
+                DispatchedRequest {
                     js: data.js_request.get(),
                     native: data.request,
                 },
                 // SAFETY: `data.ctx` holds a ref.
-                ctx: request_context::Dispatch::new(unsafe {
+                request_context::Dispatch::new(unsafe {
                     &*data
                         .ctx
                         .get::<ServerRequestContext<SSL, DEBUG>>()
                         .expect("ctx tag mismatch")
                 }),
-            },
+            ),
         };
-        let PreparedRequest { request, ctx } = prepared;
 
         debug_assert!(!callback.is_empty());
         // PERF: stable Rust forbids `ARG_COUNT + 1` in const-generic array lengths.
@@ -1030,7 +1019,6 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         args.extend_from_slice(&extra_args);
 
         let _entered = self.vm().enter_event_loop_scope_without_checkpoint();
-        let global = self.global_this();
         let response_value = match callback.call(global, server_js, &args) {
             Ok(v) => v,
             Err(err) => global.take_exception(err),
@@ -1061,11 +1049,11 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
     /// the async path.
     fn handle_request(
         &self,
-        prepared: PreparedRequest<SSL, DEBUG>,
+        request: &DispatchedRequest,
+        ctx: ServerDispatch<SSL, DEBUG>,
         req: &mut uws_sys::Request,
         response_value: JSValue,
     ) {
-        let PreparedRequest { request, ctx } = prepared;
         let Some(ctx) = ServerRequestContext::respond(ctx, self, request.js, response_value) else {
             return;
         };
@@ -1091,8 +1079,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             server_body::respond_stopped_503(bun_opaque::opaque_deref_mut(resp));
             return;
         };
-        let Some(prepared) = self.prepare_js_request_context(req, resp, CreateJsRequest::Yes, None)
-        else {
+        let Some((request, ctx)) = self.prepare_js_request_context(req, resp, None) else {
             return;
         };
 
@@ -1103,13 +1090,13 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         debug_assert!(!on_request.is_empty());
 
         let global = self.global_this();
-        let response_value =
-            match on_request.call(global, js_value, &[prepared.request.js, js_value]) {
-                Ok(v) => v,
-                Err(err) => global.take_exception(err),
-            };
+        let request = DispatchedRequest::new(request, global);
+        let response_value = match on_request.call(global, js_value, &[request.js, js_value]) {
+            Ok(v) => v,
+            Err(err) => global.take_exception(err),
+        };
 
-        self.handle_request(prepared, req, response_value);
+        self.handle_request(&request, ctx, req, response_value);
     }
 
     /// Dispatch a per-route handler
@@ -1136,12 +1123,9 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             return;
         };
 
-        let Some(mut prepared) = server.prepare_js_request_context(
-            req,
-            resp,
-            CreateJsRequest::No,
-            user_route.route.method.specific(),
-        ) else {
+        let Some((request, ctx)) =
+            server.prepare_js_request_context(req, resp, user_route.route.method.specific())
+        else {
             return;
         };
 
@@ -1151,20 +1135,20 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         let global = server.global_this();
         let server_request_list =
             Self::js_route_list_get_cached(server_js).expect("routeList cached value missing");
-        let response_value = bun_jsc::host_fn::from_js_host_call(global, || {
-            Bun__ServerRouteList__callRoute(
-                global,
-                index,
-                prepared.request.native.as_ptr(),
-                server_js,
-                server_request_list,
-                &mut prepared.request.js,
-                core::ptr::from_mut(req).cast::<c_void>(),
-            )
-        })
-        .unwrap_or_else(|err| global.take_exception(err));
+        let (request, response_value) =
+            DispatchedRequest::call_route(request, global, |request, js_request| {
+                Bun__ServerRouteList__callRoute(
+                    global,
+                    index,
+                    request,
+                    server_js,
+                    server_request_list,
+                    js_request,
+                    core::ptr::from_mut(req).cast::<c_void>(),
+                )
+            });
 
-        server.handle_request(prepared, req, response_value);
+        server.handle_request(&request, ctx, req, response_value);
     }
 
     /// Invoke the JS-side
@@ -1422,12 +1406,6 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
 
     // `js_gc_route_list_set` and the per-callback slot setters live with the
     // `slot_setter!` invocations below.
-
-    /// Wrap an already-heap-allocated server pointer in its JS object.
-    /// The caller's ref transfers to the C++ wrapper (dropped after `finalize`).
-    pub(crate) fn ptr_to_js(this: *mut Self, global: &JSGlobalObject) -> JSValue {
-        server_js_cached!(SSL, DEBUG, to_js(this.cast(), global))
-    }
 
     // `on_reload_from_zig` body lives in `server_body.rs` (`impl NewServer { … }`);
     // same crate, separate file, alongside `reload`/`reload_static_routes`.
@@ -2540,7 +2518,9 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
 
     /// Create the uws `App<SSL>` (and optional H2/H3 apps), register routes via
     /// `set_routes()`, and bind the listen socket. A failure leaves an exception pending.
-    pub(crate) fn listen(owner: &bun_ptr::AliasableBox<Self>) -> JSValue {
+    pub(crate) fn listen(
+        owner: bun_ptr::AliasableBox<Self>,
+    ) -> Option<(bun_ptr::RefPtr<Self>, JSValue)> {
         httplog!("listen");
         let this = owner.as_ptr();
         let this_ref = bun_ptr::BackRef::from(owner.as_non_null());
@@ -2560,7 +2540,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                     let _ = global.throw_value(crate::dns_jsc::cares_jsc::not_a_hostname_error(
                         global, hostname,
                     ));
-                    return JSValue::ZERO;
+                    return None;
                 }
             }
             server_config::Address::Tcp { hostname: None, .. }
@@ -2583,7 +2563,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                 let _ = global.throw(format_args!(
                     "Failed to create HTTPS server: missing tls config"
                 ));
-                return JSValue::ZERO;
+                return None;
             };
 
             let owned = match uws_sys::app::OwnedApp::<SSL>::new(&ssl_options) {
@@ -2592,7 +2572,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                     if !global.has_exception() && !throw_ssl_error_if_necessary(global) {
                         let _ = global.throw(format_args!("Failed to create HTTP server"));
                     }
-                    return JSValue::ZERO;
+                    return None;
                 }
             };
             app = owned.as_ptr();
@@ -2606,14 +2586,14 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                         if !global.has_exception() {
                             let _ = global.throw(format_args!("Failed to create HTTP/3 server"));
                         }
-                        return JSValue::ZERO;
+                        return None;
                     }
                 };
                 this_ref.h3_app.set(h3);
                 this_ref.init_mux_request_pool();
             }
             if !this_ref.attach_http2(app) {
-                return JSValue::ZERO;
+                return None;
             }
 
             route_list_value = this_ref.set_routes();
@@ -2638,10 +2618,10 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                             bstr::BStr::new(server_name.to_bytes())
                         ));
                     }
-                    return JSValue::ZERO;
+                    return None;
                 }
                 if throw_ssl_error_if_necessary(global) {
-                    return JSValue::ZERO;
+                    return None;
                 }
             }
 
@@ -2669,7 +2649,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                                     bstr::BStr::new(sni_name.to_bytes())
                                 ));
                             }
-                            return JSValue::ZERO;
+                            return None;
                         }
                     }
                 }
@@ -2684,10 +2664,10 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                             bstr::BStr::new(sni_name.to_bytes())
                         ));
                     }
-                    return JSValue::ZERO;
+                    return None;
                 }
                 if throw_ssl_error_if_necessary(global) {
-                    return JSValue::ZERO;
+                    return None;
                 }
             }
         } else {
@@ -2697,13 +2677,13 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                     if !global.has_exception() {
                         let _ = global.throw(format_args!("Failed to create HTTP server"));
                     }
-                    return JSValue::ZERO;
+                    return None;
                 }
             };
             app = owned.as_ptr();
             this_ref.app.set(Some(owned));
             if !this_ref.attach_http2(app) {
-                return JSValue::ZERO;
+                return None;
             }
             route_list_value = this_ref.set_routes();
         }
@@ -2846,10 +2826,11 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         }
 
         if global.has_exception() {
-            return JSValue::ZERO;
+            return None;
         }
 
-        this_ref.hold_open_ref();
+        let server = bun_ptr::RefPtr::from(owner);
+        server.hold_open_ref();
         this_ref.ref_();
 
         // NOTE: the "starting an HTTP server is a good time to GC" nudge runs
@@ -2857,7 +2838,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         // callbacks are rooted in the wrapper's WriteBarrier slots; see
         // `gc_hint_after_listen` below.
 
-        route_list_value
+        Some((server, route_list_value))
     }
 
     /// The server-just-started GC nudge, split out of `listen()` so
@@ -2996,7 +2977,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
     /// `Handler::from_js` so the wrapped fn is rooted the moment it exists).
     /// Writes all slots unconditionally — `JSValue::ZERO` clears, so a reload
     /// that omits a callback drops the previous root. Same contract as
-    /// [`wrap_handler_slot`]; called after `ptr_to_js` in `serve()` and after
+    /// [`wrap_handler_slot`]; called after `wrap` in `serve()` and after
     /// the websocket-context swap in `on_reload_from_zig`; dispatch keeps
     /// reading the shadow.
     pub(crate) fn write_ws_handler_slots(&self, server_js: JSValue, global: &JSGlobalObject) {
@@ -3706,11 +3687,10 @@ impl AnyServer {
     ) -> jsc::JsResult<Option<SavedRequest>> {
         let req: &mut uws_sys::Request = req;
         Ok(any_server_dispatch_resp!(self, resp, |s, r| {
-            let Some(p) = s.prepare_js_request_context(req, r, CreateJsRequest::Bake, method)
-            else {
+            let Some((request, ctx)) = s.prepare_js_request_context(req, r, method) else {
                 return Ok(None);
             };
-            Some(p.save(global, req, r))
+            Some(DispatchedRequest::for_bake(request, global).save(&ctx, global, req, r))
         }))
     }
 

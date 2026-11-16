@@ -456,11 +456,11 @@ impl Builtin {
 
     /// Borrow `argv[1..][idx]` as `&ZStr` (NUL-terminated view).
     ///
-    /// Same invariant and lifetime decoupling as [`arg_bytes`]; for callers
+    /// Same invariant as [`arg_bytes`]; for callers
     /// that need to pass the argument to a `&ZStr`-taking syscall wrapper
     /// without re-copying.
     #[inline]
-    pub(crate) fn arg_zstr<'a>(&self, idx: usize) -> &'a bun_core::ZStr {
+    pub(crate) fn arg_zstr(&self, idx: usize) -> &bun_core::ZStr {
         let p: *const c_char = self.args[idx];
         // SAFETY: see `arg_bytes` — valid NUL-terminated argv pointer.
         bun_core::ZStr::from_cstr(unsafe { core::ffi::CStr::from_ptr(p) })
@@ -530,15 +530,8 @@ impl Builtin {
                 // Clone the path bytes so the
                 // `&mut interp` open call below doesn't overlap a borrow into
                 // the Cmd node.
-                let path_buf: Vec<u8> = {
-                    let raw = &interp.as_cmd(cmd).redirection_file;
-                    let len = raw.len().saturating_sub(1);
-                    let mut v = raw[..len].to_vec();
-                    v.push(0);
-                    v
-                };
-                // SAFETY: `path_buf` ends in NUL by construction.
-                let path = bun_core::ZStr::from_slice_with_nul(&path_buf[..]);
+                let raw = &interp.as_cmd(cmd).redirection_file;
+                let path: &bun_core::ZStr = &bun_core::ZBox::from_bytes(&raw[..raw.len() - 1]);
                 let perm: bun_sys::Mode = 0o666;
                 let cwd_fd = Self::cwd(interp, cmd);
                 let evtloop = interp.event_loop;

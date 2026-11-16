@@ -14,7 +14,6 @@ use std::io::Write as _;
 use super::cron_parser;
 use super::cron_parser::{CronExpression, CronTz};
 
-use core::ffi::CStr;
 use std::cell::Cell;
 
 use bun_core::EncodedSlice;
@@ -44,8 +43,8 @@ use crate::generated_bindgen::cron::{
     Bun__CronJob__onPromiseResolve, CronOptions, js_CronJob as js,
 };
 use crate::timer::{EventLoopTimer, EventLoopTimerState, EventLoopTimerTag};
-use bun_core::ZStr;
 use bun_core::strings;
+use bun_core::{ZStr, zstr};
 #[cfg(target_os = "macos")]
 use bun_sys::FdDirExt as _;
 // Owned NUL-terminated string — `bun_str` exposes the
@@ -373,7 +372,7 @@ impl CronRegisterJob {
     /// May free `this` (via spawn → synchronous exit → finish, or error path).
     fn spawn_cmd(
         this: ThisPtr<Self>,
-        argv: &[&CStr],
+        argv: &[&ZStr],
         stdin_opt: spawn::Stdio,
         stdout_opt: spawn::Stdio,
     ) {
@@ -388,7 +387,7 @@ impl CronRegisterJob {
         let Some(crontab_path) = this.prepare_list_crontab() else {
             return Self::finish(this);
         };
-        let argv = [crontab_path.as_cstr(), c"-l"];
+        let argv = [crontab_path.as_zstr(), zstr!("-l")];
         Self::spawn_cmd(this, &argv, spawn::Stdio::Ignore, spawn::Stdio::Buffer);
     }
 
@@ -398,7 +397,7 @@ impl CronRegisterJob {
         let Ok((crontab_path, tmp_path)) = this.prepare_install_crontab() else {
             return Self::finish(this);
         };
-        let argv = [crontab_path.as_cstr(), tmp_path.as_cstr()];
+        let argv = [crontab_path.as_zstr(), tmp_path.as_zstr()];
         Self::spawn_cmd(this, &argv, spawn::Stdio::Ignore, spawn::Stdio::Ignore);
     }
 
@@ -600,7 +599,7 @@ impl CronRegisterJob {
         let Ok(uid_str) = this.prepare_bootout() else {
             return Self::finish(this);
         };
-        let argv = [c"/bin/launchctl", c"bootout", uid_str.as_cstr()];
+        let argv = [zstr!("/bin/launchctl"), zstr!("bootout"), uid_str.as_zstr()];
         Self::spawn_cmd(this, &argv, spawn::Stdio::Ignore, spawn::Stdio::Ignore);
     }
 
@@ -611,10 +610,10 @@ impl CronRegisterJob {
             return Self::finish(this);
         };
         let argv = [
-            c"/bin/launchctl",
-            c"bootstrap",
-            uid_str.as_cstr(),
-            plist_path.as_cstr(),
+            zstr!("/bin/launchctl"),
+            zstr!("bootstrap"),
+            uid_str.as_zstr(),
+            plist_path.as_zstr(),
         ];
         Self::spawn_cmd(this, &argv, spawn::Stdio::Ignore, spawn::Stdio::Ignore);
     }
@@ -773,14 +772,14 @@ impl CronRegisterJob {
             return Self::finish(this);
         };
         let argv = [
-            c"schtasks",
-            c"/create",
-            c"/xml",
-            xml_path.as_cstr(),
-            c"/tn",
-            task_name.as_cstr(),
-            c"/np",
-            c"/f",
+            zstr!("schtasks"),
+            zstr!("/create"),
+            zstr!("/xml"),
+            xml_path.as_zstr(),
+            zstr!("/tn"),
+            task_name.as_zstr(),
+            zstr!("/np"),
+            zstr!("/f"),
         ];
         Self::spawn_cmd(this, &argv, spawn::Stdio::Ignore, spawn::Stdio::Ignore);
     }
@@ -1037,7 +1036,7 @@ impl CronRemoveJob {
     /// May free `this` (via spawn → synchronous exit → finish, or error path).
     fn spawn_cmd(
         this: ThisPtr<Self>,
-        argv: &[&CStr],
+        argv: &[&ZStr],
         stdin_opt: spawn::Stdio,
         stdout_opt: spawn::Stdio,
     ) {
@@ -1050,7 +1049,7 @@ impl CronRemoveJob {
         let Some(crontab_path) = this.prepare_list_crontab() else {
             return Self::finish(this);
         };
-        let argv = [crontab_path.as_cstr(), c"-l"];
+        let argv = [crontab_path.as_zstr(), zstr!("-l")];
         Self::spawn_cmd(this, &argv, spawn::Stdio::Ignore, spawn::Stdio::Buffer);
     }
 
@@ -1060,7 +1059,7 @@ impl CronRemoveJob {
         let Ok((crontab_path, tmp_path)) = this.prepare_filtered_crontab() else {
             return Self::finish(this);
         };
-        let argv = [crontab_path.as_cstr(), tmp_path.as_cstr()];
+        let argv = [crontab_path.as_zstr(), tmp_path.as_zstr()];
         Self::spawn_cmd(this, &argv, spawn::Stdio::Ignore, spawn::Stdio::Ignore);
     }
 
@@ -1118,7 +1117,7 @@ impl CronRemoveJob {
         let Ok(uid_str) = this.prepare_bootout() else {
             return Self::finish(this);
         };
-        let argv = [c"/bin/launchctl", c"bootout", uid_str.as_cstr()];
+        let argv = [zstr!("/bin/launchctl"), zstr!("bootout"), uid_str.as_zstr()];
         Self::spawn_cmd(this, &argv, spawn::Stdio::Ignore, spawn::Stdio::Ignore);
     }
 }
@@ -1171,7 +1170,13 @@ impl CronRemoveJob {
         let Ok(task_name) = this.prepare_schtasks_delete() else {
             return Self::finish(this);
         };
-        let argv = [c"schtasks", c"/delete", c"/tn", task_name.as_cstr(), c"/f"];
+        let argv = [
+            zstr!("schtasks"),
+            zstr!("/delete"),
+            zstr!("/tn"),
+            task_name.as_zstr(),
+            zstr!("/f"),
+        ];
         Self::spawn_cmd(this, &argv, spawn::Stdio::Ignore, spawn::Stdio::Ignore);
     }
 
@@ -1630,9 +1635,8 @@ impl CronJob {
             }
         }
 
-        // `job`'s ref moves to the JS wrapper (released via `finalize`).
-        let js_value = Self::to_js_nonnull(job.as_non_null(), global);
-        let job = job.into_this_ptr();
+        let job = js::wrap(job, global);
+        let js_value = job.to_js();
         job.this_value.with_mut(|v| v.set_strong(js_value, global));
         js::cron_set_cached(js_value, global, schedule_value.to_js());
         js::callback_set_cached(
@@ -1802,7 +1806,7 @@ impl SpawnCmdTarget for CronRemoveJob {
 /// see [`CronJobBase`] note. Callers must not touch `this` after this returns.
 fn spawn_cmd_generic<T: SpawnCmdTarget>(
     this: ThisPtr<T>,
-    argv: &[&CStr],
+    argv: &[&ZStr],
     stdin_opt: spawn::Stdio,
     stdout_opt: spawn::Stdio,
 ) {
@@ -1829,7 +1833,7 @@ fn spawn_cmd_generic<T: SpawnCmdTarget>(
 /// via `set_err` (for the caller to `finish`).
 fn spawn_cmd_prepare<T: SpawnCmdTarget>(
     this: &T,
-    argv: &[&CStr],
+    argv: &[&ZStr],
     stdin_opt: spawn::Stdio,
     stdout_opt: spawn::Stdio,
 ) -> Result<ProcessHandle, ()> {
@@ -1855,7 +1859,7 @@ fn spawn_cmd_prepare<T: SpawnCmdTarget>(
             .map
             .get(b"PATH")
             .unwrap_or(b"");
-        let argv0 = argv[0].to_bytes();
+        let argv0 = argv[0].as_bytes();
         match bun_which::which(&mut path_buf, path_env, b"", argv0) {
             Some(p) => resolved_argv0 = Some(p.into()),
             None => {
@@ -1892,7 +1896,7 @@ fn spawn_cmd_prepare<T: SpawnCmdTarget>(
         ..SpawnOptions::default()
     };
 
-    let mut spawned = match spawn::spawn_process_cstr(&spawn_options, argv, env) {
+    let mut spawned = match spawn::spawn_process_z(&spawn_options, argv, env) {
         Ok(Ok(sp)) => sp,
         Ok(Err(err)) => {
             this.set_err(format_args!(

@@ -198,7 +198,17 @@ impl<'a, 'b, 's> ProjectToLower<'a, 'b, 's> {
             ranges.lock().extend(unchecked);
         }
         let path = self.loaded.loaded.files().module(file).file_name();
-        let _work = current_work::working_on(current_work::Step::Lower, path);
+        current_work::working_on(current_work::Step::Lower, path, || {
+            self.lower_or_refuse(checker, file, parts)
+        })
+    }
+
+    fn lower_or_refuse(
+        &self,
+        checker: &mut Checker<'_, 's>,
+        file: FileId,
+        parts: &PartsOfVisit<'_, 's>,
+    ) -> Option<Option<LoweredUnit>> {
         let may_fail_where_loaded = self.may_fail_where_loaded(file);
         if let Some(sentence) = self.decided.refusal_of(file) {
             let lower = || self.lower_module_that_throws(checker, file, sentence);

@@ -269,7 +269,7 @@ pub(crate) trait BlobExt {
         cx: &mut JsScope<'_>,
         parts: JsLocal<'_>,
         options: JsLocal<'_>,
-    ) -> JsResult<*mut Blob>
+    ) -> JsResult<RefPtr<Blob>>
     where
         Self: Sized;
     fn init_with_all_ascii(
@@ -1891,7 +1891,7 @@ impl BlobExt for Blob {
         cx: &mut JsScope<'_>,
         parts: JsLocal<'_>,
         options: JsLocal<'_>,
-    ) -> JsResult<*mut Blob> {
+    ) -> JsResult<RefPtr<Blob>> {
         let global_this = cx.global();
         let parts = parts.to_js();
         let options = options.to_js();
@@ -3251,9 +3251,8 @@ impl URLSearchParamsConverter {
 // ──────────────────────────────────────────────────────────────────────────
 
 #[unsafe(no_mangle)]
-pub(crate) extern "C" fn Blob__dupeFromJS(value: JSValue) -> Option<NonNull<Blob>> {
-    let this = Blob::from_js(&value)?;
-    Some(NonNull::new(Blob__dupe(&this)).expect("Blob__dupe returns a fresh heap allocation"))
+pub(crate) extern "C" fn Blob__dupeFromJS(value: JSValue) -> Option<RefPtr<Blob>> {
+    Some(Blob__dupe(&*Blob::from_js(&value)?))
 }
 
 #[unsafe(no_mangle)]
@@ -3265,7 +3264,7 @@ pub(crate) extern "C" fn Blob__setAsFile(this: &Blob, path_str: &BunString) {
 }
 
 #[unsafe(no_mangle)]
-pub(crate) extern "C" fn Blob__dupe(this: &Blob) -> *mut Blob {
+pub(crate) extern "C" fn Blob__dupe(this: &Blob) -> RefPtr<Blob> {
     Blob::new(this.dupe_with_content_type(true))
 }
 
@@ -3335,7 +3334,6 @@ pub(crate) fn mkdir_if_not_exists<T: MkdirpTarget>(
     this: &mut T,
     err: &bun_sys::Error,
     path_string: &bun_core::ZStr,
-    err_path: &[u8],
 ) -> Retry {
     if err.get_errno() == bun_sys::E::ENOENT && this.mkdirp_if_not_exists() {
         match mkdirp_parent(path_string.as_bytes()) {
@@ -3345,7 +3343,7 @@ pub(crate) fn mkdir_if_not_exists<T: MkdirpTarget>(
             }
             bun_sys::Result::Err(err2) => {
                 this.set_errno_if_present(bun_errno::from_errno(err2.errno as i32).into());
-                this.set_system_error(err.with_path(err_path).to_system_error());
+                this.set_system_error(err.to_system_error());
                 return Retry::Fail;
             }
         }
@@ -4481,9 +4479,9 @@ bun_jsc::jsc_host_abi! {
         bits: JSValue,
         name: JSValue,
         options: JSValue,
-    ) -> Option<NonNull<Blob>> {
+    ) -> Option<RefPtr<Blob>> {
         match jsdom_file_construct(global_this, bits, name, options) {
-            Ok(b) => Some(NonNull::new(b).expect("jsdom_file_construct returns Blob::new (heap::alloc)")),
+            Ok(b) => Some(b),
             Err(jsc::JsError::Thrown) => None,
             Err(jsc::JsError::Terminated) => {
                 // A constructor runs beneath script: rethrow so the caller keeps unwinding.
@@ -4503,7 +4501,7 @@ pub(crate) fn jsdom_file_construct(
     bits: JSValue,
     name: JSValue,
     options: JSValue,
-) -> JsResult<*mut Blob> {
+) -> JsResult<RefPtr<Blob>> {
     jsc::mark_binding();
 
     let name = BunString::from_js(name, global_this)?;
@@ -4869,7 +4867,7 @@ pub(crate) unsafe extern "C" fn Blob__fromBytes(
     global_this: &JSGlobalObject,
     ptr: *const u8,
     len: usize,
-) -> *mut Blob {
+) -> RefPtr<Blob> {
     if ptr.is_null() || len == 0 {
         return Blob::new(Blob::init_empty(global_this));
     }
@@ -4892,20 +4890,15 @@ pub(crate) unsafe extern "C" fn Blob__fromBytesWithType(
     ptr: *const u8,
     len: usize,
     mime: *const c_char,
-) -> *mut Blob {
+) -> RefPtr<Blob> {
     // SAFETY: forwarded from caller's contract.
     let blob = unsafe { Blob__fromBytes(global_this, ptr, len) };
     // SAFETY: caller guarantees `mime` is a NUL-terminated 'static C string.
     let mime_slice = unsafe { bun_core::ffi::cstr(mime) }.to_bytes();
     if !mime_slice.is_empty() {
-        // SAFETY: `blob` is a fresh heap allocation returned by `Blob__fromBytes`;
-        // we are the sole owner until this function returns it.
-        unsafe {
-            (*blob)
-                .content_type
-                .set(BlobContentType::Owned(mime_slice.into()));
-            (*blob).content_type_was_set.set(true);
-        }
+        blob.content_type
+            .set(BlobContentType::Owned(mime_slice.into()));
+        blob.content_type_was_set.set(true);
     }
     blob
 }
@@ -4922,7 +4915,7 @@ pub(crate) unsafe extern "C" fn Blob__fromMmapWithType(
     ptr: *mut u8,
     len: usize,
     mime: *const c_char,
-) -> *mut Blob {
+) -> RefPtr<Blob> {
     #[cfg(not(unix))]
     {
         // Windows Chrome backend never calls this; if it ever does, fall back to copying.
@@ -5150,7 +5143,7 @@ impl<const TYPED_ARRAY_VIEW: jsc::JSType> read_file::ReadFileToJs
         {
             return Err(g.throw_out_of_memory());
         }
-        jsc::ArrayBuffer::from_owned_bytes(by, TYPED_ARRAY_VIEW).to_js_unchecked(g)
+        jsc::ArrayBuffer::from_default_allocator(g, TYPED_ARRAY_VIEW, by.into_vec())
     }
     unsafe fn from_store(b: &Blob, g: &JSGlobalObject, by: *mut [u8]) -> JsResult<JSValue> {
         // SAFETY: fn contract.
@@ -5664,22 +5657,13 @@ pub(crate) trait FileOpener: Sized {
     /// `CopyFile`) override this to call [`mkdir_if_not_exists`]; everyone else
     /// (e.g. `ReadFile`) keeps the default `Retry::No`, so the open path falls
     /// straight through to the error branch.
-    fn try_mkdirp(
-        &mut self,
-        _err: bun_sys::Error,
-        _path: &bun_core::ZStr,
-        _display_path: &[u8],
-    ) -> Retry {
+    fn try_mkdirp(&mut self, _err: bun_sys::Error, _path: &bun_core::ZStr) -> Retry {
         Retry::No
     }
 
     fn get_fd_by_opening(&mut self, callback: fn(&mut Self, Fd)) {
         let mut buf = bun_paths::path_buffer_pool::get();
-        let path_string = match self.pathlike() {
-            PathOrFileDescriptor::Path(p) => p.clone(),
-            PathOrFileDescriptor::Fd(_) => unreachable!(),
-        };
-        let path = path_string.slice_z(&mut buf);
+        let path = self.pathlike().path().slice_z(&mut buf);
 
         loop {
             match bun_sys::File::open(
@@ -5693,17 +5677,15 @@ pub(crate) trait FileOpener: Sized {
                 }
                 bun_sys::Result::Err(err) => {
                     if err.get_errno() == bun_sys::E::ENOENT {
-                        match self.try_mkdirp(err.clone(), path, path_string.slice()) {
+                        // Not `err`: its path is "" if the path does not fit `buf`.
+                        match self.try_mkdirp(err.with_path(self.pathlike().path().slice()), path) {
                             Retry::Continue => continue,
                             // `mkdir_if_not_exists` has set `errno` and `system_error`.
                             Retry::Fail => break,
                             Retry::No => {}
                         }
                     }
-                    let err = node::fs::error_for_caller(
-                        [Some(&path_string), None],
-                        err.with_path(path_string.slice()),
-                    );
+                    let err = sys_error_with_path_like(&err, self.pathlike());
                     self.set_errno(bun_errno::from_errno(err.errno as i32).into());
                     self.set_system_error(jsc::SysErrorJsc::to_system_error(&err));
                     break;

@@ -393,15 +393,9 @@ impl Entry {
             }
         }
 
-        // The basename of a NUL-terminated
-        // path is itself NUL-terminated (it's a suffix), so we can hand it to
-        // `Tmpfile::finish` as a `&ZStr` without copying.
-        let dest_slice = destination_path.as_bytes();
-        let base = paths::basename(dest_slice);
-        // SAFETY: `base` is a suffix of `destination_path`, which the caller
-        // built via `get_cache_file_path` and is NUL-terminated at `dest_slice.len()`.
-        let base_z = unsafe { ZStr::from_raw(base.as_ptr(), base.len()) };
-        tmpfile.finish(base_z).map_err(|(err, _)| err)?;
+        let base_len = paths::basename(destination_path).len();
+        let base = destination_path.substring(destination_path.len() - base_len);
+        tmpfile.finish(base).map_err(|(err, _)| err)?;
         Ok(())
     }
 
@@ -620,10 +614,8 @@ impl RuntimeTranspilerCache {
         let cache_filename_len =
             Self::write_cache_filename(&mut buf[cache_dir_len + 1..], input_hash)?;
         let total = cache_dir_len + 1 + cache_filename_len;
-        buf[total] = 0;
 
-        // SAFETY: we wrote a NUL at buf[total] above.
-        Ok(ZStr::from_buf(&buf[..], total))
+        Ok(ZStr::nul_terminate(buf, total))
     }
 
     /// Writes the resolved cache directory into `buf` (NUL-terminated) and

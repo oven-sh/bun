@@ -393,11 +393,6 @@ impl JSValkeyClient {
         // SAFETY: `self` is the live heap allocation.
         unsafe { RefPtr::init_ref(self.as_ctx_ptr()) }
     }
-    #[inline]
-    pub(crate) fn new(init: JSValkeyClient) -> *mut JSValkeyClient {
-        // bun.TrivialNew(@This()) → heap::alloc(Box::new(init))
-        bun_core::heap::into_raw(Box::new(init))
-    }
 
     /// Convenience accessor for the per-thread JS VM stored on `client`.
     #[inline]
@@ -715,7 +710,7 @@ impl JSValkeyClient {
     pub(crate) fn clone_without_connecting(
         &self,
         cx: &bun_jsc::JsThread<'_>,
-    ) -> Result<*mut JSValkeyClient, bun_alloc::AllocError> {
+    ) -> Result<RefPtr<JSValkeyClient>, bun_alloc::AllocError> {
         let vm: &'static VirtualMachine = cx.global().bun_vm();
 
         let client = self.client.get();
@@ -737,7 +732,7 @@ impl JSValkeyClient {
             valkey::TLS::Custom(cfg) => valkey::TLS::Custom(cfg.clone()),
         };
 
-        Ok(JSValkeyClient::new(JSValkeyClient {
+        Ok(RefPtr::new(JSValkeyClient {
             ref_count: bun_ptr::RefCount::init(),
             _subscription_ctx: JsCell::new(SubscriptionCtx::default()),
             client: JsCell::new(valkey::ValkeyClient {
@@ -1639,7 +1634,7 @@ impl<const SSL: bool> SocketHandler<SSL> {
                 && !bun_core::ip_address::is_ip_host(sni)
                 && let Some(ssl) = socket.ssl_mut()
             {
-                ssl.set_servername(bun_core::ZBox::from_bytes(sni).as_cstr());
+                ssl.set_servername(&bun_core::ZBox::from_bytes(sni));
             }
         }
         this.client_mut().socket = Self::socket(socket);

@@ -839,9 +839,7 @@ pub(crate) fn run_scripts_with_filter(
             // Route through the process-lifetime CLI arena
             // and derive the `ZStr` from the arena slice.
             let interned: &'static [u8] = crate::cli::cli_dupe(&copy_script);
-            let combined_len = interned.len() - 1;
-            // SAFETY: interned[combined_len] == 0 (copied from `copy_script`).
-            let combined = ZStr::from_buf(interned, combined_len);
+            let combined = ZStr::from_slice_with_nul(interned);
 
             let dep_source_buf: &[u8] = &package.json.dependencies.source_buf;
             let deps: Vec<Box<[u8]>> = package

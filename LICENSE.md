@@ -24,7 +24,7 @@ Bun statically links these libraries:
 | [`brotli`](https://github.com/google/brotli) | MIT |
 | [`libarchive`](https://github.com/libarchive/libarchive) (not linked: `src/tar` is derived from parts of it) | [several licenses](https://github.com/libarchive/libarchive/blob/master/COPYING) |
 | [`lol-html`](https://github.com/cloudflare/lol-html/tree/master/c-api) | BSD 3-Clause |
-| [`ls-hpack`](https://github.com/litespeedtech/ls-hpack) | MIT |
+| [`ls-hpack`](https://github.com/litespeedtech/ls-hpack) (not linked: `src/hpack` is derived from parts of it) | MIT |
 | [`ls-qpack`](https://github.com/litespeedtech/ls-qpack) | MIT |
 | [`lsquic`](https://github.com/litespeedtech/lsquic) | MIT (portions derived from [Chromium proto-quic](https://github.com/litespeedtech/lsquic/blob/master/LICENSE.chrome), BSD 3-Clause) |
 | [`mimalloc`](https://github.com/microsoft/mimalloc) | MIT |

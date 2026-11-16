@@ -84,7 +84,7 @@ type RawState = {
   /** Called for each PING from the client. The helper never ACKs a PING; a test does it. */
   onPing?: (conn: RawConn, payload: Buffer) => void;
   /** Called for each request, before `onStream`. */
-  onRequest?: () => void;
+  onRequest?: (block: Buffer) => void;
   /** Resolves once every accepted socket has emitted `close` — i.e. all
    *  in-flight client frames have been delivered to the `data` handler.
    *  Tests asserting on server-side capture (`state.rst`) should await this
@@ -138,7 +138,7 @@ async function withRawH2Server(
         const payload = buf.subarray(9, 9 + len);
         buf = buf.subarray(9 + len);
         if (type === 4 && !(flags & 1)) socket.write(frame(4, 1, 0)); // ack their SETTINGS
-        if (type === 1) state.onRequest?.();
+        if (type === 1) state.onRequest?.(payload);
         if (type === 1) onStream(conn, id, connIndex); // HEADERS opens a stream
         if (type === 3) state.rst.push({ id, code: payload.readUInt32BE(0) });
         if (type === 6 && !(flags & 1)) state.onPing?.(conn, payload);
@@ -2609,6 +2609,56 @@ describe.concurrent("fetch() over HTTP/2 (BUN_FEATURE_FLAG_EXPERIMENTAL_HTTP2_CL
     } finally {
       server.close();
     }
+  });
+
+  test.each([
+    [[100], "3f45"],
+    [[0, 4096], "203fe11f"],
+    [[200, 100, 300], "3f453f8d02"],
+    [[4096], "3fe11f"],
+  ])("SETTINGS_HEADER_TABLE_SIZE of %j between two requests", async (sizes, update) => {
+    await withRawH2Server(
+      (conn, id) => {
+        const entries = sizes.map(size => Buffer.concat([Buffer.from([0, 1]), u32be(size)]));
+        if (id === 1) conn.socket.write(frame(4, 0, 0, Buffer.concat(entries)));
+        conn.headers(id, hpackStatus(204), { endStream: true });
+      },
+      async (url, state) => {
+        const starts: string[] = [];
+        state.onRequest = block => starts.push(block.subarray(0, block.indexOf("8287", 0, "hex")).toString("hex"));
+        await using proc = await spawnFetch(`
+          for (let i = 0; i < 3; i++) console.log((await fetch("${url}", { tls: { rejectUnauthorized: false } })).status);
+        `);
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect({ stdout, stderr, starts, exitCode }).toEqual({
+          stdout: "204\n204\n204\n",
+          stderr: "",
+          starts: ["", update, ""],
+          exitCode: 0,
+        });
+      },
+    );
+  });
+
+  test("a request header may take 64 KiB with its name", async () => {
+    await withRawH2Server(
+      (conn, id) => conn.headers(id, hpackStatus(204), { endStream: true }),
+      async (url, state) => {
+        await using proc = await spawnFetch(`
+          for (const length of [65536, 65537, 10]) {
+            const headers = { "x-big": Buffer.alloc(length - 5, "c").toString() };
+            console.log(await fetch("${url}", { headers, tls: { rejectUnauthorized: false } }).then(r => r.status, e => e.code));
+          }
+        `);
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect({ stdout, stderr, connections: state.connections, exitCode }).toEqual({
+          stdout: "204\nUnableToEncode\n204\n",
+          stderr: "",
+          connections: 2,
+          exitCode: 0,
+        });
+      },
+    );
   });
 
   test("303 to a streaming POST over HTTP/1.1 closes the socket instead of pooling it mid-chunked-body", async () => {

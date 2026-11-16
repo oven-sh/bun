@@ -466,7 +466,6 @@ export type DepName =
   | "libuv"
   | "libwebp"
   | "lolhtml"
-  | "lshpack"
   | "lsqpack"
   | "lsquic"
   | "mimalloc"

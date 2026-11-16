@@ -19,7 +19,7 @@ import type { DepName } from "./source.ts";
 import { loadFeatures } from "./trim/features.ts";
 import { ucrtServicingLibDir } from "./winsysroot.ts";
 
-export const safeStackDependencies: readonly DepName[] = ["brotli", "libdeflate", "libwebp", "lshpack", "zlib", "zstd"];
+export const safeStackDependencies: readonly DepName[] = ["brotli", "libdeflate", "libwebp", "zlib", "zstd"];
 
 export function usesSafeStack(c: Pick<Config, "hardened" | "x64" | "abi" | "asan">): boolean {
   return c.hardened && c.x64 && c.abi === "gnu" && !c.asan;
@@ -1944,12 +1944,6 @@ export function bunIncludes(cfg: Config): string[] {
   } else {
     // libuv stubs for unix (real libuv used on windows)
     includes.push(join(cwd, "src/jsc/bindings/libuv"));
-  }
-
-  // musl doesn't ship sys/queue.h (glibc-only BSDism). lshpack bundles
-  // a compat copy for this case.
-  if (cfg.linux && cfg.abi === "musl") {
-    includes.push(join(vendorDir, "lshpack/compat/queue"));
   }
 
   return includes;

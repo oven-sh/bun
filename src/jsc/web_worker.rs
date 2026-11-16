@@ -237,7 +237,6 @@ unsafe extern "C" {
     safe fn Bun__AOT__adoptPagesForNewThread(pages: *mut c_void);
     safe fn Bun__AOT__releaseUnusedPagesOfThread();
     safe fn Bun__AOT__didStartThread();
-    safe fn Bun__freeSharedHeaderBufferForThreadExit();
     // Raw FFI (no RAII guard) so `run` can take the API lock and abandon
     // it with the VM — see the note there.
     safe fn JSC__VM__getAPILock(vm: &jsc::VM);
@@ -1240,14 +1239,6 @@ impl WebWorker {
         }
         log!(
             "[{}] shutdown: VirtualMachine destroyed",
-            self.execution_context_id
-        );
-        // This thread's C++ thread_local destructors are not guaranteed to run
-        // before the process exits, so free the HPACK scratch buffer that any
-        // http2 session on this thread allocated.
-        Bun__freeSharedHeaderBufferForThreadExit();
-        log!(
-            "[{}] shutdown: thread state freed",
             self.execution_context_id
         );
         exit_code

@@ -735,7 +735,7 @@ static std::optional<AOT::ModuleID> evaluatedOriginalKeyModule(Zig::GlobalObject
     if (!isBunTest || !key.endsWith("?actual"_s))
         return std::nullopt;
     auto module = findModuleForPath(key.left(key.length() - "?actual"_s.length()));
-    if (!module || !((AOT::isUnderActualKey(globalObject, *module) && (AOT::evaluatedBy(globalObject, *module) != AOT::LoadedBy::EarlierTestFile || key.contains(makeString(PLATFORM_SEP, "node_modules"_s, PLATFORM_SEP)))) || (ranDuringWaitingMock(globalObject, *module) && !AOT::isRetainedByInFlightLoads(globalObject, *module))) || AOT::isEvicted(globalObject, *module) || AOT::wasReleasedByLoader(globalObject, *module) || AOT::isOriginalEvicted(globalObject, *module) || AOT::mockedModuleEvaluationError(globalObject, *module))
+    if (!module || !((AOT::isUnderActualKey(globalObject, *module) && !hasMockOverFileOfPreload(globalObject, key.left(key.length() - "?actual"_s.length())) && (AOT::evaluatedBy(globalObject, *module) != AOT::LoadedBy::EarlierTestFile || key.contains(makeString(PLATFORM_SEP, "node_modules"_s, PLATFORM_SEP)))) || (ranDuringWaitingMock(globalObject, *module) && !AOT::isRetainedByInFlightLoads(globalObject, *module))) || AOT::isEvicted(globalObject, *module) || AOT::wasReleasedByLoader(globalObject, *module) || AOT::isOriginalEvicted(globalObject, *module) || AOT::mockedModuleEvaluationError(globalObject, *module))
         return std::nullopt;
     return module;
 }

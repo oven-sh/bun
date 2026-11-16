@@ -28,7 +28,7 @@ pub enum Source {
 pub struct OpenTty(bun_ptr::BackRef<Tty, bun_ptr::Mut>);
 
 impl OpenTty {
-    pub fn as_ptr(&self) -> *mut Tty {
+    fn as_ptr(&self) -> *mut Tty {
         self.0.as_ptr()
     }
 
@@ -114,6 +114,24 @@ impl OpenFile {
             // SAFETY: `uv_fs_read` returned an error, so no pool thread has `fs`.
             unsafe { self.complete(false) };
             *buffer = self.buffer.take();
+        })
+    }
+
+    /// # Safety
+    /// The bytes of `iov` stay until `callback` runs or they are moved to `buffer`.
+    pub(crate) unsafe fn submit_write(
+        &self,
+        iov: uv::uv_buf_t,
+        callback: unsafe extern "C" fn(*mut uv::fs_t),
+    ) -> bun_sys::Result<()> {
+        assert!(self.can_start());
+        self.prepare();
+        let (loop_, fs, file) = (self.loop_.uv_loop(), self.as_ptr().cast(), self.file);
+        // SAFETY: fn contract, and as in `submit_read`.
+        let rc = unsafe { uv::uv_fs_write(loop_, fs, file, &raw const iov, 1, -1, Some(callback)) };
+        rc.to_result(bun_sys::Tag::write).inspect_err(|_| {
+            // SAFETY: `uv_fs_write` returned an error, so no pool thread has `fs`.
+            unsafe { self.complete(false) }
         })
     }
 
@@ -354,7 +372,7 @@ impl Source {
         self.file().map(|file| file.as_ptr().cast())
     }
 
-    pub fn ref_(&mut self) {
+    pub(crate) fn ref_(&mut self) {
         match self {
             Source::Pipe(pipe) => pipe.ref_(),
             Source::Tty(tty) => tty.uv.ref_(),
@@ -362,7 +380,7 @@ impl Source {
         }
     }
 
-    pub fn unref(&mut self) {
+    pub(crate) fn unref(&mut self) {
         match self {
             Source::Pipe(pipe) => pipe.unref(),
             Source::Tty(tty) => tty.uv.unref(),

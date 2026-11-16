@@ -1033,14 +1033,6 @@ int posix_fadvise(int fd, off_t offset, off_t len, int advice) {
       const { promise: gate, resolve: openGate } = Promise.withResolvers();
       await using server = await origin(gate);
       fs.mkdirSync(path.dirname(dest), { recursive: true });
-      const onDisk = new Promise(resolve => {
-        const watcher = fs.watch(path.dirname(dest), () => {
-          if (fs.existsSync(dest) && fs.statSync(dest).size > 0) {
-            watcher.close();
-            resolve();
-          }
-        });
-      });
       // Its own frame: after it returns only Bun.write refers to the body.
       let response;
       async function start() {
@@ -1051,7 +1043,8 @@ int posix_fadvise(int fd, off_t offset, off_t len, int advice) {
       const written = start();
       // The first half is on disk before the second half is sent. Before, nothing was written
       // until the whole body had been collected in memory.
-      await onDisk;
+      // Polled: on Windows fs.watch may not report a change in size while the file is open.
+      while (!(await fs.promises.stat(dest).catch(() => {}))?.size);
       // One full collection per event-loop turn (an fs round trip) until the Response is gone.
       do {
         await fs.promises.stat(dest);

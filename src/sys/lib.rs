@@ -18,6 +18,8 @@ pub extern crate bun_core as bun_str;
 pub extern crate bun_libuv_sys;
 use bun_core::vec::{BorrowedBuf, BorrowedCursor};
 use core::mem::MaybeUninit;
+#[cfg(windows)]
+use std::os::windows::io::IntoRawHandle as _;
 
 pub mod fd;
 pub use fd::{FdExt, MakeLibUvOwnedError, RawFd};
@@ -831,9 +833,9 @@ pub use tmp::Tmpfile;
 // `#[cfg(windows)]` arms in dependents.
 pub mod windows;
 
+use core::ffi::c_void;
 #[cfg(not(windows))]
-use core::ffi::c_int;
-use core::ffi::{c_char, c_void};
+use core::ffi::{c_char, c_int};
 
 // ──────────────────────────────────────────────────────────────────────────
 // Re-exports from lower-tier crates (PORTING.md crate map).
@@ -4039,19 +4041,9 @@ mod windows_impl {
     pub fn getcwd(buf: &mut [u8]) -> Maybe<usize> {
         // GetCurrentDirectoryW + WTF16→UTF8.
         let mut wbuf = bun_paths::w_path_buffer_pool::get();
-        let len =
-            unsafe { w::kernel32::GetCurrentDirectoryW(wbuf.len() as u32, wbuf.as_mut_ptr()) };
-        if len == 0 {
-            return Err(Error::from_win32(w::Win32Error::get(), Tag::getcwd));
-        }
-        // MSDN: when `nBufferLength` is too small `GetCurrentDirectoryW`
-        // returns the *required* size (incl. NUL), which can exceed
-        // `wbuf.len()` under long-path opt-in. Guard so the slice below
-        // surfaces ENAMETOOLONG instead of panicking on OOB.
-        if len as usize > wbuf.len() {
-            return Err(Error::new(E::ENAMETOOLONG, Tag::getcwd));
-        }
-        let utf8 = bun_paths::string_paths::from_w_path(buf, &wbuf[..len as usize]);
+        let len = w::GetCurrentDirectoryW(&mut wbuf[..])
+            .map_err(|err| Error::from_win32(err, Tag::getcwd))?;
+        let utf8 = bun_paths::string_paths::from_w_path(buf, &wbuf[..len]);
         Ok(utf8.len())
     }
     pub fn mkdirat(dir: impl AsFd, path: &ZStr, _mode: Mode) -> Maybe<()> {
@@ -4296,12 +4288,8 @@ mod windows_impl {
         }
         let mut wbuf = bun_paths::w_path_buffer_pool::get();
         let wpath = bun_paths::string_paths::to_kernel32_path(&mut wbuf, path.as_bytes());
-        let attrs = unsafe { w::kernel32::GetFileAttributesW(wpath.as_ptr()) };
-        if attrs == w::INVALID_FILE_ATTRIBUTES {
-            return Err(
-                Error::from_win32(w::Win32Error::get(), Tag::access).with_path(path.as_bytes())
-            );
-        }
+        let attrs = w::GetFileAttributesW(wpath)
+            .map_err(|err| Error::from_win32(err, Tag::access).with_path(path.as_bytes()))?;
         let is_readonly = (attrs & w::FILE_ATTRIBUTE_READONLY) != 0;
         let is_directory = (attrs & w::FILE_ATTRIBUTE_DIRECTORY) != 0;
         if (mode & W_OK) != 0 && is_readonly && !is_directory {
@@ -4417,13 +4405,7 @@ mod windows_impl {
     /// `SetFilePointerEx(.., FILE_END)`
     /// returning the new offset as `usize`.
     pub fn set_file_offset_to_end_windows(fd: Fd) -> Maybe<usize> {
-        let mut new: i64 = 0;
-        // SAFETY: `fd` is a valid kernel handle (caller invariant).
-        let ok = unsafe { w::SetFilePointerEx(fd.native() as w::HANDLE, 0, &mut new, w::FILE_END) };
-        if ok == w::FALSE {
-            return Err(Error::from_win32(w::Win32Error::get(), Tag::lseek).with_fd(fd));
-        }
-        Ok(usize::try_from(new).expect("int cast"))
+        lseek(fd, 0, w::FILE_END as i32).map(|new| usize::try_from(new).expect("int cast"))
     }
     pub fn chdir(path: &ZStr) -> Maybe<()> {
         // `SetCurrentDirectoryW(toWDirPath(..))`.
@@ -5072,13 +5054,9 @@ pub mod c {
     // a slice of `kernel32` into `bun.C`). Re-export the handful node_fs.rs
     // reaches via `sys::c::*` so the call sites stay target-neutral.
     #[cfg(windows)]
-    pub use crate::windows::{
-        CopyFileW, FILE_ATTRIBUTE_DIRECTORY, FILE_ATTRIBUTE_REPARSE_POINT, INVALID_FILE_ATTRIBUTES,
-    };
+    pub use crate::windows::{FILE_ATTRIBUTE_DIRECTORY, FILE_ATTRIBUTE_REPARSE_POINT};
     #[cfg(windows)]
-    pub use bun_windows_sys::kernel32::{
-        FlushFileBuffers, GetFileAttributesW, SetConsoleCtrlHandler,
-    };
+    pub use bun_windows_sys::kernel32::{FlushFileBuffers, SetConsoleCtrlHandler};
 
     // ── `bun.c` Darwin surface — C symbols picked up via
     // `@cImport` of system headers. The `libc` crate already binds all of
@@ -6494,8 +6472,7 @@ pub fn normalize_path_windows_opts<'a>(
                 /*ADD_NT_PREFIX*/ true,
             >(path, buf, b'\\' as u16, bun_paths::is_sep_any_t::<u16>);
             let len = norm.len();
-            // SAFETY: ZERO_TERMINATE wrote NUL at buf[len].
-            return Ok(unsafe { WStr::from_raw(norm.as_ptr(), len) });
+            return Ok(WStr::from_buf(buf, len));
         }
         // `add_nt_prefix = false` — produce a Win32 path
         // (no `\??\` object prefix) for callers that feed kernel32 APIs
@@ -6513,8 +6490,7 @@ pub fn normalize_path_windows_opts<'a>(
             /*ADD_NT_PREFIX*/ false,
         >(path, buf, b'\\' as u16, bun_paths::is_sep_any_t::<u16>);
         let len = norm.len();
-        // SAFETY: ZERO_TERMINATE wrote NUL at buf[len].
-        return Ok(unsafe { WStr::from_raw(norm.as_ptr(), len) });
+        return Ok(WStr::from_buf(buf, len));
     }
 
     // Strip a leading drive letter (`C:`) on the relative part; the bypass
@@ -6694,23 +6670,15 @@ fn open_windows_device_path(
     creation_disposition: u32,
     flags_and_attributes: u32,
 ) -> Maybe<Fd> {
-    use bun_windows_sys::externs as w;
-    // SAFETY: path is NUL-terminated UTF-16.
-    let rc = unsafe {
-        w::CreateFileW(
-            path.as_ptr(),
-            desired_access,
-            FILE_SHARE,
-            core::ptr::null_mut(),
-            creation_disposition,
-            flags_and_attributes,
-            core::ptr::null_mut(),
-        )
-    };
-    if rc == bun_windows_sys::INVALID_HANDLE_VALUE {
-        return Err(Error::from_win32(windows::Win32Error::get(), Tag::open));
-    }
-    Ok(Fd::from_system(rc))
+    windows::CreateFileW(
+        path,
+        desired_access,
+        FILE_SHARE,
+        creation_disposition,
+        flags_and_attributes,
+    )
+    .map(|handle| Fd::from_system(handle.into_raw_handle()))
+    .map_err(|err| Error::from_win32(err, Tag::open))
 }
 
 /// Absolute NT object names our producers emit: `\??\…` or `\Device\…`. Only
@@ -6720,6 +6688,15 @@ fn open_windows_device_path(
 fn is_nt_object_name(p: &[u16]) -> bool {
     bun_core::strings::has_prefix_comptime_utf16(p, &windows::NT_OBJECT_PREFIX_U8)
         || bun_core::strings::has_prefix_comptime_utf16(p, b"\\Device\\")
+}
+
+/// The `RootDirectory` that `path` resolves against.
+#[cfg(windows)]
+fn nt_root_directory(dir: Fd, path: &[u16]) -> Option<windows::HANDLE> {
+    if is_nt_object_name(path) {
+        return None;
+    }
+    Some(if dir.is_valid() { dir } else { Fd::cwd() }.native())
 }
 
 /// `openDirAtWindowsNtPath` — `NtCreateFile` with
@@ -6780,58 +6757,29 @@ pub(crate) fn open_dir_at_windows_nt_path(
         );
     }
 
-    let path_len_bytes = (p.len() * 2) as u16;
-    let mut nt_name = w::UNICODE_STRING {
-        Length: path_len_bytes,
-        MaximumLength: path_len_bytes,
-        Buffer: p.as_ptr().cast_mut().cast::<u16>(),
-    };
-    let mut attr = w::OBJECT_ATTRIBUTES {
-        Length: core::mem::size_of::<w::OBJECT_ATTRIBUTES>() as u32,
-        RootDirectory: if is_nt_object_name(p) {
-            core::ptr::null_mut()
-        } else if dir_fd.is_valid() {
-            dir_fd.native()
-        } else {
-            Fd::cwd().native()
-        },
-        Attributes: 0, // Note we do not use OBJ_CASE_INSENSITIVE here.
-        ObjectName: &mut nt_name,
-        SecurityDescriptor: core::ptr::null_mut(),
-        SecurityQualityOfService: core::ptr::null_mut(),
-    };
-    let mut fd: w::HANDLE = bun_windows_sys::INVALID_HANDLE_VALUE;
-    let mut io: w::IO_STATUS_BLOCK = bun_core::ffi::zeroed();
-    // SAFETY: FFI; all pointer args valid for the call.
-    let rc = unsafe {
-        w::ntdll::NtCreateFile(
-            &mut fd,
-            flags,
-            &mut attr,
-            &mut io,
-            core::ptr::null_mut(),
-            0,
-            FILE_SHARE,
-            match options.op {
+    windows::NtCreateFile(
+        nt_root_directory(dir_fd, p),
+        p,
+        NtCreateFileOptions {
+            access_mask: flags,
+            disposition: match options.op {
                 WindowsOpenDirOp::OnlyOpen => w::FILE_OPEN,
                 WindowsOpenDirOp::OnlyCreate => w::FILE_CREATE,
                 WindowsOpenDirOp::OpenOrCreate => w::FILE_OPEN_IF,
             },
-            w::FILE_DIRECTORY_FILE
+            options: w::FILE_DIRECTORY_FILE
                 | w::FILE_SYNCHRONOUS_IO_NONALERT
                 | windows::FILE_OPEN_FOR_BACKUP_INTENT
                 | open_reparse,
-            core::ptr::null_mut(),
-            0,
-        )
-    };
+            attributes: 0,
+            sharing_mode: FILE_SHARE,
+        },
+    )
+    .map(|handle| Fd::from_system(handle.into_raw_handle()))
     // Not `Error::new(rc)`: the curated NTSTATUS table maps
     // `OBJECT_NAME_INVALID` to EINVAL, and `open` of a bad name is ENOENT
     // (libuv/Node), which `RtlNtStatusToDosError` gives.
-    match windows::Win32Error::from_nt_status(rc) {
-        windows::Win32Error::SUCCESS => Ok(Fd::from_system(fd)),
-        code => Err(Error::from_win32(code, Tag::open)),
-    }
+    .map_err(|rc| Error::from_win32(windows::Win32Error::from_nt_status(rc), Tag::open))
 }
 
 /// Absolute paths (`\??\…`, `\Device\…`) must be full NT object names and
@@ -6841,60 +6789,17 @@ pub(crate) fn open_dir_at_windows_nt_path(
 pub(crate) fn open_file_at_windows_nt_path(
     dir: Fd,
     path: &bun_core::WStr,
-    options: NtCreateFileOptions,
+    mut options: NtCreateFileOptions,
 ) -> Maybe<Fd> {
     use bun_windows_sys::externs as w;
     let p = path.as_slice();
-    let mut result: w::HANDLE = core::ptr::null_mut();
-    let path_len_bytes = match u16::try_from(p.len() * 2) {
-        Ok(v) => v,
-        Err(_) => return Err(Error::from_code(E::ENOMEM, Tag::open)),
-    };
-    let mut nt_name = w::UNICODE_STRING {
-        Length: path_len_bytes,
-        MaximumLength: path_len_bytes,
-        Buffer: p.as_ptr().cast_mut().cast::<u16>(),
-    };
-    let mut attr = w::OBJECT_ATTRIBUTES {
-        Length: core::mem::size_of::<w::OBJECT_ATTRIBUTES>() as u32,
-        // [ObjectName] must be a fully qualified file specification or the
-        // name of a device object (`\??\…`, `\Device\…`), unless it is the
-        // name of a file relative to the directory specified by RootDirectory.
-        ObjectName: &mut nt_name,
-        RootDirectory: if is_nt_object_name(p) {
-            core::ptr::null_mut()
-        } else if dir.is_valid() {
-            dir.native()
-        } else {
-            Fd::cwd().native()
-        },
-        Attributes: 0, // Note we do not use OBJ_CASE_INSENSITIVE here.
-        SecurityDescriptor: core::ptr::null_mut(),
-        SecurityQualityOfService: core::ptr::null_mut(),
-    };
-    let mut io: w::IO_STATUS_BLOCK = bun_core::ffi::zeroed();
+    let root_directory = nt_root_directory(dir, p);
 
-    let mut attributes = options.attributes;
     loop {
-        // SAFETY: FFI; all pointer args valid for the call.
-        let rc = unsafe {
-            w::ntdll::NtCreateFile(
-                &mut result,
-                options.access_mask,
-                &mut attr,
-                &mut io,
-                core::ptr::null_mut(),
-                attributes,
-                options.sharing_mode,
-                options.disposition,
-                options.options,
-                core::ptr::null_mut(),
-                0,
-            )
-        };
+        let result = windows::NtCreateFile(root_directory, p, options);
 
-        if rc == w::NTSTATUS::ACCESS_DENIED
-            && attributes == w::FILE_ATTRIBUTE_NORMAL
+        if matches!(result, Err(w::NTSTATUS::ACCESS_DENIED))
+            && options.attributes == w::FILE_ATTRIBUTE_NORMAL
             && (options.access_mask & (w::GENERIC_READ | w::GENERIC_WRITE)) == w::GENERIC_WRITE
         {
             // > If CREATE_ALWAYS and FILE_ATTRIBUTE_NORMAL are specified,
@@ -6908,26 +6813,25 @@ pub(crate) fn open_file_at_windows_nt_path(
             //
             // See https://github.com/oven-sh/bun/issues/6820
             //     https://github.com/libuv/libuv/pull/3380
-            attributes = w::FILE_ATTRIBUTE_HIDDEN;
+            options.attributes = w::FILE_ATTRIBUTE_HIDDEN;
             continue;
         }
 
-        return match windows::Win32Error::from_nt_status(rc) {
-            windows::Win32Error::SUCCESS => {
-                let file = File::from_fd(Fd::from_system(result));
-                if (options.access_mask & w::FILE_APPEND_DATA) != 0 {
-                    // https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-setfilepointerex
-                    // SAFETY: FFI; result is a valid handle.
-                    if unsafe { w::SetFilePointerEx(result, 0, core::ptr::null_mut(), w::FILE_END) }
-                        == 0
-                    {
-                        return Err(Error::from_code(E::EUNKNOWN, Tag::SetFilePointerEx));
-                    }
+        return match result {
+            Ok(handle) => {
+                let file = File::from(handle);
+                if (options.access_mask & w::FILE_APPEND_DATA) != 0
+                    && lseek(file.fd(), 0, w::FILE_END as i32).is_err()
+                {
+                    return Err(Error::from_code(E::EUNKNOWN, Tag::SetFilePointerEx));
                 }
                 Ok(file.into_raw())
             }
             // See `open_dir_at_windows_nt_path`: Rtl mapping, not the curated table.
-            code => Err(Error::from_win32(code, Tag::open)),
+            Err(rc) => Err(Error::from_win32(
+                windows::Win32Error::from_nt_status(rc),
+                Tag::open,
+            )),
         };
     }
 }
@@ -7098,8 +7002,7 @@ pub struct WindowsFileAttributes {
 }
 
 /// `getFileAttributes`. Accepts a UTF-8 path (the
-/// resolver only ever calls it with one); the wide-path arm is the
-/// `GetFileAttributesW` body inlined. Returns `None` on
+/// resolver only ever calls it with one). Returns `None` on
 /// `INVALID_FILE_ATTRIBUTES`.
 #[cfg(windows)]
 pub fn get_file_attributes(path: &ZStr) -> Option<WindowsFileAttributes> {
@@ -7107,11 +7010,7 @@ pub fn get_file_attributes(path: &ZStr) -> Option<WindowsFileAttributes> {
     let mut wbuf = bun_paths::w_path_buffer_pool::get();
     let wpath = bun_paths::string_paths::to_kernel32_path(&mut wbuf.0[..], path.as_bytes());
     // Win32 API does file path normalization, so we do not need the valid path assertion here.
-    // SAFETY: `wpath` is NUL-terminated UTF-16 produced by `to_kernel32_path`.
-    let dword = unsafe { w::GetFileAttributesW(wpath.as_ptr()) };
-    if dword == windows::INVALID_FILE_ATTRIBUTES {
-        return None;
-    }
+    let dword = windows::GetFileAttributesW(wpath).ok()?;
     Some(WindowsFileAttributes {
         is_directory: (dword & w::FILE_ATTRIBUTE_DIRECTORY) != 0,
         is_reparse_point: (dword & w::FILE_ATTRIBUTE_REPARSE_POINT) != 0,
@@ -7129,14 +7028,11 @@ pub fn exists_os_path(path: &bun_paths::OSPathSliceZ, file_only: bool) -> bool {
     #[cfg(windows)]
     {
         use bun_windows_sys::externs as w;
-        use std::os::windows::io::{HandleOrInvalid, OwnedHandle};
         // `getFileAttributes(path)`; if `file_only` reject dirs;
         // if reparse point, open the target with `OPEN_EXISTING` to follow.
-        // SAFETY: path is NUL-terminated UTF-16.
-        let attrs = unsafe { w::GetFileAttributesW(path.as_ptr()) };
-        if attrs == windows::INVALID_FILE_ATTRIBUTES {
+        let Ok(attrs) = windows::GetFileAttributesW(path) else {
             return false;
-        }
+        };
         if file_only && (attrs & w::FILE_ATTRIBUTE_DIRECTORY) != 0 {
             return false;
         }
@@ -7157,19 +7053,14 @@ pub fn exists_os_path(path: &bun_paths::OSPathSliceZ, file_only: bool) -> bool {
                 }
             }
             // Name surrogate (or no tag available): follow it by opening the target.
-            // SAFETY: path is NUL-terminated; null security/template handles.
-            let target = unsafe {
-                HandleOrInvalid::from_raw_handle(w::CreateFileW(
-                    path.as_ptr(),
-                    0,
-                    0,
-                    core::ptr::null_mut(),
-                    w::OPEN_EXISTING,
-                    w::FILE_FLAG_BACKUP_SEMANTICS,
-                    core::ptr::null_mut(),
-                ))
-            };
-            return OwnedHandle::try_from(target).is_ok();
+            return windows::CreateFileW(
+                path,
+                0,
+                0,
+                w::OPEN_EXISTING,
+                w::FILE_FLAG_BACKUP_SEMANTICS,
+            )
+            .is_ok();
         }
         true
     }
@@ -7196,13 +7087,7 @@ fn nt_query_attributes_at(dir: Fd, mut path: &[u16]) -> Maybe<u32> {
     };
     let attr = w::OBJECT_ATTRIBUTES {
         Length: core::mem::size_of::<w::OBJECT_ATTRIBUTES>() as u32,
-        RootDirectory: if is_nt_object_name(path) {
-            core::ptr::null_mut()
-        } else if dir.is_valid() {
-            dir.native()
-        } else {
-            Fd::cwd().native()
-        },
+        RootDirectory: nt_root_directory(dir, path).unwrap_or(core::ptr::null_mut()),
         Attributes: 0,
         ObjectName: &mut nt_name,
         SecurityDescriptor: core::ptr::null_mut(),
@@ -7686,30 +7571,10 @@ pub unsafe fn environ<'a>() -> &'a [bun_core::CStrRef<'a>] {
     }
     #[cfg(windows)]
     {
-        // Populated by `windows::env::convert_env_to_wtf8()` at startup
-        // (bun_runtime::bin_entry). The slice is NUL-terminated WTF-8
-        // C strings; the underlying allocation is `Box::leak`'d for the
-        // process lifetime so `'static` here is sound.
-        // SAFETY: written exactly once at startup before any reader runs.
-        let s = unsafe { bun_core::os::environ() };
-        // SAFETY: a `CStrRef` is a non-null pointer to a C string, as each entry is; the
-        // fat-pointer cast preserves the original slice's (ptr, len) metadata
-        // exactly instead of re-deriving it.
-        unsafe { &*(s as *const [*mut c_char] as *const [bun_core::CStrRef<'static>]) }
+        let entries = bun_core::os::environ().unterminated();
+        // SAFETY: each entry is `Some` by the contract of `set_environ`, so it has the bytes of a `CStrRef`.
+        unsafe { core::slice::from_raw_parts(entries.as_ptr().cast(), entries.len()) }
     }
-}
-
-/// [`environ()`] including its null terminator.
-#[cfg(windows)]
-pub fn environ_list() -> bun_core::CStrList<'static> {
-    // SAFETY: no precondition on Windows.
-    let entries = unsafe { environ() };
-    if entries.is_empty() {
-        return bun_core::CStrList::new(&[None]);
-    }
-    // SAFETY: `convert_env_to_wtf8` pushes a trailing null pointer into the same allocation.
-    let items = unsafe { core::slice::from_raw_parts(entries.as_ptr().cast(), entries.len() + 1) };
-    bun_core::CStrList::new(items)
 }
 
 // ── moveFileZWithHandle ──
@@ -8855,10 +8720,7 @@ pub use win_symlink_impl::{mkdir_w, symlink_or_junction, symlink_w, unlink_w};
 /// `link(u16, ...)` Windows arm — `CreateHardLinkW` with errno mapping.
 #[cfg(windows)]
 pub fn link_w(src: &bun_core::WStr, dest: &bun_core::WStr) -> Maybe<()> {
-    if windows::CreateHardLinkW(dest.as_ptr(), src.as_ptr(), None) == 0 {
-        return Err(Error::from_win32(windows::Win32Error::get(), Tag::link));
-    }
-    Ok(())
+    windows::CreateHardLinkW(dest, src).map_err(|err| Error::from_win32(err, Tag::link))
 }
 
 /// `rmdir` — `rmdirat(FD.cwd(), to)`. Exposed on all
@@ -9395,29 +9257,20 @@ mod normalize_path_windows_tests {
         panic!("no clamp floor within 64 levels");
     }
 
-    /// Open a directory handle with raw `CreateFileW` so the fixture fd does
+    /// Open a directory handle with `CreateFileW` so the fixture fd does
     /// not depend on the code under test.
     fn open_dir_handle(path: &std::path::Path) -> File {
         use std::os::windows::ffi::OsStrExt;
         let wp: Vec<u16> = path.as_os_str().encode_wide().chain([0u16]).collect();
-        // SAFETY: `wp` is NUL-terminated and outlives the call.
-        let h = unsafe {
-            w::CreateFileW(
-                wp.as_ptr(),
-                w::GENERIC_READ,
-                FILE_SHARE,
-                core::ptr::null_mut(),
-                w::OPEN_EXISTING,
-                w::FILE_FLAG_BACKUP_SEMANTICS,
-                core::ptr::null_mut(),
-            )
-        };
-        assert_ne!(
-            h,
-            bun_windows_sys::INVALID_HANDLE_VALUE,
-            "CreateFileW {path:?}"
-        );
-        File::from_fd(Fd::from_system(h))
+        windows::CreateFileW(
+            bun_core::WStr::from_slice_with_nul(&wp),
+            w::GENERIC_READ,
+            FILE_SHARE,
+            w::OPEN_EXISTING,
+            w::FILE_FLAG_BACKUP_SEMANTICS,
+        )
+        .unwrap_or_else(|err| panic!("CreateFileW {path:?}: {err:?}"))
+        .into()
     }
 
     /// pid-suffixed temp dir removed on drop (declare before handle guards so

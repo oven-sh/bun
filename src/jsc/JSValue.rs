@@ -2161,7 +2161,7 @@ impl JSValue {
     // ── Object / cell views. ───────────────
     /// Statically cast to a `JSCell*`; `None` for non-cells.
     #[inline]
-    pub fn to_cell(self) -> Option<*mut crate::JSCell> {
+    pub(crate) fn to_cell(self) -> Option<*mut crate::JSCell> {
         if self.is_cell() {
             Some(self.0 as *mut crate::JSCell)
         } else {
@@ -2311,6 +2311,35 @@ impl JSValue {
         host_fn::from_js_host_call_generic(global, || {
             JSC__JSValue__forEach(self, global, ctx, callback)
         })
+    }
+    /// `for (const item of self) each(item)`, up to the first `Err`.
+    pub fn try_for_each(
+        self,
+        global: &JSGlobalObject,
+        each: &mut dyn FnMut(JSValue) -> JsResult<()>,
+    ) -> JsResult<()> {
+        struct Iteration<'a> {
+            each: &'a mut dyn FnMut(JSValue) -> JsResult<()>,
+            result: JsResult<()>,
+        }
+        extern "C" fn next(
+            _: *mut crate::VM,
+            _: &JSGlobalObject,
+            iteration: *mut c_void,
+            item: JSValue,
+        ) {
+            // SAFETY: `iteration` is the `Iteration` below, which outlives the `for_each` call.
+            let iteration = unsafe { &mut *iteration.cast::<Iteration<'_>>() };
+            if iteration.result.is_ok() {
+                iteration.result = (iteration.each)(item);
+            }
+        }
+        let mut iteration = Iteration {
+            each,
+            result: Ok(()),
+        };
+        self.for_each(global, (&raw mut iteration).cast(), next)?;
+        iteration.result
     }
     /// `JSValue.forEachWithContext` — typed-ctx wrapper (callers pass
     /// `*mut c_void` directly).

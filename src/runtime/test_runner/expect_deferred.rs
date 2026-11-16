@@ -14,6 +14,7 @@ use bun_jsc::{
 };
 use bun_ptr::CellExt as _;
 
+use super::matcher::{Passed, Verdict};
 use super::{Expect, Flags, Promise};
 use crate::generated_bindgen::expect_deferred as generated;
 use crate::test_runner::bun_test::{
@@ -912,14 +913,18 @@ impl Expect {
         cx: &mut JsScope<'a>,
         callee: JsLocal<'a>,
         arguments: &'a [JsLocal<'a>],
-        matcher: fn(JsWrapper<'a, Self>, &mut JsScope<'a>, &'a [JsLocal<'a>]) -> JsResult<JSValue>,
+        matcher: fn(JsWrapper<'a, Self>, &mut JsScope<'a>, &'a [JsLocal<'a>]) -> Verdict,
     ) -> JsResult<JSValue> {
         let call = MatcherCall {
             this: this_value.to_js(),
             callee: callee.to_js(),
             arguments: JsLocal::to_js_slice(arguments),
         };
-        self.run_matcher(cx, &call, |cx| matcher(this_value, cx, arguments))
+        self.run_matcher(cx, &call, |cx| {
+            let result = matcher(this_value, cx, arguments);
+            cx.global().bun_vm().auto_garbage_collect();
+            result.map(Passed::into_js)
+        })
     }
 
     /// Every matcher runs through here.

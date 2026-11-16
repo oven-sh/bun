@@ -4,7 +4,7 @@
 import { expect } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDirWithBunTypes as tempDir } from "harness";
 import { join } from "path";
-import { built, slot, spawned } from "./harness/commands";
+import { built, limitWithASAN, slot, spawned } from "./harness/commands";
 import { describe, test } from "./supported";
 
 const env = { ...bunEnv, NO_COLOR: "1" };
@@ -17,10 +17,10 @@ const withoutPlaces = (shown: string) =>
     .filter(line => line !== "" && !/^\s*\d+ \| |^\s*\^+$|^\s+at |^Bun v/.test(line))
     .join("\n");
 
-// A test has five minutes. Its runs are ended a little earlier: a program that hangs then fails its test by the signal, with what it has
-// shown. A test that only timed out would show nothing, and would leave the program running.
+// A test has five minutes. What it starts is ended a little earlier: a command that hangs then fails its test by the signal, with what
+// it has shown. A test that only timed out would show nothing, and would leave the command running.
 const limitOfATest = 300_000;
-const limitOfItsRuns = limitOfATest - 20_000;
+const limitOfItsCommands = limitOfATest - 20_000;
 // What a program may take to answer a resize. The two that wait for one have no limit of their own.
 const limitOfAnAnswer = 30_000;
 
@@ -171,13 +171,21 @@ describe.skipIf(isWindows)("the listener that a standard stream over a terminal 
       name,
       () => {
         // Taken before the slot: the time of a test runs while it waits for one.
-        const endsBy = performance.now() + limitOfItsRuns;
+        const endsBy = performance.now() + limitOfItsCommands;
         return slot(async () => {
+          const left = Math.round(endsBy - performance.now());
+          if (left <= 0) throw new Error("the time of the test was up before a slot was free");
           using dir = tempDir("aot-listener-for-size", { "app.ts": source });
           const folder = String(dir);
-          // `bun run` asks nothing of the build, so it runs beside it.
           const [build, plain] = await Promise.all([
-            spawned([bunExe(), "build", "--compile", "--aot", "app.ts", "--outfile", "app"], folder, env),
+            // The build keeps the limit that spawned() gives it, of which the longest is limitWithASAN, unless less than that is left.
+            spawned(
+              [bunExe(), "build", "--compile", "--aot", "app.ts", "--outfile", "app"],
+              folder,
+              env,
+              left < limitWithASAN ? left : undefined,
+            ),
+            // `bun run` asks nothing of the build, so it runs beside it.
             shownInTerminal([bunExe(), "app.ts"], folder, endsBy),
           ]);
           expect(plain).toEqual({ exitCode: 0, ...underBunRun, signal: null });

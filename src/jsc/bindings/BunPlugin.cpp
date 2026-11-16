@@ -4329,29 +4329,36 @@ static String callerPath(JSC::VM& vm, JSC::CallFrame* callframe)
 // Whether the code at callerPath() is a CommonJS module, which Bun evaluates as a program and not as a module.
 static bool isCallerCommonJS(JSC::VM& vm, JSC::CallFrame* callframe, const String& path)
 {
-#if ENABLE(AOT)
-    if (auto module = vm.hasCompiledCode() ? Bun::compiledModuleForPath(path) : std::nullopt)
-        return !JSC::AOT::isESModule(*module);
-#endif
     // A module of Bun itself is a program too, without a file.
     if (!isAbsolutePath(path))
         return false;
-    bool isCommonJS = false;
+    // The source of the frame that CallFrame::callerSourceOrigin() takes the path from. Compiled code has none.
+    JSC::SourceProvider* provider = nullptr;
     bool isFirstFrame = true;
-    // The frame that CallFrame::callerSourceOrigin() takes the path from.
     JSC::StackVisitor::visit(callframe, vm, [&](JSC::StackVisitor& visitor) -> WTF::IterationStatus {
+        if (std::exchange(isFirstFrame, false))
+            return WTF::IterationStatus::Continue;
+#if ENABLE(AOT)
+        if (visitor->isCompiledFrame())
+            return WTF::IterationStatus::Done;
+#endif
         auto* codeBlock = visitor->codeBlock();
-        if (std::exchange(isFirstFrame, false) || !codeBlock)
+        if (!codeBlock)
             return WTF::IterationStatus::Continue;
         auto* executable = codeBlock->ownerExecutable();
         if (auto* function = dynamicDowncast<JSC::FunctionExecutable>(executable); function && function->isPrivateBuiltinFunction())
             return WTF::IterationStatus::Continue;
-        // Code from a string has the path of the code that made it and no URL of its own. It is not taken for CommonJS.
-        auto* provider = executable->source().provider();
-        isCommonJS = provider && !provider->sourceURL().isEmpty() && !provider->isModuleType();
+        provider = executable->source().provider();
         return WTF::IterationStatus::Done;
     });
-    return isCommonJS;
+    // Code from a string has the path of the code that made it and no URL of its own. It is not taken for CommonJS.
+    if (provider && provider->sourceURL().isEmpty())
+        return false;
+#if ENABLE(AOT)
+    if (auto module = vm.hasCompiledCode() ? Bun::compiledModuleForPath(path) : std::nullopt)
+        return !JSC::AOT::isESModule(*module);
+#endif
+    return provider && !provider->isModuleType();
 }
 
 #if ENABLE(AOT)

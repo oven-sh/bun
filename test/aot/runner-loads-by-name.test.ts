@@ -67,6 +67,9 @@ const twoFiles = {
       console.log("requireMock:", jest.requireMock("dual").which);
       const made = jest.createMockFromModule("dual");
       console.log("createMockFromModule:", made.which, jest.isMockFunction(made.plain), String(made.plain()));
+      // The function that makes the call is code of this file, whatever calls that function.
+      globalThis.eval("globalThis.callIt = f => f()");
+      console.log("called by code from a string:", globalThis.callIt(() => jest.requireActual("dual").which));
     });`,
   "6.test.cjs": `const { jest, test } = require("bun:test");
     jest.mock("dual", () => ({ ...jest.requireActual("dual"), extra: 1 }));
@@ -87,6 +90,7 @@ test("the three of jest, for a name with two files", async () => {
       "requireActual: cjs true",
       "requireMock: manual cjs",
       "createMockFromModule: cjs true undefined",
+      "called by code from a string: cjs",
       "the mock: esm esm 1",
       "requireActual: esm",
       "createMockFromModule: esm",

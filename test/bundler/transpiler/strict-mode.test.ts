@@ -222,11 +222,15 @@ describe("strict mode early errors", () => {
       expect(errors[0].notes.map(n => n.message)).toEqual([useStrictNote]);
     });
 
-    test("delete of a constant that is inlined", () => {
+    test("delete of a constant that other uses inline", () => {
       const inlining = new Bun.Transpiler({ loader: "js", logLevel: "error", inline: true });
       expect(parseErrors("'use strict'; const x = 1; delete x", inlining).map(e => e.message)).toEqual([
         "Delete of a bare identifier cannot be used in strict mode",
       ]);
+      // In sloppy code the answer of `delete x` is false, and of `delete 1` it is true.
+      expect(inlining.transformSync("const x = 1; console.log(delete x, x)")).toBe(
+        "const x = 1;\nconsole.log(delete x, 1);\n",
+      );
     });
 
     test("a string index that minify.syntax turns into a property name", () => {
@@ -509,6 +513,8 @@ describe("strict mode early errors", () => {
       `"use strict"; namespace N { ${member}; export function drop() { return delete x; } }`;
     expect(tsTranspiler.transformSync(code("export let x = 1"))).toContain("delete N.x");
     expectTSParseError(code("let x = 1"), "Delete of a bare identifier cannot be used in strict mode");
+    const inlining = new Bun.Transpiler({ loader: "ts", logLevel: "error", inline: true });
+    expect(inlining.transformSync(code("export const x = 1"))).toContain("delete N.x");
   });
 
   describe("class body", () => {
@@ -646,7 +652,7 @@ describe("strict mode early errors", () => {
 });
 
 describe("sloppy CommonJS runs as written", () => {
-  test.concurrent("duplicate parameters, assignments to eval and arguments, legacy octal escapes", async () => {
+  test.concurrent("duplicate parameters, assignments to eval and arguments, legacy octal escapes, delete", async () => {
     using dir = tempDir("strict-mode-sloppy", {
       "sloppy.cjs": `
         function f(a, a) { return a; }
@@ -656,7 +662,8 @@ describe("sloppy CommonJS runs as written", () => {
         var obj = { foo() { return "foo"; } };
         var w;
         with (obj) { w = foo(); }
-        console.log(JSON.stringify([f(1, 2), eval, s1, s2, s3, s4, s5, s6, n, w]));
+        const c = 1;
+        console.log(JSON.stringify([f(1, 2), eval, s1, s2, s3, s4, s5, s6, n, w, delete c, c]));
         module.exports = 1;
       `,
     });
@@ -669,7 +676,7 @@ describe("sloppy CommonJS runs as written", () => {
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stderr).toBe("");
     expect(stdout).toBe(
-      JSON.stringify([2, 0, "\u0001", "\u0001", "a\u0007", "\u00008", "\u00009", "8", 8, "foo"]) + "\n",
+      JSON.stringify([2, 0, "\u0001", "\u0001", "a\u0007", "\u00008", "\u00009", "8", 8, "foo", false, 1]) + "\n",
     );
     expect(exitCode).toBe(0);
   });

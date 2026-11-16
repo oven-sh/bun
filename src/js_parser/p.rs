@@ -2171,7 +2171,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let ref_ = ident.ref_;
 
         if self.options.features.inlining {
-            if let Some(replacement) = self.const_values.get(&ref_) {
+            // `delete x` is about the name: strict code rejects it, and sloppy code answers false.
+            if let Some(replacement) = self.const_values.get(&ref_)
+                && !opts.is_delete_target()
+            {
                 let replacement = *replacement;
                 self.ignore_usage(ref_);
                 return replacement;
@@ -4899,6 +4902,18 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         r: bun_ast::Range,
         detail: &[u8],
     ) -> Result<(), crate::Error> {
+        self.mark_strict_mode_feature_in(self.current_scope, feature, r, detail);
+        Ok(())
+    }
+
+    /// `scope` is the scope of the code at `r`.
+    fn mark_strict_mode_feature_in(
+        &mut self,
+        scope: js_ast::StoreRef<Scope>,
+        feature: StrictModeFeature,
+        r: bun_ast::Range,
+        detail: &[u8],
+    ) {
         let mut can_be_transformed = false;
         let text: &'a [u8] = match feature {
             StrictModeFeature::DeleteBareName => b"Delete of a bare identifier",
@@ -4927,8 +4942,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             StrictModeFeature::LabelFunctionStmt => b"Function declarations inside labels",
         };
 
-        if self.is_strict_mode() {
-            let (where_, notes) = self.why_strict_mode(self.current_scope);
+        if scope.strict_mode != js_ast::StrictModeKind::SloppyMode {
+            let (where_, notes) = self.why_strict_mode(scope);
             self.log().add_range_error_fmt_with_notes(
                 Some(self.source),
                 r,
@@ -4949,7 +4964,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 ),
             );
         }
-        Ok(())
     }
 
     /// The phrase that completes "... cannot be used {}" and the note that points at the trigger.
@@ -5286,21 +5300,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
-    /// Call when the visit pass enters a scope that can have a directive prologue.
-    #[inline]
+    /// Call after the visit pass: it makes the scopes of a class body strict, which are the last.
     pub(crate) fn check_dropped_directives_for_legacy_octal_escape(&mut self) {
-        if !self.dropped_octal_directives.is_empty() && self.is_strict_mode() {
-            self.report_dropped_octal_directives();
-        }
-    }
-
-    #[cold]
-    fn report_dropped_octal_directives(&mut self) {
-        for i in 0..self.dropped_octal_directives.len() {
-            let (scope, range) = self.dropped_octal_directives[i];
-            if scope == self.current_scope {
-                self.mark_strict_mode_feature(StrictModeFeature::LegacyOctalEscape, range, b"")
-                    .expect("unreachable");
+        for (scope, range) in core::mem::take(&mut self.dropped_octal_directives) {
+            if scope.strict_mode != js_ast::StrictModeKind::SloppyMode {
+                let feature = StrictModeFeature::LegacyOctalEscape;
+                self.mark_strict_mode_feature_in(scope, feature, range, b"");
             }
         }
     }

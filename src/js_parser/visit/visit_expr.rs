@@ -222,18 +222,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         let result = p.find_symbol(expr.loc, name).expect("unreachable");
 
-        // `delete` of an exported member of a TypeScript namespace deletes a property.
-        if is_delete_target
-            && !(TYPESCRIPT && p.is_exported_inside_namespace.contains_key(&result.r#ref))
-        {
-            p.mark_strict_mode_feature(
-                StrictModeFeature::DeleteBareName,
-                js_lexer::range_of_identifier(p.source, expr.loc),
-                b"",
-            )
-            .expect("unreachable");
-        }
-
         // Order matters: assigning a fresh `Ref` clears the packed user-bit
         // flags (intentional — the parse-time ref carries no flags), so set
         // `ref_` first, then derive the visit-time flags into the user bits.
@@ -1367,8 +1355,22 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 }
             }
             Op::UnDelete => {
+                let name_loc = e_.value.loc;
+                let was_name = matches!(e_.value.data, js_ast::ExprData::EIdentifier(_));
                 p.delete_target = e_.value.data;
                 p.visit_expr_in_out(&mut e_.value, ExprIn::default());
+                // The visit makes an exported member of a TypeScript namespace a property access.
+                if was_name
+                    && !p.is_revisit_for_substitution
+                    && !matches!(e_.value.data, js_ast::ExprData::EDot(_))
+                {
+                    p.mark_strict_mode_feature(
+                        StrictModeFeature::DeleteBareName,
+                        js_lexer::range_of_identifier(p.source, name_loc),
+                        b"",
+                    )
+                    .expect("unreachable");
+                }
             }
             _ => {
                 let assign_target = Op::unary_assign_target(e_.op);

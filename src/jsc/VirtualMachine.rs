@@ -163,7 +163,7 @@ pub struct VirtualMachine {
     // owner guarantees the borrowed `log` outlives the VM (see `init`).
     pub transpiler: JsCell<Transpiler<'static>>,
     /// `None` when hot reload is disabled.
-    pub bun_watcher: JsCell<Option<std::sync::Arc<bun_watcher::Watcher>>>,
+    pub bun_watcher: JsCell<Option<bun_watcher::OwnedWatcher>>,
     pub(crate) console: Box<crate::console_object::ConsoleObject>,
     // BORROW_PARAM (`&'a mut bun_ast::Log` per LIFETIMES.tsv) — raw NonNull
     // used because VM is self-referential and cannot carry `<'a>`.
@@ -1427,8 +1427,7 @@ impl VirtualMachine {
 
     /// Call it after the transpile jobs have ended: their copies of the transpiler hold no count.
     fn stop_watcher(&self) {
-        if let Some(watcher) = self.bun_watcher.take() {
-            watcher.shutdown();
+        if self.bun_watcher.take().is_some() {
             self.transpiler.with_mut(|t| t.resolver.watcher = None);
         }
     }

@@ -15,13 +15,13 @@
 //!
 //! **Adding a variant** (do all four):
 //!   1. tag constant in `bun_event_loop::task_tag` (or a `bun_io::PollTag`);
-//!   2. `impl bun_event_loop::BoxedTask for YourType` if it is queued as a `Box`, otherwise `Taskable`;
+//!   2. `impl bun_event_loop::BoxedTask for YourType` if it is queued as a `Box`, `RefTask` as an `Arc` or `RefPtr`, otherwise `Taskable`;
 //!   3. a `run_task` arm and a `release_task_unrun` arm here, both through `in_features!` if only code of removable features (`src/trim/features`) queues it;
 //!   4. bump the `task_tag::COUNT` assertion below.
 
 use std::rc::Rc;
 
-use bun_event_loop::{BoxedTask, Task, task_tag};
+use bun_event_loop::{BoxedTask, RefTask, Task, task_tag};
 use bun_ptr::RefPtr;
 
 #[cfg(not(windows))]
@@ -97,6 +97,26 @@ macro_rules! boxed_arm {
                 let $($payload)+ = boxed;
                 $body
             }
+        )
+    };
+}
+
+/// The reference of a [`RefTask`], in the arm of its tag.
+macro_rules! counted {
+    ($task:ident, $Name:ty) => {
+        // SAFETY: as `boxed!`.
+        unsafe { $task.into_ref::<$Name>() }
+    };
+}
+
+/// [`in_features!`] for an arm that needs only that reference, as `$payload`.
+macro_rules! counted_arm {
+    ($task:ident, $features:tt, |$payload:ident: $Name:ty| $(-> $Result:ty)? $body:block) => {
+        in_features!(
+            $features,
+            ($payload: <$Name as RefTask>::Ref = counted!($task, $Name))
+            $(-> $Result)?
+            $body
         )
     };
 }
@@ -248,9 +268,8 @@ pub(crate) fn run_task(
             // its `Completion`; the erased entry runs `then` and frees it.
             unsafe { bun_jsc::job::complete_erased(task.ptr(), global) }?;
         }
-        task_tag::SendQueueDeferred => feature_arm!([Ipc], |queue: crate::ipc::SendQueue| {
-            // SAFETY: §Dispatch — tag identifies pointee; the task owns a ref.
-            unsafe { bun_ptr::RefPtr::from_raw(queue) }.run_deferred();
+        task_tag::SendQueueDeferred => counted_arm!(task, [Ipc], |queue: crate::ipc::SendQueue| {
+            queue.run_deferred();
         }),
         task_tag::BundleV2PluginResolve => in_features!(
             [Bundler],
@@ -342,11 +361,11 @@ pub(crate) fn run_task(
             [Shell],
             |copy: crate::node::fs::ShellAsyncCpTask| -> JsResult<()> { copy.run_from_js_thread() }
         )?,
-        task_tag::StatWatcherHop => feature_arm!(
+        task_tag::StatWatcherHop => counted_arm!(
+            task,
             [NodeFs],
             |watcher: crate::node::node_fs_stat_watcher::StatWatcher| -> JsResult<()> {
-                // SAFETY: posted by `StatWatcher::post_to_js_thread` with a ref held.
-                unsafe { crate::node::node_fs_stat_watcher::StatWatcher::run_hop(watcher) }?;
+                crate::node::node_fs_stat_watcher::StatWatcher::run_hop(watcher)?;
                 Ok(())
             }
         )?,
@@ -379,11 +398,11 @@ pub(crate) fn run_task(
                 }
             )
         }
-        task_tag::HTMLRewriterBackgroundPull => feature_arm!(
+        task_tag::HTMLRewriterBackgroundPull => counted_arm!(
+            task,
             [HtmlRewriter],
-            |pipe: crate::api::html_rewriter::RewriterPipe| {
-                // SAFETY: §Dispatch — tag identifies pointee; the task owns a ref.
-                unsafe { bun_ptr::RefPtr::from_raw(pipe) }.run_background_pull();
+            |pipe: crate::api::html_rewriter::RewriterPipeBackgroundPull| {
+                pipe.run_background_pull();
             }
         ),
         task_tag::RunTestsTask => boxed_arm!(
@@ -544,10 +563,11 @@ pub(crate) fn run_task(
             [S3Client],
             |refused: S3RefusedRequest| -> JsResult<()> { refused.run() }
         )?,
-        task_tag::S3UploadWriterCollected => feature_arm!(
+        task_tag::S3UploadWriterCollected => counted_arm!(
+            task,
             [S3Client],
-            |collected: S3UploadWriterCollected| -> JsResult<()> {
-                S3UploadWriterCollected::run(collected)?;
+            |upload: S3UploadWriterCollected| -> JsResult<()> {
+                S3UploadWriterCollected::run(&upload)?;
                 Ok(())
             }
         )?,
@@ -566,12 +586,10 @@ pub(crate) fn run_task(
         task_tag::ThreadSafeFunction => in_features!(
             [NativeAddons],
             (
-                function: *mut ThreadSafeFunction = cast_ptr!(ThreadSafeFunction),
+                function: std::sync::Arc<ThreadSafeFunction> = counted!(task, ThreadSafeFunction),
                 el: &EventLoop = el,
                 vm: &VirtualMachine = vm,
             ) {
-                // SAFETY: §Dispatch — tag identifies pointee; the task owns a ref.
-                let function = unsafe { std::sync::Arc::from_raw(function) };
                 ThreadSafeFunction::on_dispatch(function, el, vm);
             }
         ),
@@ -656,8 +674,10 @@ pub(crate) fn run_task(
         }
         // ── bake dev-server ──────────────────────────────────────────────
         task_tag::BakePendingReloadEvent => {
-            // SAFETY: §Dispatch — tag identifies pointee.
-            unsafe { BakePendingReloadEvent::run(cast_ptr!(BakePendingReloadEvent)) };
+            counted_arm!(task, [Bundler], |event: BakePendingReloadEvent| {
+                // SAFETY: this is the dev server's thread, and no borrow of it outlasts a tick.
+                unsafe { event.run() };
+            })
         }
         task_tag::FSWatchTask => {
             boxed_arm!(task, [NodeFs], |mut watch: FSWatchTask| -> JsResult<()> {
@@ -738,9 +758,8 @@ pub(crate) fn run_task(
         )?,
         // A child's stdin pipe is a `FileSink` too, whether or not the program looks at it.
         task_tag::FlushPendingFileSinkTask => {
-            feature_arm!([FileSink, Spawn, Shell], |sink: FileSink| {
-                // SAFETY: §Dispatch — tag identifies pointee; the task owns a ref.
-                unsafe { RefPtr::from_raw(sink) }.run_pending_if_armed();
+            counted_arm!(task, [FileSink, Spawn, Shell], |sink: FileSink| {
+                sink.run_pending_if_armed();
             })
         }
         task_tag::StreamPending => boxed_arm!(task, [WebStreams], |pending: StreamPending| {
@@ -1613,13 +1632,21 @@ fn __bun_release_task_unrun(task: bun_event_loop::Task) {
             boxed_arm!(task, $features, |payload: $ty| { payload.release_unrun() })
         };
     }
+    /// [`release_in!`] for a [`RefTask`].
+    macro_rules! release_counted_in {
+        ($features:tt, $ty:ty) => {
+            counted_arm!(task, $features, |payload: $ty| {
+                <$ty as RefTask>::release_unrun(payload)
+            })
+        };
+    }
     match task.tag() {
         task_tag::AnyTaskJob => {
             // The one erased tag: every payload is a `Job<C>` reached through its header.
             // SAFETY: as `release!`.
             unsafe { bun_jsc::job::release_unrun_erased(task.ptr()) }
         }
-        task_tag::BakePendingReloadEvent => release_in!([Bundler], BakePendingReloadEvent),
+        task_tag::BakePendingReloadEvent => release_counted_in!([Bundler], BakePendingReloadEvent),
         task_tag::BundleV2DeferredBatchTask => release_in!([Bundler], BundleV2DeferredBatchTask),
         task_tag::BundleV2PluginResolve => {
             release_boxed_in!(
@@ -1677,7 +1704,7 @@ fn __bun_release_task_unrun(task: bun_event_loop::Task) {
             release_in!([Fetch], crate::webcore::fetch::FetchTaskletRequestDrain)
         }
         task_tag::HTMLRewriterBackgroundPull => {
-            release_in!(
+            release_counted_in!(
                 [HtmlRewriter],
                 crate::api::html_rewriter::RewriterPipeBackgroundPull
             )
@@ -1732,7 +1759,7 @@ fn __bun_release_task_unrun(task: bun_event_loop::Task) {
             unreachable!("posix-only tag");
         }
         task_tag::FlushPendingFileSinkTask => {
-            release_in!([FileSink, Spawn, Shell], FileSink)
+            release_counted_in!([FileSink, Spawn, Shell], FileSink)
         }
         task_tag::RuntimeTranspilerStore => {
             release_in!([RuntimeTranspiler], RuntimeTranspilerStore)
@@ -1742,8 +1769,10 @@ fn __bun_release_task_unrun(task: bun_event_loop::Task) {
         }
         task_tag::S3HttpSimpleTask => release_in!([S3Client], S3HttpSimpleTask),
         task_tag::S3RefusedRequest => release_boxed_in!([S3Client], S3RefusedRequest),
-        task_tag::S3UploadWriterCollected => release_in!([S3Client], S3UploadWriterCollected),
-        task_tag::SendQueueDeferred => release_in!([Ipc], crate::ipc::SendQueue),
+        task_tag::S3UploadWriterCollected => {
+            release_counted_in!([S3Client], S3UploadWriterCollected)
+        }
+        task_tag::SendQueueDeferred => release_counted_in!([Ipc], crate::ipc::SendQueue),
         task_tag::ServerAllConnectionsClosedTask => {
             release_boxed_in!([Serve], ServerAllConnectionsClosedTask)
         }
@@ -1765,12 +1794,12 @@ fn __bun_release_task_unrun(task: bun_event_loop::Task) {
             )
         }
         task_tag::StatWatcherHop => {
-            release_in!([NodeFs], crate::node::node_fs_stat_watcher::StatWatcher)
+            release_counted_in!([NodeFs], crate::node::node_fs_stat_watcher::StatWatcher)
         }
         task_tag::AsyncCpTask => release_boxed_in!([NodeFs], crate::node::fs::AsyncCpTask),
         task_tag::ShellAsyncCpTask => release_boxed_in!([Shell], crate::node::fs::ShellAsyncCpTask),
         task_tag::StreamPending => release_boxed_in!([WebStreams], StreamPending),
-        task_tag::ThreadSafeFunction => release_in!([NativeAddons], ThreadSafeFunction),
+        task_tag::ThreadSafeFunction => release_counted_in!([NativeAddons], ThreadSafeFunction),
         task_tag::ThreadSafeFunctionRefRequest => {
             release_boxed_in!([NativeAddons], TsfnRefRequest)
         }

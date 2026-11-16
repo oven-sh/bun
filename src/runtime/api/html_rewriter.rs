@@ -562,19 +562,16 @@ fn active_sink(global: &JSGlobalObject) -> Option<BackRef<RewriterPipe>> {
         .map(|p| BackRef::from(p.cast::<RewriterPipe>()))
 }
 
-/// [`RewriterPipe::schedule_background_pull`]'s task: same pointer as the pipe, its own tag.
-#[repr(transparent)]
-pub(crate) struct RewriterPipeBackgroundPull(RewriterPipe);
-impl bun_event_loop::Taskable for RewriterPipeBackgroundPull {
+/// [`RewriterPipe::schedule_background_pull`]'s task.
+pub(crate) struct RewriterPipeBackgroundPull;
+impl bun_event_loop::RefTask for RewriterPipeBackgroundPull {
     const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::HTMLRewriterBackgroundPull;
-    /// Give back what `schedule_background_pull` took: the cell's protect and the pipe's ref.
-    unsafe fn release_unrun(this: *mut Self) {
-        // SAFETY: the ref that was queued with the task.
-        let pipe = unsafe { RefPtr::from_raw(this.cast::<RewriterPipe>()) };
+    type Ref = RefPtr<RewriterPipe>;
+    fn release_unrun(pipe: Self::Ref) {
         pipe.background_pull_root.set(None);
     }
     /// Enters no context.
-    unsafe fn context(_: *const Self) -> bun_event_loop::ContextId {
+    fn context(_: &Self::Ref) -> bun_event_loop::ContextId {
         bun_event_loop::ContextId::NONE
     }
 }
@@ -1199,11 +1196,9 @@ impl RewriterPipe {
         }
         self.background_pull_root
             .set(Some(self.cell.get_or_undefined().protected()));
-        vm.enqueue_task(bun_event_loop::Task::init(
-            self.ref_guard()
-                .into_raw()
-                .cast::<RewriterPipeBackgroundPull>(),
-        ));
+        vm.enqueue_task(
+            bun_event_loop::Task::from_ref::<RewriterPipeBackgroundPull>(self.ref_guard()),
+        );
     }
 
     pub(crate) fn run_background_pull(&self) {

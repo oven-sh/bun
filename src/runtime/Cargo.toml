@@ -57,6 +57,7 @@ bun_glob.workspace = true
 bun_highway.workspace = true
 bun_histogram.workspace = true
 bun_http.workspace = true
+bun_http1.workspace = true
 bun_http_jsc.workspace = true
 bun_http_types.workspace = true
 bun_install.workspace = true

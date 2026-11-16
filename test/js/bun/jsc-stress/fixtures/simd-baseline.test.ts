@@ -153,7 +153,7 @@ describe("JSON — JS lexer SIMD string scanning", () => {
   });
 });
 
-describe("HTTP parsing — llhttp SSE4.2 PCMPESTRI", () => {
+describe("HTTP request head", () => {
   test("long headers", async () => {
     const longHeaderValue = Buffer.alloc(512, "v").toString();
     using server = Bun.serve({

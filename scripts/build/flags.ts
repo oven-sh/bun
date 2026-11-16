@@ -755,7 +755,7 @@ export const bunOnlyFlags: Flag[] = [
   },
   // C standard: gnu17 on unix (cmake: C_STANDARD 17 with C_EXTENSIONS
   // default ON → -std=gnu17). Can't go to C23 — MSVC doesn't support it.
-  // Most .c files are usockets/llhttp which would compile fine without,
+  // Most .c files are usockets, which would compile fine without,
   // but explicit is better than compiler-default drift.
   {
     flag: "-std=gnu17",

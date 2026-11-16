@@ -6572,6 +6572,68 @@ it("connectionListener pauses reads when queued pipelined responses back up", as
   serverSide.destroy();
 });
 
+it.each([
+  "GET / HTTP/1.1\r\nHost: x\r\nProxy-Connection: close\r\n\r\n",
+  "GET / HTTP/1.0\r\nConnection: keep-alive\r\n\r\n",
+])("connectionListener answers %j with Connection: close and ends the connection", async request => {
+  const server = createServer((req, res) => res.setHeader("Content-Length", 0).end());
+  const [clientSide, serverSide] = duplexPair();
+  try {
+    server.emit("connection", serverSide);
+    clientSide.write(request);
+    let received = "";
+    for await (const chunk of clientSide) received += chunk;
+    expect(received).toEndWith("\r\nConnection: close\r\n\r\n");
+  } finally {
+    clientSide.destroy();
+    serverSide.destroy();
+  }
+});
+
+it("connectionListener reads the body of a Connection: close request that is already answered", async () => {
+  const { promise: body, resolve, reject } = Promise.withResolvers<string>();
+  const server = createServer((req, res) => {
+    req.on("data", data => resolve(String(data)));
+    req.socket.on("close", () => reject(new Error("closed without a body")));
+    res.end();
+  });
+  await using front = createNetServer(socket => server.emit("connection", socket));
+  await once(front.listen(0, "127.0.0.1"), "listening");
+  const client = connect({ port: (front.address() as AddressInfo).port, host: "127.0.0.1", allowHalfOpen: true });
+  try {
+    client.write("PUT / HTTP/1.1\r\nHost: x\r\nConnection: close\r\nContent-Length: 1\r\n\r\n");
+    await once(client.resume(), "end");
+    client.write("a");
+    expect(await body).toBe("a");
+  } finally {
+    client.destroy();
+  }
+});
+
+it("connectionListener lets the 'request' listener switch protocols", async () => {
+  const switched = "HTTP/1.1 101 Switching Protocols\r\nConnection: upgrade\r\nUpgrade: a\r\n\r\n";
+  const server = createServer(({ socket }) => {
+    socket.write(switched);
+    socket.on("data", data => socket.write(data));
+  });
+  const [clientSide, serverSide] = duplexPair();
+  try {
+    server.emit("connection", serverSide);
+    for (const [sent, expected] of [
+      ["GET / HTTP/1.1\r\nHost: x\r\nConnection: upgrade\r\nUpgrade: a\r\n\r\n", switched],
+      ["one", "one"],
+      ["two", "two"],
+    ]) {
+      clientSide.write(sent);
+      expect(String(await once(clientSide, "data"))).toBe(expected);
+    }
+    expect(serverSide.destroyed).toBe(false);
+  } finally {
+    clientSide.destroy();
+    serverSide.destroy();
+  }
+});
+
 // https://github.com/oven-sh/bun/issues/4733
 // https://github.com/oven-sh/bun/issues/18613
 // Ending the response inside the request handler must not drop the request

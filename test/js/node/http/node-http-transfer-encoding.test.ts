@@ -6,7 +6,7 @@ import { createServer as createHttpsServer } from "https";
 import { AddressInfo, connect, Server } from "net";
 import type { Duplex } from "stream";
 import { connect as tlsConnect } from "tls";
-// The llhttp binding. It has no type declarations, like in node-http-parser.test.ts.
+// The HTTPParser binding. It has no type declarations, like in node-http-parser.test.ts.
 const { HTTPParser, calculateLenientFlags } = require("node:_http_common");
 
 const fixture = "node-http-transfer-encoding-fixture.ts";

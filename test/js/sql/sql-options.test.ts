@@ -181,6 +181,31 @@ describe.each(["mysql", "mariadb"] as const)("the query of a %s:// URL", adapter
   });
 });
 
+describe("dates", () => {
+  const dates = (...args: unknown[]) => optionsOf(...args).dates;
+
+  test.each(["postgres", "mysql", "mariadb"])("%s: date by default, string on request", adapter => {
+    expect(dates(`${adapter}://uh/ud`)).toBe("date");
+    expect(dates(`${adapter}://uh/ud`, { dates: null })).toBe("date");
+    expect(dates(`${adapter}://uh/ud`, { dates: "date" })).toBe("date");
+    expect(dates(`${adapter}://uh/ud`, { dates: "string" })).toBe("string");
+  });
+
+  test.each(["postgres", "mysql"])("%s: any other value throws", adapter => {
+    const invalid = expect.objectContaining({
+      code: "ERR_INVALID_ARG_VALUE",
+      message: expect.stringContaining("must be one of: date, string"),
+    });
+    for (const value of ["temporal", "string ", "Date", true, 1]) {
+      expect(() => dates(`${adapter}://uh/ud`, { dates: value })).toThrow(invalid);
+    }
+  });
+
+  test("sqlite ignores it", () => {
+    expect(() => optionsOf("sqlite://:memory:", { dates: "string" })).not.toThrow();
+  });
+});
+
 describe("channelBinding", () => {
   const channelBinding = (...args: unknown[]) => optionsOf(...args).channelBinding;
 

@@ -349,7 +349,7 @@ enum SQLQueryFlags {
   deferredText = 1 << 6,
   copy = 1 << 9,
   /// date, timestamp and timestamptz cells are the server's text, not a Date
-  dateStrings = 1 << 10,
+  dateStrings = 1 << 11,
 }
 /// Bits 7 and 8 of the flags: the SQLQueryResultMode asked for before the handle exists.
 const resultModeShift = 7;

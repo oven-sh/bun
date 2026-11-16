@@ -507,6 +507,22 @@ for (const [server, image] of [
       },
     );
 
+    test('bigint: true and dates: "string" together keep both effects', async () => {
+      await using sql = new SQL({
+        url: `mysql://root@${container.host}:${container.port}/bun_sql_test`,
+        max: 1,
+        bigint: true,
+        dates: "string",
+      });
+      await sql.unsafe("CREATE TEMPORARY TABLE t (n BIGINT, d DATETIME(6))").simple();
+      await sql.unsafe("INSERT INTO t VALUES (9007199254740993, '2024-06-15 12:34:56.789123')").simple();
+      const expected = [{ n: 9007199254740993n, d: "2024-06-15 12:34:56.789123" }];
+      expect({
+        prepared: await sql`SELECT n, d FROM t`,
+        simple: await sql`SELECT n, d FROM t`.simple(),
+      }).toEqual({ prepared: expected, simple: expected });
+    });
+
     test('a Date parameter with dates: "string" is bound as before and read back with its microseconds', async () => {
       await using sql = await tableOf("DATETIME(6)", [], { dates: "string" });
       await sql`INSERT INTO t (v) VALUES (${new Date("2024-06-15T12:34:56.789Z")}), (${"2024-06-15 12:34:56.789123"})`;

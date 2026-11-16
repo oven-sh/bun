@@ -226,6 +226,15 @@ const dateStrings: Table = [
   [`'{0.5,null}'::float8[]`, `[0.5,null]`],
 ];
 
+// `bigint: true` and `dates: "string"` together: each keeps its effect.
+const bigintsAndDateStrings: Table = [
+  [`9223372036854775807::int8`, `9223372036854775807n`],
+  [`'{9007199254740993,NULL,-1}'::int8[]`, `[9007199254740993n,null,-1n]`],
+  [`'2024-01-02 03:04:05.678901'::timestamp`, `"2024-01-02 03:04:05.678901"`],
+  [`'2024-01-02'::date`, `"2024-01-02"`],
+  [`row(1::int8, '2024-01-02 03:04:05.678901+00'::timestamptz)`, `"(1,\\"2024-01-02 03:04:05.678901+00\\")"`],
+];
+
 // `timestamp` and `date` are UTC whatever the zone of the host is. Under a zone
 // with an offset, a decoder that reads one of them as local time shows.
 const originalTZ = process.env.TZ;
@@ -293,7 +302,22 @@ describeWithContainer("postgres", { image: "postgres_plain", concurrent: true },
     test(`dates: "string": ${title(path)}`, async () => {
       expect(await read(dateStrings, path[0], { ...path[1], dates: "string" })).toEqual(dateStrings);
     });
+    test(`bigint: true, dates: "string": ${title(path)}`, async () => {
+      expect(await read(bigintsAndDateStrings, path[0], { ...path[1], bigint: true, dates: "string" })).toEqual(
+        bigintsAndDateStrings,
+      );
+    });
   }
+
+  test('bigint: true, dates: "string": an int8 and a timestamptz of one row', async () => {
+    await container.ready;
+    await using sql = connect({ bigint: true, dates: "string" });
+    for (let run = 0; run < 2; run++) {
+      const [row] =
+        await sql`select 9007199254740993::int8 as n, '2024-01-02 03:04:05.678901+00'::timestamptz as t where ${1} = 1`;
+      expect(row).toEqual({ n: 9007199254740993n, t: "2024-01-02 03:04:05.678901+00" });
+    }
+  });
 
   describe('dates: "string"', () => {
     test("a timestamptz is printed in the zone of the session on every path", async () => {
@@ -355,9 +379,24 @@ describeWithContainer("postgres", { image: "postgres_plain", concurrent: true },
       expect(values).toEqual(table);
     });
 
-    test.each(["temporal", "string ", true, 1])("%p is not a mode", value => {
-      expect(() => connect({ dates: value as any })).toThrow(
-        expect.objectContaining({ code: "ERR_INVALID_ARG_VALUE", message: expect.stringContaining("date, string") }),
+    // The server honours a binary cursor in the simple protocol only: the Bind of a tagged template asks for text.
+    test("a FETCH from a binary cursor through a tagged template is the text that the Bind asked for", async () => {
+      await container.ready;
+      await using sql = connect({ dates: "string" });
+      await sql.unsafe("begin").simple();
+      await sql
+        .unsafe(
+          "declare c scroll binary cursor with hold for select '2024-01-02 03:04:05.678901'::timestamp as ts, '2024-01-02 03:04:05.678901+00'::timestamptz as tstz, '2024-01-02'::date as d",
+        )
+        .simple();
+      await sql.unsafe("commit").simple();
+      const seen = [];
+      for (let run = 0; run < 2; run++) {
+        await sql`move absolute 0 in c`;
+        seen.push((await sql`fetch all from c`)[0]);
+      }
+      expect(seen).toEqual(
+        Array(2).fill({ ts: "2024-01-02 03:04:05.678901", tstz: "2024-01-02 03:04:05.678901+00", d: "2024-01-02" }),
       );
     });
   });
@@ -625,6 +664,22 @@ describeWithContainer("postgres", { image: "postgres_plain", concurrent: true },
       },
     );
 
+    // With `dates: "string"` the Bind asks for `timestamp` and `timestamptz` in text too.
+    test.each(runs.filter(([, , prepared]) => prepared))(
+      'dates: "string", execute().raw(), %s: the columns that a mode that decodes asks for the other way',
+      async (_, __, ___, run) => {
+        await using sql = await session({ dates: "string" });
+        const list = columns.filter(
+          ([type]) => type in otherwiseDecoded || type === "timestamp" || type === "timestamptz",
+        );
+        expect(cells(list, await run(sql, select(list), true))).toEqual({
+          ...otherwiseDecoded,
+          timestamp: "2024-01-02 03:04:05",
+          timestamptz: "2024-01-02 03:04:05+00",
+        });
+      },
+    );
+
     const undecodable = ["numeric", "time"];
 
     test("raw().execute().values() decodes what raw() asked for", async () => {
@@ -634,6 +689,22 @@ describeWithContainer("postgres", { image: "postgres_plain", concurrent: true },
       const values = await template(sql, text).values();
       expect(await template(sql, text).raw().execute().values()).toEqual(values);
     });
+
+    test.each(["timestamp", "timestamptz"])(
+      'dates: "string": raw().execute().values() of a %s in binary has no decoder',
+      async type => {
+        await using sql = await session({ dates: "string" });
+        const text = select(columns.filter(column => column[0] === type));
+        await template(sql, text);
+        expect(
+          await template(sql, text)
+            .raw()
+            .execute()
+            .values()
+            .catch((error: any) => error.code),
+        ).toBe("ERR_POSTGRES_UNKNOWN_FORMAT_CODE");
+      },
+    );
 
     test.each(undecodable)("raw().execute().values() of a %s in binary has no decoder", async type => {
       await using sql = await session();

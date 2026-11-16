@@ -418,7 +418,7 @@ console.log(rows); // [[Buffer, Buffer], [Buffer, Buffer], [Buffer, Buffer]]
 - On MySQL, each `Buffer` holds the bytes the server sent. They are binary for a prepared query and text for `.simple()`.
 - SQLite returns `Uint8Array` objects.
 
-Call `.raw()` before the query starts, that is before `await`, `.then()` or `.execute()`. After that, Bun may already have asked PostgreSQL for the formats that it decodes. Then `numeric` and `time` arrive as text, and `int2[]` and `float8[]` in binary. On SQLite, `.execute()` has already run the query when it returns, so `.raw()` and `.values()` have no effect after it.
+Call `.raw()` before the query starts, that is before `await`, `.then()` or `.execute()`. After that, Bun may already have asked PostgreSQL for the formats that it decodes. Then `numeric` and `time` arrive as text, and `int2[]` and `float8[]` in binary. With `dates: "string"`, `timestamp` and `timestamptz` arrive as text too. On SQLite, `.execute()` has already run the query when it returns, so `.raw()` and `.values()` have no effect after it.
 
 ### Result metadata
 
@@ -1902,9 +1902,9 @@ row.t; // "2026-01-02 03:04:05.123456+00"
 
 With `dates: "string"`:
 
-- PostgreSQL `date`, `timestamp`, `timestamptz` and their arrays are strings. The text is what the server prints for the session, including the `TimeZone` offset of a `timestamptz`. `infinity` and `-infinity` are those strings. A `timestamp` from a binary cursor rejects with `ERR_POSTGRES_UNKNOWN_FORMAT_CODE`, as `date` does today.
-- MySQL `DATE`, `DATETIME` and `TIMESTAMP` are strings, with the fraction padded to the column's precision: `"2026-01-02 03:04:05.123456"`. A zero date is `"0000-00-00 00:00:00"`.
-- `Date` parameters are bound as before. `.raw()` is unchanged. SQLite ignores the option.
+- PostgreSQL `date`, `timestamp`, `timestamptz` and their arrays are strings. The text is what the server prints for the session, including the `TimeZone` offset of a `timestamptz`. `infinity` and `-infinity` are those strings. In a `.simple()` query, a `FETCH` from a binary cursor rejects with `ERR_POSTGRES_UNKNOWN_FORMAT_CODE`, as it does for `date` today. Through a tagged template, Bun asks for text and the string comes back.
+- MySQL `DATE`, `DATETIME` and `TIMESTAMP` are strings in the shape of the column: `"2026-01-02"` for a `DATE`, `"2026-01-02 03:04:05"` for a `DATETIME`, with the fraction padded to the column's precision for a `DATETIME(n)`: `"2026-01-02 03:04:05.123456"`. A zero date has the same shape: `"0000-00-00"` or `"0000-00-00 00:00:00.000000"`.
+- `Date` parameters are bound as before. `.raw()` called before the query starts is unchanged. SQLite ignores the option.
 
 The default, `dates: "date"`, keeps the `Date` values described above. `dates: "temporal"` is not available yet.
 

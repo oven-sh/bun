@@ -743,10 +743,10 @@ dependencies = [
  "bun_dotenv",
  "bun_errno",
  "bun_event_loop",
+ "bun_http1",
  "bun_http_types",
  "bun_io",
  "bun_libdeflate_sys",
- "bun_picohttp",
  "bun_ptr",
  "bun_removable_features",
  "bun_sys",
@@ -758,6 +758,15 @@ dependencies = [
  "bun_zstd",
  "scopeguard",
  "strum",
+ "thiserror",
+]
+
+[[package]]
+name = "bun_http1"
+version = "0.0.0"
+dependencies = [
+ "bun_core",
+ "bun_http_types",
  "thiserror",
 ]
 
@@ -775,12 +784,12 @@ dependencies = [
  "bun_errno",
  "bun_highway",
  "bun_http",
+ "bun_http1",
  "bun_http_types",
  "bun_io",
  "bun_jsc",
  "bun_libdeflate_sys",
  "bun_opaque",
- "bun_picohttp",
  "bun_ptr",
  "bun_sha_hmac",
  "bun_uws",
@@ -1435,15 +1444,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "bun_picohttp"
-version = "0.0.0"
-dependencies = [
- "bstr",
- "bun_core",
- "strum",
-]
-
-[[package]]
 name = "bun_platform"
 version = "0.0.0"
 dependencies = [
@@ -1635,7 +1635,6 @@ dependencies = [
  "bun_parsers",
  "bun_patch_jsc",
  "bun_paths",
- "bun_picohttp",
  "bun_platform",
  "bun_png",
  "bun_ptr",
@@ -1696,7 +1695,6 @@ dependencies = [
  "bun_collections",
  "bun_core",
  "bun_http_types",
- "bun_picohttp",
  "bun_ptr",
  "bun_sha_hmac",
  "strum",

@@ -24,7 +24,6 @@ import { lsqpack } from "./lsqpack.ts";
 import { lsquic } from "./lsquic.ts";
 import { mimalloc } from "./mimalloc.ts";
 import { nodejsHeaders } from "./nodejs-headers.ts";
-import { picohttpparser } from "./picohttpparser.ts";
 import { rustArgon2 } from "./rust-argon2.ts";
 import { sqlite } from "./sqlite.ts";
 import { tinycc } from "./tinycc.ts";
@@ -39,8 +38,7 @@ import { zstd } from "./zstd.ts";
  * boringssl near the end — many things depend on crypto/ssl symbols.
  */
 export const allDeps: readonly Dependency[] = [
-  // Header-only / source-only first — no link order concerns.
-  picohttpparser,
+  // Header-only first — no link order concerns.
   nodejsHeaders,
 
   zlib,
@@ -84,7 +82,6 @@ export {
   lsquic,
   mimalloc,
   nodejsHeaders,
-  picohttpparser,
   rustArgon2,
   sqlite,
   tinycc,

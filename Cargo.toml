@@ -69,6 +69,7 @@ members = [
   "src/trim/removable_features",
   "src/highway",
   "src/histogram",
+  "src/http1",
   "src/http_jsc",
   "src/http_types",
   "src/ini",
@@ -81,7 +82,6 @@ members = [
   "src/libuv_sys",
   "src/ast",
   "src/ast_jsc",
-  "src/picohttp",
   "src/png",
   "src/s3_signing",
   "src/sql_jsc",
@@ -447,6 +447,7 @@ bun_trim = { path = "src/trim" }
 bun_removable_features = { path = "src/trim/removable_features" }
 bun_highway = { path = "src/highway" }
 bun_histogram = { path = "src/histogram" }
+bun_http1 = { path = "src/http1" }
 bun_http_jsc = { path = "src/http_jsc" }
 bun_http_types = { path = "src/http_types" }
 bun_ini = { path = "src/ini" }
@@ -459,7 +460,6 @@ bun_libdeflate_sys = { path = "src/libdeflate_sys" }
 bun_libuv_sys = { path = "src/libuv_sys" }
 bun_ast = { path = "src/ast" }
 bun_ast_jsc = { path = "src/ast_jsc" }
-bun_picohttp = { path = "src/picohttp" }
 bun_png = { path = "src/png" }
 bun_s3_signing = { path = "src/s3_signing" }
 bun_sql_jsc = { path = "src/sql_jsc" }
@@ -517,6 +517,10 @@ opt-level = 3
 
 # Unoptimized, the default quality takes seconds for a few kilobytes.
 [profile.dev.package.bun_brotli]
+opt-level = 3
+
+# Runs for every line of a response head and every chunk of a body.
+[profile.dev.package.bun_http1]
 opt-level = 3
 
 # It stands in for vector code that every test program runs over each byte it parses.

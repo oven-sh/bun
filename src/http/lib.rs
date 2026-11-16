@@ -141,52 +141,42 @@ pub use init_error::InitError;
 /// Cloned response metadata (headers + url + status). Ownership transfers to
 /// the user once the headers phase completes.
 // hoisted so `InternalState` can name it.
-// The `picohttp::Response<'static>` borrows into `owned_buf`.
 pub struct HTTPResponseMetadata {
-    // Borrows `owned_buf` (sibling field) — `RawSlice` carries the
-    // outlives-holder invariant for the self-referential borrow.
-    pub url: bun_ptr::RawSlice<u8>,
-    pub owned_buf: Box<[u8]>,
-    pub response: bun_picohttp::Response<'static>,
+    /// `headers` points into it.
+    owned_buf: Box<[u8]>,
+    headers: Box<[picohttp::Header]>,
+    status_text: StringPointer,
+    url: StringPointer,
+    status_code: u32,
 }
 
 impl HTTPResponseMetadata {
-    /// Accessors tied to `&self`: `response` is typed `'static` but its slices
-    /// borrow the sibling `owned_buf` / header slice that `Drop` frees, so
-    /// hand out reborrows that cannot outlive this metadata.
     #[inline]
     pub fn status_code(&self) -> u32 {
-        self.response.status_code
+        self.status_code
     }
     #[inline]
     pub fn status_text(&self) -> &[u8] {
-        self.response.status
+        self.status_text.slice(&self.owned_buf)
+    }
+    pub fn url(&self) -> &[u8] {
+        self.url.slice(&self.owned_buf)
+    }
+    pub fn headers(&self) -> picohttp::HeaderList<'_> {
+        picohttp::HeaderList {
+            list: &self.headers,
+        }
     }
     #[inline]
     pub fn header(&self, name: &[u8]) -> Option<&[u8]> {
-        self.response.headers.get(name)
+        self.headers().get(name)
     }
     #[inline]
     pub fn header_if_other_is_absent(&self, name: &[u8], other: &[u8]) -> Option<&[u8]> {
-        self.response.headers.get_if_other_is_absent(name, other)
+        self.headers().get_if_other_is_absent(name, other)
     }
 }
 
-impl Drop for HTTPResponseMetadata {
-    // `response.headers.list` is `Box::leak`'d by `clone_metadata`; reclaim it here.
-    fn drop(&mut self) {
-        let list = self.response.headers.list;
-        if !list.is_empty() {
-            // SAFETY: the only non-empty producer is `clone_metadata`, which
-            // `Box::leak`s exactly this slice; we are its sole owner. The fat
-            // `*mut [Header]` is obtained directly from the borrowed slice — no
-            // need to round-trip through `(ptr, len)` + `from_raw_parts`.
-            unsafe { bun_core::heap::destroy(core::ptr::from_ref(list).cast_mut()) };
-        }
-        self.response.headers = bun_picohttp::HeaderList::default();
-        self.response.status = b"";
-    }
-}
 pub use bun_http_types::{ETag, MimeType};
 
 // ═══════════════════════════════════════════════════════════════════════
@@ -487,7 +477,7 @@ pub struct HTTPClientResult<'a> {
     /// Owned copy of the hostname the failed lookup was for (the proxy's
     /// when one is configured, else the post-redirect target). Owned so the
     /// JS side never dereferences the client's borrowed URL buffers, which
-    /// the HTTP thread frees after the result callback returns.
+    /// are freed with the request.
     pub dns_hostname: Option<Box<[u8]>>,
 
     /// Owns the response metadata aka headers, url and status code
@@ -590,10 +580,11 @@ impl<'a> HTTPClientResult<'a> {
     }
 }
 
-/// The request, with its last result. It can be scheduled again.
-pub type Finished = Option<Box<AsyncHTTP<'static>>>;
+/// Passed with the last result (`!has_more`). It can be scheduled again.
+pub type FinishedRequest = Box<AsyncHTTP<'static>>;
 
-pub type HTTPClientResultCallbackFunction = fn(*mut (), Finished, HTTPClientResult<'_>);
+pub type HTTPClientResultCallbackFunction =
+    fn(*mut (), Option<FinishedRequest>, HTTPClientResult<'_>);
 
 #[derive(Copy, Clone)]
 pub struct HTTPClientResultCallback {
@@ -611,19 +602,22 @@ pub struct HTTPClientResultCallback {
 }
 
 impl HTTPClientResultCallback {
-    pub(crate) fn run(self, finished: Finished, result: HTTPClientResult<'_>) {
+    pub(crate) fn run(self, finished: Option<FinishedRequest>, result: HTTPClientResult<'_>) {
         (self.function)(self.ctx, finished, result);
     }
 
     // Type-erases a typed callback behind a raw context pointer.
-    pub fn new<T>(this: *mut T, callback: fn(*mut T, Finished, HTTPClientResult<'_>)) -> Self {
+    pub fn new<T>(
+        this: *mut T,
+        callback: fn(*mut T, Option<FinishedRequest>, HTTPClientResult<'_>),
+    ) -> Self {
         Self {
             ctx: this.cast::<()>(),
             // SAFETY: fn-pointer cast over *mut T → *mut () first arg; same
             // calling convention, the receiver casts `ctx` back before use.
             function: unsafe {
                 bun_ptr::cast_fn_ptr::<
-                    fn(*mut T, Finished, HTTPClientResult<'_>),
+                    fn(*mut T, Option<FinishedRequest>, HTTPClientResult<'_>),
                     HTTPClientResultCallbackFunction,
                 >(callback)
             },
@@ -633,7 +627,7 @@ impl HTTPClientResultCallback {
 
     pub fn new_with_release<T>(
         this: *mut T,
-        callback: fn(*mut T, Finished, HTTPClientResult<'_>),
+        callback: fn(*mut T, Option<FinishedRequest>, HTTPClientResult<'_>),
         release: unsafe fn(*mut ()),
     ) -> Self {
         let mut cb = Self::new(this, callback);
@@ -1636,7 +1630,7 @@ impl<'a> HTTPClient<'a> {
         // `state.reset()` returns every stage field to Pending, which makes
         // this finished client indistinguishable from a fresh one. Every
         // caller reaches here with `stage == Fail` (a terminal state), and the
-        // final result dispatched below gives away the AsyncHTTP
+        // final result dispatched below moves to the callback the AsyncHTTP
         // that embeds this client. Restore the terminal stage so a late event
         // on a still-reachable reference (socket tag, timer, tracker entry)
         // hits the `stage != Done && stage != Fail` guards and becomes a
@@ -3152,10 +3146,7 @@ impl<'a> HTTPClient<'a> {
         buffer: &mut bun_io::StreamBuffer,
         data: &[u8],
     ) -> bool {
-        // Any Err is backpressure: WantRead/WantWrite retry on the next
-        // on_writable, and a fatal SSL error already ran on_close (and
-        // may have freed *self), so bail via `true` without touching
-        // self — same as the other ProxyTunnel::write callers.
+        // on_close may have freed the client: on Err return `true` without touching it.
         let pending = buffer.slice().len();
         if pending > 0 {
             let Ok(n) = ProxyTunnel::write(proxy, buffer.slice()) else {
@@ -4099,26 +4090,12 @@ impl<'a> HTTPClient<'a> {
         response.count(&mut builder);
         builder.count(self.url.href);
         let _ = builder.allocate();
-        // headers_buf is owned by the cloned_response (aka cloned_response.headers)
-        // `Response::clone` ties its return lifetime to
-        // `headers: &'a mut [Header]`; leak the box to obtain `'static` so
-        // the cloned response can be stored in `HTTPResponseMetadata`.
-        // Reclaimed by `Drop for HTTPResponseMetadata`.
-        let headers_buf = bun_core::heap::release(
-            vec![picohttp::Header::ZERO; response.headers.list.len()].into_boxed_slice(),
-        );
-        let cloned_response = response.clone(headers_buf, &mut builder);
-        // SAFETY: `href` aliases `builder`'s heap buffer; ownership of that
-        // buffer is transferred to `owned_buf` immediately below and stored
-        // alongside `href` in `HTTPResponseMetadata`.
-        let href = bun_ptr::RawSlice::new(unsafe { builder.append_raw(self.url.href) });
-        // Transfer the single backing allocation out of the builder
-        // (`builder.ptr.?[0..builder.cap]`) so its Drop becomes a no-op.
-        let owned_buf = builder.move_to_slice();
         self.state.cloned_metadata = Some(HTTPResponseMetadata {
-            owned_buf,
-            response: cloned_response,
-            url: href,
+            status_code: response.status_code,
+            status_text: builder.append_count(response.status),
+            headers: response.clone_headers(&mut builder),
+            url: builder.append_count(self.url.href),
+            owned_buf: builder.move_to_slice(),
         });
     }
 
@@ -4373,7 +4350,7 @@ impl<'a> HTTPClient<'a> {
             bun_core::scoped_log!(fetch, "done");
         }
 
-        // The last result drops `self.state` and gives `self` away.
+        // The last result drops `self.state` and moves `self` to the callback.
         let mut decoded_body = core::mem::take(&mut self.state.decoded_body);
         let parent = self.parent_async_http();
         if has_more {

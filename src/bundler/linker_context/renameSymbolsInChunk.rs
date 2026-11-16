@@ -475,7 +475,7 @@ pub(crate) fn run_nested_rename_task(
         &c.cross_chunk_names,
         &uses,
         source_index,
-        &worker.arena,
+        worker.arena(),
     );
     if c.dev_server.is_some() {
         let module_scope = &c.graph.ast.items_module_scope()[source_index as usize];

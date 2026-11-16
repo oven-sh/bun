@@ -139,7 +139,11 @@ pub(crate) type DedupeMap = HashMap<
 >;
 
 impl NetworkTask {
-    fn notify(this: *mut NetworkTask, finished: http::Finished, mut result: HTTPClientResult<'_>) {
+    fn notify(
+        this: *mut NetworkTask,
+        finished: Option<http::FinishedRequest>,
+        mut result: HTTPClientResult<'_>,
+    ) {
         // `this` is the NetworkTask erased into the callback ctx in
         // `get_completion_callback`; the HTTP thread is the sole writer for
         // this call. It stays a raw receiver: both exits below (`on_chunk(..,
@@ -169,7 +173,7 @@ impl NetworkTask {
             if let Some(m) = result.metadata.take() {
                 // SAFETY: `stream` is the live heap-allocated `TarballStream`.
                 unsafe {
-                    (*stream).status_code = m.response.status_code;
+                    (*stream).status_code = m.status_code();
                     if let http::BodySize::ContentLength(len) = result.body_size {
                         (*stream).content_length = Some(len);
                     }

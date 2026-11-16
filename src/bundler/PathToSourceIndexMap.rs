@@ -1,4 +1,6 @@
-use bun_collections::StringHashMap;
+use bun_alloc::DefaultAlloc;
+use bun_collections::string_hash_map::EntryRef;
+use bun_collections::{StringHashMap, StringHashMapKey};
 use bun_paths::fs::is_file_namespace;
 use enum_map::EnumMap;
 
@@ -53,15 +55,15 @@ impl<V> Table<V> {
         }
     }
 
-    fn iter_mut(&mut self) -> impl Iterator<Item = (&[u8], Option<Loader>, &mut V)> {
+    fn drain(&mut self) -> impl Iterator<Item = (StringHashMapKey, Option<Loader>, V)> {
         let by_path = self
             .by_path
-            .iter_mut()
-            .map(|(text, value)| (&**text, None, value));
+            .drain()
+            .map(|(text, value)| (text, None, value));
         let by_loader = self.by_loader.iter_mut().flat_map(|by_loader| {
             by_loader.iter_mut().flat_map(|(loader, map)| {
-                map.iter_mut()
-                    .map(move |(text, value)| (&**text, Some(loader), value))
+                map.drain()
+                    .map(move |(text, value)| (text, Some(loader), value))
             })
         });
         by_path.chain(by_loader)
@@ -133,16 +135,15 @@ impl<V> ModuleMap<V> {
             .value_ptr)
     }
 
-    /// For a value without a default: on a miss, returns what puts the value.
-    pub(crate) fn get_or_vacant_keyed(
+    pub(crate) fn entry_ref_keyed<'k>(
         &mut self,
-        path: &impl PathLike,
+        path: &'k impl PathLike,
         key_loader: Option<Loader>,
-    ) -> Result<&mut V, impl FnOnce(V)> {
+    ) -> EntryRef<'_, 'k, V, DefaultAlloc> {
         self.table_mut(path.path_namespace())
             .expect("oom")
             .map(key_loader)
-            .get_or_vacant(path.path_text())
+            .entry_ref(path.path_text())
     }
 
     pub(crate) fn reserve(&mut self, additional: usize) {
@@ -156,17 +157,17 @@ impl<V> ModuleMap<V> {
     }
 
     /// (namespace, text, key loader, value). The namespace of a file is empty.
-    pub(crate) fn iter_mut(
+    pub(crate) fn drain(
         &mut self,
-    ) -> impl Iterator<Item = (&[u8], &[u8], Option<Loader>, &mut V)> {
+    ) -> impl Iterator<Item = (&[u8], StringHashMapKey, Option<Loader>, V)> {
         let files = self
             .files
-            .iter_mut()
+            .drain()
             .map(|(text, loader, value)| (&b""[..], text, loader, value));
         let others = self.namespaces.iter_mut().flat_map(|namespaces| {
             namespaces.iter_mut().flat_map(|(namespace, table)| {
                 table
-                    .iter_mut()
+                    .drain()
                     .map(move |(text, loader, value)| (&**namespace, text, loader, value))
             })
         });
@@ -251,7 +252,7 @@ impl<V: Copy + Default> ModuleMap<V> {
         self.get_or_put_key(path.path_namespace(), path.path_text(), key_loader)
     }
 
-    /// The parts of a key that `iter_mut` gave.
+    /// The parts of a key that `drain` gave.
     pub(crate) fn get_or_put_key(
         &mut self,
         namespace: &[u8],

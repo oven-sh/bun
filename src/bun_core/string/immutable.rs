@@ -763,7 +763,7 @@ const _: () = assert!(core::mem::size_of::<StringOrTinyString>() == 32);
 
 impl StringOrTinyString {
     const MAX: usize = 31;
-    const TINY: NonZeroU8 = NonZeroU8::new(0x80).unwrap();
+    const TINY_TAG: NonZeroU8 = NonZeroU8::new(0x80).unwrap();
     pub const EMPTY: Self = Self(StringOrTinyStringRepr::Static(b""));
 
     #[inline]
@@ -789,7 +789,7 @@ impl StringOrTinyString {
         }
         let mut buf = [MaybeUninit::uninit(); Self::MAX];
         buf[..stringy.len()].write_copy_of_slice(stringy);
-        let tagged_len = Self::TINY | stringy.len() as u8;
+        let tagged_len = Self::TINY_TAG | stringy.len() as u8;
         Ok(Self(StringOrTinyStringRepr::Tiny { buf, tagged_len }))
     }
 }

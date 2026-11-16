@@ -518,7 +518,7 @@ pub(crate) fn generate_code_for_file_in_chunk_js(
                 // The wrapper must be a regular function, not an arrow, so that a
                 // top-level `arguments` reference in the CommonJS body binds to the
                 // wrapper's own `arguments` object (Node and esbuild both allow it).
-                let cjs_args = Vec::<Expr>::from_slice(&[Expr::init(
+                let cjs_args = bun_ast::ExprNodeList::from_slice(&[Expr::init(
                     E::Function {
                         func: G::Fn {
                             args: bun_ast::StoreSlice::new(args.into_bump_slice()),
@@ -541,7 +541,7 @@ pub(crate) fn generate_code_for_file_in_chunk_js(
                             },
                             bun_ast::Loc::EMPTY,
                         ),
-                        args: Vec::move_from_list(cjs_args),
+                        args: cjs_args,
                         ..Default::default()
                     },
                     bun_ast::Loc::EMPTY,
@@ -749,7 +749,7 @@ pub(crate) fn generate_code_for_file_in_chunk_js(
                         StmtListWhich::OutsideWrapperPrefix,
                         Stmt::alloc(
                             S::Local {
-                                decls: G::DeclList::move_from_list(core::mem::take(
+                                decls: bun_alloc::AstAlloc::vec_from_iter(core::mem::take(
                                     &mut hoist.decls,
                                 )),
                                 ..Default::default()
@@ -767,7 +767,7 @@ pub(crate) fn generate_code_for_file_in_chunk_js(
                     debug_assert!(!ast.wrapper_ref.is_empty()); // js_parser's needsWrapperRef thought wrapper was not needed
 
                     // "__esm(() => { ... })"
-                    let esm_args = Vec::<Expr>::from_slice(&[Expr::init(
+                    let esm_args = bun_ast::ExprNodeList::from_slice(&[Expr::init(
                         E::Arrow {
                             is_async,
                             body: G::FnBody {
@@ -783,7 +783,7 @@ pub(crate) fn generate_code_for_file_in_chunk_js(
                     let value = Expr::init(
                         E::Call {
                             target: Expr::init_identifier(c.esm_runtime_ref, bun_ast::Loc::EMPTY),
-                            args: Vec::move_from_list(esm_args),
+                            args: esm_args,
                             ..Default::default()
                         },
                         bun_ast::Loc::EMPTY,
@@ -922,7 +922,7 @@ fn merge_adjacent_local_stmts(stmts: &mut Vec<Stmt>, _arena: &Bump) {
                         did_merge_with_previous_local = true;
 
                         let mut clone =
-                            Vec::<G::Decl>::init_capacity(before.decls.len() + after.decls.len());
+                            G::DeclList::init_capacity(before.decls.len() + after.decls.len());
                         clone.append_slice_assume_capacity(before.decls.slice());
                         clone.append_slice_assume_capacity(after.decls.slice());
                         // we must clone instead of overwrite in-place incase the same S.Local is used across threads
@@ -931,7 +931,7 @@ fn merge_adjacent_local_stmts(stmts: &mut Vec<Stmt>, _arena: &Bump) {
                         stmts[end - 1] = Stmt::allocate(
                             _arena,
                             S::Local {
-                                decls: Vec::move_from_list(clone),
+                                decls: clone,
                                 is_export: before.is_export,
                                 origin: before.origin,
                                 kind: before.kind,

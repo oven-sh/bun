@@ -3908,15 +3908,15 @@ pub(crate) fn serialize_json_source_map_for_standalone(
 
     // Every offset/length in the serialized map is a u32 `StringPointer`;
     // anything that cannot be represented is a build error, not a crash.
-    let map_blob_len_u32 =
-        u32::try_from(map_blob.len()).map_err(|_| crate::Error::SourceMapTooLarge)?;
-    let sources_len_u32 =
-        u32::try_from(sources_paths.items().len()).map_err(|_| crate::Error::SourceMapTooLarge)?;
-    header_list.extend_from_slice(&sources_len_u32.to_le_bytes());
-    header_list.extend_from_slice(&map_blob_len_u32.to_le_bytes());
+    let header = SourceMap::SerializedSourceMap::Header {
+        source_files_count: u32::try_from(sources_paths.items().len())
+            .map_err(|_| crate::Error::SourceMapTooLarge)?,
+        map_bytes_length: u32::try_from(map_blob.len())
+            .map_err(|_| crate::Error::SourceMapTooLarge)?,
+    };
+    header_list.extend_from_slice(bun_core::bytes_of(&header));
 
-    let string_payload_start_location = size_of::<u32>()
-        + size_of::<u32>()
+    let string_payload_start_location = size_of_val(&header)
         + size_of::<StringPointer>() * sources_content.items().len() * 2 // path + source
         + map_blob.len();
 

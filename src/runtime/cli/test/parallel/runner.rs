@@ -3,13 +3,14 @@
 //! and `run_as_worker` (the `--test-worker` side that reads framed commands
 //! from stdin, runs each file under isolation, and streams results to fd 3).
 
+use core::cell::Cell;
 use core::ffi::CStr;
 use std::io::Write as _;
 
 use bun_core::{CStrRef, Global, Output};
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_options_types::context::MacroOptions;
-use bun_ptr::Interned;
+use bun_ptr::{CellExt as _, Interned};
 use bun_resolver::fs::FileSystem;
 use bun_sys::Fd;
 
@@ -22,7 +23,6 @@ use super::worker::Worker;
 use crate::Command;
 use crate::test_command::{self, CommandLineReporter, TestCommand};
 use crate::test_runner::bun_test::FirstLast;
-use crate::test_runner::cells::CellExt as _;
 use crate::test_runner::snapshot::Snapshots;
 use bun_collections::index_sort;
 use bun_options_types::code_coverage_options::CodeCoverageOptions;
@@ -89,7 +89,7 @@ pub(crate) fn run_as_coordinator(
         for name in WORKER_ID_VARIABLES {
             let _ = env.map.put(name, &id);
         }
-        envps.push(env.map.create_null_delimited_env_map()?);
+        envps.push(env.map.to_envp());
     }
     let argv = build_worker_argv(ctx)?;
 
@@ -229,7 +229,10 @@ pub(crate) fn run_as_coordinator(
     coord.end_group();
     crate::cli::run_compiled::log_largest_worker(
         coord.max_worker_peak_rss_mb,
-        (coord.workers.iter()).fold(0, |most, w| most.max(w.peak_rss_mb)),
+        (coord.workers.iter())
+            .map(|w| w.peak_rss_mb)
+            .max()
+            .unwrap_or(0),
     );
     crate::cli::run_compiled::log_account_of_process(format_args!("coordinator | files {n}"));
 
@@ -498,7 +501,6 @@ fn build_worker_argv(ctx: &Command::ContextData) -> crate::Result<Box<[Option<CS
     }
 
     argv.push(None);
-    // Callers index by .len(), so keep the trailing null in the boxed slice.
     Ok(argv.into_boxed_slice())
 }
 
@@ -551,15 +553,15 @@ fn jsx_runtime_tag_name(r: bun_options_types::schema::api::JsxRuntime) -> &'stat
 /// abstraction as the coordinator side: usockets over the socketpair on POSIX,
 /// `uv.Pipe` over the inherited duplex named-pipe on Windows.
 #[derive(Default)]
-pub(crate) struct WorkerLink {
+pub(crate) struct CoordinatorLink {
     channel: Channel,
     /// Reused across all worker → coordinator emits.
-    frame: core::cell::Cell<Frame>,
+    frame: Cell<Frame>,
     /// The coordinator-assigned index of the file currently being executed.
-    file_idx: core::cell::Cell<u32>,
+    file_idx: Cell<u32>,
 }
 
-impl WorkerLink {
+impl CoordinatorLink {
     /// Sends one frame of `kind`; `fill` writes its payload.
     fn emit(&self, kind: frame::Kind, fill: impl FnOnce(&mut Frame)) {
         self.frame.with_taken(|frame| {
@@ -571,7 +573,7 @@ impl WorkerLink {
 }
 
 struct WorkerCommands {
-    link: &'static WorkerLink,
+    link: &'static CoordinatorLink,
     /// Coordinator dispatches one `.run` and waits for `.file_done` before
     /// the next, so a single slot is sufficient. Owned path storage.
     pending_idx: Option<u32>,
@@ -593,10 +595,10 @@ struct RunningFile {
 }
 
 impl WorkerCommands {
-    /// False as long as there is no file to run and one may still come.
+    /// Returns whether the wait is over: a file to run, a shutdown or a closed channel.
     fn read_commands(&mut self) -> bool {
-        if let Some(mut received) = self.link.channel.take_received() {
-            while let Some((kind, mut rd)) = received.next_frame() {
+        if let Some(mut incoming) = self.link.channel.take_incoming() {
+            while let Some((kind, mut rd)) = incoming.next_frame() {
                 match kind {
                     frame::Kind::Run => {
                         self.pending_idx = Some(rd.u32());
@@ -610,7 +612,7 @@ impl WorkerCommands {
                     _ => {}
                 }
             }
-            self.link.channel.keep_unread(received);
+            self.link.channel.restore_incoming(incoming);
         }
         self.pending_idx.is_some() || self.shutdown || self.link.channel.done.get()
     }
@@ -881,7 +883,7 @@ pub(crate) fn run_as_worker(
 
     vm.event_loop().ensure_waker();
 
-    let link = reporter.worker.get_or_init(WorkerLink::default);
+    let link = reporter.worker.get_or_init(CoordinatorLink::default);
     let mut wloop = WorkerLoop {
         reporter,
         cmds: WorkerCommands {
@@ -946,7 +948,7 @@ fn worker_flush_aggregates(
     reporter: &CommandLineReporter,
     vm: &VirtualMachine,
     coverage: &CodeCoverageOptions,
-    link: &WorkerLink,
+    link: &CoordinatorLink,
 ) {
     // Snapshots flush lazily when the next file opens its snapshot file; the
     // last file each worker ran has no successor to trigger that.
@@ -978,7 +980,7 @@ fn worker_flush_aggregates(
 /// replays into its own reporters.
 #[optimize(size)]
 pub(crate) fn worker_emit_test_done(
-    link: &WorkerLink,
+    link: &CoordinatorLink,
     formatted_line: &[u8],
     test: Option<&test_command::TestCaseReport<'_>>,
 ) {

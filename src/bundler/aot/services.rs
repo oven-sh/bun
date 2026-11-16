@@ -59,13 +59,9 @@ impl BuildContext {
         &self.bundle().transpiler().options
     }
 
-    pub(crate) fn with_worker<R>(
-        &self,
-        work: impl FnOnce(&mut Transpiler<'static>, &Arena) -> R,
-    ) -> R {
+    pub(crate) fn with_worker<R>(&self, work: impl FnOnce(&mut Transpiler<'static>) -> R) -> R {
         let mut worker = Worker::get(self.bundle());
-        let data = worker.data.as_mut().expect("Worker::get creates it");
-        with_ast_scope(|arena| work(&mut data.transpiler, arena))
+        with_ast_scope(|_| work(&mut worker.transpiler))
     }
 }
 
@@ -1178,7 +1174,7 @@ impl SourceProvider for BundlerServices {
     }
 
     fn compile_components(&self, file: &ComponentFile<'_>, observer: &mut dyn Observer) -> bool {
-        components::compile_components(&self.context, file, observer, None, &mut Log::init())
+        components::compile_components(&self.context, file, observer, &mut Log::init())
     }
 
     fn expand_globs(&self, file: &ComponentFile<'_>) -> Vec<ExpandedImportMetaGlob> {

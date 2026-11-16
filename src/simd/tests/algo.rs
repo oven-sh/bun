@@ -570,6 +570,16 @@ mod simd {
     }
 
     #[export]
+    pub fn stop_that_goes_once_it_is_seen() {
+        for len in 1..U8::LEN {
+            let (from, mut to, is_seen) = (vec![1; len], vec![0; len], Cell::new(false));
+            let stops = |v: U8| v.simd_eq(if is_seen.replace(true) { 2 } else { 1 });
+            let got = U8::map_to_shared_until(&from, shared(&mut to), |v| v, stops);
+            assert_eq!((got, to), (len, from));
+        }
+    }
+
+    #[export]
     pub fn firsts_lasts_and_count(slice: &[AtomicU8], stays: usize) -> ([Option<usize>; 5], usize) {
         let (test, both) = (|v: U8| v.simd_eq(1), |a: U8, b: U8| (a & b).simd_eq(1));
         let found = [
@@ -707,6 +717,12 @@ fn more_alignments() {
 #[cfg_attr(miri, ignore = "slow")]
 fn matches_that_go_once_they_are_seen() {
     on_each_target(simd::matches_that_go_once_they_are_seen);
+}
+
+#[test]
+#[cfg_attr(miri, ignore = "slow")]
+fn stop_that_goes_once_it_is_seen() {
+    on_each_target(simd::stop_that_goes_once_it_is_seen);
 }
 
 /// One match comes and goes, and one stays.

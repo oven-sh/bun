@@ -619,7 +619,7 @@ mod simd {
                 f(last).store_shared(to_last);
                 return len;
             };
-            let count = stops(v).first_set().unwrap_or(0).min(rest.len());
+            let count = stops(v).first_set().unwrap_or(N - 1).min(rest.len());
             rest.as_ptr().addr() - to.as_ptr().addr() + f(v).store_partial_shared(&rest[..count])
         }
 

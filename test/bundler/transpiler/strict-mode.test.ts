@@ -216,6 +216,24 @@ describe("strict mode early errors", () => {
       expectNoParseError("'use strict'; '\\0'");
     });
 
+    // The parser reads `(` as the start of a possible arrow function, in a scope that it then discards.
+    test("a legacy octal literal in parentheses, in a default value, and in dead code", () => {
+      expectParseError("'use strict'; ('\\1')", "Legacy octal escape sequences cannot be used in strict mode");
+      expectParseError("'use strict'; (010)", "Legacy octal literals cannot be used in strict mode");
+      expectParseError("('\\1'); export {}", "Legacy octal escape sequences cannot be used in an ECMAScript module");
+      expectParseError("class A { m(a = (010)) {} }", "Legacy octal literals cannot be used in strict mode");
+      expectParseError("'use strict'; if (false) { x = 010 }", "Legacy octal literals cannot be used in strict mode");
+      expectNoParseError("x = ('\\1'); y = (010); ((a = 010) => a)");
+    });
+
+    test("a TypeScript arrow function that the parser reads twice reports once", () => {
+      expectTSParseError(
+        "'use strict'; const f = (a: number = 010) => a",
+        "Legacy octal literals cannot be used in strict mode",
+      );
+      expectNoTSParseError("const f = (a: number = 010) => a; const g = <T,>(b: T) => '\\1'");
+    });
+
     test("the note names the directive", () => {
       const errors = parseErrors("'use strict';\nwith (x) y");
       expect(errors.map(e => e.message)).toEqual(["With statements cannot be used in strict mode"]);

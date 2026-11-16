@@ -170,11 +170,13 @@ describe("URLPattern", () => {
         try {
           return (baseURL === undefined ? new URLPattern(input) : new URLPattern(input, baseURL)).port;
         } catch (error) {
-          return (error as Error).name;
+          return String(error);
         }
       };
       const refused = [{ port: "\t\n" }, { port: "*\n" }, { port: "\t:id" }, "http://localhost:*\r", "https://h:\n/p"];
-      expect(refused.map(input => portOf(input))).toEqual(refused.map(() => "TypeError"));
+      expect(refused.map(input => portOf(input))).toEqual(
+        refused.map(() => "TypeError: Invalid input to canonicalize a URL port string."),
+      );
       expect(new URLPattern({ port: "*" }).test({ port: "\r" })).toBe(false);
       expect(new URLPattern({ port: "" }).test({ port: "\t" })).toBe(false);
 

@@ -36,7 +36,7 @@ use bun_wyhash::hash as wyhash;
 
 use super::cares_jsc::error_to_deferred;
 use crate::generated_bindgen::dns::LookupOptions;
-use crate::generated_bindgen::dns_internals::ResolverOptions;
+use crate::generated_bindgen::dns_internals::{ResolverOptions, js_DNSResolver};
 use crate::socket::socket_address::inet::INET6_ADDRSTRLEN;
 use crate::timer::{EventLoopTimer, EventLoopTimerState, EventLoopTimerTag};
 use bun_cares_sys::c_ares_draft as c_ares;
@@ -2088,9 +2088,9 @@ impl Resolver {
         }
     }
 
-    pub(crate) fn init(vm: &VirtualMachine, made_in: Option<bun_jsc::ContextId>) -> Box<Self> {
+    pub(crate) fn init(vm: &VirtualMachine, made_in: Option<bun_jsc::ContextId>) -> RefPtr<Self> {
         bun_output::scoped_log!(DNSResolver, "init");
-        Box::new(Self::setup(vm, made_in))
+        RefPtr::new(Self::setup(vm, made_in))
     }
 
     // ─── R-2 interior-mutability helpers ────────────────────────────────────
@@ -3116,9 +3116,7 @@ impl Resolver {
         opts.tries = Some(options.tries);
         resolver.options.set(opts);
 
-        // SAFETY: `resolver` was boxed in `Resolver::init`; ownership
-        // transfers to the JS wrapper, which holds one ref.
-        unsafe { Resolver::to_js_ptr(bun_core::heap::into_raw(resolver), global_this) }
+        js_DNSResolver::to_js(resolver, global_this)
     }
 
     pub(crate) fn cancel(&self, cx: &mut JsScope<'_>) -> JsResult<()> {

@@ -392,21 +392,18 @@ impl PostgresSQLQuery {
         let (values, pending_value) = (values.to_js(), pending_value.to_js());
         query_ctor_args::validate(global_this, &query, values, simple)?;
 
-        let ptr = bun_core::heap::into_raw(Box::new(PostgresSQLQuery::default()));
-
-        let this_value = js::to_js(ptr, global_this);
-        this_value.ensure_still_alive();
-
-        // SAFETY: ptr is exclusively owned here until returned to JS.
-        unsafe {
-            (*ptr).query = query;
-            (*ptr).this_value.set(JsRef::init_weak(this_value));
-            (*ptr).flags.set(Flags {
+        let this = RefPtr::new(PostgresSQLQuery {
+            query,
+            flags: Cell::new(Flags {
                 bigint,
                 simple,
                 ..Default::default()
-            });
-        }
+            }),
+            ..Default::default()
+        });
+        let this = js::wrap(this, global_this);
+        let this_value = this.to_js();
+        this.this_value.set(JsRef::init_weak(this_value));
 
         js::binding_set_cached(this_value, global_this, values);
         js::pending_value_set_cached(this_value, global_this, pending_value);

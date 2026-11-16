@@ -202,7 +202,8 @@ pub(crate) unsafe extern "C" fn main(argc: c_int, argv: *const *const c_char) ->
         // `bun.handleOom(convertEnvToWTF8())` — converts the OS UTF-16 env
         // block to WTF-8 and publishes it via `bun_core::os::set_environ()`.
         // Without this, `Bun.env`/`process.env` see only `.env`-file vars.
-        bun_core::handle_oom(bun_sys::windows::env::convert_env_to_wtf8());
+        // SAFETY: no thread has been spawned yet.
+        bun_core::handle_oom(unsafe { bun_sys::windows::env::convert_env_to_wtf8() });
     }
 
     // 2/3. Allocator is static above; argv was captured at step 0; start_time

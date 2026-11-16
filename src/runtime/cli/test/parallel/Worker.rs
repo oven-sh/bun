@@ -4,7 +4,7 @@
 //! spawn/dispatch/shutdown mechanics.
 
 #[cfg(windows)]
-use core::ffi::c_void;
+use std::os::windows::io::OwnedHandle;
 
 #[cfg(unix)]
 use crate::api::bun::process::PosixStdio as Stdio;
@@ -83,7 +83,7 @@ pub(crate) struct SpawnContext<'a> {
     #[cfg_attr(windows, expect(dead_code))]
     pub(crate) compiled_program: Option<bun_sys::Fd>,
     #[cfg(windows)]
-    pub(crate) windows_job: Option<*mut c_void>,
+    pub(crate) windows_job: Option<&'a OwnedHandle>,
 }
 
 impl Worker {
@@ -253,10 +253,7 @@ impl Worker {
         {
             if let Some(job) = coord.windows_job {
                 if let Some(handle) = process.os_handle() {
-                    // SAFETY: FFI call; handles are valid (just spawned).
-                    unsafe {
-                        let _ = bun_sys::windows::AssignProcessToJobObject(job, handle);
-                    }
+                    let _ = bun_sys::windows::AssignProcessToJobObject(job, handle);
                 }
             }
         }

@@ -71,7 +71,6 @@
 
 [bun_io]
 "generic_body_not_generic:src/io/pipes.rs" = 1
-"param_wider_than_callers:src/io/PipeWriter.rs" = 1
 "safe_fn_returns_shared_mut:src/io/lib.rs" = 2
 "unused_pub:src/io/PipeWriter.rs" = 2
 
@@ -218,7 +217,7 @@
 [bun_sys]
 "error_collapsed_to_bool:src/sys/lib.rs" = 4
 "unused_pub:src/sys/lib.rs" = 55
-"unused_pub:src/sys/windows/mod.rs" = 5
+"unused_pub:src/sys/windows/mod.rs" = 4
 
 [bun_text_diff]
 "generic_body_not_generic:src/text_diff/lib.rs" = 3

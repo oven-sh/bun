@@ -5017,11 +5017,6 @@ JSC::JSValue SerializedScriptValue::fromArrayBuffer(JSC::JSGlobalObject& domGlob
     auto blobURLs = Vector<String> {};
     auto blobFiles = Vector<String> {};
 
-    if (arrayBuffer->isShared()) {
-        // prevent detaching while in-use
-        arrayBuffer->pin();
-    }
-
     auto* data = static_cast<uint8_t*>(arrayBuffer->data()) + byteOffset;
     auto size = std::min(arrayBuffer->byteLength(), maxByteLength);
     auto span = std::span<uint8_t> { data, size };
@@ -5032,10 +5027,6 @@ JSC::JSValue SerializedScriptValue::fromArrayBuffer(JSC::JSGlobalObject& domGlob
         nullptr, nullptr
 #endif
     );
-
-    if (arrayBuffer->isShared()) {
-        arrayBuffer->unpin();
-    }
 
     if (didFail) {
         *didFail = result.second != SerializationReturnCode::SuccessfullyCompleted;

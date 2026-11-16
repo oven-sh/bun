@@ -9,6 +9,7 @@ use bun_collections::{HashMap, IdentityContext};
 use bun_core::String as BunString;
 use bun_core::{Mutex, ZStr, env_var};
 use bun_options_types::Format;
+use bun_paths::resolve_path::{SpillBuf, relative_spill};
 use bun_paths::{MAX_PATH_BYTES, SEP};
 use bun_sha_hmac::sha::hashers::SHA256;
 use bun_sys::{self as sys, Fd, O};
@@ -165,11 +166,13 @@ fn hex(digest: &[u8; HASH_SIZE]) -> String {
 
 /// Portable mode keys on the path relative to the cache dir (Node parity).
 /// Falls back to absolute keys when no relative form exists (e.g. different
-/// Windows drives, where `relative` returns `to` unchanged — Node parity).
+/// Windows drives, where `relative_spill` returns `to` unchanged — Node parity).
 fn key_for(state: &CacheState, filename: &[u8], is_cjs: bool) -> u64 {
-    if state.portable {
-        // Thread-local scratch result: consumed before any other resolve call.
-        let rel = bun_paths::resolve_path::relative(&state.dir, filename);
+    if !state.portable {
+        return cache_key(filename, is_cjs);
+    }
+    SpillBuf::with_scratch(|buf| {
+        let rel = relative_spill(buf, &state.dir, filename);
         if !rel.is_empty() && !bun_paths::is_absolute(rel) {
             cclog!(
                 "[compile cache] using relative path {} from {}\n",
@@ -178,8 +181,8 @@ fn key_for(state: &CacheState, filename: &[u8], is_cjs: bool) -> u64 {
             );
             return cache_key(rel, is_cjs);
         }
-    }
-    cache_key(filename, is_cjs)
+        cache_key(filename, is_cjs)
+    })
 }
 
 /// `v<bun version>-<arch>-<revision>-<uid>`, mirroring Node's

@@ -266,65 +266,58 @@ impl ShellWork for ShellMkdirTask {
     const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::ShellMkdirTask;
 
     fn run_from_thread_pool(&mut self) {
-        use bun_paths::{Platform, platform, resolve_path};
-        // We have to give an absolute path to our mkdir implementation for it
-        // to work with cwd.
-        let mut spill = Vec::new();
-        let filepath: &bun_core::ZStr = if Platform::AUTO.is_absolute(&self.filepath) {
-            // Owned `Vec<u8>`; ensure NUL-terminated.
-            if self.filepath.last() != Some(&0) {
-                self.filepath.push(0);
-            }
-            bun_core::ZStr::from_slice_with_nul(&self.filepath)
-        } else {
-            resolve_path::join_z_spill::<platform::Auto>(
-                &mut spill,
-                &[&self.cwd_path, &self.filepath],
-            )
-        };
-
-        // `NodeFS` expects the `Valid::path_too_long` bound its JS callers
-        // enforce; past it, `PathLike::slice_z` yields "" and mkdir reports ENOENT.
-        if filepath.len() >= bun_paths::MAX_PATH_BYTES {
-            self.err = Some(
-                bun_sys::Error::from_code(bun_sys::E::ENAMETOOLONG, bun_sys::Tag::mkdir)
-                    .with_path(filepath.as_bytes()),
-            );
-            return;
-        }
-
-        let mut node_fs = NodeFS::default();
-        let args = fs_args::Mkdir {
-            path: PathLike::borrowed(filepath.as_bytes()),
-            recursive: self.opts.parents,
-            mode: fs_args::Mkdir::DEFAULT_MODE,
-            always_return_none: true,
-        };
-
-        if self.opts.parents {
-            let mut vtable = MkdirVerboseVTable {
-                inner: &mut self.created_directories,
-                active: self.opts.verbose,
+        use bun_paths::resolve_path::{self, Platform, SpillBuf, platform};
+        SpillBuf::with_scratch(|buf| {
+            // We have to give an absolute path to our mkdir implementation for it
+            // to work with cwd.
+            let filepath: &[u8] = if Platform::AUTO.is_absolute(&self.filepath) {
+                &self.filepath
+            } else {
+                resolve_path::join_spill::<platform::Auto>(buf, &[&self.cwd_path, &self.filepath])
             };
-            if let Err(e) = node_fs.mkdir_recursive_impl(&args, &mut vtable) {
-                self.err = Some(e.with_path(filepath.as_bytes()));
-                core::hint::black_box(&node_fs);
+
+            // `NodeFS` expects the `Valid::path_too_long` bound its JS callers
+            // enforce; past it, `PathLike::slice_z` yields "" and mkdir reports ENOENT.
+            if filepath.len() >= bun_paths::MAX_PATH_BYTES {
+                self.err = Some(
+                    bun_sys::Error::from_code(bun_sys::E::ENAMETOOLONG, bun_sys::Tag::mkdir)
+                        .with_path(filepath),
+                );
+                return;
             }
-        } else {
-            match node_fs.mkdir_non_recursive(&args) {
-                Ok(_) => {
-                    if self.opts.verbose {
-                        self.created_directories
-                            .extend_from_slice(filepath.as_bytes());
-                        self.created_directories.push(b'\n');
-                    }
-                }
-                Err(e) => {
-                    self.err = Some(e.with_path(filepath.as_bytes()));
+
+            let mut node_fs = NodeFS::default();
+            let args = fs_args::Mkdir {
+                path: PathLike::borrowed(filepath),
+                recursive: self.opts.parents,
+                mode: fs_args::Mkdir::DEFAULT_MODE,
+                always_return_none: true,
+            };
+
+            if self.opts.parents {
+                let mut vtable = MkdirVerboseVTable {
+                    inner: &mut self.created_directories,
+                    active: self.opts.verbose,
+                };
+                if let Err(e) = node_fs.mkdir_recursive_impl(&args, &mut vtable) {
+                    self.err = Some(e.with_path(filepath));
                     core::hint::black_box(&node_fs);
                 }
+            } else {
+                match node_fs.mkdir_non_recursive(&args) {
+                    Ok(_) => {
+                        if self.opts.verbose {
+                            self.created_directories.extend_from_slice(filepath);
+                            self.created_directories.push(b'\n');
+                        }
+                    }
+                    Err(e) => {
+                        self.err = Some(e.with_path(filepath));
+                        core::hint::black_box(&node_fs);
+                    }
+                }
             }
-        }
+        })
     }
 
     fn run_from_main_thread(&mut self, interp: &mut Interpreter<'_>) -> Yield {

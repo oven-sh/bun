@@ -1,5 +1,6 @@
 use bun_jsc::bindgen::JsScope;
 use bun_jsc::{JSValue, StringJsc as _};
+use bun_paths::resolve_path::SpillBuf;
 
 pub(crate) fn parse_lockfile(cx: &mut JsScope<'_>, cwd: &[u8]) -> bun_jsc::JsResult<JSValue> {
     use bstr::BStr;
@@ -23,8 +24,10 @@ pub(crate) fn parse_lockfile(cx: &mut JsScope<'_>, cwd: &[u8]) -> bun_jsc::JsRes
         }
     };
 
-    let lockfile_path = resolve_path::join_abs_string_z::<resolve_path::platform::Auto>(
+    let mut buf = SpillBuf::default();
+    let lockfile_path = resolve_path::join_abs_string_z_spill::<resolve_path::platform::Auto>(
         cwd,
+        &mut buf,
         &[b"bun.lockb".as_slice()],
     );
 

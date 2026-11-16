@@ -1251,17 +1251,8 @@ impl BlobExt for Blob {
                             .event_loop_ptr(),
                     ),
                 );
-                sink.writer
-                    .with_mut(|w| w.owns_fd = !matches!(pathlike, PathOrFileDescriptor::Fd(_)));
-
-                use bun_io::pipe_writer::BaseWindowsPipeWriter as _;
-                let started = sink.writer.with_mut(|w| {
-                    if is_stdout_or_stderr {
-                        w.start_sync(fd, false)
-                    } else {
-                        w.start(fd, true)
-                    }
-                });
+                let owns_fd = !matches!(pathlike, PathOrFileDescriptor::Fd(_));
+                let started = sink.start_writer(owns_fd, is_stdout_or_stderr);
                 if let bun_sys::Result::Err(err) = started {
                     return Ok(
                         JSPromise::rejected_promise(cx.global(), err.to_js(cx.global())).to_js(),
@@ -1402,8 +1393,6 @@ impl BlobExt for Blob {
 
         #[cfg(windows)]
         {
-            use bun_io::pipe_writer::BaseWindowsPipeWriter as _;
-
             let pathlike = &store.data.as_file().pathlike;
             let fd: Fd = match pathlike {
                 PathOrFileDescriptor::Fd(fd) => *fd,
@@ -1442,16 +1431,8 @@ impl BlobExt for Blob {
                 ),
             );
             // `to_js` gives init's ref to the wrapper; an early return drops it.
-            sink.writer
-                .with_mut(|w| w.owns_fd = !matches!(pathlike, PathOrFileDescriptor::Fd(_)));
-
-            let start_result = sink.writer.with_mut(|w| {
-                if is_stdout_or_stderr {
-                    w.start_sync(fd, false)
-                } else {
-                    w.start(fd, true)
-                }
-            });
+            let owns_fd = !matches!(pathlike, PathOrFileDescriptor::Fd(_));
+            let start_result = sink.start_writer(owns_fd, is_stdout_or_stderr);
             if let bun_sys::Result::Err(err) = start_result {
                 return Err(global_this.throw_value(err.to_js(global_this)));
             }

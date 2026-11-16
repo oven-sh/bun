@@ -1329,59 +1329,22 @@ pub(crate) mod upgrade_js_bindings {
                 sys::Result::Ok(norm) => norm,
             };
 
-            let path_len_bytes: u16 = (path.len() * 2) as u16;
-            let mut nt_name = w::UNICODE_STRING {
-                Length: path_len_bytes,
-                MaximumLength: path_len_bytes,
-                Buffer: path.as_ptr().cast_mut().cast::<u16>(),
+            let options = sys::NtCreateFileOptions {
+                access_mask: w::STANDARD_RIGHTS_READ
+                    | w::FILE_READ_ATTRIBUTES
+                    | w::FILE_READ_EA
+                    | w::SYNCHRONIZE
+                    | w::FILE_TRAVERSE,
+                disposition: w::FILE_OPEN,
+                options: w::FILE_DIRECTORY_FILE
+                    | w::FILE_SYNCHRONOUS_IO_NONALERT
+                    | w::FILE_OPEN_FOR_BACKUP_INTENT,
+                attributes: 0,
+                sharing_mode: w::FILE_SHARE_READ | w::FILE_SHARE_WRITE,
             };
-
-            let mut attr = w::OBJECT_ATTRIBUTES {
-                Length: core::mem::size_of::<w::OBJECT_ATTRIBUTES>() as u32,
-                RootDirectory: core::ptr::null_mut(),
-                Attributes: 0,
-                ObjectName: &mut nt_name,
-                SecurityDescriptor: core::ptr::null_mut(),
-                SecurityQualityOfService: core::ptr::null_mut(),
-            };
-
-            let flags: u32 = w::STANDARD_RIGHTS_READ
-                | w::FILE_READ_ATTRIBUTES
-                | w::FILE_READ_EA
-                | w::SYNCHRONIZE
-                | w::FILE_TRAVERSE;
-
-            let mut fd: w::HANDLE = w::INVALID_HANDLE_VALUE;
-            let mut io: w::IO_STATUS_BLOCK = bun_core::ffi::zeroed();
-
-            // SAFETY: FFI call to NtCreateFile with valid pointers
-            let rc = unsafe {
-                w::ntdll::NtCreateFile(
-                    &mut fd,
-                    flags,
-                    &mut attr,
-                    &mut io,
-                    core::ptr::null_mut(),
-                    0,
-                    w::FILE_SHARE_READ | w::FILE_SHARE_WRITE,
-                    w::FILE_OPEN,
-                    w::FILE_DIRECTORY_FILE
-                        | w::FILE_SYNCHRONOUS_IO_NONALERT
-                        | w::FILE_OPEN_FOR_BACKUP_INTENT,
-                    core::ptr::null_mut(),
-                    0,
-                )
-            };
-
-            match sys::windows::Win32Error::from_nt_status(rc) {
-                sys::windows::Win32Error::SUCCESS => {
-                    // System-kind handle on Windows.
-                    // SAFETY: test-only helper; access is single-threaded (JS thread).
-                    unsafe {
-                        TEMPDIR_FD.write(Some(sys::File::from_fd(sys::Fd::from_system(fd))));
-                    }
-                }
-                _ => {}
+            if let Ok(handle) = w::NtCreateFile(None, path, options) {
+                // SAFETY: test-only helper; access is single-threaded (JS thread).
+                unsafe { TEMPDIR_FD.write(Some(handle.into())) };
             }
         }
     }

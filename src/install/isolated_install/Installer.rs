@@ -1611,35 +1611,13 @@ impl<'a> Installer<'a> {
 
             #[cfg(windows)]
             {
-                // Borrow once. A second `src_path.buf()` for the length would invalidate `ptr`.
-                let buf = src_path.buf();
-                let cap = buf.len();
-                let ptr = buf.as_mut_ptr();
-                // SAFETY: FFI — `folder_dir` is an open handle; `ptr`
-                // points into a writable WPathBuffer of `cap` elements.
-                let src_path_len = unsafe {
-                    bun_sys::windows::GetFinalPathNameByHandleW(
-                        folder_dir.fd().native(),
-                        ptr,
-                        u32::try_from(cap).expect("int cast"),
-                        0,
-                    )
-                };
-
-                if src_path_len == 0 {
-                    return Err(sys::Error::from_win32(
-                        sys::windows::Win32Error::get(),
-                        sys::Tag::copyfile,
-                    ));
-                }
-                if src_path_len as usize >= cap {
-                    return Err(sys::Error::from_code(
-                        sys::E::ENAMETOOLONG,
-                        sys::Tag::copyfile,
-                    ));
-                }
-
-                src_path.set_length(src_path_len as usize);
+                let src_path_len = bun_sys::windows::GetFinalPathNameByHandleW(
+                    folder_dir.fd().native(),
+                    src_path.buf(),
+                    0,
+                )
+                .map_err(|err| sys::Error::from_win32(err, sys::Tag::copyfile))?;
+                src_path.set_length(src_path_len);
             }
 
             let mut dest = OsAutoPath::init();

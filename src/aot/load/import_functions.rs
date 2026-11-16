@@ -4,9 +4,9 @@ mod tests;
 use bun_sema::atom::{Atom, Interner, known};
 use bun_sema::hir::{
     BinOp, Chain, ExprId, ExprKind, File, FileBuilder, Flags, FnBody, FnKind, Func,
-    FunctionWrittenByLoader, Keyword, ModuleName, Param, ParamId, PatKind, ResolutionMode, Span,
-    SpecifierKind, SpecifierUse, StmtKind, TextRange, TextWrittenByLoader, TypeNodeId,
-    TypeNodeKind,
+    FunctionWrittenByLoader, Keyword, ModuleName, Param, ParamId, PatKind, ReplacedEvaluation,
+    ResolutionMode, Span, SpecifierKind, SpecifierUse, StmtKind, TextRange, TextWrittenByLoader,
+    TypeNodeId, TypeNodeKind,
 };
 use bun_sema::resolve::TreeChange;
 use bun_sema::session::Arena;
@@ -22,7 +22,9 @@ enum Argument {
 #[derive(Copy, Clone)]
 struct EvaluatedImport {
     expression: ExprId,
+    is_new: bool,
     function: Option<FunctionParts>,
+    text: Atom,
     argument: Argument,
 }
 
@@ -197,7 +199,9 @@ fn find_evaluated_import(
             }
             Some(EvaluatedImport {
                 expression,
+                is_new,
                 function: Some(FunctionParts { parameter, body }),
+                text: body,
                 argument: read_function_body(atoms, parameter, body)?,
             })
         }
@@ -205,7 +209,9 @@ fn find_evaluated_import(
             let specifier = read_plain_string(read_import(atoms.bytes(first))?)?;
             Some(EvaluatedImport {
                 expression,
+                is_new,
                 function: None,
+                text: first,
                 argument: Argument::Specifier(atoms.intern(specifier)),
             })
         }
@@ -333,15 +339,26 @@ impl Writer<'_, '_> {
             Some(parts) => self.function(parts, found.argument),
             None => self.import(None, found.argument),
         };
-        let kind = match self.file.is_js {
-            true => kind,
+        let expression = match self.file.is_js {
+            true => {
+                self.file[found.expression].kind = kind;
+                found.expression
+            }
             false => {
                 let expr = self.expression(kind);
                 let ty = self.any();
-                ExprKind::As { expr, ty }
+                self.file[found.expression].kind = ExprKind::As { expr, ty };
+                expr
             }
         };
-        self.file[found.expression].kind = kind;
+        let parameter = found.function.and_then(|it| it.parameter);
+        let arguments: Vec<Atom> = parameter.into_iter().chain([found.text]).collect();
+        let arguments = self.file.list(&arguments);
+        self.file.replaced_evaluations.push(ReplacedEvaluation {
+            expression,
+            is_new: found.is_new,
+            arguments,
+        });
     }
 }
 

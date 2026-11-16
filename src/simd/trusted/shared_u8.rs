@@ -62,3 +62,57 @@ impl SharedOutU8 {
         unsafe { core::slice::from_raw_parts(cells.as_ptr().cast(), size_of_val(cells)) }
     }
 }
+
+mod sealed {
+    pub trait Byte {
+        fn get(&self) -> u8;
+    }
+
+    impl Byte for u8 {
+        fn get(&self) -> u8 {
+            *self
+        }
+    }
+
+    impl Byte for super::SharedU8 {
+        fn get(&self) -> u8 {
+            self.get()
+        }
+    }
+}
+
+/// As many `u8` or `SharedU8` as fit. Returns the count. They may overlap with `to`.
+#[inline(always)]
+pub fn copy_to_shared(from: &[impl sealed::Byte], to: &[SharedOutU8]) -> usize {
+    let len = from.len().min(to.len());
+    cfg_select! {
+        all(any(target_arch = "x86_64", target_arch = "aarch64"), not(miri)) => {
+            use core::ffi::c_void;
+            unsafe extern "C" {
+                fn memmove(to: *mut c_void, from: *const c_void, len: usize) -> *mut c_void;
+            }
+            /// To LLVM, `memmove` is a copy that may not race. It cannot look through this jump.
+            /// A pointer to `memmove` would send all its callers through a stub, unless in PIE.
+            #[unsafe(naked)]
+            unsafe extern "C" fn jump(to: *const SharedOutU8, from: *const u8, len: usize) {
+                core::arch::naked_asm!(
+                    cfg_select! {
+                        target_arch = "x86_64" => "jmp {}",
+                        target_arch = "aarch64" => "b {}",
+                    },
+                    sym memmove,
+                )
+            }
+            // SAFETY: both have `len` bytes. `memmove` stores only what it has loaded, and only there.
+            unsafe { jump(to.as_ptr(), from.as_ptr().cast(), len) };
+        }
+        _ => {
+            let copy = |i: usize| to[i].set(from[i].get());
+            match to.as_ptr().addr() < from.as_ptr().addr() {
+                true => (0..len).for_each(copy),
+                false => (0..len).rev().for_each(copy),
+            }
+        }
+    }
+    len
+}

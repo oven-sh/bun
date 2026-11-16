@@ -305,10 +305,11 @@ pub fn without_utf8_bom(bytes: &[u8]) -> &[u8] {
 /// `&'static [u16]` would require leaking. Re-export of the crate-root `w!`.
 pub use crate::string::w;
 pub use crate::strings_impl::{
-    EncodeIntoResult, copy_ascii_prefix, copy_latin1_into_shared_utf8, copy_latin1_into_utf8,
-    copy_utf16_into_shared_utf8, copy_utf16_into_utf8, copy_utf16_into_utf8_with_utf8_len,
-    element_length_latin1_into_utf8, element_length_utf16_into_utf8, encode_surrogate_pair,
-    push_codepoint_utf16, to_utf8_alloc_z, to_utf8_from_latin1_z, u16_lead, u16_trail,
+    EncodeIntoResult, copy_ascii_prefix_to_shared, copy_latin1_into_shared_utf8,
+    copy_latin1_into_utf8, copy_utf16_into_shared_utf8, copy_utf16_into_utf8,
+    copy_utf16_into_utf8_with_utf8_len, element_length_latin1_into_utf8,
+    element_length_utf16_into_utf8, encode_surrogate_pair, push_codepoint_utf16, to_utf8_alloc_z,
+    to_utf8_from_latin1_z, u16_lead, u16_trail,
 };
 
 pub use kernels::{count_char, index_of_char as index_of_char_usize, last_index_of_char, memmem};

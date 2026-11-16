@@ -1169,7 +1169,7 @@ impl<const SSL: bool> WebSocket<SSL> {
             Copy::Shared(shared) => {
                 utf8_storage = Vec::new();
                 bun_simd::extend_vec(&mut utf8_storage, shared.len(), |out| {
-                    kernels::fill_with_mask_from_shared(NO_MASK, out, shared)
+                    bun_simd::copy_from_shared(shared, out)
                 });
                 &utf8_storage
             }
@@ -2347,8 +2347,6 @@ fn parse_websocket_header(bytes: [u8; 2], is_server: bool) -> Result<ParsedHeade
 // Copy
 // ──────────────────────────────────────────────────────────────────────────
 
-const NO_MASK: [u8; 4] = [0; 4];
-
 /// An outgoing payload in its source encoding, framed and masked by [`Copy::copy`].
 #[derive(Copy, Clone)]
 enum Copy<'a> {
@@ -2526,8 +2524,11 @@ impl Copy<'_> {
             }
             Copy::Shared(bytes) => {
                 assert_eq!(parts.payload.len(), bytes.len());
-                let mask = mask.unwrap_or(NO_MASK);
-                kernels::fill_with_mask_from_shared(mask, parts.payload.into(), bytes);
+                let payload = parts.payload.into();
+                match mask {
+                    Some(mask) => kernels::fill_with_mask_from_shared(mask, payload, bytes),
+                    None => bun_simd::copy_from_shared(bytes, payload),
+                };
                 return;
             }
         }

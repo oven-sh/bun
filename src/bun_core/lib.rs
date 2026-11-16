@@ -1822,18 +1822,14 @@ pub(crate) mod strings_impl {
         }
     }
 
+    /// Copies up to the first byte that is not ASCII or does not fit, and returns the count.
     #[inline]
-    fn copy_ascii_prefix_to_shared(to: &[SharedOutU8], from: &[u8]) -> usize {
+    pub fn copy_ascii_prefix_to_shared(to: &[SharedOutU8], from: &[u8]) -> usize {
         const MIN_LEN_FOR_DISPATCH: usize = 64;
         if from.len().min(to.len()) >= MIN_LEN_FOR_DISPATCH {
             return kernels::copy_ascii_prefix_to_shared(from, to);
         }
         kernels::copy_short_ascii_prefix_to_shared(from, to)
-    }
-
-    /// Copies up to the first byte that is not ASCII or does not fit, and returns the count.
-    pub fn copy_ascii_prefix(to: &mut [u8], from: &[u8]) -> usize {
-        copy_ascii_prefix_to_shared(Out::from(to).into_shared(), from)
     }
 
     /// Null-terminated variant of `to_utf8_from_latin1`. Returns `ZBox` so
@@ -2388,7 +2384,7 @@ pub mod ffi {
     // unchanged.
     pub use bun_opaque::ffi::{slice, slice_mut, wcslen, wstr_units};
 
-    pub use bun_simd::SharedU8;
+    pub use bun_simd::{SharedOutU8, SharedU8};
 
     /// Borrow a NUL-terminated C string from an FFI pointer.
     ///

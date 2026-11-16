@@ -5,6 +5,7 @@ use crate::{
     ComptimeStringMapExt as _, JSGlobalObject, JSType, JSValue, JsResult, ProtectedJSValue,
 };
 use bun_alloc::mimalloc;
+use bun_core::ffi::SharedOutU8;
 
 bun_core::declare_scope!(ArrayBuffer, visible);
 
@@ -559,6 +560,16 @@ impl ArrayBuffer {
         // SAFETY: ptr is non-null (checked above) and backed by JSC ArrayBuffer of byte_len bytes.
         // `&mut self` enforces exclusive access to this view.
         unsafe { core::slice::from_raw_parts_mut(self.ptr, self.byte_len) }
+    }
+
+    /// The same bytes for output only. They may be shared or uninitialized.
+    #[inline]
+    pub fn shared_out_bytes(&mut self) -> &[SharedOutU8] {
+        if self.is_detached() {
+            return &[];
+        }
+        // SAFETY: as in `byte_slice_mut`. `SharedOutU8` has the layout of `u8`.
+        unsafe { core::slice::from_raw_parts(self.ptr.cast::<SharedOutU8>(), self.byte_len) }
     }
 
     /// The equivalent of

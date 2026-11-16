@@ -1,7 +1,7 @@
 //! Each access touches its bytes and no others.
 #![cfg(all(unix, not(miri), any(target_arch = "x86_64", target_arch = "aarch64")))]
 #![feature(portable_simd)]
-use bun_simd_trusted::{Features, SharedOutU8, SharedU8, detected, shared::*};
+use bun_simd_trusted::{Features, SharedOutU8, SharedU8, copy_to_shared, detected, shared::*};
 use core::simd::Simd;
 use core::sync::atomic::{AtomicU8, Ordering::Relaxed};
 
@@ -160,6 +160,30 @@ fn bytes_2() {
         let two = SharedU8::from_slice(&room[start..]).first_chunk().unwrap();
         let want = [start, start + 1].map(|i| (i % 251) as u8);
         assert_eq!(SharedU8::get_two(two), want);
+    }
+}
+
+#[test]
+fn copies() {
+    let (other, room) = (fenced(), fenced());
+    reset(other);
+    for len in (0..300).chain([1000, 4096, 5000, ROOM / 2]) {
+        let end = ROOM - len;
+        for (from, to) in [(0, end), (end, 0), (1, 77), (77, 1), (77, 77)] {
+            for (source, more) in [(other, [0, 9]), (other, [9, 0]), (room, [0, 0])] {
+                reset(room);
+                let mut want = Vec::from_iter(room.iter().map(|byte| byte.load(Relaxed)));
+                want.copy_within(from..from + len, to);
+                let [from, to] = [(from, more[0]), (to, more[1])]
+                    .map(|(start, more)| start..ROOM.min(start + len + more));
+                let shorter = from.len().min(to.len());
+                let (from, to) = (&source[from], &room[to]);
+                let copied =
+                    copy_to_shared(SharedU8::from_slice(from), SharedOutU8::from_slice(to));
+                assert_eq!((copied, shorter), (len, len));
+                assert!(room.iter().map(|byte| byte.load(Relaxed)).eq(want));
+            }
+        }
     }
 }
 

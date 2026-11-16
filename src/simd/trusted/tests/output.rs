@@ -1,9 +1,10 @@
 //! Each allocation has its exact size and is not initialized, for Miri.
 #![feature(portable_simd)]
 #![forbid(unsafe_code)]
-use bun_simd_trusted::{Out, extend_vec, quarters, spare_capacity};
+use bun_simd_trusted::{Out, SharedOutU8, SharedU8, extend_vec, quarters, spare_capacity};
+use bun_simd_trusted::{copy_from_shared, copy_to_shared};
 use core::simd::Simd;
-use core::sync::atomic::{AtomicPtr, Ordering::Relaxed};
+use core::sync::atomic::{AtomicPtr, AtomicU8, Ordering::Relaxed};
 use std::panic::{AssertUnwindSafe, catch_unwind, resume_unwind};
 
 fn filled<T: Copy>(len: usize, fill: impl for<'a> FnOnce(Out<'a, T>) -> &'a mut [T]) -> Vec<T> {
@@ -281,4 +282,37 @@ fn into_shared() {
     let mut words = [0u16; 2];
     Out::from(&mut words[..]).into_shared()[3].set(1);
     assert_eq!(words, [0, u16::from_ne_bytes([0, 1])]);
+}
+
+#[test]
+fn copies() {
+    for (len, room) in (0..5).flat_map(|len| (0..5).map(move |room| (len, room))) {
+        let (from, both) = (Vec::from_iter(1..=len as u8), len.min(room));
+        let shared = Vec::from_iter((0..room).map(|_| AtomicU8::new(9)));
+        assert_eq!(
+            copy_to_shared(&from, SharedOutU8::from_slice(&shared)),
+            both
+        );
+        let copy = |room| {
+            filled(room, |out| {
+                copy_from_shared(SharedU8::from_slice(&shared), out)
+            })
+        };
+        assert_eq!(copy(len), from[..both]);
+        assert_eq!(
+            copy(room + 1),
+            [&from[..both], &[9; 5][both..room]].concat()
+        );
+    }
+}
+
+#[test]
+fn copies_that_overlap() {
+    for (from, to) in [(0, 2), (2, 0), (1, 1)] {
+        let (bytes, mut want) = ([1, 2, 3, 4, 5, 6].map(AtomicU8::new), [1, 2, 3, 4, 5, 6]);
+        let source = SharedU8::from_slice(&bytes[from..from + 4]);
+        copy_to_shared(source, SharedOutU8::from_slice(&bytes[to..]));
+        want.copy_within(from..from + 4, to);
+        assert_eq!(bytes.map(AtomicU8::into_inner), want);
+    }
 }

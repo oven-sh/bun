@@ -77,8 +77,13 @@ test.skipIf(!isLinux && !isWindows)(
         const report = runs[at].find(({ stderr }) => stderr)?.stderr;
         if (report) console.error(report);
       }
-      for (const { stdout, exitCode } of runs.flat())
-        expect({ stdout, exitCode }).toEqual({ stdout: expect.stringMatching(/^(collected|alive)$/), exitCode: 0 });
+      // What a run that did not end well printed is part of what failed: the report of another run does not stand for it.
+      for (const { stdout, stderr, exitCode } of runs.flat())
+        expect({ stdout, exitCode, stderr: exitCode ? stderr : "" }).toEqual({
+          stdout: expect.stringMatching(/^(collected|alive)$/),
+          exitCode: 0,
+          stderr: "",
+        });
     }
   },
   60_000,

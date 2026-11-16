@@ -1186,6 +1186,8 @@ describe("resolve* ENODATA vs ENOTFOUND", () => {
   const MISSING = "missing.test.";
   const DUAL = "dual.test.";
   let socket;
+  let resolver;
+  let promises;
   let previousServers;
 
   function parseQuestion(query) {
@@ -1265,6 +1267,10 @@ describe("resolve* ENODATA vs ENOTFOUND", () => {
     socket.bind(0, "127.0.0.1");
     await once(socket, "listening");
     dns.setServers(["127.0.0.1:" + socket.address().port]);
+    resolver = new dns.Resolver();
+    promises = new dns_promises.Resolver();
+    resolver.setServers(dns.getServers());
+    promises.setServers(dns.getServers());
   });
 
   afterAll(() => {
@@ -1309,54 +1315,59 @@ describe("resolve* ENODATA vs ENOTFOUND", () => {
   });
 
   test("NODATA is ENODATA and NXDOMAIN is ENOTFOUND for each record type", async () => {
-    const resolver = new dns.Resolver({ timeout: 1000, tries: 1 });
-    const promises = new dns_promises.Resolver({ timeout: 1000, tries: 1 });
-    resolver.setServers(dns.getServers());
-    promises.setServers(dns.getServers());
-
     expect(await promiseResult(promises.resolve4(A_ONLY))).toEqual({ ok: ["192.0.2.10"] });
     expect(await callbackResult(resolver.resolve4.bind(resolver), A_ONLY)).toEqual({ ok: ["192.0.2.10"] });
     expect(await promiseResult(dns_promises.resolve4(A_ONLY))).toEqual({ ok: ["192.0.2.10"] });
     expect(await callbackResult(dns.resolve4, A_ONLY)).toEqual({ ok: ["192.0.2.10"] });
 
-    expect(await promiseResult(promises.resolve6(A_ONLY))).toEqual(nodata("queryAaaa", A_ONLY));
-    expect(await callbackResult(resolver.resolve6.bind(resolver), A_ONLY)).toEqual(nodata("queryAaaa", A_ONLY));
     expect(await promiseResult(dns_promises.resolve6(A_ONLY))).toEqual(nodata("queryAaaa", A_ONLY));
     expect(await callbackResult(dns.resolve6, A_ONLY)).toEqual(nodata("queryAaaa", A_ONLY));
-
-    expect(await promiseResult(promises.resolveMx(A_ONLY))).toEqual(nodata("queryMx", A_ONLY));
-    expect(await callbackResult(resolver.resolveMx.bind(resolver), A_ONLY)).toEqual(nodata("queryMx", A_ONLY));
-    expect(await promiseResult(promises.resolveTxt(A_ONLY))).toEqual(nodata("queryTxt", A_ONLY));
-    expect(await callbackResult(resolver.resolveTxt.bind(resolver), A_ONLY)).toEqual(nodata("queryTxt", A_ONLY));
-    expect(await promiseResult(promises.resolveCname(A_ONLY))).toEqual(nodata("queryCname", A_ONLY));
-    expect(await callbackResult(resolver.resolveCname.bind(resolver), A_ONLY)).toEqual(nodata("queryCname", A_ONLY));
 
     const any = await promiseResult(promises.resolveAny(A_ONLY));
     expect(any.ok).toEqual([expect.objectContaining({ address: "192.0.2.10", type: "A" })]);
     expect(await callbackResult(resolver.resolveAny.bind(resolver), A_ONLY)).toEqual(any);
 
-    for (const [method, syscall] of [
+    const recordTypes = [
       ["resolve4", "queryA"],
       ["resolve6", "queryAaaa"],
       ["resolveAny", "queryAny"],
-      ["resolveMx", "queryMx"],
-      ["resolveTxt", "queryTxt"],
+      ["resolveCaa", "queryCaa"],
       ["resolveCname", "queryCname"],
-    ]) {
+      ["resolveMx", "queryMx"],
+      ["resolveNaptr", "queryNaptr"],
+      ["resolveNs", "queryNs"],
+      ["resolvePtr", "queryPtr"],
+      ["resolveSoa", "querySoa"],
+      ["resolveSrv", "querySrv"],
+      ["resolveTxt", "queryTxt"],
+    ];
+
+    for (const [method, syscall] of recordTypes) {
       expect(await promiseResult(promises[method](MISSING))).toEqual(notFound(syscall, MISSING));
       expect(await callbackResult(resolver[method].bind(resolver), MISSING)).toEqual(notFound(syscall, MISSING));
+    }
+
+    for (const [method, syscall] of recordTypes) {
+      if (method === "resolve4" || method === "resolveAny") continue;
+      expect(await promiseResult(promises[method](A_ONLY))).toEqual(nodata(syscall, A_ONLY));
+      expect(await callbackResult(resolver[method].bind(resolver), A_ONLY)).toEqual(nodata(syscall, A_ONLY));
     }
 
     expect(await promiseResult(promises.resolve6(DUAL))).toEqual({ ok: ["2001:db8::1"] });
     expect(await callbackResult(resolver.resolve6.bind(resolver), DUAL)).toEqual({ ok: ["2001:db8::1"] });
   });
 
-  test("resolve4 of an AAAA-only name is ENODATA", async () => {
-    const resolver = new dns.Resolver({ timeout: 1000, tries: 1 });
-    const promises = new dns_promises.Resolver({ timeout: 1000, tries: 1 });
-    resolver.setServers(dns.getServers());
-    promises.setServers(dns.getServers());
+  test("resolvePtr and resolve(rrtype) report ENODATA", async () => {
+    const PTR = "9.2.0.192.in-addr.arpa";
+    expect(await promiseResult(promises.resolvePtr(PTR))).toEqual(nodata("queryPtr", PTR));
+    expect(await callbackResult(resolver.resolvePtr.bind(resolver), PTR)).toEqual(nodata("queryPtr", PTR));
 
+    expect(await promiseResult(dns_promises.resolve(A_ONLY, "AAAA"))).toEqual(nodata("queryAaaa", A_ONLY));
+    expect(await promiseResult(promises.resolve(A_ONLY, "AAAA"))).toEqual(nodata("queryAaaa", A_ONLY));
+    expect(await callbackResult(resolver.resolve.bind(resolver), A_ONLY, "AAAA")).toEqual(nodata("queryAaaa", A_ONLY));
+  });
+
+  test("resolve4 of an AAAA-only name is ENODATA", async () => {
     expect(await promiseResult(promises.resolve4(AAAA_ONLY))).toEqual(nodata("queryA", AAAA_ONLY));
     expect(await callbackResult(resolver.resolve4.bind(resolver), AAAA_ONLY)).toEqual(nodata("queryA", AAAA_ONLY));
     expect(await promiseResult(promises.resolve6(AAAA_ONLY))).toEqual({ ok: ["2001:db8::1"] });
@@ -1364,16 +1375,11 @@ describe("resolve* ENODATA vs ENOTFOUND", () => {
   });
 
   test("resolveAny of a name with no records is ENODATA", async () => {
-    const resolver = new dns.Resolver({ timeout: 1000, tries: 1 });
-    const promises = new dns_promises.Resolver({ timeout: 1000, tries: 1 });
-    resolver.setServers(dns.getServers());
-    promises.setServers(dns.getServers());
-
     expect(await promiseResult(promises.resolveAny(NO_ANY))).toEqual(nodata("queryAny", NO_ANY));
     expect(await callbackResult(resolver.resolveAny.bind(resolver), NO_ANY)).toEqual(nodata("queryAny", NO_ANY));
   });
 
-  test("lookup of a missing hostname is still ENOTFOUND", async () => {
+  test("lookup reports ENOTFOUND for both NXDOMAIN and NODATA", async () => {
     // c-ares lookup of the fixture's NXDOMAIN name. System getaddrinfo's
     // EAI_NONAME → ENOTFOUND mapping is the test above; it does not query DNS.
     const caresMissing = await Bun.dns.lookup(MISSING, { backend: "c-ares" }).then(
@@ -1388,15 +1394,17 @@ describe("resolve* ENODATA vs ENOTFOUND", () => {
     );
     expect(caresV6).toBe("DNS_ENOTFOUND");
 
+    const caresNoAny = await Bun.dns.lookup(NO_ANY, { backend: "c-ares" }).then(
+      value => ({ ok: value }),
+      err => err.code,
+    );
+    expect(caresNoAny).toBe("DNS_ENOTFOUND");
+
     const caresV4 = await Bun.dns.lookup(A_ONLY, { backend: "c-ares", family: 4 });
     expect(caresV4.map(row => row.address)).toEqual(["192.0.2.10"]);
   });
 
   test("reverse of an address with no PTR is still ENOTFOUND", async () => {
-    const resolver = new dns.Resolver({ timeout: 1000, tries: 1 });
-    const promises = new dns_promises.Resolver({ timeout: 1000, tries: 1 });
-    resolver.setServers(dns.getServers());
-    promises.setServers(dns.getServers());
     expect(await promiseResult(promises.reverse("192.0.2.9"))).toEqual(notFound("getHostByAddr", "192.0.2.9"));
     expect(await callbackResult(resolver.reverse.bind(resolver), "192.0.2.9")).toEqual(
       notFound("getHostByAddr", "192.0.2.9"),
@@ -1404,10 +1412,6 @@ describe("resolve* ENODATA vs ENOTFOUND", () => {
   });
 
   test("reverse of a non-PTR answer is ENODATA", async () => {
-    const resolver = new dns.Resolver({ timeout: 1000, tries: 1 });
-    const promises = new dns_promises.Resolver({ timeout: 1000, tries: 1 });
-    resolver.setServers(dns.getServers());
-    promises.setServers(dns.getServers());
     expect(await promiseResult(promises.reverse(NON_PTR_ADDRESS))).toEqual(nodata("getHostByAddr", NON_PTR_ADDRESS));
     expect(await callbackResult(resolver.reverse.bind(resolver), NON_PTR_ADDRESS)).toEqual(
       nodata("getHostByAddr", NON_PTR_ADDRESS),

@@ -37,7 +37,6 @@ pub struct InternalState<'a> {
     pub(crate) encoding: Encoding,
     pub(crate) chunked_decoder: ChunkedDecoder,
     pub(crate) decompressor: Decompressor,
-    pub(crate) stage: Stage,
     /// Decoded (post-decompression / post-chunked-decode) body bytes accumulate
     /// here. Delivered to the progress callback as a borrowed slice and cleared
     /// (cap-bounded) after the callback returns.
@@ -89,13 +88,13 @@ pub struct InternalStateFlags {
     /// application data to the socket and `on_data` must treat incoming
     /// application data as unexpected. Cleared by
     /// `HTTPClient::resume_after_cert_check` once the JS thread reports the
-    /// check passed (and implicitly by `InternalState::reset()` on every
-    /// redirect hop / failure, so each hop re-parks independently).
+    /// check passed (and implicitly by `InternalState::init()` on every
+    /// redirect hop, so each hop re-parks independently).
     pub(crate) is_waiting_for_cert_check: bool,
     pub(crate) receive_paused: bool,
     /// Set once `HTTPClient::compress_body_for_send` has run for this attempt.
     /// Guards header-retry re-entries from compressing again. Cleared by
-    /// `reset()`/`init()` so each redirect/retry hop re-compresses from the
+    /// `init()` so each redirect/retry hop re-compresses from the
     /// original uncompressed `original_request_body`.
     pub(crate) body_compressed: bool,
     /// Held input or buffered decoder output remains for `HTTPClient::drain_response_body`.
@@ -129,7 +128,6 @@ impl Default for InternalState<'_> {
             encoding: Encoding::Identity,
             chunked_decoder: ChunkedDecoder::default(),
             decompressor: Decompressor::None,
-            stage: Stage::Pending,
             decoded_body: MutableString::init_empty(),
             compressed_body: MutableString::init_empty(),
             compressed_body_consumed: 0,
@@ -158,7 +156,6 @@ impl<'a> InternalState<'a> {
             request_body,
             compressed_body: MutableString::init_empty(),
             decoded_body: MutableString::init_empty(),
-            stage: Stage::Pending,
             ..Default::default()
         }
     }
@@ -171,23 +168,6 @@ impl<'a> InternalState<'a> {
 
     pub(crate) fn is_chunked_encoding(&self) -> bool {
         self.transfer_encoding == Encoding::Chunked
-    }
-
-    pub(crate) fn reset(&mut self) {
-        // Preserve `decoded_body` across the reset so the progress-update path
-        // can deliver its bytes after calling `reset()`; clearing happens in
-        // the caller after `AsyncHTTP::on_result`.
-        let decoded_body = core::mem::take(&mut self.decoded_body);
-        *self = InternalState {
-            decoded_body,
-            compressed_body: MutableString::init_empty(),
-            original_request_body: HTTPRequestBody::Bytes(b""),
-            request_body: bun_ptr::RawSlice::EMPTY,
-            certificate_info: None,
-            flags: InternalStateFlags::new(),
-            total_body_received: 0,
-            ..Default::default()
-        };
     }
 
     /// The buffer response body bytes accumulate into. For compressed
@@ -244,7 +224,7 @@ impl<'a> InternalState<'a> {
             })
     }
 
-    /// True when a socket close during `in_progress` completes the body rather
+    /// True when a socket close completes the body rather
     /// than failing it: chunked decoder already in the trailers state, or a
     /// close-delimited response (no Content-Length, no Transfer-Encoding).
     pub(crate) fn is_body_complete_on_close(&self) -> bool {
@@ -498,19 +478,10 @@ pub enum HTTPStage {
     Headers,
     Body,
     BodyChunk,
-    Fail,
     Done,
     ProxyHandshake,
     ProxyHeaders,
     ProxyBody,
-}
-
-#[repr(u8)]
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub enum Stage {
-    Pending,
-    Done,
-    Fail,
 }
 
 // Aliases used by the HTTPClient state machine: `request_stage` /

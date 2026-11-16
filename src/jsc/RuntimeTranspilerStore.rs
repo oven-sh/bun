@@ -32,23 +32,14 @@ use bun_watcher::Watcher;
 use crate::event_loop::{ConcurrentTask, EventLoop};
 use crate::resolved_source::PrintedAst;
 use crate::resolved_source_tag::ResolvedSourceTag;
-use crate::runtime_transpiler_cache::{
-    Entry as CacheEntry, ModuleType as CacheModuleType,
-    RuntimeTranspilerCache as JscRuntimeTranspilerCache,
-};
+use crate::runtime_transpiler_cache::{ModuleType as CacheModuleType, RuntimeTranspilerCache};
 use crate::saved_source_map::SavedSourceMap;
 use crate::strong::Optional as StrongOptional;
-use crate::virtual_machine::{SourceMapHandlerGetter, VirtualMachine, process_fetch_log};
+use crate::virtual_machine::{RuntimeSourceMapHandler, VirtualMachine, process_fetch_log};
 use crate::{
     ErrorableResolvedSource, JSGlobalObject, JSInternalPromise, JSValue, JsError, JsResult,
     ResolvedSource,
 };
-
-// LAYERING: `ParseOptions.runtime_transpiler_cache` carries the canonical
-// lower-tier type from `bun_js_parser` (re-exported via `bun_bundler`). The
-// JSC-tier disk-backed `Entry` is round-tripped through it type-erased via
-// `JSC_PARSER_CACHE_VTABLE` (see RuntimeTranspilerCache.rs).
-use bun_ast::RuntimeTranspilerCache;
 
 bun_core::declare_scope!(RuntimeTranspilerStore, hidden);
 
@@ -448,34 +439,9 @@ unsafe impl unbounded_queue::Linked for TranspilerJob {
 /// store, by contrast, are stack-local per call and bulk-freed on return; see
 /// the RSS-regression note in `run()`.
 //
-// `#[thread_local]` not `thread_local!`: the macro's `LocalKey::__getit`
-// wrapper showed up on the
-// async-import hot path. Const-init `Cell<ptr>` (no dtor).
+// Not `thread_local!`: its `LocalKey` wrapper showed up on the async-import hot path. The buffer is not freed at thread exit.
 #[thread_local]
-static SOURCE_CODE_PRINTER: Cell<Option<NonNull<BufferPrinter>>> = Cell::new(None);
-
-/// Get-or-leak accessor for the `#[thread_local]` `Cell<Option<NonNull<T>>>`
-/// slot above. Returns `&'static mut T` because the Box is leaked for the
-/// worker thread's lifetime and `#[thread_local]` guarantees per-thread
-/// exclusive access; callers reborrow `&'static T` where a shared ref suffices.
-#[inline]
-fn tls_get_or_leak<T>(
-    slot: &Cell<Option<NonNull<T>>>,
-    init: impl FnOnce() -> Box<T>,
-) -> &'static mut T {
-    let p = slot.get().unwrap_or_else(|| {
-        let p = bun_core::heap::into_raw_nn(init());
-        slot.set(Some(p));
-        p
-    });
-    // SAFETY: `p` is the `NonNull` produced by `heap::into_raw_nn(Box<T>)`
-    // (either just now or on a prior call) and never freed — the slot is a
-    // per-worker-thread leak. `#[thread_local]` storage means only this thread
-    // ever observes `p`, and every borrow returned here is scoped to one
-    // `TranspilerJob::run()` activation (no `&T`/`&mut T` from a prior call
-    // survives), so the `&mut` is exclusive for its actual use.
-    unsafe { &mut *p.as_ptr() }
-}
+static SOURCE_CODE_PRINTER: Cell<Option<Box<BufferPrinter>>> = Cell::new(None);
 
 /// `module_loader`: the `JSModuleLoader` that fetched, or empty for the global object's.
 fn fulfill(
@@ -692,15 +658,7 @@ impl TranspilerJob {
         let loader = this.loader;
         let this_tag = this.resolved_source.tag;
 
-        // RuntimeTranspilerCache has no per-allocator fields (Box<[u8]> + global mimalloc).
-        // LAYERING: this is the canonical `bun_ast::RuntimeTranspilerCache`
-        // wired with the JSC vtable so the parser's `cache.get()` reaches the
-        // disk-backed `Entry` loader; on a hit `cache.entry` holds a type-erased
-        // `*mut CacheEntry` which is unboxed below.
-        let mut cache = RuntimeTranspilerCache {
-            r#impl: Some(bun_ast::TranspilerCacheImplKind::Jsc),
-            ..Default::default()
-        };
+        let mut cache = RuntimeTranspilerCache::default();
 
         let mut log = bun_ast::Log::init();
         let mut log_clone_guard = scopeguard::guard((&mut this.log, &mut log), |(dst, src)| {
@@ -792,7 +750,7 @@ impl TranspilerJob {
                 .is_some_and(|d| d.set_breakpoint_on_first_line)
                 && is_main
                 && set_break_point_on_first_line(),
-            runtime_transpiler_cache: if !JscRuntimeTranspilerCache::is_disabled() {
+            runtime_transpiler_cache: if !RuntimeTranspilerCache::is_disabled() {
                 Some(&mut cache)
             } else {
                 None
@@ -844,12 +802,7 @@ impl TranspilerJob {
             && !bun_core::env_var::feature_flag::BUN_FEATURE_FLAG_DISABLE_ISOLATION_SOURCE_CACHE::get()
                 .unwrap_or(false);
 
-        if let Some(entry_ptr) = cache.entry.take() {
-            // SAFETY: `entry` was boxed by `JSC_PARSER_CACHE_VTABLE.get` from a
-            // concrete `crate::runtime_transpiler_cache::Entry`; sole owner.
-            let mut entry: Box<CacheEntry> =
-                unsafe { bun_core::heap::take(entry_ptr.cast::<CacheEntry>()) };
-
+        if let Some(mut entry) = cache.entry.take() {
             let _ = source_mappings.put_mappings(
                 &parse_result.source,
                 MutableString {
@@ -926,10 +879,10 @@ impl TranspilerJob {
             }
         }
 
-        let source_code_printer = tls_get_or_leak(&SOURCE_CODE_PRINTER, || {
-            let writer = BufferWriter::init();
-            Box::new(BufferPrinter::init(writer))
-        });
+        let mut source_code_printer =
+            scopeguard::guard(SOURCE_CODE_PRINTER.take().unwrap_or_default(), |printer| {
+                SOURCE_CODE_PRINTER.set(Some(printer));
+            });
 
         source_code_printer.ctx.reset();
 
@@ -938,7 +891,7 @@ impl TranspilerJob {
         if source_code_printer.ctx.buffer.list.capacity() > MAX_BUFFER_CAP {
             // printer.ctx.buffer.deinit() → Drop
             let writer = BufferWriter::init();
-            *source_code_printer = BufferPrinter::init(writer);
+            **source_code_printer = BufferPrinter::init(writer);
         }
 
         let printed_ast = PrintedAst::new(&parse_result.ast);
@@ -965,19 +918,19 @@ impl TranspilerJob {
         }
 
         let print_result = {
-            let mapper = SourceMapHandlerGetter::new(
+            let mapper = RuntimeSourceMapHandler {
                 source_mappings,
-                debugger(),
-                &raw mut *source_code_printer,
-            );
+                debugger: debugger(),
+                cache: &cache,
+            };
             transpiler.print_with_source_map(
                 // Same per-call `arena` that `transpiler.set_arena(&arena)`
                 // and `parse_options.arena` used to build `parse_result.ast`.
                 &arena,
                 parse_result,
-                source_code_printer,
+                &mut source_code_printer,
                 js_printer::Format::EsmAscii,
-                mapper.get(),
+                &mapper,
                 module_info.as_deref_mut(),
             )
         };
@@ -988,23 +941,19 @@ impl TranspilerJob {
         }
 
         if bun_core::env::DUMP_SOURCE {
-            dump_source(source_mappings, specifier, source_code_printer);
+            dump_source(source_mappings, specifier, &source_code_printer);
         }
 
         let source_code = 'brk: {
             let written = source_code_printer.ctx.get_written();
 
-            // The `Jsc` vtable bridge `put()` does not write
-            // `cache.output_code` (only the `r#impl == None` fallback does,
-            // and `r#impl` is `Some(Jsc)` here), so it is always `None`.
-            debug_assert!(cache.output_code.is_none());
             let result = String::clone_latin1(written);
 
             // SAFETY: leaf scalar field read on `*vm`; see `vm` note above.
             if written.len() > 1024 * 1024 * 2 || unsafe { (*vm).smol } {
                 // printer.ctx.buffer.deinit() → Drop
                 let writer = BufferWriter::init();
-                *source_code_printer = BufferPrinter::init(writer);
+                **source_code_printer = BufferPrinter::init(writer);
             }
             // else: the thread-local keeps the buffer.
 

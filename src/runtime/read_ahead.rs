@@ -17,9 +17,7 @@ use bun_core::{MutableString, String, strings};
 use bun_js_parser::lower::defer_requires::{LOADS, is_in_known_package};
 use bun_js_printer::{BufferPrinter, BufferWriter};
 use bun_jsc::resolved_source::{Bytecode, PrintedAst, Tag};
-use bun_jsc::runtime_transpiler_cache::{
-    Entry as CacheEntry, ModuleType as CacheModuleType, RuntimeTranspilerCache,
-};
+use bun_jsc::runtime_transpiler_cache::{ModuleType as CacheModuleType, RuntimeTranspilerCache};
 use bun_jsc::virtual_machine::{SharedResolution, VirtualMachine};
 use bun_jsc::{JSGlobalObject, ResolvedSource};
 use bun_options_types::Format;
@@ -587,10 +585,7 @@ fn transpile(
     let (arena, macro_load_states) = (Arena::new(), Default::default());
     let mut ast_memory = ASTMemoryAllocator::borrowing(&arena);
     let _ast_scope = ast_memory.enter();
-    let mut cache = bun_ast::RuntimeTranspilerCache {
-        r#impl: Some(bun_ast::TranspilerCacheImplKind::Jsc),
-        ..Default::default()
-    };
+    let mut cache = RuntimeTranspilerCache::default();
     let transpiler = &mut *tools.transpiler;
     // SAFETY: the log is this thread's (`copy_of`), and nothing borrows from it.
     let log = unsafe { &mut *transpiler.log };
@@ -618,7 +613,10 @@ fn transpile(
         inject_jest_globals: false,
         is_test_entry_point: false,
         set_breakpoint_on_first_line: false,
-        runtime_transpiler_cache: (!RuntimeTranspilerCache::is_disabled()).then_some(&mut cache),
+        runtime_transpiler_cache: match RuntimeTranspilerCache::is_disabled() {
+            true => None,
+            false => Some(&mut cache),
+        },
         remove_cjs_module_wrapper: false,
         module_type,
         keep_json_and_toml_as_one_statement: true,
@@ -628,10 +626,6 @@ fn transpile(
         .parse_maybe_return_file_only_allow_shared_buffer::<false, false>(parse_options, None)?;
     // SAFETY: as above.
     let has_errors = unsafe { (*transpiler.log).errors > 0 };
-    let entry = cache.entry.take().map(|it| {
-        // SAFETY: `JSC_PARSER_CACHE_VTABLE.get` has boxed it, and this is its only owner.
-        unsafe { bun_core::heap::take(it.cast::<CacheEntry>()) }
-    });
     if has_errors
         || parsed.empty
         || parsed.loader != loader
@@ -639,7 +633,7 @@ fn transpile(
     {
         return None;
     }
-    let (mut code, printed, mappings) = match entry {
+    let (mut code, printed, mappings) = match cache.entry.take() {
         Some(mut entry) => (
             core::mem::take(&mut entry.output_code),
             PrintedAst::cached(entry.metadata.module_type == CacheModuleType::Cjs),
@@ -657,11 +651,10 @@ fn transpile(
             transpiler
                 .print_with_source_map(&arena, parsed, &mut tools.printer, format, &chunk, None)
                 .ok()?;
-            (
-                String::clone_latin1(tools.printer.ctx.get_written()),
-                printed,
-                chunk.take().map_or_else(Vec::new, |it| it.buffer.list),
-            )
+            let code = tools.printer.ctx.get_written();
+            let mappings = chunk.take().map_or_else(Vec::new, |it| it.buffer.list);
+            cache.put(code, &mappings, None).ok()?;
+            (String::clone_latin1(code), printed, mappings)
         }
     };
     if code.is_utf16() || printed.depends_on_more_than_source() {

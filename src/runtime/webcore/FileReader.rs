@@ -25,7 +25,7 @@ bun_core::declare_scope!(FileReader, visible);
 pub struct FileReader {
     pub(crate) reader: BufferedReader,
     pub(crate) done: Cell<bool>,
-    pub(crate) pending: JsCell<streams::Pending>,
+    pub(crate) pending: streams::Pending,
     pub(crate) pending_value: JsCell<Strong>, // Strong.Optional
     pub(crate) fd: Cell<Fd>,
     /// Read-only after construction (set via struct literal in `from_blob_*`).
@@ -55,7 +55,7 @@ impl Default for FileReader {
         Self {
             reader: BufferedReader::init(),
             done: Cell::new(false),
-            pending: JsCell::new(streams::Pending::default()),
+            pending: streams::Pending::default(),
             pending_value: JsCell::new(Strong::empty()),
             fd: Cell::new(Fd::INVALID),
             start_offset: None,
@@ -501,10 +501,8 @@ impl FileReader {
         if sink.is_some() {
             self.detach_sink(Some(&err));
             sink.end(Some(err));
-        } else if self.pending.get().state == streams::PendingState::Pending {
-            self.pending
-                .with_mut(|p| p.result = streams::Result::Err(err));
-            self.pending.with_mut(|p| p.run());
+        } else {
+            self.pending.run(streams::Result::Err(err));
         }
     }
 
@@ -547,7 +545,7 @@ impl FileReader {
         let sink = *self.sink.get();
         if sink.is_some() {
             self.write_chunk_to_sink(sink, &chunk, has_more)
-        } else if self.pending.get().state == streams::PendingState::Pending {
+        } else if self.pending.is_pending() {
             // Pipes may return 0-byte reads short of EOF; keep reading.
             if chunk.is_empty() && state == ReadState::Drained {
                 true
@@ -573,7 +571,6 @@ impl FileReader {
 
     fn write_chunk_to_sink(&self, sink: SinkHandle, chunk: &[u8], has_more: bool) -> bool {
         if !chunk.is_empty() {
-            let chunk = bun_ptr::RawSlice::new(chunk);
             let wrote = sink.write(&if has_more {
                 streams::Result::Temporary(chunk)
             } else {
@@ -617,7 +614,7 @@ impl FileReader {
             .and_then(|view| view.as_array_buffer(global))
             .unwrap_or_default();
         let pending_buf = pending_array_buffer.slice_mut();
-        let ret = if chunk.is_empty() {
+        let (result, ret) = if chunk.is_empty() {
             let buffered = self.buffered.replace(Vec::new());
             let result = if buffered.is_empty() {
                 streams::Result::Done
@@ -630,8 +627,7 @@ impl FileReader {
             } else {
                 streams::Result::OwnedAndDone(buffered)
             };
-            self.pending.with_mut(|p| p.result = result);
-            false
+            (result, false)
         } else {
             let result = if pending_buf.len() >= chunk.len() {
                 pending_buf[..chunk.len()].copy_from_slice(&chunk);
@@ -652,15 +648,13 @@ impl FileReader {
                     streams::Result::Owned(owned)
                 }
             } else {
-                // Copied into a fresh Uint8Array by `run()` below, before this returns.
-                streams::Result::Temporary(bun_ptr::RawSlice::new(&chunk))
+                streams::Result::Temporary(&chunk)
             };
-            self.pending.with_mut(|p| p.result = result);
-            !was_done
+            (result, !was_done)
         };
         self.pending_value
             .with_mut(|p| p.clear_without_deallocation());
-        self.pending.with_mut(|p| p.run());
+        self.pending.run(result);
         // Re-entrant cancel or a nested pull that read to EOF closed the reader; tell the io caller to stop so it does not re-read the captured fd.
         ret && !self.done.get() && !self.reader.is_done()
     }
@@ -685,7 +679,7 @@ impl FileReader {
 
     fn on_reader_done(&self) {
         bun_core::scoped_log!(FileReader, "onReaderDone()");
-        // `p.run()` and `on_close()` can run user JS, and the `self.buffered` /
+        // `pending.run()` and `on_close()` can run user JS, and the `self.buffered` /
         // `io_ref` reads below must not land on a freed box.
         let _pin = self.ref_guard();
         let sink = *self.sink.get();
@@ -701,16 +695,13 @@ impl FileReader {
             }
         } else {
             self.consume_reader_buffer();
-            if self.pending.get().state == streams::PendingState::Pending {
-                if !self.buffered.get().is_empty() {
-                    let buffered = self.buffered.replace(Vec::new());
-                    self.pending
-                        .with_mut(|p| p.result = streams::Result::OwnedAndDone(buffered));
+            if self.pending.is_pending() {
+                let buffered = self.buffered.replace(Vec::new());
+                self.pending.run(if buffered.is_empty() {
+                    streams::Result::Done
                 } else {
-                    self.pending.with_mut(|p| p.result = streams::Result::Done);
-                }
-                self.buffered.set(Vec::new());
-                self.pending.with_mut(|p| p.run());
+                    streams::Result::OwnedAndDone(buffered)
+                });
             }
             // Don't handle buffered data here - it will be returned on the next onPull
             // This ensures proper ordering of chunks
@@ -729,7 +720,7 @@ impl FileReader {
             self.buffered.set(Vec::new());
         }
 
-        // `sink.end()` and `p.run()` run user JS, which can reach on_reader_done
+        // `sink.end()` and `pending.run()` run user JS, which can reach on_reader_done
         // and drop the across-read ref before the read of it below.
         let _pin = self.ref_guard();
 
@@ -738,13 +729,11 @@ impl FileReader {
             let err = streams::StreamError::Error(err);
             self.detach_sink(Some(&err));
             sink.end(Some(err));
-        } else if self.pending.get().state == streams::PendingState::Pending {
-            self.pending.with_mut(|p| {
-                p.result = streams::Result::Err(streams::StreamError::Error(err));
-            });
-            self.pending.with_mut(|p| p.run());
+        } else if self.pending.is_pending() {
+            self.pending
+                .run(streams::Result::Err(streams::StreamError::Error(err)));
         } else {
-            // `p.run()` would no-op and the pull promise would never settle.
+            // `pending.run()` would no-op and the pull promise would never settle.
             self.read_error.set(Some(err));
         }
 
@@ -770,7 +759,7 @@ impl FileReader {
     }
 
     /// The stored read error, or a clean end.
-    fn end_of_reader(&self) -> streams::Result {
+    fn end_of_reader(&self) -> streams::Result<'static> {
         match self.read_error.replace(None) {
             Some(err) => streams::Result::Err(streams::StreamError::Error(err)),
             None => streams::Result::Done,
@@ -830,7 +819,7 @@ impl readable_stream::SourceContext for FileReader {
         Self::on_start(self)
     }
 
-    fn on_pull(&self, buffer: &mut [u8], array: JSValue) -> streams::Result {
+    fn on_pull(&self, buffer: &mut [u8], array: JSValue) -> streams::Result<'_> {
         // `buffer` borrows a JS typed array kept alive by `array`.
         array.ensure_still_alive();
         let _keep = EnsureStillAlive(array);
@@ -917,7 +906,7 @@ impl readable_stream::SourceContext for FileReader {
 
         bun_core::scoped_log!(FileReader, "onPull({}) = pending", buffer_len);
 
-        streams::Result::Pending(self.pending.as_ptr())
+        streams::Result::Pending(&self.pending)
     }
 
     fn on_cancel(&self) {

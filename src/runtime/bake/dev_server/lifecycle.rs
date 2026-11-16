@@ -457,7 +457,6 @@ impl Drop for DevServer {
         }
 
         self.graph_safety_lock.lock();
-        self.bun_watcher.shutdown();
 
         // The map's `Drop` runs `SerializedFailure::drop` for each value.
 

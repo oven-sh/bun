@@ -54,9 +54,10 @@ const textsOfBundlerFeatures = [
 ];
 
 const textsOfLibraries: Record<string, string[]> = {
-  "libjpeg-turbo": ["Bogus Huffman table definition", "Unsupported JPEG process", "Invalid JPEG file structure"],
-  // It has no messages. This is a part of DC_QUANTIZERS in src/webp/lossy/tables.rs.
-  bun_webp: ["Y[]_`bdefhjlnprtvz|~"],
+  // A run of symbols in the standard AC Huffman tables.
+  "the JPEG codec": ["CDEFGHIJSTUVWXYZcdefghijstuvwxyz"],
+  // A part of DC_QUANTIZERS in src/webp/lossy/tables.rs.
+  "the WebP codec": ["Y[]_`bdefhjlnprtvz|~"],
   tar: ["Damaged tar archive", "Truncated tar archive", "Malformed pax attribute"],
   lsquic: [
     "Attempt to create second control stream",

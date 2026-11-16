@@ -16,7 +16,7 @@
 #include "wtf/ForbidHeapAllocation.h"
 #include "wtf/Noncopyable.h"
 #include "ncrypto.h"
-#include "AsymmetricKeyValue.h"
+#include "NodeCryptoJob.h"
 #include "NodeValidator.h"
 #include "JSSign.h"
 #include "JSVerify.h"
@@ -39,6 +39,27 @@
 using namespace JSC;
 
 namespace Bun {
+
+extern "C" void Bun__NodeCryptoJob__schedule(JSGlobalObject*, NodeCryptoJob*, EncodedJSValue callback);
+void NodeCryptoJob::schedule(JSGlobalObject* globalObject, JSValue callback, std::unique_ptr<NodeCryptoJob>&& job)
+{
+    Bun__NodeCryptoJob__schedule(globalObject, job.release(), JSValue::encode(callback));
+}
+
+extern "C" void Bun__NodeCryptoJob__runTask(NodeCryptoJob* job, JSGlobalObject* globalObject)
+{
+    job->runTask(globalObject);
+}
+
+extern "C" void Bun__NodeCryptoJob__runFromJS(NodeCryptoJob* job, JSGlobalObject* globalObject, JSCallbackArgs* out)
+{
+    *out = job->runFromJS(globalObject);
+}
+
+extern "C" void Bun__NodeCryptoJob__destroy(NodeCryptoJob* job)
+{
+    delete job;
+}
 
 JSC_DEFINE_HOST_FUNCTION(jsGetCurves, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
 {

@@ -522,9 +522,9 @@ pub(super) fn negotiated_alpn(ssl: *mut ssl::SSL) -> Option<Vec<u8>> {
 unsafe extern "C" {
     /// `X509_V_ERR_*` -> node's code name; see ncrypto.cpp.
     safe fn Bun__X509__validationErrorCode(err: i32) -> *const core::ffi::c_char;
-    /// openssl.c: the signature algorithms every other TLS context of Bun accepts from a peer.
+    /// openssl.cpp: the signature algorithms every other TLS context of Bun accepts from a peer.
     fn us_ssl_ctx_set_verify_signature_algorithms(ctx: *mut ssl::SSL_CTX) -> c_int;
-    /// openssl.c: the blocked public keys every other TLS context of Bun rejects in a peer's chain.
+    /// openssl.cpp: the blocked public keys every other TLS context of Bun rejects in a peer's chain.
     fn us_ssl_ctx_reject_blocked_keys(ctx: *mut ssl::SSL_CTX);
 }
 

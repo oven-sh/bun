@@ -34,7 +34,7 @@ pub(crate) use resource_usage::ResourceUsage;
 
 #[path = "subprocess/SubprocessPipeReader.rs"]
 pub(crate) mod subprocess_pipe_reader;
-pub(crate) use subprocess_pipe_reader as PipeReader;
+use subprocess_pipe_reader::PipeReader;
 
 #[path = "subprocess/Readable.rs"]
 pub(crate) mod readable;
@@ -65,11 +65,11 @@ type StdioPipeItem = ExtraPipe;
 pub(crate) type StaticPipeWriter<'a> = NewStaticPipeWriter<Subprocess<'a>>;
 
 impl<'a> static_pipe_writer::StaticPipeWriterProcess for Subprocess<'a> {
-    const POLL_OWNER_TAG: bun_io::PollTag = bun_io::posix_event_loop::poll_tag::STATIC_PIPE_WRITER;
+    const POLL_OWNER_TAG: bun_io::PollTag = bun_io::PollTag::StaticPipeWriter;
     type Source = webcore::AnyBlob;
-    unsafe fn on_close_io(this: *mut Self, kind: StdioKind) {
+    unsafe fn on_close_io(this: *mut Self, _: StdioKind) {
         // SAFETY: caller (StaticPipeWriter) guarantees `this` is live.
-        unsafe { (*this).on_close_io(kind) }
+        unsafe { (*this).on_close_stdin() }
     }
 }
 
@@ -339,47 +339,26 @@ impl Subprocess<'_> {
         false
     }
 
-    pub(crate) fn on_close_io(&self, kind: StdioKind) {
-        match kind {
-            StdioKind::Stdin => self.stdin.with_mut(|stdin| match stdin {
-                Writable::Pipe(_) => {
-                    let Writable::Pipe(pipe) = core::mem::replace(stdin, Writable::Ignore) else {
-                        unreachable!()
-                    };
-                    pipe.source.with_mut(|s| s.clear());
-                }
-                Writable::Buffer(_) => drop(core::mem::replace(stdin, Writable::Ignore)),
-                _ => {}
-            }),
-            StdioKind::Stdout | StdioKind::Stderr => {
-                let out: &JsCell<Readable> = if kind == StdioKind::Stdout {
-                    &self.stdout
-                } else {
-                    &self.stderr
+    pub(crate) fn on_close_stdin(&self) {
+        self.stdin.with_mut(|stdin| match stdin {
+            Writable::Pipe(_) => {
+                let Writable::Pipe(pipe) = core::mem::replace(stdin, Writable::Ignore) else {
+                    unreachable!()
                 };
-                if matches!(out.get(), Readable::Pipe(_)) {
-                    // Move the Rc<PipeReader> out of `*out` first so
-                    // reassigning doesn't drop it while still borrowed.
-                    let Readable::Pipe(pipe) = out.replace(Readable::Ignore) else {
-                        unreachable!()
-                    };
-                    let pipe_state = &mut Readable::pipe_reader_mut(&pipe).state;
-                    match pipe_state {
-                        PipeReader::State::Done(done) => {
-                            let taken = core::mem::take(done);
-                            out.set(Readable::Buffer(taken.into_boxed_slice()));
-                            // pipe.state was emptied via take()
-                        }
-                        PipeReader::State::Err(bytes, err) => {
-                            let taken = core::mem::take(bytes);
-                            out.set(Readable::Errored(taken.into_boxed_slice(), err.clone()));
-                        }
-                        // *out stays Readable::Ignore (set by replace above).
-                        PipeReader::State::Pending => {}
-                    }
-                }
+                pipe.source.with_mut(|s| s.clear());
             }
-        }
+            Writable::Buffer(_) => drop(core::mem::replace(stdin, Writable::Ignore)),
+            _ => {}
+        });
+        self.update_has_pending_activity();
+    }
+
+    fn on_output_read(&self, reader: &PipeReader, output: Readable) {
+        [&self.stdout, &self.stderr]
+            .into_iter()
+            .find(|out| matches!(out.get(), Readable::Pipe(pipe) if core::ptr::eq(pipe.as_ptr(), reader)))
+            .expect("We should be either stdout or stderr")
+            .set(output);
 
         // When the process exits before its stdout/stderr pipes have finished
         // draining, onProcessExit's deferred updateHasPendingActivity() observes
@@ -397,11 +376,11 @@ impl Subprocess<'_> {
         }
 
         if !self.has_called_getter(ObservableGetter::Stdout) {
-            self.stdout.with_mut(|s| s.ref_());
+            self.stdout.get().ref_();
         }
 
         if !self.has_called_getter(ObservableGetter::Stderr) {
-            self.stderr.with_mut(|s| s.ref_());
+            self.stderr.get().ref_();
         }
 
         self.update_has_pending_activity();
@@ -416,11 +395,11 @@ impl Subprocess<'_> {
         }
 
         if !self.has_called_getter(ObservableGetter::Stdout) {
-            self.stdout.with_mut(|s| s.unref());
+            self.stdout.get().unref();
         }
 
         if !self.has_called_getter(ObservableGetter::Stderr) {
-            self.stderr.with_mut(|s| s.unref());
+            self.stderr.get().unref();
         }
 
         self.update_has_pending_activity();
@@ -478,8 +457,8 @@ impl Subprocess<'_> {
         // unref streams so that this disposed process will not prevent
         // the process from exiting causing a hang
         self.stdin.with_mut(|s| s.unref());
-        self.stdout.with_mut(|s| s.unref());
-        self.stderr.with_mut(|s| s.unref());
+        self.stdout.get().unref();
+        self.stderr.get().unref();
 
         match self.try_kill(self.kill_signal) {
             bun_sys::Result::Ok(()) => {}
@@ -530,11 +509,10 @@ impl Subprocess<'_> {
     /// kill; a grandchild may still hold the write end (Node.js
     /// `SyncProcessRunner::Kill()`). Called outside any reader callback.
     pub(crate) fn close_readable_pipes(&self) {
-        if matches!(self.stdout.get(), Readable::Pipe(_)) {
-            self.stdout.with_mut(|s| s.close());
-        }
-        if matches!(self.stderr.get(), Readable::Pipe(_)) {
-            self.stderr.with_mut(|s| s.close());
+        for out in [&self.stdout, &self.stderr] {
+            if let Some(pipe) = out.get().pipe() {
+                PipeReader::close(&pipe);
+            }
         }
     }
 
@@ -808,26 +786,9 @@ impl Subprocess<'_> {
         // resume reads here; timeout/maxBuffer bound the sync wait. A lazy
         // reader is paused until JS pulls, so unpause it first; backpressure
         // is moot once the direct child has exited.
-        if let Readable::Pipe(pipe) = self.stdout.get() {
-            if !pipe.reader.is_done() {
-                let reader = &raw mut Readable::pipe_reader_mut(pipe).reader;
-                // SAFETY: live pipe reader; `read` is the raw re-entrancy-safe
-                // entry (its dispatch runs user JS).
-                unsafe {
-                    (*reader).unpause();
-                    bun_io::BufferedReader::read(reader);
-                }
-            }
-        }
-
-        if let Readable::Pipe(pipe) = self.stderr.get() {
-            if !pipe.reader.is_done() {
-                let reader = &raw mut Readable::pipe_reader_mut(pipe).reader;
-                // SAFETY: as the stdout arm above.
-                unsafe {
-                    (*reader).unpause();
-                    bun_io::BufferedReader::read(reader);
-                }
+        for out in [&self.stdout, &self.stderr] {
+            if let Some(pipe) = out.get().pipe() {
+                PipeReader::resume(&pipe);
             }
         }
 
@@ -999,14 +960,14 @@ impl Subprocess<'_> {
                 if !called {
                     self.stdout.with_mut(|s| s.finalize());
                 } else {
-                    self.stdout.with_mut(|s| s.close());
+                    Readable::close(&self.stdout);
                 }
             }
             StdioKind::Stderr => {
                 if !called {
                     self.stderr.with_mut(|s| s.finalize());
                 } else {
-                    self.stderr.with_mut(|s| s.close());
+                    Readable::close(&self.stderr);
                 }
             }
         }
@@ -1250,7 +1211,7 @@ pub(crate) mod testing_apis {
     /// Inject a synthetic read error into a subprocess's stdout/stderr
     /// PipeReader, as if the underlying read() syscall (Posix) or libuv read
     /// callback (Windows) had failed with EBADF. Used by tests to exercise
-    /// the onReaderError cleanup path, which is otherwise very hard to
+    /// the `on_read_result` cleanup path, which is otherwise very hard to
     /// trigger deterministically — on Windows in particular, peer death on
     /// a named pipe maps to UV_EOF rather than an error.
     ///
@@ -1271,21 +1232,14 @@ pub(crate) mod testing_apis {
                 .throw(format_args!("second argument must be 'stdout' or 'stderr'")));
         };
 
-        let Readable::Pipe(pipe) = out.get() else {
+        let Some(pipe) = out.get().pipe() else {
             return Ok(false);
         };
 
         // Mirror what the real error path does (onStreamRead on Windows,
         // read() on Posix) so the teardown exercised is identical.
         let fake_err = bun_sys::Error::from_code(bun_sys::Errno::EBADF, bun_sys::Tag::read);
-        #[cfg(windows)]
-        {
-            let _ = Readable::pipe_reader_mut(pipe).reader.stop_reading();
-        }
-        let reader = &raw mut Readable::pipe_reader_mut(pipe).reader;
-        // SAFETY: live pipe reader; `on_error` is the raw entry so the
-        // (maybe-freeing) error dispatch runs under no receiver protector.
-        unsafe { bun_io::BufferedReader::on_error(reader, fake_err) };
+        PipeReader::inject_error(&pipe, fake_err);
         Ok(true)
     }
 

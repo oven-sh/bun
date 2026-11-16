@@ -1650,6 +1650,27 @@ describe.concurrent("start() on an open writer", () => {
     expect(result).toEqual({ failed: syscall, buffered: 0, closed: "all" });
   });
 
+  it.skipIf(isWindows)("start({ path }) to a second FIFO closes it and keeps writing to the first", async () => {
+    const result = await run(`
+      const paths = [join(dir, "a"), join(dir, "b")];
+      Bun.spawnSync(["mkfifo", ...paths]);
+      const readers = paths.map(path => fs.openSync(path, fs.constants.O_RDONLY | fs.constants.O_NONBLOCK));
+      const writer = Bun.file(paths[0]).writer();
+      const out = {};
+      try {
+        writer.start({ path: paths[1] });
+      } catch (e) {
+        out.code = e.code;
+      }
+      writer.write("short");
+      await writer.end();
+      // Reading an empty FIFO throws EAGAIN while a write end is open.
+      out.read = readers.map(fd => fs.readSync(fd, Buffer.alloc(16)));
+      console.log(JSON.stringify(out));
+    `);
+    expect(result).toEqual({ code: isLinux ? "ENOENT" : undefined, read: [5, 0] });
+  });
+
   it("start({ path }) settles a queued write and flushes it to the new path", async () => {
     // On Windows the first chunk is in flight and the second waits in the writer's queue.
     const result = await run(`

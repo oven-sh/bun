@@ -16,7 +16,6 @@ import { brotli } from "./brotli.ts";
 import { cares } from "./cares.ts";
 import { highway } from "./highway.ts";
 import { libdeflate } from "./libdeflate.ts";
-import { libjpegTurbo } from "./libjpeg-turbo.ts";
 import { libuv } from "./libuv.ts";
 import { lolhtml } from "./lolhtml.ts";
 import { lshpack } from "./lshpack.ts";
@@ -46,8 +45,6 @@ export const allDeps: readonly Dependency[] = [
   zstd,
   brotli,
   libdeflate,
-  // Image codecs.
-  libjpegTurbo,
   cares,
   highway,
   libuv,
@@ -75,7 +72,6 @@ export {
   cares,
   highway,
   libdeflate,
-  libjpegTurbo,
   libuv,
   lolhtml,
   lshpack,

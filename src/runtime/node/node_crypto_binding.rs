@@ -1,5 +1,5 @@
 //! `node:crypto` native binding — `pbkdf2`/`scrypt`/`random*`
-//! plus the `ExternCryptoJob` / `CryptoJob<Ctx>` work-pool plumbing.
+//! plus the `ExternJob` / `CryptoJob<Ctx>` work-pool plumbing.
 
 // `rust-argon2` exports its lib as crate `argon2`; alias past the `argon2` fn below.
 use ::argon2 as rust_argon2;
@@ -40,8 +40,7 @@ impl JSValueCryptoExt for JSValue {
 }
 
 // ───────────────────────────────────────────────────────────────────────────
-// ExternCryptoJob — token-pastes C symbol names (`Bun__<name>Ctx__runTask`
-// etc.), so a `macro_rules!` is the right shape.
+// ExternJob — carries a `Bun::NodeCryptoJob` to the work pool and back.
 // ───────────────────────────────────────────────────────────────────────────
 
 /// Completion-callback arguments produced by a job ctx's JS-thread half
@@ -64,127 +63,91 @@ impl JsCallbackArgs {
     }
 }
 
-macro_rules! extern_crypto_job {
-    ($Name:ident, $name_str:literal) => {
-        pub(crate) mod $Name {
-            use super::*;
+bun_opaque::opaque_ffi! { struct NodeCryptoJob; }
 
-            // `Ctx` is `opaque {}` — Nomicon FFI opaque-handle pattern.
-            bun_opaque::opaque_ffi! { pub struct Ctx; }
-
-            // `Ctx` is an `opaque_ffi!` ZST handle, so `&Ctx` is ABI-identical
-            // to a non-null pointer and discharges the validity proof at the
-            // type level. `global` in `runTask` is forwarded raw (the trait
-            // hands us `*mut`; C++ never reads through it off-thread).
-            //
-            // `runFromJS` (the JS-thread half; `runTask` is the work-pool
-            // half) returns the completion callback's arguments by value. It
-            // never sees the callback, so it cannot run user JS; `then` frees
-            // the ctx and then invokes.
-            unsafe extern "C" {
-                #[link_name = concat!("Bun__", $name_str, "Ctx__runTask")]
-                safe fn ctx_run_task(ctx: &Ctx, global: &JSGlobalObject);
-                #[link_name = concat!("Bun__", $name_str, "Ctx__runFromJS")]
-                safe fn ctx_run_from_js(
-                    ctx: &Ctx,
-                    global: &JSGlobalObject,
-                    out: &mut JsCallbackArgs,
-                );
-                #[link_name = concat!("Bun__", $name_str, "Ctx__deinit")]
-                safe fn ctx_deinit(ctx: &Ctx);
-            }
-
-            /// The C++ context this job owns: plain data, freed wherever the job ends.
-            pub(crate) struct OwnedCtx(*mut Ctx);
-            // SAFETY: an owned C++ heap object with no thread affinity.
-            unsafe impl Send for OwnedCtx {}
-            impl Drop for OwnedCtx {
-                fn drop(&mut self) {
-                    ctx_deinit(Ctx::opaque_ref(self.0));
-                }
-            }
-
-            pub(crate) struct ExternJob {
-                ctx: OwnedCtx,
-                global: JsPtr<JSGlobalObject>,
-            }
-
-            impl JobContext for ExternJob {
-                type OffThread = Self;
-                type Js = Strong;
-
-                fn run(
-                    this: &mut Self,
-                    done: bun_jsc::Completion<Self>,
-                ) -> Option<bun_jsc::Completion<Self>> {
-                    // Jobs report what they find on the error queue of a thread they share.
-                    boringssl::c::ERR_clear_error();
-                    // SAFETY: the creating global, alive under the job's ticket; C++
-                    // only threads it through to error reporting state.
-                    ctx_run_task(Ctx::opaque_ref(this.ctx.0), unsafe {
-                        this.global.under_ticket(done.ticket())
-                    });
-                    boringssl::c::ERR_clear_error();
-                    Some(done)
-                }
-
-                fn then(this: Self, callback: Strong, cx: &JsThread<'_>) -> JsResult<()> {
-                    let global = cx.global();
-                    let mut args = JsCallbackArgs::EMPTY;
-                    // The job ran on another thread: this one's queue is not its error stack.
-                    boringssl::c::ERR_clear_error();
-                    let produced = jsc::from_js_host_call_generic(global, || {
-                        ctx_run_from_js(Ctx::opaque_ref(this.ctx.0), global, &mut args);
-                    });
-                    // `runFromJS` never sees the callback, so it cannot run user
-                    // JS; free the ctx first, then invoke.
-                    drop(this);
-                    produced?;
-                    global.bun_vm().event_loop().run_callback(
-                        bun_event_loop::ContextId::NONE,
-                        callback.get(),
-                        global,
-                        JSValue::UNDEFINED,
-                        args.as_slice(),
-                    );
-                    Ok(())
-                }
-            }
-
-            #[unsafe(export_name = concat!("Bun__", $name_str, "__createAndSchedule"))]
-            pub(crate) extern "C" fn __create_and_schedule(
-                global: &JSGlobalObject,
-                ctx: *mut Ctx,
-                callback: JSValue,
-            ) {
-                let cx = global.js_thread_of_caller();
-                let callback = callback.with_async_context_if_needed(global);
-                Job::<ExternJob>::schedule(
-                    &cx,
-                    ExternJob {
-                        ctx: OwnedCtx(ctx),
-                        // SAFETY: the creating global outlives every borrow of its VM.
-                        global: unsafe { JsPtr::new(core::ptr::NonNull::from(global)) },
-                    },
-                    Strong::create(callback, global),
-                );
-            }
-        }
-    };
+unsafe extern "C" {
+    safe fn Bun__NodeCryptoJob__runTask(job: &NodeCryptoJob, global: &JSGlobalObject);
+    safe fn Bun__NodeCryptoJob__runFromJS(
+        job: &NodeCryptoJob,
+        global: &JSGlobalObject,
+        out: &mut JsCallbackArgs,
+    );
+    fn Bun__NodeCryptoJob__destroy(job: *mut NodeCryptoJob);
 }
 
-// Definitions for job structs created from C++.
-extern_crypto_job!(CheckPrimeJob, "CheckPrimeJob");
-extern_crypto_job!(GeneratePrimeJob, "GeneratePrimeJob");
-extern_crypto_job!(HkdfJob, "HkdfJob");
-extern_crypto_job!(SecretKeyJob, "SecretKeyJob");
-extern_crypto_job!(RsaKeyPairJob, "RsaKeyPairJob");
-extern_crypto_job!(DsaKeyPairJob, "DsaKeyPairJob");
-extern_crypto_job!(EcKeyPairJob, "EcKeyPairJob");
-extern_crypto_job!(NidKeyPairJob, "NidKeyPairJob");
-extern_crypto_job!(DhKeyPairJob, "DhKeyPairJob");
-extern_crypto_job!(DhJob, "DhJob");
-extern_crypto_job!(SignJob, "SignJob");
+/// The `std::unique_ptr<NodeCryptoJob>` C++ hands over: plain data, freed wherever the job ends.
+#[repr(transparent)]
+struct OwnedCtx(*mut NodeCryptoJob);
+// SAFETY: an owned C++ heap object with no thread affinity.
+unsafe impl Send for OwnedCtx {}
+impl Drop for OwnedCtx {
+    fn drop(&mut self) {
+        // SAFETY: the pointer C++ released into `Bun__NodeCryptoJob__schedule`; freed once, here.
+        unsafe { Bun__NodeCryptoJob__destroy(self.0) };
+    }
+}
+
+struct ExternJob {
+    ctx: OwnedCtx,
+    global: JsPtr<JSGlobalObject>,
+}
+
+impl JobContext for ExternJob {
+    type OffThread = Self;
+    type Js = Strong;
+
+    fn run(this: &mut Self, done: bun_jsc::Completion<Self>) -> Option<bun_jsc::Completion<Self>> {
+        // Jobs report what they find on the error queue of a thread they share.
+        boringssl::c::ERR_clear_error();
+        // SAFETY: the creating global, alive under the job's ticket; C++
+        // only threads it through to error reporting state.
+        Bun__NodeCryptoJob__runTask(NodeCryptoJob::opaque_ref(this.ctx.0), unsafe {
+            this.global.under_ticket(done.ticket())
+        });
+        boringssl::c::ERR_clear_error();
+        Some(done)
+    }
+
+    fn then(this: Self, callback: Strong, cx: &JsThread<'_>) -> JsResult<()> {
+        let global = cx.global();
+        let mut args = JsCallbackArgs::EMPTY;
+        // The job ran on another thread: this one's queue is not its error stack.
+        boringssl::c::ERR_clear_error();
+        let produced = jsc::from_js_host_call_generic(global, || {
+            Bun__NodeCryptoJob__runFromJS(NodeCryptoJob::opaque_ref(this.ctx.0), global, &mut args);
+        });
+        // `runFromJS` never sees the callback: free the ctx first, then invoke.
+        drop(this);
+        produced?;
+        global.bun_vm().event_loop().run_callback(
+            bun_event_loop::ContextId::NONE,
+            callback.get(),
+            global,
+            JSValue::UNDEFINED,
+            args.as_slice(),
+        );
+        Ok(())
+    }
+}
+
+#[unsafe(no_mangle)]
+extern "C" fn Bun__NodeCryptoJob__schedule(
+    global: &JSGlobalObject,
+    ctx: OwnedCtx,
+    callback: JSValue,
+) {
+    let cx = global.js_thread_of_caller();
+    let callback = callback.with_async_context_if_needed(global);
+    Job::<ExternJob>::schedule(
+        &cx,
+        ExternJob {
+            ctx,
+            // SAFETY: the creating global outlives every borrow of its VM.
+            global: unsafe { JsPtr::new(core::ptr::NonNull::from(global)) },
+        },
+        Strong::create(callback, global),
+    );
+}
 
 // ───────────────────────────────────────────────────────────────────────────
 // CryptoJob<Ctx>

@@ -1610,7 +1610,7 @@ impl<'a> Formatter<'a> {
                             return Err(JsError::Thrown);
                         }
                         return Ok(());
-                    } else if bun_jsc::DOMFormData::from_js(value).is_some() {
+                    } else if bun_jsc::DOMFormData::from_js(&value).is_some() {
                         if let Some(to_json_function) = value
                             .get(self.global_this, "toJSON")?
                             .filter(|f| f.is_callable())
@@ -2972,7 +2972,7 @@ impl JestPrettyFormat {
             *this.amf_quote_strings() = original_quote_strings;
         } else if let Some(instance) = value.as_class_ref::<expect::ExpectCustomAsymmetricMatcher>() {
             let printed = expect::ExpectCustomAsymmetricMatcher::custom_print(
-                instance, value, this.amf_global_this(), &mut *writer.ctx, true,
+                &instance, value, this.amf_global_this(), &mut *writer.ctx, true,
             )
             .expect("unreachable");
             if !printed {
@@ -3284,9 +3284,9 @@ pub(crate) fn write_name_of_matcher(global: &JSGlobalObject, value: JSValue, out
             name(matcher.flags, "StringMatching", "StringNotMatching")
         } else if let Some(matcher) = value.as_class_ref::<expect::ExpectCloseTo>() {
             name(matcher.flags, "NumberCloseTo", "NumberNotCloseTo")
-        } else if value.as_class_ref::<expect::ExpectAny>().is_some() {
+        } else if value.is::<expect::ExpectAny>() {
             "Any"
-        } else if value.as_class_ref::<expect::ExpectAnything>().is_some() {
+        } else if value.is::<expect::ExpectAnything>() {
             "Anything"
         } else if let Some(matcher) = value.as_class_ref::<expect::ExpectCustomAsymmetricMatcher>() {
             let Some(matcher_fn) = js_ExpectCustomAsymmetricMatcher::matcher_fn_get_cached(value) else { return Ok(false) };
@@ -3340,7 +3340,7 @@ fn deep_merge_array(global: &JSGlobalObject, target: JSValue, source: JSValue, f
 }
 
 fn is_any_or_anything(value: JSValue) -> bool {
-    value.as_class_ref::<expect::ExpectAny>().is_some() || value.as_class_ref::<expect::ExpectAnything>().is_some()
+    value.is::<expect::ExpectAny>() || value.is::<expect::ExpectAnything>()
 }
 
 fn is_text(global: &JSGlobalObject, value: JSValue, text: &[u8]) -> JsResult<bool> {
@@ -4272,14 +4272,14 @@ impl Formatter<'_> {
                 }
             }
             out.push(b'>');
-        } else if value.as_class_ref::<expect::ExpectAny>().is_some() {
+        } else if value.is::<expect::ExpectAny>() {
             let Some(constructor) = js_ExpectAny::constructor_value_get_cached(value) else { return Ok(false) };
             out.extend_from_slice(b"Any<");
             let name = constructor.get_class_name(global)?;
             let name = name.to_utf8();
             out.extend_from_slice(if name.slice().is_empty() { b"<anonymous>" } else { name.slice() });
             out.push(b'>');
-        } else if value.as_class_ref::<expect::ExpectAnything>().is_some() {
+        } else if value.is::<expect::ExpectAnything>() {
             out.extend_from_slice(b"Anything");
         } else {
             return Ok(false);
@@ -4648,9 +4648,7 @@ impl JestPrettyFormat {
         }
 
         let utils_value = expect::ExpectMatcherUtils::singleton(global);
-        let Some(utils) = expect::ExpectMatcherUtils::from_js(utils_value) else { return Ok(()) };
-        // SAFETY: `utils_value` is on the stack and owns the payload.
-        let utils = unsafe { &*utils };
+        let Some(utils) = expect::ExpectMatcherUtils::from_js(&utils_value) else { return Ok(()) };
 
         let is_of_file = expect::Expect::is_called_by_test_file(global);
         let serializers = JSValue::create_empty_array(global, 0)?;
@@ -4674,9 +4672,7 @@ impl JestPrettyFormat {
     #[optimize(size)]
     fn serializers(global: &JSGlobalObject) -> JsResult<Option<JSValue>> {
         let utils_value = expect::ExpectMatcherUtils::singleton(global);
-        let Some(utils) = expect::ExpectMatcherUtils::from_js(utils_value) else { return Ok(None) };
-        // SAFETY: `utils_value` is on the stack and owns the payload.
-        let utils = unsafe { &*utils };
+        let Some(utils) = expect::ExpectMatcherUtils::from_js(&utils_value) else { return Ok(None) };
         let file = super::jest::Jest::file_generation();
         let is_same_file = utils.serializers_file.replace(file) == file;
         let Some(serializers) = js_ExpectMatcherUtils::snapshot_serializers_get_cached(utils_value) else {

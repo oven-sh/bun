@@ -149,10 +149,9 @@ impl Route {
         cost
     }
 
-    /// Takes its own ref on `html_bundle`.
-    pub(crate) fn init(html_bundle: ThisPtr<HTMLBundle>) -> RefPtr<Route> {
+    pub(crate) fn init(bundle: RefPtr<HTMLBundle>) -> RefPtr<Route> {
         RefPtr::new(Route {
-            bundle: RefPtr::from_this(html_bundle),
+            bundle,
             pending_responses: JsCell::new(Vec::new()),
             ref_count: RefCount::init(),
             server: Cell::new(None),

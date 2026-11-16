@@ -718,27 +718,21 @@ static int start_connections(struct us_connecting_socket_t *c, int count) {
  * racing and the first to connect wins, as in the parallel dial. */
 
 static struct addrinfo *take_next_address(struct us_connecting_socket_t *c) {
-    if (c->lead) {
-        struct addrinfo *ai = c->lead;
-        c->lead = NULL;
-        c->skip = ai;
-        return ai;
+    if (!c->next_address) {
+        c->next_address = c->next_of_other_family;
+        c->next_of_other_family = NULL;
     }
-    if (c->skip && c->addrinfo_head == c->skip) {
-        c->addrinfo_head = c->addrinfo_head->ai_next;
-    }
-    struct addrinfo *ai = c->addrinfo_head;
+    struct addrinfo *ai = c->next_address;
     if (ai) {
-        c->addrinfo_head = ai->ai_next;
+        /* The lead may be further down the list than others of its family. */
+        struct addrinfo *next = ai == c->lead ? c->addrinfo_head : ai->ai_next;
+        while (next && (next == c->lead || next->ai_family != ai->ai_family)) {
+            next = next->ai_next;
+        }
+        c->next_address = c->next_of_other_family;
+        c->next_of_other_family = next;
     }
     return ai;
-}
-
-static int has_next_address(struct us_connecting_socket_t *c) {
-    if (c->lead) return 1;
-    struct addrinfo *ai = c->addrinfo_head;
-    if (c->skip && ai == c->skip) ai = ai->ai_next;
-    return ai != NULL;
 }
 
 /* Open the next address that can be opened; arm the delay if any remain after it.
@@ -749,7 +743,7 @@ static int start_next_attempt(struct us_connecting_socket_t *c) {
     c->due_iteration = 0;
     while ((ai = take_next_address(c)) != NULL) {
         if (start_one(c, ai)) {
-            if (has_next_address(c)) {
+            if (c->next_address || c->next_of_other_family) {
                 c->next_attempt_ns = (long long) us_internal_monotonic_ns() + (long long) c->attempt_delay_ms * 1000000LL;
                 us_internal_loop_arm_connect_deadline(c->group->loop, c->next_attempt_ns);
             }
@@ -768,14 +762,14 @@ static int same_address(const struct sockaddr_storage *a, const struct addrinfo 
 }
 
 /* The entry to dial first given the address that connected last time: that
- * address if still listed, else the first of its family; NULL keeps list order. */
+ * address if still listed, else the first of its family, else the first. */
 static struct addrinfo *pick_lead(struct addrinfo *head, const struct sockaddr_storage *last) {
     struct addrinfo *family_match = NULL;
     for (struct addrinfo *ai = head; ai; ai = ai->ai_next) {
-        if (same_address(last, ai)) return ai == head ? NULL : ai;
+        if (same_address(last, ai)) return ai;
         if (!family_match && ai->ai_family == last->ss_family) family_match = ai;
     }
-    return family_match == head ? NULL : family_match;
+    return family_match ? family_match : head;
 }
 
 void us_internal_connect_sweep(struct us_loop_t *loop) {
@@ -847,9 +841,13 @@ void us_internal_socket_after_resolve(struct us_connecting_socket_t *c) {
         /* The list is in the resolver's order with families interleaved; lead
          * with what connected last time through this cache entry, if recorded. */
         struct sockaddr_storage last;
-        if (Bun__addrinfo_getLastAddress(c->addrinfo_req, &last)) {
-            c->lead = pick_lead(c->addrinfo_head, &last);
+        c->lead = Bun__addrinfo_getLastAddress(c->addrinfo_req, &last) ? pick_lead(c->addrinfo_head, &last) : c->addrinfo_head;
+        c->next_address = c->lead;
+        struct addrinfo *other = c->addrinfo_head;
+        while (other && other->ai_family == c->lead->ai_family) {
+            other = other->ai_next;
         }
+        c->next_of_other_family = other;
         opened = start_next_attempt(c);
     } else {
         opened = start_connections(c, CONCURRENT_CONNECTIONS);

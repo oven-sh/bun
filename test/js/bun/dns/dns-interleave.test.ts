@@ -348,6 +348,70 @@ describe.concurrent.each(["fetch()", "Bun.connect()"])("connection attempt delay
     },
   );
 
+  // Linux-only: 127.0.0.0/8 is on lo, and an IPv6 socket can dial ::ffff:127.0.0.3.
+  test.skipIf(!hasIPv6Loopback || !isLinux)("the families alternate after a remembered address", async () => {
+    const result = await run(
+      /* js */ `
+      ${dialHelper(client)}
+      const [remembered, [sameFamily, otherFamily]] = await listenWith("127.0.0.1", async port => {
+        await hold("::1", port);
+        return [listen("127.0.0.2", port), listen("127.0.0.3", port)];
+      });
+      dnsCacheSeed("he-mapped.test", ["::ffff:127.0.0.3"]);
+      const mapped = await dial("he-mapped.test", remembered.port);
+      const host = "he-alternate-" + remembered.port + ".test";
+      const order = dnsCacheSeed(host, ["::1", "127.0.0.1", "::ffff:127.0.0.3", "127.0.0.2"]);
+      const first = await dial(host, remembered.port);
+      remembered.stop();
+      await hold("127.0.0.1", remembered.port);
+      const second = await dial(host, remembered.port);
+      const accepted = [await sameFamily.accepted(), await otherFamily.accepted()];
+      console.log(JSON.stringify({ mapped, order, first, second, accepted }));
+      process.exit(0);
+    `,
+      { delayMs: 60_000 },
+    );
+    expect(result).toEqual({
+      out: {
+        mapped: expect.stringContaining("127.0.0.3"),
+        order: [6, 4, 6, 4],
+        first: "127.0.0.1",
+        second: "127.0.0.2",
+        // otherFamily only has the dial of he-mapped.test.
+        accepted: [1, 1],
+      },
+      stderr: "",
+      exitCode: 0,
+      signal: null,
+    });
+  });
+
+  test.skipIf(!isLinux)("the addresses in front of a remembered one are still dialed", async () => {
+    const result = await run(
+      /* js */ `
+      ${dialHelper(client)}
+      const [remembered, release] = await listenWith("127.0.0.1", port => hold("127.0.0.2", port));
+      const host = "he-in-front-" + remembered.port + ".test";
+      dnsCacheSeed(host, ["127.0.0.2", "127.0.0.1"]);
+      const first = await dial(host, remembered.port);
+      await release();
+      listen("127.0.0.2", remembered.port);
+      remembered.stop();
+      await hold("127.0.0.1", remembered.port);
+      const second = await dial(host, remembered.port);
+      console.log(JSON.stringify({ first, second }));
+      process.exit(0);
+    `,
+      { delayMs: 60_000 },
+    );
+    expect(result).toEqual({
+      out: { first: "127.0.0.1", second: "127.0.0.2" },
+      stderr: "",
+      exitCode: 0,
+      signal: null,
+    });
+  });
+
   test.skipIf(!canBlackhole)("each silent address costs one delay, up to the sixth address", async () => {
     const result = await run(
       /* js */ `

@@ -493,10 +493,11 @@ struct us_connecting_socket_t {
     int error;
     struct addrinfo *addrinfo_head;
     /* Staggered dial (RFC 8305 §5), only when attempt_delay_ms != 0: `lead` is
-     * dialed first, out of list order; `skip` then holds it so the cursor passes
-     * over it. next_attempt_ns is when the next address may start (0 = not armed). */
+     * dialed first, then the families alternate and addrinfo_head stays at the
+     * head. next_attempt_ns is when the next address may start (0 = not armed). */
     struct addrinfo *lead;
-    struct addrinfo *skip;
+    struct addrinfo *next_address;
+    struct addrinfo *next_of_other_family;
     long long next_attempt_ns;
     /* The loop's iteration_nr when a sweep found next_attempt_ns elapsed, or 0. */
     size_t due_iteration;

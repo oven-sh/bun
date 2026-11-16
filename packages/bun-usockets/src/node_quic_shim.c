@@ -533,7 +533,7 @@ lsquic_engine_t *us_nq_engine_new(int is_server, int is_http,
         api.ea_hsi_ctx = NQ_HSI_CTX_PACK(settings->es_max_h3_header_pairs,
                                          settings->es_max_h3_header_bytes);
     }
-    return lsquic_engine_new(flags, &api);
+    return us_quic_engine_new(flags, &api);
 }
 
 const struct sockaddr *us_nq_spec_dest(const struct lsquic_out_spec *s) { return s->dest_sa; }

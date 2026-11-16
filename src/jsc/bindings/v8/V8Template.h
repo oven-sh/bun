@@ -19,8 +19,6 @@ enum class SideEffectType {
 // matches V8 class hierarchy
 class Template : public Data {
 public:
-    static JSC_HOST_CALL_ATTRIBUTES JSC::EncodedJSValue DummyCallback(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame);
-
     BUN_EXPORT void Set(Local<Name> name, Local<Data> value, PropertyAttribute attributes = None);
 
     BUN_EXPORT void SetNativeDataProperty(

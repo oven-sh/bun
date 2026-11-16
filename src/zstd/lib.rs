@@ -461,9 +461,7 @@ fn compress_into(dest: BorrowedCursor<'_, u8>, src: &[u8], level: Option<i32>) -
             dst_capacity,
             src.as_ptr().cast::<c_void>(),
             src.len(),
-            // Not redundant_closure: extern "C" fn items don't implement FnOnce
-            // (Fn* traits are only blanket-impl'd for the Rust ABI).
-            level.unwrap_or_else(|| c::ZSTD_defaultCLevel()),
+            level.unwrap_or_else(c::ZSTD_defaultCLevel),
         )
     });
     match result {

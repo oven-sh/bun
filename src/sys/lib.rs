@@ -6057,15 +6057,14 @@ impl DynLib {
         // monomorphisation.
         Some(unsafe { core::mem::transmute_copy::<*mut c_void, T>(&p) })
     }
-    pub fn close(self) {
-        // SAFETY: `self.handle` was returned by `dlopen` in `open()` and has
-        // not been closed (this consumes `self`).
-        #[cfg(unix)]
-        unsafe {
-            libc::dlclose(self.handle);
-        }
-        // Windows: FreeLibrary via windows mod; intentionally leaked here
-        // (close is a no-op on Windows in our usage).
+}
+
+/// On Windows the library stays loaded.
+#[cfg(unix)]
+impl Drop for DynLib {
+    fn drop(&mut self) {
+        // SAFETY: `open` got the handle from `dlopen`.
+        unsafe { libc::dlclose(self.handle) };
     }
 }
 

@@ -15,8 +15,7 @@ use bun_collections::VecExt;
 use bun_core::strings;
 use bun_core::{self, FeatureFlags, declare_scope, scoped_log};
 use bun_event_loop::AnyTaskWithExtraContext::AnyTaskWithExtraContext;
-use bun_event_loop::ConcurrentTask::ConcurrentTask;
-use bun_event_loop::{BoxedTask, Posted};
+use bun_event_loop::BoxedTask;
 use bun_sys::Fd;
 use bun_threading::thread_pool as ThreadPoolLib;
 
@@ -2656,15 +2655,11 @@ pub mod parse_worker {
         let ctx = result.ctx;
         match ctx.any_loop() {
             bun_event_loop::AnyEventLoop::Js { .. } => {
-                let ct = ConcurrentTask::create_boxed(result);
                 let poster = ctx
                     .js_poster
                     .as_ref()
                     .expect("JS-owned bundle has a poster");
-                if let Posted::Refused(ct) = poster.post(ct) {
-                    // SAFETY: the task made above.
-                    unsafe { ct.task.into_boxed::<Result>() }.release_unrun();
-                }
+                poster.post_boxed(result);
             }
             bun_event_loop::AnyEventLoop::Mini(mini) => {
                 // SAFETY: `task` is the field at that offset; `on_complete_mini` takes the box back.

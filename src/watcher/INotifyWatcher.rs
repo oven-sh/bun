@@ -10,7 +10,7 @@ use bun_sys::{self, CloseOnDrop, Fd};
 use bun_threading::Futex;
 
 use crate::watcher_impl::{
-    MAX_COUNT as max_count, Op, WatchEvent, WatchItemColumns, WatchItemIndex, Watcher,
+    MAX_COUNT as max_count, Op, WatchEvent, WatchItemColumns, WatchItemIndex, WatchList, Watcher,
     WatcherThread,
 };
 use bun_collections::index_sort;
@@ -239,6 +239,17 @@ impl INotifyWatcher {
                     });
                 }
             }
+        }
+    }
+}
+
+impl Watcher {
+    /// Removing a watch queues `IN_IGNORED`.
+    pub(crate) fn wake(&self, watchlist: &WatchList) {
+        let fd = self.platform.fd.fd().native();
+        let remove = |wd| bun_sys::linux::inotify_rm_watch(fd, wd) == 0;
+        if !(watchlist.items_eventlist_index().iter()).any(|&wd| remove(wd)) {
+            let _ = self.platform.watch_dir(bun_core::zstr!(".")).map(remove);
         }
     }
 }

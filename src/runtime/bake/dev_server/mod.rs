@@ -42,7 +42,7 @@ use bun_ast::Loader;
 use bun_bundler::{self as bundler, BundleV2, Transpiler};
 use bun_http::{Method, MimeType};
 use bun_safety::ThreadLock;
-use bun_watcher::Watcher;
+use bun_watcher::{OwnedWatcher, Watcher};
 
 pub(super) use self::assets::Assets;
 pub(super) use self::error_report_request::ErrorReportRequest;
@@ -501,7 +501,7 @@ pub(crate) struct DevServer {
     pub(crate) server_register_update_callback: jsc::StrongOptional,
 
     // Watching
-    pub(crate) bun_watcher: Arc<Watcher>,
+    pub(crate) bun_watcher: OwnedWatcher,
     pub(crate) directory_watchers: DirectoryWatchStore,
     pub(crate) pending_reload_event: Arc<PendingReloadEvent>,
     /// Empty. Swapped with the one in `pending_reload_event` to reuse its memory.

@@ -59,6 +59,13 @@ pub mod kernel32 {
             lpOverlapped: *mut *mut OVERLAPPED,
             dwMilliseconds: DWORD,
         ) -> BOOL;
+        pub fn PostQueuedCompletionStatus(
+            CompletionPort: HANDLE,
+            dwNumberOfBytesTransferred: DWORD,
+            dwCompletionKey: ULONG_PTR,
+            lpOverlapped: LPOVERLAPPED,
+        ) -> BOOL;
+        pub fn CancelIoEx(hFile: HANDLE, lpOverlapped: LPOVERLAPPED) -> BOOL;
         pub fn ReadDirectoryChangesW(
             hDirectory: HANDLE,
             lpBuffer: *mut c_void,

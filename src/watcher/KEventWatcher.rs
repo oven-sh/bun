@@ -1,7 +1,7 @@
 use bun_core::output as Output;
 use bun_sys::CloseOnDrop;
 
-use crate::watcher_impl::{Op, WatchEvent, Watcher, WatcherThread};
+use crate::watcher_impl::{Op, WatchEvent, WatchList, Watcher, WatcherThread};
 
 pub(crate) type Platform = KEventWatcher;
 
@@ -20,6 +20,18 @@ impl KEventWatcher {
         Ok(Self {
             fd: CloseOnDrop::new(fd),
         })
+    }
+}
+
+impl Watcher {
+    pub(crate) fn wake(&self, _: &WatchList) {
+        let mut add: libc::kevent = bun_core::ffi::zeroed();
+        add.filter = libc::EVFILT_USER;
+        let mut trigger = add;
+        add.flags = libc::EV_ADD;
+        trigger.fflags = libc::NOTE_TRIGGER;
+        // SAFETY: only `watch_loop_cycle` waits on this kqueue, and it reads `udata` as an index.
+        let _ = unsafe { bun_sys::kevent(self.platform.fd.fd(), &[add, trigger], &mut [], None) };
     }
 }
 

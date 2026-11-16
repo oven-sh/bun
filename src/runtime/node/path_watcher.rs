@@ -43,9 +43,9 @@ use bun_paths as path;
 use bun_paths::platform;
 #[cfg(any(target_os = "linux", target_os = "android"))]
 use bun_paths::resolve_path::join_z_buf_spill;
-use bun_sys::{self as sys, E, Tag};
 #[cfg(any(target_os = "linux", target_os = "android", target_os = "freebsd"))]
-use bun_sys::{Fd, FdExt};
+use bun_sys::Fd;
+use bun_sys::{self as sys, E, Tag};
 use bun_threading::{Guarded, Mutex};
 #[cfg(any(target_os = "linux", target_os = "android"))]
 use bun_watcher::inotify_watcher::EventIterator as InotifyEventIterator;
@@ -579,7 +579,7 @@ compile_error!("path_watcher: unsupported target");
 /// a wd per directory, then adding new subdirectories as they appear (IN_CREATE|IN_ISDIR).
 #[cfg(any(target_os = "linux", target_os = "android"))]
 struct Linux {
-    fd: Fd,
+    file: sys::CloseOnDrop,
     /// wd → list of owners. `inotify_add_watch` returns the same wd for the same
     /// inode on a given inotify fd, so two PathWatchers whose roots overlap (e.g.
     /// a recursive watch on `/a` plus a watch on `/a/sub`) end up sharing a wd. Each
@@ -620,17 +620,17 @@ impl Linux {
         if rc < 0 {
             return Err(sys::Error::from_code_int(sys::last_errno(), Tag::watch));
         }
-        let fd = Fd::from_native(rc);
+        let file = sys::CloseOnDrop::new(Fd::from_native(rc));
+        let fd = file.fd();
         // Daemon reader — the manager is process-global and never torn down.
         if std::thread::Builder::new()
             .spawn(move || Linux::thread_main(fd))
             .is_err()
         {
-            fd.close();
             return Err(sys::Error::from_code(E::ENOMEM, Tag::watch));
         }
         Ok(Self {
-            fd,
+            file,
             wd_map: HashMap::default(),
         })
     }
@@ -662,7 +662,7 @@ impl Linux {
         } else {
             inotify_masks::WATCH_DIR_MASK
         };
-        let rc = sys::linux::inotify_add_watch(self.fd.native(), abs_path, mask);
+        let rc = sys::linux::inotify_add_watch(self.file.fd().native(), abs_path, mask);
         if rc < 0 {
             let err = sys::Error::from_code_int(sys::last_errno(), Tag::watch);
             // ENOENT/ENOTDIR during a recursive walk just means we raced; skip.
@@ -740,7 +740,7 @@ impl Linux {
             }
             if owners.is_empty() {
                 wd_map.remove(&wd);
-                sys::linux::inotify_rm_watch(self.fd.native(), wd);
+                sys::linux::inotify_rm_watch(self.file.fd().native(), wd);
             }
         }
     }
@@ -1012,7 +1012,7 @@ impl PathWatcherManager {
 /// same behaviour as libuv on FreeBSD; callers are expected to re-scan.
 #[cfg(target_os = "freebsd")]
 struct Kqueue {
-    fd: Fd,
+    file: sys::CloseOnDrop,
     /// ident (fd number) → entry (by value — avoids a per-entry heap alloc for
     /// recursive trees). `udata` on the kevent carries a monotonic generation number
     /// so the reader can reject stale events after the fd is recycled.
@@ -1034,17 +1034,17 @@ struct KqEntry {
 #[cfg(target_os = "freebsd")]
 impl Kqueue {
     fn init() -> sys::Result<Self> {
-        let fd = sys::kqueue()?;
+        let file = sys::CloseOnDrop::new(sys::kqueue()?);
+        let fd = file.fd();
         // Daemon reader — the manager is process-global and never torn down.
         if std::thread::Builder::new()
             .spawn(move || Kqueue::thread_main(fd))
             .is_err()
         {
-            fd.close();
             return Err(sys::Error::from_code(E::ENOMEM, Tag::watch));
         }
         Ok(Self {
-            fd,
+            file,
             entries: ArrayHashMap::default(),
             next_gen: 1,
         })
@@ -1118,7 +1118,7 @@ impl Kqueue {
         // SAFETY: thin wrapper over libc::kevent.
         let krc = unsafe {
             kevent(
-                self.fd.native(),
+                self.file.fd().native(),
                 changes.as_ptr(),
                 1,
                 changes.as_mut_ptr(),

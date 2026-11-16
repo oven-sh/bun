@@ -898,7 +898,7 @@ impl FileSink {
             return;
         }
         if let EventLoopHandle::Js { owner } = self.event_loop() {
-            owner.enqueue_task(bun_event_loop::Task::init(self.ref_guard().into_raw()));
+            owner.enqueue_task(bun_event_loop::Task::from_ref::<Self>(self.ref_guard()));
         }
     }
 
@@ -1572,15 +1572,13 @@ bun_jsc::impl_abort_handle_owner!(FileSink, abort_handle, |this, cause| {
     }
 });
 
-/// The task of [`FileSink::run_pending_later`], which owns a ref.
-impl bun_event_loop::Taskable for FileSink {
+/// The task of [`FileSink::run_pending_later`].
+impl bun_event_loop::RefTask for FileSink {
     const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::FlushPendingFileSinkTask;
-    unsafe fn release_unrun(this: *mut Self) {
-        // SAFETY: the ref that was queued with the task.
-        drop(unsafe { RefPtr::from_raw(this) });
-    }
+    type Ref = RefPtr<Self>;
+    fn release_unrun(_: Self::Ref) {}
     /// Flushes what the sink has buffered.
-    unsafe fn context(_: *const Self) -> bun_event_loop::ContextId {
+    fn context(_: &Self::Ref) -> bun_event_loop::ContextId {
         bun_event_loop::ContextId::NONE
     }
 }

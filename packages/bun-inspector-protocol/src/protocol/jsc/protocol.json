@@ -1623,6 +1623,21 @@
               "description": "Line with match content."
             }
           ]
+        },
+        {
+          "id": "Size",
+          "type": "object",
+          "description": "A two-dimensional size.",
+          "properties": [
+            {
+              "name": "width",
+              "type": "number"
+            },
+            {
+              "name": "height",
+              "type": "number"
+            }
+          ]
         }
       ]
     },

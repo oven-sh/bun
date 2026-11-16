@@ -1407,6 +1407,13 @@ export namespace JSC {
        */
       lineContent: string;
     };
+    /**
+     * A two-dimensional size.
+     */
+    export type Size = {
+      width: number;
+      height: number;
+    };
   }
   export namespace Heap {
     /**

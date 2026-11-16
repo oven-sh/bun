@@ -35,7 +35,6 @@
     "../src/js/internal-for-testing.ts",
     "../scripts/glob-sources.ts",
     "../scripts/build/error.ts",
-    "../packages/bun-inspector-protocol/scripts/generate-protocol.ts",
     "bake/exit-code-map.mjs",
     "docker/prestart-map.mjs"
   ],

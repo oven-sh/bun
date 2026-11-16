@@ -7,7 +7,7 @@ use core::sync::atomic::{AtomicU8, Ordering::Relaxed};
 
 const ROOM: usize = 1 << 16;
 
-fn fenced() -> &'static [AtomicU8] {
+fn fenced() -> &'static mut [AtomicU8] {
     unsafe extern "C" {
         fn mmap(
             at: usize,
@@ -25,7 +25,7 @@ fn fenced() -> &'static [AtomicU8] {
     unsafe {
         let all = mmap(0, 3 * ROOM, 0, private_anonymous, -1, 0);
         assert_eq!(mprotect(all.add(ROOM), ROOM, 3), 0);
-        core::slice::from_raw_parts(all.add(ROOM), ROOM)
+        core::slice::from_raw_parts_mut(all.add(ROOM), ROOM)
     }
 }
 
@@ -167,13 +167,15 @@ fn bytes_2() {
 fn copies() {
     let (other, room) = (fenced(), fenced());
     reset(other);
+    let before = AtomicU8::get_mut_slice(other).to_vec();
     for len in (0..300).chain([1000, 4096, 5000, ROOM / 2]) {
         let end = ROOM - len;
         for (from, to) in [(0, end), (end, 0), (1, 77), (77, 1), (77, 77)] {
-            for (source, more) in [(other, [0, 9]), (other, [9, 0]), (room, [0, 0])] {
-                reset(room);
-                let mut want = Vec::from_iter(room.iter().map(|byte| byte.load(Relaxed)));
-                want.copy_within(from..from + len, to);
+            let mut want = before.clone();
+            want.copy_within(from..from + len, to);
+            for (is_same, more) in [(false, [0, 9]), (false, [9, 0]), (true, [0, 0])] {
+                AtomicU8::get_mut_slice(room).copy_from_slice(&before);
+                let source = if is_same { &*room } else { &*other };
                 let [from, to] = [(from, more[0]), (to, more[1])]
                     .map(|(start, more)| start..ROOM.min(start + len + more));
                 let shorter = from.len().min(to.len());
@@ -181,7 +183,7 @@ fn copies() {
                 let copied =
                     copy_to_shared(SharedU8::from_slice(from), SharedOutU8::from_slice(to));
                 assert_eq!((copied, shorter), (len, len));
-                assert!(room.iter().map(|byte| byte.load(Relaxed)).eq(want));
+                assert!(AtomicU8::get_mut_slice(room) == want);
             }
         }
     }

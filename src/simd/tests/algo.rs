@@ -353,6 +353,20 @@ mod simd {
         }
     }
 
+    /// One alone, or two in the same lane of different vectors.
+    fn two_stops() {
+        let (mut from, to) = ([1; 9 * U8::LEN], &mut [0; 9 * U8::LEN]);
+        let to = shared_out(to);
+        for apart in [0, U8::LEN, 2 * U8::LEN, 3 * U8::LEN] {
+            for at in 0..from.len() - apart {
+                (from[at], from[at + apart]) = (0, 0);
+                let got = U8::map_to_shared_until(&from, to, |v| v, |v| v.simd_eq(0));
+                assert_eq!(got, at);
+                (from[at], from[at + apart]) = (1, 1);
+            }
+        }
+    }
+
     fn shared_pairs(alignments: usize) {
         let (mut room, test) = (Room::new(1), |v: U16| (v & 0xFF).simd_eq(1));
         let room = room.all();
@@ -427,6 +441,7 @@ mod simd {
         });
         stops(alignments, plain);
         stops(alignments, shared);
+        two_stops();
         maps(ranges::<u8>(16, alignments), |from, to| {
             x128::U8::map_to_shared(from, shared_out(to), |v| v + 1)
         });
@@ -751,7 +766,7 @@ fn shared_pair() {
 }
 
 #[test]
-#[should_panic]
+#[should_panic(expected = "len < N")]
 #[cfg_attr(miri, ignore = "compares only lengths")]
 fn append_a_whole_vector() {
     simd::append_a_whole_vector(shared_out(&mut [0; 100]));
@@ -768,6 +783,14 @@ fn load_a_whole_vector() {
 #[should_panic]
 #[cfg_attr(miri, ignore = "compares only lengths")]
 fn store_a_whole_vector() {
+    simd::store_a_whole_vector();
+}
+
+#[test]
+#[should_panic]
+#[cfg_attr(miri, ignore = "compares only lengths")]
+fn store_a_whole_vector_without_a_mask() {
+    bun_simd::limit_to(bun_simd::Target::Portable);
     simd::store_a_whole_vector();
 }
 

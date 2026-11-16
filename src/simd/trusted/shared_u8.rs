@@ -86,7 +86,11 @@ mod sealed {
 pub fn copy_to_shared(from: &[impl sealed::Byte], to: &[SharedOutU8]) -> usize {
     let len = from.len().min(to.len());
     cfg_select! {
-        all(any(target_arch = "x86_64", target_arch = "aarch64"), not(miri)) => {
+        // To ThreadSanitizer, too, `memmove` is a copy that may not race.
+        all(
+            any(target_arch = "x86_64", target_arch = "aarch64"),
+            not(any(miri, sanitize = "thread")),
+        ) => {
             use core::ffi::c_void;
             unsafe extern "C" {
                 fn memmove(to: *mut c_void, from: *const c_void, len: usize) -> *mut c_void;

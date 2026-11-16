@@ -209,6 +209,13 @@ describe("URLPattern", () => {
     });
   });
 
+  // https://urlpattern.spec.whatwg.org/#create-a-component-match-result makes one entry per group name and
+  // gives name N the Nth capture of the regular expression. The captures inside :a's regexp are numbers 2 and 3.
+  test("capture groups inside a regexp group add no entry to the match result", () => {
+    const result = new URLPattern({ pathname: "/:a((?<x>1)(?<y>2)):b(3)" }).exec({ pathname: "/123" });
+    expect(result?.pathname.groups).toEqual({ a: "12", b: "1" });
+  });
+
   // The tokenizer emits one token per code point, and the synthetic allocation limit caps the token list.
   test("throws for a pattern with more tokens than the token list allows", () => {
     const dots = (length: number) => Buffer.alloc(length, ".").toString();

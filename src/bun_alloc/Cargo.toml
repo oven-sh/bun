@@ -17,4 +17,3 @@ libc.workspace = true
 allocator-api2.workspace = true
 
 bun_mimalloc_sys.workspace = true
-bun_wyhash.workspace = true

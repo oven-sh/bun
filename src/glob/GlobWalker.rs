@@ -208,7 +208,7 @@ impl Accessor for SyscallAccessor {
 // ─────────────────────────────────────────────────────────────────────────────
 // MOVED: `DirEntryAccessor` lives in `bun_resolver::dir_entry_accessor` —
 // the full DirEntry cache (`DirEntry`, `EntryMap`, `read_directory`,
-// `EntriesOption`) is owned by `bun_resolver` (higher-tier). Per PORTING.md
+// `EntriesMap`) is owned by `bun_resolver` (higher-tier). Per PORTING.md
 // §Dispatch this is the "low-tier owns the trait, high-tier owns the impl"
 // case: the `Accessor` trait is exported here and `bun_resolver` provides
 // `impl bun_glob::walk::Accessor for DirEntryAccessor`. Keeping it in

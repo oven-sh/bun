@@ -250,6 +250,7 @@ impl<'a> Options<'a> {
                 runtime_transpiler_cache: None,
                 lower_using: f.lower_using,
                 ascii_only: f.ascii_only,
+                legacy_octal_in_templates: f.legacy_octal_in_templates,
                 bundler_feature_flags: None,
                 define_hash: f.define_hash,
                 repl_mode: f.repl_mode,

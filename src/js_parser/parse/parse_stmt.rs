@@ -1476,6 +1476,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 let import_clause = p.parse_import_clause()?;
                 if Self::IS_TYPESCRIPT_ENABLED {
                     if import_clause.had_type_only_imports && import_clause.items.is_empty() {
+                        p.esm_import_keyword = previous_import_keyword;
+                        p.has_type_only_import = true;
                         p.lexer.expect_contextual_keyword(b"from")?;
                         let _ = p.parse_path()?;
                         p.lexer.expect_or_insert_semicolon()?;
@@ -1579,6 +1581,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                         }
                                     });
                                 if !leave_from {
+                                    p.esm_import_keyword = previous_import_keyword;
+                                    p.has_type_only_import = true;
                                     let name = p.lexer.identifier;
                                     let name_loc = p.lexer.loc();
                                     p.lexer.next()?;
@@ -1600,6 +1604,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             }
                             T::TAsterisk => {
                                 // "import type * as foo from 'bar';"
+                                p.esm_import_keyword = previous_import_keyword;
+                                p.has_type_only_import = true;
                                 p.lexer.next()?;
                                 p.lexer.expect_contextual_keyword(b"as")?;
                                 p.lexer.expect(T::TIdentifier)?;
@@ -1611,6 +1617,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
                             T::TOpenBrace => {
                                 // "import type {foo} from 'bar';"
+                                p.esm_import_keyword = previous_import_keyword;
+                                p.has_type_only_import = true;
                                 let _ = p.parse_import_clause()?;
                                 p.lexer.expect_contextual_keyword(b"from")?;
                                 let _ = p.parse_path()?;
@@ -1877,6 +1885,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 }
                 opts.lexical_decl = LexicalDecl::AllowAll;
                 opts.is_typescript_declare = true;
+                let legacy_octals_len = p.legacy_octals.len();
 
                 // "@decorator declare class Foo {}"
                 // "@decorator declare abstract class Foo {}"
@@ -1899,6 +1908,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     // The statements inside are dropped, so discard any scopes they
                     // recorded or the visit pass will hit a scope order mismatch.
                     p.discard_scopes_up_to(scope_index);
+                    p.legacy_octals.truncate(legacy_octals_len);
                     return Ok(Some(p.s(S::TypeScript {}, loc)));
                 }
 
@@ -1924,6 +1934,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     );
                     return Err(crate::Error::SyntaxError);
                 }
+                p.legacy_octals.truncate(legacy_octals_len);
                 if let Some(decs) = &opts.ts_decorators {
                     p.discard_scopes_up_to(decs.scope_index);
                 } else {

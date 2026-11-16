@@ -253,6 +253,11 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     pub(crate) has_top_level_return: bool,
     pub(crate) latest_return_had_semicolon: bool,
     pub(crate) has_import_meta: bool,
+    /// An import that TypeScript erases, such as `import type`.
+    pub(crate) has_type_only_import: bool,
+    /// The keyword that proves this file a module, and which of the three it is. Set before the visit pass.
+    pub(crate) es_module_keyword: bun_ast::Range,
+    pub(crate) es_module_kind: js_ast::StrictModeKind,
     pub(crate) has_es_module_syntax: bool,
     pub(crate) top_level_await_keyword: bun_ast::Range,
     pub(crate) fn_or_arrow_data_parse: FnOrArrowDataParse,
@@ -3285,6 +3290,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         self.module_scope = self.current_scope;
         self.has_es_module_syntax = self.has_es_module_syntax
             || self.has_import_meta
+            || self.has_type_only_import
             || self.esm_import_keyword.len > 0
             || self.esm_export_keyword.len > 0
             || self.top_level_await_keyword.len > 0;
@@ -3347,8 +3353,48 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
         }
 
+        // ECMAScript modules are always interpreted as strict mode. This has to be
+        // done before "hoistSymbols" because strict mode can alter hoisting (!).
+        let unproven = js_ast::StrictModeKind::ImplicitStrictModeMaybeModule;
+        let (keyword, kind) = if self.esm_export_keyword.len > 0 {
+            (
+                self.esm_export_keyword,
+                js_ast::StrictModeKind::ImplicitStrictModeExport,
+            )
+        } else if self.top_level_await_keyword.len > 0 {
+            (
+                self.top_level_await_keyword,
+                js_ast::StrictModeKind::ImplicitStrictModeTopLevelAwait,
+            )
+        } else if self.esm_import_keyword.len > 0 {
+            (
+                self.esm_import_keyword,
+                js_ast::StrictModeKind::ImplicitStrictModeImport,
+            )
+        } else if self.has_import_meta || self.has_type_only_import {
+            (bun_ast::Range::NONE, unproven)
+        } else {
+            (bun_ast::Range::NONE, js_ast::StrictModeKind::SloppyMode)
+        };
+        // A line of the REPL never runs as a module.
+        if keyword.len > 0 && !self.options.repl_mode {
+            self.es_module_keyword = keyword;
+            self.es_module_kind = kind;
+        }
+        if kind != js_ast::StrictModeKind::SloppyMode {
+            let kind = match self.options.repl_mode {
+                true => unproven,
+                false => kind,
+            };
+            self.module_scope_mut().recursive_set_strict_mode(kind);
+        }
+
         // Legacy HTML comments are not allowed in ESM files
-        if self.lexer.legacy_html_comment_range.len > 0 && self.is_file_considered_esm() {
+        let is_module_by_type =
+            self.options.module_type == options::ModuleType::Esm && !self.options.repl_mode;
+        if self.lexer.legacy_html_comment_range.len > 0
+            && (self.is_file_considered_esm() || is_module_by_type)
+        {
             let notes = self.why_es_module();
             self.log().add_range_error_fmt_with_notes(
                 Some(self.source),
@@ -3358,22 +3404,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     "Legacy HTML single-line comments are not allowed in ECMAScript modules"
                 ),
             );
-        }
-
-        // ECMAScript modules are always interpreted as strict mode. This has to be
-        // done before "hoistSymbols" because strict mode can alter hoisting (!).
-        if self.esm_import_keyword.len > 0 {
-            self.module_scope_mut()
-                .recursive_set_strict_mode(js_ast::StrictModeKind::ImplicitStrictModeImport);
-        } else if self.esm_export_keyword.len > 0 {
-            self.module_scope_mut()
-                .recursive_set_strict_mode(js_ast::StrictModeKind::ImplicitStrictModeExport);
-        } else if self.top_level_await_keyword.len > 0 {
-            self.module_scope_mut()
-                .recursive_set_strict_mode(js_ast::StrictModeKind::ImplicitStrictModeTopLevelAwait);
-        } else if self.has_import_meta {
-            self.module_scope_mut()
-                .recursive_set_strict_mode(js_ast::StrictModeKind::ImplicitStrictModeImportMeta);
         }
 
         self.hoist_symbols(self.module_scope_ref());
@@ -3452,16 +3482,15 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         self.options.bundle || self.options.features.minify_identifiers
     }
 
-    /// ESM syntax only; a `.mjs` file with no import or export runs as CommonJS.
+    /// True once `import`, `export` or a top-level `await` proves a module. Not for a file that is one by its extension alone.
     #[inline]
     pub(crate) fn is_file_considered_esm(&self) -> bool {
-        self.esm_import_keyword.len > 0
-            || self.esm_export_keyword.len > 0
-            || self.top_level_await_keyword.len > 0
+        self.es_module_keyword.len > 0
     }
 
     /// Runs after hoisting: only then is the strict mode of every scope final.
     fn report_duplicate_function_declarations(&mut self) {
+        let mut why_module: Option<bun_ast::Data> = None;
         for (scope, replaced) in core::mem::take(&mut self.replaced_functions) {
             let is_module_top_level = scope.parent.is_none() && self.is_file_considered_esm();
             let is_strict_block =
@@ -3484,49 +3513,48 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 continue;
             }
 
-            let (mut why_text, why_notes) = if is_module_top_level {
-                (
-                    b"Duplicate top-level function declarations are not allowed in an ECMAScript module."
-                        .to_vec(),
-                    self.why_es_module(),
-                )
+            let why = if is_module_top_level {
+                why_module
+                    .get_or_insert_with(|| {
+                        Self::why_duplicate_function(
+                            "Duplicate top-level function declarations are not allowed in an ECMAScript module.",
+                            self.why_es_module(),
+                        )
+                    })
+                    .clone()
             } else {
                 let (where_, notes) = self.why_strict_mode(scope);
-                (
-                    format!(
+                Self::why_duplicate_function(
+                    &format!(
                         "Duplicate function declarations are not allowed in nested blocks {}.",
                         bstr::BStr::new(where_)
-                    )
-                    .into_bytes(),
+                    ),
                     notes,
                 )
             };
-            let mut why_location = None;
-            if let Some(note) = why_notes.into_vec().pop() {
-                why_text.push(b' ');
-                why_text.extend_from_slice(&note.text);
-                why_location = note.location;
-            }
-
-            let notes: Box<[bun_ast::Data]> = Box::new([
-                bun_ast::range_data(
-                    Some(self.source),
-                    js_lexer::range_of_identifier(self.source, replaced.loc),
-                    format!("\"{}\" was originally declared here", bstr::BStr::new(name))
-                        .into_bytes(),
-                ),
-                bun_ast::Data {
-                    text: why_text.into(),
-                    location: why_location,
-                },
-            ]);
-
-            self.log().add_range_error_fmt_with_notes(
-                Some(self.source),
-                js_lexer::range_of_identifier(self.source, member.loc),
-                notes,
-                format_args!("\"{}\" has already been declared", bstr::BStr::new(name)),
+            let source = self.source;
+            self.log().add_symbol_already_declared_error_with_note(
+                source,
+                name,
+                member.loc,
+                replaced.loc,
+                Some(why),
             );
+        }
+    }
+
+    /// One note: `rule`, and behind it the reason that the code is strict, with its location.
+    fn why_duplicate_function(rule: &str, reason: Box<[bun_ast::Data]>) -> bun_ast::Data {
+        let mut text = rule.as_bytes().to_vec();
+        let mut location = None;
+        if let Some(note) = reason.into_vec().pop() {
+            text.push(b' ');
+            text.extend_from_slice(&note.text);
+            location = note.location;
+        }
+        bun_ast::Data {
+            text: text.into(),
+            location,
         }
     }
 
@@ -3546,6 +3574,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             for child in scope.children.slice_mut() {
                 child.recursive_set_strict_mode(js_ast::StrictModeKind::ExplicitStrictMode);
             }
+        } else if scope.kind == js_ast::scope::Kind::ClassName {
+            // A class is strict code, and both the hoisting below and the duplicate check read that.
+            scope.recursive_set_strict_mode(js_ast::StrictModeKind::ImplicitStrictModeClass);
         }
 
         // `StoreRef` is the arena back-pointer with safe `Deref`/`DerefMut` —
@@ -4632,7 +4663,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     if !(alias == b"default" || alias == b"db") {
                         self.log().add_error(
                             Some(self.source),
-                            item.name.loc,
+                            item.alias_loc,
                             b"sqlite imports only support the \"default\" or \"db\" imports",
                         );
                         break;
@@ -4645,7 +4676,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     if item.alias.slice() != b"default" {
                         self.log().add_error(
                             Some(self.source),
-                            item.name.loc,
+                            item.alias_loc,
                             b"This loader type only supports the \"default\" import",
                         );
                         break;
@@ -5004,30 +5035,37 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 (b"in an ECMAScript module", self.why_es_module())
             }
             js_ast::StrictModeKind::SloppyMode
-            | js_ast::StrictModeKind::ImplicitStrictModeImportMeta => {
+            | js_ast::StrictModeKind::ImplicitStrictModeMaybeModule => {
                 (b"in strict mode", Box::new([]))
             }
         }
     }
 
-    /// The note that says which syntax made this file an ECMAScript module.
+    /// The note that says what made this file an ECMAScript module.
     pub(crate) fn why_es_module(&self) -> Box<[bun_ast::Data]> {
         const BECAUSE: &str = "This file is considered to be an ECMAScript module because";
-        let (range, what): (bun_ast::Range, &str) = if self.esm_export_keyword.len > 0 {
-            (self.esm_export_keyword, "of the \"export\" keyword here:")
-        } else if self.top_level_await_keyword.len > 0 {
-            (
-                self.top_level_await_keyword,
-                "of the top-level \"await\" keyword here:",
-            )
-        } else if self.esm_import_keyword.len > 0 {
-            (self.esm_import_keyword, "of the \"import\" keyword here:")
-        } else {
-            return Box::new([]);
+        let what = match self.es_module_kind {
+            js_ast::StrictModeKind::ImplicitStrictModeExport => "of the \"export\" keyword here:",
+            js_ast::StrictModeKind::ImplicitStrictModeTopLevelAwait => {
+                "of the top-level \"await\" keyword here:"
+            }
+            js_ast::StrictModeKind::ImplicitStrictModeImport => "of the \"import\" keyword here:",
+            _ if self.options.module_type == options::ModuleType::Esm => {
+                let what = match self.source.path.name().ext {
+                    b".mjs" | b".mts" => "of its file extension.",
+                    _ => "the \"package.json\" file of its package has \"type\": \"module\".",
+                };
+                return Box::new([bun_ast::range_data(
+                    Some(self.source),
+                    bun_ast::Range::NONE,
+                    format!("{BECAUSE} {what}").into_bytes(),
+                )]);
+            }
+            _ => return Box::new([]),
         };
         Box::new([bun_ast::range_data(
             Some(self.source),
-            range,
+            self.es_module_keyword,
             format!("{BECAUSE} {what}").into_bytes(),
         )])
     }
@@ -5304,11 +5342,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 LegacyOctalKind::Number => StrictModeFeature::LegacyOctalLiteral,
                 LegacyOctalKind::Escape => StrictModeFeature::LegacyOctalEscape,
                 LegacyOctalKind::TemplateEscape => {
-                    self.log().add_range_error(
-                        Some(self.source),
-                        range,
-                        b"Legacy octal escape sequences cannot be used in template literals",
-                    );
+                    if !self.options.features.legacy_octal_in_templates {
+                        self.log().add_range_error(
+                            Some(self.source),
+                            range,
+                            b"Legacy octal escape sequences cannot be used in template literals",
+                        );
+                    }
                     continue;
                 }
             };
@@ -5324,27 +5364,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
-    /// Call after `to_e_string` on a string of an import or export statement, which only a module has.
-    #[inline]
-    pub(crate) fn check_module_string_for_legacy_octal_escape(&mut self, loc: bun_ast::Loc) {
-        if self.lexer.legacy_octal_loc.start > loc.start {
-            self.report_legacy_octal_escape_in_module();
-        }
-    }
-
-    #[cold]
-    #[inline(never)]
-    fn report_legacy_octal_escape_in_module(&mut self) {
-        let notes = self.why_es_module();
-        self.log().add_range_error_fmt_with_notes(
-            Some(self.source),
-            self.source
-                .range_of_legacy_octal_escape(self.lexer.legacy_octal_loc),
-            notes,
-            format_args!("Legacy octal escape sequences cannot be used in an ECMAScript module"),
-        );
-    }
-
     /// Visit-pass check, since ESM and class bodies only become strict after parsing.
     #[inline]
     pub(crate) fn validate_declared_symbol_name(&mut self, loc: bun_ast::Loc, name: &[u8]) {
@@ -5354,6 +5373,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         {
             self.report_declared_symbol_name(loc, name);
         }
+    }
+
+    pub(crate) fn validate_import_name(&mut self, loc: bun_ast::Loc, ref_: Ref) {
+        let name = self.load_name_from_ref(ref_);
+        self.validate_declared_symbol_name(loc, name);
     }
 
     #[cold]
@@ -9955,6 +9979,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             has_top_level_return: false,
             latest_return_had_semicolon: false,
             has_import_meta: false,
+            has_type_only_import: false,
+            es_module_keyword: bun_ast::Range::NONE,
+            es_module_kind: js_ast::StrictModeKind::SloppyMode,
             has_es_module_syntax: false,
             top_level_await_keyword: bun_ast::Range::NONE,
             fn_or_arrow_data_parse,

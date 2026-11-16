@@ -261,6 +261,9 @@ pub mod Runtime {
         /// The printer escapes everything that is not ASCII.
         pub ascii_only: bool,
 
+        /// For a snapshot file: Bun 1.1.36 and older wrote raw `\1` to `\9` into its templates.
+        pub legacy_octal_in_templates: bool,
+
         /// Feature flags for dead-code elimination via `import { feature } from "bun:bundle"`
         /// When `feature("FLAG_NAME")` is called, it returns true if FLAG_NAME is in this set.
         ///
@@ -325,6 +328,7 @@ pub mod Runtime {
                 runtime_transpiler_cache: None,
                 lower_using: true,
                 ascii_only: false,
+                legacy_octal_in_templates: false,
                 bundler_feature_flags: None,
                 define_hash: None,
                 repl_mode: false,

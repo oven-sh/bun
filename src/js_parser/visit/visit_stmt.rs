@@ -136,31 +136,20 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         data: &mut S::Import,
     ) -> Result<(), Error> {
         p.record_declared_symbol(data.namespace_ref);
-        if let Some(star_name_loc) = data.star_name_loc.to_nullable() {
-            p.validate_import_name(star_name_loc, data.namespace_ref);
-        }
 
         if let Some(default_name) = data.default_name {
             p.record_declared_symbol(default_name.ref_);
-            p.validate_import_name(default_name.loc, default_name.ref_);
         }
 
         let items = data.items.slice();
         if !items.is_empty() {
             for item in items.iter() {
                 p.record_declared_symbol(item.name.ref_);
-                p.validate_import_name(item.name.loc, item.name.ref_);
             }
         }
 
         stmts.push(*stmt);
         Ok(())
-    }
-
-    /// An import makes the file a module, so its bindings are strict mode declarations.
-    fn validate_import_name(&mut self, loc: bun_ast::Loc, ref_: Ref) {
-        let name = self.load_name_from_ref(ref_);
-        self.validate_declared_symbol_name(loc, name);
     }
 
     fn s_export_equals(

@@ -4,7 +4,9 @@ use bun_collections::VecExt;
 use crate::Error;
 use crate::lexer::{self as js_lexer, T};
 use crate::p::P;
-use crate::parser::{FnOrArrowDataParse, ParseStatementOptions, Ref, ScopeOrder, StatementScope};
+use crate::parser::{
+    FnOrArrowDataParse, LegacyOctalKind, ParseStatementOptions, Ref, ScopeOrder, StatementScope,
+};
 use bun_alloc::{ArenaVec as BumpVec, ArenaVecExt as _};
 use bun_ast::expr::EFlags;
 use bun_ast::flags;
@@ -516,6 +518,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             p.lexer.expect(T::TStringLiteral)?;
             p.lexer.expect(T::TCloseParen)?;
             if !opts.is_typescript_declare {
+                p.check_for_legacy_octal_escape(path_loc, LegacyOctalKind::Escape);
                 let args = ExprNodeList::init_one(path);
                 let close_paren_loc = p.lexer.loc();
                 value = p.new_expr(
@@ -639,6 +642,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 // `slice8()` is currently duplicated in E.rs (two impl blocks);
                 // read `.data` directly — `to_utf8_e_string` guarantees `is_utf16 == false`.
                 let estr = p.lexer.to_utf8_e_string()?;
+                p.check_for_legacy_octal_escape(p.lexer.loc(), LegacyOctalKind::Escape);
                 debug_assert!(!estr.is_utf16);
                 value.name = estr.data;
                 js_lexer::is_identifier(value.name.slice())

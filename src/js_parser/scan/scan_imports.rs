@@ -315,6 +315,17 @@ impl<'a> ImportScanner<'a> {
                         st.star_name_loc = bun_ast::Loc::EMPTY;
                     }
 
+                    // An import binding is a declaration of strict code. One that was removed above is not in the output.
+                    if let Some(name) = st.default_name {
+                        p.validate_import_name(name.loc, name.ref_);
+                    }
+                    if let Some(star_name_loc) = st.star_name_loc.to_nullable() {
+                        p.validate_import_name(star_name_loc, st.namespace_ref);
+                    }
+                    for item in st.items.slice() {
+                        p.validate_import_name(item.name.loc, item.name.ref_);
+                    }
+
                     if is_typescript_enabled {
                         let default_binding = st.default_name.map(|name| (name.ref_, name.loc));
                         let star_binding = st
@@ -494,7 +505,7 @@ impl<'a> ImportScanner<'a> {
                                 name_ref,
                                 js_ast::NamedImport {
                                     alias: Some(item.alias),
-                                    alias_loc: name.loc,
+                                    alias_loc: item.alias_loc,
                                     namespace_ref,
                                     import_record_index: st.import_record_index,
                                     local_parts_with_uses: bun_alloc::AstAlloc::vec(),
@@ -525,7 +536,7 @@ impl<'a> ImportScanner<'a> {
                                 name_ref,
                                 js_ast::NamedImport {
                                     alias: Some(item.alias),
-                                    alias_loc: name.loc,
+                                    alias_loc: item.alias_loc,
                                     namespace_ref,
                                     import_record_index: st.import_record_index,
                                     local_parts_with_uses: bun_alloc::AstAlloc::vec(),

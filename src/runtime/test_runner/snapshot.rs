@@ -457,6 +457,7 @@ impl Snapshots {
         let mut opts =
             js_parser::ParserOptions::init(vm.transpiler.get().options.jsx.clone(), bun_ast::Loader::Js);
         opts.features.no_macros = true;
+        opts.features.legacy_octal_in_templates = true;
         // Thread a per-call arena — js_parser is bump-allocated.
         let arena = bun_alloc::Arena::new();
         let mut temp_log = bun_ast::Log::init();

@@ -1161,8 +1161,8 @@ pub struct NamedExport {
 #[strum(serialize_all = "snake_case")]
 pub enum StrictModeKind {
     SloppyMode,
-    /// `import.meta` and no other module syntax: Bun runs such a file as CommonJS when it uses `module`.
-    ImplicitStrictModeImportMeta,
+    /// Module syntax that does not prove a module: `import.meta`, a type-only import, a line of the REPL.
+    ImplicitStrictModeMaybeModule,
     ExplicitStrictMode,
     ImplicitStrictModeImport,
     ImplicitStrictModeExport,
@@ -1171,10 +1171,10 @@ pub enum StrictModeKind {
 }
 
 impl StrictModeKind {
-    /// Whether the parser reports the early errors of strict code here. The engine reports them for `import.meta` alone.
+    /// Whether the parser reports the early errors of strict code here. Bun can still run a `MaybeModule` file as sloppy code.
     #[inline]
     pub fn has_early_errors(self) -> bool {
-        !matches!(self, Self::SloppyMode | Self::ImplicitStrictModeImportMeta)
+        !matches!(self, Self::SloppyMode | Self::ImplicitStrictModeMaybeModule)
     }
 }
 

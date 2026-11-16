@@ -786,7 +786,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // The alias may now be a utf-16 (not wtf-16) string (see https://github.com/tc39/ecma262/pull/2154)
         if p.lexer.token == T::TStringLiteral {
             let estr = p.lexer.to_e_string()?;
-            p.check_module_string_for_legacy_octal_escape(loc);
+            p.check_for_legacy_octal_escape(loc, LegacyOctalKind::Escape);
             if estr.is_utf8() {
                 // SAFETY: E::String slices are arena-owned for 'a.
                 return Ok(unsafe { bun_collections::detach_lifetime(estr.slice8()) });
@@ -1362,7 +1362,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             loader: None,
         };
 
-        p.check_module_string_for_legacy_octal_escape(path.loc);
+        p.check_for_legacy_octal_escape(path.loc, LegacyOctalKind::Escape);
 
         if p.lexer.token == T::TNoSubstitutionTemplateLiteral {
             p.lexer.next()?;
@@ -1407,7 +1407,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         }
                     } else if p.lexer.token == T::TStringLiteral {
                         let estr = p.lexer.to_utf8_e_string()?;
-                        p.check_module_string_for_legacy_octal_escape(p.lexer.loc());
+                        p.check_for_legacy_octal_escape(p.lexer.loc(), LegacyOctalKind::Escape);
                         let string_literal_text = estr.slice8();
                         if string_literal_text == b"type" {
                             break 'brk Some(SupportedAttribute::Type);
@@ -1431,7 +1431,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 let value_loc = p.lexer.loc();
                 p.lexer.expect(T::TStringLiteral)?;
                 let estr = p.lexer.to_utf8_e_string()?;
-                p.check_module_string_for_legacy_octal_escape(value_loc);
+                p.check_for_legacy_octal_escape(value_loc, LegacyOctalKind::Escape);
                 let string_literal_text = estr.slice8();
                 if let Some(attr) = supported_attribute {
                     match attr {

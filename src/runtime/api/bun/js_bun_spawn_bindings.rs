@@ -16,6 +16,7 @@ use bun_jsc::{
     SystemError,
 };
 use bun_jsc::{JsCell, SysErrorJsc as _};
+use bun_ptr::CellExt as _;
 #[cfg(unix)]
 use bun_sys::Fd;
 use bun_sys::UV_E;
@@ -1168,11 +1169,11 @@ fn spawn_maybe_sync(
         // tear down unstarted `PipeReader`s (whose `deinit()` asserts
         // `isDone()`).
         stdin: JsCell::new(Writable::Ignore),
-        stdin_sink_ref: JsCell::new(None),
+        stdin_sink_ref: Cell::new(None),
         stdout: JsCell::new(Readable::Ignore),
         stderr: JsCell::new(Readable::Ignore),
         ref_count: bun_ptr::RefCount::init(),
-        stdio_pipes: JsCell::new(core::mem::take(&mut spawned_extra_pipes)),
+        stdio_pipes: Cell::new(core::mem::take(&mut spawned_extra_pipes)),
         ipc_data: OnceCell::new(),
         flags: Cell::new(if is_sync {
             Subprocess::Flags::IS_SYNC
@@ -1180,8 +1181,8 @@ fn spawn_maybe_sync(
             Subprocess::Flags::empty()
         }),
         kill_signal,
-        stderr_maxbuf: JsCell::new(None),
-        stdout_maxbuf: JsCell::new(None),
+        stderr_maxbuf: Cell::new(None),
+        stdout_maxbuf: Cell::new(None),
         terminal: Cell::new(
             existing_terminal
                 .map(|t| t.as_ptr())
@@ -1208,18 +1209,6 @@ fn spawn_maybe_sync(
     // Erase the borrow lifetime to 'static for the intrusive back-pointer
     // (PipeReader stores it as raw NonNull).
     let subprocess_nn: NonNull<SubprocessT<'static>> = subprocess_ref.as_non_null().cast();
-
-    // Address-dependent fields, filled now that `subprocess` has a stable address.
-    if let Some(max_buffer) = max_buffer {
-        let owner = max_buf::Owner {
-            ptr: subprocess_nn.cast::<()>(),
-            on_overflow: SubprocessT::on_max_buffer,
-        };
-        // SAFETY: both refs are fields of the owner.
-        let new = |kind| Some(unsafe { max_buf::OwnerRef::new(max_buffer, kind, owner) });
-        subprocess.stderr_maxbuf.set(new(max_buf::Kind::Stderr));
-        subprocess.stdout_maxbuf.set(new(max_buf::Kind::Stdout));
-    }
 
     #[cfg(windows)]
     if !is_sync {
@@ -1272,12 +1261,20 @@ fn spawn_maybe_sync(
         }
     }
 
+    let owner = max_buf::Owner {
+        ptr: subprocess_nn.cast::<()>(),
+        on_overflow: SubprocessT::on_max_buffer,
+    };
+    // SAFETY: both refs become fields of the owner below.
+    let new = |kind| max_buffer.map(|bytes| unsafe { max_buf::OwnerRef::new(bytes, kind, owner) });
+    let stderr_maxbuf = new(max_buf::Kind::Stderr);
+    let stdout_maxbuf = new(max_buf::Kind::Stdout);
     subprocess.stdout.set(Readable::init(
         &stdout,
         event_loop,
         subprocess_nn,
         spawned_stdout,
-        subprocess.stdout_maxbuf.get().as_ref(),
+        stdout_maxbuf.as_ref(),
         is_sync,
     ));
     subprocess.stderr.set(Readable::init(
@@ -1285,9 +1282,11 @@ fn spawn_maybe_sync(
         event_loop,
         subprocess_nn,
         spawned_stderr,
-        subprocess.stderr_maxbuf.get().as_ref(),
+        stderr_maxbuf.as_ref(),
         is_sync,
     ));
+    subprocess.stderr_maxbuf.set(stderr_maxbuf);
+    subprocess.stdout_maxbuf.set(stdout_maxbuf);
 
     // Inline terminals keep slave_fd until on_process_exit (BSD kernels flush
     // pty output on last slave close; see Terminal::drain_and_close_slave_fd).
@@ -1355,7 +1354,7 @@ fn spawn_maybe_sync(
         (JSValue::ZERO, Some(SyncWrapper(subprocess_ref)))
     } else {
         let out = SubprocessT::to_js_nonnull(subprocess_ref.into_non_null().cast(), cx.global());
-        subprocess.this_value.with_mut(|v| v.set_weak(out));
+        subprocess.this_value.set_weak(out);
         // Immediately upgrade to strong if there's pending activity to prevent premature GC
         subprocess.update_has_pending_activity();
         (out, None)
@@ -1373,7 +1372,7 @@ fn spawn_maybe_sync(
                 }
             }
             // uws owns the fd now (owns_fd=1).
-            subprocess.stdio_pipes.with_mut(|v| {
+            subprocess.stdio_pipes.with_taken(|v| {
                 let slot = &mut v[usize::try_from(ipc_channel).expect("int cast")];
                 core::mem::replace(slot, ExtraPipe::Unavailable).into_raw();
             });
@@ -1382,7 +1381,7 @@ fn spawn_maybe_sync(
         {
             let idx = usize::try_from(ipc_channel).expect("int cast");
             // The IPC channel is always a `buffer` pipe on Windows.
-            let ipc_pipe = subprocess.stdio_pipes.with_mut(|pipes| pipes[idx].take());
+            let ipc_pipe = subprocess.stdio_pipes.with_taken(|pipes| pipes[idx].take());
             let spawn::WindowsStdioResult::Buffer(ipc_pipe) = ipc_pipe else {
                 unreachable!("IPC channel stdio is not a buffer pipe");
             };
@@ -1508,7 +1507,7 @@ fn spawn_maybe_sync(
     // close.
     #[cfg(not(windows))]
     if !socket_fd_indices.is_empty() {
-        subprocess.stdio_pipes.with_mut(|pipes| {
+        subprocess.stdio_pipes.with_taken(|pipes| {
             for j in &socket_fd_indices {
                 if let Some(slot) = pipes.get_mut(*j) {
                     slot.release_to_caller();
@@ -1590,9 +1589,8 @@ fn spawn_maybe_sync(
         // Support `AbortSignal.timeout`, but it's best-effort.
         // Specifying both `timeout: number` and `AbortSignal.timeout` chooses the soonest one.
         // This does mean if an AbortSignal times out it will throw
-        if let Some(signal) = subprocess.abort_signal_ref()
-            // The clock of fake timers cannot advance while this call blocks.
-            && let Some(next_ts) = signal.timeout_deadline()
+        // The clock of fake timers cannot advance while this call blocks.
+        if let Some(next_ts) = subprocess.abort_handle.signal_timeout_deadline()
             && (user_timespec.eql(&Timespec::EPOCH)
                 || next_ts.order(&user_timespec) == core::cmp::Ordering::Less)
         {

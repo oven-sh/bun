@@ -4,7 +4,7 @@ use core::cell::Cell;
 
 use bun_jsc::{JSGlobalObject, JSValue, JsResult, ProtectedJSValue};
 use bun_core::Timespec;
-use bun_ptr::CellExt as _;
+use bun_ptr::{CellExt as _, VecCellExt as _};
 
 use crate::test_runner::bun_test::{
     BunTest, BunTestPtr, HandleUncaughtExceptionResult, RefDataValue, ScopeId, StepResult,
@@ -55,7 +55,7 @@ impl Collection {
                 callback: cb.protected(),
                 new_scope,
             };
-            buntest.collection.current_scope_callback_queue.with_taken(|queue| queue.push(queued));
+            buntest.collection.current_scope_callback_queue.push(queued);
         }
         Ok(())
     }

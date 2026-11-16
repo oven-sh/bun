@@ -2,10 +2,12 @@ use core::cell::Cell;
 use core::ffi::{c_int, c_void};
 use core::mem::size_of;
 
-use bun_ptr::{CellExt as _, OptionCellExt as _, RefPtr};
+use bun_ptr::{CellExt as _, OptionCellExt as _, RefPtr, VecCellExt as _};
 
 use crate::json_line_buffer::JSONLineBuffer;
-use bun_collections::{ByteVecExt, VecExt};
+#[cfg(windows)]
+use bun_collections::ByteVecExt;
+use bun_collections::VecExt;
 use bun_core::{EncodedSlice, String as BunString, StringView, strings};
 use bun_core::{Output, handle_oom};
 use bun_io::KeepAlive;
@@ -92,7 +94,7 @@ impl InternalMsgHolder {
             // Queued messages drop their handle; the cluster listener is
             // installed before any handle-bearing reply can arrive.
             let message = Strong::create(message, global);
-            self.messages.with_taken(|messages| messages.push(message));
+            self.messages.push(message);
             return;
         };
         global.bun_vm().event_loop().run_callback(
@@ -899,7 +901,6 @@ impl SendQueueOwner {
             // SAFETY: an attached owner is live (it holds a ref on the SendQueue).
             SendQueueOwner::Subprocess(p) => unsafe { p.as_ref() }
                 .this_value
-                .get()
                 .try_get()
                 .unwrap_or_default(),
             SendQueueOwner::Instance => JSValue::ZERO,
@@ -976,10 +977,6 @@ impl SendQueue {
     #[inline]
     fn socket_is_open(&self) -> bool {
         self.socket.is_some()
-    }
-
-    fn queue_is_empty(&self) -> bool {
-        self.queue.with_taken(|queue| queue.is_empty())
     }
 
     pub(crate) fn is_connected(&self) -> bool {
@@ -1286,7 +1283,7 @@ impl SendQueue {
         if self.waiting_for_ack.is_some() {
             return true; // waiting to receive an ack/nack from the other side
         }
-        if self.queue_is_empty() {
+        if self.queue.is_empty() {
             return false; // nothing to send
         }
         // Anything still queued (including head with cursor==0 under backpressure) must keep the loop alive; a closed socket does not.
@@ -1354,7 +1351,7 @@ impl SendQueue {
         });
         match next {
             Next::Nothing => {
-                if self.close_after_flush.get() && !waiting_for_ack && self.queue_is_empty() {
+                if self.close_after_flush.get() && !waiting_for_ack && self.queue.is_empty() {
                     self.close_socket_next_tick(true);
                 }
                 self.update_ref(global);
@@ -1377,7 +1374,7 @@ impl SendQueue {
     fn on_write_complete(&self, n: i32) {
         log!("SendQueue#_onWriteComplete {}", n);
         self.debug_log_message_queue();
-        if !self.write_in_progress.get() || self.queue_is_empty() {
+        if !self.write_in_progress.get() || self.queue.is_empty() {
             debug_assert!(false);
             return;
         }
@@ -1454,7 +1451,7 @@ impl SendQueue {
         log!("SendQueue#writeVersionPacket");
         #[cfg(debug_assertions)]
         debug_assert!(self.has_written_version.get() == 0);
-        debug_assert!(self.queue_is_empty());
+        debug_assert!(self.queue.is_empty());
         debug_assert!(self.waiting_for_ack.is_none());
         let bytes = get_version_packet(self.mode);
         if !bytes.is_empty() {
@@ -1485,7 +1482,7 @@ impl SendQueue {
         handle: Option<Handle>,
     ) -> SerializeAndSendResult {
         log!("SendQueue#serializeAndSend");
-        let indicate_backoff = self.waiting_for_ack.is_some() && !self.queue_is_empty();
+        let indicate_backoff = self.waiting_for_ack.is_some() && !self.queue.is_empty();
         let mode = self.mode;
         let mut payload = StreamBuffer::default();
         let payload_length = match serialize(mode, &mut payload, global, value, is_internal) {
@@ -2126,8 +2123,7 @@ fn on_data2(send_queue: &SendQueue, all_data: &[u8]) {
         IncomingBuffer::Advanced(incoming) => {
             // Advanced mode: uses length-prefix, no newline scanning needed.
             // Try to decode directly from the incoming chunk first, only buffer if needed.
-            let buffered = incoming.with_taken(|adv_buf| adv_buf.len() != 0);
-            if !buffered {
+            if incoming.is_empty() {
                 loop {
                     match decode_ipc_message(Mode::Advanced, data, &global_this, None) {
                         Ok(result) => {
@@ -2144,7 +2140,7 @@ fn on_data2(send_queue: &SendQueue, all_data: &[u8]) {
                             }
                         }
                         Err(IPCDecodeError::NotEnoughBytes) => {
-                            incoming.with_taken(|adv_buf| handle_oom(adv_buf.write(data)));
+                            incoming.extend_from_slice(data);
                             log!("hit NotEnoughBytes");
                             return;
                         }
@@ -2154,7 +2150,7 @@ fn on_data2(send_queue: &SendQueue, all_data: &[u8]) {
             }
 
             // Buffer has existing data, append and process
-            incoming.with_taken(|adv_buf| handle_oom(adv_buf.write(data)));
+            incoming.extend_from_slice(data);
             let mut slice_start: usize = 0;
             loop {
                 match decode_next_advanced(incoming, &global_this, &mut slice_start) {

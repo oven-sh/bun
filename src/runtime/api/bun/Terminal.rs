@@ -26,9 +26,12 @@ use bun_io::{
 use bun_jsc::EncodedSliceJsc as _;
 use bun_jsc::bindgen::{self, JsHeap, JsLocal, JsScope, JsStructure, JsWrapper};
 use bun_jsc::{
-    self as jsc, EventLoopHandle, JSGlobalObject, JSValue, JsCell, JsRef, JsResult,
-    MarkedArrayBuffer, SysErrorJsc,
+    self as jsc, EventLoopHandle, JSGlobalObject, JSValue, JsRef, JsResult, MarkedArrayBuffer,
+    SysErrorJsc,
 };
+#[cfg(unix)]
+use bun_ptr::CellExt as _;
+use bun_ptr::OptionCellExt as _;
 use bun_sys::{self as sys, Fd, File};
 
 #[cfg(windows)]
@@ -52,11 +55,11 @@ pub(crate) struct Terminal {
 
     /// The master side of the PTY (original fd, used for ioctl operations)
     #[cfg(unix)]
-    master: JsCell<Option<File>>,
+    master: Cell<Option<File>>,
 
     /// The slave side of the PTY (used by child processes).
     #[cfg(unix)]
-    slave: JsCell<Option<File>>,
+    slave: Cell<Option<File>>,
 
     /// Windows ConPTY handle. Used for resize and passed to uv_spawn via
     /// uv_process_options_t.pseudoconsole.
@@ -80,17 +83,17 @@ pub(crate) struct Terminal {
     reader: BufferedReader,
 
     /// Held until the writer closes.
-    writer_ref: JsCell<Option<bun_ptr::RefPtr<Terminal>>>,
+    writer_ref: Cell<Option<bun_ptr::RefPtr<Terminal>>>,
     /// Held while a write is in flight.
     #[cfg(windows)]
     inflight_write_ref: Cell<Option<bun_ptr::RefPtr<Terminal>>>,
 
     /// Held until the reader is done.
-    reader_ref: JsCell<Option<bun_ptr::RefPtr<Terminal>>>,
+    reader_ref: Cell<Option<bun_ptr::RefPtr<Terminal>>>,
 
     /// The JS wrapper, which roots the callbacks in its cached slots. Strong
     /// until no callback can fire, then weak (`maybe_downgrade_after_eof`).
-    this_value: JsCell<JsRef>,
+    this_value: JsRef,
 
     /// State flags
     flags: Cell<Flags>,
@@ -292,11 +295,11 @@ impl Terminal {
     // ─────────────────────────────────────────────────────────────────────────
 
     fn is_reader_done(&self) -> bool {
-        self.reader_ref.get().is_none()
+        self.reader_ref.is_none()
     }
 
     fn is_writer_done(&self) -> bool {
-        self.writer_ref.get().is_none()
+        self.writer_ref.is_none()
     }
 
     /// Hold a ref on `self` for the guard's lifetime (across re-entrant JS).
@@ -317,9 +320,9 @@ impl Terminal {
         let terminal = bun_ptr::RefPtr::new(Terminal {
             ref_count: bun_ptr::RefCount::init(),
             #[cfg(unix)]
-            master: JsCell::new(Some(pty_result.master)),
+            master: Cell::new(Some(pty_result.master)),
             #[cfg(unix)]
-            slave: JsCell::new(Some(pty_result.slave)),
+            slave: Cell::new(Some(pty_result.slave)),
             #[cfg(windows)]
             hpcon: Cell::new(Some(pty_result.hpcon)),
             cols: Cell::new(if cfg!(windows) {
@@ -336,11 +339,11 @@ impl Terminal {
             global_this: bun_ptr::BackRef::new(global_object),
             writer: StreamingWriter::default(),
             reader: BufferedReader::init(),
-            writer_ref: JsCell::new(None),
+            writer_ref: Cell::new(None),
             #[cfg(windows)]
             inflight_write_ref: Cell::new(None),
-            reader_ref: JsCell::new(None),
-            this_value: JsCell::new(JsRef::empty()),
+            reader_ref: Cell::new(None),
+            this_value: JsRef::empty(),
             flags: Cell::new(Flags::empty()),
             writer_has_buffered: Cell::new(false),
             #[cfg(unix)]
@@ -411,8 +414,7 @@ impl Terminal {
         this_value: JSValue,
     ) {
         // Start with strong ref since we're actively reading.
-        self.this_value
-            .set(JsRef::init_strong(this_value, global_object));
+        self.this_value.set_strong(this_value, global_object);
 
         // Store callbacks via generated gc setters (prevents GC of callbacks while terminal is alive)
         // Note: callbacks were already validated in parseFromJS() and may be wrapped in AsyncContextFrame
@@ -501,12 +503,14 @@ impl Terminal {
     /// Get the slave fd for subprocess to use
     #[cfg(unix)]
     pub(crate) fn get_slave_fd(&self) -> Fd {
-        self.slave.get().as_ref().map_or(Fd::INVALID, File::fd)
+        self.slave
+            .with_taken(|file| file.as_ref().map_or(Fd::INVALID, File::fd))
     }
 
     #[cfg(unix)]
     fn master_fd(&self) -> Fd {
-        self.master.get().as_ref().map_or(Fd::INVALID, File::fd)
+        self.master
+            .with_taken(|file| file.as_ref().map_or(Fd::INVALID, File::fd))
     }
 
     /// `flags.closed` — read by `Bun.spawn` arg validation.
@@ -530,7 +534,7 @@ impl Terminal {
 
     /// No callback follows (on Windows the reader drains on after `close_internal`), and the wrapper may be collected.
     fn close_without_callbacks(&self) {
-        self.this_value.with_mut(|v| v.downgrade());
+        self.this_value.downgrade();
         self.update_flags(|f| f.insert(Flags::FINALIZED));
         self.close_internal();
     }
@@ -1091,7 +1095,7 @@ impl Terminal {
         }
         #[cfg(unix)]
         {
-            if self.flags.get().contains(Flags::CLOSED) || self.master.get().is_none() {
+            if self.flags.get().contains(Flags::CLOSED) || self.master.is_none() {
                 return bindgen::to_js::f64(heap, 0.0);
             }
             let Some(termios_data) = get_termios(self.master_fd()) else {
@@ -1119,7 +1123,7 @@ impl Terminal {
         }
         #[cfg(unix)]
         {
-            if self.flags.get().contains(Flags::CLOSED) || self.master.get().is_none() {
+            if self.flags.get().contains(Flags::CLOSED) || self.master.is_none() {
                 return Ok(());
             }
             let num = value.to_js().coerce_f64(cx.global())?;
@@ -1230,7 +1234,7 @@ impl Terminal {
         if has_pending {
             // Keep the wrapper rooted for the pending drain dispatch; a write
             // after PTY EOF finds it already downgraded.
-            self.this_value.with_mut(|v| v.upgrade(global_object));
+            self.this_value.upgrade(global_object);
         }
         // A second write() can drain what an earlier one buffered; on_write saw
         // the cleared flag, so fire drain here.
@@ -1471,7 +1475,7 @@ impl Terminal {
     fn on_writer_ready(&self) {
         bun_output::scoped_log!(Terminal, "onWriterReady");
         // Call drain callback
-        if let Some(this_jsvalue) = self.this_value.get().try_get() {
+        if let Some(this_jsvalue) = self.this_value.try_get() {
             if let Some(callback) = js::drain_get_cached(this_jsvalue) {
                 let global_this = self.global();
                 global_this.bun_vm().event_loop().run_callback(
@@ -1507,7 +1511,7 @@ impl Terminal {
                 1
             }
         };
-        let Some(_reader_ref) = self.reader_ref.replace(None) else {
+        let Some(_reader_ref) = self.reader_ref.take() else {
             return;
         };
         #[cfg(unix)]
@@ -1551,14 +1555,14 @@ impl Terminal {
         if !self.is_writer_done() && self.writer_has_buffered.get() {
             return;
         }
-        self.this_value.with_mut(|v| v.downgrade());
+        self.this_value.downgrade();
     }
 
     /// Invoke the exit callback with PTY lifecycle status.
     /// Note: exit_code is PTY-level (0=EOF, 1=error), NOT the subprocess exit code.
     /// The signal parameter is only populated if a signal caused the PTY close.
     fn call_exit_callback(&self, exit_code: i32, signal: Option<SignalCode>) {
-        let Some(this_jsvalue) = self.this_value.get().try_get() else {
+        let Some(this_jsvalue) = self.this_value.try_get() else {
             return;
         };
         let Some(callback) = js::exit_get_cached(this_jsvalue) else {
@@ -1595,7 +1599,7 @@ impl Terminal {
             return;
         }
 
-        let Some(this_jsvalue) = self.this_value.get().try_get() else {
+        let Some(this_jsvalue) = self.this_value.try_get() else {
             return;
         };
         let Some(callback) = js::data_get_cached(this_jsvalue) else {
@@ -1643,7 +1647,7 @@ impl Terminal {
     pub(crate) fn finalize(&self) {
         bun_output::scoped_log!(Terminal, "finalize");
         jsc::mark_binding();
-        self.this_value.with_mut(|v| v.finalize());
+        self.this_value.finalize();
         self.update_flags(|f| f.insert(Flags::FINALIZED));
         self.close_internal();
     }
@@ -1662,7 +1666,7 @@ impl Drop for Terminal {
 impl WriteHandler for Terminal {
     fn on_close(&self) {
         bun_output::scoped_log!(Terminal, "onWriterClose");
-        if let Some(_writer_ref) = self.writer_ref.replace(None) {
+        if let Some(_writer_ref) = self.writer_ref.take() {
             self.maybe_downgrade_after_eof();
         }
     }

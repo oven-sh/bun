@@ -88,12 +88,7 @@ impl PostgresSQLConnection {
     }
 
     fn call_copy(&self, request: &PostgresSQLQuery, chunk: JSValue) -> JSValue {
-        let Some(callback) = request
-            .this_value
-            .get()
-            .try_get()
-            .and_then(js::copy_get_cached)
-        else {
+        let Some(callback) = request.this_value.try_get().and_then(js::copy_get_cached) else {
             return JSValue::ZERO;
         };
         self.event_loop().run_callback_with_result(

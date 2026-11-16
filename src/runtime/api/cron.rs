@@ -27,10 +27,12 @@ use bun_jsc::bindgen::{Callable, JsLocal, JsScope, JsWrapper};
 use bun_jsc::virtual_machine::{HotReload, VirtualMachine};
 use bun_jsc::{
     self as jsc, EncodedSliceJsc as _, EventLoopHandle, GlobalRef, JSFunction, JSGlobalObject,
-    JSObject, JSValue, JsCell, JsRef, JsResult,
+    JSObject, JSValue, JsRef, JsResult,
 };
 use bun_paths as path;
-use bun_ptr::{BackRef, RefCount, RefPtr, ThisPtr};
+use bun_ptr::{
+    BackRef, CellExt as _, OptionCellExt as _, RefCount, RefPtr, ThisPtr, VecCellExt as _,
+};
 use bun_resolver::fs::FileSystem;
 #[cfg(not(target_os = "macos"))]
 use bun_resolver::fs::RealFS;
@@ -63,17 +65,16 @@ use crate::jsc_hooks::timer_all;
 // every method on the path to it takes a `ThisPtr<Self>` receiver (never
 // `&mut self`, whose Stacked Borrows FnEntry protector would make the
 // in-flight dealloc UB) and touches nothing after the call that may free
-// `this`. Mutable state lives in `Cell`/`JsCell` fields so every access is a
-// short shared borrow.
+// `this`. Mutable state lives in `Cell` fields.
 trait CronJobBase: Sized + bun_ptr::RefCounted {
     /// The single owning ref; released by `finish`.
     fn owner(&self) -> &Cell<Option<RefPtr<Self>>>;
-    fn promise(&self) -> &JsCell<jsc::JSPromiseStrong>;
+    fn promise(&self) -> &Cell<jsc::JSPromiseStrong>;
     fn global(&self) -> GlobalRef;
     fn remaining_fds(&self) -> &Cell<i8>;
-    fn err_msg(&self) -> &JsCell<Option<Vec<u8>>>;
+    fn err_msg(&self) -> &Cell<Option<Vec<u8>>>;
     fn has_called_process_exit(&self) -> &Cell<bool>;
-    fn exit_status(&self) -> &JsCell<Option<Status>>;
+    fn exit_status(&self) -> &Cell<Option<Status>>;
     /// Of the child's stdout, or on Windows its stderr.
     fn output_reader(&self) -> &OutputReader;
 
@@ -119,20 +120,19 @@ trait CronJobBase: Sized + bun_ptr::RefCounted {
         let _entered = VirtualMachine::get().enter_event_loop_scope();
         let _owner = this.owner().take().expect("cron job finished twice");
         let global = this.global();
-        if let Some(msg) = this.err_msg().replace(None) {
+        if let Some(msg) = this.err_msg().take() {
             let err = EncodedSlice::utf8(&msg).to_error_instance(&global);
             let _ = this
                 .promise()
-                .with_mut(|p| p.reject_with_async_stack(&global, Ok(err)));
+                .take()
+                .reject_with_async_stack(&global, Ok(err));
         } else {
-            let _ = this
-                .promise()
-                .with_mut(|p| p.resolve(&global, JSValue::UNDEFINED));
+            let _ = this.promise().take().resolve(&global, JSValue::UNDEFINED);
         }
     }
 
     fn set_err(&self, args: core::fmt::Arguments<'_>) {
-        if self.err_msg().get().is_none() {
+        if self.err_msg().is_none() {
             let mut msg = Vec::new();
             let _ = msg.write_fmt(args);
             self.err_msg().set(Some(msg));
@@ -194,7 +194,7 @@ struct CronRegisterJob {
     ref_count: RefCount,
     /// The single owning ref; released by `finish`.
     owner: Cell<Option<RefPtr<CronRegisterJob>>>,
-    promise: JsCell<jsc::JSPromiseStrong>,
+    promise: Cell<jsc::JSPromiseStrong>,
     // LIFETIMES.tsv: JSC_BORROW → GlobalRef
     global: GlobalRef,
     _keep_alive: JsKeepAlive,
@@ -208,13 +208,13 @@ struct CronRegisterJob {
     parsed_cron: CronExpression,
 
     state: Cell<RegisterState>,
-    process: JsCell<Option<ProcessHandle>>,
+    process: Cell<Option<ProcessHandle>>,
     output_reader: OutputReader,
     remaining_fds: Cell<i8>,
     has_called_process_exit: Cell<bool>,
-    exit_status: JsCell<Option<Status>>,
-    err_msg: JsCell<Option<Vec<u8>>>,
-    tmp_path: JsCell<Option<ZString>>,
+    exit_status: Cell<Option<Status>>,
+    err_msg: Cell<Option<Vec<u8>>>,
+    tmp_path: Cell<Option<ZString>>,
 }
 
 #[repr(u8)]
@@ -247,7 +247,7 @@ impl CronJobBase for CronRegisterJob {
     fn owner(&self) -> &Cell<Option<RefPtr<Self>>> {
         &self.owner
     }
-    fn promise(&self) -> &JsCell<jsc::JSPromiseStrong> {
+    fn promise(&self) -> &Cell<jsc::JSPromiseStrong> {
         &self.promise
     }
     fn global(&self) -> GlobalRef {
@@ -256,13 +256,13 @@ impl CronJobBase for CronRegisterJob {
     fn remaining_fds(&self) -> &Cell<i8> {
         &self.remaining_fds
     }
-    fn err_msg(&self) -> &JsCell<Option<Vec<u8>>> {
+    fn err_msg(&self) -> &Cell<Option<Vec<u8>>> {
         &self.err_msg
     }
     fn has_called_process_exit(&self) -> &Cell<bool> {
         &self.has_called_process_exit
     }
-    fn exit_status(&self) -> &JsCell<Option<Status>> {
+    fn exit_status(&self) -> &Cell<Option<Status>> {
         &self.exit_status
     }
     fn output_reader(&self) -> &OutputReader {
@@ -274,10 +274,10 @@ impl CronJobBase for CronRegisterJob {
             return JobAction::Pending;
         }
         self.process.set(None);
-        if self.err_msg.get().is_some() {
+        if self.err_msg.is_some() {
             return JobAction::Finish;
         }
-        let Some(status) = self.exit_status.replace(None) else {
+        let Some(status) = self.exit_status.take() else {
             return JobAction::Pending;
         };
         let state = self.state.get();
@@ -441,7 +441,7 @@ impl CronRegisterJob {
 
         let file = match File::openat(
             Fd::cwd(),
-            self.tmp_path.get().as_ref().unwrap(),
+            &tmp_path,
             sys::O::WRONLY | sys::O::CREAT | sys::O::EXCL,
             0o600,
         ) {
@@ -574,12 +574,14 @@ impl CronRegisterJob {
             return Err(());
         }
 
-        let file = match File::openat(
-            Fd::cwd(),
-            self.tmp_path.get().as_ref().unwrap(),
-            sys::O::WRONLY | sys::O::CREAT | sys::O::TRUNC,
-            0o644,
-        ) {
+        let file = match self.tmp_path.with_taken(|plist_path| {
+            File::openat(
+                Fd::cwd(),
+                plist_path.as_ref().unwrap(),
+                sys::O::WRONLY | sys::O::CREAT | sys::O::TRUNC,
+                0o644,
+            )
+        }) {
             Ok(f) => f,
             Err(_) => {
                 self.set_err(format_args!("Failed to create plist file"));
@@ -621,7 +623,7 @@ impl CronRegisterJob {
     #[cfg(target_os = "macos")]
     fn prepare_bootstrap(&self) -> Result<(ZString, ZString), ()> {
         self.state.set(RegisterState::Bootstrapping);
-        let Some(plist_path) = self.tmp_path.replace(None) else {
+        let Some(plist_path) = self.tmp_path.take() else {
             self.set_err(format_args!("No plist path"));
             return Err(());
         };
@@ -723,10 +725,12 @@ pub(crate) fn register_os_job(
                 bstr::BStr::new(bun_exe.as_bytes())
             )));
     }
+    let promise = jsc::JSPromiseStrong::init(global);
+    let promise_value = promise.value();
     let job = RefPtr::new(CronRegisterJob {
         ref_count: RefCount::init(),
         owner: Cell::new(None),
-        promise: JsCell::new(jsc::JSPromiseStrong::init(global)),
+        promise: Cell::new(promise),
         global: GlobalRef::from(global),
         _keep_alive: JsKeepAlive::active(),
         bun_exe,
@@ -736,18 +740,17 @@ pub(crate) fn register_os_job(
         #[cfg(windows)]
         parsed_cron: parsed,
         state: Cell::new(RegisterState::ReadingCrontab),
-        process: JsCell::new(None),
+        process: Cell::new(None),
         output_reader: OutputReader::init(),
         remaining_fds: Cell::new(0),
         has_called_process_exit: Cell::new(false),
-        exit_status: JsCell::new(None),
-        err_msg: JsCell::new(None),
-        tmp_path: JsCell::new(None),
+        exit_status: Cell::new(None),
+        err_msg: Cell::new(None),
+        tmp_path: Cell::new(None),
     });
     let owner = Owner::new(PollTag::CronRegister, job.as_ptr().cast());
     // SAFETY: `owner` points to the heap allocation that holds this reader.
     unsafe { job.output_reader.set_owner(owner) };
-    let promise_value = job.promise.get().value();
     let this = job.this_ptr();
     this.owner.set(Some(job));
     let job = this;
@@ -830,7 +833,7 @@ impl CronRegisterJob {
 
         let file = match File::openat(
             Fd::cwd(),
-            self.tmp_path.get().as_ref().unwrap(),
+            &xml_path,
             sys::O::WRONLY | sys::O::CREAT | sys::O::EXCL,
             0o600,
         ) {
@@ -851,7 +854,7 @@ impl CronRegisterJob {
 
 impl Drop for CronRegisterJob {
     fn drop(&mut self) {
-        if let Some(p) = self.tmp_path.replace(None) {
+        if let Some(p) = self.tmp_path.take() {
             let _ = sys::unlink(&p);
         }
     }
@@ -869,20 +872,20 @@ struct CronRemoveJob {
     ref_count: RefCount,
     /// The single owning ref; released by `finish`.
     owner: Cell<Option<RefPtr<CronRemoveJob>>>,
-    promise: JsCell<jsc::JSPromiseStrong>,
+    promise: Cell<jsc::JSPromiseStrong>,
     // LIFETIMES.tsv: JSC_BORROW → GlobalRef
     global: GlobalRef,
     _keep_alive: JsKeepAlive,
     title: ZString,
 
     state: Cell<RemoveState>,
-    process: JsCell<Option<ProcessHandle>>,
+    process: Cell<Option<ProcessHandle>>,
     output_reader: OutputReader,
     remaining_fds: Cell<i8>,
     has_called_process_exit: Cell<bool>,
-    exit_status: JsCell<Option<Status>>,
-    err_msg: JsCell<Option<Vec<u8>>>,
-    tmp_path: JsCell<Option<ZString>>,
+    exit_status: Cell<Option<Status>>,
+    err_msg: Cell<Option<Vec<u8>>>,
+    tmp_path: Cell<Option<ZString>>,
 }
 
 #[repr(u8)]
@@ -910,7 +913,7 @@ impl CronJobBase for CronRemoveJob {
     fn owner(&self) -> &Cell<Option<RefPtr<Self>>> {
         &self.owner
     }
-    fn promise(&self) -> &JsCell<jsc::JSPromiseStrong> {
+    fn promise(&self) -> &Cell<jsc::JSPromiseStrong> {
         &self.promise
     }
     fn global(&self) -> GlobalRef {
@@ -919,13 +922,13 @@ impl CronJobBase for CronRemoveJob {
     fn remaining_fds(&self) -> &Cell<i8> {
         &self.remaining_fds
     }
-    fn err_msg(&self) -> &JsCell<Option<Vec<u8>>> {
+    fn err_msg(&self) -> &Cell<Option<Vec<u8>>> {
         &self.err_msg
     }
     fn has_called_process_exit(&self) -> &Cell<bool> {
         &self.has_called_process_exit
     }
-    fn exit_status(&self) -> &JsCell<Option<Status>> {
+    fn exit_status(&self) -> &Cell<Option<Status>> {
         &self.exit_status
     }
     fn output_reader(&self) -> &OutputReader {
@@ -937,10 +940,10 @@ impl CronJobBase for CronRemoveJob {
             return JobAction::Pending;
         }
         self.process.set(None);
-        if self.err_msg.get().is_some() {
+        if self.err_msg.is_some() {
             return JobAction::Finish;
         }
-        let Some(status) = self.exit_status.replace(None) else {
+        let Some(status) = self.exit_status.take() else {
             return JobAction::Pending;
         };
         let state = self.state.get();
@@ -1086,7 +1089,7 @@ impl CronRemoveJob {
 
         let file = match File::openat(
             Fd::cwd(),
-            self.tmp_path.get().as_ref().unwrap(),
+            &tmp_path,
             sys::O::WRONLY | sys::O::CREAT | sys::O::EXCL,
             0o600,
         ) {
@@ -1131,26 +1134,27 @@ pub(crate) fn remove(cx: &mut JsScope<'_>, title: &[u8]) -> JsResult<JSValue> {
         )));
     }
 
+    let promise = jsc::JSPromiseStrong::init(global);
+    let promise_value = promise.value();
     let job = RefPtr::new(CronRemoveJob {
         ref_count: RefCount::init(),
         owner: Cell::new(None),
-        promise: JsCell::new(jsc::JSPromiseStrong::init(global)),
+        promise: Cell::new(promise),
         global: GlobalRef::from(global),
         _keep_alive: JsKeepAlive::active(),
         title: ZString::from_bytes(title),
         state: Cell::new(RemoveState::ReadingCrontab),
-        process: JsCell::new(None),
+        process: Cell::new(None),
         output_reader: OutputReader::init(),
         remaining_fds: Cell::new(0),
         has_called_process_exit: Cell::new(false),
-        exit_status: JsCell::new(None),
-        err_msg: JsCell::new(None),
-        tmp_path: JsCell::new(None),
+        exit_status: Cell::new(None),
+        err_msg: Cell::new(None),
+        tmp_path: Cell::new(None),
     });
     let owner = Owner::new(PollTag::CronRemove, job.as_ptr().cast());
     // SAFETY: `owner` points to the heap allocation that holds this reader.
     unsafe { job.output_reader.set_owner(owner) };
-    let promise_value = job.promise.get().value();
     let this = job.this_ptr();
     this.owner.set(Some(job));
     let job = this;
@@ -1192,7 +1196,7 @@ impl CronRemoveJob {
 
 impl Drop for CronRemoveJob {
     fn drop(&mut self) {
-        if let Some(p) = self.tmp_path.replace(None) {
+        if let Some(p) = self.tmp_path.take() {
             let _ = sys::unlink(&p);
         }
     }
@@ -1203,8 +1207,8 @@ impl Drop for CronRemoveJob {
 // ============================================================================
 
 // R-2 (host-fn re-entrancy): every JS-exposed method takes `&self`; per-field
-// interior mutability via `Cell` (Copy) / `JsCell` (non-Copy). `on_timer_fire`
-// calls `cb.call()` which re-enters JS; that JS may call `stop()`/`ref()`/
+// interior mutability via `Cell`. `on_timer_fire` calls `cb.call()` which
+// re-enters JS; that JS may call `stop()`/`ref()`/
 // `unref()` on this same wrapper, so a `noalias` `&mut Self` held across the
 // re-entry is Stacked-Borrows UB and an LLVM-level miscompile hazard. `&self`
 // + `UnsafeCell`-backed fields suppresses `noalias` on the receiver.
@@ -1226,7 +1230,7 @@ pub(crate) struct CronJob {
     // Read-only after construction.
     tz: CronTz,
     poll_ref: KeepAlive,
-    this_value: JsCell<JsRef>,
+    this_value: JsRef,
     stopped: Cell<bool>,
     /// Last computed wall-clock fire target (ms epoch); floors the next search
     /// so monotonic-vs-wall skew can't recompute the same minute.
@@ -1269,20 +1273,15 @@ impl CronJob {
     /// has settled, so onPromiseReject can still read pendingPromise from
     /// the wrapper and pass the real Promise to unhandledRejection.
     pub(crate) fn maybe_downgrade(&self) {
-        if self.stopped.get()
-            && self.tick_cell.get().is_empty()
-            && !matches!(self.this_value.get(), JsRef::Finalized)
-        {
-            self.this_value.with_mut(|v| v.downgrade());
+        if self.stopped.get() && self.tick_cell.get().is_empty() {
+            self.this_value.downgrade();
         }
     }
 
     /// The job's script is gone (its context stopped): nothing reads the wrapper again, so the
     /// callback and what it closes over are not kept for a tick whose promise may never settle.
     fn let_go_of_wrapper(&self) {
-        if !matches!(self.this_value.get(), JsRef::Finalized) {
-            self.this_value.with_mut(|v| v.downgrade());
-        }
+        self.this_value.downgrade();
     }
 
     /// Takes one ref as the cell's claim on the job and remembers the cell.
@@ -1387,7 +1386,7 @@ impl CronJob {
         let Some(state) = crate::jsc_hooks::try_runtime_state() else {
             return;
         };
-        drop(state.cron_jobs.with_mut(|jobs| {
+        drop(state.cron_jobs.with_taken(|jobs| {
             let i = jobs.iter().position(|j| j.as_ptr() == this.as_ptr())?;
             Some(jobs.swap_remove(i))
         }));
@@ -1413,7 +1412,7 @@ impl CronJob {
     }
 
     pub(crate) fn finalize(&self) {
-        self.this_value.with_mut(|v| v.finalize());
+        self.this_value.finalize();
     }
 
     fn compute_next_timespec(&self) -> Option<bun_core::Timespec> {
@@ -1464,7 +1463,7 @@ impl CronJob {
         // R-2: shared borrows only — `cb.call()` re-enters JS, which may call
         // `stop()`/`ref()`/`unref()` on this same wrapper; a `noalias`
         // `&mut Self` here would be Stacked-Borrows UB. All mutation is
-        // interior (`Cell`/`JsCell`).
+        // interior (`Cell`).
         this.event_loop_timer.state.set(EventLoopTimerState::FIRED);
 
         if this.stopped.get() {
@@ -1475,7 +1474,7 @@ impl CronJob {
             return;
         }
 
-        let Some(js_this) = this.this_value.get().try_get() else {
+        let Some(js_this) = this.this_value.try_get() else {
             Self::self_stop(this, vm);
             return;
         };
@@ -1609,7 +1608,7 @@ impl CronJob {
             parsed,
             tz,
             poll_ref: KeepAlive::default(),
-            this_value: JsCell::new(JsRef::empty()),
+            this_value: JsRef::empty(),
             stopped: Cell::new(false),
             last_next_ms: Cell::new(0.0),
             tick_cell: Cell::new(JSValue::ZERO),
@@ -1631,14 +1630,14 @@ impl CronJob {
         // so skip the list ref + append entirely.
         if vm.hot_reload.get() == HotReload::Hot || vm.worker.get().is_some() {
             if let Some(state) = crate::jsc_hooks::try_runtime_state() {
-                state.cron_jobs.with_mut(|jobs| jobs.push(job.clone()));
+                state.cron_jobs.push(job.clone());
             }
         }
 
         // `job`'s ref moves to the JS wrapper (released via `finalize`).
         let js_value = Self::to_js_nonnull(job.as_non_null(), global);
         let job = job.into_this_ptr();
-        job.this_value.with_mut(|v| v.set_strong(js_value, global));
+        job.this_value.set_strong(js_value, global);
         js::cron_set_cached(js_value, global, schedule_value.to_js());
         js::callback_set_cached(
             js_value,
@@ -1666,7 +1665,7 @@ pub(crate) fn on_promise_resolve(
     };
     let this = job.this_ptr();
     let vm = this.global.bun_vm();
-    if let Some(js_this) = this.this_value.get().try_get() {
+    if let Some(js_this) = this.this_value.try_get() {
         js::pending_promise_set_cached(js_this, &this.global, JSValue::UNDEFINED);
     }
     CronJob::schedule_next(this, vm);
@@ -1686,7 +1685,7 @@ pub(crate) fn on_promise_reject(
     let vm = this.global.bun_vm();
     let err = reason.to_js();
     let mut promise_value = JSValue::UNDEFINED;
-    if let Some(js_this) = this.this_value.get().try_get() {
+    if let Some(js_this) = this.this_value.try_get() {
         promise_value = js::pending_promise_get_cached(js_this).unwrap_or(JSValue::UNDEFINED);
         js::pending_promise_set_cached(js_this, &this.global, JSValue::UNDEFINED);
     }
@@ -1757,7 +1756,7 @@ pub(crate) fn parse(
 
 /// Trait abstracting over CronRegisterJob/CronRemoveJob for `spawn_cmd_generic`.
 trait SpawnCmdTarget: CronJobBase + bun_spawn::ProcessExitOwner {
-    fn process_slot(&self) -> &JsCell<Option<ProcessHandle>>;
+    fn process_slot(&self) -> &Cell<Option<ProcessHandle>>;
 }
 
 /// # Safety
@@ -1790,12 +1789,12 @@ bun_spawn::link_impl_ProcessExit! {
 }
 
 impl SpawnCmdTarget for CronRegisterJob {
-    fn process_slot(&self) -> &JsCell<Option<ProcessHandle>> {
+    fn process_slot(&self) -> &Cell<Option<ProcessHandle>> {
         &self.process
     }
 }
 impl SpawnCmdTarget for CronRemoveJob {
-    fn process_slot(&self) -> &JsCell<Option<ProcessHandle>> {
+    fn process_slot(&self) -> &Cell<Option<ProcessHandle>> {
         &self.process
     }
 }

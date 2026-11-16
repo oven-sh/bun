@@ -11,7 +11,7 @@ use bun_uws as uws;
 use bun_uws_sys as uws_sys;
 use bun_uws_sys::app::c as uws_app_c;
 
-use bun_jsc::{JSGlobalObject, JSValue, JsCell, JsCellRefExt as _, JsResult};
+use bun_jsc::{JSGlobalObject, JSValue, JsCell, JsResult};
 use bun_options_types::context::IS_SILENT;
 use bun_ptr::{AsCtxPtr, CellExt as _, OptionCellExt as _};
 
@@ -226,7 +226,7 @@ pub(crate) struct NewServer<const SSL: bool, const DEBUG: bool> {
     /// Cached `h3=":<port>"; ma=86400` for Alt-Svc on H1 responses; formatted
     /// once in onH3Listen so renderMetadata doesn't reformat per-request.
     pub(crate) h3_alt_svc: JsCell<Box<[u8]>>,
-    pub(crate) js_value: JsCell<jsc::JsRef>,
+    pub(crate) js_value: jsc::JsRef,
     /// Potentially null before listen() is called, and once .destroy() is called.
     // LIFETIMES.tsv = STATIC → `&'static VirtualMachine`. `BackRef` for safe
     // `Deref` while keeping the struct `'static` (process-lifetime VM).
@@ -282,7 +282,7 @@ pub(crate) struct NewServer<const SSL: bool, const DEBUG: bool> {
     /// after the wrapper is collected, so a wrapper-traced slot would not
     /// suffice — this Strong is what keeps the cell live across that window).
     /// A `.then(cb)` can reach the wrapper, so `deinit_if_we_can` moves the Strong into the task that resolves the promise.
-    pub(crate) all_closed_promise: JsCell<jsc::JSPromiseStrong>,
+    pub(crate) all_closed_promise: core::cell::Cell<jsc::JSPromiseStrong>,
 
     pub poll_ref: KeepAlive,
 
@@ -627,7 +627,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
     /// alive (callers must only use this while the server JS object is kept
     /// alive elsewhere).
     pub(crate) fn js_value_assert_alive(&self) -> JSValue {
-        debug_assert!(self.js_value.get().is_not_empty());
+        debug_assert!(self.js_value.is_not_empty());
         self.js_value.try_get().expect("js_value alive")
     }
 
@@ -646,7 +646,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         // HTTP/3 connections are not counted yet, so a stream on one can still arrive after the drain.
         debug_assert!(
             self.h3_app().is_some()
-                || self.js_value.get().is_strong()
+                || self.js_value.is_strong()
                 || self.js_value.try_get().is_none(),
             "a socket outlived the server's connection accounting"
         );
@@ -1767,17 +1767,20 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             } else {
                 "no"
             },
-            if self.all_closed_promise.get().has_value() {
+            if self
+                .all_closed_promise
+                .with_taken(|promise| promise.has_value())
+            {
                 "has"
             } else {
                 "no"
             },
-            self.js_value.get().is_finalized(),
+            self.js_value.is_finalized(),
         );
 
         let closed = self.is_closed();
         if closed
-            && self.all_closed_promise.get().has_value()
+            && self.all_closed_promise.with_taken(|promise| promise.has_value())
             // `ServerAllConnectionsClosedTask::run_from_js_thread` early-returns
             // (without resolving the promise) when the VM is shutting down —
             // see the `if !vm.is_shutting_down()` gate there. Skip the
@@ -1791,7 +1794,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             ServerAllConnectionsClosedTask::schedule(
                 ServerAllConnectionsClosedTask {
                     global_object: self.global_this,
-                    promise: self.all_closed_promise.with_mut(|promise| promise.take()),
+                    promise: self.all_closed_promise.take(),
                     tracker: jsc::AsyncTaskTracker::init(vm_ref),
                     context: self.context.get(),
                 },
@@ -1805,7 +1808,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             self.abort_handle.leave();
             // No handler is dispatched from here on (`js_value_for_dispatch`), so the wrapper —
             // the handlers' only GC root — may become collectible.
-            self.js_value.with_mut(|js_value| js_value.downgrade());
+            self.js_value.downgrade();
             self.config.with_mut(|config| {
                 if let Some(ws) = config.websocket.as_mut() {
                     ws.handler.app = None;
@@ -1963,7 +1966,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             h3_listener: core::cell::Cell::new(None),
             h3_draining_listener: core::cell::Cell::new(None),
             h3_alt_svc: JsCell::new(Box::<[u8]>::default()),
-            js_value: JsCell::new(jsc::JsRef::empty()),
+            js_value: jsc::JsRef::empty(),
             pending_requests: core::cell::Cell::new(0),
             active_connection_count: core::cell::Cell::new(0),
             idle_tunnel_count: core::cell::Cell::new(0),
@@ -1973,7 +1976,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             context: core::cell::Cell::new(jsc::ContextId::default()),
             request_pool: crate::jsc_hooks::request_pools(global.bun_vm()).get(),
             mux_request_pool: core::cell::Cell::new(core::ptr::null()),
-            all_closed_promise: JsCell::new(jsc::JSPromiseStrong::default()),
+            all_closed_promise: core::cell::Cell::default(),
             poll_ref: KeepAlive::default(),
             flags: core::cell::Cell::new(ServerFlags::default()),
             plugins: OnceCell::new(),
@@ -2351,7 +2354,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                 .clone()
                 .unwrap_or_default();
             // `load_and_resolve_plugins` adds the plugins of `bake.config.ts`.
-            if !names.is_empty() || vm.bake_config_plugins.get().has() {
+            if !names.is_empty() || vm.bake_config_plugins.is_some() {
                 let _ = self.plugins.set(ServePlugins::init(names));
             }
         }
@@ -3317,7 +3320,7 @@ impl<const SSL: bool, const DEBUG: bool> ServerLike for NewServer<SSL, DEBUG> {
     }
     #[inline(always)]
     fn js_value(&self) -> &jsc::JsRef {
-        self.js_value.get()
+        &self.js_value
     }
     #[inline]
     fn h3_alt_svc(&self) -> Option<&[u8]> {

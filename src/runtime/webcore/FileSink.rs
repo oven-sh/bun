@@ -62,7 +62,7 @@ pub(crate) struct FileSink {
     run_pending_armed: Cell<bool>,
 
     /// While `assign_to_stream` (spawn stdin) or `pipe_stream` (`Bun.write`) pipes a stream in: the controller cell that holds the stream, `pipe_stream`'s done-promise and a JS failure value.
-    pipe: JsCell<streams::PipeCell>,
+    pipe: streams::PipeCell,
     /// A write or source failure that is not a JS value; a JS one lives on `pipe` and sets `stream_js_error`.
     stream_error: JsCell<Option<streams::StreamError>>,
     stream_js_error: Cell<bool>,
@@ -74,7 +74,7 @@ pub(crate) struct FileSink {
     /// Strong reference to the JS wrapper object to prevent GC from collecting it
     /// while an async operation is pending. This is set when endFromJS returns a
     /// pending Promise and cleared when the operation completes.
-    pub(crate) js_sink_ref: JsCell<bun_jsc::strong::Optional>,
+    pub(crate) js_sink_ref: bun_jsc::StrongCell,
     /// Armed while a file this sink opened for a `Bun.ModuleGraph`'s script is open, and under
     /// `bun test --isolate` while its copy of a descriptor is.
     abort_handle: bun_jsc::AbortHandle,
@@ -193,7 +193,7 @@ impl FileSink {
     pub(crate) fn on_attached_process_exit(&self, status: &SpawnStatus) {
         bun_core::scoped_log!(FileSink, "onAttachedProcessExit()");
         self.done.set(true);
-        if let Some(stream) = self.pipe.get().take_stream() {
+        if let Some(stream) = self.pipe.take_stream() {
             if let Some(global) = self.js_global() {
                 if !status.is_ok() {
                     let _entered = global.bun_vm().enter_event_loop_scope();
@@ -229,7 +229,7 @@ impl FileSink {
         }
 
         // See `protect_js_wrapper`.
-        self.js_sink_ref.set(Default::default());
+        self.js_sink_ref.clear();
     }
 }
 
@@ -321,7 +321,7 @@ impl WriteHandler for FileSink {
 
         self.abort_handle.leave();
         if self.js_global().is_some() {
-            if let Some(stream) = self.pipe.get().stream() {
+            if let Some(stream) = self.pipe.stream() {
                 stream.done();
             }
         }
@@ -361,7 +361,7 @@ impl FileSink {
 
     /// Microtask checkpoint owed for the JS a writer callback enters while a stream is piped in.
     fn completion_scope(&self) -> Option<bun_jsc::event_loop_handle::EnteredEventLoop> {
-        self.pipe.get().cell()?;
+        self.pipe.cell()?;
         Some(self.event_loop().entered())
     }
 
@@ -432,7 +432,7 @@ impl FileSink {
     }
 
     fn settle_stream_done(&self) {
-        let Some(promise) = self.pipe.get().take_done() else {
+        let Some(promise) = self.pipe.take_done() else {
             return;
         };
         // SAFETY: `take_done` returned a live `JSPromise` cell; the stack keeps it alive for this call.
@@ -443,7 +443,7 @@ impl FileSink {
         };
         let error = match self.stream_error.replace(None) {
             Some(err) => Some(err.to_js(global)),
-            None => self.pipe.get().error(),
+            None => self.pipe.error(),
         };
         self.stream_js_error.set(false);
         let result = match error {
@@ -462,7 +462,7 @@ impl FileSink {
     }
 
     fn release_pipe_with(&self, detach: fn(JSValue, &JSGlobalObject) -> JsResult<()>) {
-        let pipe = self.pipe.replace(streams::PipeCell::default());
+        let pipe = self.pipe.take();
         pipe.clear_slots();
         let (Some(cell), Some(global)) = (pipe.cell(), self.js_global()) else {
             return;
@@ -479,7 +479,7 @@ impl FileSink {
         if self.has_stream_error() {
             return;
         }
-        self.pipe.get().set_error(error);
+        self.pipe.set_error(error);
         self.stream_js_error.set(true);
     }
 
@@ -533,7 +533,7 @@ impl FileSink {
         options: &Options,
         context: &bun_jsc::ScriptExecutionContext,
     ) -> sys::Result<()> {
-        if self.pipe.get().has_stream() {
+        if self.pipe.has_stream() {
             // Already started.
             return sys::Result::Ok(());
         }
@@ -847,7 +847,7 @@ impl FileSink {
         // SAFETY: caller contract.
         let this = unsafe { RefPtr::init_ref(this) };
         // The root is on the cell being destroyed: dropped here, `Drop` finds no cell to detach.
-        drop(this.pipe.replace(streams::PipeCell::default()));
+        drop(this.pipe.take());
         this.release_ref_stranded_by_shutdown();
         if this.js_vm().is_some_and(|vm| vm.is_shutting_down()) {
             // The pump promise's reactions never run.
@@ -872,10 +872,7 @@ impl FileSink {
     /// This should be called when endFromJS returns a pending Promise.
     /// The reference is released when runPending() completes.
     pub(crate) fn protect_js_wrapper(&self, global_this: &JSGlobalObject, js_wrapper: JSValue) {
-        // SAFETY(JsCell): `Strong::set` is a JSC root-slot write; does not
-        // re-enter user JS.
-        self.js_sink_ref
-            .with_mut(|r| r.set(global_this, js_wrapper));
+        self.js_sink_ref.set(global_this, js_wrapper);
     }
 
     pub(crate) fn init(fd: Fd, event_loop_handle: impl Into<EventLoopHandle>) -> RefPtr<FileSink> {
@@ -986,7 +983,7 @@ impl FileSink {
         self.done.set(true);
         // The source stopped because a write failed (it cleared its sink first): nothing reads
         // the rest, so cancel it. A source that failed on its own is already done.
-        let stream = self.pipe.get().take_stream();
+        let stream = self.pipe.take_stream();
         if write_failed {
             if let (Some(stream), Some(global)) = (stream, self.js_global()) {
                 crate::dispatch::fold(stream.cancel(global));
@@ -1161,7 +1158,7 @@ impl Drop for WrapperRef {
     /// Does not clear `pending` or `pipe`: I/O in flight may still need them.
     fn drop(&mut self) {
         self.0.release_ref_stranded_by_shutdown();
-        self.0.js_sink_ref.set(Default::default());
+        self.0.js_sink_ref.clear();
     }
 }
 
@@ -1339,12 +1336,12 @@ impl FileSink {
             fd: Cell::new(fd),
             auto_flusher: AutoFlusher::default(),
             run_pending_armed: Cell::new(false),
-            pipe: JsCell::new(streams::PipeCell::default()),
+            pipe: streams::PipeCell::default(),
             stream_error: JsCell::new(None),
             stream_js_error: Cell::new(false),
             stream_bytes: Cell::new(None),
             pump_promise_ref: Cell::new(None),
-            js_sink_ref: JsCell::new(bun_jsc::strong::Optional::empty()),
+            js_sink_ref: bun_jsc::StrongCell::default(),
             abort_handle: bun_jsc::AbortHandle::for_owner::<FileSink>(),
             closes_with_test_file: Cell::new(false),
         }
@@ -1396,7 +1393,7 @@ impl FileSink {
 impl FileSink {
     /// The JS pump finished: flush what it wrote and end. Does not ref or unref.
     fn handle_resolve_stream(&self, global_this: &JSGlobalObject) {
-        if let Some(stream) = self.pipe.get().stream() {
+        if let Some(stream) = self.pipe.stream() {
             stream.done();
         }
 
@@ -1410,7 +1407,7 @@ impl FileSink {
     /// Does not ref or unref.
     fn handle_reject_stream(&self, global_this: &JSGlobalObject, err: JSValue) -> JsResult<()> {
         self.record_js_stream_error(err);
-        let aborted = match self.pipe.get().take_stream() {
+        let aborted = match self.pipe.take_stream() {
             Some(stream) => stream.abort(global_this),
             None => Ok(()),
         };
@@ -1462,12 +1459,8 @@ impl FileSink {
         let done_promise = bun_jsc::JSPromise::create(global_this);
         let promise = done_promise.to_js();
         let controller = ReadableSinkController::create(global_this, this.as_non_null());
-        this.pipe.set(streams::PipeCell::create(
-            controller,
-            stream.value,
-            promise,
-            global_this,
-        ));
+        this.pipe
+            .set(controller, stream.value, promise, global_this);
 
         match stream.wire_native_sink(
             global_this,
@@ -1478,7 +1471,7 @@ impl FileSink {
             readable_stream::NativeWireResult::Wired => {
                 // A synchronous source (FileReader over a regular file) may have run to the
                 // end inside `wire_native_sink`; the promise is settled then.
-                if this.pipe.get().has_done() && !this.done.get() {
+                if this.pipe.has_done() && !this.done.get() {
                     this.update_ref(true);
                     this.keep_alive_until_eof();
                 }
@@ -1513,12 +1506,8 @@ impl FileSink {
         global_this: &JSGlobalObject,
     ) -> JsResult<JSValue> {
         let controller = ReadableSinkController::create(global_this, this.as_non_null());
-        this.pipe.set(streams::PipeCell::create(
-            controller,
-            stream.value,
-            JSValue::UNDEFINED,
-            global_this,
-        ));
+        this.pipe
+            .set(controller, stream.value, JSValue::UNDEFINED, global_this);
 
         // Native ByteStream/FileReader fast-path: wire the SinkHandle
         // directly, skipping the JS pump.

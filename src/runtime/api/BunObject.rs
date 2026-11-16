@@ -72,6 +72,7 @@ use crate::cli::open::Editor;
 use bun_core::{EncodedSlice, String as BunString, StringView, strings};
 use bun_jsc::virtual_machine::{ResolveMode, VirtualMachine};
 use bun_paths::MAX_PATH_BYTES;
+use bun_ptr::CellExt as _;
 use bun_shell_parser::braces as Braces;
 use bun_sys::{self as sys, Fd};
 use bun_zlib as zlib;
@@ -550,7 +551,7 @@ fn enable_ansi_colors(_global_this: &JSGlobalObject, _: &JSObject) -> JSValue {
 pub(crate) fn get_main(global_this: &JSGlobalObject) -> JSValue {
     let vm = global_this.bun_vm();
     // If JS has set it to a custom value, use that one
-    if let Some(overridden_main) = vm.overridden_main.get().get() {
+    if let Some(overridden_main) = vm.overridden_main.get() {
         return overridden_main;
     }
     // No entry module (`bun bake`): an empty string, as `Bun.main` is always a string.
@@ -562,7 +563,7 @@ pub(crate) fn get_main(global_this: &JSGlobalObject) -> JSValue {
     // This makes `eval('require.main === module')` work when the main module is a symlink.
     // This behavior differs slightly from Node. Node sets the `id` to `.` when the main module is a symlink.
     'use_resolved_path: {
-        if vm.main_resolved_path.get().is_empty() {
+        if vm.main_resolved_path.with_taken(|path| path.is_empty()) {
             // If it's from eval, don't try to resolve it.
             if strings::ends_with(main, b"[eval]") {
                 break 'use_resolved_path;
@@ -616,8 +617,7 @@ pub(crate) fn get_main(global_this: &JSGlobalObject) -> JSValue {
 
         return vm
             .main_resolved_path
-            .get()
-            .to_js(global_this)
+            .with_taken(|path| path.to_js(global_this))
             .or_pending_exception();
     }
 
@@ -626,7 +626,10 @@ pub(crate) fn get_main(global_this: &JSGlobalObject) -> JSValue {
 
 // HOST_EXPORT(BunObject_setter_main, jsc)
 pub(crate) fn set_main(global_this: &JSGlobalObject, new_value: JSValue) -> bool {
-    (global_this.bun_vm().overridden_main).with_mut(|main| main.set(global_this, new_value));
+    global_this
+        .bun_vm()
+        .overridden_main
+        .set(global_this, new_value);
     true
 }
 
@@ -1028,7 +1031,6 @@ pub(crate) fn serve(cx: &mut JsScope<'_>, options: JsLocal<'_>) -> JsResult<JSVa
     // (= the runtime-side discriminant) so a HotMap entry produced by `serve`
     // is round-trippable through `serve` again on hot-reload.
     use crate::server::{AnyServer, AnyServerTag};
-    use bun_jsc::JsCellRefExt as _;
     use bun_jsc::rare_data::HotMapEntry;
 
     if config.allow_hot {
@@ -1122,9 +1124,7 @@ pub(crate) fn serve(cx: &mut JsScope<'_>, options: JsLocal<'_>) -> JsResult<JSVa
             if server_ref.config.get().websocket.is_some() {
                 server_ref.write_ws_handler_slots(obj, global_object);
             }
-            server_ref
-                .js_value
-                .with_mut(|js_value| js_value.set_strong(obj, global_object));
+            server_ref.js_value.set_strong(obj, global_object);
             // Slots are rooted; release the scoped gcProtects and run the
             // "server just started" GC nudge split out of `listen()`.
             drop(_handler_pins);
@@ -1315,12 +1315,11 @@ fn get_s3_default_client(global_this: &JSGlobalObject, _: &JSObject) -> JsResult
     // `bun_jsc::rare_data::_accessor_body` and names `bun_runtime::s3` types.
     // That can't compile in `bun_jsc`, so port the body here where the S3
     // types are in scope and store the cached value through the public
-    // `RareData.s3_default_client: Strong` field.
+    // `RareData.s3_default_client` field.
     use crate::webcore::s3_client::S3Client;
-    use bun_jsc::StrongOptional;
     let vm = global_this.bun_vm();
     let rare = vm.rare_data();
-    if let Some(v) = rare.s3_default_client.get().get() {
+    if let Some(v) = rare.s3_default_client.get() {
         return Ok(v);
     }
     // NOTE (layering): `bun_dotenv::Loader::get_s3_credentials` returns the
@@ -1351,8 +1350,7 @@ fn get_s3_default_client(global_this: &JSGlobalObject, _: &JSObject) -> JsResult
     };
     let js_client = <S3Client as bun_jsc::JsClass>::to_js(client, global_this);
     js_client.ensure_still_alive();
-    rare.s3_default_client
-        .set(StrongOptional::create(js_client, global_this));
+    rare.s3_default_client.set(global_this, js_client);
     Ok(js_client)
 }
 
@@ -1387,7 +1385,7 @@ fn get_valkey_default_client(global_this: &JSGlobalObject, _: &JSObject) -> JSVa
     // SAFETY: `valkey` is a fresh heap allocation owned by the JS wrapper; we
     // hold the only reference for field init below.
     let valkey_ref = unsafe { &*valkey };
-    valkey_ref.this_value.set(jsc::JsRef::init_weak(as_js));
+    valkey_ref.this_value.set_weak(as_js);
     match SubscriptionCtx::init(valkey_ref) {
         Ok(ctx) => valkey_ref._subscription_ctx.set(ctx),
         Err(jsc::JsError::Thrown) => return JSValue::ZERO,

@@ -913,7 +913,7 @@ it("deserialize applies the same nesting depth limit to arrays as to objects", a
   expect({ stdout, exitCode }).toEqual({ stdout: "rejected\n65\n", exitCode: 0 });
 });
 
-describe("JsRef::Weak liveness", () => {
+describe("weak JsRef liveness", () => {
   // collectSyncWithoutSweep leaves dead cells allocated until the incremental sweeper reaches them.
   it("dead-but-unswept cells read as not live, kept cells read as live", () => {
     const { jscInternals } = require("bun:internal-for-testing");

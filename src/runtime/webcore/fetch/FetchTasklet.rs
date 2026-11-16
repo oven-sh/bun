@@ -37,7 +37,7 @@ use crate::webcore::readable_stream::{ReadableStream, Strong as ReadableStreamSt
 use crate::webcore::sink::ReadableSinkController;
 use crate::webcore::streams::EncodedChunk;
 use crate::webcore::streams::{SourceHandle, StreamError, StreamResult, Writable};
-use crate::webcore::{AbortSignal, DrainResult, InternalBlob, Response, SinkHandle};
+use crate::webcore::{DrainResult, InternalBlob, Response, SinkHandle};
 use bun_jsc::AbortSignalRef;
 
 // `bun_event_loop::JsResult` (cycle-broken erased error) — used by
@@ -390,15 +390,10 @@ impl FetchTasklet {
         unsafe { &*this }
     }
 
-    #[inline]
-    fn abort_signal(&self) -> Option<&AbortSignal> {
-        self.abort_handle.signal()
-    }
-
     /// True iff an attached AbortSignal has fired.
     #[inline]
-    pub(crate) fn signal_aborted(&self) -> bool {
-        self.abort_signal().is_some_and(|s| s.aborted())
+    pub(crate) fn signal_aborted(&mut self) -> bool {
+        self.abort_handle.signal().is_some_and(|s| s.aborted())
     }
 
     /// Mutable access to the request-body sink while `self.sink` is `Some`
@@ -1115,7 +1110,7 @@ impl FetchTasklet {
             return Some(BodyValueError::JSValue(out));
         }
 
-        if let Some(signal) = self.abort_signal() {
+        if let Some(signal) = self.abort_handle.signal() {
             if let Some(reason) = signal.reason_if_aborted(global_this) {
                 // `AbortReason::to_body_value_error` lives in bun_jsc but
                 // would forward-depend on bun_runtime; reconstruct the trivial
@@ -1753,7 +1748,7 @@ impl FetchTasklet {
         let response_ptr = response.as_ptr();
         self.native_response.set(Some(response));
         // Response-owned listener so abort still errors the body after this tasklet detaches its own.
-        if let Some(signal) = self.abort_signal() {
+        if let Some(signal) = self.abort_handle.signal() {
             // SAFETY: `native_response` and the wrapper each hold a ref on the live heap allocation.
             unsafe {
                 Response::attach_abort_signal(response_ptr, global_this, signal, self.context)

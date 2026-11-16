@@ -10,6 +10,7 @@ use std::sync::Arc;
 
 use bun_bundler::Transpiler;
 use bun_io as Async;
+use bun_ptr::{CellExt as _, OptionCellExt as _, VecCellExt as _};
 use bun_uws as uws;
 
 use crate::bun_string_jsc;
@@ -20,7 +21,7 @@ use crate::rare_data::RareData;
 use crate::saved_source_map::SavedSourceMap;
 use crate::{
     self as jsc, Exception, JSGlobalObject, JSInternalPromise, JSValue, JsCell, JsResult,
-    PlatformEventLoop, ResolvedSource, VM, ZigException,
+    PlatformEventLoop, ResolvedSource, StrongCell, VM, ZigException,
 };
 
 pub use crate::process_auto_killer as ProcessAutoKiller;
@@ -71,7 +72,7 @@ pub struct StringTooLong;
 
 #[derive(Default)]
 pub struct EntryPointResult {
-    pub value: JsCell<crate::strong::Optional>, // jsc.Strong.Optional
+    pub value: StrongCell,
     pub cjs_set_value: Cell<bool>,
     /// True when the entry module evaluated as CommonJS: Node reports a CJS
     /// entry's top-level throw with origin `uncaughtException` but an ESM
@@ -163,39 +164,34 @@ pub struct VirtualMachine {
     // owner guarantees the borrowed `log` outlives the VM (see `init`).
     pub transpiler: JsCell<Transpiler<'static>>,
     /// `None` when hot reload is disabled.
-    pub bun_watcher: JsCell<Option<std::sync::Arc<bun_watcher::Watcher>>>,
+    pub(crate) bun_watcher: Cell<Option<Arc<bun_watcher::Watcher>>>,
     pub(crate) console: Box<crate::console_object::ConsoleObject>,
     /// `transpiler` and its resolver write to it too.
     pub log: &'static bun_ast::Log,
     /// The level of `log` at `init`; `Log::redirect` swaps the level too.
     pub log_level: bun_ast::Level,
     /// Path of the entry module: the user's module that runs first. `None` when there is none, as
-    /// for `bun bake`, where the program is a built-in module (`main_entry_point`). BACKREF —
-    /// borrows process-argv, the resolver's
-    /// process-lifetime `dirname_store`/`filename_store`, the standalone module
-    /// graph, or (for workers) the owning `WebWorker.unresolved_specifier`; in
-    /// every case the storage outlives this VM but is not Rust-`'static`.
-    /// `RawSlice` carries the BACKREF outlives-holder invariant — read via
-    /// `main()`.
-    main: JsCell<Option<bun_ptr::RawSlice<u8>>>,
+    /// for `bun bake`, where the program is a built-in module (`main_entry_point`).
+    /// Not `'static` in a worker: see `load_entry_point_for_web_worker`.
+    main: Cell<Option<&'static [u8]>>,
     pub main_entry_point: Cell<MainEntryPoint>,
     pub did_look_for_server: Cell<bool>,
-    pub main_resolved_path: JsCell<bun_core::String>,
+    pub main_resolved_path: Cell<bun_core::String>,
     /// Set if code overrides Bun.main to a custom value.
-    pub overridden_main: JsCell<crate::strong::Optional>,
+    pub overridden_main: StrongCell,
     /// `bun bake`: the plugins of `bake.config.ts`, a JS array. The dev server loads them after the
     /// `[serve.static] plugins` of bunfig.toml.
-    pub bake_config_plugins: JsCell<crate::strong::Optional>,
+    pub bake_config_plugins: StrongCell,
     /// The names of `bake_config_plugins`.
-    pub bake_config_plugin_names: JsCell<Box<[Box<[u8]>]>>,
+    pub bake_config_plugin_names: Cell<Box<[Box<[u8]>]>>,
     /// `bun bake`: the next `Bun.serve()` (its own) adds the routers of a framework: the one in
     /// `bake_framework`, or the default React framework. That call clears it.
     pub bake_pages: Cell<bool>,
     /// `bun bake`: the `framework` object of a plugin in `bake.config.ts`, as for the `app` option of
     /// `Bun.serve()`. Empty for the default React framework.
-    pub bake_framework: JsCell<crate::strong::Optional>,
+    pub bake_framework: StrongCell,
     /// Synthetic `bun:main` wrapper source.
-    pub entry_point: JsCell<bun_bundler::entry_points::ServerEntryPoint>,
+    pub entry_point: Cell<bun_bundler::entry_points::ServerEntryPoint>,
     pub origin: bun_url::URL<'static>,
     /// Opaque per-VM `bun_runtime` state (boxed `timer::All` +
     /// `Body::Value::HiveAllocator` + …). Set by
@@ -216,7 +212,7 @@ pub struct VirtualMachine {
     /// (POSIX only; on Windows that path calls `loop_dec()` instead and the
     /// counter stays at zero).
     pub pending_unref_counter: core::sync::atomic::AtomicI32,
-    pub preload: JsCell<Vec<Box<[u8]>>>,
+    pub preload: Cell<Vec<Box<[u8]>>>,
     pub unhandled_pending_rejection_to_capture: Option<*mut JSValue>,
     /// LAYERING: the real type is `bun_runtime`'s
     /// `html_rewriter::RewriterPipe` (a forward dep), stored type-erased.
@@ -335,7 +331,7 @@ pub struct VirtualMachine {
     pub rare_data: OnceCell<Box<RareData>>,
     /// A second owner, so that `env_mut()` panics instead of changing the loader under a borrow.
     env_loader: OnceCell<Arc<bun_dotenv::Loader>>,
-    pending_internal_promise: JsCell<crate::strong::Optional>,
+    pending_internal_promise: StrongCell,
     pub pending_internal_promise_reported_at: Cell<u32>,
     pub hot_reload_deferred: Cell<bool>,
     /// File changes that no hot reload has started for. Shared with the watcher thread.
@@ -374,9 +370,9 @@ pub struct VirtualMachine {
     /// Workers created on this thread and not yet released by it. Parent-thread
     /// only: `WebWorker::create` pushes, `release_parent_poll_ref` removes,
     /// `teardown` takes the rest for `join_child_workers`.
-    pub child_workers: JsCell<Vec<*mut crate::web_worker::WebWorker>>,
+    pub child_workers: Cell<Vec<*mut crate::web_worker::WebWorker>>,
     /// This VM's live pool jobs (`bun_jsc::job`); JS thread only.
-    pub(crate) jobs: JsCell<crate::job::JobList>,
+    pub(crate) jobs: crate::job::JobList,
     /// The door out of this thread (`bun_jsc::vm_handle`): tickets for work
     /// that leaves it are taken here, and `teardown` waits on it.
     handle: crate::VmHandle,
@@ -441,7 +437,7 @@ pub struct VirtualMachine {
 
 #[derive(Default)]
 pub struct TestIsolationState {
-    pub saved_cwd: JsCell<Option<Box<[u8]>>>,
+    pub saved_cwd: Cell<Option<Box<[u8]>>>,
     /// The time zone the test runner applied at startup (`TZ`, default
     /// `Etc/UTC`). Empty means no override (local time). With `--isolate`, re-applied
     /// after every file so a `process.env.TZ` write stays with the file that made it.
@@ -455,7 +451,7 @@ pub struct TestIsolationState {
     pub file_context: Cell<crate::ContextId>,
     /// What the outgoing file gives back once its realm is retired. See
     /// [`VirtualMachine::release_at_retirement`].
-    at_retirement: JsCell<Vec<Box<dyn FnOnce()>>>,
+    at_retirement: Cell<Vec<Box<dyn FnOnce()>>>,
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -1318,7 +1314,7 @@ impl VirtualMachine {
             let _context = self.enter_context(context.id());
             context.stop(reason)
         };
-        self.jobs.get().cancel_of_context(context.id());
+        self.jobs.cancel_of_context(context.id());
         if let Some(hooks) = runtime_hooks() {
             (hooks.cancel_timers)(self, Some(context.id()));
         }
@@ -1650,7 +1646,7 @@ impl VirtualMachine {
 
     /// Handles that wake the loop from their own thread: a `Worker`, `fs.watch()`, a napi threadsafe function.
     fn has_handles_off_the_loop(&self) -> bool {
-        !self.child_workers.get().is_empty()
+        !self.child_workers.is_empty()
             || !self.root_context.owns_nothing_that_runs_script()
             || (self.graph_contexts.get().values().iter())
                 .any(|context| !context.owns_nothing_that_runs_script())
@@ -1921,7 +1917,12 @@ impl VirtualMachine {
     }
 
     pub fn is_watcher_enabled(&self) -> bool {
-        self.bun_watcher.get().is_some()
+        self.bun_watcher.is_some()
+    }
+
+    pub fn with_watcher<R>(&self, f: impl FnOnce(&Arc<bun_watcher::Watcher>) -> R) -> Option<R> {
+        self.bun_watcher
+            .with_taken(|watcher| watcher.as_ref().map(f))
     }
 
     /// Thin setter so callers don't need `.with` plumbing on the thread-local.
@@ -2200,7 +2201,7 @@ impl VirtualMachine {
     fn run_cleanup_hooks(&self) {
         loop {
             let hooks = match self.rare_data.get() {
-                Some(rare) if !rare.cleanup_hooks.get().is_empty() => rare.cleanup_hooks.take(),
+                Some(rare) if !rare.cleanup_hooks.is_empty() => rare.cleanup_hooks.take(),
                 _ => break,
             };
             for hook in hooks {
@@ -2395,7 +2396,7 @@ impl VirtualMachine {
         // Node-API finalizers that `NapiEnv::cleanup` held back for an `execute()` on the pool.
         if let Some(rare) = vm.rare_data.get() {
             let held_back = rare.cleanup_hooks_after_teardown_wait.take();
-            rare.cleanup_hooks.with_mut(|hooks| hooks.extend(held_back));
+            rare.cleanup_hooks.extend_from_slice(&held_back);
         }
         vm.run_cleanup_hooks();
         vm.stop_watcher();
@@ -2493,7 +2494,7 @@ impl VirtualMachine {
         let mut result = SweepResult::Idle;
         // Pool jobs parked on something external (a pipe that never becomes
         // readable): their completions then arrive through the wait.
-        vm.jobs.get().cancel_all();
+        vm.jobs.cancel_all();
         result = result.and(match hooks {
             // SAFETY: fn contract.
             Some(hooks) => unsafe { (hooks.stop_active_handles_for_vm_teardown)(this) },
@@ -3037,25 +3038,25 @@ impl VirtualMachine {
         let vm = VirtualMachine {
             global: Cell::new(core::ptr::null_mut()),
             transpiler: JsCell::new(transpiler),
-            bun_watcher: JsCell::new(None),
+            bun_watcher: Cell::new(None),
             console,
             log,
             log_level: log.level.get(),
-            main: JsCell::new(None),
+            main: Cell::new(None),
             main_entry_point: Cell::new(MainEntryPoint::File),
             did_look_for_server: Cell::new(false),
-            main_resolved_path: JsCell::new(bun_core::String::EMPTY),
-            overridden_main: JsCell::default(),
-            bake_config_plugins: JsCell::default(),
-            bake_config_plugin_names: JsCell::default(),
+            main_resolved_path: Cell::new(bun_core::String::EMPTY),
+            overridden_main: StrongCell::default(),
+            bake_config_plugins: StrongCell::default(),
+            bake_config_plugin_names: Cell::default(),
             bake_pages: Cell::new(false),
-            bake_framework: JsCell::default(),
-            entry_point: JsCell::default(),
+            bake_framework: StrongCell::default(),
+            entry_point: Cell::default(),
             origin: Default::default(),
             runtime_state: Cell::new(core::ptr::null_mut()),
             event_loop_handle: Cell::new(None),
             pending_unref_counter: Default::default(),
-            preload: JsCell::default(),
+            preload: Cell::default(),
             unhandled_pending_rejection_to_capture: None,
             html_rewriter_active_sink: Cell::new(None),
             standalone_module_graph: opts.graph,
@@ -3114,7 +3115,7 @@ impl VirtualMachine {
             active_tasks: Cell::new(0),
             rare_data: OnceCell::new(),
             env_loader: OnceCell::new(),
-            pending_internal_promise: JsCell::default(),
+            pending_internal_promise: StrongCell::default(),
             // Not `hot_reload_counter`'s 0, or a reload that races the first load drops its error.
             pending_internal_promise_reported_at: Cell::new(u32::MAX),
             hot_reload_deferred: Cell::new(false),
@@ -3135,8 +3136,8 @@ impl VirtualMachine {
             text_format_arena: Cell::default(),
             gc_controller: Default::default(),
             worker: Cell::new(None),
-            child_workers: JsCell::default(),
-            jobs: JsCell::default(),
+            child_workers: Cell::default(),
+            jobs: Default::default(),
             handle: crate::VmHandle::new(this.as_ptr()),
             closed: Cell::new(false),
             pending_ipc: Cell::new(None),
@@ -3249,23 +3250,15 @@ impl VirtualMachine {
     }
 
     /// The path of the entry module, `None` when there is none (see `main` field doc).
-    ///
-    /// # Safety (callers)
-    /// The slice borrows storage that outlives this VM (process-argv,
-    /// resolver string store, standalone graph, or the owning `WebWorker`);
-    /// see the field doc. Never freed by the VM.
     #[inline]
     pub fn main(&self) -> Option<&[u8]> {
-        // `main` is a `RawSlice` whose storage outlives this VM (BACKREF — see
-        // field doc); the invariant is encapsulated in `RawSlice::slice`.
-        self.main.get().as_ref().map(|main| main.slice())
+        self.main.get()
     }
 
-    /// Set the entry-point path, or `None` for no entry module. Caller guarantees `path`'s storage
-    /// outlives this VM (BACKREF — see `main` field doc).
+    /// Set the entry-point path, or `None` for no entry module.
     #[inline]
-    pub fn set_main(&self, path: Option<&[u8]>) {
-        self.main.set(path.map(bun_ptr::RawSlice::new));
+    pub fn set_main(&self, path: Option<&'static [u8]>) {
+        self.main.set(path);
     }
 
     pub fn entry_point_is_commonjs(&self) -> bool {
@@ -3316,13 +3309,13 @@ impl VirtualMachine {
     /// `entry_path` is `None` for a built-in entry point with no entry module (`bun bake`).
     pub(crate) fn reload_entry_point(
         &self,
-        entry_path: Option<&[u8]>,
+        entry_path: Option<&'static [u8]>,
     ) -> crate::CrateResult<*mut JSInternalPromise> {
         let entry_path = entry_path.map(crate::compiled_program::entry_module_key);
         self.has_loaded.set(false);
         self.set_main(entry_path);
         self.main_resolved_path.set(bun_core::String::EMPTY);
-        self.overridden_main.set(Default::default());
+        self.overridden_main.clear();
 
         let hooks = runtime_hooks();
         let _ = self.ensure_debugger(true);
@@ -3401,12 +3394,12 @@ impl VirtualMachine {
         {
             let watch = self.is_watcher_enabled();
             self.entry_point
-                .with_mut(|entry_point| entry_point.generate(watch, entry_path))
+                .with_taken(|entry_point| entry_point.generate(watch, entry_path))
                 .map_err(|_| crate::CrateError::ServerEntryPointGenerate)?;
         }
 
         if !self.transpiler.get().options.disable_transpilation {
-            if !self.preload.get().is_empty() {
+            if !self.preload.is_empty() {
                 if let Some(hooks) = hooks {
                     let p = (hooks.load_preloads)(self)?;
                     if !p.is_null() {
@@ -3524,7 +3517,7 @@ impl VirtualMachine {
     /// returned promise settles.
     pub fn load_entry_point(
         &self,
-        entry_path: Option<&[u8]>,
+        entry_path: Option<&'static [u8]>,
     ) -> crate::CrateResult<*mut JSInternalPromise> {
         let promise = self.reload_entry_point(entry_path)?;
 
@@ -3966,9 +3959,15 @@ impl VirtualMachine {
         self.env_loader().get_tls_reject_unauthorized()
     }
 
-    /// The TLS 1.2 list assigned through `tls.DEFAULT_CIPHERS`, `None` when never assigned.
-    pub fn tls_default_ciphers(&self) -> Option<&[u8]> {
-        self.rare_data.get()?.tls_default_ciphers()
+    /// Runs `f` on the TLS 1.2 list assigned through `tls.DEFAULT_CIPHERS`. `None` when never assigned.
+    pub fn with_tls_default_ciphers<R>(&self, f: impl FnOnce(&[u8]) -> R) -> Option<R> {
+        self.rare_data.get()?.with_tls_default_ciphers(f)
+    }
+
+    pub fn has_tls_default_ciphers(&self) -> bool {
+        self.rare_data
+            .get()
+            .is_some_and(|rare| rare.has_tls_default_ciphers())
     }
 
     /// Registers a spawned subprocess with the auto-killer.
@@ -4222,15 +4221,15 @@ impl VirtualMachine {
     /// The promise of the latest load of the entry point. `--hot` looks at it on every tick,
     /// long after it has settled and the module loader has let go of it.
     pub fn pending_internal_promise(&self) -> Option<*mut JSInternalPromise> {
-        Some(self.pending_internal_promise.get().get()?.to_cell()?.cast())
+        Some(self.pending_internal_promise.get()?.to_cell()?.cast())
     }
 
     pub fn set_pending_internal_promise(&self, promise: Option<*mut JSInternalPromise>) {
-        self.pending_internal_promise
-            .with_mut(|slot| match promise {
-                Some(promise) => slot.set(self.global(), JSValue::from_cell(promise)),
-                None => slot.clear_without_deallocation(),
-            })
+        let slot = &self.pending_internal_promise;
+        match promise {
+            Some(promise) => slot.set(self.global(), JSValue::from_cell(promise)),
+            None => slot.clear_without_deallocation(),
+        }
     }
 
     /// After a hot reload, surfaces the entry-point promise's rejection (if any) and re-arms the watcher.
@@ -4276,9 +4275,7 @@ impl VirtualMachine {
     /// Adds a file that the module loader has not loaded to the file watcher when watch mode is
     /// enabled.
     pub fn add_to_watcher_if_needed(&self, path: &[u8]) {
-        if let Some(watcher) = self.bun_watcher.get() {
-            let _ = watcher.add_file_by_path_slow(path);
-        }
+        let _ = self.with_watcher(|watcher| watcher.add_file_by_path_slow(path));
     }
 
     /// Starts the process again with the same arguments, as `--watch` does on a change. Emits the
@@ -4309,7 +4306,7 @@ impl VirtualMachine {
             unreachable!("reload_process returns only when may_return is true");
         }
 
-        // Reloading while `load_preloads` ticks would clear the list it's iterating.
+        // `load_preloads` has taken the list while it ticks, so a reload would run no preloads.
         if self.is_in_preload.get() {
             self.hot_reload_deferred.set(true);
             return;
@@ -4372,7 +4369,7 @@ impl VirtualMachine {
         }
         self.hot_reload_counter.update(|n| n + 1);
         // reload_entry_point() stores into pending_internal_promise whenever it returns a promise.
-        if let Err(err) = self.reload_entry_point(self.main()) {
+        if let Err(err) = self.reload_entry_point(self.main.get()) {
             self.reject_failed_reload(err);
         }
     }
@@ -5287,7 +5284,7 @@ impl VirtualMachine {
     /// Resets entry-point state and re-loads `entry_path` for the test runner, returning the load promise.
     pub(crate) fn reload_entry_point_for_test_runner(
         &self,
-        entry_path: &[u8],
+        entry_path: &'static [u8],
     ) -> crate::CrateResult<*mut JSInternalPromise> {
         let entry_path = crate::compiled_program::entry_module_key(entry_path);
         self.has_loaded.set(
@@ -5296,7 +5293,7 @@ impl VirtualMachine {
         );
         self.set_main(Some(entry_path));
         self.main_resolved_path.set(bun_core::String::EMPTY);
-        self.overridden_main.set(Default::default());
+        self.overridden_main.clear();
         if self.test_isolation_state.shares_global.get() {
             Bun__Process__resetArgv(self.global());
         }
@@ -5344,10 +5341,15 @@ impl VirtualMachine {
     /// evaluating it. Returns once evaluation has begun (or the load failed) —
     /// the promise may still be pending on a top-level await, which then
     /// continues in the worker's normal event loop, as in Node.
-    pub(crate) fn load_entry_point_for_web_worker(
+    ///
+    /// # Safety
+    /// `entry_path` outlives this VM.
+    pub(crate) unsafe fn load_entry_point_for_web_worker(
         &self,
         entry_path: &[u8],
     ) -> crate::CrateResult<*mut JSInternalPromise> {
+        // SAFETY: fn contract. Only `main` keeps it.
+        let entry_path = unsafe { bun_ptr::detach_lifetime(entry_path) };
         let promise = self.reload_entry_point(Some(entry_path))?;
         self.event_loop()
             .wait_for_worker_entry_evaluation(jsc::AnyPromise::Internal(promise));
@@ -5391,7 +5393,7 @@ impl VirtualMachine {
     /// Loads a test-file entry point and waits for the load promise to settle.
     pub fn load_entry_point_for_test_runner(
         &self,
-        entry_path: &[u8],
+        entry_path: &'static [u8],
     ) -> crate::CrateResult<*mut JSInternalPromise> {
         let promise = self.reload_entry_point_for_test_runner(entry_path)?;
 
@@ -5512,8 +5514,7 @@ impl VirtualMachine {
     /// once the outgoing realm is retired: its close handlers and last microtasks have run, and
     /// none of its script runs again.
     pub fn release_at_retirement(&self, release: Box<dyn FnOnce()>) {
-        let at_retirement = &self.test_isolation_state.at_retirement;
-        at_retirement.with_mut(|it| it.push(release));
+        self.test_isolation_state.at_retirement.push(release);
     }
 
     /// Replaces the global object between test files so each file runs in a fresh realm.
@@ -5551,7 +5552,7 @@ impl VirtualMachine {
             // global makes the next file's call a no-op and dispatches
             // node:quic events into the dead realm.
             if !shares_global {
-                rare.node_quic_callbacks.set(Default::default());
+                rare.node_quic_callbacks.clear();
             }
         }
         let _ = self.event_loop().drain_microtasks();
@@ -5601,8 +5602,8 @@ impl VirtualMachine {
             (hooks.cancel_timers)(self, None);
         }
 
-        self.overridden_main.set(Default::default());
-        self.entry_point_result.value.set(Default::default());
+        self.overridden_main.clear();
+        self.entry_point_result.value.clear();
         self.entry_point_result.cjs_set_value.set(false);
         self.entry_point_result.evaluated_as_cjs.set(false);
         self.set_pending_internal_promise(None);
@@ -5633,7 +5634,7 @@ impl VirtualMachine {
         self.regular_event_loop.global.set(NonNull::new(new_global));
         self.macro_event_loop.global.set(NonNull::new(new_global));
         if let Some(rare) = self.rare_data.get() {
-            rare.cleanup_hooks.with_mut(|hooks| {
+            rare.cleanup_hooks.with_taken(|hooks| {
                 for hook in hooks {
                     if hook.global_this == old_global {
                         hook.global_this = new_global;

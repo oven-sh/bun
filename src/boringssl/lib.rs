@@ -10,7 +10,7 @@ use std::cell::Cell;
 
 pub use bun_boringssl_sys as boring;
 use bun_cares_sys as c_ares;
-use bun_core::strings;
+use bun_core::{ZStr, strings};
 
 /// BoringSSL's translated C API
 pub use boring as c;
@@ -173,6 +173,7 @@ pub fn canonicalize_ip<'a>(
         IpAddr::V4(ip) => c_ares::ntop(&ip.octets(), out_ip),
         IpAddr::V6(ip) => c_ares::ntop(&ip.octets(), out_ip),
     }
+    .map(ZStr::as_bytes)
 }
 
 /// Strips a single trailing `.` (the DNS root label). Mirrors Node.js

@@ -1000,10 +1000,7 @@ fn create_overlapped_pipe_pair(
         &name_utf8_buf[..written]
     };
     let mut name_w_buf = [0u16; 97]; // [96:0]u16
-    let name_w_len = bun_core::convert_utf8_to_utf16_in_buffer(&mut name_w_buf, name).len();
-    name_w_buf[name_w_len] = 0;
-    // SAFETY: name_w_buf[name_w_len] == 0 written above.
-    let name_w = bun_core::WStr::from_buf(&name_w_buf[..], name_w_len);
+    let name_w = bun_core::strings::convert_utf8_to_utf16_in_buffer_z(&mut name_w_buf, name);
 
     // SAFETY: name_w is NUL-terminated; all other params are valid per Win32.
     let server = unsafe {

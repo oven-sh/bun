@@ -1,6 +1,6 @@
 import { describe, expect, jest, test } from "bun:test";
 import fs from "fs";
-import { bunEnv, bunExe, type DirectoryTree, isLinux, isPosix, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, bunRun, type DirectoryTree, isLinux, isPosix, isWindows, tempDir } from "harness";
 import { mkfifo } from "mkfifo";
 import { isAbsolute, join } from "path";
 
@@ -654,6 +654,46 @@ test.skipIf(!isPosix)(
     expect(exitCode).toBe(0);
   },
 );
+
+describe.skipIf(!isPosix).concurrent("fs.promises.cp recursive rejects an empty destination with ENOENT", () => {
+  test.each([
+    ["src is a directory", `fs.mkdirSync("src");`],
+    // Outside macOS, JavaScript copies directories itself, so `src` becomes one after its last check.
+    [
+      "src becomes a directory",
+      `fs.writeFileSync("src", "x");
+      proto.isFile = () => {
+        proto.isFile = isFile;
+        fs.rmSync("src");
+        fs.mkdirSync("src");
+        return true;
+      };`,
+    ],
+  ])("%s", async (_, createSrc) => {
+    using dir = tempDir("cp-empty-dest", { file: "x" });
+    const script = `
+      import fs from "node:fs";
+      let proto = fs.lstatSync("file", { bigint: true });
+      while (!Object.hasOwn(proto, "isFile")) proto = Object.getPrototypeOf(proto);
+      const { isFile } = proto;
+      const results = new Set();
+      for (let i = 0; i < 20; i++) {
+        await fs.promises.cp("file", "earlier");
+        fs.rmSync("earlier");
+        ${createSrc}
+        results.add(await fs.promises.cp("src", "", { recursive: true }).then(() => "copied", err => err.code));
+        fs.rmdirSync("src");
+        results.add(fs.readdirSync(".").join());
+        fs.rmSync("earlier", { recursive: true, force: true });
+      }
+      console.log(JSON.stringify([...results]));
+    `;
+    // The earlier path is in a buffer of the thread that copied to it.
+    expect(await bunRun(["--cwd", String(dir), "-e", script], { UV_THREADPOOL_SIZE: "2" })).toSpawn(
+      '["ENOENT","file"]',
+    );
+  });
+});
 
 test.skipIf(!isLinux)("fs.cp and fs.copyFile create the destination with the source file's mode", async () => {
   using dir = tempDir("cp-dest-mode", {});

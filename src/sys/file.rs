@@ -383,7 +383,7 @@ pub(crate) mod tests {
     pub(crate) static FD_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
     fn open_cwd() -> File {
-        File::open(ZStr::from_static(b".\0"), O::RDONLY, 0).unwrap()
+        File::open(bun_core::zstr!("."), O::RDONLY, 0).unwrap()
     }
 
     #[test]

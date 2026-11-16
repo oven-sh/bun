@@ -5,8 +5,6 @@ use bun_bundler::Transpiler;
 #[cfg(not(windows))]
 use bun_collections::StringHashMap;
 use bun_collections::StringSet;
-#[cfg(not(windows))]
-use bun_core::ZStr;
 use bun_core::{Output, ZBox};
 #[cfg(not(windows))]
 use bun_paths::SEP;
@@ -496,17 +494,11 @@ impl bun_watcher::WatcherContext for HotReloader {
                                         // entrypoint is a no-op downstream).
                                         let mut name_buf = [0u8; 256];
                                         let basename = bun_paths::basename(self.main.file);
-                                        let exists = if basename.len() < name_buf.len() {
-                                            name_buf[..basename.len()].copy_from_slice(basename);
-                                            name_buf[basename.len()] = 0;
-                                            // SAFETY: name_buf[..=basename.len()] is NUL-terminated.
-                                            let z = ZStr::from_buf(&name_buf[..], basename.len());
-                                            files[event.index as usize].as_ref().is_some_and(
-                                                |dir| bun_sys::faccessat(dir.fd(), z).is_ok(),
-                                            )
-                                        } else {
-                                            false
-                                        };
+                                        let exists = strings::copy_z(&mut name_buf, basename)
+                                            .zip(files[event.index as usize].as_ref())
+                                            .is_some_and(|(z, dir)| {
+                                                bun_sys::faccessat(dir.fd(), z).is_ok()
+                                            });
                                         if exists {
                                             self.main.is_waiting_for_dir_change = false;
                                             self.changed_paths.record(self.main.file);
@@ -526,19 +518,10 @@ impl bun_watcher::WatcherContext for HotReloader {
                                             // stack from the &[u8] watch-list slice.
                                             let was_deleted = {
                                                 let mut zbuf = bun_paths::path_buffer_pool::get();
-                                                if affected_path.len() >= zbuf.len() {
-                                                    false
-                                                } else {
-                                                    zbuf[..affected_path.len()]
-                                                        .copy_from_slice(affected_path);
-                                                    zbuf[affected_path.len()] = 0;
-                                                    // SAFETY: zbuf is NUL-terminated at len.
-                                                    let z = ZStr::from_buf(
-                                                        &zbuf[..],
-                                                        affected_path.len(),
-                                                    );
-                                                    bun_sys::access(z, libc::F_OK).is_err()
-                                                }
+                                                strings::copy_z(&mut zbuf, affected_path)
+                                                    .is_some_and(|z| {
+                                                        bun_sys::access(z, libc::F_OK).is_err()
+                                                    })
                                             };
                                             if !was_deleted {
                                                 continue;
@@ -596,16 +579,8 @@ impl bun_watcher::WatcherContext for HotReloader {
                                 }
                                 let main_exists = {
                                     let mut zbuf = bun_paths::path_buffer_pool::get();
-                                    if self.main.file.len() >= zbuf.len() {
-                                        false
-                                    } else {
-                                        zbuf[..self.main.file.len()]
-                                            .copy_from_slice(self.main.file);
-                                        zbuf[self.main.file.len()] = 0;
-                                        // SAFETY: zbuf is NUL-terminated at len.
-                                        let z = ZStr::from_buf(&zbuf[..], self.main.file.len());
-                                        bun_sys::access(z, libc::F_OK).is_ok()
-                                    }
+                                    strings::copy_z(&mut zbuf, self.main.file)
+                                        .is_some_and(|z| bun_sys::access(z, libc::F_OK).is_ok())
                                 };
                                 if main_exists {
                                     self.changed_paths.record(self.main.file);

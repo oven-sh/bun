@@ -389,8 +389,7 @@ fn mkdir_recursive_os_path(fullpath: &bun_core::WStr) -> sys::Maybe<()> {
     let mut i: u16 = len - 1;
     while i > 0 {
         if is_sep(path[usize::from(i)]) {
-            working_mem[usize::from(i)] = 0;
-            let parent = bun_core::WStr::from_buf(&working_mem[..], usize::from(i));
+            let parent = bun_core::WStr::nul_terminate(&mut working_mem, usize::from(i));
             match sys::mkdir_w(parent) {
                 Ok(()) => {
                     working_mem[usize::from(i)] = bun_paths::SEP_WINDOWS as u16;
@@ -425,8 +424,7 @@ fn mkdir_recursive_os_path(fullpath: &bun_core::WStr) -> sys::Maybe<()> {
     // Now walk forward creating each remaining component.
     while i < len {
         if is_sep(path[usize::from(i)]) {
-            working_mem[usize::from(i)] = 0;
-            let parent = bun_core::WStr::from_buf(&working_mem[..], usize::from(i));
+            let parent = bun_core::WStr::nul_terminate(&mut working_mem, usize::from(i));
             match sys::mkdir_w(parent) {
                 Ok(()) => {}
                 Err(err) => match err.get_errno() {
@@ -440,8 +438,7 @@ fn mkdir_recursive_os_path(fullpath: &bun_core::WStr) -> sys::Maybe<()> {
     }
 
     // Final component (no trailing sep case).
-    working_mem[usize::from(len)] = 0;
-    let leaf = bun_core::WStr::from_buf(&working_mem[..], usize::from(len));
+    let leaf = bun_core::WStr::nul_terminate(&mut working_mem, usize::from(len));
     match sys::mkdir_w(leaf) {
         Ok(()) => Ok(()),
         Err(err) => match err.get_errno() {
@@ -921,8 +918,7 @@ impl HardLinkWindowsInstallTask {
         }
 
         let dirpath_len = dest.len() - basename - 1;
-        dest_buf[dirpath_len] = 0;
-        let dirpath = WStr::from_buf(dest_buf, dirpath_len);
+        let dirpath = WStr::nul_terminate(dest_buf, dirpath_len);
         let _ = mkdir_recursive_os_path(dirpath);
         dest_buf[dirpath_len] = bun_paths::SEP_WINDOWS as u16;
 
@@ -1377,7 +1373,6 @@ impl PackageFiles<'_> {
         walker_.resolve_unknown_entry_types = true;
 
         fn copy(destination_dir_: &Dir, walker: &mut Walker) -> crate::Result<()> {
-            let mut stackpath = [0u8; path::MAX_PATH_BYTES];
             while let Some(entry) = walker.next()? {
                 match entry.kind {
                     EntryKind::Directory => {
@@ -1388,26 +1383,21 @@ impl PackageFiles<'_> {
                         }
                     }
                     EntryKind::File => {
-                        let path_len = entry.path.len();
-                        let base_len = entry.basename.len();
-                        if path_len >= stackpath.len() {
+                        if entry.path.len() >= path::MAX_PATH_BYTES {
                             return Err(crate::Error::Sys(bun_errno::SystemErrno::ENAMETOOLONG));
                         }
-                        stackpath[..path_len].copy_from_slice(entry.path.as_bytes());
-                        stackpath[path_len] = 0;
-                        // `stackpath[path_len] == 0` written above; both views are
-                        // shared-only (used for `.as_ptr()` into FFI), so the
-                        // overlapping borrows of `stackpath` are sound — replaces
-                        // two raw `from_raw_mut` reconstructions over the same
-                        // buffer (which were UB-adjacent as aliased `&mut`s).
-                        let path_ = ZStr::from_buf(&stackpath, path_len);
-                        let basename = ZStr::from_buf(&stackpath[path_len - base_len..], base_len);
-                        let clone =
-                            || sys::clonefileat(entry.dir, basename, destination_dir_.fd(), path_);
+                        let clone = || {
+                            sys::clonefileat(
+                                entry.dir,
+                                entry.basename,
+                                destination_dir_.fd(),
+                                entry.path,
+                            )
+                        };
                         // The existing file may belong to a different version.
                         let cloned = match clone() {
                             Err(e) if e.get_errno() == sys::Errno::EEXIST => {
-                                let _ = sys::unlinkat(destination_dir_, path_);
+                                let _ = sys::unlinkat(destination_dir_, entry.path);
                                 clone()
                             }
                             result => result,
@@ -1552,14 +1542,13 @@ impl PackageFiles<'_> {
             i += strings::to_wpath_normalized(&mut buf[i..], destpath.as_bytes()).len();
             buf[i] = bun_paths::SEP_WINDOWS as u16;
             i += 1;
-            buf[i] = 0;
-            let fullpath = bun_core::WStr::from_buf(&buf[..], i);
+            let fullpath = bun_core::WStr::nul_terminate(&mut buf, i);
 
             if let Err(err) = sys::mkdir_w(fullpath) {
                 // Like `make_open_real_dir`, replace a symlink at the destination, never follow it.
                 if err.get_errno() == sys::E::EEXIST {
                     let mut narrow = bun_paths::path_buffer_pool::get();
-                    let dest = strings::from_wpath(&mut narrow[..], &buf[..i - 1]);
+                    let dest = strings::from_wpath(&mut narrow[..], &fullpath[..i - 1]);
                     if let Err(err) = crate::prune::remove_planted_link(destbase, dest) {
                         return Err(Failure::boxed(err.into(), Step::OpeningDestDir));
                     }
@@ -1826,13 +1815,11 @@ impl PackageFiles<'_> {
 
                     let dest_len = to_copy_into1_offset + entry.path.len();
                     head1[to_copy_into1_offset..dest_len].copy_from_slice(entry.path.as_slice());
-                    head1[dest_len] = 0;
-                    let dest = bun_core::WStr::from_buf(head1, dest_len);
+                    let dest = bun_core::WStr::nul_terminate(head1, dest_len);
 
                     let src_len = to_copy_into2_offset + entry.path.len();
                     head2[to_copy_into2_offset..src_len].copy_from_slice(entry.path.as_slice());
-                    head2[src_len] = 0;
-                    let src = bun_core::WStr::from_buf(head2, src_len);
+                    let src = bun_core::WStr::nul_terminate(head2, src_len);
 
                     queue.push(HardLinkWindowsInstallTask::init(
                         src.as_slice(),
@@ -1915,8 +1902,7 @@ impl PackageFiles<'_> {
                         let target_len = to_copy_into2_offset + entry.path.len();
                         head2[to_copy_into2_offset..target_len]
                             .copy_from_slice(entry.path.as_bytes());
-                        head2[target_len] = 0;
-                        let target = ZStr::from_buf(head2, target_len);
+                        let target = ZStr::nul_terminate(head2, target_len);
 
                         if let Err(err) = sys::symlinkat(target, destination_dir.fd(), entry.path) {
                             if err.get_errno() != sys::E::EEXIST {
@@ -2117,9 +2103,7 @@ impl<'a> PackageInstall<'a> {
             }
         };
         // The entry name is the NUL-terminated tail of `dest_path`.
-        let dest: &ZStr = ZStr::from_slice_with_nul(
-            &dest_path.as_bytes_with_nul()[subdir.map_or(0, |dir| dir.len() + 1)..],
-        );
+        let dest: &ZStr = dest_path.substring(subdir.map_or(0, |dir| dir.len() + 1));
         debug_assert_eq!(dest.as_bytes(), bun_paths::basename(dest_path.as_bytes()));
         // When we're linking on Windows, we want to avoid keeping the source directory handle open
         #[cfg(windows)]
@@ -2143,9 +2127,7 @@ impl<'a> PackageInstall<'a> {
                 i += strings::to_wpath_normalized(&mut wbuf[i..], dir).len();
                 wbuf[i] = bun_paths::SEP_WINDOWS as u16;
                 i += 1;
-                wbuf[i] = 0;
-                // SAFETY: NUL written at [i].
-                let fullpath = bun_core::WStr::from_buf(&wbuf[..], i);
+                let fullpath = bun_core::WStr::nul_terminate(&mut wbuf, i);
 
                 let _ = mkdir_recursive_os_path(fullpath);
             }
@@ -2164,15 +2146,11 @@ impl<'a> PackageInstall<'a> {
             }
             dest_buf[offset..offset + dest.len()].copy_from_slice(dest.as_bytes());
             offset += dest.len();
-            dest_buf[offset] = 0;
 
-            // SAFETY: NUL written at [offset].
-            let dest_z = ZStr::from_buf(&dest_buf, offset);
+            let dest_z = ZStr::nul_terminate(&mut dest_buf, offset);
 
             let to_len = to_path.len();
-            to_buf[to_len] = 0;
-            // SAFETY: NUL written at [to_len].
-            let target_z = ZStr::from_buf(&to_buf, to_len);
+            let target_z = ZStr::nul_terminate(&mut to_buf, to_len);
 
             // https://github.com/npm/cli/blob/162c82e845d410ede643466f9f8af78a312296cc/workspaces/arborist/lib/arborist/reify.js#L738
             // https://github.com/npm/cli/commit/0e58e6f6b8f0cd62294642a502c17561aaf46553
@@ -2548,13 +2526,11 @@ fn walk_install_dir_windows(
 
         let dest_len = dest_offset + entry.path.len();
         head1[dest_offset..dest_len].copy_from_slice(entry.path.as_slice());
-        head1[dest_len] = 0;
-        let dest = bun_core::WStr::from_buf(head1, dest_len);
+        let dest = bun_core::WStr::nul_terminate(head1, dest_len);
 
         let src_len = src_offset + entry.path.len();
         head2[src_offset..src_len].copy_from_slice(entry.path.as_slice());
-        head2[src_len] = 0;
-        let src = bun_core::WStr::from_buf(head2, src_len);
+        let src = bun_core::WStr::nul_terminate(head2, src_len);
 
         if entry.kind == EntryKind::File {
             // The walker returned its parent directory first, so that directory already exists.

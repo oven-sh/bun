@@ -28,7 +28,7 @@ use crate::socket::{
 use crate::socket::{SSLConfig, SSLConfigFromJs};
 
 #[cfg(windows)]
-use crate::socket::WindowsNamedPipeContext;
+use crate::socket::WindowsNamedPipe;
 
 #[cfg(windows)]
 use bun_boringssl as boringssl;
@@ -955,7 +955,7 @@ impl Listener {
         let mut connection = connection;
         #[cfg(windows)]
         {
-            use crate::socket::windows_named_pipe_context::OwnedSocket;
+            use crate::socket::windows_named_pipe::OwnedSocket;
             use bun_sys::FdExt as _;
 
             let mut buf = bun_paths::path_buffer_pool::get();
@@ -1072,22 +1072,20 @@ impl Listener {
                     let ctx_for_pipe = owned_ssl_ctx.take();
                     // Note: re-borrow connection from the socket field — `connection`
                     // was moved into `tls` above.
-                    // On `Err`, the context already ran `handle_connect_error`.
+                    // On `Err`, the pipe already ran `handle_connect_error`.
                     match tls_ref.connection.get().as_ref().unwrap() {
                         UnixOrHost::Unix(_) => {
-                            if let Ok(named_pipe) = WindowsNamedPipeContext::connect(
+                            if let Ok(named_pipe) = WindowsNamedPipe::connect(
                                 cx,
                                 &buf[..pipe_name_len.unwrap()],
                                 ssl_taken.take(),
                                 ctx_for_pipe,
                                 OwnedSocket::Tls(tls),
                             ) {
-                                tls_ref.socket.set(uws::NewSocketHandler {
-                                    socket: uws::InternalSocket::Pipe(named_pipe.cast()),
-                                });
+                                tls_ref.socket.set(named_pipe);
                             }
                         }
-                        UnixOrHost::Fd(fd) => WindowsNamedPipeContext::open(
+                        UnixOrHost::Fd(fd) => WindowsNamedPipe::open(
                             cx,
                             *fd,
                             ssl_taken.take(),
@@ -1150,28 +1148,22 @@ impl Listener {
                     );
                     tcp_ref.poll_ref.ref_(bun_io::js_vm_ctx());
 
-                    // On `Err`, the context already ran `handle_connect_error`.
+                    // On `Err`, the pipe already ran `handle_connect_error`.
                     match tcp_ref.connection.get().as_ref().unwrap() {
                         UnixOrHost::Unix(_) => {
-                            if let Ok(named_pipe) = WindowsNamedPipeContext::connect(
+                            if let Ok(named_pipe) = WindowsNamedPipe::connect(
                                 cx,
                                 &buf[..pipe_name_len.unwrap()],
                                 None,
                                 None,
                                 OwnedSocket::Tcp(tcp),
                             ) {
-                                tcp_ref.socket.set(uws::NewSocketHandler {
-                                    socket: uws::InternalSocket::Pipe(named_pipe.cast()),
-                                });
+                                tcp_ref.socket.set(named_pipe);
                             }
                         }
-                        UnixOrHost::Fd(fd) => WindowsNamedPipeContext::open(
-                            cx,
-                            *fd,
-                            None,
-                            None,
-                            OwnedSocket::Tcp(tcp),
-                        ),
+                        UnixOrHost::Fd(fd) => {
+                            WindowsNamedPipe::open(cx, *fd, None, None, OwnedSocket::Tcp(tcp))
+                        }
                         _ => unreachable!(),
                     }
                 }
@@ -1554,7 +1546,7 @@ impl WindowsNamedPipeListeningContext {
         let listener: &Listener = &this_ref.listener;
         // An accepted pipe is the listening script's.
         let entered = this_ref.vm.enter_context(listener.context);
-        use crate::socket::windows_named_pipe_context::OwnedSocket;
+        use crate::socket::windows_named_pipe::OwnedSocket;
         // Owned for the whole accept: JS below can replace the slot through setSecureContext().
         let ssl_ctx = this_ref.ctx.get().clone();
         let socket: OwnedSocket = if ssl_ctx.is_some() {
@@ -1563,15 +1555,10 @@ impl WindowsNamedPipeListeningContext {
             OwnedSocket::Tcp(Listener::on_name_pipe_created::<false>(listener))
         };
 
-        let client = WindowsNamedPipeContext::create(
-            &this_ref.global_this.js_thread(entered.context()),
-            socket,
-        );
+        let client =
+            WindowsNamedPipe::create(&this_ref.global_this.js_thread(entered.context()), socket);
 
-        if (client.named_pipe)
-            .get_accepted_by(server, ssl_ctx.as_ref())
-            .is_err()
-        {
+        if client.get_accepted_by(server, ssl_ctx.as_ref()).is_err() {
             // connection dropped
             client.self_ref.set(None);
         }

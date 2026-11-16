@@ -817,11 +817,11 @@ export const socketFaultInjection = {
 
 export const namedPipeInternals = {
   /**
-   * Live native contexts behind sockets over Windows named pipes: one per
+   * Live native objects behind sockets over Windows named pipes: one per
    * connecting or connected `Bun.connect({ unix: "\\\\.\\pipe\\..." })` socket and
    * one per accepted pipe client. Always 0 on other platforms.
    */
-  liveCount: $bindgen("socket_body.bind.ts", "namedPipeContextLiveCount"),
+  liveCount: $bindgen("socket_body.bind.ts", "namedPipeLiveCount"),
 };
 
 export const duplexTLSInternals = {

@@ -1120,12 +1120,9 @@ pub(crate) fn write_program_alone(
     launcher.extend_from_slice(build_id);
     let flags = O::WRONLY | O::CREAT | O::TRUNC | O::CLOEXEC;
     let path = ZBox::from_bytes(path);
-    let file = File::from_fd(close_on_fork::openat(directory, &path, flags, 0o755)?);
-    let written = file
-        .write_all(&launcher)
-        .and_then(|()| file.write_all(program));
-    close_on_fork::close(file.into_raw());
-    written
+    let file = close_on_fork::File::openat(directory, &path, flags, 0o755)?;
+    file.write_all(&launcher)?;
+    file.write_all(program)
 }
 
 #[cfg(not(unix))]

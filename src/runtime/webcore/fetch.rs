@@ -57,7 +57,6 @@ use bun_http_jsc::method_jsc;
 use bun_http_types::Method::{Method, OwnedMethod};
 use bun_jsc::bindgen::{JsLocal, JsScope};
 use bun_jsc::{HTTPHeaderName, StringJsc as _, URLJsc as _};
-use bun_sys::FdExt as _;
 // `FromJsEnum for FetchRedirect` lives in bun_http_jsc; importing the impl crate
 // brings the trait impl into scope for `JSValue::get_optional_enum::<FetchRedirect>`.
 use crate::node;
@@ -1206,10 +1205,9 @@ fn fetch_impl(
                 match &store.data.as_file().pathlike {
                     // On Windows `read_file` would wrap dup's HANDLE in a CRT fd that the close below never frees.
                     PathOrFileDescriptor::Fd(fd) => bun_sys::dup(*fd).and_then(|duped| {
-                        duped.make_lib_uv_owned_for_syscall(
-                            bun_sys::Tag::dup,
-                            bun_sys::ErrorCase::CloseOnFail,
-                        )
+                        bun_sys::CloseOnDrop::new(duped)
+                            .make_lib_uv_owned_for_syscall(bun_sys::Tag::dup)
+                            .map(bun_sys::CloseOnDrop::into_raw)
                     }),
                     PathOrFileDescriptor::Path(path) => {
                         let zpath = path.slice_z(&mut open_path_buf);

@@ -671,7 +671,8 @@ struct WorkerLoop {
 
 impl WorkerLoop {
     fn begin(&mut self, vm: &VirtualMachine) {
-        if !self.cmds.link.channel.adopt(vm, Fd::from_uv(3)) {
+        let end = bun_sys::File::from_fd(Fd::from_uv(3));
+        if !self.cmds.link.channel.adopt(vm, end) {
             bun_core::pretty_errorln!("<red>error<r>: test worker failed to adopt IPC fd");
             Global::exit(1);
         }

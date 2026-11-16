@@ -22,6 +22,38 @@ pub type ares_socket_t = usize; // Windows `SOCKET` is `UINT_PTR` (integer, not 
 #[cfg(not(windows))]
 pub type ares_socket_t = c_int;
 
+/// What c-ares allocates for its caller.
+pub trait Allocated {
+    /// SAFETY: c-ares handed `this` over, and nothing uses it afterwards.
+    unsafe fn free(this: *mut Self);
+}
+
+/// Only c-ares makes one. `Option<Owned<T>>` is a nullable `T *`.
+#[repr(transparent)]
+pub struct Owned<T: Allocated>(ptr::NonNull<T>);
+
+impl<T: Allocated> core::ops::Deref for Owned<T> {
+    type Target = T;
+    fn deref(&self) -> &T {
+        // SAFETY: c-ares initialized it, and `self` is its only owner.
+        unsafe { self.0.as_ref() }
+    }
+}
+
+impl<T: Allocated> core::ops::DerefMut for Owned<T> {
+    fn deref_mut(&mut self) -> &mut T {
+        // SAFETY: as in `deref`.
+        unsafe { self.0.as_mut() }
+    }
+}
+
+impl<T: Allocated> Drop for Owned<T> {
+    fn drop(&mut self) {
+        // SAFETY: as in `deref`.
+        unsafe { T::free(self.0.as_ptr()) }
+    }
+}
+
 type ares_sock_state_cb = Option<unsafe extern "C" fn(*mut c_void, ares_socket_t, c_int, c_int)>;
 
 bun_opaque::opaque_ffi! {
@@ -305,6 +337,13 @@ pub struct struct_hostent {
     pub h_addr_list: *mut *mut c_char, // NUL-terminated array
 }
 
+impl Allocated for struct_hostent {
+    unsafe fn free(this: *mut Self) {
+        // SAFETY: the caller's promise.
+        unsafe { ares_free_hostent(this) }
+    }
+}
+
 // ─── callback-wrapper note ─────────────────────────────────────────────────
 // Rust cannot take a fn pointer as a const generic on
 // stable, so the wrappers below are expressed as a trait: the implementing
@@ -347,7 +386,7 @@ impl struct_hostent {
         if let Some(err) = Error::get(status) {
             return this.on_hostent(Err(err));
         }
-        let mut start: *mut struct_hostent = ptr::null_mut();
+        let mut start = None;
         let mut addrttls = [struct_ares_addrttl::default(); 256];
         let mut naddrttls: i32 = 256;
         // SAFETY: c-ares FFI; pointers are valid stack/null per contract.
@@ -355,7 +394,7 @@ impl struct_hostent {
             ares_parse_a_reply(
                 buffer,
                 buffer_length,
-                &raw mut start,
+                &mut start,
                 addrttls.as_mut_ptr(),
                 &raw mut naddrttls,
             )
@@ -363,11 +402,7 @@ impl struct_hostent {
         if let Some(err) = Error::get(result) {
             return this.on_hostent(Err(err));
         }
-        // SAFETY: the parser left null or a hostent of ours, and the handler's borrow ends with its call.
-        unsafe {
-            this.on_hostent(start.as_mut().ok_or(Error::ENOTFOUND));
-            ares_free_hostent(start);
-        }
+        this.on_hostent(start.as_deref_mut().ok_or(Error::ENOTFOUND));
     }
 
     pub unsafe extern "C" fn callback_wrapper_ns<T: HostentHandler>(
@@ -382,17 +417,13 @@ impl struct_hostent {
         if let Some(err) = Error::get(status) {
             return this.on_hostent(Err(err));
         }
-        let mut start: *mut struct_hostent = ptr::null_mut();
+        let mut start = None;
         // SAFETY: c-ares FFI; pointers are valid stack/null per contract.
-        let result = unsafe { ares_parse_ns_reply(buffer, buffer_length, &raw mut start) };
+        let result = unsafe { ares_parse_ns_reply(buffer, buffer_length, &mut start) };
         if let Some(err) = Error::get(result) {
             return this.on_hostent(Err(err));
         }
-        // SAFETY: the parser left null or a hostent of ours, and the handler's borrow ends with its call.
-        unsafe {
-            this.on_hostent(start.as_mut().ok_or(Error::ENOTFOUND));
-            ares_free_hostent(start);
-        }
+        this.on_hostent(start.as_deref_mut().ok_or(Error::ENOTFOUND));
     }
 
     pub unsafe extern "C" fn callback_wrapper_ptr<T: HostentHandler>(
@@ -407,41 +438,21 @@ impl struct_hostent {
         if let Some(err) = Error::get(status) {
             return this.on_hostent(Err(err));
         }
-        let mut start: *mut struct_hostent = ptr::null_mut();
+        let mut start = None;
         // SAFETY: c-ares FFI; pointers are valid stack/null per contract.
         let result = unsafe {
-            ares_parse_ptr_reply(
-                buffer,
-                buffer_length,
-                ptr::null(),
-                0,
-                AF::INET,
-                &raw mut start,
-            )
+            ares_parse_ptr_reply(buffer, buffer_length, ptr::null(), 0, AF::INET, &mut start)
         };
         if let Some(err) = Error::get(result) {
             return this.on_hostent(Err(err));
         }
-        // SAFETY: the parser left null or a hostent of ours, and the handler's borrow ends with its call.
-        unsafe {
-            this.on_hostent(start.as_mut().ok_or(Error::ENOTFOUND));
-            ares_free_hostent(start);
-        }
+        this.on_hostent(start.as_deref_mut().ok_or(Error::ENOTFOUND));
     }
 }
 
 pub struct hostent_with_ttls {
-    pub hostent: *mut struct_hostent,
+    pub hostent: Owned<struct_hostent>,
     pub ttls: [c_int; 256],
-}
-
-impl Default for hostent_with_ttls {
-    fn default() -> Self {
-        Self {
-            hostent: ptr::null_mut(),
-            ttls: [-1; 256],
-        }
-    }
 }
 
 pub trait HostentWithTtlsHandler: Sized + 'static {
@@ -475,7 +486,7 @@ impl hostent_with_ttls {
     }
 
     pub fn parse_a(buffer: &[u8]) -> Result<Box<hostent_with_ttls>, Error> {
-        let mut start: *mut struct_hostent = ptr::null_mut();
+        let mut start = None;
         let mut addrttls = [struct_ares_addrttl::default(); 256];
         let mut naddrttls: c_int = 256;
         // SAFETY: c-ares FFI; `buffer` is a valid slice; out-params are valid
@@ -484,7 +495,7 @@ impl hostent_with_ttls {
             ares_parse_a_reply(
                 buffer.as_ptr(),
                 c_int::try_from(buffer.len()).unwrap_or(c_int::MAX),
-                &raw mut start,
+                &mut start,
                 addrttls.as_mut_ptr(),
                 &raw mut naddrttls,
             )
@@ -492,8 +503,10 @@ impl hostent_with_ttls {
         if result != ARES_SUCCESS {
             return Err(Error::get(result).unwrap());
         }
-        let mut with_ttls = Box::new(hostent_with_ttls::default());
-        with_ttls.hostent = start;
+        let mut with_ttls = Box::new(hostent_with_ttls {
+            hostent: start.ok_or(Error::ENOTFOUND)?,
+            ttls: [-1; 256],
+        });
         for (i, ttl) in addrttls[..usize::try_from(naddrttls).expect("int cast")]
             .iter()
             .enumerate()
@@ -504,7 +517,7 @@ impl hostent_with_ttls {
     }
 
     pub fn parse_aaaa(buffer: &[u8]) -> Result<Box<hostent_with_ttls>, Error> {
-        let mut start: *mut struct_hostent = ptr::null_mut();
+        let mut start = None;
         let mut addr6ttls = [struct_ares_addr6ttl::default(); 256];
         let mut naddr6ttls: c_int = 256;
         // SAFETY: c-ares FFI; `buffer` is a valid slice; out-params are valid
@@ -513,7 +526,7 @@ impl hostent_with_ttls {
             ares_parse_aaaa_reply(
                 buffer.as_ptr(),
                 c_int::try_from(buffer.len()).unwrap_or(c_int::MAX),
-                &raw mut start,
+                &mut start,
                 addr6ttls.as_mut_ptr(),
                 &raw mut naddr6ttls,
             )
@@ -521,8 +534,10 @@ impl hostent_with_ttls {
         if result != ARES_SUCCESS {
             return Err(Error::get(result).unwrap());
         }
-        let mut with_ttls = Box::new(hostent_with_ttls::default());
-        with_ttls.hostent = start;
+        let mut with_ttls = Box::new(hostent_with_ttls {
+            hostent: start.ok_or(Error::ENOTFOUND)?,
+            ttls: [-1; 256],
+        });
         for (i, ttl) in addr6ttls[..usize::try_from(naddr6ttls).expect("int cast")]
             .iter()
             .enumerate()
@@ -530,13 +545,6 @@ impl hostent_with_ttls {
             with_ttls.ttls[i] = ttl.ttl;
         }
         Ok(with_ttls)
-    }
-}
-
-impl Drop for hostent_with_ttls {
-    fn drop(&mut self) {
-        // SAFETY: hostent was allocated by ares_parse_*_reply (or null).
-        unsafe { ares_free_hostent(self.hostent) };
     }
 }
 
@@ -611,6 +619,13 @@ pub struct AddrInfo {
     pub name_: *mut c_char,
 }
 
+impl Allocated for AddrInfo {
+    unsafe fn free(this: *mut Self) {
+        // SAFETY: the caller's promise.
+        unsafe { ares_freeaddrinfo(this) }
+    }
+}
+
 pub trait AddrInfoHandler: Sized + 'static {
     fn on_addr_info(self: Box<Self>, result: Result<&mut AddrInfo, Error>);
 }
@@ -624,19 +639,14 @@ impl AddrInfo {
         ctx: *mut c_void,
         status: c_int,
         _timeouts: c_int,
-        addr_info: *mut AddrInfo,
+        mut addr_info: Option<Owned<AddrInfo>>,
     ) {
         // SAFETY: `ctx` is the box that `Channel` released for this query, which c-ares answers once.
         let this = unsafe { bun_core::heap::take(ctx.cast::<T>()) };
         if let Some(err) = Error::get(status) {
-            // A failure comes without an `addr_info`.
             return this.on_addr_info(Err(err));
         }
-        // SAFETY: c-ares hands `addr_info` over, and the handler's borrow ends with its call.
-        unsafe {
-            this.on_addr_info(addr_info.as_mut().ok_or(Error::ENOTFOUND));
-            ares_freeaddrinfo(addr_info);
-        }
+        this.on_addr_info(addr_info.as_deref_mut().ok_or(Error::ENOTFOUND));
     }
 }
 
@@ -712,20 +722,19 @@ impl Drop for OwnedChannel {
 }
 
 /// The list that `ares_get_servers_ports` allocated.
-pub struct Servers(*mut struct_ares_addr_port_node);
+pub struct Servers(Option<Owned<struct_ares_addr_port_node>>);
 
 impl Servers {
     pub fn iter(&self) -> impl Iterator<Item = &struct_ares_addr_port_node> {
         // SAFETY: each link is null or a node of the list, which lives as long as `self`.
-        let node = |node: *mut struct_ares_addr_port_node| unsafe { node.as_ref() };
-        core::iter::successors(node(self.0), move |current| node(current.next))
+        core::iter::successors(self.0.as_deref(), |node| unsafe { node.next.as_ref() })
     }
 }
 
-impl Drop for Servers {
-    fn drop(&mut self) {
-        // SAFETY: allocated by c-ares for the caller, freed once.
-        unsafe { ares_free_data(self.0.cast()) };
+impl Allocated for struct_ares_addr_port_node {
+    unsafe fn free(this: *mut Self) {
+        // SAFETY: the caller's promise.
+        unsafe { ares_free_data(this.cast()) }
     }
 }
 
@@ -795,9 +804,9 @@ impl OwnedChannel {
 
 impl Channel {
     pub fn servers(&mut self) -> Result<Servers, Error> {
-        let mut servers = ptr::null_mut();
+        let mut servers = None;
         // SAFETY: c-ares FFI; `servers` is a stack out-param.
-        let rc = unsafe { ares_get_servers_ports(self, &raw mut servers) };
+        let rc = unsafe { ares_get_servers_ports(self, &mut servers) };
         match Error::get(rc) {
             Some(err) => Err(err),
             None => Ok(Servers(servers)),
@@ -988,7 +997,7 @@ pub(crate) type ares_host_callback =
 pub(crate) type ares_nameinfo_callback =
     Option<unsafe extern "C" fn(*mut c_void, c_int, c_int, *mut u8, *mut u8)>;
 pub(crate) type ares_addrinfo_callback =
-    unsafe extern "C" fn(*mut c_void, c_int, c_int, *mut AddrInfo);
+    unsafe extern "C" fn(*mut c_void, c_int, c_int, Option<Owned<AddrInfo>>);
 
 unsafe extern "C" {
     fn ares_library_init_mem(
@@ -1021,7 +1030,7 @@ unsafe extern "C" {
         callback: ares_addrinfo_callback,
         arg: *mut c_void,
     );
-    pub fn ares_freeaddrinfo(ai: *mut AddrInfo);
+    fn ares_freeaddrinfo(ai: *mut AddrInfo);
 }
 
 unsafe extern "C" {
@@ -1097,14 +1106,23 @@ impl Default for struct_ares_addr6ttl {
 // Generic reply-record plumbing. The six `struct_ares_{caa,srv,mx,txt,naptr,soa}_reply`
 // types share an identical c-ares callback thunk modulo (reply type, parse fn),
 // and all six `ares_parse_*_reply` externs share the signature
-// `(abuf *const u8, alen c_int, out *mut *mut R) -> c_int`. Collapsed from six
+// `(abuf *const u8, alen c_int, out R **) -> c_int`. Collapsed from six
 // copy-pasted `callback_wrapper` bodies + six per-type handler traits.
 // ──────────────────────────────────────────────────────────────────────────
 
 /// A c-ares reply record whose parser has the canonical 3-arg signature.
 pub trait AresReply: Sized {
     /// The matching `ares_parse_*_reply` extern.
-    const PARSE: unsafe extern "C" fn(*const u8, c_int, *mut *mut Self) -> c_int;
+    const PARSE: ParseReply<Self>;
+}
+
+type ParseReply<R> = unsafe extern "C" fn(*const u8, c_int, &mut Option<Owned<R>>) -> c_int;
+
+impl<R: AresReply> Allocated for R {
+    unsafe fn free(this: *mut Self) {
+        // SAFETY: the caller's promise.
+        unsafe { ares_free_data(this.cast()) }
+    }
 }
 
 /// Receiver for a parsed `R` reply (replaces the per-type `*Handler` traits).
@@ -1127,17 +1145,13 @@ pub unsafe extern "C" fn ares_reply_callback<R: AresReply, T: ReplyHandler<R>>(
     if let Some(err) = Error::get(status) {
         return this.on_reply(Err(err));
     }
-    let mut start: *mut R = ptr::null_mut();
+    let mut start = None;
     // SAFETY: c-ares FFI; pointers are valid stack/null per contract.
-    let result = unsafe { (R::PARSE)(buffer, buffer_length, &raw mut start) };
+    let result = unsafe { (R::PARSE)(buffer, buffer_length, &mut start) };
     if let Some(err) = Error::get(result) {
         return this.on_reply(Err(err));
     }
-    // SAFETY: the parser left null or a reply of ours, and the handler's borrow ends with its call.
-    unsafe {
-        this.on_reply(start.as_mut().ok_or(Error::ENOTFOUND));
-        ares_free_data(start.cast::<c_void>());
-    }
+    this.on_reply(start.as_deref_mut().ok_or(Error::ENOTFOUND));
 }
 
 #[repr(C)]
@@ -1151,8 +1165,7 @@ pub struct struct_ares_caa_reply {
 }
 
 impl AresReply for struct_ares_caa_reply {
-    const PARSE: unsafe extern "C" fn(*const u8, c_int, *mut *mut Self) -> c_int =
-        ares_parse_caa_reply;
+    const PARSE: ParseReply<Self> = ares_parse_caa_reply;
 }
 
 impl struct_ares_caa_reply {
@@ -1192,8 +1205,7 @@ pub struct struct_ares_srv_reply {
 }
 
 impl AresReply for struct_ares_srv_reply {
-    const PARSE: unsafe extern "C" fn(*const u8, c_int, *mut *mut Self) -> c_int =
-        ares_parse_srv_reply;
+    const PARSE: ParseReply<Self> = ares_parse_srv_reply;
 }
 
 #[repr(C)]
@@ -1204,8 +1216,7 @@ pub struct struct_ares_mx_reply {
 }
 
 impl AresReply for struct_ares_mx_reply {
-    const PARSE: unsafe extern "C" fn(*const u8, c_int, *mut *mut Self) -> c_int =
-        ares_parse_mx_reply;
+    const PARSE: ParseReply<Self> = ares_parse_mx_reply;
 }
 
 #[repr(C)]
@@ -1216,8 +1227,7 @@ pub struct struct_ares_txt_reply {
 }
 
 impl AresReply for struct_ares_txt_reply {
-    const PARSE: unsafe extern "C" fn(*const u8, c_int, *mut *mut Self) -> c_int =
-        ares_parse_txt_reply;
+    const PARSE: ParseReply<Self> = ares_parse_txt_reply;
 }
 
 impl struct_ares_txt_reply {
@@ -1246,8 +1256,7 @@ pub struct struct_ares_naptr_reply {
 }
 
 impl AresReply for struct_ares_naptr_reply {
-    const PARSE: unsafe extern "C" fn(*const u8, c_int, *mut *mut Self) -> c_int =
-        ares_parse_naptr_reply;
+    const PARSE: ParseReply<Self> = ares_parse_naptr_reply;
 }
 
 #[repr(C)]
@@ -1262,38 +1271,21 @@ pub struct struct_ares_soa_reply {
 }
 
 impl AresReply for struct_ares_soa_reply {
-    const PARSE: unsafe extern "C" fn(*const u8, c_int, *mut *mut Self) -> c_int =
-        ares_parse_soa_reply;
+    const PARSE: ParseReply<Self> = ares_parse_soa_reply;
 }
 
+#[derive(Default)]
 pub struct struct_any_reply {
     pub a_reply: Option<Box<hostent_with_ttls>>,
     pub aaaa_reply: Option<Box<hostent_with_ttls>>,
-    pub mx_reply: *mut struct_ares_mx_reply,
-    pub ns_reply: *mut struct_hostent,
-    pub txt_reply: *mut struct_ares_txt_reply,
-    pub srv_reply: *mut struct_ares_srv_reply,
-    pub ptr_reply: *mut struct_hostent,
-    pub naptr_reply: *mut struct_ares_naptr_reply,
-    pub soa_reply: *mut struct_ares_soa_reply,
-    pub caa_reply: *mut struct_ares_caa_reply,
-}
-
-impl Default for struct_any_reply {
-    fn default() -> Self {
-        Self {
-            a_reply: None,
-            aaaa_reply: None,
-            mx_reply: ptr::null_mut(),
-            ns_reply: ptr::null_mut(),
-            txt_reply: ptr::null_mut(),
-            srv_reply: ptr::null_mut(),
-            ptr_reply: ptr::null_mut(),
-            naptr_reply: ptr::null_mut(),
-            soa_reply: ptr::null_mut(),
-            caa_reply: ptr::null_mut(),
-        }
-    }
+    pub mx_reply: Option<Owned<struct_ares_mx_reply>>,
+    pub ns_reply: Option<Owned<struct_hostent>>,
+    pub txt_reply: Option<Owned<struct_ares_txt_reply>>,
+    pub srv_reply: Option<Owned<struct_ares_srv_reply>>,
+    pub ptr_reply: Option<Owned<struct_hostent>>,
+    pub naptr_reply: Option<Owned<struct_ares_naptr_reply>>,
+    pub soa_reply: Option<Owned<struct_ares_soa_reply>>,
+    pub caa_reply: Option<Owned<struct_ares_caa_reply>>,
 }
 
 pub trait AnyHandler: Sized + 'static {
@@ -1350,7 +1342,7 @@ impl struct_any_reply {
 
         // SAFETY: c-ares FFI; `abuf[..alen]` is a valid slice; out-params are
         // valid stack pointers per contract.
-        let mut result = unsafe { ares_parse_mx_reply(abuf, alen, &raw mut reply.mx_reply) };
+        let mut result = unsafe { ares_parse_mx_reply(abuf, alen, &mut reply.mx_reply) };
         if result == ARES_SUCCESS {
             any_success = true;
         } else {
@@ -1358,7 +1350,7 @@ impl struct_any_reply {
         }
 
         // SAFETY: see `ares_parse_mx_reply` call above.
-        result = unsafe { ares_parse_ns_reply(abuf, alen, &raw mut reply.ns_reply) };
+        result = unsafe { ares_parse_ns_reply(abuf, alen, &mut reply.ns_reply) };
         if result == ARES_SUCCESS {
             any_success = true;
         } else {
@@ -1366,7 +1358,7 @@ impl struct_any_reply {
         }
 
         // SAFETY: see `ares_parse_mx_reply` call above.
-        result = unsafe { ares_parse_txt_reply(abuf, alen, &raw mut reply.txt_reply) };
+        result = unsafe { ares_parse_txt_reply(abuf, alen, &mut reply.txt_reply) };
         if result == ARES_SUCCESS {
             any_success = true;
         } else {
@@ -1374,7 +1366,7 @@ impl struct_any_reply {
         }
 
         // SAFETY: see `ares_parse_mx_reply` call above.
-        result = unsafe { ares_parse_srv_reply(abuf, alen, &raw mut reply.srv_reply) };
+        result = unsafe { ares_parse_srv_reply(abuf, alen, &mut reply.srv_reply) };
         if result == ARES_SUCCESS {
             any_success = true;
         } else {
@@ -1383,14 +1375,7 @@ impl struct_any_reply {
 
         // SAFETY: see `ares_parse_mx_reply` call above.
         result = unsafe {
-            ares_parse_ptr_reply(
-                abuf,
-                alen,
-                ptr::null(),
-                0,
-                AF::INET,
-                &raw mut reply.ptr_reply,
-            )
+            ares_parse_ptr_reply(abuf, alen, ptr::null(), 0, AF::INET, &mut reply.ptr_reply)
         };
         if result == ARES_SUCCESS {
             any_success = true;
@@ -1399,7 +1384,7 @@ impl struct_any_reply {
         }
 
         // SAFETY: see `ares_parse_mx_reply` call above.
-        result = unsafe { ares_parse_naptr_reply(abuf, alen, &raw mut reply.naptr_reply) };
+        result = unsafe { ares_parse_naptr_reply(abuf, alen, &mut reply.naptr_reply) };
         if result == ARES_SUCCESS {
             any_success = true;
         } else {
@@ -1407,7 +1392,7 @@ impl struct_any_reply {
         }
 
         // SAFETY: see `ares_parse_mx_reply` call above.
-        result = unsafe { ares_parse_soa_reply(abuf, alen, &raw mut reply.soa_reply) };
+        result = unsafe { ares_parse_soa_reply(abuf, alen, &mut reply.soa_reply) };
         if result == ARES_SUCCESS {
             any_success = true;
         } else {
@@ -1415,7 +1400,7 @@ impl struct_any_reply {
         }
 
         // SAFETY: see `ares_parse_mx_reply` call above.
-        result = unsafe { ares_parse_caa_reply(abuf, alen, &raw mut reply.caa_reply) };
+        result = unsafe { ares_parse_caa_reply(abuf, alen, &mut reply.caa_reply) };
         if result == ARES_SUCCESS {
             any_success = true;
         } else {
@@ -1429,100 +1414,66 @@ impl struct_any_reply {
     }
 }
 
-impl Drop for struct_any_reply {
-    fn drop(&mut self) {
-        // a_reply / aaaa_reply are Box<hostent_with_ttls>; their Drop frees the
-        // inner hostent via ares_free_hostent.
-        // SAFETY: each field is either null or a c-ares allocation matching its free fn.
-        unsafe {
-            if !self.mx_reply.is_null() {
-                ares_free_data(self.mx_reply.cast::<c_void>());
-            }
-            if !self.ns_reply.is_null() {
-                ares_free_hostent(self.ns_reply);
-            }
-            if !self.txt_reply.is_null() {
-                ares_free_data(self.txt_reply.cast::<c_void>());
-            }
-            if !self.srv_reply.is_null() {
-                ares_free_data(self.srv_reply.cast::<c_void>());
-            }
-            if !self.ptr_reply.is_null() {
-                ares_free_hostent(self.ptr_reply);
-            }
-            if !self.naptr_reply.is_null() {
-                ares_free_data(self.naptr_reply.cast::<c_void>());
-            }
-            if !self.soa_reply.is_null() {
-                ares_free_data(self.soa_reply.cast::<c_void>());
-            }
-            if !self.caa_reply.is_null() {
-                ares_free_data(self.caa_reply.cast::<c_void>());
-            }
-        }
-    }
-}
-
 unsafe extern "C" {
-    pub fn ares_parse_a_reply(
+    fn ares_parse_a_reply(
         abuf: *const u8,
         alen: c_int,
-        host: *mut *mut struct_hostent,
+        host: &mut Option<Owned<struct_hostent>>,
         addrttls: *mut struct_ares_addrttl,
         naddrttls: *mut c_int,
     ) -> c_int;
-    pub fn ares_parse_aaaa_reply(
+    fn ares_parse_aaaa_reply(
         abuf: *const u8,
         alen: c_int,
-        host: *mut *mut struct_hostent,
+        host: &mut Option<Owned<struct_hostent>>,
         addrttls: *mut struct_ares_addr6ttl,
         naddrttls: *mut c_int,
     ) -> c_int;
-    pub fn ares_parse_caa_reply(
+    fn ares_parse_caa_reply(
         abuf: *const u8,
         alen: c_int,
-        caa_out: *mut *mut struct_ares_caa_reply,
+        caa_out: &mut Option<Owned<struct_ares_caa_reply>>,
     ) -> c_int;
-    pub fn ares_parse_ptr_reply(
+    fn ares_parse_ptr_reply(
         abuf: *const u8,
         alen: c_int,
         addr: *const c_void,
         addrlen: c_int,
         family: c_int,
-        host: *mut *mut struct_hostent,
+        host: &mut Option<Owned<struct_hostent>>,
     ) -> c_int;
-    pub fn ares_parse_ns_reply(
+    fn ares_parse_ns_reply(
         abuf: *const u8,
         alen: c_int,
-        host: *mut *mut struct_hostent,
+        host: &mut Option<Owned<struct_hostent>>,
     ) -> c_int;
-    pub fn ares_parse_srv_reply(
+    fn ares_parse_srv_reply(
         abuf: *const u8,
         alen: c_int,
-        srv_out: *mut *mut struct_ares_srv_reply,
+        srv_out: &mut Option<Owned<struct_ares_srv_reply>>,
     ) -> c_int;
-    pub fn ares_parse_mx_reply(
+    fn ares_parse_mx_reply(
         abuf: *const u8,
         alen: c_int,
-        mx_out: *mut *mut struct_ares_mx_reply,
+        mx_out: &mut Option<Owned<struct_ares_mx_reply>>,
     ) -> c_int;
-    pub fn ares_parse_txt_reply(
+    fn ares_parse_txt_reply(
         abuf: *const u8,
         alen: c_int,
-        txt_out: *mut *mut struct_ares_txt_reply,
+        txt_out: &mut Option<Owned<struct_ares_txt_reply>>,
     ) -> c_int;
-    pub fn ares_parse_naptr_reply(
+    fn ares_parse_naptr_reply(
         abuf: *const u8,
         alen: c_int,
-        naptr_out: *mut *mut struct_ares_naptr_reply,
+        naptr_out: &mut Option<Owned<struct_ares_naptr_reply>>,
     ) -> c_int;
-    pub fn ares_parse_soa_reply(
+    fn ares_parse_soa_reply(
         abuf: *const u8,
         alen: c_int,
-        soa_out: *mut *mut struct_ares_soa_reply,
+        soa_out: &mut Option<Owned<struct_ares_soa_reply>>,
     ) -> c_int;
-    pub fn ares_free_hostent(host: *mut struct_hostent);
-    pub fn ares_free_data(dataptr: *mut c_void);
+    fn ares_free_hostent(host: *mut struct_hostent);
+    fn ares_free_data(dataptr: *mut c_void);
 }
 
 #[repr(C)]
@@ -1567,7 +1518,7 @@ unsafe extern "C" {
     ) -> c_int;
     fn ares_get_servers_ports(
         channel: *mut Channel,
-        servers: *mut *mut struct_ares_addr_port_node,
+        servers: &mut Option<Owned<struct_ares_addr_port_node>>,
     ) -> c_int;
     /// https://c-ares.org/docs/ares_inet_ntop.html
     pub fn ares_inet_ntop(

@@ -217,6 +217,15 @@ fn a_file_starts_with_riff_and_webp() {
 }
 
 #[test]
+fn alpha_is_not_decoded_for_a_frame_whose_header_is_cut_off() {
+    // The first partition has one byte, and there is no such way to compress alpha.
+    let file = b"RIFF4\0\0\0WEBPVP8X\n\0\0\0\x10\0\0\0\0\0\0\0\0\0ALPH\x02\0\0\0\x03\0\
+        VP8 \x0c\0\0\0\x30\0\0\x9d\x01*\x01\0\x01\0\0\0";
+    let error = Decoder::new(file).and_then(Decoder::decode).err();
+    assert_eq!(error, Some(Error::UnexpectedEof));
+}
+
+#[test]
 fn the_pixels_are_as_many_as_the_dimensions_say() {
     let error = |len, width, height| {
         encode(&vec![0; len], width, height, Compression::Lossless, None).err()

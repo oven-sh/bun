@@ -98,6 +98,7 @@ impl<'a> Parameters<'a> {
         let _refresh_entropy_probabilities = reader.read_flag();
         let probabilities = Probabilities::read(&mut reader)?;
         let skip_probability = reader.read_flag().then(|| reader.read_unsigned(8));
+        reader.check_not_past_end()?;
         Ok(Self {
             modes: reader,
             token_partitions,

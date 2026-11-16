@@ -632,3 +632,28 @@ pub(super) fn apply(
     }
     Ok(modes)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn one_pixel_is_predicted_like_four() -> Result<()> {
+        const WIDTH: usize = 1 + 4 * 500;
+        // Few values, for ties, and from both ends of the range.
+        let pixel = |i: usize| (i as u32).wrapping_pow(3).wrapping_mul(0x9e37_79b1) & 0xc3c3_c3c3;
+        let pixels: [Argb; 2 * WIDTH] = core::array::from_fn(pixel);
+        let mut rows = Rows::new(WIDTH, HiddenColors::Kept)?;
+        rows.advance(&pixels, 0, 0, WIDTH);
+        rows.advance(&pixels, 1, 0, WIDTH);
+        for mode in 0..MODES as u8 {
+            let [mut by_four, mut by_one] = [[0; WIDTH]; 2];
+            rows.subtract(mode, 0, 1, &mut by_four);
+            for (x, residual) in by_one.chunks_mut(1).enumerate() {
+                rows.subtract(mode, x, 1, residual);
+            }
+            assert_eq!(by_four, by_one);
+        }
+        Ok(())
+    }
+}

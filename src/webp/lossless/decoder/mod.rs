@@ -11,7 +11,7 @@ use core::ops::Range;
 use self::bit_reader::BitReader;
 use self::pixels::Coding;
 pub(crate) use self::transform::MAX_BUNDLE_LEN;
-use self::transform::{Lookup, Transform};
+use self::transform::{Lookup, Palette, Transform};
 use super::{IMAGE_SIZE_BITS, SIGNATURE, TransformType, VERSION_BITS, subsampled};
 use crate::error::{Error, Result};
 use crate::slice::InBounds;
@@ -148,14 +148,13 @@ impl<'a> Stream<'a> {
         let mut around = transforms.split_inclusive(|it| matches!(it, Transform::ColorIndexing(_)));
         let (first, later) = (around.next(), around.next().unwrap_or_default());
         if let Some([earlier @ .., Transform::ColorIndexing(palette)]) = first {
-            let lookup = palette.lookup(self.width, |color| color)?;
             let mut pixels = if later.is_empty() && self.coding.green_stands_alone() {
                 let bundles = self.read_greens()?;
-                self.look_up(&lookup, &bundles, |&bundle| bundle)?
+                self.look_up(palette, &bundles, |&bundle| bundle)?
             } else if palette.bundle_bits > 0 {
                 let mut bundles = self.read_pixels()?;
                 transform::undo(later, &mut bundles, self.coded_width);
-                self.look_up(&lookup, &bundles, |&[_, bundle, ..]| bundle)?
+                self.look_up(palette, &bundles, |&[_, bundle, ..]| bundle)?
             } else {
                 return self.decode_in_place(&transforms);
             };
@@ -173,10 +172,11 @@ impl<'a> Stream<'a> {
 
     fn look_up<T>(
         &self,
-        lookup: &Lookup<Rgba>,
+        palette: &Palette,
         coded: &[T],
         bundle: impl Fn(&T) -> u8,
     ) -> Result<Vec<Rgba>> {
+        let lookup = palette.lookup(self.width, |color| color)?;
         let mut pixels = vec::with_room(self.width * self.height + MAX_BUNDLE_LEN)?;
         if self.coded_width << lookup.bundle_bits == self.width {
             lookup.append(coded, bundle, &mut pixels);

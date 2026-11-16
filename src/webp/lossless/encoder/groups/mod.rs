@@ -224,10 +224,8 @@ impl Clusters {
 
     /// The last cluster takes its place.
     fn remove(&mut self, index: usize) {
-        if let Some(last) = self.clusters.pop()
-            && let Some(gone) = self.clusters.get_mut(index)
-        {
-            *gone = last;
+        if known(self.clusters.get(index)).is_some() {
+            self.clusters.swap_remove(index);
         }
     }
 
@@ -477,6 +475,7 @@ mod tests {
                 high: 1,
                 change: -1,
             });
+            clusters.remove(1);
             Ok(())
         });
         assert_eq!(merged, Err(Error::Internal));

@@ -187,14 +187,20 @@ impl Canvas {
     }
 }
 
-/// With room for chunks whose payloads have these lengths.
-fn start_file(payload_lens: impl Iterator<Item = usize>) -> Result<Vec<u8>> {
+/// What the header says of a file with chunks whose payloads have these lengths.
+fn riff_len(payload_lens: impl Iterator<Item = usize>) -> Result<usize> {
     let riff_len = payload_lens.fold(WEBP.len(), |sum, len| {
         sum.saturating_add(HEADER_LEN + padded(len))
     });
     if riff_len > MAX_PAYLOAD_LEN {
         return Err(Error::TooLarge);
     }
+    Ok(riff_len)
+}
+
+/// With room for them.
+fn start_file(payload_lens: impl Iterator<Item = usize>) -> Result<Vec<u8>> {
+    let riff_len = riff_len(payload_lens)?;
     let mut out = vec::with_room(HEADER_LEN + riff_len)?;
     out.extend_from_slice(&RIFF);
     out.extend_from_slice(&(riff_len as u32).to_le_bytes());
@@ -242,8 +248,7 @@ mod tests {
     #[test]
     fn the_length_of_a_file_fits_its_header() {
         let most = MAX_PAYLOAD_LEN - WEBP.len() - 2 * HEADER_LEN - 2;
-        let error = |len| start_file([1, len].into_iter()).err();
-        assert_ne!(error(most), Some(Error::TooLarge));
-        assert_eq!(error(most + 1), Some(Error::TooLarge));
+        assert_eq!(riff_len([1, most].into_iter()), Ok(MAX_PAYLOAD_LEN));
+        assert_eq!(start_file([1, most + 1].into_iter()), Err(Error::TooLarge));
     }
 }

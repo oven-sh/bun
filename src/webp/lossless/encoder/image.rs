@@ -183,6 +183,7 @@ pub(super) fn write_subimage(
     writer.append_flag(false);
     let bits = write_codes(core::slice::from_mut(histogram), 0, writer)?;
     writer.make_room(bits);
+    writer.check()?;
     for_each_piece(pixels, &copies, ONE_TILE, |_, _, piece| {
         piece.write(pixels, 0, &histogram.counts, writer);
         Ok(())
@@ -279,6 +280,7 @@ impl Unfinished {
 
     fn finish(mut self, pixels: Pixels, tile_bits: u32) -> Result<Vec<u8>> {
         self.writer.make_room(self.missing_bits);
+        self.writer.check()?;
         let tiles_per_row = subsampled(pixels.width, tile_bits);
         for_each_piece::<Error>(pixels, &self.copies, tile_bits, |x, y, piece| {
             let group = self.groups.of_tiles.value(y * tiles_per_row + x);

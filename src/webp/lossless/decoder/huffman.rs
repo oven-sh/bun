@@ -22,9 +22,11 @@ pub(super) const ROOT_BITS: u32 = 8;
 pub(super) struct Entry(u16);
 
 impl Entry {
+    /// Both the alphabets and the room that the second tables of a group take are smaller.
+    // https://github.com/webmproject/libwebp/blob/4fa21912338357f89e4fd51cf2368325b59e9bd9/src/dec/vp8l_dec.c#L89
+    const VALUES: usize = 1 << 12;
+
     const fn new(value: usize, len: u32) -> Self {
-        // Both the alphabets and the room that the second tables of a group take are below 4096.
-        // https://github.com/webmproject/libwebp/blob/4fa21912338357f89e4fd51cf2368325b59e9bd9/src/dec/vp8l_dec.c#L89
         Self((value as u16) << 8 | (value as u16) >> 8 << 4 | len as u16)
     }
 
@@ -232,6 +234,9 @@ impl CodeLengths {
             if key % code.root.len() != root_key {
                 root_key = key % code.root.len();
                 table = second_tables.len();
+                if table - first >= Entry::VALUES {
+                    return Err(Error::Internal);
+                }
                 let longest = longest_with_same_root(&unplaced, len);
                 *code.root.at_mut(root_key) = Entry::new(table - first, longest);
                 second_tables.try_reserve(1 << (longest - ROOT_BITS))?;
@@ -307,4 +312,25 @@ fn longest_with_same_root(counts: &[u16; MAX_CODE_LENGTH + 1], mut len: u32) -> 
         len += 1;
     }
     len
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn an_entry_can_say_where_its_table_starts() -> Result<()> {
+        let mut lengths = CodeLengths::new(10)?;
+        for len in 1..=ROOT_BITS {
+            lengths.push(0..1, len);
+        }
+        lengths.push(0..2, ROOT_BITS + 1);
+        let mut build = |start| {
+            let mut tables = vec::filled(Entry::default(), start)?;
+            lengths.build(&mut { Code::EMPTY }, &mut tables, 0)
+        };
+        assert_eq!(build(Entry::VALUES - 1), Ok(()));
+        assert_eq!(build(Entry::VALUES), Err(Error::Internal));
+        Ok(())
+    }
 }

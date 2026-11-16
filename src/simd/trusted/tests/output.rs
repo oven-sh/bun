@@ -316,3 +316,24 @@ fn copies_that_overlap() {
         assert_eq!(bytes.map(AtomicU8::into_inner), want);
     }
 }
+
+#[test]
+fn copies_that_race() {
+    let rounds = if cfg!(miri) { 3 } else { 10_000 };
+    for len in [1, 5, 40] {
+        let shared = Vec::from_iter((0..len).map(|_| AtomicU8::new(1)));
+        std::thread::scope(|scope| {
+            for byte in [1, 2] {
+                let shared = &shared;
+                scope.spawn(move || {
+                    for _ in 0..rounds {
+                        copy_to_shared(&vec![byte; len], SharedOutU8::from_slice(shared));
+                        let from = SharedU8::from_slice(shared);
+                        let got = filled(len, |out| copy_from_shared(from, out));
+                        assert!(got.iter().all(|byte| matches!(byte, 1 | 2)));
+                    }
+                });
+            }
+        });
+    }
+}

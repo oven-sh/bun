@@ -43,17 +43,15 @@ beforeAll(async () => {
   for (const [name, wanted] of ranges) {
     // One version for each name: "^19" asks for 19.0.0 and "^4.1.11" for 4.1.11, and "latest" takes what there is.
     // The setup stops at any other range, and at ranges of one name that no one version is in.
-    const lowest = [...wanted].map(range => {
+    const carets = [...wanted].filter(range => range !== "latest");
+    const lowest = carets.map(range => {
       const caret = /^\^(\d+)(?:\.(\d+))?(?:\.(\d+))?$/.exec(range);
       if (caret) return `${caret[1]}.${caret[2] ?? 0}.${caret[3] ?? 0}`;
-      if (range === "latest") return "1.0.0";
       throw new Error(`${name}: the stubs are for ranges such as "^1.2.3" and for "latest", not for "${range}"`);
     });
-    const version = lowest.sort(Bun.semver.order).at(-1)!;
-    for (const range of wanted) {
-      if (range !== "latest" && !Bun.semver.satisfies(version, range)) {
-        throw new Error(`${name}: no one version is in each of the ranges ${[...wanted].join(", ")}`);
-      }
+    const version = lowest.sort(Bun.semver.order).at(-1) ?? "1.0.0";
+    if (!carets.every(range => Bun.semver.satisfies(version, range))) {
+      throw new Error(`${name}: no one version is in each of the ranges ${carets.join(", ")}`);
     }
     const tarball = await new Bun.Archive(
       { "package/package.json": JSON.stringify({ name, version }) },

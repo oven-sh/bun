@@ -275,6 +275,27 @@ describe("Gzip: reset() is allowed while no part of a member is out", () => {
       stream.destroy();
     }
   });
+
+  test("a second init() on the native handle forgets the output of the first one", () => {
+    const stream = quiet(zlib.createGzip());
+    const handle = stream._handle;
+    const reports = reportsOf(handle);
+    const output = Buffer.alloc(64);
+    try {
+      handle.writeSync(Z_SYNC_FLUSH, input, 0, input.length, output, 0, output.length);
+      assert.ok(stream._writeState[0] < output.length);
+
+      handle.init(15, 6, 8, Z_DEFAULT_STRATEGY, stream._writeState, () => {}, undefined);
+      handle.reset();
+      assert.deepStrictEqual(reports, []);
+
+      handle.writeSync(Z_FINISH, input, 0, input.length, output, 0, output.length);
+      const length = output.length - stream._writeState[0];
+      assert.strictEqual(zlib.gunzipSync(output.subarray(0, length)).toString(), input.toString());
+    } finally {
+      stream.destroy();
+    }
+  });
 });
 
 // Node.js refuses none of these.

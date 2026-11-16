@@ -5,12 +5,13 @@ use super::evaluate::Value;
 use super::folder::Folder;
 use super::inputs::DefineValue;
 use super::known_constructors::KnownConstruction;
+use super::never_run::NeverRun;
 use crate::atom::known;
 use crate::bind::{Binding, BindingKind, CommonJsVariable};
 use crate::check::spans::skip_trivia;
 use crate::hir::{
-    BinOp, Chain, ExprId, ExprKind, File, Flags, MemberKey, NameKind, PatId, PatKind, PropKey,
-    PropKind, StmtId, StmtKind, UnOp, VarKind,
+    BinOp, Chain, ExprId, ExprKind, MemberKey, NameKind, PatKind, PropKey, PropKind, StmtId,
+    StmtKind, UnOp, VarKind,
 };
 use crate::import_sites::is_in_with_scope;
 use smallvec::SmallVec;
@@ -155,7 +156,7 @@ impl Folder<'_, '_> {
                 let mut present = branches.into_iter().filter(|branch| branch.0.is_some());
                 present.all(|(branch, runs_when)| {
                     if condition == Some(!runs_when) {
-                        return is_removed_where_never_run(self.hir, branch);
+                        return NeverRun::new(self.hir, self.bound).prints_nothing(branch);
                     }
                     parts.push((TreeNode::Stmt(branch), unused));
                     true
@@ -407,56 +408,5 @@ impl Folder<'_, '_> {
             }
         }
         true
-    }
-}
-
-fn binds_a_name(hir: &File<'_>, pattern: PatId) -> bool {
-    match hir[pattern].kind {
-        PatKind::Missing => false,
-        PatKind::Ident(_) => true,
-        PatKind::Object(props) => (props.iter()).any(|prop| binds_a_name(hir, hir[prop].value)),
-        PatKind::Array(elements) => {
-            (elements.iter()).any(|element| binds_a_name(hir, hir[element].pat))
-        }
-    }
-}
-
-pub fn is_removed_where_never_run(hir: &File<'_>, statement: StmtId) -> bool {
-    let is_removed = |part: StmtId| part.is_none() || is_removed_where_never_run(hir, part);
-    match hir[statement].kind {
-        StmtKind::Empty
-        | StmtKind::Debugger
-        | StmtKind::Expr(_)
-        | StmtKind::Class(_)
-        | StmtKind::Interface(_)
-        | StmtKind::TypeAlias(_)
-        | StmtKind::Enum(_)
-        | StmtKind::Return(_)
-        | StmtKind::Throw(_)
-        | StmtKind::Break(_)
-        | StmtKind::Continue(_) => true,
-        StmtKind::Var(declarations) => declarations.iter().all(|declaration| {
-            let declaration = hir[declaration];
-            declaration.kind != VarKind::Var || !binds_a_name(hir, declaration.pat)
-        }),
-        StmtKind::Fn(function) => {
-            !(hir[function].flags).intersects(Flags::ASYNC | Flags::GENERATOR)
-        }
-        StmtKind::Block(list) => hir.ids(list).all(is_removed),
-        StmtKind::If { yes, no, .. } => is_removed(yes) && is_removed(no),
-        StmtKind::While { body, .. }
-        | StmtKind::DoWhile { body, .. }
-        | StmtKind::Labeled { body, .. } => is_removed(body),
-        StmtKind::For { init, body, .. } => is_removed(init) && is_removed(body),
-        StmtKind::ForIn { left, body, .. } | StmtKind::ForOf { left, body, .. } => {
-            is_removed(left) && is_removed(body)
-        }
-        StmtKind::Try {
-            block,
-            handler,
-            finalizer,
-            ..
-        } => is_removed(block) && is_removed(handler) && is_removed(finalizer),
-        _ => false,
     }
 }

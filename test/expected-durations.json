@@ -16,6 +16,10 @@
       "windows-aarch64": "windows-aarch64-11-test-bun"
     }
   },
+  "aot/fold/never-run-code.test.ts": {
+    "default": 2000,
+    "asan": 13000
+  },
   "aot/type-errors-that-several-projects-are-asked-about.test.ts": {
     "default": 30000,
     "asan": 120000

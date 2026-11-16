@@ -236,7 +236,7 @@ fn find_scopes_that_declare(
     scopes
 }
 
-fn find_scope_below_file(
+pub(crate) fn find_scope_below_file(
     hir: &File<'_>,
     bound: &Bound<'_>,
     mut statement: StmtId,

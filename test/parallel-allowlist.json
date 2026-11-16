@@ -1896,6 +1896,7 @@
     "aot/texts-matched-across-awaits.test.ts",
     "aot/typescript-that-tsc-rejects.test.ts",
     "aot/values-held-across-many-calls.test.ts",
+    "aot/fold/never-run-code.test.ts",
     "aot/cli/frames-of-built-in-modules.test.ts",
     "aot/test-runs-without-function-source.test.ts",
     "aot/options-of-the-run-that-need-nothing.test.ts",

@@ -1159,7 +1159,6 @@ pub type ErrorableString = Errorable<bun_core::String>;
 
 #[path = "hot_reloader.rs"]
 pub mod hot_reloader;
-pub use self::hot_reloader::{HotReloader, ImportWatcher, NewHotReloader, WatchReloader};
 
 #[path = "RuntimeTranspilerCache.rs"]
 pub mod runtime_transpiler_cache;

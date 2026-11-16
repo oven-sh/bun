@@ -1476,14 +1476,7 @@ impl Run<'_> {
         match ctx.debug.hot_reload {
             cli::command::HotReload::Hot => {
                 bun_removable_features::removable_body!(HotReload, Abort, {
-                    // SAFETY: `vm` is the boxed-and-leaked main-thread VM
-                    // (process-lifetime); it outlives the leaked reloader.
-                    unsafe {
-                        bun_jsc::hot_reloader::HotReloader::enable_hot_module_reloading(
-                            std::ptr::from_ref(vm).cast_mut(),
-                            entry,
-                        )
-                    }
+                    bun_jsc::hot_reloader::enable_hot_module_reloading(vm, entry, None);
                     // `bun bake` (no entry module) starts again when `bake.config.ts` changes: the kill signal's JS handlers run first, as in watch mode.
                     if entry.is_none() {
                         bun_jsc::posix_signal_handle::set_watch_kill_signal(
@@ -1494,14 +1487,7 @@ impl Run<'_> {
             }
             cli::command::HotReload::Watch => {
                 bun_removable_features::removable_body!(HotReload, Abort, {
-                    // SAFETY: `vm` is the boxed-and-leaked main-thread VM
-                    // (process-lifetime); it outlives the leaked reloader.
-                    unsafe {
-                        bun_jsc::hot_reloader::WatchReloader::enable_hot_module_reloading(
-                            std::ptr::from_ref(vm).cast_mut(),
-                            entry,
-                        )
-                    }
+                    bun_jsc::hot_reloader::enable_hot_module_reloading(vm, entry, None);
                     bun_jsc::posix_signal_handle::enable_watch_mode_signals(
                         ctx.debug.watch_kill_signal,
                     );

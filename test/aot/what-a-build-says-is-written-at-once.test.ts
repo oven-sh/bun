@@ -21,7 +21,7 @@ async function readWrites(cmd: string[], cwd: string) {
   closeSync(writing);
   const buffer = Buffer.alloc(1 << 16);
   const writes: string[] = [];
-  for (let length; (length = readSync(reading, buffer)) > 0; ) writes.push(buffer.toString("utf8", 0, length));
+  for (let length; (length = readSync(reading, buffer)) > 0;) writes.push(buffer.toString("utf8", 0, length));
   closeSync(reading);
   return { writes, exitCode: await run.exited };
 }

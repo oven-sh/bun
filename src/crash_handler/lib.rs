@@ -3979,19 +3979,16 @@ mod draft {
     #[unsafe(no_mangle)]
     unsafe extern "C" fn CrashHandler__beginDlOpenAction(
         path: *const c_char,
-    ) -> *mut ActionGuard<'static> {
+    ) -> Box<ActionGuard<'static>> {
         // SAFETY: path is a valid NUL-terminated C string that outlives the guard (caller contract)
         let s: &'static [u8] = unsafe { bun_core::ffi::cstr(path) }.to_bytes();
         // SAFETY: `CrashHandler__endDlOpenAction` drops it (caller contract)
-        bun_core::heap::into_raw(Box::new(unsafe { ActionGuard::new(Action::Dlopen(s)) }))
+        Box::new(unsafe { ActionGuard::new(Action::Dlopen(s)) })
     }
 
-    /// SAFETY: `guard` must come from `CrashHandler__beginDlOpenAction`, on this thread, and must not be used again.
+    /// On the thread that called `CrashHandler__beginDlOpenAction`.
     #[unsafe(no_mangle)]
-    unsafe extern "C" fn CrashHandler__endDlOpenAction(guard: *mut ActionGuard<'static>) {
-        // SAFETY: guard is a live Box from CrashHandler__beginDlOpenAction (caller contract)
-        unsafe { bun_core::heap::destroy(guard) };
-    }
+    extern "C" fn CrashHandler__endDlOpenAction(_: Box<ActionGuard<'static>>) {}
 
     pub fn fix_dead_code_elimination() {
         bun_core::keep_symbols!(CrashHandler__unsupportedUVFunction);

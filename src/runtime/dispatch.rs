@@ -151,7 +151,7 @@ use bun_jsc::hot_reloader;
 use bun_jsc::jsc_scheduler::JSCDeferredWorkTask;
 
 use crate::bake::dev_server::DevServer;
-use crate::bake::dev_server::HotReloadEvent as BakeHotReloadEvent;
+use crate::bake::dev_server::PendingReloadEvent as BakePendingReloadEvent;
 use crate::bake::dev_server::source_map_store::SourceMapStore;
 
 #[cfg(windows)]
@@ -658,33 +658,16 @@ pub(crate) fn run_task(
 
         // ── hot-reload (early-returns from the drain loop) ───────────────
         task_tag::HotReloadTask => {
-            feature_arm!([HotReload], |reload: hot_reloader::HotReloadTask| {
-                // The task was heap-allocated in `Task::enqueue`; `deinit` frees it.
-                // SAFETY: tag identifies pointee; live Box'd HotReloadTask.
-                unsafe { (*reload).run() };
-                // SAFETY: paired with heap::alloc in `Task::enqueue`.
-                unsafe { hot_reloader::HotReloadTask::deinit(reload) };
-            });
-            return Ok(RunTaskResult::EarlyReturn);
-        }
-        task_tag::WatchReloadTask => {
-            feature_arm!([HotReload], |reload: hot_reloader::WatchReloadTask| {
-                // SAFETY: tag identifies pointee; live Box'd WatchReloadTask.
-                unsafe { (*reload).run() };
-                // SAFETY: paired with heap::alloc in `Task::enqueue`.
-                unsafe { hot_reloader::WatchReloadTask::deinit(reload) };
+            drop(boxed!(task, hot_reloader::HotReloadTask));
+            in_features!([HotReload], (vm: &VirtualMachine = vm) {
+                hot_reloader::HotReloadTask::run(vm);
             });
             return Ok(RunTaskResult::EarlyReturn);
         }
         // ── bake dev-server ──────────────────────────────────────────────
-        task_tag::BakeHotReloadEvent => {
-            // SAFETY: §Dispatch — tag identifies pointee; the event lives in a
-            // heap `WatcherAtomics` that can outlive its `DevServer`. `run`
-            // either re-derives `&mut DevServer` from the BACKREF or (when the
-            // owner has been dropped) only reclaims the heap `WatcherAtomics`,
-            // so pass the raw pointer to avoid materialising an aliasing
-            // `&mut` here.
-            unsafe { BakeHotReloadEvent::run(cast_ptr!(BakeHotReloadEvent)) };
+        task_tag::BakePendingReloadEvent => {
+            // SAFETY: §Dispatch — tag identifies pointee.
+            unsafe { BakePendingReloadEvent::run(cast_ptr!(BakePendingReloadEvent)) };
         }
         task_tag::FSWatchTask => {
             boxed_arm!(task, [NodeFs], |mut watch: FSWatchTask| -> JsResult<()> {
@@ -847,7 +830,7 @@ fn run_task_cold(task: &Task) {
 /// `release_task_unrun` track `bun_event_loop::task_tag::COUNT`. Bump when
 /// adding a variant — and give it an arm in both.
 const _: () = assert!(
-    task_tag::COUNT == 84,
+    task_tag::COUNT == 83,
     "dispatch::run_task / release_task_unrun arm count out of sync with bun_event_loop::task_tag",
 );
 
@@ -1015,7 +998,7 @@ unsafe fn __bun_run_io(owner: Owner, event: IoEvent) {
         ),
         #[cfg(target_os = "macos")]
         PollTag::GetAddrInfoRequest => {
-            crate::dns_jsc::dns_sd::SharedConnection::on_readable(owner.ptr().cast());
+            crate::dns_jsc::dns_sd::SharedConnection::on_readable();
         }
         #[cfg(not(windows))]
         PollTag::TerminalPoll => feature_poll_arm!([Terminal], TerminalPoll),
@@ -1373,11 +1356,9 @@ pub(crate) unsafe fn fire_timer(
         EventLoopTimerTag::DnsSdConnection => {
             #[cfg(target_os = "macos")]
             {
-                timer_arm!(
-                    crate::dns_jsc::dns_sd::SharedConnection,
-                    early_out_timer,
-                    |c, _now, _vm| crate::dns_jsc::dns_sd::SharedConnection::on_early_out(c)
-                )
+                // SAFETY: per fn contract, and the thread has one timer with this tag.
+                unsafe { crate::dns_jsc::dns_sd::SharedConnection::on_early_out() };
+                Ok(())
             }
             #[cfg(not(target_os = "macos"))]
             {
@@ -1646,7 +1627,7 @@ fn __bun_release_task_unrun(task: bun_event_loop::Task) {
             // SAFETY: as `release!`.
             unsafe { bun_jsc::job::release_unrun_erased(task.ptr()) }
         }
-        task_tag::BakeHotReloadEvent => release_in!([Bundler], BakeHotReloadEvent),
+        task_tag::BakePendingReloadEvent => release_in!([Bundler], BakePendingReloadEvent),
         task_tag::BundleV2DeferredBatchTask => release_in!([Bundler], BundleV2DeferredBatchTask),
         task_tag::BundleV2PluginResolve => {
             release_boxed_in!(
@@ -1676,8 +1657,7 @@ fn __bun_release_task_unrun(task: bun_event_loop::Task) {
             )
         }
         task_tag::FSWatchTask => release_boxed_in!([NodeFs], FSWatchTask),
-        task_tag::HotReloadTask => release_in!([HotReload], hot_reloader::HotReloadTask),
-        task_tag::WatchReloadTask => release_in!([HotReload], hot_reloader::WatchReloadTask),
+        task_tag::HotReloadTask => release_boxed_in!([HotReload], hot_reloader::HotReloadTask),
         task_tag::JSBundleCompletionTask => release_boxed_in!([Bundler], JSBundleCompletionTask),
         task_tag::JSCDeferredWorkTask => release!(JSCDeferredWorkTask),
         task_tag::BundleV2PluginResolveAnswered => {

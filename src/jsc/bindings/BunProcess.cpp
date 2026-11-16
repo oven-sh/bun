@@ -566,7 +566,7 @@ JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(Process_functionDlopen, __attribute__((
     [[maybe_unused]] bool fromEmbedded = false;
     if (filename.startsWith(StandaloneModuleGraph__base_path) || Bun::hasCompiledModules()) {
         BunString bunStr = Bun::toString(filename);
-        BunString resolved = Bun__resolveEmbeddedNodeFile(&bunStr);
+        auto resolved = Bun::OwnedString::adopt(Bun__resolveEmbeddedNodeFile(&bunStr));
         if (!resolved.isDead()) {
             filename = resolved.transferToWTFString();
             // The extracted file is content-hashed and shared across dlopens
@@ -1966,7 +1966,7 @@ JSObject* Process::ensureOnWarning(Zig::GlobalObject* globalObject)
     args.append(this);
     // --redirect-warnings, then NODE_REDIRECT_WARNINGS.
     JSValue redirectPath = jsUndefined();
-    BunString redirect = Bun__Node__getRedirectWarnings();
+    auto redirect = Bun::OwnedString::adopt(Bun__Node__getRedirectWarnings());
     if (!redirect.isDead()) {
         redirectPath = jsString(vm, redirect.transferToWTFString());
     } else {

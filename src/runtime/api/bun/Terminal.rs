@@ -1011,7 +1011,6 @@ fn create_overlapped_pipe_pair(
     // PIPE_ACCESS_OUTBOUND: server writes, client reads.
     server_access: u32,
 ) -> Result<PipePair, CreatePtyError> {
-    use sys::FdExt as _;
     use windows::kernel32 as k32;
     const FILE_FLAG_FIRST_PIPE_INSTANCE: u32 = 0x00080000;
 
@@ -1076,9 +1075,8 @@ fn create_overlapped_pipe_pair(
     };
     let client = OwnedHandle::try_from(client).map_err(|_| CreatePtyError::OpenPtyFailed)?;
 
-    let server = Fd::from_system(server.into_raw_handle())
-        .make_lib_uv_owned_for_syscall(sys::Tag::open, sys::ErrorCase::CloseOnFail)
-        .map(File::from_fd)
+    let server = File::from_fd(Fd::from_system(server.into_raw_handle()))
+        .make_lib_uv_owned()
         .map_err(|_| CreatePtyError::DupFailed)?;
     Ok(PipePair { server, client })
 }

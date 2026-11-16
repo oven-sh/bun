@@ -45,12 +45,7 @@ impl DevServer {
 
         bun_core::scoped_log!(DevServer, "DirectoryWatchStore.freeEntry({})", entry_index);
 
-        self.bun_watcher.remove_at_index::<true>(
-            bun_watcher::WatchItemKind::File,
-            entry.watch_index,
-            0,
-            &[],
-        );
+        self.bun_watcher.remove_at_index(entry.watch_index);
 
         // The Box key drops on swap_remove_at.
         let _ = store.watches.swap_remove_at(entry_index);
@@ -68,7 +63,7 @@ impl DevServer {
 pub(crate) struct Entry {
     /// `Dep.Index` — head of the singly-linked dep chain for this dir.
     pub(crate) first_dep: u32,
-    /// To pass to `Watcher.remove`.
+    /// To pass to `Watcher::remove_at_index`.
     pub(crate) watch_index: bun_watcher::WatchItemIndex,
 }
 /// `DirectoryWatchStore.Dep` — one resolution-failure to retry on dir change.
@@ -226,10 +221,9 @@ impl DevServer {
             return Ok(());
         }
 
-        // `dir_name_to_watch` is in a pooled buffer, so the watcher copies it.
         let Ok(watch_index) = self
             .bun_watcher
-            .add_directory::<true>(dir_name_to_watch, Watcher::get_hash(dir_name_to_watch))
+            .add_directory(dir_name_to_watch, Watcher::get_hash(dir_name_to_watch))
         else {
             // TODO: watch the parent of a directory that does not exist yet (BUN-10968).
             let _ = store.watches.swap_remove_at(gop_index);

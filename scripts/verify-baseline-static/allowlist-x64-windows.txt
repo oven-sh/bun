@@ -770,6 +770,18 @@ bun::N_AVX3_ZEN4::ParseMappingsImpl                                  [AVX, AVX2,
 
 
 # ----------------------------------------------------------------------------
+# Bun JPEG transforms and color conversions (src/jsc/bindings/highway_jpeg.cpp).
+# Gate: BUN_HWY_DISPATCH (highway_dispatch.h) via hwy::SupportedTargets. (6 symbols)
+# ----------------------------------------------------------------------------
+bun::N_AVX2::JpegForwardTransform                                    [AVX, AVX2]
+bun::N_AVX2::JpegInverseTransform                                    [AVX, AVX2]
+bun::N_AVX2::JpegRgbaToYcc420                                        [AVX, AVX2]
+bun::N_AVX2::JpegYcc420ToRgba                                        [AVX, AVX2]
+bun::N_AVX2::JpegYcc422ToRgba                                        [AVX, AVX2]
+bun::N_AVX2::JpegYccToRgba                                           [AVX, AVX2]
+
+
+# ----------------------------------------------------------------------------
 # Bun PNG scanline filters (src/jsc/bindings/highway_png.cpp).
 # Gate: BUN_HWY_DISPATCH (highway_dispatch.h) via hwy::SupportedTargets. (3 symbols)
 # ----------------------------------------------------------------------------
@@ -1130,9 +1142,8 @@ bun::xxh3::N_AVX10_2::HashLong    [AVX, AVX2, AVX512DQ, AVX512F, BMI2]
 # ----------------------------------------------------------------------------
 # Bun.Image highway kernels (image_resize.cpp). Gate: BUN_HWY_DISPATCH ->
 # hwy::SupportedTargets() via CPUID. Same gate as the highway_strings block.
-# (52 symbols; PDB demangles these to bun_image::N_*::*)
+# (46 symbols; PDB demangles these to bun_image::N_*::*)
 # ----------------------------------------------------------------------------
-bun_image::N_AVX2::CmykToRgbaImpl  [AVX, AVX2]
 bun_image::N_AVX2::FlipHImpl  [AVX, AVX2]
 bun_image::N_AVX2::HorizPass  [AVX, AVX2, FMA]
 bun_image::N_AVX2::ModulateImpl  [AVX, AVX2, FMA]
@@ -1141,7 +1152,6 @@ bun_image::N_AVX2::Rotate180Impl  [AVX, AVX2]
 bun_image::N_AVX2::Rotate270Impl  [AVX]
 bun_image::N_AVX2::Rotate90Impl  [AVX]
 bun_image::N_AVX2::VertPass  [AVX, AVX2, BMI1, FMA]
-bun_image::N_AVX3::CmykToRgbaImpl  [AVX, AVX2, AVX512BW, AVX512F, AVX512VL]
 bun_image::N_AVX3::FlipHImpl  [AVX, AVX2, AVX512F]
 bun_image::N_AVX3::HorizPass  [AVX, AVX2, AVX512DQ, AVX512F, AVX512VL]
 bun_image::N_AVX3::ModulateImpl  [AVX, AVX512DQ, AVX512F, AVX512VL]
@@ -1150,7 +1160,6 @@ bun_image::N_AVX3::Rotate180Impl  [AVX, AVX2, AVX512F]
 bun_image::N_AVX3::Rotate270Impl  [AVX, AVX2, AVX512DQ, AVX512F, AVX512VL]
 bun_image::N_AVX3::Rotate90Impl  [AVX, AVX2, AVX512DQ, AVX512F, AVX512VL]
 bun_image::N_AVX3::VertPass  [AVX, AVX512BW, AVX512F, AVX512VL, BMI1, FMA]
-bun_image::N_AVX3_DL::CmykToRgbaImpl  [AVX, AVX2, AVX512BW, AVX512F, AVX512VL, AVX512_VBMI]
 bun_image::N_AVX3_DL::FlipHImpl  [AVX, AVX2, AVX512F]
 bun_image::N_AVX3_DL::HorizPass  [AVX, AVX2, AVX512DQ, AVX512F, AVX512VL, AVX512_VNNI]
 bun_image::N_AVX3_DL::ModulateImpl  [AVX, AVX512DQ, AVX512F, AVX512VL]
@@ -1159,7 +1168,6 @@ bun_image::N_AVX3_DL::Rotate180Impl  [AVX, AVX2, AVX512F]
 bun_image::N_AVX3_DL::Rotate270Impl  [AVX, AVX2, AVX512DQ, AVX512F, AVX512VL]
 bun_image::N_AVX3_DL::Rotate90Impl  [AVX, AVX2, AVX512DQ, AVX512F, AVX512VL]
 bun_image::N_AVX3_DL::VertPass  [AVX, AVX512BW, AVX512F, AVX512VL, AVX512_VNNI, BMI1, FMA]
-bun_image::N_AVX3_SPR::CmykToRgbaImpl  [AVX, AVX2, AVX512BW, AVX512F, AVX512VL, AVX512_VBMI]
 bun_image::N_AVX3_SPR::FlipHImpl  [AVX, AVX2, AVX512F]
 bun_image::N_AVX3_SPR::HorizPass  [AVX, AVX2, AVX512DQ, AVX512F, AVX512VL, AVX512_VNNI]
 bun_image::N_AVX3_SPR::ModulateImpl  [AVX, AVX512DQ, AVX512F, AVX512VL]
@@ -1168,7 +1176,6 @@ bun_image::N_AVX3_SPR::Rotate180Impl  [AVX, AVX2, AVX512F]
 bun_image::N_AVX3_SPR::Rotate270Impl  [AVX, AVX2, AVX512DQ, AVX512F, AVX512VL]
 bun_image::N_AVX3_SPR::Rotate90Impl  [AVX, AVX2, AVX512DQ, AVX512F, AVX512VL]
 bun_image::N_AVX3_SPR::VertPass  [AVX, AVX512BW, AVX512F, AVX512VL, AVX512_VNNI, BMI1, FMA]
-bun_image::N_AVX3_ZEN4::CmykToRgbaImpl  [AVX, AVX2, AVX512BW, AVX512F, AVX512VL, AVX512_VBMI]
 bun_image::N_AVX3_ZEN4::FlipHImpl  [AVX, AVX2, AVX512F]
 bun_image::N_AVX3_ZEN4::HorizPass  [AVX, AVX2, AVX512DQ, AVX512F, AVX512VL, AVX512_VNNI]
 bun_image::N_AVX3_ZEN4::ModulateImpl  [AVX, AVX512DQ, AVX512F, AVX512VL]
@@ -1177,7 +1184,6 @@ bun_image::N_AVX3_ZEN4::Rotate180Impl  [AVX, AVX2, AVX512F]
 bun_image::N_AVX3_ZEN4::Rotate270Impl  [AVX, AVX2, AVX512DQ, AVX512F, AVX512VL]
 bun_image::N_AVX3_ZEN4::Rotate90Impl  [AVX, AVX2, AVX512DQ, AVX512F, AVX512VL]
 bun_image::N_AVX3_ZEN4::VertPass  [AVX, AVX512BW, AVX512F, AVX512VL, AVX512_VNNI, BMI1, FMA]
-bun_image::N_AVX10_2::CmykToRgbaImpl  [AVX, AVX2, AVX512BW, AVX512F, AVX512VL, AVX512_VBMI]
 bun_image::N_AVX10_2::FlipHImpl  [AVX, AVX512F]
 bun_image::N_AVX10_2::HorizPass  [AVX, AVX2, AVX512VL, AVX512_VNNI]
 bun_image::N_AVX10_2::ModulateImpl  [AVX, AVX512DQ, AVX512F, AVX512VL]
@@ -1236,53 +1242,6 @@ PredictorSub11_AVX2  [AVX, AVX2]
 PredictorSub12_AVX2  [AVX, AVX2]
 PredictorSub13_AVX2  [AVX, AVX2]
 
-
-# ----------------------------------------------------------------------------
-# libjpeg-turbo x86_64 AVX2 kernels (vendor/libjpeg-turbo/simd/x86_64/*-avx2.asm).
-# Gate: jpeg_simd_cpu_support() in simd/x86_64/jsimdcpu.asm checks CPUID leaf 7
-# AVX2 and XGETBV YMM state and sets JSIMD_AVX2; simd/jsimd.c only
-# dispatches to a jsimd_*_avx2 kernel when init_simd() saw that bit. The SSE2
-# kernels are baseline and need no entries.
-# (38 symbols)
-# ----------------------------------------------------------------------------
-jsimd_convsamp_avx2                      [AVX, AVX2]
-jsimd_extbgr_gray_convert_avx2           [AVX, AVX2]
-jsimd_extbgr_ycc_convert_avx2            [AVX, AVX2]
-jsimd_extbgrx_gray_convert_avx2          [AVX, AVX2]
-jsimd_extbgrx_ycc_convert_avx2           [AVX, AVX2]
-jsimd_extrgb_gray_convert_avx2           [AVX, AVX2]
-jsimd_extrgb_ycc_convert_avx2            [AVX, AVX2]
-jsimd_extrgbx_gray_convert_avx2          [AVX, AVX2]
-jsimd_extrgbx_ycc_convert_avx2           [AVX, AVX2]
-jsimd_extxbgr_gray_convert_avx2          [AVX, AVX2]
-jsimd_extxbgr_ycc_convert_avx2           [AVX, AVX2]
-jsimd_extxrgb_gray_convert_avx2          [AVX, AVX2]
-jsimd_extxrgb_ycc_convert_avx2           [AVX, AVX2]
-jsimd_fdct_islow_avx2                    [AVX, AVX2]
-jsimd_h2v1_downsample_avx2               [AVX, AVX2]
-jsimd_h2v1_extbgr_merged_upsample_avx2   [AVX, AVX2]
-jsimd_h2v1_extbgrx_merged_upsample_avx2  [AVX, AVX2]
-jsimd_h2v1_extrgb_merged_upsample_avx2   [AVX, AVX2]
-jsimd_h2v1_extrgbx_merged_upsample_avx2  [AVX, AVX2]
-jsimd_h2v1_extxbgr_merged_upsample_avx2  [AVX, AVX2]
-jsimd_h2v1_extxrgb_merged_upsample_avx2  [AVX, AVX2]
-jsimd_h2v1_fancy_upsample_avx2           [AVX, AVX2]
-jsimd_h2v1_merged_upsample_avx2          [AVX, AVX2]
-jsimd_h2v1_upsample_avx2                 [AVX, AVX2]
-jsimd_h2v2_downsample_avx2               [AVX, AVX2]
-jsimd_h2v2_fancy_upsample_avx2           [AVX, AVX2]
-jsimd_h2v2_upsample_avx2                 [AVX, AVX2]
-jsimd_idct_islow_avx2                    [AVX, AVX2]
-jsimd_quantize_avx2                      [AVX, AVX2]
-jsimd_rgb_gray_convert_avx2              [AVX, AVX2]
-jsimd_rgb_ycc_convert_avx2               [AVX, AVX2]
-jsimd_ycc_extbgr_convert_avx2            [AVX, AVX2]
-jsimd_ycc_extbgrx_convert_avx2           [AVX, AVX2]
-jsimd_ycc_extrgb_convert_avx2            [AVX, AVX2]
-jsimd_ycc_extrgbx_convert_avx2           [AVX, AVX2]
-jsimd_ycc_extxbgr_convert_avx2           [AVX, AVX2]
-jsimd_ycc_extxrgb_convert_avx2           [AVX, AVX2]
-jsimd_ycc_rgb_convert_avx2               [AVX, AVX2]
 
 # ----------------------------------------------------------------------------
 # The ahead-of-time compiler's search of an array for a value. Gate: findBox() asks

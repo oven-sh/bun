@@ -36,7 +36,7 @@ bakeModuleLoaderImportModule(JSC::JSGlobalObject* global,
 
         BunString refererBunString = Bun::toString(refererString);
         BunString keyBunString = Bun::toString(keyString);
-        BunString result = BakeProdResolve(global, &refererBunString, &keyBunString);
+        auto result = Bun::OwnedString::adopt(BakeProdResolve(global, &refererBunString, &keyBunString));
         RETURN_IF_EXCEPTION(scope, nullptr);
 
         RELEASE_AND_RETURN(scope, JSC::importModule(global, JSC::Identifier::fromString(vm, result.transferToWTFString()), JSC::Identifier(), WTF::move(parameters), nullptr));
@@ -64,7 +64,7 @@ JSC::Identifier bakeModuleLoaderResolve(JSC::JSGlobalObject* jsGlobal,
         if (refererString.startsWith("bake:/"_s) || (refererString == "."_s && keyString.startsWith("bake:/"_s))) {
             BunString refererBunString = Bun::toString(refererString);
             BunString keyBunString = Bun::toString(keyString);
-            BunString result = BakeProdResolve(global, &refererBunString, &keyBunString);
+            auto result = Bun::OwnedString::adopt(BakeProdResolve(global, &refererBunString, &keyBunString));
             RETURN_IF_EXCEPTION(scope, {});
 
             return JSC::Identifier::fromString(vm, result.transferToWTFString());
@@ -79,7 +79,7 @@ JSC::Identifier bakeModuleLoaderResolve(JSC::JSGlobalObject* jsGlobal,
             WTF::String keyWithoutScheme = keyView.substringSharingImpl("bake:"_s.length());
             BunString bakePrefixBunString = { BunStringTag::StaticEncodedSlice, { .encoded = { reinterpret_cast<const unsigned char*>("bake:/"), 6 } } };
             BunString keyBunString = Bun::toString(keyWithoutScheme);
-            BunString result = BakeProdResolve(global, &bakePrefixBunString, &keyBunString);
+            auto result = Bun::OwnedString::adopt(BakeProdResolve(global, &bakePrefixBunString, &keyBunString));
             RETURN_IF_EXCEPTION(scope, {});
 
             return JSC::Identifier::fromString(vm, result.transferToWTFString());
@@ -132,7 +132,7 @@ JSC::JSPromise* bakeModuleLoaderFetch(JSC::JSGlobalObject* globalObject,
     if (moduleKey.startsWith("bake:/"_s)) {
         if (global->m_perThreadData) [[likely]] {
             BunString moduleKeyBunString = Bun::toString(moduleKey);
-            BunString source = BakeProdLoad(global->m_perThreadData, &moduleKeyBunString);
+            auto source = Bun::OwnedString::adopt(BakeProdLoad(global->m_perThreadData, &moduleKeyBunString));
             if (!source.isDead()) {
                 JSC::SourceOrigin origin = JSC::SourceOrigin(WTF::URL(moduleKey));
                 JSC::SourceCode sourceCode = JSC::SourceCode(Bake::SourceProvider::create(

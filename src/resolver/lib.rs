@@ -50,9 +50,7 @@ pub use tsconfig_json::TSConfigJSON;
 // `result` / `standalone_module_graph` sibling modules.
 /// Re-export so dependents can spell `bun_resolver::install_types::AutoInstaller`.
 pub use ::bun_install_types::resolver_hooks as install_types;
-pub use resolver::{
-    AnyResolveWatcher, BrowserMapPathKind, Bufs, Dirname, Resolver, module_type_from_ext,
-};
+pub use resolver::{BrowserMapPathKind, Bufs, Dirname, Resolver, module_type_from_ext};
 pub use result::{
     DebugLogs, DirEntryResolveQueueItem, ExternalKind, FlushMode, LoadResult, MatchResult,
     MatchStatus, PathPair, Result, ResultFlags, ResultUnion,
@@ -1623,34 +1621,14 @@ pub mod fs {
 pub mod dir_entry_accessor {
     use crate::fs::{DirEntry, EntriesOption, Entry, EntryKind, FileSystem as FS};
     use bun_core::ZStr;
-    use bun_glob::walk::{self, Accessor, AccessorDirIter, AccessorHandle};
+    use bun_glob::walk::{self, Accessor, AccessorDirIter};
     use bun_paths::{Platform, resolve_path};
-    use bun_sys::{self as Syscall, Error as SysError, Result as Maybe, Stat};
+    use bun_sys::{self as Syscall, Result as Maybe, Stat};
 
     pub struct DirEntryAccessor;
 
-    #[derive(Clone, Copy)]
     pub struct DirEntryHandle {
         pub(crate) value: Option<&'static DirEntry>,
-    }
-
-    impl AccessorHandle for DirEntryHandle {
-        const EMPTY: Self = DirEntryHandle { value: None };
-
-        fn is_empty(self) -> bool {
-            self.value.is_none()
-        }
-
-        fn eql(self, other: Self) -> bool {
-            // TODO this might not be quite right, we're comparing pointers, not the underlying directory
-            // On the other hand, DirEntries are only ever created once (per generation), so this should be fine?
-            // Realistically, as closing the handle is a no-op, this should be fine either way.
-            match (self.value, other.value) {
-                (Some(a), Some(b)) => core::ptr::eq(a, b),
-                (None, None) => true,
-                _ => false,
-            }
-        }
     }
 
     // `dir_entry::EntryMap` = `StringHashMap<*mut Entry>` which derefs to
@@ -1704,7 +1682,7 @@ pub mod dir_entry_accessor {
         }
 
         #[inline]
-        fn iterate(dir: DirEntryHandle) -> Self {
+        fn iterate(dir: &DirEntryHandle) -> Self {
             let Some(entry) = dir.value else {
                 return DirEntryDirIter { value: None };
             };
@@ -1717,7 +1695,7 @@ pub mod dir_entry_accessor {
     impl DirEntryAccessor {
         /// Joins `path` onto the handle's directory. The result can be longer than a path buffer.
         fn full_path<'a>(
-            handle: DirEntryHandle,
+            handle: &DirEntryHandle,
             path: &'a ZStr,
             buf: &'a mut [u8],
             spill: &'a mut Vec<u8>,
@@ -1736,18 +1714,17 @@ pub mod dir_entry_accessor {
     }
 
     impl Accessor for DirEntryAccessor {
-        const COUNT_FDS: bool = false;
         type Handle = DirEntryHandle;
         type DirIter = DirEntryDirIter;
 
-        fn statat(handle: DirEntryHandle, path_: &ZStr) -> Maybe<Stat> {
+        fn statat(handle: &DirEntryHandle, path_: &ZStr) -> Maybe<Stat> {
             let mut buf = bun_paths::path_buffer_pool::get();
             let mut spill = Vec::new();
             Syscall::stat(Self::full_path(handle, path_, &mut buf[..], &mut spill))
         }
 
         /// Like statat but does not follow symlinks.
-        fn lstatat(handle: DirEntryHandle, path_: &ZStr) -> Maybe<Stat> {
+        fn lstatat(handle: &DirEntryHandle, path_: &ZStr) -> Maybe<Stat> {
             let mut buf = bun_paths::path_buffer_pool::get();
             if let Some(entry) = handle.value {
                 return Syscall::lstatat(entry.fd, path_);
@@ -1773,11 +1750,11 @@ pub mod dir_entry_accessor {
         }
 
         fn open(path: &ZStr) -> Result<Maybe<DirEntryHandle>, bun_core::Error> {
-            Self::openat(DirEntryHandle::EMPTY, path)
+            Self::openat(&DirEntryHandle { value: None }, path)
         }
 
         fn openat(
-            handle: DirEntryHandle,
+            handle: &DirEntryHandle,
             path_: &ZStr,
         ) -> Result<Maybe<DirEntryHandle>, bun_core::Error> {
             let mut buf = bun_paths::path_buffer_pool::get();
@@ -1796,12 +1773,6 @@ pub mod dir_entry_accessor {
                 })),
                 EntriesOption::Err(err) => Err(err.original_err.into_core()),
             }
-        }
-
-        #[inline]
-        fn close(_handle: DirEntryHandle) -> Option<SysError> {
-            // TODO is this a noop?
-            None
         }
     }
 }

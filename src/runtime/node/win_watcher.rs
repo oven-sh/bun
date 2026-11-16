@@ -37,6 +37,8 @@ pub(crate) static fs_watch: bun_output::ScopedLogger =
 /// A VM's watchers, by `recursive` and path.
 pub(crate) type PathWatchers = [JsCell<StringArrayHashMap<uv::Owned<PathWatcher>>>; 2];
 
+pub(crate) type Handle = *mut PathWatcher;
+
 // TODO: we probably should use native instead of libuv abstraction here for better performance
 #[repr(C)]
 pub(crate) struct PathWatcher {
@@ -304,10 +306,8 @@ impl PathWatcher {
         sys::Result::Ok(this)
     }
 
-    /// JS-thread entry point from `FSWatcher.detach()`. Signature matches the posix
-    /// `path_watcher::PathWatcher::detach` (associated fn over `*mut Self`) so the
-    /// caller in `node_fs_watcher.rs` is platform-agnostic.
-    pub(crate) fn detach(this: *mut PathWatcher, handler: *mut c_void) {
+    /// JS-thread entry point from `FSWatcher.detach()`.
+    pub(crate) fn detach(this: Handle, handler: *mut c_void) {
         // SAFETY: `this` is the live `heap::alloc`'d pointer returned from `watch()`;
         // it stays valid until `maybe_deinit` self-destroys on the last handler.
         let removed = unsafe { &*this }
@@ -340,7 +340,7 @@ pub(crate) fn watch(
     path: &ZStr,
     recursive: bool,
     ctx: *mut c_void,
-) -> sys::Result<*mut PathWatcher> {
+) -> sys::Result<Handle> {
     let watcher = PathWatcher::init(vm, path, recursive)?;
     // SAFETY: watcher is a valid freshly-returned heap pointer.
     unsafe { &*watcher }.handlers.with_mut(|h| {

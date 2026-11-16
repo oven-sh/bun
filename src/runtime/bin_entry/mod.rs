@@ -233,9 +233,7 @@ pub(crate) unsafe extern "C" fn main(argc: c_int, argv: *const *const c_char) ->
 /// so grow it to 1024 now. Fails with EINVAL (and does nothing) past RLIMIT_NOFILE.
 #[cfg(any(target_os = "linux", target_os = "android"))]
 fn pregrow_fd_table() {
-    if let Ok(fd) = bun_sys::dup_at_least(bun_sys::Fd::stdin(), 1023) {
-        let _ = bun_sys::close(fd);
-    }
+    let _ = bun_sys::dup_at_least(bun_sys::Fd::stdin(), 1023).map(bun_sys::CloseOnDrop::new);
 }
 
 /// Point the bundled C/C++ dependencies that have an allocator hook at

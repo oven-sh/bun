@@ -12,7 +12,7 @@ use bun_options_types::schema::api::DotEnvBehavior;
 use bun_standalone_graph::Graph;
 use bun_sys::{Fd, File, Maybe, O};
 use bun_threading::Guarded;
-use bun_watcher::{ChangedFilePath, WatchEvent, WatchList, Watcher, WatcherContext};
+use bun_watcher::{Evictions, WatchEvent, WatchList, Watcher, WatcherContext};
 
 use super::compile_command::{
     CompileFailure, CompileProduct, RequestOrigin, compile_from_context, exit_with_failure,
@@ -417,19 +417,21 @@ fn hand_over(
 }
 
 struct WatchedFiles {
-    watcher: Guarded<SharedWatcher>,
+    watcher: Arc<Watcher>,
     working_directory: Vec<u8>,
     paths: Guarded<Vec<Vec<u8>>>,
 }
 
-struct SharedWatcher(*mut Watcher);
-// SAFETY: the watcher is never freed, and one thread at a time has the pointer.
-unsafe impl Send for SharedWatcher {}
-
 struct RestartOnChange;
 
 impl WatcherContext for RestartOnChange {
-    fn on_file_update(&mut self, events: &mut [WatchEvent], _: &[ChangedFilePath], _: &WatchList) {
+    fn on_file_update(
+        &mut self,
+        events: &[WatchEvent],
+        _: &[&[u8]],
+        _: &WatchList,
+        _: &mut Evictions,
+    ) {
         if events.is_empty() {
             return;
         }
@@ -455,13 +457,10 @@ impl WatchedFiles {
         decide_whether_to_clear_terminal();
         let working_directory = super::check_command::working_directory();
         let directory: &'static [u8] = Box::leak(working_directory.clone().into_boxed_slice());
-        let context = Box::leak(Box::new(RestartOnChange));
-        let started = Watcher::init(context, directory)
-            .map(Box::leak)
-            .and_then(|watcher| {
-                watcher.start()?;
-                Ok(watcher)
-            });
+        let started = Watcher::init(Box::new(RestartOnChange), directory).and_then(|watcher| {
+            watcher.start()?;
+            Ok(watcher)
+        });
         let watcher = match started {
             Ok(watcher) => watcher,
             Err(error) => {
@@ -470,7 +469,7 @@ impl WatchedFiles {
             }
         };
         let watched: &'static WatchedFiles = Box::leak(Box::new(WatchedFiles {
-            watcher: Guarded::new(SharedWatcher(watcher)),
+            watcher,
             working_directory,
             paths: Guarded::new(Vec::new()),
         }));
@@ -493,11 +492,7 @@ impl WatchedFiles {
     fn add(&self, path: &[u8]) {
         use bun_paths::{platform::Auto, resolve_path::join_abs_string};
         let path = join_abs_string::<Auto>(&self.working_directory, &[path]);
-        let shared = self.watcher.lock();
-        let watcher = shared.0;
-        // SAFETY: see `SharedWatcher`.
-        let _ = unsafe { (*watcher).add_file_by_path_slow(path) };
-        drop(shared);
+        let _ = self.watcher.add_file_by_path_slow(path);
         self.paths.lock().push(path.to_vec());
     }
 }
@@ -1120,12 +1115,9 @@ pub(crate) fn write_program_alone(
     launcher.extend_from_slice(build_id);
     let flags = O::WRONLY | O::CREAT | O::TRUNC | O::CLOEXEC;
     let path = ZBox::from_bytes(path);
-    let file = File::from_fd(close_on_fork::openat(directory, &path, flags, 0o755)?);
-    let written = file
-        .write_all(&launcher)
-        .and_then(|()| file.write_all(program));
-    close_on_fork::close(file.into_raw());
-    written
+    let file = close_on_fork::File::openat(directory, &path, flags, 0o755)?;
+    file.write_all(&launcher)?;
+    file.write_all(program)
 }
 
 #[cfg(not(unix))]

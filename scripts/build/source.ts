@@ -463,7 +463,6 @@ export type DepName =
   | "cares"
   | "highway"
   | "libdeflate"
-  | "libjpeg-turbo"
   | "libuv"
   | "libwebp"
   | "lolhtml"
@@ -490,11 +489,7 @@ export interface Dependency {
   /**
    * Patch files to apply after extraction. Paths relative to repo root.
    * Patches are included in the source identity hash — changing a patch
-   * invalidates the fetched source and triggers re-fetch.
-   *
-   * Files ending in `.patch` are applied with `git apply`. Other files are
-   * OVERLAYS — copied into the source root as-is. Useful for injecting a
-   * CMakeLists.txt into a project that lacks one (tinycc).
+   * invalidates the fetched source and triggers re-fetch. Applied with `git apply`.
    */
   patches?: string[];
 

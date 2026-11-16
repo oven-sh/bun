@@ -96,12 +96,10 @@ impl Expect {
             return Err(m.global.throw_invalid_argument_type("expect", "received", "number"));
         }
 
-        if expected.as_number().is_infinite() && received.as_number().is_infinite() {
-            return m.pass();
-        }
+        let same_infinity = received.as_number().is_infinite() && received.as_number() == expected.as_number();
         let expected_difference = 10.0_f64.powf(-precision) / 2.0;
-        let difference = (received.as_number() - expected.as_number()).abs();
-        if m.passes(difference < expected_difference) {
+        let difference = if same_infinity { 0.0 } else { (received.as_number() - expected.as_number()).abs() };
+        if m.passes(same_infinity || difference < expected_difference) {
             return m.pass();
         }
         fail!(

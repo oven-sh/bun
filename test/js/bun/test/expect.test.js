@@ -1294,6 +1294,22 @@ describe("expect()", () => {
     }
   });
 
+  test.each([[undefined], [0], [400], [NaN], [Infinity], [-Infinity]])(
+    "toBeCloseTo() compares the signs of infinities, precision %p",
+    precision => {
+      for (const infinity of [Infinity, -Infinity]) {
+        expect(infinity).toBeCloseTo(infinity, precision);
+        expect(() => expect(infinity).not.toBeCloseTo(infinity, precision)).toThrow(
+          isBun ? /Received difference: (\x1b\[31m)?0\b/ : undefined,
+        );
+        expect(infinity).not.toBeCloseTo(-infinity, precision);
+        expect(() => expect(infinity).toBeCloseTo(-infinity, precision)).toThrow(
+          isBun ? /Received difference: (\x1b\[31m)?inf\b/ : undefined,
+        );
+      }
+    },
+  );
+
   test("toThrow() leaves a promise that was rejected before the call to whoever handles it", async () => {
     const handledInTheCall = Promise.reject(new Error("handled in the call"));
     expect(() => void handledInTheCall.catch(() => {})).not.toThrow();

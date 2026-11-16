@@ -79,6 +79,14 @@ async function record(directory: string, name: string) {
   return readFileSync(join(directory, name), "utf8");
 }
 
+// Where a file was recorded doesn't matter: a test below builds in other folders.
+let recording: Promise<string> | undefined;
+const recordingOfProgram = () =>
+  (recording ??= (async () => {
+    using dir = tempDir("aot-order-file-recording", { "program.ts": program, "helper.ts": helper });
+    return await record(String(dir), "recorded");
+  })());
+
 const bytesOf = (path: string) => Bun.hash(readFileSync(path)).toString(16);
 
 function codeOfStart(path: string) {
@@ -101,7 +109,9 @@ test.skipIf(!isSupported)(
     const order = join(String(dir), "recorded");
     expect(await run([executable], { BUN_AOT_ORDER_OUT: order })).toEqual(expected);
     expect(existsSync(order)).toBe(false);
-    const lines = (await record(String(dir), "recorded")).split("\n");
+    const recorded = await recordingOfProgram();
+    writeFileSync(order, recorded);
+    const lines = recorded.split("\n");
     expect(lines[0]).toBe("aot-order v1");
     expect(lines.at(-1)).toBe("");
     const names = lines.filter(line => line.startsWith("F ")).map(line => line.split(" ").at(-1));
@@ -131,21 +141,22 @@ test.skipIf(!isSupported)(
     const { executable } = await build(String(dir), "program");
     const expected = await run([executable]);
     const unordered = bytesOf(executable);
-    await record(String(dir), "recorded");
-    const recorded = readFileSync(join(String(dir), "recorded"), "latin1");
+    const recorded = await recordingOfProgram();
     const files = {
       torn: recorded.slice(0, recorded.length * 0.6),
       foreign: "aot-order v1\nM 0 nothing.ts\nF 0 0 b0 - 1:1 \nF 0 999999999 e7 - 1:1 work\nF 5 0 b0 - 1:1 work\n",
       broken: recorded.replaceAll(" b0 ", " q0 ") + "F\nF 0\nM x y\n\0\xff",
       empty: "",
+      blanks: recorded.replaceAll("\n", " \n"),
       garbage: "\0\xff".repeat(1000),
     };
-    for (const [name, text] of Object.entries(files)) {
-      writeFileSync(join(String(dir), name + ".order"), text, "latin1");
+    for (const [name, text] of Object.entries(files)) writeFileSync(join(String(dir), name + ".order"), text, "latin1");
+    for (const name of ["torn", "broken", "foreign", "empty.order,blanks.order,garbage"]) {
       const built = await build(String(dir), "program", name + ".order");
       expect({ name, ...(await run([built.executable])) }).toEqual({ name, ...expected });
-      const namesNothing = name === "empty" || name === "garbage";
-      expect({ name, warnings: built.warnings.length }).toEqual({ name, warnings: namesNothing ? 1 : 0 });
+      const namesNothing = name !== "torn" && name !== "broken";
+      const warnings = namesNothing ? name.split(",").length : 0;
+      expect({ name, warnings: built.warnings.length }).toEqual({ name, warnings });
       if (namesNothing) expect({ name, bytes: bytesOf(built.executable) }).toEqual({ name, bytes: unordered });
     }
     const missing = await run(buildCommand(String(dir), "missing", "torn.order,no-such-file.order"));
@@ -154,6 +165,20 @@ test.skipIf(!isSupported)(
     expect(existsSync(join(String(dir), "missing"))).toBe(false);
   },
   600_000,
+);
+
+test.skipIf(!isSupported)(
+  "a file that an editor or a checkout rewrote places what the recorded file places",
+  async () => {
+    using dir = tempDir("aot-order-file-rewritten", { "program.ts": program, "helper.ts": helper });
+    const recorded = await recordingOfProgram();
+    writeFileSync(join(String(dir), "recorded"), recorded);
+    const placed = bytesOf((await build(String(dir), "program", "recorded")).executable);
+    writeFileSync(join(String(dir), "rewritten"), "\ufeff# of one start\r\n\r\n" + recorded.replaceAll("\n", "\r\n"));
+    const { executable, warnings } = await build(String(dir), "program", "rewritten");
+    expect({ bytes: bytesOf(executable), warnings }).toEqual({ bytes: placed, warnings: [] });
+  },
+  240_000,
 );
 
 test.skipIf(!isSupported)(
@@ -174,7 +199,10 @@ if (process.argv[2] === "stay") setInterval(() => {}, 1000);
       stderr: "inherit",
     });
     const written = `${order}.${stays.pid}`;
-    while (!existsSync(written) || !readFileSync(written, "utf8").includes(" first\n")) await Bun.sleep(10);
+    const listsFirst = () => existsSync(written) && readFileSync(written, "utf8").includes(" first\n");
+    for (const end = Date.now() + 120_000; !listsFirst() && stays.exitCode === null && Date.now() < end;)
+      await Bun.sleep(10);
+    expect({ listsFirst: listsFirst(), exitCode: stays.exitCode }).toEqual({ listsFirst: true, exitCode: null });
     stays.kill("SIGKILL");
     expect(await stays.stdout.text()).toBe("8\n");
     await stays.exited;
@@ -189,8 +217,7 @@ test.skipIf(!isSupported)(
   "a file of an older build places what is still there",
   async () => {
     using dir = tempDir("aot-order-file-stale", { "program.ts": program, "helper.ts": helper });
-    const { executable } = await build(String(dir), "program");
-    await record(String(dir), "recorded");
+    writeFileSync(join(String(dir), "recorded"), await recordingOfProgram());
 
     writeFileSync(
       join(String(dir), "helper.ts"),
@@ -201,7 +228,8 @@ export function unused() { console.log("never"); }
 `,
     );
     writeFileSync(join(String(dir), "program.ts"), "// A line in front.\n" + program.replaceAll("twice", "doubled"));
-    const expected = await run([(await build(String(dir), "program")).executable]);
+    const { executable } = await build(String(dir), "program");
+    const expected = await run([executable]);
     expect(expected).toEqual({ stdout: expect.stringMatching(/^1 \d+\n$/), stderr: "", exitCode: 0 });
     const unordered = bytesOf(executable);
     const ordered = await build(String(dir), "program", "recorded");
@@ -213,24 +241,138 @@ export function unused() { console.log("never"); }
 );
 
 test.skipIf(!isSupported)(
+  "a file that a build in another folder recorded places what a file of this folder places",
+  async () => {
+    using dir = tempDir("aot-order-file-folders", {
+      "packages/app/program.ts": program.replace("./helper", "../shared/helper"),
+      "packages/shared/helper.ts": helper,
+    });
+    const path = (name: string) => join(String(dir), name);
+    const executable = path("program");
+    const entries: Record<string, string> = {
+      "packages/app": "./program.ts",
+      "packages": "./app/program.ts",
+      ".": "./packages/app/program.ts",
+    };
+    const buildIn = async (folder: string, ...flags: string[]) => {
+      const command = [bunExe(), "build", "--compile", "--aot", ...flags, entries[folder], "--outfile", executable];
+      const { stderr, exitCode } = await runCommand(command, path(folder), bunEnv);
+      expect({ stderr, exitCode }).toEqual({ stderr: expect.not.stringContaining("--aot-order"), exitCode: 0 });
+    };
+    const sizes: number[] = [];
+    for (const [recordedIn, folders] of [
+      ["packages/app", Object.keys(entries)],
+      [".", ["packages/app"]],
+    ] as const) {
+      await buildIn(recordedIn, "--aot-record-order");
+      expect((await run([executable], { BUN_AOT_ORDER_OUT: path("recorded") })).exitCode).toBe(0);
+      for (const folder of folders) {
+        await buildIn(folder, `--aot-order=${path("recorded")}`);
+        sizes.push(codeOfStart(executable).size);
+      }
+    }
+    expect(sizes[0]).toBeGreaterThan(0);
+    expect(sizes).toEqual(sizes.map(() => sizes[0]));
+  },
+  300_000,
+);
+
+test.skipIf(!isSupported)(
+  "files that were moved or renamed since the recording are found by their functions",
+  async () => {
+    const functions = (prefix: string) =>
+      Array.from(
+        { length: 8 },
+        (_, i) => `export function ${prefix}${i}(n: number): number {
+  let sum = ${i};
+  for (let k = 0; k < n; k++) sum = (sum * 31 + k * ${i + 3}) % 1000003;
+  return sum;
+}
+`,
+      ).join("");
+    const table = (namespace: string, prefix: string) =>
+      `[${Array.from({ length: 8 }, (_, i) => `${namespace}.${prefix}${i}`)}]`;
+    const cold = functions("other");
+    const setup =
+      "globalThis.started = process.argv.length;\nexport function later(n: number): number { return n ? later(n - 1) + 1 : 0; }\n";
+    const main = (places: Record<string, string>, setup: string) => `${Object.entries(places)
+      .map(([name, place]) => `import * as ${name} from "${place}";\n`)
+      .join("")}import { later } from "${setup}";
+import * as cold from "./cold";
+if (process.argv[2] === "never") console.log(later(process.argv.length));
+const table = process.argv[2] === "never" ? ${table("cold", "other")} : [${Object.keys(places)
+      .map(name => table(name, name))
+      .join(", ")}].flat();
+let sum = 0;
+for (let i = 0; i < table.length; i++) sum += table[i]!(process.argv.length + i);
+console.log(sum);
+`;
+    // Where the functions of that name lay, and where they lie now.
+    const places = {
+      moved: ["./lib/moved", "./moved"],
+      renamed: ["./lib/renamed", "./lib/all"],
+      movedAndRenamed: ["./lib/movedAndRenamed", "./src/deep/both"],
+      movedAndEdited: ["./lib/movedAndEdited", "./src/movedAndEdited"],
+      behindBarrel: ["./lib/behindBarrel", "./lib/behindBarrel"],
+    };
+    const placesAt = (index: number) =>
+      Object.fromEntries(Object.entries(places).map(([name, at]) => [name, at[index]]));
+    const filesAt = (index: number) =>
+      Object.fromEntries(Object.entries(places).map(([name, at]) => [at[index].slice(2) + ".ts", functions(name)]));
+    const now: Record<string, string> = {
+      ...filesAt(1),
+      "program.ts": main(placesAt(1), "./prepare"),
+      "cold.ts": cold,
+    };
+    now["src/movedAndEdited.ts"] =
+      "\nexport function added(n: number) {\n  return n + 1;\n}\n" + now["src/movedAndEdited.ts"];
+    now["lib/behind.ts"] = now["lib/behindBarrel.ts"];
+    now["lib/behindBarrel.ts"] = 'export * from "./behind";\n';
+    // Of this file the module's body alone is recorded.
+    now["prepare.ts"] = setup;
+    const recorded = { ...filesAt(0), "program.ts": main(placesAt(0), "./setup"), "setup.ts": setup, "cold.ts": cold };
+    using dir = tempDir("aot-order-file-moved", recorded);
+    using changed = tempDir("aot-order-file-moved-now", now);
+    writeFileSync(join(String(changed), "before"), await record(String(dir), "recorded"));
+    const names = new Set((await record(String(changed), "after")).split("\n").map(line => line.split(" ").at(-1)!));
+    const before = codeOfStart((await build(String(changed), "program", "before")).executable).size;
+    const after = codeOfStart((await build(String(changed), "program", "after")).executable).size;
+    const found = Object.keys(places).map(name => [name, [...names].filter(each => each.slice(0, -1) === name).length]);
+    expect({ found, before }).toEqual({ found: Object.keys(places).map(name => [name, 8]), before: after });
+  },
+  300_000,
+);
+
+test.skipIf(!isSupported)(
   "compile.aotOrder of Bun.build writes the same bytes as --aot-order",
   async () => {
     using dir = tempDir("aot-order-file-api", {
       "program.ts": program,
       "helper.ts": helper,
-      "build.ts": `const [entry, outfile, aotOrder] = process.argv.slice(2);
+      "build.ts": `const [entry, outfile, ...names] = process.argv.slice(2);
+const aotOrder = names.length > 1 ? names : (names[0] ?? false);
 const { success } = await Bun.build({ entrypoints: [entry], compile: { aot: true, outfile, aotOrder } });
 if (!success) process.exit(1);
 `,
     });
     const { executable } = await build(String(dir), "program");
-    const order = join(String(dir), "recorded");
-    await record(String(dir), "recorded");
+    const unordered = bytesOf(executable);
+    const order = join(String(dir), "recorded, by a start");
+    writeFileSync(order, await recordingOfProgram());
+    writeFileSync(join(String(dir), "recorded"), await recordingOfProgram());
     const bytes = bytesOf((await build(String(dir), "program", "recorded")).executable);
     const script = join(String(dir), "build.ts");
-    const built = await run([bunExe(), script, join(String(dir), "program.ts"), executable, order]);
-    expect({ stderr: built.stderr, exitCode: built.exitCode }).toEqual({ stderr: expect.any(String), exitCode: 0 });
-    expect(bytesOf(executable)).toBe(bytes);
+    const buildByApi = async (...aotOrder: string[]) => {
+      const built = await run([bunExe(), script, join(String(dir), "program.ts"), executable, ...aotOrder]);
+      expect({ stderr: built.stderr, exitCode: built.exitCode }).toEqual({ stderr: expect.any(String), exitCode: 0 });
+      return bytesOf(executable);
+    };
+    // The flag alone is split at commas.
+    expect(await buildByApi(order)).toBe(bytes);
+    expect(await buildByApi()).toBe(unordered);
+    // An empty name is no file, as it is for the flag.
+    expect(await buildByApi("")).toBe(unordered);
+    expect(await buildByApi("", order)).toBe(bytes);
   },
   240_000,
 );

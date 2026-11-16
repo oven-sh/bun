@@ -4,6 +4,7 @@
 //! A `package.json` that names the script and can't be parsed stops `bun lint` and `bun fmt`, which can write files.
 
 use bun_core::{Global, UnwrapOrOom, env_var};
+use bun_paths::string_paths::without_trailing_slash_portable;
 
 use super::check_command::working_directory;
 
@@ -194,39 +195,18 @@ pub(crate) fn is_of_the_project(command: &[u8]) -> bool {
 /// The directory that `--cwd <given>` names, as `bun run` takes it: `..` is folded before links are followed, and an empty
 /// value is the working directory. Unlike there, a `\` is part of a name on POSIX where there is such a name.
 pub(crate) fn directory_of_cwd(given: &[u8]) -> Vec<u8> {
-    use bun_paths::platform::Loose;
-    use bun_paths::resolve_path::{join_abs_string_spill, normalize_string_generic_t};
     // An absolute one needs no working directory, which may be deleted.
     let base = match bun_paths::is_absolute(given) {
         true => b"/".to_vec(),
         false => working_directory(),
     };
-    if cfg!(windows) {
-        return join_abs_string_spill::<Loose>(&base, &mut Vec::new(), &[given]).to_vec();
-    }
-    // On POSIX, that function takes every `\` for a separator, also one in the name of the working directory.
-    let fold = |given: &[u8]| {
-        let path = [&base[..], b"/", given].concat();
-        let mut folded = vec![b'/'; path.len() + 1];
-        let rest = &mut folded[1..];
-        let is_separator = |byte| byte == b'/';
-        let len =
-            normalize_string_generic_t::<u8, false, false>(&path, rest, b'/', is_separator).len();
-        folded.truncate(1 + len);
-        folded
-    };
-    let as_written = fold(given);
-    let exists = |path: &[u8]| {
-        bun_sys::exists_at_type(bun_core::Fd::cwd(), &bun_core::ZBox::from_bytes(path)).is_ok()
-    };
-    if !bun_core::strings::contains_char(given, b'\\') || exists(&as_written) {
-        return as_written;
-    }
+    let mut directory = bun_paths::VecPath::resolved(&[&base, given]);
     // `--cwd apps\web`, from a script that was written on Windows. `bun run` takes it on every platform.
-    let with_slashes: Vec<u8> = (given.iter())
-        .map(|byte| if *byte == b'\\' { b'/' } else { *byte })
-        .collect();
-    fold(&with_slashes)
+    if bun_core::strings::contains_char(given, b'\\') && !bun_sys::exists_z(&directory) {
+        directory.resolve_portable(&[&base, given]);
+    }
+    directory.trim_trailing_sep();
+    directory.into_vec()
 }
 
 /// Decides what `bun <command>` runs, without looking at `command`'s own arguments.
@@ -266,10 +246,7 @@ pub(crate) fn runs(command: &[u8]) -> Result<Runs, Unparsable> {
         None => working_directory(),
     };
     let nearest = nearest_package_json(&cwd);
-    let dir = (nearest.as_ref()).map_or_else(
-        || bun_core::strings::without_trailing_slash(&cwd),
-        |it| it.0,
-    );
+    let dir = (nearest.as_ref()).map_or_else(|| without_trailing_slash_portable(&cwd), |it| it.0);
     // In that script, and in what it runs, it is the command: `"lint": "bun lint"`.
     let running = env_var::BUN_INTERNAL_SCRIPTS_OF_COMMANDS::get();
     if running
@@ -428,7 +405,7 @@ pub(super) fn nearest_package_json(mut dir: &[u8]) -> Option<(&[u8], Vec<u8>, Ve
     loop {
         let path = below(dir, b"package.json");
         if let Some(contents) = read_package_json(&path) {
-            let dir = bun_core::strings::without_trailing_slash(dir);
+            let dir = without_trailing_slash_portable(dir);
             return Some((dir, path, contents));
         }
         dir = bun_paths::dirname(dir)?;
@@ -481,7 +458,7 @@ fn package_of_inherited_script(command: &[u8]) -> Option<Vec<u8>> {
         return None;
     }
     match env_var::npm_package_json::get() {
-        Some(of) => Some(bun_core::strings::without_trailing_slash(dirname::<Auto>(of)).to_vec()),
+        Some(of) => Some(without_trailing_slash_portable(dirname::<Auto>(of)).to_vec()),
         None if env_var::BUN_INTERNAL_SCRIPTS_OF_COMMANDS::get().is_some() => None,
         None if env_var::BUN_INTERNAL_CHECK_SCRIPTS::get().is_some() => None,
         None => Some(nearest_package_json(&working_directory())?.0.to_vec()),
@@ -493,8 +470,8 @@ pub(crate) fn note_package_script(env: &mut bun_dotenv::Loader, name: &[u8], dir
     use std::io::Write;
     let key = b"BUN_INTERNAL_SCRIPTS_OF_COMMANDS";
     // As `runs` finds it, wherever in the package the script is started.
-    let dir = nearest_package_json(dir)
-        .map_or_else(|| bun_core::strings::without_trailing_slash(dir), |it| it.0);
+    let dir =
+        nearest_package_json(dir).map_or_else(|| without_trailing_slash_portable(dir), |it| it.0);
     let mut running = env.get(key).unwrap_or_default().to_vec();
     let mut note = |command: &[u8], dir: &[u8]| {
         if !running_package_scripts(&running).any(|it| it == (command, dir)) {

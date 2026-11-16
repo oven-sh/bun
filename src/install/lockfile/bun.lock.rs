@@ -2150,9 +2150,10 @@ pub(crate) fn parse_into_binary_lockfile(
             );
         };
 
-        let listed_before = lockfile
-            .workspace_paths
-            .insert(name_hash, sbuf!(lockfile).append(path)?);
+        let listed_before = lockfile.workspace_paths.insert(
+            name_hash,
+            crate::resolution::append_path(path, &mut sbuf!(lockfile))?,
+        );
         match listed_before.and_then(|_| lockfile.workspace_paths.get_index(&name_hash)) {
             Some(index) => member_rows[index] = row,
             None => member_rows.push(row),
@@ -2267,7 +2268,7 @@ pub(crate) fn parse_into_binary_lockfile(
 
             let mut pkg = Package {
                 resolution: Resolution::init(crate::resolution::TaggedValue::Workspace(
-                    sbuf!(lockfile).append(row.key.slice())?,
+                    crate::resolution::append_path(row.key.slice(), &mut sbuf!(lockfile))?,
                 )),
                 ..Default::default()
             };
@@ -3502,9 +3503,10 @@ fn parse_append_dependencies(
                 name_hash,
                 behavior: Behavior::WORKSPACE,
                 version: DependencyVersion {
-                    value: DependencyVersionValue::Workspace(
-                        sbuf!(lockfile).append(row.key.slice())?,
-                    ),
+                    value: DependencyVersionValue::Workspace(crate::resolution::append_path(
+                        row.key.slice(),
+                        &mut sbuf!(lockfile),
+                    )?),
                     literal: String::default(),
                 },
             };

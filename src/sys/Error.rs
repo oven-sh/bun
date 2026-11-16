@@ -431,6 +431,14 @@ impl fmt::Display for Error {
     }
 }
 
+impl Tag {
+    /// For `map_err`, where the path for this call is built.
+    #[inline]
+    pub fn too_long(self) -> impl Fn(bun_paths::NameTooLong) -> Error + Copy {
+        move |_| Error::from_code(E::ENAMETOOLONG, self)
+    }
+}
+
 // `toJS` / `toJSWithAsyncStack` live as extension-trait
 // methods in the `bun_sys_jsc` crate per PORTING.md.
 

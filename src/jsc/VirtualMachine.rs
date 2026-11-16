@@ -4978,19 +4978,13 @@ impl VirtualMachine {
                     let mut busted_working_directory = false;
                     let buster_name: &[u8] = if bun_paths::is_absolute(normalized_specifier) {
                         if let Some(dir) = bun_paths::dirname(normalized_specifier) {
-                            if dir.len() > buf.len() {
+                            let mut native = bun_paths::SlicePath::new_in(buf);
+                            if native.push_portable(dir).is_err() {
                                 return Err(crate::CrateError::ModuleNotFound);
                             }
                             // `load_as_file` caches the listing under the specifier's own slashes, so bust that key too.
-                            busted_as_spelled = bust_dir_cache(
-                                bun_paths::string_paths::without_trailing_slash_windows_path(dir),
-                            );
-                            // Normalized without trailing slash.
-                            bun_paths::string_paths::normalize_slashes_only(
-                                buf,
-                                dir,
-                                bun_paths::SEP,
-                            )
+                            busted_as_spelled = bust_dir_cache(dir);
+                            native.into_z().as_bytes()
                         } else {
                             // Absolute but root — fall through to join.
                             &b""[..]
@@ -5053,10 +5047,7 @@ impl VirtualMachine {
                     };
 
                     // Only re-query if we previously had something cached.
-                    if bust_dir_cache(
-                        bun_paths::string_paths::without_trailing_slash_windows_path(buster_name),
-                    ) || busted_as_spelled
-                        || busted_working_directory
+                    if bust_dir_cache(buster_name) || busted_as_spelled || busted_working_directory
                     {
                         continue;
                     }

@@ -1,6 +1,6 @@
 #![warn(unused_must_use)]
 
-use core::cell::{Cell, RefCell};
+use core::cell::OnceCell;
 use core::sync::atomic::{AtomicBool, Ordering};
 
 use bun_ast::ExportsKind;
@@ -8,8 +8,7 @@ use bun_ast::Source;
 use bun_core::{FeatureFlags, env_var};
 use bun_core::{String as BunString, StringView, ZStr};
 use bun_js_parser::ParserOptions;
-use bun_paths::resolve_path::{self as path_handler, platform};
-use bun_paths::{self as paths, MAX_PATH_BYTES, PathBuffer, SEP};
+use bun_paths::{self as paths, PoolPath, VecPath};
 use bun_resolver::fs::FileSystem;
 use bun_sys::{self as sys, Fd};
 // Wyhash (final4 variant). Must stay stable so on-disk
@@ -98,9 +97,6 @@ const EXPECTED_VERSION: u32 = 52;
 /// key still incorporates the source byte length (see `input_byte_length` /
 /// `is_stale`), so shrinking this does not weaken staleness detection.
 const MINIMUM_CACHE_SIZE: usize = 4 * 1024;
-
-/// Length of the hex `input_hash` plus the longest suffix `write_cache_filename` appends.
-const CACHE_FILE_NAME_MAX_LEN: usize = size_of::<u64>() * 2 + ".debug.pile".len();
 
 // When making parser changes, it gets extremely confusing.
 #[cfg(bun_debug)]
@@ -269,7 +265,7 @@ pub struct Entry {
 impl Entry {
     pub(crate) fn save(
         destination_dir: Fd,
-        destination_path: &ZStr,
+        file_name: &ZStr,
         input_byte_length: u64,
         input_hash: u64,
         features_hash: u64,
@@ -283,7 +279,7 @@ impl Entry {
         // atomically write to a tmpfile and then move it to the final destination
         let mut tmpname_buf = bun_paths::path_buffer_pool::get();
         let tmpfilename = FileSystem::tmpname(
-            paths::extension(destination_path.as_bytes()),
+            paths::extension(file_name),
             &mut tmpname_buf[..],
             input_hash,
         )?;
@@ -392,15 +388,7 @@ impl Entry {
             }
         }
 
-        // The basename of a NUL-terminated
-        // path is itself NUL-terminated (it's a suffix), so we can hand it to
-        // `Tmpfile::finish` as a `&ZStr` without copying.
-        let dest_slice = destination_path.as_bytes();
-        let base = paths::basename(dest_slice);
-        // SAFETY: `base` is a suffix of `destination_path`, which the caller
-        // built via `get_cache_file_path` and is NUL-terminated at `dest_slice.len()`.
-        let base_z = unsafe { ZStr::from_raw(base.as_ptr(), base.len()) };
-        tmpfile.finish(base_z).map_err(|(err, _)| err)?;
+        tmpfile.finish(file_name).map_err(|(err, _)| err)?;
         Ok(())
     }
 
@@ -585,44 +573,35 @@ fn pread_box(file: &sys::File, len: usize, offset: u64) -> crate::CrateResult<Bo
 }
 
 impl RuntimeTranspilerCache {
-    pub(crate) fn write_cache_filename(
-        buf: &mut [u8],
-        input_hash: u64,
-    ) -> crate::CrateResult<usize> {
-        // Hex-encode the 8 native-endian bytes of `input_hash`.
-        let bytes = input_hash.to_ne_bytes();
-        let suffix: &[u8] = if bun_core::env::IS_DEBUG {
+    fn get_cache_file_path(input_hash: u64) -> crate::CrateResult<PoolPath> {
+        thread_local! {
+            static CACHE_DIR: OnceCell<Option<VecPath>> = const { OnceCell::new() };
+        }
+        const SUFFIX: &[u8] = if bun_core::env::IS_DEBUG {
             b".debug.pile"
         } else {
             b".pile"
         };
-        let needed = bytes.len() * 2 + suffix.len();
-        if buf.len() < needed {
-            return Err(crate::CrateError::Sys(bun_errno::SystemErrno::ENOSPC));
+
+        if IS_DISABLED.load(Ordering::Relaxed) {
+            return Err(crate::CrateError::CacheDisabled);
         }
-        let i = bun_core::fmt::bytes_to_hex_lower(&bytes, &mut buf[..bytes.len() * 2]);
-        buf[i..i + suffix.len()].copy_from_slice(suffix);
-        Ok(needed)
+        let mut hex = [0u8; 2 * size_of::<u64>()];
+        bun_core::fmt::bytes_to_hex_lower(&input_hash.to_ne_bytes(), &mut hex);
+        let path = CACHE_DIR.with(|dir| {
+            let mut path = PoolPath::from(dir.get_or_init(Self::find_cache_dir).as_ref()?).ok()?;
+            path.push(&hex).ok()?;
+            path.append(SUFFIX).ok()?;
+            Some(path)
+        });
+        path.ok_or_else(|| {
+            IS_DISABLED.store(true, Ordering::Relaxed);
+            crate::CrateError::CacheDisabled
+        })
     }
 
-    pub(crate) fn get_cache_file_path(
-        buf: &mut PathBuffer,
-        input_hash: u64,
-    ) -> crate::CrateResult<&ZStr> {
-        let cache_dir_len = Self::get_cache_dir(buf)?;
-        buf[cache_dir_len] = SEP;
-        let cache_filename_len =
-            Self::write_cache_filename(&mut buf[cache_dir_len + 1..], input_hash)?;
-        let total = cache_dir_len + 1 + cache_filename_len;
-        buf[total] = 0;
-
-        // SAFETY: we wrote a NUL at buf[total] above.
-        Ok(ZStr::from_buf(&buf[..], total))
-    }
-
-    /// Writes the resolved cache directory into `buf` (NUL-terminated) and
-    /// returns its byte length. Returns 0 to mean "cache disabled".
-    fn really_get_cache_dir(buf: &mut PathBuffer) -> usize {
+    /// `None` disables the cache.
+    fn find_cache_dir() -> Option<VecPath> {
         #[cfg(bun_debug)]
         {
             BUN_DEBUG_RESTORE_FROM_CACHE.store(
@@ -634,96 +613,23 @@ impl RuntimeTranspilerCache {
         }
 
         if let Some(dir) = env_var::BUN_RUNTIME_TRANSPILER_CACHE_PATH.get() {
-            if dir.is_empty() || (dir.len() == 1 && dir[0] == b'0') {
-                return 0;
-            }
-
-            let len = dir.len().min(MAX_PATH_BYTES - 1);
-            buf[0..len].copy_from_slice(&dir[0..len]);
-            buf[len] = 0;
-            return len;
+            return (!matches!(dir, b"" | b"0")).then(|| VecPath::from(dir));
         }
 
-        // The inline `bun_resolver::fs::FileSystem` surface only exposes
-        // `abs_buf` (no NUL-terminating `_z` variant), so go straight to the
-        // underlying joiner with the same `top_level_dir` + `Loose` platform
-        // that `absBufZ` used.
         let top = FileSystem::get().top_level_dir();
 
-        if let Some(dir) = env_var::XDG_CACHE_HOME.get() {
-            let parts: &[&[u8]] = &[dir, b"bun", b"@t@"];
-            return path_handler::join_abs_string_buf_z_checked::<platform::Loose>(
-                top,
-                &mut buf[..],
-                parts,
-            )
-            .map_or(0, |dir| dir.len());
+        if let Some(dir) = env_var::XDG_CACHE_HOME.get_not_empty() {
+            return Some(VecPath::resolved_portable(&[top, dir, b"bun/@t@"]));
         }
 
-        #[cfg(target_os = "macos")]
-        {
-            // On a mac, default to ~/Library/Caches/bun/*
-            // This is different than ~/.bun/install/cache, and not configurable by the user.
-            if let Some(home) = env_var::HOME.get() {
-                let parts: &[&[u8]] = &[home, b"Library/", b"Caches/", b"bun", b"@t@"];
-                return path_handler::join_abs_string_buf_z_checked::<platform::Loose>(
-                    top,
-                    &mut buf[..],
-                    parts,
-                )
-                .map_or(0, |dir| dir.len());
-            }
-        }
-
-        if let Some(dir) = env_var::HOME.get() {
-            let parts: &[&[u8]] = &[dir, b".bun", b"install", b"cache", b"@t@"];
-            return path_handler::join_abs_string_buf_z_checked::<platform::Loose>(
-                top,
-                &mut buf[..],
-                parts,
-            )
-            .map_or(0, |dir| dir.len());
-        }
-
-        0
-    }
-
-    // Only do this at most once per-thread.
-    // A Rust thread_local can't easily hand out borrows into itself across
-    // calls, so cache the resolved path bytes + length and re-copy into the
-    // caller's buffer on each call.
-    thread_local! {
-        // bun.ThreadlocalBuffers: heap-backed so only a Box pointer lives in TLS.
-        static CACHE_DIR_BUF: RefCell<Box<PathBuffer>> = RefCell::new(Box::new(PathBuffer::ZEROED));
-        static RUNTIME_TRANSPILER_CACHE: Cell<Option<usize>> = const { Cell::new(None) };
-    }
-
-    /// Copies the (cached) cache-dir path into `buf`, NUL-terminates it, and
-    /// returns its length, so the caller can keep mutably borrowing `buf` to
-    /// append the filename.
-    fn get_cache_dir(buf: &mut PathBuffer) -> crate::CrateResult<usize> {
-        if IS_DISABLED.load(Ordering::Relaxed) {
-            return Err(crate::CrateError::CacheDisabled);
-        }
-        let path_len = match Self::RUNTIME_TRANSPILER_CACHE.with(|c| c.get()) {
-            Some(len) => len,
-            None => {
-                let len = Self::CACHE_DIR_BUF
-                    .with_borrow_mut(|tl_buf| Self::really_get_cache_dir(tl_buf));
-                // `get_cache_file_path` appends a separator, the file name and a NUL.
-                if len == 0 || len + 1 + CACHE_FILE_NAME_MAX_LEN + 1 > MAX_PATH_BYTES {
-                    IS_DISABLED.store(true, Ordering::Relaxed);
-                    return Err(crate::CrateError::CacheDisabled);
-                }
-                Self::RUNTIME_TRANSPILER_CACHE.with(|c| c.set(Some(len)));
-                len
-            }
+        // On a mac, this is different than ~/.bun/install/cache, and not configurable by the user.
+        let below_home: &[u8] = if cfg!(target_os = "macos") {
+            b"Library/Caches/bun/@t@"
+        } else {
+            b".bun/install/cache/@t@"
         };
-        Self::CACHE_DIR_BUF.with_borrow(|tl_buf| {
-            buf[0..path_len].copy_from_slice(&tl_buf[0..path_len]);
-        });
-        buf[path_len] = 0;
-        Ok(path_len)
+        let home = env_var::HOME.get_not_empty()?;
+        Some(VecPath::resolved_portable(&[top, home, below_home]))
     }
 
     pub(crate) fn from_file(
@@ -733,11 +639,8 @@ impl RuntimeTranspilerCache {
     ) -> crate::CrateResult<Entry> {
         let _tracer = bun_core::perf::trace("RuntimeTranspilerCache.fromFile");
 
-        let mut cache_file_path_buf = bun_paths::path_buffer_pool::get();
-        let cache_file_path = Self::get_cache_file_path(&mut cache_file_path_buf, input_hash)?;
-        debug_assert!(!cache_file_path.is_empty());
         Self::from_file_with_cache_file_path(
-            cache_file_path,
+            &Self::get_cache_file_path(input_hash)?,
             input_hash,
             feature_hashes,
             input_stat_size,
@@ -807,29 +710,23 @@ impl RuntimeTranspilerCache {
     ) -> crate::CrateResult<()> {
         let _tracer = bun_core::perf::trace("RuntimeTranspilerCache.toFile");
 
-        let mut cache_file_path_buf = bun_paths::path_buffer_pool::get();
-        let cache_file_path = Self::get_cache_file_path(&mut cache_file_path_buf, input_hash)?;
+        let cache_file_path = Self::get_cache_file_path(input_hash)?;
         bun_core::scoped_log!(
             cache,
             "filename to put into: '{}'",
             bstr::BStr::new(cache_file_path.as_bytes())
         );
 
-        if cache_file_path.is_empty() {
-            return Ok(());
-        }
-
-        let dirname = path_handler::dirname::<platform::Auto>(cache_file_path.as_bytes());
-        let cache_dir = if dirname.is_empty() {
-            None
-        } else {
+        let cache_dir = if let Some(dirname) = cache_file_path.dirname() {
             let dir = sys::Dir::cwd().make_open_path(dirname, sys::OpenDirOptions::default())?;
             Some(sys::File::from_fd(dir.into_raw()).make_lib_uv_owned()?)
+        } else {
+            None
         };
 
         Entry::save(
             cache_dir.as_ref().map_or_else(Fd::cwd, sys::File::fd),
-            cache_file_path,
+            cache_file_path.tail(cache_file_path.len() - cache_file_path.basename().len()),
             input_byte_length,
             input_hash,
             features_hash,

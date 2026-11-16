@@ -526,6 +526,16 @@ describe.concurrent("bun compile --library", () => {
         `error: --library writes a package.json into --outdir, so --outdir can't be the project folder (${dir}). Use a folder inside it, such as --outdir=dist\n`,
     ],
     [
+      ["--outdir", "./"],
+      (dir: string) =>
+        `error: --library writes a package.json into --outdir, so --outdir can't be the project folder (${dir}). Use a folder inside it, such as --outdir=dist\n`,
+    ],
+    [
+      ["--outdir", isWindows ? "a/b/../.." : "a\\b/.."],
+      (dir: string) =>
+        `error: --library writes a package.json into --outdir, so --outdir can't be the project folder (${dir}). Use a folder inside it, such as --outdir=dist\n`,
+    ],
+    [
       ["--outdir", "src"],
       () =>
         "error: the entry point src/index.ts is inside --outdir, where it would be overwritten. Choose another --outdir\n",

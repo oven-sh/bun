@@ -2,7 +2,7 @@ import { FileSystemRouter } from "bun";
 import { heapStats } from "bun:jsc";
 import { expect, it } from "bun:test";
 import fs, { mkdirSync, rmSync } from "fs";
-import { bunEnv, bunExe, isASAN, isMacOS, isWindows, normalizeBunSnapshot, tempDir, tmpdirSync } from "harness";
+import { bunEnv, bunExe, bunRun, isASAN, isMacOS, isWindows, normalizeBunSnapshot, tempDir, tmpdirSync } from "harness";
 import path, { dirname } from "path";
 
 function createTree(basedir: string, paths: string[]) {
@@ -1318,4 +1318,17 @@ it(".query and .params support names that look like array indices", () => {
   const params = router.match("/hello")!.params;
   expect(params).toEqual({ 0: "hello" });
   expect(params[0]).toBe("hello");
+});
+
+it.skipIf(isWindows)("a name with a backslash does not stand for another file or directory", async () => {
+  using dir = tempDir("fs-router-backslash", {
+    "outside.js": "",
+    "pages": { "index.js": "", "a\\..": { "b.js": "" }, "..\\outside.js": "" },
+    "main.js": `
+      const router = new Bun.FileSystemRouter({ dir: "./pages", style: "nextjs" });
+      router.reload();
+      console.log(Object.keys(router.routes).join());
+    `,
+  });
+  expect(await bunRun(path.join(String(dir), "main.js"))).toSpawn("/");
 });

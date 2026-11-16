@@ -115,6 +115,25 @@ pub fn is_below_backslash(path: &[u8]) -> bool {
     !cfg!(windows) && contains_char(directory, b'\\')
 }
 
+/// False, with an error in `log`, if one of `entry_points` [`is_below_backslash`]. Without any, it is what is in `cwd`.
+pub fn sees_beside(cwd: &[u8], entry_points: &[Vec<u8>], log: &mut bun_ast::Log) -> bool {
+    let unseen = (entry_points.iter().map(Vec::as_slice))
+        .chain(entry_points.is_empty().then_some(&b"tsconfig.json"[..]))
+        .map(|path| bun_paths::Path::resolved_portable(&[cwd, path]))
+        .find(|path| is_below_backslash(path));
+    if let Some(path) = &unseen {
+        log.add_error_fmt(
+            None,
+            bun_ast::Loc::EMPTY,
+            format_args!(
+                "The type checker cannot read a path that has a backslash in a directory's name: {}",
+                bstr::BStr::new(path.as_bytes())
+            ),
+        );
+    }
+    unseen.is_none()
+}
+
 /// Converts a command-line path, which is relative to `cwd`. Where `/` is the file system root, a path that begins with
 /// it is a native path.
 pub fn from_argument(cwd: &[u8], path: &[u8]) -> Vec<u8> {

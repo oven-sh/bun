@@ -9,7 +9,7 @@ use core::mem::size_of;
 use bun_alloc::{AllocError, Arena};
 use bun_collections::{ArrayHashMap, BoundedArray, StringArrayHashMap};
 use bun_jsc::{JSGlobalObject, JSValue, JsResult, StringJsc, StrongOptional};
-use bun_paths as paths;
+use bun_paths::{self as paths, SlashPath};
 use bun_resolver::{DirInfo, Resolver};
 
 use crate::bake::dev_server::route_bundle::IndexOptional as RouteBundleIndexOptional;
@@ -615,9 +615,9 @@ impl FrameworkRouter {
                             }
                         }
 
-                        if let Some(child_info) =
-                            r.read_dir_info_ignore_error(fs_ref.abs(&[file.dir, file.base()]))
-                        {
+                        let child_info =
+                            (file.path()).and_then(|path| r.read_dir_info_ignore_error(&path));
+                        if let Some(child_info) = child_info {
                             self.scan_inner(t_index, r, &child_info, arena_state, ctx)?;
                         }
                     }
@@ -641,46 +641,16 @@ impl FrameworkRouter {
                         }
 
                         let t = &self.types[t_index.get() as usize];
-                        let abs_path = fs_ref.abs(&[file.dir, file.base()]);
+                        let Some(abs_path) = file.path() else {
+                            continue 'outer;
+                        };
+                        let abs_path: &[u8] = &abs_path;
 
                         // Parse the pattern from the path relative to this type's root, which can be outside `self.root`.
-                        let mut rel_path_buf = bun_paths::path_buffer_pool::get();
-                        let rel_path_len = 1 + paths::resolve_path::relative_normalized_buf::<
-                            paths::platform::Auto,
-                            true,
-                        >(
-                            &mut rel_path_buf[1..], &t.abs_root, abs_path
-                        )
-                        .len();
-                        rel_path_buf[0] = b'/';
-                        paths::resolve_path::platform_to_posix_in_place(
-                            &mut rel_path_buf[0..rel_path_len],
-                        );
-                        let rel_path: &[u8] = &rel_path_buf[0..rel_path_len];
-
-                        // For a path outside `self.root`, each root segment becomes "../".
-                        // `DevServer::relative_path` uses the same bound.
-                        let in_root = abs_path.len() > self.root.len()
-                            && abs_path.starts_with(&self.root)
-                            && paths::is_sep_native(abs_path[self.root.len()]);
-                        let label_fits =
-                            in_root || abs_path.len() + self.root.len() * 2 < paths::MAX_PATH_BYTES;
-                        let mut full_rel_path_buf = bun_paths::path_buffer_pool::get();
-                        let full_rel_path: &[u8] = if label_fits {
-                            let len = paths::resolve_path::relative_normalized_buf::<
-                                paths::platform::Auto,
-                                true,
-                            >(
-                                &mut full_rel_path_buf[..], &self.root, abs_path
-                            )
-                            .len();
-                            paths::resolve_path::platform_to_posix_in_place(
-                                &mut full_rel_path_buf[0..len],
-                            );
-                            &full_rel_path_buf[0..len]
-                        } else {
-                            rel_path
-                        };
+                        let mut rel_path = SlashPath::relative(&t.abs_root, abs_path);
+                        rel_path.replace_prefix(0, b"/");
+                        let rel_path: &[u8] = &rel_path;
+                        let full_rel_path: &[u8] = &SlashPath::relative(&self.root, abs_path);
 
                         let mut log = TinyLog::empty();
                         // The arena is reset at the end of every arm via
@@ -779,7 +749,7 @@ impl FrameworkRouter {
                                 t_index,
                                 InsertPattern::Dynamic(pattern),
                                 file_kind,
-                                fs_ref.abs(&[file.dir, file.base()]),
+                                abs_path,
                                 ctx,
                                 &mut out_colliding_file_id,
                             )
@@ -810,7 +780,7 @@ impl FrameworkRouter {
                                 t_index,
                                 InsertPattern::Static(pattern),
                                 file_kind,
-                                fs_ref.abs(&[file.dir, file.base()]),
+                                abs_path,
                                 ctx,
                                 &mut out_colliding_file_id,
                             )

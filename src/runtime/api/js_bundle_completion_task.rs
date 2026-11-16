@@ -305,11 +305,11 @@ impl JSBundleCompletionTask {
                 check_command::warn_about_skipped_typed_files(option, &mut self.log);
             }
             let working_directory = bun_resolver::fs::FileSystem::get().top_level_dir();
-            let outdir = join_abs_string::<platform::Auto>(
+            let outdir = bun_paths::VecPath::resolved(&[
                 working_directory,
-                &[&config.dir.list, &config.outdir.list],
-            )
-            .to_vec();
+                &config.dir.list,
+                &config.outdir.list,
+            ]);
             if declarations.writes_typed_files {
                 let tsconfig = &config.tsconfig_override.list;
                 let request = compile_command::TypedOutputs {
@@ -335,7 +335,7 @@ impl JSBundleCompletionTask {
                     format_args!(
                         "{} writing declaration files to {}",
                         bstr::BStr::new(error.name()),
-                        bstr::BStr::new(&outdir)
+                        bstr::BStr::new(outdir.as_bytes())
                     ),
                 );
                 self.result = Err(bun_bundler::Error::BuildFailed);
@@ -749,8 +749,6 @@ impl JSBundleCompletionTask {
                 // computation reads `self.config`. Snapshot the config slices
                 // once outside the loop so the per-file `&mut` doesn't overlap
                 // `&self.config`.
-                let outdir_is_abs = !self.config.outdir.is_empty()
-                    && bun_paths::is_absolute(&self.config.outdir.list);
                 let outdir = self.config.outdir.list.clone();
                 let dir = self.config.dir.list.clone();
                 let top_level_dir = bun_resolver::fs::FileSystem::get().top_level_dir();
@@ -758,17 +756,8 @@ impl JSBundleCompletionTask {
                 let mut to_assign_on_sourcemap = JSValue::ZERO;
                 for (i, output_file) in output_files.iter_mut().enumerate() {
                     let path: Box<[u8]> = if !outdir.is_empty() {
-                        if outdir_is_abs {
-                            Box::from(join_abs_string::<platform::Auto>(
-                                &outdir,
-                                &[&output_file.dest_path],
-                            ))
-                        } else {
-                            Box::from(join_abs_string::<platform::Auto>(
-                                top_level_dir,
-                                &[&dir, &outdir, &output_file.dest_path],
-                            ))
-                        }
+                        let parts = [top_level_dir, &dir, &outdir, &output_file.dest_path];
+                        Box::from(bun_paths::Path::resolved(&parts).as_bytes())
                     } else {
                         output_file.dest_path.clone()
                     };

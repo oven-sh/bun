@@ -2380,14 +2380,14 @@ describe("the trusted set", () => {
       expect(exitCode).toBe(0);
     });
 
-    test.concurrent.skipIf(isWindows)("keeps commands in PATH", async () => {
+    test.concurrent.skipIf(isWindows).each(["system", "system\\"])("keeps commands in PATH: %s", async system => {
       using ctx = await project("hoisted", {
         ...projectFiles(true),
-        "system/what-bin": "#!/bin/sh\nprintf system > what-bin.txt\n",
+        [`${system}/what-bin`]: "#!/bin/sh\nprintf system > what-bin.txt\n",
       });
-      await chmod(join(ctx.packageDir, "system", "what-bin"), 0o755);
+      await chmod(join(ctx.packageDir, system, "what-bin"), 0o755);
       const { err, exitCode } = await bun(ctx, ["install"], {
-        PATH: `${join(ctx.packageDir, "system")}:${ctx.env.PATH}`,
+        PATH: `${join(ctx.packageDir, system)}:${ctx.env.PATH}`,
       });
       expect(err).not.toContain("error:");
       expect(await readOutput(ctx, "hoisted")).toBe("system");

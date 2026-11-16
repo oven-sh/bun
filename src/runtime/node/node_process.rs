@@ -635,14 +635,11 @@ mod _impl {
                         saved.get_or_insert(prev_cwd);
                     });
                 }
-                #[cfg(windows)]
-                let without_trailing_slash =
-                    bun_paths::string_paths::without_trailing_slash_windows_path;
-                #[cfg(not(windows))]
-                let without_trailing_slash = strings::without_trailing_slash;
                 bun_string_jsc::create_utf8_for_js(
                     global_object,
-                    without_trailing_slash(vm.top_level_dir()),
+                    bun_paths::string_paths::without_trailing_slash_windows_path(
+                        vm.top_level_dir(),
+                    ),
                 )
             }
             bun_sys::Result::Err(e) => {

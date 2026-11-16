@@ -3460,11 +3460,9 @@ mod draft {
         argv.push({
             #[cfg(windows)]
             {
-                // `to_utf8_alloc` is infallible (Vec<u8>); OOM aborts.
-                let image_path = strings::to_utf8_alloc(bun_sys::windows::exe_path_w());
-                let mut s = image_path[0..image_path.len() - 3].to_vec();
-                s.extend_from_slice(b"pdb");
-                s
+                let mut pdb = bun_paths::VecPath::from(bun_sys::windows::exe_path_w());
+                pdb.set_extension(b".pdb");
+                pdb.into_vec()
             }
             #[cfg(not(windows))]
             {

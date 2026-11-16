@@ -1,7 +1,8 @@
 use bun_alloc::AllocError;
-use bun_core::strings;
 
 use crate::DELIMITER;
+use crate::platform::Auto;
+use crate::style::len_without_seps;
 
 fn trim_path_delimiters(input: &[u8]) -> &[u8] {
     let mut trimmed = input;
@@ -19,30 +20,6 @@ pub struct EnvPath {
     buf: Vec<u8>,
 }
 
-/// Input accepted by [`EnvPath::append`].
-///
-/// Raw slices are trimmed; anything else is assumed already-trimmed and has
-/// `.slice()` called on it.
-pub trait EnvPathInput {
-    fn as_trimmed(&self) -> &[u8];
-}
-
-impl EnvPathInput for [u8] {
-    fn as_trimmed(&self) -> &[u8] {
-        strings::without_trailing_slash(trim_path_delimiters(self))
-    }
-}
-
-// "assume already trimmed" — blanket over all const params so callers may pass
-// any `&Path<u8, KIND, SEP, CHECK>` (e.g. `PathComponentBuilder.apply()`).
-impl<const KIND: u8, const SEP_OPT: u8, const CHECK: u8> EnvPathInput
-    for crate::Path<u8, KIND, SEP_OPT, CHECK>
-{
-    fn as_trimmed(&self) -> &[u8] {
-        self.slice()
-    }
-}
-
 impl EnvPath {
     pub fn init_capacity(capacity: usize) -> Result<Self, AllocError> {
         // `Vec::with_capacity` aborts on OOM under the global mimalloc allocator.
@@ -55,43 +32,21 @@ impl EnvPath {
         self.buf.as_slice()
     }
 
-    pub fn append<I: EnvPathInput + ?Sized>(&mut self, input: &I) -> Result<(), AllocError> {
-        let trimmed: &[u8] = input.as_trimmed();
+    pub fn append(&mut self, input: &[u8]) -> Result<(), AllocError> {
+        let trimmed = trim_path_delimiters(input);
+        self.append_entry(&trimmed[..len_without_seps::<Auto, _>(trimmed, 1)]);
+        Ok(())
+    }
 
-        if trimmed.is_empty() {
-            return Ok(());
+    /// One directory, which is taken as it is.
+    pub fn append_entry(&mut self, entry: &[u8]) {
+        if entry.is_empty() {
+            return;
         }
-
         if !self.buf.is_empty() {
-            self.buf.reserve(trimmed.len() + 1);
+            self.buf.reserve(entry.len() + 1);
             self.buf.push(DELIMITER);
-            self.buf.extend_from_slice(trimmed);
-        } else {
-            self.buf.extend_from_slice(trimmed);
         }
-        Ok(())
-    }
-
-    pub fn path_component_builder(&mut self) -> PathComponentBuilder<'_> {
-        PathComponentBuilder {
-            env_path: self,
-            path_buf: crate::AutoAbsPath::init(),
-        }
-    }
-}
-
-pub struct PathComponentBuilder<'a> {
-    env_path: &'a mut EnvPath,
-    path_buf: crate::AutoAbsPath,
-}
-
-impl<'a> PathComponentBuilder<'a> {
-    pub fn append(&mut self, component: &[u8]) {
-        let _ = self.path_buf.append(component); // OOM/capacity: fire-and-forget
-    }
-
-    pub fn apply(self) -> Result<(), AllocError> {
-        self.env_path.append(&self.path_buf)?;
-        Ok(())
+        self.buf.extend_from_slice(entry);
     }
 }

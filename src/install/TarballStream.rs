@@ -906,7 +906,7 @@ fn open_output_file(
             Ok(fd) => Ok(fd),
             Err(e) => match e.get_errno() {
                 bun_sys::E::EPERM | bun_sys::E::ENOENT => 'brk: {
-                    let Some(dir) = bun_paths::Dirname::dirname::<u16>(path_slice) else {
+                    let Some(dir) = bun_paths::dirname(path_slice) else {
                         return Err(e.to_zig_err().into());
                     };
                     let _ = bun_sys::make_path::make_path::<u16>(Dir::borrow(&dest_fd), dir);

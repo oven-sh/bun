@@ -22,8 +22,10 @@ use bun_event_loop::{self, AnyEventLoop, EventLoopHandle};
 use bun_http as http;
 use bun_ini as ini;
 use bun_paths::resolve_path::{self, PosixToWinNormalizer, platform};
-use bun_paths::string_paths::without_trailing_slash_windows_path;
-use bun_paths::{DELIMITER, PathBuffer, SEP};
+use bun_paths::string_paths::{
+    without_trailing_slash_portable, without_trailing_slash_windows_path,
+};
+use bun_paths::{DELIMITER, PathBuffer, PoolPath, SEP, VecPath};
 use bun_semver as Semver;
 use bun_sys::{self, Fd};
 use bun_threading::{ThreadPool, UnboundedQueue, thread_pool};
@@ -232,8 +234,8 @@ pub use directories::{
     cached_npm_package_folder_print_basename, cached_tarball_folder_name,
     cached_tarball_folder_name_print, compute_cache_dir_and_subpath, fetch_cache_directory_path,
     get_cache_directory, get_temporary_directory, global_link_dir, global_link_dir_path,
-    is_folder_in_cache, path_for_cached_npm_path, path_for_resolution, save_lockfile,
-    setup_global_dir, update_lockfile_if_needed, write_yarn_lock,
+    is_folder_in_cache, is_importable_from, path_for_cached_npm_path, path_for_resolution,
+    save_lockfile, setup_global_dir, update_lockfile_if_needed, write_yarn_lock,
 };
 
 pub use self::package_manager_enqueue as enqueue;
@@ -1333,7 +1335,7 @@ fn ensure_temp_node_gyp_script_run(manager: &mut PackageManager) -> Result<(), E
 
     // `bun x` removes the PATH entry that equals BUN_WHICH_IGNORE_CWD, so the two must be identical.
     let parts: [&[u8]; 3] = [
-        strings::without_trailing_slash(tempdir.name),
+        without_trailing_slash_portable(tempdir.name),
         &[SEP],
         &manager.node_gyp_tempdir_name,
     ];
@@ -1709,34 +1711,25 @@ fn load_npmrc_files<'a>(
     project_npmrcs: &mut dyn Iterator<Item = &'a ZStr>,
     diagnostics: ini::NpmrcDiagnostics,
 ) -> Api::BunInstall {
-    let mut buf = bun_paths::path_buffer_pool::get();
-    let parts = [b"./.npmrc" as &[u8]];
-    // `None` (too long for `buf`) could not be opened either, so it counts as a missing file.
-    let join = resolve_path::join_abs_string_buf_z_checked::<platform::Auto>;
+    // One that is too long could not be opened either, so it counts as a missing file.
+    let join = |dir: &[u8], file: &[u8]| PoolPath::resolved_portable(&[dir, file]).ok();
     // npm's `userconfig` replaces both candidates below (actions/setup-node exports it).
     let userconfig = [b"NPM_CONFIG_USERCONFIG" as &[u8], b"npm_config_userconfig"]
         .into_iter()
         .find_map(|key| env.get(key).filter(|path| !path.is_empty()));
 
-    // npm ignores XDG_CONFIG_HOME: `$XDG_CONFIG_HOME/.npmrc` counts only when that file exists.
-    let mut global_len: usize = 0;
     // An empty or relative value is ignored, as it is when `.bunfig.toml` is looked up.
     let usable = |dir: &&[u8]| bun_paths::is_fully_qualified(dir);
-    if let Some(userconfig) = userconfig {
-        let userconfig = Api::BunInstall::resolve_path(start_dir, userconfig);
-        global_len = join(start_dir, &mut buf, &[&userconfig[..]]).map_or(0, ZStr::len);
-    } else if let Some(xdg_dir) = bun_core::env_var::XDG_CONFIG_HOME.get().filter(usable) {
-        global_len =
-            (join(xdg_dir, &mut buf, &parts).filter(|p| bun_sys::exists_z(p))).map_or(0, ZStr::len);
-    }
-    if global_len == 0 && userconfig.is_none() {
-        if let Some(home_dir) = bun_core::env_var::HOME.get().filter(usable) {
-            global_len = join(home_dir, &mut buf, &parts).map_or(0, ZStr::len);
-        }
-    }
+    let npmrc_in = |dir: Option<&[u8]>| join(dir.filter(usable)?, b".npmrc");
+    let user_npmrc = match userconfig {
+        Some(path) => join(start_dir, &Api::BunInstall::resolve_path(start_dir, path)),
+        // npm ignores XDG_CONFIG_HOME: `$XDG_CONFIG_HOME/.npmrc` counts only when that file exists.
+        None => npmrc_in(bun_core::env_var::XDG_CONFIG_HOME.get())
+            .filter(|path| bun_sys::exists_z(path))
+            .or_else(|| npmrc_in(bun_core::env_var::HOME.get())),
+    };
 
-    let user_npmrc = (global_len > 0).then(|| ZStr::from_buf(&buf[..], global_len));
-    let mut paths: Vec<&ZStr> = user_npmrc.into_iter().collect();
+    let mut paths: Vec<&ZStr> = user_npmrc.as_deref().into_iter().collect();
     for path in project_npmrcs {
         paths.push(path);
     }
@@ -1829,7 +1822,7 @@ impl<'a> PackageJsonWalk<'a> {
             self.next_dir = bun_core::dirname(dir);
             self.path.clear();
             self.path
-                .extend_from_slice(strings::without_trailing_slash(dir));
+                .extend_from_slice(without_trailing_slash_portable(dir));
             self.path.extend_from_slice(b"/package.json");
             let opened = bun_sys::File::openat(
                 bun_sys::Fd::cwd(),
@@ -1900,9 +1893,9 @@ fn find_workspace_root<'a>(
 #[cfg(unix)]
 fn path_as_typed(dir: &[u8]) -> Option<&'static [u8]> {
     let start_dir = bun_paths::fs::FileSystem::instance().initial_top_level_dir();
-    let below_dir = strings::without_trailing_slash(start_dir).strip_prefix(dir)?;
+    let below_dir = without_trailing_slash_portable(start_dir).strip_prefix(dir)?;
     let pwd = bun_core::env_var::PWD.platform_get()?;
-    let typed = strings::without_trailing_slash(pwd).strip_suffix(below_dir)?;
+    let typed = without_trailing_slash_portable(pwd).strip_suffix(below_dir)?;
     if typed == dir
         || !(below_dir.is_empty() || below_dir[0] == b'/')
         || !bun_paths::is_absolute(typed)
@@ -2209,7 +2202,10 @@ pub fn init(
         if let Some(opts) = ctx.install.as_deref() {
             explicit_global_dir = opts.global_dir.as_deref().unwrap_or(explicit_global_dir);
         }
-        let global_dir = package_manager_options::open_global_dir(explicit_global_dir)?;
+        let global_dir = package_manager_options::open_global_dir(
+            options::EnvBase::StartDir,
+            explicit_global_dir,
+        )?;
         bun_sys::fchdir(global_dir)?;
     }
 
@@ -2412,7 +2408,7 @@ pub fn init(
         // Build it from `top_level_dir`, not from the fd's real path, so that relative paths never
         // cross drives.
         let root_buf = &mut *ROOT_PACKAGE_JSON_PATH_BUF.get();
-        let tld_no_slash = strings::without_trailing_slash(tld);
+        let tld_no_slash = without_trailing_slash_portable(tld);
         let plen = tld_no_slash.len() + SEP_PACKAGE_JSON.len();
         root_buf[..tld_no_slash.len()].copy_from_slice(tld_no_slash);
         root_buf[tld_no_slash.len()..plen].copy_from_slice(SEP_PACKAGE_JSON);
@@ -2466,17 +2462,12 @@ pub fn init(
             .install
             .take()
             .map_or_else(Api::BunInstall::default, |b| *b);
-        let mut npmrc_local = bun_paths::path_buffer_pool::get();
+        let npmrc_local = PoolPath::resolved(&[top_level_dir, b".npmrc"]).ok();
         let mut install = load_npmrc_files(
             &bunfig_install,
             env,
             bun_paths::fs::FileSystem::instance().initial_top_level_dir(),
-            &mut resolve_path::join_abs_string_buf_z_checked::<platform::Auto>(
-                top_level_dir,
-                &mut npmrc_local,
-                &[b".npmrc".as_slice()],
-            )
-            .into_iter(),
+            &mut npmrc_local.as_deref().into_iter(),
             ini::NpmrcDiagnostics::Print,
         );
 
@@ -2549,7 +2540,9 @@ pub fn init(
         let mut buf = bun_paths::path_buffer_pool::get();
         buf[..raw.len()].copy_from_slice(raw);
         let normalized = &mut buf[..raw.len()];
-        resolve_path::dangerously_convert_path_to_posix_in_place::<u8>(normalized);
+        if cfg!(windows) {
+            resolve_path::dangerously_convert_path_to_posix_in_place::<u8>(normalized);
+        }
         // SAFETY: singleton fully initialized; main thread, no workers yet.
         unsafe { &mut *manager_ptr }.folders.put(
             FolderResolutionKey::new(FolderResolutionKind::Folder, normalized),
@@ -2822,18 +2815,10 @@ fn init_with_runtime_once(
         return Err(bun_resolver::Error::SecurityScannerConfigured.into());
     }
     // The .npmrc in the start directory is read too, like the bunfig.toml there.
-    let mut npmrc_buf = bun_paths::path_buffer_pool::get();
-    let npmrcs: Vec<ZBox> = (Some(start_dir_trimmed).into_iter())
+    let npmrcs: Vec<VecPath> = (Some(start_dir_trimmed).into_iter())
         .filter(|dir| !settings_dirs.contains(dir))
         .chain(settings_dirs.iter().copied())
-        .filter_map(|dir| {
-            resolve_path::join_abs_string_buf_z_checked::<platform::Auto>(
-                dir,
-                &mut npmrc_buf,
-                &[b".npmrc".as_slice()],
-            )
-            .map(|path| ZBox::from_bytes(path.as_bytes()))
-        })
+        .map(|dir| VecPath::resolved(&[dir, b".npmrc"]))
         .collect();
     let no_bunfig = Api::BunInstall::default();
     let npmrc = load_npmrc_files(
@@ -2854,8 +2839,9 @@ fn init_with_runtime_once(
         return Err(bun_resolver::Error::UnreadableConfig.into());
     }
 
-    let mut original_package_json_path =
-        strings::without_trailing_slash(FileSystem::get().top_level_dir()).to_vec();
+    let mut original_package_json_path = FileSystem::get()
+        .top_level_dir_without_trailing_slash()
+        .to_vec();
     original_package_json_path.extend_from_slice(b"/package.json\0");
     let manager_ptr = allocate_package_manager(
         Options {

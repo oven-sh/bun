@@ -12,7 +12,8 @@ use bun_core::{Global, Output};
 use bun_install::PackageManager;
 use bun_js_printer as js_printer;
 use bun_parsers::json;
-use bun_paths as path;
+use bun_paths::platform::Auto;
+use bun_paths::{Path, Style as _};
 
 pub(crate) struct PmPkgCommand;
 
@@ -134,24 +135,11 @@ impl PmPkgCommand {
     }
 
     fn find_package_json(cwd: &[u8]) -> Box<[u8]> {
-        let mut path_buf = bun_paths::path_buffer_pool::get();
-        let mut current_dir = cwd;
-
-        loop {
-            let pkg_path = path::resolve_path::join_abs_string_buf_z::<path::platform::Auto>(
-                current_dir,
-                &mut path_buf,
-                &[b"package.json"],
-            );
-            if bun_sys::exists_z(pkg_path) {
-                return Box::<[u8]>::from(pkg_path.as_bytes());
+        for dir in Auto::ancestors(cwd) {
+            let pkg_path = Path::from_parts(&[dir, b"package.json"]);
+            if bun_sys::exists_z(&pkg_path) {
+                return pkg_path.as_bytes().into();
             }
-
-            let parent = path::resolve_path::dirname::<path::platform::Auto>(current_dir);
-            if strings::eql(parent, current_dir) {
-                break;
-            }
-            current_dir = parent;
         }
 
         Output::err_generic("No package.json found", ());
@@ -353,17 +341,9 @@ impl PmPkgCommand {
                     continue;
                 };
                 let bin_path = str.slice8();
-                let mut pkg_dir = path::resolve_path::dirname::<path::platform::Auto>(&pkg.path);
-                if pkg_dir.is_empty() {
-                    pkg_dir = cwd;
-                }
-                let mut buf = bun_paths::path_buffer_pool::get();
-                // A path that's too long can't exist.
-                let full_path = path::resolve_path::join_abs_string_buf_z_checked::<
-                    path::platform::Auto,
-                >(pkg_dir, &mut buf[..], &[bin_path]);
+                let pkg_dir = bun_paths::dirname(&pkg.path).unwrap_or(cwd);
 
-                if !full_path.is_some_and(bun_sys::exists_z) {
+                if !bun_sys::exists_z(&Path::resolved_portable(&[pkg_dir, bin_path])) {
                     bun_core::warn!(
                         "No bin file found at {}",
                         bun_core::fmt::EscapeControlChars(bstr::BStr::new(bin_path))

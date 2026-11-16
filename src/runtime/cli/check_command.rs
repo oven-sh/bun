@@ -9,7 +9,7 @@ use bun_bundler::options::{TypeChecked, loaders_from_transform_options};
 use bun_clap as clap;
 use bun_core::{Global, Output, ZStr, env_var};
 use bun_sema_driver::format::{self, Layout, Style};
-use bun_sema_driver::host::{AlreadyRead, BeforeRead, Provided};
+use bun_sema_driver::host::{AlreadyRead, BeforeRead, Provided, sees_beside};
 use bun_sema_driver::{
     Category, CommandLine, CompilerOption, Diagnostic, FlagError, PlanOptions, Progress,
     RejectedFlag, Report, Request, ScriptKind,
@@ -651,7 +651,7 @@ pub(crate) fn check_before(entry_points: &[EntryPoint], before_read: Option<Befo
         script_kinds_by_extension: &by_extension,
         conditions: args.map_or(&[][..], |args| &args.conditions[..]),
     };
-    check_and_report(&Paths::EntryPoints(entries), provided)
+    check_and_report(entries, provided)
 }
 
 fn script_kind_of(loader: bun_ast::Loader) -> Option<ScriptKind> {
@@ -757,6 +757,9 @@ fn check_for_build(checked: TypeChecked, log: &mut bun_ast::Log, shows_progress:
     // Only stylesheets and the like.
     if paths.is_empty() {
         return true;
+    }
+    if !sees_beside(cwd, &paths, log) {
+        return false;
     }
     let paths = Paths::EntryPoints(Entries {
         paths: &paths,
@@ -929,7 +932,7 @@ pub(crate) fn check_project_before(before_read: Option<BeforeRead>) -> bool {
         before_read,
         ..Default::default()
     };
-    check_and_report(&Paths::EntryPoints(Entries::default()), provided)
+    check_and_report(Entries::default(), provided)
 }
 
 /// `bun`'s `--tsconfig-override`. The runtime resolves with this tsconfig instead of any other.
@@ -942,10 +945,16 @@ fn tsconfig_override() -> Option<&'static [u8]> {
 
 /// Returns true if there are no errors.
 #[inline(never)]
-fn check_and_report(paths: &Paths, provided: Provided) -> bool {
+fn check_and_report(entries: Entries, provided: Provided) -> bool {
     bun_removable_features::removable_definition!(Check, check_and_report);
     let cwd = working_directory();
-    let then = |report| report;
+    let mut log = bun_ast::Log::init();
+    if !sees_beside(&cwd, entries.paths, &mut log) {
+        let _ = log.print(Output::error_writer());
+        Output::flush();
+        return false;
+    }
+    let (paths, then) = (&Paths::EntryPoints(entries), |report| report);
     let report = run(&cwd, tsconfig_override(), paths, &[], 0, provided, then);
     if report.diagnostics.is_empty() && report.incomplete.is_empty() {
         return report.is_ok();

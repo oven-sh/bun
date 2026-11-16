@@ -5,9 +5,9 @@ use bun_core::fmt::PathSep;
 use bun_core::{Global, Output, fmt as bun_fmt};
 use bun_core::{ZBox, ZStr, handle_oom, strings};
 use bun_install_types::NodeLinker::NodeLinker;
-use bun_paths::platform;
+use bun_paths::platform::{self, Posix};
 use bun_paths::resolve_path;
-use bun_paths::{AbsPath, Platform, SEP};
+use bun_paths::{Heap, OsPath, Path, PathIn, Platform, Style as _, VecPath};
 use bun_sys::{self as sys, Dir, Fd, FdDirExt as _, FdExt as _};
 
 use crate::bin;
@@ -654,11 +654,14 @@ pub fn do_patch_commit(
     // package.json is shared with other machines, so an absolute path to a directory inside the
     // project is written relative to the project root.
     let project = with_slashes(FileSystem::get().top_level_dir());
-    if bun_paths::is_absolute(&patches_dir)
-        && resolve_path::is_parent_or_equal(&project, &patches_dir)
+    if bun_paths::is_absolute(&patches_dir) {
+        let mut portable = bun_paths::SlashPath::new();
+        portable.push_portable(&patches_dir);
+        if resolve_path::is_parent_or_equal(&project, &portable)
             != resolve_path::ParentEqual::Unrelated
-    {
-        patches_dir = with_slashes(resolve_path::relative(&project, &patches_dir));
+        {
+            patches_dir = bun_paths::SlashPath::relative_portable(&project, &portable).to_vec();
+        }
     }
 
     // Copy the result: `join_spill` usually returns the thread-local buffer that every later join
@@ -779,10 +782,16 @@ fn diff_against_cache(
 
     // The `./` that `from_cwd` adds puts a `/./` in the folder prefixes that are stripped from the
     // diff afterwards, which no path inside the package can match.
-    let paths = bun_patch::git_diff_preprocess_paths(
-        &from_cwd(cwd.as_bytes(), old_folder),
-        &from_cwd(cwd.as_bytes(), new_folder),
-    );
+    let links = TempTree(temp_sibling(b"node_modules/_"));
+    let [old, new] = [(old_folder, b"old"), (new_folder, b"new")]
+        .map(|(folder, link)| path_for_git(cwd, folder, &Path::from_parts(&[&links.0, link])));
+    let paths = match (old, new) {
+        (Ok(old), Ok(new)) => bun_patch::git_diff_preprocess_paths(&old, &new),
+        (Err(e), _) | (_, Err(e)) => {
+            Output::err(e, "failed to make diff", ());
+            return None;
+        }
+    };
     let spawned = bun_patch::spawn_git_diff(&paths[0], &paths[1], cwd, git, &manager.event_loop);
     let mut spawn_result = match spawned {
         Err(e) => {
@@ -1091,14 +1100,11 @@ fn has_trusted_scripts(
     {
         return false;
     }
-    let Ok(mut folder_path) = bun_paths::AutoAbsPath::from(folder) else {
-        return false;
-    };
     // bun.lock does not record a dependency's scripts, so they are read from its package.json.
     let mut scripts = pkg.scripts;
     let list = scripts.get_list(
         &mut bun_ast::Log::init(),
-        &mut folder_path,
+        folder,
         name,
         &pkg.resolution,
         true,
@@ -1150,32 +1156,24 @@ fn make_bins_executable(
     // `bin::Linker` sets the mode of the files it links to. The links themselves are not needed, so
     // they go in a temporary folder.
     let links = TempTree(temp_sibling(folder));
-    let (Ok(cache_path), Ok(mut links_path)) = (
-        <AbsPath>::init_fd_path(cache_dir),
-        <AbsPath>::from(links.0.as_slice()),
-    ) else {
+    let Ok(cache_path) = sys::fd_path(cache_dir) else {
         return;
     };
-    let mut abs_target_buf = bun_paths::path_buffer_pool::get();
-    let mut abs_dest_buf = bun_paths::path_buffer_pool::get();
-    let mut rel_buf = bun_paths::path_buffer_pool::get();
     bin::Linker {
         bin: pkg.bin,
         target_node_modules_path: Some(&cache_path),
         target_package_name: cache_dir_subpath,
         seen: None,
-        node_modules_path: &mut links_path,
+        node_modules_path: &Path::from(&links.0),
         package_name: cache_dir_subpath,
         global_bin_path: ZStr::EMPTY,
         string_buf: lockfile.buffers.string_bytes.as_slice(),
         extern_string_buf: lockfile.buffers.extern_strings.as_slice(),
-        abs_target_buf: abs_target_buf.as_mut_slice(),
-        rel_buf: rel_buf.as_mut_slice(),
         is_behind_link: Some(false),
         err: None,
         skipped_due_to_missing_bin: false,
     }
-    .link(false, abs_dest_buf.as_mut_slice());
+    .link(false);
 }
 
 /// The patched package's cache entry can be missing, because an install that finds the patched
@@ -1215,7 +1213,7 @@ fn cache_dir_path(cache_dir: Fd) -> Vec<u8> {
 /// Returns `path` with every symlink resolved. The part that doesn't exist yet is appended
 /// unchanged.
 fn resolve_links(path: &[u8]) -> sys::Result<Vec<u8>> {
-    let path = strings::without_trailing_slash(path);
+    let path = bun_paths::string_paths::without_trailing_slash_portable(path);
     let mut buf = bun_paths::path_buffer_pool::get();
     let mut existing = path;
     loop {
@@ -1250,16 +1248,13 @@ fn is_in_global_store(cache_path: &[u8], real: &[u8]) -> bool {
 /// Returns the part of `folder` before its first `node_modules`. A `..` can lead out of one again,
 /// so it is applied first.
 fn outermost_package(folder: &[u8]) -> Vec<u8> {
-    let mut spill = Vec::new();
-    let folder = resolve_path::join_spill::<platform::Posix>(&mut spill, &[folder]);
-    let mut start = 0;
-    for name in strings::split(folder, b"/") {
-        if name == b"node_modules" {
-            return folder[..start].to_vec();
-        }
-        start += name.len() + 1;
+    let mut folder = PathIn::<Heap, Posix>::from(folder);
+    folder.normalize();
+    let is_node_modules = |dir: &&[u8]| Posix::basename(dir) == b"node_modules";
+    if let Some(outermost) = Posix::ancestors(&folder).filter(is_node_modules).last() {
+        folder.truncate(outermost.len() - b"node_modules".len());
     }
-    folder.to_vec()
+    folder.into_vec()
 }
 
 /// Returns true if `real`, which has its symlinks resolved, is inside `subfolder` of the package
@@ -1298,12 +1293,8 @@ fn real_folder(
     };
 
     let real = resolve(folder);
-    let link = strings::without_trailing_slash(folder);
-    let link = resolve_path::join::<platform::Auto>(&[
-        &resolve(resolve_path::dirname::<platform::Auto>(link)),
-        bun_paths::basename(link),
-    ])
-    .to_vec();
+    let mut link = VecPath::from_vec(resolve(bun_paths::dirname(folder).unwrap_or_default()));
+    link.join(&[bun_paths::basename(folder)]);
     // The only link that an install puts in a package's place leads into the isolated store.
     let installed_in: &[u8] = if is_link(&link) {
         b"node_modules/.bun"
@@ -1315,7 +1306,7 @@ fn real_folder(
     }
     let is_own_link = is_own(b"node_modules", &link);
     if replaces_folder && is_own_link {
-        return link;
+        return link.into_vec();
     }
 
     if !is_in_global_store(cache_path, &real) {
@@ -1375,16 +1366,14 @@ fn is_link_position(folder: &[u8]) -> bool {
 /// Uses the same naming as an install's staging folder, so that `bun prune` removes it if a crash
 /// leaves it behind.
 fn temp_sibling(folder: &[u8]) -> Vec<u8> {
-    let mut path = resolve_path::dirname::<platform::Auto>(folder).to_vec();
-    write!(
-        path,
-        "{}{}{:016x}",
-        SEP as char,
+    let mut path = VecPath::from(folder);
+    path.pop();
+    path.push_fmt(format_args!(
+        "{}{:016x}",
         StagingPath::PREFIX,
         bun_core::fast_random()
-    )
-    .expect("formatting into a Vec is infallible");
-    path
+    ));
+    path.into_vec()
 }
 
 /// Deleted on drop, unless it was renamed away or kept.
@@ -1571,6 +1560,18 @@ fn from_cwd(cwd: &[u8], path: &[u8]) -> Vec<u8> {
     [&b"./"[..], relative].concat()
 }
 
+/// [`from_cwd`], or the way through a new `link` if git would quote it, so that it can't be stripped from the diff.
+fn path_for_git(cwd: &[u8], folder: &[u8], link: &Path) -> sys::Result<Vec<u8>> {
+    let path = from_cwd(cwd, folder);
+    let is_quoted = |byte: &u8| matches!(byte, b'\\' | b'"') || byte.is_ascii_control();
+    if cfg!(windows) || !path.iter().any(is_quoted) {
+        return Ok(path);
+    }
+    Fd::cwd().make_path(link.dirname().unwrap_or_default())?;
+    sys::symlink(&Path::from(folder), link)?;
+    Ok([&b"./"[..], link, b"/."].concat())
+}
+
 /// Copies the whole cache entry to `to`. Nothing is skipped, because `--commit` records any file
 /// that the cache entry has and the copy lacks as deleted.
 fn copy_cache_entry(
@@ -1581,43 +1582,15 @@ fn copy_cache_entry(
     // Open the cache entry before changing anything, because it may no longer exist.
     let cached_package_folder = Dir::borrow(&cache_dir).open_dir(cache_dir_subpath, ITERATE)?;
 
-    // FileCopier's path fields are `.unit = .os` (u16 on Windows). `Path::from`
-    // is generic over the *input* width and converts internally, so accepting
-    // `&[u8]` and producing `Path<OSPathChar>` is intentional. `.sep = .auto`
-    // is required so `/` is normalized to `\` on Windows. On POSIX it turns a `\` into a `/`, so
-    // `from_cwd` keeps the project's own path, which may contain a `\`, out of `to`.
-    let mut cwd_buf = bun_paths::path_buffer_pool::get();
-    let to = from_cwd(sys::getcwd_z(&mut cwd_buf)?.as_bytes(), to);
-    let dest_subpath = bun_paths::Path::<
-        bun_paths::OSPathChar,
-        { bun_paths::path_options::Kind::ANY },
-        { bun_paths::path_options::PathSeparators::AUTO },
-    >::from(to.as_slice())?;
+    let dest_subpath = OsPath::from_parts(&[to])?;
 
-    let src_path: bun_paths::AbsPath<
-        bun_paths::OSPathChar,
-        { bun_paths::path_options::PathSeparators::AUTO },
-    > = 'src_path: {
-        #[cfg(windows)]
-        {
-            let mut path_buf = bun_paths::w_path_buffer_pool::get();
-            let abs_path = sys::get_fd_path_w(cache_dir, &mut path_buf)?;
-
-            let mut sp = bun_paths::AbsPath::<
-                bun_paths::OSPathChar,
-                { bun_paths::path_options::PathSeparators::AUTO },
-            >::from(&*abs_path)
-            .unwrap();
-            sp.append(cache_dir_subpath)?;
-
-            break 'src_path sp;
-        }
-
-        // unused if not windows
-        #[cfg(not(windows))]
-        {
-            break 'src_path bun_paths::AbsPath::init();
-        }
+    #[cfg(not(windows))]
+    let src_path = OsPath::new();
+    #[cfg(windows)]
+    let src_path = {
+        let mut path = OsPath::filled(|buf| sys::get_fd_path_w(cache_dir, buf).map(|it| &*it))??;
+        path.push(cache_dir_subpath)?;
+        path
     };
 
     FileCopier::init(cached_package_folder.fd, src_path, dest_subpath, &[])?.copy()?;

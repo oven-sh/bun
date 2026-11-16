@@ -15,7 +15,7 @@ use bun_install::package_manager::workspace_manifests;
 use bun_install::{self as install, Npm, PackageManager, Subcommand};
 use bun_parsers::json as json_mod;
 use bun_paths as path;
-use bun_paths::resolve_path::{join_abs_string_buf_checked, normalize_buf_z_spill};
+use bun_paths::resolve_path::normalize_buf_z_spill;
 use bun_sha_hmac as sha;
 use bun_sys::dir_iterator as DirIterator;
 use bun_sys::{self, Fd, File, FileKind};
@@ -141,15 +141,9 @@ impl Context {
         original_cwd: &[u8],
         tarball_path: &[u8],
     ) -> Result<Context, PackError> {
-        let mut abs_buf = bun_paths::path_buffer_pool::get();
-        let abs_tarball_path = join_abs_string_buf_checked::<path::platform::Auto>(
-            original_cwd,
-            &mut abs_buf,
-            &[tarball_path],
-        )
-        .ok_or_else(|| bun_sys::Error::from_code(bun_sys::E::ENAMETOOLONG, bun_sys::Tag::open));
+        let abs_tarball_path = path::Path::resolved_portable(&[original_cwd, tarball_path]);
 
-        let tarball_bytes = match abs_tarball_path.and_then(|p| File::read_from(Fd::cwd(), p)) {
+        let tarball_bytes = match File::read_from(Fd::cwd(), &abs_tarball_path) {
             Ok(b) => b,
             Err(e) => {
                 Output::err(

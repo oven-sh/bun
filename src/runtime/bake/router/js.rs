@@ -47,13 +47,14 @@ impl JSFrameworkRouter {
             global,
         )?;
 
-        let abs_root: Box<[u8]> = strings::without_trailing_slash(paths::resolve_path::join_abs::<
-            paths::platform::Auto,
-        >(
-            bun_resolver::fs::FileSystem::get().top_level_dir(),
-            root.slice(),
-        ))
-        .into();
+        let abs_root: Box<[u8]> =
+            strings::without_trailing_slash_portable(paths::resolve_path::join_abs::<
+                paths::platform::Auto,
+            >(
+                bun_resolver::fs::FileSystem::get().top_level_dir(),
+                root.slice(),
+            ))
+            .into();
 
         let types: Box<[Type]> = Box::new([Type {
             abs_root: abs_root.clone(),

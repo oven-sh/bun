@@ -606,7 +606,7 @@ pub(crate) fn temporary_path(directory: &[u8]) -> ZBox {
         bun_core::fast_random(),
     )
     .expect("64 bytes hold a temporary name");
-    ZBox::from_bytes([directory, bun_paths::SEP_STR.as_bytes(), name.as_bytes()].concat())
+    bun_paths::VecPath::from_parts(&[directory, name]).into_zbox()
 }
 
 #[cfg(unix)]

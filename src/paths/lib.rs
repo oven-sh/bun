@@ -3,7 +3,7 @@
 // downstream (`bun_runtime::node::path::normalize_string_t`).
 // Pinned nightly — enable the structural-match subset directly instead of the
 // `PlatformT` sealed-trait workaround.
-#![feature(adt_const_params)]
+#![feature(adt_const_params, core_io_borrowed_buf)]
 
 pub mod error;
 pub use error::{Error, Result};
@@ -18,10 +18,6 @@ pub mod w_path_buffer_pool {
     #[inline]
     pub fn get() -> PoolGuard<WPathBuffer> {
         PathBufferPoolT::<WPathBuffer>::get()
-    }
-    #[inline]
-    pub fn put(buf: Box<WPathBuffer>) {
-        PathBufferPoolT::<WPathBuffer>::put(buf)
     }
 }
 
@@ -98,19 +94,8 @@ pub fn is_absolute_windows_wtf16(p: &[u16]) -> bool {
     is_absolute_windows_t::<u16>(p)
 }
 
-/// Returns the leading drive
-/// designator (e.g. `C:` or `\\server\share`) or empty.
-///
-/// No alphabetic gate on the drive letter; UNC requires a *matching* separator pair (`//` or `\\`, not mixed),
-/// rejects a third leading separator, and requires BOTH server and share
-/// tokens — otherwise returns `b""`.
-#[inline]
-fn disk_designator_windows(p: &[u8]) -> &[u8] {
-    &p[..crate::path::disk_designator_len_windows::<u8>(p)]
-}
-
 /// Character types valid in path slices (u8 / u16). Canonical definition;
-/// `resolve_path`, `Path::PathUnit`, `bun_sys::make_path::MakePathUnit`,
+/// `resolve_path`, `PathUnit`, `bun_sys::make_path::MakePathUnit`,
 /// `bun_runtime::node::path::PathCharCwd`, and `bun_core::Ch` all extend it.
 mod path_char;
 pub use path_char::PathChar;
@@ -272,32 +257,24 @@ pub fn dirname_simple(p: &[u8]) -> &[u8] {
         .map(|i| &p[..i])
         .unwrap_or(b"")
 }
-/// Basename: strips trailing separators before slicing
-/// the final component (so `basename("/a/b/")` is `"b"`, not `""`).
-/// Canonical impls (width-generic over `PathByte`) live in `bun_core::strings`.
-pub use bun_core::strings::{PathByte, basename, basename_posix, basename_windows};
+pub use bun_core::strings::{PathByte, basename_posix, basename_windows};
 
-/// Returns the file extension of `p`
-/// **including** the leading dot, or `b""` if none. Dotfiles (`.gitignore`)
-/// and basenames whose only `.` is at index 0 report no extension.
-pub fn extension(p: &[u8]) -> &[u8] {
-    let filename = basename(p);
-    match strings::last_index_of_char(filename, b'.') {
-        Some(dot) if dot > 0 => &filename[dot..],
-        _ => &p[p.len()..],
-    }
+/// [`Style::basename`] of the host.
+#[inline]
+pub fn basename<C: PathUnit>(p: &[C]) -> &[C] {
+    platform::Auto::basename(p)
 }
 
-/// Returns the basename of `p` with the
-/// extension (as defined by [`extension`]) stripped. Dotfiles keep their
-/// leading dot (`.gitignore` → `.gitignore`).
-pub fn stem(p: &[u8]) -> &[u8] {
-    let filename = basename(p);
-    match strings::last_index_of_char(filename, b'.') {
-        Some(0) => p,
-        Some(dot) => &filename[..dot],
-        None => filename,
-    }
+/// [`Style::extension`] of the host.
+#[inline]
+pub fn extension<C: PathUnit>(p: &[C]) -> &[C] {
+    platform::Auto::extension(p)
+}
+
+/// [`Style::stem`] of the host.
+#[inline]
+pub fn stem<C: PathUnit>(p: &[C]) -> &[C] {
+    platform::Auto::stem(p)
 }
 
 // LAYERING: `PathBuffer` / `WPathBuffer` / `MAX_PATH_BYTES` / `PATH_MAX_WIDE`
@@ -353,44 +330,22 @@ pub use resolve_path::{
 // resolves on both targets (= `WPathBuffer` pool on Windows, `PathBuffer` on
 // POSIX).
 pub use path_buffer_pool::os_path_buffer_pool;
+pub mod backend;
+pub use backend::{Backend, Borrowed, Fixed, Heap, NameTooLong, Pool, Spill, Stack};
 #[path = "Path.rs"]
 pub mod path;
-pub use path::{
-    AbsPath, AutoAbsPath, AutoAbsPathChecked, AutoRelPath, Path, PathUnit, RelPath,
-    options as path_options,
-};
+pub use path::{OsPath, Path, PathIn, PoolPath, SlashPath, SlicePath, StackPath, VecPath};
+mod path_unit;
+pub use path_unit::PathUnit;
+pub mod style;
+pub use style::Style;
+mod tidy;
+pub use tidy::split_unknown_names;
 
-/// Width-generic dirname
-/// (POSIX `/` on Unix, disk-designator-aware on Windows). Backed by
-/// `path::dirname_generic`.
-#[allow(non_snake_case)]
-pub mod Dirname {
-    use super::path::{PathUnit, dirname_generic};
-
-    #[inline]
-    pub fn dirname<U: PathUnit>(p: &[U]) -> Option<&[U]> {
-        dirname_generic(p)
-    }
-
-    #[inline]
-    pub fn dirname_u16(p: &[u16]) -> Option<&[u16]> {
-        dirname_generic(p)
-    }
-}
-
-/// Convenience: dirname for `u8` paths (returns `None` for
-/// root / no-parent). Prefer `Dirname::dirname::<T>` for width-generic use.
-///
-/// POSIX: re-exports `bun_core::dirname` (canonical u8 impl — identical state
-/// machine). Windows: keeps `path::dirname_generic`, whose
-/// `disk_designator_len_windows` covers UNC `\\server\share` roots that
-/// `bun_core::dirname`'s inline drive-prefix check does not.
-#[cfg(not(windows))]
-pub use bun_core::dirname;
-#[cfg(windows)]
+/// [`Style::dirname`] of the host.
 #[inline]
-pub fn dirname(p: &[u8]) -> Option<&[u8]> {
-    path::dirname_generic(p)
+pub fn dirname<C: PathUnit>(p: &[C]) -> Option<&[C]> {
+    platform::Auto::dirname(p)
 }
 #[path = "EnvPath.rs"]
 pub mod env_path;
@@ -399,12 +354,13 @@ pub use env_path::EnvPath;
 // ──────────────────────────────────────────────────────────────────────────
 // Windows path-prefix constants — relocated from
 // `bun_sys::windows` so tier-1 callers
-// (this crate's `string_paths.rs` and `Path.rs`) can resolve them
+// (this crate's `string_paths.rs`, `Path.rs` and `tidy.rs`) can resolve them
 // without depending upward on `bun_sys`.
 // ──────────────────────────────────────────────────────────────────────────
 pub mod windows {
     /// `\??\` — NT object-manager prefix (UTF-16).
-    pub const NT_OBJECT_PREFIX: [u16; 4] = ['\\' as u16, '?' as u16, '?' as u16, '\\' as u16];
+    pub(crate) const NT_OBJECT_PREFIX: [u16; 4] =
+        ['\\' as u16, '?' as u16, '?' as u16, '\\' as u16];
     /// `\??\UNC\` — NT object-manager UNC prefix (UTF-16).
     pub(crate) const NT_UNC_OBJECT_PREFIX: [u16; 8] = [
         '\\' as u16,
@@ -426,13 +382,6 @@ pub mod windows {
     pub(crate) const NT_UNC_OBJECT_PREFIX_U8: [u8; 8] = *b"\\??\\UNC\\";
     /// `\\?\` — Win32 long-path prefix (UTF-8/ASCII).
     pub const LONG_PATH_PREFIX_U8: [u8; 4] = *b"\\\\?\\";
-
-    /// Per-width long-path prefix so `Path::<U, ..>::from_long_path` stays width-generic.
-    #[inline]
-    #[cfg(windows)]
-    pub(crate) fn long_path_prefix_for<U: crate::path::PathUnit>() -> &'static [U] {
-        U::LONG_PATH_PREFIX
-    }
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -475,13 +424,16 @@ pub fn is_package_path_not_absolute(non_absolute_path: &[u8]) -> bool {
 // resolve them without a `bun_resolver` edge.
 // ──────────────────────────────────────────────────────────────────────────
 pub mod fs {
-    use core::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+    use core::sync::atomic::{AtomicU32, Ordering};
     use std::io::Write as _;
     use std::sync::OnceLock;
 
-    use bun_core::ZStr;
+    use bun_core::strings::contains_char;
+    use bun_core::{RwLock, ZStr};
 
-    use crate::resolve_path::{is_sep_any, last_index_of_sep};
+    use crate::Style as _;
+    use crate::platform::Posix;
+    use crate::resolve_path::{is_sep_any, is_sep_native, last_index_of_sep};
 
     /// Minimal `FileSystem` singleton: holds `top_level_dir` only. The dir-entry
     /// cache and filename arenas remain in `bun_resolver` and reach back here
@@ -496,17 +448,50 @@ pub mod fs {
     }
 
     static INSTANCE: OnceLock<FileSystem> = OnceLock::new();
-    // Kept as a separate flag so `instance_loaded()` is a cheap relaxed load.
-    static INSTANCE_LOADED: AtomicBool = AtomicBool::new(false);
+
+    /// [`FileSystem::top_level_dir`]. A release build that asks too early gets `.`.
+    #[inline]
+    pub(crate) fn top_level_dir() -> &'static [u8] {
+        debug_assert!(INSTANCE.get().is_some());
+        INSTANCE
+            .get()
+            .map_or_else(bun_core::top_level_dir, FileSystem::top_level_dir)
+    }
+
+    /// `/a\b/c\d`, from every top-level directory so far: what was loaded there outlasts `process.chdir()`.
+    static NAMES_WITH_BACKSLASH: RwLock<Vec<u8>> = RwLock::new(Vec::new());
+
+    /// See [`bun_core::set_top_level_dir`].
+    pub fn set_top_level_dir(dir: &'static [u8]) {
+        if cfg!(unix) && contains_char(dir, b'\\') {
+            let mut names = NAMES_WITH_BACKSLASH.write();
+            for name in Posix::components(dir).filter(|name| contains_char(name, b'\\')) {
+                if !Posix::components(&names[..]).any(|it| it == name) {
+                    names.push(b'/');
+                    names.extend_from_slice(name);
+                }
+            }
+        }
+        bun_core::set_top_level_dir(dir);
+    }
+
+    #[cfg(all(unix, not(test)))]
+    pub(crate) fn with_known_dirs(read: impl FnOnce(&[&[u8]])) {
+        let mut cwd;
+        let initial = match INSTANCE.get() {
+            Some(fs) => fs.initial_top_level_dir(),
+            None => {
+                cwd = crate::path_buffer_pool::get();
+                bun_core::getcwd(&mut cwd).map_or(&b""[..], ZStr::as_bytes)
+            }
+        };
+        let home = bun_core::env_var::HOME.get().unwrap_or_default();
+        read(&[initial, home, &NAMES_WITH_BACKSLASH.read()]);
+    }
 
     static TMPNAME_ID_NUMBER: AtomicU32 = AtomicU32::new(0);
 
     impl FileSystem {
-        #[inline]
-        pub(crate) fn instance_loaded() -> bool {
-            INSTANCE_LOADED.load(Ordering::Relaxed)
-        }
-
         /// Panics if `init` has not been called.
         #[inline]
         pub fn instance() -> &'static FileSystem {
@@ -521,7 +506,6 @@ pub mod fs {
             let _ = INSTANCE.set(FileSystem {
                 top_level_dir: top_level_dir.to_vec(),
             });
-            INSTANCE_LOADED.store(true, Ordering::Release);
             INSTANCE.get().unwrap()
         }
 
@@ -529,7 +513,7 @@ pub mod fs {
         /// to the workspace root. The canonical
         /// writable storage lives in `bun_core::TOP_LEVEL_DIR` (updated by
         /// `bun_resolver::FileSystem::set_top_level_dir`). Delegate the read
-        /// there so `Path::init_top_level_dir` observes the post-chdir value
+        /// there so `Path::top_level_dir` observes the post-chdir value
         /// instead of the `OnceLock` snapshot taken at process start.
         #[inline]
         pub fn top_level_dir(&self) -> &[u8] {
@@ -659,7 +643,7 @@ pub mod fs {
             if self.dir.is_empty() {
                 return b"./";
             }
-            let extend = (!is_sep_any(self.dir[self.dir.len() - 1])
+            let extend = (!is_sep_native(self.dir[self.dir.len() - 1])
                 && (self.dir.as_ptr() as usize + self.dir.len() + 1) == self.base.as_ptr() as usize)
                 as usize;
             // SAFETY: when `extend == 1`, `dir.ptr[dir.len]` is the separator byte
@@ -744,7 +728,7 @@ pub mod fs {
     /// The bundler/resolver's logical
     /// path (display `pretty`, canonical `text`, `namespace`, parsed `name`).
     ///
-    /// NOTE: distinct from `crate::Path` (the buffer-backed AbsPath/RelPath). This is
+    /// NOTE: distinct from `crate::Path` (the buffer that paths are built in). This is
     /// the *resolver* `Path`; addressed as `bun_paths::fs::Path`.
     ///
     /// CANONICAL: `bun_resolver::fs::Path` is a re-export of this type (D090). Resolver-tier methods (`dupe_alloc`, `loader`, `hash_key`,
@@ -954,3 +938,6 @@ pub mod fs {
         }
     }
 }
+
+#[cfg(test)]
+mod path_tests;

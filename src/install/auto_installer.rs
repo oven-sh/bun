@@ -24,7 +24,7 @@ use core::mem::{align_of, size_of};
 use core::sync::atomic::{AtomicU32, Ordering};
 
 use bun_install_types::resolver_hooks as hooks;
-use bun_paths::resolve_path::{join_abs_string_buf_checked, platform};
+use bun_paths::{PoolPath, SlicePath};
 use bun_semver::{SlicedString, String as SemverString};
 use bun_threading::Futex;
 
@@ -267,8 +267,10 @@ impl hooks::AutoInstaller for PackageManager {
                 _ => return None,
             }
         };
-        let len = join_abs_string_buf_checked::<platform::Auto>(base, buf, &[path])?.len();
-        Some(&buf[..len])
+        let mut resolved = SlicePath::new_in(buf);
+        resolved.resolve_portable(&[base, path]).ok()?;
+        resolved.trim_trailing_sep();
+        Some(resolved.into_z())
     }
 
     fn path_for_resolution<'b>(
@@ -334,12 +336,9 @@ impl hooks::AutoInstaller for PackageManager {
             && let dependency::Value::Tarball(tarball) = &version.value
             && let hooks::URI::Local(path) = tarball.uri
         {
-            let mut buf = bun_paths::path_buffer_pool::get();
-            let Some(joined) = join_abs_string_buf_checked::<platform::Auto>(
-                package_json_dir,
-                &mut buf[..],
-                &[path.slice(version_buf)],
-            ) else {
+            let Ok(joined) =
+                &PoolPath::resolved_portable(&[package_json_dir, path.slice(version_buf)])
+            else {
                 return hooks::EnqueueResult::NotFound;
             };
             absolute.extend_from_slice(b"file:");

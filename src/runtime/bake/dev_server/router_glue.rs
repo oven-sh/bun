@@ -201,23 +201,18 @@ pub(super) fn relative_path<'a>(
         return path;
     }
 
-    if path.len() > root.len() && path[root.len()] == b'/' && path.starts_with(root) {
+    // The bundler's `pretty` paths have no `\`.
+    if path.len() > root.len()
+        && path[root.len()] == b'/'
+        && path.starts_with(root)
+        && !(cfg!(unix) && bun_core::strings::contains_char(&path[root.len()..], b'\\'))
+    {
         return &path[root.len() + 1..];
     }
 
-    if path.len() + root.len() * 2 >= paths::MAX_PATH_BYTES {
-        return path;
+    let mut relative = paths::PathIn::<_, paths::platform::Slash>::new_in(relative_path_buf);
+    match relative.set_relative_portable(root, path) {
+        Ok(()) => relative.into_z(),
+        Err(paths::NameTooLong) => path,
     }
-
-    // `relative_platform_buf` with ALWAYS_COPY=true writes into
-    // `relative_path_buf[..len]` (same invariant `relative_buf_z` relies
-    // on); capture the length, drop the shared borrow, then re-slice
-    // mutably to convert separators in place.
-    let rel_len = bun_paths::resolve_path::relative_platform_buf::<
-        bun_paths::resolve_path::platform::Auto,
-        true,
-    >(&mut relative_path_buf[..], root, path)
-    .len();
-    bun_paths::resolve_path::platform_to_posix_in_place::<u8>(&mut relative_path_buf[..rel_len]);
-    &relative_path_buf[..rel_len]
 }

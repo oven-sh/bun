@@ -152,7 +152,7 @@ extern "C" fn BakeProdResolve(
 
     // dirname semantics: returns None for the root / no-parent.
     let after_scheme = &referrer.slice()[5..];
-    let dir = bun_paths::Dirname::dirname(after_scheme).unwrap_or(after_scheme);
+    let dir = bun_paths::dirname(after_scheme).unwrap_or(after_scheme);
 
     BunString::create_format(format_args!(
         "bake:{}",

@@ -1260,6 +1260,23 @@ describe("only block", () => {
     });
   });
 
+  it("does not cut the name of a directory that starts like the working directory", async () => {
+    await using tmpDir = tempDir("junit-sibling", {
+      "proj/package.json": "{}",
+      "proj-other/a.test.js": `test("passes", () => {});`,
+    });
+    await using proc = spawn(
+      [bunExe(), "test", "../proj-other/a.test.js", "--reporter=junit", "--reporter-outfile=junit.xml"],
+      { cwd: join(String(tmpDir), "proj"), env: bunEnv, stdout: "ignore", stderr: "ignore" },
+    );
+    const exitCode = await proc.exited;
+
+    const xml = await file(join(String(tmpDir), "proj", "junit.xml")).text();
+    const files = xml.match(/(?<= file=")[^"]*/g).map(path => join(path));
+    expect([...new Set(files)]).toEqual([join(String(tmpDir), "proj-other", "a.test.js")]);
+    expect(exitCode).toBe(0);
+  });
+
   it("prints a write error when the outfile is longer than the path buffer", async () => {
     // A bunfig value can be longer than the path buffer on every platform.
     const outfile = Buffer.alloc(100_000, "j").toString();

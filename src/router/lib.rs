@@ -572,9 +572,9 @@ impl<'a> RouteLoader<'a> {
                         }
                     }
 
-                    let abs_parts = [entry.dir(), entry.base()];
-                    if let Some(dir_info) = resolver.read_dir_info_ignore_error(fs.abs(&abs_parts))
-                    {
+                    let dir_info =
+                        (entry.path()).and_then(|path| resolver.read_dir_info_ignore_error(&path));
+                    if let Some(dir_info) = dir_info {
                         self.load(resolver, &dir_info, base_dir);
                     }
                 }
@@ -704,7 +704,7 @@ impl Route {
         let base = &base_[0..base_.len() - extname.len()];
 
         // The public path and the longer absolute path are both built in `route_file_buf`.
-        let dir = strings::without_trailing_slash(entry.dir());
+        let dir = bun_paths::string_paths::without_trailing_slash_portable(entry.dir());
         if dir.len() + 1 + base_.len() >= MAX_PATH_BYTES {
             log.add_error_fmt(
                 None,
@@ -825,24 +825,12 @@ impl Route {
 
             // The closure runs under the per-entry mutex, like every other write to a cached `Entry`.
             let Ok(entry_abs_path) = entry.abs_path_or_try_fill(|| {
-                let mut abs_path_str: &[u8] = b"";
+                let abs_path = entry.path().ok_or(())?;
                 let opened;
                 let fd = if let Some(cached) = entry.cache().fd.unwrap_valid() {
                     cached
                 } else {
-                    let parts = [entry.dir(), entry.base()];
-                    let abs_len = FileSystem::get().abs_buf(&parts, route_file_buf).len();
-                    // Rebind so the later getFdPath error
-                    // message prints the computed path instead of `b""`.
-                    // SAFETY: lifetime-laundered raw view into route_file_buf
-                    // (same pattern as `public_path` above) so the buffer can
-                    // be reborrowed mutably for the NUL write / open below.
-                    abs_path_str =
-                        unsafe { core::slice::from_raw_parts(route_file_buf.as_ptr(), abs_len) };
-                    route_file_buf[abs_len] = 0;
-                    // SAFETY: NUL-terminated above; `abs_len` bytes valid in route_file_buf.
-                    let buf = bun_core::ZStr::from_buf(&route_file_buf[..], abs_len);
-                    match bun_sys::open_file_absolute_z(buf, bun_sys::OpenFlags::READ_ONLY) {
+                    match bun_sys::open_file_absolute_z(&abs_path, bun_sys::OpenFlags::READ_ONLY) {
                         Ok(file) => opened = file,
                         Err(err) => {
                             log.add_error_fmt(
@@ -851,7 +839,7 @@ impl Route {
                                 format_args!(
                                     "{} opening route: {}",
                                     bstr::BStr::new(err.name()),
-                                    bstr::BStr::new(&route_file_buf[..abs_len])
+                                    bstr::BStr::new(abs_path.as_bytes())
                                 ),
                             );
                             return Err(());
@@ -870,7 +858,7 @@ impl Route {
                             format_args!(
                                 "{} resolving route: {}",
                                 bstr::BStr::new(err.name()),
-                                bstr::BStr::new(abs_path_str)
+                                bstr::BStr::new(abs_path.as_bytes())
                             ),
                         );
                         return Err(());

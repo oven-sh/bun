@@ -6,7 +6,7 @@ use crate::bun_fs::FileSystem;
 use bun_collections::DynamicBitSet;
 use bun_core::{Output, UnwrapOrOom, fmt as bun_fmt};
 use bun_core::{StringOrTinyString, strings};
-use bun_paths as Path;
+use bun_paths::Path;
 use bun_semver::{self as Semver, String as SemverString};
 use bun_sys::Fd;
 use bun_threading::thread_pool as ThreadPool;
@@ -1352,11 +1352,8 @@ fn look_ahead_from_project_folder(this: &mut PackageManager, id: DependencyID, a
         dependency::Value::Folder(folder) => *folder,
         _ => return,
     };
-    let mut buf = bun_paths::path_buffer_pool::get();
-    let Some(abs) = project_path(this.lockfile.str(&path), &mut buf[..]) else {
-        return;
-    };
-    if let Some(listed) = FolderResolution::listed_dependencies(asked.version.tag(), abs, this) {
+    let path = Path::from(this.lockfile.str(&path));
+    if let Some(listed) = FolderResolution::listed_dependencies(asked.version.tag(), &path, this) {
         let locked = names_locked_for_folder(this, &listed);
         look_ahead_from(this, &listed, &locked);
     }
@@ -2880,10 +2877,11 @@ fn enqueue_local_tarball(
         match local_tarball_base_dir(&this.lockfile, dependency_id, path) {
             None => (stored_string(path), true),
             Some(base_dir) => (
-                stored_string(Path::resolve_path::join_abs_string::<Path::platform::Auto>(
+                stored_string(&Path::resolved_portable(&[
                     FileSystem::get().top_level_dir(),
-                    &[base_dir, path],
-                )),
+                    base_dir,
+                    path,
+                ])),
                 false,
             ),
         };
@@ -3767,7 +3765,8 @@ fn get_or_put_resolved_package(
                 {
                     // Copied out of `string_bytes`, which `StringBuilder::allocate` may grow.
                     let name_slice: Vec<u8> = this.lockfile.str(&name).to_vec();
-                    let folder_path: Vec<u8> = this.lockfile.str(&folder).to_vec();
+                    let folder_path: Vec<u8> =
+                        crate::resolution::portable_path(this.lockfile.str(&folder)).into_owned();
                     let mut builder = this.lockfile.string_builder();
 
                     builder.count(&name_slice);
@@ -3819,32 +3818,18 @@ fn get_or_put_resolved_package(
             resolved_folder_package(this, res, dependency_id, success_fn)
         }
         dependency::Value::Symlink(symlink) => {
-            let mut buf = bun_paths::path_buffer_pool::get();
-            let (base, path) = if dependency::is_link_path(this.lockfile.str(symlink)) {
-                (
-                    GlobalOrRelative::Relative(dependency::version::Tag::Symlink),
-                    Path::resolve_path::join_abs_string_buf_checked::<Path::platform::Auto>(
-                        FileSystem::get().top_level_dir(),
-                        &mut buf[..],
-                        &[this.lockfile.str(symlink)],
-                    ),
-                )
+            // Reading a package.json grows the lockfile's string buffer, so the path cannot stay in there.
+            let path = Path::from(this.lockfile.str(symlink));
+            let base = if dependency::is_link_path(&path) {
+                GlobalOrRelative::Relative(dependency::version::Tag::Symlink)
             } else {
                 if let Err(why) = try_global_link_dir(this) {
                     this.exit_or_log(&why);
                     return Err(crate::Error::MissingPackageJSON);
                 }
-                (
-                    GlobalOrRelative::Global(package_manager_real::global_link_dir_path(this)),
-                    copy_path(this.lockfile.str(symlink), &mut buf[..]),
-                )
+                GlobalOrRelative::Global(package_manager_real::global_link_dir_path(this))
             };
-            let res = match path {
-                Some(path) => FolderResolution::get_or_put(base, version, path, this),
-                None => FolderResolutionValue::Err(crate::Error::Sys(
-                    bun_errno::SystemErrno::ENAMETOOLONG,
-                )),
-            };
+            let res = FolderResolution::get_or_put(base, version, &path, this);
 
             resolved_folder_package(this, res, dependency_id, success_fn)
         }
@@ -3879,34 +3864,12 @@ fn resolve_project_folder(
     version: &dependency::Version,
     path: SemverString,
 ) -> FolderResolutionValue {
-    let mut buf = bun_paths::path_buffer_pool::get();
-    let Some(abs) = project_path(this.lockfile.str(&path), &mut buf[..]) else {
-        return FolderResolutionValue::Err(crate::Error::Sys(bun_errno::SystemErrno::ENAMETOOLONG));
-    };
     FolderResolution::get_or_put(
         GlobalOrRelative::Relative(version.tag()),
         version,
-        abs,
+        &Path::from(this.lockfile.str(&path)),
         this,
     )
-}
-
-/// Returns `path` as an absolute path, or `None` if it's too long for `buf`. Relative paths are
-/// resolved against the project root.
-fn project_path<'a>(path: &[u8], buf: &'a mut [u8]) -> Option<&'a [u8]> {
-    if bun_paths::is_absolute(path) {
-        return copy_path(path, buf);
-    }
-    Path::resolve_path::join_abs_string_buf_checked::<Path::platform::Auto>(
-        FileSystem::get().top_level_dir(),
-        buf,
-        &[path],
-    )
-}
-
-/// Reading a package.json grows the lockfile's string buffer, so a path cannot stay in there.
-fn copy_path<'a>(path: &[u8], buf: &'a mut [u8]) -> Option<&'a [u8]> {
-    strings::concat_buf_t(buf, &[path]).ok().map(|copy| &*copy)
 }
 
 /// For `bun update <name>`: returns true if the dependency refers to a requested package, either by

@@ -6,10 +6,10 @@ use bun_core::strings;
 use bun_glob as glob;
 use bun_paths as path;
 use bun_paths::resolve_path;
-use bun_paths::{MAX_PATH_BYTES, SEP_STR};
+use bun_paths::{MAX_PATH_BYTES, NameTooLong, PoolPath, SEP_STR, SlashPath};
 
 use super::DependencyGroup;
-use crate::lockfile_real::{Lockfile, StringBuilder, pruned_workspaces};
+use crate::lockfile_real::{Lockfile, StringBuilder, pruned_workspaces, resolve_to_store};
 use crate::package_manager::workspace_package_json_cache::{
     GetJSONOptions, WorkspacePackageJSONCache,
 };
@@ -313,15 +313,8 @@ fn add_glob_error(
     root_dir: &[u8],
     err: &bun_sys::Error,
 ) -> crate::Error {
-    let mut buf = path::path_buffer_pool::get();
-    let failed_path = path::string_paths::without_trailing_slash_windows_path(
-        resolve_path::join_abs_string_buf_checked::<path::platform::Auto>(
-            root_dir,
-            &mut buf.0[..],
-            &[&err.path],
-        )
-        .unwrap_or(&err.path),
-    );
+    let mut failed_path = path::Path::resolved(&[root_dir, &err.path]);
+    failed_path.trim_trailing_sep();
     let _ = bun_ast::add_error_pretty!(
         log,
         Some(source),
@@ -330,24 +323,13 @@ fn add_glob_error(
         bun_core::fmt::escape_control_chars(user_pattern),
         BStr::new(err.name()),
         <&'static str>::from(err.syscall),
-        bun_core::fmt::escape_control_chars(failed_path),
+        bun_core::fmt::escape_control_chars(&failed_path),
     );
     crate::Error::InstallFailed
 }
 
-fn relative_workspace_path<'b>(
-    buf: &'b mut [u8],
-    root_dir: &[u8],
-    abs_workspace_dir: &[u8],
-) -> &'b [u8] {
-    let len = resolve_path::relative_platform_buf::<path::platform::Auto, true>(
-        buf,
-        root_dir,
-        abs_workspace_dir,
-    )
-    .len();
-    resolve_path::platform_to_posix_in_place::<u8>(&mut buf[..len]);
-    &buf[..len]
+fn package_json_in(root_dir: &[u8], workspace: &[u8]) -> Result<PoolPath, NameTooLong> {
+    resolve_to_store(root_dir, &[workspace, b"package.json"])
 }
 
 impl WorkspaceMap {
@@ -395,10 +377,8 @@ impl WorkspaceMap {
 
         let mut workspace_globs: Vec<Box<[u8]>> = Vec::new();
         let mut negated = NegatedWorkspaces::default();
-        let mut filepath_buf_os = path::path_buffer_pool::get();
-        let filepath_buf: &mut [u8] = &mut filepath_buf_os.0[..];
-        let mut rel_path_buf = path::path_buffer_pool::get();
         let root_dir: &[u8] = package_json_dir(source);
+        let mut dir = SlashPath::new();
 
         let scratch = Arena::new();
 
@@ -428,18 +408,9 @@ impl WorkspaceMap {
                 continue;
             }
 
-            let abs_package_json_path = resolve_path::join_abs_string_buf_checked::<
-                path::platform::Auto,
-            >(
-                root_dir, filepath_buf, &[input_path, b"package.json"]
-            );
-            let processed = match abs_package_json_path {
-                Some(abs_package_json_path) => {
-                    let dir = relative_workspace_path(
-                        &mut rel_path_buf.0,
-                        root_dir,
-                        workspace_dir_of(abs_package_json_path),
-                    );
+            let processed = match package_json_in(root_dir, input_path) {
+                Ok(abs_package_json_path) => {
+                    dir.set_relative(root_dir, workspace_dir_of(&abs_package_json_path));
                     // skip root package.json
                     if dir.is_empty() {
                         continue;
@@ -448,34 +419,25 @@ impl WorkspaceMap {
                     process_workspace_name(
                         workspace_names,
                         json_cache,
-                        abs_package_json_path,
-                        dir,
+                        &abs_package_json_path,
+                        &dir,
                         log,
                         missing_workspace,
                     )
-                    .map(|entry| (dir, entry))
                 }
-                None => Err(crate::Error::Sys(bun_errno::SystemErrno::ENAMETOOLONG)),
+                Err(too_long) => Err(too_long.into()),
             };
 
-            let (rel_input_path, workspace_entry) = match processed {
+            let workspace_entry = match processed {
                 Ok(processed) => processed,
                 Err(err) => {
                     if err == crate::Error::Sys(bun_errno::SystemErrno::ENOENT) {
                         let tolerated = match missing_workspace {
                             MissingWorkspace::Skip | MissingWorkspace::SkipEmptyToo => true,
                             MissingWorkspace::Error => false,
-                            MissingWorkspace::SkipIfInLockfile(lockfile) => abs_package_json_path
-                                .is_some_and(|abs| {
-                                    pruned_workspaces::lockfile_lists_workspace_path(
-                                        lockfile,
-                                        relative_workspace_path(
-                                            &mut rel_path_buf.0,
-                                            root_dir,
-                                            workspace_dir_of(abs),
-                                        ),
-                                    )
-                                }),
+                            MissingWorkspace::SkipIfInLockfile(lockfile) => {
+                                pruned_workspaces::lockfile_lists_workspace_path(lockfile, &dir)
+                            }
                         };
                         if tolerated {
                             continue;
@@ -514,11 +476,7 @@ impl WorkspaceMap {
             let Some(workspace_entry) = workspace_entry else {
                 continue;
             };
-            workspace_names.insert(
-                string_builder.as_deref_mut(),
-                rel_input_path,
-                workspace_entry,
-            )?;
+            workspace_names.insert(string_builder.as_deref_mut(), &dir, workspace_entry)?;
         }
 
         if workspace_globs.len() > 0 {
@@ -594,36 +552,32 @@ impl WorkspaceMap {
                         BStr::new(entry_dir)
                     );
 
-                    let processed = match resolve_path::join_abs_string_buf_checked::<
-                        path::platform::Auto,
-                    >(
-                        root_dir, filepath_buf, &[entry_dir, b"package.json"]
-                    ) {
-                        Some(abs_package_json_path) => {
-                            let dir = relative_workspace_path(
-                                &mut rel_path_buf.0,
-                                root_dir,
-                                workspace_dir_of(abs_package_json_path),
-                            );
+                    let parts = [root_dir, entry_dir, b"package.json"];
+                    let processed = match PoolPath::resolved(&parts) {
+                        Ok(abs_package_json_path) => {
+                            dir.set_relative(root_dir, workspace_dir_of(&abs_package_json_path));
                             // Skip the root package.json, which `**` or `../*` can match again.
                             if dir.is_empty() {
+                                continue;
+                            }
+                            // In the lockfile this would be the path of another directory.
+                            if strings::contains_char(&dir, b'\\') {
                                 continue;
                             }
 
                             process_workspace_name(
                                 workspace_names,
                                 json_cache,
-                                abs_package_json_path,
-                                dir,
+                                &abs_package_json_path,
+                                &dir,
                                 log,
                                 missing_workspace,
                             )
-                            .map(|entry| (dir, entry))
                         }
-                        None => Err(crate::Error::Sys(bun_errno::SystemErrno::ENAMETOOLONG)),
+                        Err(too_long) => Err(too_long.into()),
                     };
 
-                    let (workspace_path, workspace_entry) = match processed {
+                    let workspace_entry = match processed {
                         Ok(processed) => processed,
                         Err(err) => {
                             if err == crate::Error::Sys(bun_errno::SystemErrno::ENOENT) {
@@ -649,7 +603,7 @@ impl WorkspaceMap {
                     };
                     workspace_names.insert(
                         string_builder.as_deref_mut(),
-                        workspace_path,
+                        &dir,
                         Entry {
                             is_behind_link,
                             ..workspace_entry
@@ -678,13 +632,11 @@ impl WorkspaceMap {
     /// symlink.
     pub(crate) fn lists(arr: NamesArray<'_>, source: &bun_ast::Source, abs_dir: &[u8]) -> bool {
         let root_dir: &[u8] = package_json_dir(source);
-        let mut dir_buf = path::path_buffer_pool::get();
-        let dir = relative_workspace_path(&mut dir_buf.0, root_dir, abs_dir);
-        if dir.is_empty() {
+        let dir: &[u8] = &SlashPath::relative(root_dir, abs_dir);
+        // See `resolve_to_store` for the `\`.
+        if dir.is_empty() || strings::contains_char(dir, b'\\') {
             return false;
         }
-        let mut abs_buf = path::path_buffer_pool::get();
-        let mut rel_buf = path::path_buffer_pool::get();
         let scratch = Arena::new();
         let mut negated = NegatedWorkspaces::default();
         let mut matched = false;
@@ -702,13 +654,9 @@ impl WorkspaceMap {
                 continue;
             }
             // A workspace listed by its exact path is a member even if a negated pattern matches.
-            if resolve_path::join_abs_string_buf_checked::<path::platform::Auto>(
-                root_dir,
-                &mut abs_buf.0[..],
-                &[input_path],
-            )
-            .is_some_and(|abs| relative_workspace_path(&mut rel_buf.0, root_dir, abs) == dir)
-            {
+            if package_json_in(root_dir, input_path).is_ok_and(|abs| {
+                SlashPath::relative(root_dir, workspace_dir_of(&abs)).as_bytes() == dir
+            }) {
                 return true;
             }
         }

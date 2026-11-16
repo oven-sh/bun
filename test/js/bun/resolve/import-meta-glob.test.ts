@@ -486,6 +486,25 @@ describe.concurrent("import.meta.glob", () => {
     });
   });
 
+  test.skipIf(isWindows)("in a module whose directory is /", async () => {
+    using dir = tempDir("import-meta-glob-root", {
+      "modules/a.ts": `export default "a";`,
+      "build.ts": `
+        for (const pattern of ["." + import.meta.dir + "/modules/*.ts", "./*.matches-nothing"]) {
+          const { outputs } = await Bun.build({
+            entrypoints: ["/index.ts"],
+            files: { "/index.ts": "console.log(Object.keys(import.meta.glob(" + JSON.stringify(pattern) + ")));" },
+          });
+          new Function(await outputs[0].text())();
+        }`,
+    });
+    expect(await run(String(dir), ["build.ts"])).toEqual({
+      stdout: `[ ".${dir}/modules/a.ts" ]\n[]\n`,
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
   test("bun -e", async () => {
     expect(
       await runEntry("", {}, ["-e", `console.log(JSON.stringify(Object.keys(import.meta.glob("./src/dir/[ab].ts"))))`]),

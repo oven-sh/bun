@@ -1,6 +1,6 @@
 import type { Server, Subprocess } from "bun";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isDebug, tempDir, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, isDebug, isWindows, tempDir, tempDirWithFiles } from "harness";
 import { join } from "path";
 
 function replaceHash(html: string) {
@@ -2053,4 +2053,31 @@ describe("production headers and import.meta.env", () => {
     );
     expect(results).toEqual(cases.map(([, , expected]) => expected));
   });
+});
+
+test.skipIf(isWindows).each([
+  ["a\\b", "../web", "../web/index.html"],
+  ["a\\b", "./a\\b", "a/b/index.html"],
+])("the dev server in %s has the module that the page in %s starts with", async (cwd, pages, id) => {
+  using dir = tempDir("html-backslash", {
+    [join(cwd, pages, "index.html")]: `<script type="module" src="./main.js"></script>`,
+    [join(cwd, pages, "main.js")]: `console.log("main");`,
+    [join(cwd, "serve.js")]: `
+      const { default: page } = await import(require("path").join(import.meta.dir, ${JSON.stringify(pages)}, "index.html"));
+      using server = Bun.serve({ port: 0, development: true, routes: { "/": page } });
+      const [, src] = (await (await fetch(server.url)).text()).match(/src="([^"]+)"/);
+      const bundle = await (await fetch(new URL(src, server.url))).text();
+      console.log(bundle.match(/main: "(.+)"/)[1], bundle.match(/"(.+\\.html)": \\[/)[1]);
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "serve.js"],
+    cwd: join(String(dir), cwd),
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stdout).toBe(`${id} ${id}\n`);
+  expect(exitCode).toBe(0);
 });

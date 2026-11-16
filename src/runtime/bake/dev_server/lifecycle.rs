@@ -334,7 +334,8 @@ pub(crate) fn init(options: Options) -> JsResult<Box<DevServer>> {
             // Types with a missing root were skipped above, so this can differ from the index in the config.
             let type_index = router::TypeIndex::init(u8::try_from(types.len()).expect("int cast"));
             types.push(router::Type {
-                abs_root: strings::without_trailing_slash(entry.abs_path).into(),
+                abs_root: paths::string_paths::without_trailing_slash_portable(entry.abs_path)
+                    .into(),
                 ignore_underscores: fsr.ignore_underscores,
                 ignore_dirs: fsr
                     .ignore_dirs

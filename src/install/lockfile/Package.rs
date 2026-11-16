@@ -4,7 +4,8 @@ use core::mem;
 use bun_collections::{ArrayHashMap, AutoBitSet, MultiArrayList, StringSet, index_sort};
 use bun_core::strings;
 use bun_core::{Global, Output};
-use bun_paths::{self as path, MAX_PATH_BYTES, resolve_path};
+use bun_paths::platform::Slash;
+use bun_paths::{self as path, MAX_PATH_BYTES, PathIn, Pool};
 use bun_resolver::fs::FileSystem;
 use bun_semver::semver_query::Wildcard;
 use bun_semver::version::VersionInt;
@@ -116,27 +117,19 @@ fn name_range_on_disk(source: &bun_ast::Source) -> bun_ast::Range {
     }
 }
 
-/// Returns the path in the form that `dependency::Value::Folder` has in local packages, or `None` if it
-/// doesn't fit in `buf`.
-pub(crate) fn folder_relative_to_top_level_dir<'a>(
+/// The form that `dependency::Value::Folder` has in local packages. `None` if it is too long.
+pub(crate) fn folder_relative_to_top_level_dir(
     pkg_dir: &[u8],
     folder: &[u8],
-    buf: &'a mut [u8],
-) -> Option<&'a [u8]> {
+) -> Option<PathIn<Pool, Slash>> {
     let top_level_dir = FileSystem::get().top_level_dir();
-    let joined = resolve_path::join_abs_string_buf_checked::<path::platform::Auto>(
-        top_level_dir,
-        buf,
-        &[pkg_dir, folder],
-    )?;
-    let relative = resolve_path::relative(top_level_dir, joined);
+    let joined = lockfile::resolve_to_store(top_level_dir, &[pkg_dir, folder]).ok()?;
+    let mut relative = PathIn::<Pool, Slash>::relative(top_level_dir, &joined).ok()?;
     // empty when the package depends on itself
-    let relative: &[u8] = if relative.is_empty() { b"." } else { relative };
-    let len = relative.len();
-    buf.get_mut(..len)?.copy_from_slice(relative);
-    #[cfg(windows)]
-    path::dangerously_convert_path_to_posix_in_place::<u8>(&mut buf[..len]);
-    Some(&buf[..len])
+    if relative.is_empty() {
+        relative.set(b".").ok()?;
+    }
+    Some(relative)
 }
 
 #[cold]
@@ -1376,7 +1369,7 @@ impl Diff {
                     let (source_ref, json_root): (bun_ptr::ParentRef<bun_ast::Source>, Expr) =
                         match pm
                             .workspace_package_json_cache
-                            .get_with_path(&mut *log, package_json_path.slice(), Default::default())
+                            .get_with_path(&mut *log, &package_json_path, Default::default())
                             .unwrap()
                         {
                             Ok(entry) => (bun_ptr::ParentRef::new(&entry.source), entry.root),
@@ -1675,12 +1668,11 @@ impl Diff {
         ]) else {
             return Ok(None);
         };
-        let Ok(contents) = bun_sys::File::read_from(bun_sys::Fd::cwd(), package_json_path.slice())
-        else {
+        let Ok(contents) = bun_sys::File::read_from(bun_sys::Fd::cwd(), &package_json_path) else {
             return Ok(None);
         };
         let source =
-            bun_ast::Source::init_path_string(package_json_path.slice(), contents.as_slice());
+            bun_ast::Source::init_path_string(package_json_path.as_bytes(), contents.as_slice());
         let mut folder_pkg = Package::default();
         // Its messages point into `source`. The resolver reports them when it reads the directory.
         let mut parse_log = bun_ast::Log::init();
@@ -1770,7 +1762,7 @@ impl Diff {
         };
         let Ok(entry) = pm
             .workspace_package_json_cache
-            .get_with_path(log, path.slice(), Default::default())
+            .get_with_path(log, &path, Default::default())
             .unwrap()
         else {
             return false;
@@ -2219,12 +2211,9 @@ impl Package<u64> {
                 if (features.is_main || features.is_workspace || features.is_folder)
                     && (!is_link || dependency::is_link_path(target.slice(buf))) =>
             {
-                let mut folder_buf = bun_paths::path_buffer_pool::get();
-                let Some(relative) = folder_relative_to_top_level_dir(
-                    source.path.name().dir,
-                    target.slice(buf),
-                    &mut folder_buf.0,
-                ) else {
+                let Some(relative) =
+                    &folder_relative_to_top_level_dir(source.path.name().dir, target.slice(buf))
+                else {
                     return Err(unsafe_folder_path(log, buf));
                 };
                 dependency_version.value = if is_link {
@@ -2337,20 +2326,17 @@ impl Package<u64> {
                     dependency_version.value = dependency::Value::Workspace(path);
                 } else if features.is_main || features.is_workspace {
                     let workspace = workspace_str.slice(buf);
-                    let mut relative_buf;
+                    let relative_buf;
                     // An empty spec names no workspace and no path, so it resolves like `*`.
                     let relative: &[u8] = if workspace == b"*"
                         || strings::trim(workspace, &strings::WHITESPACE_CHARS).is_empty()
                     {
                         b"*"
                     } else {
-                        relative_buf = bun_paths::path_buffer_pool::get();
                         // `.` for `workspace:.` in the root package.json
-                        match folder_relative_to_top_level_dir(
-                            source.path.name().dir,
-                            workspace,
-                            &mut relative_buf.0,
-                        ) {
+                        relative_buf =
+                            folder_relative_to_top_level_dir(source.path.name().dir, workspace);
+                        match &relative_buf {
                             Some(relative) => relative,
                             None => return Err(unsafe_folder_path(log, buf)),
                         }
@@ -3128,13 +3114,11 @@ impl Package<u64> {
                                     continue;
                                 }
                                 if strings::eql_long(&value.name, &entry.name) {
-                                    let note_abs_path = bun_core::ZBox::from_bytes(
-                                        resolve_path::join_abs_string_z::<path::platform::Auto>(
-                                            root_dir,
-                                            &[note_path, b"package.json"],
-                                        )
-                                        .as_bytes(),
-                                    );
+                                    let note_abs_path = path::Path::resolved_portable(&[
+                                        root_dir,
+                                        note_path,
+                                        b"package.json",
+                                    ]);
 
                                     let note_src = match bun_ast::to_source(
                                         &note_abs_path,
@@ -3161,13 +3145,8 @@ impl Package<u64> {
                             break 'notes notes;
                         };
 
-                        let abs_path = bun_core::ZBox::from_bytes(
-                            resolve_path::join_abs_string_z::<path::platform::Auto>(
-                                root_dir,
-                                &[path_, b"package.json"],
-                            )
-                            .as_bytes(),
-                        );
+                        let abs_path =
+                            path::Path::resolved_portable(&[root_dir, path_, b"package.json"]);
 
                         let src = match bun_ast::to_source(&abs_path, Default::default()) {
                             Ok(s) => s,

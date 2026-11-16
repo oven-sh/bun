@@ -1828,31 +1828,21 @@ Full documentation is available at <magenta>https://bun.com/docs/pm/cli/prune<r>
 
         // A second `chdir` would resolve a relative path from inside the first one's target.
         if let Some(cwd_) = args.option(b"--cwd").filter(|_| first_parse) {
-            let mut buf = bun_paths::path_buffer_pool::get();
-            let mut buf2 = bun_paths::path_buffer_pool::get();
-
-            let final_path: Option<&bun_core::ZStr> = if !cwd_.is_empty() && cwd_[0] == b'.' {
-                let cwd_len = bun_sys::getcwd(&mut buf[..])?;
-                let cwd = &buf[..cwd_len];
-                let parts: [&[u8]; 1] = [cwd_];
-                Path::resolve_path::join_abs_string_buf_z_checked::<Path::platform::Auto>(
-                    cwd,
-                    &mut buf2[..],
-                    &parts,
-                )
-            } else if cwd_.len() < buf.len() {
-                buf[..cwd_.len()].copy_from_slice(cwd_);
-                buf[cwd_.len()] = 0;
-                Some(bun_core::ZStr::from_buf(&buf[..], cwd_.len()))
+            let final_path = if cwd_.starts_with(b".") {
+                let mut buf = bun_paths::path_buffer_pool::get();
+                Path::PoolPath::resolved_portable(&[bun_sys::getcwd_z(&mut buf)?, cwd_])
             } else {
-                None
+                Path::PoolPath::from(cwd_)
             };
-            let too_long = bun_sys::Error::from_code(bun_sys::E::ENAMETOOLONG, bun_sys::Tag::chdir);
-            if let Err(err) = final_path.map_or(Err(too_long), bun_sys::chdir) {
+            let changed = match &final_path {
+                Ok(path) => bun_sys::chdir(path),
+                Err(too_long) => Err(bun_sys::Tag::chdir.too_long()(*too_long)),
+            };
+            if let Err(err) = changed {
                 Output::err_generic(
                     "failed to change directory to \"{}\": {}\n",
                     (
-                        bstr::BStr::new(final_path.map_or(cwd_, |p| p.as_bytes())),
+                        bstr::BStr::new(final_path.as_ref().map_or(cwd_, |path| path)),
                         bstr::BStr::new(err.name()),
                     ),
                 );

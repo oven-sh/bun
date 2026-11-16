@@ -283,8 +283,7 @@ pub mod fs {
                 }
             };
             // Seed the lower-tier `bun_paths::fs::FileSystem` singleton with the
-            // same cwd. `bun_paths::resolve_path::relative*` and
-            // `Path::init_top_level_dir` reach `bun_paths::fs::FileSystem::
+            // same cwd. `resolve_path::relative*` reach `bun_paths::fs::FileSystem::
             // instance()` (a strict `OnceLock` — panics if unset), and the
             // doc-comment on that `init` names this as the intended seeding
             // point. This keeps both halves in lockstep.
@@ -292,12 +291,12 @@ pub mod fs {
             // `Err`). `cwd` is passed as raw bytes — POSIX paths are not
             // guaranteed UTF-8, and the lower tier stores/serves bytes.
             bun_paths::fs::FileSystem::init(cwd);
-            bun_core::set_top_level_dir(cwd);
+            bun_paths::fs::set_top_level_dir(cwd);
             // SAFETY: single-threaded startup; called from
             // `Transpiler::init` before any worker spawn.
             unsafe {
                 (*INSTANCE.get()).write(FileSystem {
-                    fs: Implementation::init(cwd),
+                    fs: Implementation::init(),
                     dirname_store: DirnameStore::instance(),
                     filename_store: FilenameStore::instance(),
                 });
@@ -409,7 +408,7 @@ pub mod fs {
         /// `DirnameStore` or a process-lifetime buffer like `cwd_buf`).
         #[inline]
         pub fn set_top_level_dir(&self, dir: &'static [u8]) {
-            bun_core::set_top_level_dir(dir);
+            bun_paths::fs::set_top_level_dir(dir);
         }
 
         /// `top_level_dir` with any trailing separator stripped (root `/` is
@@ -690,7 +689,7 @@ pub mod fs {
     // Re-exported here so the public path `bun_resolver::fs::*` is preserved.
     pub use crate::fs_full::{
         DirEntry, DirEntryIterator, Entry, EntryCache, EntryKind, EntryKindResolver, EntryLookup,
-        FilenameStoreAppender, dir_entry,
+        FilenameStoreAppender, dir_entry, path_of_entry,
     };
 
     use bun_core::Generation;
@@ -879,7 +878,6 @@ pub mod fs {
         /// this directly (`rfs.entries.get_or_put(..)`); modeled as the wrapper
         /// `EntriesMap` (bun_alloc has no BSSMap equivalent).
         pub entries: EntriesMap,
-        pub(crate) cwd: &'static [u8],
         #[cfg(not(windows))]
         pub(crate) file_limit: usize,
     }
@@ -888,14 +886,13 @@ pub mod fs {
         /// Raise RLIMIT_NOFILE and
         /// record the resulting fd budget so `need_to_close_files` can decide
         /// whether to cache directory fds.
-        pub(crate) fn init(cwd: &'static [u8]) -> RealFS {
+        pub(crate) fn init() -> RealFS {
             let file_limit = Self::adjust_ulimit();
             #[cfg(windows)]
             let _ = file_limit;
             RealFS {
                 entries_mutex: Mutex::default(),
                 entries: EntriesMap::new(),
-                cwd,
                 #[cfg(not(windows))]
                 file_limit,
             }
@@ -1180,7 +1177,6 @@ pub mod fs {
             existing_fd: Fd,
             store_fd: bool,
         ) -> crate::CrateResult<EntryCache> {
-            use bun_paths::resolve_path::{join_abs_string_buf_checked, platform};
             #[cfg(not(windows))]
             use bun_sys::{FileKind, kind_from_mode};
 
@@ -1190,21 +1186,8 @@ pub mod fs {
                 fd: Fd::INVALID,
             };
 
-            let combo: [&[u8]; 2] = [dir_, base];
-            let mut outpath = bun_paths::path_buffer_pool::get();
-            let join_capacity = outpath.len() - 2;
-            let Some(entry_path) = join_abs_string_buf_checked::<platform::Auto>(
-                self.cwd,
-                &mut outpath[..join_capacity],
-                &combo,
-            ) else {
-                return Err(crate::Error::Sys(bun_errno::SystemErrno::ENAMETOOLONG));
-            };
-            let entry_path_len = entry_path.len();
-
-            outpath[entry_path_len + 1] = 0;
-            outpath[entry_path_len] = 0;
-            let absolute_path_c = ZStr::from_buf(&outpath[..], entry_path_len);
+            let absolute_path_c: &ZStr = &path_of_entry(dir_, base)
+                .ok_or(crate::Error::Sys(bun_errno::SystemErrno::ENAMETOOLONG))?;
 
             #[cfg(windows)]
             {
@@ -1291,6 +1274,7 @@ pub mod fs {
                     kind_from_mode(stat_.st_mode as bun_sys::Mode) == FileKind::SymLink;
                 let mut file_kind = kind_from_mode(stat_.st_mode as bun_sys::Mode);
 
+                let mut symlink_buf;
                 let mut symlink: &[u8] = b"";
 
                 if is_symlink {
@@ -1323,7 +1307,8 @@ pub mod fs {
                     FileSystem::set_max_fd(file.fd().native());
 
                     let file_stat = file.stat()?;
-                    symlink = bun_sys::get_fd_path(file.fd(), &mut outpath)?;
+                    symlink_buf = bun_paths::path_buffer_pool::get();
+                    symlink = bun_sys::get_fd_path(file.fd(), &mut symlink_buf)?;
                     cache.fd = opened
                         .filter(|_| store_fd && !self.need_to_close_files())
                         .map_or(existing_fd, bun_sys::CloseOnDrop::into_raw);

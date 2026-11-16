@@ -3751,6 +3751,20 @@ describe.concurrent("yarn.lock entries of packages that are not the registry's",
     expect(ci.exitCode).toBe(0);
   });
 
+  test.each(["ui", "library"])("link:./%s/ is the directory without the slash", async name => {
+    using server = await serve([]);
+    using dir = tempDir("yarn-migration-link-slash", {
+      "package.json": JSON.stringify({ name: "app", dependencies: { t: `link:./${name}/` } }),
+      [`${name}/package.json`]: JSON.stringify({ name: "t", version: "1.0.0" }),
+      "yarn.lock": header + `"t@link:./${name}/":\n  version "0.0.0"\n`,
+    });
+
+    const ci = await bun(String(dir), server.url, "install", "--frozen-lockfile");
+    expect(errors(ci.stderr)).toEqual([]);
+    expect(readJson(String(dir), "node_modules", "t", "package.json").version).toBe("1.0.0");
+    expect(ci.exitCode).toBe(0);
+  });
+
   test.each(["the root", "a workspace"])(
     "a registry package that %s uses can depend on a workspace, for which yarn.lock has no entry",
     async user => {

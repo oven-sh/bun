@@ -318,6 +318,20 @@ test.concurrent("a negative workspace pattern does not remove a member listed by
   expect(Object.values(parseLockfile(packageDir).workspace_paths)).toEqual(["packages/pkg1"]);
 });
 
+test.concurrent.skipIf(isWindows)("a glob does not take a name with a backslash for a nested directory", async () => {
+  using ctx = await setupTest();
+  const { packageDir, env } = ctx;
+  await Promise.all([
+    write(join(packageDir, "package.json"), JSON.stringify({ name: "root", workspaces: ["packages/*"] })),
+    write(join(packageDir, "packages", "a\\b", "package.json"), JSON.stringify({ name: "matched" })),
+    write(join(packageDir, "packages", "a", "b", "package.json"), JSON.stringify({ name: "nested" })),
+    write(join(packageDir, "packages", "c", "package.json"), JSON.stringify({ name: "c" })),
+  ]);
+
+  await runBunInstall(env, packageDir);
+  expect(Object.values(parseLockfile(packageDir).workspace_paths)).toEqual(["packages/c"]);
+});
+
 // A `/package.json` is only possible with a private root directory: a chroot in a private user and mount namespace.
 // Skipped where those are disabled, like in most containers.
 const canChangeRoot =
@@ -335,6 +349,56 @@ for dir in /usr /bin /lib /lib64 "$BUN_DIR"; do
 done
 mount -o rbind /proc "$NEW_ROOT/proc"
 exec chroot "$NEW_ROOT" /bin/sh -c 'cd "$0" && exec "$@"' "$@"`;
+
+  async function installIn(newRoot: string, cwd: string) {
+    const bun = realpathSync(bunExe());
+    await using proc = spawn({
+      cmd: ["unshare", "-Urm", "/bin/sh", "-c", changeRoot, "sh", cwd, bun, "install"],
+      env: {
+        ...baseEnv,
+        NEW_ROOT: newRoot,
+        BUN_DIR: dirname(bun),
+        HOME: "/home",
+        TMPDIR: "/tmp",
+        BUN_INSTALL_CACHE_DIR: "/tmp/cache",
+      },
+      stdin: "ignore",
+      stdout: "ignore",
+      stderr: "pipe",
+    });
+    return await Promise.all([proc.stderr.text(), proc.exited]);
+  }
+
+  test.concurrent("a link in a folder dependency does not bring in a file from anywhere", async () => {
+    using dir = tempDir("fs-root-link", {
+      "package.json": JSON.stringify({ name: "fs-root", dependencies: { pkg: "file:./pkg" } }),
+      "pkg/package.json": JSON.stringify({ name: "pkg", version: "1.0.0" }),
+      "home/secret.txt": "secret",
+      "proc/.keep": "",
+      "tmp/.keep": "",
+    });
+    symlinkSync("/home/secret.txt", join(String(dir), "pkg", "secret.txt"));
+    const [stderr, exitCode] = await installIn(String(dir), "/");
+
+    expect(stderr).toContain("warn: skipping link pkg/secret.txt: target is outside the project");
+    expect(await readdirSorted(join(String(dir), "node_modules", "pkg"))).toEqual(["package.json"]);
+    expect(exitCode).toBe(0);
+  });
+
+  test.concurrent("is not copied into a project below it", async () => {
+    using dir = tempDir("fs-root-folder", {
+      "package.json": JSON.stringify({ name: "fs-root", version: "1.0.0" }),
+      "app/package.json": JSON.stringify({ name: "app", dependencies: { "fs-root": "file:.." } }),
+      "home/.keep": "",
+      "proc/.keep": "",
+      "tmp/.keep": "",
+    });
+    const [stderr, exitCode] = await installIn(String(dir), "/app");
+
+    expect(stderr).toContain(`error: refusing to install the root of the file system from "file:.."`);
+    expect(await readdirSorted(join(String(dir), "app"))).toEqual(["package.json"]);
+    expect(exitCode).toBe(1);
+  });
 
   // Members listed by path: a glob is walked from an open directory and never needed the root's path.
   test.concurrent.each([
@@ -356,22 +420,7 @@ exec chroot "$NEW_ROOT" /bin/sh -c 'cd "$0" && exec "$@"' "$@"`;
       "proc/.keep": "",
       "tmp/.keep": "",
     });
-    const bun = realpathSync(bunExe());
-    await using proc = spawn({
-      cmd: ["unshare", "-Urm", "/bin/sh", "-c", changeRoot, "sh", cwd, bun, "install"],
-      env: {
-        ...baseEnv,
-        NEW_ROOT: String(dir),
-        BUN_DIR: dirname(bun),
-        HOME: "/home",
-        TMPDIR: "/tmp",
-        BUN_INSTALL_CACHE_DIR: "/tmp/cache",
-      },
-      stdin: "ignore",
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    const [stderr, exitCode] = await installIn(String(dir), cwd);
 
     expect(stderr).not.toContain("error:");
     expect(stderr).toContain("Saved lockfile");

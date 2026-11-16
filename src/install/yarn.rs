@@ -18,7 +18,7 @@ use bun_install::dependency::{self, Dependency, DependencyExt as _, Tag as DepTa
 use bun_install::install::{self, PackageID, PackageManager};
 use bun_install::integrity::Integrity;
 use bun_install::npm;
-use bun_paths::AutoAbsPath;
+use bun_paths::{Path, Style as _, platform::Posix};
 use bun_semver::{self as Semver, String as SemverString};
 
 #[derive(Default)]
@@ -294,6 +294,7 @@ impl<'a> YarnLock<'a> {
                     let name = Entry::get_name_from_spec(spec);
                     let range = spec.get(name.len() + 1..).unwrap_or(b"");
                     if let Some(path) = range.strip_prefix(b"link:") {
+                        let path = Posix::without_trailing_sep(path);
                         new_entry.link = Some(dependency::link_path_for_lockfile(path));
                         break;
                     }
@@ -433,32 +434,31 @@ fn append_package_json(
     log: &mut bun_ast::Log,
     workspace_path: Option<SemverString>,
 ) -> Result<LockfilePackage, Error> {
-    let mut path = AutoAbsPath::init_top_level_dir();
-    let _ = path.append(match &workspace_path {
-        Some(workspace_path) => workspace_path.slice(this.buffers.string_bytes.as_slice()),
-        None => b"",
-    });
-    let _ = path.append(b"package.json");
-    let (source, json) = match manager.workspace_package_json_cache.get_with_path(
-        log,
-        path.slice(),
-        Default::default(),
-    ) {
-        // Cloned because parsing the root's `workspaces` grows the cache holding this entry.
-        GetJsonResult::Entry(entry) => (entry.source.clone(), entry.root),
-        GetJsonResult::ReadErr(err) => {
-            let path = bstr::BStr::new(path.slice());
-            let loc = bun_ast::Loc::EMPTY;
-            log.add_error_fmt(
-                None,
-                loc,
-                format_args!("{} reading \"{}\"", err.name(), path),
-            );
-            return Err(err);
-        }
-        // The parse diagnostics are already in `log`.
-        GetJsonResult::ParseErr(_) => return Err(crate::Error::InvalidPackageJSON),
-    };
+    let mut path = Path::top_level_dir();
+    if let Some(workspace_path) = &workspace_path {
+        path.push_portable(workspace_path.slice(this.buffers.string_bytes.as_slice()));
+    }
+    path.push(b"package.json");
+    let (source, json) =
+        match manager
+            .workspace_package_json_cache
+            .get_with_path(log, &path, Default::default())
+        {
+            // Cloned because parsing the root's `workspaces` grows the cache holding this entry.
+            GetJsonResult::Entry(entry) => (entry.source.clone(), entry.root),
+            GetJsonResult::ReadErr(err) => {
+                let path = bstr::BStr::new(path.as_bytes());
+                let loc = bun_ast::Loc::EMPTY;
+                log.add_error_fmt(
+                    None,
+                    loc,
+                    format_args!("{} reading \"{}\"", err.name(), path),
+                );
+                return Err(err);
+            }
+            // The parse diagnostics are already in `log`.
+            GetJsonResult::ParseErr(_) => return Err(crate::Error::InvalidPackageJSON),
+        };
     let mut package = LockfilePackage::default();
     let features = workspace_path.map_or(Features::main(), |_| Features::WORKSPACE);
     package.parse_with_json(this, manager, log, &source, json, &mut (), features)?;
@@ -799,11 +799,10 @@ pub(crate) fn migrate_yarn_lockfile(
             crate::resolution::Tag::Folder | crate::resolution::Tag::Symlink
         ) && let Some(folder) = entry.file.or(entry.link.as_deref())
             && let Some(path) = lockfile::join_top_level_dir(&[folder, b"package.json"])
-            && let GetJsonResult::Entry(json) = manager.workspace_package_json_cache.get_with_path(
-                log,
-                path.slice(),
-                Default::default(),
-            )
+            && let GetJsonResult::Entry(json) =
+                manager
+                    .workspace_package_json_cache
+                    .get_with_path(log, &path, Default::default())
         {
             let manifest = json.root;
             crate::migration::parse_manifest_bin(this, &mut package, &manifest)?;

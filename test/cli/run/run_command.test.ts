@@ -3,7 +3,7 @@ import { dlopen } from "bun:ffi";
 import { describe, expect, test } from "bun:test";
 import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "fs";
 import { bunEnv, bunExe, bunRun, isLinux, isWindows, tempDir } from "harness";
-import { dirname, join } from "path";
+import { delimiter, dirname, join } from "path";
 
 let cwd: string | undefined;
 
@@ -19,6 +19,27 @@ describe("bun", () => {
     expect(stdout.toString()).toBeEmpty();
     expect(stderr.toString()).toMatch(/Script not found/);
     expect(exitCode).toBe(1);
+  });
+
+  test("$PATH gets node_modules/.bin of the working directory and of each parent once", async () => {
+    using dir = tempDir("run-path-entries", {
+      "package.json": JSON.stringify({ scripts: { path: "echo $PATH" } }),
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "run", "--silent", "--shell=bun", "path"],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    const parents = [String(dir)];
+    while (dirname(parents.at(-1)!) !== parents.at(-1)) parents.push(dirname(parents.at(-1)!));
+    const bins = stdout.split(delimiter).filter(entry => entry.endsWith(".bin"));
+    expect(bins.slice(0, parents.length)).toEqual(parents.map(parent => join(parent, "node_modules", ".bin")));
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
   });
 
   test("an empty-string script value is not a runnable script", () => {

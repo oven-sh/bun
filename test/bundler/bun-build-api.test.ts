@@ -46,6 +46,19 @@ describe("Bun.build", () => {
     expect(await build.outputs[0].text()).toEqualIgnoringWhitespace(".hello{color:#00f}.hi{color:red}\n");
   });
 
+  test.skipIf(isWindows)("the path of an output is where it has been written", async () => {
+    using dir = tempDir("bun-build-api-backslash", { "entry.js": `console.log(1);` });
+
+    const { outputs } = await Bun.build({
+      entrypoints: [join(String(dir), "entry.js")],
+      outdir: join(String(dir), "a\\b"),
+      naming: "c\\..\\[name].[ext]",
+    });
+
+    expect(outputs.map(output => output.path)).toEqual([join(String(dir), "a\\b", "c\\..\\entry.js")]);
+    expect(await outputs[0].text()).toContain("console.log(1);");
+  });
+
   test("a file imported by its default type and with { type: 'file' } is one output", async () => {
     using dir = tempDir("bun-build-api-file-twice", {
       "entry.ts": `

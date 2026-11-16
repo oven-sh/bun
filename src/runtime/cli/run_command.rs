@@ -20,8 +20,9 @@ use bun_md::root as md;
 use bun_options_types::schema::api;
 #[cfg(windows)]
 use bun_paths::WPathBuffer;
+use bun_paths::platform::Auto;
 use bun_paths::strings;
-use bun_paths::{self as paths, DELIMITER, MAX_PATH_BYTES, PathBuffer, SEP};
+use bun_paths::{self as paths, DELIMITER, MAX_PATH_BYTES, PathBuffer, SEP, Style as _};
 use bun_resolver::package_json::PackageJSON;
 use bun_sys::{self as sys, Fd};
 use bun_which::which;
@@ -35,21 +36,6 @@ use crate::cli::shell_completions::ShellCompletions;
 bun_core::declare_scope!(RUN_LOG, visible);
 
 use bun_core::UnwrapOrOom;
-
-/// Picks the POSIX or Windows path literal at compile
-/// time. Local because `bun_paths` does not export a macro form yet.
-macro_rules! path_literal {
-    ($posix:literal, $win:literal) => {{
-        #[cfg(windows)]
-        {
-            $win
-        }
-        #[cfg(not(windows))]
-        {
-            $posix
-        }
-    }};
-}
 
 // Passthrough-arg shell escaping. The escape tables + helpers are the lower-tier
 // `bun_shell_parser` crate's canonical copy — import them so future fixes to
@@ -1892,7 +1878,7 @@ impl RunCommand {
             if root_dir_info.package_json.is_none() {
                 // no trailing slash
                 package_json_dir =
-                    strings::without_trailing_slash(package_json.source.path.name().dir);
+                    strings::without_trailing_slash_portable(package_json.source.path.name().dir);
             }
         }
 
@@ -1956,18 +1942,8 @@ impl RunCommand {
             new_path_len += package_json_dir.len() + 1;
         }
 
-        {
-            let mut remain = cwd;
-            while let Some(i) = strings::last_index_of_char(remain, SEP) {
-                new_path_len += strings::without_trailing_slash(remain).len()
-                    + b"node_modules.bin".len()
-                    + 1
-                    + 2; // +2 for path separators, +1 for path delimiter
-                remain = &remain[..i];
-            }
-            // final segment once the loop ends naturally
-            new_path_len +=
-                strings::without_trailing_slash(remain).len() + b"node_modules.bin".len() + 1 + 2; // +2 for path separators, +1 for path delimiter
+        for dir in Auto::ancestors(cwd) {
+            new_path_len += dir.len() + b"/node_modules/.bin:".len();
         }
 
         if needs_to_force_bun {
@@ -2015,23 +1991,10 @@ impl RunCommand {
                 new_path.push(DELIMITER);
             }
 
-            let mut remain = cwd;
-            while let Some(i) = strings::last_index_of_char(remain, SEP) {
-                new_path.extend_from_slice(strings::without_trailing_slash(remain));
-                new_path.extend_from_slice(path_literal!(
-                    b"/node_modules/.bin",
-                    b"\\node_modules\\.bin"
-                ));
+            for dir in Auto::ancestors(cwd) {
+                new_path.extend_from_slice(&paths::Path::from_parts(&[dir, b"node_modules/.bin"]));
                 new_path.push(DELIMITER);
-                remain = &remain[..i];
             }
-            // final segment once the loop ends naturally
-            new_path.extend_from_slice(strings::without_trailing_slash(remain));
-            new_path.extend_from_slice(path_literal!(
-                b"/node_modules/.bin",
-                b"\\node_modules\\.bin"
-            ));
-            new_path.push(DELIMITER);
 
             new_path.extend_from_slice(&path);
         }

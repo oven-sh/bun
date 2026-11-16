@@ -397,9 +397,9 @@ pub(crate) fn typed_files_for_build(
     if !report.incomplete.is_empty() {
         return warn(format_args!("they could not be type checked"));
     }
-    let typed_files = found.typed.into_iter().map(|(path, text)| TypedFile {
-        path: bundler_path(&path),
-        text,
+    let typed_files = (found.typed.into_iter().zip(written)).filter_map(|((_, text), file)| {
+        let path = typed_path_beside(file.path)?;
+        Some(TypedFile { path, text })
     });
     TypedFiles {
         files: typed_files.collect(),

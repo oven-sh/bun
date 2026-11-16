@@ -6,7 +6,7 @@ planned by cargo and run by ninja (`scripts/build/rust.ts`, `scripts/build/rust/
 
 - `bun_core` (`src/bun_core/`) — strings, formatting, logging, env vars, allocator/heap helpers, the foundation everything else uses
 - `bun_sys` (`src/sys/`) — cross-platform syscall wrappers (`File`, `Fd`, `Dir`, `Error`)
-- `bun_paths` (`src/paths/`) — path joining/normalization, the path-buffer pool
+- `bun_paths` (`src/paths/`) — `Path` (building, joining, normalizing), `Style` (reading), the path-buffer pool
 - `bun_jsc` (`src/jsc/`) — JSC value types, `Strong`/`Weak`, FFI imports
 - `bun_runtime` (`src/runtime/`) — JS-visible APIs (server, fetch, node compat, crypto)
 - `bun_js_parser`, `bun_js_printer`, `bun_resolver`, `bun_bundler`, `bun_install`, `bun_collections`, `bun_threading`, `bun_alloc` — the rest of the pipeline
@@ -33,7 +33,7 @@ or don't match the cross-platform behavior the runtime needs.
 | --------------------------------------- | ------------------------------------------------------------------------------------ |
 | `std::fs::File`                         | `bun_sys::File` (owns the fd; closes on `Drop`)                                      |
 | `std::fs::read` / `write`               | `bun_sys::File::read_from` / `File::create` + `write_all`                            |
-| `std::path::Path::join`                 | `bun_paths::resolve_path::join` / `join_string_buf`                                  |
+| `std::path::PathBuf` / `Path::join`     | `bun_paths::Path` (`push`, `join`, `resolve`)                                        |
 | `std::path::Path::parent`/`file_name`   | `bun_paths::dirname` / `bun_paths::basename`                                         |
 | `std::env::var`                         | `bun_core::env_var::*::get()` (typed + cached)                                       |
 | `String::from_utf8` for JS-visible strs | `bun_core::String::clone_utf8` / `StringView::borrow_utf8`                           |
@@ -213,33 +213,70 @@ strings::to_utf16_alloc(...)             // encoding conversions
 
 ## Paths (`bun_paths`)
 
-Path helpers operate on `&[u8]` and are platform-parameterized via the
-`Platform` const-generic (`Posix`, `Windows`, `Loose`, `Nt`; `platform::Auto`
-picks the host). Never use `std::path` for runtime path logic.
+Never use `std::path` for runtime path logic. Build paths with `bun_paths::Path`.
+It is always NUL-terminated and derefs to `ZStr` (and on to `[u8]`), so `&path`
+goes straight into `bun_sys`. No path makes it panic, and an operation that
+fails leaves the path as it was.
 
 ```rust
-use bun_paths::{dirname, basename};
-use bun_paths::resolve_path::{self, platform};
+use bun_paths::Path;
 
-let dir  = dirname(path);                               // Option<&[u8]>
-let name = basename(path);                              // &[u8]
-let joined = resolve_path::join::<platform::Auto>(&[a, b]);   // &'static [u8] (threadlocal buf)
-let joined = resolve_path::join_string_buf::<platform::Auto>(&mut buf, &[a, b]);  // caller buf
-let rel    = resolve_path::relative(from, to);
+let json = Path::resolved(&[dir, b"package.json"]);    // path.resolve
+let rel  = Path::relative(from, to);                   // path.relative
+let cwd  = Path::filled(|buf| bun_sys::getcwd_z(buf).map(ZStr::as_bytes))?; // no copy
+
+let mut path = Path::top_level_dir();
+path.push(b"node_modules");                            // separator + name, no normalizing
+for name in names {
+    bun_sys::unlink(&path.child(name))?;               // cut back when the guard drops
+}
+write!(path, "-{hash:x}");                             // `append`; `push_fmt` adds a separator
 ```
 
-Use the path-buffer pool to avoid 64 KB stack allocations on Windows
-(`PathBuffer` is `[u8; PATH_MAX_BYTES]`, ~64 KB on Windows):
+All of these are `PathIn<Backend, Style>` and have the same methods. What can
+lengthen a path returns `T` if the backend grows, else `Result<T, NameTooLong>`.
+`?` makes that `ENAMETOOLONG`; a `bun_sys::Error` needs `.map_err(Tag::open.too_long())`.
+
+| Type           | Storage                          | Too long | Use it                                                           |
+| -------------- | -------------------------------- | -------- | ---------------------------------------------------------------- |
+| `Path`         | pooled buffer, then the heap     | grows    | by default: the system call reports a path that is too long      |
+| `PoolPath`     | pooled buffer                    | `Err`    | when it has to fit a `PathBuffer`, or "absent" leads to a write  |
+| `OsPath`       | pooled buffer, `u16` on Windows  | `Err`    | for the wide and NT calls (`add_long_prefix`, `add_nt_prefix`)   |
+| `VecPath`      | `Vec` (`into_vec`, `into_zbox`)  | grows    | when it is kept, or more than 4 are alive (the size of the pool) |
+| `StackPath<N>` | inline, not zeroed               | `Err`    | when it is known to be short, or nothing may be allocated        |
+| `SlicePath`    | the caller's buffer (`into_z`)   | `Err`    | for `fn(buf: &'a mut PathBuffer) -> &'a ZStr`                    |
+| `SlashPath`    | as `Path`, writes `/` on Windows | grows    | for what is printed, hashed or saved                             |
+
+- `set`/`from` and `append` copy as is. `push`/`from_parts` only tidy the seam: `..` stays and
+  an absolute part does not start over. `join`, `resolve`, `normalize` and `relative` are Node's,
+  except that `resolve` keeps a trailing separator and has no working directory to fall back on.
+- On POSIX a `\` is part of a name. For what somebody has written, maybe on Windows (package.json,
+  lockfiles, bunfig.toml, flags, options), use `resolve_portable` and `push_portable`. They read it
+  as a separator, except in an absolute part, in a name that a working directory or `$HOME` has
+  too (`/home/DOMAIN\user`). A name that the disk has listed is not written: `push` it.
+  `relative_portable` never returns a `\` in a name, for what is printed or saved. `relative` leads to
+  its target, for a symlink.
+- Arguments are `&[u8]` or `&[u16]`, whatever the path holds. They are transcoded as WTF-8/WTF-16.
+- `scope()` cuts the path back on drop, `prefix(n)` and `tail(n)` lend a NUL-terminated part.
+- Never ignore an `Err`: the path is still the parent of what was meant.
+
+To read a borrowed slice use `bun_paths::{dirname, basename, extension, stem}`, or `Style` for the
+rest and for another platform's grammar (`platform::{Auto, Slash, Posix, Windows, Loose}`):
 
 ```rust
-use bun_paths::path_buffer_pool;
+use bun_paths::{Style, platform::Auto};
 
-let mut buf = path_buffer_pool::get();        // PoolGuard<PathBuffer>, returns to pool on Drop
-let joined  = resolve_path::join_string_buf::<platform::Auto>(&mut *buf, &[a, b]);
+Auto::strip_dir(path, dir)    // Option<&[u8]>: what is below `dir`. Not `starts_with`: `/ab` is not in `/a`
+Auto::ancestors(path)         // `path`, its parent, .., the root (`/`, `C:\`, `\\server\share\`)
+Auto::components(path)        // the names after the root, from either end
 ```
 
-`bun_paths::os_path_buffer_pool` selects the wide (`u16`) variant on Windows
-and the narrow (`u8`) variant on POSIX.
+`resolve_path::{join*, relative*, normalize*}` are the older functions. Many return a thread-local
+buffer that the next call overwrites, panic on a long input, or turn `\` into `/` on POSIX: do not
+add callers. `join_abs*` is `resolve_portable`. `strings::without_trailing_slash` cuts a `\` off a POSIX name, which
+`Style::without_trailing_sep` does not. For a scratch buffer that is not a path under construction, use
+`path_buffer_pool::get()` (`os_path_buffer_pool` is `u16` on Windows) and not the stack, since a
+`PathBuffer` is 96 KB on Windows.
 
 ## URL Parsing (`bun_url::whatwg`)
 

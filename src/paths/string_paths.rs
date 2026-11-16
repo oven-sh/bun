@@ -7,7 +7,9 @@
 //! resolve unchanged.
 
 use crate::PathChar;
+use crate::platform::Auto;
 use crate::resolve_path;
+use crate::style::len_without_seps;
 use crate::windows;
 use bun_core::strings;
 use bun_core::{WStr, ZStr};
@@ -151,27 +153,6 @@ pub fn to_nt_path16<'a>(wbuf: &'a mut [u16], path: &[u16]) -> &'a WStr {
     wstr_in_buf(wbuf, total)
 }
 
-fn add_nt_path_prefix<'a>(wbuf: &'a mut [u16], utf16: &[u16]) -> &'a WStr {
-    let plen = windows::NT_OBJECT_PREFIX.len();
-    wbuf[..plen].copy_from_slice(&windows::NT_OBJECT_PREFIX);
-    wbuf[plen..plen + utf16.len()].copy_from_slice(utf16);
-    wbuf[utf16.len() + plen] = 0;
-    wstr_in_buf(wbuf, utf16.len() + plen)
-}
-
-pub fn add_nt_path_prefix_if_needed<'a>(wbuf: &'a mut [u16], utf16: &[u16]) -> &'a WStr {
-    if utf16.starts_with(&windows::NT_OBJECT_PREFIX) {
-        wbuf[..utf16.len()].copy_from_slice(utf16);
-        wbuf[utf16.len()] = 0;
-        return wstr_in_buf(wbuf, utf16.len());
-    }
-    if utf16.starts_with(&windows::LONG_PATH_PREFIX) {
-        // Replace prefix
-        return add_nt_path_prefix(wbuf, &utf16[windows::LONG_PATH_PREFIX.len()..]);
-    }
-    add_nt_path_prefix(wbuf, utf16)
-}
-
 pub fn to_extended_path_normalized<'a>(wbuf: &'a mut [u16], utf8: &[u8]) -> &'a WStr {
     debug_assert!(wbuf.len() > 4);
     if utf8.starts_with(&windows::LONG_PATH_PREFIX_U8)
@@ -197,13 +178,13 @@ pub fn to_w_path_normalized<'a>(wbuf: &'a mut [u16], utf8: &[u8]) -> &'a WStr {
 
     // Longer than the pooled scratch buffer (and than any path the OS can
     // address) — fail-safe to "" like `to_w_path_maybe_dir` does, instead of
-    // panicking in the `normalize_slashes_only` copy below.
+    // panicking in the `normalize_slashes_only_t` copy below.
     if utf8.len() > renormalized.len() {
         wbuf[0] = 0;
         return wstr_in_buf(wbuf, 0);
     }
 
-    let mut path_to_use = normalize_slashes_only(&mut renormalized[..], utf8, b'\\');
+    let mut path_to_use = normalize_slashes_only_t::<u8, b'\\', false>(&mut renormalized[..], utf8);
 
     // is there a trailing slash? Let's remove it before converting to UTF-16
     if path_to_use.len() > 3 && resolve_path::is_sep_any(path_to_use[path_to_use.len() - 1]) {
@@ -265,30 +246,6 @@ fn normalize_slashes_only_t<'a, T: PathChar, const DESIRED_SLASH: u8, const ALWA
         return &buf[..path.len()];
     }
     path
-}
-
-// `desired_slash` is a runtime arg (not a const generic) since a
-// const-generic value can't be forwarded from a runtime call site without duplication.
-// PERF: profile if it shows up on a hot path.
-pub fn normalize_slashes_only<'a>(
-    buf: &'a mut [u8],
-    utf8: &'a [u8],
-    desired_slash: u8,
-) -> &'a [u8] {
-    debug_assert!(desired_slash == b'/' || desired_slash == b'\\');
-    let undesired_slash: u8 = if desired_slash == b'/' { b'\\' } else { b'/' };
-
-    if strings::contains_char_t(utf8, undesired_slash) {
-        buf[..utf8.len()].copy_from_slice(utf8);
-        for c in buf[..utf8.len()].iter_mut() {
-            if *c == undesired_slash {
-                *c = desired_slash;
-            }
-        }
-        return &buf[..utf8.len()];
-    }
-
-    utf8
 }
 
 pub fn to_w_path<'a>(wbuf: &'a mut [u16], utf8: &[u8]) -> &'a WStr {
@@ -438,10 +395,31 @@ pub fn starts_with_windows_drive_letter_t<T: PathChar>(s: &[T]) -> bool {
 
 pub use crate::strings::without_trailing_slash;
 
+/// [`without_trailing_slash`], but a `\` stays where [`crate::PathIn::push_portable`] would keep it.
+#[inline]
+pub fn without_trailing_slash_portable(path: &[u8]) -> &[u8] {
+    let path = &path[..len_without_seps::<Auto, _>(path, 1)];
+    if cfg!(unix) && path.ends_with(b"\\") {
+        return without_written_backslashes(path);
+    }
+    path
+}
+
+#[cold]
+#[inline(never)]
+fn without_written_backslashes(path: &[u8]) -> &[u8] {
+    if !crate::is_absolute(path) {
+        return without_trailing_slash(path);
+    }
+    let mut portable = crate::Path::new();
+    portable.push_portable(path);
+    &path[..portable.len()]
+}
+
 /// Does not strip the device root (C:\ or \\Server\Share\ portion off of the path)
 pub fn without_trailing_slash_windows_path(input: &[u8]) -> &[u8] {
     if cfg!(unix) || input.len() < 3 || input[1] != b':' {
-        return without_trailing_slash(input);
+        return without_trailing_slash_portable(input);
     }
 
     let root_len = resolve_path::windows_filesystem_root(input).len();
@@ -659,21 +637,6 @@ mod tests {
         let result = to_kernel32_path(&mut wbuf, &path);
         assert_eq!(result.len(), path.len() + 4);
         assert_eq!(&result.as_slice()[..4], &windows::LONG_PATH_PREFIX[..]);
-    }
-
-    #[test]
-    fn convert_z_bounds() {
-        // The NUL-terminating conversion (used by the Windows profilers'
-        // path widening) shares the checked core: exact fit converts with
-        // the NUL in the reserved slot, over-long fails safe to "".
-        let mut wbuf = [1u16; 9];
-        let result = bun_core::strings::convert_utf8_to_utf16_in_buffer_z(&mut wbuf, b"abcdefgh");
-        assert_eq!(result.len(), 8);
-        assert_eq!(wbuf[8], 0);
-
-        let result = bun_core::strings::convert_utf8_to_utf16_in_buffer_z(&mut wbuf, &[b'a'; 16]);
-        assert_eq!(result.len(), 0);
-        assert_eq!(wbuf[0], 0);
     }
 
     #[test]

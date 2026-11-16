@@ -21,7 +21,7 @@ use bun_options_types::code_coverage_options::CodeCoverageOptions;
 use bun_options_types::context::{JunitSuites, ReactCompilerScope, TestEnvironment, TestGlobals};
 use bun_paths as bun_path;
 use bun_paths::resolve_path;
-use bun_paths::string_paths::without_leading_path_separator;
+use bun_paths::string_paths::without_trailing_slash_portable;
 use bun_ptr::{CellExt as _, Interned};
 use bun_resolver::fs::FileSystem;
 use bun_sys::{self, Fd, File};
@@ -292,7 +292,7 @@ fn find_folder_of_package(folder: &[u8], name: &[u8]) -> Option<Vec<u8>> {
         if parent.len() >= ancestor.len() || parent.is_empty() {
             return None;
         }
-        ancestor = strings::without_trailing_slash(parent);
+        ancestor = without_trailing_slash_portable(parent);
     }
 }
 
@@ -351,7 +351,7 @@ fn add_files_behind_pattern(
     suffix: &[u8],
     found: &mut Vec<Box<[u8]>>,
 ) {
-    let folder = strings::without_trailing_slash(folder);
+    let folder = without_trailing_slash_portable(folder);
     let Some(slash) = strings::last_index_of_char(prefix, b'/') else {
         return;
     };
@@ -369,7 +369,7 @@ fn add_files_behind_pattern(
             let mut package = folder;
             while !holds_named_manifest(package) {
                 let parent = resolve_path::dirname::<bun_path::platform::Auto>(package);
-                let parent = strings::without_trailing_slash(parent);
+                let parent = without_trailing_slash_portable(parent);
                 if parent.len() >= package.len() || parent.is_empty() {
                     break;
                 }
@@ -389,7 +389,7 @@ fn add_files_behind_pattern(
         }
     };
     if let Some(root) = root {
-        add_files_below(strings::without_trailing_slash(&root), start, suffix, found);
+        add_files_below(without_trailing_slash_portable(&root), start, suffix, found);
     }
 }
 
@@ -864,12 +864,8 @@ pub(crate) struct TestFailure {
 /// How a test file is named in the JUnit document: relative to the project
 /// root when inside it, else as given.
 pub(crate) fn junit_file_name(path: &[u8]) -> &[u8] {
-    let top = FileSystem::get().top_level_dir();
-    if strings::has_prefix(path, top) {
-        without_leading_path_separator(&path[top.len()..])
-    } else {
-        path
-    }
+    use bun_paths::{Style as _, platform::Auto};
+    Auto::strip_dir(path, FileSystem::get().top_level_dir()).unwrap_or(path)
 }
 
 /// One finished test as structured reporters see it.

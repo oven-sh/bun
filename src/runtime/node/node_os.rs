@@ -30,8 +30,6 @@ pub(crate) fn freemem() -> u64 {
 
 mod _impl {
     use super::*;
-    #[cfg(any(target_os = "linux", target_os = "android"))]
-    use bun_core::ZStr;
     #[cfg(not(windows))]
     use bun_core::strings;
     use bun_core::{env_var, fmt as bun_fmt};
@@ -289,21 +287,13 @@ mod _impl {
         for cpu_index in 0..num_cpus as usize {
             let cpu = values.get_index(global_this, cpu_index as u32)?;
 
-            let mut path_buf = [0u8; 128];
-            let path: &ZStr = {
-                let mut cursor = &mut path_buf[..];
-                write!(
-                    cursor,
-                    "/sys/devices/system/cpu/cpu{}/cpufreq/scaling_cur_freq\0",
-                    cpu_index
-                )
-                .map_err(|_| crate::Error::fmt)?;
-                let remaining = cursor.len();
-                let written = path_buf.len() - remaining;
-                // SAFETY: we wrote a NUL terminator at path_buf[written-1]
-                ZStr::from_buf(&path_buf[..], written - 1)
-            };
-            if let Ok(file) = bun_sys::File::open(path, bun_sys::O::RDONLY, 0) {
+            let mut path = bun_paths::StackPath::<128>::new();
+            write!(
+                path,
+                "/sys/devices/system/cpu/cpu{cpu_index}/cpufreq/scaling_cur_freq"
+            )
+            .map_err(|_| crate::Error::fmt)?;
+            if let Ok(file) = bun_sys::File::open(&path, bun_sys::O::RDONLY, 0) {
                 // file closed on Drop
 
                 file.read_to_end_with_array_list(&mut file_buf, bun_sys::SizeHint::ProbablySmall)?;

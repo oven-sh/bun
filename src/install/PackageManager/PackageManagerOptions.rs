@@ -8,6 +8,8 @@ use super::Subcommand;
 use super::command_line_arguments::{self, CommandLineArguments};
 use bun_dotenv::Loader as DotEnvLoader;
 use bun_install::{Features, Npm};
+use bun_paths::string_paths::without_trailing_slash_portable;
+use bun_paths::{NameTooLong, PoolPath, VecPath};
 
 /// Network policy for this install.
 #[derive(Copy, Clone, PartialEq, Eq, Debug, Default)]
@@ -609,51 +611,87 @@ pub use bun_install_types::DependencyGroup;
 pub use bun_install_types::NodeLinker::NodeLinker;
 
 // mkdir -p + open the dir. Callers store the raw `Fd` (`options.global_bin_dir: Fd`).
-fn make_open_dir(path: &[u8]) -> crate::Result<bun_sys::Fd> {
+fn make_open_dir(mut path: &[u8]) -> crate::Result<bun_sys::Fd> {
+    if cfg!(unix) {
+        path = without_trailing_slash_portable(path);
+    }
     bun_sys::Dir::cwd()
         .make_open_path(path, Default::default())
         .map(|d| d.into_raw())
         .map_err(Into::into)
 }
 
-/// Opens `<base>/<parts...>`. `base` comes from the environment and can have any length.
-fn make_open_dir_under(base: &[u8], parts: &[&[u8]]) -> crate::Result<bun_sys::Fd> {
-    use bun_paths::{platform, resolve_path::join_abs_string_buf_checked};
-
-    let base = expand_home(base);
-    let mut buf = bun_paths::path_buffer_pool::get();
-    let Some(path) = join_abs_string_buf_checked::<platform::Auto>(&base, &mut buf.0, parts) else {
-        return Err(crate::Error::Sys(bun_errno::SystemErrno::ENAMETOOLONG));
-    };
-    make_open_dir(path)
+/// What a relative `$BUN_INSTALL` and the like start from.
+#[derive(Clone, Copy)]
+pub enum EnvBase {
+    Project,
+    /// With `--global` the project is the global directory, which is one of them.
+    StartDir,
 }
 
-pub fn open_global_dir(explicit_global_dir: &[u8]) -> crate::Result<bun_sys::Fd> {
-    if let Some(home_dir) = env_var::BUN_INSTALL_GLOBAL_DIR.get() {
-        return make_open_dir(&expand_home(home_dir));
+impl EnvBase {
+    fn of(self, dir: &[u8]) -> &'static [u8] {
+        if cfg!(unix) && dir.starts_with(b"\\") {
+            return b"/";
+        }
+        let fs = bun_paths::fs::FileSystem::instance();
+        match self {
+            EnvBase::Project => fs.top_level_dir(),
+            EnvBase::StartDir => fs.initial_top_level_dir(),
+        }
+    }
+
+    /// `<dir>/<below>`. `dir` comes from the environment and can have any length.
+    pub(crate) fn resolve(self, dir: &[u8], below: &[u8]) -> Result<PoolPath, NameTooLong> {
+        PoolPath::resolved_portable(&[self.of(dir), &expand_home(dir), below])
+    }
+
+    /// `dir` for Bun, and for the system, which follows a symlink that is in front of a `..`.
+    pub fn readings(self, dir: &[u8]) -> [Box<[u8]>; 2] {
+        let expanded = expand_home(dir);
+        let resolved = VecPath::resolved_portable(&[self.of(dir), &expanded]);
+        [resolved.into_vec().into(), expanded]
+    }
+}
+
+impl Options {
+    pub fn env_base(&self) -> EnvBase {
+        match self.global {
+            true => EnvBase::StartDir,
+            false => EnvBase::Project,
+        }
+    }
+}
+
+pub fn open_global_dir(base: EnvBase, explicit_global_dir: &[u8]) -> crate::Result<bun_sys::Fd> {
+    if let Some(home_dir) = env_var::BUN_INSTALL_GLOBAL_DIR.get_not_empty() {
+        return make_open_dir(&Api::BunInstall::resolve_path(base.of(home_dir), home_dir));
     }
 
     if !explicit_global_dir.is_empty() {
         return make_open_dir(explicit_global_dir);
     }
 
-    if let Some(home_dir) = env_var::BUN_INSTALL.get() {
-        return make_open_dir_under(home_dir, &[b"install", b"global"]);
+    if let Some(home_dir) = env_var::BUN_INSTALL.get_not_empty() {
+        return make_open_dir(&base.resolve(home_dir, b"install/global")?);
     }
 
     if let Some(home_dir) = env_var::XDG_CACHE_HOME
-        .get()
-        .or_else(|| env_var::HOME.get())
+        .get_not_empty()
+        .or_else(|| env_var::HOME.get_not_empty())
     {
-        return make_open_dir_under(home_dir, &[b".bun", b"install", b"global"]);
+        return make_open_dir(&base.resolve(home_dir, b".bun/install/global")?);
     }
 
     Err(crate::Error::NoGlobalDirectoryFound)
 }
 
-pub(crate) fn open_global_bin_dir(opts_: Option<&Api::BunInstall>) -> crate::Result<bun_sys::Fd> {
-    if let Some(home_dir) = env_var::BUN_INSTALL_BIN.get() {
-        return make_open_dir(&expand_home(home_dir));
+pub(crate) fn open_global_bin_dir(
+    base: EnvBase,
+    opts_: Option<&Api::BunInstall>,
+) -> crate::Result<bun_sys::Fd> {
+    if let Some(home_dir) = env_var::BUN_INSTALL_BIN.get_not_empty() {
+        return make_open_dir(&Api::BunInstall::resolve_path(base.of(home_dir), home_dir));
     }
 
     if let Some(home_dir) = opts_
@@ -663,15 +701,15 @@ pub(crate) fn open_global_bin_dir(opts_: Option<&Api::BunInstall>) -> crate::Res
         return make_open_dir(home_dir);
     }
 
-    if let Some(home_dir) = env_var::BUN_INSTALL.get() {
-        return make_open_dir_under(home_dir, &[b"bin"]);
+    if let Some(home_dir) = env_var::BUN_INSTALL.get_not_empty() {
+        return make_open_dir(&base.resolve(home_dir, b"bin")?);
     }
 
     if let Some(home_dir) = env_var::XDG_CACHE_HOME
-        .get()
-        .or_else(|| env_var::HOME.get())
+        .get_not_empty()
+        .or_else(|| env_var::HOME.get_not_empty())
     {
-        return make_open_dir_under(home_dir, &[b".bun", b"bin"]);
+        return make_open_dir(&base.resolve(home_dir, b".bun/bin")?);
     }
 
     Err(crate::Error::MissingGlobalBinDirectoryTrySettingBUNINSTALL)
@@ -687,7 +725,7 @@ fn leak_static(s: &[u8]) -> &'static [u8] {
 
 /// Expands a leading `~/` in a path from an environment variable, because the shell often has not
 /// done so. A relative path is returned unchanged.
-pub(crate) fn expand_home(path: &[u8]) -> Box<[u8]> {
+fn expand_home(path: &[u8]) -> Box<[u8]> {
     Api::BunInstall::resolve_path(b"", path)
 }
 

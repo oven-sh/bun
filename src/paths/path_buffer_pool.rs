@@ -94,7 +94,7 @@ impl<T: PoolStorage> PathBufferPoolT<T> {
 
     /// Manual return path. Prefer dropping
     /// the `PoolGuard` instead.
-    pub fn put(buf: Box<T>) {
+    pub(crate) fn put(buf: Box<T>) {
         // Dropped when the pool is full or TLS is gone.
         let _ = T::with_pool(|p| {
             let mut p = p.borrow_mut();
@@ -145,7 +145,7 @@ impl<T: PoolStorage> Drop for PoolGuard<T> {
 impl<T: PoolStorage> PoolGuard<T> {
     /// Extract the `Box` without returning it to the pool; the owner `put`s it later.
     #[inline]
-    pub fn into_box(mut self) -> Box<T> {
+    pub(crate) fn into_box(mut self) -> Box<T> {
         self.buf.take().unwrap()
     }
 }
@@ -156,16 +156,10 @@ pub type path_buffer_pool = PathBufferPoolT<PathBuffer>;
 pub type w_path_buffer_pool = PathBufferPoolT<WPathBuffer>;
 
 /// `bun.path_buffer_pool.get()` — convenience wrapper returning the RAII guard.
-/// `Path<U>` callers store this in a `ManuallyDrop` and explicitly `put` on
-/// reset, so also expose `into_box`/free `put`.
 pub type Guard = PoolGuard<PathBuffer>;
 #[inline(never)]
 pub fn get() -> PoolGuard<PathBuffer> {
     PathBufferPoolT::<PathBuffer>::get()
-}
-#[inline]
-pub fn put(buf: Box<PathBuffer>) {
-    PathBufferPoolT::<PathBuffer>::put(buf)
 }
 
 #[cfg(windows)]

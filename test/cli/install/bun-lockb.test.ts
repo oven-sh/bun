@@ -16,6 +16,18 @@ afterAll(() => {
   registry.stop();
 });
 
+// An argument cannot be longer than the path buffer of Windows.
+it.skipIf(isWindows)("printing a lockfile whose path is longer than PATH_MAX says that it is not found", async () => {
+  using dir = tempDir("lockb-long-path", {});
+  const name = Buffer.alloc(5000, "a").toString() + ".lockb";
+
+  await using proc = spawn({ cmd: [bunExe(), name], cwd: String(dir), env, stdout: "pipe", stderr: "pipe" });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect({ stdout, stderr }).toEqual({ stdout: "", stderr: `lockfile not found: "${join(String(dir), name)}"\n` });
+  expect(exitCode).toBe(1);
+});
+
 it("should not print anything to stderr when running bun.lockb", async () => {
   const { packageDir, packageJson } = await registry.createTestDir({ bunfigOpts: { saveTextLockfile: false } });
 

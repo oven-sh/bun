@@ -735,6 +735,25 @@ unsafe extern "C" fn highway_index_of_untidy_slash(p: *const u8, len: usize) -> 
 }
 #[unsafe(no_mangle)]
 #[linkage = "weak"]
+unsafe extern "C" fn highway_last_index_of_slash(p: *const u8, len: usize) -> usize {
+    // SAFETY: the caller passes a slice, as a pointer and a length.
+    unsafe { highway_last_index_of_char(p, len, b'/') }
+}
+#[unsafe(no_mangle)]
+#[linkage = "weak"]
+unsafe extern "C" fn highway_count_slashes(p: *const u8, len: usize) -> usize {
+    // SAFETY: the caller passes a slice, as a pointer and a length.
+    unsafe { highway_count_char(p, len, b'/') }
+}
+#[unsafe(no_mangle)]
+#[linkage = "weak"]
+unsafe extern "C" fn highway_common_prefix_length(a: *const u8, b: *const u8, len: usize) -> usize {
+    // SAFETY: the caller passes two slices of the same length.
+    let (a, b) = unsafe { (bytes(a, len), bytes(b, len)) };
+    a.iter().zip(b).take_while(|(a, b)| a == b).count()
+}
+#[unsafe(no_mangle)]
+#[linkage = "weak"]
 unsafe extern "C" fn highway_memmem(
     h: *const u8,
     h_len: usize,

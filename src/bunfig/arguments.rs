@@ -10,8 +10,8 @@ use bun_core::{self, Global, Output, env_var};
 use bun_options_types::command_tag::{ALWAYS_LOADS_CONFIG, Tag as CommandTag};
 use bun_options_types::context::Context;
 use bun_options_types::schema::api;
-use bun_paths::PathBuffer;
 use bun_paths::resolve_path::{self, platform};
+use bun_paths::{PathBuffer, SlicePath, Style as _};
 use bun_standalone_graph::StandaloneModuleGraph::StandaloneModuleGraph;
 
 use crate::bunfig::{Bunfig, Counts};
@@ -37,15 +37,9 @@ fn join_config_path<'buf>(
     path: &[u8],
     buf: &'buf mut PathBuffer,
 ) -> Option<&'buf ZStr> {
-    let max_len = buf.len() - 1;
-    let len = resolve_path::join_abs_string_buf_checked::<platform::Auto>(
-        dir,
-        &mut buf[..max_len],
-        &[path],
-    )?
-    .len();
-    buf[len] = 0;
-    Some(ZStr::from_buf(&buf[..], len))
+    let mut config_path = SlicePath::new_in(buf);
+    config_path.resolve_portable(&[dir, path]).ok()?;
+    Some(config_path.into_z())
 }
 
 /// The XDG specification says to ignore `$XDG_CONFIG_HOME` when it is empty or a relative path.
@@ -163,18 +157,16 @@ pub fn has_security_scanner(dir: &[u8], root: &[u8]) -> Result<bool, Box<[u8]>> 
     {
         return Ok(true);
     }
-    let mut next_dir = Some(bun_paths::string_paths::without_trailing_slash_windows_path(dir));
-    while let Some(dir) = next_dir {
+    for dir in platform::Auto::ancestors(dir) {
         if let Some(path) = join_config_path(dir, b"bunfig.toml", &mut config_buf)
             && file_has_security_scanner(path)?
         {
             return Ok(true);
         }
         // Stop at `root`. If `dir` is outside `root`, only `dir` itself is read, not its parents.
-        next_dir = match resolve_path::is_parent_or_equal(root, dir) {
-            resolve_path::ParentEqual::Parent => bun_core::dirname(dir),
-            _ => None,
-        };
+        if resolve_path::is_parent_or_equal(root, dir) != resolve_path::ParentEqual::Parent {
+            break;
+        }
     }
     Ok(false)
 }

@@ -136,6 +136,24 @@ async function runAutoInstallWithEnv(env: Record<string, string>, cwd: string, .
 
 const printNoDepsVersion = `console.log(require("no-deps").version);\n`;
 
+test.skipIf(isWindows)("auto-install with a backslash in the name of the home directory", async () => {
+  using registry = fixtureRegistry();
+  using dir = tempDir("autoinstall-home-backslash", {
+    "DOMAIN\\user/.keep": "",
+    "app/index.js": `console.log(require.resolve("no-deps"));`,
+    "app/bunfig.toml": registry.bunfig,
+  });
+  const HOME = join(String(dir), "DOMAIN\\user");
+  const env = { HOME, BUN_INSTALL: "", BUN_INSTALL_CACHE_DIR: "", XDG_CACHE_HOME: "" };
+
+  const { stdout, stderr, exitCode } = await runAutoInstallWithEnv(env, join(String(dir), "app"), "index.js");
+
+  expect(stderr).toBe("");
+  expect(stdout).toStartWith(join(HOME, ".bun/install/cache/no-deps@2.0.0"));
+  expect(readdirSync(String(dir)).sort()).toEqual(["DOMAIN\\user", "app"]);
+  expect(exitCode).toBe(0);
+});
+
 // docs/runtime/auto-install.mdx: a bare import resolves to the version range the
 // nearest package.json declares for it, and only falls back to `latest` when no
 // package.json lists the package.

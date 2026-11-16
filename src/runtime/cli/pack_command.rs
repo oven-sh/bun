@@ -1,7 +1,6 @@
 use bun_collections::VecExt;
 use core::fmt;
 use std::borrow::Cow;
-use std::io::Write as _;
 
 use crate::cli::publish_command as Publish;
 use crate::cli::run_command::{ConfigureEnvOptions, RunCommand};
@@ -138,7 +137,6 @@ impl PackCommand {
         }
         // The path is relative to `original_cwd`, and `PackageManager::init` has changed the
         // directory since.
-        let mut abs_buf = bun_paths::path_buffer_pool::get();
         for (what, option) in [
             ("filename", &mut options.pack_filename),
             ("destination name", &mut options.pack_destination),
@@ -146,11 +144,7 @@ impl PackCommand {
             if option.is_empty() {
                 continue;
             }
-            let Some(abs) = resolve_path::join_abs_string_buf_checked::<path::platform::Auto>(
-                original_cwd,
-                &mut abs_buf,
-                &[*option],
-            ) else {
+            let Ok(abs) = path::PoolPath::resolved_portable(&[original_cwd, *option]) else {
                 Output::err_generic(
                     "archive {} too long: \"{}\"",
                     (
@@ -160,9 +154,8 @@ impl PackCommand {
                 );
                 Global::crash();
             };
-            *option = crate::cli::cli_dupe(abs);
+            *option = crate::cli::cli_dupe(&abs);
         }
-        drop(abs_buf);
 
         let abs_pkg_json = ZBox::from_bytes(manager.original_package_json_path.as_bytes());
 
@@ -2120,17 +2113,16 @@ fn tarball_destination<'a>(
     tarball_name: TarballNameFormatter<'_>,
     dest_buf: &'a mut [u8],
 ) -> (&'a ZStr, usize) {
+    let mut dest = path::SlicePath::new_in(dest_buf);
     if !pack_filename.is_empty() {
-        if pack_filename.len() + 1 > dest_buf.len() {
+        if dest.set(pack_filename).is_err() {
             Output::err_generic(
                 "archive filename too long: \"{}\"",
                 format_args!("{}", bstr::BStr::new(pack_filename)),
             );
             Global::crash();
         }
-        dest_buf[..pack_filename.len()].copy_from_slice(pack_filename);
-        dest_buf[pack_filename.len()] = 0;
-        return (ZStr::from_buf(&dest_buf[..], pack_filename.len()), 0);
+        return (dest.into_z(), 0);
     }
 
     #[cold]
@@ -2144,26 +2136,17 @@ fn tarball_destination<'a>(
         );
         Global::crash();
     }
-    let Some(dir) = resolve_path::join_abs_string_buf_checked::<resolve_path::platform::Auto>(
-        abs_workspace_path,
-        dest_buf,
-        &[pack_destination],
-    ) else {
+    if dest
+        .resolve_portable(&[abs_workspace_path, pack_destination])
+        .is_err()
+    {
         too_long(pack_destination, tarball_name);
-    };
-    let dir_len_full = dir.len();
-    let dir_len_trimmed = strings::without_trailing_slash(dir).len();
-
-    let mut cursor = std::io::Cursor::new(&mut dest_buf[dir_len_trimmed..]);
-    if write!(&mut cursor, "{}{}\x00", SEP_STR, tarball_name).is_err() {
-        too_long(&dest_buf[..dir_len_full], tarball_name);
     }
-    let tarball_name_len = usize::try_from(cursor.position()).expect("int cast");
-
-    (
-        ZStr::from_buf(&dest_buf[..], dir_len_trimmed + tarball_name_len - 1),
-        dir_len_full,
-    )
+    let dir_len = dest.len();
+    if dest.push_fmt(format_args!("{tarball_name}")).is_err() {
+        too_long(&dest, tarball_name);
+    }
+    (dest.into_z(), dir_len)
 }
 
 pub(crate) fn fmt_tarball_filename<'a>(
@@ -2243,15 +2226,9 @@ fn open_tarball(abs_tarball_dest: &ZStr, is_typed_filename: bool) -> Option<Fd> 
     let mut name_buf = [0u8; 64];
     let name = path::fs::FileSystem::tmpname(b"tmp", &mut name_buf, bun_core::fast_random())
         .expect("unreachable");
-    let tmp = ZBox::from_vec_with_nul(
-        [
-            path::dirname_simple(abs_tarball_dest.as_bytes()),
-            SEP_STR.as_bytes(),
-            UNFINISHED_TARBALL_PREFIX,
-            name.as_bytes_with_nul(),
-        ]
-        .concat(),
-    );
+    let mut tmp = path::VecPath::from(abs_tarball_dest);
+    tmp.set_basename(UNFINISHED_TARBALL_PREFIX);
+    tmp.append(name);
     let file = File::openat(
         Fd::cwd(),
         &tmp,
@@ -2260,7 +2237,7 @@ fn open_tarball(abs_tarball_dest: &ZStr, is_typed_filename: bool) -> Option<Fd> 
     )
     .ok()?;
     let fd = file.fd();
-    *UNFINISHED_TARBALL.lock() = Some((file, tmp));
+    *UNFINISHED_TARBALL.lock() = Some((file, tmp.into_zbox()));
     Global::add_exit_callback(remove_unfinished_tarball);
     Some(fd)
 }

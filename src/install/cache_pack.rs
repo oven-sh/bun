@@ -900,17 +900,12 @@ fn create_index_link(cache_dir: Fd, cache_dir_path: &[u8], entry: &ZStr) {
     let Some(name_len) = strings::index_of_char_pos(entry.as_bytes(), b'@', 1) else {
         return;
     };
-    let mut target_buf = bun_paths::path_buffer_pool::get();
     crate::cache_publish::create_index_link(
         cache_dir,
         cache_dir_path,
         &entry.as_bytes()[..name_len],
         &entry.as_bytes()[name_len + 1..],
-        bun_paths::resolve_path::join_abs_string_buf_z::<bun_paths::platform::Auto>(
-            cache_dir_path,
-            &mut target_buf[..],
-            &[entry.as_bytes()],
-        ),
+        &bun_paths::Path::resolved(&[cache_dir_path, entry]),
     );
 }
 
@@ -1021,10 +1016,7 @@ pub fn exec(pm: &mut PackageManager, original_cwd: &[u8]) -> ! {
         }
     };
     // `PackageManager::init` has changed directory since it was typed.
-    let mut abs_buf = bun_paths::path_buffer_pool::get();
-    let Some(abs_file) = bun_paths::resolve_path::join_abs_string_buf_checked::<
-        bun_paths::platform::Auto,
-    >(original_cwd, &mut abs_buf[..], &[file]) else {
+    let Ok(abs_file) = &bun_paths::PoolPath::resolved_portable(&[original_cwd, file]) else {
         bun_core::pretty_errorln!("<r><red>error<r><d>:<r> \\<file\\> is too long");
         Global::exit(1);
     };

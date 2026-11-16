@@ -2,13 +2,12 @@ use bstr::BStr;
 use bun_ast::{self, ExprData, Log};
 use bun_core::Global;
 use bun_core::Output;
-use bun_core::strings;
 use bun_glob as glob;
 use bun_install::package_manager::workspace_selection::{
     self, Candidate, NegatedWorkspaces, RootSelection, WorkspaceGraph,
 };
 use bun_parsers::json;
-use bun_paths::path_buffer_pool;
+use bun_paths::string_paths::without_trailing_slash_portable;
 use bun_paths::{PathBuffer, platform, resolve_path};
 use bun_resolver::package_json::{IncludeDependencies, IncludeScripts};
 
@@ -126,7 +125,7 @@ fn get_candidate_package_patterns<'a>(
                 }
             }
 
-            let parent_trimmed = strings::without_trailing_slash(workdir);
+            let parent_trimmed = without_trailing_slash_portable(workdir);
             root_buf[0..parent_trimmed.len()].copy_from_slice(parent_trimmed);
             return Ok(&root_buf[0..parent_trimmed.len()]);
         }
@@ -139,7 +138,7 @@ fn get_candidate_package_patterns<'a>(
 
     // if we were not able to find a workspace root, we simply glob for all package.json files
     out_patterns.push(Box::<[u8]>::from(b"**/package.json".as_slice()));
-    let root_dir = strings::without_trailing_slash(workdir_);
+    let root_dir = without_trailing_slash_portable(workdir_);
     root_buf[0..root_dir.len()].copy_from_slice(root_dir);
     Ok(&root_buf[0..root_dir.len()])
 }
@@ -182,7 +181,7 @@ pub(crate) fn select_packages(
 
     let mut discovered: Vec<WorkspacePackage> = Vec::new();
     for_each_package_json(&glob_patterns, &negated, &root_dir, |package_json_path| {
-        let dir = strings::without_trailing_slash(resolve_path::dirname::<platform::Auto>(
+        let dir = without_trailing_slash_portable(resolve_path::dirname::<platform::Auto>(
             &package_json_path,
         ));
         if ctx.workspaces && dir == &*root_dir {
@@ -208,19 +207,10 @@ pub(crate) fn select_packages(
         });
     })?;
 
-    let mut path_buf = path_buffer_pool::get();
     let posix_dirs: Vec<Box<[u8]>> = discovered
         .iter()
-        .map(|p| {
-            strings::without_trailing_slash(resolve_path::join_abs_string_buf::<platform::Posix>(
-                &p.dir,
-                &mut path_buf.0,
-                &[b".".as_slice()],
-            ))
-            .into()
-        })
+        .map(|p| workspace_selection::posix_dir(&p.dir, b".").unwrap_or_default())
         .collect();
-    drop(path_buf);
 
     let candidates: Vec<Candidate<'_>> = discovered
         .iter()

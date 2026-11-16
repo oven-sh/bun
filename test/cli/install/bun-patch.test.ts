@@ -203,6 +203,33 @@ describe.concurrent("error messages", () => {
   });
 });
 
+test.concurrent.skipIf(isWindows).each([
+  ["hoisted", false, "DOMAIN\\user"],
+  ["isolated", false, "DOMAIN\\user"],
+  ["isolated", true, "DOMAIN\\user"],
+  ["hoisted", false, 'the "user"'],
+] as const)("%s linker, global store %p: the cache is in the home directory %s", async (linker, globalStore, home) => {
+  await using tmp = tempDir("bun-patch-home", {
+    [home]: { ".npmrc": "" },
+    "app/package.json": JSON.stringify({ name: "root", dependencies: { "no-deps": "1.0.0" } }),
+    "app/bunfig.toml": `[install]\nlinker = "${linker}"\nglobalStore = ${globalStore}\n`,
+  });
+  const dir = join(String(tmp), "app");
+  const env = { ...projectEnv(dir, join(String(tmp), home, "cache")), HOME: join(String(tmp), home) };
+  await bunOk(dir, env, "install");
+  await bunOk(dir, env, "patch", "no-deps");
+  await Bun.write(join(dir, "node_modules/no-deps/index.js"), patched);
+
+  await bunOk(dir, env, "patch", "--commit", "node_modules/no-deps");
+
+  expect(readFileSync(join(dir, "patches/no-deps@1.0.0.patch"), "utf8")).toStartWith(
+    "diff --git a/index.js b/index.js\n",
+  );
+  expect(readFileSync(join(dir, "node_modules/no-deps/index.js"), "utf8")).toBe(patched);
+  expect(readdirSync(join(dir, "node_modules")).filter(name => !/^\.(bun|cache)$/.test(name))).toEqual(["no-deps"]);
+  expect(readdirSync(String(tmp)).sort()).toEqual([home, "app"].sort());
+});
+
 // `bun patch` identifies packages by `name@label`, where a tarball package's label is
 // the spec it was installed from. These labels used to be formatted into 1024 byte
 // stack buffers (512 bytes in the installer itself), so a long enough spec crashed

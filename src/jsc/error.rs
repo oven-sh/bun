@@ -63,8 +63,6 @@ pub enum Error {
     #[error(transparent)]
     MakeLibUvOwned(#[from] bun_sys::MakeLibUvOwnedError),
     #[error(transparent)]
-    Path(#[from] bun_paths::path_options::Error),
-    #[error(transparent)]
     Bundler(#[from] bun_bundler::Error),
     #[error(transparent)]
     Watcher(#[from] bun_watcher::Error),
@@ -119,7 +117,6 @@ impl Error {
             Self::Core(e) => e.name(),
             Self::Resolver(e) => e.name(),
             Self::MakeLibUvOwned(e) => <&'static str>::from(e),
-            Self::Path(e) => <&'static str>::from(e),
             Self::Bundler(e) => e.name(),
             Self::Watcher(e) => e.name(),
             Self::Install(e) => e.name(),

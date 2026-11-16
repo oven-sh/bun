@@ -1336,7 +1336,7 @@ fn file_copier_copy(
                     scopeguard::defer! { progress.complete_one(NodeId::Root) }
                     let mut result = bun_sys::windows::CopyFileW(src, dst, false);
                     if result.is_err()
-                        && let Some(entry_dirname) = bun_paths::Dirname::dirname_u16(entry.path)
+                        && let Some(entry_dirname) = bun_paths::dirname(entry.path)
                     {
                         let _ = bun_sys::MakePath::make_path_u16(destination_dir_, entry_dirname);
                         result = bun_sys::windows::CopyFileW(src, dst, false);

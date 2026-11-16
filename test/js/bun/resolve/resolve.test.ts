@@ -1,6 +1,15 @@
 import { pathToFileURL } from "bun";
 import { describe, expect, it, test } from "bun:test";
-import { chmodSync, chownSync, mkdirSync, readFileSync, realpathSync, symlinkSync, writeFileSync } from "fs";
+import {
+  chmodSync,
+  chownSync,
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  realpathSync,
+  symlinkSync,
+  writeFileSync,
+} from "fs";
 import {
   autoInstallTempDir,
   bunEnv,
@@ -2427,3 +2436,234 @@ test.concurrent.each(["import", "require"])(
     expect({ stdout, stderr, exitCode }).toEqual({ stdout: "later.mjs\nlater.mjs\n", stderr: "", exitCode: 0 });
   },
 );
+
+describe.concurrent.skipIf(isWindows).each(["a\\b", "a\\"])("a directory with a backslash in its name: %s", name => {
+  async function run(files: Record<string, string>, ...args: string[]) {
+    using dir = tempDir("resolve-backslash", { "up.cjs": `module.exports = "up";`, [name]: files });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), ...args],
+      cwd: join(String(dir), name),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(readdirSync(String(dir)).sort()).toEqual([name, "up.cjs"]);
+    return { stdout: stdout.replaceAll(join(String(dir), name), "<dir>"), stderr, exitCode };
+  }
+
+  const project = {
+    "package.json": JSON.stringify({ imports: { "#x": "./lib/x.js" }, scripts: { where: "pwd" } }),
+    "tsconfig.json": JSON.stringify({ extends: "./config/base.json" }),
+    "config/base.json": JSON.stringify({ compilerOptions: { paths: { "@/*": ["../lib/*"] } } }),
+    "lib/x.js": `export default "x";`,
+    "lib/index.cjs": `module.exports = __filename;`,
+    "node_modules/main/package.json": JSON.stringify({ name: "main", main: "lib/main.js" }),
+    "node_modules/main/lib/main.js": `module.exports = "main";`,
+    "node_modules/exports/package.json": JSON.stringify({ name: "exports", exports: { "./sub": "./dist/sub.mjs" } }),
+    "node_modules/exports/dist/sub.mjs": `export default "exports";`,
+    "index.ts": `
+      import relative from "./lib/x";
+      import imports from "#x";
+      import paths from "@/x";
+      import up from "../up.cjs";
+      import main from "main";
+      import exports from "exports/sub";
+      console.log(relative, imports, paths, up, main, exports);
+    `,
+  };
+
+  test.each(["index.ts", "run ./index.ts", "."])("bun %s", async args => {
+    expect(await run(project, ...args.split(" "))).toEqual({
+      stdout: "x x x up main exports\n",
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  test.each(["system", "bun"])("a script in the %s shell", async shell => {
+    expect(await run(project, "run", "--silent", `--shell=${shell}`, "where")).toEqual({
+      stdout: "<dir>\n",
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  test("a file that was not there when the directory was listed", async () => {
+    const entry = `
+      await Bun.write(import.meta.dir + "/late.cjs", "module.exports = 1");
+      console.log(require(import.meta.dir + "/late.cjs"));
+      await Bun.write(import.meta.dir + "/worker.js", "console.log(2)");
+      new Worker(import.meta.dir + "/worker.js");
+    `;
+    expect(await run({ "entry.ts": entry }, "entry.ts")).toEqual({ stdout: "1\n2\n", stderr: "", exitCode: 0 });
+  });
+
+  test("what a module knows of its path", async () => {
+    const entry = `
+      process.chdir("lib");
+      process.chdir("..");
+      console.log(process.cwd());
+      console.log(import.meta.path, Bun.main, require("./lib/index.cjs"), require.resolve("main"));
+      console.log((await import(import.meta.dir + "/config/../lib/x")).default);
+      console.log((await import(new URL("./lib/x.js", import.meta.url).href)).default);
+    `;
+    expect(await run({ ...project, "entry.ts": entry }, "entry.ts")).toEqual({
+      stdout: "<dir>\n<dir>/entry.ts <dir>/entry.ts <dir>/lib/index.cjs <dir>/node_modules/main/lib/main.js\nx\nx\n",
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  test("below it, a backslash that was written on Windows is still a separator", async () => {
+    const files = {
+      ...project,
+      "tsconfig.json": JSON.stringify({ compilerOptions: { paths: { "@/*": ["${configDir}\\lib\\*"] } } }),
+      "node_modules/main/package.json": JSON.stringify({ name: "main", main: "lib\\main.js" }),
+      "pages/index.js": "",
+      "entry.ts": String.raw`
+        console.log(require.resolve("@/x"), require.resolve("main"), require.resolve("./lib\\x"));
+        console.log(require.resolve(import.meta.dir + "\\pages\\..\\lib\\x"));
+        console.log(require.resolve(import.meta.dir + "/lib\\/x"), Bun.resolveSync("main", import.meta.dir + "\\"));
+        console.log(new Bun.FileSystemRouter({ style: "nextjs", dir: import.meta.dir + "\\pages" }).routes["/"]);
+      `,
+    };
+    expect(await run(files, "entry.ts")).toEqual({
+      stdout: [
+        "<dir>/lib/x.js <dir>/node_modules/main/lib/main.js <dir>/lib/x.js",
+        "<dir>/lib/x.js",
+        "<dir>/lib/x.js <dir>/node_modules/main/lib/main.js",
+        "<dir>/pages/index.js\n",
+      ].join("\n"),
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  test("below it, a name with a backslash does not change what is loaded", async () => {
+    const files = {
+      "lib/x.cjs": `module.exports = "written";`,
+      "lib\\x.cjs": `module.exports = "listed";`,
+      "d/e\\..\\..\\lib\\x.cjs": `module.exports = "listed";`,
+      "entry.ts": String.raw`
+        require("fs").symlinkSync(".", "link");
+        for (const path of ["/lib\\x.cjs", "/link/lib\\x.cjs", "/d/e\\..\\..\\lib\\x.cjs"])
+          console.log(await import(import.meta.dir + path).then(it => it.default, it => it.code));
+      `,
+    };
+    expect(await run(files, "entry.ts")).toEqual({
+      stdout: "ERR_MODULE_NOT_FOUND\nERR_MODULE_NOT_FOUND\nwritten\n",
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  test("after process.chdir() has left it", async () => {
+    const entry = `process.chdir(".."); console.log(require("./lib/index.cjs"), (await import("@/x")).default);`;
+    expect(await run({ ...project, "entry.ts": entry }, "entry.ts")).toEqual({
+      stdout: "<dir>/lib/index.cjs x\n",
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  test("Bun.build({ files })", async () => {
+    const entry = `
+      const { outputs } = await Bun.build({
+        entrypoints: ["./disk.js"],
+        files: {
+          [process.cwd() + "/a.js"]: "import './lib/b.js'",
+          [process.cwd() + "/lib\\\\b.js"]: "import x from './x.js'; console.log(x)",
+        },
+      });
+      eval(await outputs[0].text());
+    `;
+    expect(await run({ ...project, "entry.ts": entry, "disk.js": `import "./a.js";` }, "entry.ts")).toEqual({
+      stdout: "x\n",
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  test("bun build --no-bundle from another directory, if it is the home", async () => {
+    using dir = tempDir("resolve-backslash-no-bundle", { [name]: { "x.js": "console.log(1);" }, app: {} });
+    const HOME = join(String(dir), name);
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build", "--no-bundle", join(HOME, "x.js")],
+      cwd: join(String(dir), "app"),
+      env: { ...bunEnv, HOME },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "console.log(1);\n", stderr: "", exitCode: 0 });
+  });
+
+  test("after process.chdir() has been there", async () => {
+    using dir = tempDir("resolve-backslash-chdir", {
+      [name]: { "lazy.cjs": `module.exports = () => require("./x.cjs");`, "x.cjs": `module.exports = "there";` },
+      [`${name.replace("\\", "/")}/x.cjs`]: `module.exports = "elsewhere";`,
+      "entry.cjs": `
+        process.chdir(${JSON.stringify(name)});
+        const lazy = require(process.cwd() + "/lazy.cjs");
+        process.chdir(__dirname);
+        console.log(lazy());
+      `,
+    });
+    expect(await bunRun(join(String(dir), "entry.cjs"))).toSpawn("there");
+  });
+
+  test.each(["home", "scratch"])("from another directory, in %s, if the home directory has the name", async parent => {
+    using dir = tempDir("resolve-backslash-home", {
+      home: { [name]: project },
+      scratch: { [name]: project },
+      [`${parent}/up.cjs`]: `module.exports = "up";`,
+    });
+    const HOME = join(String(dir), "home", name);
+    expect(await bunRun([join(String(dir), parent, name, "index.ts")], { HOME })).toSpawn("x x x up main exports");
+  });
+
+  test("a macro", async () => {
+    const files = {
+      "macro.ts": `export const value = () => "inlined";`,
+      "entry.ts": `import { value } from "./macro.ts" with { type: "macro" }; console.log(value());`,
+    };
+    expect(await run(files, "entry.ts")).toEqual({
+      stdout: expect.stringMatching(/^inlined$/m),
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  test("Bun.build", async () => {
+    const build = `
+      const { outputs } = await Bun.build({ entrypoints: ["./index.ts"], outdir: "out", sourcemap: "linked" });
+      console.log(outputs.map(output => output.path).join());
+      console.log((await outputs[0].text()).match(/^\\/\\/ .*/gm).join());
+      console.log((await outputs[1].json()).sources.join());
+      await import("./out/index.js");
+    `;
+    expect(await run({ ...project, "build.ts": build }, "build.ts")).toEqual({
+      stdout: [
+        "<dir>/out/index.js,<dir>/out/index.js.map",
+        "// ../up.cjs,// node_modules/main/lib/main.js,// lib/x.js,// index.ts,// node_modules/exports/dist/sub.mjs,// index.ts",
+        "../../up.cjs,../node_modules/main/lib/main.js,../lib/x.js,../index.ts,../node_modules/exports/dist/sub.mjs",
+        "x x x up main exports\n",
+      ].join("\n"),
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  test("bun test", async () => {
+    const files = {
+      ...project,
+      "test/a.test.ts": `import x from "@/x"; test("runs", () => console.log(x));`,
+    };
+    const { stdout, stderr, exitCode } = await run(files, "test");
+    expect(stdout).toEndWith("\nx\n");
+    expect(stderr).toContain("test/a.test.ts:\n(pass) runs");
+    expect(stderr).toContain("Ran 1 test across 1 file.");
+    expect(exitCode).toBe(0);
+  });
+});

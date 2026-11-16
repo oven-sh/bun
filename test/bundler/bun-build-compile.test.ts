@@ -3,6 +3,7 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import {
   bunEnv,
   bunExe,
+  bunRun,
   isArm64,
   isASAN,
   isDebug,
@@ -29,6 +30,7 @@ import {
 import { builtinModules } from "node:module";
 import { isAbsolute, join, sep } from "path";
 import { isHardened, locksEnvironment } from "../aot/hardened";
+import { copyWithoutDebugInformation as executablePath } from "../aot/harness/without-debug-information";
 
 // harness.ts takes the variable out of bunEnv where the environment is locked. An executable that is not compiled ahead of time reads it there too.
 const envWithInternals = { ...bunEnv, BUN_FEATURE_FLAG_INTERNAL_FOR_TESTING: "1" };
@@ -64,6 +66,26 @@ describe("Bun.build compile", () => {
     expect(result.outputs[0].path.replaceAll("\\", "/")).toStartWith(outdir.replaceAll("\\", "/"));
     expect(exists).toBe(true);
   });
+
+  test.concurrent.each(["./index.js", "../index.js", ".."])(
+    "without an outfile, %s is index in outdir",
+    async entrypoint => {
+      const options = {
+        entrypoints: [entrypoint],
+        outdir: "out/dist",
+        compile: executablePath ? { executablePath } : true,
+      };
+      using dir = tempDir("build-compile-default-name", {
+        "index.js": "",
+        "app/index.js": "",
+        "app/build.js": `console.log((await Bun.build(${JSON.stringify(options)})).outputs[0].path);`,
+      });
+      const file = isWindows ? "index.exe" : "index";
+
+      expect(await bunRun(join(String(dir), "app", "build.js"))).toSpawn(join(String(dir), "app", "out", "dist", file));
+      expect(readdirSync(join(String(dir), "app", "out", "dist"))).toEqual([file]);
+    },
+  );
 
   test.skipIf(!isLinux)("the executable can be started when it was written as descriptor 0, 1 or 2", async () => {
     using dir = tempDir("build-compile-closed-stdio", {

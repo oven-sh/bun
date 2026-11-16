@@ -1841,6 +1841,18 @@ describe.skipIf(isWindows)("cache directory", () => {
     });
   });
 
+  // Node.js does not import a module from there.
+  it.concurrent("is in the temp directory if the home directory has a backslash in its name", async () => {
+    using registry = await localRegistry(...toolWithDep());
+    using box = sandbox(registry);
+    const HOME = join(box.home, "DOMAIN\\user");
+    mkdirSync(HOME);
+
+    expect(await box.run(["tool"], { env: { ...box.env, HOME } })).toMatchObject({ stdout: ran, exitCode: 0 });
+    expect(bunxEntries(box.tmp)).toContain(`.bunx-${uid}`);
+    expect(readdirSync(box.home)).toEqual(["DOMAIN\\user"]);
+  });
+
   // The install that bunx spawns runs in the tree, and is told which directory that is.
   it.concurrent("a relative temp directory works like an absolute one", async () => {
     using registry = await localRegistry(...toolWithDep());

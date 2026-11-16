@@ -163,12 +163,12 @@ mod bun_paths {
 }
 // bun_core::strings shim — re-export the canonical `immutable/paths` helpers
 // (`without_trailing_slash_windows_path` / `path_contains_node_modules_folder` /
-// `without_leading_path_separator` / `char_is_any_slash`) instead of locally
+// `without_leading_path_separator`) instead of locally
 // re-implementing them. The previous local copies diverged from the spec
 // (single-strip vs. while-loop, `is_sep_any` vs. platform `SEP`).
 mod strings {
     pub(super) use bun_paths::strings::paths::{
-        char_is_any_slash, path_contains_node_modules_folder, without_leading_path_separator,
+        path_contains_node_modules_folder, without_leading_path_separator,
         without_trailing_slash_windows_path,
     };
     pub(super) use bun_paths::strings::*;
@@ -1964,25 +1964,17 @@ impl<'a> Resolver<'a> {
                     }
                 } else if !dir.abs_real_path.is_empty()
                     // When the directory is a symlink, we don't need to call getFdPath.
-                    && let mut buf = bun_paths::path_buffer_pool::get()
-                    && let Some(out_len) =
-                        ::bun_paths::resolve_path::join_abs_string_buf_z_checked::<
-                            ::bun_paths::platform::Loose,
-                        >(
-                            self.fs_ref().top_level_dir(),
-                            &mut buf[..],
-                            &[dir.abs_real_path, query.entry().base()],
-                        )
-                        .map(|joined| joined.len())
+                    && let Some(real_path) =
+                        Fs::path_of_entry(dir.abs_real_path, query.entry().base())
+                    && real_path.len() < bun_paths::MAX_PATH_BYTES
                 {
                     let store_fd = self.store_fd;
 
                     if !query.entry().cache().fd.is_valid() && store_fd {
-                        let span = bun_core::ZStr::from_buf(&buf[..], out_len);
                         // I/O errors propagate so `resolveAndAutoInstall` can
                         // return them as `Result.Union.failure` — never
                         // panic on EACCES/EMFILE/ELOOP here.
-                        let file = bun_sys::open(span, bun_sys::O::RDONLY, 0)
+                        let file = bun_sys::open(&real_path, bun_sys::O::RDONLY, 0)
                             .map_err(Into::<crate::Error>::into)?;
                         {
                             // Every cached-`Entry` rewrite takes the per-entry mutex.
@@ -2016,7 +2008,7 @@ impl<'a> Resolver<'a> {
                         }
                     }
 
-                    let symlink = Fs::FilenameStore::instance().append_slice(&buf[..out_len])?;
+                    let symlink = Fs::FilenameStore::instance().append_slice(&real_path)?;
                     if let Some(debug) = self.debug_logs.as_mut() {
                         debug.add_note_fmt(format_args!(
                             "Resolved symlink \"{}\" to \"{}\"",
@@ -2776,7 +2768,7 @@ impl<'a> Resolver<'a> {
     pub(crate) fn assert_valid_cache_key(path: &[u8]) {
         if cfg!(debug_assertions) {
             if path.len() > 1
-                && strings::char_is_any_slash(path[path.len() - 1])
+                && bun_paths::is_sep_native(path[path.len() - 1])
                 && !if cfg!(windows) {
                     path.len() == 3 && path[1] == b':'
                 } else {
@@ -4298,15 +4290,10 @@ impl<'a> Resolver<'a> {
         out: &mut MatchResult,
     ) -> bool {
         let Ok(abs_path) = query.entry().abs_path_or_try_fill(|| {
-            let parts = [query.entry().dir, query.entry().base()];
-            let abs = self
-                .fs_ref()
-                .abs_buf_checked(&parts, bufs!(remap_path))
-                .ok_or(())?;
             Ok::<_, ()>(Interned::from_static(
                 self.fs_ref()
                     .dirname_store
-                    .append_slice(abs)
+                    .append_slice(&query.entry().path().ok_or(())?)
                     .expect("unreachable"),
             ))
         }) else {
@@ -6122,6 +6109,10 @@ impl<'a> Resolver<'a> {
         }
 
         let base = bun_paths::basename(path);
+        // What it imports would be looked for in another directory.
+        if cfg!(unix) && strings::contains_char(base, b'\\') {
+            dec_ret!(None);
+        }
 
         // Try the plain path without any extensions
         if let Some(debug) = self.debug_logs.as_mut() {
@@ -6143,15 +6134,10 @@ impl<'a> Resolver<'a> {
                 }
 
                 let Ok(abs_path) = query.entry().abs_path_or_try_fill(|| {
-                    let abs_path_parts = [query.entry().dir, query.entry().base()];
-                    let joined = self
-                        .fs_ref()
-                        .abs_buf_checked(&abs_path_parts, bufs!(load_as_file))
-                        .ok_or(())?;
                     Ok::<_, ()>(Interned::from_static(
                         self.fs_ref()
                             .dirname_store
-                            .append_slice(joined)
+                            .append_slice(&query.entry().path().ok_or(())?)
                             .expect("unreachable"),
                     ))
                 }) else {
@@ -6520,16 +6506,13 @@ impl<'a> Resolver<'a> {
                             }
                             info.abs_real_path = symlink;
                         } else if !parent_.abs_real_path.is_empty()
-                            && let Some(joined) = self.fs_ref().abs_buf_checked(
-                                &[parent_.abs_real_path, base],
-                                bufs!(dir_info_uncached_filename),
-                            )
+                            && let Some(joined) = Fs::path_of_entry(parent_.abs_real_path, base)
                         {
                             // this might leak a little i'm not sure
                             symlink = self
                                 .fs_ref()
                                 .dirname_store
-                                .append_slice(joined)
+                                .append_slice(&joined)
                                 .expect("unreachable");
 
                             if let Some(logs) = self.debug_logs.as_mut() {
@@ -7055,14 +7038,7 @@ fn primary_side_effects(
 
 #[inline]
 fn is_dot_slash(path: &[u8]) -> bool {
-    #[cfg(not(windows))]
-    {
-        path == b"./"
-    }
-    #[cfg(windows)]
-    {
-        path.len() == 2 && path[0] == b'.' && strings::char_is_any_slash(path[1])
-    }
+    matches!(path, [b'.', sep] if bun_paths::is_sep_native(*sep))
 }
 
 bun_core::comptime_string_map! {
@@ -7128,7 +7104,7 @@ pub struct Dirname;
 impl Dirname {
     /// Resolver-specific upward-traversal dirname:
     /// returns trailing-sep-INCLUSIVE slice, never `None`,
-    /// `is_sep_any` on all platforms. Do NOT replace with `bun_core::dirname`.
+    /// so do NOT replace with `bun_core::dirname`.
     pub fn dirname(path: &[u8]) -> &[u8] {
         if path.is_empty() {
             return SEP_STR.as_bytes();
@@ -7154,21 +7130,21 @@ impl Dirname {
         };
 
         let mut end_index: usize = path.len() - 1;
-        while bun_paths::is_sep_any(path[end_index]) {
+        while bun_paths::is_sep_native(path[end_index]) {
             if end_index == 0 {
                 return root;
             }
             end_index -= 1;
         }
 
-        while !bun_paths::is_sep_any(path[end_index]) {
+        while !bun_paths::is_sep_native(path[end_index]) {
             if end_index == 0 {
                 return root;
             }
             end_index -= 1;
         }
 
-        if end_index == 0 && bun_paths::is_sep_any(path[0]) {
+        if end_index == 0 && bun_paths::is_sep_native(path[0]) {
             return &path[0..1];
         }
 

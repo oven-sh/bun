@@ -17,6 +17,7 @@ use bun_install::dependency::{self, VersionTag};
 use bun_install::postinstall_optimizer;
 use bun_install::update_request::{self, UpdateRequest};
 use bun_parsers::json;
+use bun_paths::string_paths::without_trailing_slash_portable;
 use bun_paths::{self, DELIMITER};
 use bun_resolver::fs::RealFS;
 use bun_sys::{self, Fd, FdDirExt as _, O};
@@ -457,9 +458,9 @@ impl BunxCommand {
         bin_name: &[u8],
         only_that_bin: bool,
     ) -> crate::Result<InProject> {
-        let project = strings::without_trailing_slash(project);
+        let project = without_trailing_slash_portable(project);
         let mut next_dir = Some(cwd);
-        while let Some(dir) = next_dir.map(strings::without_trailing_slash) {
+        while let Some(dir) = next_dir.map(without_trailing_slash_portable) {
             if !dir.starts_with(project) {
                 break;
             }
@@ -713,23 +714,24 @@ impl BunxCommand {
         package_fmt: &[u8],
         create: bool,
     ) -> Option<Vec<u8>> {
+        use bun_install::package_manager_real::{
+            fetch_cache_directory_path, is_importable_from, options::EnvBase,
+        };
         let uid = bun_sys::c::getuid();
         let root_name = cache_root_name();
-        let install_cache =
-            bun_install::package_manager_real::fetch_cache_directory_path(env, configured)
-                .ok()
-                .filter(|dir| !dir.is_cwd_fallback);
+        let install_cache = fetch_cache_directory_path(env, EnvBase::Project, configured)
+            .ok()
+            .filter(|dir| !dir.is_cwd_fallback && is_importable_from(&dir.path));
         // `$TMPDIR` can be relative. It is made absolute because the install runs in a different
         // working directory than this command.
-        let mut temp_dir_buf = bun_paths::path_buffer_pool::get();
-        let temp_dir = bun_resolver::fs::FileSystem::get()
-            .abs_buf_checked(&[RealFS::platform_temp_dir()], &mut temp_dir_buf[..]);
+        let mut temp_dir = bun_paths::Path::top_level_dir();
+        temp_dir.resolve_portable(&[RealFS::platform_temp_dir()]);
         let bases = [
             install_cache.as_ref().map(|dir| dir.path.as_slice()),
-            temp_dir,
+            Some(temp_dir.as_bytes()),
         ];
         for (base, is_shared) in bases.into_iter().zip([false, true]) {
-            let Some(base) = base.map(strings::without_trailing_slash) else {
+            let Some(base) = base.map(without_trailing_slash_portable) else {
                 continue;
             };
             let root = ZBox::from_vec([base, b"/", root_name.as_slice()].concat());
@@ -1322,17 +1324,15 @@ impl BunxCommand {
             .flatten();
 
         // `bun add` runs in another directory.
-        let cafile = opts.cafile.map(|path| {
-            bun_paths::resolve_path::join_abs::<bun_paths::platform::Auto>(top_level_dir, path)
-                .to_vec()
-        });
+        let cafile =
+            (opts.cafile).map(|path| bun_paths::Path::resolved_portable(&[top_level_dir, path]));
         let flags_with_value: Vec<Vec<u8>> = [
             (
                 b"--minimum-release-age=".as_slice(),
                 opts.minimum_release_age,
             ),
             (b"--registry=", opts.registry),
-            (b"--cafile=", cafile.as_deref()),
+            (b"--cafile=", cafile.as_deref().map(ZStr::as_bytes)),
         ]
         .into_iter()
         .chain(opts.ca.iter().map(|ca| (b"--ca=".as_slice(), Some(*ca))))

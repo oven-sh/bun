@@ -2493,6 +2493,20 @@ describe.concurrent("test file discovery (scanner)", () => {
     },
   );
 
+  test.skipIf(isWindows)("a directory with a backslash in its name does not hide another one", async () => {
+    using dir = tempDir("scanner-backslash", {
+      "a\\b": { "other.test.ts": "" },
+      "t": { "a\\b": { "other.test.ts": "" }, "a": { "b": { "exists.test.ts": existsTest } } },
+    });
+
+    await using proc = Bun.spawn({ cmd: [bunExe(), "test"], env: bunEnv, cwd: String(dir), stderr: "pipe" });
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+
+    expect(stderr).toContain("Ran 1 test across 1 file.");
+    expect(stderr).toContain(" 1 pass");
+    expect(exitCode).toBe(0);
+  });
+
   // The directory walk joins parent + entry name for every directory it
   // descends into and every candidate test file. With pathIgnorePatterns
   // configured it additionally joins each directory before queueing it, so the

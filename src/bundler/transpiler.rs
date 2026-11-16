@@ -273,60 +273,19 @@ impl<'a> Transpiler<'a> {
         match self._resolve_entry_point(entry_point, dot_slash) {
             Ok(r) => self.reject_unbundleable_entry_point(r, entry_point),
             Err(err) => {
-                let mut cache_bust_buf = bun_paths::path_buffer_pool::get();
-
                 // Bust directory cache and try again
-                // reshaped for borrowck — a single labelled block would
-                // return a slice that aliases either `entry_point` (via
-                // `dirname`) or `cache_bust_buf`. Rust can't unify the two
-                // disjoint mutable borrows of `cache_bust_buf` across `break`,
-                // so compute `busted` directly instead.
-                let busted: bool = 'name: {
-                    // Neither buster name below would fit `cache_bust_buf`.
-                    if Fs::FileSystem::get().top_level_dir().len() + entry_point.len() + 4
-                        > bun_paths::MAX_PATH_BYTES
-                    {
-                        break 'name false;
-                    }
-                    if bun_paths::is_absolute(entry_point) {
-                        let dir = bun_paths::resolve_path::dirname::<bun_paths::platform::Auto>(
-                            entry_point,
-                        );
-                        if !dir.is_empty() {
-                            // Normalized with trailing slash
-                            let buster_name = bun_paths::string_paths::normalize_slashes_only(
-                                &mut cache_bust_buf[..],
-                                dir,
-                                bun_paths::SEP,
-                            );
-                            break 'name self.resolver.bust_dir_cache(
-                                bun_paths::string_paths::without_trailing_slash_windows_path(
-                                    buster_name,
-                                ),
-                            );
-                        }
-                    }
-
-                    // `".."` needs no platform separator rewrite.
-                    let parts: [&[u8]; 2] = [entry_point, b".."];
+                let dir =
+                    bun_paths::resolve_path::dirname::<bun_paths::platform::Auto>(entry_point);
+                let mut buster_name = bun_paths::Path::new();
+                if bun_paths::is_absolute(entry_point) && !dir.is_empty() {
+                    buster_name.push_portable(dir);
+                } else {
                     let top_level_dir = Fs::FileSystem::get().top_level_dir();
-
-                    let Some(buster_name) =
-                        bun_paths::resolve_path::join_abs_string_buf_z_checked::<
-                            bun_paths::platform::Auto,
-                        >(top_level_dir, &mut cache_bust_buf[..], &parts)
-                    else {
-                        break 'name false;
-                    };
-                    self.resolver.bust_dir_cache(
-                        bun_paths::string_paths::without_trailing_slash_windows_path(
-                            buster_name.as_bytes(),
-                        ),
-                    )
-                };
+                    buster_name.resolve_portable(&[top_level_dir, entry_point, b".."]);
+                }
 
                 // Only re-query if we previously had something cached.
-                if busted {
+                if self.resolver.bust_dir_cache(&buster_name) {
                     if let Ok(result) = self._resolve_entry_point(entry_point, dot_slash) {
                         return self.reject_unbundleable_entry_point(result, entry_point);
                     }
@@ -2373,6 +2332,11 @@ impl<'a> Transpiler<'a> {
         // input unchanged so bare specifiers (`react`) and URLs are left alone.
         if !bun_sys::exists(entry) {
             return crate::linker::dupe(_entry);
+        }
+
+        // A relative path does not lead into such a directory.
+        if cfg!(unix) && strings::contains_char(entry, b'\\') {
+            return crate::linker::dupe(entry);
         }
 
         let entry = fs.relative_to(entry);

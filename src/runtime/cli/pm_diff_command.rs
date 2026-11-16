@@ -90,13 +90,14 @@ pub(crate) fn exec(
     let args: Vec<Vec<u8>> = typed
         .iter()
         .map(|&arg| {
-            use bun_paths::resolve_path::{join_abs_string, platform};
-            match (arg.strip_prefix(b"~/"), bun_core::env_var::HOME.get()) {
+            use bun_paths::VecPath;
+            let home = bun_core::env_var::HOME.get_not_empty();
+            match (arg.strip_prefix(b"~/"), home) {
                 (Some(rest), Some(home)) => {
-                    join_abs_string::<platform::Auto>(home, &[rest]).to_vec()
+                    VecPath::resolved_portable(&[original_cwd, home, rest]).into_vec()
                 }
                 _ if looks_like_path(arg) && !bun_paths::is_absolute(arg) => {
-                    join_abs_string::<platform::Auto>(original_cwd, &[arg]).to_vec()
+                    VecPath::resolved_portable(&[original_cwd, arg]).into_vec()
                 }
                 _ => arg.to_vec(),
             }

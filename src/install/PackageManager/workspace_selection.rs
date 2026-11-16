@@ -4,8 +4,9 @@ use bstr::BStr;
 use bun_collections::{DynamicBitSet, HashMap, index_sort};
 use bun_core::{Global, Output, UnwrapOrOom as _, strings};
 use bun_glob::Prepared;
-use bun_paths::path_buffer_pool;
-use bun_paths::resolve_path::{join_abs_string_buf_checked, platform, platform_to_posix_in_place};
+use bun_paths::platform::{Posix, Slash};
+use bun_paths::resolve_path::platform_to_posix_in_place;
+use bun_paths::{Heap, PathIn, Pool, slashes_to_posix_in_place};
 
 use crate::bun_fs::FileSystem;
 use crate::dependency::Behavior;
@@ -106,8 +107,17 @@ impl NegatedWorkspaces {
     }
 }
 
+/// For `Candidate::abs_posix_dir` and the globs it is matched with, in which a `\` would be an escape. `None` if it is too long.
+pub fn posix_dir(base: &[u8], path: &[u8]) -> Option<Box<[u8]>> {
+    let mut dir = PathIn::<Pool, Slash>::resolved_portable(&[base, path]).ok()?;
+    slashes_to_posix_in_place(dir.as_mut_slice());
+    let mut dir = PathIn::<Heap, Posix>::joined(&[&dir]);
+    dir.trim_trailing_sep();
+    Some(dir.into_vec().into())
+}
+
 /// Accepted shapes: `!`* then `...`/`...^` prefix and/or `...`/`^...` suffix around `*`, `{dir}`, `./path` or a name glob.
-fn parse(raw: &[u8], original_cwd: &[u8], path_buf: &mut [u8]) -> Selector {
+fn parse(raw: &[u8], original_cwd: &[u8]) -> Selector {
     let (mut remain, negated) = strip_negations(raw);
     let mut dependencies = false;
     let mut dependents = false;
@@ -138,22 +148,20 @@ fn parse(raw: &[u8], original_cwd: &[u8], path_buf: &mut [u8]) -> Selector {
         Global::crash();
     }
 
-    let resolve = |part: &[u8], path_buf: &mut [u8]| -> Prepared<Box<[u8]>> {
-        let Some(joined) =
-            join_abs_string_buf_checked::<platform::Posix>(original_cwd, path_buf, &[part])
-        else {
+    let resolve = |part: &[u8]| -> Prepared<Box<[u8]>> {
+        let Some(joined) = posix_dir(original_cwd, part) else {
             Output::err_generic("--filter \"{}\" path is too long", (BStr::new(raw),));
             Global::crash();
         };
-        Prepared::new(strings::without_trailing_slash(joined).into())
+        Prepared::new(joined)
     };
 
     let base = if remain == b"*" || remain == b"**" {
         Base::All
     } else if remain.len() >= 2 && remain[0] == b'{' && remain[remain.len() - 1] == b'}' {
-        Base::Subtree(resolve(&remain[1..remain.len() - 1], path_buf))
+        Base::Subtree(resolve(&remain[1..remain.len() - 1]))
     } else if remain.first() == Some(&b'.') {
-        Base::Path(resolve(remain, path_buf))
+        Base::Path(resolve(remain))
     } else {
         Base::Name(Prepared::new(remain.into()))
     };
@@ -270,10 +278,9 @@ pub fn select(
     let mut exclude = bitset(n);
     let mut any_positive = false;
     let mut unmatched_patterns: Vec<usize> = Vec::new();
-    let mut path_buf = path_buffer_pool::get();
 
     for (index, raw) in patterns.iter().enumerate() {
-        let sel = parse(raw, original_cwd, &mut path_buf.0);
+        let sel = parse(raw, original_cwd);
         let mut set = bitset(n);
         for (i, c) in candidates.iter().enumerate() {
             if base_matches(&sel.base, c, explicit_root_only) {
@@ -499,7 +506,6 @@ pub fn select_lockfile_workspaces(
     let string_buf = lockfile.buffers.string_bytes.as_slice();
     let top_level_dir = FileSystem::get().top_level_dir();
 
-    let mut path_buf = path_buffer_pool::get();
     let dirs: Vec<Box<[u8]>> = ids
         .iter()
         .map(|&pkg_id| {
@@ -509,15 +515,7 @@ pub fn select_lockfile_workspaces(
                 _ => b".",
             };
             // A path out of bun.lock that fits no path buffer is selected by its name only.
-            strings::without_trailing_slash(
-                join_abs_string_buf_checked::<platform::Posix>(
-                    top_level_dir,
-                    &mut path_buf.0,
-                    &[rel],
-                )
-                .unwrap_or_default(),
-            )
-            .into()
+            posix_dir(top_level_dir, rel).unwrap_or_default()
         })
         .collect();
 

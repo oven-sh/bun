@@ -304,30 +304,30 @@ fn handle_path(
             .throw());
     }
     // Opened later (for fetch, on the HTTP thread), and the SSL_CTX caches key on this string.
-    let mut path = if cfg!(windows) || !bun_paths::is_absolute_posix(name) {
-        bun_paths::AutoAbsPathChecked::init_top_level_dir()
+    let mut path = bun_paths::Path::top_level_dir();
+    // The kernel resolves `..` through symlinks, so it is left in. Win32 resolves it as `resolve` does, which also knows `C:foo` and `\foo`.
+    if cfg!(windows) {
+        path.resolve(&[name]);
+        path.trim_trailing_sep();
     } else {
-        bun_paths::AutoAbsPathChecked::init()
-    };
-    // The kernel resolves `..` through symlinks, so it is left in. Win32 resolves it as `join` does, which also knows `C:foo` and `\foo`.
-    let pinned = if cfg!(windows) {
-        path.join(&[name])
-    } else {
-        path.append(name)
-    };
-    // `append` drops a trailing slash, with which no file opens.
+        if bun_paths::is_absolute(name) {
+            path.clear();
+        }
+        path.push_portable(name);
+    }
+    // `push` drops a separator at the end, with which no file opens.
+    let names_directory = name.ends_with(b"/") || (name.ends_with(b"\\") && !path.ends_with(b"\\"));
     if name.is_empty()
-        || (cfg!(not(windows)) && name.ends_with(b"/"))
-        || pinned.is_err()
-        || bun_sys::access(path.slice_z(), bun_sys::posix::F_OK).is_err()
+        || (cfg!(not(windows)) && names_directory)
+        || bun_sys::access(&path, bun_sys::posix::F_OK).is_err()
     {
         return Err(global.throw_invalid_arguments(format_args!("Unable to access {field} path")));
     }
     // BoringSSL's fopen is narrow on Windows: a non-ASCII cwd must not be baked into the path.
-    if cfg!(windows) && !bun_core::strings::is_all_ascii(path.slice()) {
+    if cfg!(windows) && !bun_core::strings::is_all_ascii(&path) {
         return Ok(SensitiveCString::new(name));
     }
-    Ok(SensitiveCString::new(path.slice()))
+    Ok(SensitiveCString::new(path.as_bytes()))
 }
 
 fn handle_file_for_field(

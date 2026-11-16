@@ -661,13 +661,6 @@ fn lay_links_below(
     rel.truncate(dir_len);
 }
 
-/// Returns the part of `real` that follows the directory `root`, or `None` if `real` is not inside
-/// `root`. Both must be real paths.
-fn path_below<'a>(root: &[u8], real: &'a [u8]) -> Option<&'a [u8]> {
-    real.strip_prefix(strings::without_trailing_slash(root))
-        .filter(|rest| rest.first().is_none_or(|&c| c == path::SEP))
-}
-
 fn read_link(dir: &Dir, name: &[u8]) -> Option<Box<[u8]>> {
     let mut text = path::path_buffer_pool::get();
     let len = sys::readlinkat(dir, &bun_core::ZBox::from_bytes(name), &mut text[..]).ok()?;
@@ -688,18 +681,12 @@ impl FolderLink {
     /// Decides what the symlink at `rel` in the folder becomes in the copy. `src` is the symlink's
     /// parent directory, and `rel[dir_len..]` is its name there.
     fn of(paths: &RealPaths, rel: &[u8], dir_len: usize, src: &Dir) -> FolderLink {
-        use path::resolve_path::{join_abs_string_buf_z_checked, platform};
+        use path::{Style as _, platform::Auto};
         const NOWHERE: FolderLink = FolderLink::LeftOut("target does not exist");
         let root: &[u8] = &paths.folder;
 
-        let mut link_buf = path::path_buffer_pool::get();
         let mut real_buf = path::path_buffer_pool::get();
-        let Some(link) =
-            join_abs_string_buf_z_checked::<platform::Auto>(root, &mut link_buf[..], &[rel])
-        else {
-            return NOWHERE;
-        };
-        let Ok(real) = sys::realpath(link, &mut real_buf) else {
+        let Ok(real) = sys::realpath(&path::Path::from_parts(&[root, rel]), &mut real_buf) else {
             return NOWHERE;
         };
         let real_z = bun_core::ZBox::from_bytes(real);
@@ -707,8 +694,10 @@ impl FolderLink {
             return NOWHERE;
         };
         // The install backends skip `node_modules`, so a target inside one is not in the copy.
-        let in_folder = path_below(root, real)
-            .is_some_and(|rest| !strings::split(rest, b"/").any(|part| part == b"node_modules"));
+        // Of real paths, also the case is the same.
+        let below = |dir: &[u8]| Auto::strip_dir(real, dir).filter(|_| real.starts_with(dir));
+        let in_folder = below(root)
+            .is_some_and(|rest| !Auto::components(rest).any(|name| name == b"node_modules"));
 
         // A symlink is kept only if both its resolved target and its literal text stay in the
         // folder. The text alone is not enough, because it can pass through another symlink.
@@ -727,7 +716,9 @@ impl FolderLink {
                 "directory links must be relative and stay inside the folder"
             });
         }
-        if !in_folder && path_below(&paths.project, real).is_none() {
+        // A project in `/`, as in many a container, does not vouch for the whole file system.
+        let in_project = *paths.project != *b"/" && below(&paths.project).is_some();
+        if !in_folder && !in_project {
             return FolderLink::LeftOut("target is outside the project");
         }
         FolderLink::File(real_z, Box::new(target))
@@ -755,16 +746,8 @@ fn lay_link(
             }
             #[cfg(windows)]
             {
-                use path::resolve_path::{join_abs_string_buf_z_checked, platform};
-                let mut dir_buf = path::path_buffer_pool::get();
-                let mut to_buf = path::path_buffer_pool::get();
-                if let Ok(dir) = dest.get_fd_path(&mut dir_buf)
-                    && let Some(to) = join_abs_string_buf_z_checked::<platform::Auto>(
-                        dir,
-                        &mut to_buf[..],
-                        &[name.as_bytes()],
-                    )
-                    && sys::sys_uv::link(&real, to).is_ok()
+                if let Ok(mut dir) = sys::fd_path(dest.fd())
+                    && sys::sys_uv::link(&real, &dir.child(name)).is_ok()
                 {
                     return Ok(());
                 }
@@ -2028,12 +2011,11 @@ impl<'a> PackageInstall<'a> {
         }
         // Deleting a large tree takes a while. Now that it has a random name, another thread can
         // delete it.
-        let absolute_path = path::resolve_path::join_abs_string::<path::platform::Auto>(
-            bun_fs::FileSystem::get().top_level_dir(),
-            &[&self.node_modules.path, temp_path.as_bytes()],
-        );
+        let top_level_dir = bun_fs::FileSystem::get().top_level_dir();
+        let absolute_path =
+            path::Path::resolved(&[top_level_dir, &self.node_modules.path, &temp_path]);
         let task = Box::new(UninstallTask {
-            absolute_path: absolute_path.to_vec().into_boxed_slice(),
+            absolute_path: absolute_path.as_bytes().into(),
             task: WorkPoolTask::default(),
         });
         total_tasks.update(|total| total + 1);
@@ -2221,12 +2203,7 @@ impl<'a> PackageInstall<'a> {
                 Err(err) => return InstallResult::fail(err.into(), Step::LinkingDependency),
             };
 
-            let mut target_buf = bun_paths::path_buffer_pool::get();
-            let target = path::resolve_path::relative_buf_z(
-                target_buf.as_mut_slice(),
-                dest_dir_path,
-                to_path,
-            );
+            let target: &ZStr = &path::Path::relative(dest_dir_path, to_path);
             if let Err(err) = sys::symlinkat(target, dest_dir.fd(), dest).or_else(|err| {
                 // A workspace's own node_modules outlives a wiped root node_modules.
                 if err.get_errno() != sys::E::EEXIST {

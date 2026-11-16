@@ -1,1504 +1,729 @@
-// Enum options are passed as `const u8` generics on stable
-// (adt_const_params is nightly-only). Each fn that branches on an option
-// reconstructs the enum from the u8 via `decode_opts!` so the
-// `match Kind::Abs => ..` arms stay readable. The optimizer sees through the
-// `const fn from_u8` so monomorphization is preserved.
+//! A path that is being built: always NUL-terminated, never a panic over what is in it or how long it is.
 
+use core::fmt;
 use core::marker::PhantomData;
-use core::mem::ManuallyDrop;
+use core::ops::{Deref, DerefMut};
 
-use crate::{
-    MAX_PATH_BYTES, PATH_MAX_WIDE, PathBuffer, SEP, SEP_POSIX, SEP_WINDOWS, WPathBuffer,
-    resolve_path as path,
+use bun_core::ZBox;
+
+use crate::backend::sealed::Storage;
+use crate::backend::{
+    Backend, Borrowed, Boxed, Heap, NameTooLong, Out, Overflow, Pool, Pooled, Spill, Stack,
 };
-use bun_core::{Fd, WStr, ZStr, strings};
+use crate::path_buffer_pool::PathBufferPoolT;
+use crate::path_unit::sealed::Kernels;
+use crate::platform::{Auto, Posix, Slash};
+use crate::style::{ends_with_sep, last_name, len_without_seps, stem_len};
+use crate::tidy::{self, Pushed, Relative, Resolved, Units, Unresolved};
+use crate::{OSPathChar, PathChar, PathUnit, Style};
 
-// ──────────────────────────────────────────────────────────────────────────
-// Options
-// ──────────────────────────────────────────────────────────────────────────
-//
-// Rust cannot take a struct as a const
-// generic on stable, so the option fields are spread as individual
-// const-generic parameters on `Path` below. The `Options` namespace is kept
-// as a module for the enums.
+/// The one to use by default: a pooled buffer, and no errors, because the system call reports a path that is too long.
+pub type Path = PathIn<Spill>;
+/// For what must fit in a `PathBuffer`.
+pub type PoolPath = PathIn<Pool>;
+/// [`PoolPath`] in the unit of the system's calls.
+pub type OsPath = PathIn<Pool<OSPathChar>>;
+/// For what is kept, and for more paths at a time than the pool has buffers.
+pub type VecPath = PathIn<Heap>;
+/// For what is known to be short, and for where nothing may be allocated.
+pub type StackPath<const N: usize> = PathIn<Stack<N>>;
+/// For a result that outlives the function that builds it in its caller's buffer.
+pub type SlicePath<'a> = PathIn<Borrowed<'a>>;
+/// [`Path`] with `/` on every system.
+pub type SlashPath = PathIn<Spill, Slash>;
 
-pub mod options {
-    use super::*;
+type Z<B> = <<B as Storage>::Unit as Kernels>::Z;
+type Buffer<B> = <<B as Storage>::Unit as Kernels>::Buffer;
 
-    #[derive(PartialEq, Eq, Clone, Copy, Debug)]
-    pub enum Kind {
-        Abs,
-        Rel,
-
-        // not recommended, but useful when you don't know
-        Any,
-    }
-
-    #[derive(PartialEq, Eq, Clone, Copy, Debug)]
-    pub enum CheckLength {
-        AssumeAlwaysLessThanMaxPath,
-        CheckForGreaterThanMaxPath,
-    }
-
-    #[derive(PartialEq, Eq, Clone, Copy, Debug)]
-    pub enum PathSeparators {
-        Any,
-        Auto,
-        Posix,
-        Windows,
-    }
-
-    // ── const-generic encoding ────────────────────────────────────────────
-    // Stable Rust forbids enum-typed const generics; encode each option enum
-    // as a `u8` const param and decode at fn entry via `from_u8`.
-    impl Kind {
-        pub const ABS: u8 = 0;
-        pub const REL: u8 = 1;
-        pub const ANY: u8 = 2;
-        #[inline(always)]
-        pub(crate) const fn from_u8(v: u8) -> Self {
-            match v {
-                0 => Self::Abs,
-                1 => Self::Rel,
-                _ => Self::Any,
-            }
-        }
-    }
-    impl PathSeparators {
-        pub const ANY: u8 = 0;
-        pub const AUTO: u8 = 1;
-        #[inline(always)]
-        pub(crate) const fn from_u8(v: u8) -> Self {
-            match v {
-                1 => Self::Auto,
-                2 => Self::Posix,
-                3 => Self::Windows,
-                _ => Self::Any,
-            }
-        }
-    }
-    impl CheckLength {
-        pub(crate) const ASSUME: u8 = 0;
-        /// For paths that get unbounded input appended; see also [`Path::into_checked`].
-        pub const CHECK: u8 = 1;
-        #[inline(always)]
-        pub(crate) const fn from_u8(v: u8) -> Self {
-            if v == 0 {
-                Self::AssumeAlwaysLessThanMaxPath
-            } else {
-                Self::CheckForGreaterThanMaxPath
-            }
-        }
-    }
-
-    impl PathSeparators {
-        pub(crate) const fn char(self) -> u8 {
-            match self {
-                PathSeparators::Any => panic!("use the existing slash"),
-                PathSeparators::Auto => SEP,
-                PathSeparators::Posix => SEP_POSIX,
-                PathSeparators::Windows => SEP_WINDOWS,
-            }
-        }
-    }
-
-    // Path units are modeled as a trait with an associated `Other` type; see
-    // `PathUnit` below.
-
-    // The max path length is the `PathUnit::MAX_PATH` associated const; in
-    // `.assume_always_less_than_max_path` mode it is simply never read.
-
-    /// `error{MaxPathExceeded}`
-    #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error, strum::IntoStaticStr)]
-    pub enum Error {
-        #[error("MaxPathExceeded")]
-        MaxPathExceeded,
-    }
-
-    // Rust cannot vary a fn's return type on a const-generic value, so all
-    // `Result(T)` call sites below return `Result<T, Error>` unconditionally;
-    // callers configured with `AssumeAlwaysLessThanMaxPath` should treat the
-    // `Err` arm as unreachable (see `AssumeOk` below).
-    pub type Result<T> = core::result::Result<T, Error>;
-
-    /// `Result::unwrap` for the `CheckLength::AssumeAlwaysLessThanMaxPath`
-    /// configuration (every `Auto*`/`Os*` `Path` alias).
-    ///
-    /// `from`/`append`/`append_fmt` return
-    /// `Result<T, Error>` unconditionally (see note above), but their
-    /// bodies *skip the length check entirely* in `ASSUME`
-    /// mode -- `Err(MaxPathExceeded)` is dead code, and an over-long input
-    /// instead panics inside `PooledBuf::append` slice indexing. So callers
-    /// on `ASSUME` types should use this instead of `?`/`handle_oom`: it
-    /// makes the infallibility explicit and, unlike `handle_oom`, panics with
-    /// the real reason if the invariant is ever violated rather than
-    /// misreporting it as "out of memory".
-    pub trait AssumeOk<T> {
-        fn assume_ok(self) -> T;
-    }
-    impl<T> AssumeOk<T> for Result<T> {
-        #[inline]
-        #[track_caller]
-        fn assume_ok(self) -> T {
-            match self {
-                Ok(v) => v,
-                // Not `unreachable_unchecked` -- keep the panic so a future
-                // `CheckForGreaterThanMaxPath` caller misusing this surfaces
-                // a real diagnostic instead of UB.
-                Err(Error::MaxPathExceeded) => unreachable!(
-                    "MaxPathExceeded on a CheckLength::ASSUME Path \
-                     (Err arm is dead under ASSUME; over-long input panics in \
-                     PooledBuf::append slice indexing first)"
-                ),
-            }
-        }
-    }
-}
-
-use options::{CheckLength, Error as PathError, Kind, PathSeparators};
-
-// Runtime → type-param dispatch for `resolve_path`'s `<P: PlatformT>` fns,
-// keyed on `SEP_OPT`. PERF: SEP_OPT is a const generic so the optimizer
-// const-folds the match to a single monomorphized call.
-macro_rules! sep_dispatch {
-    ($fn:ident ( $($a:expr),* $(,)? )) => {
-        match PathSeparators::from_u8(SEP_OPT) {
-            PathSeparators::Any | PathSeparators::Auto => path::$fn::<path::platform::Auto>($($a),*),
-            PathSeparators::Posix => path::$fn::<path::platform::Posix>($($a),*),
-            PathSeparators::Windows => path::$fn::<path::platform::Windows>($($a),*),
-        }
-    };
-}
-
-// ──────────────────────────────────────────────────────────────────────────
-// PathUnit trait — replaces `opts.pathUnit()` / `opts.notPathUnit()` /
-// `opts.Buf().pooled`'s type-level switch on `opts.unit`.
-// ──────────────────────────────────────────────────────────────────────────
-
-/// A path code unit: `u8` (UTF-8/WTF-8 bytes) or `u16` (WTF-16, Windows).
-/// Extends the canonical [`crate::PathChar`] with the buffer-pool / ZSlice
-/// machinery this module needs; the ASCII helpers (`from_u8`/`eq_ascii`/
-/// `to_ascii`) are inherited.
-pub trait PathUnit: crate::PathChar {
-    /// `opts.notPathUnit()`
-    type Other: PathUnit;
-    /// The fixed-size buffer type (`PathBuffer` / `WPathBuffer`).
-    type Buffer: 'static;
-    /// `opts.maxPathLength()` for this unit.
-    const MAX_PATH: usize;
-    /// `[:0]const u8` → `ZStr`, `[:0]const u16` → `WStr` (length-carrying NUL-terminated slice).
-    type ZSlice: ?Sized;
-
-    /// Construct a borrowed NUL-terminated slice (`ZStr` / `WStr`) from a raw pointer + len.
-    ///
-    /// # Safety
-    /// `ptr[..=len]` must be valid for reads for `'a`, and `ptr[len]` must be `0`.
-    unsafe fn zslice_from_raw<'a>(ptr: *const Self, len: usize) -> &'a Self::ZSlice;
-
-    /// `bun.path_buffer_pool.get()` / `bun.w_path_buffer_pool.get()`
-    // LIFETIMES.tsv classifies `Buf.pooled` as OWNED → Box<PathBuffer>; the
-    // underlying pool hands out heap buffers and reclaims them in `deinit`.
-    // Modeled as Box with put-back in `Buf`'s Drop impl below (the pool's
-    // RAII guard type is not generic over unit).
-    fn pool_get() -> Box<Self::Buffer>;
-    fn pool_put(buf: Box<Self::Buffer>);
-
-    fn buffer_as_mut_slice(buf: &mut Self::Buffer) -> &mut [Self];
-    fn buffer_as_slice(buf: &Self::Buffer) -> &[Self];
-
-    /// `bun.windows.long_path_prefix{,_u8}` lifted into the unit trait so
-    /// `crate::windows::long_path_prefix_for::<U>()` can pick the right width without a runtime
-    /// switch.
-    const LONG_PATH_PREFIX: &'static [Self];
-
-    // ── identity downcasts ────────────────────────────────────────────────
-    // Trait-dispatched no-op identity casts. The default body is unreachable
-    // for the non-matching impl; callers gate on `TypeId` so the dead arm is
-    // const-folded out, and in the live arm the cast is a safe
-    // `fn(&[u8]) -> &[u8]` in the monomorphized code.
-    #[inline(always)]
-    fn id_u8(_: &[Self]) -> &[u8] {
-        unreachable!("PathUnit::id_u8 on non-u8")
-    }
-    #[inline(always)]
-    fn id_u8_mut(_: &mut [Self]) -> &mut [u8] {
-        unreachable!("PathUnit::id_u8_mut on non-u8")
-    }
-    #[inline(always)]
-    fn id_u8_slices<'a, 'b>(_: &'a [&'b [Self]]) -> &'a [&'b [u8]] {
-        unreachable!("PathUnit::id_u8_slices on non-u8")
-    }
-    #[inline(always)]
-    fn id_u16(_: &[Self]) -> &[u16] {
-        unreachable!("PathUnit::id_u16 on non-u16")
-    }
-    #[inline(always)]
-    fn id_u16_mut(_: &mut [Self]) -> &mut [u16] {
-        unreachable!("PathUnit::id_u16_mut on non-u16")
-    }
-    // Inverse direction (concrete → Self). Same trait-dispatch trick: the
-    // matching impl overrides with the identity, the other hits `unreachable!`.
-    #[inline(always)]
-    fn id_from_u8(_: &[u8]) -> &[Self] {
-        unreachable!("PathUnit::id_from_u8 on non-u8")
-    }
-    #[inline(always)]
-    fn id_from_u16(_: &[u16]) -> &[Self] {
-        unreachable!("PathUnit::id_from_u16 on non-u16")
-    }
-
-    /// `convert_into_buffer` — write `src` (the *other* width) into `dest`
-    /// transcoding UTF-8↔UTF-16. Returns units written.
-    fn convert_from_other(dest: &mut [Self], src: &[Self::Other]) -> usize;
-}
-
-impl PathUnit for u8 {
-    type Other = u16;
-    type Buffer = PathBuffer;
-    const MAX_PATH: usize = MAX_PATH_BYTES;
-    type ZSlice = ZStr;
-    const LONG_PATH_PREFIX: &'static [u8] = &crate::windows::LONG_PATH_PREFIX_U8;
-
-    #[inline]
-    unsafe fn zslice_from_raw<'a>(ptr: *const u8, len: usize) -> &'a ZStr {
-        // SAFETY: caller of this `unsafe fn` upholds the trait contract that
-        // `ptr[..=len]` is valid for reads for `'a` and `ptr[len] == 0`.
-        unsafe { ZStr::from_raw(ptr, len) }
-    }
-    fn pool_get() -> Box<PathBuffer> {
-        crate::path_buffer_pool::get().into_box()
-    }
-    fn pool_put(buf: Box<PathBuffer>) {
-        crate::path_buffer_pool::put(buf)
-    }
-    #[inline]
-    fn buffer_as_mut_slice(buf: &mut PathBuffer) -> &mut [u8] {
-        &mut buf[..]
-    }
-    #[inline]
-    fn buffer_as_slice(buf: &PathBuffer) -> &[u8] {
-        &buf[..]
-    }
-    #[inline(always)]
-    fn id_u8(s: &[u8]) -> &[u8] {
-        s
-    }
-    #[inline(always)]
-    fn id_u8_mut(s: &mut [u8]) -> &mut [u8] {
-        s
-    }
-    #[inline(always)]
-    fn id_u8_slices<'a, 'b>(s: &'a [&'b [u8]]) -> &'a [&'b [u8]] {
-        s
-    }
-    #[inline(always)]
-    fn id_from_u8(s: &[u8]) -> &[u8] {
-        s
-    }
-    #[inline]
-    fn convert_from_other(dest: &mut [u8], src: &[u16]) -> usize {
-        strings::convert_utf16_to_utf8_in_buffer(dest, src).len()
-    }
-}
-
-impl PathUnit for u16 {
-    type Other = u8;
-    type Buffer = WPathBuffer;
-    const MAX_PATH: usize = PATH_MAX_WIDE;
-    type ZSlice = WStr;
-    const LONG_PATH_PREFIX: &'static [u16] = &crate::windows::LONG_PATH_PREFIX;
-
-    #[inline]
-    unsafe fn zslice_from_raw<'a>(ptr: *const u16, len: usize) -> &'a WStr {
-        // SAFETY: caller of this `unsafe fn` upholds the trait contract that
-        // `ptr[..=len]` is valid for reads for `'a` and `ptr[len] == 0`.
-        unsafe { WStr::from_raw(ptr, len) }
-    }
-    fn pool_get() -> Box<WPathBuffer> {
-        crate::w_path_buffer_pool::get().into_box()
-    }
-    fn pool_put(buf: Box<WPathBuffer>) {
-        crate::w_path_buffer_pool::put(buf)
-    }
-    #[inline]
-    fn buffer_as_mut_slice(buf: &mut WPathBuffer) -> &mut [u16] {
-        &mut buf[..]
-    }
-    #[inline]
-    fn buffer_as_slice(buf: &WPathBuffer) -> &[u16] {
-        &buf[..]
-    }
-    #[inline(always)]
-    fn id_u16(s: &[u16]) -> &[u16] {
-        s
-    }
-    #[inline(always)]
-    fn id_u16_mut(s: &mut [u16]) -> &mut [u16] {
-        s
-    }
-    #[inline(always)]
-    fn id_from_u16(s: &[u16]) -> &[u16] {
-        s
-    }
-    #[inline]
-    fn convert_from_other(dest: &mut [u16], src: &[u8]) -> usize {
-        strings::convert_utf8_to_utf16_in_buffer(dest, src).len()
-    }
-}
-
-// ──────────────────────────────────────────────────────────────────────────
-// Buf — only the `.pool` variant is implemented
-// ──────────────────────────────────────────────────────────────────────────
-
-pub(crate) struct Buf<U: PathUnit> {
-    // LIFETIMES.tsv: OWNED → Box<PathBuffer> (pool.get() in init(); pool.put() in deinit()).
-    // Wrapped in ManuallyDrop so `Buf::drop` can move the Box back into the pool
-    // without leaving a dangling Box behind for the field destructor.
-    pooled: ManuallyDrop<Box<U::Buffer>>,
+/// Dereferences to `ZStr` or `WStr`. Arguments can be of either unit. An operation that fails changes nothing.
+pub struct PathIn<B: Backend, S: Style = Auto> {
+    /// `len` units and a NUL are initialized.
+    backend: B,
     len: usize,
+    style: PhantomData<S>,
 }
 
-impl<U: PathUnit> Buf<U> {
+impl<B: Backend, S: Style> Deref for PathIn<B, S> {
+    type Target = Z<B>;
+
+    #[inline(always)]
+    fn deref(&self) -> &Z<B> {
+        // SAFETY: the invariant of `backend`.
+        unsafe { B::Unit::z(self.backend.as_ptr(), self.len) }
+    }
+}
+
+impl<B: Boxed, S: Style> Default for PathIn<B, S> {
     #[inline]
-    fn set_length(&mut self, new_len: usize) {
-        self.len = new_len;
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl<B: Boxed, S: Style> PathIn<B, S> {
+    /// Allocates nothing.
+    #[inline(always)]
+    pub const fn new() -> Self {
+        Self::empty(B::EMPTY)
     }
 
-    /// Append `characters` (same code-unit width as `U`), optionally prefixing a separator.
-    fn append<const SEP_OPT: u8>(&mut self, characters: &[U], add_separator: bool) {
-        let buf = U::buffer_as_mut_slice(&mut self.pooled);
-        if add_separator {
-            buf[self.len] = match PathSeparators::from_u8(SEP_OPT) {
-                PathSeparators::Any | PathSeparators::Auto => U::from_u8(SEP),
-                PathSeparators::Posix => U::from_u8(SEP_POSIX),
-                PathSeparators::Windows => U::from_u8(SEP_WINDOWS),
-            };
-            self.len += 1;
-        }
+    #[inline(always)]
+    fn built(build: impl FnOnce(&mut Self) -> Result<(), B::Error>) -> Out<B, Self> {
+        let mut path = Self::new();
+        B::Error::out(build(&mut path).map(|()| path))
+    }
 
-        // opts.inputChildType(@TypeOf(characters)) == opts.pathUnit() — same-unit branch.
-        match PathSeparators::from_u8(SEP_OPT) {
-            PathSeparators::Any => {
-                buf[self.len..][..characters.len()].copy_from_slice(characters);
-                self.len += characters.len();
-            }
-            PathSeparators::Auto | PathSeparators::Posix | PathSeparators::Windows => {
-                for &c in characters {
-                    buf[self.len] = if c.eq_ascii(b'/') || c.eq_ascii(b'\\') {
-                        U::from_u8(PathSeparators::from_u8(SEP_OPT).char())
-                    } else {
-                        c
-                    };
-                    self.len += 1;
+    /// See [`Self::set`].
+    #[inline]
+    pub fn from<C: PathUnit>(path: &[C]) -> Out<B, Self> {
+        Self::built(|it| it.try_replace_from(0, path))
+    }
+
+    /// [`Self::push`] of each part, in one allocation.
+    #[inline]
+    pub fn from_parts<C: PathUnit>(parts: &[&[C]]) -> Out<B, Self> {
+        Self::built(|it| {
+            let room = tidy::room_for_parts::<B::Unit, C>(parts);
+            it.rewrite(room + tidy::SLACK, |units| {
+                for part in parts {
+                    Pushed::new::<S, _>(units.as_slice(), part).write::<S, _>(units);
                 }
-            }
-        }
+            })
+        })
     }
 
-    /// Append `characters` of the *other* code-unit width, transcoding into the buffer.
-    fn append_other<const SEP_OPT: u8>(&mut self, characters: &[U::Other], add_separator: bool) {
-        let buf = U::buffer_as_mut_slice(&mut self.pooled);
-        if add_separator {
-            buf[self.len] = match PathSeparators::from_u8(SEP_OPT) {
-                PathSeparators::Any | PathSeparators::Auto => U::from_u8(SEP),
-                PathSeparators::Posix => U::from_u8(SEP_POSIX),
-                PathSeparators::Windows => U::from_u8(SEP_WINDOWS),
-            };
-            self.len += 1;
-        }
-
-        // Width dispatch happens via `convert_into_buffer`'s per-unit
-        // specialization on the two concrete `PathUnit` impls.
-        let converted_len = convert_into_buffer::<U>(&mut buf[self.len..], characters);
-        if SEP_OPT != PathSeparators::ANY {
-            for off in 0..converted_len {
-                let c = buf[self.len + off];
-                if c.eq_ascii(b'/') || c.eq_ascii(b'\\') {
-                    buf[self.len + off] = U::from_u8(PathSeparators::from_u8(SEP_OPT).char());
-                }
-            }
-        }
-        self.len += converted_len;
+    /// Without a separator at its end, unless it is a root.
+    #[inline]
+    pub fn top_level_dir() -> Out<B, Self> {
+        Self::built(|it| it.try_push(crate::fs::top_level_dir()))
     }
-}
 
-/// Width-generic `bun.strings.basename`.
-/// Platform-split: POSIX recognizes only `/`; Windows recognizes `/`, `\`, and
-/// the `X:` drive designator at index 1.
-#[inline]
-fn basename_generic<U: PathUnit>(path: &[U]) -> &[U] {
-    if cfg!(windows) {
-        bun_core::strings::basename_windows(path)
-    } else {
-        bun_core::strings::basename_posix(path)
+    /// See [`Self::join`].
+    #[inline]
+    pub fn joined<C: PathUnit>(parts: &[&[C]]) -> Out<B, Self> {
+        Self::built(|it| it.try_join(parts))
+    }
+
+    /// See [`Self::resolve`].
+    #[inline]
+    pub fn resolved<C: PathUnit>(parts: &[&[C]]) -> Out<B, Self> {
+        Self::built(|it| it.try_resolve(parts, tidy::resolve::<S, _, C>))
+    }
+
+    /// See [`Self::resolve_portable`].
+    #[inline]
+    pub fn resolved_portable<C: PathUnit>(parts: &[&[C]]) -> Out<B, Self> {
+        Self::built(|it| it.try_resolve(parts, tidy::resolve_portable::<S, _, C>))
+    }
+
+    /// See [`Self::set_relative`].
+    #[inline]
+    pub fn relative(from: &[B::Unit], to: &[B::Unit]) -> Out<B, Self> {
+        Self::built(|it| it.try_set_relative::<false>(from, to))
+    }
+
+    /// See [`Self::set_relative_portable`].
+    #[inline]
+    pub fn relative_portable(from: &[B::Unit], to: &[B::Unit]) -> Out<B, Self> {
+        Self::built(|it| it.try_set_relative_portable(from, to))
     }
 }
 
-/// Width-generic `bun.Dirname.dirname`.
-/// Platform-split: POSIX considers only `/`; Windows adds
-/// disk-designator handling.
-pub(crate) fn dirname_generic<U: PathUnit>(path: &[U]) -> Option<&[U]> {
-    #[cfg(not(windows))]
-    return dirname_posix(path);
-    #[cfg(windows)]
-    return dirname_windows(path);
+impl PathIn<Spill, Posix> {
+    /// [`Self::resolved_portable`] of `absolute` and `relative`.
+    #[inline]
+    pub(crate) fn resolved_portable_below(absolute: &[u8], relative: &[&[u8]]) -> Self {
+        Self::built(|it| {
+            let room = absolute.len() + tidy::room_for_parts::<u8, u8>(relative) + tidy::SLACK;
+            it.edit(room, |units| {
+                tidy::join_portable::<Posix, _, _>(units, absolute, relative);
+            })
+        })
+    }
 }
 
-#[cfg(not(windows))]
-#[inline]
-fn dirname_posix<U: PathUnit>(path: &[U]) -> Option<&[U]> {
-    if path.is_empty() {
-        return None;
-    }
-    let mut end_index = path.len() - 1;
-    while path[end_index].eq_ascii(b'/') {
-        if end_index == 0 {
-            return None;
+impl<B: Pooled, S: Style> PathIn<B, S> {
+    /// What `fill` returns, which is not copied if it is at the start of the buffer that `fill` is given.
+    #[inline]
+    pub fn filled<E>(
+        fill: impl for<'b> FnOnce(&'b mut Buffer<B>) -> Result<&'b [B::Unit], E>,
+    ) -> Result<Out<B, Self>, E> {
+        let mut buffer = PathBufferPoolT::<Buffer<B>>::get();
+        let start = buffer.as_ptr();
+        let filled = fill(&mut buffer)?;
+        let len = filled.len();
+        if filled.as_ptr() != start || len >= B::Unit::POOLED_LEN {
+            return Ok(Self::from(filled));
         }
-        end_index -= 1;
+        buffer[len] = *B::Unit::NUL;
+        let mut path = Self::new();
+        // SAFETY: `path` is new. All of `buffer` is initialized, with a NUL at `len`.
+        unsafe { path.backend.adopt(buffer.into_box()) };
+        path.len = len;
+        Ok(B::Error::out(Ok(path)))
     }
-    while !path[end_index].eq_ascii(b'/') {
-        if end_index == 0 {
-            return None;
-        }
-        end_index -= 1;
-    }
-    // end_index is now at a '/'
-    if end_index == 0 {
-        // path[0] == '/' (loop exited because is_sep, not because index hit 0)
-        return Some(&path[..1]);
-    }
-    Some(&path[..end_index])
 }
 
-#[cfg(windows)]
-#[inline]
-fn dirname_windows<U: PathUnit>(path: &[U]) -> Option<&[U]> {
-    if path.is_empty() {
-        return None;
+impl<const N: usize, U: PathUnit, S: Style> PathIn<Stack<N, U>, S> {
+    /// The only constructor: all `N` units of a path in a `Result` are copied to get it out.
+    #[inline(always)]
+    pub const fn new() -> Self {
+        Self::empty(Stack::new())
     }
-    let root_len = disk_designator_len_windows(path);
-    if path.len() == root_len {
-        return None;
-    }
-    let have_root_slash =
-        path.len() > root_len && (path[root_len].eq_ascii(b'/') || path[root_len].eq_ascii(b'\\'));
-
-    let mut end_index = path.len() - 1;
-    while path[end_index].eq_ascii(b'/') || path[end_index].eq_ascii(b'\\') {
-        if end_index == 0 {
-            return None;
-        }
-        end_index -= 1;
-    }
-    while !path[end_index].eq_ascii(b'/') && !path[end_index].eq_ascii(b'\\') {
-        if end_index == 0 {
-            return None;
-        }
-        end_index -= 1;
-    }
-    if have_root_slash && end_index == root_len {
-        end_index += 1;
-    }
-    if end_index == 0 {
-        return None;
-    }
-    Some(&path[..end_index])
 }
 
-/// Width-generic port of `bun.Dirname.diskDesignatorWindows` →
-/// `windowsParsePath(..).disk_designator.len`. Handles drive-letter (`C:` → 2)
-/// and UNC NetworkShare (`\\server\share` → index past second token).
-pub(crate) fn disk_designator_len_windows<U: PathUnit>(path: &[U]) -> usize {
-    // No alphabetic check on path[0].
-    if path.len() >= 2 && path[1].eq_ascii(b':') {
-        return 2;
+impl<'a, U: PathUnit, S: Style> PathIn<Borrowed<'a, U>, S> {
+    #[inline]
+    pub fn new_in(buffer: &'a mut [U]) -> Self {
+        Self::empty(Borrowed::new(buffer))
     }
-    // Single leading separator (or lone sep) → kind = .None, designator = path[0..0].
-    if !path.is_empty()
-        && (path[0].eq_ascii(b'/') || path[0].eq_ascii(b'\\'))
-        && (path.len() == 1 || (!path[1].eq_ascii(b'/') && !path[1].eq_ascii(b'\\')))
-    {
-        return 0;
+
+    #[inline]
+    pub fn into_z(self) -> &'a U::Z {
+        // SAFETY: the invariant of `backend`, which has borrowed the units for `'a`.
+        unsafe { U::z(self.backend.as_ptr(), self.len) }
     }
-    if path.len() < 5 {
-        // "//a/b".len
-        return 0;
-    }
-    // UNC NetworkShare: `\\server\share` or `//server/share` (uniform sep).
-    // `inline for ("/\\") |this_sep|` — separator that started the prefix
-    // must match throughout; mixing `/` and `\` falls through to relative.
-    for this_sep in *b"/\\" {
-        if path[0].eq_ascii(this_sep) && path[1].eq_ascii(this_sep) {
-            if path[2].eq_ascii(this_sep) {
-                return 0;
-            }
-            // Tokenize on `this_sep`: skip sep runs,
-            // yield non-empty tokens; after two `next()`, `it.index` is the
-            // offset just past the second token (at next sep or len).
-            let mut idx = 0usize;
-            let mut tokens = 0u8;
-            while tokens < 2 {
-                while idx < path.len() && path[idx].eq_ascii(this_sep) {
-                    idx += 1;
-                }
-                if idx >= path.len() {
-                    // `orelse return relative_path`
-                    return 0;
-                }
-                while idx < path.len() && !path[idx].eq_ascii(this_sep) {
-                    idx += 1;
-                }
-                tokens += 1;
-            }
-            return idx;
-        }
-    }
-    0
 }
 
-#[inline]
-fn convert_into_buffer<U: PathUnit>(dest: &mut [U], src: &[U::Other]) -> usize {
-    U::convert_from_other(dest, src)
-}
-
-// ──────────────────────────────────────────────────────────────────────────
-// AbsPath / RelPath / Path
-// ──────────────────────────────────────────────────────────────────────────
-
-/// `AbsPath(opts)` — forces `kind = .abs`.
-pub type AbsPath<
-    U = u8,
-    const SEP_OPT: u8 = { PathSeparators::ANY },
-    const CHECK: u8 = { CheckLength::ASSUME },
-> = Path<U, { Kind::ABS }, SEP_OPT, CHECK>;
-
-/// Absolute path with auto separator.
-pub type AutoAbsPath = Path<u8, { Kind::ABS }, { PathSeparators::AUTO }>;
-
-/// [`AutoAbsPath`] that returns `Err(MaxPathExceeded)` on overflow. Use for unbounded user input.
-pub type AutoAbsPathChecked =
-    Path<u8, { Kind::ABS }, { PathSeparators::AUTO }, { CheckLength::CHECK }>;
-
-/// `RelPath(opts)` — forces `kind = .rel`.
-pub type RelPath<
-    U = u8,
-    const SEP_OPT: u8 = { PathSeparators::ANY },
-    const CHECK: u8 = { CheckLength::ASSUME },
-> = Path<U, { Kind::REL }, SEP_OPT, CHECK>;
-
-/// Relative path with auto separator.
-pub type AutoRelPath = Path<u8, { Kind::REL }, { PathSeparators::AUTO }>;
-
-/// Generic path buffer parameterised by unit width, kind, and separator
-/// options.
-///
-/// `BufType` is omitted as a parameter because only `.pool` is implemented.
-/// `Unit` is encoded as the type parameter `U: PathUnit` (use `u8` or `u16`).
-pub struct Path<
-    U: PathUnit = u8,
-    const KIND: u8 = { Kind::ANY },
-    const SEP_OPT: u8 = { PathSeparators::ANY },
-    const CHECK: u8 = { CheckLength::ASSUME },
-> {
-    _buf: Buf<U>,
-    _unit: PhantomData<U>,
-}
-
-impl<U: PathUnit, const KIND: u8, const SEP_OPT: u8, const CHECK: u8>
-    Path<U, KIND, SEP_OPT, CHECK>
-{
-    pub fn init() -> Self {
-        // match BufType::Pool
+impl<U: PathUnit, S: Style> PathIn<Heap<U>, S> {
+    #[inline]
+    pub fn from_vec(mut path: Vec<U>) -> Self {
+        let len = path.len();
+        path.push(*U::NUL);
         Self {
-            _buf: Buf {
-                pooled: ManuallyDrop::new(U::pool_get()),
-                len: 0,
-            },
-            _unit: PhantomData,
+            len,
+            ..Self::empty(Heap::from_vec(path))
         }
     }
 
-    fn trimmed_top_level_dir() -> &'static [u8] {
-        debug_assert!(crate::fs::FileSystem::instance_loaded());
-        let top_level_dir = crate::fs::FileSystem::instance().top_level_dir();
+    /// Without the NUL.
+    #[inline]
+    pub fn into_vec(self) -> Vec<U> {
+        // SAFETY: the invariant of `backend`.
+        unsafe { self.backend.into_vec(self.len) }
+    }
+}
 
-        match Kind::from_u8(KIND) {
-            Kind::Abs => {
-                debug_assert!(is_input_absolute(top_level_dir));
-                trim_input(TrimInputKind::Abs, top_level_dir)
-            }
-            Kind::Rel => panic!("cannot create a relative path from top_level_dir"),
-            Kind::Any => trim_input(TrimInputKind::Abs, top_level_dir),
+impl<S: Style> PathIn<Heap, S> {
+    #[inline]
+    pub fn into_zbox(self) -> ZBox {
+        ZBox::from_vec(self.into_vec())
+    }
+}
+
+impl<B: Backend, S: Style> PathIn<B, S> {
+    #[inline(always)]
+    const fn empty(backend: B) -> Self {
+        Self {
+            backend,
+            len: 0,
+            style: PhantomData,
         }
     }
 
-    pub fn init_top_level_dir() -> Self {
-        let trimmed = Self::trimmed_top_level_dir();
-        let mut this = Self::init();
-        // top_level_dir is &[u8]; `buf_append_input` routes it through
-        // `append_other` (transcoding) when U == u16.
-        this.buf_append_input(trimmed, false);
-        this
+    /// `edit` never makes the path longer than `room`, and fails if that is not available.
+    #[inline(always)]
+    fn edit(
+        &mut self,
+        room: usize,
+        edit: impl FnOnce(&mut Units<'_, B::Unit>),
+    ) -> Result<(), B::Error> {
+        if room >= self.backend.capacity() {
+            core::hint::cold_path();
+            // SAFETY: the invariant of `backend`, and the condition above. `finish` writes the NUL.
+            unsafe { self.backend.grow(self.len, room + 1) }?;
+        }
+        // SAFETY: the invariant of `backend`.
+        let mut units = unsafe { Units::new(self.backend.all(), self.len) };
+        edit(&mut units);
+        self.len = units.finish();
+        Ok(())
     }
 
-    pub fn init_top_level_dir_long_path() -> Self {
-        let trimmed = Self::trimmed_top_level_dir();
-        let mut this = Self::init();
-
-        #[cfg(windows)]
-        {
-            this.buf_append_input(crate::windows::long_path_prefix_for::<U>(), false);
+    /// [`Self::edit`] for a result that can be shorter than `room`.
+    #[inline(always)]
+    fn rewrite(
+        &mut self,
+        room: usize,
+        mut edit: impl FnMut(&mut Units<'_, B::Unit>),
+    ) -> Result<(), B::Error> {
+        let in_place = self.edit(room, &mut edit);
+        if in_place.is_ok() || !B::RETRIES_ON_HEAP {
+            return in_place;
         }
-
-        this.buf_append_input(trimmed, false);
-
-        this
+        let edited = edit_on_heap(self.as_slice(), room, &mut edit);
+        self.try_replace_from(0, &edited)
     }
 
-    pub fn init_fd_path(fd: Fd) -> crate::Result<Self> {
-        match Kind::from_u8(KIND) {
-            Kind::Abs => {}
-            Kind::Rel => panic!("cannot create a relative path from getFdPath"),
-            Kind::Any => {}
-        }
-
-        // `getFdPath`/`getFdPathW` are libc/kernel32-only, so the bodies live
-        // in `bun_core::fd_path_raw[_w]` (T0). >0 = units written, <0 = error.
-        // Dispatch on the pooled buffer's element type (u8 →
-        // readlink/F_GETPATH, u16 → GetFinalPathNameByHandleW) via TypeId.
-        use core::any::TypeId;
-        let mut this = Self::init();
-
-        if TypeId::of::<U>() == TypeId::of::<u8>() {
-            let buf: &mut [u8] = U::id_u8_mut(U::buffer_as_mut_slice(&mut this._buf.pooled));
-
-            // On Windows the u8 path still resolves via
-            // `GetFinalPathNameByHandleW` into a stack `WPathBuffer`, then
-            // transcodes to UTF-8. `fd_path_raw` has no Windows arm
-            // (returns 0), so route through the wide call here.
-            #[cfg(windows)]
-            {
-                let mut wbuf = crate::w_path_buffer_pool::get();
-                let wslice: &mut [u16] = wbuf.as_mut_slice();
-                let n = bun_core::fd_path_raw_w(fd, wslice);
-                if n <= 0 {
-                    // `GetFinalPathNameByHandle` surfaces
-                    // FileNotFound (return_length==0 → -1) or
-                    // NameTooLong (return_length>=buf.len → -2).
-                    return Err(if n == -2 {
-                        crate::Error::Sys(bun_errno::SystemErrno::ENAMETOOLONG)
-                    } else {
-                        crate::Error::Sys(bun_errno::SystemErrno::ENOENT)
-                    });
-                }
-                let wide = &wslice[..n as usize];
-                let written = strings::convert_utf16_to_utf8_in_buffer(buf, wide).len();
-                let raw = &buf[..written];
-                let trimmed = trim_input(TrimInputKind::Abs, raw);
-                this._buf.len = trimmed.len();
-                return Ok(this);
-            }
-
-            #[cfg(not(windows))]
-            {
-                // SAFETY: buf is valid for buf.len() writable bytes.
-                let n = unsafe { bun_core::fd_path_raw(fd, buf.as_mut_ptr(), buf.len()) };
-                // `fd_path_raw` returns 0 on misc failure — do not swallow as
-                // an empty path; propagate an error.
-                if n <= 0 {
-                    return Err(crate::Error::Sys(bun_errno::SystemErrno::EBADF)); // EBADF — fd_path_raw surfaces no errno
-                }
-                let raw = &buf[..n as usize];
-                let trimmed = trim_input(TrimInputKind::Abs, raw);
-                this._buf.len = trimmed.len();
-            }
+    /// [`Self::edit`] or [`Self::rewrite`], depending on whether `room_for` is exact.
+    #[inline(always)]
+    fn write<C: PathUnit>(
+        &mut self,
+        room: usize,
+        edit: impl FnMut(&mut Units<'_, B::Unit>),
+    ) -> Result<(), B::Error> {
+        if B::Unit::IS_U16 && !C::IS_U16 {
+            self.rewrite(room, edit)
         } else {
-            // U == u16 → getFdPathW (Windows GetFinalPathNameByHandleW).
-            let buf: &mut [u16] = U::id_u16_mut(U::buffer_as_mut_slice(&mut this._buf.pooled));
-
-            let n = bun_core::fd_path_raw_w(fd, buf);
-            if n <= 0 {
-                // `GetFinalPathNameByHandle` surfaces
-                // FileNotFound (return_length==0 → -1) or
-                // NameTooLong (return_length>=buf.len → -2).
-                return Err(if n == -2 {
-                    crate::Error::Sys(bun_errno::SystemErrno::ENAMETOOLONG)
-                } else {
-                    crate::Error::Sys(bun_errno::SystemErrno::ENOENT)
-                });
-            }
-            let raw = &buf[..n as usize];
-            let trimmed = trim_input(TrimInputKind::Abs, raw);
-            this._buf.len = trimmed.len();
+            self.edit(room, edit)
         }
-        Ok(this)
     }
 
-    fn trim_input_for_kind<C: PathUnit>(input: &[C]) -> options::Result<&[C]> {
-        let trimmed = match Kind::from_u8(KIND) {
-            Kind::Abs => {
-                debug_assert!(is_input_absolute(input));
-                trim_input(TrimInputKind::Abs, input)
-            }
-            Kind::Rel => {
-                debug_assert!(!is_input_absolute(input));
-                trim_input(TrimInputKind::Rel, input)
-            }
-            Kind::Any => trim_input(
-                if is_input_absolute(input) {
-                    TrimInputKind::Abs
-                } else {
-                    TrimInputKind::Rel
-                },
-                input,
-            ),
+    #[inline(always)]
+    fn try_replace_from<C: PathUnit>(&mut self, start: usize, with: &[C]) -> Result<(), B::Error> {
+        self.write::<C>(start + B::Unit::room_for(with), |units| {
+            units.truncate(start);
+            units.extend(with);
+        })
+    }
+
+    #[inline(always)]
+    fn try_push_at<C: PathUnit>(
+        &mut self,
+        len: usize,
+        pushed: &Pushed<'_, C>,
+    ) -> Result<(), B::Error> {
+        let room = len + pushed.room::<B::Unit>();
+        let edit = |units: &mut Units<'_, B::Unit>| {
+            units.truncate(len);
+            pushed.write::<S, _>(units);
         };
-
-        if CheckLength::from_u8(CHECK) == CheckLength::CheckForGreaterThanMaxPath {
-            if trimmed.len() >= U::MAX_PATH {
-                return Err(PathError::MaxPathExceeded);
-            }
+        if S::LOOSE {
+            self.rewrite(room, edit)
+        } else {
+            self.write::<C>(room, edit)
         }
-
-        Ok(trimmed)
     }
 
-    pub fn from_long_path<C: PathUnit>(input: &[C]) -> options::Result<Self> {
-        let trimmed = Self::trim_input_for_kind(input)?;
-        let mut this = Self::init();
-        #[cfg(windows)]
+    #[inline(always)]
+    fn try_push<C: PathUnit>(&mut self, part: &[C]) -> Result<(), B::Error> {
+        self.try_push_at(self.len, &Pushed::new::<S, _>(self.as_slice(), part))
+    }
+
+    #[inline(always)]
+    fn try_join<C: PathUnit>(&mut self, parts: &[&[C]]) -> Result<(), B::Error> {
+        let room = self.len + tidy::room_for_parts::<B::Unit, C>(parts) + tidy::SLACK;
+        self.rewrite(room, |units| tidy::join::<S, _, C>(units, parts))
+    }
+
+    #[inline(always)]
+    fn try_resolve<C: PathUnit>(
+        &mut self,
+        parts: &[&[C]],
+        resolve: impl Fn(&mut Units<'_, B::Unit>, &[&[C]]),
+    ) -> Result<(), B::Error> {
+        let (len, parts) = match tidy::last_fully_qualified::<S, C>(parts) {
+            Some(index) => (0, &parts[index..]),
+            None => (self.len, parts),
+        };
+        let room = len + tidy::room_for_parts::<B::Unit, C>(parts) + tidy::SLACK;
+        self.rewrite(room, |units| {
+            units.truncate(len);
+            resolve(units, parts);
+        })
+    }
+
+    #[inline(always)]
+    fn try_set_relative<const PORTABLE: bool>(
+        &mut self,
+        from: &[B::Unit],
+        to: &[B::Unit],
+    ) -> Result<(), B::Error> {
+        if let Some(from) = Resolved::as_is::<S, PORTABLE>(from)
+            && let Some(to) = Resolved::as_is::<S, PORTABLE>(to)
         {
-            this.buf_append_input(crate::windows::long_path_prefix_for::<U>(), false);
+            let relative = Relative::new::<S>(from, to);
+            return self.rewrite(relative.room::<S>(), |units| relative.write::<S>(units));
         }
-
-        this.buf_append_input(trimmed, false);
-        Ok(this)
+        let (from, to) = (Unresolved::new::<S>(from), Unresolved::new::<S>(to));
+        let room = tidy::room_for_relative(from, to);
+        self.rewrite(room, |units| {
+            tidy::relative::<S, _, PORTABLE>(units, from, to)
+        })
     }
 
-    pub fn from<C: PathUnit>(input: &[C]) -> options::Result<Self> {
-        let trimmed = Self::trim_input_for_kind(input)?;
-        let mut this = Self::init();
-        this.buf_append_input(trimmed, false);
-        Ok(this)
-    }
-
-    pub(crate) fn is_absolute(&self) -> bool {
-        match Kind::from_u8(KIND) {
-            // Rust can't compile-error on a const-generic value
-            // without specialization; panic instead.
-            Kind::Abs => panic!("already known to be absolute"),
-            Kind::Rel => panic!("already known to not be absolute"),
-            Kind::Any => is_input_absolute(self.slice()),
+    #[inline(always)]
+    fn try_set_relative_portable(
+        &mut self,
+        from: &[B::Unit],
+        to: &[B::Unit],
+    ) -> Result<(), B::Error> {
+        match S::LOOSE {
+            true => self.try_set_relative::<false>(from, to),
+            false => self.try_set_relative::<true>(from, to),
         }
     }
 
-    pub fn basename(&self) -> &[U] {
-        basename_generic(self.slice())
-    }
-
-    pub fn dirname(&self) -> Option<&[U]> {
-        dirname_generic(self.slice())
-    }
-
-    pub fn slice(&self) -> &[U] {
-        // match BufType::Pool
-        &U::buffer_as_slice(&self._buf.pooled)[..self._buf.len]
-    }
-
-    /// Reinterpret this path under a different `SEP_OPT` const parameter.
-    /// All `SEP_OPT` instantiations are
-    /// structurally identical at runtime — the option only affects how
-    /// `append`/`append_join` normalize separators going forward — so
-    /// passing a built path to a callee typed with a different `sep`
-    /// option is sound. Rust's const-generic monomorphization makes them
-    /// nominally distinct, hence this explicit conversion.
-    #[inline]
-    pub fn into_sep<const NEW_SEP: u8>(self) -> Path<U, KIND, NEW_SEP, CHECK> {
-        self.reinterpret()
-    }
-
-    /// [`Self::into_sep`] for `CHECK`: from here on over-long input is `Err(MaxPathExceeded)`.
-    #[inline]
-    pub fn into_checked(self) -> Path<U, KIND, SEP_OPT, { CheckLength::CHECK }> {
-        self.reinterpret()
-    }
-
-    #[inline]
-    fn reinterpret<const NEW_SEP: u8, const NEW_CHECK: u8>(
-        self,
-    ) -> Path<U, KIND, NEW_SEP, NEW_CHECK> {
-        Path {
-            _buf: self._buf,
-            _unit: PhantomData,
-        }
-    }
-
-    pub fn slice_z(&mut self) -> &U::ZSlice {
-        // match BufType::Pool
-        let len = self._buf.len;
-        let buf = U::buffer_as_mut_slice(&mut self._buf.pooled);
-        buf[len] = U::from_u8(0);
-        // SAFETY: buf[len] == 0 written above; buf outlives the returned borrow.
-        unsafe { U::zslice_from_raw(buf.as_ptr(), len) }
-    }
-
-    pub fn buf(&mut self) -> &mut [U] {
-        // match BufType::Pool
-        U::buffer_as_mut_slice(&mut self._buf.pooled)
-    }
-
-    pub fn set_length(&mut self, new_length: usize) {
-        self._buf.set_length(new_length);
-
-        let trimmed_len = match Kind::from_u8(KIND) {
-            Kind::Abs => trim_input(TrimInputKind::Abs, self.slice()).len(),
-            Kind::Rel => trim_input(TrimInputKind::Rel, self.slice()).len(),
-            Kind::Any => {
-                if self.is_absolute() {
-                    trim_input(TrimInputKind::Abs, self.slice()).len()
-                } else {
-                    trim_input(TrimInputKind::Rel, self.slice()).len()
+    fn try_write_fmt(&mut self, args: fmt::Arguments<'_>) -> Result<(), B::Error> {
+        struct Sink<'a, B: Backend, S: Style>(&'a mut PathIn<B, S>, Result<(), B::Error>);
+        impl<B: Backend, S: Style> fmt::Write for Sink<'_, B, S> {
+            #[inline]
+            fn write_str(&mut self, text: &str) -> fmt::Result {
+                if self.1.is_ok() {
+                    self.1 = self.0.try_replace_from(self.0.len, text.as_bytes());
                 }
+                self.1.as_ref().map(|_| ()).map_err(|_| fmt::Error)
             }
-        };
-
-        self._buf.set_length(trimmed_len);
+        }
+        let mut sink = Sink(self, Ok(()));
+        let formatted = fmt::write(&mut sink, args);
+        sink.1?;
+        formatted.expect("a formatting trait implementation returned an error");
+        Ok(())
     }
 
+    #[inline(always)]
+    pub fn as_slice(&self) -> &[B::Unit] {
+        self
+    }
+
+    /// For changes that keep the length.
     #[inline]
-    pub fn len(&self) -> usize {
-        // match BufType::Pool
-        self._buf.len
+    pub fn as_mut_slice(&mut self) -> &mut [B::Unit] {
+        // SAFETY: the invariant of `backend`.
+        unsafe { self.backend.all()[..self.len].assume_init_mut() }
     }
 
-    fn clone(&self) -> Self {
-        // match BufType::Pool
-        let mut cloned = Self::init();
-        let len = self._buf.len;
-        U::buffer_as_mut_slice(&mut cloned._buf.pooled)[..len]
-            .copy_from_slice(&U::buffer_as_slice(&self._buf.pooled)[..len]);
-        cloned._buf.len = len;
-        cloned
+    /// What follows the first `start` units.
+    #[inline]
+    pub fn tail(&self, start: usize) -> &Z<B> {
+        let start = start.min(self.len);
+        // SAFETY: the invariant of `backend`.
+        unsafe { B::Unit::z(self.backend.as_ptr().add(start), self.len - start) }
+    }
+
+    /// See [`Style::dirname`].
+    #[inline]
+    pub fn dirname(&self) -> Option<&[B::Unit]> {
+        S::dirname(self.as_slice())
+    }
+
+    /// See [`Style::basename`].
+    #[inline]
+    pub fn basename(&self) -> &[B::Unit] {
+        S::basename(self.as_slice())
+    }
+
+    /// Does nothing if the path is not longer.
+    #[inline]
+    pub fn truncate(&mut self, len: usize) {
+        if len < self.len {
+            self.backend.all()[len].write(*B::Unit::NUL);
+            self.len = len;
+        }
     }
 
     #[inline]
     pub fn clear(&mut self) {
-        self._buf.set_length(0);
+        self.truncate(0);
     }
 
-    pub fn append<C: PathUnit>(&mut self, input: &[C]) -> options::Result<()> {
-        self.append_with(CheckLength::from_u8(CHECK), input)
+    /// Copies `path` as it is.
+    #[inline]
+    pub fn set<C: PathUnit>(&mut self, path: &[C]) -> Out<B, ()> {
+        B::Error::out(self.try_replace_from(0, path))
     }
 
-    /// [`Self::append`] that returns `Err(MaxPathExceeded)` on overflow whatever `CHECK` is.
-    pub fn try_append<C: PathUnit>(&mut self, input: &[C]) -> options::Result<()> {
-        self.append_with(CheckLength::CheckForGreaterThanMaxPath, input)
+    /// Adds `text` as it is, without a separator.
+    #[inline]
+    pub fn append<C: PathUnit>(&mut self, text: &[C]) -> Out<B, ()> {
+        B::Error::out(self.try_replace_from(self.len, text))
+    }
+
+    /// [`Self::append`] for `write!`. Like `format!`, it panics if a `Display` fails for a reason of its own.
+    #[inline]
+    pub fn write_fmt(&mut self, args: fmt::Arguments<'_>) -> Out<B, ()> {
+        let len = self.len;
+        B::Error::out(self.try_write_fmt(args).inspect_err(|_| self.truncate(len)))
+    }
+
+    /// Adds a separator and `part`, less the separators around it and any `./` at its start. `..` stays, and a root only counts in an empty path.
+    #[inline]
+    pub fn push<C: PathUnit>(&mut self, part: &[C]) -> Out<B, ()> {
+        B::Error::out(self.try_push(part))
+    }
+
+    /// [`Self::push`] for what may have been written on Windows. See [`Self::resolve_portable`].
+    #[inline]
+    pub fn push_portable<C: PathUnit>(&mut self, part: &[C]) -> Out<B, ()> {
+        if S::LOOSE {
+            return self.push(part);
+        }
+        let room = self.len + 1 + B::Unit::room_for(part);
+        B::Error::out(self.rewrite(room, |units| tidy::push_portable::<S, _, C>(units, part)))
+    }
+
+    /// [`Self::push`] of what `args` print. See [`Self::write_fmt`].
+    pub fn push_fmt(&mut self, args: fmt::Arguments<'_>) -> Out<B, ()> {
+        let len = self.len;
+        let mut push_in_place = || {
+            self.try_end_with_sep()?;
+            let start = self.len;
+            self.try_write_fmt(args)?;
+            let room = self.len + if S::LOOSE { tidy::SLACK } else { 0 };
+            self.rewrite(room, |units| tidy::push_appended::<S, _>(units, len, start))
+        };
+        B::Error::out(push_in_place().or_else(|too_long| {
+            self.truncate(len);
+            match B::RETRIES_ON_HEAP {
+                true => self.try_push(&format_on_heap(args)),
+                false => Err(too_long),
+            }
+        }))
+    }
+
+    /// Removes the last name. False if there is none.
+    #[inline]
+    pub fn pop(&mut self) -> bool {
+        let (root, start, end) = last_name::<S, _>(self.as_slice());
+        if start < end {
+            self.truncate(len_without_seps::<S, _>(
+                &self.as_slice()[..start],
+                root.len,
+            ));
+        }
+        start < end
+    }
+
+    /// [`Self::pop`], then [`Self::push`].
+    #[inline]
+    pub fn set_basename<C: PathUnit>(&mut self, name: &[C]) -> Out<B, ()> {
+        let (root, start, end) = last_name::<S, _>(self.as_slice());
+        let len = len_without_seps::<S, _>(&self.as_slice()[..start], root.len);
+        let mut pushed = Pushed::new::<S, _>(&self.as_slice()[..len], name);
+        if len == start && start < end {
+            pushed = pushed.without_sep();
+        }
+        B::Error::out(self.try_push_at(len, &pushed))
+    }
+
+    /// Replaces [`Style::extension`] and the separators after it. Does nothing to a root, `.` or `..`.
+    #[inline]
+    pub fn set_extension<C: PathUnit>(&mut self, extension: &[C]) -> Out<B, ()> {
+        let (_, start, end) = last_name::<S, _>(self.as_slice());
+        let name = &self.as_slice()[start..end];
+        if B::Unit::lit(b"..").starts_with(name) {
+            return B::Error::out(Ok(()));
+        }
+        B::Error::out(self.try_replace_from(start + stem_len(name), extension))
+    }
+
+    /// Replaces the first `len` units.
+    #[inline]
+    pub fn replace_prefix(&mut self, len: usize, with: &[B::Unit]) -> Out<B, ()> {
+        let len = len.min(self.len);
+        let room = self.len - len + with.len();
+        B::Error::out(self.edit(room, |units| units.splice(0, len, with)))
     }
 
     #[inline(always)]
-    fn append_with<C: PathUnit>(&mut self, check: CheckLength, input: &[C]) -> options::Result<()> {
-        let needs_sep = self.len() > 0
-            && match PathSeparators::from_u8(SEP_OPT) {
-                PathSeparators::Any => {
-                    let last = self.slice()[self.len() - 1];
-                    !(last.eq_ascii(b'/') || last.eq_ascii(b'\\'))
-                }
-                _ => {
-                    !self.slice()[self.len() - 1].eq_ascii(PathSeparators::from_u8(SEP_OPT).char())
-                }
-            };
-
-        match Kind::from_u8(KIND) {
-            Kind::Abs => {
-                let has_root = self.len() > 0;
-
-                if cfg!(debug_assertions) {
-                    if has_root {
-                        debug_assert!(!is_input_absolute(input));
-                    } else {
-                        debug_assert!(is_input_absolute(input));
-                    }
-                }
-
-                let trimmed = trim_input(
-                    if has_root {
-                        TrimInputKind::Rel
-                    } else {
-                        TrimInputKind::Abs
-                    },
-                    input,
-                );
-
-                if trimmed.is_empty() {
-                    return Ok(());
-                }
-
-                if check == CheckLength::CheckForGreaterThanMaxPath {
-                    if self.len() + trimmed.len() + (needs_sep as usize) >= U::MAX_PATH {
-                        return Err(PathError::MaxPathExceeded);
-                    }
-                }
-
-                self.buf_append_input(trimmed, needs_sep);
-            }
-            Kind::Rel => {
-                debug_assert!(!is_input_absolute(input));
-
-                let trimmed = trim_input(TrimInputKind::Rel, input);
-
-                if trimmed.is_empty() {
-                    return Ok(());
-                }
-
-                if check == CheckLength::CheckForGreaterThanMaxPath {
-                    if self.len() + trimmed.len() + (needs_sep as usize) >= U::MAX_PATH {
-                        return Err(PathError::MaxPathExceeded);
-                    }
-                }
-
-                self.buf_append_input(trimmed, needs_sep);
-            }
-            Kind::Any => {
-                let input_is_absolute = is_input_absolute(input);
-
-                if cfg!(debug_assertions) {
-                    if needs_sep {
-                        debug_assert!(!input_is_absolute);
-                    }
-                }
-
-                let trimmed = trim_input(
-                    if self.len() > 0 {
-                        // anything appended to an existing path should be trimmed
-                        // as a relative path
-                        TrimInputKind::Rel
-                    } else if is_input_absolute(input) {
-                        // path is empty, trim based on input
-                        TrimInputKind::Abs
-                    } else {
-                        TrimInputKind::Rel
-                    },
-                    input,
-                );
-
-                if trimmed.is_empty() {
-                    return Ok(());
-                }
-
-                if check == CheckLength::CheckForGreaterThanMaxPath {
-                    if self.len() + trimmed.len() + (needs_sep as usize) >= U::MAX_PATH {
-                        return Err(PathError::MaxPathExceeded);
-                    }
-                }
-
-                self.buf_append_input(trimmed, needs_sep);
-            }
+    fn try_end_with_sep(&mut self) -> Result<(), B::Error> {
+        if self.len == 0 || ends_with_sep::<S, _>(self.as_slice()) {
+            return Ok(());
         }
-        Ok(())
+        self.edit(self.len + 1, |units| units.push(S::SEP))
     }
 
-    pub fn append_fmt(&mut self, args: core::fmt::Arguments<'_>) -> options::Result<()> {
-        self.append_fmt_with(CheckLength::from_u8(CHECK), args)
+    /// An empty path stays empty.
+    #[inline]
+    pub fn end_with_sep(&mut self) -> Out<B, ()> {
+        B::Error::out(self.try_end_with_sep())
     }
 
-    /// [`Self::append_fmt`] that returns `Err(MaxPathExceeded)` on overflow whatever `CHECK` is.
-    pub fn try_append_fmt(&mut self, args: core::fmt::Arguments<'_>) -> options::Result<()> {
-        self.append_fmt_with(CheckLength::CheckForGreaterThanMaxPath, args)
+    /// See [`Style::without_trailing_sep`].
+    #[inline]
+    pub fn trim_trailing_sep(&mut self) {
+        self.truncate(S::without_trailing_sep(self.as_slice()).len());
     }
 
-    fn append_fmt_with(
-        &mut self,
-        check: CheckLength,
-        args: core::fmt::Arguments<'_>,
-    ) -> options::Result<()> {
-        // TODO: there's probably a better way to do this. needed for trimming slashes
-        let mut temp: Path<u8, { Kind::ANY }, { PathSeparators::ANY }> = Path::init();
-
-        // match BufType::Pool
-        let input = {
-            use std::io::Write;
-            let buf = u8::buffer_as_mut_slice(&mut temp._buf.pooled);
-            let mut cursor: &mut [u8] = buf;
-            let total = cursor.len();
-            match cursor.write_fmt(args) {
-                Ok(()) => {
-                    let written = total - cursor.len();
-                    &u8::buffer_as_slice(&temp._buf.pooled)[..written]
-                }
-                Err(_) => {
-                    if check == CheckLength::CheckForGreaterThanMaxPath {
-                        return Err(PathError::MaxPathExceeded);
-                    }
-                    unreachable!();
-                }
-            }
-        };
-
-        self.append_with(check, input)
+    /// Node's `path.normalize`.
+    #[inline]
+    pub fn normalize(&mut self) -> Out<B, ()> {
+        B::Error::out(self.rewrite(self.len + tidy::SLACK, tidy::normalize::<S, _>))
     }
 
-    fn assert_joinable(&self) {
-        match Kind::from_u8(KIND) {
-            Kind::Abs => {}
-            Kind::Rel => panic!("cannot join with relative path"),
-            Kind::Any => {
-                debug_assert!(self.is_absolute());
-            }
+    /// Node's `path.join(self, ...parts)`.
+    #[inline]
+    pub fn join<C: PathUnit>(&mut self, parts: &[&[C]]) -> Out<B, ()> {
+        B::Error::out(self.try_join(parts))
+    }
+
+    /// Node's `path.resolve(self, ...parts)`, but it keeps a separator at the end and does not fall back on the working directory.
+    #[inline]
+    pub fn resolve<C: PathUnit>(&mut self, parts: &[&[C]]) -> Out<B, ()> {
+        B::Error::out(self.try_resolve(parts, tidy::resolve::<S, _, C>))
+    }
+
+    /// [`Self::resolve`] for what somebody has written, maybe on Windows. A `\` is a separator, unless it is in an absolute part, in a name that a working directory or the home has too. At the end, only the separator of the style is kept.
+    #[inline]
+    pub fn resolve_portable<C: PathUnit>(&mut self, parts: &[&[C]]) -> Out<B, ()> {
+        B::Error::out(self.try_resolve(parts, tidy::resolve_portable::<S, _, C>))
+    }
+
+    /// Node's `path.relative`, with [`top_level_dir`](bun_core::top_level_dir) for the working directory. `to` if it is on another volume.
+    #[inline]
+    pub fn set_relative(&mut self, from: &[B::Unit], to: &[B::Unit]) -> Out<B, ()> {
+        B::Error::out(self.try_set_relative::<false>(from, to))
+    }
+
+    /// [`Self::set_relative`] for what is printed or saved. The operands are read as by [`Self::resolve_portable`], and no `\` is left in a name.
+    #[inline]
+    pub fn set_relative_portable(&mut self, from: &[B::Unit], to: &[B::Unit]) -> Out<B, ()> {
+        B::Error::out(self.try_set_relative_portable(from, to))
+    }
+
+    #[inline(always)]
+    fn add_namespace(&mut self, prefix: [u8; 4]) -> Out<B, ()> {
+        if S::SEP != b'\\' {
+            return B::Error::out(Ok(()));
+        }
+        let room = self.len + tidy::ROOM_FOR_NAMESPACE;
+        B::Error::out(self.rewrite(room, |units| tidy::add_namespace::<S, _>(units, prefix)))
+    }
+
+    /// `\\?\C:\a` or `\\?\UNC\server\share\a`, which lifts `MAX_PATH`. Normalizes. Only does something to Windows paths.
+    #[inline]
+    pub fn add_long_prefix(&mut self) -> Out<B, ()> {
+        self.add_namespace(crate::windows::LONG_PATH_PREFIX_U8)
+    }
+
+    /// `\??\C:\a` or `\??\UNC\server\share\a`, for `ntdll`. Normalizes. Only does something to Windows paths.
+    #[inline]
+    pub fn add_nt_prefix(&mut self) -> Out<B, ()> {
+        self.add_namespace(crate::windows::NT_OBJECT_PREFIX_U8)
+    }
+
+    /// Undoes either of the above. `\\?\Volume{..}\a` has no other name and stays.
+    #[inline]
+    pub fn remove_win32_prefix(&mut self) {
+        if S::WIN32 && self.len > 0 {
+            let edited = self.edit(self.len, tidy::remove_namespace::<S, _>);
+            debug_assert!(edited.is_ok());
         }
     }
 
-    pub fn join(&mut self, parts: &[&[U]]) -> options::Result<()> {
-        // Rust can't compile-error on a
-        // type parameter without specialization; enforced here at runtime.
-        if core::any::TypeId::of::<U>() == core::any::TypeId::of::<u16>() {
-            panic!("unsupported unit type");
-        }
-
-        self.assert_joinable();
-
-        let cloned = self.clone();
-
-        // match BufType::Pool
-        {
-            let pooled: &mut [u8] = U::id_u8_mut(U::buffer_as_mut_slice(&mut self._buf.pooled));
-            let cloned_slice: &[u8] = U::id_u8(cloned.slice());
-            // TypeId check above proves U == u8; trait-dispatched identity (no
-            // `unsafe`) — the u8 impl is `fn(s) { s }`, the u16 default is
-            // `unreachable!()` and is const-folded out in this monomorphisation.
-            let parts_u8: &[&[u8]] = U::id_u8_slices(parts);
-            let joined = if CheckLength::from_u8(CHECK) == CheckLength::CheckForGreaterThanMaxPath {
-                match sep_dispatch!(join_abs_string_buf_checked(cloned_slice, pooled, parts_u8)) {
-                    Some(j) => j,
-                    None => return Err(PathError::MaxPathExceeded),
-                }
-            } else {
-                sep_dispatch!(join_abs_string_buf(cloned_slice, pooled, parts_u8))
-            };
-
-            let trimmed = trim_input(TrimInputKind::Abs, joined);
-            if CheckLength::from_u8(CHECK) == CheckLength::CheckForGreaterThanMaxPath
-                && trimmed.len() >= U::MAX_PATH
-            {
-                return Err(PathError::MaxPathExceeded);
-            }
-            self._buf.len = trimmed.len();
-        }
-        Ok(())
-    }
-
-    /// [`Self::append_join`] that returns `Err(MaxPathExceeded)` on overflow whatever `CHECK` is.
-    pub fn try_append_join<C: PathUnit>(&mut self, part: &[C]) -> options::Result<()> {
-        if self.len() + 1 + part.len() >= U::MAX_PATH {
-            return Err(PathError::MaxPathExceeded);
-        }
-        self.append_join(part)
-    }
-
-    pub fn append_join<C: PathUnit>(&mut self, part: &[C]) -> options::Result<()> {
-        self.assert_joinable();
-
-        if CheckLength::from_u8(CHECK) == CheckLength::CheckForGreaterThanMaxPath
-            && self.len() + 1 + part.len() >= U::MAX_PATH
-        {
-            return Err(PathError::MaxPathExceeded);
-        }
-
-        // The four (C, U) arms are dispatched below via TypeId checks, which
-        // const-fold to a single arm per monomorphization.
-        use core::any::TypeId;
-        let c_is_u8 = TypeId::of::<C>() == TypeId::of::<u8>();
-        let u_is_u8 = TypeId::of::<U>() == TypeId::of::<u8>();
-
-        match (c_is_u8, u_is_u8) {
-            (true, true) => {
-                // part: &[u8], unit: u8
-                let mut cwd_path_buf = crate::path_buffer_pool::get();
-                // RAII guard puts back on Drop.
-                let current_slice: &[u8] = U::id_u8(self.slice());
-                let cwd_path = &mut cwd_path_buf[..current_slice.len()];
-                cwd_path.copy_from_slice(current_slice);
-
-                let pooled: &mut [u8] = U::id_u8_mut(U::buffer_as_mut_slice(&mut self._buf.pooled));
-                let part_u8: &[u8] = C::id_u8(part);
-                let joined = sep_dispatch!(join_string_buf(pooled, &[cwd_path, part_u8]));
-
-                let trimmed = trim_input(TrimInputKind::Abs, joined);
-                self._buf.len = trimmed.len();
-            }
-            (true, false) => {
-                // part: &[u8], unit: u16 → transcode then recurse
-                let mut path_buf = crate::w_path_buffer_pool::get();
-                let part_u8: &[u8] = C::id_u8(part);
-                let converted =
-                    strings::convert_utf8_to_utf16_in_buffer(&mut path_buf[..], part_u8);
-                return self.append_join::<u16>(converted);
-            }
-            (false, false) => {
-                // part: &[u16], unit: u16
-                let mut cwd_path_buf = crate::w_path_buffer_pool::get();
-                let current_slice: &[u16] = U::id_u16(self.slice());
-                let cwd_path = &mut cwd_path_buf[..current_slice.len()];
-                cwd_path.copy_from_slice(current_slice);
-
-                let pooled: &mut [u16] =
-                    U::id_u16_mut(U::buffer_as_mut_slice(&mut self._buf.pooled));
-                let part_u16: &[u16] = C::id_u16(part);
-                let joined = sep_dispatch!(join_string_buf_w_same(pooled, &[cwd_path, part_u16]));
-                let trimmed = trim_input(TrimInputKind::Abs, joined);
-                self._buf.len = trimmed.len();
-            }
-            (false, true) => {
-                // part: &[u16], unit: u8 → transcode then recurse
-                let mut path_buf = crate::path_buffer_pool::get();
-                let part_u16: &[u16] = C::id_u16(part);
-                let converted =
-                    strings::convert_utf16_to_utf8_in_buffer(&mut path_buf[..], part_u16);
-                return self.append_join::<u8>(converted);
-            }
-        }
-        Ok(())
-    }
-
-    pub fn relative<const K2: u8>(
-        &self,
-        to: &Path<U, K2, SEP_OPT, CHECK>,
-    ) -> RelPath<U, SEP_OPT, CHECK> {
-        // `resolve_path::relative_buf_z` is `&[u8]`-only, so we
-        // TypeId-dispatch: u8 → identity-cast and call; u16 → transcode through
-        // temp u8 buffers and back.
-        use core::any::TypeId;
-        let mut output: RelPath<U, SEP_OPT, CHECK> = Path::init();
-
-        if TypeId::of::<U>() == TypeId::of::<u8>() {
-            let pooled: &mut [u8] = U::id_u8_mut(U::buffer_as_mut_slice(&mut output._buf.pooled));
-            let from_u8: &[u8] = U::id_u8(self.slice());
-            let to_u8: &[u8] = U::id_u8(to.slice());
-            let rel = path::relative_buf_z(pooled, from_u8, to_u8);
-            let trimmed = trim_input(TrimInputKind::Rel, rel.as_bytes());
-            output._buf.len = trimmed.len();
-        } else {
-            // U == u16: transcode from/to → u8 scratch buffers, compute the
-            // relative path in u8-space, then transcode back into the u16
-            // output buffer. Mirrors the cross-width arms in `append_join`.
-            // Three pooled buffers + two transcodes — only ever reached on
-            // Windows wide-path callers.
-            let from_u16: &[u16] = U::id_u16(self.slice());
-            let to_u16: &[u16] = U::id_u16(to.slice());
-
-            let mut from_buf = crate::path_buffer_pool::get();
-            let mut to_buf = crate::path_buffer_pool::get();
-            let mut rel_buf = crate::path_buffer_pool::get();
-
-            let from_u8 = strings::convert_utf16_to_utf8_in_buffer(&mut from_buf[..], from_u16);
-            let to_u8 = strings::convert_utf16_to_utf8_in_buffer(&mut to_buf[..], to_u16);
-
-            let rel = path::relative_buf_z(&mut rel_buf[..], from_u8, to_u8);
-            let trimmed = trim_input(TrimInputKind::Rel, rel.as_bytes());
-
-            let pooled: &mut [u16] = U::id_u16_mut(U::buffer_as_mut_slice(&mut output._buf.pooled));
-            let converted = strings::convert_utf8_to_utf16_in_buffer(pooled, trimmed);
-            output._buf.len = converted.len();
-        }
-        output
-    }
-
-    pub fn undo(&mut self, n_components: usize) {
-        let min_len = match Kind::from_u8(KIND) {
-            Kind::Abs => root_len(self.slice()).unwrap_or(0),
-            Kind::Rel => 0,
-            Kind::Any => {
-                if self.is_absolute() {
-                    root_len(self.slice()).unwrap_or(0)
-                } else {
-                    0
-                }
-            }
-        };
-
-        let mut i: usize = 0;
-        while i < n_components {
-            let slash = match PathSeparators::from_u8(SEP_OPT) {
-                PathSeparators::Any => self
-                    .slice()
-                    .iter()
-                    .rposition(|c| c.eq_ascii(SEP_POSIX) || c.eq_ascii(SEP_WINDOWS)),
-                PathSeparators::Auto => self.slice().iter().rposition(|c| c.eq_ascii(SEP)),
-                PathSeparators::Posix => self.slice().iter().rposition(|c| c.eq_ascii(SEP_POSIX)),
-                PathSeparators::Windows => {
-                    self.slice().iter().rposition(|c| c.eq_ascii(SEP_WINDOWS))
-                }
-            };
-            let Some(slash) = slash else {
-                self._buf.set_length(min_len);
-                return;
-            };
-
-            if slash < min_len {
-                self._buf.set_length(min_len);
-                return;
-            }
-
-            self._buf.set_length(slash);
-            i += 1;
-        }
-    }
-
-    pub fn save(&mut self) -> ResetScope<'_, U, KIND, SEP_OPT, CHECK> {
-        let saved_len = self.len();
-        ResetScope {
+    /// Cuts the path back to its length when dropped. What it has now must not be changed in the meantime.
+    #[inline]
+    pub fn scope(&mut self) -> Scope<'_, B, S> {
+        Scope {
+            len: self.len,
+            #[cfg(debug_assertions)]
+            checksum: checksum(self.as_slice()),
             path: self,
-            saved_len,
         }
     }
 
-    // ── private helpers ──────────────────────────────────────────────────
+    /// [`Self::scope`], then [`Self::push`].
+    #[inline]
+    pub fn child<C: PathUnit>(&mut self, part: &[C]) -> Out<B, Scope<'_, B, S>> {
+        let mut scope = self.scope();
+        B::Error::out(scope.try_push(part).map(|()| scope))
+    }
 
-    /// Dispatch `Buf::append` / `Buf::append_other` based on whether the input
-    /// element type matches `U`.
-    fn buf_append_input<C: PathUnit>(&mut self, characters: &[C], add_separator: bool) {
-        use core::any::TypeId;
-        // Route via concrete `u8`/`u16` using the safe trait-dispatched
-        // identity casts (`id_u8`/`id_from_u8` etc.) — each is the literal
-        // identity in its monomorphized impl and `unreachable!()` otherwise,
-        // so no `from_raw_parts` is needed for the generic→generic reslice.
-        if TypeId::of::<C>() == TypeId::of::<u8>() {
-            let bytes = C::id_u8(characters);
-            if TypeId::of::<U>() == TypeId::of::<u8>() {
-                self._buf
-                    .append::<SEP_OPT>(U::id_from_u8(bytes), add_separator);
-            } else {
-                self._buf
-                    .append_other::<SEP_OPT>(<U::Other>::id_from_u8(bytes), add_separator);
-            }
-        } else {
-            let words = C::id_u16(characters);
-            if TypeId::of::<U>() == TypeId::of::<u16>() {
-                self._buf
-                    .append::<SEP_OPT>(U::id_from_u16(words), add_separator);
-            } else {
-                self._buf
-                    .append_other::<SEP_OPT>(<U::Other>::id_from_u16(words), add_separator);
-            }
+    /// The first `len` units, NUL-terminated in place until the result is dropped.
+    #[inline]
+    pub fn prefix(&mut self, len: usize) -> Prefix<'_, B, S> {
+        let full_len = self.len;
+        let replaced = self.as_slice().get(len).copied();
+        self.truncate(len);
+        Prefix {
+            path: self,
+            full_len,
+            replaced,
         }
     }
 }
 
-impl<U: PathUnit> Drop for Buf<U> {
-    fn drop(&mut self) {
-        // match BufType::Pool
-        // SAFETY: `pooled` is initialized in `init()` and never taken before this; Drop runs once.
-        let pooled = unsafe { ManuallyDrop::take(&mut self.pooled) };
-        U::pool_put(pooled);
-    }
+#[cold]
+#[inline(never)]
+fn edit_on_heap<U: PathUnit>(
+    path: &[U],
+    room: usize,
+    edit: &mut dyn FnMut(&mut Units<'_, U>),
+) -> Vec<U> {
+    let mut copy = PathIn::<Heap<U>>::from(path);
+    let Ok(()) = copy.edit(room, edit);
+    copy.into_vec()
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// ResetScope
-// ──────────────────────────────────────────────────────────────────────────
-
-pub struct ResetScope<'a, U: PathUnit, const KIND: u8, const SEP_OPT: u8, const CHECK: u8> {
-    // LIFETIMES.tsv: BORROW_PARAM → &'a mut Path
-    path: &'a mut Path<U, KIND, SEP_OPT, CHECK>,
-    saved_len: usize,
+#[cold]
+#[inline(never)]
+fn format_on_heap(args: fmt::Arguments<'_>) -> VecPath {
+    let mut text = VecPath::new();
+    text.write_fmt(args);
+    text
 }
 
-impl<'a, U: PathUnit, const KIND: u8, const SEP_OPT: u8, const CHECK: u8> core::ops::Deref
-    for ResetScope<'a, U, KIND, SEP_OPT, CHECK>
-{
-    type Target = Path<U, KIND, SEP_OPT, CHECK>;
-    fn deref(&self) -> &Self::Target {
+#[cfg(debug_assertions)]
+fn checksum<U: PathUnit>(units: &[U]) -> u32 {
+    (units.iter()).fold(0, |sum, unit| {
+        sum.wrapping_mul(31).wrapping_add(unit.as_u32())
+    })
+}
+
+/// See [`PathIn::scope`].
+#[must_use]
+pub struct Scope<'a, B: Backend, S: Style> {
+    path: &'a mut PathIn<B, S>,
+    len: usize,
+    #[cfg(debug_assertions)]
+    checksum: u32,
+}
+
+impl<B: Backend, S: Style> Deref for Scope<'_, B, S> {
+    type Target = PathIn<B, S>;
+    #[inline(always)]
+    fn deref(&self) -> &PathIn<B, S> {
         self.path
     }
 }
 
-impl<'a, U: PathUnit, const KIND: u8, const SEP_OPT: u8, const CHECK: u8> core::ops::DerefMut
-    for ResetScope<'a, U, KIND, SEP_OPT, CHECK>
-{
-    fn deref_mut(&mut self) -> &mut Self::Target {
+impl<B: Backend, S: Style> DerefMut for Scope<'_, B, S> {
+    #[inline(always)]
+    fn deref_mut(&mut self) -> &mut PathIn<B, S> {
         self.path
     }
 }
 
-impl<'a, U: PathUnit, const KIND: u8, const SEP_OPT: u8, const CHECK: u8> Drop
-    for ResetScope<'a, U, KIND, SEP_OPT, CHECK>
-{
-    /// Truncate the path back to its
-    /// length at `save()` time on every scope exit (including `?` early
-    /// returns).
+impl<B: Backend, S: Style> Drop for Scope<'_, B, S> {
+    #[inline]
     fn drop(&mut self) {
-        self.path._buf.set_length(self.saved_len);
+        self.path.truncate(self.len);
+        #[cfg(debug_assertions)]
+        assert_eq!(checksum(self.path.as_slice()), self.checksum);
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// Free functions (were nested in `Path(opts)` but don't depend on opts beyond
-// the input element type, so they're hoisted to generics over `C: PathUnit`)
-// ──────────────────────────────────────────────────────────────────────────
+/// See [`PathIn::prefix`].
+#[must_use]
+pub struct Prefix<'a, B: Backend, S: Style> {
+    path: &'a mut PathIn<B, S>,
+    full_len: usize,
+    replaced: Option<B::Unit>,
+}
 
-fn root_len<C: PathUnit>(input: &[C]) -> Option<usize> {
-    #[cfg(windows)]
-    {
-        if input.len() > 2
-            && input[1].eq_ascii(b':')
-            && (input[2].eq_ascii(b'/') || input[2].eq_ascii(b'\\'))
-        {
-            // ('a' <= letter and letter <= 'z') or ('A' <= letter and letter <= 'Z')
-            if let Some(l) = input[0].to_ascii() {
-                if (b'a'..=b'z').contains(&l) || (b'A'..=b'Z').contains(&l) {
-                    // C:\
-                    return Some(3);
-                }
-            }
-        }
-
-        if input.len() > 5
-            && (input[0].eq_ascii(b'/') || input[0].eq_ascii(b'\\'))
-            && (input[1].eq_ascii(b'/') || input[1].eq_ascii(b'\\'))
-            && !(input[2].eq_ascii(b'\\') || input[2].eq_ascii(b'.'))
-        {
-            let mut i: usize = 3;
-            // \\network\share\
-            //   ^
-            while i < input.len() && !(input[i].eq_ascii(b'/') || input[i].eq_ascii(b'\\')) {
-                i += 1;
-            }
-
-            i += 1;
-            // \\network\share\
-            //           ^
-            let start = i;
-            while i < input.len() && !(input[i].eq_ascii(b'/') || input[i].eq_ascii(b'\\')) {
-                i += 1;
-            }
-
-            if start != i
-                && i < input.len()
-                && (input[i].eq_ascii(b'/') || input[i].eq_ascii(b'\\'))
-            {
-                // \\network\share\
-                //                ^
-                if i + 1 < input.len() {
-                    return Some(i + 1);
-                }
-                return Some(i);
-            }
-        }
-
-        if !input.is_empty() && (input[0].eq_ascii(b'/') || input[0].eq_ascii(b'\\')) {
-            // \
-            return Some(1);
-        }
-
-        return None;
-    }
-
-    #[cfg(not(windows))]
-    {
-        if !input.is_empty() && input[0].eq_ascii(b'/') {
-            // /
-            return Some(1);
-        }
-
-        None
+impl<B: Backend, S: Style> Deref for Prefix<'_, B, S> {
+    type Target = PathIn<B, S>;
+    #[inline(always)]
+    fn deref(&self) -> &PathIn<B, S> {
+        self.path
     }
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum TrimInputKind {
-    Abs,
-    Rel,
-}
-
-fn trim_input<C: PathUnit>(kind: TrimInputKind, input: &[C]) -> &[C] {
-    let mut trimmed: &[C] = input;
-
-    #[cfg(windows)]
-    {
-        match kind {
-            TrimInputKind::Abs => {
-                let root = root_len(input).unwrap_or(0);
-                while trimmed.len() > root
-                    && (trimmed[trimmed.len() - 1].eq_ascii(b'/')
-                        || trimmed[trimmed.len() - 1].eq_ascii(b'\\'))
-                {
-                    trimmed = &trimmed[..trimmed.len() - 1];
-                }
-            }
-            TrimInputKind::Rel => {
-                if trimmed.len() > 1 && trimmed[0].eq_ascii(b'.') {
-                    let c = trimmed[1];
-                    if c.eq_ascii(b'/') || c.eq_ascii(b'\\') {
-                        trimmed = &trimmed[2..];
-                    }
-                }
-                while !trimmed.is_empty()
-                    && (trimmed[0].eq_ascii(b'/') || trimmed[0].eq_ascii(b'\\'))
-                {
-                    trimmed = &trimmed[1..];
-                }
-                while !trimmed.is_empty()
-                    && (trimmed[trimmed.len() - 1].eq_ascii(b'/')
-                        || trimmed[trimmed.len() - 1].eq_ascii(b'\\'))
-                {
-                    trimmed = &trimmed[..trimmed.len() - 1];
-                }
-            }
+impl<B: Backend, S: Style> Drop for Prefix<'_, B, S> {
+    #[inline]
+    fn drop(&mut self) {
+        if let Some(replaced) = self.replaced {
+            let len = self.path.len;
+            self.path.backend.all()[len].write(replaced);
+            self.path.len = self.full_len;
         }
-
-        return trimmed;
-    }
-
-    #[cfg(not(windows))]
-    {
-        match kind {
-            TrimInputKind::Abs => {
-                let root = root_len(input).unwrap_or(0);
-                while trimmed.len() > root && trimmed[trimmed.len() - 1].eq_ascii(b'/') {
-                    trimmed = &trimmed[..trimmed.len() - 1];
-                }
-            }
-            TrimInputKind::Rel => {
-                if trimmed.len() > 1 && trimmed[0].eq_ascii(b'.') && trimmed[1].eq_ascii(b'/') {
-                    trimmed = &trimmed[2..];
-                }
-                while !trimmed.is_empty() && trimmed[0].eq_ascii(b'/') {
-                    trimmed = &trimmed[1..];
-                }
-
-                while !trimmed.is_empty() && trimmed[trimmed.len() - 1].eq_ascii(b'/') {
-                    trimmed = &trimmed[..trimmed.len() - 1];
-                }
-            }
-        }
-
-        trimmed
     }
 }
 
-fn is_input_absolute<C: PathUnit>(input: &[C]) -> bool {
-    if input.is_empty() {
-        return false;
+impl From<NameTooLong> for crate::Error {
+    #[inline]
+    fn from(error: NameTooLong) -> Self {
+        Self::Sys(error.into())
     }
-
-    if input[0].eq_ascii(b'/') {
-        return true;
-    }
-
-    #[cfg(windows)]
-    {
-        if input[0].eq_ascii(b'\\') {
-            return true;
-        }
-
-        if input.len() < 3 {
-            return false;
-        }
-
-        if input[1].eq_ascii(b':') && (input[2].eq_ascii(b'/') || input[2].eq_ascii(b'\\')) {
-            return true;
-        }
-    }
-
-    false
 }

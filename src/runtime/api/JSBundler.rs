@@ -101,9 +101,13 @@ pub(crate) mod js_bundler {
             // Normalize backslashes to forward slashes for cross-platform consistency.
             // Use dangerouslyConvertPathToPosixInPlace which always converts \ to /
             // (uses sep_windows constant, not sep which varies by target).
-            bun_paths::resolve_path::dangerously_convert_path_to_posix_in_place::<u8>(
-                key.as_mut_slice(),
-            );
+            if cfg!(unix) && key.starts_with(b"/") {
+                bun_paths::split_unknown_names(key.as_mut_slice());
+            } else {
+                bun_paths::resolve_path::dangerously_convert_path_to_posix_in_place::<u8>(
+                    key.as_mut_slice(),
+                );
+            }
 
             this.map.put_assume_capacity(&key, bytes);
         }
@@ -1750,6 +1754,7 @@ pub(crate) mod js_bundler {
                     }
 
                     if compile.outfile.is_empty() {
+                        use bun_paths::{Style as _, platform::Loose};
                         let entry_point: &[u8] = &this.entry_points.keys()[0];
                         // The build expands the patterns again, and reports one without a match.
                         let expanded_entry_points = compile.aot.as_ref().and_then(|_| {
@@ -1764,25 +1769,12 @@ pub(crate) mod js_bundler {
                             Some([first, ..]) => first,
                             Some([]) | None => entry_point,
                         };
-                        let mut outfile = bun_paths::basename(entry_point);
-                        let ext = bun_paths::extension(outfile);
-                        if !ext.is_empty() {
-                            outfile = &outfile[0..outfile.len() - ext.len()];
+                        let mut outfile = bun_paths::stem(entry_point);
+                        if matches!(outfile, b"index" | b"bun") {
+                            outfile =
+                                bun_paths::dirname(entry_point).map_or(outfile, Loose::basename);
                         }
-
-                        if outfile == b"index" {
-                            let d = bun_paths::resolve_path::dirname::<bun_paths::platform::Auto>(
-                                entry_point,
-                            );
-                            outfile = bun_paths::basename(if d.is_empty() { b"index" } else { d });
-                        }
-
-                        if outfile == b"bun" {
-                            let d = bun_paths::resolve_path::dirname::<bun_paths::platform::Auto>(
-                                entry_point,
-                            );
-                            outfile = bun_paths::basename(if d.is_empty() { b"bun" } else { d });
-                        }
+                        let outfile = crate::cli::build_command::compile_outfile(outfile);
 
                         // If argv[0] is "bun" or "bunx", we don't check if the binary is standalone
                         if outfile == b"bun" || outfile == b"bunx" {

@@ -297,3 +297,18 @@ describe.concurrent("bun lint and bun fmt", () => {
     expect(onlyLint).toEqual({ stdout: expect.any(String), error: undefined, exitCode: 0 });
   });
 });
+
+test.skipIf(isWindows)("bunfig.toml is found in a directory with a backslash in its name", async () => {
+  using dir = tempDir("bunfig-backslash", { "a\\b": { "bunfig.toml": `[define]\nFROM = '"bunfig"'\n` } });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-p", "FROM"],
+    env: bunEnv,
+    cwd: join(String(dir), "a\\b"),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect({ stdout, stderr }).toEqual({ stdout: "bunfig\n", stderr: "" });
+  expect(exitCode).toBe(0);
+});

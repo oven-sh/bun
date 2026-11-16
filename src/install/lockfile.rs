@@ -13,7 +13,7 @@ use bun_collections::{
 };
 use bun_core::fmt::PathSep;
 use bun_core::{Global, Output, UnwrapOrOom as _};
-use bun_paths::{MAX_PATH_BYTES, SEP, SEP_STR, platform, resolve_path};
+use bun_paths::{SEP, resolve_path};
 // `bun_install` sits above `bun_resolver` in the crate graph (no cycle), so use
 // the real resolver `FileSystem` directly — same as `PackageManager.rs`.
 use crate::bun_json as JSON;
@@ -250,7 +250,6 @@ impl LinkedMembers {
         if crate::bin::path_climbs_out(path) || self.get(path).is_some() {
             return;
         }
-        let mut buf = bun_paths::path_buffer_pool::get();
         let mut end = 0;
         while end < path.len() {
             end = strings::index_of_char_pos(path, b'/', end + 1).unwrap_or(path.len());
@@ -258,13 +257,9 @@ impl LinkedMembers {
             if self.real_folders.contains_key(folder) {
                 continue;
             }
-            let is_link = !resolve_path::join_abs_string_buf_z_checked::<platform::Auto>(
-                FileSystem::get().top_level_dir(),
-                &mut buf.0,
-                &[folder],
-            )
-            .and_then(|folder| sys::lstat(folder).ok())
-            .is_some_and(|st| {
+            let abs =
+                bun_paths::Path::resolved_portable(&[FileSystem::get().top_level_dir(), folder]);
+            let is_link = !sys::lstat(&abs).is_ok_and(|st| {
                 sys::kind_from_mode(st.st_mode as sys::Mode) != sys::EntryKind::SymLink
             });
             if is_link {
@@ -294,16 +289,9 @@ impl LinkedMembers {
     /// `path` is absolute or relative to the project root. Returns an empty path if `realpath`
     /// fails.
     pub(crate) fn real_path_of(path: &[u8]) -> Box<[u8]> {
-        let mut buf = bun_paths::path_buffer_pool::get();
         let mut real_buf = bun_paths::path_buffer_pool::get();
-        let Some(path) = resolve_path::join_abs_string_buf_z_checked::<platform::Auto>(
-            FileSystem::get().top_level_dir(),
-            &mut buf.0,
-            &[path],
-        ) else {
-            return Box::default();
-        };
-        match sys::realpath(path, &mut *real_buf) {
+        let path = bun_paths::Path::resolved_portable(&[FileSystem::get().top_level_dir(), path]);
+        match sys::realpath(&path, &mut *real_buf) {
             Ok(real_path) => real_path.into(),
             Err(_) => Box::default(),
         }
@@ -719,7 +707,6 @@ impl Lockfile {
     /// dependencies of local packages.
     pub(crate) fn rebase_folder_dependencies(&mut self) -> Result<(), AllocError> {
         let pkgs = &self.packages;
-        let mut path_buf = bun_paths::path_buffer_pool::get();
         for (pkg_resolution, pkg_dependencies) in
             (pkgs.items_resolution().iter()).zip(pkgs.items_dependencies())
         {
@@ -756,11 +743,9 @@ impl Lockfile {
                 if is_link && !dependency::is_link_path(declared_path) {
                     continue;
                 }
-                let Some(relative) = package::folder_relative_to_top_level_dir(
-                    pkg_dir.slice(buf),
-                    declared_path,
-                    &mut path_buf[..],
-                ) else {
+                let Some(relative) =
+                    &package::folder_relative_to_top_level_dir(pkg_dir.slice(buf), declared_path)
+                else {
                     continue;
                 };
                 let mut string_buf = SemverStringBuf {
@@ -1008,7 +993,6 @@ impl Lockfile {
         let Some(selected) = join_top_level_dir(&[folder.slice(buf)]) else {
             return false;
         };
-        let selected = strings::without_trailing_slash(selected.slice());
         (self.buffers.resolutions.iter().enumerate()).any(|(row, &target)| {
             let dependency = &self.buffers.dependencies[row];
             target == id
@@ -1019,7 +1003,7 @@ impl Lockfile {
                         }
                         _ => None,
                     })
-                    .is_some_and(|named| strings::without_trailing_slash(named.slice()) == selected)
+                    .is_some_and(|named| named.as_bytes() == selected.as_bytes())
         })
     }
 
@@ -1926,26 +1910,17 @@ pub mod printer {
 impl<'a> Printer<'a> {
     #[cold]
     pub fn print(log: &mut bun_ast::Log, input_lockfile_path: &[u8]) -> Result<(), BunError> {
-        // We truncate longer than allowed paths. We should probably throw an error instead.
-        let path = &input_lockfile_path[..input_lockfile_path.len().min(MAX_PATH_BYTES)];
-
-        let mut cwd_buf = bun_paths::path_buffer_pool::get();
-        let mut joined_buf = bun_paths::path_buffer_pool::get();
-        let lockfile_path: &[u8] = if bun_paths::is_absolute(path) {
-            path
+        let mut lockfile_path = if bun_paths::is_absolute(input_lockfile_path) {
+            bun_paths::Path::from(input_lockfile_path)
         } else {
-            let cwd_len = bun_sys::getcwd(&mut cwd_buf[..])?;
-            resolve_path::join_abs_string_buf::<platform::Auto>(
-                &cwd_buf[..cwd_len],
-                &mut joined_buf.0,
-                &[path],
-            )
+            let mut path = bun_paths::Path::filled(|buf| sys::getcwd_z(buf).map(ZStr::as_bytes))?;
+            path.resolve_portable(&[input_lockfile_path]);
+            path
         };
 
         if lockfile_path.first() == Some(&SEP) {
-            let dir = bun_paths::dirname(lockfile_path).unwrap_or(SEP_STR.as_bytes());
-            let mut dir_buf = bun_paths::path_buffer_pool::get();
-            let _ = sys::chdir(resolve_path::z(dir, &mut dir_buf));
+            let dir_len = lockfile_path.dirname().map_or(1, <[u8]>::len);
+            let _ = sys::chdir(&lockfile_path.prefix(dir_len));
         }
 
         // An entry point (`bun bun.lockb`): the resolver FS singleton may not exist yet.
@@ -1954,7 +1929,7 @@ impl<'a> Printer<'a> {
         let mut lockfile = Box::<Lockfile>::default();
 
         // git's textconv hands over `<random>_bun.lockb`. `bun bun.lockb` also prints a bun.lock.
-        let load_from_disk = match File::read_from(Fd::cwd(), lockfile_path) {
+        let load_from_disk = match File::read_from(Fd::cwd(), &lockfile_path) {
             Ok(bytes) => lockfile.load_from_bytes(None, bytes, log),
             Err(_) => lockfile.load_from_cwd::<false>(None, log),
         };
@@ -1979,7 +1954,7 @@ impl<'a> Printer<'a> {
                 bun_core::pretty_errorln!(
                     "<r><red>lockfile not found:<r> {}",
                     bun_core::fmt::QuotedFormatter {
-                        text: lockfile_path
+                        text: &lockfile_path
                     },
                 );
                 Global::crash();
@@ -2199,11 +2174,24 @@ pub(crate) fn linked_workspace_path_in(
     range.satisfies(version, range_buf, buf).then_some(path)
 }
 
-/// Use this for paths from a lockfile, because `join` resolves absolute paths and `..`. Returns
-/// `None` if the result doesn't fit in a path buffer.
-pub(crate) fn join_top_level_dir(parts: &[&[u8]]) -> Option<bun_paths::AutoAbsPathChecked> {
-    let mut path = bun_paths::AutoAbsPathChecked::init_top_level_dir();
-    path.join(parts).ok()?;
+/// For what a lockfile gets relative to `base`, where a `\` is a separator even if it came with an absolute path.
+pub(crate) fn resolve_to_store(
+    base: &[u8],
+    parts: &[&[u8]],
+) -> Result<bun_paths::PoolPath, bun_paths::NameTooLong> {
+    let mut path = bun_paths::PoolPath::from(base)?;
+    path.resolve_portable(parts)?;
+    if cfg!(not(windows)) && strings::contains_char(&path, b'\\') {
+        let stored = bun_paths::Path::relative_portable(base, &path);
+        path.resolve(&[base, &stored])?;
+    }
+    Ok(path)
+}
+
+/// For paths from a lockfile, which can be absolute, have a `..` or come from Windows. `None` if the result is too long.
+pub(crate) fn join_top_level_dir(parts: &[&[u8]]) -> Option<bun_paths::PoolPath> {
+    let mut path = resolve_to_store(FileSystem::get().top_level_dir(), parts).ok()?;
+    path.trim_trailing_sep();
     Some(path)
 }
 
@@ -3679,7 +3667,7 @@ impl Lockfile {
             else {
                 continue;
             };
-            let path = package_json_path.slice();
+            let path = package_json_path.as_bytes();
             let entry = match manifests.get_with_path(log, path, Default::default()) {
                 crate::GetJsonResult::Entry(entry) => entry,
                 // An install also skips a workspace that isn't on disk.

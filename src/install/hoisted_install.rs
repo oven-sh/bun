@@ -2,7 +2,6 @@ use crate::lockfile::package::PackageColumns as _;
 use core::sync::atomic::{AtomicUsize, Ordering};
 
 use bun_collections::{DynamicBitSet as Bitset, DynamicBitSetList, StringHashMap};
-use bun_core::strings;
 use bun_core::{Global, Output};
 use bun_paths::SEP;
 use bun_sys::{self as sys, Dir, Fd};
@@ -343,7 +342,8 @@ pub(crate) fn install_hoisted_packages(
                 deferred: (cfg!(not(windows)) && !FileSystem::get().fs.need_to_close_files())
                     .then(|| DeferredLinks::init(&lockfile_ref)),
                 node_modules: NodeModulesFolder {
-                    path: strings::without_trailing_slash(FileSystem::get().top_level_dir())
+                    path: FileSystem::get()
+                        .top_level_dir_without_trailing_slash()
                         .to_vec(),
                     tree_id: 0,
                 },
@@ -399,8 +399,10 @@ pub(crate) fn install_hoisted_packages(
 
         installer.node_modules.path.push(SEP);
 
-        let top_level_len =
-            strings::without_trailing_slash(FileSystem::get().top_level_dir()).len() + 1;
+        let top_level_len = FileSystem::get()
+            .top_level_dir_without_trailing_slash()
+            .len()
+            + 1;
 
         while let Some(node_modules) = iterator.next(Some(&mut installer.completed_trees)) {
             if installer.must_link_before(node_modules.tree_id) {

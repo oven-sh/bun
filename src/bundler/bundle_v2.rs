@@ -1046,10 +1046,9 @@ pub mod bv2_impl {
                         if abs_source_file.len() > source_file_buf.len() {
                             return None;
                         }
-                        let normalized_source_file = bun_paths::resolve_path::path_to_posix_buf::<u8>(
-                            abs_source_file,
-                            &mut **source_file_buf,
-                        );
+                        let normalized_source_file = &mut source_file_buf[..abs_source_file.len()];
+                        normalized_source_file.copy_from_slice(abs_source_file);
+                        bun_paths::split_unknown_names(normalized_source_file);
 
                         let mut buf = bun_paths::path_buffer_pool::get();
                         let source_dir = bun_paths::resolve_path::dirname::<

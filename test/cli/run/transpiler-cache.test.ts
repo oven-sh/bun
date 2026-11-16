@@ -231,6 +231,41 @@ describe("transpiler cache", () => {
     }
     expect(existsSync(cache_dir)).toBeFalse();
   });
+  test.skipIf(isWindows)("is below a home directory with a backslash in its name", async () => {
+    writeFileSync(join(temp_dir, "a.js"), dummyFile((50 * 1024 * 1.5) | 0, "1", "backslash"));
+    mkdirSync(join(temp_dir, "x\\y"));
+
+    expect(
+      await bunRun(join(temp_dir, "a.js"), {
+        ...env,
+        BUN_RUNTIME_TRANSPILER_CACHE_PATH: undefined,
+        HOME: join(temp_dir, "x\\y"),
+        XDG_CACHE_HOME: join(temp_dir, "x\\y", ".cache"),
+      }),
+    ).toSpawn("backslash");
+
+    expect(readdirSync(temp_dir).sort()).toEqual(["a.js", "x\\y"]);
+    expect(readdirSync(join(temp_dir, "x\\y", ".cache", "bun", "@t@"))).toHaveLength(1);
+  });
+  test.each([
+    ["XDG_CACHE_HOME", ["a.js", "home"]],
+    [isWindows ? "USERPROFILE" : "HOME", ["a.js"]],
+  ])("an empty %s counts as unset", async (name, entries) => {
+    writeFileSync(join(temp_dir, "a.js"), dummyFile((50 * 1024 * 1.5) | 0, "1", "empty"));
+
+    expect(
+      await bunRun(join(temp_dir, "a.js"), {
+        ...env,
+        BUN_RUNTIME_TRANSPILER_CACHE_PATH: undefined,
+        XDG_CACHE_HOME: undefined,
+        HOME: join(temp_dir, "home"),
+        USERPROFILE: join(temp_dir, "home"),
+        [name]: "",
+      }),
+    ).toSpawn("empty");
+
+    expect(readdirSync(temp_dir).sort()).toEqual(entries);
+  });
   test("works if the cache is not user-readable", async () => {
     mkdirSync(cache_dir, { recursive: true });
     writeFileSync(join(temp_dir, "a.js"), dummyFile((50 * 1024 * 1.5) | 0, "1", "b"));

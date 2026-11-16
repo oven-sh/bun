@@ -2,8 +2,6 @@ use bun_collections::bit_set::Range as BitRange;
 use bun_collections::{DynamicBitSet, index_sort};
 use bun_core::{Global, Output};
 use bun_install_types::DependencyGroup;
-use bun_paths::path_buffer_pool;
-use bun_paths::resolve_path::{join_abs_string_buf, platform};
 
 use crate::bun_fs::FileSystem;
 use crate::dependency::DependencyExt as _;
@@ -15,7 +13,8 @@ use crate::{DependencyID, Features, PackageID, PackageNameHash, invalid_package_
 
 use super::add_catalog;
 use super::add_remove_with_filter::{
-    WorkspaceTarget, fetch_entry, fetch_entry_root, store_entry, write_target,
+    WorkspaceTarget, fetch_entry, fetch_entry_root, store_entry, workspace_package_json_path,
+    write_target,
 };
 use super::options::Do;
 use super::package_json_editor::{self as PackageJSONEditor, Declared, EditOptions};
@@ -287,7 +286,6 @@ fn edit_update_targets(
     edited: &mut Vec<EditedPackageJson>,
     exact: bool,
 ) -> crate::Result<()> {
-    let top_level = FileSystem::get().top_level_dir();
     let mut selected: Vec<WorkspaceTarget> = Vec::new();
     {
         let lockfile: &Lockfile = &manager.lockfile;
@@ -295,7 +293,6 @@ fn edit_update_targets(
         let resolutions = lockfile.packages.items_resolution();
         let name_hashes = lockfile.packages.items_name_hash();
         let names = lockfile.packages.items_name();
-        let mut path_buf = path_buffer_pool::get();
         for pkg_id in 0..resolutions.len() {
             let res = resolutions[pkg_id];
             let (name_hash, rel): (Option<PackageNameHash>, &[u8]) = match res.tag {
@@ -313,12 +310,7 @@ fn edit_update_targets(
             selected.push(WorkspaceTarget {
                 name: Box::from(name),
                 name_hash,
-                package_json_path: join_abs_string_buf::<platform::Auto>(
-                    top_level,
-                    &mut path_buf.0,
-                    &[rel, b"package.json"],
-                )
-                .into(),
+                package_json_path: workspace_package_json_path(rel),
             });
         }
     }

@@ -228,8 +228,6 @@ pub enum Error {
     #[error(transparent)]
     Paths(#[from] bun_paths::Error),
     #[error(transparent)]
-    PathOptions(#[from] bun_paths::path_options::Error),
-    #[error(transparent)]
     Fmt(#[from] core::fmt::Error),
 }
 
@@ -372,7 +370,6 @@ impl Error {
             Self::JsPrinter(e) => e.name(),
             Self::Bunfig(e) => e.name(),
             Self::Paths(e) => e.name(),
-            Self::PathOptions(e) => <&'static str>::from(e),
             Self::Fmt(_) => "FmtError",
         }
     }
@@ -386,6 +383,12 @@ impl bun_core::output::ErrName for Error {
 
 impl From<bun_sys::Error> for Error {
     fn from(e: bun_sys::Error) -> Self {
+        Self::Sys(e.into())
+    }
+}
+
+impl From<bun_paths::NameTooLong> for Error {
+    fn from(e: bun_paths::NameTooLong) -> Self {
         Self::Sys(e.into())
     }
 }

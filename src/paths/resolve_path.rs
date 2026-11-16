@@ -2,7 +2,7 @@ use core::cell::{OnceCell, UnsafeCell};
 use core::mem::MaybeUninit;
 
 use crate::fs as Fs;
-use crate::{MAX_PATH_BYTES, PathBuffer, SEP, SEP_POSIX, SEP_WINDOWS};
+use crate::{MAX_PATH_BYTES, PathBuffer, SEP, SEP_POSIX, SEP_WINDOWS, Style};
 use bun_core::{ZStr, strings};
 
 // Thread-local scratch buffers. Stored in `UnsafeCell` (not `RefCell`)
@@ -112,7 +112,7 @@ pub enum ParentEqual {
 
 pub fn is_parent_or_equal(parent_: &[u8], child: &[u8]) -> ParentEqual {
     let mut parent = parent_;
-    while !parent.is_empty() && is_sep_any(parent[parent.len() - 1]) {
+    while !parent.is_empty() && is_sep_native(parent[parent.len() - 1]) {
         parent = &parent[..parent.len() - 1];
     }
 
@@ -127,7 +127,7 @@ pub fn is_parent_or_equal(parent_: &[u8], child: &[u8]) -> ParentEqual {
     if child.len() == parent.len() {
         return ParentEqual::Equal;
     }
-    if child.len() > parent.len() && is_sep_any(child[parent.len()]) {
+    if child.len() > parent.len() && is_sep_native(child[parent.len()]) {
         return ParentEqual::Parent;
     }
     ParentEqual::Unrelated
@@ -648,7 +648,7 @@ pub fn dirname<P: PlatformT>(str: &[u8]) -> &[u8] {
         }
         Platform::Windows => {
             let Some(separator) = last_index_of_separator_windows(str) else {
-                return crate::disk_designator_windows(str);
+                return platform::Windows::root(str);
             };
             &str[..separator]
         }
@@ -675,15 +675,6 @@ pub fn dirname_w(str: &[u16]) -> &[u16] {
 
 pub fn relative(from: &[u8], to: &[u8]) -> &'static [u8] {
     relative_platform::<platform::Auto, false>(from, to)
-}
-
-pub fn relative_buf_z<'a>(buf: &'a mut [u8], from: &[u8], to: &[u8]) -> &'a ZStr {
-    let rel = relative_platform_buf::<platform::Auto, true>(buf, from, to);
-    let len = rel.len();
-    // reshaped for borrowck — drop `rel` borrow before mutating buf
-    buf[len] = 0;
-    // SAFETY: buf[len] == 0 written above
-    ZStr::from_buf(&buf[..], len)
 }
 
 pub fn relative_platform_buf<'a, P: PlatformT, const ALWAYS_COPY: bool>(
@@ -715,7 +706,22 @@ fn relative_platform_in<'a, P: PlatformT, const ALWAYS_COPY: bool>(
     from: &[u8],
     to: &[u8],
 ) -> &'a [u8] {
-    let normalized_from: &[u8] = if P::P.is_absolute(from) {
+    let is_posix = cfg!(unix) && matches!(P::P, Platform::Posix | Platform::Loose);
+    let has_backslash = is_posix && [cwd, from, to].into_iter().any(has_backslash);
+    if has_backslash && let Some(len) = relative_through_known_name::<P>(buf, cwd, from, to) {
+        return &buf[..len];
+    }
+    let is_normalized = |path: &[u8]| {
+        is_posix
+            && !has_backslash
+            && path.first() == Some(&SEP_POSIX)
+            && bun_highway::index_of_untidy_slash(path).is_none()
+    };
+
+    let normalized_from: &[u8] = if is_normalized(from) {
+        relative_from_buf[..from.len()].copy_from_slice(from);
+        &relative_from_buf[..from.len()]
+    } else if P::P.is_absolute(from) {
         'brk: {
             if P::P == Platform::Loose && cfg!(windows) {
                 // we want to invoke the windows resolution behavior but end up with a
@@ -745,7 +751,10 @@ fn relative_platform_in<'a, P: PlatformT, const ALWAYS_COPY: bool>(
         join_abs_string_buf::<P>(cwd, relative_from_buf, &[&relative_to_buf[..norm_len]])
     };
 
-    let normalized_to: &[u8] = if P::P.is_absolute(to) {
+    let normalized_to: &[u8] = if is_normalized(to) {
+        relative_to_buf[..to.len()].copy_from_slice(to);
+        &relative_to_buf[..to.len()]
+    } else if P::P.is_absolute(to) {
         'brk: {
             if P::P == Platform::Loose && cfg!(windows) {
                 let normalized = normalize_string_buf::<true, platform::Windows, true>(
@@ -774,6 +783,35 @@ fn relative_platform_in<'a, P: PlatformT, const ALWAYS_COPY: bool>(
     };
 
     relative_normalized_buf::<P, ALWAYS_COPY>(buf, normalized_from, normalized_to)
+}
+
+#[inline(always)]
+fn has_backslash(path: &[u8]) -> bool {
+    strings::contains_char(path, SEP_WINDOWS)
+}
+
+/// A name that keeps its `\` is left with one `..`, and is the same with a `/` for it. `None` if there is no such name.
+#[cold]
+#[inline(never)]
+fn relative_through_known_name<P: PlatformT>(
+    buf: &mut [u8],
+    cwd: &[u8],
+    from: &[u8],
+    to: &[u8],
+) -> Option<usize> {
+    let resolve = |path: &[u8]| {
+        (!P::P.is_absolute(path) || path[0] == SEP_POSIX)
+            .then(|| crate::Path::resolved_portable(&[cwd, path]))
+    };
+    let (from, mut to) = (resolve(from)?, resolve(to)?);
+    if !has_backslash(&from) && !has_backslash(&to) {
+        return None;
+    }
+    let common = crate::style::common_len::<platform::Loose, u8>(&from, &to);
+    to.as_mut_slice()[..common].copy_from_slice(&from[..common]);
+    let relative = crate::Path::relative_portable(&from, &to);
+    buf[..relative.len()].copy_from_slice(&relative);
+    Some(relative.len())
 }
 
 pub fn relative_platform<P: PlatformT, const ALWAYS_COPY: bool>(
@@ -1265,6 +1303,11 @@ pub mod platform {
     pub type Auto = Posix;
     #[cfg(all(not(windows), not(unix)))]
     pub type Auto = Loose;
+    /// Reads like [`Auto`] and writes `/`, for what is printed, hashed or saved.
+    #[cfg(unix)]
+    pub type Slash = Posix;
+    #[cfg(not(unix))]
+    pub type Slash = Loose;
 }
 
 impl Platform {
@@ -1284,7 +1327,7 @@ impl Platform {
 
     // dropped `const` — PathChar trait methods aren't const-callable
     // on stable.
-    pub fn is_absolute_t<T: PathChar>(self, path: &[T]) -> bool {
+    pub(crate) fn is_absolute_t<T: PathChar>(self, path: &[T]) -> bool {
         match self {
             Platform::Posix => !path.is_empty() && path[0] == T::from_u8(b'/'),
             Platform::Nt | Platform::Windows | Platform::Loose => {
@@ -1534,7 +1577,7 @@ pub fn join_abs<'a, P: PlatformT>(cwd: &'a [u8], part: &[u8]) -> &'a [u8] {
 }
 
 /// Convert parts of potentially invalid file paths into a single valid filpeath
-/// without querying the filesystem
+/// See [`crate::PathIn::resolve_portable`] for what a `\` is on POSIX
 /// This is the equivalent of path.resolve
 ///
 /// Returned path is stored in a temporary buffer. It must be copied if it needs to be stored.
@@ -1578,7 +1621,7 @@ pub fn join_abs_string_spill<'a, P: PlatformT>(
 }
 
 /// Convert parts of potentially invalid file paths into a single valid filpeath
-/// without querying the filesystem
+/// See [`crate::PathIn::resolve_portable`] for what a `\` is on POSIX
 /// This is the equivalent of path.resolve
 ///
 /// Returned path is stored in a temporary buffer. It must be copied if it needs to be stored.
@@ -1695,15 +1738,9 @@ pub fn join_string_buf<'a, P: PlatformT>(buf: &'a mut [u8], parts: &[&[u8]]) -> 
     join_string_buf_t::<u8, P>(buf, parts)
 }
 
-/// `joinStringBufW` overload for u16 parts (no transcode): the
-/// `T == u16 && Elem == u16` case.
-pub fn join_string_buf_w_same<'a, P: PlatformT>(buf: &'a mut [u16], parts: &[&[u16]]) -> &'a [u16] {
-    join_string_buf_t_same::<u16, P>(buf, parts)
-}
-
 const JOIN_TEMP_LEN: usize = 4096;
 
-/// Uninitialized scratch for `join_string_buf_t*`'s unnormalized concatenation of `count` units.
+/// Uninitialized scratch for `join_string_buf_t`'s unnormalized concatenation of `count` units.
 #[inline]
 fn join_temp_buf<'a, T>(
     stack: &'a mut [MaybeUninit<T>; JOIN_TEMP_LEN],
@@ -1715,51 +1752,6 @@ fn join_temp_buf<'a, T>(
         return heap.spare_capacity_mut();
     }
     stack
-}
-
-/// Same-width `joinStringBufT`: parts already match `T`, so no UTF-8→16 transcode.
-/// split out of `join_string_buf_t` because Rust can't monomorphize on the
-/// parts' element types — callers pick the overload.
-fn join_string_buf_t_same<'a, T: PathChar, P: PlatformT>(
-    buf: &'a mut [T],
-    parts: &[&[T]],
-) -> &'a [T] {
-    let mut written: usize = 0;
-    let mut stack_temp_buf = [const { MaybeUninit::<T>::uninit() }; JOIN_TEMP_LEN];
-    let mut heap_temp_buf: Vec<T> = Vec::new();
-
-    let mut count: usize = 0;
-    for part in parts {
-        if part.is_empty() {
-            continue;
-        }
-        count += part.len() + 1;
-    }
-
-    let temp_buf = join_temp_buf(&mut stack_temp_buf, &mut heap_temp_buf, count);
-
-    for part in parts {
-        if part.is_empty() {
-            continue;
-        }
-
-        if written > 0 {
-            temp_buf[written].write(T::from_u8(P::P.separator()));
-            written += 1;
-        }
-
-        temp_buf[written..written + part.len()].write_copy_of_slice(part);
-        written += part.len();
-    }
-
-    if written == 0 {
-        buf[0] = T::from_u8(b'.');
-        return &buf[0..1];
-    }
-
-    // SAFETY: the loop above wrote every unit of `temp_buf[..written]`.
-    let joined = unsafe { temp_buf[..written].assume_init_ref() };
-    normalize_string_node_t::<T, P>(joined, buf)
 }
 
 pub fn join_string_buf_z<'a, P: PlatformT>(buf: &'a mut [u8], parts: &[&[u8]]) -> &'a ZStr {
@@ -1982,6 +1974,14 @@ fn _join_abs_string_buf<'a, const IS_SENTINEL: bool, P: PlatformT>(
             }
             part_i += 1;
         }
+    }
+
+    if cfg!(unix) && cwd.first() == Some(&SEP_POSIX) {
+        // Not built in `buf`, which can be where one of the parts is.
+        let path = crate::PathIn::resolved_portable_below(cwd, parts);
+        let len = path.len() + usize::from(IS_SENTINEL);
+        buf[..len].copy_from_slice(&path.as_bytes_with_nul()[..len]);
+        return &buf[..path.len()];
     }
 
     let mut scratch = JoinScratch::init(cwd.len(), parts);
@@ -2599,24 +2599,20 @@ impl PosixToWinNormalizer {
 /// Unconditional `'\\' → '/'` in place. No host-OS gate, no drive-letter touch.
 #[inline]
 pub fn slashes_to_posix_in_place<T: PathChar>(path: &mut [T]) {
-    let bslash = T::from_u8(b'\\');
-    let fslash = T::from_u8(b'/');
-    for c in path.iter_mut() {
-        if *c == bslash {
-            *c = fslash;
-        }
-    }
+    replace_in_place(path, T::from_u8(b'\\'), T::from_u8(b'/'));
 }
 
 /// Unconditional `'/' → '\\'` in place. No host-OS gate.
 #[inline]
 pub fn slashes_to_windows_in_place<T: PathChar>(path: &mut [T]) {
-    let fslash = T::from_u8(b'/');
-    let bslash = T::from_u8(b'\\');
-    for c in path.iter_mut() {
-        if *c == fslash {
-            *c = bslash;
-        }
+    replace_in_place(path, T::from_u8(b'/'), T::from_u8(b'\\'));
+}
+
+#[inline(always)]
+fn replace_in_place<T: PathChar>(path: &mut [T], from: T, to: T) {
+    // An unconditional store is what lets this be vectorized.
+    for unit in path {
+        *unit = if *unit == from { to } else { *unit };
     }
 }
 
@@ -2766,6 +2762,31 @@ mod tests {
             .checked_sub(k)
             .and_then(|end| (0..=end).rev().find(|&i| h[i..i + k] == *nd));
         last.unwrap_or(usize::MAX)
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn relative_to_a_name_with_a_backslash_is_normalized() {
+        for (from, to, expected) in [
+            (r"/a\A", r"/a\A/b", "b"),
+            (r"/a\A/b", r"/y", "../../y"),
+            (r"/x\A/b", r"/y", "../../../y"),
+            (r"/x", r"/x/b\..\..\a", "../a"),
+            (r"/x", r"/x/\a", "a"),
+            (r"/x", r"/x/a\", "a"),
+            (r"/x", r"/x/\", ""),
+        ] {
+            let (mut buf, mut from_buf, mut to_buf) = ([0; 32], [0; 32], [0; 32]);
+            let relative = relative_platform_in::<platform::Posix, true>(
+                &mut buf,
+                &mut from_buf,
+                &mut to_buf,
+                b"/",
+                from.as_bytes(),
+                to.as_bytes(),
+            );
+            assert_eq!(relative, expected.as_bytes(), "{from} {to}");
+        }
     }
 
     #[test]
@@ -3016,37 +3037,6 @@ mod tests {
         let mut out = vec![0u8; JOIN_TEMP_LEN + 16];
         assert_eq!(
             join_string_buf::<platform::Posix>(&mut out, &[&long, b"x/../y"]),
-            &expected[..]
-        );
-    }
-
-    #[test]
-    fn join_string_buf_w_same_skips_empty_parts_and_normalizes() {
-        let foo: Vec<u16> = "foo".encode_utf16().collect();
-        let rest: Vec<u16> = "bar\\..\\baz".encode_utf16().collect();
-        let expected: Vec<u16> = "foo\\baz".encode_utf16().collect();
-
-        let mut out = [0u16; 64];
-        assert_eq!(
-            join_string_buf_w_same::<platform::Windows>(&mut out, &[&foo, &[], &rest]),
-            &expected[..]
-        );
-        assert_eq!(
-            join_string_buf_w_same::<platform::Windows>(&mut out, &[&[], &[]]),
-            &[b'.' as u16][..]
-        );
-    }
-
-    #[test]
-    fn join_string_buf_w_same_spills_parts_longer_than_the_stack_scratch() {
-        let long = vec![b'a' as u16; JOIN_TEMP_LEN];
-        let rest: Vec<u16> = "x\\..\\y".encode_utf16().collect();
-        let mut expected = long.clone();
-        expected.extend_from_slice(&[b'\\' as u16, b'y' as u16]);
-
-        let mut out = vec![0u16; JOIN_TEMP_LEN + 16];
-        assert_eq!(
-            join_string_buf_w_same::<platform::Windows>(&mut out, &[&long, &rest]),
             &expected[..]
         );
     }

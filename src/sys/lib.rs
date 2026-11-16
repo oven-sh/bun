@@ -4062,7 +4062,7 @@ mod windows_impl {
             super::open_dir_at_windows_a(dir, path.as_bytes(), options)
         } else {
             let mut wbuf = bun_paths::w_path_buffer_pool::get();
-            let wpath = bun_paths::string_paths::to_nt_path(&mut wbuf, path.as_bytes());
+            let wpath = super::nt_path(&mut wbuf, path, Tag::mkdir)?;
             super::open_dir_at_windows_nt_path(dir, wpath, options)
         };
         made.map(super::File::from_fd).map(drop)
@@ -4072,8 +4072,8 @@ mod windows_impl {
         let to_dir = to_dir.as_fd();
         let mut wf = bun_paths::w_path_buffer_pool::get();
         let mut wt = bun_paths::w_path_buffer_pool::get();
-        let from_w = bun_paths::string_paths::to_nt_path(&mut wf, from.as_bytes());
-        let to_w = bun_paths::string_paths::to_nt_path(&mut wt, to.as_bytes());
+        let from_w = super::nt_path(&mut wf, from, Tag::rename)?;
+        let to_w = super::nt_path(&mut wt, to, Tag::rename)?;
         super::windows::rename_at_w(from_dir, from_w, to_dir, to_w, true)
     }
     pub(crate) fn renameat2(
@@ -4094,7 +4094,7 @@ mod windows_impl {
         // AT_REMOVEDIR on Windows = 0x200.
         const AT_REMOVEDIR: i32 = 0x200;
         let mut wbuf = bun_paths::w_path_buffer_pool::get();
-        let wpath = bun_paths::string_paths::to_nt_path(&mut wbuf, path.as_bytes());
+        let wpath = super::nt_path(&mut wbuf, path, Tag::unlink)?;
         super::windows::DeleteFileBun(
             wpath,
             super::windows::DeleteFileOptions {
@@ -6852,6 +6852,17 @@ fn convert_path_u8_to_u16<'a>(buf: &'a mut [u16], path: &[u8]) -> Maybe<&'a mut 
     Ok(bun_core::convert_utf8_to_utf16_in_buffer(buf, path))
 }
 
+/// `to_nt_path` makes an empty name of one that is too long, which next to a directory handle is that directory.
+#[cfg(windows)]
+fn nt_path<'a>(buf: &'a mut [u16], path: &ZStr, syscall: Tag) -> Maybe<&'a bun_core::WStr> {
+    use bun_paths::string_paths::{fits_in_wide_path_buffer, to_nt_path, without_nt_prefix};
+    let nt_path = to_nt_path(buf, path);
+    if !fits_in_wide_path_buffer(without_nt_prefix(path)) || nt_path.is_empty() != path.is_empty() {
+        return Err(Error::from_code(E::ENAMETOOLONG, syscall).with_path(path));
+    }
+    Ok(nt_path)
+}
+
 #[cfg(windows)]
 pub fn open_dir_at_windows(dir_fd: Fd, path: &[u16], options: WindowsOpenDirOptions) -> Maybe<Fd> {
     let mut wbuf = bun_paths::w_path_buffer_pool::get();
@@ -7109,8 +7120,7 @@ fn nt_query_attributes_at(dir: Fd, mut path: &[u16]) -> Maybe<u32> {
 pub fn get_file_attributes_at(dir: Fd, sub: &ZStr) -> Maybe<WindowsFileAttributes> {
     use bun_windows_sys::externs as w;
     let mut wbuf = bun_paths::w_path_buffer_pool::get();
-    let path = bun_paths::string_paths::to_nt_path(&mut wbuf.0[..], sub.as_bytes()).as_slice();
-    let dword = nt_query_attributes_at(dir, path)?;
+    let dword = nt_query_attributes_at(dir, nt_path(&mut wbuf, sub, Tag::access)?)?;
     Ok(WindowsFileAttributes {
         is_directory: (dword & w::FILE_ATTRIBUTE_DIRECTORY) != 0,
         is_reparse_point: (dword & w::FILE_ATTRIBUTE_REPARSE_POINT) != 0,
@@ -7145,8 +7155,7 @@ pub fn exists_at_type(dir: Fd, sub: &ZStr) -> Maybe<ExistsAtType> {
         // `NtQueryAttributesFile` against an OBJECT_ATTRIBUTES
         // built from the (optionally NT-prefixed) wide path.
         let mut wbuf = bun_paths::w_path_buffer_pool::get();
-        let path = bun_paths::string_paths::to_nt_path(&mut wbuf.0[..], sub.as_bytes()).as_slice();
-        exists_at_type_nt(dir, path)
+        exists_at_type_nt(dir, nt_path(&mut wbuf, sub, Tag::access)?)
     }
 }
 /// Wide-path arm of `exists_at_type`. Takes an already-wide path (Windows
@@ -7528,11 +7537,14 @@ pub fn get_fd_path<'a>(fd: Fd, out: &'a mut bun_paths::PathBuffer) -> Maybe<&'a 
     }
 }
 
+/// [`get_fd_path`] in a buffer of the pool.
+pub fn fd_path(fd: Fd) -> Maybe<bun_paths::Path> {
+    bun_paths::Path::filled(|buf| Ok(get_fd_path(fd, buf)?))
+}
+
 /// fd → absolute wide path (Windows `GetFinalPathNameByHandleW`).
 /// `\\?\` prefix and `\\?\UNC\` are stripped. Higher-tier callers
-/// (`bun.getFdPathW`) re-export this. A libc/kernel32-only sibling lives at
-/// `bun_core::fd_path_raw_w` for T0/T1 callers that cannot depend on this
-/// crate.
+/// (`bun.getFdPathW`) re-export this.
 #[cfg(windows)]
 pub fn get_fd_path_w(fd: Fd, out: &mut [u16]) -> Maybe<&mut [u16]> {
     crate::windows::GetFinalPathNameByHandle(fd.native(), Default::default(), out).map_err(|e| {

@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
+import { readdirSync } from "node:fs";
 import { join } from "path";
 
 const testScript = `const arr = []; for (let i = 0; i < 100; i++) arr.push({ x: i, y: "hello" + i }); console.log("done");`;
@@ -259,6 +260,22 @@ test("--heap-prof-name and --heap-prof-dir work together", async () => {
   expectV8HeapSnapshotShape(profile);
 });
 
+test.skipIf(isWindows)("a backslash in --heap-prof-dir is part of the name", async () => {
+  using dir = tempDir("heap-prof-dir-backslash", {});
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "--heap-prof", "--heap-prof-dir", "a\\b", "--heap-prof-name", "p.heapprofile", "-e", "1"],
+    cwd: String(dir),
+    env: bunEnv,
+    stdout: "ignore",
+    stderr: "ignore",
+  });
+  const exitCode = await proc.exited;
+
+  expect(readdirSync(String(dir), { recursive: true }).sort()).toEqual(["a\\b", "a\\b/p.heapprofile"]);
+  expect(exitCode).toBe(0);
+});
+
 // Node parity: heap-profiler-scoped flags without --heap-prof exit 9 with
 // "<execPath>: <flag> must be used with --heap-prof" on stderr.
 for (const [flag, value] of [
@@ -316,7 +333,7 @@ test.skipIf(isWindows).each([
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
   expect(stdout.trim()).toBe("done");
-  expect(stderr).toContain("MaxPathExceeded");
+  expect(stderr).toContain("ENAMETOOLONG");
   expect(stderr).toContain("Failed to write heap profile");
   expect(exitCode).toBe(0);
   expect(proc.signalCode).toBeNull();

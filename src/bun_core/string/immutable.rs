@@ -10,7 +10,7 @@ use crate::CrateError as Error;
 use crate::vec::{BorrowedBuf, BorrowedCursor};
 use bun_alloc::AllocError;
 use bun_highway as highway;
-use bun_simdutf_sys::simdutf::{self, WithUtf16Len};
+use bun_simdutf_sys::simdutf::{self, WithUtf8Len, WithUtf16Len};
 
 pub use self::unicode::{
     CodepointIterator, Cursor, NewCodePointIterator, UnsignedCodepointIterator,
@@ -2217,10 +2217,6 @@ pub use crate::strings_impl::{
 // Re-export the bun_core implementation so callers can spell
 // `strings::convert_utf16_to_utf8_in_buffer` without reaching into `unicode`.
 pub use crate::strings_impl::convert_utf16_to_utf8_in_buffer;
-// Re-export the NUL-terminated variant so callers can spell
-// `strings::convert_utf8_to_utf16_in_buffer_z` (used by the Windows profilers
-// to widen output paths for `File::write_file_os_path`).
-pub use unicode_draft::convert_utf8_to_utf16_in_buffer_z;
 
 /// `strings.convertUTF8toUTF16InBuffer` — UTF-8 → UTF-16LE into a caller-supplied
 /// buffer (capacity ≥ `input.len()` u16). SIMD fast path via simdutf; on invalid
@@ -2253,7 +2249,7 @@ pub fn try_convert_utf8_to_utf16_in_buffer<'a>(
 }
 
 /// Returns false if `out` is too short (invalid byte → U+FFFD; lone surrogates pass through).
-fn try_write_wtf8_as_utf16(input: &[u8], mut out: BorrowedCursor<'_, u16>) -> bool {
+pub fn try_write_wtf8_as_utf16(input: &[u8], mut out: BorrowedCursor<'_, u16>) -> bool {
     if input.is_empty() {
         return true;
     }
@@ -2280,6 +2276,30 @@ fn try_write_wtf8_as_utf16(input: &[u8], mut out: BorrowedCursor<'_, u16>) -> bo
             _ => return false,
         }
         rest = &rest[adv..];
+    }
+    true
+}
+
+/// Returns false if `out` is too short (lone surrogates pass through, three bytes each).
+pub fn try_write_wtf16_as_wtf8(input: &[u16], mut out: BorrowedCursor<'_, u8>) -> bool {
+    if input.is_empty() {
+        return true;
+    }
+    let bounded = WithUtf8Len::utf16_worst_case(input, out.capacity())
+        .unwrap_or_else(|| WithUtf8Len::utf16_with_replacement(input));
+    if bounded.utf8_len() > out.capacity() {
+        return false;
+    }
+    if simdutf::convert::utf16::to::utf8::with_errors::le(bounded, out.reborrow()).is_successful() {
+        return true;
+    }
+    let mut rest = input;
+    let mut bytes = [0u8; 4];
+    while !rest.is_empty() {
+        let (cp, adv) = decode_wtf16_raw(rest);
+        let len = encode_wtf8_rune(&mut bytes, cp);
+        out.append(&bytes[..len]);
+        rest = &rest[adv as usize..];
     }
     true
 }
@@ -2312,7 +2332,7 @@ pub fn to_utf8_list_with_type(mut list: Vec<u8>, utf16: &[u16]) -> Result<Vec<u8
     if utf16.is_empty() {
         return Ok(list);
     }
-    let input = simdutf::WithUtf8Len::utf16(utf16);
+    let input = WithUtf8Len::utf16(utf16);
     list.try_reserve(input.utf8_len() + 16)
         .map_err(|_| AllocError)?;
     // Replaces unpaired surrogates with U+FFFD.

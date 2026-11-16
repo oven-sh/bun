@@ -16,7 +16,8 @@ use bun_install::LogLevel;
 use bun_install::PackageManager;
 use bun_js_printer as JSPrinter;
 use bun_parsers::json as JSON;
-use bun_paths::{resolve_path as path, resolve_path::platform as path_platform};
+use bun_paths::platform::Auto;
+use bun_paths::{Path, Style as _};
 use bun_semver as Semver;
 use bun_sys::{self, Fd};
 use bun_which::which;
@@ -205,12 +206,7 @@ impl PmVersionCommand {
 
         Self::verify_git(&package_json_dir, pm);
 
-        let mut path_buf = bun_paths::path_buffer_pool::get();
-        let package_json_path = path::join_abs_string_buf_z::<path_platform::Auto>(
-            &package_json_dir,
-            &mut path_buf.0,
-            &[b"package.json"],
-        );
+        let package_json_path = &Path::from_parts(&[&package_json_dir, b"package.json"]);
 
         let package_json_contents = match bun_sys::File::read_from(Fd::cwd(), package_json_path) {
             Ok(c) => c,
@@ -372,25 +368,10 @@ impl PmVersionCommand {
     }
 
     fn find_package_dir(start_dir: &[u8]) -> Vec<u8> {
-        let mut path_buf = bun_paths::path_buffer_pool::get();
-        let mut current_dir = start_dir;
-
-        loop {
-            let package_json_path_z = path::join_abs_string_buf_z::<path_platform::Auto>(
-                current_dir,
-                &mut path_buf.0,
-                &[b"package.json"],
-            );
-            if bun_sys::exists_at(Fd::cwd(), package_json_path_z) {
-                return current_dir.to_vec();
-            }
-
-            let parent = path::dirname::<path_platform::Auto>(current_dir);
-            if parent == current_dir {
-                return start_dir.to_vec();
-            }
-            current_dir = parent;
-        }
+        Auto::ancestors(start_dir)
+            .find(|dir| bun_sys::exists_at(Fd::cwd(), &Path::from_parts(&[dir, b"package.json"])))
+            .unwrap_or(start_dir)
+            .to_vec()
     }
 
     fn verify_git(cwd: &[u8], pm: &mut PackageManager) {
@@ -398,11 +379,8 @@ impl PmVersionCommand {
             return;
         }
 
-        let mut path_buf = bun_paths::path_buffer_pool::get();
-        let git_dir_path =
-            path::join_abs_string_buf_z::<path_platform::Auto>(cwd, &mut path_buf.0, &[b".git"]);
         // `.git` is a file, not a directory, in a linked worktree or a submodule.
-        if !bun_sys::exists_z(git_dir_path) {
+        if !bun_sys::exists_z(&Path::from_parts(&[cwd, b".git"])) {
             pm.options.git_tag_version = false;
         } else if !pm.options.force && !Self::is_git_clean(cwd) {
             Output::err_generic("Git working directory not clean.", ());
@@ -427,12 +405,7 @@ impl PmVersionCommand {
     }
 
     fn get_current_version(ctx: &command::ContextData, cwd: &[u8]) -> Option<Vec<u8>> {
-        let mut path_buf = bun_paths::path_buffer_pool::get();
-        let package_json_path = path::join_abs_string_buf_z::<path_platform::Auto>(
-            cwd,
-            &mut path_buf.0,
-            &[b"package.json"],
-        );
+        let package_json_path = &Path::from_parts(&[cwd, b"package.json"]);
 
         let package_json_contents = bun_sys::File::read_from(Fd::cwd(), package_json_path).ok()?;
 

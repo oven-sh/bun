@@ -10,7 +10,8 @@ use bun_core::time::nano_timestamp;
 use bun_core::{Global, Output, ZStr, handle_oom, strings};
 use bun_install_types::NodeLinker::NodeLinker;
 use bun_paths::SEP;
-use bun_paths::path_options::AssumeOk as _;
+use bun_paths::platform::Auto;
+use bun_paths::{NameTooLong, PoolPath, Style as _};
 use bun_sys::{self as sys, Dir, E, EntryKind, O};
 use bun_threading::{WaitGroup, WorkPool};
 
@@ -2151,20 +2152,14 @@ impl LinkedNodeModules {
     ///
     /// On Windows `path` is not rewritten, because a relative link resolves differently behind a
     /// junction than behind a symlink. A link out of this `node_modules` gets an absolute target.
-    pub(crate) fn resolve<const KIND: u8, const SEP: u8>(
-        &self,
-        path: &mut bun_paths::Path<u8, KIND, SEP>,
-    ) -> bool {
-        let below = match path.slice().strip_prefix(&*self.abs_path) {
-            Some([]) => Vec::new(),
-            Some([sep, below @ ..]) if bun_paths::is_sep_any(*sep) => below.to_vec(),
-            _ => return false,
-        };
-        if !self.real_path.is_empty() {
-            *path = bun_paths::Path::from(&*self.real_path).assume_ok();
-            path.append(&below).assume_ok();
+    pub(crate) fn resolve(&self, path: &mut PoolPath) -> Result<bool, NameTooLong> {
+        if Auto::strip_dir(path, &self.abs_path).is_none() {
+            return Ok(false);
         }
-        true
+        if !self.real_path.is_empty() {
+            path.replace_prefix(self.abs_path.len(), &self.real_path)?;
+        }
+        Ok(true)
     }
 
     /// `folders` are the symlinked `node_modules` folders, relative to the project root, that a
@@ -2674,13 +2669,15 @@ pub(crate) fn remove_planted_link(dir: &Dir, path: &ZStr) -> sys::Maybe<()> {
 
 /// For each component of `path` (absolute, or from the cwd) after `path[..real_len]`.
 pub(crate) fn remove_planted_links(path: &[u8], mut real_len: usize) -> sys::Maybe<()> {
+    if real_len >= path.len() {
+        return Ok(());
+    }
     let separators: &[u8] = if cfg!(windows) { b"/\\" } else { b"/" };
-    let mut buf = bun_paths::path_buffer_pool::get();
+    let mut path = PoolPath::from(path).map_err(sys::Tag::lstat.too_long())?;
     while real_len < path.len() {
         let rest = &path[real_len + 1..];
         real_len += 1 + strings::index_of_any(rest, separators).unwrap_or(rest.len());
-        let component = bun_paths::resolve_path::z(&path[..real_len], &mut buf);
-        remove_planted_link(&Dir::cwd(), component)?;
+        remove_planted_link(&Dir::cwd(), &path.prefix(real_len))?;
     }
     Ok(())
 }

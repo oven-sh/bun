@@ -783,10 +783,9 @@ impl Archiver {
                             Ok(fd) => fd,
                             Err(e) => match e.get_errno() {
                                 bun_sys::E::EPERM | bun_sys::E::ENOENT => {
-                                    // `Dirname::dirname` strips
+                                    // `dirname` strips
                                     // trailing separators.
-                                    let Some(dirname) = bun_paths::Dirname::dirname(path_slice)
-                                    else {
+                                    let Some(dirname) = bun_paths::dirname(path_slice) else {
                                         return Err(e.into());
                                     };
                                     let _ = make_path_u16(dir, dirname);

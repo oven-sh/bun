@@ -1082,7 +1082,8 @@ impl Stdio {
 /// `bun_sys::fd` per PORTING.md (no cross-crate extern).
 ///
 /// SAFETY: `buf` must be valid for `cap` writable bytes.
-pub unsafe fn fd_path_raw(fd: Fd, buf: *mut u8, cap: usize) -> isize {
+#[cfg(all(not(windows), debug_assertions))]
+unsafe fn fd_path_raw(fd: Fd, buf: *mut u8, cap: usize) -> isize {
     #[cfg(any(target_os = "linux", target_os = "android"))]
     {
         let mut proc = [0u8; 32];
@@ -1153,71 +1154,6 @@ pub unsafe fn fd_path_raw(fd: Fd, buf: *mut u8, cap: usize) -> isize {
     )))]
     {
         let _ = (fd, buf, cap);
-        0
-    }
-}
-
-/// Wide-char fd → path (Windows `GetFinalPathNameByHandleW`). Returns code
-/// units written (>0), -1 on lookup failure,
-/// -2 when the buffer is too small, 0 on
-/// non-Windows. Body is a single kernel32 call, so it lives at T0 — moved
-/// down from `bun_sys` per PORTING.md (no cross-crate extern).
-pub fn fd_path_raw_w(fd: Fd, buf: &mut [u16]) -> isize {
-    #[cfg(windows)]
-    {
-        unsafe extern "system" {
-            fn GetFinalPathNameByHandleW(
-                hFile: *mut core::ffi::c_void,
-                lpszFilePath: *mut u16,
-                cchFilePath: u32,
-                dwFlags: u32,
-            ) -> u32;
-        }
-        let cap = buf.len();
-        // VOLUME_NAME_DOS (0) — matches `bun_sys::windows::GetFinalPathNameByHandle` default.
-        // SAFETY: buf has `cap` u16 units; handle from Fd::native().
-        let n = unsafe { GetFinalPathNameByHandleW(fd.native(), buf.as_mut_ptr(), cap as u32, 0) }
-            as usize;
-        // The size check below is `>=` because a return
-        // value equal to `cap` is the buffer-too-small sentinel (required size
-        // including NUL), not a successful write of `cap` chars.
-        if n == 0 {
-            // Lookup failure.
-            return -1;
-        }
-        if n >= cap {
-            // Buffer too small.
-            return -2;
-        }
-        // Strip the `\\?\` prefix if present so callers see a plain DOS path
-        // (matches `bun_sys::windows::GetFinalPathNameByHandle` post-processing).
-        let buf = &mut buf[..n];
-        let bs = b'\\' as u16;
-        let off: usize =
-            if n >= 4 && buf[0] == bs && buf[1] == bs && buf[2] == b'?' as u16 && buf[3] == bs {
-                if n >= 8
-                    && (buf[4] == b'U' as u16 || buf[4] == b'u' as u16)
-                    && (buf[5] == b'N' as u16 || buf[5] == b'n' as u16)
-                    && (buf[6] == b'C' as u16 || buf[6] == b'c' as u16)
-                    && buf[7] == bs
-                {
-                    // `\\?\UNC\server\share` → `\\server\share`
-                    buf[6] = bs;
-                    buf.copy_within(6.., 0);
-                    6
-                } else {
-                    // `\\?\C:\...` → `C:\...`
-                    buf.copy_within(4.., 0);
-                    4
-                }
-            } else {
-                0
-            };
-        return (n - off) as isize;
-    }
-    #[cfg(not(windows))]
-    {
-        let _ = (fd, buf);
         0
     }
 }

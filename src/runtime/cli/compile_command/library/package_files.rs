@@ -15,7 +15,7 @@ use bun_sema_driver::typed_files::typed_path_beside;
 
 use super::declarations::{declaration_path, is_declaration_file};
 use super::typed_files::is_typed_file;
-use super::{Project, absolute_path};
+use super::{Project, absolute_outdir, absolute_path};
 use crate::cli::check_command::CompilerOptions;
 use crate::cli::compile_command::build::asset_output_file;
 
@@ -65,7 +65,7 @@ pub(crate) fn add_package_files(
 ) {
     let working_directory = ctx.args.absolute_working_dir.as_deref().unwrap_or_default();
     let project = Project::find(working_directory);
-    let outdir = absolute_path(working_directory, &ctx.bundler_options.outdir);
+    let outdir = absolute_outdir(working_directory, &ctx.bundler_options.outdir);
     add_documents(&project.directory, output_files);
     let request = PackageRequest {
         project: &project,

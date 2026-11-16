@@ -9,8 +9,8 @@ use bun_core::time::nano_timestamp;
 use bun_core::{Global, Output, strings};
 use bun_install::dependency;
 use bun_install::{Lockfile, PackageID, PackageNameHash};
-use bun_paths::path_buffer_pool;
-use bun_paths::resolve_path::{self, Platform, join_abs_string_buf, platform};
+use bun_paths::resolve_path::{self, Platform, platform};
+use bun_paths::{Path, PoolPath, VecPath};
 use bun_sys::{Fd, File};
 
 use super::add_catalog;
@@ -55,16 +55,14 @@ impl WorkspaceTarget {
             ResolutionTag::Root => Some(WorkspaceTarget::root()),
             ResolutionTag::Workspace => {
                 let buf = lockfile.buffers.string_bytes.as_slice();
-                let top_level = FileSystem::get().top_level_dir();
-                let mut path_buf = path_buffer_pool::get();
                 Some(WorkspaceTarget {
                     name: Box::from(lockfile.packages.items_name()[pkg_id as usize].slice(buf)),
                     name_hash: Some(lockfile.packages.items_name_hash()[pkg_id as usize]),
-                    package_json_path: resolve_path::join_abs_string_buf_checked::<platform::Auto>(
-                        top_level,
-                        &mut path_buf.0,
-                        &[res.workspace().slice(buf), b"package.json"],
-                    )?
+                    package_json_path: crate::lockfile::join_top_level_dir(&[
+                        res.workspace().slice(buf),
+                        b"package.json",
+                    ])?
+                    .as_bytes()
                     .into(),
                 })
             }
@@ -74,11 +72,13 @@ impl WorkspaceTarget {
 }
 
 pub(crate) fn root_package_json_path() -> Box<[u8]> {
+    workspace_package_json_path(b"")
+}
+
+pub(crate) fn workspace_package_json_path(workspace_path: &[u8]) -> Box<[u8]> {
     let top_level = FileSystem::get().top_level_dir();
-    let mut buf = path_buffer_pool::get();
-    let path: Box<[u8]> =
-        join_abs_string_buf::<platform::Auto>(top_level, &mut buf.0, &[b"package.json"]).into();
-    path
+    let path = Path::resolved_portable(&[top_level, workspace_path, b"package.json"]);
+    path.as_bytes().into()
 }
 
 pub(crate) struct WorkspaceMembers {
@@ -138,16 +138,9 @@ pub(crate) fn select_targets(
         members,
     } = load_workspace_members(manager);
 
-    let mut path_buf = path_buffer_pool::get();
     let patterns = manager.options.filter_patterns;
 
-    let root_subject: Box<[u8]> =
-        strings::without_trailing_slash(join_abs_string_buf::<platform::Posix>(
-            top_level,
-            &mut path_buf.0,
-            &[b"."],
-        ))
-        .into();
+    let subject = |rel: &[u8]| workspace_selection::posix_dir(top_level, rel).unwrap_or_default();
     let mut candidates: Vec<(WorkspaceTarget, Box<[u8]>)> = Vec::with_capacity(members.count() + 1);
     candidates.push((
         WorkspaceTarget {
@@ -155,31 +148,18 @@ pub(crate) fn select_targets(
             name_hash: None,
             package_json_path: root_path,
         },
-        root_subject,
+        subject(b"."),
     ));
 
-    let mut package_json_buf = path_buffer_pool::get();
     for (rel, entry) in members.keys().iter().zip(members.values()) {
         let rel: &[u8] = rel;
-        let subject: Box<[u8]> =
-            strings::without_trailing_slash(join_abs_string_buf::<platform::Posix>(
-                top_level,
-                &mut path_buf.0,
-                &[rel],
-            ))
-            .into();
         candidates.push((
             WorkspaceTarget {
                 name: entry.name.clone(),
                 name_hash: Some(bun_semver::string::Builder::string_hash(&entry.name)),
-                package_json_path: join_abs_string_buf::<platform::Auto>(
-                    top_level,
-                    &mut package_json_buf.0,
-                    &[rel, b"package.json"],
-                )
-                .into(),
+                package_json_path: workspace_package_json_path(rel),
             },
-            subject,
+            subject(rel),
         ));
     }
 
@@ -267,9 +247,8 @@ pub(crate) fn store_entry(
 
 pub(crate) fn write_target(manager: &mut PackageManager, target: &WorkspaceTarget) -> bool {
     let entry = fetch_entry(manager, target);
-    let mut zbuf = path_buffer_pool::get();
-    let path = resolve_path::z(&target.package_json_path, &mut zbuf);
-    match File::write_file(Fd::cwd(), path, &entry.source.contents) {
+    let path = Path::from(&target.package_json_path);
+    match File::write_file(Fd::cwd(), &path, &entry.source.contents) {
         Ok(()) => true,
         Err(err) => {
             if target.name.is_empty() {
@@ -352,14 +331,8 @@ fn local_path_too_long(request: &UpdateRequest) -> ! {
     Global::crash();
 }
 
-fn resolve_from_cwd<'a>(
-    cwd: &'a [u8],
-    buf: &'a mut bun_paths::PathBuffer,
-    request: &UpdateRequest,
-    path: &[u8],
-) -> &'a [u8] {
-    resolve_path::join_abs_string_buf_checked::<platform::Auto>(cwd, &mut buf.0, &[path])
-        .unwrap_or_else(|| local_path_too_long(request))
+fn resolve_from_cwd(cwd: &[u8], request: &UpdateRequest, path: &[u8]) -> PoolPath {
+    PoolPath::resolved_portable(&[cwd, path]).unwrap_or_else(|_| local_path_too_long(request))
 }
 
 /// `None` means the global package.json, which stores `abs` itself, like `-g /abs/path` does.
@@ -369,21 +342,9 @@ fn spell_relative_to(
     prefix: &[u8],
     abs: &[u8],
 ) -> Vec<u8> {
-    let mut buf = path_buffer_pool::get();
-    let rel: &[u8] = match package_json_path {
-        Some(package_json_path) => {
-            let target_dir = resolve_path::dirname::<platform::Auto>(package_json_path);
-            // `rel` is at most one `../` for each component of `target_dir`, then `abs`.
-            let components = target_dir
-                .iter()
-                .filter(|&&c| Platform::AUTO.is_separator(c))
-                .count()
-                + 1;
-            if abs.len() + components * b"../".len() >= buf.0.len() {
-                local_path_too_long(request);
-            }
-            resolve_path::relative_platform_buf::<platform::Auto, true>(&mut buf.0, target_dir, abs)
-        }
+    let rel: &[u8] = match package_json_path.and_then(bun_paths::dirname) {
+        Some(target_dir) => &PoolPath::relative_portable(target_dir, abs)
+            .unwrap_or_else(|_| local_path_too_long(request)),
         None => abs,
     };
     let mut positional = Vec::with_capacity(request.name.len() + prefix.len() + rel.len() + 4);
@@ -427,15 +388,14 @@ pub(super) fn respell_local_paths(
     } else {
         (original_cwd, Some(&*package_json_path))
     };
-    let mut buf = path_buffer_pool::get();
     let mut requests: Vec<UpdateRequest> = Vec::with_capacity(updates.len());
     for request in updates {
         let Some((prefix, path)) = local_relative_path(&request) else {
             requests.push(request);
             continue;
         };
-        let abs = resolve_from_cwd(cwd, &mut buf, &request, path);
-        let positional = spell_relative_to(target, &request, prefix, abs);
+        let abs = resolve_from_cwd(cwd, &request, path);
+        let positional = spell_relative_to(target, &request, prefix, &abs);
         let log = manager.log_mut();
         let subcommand = manager.subcommand;
         UpdateRequest::parse(
@@ -460,7 +420,6 @@ fn assign_requests(
         Shared(PackageNameHash),
         PerTarget(Vec<Vec<u8>>),
     }
-    let mut buf = path_buffer_pool::get();
     let mut requests: Vec<UpdateRequest> = Vec::with_capacity(updates.len());
     let mut slots: Vec<Slot> = Vec::with_capacity(updates.len());
     for request in updates {
@@ -469,7 +428,7 @@ fn assign_requests(
             requests.push(request);
             continue;
         };
-        let abs: Box<[u8]> = resolve_from_cwd(original_cwd, &mut buf, &request, path).into();
+        let abs = resolve_from_cwd(original_cwd, &request, path);
         slots.push(Slot::PerTarget(
             targets
                 .iter()
@@ -794,11 +753,8 @@ pub(super) fn update_filtered_workspaces_and_install(
         }));
     }
 
-    {
-        let mut zbuf = path_buffer_pool::get();
-        let root_package_json_path = resolve_path::z(&root_target.package_json_path, &mut zbuf);
-        install_with_manager(manager, ctx, root_package_json_path, original_cwd)?;
-    }
+    let root_package_json_path = VecPath::from(&root_target.package_json_path);
+    install_with_manager(manager, ctx, &root_package_json_path, original_cwd)?;
     package_json_write_back::flush(manager)?;
     remove_leftover_node_modules(manager);
 

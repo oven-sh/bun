@@ -167,25 +167,12 @@ impl BodyAbortListener {
 
 use crate::generated_bindgen::response::js_Response as js;
 
-#[inline]
-pub(crate) fn from_js(value: JSValue) -> Option<*mut Response> {
-    js::from_js(value).map(|p| p.as_ptr())
-}
-
-/// [`from_js`] as a shared borrow; `value` must stay rooted while it is used.
-#[inline]
-pub(crate) fn from_js_ref(value: JSValue) -> Option<bun_ptr::ParentRef<Response>> {
-    from_js(value)
-        .and_then(core::ptr::NonNull::new)
-        .map(bun_ptr::ParentRef::from)
-}
-
 impl bun_jsc::JsClass for Response {
-    fn from_js(value: JSValue) -> Option<*mut Self> {
-        from_js(value)
+    fn from_js(value: &JSValue) -> Option<bun_jsc::WrapperGuard<'_, Self>> {
+        js::from_js(value)
     }
-    fn from_js_direct(value: JSValue) -> Option<*mut Self> {
-        js::from_js_direct(value).map(|p| p.as_ptr())
+    fn from_js_direct(value: &JSValue) -> Option<bun_jsc::WrapperGuard<'_, Self>> {
+        js::from_js_direct(value)
     }
     fn to_js(self, global: &JSGlobalObject) -> JSValue {
         Response::to_js(RefPtr::new(self), global)
@@ -240,9 +227,9 @@ impl Default for Response {
 
 // SAFETY: see its `#[ref_count(destroy = …)]`. No field reaches a `WeakRef`.
 unsafe impl bun_ptr::weak_ptr::HasWeakPtrData for Response {
-    unsafe fn weak_ptr_data(this: *mut Self) -> *mut WeakPtrData {
+    unsafe fn weak_ptr_data(this: *mut Self) -> *const WeakPtrData {
         // SAFETY: caller guarantees `this` points to a live (possibly-finalized) allocation.
-        unsafe { core::ptr::addr_of_mut!((*this).weak_ptr_data) }
+        unsafe { core::ptr::addr_of!((*this).weak_ptr_data) }
     }
 }
 pub(crate) type WeakRef = bun_ptr::WeakPtr<Response>;
@@ -982,9 +969,6 @@ impl Response {
         init: JSValue,
     ) -> JsResult<RefPtr<Response>> {
         if body.is_object() {
-            // `as_class_ref` is the safe shared-borrow downcast (one audited
-            // unsafe in `JSValue`); only `&self` accessors (`is_s3`, `store`)
-            // are touched on this path.
             if let Some(blob) = body.as_class_ref::<Blob>() {
                 if blob.is_s3() {
                     if !init.is_undefined_or_null() {
@@ -1224,7 +1208,7 @@ impl Init {
     }
 
     fn set_headers(&mut self, global_this: &JSGlobalObject, headers: JSValue) -> JsResult<()> {
-        // `JSValue::as_::<FetchHeaders>()` requires `JsClass`; FetchHeaders is a hand-bound opaque, so use its dedicated `cast()` (wraps `WebCore__FetchHeaders__cast_`).
+        // `JSValue::as_class_ref::<FetchHeaders>()` requires `JsClass`; FetchHeaders is a hand-bound opaque, so use its dedicated `cast()` (wraps `WebCore__FetchHeaders__cast_`).
         if let Some(orig) = FetchHeaders::cast(headers) {
             // `orig` is a live `WebCore::FetchHeaders*` borrowed from JS; `FetchHeaders` is an opaque ZST FFI handle (S008) — safe deref.
             let orig = bun_opaque::opaque_deref_mut(orig.as_ptr());
@@ -1278,11 +1262,6 @@ impl Init {
             // fast path: it's a Request object or a Response object
             // we can skip calling JS getters
             if let Some(req) = response_init.as_direct::<Request>() {
-                // SAFETY: `as_direct` returned a live `*mut Request` owned by the
-                // JS wrapper cell; the wrapper is rooted by `response_init` for
-                // the duration of this call, so no GC can finalize it here.
-                // Everything touched is `&self`.
-                let req = unsafe { &*req };
                 if let Some(headers) = req.get_fetch_headers_unless_empty() {
                     result.headers = headers.clone_this(global_this)?;
                 }
@@ -1292,9 +1271,6 @@ impl Init {
             }
 
             if let Some(resp) = response_init.as_direct::<Response>() {
-                // SAFETY: `as_direct` returned a live `*mut Response` owned by the
-                // JS wrapper cell; rooted by `response_init` for this call.
-                let resp = unsafe { &*resp };
                 return Ok(Some(resp.init.get().clone(global_this)?));
             }
         }

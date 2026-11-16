@@ -766,7 +766,7 @@ One class inherits from another as one WebIDL interface does:
 - `RecordableHistogram.prototype` inherits from `Histogram.prototype`, and `RecordableHistogram` from `Histogram`.
 - The subclass adds no fields. Its struct is the base's, so `record` is a method of `Histogram` in Rust, and no two
   members of a class and its subclasses have the same Rust function unless a `rustName` says so.
-  `js_RecordableHistogram::from_js(value)` is the struct if `value` is an instance of the subclass.
+  `js_RecordableHistogram::from_js(&value)` is the struct if `value` is an instance of the subclass.
 
 `js_RecordableHistogram::create(heap, payload)` makes an instance, and `create_wrapper(global, payload)` does for code
 that has no capability. `payload.into_js(heap)` makes an instance of the base.
@@ -781,10 +781,13 @@ base and not both.
 ### The receiver
 
 Every member takes `&self`, a setter too, and mutable state is in `Cell` and `JsCell`. The struct implements
-`bun_jsc::JsClass`, so `value.as_class_ref::<Glob>()` works, and `js_Glob::from_js(value)` is the struct if `value`
-is an instance. `js_Glob::from_js_direct(value)` returns `None` for an instance of a subclass or one with own
-properties, either of which may override a member. `wrapper.payload_ptr()` is the address of the struct, which
-never changes, and `payload.wrapper_value()` returns the object that owns the struct.
+`bun_jsc::JsClass`, so `value.as_class_ref::<Glob>()` works, and `js_Glob::from_js(&value)` is the struct if `value`
+is an instance. Both return a `WrapperGuard<'_, Glob>`, which borrows `value`, derefs to the struct and keeps the object
+visible to the GC's stack scan until it is dropped. `JsLocal::as_class_ref` does the same for an argument, with the
+lifetime of the call. `js_Glob::from_js_direct(&value)` returns `None` for an instance of a subclass or one with own
+properties, either of which may override a member. `value.is::<Glob>()` and `value.is_direct::<Glob>()` only test the
+class. `wrapper.payload_ptr()` is the address of the struct, which never changes, and `payload.wrapper_value()` returns
+the object that owns the struct.
 
 A member with `mutates: true` takes `&mut self`, and so does every setter of its class. JavaScript that ran
 during another member could call it on the same object, so no member of that class has `capability: "js"`. The class
@@ -928,7 +931,8 @@ Native callbacks have no capability. What they need to reach the JS object takes
 | Function                         | What it does                                        |
 | -------------------------------- | --------------------------------------------------- |
 | `js_CronJob::to_js(ptr, global)` | makes the object, which takes over the caller's ref |
-| `js_CronJob::from_js(value)`     | the struct, if `value` is an instance               |
+| `js_CronJob::from_js(&value)`    | the struct, if `value` is an instance               |
+| `js_CronJob::ref_from_js(value)` | the same, as a new `RefPtr`                         |
 
 `CronJob::to_js_ptr(ptr, global)` is `to_js` as an `unsafe fn`, and `CronJob::to_js_nonnull(ptr, global)` takes a
 `NonNull`. The struct also implements `bun_jsc::JsClass`, so `value.as_class_ref::<CronJob>()` works. To get

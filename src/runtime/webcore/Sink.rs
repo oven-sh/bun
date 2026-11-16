@@ -569,7 +569,9 @@ impl ReadableSinkController {
     }
 
     pub(crate) fn detach(controller: JSValue, global: &JSGlobalObject) -> JsResult<()> {
-        let this: &Self = controller.as_class_ref().expect("a ReadableSinkController");
+        let this = controller
+            .as_class_ref::<Self>()
+            .expect("a ReadableSinkController");
         this.detach_with_reason(global, None)
     }
 
@@ -579,7 +581,9 @@ impl ReadableSinkController {
         global: &JSGlobalObject,
         reason: JSValue,
     ) -> JsResult<()> {
-        let this: &Self = controller.as_class_ref().expect("a ReadableSinkController");
+        let this = controller
+            .as_class_ref::<Self>()
+            .expect("a ReadableSinkController");
         this.destination_closed.set(true);
         js::on_close(controller, global, reason, /* sink_closed */ true)
     }

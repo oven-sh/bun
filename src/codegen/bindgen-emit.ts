@@ -2159,12 +2159,12 @@ const rustImplJsClass = (type: ClassType, toJS: string) => `impl bun_jsc::JsClas
         ${toJS}
     }
     #[inline]
-    fn from_js(value: JSValue) -> Option<*mut Self> {
-        js_${type.name}::from_js(value).map(core::ptr::NonNull::as_ptr)
+    fn from_js(value: &JSValue) -> Option<bun_jsc::WrapperGuard<'_, Self>> {
+        js_${type.name}::from_js(value)
     }
     #[inline]
-    fn from_js_direct(value: JSValue) -> Option<*mut Self> {
-        js_${type.name}::from_js_direct(value).map(core::ptr::NonNull::as_ptr)
+    fn from_js_direct(value: &JSValue) -> Option<bun_jsc::WrapperGuard<'_, Self>> {
+        js_${type.name}::from_js_direct(value)
     }
 }`;
 
@@ -2406,7 +2406,7 @@ ${
     safe fn ${fromJS}(value: JSValue) -> *mut core::ffi::c_void;${
       type.sharedThis
         ? `
-    safe fn ${fromJS}Direct(value: JSValue) -> *mut core::ffi::c_void;`
+    fn ${fromJS}Direct(value: JSValue) -> *mut core::ffi::c_void;`
         : ""
     }${type.calledFromRust
       .map(
@@ -2446,14 +2446,18 @@ ${
   }${
     type.sharedThis
       ? `    #[inline]
-    pub fn from_js(value: JSValue) -> Option<core::ptr::NonNull<${rustPath}>> {
-        core::ptr::NonNull::new(${fromJS}(value).cast())
+    pub fn from_js(value: &JSValue) -> Option<bun_jsc::WrapperGuard<'_, ${rustPath}>> {
+        // SAFETY: the object ${type.refCounted ? "holds a ref on the struct" : "owns the struct"}, and no member takes \`&mut self\`.
+        unsafe { bun_jsc::WrapperGuard::new(value, ${fromJS}(*value).cast()) }
     }
-    /// As \`from_js\`, but \`None\` for an instance of a subclass or one with own properties. \`value\` is a cell.
+    /// As \`from_js\`, but \`None\` for an instance of a subclass or one with own properties.
     #[inline]
-    pub fn from_js_direct(value: JSValue) -> Option<core::ptr::NonNull<${rustPath}>> {
-        debug_assert!(value.is_cell());
-        core::ptr::NonNull::new(${fromJS}Direct(value).cast())
+    pub fn from_js_direct(value: &JSValue) -> Option<bun_jsc::WrapperGuard<'_, ${rustPath}>> {
+        if !value.is_cell() {
+            return None;
+        }
+        // SAFETY: \`value\` is a cell. The rest is as in \`from_js\`.
+        unsafe { bun_jsc::WrapperGuard::new(value, ${fromJS}Direct(*value).cast()) }
     }
 `
       : ""
@@ -2464,6 +2468,12 @@ ${
     pub fn to_js(this: *mut ${rustPath}, global: &JSGlobalObject) -> JSValue {
         // SAFETY: the ref becomes the object's.
         unsafe { ${symbolName(type, "create")}(global.as_mut_ptr(), this.cast()) }
+    }
+    /// As \`from_js\`, a new ref on the struct.
+    #[inline]
+    pub fn ref_from_js(value: JSValue) -> Option<bun_ptr::RefPtr<${rustPath}>> {
+        // SAFETY: the pointer of the ref that the object holds.
+        from_js(&value).map(|wrapped| unsafe { bun_ptr::RefPtr::init_ref(wrapped.as_ptr()) })
     }
 `
       : ""

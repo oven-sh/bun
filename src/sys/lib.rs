@@ -4533,10 +4533,6 @@ pub fn pwritev(fd: Fd, vecs: &[IoSlice<'_>], offset: i64) -> Maybe<usize> {
     }
     #[cfg(windows)]
     {
-        // SAFETY: `IoSlice` has the layout of `uv_buf_t`, as `PlatformIoVecConst` has (asserted below).
-        let vecs = unsafe {
-            core::slice::from_raw_parts(vecs.as_ptr().cast::<PlatformIoVecConst>(), vecs.len())
-        };
         sys_uv::pwritev(fd, vecs, offset)
     }
 }
@@ -4550,11 +4546,9 @@ pub fn pwritev(fd: Fd, vecs: &[IoSlice<'_>], offset: i64) -> Maybe<usize> {
 pub type PlatformIoVec = libc::iovec;
 #[cfg(windows)]
 pub type PlatformIoVec = bun_libuv_sys::uv_buf_t;
-// Both casings of `PlatformIOVec` / `PlatformIOVecConst` are provided so
+// Both casings of `PlatformIOVec` are provided so
 // existing call sites (`sys_uv.rs`) compile without churn.
 pub use PlatformIoVec as PlatformIOVec;
-#[cfg(windows)]
-pub use PlatformIoVecConst as PlatformIOVecConst;
 // `IoSlice` is ABI-compatible with `iovec` and with `WSABUF`, as `uv_buf_t` is (uv/win.h).
 const _: () = assert!(
     core::mem::size_of::<PlatformIoVec>() == core::mem::size_of::<IoSlice<'_>>()
@@ -4590,31 +4584,6 @@ pub const fn platform_iovec_len(iov: &PlatformIoVec) -> usize {
     #[cfg(windows)]
     {
         iov.len as usize
-    }
-}
-
-/// Windows `PlatformIOVecConst` — same `uv_buf_t` layout (libuv has no
-/// const-buf type), with `base` typed `*const u8` so callers can build it
-/// from `&[u8]` without casts.
-#[cfg(windows)]
-#[repr(C)]
-#[derive(Clone, Copy)]
-pub struct PlatformIoVecConst {
-    pub len: bun_libuv_sys::ULONG,
-    pub(crate) base: *const u8,
-}
-#[cfg(windows)]
-const _: () = assert!(
-    core::mem::size_of::<PlatformIoVecConst>() == core::mem::size_of::<bun_libuv_sys::uv_buf_t>()
-        && core::mem::align_of::<PlatformIoVecConst>()
-            == core::mem::align_of::<bun_libuv_sys::uv_buf_t>()
-);
-#[cfg(windows)]
-#[inline]
-pub fn platform_iovec_const_create(buf: &[u8]) -> PlatformIoVecConst {
-    PlatformIoVecConst {
-        len: buf.len() as bun_libuv_sys::ULONG,
-        base: buf.as_ptr(),
     }
 }
 

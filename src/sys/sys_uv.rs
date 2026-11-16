@@ -4,6 +4,7 @@
 
 use core::ffi::{c_char, c_int, c_uint};
 use core::mem::MaybeUninit;
+use std::io::IoSlice;
 
 use bstr::BStr;
 
@@ -13,7 +14,7 @@ use bun_core::vec::{BorrowedBuf, BorrowedCursor};
 use crate::ReturnCodeExt;
 use crate::Tag;
 use crate::windows::libuv as uv;
-use crate::{E, Fd, FdExt, Mode, PlatformIOVec, PlatformIOVecConst, Stat, StatFS};
+use crate::{E, Fd, FdExt, Mode, PlatformIOVec, Stat, StatFS};
 
 type Result<T> = crate::Result<T>;
 
@@ -156,8 +157,7 @@ pub fn statfs(file_path: &ZStr) -> Result<StatFS> {
         // so read it by value via `read_unaligned`. The value is copied out
         // *before* dropping `req` frees the
         // backing allocation.
-        let p = unsafe { req.ptr_as::<StatFS>() };
-        Result::Ok(unsafe { core::ptr::read_unaligned(p) })
+        Result::Ok(unsafe { core::ptr::read_unaligned(req.ptr_as::<StatFS>()) })
     }
 }
 
@@ -282,7 +282,7 @@ pub(crate) fn readlink<'a>(file_path: &ZStr, buf: &'a mut [u8]) -> Result<&'a ZS
     } else {
         // Seems like `rc` does not contain the size?
         debug_assert!(rc.int() == 0);
-        let result_ptr: *mut c_char = unsafe { req.ptr_as::<c_char>() } as *mut c_char;
+        let result_ptr = req.ptr_as::<c_char>();
         let Some(result_ptr) = (!result_ptr.is_null()).then_some(result_ptr) else {
             return Result::Err(
                 Error::new(E::NOENT, Tag::readlink).with_path(file_path.as_bytes()),
@@ -504,7 +504,9 @@ fn sum_bufs_len(bufs: &[PlatformIOVec]) -> usize {
     total
 }
 
-pub fn preadv(fd: Fd, bufs: &[PlatformIOVec], position: i64) -> Result<usize> {
+/// # Safety
+/// The bytes that `bufs` name are valid for writes.
+pub unsafe fn preadv(fd: Fd, bufs: &[PlatformIOVec], position: i64) -> Result<usize> {
     let uv_fd = fd.uv();
     const _: () = assert!(
         core::mem::size_of::<PlatformIOVec>() == core::mem::size_of::<uv::uv_buf_t>()
@@ -515,7 +517,7 @@ pub fn preadv(fd: Fd, bufs: &[PlatformIOVec], position: i64) -> Result<usize> {
 
     let mut total_read: usize = 0;
     let mut remaining_bufs = bufs;
-    let mut current_position = position;
+    let mut current_position = uv::fs::clamp_offset(position);
 
     while !remaining_bufs.is_empty() {
         let chunk_len = remaining_bufs.len().min(MAX_IOVEC_COUNT);
@@ -525,7 +527,7 @@ pub fn preadv(fd: Fd, bufs: &[PlatformIOVec], position: i64) -> Result<usize> {
 
         // The int return value of uv_fs_read truncates req.result (ssize_t) and
         // wraps negative when bytes read > INT_MAX, so use req.result directly.
-        // SAFETY: synchronous libuv fs call; req and chunk_bufs live on the stack.
+        // SAFETY: fn contract; synchronous libuv fs call; req lives on the stack.
         let _ = unsafe {
             uv::uv_fs_read(
                 uv::Loop::get(),
@@ -573,18 +575,14 @@ pub fn preadv(fd: Fd, bufs: &[PlatformIOVec], position: i64) -> Result<usize> {
     Result::Ok(total_read)
 }
 
-pub fn pwritev(fd: Fd, bufs: &[PlatformIOVecConst], position: i64) -> Result<usize> {
+pub fn pwritev(fd: Fd, bufs: &[IoSlice<'_>], position: i64) -> Result<usize> {
     let uv_fd = fd.uv();
-    const _: () = assert!(
-        core::mem::size_of::<PlatformIOVec>() == core::mem::size_of::<uv::uv_buf_t>()
-            && core::mem::align_of::<PlatformIOVec>() == core::mem::align_of::<uv::uv_buf_t>()
-    );
 
     let debug_timer = bun_core::Output::DebugTimer::start();
 
     let mut total_written: usize = 0;
     let mut remaining_bufs = bufs;
-    let mut current_position = position;
+    let mut current_position = uv::fs::clamp_offset(position);
 
     while !remaining_bufs.is_empty() {
         let chunk_len = remaining_bufs.len().min(MAX_IOVEC_COUNT);
@@ -594,7 +592,7 @@ pub fn pwritev(fd: Fd, bufs: &[PlatformIOVecConst], position: i64) -> Result<usi
 
         // The int return value of uv_fs_write truncates req.result (ssize_t) and
         // wraps negative when bytes written > INT_MAX, so use req.result directly.
-        // SAFETY: synchronous libuv fs call; req and chunk_bufs live on the stack.
+        // SAFETY: synchronous libuv fs call; req lives on the stack. `IoSlice` has the layout of `uv_buf_t`.
         let _ = unsafe {
             uv::uv_fs_write(
                 uv::Loop::get(),
@@ -607,9 +605,7 @@ pub fn pwritev(fd: Fd, bufs: &[PlatformIOVecConst], position: i64) -> Result<usi
             )
         };
 
-        // `sum_bufs_len` expects `&[PlatformIOVec]`; rather than repr-punning the
-        // const slice through `from_raw_parts`, sum the `.len` fields directly.
-        let chunk_capacity: usize = chunk_bufs.iter().map(|b| b.len as usize).sum();
+        let chunk_capacity: usize = chunk_bufs.iter().map(|b| b.len()).sum();
 
         if cfg!(debug_assertions) {
             log!(
@@ -644,11 +640,6 @@ pub fn pwritev(fd: Fd, bufs: &[PlatformIOVecConst], position: i64) -> Result<usi
     Result::Ok(total_written)
 }
 
-#[inline]
-pub fn readv(fd: Fd, bufs: &[PlatformIOVec]) -> Result<usize> {
-    preadv(fd, bufs, -1)
-}
-
 pub fn pread(fd: Fd, buf: &mut [u8], position: i64) -> Result<usize> {
     pread_buf(fd, BorrowedBuf::from(buf).unfilled(), position)
 }
@@ -658,18 +649,19 @@ fn pread_buf(fd: Fd, mut cursor: BorrowedCursor<'_, u8>, position: i64) -> Resul
     unsafe { pread_uninit(fd, cursor.as_mut(), position).inspect(|&n| _ = cursor.advance(n)) }
 }
 
-fn iovec(buf: &mut [MaybeUninit<u8>]) -> PlatformIOVec {
-    PlatformIOVec {
-        len: buf.len() as uv::ULONG,
-        base: buf.as_mut_ptr().cast(),
-    }
-}
-
 pub(crate) fn pread_uninit(fd: Fd, buf: &mut [MaybeUninit<u8>], position: i64) -> Result<usize> {
+    fn pread_chunk(fd: Fd, chunk: &mut [MaybeUninit<u8>], position: i64) -> Result<usize> {
+        let buf = PlatformIOVec {
+            len: chunk.len() as uv::ULONG,
+            base: chunk.as_mut_ptr().cast(),
+        };
+        // SAFETY: `chunk` is borrowed mutably.
+        unsafe { preadv(fd, &[buf], position) }
+    }
+
     // If buffer fits in a single uv_buf_t, use the simple path
     if buf.len() <= MAX_BUF_LEN {
-        let bufs: [PlatformIOVec; 1] = [iovec(buf)];
-        return preadv(fd, &bufs, position);
+        return pread_chunk(fd, buf, position);
     }
 
     // Buffer is too large, need to chunk it
@@ -679,9 +671,8 @@ pub(crate) fn pread_uninit(fd: Fd, buf: &mut [MaybeUninit<u8>], position: i64) -
 
     while !remaining.is_empty() {
         let chunk_len = remaining.len().min(MAX_BUF_LEN);
-        let bufs: [PlatformIOVec; 1] = [iovec(&mut remaining[0..chunk_len])];
 
-        match preadv(fd, &bufs, current_position) {
+        match pread_chunk(fd, &mut remaining[0..chunk_len], current_position) {
             Result::Err(err) => return Result::Err(err),
             Result::Ok(bytes_read) => {
                 total_read += bytes_read;
@@ -706,19 +697,14 @@ pub fn read_buf(fd: Fd, cursor: BorrowedCursor<'_, u8>) -> Result<usize> {
 }
 
 #[inline]
-pub fn writev(fd: Fd, bufs: &[PlatformIOVec]) -> Result<usize> {
-    // SAFETY: `PlatformIOVec` (= `uv_buf_t`) and `PlatformIOVecConst` are
-    // layout-identical on Windows (size/align asserted in lib.rs); the
-    // fat-pointer cast preserves the original slice's (ptr, len) metadata
-    // exactly instead of re-deriving it.
-    let const_bufs = unsafe { &*(bufs as *const [PlatformIOVec] as *const [PlatformIOVecConst]) };
-    pwritev(fd, const_bufs, -1)
+pub fn writev(fd: Fd, bufs: &[IoSlice<'_>]) -> Result<usize> {
+    pwritev(fd, bufs, -1)
 }
 
 pub fn pwrite(fd: Fd, buf: &[u8], position: i64) -> Result<usize> {
     // If buffer fits in a single uv_buf_t, use the simple path
     if buf.len() <= MAX_BUF_LEN {
-        let bufs: [PlatformIOVecConst; 1] = [crate::platform_iovec_const_create(buf)];
+        let bufs = [IoSlice::new(buf)];
         return pwritev(fd, &bufs, position);
     }
 
@@ -729,8 +715,7 @@ pub fn pwrite(fd: Fd, buf: &[u8], position: i64) -> Result<usize> {
 
     while !remaining.is_empty() {
         let chunk_len = remaining.len().min(MAX_BUF_LEN);
-        let bufs: [PlatformIOVecConst; 1] =
-            [crate::platform_iovec_const_create(&remaining[0..chunk_len])];
+        let bufs = [IoSlice::new(&remaining[0..chunk_len])];
 
         match pwritev(fd, &bufs, current_position) {
             Result::Err(err) => return Result::Err(err),
@@ -755,8 +740,8 @@ pub fn pwrite(fd: Fd, buf: &[u8], position: i64) -> Result<usize> {
 pub fn write(fd: Fd, buf: &[u8]) -> Result<usize> {
     // If buffer fits in a single uv_buf_t, use the simple path
     if buf.len() <= MAX_BUF_LEN {
-        let bufs: [PlatformIOVecConst; 1] = [crate::platform_iovec_const_create(buf)];
-        return writev_const(fd, &bufs);
+        let bufs = [IoSlice::new(buf)];
+        return writev(fd, &bufs);
     }
 
     // Buffer is too large, need to chunk it
@@ -765,10 +750,9 @@ pub fn write(fd: Fd, buf: &[u8]) -> Result<usize> {
 
     while !remaining.is_empty() {
         let chunk_len = remaining.len().min(MAX_BUF_LEN);
-        let bufs: [PlatformIOVecConst; 1] =
-            [crate::platform_iovec_const_create(&remaining[0..chunk_len])];
+        let bufs = [IoSlice::new(&remaining[0..chunk_len])];
 
-        match writev_const(fd, &bufs) {
+        match writev(fd, &bufs) {
             Result::Err(err) => return Result::Err(err),
             Result::Ok(bytes_written) => {
                 total_written += bytes_written;
@@ -783,12 +767,4 @@ pub fn write(fd: Fd, buf: &[u8]) -> Result<usize> {
     }
 
     Result::Ok(total_written)
-}
-
-// `write()` builds a `[1]PlatformIOVecConst`, but `writev` takes
-// `&[PlatformIOVec]`; route through pwritev directly with position = -1.
-// TODO(refactor): unify the iovec types on Windows.
-#[inline]
-fn writev_const(fd: Fd, bufs: &[PlatformIOVecConst]) -> Result<usize> {
-    pwritev(fd, bufs, -1)
 }

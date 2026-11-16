@@ -73,19 +73,15 @@ describe("isArray + Proxy crash fixes", () => {
   });
 
   test("expect.arrayContaining does not crash with Proxy receiver", () => {
-    // Before: UBSan null deref on otherArray->length(). Now: FAIL (doesn't match).
+    // Before: UBSan null deref on otherArray->length(). Now the Proxy is read as the array that it wraps.
     const proxy = new Proxy([1, 2, 3], {});
-    // Proxy is not a real JSArray, so arrayContaining matcher falls to FAIL path.
-    // The important thing is: no crash.
-    expect(() => {
-      expect(proxy).toEqual(expect.arrayContaining([1]));
-    }).toThrow(); // toEqual assertion fails, but process doesn't crash
+    expect(proxy).toEqual(expect.arrayContaining([1]));
+    expect(proxy).not.toEqual(expect.arrayContaining([4]));
   });
 
   test("expect.arrayContaining with Proxy expected value does not crash", () => {
     const proxyExpected = new Proxy([1], {});
-    expect(() => {
-      expect([1, 2, 3]).toEqual(expect.arrayContaining(proxyExpected));
-    }).toThrow(); // assertion fails, no crash
+    expect([1, 2, 3]).toEqual(expect.arrayContaining(proxyExpected));
+    expect([2, 3]).not.toEqual(expect.arrayContaining(proxyExpected));
   });
 });

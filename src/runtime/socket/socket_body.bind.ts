@@ -180,9 +180,9 @@ export const socketFaultInjectionAvailable = b.fn({
   returns: b.bool,
   rustPath: testing("socket_fault_injection_available"),
 });
-export const namedPipeContextLiveCount = b.fn({
+export const namedPipeLiveCount = b.fn({
   returns: b.usize,
-  rustPath: testing("named_pipe_context_live_count"),
+  rustPath: testing("named_pipe_live_count"),
 });
 export const duplexUpgradeContextLiveCount = b.fn({
   returns: b.usize,

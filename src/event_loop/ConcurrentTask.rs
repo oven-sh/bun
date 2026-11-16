@@ -136,7 +136,7 @@ pub mod task_tag {
         UvWorkDone,               // work that an addon thread queued (posix)
         ValkeyDeferredClose,
         ValkeyDeferredFailure,
-        WindowsNamedPipeContext,
+        WindowsNamedPipeDeinit,
         Write,
         Writev,
     }

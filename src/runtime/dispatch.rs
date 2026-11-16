@@ -295,14 +295,9 @@ pub(crate) fn run_task(
             })
         }
         #[cfg(windows)]
-        task_tag::WindowsNamedPipeContext => {
-            // Same shape as `DuplexUpgradeContext`: may free the context.
+        task_tag::WindowsNamedPipeDeinit => {
             // SAFETY: tag identifies the pointee; the queue owns it until here.
-            unsafe {
-                crate::socket::WindowsNamedPipeContext::run_event(cast_ptr!(
-                    crate::socket::WindowsNamedPipeContext
-                ))
-            };
+            unsafe { bun_core::heap::destroy(cast_ptr!(WindowsNamedPipe)) };
         }
         #[cfg(windows)]
         task_tag::GetAddrInfoLibuvComplete => {
@@ -1305,10 +1300,10 @@ pub(crate) fn fire_first_timer(
         EventLoopTimerTag::WindowsNamedPipe => {
             #[cfg(windows)]
             {
-                let context: *mut crate::socket::WindowsNamedPipeContext =
+                let pipe: *mut WindowsNamedPipe =
                     timer_owner!(timer.into_owner_ptr::<WindowsNamedPipe>());
                 // SAFETY: only a queued task frees it.
-                unsafe { &(*context).named_pipe }.on_timeout();
+                unsafe { &*pipe }.on_timeout();
                 Ok(())
             }
             #[cfg(not(windows))]
@@ -1753,9 +1748,9 @@ fn __bun_release_task_unrun(task: bun_event_loop::Task) {
             #[cfg(not(windows))]
             unreachable!("windows-only tag");
         }
-        task_tag::WindowsNamedPipeContext => {
+        task_tag::WindowsNamedPipeDeinit => {
             #[cfg(windows)]
-            release!(crate::socket::WindowsNamedPipeContext);
+            release!(WindowsNamedPipe);
             #[cfg(not(windows))]
             unreachable!("windows-only tag");
         }

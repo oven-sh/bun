@@ -2081,7 +2081,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
     /// returns. A block `var n` hoisted onto a parameter `n` is a linked ref
     /// of the same variable.
     pub(crate) fn record_assignment(&mut self, ref_: Ref) {
-        let root = js_ast::symbol::follow_symbols(&self.symbols, ref_);
+        let root = js_ast::symbol::follow_symbols(&mut self.symbols, ref_);
         self.symbols[root.inner_index() as usize].set_has_been_assigned_to(true);
     }
 
@@ -2101,7 +2101,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
             if !symbol.has_link() {
                 return;
             }
-            ref_ = symbol.link.get();
+            ref_ = symbol.link;
         }
     }
 
@@ -2849,7 +2849,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
                     if ident.ref_.eql(r#ref)
                         || self.symbols[ident.ref_.inner_index() as usize]
                             .link
-                            .get()
                             .eql(r#ref)
                     {
                         self.ignore_usage(r#ref);
@@ -3588,7 +3587,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
                                         || scope_kind == js_ast::scope::Kind::FunctionBody))
                             {
                                 // Silently merge this symbol into the existing symbol
-                                self.symbols[symbol_idx].link.set(member_in_scope.ref_);
+                                self.symbols[symbol_idx].link = member_in_scope.ref_;
                                 if self.symbols[symbol_idx].must_not_be_renamed() {
                                     self.set_must_not_be_renamed_through_links(
                                         member_in_scope.ref_,
@@ -3666,7 +3665,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
 
                             // If this is a catch identifier, silently merge the existing symbol
                             // into this symbol but continue hoisting past this catch scope
-                            self.symbols[existing_idx].link.set(value.ref_);
+                            self.symbols[existing_idx].link = value.ref_;
                             *_scope
                                 .get_or_put_member_with_hash(self.ast_arena, name, hash.unwrap())
                                 .value_ptr = value;
@@ -5048,7 +5047,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
                     ref_ = existing.ref_;
                 }
                 MR::ReplaceWithNew => {
-                    self.symbols[symbol_idx].link.set(ref_);
+                    self.symbols[symbol_idx].link = ref_;
 
                     let existing_kind = self.symbols[symbol_idx].kind;
                     // If these are both functions, remove the overwritten declaration
@@ -5449,7 +5448,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
                 // Follow links because "var" declarations may be merged due to hoisting
                 let mut local = self.relocated_top_level_vars[i];
                 if !local.ref_.is_empty() {
-                    local.ref_ = js_ast::symbol::follow_symbols(&self.symbols, local.ref_);
+                    local.ref_ = js_ast::symbol::follow_symbols(&mut self.symbols, local.ref_);
                 }
                 self.relocated_top_level_vars[i] = local;
                 let Some(ref_) = local.ref_.to_nullable() else {
@@ -6832,7 +6831,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
         all_values_are_pure: bool,
     ) -> Result<(), crate::Error> {
         // Follow the link chain in case symbols were merged
-        let name_ref = js_ast::symbol::follow_symbols(&self.symbols, original_name_ref);
+        let name_ref = js_ast::symbol::follow_symbols(&mut self.symbols, original_name_ref);
         let symbol_kind = self.symbols[name_ref.inner_index() as usize].kind;
         let arena = self.arena;
 
@@ -9129,14 +9128,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
             // closure mutates `top_level_symbols_to_parts` (disjoint from `self.symbols`).
             struct Ctx<'s, 'ast> {
                 top_level: &'s mut bun_ast::ast_result::TopLevelSymbolToParts<'ast>,
-                symbols: &'s [Symbol<'ast>],
+                symbols: &'s mut [Symbol<'ast>],
                 part_index: u32,
             }
             let ast_arena = self.ast_arena;
             for (part_index, part) in parts.iter_mut().enumerate() {
                 let mut ctx = Ctx {
                     top_level: &mut top_level_symbols_to_parts,
-                    symbols: self.symbols.as_slice(),
+                    symbols: self.symbols.as_mut_slice(),
                     part_index: part_index as u32,
                 };
                 DeclaredSymbol::for_each_top_level_symbol(

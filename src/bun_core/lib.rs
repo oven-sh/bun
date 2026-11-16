@@ -802,10 +802,6 @@ macro_rules! assert_not_freeze {
     };
 }
 
-/// [`core::marker::Freeze`], as a bound for the crates that do not enable the feature.
-pub trait Freeze: core::marker::Freeze {}
-impl<T: ?Sized + core::marker::Freeze> Freeze for T {}
-
 #[doc(hidden)]
 pub struct __IsFreeze<T: ?Sized>(core::marker::PhantomData<T>);
 #[doc(hidden)]

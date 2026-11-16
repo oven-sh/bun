@@ -12,7 +12,6 @@ use crate::linker_context_mod::{StmtList, StmtListWhich};
 use crate::options::Format as OutputFormat;
 use crate::{Chunk, Index, LinkerContext, Part, PartRange, WrapKind};
 
-use bun_ast::StoreRef;
 use bun_ast::{AstArena, B, Binding, E, Expr, G, Ref, S, Stmt};
 use bun_js_parser::lexer as js_lexer;
 
@@ -712,18 +711,10 @@ pub(crate) fn generate_code_for_file_in_chunk_js<'a>(
                                 let class_name_loc = class.class.class_name.unwrap().loc;
                                 let class_name_ref = class.class.class_name.unwrap().ref_;
                                 let lhs = hoist.wrap_identifier(class_name_loc, class_name_ref);
-                                let class_ref: StoreRef<E::Class> =
-                                    StoreRef::from_bump(&mut class.into_mut().class);
+                                let rhs = Expr::allocate(temp_arena, class.class, stmt.loc);
                                 break 'stmt Stmt::allocate_expr(
                                     temp_arena,
-                                    Expr::assign(
-                                        temp_arena,
-                                        lhs,
-                                        Expr {
-                                            data: ExprData::EClass(class_ref),
-                                            loc: stmt.loc,
-                                        },
-                                    ),
+                                    Expr::assign(temp_arena, lhs, rhs),
                                 );
                             }
                             _ => stmt,

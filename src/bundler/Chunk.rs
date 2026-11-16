@@ -27,9 +27,7 @@ use crate::BundleV2;
 use crate::LinkerContext;
 use crate::html_import_manifest as HTMLImportManifest;
 use crate::options::{self, Loader};
-use crate::{
-    AdditionalFile, CompileResult, LinkerGraph, PartRange, PathTemplate, cheap_prefix_normalizer,
-};
+use crate::{AdditionalFile, LinkerGraph, PartRange, PathTemplate, cheap_prefix_normalizer};
 
 use crate::IndexInt;
 
@@ -72,17 +70,13 @@ pub struct Chunk<'a> {
 
     pub(crate) output_source_map: source_map::SourceMapPieces,
 
-    pub intermediate_output: IntermediateOutput,
     pub(crate) isolated_hash: u64,
 
-    /// The printer reads it through `LinkerContext::renamer_for_chunk`.
     pub(crate) renamer: bun_renamer::ChunkRenamer<'a>,
     /// The nested scopes still to name after `rename_symbols_in_chunk`
     /// (number renamer only), `(source_index, module-scope child)` grouped by
-    /// file; each file becomes a `NestedRenamer` task.
-    pub(crate) nested_scopes_to_rename: Vec<(u32, *const bun_ast::Scope<'a>)>,
-
-    pub compile_results_for_chunk: Box<[CompileResult]>,
+    /// file; each file becomes a `NestedRenamer` task. `None` is the module scope itself.
+    pub(crate) nested_scopes_to_rename: Vec<(u32, Option<&'a bun_ast::Scope<'a>>)>,
 
     /// Byte length of the output emitted for this chunk: what `code()` returned plus
     /// the source map comment. The metafile reports it as `outputs[..].bytes`.
@@ -91,6 +85,18 @@ pub struct Chunk<'a> {
     /// Pack boolean flags to reduce padding overhead.
     /// Previously 3 separate bool fields caused ~21 bytes of padding waste.
     pub(crate) flags: Flags,
+}
+
+/// What post-processing writes for a chunk, while it reads the others.
+#[derive(Default)]
+pub(crate) struct ChunkOutput<'r, 'a> {
+    /// Taken from the chunk, to be freed on the pool.
+    pub(crate) renamer: bun_renamer::ChunkRenamer<'a>,
+    pub(crate) intermediate_output: IntermediateOutput<'r>,
+    pub(crate) isolated_hash: u64,
+    pub(crate) output_source_map: source_map::SourceMapPieces,
+    pub(crate) module_info: Option<Box<analyze_transpiled_module::ModuleInfo>>,
+    pub(crate) is_executable: bool,
 }
 
 bitflags::bitflags! {
@@ -109,16 +115,6 @@ impl Default for Content<'_> {
     }
 }
 
-// SAFETY: `Chunk` is processed across the bundler thread pool (see
-// `computeCrossChunkDependencies`, `generateChunksInParallel`). Raw-pointer
-// fields (`CssAstRef`, `ChunkRenamer` arena)
-// point into the bundle's storage, which outlives the
-// pool join and is only mutated by the owning task; this mirrors
-// `InputFile`'s blanket impls (bundle_v2.rs).
-unsafe impl Send for Chunk<'_> {}
-// SAFETY: workers write only the atomic counters of `files_with_parts_in_chunk` through `&Chunk`.
-unsafe impl Sync for Chunk<'_> {}
-
 impl Default for Chunk<'_> {
     fn default() -> Self {
         Chunk {
@@ -132,11 +128,9 @@ impl Default for Chunk<'_> {
             content: Content::default(),
             entry_point: EntryPoint::default(),
             output_source_map: source_map::SourceMapPieces::default(),
-            intermediate_output: IntermediateOutput::default(),
             isolated_hash: u64::MAX,
             renamer: bun_renamer::ChunkRenamer::default(),
             nested_scopes_to_rename: Vec::new(),
-            compile_results_for_chunk: Box::default(),
             final_output_size: 0,
             flags: Flags::default(),
         }
@@ -259,7 +253,7 @@ impl<'a> Chunk<'a> {
 /// Can we make the JSPrinter itself track this without increasing
 /// complexity a lot?
 #[derive(Default)]
-pub enum IntermediateOutput {
+pub(crate) enum IntermediateOutput<'r> {
     /// If the chunk has references to other chunks, then "pieces" contains
     /// the contents of the chunk. Another joiner will have to be
     /// constructed later when merging the pieces together.
@@ -270,35 +264,27 @@ pub enum IntermediateOutput {
     /// If the chunk doesn't have any references to other chunks, then
     /// `joiner` contains the contents of the chunk. This is more efficient
     /// because it avoids doing a join operation twice.
-    Joiner(StringJoiner<'static>),
+    Joiner(StringJoiner<'r>),
 
     #[default]
     Empty,
 }
 
-/// Owns the joined output buffer alongside the `OutputPiece` slices that
-/// point into it.
-///
-/// Note: `StringJoiner::done()`
-/// returns a `Box<[u8]>`; if that box is dropped at the end of
-/// `break_output_into_pieces`, every piece's `data` slice dangles (ASAN
-/// use-after-poison in `generate_isolated_hash`). Keep the box alive next to
-/// the pieces so their raw-pointer slices remain valid for the chunk's
-/// lifetime.
-pub struct OutputPieces {
+/// The joined output and the pieces of it.
+pub(crate) struct OutputPieces {
     pieces: Vec<OutputPiece>,
-    /// Backing storage for every `OutputPiece::data` in `pieces`.
-    /// Never read directly — only pins the allocation.
-    _buffer: Box<[u8]>,
+    buffer: Box<[u8]>,
 }
 
 impl OutputPieces {
     #[inline]
     pub(crate) fn new(pieces: Vec<OutputPiece>, buffer: Box<[u8]>) -> Self {
-        OutputPieces {
-            pieces,
-            _buffer: buffer,
-        }
+        OutputPieces { pieces, buffer }
+    }
+
+    #[inline]
+    pub(crate) fn data(&self, piece: &OutputPiece) -> &[u8] {
+        &self.buffer[piece.data.clone()]
     }
 
     #[inline]
@@ -312,15 +298,15 @@ impl OutputPieces {
     }
 }
 
-pub struct CodeResult {
-    pub buffer: Box<[u8]>,
+pub(crate) struct CodeResult {
+    pub(crate) buffer: Box<[u8]>,
     pub(crate) shifts: Vec<source_map::SourceMapShifts>,
 }
 
 /// What the paths `code()` writes over a chunk's references to other outputs
 /// are relative to. A public path makes them outdir-relative either way.
 #[derive(Clone, Copy, PartialEq, Eq)]
-pub enum ReferencePathStyle {
+pub(crate) enum ReferencePathStyle {
     /// The directory of the chunk being emitted, as in esbuild.
     ImporterRelative,
     /// The outdir, wherever the emitting chunk lands (`bun build --compile`).
@@ -348,7 +334,7 @@ impl ReferencePathStyle {
 /// (`CodeResult::shifts`, which the chunk's source map is corrected with) and
 /// appends the `//# debugId` comment. Only wanted for a chunk that gets a map.
 #[derive(Clone, Copy, PartialEq, Eq)]
-pub enum SourceMapShiftTracking {
+pub(crate) enum SourceMapShiftTracking {
     Disabled,
     Enabled,
 }
@@ -389,7 +375,7 @@ fn additional_output_file_index(f: &AdditionalFile) -> usize {
     }
 }
 
-impl IntermediateOutput {
+impl IntermediateOutput<'_> {
     pub(crate) fn allocator_for_size(_size: usize) -> &'static DynAlloc {
         // mimalloc serves large allocations via mmap already, so the global
         // allocator suffices (see `alloc_buf`).
@@ -440,15 +426,12 @@ impl IntermediateOutput {
     }
 
     #[allow(clippy::too_many_arguments)]
-    pub fn code<'d>(
+    pub(crate) fn code<'d>(
         &mut self,
         allocator_to_use: Option<&DynAlloc>,
         bundle: &BundleV2<'_>,
         linker_graph: &LinkerGraph<'_>,
         import_prefix: &[u8],
-        // Note: `chunk` aliases `&chunks[i]`. The body only reads both, so
-        // take `&` to avoid
-        // overlapping `&mut Chunk` + `&mut [Chunk]` UB at every call site.
         chunk: &Chunk,
         chunks: &[Chunk],
         // Accept both `&mut usize` and
@@ -495,7 +478,6 @@ impl IntermediateOutput {
         bundle: &BundleV2<'_>,
         linker_graph: &LinkerGraph<'_>,
         import_prefix: &[u8],
-        // See `code()` note — `chunk` aliases `chunks[i]`; body is read-only.
         chunk: &Chunk,
         chunks: &[Chunk],
         // Accept both `&mut usize` and
@@ -539,7 +521,6 @@ impl IntermediateOutput {
         bundle: &BundleV2<'_>,
         linker_graph: &LinkerGraph<'_>,
         import_prefix: &[u8],
-        // See `code()` note — `chunk` aliases `chunks[i]`; body is read-only.
         chunk: &Chunk,
         chunks: &[Chunk],
         display_size: Option<&mut usize>,
@@ -589,7 +570,7 @@ impl IntermediateOutput {
                     || !import_prefix.is_empty();
 
                 let urls_for_css: &[&[u8]] = if standalone_chunk_contents.is_some() {
-                    graph.ast.items_url_for_css()
+                    linker_graph.ast.items_url_for_css()
                 } else {
                     &[]
                 };
@@ -717,7 +698,7 @@ impl IntermediateOutput {
                 let mut total_buf = alloc_buf(*arena, total_len)?;
 
                 for piece in pieces.slice() {
-                    let data = piece.data();
+                    let data = pieces.data(piece);
 
                     if ENABLE_SOURCE_MAP_SHIFTS {
                         let mut data_offset = source_map::LineColumnOffset::default();
@@ -973,28 +954,15 @@ impl IntermediateOutput {
 ///
 /// An output piece is the concatenation of source code text and an output
 /// path, in that order. An array of pieces makes up an entire file.
-///
-/// Note: stores a
-/// `RawSlice` (encapsulates the unsafe re-borrow) — the per-chunk piece count
-/// is bounded by the number of unique-key boundaries, so the extra word per
-/// piece is negligible against the safety win.
 pub(crate) struct OutputPiece {
-    /// Borrows `OutputPieces::_buffer`; `RawSlice` invariant (backing outlives
-    /// holder) is upheld by `OutputPieces` keeping the box alongside `pieces`.
-    data: bun_ptr::RawSlice<u8>,
+    /// In `OutputPieces::buffer`.
+    data: core::ops::Range<usize>,
     pub query: Query,
 }
 
 impl OutputPiece {
-    pub(crate) fn data(&self) -> &[u8] {
-        self.data.slice()
-    }
-
-    pub(crate) fn init(data_slice: &[u8], query: Query) -> OutputPiece {
-        OutputPiece {
-            data: bun_ptr::RawSlice::new(data_slice),
-            query,
-        }
+    pub(crate) fn init(data: core::ops::Range<usize>, query: Query) -> OutputPiece {
+        OutputPiece { data, query }
     }
 }
 
@@ -1450,5 +1418,15 @@ pub mod bun_renamer {
         None,
         Number(Box<bun_js_printer::renamer::NumberRenamer<'a>>),
         Minify(Box<bun_js_printer::renamer::MinifyRenamer>),
+    }
+
+    impl ChunkRenamer<'_> {
+        pub(crate) fn as_renamer<'r>(&'r self, c: &'r crate::LinkerContext) -> Renamer<'r> {
+            match self {
+                Self::None => unreachable!("ChunkRenamer not initialized"),
+                Self::Number(r) => r.as_renamer(&c.graph.symbols, &c.cross_chunk_names),
+                Self::Minify(r) => r.as_renamer(&c.graph.symbols),
+            }
+        }
     }
 }

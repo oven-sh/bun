@@ -131,8 +131,8 @@ impl HTMLProcessorHandler for HTMLLoader<'_, '_> {
 
         if self.compile_to_standalone_html && import_record.source_index.is_valid() {
             // In standalone HTML mode, inline assets as data: URIs
-            let url_for_css =
-                parse_graph.ast.items_url_for_css()[import_record.source_index.get() as usize];
+            let url_for_css = self.linker.graph.ast.items_url_for_css()
+                [import_record.source_index.get() as usize];
             if !url_for_css.is_empty() {
                 set_attribute(element, url_attribute, url_for_css);
                 return;

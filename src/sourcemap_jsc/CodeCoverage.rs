@@ -1201,12 +1201,7 @@ fn print_for_coverage(path: &[u8], text: &[u8]) -> Option<bun_core::MutableStrin
         return None;
     };
 
-    let symbols_arena = *ast.symbols.allocator();
-    let symbols = bun_ast::symbol::Map::init_with_one_list(
-        core::mem::replace(&mut ast.symbols, bun_alloc::ArenaVec::new_in(symbols_arena))
-            .into_iter()
-            .collect(),
-    );
+    let symbols = ast.take_symbols();
     let chunk = core::cell::Cell::new(None);
     // ASCII_ONLY = true: the chunk is an `InternalSourceMap`, not VLQ text.
     bun_js_printer::print_ast::<true, true>(

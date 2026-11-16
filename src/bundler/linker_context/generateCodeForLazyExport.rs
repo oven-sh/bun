@@ -63,7 +63,8 @@ pub(crate) fn generate_code_for_lazy_export<'a>(
             }
             let mut exports = E::Object::default();
 
-            let symbols: &SymbolList<'_> = &this.graph.ast.items_symbols()[source_index as usize];
+            let symbols: &SymbolList<'_> =
+                &this.graph.symbols.symbols_for_source[source_index as usize];
 
             struct Graph<'a, 'bump> {
                 all_import_records: &'a [bun_ast::import_record::List<'a>],

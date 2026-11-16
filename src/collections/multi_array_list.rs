@@ -37,7 +37,7 @@
 //! | [`__mal_column_impl`] macro     | `items`, `items_mut`     |
 //!
 //! plus `unsafe impl Send`/`Sync` and the `pub unsafe fn` caller-contract
-//! signatures on [`set_len`](MultiArrayList::set_len), `shallow_clone`,
+//! signatures on [`set_len`](MultiArrayList::set_len),
 //! `items{,_mut}` and `column_bytes{,_mut}`. All row-level mutations
 //! (insert/remove/swap/append/grow/clone) are rebuilt on safe
 //! `<[MaybeUninit<u8>]>` slice ops over [`Col`]/[`ColMut`] views.
@@ -51,7 +51,6 @@ use core::ptr::{self, NonNull};
 use std::alloc::{Allocator, Global};
 
 use bun_alloc::AllocError;
-use bun_core::Freeze;
 
 /// Declares typed column-accessor extension traits for a `MultiArrayList<$T>`
 /// element struct.
@@ -117,42 +116,16 @@ macro_rules! multi_array_columns {
                 pub __mal: ::core::marker::PhantomData<&'__mal mut $elem>,
             }
 
-            /// Raw `*mut [T]` view of every column. Returned by
-            /// [`split_raw`]($trait::split_raw). Unlike [`split_mut`], the
-            /// pointers are derived directly from the SoA buffer's raw `bytes`
-            /// base (root/SharedRW provenance) with **no `&mut` intermediate**,
-            /// so they remain valid under Stacked Borrows even when interleaved
-            /// with other column accessors on the same list — the use case
-            /// `split_mut` cannot serve. Dereferencing is the caller's
-            /// responsibility (per-site `unsafe`); columns are physically
-            /// disjoint by `COLUMN_OFFSET_PER_CAP`, so distinct-column derefs
-            /// never alias. Invalidated by any reallocation of the list.
-            #[allow(non_snake_case)]
-            $vis struct [<$trait Raw>] <$($decl)*> {
-                $( $(#[cfg($cfg)])? pub $field: *mut [$ty], )*
-                #[doc(hidden)]
-                pub __mal: ::core::marker::PhantomData<*mut $elem>,
-            }
-            #[allow(non_snake_case)]
-            impl <$($decl)*> ::core::marker::Copy for [<$trait Raw>] <$($use)*> {}
-            #[allow(non_snake_case)]
-            impl <$($decl)*> ::core::clone::Clone for [<$trait Raw>] <$($use)*> {
-                #[inline] fn clone(&self) -> Self { *self }
-            }
-
             #[allow(non_snake_case)]
             $vis trait $trait <$($decl)*> {
                 $( $(#[cfg($cfg)])? $crate::__mal_column_sig!($field : $ty); )*
                 /// Split-borrow every column at once.
                 fn split_mut(&mut self) -> [<$trait Mut>]<'_, $($use)*>;
-                /// Raw column pointers (root provenance, no `&mut` intermediate).
-                fn split_raw(&self) -> [<$trait Raw>]<$($use)*>;
             }
             #[allow(non_snake_case)]
             impl <$($decl)*> $trait <$($use)*> for $crate::MultiArrayList<$elem> {
                 $( $(#[cfg($cfg)])? $crate::__mal_column_impl!($elem, $field : $ty); )*
                 $crate::__mal_split_mut_impl!([<$trait Mut>] [$($use)*] { $( $(#[cfg($cfg)])? $field : $ty, )* });
-                $crate::__mal_split_raw_impl!([<$trait Raw>] [$($use)*] { $( $(#[cfg($cfg)])? $field : $ty, )* });
             }
         }
     };
@@ -190,24 +163,6 @@ macro_rules! __mal_split_mut_impl {
                     ), )*
                     __mal: ::core::marker::PhantomData,
                 }
-            }
-        }
-    };
-}
-
-#[doc(hidden)]
-#[macro_export]
-macro_rules! __mal_split_raw_impl {
-    ($struct:ident [$($use:tt)*] { $( $(#[cfg($cfg:meta)])? $field:ident : $ty:ty, )* }) => {
-        #[inline]
-        fn split_raw(&self) -> $struct<$($use)*> {
-            let __len = self.len();
-            $struct {
-                $( $(#[cfg($cfg)])? $field: ::core::ptr::slice_from_raw_parts_mut(
-                    self.items_raw::<{ ::core::stringify!($field) }, $ty>(),
-                    __len,
-                ), )*
-                __mal: ::core::marker::PhantomData,
             }
         }
     };
@@ -560,9 +515,8 @@ pub struct MultiArrayList<T> {
 
 // SAFETY: `bytes` is uniquely owned.
 unsafe impl<T: Send> Send for MultiArrayList<T> {}
-// SAFETY: `&self` only reads `bytes`, which nothing writes to through a reference to a field of a
-// `Freeze` type. It hands out such references, and copies of a `T`.
-unsafe impl<T: Send + Sync + Freeze> Sync for MultiArrayList<T> {}
+// SAFETY: `&self` hands out references to the fields of a `T`, and copies of a `T` that is `Copy`.
+unsafe impl<T: Sync> Sync for MultiArrayList<T> {}
 
 /// The start of each column, for the operations on whole rows. It does not borrow its list.
 struct Columns<T> {
@@ -931,10 +885,7 @@ impl<T> MultiArrayList<T> {
     /// capacity retained).
     ///
     /// `Drop` for this type is **slab-only** — it frees the SoA backing buffer
-    /// but never runs column destructors (see the `Drop` impl for why:
-    /// [`shallow_clone`] aliasing). When `T` has fields that own global-heap resources
-    /// and the list is the unique owner, call this before the list goes out of
-    /// scope or those payloads leak. No-op when `!needs_drop::<T>()`.
+    /// but never runs column destructors. Call this first, or what the fields of `T` own leaks.
     ///
     /// Elements are dropped by gathering each row's column bytes back into a
     /// stack `T` (the inverse of [`scatter`]) and letting it drop, so every
@@ -987,16 +938,6 @@ impl<T> MultiArrayList<T> {
     where
         T: Copy,
     {
-        // SAFETY: a `Copy` element owns nothing.
-        unsafe { self.shallow_clone() }
-    }
-
-    /// Create a bitwise copy of this list with a new backing store.
-    ///
-    /// # Safety
-    /// The elements of both lists alias what they own. After one list frees or reallocates it the
-    /// other must not use it, and accesses through the two lists must not conflict.
-    pub unsafe fn shallow_clone(&self) -> Result<Self, AllocError> {
         let mut result = Self::default();
         result.ensure_total_capacity(self.len)?;
         result.len = self.len;
@@ -1082,12 +1023,9 @@ impl<T> MultiArrayList<T> {
 
 impl<T> Drop for MultiArrayList<T> {
     fn drop(&mut self) {
-        // Frees the slab only — no per-element destructors. This is
-        // **intentionally preserved**:
-        // [`shallow_clone`] is a bitwise SoA memcpy, so two live lists
-        // can alias the same column heap pointers — see `create_linker_graph`.
+        // Frees the slab only — no per-element destructors.
         //
-        // For lists that *do* uniquely own heap-backed columns (e.g.
+        // For lists that own heap-backed columns (e.g.
         // `LineOffsetTable.columns_for_non_ascii: Box<[i32]>`), call
         // [`MultiArrayList::drop_elements`] before letting this run, or the
         // column payloads leak.

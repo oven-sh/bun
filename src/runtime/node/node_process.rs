@@ -386,6 +386,7 @@ mod _impl {
                             .any(|param| {
                                 (param.takes_value == bun_clap::Values::One
                                     || (param.takes_value == bun_clap::Values::OneOptional
+                                        && crate::cli::arguments::OPTIONAL_BOOLEANS.contains(&name)
                                         && matches!(arg, b"true" | b"false")))
                                     && (param.names.long == Some(name)
                                         || param.names.long_aliases.contains(&name))

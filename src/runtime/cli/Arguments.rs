@@ -1123,9 +1123,12 @@ fn tag_table(cmd: CommandTag) -> &'static clap::ConvertedTable {
     }
 }
 
+// The parser and process.execArgv must consume the same separate optional values.
+pub(crate) const OPTIONAL_BOOLEANS: &[&[u8]] = &[b"pretty"];
+
 fn parsing_options(cmd: CommandTag) -> clap::ParseOptions<'static> {
     clap::ParseOptions {
-        optional_booleans: &[b"pretty"],
+        optional_booleans: OPTIONAL_BOOLEANS,
         stop_after_positional_at: match cmd {
             CommandTag::RunCommand => 2,
             CommandTag::AutoCommand | CommandTag::RunAsNodeCommand => 1,

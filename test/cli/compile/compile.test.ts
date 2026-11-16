@@ -41,7 +41,7 @@ describe.concurrent("bun compile", () => {
     expect(bad.exitCode).toBe(1);
     expect(existsSync(executable(String(dir), "bad"))).toBe(false);
 
-    const good = await bun(String(dir), "compile", "--no-aot", "--check", "good.ts");
+    const good = await compile(String(dir), "--no-aot", "--check", "good.ts");
     expect(good.stderr).toBe("");
     expect(good.exitCode).toBe(0);
     expect(await run(String(dir), [executable(String(dir), "good")])).toEqual({

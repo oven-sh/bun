@@ -608,6 +608,24 @@ describe.concurrent("--no-follow-imports with references", () => {
       [isShown("17")],
       ["base/src/one.ts", "lib/src/unused.ts", "lib/src/used.ts"],
     ],
+    [
+      "the imported file of a project with half as many files as the named file's",
+      {
+        ...Object.fromEntries([1, 2, 3].map(it => [`app/src/more${it}.ts`, "export {};\n"])),
+        "lib/src/used.ts": "export const value = 18;\n",
+      },
+      [isShown("18")],
+      ["lib/src/used.ts"],
+    ],
+    [
+      "every file under traceResolution",
+      {
+        "app/tsconfig.json": project(["lib"], { traceResolution: true }),
+        "lib/src/used.ts": "export const value = 19;\n",
+      },
+      [isShown("19")],
+      ["lib/src/unused.ts", "lib/src/used.ts"],
+    ],
   ])("checks %s", async (_, files, errors, checked, links = {}) => {
     const result = await run(
       {

@@ -4,7 +4,6 @@ use core::marker::PhantomData;
 use core::sync::atomic::Ordering;
 
 use crate::bindgen::{self, JsHeap, JsLocal};
-use crate::node_path::PathOrFileDescriptor;
 use crate::spawn_sync_event_loop::SpawnSyncEventLoop;
 use crate::strong::StrongCell;
 use crate::virtual_machine::VirtualMachine;
@@ -693,12 +692,7 @@ impl RareData {
                 Stdio::StdErr => Output::stderr_descriptor_type() == terminal,
             };
             let store = RefPtr::new(Store::new(
-                Data::File(File {
-                    pathlike: PathOrFileDescriptor::Fd(fd),
-                    is_atty: Some(is_atty),
-                    mode,
-                    ..Default::default()
-                }),
+                Data::File(File::init_stdio(fd, is_atty, mode)),
                 bun_http_types::MimeType::NONE,
             ));
             StdioStore { store, mode }

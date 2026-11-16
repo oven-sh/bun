@@ -77,6 +77,7 @@ use bun_resolver::data_url::DataURL;
 use bun_s3_signing::{SignOptions, SignResult};
 use bun_url::PercentEncoding;
 use bun_url::URL as ZigURL;
+use std::sync::Arc;
 
 use self::fetch_tasklet::{FetchOptions, HTTPRequestBody};
 pub(crate) use self::fetch_tasklet::{
@@ -112,22 +113,23 @@ fn absolute_unix_socket_path(cwd: &[u8], path: Vec<u8>) -> Box<[u8]> {
     bun_paths::join_sep_maybe_z::<false>(&[cwd, &path])
 }
 
-/// Build the refcounted `bun_s3_signing::S3Credentials` from the lower-tier
+/// Build the `bun_s3_signing::S3Credentials` from the lower-tier
 /// `bun_dotenv::S3Credentials` POD mirror. The dotenv crate (T2) cannot name
 /// `bun_s3_signing` types (would be an upward dep), so the conversion lives at
 /// the call site here in T6.
 pub(crate) fn s3_credentials_from_env(
     env: &bun_dotenv::S3Credentials,
 ) -> bun_s3_signing::S3Credentials {
-    bun_s3_signing::S3Credentials::new_value(
-        env.access_key_id.clone(),
-        env.secret_access_key.clone(),
-        env.region.clone(),
-        env.endpoint.clone(),
-        env.bucket.clone(),
-        env.session_token.clone(),
-        env.insecure_http,
-    )
+    bun_s3_signing::S3Credentials {
+        access_key_id: env.access_key_id.clone(),
+        secret_access_key: env.secret_access_key.clone(),
+        region: env.region.clone(),
+        endpoint: env.endpoint.clone(),
+        bucket: env.bucket.clone(),
+        session_token: env.session_token.clone(),
+        insecure_http: env.insecure_http,
+        virtual_hosted_style: false,
+    }
 }
 
 #[inline(never)]
@@ -1429,7 +1431,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
             let mut open_path_buf = bun_paths::path_buffer_pool::get();
             let opened_fd_res: bun_sys::Result<bun_sys::Fd> = {
                 let store = body.store().expect("needs_to_read_file implies store");
-                match &store.data.as_file().pathlike {
+                match &store.data.as_file().pathlike() {
                     PathOrFileDescriptor::Fd(fd) => bun_sys::dup(*fd),
                     PathOrFileDescriptor::Path(path) => {
                         let zpath = path.slice_z(&mut open_path_buf);
@@ -1649,11 +1651,8 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                 promise,
                 global: jsc::GlobalRef::from(global_this),
             };
-            // `dupe()` heap-allocates a fresh intrusive-refcounted copy.
-            // `upload_stream` adopts the ref by value (no extra bump) and the
-            // MultiPartUpload derefs on completion.
             let _ = s3::upload_stream(
-                credentials_with_options.credentials.dupe(),
+                Arc::new(credentials_with_options.credentials),
                 url.s3_path(),
                 readable_stream.get().unwrap(),
                 &global_this.js_thread(context),

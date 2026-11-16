@@ -65,9 +65,6 @@ pub(crate) fn get_credentials_with_options(
 ) -> JsResult<S3CredentialsWithOptions> {
     bun_analytics::features::s3.fetch_add(1, Ordering::Relaxed);
     // get ENV config
-    // `S3Credentials`
-    // carries an intrusive ref-count and is not `Copy`; `Clone` performs a
-    // deep field copy with a fresh ref-count.
     let mut new_credentials = S3CredentialsWithOptions {
         credentials: this.clone(),
         options: default_options,
@@ -81,17 +78,14 @@ pub(crate) fn get_credentials_with_options(
         if opts.is_object() {
             if let Some(utf8) = get_truthy_string_utf8(opts, global_object, b"accessKeyId", true)? {
                 new_credentials.credentials.access_key_id = utf8.into_vec().into_boxed_slice();
-                new_credentials.changed_credentials = true;
             }
             if let Some(utf8) =
                 get_truthy_string_utf8(opts, global_object, b"secretAccessKey", true)?
             {
                 new_credentials.credentials.secret_access_key = utf8.into_vec().into_boxed_slice();
-                new_credentials.changed_credentials = true;
             }
             if let Some(utf8) = get_truthy_string_utf8(opts, global_object, b"region", true)? {
                 new_credentials.credentials.region = utf8.into_vec().into_boxed_slice();
-                new_credentials.changed_credentials = true;
             }
             if let Some(js_value) = opts.get_truthy(global_object, "endpoint")? {
                 if !js_value.is_empty_or_undefined_or_null() {
@@ -106,8 +100,6 @@ pub(crate) fn get_credentials_with_options(
                                 // Default to https://
                                 // Only use http:// if the endpoint specifically starts with 'http://'
                                 new_credentials.credentials.insecure_http = parsed.is_http;
-
-                                new_credentials.changed_credentials = true;
                             } else if !endpoint.is_empty() {
                                 // endpoint is not a valid URL
                                 return Err(global_object.throw_invalid_argument_type_value(
@@ -128,20 +120,17 @@ pub(crate) fn get_credentials_with_options(
             }
             if let Some(utf8) = get_truthy_string_utf8(opts, global_object, b"bucket", true)? {
                 new_credentials.credentials.bucket = utf8.into_vec().into_boxed_slice();
-                new_credentials.changed_credentials = true;
             }
 
             if let Some(virtual_hosted_style) =
                 opts.get_boolean_strict(global_object, "virtualHostedStyle")?
             {
                 new_credentials.credentials.virtual_hosted_style = virtual_hosted_style;
-                new_credentials.changed_credentials = true;
             }
 
             if let Some(utf8) = get_truthy_string_utf8(opts, global_object, b"sessionToken", true)?
             {
                 new_credentials.credentials.session_token = utf8.into_vec().into_boxed_slice();
-                new_credentials.changed_credentials = true;
             }
 
             if let Some(page_size) = opts.get_optional::<i64>(global_object, "pageSize")? {

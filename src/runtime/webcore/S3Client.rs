@@ -37,10 +37,6 @@ pub(crate) trait S3CredentialsExt {
     fn guess_region(endpoint: &[u8]) -> &[u8];
     fn guess_bucket(endpoint: &[u8]) -> Option<&[u8]>;
     fn get_credentials_with_options(
-        // Takes `&S3Credentials` (not by-value) — `bun_s3_signing::S3Credentials`
-        // has a private `ref_count` field and no `Clone`, so callers holding a borrow
-        // (e.g. `&RefPtr<S3Credentials>` deref) cannot produce an owned copy. The
-        // real impl in `s3/credentials_jsc.rs` deep-copies internally.
         this: &S3Credentials,
         default_options: MultiPartUploadOptions,
         options: Option<JSValue>,
@@ -258,7 +254,7 @@ where
 }
 
 pub(crate) struct S3Client {
-    pub(crate) credentials: bun_ptr::RefPtr<S3Credentials>,
+    pub(crate) credentials: S3Credentials,
     pub(crate) options: MultiPartUploadOptions,
     pub(crate) acl: Option<ACL>,
     pub(crate) storage_class: Option<StorageClass>,
@@ -281,7 +277,7 @@ impl S3Client {
             global,
         )?;
         Ok(S3Client {
-            credentials: aws_options.credentials.dupe(),
+            credentials: aws_options.credentials,
             options: aws_options.options,
             acl: aws_options.acl,
             storage_class: aws_options.storage_class,
@@ -332,9 +328,7 @@ impl S3Client {
     }
 
     /// Constructs the S3 blob for `path` from this client's credentials and
-    /// per-client defaults merged with the per-call `options` object. The
-    /// returned blob releases its store ref on drop (the Zig `defer
-    /// blob.detach()`).
+    /// per-client defaults merged with the per-call `options` object.
     fn construct_blob(
         &self,
         global: &JSGlobalObject,
@@ -437,14 +431,14 @@ impl S3Client {
         options: JsLocal<'_>,
     ) -> JsResult<JSValue> {
         let cx = cx.js_thread();
-        let mut blob = self.blob_for_path(
+        let blob = self.blob_for_path(
             cx.global(),
             path.to_js(),
             opt_js(options.to_js()),
             "check the size of",
             MissingPathError::MissingOrInvalid,
         )?;
-        S3File::S3BlobStatTask::size(&cx, &mut blob)
+        S3File::S3BlobStatTask::size(&cx, &blob)
     }
 
     pub(crate) fn stat(
@@ -531,7 +525,7 @@ impl S3Client {
             self.request_payer,
         )?;
 
-        let store = blob.store.get().as_ref().unwrap().clone();
+        let store = blob.store().unwrap();
         store
             .data
             .as_s3()
@@ -553,7 +547,7 @@ impl S3Client {
             "unlink",
             MissingPathError::AlwaysMissingArgs,
         )?;
-        let store = blob.store.get().as_ref().unwrap().clone();
+        let store = blob.store().unwrap();
         store.data.as_s3().unlink(store.clone(), &cx, options)
     }
 
@@ -626,13 +620,13 @@ impl S3Client {
         let cx = cx.js_thread();
         let global = cx.global();
         let error_message = "Expected a S3 or path to get size";
-        let mut blob = match S3File::parse_s3_path_or_blob(global, path.to_js(), error_message)? {
+        let blob = match S3File::parse_s3_path_or_blob(global, path.to_js(), error_message)? {
             crate::webcore::node_types::PathOrBlob::Blob(blob) => {
                 return Ok(JSValue::js_number(blob.get_size()));
             }
             path => S3File::resolve_s3_blob(global, opt_js(options.to_js()), path, error_message)?,
         };
-        S3File::S3BlobStatTask::size(&cx, &mut blob)
+        S3File::S3BlobStatTask::size(&cx, &blob)
     }
 
     pub(crate) fn static_unlink(
@@ -648,7 +642,7 @@ impl S3Client {
             options,
             "Expected a S3 or path to delete",
         )?;
-        let store = blob.store.get().as_ref().unwrap().clone();
+        let store = blob.store().unwrap();
         store.data.as_s3().unlink(store.clone(), &cx, options)
     }
 
@@ -701,7 +695,7 @@ impl S3Client {
             &existing_credentials,
         )?;
 
-        let store = blob.store.get().as_ref().unwrap().clone();
+        let store = blob.store().unwrap();
         store
             .data
             .as_s3()

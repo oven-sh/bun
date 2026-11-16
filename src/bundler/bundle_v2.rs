@@ -5074,7 +5074,7 @@ pub mod bv2_impl {
                                     continue;
                                 }
                                 if ast.parts[imported].len() == 0 {
-                                    // The build errors of a stylesheet that is not a file are filed under `path.text`, which only the path as written can match.
+                                    // Apart from a throw in `onLoad`, the build errors of a stylesheet that is not a file are filed under `path.text`, which only the path as written can match.
                                     let is_file = sources[imported].path.is_file();
                                     // From here on the path is the only name of the stylesheet, and an html file can hold the specifier.
                                     if is_file {

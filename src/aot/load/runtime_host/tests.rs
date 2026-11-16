@@ -25,6 +25,7 @@ const MISSING_PROGRAM_FILE: &[u8] = b"/project/src/missing.ts";
 
 struct Fixture<'f, 's> {
     host: &'f RuntimeHost<'f>,
+    disk: &'f Disk,
     session: &'s Session,
     atoms: Interner<'s>,
 }
@@ -103,6 +104,7 @@ fn with_host<R>(then: impl FnOnce(&Fixture<'_, '_>) -> R) -> R {
     };
     then(&Fixture {
         host: &host,
+        disk: &disk,
         session: &session,
         atoms,
     })
@@ -299,6 +301,17 @@ fn other_paths_are_served_by_the_disk() {
 }
 
 #[test]
+fn unreadable_files_of_the_application_stay_with_its_disk() {
+    with_host(|fixture| {
+        let (host, disk) = (fixture.host, fixture.disk);
+        assert!(disk.read_source(MISSING_PROGRAM_FILE).is_empty());
+        assert!(host.read_source(MISSING_SOURCE).is_empty());
+        assert_eq!(host.take_unreadable(), [MISSING_SOURCE]);
+        assert_eq!(disk.take_unreadable(), [MISSING_PROGRAM_FILE]);
+    });
+}
+
+#[test]
 fn payload_kind_follows_file_kind() {
     with_host(|fixture| {
         let (function_file, prelude_file) = (fixture.function_file(), fixture.prelude_file());
@@ -375,9 +388,9 @@ fn unknown_host_path_is_unreadable() {
         };
         assert!(code.is_empty());
         let unreadable: [&[u8]; 3] = [
+            MISSING_PROGRAM_FILE,
             MISSING_SOURCE,
             b"/$bun/plugin/v/config",
-            MISSING_PROGRAM_FILE,
         ];
         assert_eq!(host.take_unreadable(), unreadable);
         assert!(host.take_unreadable().is_empty());

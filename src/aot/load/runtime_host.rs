@@ -79,6 +79,10 @@ impl RuntimeHost<'_> {
 impl Host for RuntimeHost<'_> {
     delegate_host_services_to_disk!(disk);
 
+    fn take_unreadable(&self) -> Vec<Vec<u8>> {
+        std::mem::take(&mut *self.unreadable.lock())
+    }
+
     fn log_steps_of_load(&self) -> Option<Box<dyn FnMut(&str) + '_>> {
         log_steps_of_load("library: ")
     }
@@ -91,10 +95,7 @@ impl Host for RuntimeHost<'_> {
     }
 
     fn read_source(&self, path: &[u8]) -> Cow<'static, [u8]> {
-        if !is_host_path(path) {
-            return self.disk.read_source(path);
-        }
-        let text = self.runtime_modules.read(path);
+        let text = self.read(path);
         text.unwrap_or_else(|| self.record_unreadable(path))
     }
 

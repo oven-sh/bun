@@ -1,5 +1,7 @@
 import { afterAll, expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, isLinux, tempDir } from "harness";
+import { symlinkSync } from "node:fs";
+import { join } from "node:path";
 import { endChildren, longLimit, spawn } from "../children";
 
 afterAll(endChildren);
@@ -50,6 +52,36 @@ test.concurrent.each(["--threads=1", "--threads=4"])(
       exitCode: 1,
     });
     expect(await check(String(dir), threads, "--aot", "app.ts")).toEqual(plain);
+  },
+  longLimit,
+);
+
+// Bun's own modules are checked beside the program. What the program could not read is an error of the program.
+test.skipIf(!isLinux).concurrent.each(["--threads=1", "--threads=4"])(
+  "bun check --aot reports a file of the program that cannot be read, as bun check does, with %s",
+  async threads => {
+    using dir = tempDir("check-aot-reports-unreadable-file", {
+      "app.ts": `/// <reference path="./unreadable.d.ts" />\nexport const count: number = 1;\n`,
+    });
+    // Opening the link succeeds but reading it fails, even for root.
+    symlinkSync("/proc/self/mem", join(String(dir), "unreadable.d.ts"));
+    const said = async (...args: string[]) => {
+      await using proc = spawn({
+        cmd: [bunExe(), "check", "--no-pretty", threads, ...args, "app.ts"],
+        cwd: String(dir),
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      return { errors: (stdout + stderr).split("\n").filter(line => /^error\b/.test(line)), exitCode };
+    };
+    const plain = await said();
+    expect(plain).toEqual({
+      errors: [`error TS5083: Cannot read file '${join(String(dir), "unreadable.d.ts")}'.`],
+      exitCode: 1,
+    });
+    expect(await said("--aot")).toEqual(plain);
   },
   longLimit,
 );

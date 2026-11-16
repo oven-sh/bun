@@ -9,14 +9,19 @@ macro_rules! forward_to_disk {
     };
 }
 
-macro_rules! delegate_host_services_to_disk {
+/// For the host of the application alone: what the library could not read is the library's own list.
+macro_rules! delegate_unreadable_to_disk {
     ($disk:ident) => {
         fn take_unreadable(&self) -> Vec<Vec<u8>> {
             let mut paths = std::mem::take(&mut *self.unreadable.lock());
             paths.extend(bun_sema::resolve::Host::take_unreadable(self.$disk));
             paths
         }
+    };
+}
 
+macro_rules! delegate_host_services_to_disk {
+    ($disk:ident) => {
         fn realpath(&self, path: &[u8]) -> Vec<u8> {
             match crate::load::is_host_path(path) {
                 true => path.to_vec(),
@@ -102,4 +107,5 @@ macro_rules! delegate_runtime_config_parsers_to_disk {
 
 pub(crate) use delegate_host_services_to_disk;
 pub(crate) use delegate_runtime_config_parsers_to_disk;
+pub(crate) use delegate_unreadable_to_disk;
 pub(crate) use forward_to_disk;

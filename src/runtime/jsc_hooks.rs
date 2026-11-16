@@ -1844,10 +1844,7 @@ fn transpile_source_code_of_any_provenance<const DATA_ONLY: bool>(
             bun_ast::Stmt::data_store_reset();
 
             let hash = bun_watcher::Watcher::get_hash(path.text);
-            let (main, main_hash) = (jsc_vm.main(), jsc_vm.main_hash.get());
-            let is_main = main.is_some_and(|main| {
-                main.len() == path.text.len() && main_hash == hash && main == path.text
-            });
+            let is_main = jsc_vm.main() == Some(path.text);
             let is_preload = jsc_vm.is_in_preload.get() && jsc_vm.preload_hash.get() == hash;
 
             // ── Arena take/give-back ────────────────────────────────────────
@@ -2757,9 +2754,9 @@ fn maybe_watch_file(
     path: &Fs::Path,
     hash: u32,
 ) {
-    if !jsc_vm.is_watcher_enabled() {
+    let Some(watcher) = jsc_vm.bun_watcher.get() else {
         return;
-    }
+    };
     if input_file.is_none() {
         return;
     }
@@ -2769,17 +2766,14 @@ fn maybe_watch_file(
     {
         return;
     }
-    // SAFETY: `bun_watcher` is the `*mut ImportWatcher` set when
-    // `is_watcher_enabled()`; cast recovers the concrete type.
-    let watcher = unsafe { &mut *jsc_vm.bun_watcher.get().cast::<bun_jsc::ImportWatcher>() };
     let _ = watcher.add_file(input_file.take(), path.text, hash);
 }
 
 /// Like `maybe_watch_file`, for a file the transpiler didn't open itself.
 fn auto_watch_file(jsc_vm: &VirtualMachine, path_text: &[u8]) {
-    if !jsc_vm.is_watcher_enabled() {
+    let Some(watcher) = jsc_vm.bun_watcher.get() else {
         return;
-    }
+    };
     if !bun_paths::is_absolute(path_text) || bun_core::strings::contains(path_text, b"node_modules")
     {
         return;
@@ -2799,9 +2793,6 @@ fn auto_watch_file(jsc_vm: &VirtualMachine, path_text: &[u8]) {
         None
     };
     let hash = bun_watcher::Watcher::get_hash(path_text);
-    // SAFETY: `bun_watcher` is the `*mut ImportWatcher` set when
-    // `is_watcher_enabled()`; cast recovers the concrete type.
-    let watcher = unsafe { &mut *jsc_vm.bun_watcher.get().cast::<bun_jsc::ImportWatcher>() };
     let _ = watcher.add_file(file, path_text, hash);
 }
 

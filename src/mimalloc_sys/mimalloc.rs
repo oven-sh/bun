@@ -109,6 +109,15 @@ unsafe extern "C" {
     ) -> bool;
     /// No preconditions; looks the address up in the page map and never dereferences `p`.
     pub safe fn mi_is_in_heap_region(p: *const c_void) -> bool;
+    /// No preconditions; returns 0 or an `errno`.
+    pub safe fn mi_reserve_os_memory_ex(
+        size: usize,
+        commit: bool,
+        allow_large: bool,
+        exclusive: bool,
+        arena: &mut *mut c_void,
+    ) -> core::ffi::c_int;
+    pub fn mi_arena_area(arena: *mut c_void, size: &mut usize) -> *mut c_void;
 }
 
 // Named `Option` after mimalloc's `mi_option_t`; shadows `core::option::Option` in

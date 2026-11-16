@@ -606,6 +606,7 @@ impl<S: RuleSet> Linter<S> {
                 locator: &locator,
                 problems: &mut problems,
                 skipped: &mut result.skipped_rules,
+                js_plugins: options.js_plugins,
                 configured: Vec::new(),
                 by_other_name: Vec::new(),
             };
@@ -1051,7 +1052,7 @@ impl<S: RuleSet> Linter<S> {
                 back.iter().map(|it| &**it.0.configured).collect();
             let reports = match (options.js_plugins, config.js_settings_of(file)) {
                 (Some(host), Some(settings)) if !enabled.is_empty() => {
-                    if file.text().len() < js_plugin::HEAVY {
+                    if file.text().len() < host.heavy_size() {
                         host.needs_realm(file.text().len() as u64);
                     }
                     host.run_on_block(
@@ -1394,6 +1395,7 @@ struct Inline<'i, 'c, 'a, S: RuleSet> {
     locator: &'i Locator<'a>,
     problems: &'i mut Vec<LintMessage>,
     skipped: &'i mut Vec<Box<[u8]>>,
+    js_plugins: Option<&'i js_plugin::Host<'i>>,
     /// The rules that a comment has already configured.
     configured: Vec<Named<'c>>,
     /// The subset of `configured` that was set [through the paired rule's name](Inline::set_by).
@@ -1570,6 +1572,9 @@ impl<'c, 'a, S: RuleSet> Inline<'_, 'c, 'a, S> {
             let Some(named) = self.find(comment, &id, is_turned_on) else {
                 continue;
             };
+            if let (Some(rule), Some(host)) = (named.js(), self.js_plugins) {
+                host.describe(rule);
+            }
             let given = match &value {
                 Json::Array(items) => items.get(1..).unwrap_or_default(),
                 _ => &[],

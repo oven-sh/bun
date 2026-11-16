@@ -39,6 +39,7 @@ impl<'e> Prettier<'e> {
         threads: usize,
     ) -> Prettier<'e> {
         let host = Host::with_engine(environment.js_engine, &environment.cwd);
+        environment.js_engine.expect_independent_files();
         host.expect(files, size, threads);
         // A string flag's value has no quotes, so it isn't valid JSON.
         let value = |text: &[u8]| match bun_lint::json::parse(text) {
@@ -73,6 +74,11 @@ impl<'e> Prettier<'e> {
             run,
             written_files: fs::WrittenFiles::default(),
         }
+    }
+
+    /// [`Host::heavy_size`]
+    pub(crate) fn heavy_size(&self) -> usize {
+        self.host.heavy_size()
     }
 
     /// [`Host::for_each`]

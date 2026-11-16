@@ -840,7 +840,7 @@ impl RuntimeTranspilerCache {
         )
     }
 
-    pub(crate) fn is_disabled() -> bool {
+    pub fn is_disabled() -> bool {
         IS_DISABLED.load(Ordering::Relaxed)
     }
 
@@ -874,7 +874,10 @@ impl RuntimeTranspilerCache {
             return false;
         }
 
-        let input_hash = self.input_hash.unwrap_or_else(|| hash(&source.contents));
+        // The hash names the file. `bun lint` and `bun run` would take turns to overwrite it.
+        let variant = u64::from(parser_options.features.lists_loads);
+        let input_hash =
+            (self.input_hash).unwrap_or_else(|| hash(&source.contents).wrapping_add(variant));
         self.input_hash = Some(input_hash);
         self.input_byte_length = Some(source.contents.len() as u64);
 

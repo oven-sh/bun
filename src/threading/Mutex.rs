@@ -305,6 +305,7 @@ impl FutexImpl {
     const LOCKED: u32 = 0b01;
     /// must contain the `LOCKED` bit for x86 optimization below
     const CONTENDED: u32 = 0b11;
+    const SPINS: u32 = 100;
 
     fn lock(&self) {
         if !self.try_lock() {
@@ -342,6 +343,14 @@ impl FutexImpl {
 
     #[cold]
     fn lock_slow(&self) {
+        // Most locks are held for less time than a sleep and a wake-up take.
+        for _ in 0..Self::SPINS {
+            if self.state.load(Ordering::Relaxed) == Self::UNLOCKED && self.try_lock() {
+                return;
+            }
+            core::hint::spin_loop();
+        }
+
         // Avoid doing an atomic swap below if we already know the state is contended.
         // An atomic swap unconditionally stores which marks the cache-line as modified unnecessarily.
         if self.state.load(Ordering::Relaxed) == Self::CONTENDED {

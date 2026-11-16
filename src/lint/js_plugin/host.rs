@@ -1,7 +1,7 @@
 //! The linter's interface to JavaScript plugins: loads them and runs their rules on a file.
 
 use super::engine::{Engine, Vm, Work};
-use super::rules::{Configured, FileSettings, Plugin, Rule, Schema};
+use super::rules::{About, Configured, FileSettings, Plugin, Rule, Schema};
 use super::wire::{self, ask, call, result};
 use super::{ast, calls, directives, layouts, reports, schema, scopes, tokens};
 use crate::ast::File;
@@ -17,10 +17,10 @@ use bun_core::printer::json_stringify;
 use bun_core::strings::Utf16OffsetTable;
 use bun_threading::Guarded;
 use core::cell::RefCell;
-use rustc_hash::FxHashMap;
+use rustc_hash::{FxHashMap, FxHashSet};
 use std::borrow::Cow;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::{Arc, OnceLock};
 
 /// ESLint's `context.report()`.
 #[derive(Clone, Debug)]
@@ -123,6 +123,10 @@ struct Loaded {
 struct State {
     plugins: Vec<Loaded>,
     rules: u32,
+    /// See [`ask::PRINTED`]
+    printed: FxHashSet<Box<[u8]>>,
+    /// See [`Engine::expect_independent_files`]
+    are_files_independent: bool,
     /// The selectors that rules have listened for, indexed by number. `None` if it can't be parsed.
     selectors: Vec<Option<Arc<Selector>>>,
     /// Keyed by selector text.
@@ -243,6 +247,12 @@ impl<'e> Host<'e> {
                 schema::write_start(&self.cwd, self.measures, out);
             }
             ask::LAYOUTS => layouts::write(out),
+            ask::PRINTED => {
+                let mut state = self.state.lock();
+                if state.are_files_independent && !state.printed.insert(details.into()) {
+                    out.push(b'1');
+                }
+            }
             ask::LOADED => {
                 let parts = crate::json::parse(details);
                 if let Some(
@@ -269,6 +279,33 @@ impl<'e> Host<'e> {
         self.engine.expect(files, size, most);
     }
 
+    /// Announces rules that are going to run.
+    pub fn expect_rules<'r>(&self, rules: impl Iterator<Item = &'r Rule>) {
+        let mut state = self.state.lock();
+        let (mut seen, mut paths) = (FxHashSet::default(), Vec::new());
+        let mut are_files_independent = true;
+        for rule in rules {
+            let of_plugin = || Some(&state.plugins.get(rule.plugin as usize)?.location[..]);
+            let location = rule.location().or_else(of_plugin);
+            if location.is_some_and(|it| !seen.insert(it)) {
+                continue;
+            }
+            let location = location.and_then(crate::json::parse);
+            let location = location.as_ref();
+            let location = location.map(|it| it.as_array().and_then(<[_]>::first).unwrap_or(it));
+            let path =
+                location.and_then(|it| it.get(b"module").or_else(|| it.get(b"config"))?.as_str());
+            are_files_independent &= path.is_some_and(looks_at_one_file);
+            paths.extend(path.map(<[u8]>::to_vec));
+        }
+        state.are_files_independent = are_files_independent;
+        drop(state);
+        if are_files_independent {
+            self.engine.expect_independent_files();
+        }
+        self.engine.expect_modules(paths);
+    }
+
     /// [`Engine::may_need_realm`]
     pub fn may_need_realm(&self, size: u64) {
         self.engine.may_need_realm(size);
@@ -289,13 +326,18 @@ impl<'e> Host<'e> {
         self.engine.work_off(work, meanwhile)
     }
 
+    /// [`Engine::heavy_size`]
+    pub fn heavy_size(&self) -> usize {
+        self.engine.heavy_size()
+    }
+
     /// [`Engine::busy`]
     pub fn busy(&self) -> usize {
         self.engine.busy()
     }
 
     /// Calls `work` with every number below `count`, on threads that have a realm. `is_heavy` tells whether the file
-    /// with that number is [`HEAVY`](super::HEAVY).
+    /// with that number is heavy.
     pub fn for_each(
         &self,
         count: usize,
@@ -456,6 +498,39 @@ impl<'e> Host<'e> {
         Ok(self.register(location, &described, false))
     }
 
+    /// [`Rule::about`], also of a rule that no config object has a setting for.
+    pub fn describe<'r>(&self, rule: &'r Rule) -> &'r About {
+        if rule.about.get().is_none() {
+            self.describe_plugin_of(rule);
+        }
+        rule.about()
+    }
+
+    fn describe_plugin_of(&self, rule: &Rule) {
+        let state = self.state.lock();
+        let Some(loaded) = state.plugins.get(rule.plugin as usize) else {
+            return;
+        };
+        let (location, plugin) = (loaded.location.clone(), Arc::clone(&loaded.plugin));
+        let needs_config_file = loaded.needs_config_file;
+        drop(state);
+        let mut described = None;
+        // If it can't be loaded, the attempt to run the rule says why.
+        let _ = self.engine.with_vm(0, &mut |vm| {
+            described = self.load_in(vm, &location, None).ok();
+        });
+        let described = described.and_then(|it| crate::json::parse(&it));
+        let rules = described
+            .as_ref()
+            .and_then(|it| it.get(b"rules")?.as_array());
+        for it in rules.unwrap_or_default() {
+            let name = it.get(b"name").and_then(Json::as_str);
+            if let Some(rule) = name.and_then(|it| plugin.rule(it)) {
+                rule.about.get_or_init(|| about(it, needs_config_file));
+            }
+        }
+    }
+
     /// Makes `vm` load the plugin at `location`. `numbering` is its index among the plugins and the number of its first
     /// rule, once it has them. Returns the plugin's description.
     fn load_in(
@@ -537,7 +612,7 @@ impl<'e> Host<'e> {
 
     /// The indices of the plugins that a realm has to load for the rules `enabled`, ascending.
     fn plugins_to_load(enabled: &[&Configured]) -> Vec<u32> {
-        let without_module = enabled.iter().filter(|it| it.rule.location.is_none());
+        let without_module = enabled.iter().filter(|it| it.rule.location().is_none());
         let mut positions: Vec<u32> = without_module.map(|it| it.rule.plugin).collect();
         positions.sort_unstable();
         positions.dedup();
@@ -791,6 +866,83 @@ fn source_type_for_oxlint<'a>(file: &'a File<'a>) -> u32 {
     source_type | (u32::from(has_no_jsx) << 2)
 }
 
+/// True if the module at `path` is of a package whose rules don't compare a file with those that were linted before.
+fn looks_at_one_file(path: &[u8]) -> bool {
+    const PACKAGES: &[&[u8]] = &[
+        b"@eslint-community/eslint-plugin-eslint-comments",
+        b"@next/eslint-plugin-next",
+        b"@stylistic/eslint-plugin",
+        b"@tanstack/eslint-plugin-query",
+        b"@typescript-eslint/eslint-plugin",
+        b"@vitest/eslint-plugin",
+        b"eslint",
+        b"eslint-plugin-ava",
+        b"eslint-plugin-compat",
+        b"eslint-plugin-es-x",
+        b"eslint-plugin-flowtype",
+        b"eslint-plugin-i18next",
+        b"eslint-plugin-import",
+        b"eslint-plugin-import-x",
+        b"eslint-plugin-jest",
+        b"eslint-plugin-jsdoc",
+        b"eslint-plugin-jsx-a11y",
+        b"eslint-plugin-mdx",
+        b"eslint-plugin-n",
+        b"eslint-plugin-no-only-tests",
+        b"eslint-plugin-playwright",
+        b"eslint-plugin-prettier",
+        b"eslint-plugin-promise",
+        b"eslint-plugin-react",
+        b"eslint-plugin-react-hooks",
+        b"eslint-plugin-react-refresh",
+        b"eslint-plugin-regexp",
+        b"eslint-plugin-simple-import-sort",
+        b"eslint-plugin-sonarjs",
+        b"eslint-plugin-storybook",
+        b"eslint-plugin-svelte",
+        b"eslint-plugin-testing-library",
+        b"eslint-plugin-turbo",
+        b"eslint-plugin-unicorn",
+        b"eslint-plugin-unused-imports",
+        b"eslint-plugin-vue",
+    ];
+    bun_paths::package_of(path).is_some_and(|it| PACKAGES.contains(&&it[..]))
+}
+
+/// `it` is an entry of the `rules` of [`plugin_from_description`].
+fn about(it: &Json, needs_config_file: bool) -> About {
+    About {
+        kind: match it.get(b"type").and_then(Json::as_str) {
+            Some(b"problem") => Some(Kind::Problem),
+            Some(b"suggestion") => Some(Kind::Suggestion),
+            Some(b"layout") => Some(Kind::Layout),
+            _ => None,
+        },
+        is_fixable: it.get(b"fixable").and_then(Json::as_bool) == Some(true),
+        has_suggestions: it.get(b"hasSuggestions").and_then(Json::as_bool) == Some(true),
+        schema: match it.get(b"schema") {
+            None | Some(Json::Null) => Schema::None,
+            Some(Json::Bool(false)) => Schema::Any,
+            Some(schema) => Schema::Json(schema.clone()),
+        },
+        default_options: it
+            .get(b"defaultOptions")
+            .and_then(Json::as_array)
+            .unwrap_or_default()
+            .to_vec(),
+        deprecated: it.get(b"deprecated").map(|deprecated| {
+            let replaced_by = it.get(b"replacedBy").cloned().unwrap_or(Json::Null);
+            Box::new((deprecated.clone(), replaced_by))
+        }),
+        needs_config_file: needs_config_file && it.get(b"at").is_none(),
+        location: it.get(b"at").map(|at| {
+            let mut rule_location_json = Vec::new();
+            write_json(&mut rule_location_json, at);
+            rule_location_json.into()
+        }),
+    }
+}
+
 /// Reads a plugin's description:
 /// `{ name, isAlias, id, file, export, hasNothing, rules: [{ name, at, type, fixable, hasSuggestions, schema, .. }] }`,
 /// where `..` is `defaultOptions`, `deprecated` and `replacedBy`. The rules are numbered from `first`, in that order.
@@ -824,34 +976,10 @@ fn plugin_from_description(
             ]
             .concat()
             .into(),
-            kind: match it.get(b"type").and_then(Json::as_str) {
-                Some(b"problem") => Some(Kind::Problem),
-                Some(b"suggestion") => Some(Kind::Suggestion),
-                Some(b"layout") => Some(Kind::Layout),
-                _ => None,
+            about: match it.get(b"isLazy") {
+                Some(_) => OnceLock::new(),
+                None => OnceLock::from(about(it, needs_config_file)),
             },
-            is_fixable: it.get(b"fixable").and_then(Json::as_bool) == Some(true),
-            has_suggestions: it.get(b"hasSuggestions").and_then(Json::as_bool) == Some(true),
-            schema: match it.get(b"schema") {
-                None | Some(Json::Null) => Schema::None,
-                Some(Json::Bool(false)) => Schema::Any,
-                Some(schema) => Schema::Json(schema.clone()),
-            },
-            default_options: it
-                .get(b"defaultOptions")
-                .and_then(Json::as_array)
-                .unwrap_or_default()
-                .to_vec(),
-            deprecated: it.get(b"deprecated").map(|deprecated| {
-                let replaced_by = it.get(b"replacedBy").cloned().unwrap_or(Json::Null);
-                Box::new((deprecated.clone(), replaced_by))
-            }),
-            needs_config_file: needs_config_file && it.get(b"at").is_none(),
-            location: it.get(b"at").map(|at| {
-                let mut rule_location_json = Vec::new();
-                write_json(&mut rule_location_json, at);
-                rule_location_json.into()
-            }),
             plugin: position,
             index: first + i as u32,
         })

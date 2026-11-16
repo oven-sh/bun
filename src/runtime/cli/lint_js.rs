@@ -23,7 +23,7 @@ use core::ptr::NonNull;
 
 use bun_core::strings;
 use bun_jsc::{self as jsc, JSGlobalObject, JSValue, Strong, virtual_machine::VirtualMachine};
-use bun_lint_driver::js_plugin::{Demand, Engine, HEAVY, Serve, Vm, Work, program};
+use bun_lint_driver::js_plugin::{Demand, Engine, Serve, Vm, Work, heavy_size, program};
 use bun_threading::{Condition, Guarded};
 use std::collections::VecDeque;
 use std::sync::Arc;
@@ -175,6 +175,7 @@ extern "C" fn Bun__Lint__ask(
 /// Runs the program in this thread's new VM.
 fn start_program(vm: &VirtualMachine) -> Result<LintVm, Vec<u8>> {
     let global = vm.global();
+    crate::read_ahead::enable(vm, true);
     // Strict, so that a plugin's function can't reach the program's functions through `caller`.
     let mut source = b"(function (native) {\n\
         \"use strict\";\n\
@@ -238,6 +239,7 @@ fn start_vm(log: *mut bun_ast::Log) -> Result<(), Vec<u8>> {
     let vm = VirtualMachine::init(log, options).map_err(|error| failed(error.name()))?;
     // Transpile on this thread. It would only wait for the result anyway.
     vm.transpiler_store.enabled.set(false);
+    vm.allocate_without_collecting(32 << 20);
     vm.transpiler
         .with_mut(|t| {
             t.resolver.env_loader = NonNull::new(t.env);
@@ -361,7 +363,7 @@ fn cgroup_memory_limit() -> Option<usize> {
 
 /// The memory budget for all VMs together: half of what's available on the machine or in the container. A linter
 /// shouldn't take over the machine.
-fn memory_for_engines() -> usize {
+pub(super) fn memory_for_engines() -> usize {
     // A test's result must not depend on how much memory happens to be free on the machine that runs it.
     if let Some(override_bytes) = memory_override_for_tests() {
         return override_bytes / 2;
@@ -414,6 +416,8 @@ struct Start {
     initialize: std::sync::Once,
     /// Set if the run won't have more than a few VMs. Stays unset if a VM starts before the files are known.
     is_for_few: AtomicBool,
+    /// The same if no VM has much to do
+    is_short: AtomicBool,
     memory: std::sync::OnceLock<usize>,
 }
 
@@ -423,6 +427,10 @@ impl Start {
         *self.memory.get_or_init(memory_for_engines)
     }
 
+    fn heavy_size(&self) -> usize {
+        heavy_size(self.memory(), usize::from(bun_core::get_thread_count()))
+    }
+
     /// As [`start_vm`].
     fn start_vm(&self, log: *mut bun_ast::Log) -> Result<(), Vec<u8>> {
         let mut first = None;
@@ -430,7 +438,7 @@ impl Start {
             // A no-op if a regular expression in a config has already started JSC (`bun_yarr`).
             jsc::initialize(jsc::InitializeOptions::default());
             if !self.is_for_few.load(Ordering::Relaxed) {
-                jsc::expect_vm_per_thread();
+                jsc::expect_vm_per_thread(self.is_short.load(Ordering::Relaxed));
             }
             // The first VM also creates process-wide singletons like `FileSystem::instance()`, which isn't safe from
             // several threads at once. So the others wait here until it's up.
@@ -443,14 +451,18 @@ impl Start {
     }
 
     /// [`Engine::expect`]
-    fn expect(&self, demand: &Demand, size: u64, most: usize) {
+    fn expect(&self, demand: &Demand, files: usize, size: u64, most: usize) {
+        let most = most.min(files.max(1));
         demand.expect(size, most);
         // How many VMs the files are worth.
         let is_enough = |&vms: &usize| !demand.is_worth_another(vms, 0);
         let vms = (1..most).find(is_enough).unwrap_or(most);
         // With few VMs, cores are left for JSC's compiler threads.
-        let is_for_few = vms <= usize::from(bun_core::get_thread_count()) / 2;
+        // More than three keep waiting for each other: a VM that collects garbage stops these threads.
+        let is_for_few = vms <= (usize::from(bun_core::get_thread_count()) / 2).min(3);
         self.is_for_few.store(is_for_few, Ordering::Relaxed);
+        let is_short = size / (vms.max(1) as u64) < 1 << 20;
+        self.is_short.store(is_short, Ordering::Relaxed);
     }
 }
 
@@ -729,7 +741,11 @@ impl Crew {
     fn start_more(crew: &Arc<Crew>, state: &mut CrewState) -> Result<(), Vec<u8>> {
         loop {
             let free = |it: &&Member| !it.is_freed && (it.is_idle || it.is_starting());
-            let light = state.posted.iter().filter(|it| it.size < HEAVY).count();
+            let light = state
+                .posted
+                .iter()
+                .filter(|it| it.size < crew.start.heavy_size())
+                .count();
             // SAFETY: read from `shared` under the lock.
             let has_files = (state.shared).is_some_and(|it| unsafe { it.work() }.needs_realms());
             let is_needed = match state.all.is_empty() {
@@ -789,10 +805,11 @@ impl Crew {
             }
             // Heavy jobs go to the first member. It leaves the other jobs alone as long as another member is free.
             let others_are_free = (state.all.iter().skip(1)).any(|it| it.is_idle && !it.is_freed);
+            let heavy = self.start.heavy_size();
             let found = match at {
-                0 => (state.posted.iter().position(|it| it.size >= HEAVY))
+                0 => (state.posted.iter().position(|it| it.size >= heavy))
                     .or_else(|| state.posted.front().filter(|_| !others_are_free).map(|_| 0)),
-                _ => state.posted.iter().position(|it| it.size < HEAVY),
+                _ => state.posted.iter().position(|it| it.size < heavy),
             };
             if let Some(posted) = found.and_then(|found| state.posted.remove(found)) {
                 return Next::Posted(posted);
@@ -904,7 +921,7 @@ impl Crew {
             state.all[at].is_freed = true;
         }
         // `Demand` doesn't count heavy files.
-        if size < HEAVY {
+        if size < crew.start.heavy_size() {
             crew.demand.note(size);
         }
         let _ = Crew::start_more(crew, &mut state);
@@ -1025,6 +1042,10 @@ impl Engine for Engines {
         Crew::work_off(&self.0, work, meanwhile)
     }
 
+    fn heavy_size(&self) -> usize {
+        self.0.start.heavy_size()
+    }
+
     fn busy(&self) -> usize {
         self.0.busy.load(Ordering::Relaxed)
     }
@@ -1049,8 +1070,16 @@ impl Engine for Engines {
         self.0.demand.report_realm_need(size, needed_realm);
     }
 
-    fn expect(&self, _files: usize, size: u64, most: usize) {
-        self.0.start.expect(&self.0.demand, size, most);
+    fn expect_independent_files(&self) {
+        self.0.demand.expect_independent_files();
+    }
+
+    fn expect_modules(&self, paths: Vec<Vec<u8>>) {
+        crate::read_ahead::expect(paths.iter().map(|it| &it[..]));
+    }
+
+    fn expect(&self, files: usize, size: u64, most: usize) {
+        self.0.start.expect(&self.0.demand, files, size, most);
     }
 }
 

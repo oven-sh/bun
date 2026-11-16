@@ -56,6 +56,18 @@ pub mod strings {
 pub use bun_alloc::SEP;
 pub use bun_alloc::SEP_STR;
 
+/// The name of the package in `node_modules` that the file at `path` is in
+pub fn package_of(path: &[u8]) -> Option<Vec<u8>> {
+    let separators: &[u8] = if cfg!(windows) { b"/\\" } else { b"/" };
+    let names: Vec<&[u8]> = strings::split_any(path, separators).collect();
+    let at = names.iter().rposition(|it| *it == b"node_modules")?;
+    match names[at + 1..] {
+        [scope @ [b'@', ..], name, _, ..] => Some([scope, b"/", name].concat()),
+        [name, _, ..] => Some(name.to_vec()),
+        _ => None,
+    }
+}
+
 /// `<SEP>node_modules<SEP>` — platform-dependent infix needle for detecting whether
 /// a path passes through a `node_modules` directory.
 pub const NODE_MODULES_NEEDLE: &[u8] =

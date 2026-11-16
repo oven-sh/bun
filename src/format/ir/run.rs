@@ -67,6 +67,10 @@ pub(crate) fn format_with_marks<'a>(
 }
 
 impl Scratch {
+    pub(crate) fn outcome(&self) -> super::printer::Outcome {
+        self.printer.outcome
+    }
+
     /// Returns the offsets of the cursor marks in the last printed text.
     pub(crate) fn marks(&self) -> [Option<u32>; 2] {
         self.printer.marks

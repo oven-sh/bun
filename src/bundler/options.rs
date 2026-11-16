@@ -1458,6 +1458,8 @@ pub struct BundleOptions<'a> {
     pub compile_target_builtins: CompileTargetBuiltins,
 
     pub code_coverage: bool,
+    /// For a linter's configuration and plugins. See `Features::lists_loads` and `Features::defers_requires`.
+    pub defers_requires: bool,
     pub debugger: bool,
 
     pub compile_mode: CompileMode,
@@ -1672,6 +1674,7 @@ impl<'a> BundleOptions<'a> {
             bytecode_order: self.bytecode_order.clone(),
             compile_target_builtins: self.compile_target_builtins.clone(),
             code_coverage: self.code_coverage,
+            defers_requires: self.defers_requires,
             debugger: self.debugger,
             compile_mode: self.compile_mode,
             compile_entry_point_name: self.compile_entry_point_name.clone(),
@@ -1928,6 +1931,7 @@ impl<'a> BundleOptions<'a> {
             bytecode_order: Vec::new(),
             compile_target_builtins: CompileTargetBuiltins::Host,
             code_coverage: false,
+            defers_requires: false,
             debugger: false,
             compile_mode: CompileMode::None,
             compile_entry_point_name: Box::default(),

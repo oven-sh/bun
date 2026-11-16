@@ -3,6 +3,7 @@
 //! bundling, after the bundler has read every file ([`check_for_build_command`],
 //! [`check_for_bun_build`]).
 
+use super::short_run;
 use bstr::BStr;
 
 use bun_bundler::options::{TypeChecked, loaders_from_transform_options};
@@ -534,6 +535,8 @@ impl CheckCommand {
         if options.aot {
             compile_check::exec(options)
         }
+        short_run::share_heaps_of_libc();
+        short_run::spend_spare_memory();
         let (cwd, command_line) = (working_directory(), &options.command_line);
         // The closure returns the report so that it's never dropped. The process exits instead.
         let (exit_code, _report) = run(

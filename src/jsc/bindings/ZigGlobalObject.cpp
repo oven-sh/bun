@@ -291,9 +291,11 @@ extern "C" long Bun__crashHandlerFromJSCFrame(void*, void*, void*, void*);
 // bun_icu_default_locale.cpp
 extern "C" void Bun__ensureICUDefaultLocale();
 
-// LintHost.cpp
 namespace Bun {
+// LintHost.cpp
 JSC::JSObject* createLintHost(JSC::VM&, JSC::JSGlobalObject*);
+// LintNodes.cpp
+void noteImportCallForLint(Zig::GlobalObject*);
 }
 
 // BunAOTRuntime.cpp
@@ -542,14 +544,24 @@ extern "C" void JSCInitialize(const char* envp[], size_t envc, void (*onCrash)(c
 // As many VMs as cores, each busy on its own thread: there is no core left for threads that compile beside them. With 16 VMs on
 // 16 cores these took 10 % more time and 2.3 times the memory.
 // After JSCInitialize and before the first VM: nothing reads the option before it, and its constructor freezes the options.
-extern "C" void JSC__useOptionsForVMPerThread(const char* envp[], size_t envc)
+extern "C" void JSC__useOptionsForVMPerThread(const char* envp[], size_t envc, bool areShortLived)
 {
     RELEASE_ASSERT(!g_jscConfig.isPermanentlyFrozen());
     JSC::Options::useConcurrentJIT() = false;
-    // BUN_JSC_useConcurrentJIT wins, as in JSCInitialize.
+    // Each VM compiles the same functions again, and waits for it.
+    JSC::Options::thresholdForOptimizeAfterWarmUp() *= areShortLived ? 32 : 4;
+    JSC::Options::thresholdForOptimizeAfterLongWarmUp() *= areShortLived ? 32 : 4;
+    JSC::Options::thresholdForOptimizeSoon() *= areShortLived ? 32 : 4;
+    JSC::Options::thresholdForFTLOptimizeAfterWarmUp() *= areShortLived ? 300 : 30;
+    JSC::Options::thresholdForFTLOptimizeSoon() *= areShortLived ? 300 : 30;
+    JSC::Options::largeHeapSize() = 32 * 1024 * 1024;
+    // The environment wins, as in JSCInitialize.
     for (size_t i = 0; i < envc; i++) {
-        if (WTF::StringView::fromLatin1(envp[i]).startsWithIgnoringASCIICase("BUN_JSC_useConcurrentJIT="_s))
-            JSC::Options::setOption(envp[i] + 8, false);
+        auto variable = WTF::StringView::fromLatin1(envp[i]);
+        for (auto prefix : { "BUN_JSC_useConcurrentJIT="_s, "BUN_JSC_thresholdFor"_s, "BUN_JSC_largeHeapSize="_s }) {
+            if (variable.startsWithIgnoringASCIICase(prefix))
+                JSC::Options::setOption(envp[i] + 8, false);
+        }
     }
 }
 
@@ -4316,6 +4328,7 @@ JSC::JSPromise* GlobalObject::moduleLoaderImportModule(JSGlobalObject* jsGlobalO
 
     VM& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
+    Bun::noteImportCallForLint(globalObject);
 
     {
         JSC::JSPromise* result = NodeVM::importModule(globalObject, moduleNameValue, parameters, sourceOrigin);

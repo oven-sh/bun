@@ -7,9 +7,14 @@
 
 #include "root.h"
 
+#include "BunClientData.h"
 #include "LintHost.h"
+#include "ZigGlobalObject.h"
 #include <JavaScriptCore/ArgList.h>
 #include <JavaScriptCore/JSArray.h>
+#include <JavaScriptCore/CodeBlock.h>
+#include <JavaScriptCore/Completion.h>
+#include <JavaScriptCore/CustomGetterSetter.h>
 #include <JavaScriptCore/GetterSetter.h>
 #include <JavaScriptCore/JSBigInt.h>
 #include <JavaScriptCore/JSCInlines.h>
@@ -19,6 +24,7 @@
 #include <JavaScriptCore/ObjectInitializationScope.h>
 #include <JavaScriptCore/RegExp.h>
 #include <JavaScriptCore/RegExpObject.h>
+#include <JavaScriptCore/StackVisitor.h>
 #include <JavaScriptCore/YarrFlags.h>
 #include <array>
 
@@ -975,6 +981,219 @@ JSC_DEFINE_HOST_FUNCTION(jsLintCodePaths, (JSGlobalObject * globalObject, CallFr
 void addLintAskFunctions(JSGlobalObject*, JSObject* native);
 // LintScopes.cpp
 void addLintScopeFunctions(JSGlobalObject*, JSObject* native);
+
+extern "C" bool Bun__hasChangedRequireExtensions(JSGlobalObject*);
+
+extern "C" bool Bun__Lint__isInKnownPackage(const uint8_t* path, size_t length);
+
+static bool isOfBun(const String& url)
+{
+    return url.isEmpty() || url.endsWith("[eval]"_s) || url == "bun-lint-plugins.js"_s;
+}
+
+// () => whether how modules are loaded has been changed, and may be changed back
+JSC_DEFINE_HOST_FUNCTION(jsLintIsLoadingChanged, (JSGlobalObject * globalObject, CallFrame*))
+{
+    return JSValue::encode(jsBoolean(defaultGlobalObject(globalObject)->hasOverriddenModuleWrapper || Bun__hasChangedRequireExtensions(globalObject)));
+}
+
+// () => whether what is thrown now may be caught
+JSC_DEFINE_HOST_FUNCTION(jsLintIsCaught, (JSGlobalObject * globalObject, CallFrame* callFrame))
+{
+    // What waits for the promise is not on the stack.
+    bool isCaught = defaultGlobalObject(globalObject)->hasLintPluginCalledImport;
+    StackVisitor::visit(callFrame, globalObject->vm(), [&](StackVisitor& visitor) {
+        CodeBlock* codeBlock = visitor->codeBlock();
+        // Bun's own code only catches to report.
+        if (!isCaught && codeBlock && codeBlock->unlinkedCodeBlock()->handlerForBytecodeIndex(visitor->bytecodeIndex(), RequiredHandler::CatchHandler))
+            isCaught = !codeBlock->unlinkedCodeBlock()->isBuiltinFunction() && !isOfBun(codeBlock->ownerExecutable()->sourceURL());
+        return isCaught ? IterationStatus::Done : IterationStatus::Continue;
+    });
+    return JSValue::encode(jsBoolean(isCaught));
+}
+
+// (file) => whether that CommonJS module may be in the middle of loading
+JSC_DEFINE_HOST_FUNCTION(jsLintIsLoading, (JSGlobalObject * globalObject, CallFrame* callFrame))
+{
+    auto& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    String file = callFrame->argument(0).toWTFString(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+    bool isLoading = false;
+    StackVisitor::visit(callFrame, vm, [&](StackVisitor& visitor) {
+        CodeBlock* codeBlock = visitor->codeBlock();
+        // this, exports, require, module, __filename, __dirname
+        isLoading = codeBlock && codeBlock->numParameters() >= 6 && codeBlock->ownerExecutable()->sourceURL() == file;
+        return isLoading ? IterationStatus::Done : IterationStatus::Continue;
+    });
+    return JSValue::encode(jsBoolean(isLoading));
+}
+
+// (function) => whether it is written in a package whose `require`s are deferred
+JSC_DEFINE_HOST_FUNCTION(jsLintIsOfKnownPackage, (JSGlobalObject*, CallFrame* callFrame))
+{
+    auto* function = dynamicDowncast<JSFunction>(callFrame->argument(0));
+    if (!function || function->isHostOrBuiltinFunction())
+        return JSValue::encode(jsBoolean(false));
+    CString url = function->jsExecutable()->sourceURL().utf8();
+    return JSValue::encode(jsBoolean(Bun__Lint__isInKnownPackage(reinterpret_cast<const uint8_t*>(url.data()), url.length())));
+}
+
+// One of the functions that src/runtime/defer_require.js returns. Empty in a VM that has not run it.
+static JSValue lintHook(JSGlobalObject* globalObject, unsigned index)
+{
+    auto& vm = getVM(globalObject);
+    JSValue hooks = defaultGlobalObject(globalObject)->getDirect(vm, WebCore::builtinNames(vm).dataPrivateName());
+    return hooks ? asObject(hooks)->getDirectIndex(globalObject, index) : JSValue();
+}
+
+JSC_DEFINE_CUSTOM_GETTER(lintLazyProperty, (JSGlobalObject * globalObject, EncodedJSValue thisValue, PropertyName name))
+{
+    auto& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSObject* object = asObject(JSValue::decode(thisValue));
+    JSValue make = lintHook(globalObject, 0);
+    MarkedArgumentBuffer arguments;
+    arguments.append(object);
+    arguments.append(identifierToJSValue(vm, Identifier::fromUid(vm, name.uid())));
+    JSValue made = JSC::call(globalObject, make, getCallData(make), jsUndefined(), arguments);
+    RETURN_IF_EXCEPTION(scope, {});
+    JSValue value = asObject(made)->getDirectIndex(globalObject, 0);
+    RETURN_IF_EXCEPTION(scope, {});
+    JSValue isForGood = asObject(made)->getDirectIndex(globalObject, 1);
+    RETURN_IF_EXCEPTION(scope, {});
+    if (!isForGood.isTrue())
+        return JSValue::encode(value);
+    // The module that was loaded can have done anything to it.
+    unsigned attributes = 0;
+    JSValue now = object->getDirect(vm, name, attributes);
+    if (!now || !(attributes & PropertyAttribute::CustomValue))
+        RELEASE_AND_RETURN(scope, JSValue::encode(object->get(globalObject, name)));
+    object->putDirect(vm, name, value, attributes & ~static_cast<unsigned>(PropertyAttribute::CustomValue));
+    return JSValue::encode(value);
+}
+
+// (object, key) => whether the property now gets its value when it is first read. To scripts it's a plain property.
+JSC_DEFINE_HOST_FUNCTION(jsLintMakeLazy, (JSGlobalObject * globalObject, CallFrame* callFrame))
+{
+    auto& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto* object = dynamicDowncast<JSFinalObject>(callFrame->argument(0));
+    Identifier name = callFrame->argument(1).toPropertyKey(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+    unsigned attributes = 0;
+    if (!object || object->mayBePrototype() || !object->isStructureExtensible() || parseIndex(name) || !object->getDirect(vm, name, attributes) || attributes)
+        return JSValue::encode(jsBoolean(false));
+    // `putDirectCustomAccessor` only adds.
+    auto* custom = CustomGetterSetter::create(vm, lintLazyProperty, nullptr);
+    Structure* structure = object->structure();
+    PropertyOffset offset = structure->get(vm, name);
+    structure->didReplaceProperty(offset);
+    object->putDirectOffset(vm, offset, custom);
+    DeferredStructureTransitionWatchpointFire deferred(vm, structure);
+    Structure* changed = Structure::attributeChangeTransition(vm, structure, name, static_cast<unsigned>(PropertyAttribute::CustomValue), &deferred);
+    changed->setHasAnyKindOfGetterSetterPropertiesWithProtoCheck(false);
+    object->setStructure(vm, changed);
+    return JSValue::encode(jsBoolean(true));
+}
+
+// (object, key) => whether to read the property would load a module
+JSC_DEFINE_HOST_FUNCTION(jsLintIsLazy, (JSGlobalObject * globalObject, CallFrame* callFrame))
+{
+    auto& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto* object = dynamicDowncast<JSFinalObject>(callFrame->argument(0));
+    Identifier name = callFrame->argument(1).toPropertyKey(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+    if (object && object->getDirect(vm, WebCore::builtinNames(vm).dataPrivateName()))
+        return JSValue::encode(jsBoolean(true));
+    JSValue value = object ? object->getDirect(vm, name) : JSValue();
+    auto* custom = value ? dynamicDowncast<CustomGetterSetter>(value) : nullptr;
+    return JSValue::encode(jsBoolean(custom && custom->getter() == lintLazyProperty));
+}
+
+// (object): `jsLintIsLazy` is true of all of its properties.
+JSC_DEFINE_HOST_FUNCTION(jsLintMakeAllLazy, (JSGlobalObject * globalObject, CallFrame* callFrame))
+{
+    auto& vm = getVM(globalObject);
+    if (auto* object = dynamicDowncast<JSFinalObject>(callFrame->argument(0)))
+        object->putDirect(vm, WebCore::builtinNames(vm).dataPrivateName(), jsBoolean(true), PropertyAttribute::DontEnum | 0);
+    return JSValue::encode(jsUndefined());
+}
+
+extern "C" void Bun__Lint__setWantsWhole(bool);
+
+JSC_DEFINE_HOST_FUNCTION(jsLintSetWantsWhole, (JSGlobalObject*, CallFrame* callFrame))
+{
+    Bun__Lint__setWantsWhole(callFrame->argument(0).isTrue());
+    return JSValue::encode(jsUndefined());
+}
+
+void noteModuleLoadedForLint(JSGlobalObject* globalObject, JSValue file, JSObject* module)
+{
+    JSValue note = lintHook(globalObject, 2);
+    if (!note) [[likely]]
+        return;
+    MarkedArgumentBuffer arguments;
+    arguments.append(file);
+    arguments.append(module);
+    JSC::call(globalObject, note, getCallData(note), jsUndefined(), arguments);
+}
+
+void noteImportCallForLint(Zig::GlobalObject* globalObject)
+{
+    if (!lintHook(globalObject, 0)) [[likely]]
+        return;
+    auto& vm = getVM(globalObject);
+    StackVisitor::visit(vm.topCallFrame, vm, [&](StackVisitor& visitor) {
+        CodeBlock* codeBlock = visitor->codeBlock();
+        if (!codeBlock || codeBlock->unlinkedCodeBlock()->isBuiltinFunction())
+            return IterationStatus::Continue;
+        globalObject->hasLintPluginCalledImport |= !isOfBun(codeBlock->ownerExecutable()->sourceURL());
+        return IterationStatus::Done;
+    });
+}
+
+// What `slot` of `object` has. Empty: to read it would load a module.
+JSValue valueUnlessLintLazy(JSGlobalObject* globalObject, JSObject* object, const Identifier& name, PropertySlot& slot)
+{
+    JSValue ifLoaded = slot.isValue() ? JSValue() : lintHook(globalObject, 1);
+    if (!ifLoaded) [[likely]]
+        return slot.getValue(globalObject, name);
+    auto& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    MarkedArgumentBuffer arguments;
+    arguments.append(object);
+    arguments.append(identifierToJSValue(vm, name));
+    arguments.append(ifLoaded);
+    JSValue value = JSC::call(globalObject, ifLoaded, getCallData(ifLoaded), jsUndefined(), arguments);
+    RETURN_IF_EXCEPTION(scope, {});
+    return value == ifLoaded ? JSValue() : value;
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsLintIsPlain, (JSGlobalObject*, CallFrame* callFrame))
+{
+    return JSValue::encode(jsBoolean(dynamicDowncast<JSFinalObject>(callFrame->argument(0))));
+}
+
+// `source`: src/runtime/defer_require.js
+extern "C" bool Bun__Lint__deferRequires(JSGlobalObject* globalObject, const Latin1Character* source, size_t length)
+{
+    auto& vm = getVM(globalObject);
+    auto code = makeSource(StringImpl::createWithoutCopying(std::span { source, length }), SourceOrigin {}, SourceTaintedOrigin::Untainted, "bun-lint-plugins.js"_s, TextPosition(), SourceProviderSourceType::Program, SourceProvenance::Static);
+    NakedPtr<JSC::Exception> exception;
+    JSValue program = JSC::evaluate(globalObject, code, jsUndefined(), exception);
+    if (exception)
+        return false;
+    MarkedArgumentBuffer arguments;
+    for (auto function : { jsLintIsLoadingChanged, jsLintIsCaught, jsLintIsLoading, jsLintIsOfKnownPackage, jsLintMakeLazy, jsLintIsLazy, jsLintIsPlain, jsLintMakeAllLazy, jsLintSetWantsWhole })
+        arguments.append(JSFunction::create(vm, globalObject, 0, String(), function, ImplementationVisibility::Private));
+    JSValue make = JSC::call(globalObject, program, getCallData(program), jsUndefined(), arguments, exception);
+    if (exception)
+        return false;
+    globalObject->putDirect(vm, WebCore::builtinNames(vm).dataPrivateName(), make, PropertyAttribute::DontEnum | 0);
+    return true;
+}
 
 // `{ shape, listen, codePaths, .. }` for the program in src/lint/js_plugin/worker.
 extern "C" EncodedJSValue Bun__Lint__nodeFunctions(JSGlobalObject* globalObject)

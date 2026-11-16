@@ -2168,3 +2168,33 @@ pub struct DefaultAlloc;
 // The real impl is `impl GlobalAlloc for Mimalloc` above.
 #[path = "basic.rs"]
 pub mod basic;
+
+/// Call before all of `room` is written. Memory that is new to the process takes a page fault for every page at the
+/// first write, and one call that maps them all costs a third of that.
+#[inline]
+pub fn prefault<T>(room: &mut [core::mem::MaybeUninit<T>]) {
+    #[cfg(target_os = "linux")]
+    if size_of_val(room) >= 32 << 10 {
+        populate(room.as_mut_ptr().cast(), size_of_val(room));
+    }
+    #[cfg(not(target_os = "linux"))]
+    let _ = room;
+}
+
+#[cfg(target_os = "linux")]
+#[inline(never)]
+fn populate(start: *mut u8, size: usize) {
+    use core::sync::atomic::{AtomicBool, Ordering};
+    /// Linux has the advice since 5.14.
+    static IS_REFUSED: AtomicBool = AtomicBool::new(false);
+    if IS_REFUSED.load(Ordering::Relaxed) {
+        return;
+    }
+    let before = start.align_offset(page_size());
+    let pages = size.saturating_sub(before) / page_size() * page_size();
+    let first = start.wrapping_add(before).cast();
+    // SAFETY: the pages are inside the `size` bytes at `start`, and the call changes nothing that they hold.
+    if unsafe { libc::madvise(first, pages, libc::MADV_POPULATE_WRITE) } != 0 {
+        IS_REFUSED.store(true, Ordering::Relaxed);
+    }
+}

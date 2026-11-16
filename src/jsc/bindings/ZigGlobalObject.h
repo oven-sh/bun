@@ -677,6 +677,7 @@ private:
 public:
     // De-optimization once `require("module")._resolveFilename` is written to
     bool hasOverriddenModuleResolveFilenameFunction = false;
+    bool hasLintPluginCalledImport = false;
     // De-optimization once `require("module").wrapper` or `require("module").wrap` is written to
     bool hasOverriddenModuleWrapper = false;
     // De-optimization once `require("module").runMain` is written to

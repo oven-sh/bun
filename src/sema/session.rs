@@ -49,7 +49,21 @@ pub fn set_in<K>(arena: &Arena) -> ArenaHashSet<'_, K> {
 /// otherwise stays resident as a whole. Only the thread that owns a heap can do this. The allocator does it for a
 /// thread that parks, so this is for a thread that has work for a long time.
 pub fn give_back_free_memory() {
-    bun_alloc::mimalloc::mi_on_thread_idle();
+    if !HAS_MEMORY_TO_SPARE.get().is_some_and(|it| it()) {
+        bun_alloc::mimalloc::mi_on_thread_idle();
+    }
+}
+
+/// Makes mimalloc return freed pages right away instead of caching them for reuse.
+pub fn stop_keeping_free_pages() {
+    bun_alloc::mimalloc::mi_option_set(bun_alloc::mimalloc::Option::purge_delay, 0);
+}
+
+static HAS_MEMORY_TO_SPARE: OnceLock<fn() -> bool> = OnceLock::new();
+
+/// `give_back_free_memory` does nothing while `has_memory_to_spare` returns true.
+pub fn keep_free_memory_while(has_memory_to_spare: fn() -> bool) {
+    let _ = HAS_MEMORY_TO_SPARE.set(has_memory_to_spare);
 }
 
 /// Starts at 1.
@@ -227,8 +241,7 @@ impl Session {
                 _ => kept.push(vec![value]),
             });
         }
-        // Make mimalloc return freed pages right away instead of caching them for reuse.
-        bun_alloc::mimalloc::mi_option_set(bun_alloc::mimalloc::Option::purge_delay, 0);
+        stop_keeping_free_pages();
         let (runs, count) = (kept.len(), kept.len() + arenas.len());
         let (kept, arenas) = (Guarded::new(kept), Guarded::new(arenas));
         in_parallel(count, &|index| {

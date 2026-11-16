@@ -146,6 +146,25 @@ fn release_free_pages_of(pool: &bun_threading::ThreadPool) {
     });
 }
 
+/// Each thread returns to the system what it has allocated: its `caches`, its `values` and its free pages. When the
+/// process exits, a single thread unmaps what is left.
+pub fn free_before_exit<T: Send>(
+    caches: &ThreadCaches,
+    threads: usize,
+    values: Vec<(ThreadId, T)>,
+) {
+    bun_sema::session::stop_keeping_free_pages();
+    let values = Guarded::new(values);
+    for_each_parallel_in_runs(caches, threads, threads, 1, &|_| {
+        let thread = std::thread::current().id();
+        let own: Vec<_> = (values.lock().extract_if(.., |it| it.0 == thread)).collect();
+        drop(own);
+        drop(bun_sema_parser::ThreadCaches::take());
+        drop(bun_sema::bind::ThreadCaches::take());
+        bun_core::Global::mimalloc_cleanup(true);
+    });
+}
+
 /// Runs `work(i)` for every `i` below `count` on Bun's shared thread pool, on at most `threads` threads at a time.
 /// Indices are claimed in order, `run` consecutive ones at a time. Each thread takes the next run when it finishes its
 /// previous one.
@@ -429,6 +448,15 @@ pub fn use_pool_for_lowering(name: &'static str) {
     make_pool(&LOWERING_POOL, name, LOWERING_STACK_SIZE);
 }
 
+/// They are there when the configuration has been read.
+fn start_threads_meanwhile(threads: usize) {
+    let count = u16::try_from(threads).unwrap_or(u16::MAX);
+    let _ = std::thread::Builder::new()
+        .name("Bun Starter".into())
+        .stack_size(256 << 10)
+        .spawn(move || region_pool().warm(count));
+}
+
 fn make_pool(place: &OnceLock<bun_threading::ThreadPool>, name: &'static str, stack_size: u32) {
     place.get_or_init(|| {
         // The tests of this program run at once on the one pool, and some hold a thread of it until another thread comes: as many as the pool can count.
@@ -642,7 +670,7 @@ impl JoinableRegion {
             let helper = bun_core::heap::into_raw(Box::new(Helper { task, region }));
             batch.push(Batch::from(helper.cast::<Task>()));
         }
-        pool.schedule(batch);
+        pool.schedule_all_at_once(batch);
     }
 
     fn help(self: &Arc<JoinableRegion>) {
@@ -1799,6 +1827,9 @@ pub fn check_provided_then<R>(
         0 => usize::from(bun_core::get_thread_count()),
         n => n,
     };
+    if provided.ends_the_process && threads > 1 {
+        start_threads_meanwhile(threads);
+    }
     let cwd = host::from_native(request.cwd);
     let applies_to_every_file = !request.plan_options.project_is_fallback;
     let named = (request.project.filter(|_| applies_to_every_file))
@@ -1830,10 +1861,16 @@ pub fn check_provided_then<R>(
         then(report)
     };
     if disk.ends_the_process {
-        let sessions = std::mem::take(&mut *disk.to_drop_before_the_process_ends.lock());
+        let mut sessions = std::mem::take(&mut *disk.to_drop_before_the_process_ends.lock());
         let (mut then, mut result) = (Some((then, report)), None);
+        // The system unmaps a small program faster than threads wake up to free it.
+        let size: usize = sessions.iter().map(Session::allocated_bytes).sum();
+        if size < 64 << 20 && !bun_core::feature_flags::HELP_CATCH_MEMORY_ISSUES {
+            let _not_dropped = std::mem::ManuallyDrop::new(std::mem::take(&mut sessions));
+        }
         Session::drop_before_the_process_ends(sessions, |count, work| {
-            disk.parallel_while(count, work, &mut || {
+            let threads = disk.threads().min(16);
+            for_each_parallel_while(&disk.caches, threads, count, 1, work, &mut || {
                 result = then.take().map(|(then, report)| then(report));
             });
         });

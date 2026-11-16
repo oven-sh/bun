@@ -119,6 +119,9 @@ async function formatChecked(files: Record<string, string>, args: string[], opti
 const slowdown = (odd: { cpu: number }, plain: { cpu: number }) =>
   odd.cpu / Math.max(plain.cpu, isWindows ? 1 / 64 : 0);
 
+/** What's already formatted is formatted too. */
+const formatsAll = { BUN_FEATURE_FLAG_DISABLE_SETTLED_FORMAT: "1" };
+
 /** True if the temporary directory is inside a repository. */
 const isInRepository = (function look(directory: string): boolean {
   const isRoot = [".git", ".jj"].some(name => existsSync(join(directory, name)));
@@ -7553,16 +7556,17 @@ try {
       "// Returns the sum.\nfunction add(first, second) {\n  const sum = first + second; // a number\n  return [sum, { first, second }];\n}\n\n";
     const length = Math.ceil(texts.reduce((sum, text) => sum + Buffer.byteLength(text), 0) / texts.length);
     for (const configuration of [{}, { ".oxfmtrc.json": "{}\n" }]) {
-      const run = (text: (index: number) => string) =>
+      const run = (text: (index: number) => string, env = {}) =>
         format(
           {
             ...configuration,
             ...Object.fromEntries(shapes.map(([ending], index) => [`${index}.${ending}`, text(index)])),
           },
           ["--check", "--log-level", "silent"],
+          { env },
         );
       const odd = await run(index => texts[index]);
-      const plain = await run(() => ordinary.repeat(length / ordinary.length));
+      const plain = await run(() => ordinary.repeat(length / ordinary.length), formatsAll);
       // 2.3 to 3 on Linux and 8.3 on Windows when all is well. One shape that takes quadratic time adds 9 or more.
       expect(slowdown(odd, plain)).toBeLessThan(isWindows ? 16 : 8);
     }
@@ -9566,7 +9570,7 @@ describe.concurrent("path handling", () => {
       stderr: "inherit",
     });
     const stdout = await proc.stdout.text();
-    const { config } = JSON.parse(stdout.slice(stdout.lastIndexOf("<marker>") + "<marker>".length));
+    const { config } = JSON.parse(stdout.split("<marker>").at(-2)!);
     // Nothing is installed there, so each group gets an error.
     expect(config.groups.map(({ error, ...which }: { error: string }) => [typeof error, which])).toEqual(
       groups.map(({ classes, ...which }) => ["string", which]),
@@ -11258,5 +11262,70 @@ describe.concurrent("[fmt] in bunfig.toml", () => {
       "experimental-cli",
       "lsp",
     ]);
+  });
+});
+
+describe.concurrent("files that are formatted, or nearly", () => {
+  const around = (text: string) => {
+    const settled = Array.from({ length: 8 }, (_, i) => `function f${i}(a) {\n  return a + ${i};\n}\n`).join("\n");
+    return `${settled}\n${text}\n${settled.replaceAll("function f", "function g")}`;
+  };
+  const cases: [name: string, text: string, options?: object][] = [
+    ["a.ts", "export const shown = (\n  n: number,\n): number => (n > 0 ? Math.floor(n) : 0);\n", { printWidth: 44 }],
+    ["a.ts", "export const shown = (\n  n: number,\n): number => (n > 0 ? Math.floor(n) : 0);\n", { printWidth: 43 }],
+    ["a.ts", "const inked = columns.flatMap(\n  (count, x) => (count > 0 ? [x] : []),\n);\n", { printWidth: 43 }],
+    ["a.ts", "const inked = columns.flatMap(\n  (count, x) => (count > 0 ? [x] : []),\n);\n", { printWidth: 42 }],
+    [
+      "a.tsx",
+      `mock(\n  "../../a/long/enough/path/to/a/module",\n  <T,>() => ({\n    a: 1,\n  }),\n);\n`,
+      { printWidth: 50 },
+    ],
+    ["a.ts", "function h(\n  a: A,\n): (\n  b: B,\n\n  c: C,\n) => D {\n  return a;\n}\n"],
+    ["a.ts", "h(() => ({}.x as Api).size());\n"],
+    ["a.ts", "h(() => ({ a: 1 } as unknown as Api).size() + 1);\n"],
+    ["a.ts", "({ a: 1 } as any, b);\n"],
+    ["a.tsx", `const a = <span extends className="a" />;\n`],
+    ["a.js", "async(...() => {});\n"],
+    ["a.js", "async ()\n{\n  d;\n}\n"],
+    ["a.js", "const // a\n// b\nv = 1,\n  w = 2;\n"],
+    ["a.ts", "class C {\n  export // a\n  constructor() {}\n}\n", { semi: false }],
+    ["a.js", "function h() {\n  one();\n  two( );\n  three();\n}\n"],
+    ["a.js", "h(() => {\n  one();\n\n\n  two();\n});\n"],
+    ["a.js", "debugger;\nh( );\n"],
+    ["a.js", "let f0;\n"],
+    ["a.js", "export const a = 1;\nexport { b as a };\n"],
+    ["a.js", "// prettier-ignore\nh( );\n"],
+    ["a.js", "h();\n", { endOfLine: "crlf" }],
+    ["a.jsx", 'const a = (\n  <a>\n    b{" "}\n    <c />\n  </a>\n);\n'],
+    ["a.js", "const a = css`\n  color:red;\n`;\n"],
+  ];
+  test.each([".prettierrc", ".oxfmtrc.json"])("are treated like any other file with %s", async configuration => {
+    const files: Record<string, string> = {};
+    cases.forEach(([name, text, options = {}], i) => {
+      files[`${i}/${configuration}`] = JSON.stringify(options);
+      files[`${i}/alone.${name}`] = text;
+      files[`${i}/among.${name}`] = around(text);
+      files[`${i}/crlf.${name}`] = around(text).replaceAll("\n", "\r\n");
+    });
+    const reads = Object.keys(files);
+    const results = [];
+    for (const env of [{}, formatsAll]) {
+      const runs = await Promise.all([format(files, ["-l"], { env }), format(files, [], { env, reads })]);
+      results.push(runs.map(({ cpu, raw, ...rest }) => rest));
+    }
+    expect(results[0]).toEqual(results[1]);
+    expect(results[0][0].stdout).toContain("0/among.a.ts");
+  });
+
+  test.skipIf(isDebug || isASAN)("take a fraction of the time", async () => {
+    const files = {
+      "a.js": around("h();\n")
+        .repeat(2000)
+        .replace(/function \w+/g, "x = function ")
+        .replace(/^}$/gm, "};"),
+    };
+    const [settled, all] = [await format(files, ["-l"]), await format(files, ["-l"], { env: formatsAll })];
+    expect([settled.stdout, all.stdout]).toEqual(["", ""]);
+    expect(slowdown(all, settled)).toBeGreaterThan(1.5);
   });
 });

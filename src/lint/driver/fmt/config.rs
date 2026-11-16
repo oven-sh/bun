@@ -14,6 +14,7 @@ use crate::configs::{VITE_CONFIG_NAMES, package_that_depends_on};
 use crate::gitignore::{self, Chain};
 use crate::paths::package_of;
 use crate::run::{Environment, Fatal};
+use crate::walk::AwaitTurn;
 use crate::{evaluate, fs, paths};
 use bun_ast::Expr;
 use bun_ast::expr::Data;
@@ -1030,6 +1031,8 @@ pub(crate) struct Configs<'c> {
     /// Compiled import-sorting settings, keyed by the options they came from, so they're compiled once instead of per
     /// file.
     sort_imports: Guarded<Vec<(SortSettings, Option<Arc<SortImports>>)>>,
+    /// The first of `sort_imports`, which is that of most files.
+    first_sort_imports: OnceLock<(SortSettings, Option<Arc<SortImports>>)>,
     /// With oxfmt, the only `.editorconfig` that applies: the one nearest to the working directory.
     oxfmt_editorconfig: Option<Arc<editorconfig::File>>,
     /// Warnings for the user.
@@ -1096,6 +1099,7 @@ impl<'c> Configs<'c> {
             flavor: Flavor::Prettier,
             tsconfigs: Guarded::new(FxHashMap::default()),
             has_yarn_or_pnpm_files: OnceLock::new(),
+            first_sort_imports: OnceLock::new(),
             sort_imports: Guarded::new(Vec::new()),
             oxfmt_editorconfig: None,
             warnings: Guarded::new(Vec::new()),
@@ -1189,6 +1193,25 @@ impl<'c> Configs<'c> {
         Ok(())
     }
 
+    /// Calls `in_parallel`. If that leaves several new warnings, whose order is then by chance, `in_order` makes them
+    /// again.
+    pub(crate) fn with_warnings_in_order<T>(
+        &self,
+        in_parallel: impl FnOnce() -> T,
+        in_order: impl FnOnce() -> T,
+    ) -> T {
+        let lists = [&self.warnings, &self.unsupported_options];
+        let before = lists.map(|it| it.lock().len());
+        let result = in_parallel();
+        if (lists.iter().zip(before)).all(|(it, before)| it.lock().len() <= before + 1) {
+            return result;
+        }
+        for (it, before) in lists.iter().zip(before) {
+            it.lock().truncate(before);
+        }
+        in_order()
+    }
+
     fn warn(&self, parts: &[&[u8]]) {
         let warning = parts.concat();
         let mut warnings = self.warnings.lock();
@@ -1199,7 +1222,19 @@ impl<'c> Configs<'c> {
 
     /// Prettier's `loadConfig`. `None` if the file has no configuration, like most `package.json` files.
     fn load(&self, path: &[u8], is_oxfmt: bool) -> Result<Option<Arc<Config>>, Fatal> {
+        self.load_in_turn(path, is_oxfmt, &|| true)
+    }
+
+    fn load_in_turn(
+        &self,
+        path: &[u8],
+        is_oxfmt: bool,
+        await_turn: AwaitTurn<'_>,
+    ) -> Result<Option<Arc<Config>>, Fatal> {
         let name = paths::basename(path);
+        if name != b"package.json" && !await_turn() {
+            return Ok(None);
+        }
         let read = || {
             self.options.pipes.read(path).map_err(|error| {
                 Fatal(
@@ -1229,6 +1264,7 @@ impl<'c> Configs<'c> {
                 .and_then(|it| it.get(b"prettier"))
             {
                 None | Some(Json::Null | Json::Bool(false)) => return Ok(None),
+                Some(_) if !await_turn() => return Ok(None),
                 Some(config) => config.clone(),
             }
         } else if name == b"package.yaml" {
@@ -1377,6 +1413,7 @@ impl<'c> Configs<'c> {
         directory: &[u8],
         entries: impl Iterator<Item = (&'n [u8], bool)>,
         above: Option<&Scope>,
+        await_turn: AwaitTurn<'_>,
     ) -> Found {
         let count = if self.flavor == Flavor::Oxfmt {
             OXFMT_NAME_COUNT
@@ -1408,11 +1445,17 @@ impl<'c> Configs<'c> {
                 );
             }
         }
-        self.scope_of(directory, listed, above)
+        self.scope_of(directory, listed, above, await_turn)
     }
 
     /// The scope for `directory`, given its relevant entries in `listed` and its parent's scope `above`.
-    fn scope_of(&self, directory: &[u8], listed: Listed, above: Option<&Scope>) -> Found {
+    fn scope_of(
+        &self,
+        directory: &[u8],
+        listed: Listed,
+        above: Option<&Scope>,
+        await_turn: AwaitTurn<'_>,
+    ) -> Found {
         let Listed {
             mut candidates,
             has_editorconfig,
@@ -1441,9 +1484,8 @@ impl<'c> Configs<'c> {
             }
             let mut candidates = candidates.into_iter();
             for at in candidates.by_ref() {
-                if let Some(found) =
-                    self.load(&paths::join(directory, NAMES[at]), at < OXFMT_NAME_COUNT)?
-                {
+                let path = paths::join(directory, NAMES[at]);
+                if let Some(found) = self.load_in_turn(&path, at < OXFMT_NAME_COUNT, await_turn)? {
                     if at < OXFMT_NAME_COUNT
                         && let Some(other) =
                             candidates.find_map(|it| prettier_config_name(directory, it))
@@ -1556,11 +1598,11 @@ impl<'c> Configs<'c> {
             let entries = fs::list(directory).map_or_else(Vec::new, |it| it.entries);
             let entries = entries.iter().map(|it| (&it.name[..], it.is_directory));
             let found = match &above {
-                Some(Ok(above)) => self.scope(directory, entries, Some(above)),
-                None => self.scope(directory, entries, None),
+                Some(Ok(above)) => self.scope(directory, entries, Some(above), &|| true),
+                None => self.scope(directory, entries, None, &|| true),
                 // A broken configuration file doesn't matter if there's a nearer one.
                 Some(Err(error)) => {
-                    self.scope(directory, entries, None)
+                    self.scope(directory, entries, None, &|| true)
                         .and_then(|scope| match scope.config {
                             Some(_) => Ok(scope),
                             None => Err(error.clone()),
@@ -1582,11 +1624,12 @@ impl<'c> Configs<'c> {
         directory: &[u8],
         entries: impl Iterator<Item = (&'n [u8], bool)>,
         above: &Arc<Scope>,
+        await_turn: AwaitTurn<'_>,
     ) -> Found {
         if self.options.disable_nested_config {
             return Ok(Arc::clone(above));
         }
-        let found = self.scope(directory, entries, Some(above));
+        let found = self.scope(directory, entries, Some(above), await_turn);
         self.by_directory
             .lock()
             .insert(directory.to_vec(), found.clone());
@@ -1850,8 +1893,15 @@ impl<'c> Configs<'c> {
 
     /// The `parser` option for the file at `path` in `scope`, if it's set.
     pub(crate) fn parser_for(&self, scope: &Scope, path: &[u8]) -> Option<Box<[u8]>> {
+        match self.may_set_parser(scope) {
+            true => self.options_for(scope, path).ok()?.options.parser,
+            false => None,
+        }
+    }
+
+    pub(crate) fn may_set_parser(&self, scope: &Scope) -> bool {
         let is_about_parser = |it: &(Vec<u8>, Vec<u8>)| it.0 == b"parser";
-        let may_be_set = self.options.format.iter().any(|it| it.0 == b"parser")
+        self.options.format.iter().any(|it| it.0 == b"parser")
             || (self.overrides.iter()).any(|it| it.settings.iter().any(is_about_parser))
             || self.config_of(scope).ok().flatten().is_some_and(|config| {
                 config.settings.iter().any(is_about_parser)
@@ -1859,25 +1909,32 @@ impl<'c> Configs<'c> {
                         .overrides
                         .iter()
                         .any(|it| it.settings.iter().any(is_about_parser))
-            });
-        match may_be_set {
-            true => self.options_for(scope, path).ok()?.options.parser,
-            false => None,
-        }
+            })
     }
 
     /// Prettier's `getOptionsForFile`: how to format the file at `path` in `scope`.
     pub(crate) fn options_for(&self, scope: &Scope, path: &[u8]) -> Result<Resolved, Fatal> {
-        self.options_of(scope, Some(path))
+        self.options_of(scope, Some(path), true)
+    }
+
+    /// Like [`Configs::options_for`]. `None` if that fails or warns.
+    pub(crate) fn sound_options_for(&self, scope: &Scope, path: &[u8]) -> Option<Resolved> {
+        self.options_of(scope, Some(path), false).ok()
     }
 
     /// Same for text without a file name, like `prettier --parser x < file`. `scope` is the working directory's.
     /// Overrides and `.editorconfig` sections match on a name, so they don't apply.
     pub(crate) fn options_without_name(&self, scope: &Scope) -> Result<Resolved, Fatal> {
-        self.options_of(scope, None)
+        self.options_of(scope, None, true)
     }
 
-    fn options_of(&self, scope: &Scope, path: Option<&[u8]>) -> Result<Resolved, Fatal> {
+    fn options_of(
+        &self,
+        scope: &Scope,
+        path: Option<&[u8]>,
+        may_warn: bool,
+    ) -> Result<Resolved, Fatal> {
+        let before_warning = || may_warn.then_some(()).ok_or(Fatal(Vec::new()));
         let directory = path.map_or(&self.environment.cwd[..], paths::dirname);
         let config = self.config_of(scope)?;
         let is_oxfmt = self.is_oxfmt_for(scope);
@@ -2072,6 +2129,7 @@ impl<'c> Configs<'c> {
                     });
                 }
                 name if is_tailwind(name) && value != b"false" => {
+                    before_warning()?;
                     resolved.has_unsupported_option = true;
                     let mut unsupported = self.unsupported_options.lock();
                     if !unsupported.iter().any(|it| it == name) {
@@ -2111,6 +2169,7 @@ impl<'c> Configs<'c> {
             sort.add_plugin(name);
         }
         for (name, value) in sort.options_of_unlisted_plugins().chain(unknown) {
+            before_warning()?;
             // Strings have no quotes here, so a value is treated as JSON if it parses as something other than a string.
             let is_json = name.starts_with(b"tailwind");
             let json = json::parse(value).filter(|it| is_json || !matches!(it, Json::String(_)));
@@ -2149,6 +2208,7 @@ impl<'c> Configs<'c> {
             (Some(value), _) => (value, tailwindcss_set_by(is_tailwindcss_from_bun)),
             (None, Some(entries)) => {
                 if let Some(warning) = tailwind::plugin_warning(&entries) {
+                    before_warning()?;
                     self.warn(&[&warning]);
                 }
                 let mut value = Vec::new();
@@ -2189,11 +2249,17 @@ impl<'c> Configs<'c> {
     }
 
     fn sort_imports(&self, settings: SortSettings) -> Result<Option<Arc<SortImports>>, Fatal> {
+        if let Some((first, compiled)) = self.first_sort_imports.get()
+            && *first == settings
+        {
+            return Ok(compiled.clone());
+        }
         let mut known = self.sort_imports.lock();
         if let Some((_, compiled)) = known.iter().find(|it| it.0 == settings) {
             return Ok(compiled.clone());
         }
         let compiled = settings.compile().map_err(Fatal)?;
+        (self.first_sort_imports).get_or_init(|| (settings.clone(), compiled.clone()));
         known.push((settings, compiled.clone()));
         Ok(compiled)
     }

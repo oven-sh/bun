@@ -1013,7 +1013,8 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         crate::cli::startup_options::refuse_code_the_compiler_did_not_see();
         bun_jsc::initialize(bun_jsc::InitializeOptions {
             eval_mode: ctx.runtime_options.eval.eval_and_print,
-            one_shot: bun_jsc::is_one_shot_eval_invocation(),
+            one_shot: bun_jsc::is_one_shot_eval_invocation()
+                && !ctx.runtime_options.eval.reads_configuration,
             runs_compiled_code: crate::cli::run_compiled::runs_compiled_code(),
             locks_builtins: crate::cli::run_compiled::is_checked(),
             ..Default::default()
@@ -1411,6 +1412,15 @@ impl Run<'_> {
 
         Self::add_conditional_globals(global, ctx);
 
+        if ctx.runtime_options.eval.reads_configuration {
+            // Nearly all that it allocates is alive until it exits, which is soon.
+            let spare = super::lint_js::memory_for_engines() / 4;
+            vm.allocate_without_collecting(spare.min(256 << 20));
+            crate::read_ahead::enable(vm, false);
+            let script = ctx.runtime_options.eval.script;
+            crate::read_ahead::expect(bun_lint_driver::configuration_read_by(script).into_iter());
+        }
+
         // ── redis preconnect (must run under the API lock) ─────────────────
         'do_redis_preconnect: {
             if !ctx.runtime_options.redis_preconnect {
@@ -1563,6 +1573,7 @@ impl Run<'_> {
         // standalone executable has no transpiler garbage, and its unlinked code blocks came from the embedded bytecode
         // cache — deleting them here only means decoding them again on first call — so leave its heap to the collector.
         if vm.standalone_module_graph.is_none()
+            && !ctx.runtime_options.eval.reads_configuration
             && (vm.is_event_loop_alive() || vm.event_loop().tick_concurrent_with_count() > 0)
         {
             global.vm().release_weak_refs();

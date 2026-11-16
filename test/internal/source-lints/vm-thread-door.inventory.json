@@ -86,6 +86,9 @@
   "src/runtime/cli/run_compiled.rs": {
     "thread spawn": 1
   },
+  "src/runtime/cli/short_run.rs": {
+    "thread spawn": 1
+  },
   "src/runtime/cli/test/ShardsByReach.rs": {
     "thread spawn": 1
   },
@@ -175,6 +178,15 @@
     "thread spawn": 2,
     "unsafe impl Send": [
       "PathWatcher"
+    ]
+  },
+  "src/runtime/read_ahead.rs": {
+    "thread spawn": 1,
+    "unsafe impl Send": [
+      "Template"
+    ],
+    "unsafe impl Sync": [
+      "Template"
     ]
   },
   "src/runtime/shell/builtin/cp.rs": {

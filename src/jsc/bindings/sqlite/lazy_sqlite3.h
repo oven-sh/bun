@@ -53,6 +53,7 @@ typedef int (*lazy_sqlite3_extended_errcode_type)(sqlite3*);
 typedef int (*lazy_sqlite3_error_offset_type)(sqlite3*);
 typedef const char* (*lazy_sqlite3_errstr_type)(int);
 typedef char* (*lazy_sqlite3_expanded_sql_type)(sqlite3_stmt* pStmt);
+typedef int (*lazy_sqlite3_trace_v2_type)(sqlite3*, unsigned, int (*)(unsigned, void*, void*, void*), void*);
 typedef const char* (*lazy_sqlite3_sql_type)(sqlite3_stmt* pStmt);
 typedef int (*lazy_sqlite3_finalize_type)(sqlite3_stmt* pStmt);
 typedef void (*lazy_sqlite3_free_type)(void*);
@@ -157,6 +158,7 @@ inline lazy_sqlite3_errmsg_type lazy_sqlite3_errmsg;
 inline lazy_sqlite3_errcode_type lazy_sqlite3_errcode;
 inline lazy_sqlite3_errstr_type lazy_sqlite3_errstr;
 inline lazy_sqlite3_expanded_sql_type lazy_sqlite3_expanded_sql;
+inline lazy_sqlite3_trace_v2_type lazy_sqlite3_trace_v2;
 inline lazy_sqlite3_sql_type lazy_sqlite3_sql;
 inline lazy_sqlite3_finalize_type lazy_sqlite3_finalize;
 inline lazy_sqlite3_free_type lazy_sqlite3_free;
@@ -252,6 +254,7 @@ inline lazy_sqlite3changeset_apply_type lazy_sqlite3changeset_apply;
 #define sqlite3_errcode lazy_sqlite3_errcode
 #define sqlite3_errstr lazy_sqlite3_errstr
 #define sqlite3_expanded_sql lazy_sqlite3_expanded_sql
+#define sqlite3_trace_v2 lazy_sqlite3_trace_v2
 #define sqlite3_sql lazy_sqlite3_sql
 #define sqlite3_finalize lazy_sqlite3_finalize
 #define sqlite3_free lazy_sqlite3_free
@@ -406,6 +409,7 @@ inline int lazyLoadSQLiteUnlocked(WTF::String* errorMessage = nullptr)
     lazy_sqlite3_errcode = (lazy_sqlite3_errcode_type)dlsym(sqlite3_handle, "sqlite3_errcode");
     lazy_sqlite3_errstr = (lazy_sqlite3_errstr_type)dlsym(sqlite3_handle, "sqlite3_errstr");
     lazy_sqlite3_expanded_sql = (lazy_sqlite3_expanded_sql_type)dlsym(sqlite3_handle, "sqlite3_expanded_sql");
+    lazy_sqlite3_trace_v2 = (lazy_sqlite3_trace_v2_type)dlsym(sqlite3_handle, "sqlite3_trace_v2");
     lazy_sqlite3_sql = (lazy_sqlite3_sql_type)dlsym(sqlite3_handle, "sqlite3_sql");
     lazy_sqlite3_finalize = (lazy_sqlite3_finalize_type)dlsym(sqlite3_handle, "sqlite3_finalize");
     lazy_sqlite3_free = (lazy_sqlite3_free_type)dlsym(sqlite3_handle, "sqlite3_free");

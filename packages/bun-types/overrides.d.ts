@@ -25,6 +25,18 @@ interface BunConsumerConvenienceMethods {
   json(): Promise<any>;
 }
 
+declare module "node:sqlite" {
+  const Database: typeof DatabaseSync;
+  type Database = DatabaseSync;
+  const Statement: typeof StatementSync;
+  type Statement = StatementSync;
+
+  interface StatementSync {
+    close(): void;
+    [Symbol.dispose](): void;
+  }
+}
+
 declare module "stream/web" {
   interface ReadableStream extends BunConsumerConvenienceMethods {
     /**

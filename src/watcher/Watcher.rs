@@ -56,7 +56,7 @@ pub const MAX_EVICTION_COUNT: usize = 8096;
 /// The items to stop watching once `on_file_update` returns.
 pub type Evictions = BoundedArray<WatchItemIndex, MAX_EVICTION_COUNT>;
 
-const NO_WATCH_ITEM: WatchItemIndex = WatchItemIndex::MAX;
+pub const NO_WATCH_ITEM: WatchItemIndex = WatchItemIndex::MAX;
 
 // TODO: some platform-specific behavior is implemented in
 // this file instead of the platform-specific file.
@@ -100,6 +100,8 @@ impl Drop for OwnedWatcher {
 pub(crate) struct State {
     pub(crate) watchlist: WatchList,
     evictions: Evictions,
+    directory_evictions: Vec<Box<[u8]>>,
+    file_evictions: Vec<Box<[u8]>>,
     /// `Some` until `thread_main` takes it.
     thread: Option<Box<WatcherThread>>,
 }
@@ -254,9 +256,6 @@ impl Watcher {
 
     fn flush_evictions(&self, state: &mut State) {
         let evictions = &mut state.evictions;
-        if evictions.is_empty() {
-            return;
-        }
         let watchlist = &mut state.watchlist;
 
         // swapRemove messes up the order
@@ -285,6 +284,59 @@ impl Watcher {
         }
 
         evictions.clear();
+
+        for path in state.file_evictions.drain(..) {
+            self.remove_path_watch(watchlist, &path, WatchItemKind::File);
+        }
+
+        let mut pending_index = 0;
+        while pending_index < state.directory_evictions.len() {
+            let hash = Self::get_hash(&state.directory_evictions[pending_index]);
+            if watchlist
+                .items_kind()
+                .iter()
+                .zip(watchlist.items_parent_hash())
+                .any(|(&kind, &parent)| kind == WatchItemKind::File && parent == hash)
+            {
+                pending_index += 1;
+                continue;
+            }
+            let path = state.directory_evictions.swap_remove(pending_index);
+            self.remove_path_watch(watchlist, &path, WatchItemKind::Directory);
+        }
+    }
+
+    fn remove_path_watch(&self, watchlist: &mut WatchList, path: &[u8], kind: WatchItemKind) {
+        let Some(index) = watchlist
+            .items_file_path()
+            .iter()
+            .zip(watchlist.items_kind())
+            .position(|(candidate, &candidate_kind)| {
+                candidate.as_ref() == path && candidate_kind == kind
+            })
+        else {
+            return;
+        };
+        // Linux file watches can be fd-less; closing an fd alone never removes inotify watches.
+        #[cfg(any(target_os = "linux", target_os = "android"))]
+        {
+            let descriptor = watchlist.items_eventlist_index()[index];
+            if descriptor >= 0
+                && !watchlist
+                    .items_eventlist_index()
+                    .iter()
+                    .enumerate()
+                    .any(|(other, &current)| other != index && current == descriptor)
+            {
+                let _ =
+                    bun_sys::linux::inotify_rm_watch(self.platform.fd.fd().native(), descriptor);
+            }
+        }
+        drop(watchlist.swap_remove(index));
+        #[cfg(any(target_os = "macos", target_os = "freebsd"))]
+        if let Some(Some(moved)) = watchlist.items_file().get(index) {
+            self.add_file_descriptor_to_kqueue_without_checks(moved, index);
+        }
     }
 
     /// Register a file descriptor with kqueue on macOS without validation.
@@ -506,7 +558,8 @@ impl Watcher {
             && self.is_eligible_directory(parent_dir_with_slash)
             && index_of(watchlist, parent_dir_hash).is_none();
         #[cfg(not(windows))]
-        if !append_parent_dir && feature_flags::WATCH_DIRECTORIES
+        if !append_parent_dir
+            && feature_flags::WATCH_DIRECTORIES
             && self.is_eligible_directory(parent_dir_with_slash)
         {
             if let Some(index) = index_of(watchlist, parent_dir_hash) {
@@ -589,7 +642,11 @@ impl Watcher {
             Self::get_hash(normalized_path)
         };
         let file_path = normalized_path;
-        let watchlist = &mut self.state.lock().watchlist;
+        let state = &mut *self.state.lock();
+        state
+            .directory_evictions
+            .retain(|path| path.as_ref() != file_path);
+        let watchlist = &mut state.watchlist;
         if let Some(idx) = index_of(watchlist, hash) {
             #[cfg(not(windows))]
             self.refresh_directory_watch(watchlist, idx)?;
@@ -616,10 +673,22 @@ impl Watcher {
         if file_path.is_empty() {
             return false;
         }
+        #[cfg(windows)]
+        if bun_paths::resolve_path::is_parent_or_equal(self.top_level_dir(), file_path)
+            == bun_paths::resolve_path::ParentEqual::Unrelated
+        {
+            return false;
+        }
         let hash = Self::get_hash(file_path);
 
-        if index_of(&self.state.lock().watchlist, hash).is_some() {
-            return true;
+        {
+            let state = &mut *self.state.lock();
+            if index_of(&state.watchlist, hash).is_some() {
+                state
+                    .file_evictions
+                    .retain(|path| path.as_ref() != file_path);
+                return true;
+            }
         }
 
         // Only open fd if we might need it
@@ -669,7 +738,17 @@ impl Watcher {
         hash: HashType,
     ) -> sys::Result<()> {
         let file = file.map(CloseOnDrop::from);
-        let watchlist = &mut self.state.lock().watchlist;
+        let state = &mut *self.state.lock();
+        state
+            .file_evictions
+            .retain(|path| path.as_ref() != file_path);
+        let parent = Self::directory_path(
+            bun_paths::fs::PathName::init(file_path).dir_with_trailing_slash(),
+        );
+        state
+            .directory_evictions
+            .retain(|path| path.as_ref() != parent);
+        let watchlist = &mut state.watchlist;
 
         if let Some(index) = index_of(watchlist, hash) {
             if feature_flags::ATOMIC_FILE_WATCHER {
@@ -694,6 +773,39 @@ impl Watcher {
         self.state.lock().evictions.append_assume_capacity(index);
     }
 
+    /// Called after external directory owners release the path. File parents remain watched.
+    pub fn remove_directory(&self, path: &[u8]) {
+        let path = Self::directory_path(path);
+        let state = &mut *self.state.lock();
+        if !state
+            .watchlist
+            .items_file_path()
+            .iter()
+            .zip(state.watchlist.items_kind())
+            .any(|(candidate, &kind)| {
+                candidate.as_ref() == path && kind == WatchItemKind::Directory
+            })
+        {
+            return;
+        }
+        queue_path_eviction(&mut state.directory_evictions, path);
+    }
+
+    /// Called after graph and plugin owners release a file path.
+    pub fn remove_file(&self, path: &[u8]) {
+        let state = &mut *self.state.lock();
+        if !state
+            .watchlist
+            .items_file_path()
+            .iter()
+            .zip(state.watchlist.items_kind())
+            .any(|(candidate, &kind)| candidate.as_ref() == path && kind == WatchItemKind::File)
+        {
+            return;
+        }
+        queue_path_eviction(&mut state.file_evictions, path);
+    }
+
     pub fn on_maybe_watch_directory(&self, file_path: &'static [u8]) {
         // We don't want to watch:
         // - Directories outside the root directory
@@ -712,6 +824,8 @@ impl State {
         Self {
             watchlist: WatchList::default(),
             evictions: Evictions::new(),
+            directory_evictions: Vec::new(),
+            file_evictions: Vec::new(),
             thread: Some(thread),
         }
     }
@@ -737,6 +851,12 @@ fn index_of(watchlist: &WatchList, hash: HashType) -> Option<usize> {
 
 fn copy_path(path: &[u8]) -> Cow<'static, [u8]> {
     Cow::Owned(path.to_vec())
+}
+
+fn queue_path_eviction(queue: &mut Vec<Box<[u8]>>, path: &[u8]) {
+    if !queue.iter().any(|queued| queued.as_ref() == path) {
+        queue.push(Box::from(path));
+    }
 }
 
 // ─── WatchEvent ───────────────────────────────────────────────────────────
@@ -875,5 +995,191 @@ impl WatchItemColumns for WatchList {
     #[cfg(any(target_os = "linux", target_os = "android"))]
     fn items_eventlist_index(&self) -> &[platform::EventListIndex] {
         self.items::<"eventlist_index", platform::EventListIndex>()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    use super::WatchItemColumns;
+    use super::{
+        Evictions, NO_WATCH_ITEM, WatchEvent, WatchItemIndex, WatchList, Watcher, WatcherContext,
+        index_of, sys,
+    };
+
+    const ROOT: &[u8] = env!("CARGO_MANIFEST_DIR").as_bytes();
+    const FILE: &[u8] = concat!(env!("CARGO_MANIFEST_DIR"), "/lib.rs").as_bytes();
+
+    struct Context;
+
+    impl WatcherContext for Context {
+        fn on_file_update(
+            &mut self,
+            _: &[WatchEvent],
+            _: &[&[u8]],
+            _: &WatchList,
+            _: &mut Evictions,
+        ) {
+        }
+
+        fn on_error(&mut self, error: sys::Error) {
+            panic!("watcher failed: {error:?}");
+        }
+    }
+
+    #[test]
+    fn released_directory_is_removed() {
+        let watcher = Watcher::init(Box::new(Context), ROOT).unwrap();
+        let hash = Watcher::get_hash(ROOT);
+        let index = watcher.add_directory(ROOT, hash).unwrap();
+        assert_ne!(index, NO_WATCH_ITEM);
+        #[cfg(any(target_os = "linux", target_os = "android"))]
+        let descriptor = watcher.state.lock().watchlist.items_eventlist_index()[index as usize];
+        watcher.remove_directory(ROOT);
+        let mut state = watcher.state.lock();
+        watcher.flush_evictions(&mut state);
+        assert!(index_of(&state.watchlist, hash).is_none());
+        assert!(state.directory_evictions.is_empty());
+        #[cfg(any(target_os = "linux", target_os = "android"))]
+        {
+            let result =
+                bun_sys::linux::inotify_rm_watch(watcher.platform.fd.fd().native(), descriptor);
+            assert!(
+                result < 0,
+                "the inotify registration must already be removed"
+            );
+        }
+    }
+
+    #[test]
+    fn reacquired_directory_cancels_release() {
+        let watcher = Watcher::init(Box::new(Context), ROOT).unwrap();
+        let hash = Watcher::get_hash(ROOT);
+        assert_ne!(watcher.add_directory(ROOT, hash).unwrap(), NO_WATCH_ITEM);
+        watcher.remove_directory(ROOT);
+        watcher.add_directory(ROOT, hash).unwrap();
+        let mut state = watcher.state.lock();
+        watcher.flush_evictions(&mut state);
+        assert!(index_of(&state.watchlist, hash).is_some());
+        assert!(state.directory_evictions.is_empty());
+    }
+
+    #[test]
+    fn file_parent_is_released_after_its_file_is_evicted() {
+        let watcher = Watcher::init(Box::new(Context), ROOT).unwrap();
+        let directory_hash = Watcher::get_hash(ROOT);
+        assert_ne!(
+            watcher.add_directory(ROOT, directory_hash).unwrap(),
+            NO_WATCH_ITEM
+        );
+        assert!(watcher.add_file_by_path_slow(FILE));
+        watcher.remove_directory(ROOT);
+        let file_index = {
+            let mut state = watcher.state.lock();
+            watcher.flush_evictions(&mut state);
+            assert!(index_of(&state.watchlist, directory_hash).is_some());
+            index_of(&state.watchlist, Watcher::get_hash(FILE)).unwrap()
+        };
+        watcher.remove_at_index(file_index as WatchItemIndex);
+        let mut state = watcher.state.lock();
+        watcher.flush_evictions(&mut state);
+        assert!(index_of(&state.watchlist, directory_hash).is_none());
+        assert!(state.directory_evictions.is_empty());
+    }
+
+    #[test]
+    fn directory_release_follows_path_after_file_compaction() {
+        static PARENT: std::sync::OnceLock<Box<[u8]>> = std::sync::OnceLock::new();
+        let parent = PARENT.get_or_init(|| {
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .parent()
+                .unwrap()
+                .as_os_str()
+                .as_encoded_bytes()
+                .into()
+        });
+        let watcher = Watcher::init(Box::new(Context), parent).unwrap();
+        let file = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .unwrap()
+            .join("bun_core/lib.rs");
+        let file = file.as_os_str().as_encoded_bytes();
+        assert!(watcher.add_file_by_path_slow(file));
+        let directory_hash = Watcher::get_hash(ROOT);
+        let directory_index = watcher.add_directory(ROOT, directory_hash).unwrap();
+        assert_ne!(directory_index, NO_WATCH_ITEM);
+        let file_index =
+            index_of(&watcher.state.lock().watchlist, Watcher::get_hash(file)).unwrap();
+        assert!(file_index < directory_index as usize);
+        watcher.remove_directory(ROOT);
+        watcher.remove_at_index(file_index as WatchItemIndex);
+        let mut state = watcher.state.lock();
+        watcher.flush_evictions(&mut state);
+        assert!(index_of(&state.watchlist, directory_hash).is_none());
+        assert!(state.directory_evictions.is_empty());
+    }
+
+    #[test]
+    fn released_file_and_its_unowned_directory_are_removed() {
+        let watcher = Watcher::init(Box::new(Context), ROOT).unwrap();
+        assert!(watcher.add_file_by_path_slow(FILE));
+        let hash = Watcher::get_hash(FILE);
+        #[cfg(any(target_os = "linux", target_os = "android"))]
+        let descriptor = {
+            let state = watcher.state.lock();
+            state.watchlist.items_eventlist_index()[index_of(&state.watchlist, hash).unwrap()]
+        };
+        watcher.remove_file(FILE);
+        watcher.remove_directory(ROOT);
+        let mut state = watcher.state.lock();
+        watcher.flush_evictions(&mut state);
+        assert!(index_of(&state.watchlist, hash).is_none());
+        assert!(index_of(&state.watchlist, Watcher::get_hash(ROOT)).is_none());
+        #[cfg(any(target_os = "linux", target_os = "android"))]
+        assert!(
+            bun_sys::linux::inotify_rm_watch(watcher.platform.fd.fd().native(), descriptor) < 0
+        );
+    }
+
+    #[test]
+    fn reacquired_file_cancels_release() {
+        let watcher = Watcher::init(Box::new(Context), ROOT).unwrap();
+        assert!(watcher.add_file_by_path_slow(FILE));
+        watcher.remove_file(FILE);
+        assert!(watcher.add_file_by_path_slow(FILE));
+        let mut state = watcher.state.lock();
+        watcher.flush_evictions(&mut state);
+        assert!(index_of(&state.watchlist, Watcher::get_hash(FILE)).is_some());
+        assert!(state.file_evictions.is_empty());
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    #[test]
+    fn releasing_directory_alias_keeps_shared_inotify_registration() {
+        const ALIAS: &[u8] = concat!(env!("CARGO_MANIFEST_DIR"), "/.").as_bytes();
+        let watcher = Watcher::init(Box::new(Context), ROOT).unwrap();
+        let root_index = watcher
+            .add_directory(ROOT, Watcher::get_hash(ROOT))
+            .unwrap();
+        let alias_index = watcher
+            .add_directory(ALIAS, Watcher::get_hash(ALIAS))
+            .unwrap();
+        {
+            let state = watcher.state.lock();
+            assert_eq!(
+                state.watchlist.items_eventlist_index()[root_index as usize],
+                state.watchlist.items_eventlist_index()[alias_index as usize],
+            );
+        }
+        watcher.remove_directory(ROOT);
+        let mut state = watcher.state.lock();
+        watcher.flush_evictions(&mut state);
+        assert!(index_of(&state.watchlist, Watcher::get_hash(ROOT)).is_none());
+        let alias_index = index_of(&state.watchlist, Watcher::get_hash(ALIAS)).unwrap();
+        let descriptor = state.watchlist.items_eventlist_index()[alias_index];
+        assert!(
+            bun_sys::linux::inotify_rm_watch(watcher.platform.fd.fd().native(), descriptor) >= 0,
+            "the surviving directory alias must retain its inotify registration",
+        );
     }
 }

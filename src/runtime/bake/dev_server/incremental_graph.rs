@@ -514,10 +514,7 @@ impl DevServer {
         // DirectoryWatchStore.Dep.source_file_path borrows this key; remove
         // any such dependencies before freeing it so they do not dangle.
         self.remove_dependencies_for_file(file_index);
-        self.plugin_watchers.remove_module(
-            &self.graphs.client.bundled_files.keys()[file_index.get() as usize],
-            Side::Client,
-        );
+        self.remove_client_plugin_watch_dependencies(file_index);
 
         // Free the key string and tombstone the slot. Cannot swap-remove since
         // FrameworkRouter / SerializedFailure hold FileIndices into this graph.
@@ -1683,6 +1680,15 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
             }
             if plugin_watchers.is_virtual(&self.bundled_files.keys()[index], SIDE) {
                 self.stale_files.set(index);
+                plugin_watchers.append_entry_points(
+                    &self.bundled_files.keys()[index],
+                    SIDE,
+                    matches!(
+                        self.bundled_files.values()[index].content,
+                        Content::CssRoot(_)
+                    ),
+                    entry_points,
+                )?;
                 // Virtual graph keys are module identities, not file entrypoints.
                 let mut it = self.edge_lists[index].first_dep;
                 while let Some(edge_index) = it {

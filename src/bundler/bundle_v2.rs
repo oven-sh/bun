@@ -3016,6 +3016,10 @@ pub mod bv2_impl {
             self.schedule_barrel_imports_after_plugin_resolve(source_index);
         }
 
+        pub fn original_entry_point_name(&self, source_index: IndexInt) -> Option<&[u8]> {
+            self.graph.entry_point_original_names.get(source_index)
+        }
+
         /// An onResolve callback named the module of an entry point: `answer` holds its path.
         fn enqueue_answered_entry_point(
             &mut self,
@@ -3064,6 +3068,18 @@ pub mod bv2_impl {
                     self.set_existing_entry_point(slot, source_index);
                 } else {
                     self.set_entry_point(slot, bun_ast::Index::init(source_index));
+                }
+            }
+            if let Some(dev) = self.dev_server {
+                let source = &self.graph.input_files.items_source()[source_index as usize];
+                if !source.path.is_file() {
+                    dev.track_plugin_entry_point(
+                        source.path.key_for_incremental_graph(),
+                        target.bake_graph(),
+                        record.specifier,
+                        record.loader == Some(Loader::Html),
+                    )
+                    .expect("OOM");
                 }
             }
             // The name the entry point was asked for by names its output file.
@@ -4283,7 +4299,9 @@ pub mod bv2_impl {
                 jsc_api::JSBundler::LoadValue::NoMatch => {
                     let source =
                         &this.graph.input_files.items_source()[source_index.get() as usize];
-                    if let Some(dev) = this.dev_server {
+                    if let Some(dev) = this.dev_server
+                        && source.path.is_file()
+                    {
                         dev.replace_plugin_watch_dependencies(
                             source.path.key_for_incremental_graph(),
                             parse_task.known_target.bake_graph(),
@@ -4330,8 +4348,8 @@ pub mod bv2_impl {
                 }
                 jsc_api::JSBundler::LoadValue::Success(code) => {
                     if let Some(dev) = this.dev_server {
-                        let source = &this.graph.input_files.items_source()
-                            [source_index.get() as usize];
+                        let source =
+                            &this.graph.input_files.items_source()[source_index.get() as usize];
                         dev.replace_plugin_watch_dependencies(
                             source.path.key_for_incremental_graph(),
                             parse_task.known_target.bake_graph(),

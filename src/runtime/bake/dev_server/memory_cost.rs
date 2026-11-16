@@ -217,6 +217,10 @@ pub(crate) fn memory_cost_detailed(dev: &DevServer) -> MemoryCost {
         other_bytes += memory_cost_array_hash_map(modules);
         for (module, dependencies) in modules.iter() {
             other_bytes += module.len();
+            other_bytes += memory_cost_array_list(&dependencies.entry_points);
+            for entry in &dependencies.entry_points {
+                other_bytes += entry.path.len();
+            }
             other_bytes += memory_cost_array_list(&dependencies.files);
             other_bytes += memory_cost_array_list(&dependencies.dirs);
             for file in &dependencies.files {

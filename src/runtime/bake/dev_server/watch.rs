@@ -62,7 +62,9 @@ impl bun_watcher::WatcherContext for WatchContext {
                         pending.event.append_dir(file_path, None, event.op);
                     }
                     for &sub_path in names {
-                        pending.event.append_dir(file_path, Some(sub_path), event.op);
+                        pending
+                            .event
+                            .append_dir(file_path, Some(sub_path), event.op);
                     }
                 }
             }

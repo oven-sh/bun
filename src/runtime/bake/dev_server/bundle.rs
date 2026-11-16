@@ -405,7 +405,7 @@ impl DevServer {
     }
 
     fn begin_prepared_bundle(&mut self) -> crate::Result<()> {
-        let entry_points = match &mut self
+        let mut entry_points = match &mut self
             .current_bundle
             .as_mut()
             .expect("bundle preparation owns current_bundle")
@@ -414,6 +414,12 @@ impl DevServer {
             BundleState::Preparing { entry_points, .. } => ::core::mem::take(entry_points),
             BundleState::Running { .. } => unreachable!(),
         };
+        // onStart may have rewritten cached modules while its promise was pending.
+        let has_pending_changes = !self.pending_reload_event.state.lock().event.is_empty();
+        if core::mem::take(&mut self.next_bundle.has_reload_event) || has_pending_changes {
+            self.process_reload_events(&mut entry_points);
+            self.current_bundle.as_mut().unwrap().had_reload_event = true;
+        }
         // Boxed so its address is stable: `bv2.graph.heap: &'static Arena`
         // borrows it (self-ref via `CurrentBundle`, see Note on
         // `CurrentBundle.bv2`).
@@ -526,8 +532,13 @@ impl DevServer {
                 )?;
             }
             if flags.intersects(entry_point_list::Flags::SERVER | entry_point_list::Flags::SSR) {
+                let graph = if flags.contains(entry_point_list::Flags::SERVER) {
+                    bake::Graph::Server
+                } else {
+                    bake::Graph::Ssr
+                };
                 self.graphs.insert_failure::<{ bake::Side::Server }>(
-                    incremental_graph::InsertFailureKey::AbsPath(path, bake::Graph::Server),
+                    incremental_graph::InsertFailureKey::AbsPath(path, graph),
                     &log,
                 )?;
             }

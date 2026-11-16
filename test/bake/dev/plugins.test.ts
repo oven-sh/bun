@@ -1,7 +1,157 @@
 // Plugin tests concern plugins in development mode.
-import { devTest, emptyHtmlFile, minimalFramework, WAIT_MULTIPLIER } from "../bake-harness";
 import { expect } from "bun:test";
 import { renameSync, rmdirSync, rmSync, writeFileSync } from "node:fs";
+import { devTest, emptyHtmlFile, minimalFramework, WAIT_MULTIPLIER } from "../bake-harness";
+
+for (const rejection of ["throw", "reject"]) {
+  devTest(`onStart ${rejection} is handled before a sibling starts an async build`, {
+    framework: minimalFramework,
+    pluginFile: `
+      import { join } from 'node:path';
+      export default [{
+        name: 'handled-on-start',
+        setup(build) {
+          globalThis.onStartUnhandled = [];
+          process.on('unhandledRejection', error => globalThis.onStartUnhandled.push(error.message));
+          let starts = 0;
+          build.onStart(() => {
+            if (++starts !== 2) return;
+            const error = new Error('expected preparation rejection');
+            ${rejection === "throw" ? "throw error;" : "return Promise.reject(error);"}
+          });
+          build.onStart(() => {
+            if (starts !== 2) return;
+            return Bun.build({
+              entrypoints: [join(import.meta.dirname, 'nested.ts')],
+              write: false,
+              plugins: [{ name: 'async-setup', async setup() { await Promise.resolve(); await Promise.resolve(); } }],
+            }).then(result => {
+              if (!result.success) throw new Error('nested build failed');
+            });
+          });
+        },
+      }];
+    `,
+    files: {
+      "nested.ts": "export default 1;",
+      "routes/index.ts": "export default () => Response.json(globalThis.onStartUnhandled);",
+    },
+    async test(dev) {
+      await dev.fetch("/").equals([]);
+      await dev.write("routes/index.ts", "export default () => Response.json(globalThis.onStartUnhandled); // reject", {
+        errors: null,
+      });
+      await dev.write("routes/index.ts", "export default () => Response.json(globalThis.onStartUnhandled); // retry");
+      await dev.fetch("/").equals([]);
+    },
+  });
+}
+
+devTest("onStart file changes invalidate cached imports before the current request", {
+  framework: minimalFramework,
+  pluginFile: `
+    import { join } from 'node:path';
+    import { watch } from 'node:fs';
+    export default [{
+      name: 'generated-on-start',
+      setup(build) {
+        let builds = 0;
+        build.onStart(async () => {
+          if (++builds !== 2) return;
+          const release = Promise.withResolvers();
+          const watcher = watch(join(import.meta.dirname, 'release.txt'), { persistent: false }, release.resolve);
+          try {
+            watcher.on('error', release.reject);
+            await Bun.write(join(import.meta.dirname, 'generated.ts'), 'export default "after";');
+            await release.promise;
+          } finally {
+            watcher.close();
+          }
+        });
+      },
+    }];
+  `,
+  files: {
+    "generated.ts": 'export default "before";',
+    "release.txt": "wait",
+    "routes/warm.ts": 'import value from "../generated"; export default () => new Response(value);',
+    "routes/index.ts": 'import value from "../generated"; export default () => new Response(value);',
+  },
+  async test(dev) {
+    await dev.fetch("/warm").equals("before");
+    // SeenFiles is emitted after the native watcher queues the generated-file change.
+    let onSync: (event: number) => void;
+    let queueTimeout: ReturnType<typeof setTimeout>;
+    const queued = new Promise<void>((resolve, reject) => {
+      onSync = (event: number) => {
+        if (event === 1) resolve();
+      };
+      dev.on("watch_synchronization", onSync);
+      queueTimeout = setTimeout(
+        () => reject(new Error("Native watcher did not queue generated.ts")),
+        2_000 * WAIT_MULTIPLIER,
+      );
+      dev.devProcess.exited.then(code => reject(new Error(`Server exited before queuing the generated file: ${code}`)));
+    });
+    const response = dev.fetch("/");
+    try {
+      await queued;
+      writeFileSync(dev.join("release.txt"), "release");
+      await response.equals("after");
+      await dev.fetch("/warm").equals("after");
+    } finally {
+      dev.off("watch_synchronization", onSync!);
+      clearTimeout(queueTimeout!);
+      // Release the plugin even if an assertion fails, so server teardown can drain.
+      writeFileSync(dev.join("release.txt"), "release");
+    }
+  },
+});
+
+devTest("onStart failures preserve SSR-only file membership on recovery", {
+  framework: {
+    ...minimalFramework,
+    serverComponents: { ...minimalFramework.serverComponents!, separateSSRGraph: true },
+  },
+  pluginFile: `
+    import { readFileSync } from 'node:fs';
+    import { join } from 'node:path';
+    export default [{
+      name: 'ssr-failure-membership',
+      setup(build) {
+        build.onStart(() => {
+          const fail = join(import.meta.dirname, 'fail.txt');
+          if (readFileSync(fail, 'utf8') === 'fail') {
+            throw new Error('expected SSR preparation failure');
+          }
+        });
+        build.onLoad({ filter: /only-rsc[.]ts$/ }, () => {
+          globalThis.unexpectedRscLoads = (globalThis.unexpectedRscLoads ?? 0) + 1;
+        });
+      },
+    }];
+  `,
+  files: {
+    "fail.txt": "ready",
+    "package.json": JSON.stringify({
+      imports: { "#only": { "react-server": "./only-rsc.ts", default: "./only-ssr.ts" } },
+    }),
+    "only-rsc.ts": 'export const which = "rsc";',
+    "only-ssr.ts": 'export const which = "ssr";',
+    "ssr-only.ts": 'import "#only"; export const value = 1;',
+    "Comp.ts": '"use client"; import "./ssr-only"; export const marker = 1;',
+    "routes/index.ts": 'import "../Comp"; export default () => Response.json(globalThis.unexpectedRscLoads ?? 0);',
+  },
+  async test(dev) {
+    await dev.fetch("/").equals(0);
+    writeFileSync(dev.join("fail.txt"), "fail");
+    await dev.write("ssr-only.ts", 'import "#only"; export const value = 2;', { errors: null });
+    expect((await dev.fetch("/")).status).toBe(500);
+    writeFileSync(dev.join("fail.txt"), "ready");
+    await dev.write("ssr-only.ts", 'import "#only"; export const value = 3;');
+    await dev.fetch("/").equals(0);
+  },
+});
 
 devTest("incremental onStart is awaited before loading watched virtual modules", {
   framework: minimalFramework,

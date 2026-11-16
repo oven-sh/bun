@@ -118,18 +118,22 @@ impl HotReloadEvent {
             bun_core::handle_oom(self.files.put(rest_extra, ()));
         }
 
-        bun_core::handle_oom(dev.plugin_watchers.invalidate(self, &dev.bun_watcher));
+        bun_core::handle_oom(dev.plugin_watchers.invalidate(
+            self,
+            &dev.bun_watcher,
+            &dev.directory_watchers,
+        ));
         let changed_file_paths = self.files.keys();
-        bun_core::handle_oom(
-            dev.graphs
-                .server
-                .invalidate(changed_file_paths, entry_points, &dev.plugin_watchers),
-        );
-        bun_core::handle_oom(
-            dev.graphs
-                .client
-                .invalidate(changed_file_paths, entry_points, &dev.plugin_watchers),
-        );
+        bun_core::handle_oom(dev.graphs.server.invalidate(
+            changed_file_paths,
+            entry_points,
+            &dev.plugin_watchers,
+        ));
+        bun_core::handle_oom(dev.graphs.client.invalidate(
+            changed_file_paths,
+            entry_points,
+            &dev.plugin_watchers,
+        ));
 
         if entry_points.set.count() == 0 {
             bun_core::debug_warn!("nothing to bundle");
@@ -251,8 +255,16 @@ impl PendingReloadEvent {
             bun_core::scoped_log!(DevServer, "HMR Task end");
         }
 
-        if dev.current_bundle.is_some() {
+        if let Some(bundle) = &dev.current_bundle {
             dev.next_bundle.has_reload_event = true;
+            if matches!(bundle.state, BundleState::Preparing { .. }) {
+                // Acknowledge queued changes while onStart holds the preparation barrier.
+                dev.publish(
+                    HmrTopic::TestingWatchSynchronization,
+                    &[MessageId::TestingWatchSynchronization.char(), 1],
+                    bun_uws::Opcode::BINARY,
+                );
+            }
             return;
         }
 

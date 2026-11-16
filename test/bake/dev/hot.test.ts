@@ -127,6 +127,74 @@ for (const atomicWatchFile of [false, true]) {
   );
 }
 
+for (const watch of ["watchFiles", "watchDirs"] as const) {
+  devTest(`rebuilds a virtual client entry point after its ${watch} change`, {
+    framework: {
+      ...minimalFramework,
+      fileSystemRouterTypes: [{ ...minimalFramework.fileSystemRouterTypes![0], clientEntryPoint: "./client.ts" }],
+    },
+    pluginFile: `
+      import { join } from 'node:path';
+      import { readdir } from 'node:fs/promises';
+      export default [{
+        name: 'virtual-client-entry',
+        setup(build) {
+          const dependency = join(import.meta.dirname, ${JSON.stringify(watch === "watchFiles" ? "value.txt" : "data")});
+          build.onResolve({ filter: /client[.]ts$/ }, async args => {
+            if (args.kind !== 'entry-point-build') return;
+            const value = ${watch === "watchFiles" ? "await Bun.file(dependency).text()" : "'client'"};
+            if (value === 'file') return { path: join(import.meta.dirname, 'client.ts'), namespace: 'file' };
+            return { path: value === 'decline' ? 'third' : value, namespace: 'virtual-client' };
+          });
+          build.onLoad({ filter: /client[.]ts$/ }, async () => {
+            globalThis.virtualEntryValue = await Bun.file(join(import.meta.dirname, 'file-data.txt')).text();
+            return { contents: 'export const value = ' + JSON.stringify(globalThis.virtualEntryValue), loader: 'js', watchFiles: [join(import.meta.dirname, 'file-data.txt')] };
+          });
+          build.onLoad({ filter: /.*/, namespace: 'virtual-client' }, async () => {
+            const value = ${watch === "watchFiles" ? "await Bun.file(dependency).text()" : "(await readdir(dependency)).sort().join(',')"};
+            if (value === 'reject') throw new Error('virtual entry point failed');
+            if (value === 'decline') return;
+            globalThis.virtualEntryValue = value;
+            return { contents: 'export const value = ' + JSON.stringify(value), loader: 'js', ${watch}: [dependency] };
+          });
+        },
+      }];
+    `,
+    files: {
+      "client.ts": "",
+      "value.txt": "first",
+      "file-data.txt": "from the file entry point",
+      "data/first.txt": "first",
+      "routes/index.ts": `export default () => new Response(globalThis.virtualEntryValue);`,
+    },
+    async test(dev) {
+      await dev.fetch("/").equals(watch === "watchFiles" ? "first" : "first.txt");
+      if (watch === "watchFiles") {
+        await dev.write("value.txt", "second");
+        await dev.fetch("/").equals("second");
+        await dev.write("value.txt", "third");
+        await dev.fetch("/").equals("third");
+        await dev.write("value.txt", "reject", { errors: null });
+        await dev.write("value.txt", "decline", { errors: null });
+        await dev.write("value.txt", "recovered");
+        await dev.fetch("/").equals("recovered");
+        await dev.write("value.txt", "file");
+        await dev.fetch("/").equals("from the file entry point");
+        await dev.write("value.txt", "obsolete dependency");
+        await dev.fetch("/").equals("from the file entry point");
+        await dev.write("value.txt", "file");
+        await dev.write("file-data.txt", "updated file entry point");
+        await dev.fetch("/").equals("updated file entry point");
+      } else {
+        await dev.write("data/second.txt", "second");
+        await dev.fetch("/").equals("first.txt,second.txt");
+        await dev.delete("data/first.txt");
+        await dev.fetch("/").equals("second.txt");
+      }
+    },
+  });
+}
+
 devTest("import.meta.hot.accept basic", {
   files: {
     "index.html": emptyHtmlFile({

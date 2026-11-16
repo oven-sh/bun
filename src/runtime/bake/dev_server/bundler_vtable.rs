@@ -43,6 +43,9 @@ bun_bundler::link_impl_DevServerHandle! {
         replace_plugin_watch_dependencies(module, graph, is_virtual, files, dirs) => {
             (*this).replace_plugin_watch_dependencies(module, graph, is_virtual, files, dirs).map_err(Into::into)
         },
+        track_plugin_entry_point(module, graph, original_path, is_html) => {
+            (*this).track_plugin_entry_point(module, graph, original_path, is_html).map_err(Into::into)
+        },
         is_file_cached(abs_path, side) => {
             (*this).is_file_cached(abs_path, side).map(|e| {
                 use bun_bundler::bake_types::CacheKind;

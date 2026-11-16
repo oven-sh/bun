@@ -118,9 +118,13 @@ export function runOnStartCallbacks(this: $Node.BundlerPlugin): Promise<void> | 
   const promises: Promise<void>[] = [];
   for (const callback of callbacks) {
     try {
-      $arrayPush(promises, Promise.$resolve(callback()));
+      const promise = Promise.$resolve(callback());
+      $pokePromiseAsHandled(promise);
+      $arrayPush(promises, promise);
     } catch (error) {
-      $arrayPush(promises, Promise.$reject(error));
+      const promise = Promise.$reject(error);
+      $pokePromiseAsHandled(promise);
+      $arrayPush(promises, promise);
     }
   }
   if (promises.length > 0) {

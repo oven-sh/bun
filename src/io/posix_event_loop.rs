@@ -212,8 +212,12 @@ pub struct Owner {
     tag: PollTag,
     /// Tells the two readers of one owner apart.
     kind: Kind,
+    /// Tells the readers and writers of an owner that has many apart.
+    key: u32,
     ptr: *mut (),
 }
+
+const _: () = assert!(size_of::<Owner>() == 16);
 
 impl Owner {
     pub(crate) const NULL: Owner = Owner::new(PollTag::Null, core::ptr::null_mut());
@@ -223,7 +227,20 @@ impl Owner {
     }
     #[inline]
     pub const fn with_kind(tag: PollTag, kind: Kind, ptr: *mut ()) -> Owner {
-        Owner { tag, kind, ptr }
+        Owner::with_kind_and_key(tag, kind, 0, ptr)
+    }
+    #[inline]
+    pub const fn with_key(tag: PollTag, key: u32, ptr: *mut ()) -> Owner {
+        Owner::with_kind_and_key(tag, Kind::Stdout, key, ptr)
+    }
+    #[inline]
+    pub const fn with_kind_and_key(tag: PollTag, kind: Kind, key: u32, ptr: *mut ()) -> Owner {
+        Owner {
+            tag,
+            kind,
+            key,
+            ptr,
+        }
     }
     #[inline]
     pub fn tag(&self) -> PollTag {
@@ -232,6 +249,10 @@ impl Owner {
     #[inline]
     pub fn kind(&self) -> Kind {
         self.kind
+    }
+    #[inline]
+    pub fn key(&self) -> u32 {
+        self.key
     }
     #[inline]
     pub fn ptr(&self) -> *mut () {

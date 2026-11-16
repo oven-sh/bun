@@ -1,9 +1,10 @@
 use crate::shell::ExitCode;
 use crate::shell::builtin::{Builtin, BuiltinIO, BuiltinState, Impl, Kind};
-use crate::shell::interpreter::{EventLoopHandle, Interpreter, NodeId, OutputNeedsIOSafeGuard};
+use crate::shell::interpreter::{EventLoopHandle, Interpreter, NodeId, ShellInterpreter};
+use crate::shell::io::OutFd;
 use crate::shell::io_writer::{ChildPtr, WriterTag};
 use crate::shell::states::cmd::Exec;
-use crate::shell::yield_::Yield;
+use crate::shell::yield_::{ReentrantAction, Yield};
 
 use bun_event_loop::{EventLoopTask, TaskTag, Taskable, task_tag};
 
@@ -28,7 +29,7 @@ pub(crate) struct Yes {
 }
 
 impl Yes {
-    pub(crate) fn start(interp: &Interpreter, cmd: NodeId) -> Yield {
+    pub(crate) fn start(interp: &mut Interpreter<'_>, cmd: NodeId) -> Yield {
         // Build one copy of the output line.
         let argc = Builtin::of(interp, cmd).args_slice().len();
         let mut one = Vec::new();
@@ -63,8 +64,8 @@ impl Yes {
             copies -= 1;
         }
 
-        let evtloop = Builtin::event_loop(interp, cmd);
-        let interp_ptr: *mut Interpreter = interp.as_ctx_ptr();
+        let evtloop = interp.event_loop;
+        let interp_ptr = interp.shell_interp();
         {
             let me = Self::state_mut(interp, cmd);
             me.buffer = buf;
@@ -77,9 +78,9 @@ impl Yes {
             });
         }
 
-        if let Some(safeguard) = Builtin::of(interp, cmd).stdout.needs_io() {
+        if let Some(fd) = Builtin::of(interp, cmd).stdout.needs_io() {
             Self::state_mut(interp, cmd).state = State::WaitingIo;
-            return Self::enqueue_chunk(interp, cmd, safeguard);
+            return Self::enqueue_chunk(interp, cmd, fd);
         }
 
         Self::write_no_io_loop(interp, cmd)
@@ -87,13 +88,13 @@ impl Yes {
 
     /// Write 4 chunks then bounce to the event loop so we don't hog the main
     /// thread.
-    fn write_no_io_loop(interp: &Interpreter, cmd: NodeId) -> Yield {
+    fn write_no_io_loop(interp: &mut Interpreter<'_>, cmd: NodeId) -> Yield {
         // Split-borrow the Cmd so the tiled buffer (in `impl_`) and `stdout`
         // are accessible simultaneously — the buffer is written zero-copy,
         // which matters for `yes` throughput.
         let err = {
-            let cmd_node = interp.as_cmd_mut(cmd);
-            let shell = &mut *cmd_node.shell;
+            let cmd_node = interp.nodes[cmd.idx()].as_cmd_mut();
+            let shell = cmd_node.shell.id();
             let Exec::Builtin(me) = &mut cmd_node.exec else {
                 unreachable!()
             };
@@ -101,7 +102,7 @@ impl Yes {
             let chunk = &yes.buffer[..yes.buffer_used];
             let mut err = None;
             for _ in 0..4 {
-                if let Err(e) = stdout.write_no_io_to(shell, chunk) {
+                if let Err(e) = stdout.write_no_io_to(&mut interp.shells, shell, chunk) {
                     err = Some(e);
                     break;
                 }
@@ -109,43 +110,53 @@ impl Yes {
             err
         };
         if let Some(e) = err {
-            let buf = Builtin::fmt_error_arena(
-                interp,
-                cmd,
+            let buf = Builtin::fmt_error(
                 Some(Kind::Yes),
                 format_args!("{}\n", bstr::BStr::new(e.name())),
-            )
-            .to_vec();
+            );
             return Self::write_failing_error(interp, cmd, &buf, 1);
         }
         // Bounce back via the event loop so we don't block the main thread.
+        if let EventLoopHandle::Mini(_) = interp.event_loop {
+            return Yield::Action(ReentrantAction::TickMiniLoop(cmd));
+        }
+        Self::enqueue_task(interp, cmd)
+    }
+
+    pub(crate) fn tick_mini_loop(shell_interp: &ShellInterpreter, cmd: NodeId) -> Yield {
+        if let EventLoopHandle::Mini(mini) = shell_interp.event_loop {
+            mini.loop_.tick();
+        }
+        shell_interp
+            .with_interp(|interp| Self::enqueue_task(interp, cmd))
+            .expect("the script waits for this Cmd")
+    }
+
+    fn enqueue_task(interp: &mut Interpreter<'_>, cmd: NodeId) -> Yield {
         let task: *mut YesTask = Self::state_mut(interp, cmd)
             .task
             .as_mut()
             .expect("YesTask set in start()");
         // SAFETY: `task` was set in `start()`; `Yes` lives in a `Box` inside
         // the interpreter arena, so the address is stable across the enqueue
-        // and the later main-thread callback. `enqueue` ticks the event loop
-        // and may re-enter shell dispatch — we hold no `&mut` derived from
-        // `interp` across the call.
+        // and the later main-thread callback.
         unsafe { YesTask::enqueue(task) };
         Yield::suspended()
     }
 
-    fn enqueue_chunk(
-        interp: &Interpreter,
-        cmd: NodeId,
-        safeguard: OutputNeedsIOSafeGuard,
-    ) -> Yield {
+    fn enqueue_chunk(interp: &mut Interpreter<'_>, cmd: NodeId, fd: OutFd) -> Yield {
         let child = ChildPtr::new(cmd, WriterTag::Builtin);
-        // `stdout` and `impl_` are disjoint fields of `Builtin` — split-borrow
-        // so the tiled buffer is enqueued zero-copy.
-        let (stdout, yes) = Self::split_stdout_state(Builtin::of_mut(interp, cmd));
-        stdout.enqueue(child, &yes.buffer[..yes.buffer_used], safeguard)
+        // Split-borrow so the tiled buffer is enqueued zero-copy.
+        let Exec::Builtin(me) = &mut interp.nodes[cmd.idx()].as_cmd_mut().exec else {
+            unreachable!()
+        };
+        let yes = Self::extract(&mut me.impl_);
+        let chunk = &yes.buffer[..yes.buffer_used];
+        interp.io_writers[fd.writer].enqueue(&mut interp.shells, child, fd.captured, chunk)
     }
 
     fn write_failing_error(
-        interp: &Interpreter,
+        interp: &mut Interpreter<'_>,
         cmd: NodeId,
         buf: &[u8],
         exit_code: ExitCode,
@@ -155,7 +166,7 @@ impl Yes {
     }
 
     pub(crate) fn on_io_writer_chunk(
-        interp: &Interpreter,
+        interp: &mut Interpreter<'_>,
         cmd: NodeId,
         _: usize,
         e: Option<bun_sys::SystemError>,
@@ -167,8 +178,8 @@ impl Yes {
         if Self::state_mut(interp, cmd).state == State::WaitingWriteErr {
             return Builtin::done(interp, cmd, 1);
         }
-        debug_assert!(Builtin::of(interp, cmd).stdout.needs_io().is_some());
-        Self::enqueue_chunk(interp, cmd, OutputNeedsIOSafeGuard::OutputNeedsIo)
+        let fd = Builtin::of(interp, cmd).stdout.needs_io();
+        Self::enqueue_chunk(interp, cmd, fd.expect("wrote the last chunk"))
     }
 
     /// Split-borrow `&mut Builtin` into `(&mut stdout, &mut Yes)`; the fields
@@ -189,8 +200,8 @@ impl Yes {
 /// don't block the main thread forever.
 #[repr(C)]
 pub(crate) struct YesTask {
-    /// Back-ref to the owning [`Interpreter`].
-    pub(crate) interp: *mut Interpreter,
+    /// Back-ref to the owning [`ShellInterpreter`].
+    pub(crate) interp: core::ptr::NonNull<ShellInterpreter>,
     pub(crate) cmd: NodeId,
     pub(crate) evtloop: EventLoopHandle,
     pub(crate) concurrent_task: EventLoopTask,
@@ -224,7 +235,6 @@ impl YesTask {
                     owner.enqueue_task_after_yield(bun_jsc::Task::init(this));
                 }
                 EventLoopHandle::Mini(mini) => {
-                    mini.loop_.tick();
                     let at =
                         core::ptr::NonNull::new_unchecked(match &mut (*this).concurrent_task {
                             EventLoopTask::Mini(at) => {
@@ -238,14 +248,12 @@ impl YesTask {
         }
     }
 
-    /// `this` must be a live `YesTask` whose storage is stable inside
-    /// `Box<Yes>` in the interpreter arena, with `interp` initialised by
-    /// [`Yes::start`]. Reached only via the concurrent-task dispatch installed
-    /// in [`enqueue`](Self::enqueue).
-    pub(crate) fn run_from_main_thread(this: &Self) {
-        // SAFETY: `interp` was set in `Yes::start` and outlives the task.
-        let (interp, cmd) = unsafe { (&*this.interp, this.cmd) };
-        Yes::write_no_io_loop(interp, cmd).run(interp);
+    /// # Safety
+    /// `this` was queued by [`enqueue`](Self::enqueue), and the queue is running it.
+    pub(crate) unsafe fn run_from_main_thread(this: *mut Self) {
+        // SAFETY: fn contract. The script does not finish before the task has run.
+        let (shell_interp, cmd) = unsafe { ((*this).interp.as_ref(), (*this).cmd) };
+        shell_interp.run_yield_with(|interp| Yes::write_no_io_loop(interp, cmd));
     }
 
     /// Signature matches
@@ -254,6 +262,6 @@ impl YesTask {
     fn run_from_main_thread_mini(this: *mut Self, _: *mut ()) {
         // SAFETY: dispatch contract — `this` is the live task previously passed
         // to `enqueue`; see `run_from_main_thread`.
-        Self::run_from_main_thread(unsafe { &*this })
+        unsafe { Self::run_from_main_thread(this) }
     }
 }

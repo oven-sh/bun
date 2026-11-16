@@ -13,55 +13,36 @@ enum State {
     Done,
 }
 
+#[derive(Default)]
 pub(crate) struct Seq {
     state: State,
-    start: f32,
-    end: f32,
-    increment: f32,
-    /// Borrowed from argv (NUL-terminated arena strings) or `'static` literals;
-    /// argv outlives the builtin — `RawSlice` invariant.
-    separator: bun_ptr::RawSlice<u8>,
-    terminator: bun_ptr::RawSlice<u8>,
-}
-
-impl Default for Seq {
-    fn default() -> Self {
-        Self {
-            state: State::Idle,
-            start: 1.0,
-            end: 1.0,
-            increment: 1.0,
-            separator: bun_ptr::RawSlice::new(b"\n"),
-            terminator: bun_ptr::RawSlice::EMPTY,
-        }
-    }
 }
 
 impl Seq {
-    pub(crate) fn start(interp: &Interpreter, cmd: NodeId) -> Yield {
-        let argc = Builtin::of(interp, cmd).args_slice().len();
+    pub(crate) fn start(interp: &mut Interpreter<'_>, cmd: NodeId) -> Yield {
+        let bltn = Builtin::of(interp, cmd);
+        let argc = bltn.args_slice().len();
         if argc == 0 {
             return Self::fail(interp, cmd, Kind::Seq.usage_string());
         }
 
         let mut idx = 0usize;
-        // Flag parsing — operates on raw argv pointers so we can stash
-        // borrowed slices into separator/terminator.
+        let mut separator: &[u8] = b"\n";
+        let mut terminator: &[u8] = b"";
         while idx < argc {
-            let arg = Builtin::of(interp, cmd).arg_bytes(idx);
+            let arg = bltn.arg_bytes(idx);
 
             if arg == b"-s" || arg == b"--separator" {
                 idx += 1;
                 if idx >= argc {
                     return Self::fail(interp, cmd, b"seq: option requires an argument -- s\n");
                 }
-                let bytes = Builtin::of(interp, cmd).arg_bytes(idx);
-                Self::state_mut(interp, cmd).separator = bun_ptr::RawSlice::new(bytes);
+                separator = bltn.arg_bytes(idx);
                 idx += 1;
                 continue;
             }
             if arg.starts_with(b"-s") && arg.len() > 2 {
-                Self::state_mut(interp, cmd).separator = bun_ptr::RawSlice::new(&arg[2..]);
+                separator = &arg[2..];
                 idx += 1;
                 continue;
             }
@@ -70,13 +51,12 @@ impl Seq {
                 if idx >= argc {
                     return Self::fail(interp, cmd, b"seq: option requires an argument -- t\n");
                 }
-                let bytes = Builtin::of(interp, cmd).arg_bytes(idx);
-                Self::state_mut(interp, cmd).terminator = bun_ptr::RawSlice::new(bytes);
+                terminator = bltn.arg_bytes(idx);
                 idx += 1;
                 continue;
             }
             if arg.starts_with(b"-t") && arg.len() > 2 {
-                Self::state_mut(interp, cmd).terminator = bun_ptr::RawSlice::new(&arg[2..]);
+                terminator = &arg[2..];
                 idx += 1;
                 continue;
             }
@@ -90,7 +70,7 @@ impl Seq {
         // Positional args.
         macro_rules! parse_num {
             ($i:expr) => {{
-                let s = Builtin::of(interp, cmd).arg_bytes($i);
+                let s = bltn.arg_bytes($i);
                 match parse_f32(s) {
                     Some(n) if n.is_finite() => n,
                     _ => return Self::fail(interp, cmd, b"seq: invalid argument\n"),
@@ -103,66 +83,51 @@ impl Seq {
         }
         let int1 = parse_num!(idx);
         idx += 1;
-        {
-            let me = Self::state_mut(interp, cmd);
-            me.end = int1;
-            if me.start > me.end {
-                me.increment = -1.0;
-            }
-        }
+        let (mut start, mut end) = (1.0, int1);
+        let mut increment = if start > end { -1.0 } else { 1.0 };
 
         if idx < argc {
             let int2 = parse_num!(idx);
             idx += 1;
-            {
-                let me = Self::state_mut(interp, cmd);
-                me.start = int1;
-                me.end = int2;
-                me.increment = if me.start < me.end {
-                    1.0
-                } else if me.start > me.end {
-                    -1.0
-                } else {
-                    me.increment
-                };
+            start = int1;
+            end = int2;
+            if start < end {
+                increment = 1.0;
+            } else if start > end {
+                increment = -1.0;
             }
             if idx < argc {
                 let int3 = parse_num!(idx);
-                {
-                    let me = Self::state_mut(interp, cmd);
-                    me.start = int1;
-                    me.increment = int2;
-                    me.end = int3;
-                }
-                let me = Self::state_mut(interp, cmd);
-                if me.increment == 0.0 {
+                increment = int2;
+                end = int3;
+                if increment == 0.0 {
                     return Self::fail(interp, cmd, b"seq: zero increment\n");
                 }
-                if me.start > me.end && me.increment > 0.0 {
+                if start > end && increment > 0.0 {
                     return Self::fail(interp, cmd, b"seq: needs negative decrement\n");
                 }
-                if me.start < me.end && me.increment < 0.0 {
+                if start < end && increment < 0.0 {
                     return Self::fail(interp, cmd, b"seq: needs positive increment\n");
                 }
             }
         }
 
-        Self::do_(interp, cmd)
+        let out = Self::render(start, end, increment, separator, terminator);
+        Self::state_mut(interp, cmd).state = State::Done;
+        if let Some(fd) = Builtin::of(interp, cmd).stdout.needs_io() {
+            let child = ChildPtr::new(cmd, WriterTag::Builtin);
+            return interp.enqueue(fd, child, &out);
+        }
+        let _ = Builtin::write_no_io(interp, cmd, IoKind::Stdout, &out);
+        Builtin::done(interp, cmd, 0)
     }
 
-    fn fail(interp: &Interpreter, cmd: NodeId, msg: &[u8]) -> Yield {
+    fn fail(interp: &mut Interpreter<'_>, cmd: NodeId, msg: &[u8]) -> Yield {
         Self::state_mut(interp, cmd).state = State::Err;
         Builtin::write_failing_error(interp, cmd, msg, 1)
     }
 
-    fn do_(interp: &Interpreter, cmd: NodeId) -> Yield {
-        let needs_io = Builtin::of(interp, cmd).stdout.needs_io().is_some();
-        // Render entirely into a local Vec, then either enqueue it or
-        // write_no_io it; we buffer once for simplicity.
-        let (start, end, incr, sep, term) = {
-            let me = Self::state_mut(interp, cmd);
-            (me.start, me.end, me.increment, me.separator, me.terminator)
-        };
+    fn render(start: f32, end: f32, incr: f32, sep: &[u8], term: &[u8]) -> Vec<u8> {
         let mut out = Vec::new();
         let mut current = start;
         while if incr > 0.0 {
@@ -173,7 +138,7 @@ impl Seq {
             // Rust `{}` for f32 prints the shortest decimal that round-trips
             // (no exponent, no trailing ".0").
             let _ = write!(&mut out, "{}", current);
-            out.extend_from_slice(sep.slice());
+            out.extend_from_slice(sep);
             let next = current + incr;
             if next == current {
                 // f32 rounding can make `current + incr` equal `current`
@@ -184,22 +149,12 @@ impl Seq {
             }
             current = next;
         }
-        out.extend_from_slice(term.slice());
-
-        Self::state_mut(interp, cmd).state = State::Done;
-        if needs_io {
-            let safeguard = Builtin::of(interp, cmd).stdout.needs_io().unwrap();
-            let child = ChildPtr::new(cmd, WriterTag::Builtin);
-            return Builtin::of_mut(interp, cmd)
-                .stdout
-                .enqueue(child, &out, safeguard);
-        }
-        let _ = Builtin::write_no_io(interp, cmd, IoKind::Stdout, &out);
-        Builtin::done(interp, cmd, 0)
+        out.extend_from_slice(term);
+        out
     }
 
     pub(crate) fn on_io_writer_chunk(
-        interp: &Interpreter,
+        interp: &mut Interpreter<'_>,
         cmd: NodeId,
         _: usize,
         e: Option<bun_sys::SystemError>,

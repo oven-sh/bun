@@ -303,7 +303,8 @@ impl PosixBufferedWriter {
     }
 
     /// # Safety
-    /// See `PosixStreamingWriter::set_owner`.
+    /// `owner.ptr` points to a live value of the type `__bun_run_io` casts `owner.tag` to, until `self`
+    /// is dropped. Only the Windows writer also has to stay in place, see `PosixStreamingWriter::set_owner`.
     pub unsafe fn set_owner(&self, owner: Owner) {
         // SAFETY: caller contract.
         unsafe { self.base.handle.set_owner(owner) };
@@ -1062,7 +1063,7 @@ impl WindowsBufferedWriter {
         self.base.set_source(Source::Pipe(pipe));
     }
 
-    pub fn start_with_current_pipe(&self, handler: &impl BufferedWriteHandler) {
+    fn start_with_current_pipe(&self, handler: &impl BufferedWriteHandler) {
         debug_assert!(self.base.has_source());
         self.base.is_done.set(false);
         self.write(handler);

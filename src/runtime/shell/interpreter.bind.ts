@@ -3,7 +3,7 @@ import * as b from "../../codegen/bindgen-lib.ts";
 export default b.module({ rustPath: "crate::shell::interpreter" });
 
 export const ShellInterpreter = b.class({
-  rustPath: "crate::shell::Interpreter",
+  rustPath: "crate::shell::ShellInterpreter",
   memoryCost: true,
   estimatedSize: true,
   internalFields: ["resolve", "reject", "jsobjs"],

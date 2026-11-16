@@ -19,8 +19,6 @@
 //!   3. a `run_task` arm and a `release_task_unrun` arm here, both through `in_features!` if only code of removable features (`src/trim/features`) queues it;
 //!   4. bump the `task_tag::COUNT` assertion below.
 
-use std::rc::Rc;
-
 use bun_event_loop::{BoxedTask, Task, task_tag};
 use bun_ptr::RefPtr;
 
@@ -113,12 +111,12 @@ use crate::shell::builtins::{
     touch::ShellTouchTask,
     yes::YesTask as ShellYesTask,
 };
-use crate::shell::dispatch_tasks::{ShellCondExprStatTask, ShellGlobTask, ShellRmDirTask};
-use crate::shell::interpreter::{PoolTask, ShellTask};
-use crate::shell::io_reader::IOReader as ShellIoReader;
-use crate::shell::io_writer::IOWriter as ShellIoWriter;
-use crate::shell::states::r#async::Async as ShellAsync;
-use crate::shell::subproc::{PipeReader as ShellPipeReader, ShellSubprocess};
+use crate::shell::dispatch_tasks::{
+    ShellAsyncTask, ShellCondExprStatTask, ShellGlobTask, ShellRmDirTask,
+};
+use crate::shell::interpreter::{NodeId, PoolTask, ShellInterpreter, ShellTask};
+use crate::shell::io_reader::IOReaderId;
+use crate::shell::io_writer::IOWriterId;
 
 use crate::webcore::fetch::fetch_tasklet::FetchTasklet;
 use crate::webcore::file_reader::{FileReader, Source as FileReaderSource};
@@ -738,7 +736,7 @@ pub(crate) fn run_task(
         )?,
         // A child's stdin pipe and a stream written to a file make a `FileSink` that the program need not name.
         task_tag::FlushPendingFileSinkTask => {
-            feature_arm!([FileSink, Bodies, Spawn, Shell], |sink: FileSink| {
+            feature_arm!([FileSink, Bodies, Spawn], |sink: FileSink| {
                 // SAFETY: §Dispatch — tag identifies pointee; the task owns a ref.
                 unsafe { RefPtr::from_raw(sink) }.run_pending_if_armed();
             })
@@ -772,12 +770,9 @@ fn run_task_cold(task: &Task) {
             task.ptr().cast::<$ty>()
         };
     }
-    /// The wrapper recovers `&mut Interpreter` from the embedded
-    /// `ShellTask.interp` back-ref.
     macro_rules! shell_dispatch {
         ($ty:ty) => {{
-            // SAFETY: §Dispatch — `t` is a live heap-allocated shell task;
-            // `interp` was set at schedule time and outlives the task.
+            // SAFETY: §Dispatch — `t` is a live heap-allocated shell task, which its script waits for.
             unsafe { ShellTask::run_from_main_thread::<$ty>(cast_ptr!($ty)) };
         }};
     }
@@ -786,10 +781,7 @@ fn run_task_cold(task: &Task) {
         // ── shell interpreter ────────────────────────────────────────────
         task_tag::ShellAsync => {
             // SAFETY: §Dispatch — tag identifies pointee.
-            let t = unsafe { &*cast_ptr!(crate::shell::dispatch_tasks::ShellAsyncTask) };
-            // SAFETY: `interp` set at enqueue; outlives task.
-            let interp = unsafe { &*t.interp };
-            ShellAsync::run_from_main_thread(interp, t.node.get());
+            unsafe { ShellAsyncTask::run_from_main_thread(cast_ptr!(ShellAsyncTask)) };
         }
         task_tag::ShellCondExprStatTask => shell_dispatch!(PoolTask<ShellCondExprStatTask>),
         task_tag::ShellCpTask => shell_dispatch!(ShellCpTask),
@@ -808,7 +800,7 @@ fn run_task_cold(task: &Task) {
             // SAFETY: §Dispatch — tag identifies pointee; enqueued by
             // `YesTask::enqueue`, storage lives inside `Box<Yes>` in the
             // interpreter arena and is stable until the builtin deinits.
-            ShellYesTask::run_from_main_thread(unsafe { &*cast_ptr!(ShellYesTask) });
+            unsafe { ShellYesTask::run_from_main_thread(cast_ptr!(ShellYesTask)) };
         }
 
         // Any tag the hot path mis-routed: producer bug.
@@ -892,11 +884,11 @@ pub(crate) fn tick_queue_with_count(
 unsafe fn __bun_run_io(owner: Owner, event: IoEvent) {
     /// Runs `$body` through [`in_features!`] with `$this = $cast(owner.ptr().cast::<$Ty>())`.
     macro_rules! io_arm {
-        ($features:tt, $cast:expr, $Ty:ty, |$this:ident, $kind:pat, $event:ident| $body:expr) => {
+        ($features:tt, $cast:expr, $Ty:ty, |$this:ident, $owner:pat, $event:ident| $body:expr) => {
             in_features!($features, (owner: Owner = owner, $event: IoEvent = event) {
                 // SAFETY: the contract of `__bun_run_io`.
                 let $this = unsafe { $cast(owner.ptr().cast::<$Ty>()) };
-                let $kind = owner.kind();
+                let $owner = owner;
                 $body
             })
         };
@@ -962,7 +954,7 @@ unsafe fn __bun_run_io(owner: Owner, event: IoEvent) {
         }
         // A child's stdin pipe and a stream written to a file make a `FileSink` that the program need not name.
         PollTag::FileSink => io_arm!(
-            [FileSink, Bodies, Spawn, Shell],
+            [FileSink, Bodies, Spawn],
             RefPtr::init_ref,
             FileSink,
             |this, _, event| this.on_writer_io(event)
@@ -974,22 +966,31 @@ unsafe fn __bun_run_io(owner: Owner, event: IoEvent) {
             WindowsNamedPipe,
             |this, _, event| this.on_writer_io(event)
         ),
-        // `bun run` and `bun exec` run the interpreter too.
-        PollTag::ShellIoReader => {
-            io_arm!([Shell, Tools], clone_rc, ShellIoReader, |this, _, event| {
-                this.on_io(event)
-            })
-        }
-        PollTag::ShellIoWriter => {
-            io_arm!([Shell, Tools], clone_rc, ShellIoWriter, |this, _, event| {
-                this.on_io(event)
-            })
-        }
+        // `bun run` and `bun exec` run the interpreter too. The handlers keep the JS wrapper alive.
+        PollTag::ShellIoReader => io_arm!(
+            [Shell, Tools],
+            <*mut _>::as_ref_unchecked,
+            ShellInterpreter,
+            |this, owner, event| this.on_reader_io(IOReaderId::init(owner.key()), event)
+        ),
+        PollTag::ShellIoWriter => io_arm!(
+            [Shell, Tools],
+            <*mut _>::as_ref_unchecked,
+            ShellInterpreter,
+            |this, owner, event| this.on_writer_io(IOWriterId::init(owner.key()), event)
+        ),
         PollTag::ShellPipeReader => io_arm!(
             [Shell, Tools],
-            clone_rc,
-            ShellPipeReader,
-            |this, _, event| this.read(Some(event))
+            <*mut _>::as_ref_unchecked,
+            ShellInterpreter,
+            |this, owner, event| this.on_pipe_reader_io(NodeId(owner.key()), owner.kind(), event)
+        ),
+        // Only `Bun.$` redirects stdin from a buffer.
+        PollTag::ShellStdinWriter => io_arm!(
+            [Shell],
+            <*mut _>::as_ref_unchecked,
+            ShellInterpreter,
+            |this, owner, event| this.on_subproc_stdin_io(NodeId(owner.key()), event)
         ),
 
         // Neither JS nor a nested tick runs under these.
@@ -997,7 +998,7 @@ unsafe fn __bun_run_io(owner: Owner, event: IoEvent) {
             [Tools],
             <*mut _>::as_mut_unchecked,
             filter_run::ProcessHandle<'_>,
-            |this, kind, event| this.read(kind, Some(event))
+            |this, owner, event| this.read(owner.kind(), Some(event))
         ),
         PollTag::MultiRunPipeReader => io_arm!(
             [Tools],
@@ -1009,7 +1010,7 @@ unsafe fn __bun_run_io(owner: Owner, event: IoEvent) {
             [TestCommand],
             <*mut _>::as_mut_unchecked,
             TestParallelWorker,
-            |this, kind, event| this.on_io(kind, event)
+            |this, owner, event| this.on_io(owner.kind(), event)
         ),
         PollTag::SecurityScanReader => io_arm!(
             [Install],
@@ -1030,22 +1031,12 @@ unsafe fn __bun_run_io(owner: Owner, event: IoEvent) {
             |this, _, event| this.on_stdin_io(event)
         ),
 
-        // Only `Bun.$` redirects stdin from a buffer. `this` is not used once `on_stdin_writer_close` runs, which may free it.
-        PollTag::ShellStdinWriter => io_arm!(
-            [Shell],
-            <*mut _>::as_mut_unchecked,
-            ShellSubprocess,
-            |this, _, event| if let Some(cmd) = this.on_stdin_io(event) {
-                cmd.on_stdin_writer_close();
-            }
-        ),
-
         // These free themselves once they have read to the end.
         PollTag::InstallGit => io_arm!(
             [Install],
             bun_ptr::ThisPtr::new,
             GitSubprocess,
-            |this, kind, event| GitSubprocess::on_io(this, kind, event)
+            |this, owner, event| GitSubprocess::on_io(this, owner.kind(), event)
         ),
         PollTag::SubprocessPipeReader => {
             in_features!([Spawn], (owner: Owner = owner, event: IoEvent = event) {
@@ -1067,16 +1058,6 @@ unsafe fn __bun_run_io(owner: Owner, event: IoEvent) {
         }
 
         PollTag::Null => debug_assert!(false, "a poll with no owner fired"),
-    }
-}
-
-/// # Safety
-/// `ptr` is `Rc::as_ptr` of a live `Rc`.
-unsafe fn clone_rc<T>(ptr: *mut T) -> Rc<T> {
-    // SAFETY: fn contract.
-    unsafe {
-        Rc::increment_strong_count(ptr);
-        Rc::from_raw(ptr)
     }
 }
 
@@ -1719,7 +1700,7 @@ fn __bun_release_task_unrun(task: bun_event_loop::Task) {
             unreachable!("posix-only tag");
         }
         task_tag::FlushPendingFileSinkTask => {
-            release_in!([FileSink, Bodies, Spawn, Shell], FileSink)
+            release_in!([FileSink, Bodies, Spawn], FileSink)
         }
         task_tag::RuntimeTranspilerStore => {
             release_in!([RuntimeTranspiler], RuntimeTranspilerStore)

@@ -87,7 +87,7 @@ impl IOReader<'_> {
             let owner = Owner::with_key(PollTag::ShellIoReader, id.get(), ptr);
             // SAFETY: `shell_interp` owns `interp`, and `on_reader_io` borrows it while it holds the
             // only other `Rc`.
-            unsafe { inner.reader.set_external_owner(owner) };
+            unsafe { inner.reader.set_owner(owner) };
             #[cfg(not(windows))]
             inner
                 .reader

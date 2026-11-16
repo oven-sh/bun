@@ -312,7 +312,7 @@ impl<'a> SubprocExec<'a> {
             );
             for (kind, reader) in [(Kind::Stdout, &child.stdout), (Kind::Stderr, &child.stderr)] {
                 let tag = PollTag::ShellPipeReader;
-                reader.set_external_owner(Owner::with_kind_and_key(tag, kind, cmd.0, owner_ptr));
+                reader.set_owner(Owner::with_kind_and_key(tag, kind, cmd.0, owner_ptr));
             }
         }
         if let Some(id) = interp.context {

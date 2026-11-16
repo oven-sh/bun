@@ -15,7 +15,7 @@ use bun_resolver::fs::FileSystem;
 use bun_sys::Fd;
 
 use super::aggregate;
-use super::channel::Channel;
+use super::channel::OwnedChannel;
 use super::coordinator::{Coordinator, abort_handler};
 use super::file_range::FileRange;
 use super::frame::{self, Frame};
@@ -147,7 +147,7 @@ pub(crate) fn run_as_coordinator(
             out: bun_io::BufferedReader::init(),
             err: bun_io::BufferedReader::init(),
             process: None,
-            ipc: Channel::default(),
+            ipc: OwnedChannel::default(),
             inflight: None,
             dispatched_at: 0,
             captured: Vec::new(),
@@ -557,7 +557,7 @@ fn jsx_runtime_tag_name(r: bun_options_types::schema::api::JsxRuntime) -> &'stat
 /// `uv.Pipe` over the inherited duplex named-pipe on Windows.
 #[derive(Default)]
 pub(crate) struct CoordinatorLink {
-    channel: Channel,
+    channel: OwnedChannel,
     /// Reused across all worker → coordinator emits.
     frame: Cell<Frame>,
     /// The coordinator-assigned index of the file currently being executed.

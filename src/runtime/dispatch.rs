@@ -948,12 +948,30 @@ unsafe fn __bun_run_io(owner: Owner, event: IoEvent) {
             FileSink,
             |this, _, event| this.on_writer_io(event)
         ),
+        // `on_io` takes the ref.
         #[cfg(windows)]
         PollTag::WindowsNamedPipe => io_arm!(
             [Sockets],
             <*mut _>::as_ref_unchecked,
             WindowsNamedPipe,
-            |this, _, event| this.on_writer_io(event)
+            |this, _, event| this.on_io(event)
+        ),
+
+        // Its owner keeps it until the task that reports the close has run.
+        #[cfg(windows)]
+        PollTag::SendQueue => io_arm!(
+            [Ipc],
+            <*mut _>::as_ref_unchecked,
+            crate::ipc::SendQueue,
+            |this, _, event| this.on_io(event)
+        ),
+        // Not refcounted: `on_io` runs no code of the owner.
+        #[cfg(windows)]
+        PollTag::TestParallelChannel => io_arm!(
+            [TestCommand],
+            <*mut _>::as_ref_unchecked,
+            crate::cli::test::parallel::channel::Channel,
+            |this, _, event| this.on_io(event)
         ),
         // `bun run` and `bun exec` run the interpreter too. The handlers keep the JS wrapper alive.
         PollTag::ShellIoReader => io_arm!(

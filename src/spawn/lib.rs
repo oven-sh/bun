@@ -62,7 +62,6 @@ bun_dispatch::link_interface! {
         CronRemove,
         ChromeProcess,
         HostProcess,
-        SyncWindows,
     ] {
         fn on_process_exit(status: Status, rusage: &Rusage);
     }
@@ -71,25 +70,6 @@ bun_dispatch::link_interface! {
 /// `None` = no handler set (the default for `Process::exit_handler`).
 pub type ProcessExitHandler = Option<ProcessExit>;
 
-// In-crate `link_impl_*!` calls must be textually after the `link_interface!`
-// that emits the macro (`#[macro_export]` is path-addressable from *other*
-// crates only; same-crate use is textual-scope). POSIX `spawn_sync` waits
-// inline and never installs a handler, so the `SyncWindows` arm is genuinely
-// unreachable there — but every variant needs a body or the link fails.
-#[cfg(windows)]
-link_impl_ProcessExit! {
-    SyncWindows for process::sync::SyncWindowsProcess => |this| {
-        on_process_exit(status, _rusage) =>
-            process::sync::SyncWindowsProcess::on_process_exit(this, status),
-    }
-}
-#[cfg(not(windows))]
-link_impl_ProcessExit! {
-    SyncWindows for process::SyncProcessPosix => |_this| {
-        on_process_exit(_status, _rusage) =>
-            unreachable!("SyncWindows exit handler is Windows-only"),
-    }
-}
 #[cfg(unix)]
 pub use process::{PosixSpawnOptions, PosixSpawnResult, PosixStdio as Stdio, WaitPidResult};
 #[cfg(unix)]

@@ -2,6 +2,7 @@
 
 use super::*;
 use bun_core::ffi::zeroed_unchecked;
+use bun_ptr::VecCellExt as _;
 use std::rc::Rc;
 
 /// Touches a handle or a request whenever libuv may, so that Miri reports one that was freed or moved.
@@ -11,6 +12,8 @@ mod fake {
 
     const CLOSING: c_uint = 1;
     const ACTIVE: c_uint = 4;
+    const WRITABLE: c_uint = 0x8000;
+    const UV_FS: uv_req_type = 6;
 
     #[derive(Copy, Clone, PartialEq, Default)]
     pub(super) enum Failure {
@@ -23,6 +26,12 @@ mod fake {
     thread_local! {
         static HANDLES: RefCell<Vec<*mut uv_handle_t>> = const { RefCell::new(Vec::new()) };
         static LOOKUPS: RefCell<Vec<*mut uv_getaddrinfo_t>> = const { RefCell::new(Vec::new()) };
+        /// Each completes a request.
+        static REQUESTS: RefCell<Vec<Box<dyn FnOnce()>>> = const { RefCell::new(Vec::new()) };
+        /// The tty, the buffer, and whether the read was cancelled. libuv has one per process (win/tty.c:85).
+        static LINE_READ: Cell<Option<(*mut uv_stream_t, uv_buf_t, bool)>> = const { Cell::new(None) };
+        pub(super) static WRITTEN: RefCell<Vec<u8>> = const { RefCell::new(Vec::new()) };
+        pub(super) static CLOSED_FILES: Cell<u32> = const { Cell::new(0) };
         /// What the next call that can fail does.
         pub(super) static FAILURE: Cell<Failure> = const { Cell::new(Failure::None) };
     }
@@ -76,9 +85,15 @@ mod fake {
                 };
                 (*req).getaddrinfo_cb.unwrap()(req, status, res);
             }
-            // win/handle-inl.h:76.
+            for complete in REQUESTS.take() {
+                complete();
+            }
+            // win/handle-inl.h:76, win/tty.c:2321.
             while let Some(handle) = HANDLES.with_borrow_mut(|handles| {
-                let index = handles.iter().position(|&h| (*h).flags & CLOSING != 0)?;
+                let reading = LINE_READ.get().map(|read| read.0.cast());
+                let index = handles
+                    .iter()
+                    .position(|&h| (*h).flags & CLOSING != 0 && Some(h) != reading)?;
                 Some(handles.remove(index))
             }) {
                 (*handle).flags |= UV_HANDLE_CLOSED;
@@ -133,6 +148,83 @@ mod fake {
         }
     }
 
+    fn request(complete: impl FnOnce() + 'static) -> ReturnCode {
+        if FAILURE.take() != Failure::None {
+            return ReturnCode(UV_EINVAL);
+        }
+        REQUESTS.with_borrow_mut(|requests| requests.push(Box::new(complete)));
+        ReturnCode::ZERO
+    }
+
+    unsafe fn alloc(stream: *mut uv_stream_t) -> uv_buf_t {
+        let mut buf = uv_buf_t::init(b"");
+        // SAFETY: test stub; `handle.rs` passes a live handle.
+        unsafe { (*stream).alloc_cb.unwrap()(stream.cast(), 8, &raw mut buf) };
+        buf
+    }
+
+    /// As much of `bytes` as fits.
+    unsafe fn fill(buf: uv_buf_t, bytes: &[u8]) -> ReturnCodeI64 {
+        let len = bytes.len().min(buf.len as usize);
+        // SAFETY: test stub; `handle.rs` passes a live handle.
+        unsafe { buf.base.copy_from(bytes.as_ptr(), len) };
+        ReturnCodeI64(len as i64)
+    }
+
+    unsafe fn record(buf: uv_buf_t) {
+        // SAFETY: test stub; `handle.rs` passes a live handle.
+        let bytes = unsafe { core::slice::from_raw_parts(buf.base, buf.len as usize) };
+        WRITTEN.with_borrow_mut(|written| written.extend_from_slice(bytes));
+    }
+
+    /// win/pipe.c:1996,2082. An error comes without an allocation (:2213).
+    pub(super) fn read_pipes(result: Result<&[u8], c_int>) {
+        for pipe in handles(HandleType::NamedPipe) {
+            let pipe = pipe.cast::<uv_stream_t>();
+            // SAFETY: test stub; `handle.rs` passes a live handle.
+            unsafe {
+                let (buf, nread) = match result {
+                    Ok(bytes) => {
+                        let buf = alloc(pipe);
+                        (buf, fill(buf, bytes))
+                    }
+                    Err(err) => (uv_buf_t::init(b""), ReturnCodeI64(err.into())),
+                };
+                (*pipe).read_cb.unwrap()(pipe, nread, &raw const buf);
+            }
+        }
+    }
+
+    /// win/tty.c:588,1036-1048.
+    pub(super) fn finish_line_read(line: &[u8]) {
+        let (tty, buf, was_cancelled) = LINE_READ.get().unwrap();
+        // SAFETY: test stub; `handle.rs` passes a live handle.
+        unsafe {
+            let nread = fill(buf, line);
+            if !was_cancelled {
+                (*tty).read_cb.unwrap()(tty, nread, &raw const buf);
+            }
+            LINE_READ.set(((*tty).flags & ACTIVE != 0).then(|| (tty, alloc(tty), false)));
+        }
+    }
+
+    /// win/fs.c:3236-3241.
+    fn fs(
+        req: *mut fs_t,
+        cb: uv_fs_cb,
+        work: impl FnOnce() -> ReturnCodeI64 + 'static,
+    ) -> ReturnCode {
+        // SAFETY: test stub; `handle.rs` passes a live handle.
+        unsafe { ((*req).type_, (*req).result) = (UV_FS, ReturnCodeI64(0)) };
+        // SAFETY: as above.
+        request(move || unsafe {
+            if (*req).result.int() == 0 {
+                (*req).result = work();
+            }
+            cb.unwrap()(req);
+        })
+    }
+
     macro_rules! fakes {
         ($(fn $name:ident($($arg:tt: $type:ty),*) $(-> $ret:ty)? = $body:expr;)*) => {$(
             #[unsafe(no_mangle)]
@@ -152,10 +244,13 @@ mod fake {
         // win/handle.c:152.
         fn uv_is_closing(h: *const uv_handle_t) -> c_int =
             unsafe { (*h).flags & (CLOSING | UV_HANDLE_CLOSED) != 0 }.into();
-        // win/handle.c:70-75, win/handle-inl.h:71.
+        // win/handle.c:70-75, win/handle-inl.h:71, win/pipe.c:1104, win/tty.c:2308,2318.
         fn uv_close(h: *mut uv_handle_t, cb: uv_close_cb) = unsafe {
+            if (*h).type_ == HandleType::Tty {
+                uv_read_stop(h.cast());
+            }
             set_active(h);
-            ((*h).flags, (*h).close_cb) = (((*h).flags | CLOSING) & !ACTIVE, cb);
+            ((*h).flags, (*h).close_cb) = (((*h).flags | CLOSING) & !(ACTIVE | WRITABLE), cb);
         };
         // timer.c:57.
         fn uv_timer_init(l: &Loop, h: *mut Timer) -> ReturnCode =
@@ -224,20 +319,130 @@ mod fake {
         // win/getaddrinfo.c:219.
         fn uv_freeaddrinfo(ai: *mut addrinfo) = drop(unsafe { Box::from_raw(ai) });
         // threadpool.c:307, win/getaddrinfo.c:113.
-        fn uv_cancel(req: *mut uv_req_t) -> c_int = {
+        fn uv_cancel(req: *mut uv_req_t) -> c_int = unsafe {
             if FAILURE.take() != Failure::None {
                 return UV_EBUSY;
             }
-            unsafe { (*req.cast::<uv_getaddrinfo_t>()).retcode = ReturnCode(UV_EAI_CANCELED) };
+            if (*req).type_ == UV_FS {
+                (*req.cast::<fs_t>()).result = ReturnCodeI64(UV_ECANCELED.into());
+            } else {
+                (*req.cast::<uv_getaddrinfo_t>()).retcode = ReturnCode(UV_EAI_CANCELED);
+            }
             0
         };
+        // win/pipe.c:1210, which is freed with the handle (:721).
+        fn uv_accept(server: *mut uv_stream_t, client: *mut uv_stream_t) -> ReturnCode = {
+            assert_eq!(uv_is_closing(server.cast()), 0);
+            uv_pipe_open(client.cast(), 0)
+        };
+        // win/pipe.c:2547.
+        fn uv_pipe_open(h: *mut Pipe, _: uv_file) -> ReturnCode = {
+            unsafe { (*h).flags |= WRITABLE };
+            ReturnCode::ZERO
+        };
+        // win/pipe.c:2346-2357.
+        fn uv_pipe_connect2(
+            req: *mut uv_connect_t,
+            h: *mut Pipe,
+            _: *const u8,
+            _: usize,
+            _: c_uint,
+            cb: uv_connect_cb
+        ) -> ReturnCode = request(move || {
+            let status = match uv_is_closing(h.cast()) {
+                0 => uv_pipe_open(h, 0),
+                _ => ReturnCode(UV_ECANCELED),
+            };
+            unsafe { cb.unwrap()(req, status) };
+        });
+        // win/tty.c:285.
+        fn uv_tty_init(l: &Loop, h: *mut uv_tty_t, _: uv_file, _: c_int) -> ReturnCode =
+            unsafe { init(l, h, HandleType::Tty) };
+        // uv-common.c:928-932, win/tty.c:652,1086.
+        fn uv_read_start(h: *mut uv_stream_t, alloc_cb: uv_alloc_cb, read_cb: uv_read_cb) -> ReturnCode = unsafe {
+            if (*h).flags & (CLOSING | ACTIVE) != 0 {
+                return ReturnCode(if (*h).flags & CLOSING != 0 { UV_EINVAL } else { UV_EALREADY });
+            }
+            ((*h).alloc_cb, (*h).read_cb) = (alloc_cb, read_cb);
+            if (*h).type_ == HandleType::Tty && LINE_READ.get().is_none() {
+                LINE_READ.set(Some((h, alloc(h), false)));
+            }
+            set_active(h)
+        };
+        // win/stream.c:97, win/tty.c:1127-1131.
+        fn uv_read_stop(h: *mut uv_stream_t) -> ReturnCode = unsafe {
+            if (*h).flags & ACTIVE == 0 {
+                return ReturnCode::ZERO;
+            }
+            (*h).flags &= !ACTIVE;
+            if FAILURE.take() != Failure::None {
+                return ReturnCode(UV_EBADF);
+            }
+            LINE_READ.update(|read| read.map(|(tty, buf, _)| (tty, buf, true)));
+            ReturnCode::ZERO
+        };
+        // win/stream.c:122. The status is the kernel's, also after a close (win/pipe.c:2266).
+        fn uv_write(
+            req: *mut uv_write_t,
+            h: *mut uv_stream_t,
+            bufs: *const uv_buf_t,
+            _: c_uint,
+            cb: uv_write_cb
+        ) -> ReturnCode = {
+            if unsafe { (*h).flags } & WRITABLE == 0 {
+                return ReturnCode(UV_EPIPE);
+            }
+            let buf = unsafe { *bufs };
+            request(move || unsafe {
+                record(buf);
+                cb.unwrap()(req, ReturnCode::ZERO);
+                assert!(!uv_is_closed(h.cast()));
+            })
+        };
+        // win/fs.c:3327.
+        fn uv_fs_read(
+            _: *const Loop,
+            req: *mut fs_t,
+            _: uv_file,
+            bufs: *const uv_buf_t,
+            _: c_uint,
+            _: i64,
+            cb: uv_fs_cb
+        ) -> ReturnCode = {
+            let buf = unsafe { *bufs };
+            fs(req, cb, move || unsafe { fill(buf, b"file") })
+        };
+        // win/fs.c:3360.
+        fn uv_fs_write(
+            _: *const Loop,
+            req: *mut fs_t,
+            _: uv_file,
+            bufs: *const uv_buf_t,
+            _: c_uint,
+            _: i64,
+            cb: uv_fs_cb
+        ) -> ReturnCode = {
+            let buf = unsafe { *bufs };
+            fs(req, cb, move || {
+                unsafe { record(buf) };
+                ReturnCodeI64(buf.len.into())
+            })
+        };
+        // win/fs.c:3294.
+        fn uv_fs_close(_: *const Loop, req: *mut fs_t, _: uv_file, cb: uv_fs_cb) -> ReturnCode =
+            fs(req, cb, || {
+                CLOSED_FILES.update(|n| n + 1);
+                ReturnCodeI64(0)
+            });
+        // win/fs.c:3245.
+        fn uv_fs_req_cleanup(req: *mut fs_t) = unsafe { (*req).type_ = 0 };
     }
 }
 
-use fake::{FAILURE, Failure};
+use fake::{CLOSED_FILES, FAILURE, Failure, WRITTEN};
 
 /// Runs `test`, and closes the loop, which has to be empty by then. Miri reports what leaks.
-fn with_loop(test: impl FnOnce(&Loop)) {
+fn with_loop(test: impl FnOnce(&'static Loop)) {
     test(Loop::get());
     // SAFETY: `test` has returned.
     unsafe { Loop::close_thread_loop() };
@@ -390,6 +595,7 @@ fn teardown_closes_what_is_listed() {
     with_loop(|loop_| {
         let listen = |name| {
             ListeningPipe::listen(loop_, name, 1, Cell::new(0), |pipe, _| {
+                assert!(pipe.accept(()).is_ok());
                 pipe.data.update(|n| n + 1)
             })
         };
@@ -403,6 +609,7 @@ fn teardown_closes_what_is_listed() {
         open_handles::stop_all_for_vm_teardown();
         fake::fire_connections();
         assert!(first.is_closing() && last.is_closing());
+        assert!(first.accept(()).is_err_and(|rc| rc.int() == UV_EINVAL));
         assert_eq!(
             [first.data.get(), closed.data.get(), last.data.get()],
             [1, 0, 1]
@@ -515,5 +722,223 @@ fn getaddrinfo_returns_its_box() {
             [refused, done, running, cancelled, late].map(|status| status.get()),
             [None, Some(0), Some(0), Some(UV_EAI_CANCELED), Some(0)]
         );
+    });
+}
+
+/// What the callbacks got.
+type Results = Rc<Cell<Vec<i64>>>;
+
+#[test]
+fn reads_append_to_the_input() {
+    with_loop(|loop_| {
+        let results = Results::default();
+        let pipe = Pipe::open(loop_, false, 3, Rc::clone(&results)).unwrap();
+        pipe.input().set(b"a".to_vec());
+        let rc = pipe.read_start(|pipe, nread| pipe.data.push(nread.int()));
+        assert!(!rc.is_err());
+        fake::read_pipes(Ok(b"bc"));
+        fake::read_pipes(Ok(b""));
+        pipe.set_max_read_len(1);
+        fake::read_pipes(Ok(b"de"));
+        fake::read_pipes(Err(UV_EOF));
+        fake::read_pipes(Ok(b"f"));
+        assert_eq!(results.take(), [2, 1, UV_EOF.into()]);
+        assert_eq!(pipe.input().take(), b"abcd");
+        drop(pipe);
+        fake::run();
+    });
+}
+
+#[test]
+fn cancelled_line_read_keeps_its_buffer() {
+    for last_cancel in [Failure::None, Failure::BeforeInit] {
+        with_loop(|loop_| {
+            let results = Results::default();
+            let tty = uv_tty_t::init(loop_, 0, Rc::clone(&results)).unwrap();
+            let read_start = || {
+                tty.read_start(|tty, nread| {
+                    tty.data.push(nread.int());
+                    assert_eq!(tty.input().take(), b"ab");
+                })
+            };
+            assert!(!read_start().is_err());
+            tty.read_stop();
+            drop(tty.input().take());
+            assert!(!read_start().is_err());
+            fake::finish_line_read(b"lost");
+            fake::finish_line_read(b"ab");
+            assert_eq!(results.take(), [2]);
+
+            FAILURE.set(last_cancel);
+            drop(tty);
+            fake::run();
+            assert!(!is_dropped(&results));
+            fake::finish_line_read(b"lost");
+            fake::run();
+            assert!(is_dropped(&results));
+        });
+    }
+}
+
+#[test]
+fn request_reports_after_close_but_not_after_drop() {
+    type Start = fn(&Loop, Results) -> Owned<Pipe, Results>;
+    fn then(pipe: &Handle<Pipe, Results>, status: ReturnCode) {
+        pipe.data.push(status.int().into());
+    }
+    let starts: [(Start, &[u8], c_int); 3] = [
+        (
+            |loop_, data| Pipe::connect(loop_, bun_core::zstr!("a"), data, then).unwrap(),
+            b"",
+            UV_ECANCELED,
+        ),
+        (
+            |loop_, data| {
+                let pipe = Pipe::open(loop_, false, 3, data).unwrap();
+                let result = pipe.write(b"abc".to_vec(), 1, |pipe, bytes, status| {
+                    assert_eq!(bytes, b"abc");
+                    then(pipe, status);
+                });
+                assert!(result.is_ok());
+                pipe
+            },
+            b"bc",
+            0,
+        ),
+        (
+            |loop_, data| {
+                let pipe = Pipe::open(loop_, false, 3, data).unwrap();
+                let bytes = Box::<[u8]>::from(*b"abc");
+                assert!(!pipe.queue_write(bytes, |bytes| bytes, then).is_err());
+                pipe
+            },
+            b"abc",
+            0,
+        ),
+    ];
+    for (start, written, after_close) in starts {
+        with_loop(|loop_| {
+            let results = Results::default();
+            let [open, closed, dropped] = [(); 3].map(|()| start(loop_, Rc::clone(&results)));
+            closed.close();
+            drop(dropped);
+            fake::run();
+            assert_eq!(results.take(), [0, after_close.into()]);
+            assert_eq!(WRITTEN.take(), written.repeat(3));
+            drop((open, closed));
+            fake::run();
+        });
+    }
+}
+
+#[test]
+fn write_can_follow_a_connect_a_write_or_a_refusal() {
+    with_loop(|loop_| {
+        let pipe = Pipe::connect(loop_, bun_core::zstr!("a"), (), |pipe, _| {
+            let result = pipe.write(b"a".to_vec(), 0, |pipe, _, _| {
+                assert!(pipe.write(b"b".to_vec(), 0, |_, _, _| {}).is_ok());
+            });
+            assert!(result.is_ok());
+        })
+        .unwrap();
+        for _ in 0..3 {
+            fake::run();
+        }
+        FAILURE.set(Failure::BeforeInit);
+        let (refused, _) = pipe.write(b"c".to_vec(), 0, |_, _, _| {}).unwrap_err();
+        FAILURE.set(Failure::BeforeInit);
+        assert!(pipe.queue_write(vec![0], |v| v, |_, _| {}).is_err());
+        assert!(pipe.write(refused, 0, |_, _, _| {}).is_ok());
+        fake::run();
+        pipe.close();
+        let (_, rc) = pipe.write(vec![0], 0, |_, _, _| {}).unwrap_err();
+        assert_eq!(rc.int(), UV_EPIPE);
+        fake::run();
+        assert_eq!(WRITTEN.take(), b"abc");
+    });
+}
+
+#[test]
+fn teardown_callback_can_drop_its_handle() {
+    with_loop(|loop_| {
+        let slot = Slot::default();
+        let pipe = Pipe::init(loop_, false, SlotData(Rc::clone(&slot))).unwrap();
+        pipe.on_vm_teardown(|pipe| drop(pipe.data.0.take()));
+        slot.set(Some(pipe));
+        open_handles::stop_all_for_vm_teardown();
+        fake::run();
+        assert!(is_dropped(&slot));
+    });
+}
+
+#[test]
+fn teardown_skips_what_a_walk_has_closed() {
+    with_loop(|loop_| {
+        let slot = Slot::default();
+        let pipe = Pipe::init(loop_, false, SlotData(Rc::clone(&slot))).unwrap();
+        pipe.on_vm_teardown(|pipe| drop(pipe.data.0.take()));
+        slot.set(Some(pipe));
+        fake::close_all_without_callback();
+        fake::run();
+        open_handles::stop_all_for_vm_teardown();
+        drop(slot.take().unwrap());
+        assert!(is_dropped(&slot));
+    });
+}
+
+thread_local! {
+    static FILE: Cell<Option<OwnedFile<u8>>> = const { Cell::new(None) };
+    static FILE_RESULT: Cell<Option<(u8, Vec<u8>, i64)>> = const { Cell::new(None) };
+}
+
+fn drop_file(data: u8, buffer: Vec<u8>, result: ReturnCodeI64) {
+    FILE.set(None);
+    FILE_RESULT.set(Some((data, buffer, result.int())));
+}
+
+#[test]
+fn file_callback_can_drop_its_file() {
+    with_loop(|loop_| {
+        for (cancel, expected) in [
+            (None, (&b"fil"[..], 3)),
+            (Some(Failure::None), (b"", UV_ECANCELED.into())),
+            (Some(Failure::BeforeInit), (b"fil", 3)),
+        ] {
+            let file = OwnedFile::new(loop_, 3, 1);
+            FAILURE.set(Failure::BeforeInit);
+            let (buffer, _) = file
+                .read(Vec::with_capacity(8), 3, None, drop_file)
+                .unwrap_err();
+            assert!(file.read(buffer, 3, None, drop_file).is_ok());
+            file.data().set(2);
+            if let Some(failure) = cancel {
+                FAILURE.set(failure);
+                file.cancel();
+            }
+            file.set_close_on_drop(true);
+            FILE.set(Some(file));
+            fake::run();
+            let (data, buffer, result) = FILE_RESULT.take().unwrap();
+            assert_eq!((data, (&buffer[..], result)), (2, expected));
+            fake::run();
+            assert_eq!(CLOSED_FILES.take(), 1);
+        }
+    });
+}
+
+#[test]
+fn file_dropped_under_an_operation_closes_after_it() {
+    with_loop(|loop_| {
+        let file = OwnedFile::new(loop_, 3, 1);
+        file.on_vm_teardown(|_| FILE.set(None));
+        file.set_close_on_drop(true);
+        assert!(file.write(b"abc".to_vec(), 1, drop_file).is_ok());
+        FILE.set(Some(file));
+        open_handles::stop_all_for_vm_teardown();
+        fake::run();
+        assert_eq!((WRITTEN.take(), CLOSED_FILES.get()), (b"bc".to_vec(), 0));
+        fake::run();
+        assert_eq!(CLOSED_FILES.take(), 1);
+        assert!(FILE_RESULT.take().is_none());
     });
 }

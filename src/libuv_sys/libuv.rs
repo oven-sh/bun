@@ -209,14 +209,14 @@ pub union handle_u {
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub struct uv_handle_t {
-    pub data: *mut c_void,
-    pub loop_: *mut Loop,
-    pub type_: HandleType,
-    pub close_cb: uv_close_cb,
-    pub handle_queue: uv__queue,
-    pub u: handle_u,
-    pub endgame_next: *mut uv_handle_t,
-    pub(crate) flags: c_uint,
+    data: *mut c_void,
+    loop_: *mut Loop,
+    type_: HandleType,
+    close_cb: uv_close_cb,
+    handle_queue: uv__queue,
+    u: handle_u,
+    endgame_next: *mut uv_handle_t,
+    flags: c_uint,
 }
 
 /// `uv_handle_type` (uv.h). `#[repr(C)]` so it round-trips through
@@ -358,17 +358,6 @@ thread_local! {
 
 // ──────────────────────────────────────────────────────────────────────────
 // Open stream/process handles on this thread — Bun's HandleWrap list.
-//
-// Every `uv_pipe_t`, `uv_tty_t` (except the process-static stdin tty) and
-// `uv_process_t` this thread initialises is listed here from `init`/`spawn`
-// until the `uv_close` for it is issued. Whoever currently drives a stream records
-// itself with [`open_handles::set_owner`] — readers/writers do so through
-// `Source::set_owner`, IPC / named pipes when they take the handle —
-// so a thread teardown can close each handle through its owner's ordinary
-// close path (parents observe the close; pending writes finish ECANCELED)
-// while the VM is alive, or directly if nothing ever adopted it. Keyed by the
-// handle's address, which is stable for its life (boxed / embedded in a boxed
-// owner), so ownership moving between objects needs no re-registration.
 // ──────────────────────────────────────────────────────────────────────────
 #[path = "open_handles.rs"]
 pub mod open_handles;
@@ -376,6 +365,10 @@ pub mod open_handles;
 #[path = "handle.rs"]
 mod handle;
 pub use handle::*;
+
+#[path = "file.rs"]
+mod file;
+pub use file::OwnedFile;
 
 impl Loop {
     /// Returns this thread's
@@ -631,7 +624,6 @@ unsafe extern "C" fn log_walk_cb(handle: *mut uv_handle_t, _data: *mut c_void) {
 unsafe extern "C" fn close_walk_cb(handle: *mut uv_handle_t, _data: *mut c_void) {
     // SAFETY: libuv passes a live handle.
     if unsafe { uv_is_closing(handle) } == 0 {
-        open_handles::remove(handle);
         unsafe { uv_close(handle, None) };
     }
 }
@@ -687,96 +679,15 @@ impl<T: ListItem> Drop for List<T> {
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// Handle mixin — a generic trait every
-// handle type opts into. All methods are `#[inline]` zero-cost casts.
+// The kinds of handles that a [`Handle`] holds.
 // ──────────────────────────────────────────────────────────────────────────
 /// Marker for `#[repr(C)]` structs whose first fields are exactly
 /// `UV_HANDLE_FIELDS` (i.e. layout-prefixed with [`uv_handle_t`]).
 ///
 /// SAFETY: `Self` must be `#[repr(C)]` and start with the same fields as
-/// [`uv_handle_t`], so `*mut Self` is castable to `*mut uv_handle_t`. All-zero is
-/// valid if [`Owned`] has a constructor for `Self`.
+/// [`uv_handle_t`], so `*mut Self` is castable to `*mut uv_handle_t`. All-zero is valid.
 pub unsafe trait UvHandle: Sized {
     type State: HandleState;
-
-    #[inline]
-    fn as_handle(&self) -> *const uv_handle_t {
-        (self as *const Self).cast()
-    }
-    #[inline]
-    fn as_handle_mut(&mut self) -> *mut uv_handle_t {
-        (self as *mut Self).cast()
-    }
-    #[inline]
-    fn data(&self) -> *mut c_void {
-        // SAFETY: handle prefix; `data` is at offset 0.
-        unsafe { (*self.as_handle()).data }
-    }
-    #[inline]
-    fn get_data<T>(&self) -> *mut T {
-        // SAFETY: handle prefix invariant.
-        unsafe { uv_handle_get_data(self.as_handle()).cast() }
-    }
-    #[inline]
-    fn set_data(&mut self, ptr_: *mut c_void) {
-        // SAFETY: handle prefix invariant.
-        unsafe { uv_handle_set_data(self.as_handle_mut(), ptr_) };
-    }
-    /// `HandleMixin::close` — `cb` receives the same pointer cast back to
-    /// `*mut Self`. ABI-identical to `uv_close_cb` modulo the pointee type.
-    #[inline]
-    fn close(&mut self, cb: unsafe extern "C" fn(*mut Self)) {
-        open_handles::remove(self.as_handle_mut());
-        // SAFETY: `Self` embeds `uv_handle_t` at offset 0; cb is ABI-identical.
-        unsafe {
-            uv_close(
-                self.as_handle_mut(),
-                Some(mem::transmute::<
-                    unsafe extern "C" fn(*mut Self),
-                    unsafe extern "C" fn(*mut uv_handle_t),
-                >(cb)),
-            );
-        }
-    }
-    #[inline]
-    fn has_ref(&self) -> bool {
-        // SAFETY: handle prefix invariant.
-        unsafe { uv_has_ref(self.as_handle()) != 0 }
-    }
-    #[inline]
-    fn ref_(&mut self) {
-        // SAFETY: handle prefix invariant.
-        unsafe { uv_ref(self.as_handle_mut()) };
-    }
-    #[inline]
-    fn unref(&mut self) {
-        // SAFETY: handle prefix invariant.
-        unsafe { uv_unref(self.as_handle_mut()) };
-    }
-    #[inline]
-    fn is_closing(&self) -> bool {
-        // SAFETY: handle prefix invariant.
-        unsafe { uv_is_closing(self.as_handle()) != 0 }
-    }
-    #[inline]
-    fn is_closed(&self) -> bool {
-        // SAFETY: handle prefix invariant.
-        unsafe { uv_is_closed(self.as_handle()) }
-    }
-    #[inline]
-    fn is_active(&self) -> bool {
-        // SAFETY: handle prefix invariant.
-        unsafe { uv_is_active(self.as_handle()) != 0 }
-    }
-    /// `HandleMixin::fd` — returns the OS handle, or `INVALID_HANDLE_VALUE` if
-    /// none. (Higher-tier crates wrap this in `bun_sys::Fd`.)
-    #[inline]
-    fn fd(&self) -> uv_os_fd_t {
-        let mut fd_: uv_os_fd_t = INVALID_HANDLE_VALUE;
-        // SAFETY: handle prefix invariant; out-param is valid.
-        let _ = unsafe { uv_fileno(self.as_handle(), &mut fd_) };
-        fd_
-    }
 }
 macro_rules! impl_uv_handle {
     ($($handle:ty => $state:ty),* $(,)?) => {$(
@@ -787,11 +698,9 @@ macro_rules! impl_uv_handle {
     )*};
 }
 impl_uv_handle! {
-    uv_stream_t => (),
-    Pipe => (),
+    Pipe => StreamState,
     ListeningPipe => (),
-    uv_tty_t => (),
-    Tty => (),
+    uv_tty_t => StreamState,
     Timer => (),
     uv_idle_t => (),
     uv_poll_t => PollState,
@@ -799,193 +708,12 @@ impl_uv_handle! {
     uv_fs_event_t => (),
 }
 
-/// A heap pipe or tty. Dropping it closes the handle, which is freed once libuv is done with it.
-#[repr(transparent)]
-pub struct OwnedStream<H: UvHandle>(ptr::NonNull<H>);
-
-impl<H: UvHandle + bun_core::ffi::Zeroable> OwnedStream<H> {
-    /// A handle to `init`.
-    pub fn zeroed() -> Self {
-        Self(Box::into_non_null(bun_core::boxed_zeroed()))
-    }
-}
-
-impl<H: UvHandle> OwnedStream<H> {
-    /// `handle` is zeroed: libuv keeps the address of an initialised one.
-    pub fn new(handle: H) -> Self {
-        Self(Box::into_non_null(Box::new(handle)))
-    }
-
-    /// SAFETY: `handle` is a `Box<H>` that nothing else closes or frees, zeroed or initialised.
-    pub unsafe fn from_raw(handle: *mut H) -> Self {
-        // SAFETY: fn contract.
-        Self(unsafe { ptr::NonNull::new_unchecked(handle) })
-    }
-
-    pub fn into_raw(self) -> *mut H {
-        mem::ManuallyDrop::new(self).as_ptr()
-    }
-
-    /// Valid until `self` is dropped.
-    pub fn as_ptr(&self) -> *mut H {
-        self.0.as_ptr()
-    }
-
-    /// See [`open_handles::set_owner`].
-    pub fn set_owner(&self, owner: *mut c_void, close: open_handles::CloseViaOwner) {
-        open_handles::set_owner(self.as_ptr().cast(), owner, Some(close));
-    }
-}
-
-impl<H: UvHandle> core::ops::Deref for OwnedStream<H> {
-    type Target = H;
-    fn deref(&self) -> &H {
-        // SAFETY: live until `self` is dropped.
-        unsafe { self.0.as_ref() }
-    }
-}
-
-impl<H: UvHandle> core::ops::DerefMut for OwnedStream<H> {
-    fn deref_mut(&mut self) -> &mut H {
-        // SAFETY: live until `self` is dropped.
-        unsafe { self.0.as_mut() }
-    }
-}
-
-impl<H: UvHandle> Drop for OwnedStream<H> {
-    fn drop(&mut self) {
-        unsafe extern "C" fn free<H>(handle: *mut uv_handle_t) {
-            // SAFETY: the box `OwnedStream` held, which is not on the loop.
-            unsafe { bun_core::heap::destroy(handle.cast::<H>()) };
-        }
-        let handle = self.as_ptr().cast::<uv_handle_t>();
-        // SAFETY: handle prefix invariant, and it is freed once it is off the loop.
-        unsafe {
-            if (*handle).loop_.is_null() || uv_is_closed(handle) {
-                free::<H>(handle);
-            } else if uv_is_closing(handle) != 0 {
-                // By the thread's teardown, without a callback.
-                (*handle).close_cb = Some(free::<H>);
-            } else {
-                open_handles::remove(handle);
-                uv_close(handle, Some(free::<H>));
-            }
-        }
-    }
-}
-
-/// Marker for `#[repr(C)]` structs prefixed with `UV_STREAM_FIELDS`
-/// (`uv_stream_t`, `Pipe`, `uv_tcp_t`, `uv_tty_t`).
-pub unsafe trait UvStream: UvHandle {
-    #[inline]
-    fn as_stream(&mut self) -> *mut uv_stream_t {
-        (self as *mut Self).cast()
-    }
-    #[inline]
-    fn get_write_queue_size(&self) -> usize {
-        // SAFETY: stream prefix invariant.
-        unsafe { uv_stream_get_write_queue_size((self as *const Self).cast()) }
-    }
-    #[inline]
-    fn read_start(&mut self, alloc_cb: uv_alloc_cb, read_cb: uv_read_cb) -> ReturnCode {
-        // SAFETY: stream prefix invariant.
-        unsafe { uv_read_start(self.as_stream(), alloc_cb, read_cb) }
-    }
-    #[inline]
-    fn read_stop(&mut self) {
-        // SAFETY: always succeeds (uv docs).
-        let _ = unsafe { uv_read_stop(self.as_stream()) };
-    }
-    #[inline]
-    fn try_write(&mut self, bufs: &[uv_buf_t]) -> ReturnCode {
-        // SAFETY: stream prefix invariant.
-        unsafe { uv_try_write(self.as_stream(), bufs.as_ptr(), bufs.len() as c_uint) }
-    }
-    #[inline]
-    fn is_readable(&self) -> bool {
-        // SAFETY: stream prefix invariant.
-        unsafe { uv_is_readable((self as *const Self).cast()) != 0 }
-    }
-    #[inline]
-    fn is_writable(&self) -> bool {
-        // SAFETY: stream prefix invariant.
-        unsafe { uv_is_writable((self as *const Self).cast()) != 0 }
-    }
-    /// High-level wrapper
-    /// over `uv_read_start` that thunks Rust callbacks through a monomorphised
-    /// `extern "C"` trampoline. `context` is stashed in `handle.data` and
-    /// recovered in the trampoline; the three callbacks are baked into the
-    /// monomorphisation via the [`StreamReader`] trait (associated fns, so the
-    /// trampoline stays zero-alloc and the handle needs no spare storage).
-    ///
-    /// `error_cb` receives the
-    /// raw negative libuv errno (`c_int`); this crate is layered below
-    /// `bun_sys` so it can't name `E`. Callers map via
-    /// `bun_sys::windows::translate_uv_error_to_e`. Returns the raw
-    /// [`ReturnCode`] from `uv_read_start`; callers apply
-    /// `.to_error(Tag::listen)` themselves.
-    #[inline]
-    fn read_start_ctx<T: StreamReader>(&mut self, context: *const T) -> ReturnCode {
-        // SAFETY: stream prefix invariant — `&mut Self` reinterprets as
-        // `&mut uv_handle_t` for the leading `UV_HANDLE_FIELDS`.
-        let h = unsafe { &mut *(self as *mut Self).cast::<uv_handle_t>() };
-        h.data = context.cast_mut().cast();
-
-        unsafe extern "C" fn uv_allocb<T: StreamReader>(
-            req: *mut uv_handle_t,
-            suggested_size: usize,
-            buffer: *mut uv_buf_t,
-        ) {
-            // SAFETY: `req.data` was set to `context` above; libuv calls this
-            // on the loop thread before `uv_readcb`.
-            let ctx = unsafe { &*(*req).data.cast::<T>() };
-            let buf = T::on_read_alloc(ctx, suggested_size);
-            let (len, base) = (buf.len() as ULONG, buf.cast());
-            // SAFETY: `buffer` is libuv's out-param.
-            unsafe { *buffer = uv_buf_t { len, base } };
-        }
-        unsafe extern "C" fn uv_readcb<T: StreamReader>(
-            req: *mut uv_stream_t,
-            nreads: ReturnCodeI64,
-            _: *const uv_buf_t,
-        ) {
-            let n = nreads.int();
-            if n == 0 {
-                return; // EAGAIN / EWOULDBLOCK
-            }
-            // SAFETY: `req.data` was set to `context` above.
-            let ctx = unsafe { &*(*req).data.cast::<T>() };
-            if n < 0 {
-                // SAFETY: stream prefix invariant.
-                let _ = unsafe { uv_read_stop(req) };
-                T::on_read_error(ctx, n as c_int);
-            } else {
-                // SAFETY: libuv has read `n` bytes to the buffer of `uv_allocb`.
-                unsafe { T::on_read(ctx, n as usize) };
-            }
-        }
-        // SAFETY: stream prefix invariant.
-        unsafe { uv_read_start(self.as_stream(), Some(uv_allocb::<T>), Some(uv_readcb::<T>)) }
-    }
-}
-
-/// Callback bundle for [`UvStream::read_start_ctx`].
-/// The `extern "C"` trampolines are monomorphised over
-/// this trait so the callbacks are baked into the codegen (zero-alloc, no
-/// per-handle storage).
+/// A handle that can be read and written.
 ///
-/// SAFETY: what `on_read_alloc` returns stays writable, and nothing else uses it, until the read
-/// is reported or the handle is closed.
-pub unsafe trait StreamReader: Sized {
-    fn on_read_alloc(this: &Self, suggested_size: usize) -> *mut [u8];
-    /// `err` is the raw negative libuv errno (e.g. `UV_EOF`). Map via
-    /// `bun_sys::windows::translate_uv_error_to_e` if `bun_sys::E` is needed.
-    fn on_read_error(this: &Self, err: c_int);
-    /// SAFETY: `nread` bytes have been written to what `on_read_alloc` returned.
-    unsafe fn on_read(this: &Self, nread: usize);
-}
+/// # Safety
+/// `Self` is `#[repr(C)]` and starts with the same fields as [`uv_stream_t`].
+pub unsafe trait UvStream: UvHandle<State = StreamState> {}
 // SAFETY: all of these are `#[repr(C)]` with `UV_STREAM_FIELDS` prefix.
-unsafe impl UvStream for uv_stream_t {}
 unsafe impl UvStream for Pipe {}
 unsafe impl UvStream for uv_tty_t {}
 
@@ -1039,20 +767,20 @@ pub struct uv_shutdown_t {
 /// `uv_stream_t` (`UV_HANDLE_FIELDS` + `UV_STREAM_FIELDS`).
 #[repr(C)]
 pub struct uv_stream_t {
-    pub data: *mut c_void,
-    pub loop_: *mut Loop,
-    pub type_: HandleType,
-    pub close_cb: uv_close_cb,
-    pub handle_queue: uv__queue,
-    pub u: handle_u,
-    pub endgame_next: *mut uv_handle_t,
-    pub flags: c_uint,
-    pub write_queue_size: usize,
-    pub alloc_cb: uv_alloc_cb,
-    pub read_cb: uv_read_cb,
-    pub reqs_pending: c_uint,
-    pub activecnt: c_int,
-    pub read_req: uv_read_t,
+    data: *mut c_void,
+    loop_: *mut Loop,
+    type_: HandleType,
+    close_cb: uv_close_cb,
+    handle_queue: uv__queue,
+    u: handle_u,
+    endgame_next: *mut uv_handle_t,
+    flags: c_uint,
+    write_queue_size: usize,
+    alloc_cb: uv_alloc_cb,
+    read_cb: uv_read_cb,
+    reqs_pending: c_uint,
+    activecnt: c_int,
+    read_req: uv_read_t,
     stream: stream_conn_serv,
 }
 
@@ -1060,77 +788,31 @@ pub struct uv_stream_t {
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub struct uv_write_t {
-    pub(crate) data: *mut c_void,
-    pub type_: uv_req_type,
-    pub(crate) reserved: [*mut c_void; 6],
-    pub u: req_u,
-    pub next_req: *mut uv_req_t,
-    pub cb: uv_write_cb,
-    pub send_handle: *mut uv_stream_t,
-    pub handle: *mut uv_stream_t,
-    pub coalesced: c_int,
-    pub write_buffer: uv_buf_t,
-    pub event_handle: HANDLE,
-    pub wait_handle: HANDLE,
-}
-impl uv_write_t {
-    /// Context-aware `uv_write`. Stores `context` in `req.data`;
-    /// the trampoline recovers it and dispatches to `on_write` as a plain Rust
-    /// `&mut`. Generic monomorphisation gives one `extern "C"` thunk per `<T>`.
-    ///
-    /// Without a `bun_sys` dependency / unstable const-generic fn pointers,
-    /// this (a) keeps `on_write` runtime-dispatched but stashes it as a `usize`
-    /// (fn-ptr ↔ integer is well-defined; fn-ptr ↔ data-ptr is not — Miri
-    /// rejects the latter), and (b) returns the raw [`ReturnCode`]; callers
-    /// apply `.to_error(Tag::write)` themselves. The `bun.sys.syslog` line is
-    /// emitted via this crate's `[uv]` log scope.
-    #[inline]
-    pub fn write<T>(
-        &mut self,
-        stream: *mut uv_stream_t,
-        input: &uv_buf_t,
-        context: *mut T,
-        on_write: fn(*mut T, ReturnCode),
-    ) -> ReturnCode {
-        // Stash the Rust fn-pointer in `reserved[0]` (libuv never touches the
-        // 6-slot `reserved` array on `uv_req_t`) as a `usize`, recovered in the
-        // thunk below.
-        self.data = context.cast();
-        self.reserved[0] = on_write as usize as *mut c_void;
-        unsafe extern "C" fn thunk<T>(req: *mut uv_write_t, status: ReturnCode) {
-            // SAFETY: `data`/`reserved[0]` were set immediately before
-            // `uv_write` below; libuv invokes this exactly once with the same
-            // `req` pointer. The `usize` → `fn` cast round-trips the address
-            // written by `on_write as usize` above (Win64: same width).
-            // Pass the raw `*mut T` straight through
-            // — callers commonly free the `T` allocation inside the callback,
-            // so materialising `&mut T` here would leave that reference
-            // dangling across the dealloc (UB).
-            unsafe {
-                let cb: fn(*mut T, ReturnCode) =
-                    mem::transmute::<usize, fn(*mut T, ReturnCode)>((*req).reserved[0] as usize);
-                cb((*req).data.cast::<T>(), status);
-            }
-        }
-        // SAFETY: caller guarantees `self` lives until the cb fires and
-        // `stream` is a live stream handle.
-        let rc = unsafe { uv_write(self, stream, input, 1, Some(thunk::<T>)) };
-        crate::__uv_log!("uv_write({}) = {}", input.len, rc.int());
-        rc
-    }
+    data: *mut c_void,
+    type_: uv_req_type,
+    reserved: [*mut c_void; 6],
+    u: req_u,
+    next_req: *mut uv_req_t,
+    cb: uv_write_cb,
+    send_handle: *mut uv_stream_t,
+    handle: *mut uv_stream_t,
+    coalesced: c_int,
+    write_buffer: uv_buf_t,
+    event_handle: HANDLE,
+    wait_handle: HANDLE,
 }
 
 /// `uv_connect_t`.
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub struct uv_connect_t {
-    pub data: *mut c_void,
-    pub type_: uv_req_type,
-    pub reserved: [*mut c_void; 6],
-    pub u: req_u,
-    pub next_req: *mut uv_req_t,
-    pub cb: uv_connect_cb,
-    pub handle: *mut uv_stream_t,
+    data: *mut c_void,
+    type_: uv_req_type,
+    reserved: [*mut c_void; 6],
+    u: req_u,
+    next_req: *mut uv_req_t,
+    cb: uv_connect_cb,
+    handle: *mut uv_stream_t,
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -1279,71 +961,25 @@ union pipe_u {
 }
 #[repr(C)]
 pub struct Pipe {
-    pub data: *mut c_void,
-    pub(crate) loop_: *mut Loop,
-    pub type_: HandleType,
-    pub close_cb: uv_close_cb,
-    pub handle_queue: uv__queue,
-    pub u: handle_u,
-    pub endgame_next: *mut uv_handle_t,
-    pub flags: c_uint,
-    pub write_queue_size: usize,
-    pub alloc_cb: uv_alloc_cb,
-    pub read_cb: uv_read_cb,
-    pub reqs_pending: c_uint,
-    pub activecnt: c_int,
-    pub read_req: uv_read_t,
+    data: *mut c_void,
+    loop_: *mut Loop,
+    type_: HandleType,
+    close_cb: uv_close_cb,
+    handle_queue: uv__queue,
+    u: handle_u,
+    endgame_next: *mut uv_handle_t,
+    flags: c_uint,
+    write_queue_size: usize,
+    alloc_cb: uv_alloc_cb,
+    read_cb: uv_read_cb,
+    reqs_pending: c_uint,
+    activecnt: c_int,
+    read_req: uv_read_t,
     stream: stream_conn_serv,
-    pub ipc: c_int,
-    pub handle: HANDLE,
-    pub name: *mut WCHAR,
+    ipc: c_int,
+    handle: HANDLE,
+    name: *mut WCHAR,
     pipe: pipe_u,
-}
-
-impl Pipe {
-    #[inline]
-    pub fn ipc_remote_pid(&self) -> DWORD {
-        // SAFETY: `conn` is the active variant for a connected IPC pipe (init
-        unsafe { self.pipe.conn.ipc_remote_pid }
-    }
-    /// `uv_pipe_init` wrapper. Returns the raw `ReturnCode`; callers
-    /// in higher tiers map to `bun_sys::Result` themselves so this crate stays
-    /// free of `bun_sys`.
-    #[inline]
-    pub fn init(&mut self, loop_: &Loop, ipc: bool) -> ReturnCode {
-        // SAFETY: `self` is a valid `uv_pipe_t`-sized allocation.
-        let rc = unsafe { uv_pipe_init(loop_, self, if ipc { 1 } else { 0 }) };
-        if rc.0 == 0 {
-            open_handles::add_pipe(self);
-        }
-        rc
-    }
-    #[inline]
-    pub fn open(&mut self, file: uv_file) -> ReturnCode {
-        // SAFETY: pipe was `init`ed.
-        unsafe { uv_pipe_open(self, file) }
-    }
-    #[inline]
-    pub fn connect(
-        &mut self,
-        req: &mut uv_connect_t,
-        name: &[u8],
-        context: *mut c_void,
-        on_connect: unsafe extern "C" fn(*mut uv_connect_t, ReturnCode),
-    ) -> ReturnCode {
-        self.data = context;
-        // SAFETY: pipe was `init`ed; libuv copies the name.
-        unsafe {
-            uv_pipe_connect2(
-                req,
-                self,
-                name.as_ptr(),
-                name.len(),
-                UV_PIPE_NO_TRUNCATE,
-                Some(on_connect),
-            )
-        }
-    }
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -1381,56 +1017,23 @@ union tty_u {
 }
 #[repr(C)]
 pub struct uv_tty_t {
-    pub data: *mut c_void,
-    pub loop_: *mut Loop,
-    pub type_: HandleType,
-    pub close_cb: uv_close_cb,
-    pub handle_queue: uv__queue,
-    pub u: handle_u,
-    pub endgame_next: *mut uv_handle_t,
-    pub flags: c_uint,
-    pub write_queue_size: usize,
-    pub alloc_cb: uv_alloc_cb,
-    pub read_cb: uv_read_cb,
-    pub reqs_pending: c_uint,
-    pub activecnt: c_int,
-    pub read_req: uv_read_t,
+    data: *mut c_void,
+    loop_: *mut Loop,
+    type_: HandleType,
+    close_cb: uv_close_cb,
+    handle_queue: uv__queue,
+    u: handle_u,
+    endgame_next: *mut uv_handle_t,
+    flags: c_uint,
+    write_queue_size: usize,
+    alloc_cb: uv_alloc_cb,
+    read_cb: uv_read_cb,
+    reqs_pending: c_uint,
+    activecnt: c_int,
+    read_req: uv_read_t,
     stream: stream_conn_serv,
-    pub handle: HANDLE,
+    handle: HANDLE,
     tty: tty_u,
-}
-/// A console handle plus the read buffer whose lifetime libuv ties to the
-/// handle rather than to any reader.
-#[repr(C)]
-pub struct Tty {
-    pub uv: uv_tty_t,
-
-    /// Destination buffer for this handle's console reads. A cooked-mode
-    /// line read parks a worker thread in `ReadConsoleW` writing into the
-    /// `alloc_cb` buffer, and a read cancelled by `uv_read_stop` is never
-    /// handed back through `read_cb` — so the buffer must be owned by
-    /// something libuv guarantees outlives the read. The handle is that
-    /// thing: its close callback only runs once no requests are pending,
-    /// and the process-static stdin tty is never closed at all.
-    pub read_scratch: Vec<u8>,
-}
-
-impl Tty {
-    #[inline]
-    pub fn init(&mut self, loop_: &Loop, file: uv_file) -> ReturnCode {
-        // Init and register through a whole-struct pointer: the close paths
-        // reclaim the full `Tty` from this address, and `&mut self.uv` would
-        // narrow provenance to the field.
-        let uv_ptr = core::ptr::from_mut(self).cast::<uv_tty_t>();
-        // SAFETY: `uv` is the first `#[repr(C)]` field, sized for uv_tty_t.
-        let rc = unsafe { uv_tty_init(loop_, uv_ptr, file, 0) };
-        // fd 0 is the process-static stdin tty (never freed, shared across
-        // threads by design); everything else is a heap tty owned by this thread.
-        if rc.0 == 0 && file != 0 {
-            open_handles::add_tty(uv_ptr);
-        }
-        rc
-    }
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -2192,7 +1795,7 @@ pub struct ReturnCode(pub(crate) c_int);
 pub type StartResult<T> = Result<(), (T, ReturnCode)>;
 
 // ──────────────────────────────────────────────────────────────────────────
-// `bun_core::ffi::Zeroable` impls (S021). Every libuv handle/request struct
+// `bun_core::ffi::Zeroable` impls (S021). Every libuv request struct
 // above is `#[repr(C)]` POD whose fields are integers, raw pointers,
 // `Option<extern fn>` callbacks, nested POD unions, or `HandleType` (a
 // `#[repr(C)]` enum with `Unknown = 0`). The all-zero bit pattern is therefore
@@ -2206,9 +1809,6 @@ pub type StartResult<T> = Result<(), (T, ReturnCode)>;
 unsafe impl bun_core::ffi::Zeroable for uv_buf_t {}
 unsafe impl bun_core::ffi::Zeroable for uv_req_t {}
 unsafe impl bun_core::ffi::Zeroable for uv_write_t {}
-unsafe impl bun_core::ffi::Zeroable for uv_connect_t {}
-unsafe impl bun_core::ffi::Zeroable for Pipe {}
-unsafe impl bun_core::ffi::Zeroable for uv_tty_t {}
 unsafe impl bun_core::ffi::Zeroable for fs_t {}
 bun_core::impl_zeroable!(uv_stat_t, uv_utsname_t);
 impl ReturnCode {
@@ -2592,51 +2192,38 @@ unsafe extern "C" {
     pub fn uv_handle_size(type_: uv_handle_type) -> usize;
     pub fn uv_handle_get_type(handle: *const uv_handle_t) -> uv_handle_type;
     pub fn uv_handle_type_name(type_: uv_handle_type) -> *const c_char;
-    pub fn uv_handle_get_data(handle: *const uv_handle_t) -> *mut c_void;
-    pub fn uv_handle_set_data(handle: *mut uv_handle_t, data: *mut c_void);
     fn uv_is_active(handle: *const uv_handle_t) -> c_int;
     fn uv_walk(loop_: &Loop, walk_cb: uv_walk_cb, arg: *mut c_void);
     fn uv_close(handle: *mut uv_handle_t, close_cb: uv_close_cb);
-    pub fn uv_fileno(handle: *const uv_handle_t, fd: *mut uv_os_fd_t) -> c_int;
+    fn uv_fileno(handle: *const uv_handle_t, fd: *mut uv_os_fd_t) -> c_int;
     pub fn uv_buf_init(base: *mut c_char, len: c_uint) -> uv_buf_t;
     pub fn uv_pipe(fds: *mut [uv_file; 2], read_flags: c_int, write_flags: c_int) -> ReturnCode;
     fn uv_is_closing(handle: *const uv_handle_t) -> c_int;
-    pub fn uv_cancel(req: *mut uv_req_t) -> c_int;
+    fn uv_cancel(req: *mut uv_req_t) -> c_int;
 
     // stream
-    pub fn uv_stream_get_write_queue_size(stream: *const uv_stream_t) -> usize;
     fn uv_listen(stream: *mut uv_stream_t, backlog: c_int, cb: uv_connection_cb) -> ReturnCode;
     fn uv_accept(server: *mut uv_stream_t, client: *mut uv_stream_t) -> ReturnCode;
-    pub fn uv_read_start(
+    fn uv_read_start(
         stream: *mut uv_stream_t,
         alloc_cb: uv_alloc_cb,
         read_cb: uv_read_cb,
     ) -> ReturnCode;
-    pub fn uv_read_stop(stream: *mut uv_stream_t) -> ReturnCode;
-    pub fn uv_write(
+    fn uv_read_stop(stream: *mut uv_stream_t) -> ReturnCode;
+    fn uv_write(
         req: *mut uv_write_t,
         handle: *mut uv_stream_t,
         bufs: *const uv_buf_t,
         nbufs: c_uint,
         cb: uv_write_cb,
     ) -> ReturnCode;
-    pub fn uv_try_write(
-        handle: *mut uv_stream_t,
-        bufs: *const uv_buf_t,
-        nbufs: c_uint,
-    ) -> ReturnCode;
-    pub fn uv_is_readable(handle: *const uv_stream_t) -> c_int;
-    pub fn uv_is_writable(handle: *const uv_stream_t) -> c_int;
-    pub fn uv_stream_set_blocking(handle: *mut uv_stream_t, blocking: c_int) -> ReturnCode;
+    fn uv_try_write(handle: *mut uv_stream_t, bufs: *const uv_buf_t, nbufs: c_uint) -> ReturnCode;
+    fn uv_stream_set_blocking(handle: *mut uv_stream_t, blocking: c_int) -> ReturnCode;
 
     // tty
-    pub fn uv_tty_init(
-        loop_: &Loop,
-        handle: *mut uv_tty_t,
-        fd: uv_file,
-        readable: c_int,
-    ) -> ReturnCode;
-    pub fn uv_tty_set_mode(handle: *mut uv_tty_t, mode: uv_tty_mode_t) -> ReturnCode;
+    fn uv_tty_init(loop_: &Loop, handle: *mut uv_tty_t, fd: uv_file, readable: c_int)
+    -> ReturnCode;
+    fn uv_tty_set_mode(handle: *mut uv_tty_t, mode: uv_tty_mode_t) -> ReturnCode;
     /// Raw `uv_guess_handle`. Declared `-> c_int` (not [`HandleType`]) because
     /// returning a `#[repr(C)]` enum from a `safe extern fn` is a soundness
     /// hole: any out-of-range discriminant (e.g. `UV_HANDLE_TYPE_MAX = 18`, or

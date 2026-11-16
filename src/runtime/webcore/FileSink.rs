@@ -22,8 +22,6 @@ use crate::webcore::sink::{AnyControlledSink, ReadableSinkController};
 use crate::webcore::{self, AutoFlusher, PathOrFileDescriptor, streams};
 #[cfg(windows)]
 use bun_sys::windows::libuv as uv;
-#[cfg(windows)]
-use bun_sys::windows::libuv::UvHandle as _;
 
 bun_core::declare_scope!(FileSink, visible);
 
@@ -500,7 +498,7 @@ impl FileSink {
         event_loop_: impl Into<EventLoopHandle>,
         pipe: bun_io::OwnedPipe,
     ) -> RefPtr<FileSink> {
-        // `UvHandle::fd()` returns the raw `uv_os_fd_t` (HANDLE on Windows);
+        // `Handle::fd()` returns the raw `uv_os_fd_t` (HANDLE on Windows);
         // INVALID_HANDLE_VALUE maps to `Fd::INVALID`, anything else is
         // tagged as a system handle.
         let fd = match pipe.fd() {

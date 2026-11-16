@@ -9,6 +9,8 @@ use core::fmt;
 #[cfg(unix)]
 use core::ptr;
 
+#[cfg(windows)]
+use bun_sys::windows::libuv as uv;
 #[cfg(not(windows))]
 use bun_sys::{self as sys, Fd};
 #[cfg(not(windows))]
@@ -186,6 +188,10 @@ pub enum PollTag {
     TerminalWriter,
     #[cfg(windows)]
     WindowsNamedPipe,
+    #[cfg(windows)]
+    SendQueue,
+    #[cfg(windows)]
+    TestParallelChannel,
     #[cfg(target_os = "macos")]
     ParentDeathWatchdog,
     #[cfg(not(windows))]
@@ -206,7 +212,7 @@ pub enum PollTag {
 }
 
 /// The receiver of an [`IoEvent`]. Safe to build: `set_owner` and `OwnedFilePoll::new` carry the contract.
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, PartialEq, Eq)]
 pub struct Owner {
     tag: PollTag,
     /// Tells the two readers of one owner apart.
@@ -261,8 +267,14 @@ impl Owner {
 
 #[cfg(windows)]
 pub enum IoEvent {
-    Read(crate::pipe_reader::ReadEvent),
-    Write(crate::pipe_writer::WriteEvent),
+    Connect(uv::ReturnCode),
+    /// How much the `input` of the stream has grown.
+    StreamRead(uv::ReturnCodeI64),
+    StreamWrite(Vec<u8>, uv::ReturnCode),
+    /// The buffer comes back with what was read.
+    FileRead(Vec<u8>, uv::ReturnCodeI64),
+    FileWrite(Vec<u8>, uv::ReturnCodeI64),
+    VmTeardown,
 }
 
 /// What a poll that fired tells its owner.

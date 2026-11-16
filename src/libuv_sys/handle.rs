@@ -4,7 +4,7 @@ use super::*;
 
 use bun_core::ffi::conjure_zst;
 use bun_core::{IntrusiveField, ZStr};
-use bun_ptr::{AliasableBox, RefCounted, RefPtr};
+use bun_ptr::{AliasableBox, OptionCellExt as _, RefCounted, RefPtr};
 use core::cell::UnsafeCell;
 use core::mem::ManuallyDrop;
 use core::ptr::NonNull;
@@ -50,6 +50,15 @@ impl<H: UvHandle, D> Handle<H, D> {
         self.as_ptr().cast()
     }
 
+    /// `None` once the [`Owned`] was dropped, which sets `data`.
+    ///
+    /// # Safety
+    /// `handle` came from `as_ptr`, and its close callback has not run.
+    unsafe fn from_ptr_unless_dropped<'a>(handle: *mut c_void) -> Option<&'a Self> {
+        // SAFETY: fn contract.
+        unsafe { ((*handle.cast::<uv_handle_t>()).data.is_null()).then(|| &*handle.cast()) }
+    }
+
     /// `EINVAL` for a handle that is closing, as from `uv_read_start`.
     fn unless_closing(&self, start: impl FnOnce(*mut H) -> ReturnCode) -> ReturnCode {
         if self.is_closing() {
@@ -58,16 +67,22 @@ impl<H: UvHandle, D> Handle<H, D> {
         start(self.as_ptr())
     }
 
-    /// Lists the handle for a thread's teardown to close.
-    fn add_to_open_handles(&self) {
+    /// Lists the handle for a thread's teardown, which calls `stop` and closes it if it is open.
+    pub fn on_vm_teardown<F: Fn(&Self) + Copy + 'static>(&self, _stop: F) {
         /// # Safety
         /// `this` is a live `Handle<H, D>`.
-        unsafe fn close<H: UvHandle, D>(this: *mut c_void) {
+        unsafe fn stop<H: UvHandle, D, F: Fn(&Handle<H, D>)>(this: *mut c_void) {
             // SAFETY: fn contract.
-            unsafe { &*this.cast::<Handle<H, D>>() }.close();
+            let this = unsafe { &*this.cast::<Handle<H, D>>() };
+            // A `uv_walk` closes what is listed, and then `F` could free it.
+            if !this.is_closing() {
+                conjure_zst::<F>()(this);
+                this.close();
+            }
         }
+        self.link.remove();
         // SAFETY: `self` holds the link, and stays in place.
-        unsafe { self.link.add_handle(self.as_ptr().cast(), close::<H, D>) };
+        unsafe { self.link.add_handle(self.as_ptr().cast(), stop::<H, D, F>) };
     }
 
     /// Does nothing the second time. The memory stays until the [`Owned`] is dropped too.
@@ -155,6 +170,13 @@ impl<H: UvHandle, D: 'static> Owned<H, D> {
         })));
         init(this.0.as_ptr().cast()).into_result()?;
         Ok(this)
+    }
+}
+
+impl<H: UvHandle, D> Owned<H, D> {
+    pub fn leak(self) -> &'static Handle<H, D> {
+        // SAFETY: nothing frees it.
+        unsafe { ManuallyDrop::new(self).0.as_ref() }
     }
 }
 
@@ -394,6 +416,304 @@ impl<D: 'static> Handle<uv_poll_t, D> {
     }
 }
 
+union StreamRequest {
+    write: uv_write_t,
+    connect: uv_connect_t,
+}
+
+pub struct StreamState {
+    input: Cell<Vec<u8>>,
+    /// `input`, from the alloc callback on. A console's line read writes to it past `uv_read_stop`, unreported.
+    lent_input: Cell<Option<Vec<u8>>>,
+    max_read_len: Cell<usize>,
+    /// `Some` while libuv has `req`.
+    output: Cell<Option<Vec<u8>>>,
+    req: UnsafeCell<StreamRequest>,
+}
+
+impl Default for StreamState {
+    fn default() -> Self {
+        Self {
+            input: Cell::default(),
+            lent_input: Cell::new(None),
+            max_read_len: Cell::new(usize::MAX),
+            output: Cell::new(None),
+            // SAFETY: integers, raw pointers and `Option<fn>`.
+            req: UnsafeCell::new(unsafe { bun_core::ffi::zeroed_unchecked() }),
+        }
+    }
+}
+
+impl HandleState for StreamState {}
+
+/// The callbacks can run after `close`, but not once the [`Owned`] was dropped.
+impl<H: UvStream, D> Handle<H, D> {
+    /// For a `uv_stdio_container_t`.
+    pub fn as_stream(&self) -> *mut uv_stream_t {
+        self.as_ptr().cast()
+    }
+
+    /// `INVALID_HANDLE_VALUE` if there is none.
+    pub fn fd(&self) -> uv_os_fd_t {
+        let mut fd = INVALID_HANDLE_VALUE;
+        // SAFETY: initialised.
+        let _ = unsafe { uv_fileno(self.as_handle(), &raw mut fd) };
+        fd
+    }
+
+    /// What reads append to.
+    pub fn input(&self) -> &Cell<Vec<u8>> {
+        &self.state.input
+    }
+
+    pub fn set_max_read_len(&self, len: usize) {
+        self.state.max_read_len.set(len);
+    }
+
+    /// `on_read` gets how much `input` has grown, or an error, after which reading has stopped.
+    pub fn read_start<F>(&self, _on_read: F) -> ReturnCode
+    where
+        F: Fn(&Self, ReturnCodeI64) + Copy + 'static,
+    {
+        /// For a tty this also runs from inside `uv_read_start` and `uv_tty_set_mode`.
+        unsafe extern "C" fn alloc<H: UvStream, D>(
+            handle: *mut uv_handle_t,
+            suggested_size: usize,
+            buf: *mut uv_buf_t,
+        ) {
+            // SAFETY: the first field of a live `Handle`.
+            let state = unsafe { &(*handle.cast::<Handle<H, D>>()).state };
+            let mut input = state
+                .lent_input
+                .take()
+                .unwrap_or_else(|| state.input.take());
+            let max_len = state.max_read_len.get().min(ULONG::MAX as usize);
+            input.reserve(suggested_size.min(max_len));
+            let spare = input.spare_capacity_mut();
+            let (len, base) = (spare.len().min(max_len) as ULONG, spare.as_mut_ptr().cast());
+            state.lent_input.set(Some(input));
+            // SAFETY: libuv's out-parameter.
+            unsafe { *buf = uv_buf_t { len, base } };
+        }
+        unsafe extern "C" fn read<H, D, F>(
+            stream: *mut uv_stream_t,
+            nread: ReturnCodeI64,
+            _: *const uv_buf_t,
+        ) where
+            H: UvStream,
+            F: Fn(&Handle<H, D>, ReturnCodeI64),
+        {
+            // SAFETY: the first field of a live `Handle`.
+            let Some(this) = (unsafe { Handle::<H, D>::from_ptr_unless_dropped(stream.cast()) })
+            else {
+                return;
+            };
+            if let Some(mut input) = this.state.lent_input.take() {
+                if let Ok(len) = usize::try_from(nread.int()) {
+                    // SAFETY: libuv wrote them to what `alloc` handed out.
+                    unsafe { bun_core::vec::commit_spare(&mut input, len) };
+                }
+                this.state.input.set(input);
+            }
+            match nread.int() {
+                // EAGAIN or canceled.
+                0 => return,
+                1.. => {}
+                _ => this.read_stop(),
+            }
+            conjure_zst::<F>()(this, nread);
+        }
+        // SAFETY: initialised. libuv refuses a stream that is closing or not readable.
+        unsafe { uv_read_start(self.as_stream(), Some(alloc::<H, D>), Some(read::<H, D, F>)) }
+    }
+
+    pub fn read_stop(&self) {
+        // SAFETY: initialised. It does nothing unless the stream is being read.
+        let _ = unsafe { uv_read_stop(self.as_stream()) };
+    }
+
+    pub fn try_write(&self, bytes: &[u8]) -> ReturnCode {
+        let buf = uv_buf_t::init(bytes);
+        // SAFETY: initialised, and `bytes` is not used after the call.
+        unsafe { uv_try_write(self.as_stream(), &raw const buf, 1) }
+    }
+
+    /// # Safety
+    /// On success `req` and the bytes of `buf` stay until `cb`.
+    unsafe fn start_write(
+        &self,
+        req: *mut uv_write_t,
+        buf: uv_buf_t,
+        cb: unsafe extern "C" fn(*mut uv_write_t, ReturnCode),
+    ) -> ReturnCode {
+        // SAFETY: fn contract. libuv copies `buf`, and refuses a stream that is closing or not writable.
+        let rc = unsafe {
+            (*req).data = self.as_ptr().cast();
+            uv_write(req, self.as_stream(), &raw const buf, 1, Some(cb))
+        };
+        log!("uv_write({}) = {}", buf.len, rc.int());
+        rc
+    }
+
+    /// Writes `bytes[start..]`. Panics while the last `write` or `connect` is in flight.
+    pub fn write<F>(&self, bytes: Vec<u8>, start: usize, _then: F) -> StartResult<Vec<u8>>
+    where
+        F: Fn(&Self, Vec<u8>, ReturnCode) + Copy + 'static,
+    {
+        unsafe extern "C" fn thunk<H, D, F>(req: *mut uv_write_t, status: ReturnCode)
+        where
+            H: UvStream,
+            F: Fn(&Handle<H, D>, Vec<u8>, ReturnCode),
+        {
+            // SAFETY: set by `start_write`. A handle closes after its requests.
+            if let Some(this) = unsafe { Handle::<H, D>::from_ptr_unless_dropped((*req).data) } {
+                let bytes = this.state.output.take().expect("set by `write`");
+                conjure_zst::<F>()(this, bytes, status);
+            }
+        }
+        assert!(self.state.output.is_none());
+        let buf = uv_buf_t::init(&bytes[start..]);
+        self.state.output.set(Some(bytes));
+        let req = self.state.req.get();
+        // SAFETY: both are in `self`, and nothing uses them while `output` is `Some`.
+        unsafe { self.start_write(&raw mut (*req).write, buf, thunk::<H, D, F>) }
+            .into_result()
+            .map_err(|rc| (self.state.output.take().expect("set above"), rc))
+    }
+
+    /// Allocates the request, which holds `source`, so any number can be in flight.
+    pub fn queue_write<T: 'static, F>(
+        &self,
+        source: T,
+        bytes: impl FnOnce(&T) -> &[u8],
+        _then: F,
+    ) -> ReturnCode
+    where
+        F: Fn(&Self, ReturnCode) + Copy + 'static,
+    {
+        #[repr(C)]
+        struct Request<T> {
+            uv: uv_write_t,
+            source: T,
+        }
+        unsafe extern "C" fn thunk<H: UvHandle, D, T, F: Fn(&Handle<H, D>, ReturnCode)>(
+            req: *mut uv_write_t,
+            status: ReturnCode,
+        ) {
+            // SAFETY: the box given up below, whose `data` is as in `write`.
+            let (_req, this) = unsafe {
+                let this = Handle::<H, D>::from_ptr_unless_dropped((*req).data);
+                (bun_core::heap::take(req.cast::<Request<T>>()), this)
+            };
+            if let Some(this) = this {
+                conjure_zst::<F>()(this, status);
+            }
+        }
+        let uv = bun_core::ffi::zeroed();
+        let req = bun_core::heap::into_raw(Box::new(Request { uv, source }));
+        // SAFETY: nothing touches `*req` until it is a box again.
+        unsafe {
+            let buf = uv_buf_t::init(bytes(&(*req).source));
+            let rc = self.start_write(req.cast(), buf, thunk::<H, D, T, F>);
+            if rc.is_err() {
+                bun_core::heap::destroy(req);
+            }
+            rc
+        }
+    }
+
+    pub fn set_blocking(&self) -> ReturnCode {
+        // SAFETY: initialised.
+        unsafe { uv_stream_set_blocking(self.as_stream(), 1) }
+    }
+}
+
+impl Pipe {
+    /// A pipe for `uv_spawn` to open.
+    pub fn init<D: 'static>(
+        loop_: &Loop,
+        ipc: bool,
+        data: D,
+    ) -> Result<Owned<Pipe, D>, ReturnCode> {
+        // SAFETY: a zeroed handle at its final address.
+        let this = unsafe { Owned::init(data, |pipe| uv_pipe_init(loop_, pipe, ipc.into())) }?;
+        this.on_vm_teardown(|_| {});
+        Ok(this)
+    }
+
+    /// The pipe owns `file` on `Ok`.
+    pub fn open<D: 'static>(
+        loop_: &Loop,
+        ipc: bool,
+        file: uv_file,
+        data: D,
+    ) -> Result<Owned<Pipe, D>, ReturnCode> {
+        let this = Pipe::init(loop_, ipc, data)?;
+        // SAFETY: initialised, and not open yet.
+        unsafe { uv_pipe_open(this.as_ptr(), file) }.into_result()?;
+        Ok(this)
+    }
+
+    pub fn connect<D: 'static, F>(
+        loop_: &Loop,
+        name: &ZStr,
+        data: D,
+        _then: F,
+    ) -> Result<Owned<Pipe, D>, ReturnCode>
+    where
+        F: Fn(&Handle<Pipe, D>, ReturnCode) + Copy + 'static,
+    {
+        unsafe extern "C" fn thunk<D, F: Fn(&Handle<Pipe, D>, ReturnCode)>(
+            req: *mut uv_connect_t,
+            status: ReturnCode,
+        ) {
+            // SAFETY: set below. A handle closes after its requests.
+            if let Some(this) = unsafe { Handle::<Pipe, D>::from_ptr_unless_dropped((*req).data) } {
+                this.state.output.set(None);
+                conjure_zst::<F>()(this, status);
+            }
+        }
+        let this = Pipe::init(loop_, false, data)?;
+        // Marks the request as in flight.
+        this.state.output.set(Some(Vec::new()));
+        let pipe = this.as_ptr();
+        let (name, len, flags) = (name.as_ptr().cast(), name.len(), UV_PIPE_NO_TRUNCATE);
+        // SAFETY: initialised, and not open yet. `req` is as in `write`. libuv copies `name`.
+        unsafe {
+            let req = &raw mut (*this.state.req.get()).connect;
+            (*req).data = pipe.cast();
+            uv_pipe_connect2(req, pipe, name, len, flags, Some(thunk::<D, F>)).into_result()?;
+        }
+        Ok(this)
+    }
+}
+
+impl<D> Handle<Pipe, D> {
+    pub fn ipc_remote_pid(&self) -> DWORD {
+        // SAFETY: zeroed, or written by libuv.
+        unsafe { (*self.as_ptr()).pipe.conn.ipc_remote_pid }
+    }
+}
+
+impl uv_tty_t {
+    /// Not listed for a thread's teardown until `on_vm_teardown` is called.
+    pub fn init<D: 'static>(
+        loop_: &Loop,
+        file: uv_file,
+        data: D,
+    ) -> Result<Owned<uv_tty_t, D>, ReturnCode> {
+        // SAFETY: a zeroed handle at its final address.
+        unsafe { Owned::init(data, |tty| uv_tty_init(loop_, tty, file, 0)) }
+    }
+}
+
+impl<D> Handle<uv_tty_t, D> {
+    pub fn set_mode(&self, mode: TtyMode) -> ReturnCode {
+        // SAFETY: initialised. It reaches for the loop only while the tty is being read.
+        unsafe { uv_tty_set_mode(self.as_ptr(), mode as _) }
+    }
+}
+
 /// A `uv_pipe_t` on which `uv_listen` was called.
 #[repr(transparent)]
 pub struct ListeningPipe(Pipe);
@@ -421,7 +741,7 @@ impl ListeningPipe {
         // libuv copies `name`.
         unsafe {
             let this = Owned::init(data, |pipe: *mut Self| uv_pipe_init(loop_, pipe.cast(), 0))?;
-            this.add_to_open_handles();
+            this.on_vm_teardown(|_| {});
             let pipe = this.as_ptr().cast::<Pipe>();
             uv_pipe_bind2(pipe, name.as_ptr().cast(), name.len(), UV_PIPE_NO_TRUNCATE)
                 .into_result()?;
@@ -432,9 +752,12 @@ impl ListeningPipe {
 }
 
 impl<D> Handle<ListeningPipe, D> {
-    pub fn accept(&self, client: &mut Pipe) -> ReturnCode {
-        // SAFETY: both pipes embed `uv_stream_t` at offset 0.
+    pub fn accept<C: 'static>(&self, data: C) -> Result<Owned<Pipe, C>, ReturnCode> {
+        let client = Pipe::init(self.get_loop(), false, data)?;
+        // SAFETY: a listening pipe, and one on its loop that is not open yet.
         self.unless_closing(|server| unsafe { uv_accept(server.cast(), client.as_stream()) })
+            .into_result()?;
+        Ok(client)
     }
 }
 

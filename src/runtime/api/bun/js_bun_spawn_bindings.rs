@@ -1192,8 +1192,6 @@ fn spawn_maybe_sync(
     let subprocess_ptr = subprocess_ref.as_ptr();
     // SAFETY: `subprocess_ref`, and then the wrapper that takes it, outlive this borrow.
     let subprocess = unsafe { &*subprocess_ptr };
-    #[cfg(windows)]
-    SubprocessT::record_stdio_pipe_ownership(subprocess_ptr);
     // Erase the borrow lifetime to 'static for the intrusive back-pointer
     // (PipeReader stores it as raw NonNull).
     let subprocess_nn: NonNull<SubprocessT<'static>> = subprocess_ref.as_non_null().cast();
@@ -1374,13 +1372,7 @@ fn spawn_maybe_sync(
             let spawn::WindowsStdioResult::Buffer(ipc_pipe) = ipc_pipe else {
                 unreachable!("IPC channel stdio is not a buffer pipe");
             };
-            // `windows_configure_server` stores the pointer in `uv_handle_t.data`
-            // for the pipe's lifetime, so it must be the allocation root
-            // (write provenance), never one re-derived from `&SendQueue`.
-            // SAFETY: `ipc_data` is the live SendQueue owned by `subprocess`.
-            if let Err(err) =
-                unsafe { IPC::SendQueue::windows_configure_server(ipc_data.as_ctx_ptr(), ipc_pipe) }
-            {
+            if let Err(err) = ipc_data.windows_configure_server(ipc_pipe) {
                 return Err(cx.global().throw_value(err.to_js(cx.global())));
             }
         }

@@ -7,12 +7,11 @@
 use core::ptr::NonNull;
 use core::sync::atomic::Ordering;
 
-use bun_picohttp as picohttp;
 use bun_uws::quic;
 
 use super::ClientSession;
-use crate::HttpClient;
 use crate::h3_client as h3;
+use crate::{Headers, HttpClient};
 
 pub struct Stream {
     // BACKREF: owned by `session.pending`; session outlives every Stream it holds.
@@ -22,11 +21,7 @@ pub struct Stream {
     // FFI handle into lsquic; bound in `callbacks.onStreamOpen`, reset in `ClientSession::detach`.
     pub(crate) qstream: Option<NonNull<quic::Stream>>,
 
-    /// Slices into the lsquic-owned hset buffer; valid only for the duration
-    /// of the `onStreamHeaders` callback that populated it. `cloneMetadata`
-    /// deep-copies synchronously inside that callback, so nothing reads these
-    /// after they go stale.
-    pub(crate) decoded_headers: Vec<picohttp::Header>,
+    pub(crate) decoded_headers: Headers,
     pub(crate) body_buffer: Vec<u8>,
     pub(crate) status_code: u16,
 
@@ -49,7 +44,7 @@ impl Stream {
             session: bun_ptr::BackRef::new_mut(session),
             client: Some(client.as_erased_ptr()),
             qstream: None,
-            decoded_headers: Vec::new(),
+            decoded_headers: Headers::default(),
             body_buffer: Vec::new(),
             status_code: 0,
             pending_body: bun_ptr::RawSlice::EMPTY,

@@ -154,7 +154,6 @@ fn write_codes(
             bits += builder.write_code(histogram.get_mut(alphabet.symbols()), writer);
         }
     }
-    writer.check()?;
     Ok(bits as usize)
 }
 
@@ -265,9 +264,11 @@ impl Unfinished {
             tiles.merge();
             write_tiles(&tiles, options.quality, &mut writer)?;
         }
+        let missing_bits = write_codes(&mut groups.histograms, cache_bits, &mut writer)?;
+        writer.check()?;
         Ok(Self {
-            missing_bits: write_codes(&mut groups.histograms, cache_bits, &mut writer)?,
             writer,
+            missing_bits,
             copies: coding.copies,
             cache_bits,
             groups,

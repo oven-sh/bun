@@ -26,7 +26,7 @@ impl PixelCopy {
     }
 
     /// The position of the first pixel.
-    pub(super) const fn start(self) -> usize {
+    const fn start(self) -> usize {
         self.to as usize
     }
 
@@ -113,7 +113,7 @@ pub(super) struct Pixels<'a> {
 }
 
 impl Pixels<'_> {
-    pub(super) fn left_by(&self, copies: &[PixelCopy]) -> impl Iterator<Item = Range<usize>> {
+    fn left_by(&self, copies: &[PixelCopy]) -> impl Iterator<Item = Range<usize>> {
         gaps(copies, self.argb.len()).filter(|gap| gap.start != gap.end)
     }
 

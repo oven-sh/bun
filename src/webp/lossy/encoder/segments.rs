@@ -239,3 +239,30 @@ impl Segments {
             .fold(0, u8::max)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn steps_and_levels_have_limits() {
+        let segments = |quality, filter_susceptibility| {
+            let analysis = Analysis {
+                map: Vec::new(),
+                quantizer_susceptibilities: [0; SEGMENTS],
+                filter_susceptibilities: [filter_susceptibility; SEGMENTS],
+                chroma_susceptibility: 255,
+            };
+            let mut segments = Segments::new(analysis, quality);
+            segments.start_pass();
+            segments
+        };
+        let level =
+            |quality, susceptibility| segments(quality, susceptibility).segments[0].filter_level;
+        assert_eq!([level(0, 255), level(0, 0), level(100, 0)], [36, 63, 0]);
+        let segments = segments(0, 255);
+        assert_eq!(segments.chroma_ac_delta, 6);
+        let [[dc, ac, ..], _] = Coding::new(127, &segments, 0).chroma.steps;
+        assert_eq!([dc, ac], [[132; 2], [284; 2]]);
+    }
+}

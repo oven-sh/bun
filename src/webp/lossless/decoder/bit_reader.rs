@@ -13,7 +13,7 @@ pub(super) struct BitReader<'a> {
 
 impl<'a> BitReader<'a> {
     /// What `refill()` leaves at least.
-    pub(super) const REFILLED: u32 = 56;
+    const REFILLED: u32 = 56;
 
     pub(super) fn new(bytes: &'a [u8]) -> Self {
         Self {

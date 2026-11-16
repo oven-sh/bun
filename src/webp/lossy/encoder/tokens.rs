@@ -1,7 +1,6 @@
 //! The coefficients as bits whose probabilities are only known once all of them have been seen.
 
 use core::hint::{cold_path, select_unpredictable};
-use core::mem::replace;
 
 use bun_highway::webp::MAX_SYMBOL;
 
@@ -18,7 +17,7 @@ use crate::slice::{InBounds, known};
 use crate::vec;
 
 /// The quantized coefficients of a block.
-#[derive(Clone, Copy, Default)]
+#[derive(Default)]
 pub(super) struct Residual {
     /// By row.
     pub(super) levels: [i16; 16],
@@ -232,7 +231,7 @@ impl Tokens {
     fn turn_page(&mut self) -> Result<()> {
         self.count();
         self.full_pages.try_reserve(1)?;
-        let mut full = replace(&mut self.page, vec::filled(0, self.page_len)?);
+        let mut full = core::mem::replace(&mut self.page, vec::filled(0, self.page_len)?);
         full.truncate(self.len);
         self.full_pages.push(full);
         (self.len, self.counted) = (0, 0);

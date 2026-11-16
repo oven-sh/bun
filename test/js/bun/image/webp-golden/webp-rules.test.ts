@@ -153,6 +153,8 @@ describe("the container", () => {
     file.writeUInt32LE(12, 4);
     expect(await size(file)).toBe("2x1");
     expect(await size(Buffer.concat([file, chunk("JUNK")]))).toBe(FAILED);
+    file.writeUInt32LE(11, 4);
+    expect(await size(file)).toBe(FAILED);
   });
 
   test("an image is read to its end, be that behind its chunk or the RIFF chunk", async () => {
@@ -200,12 +202,21 @@ describe("the container", () => {
     expect(await decodes(withModes(255))).toBe(false);
   });
 
+  test("the two bits above the width and the height of a lossy image do not count", async () => {
+    const frame = await vp8(2, 1);
+    const expected = await decode(riff(frame));
+    frame.writeUInt32LE(0xc001_c002, 8 + 6);
+    expect(await size(riff(frame))).toBe("2x1");
+    expect(await decode(riff(frame))).toEqual(expected);
+  });
+
   test("the limits of a lossless image", async () => {
     expect(await size(riff(vp8l(16384, 16384)), 2 ** 28)).toBe("16384x16384");
     expect((await decodeToHex(riff(vp8l(16384, 1)))).hex).toBe(Buffer.alloc(16384 * 8, "01020304").toString());
     const { lines } = await decoded(riff(vp8l(1, 16384)));
     expect(Buffer.from(lines).toString("hex")).toBe(Buffer.alloc(16384 * 10, "0001020304").toString());
     expect(await size(riff(vp8l(2, 1, 1)))).toBe(FAILED);
+    expect(await size(riff(vp8x(0, 2, 1), vp8l(2, 1, 1)))).toBe(FAILED);
   });
 
   test("maxPixels", async () => {
@@ -377,6 +388,16 @@ describe("what is written", () => {
     }
   });
 
+  test("a lossless file of more than 64 KiB has all of the picture, and nothing if it is cut short", async () => {
+    const random = randomBytes(5);
+    const rgba = Buffer.from(Array.from({ length: 200 * 120 * 4 }, (_, i) => (i % 4 === 3 ? 255 : random())));
+    const file = Buffer.from(await encode(pngOf(200, 120, rgba), "lossless"));
+    expect(file.length).toBeGreaterThan(65536);
+    expect((await decodeToHex(file)).hex).toBe(rgba.toString("hex"));
+    const [image] = chunksOf(file);
+    expect(await decodes(riff(chunk(image.tag, image.data.subarray(0, -8))))).toBe(false);
+  });
+
   type Color = (x: number, y: number, random: () => number) => number[];
   const lengths = slow ? [1, 2, 3, 17, 33] : [1, 2, 3, 4, 5, 7, 8, 9, 15, 16, 17, 31, 32, 33, 65];
   describe.each(
@@ -391,7 +412,7 @@ describe("what is written", () => {
       "slopes": (x, y) => [x * 3 + y, x + y * 2, 200 - x - y, 255 - x * 2 - y],
       "holes": (x, y, random) => [x * 3, y * 3, random() & 7, random() < 64 ? 0 : 255],
     }),
-  )("%s", (name, color) => {
+  )("%s", (_, color) => {
     const pictures = lengths.flatMap(width =>
       lengths.map(height => {
         const random = randomBytes(width * 100 + height);

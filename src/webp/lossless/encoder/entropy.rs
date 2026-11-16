@@ -319,7 +319,7 @@ pub(super) fn can_repeat(start: usize, alphabet_len: usize) -> u64 {
 }
 
 /// What it takes to tell what the symbols of an alphabet and their code cost.
-#[derive(Clone, Copy, Default)]
+#[derive(Default)]
 pub(super) struct Estimate {
     pub(super) population: Population,
     /// Of all blocks.
@@ -370,7 +370,7 @@ mod tests {
 
     #[test]
     fn logarithms_are_those_of_floating_point() {
-        for x in 1..APPROXIMATE_FROM as u32 {
+        for x in (1..APPROXIMATE_FROM as u32).chain(EXACT_FROM..EXACT_FROM + 8) {
             let expected =
                 |factor| (f64::from(factor) * f64::from(x).log2() * ONE_BIT as f64).round();
             assert_eq!(scaled_log2(x, 1) as f64, expected(1));

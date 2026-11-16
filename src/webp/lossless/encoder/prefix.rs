@@ -4,7 +4,6 @@ use crate::array::At;
 use crate::lossless::NEIGHBORS;
 
 /// A number as a symbol for its highest bits, and the bits below them as they are.
-#[derive(Clone, Copy)]
 pub(super) struct Prefixed {
     pub(super) symbol: usize,
     pub(super) extra_len: u32,

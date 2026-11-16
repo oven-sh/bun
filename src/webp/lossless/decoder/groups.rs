@@ -33,7 +33,7 @@ pub(super) struct Group {
     packed: [Packed; 1 << PACKED_BITS],
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(PartialEq, Eq)]
 pub(super) enum Shortcut {
     None,
     ConstantAlpha,

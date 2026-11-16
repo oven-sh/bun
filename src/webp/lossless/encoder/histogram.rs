@@ -13,9 +13,9 @@ use crate::slice::InBounds;
 pub(super) const BLOCK_LEN: usize = 64;
 
 /// Not 0, so that all symbols have a neighbor on either side.
-pub(super) const RED: usize = BLOCK_LEN;
-pub(super) const BLUE: usize = RED + LITERAL_CODES;
-pub(super) const ALPHA: usize = BLUE + LITERAL_CODES;
+const RED: usize = BLOCK_LEN;
+const BLUE: usize = RED + LITERAL_CODES;
+const ALPHA: usize = BLUE + LITERAL_CODES;
 pub(super) const DISTANCE: usize = ALPHA + LITERAL_CODES;
 pub(super) const GREEN: usize = DISTANCE + DISTANCE_CODES.next_multiple_of(BLOCK_LEN);
 pub(super) const LENGTH: usize = GREEN + LITERAL_CODES;
@@ -99,7 +99,7 @@ impl Histogram {
         self.counts.as_chunks().0.part(blocks)
     }
 
-    pub(super) fn get(&self, symbols: Range<usize>) -> &[u32] {
+    fn get(&self, symbols: Range<usize>) -> &[u32] {
         self.counts.part(symbols)
     }
 

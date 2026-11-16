@@ -58,7 +58,6 @@ const MAX_TILE_LEN: usize = 1 << (2 * MAX_TILE_BITS);
 const LANES: usize = 8;
 
 /// Some of the colors of a tile.
-#[derive(Clone, Copy, Default)]
 struct Lanes {
     /// Both in the high byte.
     green: [i16; LANES],

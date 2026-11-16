@@ -87,10 +87,11 @@ pub(super) const MIN_SUBBLOCK_MODE_COST: i32 = {
 /// The lowest of `SUBBLOCK_MODE_COSTS` from the fifth mode on.
 #[expect(clippy::indexing_slicing, reason = "evaluated at compile time")]
 pub(super) static MIN_DIAGONAL_MODE_COSTS: [[u16; SUBBLOCK_MODES]; SUBBLOCK_MODES] = {
-    let mut lowest = [[u16::MAX; SUBBLOCK_MODES]; SUBBLOCK_MODES];
+    const N: usize = SUBBLOCK_MODES;
+    let mut lowest = [[u16::MAX; N]; N];
     let mut i = 0;
-    while i < 1000 {
-        let (above, left, mode) = (i / 100, i / 10 % 10, i % 10);
+    while i < N * N * N {
+        let (above, left, mode) = (i / N / N, i / N % N, i % N);
         let cost = SUBBLOCK_MODE_COSTS[above][left][mode];
         if mode >= 4 && cost < lowest[above][left] {
             lowest[above][left] = cost;

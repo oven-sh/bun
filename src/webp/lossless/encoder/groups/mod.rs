@@ -485,4 +485,22 @@ mod tests {
         assert_eq!(clusters.assign(&tiles, &mut [0]), Err(Error::Internal));
         Ok(())
     }
+
+    #[test]
+    fn tiles_share_a_group_if_they_are_alike() -> Result<()> {
+        const KINDS: u32 = 300;
+        let mut tiles = TileHistograms::new(320, 0)?;
+        let [histogram] = &mut *vec::array(Histogram::EMPTY)?;
+        for tile in 0..320 {
+            (0..1000).for_each(|_| histogram.add_literal((tile % KINDS) << 8));
+            tiles.push(histogram)?;
+        }
+        let groups = find(&tiles, Quality::Picture)?.of_tiles;
+        for (a, group_a) in (0..).zip(&groups) {
+            for (b, group_b) in (0..).zip(&groups) {
+                assert_eq!(group_a == group_b, a % KINDS == b % KINDS);
+            }
+        }
+        Ok(())
+    }
 }

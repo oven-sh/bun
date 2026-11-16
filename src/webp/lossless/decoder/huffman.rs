@@ -50,7 +50,6 @@ impl Entry {
     }
 }
 
-#[derive(Clone, Copy)]
 pub(super) struct Code {
     root: [Entry; 1 << ROOT_BITS],
     /// Of the longest code. 0: there is one symbol.
@@ -325,12 +324,18 @@ mod tests {
             lengths.push(0..1, len);
         }
         lengths.push(0..2, ROOT_BITS + 1);
-        let mut build = |start| {
-            let mut tables = vec::filled(Entry::default(), start)?;
-            lengths.build(&mut { Code::EMPTY }, &mut tables, 0)
+        let mut build = |first, start| {
+            let mut tables = vec::filled(Entry::default(), first + start)?;
+            lengths.build(&mut { Code::EMPTY }, &mut tables, first)
         };
-        assert_eq!(build(Entry::VALUES - 1), Ok(()));
-        assert_eq!(build(Entry::VALUES), Err(Error::Internal));
+        assert_eq!(build(0, Entry::VALUES - 1), Ok(()));
+        assert_eq!(build(0, Entry::VALUES), Err(Error::Internal));
+        assert_eq!(build(Entry::VALUES, 0), Ok(()));
+        let last = Entry::new(Entry::VALUES - 1, MAX_CODE_LENGTH as u32);
+        assert_eq!(
+            (last.value(), last.len()),
+            (Entry::VALUES - 1, MAX_CODE_LENGTH as u32)
+        );
         Ok(())
     }
 }

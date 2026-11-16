@@ -3,13 +3,13 @@
 use super::{CoefficientProbabilities, SUBBLOCK_MODES};
 
 /// The position in the block of each coefficient, in the order they are coded. Section 13.
-pub(crate) const ZIGZAG: [u8; 16] = [0, 1, 4, 8, 5, 2, 3, 6, 9, 12, 13, 10, 7, 11, 14, 15];
+pub(super) const ZIGZAG: [u8; 16] = [0, 1, 4, 8, 5, 2, 3, 6, 9, 12, 13, 10, 7, 11, 14, 15];
 
 /// The band of each coefficient, and of the one that would come behind the last. Section 13.3.
-pub(crate) const BANDS: [u8; 16 + 1] = [0, 1, 2, 3, 6, 4, 5, 6, 6, 6, 6, 6, 6, 6, 6, 7, 0];
+pub(super) const BANDS: [u8; 16 + 1] = [0, 1, 2, 3, 6, 4, 5, 6, 6, 6, 6, 6, 6, 6, 6, 7, 0];
 
 /// The probabilities of the extra bits of the categories 3 to 6 of coefficients. Section 13.2.
-pub(crate) const CATEGORY_3_TO_6: [&[u8]; 4] = [
+pub(super) const CATEGORY_3_TO_6: [&[u8]; 4] = [
     &[173, 148, 140],
     &[176, 155, 140, 135],
     &[180, 157, 141, 134, 130],
@@ -17,7 +17,7 @@ pub(crate) const CATEGORY_3_TO_6: [&[u8]; 4] = [
 ];
 
 /// Section 14.1.
-pub(crate) static DC_QUANTIZERS: [u8; 128] = [
+pub(super) static DC_QUANTIZERS: [u8; 128] = [
     4, 5, 6, 7, 8, 9, 10, 10, 11, 12, 13, 14, 15, 16, 17, 17, 18, 19, 20, 20, 21, 21, 22, 22, 23,
     23, 24, 25, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 37, 38, 39, 40, 41, 42, 43, 44,
     45, 46, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64, 65, 66, 67,
@@ -27,7 +27,7 @@ pub(crate) static DC_QUANTIZERS: [u8; 128] = [
 ];
 
 /// Section 14.1.
-pub(crate) static AC_QUANTIZERS: [u16; 128] = [
+pub(super) static AC_QUANTIZERS: [u16; 128] = [
     4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28,
     29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52,
     53, 54, 55, 56, 57, 58, 60, 62, 64, 66, 68, 70, 72, 74, 76, 78, 80, 82, 84, 86, 88, 90, 92, 94,
@@ -37,7 +37,7 @@ pub(crate) static AC_QUANTIZERS: [u16; 128] = [
 ];
 
 /// By the modes of the subblocks above and to the left. Section 11.5.
-pub(crate) static SUBBLOCK_MODE_PROBABILITIES: [[[u8; SUBBLOCK_MODES - 1]; SUBBLOCK_MODES];
+pub(super) static SUBBLOCK_MODE_PROBABILITIES: [[[u8; SUBBLOCK_MODES - 1]; SUBBLOCK_MODES];
     SUBBLOCK_MODES] = [
     [
         [231, 120, 48, 89, 115, 113, 120, 152, 112],
@@ -162,7 +162,7 @@ pub(crate) static SUBBLOCK_MODE_PROBABILITIES: [[[u8; SUBBLOCK_MODES - 1]; SUBBL
 ];
 
 /// Section 13.5.
-pub(crate) static DEFAULT_COEFFICIENT_PROBABILITIES: CoefficientProbabilities = [
+pub(super) static DEFAULT_COEFFICIENT_PROBABILITIES: CoefficientProbabilities = [
     [
         [
             [128, 128, 128, 128, 128, 128, 128, 128, 128, 128, 128],
@@ -334,7 +334,7 @@ pub(crate) static DEFAULT_COEFFICIENT_PROBABILITIES: CoefficientProbabilities = 
 ];
 
 /// That the frame header does not replace the default. Section 13.4.
-pub(crate) static COEFFICIENT_UPDATE_PROBABILITIES: CoefficientProbabilities = [
+pub(super) static COEFFICIENT_UPDATE_PROBABILITIES: CoefficientProbabilities = [
     [
         [
             [255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255],

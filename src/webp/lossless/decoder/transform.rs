@@ -1,7 +1,5 @@
 //! What was done to the pixels to make them compress better, and how it is undone.
 
-use core::array;
-
 use bun_highway::webp::{undo_cross_color, undo_prediction};
 
 use super::Rgba;
@@ -68,7 +66,7 @@ impl Transform {
             Self::SubtractGreen => {
                 let (steps, rest) = rows.as_chunks_mut::<16>();
                 steps.iter_mut().for_each(add_green);
-                rest.iter_mut().map(array::from_mut).for_each(add_green);
+                rest.as_chunks_mut::<1>().0.iter_mut().for_each(add_green);
             }
             Self::ColorIndexing(palette) => {
                 for pixel in rows {
@@ -201,7 +199,7 @@ impl<T: Copy> Lookup<T> {
     }
 }
 
-/// In the form, and for the `N` of 16, that the compiler makes additions of vectors of bytes of.
+/// Written so that an `N` of 16 becomes additions of vectors of bytes.
 #[inline(always)]
 fn add_green<const N: usize>(pixels: &mut [Rgba; N]) {
     let greens = pixels.map(|[_, green, ..]| [green, 0, green, 0]);
@@ -214,7 +212,7 @@ fn add_green<const N: usize>(pixels: &mut [Rgba; N]) {
 /// Adds to each pixel the one before it, channel by channel.
 fn add_up(pixels: &mut [Rgba], mut before: Rgba) {
     for pixel in pixels {
-        before = array::from_fn(|i| pixel.at(i).wrapping_add(*before.at(i)));
+        before = core::array::from_fn(|i| pixel.at(i).wrapping_add(*before.at(i)));
         *pixel = before;
     }
 }

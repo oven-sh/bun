@@ -25,7 +25,6 @@ const POSITIONS: [u8; 16] = {
 };
 
 /// What the first coefficient of a block is multiplied by, and the others.
-#[derive(Clone, Copy, Default)]
 pub(super) struct Quantizers {
     pub(super) luma: [i32; 2],
     pub(super) y2: [i32; 2],
@@ -35,7 +34,7 @@ pub(super) struct Quantizers {
 type Tree = [u8; 11];
 
 /// From one coefficient to the next.
-#[derive(Clone, Copy, Default)]
+#[derive(Default)]
 struct Step {
     /// Of the one that is left.
     index: u8,

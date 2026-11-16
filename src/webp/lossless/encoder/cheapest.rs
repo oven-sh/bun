@@ -360,3 +360,36 @@ pub(super) fn copies(
     copies.reverse();
     Ok(copies)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn each_position_gets_the_cheapest_of_many_offers() -> Result<()> {
+        let costs = SymbolCosts(&[0; _]);
+        let mut expected = [(Cost::MAX, 0); 8000];
+        let mut search = Search::new(&costs, expected.len())?;
+        let rooms = |search: &Search| [search.pending.capacity(), search.passed.capacity()];
+        assert_eq!(rooms(&search), [500; 2]);
+        let (mut seed, mut most_pending) = (1, 0);
+        for offer in 0..2000 {
+            seed = seed * 48271 % 2_147_483_647;
+            let (origin, len) = (seed as usize % 7900, 2 + seed as usize / 7900 % 99);
+            // No two are the same.
+            let cost = (seed >> 24) * ONE_BIT + offer;
+            search.offer_copy(origin, len, cost);
+            for (best, last) in expected.part_mut(origin..origin + len).iter_mut().zip(0..) {
+                *best = (cost + costs.of_prefixed(LENGTH, last), last as u16 + 1).min(*best);
+            }
+            let mut pairs = search.pending.array_windows();
+            assert!(pairs.all(|[later, earlier]| earlier.end <= later.start));
+            most_pending = search.pending.len().max(most_pending);
+        }
+        assert_eq!((most_pending, rooms(&search)), (500, [500; 2]));
+        for (at, expected) in expected.into_iter().enumerate() {
+            assert_eq!((search.leave(at), search.paths.lens.value(at)), expected);
+        }
+        Ok(())
+    }
+}

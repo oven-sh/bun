@@ -89,7 +89,8 @@ mod native_test_shims {
         out.luma[0][0][0] = red;
     }
 
-    /// A macroblock that starts with red gets subblock modes. The others get many tokens, which make no sense.
+    /// A macroblock that starts with red gets subblock modes. The others get many tokens, which make no sense, and some
+    /// levels of 1, whose signs make the frame outgrow its room.
     #[unsafe(no_mangle)]
     extern "C" fn highway_webp_try_luma_modes(
         samples: &Macroblock,
@@ -103,6 +104,7 @@ mod native_test_shims {
     ) -> u8 {
         out.squared_errors = [(i32::from(samples.luma[0][0][0]) - 1) << 20; 4];
         out.ends = [[[[4 * 16; _]; _]; _]; _];
+        out.blocks[0].symbols = [[[0x0101; _]; _]; _];
         0
     }
 }
@@ -164,18 +166,19 @@ fn refused_memory_is_an_error_when_lossless() {
             _ => [r, g, b, 255],
         }),
         // Few colors: better off without a palette, with one, and with one that bundles.
-        (40, 40, |x, y, _| [(x + y) as u8; 4]),
+        (40, 48, |x, y, _| [(x + y) as u8; 4]),
         (128, 80, |_, _, [n, ..]| [n % 3, n % 7, 0, 255]),
         (60, 80, |x, y, [n, ..]| {
             [(x / 5 + y / 3) as u8 % 5 + u8::from(n < 9), 0, 0, 255]
         }),
-        (70, 70, |x, _, [n, ..]| match x % 2 {
+        (70, 71, |x, _, [n, ..]| match x % 2 {
             0 => [n % 16, 0, 0, 255],
             _ => [n % 2, 0, 0, 255],
         }),
     ];
     for (width, height, paint) in pictures {
         back(&there(width, height, Compression::Lossless, paint));
+        back(&there(height, width, Compression::Lossless, paint));
     }
     // All four transforms, two of them behind a palette that bundles.
     back(b"RIFF \0\0\0WEBPVP8L\x13\0\0\0/\0\0\0\0=\x80\x88\x88\x08DD\xc4 \x22\x22\x10\x11\x11\0");
@@ -192,8 +195,8 @@ fn refused_memory_is_an_error_when_lossy() {
         |x, y, [n, ..]| [1, 0, 0, 1 + (x * y / 8) as u8 + n % 2],
     ];
     for paint in pictures {
-        back(&there(50, 33, lossy, paint));
-        back(&there(33, 50, lossy, paint));
+        back(&there(60, 33, lossy, paint));
+        back(&there(33, 60, lossy, paint));
     }
     // Some of these frames end just where their room does, and some have several pages of tokens.
     for macroblocks in 1..12 {
@@ -246,15 +249,34 @@ fn quality_ends_at_100() {
     assert_eq!(with(255), with(100));
 }
 
-/// `call` gets through with `enough`, and not with one less of any of them.
-fn needs<const N: usize>(enough: [usize; N], call: impl Fn([usize; N])) {
-    call(enough);
+#[test]
+fn an_empty_profile_is_none() {
+    let with = |profile| encode(&[0; 4], 1, 1, Compression::Lossless, profile).unwrap();
+    assert_eq!(with(Some(b"")), with(None));
+    let mut file = with(Some(b"JUNK\0\0\0\0"));
+    // The length of the ICCP chunk, which leaves what it had as a chunk of its own.
+    file[34] = 0;
+    let image = Decoder::new(&file).unwrap().decode().unwrap();
+    assert_eq!(image.icc_profile, None);
+}
+
+/// By an assertion, as an overflow stops debug builds only.
+fn is_stopped(call: impl FnOnce()) -> bool {
+    catch_unwind(AssertUnwindSafe(call)).is_err_and(|message| {
+        let formatted = message.downcast_ref().map(String::as_str);
+        let message = formatted.or_else(|| message.downcast_ref().copied());
+        message.unwrap().starts_with("assertion")
+    })
+}
+
+/// `call` gets through with `enough`, and not with one less of any of them. Returns what it returns with `enough`.
+fn needs<const N: usize, T>(enough: [usize; N], call: impl Fn([usize; N]) -> T) -> T {
     for i in 0..N {
         let mut fewer = enough;
         fewer[i] -= 1;
-        let result = catch_unwind(AssertUnwindSafe(|| call(fewer)));
-        assert!(result.is_err(), "{fewer:?}");
+        assert!(is_stopped(|| drop(call(fewer))), "{fewer:?}");
     }
+    call(enough)
 }
 
 #[test]
@@ -271,6 +293,8 @@ fn the_filters_get_whole_macroblocks_and_the_rows_above() {
         let mut y = vec![0; above + below];
         kernels::filter_simply(plane(&mut y, stride, above), &strengths, true);
     });
+    let behind = || kernels::filter_simply(plane(&mut [0; 64], 32, 1024), &strengths, true);
+    assert!(is_stopped(behind));
     let [y, u, v] = [16, 8, 8].map(|size| [2 * size, 4 * 2 * size, size * 2 * size]);
     let normally = |planes: [[usize; 3]; 3]| {
         let mut planes =
@@ -295,13 +319,16 @@ fn rows_are_padded_to_whole_steps() {
         let [upper, lower, mut to_upper, mut to_lower] = lens.map(|len| vec![0; len]);
         kernels::upsample([&upper, &lower], [&mut to_upper, &mut to_lower], 33);
     });
-    needs([64, 64, 64, 64, 5, 33], |[y, u, v, alpha, len, room]| {
+    let endless = || kernels::upsample([&[0]; 2], [&mut [], &mut []], usize::MAX);
+    assert!(is_stopped(endless));
+    let converted = needs([64, 64, 64, 64, 5, 33], |[y, u, v, alpha, len, room]| {
         let yuva = [y, u, v, alpha].map(|len| vec![0; len]);
         let mut rgba = Vec::with_capacity(5 + room);
         rgba.resize(len, [1; 4]);
         kernels::yuv_to_rgba(yuva.each_ref().map(Vec::as_slice), &mut rgba, 5, 33);
-        assert_eq!(rgba.len(), 5 + 33);
+        rgba.len()
     });
+    assert_eq!(converted, 5 + 33);
 }
 
 #[test]

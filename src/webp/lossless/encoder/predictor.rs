@@ -61,7 +61,7 @@ fn predict_pixel<const MODE: usize>(left: Pixel, above: [Pixel; 3]) -> Argb {
     let wide = |it: Argb| u64::from(it & 0x00ff_00ff) | u64::from(it & 0xff00_ff00) << 24;
     let clamped_less_256 = |sums: u64| {
         let channels = sums & ((sums >> 8 & ONES) * 255) | ((sums >> 9 & ONES) * 255);
-        channels as Argb | (channels >> 24) as Argb & 0xff00_ff00
+        channels as Argb | (channels >> 24) as Argb
     };
     let to_top_left = |from: Argb| {
         let differences = wide(from) + 256 * ONES - wide(top_left);
@@ -653,6 +653,31 @@ mod tests {
                 rows.subtract(mode, x, 1, residual);
             }
             assert_eq!(by_four, by_one);
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn a_flat_tile_costs_what_any_other_does() -> Result<()> {
+        let (mut plane, prefers_left) = (Plane::new(64, 16)?, Plane::new(64, 16)?);
+        plane.bytes.fill(7);
+        for shift in [0, 24] {
+            for (x, y) in [(0, 0), (32, 0), (0, 16), (32, 16)] {
+                let tile = Tile {
+                    x,
+                    y,
+                    width: 32,
+                    height: 16,
+                };
+                let [flat, any] = &mut *vec::default_array::<Channel, 2>()?;
+                (flat.shift, any.shift) = (shift, shift);
+                let costs = flat.count_flat(tile, 7);
+                let black = any.of(BLACK);
+                count(&mut any.residuals, tile, black, &plane, &prefers_left);
+                assert_eq!(flat.residuals.part(..2), any.residuals.part(..2));
+                let [_, others, ..] = any.costs();
+                assert_eq!(costs, any.costs().map(|it| it - others));
+            }
         }
         Ok(())
     }

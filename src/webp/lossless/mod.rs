@@ -156,7 +156,7 @@ const NEIGHBORS: [(i8, i8); 120] = [
 const MIN_TILE_BITS: u32 = 2;
 const TILE_BITS_BITS: u32 = 3;
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy)]
 enum TransformType {
     Predictor = 0,
     CrossColor = 1,

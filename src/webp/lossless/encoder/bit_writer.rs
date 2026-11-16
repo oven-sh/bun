@@ -17,7 +17,7 @@ pub(super) struct BitWriter {
 
 impl BitWriter {
     /// The most bits that `put()` takes at once.
-    pub(super) const MAX_PUT: u32 = 56;
+    const MAX_PUT: u32 = 56;
 
     pub(super) fn try_clone(&self) -> Result<Self> {
         Ok(Self {
@@ -85,5 +85,19 @@ impl BitWriter {
         let len = self.bytes.part(..self.len_with(0)).len();
         self.bytes.truncate(len);
         Ok(self.bytes)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn nothing_comes_of_a_writer_that_was_refused_room() {
+        let writer = BitWriter {
+            is_out_of_memory: true,
+            ..BitWriter::default()
+        };
+        assert_eq!(writer.finish(), Err(Error::Alloc(bun_alloc::AllocError)));
     }
 }

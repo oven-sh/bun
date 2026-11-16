@@ -19,17 +19,17 @@ const cases = await loadCases();
 
 describe("Bun.Image reads and writes WebP the way it was recorded to", () => {
   test("decode", async () => {
-    expect(cases.decode.length).toBe(349);
+    expect(cases.decode.length).toBe(351);
     expect(await decodeDifferences(cases.decode)).toBe("");
   });
 
   test("there is something to encode", () => {
     const kinds = Object.entries(Object.groupBy(cases.encode, c => c.name.split("/")[0]));
     expect(Object.fromEntries(kinds.map(([kind, some]) => [kind, some!.length]))).toEqual({
-      layers: 283,
-      sequence: 35,
-      noise: 8,
-      stored: 28,
+      layers: 285,
+      sequence: 36,
+      noise: 9,
+      stored: 29,
       large: 12,
     });
   });

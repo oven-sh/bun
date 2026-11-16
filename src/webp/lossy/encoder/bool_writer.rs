@@ -42,10 +42,8 @@ static STEPS: Steps = {
         let (remains, kept) = if symbol % 2 == 0 {
             (probability << 8, 1 << 16)
         } else {
-            (
-                ((256 - probability) << 8) - 1,
-                ((256 - probability) << 8) - 1,
-            )
+            let rest = ((256 - probability) << 8) - 1;
+            (rest, rest)
         };
         let shift = ((((254 * remains) >> 16) + 1) as u8).leading_zeros();
         steps.factors[symbol] = remains << shift | kept << 32;

@@ -276,3 +276,59 @@ impl Cluster {
         Some(total)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::super::super::histogram::Histogram;
+    use super::super::tiles::TileHistograms;
+    use super::*;
+    use crate::error::Error;
+
+    /// `count` says how often two tiles have each red.
+    fn costs_what_the_sum_costs(count: impl Fn(usize) -> [u32; 2]) -> Result<()> {
+        let mut tiles = TileHistograms::new(3, 0)?;
+        let alphabets @ [_, reds, ..] = tiles.alphabets;
+        let [histogram] = &mut *vec::array(Histogram::EMPTY)?;
+        for [has_first, has_second] in [[1, 0], [0, 1], [1, 1]] {
+            for (red, to) in histogram.get_mut(reds.symbols()).iter_mut().enumerate() {
+                let [first, second] = count(red);
+                *to = has_first * first + has_second * second;
+            }
+            tiles.push(histogram)?;
+        }
+        let counts = |tile| -> Result<_> {
+            let mut counts = Counts::empty(&alphabets)?;
+            counts.fill(tile, tiles.entries(tile));
+            Ok(counts)
+        };
+        let [first, second, sum] = tiles.tiles.as_array().ok_or(Error::Internal)?;
+        let (mut clusters, second, sum) = (vec::with_room(1)?, counts(second)?, cost(&sum.parts));
+        Cluster::push(&mut clusters, &counts(first)?, &alphabets)?;
+        let mut cluster = clusters.pop().ok_or(Error::Internal)?;
+        for is_likely in [false, true] {
+            let below = |limit| cluster.cost_with(&second, &alphabets, limit, is_likely);
+            assert_eq!([below(sum), below(sum + 1)], [None, Some(sum)]);
+        }
+        assert!(cluster.add(&second, &alphabets, sum + 1));
+        assert_eq!(cost(&cluster.counts.parts), sum);
+        Ok(())
+    }
+
+    #[test]
+    fn runs_go_on_in_the_next_block() -> Result<()> {
+        for counts in 0..3u32.pow(7) {
+            for added in 0..7 {
+                costs_what_the_sum_costs(|red| match red.wrapping_sub(BLOCK_LEN - 4) {
+                    i @ ..7 => [counts / 3u32.pow(i as u32) % 3, (i == added).into()],
+                    _ => [0; 2],
+                })?;
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn no_sum_is_ruled_out_for_the_errors_of_the_logarithm() -> Result<()> {
+        (1..600).try_for_each(|count| costs_what_the_sum_costs(|_| [count; 2]))
+    }
+}

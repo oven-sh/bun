@@ -58,7 +58,6 @@ pub(super) enum FilterType {
     Normal,
 }
 
-#[derive(Clone, Copy, Default)]
 pub(super) struct Segment {
     pub(super) quantizers: Quantizers,
     /// For a macroblock that is predicted as a whole, and for one that is predicted by subblocks.

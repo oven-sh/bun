@@ -356,3 +356,27 @@ fn write_simple_code(first: u16, second: Option<u16>, writer: &mut BitWriter) {
         writer.put(second.into(), 8);
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn counts_have_more_than_16_bits_and_all_symbols_have_room() -> Result<()> {
+        let (mut builder, mut writer) = (Builder::new(5)?, BitWriter::default());
+        let counts = &mut [70_000, 40_000, 20_000, 20_000, 20_000];
+        assert_eq!(
+            builder.write_code(counts, &mut writer),
+            70_000 + 3 * 100_000
+        );
+        let rooms = [
+            builder.leaves.capacity(),
+            builder.by_count.capacity(),
+            builder.leaf_parents.capacity(),
+            builder.inner_nodes.capacity(),
+            builder.tokens.capacity(),
+        ];
+        assert_eq!(rooms, [5; 5]);
+        Ok(())
+    }
+}

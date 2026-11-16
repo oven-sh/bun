@@ -7,6 +7,11 @@
 # `const dep = require("dep")`), two instances are wanted at one time, or the test counts the runs. What an importer reads late follows the mock.
 test/js/bun/test/mock/mock-module.test.ts: a module mocked without a factory > a mocked package that another package imports > later files mock a package that a library loaded while the first file mocked it
 test/js/bun/test/mock/mock-module.test.ts: a test file's module mocks are undone when it ends > also when the file fails to load, or has already removed the mock itself
+# The next one: the factory of a.ts imports a file that hands on a name of k.ts, whose mock waits for that factory. Plain runs neither a.ts nor k.ts before it.
+# Compiled runs both first, so the mock of k.ts has its exports when the factory asks, and the test of the fixture fails.
+test/js/bun/test/mock/mock-module.test.ts: spyOn() on a module export stores the spy where importers read it, or throws > an export of a module mock that has no exports yet takes no spy
+# The next one: a file names an export that its module has only as a mock. Plain runs it. The build of a compiled run stops there, and no file after it runs.
+test/js/bun/test/mock/mock-module.test.ts: spyOn() on a module export stores the spy where importers read it, or throws > an export that a module has only while it is mocked takes no spy
 # In these the one instance is all that differs: every test of the fixture passes, every file runs, and some files run fewer times.
 test/js/bun/test/mock/mock-module.test.ts: a factory that loads a module which imports another mock > a mock that waits for the factory is a mock for what the factory loads too
 test/js/bun/test/mock/mock-module.test.ts: import cycles through a mocked module > a factory that fails

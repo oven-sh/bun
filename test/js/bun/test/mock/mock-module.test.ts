@@ -3557,6 +3557,421 @@ describe.concurrent("a mocked module's exports are read from the object the fact
   });
 });
 
+describe.concurrent("spyOn() on a module export stores the spy where importers read it, or throws", () => {
+  test.each(isolationFlags)("after the mock of a module ended while the module loaded %j", async args => {
+    await expectFixturesToPass(
+      {
+        "db.ts": `
+          export const save = (user: string) => "saved " + user;
+          export default function connect() { return "connected"; }
+        `,
+        "helper.ts": `
+          import { vi } from "bun:test";
+          vi.doUnmock("./db.ts");
+        `,
+        "barrel.ts": `export * from "./db.ts";`,
+        "named.ts": `export { save, save as keep, default as connect } from "./db.ts";`,
+        "app.ts": `
+          import "./helper.ts";
+          import connect, { save } from "./db.ts";
+          import * as db from "./db.ts";
+          export * as barrel from "./barrel.ts";
+          export * as named from "./named.ts";
+          export { db };
+          export const throughNamespace = { save: () => db.save("a"), default: () => db.default() };
+          export const throughBinding = { save: () => save("a"), default: () => connect() };
+        `,
+        "spy.test.ts": `
+          import { expect, jest, spyOn, test, vi } from "bun:test";
+
+          vi.doMock("./db.ts");
+          const app = await import("./app.ts");
+
+          test.each([
+            ["its namespace object", () => app.db, "save", "save"],
+            ["export * from", () => app.barrel, "save", "save"],
+            ["export { save } from", () => app.named, "save", "save"],
+            ["export { save as keep } from", () => app.named, "keep", "save"],
+            ["export { default as connect } from", () => app.named, "connect", "default"],
+            ["its default export", () => app.db, "default", "default"],
+          ] as const)("through %s", (_, namespace, key, name) => {
+            const real = name === "save" ? "saved a" : "connected";
+            for (const spyOnOf of [spyOn, jest.spyOn, vi.spyOn]) {
+              const original = namespace()[key];
+              const spy = spyOnOf(namespace(), key).mockImplementation(() => "spied");
+              expect(namespace()[key]).toBe(spy);
+              expect(app.db[name]).toBe(spy);
+              expect([app.throughNamespace[name](), app.throughBinding[name]()]).toEqual(["spied", "spied"]);
+              expect(spy).toHaveBeenCalledTimes(2);
+              expect(spyOnOf(namespace(), key)).toBe(spy);
+              spy.mockRestore();
+              expect(namespace()[key]).toBe(original);
+              expect([app.throughNamespace[name](), app.throughBinding[name]()]).toEqual([real, real]);
+            }
+          });
+        `,
+      },
+      6,
+      args,
+    );
+  });
+
+  // With --isolate the second file has a global object and modules of its own, and can read nothing of the first.
+  test("every restore of such a spy puts the export back", async () => {
+    await expectFixturesToPass(
+      {
+        "db.ts": `
+          export const save = (user: string) => "saved " + user;
+          export default function connect() { return "connected"; }
+        `,
+        "helper.ts": `
+          import { vi } from "bun:test";
+          vi.doUnmock("./db.ts");
+        `,
+        "barrel.ts": `export * from "./db.ts";`,
+        "named.ts": `export { save, save as keep, default as connect } from "./db.ts";`,
+        "app.ts": `
+          import "./helper.ts";
+          import connect, { save } from "./db.ts";
+          import * as db from "./db.ts";
+          export * as barrel from "./barrel.ts";
+          export * as named from "./named.ts";
+          export { db };
+          export const throughNamespace = { save: () => db.save("a"), default: () => db.default() };
+          export const throughBinding = { save: () => save("a"), default: () => connect() };
+        `,
+        "1.test.ts": `
+          import { expect, jest, mock, spyOn, test, vi } from "bun:test";
+          vi.doMock("./db.ts");
+          const app = await import("./app.ts");
+          globalThis.appOfFirstFile = app;
+
+          test("restoreAllMocks, mock.restore and dispose put the export back", () => {
+            const real = app.db.save;
+            for (const restore of [() => vi.restoreAllMocks(), () => jest.restoreAllMocks(), () => mock.restore()]) {
+              const spy = spyOn(app.barrel, "save").mockReturnValue("spied");
+              expect(app.throughBinding.save()).toBe("spied");
+              restore();
+              expect(app.db.save).toBe(real);
+              expect(app.throughBinding.save()).toBe("saved a");
+            }
+            {
+              using spy = spyOn(app.named, "keep").mockReturnValue("spied");
+              expect(app.throughBinding.save()).toBe("spied");
+            }
+            expect(app.throughBinding.save()).toBe("saved a");
+          });
+
+          test("a spy survives a collection, and the restore still finds the export", () => {
+            let spy = spyOn(app.db, "save").mockReturnValue("spied");
+            Bun.gc(true);
+            expect(app.throughBinding.save()).toBe("spied");
+            spy.mockRestore();
+            expect(app.throughBinding.save()).toBe("saved a");
+          });
+
+          test("a spy that the file leaves in place", () => {
+            spyOn(app.db, "save").mockReturnValue("left by the first file");
+            expect(app.throughBinding.save()).toBe("left by the first file");
+          });
+        `,
+        "2.test.ts": `
+          import { expect, test } from "bun:test";
+
+          test("ends with the file", () => {
+            expect(globalThis.appOfFirstFile.throughBinding.save()).toBe("saved a");
+          });
+        `,
+      },
+      4,
+    );
+  });
+
+  test("after Bun.plugin.clearAll() ended the mock of a module while the module loaded", async () => {
+    await expectFixturesToPass(
+      {
+        "db.ts": `export const save = (user: string) => "saved " + user;`,
+        "helper.ts": `Bun.plugin.clearAll();`,
+        "app.ts": `
+          import "./helper.ts";
+          import { save } from "./db.ts";
+          export * as db from "./db.ts";
+          export const signup = () => save("a");
+        `,
+        "clear.test.ts": `
+          import { expect, spyOn, test, vi } from "bun:test";
+
+          test("after Bun.plugin.clearAll() ended the mock while the module loaded", async () => {
+            vi.doMock("./db.ts");
+            const app = await import("./app.ts");
+            const spy = spyOn(app.db, "save").mockReturnValue("spied");
+            expect(app.db.save).toBe(spy);
+            expect(app.signup()).toBe("spied");
+            spy.mockRestore();
+            expect(app.signup()).toBe("saved a");
+          });
+        `,
+      },
+      1,
+    );
+  });
+
+  test("after the mock of a module ended, a name that the module does not export takes no spy", async () => {
+    await expectFixturesToPass(
+      {
+        "b.ts": `export const fromB = () => "b";`,
+        "a.ts": `
+          export * from "./b";
+          export const fromA = () => "a";
+        `,
+        "helper.ts": `
+          import { vi } from "bun:test";
+          vi.doUnmock("./a");
+        `,
+        "app.ts": `
+          import "./helper";
+          // @ts-ignore No module exports \`missing\`. A module that is loaded as a mock answers for any name.
+          import { fromA, fromB, missing } from "./a";
+          export * as a from "./a";
+          export const read = () => [fromA(), fromB(), missing];
+        `,
+        "star.test.ts": `
+          import { expect, mock, spyOn, test, vi } from "bun:test";
+
+          const exportsOfB: Record<string, unknown> = { fromB: () => "mocked b" };
+          // helper.ts ends this mock before a.ts runs. The mock of b.ts stays.
+          vi.doMock("./a");
+          mock.module("./b", () => exportsOfB);
+          const app = await import("./app");
+          const { read } = app;
+
+          test("a name that no module exports takes no spy, and the mock behind export * gets no property", () => {
+            expect(() => spyOn(app.a, "missing")).toThrow(
+              new TypeError("spyOn(target, prop) expects the module namespace object to export \`missing\`"),
+            );
+            expect([read(), Object.keys(exportsOfB)]).toEqual([["a", "mocked b", undefined], ["fromB"]]);
+          });
+
+          test.each([
+            ["fromA", ["spied", "mocked b", undefined]],
+            ["fromB", ["a", "spied", undefined]],
+          ])("%s takes one", (name, spied) => {
+            const spy = spyOn(app.a, name).mockReturnValue("spied");
+            expect(read()).toEqual(spied);
+            spy.mockRestore();
+            expect(read()).toEqual(["a", "mocked b", undefined]);
+          });
+        `,
+      },
+      3,
+    );
+  });
+
+  test.each(isolationFlags)("an export that is the namespace object of a mocked module takes no spy %j", async args => {
+    await expectFixturesToPass(
+      {
+        "dep.ts": `export const greet = () => "real";`,
+        "plain.ts": `export const greet = () => "plain";`,
+        "star.ts": `
+          export * as dep from "./dep";
+          export * as plain from "./plain";
+        `,
+        "handed.ts": `
+          import * as dep from "./dep";
+          import * as plain from "./plain";
+          export { dep, plain };
+        `,
+        "importer.ts": `
+          import { dep as ofStar, plain as plainOfStar } from "./star";
+          import { dep as ofHanded, plain as plainOfHanded } from "./handed";
+          export const read = () => ({ "./star": [ofStar, plainOfStar], "./handed": [ofHanded, plainOfHanded] });
+        `,
+        "namespace.test.ts": `
+          import { expect, mock, spyOn, test } from "bun:test";
+
+          mock.module("./dep", () => ({ greet: () => "mocked" }));
+          const refused =
+            "Cannot spy on the \`dep\` export because it is the namespace object of a module that was loaded as a mock. Spy on an export of that module instead";
+
+          test.each(["./star", "./handed"] as const)("%s", async file => {
+            const namespace = await import(file);
+            const { read } = await import("./importer");
+            const { dep, plain } = namespace;
+            expect([dep.greet(), plain.greet()]).toEqual(["mocked", "plain"]);
+
+            // bun 1.4.4 stored this spy. The engine takes no store for it now, so spyOn() throws until one is made.
+            expect(() => spyOn(namespace, "dep")).toThrow(TypeError);
+            expect(() => spyOn(namespace, "dep")).toThrow(refused);
+            expect([namespace.dep, read()[file][0]]).toEqual([dep, dep]);
+            const greet = spyOn(namespace.dep, "greet").mockReturnValue("spied");
+            expect(read()[file][0].greet()).toBe("spied");
+            greet.mockRestore();
+            expect(read()[file][0].greet()).toBe("mocked");
+
+            // The module is not mocked. The value is no function, so the spy returns it.
+            const spy = spyOn(namespace, "plain");
+            expect([namespace.plain, read()[file][1], read()[file][1]()]).toEqual([spy, spy, plain]);
+            spy.mockRestore();
+            expect([namespace.plain, read()[file][1]]).toEqual([plain, plain]);
+          });
+
+          // What bun 1.4.4 does, and what the test above turns into once the spy is stored.
+          test.failing("the spy is stored", async () => {
+            const namespace = await import("./star");
+            const { read } = await import("./importer");
+            const dep = namespace.dep;
+            const spy = spyOn(namespace, "dep");
+            expect([namespace.dep, read()["./star"][0], read()["./star"][0]()]).toEqual([spy, spy, dep]);
+            spy.mockRestore();
+            expect([namespace.dep, read()["./star"][0]]).toEqual([dep, dep]);
+          });
+        `,
+      },
+      3,
+      args,
+    );
+  });
+
+  test("an export that is the namespace object of a module that was loaded before its mock takes the spy", async () => {
+    await expectFixturesToPass(
+      {
+        "dep.ts": `export const greet = () => "real";`,
+        "plain.ts": `export const greet = () => "plain";`,
+        "star.ts": `
+          export * as dep from "./dep";
+          export * as plain from "./plain";
+        `,
+        "handed.ts": `
+          import * as dep from "./dep";
+          import * as plain from "./plain";
+          export { dep, plain };
+        `,
+        "importer.ts": `
+          import { dep as ofStar, plain as plainOfStar } from "./star";
+          import { dep as ofHanded, plain as plainOfHanded } from "./handed";
+          export const read = () => ({ "./star": [ofStar, plainOfStar], "./handed": [ofHanded, plainOfHanded] });
+        `,
+        "loaded.test.ts": `
+          import { expect, mock, spyOn, test } from "bun:test";
+          import * as handed from "./handed";
+          import { read } from "./importer";
+          import * as star from "./star";
+
+          // The imports above loaded ./dep before this call, so the mock replaces the exports of the loaded module.
+          mock.module("./dep", () => ({ greet: () => "mocked" }));
+
+          test.each([
+            ["./star", star],
+            ["./handed", handed],
+          ] as const)("%s", (file, namespace) => {
+            const dep = namespace.dep;
+            expect(dep.greet()).toBe("mocked");
+            const spy = spyOn(namespace, "dep");
+            expect([namespace.dep, read()[file][0], read()[file][0]()]).toEqual([spy, spy, dep]);
+            spy.mockRestore();
+            expect([namespace.dep, read()[file][0]]).toEqual([dep, dep]);
+          });
+        `,
+      },
+      2,
+    );
+  });
+
+  test("an export of a module mock that has no exports yet takes no spy", async () => {
+    await expectFixturesToPass(
+      {
+        "a.ts": `export const a = "real a";`,
+        "k.ts": `
+          import { a } from "./a.ts";
+          export const k = () => "real k, " + a;
+        `,
+        "barrel.ts": `export { k } from "./k.ts";`,
+        "noexports.test.ts": `
+          import { expect, spyOn, test, vi } from "bun:test";
+
+          let thrown: unknown;
+          vi.doMock("./k.ts");
+          // k.ts imports a.ts, so this factory runs while the mock of k.ts has no exports yet.
+          vi.doMock("./a.ts", async () => {
+            const barrel = await import("./barrel.ts");
+            try {
+              spyOn(barrel, "k");
+            } catch (error) {
+              thrown = error;
+            }
+            return { a: "mocked a" };
+          });
+
+          test("spyOn() says that the mock has no exports yet", async () => {
+            await import("./k.ts");
+            expect(thrown).toEqual(
+              new TypeError(
+                "Cannot spy on the \`k\` export because the module mock that provides it has no exports yet. Call spyOn() once that module has loaded",
+              ),
+            );
+          });
+        `,
+      },
+      1,
+    );
+  });
+
+  test("an export that a module has only while it is mocked takes no spy", async () => {
+    await expectFixturesToPass(
+      {
+        "a.ts": `export const real = () => "real";`,
+        "helper.ts": `
+          import { vi } from "bun:test";
+          vi.doUnmock("./a.ts");
+        `,
+        "barrel.ts": `
+          // @ts-ignore a.ts has no such export. This file links because a.ts is loaded as a mock, which answers for any name.
+          export { gone } from "./a.ts";
+        `,
+        "app.ts": `
+          import "./helper.ts";
+          export * as barrel from "./barrel.ts";
+        `,
+        "generic.test.ts": `
+          import { expect, spyOn, test, vi } from "bun:test";
+
+          // helper.ts ends this mock before a.ts runs.
+          vi.doMock("./a.ts");
+          const app = await import("./app.ts");
+
+          test("spyOn() on a name that the module has only while it is mocked", () => {
+            expect(app.barrel.gone).toBeUndefined();
+            expect(() => spyOn(app.barrel, "gone")).toThrow(
+              new TypeError("Cannot spy on the \`gone\` export because the module that declares it takes no other value for it"),
+            );
+          });
+        `,
+      },
+      1,
+    );
+  });
+
+  test("a symbol of a namespace object takes no spy", async () => {
+    await expectFixturesToPass(
+      {
+        "plain.ts": `export const greet = () => "plain";`,
+        "symbol.test.ts": `
+          import { expect, spyOn, test } from "bun:test";
+          import * as plain from "./plain";
+
+          test("a symbol of a namespace object takes no spy", () => {
+            expect(() => spyOn(plain, Symbol.toStringTag)).toThrow(
+              new TypeError("spyOn(target, prop) expects the module namespace object to export \`Symbol(Symbol.toStringTag)\`"),
+            );
+            expect(plain[Symbol.toStringTag]).toBe("Module");
+          });
+        `,
+      },
+      1,
+    );
+  });
+});
+
 describe.concurrent("a factory that returns a module namespace object", () => {
   const files = {
     "a.ts": `export const a = "real-a";`,

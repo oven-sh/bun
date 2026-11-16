@@ -82,11 +82,15 @@ macro_rules! sync_functions {
 }
 
 sync_functions! {
-    exists_sync    => Exists,   args::Exists<'static>,   ret::Exists;
-    lstat_sync     => Lstat,    args::Lstat<'static>,    ret::Lstat;
-    readdir_sync   => Readdir,  args::Readdir<'static>,  ret::Readdir;
-    read_file_sync => ReadFile, args::ReadFile<'static>, ret::ReadFile;
-    stat_sync      => Stat,     args::Stat<'static>,     ret::Stat;
+    append_file_sync => AppendFile, args::AppendFile<'static>, ret::AppendFile;
+    chmod_sync       => Chmod,      args::Chmod<'static>,      ret::Chmod;
+    close_sync       => Close,      args::Close,               ret::Close;
+    exists_sync      => Exists,     args::Exists<'static>,     ret::Exists;
+    fstat_sync       => Fstat,      args::Fstat,               ret::Fstat;
+    lstat_sync       => Lstat,      args::Lstat<'static>,      ret::Lstat;
+    readdir_sync     => Readdir,    args::Readdir<'static>,    ret::Readdir;
+    read_file_sync   => ReadFile,   args::ReadFile<'static>,   ret::ReadFile;
+    stat_sync        => Stat,       args::Stat<'static>,       ret::Stat;
 }
 
 /// Which arm of an async binding was called.
@@ -292,7 +296,7 @@ impl Binding {
         // scoped via `with_mut` so the borrow cannot outlive the call.
         match self
             .node_fs
-            .with_mut(|nfs| nfs.watch(&watch_args, Flavor::Sync))
+            .with_mut(|nfs| nfs.watch(watch_args, Flavor::Sync))
         {
             Err(ref err) => Err(global.throw_value(err.to_js(global))),
             Ok(res) => Ok(res),

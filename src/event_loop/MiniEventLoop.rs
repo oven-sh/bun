@@ -18,12 +18,15 @@
 //! - Shell command execution with proper I/O handling
 //! - Any Bun subsystem that needs event-driven architecture without JS overhead
 
-use core::cell::{Cell, OnceCell, UnsafeCell};
+#[cfg(not(windows))]
+use core::cell::OnceCell;
+use core::cell::{Cell, UnsafeCell};
 use core::ffi::c_void;
 use core::ptr::NonNull;
 
 use bun_collections::linear_fifo::{DynamicBuffer, LinearFifo};
 use bun_dotenv::{self as dotenv, Loader as DotEnvLoader};
+#[cfg(not(windows))]
 use bun_io::file_poll::Store as FilePollStore;
 use bun_threading::UnboundedQueue;
 use bun_uws::Loop as UwsLoop;
@@ -53,26 +56,26 @@ pub struct MiniEventLoop {
     tasks: UnsafeCell<Queue>,
     concurrent_tasks: ConcurrentTaskQueue,
     pub loop_: &'static UwsLoop,
-    file_polls: OnceCell<Box<UnsafeCell<FilePollStore>>>,
-    /// Stored as `NonNull`
-    /// (BACKREF) so [`EventLoopHandle::env`] can hand out a `*mut` with
-    /// mutable provenance.
+    #[cfg(not(windows))]
+    file_polls: OnceCell<Box<FilePollStore>>,
+    /// `NonNull` so that [`EventLoopHandle::env`] can hand out a `*mut` with mutable provenance.
     env: Option<NonNull<DotEnvLoader>>,
     // Opaque ctx assigned externally; only read/cleared here.
+    #[cfg(not(windows))]
     after_event_loop_callback_ctx: Cell<Option<NonNull<c_void>>>,
+    #[cfg(not(windows))]
     after_event_loop_callback: Cell<Option<unsafe extern "C" fn(*mut c_void)>>,
+    #[cfg(not(windows))]
     pipe_read_scratch: Box<bun_io::PipeReadScratch>,
 }
 
 thread_local! {
-    /// What `init_global` made. `GLOBAL` can be the package manager's loop before that.
-    static OWN: Cell<Option<&'static MiniEventLoop>> = const { Cell::new(None) };
-    pub static GLOBAL: Cell<Option<&'static MiniEventLoop>> = const { Cell::new(None) };
+    static GLOBAL: Cell<Option<&'static MiniEventLoop>> = const { Cell::new(None) };
 }
 
 /// Returns this thread's loop. `env` only counts for the call that makes it.
 pub fn init_global(env: Option<&'static mut DotEnvLoader>) -> &'static MiniEventLoop {
-    if let Some(global) = OWN.get() {
+    if let Some(global) = GLOBAL.get() {
         return global;
     }
     let mut global = MiniEventLoop::init();
@@ -90,7 +93,6 @@ pub fn init_global(env: Option<&'static mut DotEnvLoader>) -> &'static MiniEvent
     EventLoopHandle::init_mini(global).set_as_parent_of(global.loop_);
 
     GLOBAL.set(Some(global));
-    OWN.set(Some(global));
     global
 }
 
@@ -115,6 +117,7 @@ impl MiniEventLoop {
     }
 
     pub fn on_after_event_loop(&self) {
+        #[cfg(not(windows))]
         if let Some(cb) = self.after_event_loop_callback.get() {
             self.after_event_loop_callback.set(None);
             let ctx = self.after_event_loop_callback_ctx.take();
@@ -124,10 +127,10 @@ impl MiniEventLoop {
         }
     }
 
-    fn file_polls_ptr(&self) -> *mut FilePollStore {
+    #[cfg(not(windows))]
+    fn file_polls(&self) -> &FilePollStore {
         self.file_polls
-            .get_or_init(|| Box::new(UnsafeCell::new(FilePollStore::init())))
-            .get()
+            .get_or_init(|| Box::new(FilePollStore::init()))
     }
 
     pub(crate) fn init() -> MiniEventLoop {
@@ -135,10 +138,14 @@ impl MiniEventLoop {
             tasks: UnsafeCell::new(Queue::init()),
             concurrent_tasks: ConcurrentTaskQueue::default(),
             loop_: UwsLoop::get(),
+            #[cfg(not(windows))]
             file_polls: OnceCell::new(),
             env: None,
+            #[cfg(not(windows))]
             after_event_loop_callback_ctx: Cell::new(None),
+            #[cfg(not(windows))]
             after_event_loop_callback: Cell::new(None),
+            #[cfg(not(windows))]
             pipe_read_scratch: Box::new(bun_io::PipeReadScratch::new()),
         }
     }
@@ -228,8 +235,10 @@ impl MiniEventLoop {
     /// `task` must outlive the queued work item; ownership of the intrusive
     /// node stays with the caller until the callback runs.
     pub fn enqueue_task_concurrent(&self, task: NonNull<AnyTaskWithExtraContext>) {
+        // Read first: the push lets a bundle finish and drop `self`. The main and bundle threads never call `free_thread_loop`.
+        let loop_ = self.loop_;
         self.concurrent_tasks.push(task);
-        self.loop_.wakeup();
+        loop_.wakeup();
     }
 
     /// The caller supplies `field_offset = core::mem::offset_of!(C, <field>)` of the
@@ -251,10 +260,7 @@ impl MiniEventLoop {
         unsafe { task.write(New::<C, P>::init(ctx, callback)) };
 
         // SAFETY: `task` was just initialized above and is non-null (derived from `ctx`).
-        self.concurrent_tasks
-            .push(unsafe { NonNull::new_unchecked(task) });
-
-        self.loop_.wakeup();
+        self.enqueue_task_concurrent(unsafe { NonNull::new_unchecked(task) });
     }
 }
 
@@ -267,7 +273,7 @@ impl MiniEventLoop {
 bun_io::link_impl_EventLoopCtx! {
     Mini for MiniEventLoop => |this| {
         loop_() => (*this).loop_,
-        file_polls_ptr() => (*this).file_polls_ptr(),
+        file_polls_ptr() => (*this).file_polls(),
         // Mini has no pending_unref_counter; the upstream deliberately panics.
         increment_pending_unref_counter() => panic!("FIXME TODO"),
         after_event_loop_callback() => (*this).after_event_loop_callback.get(),

@@ -103,6 +103,9 @@ impl File {
 
 use crate::time::NS_PER_MS;
 
+/// How many nanoseconds to keep the output hidden
+const INITIAL_DELAY_NS: u64 = 500 * NS_PER_MS;
+
 pub struct Progress {
     /// `None` if the current node (and its children) should
     /// not print on update()
@@ -111,25 +114,22 @@ pub struct Progress {
     /// Whether the terminal supports ANSI escape codes.
     pub supports_ansi_escape_codes: bool,
 
-    /// By [`NodeId`].
+    /// Indexed by [`NodeId`].
     nodes: [Node; 4],
 
     /// The child that is shown after the root.
     recently_updated_child: Cell<Option<NodeId>>,
 
     /// Keeps track of how much time has passed since the beginning.
-    /// Used to compare with `initial_delay_ms` and `refresh_rate_ms`.
+    /// Used to compare with `INITIAL_DELAY_NS` and `refresh_rate_ns`.
     timer: Option<Instant>,
 
     /// When the previous refresh was written to the terminal.
-    /// Used to compare with `refresh_rate_ms`.
+    /// Used to compare with `refresh_rate_ns`.
     prev_refresh_timestamp: Cell<u64>,
 
     /// How many nanoseconds between writing updates to the terminal.
     pub refresh_rate_ns: u64,
-
-    /// How many nanoseconds to keep the output hidden
-    initial_delay_ns: u64,
 
     done: Cell<bool>,
 
@@ -148,7 +148,6 @@ impl Default for Progress {
             timer: None,
             prev_refresh_timestamp: Cell::new(0),
             refresh_rate_ns: 50 * NS_PER_MS,
-            initial_delay_ns: 500 * NS_PER_MS,
             done: Cell::new(true),
             columns_written: Cell::new(0),
         }
@@ -252,7 +251,7 @@ impl Progress {
         self.done.set(false);
     }
 
-    /// It is shown once it is activated or completes an item.
+    /// `child` is shown after its first `activate` or `complete_one`.
     pub fn start_child(&self, child: NodeId, name: &[u8], estimated_total_items: usize) {
         debug_assert!(child != NodeId::Root);
         self.node(child).start(name, estimated_total_items);
@@ -305,7 +304,7 @@ impl Progress {
             return;
         };
         let now = u64::try_from(timer.elapsed().as_nanos()).expect("int cast");
-        if now < self.initial_delay_ns {
+        if now < INITIAL_DELAY_NS {
             return;
         }
         // TODO I have observed this to happen sometimes. I think we need to follow Rust's

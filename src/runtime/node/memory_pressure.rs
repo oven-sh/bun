@@ -76,7 +76,7 @@ pub(crate) type WatcherSlot = bun_jsc::JsCell<Option<posix::MemoryPressureWatche
 pub(crate) type WatcherSlot = bun_jsc::JsCell<Option<windows::MemoryPressureWatcher>>;
 
 fn slot(vm: &VirtualMachine) -> &WatcherSlot {
-    &crate::jsc_hooks::state_of(vm).memory_pressure_watcher
+    &crate::jsc_hooks::runtime_state_of(vm).memory_pressure_watcher
 }
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -85,13 +85,10 @@ fn slot(vm: &VirtualMachine) -> &WatcherSlot {
 
 #[cfg(not(windows))]
 mod posix {
-    #[cfg(any(target_os = "linux", target_os = "android", target_os = "macos"))]
-    use core::ptr::NonNull;
-
     use bun_io::OwnedFilePoll;
     use bun_io::posix_event_loop::FlagsSet;
     #[cfg(any(target_os = "linux", target_os = "android", target_os = "macos"))]
-    use bun_io::posix_event_loop::{Flags, Owner, poll_tag};
+    use bun_io::posix_event_loop::{Flags, Owner, PollTag};
     use bun_jsc::JSGlobalObject;
     use bun_jsc::virtual_machine::VirtualMachine;
 
@@ -223,14 +220,10 @@ mod posix {
         }
         #[cfg(any(target_os = "linux", target_os = "android", target_os = "macos"))]
         {
-            let ctx = global.bun_vm().loop_ctx();
-            let owner = Owner::new(
-                poll_tag::MEMORY_PRESSURE,
-                NonNull::<()>::dangling().as_ptr(),
-            );
-            let mut poll = OwnedFilePoll::new(ctx, fd, owner);
-            poll.register(ctx.loop_(), Flags::MemoryPressure, false)
-                .ok()?;
+            let owner = Owner::new(PollTag::MemoryPressure, core::ptr::null_mut());
+            // SAFETY: this tag has no pointee.
+            let poll = unsafe { OwnedFilePoll::new(global.bun_vm().loop_ctx(), fd, owner) };
+            poll.register(Flags::MemoryPressure, false).ok()?;
             Some(MemoryPressureWatcher {
                 poll: Some(poll),
                 #[cfg(any(target_os = "linux", target_os = "android"))]
@@ -261,7 +254,7 @@ mod posix {
         slot(global.bun_vm()).set(None);
     }
 
-    /// `__bun_run_file_poll` dispatch target. `fflags` is the kqueue `fflags`
+    /// `__bun_run_io` dispatch target. `fflags` is the kqueue `fflags`
     /// on macOS (carrying the pressure level) and 0 on Linux.
     pub(crate) fn on_poll(flags: FlagsSet, fflags: i64) {
         let vm = VirtualMachine::get();
@@ -369,12 +362,10 @@ mod windows {
                 break;
             }
             let task = ConcurrentTask::create(super::pressure_task(super::level::CRITICAL));
-            if let bun_jsc::vm_handle::Posted::Refused(task) =
+            if let bun_jsc::vm_handle::Posted::Refused(_) =
                 vm.post(bun_jsc::LoopKind::Regular, task)
             {
                 // VM torn down: drop the notification.
-                // SAFETY: refused ⇒ we own the task box.
-                unsafe { drop(bun_core::heap::take(task.as_ptr())) };
                 break;
             }
             if WaitForSingleObject(handles[0], HOLDOFF_MS) == WAIT_OBJECT_0 {

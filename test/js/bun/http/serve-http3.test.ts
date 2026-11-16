@@ -763,7 +763,7 @@ describe("Bun.serve HTTP/3 adversarial", () => {
   });
 
   // The big one: every concurrent stream gets back exactly its own bytes,
-  // transformed. Catches shared-buffer reuse in quic.c read_buf, response
+  // transformed. Catches shared-buffer reuse in quic.cpp read_buf, response
   // backpressure aliasing in Http3ResponseData, and partial-write offset
   // bugs in HTTPSResponseSink. Bodies are crypto-random so any cross-stream
   // leak shows up as an md5 mismatch, not just an offset shift.
@@ -805,7 +805,7 @@ describe("Bun.serve HTTP/3 adversarial", () => {
     }
   };
 
-  // 8 × 96KB — past the 16KB quic.c read_buf and the 64KB lsquic stream
+  // 8 × 96KB — past the 16KB quic.cpp read_buf and the 64KB lsquic stream
   // window. Aliasing bugs reproduce at any N≥2; 8 fits the debug-build 5s
   // default. (Unlike the curl version these now share one QUIC connection,
   // which is the more interesting case for read_buf reuse.)

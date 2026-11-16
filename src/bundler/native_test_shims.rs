@@ -20,8 +20,7 @@ macro_rules! not_called_by_tests {
 not_called_by_tests! {
     __bun_resolver_parse_dependency
     __bun_resolver_init_package_manager
-    __bun_macro_context_init
-    __bun_macro_context_deinit
+    __bun_macro_drop_source_code_printer
     __bun_macro_context_call
     __bun_macro_collect_vm_garbage
     __bun_jsc_wtf_string_hash
@@ -32,7 +31,6 @@ not_called_by_tests! {
     __bun_jsc_encoder_string_table_take
     __bun_jsc_encoder_string_table_slot
     __bun_jsc_encoder_string_table_new
-    __bun_jsc_enable_hot_module_reloading_for_bundler
     __bun_jsc_bytecode_link_encoder_new
     __bun_jsc_bytecode_link_encoder_finish
     __bun_jsc_bytecode_link_encoder_destroy

@@ -1196,8 +1196,8 @@ extern "C"
                           void (*handler)(uws_res_r res, void *optional_data),
                           void *optional_data)
   {
-    /* A closed socket's ext block is already destructed (HttpContext::onClose)
-     * and its callbacks can never fire again; registering or clearing one is a
+    /* HttpContext::onClose calls the handlers that are set, then destructs the
+     * ext block; registering or clearing one on a closed socket is a
      * no-op. Completion bookkeeping runs after ends that may have closed the
      * socket via a shouldCloseConnection() gate, so this must not touch ext. */
     if (us_socket_is_closed((struct us_socket_t *)res))

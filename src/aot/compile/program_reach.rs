@@ -2669,7 +2669,7 @@ impl<'a, 's> Walk<'a, 's> {
                 bound
                     .ids(bound.fns[function.idx()].returns)
                     .any(|statement: StmtId| match hir[statement].kind {
-                        StmtKind::Return(returned) => returned.some().is_some_and(&can_read_this),
+                        StmtKind::Return(returned) => returned.some().is_some_and(can_read_this),
                         _ => true,
                     })
             }

@@ -37,14 +37,14 @@ pub enum Error {
 /// Windows PE Binary manipulation for codesigning standalone executables
 pub struct PEFile {
     pub(crate) data: Vec<u8>,
-    pub(crate) pe_header_offset: u32,
+    pub(crate) pe_header_offset: usize,
     pub(crate) section_headers_offset: usize,
     pub(crate) num_sections: u16,
 }
 
 #[derive(Copy, Clone)]
 pub(crate) struct PELayout {
-    pub(crate) pe_header_offset: u32,
+    pub(crate) pe_header_offset: usize,
     pub(crate) optional_header_offset: usize,
     pub(crate) section_headers_offset: usize,
     pub(crate) num_sections: u16,
@@ -218,11 +218,11 @@ fn align_up_usize(v: usize, a: usize) -> Result<usize, Error> {
 
 impl PEFile {
     fn get_pe_header_mut(&mut self) -> Result<&mut PEHeader, Error> {
-        view_at_mut::<PEHeader>(&mut self.data, self.pe_header_offset as usize)
+        view_at_mut::<PEHeader>(&mut self.data, self.pe_header_offset)
     }
 
     fn get_optional_header_mut(&mut self) -> Result<&mut OptionalHeader64, Error> {
-        let offset = self.pe_header_offset as usize + size_of::<PEHeader>();
+        let offset = self.pe_header_offset + size_of::<PEHeader>();
         view_at_mut::<OptionalHeader64>(&mut self.data, offset)
     }
 
@@ -324,7 +324,7 @@ impl PEFile {
         }
 
         Ok(PELayout {
-            pe_header_offset: dos_header.e_lfanew,
+            pe_header_offset: dos_header.e_lfanew as usize,
             optional_header_offset,
             section_headers_offset,
             num_sections,
@@ -647,7 +647,7 @@ mod tests {
     fn init_copies_bytes_and_layout() {
         let bytes = toy_pe(Architecture::X86_64);
         let layout = PEFile::layout_of(&bytes).unwrap();
-        assert_eq!(layout.pe_header_offset as usize, size_of::<DOSHeader>());
+        assert_eq!(layout.pe_header_offset, size_of::<DOSHeader>());
         assert_eq!(layout.optional_header_offset, 88);
         assert_eq!(layout.section_headers_offset, 328);
         assert_eq!(layout.num_sections, 7);

@@ -1,25 +1,30 @@
 //! Node-API (N-API) implementation.
 
+use core::cell::{Cell, UnsafeCell};
 use core::ffi::{c_char, c_int, c_uint, c_void};
+use core::mem::{ManuallyDrop, MaybeUninit};
 use core::ptr;
-use core::sync::atomic::{AtomicBool, AtomicI64, AtomicU8, AtomicU32, AtomicUsize, Ordering};
+use core::sync::atomic::{AtomicU32, AtomicUsize, Ordering};
+use std::sync::Arc;
 
 use bun_collections::LinearFifo;
 use bun_collections::linear_fifo::DynamicBuffer;
-use bun_event_loop::ConcurrentTask::AutoDeinit;
-use bun_event_loop::{TaskTag, Taskable, task_tag};
+use bun_core::Unaligned;
+use bun_event_loop::{BoxedTask, TaskTag, Taskable, task_tag};
 use bun_io::{JsKeepAlive, KeepAlive};
 use bun_jsc::StringJsc;
 use bun_jsc::bun_string_jsc;
 use bun_jsc::event_loop::{ConcurrentTaskItem as ConcurrentTask, EventLoop};
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{
-    self as jsc, Debugger, GlobalRef, JSGlobalObject, JSPromiseStrong, JSValue, JsResult,
-    StrongOptional, Task,
+    self as jsc, Debugger, JSGlobalObject, JSPromiseStrong, JSValue, JsResult, StrongOptional,
+    Task, VmBound,
 };
+use bun_ptr::CellExt;
 use bun_threading::Condition as Condvar;
-use bun_threading::Mutex;
+use bun_threading::guarded::GuardedLock;
 use bun_threading::work_pool::{IntrusiveWorkTask as _, Task as WorkPoolTask, WorkPool};
+use bun_threading::{Guarded, Mutex};
 
 // ─── local shims for upstream-crate gaps (see PORTING.md §extension traits) ───
 
@@ -41,7 +46,6 @@ impl JSValueNapiExt for JSValue {
     }
 }
 
-// `Taskable` impls for the napi heap tasks dispatched through the JS event loop.
 impl Taskable for napi_async_work {
     const TAG: TaskTag = task_tag::NapiAsyncWork;
     /// Work the pool handed back during teardown: its `complete` callback is
@@ -51,7 +55,7 @@ impl Taskable for napi_async_work {
         let global = VirtualMachine::get().global();
         // `Err` is left pending for the release dispatcher's fold.
         // SAFETY: fn contract — the addon's live work object the pool posted.
-        let _ = unsafe { (*this).run_from_js(global) };
+        let _ = unsafe { Self::run_from_js(this, global) };
     }
     /// An addon's completion always runs (it frees the work there): `NapiEnv::complete_in_context`
     /// enters the context that queued it, and refuses calls into script if that context has stopped.
@@ -59,28 +63,38 @@ impl Taskable for napi_async_work {
         bun_event_loop::ContextId::NONE
     }
 }
+/// The queued pointer is from `Arc::into_raw`.
 impl Taskable for ThreadSafeFunction {
     const TAG: TaskTag = task_tag::ThreadSafeFunction;
-    /// `this` is the TSFN itself, which the env's cleanup hook (`env_teardown`,
-    /// run with the exit handlers before the queue is released) already
-    /// neutralised or freed. Nothing to do, and `this` must not be dereferenced.
-    unsafe fn release_unrun(_: *mut Self) {}
+    /// The env's cleanup hook (`env_teardown`) does what the dispatch would have done.
+    unsafe fn release_unrun(this: *mut Self) {
+        // SAFETY: fn contract — the task owns this reference.
+        drop(unsafe { Arc::from_raw(this) });
+    }
     /// As `napi_async_work`.
     unsafe fn context(_: *const Self) -> bun_event_loop::ContextId {
         bun_event_loop::ContextId::NONE
     }
 }
-impl Taskable for NapiFinalizerTask {
+impl BoxedTask for TsfnRefRequest {
+    const TAG: TaskTag = task_tag::ThreadSafeFunctionRefRequest;
+    fn release_unrun(self: Box<Self>) {}
+    /// As `napi_async_work`.
+    fn context(&self) -> bun_event_loop::ContextId {
+        bun_event_loop::ContextId::NONE
+    }
+}
+impl BoxedTask for NapiFinalizerTask {
     const TAG: TaskTag = task_tag::NapiFinalizerTask;
     /// A finalizer queued before the loop stopped: Node runs an addon's
     /// finalizers during environment cleanup (script already forbidden), and
     /// an addon counts on them (external buffers freed when a Worker exits).
-    unsafe fn release_unrun(this: *mut Self) {
+    fn release_unrun(self: Box<Self>) {
         // `Err` is left pending for the release dispatcher's fold.
-        let _ = NapiFinalizerTask::run_on_js_thread(this);
+        let _ = self.finalizer.run();
     }
     /// An addon counts on its finalizers running.
-    unsafe fn context(_: *const Self) -> bun_event_loop::ContextId {
+    fn context(&self) -> bun_event_loop::ContextId {
         bun_event_loop::ContextId::NONE
     }
 }
@@ -127,10 +141,16 @@ impl NapiEnv {
         unsafe { &*NapiEnv__globalObject(self.as_mut_ptr()) }
     }
 
+    fn ref_(&self) -> NapiEnvRef {
+        // SAFETY: `self` is a live C++-owned napi_env. Its count is not atomic, and `&NapiEnv` is not
+        // `Send`: it is made on the JS thread, or on the collector's while that thread is stopped.
+        unsafe { NapiEnvRef::clone_from_raw(self.as_mut_ptr()) }
+    }
+
     /// Any thread holding an env ref: the env's VM handle.
-    pub(crate) fn vm_handle(&self) -> bun_jsc::vm_handle::BorrowedRef {
+    pub(crate) fn vm_handle(&self) -> bun_jsc::VmHandle {
         // SAFETY: the env holds a reference for its whole lifetime.
-        unsafe { bun_jsc::VmHandle::borrow_ref(NapiEnv__vmHandle(self.as_mut_ptr())) }
+        unsafe { bun_jsc::VmHandle::borrow_ref(NapiEnv__vmHandle(self.as_mut_ptr())) }.clone()
     }
 
     /// Convert err to an extern napi_status, and store the error code in env so that it can be
@@ -311,7 +331,7 @@ impl NapiHandleScope {
     /// Closes the given handle scope, releasing all values inside it, if it is safe to do so.
     /// Asserts that self is the current handle scope in env.
     fn close(self_: *mut NapiHandleScope, env: &NapiEnv) {
-        // SAFETY: NapiHandleScope__close handles null `current`.
+        // SAFETY: C++ dereferences `self_` only once it has found it to be the env's current scope.
         unsafe { NapiHandleScope__close(env.as_mut_ptr(), self_) }
     }
 
@@ -373,6 +393,9 @@ pub(crate) struct Deferred {
 }
 type napi_deferred = *mut Deferred;
 
+/// A box that the addon hands back. It stays the addon's if the call is refused.
+type AddonBox<T> = ManuallyDrop<Box<T>>;
+
 // ──────────────────────────────────────────────────────────────────────────
 // napi_value
 // ──────────────────────────────────────────────────────────────────────────
@@ -384,11 +407,6 @@ type napi_deferred = *mut Deferred;
 pub(crate) struct napi_value(i64);
 
 impl napi_value {
-    pub(crate) fn set(&mut self, env: &NapiEnv, val: JSValue) {
-        NapiHandleScope::append(env, val);
-        self.0 = val.encoded() as i64;
-    }
-
     pub(crate) fn get(self) -> JSValue {
         JSValue::from_encoded(self.0 as usize)
     }
@@ -485,7 +503,7 @@ pub(super) type napi_status = c_uint;
 pub(super) type napi_callback = Option<extern "C" fn(napi_env, napi_callback_info) -> napi_value>;
 
 /// expects `napi_env`, `callback_data`, `context`
-pub(super) type NapiFinalizeFunction = extern "C" fn(napi_env, *mut c_void, *mut c_void);
+pub(super) type NapiFinalizeFunction = unsafe extern "C" fn(napi_env, *mut c_void, *mut c_void);
 pub(super) type napi_finalize = Option<NapiFinalizeFunction>;
 
 #[repr(C)]
@@ -579,37 +597,36 @@ macro_rules! ungated {
     };
 }
 
+/// Where an addon wants a result. It can be uninitialized, and it can alias another argument.
+#[repr(transparent)]
+struct Out<T>(Cell<MaybeUninit<T>>);
+
+impl<T> Out<T> {
+    fn write(&self, value: T) {
+        self.0.set(MaybeUninit::new(value));
+    }
+}
+
+impl Out<napi_value> {
+    fn set(&self, env: &NapiEnv, val: JSValue) {
+        self.write(napi_value::create(env, val));
+    }
+}
+
 macro_rules! get_out {
-    ($env:expr, $ptr:expr) => {
-        // SAFETY: caller passes raw out pointer; we treat non-null as &mut borrow.
-        match unsafe { $ptr.as_mut() } {
+    ($env:expr, $out:expr) => {
+        match $out {
             Some(r) => r,
             None => return $env.invalid_arg(),
         }
     };
 }
 
-/// Write `v` through an optional N-API out-param pointer.
-///
-/// N-API "info" entry points take a family of nullable `*mut T` out-params where
-/// `NULL` means "caller doesn't want this field". This helper centralizes the
-/// `if let Some(r) = ptr.as_mut() { *r = v }` pattern so the per-site `unsafe`
-/// blocks collapse into one audited location.
-///
-/// # Safety
-/// The caller (the native addon) must pass either `NULL` or a pointer that is:
-/// - valid for a single write of `T`,
-/// - properly aligned for `T`,
-/// - not aliased by any other live `&`/`&mut` borrow for the duration of the call.
-///
-/// These are exactly the N-API ABI guarantees for out-params, so call sites in
-/// `extern "C" fn napi_*` bodies need no additional justification.
+/// For the "info" entry points, where `NULL` means that the addon does not want this field.
 #[inline]
-fn write_out<T>(p: *mut T, v: T) {
-    // SAFETY: see doc comment — `p` is either null (skipped) or a valid,
-    // exclusively-owned out-param per the N-API contract.
-    if let Some(r) = unsafe { p.as_mut() } {
-        *r = v;
+fn write_out<T>(out: Option<&Out<T>>, v: T) {
+    if let Some(out) = out {
+        out.write(v);
     }
 }
 
@@ -626,7 +643,10 @@ unsafe extern "C" {
 }
 
 #[unsafe(no_mangle)]
-extern "C" fn napi_get_undefined(env_: Option<&NapiEnv>, result_: *mut napi_value) -> napi_status {
+extern "C" fn napi_get_undefined(
+    env_: Option<&NapiEnv>,
+    result_: Option<&Out<napi_value>>,
+) -> napi_status {
     bun_output::scoped_log!(napi, "napi_get_undefined");
     ungated!(env, env_);
     env.check_gc();
@@ -636,7 +656,10 @@ extern "C" fn napi_get_undefined(env_: Option<&NapiEnv>, result_: *mut napi_valu
 }
 
 #[unsafe(no_mangle)]
-extern "C" fn napi_get_null(env_: Option<&NapiEnv>, result_: *mut napi_value) -> napi_status {
+extern "C" fn napi_get_null(
+    env_: Option<&NapiEnv>,
+    result_: Option<&Out<napi_value>>,
+) -> napi_status {
     bun_output::scoped_log!(napi, "napi_get_null");
     ungated!(env, env_);
     env.check_gc();
@@ -652,19 +675,22 @@ unsafe extern "C" {
 #[unsafe(no_mangle)]
 extern "C" fn napi_get_boolean(
     env_: Option<&NapiEnv>,
-    value: bool,
-    result_: *mut napi_value,
+    value: u8,
+    result_: Option<&Out<napi_value>>,
 ) -> napi_status {
     bun_output::scoped_log!(napi, "napi_get_boolean");
     ungated!(env, env_);
     env.check_gc();
     let result = get_out!(env, result_);
-    result.set(env, JSValue::from(value));
+    result.set(env, JSValue::from(value != 0));
     env.ok()
 }
 
 #[unsafe(no_mangle)]
-extern "C" fn napi_create_array(env_: Option<&NapiEnv>, result_: *mut napi_value) -> napi_status {
+extern "C" fn napi_create_array(
+    env_: Option<&NapiEnv>,
+    result_: Option<&Out<napi_value>>,
+) -> napi_status {
     bun_output::scoped_log!(napi, "napi_create_array");
     ungated!(env, env_);
     env.check_gc();
@@ -681,7 +707,7 @@ extern "C" fn napi_create_array(env_: Option<&NapiEnv>, result_: *mut napi_value
 extern "C" fn napi_create_array_with_length(
     env_: Option<&NapiEnv>,
     length: usize,
-    result_: *mut napi_value,
+    result_: Option<&Out<napi_value>>,
 ) -> napi_status {
     bun_output::scoped_log!(napi, "napi_create_array_with_length");
     ungated!(env, env_);
@@ -716,7 +742,7 @@ unsafe extern "C" {
 extern "C" fn napi_create_int32(
     env_: Option<&NapiEnv>,
     value: i32,
-    result_: *mut napi_value,
+    result_: Option<&Out<napi_value>>,
 ) -> napi_status {
     bun_output::scoped_log!(napi, "napi_create_int32");
     ungated!(env, env_);
@@ -730,7 +756,7 @@ extern "C" fn napi_create_int32(
 extern "C" fn napi_create_uint32(
     env_: Option<&NapiEnv>,
     value: u32,
-    result_: *mut napi_value,
+    result_: Option<&Out<napi_value>>,
 ) -> napi_status {
     bun_output::scoped_log!(napi, "napi_create_uint32");
     ungated!(env, env_);
@@ -744,7 +770,7 @@ extern "C" fn napi_create_uint32(
 extern "C" fn napi_create_int64(
     env_: Option<&NapiEnv>,
     value: i64,
-    result_: *mut napi_value,
+    result_: Option<&Out<napi_value>>,
 ) -> napi_status {
     bun_output::scoped_log!(napi, "napi_create_int64");
     ungated!(env, env_);
@@ -754,12 +780,14 @@ extern "C" fn napi_create_int64(
     env.ok()
 }
 
+/// # Safety
+/// `str_` is null, or points to `length` bytes, or to a C string for `NAPI_AUTO_LENGTH`.
 #[unsafe(no_mangle)]
-extern "C" fn napi_create_string_latin1(
+unsafe extern "C" fn napi_create_string_latin1(
     env_: Option<&NapiEnv>,
     str_: *const u8,
     length: usize,
-    result_: *mut napi_value,
+    result_: Option<&Out<napi_value>>,
 ) -> napi_status {
     ungated!(env, env_);
     let result = get_out!(env, result_);
@@ -806,12 +834,14 @@ extern "C" fn napi_create_string_latin1(
     env.ok()
 }
 
+/// # Safety
+/// `str_` is null, or points to `length` bytes, or to a C string for `NAPI_AUTO_LENGTH`.
 #[unsafe(no_mangle)]
-extern "C" fn napi_create_string_utf8(
+unsafe extern "C" fn napi_create_string_utf8(
     env_: Option<&NapiEnv>,
     str_: *const u8,
     length: usize,
-    result_: *mut napi_value,
+    result_: Option<&Out<napi_value>>,
 ) -> napi_status {
     ungated!(env, env_);
     let result = get_out!(env, result_);
@@ -847,22 +877,27 @@ extern "C" fn napi_create_string_utf8(
     env.ok()
 }
 
+/// # Safety
+/// As [`napi_create_string_utf8`], in units of two bytes.
 #[unsafe(no_mangle)]
-extern "C" fn napi_create_string_utf16(
+unsafe extern "C" fn napi_create_string_utf16(
     env_: Option<&NapiEnv>,
-    str_: *const char16_t,
+    // Addons pass the bytes of a `Buffer`, which can start anywhere.
+    str_: *const Unaligned<char16_t>,
     length: usize,
-    result_: *mut napi_value,
+    result_: Option<&Out<napi_value>>,
 ) -> napi_status {
     ungated!(env, env_);
     let result = get_out!(env, result_);
 
-    let slice: &[u16] = 'brk: {
+    let slice: &[Unaligned<char16_t>] = 'brk: {
         if !str_.is_null() {
             if NAPI_AUTO_LENGTH == length {
                 // SAFETY: caller guarantees ptr is NUL-terminated when length == NAPI_AUTO_LENGTH.
                 // Scan to the NUL u16 terminator.
-                break 'brk unsafe { bun_core::ffi::wstr_units(str_) };
+                break 'brk unsafe {
+                    bun_core::ffi::slice(str_, bun_core::ffi::wcslen(str_.cast()))
+                };
             } else if length > i32::MAX as usize {
                 return env.invalid_arg();
             } else {
@@ -878,22 +913,22 @@ extern "C" fn napi_create_string_utf16(
         }
     };
 
-    if cfg!(debug_assertions) {
-        bun_output::scoped_log!(
-            napi,
-            "napi_create_string_utf16: {} {}",
-            slice.len(),
-            bun_core::fmt::utf16(&slice[..slice.len().min(512)])
-        );
-    }
-
     if slice.is_empty() {
         result.set(env, JSValue::js_empty_string(env.to_js()));
         return env.ok();
     }
 
     let (string, chars) = bun_core::String::create_uninitialized_utf16(slice.len());
-    chars.copy_from_slice(slice);
+    bun_core::slice_as_bytes_mut(chars).copy_from_slice(bun_core::slice_as_bytes(slice));
+
+    if cfg!(debug_assertions) {
+        bun_output::scoped_log!(
+            napi,
+            "napi_create_string_utf16: {} {}",
+            chars.len(),
+            bun_core::fmt::utf16(&chars[..chars.len().min(512)])
+        );
+    }
 
     let js = match string.into_js(env.to_js()) {
         Ok(v) => v,
@@ -1008,7 +1043,7 @@ unsafe extern "C" {
 extern "C" fn napi_get_prototype(
     env_: Option<&NapiEnv>,
     object_: napi_value,
-    result_: *mut napi_value,
+    result_: Option<&Out<napi_value>>,
 ) -> napi_status {
     bun_output::scoped_log!(napi, "napi_get_prototype");
     let env = preamble!(env_);
@@ -1085,7 +1120,7 @@ unsafe extern "C" {
 extern "C" fn napi_is_array(
     env_: Option<&NapiEnv>,
     value_: napi_value,
-    result_: *mut bool,
+    result_: Option<&Out<bool>>,
 ) -> napi_status {
     bun_output::scoped_log!(napi, "napi_is_array");
     ungated!(env, env_);
@@ -1095,7 +1130,7 @@ extern "C" fn napi_is_array(
     if value.is_empty() {
         return env.invalid_arg();
     }
-    *result = value.js_type().is_array();
+    result.write(value.js_type().is_array());
     env.ok()
 }
 
@@ -1103,7 +1138,7 @@ extern "C" fn napi_is_array(
 extern "C" fn napi_get_array_length(
     env_: Option<&NapiEnv>,
     value_: napi_value,
-    result_: *mut u32,
+    result_: Option<&Out<u32>>,
 ) -> napi_status {
     bun_output::scoped_log!(napi, "napi_get_array_length");
     let env = preamble!(env_);
@@ -1117,10 +1152,10 @@ extern "C" fn napi_get_array_length(
         return NapiEnv::set_last_error(Some(env), NapiStatus::array_expected);
     }
 
-    *result = match value.get_length(env.to_js()) {
+    result.write(match value.get_length(env.to_js()) {
         Ok(len) => len as u32, // intentional truncation
         Err(_) => return NapiEnv::set_last_error(Some(env), NapiStatus::pending_exception),
-    };
+    });
     env.ok()
 }
 
@@ -1129,7 +1164,7 @@ extern "C" fn napi_strict_equals(
     env_: Option<&NapiEnv>,
     lhs_: napi_value,
     rhs_: napi_value,
-    result_: *mut bool,
+    result_: Option<&Out<bool>>,
 ) -> napi_status {
     bun_output::scoped_log!(napi, "napi_strict_equals");
     let env = preamble!(env_);
@@ -1138,10 +1173,10 @@ extern "C" fn napi_strict_equals(
     if lhs.is_empty() || rhs.is_empty() {
         return env.invalid_arg();
     }
-    *result = match lhs.is_strict_equal(rhs, env.to_js()) {
+    result.write(match lhs.is_strict_equal(rhs, env.to_js()) {
         Ok(b) => b,
         Err(_) => return NapiEnv::set_last_error(Some(env), NapiStatus::pending_exception),
-    };
+    });
     env.ok()
 }
 
@@ -1248,13 +1283,13 @@ unsafe extern "C" {
 #[unsafe(no_mangle)]
 extern "C" fn napi_open_handle_scope(
     env_: Option<&NapiEnv>,
-    result_: *mut napi_handle_scope,
+    result_: Option<&Out<napi_handle_scope>>,
 ) -> napi_status {
     bun_output::scoped_log!(napi, "napi_open_handle_scope");
     ungated!(env, env_);
     env.check_gc();
     let result = get_out!(env, result_);
-    *result = NapiHandleScope::open(env, false);
+    result.write(NapiHandleScope::open(env, false));
     env.ok()
 }
 
@@ -1278,12 +1313,12 @@ extern "C" fn napi_async_init(
     env_: Option<&NapiEnv>,
     _async_resource: napi_value,
     _async_resource_name: napi_value,
-    async_ctx_: *mut *mut c_void,
+    async_ctx_: Option<&Out<*mut c_void>>,
 ) -> napi_status {
     bun_output::scoped_log!(napi, "napi_async_init");
     let env = get_env!(env_);
     let async_ctx = get_out!(env, async_ctx_);
-    *async_ctx = env.as_mut_ptr().cast::<c_void>();
+    async_ctx.write(env.as_mut_ptr().cast::<c_void>());
     env.ok()
 }
 
@@ -1296,15 +1331,17 @@ extern "C" fn napi_async_destroy(env_: Option<&NapiEnv>, _async_ctx: *mut c_void
 }
 
 // this is just a regular function call
+/// # Safety
+/// `args` is null, or points to `arg_count` values that nothing writes while the callee runs.
 #[unsafe(no_mangle)]
-extern "C" fn napi_make_callback(
+unsafe extern "C" fn napi_make_callback(
     env_: Option<&NapiEnv>,
     _async_ctx: *mut c_void,
     recv_: napi_value,
     func_: napi_value,
     arg_count: usize,
     args: *const napi_value,
-    maybe_result: *mut napi_value,
+    maybe_result: Option<&Out<napi_value>>,
 ) -> napi_status {
     bun_output::scoped_log!(napi, "napi_make_callback");
     let env = preamble!(env_);
@@ -1340,8 +1377,7 @@ extern "C" fn napi_make_callback(
         Err(_) => return env.pending_exception(),
     };
 
-    // SAFETY: `maybe_result` is null or a valid exclusive out-param per N-API contract.
-    if let Some(result) = unsafe { maybe_result.as_mut() } {
+    if let Some(result) = maybe_result {
         result.set(env, res);
     }
 
@@ -1351,13 +1387,13 @@ extern "C" fn napi_make_callback(
 #[unsafe(no_mangle)]
 extern "C" fn napi_open_escapable_handle_scope(
     env_: Option<&NapiEnv>,
-    result_: *mut napi_escapable_handle_scope,
+    result_: Option<&Out<napi_escapable_handle_scope>>,
 ) -> napi_status {
     bun_output::scoped_log!(napi, "napi_open_escapable_handle_scope");
     ungated!(env, env_);
     env.check_gc();
     let result = get_out!(env, result_);
-    *result = NapiHandleScope::open(env, true);
+    result.write(NapiHandleScope::open(env, true));
     env.ok()
 }
 
@@ -1380,7 +1416,7 @@ extern "C" fn napi_escape_handle(
     env_: Option<&NapiEnv>,
     scope_: Option<&NapiHandleScope>,
     escapee: napi_value,
-    result_: *mut napi_value,
+    result_: Option<&Out<napi_value>>,
 ) -> napi_status {
     bun_output::scoped_log!(napi, "napi_escape_handle");
     ungated!(env, env_);
@@ -1392,7 +1428,7 @@ extern "C" fn napi_escape_handle(
     if scope.escape(escapee.get()).is_err() {
         return NapiEnv::set_last_error(Some(env), NapiStatus::escape_called_twice);
     }
-    *result = escapee;
+    result.write(escapee);
     env.ok()
 }
 
@@ -1454,7 +1490,7 @@ unsafe extern "C" {
 extern "C" fn napi_is_error(
     env_: Option<&NapiEnv>,
     value_: napi_value,
-    result_: *mut bool,
+    result_: Option<&Out<bool>>,
 ) -> napi_status {
     bun_output::scoped_log!(napi, "napi_is_error");
     ungated!(env, env_);
@@ -1464,7 +1500,7 @@ extern "C" fn napi_is_error(
         return env.invalid_arg();
     }
     let result = get_out!(env, result_);
-    *result = value.is_any_error();
+    result.write(value.is_any_error());
     env.ok()
 }
 
@@ -1480,7 +1516,7 @@ unsafe extern "C" {
 extern "C" fn napi_is_arraybuffer(
     env_: Option<&NapiEnv>,
     value_: napi_value,
-    result_: *mut bool,
+    result_: Option<&Out<bool>>,
 ) -> napi_status {
     bun_output::scoped_log!(napi, "napi_is_arraybuffer");
     ungated!(env, env_);
@@ -1494,9 +1530,11 @@ extern "C" fn napi_is_arraybuffer(
     // ArrayBuffer in JSC, so `js_type` alone can't tell them apart. Node's
     // `napi_is_arraybuffer` maps to V8's `IsArrayBuffer()`, which is false for
     // SharedArrayBuffer, so exclude shared buffers here too.
-    *result = value
-        .as_array_buffer(env.to_js())
-        .is_some_and(|ab| ab.typed_array_type == jsc::JSType::ArrayBuffer && !ab.shared);
+    result.write(
+        value
+            .as_array_buffer(env.to_js())
+            .is_some_and(|ab| ab.typed_array_type == jsc::JSType::ArrayBuffer && !ab.shared),
+    );
     env.ok()
 }
 
@@ -1524,8 +1562,8 @@ unsafe extern "C" {
 extern "C" fn napi_get_arraybuffer_info(
     env_: Option<&NapiEnv>,
     arraybuffer_: napi_value,
-    data: *mut *mut u8,
-    byte_length: *mut usize,
+    data: Option<&Out<*mut u8>>,
+    byte_length: Option<&Out<usize>>,
 ) -> napi_status {
     bun_output::scoped_log!(napi, "napi_get_arraybuffer_info");
     ungated!(env, env_);
@@ -1555,11 +1593,11 @@ unsafe extern "C" {
 extern "C" fn napi_get_typedarray_info(
     env_: Option<&NapiEnv>,
     typedarray_: napi_value,
-    maybe_type: *mut napi_typedarray_type,
-    maybe_length: *mut usize,
-    maybe_data: *mut *mut u8,
-    maybe_arraybuffer: *mut napi_value,
-    maybe_byte_offset: *mut usize,
+    maybe_type: Option<&Out<napi_typedarray_type>>,
+    maybe_length: Option<&Out<usize>>,
+    maybe_data: Option<&Out<*mut u8>>,
+    maybe_arraybuffer: Option<&Out<napi_value>>,
+    maybe_byte_offset: Option<&Out<usize>>,
 ) -> napi_status {
     bun_output::scoped_log!(napi, "napi_get_typedarray_info");
     ungated!(env, env_);
@@ -1572,36 +1610,33 @@ extern "C" fn napi_get_typedarray_info(
 
     // Keep the pointer valid for the view's lifetime, as in Node: the
     // arraybuffer out-param below would otherwise invalidate it.
-    if !maybe_data.is_null() && !typedarray.materialize_array_buffer_view_buffer() {
+    if maybe_data.is_some() && !typedarray.materialize_array_buffer_view_buffer() {
         return env.generic_failure();
     }
 
     let Some(array_buffer) = typedarray.as_array_buffer(env.to_js()) else {
         return env.invalid_arg();
     };
-    // SAFETY: `maybe_type` is null or a valid exclusive out-param per N-API contract.
-    if let Some(ty) = unsafe { maybe_type.as_mut() } {
+    if let Some(ty) = maybe_type {
         // The `ArrayBuffer.typed_array_type` field is already a `JSType`, so map it
         // straight to `napi_typedarray_type`.
         let Some(napi_ty) = napi_typedarray_type::from_js_type(array_buffer.typed_array_type)
         else {
             return env.invalid_arg();
         };
-        *ty = napi_ty;
+        ty.write(napi_ty);
     }
 
     // TODO: handle detached
     write_out(maybe_data, array_buffer.ptr);
     write_out(maybe_length, array_buffer.len);
 
-    // SAFETY: `maybe_arraybuffer` is null or a valid exclusive out-param per N-API contract.
-    if let Some(arraybuffer) = unsafe { maybe_arraybuffer.as_mut() } {
+    if let Some(arraybuffer) = maybe_arraybuffer {
         arraybuffer.set(env, typedarray.get_array_buffer_view_buffer(env.to_js()));
     }
 
-    // SAFETY: `maybe_byte_offset` is null or a valid exclusive out-param per N-API contract.
-    if let Some(byte_offset) = unsafe { maybe_byte_offset.as_mut() } {
-        *byte_offset = typedarray.get_array_buffer_view_byte_offset();
+    if let Some(byte_offset) = maybe_byte_offset {
+        byte_offset.write(typedarray.get_array_buffer_view_byte_offset());
     }
     env.ok()
 }
@@ -1620,7 +1655,7 @@ unsafe extern "C" {
 extern "C" fn napi_is_dataview(
     env_: Option<&NapiEnv>,
     value_: napi_value,
-    result_: *mut bool,
+    result_: Option<&Out<bool>>,
 ) -> napi_status {
     bun_output::scoped_log!(napi, "napi_is_dataview");
     ungated!(env, env_);
@@ -1629,8 +1664,9 @@ extern "C" fn napi_is_dataview(
     if value.is_empty() {
         return env.invalid_arg();
     }
-    *result =
-        !value.is_empty_or_undefined_or_null() && value.js_type_loose() == jsc::JSType::DataView;
+    result.write(
+        !value.is_empty_or_undefined_or_null() && value.js_type_loose() == jsc::JSType::DataView,
+    );
     env.ok()
 }
 
@@ -1638,10 +1674,10 @@ extern "C" fn napi_is_dataview(
 extern "C" fn napi_get_dataview_info(
     env_: Option<&NapiEnv>,
     dataview_: napi_value,
-    maybe_bytelength: *mut usize,
-    maybe_data: *mut *mut u8,
-    maybe_arraybuffer: *mut napi_value,
-    maybe_byte_offset: *mut usize,
+    maybe_bytelength: Option<&Out<usize>>,
+    maybe_data: Option<&Out<*mut u8>>,
+    maybe_arraybuffer: Option<&Out<napi_value>>,
+    maybe_byte_offset: Option<&Out<usize>>,
 ) -> napi_status {
     bun_output::scoped_log!(napi, "napi_get_dataview_info");
     ungated!(env, env_);
@@ -1655,34 +1691,32 @@ extern "C" fn napi_get_dataview_info(
     };
     write_out(maybe_bytelength, array_buffer.byte_len);
     write_out(maybe_data, array_buffer.ptr);
-    // SAFETY: `maybe_arraybuffer` is null or a valid exclusive out-param per N-API contract.
-    if let Some(arraybuffer) = unsafe { maybe_arraybuffer.as_mut() } {
+    if let Some(arraybuffer) = maybe_arraybuffer {
         arraybuffer.set(env, dataview.get_array_buffer_view_buffer(env.to_js()));
     }
-    // SAFETY: `maybe_byte_offset` is null or a valid exclusive out-param per N-API contract.
-    if let Some(byte_offset) = unsafe { maybe_byte_offset.as_mut() } {
-        *byte_offset = dataview.get_array_buffer_view_byte_offset();
+    if let Some(byte_offset) = maybe_byte_offset {
+        byte_offset.write(dataview.get_array_buffer_view_byte_offset());
     }
 
     env.ok()
 }
 
 #[unsafe(no_mangle)]
-extern "C" fn napi_get_version(env_: Option<&NapiEnv>, result_: *mut u32) -> napi_status {
+extern "C" fn napi_get_version(env_: Option<&NapiEnv>, result_: Option<&Out<u32>>) -> napi_status {
     bun_output::scoped_log!(napi, "napi_get_version");
     let env = get_env!(env_);
     let result = get_out!(env, result_);
     // The result is supposed to be the highest NAPI version Bun supports, rather than the version reported by a NAPI module.
     // Keep this in sync with process.versions.napi in BunProcess.cpp.
-    *result = 10;
+    result.write(10);
     env.ok()
 }
 
 #[unsafe(no_mangle)]
 extern "C" fn napi_create_promise(
     env_: Option<&NapiEnv>,
-    deferred_: *mut napi_deferred,
-    promise_: *mut napi_value,
+    deferred_: Option<&Out<napi_deferred>>,
+    promise_: Option<&Out<napi_value>>,
 ) -> napi_status {
     bun_output::scoped_log!(napi, "napi_create_promise");
     let env = preamble!(env_);
@@ -1693,7 +1727,7 @@ extern "C" fn napi_create_promise(
         context: env.to_js().bun_vm().context_of_caller().id(),
     });
     let prom_value = strong.promise.value();
-    *deferred = bun_core::heap::into_raw(strong);
+    deferred.write(bun_core::heap::into_raw(strong));
     promise.set(env, prom_value);
     env.ok()
 }
@@ -1702,18 +1736,16 @@ extern "C" fn napi_create_promise(
 /// script made it, whichever completion the addon does it from.
 fn conclude_deferred(
     env: &NapiEnv,
-    deferred: napi_deferred,
+    deferred: Option<AddonBox<Deferred>>,
     settle: impl FnOnce(&mut jsc::JSPromise, &JSGlobalObject) -> JsResult<()>,
 ) -> napi_status {
-    if deferred.is_null() {
+    let Some(deferred) = deferred else {
         return env.invalid_arg();
-    }
-    // SAFETY: deferred is non-null and was created by heap::alloc in napi_create_promise.
-    let context = unsafe { (*deferred).context };
+    };
+    let context = deferred.context;
     if !env.to_js().bun_vm().is_context_live(context) {
         // Of a Bun.ModuleGraph that has been disposed: released, and nothing is settled.
-        // SAFETY: as above; the addon is done with it on napi_ok.
-        drop(unsafe { bun_core::heap::take(deferred) });
+        drop(ManuallyDrop::into_inner(deferred));
         return env.ok();
     }
     let mut status = env.ok();
@@ -1722,8 +1754,7 @@ fn conclude_deferred(
             status = refused;
             return;
         }
-        // SAFETY: as above. `deferred_box` drops at scope exit (deinit + free).
-        let deferred_box = unsafe { bun_core::heap::take(deferred) };
+        let deferred_box = ManuallyDrop::into_inner(deferred);
         if settle(deferred_box.promise.get(), env.to_js()).is_err() {
             status = env.generic_failure();
         }
@@ -1734,7 +1765,7 @@ fn conclude_deferred(
 #[unsafe(no_mangle)]
 extern "C" fn napi_resolve_deferred(
     env_: Option<&NapiEnv>,
-    deferred: napi_deferred,
+    deferred: Option<AddonBox<Deferred>>,
     resolution_: napi_value,
 ) -> napi_status {
     bun_output::scoped_log!(napi, "napi_resolve_deferred");
@@ -1748,7 +1779,7 @@ extern "C" fn napi_resolve_deferred(
 #[unsafe(no_mangle)]
 extern "C" fn napi_reject_deferred(
     env_: Option<&NapiEnv>,
-    deferred: napi_deferred,
+    deferred: Option<AddonBox<Deferred>>,
     rejection_: napi_value,
 ) -> napi_status {
     bun_output::scoped_log!(napi, "napi_reject_deferred");
@@ -1763,7 +1794,7 @@ extern "C" fn napi_reject_deferred(
 extern "C" fn napi_is_promise(
     env_: Option<&NapiEnv>,
     value_: napi_value,
-    is_promise_: *mut bool,
+    is_promise_: Option<&Out<bool>>,
 ) -> napi_status {
     bun_output::scoped_log!(napi, "napi_is_promise");
     ungated!(env, env_);
@@ -1775,7 +1806,7 @@ extern "C" fn napi_is_promise(
         return env.invalid_arg();
     }
 
-    *is_promise = value.as_any_promise().is_some();
+    is_promise.write(value.as_any_promise().is_some());
     env.ok()
 }
 
@@ -1796,7 +1827,7 @@ unsafe extern "C" {
 extern "C" fn napi_create_date(
     env_: Option<&NapiEnv>,
     time: f64,
-    result_: *mut napi_value,
+    result_: Option<&Out<napi_value>>,
 ) -> napi_status {
     bun_output::scoped_log!(napi, "napi_create_date");
     let env = preamble!(env_);
@@ -1812,7 +1843,7 @@ extern "C" fn napi_create_date(
 extern "C" fn napi_is_date(
     env_: Option<&NapiEnv>,
     value_: napi_value,
-    is_date_: *mut bool,
+    is_date_: Option<&Out<bool>>,
 ) -> napi_status {
     bun_output::scoped_log!(napi, "napi_is_date");
     ungated!(env, env_);
@@ -1822,7 +1853,7 @@ extern "C" fn napi_is_date(
     if value.is_empty() {
         return env.invalid_arg();
     }
-    *is_date = value.js_type_loose() == jsc::JSType::JSDate;
+    is_date.write(value.js_type_loose() == jsc::JSType::JSDate);
     env.ok()
 }
 
@@ -1914,101 +1945,109 @@ pub(super) enum AsyncWorkStatus {
 
 /// must be globally allocated
 pub(crate) struct napi_async_work {
-    pub task: WorkPoolTask,
-    pub(crate) concurrent_task: ConcurrentTask,
-    /// Held while the work is out on the pool (`schedule` until it is posted
-    /// back): how the pool thread delivers completion / cancellation, and what
-    /// makes the VM wait for it.
-    pub(crate) ticket: Option<bun_jsc::Ticket>,
-    /// JS thread only.
-    pub global: GlobalRef,
-    pub(crate) env: NapiEnvRef,
-    pub(crate) execute: napi_async_execute_callback,
-    pub(crate) complete: Option<napi_async_complete_callback>,
-    pub(crate) data: *mut c_void,
-    pub(crate) status: AtomicU32, // AsyncWorkStatus
-    pub(crate) scheduled: bool,
-    pub poll_ref: JsKeepAlive,
+    /// Only the pool thread uses it between `schedule` and the post back.
+    off_thread: UnsafeCell<AsyncWorkOffThread>,
+    status: AtomicU32, // AsyncWorkStatus
+    data: *mut c_void,
+    /// Taken by `run_from_js`, which needs the env for longer than the work lives.
+    env: Cell<Option<NapiEnvRef>>,
+    complete: Option<napi_async_complete_callback>,
+    scheduled: Cell<bool>,
+    poll_ref: Cell<JsKeepAlive>,
     /// The context whose script created the work: `complete` runs in it.
-    pub(crate) context: bun_jsc::ContextId,
+    context: bun_jsc::ContextId,
 }
 
-bun_threading::intrusive_work_task!(napi_async_work, task);
+struct AsyncWorkOffThread {
+    task: WorkPoolTask,
+    concurrent_task: ConcurrentTask,
+    /// How the pool thread delivers completion / cancellation, and what makes the VM wait for it.
+    ticket: Option<bun_jsc::Ticket>,
+    env: napi_env,
+    execute: napi_async_execute_callback,
+}
+
+bun_threading::intrusive_work_task!(AsyncWorkOffThread, task);
 
 impl napi_async_work {
-    pub(crate) fn new(
+    /// # Safety
+    /// As [`napi_create_async_work`].
+    unsafe fn new(
         env: &NapiEnv,
         execute: napi_async_execute_callback,
         complete: Option<napi_async_complete_callback>,
         data: *mut c_void,
     ) -> *mut napi_async_work {
-        let global = env.to_js();
-
         bun_core::heap::into_raw(Box::new(napi_async_work {
-            task: WorkPoolTask {
-                node: bun_threading::thread_pool::Node::default(),
-                callback: Self::run_from_thread_pool,
-            },
-            concurrent_task: ConcurrentTask::default(),
-            global: GlobalRef::from(global),
-            // SAFETY: env outlives the async work; clone bumps the C++ refcount.
-            env: unsafe { NapiEnvRef::clone_from_raw(env.as_mut_ptr()) },
-            execute,
-            ticket: None,
-            complete,
-            data,
+            off_thread: UnsafeCell::new(AsyncWorkOffThread {
+                task: WorkPoolTask {
+                    node: bun_threading::thread_pool::Node::default(),
+                    callback: Self::run_from_thread_pool,
+                },
+                concurrent_task: ConcurrentTask::default(),
+                ticket: None,
+                env: env.as_mut_ptr(),
+                execute,
+            }),
             status: AtomicU32::new(AsyncWorkStatus::Pending as u32),
-            scheduled: false,
-            poll_ref: JsKeepAlive::default(),
-            context: global.bun_vm().context_of_caller().id(),
+            data,
+            env: Cell::new(Some(env.ref_())),
+            complete,
+            scheduled: Cell::new(false),
+            poll_ref: Cell::default(),
+            context: env.to_js().bun_vm().context_of_caller().id(),
         }))
     }
 
-    pub(crate) fn destroy(this: *mut napi_async_work) {
-        // SAFETY: `this` was created by heap::alloc in `new`.
-        // env.deinit() runs via Drop on NapiEnvRef.
-        drop(unsafe { bun_core::heap::take(this) });
-    }
-
     /// Returns false if the VM is closed. The addon still has to delete the work.
-    pub(crate) fn schedule(&mut self) -> bool {
-        if self.scheduled {
+    ///
+    /// # Safety
+    /// As [`napi_queue_async_work`].
+    unsafe fn schedule(&self) -> bool {
+        if self.scheduled.get() {
             return true;
         }
-        let vm = self.global.bun_vm();
+        let vm = VirtualMachine::get();
         // A finalizer can call this during the GC that destroys the heap.
         if vm.closed() {
             return false;
         }
-        self.scheduled = true;
-        self.poll_ref.ref_(bun_io::js_vm_ctx());
+        self.scheduled.set(true);
+        self.poll_ref.set(JsKeepAlive::active());
         // The work object belongs to the addon and `execute` receives this
         // env, so the VM waits for it (Node likewise settles its threadpool
         // requests before an environment is freed).
-        self.ticket = Some(vm.ticket());
-        // SAFETY: `self.env` keeps the env alive.
-        unsafe { NapiEnv__asyncWorkEnteredThreadPool(self.env.get()) };
-        WorkPool::schedule(&raw mut self.task);
+        let ticket = vm.ticket();
+        // Not `.get()`: `run_from_thread_pool` recovers `Self` from this pointer.
+        let off_thread = UnsafeCell::raw_get(&raw const self.off_thread);
+        // SAFETY: the work was not scheduled, so nothing else has `off_thread`, and `self.env` keeps the env alive.
+        unsafe {
+            (*off_thread).ticket = Some(ticket);
+            NapiEnv__asyncWorkEnteredThreadPool((*off_thread).env);
+            WorkPool::schedule(&raw mut (*off_thread).task);
+        }
         true
     }
 
-    pub(crate) unsafe fn run_from_thread_pool(task: *mut WorkPoolTask) {
-        // SAFETY: `task` is the `task` field of a live heap `napi_async_work`,
-        // exclusively owned by the work pool for this callback's duration.
-        unsafe { (*napi_async_work::from_task_ptr(task)).run() };
-    }
-
-    fn run(&mut self) {
-        let self_ptr: *mut Self = self;
-        // Moved out: the JS thread may free `self` the moment it is posted back.
-        let ticket = self
+    /// # Safety
+    /// `task` is the one that `schedule` handed to the pool.
+    unsafe fn run_from_thread_pool(task: *mut WorkPoolTask) {
+        // SAFETY: the addon deletes no work before its `complete` is called, and only this thread uses
+        // `off_thread`. `napi_cancel_async_work` can be running, so the rest is only shared.
+        let (this, off_thread, status, data) = unsafe {
+            let off_thread = AsyncWorkOffThread::from_task_ptr(task);
+            let this = bun_core::from_field_ptr!(Self, off_thread, off_thread);
+            (this, &mut *off_thread, &(*this).status, (*this).data)
+        };
+        // Moved out: the JS thread may free the work the moment it is posted back.
+        let ticket = off_thread
             .ticket
             .take()
             .expect("scheduled napi async work holds a ticket");
         // A VM that is already stopping cancels work it has not started, as
         // Node's environment cleanup does (uv_cancel).
         let started = ticket.script_allowed()
-            && match self.status.compare_exchange(
+            && match status.compare_exchange(
                 AsyncWorkStatus::Pending as u32,
                 AsyncWorkStatus::Started as u32,
                 Ordering::SeqCst,
@@ -2018,32 +2057,20 @@ impl napi_async_work {
                 Err(state) => state != AsyncWorkStatus::Cancelled as u32,
             };
         if started {
-            (self.execute)(self.env.get(), self.data);
-            self.status
-                .store(AsyncWorkStatus::Completed as u32, Ordering::SeqCst);
+            // SAFETY: `napi_create_async_work`'s contract. The work keeps the env alive until it is posted back.
+            unsafe { (off_thread.execute)(off_thread.env, data) };
+            status.store(AsyncWorkStatus::Completed as u32, Ordering::SeqCst);
         } else {
-            let _ = self.cancel();
+            let _ = Self::cancel(status);
         }
-        // SAFETY: `self.env` keeps the env alive, and `self` is live until it is posted back.
-        unsafe { NapiEnv__asyncWorkLeftThreadPool(self.env.get()) };
-        self.post_to_js_thread(self_ptr, &ticket);
+        // SAFETY: as above.
+        unsafe { NapiEnv__asyncWorkLeftThreadPool(off_thread.env) };
+        // A VM tearing down runs `complete` from its queue release, as Node does at environment cleanup.
+        ticket.post_intrusive(ptr::NonNull::from(off_thread.concurrent_task.from(this)));
     }
 
-    /// Pool thread → JS thread: run `complete` there. `concurrent_task` is the
-    /// live inline field of this heap work; the queue takes ownership of its
-    /// `next` link. A VM tearing down runs `complete` from its queue release
-    /// (status cancelled if `execute` never ran), as Node does at environment
-    /// cleanup.
-    fn post_to_js_thread(&mut self, self_ptr: *mut Self, ticket: &bun_jsc::Ticket) {
-        let ct = core::ptr::NonNull::from(
-            self.concurrent_task
-                .from(self_ptr, AutoDeinit::ManualDeinit),
-        );
-        ticket.post(ct);
-    }
-
-    pub(crate) fn cancel(&mut self) -> bool {
-        self.status
+    fn cancel(status: &AtomicU32) -> bool {
+        status
             .compare_exchange(
                 AsyncWorkStatus::Pending as u32,
                 AsyncWorkStatus::Cancelled as u32,
@@ -2053,49 +2080,55 @@ impl napi_async_work {
             .is_ok()
     }
 
-    pub(crate) fn run_from_js(&mut self, global: &JSGlobalObject) -> JsResult<()> {
-        // Note: the "this" value here may already be freed by the user in `complete`
-        let _poll_ref = core::mem::take(&mut self.poll_ref);
+    /// # Safety
+    /// `this` is the work that the pool posted back, on the thread it was posted to.
+    pub(crate) unsafe fn run_from_js(this: *mut Self, global: &JSGlobalObject) -> JsResult<()> {
+        let (_poll_ref, env, complete, status, data, context) = {
+            // SAFETY: fn contract. The borrow ends here, because `complete` usually deletes the work.
+            let work = unsafe { &*this };
+            (
+                work.poll_ref.take(),
+                work.env.take(),
+                work.complete,
+                work.status.load(Ordering::SeqCst),
+                work.data,
+                work.context,
+            )
+        };
 
         // https://github.com/nodejs/node/blob/a2de5b9150da60c77144bb5333371eaca3fab936/src/node_api.cc#L1201
-        let Some(complete) = self.complete else {
+        let (Some(complete), Some(env)) = (complete, env) else {
             return Ok(());
         };
 
-        let env = self.env.get();
-        // SAFETY: env is held alive by NapiEnvRef for the duration of this call.
-        let env_ref = unsafe { &*env };
-        let _hs = NapiHandleScope::open_scoped(env_ref);
+        let _hs = NapiHandleScope::open_scoped(&env);
 
-        let status: NapiStatus =
-            if self.status.load(Ordering::SeqCst) == AsyncWorkStatus::Cancelled as u32 {
-                NapiStatus::cancelled
-            } else {
-                NapiStatus::ok
-            };
+        let status: NapiStatus = if status == AsyncWorkStatus::Cancelled as u32 {
+            NapiStatus::cancelled
+        } else {
+            NapiStatus::ok
+        };
 
-        let data = self.data;
-        env_ref.complete_in_context(self.context, || complete(env, status as napi_status, data));
+        env.complete_in_context(context, || {
+            // SAFETY: `napi_create_async_work`'s contract.
+            unsafe { complete(env.get(), status as napi_status, data) }
+        });
 
-        env_ref.surface_exception(global)
+        env.surface_exception(global)
     }
 }
 
-type napi_threadsafe_function = *mut ThreadSafeFunction;
+type napi_threadsafe_function = *const ThreadSafeFunction;
 
-#[repr(u32)]
-#[derive(Copy, Clone, PartialEq, Eq)]
-pub(crate) enum napi_threadsafe_function_release_mode {
-    release = 0,
-    abort = 1,
-}
-
+const NAPI_TSFN_ABORT: c_uint = 1;
+type napi_threadsafe_function_release_mode = c_uint;
 const NAPI_TSFN_BLOCKING: c_uint = 1;
 type napi_threadsafe_function_call_mode = c_uint;
-pub(super) type napi_async_execute_callback = extern "C" fn(napi_env, *mut c_void);
-pub(super) type napi_async_complete_callback = extern "C" fn(napi_env, napi_status, *mut c_void);
-pub(super) type napi_threadsafe_function_call_js =
-    extern "C" fn(napi_env, napi_value, *mut c_void, *mut c_void);
+pub(super) type napi_async_execute_callback = unsafe extern "C" fn(napi_env, *mut c_void);
+pub(super) type napi_async_complete_callback =
+    unsafe extern "C" fn(napi_env, napi_status, *mut c_void);
+type napi_threadsafe_function_call_js =
+    unsafe extern "C" fn(napi_env, napi_value, AddonData, AddonData);
 
 #[repr(C)]
 struct napi_node_version {
@@ -2137,24 +2170,26 @@ bun_opaque::opaque_ffi! { pub struct struct_napi_async_cleanup_hook_handle__; }
 type napi_async_cleanup_hook_handle = *mut struct_napi_async_cleanup_hook_handle__;
 type napi_async_cleanup_hook = Option<extern "C" fn(napi_async_cleanup_hook_handle, *mut c_void)>;
 
-fn napi_span(ptr: *const u8, len: usize) -> &'static [u8] {
-    // SAFETY: caller-supplied C string region; lifetime is the duration of the NAPI call.
-    // `'static` is used because the slice never outlives the FFI call.
+/// # Safety
+/// For `'a`, `ptr` is null, or points to `len` bytes, or to a C string for `NAPI_AUTO_LENGTH`.
+unsafe fn napi_span<'a>(ptr: *const u8, len: usize) -> &'a [u8] {
     if ptr.is_null() {
         return &[];
     }
 
     if len == NAPI_AUTO_LENGTH {
-        // SAFETY: N-API contract — `ptr` is a NUL-terminated C string when `len == NAPI_AUTO_LENGTH`.
+        // SAFETY: fn contract.
         return unsafe { bun_core::ffi::cstr(ptr.cast::<c_char>()) }.to_bytes();
     }
 
-    // SAFETY: N-API contract — `[ptr, ptr+len)` is a valid readable region for the call.
+    // SAFETY: fn contract.
     unsafe { bun_core::ffi::slice(ptr, len) }
 }
 
+/// # Safety
+/// As [`napi_span`], for both strings.
 #[unsafe(no_mangle)]
-extern "C" fn napi_fatal_error(
+unsafe extern "C" fn napi_fatal_error(
     location_ptr: *const u8,
     location_len: usize,
     message_ptr: *const u8,
@@ -2162,12 +2197,17 @@ extern "C" fn napi_fatal_error(
 ) -> ! {
     bun_output::scoped_log!(napi, "napi_fatal_error");
     Bun__napi_suppress_crash_on_abort_if_desired();
-    let mut message = napi_span(message_ptr, message_len_);
+    // SAFETY: fn contract.
+    let (mut message, location) = unsafe {
+        (
+            napi_span(message_ptr, message_len_),
+            napi_span(location_ptr, location_len),
+        )
+    };
     if message.is_empty() {
         message = b"fatal error";
     }
 
-    let location = napi_span(location_ptr, location_len);
     if !location.is_empty() {
         bun_core::Output::panic(format_args!(
             "NAPI FATAL ERROR: {} {}",
@@ -2211,14 +2251,14 @@ unsafe extern "C" {
 extern "C" fn napi_get_buffer_info(
     env_: Option<&NapiEnv>,
     value_: napi_value,
-    data: *mut *mut u8,
-    length: *mut usize,
+    data: Option<&Out<*mut u8>>,
+    length: Option<&Out<usize>>,
 ) -> napi_status {
     bun_output::scoped_log!(napi, "napi_get_buffer_info");
     ungated!(env, env_);
     let value = value_.get();
     // Keep the pointer valid for the buffer's lifetime, as in Node.
-    if !data.is_null() && !value.materialize_array_buffer_view_buffer() {
+    if data.is_some() && !value.materialize_array_buffer_view_buffer() {
         return env.generic_failure();
     }
     let Some(array_buf) = value.as_array_buffer(env.to_js()) else {
@@ -2301,15 +2341,17 @@ unsafe extern "C" {
     ) -> napi_status;
 }
 
+/// # Safety
+/// `execute_` takes `data` on a pool thread, and `complete` takes it on this one afterwards.
 #[unsafe(no_mangle)]
-extern "C" fn napi_create_async_work(
+unsafe extern "C" fn napi_create_async_work(
     env_: Option<&NapiEnv>,
     _async_resource: napi_value,
     _async_resource_name: *const c_char,
     execute_: Option<napi_async_execute_callback>,
     complete: Option<napi_async_complete_callback>,
     data: *mut c_void,
-    result_: *mut *mut napi_async_work,
+    result_: Option<&Out<*mut napi_async_work>>,
 ) -> napi_status {
     bun_output::scoped_log!(napi, "napi_create_async_work");
     let env = get_env!(env_);
@@ -2318,39 +2360,39 @@ extern "C" fn napi_create_async_work(
     let Some(execute) = execute_ else {
         return env.invalid_arg();
     };
-    *result = napi_async_work::new(env, execute, complete, data);
+    // SAFETY: fn contract.
+    result.write(unsafe { napi_async_work::new(env, execute, complete, data) });
     env.ok()
 }
 
 #[unsafe(no_mangle)]
 extern "C" fn napi_delete_async_work(
     env_: Option<&NapiEnv>,
-    work_: *mut napi_async_work,
+    work_: Option<AddonBox<napi_async_work>>,
 ) -> napi_status {
     bun_output::scoped_log!(napi, "napi_delete_async_work");
     let env = get_env!(env_);
-    // SAFETY: `work_` is null or the `napi_async_work` we allocated in `napi_create_async_work`.
-    let Some(work) = (unsafe { work_.as_mut() }) else {
+    let Some(work) = work_ else {
         return env.invalid_arg();
     };
-    debug_assert!(core::ptr::eq(env.to_js(), work.global.as_ptr()));
-    napi_async_work::destroy(work_);
+    drop(ManuallyDrop::into_inner(work));
     env.ok()
 }
 
+/// # Safety
+/// The addon does not delete the work before its `complete` is called.
 #[unsafe(no_mangle)]
-extern "C" fn napi_queue_async_work(
+unsafe extern "C" fn napi_queue_async_work(
     env_: Option<&NapiEnv>,
-    work_: *mut napi_async_work,
+    work_: Option<&napi_async_work>,
 ) -> napi_status {
     bun_output::scoped_log!(napi, "napi_queue_async_work");
     let env = get_env!(env_);
-    // SAFETY: `work_` is null or the `napi_async_work` we allocated in `napi_create_async_work`.
-    let Some(work) = (unsafe { work_.as_mut() }) else {
+    let Some(work) = work_ else {
         return env.invalid_arg();
     };
-    debug_assert!(core::ptr::eq(env.to_js(), work.global.as_ptr()));
-    if !work.schedule() {
+    // SAFETY: fn contract.
+    if !unsafe { work.schedule() } {
         return env.cannot_run_js();
     }
     env.ok()
@@ -2359,16 +2401,14 @@ extern "C" fn napi_queue_async_work(
 #[unsafe(no_mangle)]
 extern "C" fn napi_cancel_async_work(
     env_: Option<&NapiEnv>,
-    work_: *mut napi_async_work,
+    work_: Option<&napi_async_work>,
 ) -> napi_status {
     bun_output::scoped_log!(napi, "napi_cancel_async_work");
     let env = get_env!(env_);
-    // SAFETY: `work_` is null or the `napi_async_work` we allocated in `napi_create_async_work`.
-    let Some(work) = (unsafe { work_.as_mut() }) else {
+    let Some(work) = work_ else {
         return env.invalid_arg();
     };
-    debug_assert!(core::ptr::eq(env.to_js(), work.global.as_ptr()));
-    if work.cancel() {
+    if napi_async_work::cancel(&work.status) {
         return env.ok();
     }
 
@@ -2378,12 +2418,12 @@ extern "C" fn napi_cancel_async_work(
 #[unsafe(no_mangle)]
 extern "C" fn napi_get_node_version(
     env_: Option<&NapiEnv>,
-    version_: *mut *const napi_node_version,
+    version_: Option<&Out<*const napi_node_version>>,
 ) -> napi_status {
     bun_output::scoped_log!(napi, "napi_get_node_version");
     let env = get_env!(env_);
     let version = get_out!(env, version_);
-    *version = &raw const NAPI_NODE_VERSION_GLOBAL;
+    version.write(&raw const NAPI_NODE_VERSION_GLOBAL);
     env.ok()
 }
 
@@ -2395,7 +2435,7 @@ type napi_event_loop = *mut super::uv_posix::UvLoop;
 #[unsafe(no_mangle)]
 extern "C" fn napi_get_uv_event_loop(
     env_: Option<&NapiEnv>,
-    loop_: *mut napi_event_loop,
+    loop_: Option<&Out<napi_event_loop>>,
 ) -> napi_status {
     bun_output::scoped_log!(napi, "napi_get_uv_event_loop");
     let env = get_env!(env_);
@@ -2404,7 +2444,7 @@ extern "C" fn napi_get_uv_event_loop(
     {
         // A past alignment assertion here fired spuriously.
         // TODO(@190n) investigate
-        *loop_out = VirtualMachine::get().uv_loop();
+        loop_out.write(VirtualMachine::get().uv_loop());
     }
     #[cfg(unix)]
     {
@@ -2415,7 +2455,7 @@ extern "C" fn napi_get_uv_event_loop(
         if uv_loop.is_null() {
             return env.generic_failure();
         }
-        *loop_out = uv_loop;
+        loop_out.write(uv_loop);
     }
     env.ok()
 }
@@ -2450,41 +2490,47 @@ unsafe extern "C" {
         data: *mut c_void,
     ) -> napi_status;
 
-    fn Bun__napi_cleanup_env_cpp(env: napi_env);
     safe fn Bun__napi_check_gc(env: &NapiEnv);
 
     /// Returns false if the env has already torn down its registry.
-    fn NapiEnv__registerThreadSafeFunction(env: *mut NapiEnv, tsfn: *mut c_void) -> bool;
-    fn NapiEnv__unregisterThreadSafeFunction(env: *mut NapiEnv, tsfn: *mut c_void);
+    fn NapiEnv__registerThreadSafeFunction(env: *mut NapiEnv, tsfn: *const c_void) -> bool;
+    fn NapiEnv__unregisterThreadSafeFunction(env: *mut NapiEnv, tsfn: *const c_void);
 }
 
-extern "C" fn Bun__napi_register_cleanup_callback(data: *mut c_void) {
-    // SAFETY: data is the napi_env we registered below.
-    unsafe { Bun__napi_cleanup_env_cpp(data as napi_env) };
-}
-
+/// # Safety
+/// `env` lives until its VM has run its cleanup hooks.
 #[unsafe(no_mangle)]
-extern "C" fn Bun__napi_register_cleanup_zig(env: &NapiEnv) {
-    env.to_js().bun_vm().rare_data().push_cleanup_hook(
-        env.to_js(),
-        env.as_mut_ptr().cast::<c_void>(),
-        Bun__napi_register_cleanup_callback,
-    );
-}
-
-#[unsafe(no_mangle)]
-extern "C" fn Bun__napi_run_finalizers_after_teardown_wait(env: &NapiEnv) {
+unsafe extern "C" fn Bun__napi_register_cleanup_zig(env: &NapiEnv) {
     unsafe extern "C" {
-        safe fn NapiEnv__runFinalizers(env: *mut c_void);
+        fn Bun__napi_cleanup_env_cpp(env: *mut c_void);
     }
-    env.to_js()
-        .bun_vm()
-        .rare_data()
-        .push_cleanup_hook_after_teardown_wait(
+    let rare_data = env.to_js().bun_vm().rare_data();
+    // SAFETY: fn contract.
+    unsafe {
+        rare_data.push_cleanup_hook(
+            env.to_js(),
+            env.as_mut_ptr().cast::<c_void>(),
+            Bun__napi_cleanup_env_cpp,
+        )
+    };
+}
+
+/// # Safety
+/// As [`Bun__napi_register_cleanup_zig`].
+#[unsafe(no_mangle)]
+unsafe extern "C" fn Bun__napi_run_finalizers_after_teardown_wait(env: &NapiEnv) {
+    unsafe extern "C" {
+        fn NapiEnv__runFinalizers(env: *mut c_void);
+    }
+    let rare_data = env.to_js().bun_vm().rare_data();
+    // SAFETY: fn contract.
+    unsafe {
+        rare_data.push_cleanup_hook_after_teardown_wait(
             env.to_js(),
             env.as_mut_ptr().cast::<c_void>(),
             NapiEnv__runFinalizers,
-        );
+        )
+    };
 }
 
 #[unsafe(no_mangle)]
@@ -2511,23 +2557,25 @@ unsafe extern "C" {
 // ──────────────────────────────────────────────────────────────────────────
 
 pub(crate) struct Finalizer {
-    pub env: NapiEnvRef,
-    pub fun: NapiFinalizeFunction,
-    pub data: *mut c_void,
-    pub hint: *mut c_void,
+    env: NapiEnvRef,
+    fun: NapiFinalizeFunction,
+    data: *mut c_void,
+    hint: *mut c_void,
 }
 
 impl Finalizer {
     /// Run the addon's finalizer. What it raised through napi (latched on the
     /// env) or left on the VM is the `Err`, for the caller's dispatcher to fold.
-    pub(crate) fn run(&self) -> JsResult<()> {
+    pub(crate) fn run(self) -> JsResult<()> {
         let env_ref: &NapiEnv = &self.env;
         let env = env_ref.as_mut_ptr();
         let _hs = NapiHandleScope::open_scoped(env_ref);
 
-        (self.fun)(env, self.data, self.hint);
-        // SAFETY: env is valid; passes the C finalizer back for bookkeeping.
-        unsafe { Bun__napi_remove_finalizer(env, Some(self.fun), self.hint, self.data) };
+        // SAFETY: env is valid, and the addon gave `fun` together with `data` and `hint`.
+        unsafe {
+            (self.fun)(env, self.data, self.hint);
+            Bun__napi_remove_finalizer(env, Some(self.fun), self.hint, self.data);
+        }
 
         env_ref.surface_exception(env_ref.to_js())
     }
@@ -2543,8 +2591,11 @@ impl Finalizer {
 /// For Node-API modules not built with NAPI_EXPERIMENTAL, finalizers should be deferred to the
 /// immediate task queue instead of run immediately. This lets finalizers perform allocations,
 /// which they couldn't if they ran immediately while the garbage collector is still running.
+///
+/// # Safety
+/// `fun` takes `data` and `hint`, once. This is `env`'s JS thread, or the collector's while that thread is stopped.
 #[unsafe(no_mangle)]
-extern "C" fn Bun__napi_enqueue_finalizer(
+unsafe extern "C" fn Bun__napi_enqueue_finalizer(
     env: Option<&NapiEnv>,
     fun: napi_finalize,
     data: *mut c_void,
@@ -2556,8 +2607,7 @@ extern "C" fn Bun__napi_enqueue_finalizer(
     };
     let this = Finalizer {
         fun,
-        // SAFETY: env_ref points to a live C++-owned napi_env.
-        env: unsafe { NapiEnvRef::clone_from_raw(env_ref.as_mut_ptr()) },
+        env: env_ref.ref_(),
         data,
         hint,
     };
@@ -2568,9 +2618,48 @@ extern "C" fn Bun__napi_enqueue_finalizer(
 // ThreadSafeFunction
 // ──────────────────────────────────────────────────────────────────────────
 
-/// Ownership: the JS thread owns this allocation until `finalize` or `env_teardown` sets `resources_released`; then the remaining `thread_count` references own it and the last one dropped frees it.
+/// A pointer of the addon's, which is only ever handed back to it.
+#[repr(transparent)]
+#[derive(Copy, Clone)]
+struct AddonData(*mut c_void);
+
+// SAFETY: never dereferenced here. Node-API lets the addon pass these between its threads.
+unsafe impl Send for AddonData {}
+// SAFETY: as above.
+unsafe impl Sync for AddonData {}
+
+/// Lives in an `Arc` owned by the env's registry, [`TsfnShared::dispatch_ref`], [`TsfnShared::threads_ref`] and any [`TsfnRefRequest`].
 // TODO: generate a compile-time version of this instead of runtime checking
 pub(crate) struct ThreadSafeFunction {
+    shared: Guarded<TsfnShared>,
+    blocking_condvar: Condvar,
+    /// Its handle is weak: addon threads hold the function for as long as they like, so the VM cannot wait for it.
+    js: VmBound<TsfnJsSide>,
+    loop_kind: bun_jsc::LoopKind,
+    tracker: Debugger::AsyncTaskTracker,
+    /// The context whose script created the function: its calls run in it.
+    context: bun_jsc::ContextId,
+    /// Zero means the size is unlimited.
+    max_queue_size: usize,
+    ctx: AddonData,
+    call_js: Option<napi_threadsafe_function_call_js>,
+}
+
+type TsfnQueue = LinearFifo<AddonData, DynamicBuffer<AddonData>>;
+
+struct TsfnShared {
+    queue: TsfnQueue,
+    thread_count: i64,
+    closing: ClosingState,
+    /// The reference that a dispatch runs on. `None` while one is queued or running.
+    dispatch_ref: Option<Arc<ThreadSafeFunction>>,
+    /// The reference that the addon's `thread_count` references stand for.
+    threads_ref: Option<Arc<ThreadSafeFunction>>,
+    /// A ref (`true`) or an unref from another thread that the JS thread has yet to apply.
+    requested_ref: Option<bool>,
+}
+
+struct TsfnJsSide {
     /// thread-safe functions can be "referenced" and "unreferenced". A
     /// "referenced" thread-safe function will cause the event loop on the thread
     /// on which it is created to remain alive until the thread-safe function is
@@ -2581,102 +2670,86 @@ pub(crate) struct ThreadSafeFunction {
     /// Neither does napi_unref_threadsafe_function mark the thread-safe
     /// functions as able to be destroyed nor does napi_ref_threadsafe_function
     /// prevent it from being destroyed.
-    pub poll_ref: KeepAlive,
-
-    // User implementation error can cause this number to go negative.
-    pub(crate) thread_count: AtomicI64,
-    // for std.condvar
-    pub(crate) lock: Mutex,
-
-    /// JS-thread uses; `None` once the env has been torn down.
-    pub(crate) event_loop: Option<bun_ptr::BackRef<EventLoop>>,
-    /// How addon threads (`napi_call_threadsafe_function`) schedule a
-    /// dispatch on the VM. Weak: addon threads hold this function for as long
-    /// as they like (Node: calls after env cleanup get `napi_closing`), so it
-    /// cannot be something the VM waits for.
-    pub(crate) handle: bun_jsc::VmHandle,
-    pub(crate) loop_kind: bun_jsc::LoopKind,
-    pub(crate) tracker: Debugger::AsyncTaskTracker,
-    /// The context whose script created the function: its calls run in it.
-    pub(crate) context: bun_jsc::ContextId,
-    /// Armed in that context until the JS thread lets go of the function (`finalize`,
+    poll_ref: KeepAlive,
+    /// Armed in the function's context until the JS thread lets go of the function (`finalize`,
     /// `env_teardown`): once the context has stopped, the function no longer keeps the loop
     /// alive, whoever asked it to. Addon threads can still call it and it is finalized as usual.
     abort_handle: bun_jsc::AbortHandle,
-
-    /// Dropped on the JS thread by `env_teardown`; `None` afterwards.
-    pub(crate) env: Option<NapiEnvRef>,
-    pub(crate) finalizer_fun: napi_finalize,
-    pub(crate) finalizer_data: *mut c_void,
-
-    pub(crate) has_queued_finalizer: bool,
-    pub(crate) queue: TsfnQueue,
-
-    pub ctx: *mut c_void,
-
-    pub callback: TsfnCallback,
-    pub(crate) dispatch_state: AtomicU8, // DispatchState
-    pub(crate) blocking_condvar: Condvar,
-    pub(crate) closing: AtomicU8, // ClosingState
-    /// Written under `lock` by `env_teardown` on the JS thread. Every path
-    /// that would reach `event_loop` from another thread reads it under the
-    /// same lock, so teardown cannot land between the check and the enqueue.
-    pub(crate) env_dead: AtomicBool,
-    /// Also written under `lock`, once `finalize` or `env_teardown` has released every JS-thread-owned resource; until then the thread that drops the last `thread_count` reference must not free this (Node's `kClosed`).
-    pub(crate) resources_released: AtomicBool,
+    /// Taken out for a call, which can tear the env down, and for good by `finalize` or `env_teardown`.
+    target: Cell<Option<TsfnTarget>>,
+    finalizer_fun: Cell<napi_finalize>,
+    finalizer_data: *mut c_void,
 }
 
-bun_jsc::impl_abort_handle_owner!(ThreadSafeFunction, abort_handle, |this, _cause| {
+impl TsfnJsSide {
+    fn set_referenced(&self, referenced: bool) {
+        if referenced {
+            self.poll_ref.ref_(bun_io::js_vm_ctx());
+        } else {
+            self.poll_ref.unref(bun_io::js_vm_ctx());
+        }
+    }
+}
+
+/// Applies [`TsfnShared::requested_ref`].
+pub(crate) struct TsfnRefRequest(Arc<ThreadSafeFunction>);
+
+impl TsfnRefRequest {
+    pub(crate) fn run(&self) {
+        let js = self.0.js_side(VirtualMachine::get());
+        let requested = self.0.shared.lock().requested_ref.take();
+        match requested {
+            Some(true) if js.abort_handle.context_stopped() => {}
+            Some(referenced) => js.set_referenced(referenced),
+            None => {}
+        }
+    }
+}
+
+struct TsfnTarget {
+    env: NapiEnvRef,
+    callback: StrongOptional,
+}
+
+bun_jsc::impl_abort_handle_owner!(TsfnJsSide, abort_handle, |this, _cause| {
     // SAFETY: trait contract: `this` is live, and this is the JS thread.
-    unsafe { &*this }.unref()
+    unsafe { &*this }.poll_ref.unref(bun_io::js_vm_ctx())
 });
 
-pub(crate) enum TsfnCallback {
-    Js(StrongOptional),
-    C {
-        js: StrongOptional,
-        napi_threadsafe_function_call_js: napi_threadsafe_function_call_js,
-    },
-}
-
-#[repr(u8)]
 #[derive(Copy, Clone, PartialEq, Eq)]
 enum ClosingState {
     NotClosing,
     Closing,
+    /// `finalize` is queued or running, or `env_teardown` is running.
     Closed,
+    /// The JS thread has let go of the function (Node's `kClosed`).
+    Finalized,
 }
 
-#[repr(u8)]
-#[derive(Copy, Clone, PartialEq, Eq)]
-pub(super) enum DispatchState {
-    Idle,
-    Running,
-    Pending,
+enum DispatchStep {
+    Call { item: AddonData },
+    QueueFinalizer { leftovers: TsfnQueue },
+    Finalize,
 }
 
-pub(crate) struct TsfnQueue {
-    pub data: LinearFifo<*mut c_void, DynamicBuffer<*mut c_void>>,
-    /// This value will never change after initialization. Zero means the size is unlimited.
-    pub max_queue_size: usize,
-    pub count: AtomicU32,
-}
+impl TsfnShared {
+    fn is_closing(&self) -> bool {
+        self.closing != ClosingState::NotClosing
+    }
 
-impl TsfnQueue {
-    pub(crate) fn init(max_queue_size: usize) -> TsfnQueue {
-        TsfnQueue {
-            data: LinearFifo::<*mut c_void, DynamicBuffer<*mut c_void>>::init(),
-            max_queue_size,
-            count: AtomicU32::new(0),
+    /// The items are the caller's to give back to the addon once the lock is dropped.
+    fn take_queue(&mut self) -> TsfnQueue {
+        core::mem::replace(&mut self.queue, TsfnQueue::init())
+    }
+
+    /// Node's MaybeDelete. Drop the result after unlocking.
+    fn take_if_orphaned(&mut self) -> Option<Arc<ThreadSafeFunction>> {
+        if self.closing == ClosingState::Finalized && self.thread_count <= 0 {
+            return self.threads_ref.take();
         }
-    }
-
-    pub(crate) fn is_blocked(&self) -> bool {
-        self.max_queue_size > 0 && self.count.load(Ordering::SeqCst) as usize >= self.max_queue_size
+        None
     }
 }
-
-// Drop on TsfnQueue: LinearFifo drops itself.
 
 /// Live `ThreadSafeFunction` allocations, process-wide.
 static THREADSAFE_FUNCTION_LIVE_COUNT: AtomicUsize = AtomicUsize::new(0);
@@ -2694,83 +2767,78 @@ impl Drop for ThreadSafeFunction {
 }
 
 impl ThreadSafeFunction {
-    pub(crate) fn new(init: ThreadSafeFunction) -> *mut ThreadSafeFunction {
+    fn new(init: ThreadSafeFunction) -> Arc<ThreadSafeFunction> {
         let _ = THREADSAFE_FUNCTION_LIVE_COUNT.fetch_add(1, Ordering::SeqCst);
-        bun_core::heap::into_raw(Box::new(init))
+        Arc::new(init)
+    }
+
+    /// Runs `f` under the lock when `f` can give up the caller's reference.
+    ///
+    /// # Safety
+    /// This thread holds a `thread_count` reference or an `Arc`, and only `f` gives it up during the call.
+    unsafe fn with_lock_raw<R>(
+        this: *const Self,
+        f: impl FnOnce(&Self, &mut GuardedLock<'_, TsfnShared, Mutex>) -> R,
+    ) -> R {
+        // SAFETY: `this` is live on entry. `f` gives the reference up to `dispatch_ref` or `threads_ref`,
+        // which another thread can only take under the lock. `_orphaned` is dropped after the unlock.
+        let (result, _orphaned) = unsafe {
+            Guarded::with_lock_raw(&raw const (*this).shared, |shared| {
+                (f(&*this, shared), shared.take_if_orphaned())
+            })
+        };
+        result
+    }
+
+    fn js_side<'a>(&'a self, vm: &'a VirtualMachine) -> &'a TsfnJsSide {
+        self.js.get(vm).expect("the function's own VM")
     }
 
     // This has two states:
     // 1. We need to run potentially multiple tasks.
     // 2. We need to finalize the ThreadSafeFunction.
-    //
-    // Dispatched via the event-loop task table (`dispatch.rs`), which hands us
-    // a `*mut ThreadSafeFunction`; the signature is fixed by that registry.
     /// The threadsafe function's queue drain is a dispatcher: each queued call
     /// is a JS entry of its own, so what one leaves pending is folded per call
-    /// (`dispatch_one`) and the drain goes on; the VM's termination ends it.
-    pub(crate) fn on_dispatch(this: *mut ThreadSafeFunction) {
-        // SAFETY: `this` is a live heap allocation owned by the event loop
-        // dispatch; `env_dead` is atomic so a shared reborrow suffices.
-        if unsafe { (*this).env_dead.load(Ordering::SeqCst) } {
-            // `env_teardown` already released everything and owns the free
-            // decision. The loop this task came from is being destroyed.
-            return;
-        }
-        // SAFETY: as above.
-        if unsafe { (*this).closing.load(Ordering::SeqCst) } == ClosingState::Closed as u8 {
-            // SAFETY: `this` is the live heap allocation `maybe_queue_finalizer`
-            // queued this task for.
-            unsafe { ThreadSafeFunction::finalize(this) };
-            return;
-        }
-
+    /// (`call`) and the drain goes on; the VM's termination ends it.
+    pub(crate) fn on_dispatch(mut this: Arc<Self>, event_loop: &EventLoop, vm: &VirtualMachine) {
         let mut is_first = true;
+        let mut is_stopped = false;
 
         // Run the tasks.
         loop {
-            // SAFETY: as above.
-            unsafe {
-                (*this)
-                    .dispatch_state
-                    .store(DispatchState::Running as u8, Ordering::SeqCst)
+            // SAFETY: `this` is moved into the closure, which stores or returns it.
+            let next = unsafe {
+                Self::with_lock_raw(Arc::as_ptr(&this), |function, shared| {
+                    let Some(step) = function.next_step(shared, is_stopped) else {
+                        shared.dispatch_ref = Some(this);
+                        return None;
+                    };
+                    Some((this, step))
+                })
             };
-            // SAFETY: as above. `dispatch_one` runs JS that can re-enter other
-            // TSFN entry points, so the exclusive borrow is scoped to this call.
-            // A stopping VM ends the drain like an empty queue does.
-            let more = unsafe { (*this).dispatch_one(is_first) }.unwrap_or(false);
-            if more {
-                is_first = false;
-                // SAFETY: as above.
-                unsafe {
-                    (*this)
-                        .dispatch_state
-                        .store(DispatchState::Pending as u8, Ordering::SeqCst)
-                };
-            } else {
-                // We're done running tasks, for now. Transition Running → Idle
-                // via CAS instead of an unconditional store: between
-                // dispatch_one() observing an empty queue (and dropping the
-                // lock) and this point, another thread may have enqueued an
-                // item and called schedule_dispatch(). That swap() saw
-                // Running, so it intentionally did *not* schedule a new
-                // concurrent task — it relies on this loop to pick the item
-                // up. If we blindly stored Idle we'd overwrite that Pending
-                // and the callback would be dropped (flaky lost-wakeup under
-                // load). On CAS failure, loop and re-drain.
-                // SAFETY: as above.
-                if unsafe {
-                    (*this).dispatch_state.compare_exchange(
-                        DispatchState::Running as u8,
-                        DispatchState::Idle as u8,
-                        Ordering::SeqCst,
-                        Ordering::SeqCst,
-                    )
+            let Some((returned, step)) = next else {
+                break;
+            };
+            this = returned;
+            let js = this.js_side(vm);
+
+            match step {
+                DispatchStep::Call { item } => {
+                    // One call's microtasks are drained before the next call (https://github.com/nodejs/node/pull/38506).
+                    is_stopped = (!is_first && event_loop.drain_microtasks().is_err())
+                        || this.call(js, item).is_err();
+                    is_first = false;
                 }
-                .is_ok()
-                {
+                DispatchStep::QueueFinalizer { leftovers } => {
+                    this.hand_back(leftovers);
+                    js.poll_ref.disable();
+                    event_loop.enqueue_task(Task::init(Arc::into_raw(this).cast_mut()));
                     break;
                 }
-                // state was bumped to Pending by enqueue()/release(); re-dispatch.
+                DispatchStep::Finalize => {
+                    this.finalize(js);
+                    break;
+                }
             }
         }
 
@@ -2780,166 +2848,97 @@ impl ThreadSafeFunction {
         // not add unnecessary event loop ticks.
     }
 
-    pub(crate) fn is_closing(&self) -> bool {
-        self.closing.load(Ordering::SeqCst) != ClosingState::NotClosing as u8
-    }
-
-    fn maybe_queue_finalizer(&mut self) {
-        let prev = self
-            .closing
-            .swap(ClosingState::Closed as u8, Ordering::SeqCst);
-        match prev {
-            x if x == ClosingState::Closing as u8 || x == ClosingState::NotClosing as u8 => {
-                // TODO: is this boolean necessary? Can we rely just on the closing value?
-                if !self.has_queued_finalizer {
-                    // Note: replace callback with a no-op variant to drop Strong now.
-                    self.callback = TsfnCallback::Js(StrongOptional::empty());
-                    self.poll_ref.disable();
-                    let self_ptr: *mut Self = self;
-                    let Some(loop_) = self.event_loop else {
-                        // env torn down: `env_teardown` owns the finalize + free.
-                        return;
-                    };
-                    loop_.enqueue_task(Task::init(self_ptr));
-                    self.has_queued_finalizer = true;
+    /// `None`: done running tasks, for now.
+    fn next_step(&self, shared: &mut TsfnShared, is_stopped: bool) -> Option<DispatchStep> {
+        match shared.closing {
+            ClosingState::Closed | ClosingState::Finalized => return Some(DispatchStep::Finalize),
+            // Finalizes whatever thread_count is: after an abort the other threads may never release (Node's CloseHandlesAndMaybeDelete).
+            ClosingState::Closing => {}
+            ClosingState::NotClosing if shared.queue.readable_length() > 0 => {
+                if is_stopped {
+                    // The queue waits for the next dispatch, or for `env_teardown`.
+                    return None;
                 }
+                return self.dequeue(shared);
             }
-            _ => {
-                // already scheduled.
-            }
-        }
-    }
-
-    /// `Ok(true)`: a queued call ran (what it threw has been reported), keep
-    /// draining. `Err`: the VM is stopping.
-    ///
-    /// This can run several times in one tick of the event loop, so the
-    /// microtasks one call queued are drained before the next call
-    /// (https://github.com/nodejs/node/pull/38506), but not before the first.
-    pub(crate) fn dispatch_one(&mut self, is_first: bool) -> Result<bool, bun_jsc::Stopped> {
-        let mut queue_finalizer_after_call = false;
-        let task = 'brk: {
-            // `MutexGuard` holds the lock by raw pointer, so it does not borrow
-            // `*self` across the `&mut self` calls below.
-            let _g = self.lock.lock_guard();
-            if self.is_closing() {
-                // Closing (napi_tsfn_abort, or the last call already ran):
-                // nothing still queued runs any more, as in Node's DispatchOne.
-                // An abort's leftovers go back to the addon, with no lock held
-                // since that re-enters it. Then it finalizes whatever thread_count is: after an abort the other threads may never release (Node's CloseHandlesAndMaybeDelete).
-                let leftovers = self.take_queue();
-                drop(_g);
-                self.hand_back(leftovers);
-                let _g = self.lock.lock_guard();
-                self.maybe_queue_finalizer();
-                return Ok(false);
-            }
-            let was_blocked = self.queue.is_blocked();
-            let Some(t) = self.queue.data.read_item() else {
+            ClosingState::NotClosing => {
                 // When there are no tasks and the number of threads that have
                 // references reaches zero, we prepare to finalize the
                 // ThreadSafeFunction.
-                if self.thread_count.load(Ordering::SeqCst) == 0 {
-                    if self.queue.max_queue_size > 0 {
-                        self.blocking_condvar.signal();
-                    }
-                    self.maybe_queue_finalizer();
+                if shared.thread_count != 0 {
+                    return None;
                 }
-                return Ok(false);
-            };
-
-            if self.queue.count.fetch_sub(1, Ordering::SeqCst) == 1
-                && self.thread_count.load(Ordering::SeqCst) == 0
-            {
-                self.closing
-                    .store(ClosingState::Closing as u8, Ordering::SeqCst);
-                if self.queue.max_queue_size > 0 {
+                if self.max_queue_size > 0 {
                     self.blocking_condvar.signal();
                 }
-                queue_finalizer_after_call = true;
-            } else if was_blocked && !self.queue.is_blocked() {
+            }
+        }
+        shared.closing = ClosingState::Closed;
+        Some(DispatchStep::QueueFinalizer {
+            leftovers: shared.take_queue(),
+        })
+    }
+
+    fn dequeue(&self, shared: &mut TsfnShared) -> Option<DispatchStep> {
+        let was_blocked = self.is_blocked(shared);
+        let item = shared.queue.read_item()?;
+
+        if shared.queue.readable_length() == 0 && shared.thread_count == 0 {
+            shared.closing = ClosingState::Closing;
+            if self.max_queue_size > 0 {
                 self.blocking_condvar.signal();
             }
-
-            break 'brk t;
-        };
-
-        let called = match self.event_loop {
-            Some(loop_) if !is_first => loop_.drain_microtasks(),
-            _ => Ok(()),
+        } else if was_blocked && !self.is_blocked(shared) {
+            self.blocking_condvar.signal();
         }
-        .and_then(|()| self.call(task));
 
-        // The last queued call finalizes even when the VM is stopping.
-        if queue_finalizer_after_call {
-            self.maybe_queue_finalizer();
-        }
-        called?;
+        Some(DispatchStep::Call { item })
+    }
 
-        // An item was dequeued: keep on_dispatch looping so remaining queued
-        // items drain and the empty-queue thread_count==0 path can finalize.
-        Ok(true)
+    fn is_blocked(&self, shared: &TsfnShared) -> bool {
+        self.max_queue_size > 0 && shared.queue.readable_length() >= self.max_queue_size
     }
 
     /// One queued call from the drain, which is its landing frame: what it
     /// left pending is folded here. `Err`: the VM is stopping.
-    fn call(&mut self, task: *mut c_void) -> Result<(), bun_jsc::Stopped> {
-        let Some(env) = self.env.as_ref().map(NapiEnvRef::get) else {
-            // env torn down; nothing to call into.
-            return Ok(());
-        };
-        // SAFETY: env is valid while the TSF is live.
-        let env = unsafe { &*env };
-        match self.deliver(env, task) {
-            Ok(()) => Ok(()),
-            Err(err) => bun_jsc::task::report_error_or_terminate(env.to_js(), err),
-        }
+    fn call(&self, js: &TsfnJsSide, item: AddonData) -> Result<(), bun_jsc::Stopped> {
+        js.target.with_taken(|target| {
+            let Some(target) = target else {
+                // env torn down; nothing to call into.
+                return Ok(());
+            };
+            self.deliver(target, item)
+                .or_else(|err| bun_jsc::task::report_error_or_terminate(target.env.to_js(), err))
+        })
     }
 
     /// One queued call: a JS entry of its own, so what it leaves pending is
-    /// the `Err`, for the caller's landing frame to fold. `env` is this
-    /// function's own, which `self.env` still holds.
-    fn deliver(&mut self, env: &NapiEnv, task: *mut c_void) -> JsResult<()> {
+    /// the `Err`, for the caller's landing frame to fold.
+    fn deliver(&self, target: &TsfnTarget, item: AddonData) -> JsResult<()> {
+        let env: &NapiEnv = &target.env;
         let global_object = env.to_js();
         let _dispatch = self.tracker.dispatch(global_object);
 
-        match &self.callback {
-            TsfnCallback::Js(strong) => {
-                let js: JSValue = strong.get().unwrap_or(JSValue::UNDEFINED);
-                if js.is_empty_or_undefined_or_null() {
-                    return Ok(());
-                }
-
-                js.call(global_object, JSValue::UNDEFINED, &[]).map(drop)
+        let Some(call_js) = self.call_js else {
+            let js: JSValue = target.callback.get().unwrap_or(JSValue::UNDEFINED);
+            if js.is_empty_or_undefined_or_null() {
+                return Ok(());
             }
-            TsfnCallback::C {
-                js: cb_js,
-                napi_threadsafe_function_call_js,
-            } => {
-                let _hs = NapiHandleScope::open_scoped(env);
-                // No func at creation => null js_callback (Node), not encoded undefined.
-                let js = match cb_js.get() {
-                    Some(v) => napi_value::create(env, v),
-                    None => napi_value(0),
-                };
-                let ctx = self.ctx;
-                env.complete_in_context(self.context, || {
-                    napi_threadsafe_function_call_js(env.as_mut_ptr(), js, ctx, task)
-                });
-                env.surface_exception(global_object)
-            }
-        }
-    }
 
-    /// Caller holds `lock`. Empties the queue; the items are the caller's to
-    /// give back to the addon once the lock is dropped.
-    fn take_queue(&mut self) -> Vec<*mut c_void> {
-        let mut items = Vec::new();
-        while let Some(item) = self.queue.data.read_item() {
-            items.push(item);
-        }
-        self.queue.count.store(0, Ordering::SeqCst);
-        items
+            return js.call(global_object, JSValue::UNDEFINED, &[]).map(drop);
+        };
+
+        let _hs = NapiHandleScope::open_scoped(env);
+        // No func at creation => null js_callback (Node), not encoded undefined.
+        let js = match target.callback.get() {
+            Some(v) => napi_value::create(env, v),
+            None => napi_value(0),
+        };
+        env.complete_in_context(self.context, || {
+            // SAFETY: the addon's callback, with its context and an item it queued.
+            unsafe { call_js(env.as_mut_ptr(), js, self.ctx, item) }
+        });
+        env.surface_exception(global_object)
     }
 
     /// What a closing function does with items it will never run: each goes
@@ -2947,206 +2946,130 @@ impl ThreadSafeFunction {
     /// the signal napi_threadsafe_function_call_js documents for "free this,
     /// JS is no longer reachable" (Node's ThreadSafeFunction::EmptyQueue). A
     /// function created without a call_js_cb has nothing to give back.
-    fn hand_back(&self, items: Vec<*mut c_void>) {
-        let TsfnCallback::C {
-            napi_threadsafe_function_call_js,
-            ..
-        } = &self.callback
-        else {
+    fn hand_back(&self, mut items: TsfnQueue) {
+        let Some(call_js) = self.call_js else {
             return;
         };
-        let call_js = *napi_threadsafe_function_call_js;
-        for item in items {
-            call_js(ptr::null_mut(), napi_value(0), self.ctx, item);
+        while let Some(item) = items.read_item() {
+            // SAFETY: as in `deliver`.
+            unsafe { call_js(ptr::null_mut(), napi_value(0), self.ctx, item) };
         }
     }
 
-    /// Runs on an addon thread. A call that reports `napi_closing` consumes the
-    /// caller's thread reference, so like a release it can free the threadsafe
-    /// function -- hence `*mut Self`, not `&mut self` (Node's `Push`).
-    ///
-    /// SAFETY: `this` is a live threadsafe function and the caller holds no
-    /// reference into it.
-    pub(crate) unsafe fn push(
-        this: *mut ThreadSafeFunction,
-        ctx: *mut c_void,
+    /// Runs on an addon thread (Node's `Push`).
+    fn enqueue(
+        &self,
+        shared: &mut GuardedLock<'_, TsfnShared, Mutex>,
+        item: AddonData,
         block: bool,
-    ) -> napi_status {
-        // SAFETY: live allocation; the borrow is scoped to this call and ends
-        // before the free below.
-        let (status, orphaned) = unsafe { (*this).enqueue(ctx, block) };
-
-        if orphaned {
-            // SAFETY: the lock is dropped, this was the last thread reference,
-            // and the JS thread already released what only it may release.
-            unsafe { ThreadSafeFunction::free_orphaned(this) };
-        }
-        status
-    }
-
-    /// Returns `(status, caller_must_free)`; the free must happen after the
-    /// lock guard here is dropped, which is why only `push` may call this.
-    fn enqueue(&mut self, ctx: *mut c_void, block: bool) -> (napi_status, bool) {
-        let _g = self.lock.lock_guard();
+    ) -> NapiStatus {
         if block {
-            while self.queue.is_blocked() && !self.is_closing() {
-                self.blocking_condvar.wait(&self.lock);
+            while self.is_blocked(shared) && !shared.is_closing() {
+                self.blocking_condvar.wait_guarded(shared);
             }
-        } else if self.queue.is_blocked() && !self.is_closing() {
+        } else if self.is_blocked(shared) && !shared.is_closing() {
             // A closing threadsafe function reports napi_closing even with a full
             // queue (node's `Push` skips the queue-full check unless it is open),
             // so the caller's reference is still consumed and it can finalize.
             // don't set the error on the env as this is run from another thread
-            return (NapiStatus::queue_full as napi_status, false);
+            return NapiStatus::queue_full;
         }
 
-        if self.is_closing() {
+        if shared.is_closing() {
             // `env_teardown` sets `closing` under this same lock, so an env that
             // dies while we wait above lands here, never below.
-            if self.thread_count.load(Ordering::SeqCst) <= 0 {
-                return (NapiStatus::invalid_arg as napi_status, false);
+            if shared.thread_count <= 0 {
+                return NapiStatus::invalid_arg;
             }
             // Consumes this thread's reference, like Node's `Push`, so a thread
-            // that stops calling after napi_closing does not pin the loop. That
-            // can be the last reference: the caller frees if we say so.
-            let (_, caller_must_free) =
-                self.release_locked(napi_threadsafe_function_release_mode::release);
-            return (NapiStatus::closing as napi_status, caller_must_free);
+            // that stops calling after napi_closing does not pin the loop.
+            shared.thread_count -= 1;
+            return NapiStatus::closing;
         }
 
-        let _ = self.queue.count.fetch_add(1, Ordering::SeqCst);
-        let _ = self.queue.data.write_item(ctx); // OOM/capacity failures are fire-and-forget
-        self.schedule_dispatch();
-        (NapiStatus::ok as napi_status, false)
+        let _ = shared.queue.write_item(item); // OOM/capacity failures are fire-and-forget
+        self.schedule_dispatch(shared);
+        NapiStatus::ok
     }
 
-    /// Caller must hold `lock`. Reached from addon threads (`enqueue`,
-    /// `release_locked`); the VM is reached only through its handle.
-    fn schedule_dispatch(&mut self) {
-        let prev = self
-            .dispatch_state
-            .swap(DispatchState::Pending as u8, Ordering::SeqCst);
-        match prev {
-            x if x == DispatchState::Idle as u8 => {
-                let self_ptr: *mut Self = self;
-                if self.event_loop.is_none() {
-                    // env torn down: the loop is gone, nothing to schedule onto.
-                    return;
-                }
-                let ct = ConcurrentTask::create_from(self_ptr);
-                if let bun_jsc::vm_handle::Posted::Refused(ct) =
-                    self.handle.post(self.loop_kind, ct)
-                {
-                    // VM closed before the env cleanup hook ran here: no
-                    // dispatch will happen; the queued calls are released by the
-                    // teardown path. Free the task and fall back to Idle.
-                    // SAFETY: refused ⇒ we own the task box.
-                    unsafe { drop(bun_core::heap::take(ct.as_ptr())) };
-                    self.dispatch_state
-                        .store(DispatchState::Idle as u8, Ordering::SeqCst);
-                }
-            }
-            x if x == DispatchState::Running as u8 => {
-                // it will check if it has more work to do
-            }
-            _ => {
-                // we've already scheduled it to run
-            }
-        }
-    }
-
-    /// Runs on the JS thread once the function has closed. Runs the addon's
-    /// finalizer, releases what only this thread may release, and frees the
-    /// allocation unless another thread still holds a reference; then the last
-    /// release frees it (Node's Finalize + MaybeDelete).
-    ///
-    /// SAFETY: `this` is a live allocation from `new` that no other event-loop
-    /// task will reach again.
-    unsafe fn finalize(this: *mut ThreadSafeFunction) {
-        // SAFETY: caller contract. The borrow ends before the addon's finalizer
-        // runs; it may still use the handle (napi_get_threadsafe_function_context).
-        let finalizer = unsafe {
-            let self_ = &mut *this;
-            if let Some(env) = self_.env.as_ref() {
-                // SAFETY: env is live (we hold a ref). `this` is an opaque
-                // registry key here, never dereferenced.
-                NapiEnv__unregisterThreadSafeFunction(env.get(), this.cast());
-            }
-            self_
-                .finalizer_fun
-                .take()
-                .zip(self_.env.as_ref())
-                .map(|(fun, env)| Finalizer {
-                    env: env.clone(),
-                    fun,
-                    data: self_.finalizer_data,
-                    hint: self_.ctx,
-                })
+    /// Reached from addon threads; the VM is reached only through its handle.
+    fn schedule_dispatch(&self, shared: &mut TsfnShared) {
+        let Some(this) = shared.dispatch_ref.take() else {
+            // A dispatch is queued or running and will see this, or `env_teardown` will.
+            return;
         };
+        let queued = Arc::into_raw(this);
+        let ct = ConcurrentTask::create_from(queued.cast_mut());
+        if let bun_jsc::vm_handle::Posted::Refused(_) = self.js.handle().post(self.loop_kind, ct) {
+            // VM closed before the env cleanup hook ran here: no
+            // dispatch will happen; the queued calls are released by the
+            // teardown path.
+            // SAFETY: the reference that the refused task carried.
+            shared.dispatch_ref = Some(unsafe { Arc::from_raw(queued) });
+        }
+    }
 
-        // Before anything is released, as in Node and `env_teardown`.
-        if let Some(finalizer) = finalizer {
+    /// Runs once the function has closed (Node's Finalize).
+    fn finalize(self: &Arc<Self>, js: &TsfnJsSide) {
+        let Some(target) = js.target.take() else {
+            return;
+        };
+        let this = Arc::as_ptr(self);
+        // SAFETY: env is live (we hold a ref). Its registry still has its reference: the env's
+        // teardown takes `target`, and it runs no task.
+        unsafe {
+            NapiEnv__unregisterThreadSafeFunction(target.env.get(), this.cast());
+            Arc::decrement_strong_count(this);
+        }
+        self.run_finalizer_and_release(js, &target.env);
+    }
+
+    /// Runs the addon's finalizer and leaves the function to the threads that still hold a reference.
+    fn run_finalizer_and_release(&self, js: &TsfnJsSide, env: &NapiEnv) {
+        if let Some(fun) = js.finalizer_fun.take() {
+            let finalizer = Finalizer {
+                env: env.ref_(),
+                fun,
+                data: js.finalizer_data,
+                hint: self.ctx.0,
+            };
+            // This is the finalizer's landing frame: what it leaves is folded here.
             crate::dispatch::fold(finalizer.run());
         }
 
-        // SAFETY: caller contract; the finalizer has returned and the borrow
-        // ends before the free below.
-        let free = unsafe {
-            let self_ = &mut *this;
-            // The same critical section reads thread_count, so a thread that drops the last reference frees only if it sees this store.
-            let _g = self_.lock.lock_guard();
-            self_.abort_handle.leave();
-            self_.event_loop = None;
-            drop(self_.env.take());
-            self_.resources_released.store(true, Ordering::SeqCst);
-            self_.thread_count.load(Ordering::SeqCst) <= 0
-        };
+        js.poll_ref.disable();
+        js.abort_handle.leave();
 
-        if free {
-            // SAFETY: no thread reference is left, the lock is dropped, and
-            // nothing else can reach this allocation.
-            unsafe { ThreadSafeFunction::free_orphaned(this) };
-        }
-    }
-
-    /// Frees the allocation and nothing else: no finalizer, no registry entry,
-    /// no event loop. Every JS-thread-owned resource must already be released
-    /// (`finalize`, `env_teardown`) or be safe to drop here (a creation that failed).
-    ///
-    /// SAFETY: `this` is a live allocation from `new`, the caller holds no
-    /// lock on it, and no other thread holds a reference.
-    unsafe fn free_orphaned(this: *mut ThreadSafeFunction) {
-        // SAFETY: per this function's contract, `this` is a live allocation from `new`.
-        drop(unsafe { bun_core::heap::take(this) });
+        let mut shared = self.shared.lock();
+        shared.closing = ClosingState::Finalized;
+        let released = (shared.dispatch_ref.take(), shared.take_if_orphaned());
+        drop(shared);
+        drop(released);
     }
 
     /// Runs on the JS thread from `NapiEnv::cleanup()` while JSC is still
-    /// alive but the VirtualMachine (and the event loop this TSFN points at)
-    /// is about to be destroyed. Mirrors Node's
+    /// alive but the VirtualMachine is about to be destroyed. Mirrors Node's
     /// ThreadSafeFunction::Cleanup -> Finalize -> MaybeDelete.
-    ///
-    /// Returns true if the caller must free the allocation.
-    fn env_teardown(&mut self) -> bool {
-        // Phase 1: publish "the loop is going away". From here no other thread
+    fn env_teardown(&self, env: &NapiEnv) {
+        let vm = env.to_js().bun_vm();
+        let js = self.js_side(vm);
+
+        // Publish "the loop is going away". From here no other thread
         // schedules onto it, but none may free us either -- the JS resources
         // below are still live and only this thread may touch them.
-        let (was_closing, queued) = {
-            let _g = self.lock.lock_guard();
-            self.env_dead.store(true, Ordering::SeqCst);
-            let was_closing = self.is_closing();
-            if !was_closing {
-                self.closing
-                    .store(ClosingState::Closing as u8, Ordering::SeqCst);
-            }
-            if self.queue.max_queue_size > 0 {
+        let (was_closing, mut queued) = {
+            let mut shared = self.shared.lock();
+            let was_closing = shared.is_closing();
+            shared.closing = ClosingState::Closed;
+            if self.max_queue_size > 0 {
                 // Wake producers blocked on the bounded queue; they observe
                 // is_closing and release.
                 self.blocking_condvar.broadcast();
             }
-            (was_closing, self.take_queue())
+            (was_closing, shared.take_queue())
         };
 
-        // Phase 2: addon callbacks, so no lock is held.
+        // Addon callbacks run from here, so no lock is held.
         //
         // What is still queued goes back to the addon only when a worker's env
         // dies under it. On the main thread this is process exit, where Node
@@ -3158,163 +3081,104 @@ impl ThreadSafeFunction {
         // live env and js_callback, with script refused if the worker was
         // stopped. A function already closing (napi_tsfn_abort) keeps the
         // abort contract. The finalizer runs either way.
-        //
-        // SAFETY: `env` is live; phase 3 below is what drops our reference.
-        let env = self.env.as_ref().map(|env| unsafe { &*env.get() });
-        if let Some(env) = env
-            && env.to_js().bun_vm().worker_ref().is_some()
-        {
-            if was_closing {
-                self.hand_back(queued);
-            } else if matches!(self.callback, TsfnCallback::C { .. }) {
-                for item in queued {
-                    // The env's cleanup hook is each delivery's landing frame,
-                    // as it is the finalizer's below.
-                    crate::dispatch::fold(self.deliver(env, item));
+        let target = js.target.take();
+        if vm.worker_ref().is_some() && self.call_js.is_some() {
+            match &target {
+                Some(target) if !was_closing => {
+                    while let Some(item) = queued.read_item() {
+                        // The env's cleanup hook is each delivery's landing frame.
+                        crate::dispatch::fold(self.deliver(target, item));
+                    }
                 }
+                _ => self.hand_back(queued),
             }
         }
-        let finalizer = self
-            .finalizer_fun
-            .take()
-            .zip(self.env.as_ref())
-            .map(|(fun, env)| Finalizer {
-                env: env.clone(),
-                fun,
-                data: self.finalizer_data,
-                hint: self.ctx,
-            });
-        if let Some(finalizer) = finalizer {
-            // The env's cleanup hook is this finalizer's landing frame: what it
-            // leaves is folded here so the next function's teardown starts clean.
-            crate::dispatch::fold(finalizer.run());
-        }
-
-        // Phase 3: release what only the JS thread may release, then hand the
-        // allocation over. `resources_released` is published in the critical section that reads thread_count (Node's ReleaseResources + MaybeDelete).
-        let _g = self.lock.lock_guard();
-        self.callback = TsfnCallback::Js(StrongOptional::empty());
-        self.poll_ref.disable();
-        self.abort_handle.leave();
-        self.event_loop = None;
-        drop(self.env.take());
-        self.resources_released.store(true, Ordering::SeqCst);
-        // Cleanup hooks are the loop's last tick: a task still queued for this
-        // TSFN will never run (and its `release_unrun` does not dereference it).
-        // With no thread_count reference left, nobody else can reach this, so
-        // free it here.
-        self.thread_count.load(Ordering::SeqCst) <= 0
+        self.run_finalizer_and_release(js, env);
     }
 
-    /// `napi_ref_threadsafe_function` — JS thread only (as in Node).
-    pub(crate) fn ref_(&self) {
-        let caller = VirtualMachine::get().context_of_caller();
+    /// Node's `Ref` and `Unref`, which take effect on any thread.
+    fn set_referenced(&self, referenced: bool) {
+        let vm = VirtualMachine::get_or_null();
+        let Some((vm, js)) = vm.and_then(|vm| Some((vm, self.js.get(vm)?))) else {
+            return self.request_ref(referenced);
+        };
         // Nothing of a context that has stopped holds the loop: not the function's own call_js
         // once its maker has stopped (that is where it runs), not a disposed graph's leftover
         // script. Accepted, and holds nothing.
-        if caller.is_stopped() {
+        if referenced && vm.context_of_caller().is_stopped() {
             return;
         }
-        self.poll_ref.ref_(bun_io::js_vm_ctx());
+        self.shared.lock().requested_ref = None;
+        js.set_referenced(referenced);
     }
 
-    /// `napi_unref_threadsafe_function` — JS thread only (as in Node).
-    pub(crate) fn unref(&self) {
-        self.poll_ref.unref(bun_io::js_vm_ctx());
-    }
-
-    pub(crate) fn acquire(&mut self) -> napi_status {
-        let _g = self.lock.lock_guard();
-        if self.is_closing() {
-            return NapiStatus::closing as napi_status;
+    /// Does not wake the loop, like `uv_unref`, so that it does not exit before a call that follows.
+    fn request_ref(&self, referenced: bool) {
+        let mut shared = self.shared.lock();
+        if shared.is_closing() || shared.requested_ref.replace(referenced).is_some() {
+            return;
         }
-        let _ = self.thread_count.fetch_add(1, Ordering::SeqCst);
-        NapiStatus::ok as napi_status
-    }
-
-    /// Frees the threadsafe function when this drops the last thread reference
-    /// of an orphaned one, so it dispatches off `*mut Self`: freeing through a
-    /// pointer derived from a live `&mut self` is UB.
-    ///
-    /// SAFETY: `this` is a live threadsafe function and the caller holds no
-    /// reference into it.
-    pub(crate) unsafe fn release(
-        this: *mut ThreadSafeFunction,
-        mode: napi_threadsafe_function_release_mode,
-    ) -> napi_status {
-        let (status, orphaned) = {
-            // SAFETY: live allocation. `MutexGuard` holds the lock by raw
-            // pointer, so it does not keep `*this` borrowed across the call
-            // below; both borrows are scoped and end before the free.
-            let _g = unsafe { (*this).lock.lock_guard() };
-            // SAFETY: as above.
-            unsafe { (*this).release_locked(mode) }
-        };
-
-        if orphaned {
-            // SAFETY: the lock is dropped, this was the last thread reference,
-            // and the JS thread already released what only it may release.
-            unsafe { ThreadSafeFunction::free_orphaned(this) };
-        }
-        status
-    }
-
-    /// Caller must hold `lock`. Returns `(status, caller_must_free)`; the free
-    /// must happen after the lock is dropped.
-    fn release_locked(
-        &mut self,
-        mode: napi_threadsafe_function_release_mode,
-    ) -> (napi_status, bool) {
-        if self.thread_count.load(Ordering::SeqCst) <= 0 {
-            return (NapiStatus::invalid_arg as napi_status, false);
-        }
-
-        let prev_remaining = self.thread_count.fetch_sub(1, Ordering::SeqCst);
-
-        if self.env_dead.load(Ordering::SeqCst)
-            || self.closing.load(Ordering::SeqCst) == ClosingState::Closed as u8
+        let this = shared.threads_ref.clone().expect("held until finalized");
+        let ct = ConcurrentTask::create_boxed(Box::new(TsfnRefRequest(this)));
+        if let bun_jsc::vm_handle::Posted::Refused(ct) =
+            self.js.handle().post_without_waking(self.loop_kind, ct)
         {
-            // The JS thread owns the finalization (`finalize` queued or done, or `env_teardown` ran): never schedule onto the loop again. The last reference frees us once `resources_released` is set; before that the JS thread frees us itself.
-            let orphaned = prev_remaining == 1 && self.resources_released.load(Ordering::SeqCst);
-            return (NapiStatus::ok as napi_status, orphaned);
+            // SAFETY: the task made above.
+            drop(unsafe { ct.task.into_boxed::<TsfnRefRequest>() });
+        }
+    }
+
+    fn acquire(&self) -> NapiStatus {
+        let mut shared = self.shared.lock();
+        if shared.is_closing() {
+            return NapiStatus::closing;
+        }
+        shared.thread_count += 1;
+        NapiStatus::ok
+    }
+
+    fn release(&self, shared: &mut TsfnShared, abort: bool) -> NapiStatus {
+        if shared.thread_count <= 0 {
+            return NapiStatus::invalid_arg;
         }
 
-        // Already closing: the abort's dispatch is pending or running and finalizes whatever thread_count is by then.
-        if (mode == napi_threadsafe_function_release_mode::abort || prev_remaining == 1)
-            && !self.is_closing()
-        {
-            if mode == napi_threadsafe_function_release_mode::abort {
-                self.closing
-                    .store(ClosingState::Closing as u8, Ordering::SeqCst);
-                if self.queue.max_queue_size > 0 {
+        shared.thread_count -= 1;
+
+        // Already closing: the JS thread finalizes whatever thread_count is by then.
+        if (abort || shared.thread_count == 0) && !shared.is_closing() {
+            if abort {
+                shared.closing = ClosingState::Closing;
+                if self.max_queue_size > 0 {
                     // Wake all producers blocked in enqueue()'s bounded queue wait so they observe is_closing and release.
                     self.blocking_condvar.broadcast();
                 }
             }
-            self.schedule_dispatch();
+            self.schedule_dispatch(shared);
         }
 
-        (NapiStatus::ok as napi_status, false)
+        NapiStatus::ok
     }
 }
 
 /// Called from `NapiEnv::cleanup()` (JS thread) for every threadsafe function
 /// still registered with the env that is being torn down.
+///
+/// # Safety
+/// `tsfn` is the reference that `env`'s registry had.
 #[unsafe(no_mangle)]
-extern "C" fn Bun__napi_threadsafe_function_env_teardown(tsfn: *mut c_void) {
-    let this = tsfn.cast::<ThreadSafeFunction>();
-    // SAFETY: the registry only holds live TSFN pointers — `finalize` and
-    // `env_teardown` both remove the entry before freeing. Exclusive borrow
-    // scoped to this call.
-    if unsafe { (*this).env_teardown() } {
-        // SAFETY: no other thread holds a reference (thread_count == 0) and no
-        // event-loop task will run again.
-        unsafe { ThreadSafeFunction::free_orphaned(this) };
-    }
+unsafe extern "C" fn Bun__napi_threadsafe_function_env_teardown(
+    env: &NapiEnv,
+    tsfn: *const ThreadSafeFunction,
+) {
+    // SAFETY: fn contract.
+    unsafe { Arc::from_raw(tsfn) }.env_teardown(env);
 }
 
+/// # Safety
+/// On this thread, `call_js_cb` takes `context` and each item that the addon queues,
+/// and `thread_finalize_cb` takes `thread_finalize_data` and `context`.
 #[unsafe(no_mangle)]
-extern "C" fn napi_create_threadsafe_function(
+unsafe extern "C" fn napi_create_threadsafe_function(
     env_: Option<&NapiEnv>,
     func_: napi_value,
     _async_resource: napi_value,
@@ -3323,9 +3187,9 @@ extern "C" fn napi_create_threadsafe_function(
     initial_thread_count: usize,
     thread_finalize_data: *mut c_void,
     thread_finalize_cb: napi_finalize,
-    context: *mut c_void,
+    context: AddonData,
     call_js_cb: Option<napi_threadsafe_function_call_js>,
-    result_: *mut napi_threadsafe_function,
+    result_: Option<&Out<napi_threadsafe_function>>,
 ) -> napi_status {
     bun_output::scoped_log!(napi, "napi_create_threadsafe_function");
     let env = get_env!(env_);
@@ -3340,164 +3204,150 @@ extern "C" fn napi_create_threadsafe_function(
     }
 
     let vm = env.to_js().bun_vm();
-    let callback = if let Some(c) = call_js_cb {
-        TsfnCallback::C {
-            napi_threadsafe_function_call_js: c,
-            js: if func.is_empty() {
-                StrongOptional::empty()
-            } else {
-                StrongOptional::create(func.with_async_context_if_needed(env.to_js()), vm.global())
-            },
-        }
-    } else {
-        TsfnCallback::Js(if func.is_empty() {
+    let target = TsfnTarget {
+        env: env.ref_(),
+        callback: if func.is_empty() {
             StrongOptional::empty()
         } else {
             StrongOptional::create(func.with_async_context_if_needed(env.to_js()), vm.global())
-        })
+        },
     };
 
     let function = ThreadSafeFunction::new(ThreadSafeFunction {
-        // `env_teardown` clears this before the VirtualMachine holding the loop is freed.
-        event_loop: Some(bun_ptr::BackRef::new(vm.event_loop())),
-        handle: vm.handle(),
+        shared: Guarded::new(TsfnShared {
+            queue: TsfnQueue::init(),
+            thread_count: i64::try_from(initial_thread_count).expect("int cast"),
+            closing: ClosingState::NotClosing,
+            dispatch_ref: None,
+            threads_ref: None,
+            requested_ref: None,
+        }),
+        blocking_condvar: Condvar::default(),
+        js: VmBound::new(
+            vm,
+            TsfnJsSide {
+                poll_ref: KeepAlive::init(),
+                abort_handle: bun_jsc::AbortHandle::for_owner::<TsfnJsSide>(),
+                target: Cell::new(None),
+                finalizer_fun: Cell::new(thread_finalize_cb),
+                finalizer_data: thread_finalize_data,
+            },
+        ),
         loop_kind: vm.current_loop_kind(),
-        // SAFETY: env is a live C++-owned napi_env.
-        env: Some(unsafe { NapiEnvRef::clone_from_raw(env.as_mut_ptr()) }),
-        callback,
-        ctx: context,
-        queue: TsfnQueue::init(max_queue_size),
-        thread_count: AtomicI64::new(i64::try_from(initial_thread_count).expect("int cast")),
-        poll_ref: KeepAlive::init(),
         tracker: Debugger::AsyncTaskTracker::init(vm),
         context: vm.context_of_caller().id(),
-        abort_handle: bun_jsc::AbortHandle::for_owner::<ThreadSafeFunction>(),
-        finalizer_fun: thread_finalize_cb,
-        finalizer_data: thread_finalize_data,
-        has_queued_finalizer: false,
-        lock: Mutex::new(),
-        dispatch_state: AtomicU8::new(DispatchState::Idle as u8),
-        blocking_condvar: Condvar::default(),
-        closing: AtomicU8::new(ClosingState::NotClosing as u8),
-        env_dead: AtomicBool::new(false),
-        resources_released: AtomicBool::new(false),
+        max_queue_size,
+        ctx: context,
+        call_js: call_js_cb,
     });
 
     // Register with the env so that VM/worker teardown neutralizes this TSFN
-    // before the event loop it points at is freed. `false` means the env has
+    // before the VM is freed. `false` means the env has
     // already torn its threadsafe functions down -- we are running from a
     // finalizer, after the loop's last tick.
-    // SAFETY: env is live; `function` is a fresh heap allocation.
-    if !unsafe { NapiEnv__registerThreadSafeFunction(env.as_mut_ptr(), function.cast()) } {
+    // SAFETY: env is live. The registry gets the reference that `into_raw` leaves below.
+    if !unsafe {
+        NapiEnv__registerThreadSafeFunction(env.as_mut_ptr(), Arc::as_ptr(&function).cast())
+    } {
         // Born dead. Free only what we allocated and never run the addon's
         // finalizer: the handle was never published, so the addon still owns
         // what it passed in (node's `Init` failure path just deletes the
         // ThreadSafeFunction, whose destructor only releases its own resources).
-        // SAFETY: the allocation we just made; nothing else can reach it.
-        unsafe { ThreadSafeFunction::free_orphaned(function) };
         return env.generic_failure();
     }
 
-    // nodejs by default keeps the event loop alive until the thread-safe function is unref'd
-    // SAFETY: function is non-null (just allocated) and not yet handed out.
-    unsafe { (*function).ref_() };
-    // (Unless the context whose script is creating it stops first.)
-    // SAFETY: a heap allocation that leaves its context on this thread before it is freed.
-    unsafe { bun_jsc::AbortHandle::arm_owner(function, vm.context_of_caller()) };
-    // SAFETY: as above.
-    unsafe { (*function).tracker.did_schedule(vm.global()) };
+    let js = function.js_side(vm);
+    js.target.set(Some(target));
+    let mut shared = function.shared.lock();
+    shared.dispatch_ref = Some(Arc::clone(&function));
+    shared.threads_ref = Some(Arc::clone(&function));
+    drop(shared);
 
-    *result = function;
+    // nodejs by default keeps the event loop alive until the thread-safe function is unref'd
+    js.set_referenced(!vm.context_of_caller().is_stopped());
+    // (Unless the context whose script is creating it stops first.)
+    // SAFETY: `threads_ref` keeps the allocation until `run_finalizer_and_release` has left the context.
+    unsafe {
+        bun_jsc::AbortHandle::arm_owner(ptr::from_ref(js).cast_mut(), vm.context_of_caller())
+    };
+    function.tracker.did_schedule(vm.global());
+
+    result.write(Arc::into_raw(function));
     env.ok()
 }
 
 #[unsafe(no_mangle)]
 extern "C" fn napi_get_threadsafe_function_context(
-    func: napi_threadsafe_function,
-    result: *mut *mut c_void,
+    func: &ThreadSafeFunction,
+    result: &Out<AddonData>,
 ) -> napi_status {
     bun_output::scoped_log!(napi, "napi_get_threadsafe_function_context");
-    // SAFETY: func and result are non-null per N-API contract.
-    unsafe { *result = (*func).ctx };
+    result.write(func.ctx);
     NapiStatus::ok as napi_status
 }
 
+/// # Safety
+/// As [`napi_release_threadsafe_function`], and `call_js_cb` takes `data`. napi_closing consumes the reference.
 #[unsafe(no_mangle)]
-extern "C" fn napi_call_threadsafe_function(
+unsafe extern "C" fn napi_call_threadsafe_function(
     func: napi_threadsafe_function,
-    data: *mut c_void,
+    data: AddonData,
     is_blocking: napi_threadsafe_function_call_mode,
 ) -> napi_status {
     bun_output::scoped_log!(napi, "napi_call_threadsafe_function");
-    // SAFETY: func is non-null per N-API contract, and the caller may not use it
-    // afterwards if this reports napi_closing — that consumes the caller's
-    // thread reference, which can free it.
-    unsafe { ThreadSafeFunction::push(func, data, is_blocking == NAPI_TSFN_BLOCKING) }
+    let block = is_blocking == NAPI_TSFN_BLOCKING;
+    // SAFETY: fn contract.
+    unsafe {
+        ThreadSafeFunction::with_lock_raw(func, |func, shared| func.enqueue(shared, data, block))
+            as napi_status
+    }
 }
 
 #[unsafe(no_mangle)]
-extern "C" fn napi_acquire_threadsafe_function(func: napi_threadsafe_function) -> napi_status {
+extern "C" fn napi_acquire_threadsafe_function(func: &ThreadSafeFunction) -> napi_status {
     bun_output::scoped_log!(napi, "napi_acquire_threadsafe_function");
-    // SAFETY: func is non-null per N-API contract.
-    unsafe { &mut *func }.acquire()
+    func.acquire() as napi_status
 }
 
+/// # Safety
+/// The caller has a reference to `func`, or it is on the JS thread and the finalizer has not returned.
 #[unsafe(no_mangle)]
-extern "C" fn napi_release_threadsafe_function(
+unsafe extern "C" fn napi_release_threadsafe_function(
     func: napi_threadsafe_function,
     mode: napi_threadsafe_function_release_mode,
 ) -> napi_status {
     bun_output::scoped_log!(napi, "napi_release_threadsafe_function");
-    // SAFETY: func is non-null per N-API contract, and the caller may not use
-    // it afterwards — this call can free it.
-    unsafe { ThreadSafeFunction::release(func, mode) }
+    let abort = mode == NAPI_TSFN_ABORT;
+    // SAFETY: fn contract.
+    unsafe {
+        ThreadSafeFunction::with_lock_raw(func, |func, shared| func.release(shared, abort))
+            as napi_status
+    }
 }
 
 #[unsafe(no_mangle)]
 extern "C" fn napi_unref_threadsafe_function(
-    env_: Option<&NapiEnv>,
-    func: napi_threadsafe_function,
+    _env: napi_env,
+    func: Option<&ThreadSafeFunction>,
 ) -> napi_status {
     bun_output::scoped_log!(napi, "napi_unref_threadsafe_function");
-    if func.is_null() {
+    let Some(func) = func else {
         return NapiStatus::invalid_arg as napi_status;
-    }
-    #[cfg(debug_assertions)]
-    {
-        // SAFETY: `func` was null-checked above; JS thread, shared read.
-        let loop_ = unsafe { (*func).event_loop.as_ref() };
-        if let (Some(loop_), Some(env)) = (loop_, env_) {
-            debug_assert!(core::ptr::eq(loop_.global_ref(), env.to_js()));
-        }
-    }
-    #[cfg(not(debug_assertions))]
-    let _ = env_;
-    // SAFETY: `func` was null-checked above, and this is the JS thread.
-    unsafe { (*func).unref() };
+    };
+    func.set_referenced(false);
     NapiStatus::ok as napi_status
 }
 
 #[unsafe(no_mangle)]
 extern "C" fn napi_ref_threadsafe_function(
-    env_: Option<&NapiEnv>,
-    func: napi_threadsafe_function,
+    _env: napi_env,
+    func: Option<&ThreadSafeFunction>,
 ) -> napi_status {
     bun_output::scoped_log!(napi, "napi_ref_threadsafe_function");
-    if func.is_null() {
+    let Some(func) = func else {
         return NapiStatus::invalid_arg as napi_status;
-    }
-    #[cfg(debug_assertions)]
-    {
-        // SAFETY: `func` was null-checked above; JS thread, shared read.
-        let loop_ = unsafe { (*func).event_loop.as_ref() };
-        if let (Some(loop_), Some(env)) = (loop_, env_) {
-            debug_assert!(core::ptr::eq(loop_.global_ref(), env.to_js()));
-        }
-    }
-    #[cfg(not(debug_assertions))]
-    let _ = env_;
-    // SAFETY: `func` was null-checked above, and this is the JS thread.
-    unsafe { (*func).ref_() };
+    };
+    func.set_referenced(true);
     NapiStatus::ok as napi_status
 }
 
@@ -5424,18 +5274,14 @@ impl NapiFinalizerTask {
             // already torn down the finalizer can never run; free the task but
             // not the env ref — the env's count is not atomic and the env goes
             // with its VM — as the cleanup-hooks-already-ran case below does.
-            let handle = self.finalizer.env.vm_handle().clone();
-            let this = bun_core::heap::into_raw(self);
-            let ct = ConcurrentTask::create(Task::init(this));
+            let handle = self.finalizer.env.vm_handle();
+            let ct = ConcurrentTask::create_boxed(self);
             if let bun_jsc::vm_handle::Posted::Refused(ct) =
                 handle.post(bun_jsc::LoopKind::Regular, ct)
             {
-                // SAFETY: refused ⇒ we own both boxes.
-                unsafe {
-                    drop(bun_core::heap::take(ct.as_ptr()));
-                    let task = bun_core::heap::take(this);
-                    let _ = core::mem::ManuallyDrop::new(task.finalizer.env);
-                }
+                // SAFETY: the task made above.
+                let task = unsafe { ct.task.into_boxed::<Self>() };
+                let _ = core::mem::ManuallyDrop::new(task.finalizer.env);
             }
             return;
         }
@@ -5457,29 +5303,26 @@ impl NapiFinalizerTask {
             }
             // Immediate tasks won't run, so we run this as a cleanup hook instead
             let this = bun_core::heap::into_raw(self);
-            vm.rare_data().push_cleanup_hook(
-                vm.global(),
-                this.cast::<c_void>(),
-                Self::run_as_cleanup_hook,
-            );
+            // SAFETY: the hook owns the box from here.
+            unsafe {
+                vm.rare_data().push_cleanup_hook(
+                    vm.global(),
+                    this.cast::<c_void>(),
+                    Self::run_as_cleanup_hook,
+                )
+            };
         } else {
-            let this = bun_core::heap::into_raw(self);
-            vm.event_loop().enqueue_task(Task::init(this));
+            vm.event_loop().enqueue_task(Task::from_boxed(self));
         }
     }
 
-    pub(crate) fn run_on_js_thread(this: *mut NapiFinalizerTask) -> JsResult<()> {
-        // SAFETY: `this` was created by heap::alloc in `schedule`.
-        let this_box = unsafe { bun_core::heap::take(this) };
-        this_box.finalizer.run()
-        // finalizer.deinit() runs via Drop on NapiEnvRef when this_box drops.
-    }
-
-    extern "C" fn run_as_cleanup_hook(opaque_this: *mut c_void) {
-        // SAFETY: opaque_this is the *mut NapiFinalizerTask we registered above (non-null).
-        let this: *mut NapiFinalizerTask = opaque_this.cast();
+    /// # Safety
+    /// `opaque_this` is the box that `schedule` gave up.
+    unsafe extern "C" fn run_as_cleanup_hook(opaque_this: *mut c_void) {
+        // SAFETY: fn contract.
+        let this = unsafe { bun_core::heap::take(opaque_this.cast::<NapiFinalizerTask>()) };
         // A cleanup hook returns nothing: `Err` is left pending for the hook
         // runner's fold.
-        let _ = Self::run_on_js_thread(this);
+        let _ = this.finalizer.run();
     }
 }

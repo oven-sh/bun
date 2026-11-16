@@ -1,16 +1,14 @@
 use core::sync::atomic::Ordering;
 
 use bun_core::MutableString;
-use bun_event_loop::ConcurrentTask::{AutoDeinit, ConcurrentTask};
-use bun_event_loop::{Task, TaskTag, Taskable, task_tag};
+use bun_event_loop::ConcurrentTask::ConcurrentTask;
+use bun_event_loop::{BoxedTask, TaskTag, Taskable, task_tag};
 use bun_http::async_http::Options as HttpOptions;
 use bun_http::{
-    AsyncHTTP, FetchRedirect, HTTPClientResult, HTTPClientResultCallback, Headers, HeadersExt,
-    Method,
+    AsyncHTTP, FetchRedirect, HTTPClientResult, HTTPClientResultCallback, Headers, Method,
 };
 use bun_io::JsKeepAlive;
 use bun_jsc::virtual_machine::VirtualMachine;
-use bun_picohttp as picohttp;
 use bun_ptr::RefPtr;
 use bun_s3_signing::acl::ACL;
 use bun_s3_signing::credentials::{S3Credentials, SignOptions, SignResult};
@@ -56,7 +54,7 @@ pub(crate) enum S3DownloadResult<'a> {
     Failure(S3Error<'a>),
 }
 
-pub enum S3UploadResult<'a> {
+pub(crate) enum S3UploadResult<'a> {
     Success,
     /// failure error is not owned and need to be copied if used after this callback
     Failure(S3Error<'a>),
@@ -172,7 +170,7 @@ pub(crate) enum Callback {
     /// An upload that turned out to fit in one request.
     SingleSend(RefPtr<MultiPartUpload>),
     Start(RefPtr<MultiPartUpload>),
-    /// The index is the part's in the upload's queue.
+    /// The upload and the part's index in `MultiPartUpload::queue`.
     Part(RefPtr<MultiPartUpload>, u8),
     Commit(RefPtr<MultiPartUpload>),
     Rollback(RefPtr<MultiPartUpload>),
@@ -185,15 +183,14 @@ pub(crate) struct RefusedRequest {
     context: bun_jsc::ContextId,
 }
 
-impl Taskable for RefusedRequest {
+impl BoxedTask for RefusedRequest {
     const TAG: TaskTag = task_tag::S3RefusedRequest;
     /// As `S3HttpSimpleTask`.
-    unsafe fn release_unrun(this: *mut Self) {
-        // SAFETY: fn contract — boxed in `Callback::refuse`.
-        let _ = unsafe { bun_core::heap::take(this) }.run();
+    fn release_unrun(self: Box<Self>) {
+        let _ = self.run();
     }
     /// As `S3HttpSimpleTask`.
-    unsafe fn context(_: *const Self) -> bun_event_loop::ContextId {
+    fn context(&self) -> bun_event_loop::ContextId {
         bun_event_loop::ContextId::NONE
     }
 }
@@ -206,7 +203,7 @@ impl RefusedRequest {
 }
 
 impl Callback {
-    /// The request is not sent.
+    /// Fails a request that was never sent.
     fn refuse(
         self,
         context: &bun_jsc::ScriptExecutionContext,
@@ -223,7 +220,7 @@ impl Callback {
                     error,
                     context: context.id(),
                 };
-                let task = ConcurrentTask::create(Task::from_boxed(Box::new(refused)));
+                let task = ConcurrentTask::create_boxed(Box::new(refused));
                 // Not `enqueue_task`: it wakes no loop, and fails the request on arrival in teardown.
                 VirtualMachine::get().ticket().post(task);
                 Ok(())
@@ -338,10 +335,10 @@ impl S3HttpSimpleTask {
     }
 
     /// A commit can answer 200 and still carry an `<Error>` document.
-    fn contained_error<'a>(
+    fn response_error<'a>(
         &'a self,
         status: u32,
-        parsed: &'a Option<xml_response::ErrorBody>,
+        parsed: Option<&'a xml_response::ErrorBody>,
     ) -> Option<S3Error<'a>> {
         if (parsed.is_none() && status == 200) || status == 206 {
             return None;
@@ -376,9 +373,8 @@ impl S3HttpSimpleTask {
         let _context = vm.enter_context(unsafe { (*this).context });
         // SAFETY: fn contract — `this` is live.
         unsafe { (*this).abort_handle.leave() };
-        // SAFETY: `this` was produced by `S3HttpSimpleTask::new` (heap::alloc) and ownership is
-        // reclaimed here exactly once via the ConcurrentTask `AutoDeinit::ManualDeinit` contract;
-        // `this` is dropped at scope exit.
+        // SAFETY: `this` was produced by `S3HttpSimpleTask::new` (heap::alloc), and its task is
+        // posted once.
         let mut this = unsafe { bun_core::heap::take(this) };
 
         let callback = this.callback.take().expect("a request is answered once");
@@ -386,15 +382,14 @@ impl S3HttpSimpleTask {
             return this.error_with_body(callback, ErrorType::Failure);
         }
         debug_assert!(this.result.metadata.is_some());
-        let response = &this.result.metadata.as_ref().unwrap().response;
-        match (callback, response.status_code) {
+        let response = this.result.metadata.as_ref().unwrap();
+        match (callback, response.status_code()) {
             (Callback::Stat(callback), 200) => callback(S3StatResult::Success(S3StatSuccess {
-                etag: response.headers.get(b"etag").unwrap_or(b""),
-                last_modified: response.headers.get(b"last-modified").unwrap_or(b""),
-                content_type: response.headers.get(b"content-type").unwrap_or(b""),
+                etag: response.header(b"etag").unwrap_or(b""),
+                last_modified: response.header(b"last-modified").unwrap_or(b""),
+                content_type: response.header(b"content-type").unwrap_or(b""),
                 size: response
-                    .headers
-                    .get(b"content-length")
+                    .header(b"content-length")
                     .map(bun_http_types::parse_content_length)
                     .unwrap_or(0),
             })),
@@ -433,7 +428,7 @@ impl S3HttpSimpleTask {
             (Callback::Commit(upload), status) => {
                 // commit multipart upload can fail with status 200
                 let parsed = xml_response::parse_error(&this.response_buffer.list);
-                let result = match this.contained_error(status, &parsed) {
+                let result = match this.response_error(status, parsed.as_ref()) {
                     Some(err) => S3CommitResult::Failure(err),
                     None => S3CommitResult::Success,
                 };
@@ -441,9 +436,9 @@ impl S3HttpSimpleTask {
             }
             (Callback::Part(upload, index), status) => {
                 let parsed = xml_response::parse_error(&this.response_buffer.list);
-                if let Some(err) = this.contained_error(status, &parsed) {
+                if let Some(err) = this.response_error(status, parsed.as_ref()) {
                     UploadPart::on_part_response(&upload, index, S3PartResult::Failure(err))
-                } else if let Some(etag) = response.headers.get(b"etag") {
+                } else if let Some(etag) = response.header(b"etag") {
                     UploadPart::on_part_response(&upload, index, S3PartResult::Etag(etag))
                 } else {
                     this.error_with_body(Callback::Part(upload, index), ErrorType::Failure)
@@ -480,7 +475,7 @@ impl S3HttpSimpleTask {
     /// owned by the HTTP thread for the duration of this call.
     pub(crate) fn http_callback(
         this: *mut Self,
-        finished: bun_http::Finished,
+        finished: Option<bun_http::FinishedRequest>,
         result: HTTPClientResult<'_>,
     ) {
         drop(finished);
@@ -494,10 +489,8 @@ impl S3HttpSimpleTask {
             // JS thread may free `this` the moment it is queued.
             unsafe {
                 let ticket = (*this).http_ticket.take().expect(Self::HOLDS_TICKET);
-                let queued = core::ptr::NonNull::from(
-                    (*this).concurrent_task.from(this, AutoDeinit::ManualDeinit),
-                );
-                ticket.post(queued);
+                let queued = core::ptr::NonNull::from((*this).concurrent_task.from(this));
+                ticket.post_intrusive(queued);
             }
         }
     }
@@ -515,10 +508,8 @@ impl S3HttpSimpleTask {
             (*this).result.fail = Some(bun_http::Error::Aborted);
             (*this).result.has_more = false;
             let ticket = (*this).http_ticket.take().expect(Self::HOLDS_TICKET);
-            let queued = core::ptr::NonNull::from(
-                (*this).concurrent_task.from(this, AutoDeinit::ManualDeinit),
-            );
-            ticket.post(queued);
+            let queued = core::ptr::NonNull::from((*this).concurrent_task.from(this));
+            ticket.post_intrusive(queued);
         }
     }
 }
@@ -639,25 +630,7 @@ pub(crate) fn execute_simple_s3_request(
         }
     };
 
-    let headers = 'brk: {
-        let mut header_buffer = [picohttp::Header::ZERO; SignResult::MAX_HEADERS + 1];
-        if let Some(range_) = &options.range {
-            let _headers =
-                result.mix_with_header(&mut header_buffer, picohttp::Header::new(b"range", range_));
-            break 'brk Headers::from_pico_http_headers(_headers);
-        } else {
-            if let Some(content_type) = options.content_type {
-                if !content_type.is_empty() {
-                    let _headers = result.mix_with_header(
-                        &mut header_buffer,
-                        picohttp::Header::new(b"Content-Type", content_type),
-                    );
-                    break 'brk Headers::from_pico_http_headers(_headers);
-                }
-            }
-            break 'brk Headers::from_pico_http_headers(result.headers());
-        }
-    };
+    let headers = result.headers(options.range.as_deref(), options.content_type);
 
     let proxy_url = resolve_proxy(options.proxy_url, &result.url);
     let task_ptr = S3HttpSimpleTask::new(S3HttpSimpleTask {

@@ -826,24 +826,9 @@ impl Route {
             // The closure runs under the per-entry mutex, like every other write to a cached `Entry`.
             let Ok(entry_abs_path) = entry.abs_path_or_try_fill(|| {
                 let mut abs_path_str: &[u8] = b"";
-                // NOTE: reshaped for borrowck — `defer if (needs_close) file.close()`
-                // becomes a scopeguard owning the Option<File>; `needs_close` is a
-                // Cell so the drop closure can read it while the body still mutates.
-                // The guard is inverted: when the fd belongs to the cache
-                // (`needs_close == false`), `into_raw()` so we do not close
-                // someone else's fd.
-                let needs_close = core::cell::Cell::new(true);
-                let mut file = scopeguard::guard(None::<bun_sys::File>, |f| {
-                    if !needs_close.get() {
-                        if let Some(f) = f {
-                            let _ = f.into_raw();
-                        }
-                    }
-                });
-
-                if let Some(valid) = entry.cache().fd.unwrap_valid() {
-                    *file = Some(bun_sys::File::from_fd(valid));
-                    needs_close.set(false);
+                let opened;
+                let fd = if let Some(cached) = entry.cache().fd.unwrap_valid() {
+                    cached
                 } else {
                     let parts = [entry.dir(), entry.base()];
                     let abs_len = FileSystem::get().abs_buf(&parts, route_file_buf).len();
@@ -858,11 +843,8 @@ impl Route {
                     // SAFETY: NUL-terminated above; `abs_len` bytes valid in route_file_buf.
                     let buf = bun_core::ZStr::from_buf(&route_file_buf[..], abs_len);
                     match bun_sys::open_file_absolute_z(buf, bun_sys::OpenFlags::READ_ONLY) {
-                        Ok(f) => {
-                            *file = Some(f);
-                        }
+                        Ok(file) => opened = file,
                         Err(err) => {
-                            needs_close.set(false);
                             log.add_error_fmt(
                                 None,
                                 bun_ast::Loc::EMPTY,
@@ -875,10 +857,10 @@ impl Route {
                             return Err(());
                         }
                     }
-                    FileSystem::set_max_fd(file.as_ref().unwrap().handle().native());
-                }
+                    FileSystem::set_max_fd(opened.handle().native());
+                    opened.handle()
+                };
 
-                let fd = file.as_ref().unwrap().handle();
                 let _abs = match bun_sys::get_fd_path(fd, route_file_buf) {
                     Ok(p) => &p[..],
                     Err(err) => {

@@ -202,7 +202,7 @@ pub(crate) fn describe(
                 values.append(JSValue::js_number_from_int32(column.column_type as i32));
                 values.append(bun_string_jsc::create_utf8_for_js(
                     global_object,
-                    column.table.slice(),
+                    &column.table,
                 )?);
                 values.append(JSValue::js_number_from_uint64(column.column_length.into()));
                 values.append(JSValue::js_number_from_int32(column.flags.bits().into()));

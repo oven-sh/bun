@@ -23,24 +23,6 @@ fn cli_start_time() -> i128 {
     crate::cli::start_time()
 }
 
-/// Local shim for `writer.splatByteAll(b, n)` — `bun_core::io::Writer` has no
-/// such method yet; loop on `write_all`.
-#[inline]
-fn splat_byte_all(
-    writer: &bun_core::io::Writer,
-    byte: u8,
-    count: usize,
-) -> Result<(), crate::Error> {
-    let buf = [byte; 64];
-    let mut remaining = count;
-    while remaining > 0 {
-        let n = remaining.min(buf.len());
-        writer.write_all(&buf[..n])?;
-        remaining -= n;
-    }
-    Ok(())
-}
-
 pub(crate) fn has_only_html_entry_points(entry_points: &[Box<[u8]>]) -> bool {
     !entry_points.is_empty() && entry_points.iter().all(|path| path.ends_with(b".html"))
 }
@@ -135,11 +117,7 @@ impl BuildCommand {
         // `exec` never returns until process exit (`exit_or_watch` diverges),
         // so use the shared CLI arena instead of allocating a fresh one.
         let arena: &'static bun_alloc::Arena = crate::cli::cli_arena();
-        // Note: `generate_from_cli` takes `&'a mut Transpiler<'a>`, which
-        // borrows the transpiler for its full lifetime — dropck then rejects a
-        // stack local because the borrow would still be live in its destructor.
-        // Allocate in the process-lifetime arena (same rationale as `arena`;
-        // `exec` diverges so this is never dropped).
+        // In the arena: `exec` diverges, so it is never dropped.
         let this_transpiler: &mut transpiler::Transpiler<'static> = arena.alloc(
             transpiler::Transpiler::init(arena, log, ctx.args.clone(), None)?,
         );
@@ -689,11 +667,14 @@ impl BuildCommand {
             // BACKREF passed to `generate_from_cli`.
             let event_loop = bun_event_loop::AnyEventLoop::init();
 
+            if ctx.debug.hot_reload == HotReload::Watch {
+                bun_jsc::hot_reloader::enable_hot_module_reloading_for_bundler(this_transpiler);
+            }
+
             let build_result = match BundleV2::generate_from_cli(
                 this_transpiler,
                 arena,
                 Some(core::ptr::NonNull::from(&event_loop)),
-                ctx.debug.hot_reload == HotReload::Watch,
                 &mut reachable_file_count,
                 &mut minify_duration,
                 &mut input_code_length,
@@ -851,7 +832,7 @@ impl BuildCommand {
         let mut had_err = false;
         'dump: {
             // Output::flush() runs at end of this block; see explicit calls below
-            let writer = Output::writer_buffered();
+            let mut writer = Output::writer_buffered();
             let mut output_dir: &[u8] = &opt_output_dir;
 
             let will_be_one_file =
@@ -1207,6 +1188,8 @@ impl BuildCommand {
             }
 
             for f in output_files.iter() {
+                use bun_io::Write as _;
+
                 if let Err(err) = f.write_to_disk(root_dir.fd) {
                     Output::err(
                         err,
@@ -1223,7 +1206,7 @@ impl BuildCommand {
 
                 // Print summary
                 let padding_count = 2usize.max(rel_path.len().max(max_path_len) - rel_path.len());
-                splat_byte_all(writer, b' ', 2)?;
+                writer.splat_byte_all(b' ', 2)?;
 
                 if Output::enable_ansi_colors_stdout() {
                     writer.write_all(&Output::pretty_fmt::<true>(match f.output_kind {
@@ -1266,10 +1249,9 @@ impl BuildCommand {
                     }
                 }
 
-                splat_byte_all(writer, b' ', padding_count)?;
+                writer.splat_byte_all(b' ', padding_count)?;
                 write!(writer, "{}  ", bun_fmt::size(f.size, Default::default()))?;
-                splat_byte_all(
-                    writer,
+                writer.splat_byte_all(
                     b' ',
                     size_padding
                         - bun_fmt::count(format_args!(

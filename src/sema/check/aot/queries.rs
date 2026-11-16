@@ -1036,7 +1036,7 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
     }
 
     pub fn is_int32_written(&self) -> bool {
-        self.c.p.aot_symbols().is_int32_written()
+        self.c.p.aot_symbols.is_int32_written()
     }
 
     pub fn written_parameters(&mut self, function: FunctionRef) -> &'c [WrittenParameter] {
@@ -1135,7 +1135,7 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
             | ClassMemberSource::StaticStore(_) => return Ok(TypeId::ANY),
         };
         let said = self.ask(|queries| Ok(queries.infer_field_type(class, field, position)))?;
-        let int32 = self.c.p.aot_symbols().int32_alias();
+        let int32 = self.c.p.aot_symbols.int32_alias();
         let int32 = int32.map(|alias| self.c.declared_type(alias));
         let mut names_list = false;
         let mut holds_numbers_alone = true;

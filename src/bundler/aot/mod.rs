@@ -41,10 +41,10 @@ pub use services::FileFinder;
 pub use services::FilesForFileSystem;
 use services::{BundlerServices, NamesWanted, is_at_or_below};
 
-pub struct PluginSetup {
+pub struct PluginSetup<'a> {
     pub plugins: NonNull<JSBundlerPlugin>,
     pub context: bun_event_loop::ContextId,
-    pub completion: dispatch::CompletionHandle,
+    pub completion: dispatch::CompletionHandle<'a>,
 }
 
 pub struct AotBuildRequest<'r, 'a> {
@@ -65,7 +65,7 @@ pub struct AotBuildRequest<'r, 'a> {
     pub arena: &'a bun_alloc::Arena,
     pub event_loop: EventLoop,
     pub worker_pool: Option<NonNull<bun_threading::ThreadPool>>,
-    pub plugins: Option<PluginSetup>,
+    pub plugins: Option<PluginSetup<'a>>,
     pub file_map: Option<&'a FileMap>,
     pub typescript_libs: Libs<'r>,
 }
@@ -173,7 +173,6 @@ pub fn build(request: AotBuildRequest<'_, '_>) -> Result<AotBuild, AotBuildFailu
         None,
         arena,
         event_loop,
-        false,
         worker_pool,
         arena,
     );

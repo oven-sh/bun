@@ -34,7 +34,7 @@ const HAS_SYSTEM_BACKEND: bool = cfg!(any(target_os = "macos", windows));
 /// Process-global selector exposed as `Bun.Image.backend`.
 ///
 /// `.system` (default on darwin/windows) is the perf-optimal hybrid:
-///   • jpeg/png/webp decode+encode → static codecs (turbo/bun_png/libwebp).
+///   • jpeg/png/webp decode+encode → static codecs (bun_jpeg/bun_png/libwebp).
 ///     Profiling on M-series found ImageIO no faster: Huffman/inflate
 ///     dominate and aren't AMX-amenable, and ImageIO bottoms out in stock
 ///     libz vs our zlib-ng. Keeping these static also makes output bytes
@@ -272,7 +272,7 @@ pub(crate) fn decode(bytes: &[u8], max_pixels: u64, hint: DecodeHint) -> Result<
         Format::Png => png::decode(bytes, max_pixels),
         Format::Webp => webp::decode(bytes, max_pixels),
         // Static codecs cover everything we ship; profiling on M-series showed
-        // ImageIO is no faster (AppleJPEG ≈ libjpeg-turbo since Huffman is the
+        // ImageIO is no faster (for JPEG, Huffman is the
         // bottleneck and isn't vectorisable; for PNG, zlib-ng beats ImageIO's
         // system libz). The OS backend is purely a *capability* fallback for
         // containers we don't link a decoder for — and `backend == .bun` opts
@@ -354,11 +354,7 @@ pub(crate) fn probe(bytes: &[u8], max_pixels: u64) -> Result<Probe, Error> {
             w = u32::from_be_bytes(bytes[16..20].try_into().expect("infallible: size matches"));
             h = u32::from_be_bytes(bytes[20..24].try_into().expect("infallible: size matches"));
         }
-        Format::Jpeg => {
-            // turbojpeg's header decode is already cheap (no scan data read).
-            let handle = jpeg::Handle::init(1).ok_or(Error::OutOfMemory)?;
-            (w, h) = handle.read_header(bytes)?;
-        }
+        Format::Jpeg => (w, h) = jpeg::dimensions(bytes)?,
         Format::Webp => {
             let mut cw: c_int = 0;
             let mut ch: c_int = 0;
@@ -466,7 +462,7 @@ impl Default for EncodeOptions {
 }
 
 /// Encoded output paired with the free function for its allocator. The C
-/// codecs each malloc internally (turbojpeg's allocator, libwebp's); rather
+/// codec (libwebp) mallocs internally; rather
 /// than dupe into the global allocator so JS can own it,
 /// we hand the original buffer to JS via `ArrayBuffer.toJSWithContext` with
 /// the matching free — one allocation, zero copies, for the final output.
@@ -500,7 +496,7 @@ impl Drop for Encoded {
     }
 }
 
-/// Adapt a 1-arg C free (`tj3Free`, `WebPFree`) to the
+/// Adapt a 1-arg C free (`WebPFree`) to the
 /// 2-arg JSC deallocator signature.
 // Rust cannot capture a runtime fn pointer in a non-capturing `extern "C" fn`,
 // so this is a macro that mints a static trampoline per call site.
@@ -578,7 +574,7 @@ pub(crate) fn encode(
         Format::Webp => webp::encode(rgba, width, height, opts.quality, opts.lossless, icc),
         // Same routing rationale as decode(): the OS encoder is a capability
         // fallback, not a fast path — ImageIO's quality scale doesn't match
-        // libjpeg-turbo's, and it can't honour compressionLevel/palette/
+        // libjpeg's, and it can't honour compressionLevel/palette/
         // lossless, so using it for jpeg/png/webp would make output bytes
         // diverge from Linux for no speed win.
         Format::Heic | Format::Avif => {
@@ -657,13 +653,6 @@ unsafe extern "C" {
     fn bun_image_rotate_rgba8(src: *const u8, w: i32, h: i32, dst: *mut u8, deg: i32);
     fn bun_image_flip_rgba8(src: *const u8, w: i32, h: i32, dst: *mut u8, horiz: i32);
     fn bun_image_modulate_rgba8(buf: *mut u8, len: usize, brightness: f32, saturation: f32);
-    fn bun_image_cmyk_to_rgba8(buf: *mut u8, len: usize);
-}
-
-/// In-place inverted-CMYK (libjpeg-turbo `TJPF_CMYK` output) → opaque RGBA.
-pub(crate) fn cmyk_to_rgba(px: &mut [u8]) {
-    // SAFETY: ptr+len from a valid slice; C++ kernel writes within bounds.
-    unsafe { bun_image_cmyk_to_rgba8(px.as_mut_ptr(), px.len()) }
 }
 
 /// In-place brightness/saturation. brightness multiplies V (so 1.0 is
@@ -672,6 +661,13 @@ pub(crate) fn cmyk_to_rgba(px: &mut [u8]) {
 pub(crate) fn modulate(rgba: &mut [u8], brightness: f32, saturation: f32) {
     // SAFETY: ptr+len from a valid slice; C++ kernel writes within bounds.
     unsafe { bun_image_modulate_rgba8(rgba.as_mut_ptr(), rgba.len(), brightness, saturation) }
+}
+
+fn try_with_capacity(capacity: usize) -> Result<Vec<u8>, Error> {
+    let mut vec = Vec::new();
+    vec.try_reserve_exact(capacity)
+        .map_err(|_| Error::OutOfMemory)?;
+    Ok(vec)
 }
 
 pub(crate) fn resize(
@@ -704,7 +700,7 @@ pub(crate) fn resize(
         i32::try_from(dh).expect("int cast"),
         f as i32,
     );
-    let mut block: Vec<u8> = Vec::with_capacity(out_sz + scratch_sz);
+    let mut block = try_with_capacity(out_sz + scratch_sz)?;
     // SAFETY: capacity = dst [0..out_sz) + scratch; the kernel fills scratch before reading it.
     let rc = unsafe {
         bun_image_resize_rgba8(
@@ -725,7 +721,7 @@ pub(crate) fn resize(
     unsafe { bun_core::vec::commit_spare(&mut block, out_sz) };
     // Drop the scratch tail; mimalloc's shrink is in-place when the new size
     // fits the same block, so this is free.
-    block.shrink_to_fit();
+    let _ = block.try_shrink_to_fit();
     // PERF: Vec::shrink_to_fit may not be in-place — profile if hot.
     Ok(block)
 }
@@ -752,7 +748,7 @@ pub(crate) fn rotate(src: &[u8], w: u32, h: u32, degrees: u32) -> Result<Decoded
         }
     }
     let out_len = (dw as usize) * (dh as usize) * 4;
-    let mut out: Vec<u8> = Vec::with_capacity(out_len);
+    let mut out = try_with_capacity(out_len)?;
     // SAFETY: src has w*h*4 bytes; out has dw*dh*4 bytes of capacity; degrees is multiple of 90.
     unsafe {
         bun_image_rotate_rgba8(
@@ -783,7 +779,7 @@ pub(crate) fn flip(src: &[u8], w: u32, h: u32, horizontal: bool) -> Result<Vec<u
         }
     }
     let out_len = (w as usize) * (h as usize) * 4;
-    let mut out: Vec<u8> = Vec::with_capacity(out_len);
+    let mut out = try_with_capacity(out_len)?;
     // SAFETY: src has w*h*4 bytes; out has w*h*4 bytes of capacity.
     unsafe {
         bun_image_flip_rgba8(

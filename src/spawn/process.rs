@@ -103,7 +103,7 @@ bun_opaque::opaque_ffi! {
 #[inline]
 fn call_exit_handler(h: ProcessExitHandler, status: Status, rusage: &Rusage) {
     let Some(h) = h else { return };
-    if h.owner.is_null() {
+    if h.owner().is_null() {
         return;
     }
     h.on_process_exit(status, rusage);
@@ -397,27 +397,20 @@ impl Process {
             #[cfg(not(any(target_os = "linux", target_os = "android")))]
             let watchfd = this.pid;
 
-            let ctx = this.event_loop_ctx();
-            let mut poll = match this.poller.replace(Poller::Detached) {
+            let poll = match this.poller.replace(Poller::Detached) {
                 Poller::Fd(poll) => poll,
-                Poller::WaiterThread(_) | Poller::Detached => OwnedFilePoll::new(
-                    ctx,
-                    Fd::from_native(watchfd),
-                    bun_io::Owner::new(
-                        bun_io::posix_event_loop::poll_tag::PROCESS,
-                        this.as_ptr().cast(),
-                    ),
-                ),
+                Poller::WaiterThread(_) | Poller::Detached => {
+                    let owner = bun_io::Owner::new(bun_io::PollTag::Process, this.as_ptr().cast());
+                    let ctx = this.event_loop_ctx();
+                    // SAFETY: the poll becomes a field of its owner.
+                    unsafe { OwnedFilePoll::new(ctx, Fd::from_native(watchfd), owner) }
+                }
             };
 
-            poll.enable_keeping_process_alive(ctx);
+            poll.enable_keeping_process_alive();
             let registered = poll
-                .register(
-                    this.event_loop.platform_event_loop(),
-                    bun_io::PollKind::Process,
-                    PROCESS_POLL_ONE_SHOT,
-                )
-                .inspect_err(|_| poll.disable_keeping_process_alive(ctx));
+                .register(bun_io::PollKind::Process, PROCESS_POLL_ONE_SHOT)
+                .inspect_err(|_| poll.disable_keeping_process_alive());
             this.poller.set(Poller::Fd(poll));
             registered
         }
@@ -437,13 +430,7 @@ impl Process {
             return Ok(());
         }
 
-        this.with_poll(|fd| {
-            fd.register(
-                this.event_loop.platform_event_loop(),
-                bun_io::PollKind::Process,
-                PROCESS_POLL_ONE_SHOT,
-            )
-        })
+        this.with_poll(|fd| fd.register(bun_io::PollKind::Process, PROCESS_POLL_ONE_SHOT))
         .expect(
             "Internal Bun error: poll_ref in Subprocess is null unexpectedly. Please file a bug report.",
         )
@@ -530,12 +517,11 @@ impl Process {
     pub fn disable_keeping_event_loop_alive(&self) {
         #[cfg(unix)]
         {
-            let ctx = self.event_loop_ctx();
-            self.poller.with_mut(|poller| match poller {
-                Poller::Fd(poll) => poll.disable_keeping_process_alive(ctx),
-                Poller::WaiterThread(keep_alive) => keep_alive.unref(ctx),
+            match self.poller.get() {
+                Poller::Fd(poll) => poll.disable_keeping_process_alive(),
+                Poller::WaiterThread(keep_alive) => keep_alive.unref(self.event_loop_ctx()),
                 Poller::Detached => {}
-            });
+            }
         }
         // `us_loop_pump` runs `uv_run` without active handles too, so `on_exit_uv` still fires.
         #[cfg(windows)]
@@ -548,12 +534,11 @@ impl Process {
         }
         #[cfg(unix)]
         {
-            let ctx = self.event_loop_ctx();
-            self.poller.with_mut(|poller| match poller {
-                Poller::Fd(poll) => poll.enable_keeping_process_alive(ctx),
-                Poller::WaiterThread(keep_alive) => keep_alive.ref_(ctx),
+            match self.poller.get() {
+                Poller::Fd(poll) => poll.enable_keeping_process_alive(),
+                Poller::WaiterThread(keep_alive) => keep_alive.ref_(self.event_loop_ctx()),
                 Poller::Detached => {}
-            });
+            }
         }
         #[cfg(windows)]
         self.with_handle(|p| p.ref_());
@@ -615,7 +600,7 @@ impl Process {
         {
             // Detached is a deliberate no-op: spawnSync's `read_all()` runs
             // before `watch_or_reap()` installs the poller; the first
-            // `recv_non_block` returns EAGAIN (yes hasn't written yet) so the
+            // `recv_non_block_buf` returns EAGAIN (yes hasn't written yet) so the
             // maxBuffer overflow fires from the event-loop poll
             // tick *after* the Fd poller is armed. Do not widen this match to
             // mask spawn-maxbuf.test.ts — the async-path hang there has a
@@ -777,11 +762,11 @@ impl Process {
 
     /// Runs `f` on the poll, if there is one.
     #[inline]
-    fn with_poll<R>(&self, f: impl FnOnce(&mut FilePoll) -> R) -> Option<R> {
-        self.poller.with_mut(|poller| match poller {
+    fn with_poll<R>(&self, f: impl FnOnce(&FilePoll) -> R) -> Option<R> {
+        match self.poller.get() {
             Poller::Fd(poll) => Some(f(poll)),
             Poller::WaiterThread(_) | Poller::Detached => None,
-        })
+        }
     }
 }
 
@@ -816,7 +801,7 @@ pub use waiter_thread_posix::WaiterThreadPosix as WaiterThread;
 pub mod waiter_thread_posix {
     use super::*;
     use bun_event_loop::AnyTaskWithExtraContext::{AnyTaskWithExtraContext, New as AnyTaskNew};
-    use bun_event_loop::ConcurrentTask::{ConcurrentTask, Task, TaskTag};
+    use bun_event_loop::ConcurrentTask::{ConcurrentTask, TaskTag};
     use bun_event_loop::task_tag;
     use bun_threading::UnboundedQueue;
 
@@ -870,27 +855,19 @@ pub mod waiter_thread_posix {
         pub(crate) rusage: Rusage,
     }
 
-    impl<T: ProcessLike> bun_event_loop::Taskable for ResultTask<T> {
+    impl<T: ProcessLike> bun_event_loop::BoxedTask for ResultTask<T> {
         const TAG: TaskTag = T::TASK_TAG;
         /// An exit status the waiter thread posted whose delivery will not run:
         /// drop it and the strong ref it carried for the JS thread.
-        unsafe fn release_unrun(this: *mut Self) {
-            // SAFETY: fn contract — the box `ResultTask::new` made.
-            drop(unsafe { bun_core::heap::take(this) });
-        }
+        fn release_unrun(self: Box<Self>) {}
         /// A child's exit is delivered to its `Process` whatever became of the script that spawned it
         /// (the child is reaped); what reaches script is the exit handler's to decide.
-        unsafe fn context(_: *const Self) -> bun_event_loop::ContextId {
+        fn context(&self) -> bun_event_loop::ContextId {
             bun_event_loop::ContextId::NONE
         }
     }
 
     impl<T: ProcessLike> ResultTask<T> {
-        #[inline]
-        pub(crate) fn new(v: ResultTask<T>) -> *mut ResultTask<T> {
-            bun_core::heap::into_raw(Box::new(v))
-        }
-
         pub fn run_from_js_thread(self) {
             self.run_from_main_thread();
         }
@@ -1029,20 +1006,16 @@ pub mod waiter_thread_posix {
             EventLoopHandle::Js { .. } => {
                 // Its own: the JS thread may free the process before `post` has returned.
                 let poster = (process.js_poster().cloned()).expect("JS-owned process has a poster");
-                let rt = ResultTask::<T>::new(ResultTask {
+                let ct = ConcurrentTask::create_boxed(Box::new(ResultTask {
                     result,
                     subprocess: process,
                     rusage: *rusage,
-                });
-                let ct = ConcurrentTask::create(Task::init(rt));
+                }));
                 if let bun_event_loop::Posted::Refused(ct) = poster.post(ct) {
                     // VM torn down: nobody will observe this exit. Free the
                     // task and drop the ref its delivery would have released.
-                    // SAFETY: refused ⇒ we own both boxes.
-                    unsafe {
-                        drop(bun_core::heap::take(ct.as_ptr()));
-                        drop(bun_core::heap::take(rt));
-                    }
+                    // SAFETY: the task made above.
+                    drop(unsafe { ct.task.into_boxed::<ResultTask<T>>() });
                 }
             }
             EventLoopHandle::Mini(mini) => {
@@ -1527,7 +1500,7 @@ mod spawn_process_body {
         uv_process_options.exit_cb = Some(Process::on_exit_uv);
         // `WindowsOptions::default()` leaves a null handle, which `uv_loop()` would dereference.
         assert!(
-            !matches!(options.windows.loop_, EventLoopHandle::Js { owner } if owner.owner.is_null()),
+            !matches!(options.windows.loop_, EventLoopHandle::Js { owner } if owner.owner().is_null()),
             "spawn_process_windows: WindowsSpawnOptions.windows.loop_ was not set. \
          WindowsOptions::default() leaves it zeroed (Zig spec: `= undefined`); \
          every caller must populate it — see src/CLAUDE.md §Spawning Subprocesses \
@@ -2252,7 +2225,7 @@ mod spawn_process_body {
         }
 
         pub fn spawn(options: &Options<'_>) -> core::result::Result<Maybe<Result>, crate::Error> {
-            let argv = CStringList::concat(options.argv.iter().map(|arg| [&**arg]));
+            let argv = CStringList::from_parts(options.argv.iter().map(|arg| [&**arg]));
             let argv = argv.as_list();
 
             #[cfg(windows)]

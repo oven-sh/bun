@@ -975,14 +975,13 @@ fn write_persist_job_locked(
     cclog!("[compile cache] Creating temporary file for cache of {name} ({tname})...");
 
     // 0600 like Node: entries contain the module's post-transpile source.
-    let mut tmpfile =
-        match sys::Tmpfile::create_with_mode(state.dir_handle.fd(), tmpname_zstr, 0o600) {
-            Ok(t) => t,
-            Err(e) => {
-                cclog!("failed. {}\n", errno_name(&e));
-                return Err(());
-            }
-        };
+    let tmpfile = match sys::Tmpfile::create_with_mode(state.dir_handle.fd(), tmpname_zstr, 0o600) {
+        Ok(t) => t,
+        Err(e) => {
+            cclog!("failed. {}\n", errno_name(&e));
+            return Err(());
+        }
+    };
 
     let tmp_display = if logging {
         format!(
@@ -1008,7 +1007,7 @@ fn write_persist_job_locked(
     header_bytes[8..12].copy_from_slice(&cache_size.to_le_bytes());
     header_bytes[12..12 + HASH_SIZE].copy_from_slice(&job.code_hash);
     header_bytes[12 + HASH_SIZE..HEADER_SIZE].copy_from_slice(&cache_hash);
-    let file = sys::File::borrow(&tmpfile.fd);
+    let file = &tmpfile.file;
     let write_all = || -> sys::Maybe<()> {
         file.pwrite_all(&header_bytes, 0)?;
         file.pwrite_all(&job.code, HEADER_SIZE as i64)?;
@@ -1018,7 +1017,6 @@ fn write_persist_job_locked(
     };
     if let Err(e) = write_all() {
         cclog!("failed: {}\n", errno_name(&e));
-        let _ = sys::unlinkat(state.dir_handle.fd(), tmpname_zstr);
         return Err(());
     }
     cclog!("success\n");
@@ -1037,9 +1035,8 @@ fn write_persist_job_locked(
         String::new()
     };
     cclog!("[compile cache] Renaming {tmp_display} to {final_display}...");
-    if let Err(e) = tmpfile.finish(dest_zstr) {
+    if let Err((e, _)) = tmpfile.finish(dest_zstr) {
         cclog!("failed: {}\n", errno_name(&e));
-        let _ = sys::unlinkat(state.dir_handle.fd(), tmpname_zstr);
         return Err(());
     }
     cclog!("success\n");

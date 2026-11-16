@@ -2,9 +2,9 @@
 
 use core::ffi::c_int;
 
+use bun_sys::Fd;
 #[cfg(windows)]
 use bun_sys::FdKind;
-use bun_sys::{Fd, FdExt};
 
 use crate::{JSGlobalObject, JSValue, JsResult, RangeErrorOptions};
 
@@ -79,10 +79,9 @@ impl FdJsc for Fd {
         if !self.is_valid() {
             return JSValue::js_number_from_int32(-1);
         }
-        let uv_owned_fd = match self.make_lib_uv_owned() {
-            Ok(fd) => fd,
+        let uv_owned_fd = match bun_sys::File::from_fd(self).make_lib_uv_owned() {
+            Ok(file) => file.into_raw(),
             Err(_) => {
-                self.close();
                 let err_instance = (bun_jsc::SystemError {
                     message: bun_core::String::static_("EMFILE, too many open files"),
                     code: bun_core::String::static_("EMFILE"),

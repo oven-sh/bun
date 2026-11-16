@@ -17,7 +17,8 @@ use bun_core::{ZStr, strings};
 use bun_event_loop::EventLoopHandle;
 use bun_event_loop::MiniEventLoop::{self as MiniEventLoopMod, MiniEventLoop};
 use bun_install::lifecycle_script_runner::ScriptArgv;
-use bun_io::BufferedReader;
+use bun_io::max_buf::Kind;
+use bun_io::{BufferedReader, IoEvent, Owner, PollTag};
 
 // The string fields below are owned boxes, except `combined` which is interned
 // in the process-lifetime CLI arena.
@@ -56,7 +57,7 @@ struct Shared {
     /// Buffer for batched output, unless `pretty_output`.
     print_buf: Cell<Vec<u8>>,
     /// There is output that `State::redraw` has not drawn.
-    has_output: Cell<bool>,
+    needs_redraw: Cell<bool>,
     /// A process has exited since `State::finish_exited` last looked.
     has_exits: Cell<bool>,
 }
@@ -74,8 +75,8 @@ fn write_to_stdout(bytes: &[u8]) {
     let _ = bun_sys::File::borrow(&bun_sys::Fd::stdout()).write_all(bytes);
 }
 
-/// Parent of both readers of a script.
-pub(crate) struct ScriptOutput<'a> {
+/// Where both readers of a script deliver.
+struct ScriptOutput<'a> {
     shared: &'a Shared,
     config: &'a ScriptConfig,
     buffer: Vec<u8>,
@@ -85,7 +86,7 @@ impl ScriptOutput<'_> {
     fn read_chunk(&mut self, chunk: &[u8]) -> crate::Result<()> {
         if self.shared.pretty_output {
             self.buffer.extend_from_slice(chunk);
-            self.shared.has_output.set(true);
+            self.shared.needs_redraw.set(true);
             return Ok(());
         }
         let mut buf = self.shared.print_buf.take();
@@ -110,17 +111,6 @@ impl ScriptOutput<'_> {
         self.shared.print(buf);
         Ok(())
     }
-}
-
-bun_io::impl_buffered_reader_parent! {
-    FilterRunHandle for ScriptOutput<'a>;
-    feature = Tools;
-    has_on_read_chunk = true;
-    on_read_chunk   = |this, chunk, _has_more| { let _ = (*this).read_chunk(&chunk); true };
-    on_reader_done  = |_this| {};
-    on_reader_error = |_this, _err| {};
-    loop_           = |this| bun_io::uws_to_native((*this).shared.event_loop.loop_);
-    event_loop      = |this| (*this).shared.event_loop.as_event_loop_ctx();
 }
 
 pub(crate) struct ProcessHandle<'a> {
@@ -181,8 +171,8 @@ impl<'a> ProcessHandle<'a> {
                 bun_paths::resolve_path::dirname::<bun_paths::platform::Auto>(
                     &handle.output.config.package_json_path,
                 ),
-                |env| env.map.create_null_delimited_env_map(),
-            )?;
+                |env| env.map.to_envp(),
+            );
             break 'brk spawn::spawn_process(
                 &handle.options,
                 argv.as_list(),
@@ -194,9 +184,12 @@ impl<'a> ProcessHandle<'a> {
         let process =
             spawned.to_process_handle(EventLoopHandle::init_mini(handle.output.shared.event_loop));
 
-        let output = (&raw mut handle.output).cast();
-        handle.stdout.set_parent(output);
-        handle.stderr.set_parent(output);
+        let ptr = std::ptr::from_mut(handle).cast();
+        for kind in [Kind::Stdout, Kind::Stderr] {
+            let owner = Owner::with_kind(PollTag::FilterRunHandle, kind, ptr);
+            // SAFETY: `owner` points to the slot in `State.handles` that holds this reader, which does not move.
+            unsafe { handle.reader(kind).set_owner(owner) };
+        }
 
         #[cfg(windows)]
         {
@@ -209,14 +202,11 @@ impl<'a> ProcessHandle<'a> {
         }
 
         #[cfg(unix)]
-        {
-            if let Some(stdout) = stdout_pipe.map(bun_sys::File::into_raw) {
-                let _ = bun_sys::set_nonblocking(stdout);
-                handle.stdout.start(stdout, true)?;
-            }
-            if let Some(stderr) = stderr_pipe.map(bun_sys::File::into_raw) {
-                let _ = bun_sys::set_nonblocking(stderr);
-                handle.stderr.start(stderr, true)?;
+        for (reader, pipe) in [(&handle.stdout, stdout_pipe), (&handle.stderr, stderr_pipe)] {
+            if let Some(fd) = pipe.map(bun_sys::File::into_raw) {
+                let _ = bun_sys::set_nonblocking(fd);
+                let event_loop = handle.output.shared.event_loop.as_event_loop_ctx();
+                let _ = reader.start(event_loop, fd, true)?;
             }
         }
         #[cfg(not(unix))]
@@ -253,18 +243,36 @@ impl<'a> ProcessHandle<'a> {
         Ok(())
     }
 
+    fn reader(&self, kind: Kind) -> &BufferedReader {
+        match kind {
+            Kind::Stdout => &self.stdout,
+            Kind::Stderr => &self.stderr,
+        }
+    }
+
+    pub(crate) fn read(&mut self, kind: Kind, event: Option<IoEvent>) {
+        let reader = match kind {
+            Kind::Stdout => &self.stdout,
+            Kind::Stderr => &self.stderr,
+        };
+        let event_loop = self.output.shared.event_loop.as_event_loop_ctx();
+        // Ignored: `on_process_exit` ends the script.
+        let _ = reader.read_chunks(event_loop, event, |chunk, _| {
+            let _ = self.output.read_chunk(&chunk);
+            true
+        });
+    }
+
     /// After the exit: a leftover child may hold the pipes open, so their EOF may never come.
     fn drain_and_close_pipes(&mut self) {
-        for reader in [&mut self.stdout, &mut self.stderr] {
+        for kind in [Kind::Stdout, Kind::Stderr] {
             // Windows has no synchronous drain.
             #[cfg(unix)]
-            if !reader.is_done() && reader.get_fd() != bun_sys::Fd::INVALID {
-                reader.set_parent((&raw mut self.output).cast());
-                // SAFETY: the callbacks reach only `self.output`, which `&mut self` covers.
-                unsafe { BufferedReader::read(reader) };
+            if !self.reader(kind).is_done() && self.reader(kind).get_fd() != bun_sys::Fd::INVALID {
+                self.read(kind, None);
             }
-            if !reader.is_done() {
-                reader.deinit();
+            if !self.reader(kind).is_done() {
+                self.reader(kind).deinit();
             }
         }
     }
@@ -321,7 +329,7 @@ impl<'a> State<'a> {
         // SAFETY: the process-lifetime DotEnv loader; nothing else reaches it during `start`.
         let env = unsafe { &mut *self.env };
         if self.handles[index].start(self.shell_bin, env).is_err() {
-            if self.shared.has_output.get() {
+            if self.shared.needs_redraw.get() {
                 let _ = self.redraw(false);
             }
             bun_core::pretty_errorln!("<r><red>error<r>: Failed to start process");
@@ -486,7 +494,7 @@ impl<'a> State<'a> {
         if !self.shared.pretty_output {
             return Ok(());
         }
-        self.shared.has_output.set(false);
+        self.shared.needs_redraw.set(false);
         self.draw_buf.clear();
         self.draw_buf
             .extend_from_slice(Output::SYNCHRONIZED_START.as_bytes());
@@ -765,11 +773,7 @@ pub(crate) fn run_scripts_with_filter(
     let _ = bun_resolver::fs::FileSystem::init(None)?;
     let fsinstance = bun_resolver::fs::FileSystem::get();
 
-    // TODO(refactor): out-param init — `configureEnvForRun` writes through the
-    // out-param. Per PORTING.md this should be reshaped to
-    // `RunCommand::configure_env_for_run(...) -> Result<Transpiler, _>`; until then
-    // pass `&mut MaybeUninit<Transpiler>` (zeroed() is invalid: Transpiler is not #[repr(C)] POD).
-    let mut transpiler_slot = core::mem::MaybeUninit::<bun_bundler::Transpiler<'static>>::uninit();
+    let mut transpiler_slot = None;
     let (this_transpiler, _) = RunCommand::configure_env_for_run(
         &mut *ctx,
         &mut transpiler_slot,
@@ -907,7 +911,7 @@ pub(crate) fn run_scripts_with_filter(
             }
         },
         print_buf: Cell::default(),
-        has_output: Cell::new(false),
+        needs_redraw: Cell::new(false),
         has_exits: Cell::new(false),
     };
 
@@ -916,8 +920,8 @@ pub(crate) fn run_scripts_with_filter(
     let mut map: StringHashMap<Vec<usize>> = StringHashMap::default();
     for script in scripts.iter() {
         handles.push(ProcessHandle {
-            stdout: BufferedReader::init::<ScriptOutput>(),
-            stderr: BufferedReader::init::<ScriptOutput>(),
+            stdout: BufferedReader::init(),
+            stderr: BufferedReader::init(),
             output: ScriptOutput {
                 shared: &shared,
                 config: script,
@@ -1005,7 +1009,7 @@ pub(crate) fn run_scripts_with_filter(
     AbortHandler::install();
 
     loop {
-        if shared.has_output.get() {
+        if shared.needs_redraw.get() {
             let _ = state.redraw(false);
         }
         state.finish_exited();

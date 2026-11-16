@@ -1,7 +1,9 @@
+use core::cell::Cell;
 use core::ffi::c_void;
 use core::ptr::NonNull;
-use core::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+use core::sync::atomic::{AtomicBool, AtomicPtr, AtomicU32, Ordering};
 use std::collections::VecDeque;
+use std::sync::LazyLock;
 
 use crate::Error;
 use crate::bun_fs as fs;
@@ -16,7 +18,6 @@ use bun_core::ZBox;
 use bun_core::{Global, Output};
 use bun_core::{ZStr, strings};
 use bun_dotenv as dot_env;
-use bun_event_loop::MiniEventLoop as mini_event_loop;
 use bun_event_loop::{self, AnyEventLoop, EventLoopHandle};
 use bun_http as http;
 use bun_ini as ini;
@@ -227,22 +228,20 @@ use directories::attempt_to_create_package_json_and_open;
 pub use directories::{
     attempt_to_create_package_json, cached_git_folder_name, cached_git_folder_name_print,
     cached_git_folder_name_print_auto, cached_github_folder_name, cached_github_folder_name_print,
-    cached_github_folder_name_print_auto, cached_npm_package_folder_name_print,
+    cached_github_folder_name_print_auto, cached_npm_package_folder_name,
     cached_npm_package_folder_print_basename, cached_tarball_folder_name,
     cached_tarball_folder_name_print, compute_cache_dir_and_subpath, fetch_cache_directory_path,
-    get_cache_directory, get_cache_directory_and_abs_path, get_temporary_directory,
-    global_link_dir, global_link_dir_path, is_folder_in_cache, path_for_cached_npm_path,
-    path_for_resolution, save_lockfile, setup_global_dir, update_lockfile_if_needed,
-    write_yarn_lock,
+    get_cache_directory, get_temporary_directory, global_link_dir, global_link_dir_path,
+    is_folder_in_cache, path_for_cached_npm_path, path_for_resolution, save_lockfile,
+    setup_global_dir, update_lockfile_if_needed, write_yarn_lock,
 };
 
 pub use self::package_manager_enqueue as enqueue;
+pub(crate) use enqueue::enqueue_install_task;
 pub use enqueue::{
     enqueue_dependency_list, enqueue_dependency_to_root, enqueue_dependency_with_main,
-    enqueue_extract_npm_package, enqueue_git_checkout, enqueue_git_for_checkout,
-    enqueue_network_task, enqueue_package_for_download, enqueue_parse_npm_package,
-    enqueue_patch_task, enqueue_patch_task_pre, enqueue_tarball_for_download,
-    enqueue_tarball_for_reading,
+    enqueue_extract_npm_package, enqueue_git_checkout, enqueue_network_task,
+    enqueue_parse_npm_package, enqueue_patch_task, enqueue_patch_task_pre,
 };
 
 pub use self::progress_strings::ProgressStrings;
@@ -250,8 +249,8 @@ pub use self::progress_strings::ProgressStrings;
 pub use self::patch_package::PatchCommitResult;
 
 pub use self::run_tasks::{
-    flush_dependency_queue, flush_network_queue, flush_patch_task_queue,
-    generate_network_task_for_tarball, get_network_task, run_tasks, schedule_tasks,
+    flush_dependency_queue, flush_network_queue, generate_network_task_for_tarball,
+    get_network_task, schedule_tasks,
 };
 
 pub use self::update_package_json_and_install::{
@@ -287,7 +286,6 @@ pub(crate) type NpmAliasMap =
     HashMap<PackageNameHash, Box<[u8]> /* , IdentityContext<u64>, 80 */>;
 
 type NetworkQueue = LinearFifo<*mut NetworkTask, StaticBuffer<*mut NetworkTask, 32>>;
-type PatchTaskFifo = LinearFifo<*mut PatchTask, StaticBuffer<*mut PatchTask, 32>>;
 
 pub type PatchTaskQueue = UnboundedQueue<PatchTask /* , .next */>;
 pub type AsyncNetworkTaskQueue = UnboundedQueue<NetworkTask /* , .next */>;
@@ -452,9 +450,51 @@ bun_output::declare_scope!(PackageManager, hidden);
 // PackageManager
 // ──────────────────────────────────────────────────────────────────────────
 
+/// What other threads hand to the install thread.
+pub(crate) struct Inbox {
+    pub(crate) resolve_tasks: ResolveTaskQueue,
+    pub(crate) network_tasks: AsyncNetworkTaskQueue,
+    pub(crate) patch_tasks: PatchTaskQueue,
+    pub(crate) pending_tasks: AtomicU32,
+    /// Null unless the install thread is the main thread, whose loop is never freed.
+    uws_loop: AtomicPtr<bun_uws::Loop>,
+    runtime_auto_install: AtomicBool,
+}
+
+pub(crate) static INBOX: Inbox = Inbox {
+    resolve_tasks: ResolveTaskQueue::new(),
+    network_tasks: AsyncNetworkTaskQueue::new(),
+    patch_tasks: PatchTaskQueue::new(),
+    pending_tasks: AtomicU32::new(0),
+    uws_loop: AtomicPtr::new(core::ptr::null_mut()),
+    runtime_auto_install: AtomicBool::new(false),
+};
+
+impl Inbox {
+    pub(crate) fn decrement_pending_tasks(&self) {
+        self.pending_tasks.fetch_sub(1, Ordering::Release);
+    }
+
+    pub(crate) fn wake(&self) {
+        let uws_loop = self.uws_loop.load(Ordering::Acquire);
+        if !uws_loop.is_null() {
+            // SAFETY: never freed. `Loop` is `!Sync`, but any thread may wake it.
+            unsafe { bun_uws::us_wakeup_loop(uws_loop) };
+        }
+        if self.runtime_auto_install.load(Ordering::Acquire) {
+            crate::auto_installer::Parked::wake_all();
+        }
+    }
+}
+
+pub(crate) static THREAD_POOL: LazyLock<ThreadPool> = LazyLock::new(|| {
+    ThreadPool::init(thread_pool::Config {
+        max_threads: u32::from(bun_core::get_thread_count()),
+        ..Default::default()
+    })
+});
+
 pub struct PackageManager {
-    pub(crate) cache_directory: Option<bun_sys::Dir>,
-    pub(crate) cache_directory_path: ZBox, // owned; process lifetime via the leaked singleton
     pub root_dir: &'static fs::DirEntry,
     // allocator dropped per §Allocators (was `bun.default_allocator`). For the
     // handful of sites that allocated AST nodes via `Expr.allocate(manager.allocator, …)`
@@ -466,7 +506,6 @@ pub struct PackageManager {
     // stored in a `static`, which cannot carry a lifetime parameter. Invariant: the
     // pointed-to Log must outlive every use of the singleton.
     pub log: *mut bun_ast::Log,
-    pub(crate) resolve_tasks: ResolveTaskQueue,
     pub(crate) timestamp_for_manifest_cache_control: u32,
     pub(crate) extracted_count: u32,
     pub(crate) summary: Package::DiffSummary,
@@ -501,7 +540,6 @@ pub struct PackageManager {
     /// The `version` in the root package.json, as written. The lockfile records none for the root.
     pub(crate) workspace_root_version: Box<[u8]>,
 
-    pub(crate) thread_pool: ThreadPool,
     pub(crate) task_batch: thread_pool::Batch,
     pub(crate) task_queue: TaskDependencyQueue,
 
@@ -518,7 +556,6 @@ pub struct PackageManager {
     pub(crate) appended_task_packages: AppendedTaskPackageMap,
 
     pub(crate) network_dedupe_map: crate::network_task::DedupeMap,
-    pub(crate) async_network_task_queue: AsyncNetworkTaskQueue,
     // The HTTP thread takes the requests of both batches in their boxes.
     #[expect(clippy::vec_box)]
     pub(crate) network_tarball_batch: Vec<Box<http::AsyncHTTP<'static>>>,
@@ -526,17 +563,14 @@ pub struct PackageManager {
     pub(crate) network_resolve_batch: Vec<Box<http::AsyncHTTP<'static>>>,
     pub(crate) network_task_fifo: NetworkQueue,
     pub(crate) retry_queue: crate::retry_timer::RetryQueue,
-    pub(crate) patch_apply_batch: thread_pool::Batch,
-    pub(crate) patch_calc_hash_batch: thread_pool::Batch,
-    pub(crate) patch_task_fifo: PatchTaskFifo,
-    pub(crate) patch_task_queue: PatchTaskQueue,
+    /// Joins `task_batch` in `flush_dependency_queue`.
+    pub(crate) patch_batch: thread_pool::Batch,
     /// We actually need to calculate the patch file hashes
     /// every single time, because someone could edit the patchfile at anytime
     ///
     /// TODO: Does this need to be atomic? It seems to be accessed only from the main thread.
     pub(crate) pending_pre_calc_hashes: AtomicU32,
-    pub pending_tasks: AtomicU32,
-    pub total_tasks: u32,
+    pub(crate) total_tasks: Cell<u32>,
     pub(crate) preallocated_network_tasks: PreallocatedNetworkTasks,
     pub(crate) preallocated_resolve_tasks: PreallocatedTaskStore,
 
@@ -558,8 +592,6 @@ pub struct PackageManager {
     pub(crate) global_link_dir: Option<bun_sys::Dir>,
     pub global_dir: Option<bun_sys::Dir>,
     pub(crate) global_link_dir_path: &'static [u8],
-
-    pub(crate) on_wake: WakeHandler,
 
     pub(crate) peer_dependencies: LinearFifo<DependencyID, DynamicBuffer<DependencyID>>,
 
@@ -853,12 +885,6 @@ pub enum TrackInstalledBin {
     Basename(Box<[u8]>),
 }
 
-// MOVE_DOWN: the data struct lives in `bun_install_types::WakeHandler`
-// (single definition the resolver also stores). The `handler` second arg is
-// erased to `*mut c_void` there because that crate cannot name
-// `PackageManager`; `wake_raw()` casts it back at the call site.
-pub use bun_install_types::resolver_hooks::WakeHandler;
-
 // ──────────────────────────────────────────────────────────────────────────
 // Globals / statics
 // ──────────────────────────────────────────────────────────────────────────
@@ -904,24 +930,6 @@ impl PackageManager {
         unsafe { &mut *p }
     }
 
-    /// The global singleton accessor. Associated-fn spelling that forwards to
-    /// the free [`get`] so callers can write `PackageManager::get()`.
-    ///
-    /// Returns `&'static` (shared) — NOT `&'static mut`. Thread-pool workers
-    /// (`Repository` git ops, npm `SaveTask`, `UninstallTask::run`) call this
-    /// concurrently with the main thread; a shared ref is the only sound
-    /// shape. Mutating accessors (`increment_pending_tasks`, `wake`, …) take
-    /// `&self` and use interior atomics. For exclusive in-place mutation use
-    /// the raw [`get`] free fn with field projection (see its doc).
-    #[inline]
-    pub fn get() -> &'static PackageManager {
-        // SAFETY: `holder::RAW_PTR` is written once on the main thread by
-        // `allocate_package_manager()` before any caller of `get()`; the
-        // singleton lives for the process. Shared `&` aliases freely across
-        // threads.
-        unsafe { &*get() }
-    }
-
     /// Associated-fn spelling that forwards to the free [`init`] so callers
     /// can write `PackageManager::init(ctx, cli, subcommand)`.
     #[inline]
@@ -944,8 +952,6 @@ mod holder {
     // OWNED — global singleton, leaked.
     // OnceLock<Box<PackageManager>> can't express allocate-then-fill
     // (no `&mut` after set), so a raw ptr is used instead.
-    // PORTING.md §Global mutable state: ptr written once on main thread, read
-    // from worker threads → AtomicPtr (Release/Acquire pairs the publish).
     pub(super) static RAW_PTR: core::sync::atomic::AtomicPtr<PackageManager> =
         core::sync::atomic::AtomicPtr::new(core::ptr::null_mut());
 
@@ -1025,21 +1031,13 @@ impl PackageManager {
 
     pub(crate) fn crash(&mut self) -> ! {
         if self.options.log_level != package_manager_options::LogLevel::Silent {
-            // SAFETY: `self.log` points to a separate `bun_ast::Log` allocation (borrowed from
-            // `ctx.log`) that outlives the singleton. `&mut self` only covers the pointer field,
-            // not the pointee. `bun_ast::Log::print` takes `&self`,
-            // so we only need a shared borrow here — the sole invariant is
-            // that no `&mut bun_ast::Log` to the pointee is live, which holds on this path.
             let _ = self.log_mut().print(Output::error_writer());
         }
         Global::crash();
     }
 
-    pub fn has_enough_time_passed_between_waiting_messages() -> bool {
-        // Main-thread only (also guards TIME_PASSER_LAST_TIME below); reads
-        // event_loop.iteration_number which is written only by the same main-thread tick loop.
-        // `Self::get()` is the safe `&'static PackageManager` singleton accessor.
-        let iter = Self::get().event_loop.iteration_number();
+    pub fn has_enough_time_passed_between_waiting_messages(&self) -> bool {
+        let iter = self.event_loop.iteration_number();
         if TIME_PASSER_LAST_TIME.load(core::sync::atomic::Ordering::Relaxed) < iter {
             TIME_PASSER_LAST_TIME.store(iter, core::sync::atomic::Ordering::Relaxed);
             return true;
@@ -1103,32 +1101,6 @@ impl PackageManager {
         req.client.flags.reject_unauthorized = self.tls_reject_unauthorized();
         req.client.flags.redirect_credentials = http::RedirectCredentialsPolicy::HttpsUpgrade;
         req
-    }
-
-    /// Raw-pointer wake for concurrent task-thread callers (see
-    /// `isolated_install::Installer::Task::callback`). Never materializes
-    /// `&mut PackageManager`, so two task threads finishing simultaneously do
-    /// not hold aliased exclusive borrows. `on_wake` is read-only; the handler
-    /// receives the raw `*mut`;
-    /// `event_loop.wakeup()` is the cross-thread signal and is
-    /// internally synchronized; the borrow covers only the event-loop field.
-    ///
-    /// # Safety
-    /// `this` must point to a live `PackageManager` (BACKREF).
-    pub(crate) unsafe fn wake_raw(this: *mut Self) {
-        // SAFETY: caller guarantees `this` points to a live `PackageManager`; we
-        // only form field pointers via `addr_of!` (no whole-struct
-        // borrow) and `wakeup()` is internally synchronized for cross-thread use.
-        unsafe {
-            if let Some(wake) = (*core::ptr::addr_of!((*this).on_wake)).0 {
-                // `bun_install_types` cannot name `PackageManager`: the second arg is erased.
-                (wake.handler)(wake.context.as_ptr(), this.cast::<c_void>());
-            }
-            (*core::ptr::addr_of!((*this).event_loop)).wakeup();
-            if *core::ptr::addr_of!((*this).options.runtime_auto_install) {
-                crate::auto_installer::Parked::wake_all();
-            }
-        }
     }
 
     /// Runs the event loop until `is_done`.
@@ -1214,12 +1186,11 @@ fn configure_env_for_scripts_run(this: &mut PackageManager) -> Result<(), Error>
         // https://github.com/nodejs/node-gyp/blob/7d883b5cf4c26e76065201f85b0be36d5ebdcc0e/lib/build.js#L150-L184
         let thread_count = bun_core::get_thread_count();
         if thread_count > 2 {
-            let t_env = this.env_mut();
-            if !t_env.has(b"JOBS") {
+            let env = this.env_mut();
+            if !env.has(b"JOBS") {
                 let mut int_buf = bun_core::fmt::ItoaBuf::new();
                 let jobs_str = bun_core::fmt::itoa(&mut int_buf, thread_count);
-                t_env
-                    .map
+                env.map
                     .put_alloc_value(b"JOBS", jobs_str)
                     .expect("unreachable");
             }
@@ -1451,6 +1422,11 @@ fn allocate_package_manager(
     bun_core::add_exit_callback(deinit_caches_at_exit);
 
     let runtime_auto_install = options.runtime_auto_install;
+    (INBOX.runtime_auto_install).store(runtime_auto_install, Ordering::Release);
+    if bun_crash_handler::cli_state::is_main_thread() {
+        let uws_loop: &bun_uws::Loop = bun_uws::Loop::get();
+        (INBOX.uws_loop).store(core::ptr::from_ref(uws_loop).cast_mut(), Ordering::Release);
+    }
     // SAFETY: `p` points to uninitialized memory, fully initialized here field-by-field via
     // `addr_of_mut!((*p).field).write(..)`. No reference to it is formed before that: an uninit
     // bit pattern is invalid for its niche-bearing fields (`Box`, `Vec`, `Option<NonNull<_>>`).
@@ -1477,25 +1453,14 @@ fn allocate_package_manager(
             (*p).preallocated_resolve_tasks
         ));
 
-        wr!(cache_directory, None);
-        wr!(cache_directory_path, ZBox::from_bytes(b""));
         wr!(options, options);
         wr!(active_lifecycle_scripts, Default::default());
         wr!(network_task_fifo, NetworkQueue::init());
         wr!(retry_queue, Default::default());
-        wr!(patch_task_fifo, PatchTaskFifo::init());
         wr!(log, log);
         wr!(root_dir, root_dir);
         wr!(ast_arena, bun_alloc::Arena::new());
         wr!(env, Some(bun_ptr::BackRef::new_mut(env)));
-        wr!(
-            thread_pool,
-            ThreadPool::init(thread_pool::Config {
-                max_threads: u32::from(bun_core::get_thread_count()),
-                ..Default::default()
-            })
-        );
-        wr!(resolve_tasks, ResolveTaskQueue::default());
         wr!(lockfile, Box::new(Lockfile::default()));
         wr!(
             event_loop,
@@ -1544,15 +1509,11 @@ fn allocate_package_manager(
         wr!(git_env, bun_ptr::JsCell::new(None));
         wr!(appended_task_packages, AppendedTaskPackageMap::default());
         wr!(network_dedupe_map, Default::default());
-        wr!(async_network_task_queue, AsyncNetworkTaskQueue::default());
         wr!(network_tarball_batch, Vec::new());
         wr!(network_resolve_batch, Vec::new());
-        wr!(patch_apply_batch, thread_pool::Batch::default());
-        wr!(patch_calc_hash_batch, thread_pool::Batch::default());
-        wr!(patch_task_queue, PatchTaskQueue::default());
+        wr!(patch_batch, thread_pool::Batch::default());
         wr!(pending_pre_calc_hashes, AtomicU32::new(0));
-        wr!(pending_tasks, AtomicU32::new(0));
-        wr!(total_tasks, 0);
+        wr!(total_tasks, Cell::new(0));
         wr!(pending_lifecycle_script_tasks, AtomicU32::new(0));
         wr!(finished_installing, AtomicBool::new(false));
         wr!(total_scripts, 0);
@@ -1564,7 +1525,6 @@ fn allocate_package_manager(
         wr!(global_link_dir, None);
         wr!(global_dir, None);
         wr!(global_link_dir_path, b"");
-        wr!(on_wake, WakeHandler::default());
         wr!(
             peer_dependencies,
             LinearFifo::<DependencyID, DynamicBuffer<DependencyID>>::init()
@@ -1599,7 +1559,6 @@ fn allocate_package_manager(
         wr!(cached_tick_for_slow_lifecycle_script_logging, 0);
     }
     holder::INITIALIZED.store(true, core::sync::atomic::Ordering::Release);
-    // This has to come after `thread_pool` is initialized, because the callback reads it.
     bun_core::add_exit_callback(crate::npm::package_manifest::Serializer::finish_saves_at_exit);
     p
 }
@@ -1620,17 +1579,7 @@ extern "C" fn deinit_caches_at_exit() {
     unsafe { (*ptr).deinit_caches() };
 }
 
-/// Returns the raw singleton pointer.
-///
-/// Intentionally returns `*mut` rather than `&'static mut`: this accessor is
-/// invoked from thread-pool workers
-/// (`UninstallTask::run`, npm `SaveTask`, `Repository` git ops) concurrently
-/// with the main thread holding the `&mut PackageManager` returned by `init()`.
-/// Materializing `&'static mut` here would create aliased mutable references
-/// (UB). Callers must form their own narrowly-scoped reference via raw-pointer
-/// projection (e.g. `unsafe { &(*get()).cache_directory_path }`) and justify
-/// exclusivity / atomicity at the deref site.
-pub(crate) fn get() -> *mut PackageManager {
+fn get() -> *mut PackageManager {
     // `allocate_package_manager()` is the sole writer and runs on the main
     // thread before any caller of `get()`; Acquire pairs with its Release.
     holder::RAW_PTR.load(core::sync::atomic::Ordering::Acquire)
@@ -1815,7 +1764,7 @@ pub fn config_ignores_scripts(
     env: &dot_env::Loader,
     cwd: &[u8],
 ) -> Result<bool, Error> {
-    ::bun_bunfig::arguments::load_config(
+    bun_bunfig::arguments::load_config(
         bun_options_types::command_tag::Tag::InstallCommand,
         None,
         ctx,
@@ -1843,7 +1792,7 @@ pub fn config_ignores_scripts(
 /// Those are the files that the `bun add` spawned by `bunx` reads. This is for `bunx`, which has no
 /// `PackageManager`.
 pub fn user_cache_directory(env: &dot_env::Loader, cwd: &[u8]) -> Option<Box<[u8]>> {
-    let bunfig = (::bun_bunfig::arguments::load_user_install_section().ok())
+    let bunfig = (bun_bunfig::arguments::load_user_install_section().ok())
         .flatten()
         .unwrap_or_default();
     if bunfig.cache_directory.is_some() {
@@ -2086,7 +2035,7 @@ fn find_workspace_root_above<'a>(
                 #[cfg(not(windows))]
                 let maybe_workspace_path = child_path;
 
-                if strings::eql_long(maybe_workspace_path, path_, true) {
+                if strings::eql_long(maybe_workspace_path, path_) {
                     let name_hash = Semver::string::Builder::string_hash(&entry.name);
                     return Ok(Some((parent, json_file, name_hash)));
                 }
@@ -2207,12 +2156,6 @@ pub fn project_directory(cwd: &[u8]) -> Option<&[u8]> {
 /// CLI command immediately reborrows the result as `&mut` for the command's
 /// duration; centralising the deref here removes a dozen identical
 /// `unsafe { &mut *ptr }` blocks at call sites.
-///
-/// Thread-pool workers (`UninstallTask::run`, npm `SaveTask`, `Repository` git ops)
-/// project `&(*get()).field` concurrently once tasks are scheduled — same
-/// aliasing story as before this change (the prior callers already held `&mut`
-/// across those points). The raw [`get`] accessor remains `*mut` for those
-/// worker-side projections.
 pub fn init(
     ctx: Command::Context,
     cli: &CommandLineArguments,
@@ -2253,9 +2196,9 @@ pub fn init(
     if cli.global {
         // `globalDir` is only read from the user's own bunfig or from the `--config` file.
         if cli.config.is_some() {
-            ::bun_bunfig::arguments::load_config(CONFIG_TAG, cli.config, ctx)?;
+            bun_bunfig::arguments::load_config(CONFIG_TAG, cli.config, ctx)?;
         } else {
-            ::bun_bunfig::arguments::load_global_bunfig(CONFIG_TAG, ctx);
+            bun_bunfig::arguments::load_global_bunfig(CONFIG_TAG, ctx);
         }
 
         // Non-consuming peek: `ctx.install` is
@@ -2397,8 +2340,7 @@ pub fn init(
 
         debug_assert!(strings::eql_long(
             &original_package_json_path_buf[..this_cwd.len()],
-            this_cwd,
-            true,
+            this_cwd
         ));
         original_package_json_path_buf.truncate(this_cwd.len());
         push_package_json(&mut original_package_json_path_buf);
@@ -2454,7 +2396,7 @@ pub fn init(
     // `loadConfig` was moved down into `bun_bunfig`
     // (MOVE_DOWN b0) so install can call it directly — no fn-pointer hook.
     if !(cli.global && cli.config.is_some()) {
-        ::bun_bunfig::arguments::load_config(CONFIG_TAG, cli.config, ctx)?;
+        bun_bunfig::arguments::load_config(CONFIG_TAG, cli.config, ctx)?;
     }
     // SAFETY: main-thread global
     let root_package_json_path: &'static ZStr = unsafe {
@@ -2588,10 +2530,6 @@ pub fn init(
     );
     // The per-field placement above fully initialized the singleton; the
     // `&mut PackageManager` validity invariant now holds.
-    // We do NOT bind a long-lived `&'static mut` here: `http::HTTPThread::init`
-    // below spawns workers that deref `get()` concurrently, which would alias such a
-    // borrow under Stacked Borrows. Instead each statement forms its own narrowly-scoped
-    // reborrow via `unsafe { &mut *manager_ptr }`, dropped before the next raw-ptr use.
     {
         // SAFETY: singleton fully initialized; main thread, no workers yet.
         let manager = unsafe { &mut *manager_ptr };
@@ -2623,16 +2561,6 @@ pub fn init(
         // normalized.deinit() → Drop (stack buffer)
     }
 
-    // Set the thread-local global to point at the embedded mini loop
-    // (`bun_event_loop::mini_event_loop::GLOBAL`).
-    {
-        // SAFETY: singleton fully initialized and never freed; main thread, no workers yet.
-        let evl = unsafe { &mut (*manager_ptr).event_loop };
-        if let AnyEventLoop::Mini(mini) = evl {
-            // This loop has no `env`, so a later `init_global` makes its own.
-            mini_event_loop::GLOBAL.with(|g| g.set(Some(mini)));
-        }
-    }
     {
         // SAFETY: as above; scoped reborrow for the options/manifest-cache block.
         let manager = unsafe { &mut *manager_ptr };
@@ -2760,21 +2688,12 @@ pub fn init(
 
         (u64::try_from(bun_core::time::timestamp().max(0)).expect("int cast")) as u32 // @truncate
     };
-    // SAFETY: singleton fully initialized. The HTTP thread is now live and may
-    // project `&(*get()).field` concurrently, but `timestamp_for_manifest_cache_control`
-    // is main-thread-only state; this raw-pointer place write does not materialize a
-    // `&mut PackageManager` that could alias worker projections.
-    unsafe {
-        (*manager_ptr).timestamp_for_manifest_cache_control = timestamp_for_manifest_cache_control;
-    }
 
-    // SAFETY: `manager_ptr` is `holder::RAW_PTR`, written once by
-    // `allocate_package_manager()` above and fully initialized via `ptr::write`
-    // earlier in this function. `init()` is called exactly once per process on
-    // the CLI dispatch thread; the returned `&'static mut` is the sole
-    // first-class reference handed out (worker threads project fields via the
-    // raw [`get`] accessor, never via this reference).
-    Ok((unsafe { &mut *manager_ptr }, original_cwd_clone))
+    // SAFETY: fully initialized and never freed. `init()` gets here once per process, so this is
+    // the only `&'static mut`.
+    let manager = unsafe { &mut *manager_ptr };
+    manager.timestamp_for_manifest_cache_control = timestamp_for_manifest_cache_control;
+    Ok((manager, original_cwd_clone))
 }
 
 pub(crate) fn init_with_runtime(
@@ -2874,7 +2793,7 @@ fn init_with_runtime_once(
             merged = &mut nearer_bunfig;
             continue;
         }
-        match ::bun_bunfig::arguments::load_install_section(dir) {
+        match bun_bunfig::arguments::load_install_section(dir) {
             Ok(Some(nearer)) => match merged.as_deref_mut() {
                 Some(above) => overlay_bunfig_install(above, *nearer),
                 None => *merged = Some(nearer),
@@ -2885,7 +2804,7 @@ fn init_with_runtime_once(
     }
     // This also finds a scanner in a folder between the two. `bun install` wouldn't read that file,
     // but when in doubt, the scanner counts.
-    let has_scanner = ::bun_bunfig::arguments::has_security_scanner(start_dir, project_dir);
+    let has_scanner = bun_bunfig::arguments::has_security_scanner(start_dir, project_dir);
     // A scanner only sees what `bun install` is about to install, so auto-install is refused.
     if [
         bun_install,
@@ -3020,7 +2939,7 @@ fn init_with_runtime_once(
             {
                 use crate::dependency::version::Tag as Declared;
                 use crate::resolution::Tag;
-                if matches!(row.version.tag, Declared::Npm | Declared::DistTag)
+                if matches!(row.version.tag(), Declared::Npm | Declared::DistTag)
                     && resolved_as
                         .get(*package_id as usize)
                         .is_some_and(|it| !matches!(it.tag, Tag::Npm | Tag::Workspace | Tag::Root))

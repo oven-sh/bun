@@ -22,6 +22,7 @@
 #include <wtf/PlatformRegisters.h>
 #else
 #define HANDLES_ACCESS_FAULTS_BY_SIGNAL 0
+#include <JavaScriptCore/AOTImage.h>
 #endif
 
 // With glibc and musl the executable defines the functions of libc that set a signal's action or block it, so that a library's
@@ -111,9 +112,11 @@ static SignalHandler callLibcSignal(int signalNumber, SignalHandler handler)
 
 #endif // DEFINES_SIGNAL_FUNCTIONS_OF_LIBC
 
-#if HANDLES_ACCESS_FAULTS_BY_SIGNAL
-
 extern "C" [[noreturn]] void Bun__raiseDefaultAction(int signalNumber);
+extern "C" bool CrashHandler__getAction(struct sigaction*);
+extern "C" void CrashHandler__reportOwnCrash(int signalNumber, siginfo_t*, void* context);
+
+#if HANDLES_ACCESS_FAULTS_BY_SIGNAL
 
 using SignalHandlerWithInfo = void (*)(int, siginfo_t*, void*);
 
@@ -203,6 +206,8 @@ static void handleAccessFaultSignal(int signalNumber, siginfo_t* info, void* con
     AccessFaultSignal& signal = accessFaultSignal(signalNumber);
     SignalHandlerWithInfo handler = signal.handler.load(std::memory_order_relaxed);
     int flags = signal.flags.load(std::memory_order_relaxed);
+    if (isFault && handler != signal.handlerOfEngine)
+        CrashHandler__reportOwnCrash(signalNumber, info, context);
     // Bun's handler for a listener of the program notes the signal and returns, onto the same instruction, for ever.
     if (isFault && isInCompiledCode(*userContext) && !mayServeFaultOfCompiledCode(signalNumber, handler)) {
         handler = signal.handlerOfEngine;
@@ -342,6 +347,82 @@ SignalHandler setSignalHandler(int signalNumber, SignalHandler handler)
 
 #endif // HANDLES_ACCESS_FAULTS_BY_SIGNAL
 
+#if OS(DARWIN)
+static bool isRaisedByAbort(const ucontext_t& context)
+{
+    sigset_t unblocked = ~context.uc_sigmask;
+    for (int signalNumber : { SIGABRT, SIGILL, SIGTRAP, SIGFPE, SIGBUS, SIGSEGV, SIGSYS, SIGKILL, SIGSTOP })
+        sigdelset(&unblocked, signalNumber);
+    return !unblocked;
+}
+#endif
+
+bool mayReportOwnCrash(int signalNumber)
+{
+#if OS(DARWIN)
+    if (signalNumber == SIGABRT)
+        return JSC::AOT::Image::isRegistered();
+#endif
+    return (signalNumber == SIGTRAP || signalNumber == SIGILL || signalNumber == SIGSEGV || signalNumber == SIGBUS) && JSC::AOT::Image::isRegistered();
+}
+
+void reportOwnCrash(int signalNumber, siginfo_t* info, void* context)
+{
+    if (!mayReportOwnCrash(signalNumber)) [[likely]]
+        return;
+#if OS(DARWIN)
+    if (signalNumber == SIGABRT) {
+        struct sigaction action;
+        if (isRaisedByAbort(*static_cast<ucontext_t*>(context)) && CrashHandler__getAction(&action))
+            action.sa_sigaction(signalNumber, info, context);
+        return;
+    }
+#endif
+    CrashHandler__reportOwnCrash(signalNumber, info, context);
+}
+
+static void endProcessUnlessOwnCrash(int signalNumber, siginfo_t* info, void* context)
+{
+    reportOwnCrash(signalNumber, info, context);
+    if (getpid() != 1) {
+        Bun__raiseDefaultAction(signalNumber);
+        return;
+    }
+    if (info->si_code <= 0)
+        return;
+    setSignalHandler(signalNumber, SIG_DFL);
+#if OS(LINUX) && CPU(X86_64)
+    if (signalNumber == SIGTRAP && info->si_code == SI_KERNEL)
+        static_cast<ucontext_t*>(context)->uc_mcontext.gregs[REG_RIP]--;
+#endif
+}
+
+void setDefaultSignalAction(int signalNumber)
+{
+    if ((signalNumber != SIGABRT && signalNumber != SIGTRAP) || !JSC::AOT::Image::isRegistered()) {
+        setSignalHandler(signalNumber, SIG_DFL);
+        return;
+    }
+    struct sigaction action;
+    memset(&action, 0, sizeof(action));
+    action.sa_sigaction = endProcessUnlessOwnCrash;
+    action.sa_flags = SA_RESTART | SA_SIGINFO | SA_ONSTACK;
+    findDefinitionsForSignalHandler();
+    callLibcSigaction(signalNumber, &action, nullptr);
+}
+
+#if HANDLES_ACCESS_FAULTS_BY_SIGNAL && !ASAN_ENABLED
+static void reinstallCrashHandlerForAbort()
+{
+    if (!JSC::AOT::Image::isRegistered()) [[likely]]
+        return;
+    struct sigaction action;
+    struct sigaction current;
+    if (!callLibcSigaction(SIGABRT, nullptr, &current) && current.sa_handler != SIG_DFL && CrashHandler__getAction(&action))
+        callLibcSigaction(SIGABRT, &action, nullptr);
+}
+#endif
+
 #if DEFINES_SIGNAL_FUNCTIONS_OF_LIBC
 
 static SignalHandler setSysvSignalHandler(int signalNumber, SignalHandler handler)
@@ -444,6 +525,15 @@ static void* const replacementsOfLibcFunctions[numberOfLibcFunctions] = {
 #endif // DEFINES_SIGNAL_FUNCTIONS_OF_LIBC
 
 } // namespace Bun
+
+#if HANDLES_ACCESS_FAULTS_BY_SIGNAL && !ASAN_ENABLED
+extern "C" void __real_abort();
+extern "C" void __wrap_abort()
+{
+    Bun::reinstallCrashHandlerForAbort();
+    [[clang::musttail]] return __real_abort();
+}
+#endif
 
 #if DEFINES_SIGNAL_FUNCTIONS_OF_LIBC
 

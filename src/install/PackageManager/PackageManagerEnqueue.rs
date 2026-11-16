@@ -15,6 +15,7 @@ use crate::_folder_resolver::{
     self as FolderResolution, FolderResolution as FolderResolutionValue, GlobalOrRelative,
     PackageWorkspaceSearchPathFormatter,
 };
+use crate::dedupe::NpmRange;
 use crate::dependency;
 use crate::dependency::{DependencyExt as _, TagExt as _, VersionExt as _};
 use crate::lockfile::package::Package;
@@ -28,10 +29,10 @@ use crate::package_manager_real::options::{Do, OfflineMode};
 use crate::package_manager_real::process_dependency_list::ListedDependencies;
 use crate::package_manager_real::{
     self, HeldAbout, PackageManager, RemoteTurn, SuccessFn, TaskCallbackList, Wanted,
-    get_cache_directory, get_temporary_directory, run_tasks,
+    get_temporary_directory, is_folder_in_cache, run_tasks,
 };
 use crate::package_manager_task as Task;
-use crate::patch_install::EnqueueAfterState;
+use crate::patch_install::{Callback as PatchTaskCallback, EnqueueAfterState};
 use crate::resolution::{
     NpmVersionInfo as ResolutionNpmValue, Tag as ResolutionTag, TaggedValue as ResolutionTagged,
 };
@@ -234,7 +235,7 @@ pub(crate) fn add_dependency_error(
     dependency: &Dependency,
     err: crate::Error,
 ) {
-    let path_sep = match dependency.version.tag {
+    let path_sep = match dependency.version.tag() {
         dependency::version::Tag::Folder => bun_fmt::PathSep::Auto,
         _ => bun_fmt::PathSep::Any,
     };
@@ -262,55 +263,46 @@ pub(crate) fn add_dependency_error(
     }
 }
 
-pub fn enqueue_tarball_for_download(
+/// Brings a package of the lockfile into the cache. `can_enqueue_install_task` must hold for it.
+pub(crate) fn enqueue_install_task(
     this: &mut PackageManager,
     dependency_id: DependencyID,
     package_id: PackageID,
-    url: &[u8],
     task_context: TaskCallbackContext,
+    patch_name_and_version_hash: Option<u64>,
 ) -> Result<(), ForTarballError> {
-    let name = this.lockfile.packages.items_name()[package_id as usize];
-    let name = this.lockfile.str_detached(&name);
-    enqueue_download(
-        this,
-        Task::Id::for_tarball(url),
-        name,
-        dependency_id,
-        package_id,
-        url,
-        task_context,
-    )
-}
-
-pub fn enqueue_package_for_download(
-    this: &mut PackageManager,
-    name: &[u8],
-    dependency_id: DependencyID,
-    package_id: PackageID,
-    version: Semver::Version,
-    url: &[u8],
-    task_context: TaskCallbackContext,
-) -> Result<(), ForTarballError> {
-    enqueue_download(
-        this,
-        Task::Id::for_npm_package(name, version),
-        name,
-        dependency_id,
-        package_id,
-        url,
-        task_context,
-    )
+    match this.lockfile.packages.items_resolution()[package_id as usize].tag {
+        ResolutionTag::Git => enqueue_git_for_checkout(
+            this,
+            dependency_id,
+            package_id,
+            task_context,
+            patch_name_and_version_hash,
+        ),
+        ResolutionTag::LocalTarball => {
+            enqueue_tarball_for_reading(this, dependency_id, package_id, task_context)
+        }
+        _ => enqueue_download(this, dependency_id, package_id, task_context),
+    }
 }
 
 fn enqueue_download(
     this: &mut PackageManager,
-    task_id: Task::Id,
-    name: &[u8],
     dependency_id: DependencyID,
     package_id: PackageID,
-    url: &[u8],
     task_context: TaskCallbackContext,
 ) -> Result<(), ForTarballError> {
+    let name = this.lockfile.packages.items_name()[package_id as usize];
+    let resolution = &this.lockfile.packages.items_resolution()[package_id as usize];
+    let github_url = (resolution.tag == ResolutionTag::Github)
+        .then(|| this.alloc_github_url(resolution.github()));
+    let task_id = match (&github_url, resolution.tag) {
+        (Some(url), _) => Task::Id::for_tarball(url),
+        (None, ResolutionTag::Npm) => {
+            Task::Id::for_npm_package(this.lockfile.str(&name), resolution.npm().version)
+        }
+        (None, _) => Task::Id::for_tarball(this.lockfile.str(resolution.remote_tarball())),
+    };
     if has_already_failed(this, task_id, dependency_id, package_id, &task_context) {
         return Err(ForTarballError::AlreadyFailed);
     }
@@ -329,7 +321,7 @@ fn enqueue_download(
     if let Some(task) = run_tasks::generate_network_task_for_tarball(
         this,
         task_id,
-        url,
+        github_url.as_deref(),
         is_required,
         dependency_id,
         &package,
@@ -341,17 +333,14 @@ fn enqueue_download(
     Ok(())
 }
 
-pub fn enqueue_tarball_for_reading(
+fn enqueue_tarball_for_reading(
     this: &mut PackageManager,
     dependency_id: DependencyID,
     package_id: PackageID,
-    alias: &[u8],
-    resolution: &Resolution,
     task_context: TaskCallbackContext,
 ) -> Result<(), ForTarballError> {
-    // `enqueue_local_tarball` copies `path` into the filename store before `string_bytes` can grow.
-    let path = this.lockfile.str_detached(resolution.local_tarball());
-    let task_id = Task::Id::for_tarball(path);
+    let resolution = this.lockfile.packages.items_resolution()[package_id as usize];
+    let task_id = Task::Id::for_tarball(this.lockfile.str(resolution.local_tarball()));
     if has_already_failed(this, task_id, dependency_id, package_id, &task_context) {
         return Err(ForTarballError::AlreadyFailed);
     }
@@ -361,13 +350,13 @@ pub fn enqueue_tarball_for_reading(
 
     let integrity = this.lockfile.packages.items_meta()[package_id as usize].integrity;
 
+    let alias = this.lockfile.buffers.dependencies[dependency_id as usize].name;
     let task = enqueue_local_tarball(
         this,
         task_id,
         dependency_id,
         alias,
-        path,
-        resolution,
+        &resolution,
         Some(&integrity),
     );
     this.task_batch.push(ThreadPool::Batch::from(task));
@@ -376,21 +365,19 @@ pub fn enqueue_tarball_for_reading(
 
 /// Returns `Err(Offline)` if the repository isn't cached. Nothing is queued then, and the caller
 /// counts the package as failed or skipped.
-pub fn enqueue_git_for_checkout(
+fn enqueue_git_for_checkout(
     this: &mut PackageManager,
     dependency_id: DependencyID,
     package_id: PackageID,
-    alias: &[u8],
     task_context: TaskCallbackContext,
     patch_name_and_version_hash: Option<u64>,
 ) -> Result<(), ForTarballError> {
     let resolution: Resolution = this.lockfile.packages.items_resolution()[package_id as usize];
     let repository: Repository = *resolution.git();
-    // The enqueue callees copy these into the filename store before `string_bytes` grows.
-    let url = this.lockfile.str_detached(&repository.repo);
+    let alias = this.lockfile.buffers.dependencies[dependency_id as usize].name;
+    let url = this.lockfile.str(&repository.repo);
     let clone_id = Task::Id::for_git_clone(url);
-    let resolved = this.lockfile.str_detached(&repository.resolved);
-    let checkout_id = Task::Id::for_git_checkout(url, resolved);
+    let checkout_id = Task::Id::for_git_checkout(url, this.lockfile.str(&repository.resolved));
     let repo_fd = this.git_repositories.get(&clone_id).copied();
     let is_required = repo_fd.is_some() || this.is_package_required(dependency_id, package_id);
     // --offline: decide before any queue registration, so an optional miss leaves
@@ -410,6 +397,7 @@ pub fn enqueue_git_for_checkout(
     }
 
     if let Some(repo_fd) = repo_fd {
+        let resolved = stored_string(this.lockfile.str(&repository.resolved));
         let task = enqueue_git_checkout(
             this,
             checkout_id,
@@ -502,7 +490,7 @@ pub(crate) fn offline_miss(
     this: &mut PackageManager,
     task_id: Task::Id,
     what: &str,
-    name: &[u8],
+    name: SemverString,
     is_required: bool,
 ) {
     if is_required && !this.network_task_has_failed(task_id) {
@@ -514,7 +502,7 @@ pub(crate) fn offline_miss(
             bun_ast::Loc::EMPTY,
             format_args!(
                 "--offline: {what}\"{}\" is not in the cache",
-                bun_fmt::for_terminal(bstr::BStr::new(name))
+                bun_fmt::for_terminal(bstr::BStr::new(this.lockfile.str(&name)))
             ),
         );
     }
@@ -525,14 +513,14 @@ pub(crate) fn offline_miss(
 fn offline_git_miss(
     this: &mut PackageManager,
     clone_id: Task::Id,
-    name: &[u8],
+    name: SemverString,
     is_required: bool,
 ) -> bool {
     if this.options.offline != OfflineMode::Offline {
         return false;
     }
     let folder = bun_core::ZBox::from_bytes(crate::git_runner::bare_repo_folder_name(clone_id));
-    if bun_sys::directory_exists_at(get_cache_directory(this), &folder).unwrap_or(false) {
+    if is_folder_in_cache(this, &folder) {
         return false;
     }
     if !is_required {
@@ -558,6 +546,7 @@ pub unsafe fn enqueue_parse_npm_package(
     let job = Task::Job::PackageManifest {
         name,
         network,
+        temp_dir: this.manifest_cache_temporary_directory(),
         manifest: None,
     };
     let task = Task::Task::create(this, task_id, job);
@@ -589,7 +578,7 @@ pub fn enqueue_dependency_to_root(
     let dep_id = 'brk: {
         let str_buf = this.lockfile.buffers.string_bytes.as_slice();
         for (id, dep) in this.lockfile.buffers.dependencies.iter().enumerate() {
-            if !strings::eql_long(dep.name.slice(str_buf), name, true) {
+            if !strings::eql_long(dep.name.slice(str_buf), name) {
                 continue;
             }
             if !dep.version.eql(version, str_buf, version_buf) {
@@ -639,7 +628,7 @@ pub fn enqueue_dependency_to_root(
                 let own = &rows[id as usize];
                 own.name_hash == rows[dep_id as usize].name_hash
                     && !matches!(
-                        own.version.tag,
+                        own.version.tag(),
                         dependency::version::Tag::Workspace
                             | dependency::version::Tag::Folder
                             | dependency::version::Tag::Symlink
@@ -724,14 +713,12 @@ pub fn download_missing_package(
     package_id: PackageID,
 ) -> crate::Result<()> {
     let dependency_id = (this.lockfile.buffers).legacy_package_to_dependency_id(package_id)?;
-    let package = *this.lockfile.packages.get(package_id as usize);
-    let npm = *package.resolution.npm();
-    let name = this.lockfile.str(&package.name).to_vec();
-    let url = this.lockfile.str(&npm.url).to_vec();
+    let name = this.lockfile.packages.items_name()[package_id as usize];
+    let resolution = &this.lockfile.packages.items_resolution()[package_id as usize];
 
     // A failed download is remembered for the rest of this turn of the event loop, like a failed
     // lookup. After that it is tried again.
-    let task_id = Task::Id::for_npm_package(&name, npm.version);
+    let task_id = Task::Id::for_npm_package(this.lockfile.str(&name), resolution.npm().version);
     let turn = this.event_loop.iteration_number();
     if (this.network_dedupe_map.get(&task_id))
         .is_some_and(|entry| entry.failed && entry.missed_in != Some(turn))
@@ -739,13 +726,10 @@ pub fn download_missing_package(
         let _ = this.network_dedupe_map.remove(&task_id);
     }
 
-    enqueue_package_for_download(
+    enqueue_download(
         this,
-        &name,
         dependency_id,
         package_id,
-        npm.version,
-        &url,
         TaskCallbackContext::RootRequestId(0),
     )?;
     wait_for_tasks(this)?;
@@ -774,7 +758,7 @@ fn wait_for_tasks(this: &mut PackageManager) -> crate::Result<()> {
             }
 
             if verbose_install() && this.pending_task_count() > 0 {
-                if PackageManager::has_enough_time_passed_between_waiting_messages() {
+                if this.has_enough_time_passed_between_waiting_messages() {
                     bun_core::pretty_errorln!(
                         "<d>[PackageManager]<r> waiting for {} tasks\n",
                         this.pending_task_count()
@@ -806,15 +790,8 @@ pub fn enqueue_network_task(this: &mut PackageManager, task: *mut NetworkTask) {
     this.network_task_fifo.write_item_assume_capacity(task);
 }
 
-/// Hands the task to the patch-task fifo as a raw pointer; it is reclaimed once
-/// in `run_tasks` after the thread pool pushes it onto `patch_task_queue`.
 pub fn enqueue_patch_task(this: &mut PackageManager, task: Box<PatchTask>) {
-    if this.patch_task_fifo.writable_length() == 0 {
-        run_tasks::flush_patch_task_queue(this);
-    }
-
-    this.patch_task_fifo
-        .write_item_assume_capacity(bun_core::heap::into_raw(task));
+    this.patch_batch.push(ThreadPool::Batch::from_owned(task));
 }
 
 /// We need to calculate all the patchfile hashes at the beginning so we don't run into problems with stale hashes
@@ -847,16 +824,15 @@ pub(crate) fn name_resolved_row(
     pkg_name: SemverString,
     pkg_res: &Resolution,
 ) {
-    match v.tag {
-        dependency::version::Tag::Git => {
-            let repo = v.git_mut();
+    match &mut v.value {
+        dependency::Value::Git(repo) => {
             if pkg_res.tag == ResolutionTag::Git {
                 repo.resolved = pkg_res.git().resolved;
             }
             repo.package_name = pkg_name;
         }
-        dependency::version::Tag::Github => v.github_mut().package_name = pkg_name,
-        dependency::version::Tag::Tarball => v.tarball_mut().package_name = pkg_name,
+        dependency::Value::Github(github) => github.package_name = pkg_name,
+        dependency::Value::Tarball(tarball) => tarball.package_name = pkg_name,
         _ => {}
     }
 }
@@ -874,14 +850,13 @@ fn enqueue_manifest_download(
     // A list for the task, even an empty one, tells `run_tasks` that a dependency wants it.
     task_callback_list(this, task_id);
 
-    let this_ptr: *mut PackageManager = this;
     let network_task = run_tasks::get_network_task(this);
     // SAFETY: `network_task` is the unique handle to a
     // freshly-vended pool slot. `write_init` resets every
     // defaulted field (callback is uninitialized and
     // overwritten by `for_manifest`).
     unsafe {
-        NetworkTask::write_init(network_task, task_id, this_ptr);
+        NetworkTask::write_init(network_task, task_id, bun_ptr::ParentRef::new(this));
     }
 
     let scope = this.scope_for_package_name(name);
@@ -990,7 +965,7 @@ pub(crate) fn may_refresh_in_place(dependency: &Dependency) -> bool {
     use dependency::version::Tag;
     dependency.behavior.is_optional()
         && matches!(
-            dependency.version.tag,
+            dependency.version.tag(),
             Tag::Git | Tag::Github | Tag::Tarball
         )
 }
@@ -1002,7 +977,6 @@ pub(crate) fn refreshes_in_place(
     dependency: &Dependency,
     locked: PackageID,
 ) -> bool {
-    use dependency::version::Tag;
     if !may_refresh_in_place(dependency) {
         return false;
     }
@@ -1012,21 +986,20 @@ pub(crate) fn refreshes_in_place(
     };
     let buf = lockfile.buffers.string_bytes.as_slice();
     // An older bun.lock binds a dependency that never resolved to any package of its name.
-    let is_from_source = match dependency.version.tag {
-        Tag::Github => {
-            let asks = dependency.version.github();
+    let is_from_source = match &dependency.version.value {
+        dependency::Value::Github(asks) => {
             locked_res.tag == ResolutionTag::Github
                 && locked_res.github().owner.eql(asks.owner, buf, buf)
                 && locked_res.github().repo.eql(asks.repo, buf, buf)
         }
-        Tag::Git => {
-            let asks = dependency.version.git().repo.slice(buf);
+        dependency::Value::Git(git) => {
+            let asks = git.repo.slice(buf);
             // bun.lock has `host:path` as a URL.
             let recorded = crate::repository_real::locked_scp_like(asks);
             locked_res.tag == ResolutionTag::Git
                 && locked_res.git().repo.slice(buf) == recorded.as_deref().unwrap_or(asks)
         }
-        _ => match &dependency.version.tarball().uri {
+        dependency::Value::Tarball(tarball) => match &tarball.uri {
             dependency::tarball::Uri::Remote(url) => {
                 locked_res.tag == ResolutionTag::RemoteTarball
                     && locked_res.remote_tarball().eql(*url, buf, buf)
@@ -1037,6 +1010,7 @@ pub(crate) fn refreshes_in_place(
                     && may_name_local_tarball(lockfile, declarer, dependency)
             }
         },
+        _ => return false,
     };
     let has_rule = |name_hash: PackageNameHash| {
         lockfile.overrides.has_rule_for_name(name_hash)
@@ -1088,7 +1062,7 @@ fn followed_npm_alias(
         .iter()
         .filter(|dep| dep.name_hash == name_hash)
         .filter_map(|dep| lockfile.resolve_catalog_dependency(dep))
-        .find(|version| version.tag == dependency::version::Tag::Npm && version.npm().is_alias)
+        .find(dependency::Version::is_npm_alias)
 }
 
 /// Like npm, a dependency shares the folder of a same-named alias only if its range accepts the
@@ -1098,12 +1072,13 @@ fn takes_alias_target(
     this: &mut PackageManager,
     declared: &Semver::query::Group,
     aliased: &dependency::Version,
+    alias: &dependency::NpmInfo,
 ) -> Result<bool, Task::Id> {
     let lockfile = &*this.lockfile;
     let buf = lockfile.buffers.string_bytes.as_slice();
-    let name = aliased.npm().name.slice(buf);
+    let name = alias.name.slice(buf);
     let name_hash = Semver::string::Builder::string_hash(name);
-    if links_workspace(this, name_hash, &aliased.npm().version) {
+    if links_workspace(this, name_hash, &alias.version) {
         return Ok(links_workspace(this, name_hash, declared));
     }
     if let Some(id) = lockfile.package_satisfying(name_hash, aliased, |_| true) {
@@ -1123,8 +1098,9 @@ fn takes_alias_target(
     let Some(manifest) = this.manifests.by_name_hash_in_memory(&name, name_hash) else {
         return Ok(true);
     };
-    match manifest.find_for_dependency(
-        aliased,
+    match manifest.find_for_range(
+        aliased.literal.slice(buf),
+        &alias.version,
         buf,
         this.options.minimum_release_age_ms,
         this.options.minimum_release_age_excludes,
@@ -1242,8 +1218,7 @@ fn request_row_ahead(this: &mut PackageManager, id: DependencyID, item: Lockfile
     let row = queued_row(this, id, item);
     // Most names come up many times, and one request serves all of them.
     if row.behavior.is_optional_peer()
-        || (row.version.tag == dependency::version::Tag::Npm
-            && !row.version.npm().is_alias
+        || (row.version.try_npm().is_some_and(|npm| !npm.is_alias)
             && this.look_ahead.seen.contains_key(&row.name_hash))
     {
         return;
@@ -1259,7 +1234,7 @@ fn request_row_ahead(this: &mut PackageManager, id: DependencyID, item: Lockfile
     // The rows of a package that the peer pass added are queued like any other package's. Its
     // peers are in the next batch, and all they wait for is their turn.
     let install_peer = item.install_peer || this.look_ahead.in_peer_pass;
-    match asked.version.tag {
+    match asked.version.tag() {
         // `Wanted` keeps the text of a range, and a range that a command made up has none. A tag
         // without text is what `bun add <name>` and `"name": ""` ask for, and it means `latest`.
         dependency::version::Tag::Npm if asked.version.literal.is_empty() => return,
@@ -1324,8 +1299,8 @@ fn request_remote_package_ahead(
         || this.options.runtime_auto_install
         // A deferred peer doesn't request anything, because the tree may provide it.
         || (dependency.behavior.is_peer() && !install_peer)
-        || (asked.version.tag == dependency::version::Tag::Tarball
-            && match &asked.version.tarball().uri {
+        || match &asked.version.value {
+            dependency::Value::Tarball(tarball) => match &tarball.uri {
                 // Whether another package may name a tarball in the project is decided at its turn.
                 dependency::tarball::Uri::Local(_) => {
                     !this.lockfile.is_dependency_of_local_package(id)
@@ -1335,7 +1310,9 @@ fn request_remote_package_ahead(
                     this.options.has_tarball_url_credentials()
                         && !(this.lockfile).is_tarball_url_of_project(this.lockfile.str(url))
                 }
-            })
+            },
+            _ => false,
+        }
     {
         return;
     }
@@ -1367,19 +1344,19 @@ fn look_ahead_from_project_folder(this: &mut PackageManager, id: DependencyID, a
     {
         return;
     }
-    let path = match asked.version.tag {
-        dependency::version::Tag::Workspace => (this.lockfile.workspace_paths)
+    let path = match &asked.version.value {
+        dependency::Value::Workspace(workspace) => (this.lockfile.workspace_paths)
             .get(&asked.name_hash)
             .copied()
-            .unwrap_or_else(|| *asked.version.workspace()),
-        _ => *asked.version.folder(),
+            .unwrap_or(*workspace),
+        dependency::Value::Folder(folder) => *folder,
+        _ => return,
     };
-    let path = this.lockfile.str_detached(&path);
     let mut buf = bun_paths::path_buffer_pool::get();
-    let Some(abs) = project_path(path, &mut buf[..]) else {
+    let Some(abs) = project_path(this.lockfile.str(&path), &mut buf[..]) else {
         return;
     };
-    if let Some(listed) = FolderResolution::listed_dependencies(asked.version.tag, abs, this) {
+    if let Some(listed) = FolderResolution::listed_dependencies(asked.version.tag(), abs, this) {
         let locked = names_locked_for_folder(this, &listed);
         look_ahead_from(this, &listed, &locked);
     }
@@ -1489,7 +1466,6 @@ fn look_ahead(this: &mut PackageManager, first: Wanted) {
 /// Pushes what the version that `wanted` most likely resolves to depends on, except for the
 /// packages that were looked at before. The manifest of `wanted` is in memory.
 fn follow_likely_version(this: &mut PackageManager, wanted: &Wanted, stack: &mut Vec<Wanted>) {
-    use dependency::version::Tag;
     let name_hash = wanted.name_hash;
     let Some(version) = wanted.version() else {
         return;
@@ -1501,11 +1477,11 @@ fn follow_likely_version(this: &mut PackageManager, wanted: &Wanted, stack: &mut
     let lockfile = &*this.lockfile;
     let buf = lockfile.buffers.string_bytes.as_slice();
     let resolutions = lockfile.packages.items_resolution();
-    if version.tag == Tag::Npm
+    if let dependency::Value::Npm(npm) = &version.value
         && lockfile.packages_named(name_hash).iter().any(|&id| {
             let existing = &resolutions[id as usize];
             existing.tag == ResolutionTag::Npm
-                && (version.npm().version).satisfies(existing.npm().version, &wanted.text, buf)
+                && (npm.version).satisfies(existing.npm().version, &wanted.text, buf)
         })
     {
         return;
@@ -1615,9 +1591,9 @@ impl Follow<'_> {
             // Only the parser knows where the name in `npm:name@range` ends.
             let unnamed = Wanted::new(alias, range, b"", 0, follows_peers);
             let version = unnamed.version()?;
-            let name = match version.tag {
-                Tag::Npm => version.npm().name.slice(&unnamed.text),
-                Tag::DistTag => version.dist_tag().name.slice(&unnamed.text),
+            let name = match &version.value {
+                dependency::Value::Npm(npm) => npm.name.slice(&unnamed.text),
+                dependency::Value::DistTag(dist_tag) => dist_tag.name.slice(&unnamed.text),
                 _ => return None,
             };
             let name_hash = Semver::string::Builder::string_hash(name);
@@ -1716,12 +1692,8 @@ fn enqueue_resolved_task(
         }
         ResolvedPackageTask::PatchTask(patch_task) => {
             let (ready, started) = match patch_task.callback {
-                crate::patch_install::Callback::CalcHash(_) => {
-                    (State::CalcPatchHash, State::CalcingPatchHash)
-                }
-                crate::patch_install::Callback::Apply(_) => {
-                    (State::ApplyPatch, State::ApplyingPatch)
-                }
+                PatchTaskCallback::CalcHash(_) => (State::CalcPatchHash, State::CalcingPatchHash),
+                PatchTaskCallback::Apply(_) => (State::ApplyPatch, State::ApplyingPatch),
             };
             if state == ready {
                 this.set_preinstall_state(package_id, started);
@@ -1754,7 +1726,7 @@ fn asked_version<'a>(
     replacement: &'a mut Option<dependency::Version>,
 ) -> Result<Asked<'a>, Task::Id> {
     let mut name = dependency.realname();
-    let mut name_hash = match dependency.version.tag {
+    let mut name_hash = match dependency.version.tag() {
         dependency::version::Tag::DistTag
         | dependency::version::Tag::Git
         | dependency::version::Tag::Github
@@ -1768,15 +1740,16 @@ fn asked_version<'a>(
 
     'replaced: {
         // Only a plain dependency follows a same-named `npm:` alias of the project.
-        if dependency.version.tag == dependency::version::Tag::Npm
-            && !dependency.version.npm().is_alias
+        if let dependency::Value::Npm(npm) = &dependency.version.value
+            && !npm.is_alias
             && !this.known_npm_aliases.is_empty()
         {
-            if let Some(aliased) = followed_npm_alias(this, id, is_root, name, name_hash) {
-                let group = &dependency.version.npm().version;
+            if let Some(aliased) = followed_npm_alias(this, id, is_root, name, name_hash)
+                && let dependency::Value::Npm(alias) = &aliased.value
+            {
+                let group = &npm.version;
                 let buf = this.lockfile.buffers.string_bytes.as_slice();
-                // SAFETY: `aliased` is always tag == Npm (`followed_npm_alias` returns no other).
-                let alias_group = &aliased.npm().version;
+                let alias_group = &alias.version;
                 // The bounds guess where the alias resolves. A peer is not held to its range.
                 if (dependency.behavior.is_peer() || group.intersects(buf, alias_group, buf))
                     && group.is_satisfied_by_a_bound_of(buf, alias_group, buf)
@@ -1787,9 +1760,9 @@ fn asked_version<'a>(
                             .is_none())
                     && (dependency.behavior.is_peer()
                         || group.is_star()
-                        || takes_alias_target(this, group, &aliased)?)
+                        || takes_alias_target(this, group, &aliased, alias)?)
                 {
-                    name = aliased.npm().name;
+                    name = alias.name;
                     name_hash = Semver::string::Builder::string_hash(this.lockfile.str(&name));
                     *replacement = Some(aliased);
                     break 'replaced;
@@ -1802,8 +1775,7 @@ fn asked_version<'a>(
 
         // A workspaceOnly dependency is never overridden. `lookup` decides which rules reach an alias.
         if !dependency.behavior.is_workspace() {
-            let is_alias = dependency.version.tag == dependency::version::Tag::Npm
-                && dependency.version.npm().is_alias;
+            let is_alias = dependency.version.is_npm_alias();
             // Rules for an alias are keyed by the alias, not by the package it points at.
             let rule_name_hash = if is_alias {
                 dependency.name_hash
@@ -1818,7 +1790,7 @@ fn asked_version<'a>(
                 .filter(|rule| {
                     !this.options.runtime_auto_install
                         || matches!(
-                            rule.version.tag,
+                            rule.version.tag(),
                             dependency::version::Tag::Npm
                                 | dependency::version::Tag::DistTag
                                 | dependency::version::Tag::Catalog
@@ -1842,22 +1814,19 @@ fn asked_version<'a>(
             }
 
             let declared = rule.map_or(&dependency.version, |rule| &rule.version);
-            if declared.tag == dependency::version::Tag::Catalog {
-                if let Some(catalog_dep) =
-                    this.lockfile
-                        .catalogs
-                        .get(&this.lockfile, *declared.catalog(), name)
-                {
-                    let v = catalog_dep.version;
-                    (name, name_hash) = update_name_and_name_hash_from_version_replacement(
-                        &this.lockfile,
-                        name,
-                        name_hash,
-                        &v,
-                    );
-                    *replacement = Some(v);
-                    break 'replaced;
-                }
+            if let dependency::Value::Catalog(catalog) = &declared.value
+                && let Some(catalog_dep) =
+                    this.lockfile.catalogs.get(&this.lockfile, *catalog, name)
+            {
+                let v = catalog_dep.version;
+                (name, name_hash) = update_name_and_name_hash_from_version_replacement(
+                    &this.lockfile,
+                    name,
+                    name_hash,
+                    &v,
+                );
+                *replacement = Some(v);
+                break 'replaced;
             }
 
             if let Some(rule) = rule {
@@ -1885,7 +1854,7 @@ fn unsafe_name<'a>(
     if let Some(alias) = unsafe_alias(lockfile, dependency) {
         return Some(alias);
     }
-    let registry_name: Option<&[u8]> = match asked.version.tag {
+    let registry_name: Option<&[u8]> = match asked.version.tag() {
         dependency::version::Tag::Npm | dependency::version::Tag::DistTag => {
             Some(lockfile.str(&asked.name))
         }
@@ -1970,7 +1939,7 @@ pub(crate) fn bind_row(
     };
     let mut loaded_manifest: Option<Npm::PackageManifest> = None;
 
-    match version.tag {
+    match version.tag() {
         dependency::version::Tag::DistTag
         | dependency::version::Tag::Folder
         | dependency::version::Tag::Npm => {
@@ -1998,7 +1967,7 @@ pub(crate) fn bind_row(
                                 this, id, dependency, name, version, err, is_root,
                             )?;
                             // The manifest is loaded and doesn't have that version.
-                            if version.tag.is_npm() {
+                            if version.tag().is_npm() {
                                 this.hold_log_since(log_mark, id);
                             }
                             return Ok(Row::Done);
@@ -2014,7 +1983,7 @@ pub(crate) fn bind_row(
                         }
                         return Ok(Row::Done);
                     }
-                    if !version.tag.is_npm() {
+                    if !version.tag().is_npm() {
                         return Ok(Row::Done);
                     }
 
@@ -2060,9 +2029,9 @@ pub(crate) fn bind_row(
                             let excludes = this.options.minimum_release_age_excludes;
 
                             // An exact version in an expired manifest needs no request.
-                            let exact = (version.tag == dependency::version::Tag::Npm
-                                && version.npm().version.is_exact())
-                            .then(|| version.npm().version.head.head.range.left.version);
+                            let exact = (version.try_npm())
+                                .filter(|npm| npm.version.is_exact())
+                                .map(|npm| npm.version.head.head.range.left.version);
                             if let Some(exact) = exact
                                 && (!needs_extended_manifest
                                     || manifest.pkg.has_extended_manifest()
@@ -2209,9 +2178,8 @@ fn bind_row_without_manifest(
         }
     };
 
-    match version.tag {
-        dependency::version::Tag::Git => {
-            let dep: Repository = *version.git();
+    match &version.value {
+        &dependency::Value::Git(dep) => {
             let res = Resolution::init(ResolutionTagged::Git(dep));
 
             // First: see if we already loaded the git package in-memory
@@ -2242,17 +2210,15 @@ fn bind_row_without_manifest(
                 return Ok(());
             }
 
-            // The enqueue callees copy these into the filename store before `string_bytes` grows.
-            let alias = this.lockfile.str_detached(&dependency.name);
-            let url = this.lockfile.str_detached(&dep.repo);
+            let alias = dependency.name;
+            let url = this.lockfile.str(&dep.repo);
             let clone_id = Task::Id::for_git_clone(url);
 
             if let Some(repo_fd) = this.git_repositories.get(&clone_id).copied() {
                 let needs_ctx = this.lockfile.awaits_resolve(id);
 
                 // Waits on a `git log` task; `run_tasks` fills `git_commits` and re-enters here.
-                let committish = this.lockfile.str_detached(&dep.committish);
-                let commit_id = Task::Id::for_git_commit(url, committish);
+                let commit_id = Task::Id::for_git_commit(url, this.lockfile.str(&dep.committish));
                 let resolved = match this.git_commits.get(&commit_id) {
                     Some(resolved) => resolved.clone(),
                     None => {
@@ -2270,7 +2236,7 @@ fn bind_row_without_manifest(
                         }
 
                         let task =
-                            enqueue_git_commit(this, commit_id, clone_id, alias, url, committish);
+                            enqueue_git_commit(this, commit_id, clone_id, alias, dep.committish);
                         this.enqueue_git_task(task);
                         return Ok(());
                     }
@@ -2305,7 +2271,7 @@ fn bind_row_without_manifest(
                     id,
                     alias,
                     &res,
-                    &resolved,
+                    stored_string(&resolved),
                     None,
                 );
                 this.enqueue_git_task(task);
@@ -2329,12 +2295,12 @@ fn bind_row_without_manifest(
             }
             Ok(())
         }
-        dependency::version::Tag::Symlink | dependency::version::Tag::Workspace => {
-            let dependency_tag = version.tag;
+        dependency::Value::Symlink(target) | dependency::Value::Workspace(target) => {
+            let dependency_tag = version.tag();
 
             // The same trust rule as in the `file:` arm of `get_or_put_resolved_package`.
             let is_link_path = dependency_tag == dependency::version::Tag::Symlink
-                && dependency::is_link_path(this.lockfile.str(version.symlink()));
+                && dependency::is_link_path(this.lockfile.str(target));
             if is_link_path && !this.lockfile.is_trusted_folder_dependency(id) {
                 if dependency.behavior.is_required() {
                     reject_link_path_of_remote_package(this, id, dependency, version);
@@ -2380,7 +2346,7 @@ fn bind_row_without_manifest(
                     is_required,
                     format_args!(
                         "directory \"{}\" not found for linked dependency \"{}\"",
-                        bun_fmt::escape_control_chars(this.lockfile.str(version.symlink())),
+                        bun_fmt::escape_control_chars(this.lockfile.str(target)),
                         bun_fmt::escape_control_chars(this.lockfile.str(&name)),
                     ),
                 );
@@ -2392,7 +2358,7 @@ fn bind_row_without_manifest(
                     bstr::BStr::new(this.lockfile.str(&name)),
                     PackageWorkspaceSearchPathFormatter {
                         manager: this,
-                        version: version.clone(),
+                        workspace: target,
                     },
                 );
             } else {
@@ -2405,13 +2371,14 @@ fn bind_row_without_manifest(
             }
             Ok(())
         }
-        dependency::version::Tag::Github | dependency::version::Tag::Tarball => {
-            let res = Resolution::init(match version.tag {
-                dependency::version::Tag::Github => ResolutionTagged::Github(*version.github()),
-                _ => match &version.tarball().uri {
-                    dependency::tarball::Uri::Local(path) => ResolutionTagged::LocalTarball(*path),
-                    dependency::tarball::Uri::Remote(url) => ResolutionTagged::RemoteTarball(*url),
+        dependency::Value::Github(_) | dependency::Value::Tarball(_) => {
+            let res = Resolution::init(match &version.value {
+                dependency::Value::Github(github) => ResolutionTagged::Github(*github),
+                dependency::Value::Tarball(tarball) => match tarball.uri {
+                    dependency::tarball::Uri::Local(path) => ResolutionTagged::LocalTarball(path),
+                    dependency::tarball::Uri::Remote(url) => ResolutionTagged::RemoteTarball(url),
                 },
+                _ => unreachable!(),
             });
             if res.tag == ResolutionTag::LocalTarball
                 && !version_was_replaced
@@ -2434,17 +2401,13 @@ fn bind_row_without_manifest(
                 return Ok(());
             }
 
-            // The enqueue callees copy `url` into the filename store before `string_bytes` grows.
-            let github_url;
-            let url: &[u8] = match res.tag {
-                ResolutionTag::Github => {
-                    github_url = this.alloc_github_url(res.github());
-                    &github_url
-                }
-                ResolutionTag::LocalTarball => this.lockfile.str_detached(res.local_tarball()),
-                _ => this.lockfile.str_detached(res.remote_tarball()),
-            };
-            let task_id = Task::Id::for_tarball(url);
+            let github_url =
+                (res.tag == ResolutionTag::Github).then(|| this.alloc_github_url(res.github()));
+            let task_id = Task::Id::for_tarball(match (&github_url, res.tag) {
+                (Some(url), _) => url,
+                (None, ResolutionTag::LocalTarball) => this.lockfile.str(res.local_tarball()),
+                (None, _) => this.lockfile.str(res.remote_tarball()),
+            });
 
             if this.lockfile.awaits_resolve(id) {
                 if let Some(pkg_id) = resolve_from_appended_task(this, task_id, id) {
@@ -2466,8 +2429,8 @@ fn bind_row_without_manifest(
                     return Ok(());
                 }
                 if !this.has_created_network_task(task_id, dependency.behavior.is_required()) {
-                    let dep_name = this.lockfile.str_detached(&dependency.name);
-                    let task = enqueue_local_tarball(this, task_id, id, dep_name, url, &res, None);
+                    let task =
+                        enqueue_local_tarball(this, task_id, id, dependency.name, &res, None);
                     this.task_batch.push(ThreadPool::Batch::from(task));
                 }
                 return Ok(());
@@ -2479,7 +2442,7 @@ fn bind_row_without_manifest(
                 match run_tasks::generate_network_task_for_tarball(
                     this,
                     task_id,
-                    url,
+                    github_url.as_deref(),
                     dependency.behavior.is_required(),
                     id,
                     &Package {
@@ -2600,14 +2563,15 @@ fn report_resolve_error(
     let age_gate_s = this.options.minimum_release_age_ms.unwrap_or(0.0) / MS_PER_S;
     let log = this.log_mut();
     match err {
-        E::DistTagNotFound => log.add_error_fmt(
-            None,
-            bun_ast::Loc::EMPTY,
-            format_args!(
-                "Package \"{name}\" with tag \"{}\" not found, but package exists",
-                escape(version.dist_tag().tag.slice(buf)),
+        E::DistTagNotFound if let dependency::Value::DistTag(dist_tag) = &version.value => log
+            .add_error_fmt(
+                None,
+                bun_ast::Loc::EMPTY,
+                format_args!(
+                    "Package \"{name}\" with tag \"{}\" not found, but package exists",
+                    escape(dist_tag.tag.slice(buf)),
+                ),
             ),
-        ),
         E::NoMatchingVersion => bun_ast::add_error_pretty!(
             log,
             None,
@@ -2616,14 +2580,14 @@ fn report_resolve_error(
             escape(version.literal.slice(buf)),
             name,
         ),
-        E::TooRecentVersion if version.tag == dependency::version::Tag::DistTag => {
+        E::TooRecentVersion if let dependency::Value::DistTag(dist_tag) = &version.value => {
             bun_ast::add_error_pretty!(
                 log,
                 None,
                 bun_ast::Loc::EMPTY,
                 "Package \"{}\" with tag \"{}\" not found<r> <d>(all versions blocked by minimum-release-age: {} seconds)<r>",
                 name,
-                escape(version.dist_tag().tag.slice(buf)),
+                escape(dist_tag.tag.slice(buf)),
                 age_gate_s,
             )
         }
@@ -2636,13 +2600,13 @@ fn report_resolve_error(
             name,
             age_gate_s,
         ),
-        E::MissingPackageJSON if version.tag == dependency::version::Tag::Folder => log
+        E::MissingPackageJSON if let dependency::Value::Folder(folder) = &version.value => log
             .add_error_fmt(
                 None,
                 bun_ast::Loc::EMPTY,
                 format_args!(
                     "package.json not found for \"file:{}\" dependency \"{name}\"",
-                    escape(version.folder().slice(buf)),
+                    escape(folder.slice(buf)),
                 ),
             ),
         E::MissingPackageJSON => log.add_error_fmt(
@@ -2788,13 +2752,13 @@ fn requires_local_target(
 /// Allocated up front on the main thread, because `preallocated_resolve_tasks` isn't thread-safe.
 pub(crate) fn create_extract_task_for_streaming(
     this: &mut PackageManager,
-    tarball: &ExtractTarball,
     network_task: *mut NetworkTask,
 ) -> *mut Task::Task {
     // SAFETY: `network_task` is a live pool slot, and it is not returned to the pool
     // before this task is done, which is what the `'static` stands for.
     let network = unsafe { &mut *network_task };
     let id = network.task_id;
+    let tarball = network.tarball();
     let job = Task::Job::Extract {
         tarball: ExtractTarball {
             skip_verify: this.skips_verify(tarball.resolution.tag),
@@ -2808,10 +2772,9 @@ pub(crate) fn create_extract_task_for_streaming(
 
 pub fn enqueue_extract_npm_package(
     this: &mut PackageManager,
-    tarball: &ExtractTarball,
     network_task: *mut NetworkTask,
 ) -> *mut ThreadPool::Task {
-    let task = create_extract_task_for_streaming(this, tarball, network_task);
+    let task = create_extract_task_for_streaming(this, network_task);
     // SAFETY: a valid, initialized pool slot
     unsafe { &raw mut (*task).threadpool_task }
 }
@@ -2819,12 +2782,12 @@ pub fn enqueue_extract_npm_package(
 fn enqueue_git_clone(
     this: &mut PackageManager,
     task_id: Task::Id,
-    name: &[u8],
+    name: SemverString,
     repository: &Repository,
 ) -> NonNull<Task::Task> {
     let job = Task::Job::GitClone {
         request: Task::GitCloneRequest {
-            name: stored_string(name),
+            name: stored_string(this.lockfile.str(&name)),
             url: stored_string(this.lockfile.str(&repository.repo)),
         },
         repo: Fd::invalid(),
@@ -2837,16 +2800,14 @@ fn enqueue_git_commit(
     this: &mut PackageManager,
     task_id: Task::Id,
     clone_id: Task::Id,
-    name: &[u8],
-    url: &[u8],
-    committish: &[u8],
+    name: SemverString,
+    committish: SemverString,
 ) -> NonNull<Task::Task> {
     let job = Task::Job::GitCommit {
         request: Task::GitCommitRequest {
             clone_id,
-            name: stored_string(name),
-            url: stored_string(url),
-            committish: stored_string(committish),
+            name: stored_string(this.lockfile.str(&name)),
+            committish: stored_string(this.lockfile.str(&committish)),
         },
         sha: Vec::new(),
     };
@@ -2858,9 +2819,9 @@ pub fn enqueue_git_checkout(
     task_id: Task::Id,
     dir: Fd,
     dependency_id: DependencyID,
-    name: &[u8],
+    name: SemverString,
     resolution: &Resolution,
-    resolved: &[u8],
+    resolved: StringOrTinyString,
     // the package to patch and its name-and-version hash, if an apply step follows the checkout
     patch: Option<(PackageID, u64)>,
 ) -> NonNull<Task::Task> {
@@ -2884,9 +2845,9 @@ pub fn enqueue_git_checkout(
             repo_dir: dir,
             resolution: *resolution,
             dependency_id,
-            name: stored_string(name),
+            name: stored_string(this.lockfile.str(&name)),
             url: stored_string(this.lockfile.str(&resolution.git().repo)),
-            resolved: stored_string(resolved),
+            resolved,
             apply_patch_task: patch.map(|(pkg_id, h, patch_hash)| {
                 let mut pt = PatchTask::new_apply_patch_hash(this, pkg_id, patch_hash, h);
                 pt.callback.apply_mut().task_id = Some(task_id);
@@ -2902,12 +2863,13 @@ fn enqueue_local_tarball(
     this: &mut PackageManager,
     task_id: Task::Id,
     dependency_id: DependencyID,
-    name: &[u8],
-    path: &[u8],
+    name: SemverString,
     resolution: &Resolution,
     // Of the package in the loaded lockfile.
     locked_integrity: Option<&Integrity>,
 ) -> *mut ThreadPool::Task {
+    let temp_dir = get_temporary_directory(this);
+    let path = this.lockfile.str(resolution.local_tarball());
     // Resolve the on-disk tarball path here on the main thread. The task
     // callback runs on a ThreadPool worker and must not read
     // `lockfile.packages` / `lockfile.buffers.string_bytes`: those buffers
@@ -2928,18 +2890,17 @@ fn enqueue_local_tarball(
 
     let job = Task::Job::Extract {
         tarball: ExtractTarball {
-            package_manager: bun_ptr::BackRef::new(this),
-            name: stored_string(name),
+            registry: None,
+            name: stored_string(this.lockfile.str(&name)),
             resolution: *resolution,
-            cache_dir: get_cache_directory(this),
-            temp_dir: get_temporary_directory(this).handle.fd(),
+            temp_dir,
             dependency_id,
             integrity: locked_integrity.copied().unwrap_or_default(),
             stays_unpinned: locked_integrity.is_some() && !this.pins_tarballs(),
             url: stored_string(path),
             skip_verify: false,
             in_trusted_dependencies: false,
-            github_resolved: StringOrTinyString::EMPTY,
+            github_resolved: b"",
         },
         source: Task::TarballSource::Local {
             path: tarball_path,
@@ -2959,11 +2920,13 @@ fn local_tarball_base_dir<'a>(
     path: &[u8],
 ) -> Option<&'a [u8]> {
     let declared = &lockfile.buffers.dependencies[dependency_id as usize].version;
-    let declared_by_parent = declared.tag == dependency::version::Tag::Tarball
-        && matches!(
-            &declared.tarball().uri,
-            dependency::tarball::Uri::Local(declared_path) if lockfile.str(declared_path) == path
-        );
+    let declared_by_parent = matches!(
+        &declared.value,
+        dependency::Value::Tarball(dependency::TarballInfo {
+            uri: dependency::tarball::Uri::Local(declared_path),
+            ..
+        }) if lockfile.str(declared_path) == path
+    );
     if !declared_by_parent {
         // Overrides, resolutions and catalogs are all written in the root package.json.
         return None;
@@ -2985,21 +2948,20 @@ fn update_name_and_name_hash_from_version_replacement(
     original_name_hash: PackageNameHash,
     new_version: &dependency::Version,
 ) -> (SemverString, PackageNameHash) {
-    match new_version.tag {
+    match &new_version.value {
         // only get name hash for npm and dist_tag. git, github, tarball don't have names until after extracting tarball
-        dependency::version::Tag::DistTag => (
-            new_version.dist_tag().name,
-            Semver::string::Builder::string_hash(lockfile.str(&new_version.dist_tag().name)),
+        dependency::Value::DistTag(dist_tag) => (
+            dist_tag.name,
+            Semver::string::Builder::string_hash(lockfile.str(&dist_tag.name)),
         ),
-        dependency::version::Tag::Npm => (
-            new_version.npm().name,
-            Semver::string::Builder::string_hash(lockfile.str(&new_version.npm().name)),
+        dependency::Value::Npm(npm) => (
+            npm.name,
+            Semver::string::Builder::string_hash(lockfile.str(&npm.name)),
         ),
-        dependency::version::Tag::Git => (new_version.git().package_name, original_name_hash),
-        dependency::version::Tag::Github => (new_version.github().package_name, original_name_hash),
-        dependency::version::Tag::Tarball => {
-            (new_version.tarball().package_name, original_name_hash)
+        dependency::Value::Git(repo) | dependency::Value::Github(repo) => {
+            (repo.package_name, original_name_hash)
         }
+        dependency::Value::Tarball(tarball) => (tarball.package_name, original_name_hash),
         _ => (original_name, original_name_hash),
     }
 }
@@ -3035,7 +2997,7 @@ fn root_workspace_package_id(
     debug_assert_eq!(root_dependencies.len(), root_resolutions.len());
     for (root_dep, &workspace_package_id) in root_dependencies.iter().zip(root_resolutions) {
         if workspace_package_id != invalid_package_id
-            && root_dep.version.tag == dependency::version::Tag::Workspace
+            && root_dep.version.tag() == dependency::version::Tag::Workspace
             && root_dep.name_hash == name_hash
         {
             return Some(workspace_package_id);
@@ -3200,7 +3162,6 @@ fn tarball_task(
     package: &Package,
     behavior: Behavior,
     dependency_id: DependencyID,
-    url: &[u8],
 ) -> crate::Result<Option<ResolvedPackageTask>> {
     let task_id =
         Task::Id::for_npm_package(this.lockfile.str(&name), package.resolution.npm().version);
@@ -3209,7 +3170,7 @@ fn tarball_task(
     let task = run_tasks::generate_network_task_for_tarball(
         this,
         task_id,
-        url,
+        None,
         behavior.is_required(),
         dependency_id,
         package,
@@ -3242,7 +3203,7 @@ fn get_or_put_resolved_package_with_find_result(
         } else {
             // A bare `bun update` updates the dependencies that the targeted workspaces declare.
             // Catalogs belong to the root.
-            dependency.version.tag == dependency::version::Tag::Catalog
+            dependency.version.tag() == dependency::version::Tag::Catalog
                 || update_target_declares(this, dependency_id)
         };
 
@@ -3322,7 +3283,7 @@ fn get_or_put_resolved_package_with_find_result(
 
     debug_assert!(package.meta.id != invalid_package_id);
     let package_id = package.meta.id;
-    if version.tag == dependency::version::Tag::Npm && version.npm().version.is_exact() {
+    if version.is_exact_npm() {
         this.lockfile.mark_exact_pin(package_id);
     }
     // `success_fn` runs however the rest exits, including through `?`.
@@ -3366,8 +3327,7 @@ fn get_or_put_resolved_package_with_find_result(
             }
             // Do we need to download the tarball?
             install::PreinstallState::Extract => {
-                let url = manifest.str(&find_result.package.tarball_url);
-                tarball_task(this, name, &package, behavior, dependency_id, url)?
+                tarball_task(this, name, &package, behavior, dependency_id)?
             }
             install::PreinstallState::CalcPatchHash => Some(ResolvedPackageTask::PatchTask(
                 PatchTask::new_calc_patch_hash(
@@ -3376,7 +3336,6 @@ fn get_or_put_resolved_package_with_find_result(
                     Some(EnqueueAfterState {
                         pkg_id: package.meta.id,
                         dependency_id,
-                        url: Box::<[u8]>::from(manifest.str(&find_result.package.tarball_url)),
                     }),
                 ),
             )),
@@ -3459,10 +3418,10 @@ fn settle_without_manifest(
         return Some(Settled::Resolved);
     }
 
-    let links = match version.tag {
-        dependency::version::Tag::Npm => links_workspace(this, name_hash, &version.npm().version),
+    let links = match &version.value {
+        dependency::Value::Npm(npm) => links_workspace(this, name_hash, &npm.version),
         // `bun add <name>` asks for no version and no tag, so it links a workspace as `*` would.
-        dependency::version::Tag::DistTag => {
+        dependency::Value::DistTag(_) => {
             has_linkable_workspace(this, name_hash)
                 && !version_was_replaced
                 && is_bare_add_request(this, dependency, dependency_id)
@@ -3534,25 +3493,27 @@ fn get_or_put_resolved_package(
         None => {}
     }
 
-    match version.tag {
-        dependency::version::Tag::Npm | dependency::version::Tag::DistTag => {
+    match &version.value {
+        dependency::Value::Npm(_) | dependency::Value::DistTag(_) => {
             // Resolve the version from the loaded NPM manifest
             let cache_ctx = this.manifest_disk_cache_ctx();
             let needs_ext = this.options.minimum_release_age_ms.is_some();
-            let this_ptr: *mut PackageManager = this;
-            // `string_bytes` is not resized between here and the `find_result` lookup.
-            let name_str = this.lockfile.str_detached(&name);
+            // Taken out, so that the manifest can be read while the manager changes.
+            let manifests = core::mem::take(&mut this.manifests);
+            let mut guard = scopeguard::guard((this, manifests), |(this, manifests)| {
+                debug_assert!(this.manifests.hash_map.is_empty());
+                this.manifests = manifests;
+            });
+            let (this, manifests) = &mut *guard;
 
+            let name_str = this.lockfile.str(&name);
             let scope = this.options.scope_for_package_name(name_str);
-            // SAFETY: `manifests` projected from `this_ptr`; the lookup holds
-            // only that disjoint field borrow alongside the shared `options`
-            // / `lockfile` borrows above.
-            let Some(manifest) = (unsafe { &mut (*this_ptr).manifests })
-                .by_name_hash(cache_ctx, scope, name_str, name_hash, needs_ext)
+            let Some(manifest) =
+                manifests.by_name_hash(cache_ctx, scope, name_str, name_hash, needs_ext)
             else {
                 // The registry doesn't have the name. `run_tasks` sent the dependency back here
                 // after the 404.
-                if version.tag == dependency::version::Tag::DistTag
+                if version.tag() == dependency::version::Tag::DistTag
                     && has_linkable_workspace(this, name_hash)
                     && this.network_task_has_failed(Task::Id::for_manifest(name_str))
                     && let Some(id) = root_workspace_package_id(&this.lockfile, name_hash)
@@ -3612,11 +3573,11 @@ fn get_or_put_resolved_package(
                             this.options.minimum_release_age_ms.unwrap_or(0.0) / MS_PER_S;
                         let manifest_buf: &[u8] = &manifest.string_buf;
                         let buf = this.lockfile.buffers.string_bytes.as_slice();
-                        let wanted: &dyn core::fmt::Display = match version.tag {
-                            dependency::version::Tag::DistTag => {
-                                &bun_fmt::escape_control_chars(version.dist_tag().tag.slice(buf))
+                        let wanted: &dyn core::fmt::Display = match &version.value {
+                            dependency::Value::DistTag(dist_tag) => {
+                                &bun_fmt::escape_control_chars(dist_tag.tag.slice(buf))
                             }
-                            dependency::version::Tag::Npm => &version.npm().version.fmt(buf),
+                            dependency::Value::Npm(npm) => &npm.version.fmt(buf),
                             _ => unreachable!(),
                         };
                         bun_core::pretty_errorln!(
@@ -3661,13 +3622,13 @@ fn get_or_put_resolved_package(
                 None => 'instead_of_latest: {
                     // An unmet peer only warns.
                     if !behavior.is_peer()
-                        && refetch_stale_manifest(this, name_str, behavior.is_optional())?
+                        && refetch_stale_manifest(this, manifest.name(), behavior.is_optional())?
                     {
                         return Ok(None);
                     }
 
                     // A workspace is only used for a dist-tag if the registry can't satisfy it.
-                    if version.tag == dependency::version::Tag::DistTag
+                    if version.tag() == dependency::version::Tag::DistTag
                         && let Some(id) = root_workspace_package_id(&this.lockfile, name_hash)
                     {
                         return bind_existing(this, dependency_id, id, success_fn);
@@ -3675,8 +3636,11 @@ fn get_or_put_resolved_package(
 
                     // A mirror that lags behind its own dist-tags, or a registry that serves none.
                     if latest_for_target
-                        || (version.tag == dependency::version::Tag::DistTag
-                            && this.lockfile.str(&version.dist_tag().tag) == b"latest")
+                        || matches!(
+                            &version.value,
+                            dependency::Value::DistTag(dist_tag)
+                                if this.lockfile.str(&dist_tag.tag) == b"latest"
+                        )
                     {
                         if let Some(instead) = manifest
                             .find_any_version(
@@ -3690,7 +3654,7 @@ fn get_or_put_resolved_package(
                         }
                     }
 
-                    return match version.tag {
+                    return match version.tag() {
                         dependency::version::Tag::Npm => Err(crate::Error::NoMatchingVersion),
                         dependency::version::Tag::DistTag => Err(crate::Error::DistTagNotFound),
                         _ => unreachable!(),
@@ -3710,7 +3674,7 @@ fn get_or_put_resolved_package(
             // It also never moves a dependency on a dist-tag below the version that the tag points
             // to.
             if latest_for_target
-                && version.tag == dependency::version::Tag::DistTag
+                && version.tag() == dependency::version::Tag::DistTag
                 && let Some(tagged) = manifest
                     .find_for_dependency(
                         version,
@@ -3750,9 +3714,7 @@ fn get_or_put_resolved_package(
             }
 
             get_or_put_resolved_package_with_find_result(
-                // SAFETY: the callee doesn't touch `this.manifests`, which `manifest` and
-                // `find_result` point into.
-                unsafe { &mut *this_ptr },
+                this,
                 name_hash,
                 name,
                 dependency,
@@ -3766,8 +3728,7 @@ fn get_or_put_resolved_package(
             )
         }
 
-        dependency::version::Tag::Folder => {
-            let folder = *version.folder();
+        &dependency::Value::Folder(folder) => {
             let res: FolderResolutionValue = 'res: {
                 // A rule of the root package.json wrote the path: read like a root `file:` row.
                 let from_root_rule = version_was_replaced
@@ -3834,7 +3795,7 @@ fn get_or_put_resolved_package(
 
             resolved_folder_package(this, res, dependency_id, success_fn)
         }
-        dependency::version::Tag::Workspace => {
+        dependency::Value::Workspace(workspace) => {
             if !behavior.is_workspace() && !this.lockfile.is_workspace_dependency(dependency_id) {
                 let buf = this.lockfile.buffers.string_bytes.as_slice();
                 if !this.lockfile.overrides.contains_name(
@@ -3853,44 +3814,37 @@ fn get_or_put_resolved_package(
                 .workspace_paths
                 .get(&name_hash)
                 .copied()
-                .unwrap_or_else(|| *version.workspace());
+                .unwrap_or(*workspace);
             let res = resolve_project_folder(this, version, workspace_path);
             resolved_folder_package(this, res, dependency_id, success_fn)
         }
-        dependency::version::Tag::Symlink => {
-            // `get_or_put` copies it into the lockfile string buffer before any other mutation.
-            let symlink_path = this.lockfile.str_detached(version.symlink());
-            if dependency::is_link_path(symlink_path) {
-                let mut buf2 = bun_paths::path_buffer_pool::get();
-                let res =
-                    match Path::resolve_path::join_abs_string_buf_checked::<Path::platform::Auto>(
+        dependency::Value::Symlink(symlink) => {
+            let mut buf = bun_paths::path_buffer_pool::get();
+            let (base, path) = if dependency::is_link_path(this.lockfile.str(symlink)) {
+                (
+                    GlobalOrRelative::Relative(dependency::version::Tag::Symlink),
+                    Path::resolve_path::join_abs_string_buf_checked::<Path::platform::Auto>(
                         FileSystem::get().top_level_dir(),
-                        &mut buf2[..],
-                        &[symlink_path],
-                    ) {
-                        Some(symlink_path_abs) => FolderResolution::get_or_put(
-                            GlobalOrRelative::Relative(dependency::version::Tag::Symlink),
-                            version,
-                            symlink_path_abs,
-                            this,
-                        ),
-                        None => FolderResolutionValue::Err(crate::Error::Sys(
-                            bun_errno::SystemErrno::ENAMETOOLONG,
-                        )),
-                    };
-                return resolved_folder_package(this, res, dependency_id, success_fn);
-            }
-            if let Err(why) = try_global_link_dir(this) {
-                this.exit_or_log(&why);
-                return Err(crate::Error::MissingPackageJSON);
-            }
-            let link_dir = package_manager_real::global_link_dir_path(this);
-            let res = FolderResolution::get_or_put(
-                GlobalOrRelative::Global(link_dir),
-                version,
-                symlink_path,
-                this,
-            );
+                        &mut buf[..],
+                        &[this.lockfile.str(symlink)],
+                    ),
+                )
+            } else {
+                if let Err(why) = try_global_link_dir(this) {
+                    this.exit_or_log(&why);
+                    return Err(crate::Error::MissingPackageJSON);
+                }
+                (
+                    GlobalOrRelative::Global(package_manager_real::global_link_dir_path(this)),
+                    copy_path(this.lockfile.str(symlink), &mut buf[..]),
+                )
+            };
+            let res = match path {
+                Some(path) => FolderResolution::get_or_put(base, version, path, this),
+                None => FolderResolutionValue::Err(crate::Error::Sys(
+                    bun_errno::SystemErrno::ENAMETOOLONG,
+                )),
+            };
 
             resolved_folder_package(this, res, dependency_id, success_fn)
         }
@@ -3925,26 +3879,34 @@ fn resolve_project_folder(
     version: &dependency::Version,
     path: SemverString,
 ) -> FolderResolutionValue {
-    // `get_or_put` copies the path into the lockfile string buffer before any other mutation.
-    let path = this.lockfile.str_detached(&path);
     let mut buf = bun_paths::path_buffer_pool::get();
-    let Some(abs) = project_path(path, &mut buf[..]) else {
+    let Some(abs) = project_path(this.lockfile.str(&path), &mut buf[..]) else {
         return FolderResolutionValue::Err(crate::Error::Sys(bun_errno::SystemErrno::ENAMETOOLONG));
     };
-    FolderResolution::get_or_put(GlobalOrRelative::Relative(version.tag), version, abs, this)
+    FolderResolution::get_or_put(
+        GlobalOrRelative::Relative(version.tag()),
+        version,
+        abs,
+        this,
+    )
 }
 
 /// Returns `path` as an absolute path, or `None` if it's too long for `buf`. Relative paths are
 /// resolved against the project root.
-fn project_path<'a>(path: &'a [u8], buf: &'a mut [u8]) -> Option<&'a [u8]> {
+fn project_path<'a>(path: &[u8], buf: &'a mut [u8]) -> Option<&'a [u8]> {
     if bun_paths::is_absolute(path) {
-        return (path.len() < buf.len()).then_some(path);
+        return copy_path(path, buf);
     }
     Path::resolve_path::join_abs_string_buf_checked::<Path::platform::Auto>(
         FileSystem::get().top_level_dir(),
         buf,
         &[path],
     )
+}
+
+/// Reading a package.json grows the lockfile's string buffer, so a path cannot stay in there.
+fn copy_path<'a>(path: &[u8], buf: &'a mut [u8]) -> Option<&'a [u8]> {
+    strings::concat_buf_t(buf, &[path]).ok().map(|copy| &*copy)
 }
 
 /// For `bun update <name>`: returns true if the dependency refers to a requested package, either by
@@ -3974,7 +3936,7 @@ fn picks_latest_tag(
     if !this.to_update
         || version_was_replaced
         || !this.options.do_.contains(Do::UPDATE_TO_LATEST)
-        || !version.tag.is_npm()
+        || !version.tag().is_npm()
     {
         return false;
     }
@@ -4013,13 +3975,14 @@ fn catalog_entry_before_latest<'a>(
     dependency: &Dependency,
 ) -> Option<&'a package_manager_real::PackageUpdateInfo> {
     use package_manager_real::{PackageJSONEditor, PackageUpdateInfo};
-    if dependency.version.tag != dependency::version::Tag::Catalog
-        || !PackageJSONEditor::steers_catalogs_to_latest(this)
-    {
+    let dependency::Value::Catalog(catalog) = &dependency.version.value else {
+        return None;
+    };
+    if !PackageJSONEditor::steers_catalogs_to_latest(this) {
         return None;
     }
     let buf = this.lockfile.buffers.string_bytes.as_slice();
-    let catalog_name = dependency.version.catalog().slice(buf);
+    let catalog_name = catalog.slice(buf);
     let key = PackageUpdateInfo::catalog_row_key(dependency.name.slice(buf), catalog_name);
     this.updating_packages.get(&key)
 }
@@ -4064,7 +4027,7 @@ fn installed_version_in_ranges(
     lockfile: &Lockfile::Lockfile,
     name_hash: PackageNameHash,
     version: &dependency::Version,
-    ranges: &[dependency::Version],
+    ranges: &[NpmRange],
 ) -> Option<PackageID> {
     let buf = lockfile.buffers.string_bytes.as_slice();
     let resolutions = lockfile.packages.items_resolution();
@@ -4072,15 +4035,15 @@ fn installed_version_in_ranges(
         let resolution = &resolutions[id as usize];
         resolution.tag == ResolutionTag::Npm
             && (ranges.iter())
-                .all(|range| (range.npm().version).satisfies(resolution.npm().version, buf, buf))
+                .all(|range| (range.npm.version).satisfies(resolution.npm().version, buf, buf))
     })
 }
 
 /// Returns true if two of the ranges have no version in common.
-fn has_disjoint_ranges(lockfile: &Lockfile::Lockfile, ranges: &[dependency::Version]) -> bool {
+fn has_disjoint_ranges(lockfile: &Lockfile::Lockfile, ranges: &[NpmRange]) -> bool {
     let buf = lockfile.buffers.string_bytes.as_slice();
     ranges.iter().enumerate().any(|(i, a)| {
-        (ranges[i + 1..].iter()).any(|b| !a.npm().version.intersects(buf, &b.npm().version, buf))
+        (ranges[i + 1..].iter()).any(|b| !a.npm.version.intersects(buf, &b.npm.version, buf))
     })
 }
 
@@ -4094,7 +4057,7 @@ fn installed_version_in_any_range(
     lockfile: &Lockfile::Lockfile,
     name_hash: PackageNameHash,
     row: DependencyID,
-    ranges: &[dependency::Version],
+    ranges: &[NpmRange],
 ) -> Option<PackageID> {
     let buf = lockfile.buffers.string_bytes.as_slice();
     let resolutions = lockfile.packages.items_resolution();
@@ -4102,7 +4065,7 @@ fn installed_version_in_any_range(
         let resolution = &resolutions[id as usize];
         resolution.tag == ResolutionTag::Npm
             && (ranges.iter())
-                .any(|range| (range.npm().version).satisfies(resolution.npm().version, buf, buf))
+                .any(|range| (range.npm.version).satisfies(resolution.npm().version, buf, buf))
             && !would_revive_leftover(lockfile, row, id)
     })
 }
@@ -4262,9 +4225,7 @@ fn index_peer_askers(this: &mut PackageManager) {
                 if !dep.behavior.is_optional_peer() {
                     askers.push((dep.name_hash, id, owner as PackageID, false));
                 }
-            } else if dep.version.try_npm().is_some_and(|npm| npm.is_alias)
-                && resolutions[id as usize] != invalid_package_id
-            {
+            } else if dep.version.is_npm_alias() && resolutions[id as usize] != invalid_package_id {
                 aliases.push((dep.name_hash, owner as PackageID, resolutions[id as usize]));
             }
         }
@@ -4349,18 +4310,18 @@ fn ranges_of_every_asker(
     this: &PackageManager,
     peer: &Dependency,
     row: DependencyID,
-) -> Vec<dependency::Version> {
+) -> Vec<NpmRange> {
     let lockfile: &Lockfile::Lockfile = &this.lockfile;
     let buf = lockfile.buffers.string_bytes.as_slice();
     let deps = lockfile.buffers.dependencies.as_slice();
-    let mut ranges: Vec<dependency::Version> = Vec::new();
+    let mut ranges: Vec<NpmRange> = Vec::new();
     let mut row_counts = false;
     for &(_, id, _, has_no_provider) in peer_askers(this, peer.name_hash) {
         let dep = &deps[id as usize];
         let Some(range) = crate::dedupe::effective_npm_range(lockfile, id, dep) else {
             continue;
         };
-        if range.npm().is_alias {
+        if range.npm.is_alias {
             continue;
         }
         row_counts |= id == row && has_no_provider;
@@ -4379,13 +4340,14 @@ fn ranges_of_every_asker(
 fn version_every_peer_accepts<'m>(
     this: &PackageManager,
     manifest: &'m Npm::PackageManifest,
-    ranges: &[dependency::Version],
+    ranges: &[NpmRange],
 ) -> Option<Npm::FindVersionResult<'m>> {
     let buf = this.lockfile.buffers.string_bytes.as_slice();
     let mut best: Option<(Semver::Version, Npm::FindVersionResult<'m>)> = None;
     for range in ranges {
-        let found = manifest.find_for_dependency(
-            range,
+        let found = manifest.find_for_range(
+            range.literal.slice(buf),
+            &range.npm.version,
             buf,
             this.options.minimum_release_age_ms,
             this.options.minimum_release_age_excludes,
@@ -4396,7 +4358,7 @@ fn version_every_peer_accepts<'m>(
             Npm::FindVersionResult::Err(_) => continue,
         };
         let versions = &manifest.string_buf;
-        if (ranges.iter()).all(|range| range.npm().version.satisfies(version, buf, versions))
+        if (ranges.iter()).all(|range| range.npm.version.satisfies(version, buf, versions))
             && !best.as_ref().is_some_and(|(newest, _)| {
                 version.order(*newest, versions, versions) != core::cmp::Ordering::Greater
             })
@@ -4416,7 +4378,7 @@ fn highest_peer_candidate(
     let &highest = lockfile.packages_named(name_hash).first()?;
     let resolution = lockfile.packages.items_resolution().get(highest as usize)?;
     let same_kind = matches!(
-        (resolution.tag, version.tag),
+        (resolution.tag, version.tag()),
         (ResolutionTag::Npm, dependency::version::Tag::Npm)
             | (ResolutionTag::Git, dependency::version::Tag::Git)
             | (ResolutionTag::Github, dependency::version::Tag::Github)
@@ -4730,7 +4692,7 @@ impl PackageManager {
             ) else {
                 continue;
             };
-            if range.npm().version.satisfies(version, buf, buf) {
+            if range.npm.version.satisfies(version, buf, buf) {
                 continue;
             }
             let Some(dependent) = lockfile.get_parent_pkg_of_dependency(row) else {
@@ -4760,10 +4722,5 @@ impl PackageManager {
                 ),
             );
         }
-    }
-
-    #[inline]
-    pub fn enqueue_dependency_list(&mut self, dependencies_list: Lockfile::DependencySlice) {
-        enqueue_dependency_list(self, dependencies_list)
     }
 }

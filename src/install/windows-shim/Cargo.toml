@@ -6,7 +6,7 @@
 # The same source file (`bun_shim_impl.rs`) is compiled *twice*:
 #
 #   1. As a `mod` of `bun_install` (no `shim_standalone` feature) — exposes
-#      `try_startup_from_bun_js` / `read_without_launch` so bun.exe can run
+#      `try_startup_from_bun_js` so bun.exe can run
 #      the launcher logic in-process and skip a CreateProcessW round-trip.
 #   2. As this crate's `[[bin]]` (with `shim_standalone`) — produces the tiny
 #      `bun-shim-impl.exe` that `bun_install` then `include_bytes!`s.
@@ -24,10 +24,10 @@
 # libuv/simdutf/highway/ICU and makes those undefined symbols link roots — the
 # shim can't satisfy them and shouldn't carry them. `main.rs` provides local
 # stand-ins for the handful of helpers the shared source reaches for
-# (`bun_core::ffi::{slice,slice_mut,zeroed}`, `RacyCell`, `bun_str::w!`,
+# (`bun_core::ffi::{slice,zeroed}`, `bun_str::w!`,
 # the `bun_sys::windows` re-export layer) under the same paths.
 #
-# Built for Windows targets only, as a unit graph of its own (one rustc edge
+# The bin is built for Windows targets only, as a unit graph of its own (one rustc edge
 # per crate, like bun_runtime's) planned with `--profile shim` (workspace
 # `[profile.shim]`: panic=abort, opt-level=z, lto, strip) plus
 # `-Zbuild-std=core` / `-Cpanic=immediate-abort` / `/ENTRY:shim_main` (no
@@ -46,6 +46,10 @@ path = "main.rs"
 # `-p bun_shim_impl --features shim_standalone` (the build system's shim plan)
 # picks it up.
 required-features = ["shim_standalone"]
+
+[[test]]
+name = "command_line"
+path = "tests.rs"
 
 [features]
 shim_standalone = []

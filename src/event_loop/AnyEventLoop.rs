@@ -155,17 +155,6 @@ impl AnyEventLoop {
     pub fn loop_(&self) -> &'static UwsLoop {
         self.r#loop()
     }
-
-    /// See [`bun_io::uws_to_native`].
-    #[inline]
-    pub fn native_loop(&self) -> bun_io::LoopRef {
-        bun_io::uws_to_native(self.r#loop())
-    }
-
-    #[inline]
-    pub fn wakeup(&self) {
-        self.r#loop().wakeup();
-    }
 }
 
 // ─────────────────────────── EventLoopHandle ───────────────────────────────
@@ -253,7 +242,7 @@ impl EventLoopHandle {
     #[inline]
     fn into_tag_ptr(self) -> (core::ffi::c_char, *mut core::ffi::c_void) {
         match self {
-            EventLoopHandle::Js { owner, .. } => (1, owner.owner.cast()),
+            EventLoopHandle::Js { owner, .. } => (1, owner.owner().cast()),
             EventLoopHandle::Mini(mini) => (2, mini.as_const_ptr().cast_mut().cast()),
         }
     }
@@ -378,18 +367,10 @@ impl EventLoopHandle {
         self.r#loop()
     }
 
-    /// See [`bun_io::uws_to_native`].
-    #[inline]
-    pub fn native_loop(self) -> bun_io::LoopRef {
-        bun_io::uws_to_native(self.r#loop())
-    }
-
-    /// Windows convenience alias for [`native_loop`](Self::native_loop)
-    /// (kept for existing `cfg(windows)` callers that spell `uv_loop`).
     #[cfg(windows)]
     #[inline]
     pub fn uv_loop(self) -> *mut bun_io::Loop {
-        self.native_loop()
+        self.r#loop().uv_loop()
     }
 
     pub fn env(self) -> *mut DotEnvLoader {
@@ -415,20 +396,20 @@ impl EventLoopHandle {
 // bundle owned by a JS loop). Its `post` is deliver-or-refuse: once the VM has
 // closed, the task comes back and the caller releases it — its own payload —
 // on its own thread. Work that a VM must *wait* for holds a `bun_jsc::Ticket`
-// instead (a `Bun.build`'s completion task carries one for the bundle thread).
+// instead, which implements `PostToJs` too and never refuses.
 
 /// Result of a weak post to a JS loop from another thread: it was queued, or
 /// the loop's VM is closed and the caller has the task back to release on this
 /// thread.
 #[must_use = "a refused task must be released by its producer"]
-pub enum Posted {
+pub enum Posted<T = Box<ConcurrentTask>> {
     Queued,
-    Refused(NonNull<ConcurrentTask>),
+    Refused(T),
 }
 
 pub trait PostToJs: Send + Sync {
     /// Queue `task` on the VM this poster was created for and wake it, or hand it back if the VM has closed.
-    fn post(&self, task: NonNull<ConcurrentTask>) -> Posted;
+    fn post(&self, task: Box<ConcurrentTask>) -> Posted;
 }
 
 pub type JsPoster = std::sync::Arc<dyn PostToJs>;

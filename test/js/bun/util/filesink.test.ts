@@ -571,7 +571,7 @@ it("close() does not leak the native FileSink", async () => {
   expect(fileSinkInternals.liveCount()).toBeLessThanOrEqual(baseline + 1);
 });
 
-// Now that __doClose runs finalize(), finalize() must not tear down state an
+// close() drops the wrapper's ref, which must not tear down state an
 // in-flight write still needs: clearing `pending` here would drop the
 // backpressure promise's Strong before on_write can settle it.
 it.skipIf(isWindows)("close() while a write() promise is pending still settles it", async () => {
@@ -1648,6 +1648,27 @@ describe.concurrent("start() on an open writer", () => {
       console.log(JSON.stringify({ failed, buffered, closed: await closed() }));
     `);
     expect(result).toEqual({ failed: syscall, buffered: 0, closed: "all" });
+  });
+
+  it.skipIf(isWindows)("start({ path }) to a second FIFO closes it and keeps writing to the first", async () => {
+    const result = await run(`
+      const paths = [join(dir, "a"), join(dir, "b")];
+      Bun.spawnSync(["mkfifo", ...paths]);
+      const readers = paths.map(path => fs.openSync(path, fs.constants.O_RDONLY | fs.constants.O_NONBLOCK));
+      const writer = Bun.file(paths[0]).writer();
+      const out = {};
+      try {
+        writer.start({ path: paths[1] });
+      } catch (e) {
+        out.code = e.code;
+      }
+      writer.write("short");
+      await writer.end();
+      // Reading an empty FIFO throws EAGAIN while a write end is open.
+      out.read = readers.map(fd => fs.readSync(fd, Buffer.alloc(16)));
+      console.log(JSON.stringify(out));
+    `);
+    expect(result).toEqual({ code: isLinux ? "ENOENT" : undefined, read: [5, 0] });
   });
 
   it("start({ path }) settles a queued write and flushes it to the new path", async () => {

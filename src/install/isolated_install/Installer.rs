@@ -32,6 +32,7 @@ use crate::package_install::{
 };
 use crate::package_manager_real::directories;
 use crate::package_manager_real::package_manager_options::{Do, Enable};
+use crate::package_manager_real::{INBOX, THREAD_POOL};
 use crate::postinstall_optimizer;
 use crate::postinstall_optimizer::PostinstallOptimizer;
 use crate::prune::LinkedNodeModules;
@@ -143,12 +144,7 @@ impl<'a> Installer<'a> {
     }
     #[inline]
     pub(crate) fn manager_mut(&self) -> &'a mut PackageManager {
-        // SAFETY: BACKREF — never null; disjoint from `*self`. Return is `'a`
-        // (not elided) so `start_task` can hold it across `&mut self.tasks[i]`
-        // — same field-disjoint shape the prior `&'a mut` field permitted.
-        // Caller must be on the main thread (only main mutates
-        // `PackageManager`; `Task::run` / `Task::callback` on the pool read
-        // via the raw field, never this accessor).
+        // SAFETY: BACKREF — never null; disjoint from `*self`. Main thread only.
         unsafe { &mut *self.manager }
     }
     #[inline]
@@ -177,7 +173,6 @@ impl<'a> Installer<'a> {
 
     /// Called from main thread
     pub(crate) fn start_task(&mut self, entry_id: StoreEntryId) {
-        let manager = self.manager_mut();
         let task = &mut self.tasks[entry_id.get() as usize];
         debug_assert!(matches!(
             task.result,
@@ -191,9 +186,7 @@ impl<'a> Installer<'a> {
 
         task.result = Result::None;
         self.tasks_in_flight.add_one();
-        manager
-            .thread_pool
-            .schedule(thread_pool::Batch::from(&raw mut task.task.task));
+        THREAD_POOL.schedule(thread_pool::Batch::from(&raw mut task.task.task));
     }
 
     /// Called from main thread, for an existing project-local store entry.
@@ -548,7 +541,7 @@ impl<'a> Installer<'a> {
 
         self.summary.fail += 1;
 
-        self.manager_mut().decrement_pending_tasks();
+        INBOX.decrement_pending_tasks();
         self.resume_unblocked_tasks(entry_id);
     }
 
@@ -633,7 +626,7 @@ impl<'a> Installer<'a> {
             // It depends on a workspace, so its `Which::Staging` is where it is.
             debug_assert!(!self.entry_uses_global_store(dependent));
             if let Err(err) = self.link_dependency_bins(dependent) {
-                self.manager_mut().increment_pending_tasks(1);
+                self.manager().increment_pending_tasks(1);
                 self.on_task_fail(dependent, &err);
             }
         }
@@ -676,7 +669,7 @@ impl<'a> Installer<'a> {
 
     /// Called from main thread
     pub(crate) fn on_task_complete(&mut self, entry_id: StoreEntryId, state: CompleteState) {
-        self.manager_mut().decrement_pending_tasks();
+        INBOX.decrement_pending_tasks();
         self.resume_unblocked_tasks(entry_id);
 
         let manager = self.manager();
@@ -848,6 +841,7 @@ impl<'a> Installer<'a> {
         self.trusted_dependencies_from_update_requests
             .contains(&pkg_id)
             || lockfile.has_trusted_dependency(
+                &self.manager().options,
                 lockfile.str(&lockfile.buffers.dependencies[dep_id as usize].name),
                 self.pkg_name(entry_id),
                 self.resolution(entry_id),
@@ -1400,7 +1394,6 @@ impl Task {
         // Many `Task`s on the thread pool share one `Installer`, so never form `&mut Installer`.
         let installer_ptr = this.installer;
         let installer = installer_ptr.get();
-        let manager_ptr: *mut PackageManager = installer.manager;
         let entry_step = &installer.store.entries.items_step()[this.entry_id.get() as usize];
 
         let result = this.run();
@@ -1423,9 +1416,7 @@ impl Task {
             }
         };
         installer.task_queue.push(core::ptr::NonNull::from(this));
-        // SAFETY: `manager_ptr` is the non-null BACKREF and outlives every `Task`. `wake_raw` never
-        // forms `&mut PackageManager`, so two threads finishing at once do not alias.
-        unsafe { PackageManager::wake_raw(manager_ptr) };
+        INBOX.wake();
     }
 }
 
@@ -1539,7 +1530,7 @@ impl<'a> Installer<'a> {
         let manager = self.manager();
         let pkg_res = self.resolution(entry_id);
         match pkg_res.tag {
-            ResolutionTag::Npm => directories::cached_npm_package_folder_name_print(
+            ResolutionTag::Npm => directories::cached_npm_package_folder_name(
                 manager,
                 buf,
                 self.pkg_name(entry_id),
@@ -1690,22 +1681,17 @@ impl<'a> Installer<'a> {
     /// Task thread. True: the entry had no directory before.
     fn link_cached_package(&self, entry_id: StoreEntryId) -> TaskResult<bool> {
         let patch_info = self.package_patch_info(self.store.ids(entry_id).pkg_id)?;
-        let subpath = AutoRelPath::from(self.cached_folder_name(
-            &mut **paths::path_buffer_pool::get(),
-            entry_id,
-            patch_info.contents_hash(),
-        ))
-        .assume_ok();
+        let subpath = {
+            let mut buf = paths::path_buffer_pool::get();
+            let name = self.cached_folder_name(&mut buf, entry_id, patch_info.contents_hash());
+            AutoRelPath::from(name).assume_ok()
+        };
         #[cfg(target_os = "macos")]
         let mut subpath = subpath;
 
-        // SAFETY: idempotent cache-dir initialization (once-init internally). The
-        // `&mut PackageManager` does not outlive this statement; no `&PackageManager` is live on
-        // this thread across it. Concurrent task threads may race the same once-init path — that
-        // is a data-level race the once-init guards, not an aliasing violation here because no
-        // long-lived `&mut PackageManager` exists.
-        let (cache_dir, cache_dir_path) =
-            directories::get_cache_directory_and_abs_path(unsafe { &mut *self.manager });
+        let cache = directories::cache_directory_if_open()
+            .expect("the install thread opened the cache directory");
+        let (cache_dir, cache_dir_path) = (cache.handle.fd(), cache.path.as_bytes());
 
         let uses_global_store = self.entry_uses_global_store(entry_id);
         let staging = if uses_global_store {
@@ -1809,8 +1795,7 @@ impl<'a> Installer<'a> {
                             }
                         };
 
-                        let mut src =
-                            OsAutoAbsPath::from_long_path(cache_dir_path.slice()).assume_ok();
+                        let mut src = OsAutoAbsPath::from_long_path(cache_dir_path).assume_ok();
                         if let Err(err) = src.try_append_join(subpath.slice()) {
                             break 'backend Err(name_too_long(err));
                         }
@@ -1850,7 +1835,7 @@ impl<'a> Installer<'a> {
                             })
                             .map_err(TaskError::LinkPackage)?;
 
-                        let mut src = OsAutoAbsPath::from(cache_dir_path.slice()).assume_ok();
+                        let mut src = OsAutoAbsPath::from(cache_dir_path).assume_ok();
                         if let Err(err) = PathLike::append(&mut src, subpath.slice()) {
                             break 'backend Err(err);
                         }
@@ -2959,7 +2944,7 @@ fn append_dependency_link_name(
     entry_node_modules_name: Option<&[u8]>,
 ) -> sys::Result<()> {
     PathLike::append(dest, dep_name)?;
-    if entry_node_modules_name.is_some_and(|name| strings::eql_long(dep_name, name, true)) {
+    if entry_node_modules_name.is_some_and(|name| strings::eql_long(dep_name, name)) {
         // It has the same name as the entry itself, so nest it one `node_modules` deeper to avoid
         // the collision.
         PathLike::append(dest, b"node_modules")?;

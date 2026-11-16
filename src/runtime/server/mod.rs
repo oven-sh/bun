@@ -338,7 +338,7 @@ impl<const SSL: bool, const DEBUG: bool> Drop for NewServer<SSL, DEBUG> {
         }
         self.app.set(None);
 
-        // Before `config`, which owns the arena the dev server's transpilers and views live in.
+        // Before `config`, which owns the arena the dev server's transpilers borrow.
         drop(self.dev_server.take());
         if let Some(plugins) = self.plugins.get() {
             // SAFETY: the intrusive refcount permits mutation through any owner. Each server has its
@@ -3155,7 +3155,7 @@ trait AnyRequestPool: Any {
 
 impl<T: 'static, const N: usize> AnyRequestPool for bun_collections::hive_array::Fallback<T, N> {
     fn is_in_use(&self) -> bool {
-        self.hive.used.iter_set().next().is_some()
+        Self::is_in_use(self)
     }
 }
 
@@ -3475,15 +3475,15 @@ impl AnyServer {
     /// `None` if `value` is not what `Bun.serve` returns. `value` keeps the server alive.
     pub(crate) fn from_js(value: JSValue) -> Option<AnyServer> {
         if let Some(server) = value.as_class_ref::<HTTPServer>() {
-            Some(Self::from(std::ptr::from_ref(server)))
+            Some(Self::from(server.as_ptr()))
         } else if let Some(server) = value.as_class_ref::<HTTPSServer>() {
-            Some(Self::from(std::ptr::from_ref(server)))
+            Some(Self::from(server.as_ptr()))
         } else if let Some(server) = value.as_class_ref::<DebugHTTPServer>() {
-            Some(Self::from(std::ptr::from_ref(server)))
+            Some(Self::from(server.as_ptr()))
         } else {
             value
                 .as_class_ref::<DebugHTTPSServer>()
-                .map(|server| Self::from(std::ptr::from_ref(server)))
+                .map(|server| Self::from(server.as_ptr()))
         }
     }
 

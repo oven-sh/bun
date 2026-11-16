@@ -3101,6 +3101,11 @@ impl File<'_> {
 
     /// `FindUseStrictPrologue`
     pub fn find_use_strict_prologue(&self, statements: IdList<StmtId>) -> StmtId {
+        // In a file that is compiled types may follow the string, and stand in front of the statement.
+        let mut directives = self.directives(statements);
+        if let Some((statement, _)) = directives.find(|it| it.1 == known::use_strict) {
+            return statement;
+        }
         for statement in self.ids(statements) {
             let node = self.node(statement);
             if !self.is_prologue_directive(node) {

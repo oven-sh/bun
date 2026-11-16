@@ -387,7 +387,7 @@ impl HTMLRewriter {
     ) -> JsResult<JSValue> {
         let cx = cx.js_thread();
         let (this_value, input) = (this_value.to_js(), input.to_js());
-        if let Some(response) = js_Response::from_js(input).map(BackRef::<Response>::from) {
+        if let Some(response) = js_Response::from_js(&input) {
             // An already-failed body surfaces its stored upstream error (abort
             // reason, connection error) instead of a generic "body already used"
             // — the error is the useful bit, and `wire_input` would otherwise
@@ -446,10 +446,7 @@ impl HTMLRewriter {
             if let Some(err) = out_response_value.to_error() {
                 return Err(cx.global().throw_value(err));
             }
-            out_response_value.ensure_still_alive();
-            let Some(out_response) =
-                js_Response::from_js(out_response_value).map(BackRef::<Response>::from)
-            else {
+            let Some(out_response) = js_Response::from_js(&out_response_value) else {
                 return Ok(out_response_value);
             };
 
@@ -1835,10 +1832,6 @@ impl crate::webcore::sink::JsSinkType for RewriterPipe {
     fn memory_cost(&self) -> usize {
         self.pending_input.get().capacity() + self.output_buffer.get().capacity()
     }
-    // Unlike other sinks, the controller does not own the pipe: its ref is
-    // released by `controller_detached` below, and the free happens wherever
-    // the last ref drops.
-    unsafe fn finalize(_this: *mut Self) {}
     fn write_bytes(&mut self, data: &StreamResult) -> Writable {
         RewriterPipe::write(self, data)
     }
@@ -1920,6 +1913,9 @@ impl crate::webcore::sink::ControlledSink for RewriterPipe {
     fn controller_detached(&self) {
         self.pump_ref.set(None);
     }
+
+    /// `controller_detached` released the controller's ref: `_this` may already be freed.
+    unsafe fn controller_finalize(_this: *mut Self) {}
 
     unsafe fn close_with_error(
         this: *mut Self,

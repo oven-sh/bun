@@ -34,7 +34,7 @@ use crate::webcore::response::HeadersRef;
 use crate::webcore::sink::ReadableSinkController;
 use crate::webcore::streams::EncodedChunk;
 use crate::webcore::streams::{SourceHandle, StreamError, StreamResult, Writable};
-use crate::webcore::{AbortSignal, DrainResult, FetchHeaders, InternalBlob, Response, SinkHandle};
+use crate::webcore::{AbortSignal, DrainResult, InternalBlob, Response, SinkHandle};
 use bun_jsc::AbortSignalRef;
 
 // `bun_event_loop::JsResult` (cycle-broken erased error) — used by
@@ -133,7 +133,7 @@ use http::signals::BodyReceiveMode;
 pub struct FetchTasklet {
     /// The JS controller holds a detachable back-pointer into it.
     sink: Option<AliasableBox<FetchRequestBodySink>>,
-    /// `None` while it drops.
+    /// `None` before the request is built and in `drop`.
     async_http_id: Option<u32>,
     method: Method,
     pub(crate) result: HTTPClientResult<'static>,
@@ -147,7 +147,7 @@ pub struct FetchTasklet {
     js_ref: Option<RefPtr<FetchTasklet>>,
     pub global_this: GlobalRef,
     pub(crate) request_body: HTTPRequestBody,
-    /// This side's ref; the HTTP thread holds the other of the two initial refs.
+    /// This side's ref; the HTTP thread holds the other.
     pub(crate) request_body_streaming_buffer: Option<RefPtr<ThreadSafeStreamBuffer>>,
 
     /// buffer used to stream response to JS
@@ -1169,7 +1169,7 @@ impl FetchTasklet {
         if fail == http::Error::ProxyConnectFailed {
             if let Some(metadata) = &self.result.proxy_connect_response {
                 let global_this = self.global_this;
-                let error = Self::proxy_connect_error(&global_this, &metadata.response)
+                let error = Self::proxy_connect_error(&global_this, metadata)
                     .unwrap_or_else(|e| global_this.take_exception(e));
                 return BodyValueError::JSValue(StrongOptional::create(error, &global_this));
             }
@@ -1194,7 +1194,7 @@ impl FetchTasklet {
         // some times we don't have metadata so we also check the request's URL
         // Without the URL's userinfo: errors get logged.
         let href = match &self.metadata {
-            Some(metadata) => metadata.url.slice(),
+            Some(metadata) => metadata.url(),
             None => &self.url_proxy_buffer[..self.url_len],
         };
         let path = BunString::clone_utf8(&ZigURL::parse(href).href_without_userinfo());
@@ -1474,34 +1474,29 @@ impl FetchTasklet {
     /// proxy's reply to CONNECT.
     fn proxy_connect_error(
         global_this: &JSGlobalObject,
-        response: &bun_picohttp::Response<'_>,
+        response: &HTTPResponseMetadata,
     ) -> JsResult<JSValue> {
         let error = global_this
             .err(
                 jsc::ErrorCode::PROXY_TUNNEL,
                 format_args!(
                     "Proxy refused to open a tunnel: {} {}",
-                    response.status_code,
-                    bstr::BStr::new(response.status),
+                    response.status_code(),
+                    bstr::BStr::new(response.status_text()),
                 ),
             )
             .to_js();
         error.put(
             global_this,
             b"status".as_slice(),
-            JSValue::js_number_from_int32(response.status_code as i32),
+            JSValue::js_number_from_int32(response.status_code() as i32),
         );
         error.put(
             global_this,
             b"statusText".as_slice(),
-            bun_string_jsc::create_utf8_for_js(global_this, response.status)?,
+            bun_string_jsc::create_utf8_for_js(global_this, response.status_text())?,
         );
-        // SAFETY: `create_from_pico_headers` returns a fresh refcount=1 FetchHeaders*.
-        let mut headers = unsafe {
-            HeadersRef::adopt(FetchHeaders::create_from_pico_headers(
-                response.headers.list,
-            ))
-        };
+        let mut headers = HeadersRef::create_from_headers(response.headers());
         error.put(
             global_this,
             b"headers".as_slice(),
@@ -1700,20 +1695,19 @@ impl FetchTasklet {
         debug_assert!(self.metadata.is_some());
         // at this point we always should have metadata
         let metadata = self.metadata.as_ref().unwrap();
-        let http_response = &metadata.response;
         // reshaped for borrowck — capture metadata fields before to_body_value() takes &mut self
-        let headers = FetchHeaders::create_from_pico_headers(http_response.headers.list);
-        let status_code = http_response.status_code as u16;
+        let headers = HeadersRef::create_from_headers(metadata.headers());
+        let status_code = metadata.status_code() as u16;
         // Fast path: when the wire reason phrase matches the canonical text for
         // this status code, store a StaticEncodedSlice and skip the WTF allocation.
         let status_text = match crate::server::http_status_text::get(status_code)
             .map(|t| &t[4..])
-            .filter(|canon| *canon == http_response.status)
+            .filter(|canon| *canon == metadata.status_text())
         {
             Some(canon) => BunString::static_(canon),
-            None => BunString::clone_utf8(http_response.status),
+            None => BunString::clone_utf8(metadata.status_text()),
         };
-        let url = BunString::clone_utf8(metadata.url.slice());
+        let url = BunString::clone_utf8(metadata.url());
         let redirected = self.result.redirected;
         let body = if self.response_body_is_null(status_code) {
             self.null_body_value()
@@ -1723,8 +1717,7 @@ impl FetchTasklet {
         };
         Response::init(
             crate::webcore::response::Init {
-                // SAFETY: create_from_pico_headers returns a fresh refcount=1 FetchHeaders*.
-                headers: Some(unsafe { HeadersRef::adopt(headers) }),
+                headers: Some(headers),
                 status_code,
                 status_text,
                 ..Default::default()
@@ -1950,13 +1943,13 @@ impl FetchTasklet {
             if !fetch_tasklet.upgraded_connection {
                 fetch_tasklet.declared_request_body_len = framing.content_length;
             }
-            let [ours, theirs] = ThreadSafeStreamBuffer::new(
+            let buffer = ThreadSafeStreamBuffer::new(
                 FetchTasklet::on_write_request_data_drain,
                 fetch_tasklet_ptr,
             );
-            fetch_tasklet.request_body_streaming_buffer = Some(ours);
+            fetch_tasklet.request_body_streaming_buffer = Some(buffer.clone());
             http.request_body = http::HTTPRequestBody::Stream(http::http_request_body::Stream {
-                buffer: Some(theirs),
+                buffer: Some(buffer),
                 ended: false,
                 framing,
             });
@@ -2279,7 +2272,11 @@ impl FetchTasklet {
     /// # Safety
     /// `task` must be a live heap-allocated `FetchTasklet` with the
     /// HTTP-thread ref still held.
-    fn callback(task: *mut FetchTasklet, finished: http::Finished, result: HTTPClientResult) {
+    fn callback(
+        task: *mut FetchTasklet,
+        finished: Option<http::FinishedRequest>,
+        result: HTTPClientResult,
+    ) {
         drop(finished);
         let is_done = !result.has_more;
         // SAFETY: fn contract; `http_ref` is HTTP-thread-only.

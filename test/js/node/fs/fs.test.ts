@@ -3907,6 +3907,25 @@ describe("rm", () => {
     expect(existsSync(path)).toBe(false);
   });
 
+  it.skipIf(isWindows)("closes a directory that got the number of a closed standard stream", async () => {
+    using dir = tempDir("rm-closed-stdin", { "tree/nested/file.txt": "" });
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const fs = require("fs");
+         fs.closeSync(0);
+         fs.rmSync("tree", { recursive: true });
+         console.log(fs.existsSync("tree"), fs.openSync(".", "r"));`,
+      ],
+      env: bunEnv,
+      cwd: String(dir),
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "false 0\n", stderr: "", exitCode: 0 });
+  });
+
   // On Windows a leading-separator, drive-less path like "/foo/bar" is
   // "rooted" and must be resolved against the cwd's drive. existsSync/
   // statSync/unlinkSync all do this; recursive rmSync must agree

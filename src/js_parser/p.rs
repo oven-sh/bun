@@ -539,7 +539,6 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     pub(crate) delete_target: js_ast::ExprData,
     pub(crate) loop_body: js_ast::StmtData,
     pub(crate) module_scope: js_ast::StoreRef<js_ast::Scope>,
-    pub(crate) module_scope_directive_loc: bun_ast::Loc,
     pub(crate) is_control_flow_dead: bool,
     /// Visiting an export that `replace_exports` deletes. Its uses are not counted (the code is
     /// dead), but recorded in `used_by_deleted_exports`.
@@ -693,10 +692,6 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     /// associated with that namespace or namespace member: "ref_to_ts_namespace_member".
     /// This gives enough info to be able to resolve queries into the namespace.
     pub(crate) ref_to_ts_namespace_member: HashMap<Ref, js_ast::ts::Data>,
-    /// Arena-allocated `TSNamespaceScope`s; their global-heap maps are freed in `Drop`.
-    pub(crate) ts_namespace_scopes: Vec<js_ast::StoreRef<js_ast::TSNamespaceScope>>,
-    /// Companion list (sibling scopes share a map, so the scope list can't free it).
-    pub(crate) ts_namespace_member_maps: Vec<js_ast::StoreRef<js_ast::TSNamespaceMemberMap>>,
     /// When visiting expressions, namespace metadata is associated with the most
     /// recently visited node. If namespace metadata is present, "tsNamespaceTarget"
     /// will be set to the most recently visited node (as a way to mark that this
@@ -722,18 +717,6 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> Drop for P<'a, TYPESCRIPT, SCAN_ONLY> {
-    fn drop(&mut self) {
-        // Arena-allocated structs never run Drop; free their global-heap maps here.
-        for mut scope in self.ts_namespace_scopes.drain(..) {
-            drop(core::mem::take(&mut scope.property_accesses));
-        }
-        for mut map in self.ts_namespace_member_maps.drain(..) {
-            drop(core::mem::take(&mut *map));
-        }
-    }
-}
-
 impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_ONLY> {
     pub(crate) const IS_TYPESCRIPT_ENABLED: bool = TYPESCRIPT;
     pub(crate) const TRACK_SYMBOL_USAGE_DURING_PARSE_PASS: bool = SCAN_ONLY && TYPESCRIPT;
@@ -1558,8 +1541,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         let _ = self.check_dynamic_specifier(arg, arg.loc, "require.resolve()");
 
-        // Vec::from_owned_slice wants Box<[T]>; init_one is the
-        // single-element equivalent (matches transpose_require below).
         self.new_expr(
             E::Call {
                 target: require_resolve_ref,
@@ -3448,6 +3429,15 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             return;
         }
 
+        // The directive of a function also makes strict what its parameters hold, such as a function in a decorator.
+        if scope.kind == js_ast::scope::Kind::FunctionArgs
+            && scope.strict_mode == js_ast::StrictModeKind::ExplicitStrictMode
+        {
+            for child in scope.children.slice_mut() {
+                child.recursive_set_strict_mode(js_ast::StrictModeKind::ExplicitStrictMode);
+            }
+        }
+
         // `StoreRef` is the arena back-pointer with safe `Deref`/`DerefMut` —
         // scope is arena-owned and valid for the parser 'a lifetime; the visit
         // pass is single-threaded so no aliasing `&mut` is outstanding. Read the
@@ -4240,9 +4230,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         let macro_remap = if Self::ALLOW_MACROS {
             self.options
-                .macro_context
-                .as_deref()
-                .and_then(|ctx| ctx.get_remap(path.text))
+                .macro_remap
+                .filter(|remap| !remap.is_empty())
+                .and_then(|remap| remap.get(path.text))
         } else {
             None
         };
@@ -4754,7 +4744,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     #[cold]
     #[inline(never)]
     pub(crate) fn get_or_create_exported_namespace_members(
-        &mut self,
+        &self,
         name: &[u8],
         is_export: bool,
         is_enum_scope: bool,
@@ -4786,35 +4776,33 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             None
         };
 
-        if let Some(existing) = map {
-            let scope = js_ast::StoreRef::from_bump(self.arena.alloc(js_ast::TSNamespaceScope {
-                exported_members: existing,
-                is_enum_scope,
-                arg_ref: Ref::NONE,
-                property_accesses: Default::default(),
-            }));
-            self.ts_namespace_scopes.push(scope);
-            return scope;
-        }
-
-        // Otherwise, generate a new namespace object.
-        // Two bump allocs from the same arena; `StoreRef` is non-null so the
-        // map field can't be null-then-patched, and same-arena allocation
-        // keeps the locality while avoiding a self-referential init.
-        let map = js_ast::StoreRef::from_bump(self.arena.alloc(Default::default()));
-        self.ts_namespace_member_maps.push(map);
-        let scope = js_ast::StoreRef::from_bump(self.arena.alloc(js_ast::TSNamespaceScope {
-            exported_members: map,
+        let exported_members = map
+            .unwrap_or_else(|| js_ast::StoreRef::from_bump(self.arena.alloc(Default::default())));
+        js_ast::StoreRef::from_bump(self.arena.alloc(js_ast::TSNamespaceScope {
+            exported_members,
             is_enum_scope,
             arg_ref: Ref::NONE,
             property_accesses: Default::default(),
-        }));
-        self.ts_namespace_scopes.push(scope);
-        scope
+        }))
     }
 
     // TODO:
     pub(crate) fn check_for_non_bmp_code_point(&mut self, _: bun_ast::Loc, _: &[u8]) {}
+
+    /// A bundle keeps the "use strict" of the code, and one such error would make the whole bundle unparsable.
+    pub(crate) fn mark_feature_under_kept_directive(
+        &mut self,
+        feature: StrictModeFeature,
+        r: bun_ast::Range,
+        detail: &[u8],
+    ) {
+        if self.options.bundle
+            && self.current_scope().strict_mode == js_ast::StrictModeKind::ExplicitStrictMode
+        {
+            // It adds to the log, and nothing in it fails.
+            let _ = self.mark_strict_mode_feature(feature, r, detail);
+        }
+    }
 
     pub(crate) fn mark_strict_mode_feature(
         &mut self,
@@ -4823,6 +4811,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         detail: &[u8],
     ) -> Result<(), crate::Error> {
         let text: &'a [u8] = match feature {
+            StrictModeFeature::DeleteBareName => b"Delete of a bare identifier",
+            StrictModeFeature::WithStatement => b"With statements",
             StrictModeFeature::EvalOrArguments => bun_alloc::arena_format!(
                 in self.arena,
                 "Declarations with the name \"{}\"",
@@ -4856,6 +4846,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 js_ast::StrictModeKind::ImplicitStrictModeClass => {
                     why = b"All code inside a class is implicitly in strict mode";
                     where_ = self.enclosing_class_keyword;
+                }
+                js_ast::StrictModeKind::ExplicitStrictMode => {
+                    why = b"Strict mode is triggered by a \"use strict\" directive";
                 }
                 _ => {}
             }
@@ -7487,7 +7480,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     if let Some(mut cf) = constructor_function {
                         // `body.stmts` is an arena-owned `StoreSlice<Stmt>`.
                         let old_stmts: &[Stmt] = cf.func.body.stmts.slice();
-                        // statements coming from class body inserted after super call or beginning of constructor.
+                        // statements coming from class body inserted after super call or beginning of constructor,
+                        // where a directive prologue still comes first.
                         let mut super_index: Option<usize> = None;
                         for (index, item) in old_stmts.iter().enumerate() {
                             if !matches!(item.data, js_ast::StmtData::SExpr(se) if matches!(se.value.data, js_ast::ExprData::ECall(c) if matches!(c.target.data, js_ast::ExprData::ESuper(_))))
@@ -7498,7 +7492,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             break;
                         }
 
-                        let i = super_index.map(|j| j + 1).unwrap_or(0);
+                        let i = super_index
+                            .map(|j| j + 1)
+                            .unwrap_or_else(|| crate::visit::leading_directive_count(old_stmts));
                         let mut constructor_stmts = BumpVec::<Stmt>::with_capacity_in(
                             old_stmts.len() + instance_members.len(),
                             self.arena,
@@ -8487,6 +8483,42 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         ))
     }
 
+    /// Like react-refresh's Babel plugin: a function, or a call such as `memo()` or `forwardRef()` whose first
+    /// argument is a function, a component or such a call.
+    pub(crate) fn makes_react_component(&self, value: Expr) -> bool {
+        let mut value = value;
+        let mut is_argument = false;
+        loop {
+            match value.data {
+                js_ast::ExprData::EArrow(_) | js_ast::ExprData::EFunction(_) => return true,
+                js_ast::ExprData::EIdentifier(js_ast::E::Identifier { ref_, .. })
+                | js_ast::ExprData::EImportIdentifier(js_ast::E::ImportIdentifier {
+                    ref_, ..
+                }) if is_argument => {
+                    let name = self.symbols[ref_.inner_index() as usize]
+                        .original_name
+                        .slice();
+                    return ReactRefresh::is_componentish_name(name);
+                }
+                js_ast::ExprData::ECall(call)
+                    if matches!(
+                        call.target.data,
+                        js_ast::ExprData::EIdentifier(_)
+                            | js_ast::ExprData::EImportIdentifier(_)
+                            | js_ast::ExprData::EDot(_)
+                    ) =>
+                {
+                    let Some(first) = call.args.slice().first() else {
+                        return false;
+                    };
+                    value = *first;
+                    is_argument = true;
+                }
+                _ => return false,
+            }
+        }
+    }
+
     pub(crate) fn handle_react_refresh_register(
         &mut self,
         stmts: &mut ListManaged<'a, Stmt>,
@@ -8602,18 +8634,22 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         if ctx_storage.is_none() {
             self.react_refresh.signature_used = true;
 
-            // `StoreRef<Scope>` (Copy + safe `Deref`) lets the parent-chain
-            // walk run without raw-pointer `unsafe` and without borrowing
-            // `self`.
+            // `var _s = $RefreshSig$()` goes in the statement list around this
+            // function, so the name lives where a `var` there hoists to.
             let mut scope = self.current_scope_ref();
-            loop {
-                if scope.kind == js_ast::scope::Kind::FunctionBody
-                    || scope.kind == js_ast::scope::Kind::Block
-                    || scope.kind == js_ast::scope::Kind::Entry
-                {
-                    break;
-                }
+            while scope.kind != js_ast::scope::Kind::FunctionBody {
                 let Some(p) = scope.parent else { break };
+                scope = p;
+            }
+            // Out of this function: its body, then its arguments.
+            for _ in 0..2 {
+                if let Some(p) = scope.parent {
+                    scope = p;
+                }
+            }
+            while (!scope.kind_stops_hoisting() || scope.kind == js_ast::scope::Kind::FunctionArgs)
+                && let Some(p) = scope.parent
+            {
                 scope = p;
             }
 
@@ -8624,9 +8660,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 user_hooks: Default::default(),
             });
 
-            // TODO: fix the renamer bug. this bug theoretically affects all
-            // usages of temp refs, but i cannot find another example of it
-            // breaking (like with `using`)
+            // The file's top level is renamed from `Part::declared_symbols`.
             self.declared_symbols
                 .append(DeclaredSymbol {
                     is_top_level: true,
@@ -8699,15 +8733,17 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     ) {
         debug_assert!(self.options.features.react_fast_refresh);
 
-        // We need to prepend `_s();` as a statement.
+        // We need to prepend `_s();` as a statement, after the directive prologue.
+        let at = crate::visit::leading_directive_count(stmts.as_slice());
         if stmts.len() == stmts.capacity() {
             // If the ArrayList does not have enough capacity, it is
             // re-allocated entirely to fit. Only one slot of new capacity
             // is used since we know this statement list is not going to be
             // appended to afterwards; This function is a post-visit handler.
             let mut new_stmts = BumpVec::with_capacity_in(stmts.len() + 1, self.arena);
+            new_stmts.extend_from_slice(&stmts[..at]);
             new_stmts.push(Stmt::empty()); // placeholder, overwritten below
-            new_stmts.extend_from_slice(stmts.as_slice());
+            new_stmts.extend_from_slice(&stmts[at..]);
             *stmts = new_stmts;
         } else {
             // The array has enough capacity, so there is no possibility of
@@ -8715,7 +8751,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             // by one, and increase the length using `addOneAssumeCapacity`
             stmts.push(Stmt::empty());
             let len = stmts.len();
-            stmts.copy_within(0..len - 1, 1);
+            stmts.copy_within(at..len - 1, at + 1);
         }
 
         let loc = bun_ast::Loc::EMPTY;
@@ -8733,7 +8769,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             },
             loc,
         );
-        stmts[0] = prepended_stmt;
+        stmts[at] = prepended_stmt;
     }
 
     pub(crate) fn get_react_refresh_hook_signal_decl(&mut self, signal_cb_ref: Ref) -> Stmt {
@@ -8841,6 +8877,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         exports_kind: js_ast::ExportsKind,
         wrap_mode: WrapMode,
         hashbang: &'a [u8],
+        // The module's directive prologue, which `_parse` took off the top-level statements.
+        mut directives: &'a [Stmt],
     ) -> Result<Box<js_ast::Ast<'a>>, crate::Error> {
         use crate::lower::lower_esm_exports_hmr::ConvertESMExportsForHmr;
         use crate::scan::scan_imports::ImportScanner;
@@ -9073,32 +9111,19 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 };
             }
 
-            let mut total_stmts_count: usize = 0;
+            // The prologue of the file is the prologue of the wrapper function.
+            let mut total_stmts_count: usize = directives.len();
             for part in parts.iter() {
                 total_stmts_count += part.stmts.len();
             }
-
-            let preserve_strict_mode = self.module_scope().strict_mode
-                == js_ast::StrictModeKind::ExplicitStrictMode
-                && !(parts.len() > 0
-                    && parts[0].stmts.len() > 0
-                    && matches!(parts[0].stmts[0].data, js_ast::StmtData::SDirective(_)));
-
-            total_stmts_count += usize::from(preserve_strict_mode);
 
             // Stmt is not Default; fill with `Stmt::empty()`.
             let stmts_to_copy = arena.alloc_slice_fill_with(total_stmts_count, |_| Stmt::empty());
             {
                 let mut remaining_stmts = &mut stmts_to_copy[..];
-                if preserve_strict_mode {
-                    remaining_stmts[0] = self.s(
-                        S::Directive {
-                            value: b"use strict".into(),
-                        },
-                        self.module_scope_directive_loc,
-                    );
-                    remaining_stmts = &mut remaining_stmts[1..];
-                }
+                remaining_stmts[..directives.len()].copy_from_slice(directives);
+                remaining_stmts = &mut remaining_stmts[directives.len()..];
+                directives = &[];
 
                 for part in parts.iter() {
                     let src = part.stmts.slice();
@@ -9144,7 +9169,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         if self.options.repl_mode {
             // `apply_repl_transforms` is declared in ast::repl_transforms as an
             // `impl P` mixin.
-            self.apply_repl_transforms(parts, arena)?;
+            if self.apply_repl_transforms(parts, arena, directives)? {
+                directives = &[];
+            }
         }
 
         let mut top_level_symbols_to_parts = bun_ast::ast_result::TopLevelSymbolToParts::default();
@@ -9240,7 +9267,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let char_freq = self.compute_character_frequency().map(bun_alloc::ast_box);
         let scope_uses = self.take_scope_uses();
 
-        let module_scope_strict = self.module_scope().strict_mode;
         // Scope is not `Clone` (Vec/HashMap members), so move it out and leave
         // a default in `*self.module_scope`. `to_ast` is terminal — the parser
         // does not touch `module_scope` afterwards.
@@ -9307,11 +9333,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             top_level_symbols_to_parts,
             char_freq,
             scope_uses,
-            directive: if module_scope_strict == js_ast::StrictModeKind::ExplicitStrictMode {
-                Some(bun_ast::StoreStr::new(b"use strict"))
-            } else {
-                None
-            },
+            directives: bun_ast::StoreSlice::new(directives),
             nested_scope_slot_counts,
 
             require_ref,
@@ -9481,29 +9503,15 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 }
 
 impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_ONLY> {
-    /// Construct a `P` in place at `out`.
-    ///
-    /// PERF: an earlier shape returned `Result<Self, _>` by value. `P`
-    /// is ~5 KiB; the by-value return forced a stack temp inside `init` (5176-B
-    /// frame, ASM-verified) plus a move at the caller's `?` (`_scan_imports`
-    /// 14168-B frame, 5× `memcpy`). Out-pointer init writes the struct exactly
-    /// once at its final address: every pre-computable post-init mutation is
-    /// hoisted above the
-    /// single `out.write(Self { .. })` so there is no stack temporary `Self`
-    /// to relocate.
-    ///
-    /// Returns the initialized `*out`; the caller owns dropping it.
-    /// Taking `&mut MaybeUninit<Self>` (vs the previous `*mut Self`) makes the
-    /// alignment/writability precondition a type guarantee, so this fn is safe.
-    pub fn init<'o>(
-        out: &'o mut core::mem::MaybeUninit<Self>,
+    /// PERF: `P` is over 4 KiB. The literal is the tail expression, with no `Result`, so it is written in the caller's frame.
+    pub fn init(
         arena: &'a Bump,
         log: core::ptr::NonNull<bun_ast::Log>,
         source: &'a bun_ast::Source<'a>,
         define: &'a Define,
         mut lexer: js_lexer::Lexer<'a>,
         mut opts: ParserOptions<'a>,
-    ) -> &'o mut Self {
+    ) -> Self {
         // Pre-size the parser's per-file name/ref-keyed symbol maps so the
         // common case never re-hashes while it grows. Profiling the runtime
         // transpiler showed
@@ -9538,9 +9546,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             true
         };
 
-        // ─── Hoisted post-init mutations (were `this.* = ...` after the
-        // literal in the by-value-return shape; now precomputed so the
-        // literal below is the *only* write to `*out`). ───
         lexer.track_comments = opts.features.minify_identifiers;
         let track_scope_uses = opts.bundle && !opts.features.minify_identifiers;
         lexer.track_react_suppressions = opts.features.react_compiler.is_enabled();
@@ -9596,9 +9601,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // dispatch). Computed before the literal so it can still read `opts`.
         let jsx_transform = JSXTransformType::from_parse_flag(opts.jsx.parse);
 
-        // Single placement write — no separate stack temp for `Self`.
-        // `MaybeUninit::write` is safe; it overwrites without dropping.
-        out.write(Self {
+        Self {
             // This must default to true or else parsing "in" won't work right.
             // It will fail for the case in the "in-keyword.js" file
             allow_in: true,
@@ -9724,7 +9727,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             is_import_item: Default::default(),
             export_default_alias_of_import: Ref::NONE,
             scope_order_to_visit: &[],
-            module_scope_directive_loc: bun_ast::Loc::default(),
             is_control_flow_dead: false,
             in_deleted_export: false,
             used_by_deleted_exports: Default::default(),
@@ -9747,8 +9749,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             binary_expression_stack: BumpVec::new_in(arena),
             binary_expression_simplify_stack: BumpVec::new_in(arena),
             ref_to_ts_namespace_member: Default::default(),
-            ts_namespace_scopes: Vec::new(),
-            ts_namespace_member_maps: Vec::new(),
             ts_namespace: RecentlyVisitedTSNamespace {
                 expr: null_expr_data(),
                 map: None,
@@ -9763,7 +9763,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
             // Moved-in last so the field expressions above can still read `opts.*`.
             options: opts,
-        })
+        }
 
         // The transposer recursion lives as inherent `P::maybe_transpose_if_*` methods
         // called directly (no stored `*mut P`).

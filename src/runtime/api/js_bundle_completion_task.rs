@@ -1170,7 +1170,7 @@ impl JSBundleCompletionTask {
             },
             inject: Vec::new(),
             external: config.external.keys().to_vec(),
-            // Also read by `Macro::init`, which creates the macro VM from these.
+            // The macro VM is also created from these.
             loaders: config.loaders.clone(),
             main_fields: Vec::new(),
             extension_order: Vec::new(),
@@ -1244,7 +1244,7 @@ impl JSBundleCompletionTask {
             return compile_ahead_of_time::finish_compilation(config, compiled, log);
         }
 
-        let mut bv2 = BundleV2::init(transpiler, None, heap, event_loop, false, worker_pool, heap);
+        let mut bv2 = BundleV2::init(transpiler, None, heap, event_loop, worker_pool, heap);
         bv2.plugins = plugins;
         bv2.plugin_context = self.context;
         bv2.completion = Some(completion);

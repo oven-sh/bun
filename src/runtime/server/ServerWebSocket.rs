@@ -179,10 +179,9 @@ pub(super) enum Accept {
 /// A converted message argument. Keeps the JS value that owns the bytes alive.
 pub(super) enum Payload<'a> {
     Buffer(ArrayBuffer),
-    Bytes {
-        bytes: &'a [u8],
-        _owner: jsc::EnsureStillAlive,
-    },
+    /// One whose bytes are in memory.
+    Blob(jsc::WrapperGuard<'a, Blob>),
+    Empty,
     Text(jsc::JSStringView<'a>),
 }
 
@@ -191,7 +190,7 @@ impl Payload<'_> {
     pub(super) fn opcode(&self) -> Opcode {
         match self {
             Payload::Text(_) => Opcode::Text,
-            Payload::Buffer(_) | Payload::Bytes { .. } => Opcode::Binary,
+            Payload::Buffer(_) | Payload::Blob(_) | Payload::Empty => Opcode::Binary,
         }
     }
 
@@ -199,7 +198,8 @@ impl Payload<'_> {
     pub(super) fn bytes(&self) -> Utf8Bytes<'_> {
         match self {
             Payload::Buffer(buffer) => Utf8Bytes::Borrowed(buffer.slice()),
-            Payload::Bytes { bytes, .. } => Utf8Bytes::Borrowed(bytes),
+            Payload::Blob(blob) => Utf8Bytes::Borrowed(blob.shared_view()),
+            Payload::Empty => Utf8Bytes::EMPTY,
             Payload::Text(view) => view.to_utf8(),
         }
     }
@@ -208,20 +208,16 @@ impl Payload<'_> {
 /// Converting an argument can run user JS that closes the socket or stops the
 /// server, so every method converts all of its arguments before it reads native state.
 #[inline]
-pub(super) fn payload_from_js<'a>(
+pub(super) fn payload_from_js<'a, 'b: 'a>(
     global_this: &'a JSGlobalObject,
     fn_name: &'static str,
-    value: JSValue,
+    message: JsLocal<'b>,
     accept: Accept,
 ) -> JsResult<Payload<'a>> {
+    let value = message.to_js();
     if value.is_undefined_or_null() {
         match accept {
-            Accept::Control => {
-                return Ok(Payload::Bytes {
-                    bytes: &[],
-                    _owner: jsc::EnsureStillAlive(value),
-                });
-            }
+            Accept::Control => return Ok(Payload::Empty),
             Accept::Any => {
                 return Err(
                     global_this.throw(format_args!("{fn_name} requires a non-empty message"))
@@ -234,16 +230,13 @@ pub(super) fn payload_from_js<'a>(
         if let Some(buffer) = value.as_array_buffer(global_this) {
             return Ok(Payload::Buffer(buffer));
         }
-        if let Some(blob) = value.as_class_ref::<Blob>() {
-            let Some(bytes) = blob.in_memory_view() else {
+        if let Some(blob) = message.as_class_ref::<Blob>() {
+            if blob.needs_to_read_file() || blob.is_s3() {
                 return Err(global_this.throw(format_args!(
                     "{fn_name} cannot send a file- or S3-backed Blob synchronously; await blob.bytes() first"
                 )));
-            };
-            return Ok(Payload::Bytes {
-                bytes,
-                _owner: jsc::EnsureStillAlive(value),
-            });
+            }
+            return Ok(Payload::Blob(blob));
         }
     }
     let expected = match accept {
@@ -355,7 +348,7 @@ impl ServerWebSocket {
     fn send_message(
         &self,
         global_this: &JSGlobalObject,
-        message_value: JSValue,
+        message_value: JsLocal<'_>,
         compress_value: JSValue,
         fn_name: &'static str,
         accept: Accept,
@@ -386,7 +379,7 @@ impl ServerWebSocket {
     pub(crate) fn send_frame(
         &self,
         global_this: &JSGlobalObject,
-        data: JSValue,
+        data: JsLocal<'_>,
         opcode: Opcode,
         fin: bool,
         compress: bool,
@@ -409,7 +402,7 @@ impl ServerWebSocket {
     fn send_control(
         &self,
         global_this: &JSGlobalObject,
-        data: JSValue,
+        data: JsLocal<'_>,
         fn_name: &'static str,
         opcode: Opcode,
     ) -> JsResult<JSValue> {
@@ -439,7 +432,7 @@ impl ServerWebSocket {
         &self,
         global_this: &JSGlobalObject,
         topic_value: JSValue,
-        message_value: JSValue,
+        message_value: JsLocal<'_>,
         compress_value: JSValue,
         fn_name: &'static str,
         accept: Accept,
@@ -926,7 +919,7 @@ impl ServerWebSocket {
         self.publish_message(
             cx.global(),
             topic.to_js(),
-            data.to_js(),
+            data,
             compress.to_js(),
             "publish",
             Accept::Any,
@@ -943,7 +936,7 @@ impl ServerWebSocket {
         self.publish_message(
             cx.global(),
             topic.to_js(),
-            data.to_js(),
+            data,
             compress.to_js(),
             "publishText",
             Accept::Text,
@@ -960,7 +953,7 @@ impl ServerWebSocket {
         self.publish_message(
             cx.global(),
             topic.to_js(),
-            data.to_js(),
+            data,
             compress.to_js(),
             "publishBinary",
             Accept::Binary,
@@ -995,13 +988,7 @@ impl ServerWebSocket {
         data: JsLocal<'_>,
         compress: JsLocal<'_>,
     ) -> JsResult<JSValue> {
-        self.send_message(
-            cx.global(),
-            data.to_js(),
-            compress.to_js(),
-            "send",
-            Accept::Any,
-        )
+        self.send_message(cx.global(), data, compress.to_js(), "send", Accept::Any)
     }
 
     pub(crate) fn send_text(
@@ -1012,7 +999,7 @@ impl ServerWebSocket {
     ) -> JsResult<JSValue> {
         self.send_message(
             cx.global(),
-            data.to_js(),
+            data,
             compress.to_js(),
             "sendText",
             Accept::Text,
@@ -1027,7 +1014,7 @@ impl ServerWebSocket {
     ) -> JsResult<JSValue> {
         self.send_message(
             cx.global(),
-            data.to_js(),
+            data,
             compress.to_js(),
             "sendBinary",
             Accept::Binary,
@@ -1035,11 +1022,11 @@ impl ServerWebSocket {
     }
 
     pub(crate) fn ping(&self, cx: &mut JsScope<'_>, data: JsLocal<'_>) -> JsResult<JSValue> {
-        self.send_control(cx.global(), data.to_js(), "ping", Opcode::Ping)
+        self.send_control(cx.global(), data, "ping", Opcode::Ping)
     }
 
     pub(crate) fn pong(&self, cx: &mut JsScope<'_>, data: JsLocal<'_>) -> JsResult<JSValue> {
-        self.send_control(cx.global(), data.to_js(), "pong", Opcode::Pong)
+        self.send_control(cx.global(), data, "pong", Opcode::Pong)
     }
 
     pub(crate) fn get_ready_state(&self) -> i32 {

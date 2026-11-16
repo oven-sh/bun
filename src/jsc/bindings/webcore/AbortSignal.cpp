@@ -44,8 +44,7 @@ namespace WebCore {
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(AbortSignal);
 
-extern "C" AbortSignalTimeout AbortSignal__Timeout__create(void* vm, AbortSignal* signal, uint64_t milliseconds);
-extern "C" void AbortSignal__Timeout__deinit(AbortSignalTimeout timeout);
+extern "C" AbortSignalTimeout* AbortSignal__Timeout__create(void* vm, AbortSignal* signal, uint64_t milliseconds);
 
 Ref<AbortSignal> AbortSignal::create(ScriptExecutionContext* context)
 {
@@ -72,7 +71,7 @@ Ref<AbortSignal> AbortSignal::timeout(ScriptExecutionContext& context, uint64_t 
     // alive while an abort listener or an AbortSignal.any() dependent observes
     // the timeout. With no observer, collecting the wrapper destroys the
     // signal and ~AbortSignal() cancels and frees the timer.
-    signal->m_timeout = AbortSignal__Timeout__create(bunVM(context.vm()), signal.ptr(), milliseconds);
+    signal->m_timeout.reset(AbortSignal__Timeout__create(bunVM(context.vm()), signal.ptr(), milliseconds));
     ASSERT(signal->m_timeout);
     return signal;
 }
@@ -118,8 +117,6 @@ AbortSignal::~AbortSignal()
     // ~EventTarget()'s eventTargetData() lookup still works.
     if (auto* impl = EventTargetWithInlineData::weakPtrFactory().impl())
         impl->clear();
-
-    cancelTimer();
 }
 
 JSValue AbortSignal::jsReason(JSC::JSGlobalObject& globalObject)
@@ -162,13 +159,6 @@ void AbortSignal::releaseSourceObserverCounts()
 {
     for (Ref source : m_sourceSignals)
         source->m_timeoutObserverCount.fetch_sub(1, std::memory_order_relaxed);
-}
-
-void AbortSignal::cancelTimer()
-{
-    if (auto timeout = std::exchange(m_timeout, nullptr)) {
-        AbortSignal__Timeout__deinit(timeout);
-    }
 }
 
 void AbortSignal::markAborted(JSC::JSValue reason)

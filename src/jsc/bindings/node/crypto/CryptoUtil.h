@@ -31,9 +31,11 @@ const EVP_PKEY_ALG* pqcNidToAlg(int nid);
 namespace ExternZigHash {
 struct Hasher;
 
-Hasher* getByName(const StringView& name);
-Hasher* getFromOther(Hasher* hasher);
-void destroy(Hasher* hasher);
+extern "C" void Bun__CryptoHasherExtern__destroy(Hasher* hasher);
+using HasherPointer = ncrypto::DeleteFnPtr<Hasher, Bun__CryptoHasherExtern__destroy>;
+
+HasherPointer getByName(const StringView& name);
+HasherPointer getFromOther(Hasher* hasher);
 bool update(Hasher* hasher, std::span<const uint8_t> data);
 uint32_t digest(Hasher* hasher, std::span<uint8_t> out);
 uint32_t getDigestSize(Hasher* hasher);
@@ -71,69 +73,5 @@ std::optional<WTF::Vector<uint8_t>> copyArgumentBytes(JSGlobalObject* globalObje
 void parsePublicKeyEncoding(JSGlobalObject*, ThrowScope&, JSObject* enc, JSValue keyTypeValue, WTF::StringView objName, ncrypto::EVPKeyPointer::PublicKeyEncodingConfig&);
 void parsePrivateKeyEncoding(JSGlobalObject*, ThrowScope&, JSObject* enc, JSValue keyTypeValue, WTF::StringView objName, ncrypto::EVPKeyPointer::PrivateKeyEncodingConfig&);
 void parseKeyEncoding(JSGlobalObject* globalObject, ThrowScope& scope, JSObject* enc, JSValue keyTypeValue, std::optional<bool> isPublic, WTF::StringView objName, ncrypto::EVPKeyPointer::PrivateKeyEncodingConfig& config);
-
-// Modified version of ByteSource from node
-//
-// https://github.com/nodejs/node/blob/2a6f90813f4802def79f2df1bfe20e95df279abf/src/crypto/crypto_util.h#L168
-// A helper class representing a read-only byte array. When deallocated, its
-// contents are zeroed.
-class ByteSource final {
-public:
-    ByteSource() = default;
-    ByteSource(ByteSource&& other) noexcept;
-    ~ByteSource();
-
-    ByteSource& operator=(ByteSource&& other) noexcept;
-
-    ByteSource(const ByteSource&) = delete;
-    ByteSource& operator=(const ByteSource&) = delete;
-
-    std::span<const uint8_t> span() const;
-
-    template<typename T = void>
-    inline const T* data() const
-    {
-        return reinterpret_cast<const T*>(data_);
-    }
-
-    template<typename T = void>
-    operator ncrypto::Buffer<const T>() const
-    {
-        return ncrypto::Buffer<const T> {
-            .data = data<T>(),
-            .len = size(),
-        };
-    }
-
-    inline size_t size() const { return size_; }
-
-    inline bool empty() const { return size_ == 0; }
-
-    inline operator bool() const { return data_ != nullptr; }
-
-    static ByteSource allocated(void* data, size_t size);
-
-    template<typename T>
-    static ByteSource allocated(const ncrypto::Buffer<T>& buffer)
-    {
-        return allocated(buffer.data, buffer.len);
-    }
-
-    static ByteSource foreign(const void* data, size_t size);
-
-    static ByteSource fromBIO(const ncrypto::BIOPointer& bio);
-
-private:
-    const void* data_ = nullptr;
-    void* allocated_data_ = nullptr;
-    size_t size_ = 0;
-
-    ByteSource(const void* data, void* allocated_data, size_t size)
-        : data_(data)
-        , allocated_data_(allocated_data)
-        , size_(size)
-    {
-    }
-};
 
 }

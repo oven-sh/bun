@@ -30,7 +30,6 @@ use bun_threading::work_pool::{Task as WorkPoolTask, WorkPool};
 use bun_watcher::Watcher;
 
 use crate::event_loop::{ConcurrentTask, EventLoop};
-use crate::hot_reloader::ImportWatcher;
 use crate::resolved_source::PrintedAst;
 use crate::resolved_source_tag::ResolvedSourceTag;
 use crate::runtime_transpiler_cache::{
@@ -191,7 +190,8 @@ pub fn set_break_point_on_first_line() -> bool {
 
 pub struct RuntimeTranspilerStore {
     pub(crate) generation_number: AtomicU32,
-    pub(crate) store: TranspilerJobStore,
+    /// Boxed: 22 KB that `VirtualMachine::init` would otherwise copy.
+    pub(crate) store: Box<TranspilerJobStore>,
     pub enabled: Cell<bool>,
     pub(crate) queue: Queue,
     /// JS thread only.
@@ -205,7 +205,7 @@ impl Default for RuntimeTranspilerStore {
     fn default() -> Self {
         Self {
             generation_number: AtomicU32::new(0),
-            store: TranspilerJobStore::init(),
+            store: TranspilerJobStore::new_boxed(),
             enabled: Cell::new(true),
             queue: Queue::new(),
             jobs_scheduled: Cell::new(0),
@@ -624,7 +624,7 @@ impl TranspilerJob {
         // `transpile`; the WorkPool calls back with exactly that field, so
         // `from_field_ptr!` recovers the live `TranspilerJob` parent.
         let this = unsafe { bun_core::from_field_ptr!(TranspilerJob, work_task, work_task) };
-        // The slot lives inside the VM, which waits for this ticket, so it is
+        // The slot belongs to the VM, which waits for this ticket, so it is
         // alive throughout. Transpile only while the VM still runs script;
         // either way hand the job back to the JS thread, which completes or
         // releases it.
@@ -709,7 +709,7 @@ impl TranspilerJob {
         });
 
         // The whole Transpiler is copied by value here.
-        // `Transpiler<'static>` is not `Clone` (it holds raw self-referential pointers); we do
+        // `Transpiler<'static>` is not `Clone`; we do
         // a bytewise copy. SAFETY: `vm.transpiler` is read via
         // a raw pointer; every internal raw pointer in the copy
         // still targets memory owned by `vm.transpiler` (resolver caches, define, env) which
@@ -728,24 +728,9 @@ impl TranspilerJob {
         if this.has_plugins {
             transpiler.options.no_macros = true;
         }
-        // The one in the copy is the VM's.
-        let mut macro_context = None;
+        let macro_load_states = transpiler::MacroLoadStates::default();
 
-        let mut package_json: Option<&'static bun_watcher::PackageJSON> = None;
         let hash = Watcher::get_hash(path.text);
-
-        // SAFETY: `bun_watcher` is the `*mut ImportWatcher` set during VM init
-        // (BACKREF — when non-null it points at the process-lifetime watcher
-        // leaked in `enable_hot_module_reloading`, so the `ParentRef` invariant
-        // holds for this transpile job's duration). Raw `(*vm)` field
-        // projection avoids forming `&VirtualMachine` per the `vm` note.
-        let import_watcher: Option<bun_ptr::ParentRef<ImportWatcher, bun_ptr::Mut>> =
-            unsafe { bun_ptr::ParentRef::from_nullable_mut((*vm).bun_watcher.get().cast()) };
-        if let Some(iw) = import_watcher {
-            // Never read through the watchlist's stored fd; see
-            // `ImportWatcher::snapshot_package_json`.
-            package_json = iw.snapshot_package_json(hash);
-        }
 
         // this should be a cheap lookup because 24 bytes == 8 * 3 so it's read 3 machine words
         let is_node_override = strings::has_prefix_comptime(specifier, node_fallbacks::IMPORT_PATH);
@@ -774,11 +759,8 @@ impl TranspilerJob {
 
         // SAFETY: leaf scalar field reads on `*vm`; see `vm` note above.
         let (vm_main, vm_main_hash) = unsafe { ((*vm).main(), (*vm).main_hash.get()) };
-        let is_main = vm_main.is_some_and(|vm_main| {
-            vm_main.len() == path.text.len()
-                && vm_main_hash == hash
-                && strings::eql_long(vm_main, path.text, false)
-        });
+        let is_main = vm_main
+            .is_some_and(|vm_main| vm_main_hash == hash && strings::eql_long(vm_main, path.text));
 
         let module_type: ModuleType = match this_tag {
             ResolvedSourceTag::PackageJsonTypeCommonjs => ModuleType::Cjs,
@@ -795,7 +777,7 @@ impl TranspilerJob {
             opened_file: Some(&mut input_file),
             macro_remappings,
             macro_js_ctx: transpiler::default_macro_js_value(),
-            macro_context: Some(&mut macro_context),
+            macro_load_states: &macro_load_states,
             jsx: transpiler.options.jsx.clone(),
             emit_decorator_metadata: transpiler.options.emit_decorator_metadata,
             experimental_decorators: transpiler.options.experimental_decorators,
@@ -841,17 +823,13 @@ impl TranspilerJob {
         let parse_result = transpiler
             .parse_maybe_return_file_only_allow_shared_buffer::<false, false>(parse_options, None);
 
-        if let Some(iw) = import_watcher
+        if let Some(watcher) = &transpiler.resolver.watcher
             && input_file.is_some()
             && !is_node_override
             && bun_paths::is_absolute(path.text)
             && !strings::contains(path.text, b"node_modules")
         {
-            // SAFETY: BACKREF — process-lifetime watcher; no other
-            // `&ImportWatcher` is live here, and `add_file` is
-            // thread-safe via watcher mutex.
-            let iw = unsafe { iw.assume_mut() };
-            let _ = iw.add_owned_file(input_file, path.text, hash, package_json);
+            let _ = watcher.add_file(input_file, path.text, hash);
         }
 
         let Some(mut parse_result) = parse_result else {

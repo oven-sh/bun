@@ -132,12 +132,7 @@ impl<'a> Writable<'a> {
     ) -> JsResult<Writable<'a>> {
         let global = event_loop.global_ref();
 
-        // `FileSink::create` / `StaticPipeWriter::create` take
-        // `bun_event_loop::EventLoopHandle`, not `&bun_jsc::EventLoop`; erase to
-        // the vtable-backed handle once and reuse for all arms (both platforms).
-        // `event_loop` is a `&jsc::EventLoop` for the live per-thread loop;
-        // erasing to `*mut ()` and back is the `EventLoopHandle::init` contract.
-        let evtloop = bun_event_loop::EventLoopHandle::init(event_loop.as_erased_ptr());
+        let evtloop = event_loop.as_handle();
 
         #[cfg(windows)]
         {
@@ -228,13 +223,11 @@ impl<'a> Writable<'a> {
                     }
                 }
 
-                // `handle` is `PollOrFd` (enum); flag mutation goes
-                // through the FilePoll vtable shim.
-                pipe_ref.writer.with_mut(|w| {
-                    if let Some(poll) = w.handle.get_poll() {
-                        poll.set_flag(bun_io::FilePollFlag::Socket);
-                    }
-                });
+                pipe_ref
+                    .writer
+                    .get()
+                    .handle
+                    .set_poll_flag(bun_io::FilePollFlag::Socket);
 
                 subprocess
                     .weak_file_sink_stdin_ptr

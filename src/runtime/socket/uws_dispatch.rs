@@ -237,7 +237,7 @@ unsafe extern "C" fn us_dispatch_ssl_raw_tap(
 /// `bun_socket_tls` sockets reach this.
 ///
 /// # Safety
-/// `openssl.c` must pass a live, non-null `s` whose ext slot holds a valid
+/// `openssl.cpp` must pass a live, non-null `s` whose ext slot holds a valid
 /// `*mut TLSSocket`, and `data` must point to `len` readable bytes.
 #[unsafe(no_mangle)]
 pub(crate) unsafe extern "C" fn us_dispatch_session(
@@ -336,7 +336,7 @@ pub(crate) extern "C" fn us_dispatch_new_session(
 /// `keylog` handler.
 ///
 /// # Safety
-/// `openssl.c` must pass a live, non-null `s` whose ext slot holds a valid
+/// `openssl.cpp` must pass a live, non-null `s` whose ext slot holds a valid
 /// `*mut TLSSocket`, and `data` must point to `len` readable bytes.
 #[unsafe(no_mangle)]
 pub(crate) unsafe extern "C" fn us_dispatch_keylog(

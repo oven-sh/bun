@@ -572,8 +572,7 @@ GCClient::IsoSubspace* JSModuleGraph::subspaceFor(VM& vm)
 {
     if constexpr (mode == SubspaceAccess::Concurrently)
         return nullptr;
-    return WebCore::subspaceForImpl<JSModuleGraph, WebCore::UseCustomHeapCellType::Yes>(vm, BUN_SUBSPACE_SLOTS(m_clientSubspaceForJSModuleGraph, m_subspaceForJSModuleGraph),
-        [](auto& server) -> JSC::HeapCellType& { return server.m_heapCellTypeForJSModuleGraph; });
+    return WebCore::subspaceForImpl<JSModuleGraph, WebCore::UseCustomHeapCellType::Yes>(vm, BUN_SUBSPACE_SLOTS(m_clientSubspaceForJSModuleGraph, m_subspaceForJSModuleGraph));
 }
 
 Structure* JSModuleGraph::createStructure(VM& vm, JSGlobalObject* globalObject, JSValue prototype)

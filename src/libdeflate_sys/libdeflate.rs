@@ -1,158 +1,132 @@
 use core::ffi::{c_int, c_uint, c_void};
-use core::mem::MaybeUninit;
 use core::ptr::NonNull;
-use std::sync::Once;
 
 use bun_alloc::AllocError;
+use bun_core::vec::{BorrowedBuf, BorrowedCursor, append_with};
 
-/// Valid `compression_level` range for `libdeflate_alloc_compressor`. Values
+/// Valid `compression_level` range for `libdeflate_alloc_compressor_ex`. Values
 /// outside this range make the allocator return NULL (indistinguishable from OOM),
 /// so callers must range-check first.
 pub const MIN_COMPRESSION_LEVEL: c_int = 0;
 pub const MAX_COMPRESSION_LEVEL: c_int = 12;
 
 unsafe extern "C" {
-    // Allocation: scalar arg, no preconditions; returns null on OOM or
-    // compression_level outside MIN..=MAX_COMPRESSION_LEVEL.
-    pub(crate) safe fn libdeflate_alloc_compressor(compression_level: c_int) -> *mut Compressor;
-    pub(crate) fn libdeflate_deflate_compress(
+    // Returns null on OOM or compression_level outside MIN..=MAX_COMPRESSION_LEVEL.
+    fn libdeflate_alloc_compressor_ex(
+        compression_level: c_int,
+        options: *const Options,
+    ) -> *mut Compressor;
+    fn libdeflate_deflate_compress(
         compressor: *mut Compressor,
         in_: *const c_void,
         in_nbytes: usize,
         out: *mut c_void,
         out_nbytes_avail: usize,
     ) -> usize;
-    // Bound queries: opaque handle + scalar. The C API documents `compressor`
-    // may be NULL (returns a library-wide upper bound), so expose it as
-    // `Option<&mut Compressor>` (NPO-ABI-compatible with `*mut Compressor`).
-    pub(crate) safe fn libdeflate_deflate_compress_bound(
-        compressor: Option<&mut Compressor>,
-        in_nbytes: usize,
-    ) -> usize;
-    pub(crate) fn libdeflate_zlib_compress(
+    fn libdeflate_deflate_compress_bound(compressor: *mut Compressor, in_nbytes: usize) -> usize;
+    fn libdeflate_zlib_compress(
         compressor: *mut Compressor,
         in_: *const c_void,
         in_nbytes: usize,
         out: *mut c_void,
         out_nbytes_avail: usize,
     ) -> usize;
-    pub(crate) safe fn libdeflate_zlib_compress_bound(
-        compressor: Option<&mut Compressor>,
-        in_nbytes: usize,
-    ) -> usize;
-    pub(crate) fn libdeflate_gzip_compress(
+    fn libdeflate_zlib_compress_bound(compressor: *mut Compressor, in_nbytes: usize) -> usize;
+    fn libdeflate_gzip_compress(
         compressor: *mut Compressor,
         in_: *const c_void,
         in_nbytes: usize,
         out: *mut c_void,
         out_nbytes_avail: usize,
     ) -> usize;
-    pub(crate) safe fn libdeflate_gzip_compress_bound(
-        compressor: Option<&mut Compressor>,
-        in_nbytes: usize,
-    ) -> usize;
-    pub(crate) fn libdeflate_free_compressor(compressor: *mut Compressor);
+    fn libdeflate_gzip_compress_bound(compressor: *mut Compressor, in_nbytes: usize) -> usize;
+    fn libdeflate_free_compressor(compressor: *mut Compressor);
 }
 
-fn load_once() {
-    // SAFETY: mi_malloc/mi_free are valid C-ABI allocator callbacks for libdeflate.
-    unsafe {
-        libdeflate_set_memory_allocator(
-            Some(bun_alloc::mimalloc::mi_malloc),
-            Some(bun_alloc::mimalloc::mi_free),
-        );
-    }
+/// `struct libdeflate_options`
+#[repr(C)]
+struct Options {
+    sizeof_options: usize,
+    malloc_func: unsafe extern "C" fn(usize) -> *mut c_void,
+    free_func: unsafe extern "C" fn(*mut c_void),
 }
 
-static LOADED_ONCE: Once = Once::new();
-
-pub fn load() {
-    LOADED_ONCE.call_once(load_once);
-}
+static OPTIONS: Options = Options {
+    sizeof_options: size_of::<Options>(),
+    malloc_func: bun_alloc::mimalloc::mi_malloc,
+    free_func: bun_alloc::mimalloc::mi_free,
+};
 
 bun_opaque::opaque_ffi! {
-    /// Opaque libdeflate compressor handle. `UnsafeCell` makes the type `!Freeze`
-    /// so a `&Compressor` does not assert immutability of the C-owned state.
-    pub struct Compressor;
+    struct Compressor;
+    struct Decompressor;
 }
 
-/// libdeflate's one-shot compressors return 0 when the output buffer is too small.
-#[inline]
-fn compress_result(read: usize, written: usize) -> Result {
-    Result {
-        read,
-        written,
-        status: if written == 0 {
-            Status::InsufficientSpace
-        } else {
-            Status::Success
-        },
-    }
-}
+/// Frees on drop. `#[repr(transparent)]`, so an all-zero `Option<OwnedCompressor>` is `None`.
+#[repr(transparent)]
+pub struct OwnedCompressor(NonNull<Compressor>);
 
-impl Compressor {
-    pub(crate) fn alloc(compression_level: c_int) -> *mut Compressor {
-        libdeflate_alloc_compressor(compression_level)
-    }
-
-    /// Compresses `input` into `output` and returns the number of bytes written.
-    pub(crate) fn inflate(&mut self, input: &[u8], output: &mut [u8]) -> Result {
-        // SAFETY: self is a valid *mut Compressor; slice ptr/len pairs are valid.
-        let written = unsafe {
-            libdeflate_deflate_compress(
-                self,
-                input.as_ptr().cast::<c_void>(),
-                input.len(),
-                output.as_mut_ptr().cast::<c_void>(),
-                output.len(),
-            )
-        };
-        compress_result(input.len(), written)
+impl OwnedCompressor {
+    /// `None` on OOM, or if `level` is outside [`MIN_COMPRESSION_LEVEL`]..=[`MAX_COMPRESSION_LEVEL`].
+    #[inline]
+    pub fn new(level: c_int) -> Option<Self> {
+        // SAFETY: the allocator functions match.
+        NonNull::new(unsafe { libdeflate_alloc_compressor_ex(level, &raw const OPTIONS) }).map(Self)
     }
 
     pub fn max_bytes_needed(&mut self, input: &[u8], encoding: Encoding) -> usize {
-        match encoding {
-            Encoding::Deflate => libdeflate_deflate_compress_bound(Some(self), input.len()),
-            Encoding::Zlib => libdeflate_zlib_compress_bound(Some(self), input.len()),
-            Encoding::Gzip => libdeflate_gzip_compress_bound(Some(self), input.len()),
+        let compressor = self.0.as_ptr();
+        // SAFETY: allocated in `new`.
+        unsafe {
+            match encoding {
+                Encoding::Deflate => libdeflate_deflate_compress_bound(compressor, input.len()),
+                Encoding::Zlib => libdeflate_zlib_compress_bound(compressor, input.len()),
+                Encoding::Gzip => libdeflate_gzip_compress_bound(compressor, input.len()),
+            }
         }
     }
 
     pub fn compress(&mut self, input: &[u8], output: &mut [u8], encoding: Encoding) -> Result {
-        match encoding {
-            Encoding::Deflate => self.inflate(input, output),
-            Encoding::Zlib => self.zlib(input, output),
-            Encoding::Gzip => self.gzip(input, output),
-        }
+        self.compress_into(input, BorrowedBuf::from(output).unfilled(), encoding)
     }
 
-    /// Like [`compress`](Self::compress) but writes into a possibly-uninitialized
-    /// output buffer (e.g. `Vec::spare_capacity_mut()`). libdeflate only writes
-    /// to `output`, never reads, so `MaybeUninit<u8>` is the correct element type
-    /// and avoids the UB of materializing `&mut [u8]` over uninitialized bytes.
-    /// On return, `output[..result.written]` is initialized.
-    pub(crate) fn compress_into(
+    fn compress_into(
         &mut self,
         input: &[u8],
-        output: &mut [MaybeUninit<u8>],
+        mut output: BorrowedCursor<'_, u8>,
         encoding: Encoding,
     ) -> Result {
+        let compressor = self.0.as_ptr();
         let in_ptr = input.as_ptr().cast::<c_void>();
         let in_len = input.len();
-        let out_ptr = output.as_mut_ptr().cast::<c_void>();
-        let out_len = output.len();
-        // SAFETY: self is a valid *mut Compressor; ptr/len pairs are valid for the
-        // FFI contract (input read-only, output write-only for `out_len` bytes).
+        let out_len = output.capacity();
+        // SAFETY: allocated in `new`; libdeflate returns how many bytes it wrote at the start of `output`.
         let written = unsafe {
-            match encoding {
+            let out_ptr = output.as_mut().as_mut_ptr().cast::<c_void>();
+            let written = match encoding {
                 Encoding::Deflate => {
-                    libdeflate_deflate_compress(self, in_ptr, in_len, out_ptr, out_len)
+                    libdeflate_deflate_compress(compressor, in_ptr, in_len, out_ptr, out_len)
                 }
-                Encoding::Zlib => libdeflate_zlib_compress(self, in_ptr, in_len, out_ptr, out_len),
-                Encoding::Gzip => libdeflate_gzip_compress(self, in_ptr, in_len, out_ptr, out_len),
-            }
+                Encoding::Zlib => {
+                    libdeflate_zlib_compress(compressor, in_ptr, in_len, out_ptr, out_len)
+                }
+                Encoding::Gzip => {
+                    libdeflate_gzip_compress(compressor, in_ptr, in_len, out_ptr, out_len)
+                }
+            };
+            output.advance(written);
+            written
         };
-        compress_result(in_len, written)
+        Result {
+            read: in_len,
+            written,
+            // libdeflate's one-shot compressors return 0 when the output buffer is too small.
+            status: if written == 0 {
+                Status::InsufficientSpace
+            } else {
+                Status::Success
+            },
+        }
     }
 
     /// Compress `input` onto the end of `out`, reserving the bound first; `Err` if that allocation fails.
@@ -164,193 +138,57 @@ impl Compressor {
     ) -> core::result::Result<Result, AllocError> {
         out.try_reserve_exact(self.max_bytes_needed(input, encoding))
             .map_err(|_| AllocError)?;
-        let result = self.compress_into(input, out.spare_capacity_mut(), encoding);
-        if result.status == Status::Success {
-            // SAFETY: result.written ≤ spare.len() and libdeflate has
-            // initialized spare[..result.written].
-            unsafe { out.set_len(out.len() + result.written) };
-        }
-        Ok(result)
-    }
-
-    pub(crate) fn zlib(&mut self, input: &[u8], output: &mut [u8]) -> Result {
-        // SAFETY: self is a valid *mut Compressor; slice ptr/len pairs are valid.
-        let result = unsafe {
-            libdeflate_zlib_compress(
-                self,
-                input.as_ptr().cast::<c_void>(),
-                input.len(),
-                output.as_mut_ptr().cast::<c_void>(),
-                output.len(),
-            )
-        };
-        compress_result(input.len(), result)
-    }
-
-    pub(crate) fn gzip(&mut self, input: &[u8], output: &mut [u8]) -> Result {
-        // SAFETY: self is a valid *mut Compressor; slice ptr/len pairs are valid.
-        let result = unsafe {
-            libdeflate_gzip_compress(
-                self,
-                input.as_ptr().cast::<c_void>(),
-                input.len(),
-                output.as_mut_ptr().cast::<c_void>(),
-                output.len(),
-            )
-        };
-        compress_result(input.len(), result)
-    }
-}
-
-/// Owned RAII libdeflate compressor. Frees on drop.
-///
-/// `#[repr(transparent)]` over `NonNull` so `Option<OwnedCompressor>` has the
-/// same layout as `*mut Compressor` (all-zero = `None`).
-#[repr(transparent)]
-pub struct OwnedCompressor(NonNull<Compressor>);
-
-impl OwnedCompressor {
-    /// Allocate a compressor at `level` ([`MIN_COMPRESSION_LEVEL`]..=[`MAX_COMPRESSION_LEVEL`]).
-    /// Returns `None` on OOM or if `level` is out of range.
-    #[inline]
-    pub fn new(level: c_int) -> Option<Self> {
-        NonNull::new(Compressor::alloc(level)).map(Self)
-    }
-}
-
-impl core::ops::Deref for OwnedCompressor {
-    type Target = Compressor;
-    #[inline]
-    fn deref(&self) -> &Compressor {
-        // SAFETY: non-null, allocated by libdeflate, exclusively owned by `self`.
-        unsafe { self.0.as_ref() }
-    }
-}
-
-impl core::ops::DerefMut for OwnedCompressor {
-    #[inline]
-    fn deref_mut(&mut self) -> &mut Compressor {
-        // SAFETY: non-null, allocated by libdeflate, exclusively owned by `self`.
-        unsafe { self.0.as_mut() }
+        Ok(append_with(out, usize::MAX, |out| {
+            self.compress_into(input, out, encoding)
+        }))
     }
 }
 
 impl Drop for OwnedCompressor {
     #[inline]
     fn drop(&mut self) {
-        // SAFETY: allocated by `libdeflate_alloc_compressor`; freed exactly once here.
+        // SAFETY: allocated in `new`; freed exactly once here.
         unsafe { libdeflate_free_compressor(self.0.as_ptr()) }
     }
 }
 
-bun_opaque::opaque_ffi! {
-    /// Opaque libdeflate decompressor handle. `UnsafeCell` makes the type `!Freeze`.
-    pub struct Decompressor;
-}
+/// Frees on drop. `#[repr(transparent)]`, so an all-zero `Option<OwnedDecompressor>` is `None`.
+#[repr(transparent)]
+pub struct OwnedDecompressor(NonNull<Decompressor>);
 
-impl Decompressor {
-    pub(crate) fn alloc() -> *mut Decompressor {
-        libdeflate_alloc_decompressor()
-    }
-
-    pub(crate) fn deflate(&self, input: &[u8], output: &mut [u8]) -> Result {
-        let mut actual_in_bytes_ret: usize = input.len();
-        let mut actual_out_bytes_ret: usize = output.len();
-        // SAFETY: self is a valid *mut Decompressor; slice ptr/len pairs and out-params are valid.
-        let result = unsafe {
-            libdeflate_deflate_decompress_ex(
-                self.as_mut_ptr(),
-                input.as_ptr().cast::<c_void>(),
-                input.len(),
-                output.as_mut_ptr().cast::<c_void>(),
-                output.len(),
-                &raw mut actual_in_bytes_ret,
-                &raw mut actual_out_bytes_ret,
-            )
-        };
-        Result {
-            read: actual_in_bytes_ret,
-            written: actual_out_bytes_ret,
-            status: result,
-        }
-    }
-
-    pub(crate) fn zlib(&self, input: &[u8], output: &mut [u8]) -> Result {
-        let mut actual_in_bytes_ret: usize = input.len();
-        let mut actual_out_bytes_ret: usize = output.len();
-        // SAFETY: self is a valid *mut Decompressor; slice ptr/len pairs and out-params are valid.
-        let result = unsafe {
-            libdeflate_zlib_decompress_ex(
-                self.as_mut_ptr(),
-                input.as_ptr().cast::<c_void>(),
-                input.len(),
-                output.as_mut_ptr().cast::<c_void>(),
-                output.len(),
-                &raw mut actual_in_bytes_ret,
-                &raw mut actual_out_bytes_ret,
-            )
-        };
-        Result {
-            read: actual_in_bytes_ret,
-            written: actual_out_bytes_ret,
-            status: result,
-        }
-    }
-
-    pub(crate) fn gzip(&self, input: &[u8], output: &mut [u8]) -> Result {
-        let mut actual_in_bytes_ret: usize = input.len();
-        let mut actual_out_bytes_ret: usize = output.len();
-        // SAFETY: self is a valid *mut Decompressor; slice ptr/len pairs and out-params are valid.
-        let result = unsafe {
-            libdeflate_gzip_decompress_ex(
-                self.as_mut_ptr(),
-                input.as_ptr().cast::<c_void>(),
-                input.len(),
-                output.as_mut_ptr().cast::<c_void>(),
-                output.len(),
-                &raw mut actual_in_bytes_ret,
-                &raw mut actual_out_bytes_ret,
-            )
-        };
-        Result {
-            read: actual_in_bytes_ret,
-            written: actual_out_bytes_ret,
-            status: result,
-        }
+impl OwnedDecompressor {
+    /// Allocate a decompressor. Returns `None` on OOM.
+    #[inline]
+    pub fn new() -> Option<Self> {
+        // SAFETY: the allocator functions match.
+        NonNull::new(unsafe { libdeflate_alloc_decompressor_ex(&raw const OPTIONS) }).map(Self)
     }
 
     pub fn decompress(&self, input: &[u8], output: &mut [u8], encoding: Encoding) -> Result {
-        match encoding {
-            Encoding::Deflate => self.deflate(input, output),
-            Encoding::Zlib => self.zlib(input, output),
-            Encoding::Gzip => self.gzip(input, output),
-        }
+        self.decompress_into(input, BorrowedBuf::from(output).unfilled(), encoding)
     }
 
-    /// Like [`decompress`](Self::decompress) but writes into a possibly-uninitialized
-    /// output buffer (e.g. `Vec::spare_capacity_mut()`). libdeflate only writes
-    /// to `output`, never reads, so `MaybeUninit<u8>` is the correct element type
-    /// and avoids the UB of materializing `&mut [u8]` over uninitialized bytes.
-    /// On `Status::Success`, `output[..result.written]` is initialized.
-    pub(crate) fn decompress_into(
+    /// Fills `output` only on `Status::Success`.
+    fn decompress_into(
         &self,
         input: &[u8],
-        output: &mut [MaybeUninit<u8>],
+        mut output: BorrowedCursor<'_, u8>,
         encoding: Encoding,
     ) -> Result {
+        let decompressor = self.0.as_ptr();
         let in_ptr = input.as_ptr().cast::<c_void>();
         let in_len = input.len();
-        let out_ptr = output.as_mut_ptr().cast::<c_void>();
-        let out_len = output.len();
+        let out_len = output.capacity();
         let mut read: usize = in_len;
         let mut written: usize = out_len;
-        // SAFETY: self is a valid *mut Decompressor; ptr/len pairs are valid for the
-        // FFI contract (input read-only, output write-only for `out_len` bytes);
-        // out-params are valid `*mut usize`.
+        // SAFETY: allocated in `new`, and no other call is using it: `Self` is not `Sync`, and
+        // libdeflate does not call back. On success it reports how many bytes it wrote at the
+        // start of `output`.
         let status = unsafe {
-            match encoding {
+            let out_ptr = output.as_mut().as_mut_ptr().cast::<c_void>();
+            let status = match encoding {
                 Encoding::Deflate => libdeflate_deflate_decompress_ex(
-                    self.as_mut_ptr(),
+                    decompressor,
                     in_ptr,
                     in_len,
                     out_ptr,
@@ -359,7 +197,7 @@ impl Decompressor {
                     &raw mut written,
                 ),
                 Encoding::Zlib => libdeflate_zlib_decompress_ex(
-                    self.as_mut_ptr(),
+                    decompressor,
                     in_ptr,
                     in_len,
                     out_ptr,
@@ -368,7 +206,7 @@ impl Decompressor {
                     &raw mut written,
                 ),
                 Encoding::Gzip => libdeflate_gzip_decompress_ex(
-                    self.as_mut_ptr(),
+                    decompressor,
                     in_ptr,
                     in_len,
                     out_ptr,
@@ -376,7 +214,11 @@ impl Decompressor {
                     &raw mut read,
                     &raw mut written,
                 ),
+            };
+            if status == Status::Success {
+                output.advance(written);
             }
+            status
         };
         Result {
             read,
@@ -393,19 +235,10 @@ impl Decompressor {
     /// - On [`Status::Success`], `out.len()` is advanced by `result.written`.
     ///   On any other status, `out.len()` is left unchanged (libdeflate does
     ///   not define `actual_out_nbytes_ret` on failure).
-    ///
-    /// Safe replacement for the open-coded
-    /// `decompress_into(out.spare_capacity_mut()) + unsafe { set_len }` pattern,
-    /// and for the UB-adjacent `slice_mut(ptr, capacity)` form that materialized
-    /// `&mut [u8]` over uninitialized bytes.
     pub fn decompress_to_vec(&self, input: &[u8], out: &mut Vec<u8>, encoding: Encoding) -> Result {
-        let result = self.decompress_into(input, out.spare_capacity_mut(), encoding);
-        if result.status == Status::Success {
-            // SAFETY: result.written ≤ spare.len() and libdeflate has
-            // initialized spare[..result.written].
-            unsafe { out.set_len(out.len() + result.written) };
-        }
-        result
+        append_with(out, usize::MAX, |out| {
+            self.decompress_into(input, out, encoding)
+        })
     }
 
     /// [`decompress_to_vec`](Self::decompress_to_vec) with a doubling retry loop.
@@ -436,34 +269,10 @@ impl Decompressor {
     }
 }
 
-/// Owned RAII libdeflate decompressor. Frees on drop.
-///
-/// `#[repr(transparent)]` over `NonNull` so `Option<OwnedDecompressor>` has the
-/// same layout as `*mut Decompressor` (all-zero = `None`).
-#[repr(transparent)]
-pub struct OwnedDecompressor(NonNull<Decompressor>);
-
-impl OwnedDecompressor {
-    /// Allocate a decompressor. Returns `None` on OOM.
-    #[inline]
-    pub fn new() -> Option<Self> {
-        NonNull::new(Decompressor::alloc()).map(Self)
-    }
-}
-
-impl core::ops::Deref for OwnedDecompressor {
-    type Target = Decompressor;
-    #[inline]
-    fn deref(&self) -> &Decompressor {
-        // SAFETY: non-null, allocated by libdeflate, exclusively owned by `self`.
-        unsafe { self.0.as_ref() }
-    }
-}
-
 impl Drop for OwnedDecompressor {
     #[inline]
     fn drop(&mut self) {
-        // SAFETY: allocated by `libdeflate_alloc_decompressor`; freed exactly once here.
+        // SAFETY: allocated in `new`; freed exactly once here.
         unsafe { libdeflate_free_decompressor(self.0.as_ptr()) }
     }
 }
@@ -482,7 +291,7 @@ pub enum Encoding {
 }
 
 unsafe extern "C" {
-    pub(crate) safe fn libdeflate_alloc_decompressor() -> *mut Decompressor;
+    fn libdeflate_alloc_decompressor_ex(options: *const Options) -> *mut Decompressor;
 }
 
 const LIBDEFLATE_SUCCESS: c_uint = 0;
@@ -501,7 +310,7 @@ pub enum Status {
 }
 
 unsafe extern "C" {
-    pub(crate) fn libdeflate_deflate_decompress_ex(
+    fn libdeflate_deflate_decompress_ex(
         decompressor: *mut Decompressor,
         in_: *const c_void,
         in_nbytes: usize,
@@ -510,7 +319,7 @@ unsafe extern "C" {
         actual_in_nbytes_ret: *mut usize,
         actual_out_nbytes_ret: *mut usize,
     ) -> Status;
-    pub(crate) fn libdeflate_zlib_decompress_ex(
+    fn libdeflate_zlib_decompress_ex(
         decompressor: *mut Decompressor,
         in_: *const c_void,
         in_nbytes: usize,
@@ -519,7 +328,7 @@ unsafe extern "C" {
         actual_in_nbytes_ret: *mut usize,
         actual_out_nbytes_ret: *mut usize,
     ) -> Status;
-    pub(crate) fn libdeflate_gzip_decompress_ex(
+    fn libdeflate_gzip_decompress_ex(
         decompressor: *mut Decompressor,
         in_: *const c_void,
         in_nbytes: usize,
@@ -528,9 +337,5 @@ unsafe extern "C" {
         actual_in_nbytes_ret: *mut usize,
         actual_out_nbytes_ret: *mut usize,
     ) -> Status;
-    pub(crate) fn libdeflate_free_decompressor(decompressor: *mut Decompressor);
-    pub(crate) fn libdeflate_set_memory_allocator(
-        malloc_func: Option<unsafe extern "C" fn(usize) -> *mut c_void>,
-        free_func: Option<unsafe extern "C" fn(*mut c_void)>,
-    );
+    fn libdeflate_free_decompressor(decompressor: *mut Decompressor);
 }

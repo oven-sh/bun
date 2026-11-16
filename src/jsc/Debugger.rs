@@ -13,7 +13,7 @@ use core::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 
 use bun_core::{String as BunString, StringView};
 use bun_io::KeepAlive;
-use bun_io::posix_event_loop::{AllocatorType, get_vm_ctx};
+use bun_io::js_vm_ctx;
 
 use crate::virtual_machine::{VirtualMachine, runtime_hooks};
 use crate::{self as jsc, JSGlobalObject, ZigException};
@@ -260,7 +260,7 @@ impl Debugger {
 
                 extern "C" fn on_debugger_timer(handle: *mut uv::Timer) {
                     if let Some(d) = VirtualMachine::get().debugger.get() {
-                        d.poll_ref.unref(get_vm_ctx(AllocatorType::Js));
+                        d.poll_ref.unref(js_vm_ctx());
                     }
                     // SAFETY: the timer given up below, which fires once.
                     drop(unsafe { uv::Owned::from_raw(handle) });
@@ -313,7 +313,7 @@ impl Debugger {
                     let elapsed =
                         bun_core::Timespec::now(bun_core::TimespecMockMode::ForceRealTime);
                     if elapsed.order(&deadline) != core::cmp::Ordering::Less {
-                        dbg.poll_ref.unref(get_vm_ctx(AllocatorType::Js));
+                        dbg.poll_ref.unref(js_vm_ctx());
                         bun_core::scoped_log!(debugger, "Timed out waiting for the debugger");
                         break;
                     }
@@ -382,7 +382,7 @@ impl Debugger {
         this.event_loop().ensure_waker();
 
         if dbg.wait_for_connection.get() != Wait::Off {
-            dbg.poll_ref.ref_(get_vm_ctx(AllocatorType::Js));
+            dbg.poll_ref.ref_(js_vm_ctx());
             dbg.must_block_until_connected.set(true);
         }
         Ok(())
@@ -404,15 +404,15 @@ impl Debugger {
         bun_core::scoped_log!(debugger, "startJSDebuggerThread");
         jsc::mark_binding();
 
-        let vm = VirtualMachine::init(crate::virtual_machine::InitOptions {
-            // Lives as long as the VM, which this thread never tears down.
-            env_loader: Some(bun_core::heap::alloc_nn(bun_dotenv::Loader::init_with_map(
-                env_map,
-            ))),
+        let mut log = bun_ast::Log::default();
+        let mut env_loader = bun_dotenv::Loader::init_with_map(env_map);
+        let options = crate::virtual_machine::InitOptions {
+            env_loader: Some(core::ptr::NonNull::from(&mut env_loader)),
             is_main_thread: false,
             ..Default::default()
-        })
-        .unwrap_or_else(|_| panic!("Failed to create Debugger VM"));
+        };
+        let vm = VirtualMachine::init(&raw mut log, options)
+            .unwrap_or_else(|_| panic!("Failed to create Debugger VM"));
         vm.event_loop().ensure_waker();
 
         extern "C" fn start_trampoline(ctx: *mut c_void) {
@@ -431,7 +431,7 @@ impl Debugger {
     /// Runs inside `holdAPILock` on the debugger thread. Publishes the
     /// inspector URL(s), wakes the futex the debuggee VM is blocked on, then
     /// spins this thread's event loop forever.
-    fn start(init: DebuggerThreadInit) {
+    fn start(init: DebuggerThreadInit) -> ! {
         jsc::mark_binding();
 
         let this: &VirtualMachine = VirtualMachine::get();
@@ -561,7 +561,7 @@ pub fn wait_for_node_inspector_connection() {
         if dbg.wait_for_connection.get() == Wait::Off {
             // Mirror `create()`: the ref pairs with the unref in `did_connect`.
             dbg.wait_for_connection.set(Wait::Forever);
-            dbg.poll_ref.ref_(get_vm_ctx(AllocatorType::Js));
+            dbg.poll_ref.ref_(js_vm_ctx());
         }
         dbg.must_block_until_connected.set(true);
     }
@@ -579,7 +579,7 @@ pub fn abandon_node_inspector_wait() {
     if dbg.wait_for_connection.get() != Wait::Off {
         dbg.wait_for_connection.set(Wait::Off);
         dbg.must_block_until_connected.set(false);
-        dbg.poll_ref.unref(get_vm_ctx(AllocatorType::Js));
+        dbg.poll_ref.unref(js_vm_ctx());
     }
 }
 
@@ -591,7 +591,7 @@ pub fn did_connect() {
     };
     if dbg.wait_for_connection.get() != Wait::Off {
         dbg.wait_for_connection.set(Wait::Off);
-        dbg.poll_ref.unref(get_vm_ctx(AllocatorType::Js));
+        dbg.poll_ref.unref(js_vm_ctx());
         this.event_loop().wakeup();
     }
 }

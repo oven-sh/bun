@@ -76,7 +76,7 @@ public:
 
         /* Flush queued publishes and corked sends now. The fd is already closed by the time onClose runs. */
         if (webSocketData->subscriber) {
-            getContextData()->topicTree->drain(webSocketData->subscriber);
+            getContextData()->topicTree->drain(webSocketData->subscriber.get());
         }
         Super::uncork();
 
@@ -215,7 +215,7 @@ private:
 
             if (webSocketData->subscriber) {
                 /* This will call back into us, send. */
-                webSocketContextData->topicTree->drain(webSocketData->subscriber);
+                webSocketContextData->topicTree->drain(webSocketData->subscriber.get());
             }
 
             /* Transform the message to compressed domain if requested */
@@ -227,8 +227,8 @@ private:
                     && (webSocketContextData->compression & CompressOptions::_COMPRESSOR_MASK) != 0) {
                     LoopData *loopData = Super::getLoopData();
                     /* Compress using either shared or dedicated deflationStream */
-                    DeflationStream *deflationStream = webSocketData->deflationStream ? webSocketData->deflationStream : loopData->deflationStream;
-                    message = deflationStream->deflate(loopData->zlibContext, message);
+                    DeflationStream *deflationStream = (webSocketData->deflationStream ? webSocketData->deflationStream : loopData->deflationStream).get();
+                    message = deflationStream->deflate(loopData->zlibContext.get(), message);
                 } else {
                     compress = false;
                 }
@@ -283,8 +283,7 @@ private:
 
         /* Flush queued publishes first. Make sure to unsubscribe from any pub/sub node at exit */
         if (webSocketData->subscriber) {
-            webSocketContextData->topicTree->drain(webSocketData->subscriber);
-            webSocketContextData->topicTree->freeSubscriber(webSocketData->subscriber);
+            webSocketContextData->topicTree->drain(webSocketData->subscriber.get());
             webSocketData->subscriber = nullptr;
         }
 
@@ -377,7 +376,6 @@ public:
         }
 
         /* Drop the queued publishes, because sendCloseFrame() would write them first. */
-        getContextData()->topicTree->freeSubscriber(webSocketData->subscriber);
         webSocketData->subscriber = nullptr;
 
         if (!getBufferedAmount()) {
@@ -419,7 +417,7 @@ public:
             webSocketData->subscriber->user = this;
         }
 
-        webSocketContextData->topicTree->subscribe(webSocketData->subscriber, topic);
+        webSocketContextData->topicTree->subscribe(webSocketData->subscriber.get(), topic);
 
         /* Subscribe always succeeds */
         return true;
@@ -433,15 +431,12 @@ public:
 
         if (!webSocketData->subscriber) { return false; }
 
-        auto [ok, last] = webSocketContextData->topicTree->unsubscribe(webSocketData->subscriber, topic);
+        auto [ok, last] = webSocketContextData->topicTree->unsubscribe(webSocketData->subscriber.get(), topic);
 
         /* Free us as subscribers if we unsubscribed from our last topic */
         if (ok && last) {
-            /* Flush queued publish() messages before the Subscriber is freed.
-             * freeSubscriber unlinks without draining, which would otherwise
-             * drop messages that publish() already accepted this tick. */
-            webSocketContextData->topicTree->drain(webSocketData->subscriber);
-            webSocketContextData->topicTree->freeSubscriber(webSocketData->subscriber);
+            /* ~Subscriber drops the messages that publish() already accepted this tick. */
+            webSocketContextData->topicTree->drain(webSocketData->subscriber.get());
             webSocketData->subscriber = nullptr;
         }
 
@@ -462,7 +457,7 @@ public:
             return false;
         }
 
-        return topicPtr->count(webSocketData->subscriber);
+        return topicPtr->count(webSocketData->subscriber.get());
     }
 
     /* Iterates all topics of this WebSocket. Every topic is represented by its full name.
@@ -475,7 +470,7 @@ public:
         WebSocketData *webSocketData = (WebSocketData *) us_socket_ext((us_socket_t *) this);
         if (webSocketData->subscriber) {
             /* Lock this subscriber for unsubscription / subscription */
-            webSocketContextData->topicTree->iteratingSubscriber = webSocketData->subscriber;
+            webSocketContextData->topicTree->iteratingSubscriber = webSocketData->subscriber.get();
 
             for (Topic *topicPtr : webSocketData->subscriber->topics) {
                 cb({topicPtr->name.data(), topicPtr->name.length()});
@@ -495,7 +490,7 @@ public:
         /* A sender with no Subscriber (never subscribed to anything) still publishes; nullptr
          * is a valid "exclude nobody" sender for TopicTree (App::publish relies on this). */
         WebSocketData *webSocketData = (WebSocketData *) us_socket_ext((us_socket_t *) this);
-        Subscriber *sender = webSocketData->subscriber;
+        Subscriber *sender = webSocketData->subscriber.get();
 
         /* Publish as sender, does not receive its own messages even if subscribed to relevant topics */
         if (message.length() >= LoopData::CORK_COPY_MAX) {

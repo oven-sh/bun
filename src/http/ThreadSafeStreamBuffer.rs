@@ -8,7 +8,7 @@ use bun_threading::{Guarded, Mutex};
 #[derive(bun_ptr::ThreadSafeRefCounted)]
 pub struct ThreadSafeStreamBuffer {
     state: Guarded<State>,
-    /// Intrusive atomic refcount. Starts at 2: 1 for main thread and 1 for http thread.
+    /// Intrusive atomic refcount: 1 for main thread and 1 for http thread.
     pub(crate) ref_count: bun_ptr::ThreadSafeRefCount<ThreadSafeStreamBuffer>,
 }
 
@@ -42,16 +42,14 @@ impl Callback {
 
 impl ThreadSafeStreamBuffer {
     /// The http thread calls `callback(context)` when the buffer drains.
-    pub fn new<T>(callback: fn(*mut T), context: *mut T) -> [RefPtr<Self>; 2] {
-        let this = bun_core::heap::into_raw(Box::new(Self {
+    pub fn new<T>(callback: fn(*mut T), context: *mut T) -> RefPtr<Self> {
+        RefPtr::new(Self {
             state: Guarded::new(State {
                 buffer: StreamBuffer::default(),
                 callback: Some(Callback::init(callback, context)),
             }),
-            ref_count: bun_ptr::ThreadSafeRefCount::init_exact_refs(2),
-        }));
-        // SAFETY: each adopts one of the two refs.
-        unsafe { [RefPtr::from_raw(this), RefPtr::from_raw(this)] }
+            ref_count: bun_ptr::ThreadSafeRefCount::init(),
+        })
     }
 
     /// Locks the mutex; the guard unlocks it on `Drop`.

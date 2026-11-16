@@ -52,7 +52,6 @@ fn create_page_outputs(
     with_ast_scope(|heap| {
         let mut page_log = Log::init();
         let mut transpiler = create_page_transpiler(context, heap, &raw mut page_log);
-        transpiler.wire_after_move();
         let any_loop = AnyEventLoop::default();
         let carrier = context.bundle();
 
@@ -61,7 +60,6 @@ fn create_page_outputs(
             None,
             heap,
             Some(NonNull::from(&any_loop)),
-            false,
             Some(NonNull::from(carrier.graph.pool().worker_pool())),
             heap,
         );
@@ -148,8 +146,13 @@ fn run<'h>(
     bundle.enqueue_entry_points_normal::<&[u8]>(&[])?;
 
     let mut source = create_entry_source(pages, heap);
-    let index =
-        bundle.enqueue_parse_task2(&mut source, Loader::Js, Target::Bun, ModuleType::Esm)?;
+    let index = bundle.enqueue_parse_task2(
+        &mut source,
+        Loader::Js,
+        Target::Bun,
+        ModuleType::Esm,
+        Default::default(),
+    )?;
     bundle.graph.entry_points.push(Index::init(index));
 
     bundle.wait_for_parse();
@@ -159,8 +162,9 @@ fn run<'h>(
     bundle.fail_if_no_entry_points()?;
 
     bundle.scan_for_secondary_paths();
+    bundle.disambiguate_pretty_paths();
     bundle.process_server_component_manifest_files()?;
-    let mut linker_graph = bundle.clone_ast()?;
+    let mut linker_graph = bundle.create_linker_graph()?;
 
     let reachable_files = bundle.find_reachable_files()?;
     linker_graph.additional_output_files = bundle.process_files_to_copy(&reachable_files)?;

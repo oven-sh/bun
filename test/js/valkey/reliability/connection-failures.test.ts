@@ -887,7 +887,7 @@ describe("Valkey: Recovering After fail()", () => {
   test("a failure while the peer has stopped reading still closes the TLS socket at once", async () => {
     // Pins the close code fail() uses: with a fast shutdown, usockets keeps a
     // TLS socket whose last batch flush could not be handed to the kernel
-    // (packages/bun-usockets/src/crypto/openssl.c, us_internal_ssl_close) until
+    // (packages/bun-usockets/src/crypto/openssl.cpp, us_internal_ssl_close) until
     // the peer reads again, which this peer never does.
     const fake = helloServer(
       {

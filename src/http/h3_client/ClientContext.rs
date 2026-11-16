@@ -2,7 +2,7 @@
 //! client engine and the live-session registry. Never freed — the engine
 //! lives for the process, same as the HTTP thread itself.
 
-use core::ffi::{c_uint, c_void};
+use core::ffi::c_void;
 use core::ptr::NonNull;
 
 use bun_ptr::RefPtr;
@@ -13,7 +13,6 @@ use bun_uws::quic::context::ConnectResult;
 use super::callbacks;
 use super::client_session::{ClientSession, quic_socket_mut, session_mut};
 use super::pending_connect::PendingConnect;
-use super::stream::Stream;
 use crate::HTTPClient;
 use crate::http_thread::WriteMessageType;
 
@@ -37,7 +36,6 @@ pub(crate) struct ClientContext {
 // uncontended atomic op is free on the single HTTP client thread.
 static INSTANCE: bun_core::AtomicCell<Option<NonNull<ClientContext>>> =
     bun_core::AtomicCell::new(None);
-static LSQUIC_INIT_ONCE: std::sync::Once = std::sync::Once::new();
 
 impl ClientContext {
     /// Mutable access to the lsquic client engine.
@@ -74,17 +72,7 @@ impl ClientContext {
         if let Some(i) = INSTANCE.load() {
             return Some(i);
         }
-        LSQUIC_INIT_ONCE.call_once(quic::global_init);
-        // SAFETY: `global_init` ran above.
-        let qctx = unsafe {
-            quic::Context::create_client(
-                UwsLoop::get(),
-                0,
-                core::mem::size_of::<*mut ClientSession>() as c_uint,
-                core::mem::size_of::<*mut Stream>() as c_uint,
-            )
-        }?;
-        let qctx = NonNull::new(qctx).expect("us_create_quic_socket_context returned null");
+        let qctx = quic::Context::create_client(UwsLoop::get())?;
 
         // Process-lifetime singleton — published into `INSTANCE` below and
         // never torn down (the lsquic engine outlives every request).
@@ -166,8 +154,7 @@ impl ClientContext {
                     bstr::BStr::new(hostname),
                     port,
                 );
-                let l = self.qctx_mut().r#loop();
-                PendingConnect::register(session, pending, l.cast::<UwsLoop>());
+                PendingConnect::register(session, pending);
             }
             ConnectResult::Err => {
                 bun_core::scoped_log!(

@@ -234,28 +234,21 @@ pub mod analyze_transpiled_module {
         let mut blob: Vec<u8> = Vec::new();
         for wtf8 in strings {
             offsets.push(blob.len() as u32);
-            match bun_core::strings::first_non_ascii(wtf8) {
-                None => {
-                    blob.push(1);
-                    blob.extend_from_slice(wtf8);
-                }
-                Some(first_non_ascii) => {
-                    blob.push(0);
-                    if !blob.len().is_multiple_of(2) {
-                        blob.push(0);
-                    }
-                    blob.reserve(2 * wtf8.len());
-                    // SAFETY: `2 * wtf8.len()` spare bytes reserved, the bound `write_wtf8_as_utf16le` requires.
-                    unsafe {
-                        let n = bun_core::strings::write_wtf8_as_utf16le(
-                            wtf8,
-                            first_non_ascii as usize,
-                            blob.as_mut_ptr().add(blob.len()),
-                        );
-                        blob.set_len(blob.len() + n);
-                    }
-                }
+            let Some(first_non_ascii) = bun_core::strings::first_non_ascii(wtf8) else {
+                blob.push(1);
+                blob.extend_from_slice(wtf8);
+                continue;
+            };
+            blob.push(0);
+            if !blob.len().is_multiple_of(2) {
+                blob.push(0);
             }
+            blob.reserve(2 * wtf8.len());
+            let (ascii, rest) = wtf8.split_at(first_non_ascii as usize);
+            blob.extend(ascii.iter().flat_map(|&b| [b, 0]));
+            bun_core::vec::append_with(&mut blob, usize::MAX, |spare| {
+                bun_core::strings::write_wtf8_as_utf16le(rest, spare)
+            });
         }
         offsets.push(blob.len() as u32);
         let width = int_width(blob.len() as u32);
@@ -3970,8 +3963,13 @@ pub(crate) mod __gated_printer {
                     let e = e.flattened(self.bump);
                     self.add_source_mapping(expr.loc);
 
-                    // If this was originally a template literal, print it as one as long as we're not minifying
-                    if e.prefer_template && !self.options.minify_syntax {
+                    // If this was originally a template literal, print it as one as long as we're not minifying.
+                    // One that is a whole statement stays a template literal: as a string it could be a directive.
+                    if e.prefer_template
+                        && (!self.options.minify_syntax
+                            || (level == Level::Lowest
+                                && flags.contains(ExprFlag::ExprResultIsUnused)))
+                    {
                         self.print(b"`");
                         self.print_string_characters_e_string(&e, b'`');
                         self.print(b"`");
@@ -6935,7 +6933,7 @@ pub(crate) mod __gated_printer {
         pub(crate) fn print_dev_server_module(
             &mut self,
             source: &bun_ast::Source,
-            ast: &BundledFile,
+            ast: &BundledAstView,
             part: &js_ast::Part,
         ) {
             self.indent();
@@ -7515,7 +7513,7 @@ use js_ast::Ast;
 // `generate_source_map` is a runtime arg: `generic_const_exprs`
 // can't compute a non-`bool` const-generic from a `bool` const-generic without
 // viral `where` clauses, and the body only does runtime branches anyway. The
-// `IS_BUN_PLATFORM` axis stays const so `prepend_count` is still a compile-time
+// `IS_BUN_PLATFORM` axis stays const so `is_internal` is still a compile-time
 // constant in the monomorphized callers.
 pub(crate) fn get_source_map_builder<'a, const IS_BUN_PLATFORM: bool>(
     generate_source_map: GenerateSourceMap,
@@ -7533,7 +7531,6 @@ pub(crate) fn get_source_map_builder<'a, const IS_BUN_PLATFORM: bool>(
             IS_BUN_PLATFORM && generate_source_map == GenerateSourceMap::Lazy,
         ),
         cover_lines_without_mappings: true,
-        prepend_count: IS_BUN_PLATFORM && generate_source_map == GenerateSourceMap::Lazy,
         line_offset_tables: match opts.line_offset_tables.take() {
             Some(table) => LineOffsetTables::Borrowed(table),
             None if generate_source_map == GenerateSourceMap::Lazy => LineOffsetTables::Deferred {
@@ -7549,7 +7546,7 @@ pub(crate) fn get_source_map_builder<'a, const IS_BUN_PLATFORM: bool>(
     // O(n) memmoves on a large module. The estimate is intentionally
     // conservative — undershooting still saves the early small reallocs and
     // the buffer doubles from there. Only the bundler/external path uses
-    // `data` directly; the prepend-count (Lazy) path writes through
+    // `data` directly; the internal (Lazy) path writes through
     // `internal` and would just waste the reservation.
     if builder.source_map.ctx.internal.is_none() {
         let hint = (source.contents.len() / 4).max(approximate_newline_count.saturating_mul(4));
@@ -7661,7 +7658,7 @@ pub fn print_ast<'a, W: WriterTrait, const ASCII_ONLY: bool, const GENERATE_SOUR
         let char_freq = tree.char_freq.as_deref().copied().unwrap_or_default();
         minify_renamer.assign_names_by_frequency(&char_freq.compile())?;
 
-        minify_renamer.to_renamer(&symbols)
+        minify_renamer.as_renamer(&symbols)
     } else {
         rename::Renamer::no_op(&symbols, source)
     };
@@ -7699,6 +7696,12 @@ pub fn print_ast<'a, W: WriterTrait, const ASCII_ONLY: bool, const GENERATE_SOUR
         printer.module_info = printer.options.module_info.take();
     }
     printer.binary_expression_stack = Vec::new();
+
+    // The directive prologue comes ahead of every statement the printer adds.
+    for stmt in tree.directives.slice() {
+        printer.print_stmt(*stmt)?;
+        printer.print_semicolon_if_needed();
+    }
 
     if !printer.options.bundling
         && tree.uses_require_ref
@@ -7827,7 +7830,7 @@ pub fn print_json<W: WriterTrait>(
 }
 
 /// What printing a file's statements into a chunk reads from the file's AST.
-pub struct BundledFile<'a> {
+pub struct BundledAstView<'a> {
     pub approximate_newline_count: usize,
     pub has_lazy_export: bool,
     pub has_top_level_await: bool,
@@ -7839,7 +7842,7 @@ pub struct BundledFile<'a> {
 pub fn print<'a, const GENERATE_SOURCE_MAPS: bool>(
     bump: &'a bun_alloc::Arena,
     target: bun_ast::Target,
-    ast: &BundledFile,
+    ast: &BundledAstView,
     source: &'a bun_ast::Source<'a>,
     opts: Options<'a>,
     import_records: &'a [ImportRecord<'a>],
@@ -7870,7 +7873,7 @@ pub fn print_with_writer<'a, W: WriterTrait, const GENERATE_SOURCE_MAPS: bool>(
     writer: W,
     bump: &'a bun_alloc::Arena,
     target: bun_ast::Target,
-    ast: &BundledFile,
+    ast: &BundledAstView,
     source: &'a bun_ast::Source<'a>,
     opts: Options<'a>,
     import_records: &'a [ImportRecord<'a>],
@@ -7911,7 +7914,7 @@ pub(crate) fn print_with_writer_and_platform<
 >(
     mut writer: W,
     bump: &'a bun_alloc::Arena,
-    ast: &BundledFile,
+    ast: &BundledAstView,
     source: &'a bun_ast::Source<'a>,
     opts: Options<'a>,
     import_records: &'a [ImportRecord<'a>],

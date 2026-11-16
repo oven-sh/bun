@@ -349,11 +349,8 @@ fn make_path_u16(dir_fd: Fd, sub_path: &[u16]) -> crate::Result<()> {
     // returns BadPathName here.
     let it = bun_paths::ComponentIterator::init(sub_path, bun_paths::PathFormat::Windows)?;
     bun_paths::make_path_with(it, |prefix| {
-        match open_dir_at_windows(dir_fd, prefix, opts) {
-            Ok(fd) => {
-                fd.close();
-                Ok(bun_paths::MakePathStep::Created)
-            }
+        match open_dir_at_windows(dir_fd, prefix, opts).map(File::from_fd) {
+            Ok(_) => Ok(bun_paths::MakePathStep::Created),
             Err(e) if e.get_errno() == E::ENOENT => Ok(bun_paths::MakePathStep::NotFound(e.into())),
             Err(e) => Err(e.into()),
         }
@@ -821,13 +818,7 @@ impl Archiver {
                         }
                     };
 
-                    let output = match file_handle_native.make_lib_uv_owned() {
-                        Ok(fd) => File::from_fd(fd),
-                        Err(err) => {
-                            file_handle_native.close();
-                            return Err(err.into());
-                        }
-                    };
+                    let output = File::from_fd(file_handle_native).make_lib_uv_owned()?;
 
                     let size: usize = usize::try_from(entry.size().max(0)).unwrap();
 

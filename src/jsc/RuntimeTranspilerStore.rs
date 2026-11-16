@@ -774,11 +774,8 @@ impl TranspilerJob {
 
         // SAFETY: leaf scalar field reads on `*vm`; see `vm` note above.
         let (vm_main, vm_main_hash) = unsafe { ((*vm).main(), (*vm).main_hash.get()) };
-        let is_main = vm_main.is_some_and(|vm_main| {
-            vm_main.len() == path.text.len()
-                && vm_main_hash == hash
-                && strings::eql_long(vm_main, path.text, false)
-        });
+        let is_main = vm_main
+            .is_some_and(|vm_main| vm_main_hash == hash && strings::eql_long(vm_main, path.text));
 
         let module_type: ModuleType = match this_tag {
             ResolvedSourceTag::PackageJsonTypeCommonjs => ModuleType::Cjs,
@@ -851,7 +848,7 @@ impl TranspilerJob {
             // `&ImportWatcher` is live here, and `add_file` is
             // thread-safe via watcher mutex.
             let iw = unsafe { iw.assume_mut() };
-            let _ = iw.add_owned_file(input_file, path.text, hash, package_json);
+            let _ = iw.add_file(input_file, path.text, hash, package_json);
         }
 
         let Some(mut parse_result) = parse_result else {

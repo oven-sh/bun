@@ -2947,7 +2947,7 @@ pub(crate) fn parse_into_binary_lockfile(
                 let dep = &dependencies[dep_id as usize];
 
                 // A stripped `catalog:` edge (`CatalogMap::strip_reference`) stays unresolved, as in a fresh install.
-                if dep.version.tag == DependencyVersionTag::Uninitialized {
+                if dep.version.tag() == DependencyVersionTag::Uninitialized {
                     continue 'deps;
                 }
 
@@ -3155,7 +3155,7 @@ impl PeerRanges<'_> {
                     &lockfile.overrides,
                     string_buf,
                 ) && asks_for == name_hash
-                    && range.tag == DependencyVersionTag::Npm
+                    && range.tag() == DependencyVersionTag::Npm
                 {
                     rows.push((bun_wyhash::hash(range.literal.slice(string_buf)), id));
                 }
@@ -3189,10 +3189,9 @@ fn version_based_peer_range<'a>(
     // the path walk. The exemptions mirror
     // `enqueue_dependency_with_main_and_success_fn`: `npm:` aliases and
     // workspace-only edges are never overridden.
-    let overridable = !dep.behavior.is_workspace()
-        && (dep.version.tag != DependencyVersionTag::Npm || !dep.version.npm().is_alias);
+    let overridable = !dep.behavior.is_workspace() && !dep.version.is_npm_alias();
     // Overrides are applied before catalog resolution, so a catalog peer is overridden by its own name.
-    let override_name_hash = if dep.version.tag == DependencyVersionTag::Catalog {
+    let override_name_hash = if dep.version.tag() == DependencyVersionTag::Catalog {
         dep.name_hash
     } else {
         name_hash
@@ -3209,12 +3208,13 @@ pub(crate) fn peer_candidate_name_hash(
     range: &DependencyVersion,
     string_buf: &[u8],
 ) -> PackageNameHash {
-    let name = match range.tag {
-        DependencyVersionTag::Npm => range.npm().name,
-        DependencyVersionTag::DistTag => range.dist_tag().name,
-        DependencyVersionTag::Git => range.git().package_name,
-        DependencyVersionTag::Github => range.github().package_name,
-        DependencyVersionTag::Tarball => range.tarball().package_name,
+    let name = match &range.value {
+        DependencyVersionValue::Npm(npm) => npm.name,
+        DependencyVersionValue::DistTag(dist_tag) => dist_tag.name,
+        DependencyVersionValue::Git(repo) | DependencyVersionValue::Github(repo) => {
+            repo.package_name
+        }
+        DependencyVersionValue::Tarball(tarball) => tarball.package_name,
         _ => return dep.name_hash,
     };
     StringBuilder::string_hash(name.slice(string_buf))
@@ -3502,10 +3502,9 @@ fn parse_append_dependencies(
                 name_hash,
                 behavior: Behavior::WORKSPACE,
                 version: DependencyVersion {
-                    tag: DependencyVersionTag::Workspace,
-                    value: DependencyVersionValue {
-                        workspace: sbuf!(lockfile).append(row.key.slice())?,
-                    },
+                    value: DependencyVersionValue::Workspace(
+                        sbuf!(lockfile).append(row.key.slice())?,
+                    ),
                     literal: String::default(),
                 },
             };

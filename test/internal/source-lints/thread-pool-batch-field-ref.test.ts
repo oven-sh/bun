@@ -27,9 +27,8 @@ import { globAllSources } from "../../../scripts/glob-sources.ts";
 // Borrows rejects every out-of-range access; Tree Borrows (what `bun run
 // rust:miri` uses) rejects the writes and the free. A raw projection from the
 // object's own pointer keeps that pointer's provenance, which is what
-// `WorkPool::schedule_owned` (src/threading/work_pool.rs) does and what
-// `NewTaskQueue::push` in src/install/PackageInstall.rs, the instance this was
-// written for, does now via `IntrusiveField::field_of`.
+// `Batch::from_owned` (src/threading/work_pool.rs) does via
+// `IntrusiveField::field_of`.
 //
 // Scope: the argument expression of every `Batch::from(` call, which is the
 // one way a task enters a `ThreadPool` batch (`.schedule(Batch::from(..))`,

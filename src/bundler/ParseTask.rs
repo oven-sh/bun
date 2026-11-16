@@ -121,7 +121,7 @@ pub struct Result<'a> {
     pub(crate) task: AnyTaskWithExtraContext,
     pub(crate) ctx: bun_ptr::ParentRef<BundleV2<'static>, bun_ptr::Mut>,
     pub(crate) value: ResultValue<'a>,
-    pub(crate) watcher_data: WatcherData,
+    pub(crate) file_to_watch: Option<SourceFd>,
     /// This is used for native onBeforeParsePlugins to store
     /// a function pointer and context pointer to free the
     /// returned source code by the plugin. After `value`, which may borrow it.
@@ -151,19 +151,6 @@ impl ResultValue<'_> {
             ResultValue::Success(val) => val.source.index.0,
         }
     }
-}
-
-pub(crate) struct WatcherData {
-    pub(crate) file: Option<SourceFd>,
-    pub(crate) dir_fd: Fd,
-}
-
-impl WatcherData {
-    /// When no files to watch, this encoding is used.
-    pub(crate) const NONE: WatcherData = WatcherData {
-        file: None,
-        dir_fd: Fd::INVALID,
-    };
 }
 
 pub(crate) struct Success<'a> {
@@ -2574,12 +2561,9 @@ pub mod parse_worker {
         let mut log = Log::init();
         debug_assert!(this.source_index.is_valid()); // forgot to set source_index
 
-        let mut watcher_data = match this.contents_or_fd {
-            ContentsOrFd::Fd { file, dir } => WatcherData {
-                file: file.unwrap_valid().map(SourceFd::Borrowed),
-                dir_fd: dir,
-            },
-            ContentsOrFd::Contents(_) => WatcherData::NONE,
+        let mut file_to_watch = match this.contents_or_fd {
+            ContentsOrFd::Fd { file, .. } => file.unwrap_valid().map(SourceFd::Borrowed),
+            ContentsOrFd::Contents(_) => None,
         };
 
         let value: ResultValue = 'value: {
@@ -2613,11 +2597,8 @@ pub mod parse_worker {
                 }
             };
 
-            watcher_data = WatcherData {
-                // Without a watcher, a file that the task opened closes here.
-                file: entry.file.filter(|_| ctx.bun_watcher.is_some()),
-                dir_fd: Fd::INVALID,
-            };
+            // Without a watcher, a file that the task opened closes here.
+            file_to_watch = entry.file.filter(|_| ctx.bun_watcher.is_some());
 
             let (bump, contents) = (worker.arena(), entry.contents);
             match run_with_source_code(&mut this, &mut worker, &mut step, &mut log, bump, contents)
@@ -2663,7 +2644,7 @@ pub mod parse_worker {
             // `ExternalFreeFunction`
             // doesn't derive `Copy`, so move it out (task is consumed here).
             external: core::mem::take(&mut this.external_free_function),
-            watcher_data,
+            file_to_watch,
         });
         // Before the post: the bundle can then finish and free what the task borrows.
         drop(this);

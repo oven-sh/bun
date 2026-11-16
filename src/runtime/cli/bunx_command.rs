@@ -13,7 +13,7 @@ use bun_bundler::Transpiler;
 use bun_core::{self, Global, Output};
 use bun_core::{ZBox, ZStr, strings};
 use bun_install::CommandLineArguments;
-use bun_install::dependency::VersionTag;
+use bun_install::dependency::{self, VersionTag};
 use bun_install::postinstall_optimizer;
 use bun_install::update_request::{self, UpdateRequest};
 use bun_parsers::json;
@@ -927,12 +927,8 @@ impl BunxCommand {
             b"tsc"
         } else if update_request.name == b"@anthropic-ai/claude-code" {
             b"claude"
-        } else if update_request.version.tag == VersionTag::Github {
-            update_request
-                .version
-                .github()
-                .repo
-                .slice(update_request.version_buf())
+        } else if let dependency::Value::Github(github) = &update_request.version.value {
+            github.repo.slice(update_request.version_buf())
         } else if let Some(index) = strings::last_index_of_char(update_request.name, b'/') {
             initial_bin_name_is_a_guess = true;
             &update_request.name[index + 1..]
@@ -1017,7 +1013,7 @@ impl BunxCommand {
             format!(
                 "{}@{}@{}",
                 BStr::new(initial_bin_name),
-                <&'static str>::from(update_request.version.tag),
+                <&'static str>::from(update_request.version.tag()),
                 hash(update_request.name).wrapping_add(hash(display_version)),
             )
         } else {
@@ -1073,7 +1069,6 @@ impl BunxCommand {
                 if !strings::eql_long(
                     strings::without_trailing_slash(segment),
                     strings::without_trailing_slash(&ignore_cwd),
-                    true,
                 ) {
                     if i > 0 {
                         new_path.push(DELIMITER);
@@ -1097,7 +1092,7 @@ impl BunxCommand {
         // An explicit dist-tag (`pkg@latest`, `pkg@next`) checks the registry on every run, except
         // with `--no-install`.
         let look_for_existing_bin =
-            opts.no_install || !is_versioned || update_request.version.tag != VersionTag::DistTag;
+            opts.no_install || !is_versioned || update_request.version.tag() != VersionTag::DistTag;
         let package_with_bin = opts.binary_name.is_none().then_some(result_package_name);
 
         let find_on_path = || {
@@ -1349,7 +1344,7 @@ impl BunxCommand {
             install_param.as_slice(),
             b"--no-summary",
         ];
-        if update_request.version.tag == VersionTag::DistTag || tree == Tree::Stale {
+        if update_request.version.tag() == VersionTag::DistTag || tree == Tree::Stale {
             // No manifest cache, so that @latest is fetched from the registry.
             args.push(b"--no-cache");
         }

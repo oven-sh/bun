@@ -1455,7 +1455,7 @@ impl VirtualMachine {
         let (ImportWatcher::Hot(w) | ImportWatcher::Watch(w)) =
             unsafe { &mut *self.bun_watcher.get() };
         // SAFETY: the box is the one `Watcher::init` returned.
-        unsafe { bun_watcher::Watcher::shutdown(&raw mut **w, false) };
+        unsafe { bun_watcher::Watcher::shutdown(&raw mut **w) };
         self.transpiler.with_mut(|t| t.resolver.watcher = None);
         let watcher = self.bun_watcher.replace(core::ptr::null_mut());
         // SAFETY: as above.
@@ -3784,22 +3784,7 @@ impl<'a> bun_js_printer::OnSourceMapChunk for SourceMapHandlerGetter<'a> {
             .ctx
             .buffer
             .append_assume_capacity(SOURCE_MAP_URL_PREFIX_START);
-        {
-            // `MutableString::list` is a `Vec<u8>`; write into spare capacity,
-            // then commit the written length.
-            let buf = &mut printer.ctx.buffer.list;
-            // SAFETY: `grow_if_needed` reserved ≥encode_len spare; encode writes
-            // `wrote<=encode_len` bytes.
-            let wrote = unsafe {
-                bun_base64::encode(
-                    &mut bun_core::vec::spare_bytes_mut(buf)[..encode_len],
-                    temp_json_buffer.list.as_slice(),
-                )
-            };
-            // SAFETY: `wrote <= encode_len` bytes were just initialized in the
-            // spare capacity reserved by `grow_if_needed` above.
-            unsafe { bun_core::vec::commit_spare(buf, wrote) };
-        }
+        bun_base64::encode_append(&mut printer.ctx.buffer.list, &temp_json_buffer.list);
         printer
             .ctx
             .buffer
@@ -7342,11 +7327,7 @@ impl VirtualMachine {
                             } else {
                                 let msg_chars = message.latin1();
                                 msg_chars.len() > code.len() + 2 + 1
-                                    && bun_core::strings::eql_long(
-                                        &msg_chars[..code.len()],
-                                        code,
-                                        false,
-                                    )
+                                    && bun_core::strings::eql_long(&msg_chars[..code.len()], code)
                                     && msg_chars[code.len()] == b':'
                                     && msg_chars[code.len() + 1] == b' '
                             };

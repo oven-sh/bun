@@ -500,6 +500,7 @@ impl VmHandle {
             }
             if s.tickets.load(Ordering::SeqCst) == 0 {
                 s.hot.state.store(State::Closed as u8, Ordering::SeqCst);
+                crate::virtual_machine::HAS_OPEN_VM.set(false);
                 break;
             }
             let _ = s.drained.1.timed_wait_guarded(&mut g, 1_000_000_000);

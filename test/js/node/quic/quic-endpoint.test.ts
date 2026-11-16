@@ -13,6 +13,11 @@ import { connect, listen, QuicEndpoint, type EndpointOptions, type SessionOption
 const keysDir = join(import.meta.dir, "..", "test", "fixtures", "keys");
 const key = createPrivateKey(readFileSync(join(keysDir, "agent1-key.pem")));
 const cert = readFileSync(join(keysDir, "agent1-cert.pem"));
+const lsanEnv = {
+  BUN_DESTRUCT_VM_ON_EXIT: "1",
+  ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "detect_leaks=1"].filter(Boolean).join(":"),
+  LSAN_OPTIONS: `print_suppressions=0:suppressions=${join(import.meta.dir, "..", "..", "..", "leaksan.supp")}`,
+};
 
 describe("QuicEndpoint client-engine mode", () => {
   test("an explicit endpoint rejects a connect() in the other mode", async () => {
@@ -407,13 +412,7 @@ describe("endpoint.close() with an unsent stateless reset", () => {
 
       await using proc = Bun.spawn({
         cmd: [bunExe(), "-e", fixture],
-        env: {
-          ...bunEnv,
-          NODE_NO_WARNINGS: "1",
-          BUN_DESTRUCT_VM_ON_EXIT: "1",
-          ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "detect_leaks=1"].filter(Boolean).join(":"),
-          LSAN_OPTIONS: `print_suppressions=0:suppressions=${join(import.meta.dir, "..", "..", "..", "leaksan.supp")}`,
-        },
+        env: { ...bunEnv, NODE_NO_WARNINGS: "1", ...lsanEnv },
         stdout: "pipe",
         stderr: "pipe",
       });
@@ -425,6 +424,168 @@ describe("endpoint.close() with an unsent stateless reset", () => {
         stderr: "",
         exitCode: 0,
       });
+    },
+    // LeakSanitizer needs more than the default 5 s on a debug build.
+    60_000,
+  );
+});
+
+describe.concurrent("transferred state and stats, and getters on options", () => {
+  async function run(body: string, env = {}) {
+    const fixture = `
+      import { createPrivateKey } from "node:crypto";
+      import { readFileSync } from "node:fs";
+      import { connect, listen, QuicEndpoint } from "node:quic";
+
+      const key = createPrivateKey(readFileSync(${JSON.stringify(join(keysDir, "agent1-key.pem"))}));
+      const cert = readFileSync(${JSON.stringify(join(keysDir, "agent1-cert.pem"))});
+      const identity = { keys: [key], certs: [cert] };
+      const transportParams = { maxIdleTimeout: 2 };
+      const client = { alpn: "x", verifyPeer: "manual", transportParams };
+      const nativeAlpn = Buffer.from("\\x01x");
+      function ignoreErrors(session) {
+        session.onstream = stream => stream.closed.catch(() => {});
+        session.opened.catch(() => {});
+        session.closed.catch(() => {});
+        return session;
+      }
+      // The first read is the validation in JS, the second read is native code.
+      function onNativeRead(value, callback) {
+        let reads = 0;
+        return Object.defineProperty([], 0, { enumerable: true, get: () => (++reads === 2 && callback(), value) });
+      }
+      const binding = require("internal/test/binding").internalBinding("quic");
+      const server = await listen(ignoreErrors, { sni: { "*": identity }, alpn: "x", transportParams });
+      ${body}
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", fixture],
+      env: { ...bunEnv, NODE_NO_WARNINGS: "1", ...env },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+
+  // ASAN only tracks ArrayBuffer memory with Malloc=1. Without ASAN, the write lands in a buffer allocated later.
+  const mallocEnv = isASAN ? { Malloc: "1", ASAN_OPTIONS: bunEnv.ASAN_OPTIONS + ":detect_leaks=0" } : {};
+  const detachAndCopy = `
+    const sources = [];
+    const laterBuffers = [];
+    function detachAndCopy(buffer) {
+      const copy = buffer.slice(0);
+      buffer.transfer(0);
+      sources.push(buffer);
+      for (let i = 0; i < 128; i++) laterBuffers.push(new Uint8Array(new ArrayBuffer(copy.byteLength)));
+      return copy;
+    }
+    const report = () =>
+      console.log(
+        JSON.stringify({
+          sizes: new Set(laterBuffers.map(bytes => bytes.length)).size,
+          detached: sources.every(buffer => buffer.detached),
+          written: laterBuffers.filter(bytes => bytes.some(Boolean)).length,
+        }),
+      );
+  `;
+  const nothingWritten = { stdout: '{"sizes":3,"detached":true,"written":0}\n', stderr: "", exitCode: 0 };
+
+  test("state isn't written to freed memory after its ArrayBuffer is transferred", async () => {
+    const result = await run(
+      `
+        ${detachAndCopy}
+        const { DataView } = globalThis;
+        globalThis.DataView = function (buffer) {
+          return new DataView(detachAndCopy(buffer));
+        };
+        const endpoint = new QuicEndpoint();
+        const session = ignoreErrors(await connect(server.address, { ...client, endpoint }));
+        await session.opened;
+        (await session.createBidirectionalStream()).destroy();
+        endpoint.busy = true;
+        report();
+        process.exit(0);
+      `,
+      mallocEnv,
+    );
+    expect(result).toEqual(nothingWritten);
+  });
+
+  test("stats aren't written to freed memory after their ArrayBuffer is transferred", async () => {
+    const result = await run(
+      `
+        ${detachAndCopy}
+        const handle = new binding.Endpoint();
+        const session = handle.connect(server.address, { tls: { alpn: nativeAlpn } });
+        const stream = session.openStream(binding.STREAM_DIRECTION_BIDIRECTIONAL);
+        for (const { stats } of [handle, session, stream]) detachAndCopy(stats);
+        stream.destroy();
+        session.destroy();
+        handle.releaseSocket();
+        report();
+        process.exit(0);
+      `,
+      mallocEnv,
+    );
+    expect(result).toEqual(nothingWritten);
+  });
+
+  test("connect() rejects if a getter on ca closes the endpoint", async () => {
+    const result = await run(`
+      const endpoint = new QuicEndpoint();
+      const ca = onNativeRead(cert, () => endpoint.close());
+      const session = await connect(server.address, { ...client, endpoint, ca }).then(ignoreErrors, e => console.log(e.code));
+      await endpoint.closed;
+      await new Promise(setImmediate);
+      session?.destroy(undefined, { code: 1 });
+      process.exit(0);
+    `);
+    expect(result).toEqual({ stdout: "ERR_QUIC_CONNECTION_FAILED\n", stderr: "", exitCode: 0 });
+  });
+
+  test("connect() resolves if a getter on ca closes an endpoint that has another session", async () => {
+    const result = await run(`
+      const endpoint = new QuicEndpoint();
+      const first = ignoreErrors(await connect(server.address, { ...client, endpoint }));
+      await first.opened;
+      const ca = onNativeRead(cert, () => endpoint.close());
+      const second = ignoreErrors(await connect(server.address, { ...client, endpoint, ca }));
+      await second.opened;
+      await first.close();
+      console.log(endpoint.closing, endpoint.destroyed);
+      await Promise.all([second.close(), endpoint.closed, server.close()]);
+    `);
+    expect(result).toEqual({ stdout: "true false\n", stderr: "", exitCode: 0 });
+  });
+
+  test.each(["transportParams", "qlog"])(
+    "connect() returns undefined if the %s getter releases the socket",
+    async name => {
+      const result = await run(`
+        const handle = new binding.Endpoint();
+        handle.connect(server.address, { tls: { alpn: nativeAlpn } });
+        console.log(handle.connect(server.address, { tls: { alpn: nativeAlpn }, get ${name}() { handle.releaseSocket(); } }));
+        process.exit(0);
+      `);
+      expect(result).toEqual({ stdout: "undefined\n", stderr: "", exitCode: 0 });
+    },
+  );
+
+  test.skipIf(!isASAN || !isLinux).each(["listen(ignoreErrors, options([cert]))", "endpoint.close()"])(
+    "%s from a getter on certs doesn't leak an engine",
+    async call => {
+      const result = await run(
+        `
+          const endpoint = new QuicEndpoint();
+          const options = certs => ({ endpoint, alpn: "x", sni: { "*": { keys: [key], certs } } });
+          const certs = onNativeRead(cert, () => console.log(typeof ${call}));
+          console.log(endpoint === (await listen(ignoreErrors, options(certs))));
+          await Promise.all([endpoint.close(), server.close()]);
+        `,
+        lsanEnv,
+      );
+      expect(result).toEqual({ stdout: "object\ntrue\n", stderr: "", exitCode: 0 });
     },
     // LeakSanitizer needs more than the default 5 s on a debug build.
     60_000,

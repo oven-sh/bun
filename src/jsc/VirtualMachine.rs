@@ -697,6 +697,9 @@ static MAIN_THREAD_VM: core::sync::atomic::AtomicPtr<VirtualMachine> =
 // `#[inline(always)]` accessors below.
 #[thread_local]
 static VM: Cell<Option<*mut VirtualMachine>> = Cell::new(None);
+/// `VM` is set and not [`closed`](VirtualMachine::closed), in one load.
+#[thread_local]
+pub(crate) static HAS_OPEN_VM: Cell<bool> = Cell::new(false);
 #[thread_local]
 static CACHED_GLOBAL_OBJECT: Cell<Option<*mut JSGlobalObject>> = Cell::new(None);
 
@@ -2256,6 +2259,7 @@ impl VirtualMachine {
     ///
     /// # Safety
     /// `this` is this thread's VM, which nothing else can reach; this thread abandons its API lock.
+    /// No `StrongWrapper` of it is left if this thread makes another VM.
     pub unsafe fn exit_and_free(this: *mut Self) -> u8 {
         // SAFETY: fn contract.
         let vm = unsafe { &*this };
@@ -3175,6 +3179,7 @@ impl VirtualMachine {
             this.as_ref()
         };
         VM.set(Some(this.as_ptr()));
+        HAS_OPEN_VM.set(true);
         if opts.is_main_thread {
             MAIN_THREAD_VM.store(this.as_ptr(), core::sync::atomic::Ordering::Release);
         }

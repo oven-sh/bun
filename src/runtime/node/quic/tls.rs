@@ -2,6 +2,8 @@ use core::ffi::c_int;
 
 use bun_boringssl_sys as ssl;
 use bun_jsc::{JSGlobalObject, JSValue, JsResult, StringJsc};
+use bun_lsquic_sys::Conn;
+use bun_ptr::AliasableBox;
 
 pub(super) struct TlsConfig {
     pub is_server: bool,
@@ -166,7 +168,12 @@ impl TlsConfig {
     }
 }
 
-pub(super) fn early_data_info(ssl_ptr: *mut ssl::SSL) -> (bool, bool) {
+/// Valid until the engine of `conn` runs again. Nothing in this file runs it.
+fn conn_ssl(conn: &Conn) -> Option<*mut ssl::SSL> {
+    Some(conn.ssl()?.as_ptr().cast())
+}
+
+pub(super) fn early_data_info(conn: &Conn) -> (bool, bool) {
     const SSL_EARLY_DATA_UNKNOWN: c_int = 0;
     const SSL_EARLY_DATA_DISABLED: c_int = 1;
     const SSL_EARLY_DATA_NO_SESSION_OFFERED: c_int = 5;
@@ -174,10 +181,10 @@ pub(super) fn early_data_info(ssl_ptr: *mut ssl::SSL) -> (bool, bool) {
         fn SSL_early_data_accepted(ssl: *const ssl::SSL) -> c_int;
         fn SSL_get_early_data_reason(ssl: *const ssl::SSL) -> c_int;
     }
-    if ssl_ptr.is_null() {
+    let Some(ssl_ptr) = conn_ssl(conn) else {
         return (false, false);
-    }
-    // SAFETY: `ssl_ptr` is the live SSL for this handshake (caller contract).
+    };
+    // SAFETY: see `conn_ssl`.
     let (accepted, reason) = unsafe {
         (
             SSL_early_data_accepted(ssl_ptr) != 0,
@@ -198,57 +205,12 @@ pub(super) struct TlsContext {
     /// Keep the wire-format ALPN alive at a stable heap address: BoringSSL
     /// stores the `arg` pointer we pass to `SSL_CTX_set_alpn_select_cb` and
     /// the callback dereferences it on every ClientHello.
-    #[expect(
-        clippy::box_collection,
-        reason = "BoringSSL keeps the `arg` pointer (this Vec's header address) across ClientHellos, so the Vec must not move; the Box pins it"
-    )]
-    _alpn: Option<Box<Vec<u8>>>,
+    alpn: Option<AliasableBox<Vec<u8>>>,
 }
 
 unsafe extern "C" fn keylog_cb(ssl: *const ssl::SSL, line: *const core::ffi::c_char) {
-    if line.is_null() {
-        return;
-    }
-    // SAFETY: `line` is the NUL-terminated NSS key log line BoringSSL
-    // guarantees valid for this callback; the SSL → conn → session walk is
-    // safe because lsquic owns all three for the SSL's lifetime.
-    let bytes = unsafe { core::ffi::CStr::from_ptr(line).to_bytes().to_vec() };
-    // SAFETY: lsquic stored the conn on the SSL via SSL_set_app_data — but
-    // we can't rely on that index; use lsquic_ssl_to_conn instead.
-    let conn = unsafe { bun_lsquic_sys::lsquic_ssl_to_conn(ssl.cast()) };
-    if conn.is_null() {
-        return;
-    }
-    // SAFETY: as above.
-    let ctx = unsafe { bun_lsquic_sys::lsquic_conn_get_ctx(conn) };
-    if ctx.is_null() {
-        // SAFETY: peer_ctx is the Rust QuicEndpoint for every conn on it.
-        let peer_ctx = unsafe { bun_lsquic_sys::lsquic_conn_get_peer_ctx(conn, core::ptr::null()) };
-        if !peer_ctx.is_null() {
-            // SAFETY: as above.
-            let endpoint = unsafe { &*peer_ctx.cast::<super::endpoint::QuicEndpoint>() };
-            let mut local = core::ptr::null();
-            let mut peer = core::ptr::null();
-            // SAFETY: `conn` is live; out-params point at stack slots.
-            let peer_addr = if unsafe {
-                bun_lsquic_sys::lsquic_conn_get_sockaddr(
-                    conn,
-                    core::ptr::from_mut(&mut local),
-                    core::ptr::from_mut(&mut peer),
-                )
-            } == 0
-            {
-                super::endpoint::stored_addr_from_sockaddr(peer)
-            } else {
-                return;
-            };
-            endpoint.buffer_early_keylog(ssl.cast_mut().cast(), peer_addr, bytes);
-        }
-        return;
-    }
-    // SAFETY: ctx is the QuicSession (conn-ctx).
-    let session = unsafe { &*ctx.cast::<super::session::QuicSession>() };
-    session.push_event(super::session::SessionEvent::Keylog(bytes));
+    // SAFETY: `line` is a C string that is valid for this callback. Only an `Engine` makes an `SSL` from a `TlsContext`.
+    unsafe { super::engine::on_keylog(ssl.cast(), core::ffi::CStr::from_ptr(line).to_bytes()) }
 }
 
 unsafe extern "C" fn alpn_select_cb(
@@ -374,7 +336,7 @@ impl TlsContext {
             let ctx = owned.as_ptr();
             let mut this = TlsContext {
                 ctx: owned,
-                _alpn: None,
+                alpn: None,
             };
 
             if let Some(policy) = config.ciphers.as_deref().and_then(tls13_policy_for_ciphers) {
@@ -436,15 +398,15 @@ impl TlsContext {
                     ssl::SSL_CTX_set_verify(ctx, ssl::SSL_VERIFY_PEER, None);
                 }
                 if !config.alpn.is_empty() {
-                    let alpn = Box::new(config.alpn.clone());
+                    let alpn = AliasableBox::new(config.alpn.clone());
                     // The callback's `arg` is the heap address of the boxed
                     // Vec (stable for the box's life, which is `this`'s).
                     ssl::SSL_CTX_set_alpn_select_cb(
                         ctx,
                         Some(alpn_select_cb),
-                        (&raw const *alpn).cast_mut().cast(),
+                        alpn.as_ptr().cast(),
                     );
-                    this._alpn = Some(alpn);
+                    this.alpn = Some(alpn);
                 }
             } else {
                 if !config.alpn.is_empty()
@@ -486,6 +448,10 @@ impl TlsContext {
         self.ctx.as_ptr()
     }
 
+    pub(super) fn has_alpn_select_cb(&self) -> bool {
+        self.alpn.is_some()
+    }
+
     pub(super) fn alpn_cstr(config: &TlsConfig) -> Vec<u8> {
         if config.alpn.len() < 2 {
             return Vec::new();
@@ -497,13 +463,11 @@ impl TlsContext {
     }
 }
 
-pub(super) fn negotiated_alpn(ssl: *mut ssl::SSL) -> Option<Vec<u8>> {
-    if ssl.is_null() {
-        return None;
-    }
+pub(super) fn negotiated_alpn(conn: &Conn) -> Option<Vec<u8>> {
+    let ssl = conn_ssl(conn)?;
     let mut data: *const u8 = core::ptr::null();
     let mut len: u32 = 0;
-    // SAFETY: lsquic guarantees the SSL outlives the conn.
+    // SAFETY: see `conn_ssl`.
     unsafe {
         ssl::SSL_get0_alpn_selected(
             ssl,
@@ -556,26 +520,18 @@ pub(super) fn validation_error_strings(code: i32) -> (&'static str, &'static str
     (name, reason)
 }
 
-pub(super) fn validation_error(ssl: *mut ssl::SSL) -> Option<(&'static str, &'static str)> {
-    if ssl.is_null() {
-        return None;
-    }
-    // SAFETY: as above.
-    let code = unsafe { ssl::SSL_get_verify_result(ssl) };
+pub(super) fn validation_error(conn: &Conn) -> Option<(&'static str, &'static str)> {
+    // SAFETY: see `conn_ssl`.
+    let code = unsafe { ssl::SSL_get_verify_result(conn_ssl(conn)?) };
     if code == 0 {
         return None;
     }
     Some(validation_error_strings(code as i32))
 }
 
-pub(super) fn ephemeral_key_info(
-    ssl: *mut ssl::SSL,
-) -> Option<(&'static str, Option<&'static str>, u32)> {
-    if ssl.is_null() {
-        return None;
-    }
-    // SAFETY: as above.
-    let group = unsafe { ssl::SSL_get_group_id(ssl) };
+pub(super) fn ephemeral_key_info(conn: &Conn) -> Option<(&'static str, Option<&'static str>, u32)> {
+    // SAFETY: see `conn_ssl`.
+    let group = unsafe { ssl::SSL_get_group_id(conn_ssl(conn)?) };
     if group == 0 {
         return None;
     }
@@ -598,10 +554,8 @@ pub(super) fn ephemeral_key_info(
     Some(("ECDH", name, bits))
 }
 
-pub(super) fn local_certificate_der(ssl: *mut ssl::SSL) -> Option<Vec<u8>> {
-    if ssl.is_null() {
-        return None;
-    }
+pub(super) fn local_certificate_der(conn: &Conn) -> Option<Vec<u8>> {
+    let ssl = conn_ssl(conn)?;
     // `load_cert_chain` only installs certificates on the context. The context parses its
     // leaf once, but `SSL_get_certificate` parses a copy for each SSL.
     // SAFETY: returns a borrowed X509 owned by `ssl`'s context.
@@ -612,10 +566,7 @@ pub(super) fn local_certificate_der(ssl: *mut ssl::SSL) -> Option<Vec<u8>> {
     Some(ssl::X509::opaque_ref(cert).to_der()?.to_vec())
 }
 
-pub(super) fn peer_certificate_der(ssl_ptr: *mut ssl::SSL) -> Option<Vec<u8>> {
-    if ssl_ptr.is_null() {
-        return None;
-    }
-    let cert = ssl::SSL::opaque_ref(ssl_ptr).peer_certificate()?;
+pub(super) fn peer_certificate_der(conn: &Conn) -> Option<Vec<u8>> {
+    let cert = ssl::SSL::opaque_ref(conn_ssl(conn)?).peer_certificate()?;
     Some(cert.to_der()?.to_vec())
 }

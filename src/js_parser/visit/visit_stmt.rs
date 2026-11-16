@@ -728,8 +728,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
                         stmts.push(*stmt);
 
-                        // React Fast Refresh signs and registers the function by the name
-                        // that its declaration binds.
                         if p.options.features.react_fast_refresh
                             && matches!(data.value, js_ast::StmtOrExpr::Stmt(_))
                         {
@@ -741,6 +739,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                     hook,
                                     Expr::init_identifier(name_ref, bun_ast::Loc::EMPTY),
                                 );
+                                p.record_usage(name_ref);
                                 stmts.push(p.s(
                                     S::SExpr {
                                         value: init,
@@ -748,9 +747,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                     },
                                     bun_ast::Loc::EMPTY,
                                 ));
-                                // The dev server moves a default function that nothing else
-                                // reads into the exports object. This read keeps the declaration.
-                                p.record_usage(name_ref);
                             }
                             if ReactRefresh::is_componentish_name(name)
                                 || name == js_ast::ClauseItem::DEFAULT_ALIAS

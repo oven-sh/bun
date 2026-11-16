@@ -40,11 +40,41 @@ impl List {
         Some(first)
     }
 
+    pub(super) fn fail_all(&mut self) {
+        while let Some(request) = self.pop_first() {
+            request.take_handler().fail();
+        }
+    }
+
     pub(super) fn iter(&self) -> impl Iterator<Item = &DeferredRequest> {
         core::iter::successors(self.first(), |request| {
             // SAFETY: `request` is in this list only, and `pop_first` borrows the list exclusively.
             unsafe { &*request.next.as_ptr() }.as_deref()
         })
+    }
+}
+
+/// A `List` that was moved out of its `DevServer`.
+#[must_use]
+pub(crate) struct FailOnDrop {
+    pub(super) requests: List,
+    /// The request's handler has not returned: it gets the plugin error, like the requests that follow.
+    pub(super) in_handler: bool,
+    /// Completing the last request on a stopped server frees the DevServer, whose `deferred_request_pool` holds `requests`.
+    pub(super) _pending: Option<PendingRequest>,
+}
+
+impl Drop for FailOnDrop {
+    fn drop(&mut self) {
+        if !self.in_handler {
+            return self.requests.fail_all();
+        }
+        while let Some(request) = self.requests.pop_first() {
+            let handler = request.take_handler();
+            if let Some(resp) = handler.detach_response_for_error_page() {
+                super::ensure_route::send_plugin_error(resp);
+            }
+        }
     }
 }
 

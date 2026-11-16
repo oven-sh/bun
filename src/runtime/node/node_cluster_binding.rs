@@ -1,71 +1,34 @@
 // Most of this code should be rewritten.
-// - Usage of jsc.Strong.Optional here is likely to cause memory leaks.
+// - Usage of jsc.Strong here is likely to cause memory leaks.
 // - These sequence numbers and ACKs shouldn't exist from JavaScript's perspective
 //   at all. It should happen in the protocol before it reaches JS.
 // - We should not be creating JSFunction's in process.nextTick.
 
-use crate::ipc::{IsInternal, SerializeAndSendResult};
+use crate::ipc::{ClusterListener, IsInternal, SerializeAndSendResult};
+use crate::ipc_host::get_ipc_instance;
 use bun_jsc::bindgen::{Callable, JsLocal, JsScope};
 use bun_jsc::virtual_machine::VirtualMachine;
-use bun_jsc::{JSGlobalObject, JSObject, JSValue, JsResult, StrongOptional};
+use bun_jsc::{JSGlobalObject, JSObject, JSValue, JsResult, Strong};
 
 use crate::api::bun::subprocess::Subprocess;
 use crate::generated_bindgen::node_cluster_binding::{
     BindAddress, BindAddressType, BindResult, BoundHandle,
 };
 
-// Struct lives in `crate::ipc` —
-// `SendQueue` stores one inline so it must live at that tier. Re-exported here so
-// existing `bun_runtime` paths (`node_cluster_binding::InternalMsgHolder`) keep working.
-pub(crate) use crate::ipc::InternalMsgHolder;
-
 bun_output::declare_scope!(IPC, visible);
-
-// ArrayHashMap::new() is not const, so the global is lazily seeded on first
-// access via `child_singleton()`.
-// PORTING.md §Global mutable state: JS-thread-only singleton with `!Sync`
-// fields (`Strong`). RacyCell — single-thread access is the contract.
-pub(crate) static CHILD_SINGLETON: bun_core::RacyCell<Option<InternalMsgHolder>> =
-    bun_core::RacyCell::new(None);
-
-/// `&mut` to the (lazily-initialized) JS-thread singleton.
-///
-/// Centralises the `RacyCell<Option<_>> → &mut InternalMsgHolder` deref so the
-/// three host-fn callers stay safe at the call site (PORTING.md §Global mutable
-/// state). Callers must be on the JS thread and
-/// must not hold the borrow across a re-entrant `child_singleton()` call.
-#[inline]
-fn child_singleton<'a>() -> &'a mut InternalMsgHolder {
-    // SAFETY: only called on the single JS thread.
-    // `RacyCell::get` returns `*mut Option<_>`; the `Option` lives in
-    // `'static` storage so the returned `&mut` is valid for any caller-chosen
-    // `'a`. Aliasing: each of the three callers borrows for a single
-    // statement/block with no nested call to this fn.
-    unsafe { (*CHILD_SINGLETON.get()).get_or_insert_with(Default::default) }
-}
 
 pub(crate) fn on_internal_message_child<'a>(
     cx: &mut JsScope<'a>,
     worker: JsLocal<'a>,
     callback: JsLocal<'a>,
-) -> JsResult<()> {
+) {
     bun_output::scoped_log!(IPC, "onInternalMessageChild");
     let global = cx.global();
-    let singleton = child_singleton();
-    // TODO: we should not create two jsc.Strong.Optional here. If absolutely necessary, a single Array. should be all we use.
-    singleton.worker = StrongOptional::create(worker.to_js(), global);
-    singleton.cb = StrongOptional::create(callback.to_js(), global);
-    singleton.flush(global)
-}
-
-pub(crate) fn handle_internal_message_child(
-    global: &JSGlobalObject,
-    message: JSValue,
-    handle: JSValue,
-) -> JsResult<()> {
-    bun_output::scoped_log!(IPC, "handleInternalMessageChild");
-
-    child_singleton().dispatch(message, handle, global)
+    if let Some(channel) = get_ipc_instance(global.bun_vm()) {
+        let queue = &channel.data().internal_msg_queue;
+        queue.set_listener(worker.to_js(), callback.to_js(), global);
+        queue.flush(global);
+    }
 }
 
 pub(crate) fn send_helper_primary<'a>(
@@ -138,17 +101,11 @@ pub(crate) fn send_helper_primary<'a>(
             };
         }
     }
-    let this_seq = ipc_data.internal_msg_queue.with_mut(|q| {
-        let seq = q.seq;
-        if let Some(callback) = callback {
-            let _ = q
-                .callbacks
-                .put(seq, StrongOptional::create(callback.to_js(), global));
-        }
-        q.seq = seq.wrapping_add(1);
-        seq
-    });
-    if callback.is_some() {
+    let this_seq = ipc_data.internal_msg_queue.next_seq();
+    if let Some(callback) = callback {
+        ipc_data
+            .internal_msg_queue
+            .put_callback(this_seq, Strong::create(callback.to_js(), global));
         if let Some(h) = &mut native_handle {
             h.cluster_seq = Some(this_seq);
         }
@@ -196,12 +153,10 @@ pub(crate) fn on_internal_message_primary<'a>(
     let Some(ipc_data) = subprocess.ipc() else {
         return;
     };
-    let global = cx.global();
     // TODO: remove these strongs.
-    ipc_data.internal_msg_queue.with_mut(|q| {
-        q.worker = StrongOptional::create(worker.to_js(), global);
-        q.cb = StrongOptional::create(callback.to_js(), global);
-    });
+    ipc_data
+        .internal_msg_queue
+        .set_listener(worker.to_js(), callback.to_js(), cx.global());
 }
 
 pub(crate) fn handle_internal_message_primary(
@@ -212,46 +167,18 @@ pub(crate) fn handle_internal_message_primary(
     let Some(ipc_data) = subprocess.ipc() else {
         return Ok(());
     };
-
-    if !ipc_data.internal_msg_queue.get().is_ready() {
+    let Some(ClusterListener { worker, cb }) = ipc_data.internal_msg_queue.listener() else {
         return Ok(());
-    }
-
-    let event_loop = global.bun_vm().event_loop();
+    };
 
     // TODO: investigate if "ack" and "seq" are observable and if they're not, remove them entirely.
-    if let Some(p) = message.get(global, "ack")? {
-        if p.is_int32() {
-            let ack = p.as_int32();
-            let entry = ipc_data.internal_msg_queue.with_mut(|q| {
-                let cb = q.callbacks.get(&ack).and_then(|s| s.get());
-                if q.callbacks.contains_key(&ack) {
-                    q.callbacks.swap_remove(&ack);
-                }
-                cb.zip(q.worker.get())
-            });
-            if let Some((cb, worker)) = entry {
-                event_loop.run_callback(
-                    subprocess.context,
-                    cb,
-                    global,
-                    worker,
-                    &[
-                        message,
-                        JSValue::NULL, // handle
-                    ],
-                );
-                return Ok(());
-            }
-        }
-    }
-    let (cb, worker) = {
-        let q = ipc_data.internal_msg_queue.get();
-        (q.cb.get().unwrap(), q.worker.get().unwrap())
-    };
-    event_loop.run_callback(
+    let ack_callback = message
+        .get(global, "ack")?
+        .filter(|ack| ack.is_int32())
+        .and_then(|ack| ipc_data.internal_msg_queue.take_callback(ack.as_int32()));
+    global.bun_vm().event_loop().run_callback(
         subprocess.context,
-        cb,
+        ack_callback.unwrap_or(cb),
         global,
         worker,
         &[

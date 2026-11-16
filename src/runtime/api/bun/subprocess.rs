@@ -1,7 +1,7 @@
 //! The Subprocess object is returned by `Bun.spawn`. This file also holds the
 //! code for `Bun.spawnSync`
 
-use core::cell::Cell;
+use core::cell::{Cell, OnceCell};
 use core::ptr::NonNull;
 
 use bun_ptr::{RefCount, RefPtr};
@@ -111,7 +111,7 @@ pub struct Subprocess<'a> {
     pub closed: Cell<EnumSet<StdioKind>>,
     pub this_value: JsCell<JsRef>,
 
-    pub(crate) ipc_data: JsCell<Option<RefPtr<IPC::SendQueue>>>,
+    pub(crate) ipc_data: OnceCell<RefPtr<IPC::SendQueue>>,
     pub(crate) flags: Cell<Flags>,
 
     /// Weak observer of the stdin `FileSink` — holds no ownership/ref. `onStdinDestroyed`
@@ -276,12 +276,12 @@ impl Subprocess<'_> {
     }
 
     pub(crate) fn compute_has_pending_activity(&self) -> bool {
-        // `ipc_data` is never set back to `None` after init, so checking only
+        // `ipc_data` is never cleared, so checking only
         // for `is_some()` would keep the JSSubprocess strongly referenced for the
         // lifetime of the VM. The IPC side contributes pending activity until
         // `_onAfterIPCClosed` has actually run: gating on `close_event_sent`
-        // (rather than `socket != .closed`) keeps the wrapper Strong across the
-        // window where the socket is already `.closed` but the task holding a
+        // (rather than an open `socket`) keeps the wrapper Strong across the
+        // window where the socket is already closed but the task holding a
         // raw `*SendQueue` into `ipc_data` is still queued.
         if let Some(ipc) = self.ipc() {
             if !ipc.close_event_sent.get() {
@@ -617,8 +617,6 @@ impl Subprocess<'_> {
         } else {
             crate::ipc_host::FromEnum::Subprocess
         };
-        // `ipc()` centralises the single unsafe `JsCell` deref; `do_send` may
-        // re-enter JS, but only the SendQueue is borrowed, not `*self`.
         crate::ipc_host::do_send(
             self.ipc(),
             cx.global(),
@@ -1065,12 +1063,11 @@ impl Subprocess<'_> {
         self.stdout_maxbuf.set(None);
         self.stderr_maxbuf.set(None);
 
-        if let Some(ipc_data) = self.ipc_data.take() {
-            // In normal operation the socket is already `.closed` by the time we
+        if let Some(ipc_data) = self.ipc() {
+            // In normal operation the socket is already closed by the time we
             // get here (that is what allowed `compute_has_pending_activity` to drop
-            // to false and let GC collect us). Detach and release our ref; any
-            // still-queued close task holds its own ref and frees the SendQueue
-            // when it runs.
+            // to false and let GC collect us). Any still-queued close task holds
+            // its own ref.
             ipc_data.detach();
         }
 
@@ -1207,7 +1204,7 @@ impl Subprocess<'_> {
     }
 
     pub(crate) fn ipc(&self) -> Option<&IPC::SendQueue> {
-        self.ipc_data.get().as_deref()
+        self.ipc_data.get().map(|ipc_data| &**ipc_data)
     }
 }
 

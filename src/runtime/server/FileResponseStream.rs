@@ -14,6 +14,8 @@ use core::ffi::c_void;
 use bun_io::Closer;
 #[cfg(windows)]
 use bun_io::pipe_reader::WindowsFlags as ReaderFlags;
+#[cfg(unix)]
+use bun_io::pipes::PollOrFd;
 use bun_io::{BufferedReader, FileType, ReadState};
 #[cfg(unix)]
 use bun_io::{FilePollFlag, PosixFlags as ReaderFlags};
@@ -545,6 +547,10 @@ impl FileResponseStream {
         if !self.state.get().contains(State::RESPONSE_DONE) {
             self.insert_state(State::RESPONSE_DONE);
             self.detach_resp();
+            // An `abort` listener may close the fd, and epoll cannot remove a closed fd.
+            #[cfg(unix)]
+            self.reader
+                .with_mut(|reader| reader.handle = PollOrFd::Closed);
             self.deliver(self.resp.get(), StreamEnd::Abort);
         }
         self.finish();

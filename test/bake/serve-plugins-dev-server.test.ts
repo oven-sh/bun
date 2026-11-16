@@ -4,8 +4,9 @@
 // pending payload *before* the reassignment. When it isn't, the optional reads back as
 // null (or garbage, depending on build mode) and the DevServer is never told that
 // plugin loading finished, so the request it deferred to `next_bundle` waits forever.
-import { expect, test } from "bun:test";
-import { bunEnv, bunExe, isWindows, tempDir } from "harness";
+import { describe, expect, test } from "bun:test";
+import { bunEnv, bunExe, bunRun, isWindows, tempDir } from "harness";
+import { join } from "node:path";
 
 const indexHtml = /* html */ `<!DOCTYPE html>
 <html><head><meta charset="utf-8"></head>
@@ -550,4 +551,99 @@ test.skipIf(isWindows)("responds to a framework request queued behind the reload
 
   expect(stdout, stderr).toBe("index\nafter\nafter\n");
   expect(exitCode).toBe(0);
+});
+
+async function run(files: Record<string, string>, env?: Record<string, string>) {
+  using dir = tempDir("serve-plugins-first-request", {
+    "bunfig.toml": `[serve.static]\nplugins = ["./plugin.ts"]\n`,
+    "index.html": indexHtml,
+    "entry.ts": `console.log("entry");`,
+    ...files,
+  });
+  return await bunRun(join(String(dir), "server.ts"), env);
+}
+
+test.concurrent("server.reload() keeps the DevServer routes while a rejected plugin load fails a request", async () => {
+  const { stdout, stderr, exitCode } = await run({
+    "plugin.ts": parkedPlugin,
+    "render.ts": `export function render() { return new Response("rendered"); }`,
+    "routes/index.ts": `export default {};`,
+    "server.ts": `
+      const entered = Promise.withResolvers();
+      const release = Promise.withResolvers();
+      globalThis.__setup = { entered: entered.resolve, release: release.promise, finished() {} };
+
+      const fsr = { root: "routes", style: "nextjs-pages", serverEntryPoint: "./render.ts" };
+      const app = { framework: { fileSystemRouterTypes: [fsr] } };
+      const server = Bun.serve({ port: 0, hostname: "127.0.0.1", development: true, app });
+      const closed = Promise.withResolvers();
+      const handlers = { data() {}, close: closed.resolve };
+      const socket = await Bun.connect({ hostname: server.hostname, port: server.port, socket: handlers });
+      // Failing a request whose body is incomplete drains microtasks, so the last of these awaits resume there.
+      socket.write("POST / HTTP/1.1\\r\\nHost: localhost\\r\\nContent-Length: 2\\r\\n\\r\\nx");
+      await entered.promise;
+      release.resolve("reject");
+      for (let i = 0; i < 100; i++) await null;
+      server.reload({ fetch: () => new Response("fetch") });
+      await closed.promise;
+      console.log(await fetch(server.url).then(res => res.text()));
+      await server.stop(true);
+    `,
+  });
+  expect(stdout, stderr).toBe("Plugin Error");
+  expect(exitCode).toBe(0);
+});
+
+describe.concurrent.each(["true", "{ hmr: false }", "false"])("development: %s", development => {
+  // server.ts imports the plugin so that setup() runs without waiting for the module to load.
+  test("a plugin's setup() can call server.stop(true)", async () => {
+    const { stdout, stderr, exitCode } = await run({
+      "plugin.ts": `export default { name: "stops", setup: () => globalThis.stop() };`,
+      "server.ts": `
+        import html from "./index.html";
+        import "./plugin.ts";
+        const server = Bun.serve({ port: 0, development: ${development}, routes: { "/": html } });
+        let stopped;
+        globalThis.stop = () => void (stopped = server.stop(true));
+        console.log(await fetch(server.url).then(res => res.status, err => err.code));
+        await stopped;
+        console.log(server.pendingRequests);
+      `,
+    });
+    expect(stdout, stderr).toBe("ECONNRESET\n0");
+    expect(exitCode).toBe(0);
+  });
+
+  test("a plugin's setup() can call process.exit()", async () => {
+    const { stderr, exitCode } = await run(
+      {
+        "plugin.ts": `export default { name: "exits", setup: () => process.exit(7) };`,
+        "server.ts": `
+          import html from "./index.html";
+          import "./plugin.ts";
+          await fetch(Bun.serve({ port: 0, development: ${development}, routes: { "/": html } }).url);
+        `,
+      },
+      { BUN_DESTRUCT_VM_ON_EXIT: "1" },
+    );
+    expect(exitCode, stderr).toBe(7);
+  });
+
+  test.each(["./plugin.ts", "./missing.ts"])("responds with 200 if %s fails to load synchronously", async path => {
+    const { stdout, stderr } = await run({
+      "bunfig.toml": `[serve.static]\nplugins = ["${path}"]\n`,
+      "plugin.ts": `export default { name: "throws", setup() { throw new Error("plugin failed on purpose"); } };`,
+      "server.ts": `
+        import { heapStats } from "bun:jsc";
+        import html from "./index.html";
+        import "./plugin.ts";
+        using server = Bun.serve({ port: 0, development: ${development}, routes: { "/": html } });
+        const get = () => fetch(server.url).then(async res => [res.status, await res.text()]);
+        const responses = [await get(), await get()];
+        console.log(JSON.stringify([...responses, heapStats().protectedObjectTypeCounts.BundlerPlugin ?? 0]));
+      `,
+    });
+    const response = [200, development === "true" ? "Plugin Error" : ""];
+    expect(stdout, stderr).toBe(JSON.stringify([response, response, 0]));
+  });
 });

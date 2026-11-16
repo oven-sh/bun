@@ -2,8 +2,7 @@ use core::cell::Cell;
 use core::ffi::{c_int, c_void};
 use core::mem::size_of;
 
-use bun_jsc::JsCell;
-use bun_ptr::RefPtr;
+use bun_ptr::{CellExt as _, OptionCellExt as _, RefPtr};
 
 use crate::json_line_buffer::JSONLineBuffer;
 use bun_collections::{ByteVecExt, VecExt};
@@ -17,7 +16,8 @@ use bun_jsc::js_value::Protected;
 #[cfg(windows)]
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{
-    JSGlobalObject, JSObject, JSValue, JsError, JsResult, SerializedFlags, StringJsc as _, Task,
+    JSGlobalObject, JSObject, JSValue, JsError, JsResult, SerializedFlags, StringJsc as _, Strong,
+    Task,
 };
 use bun_sys::Fd;
 use bun_sys::FdExt;
@@ -40,103 +40,83 @@ use bun_sys::windows::libuv::{UvHandle as _, UvStream as _};
 /// Queue for messages sent between parent and child processes in an IPC environment. node:cluster sends json serialized messages
 /// to describe different events it performs. It will send a message with an incrementing sequence number and then call a callback
 /// when a message is received with an 'ack' property of the same sequence number.
+#[derive(Default)]
 pub(crate) struct InternalMsgHolder {
-    pub seq: i32,
+    seq: Cell<i32>,
 
     // TODO: move this to an Array or a JS Object or something which doesn't
     // individually create a Strong for every single IPC message...
-    pub callbacks: bun_collections::ArrayHashMap<i32, bun_jsc::StrongOptional>,
-    pub worker: bun_jsc::StrongOptional,
-    pub cb: bun_jsc::StrongOptional,
-    pub(crate) messages: Vec<bun_jsc::StrongOptional>,
+    callbacks: Cell<bun_collections::ArrayHashMap<i32, Strong>>,
+    listener: Cell<Option<ClusterListener<Strong>>>,
+    messages: Cell<Vec<Strong>>,
 }
 
-impl Default for InternalMsgHolder {
-    fn default() -> Self {
-        Self {
-            seq: 0,
-            callbacks: bun_collections::ArrayHashMap::default(),
-            worker: bun_jsc::StrongOptional::empty(),
-            cb: bun_jsc::StrongOptional::empty(),
-            messages: Vec::new(),
-        }
-    }
+// TODO: we should not create two jsc.Strong here. If absolutely necessary, a single Array. should be all we use.
+pub(crate) struct ClusterListener<T> {
+    pub(crate) worker: T,
+    pub(crate) cb: T,
 }
 
 impl InternalMsgHolder {
-    pub(crate) fn is_ready(&self) -> bool {
-        self.worker.has() && self.cb.has()
+    pub(crate) fn set_listener(&self, worker: JSValue, cb: JSValue, global: &JSGlobalObject) {
+        self.listener.set(Some(ClusterListener {
+            worker: Strong::create(worker, global),
+            cb: Strong::create(cb, global),
+        }));
     }
 
-    pub(crate) fn enqueue(&mut self, message: JSValue, global: &JSGlobalObject) {
-        self.messages
-            .push(bun_jsc::StrongOptional::create(message, global));
+    pub(crate) fn listener(&self) -> Option<ClusterListener<JSValue>> {
+        self.listener.with_taken(|listener| {
+            let listener = listener.as_ref()?;
+            Some(ClusterListener {
+                worker: listener.worker.get(),
+                cb: listener.cb.get(),
+            })
+        })
     }
 
-    pub(crate) fn dispatch(
-        &mut self,
-        message: JSValue,
-        handle: JSValue,
-        global: &JSGlobalObject,
-    ) -> JsResult<()> {
-        if !self.is_ready() {
+    pub(crate) fn next_seq(&self) -> i32 {
+        self.seq.replace(self.seq.get().wrapping_add(1))
+    }
+
+    pub(crate) fn put_callback(&self, seq: i32, callback: Strong) {
+        self.callbacks.with_taken(|map| map.insert(seq, callback));
+    }
+
+    pub(crate) fn take_callback(&self, seq: i32) -> Option<JSValue> {
+        let (_, callback) = self
+            .callbacks
+            .with_taken(|map| map.fetch_swap_remove(&seq))?;
+        Some(callback.get())
+    }
+
+    pub(crate) fn dispatch(&self, message: JSValue, handle: JSValue, global: &JSGlobalObject) {
+        let Some(ClusterListener { worker, cb }) = self.listener() else {
             // Queued messages drop their handle; the cluster listener is
             // installed before any handle-bearing reply can arrive.
-            self.enqueue(message, global);
-            return Ok(());
-        }
-        self.dispatch_unsafe(message, handle, global)
-    }
-
-    fn dispatch_unsafe(
-        &mut self,
-        message: JSValue,
-        handle: JSValue,
-        global: &JSGlobalObject,
-    ) -> JsResult<()> {
-        let cb = self.cb.get().unwrap();
-        let worker = self.worker.get().unwrap();
-
-        let event_loop = global.bun_vm().event_loop();
-
-        event_loop.run_callback(
+            let message = Strong::create(message, global);
+            self.messages.with_taken(|messages| messages.push(message));
+            return;
+        };
+        global.bun_vm().event_loop().run_callback(
             bun_event_loop::ContextId::NONE,
             cb,
             global,
             worker,
             &[message, handle],
         );
-        Ok(())
     }
 
-    pub(crate) fn flush(&mut self, global: &JSGlobalObject) -> JsResult<()> {
-        debug_assert!(self.is_ready());
-        let messages = core::mem::take(&mut self.messages);
-        // `&mut self` carries LLVM `noalias`, but
-        // `dispatch_unsafe` → `event_loop.run_callback` runs the JS IPC
-        // listener which can re-enter via a fresh `&mut Self` from the
-        // owner's JS wrapper and write `self.cb` / `self.worker` /
-        // `self.callbacks`. With the loop body inlined, LLVM was hoisting the
-        // `self.cb`/`self.worker` reads (at the top of `dispatch_unsafe`) out
-        // of the loop — ASM-verified PROVEN_CACHED. Launder so each iteration
-        // re-reads through an opaque pointer.
-        let this: *mut Self = core::hint::black_box(core::ptr::from_mut(self));
-        for strong in messages {
-            if let Some(message) = strong.get() {
-                // SAFETY: `this` is still live across re-entry — the IPC
-                // dispatcher is owned by the Subprocess/Worker which outlives
-                // this `flush` frame; `&mut *this` is the unique mutable view
-                // for this call.
-                unsafe { &mut *this }.dispatch_unsafe(message, JSValue::NULL, global)?;
-            }
-            // strong drops here (== `strong.deinit()`)
+    pub(crate) fn flush(&self, global: &JSGlobalObject) {
+        for message in self.messages.take() {
+            self.dispatch(message.get(), JSValue::NULL, global);
         }
-        // messages Vec drops here (== `messages.deinit(bun.default_allocator)`)
-        Ok(())
     }
 
-    // `deinit` body only freed owned fields (Strongs, map, Vec). All of those impl Drop in
-    // Rust, so no explicit Drop body is needed.
+    pub(crate) fn clear_listener_and_messages(&self) {
+        self.listener.set(None);
+        drop(self.messages.take());
+    }
 }
 
 bun_core::define_scoped_log!(log, IPC, visible);
@@ -145,16 +125,18 @@ bun_core::define_scoped_log!(log, IPC, visible);
 /// and JSONLineBuffer (for JSON mode with optimized newline tracking).
 enum IncomingBuffer {
     /// For advanced mode - uses length-prefix, no scanning needed
-    Advanced(Vec<u8>),
+    Advanced(Cell<Vec<u8>>),
     /// For JSON mode - tracks newline positions to avoid O(n²) scanning
-    Json(JSONLineBuffer),
+    Json(Cell<JSONLineBuffer>),
 }
 
 impl IncomingBuffer {
     fn init(mode: Mode) -> IncomingBuffer {
         match mode {
-            Mode::Advanced => IncomingBuffer::Advanced(Vec::<u8>::default()),
-            Mode::Json => IncomingBuffer::Json(JSONLineBuffer::new(json::max_line_len())),
+            Mode::Advanced => IncomingBuffer::Advanced(Cell::default()),
+            Mode::Json => {
+                IncomingBuffer::Json(Cell::new(JSONLineBuffer::new(json::max_line_len())))
+            }
         }
     }
 }
@@ -723,62 +705,31 @@ impl Drop for Handle {
 pub(crate) enum CallbackList {
     AckNack,
     None,
-    /// js callable
-    Callback(Protected),
-    /// js array
-    CallbackArray(Protected),
+    Callback(Strong),
+    CallbackArray(Vec<Strong>),
 }
 
 impl CallbackList {
-    /// protects the callback
-    pub(crate) fn init(callback: JSValue) -> Self {
-        if callback.is_callable() {
-            return CallbackList::Callback(callback.protected());
-        }
-        CallbackList::None
-    }
-
-    /// protects the callback
-    pub(crate) fn push(&mut self, callback: JSValue, global: &JSGlobalObject) -> JsResult<()> {
-        match self {
+    fn push(&mut self, callback: Strong) {
+        *self = match core::mem::replace(self, CallbackList::None) {
             CallbackList::AckNack => unreachable!(),
-            CallbackList::None => {
-                *self = CallbackList::Callback(callback.protected());
+            CallbackList::None => CallbackList::Callback(callback),
+            CallbackList::Callback(first) => CallbackList::CallbackArray(vec![first, callback]),
+            CallbackList::CallbackArray(mut callbacks) => {
+                callbacks.push(callback);
+                CallbackList::CallbackArray(callbacks)
             }
-            CallbackList::Callback(prev) => {
-                let prev = prev.value();
-                let arr = JSValue::create_empty_array(global, 2)?;
-                let arr = arr.protected();
-                arr.value().put_index(global, 0, prev)?; // add the old callback to the array
-                arr.value().put_index(global, 1, callback)?; // add the new callback to the array
-                // Overwriting the old `Callback(prev_guard)` drops it →
-                // single `unprotect()` on `prev` (now rooted via `arr`).
-                *self = CallbackList::CallbackArray(arr);
-            }
-            CallbackList::CallbackArray(arr) => {
-                arr.value().push(global, callback)?;
-            }
-        }
-        Ok(())
+        };
     }
 
-    fn call_next_tick(&mut self, global: &JSGlobalObject) -> JsResult<()> {
-        match self {
-            CallbackList::AckNack => {}
-            CallbackList::None => {}
-            CallbackList::Callback(cb) => {
-                JSValue::call_next_tick_1(cb.value(), global, JSValue::NULL)?;
-                // Assignment drops the old `Callback(cb)` guard → unprotect.
-                *self = CallbackList::None;
-            }
-            CallbackList::CallbackArray(arr) => {
-                let mut iter = arr.value().array_iterator(global)?;
-                while let Some(item) = iter.next()? {
-                    JSValue::call_next_tick_1(item, global, JSValue::NULL)?;
-                }
-                // Assignment drops the old `CallbackArray(arr)` guard → unprotect.
-                *self = CallbackList::None;
-            }
+    fn call_next_tick(&self, global: &JSGlobalObject) -> JsResult<()> {
+        let callbacks = match self {
+            CallbackList::AckNack | CallbackList::None => &[],
+            CallbackList::Callback(callback) => core::slice::from_ref(callback),
+            CallbackList::CallbackArray(callbacks) => callbacks,
+        };
+        for callback in callbacks {
+            JSValue::call_next_tick_1(callback.get(), global, JSValue::NULL)?;
         }
         Ok(())
     }
@@ -799,7 +750,7 @@ impl SendHandle {
     }
 
     /// Call the callback and deinit
-    pub(crate) fn complete(mut self, global: &JSGlobalObject) {
+    pub(crate) fn complete(self, global: &JSGlobalObject) {
         if let Some(handle) = &self.handle {
             if handle.close_on_complete {
                 let js = handle.js.value();
@@ -864,8 +815,8 @@ pub(crate) struct WindowsWrite {
 #[derive(Default)]
 pub(crate) struct WindowsState {
     /// libuv's until `windows_on_write_complete`.
-    pub(crate) windows_write: Option<*mut WindowsWrite>,
-    pub(crate) try_close_after_write: bool,
+    pub(crate) windows_write: Cell<Option<*mut WindowsWrite>>,
+    pub(crate) try_close_after_write: Cell<bool>,
 }
 
 #[derive(Copy, Clone, Eq, PartialEq)]
@@ -899,19 +850,19 @@ const MAX_WRITE_LEN: usize = i32::MAX as usize;
 pub(crate) struct SendQueue {
     ref_count: Cell<u32>,
     root: Cell<Option<core::ptr::NonNull<SendQueue>>>,
-    pub(crate) queue: JsCell<Vec<SendHandle>>,
-    pub(crate) waiting_for_ack: JsCell<Option<SendHandle>>,
+    queue: Cell<Vec<SendHandle>>,
+    waiting_for_ack: Cell<Option<SendHandle>>,
 
     pub(crate) retry_count: Cell<u32>,
     pub(crate) keep_alive: KeepAlive,
     #[cfg(debug_assertions)]
     pub(crate) has_written_version: Cell<u8>,
     pub(crate) mode: Mode,
-    pub internal_msg_queue: JsCell<InternalMsgHolder>,
-    incoming: JsCell<IncomingBuffer>,
+    pub internal_msg_queue: InternalMsgHolder,
+    incoming: IncomingBuffer,
     pub(crate) incoming_fd: Cell<Option<Fd>>,
 
-    pub socket: JsCell<SocketUnion>,
+    pub socket: Cell<Option<SocketType>>,
     pub(crate) owner: Cell<Option<SendQueueOwner>>,
 
     pub(crate) deferred_scheduled: Cell<bool>,
@@ -925,7 +876,7 @@ pub(crate) struct SendQueue {
     pub close_event_sent: Cell<bool>,
 
     #[cfg(windows)]
-    pub windows: JsCell<WindowsState>,
+    pub windows: WindowsState,
 }
 
 #[derive(Copy, Clone)]
@@ -967,7 +918,8 @@ impl SendQueueOwner {
             // SAFETY: an attached owner is live (it holds a ref on the SendQueue).
             SendQueueOwner::Subprocess(p) => unsafe { p.as_ref() }.handle_ipc_message(msg, handle),
             SendQueueOwner::Instance => {
-                crate::ipc_host::IPCInstance::handle_ipc_message(msg, handle)
+                crate::ipc_host::IPCInstance::handle_ipc_message(msg, handle);
+                Ok(())
             }
         }
     }
@@ -996,12 +948,6 @@ pub(crate) type SocketType = uv::Owned<uv::Pipe>;
 #[cfg(not(windows))]
 pub(crate) type SocketType = Socket;
 
-pub(crate) enum SocketUnion {
-    Uninitialized,
-    Open(SocketType),
-    Closed,
-}
-
 impl SendQueue {
     #[inline]
     fn owner_ref(&self) -> Option<SendQueueOwner> {
@@ -1015,26 +961,22 @@ impl SendQueue {
         self.owner.set(None);
     }
 
-    pub(crate) fn new(
-        mode: Mode,
-        owner: Option<SendQueueOwner>,
-        socket: SocketUnion,
-    ) -> RefPtr<SendQueue> {
+    pub(crate) fn new(mode: Mode, owner: Option<SendQueueOwner>) -> RefPtr<SendQueue> {
         log!("SendQueue#init");
         let this = RefPtr::new(Self {
             ref_count: Cell::new(1),
             root: Cell::new(None),
-            queue: JsCell::new(Vec::new()),
-            waiting_for_ack: JsCell::new(None),
+            queue: Cell::new(Vec::new()),
+            waiting_for_ack: Cell::new(None),
             retry_count: Cell::new(0),
             keep_alive: KeepAlive::default(),
             #[cfg(debug_assertions)]
             has_written_version: Cell::new(0),
             mode,
-            internal_msg_queue: JsCell::new(InternalMsgHolder::default()),
-            incoming: JsCell::new(IncomingBuffer::init(mode)),
+            internal_msg_queue: InternalMsgHolder::default(),
+            incoming: IncomingBuffer::init(mode),
             incoming_fd: Cell::new(None),
-            socket: JsCell::new(socket),
+            socket: Cell::new(None),
             owner: Cell::new(owner),
             deferred_scheduled: Cell::new(false),
             pending_close: Cell::new(false),
@@ -1045,7 +987,7 @@ impl SendQueue {
             write_in_progress: Cell::new(false),
             close_event_sent: Cell::new(false),
             #[cfg(windows)]
-            windows: JsCell::new(WindowsState::default()),
+            windows: WindowsState::default(),
         });
         this.root.set(Some(this.as_non_null()));
         this
@@ -1063,12 +1005,16 @@ impl SendQueue {
 
     #[inline]
     fn socket_is_open(&self) -> bool {
-        matches!(*self.socket.get(), SocketUnion::Open(_))
+        self.socket.is_some()
+    }
+
+    fn queue_is_empty(&self) -> bool {
+        self.queue.with_taken(|queue| queue.is_empty())
     }
 
     pub(crate) fn is_connected(&self) -> bool {
         #[cfg(windows)]
-        if self.windows.get().try_close_after_write {
+        if self.windows.try_close_after_write.get() {
             return false;
         }
         self.socket_is_open() && !self.pending_close.get() && !self.close_after_flush.get()
@@ -1086,15 +1032,15 @@ impl SendQueue {
         {
             let _ = reason;
             let is_open = self.with_pipe(|pipe| pipe.read_stop()).is_some();
-            if is_open && self.windows.get().windows_write.is_some() && from != CloseFrom::Deinit {
+            if is_open && self.windows.windows_write.get().is_some() && from != CloseFrom::Deinit {
                 log!("SendQueue#closeSocket -> mark ready for close");
                 // currently writing; wait for the write to complete
-                self.windows.with_mut(|w| w.try_close_after_write = true);
+                self.windows.try_close_after_write.set(true);
                 return;
             }
         }
         #[cfg(not(windows))]
-        if let Some(s) = self.get_socket() {
+        if let Some(s) = self.socket.get() {
             s.close(match reason {
                 CloseReason::Normal => bun_uws::CloseCode::Normal,
                 CloseReason::Failure => bun_uws::CloseCode::Failure,
@@ -1110,22 +1056,17 @@ impl SendQueue {
     fn socket_closed_notify(&self, notify: bool) {
         log!("SendQueue#_socketClosed");
         #[cfg(windows)]
-        {
-            let windows_write = self.windows.get().windows_write;
-            if let Some(windows_write) = windows_write {
-                // SAFETY: libuv holds it until `windows_on_write_complete`,
-                // which frees it. We only clear the backref so
-                // the callback doesn't touch a dead `SendQueue`.
-                unsafe { (*windows_write).owner = None };
-            }
-            self.windows.with_mut(|w| w.windows_write = None);
+        if let Some(windows_write) = self.windows.windows_write.take() {
+            // SAFETY: libuv holds it until `windows_on_write_complete`,
+            // which frees it. We only clear the backref so
+            // the callback doesn't touch a dead `SendQueue`.
+            unsafe { (*windows_write).owner = None };
         }
         self.keep_alive.disable();
-        let was_open = self.socket_is_open();
-        self.socket.set(SocketUnion::Closed);
+        let was_open = self.socket.take().is_some();
         // Only enqueue the close notification for the open→closed transition.
         // `closeSocket` (via `SendQueue.deinit` during the owner's finalizer)
-        // can reach this path again with the socket already `.closed`; the
+        // can reach this path again with the socket already closed; the
         // owner is about to free the memory that backs `this`, so scheduling
         // a task that points back into it would use-after-free.
         if notify && was_open && !self.pending_after_close.get() && !self.close_event_sent.get() {
@@ -1153,7 +1094,7 @@ impl SendQueue {
             log!("SendQueue#closeSocketTask");
             #[cfg(not(windows))]
             if self.read_before_close.get()
-                && let SocketUnion::Open(socket) = *self.socket.get()
+                && let Some(socket) = self.socket.get()
             {
                 // `pending_close` is still set, so a callback finds the channel disconnected.
                 socket.read_now();
@@ -1165,11 +1106,11 @@ impl SendQueue {
             log!("SendQueue#_onAfterIPCClosed");
             if !self.close_event_sent.replace(true) {
                 let global = self.get_global_this();
-                if let Some(item) = self.waiting_for_ack.with_mut(|w| w.take()) {
+                if let Some(item) = self.waiting_for_ack.take() {
                     item.complete(&global);
                 }
                 // on_write_complete already dequeued everything fully written; the rest was never delivered.
-                for item in self.queue.with_mut(std::mem::take) {
+                for item in self.queue.take() {
                     item.abort_unsent(&global);
                 }
                 if let Some(owner) = self.owner.get() {
@@ -1192,7 +1133,6 @@ impl SendQueue {
     pub(crate) fn close_socket_next_tick(&self, next_tick: bool) {
         log!("SendQueue#closeSocketNextTick");
         if !self.socket_is_open() {
-            self.socket.set(SocketUnion::Closed);
             return;
         }
         // Peer-gone and exit paths land here too: a postponed disconnect never outranks them.
@@ -1219,10 +1159,7 @@ impl SendQueue {
 
     /// User disconnect(): reports disconnected now but, like node, closes only once a handle awaiting its ack and the queue behind it have gone out.
     pub(crate) fn disconnect(&self) {
-        if self.socket_is_open()
-            && !self.pending_close.get()
-            && self.waiting_for_ack.get().is_some()
-        {
+        if self.socket_is_open() && !self.pending_close.get() && self.waiting_for_ack.is_some() {
             self.close_after_flush.set(true);
             return;
         }
@@ -1231,17 +1168,16 @@ impl SendQueue {
 
     fn start_message(
         &self,
-        global: &JSGlobalObject,
-        callback: JSValue,
+        callback: Option<Strong>,
         handle: Option<Handle>,
         payload: StreamBuffer,
-    ) -> JsResult<()> {
+    ) {
         log!("SendQueue#startMessage");
         #[cfg(debug_assertions)]
         debug_assert!(self.has_written_version.get() == 1);
 
         let write_in_progress = self.write_in_progress.get();
-        self.queue.with_mut(|queue| {
+        self.queue.with_taken(|queue| {
             // optimal case: appending a message without a handle to the end of the queue when the last message also doesn't have a handle and isn't ack/nack
             // this is rare. it will only happen if messages stack up after sending a handle.
             let use_last = if handle.is_none() && !queue.is_empty() {
@@ -1257,19 +1193,18 @@ impl SendQueue {
             if use_last {
                 let len = queue.len();
                 let last = &mut queue[len - 1];
-                if callback.is_callable() {
-                    last.callbacks.push(callback, global)?;
+                if let Some(callback) = callback {
+                    last.callbacks.push(callback);
                 }
                 handle_oom(last.data.write(&payload.list));
             } else {
                 queue.push(SendHandle {
                     data: payload,
                     handle,
-                    callbacks: CallbackList::init(callback),
+                    callbacks: callback.map_or(CallbackList::None, CallbackList::Callback),
                 });
             }
-            Ok(())
-        })
+        });
     }
 
     pub(crate) fn insert_message(&self, message: SendHandle) {
@@ -1277,8 +1212,8 @@ impl SendQueue {
         #[cfg(debug_assertions)]
         debug_assert!(self.has_written_version.get() == 1);
         let write_in_progress = self.write_in_progress.get();
-        let waiting_for_ack = self.waiting_for_ack.get().is_some();
-        self.queue.with_mut(|queue| {
+        let waiting_for_ack = self.waiting_for_ack.is_some();
+        self.queue.with_taken(|queue| {
             if (queue.is_empty() || queue[0].data.cursor == 0) && !write_in_progress {
                 // prepend (we have not started sending the next message yet because we are waiting for the ack/nack)
                 queue.insert(0, message);
@@ -1291,7 +1226,7 @@ impl SendQueue {
 
     pub(crate) fn on_ack_nack(&self, global: &JSGlobalObject, ack_nack: AckNack) {
         log!("SendQueue#onAckNack");
-        let waiting = self.waiting_for_ack.with_mut(|w| match w {
+        let waiting = self.waiting_for_ack.with_taken(|w| match w {
             None => None,
             Some(item) => Some(item.handle.is_some()),
         });
@@ -1311,7 +1246,7 @@ impl SendQueue {
                 // retry sending the message
                 let item = self
                     .waiting_for_ack
-                    .with_mut(|w| w.take())
+                    .take()
                     .map(|mut item| {
                         item.data.cursor = 0;
                         #[cfg(windows)]
@@ -1344,16 +1279,9 @@ impl SendQueue {
             }
             let cluster_seq = self
                 .waiting_for_ack
-                .with_mut(|w| w.as_ref().and_then(|i| i.handle.as_ref()?.cluster_seq));
+                .with_taken(|w| w.as_ref().and_then(|i| i.handle.as_ref()?.cluster_seq));
             if let Some(seq) = cluster_seq {
-                let cb = self.internal_msg_queue.with_mut(|q| {
-                    let entry = q.callbacks.get(&seq).map(|s| s.get());
-                    if entry.is_some() {
-                        q.callbacks.swap_remove(&seq);
-                    }
-                    entry.flatten()
-                });
-                if let Some(cb) = cb {
+                if let Some(cb) = self.internal_msg_queue.take_callback(seq) {
                     let reply = JSValue::create_empty_object(global, 1);
                     reply.put(global, b"accepted", JSValue::FALSE);
                     let _ = JSValue::call_next_tick_1(cb, global, reply);
@@ -1376,7 +1304,7 @@ impl SendQueue {
             // (fall through to success code in order to consume the message and continue sending)
         }
         // consume the message and continue sending
-        if let Some(item) = self.waiting_for_ack.with_mut(|w| w.take()) {
+        if let Some(item) = self.waiting_for_ack.take() {
             self.retry_count.set(0);
             item.complete(global); // call the callback & deinit
         }
@@ -1385,10 +1313,10 @@ impl SendQueue {
     }
 
     fn should_ref(&self) -> bool {
-        if self.waiting_for_ack.get().is_some() {
+        if self.waiting_for_ack.is_some() {
             return true; // waiting to receive an ack/nack from the other side
         }
-        if self.queue.get().is_empty() {
+        if self.queue_is_empty() {
             return false; // nothing to send
         }
         // Anything still queued (including head with cursor==0 under backpressure) must keep the loop alive; a closed socket does not.
@@ -1429,8 +1357,8 @@ impl SendQueue {
             EmptyItem(SendHandle),
             Send(Option<Fd>),
         }
-        let waiting_for_ack = self.waiting_for_ack.get().is_some();
-        let next = self.queue.with_mut(|queue| {
+        let waiting_for_ack = self.waiting_for_ack.is_some();
+        let next = self.queue.with_taken(|queue| {
             let Some(first) = queue.first() else {
                 return Next::Nothing; // nothing to send
             };
@@ -1456,7 +1384,7 @@ impl SendQueue {
         });
         match next {
             Next::Nothing => {
-                if self.close_after_flush.get() && !waiting_for_ack && self.queue.get().is_empty() {
+                if self.close_after_flush.get() && !waiting_for_ack && self.queue_is_empty() {
                     self.close_socket_next_tick(true);
                 }
                 self.update_ref(global);
@@ -1479,7 +1407,7 @@ impl SendQueue {
     fn on_write_complete(&self, n: i32) {
         log!("SendQueue#_onWriteComplete {}", n);
         self.debug_log_message_queue();
-        if !self.write_in_progress.get() || self.queue.get().is_empty() {
+        if !self.write_in_progress.get() || self.queue_is_empty() {
             debug_assert!(false);
             return;
         }
@@ -1494,7 +1422,7 @@ impl SendQueue {
             NoProgress,
             Error,
         }
-        let done = self.queue.with_mut(|queue| {
+        let done = self.queue.with_taken(|queue| {
             let first = &mut queue[0];
             let to_send_len = first.data.list.len() - first.data.cursor;
             let Ok(written) = usize::try_from(n) else {
@@ -1505,13 +1433,10 @@ impl SendQueue {
                     // the message was fully written, but it had a handle.
                     // we must wait for ACK or NACK before sending any more messages.
                     let item = queue.remove(0);
-                    self.waiting_for_ack.with_mut(|w| {
-                        if w.is_some() {
-                            log!("[error] already waiting for ack. this should never happen.");
-                        }
-                        // shift the item off the queue and move it to waiting_for_ack
-                        *w = Some(item);
-                    });
+                    // shift the item off the queue and move it to waiting_for_ack
+                    if self.waiting_for_ack.replace(Some(item)).is_some() {
+                        log!("[error] already waiting for ack. this should never happen.");
+                    }
                     Done::AwaitAck
                 } else {
                     // the message was fully sent, but there may be more items in the queue.
@@ -1559,11 +1484,11 @@ impl SendQueue {
         log!("SendQueue#writeVersionPacket");
         #[cfg(debug_assertions)]
         debug_assert!(self.has_written_version.get() == 0);
-        debug_assert!(self.queue.get().is_empty());
-        debug_assert!(self.waiting_for_ack.get().is_none());
+        debug_assert!(self.queue_is_empty());
+        debug_assert!(self.waiting_for_ack.is_none());
         let bytes = get_version_packet(self.mode);
         if !bytes.is_empty() {
-            self.queue.with_mut(|queue| {
+            self.queue.with_taken(|queue| {
                 queue.push(SendHandle {
                     data: StreamBuffer::default(),
                     handle: None,
@@ -1590,7 +1515,7 @@ impl SendQueue {
         handle: Option<Handle>,
     ) -> SerializeAndSendResult {
         log!("SendQueue#serializeAndSend");
-        let indicate_backoff = self.waiting_for_ack.get().is_some() && !self.queue.get().is_empty();
+        let indicate_backoff = self.waiting_for_ack.is_some() && !self.queue_is_empty();
         let mode = self.mode;
         let mut payload = StreamBuffer::default();
         let payload_length = match serialize(mode, &mut payload, global, value, is_internal) {
@@ -1598,12 +1523,10 @@ impl SendQueue {
             Err(_) => return SerializeAndSendResult::Failure,
         };
         debug_assert!(payload.list.len() == payload_length);
-        if self
-            .start_message(global, callback, handle, payload)
-            .is_err()
-        {
-            return SerializeAndSendResult::Failure;
-        }
+        let callback = callback
+            .is_callable()
+            .then(|| Strong::create(callback, global));
+        self.start_message(callback, handle, payload);
         log!("IPC call continueSend() from serializeAndSend");
         self.continue_send(global, ContinueSendReason::NewMessageAppended);
 
@@ -1617,39 +1540,29 @@ impl SendQueue {
         if !cfg!(debug_assertions) {
             return;
         }
-        let queue = self.queue.get();
-        log!("IPC message queue ({} items)", queue.len());
-        for item in queue {
-            if item.data.list.len() > 100 {
-                log!(
-                    " {}|{}",
-                    item.data.cursor,
-                    item.data.list.len() - item.data.cursor
-                );
-            } else {
-                log!(
-                    "  \"{}\"|\"{}\"",
-                    bstr::BStr::new(&item.data.list[0..item.data.cursor]),
-                    bstr::BStr::new(&item.data.list[item.data.cursor..])
-                );
+        self.queue.with_taken(|queue| {
+            log!("IPC message queue ({} items)", queue.len());
+            for item in queue {
+                if item.data.list.len() > 100 {
+                    log!(
+                        " {}|{}",
+                        item.data.cursor,
+                        item.data.list.len() - item.data.cursor
+                    );
+                } else {
+                    log!(
+                        "  \"{}\"|\"{}\"",
+                        bstr::BStr::new(&item.data.list[0..item.data.cursor]),
+                        bstr::BStr::new(&item.data.list[item.data.cursor..])
+                    );
+                }
             }
-        }
-    }
-
-    #[cfg(not(windows))]
-    fn get_socket(&self) -> Option<SocketType> {
-        match *self.socket.get() {
-            SocketUnion::Open(s) => Some(s),
-            _ => None,
-        }
+        });
     }
 
     #[cfg(windows)]
     fn with_pipe<R>(&self, f: impl FnOnce(&mut uv::Pipe) -> R) -> Option<R> {
-        self.socket.with_mut(|socket| match socket {
-            SocketUnion::Open(pipe) => Some(f(pipe)),
-            _ => None,
-        })
+        self.socket.with_taken(|pipe| pipe.as_deref_mut().map(f))
     }
 
     #[cfg(windows)]
@@ -1673,7 +1586,7 @@ impl SendQueue {
                 return;
             };
 
-            let write_req_slice: Box<[u8]> = self.queue.with_mut(|queue| {
+            let write_req_slice: Box<[u8]> = self.queue.with_taken(|queue| {
                 let first = &queue[0];
                 let data = &first.data.list[first.data.cursor..];
                 log!("SendQueue#write len {}", data.len());
@@ -1691,7 +1604,7 @@ impl SendQueue {
             write_req.write_buffer = uv::uv_buf_t::init(&write_req.write_slice);
             let write_req = bun_ptr::AliasableBox::from(write_req);
             let req = write_req.as_ptr();
-            debug_assert!(self.windows.get().windows_write.is_none());
+            debug_assert!(self.windows.windows_write.get().is_none());
 
             // SAFETY: `req` stays put until the write callback takes it.
             let result = unsafe {
@@ -1706,21 +1619,21 @@ impl SendQueue {
                 drop(write_req);
                 self.with_pipe(|pipe| pipe.unref());
                 self.on_write_complete(-1);
-                if self.windows.get().try_close_after_write {
+                if self.windows.try_close_after_write.get() {
                     self.close_socket(CloseReason::Normal, CloseFrom::User);
                 }
                 return;
             }
             // write request is queued. it will call _onWriteComplete when it completes.
-            (self.windows).with_mut(|w| w.windows_write = Some(write_req.into_raw()));
+            self.windows.windows_write.set(Some(write_req.into_raw()));
         }
         #[cfg(not(windows))]
         {
-            let Some(socket) = self.get_socket() else {
+            let Some(socket) = self.socket.get() else {
                 self.on_write_complete(-1);
                 return;
             };
-            let n: i32 = self.queue.with_mut(|queue| {
+            let n: i32 = self.queue.with_taken(|queue| {
                 let first = &queue[0];
                 let data = &first.data.list[first.data.cursor..];
                 log!("SendQueue#write len {}", data.len());
@@ -1752,7 +1665,7 @@ impl SendQueue {
         // SAFETY: owner is a BACKREF into the live SendQueue (cleared in
         // socket_closed if not); every method takes `&self`.
         let this = unsafe { &*this };
-        this.windows.with_mut(|w| w.windows_write = None);
+        this.windows.windows_write.set(None);
         this.with_pipe(|pipe| pipe.unref()); // write complete; unref
         let n = if status.to_error(bun_sys::Tag::write).is_some() {
             -1
@@ -1761,7 +1674,7 @@ impl SendQueue {
         };
         this.on_write_complete(n);
 
-        if this.windows.get().try_close_after_write {
+        if this.windows.try_close_after_write.get() {
             this.close_socket(CloseReason::Normal, CloseFrom::User);
         }
         // The event-loop exit is handled by `_scope` drop.
@@ -1788,7 +1701,7 @@ impl SendQueue {
         let result = ipc_pipe.read_start_ctx::<SendQueue>(this);
         // SAFETY: caller contract — `this` is a live SendQueue.
         let self_ = unsafe { &*this };
-        self_.socket.set(SocketUnion::Open(ipc_pipe));
+        self_.socket.set(Some(ipc_pipe));
         result
             .to_result(bun_sys::Tag::listen)
             .inspect_err(|_| self_.close_socket(CloseReason::Failure, CloseFrom::User))
@@ -2165,11 +2078,8 @@ fn finish_decode(send_queue: &SendQueue, step: &DecodeStep) {
     }
 }
 
-fn decode_next_json(incoming: &JsCell<IncomingBuffer>, global: &JSGlobalObject) -> DecodeStep {
-    incoming.with_mut(|inc| {
-        let IncomingBuffer::Json(json_buf) = inc else {
-            unreachable!()
-        };
+fn decode_next_json(incoming: &Cell<JSONLineBuffer>, global: &JSGlobalObject) -> DecodeStep {
+    incoming.with_taken(|json_buf| {
         let Some(msg) = json_buf.next() else {
             if json_buf.is_too_long() {
                 // Fail the same way as a complete line that's too long to become a string.
@@ -2190,14 +2100,11 @@ fn decode_next_json(incoming: &JsCell<IncomingBuffer>, global: &JSGlobalObject) 
 }
 
 fn decode_next_advanced(
-    incoming: &JsCell<IncomingBuffer>,
+    incoming: &Cell<Vec<u8>>,
     global: &JSGlobalObject,
     slice_start: &mut usize,
 ) -> DecodeStep {
-    incoming.with_mut(|inc| {
-        let IncomingBuffer::Advanced(adv_buf) = inc else {
-            unreachable!()
-        };
+    incoming.with_taken(|adv_buf| {
         let slice = &adv_buf.slice()[*slice_start..];
         match decode_ipc_message(Mode::Advanced, slice, global, None) {
             Ok(r) => {
@@ -2227,19 +2134,14 @@ fn on_data2(send_queue: &SendQueue, all_data: &[u8]) {
     // the vm is freed before the socket closes.
     let global_this = send_queue.get_global_this();
 
-    match send_queue.mode {
-        Mode::Json => {
+    match &send_queue.incoming {
+        IncomingBuffer::Json(incoming) => {
             // JSON mode: append to buffer (scans only new data for newline),
             // then process complete messages using next().
-            send_queue.incoming.with_mut(|inc| {
-                let IncomingBuffer::Json(json_buf) = inc else {
-                    unreachable!()
-                };
-                json_buf.append(data);
-            });
+            incoming.with_taken(|json_buf| json_buf.append(data));
 
             loop {
-                match decode_next_json(&send_queue.incoming, &global_this) {
+                match decode_next_json(incoming, &global_this) {
                     DecodeStep::Message(result) => {
                         crate::dispatch::fold(handle_ipc_message(
                             send_queue,
@@ -2251,15 +2153,10 @@ fn on_data2(send_queue: &SendQueue, all_data: &[u8]) {
                 }
             }
         }
-        Mode::Advanced => {
+        IncomingBuffer::Advanced(incoming) => {
             // Advanced mode: uses length-prefix, no newline scanning needed.
             // Try to decode directly from the incoming chunk first, only buffer if needed.
-            let buffered = send_queue.incoming.with_mut(|inc| {
-                let IncomingBuffer::Advanced(adv_buf) = inc else {
-                    unreachable!()
-                };
-                adv_buf.len() != 0
-            });
+            let buffered = incoming.with_taken(|adv_buf| adv_buf.len() != 0);
             if !buffered {
                 loop {
                     match decode_ipc_message(Mode::Advanced, data, &global_this, None) {
@@ -2277,12 +2174,7 @@ fn on_data2(send_queue: &SendQueue, all_data: &[u8]) {
                             }
                         }
                         Err(IPCDecodeError::NotEnoughBytes) => {
-                            send_queue.incoming.with_mut(|inc| {
-                                let IncomingBuffer::Advanced(adv_buf) = inc else {
-                                    unreachable!()
-                                };
-                                handle_oom(adv_buf.write(data));
-                            });
+                            incoming.with_taken(|adv_buf| handle_oom(adv_buf.write(data)));
                             log!("hit NotEnoughBytes");
                             return;
                         }
@@ -2292,15 +2184,10 @@ fn on_data2(send_queue: &SendQueue, all_data: &[u8]) {
             }
 
             // Buffer has existing data, append and process
-            send_queue.incoming.with_mut(|inc| {
-                let IncomingBuffer::Advanced(adv_buf) = inc else {
-                    unreachable!()
-                };
-                handle_oom(adv_buf.write(data));
-            });
+            incoming.with_taken(|adv_buf| handle_oom(adv_buf.write(data)));
             let mut slice_start: usize = 0;
             loop {
-                match decode_next_advanced(&send_queue.incoming, &global_this, &mut slice_start) {
+                match decode_next_advanced(incoming, &global_this, &mut slice_start) {
                     DecodeStep::Message(result) => {
                         crate::dispatch::fold(handle_ipc_message(
                             send_queue,
@@ -2385,10 +2272,14 @@ pub(crate) mod IPCHandlers {
 
         pub(crate) fn on_read_alloc(send_queue: &SendQueue, suggested_size: usize) -> *mut [u8] {
             log!("NewNamedPipeIPCHandler#onReadAlloc {}", suggested_size);
-            send_queue.incoming.with_mut(|inc| match inc {
-                IncomingBuffer::Json(json_buf) => json_buf.data.uv_alloc_spare(suggested_size),
-                IncomingBuffer::Advanced(adv_buf) => adv_buf.uv_alloc_spare(suggested_size),
-            })
+            match &send_queue.incoming {
+                IncomingBuffer::Json(incoming) => {
+                    incoming.with_taken(|json_buf| json_buf.data.uv_alloc_spare(suggested_size))
+                }
+                IncomingBuffer::Advanced(incoming) => {
+                    incoming.with_taken(|adv_buf| adv_buf.uv_alloc_spare(suggested_size))
+                }
+            }
         }
 
         pub(crate) fn on_read_error(send_queue: &SendQueue, err: bun_sys::E) {
@@ -2404,13 +2295,10 @@ pub(crate) mod IPCHandlers {
             let global_this = send_queue.get_global_this();
             let _scope = global_this.bun_vm().enter_event_loop_scope();
 
-            match send_queue.mode {
-                Mode::Json => {
+            match &send_queue.incoming {
+                IncomingBuffer::Json(incoming) => {
                     // For JSON mode on Windows, use notifyWritten to update length and scan for newlines
-                    send_queue.incoming.with_mut(|inc| {
-                        let IncomingBuffer::Json(json_buf) = inc else {
-                            unreachable!()
-                        };
+                    incoming.with_taken(|json_buf| {
                         debug_assert!(json_buf.data.len() + nread <= json_buf.data.capacity());
                         // libuv wrote `nread` bytes at `data[old_len..]` via the
                         // slice returned from `on_read_alloc`; only the count is
@@ -2420,7 +2308,7 @@ pub(crate) mod IPCHandlers {
 
                     // Process complete messages using next() - avoids O(n²) re-scanning
                     loop {
-                        match decode_next_json(&send_queue.incoming, &global_this) {
+                        match decode_next_json(incoming, &global_this) {
                             DecodeStep::Message(result) => {
                                 crate::dispatch::fold(handle_ipc_message(
                                     send_queue,
@@ -2432,21 +2320,12 @@ pub(crate) mod IPCHandlers {
                         }
                     }
                 }
-                Mode::Advanced => {
-                    send_queue.incoming.with_mut(|inc| {
-                        let IncomingBuffer::Advanced(adv_buf) = inc else {
-                            unreachable!()
-                        };
-                        // SAFETY: `on_read_alloc` reserved ≥ nread bytes; libuv initialised them.
-                        unsafe { adv_buf.uv_commit(nread) };
-                    });
+                IncomingBuffer::Advanced(incoming) => {
+                    // SAFETY: `on_read_alloc` reserved ≥ nread bytes; libuv initialised them.
+                    incoming.with_taken(|adv_buf| unsafe { adv_buf.uv_commit(nread) });
                     let mut slice_start: usize = 0;
                     loop {
-                        match decode_next_advanced(
-                            &send_queue.incoming,
-                            &global_this,
-                            &mut slice_start,
-                        ) {
+                        match decode_next_advanced(incoming, &global_this, &mut slice_start) {
                             DecodeStep::Message(result) => {
                                 crate::dispatch::fold(handle_ipc_message(
                                     send_queue,

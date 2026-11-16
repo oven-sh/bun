@@ -68,8 +68,7 @@ public:
     {
         if constexpr (mode == JSC::SubspaceAccess::Concurrently)
             return nullptr;
-        return WebCore::subspaceForImpl<NativePromiseContext, WebCore::UseCustomHeapCellType::Yes>(vm, BUN_SUBSPACE_SLOTS(m_clientSubspaceForNativePromiseContext, m_subspaceForNativePromiseContext),
-            [](auto& server) -> JSC::HeapCellType& { return server.m_heapCellTypeForNativePromiseContext; });
+        return WebCore::subspaceForImpl<NativePromiseContext, WebCore::UseCustomHeapCellType::Yes>(vm, BUN_SUBSPACE_SLOTS(m_clientSubspaceForNativePromiseContext, m_subspaceForNativePromiseContext));
     }
 
     DECLARE_INFO;

@@ -576,10 +576,9 @@ impl ReadableStream {
         }
     }
 
-    pub fn from_pipe<P>(
+    pub fn from_pipe(
         cx: &bun_jsc::JsThread<'_>,
-        _parent: P,
-        buffered_reader: &mut bun_io::BufferedReader,
+        buffered_reader: &bun_io::BufferedReader,
     ) -> JsResult<JSValue> {
         let source = NewSource::<FileReader>::new_mut(NewSource {
             global_this: Cell::new(Some(bun_ptr::BackRef::new(cx.global()))),
@@ -591,18 +590,15 @@ impl ReadableStream {
             },
             ..Default::default()
         });
-        let ctx_ptr: *mut FileReader = &raw mut source.context;
-        source
-            .context
-            .reader()
-            .from(buffered_reader, ctx_ptr.cast::<c_void>());
+        source.context.set_reader_owner();
+        source.context.reader.from(buffered_reader);
 
         let stream = source.to_readable_stream(cx)?;
 
         // The transferred poll's owner now points into this box; root the
         // wrapper before JS can GC it. `on_start` skips a second ref via the
         // same `io_ref`; `on_reader_done` releases.
-        if !source.context.reader().is_done() {
+        if !source.context.reader.is_done() {
             source.context.io_ref.set(Some(source.context.ref_guard()));
         }
 

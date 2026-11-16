@@ -91,7 +91,7 @@ pub(crate) fn compute_chunks<'a>(
     let parse_graph = this.parse_graph();
 
     let entry_source_indices = this.graph.entry_points.items_source_index();
-    let css_asts = this.graph.ast.items_css();
+    let css_asts = &parse_graph.css_asts;
     let mut html_chunks: ArrayHashMap<&[u8], Chunk> = ArrayHashMap::new();
     let loaders = parse_graph.input_files.items_loader();
     let sources = parse_graph.input_files.items_source();
@@ -157,7 +157,7 @@ pub(crate) fn compute_chunks<'a>(
         }
 
         if css_asts[source_index as usize].is_some() {
-            let order = find_imported_files_in_css_order(this, temp, &[Index::init(source_index)]);
+            let order = find_imported_files_in_css_order(this, &[Index::init(source_index)]);
             let order = css_order_or_log(log, sources, order);
             // Create a chunk for the entry point here to ensure that the chunk is
             // always generated even if the resulting file is empty
@@ -223,8 +223,7 @@ pub(crate) fn compute_chunks<'a>(
             let css_source_indices =
                 find_imported_css_files_in_js_order(this, temp, Index::init(source_index));
             if css_source_indices.len() > 0 {
-                let order =
-                    find_imported_files_in_css_order(this, temp, css_source_indices.slice());
+                let order = find_imported_files_in_css_order(this, css_source_indices.slice());
                 let order = css_order_or_log(log, sources, order);
 
                 // Always use content-based hashing for CSS chunk deduplication.
@@ -286,7 +285,6 @@ pub(crate) fn compute_chunks<'a>(
         let min_chunk_size = this.options.min_chunk_size;
         merge_small_chunks(this, temp, min_chunk_size)?;
     }
-    let css_asts = this.graph.ast.items_css();
     let ast_targets = this.graph.ast.items_target();
 
     // Files with at least one part that will be printed. A file with none
@@ -316,17 +314,12 @@ pub(crate) fn compute_chunks<'a>(
     // reshaped for borrowck — re-borrow file_entry_bits after the loop above mutated it
     let file_entry_bits: &mut [AutoBitSet] = this.graph.files.items_entry_bits_mut();
 
-    let css_reprs = this.graph.ast.items_css();
-
     // Figure out which JS files are in which chunk
     if js_chunks.count() > 0 {
         for source_index in this.graph.reachable_files.slice() {
             if this.graph.files_live.is_set(source_index.get() as usize) {
-                if css_reprs[source_index.get() as usize].is_none() {
+                if css_asts[source_index.get() as usize].is_none() {
                     let entry_bits: &AutoBitSet = &file_entry_bits[source_index.get() as usize];
-                    if css_reprs[source_index.get() as usize].is_some() {
-                        continue;
-                    }
 
                     if this.graph.code_splitting {
                         if !contributes_code.is_set(source_index.get() as usize) {

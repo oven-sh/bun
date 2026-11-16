@@ -1012,9 +1012,12 @@ pub(crate) fn statement_cares_about_scope(stmt: &Stmt) -> bool {
     match stmt.data {
         SBlock(_) | SEmpty(_) | SDebugger(_) | SExpr(_) | SIf(_) | SFor(_) | SForIn(_)
         | SForOf(_) | SDoWhile(_) | SWhile(_) | SWith(_) | STry(_) | SSwitch(_) | SReturn(_)
-        | SThrow(_) | SBreak(_) | SContinue(_) | SDirective(_) | SLabel(_) => false,
+        | SThrow(_) | SBreak(_) | SContinue(_) | SLabel(_) => false,
 
         SLocal(ref local) => local.kind != js_ast::LocalKind::KVar,
+        // With `keep_directives` the string that starts a block is one. Outside the block it could become
+        // the directive of a function.
+        SDirective(_) => true,
         _ => true,
     }
 }
@@ -1115,8 +1118,10 @@ pub struct ParsedPath<'a> {
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum StrictModeFeature {
+    DeleteBareName,
     EvalOrArguments,
     ReservedWord,
+    WithStatement,
 }
 
 #[derive(Clone, Copy)]
@@ -1523,7 +1528,12 @@ pub struct ParseStatementOptions<'a> {
     pub(crate) is_name_optional: bool,
     pub(crate) is_typescript_declare: bool,
     pub(crate) is_for_loop_init: bool,
+    /// The statement list is a module, function or namespace body, so it can start with a
+    /// directive prologue. `parse_stmts_up_to` reads it and does not pass it on.
+    pub(crate) allow_directive_prologue: bool,
 }
+
+const _: () = assert!(core::mem::size_of::<ParseStatementOptions>() == 32);
 
 impl<'a> ParseStatementOptions<'a> {
     pub(crate) fn has_decorators(&self) -> bool {
@@ -1745,7 +1755,8 @@ pub fn new_lazy_export_ast_impl<'bump>(
     // same pattern.
     let lexer = js_lexer::Lexer::init_without_reading(&mut temp_log, source, bump);
     let log_ptr = lexer.log;
-    let mut parser = Parser {
+    let range = lexer.range();
+    let parser = Parser {
         options: opts,
         bump,
         lexer,
@@ -1754,11 +1765,9 @@ pub fn new_lazy_export_ast_impl<'bump>(
         log: log_ptr,
         orig_error_count: 0,
     };
-    let result = match parser.to_lazy_export_ast(expr, runtime_api_call, symbols) {
+    let result = match parser.into_lazy_export_ast(expr, runtime_api_call, symbols) {
         Ok(r) => r,
         Err(err) => {
-            let range = parser.lexer.range();
-            drop(parser);
             if temp_log.errors == 0 {
                 log_to_copy_into.add_range_error(Some(source), range, err.name().as_bytes());
             }
@@ -1766,7 +1775,6 @@ pub fn new_lazy_export_ast_impl<'bump>(
             return Ok(None);
         }
     };
-    drop(parser);
 
     temp_log.append_to(log_to_copy_into);
     match result {
@@ -1774,8 +1782,8 @@ pub fn new_lazy_export_ast_impl<'bump>(
             ast.has_lazy_export = true;
             Ok(Some(*ast))
         }
-        // `to_lazy_export_ast` always returns `Result::Ast` (no parse pass runs).
-        _ => unreachable!("to_lazy_export_ast returns Result::Ast"),
+        // `into_lazy_export_ast` always returns `Result::Ast` (no parse pass runs).
+        _ => unreachable!("into_lazy_export_ast returns Result::Ast"),
     }
 }
 

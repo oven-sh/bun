@@ -1,7 +1,6 @@
 //! This namespace is used to test binding generator
 
 use core::cell::{Cell, RefCell};
-use core::ptr::NonNull;
 use core::sync::atomic::{AtomicI32, AtomicUsize, Ordering};
 
 use crate::bindgen::{
@@ -16,7 +15,7 @@ use crate::generated_bindgen::bindgen_test::{
     js_TestNonFinal, js_TestNote, js_TestRefCounted, js_TestRefCountedNote, js_TestShape,
     js_TestSquare,
 };
-use crate::{JSGlobalObject, JSString, JSValue, JsClass, JsResult};
+use crate::{JSGlobalObject, JSString, JSValue, JsClass, JsResult, WrapperGuard};
 use bun_ptr::{AsCtxPtr as _, RefPtr};
 
 // This example should be kept in sync with bindgen's documentation
@@ -640,7 +639,7 @@ impl TestRefCounted {
     }
 
     pub(crate) fn value_from_js(object: JsLocal<'_>) -> Option<i32> {
-        Some(object.to_js().as_class_ref::<Self>()?.value.get())
+        Some(object.as_class_ref::<Self>()?.value.get())
     }
 }
 
@@ -859,12 +858,12 @@ impl JsClass for TestNonFinal {
         js_TestNonFinal::to_js(RefPtr::new(self).into_raw(), global)
     }
 
-    fn from_js(value: JSValue) -> Option<*mut Self> {
-        js_TestNonFinal::from_js(value).map(NonNull::as_ptr)
+    fn from_js(value: &JSValue) -> Option<WrapperGuard<'_, Self>> {
+        js_TestNonFinal::from_js(value)
     }
 
-    fn from_js_direct(value: JSValue) -> Option<*mut Self> {
-        js_TestNonFinal::from_js_direct(value).map(NonNull::as_ptr)
+    fn from_js_direct(value: &JSValue) -> Option<WrapperGuard<'_, Self>> {
+        js_TestNonFinal::from_js_direct(value)
     }
 }
 
@@ -927,9 +926,9 @@ pub(crate) fn make_square_wrapper<'a>(cx: &mut JsScope<'a>, side: u32) -> JSValu
 pub(crate) fn shape_from_js(shape: JsLocal<'_>) -> [bool; 3] {
     let shape = shape.to_js();
     [
-        js_TestShape::from_js(shape).is_some(),
-        js_TestSquare::from_js(shape).is_some(),
-        shape.is_cell() && js_TestShape::from_js_direct(shape).is_some(),
+        js_TestShape::from_js(&shape).is_some(),
+        js_TestSquare::from_js(&shape).is_some(),
+        js_TestShape::from_js_direct(&shape).is_some(),
     ]
 }
 
@@ -938,14 +937,12 @@ pub(crate) fn dropped_shapes() -> usize {
 }
 
 pub(crate) fn token_id_from_js(token: JsLocal<'_>) -> Option<u32> {
-    Some(token.to_js().as_class_ref::<TestToken>()?.id)
+    Some(token.as_class_ref::<TestToken>()?.id)
 }
 
 pub(crate) fn is_note_from_js_direct(note: JsLocal<'_>) -> bool {
     let note = note.to_js();
-    note.is_cell()
-        && (note.as_direct::<TestNote>().is_some()
-            || note.as_direct::<TestRefCountedNote>().is_some())
+    note.is_direct::<TestNote>() || note.is_direct::<TestRefCountedNote>()
 }
 
 pub(crate) fn error_constructor<'a>(cx: &mut JsScope<'a>) -> JsLocal<'a> {

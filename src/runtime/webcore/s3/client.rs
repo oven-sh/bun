@@ -4,7 +4,6 @@ use std::io::Write as _;
 
 use bun_collections::{ByteVecExt, VecExt};
 use bun_core::MutableString;
-use bun_http::HeadersExt as _;
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{GlobalRef, JSValue, JsCell, JsResult};
 use bun_ptr::{AliasableBox, RefPtr};
@@ -283,7 +282,7 @@ pub(crate) fn list_objects(
 
     drop(search_params);
 
-    let headers = bun_http::Headers::from_pico_http_headers(result.headers());
+    let headers = result.headers(None, None);
     let proxy_url = s3_simple_request::resolve_proxy(None, &result.url);
 
     let task_ptr = bun_core::heap::into_raw(Box::new(S3HttpSimpleTask {
@@ -411,7 +410,7 @@ pub(crate) fn writable_stream(
     // MultiPartUpload.
     let global_static = GlobalRef::from(cx.global());
     let task = RefPtr::new(MultiPartUpload {
-        unfinished: Cell::new(None),
+        self_ref: Cell::new(None),
         queue: OnceCell::new(),
         available: Cell::new(IntegerBitSet::init_full()),
         current_part_number: Cell::new(1),
@@ -443,7 +442,7 @@ pub(crate) fn writable_stream(
         state: Cell::new(MultiPartUploadState::NotStarted),
         callback: JsCell::new(None), // assigned below
     });
-    task.unfinished.set(Some(task.clone()));
+    task.self_ref.set(Some(task.clone()));
 
     // SAFETY: heap-allocated and refcounted; it leaves its context when it finishes or drops.
     unsafe { bun_jsc::AbortHandle::arm_owner(task.as_ptr(), cx.context()) };
@@ -719,7 +718,7 @@ pub(crate) fn upload_stream(
     // SAFETY (JSC_BORROW): see `writable_stream` for rationale.
     let global_static = GlobalRef::from(cx.global());
     let task = RefPtr::new(MultiPartUpload {
-        unfinished: Cell::new(None),
+        self_ref: Cell::new(None),
         queue: OnceCell::new(),
         available: Cell::new(IntegerBitSet::init_full()),
         current_part_number: Cell::new(1),
@@ -750,7 +749,7 @@ pub(crate) fn upload_stream(
         state: Cell::new(MultiPartUploadState::WaitStreamCheck),
         callback: JsCell::new(None), // assigned below
     });
-    task.unfinished.set(Some(task.clone()));
+    task.self_ref.set(Some(task.clone()));
 
     // SAFETY: heap-allocated and refcounted; it leaves its context when it finishes or drops.
     unsafe { bun_jsc::AbortHandle::arm_owner(task.as_ptr(), cx.context()) };
@@ -973,19 +972,7 @@ fn download_stream(
         }
     };
 
-    let mut header_buffer =
-        [bun_picohttp::Header::ZERO; bun_s3_signing::credentials::SignResult::MAX_HEADERS + 1];
-    let headers = 'brk: {
-        if let Some(range_) = &range {
-            let _headers = result.mix_with_header(
-                &mut header_buffer,
-                bun_picohttp::Header::new(b"range", range_),
-            );
-            break 'brk bun_http::Headers::from_pico_http_headers(_headers);
-        } else {
-            break 'brk bun_http::Headers::from_pico_http_headers(result.headers());
-        }
-    };
+    let headers = result.headers(range.as_deref(), None);
     let owned_proxy = s3_simple_request::resolve_proxy(None, &result.url);
     let task_ptr = bun_core::heap::into_raw(S3HttpDownloadStreamingTask::new(
         S3HttpDownloadStreamingTask {

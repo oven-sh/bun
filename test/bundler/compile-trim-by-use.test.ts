@@ -54,7 +54,8 @@ const textsOfBundlerFeatures = [
 ];
 
 const textsOfLibraries: Record<string, string[]> = {
-  "libjpeg-turbo": ["Bogus Huffman table definition", "Unsupported JPEG process", "Invalid JPEG file structure"],
+  // A run of symbols in the standard AC Huffman tables.
+  "the JPEG codec": ["CDEFGHIJSTUVWXYZcdefghijstuvwxyz"],
   libwebp: ["Frame setup failed", "Premature end-of-partition0 encountered", "NULL VP8Io parameter"],
   tar: ["Damaged tar archive", "Truncated tar archive", "Malformed pax attribute"],
   lsquic: [

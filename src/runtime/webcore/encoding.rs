@@ -485,19 +485,10 @@ fn encode_base64_to_bun_string(input: &[u8], url_safe: bool) -> BunString {
     if to.try_reserve_exact(to_len).is_err() {
         return BunString::OUT_OF_MEMORY;
     }
-    // SAFETY: the spare bytes are write-only; the encoder reports how many it
-    // initialized and only those are committed.
-    let wrote = unsafe {
-        bun_core::vec::fill_spare(&mut to, 0, |spare| {
-            let wrote = if url_safe {
-                bun_base64::encode_url_safe(&mut spare[..to_len], input)
-            } else {
-                bun_base64::encode(&mut spare[..to_len], input)
-            };
-            (wrote, wrote)
-        })
-    };
-    debug_assert_eq!(wrote, to_len);
+    bun_core::vec::append_with(&mut to, to_len, |spare| {
+        bun_simdutf::base64::encode(input, spare, url_safe)
+    });
+    debug_assert_eq!(to.len(), to_len);
     create_external_globally_allocated_latin1(to)
 }
 

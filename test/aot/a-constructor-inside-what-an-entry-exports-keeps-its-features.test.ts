@@ -50,7 +50,8 @@ async function featuresKeptBy(files: Record<string, string>) {
     stdout: "ignore",
     stderr: "pipe",
   });
-  const [stderr] = await Promise.all([proc.stderr.text(), proc.exited]);
+  const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+  expect({ stderr: exitCode === 0 ? "" : stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
   return [...stderr.matchAll(/^aot: trim: kept (.+): used/gm)].map(line => line[1]);
 }
 

@@ -11,7 +11,7 @@ use core::mem;
 use bun_core::strings;
 use bun_core::{CStrList, CStrRef, ZBox, ZStr};
 use bun_paths as paths;
-use bun_sys::{self as sys, Fd, FdExt};
+use bun_sys::{self as sys, Fd};
 
 bun_core::declare_scope!(Patch, visible);
 
@@ -121,9 +121,7 @@ fn change_mode(patch_dir: Fd, change: &FileModeChange<'_>) -> sys::Result<()> {
     let (parent, base) = resolve_target(patch_dir, change.path, None)?;
     let (file, _) = open_target_file(parent.fd(), &base, sys::O::RDONLY, 0)?;
     // On Windows, `fchmod` needs a CRT-backed fd. Closing that fd also closes the HANDLE.
-    let file = (file.into_raw())
-        .make_lib_uv_owned_for_syscall(sys::Tag::chmod, sys::ErrorCase::CloseOnFail)
-        .map(sys::CloseOnDrop::new)?;
+    let file = file.make_lib_uv_owned_for_syscall(sys::Tag::chmod)?;
     sys::fchmod(file.fd(), change.new_mode.to_bun_mode())
 }
 
@@ -1410,7 +1408,7 @@ pub fn spawn_git_diff(
     ];
     let mut envp = Vec::with_capacity(ENV_STATIC.len() + 2);
     let variables = path_var.as_deref().into_iter().chain(ENV_STATIC);
-    envp.extend(variables.map(|variable| Some(CStrRef::from_bytes_with_nul(variable))));
+    envp.extend(variables.map(|variable| Some(CStrRef::from_slice_with_nul(variable))));
 
     #[cfg(not(windows))]
     let _ = loop_;
@@ -1419,7 +1417,7 @@ pub fn spawn_git_diff(
         stdout: bun_spawn::sync::Stdio::Buffer,
         stderr: bun_spawn::sync::Stdio::Buffer,
         cwd: cwd.as_bytes().into(),
-        envp: Some(CStrList::terminate(&mut envp)),
+        envp: Some(CStrList::from_unterminated(&mut envp)),
         argv,
         // `spawn` dereferences `windows.loop_` unconditionally, and `WindowsOptions::default()` is
         // zeroed.

@@ -544,7 +544,7 @@ impl Value {
     /// Downcast a `JSValue` to the `Body.Value` it owns, if any.
     ///
     /// `Body.Value` is not itself a JS class — it lives inside a `Request` or
-    /// `Response` wrapper — so the generic `JSValue::as_::<T: JsClass>()` path
+    /// `Response` wrapper — so the generic `JSValue::as_class_ref::<T: JsClass>()` path
     /// cannot be used. Instead, try both wrapper classes and return the inner
     /// body pointer.
     ///
@@ -836,24 +836,18 @@ impl Value {
             }
         }
 
-        if let Some(form_data) = DOMFormData::from_js(value) {
-            return Ok(Value::Blob(Blob::from_dom_form_data(
-                global_this,
-                form_data,
-            )));
+        if let Some(form) = DOMFormData::from_js(&value) {
+            return Ok(Value::Blob(Blob::from_dom_form_data(global_this, &form)));
         }
 
-        if let Some(search_params) = URLSearchParams::from_js(value) {
+        if let Some(params) = URLSearchParams::from_js(&value) {
             return Ok(Value::Blob(Blob::from_url_search_params(
                 global_this,
-                search_params,
+                &params,
             )));
         }
 
         if js_type == jsc::JSType::DOMWrapper {
-            // `as_class_ref` is the safe shared-borrow downcast (one audited
-            // unsafe in `JSValue`); `dupe_with_content_type` / `encode_for_body`
-            // both take `&self`.
             if let Some(blob) = value.as_class_ref::<Blob>() {
                 return Ok(Value::Blob(
                     // We must preserve "type" so that DOMFormData and the "type" field are preserved.

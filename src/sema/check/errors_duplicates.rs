@@ -13,7 +13,6 @@ use crate::bind::{
     ClassOwner, Decl, JsDeclarationKind, MemberOwner, Parent, SymbolId,
     assignment_declaration_kind, flags_of_member,
 };
-use crate::program::ReadingNoTrees;
 use smallvec::SmallVec;
 
 /// A declaration of a symbol as in TypeScript: its location, and whether that symbol is the declaration's own symbol,
@@ -719,12 +718,10 @@ impl Checker<'_, '_> {
         files.order.iter().take(before).any(|&other| {
             // The trees of an earlier file may be gone, but never those of a file with an `export *`. Such a file isn't a
             // leaf either, and a leaf's data is freed after its task.
-            let has_export_star = {
-                let _reading = ReadingNoTrees::begin();
-                let module = files.module(other);
-                !module.is_leaf && !module.bound.export_stars.is_empty() && module.is_module()
-            };
-            has_export_star
+            let module = files.module(other);
+            !module.is_leaf
+                && module.facts.has_export_stars
+                && module.is_module()
                 && self.is_checked_no_later_than(other, file)
                 && (files.exports_of_module(files.file_symbol(other))).contains(&(id, symbol))
         })

@@ -464,17 +464,11 @@ impl DirEntry {
                 use core::ptr::addr_of_mut;
                 let p = (*slot).as_mut_ptr();
                 // name_slice only lives for the duration of the iteration.
-                // `init*_append_if_needed` are `#[inline(always)]` so the
-                // 32-byte `StringOrTinyString` is built directly into `*p`
-                // with no intermediate stack copy.
                 addr_of_mut!((*p).base_).write(strings::StringOrTinyString::init_append_if_needed(
                     name_slice,
                     filename_store,
                 )?);
-                // `name_lc` is already ASCII-lowercased, so interning it as-is
-                // is byte-identical to `init_lower_case_append_if_needed(name_slice, ..)`
-                // and skips a second lowercase pass over the basename. Moreover,
-                // when the basename has no uppercase bytes (the overwhelmingly
+                // `name_lc` is already lowercase. When the basename has no uppercase bytes (the
                 // common case on Linux), `copy_lowercase_if_needed` returns the
                 // *input slice unchanged* — so `name_lc` points at the same bytes
                 // `base_` just interned. Detect that and copy `base_` instead of
@@ -631,7 +625,7 @@ impl ModKey {
 unsafe impl Sync for Entry {}
 
 // ══════════════════════════════════════════════════════════════════════════
-// CANONICAL: read-file-with-handle (stat → grow → pread-loop → BOM-strip)
+// CANONICAL: read-file-with-handle (stat → grow → read loop → BOM-strip)
 //
 // One body, two entry points:
 //   • `read_file_with_handle_impl`  — free fn, const-generic, returns
@@ -668,15 +662,12 @@ pub fn read_file_contents<'buf>(
 /// round-tripping through the worker thread's *default* mimalloc heap (which
 /// is never destroyed and retains the segment for the process lifetime).
 ///
-/// Returns `(ptr, len)` into `arena`-owned memory; a sentinel NUL is written
-/// at `ptr[len]` (not counted in `len`).
-pub fn read_file_contents_in_arena(
+/// A sentinel NUL is written after the last byte.
+pub fn read_file_contents_in_arena<'a>(
     file: &bun_sys::File,
-    path: &[u8],
-    arena: &bun_alloc::Arena,
+    arena: &'a bun_alloc::Arena,
     byte_order_mark: ByteOrderMark,
-) -> crate::CrateResult<(core::ptr::NonNull<u8>, usize)> {
-    let _ = path;
+) -> crate::CrateResult<&'a [u8]> {
     crate::fs::FileSystem::set_max_fd(file.handle().native());
 
     let mut initial_buf = [const { MaybeUninit::uninit() }; 16384];
@@ -691,42 +682,47 @@ pub fn read_file_contents_in_arena(
         let size = file.get_end_pos()?;
         debug!("stat({}) = {}", file.handle(), size);
         if size == 0 {
-            return Ok((core::ptr::NonNull::dangling(), 0));
+            return Ok(b"");
         }
         // A hot reload can write the file between `stat` and `read`. What it grew by is cut off.
         size.max(initial_len)
     };
 
     let slot = arena.alloc_uninit_slice::<u8>(cap + 1);
+    slot[cap].write(0);
     let mut buf = BorrowedBuf::from(&mut slot[..cap]);
     buf.unfilled().append(initial_buf.filled());
     file.read_all_buf(buf.unfilled())?;
-    debug!("read({}, {}) = {}", file.handle(), cap, buf.len());
+    let mut total = buf.len();
+    debug!("read({}, {}) = {}", file.handle(), cap, total);
+    if total < cap {
+        buf.unfilled().append(&[0]);
+    }
 
     let contents = buf.into_filled_mut();
-    let mut total = contents.len();
     let is_converted = byte_order_mark == ByteOrderMark::Converted;
-    if let Some(bom) = BOM::detect(contents).filter(|_| is_converted) {
+    if let Some(bom) = BOM::detect(&contents[..total]).filter(|_| is_converted) {
         debug!("Convert {} BOM", bom.tag_name());
         match bom {
             BOM::Utf8 => {
                 let n = BOM::UTF8_BYTES.len();
-                contents.copy_within(n.., 0);
+                contents.copy_within(n..total, 0);
                 total -= n;
+                contents[total] = 0;
             }
             other => {
                 // Rare path (UTF-16 source on the concurrent transpiler) —
                 // re-encode via the global-heap helper, then copy into the
                 // arena so the *retained* bytes still land there.
-                let converted = other.remove_and_convert_to_utf8_and_free(contents.to_vec());
+                let converted =
+                    other.remove_and_convert_to_utf8_and_free(contents[..total].to_vec());
                 let dst = arena.alloc_slice_fill_copy::<u8>(converted.len() + 1, 0);
                 dst[..converted.len()].copy_from_slice(&converted);
-                return Ok((core::ptr::NonNull::from_mut(dst).cast(), converted.len()));
+                return Ok(&dst[..converted.len()]);
             }
         }
     }
-    slot[total].write(0);
-    Ok((core::ptr::NonNull::from_mut(slot).cast(), total))
+    Ok(&contents[..total])
 }
 
 /// What becomes of a byte order mark at the start of a file that is read.
@@ -760,7 +756,7 @@ pub fn read_file_with_handle_impl<'buf, const USE_SHARED_BUFFER: bool, const STR
         };
         debug!("stat({}) = {}", file.handle(), size);
 
-        // Skip the pread call for empty files
+        // Skip the read call for empty files
         // Otherwise will get out of bounds errors
         // plus it's an unnecessary syscall
         if size == 0 {
@@ -779,11 +775,10 @@ pub fn read_file_with_handle_impl<'buf, const USE_SHARED_BUFFER: bool, const STR
         shared_buffer.grow_by(size + 1)?;
 
         // if you press save on a large file we might not read all the
-        // bytes in the first few pread() calls. we only handle this on
+        // bytes in the first few read() calls. we only handle this on
         // stream because we assume that this only realistically happens
         // during HMR
         loop {
-            // We use pread to ensure if the file handle was open, it doesn't seek from the last position
             let read_count = append_with(&mut shared_buffer.list, usize::MAX, |spare| {
                 file.read_all_buf(spare)
             })?;

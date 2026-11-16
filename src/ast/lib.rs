@@ -1,4 +1,3 @@
-#![feature(allocator_api)]
 // `#[thread_local]` for the per-node-allocation hot-path TLS
 // (`DATA_STORE_OVERRIDE`, `Expr/Stmt::data::Store::{INSTANCE,
 // MEMORY_ALLOCATOR, DISABLE_RESET}`, `store_ast_alloc_heap::ARENA`): bare
@@ -429,35 +428,6 @@ impl IntoText for Box<[u8]> {
     #[inline]
     fn into_text(self) -> Cow<'static, [u8]> {
         Cow::Owned(self.into_vec())
-    }
-}
-
-/// Sink adapter for [`Log::print`] — lets callers pass either a borrowed
-/// `fmt::Write` impl or the `&bun_core::io::Writer` returned by
-/// `Output::error_writer()` (the dominant call shape across the tree).
-pub trait IntoLogWrite {
-    type W: fmt::Write;
-    fn into_log_write(self) -> Self::W;
-}
-impl<'a, W: fmt::Write> IntoLogWrite for &'a mut W {
-    type W = &'a mut W;
-    #[inline]
-    fn into_log_write(self) -> &'a mut W {
-        self
-    }
-}
-/// `fmt::Write` view over a `bun_core::io::Writer`.
-pub struct IoWriterAdapter<'a>(&'a bun_core::io::Writer);
-impl fmt::Write for IoWriterAdapter<'_> {
-    fn write_str(&mut self, s: &str) -> fmt::Result {
-        self.0.write_all(s.as_bytes()).map_err(|_| fmt::Error)
-    }
-}
-impl<'a> IntoLogWrite for &'a bun_core::io::Writer {
-    type W = IoWriterAdapter<'a>;
-    #[inline]
-    fn into_log_write(self) -> IoWriterAdapter<'a> {
-        IoWriterAdapter(self)
     }
 }
 
@@ -1871,12 +1841,11 @@ impl Log {
         )
     }
 
-    pub fn print<W: IntoLogWrite>(&self, to: W) -> fmt::Result {
-        let mut w = to.into_log_write();
+    pub fn print(&self, mut to: impl fmt::Write) -> fmt::Result {
         if Output::ENABLE_ANSI_COLORS_STDERR.load(core::sync::atomic::Ordering::Relaxed) {
-            self.print_with_enable_ansi_colors::<true>(&mut w)
+            self.print_with_enable_ansi_colors::<true>(&mut to)
         } else {
-            self.print_with_enable_ansi_colors::<false>(&mut w)
+            self.print_with_enable_ansi_colors::<false>(&mut to)
         }
     }
 

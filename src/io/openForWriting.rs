@@ -1,6 +1,4 @@
 use bun_core::ZStr;
-#[cfg(windows)]
-use bun_sys::FdExt;
 use bun_sys::{self, Fd, File, Mode};
 
 // A sealed trait whose impls cover each accepted input type
@@ -111,11 +109,11 @@ where
     let mut is_nonblocking = false;
     let result =
         input_path.open_for_writing_result(dir, input_flags, mode, &mut is_nonblocking, &openat);
-    let fd = result?;
+    let file = File::from_fd(result?);
+    let fd = file.fd();
 
     #[cfg(unix)]
     {
-        let file = File::from_fd(fd);
         let stat = bun_sys::fstat(fd)?;
         *pollable = is_pollable(stat.st_mode as Mode);
         if !*pollable {
@@ -157,8 +155,6 @@ where
             != 0
             && !force_sync;
         // The libuv writer needs a CRT fd. `Fd::uv()` panics on a HANDLE.
-        return fd
-            .make_lib_uv_owned_for_syscall(bun_sys::Tag::open, bun_sys::ErrorCase::CloseOnFail)
-            .map(File::from_fd);
+        return file.make_lib_uv_owned_for_syscall(bun_sys::Tag::open);
     }
 }

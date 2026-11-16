@@ -273,6 +273,7 @@ fn on_data(ctx: *mut HTTPClient, decoded_data: &[u8]) {
             let report_progress = match this.handle_response_body(decoded_data, false) {
                 Ok(v) => v,
                 Err(err) => {
+                    this.state.fail = Some(err);
                     // `this` is dead (NLL); reenter via raw ptr so on_close's
                     // fresh `&mut *ctx` / `&mut *proxy_ptr` do not alias us.
                     // SAFETY: tunnel pinned by ref_raw above.
@@ -295,6 +296,7 @@ fn on_data(ctx: *mut HTTPClient, decoded_data: &[u8]) {
             let report_progress = match this.handle_response_body_chunked_encoding(decoded_data) {
                 Ok(v) => v,
                 Err(err) => {
+                    this.state.fail = Some(err);
                     // SAFETY: see Body arm.
                     ProxyTunnel::close_from_callback(proxy_nn, err);
                     return;
@@ -513,7 +515,7 @@ fn on_close(ctx: *mut HTTPClient) {
         && this.state.stage != Stage::Fail
         && !this.state.flags.is_redirect_pending;
     let mut fail_err: Option<crate::Error> = None;
-    if in_progress && this.state.is_body_complete_on_close() {
+    if in_progress && this.state.fail.is_none() && this.state.is_body_complete_on_close() {
         match this.state.finalize_body_on_eof() {
             Ok(()) => {
                 // `this` dead (NLL); reborrow via `client_from_ctx` inside.

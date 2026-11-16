@@ -985,35 +985,6 @@ impl Fd {
         }
     }
 
-    /// On Windows, convert a system-kind
-    /// `Fd` (raw `HANDLE`) into a libuv-kind `Fd` (CRT `_open_osfhandle`-backed
-    /// `int`) so libuv `uv_fs_*` APIs can consume it. uv-kind passes through.
-    /// On POSIX this is the identity (libuv fd == posix fd).
-    ///
-    /// Returns `Err(())` when
-    /// `uv_open_osfhandle` returns `-1`; the caller decides whether to close
-    /// the original handle (see `make_libuv_owned_for_syscall`).
-    #[inline]
-    pub fn make_libuv_owned(self) -> Result<Fd, ()> {
-        debug_assert!(self.is_valid());
-        #[cfg(not(windows))]
-        {
-            Ok(self)
-        }
-        #[cfg(windows)]
-        match self.kind() {
-            FdKind::Uv => Ok(self),
-            FdKind::System => {
-                let crt_fd = fd::uv_open_osfhandle(self.native());
-                if crt_fd == -1 {
-                    Err(())
-                } else {
-                    Ok(Fd::from_uv(crt_fd))
-                }
-            }
-        }
-    }
-
     #[inline]
     pub fn is_valid(self) -> bool {
         #[cfg(not(windows))]
@@ -1508,7 +1479,7 @@ pub mod io {
     use crate::Fd;
     use crate::output::output_sink;
 
-    /// Best-effort writer to stdout or stderr. Shared: what is being printed can itself print.
+    /// Best-effort writer. Takes `&self` because a `Display` impl can print re-entrantly.
     pub struct Writer<Buf: ?Sized = [Cell<u8>]> {
         fd: Cell<Fd>,
         /// How much of `buf` is waiting to be written.
@@ -1517,9 +1488,9 @@ pub mod io {
     }
 
     /// The storage of a [`Writer`] that buffers up to `N` bytes.
-    pub type WriterWithBuffer<const N: usize> = Writer<[Cell<u8>; N]>;
+    pub type WriterStorage<const N: usize> = Writer<[Cell<u8>; N]>;
 
-    impl<const N: usize> WriterWithBuffer<N> {
+    impl<const N: usize> WriterStorage<N> {
         pub const fn new(fd: Fd) -> Self {
             Self {
                 fd: Cell::new(fd),
@@ -1575,21 +1546,14 @@ pub mod io {
         }
         #[inline]
         pub fn print(&self, args: core::fmt::Arguments<'_>) -> crate::CrateResult<()> {
-            use core::fmt::Write;
-            struct A<'a>(&'a Writer, crate::CrateResult<()>);
-            impl core::fmt::Write for A<'_> {
-                fn write_str(&mut self, s: &str) -> core::fmt::Result {
-                    self.1 = self.0.write_all(s.as_bytes());
-                    if self.1.is_err() {
-                        Err(core::fmt::Error)
-                    } else {
-                        Ok(())
-                    }
-                }
-            }
-            let mut a = A(self, Ok(()));
-            let _ = a.write_fmt(args);
-            a.1
+            let _ = fmt::Write::write_fmt(&mut &*self, args);
+            Ok(())
+        }
+    }
+
+    impl fmt::Write for &Writer {
+        fn write_str(&mut self, s: &str) -> fmt::Result {
+            Writer::write_all(self, s.as_bytes()).map_err(|_| fmt::Error)
         }
     }
 
@@ -3045,17 +3009,14 @@ pub use bun_pod::{
 
 // ─── extern_union_accessors! ──────────────────────────────────────────────────
 // Wraps each bare-union field read in a tag-asserted `unsafe` accessor so call
-// sites stay safe. `Resolution`, `Bin` and `DependencyVersion` share it.
+// sites stay safe. `Resolution` and `Bin` share it.
 //
 // Emits, per arm, `pub fn $field(&self) -> &$Ty` and optionally
 // `pub fn $field_mut(&mut self) -> &mut $Ty`, each guarded by
 // `debug_assert!(self.$tag_field == $TagTy::$Variant)`.
 //
 // Projection uses `addr_of!`/`addr_of_mut!` so no intermediate `&Union` is
-// formed (defensive against partially-initialized padding). The trailing
-// `as *const $Ty` cast is identity for plain fields and unwraps
-// `ManuallyDrop<$Ty>` (`#[repr(transparent)]`) for the `DependencyVersionValue`
-// case without needing a separate macro arm.
+// formed (defensive against partially-initialized padding).
 //
 // Syntax:
 //   extern_union_accessors! {
@@ -3096,9 +3057,8 @@ macro_rules! extern_union_accessors {
         pub fn $field(&self) -> &$Ty {
             debug_assert!(self.$tf == $TT::$Variant);
             // SAFETY: tag-guarded; `addr_of!` projects without forming an
-            // intermediate `&Union`. Cast is identity for plain fields and
-            // unwraps `ManuallyDrop<$Ty>` (repr(transparent)).
-            unsafe { &*(::core::ptr::addr_of!(self.$vf.$field) as *const $Ty) }
+            // intermediate `&Union`.
+            unsafe { &*::core::ptr::addr_of!(self.$vf.$field) }
         }
     };
     (@emit_rw [$tf:ident, $TT:ident, $vf:ident] $Variant:ident, $field:ident, $field_mut:ident, $Ty:ty) => {
@@ -3106,7 +3066,7 @@ macro_rules! extern_union_accessors {
         pub fn $field_mut(&mut self) -> &mut $Ty {
             debug_assert!(self.$tf == $TT::$Variant);
             // SAFETY: tag-guarded; `&mut self` exclusive over union storage.
-            unsafe { &mut *(::core::ptr::addr_of_mut!(self.$vf.$field) as *mut $Ty) }
+            unsafe { &mut *::core::ptr::addr_of_mut!(self.$vf.$field) }
         }
     };
 }
@@ -3406,6 +3366,7 @@ pub mod hash {
 // tier-0/1 callers need (npm auth, sourcemaps,
 // ansi_renderer). Full URL-safe / streaming variants stay in bun_base64.
 pub mod base64 {
+    use crate::vec::BorrowedBuf;
     use bun_simdutf_sys::simdutf;
 
     /// Max encoded length for `source.len()` input bytes (standard alphabet,
@@ -3418,8 +3379,9 @@ pub mod base64 {
 
     /// `bun.base64.encode` — standard alphabet, padded. Returns bytes written.
     pub fn encode(dest: &mut [u8], source: &[u8]) -> usize {
-        debug_assert!(dest.len() >= encode_len(source));
-        simdutf::base64::encode(source, dest, false)
+        let mut dest = BorrowedBuf::from(dest);
+        simdutf::base64::encode(source, dest.unfilled(), false);
+        dest.len()
     }
 
     /// Encoded output size for a standard-base64 input of `source_len` bytes.
@@ -3549,7 +3511,7 @@ impl Clone for SensitiveCString {
 
 impl PartialEq for SensitiveCString {
     fn eq(&self, other: &Self) -> bool {
-        crate::strings::eql_long(self.as_bytes(), other.as_bytes(), true)
+        crate::strings::eql_long(self.as_bytes(), other.as_bytes())
     }
 }
 
@@ -4633,42 +4595,46 @@ fn spawn_sync_inherit_impl(
         // for the non-PTY inherit case. PTY spawns go through spawn_sys.
         #[cfg(target_os = "macos")]
         let pid: libc::pid_t = {
+            struct FileActions(libc::posix_spawn_file_actions_t);
+            impl Drop for FileActions {
+                fn drop(&mut self) {
+                    // SAFETY: `posix_spawn_file_actions_init` made it.
+                    unsafe { libc::posix_spawn_file_actions_destroy(&raw mut self.0) };
+                }
+            }
             // StdinBehavior::Ignore → file action opening /dev/null onto fd 0;
             // stdout/stderr stay inherited.
-            let mut actions: libc::posix_spawn_file_actions_t = core::ptr::null_mut();
-            let actions_ptr: *const libc::posix_spawn_file_actions_t =
-                if stdin == StdinBehavior::Ignore {
-                    let rc = libc::posix_spawn_file_actions_init(&raw mut actions);
-                    if rc != 0 {
-                        return Err(crate::CrateError::Unexpected);
-                    }
-                    let rc = libc::posix_spawn_file_actions_addopen(
-                        &raw mut actions,
-                        0,
-                        c"/dev/null".as_ptr(),
-                        libc::O_RDONLY,
-                        0,
-                    );
-                    if rc != 0 {
-                        libc::posix_spawn_file_actions_destroy(&raw mut actions);
-                        return Err(crate::CrateError::Unexpected);
-                    }
-                    &raw const actions
-                } else {
-                    core::ptr::null()
-                };
+            let actions = if stdin == StdinBehavior::Ignore {
+                let mut actions = core::ptr::null_mut();
+                if libc::posix_spawn_file_actions_init(&raw mut actions) != 0 {
+                    return Err(crate::CrateError::Unexpected);
+                }
+                let mut actions = FileActions(actions);
+                let rc = libc::posix_spawn_file_actions_addopen(
+                    &raw mut actions.0,
+                    0,
+                    c"/dev/null".as_ptr(),
+                    libc::O_RDONLY,
+                    0,
+                );
+                if rc != 0 {
+                    return Err(crate::CrateError::Unexpected);
+                }
+                Some(actions)
+            } else {
+                None
+            };
             let mut pid: libc::pid_t = 0;
             let rc = libc::posix_spawnp(
                 &raw mut pid,
                 ptrs[0],
-                actions_ptr,
+                actions
+                    .as_ref()
+                    .map_or(core::ptr::null(), |it| &raw const it.0),
                 core::ptr::null(),
                 ptrs.as_ptr().cast::<*mut core::ffi::c_char>(),
                 environ.cast::<*mut core::ffi::c_char>(),
             );
-            if !actions_ptr.is_null() {
-                libc::posix_spawn_file_actions_destroy(&raw mut actions);
-            }
             if rc != 0 {
                 return Err(crate::CrateError::Unexpected);
             }

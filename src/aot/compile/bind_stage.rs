@@ -1317,11 +1317,12 @@ fn keep_where_parsers_refused_data(
             paths.display_path,
             b"\" could not be parsed as ",
             type_attribute_of(*loader).as_bytes(),
-        ];
+        ]
+        .concat();
         provider.keep_where_text_is_refused(&RefusedText {
             path: paths.public_path,
             is_syntax_error: *loader == Loader::Json,
-            message: said_by_bun_run.unwrap_or(&message.concat()),
+            message: said_by_bun_run.unwrap_or(&message),
             line: place.line,
             column: place.column,
             offset: place.offset,

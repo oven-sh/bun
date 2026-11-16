@@ -21,7 +21,9 @@ use bun_core::EncodedSlice;
 #[cfg(not(windows))]
 use bun_core::env_var;
 use bun_io::BufferedReader as OutputReader;
-use bun_io::{JsKeepAlive, KeepAlive, LoopRef};
+#[cfg(unix)]
+use bun_io::PosixFlags;
+use bun_io::{IoEvent, JsKeepAlive, KeepAlive, Owner, PollTag, ReadResult};
 use bun_jsc::bindgen::{Callable, JsLocal, JsScope, JsWrapper};
 use bun_jsc::virtual_machine::{HotReload, VirtualMachine};
 use bun_jsc::{
@@ -44,7 +46,6 @@ use crate::generated_bindgen::cron::{
 use crate::timer::{EventLoopTimer, EventLoopTimerState, EventLoopTimerTag};
 use bun_core::ZStr;
 use bun_core::strings;
-use bun_io::pipe_reader::BufferedReaderParent;
 #[cfg(target_os = "macos")]
 use bun_sys::FdDirExt as _;
 // Owned NUL-terminated string — `bun_str` exposes the
@@ -74,6 +75,8 @@ trait CronJobBase: Sized + bun_ptr::AnyRefCounted {
     fn err_msg(&self) -> &JsCell<Option<Vec<u8>>>;
     fn has_called_process_exit(&self) -> &Cell<bool>;
     fn exit_status(&self) -> &JsCell<Option<Status>>;
+    /// Of the child's stdout, or on Windows its stderr.
+    fn output_reader(&self) -> &OutputReader;
 
     type State: Copy;
     #[cfg(all(not(target_os = "macos"), not(windows)))]
@@ -82,21 +85,12 @@ trait CronJobBase: Sized + bun_ptr::AnyRefCounted {
     const BOOTING_OUT: Self::State;
     #[cfg(not(windows))]
     fn set_state(&self, state: Self::State);
-    #[cfg(all(not(target_os = "macos"), not(windows)))]
-    fn stdout_reader_slot(&self) -> &JsCell<OutputReader>;
     #[cfg(target_os = "macos")]
     fn title_bytes(&self) -> &[u8];
 
     #[cfg(all(not(target_os = "macos"), not(windows)))]
-    fn prepare_list_crontab(&self, this_ptr: *mut core::ffi::c_void) -> Option<ZString>
-    where
-        Self: BufferedReaderParent,
-    {
+    fn prepare_list_crontab(&self) -> Option<ZString> {
         self.set_state(Self::READING_CRONTAB);
-        self.stdout_reader_slot().with_mut(|r| {
-            *r = OutputReader::init::<Self>();
-            r.set_parent(this_ptr);
-        });
         let crontab_path = find_crontab();
         if crontab_path.is_none() {
             self.set_err(format_args!("crontab not found in PATH"));
@@ -155,41 +149,27 @@ trait CronJobBase: Sized + bun_ptr::AnyRefCounted {
         }
     }
 
-    fn loop_(&self) -> LoopRef {
-        // `VirtualMachine::uv_loop` already returns the native loop on both
-        // targets (jsc/VirtualMachine.rs:2975); the prior POSIX arm's
-        // `bun_uws::Loop::get()` named the same per-thread singleton.
-        VirtualMachine::get().uv_loop()
-    }
-
-    fn note_reader_done(&self) {
-        debug_assert!(self.remaining_fds().get() > 0);
-        self.remaining_fds().set(self.remaining_fds().get() - 1);
-    }
-
-    fn note_reader_error(&self, err: sys::Error) {
-        self.note_reader_done();
-        if self.err_msg().get().is_none() {
-            let mut msg = Vec::new();
-            let _ = write!(
-                &mut msg,
+    /// `true` if the reader has ended.
+    fn note_read_result(&self, result: ReadResult) -> bool {
+        match result {
+            ReadResult::Pending => return false,
+            ReadResult::Done => {}
+            ReadResult::Err(err) => self.set_err(format_args!(
                 "Failed to read process output: {}",
                 bstr::BStr::new(err.name())
-            );
-            self.err_msg().set(Some(msg));
+            )),
         }
+        debug_assert!(self.remaining_fds().get() > 0);
+        self.remaining_fds().set(self.remaining_fds().get() - 1);
+        true
     }
 
     /// May free `this` via `maybe_finished`.
-    fn on_reader_done(this: ThisPtr<Self>) {
-        this.note_reader_done();
-        Self::maybe_finished(this);
-    }
-
-    /// May free `this` via `maybe_finished`.
-    fn on_reader_error(this: ThisPtr<Self>, err: sys::Error) {
-        this.note_reader_error(err);
-        Self::maybe_finished(this);
+    fn on_io(this: ThisPtr<Self>, event: IoEvent) {
+        let result = this.output_reader().read(bun_io::js_vm_ctx(), Some(event));
+        if this.note_read_result(result) {
+            Self::maybe_finished(this);
+        }
     }
 
     /// May free `this` via `maybe_finished`.
@@ -230,17 +210,12 @@ struct CronRegisterJob {
 
     state: Cell<RegisterState>,
     process: JsCell<Option<ProcessHandle>>,
-    stdout_reader: JsCell<OutputReader>,
-    #[cfg(windows)]
-    stderr_reader: JsCell<OutputReader>,
+    output_reader: OutputReader,
     remaining_fds: Cell<i8>,
     has_called_process_exit: Cell<bool>,
     exit_status: JsCell<Option<Status>>,
     err_msg: JsCell<Option<Vec<u8>>>,
     tmp_path: JsCell<Option<ZString>>,
-    /// Typed enum for the io-layer FilePoll vtable (`bun_io::EventLoopHandle`
-    /// wraps `*const EventLoopHandle`).
-    event_loop_handle: EventLoopHandle,
 }
 
 #[repr(u8)]
@@ -256,19 +231,6 @@ enum RegisterState {
     Bootstrapping,
 }
 
-// `maybe_finished` (via `CronJobBase`) may free `this`.
-bun_io::impl_buffered_reader_parent! {
-    CronRegister for CronRegisterJob;
-    feature = Cron;
-    has_on_read_chunk = false;
-    // SAFETY: `this` is the live heap job registered via `set_parent`.
-    on_reader_done  = |this| <Self as CronJobBase>::on_reader_done(ThisPtr::new(this));
-    // SAFETY: `this` is the live heap job registered via `set_parent`.
-    on_reader_error = |this, err| <Self as CronJobBase>::on_reader_error(ThisPtr::new(this), err);
-    loop_           = |this| <Self as CronJobBase>::loop_(&*this);
-    event_loop      = |this| (*this).event_loop_handle.as_event_loop_ctx();
-}
-
 impl CronJobBase for CronRegisterJob {
     type State = RegisterState;
     #[cfg(all(not(target_os = "macos"), not(windows)))]
@@ -278,10 +240,6 @@ impl CronJobBase for CronRegisterJob {
     #[cfg(not(windows))]
     fn set_state(&self, state: RegisterState) {
         self.state.set(state);
-    }
-    #[cfg(all(not(target_os = "macos"), not(windows)))]
-    fn stdout_reader_slot(&self) -> &JsCell<OutputReader> {
-        &self.stdout_reader
     }
     #[cfg(target_os = "macos")]
     fn title_bytes(&self) -> &[u8] {
@@ -308,6 +266,9 @@ impl CronJobBase for CronRegisterJob {
     fn exit_status(&self) -> &JsCell<Option<Status>> {
         &self.exit_status
     }
+    fn output_reader(&self) -> &OutputReader {
+        &self.output_reader
+    }
 
     fn check_finished(&self) -> JobAction {
         if !self.has_called_process_exit.get() || self.remaining_fds.get() != 0 {
@@ -327,16 +288,10 @@ impl CronJobBase for CronRegisterJob {
                     && !(state == RegisterState::ReadingCrontab && exited.code == 1)
                     && state != RegisterState::BootingOut
                 {
-                    // Materialize the trimmed stderr into an owned buffer so
-                    // no borrow of the reader outlives this statement
-                    // (Windows only; POSIX ignores stderr here).
                     #[cfg(windows)]
-                    let stderr_owned: Vec<u8> = self.stderr_reader.with_mut(|r| {
-                        bun_core::strings::trim(r.final_buffer().as_slice(), &ASCII_WHITESPACE)
-                            .to_vec()
-                    });
+                    let stderr = self.output_reader.take_final_buffer();
                     #[cfg(windows)]
-                    let stderr_output: &[u8] = stderr_owned.as_slice();
+                    let stderr_output = bun_core::strings::trim(&stderr, &ASCII_WHITESPACE);
                     #[cfg(not(windows))]
                     let stderr_output: &[u8] = b"";
                     // On Windows, detect the SID resolution error and provide
@@ -430,7 +385,7 @@ impl CronRegisterJob {
     /// May free `this`; see [`CronJobBase`] note.
     #[cfg(all(not(target_os = "macos"), not(windows)))]
     fn start_linux(this: ThisPtr<Self>) {
-        let Some(crontab_path) = this.prepare_list_crontab(this.as_ptr().cast()) else {
+        let Some(crontab_path) = this.prepare_list_crontab() else {
             return Self::finish(this);
         };
         let argv = [crontab_path.as_cstr(), c"-l"];
@@ -450,13 +405,8 @@ impl CronRegisterJob {
     #[cfg(not(target_os = "macos"))]
     fn prepare_install_crontab(&self) -> Result<(ZString, ZString), ()> {
         let mut result: Vec<u8> = Vec::new();
-        let filtered = self.stdout_reader.with_mut(|r| {
-            filter_crontab(
-                r.final_buffer().as_slice(),
-                self.title.as_bytes(),
-                &mut result,
-            )
-        });
+        let crontab = self.output_reader.take_final_buffer();
+        let filtered = filter_crontab(&crontab, self.title.as_bytes(), &mut result);
 
         if filtered.is_err() {
             self.set_err(format_args!("Out of memory building crontab"));
@@ -509,8 +459,7 @@ impl CronRegisterJob {
         drop(file);
 
         self.state.set(RegisterState::InstallingCrontab);
-        self.stdout_reader
-            .set(OutputReader::init::<CronRegisterJob>());
+        self.output_reader.reset();
         let Some(crontab_path) = find_crontab() else {
             self.set_err(format_args!("crontab not found in PATH"));
             return Err(());
@@ -789,16 +738,16 @@ pub(crate) fn register_os_job(
         parsed_cron: parsed,
         state: Cell::new(RegisterState::ReadingCrontab),
         process: JsCell::new(None),
-        stdout_reader: JsCell::new(OutputReader::init::<CronRegisterJob>()),
-        #[cfg(windows)]
-        stderr_reader: JsCell::new(OutputReader::init::<CronRegisterJob>()),
+        output_reader: OutputReader::init(),
         remaining_fds: Cell::new(0),
         has_called_process_exit: Cell::new(false),
         exit_status: JsCell::new(None),
         err_msg: JsCell::new(None),
         tmp_path: JsCell::new(None),
-        event_loop_handle: EventLoopHandle::init(VirtualMachine::get().event_loop_ptr()),
     });
+    let owner = Owner::new(PollTag::CronRegister, job.as_ptr().cast());
+    // SAFETY: `owner` points to the heap allocation that holds this reader.
+    unsafe { job.output_reader.set_owner(owner) };
     let promise_value = job.promise.get().value();
     let this = job.this_ptr();
     this.owner.set(Some(job));
@@ -929,17 +878,12 @@ struct CronRemoveJob {
 
     state: Cell<RemoveState>,
     process: JsCell<Option<ProcessHandle>>,
-    stdout_reader: JsCell<OutputReader>,
-    #[cfg(windows)]
-    stderr_reader: JsCell<OutputReader>,
+    output_reader: OutputReader,
     remaining_fds: Cell<i8>,
     has_called_process_exit: Cell<bool>,
     exit_status: JsCell<Option<Status>>,
     err_msg: JsCell<Option<Vec<u8>>>,
     tmp_path: JsCell<Option<ZString>>,
-    /// Typed enum for the io-layer FilePoll vtable (`bun_io::EventLoopHandle`
-    /// wraps `*const EventLoopHandle`).
-    event_loop_handle: EventLoopHandle,
 }
 
 #[repr(u8)]
@@ -948,19 +892,6 @@ enum RemoveState {
     ReadingCrontab,
     InstallingCrontab,
     BootingOut,
-}
-
-// `maybe_finished` (via `CronJobBase`) may free `this`.
-bun_io::impl_buffered_reader_parent! {
-    CronRemove for CronRemoveJob;
-    feature = Cron;
-    has_on_read_chunk = false;
-    // SAFETY: `this` is the live heap job registered via `set_parent`.
-    on_reader_done  = |this| <Self as CronJobBase>::on_reader_done(ThisPtr::new(this));
-    // SAFETY: `this` is the live heap job registered via `set_parent`.
-    on_reader_error = |this, err| <Self as CronJobBase>::on_reader_error(ThisPtr::new(this), err);
-    loop_           = |this| <Self as CronJobBase>::loop_(&*this);
-    event_loop      = |this| (*this).event_loop_handle.as_event_loop_ctx();
 }
 
 impl CronJobBase for CronRemoveJob {
@@ -972,10 +903,6 @@ impl CronJobBase for CronRemoveJob {
     #[cfg(not(windows))]
     fn set_state(&self, state: RemoveState) {
         self.state.set(state);
-    }
-    #[cfg(all(not(target_os = "macos"), not(windows)))]
-    fn stdout_reader_slot(&self) -> &JsCell<OutputReader> {
-        &self.stdout_reader
     }
     #[cfg(target_os = "macos")]
     fn title_bytes(&self) -> &[u8] {
@@ -1002,6 +929,9 @@ impl CronJobBase for CronRemoveJob {
     fn exit_status(&self) -> &JsCell<Option<Status>> {
         &self.exit_status
     }
+    fn output_reader(&self) -> &OutputReader {
+        &self.output_reader
+    }
 
     fn check_finished(&self) -> JobAction {
         if !self.has_called_process_exit.get() || self.remaining_fds.get() != 0 {
@@ -1025,12 +955,9 @@ impl CronJobBase for CronRemoveJob {
                     || (cfg!(windows) && state == RemoveState::InstallingCrontab);
                 if exited.code != 0 && !is_acceptable_nonzero {
                     #[cfg(windows)]
-                    let stderr_owned: Vec<u8> = self.stderr_reader.with_mut(|r| {
-                        bun_core::strings::trim(r.final_buffer().as_slice(), &ASCII_WHITESPACE)
-                            .to_vec()
-                    });
+                    let stderr = self.output_reader.take_final_buffer();
                     #[cfg(windows)]
-                    let stderr_output: &[u8] = stderr_owned.as_slice();
+                    let stderr_output = bun_core::strings::trim(&stderr, &ASCII_WHITESPACE);
                     #[cfg(not(windows))]
                     let stderr_output: &[u8] = b"";
                     if !stderr_output.is_empty() {
@@ -1120,7 +1047,7 @@ impl CronRemoveJob {
     /// May free `this`; see [`CronJobBase`] note.
     #[cfg(all(not(target_os = "macos"), not(windows)))]
     fn start_linux(this: ThisPtr<Self>) {
-        let Some(crontab_path) = this.prepare_list_crontab(this.as_ptr().cast()) else {
+        let Some(crontab_path) = this.prepare_list_crontab() else {
             return Self::finish(this);
         };
         let argv = [crontab_path.as_cstr(), c"-l"];
@@ -1140,13 +1067,8 @@ impl CronRemoveJob {
     #[cfg(not(target_os = "macos"))]
     fn prepare_filtered_crontab(&self) -> Result<(ZString, ZString), ()> {
         let mut result: Vec<u8> = Vec::new();
-        let filtered = self.stdout_reader.with_mut(|r| {
-            filter_crontab(
-                r.final_buffer().as_slice(),
-                self.title.as_bytes(),
-                &mut result,
-            )
-        });
+        let crontab = self.output_reader.take_final_buffer();
+        let filtered = filter_crontab(&crontab, self.title.as_bytes(), &mut result);
 
         if filtered.is_err() {
             self.set_err(format_args!("Out of memory"));
@@ -1182,8 +1104,7 @@ impl CronRemoveJob {
         drop(file);
 
         self.state.set(RemoveState::InstallingCrontab);
-        self.stdout_reader
-            .set(OutputReader::init::<CronRemoveJob>());
+        self.output_reader.reset();
         let Some(crontab_path) = find_crontab() else {
             self.set_err(format_args!("crontab not found in PATH"));
             return Err(());
@@ -1220,16 +1141,16 @@ pub(crate) fn remove(cx: &mut JsScope<'_>, title: &[u8]) -> JsResult<JSValue> {
         title: ZString::from_bytes(title),
         state: Cell::new(RemoveState::ReadingCrontab),
         process: JsCell::new(None),
-        stdout_reader: JsCell::new(OutputReader::init::<CronRemoveJob>()),
-        #[cfg(windows)]
-        stderr_reader: JsCell::new(OutputReader::init::<CronRemoveJob>()),
+        output_reader: OutputReader::init(),
         remaining_fds: Cell::new(0),
         has_called_process_exit: Cell::new(false),
         exit_status: JsCell::new(None),
         err_msg: JsCell::new(None),
         tmp_path: JsCell::new(None),
-        event_loop_handle: EventLoopHandle::init(VirtualMachine::get().event_loop_ptr()),
     });
+    let owner = Owner::new(PollTag::CronRemove, job.as_ptr().cast());
+    // SAFETY: `owner` points to the heap allocation that holds this reader.
+    unsafe { job.output_reader.set_owner(owner) };
     let promise_value = job.promise.get().value();
     let this = job.this_ptr();
     this.owner.set(Some(job));
@@ -1830,12 +1751,21 @@ pub(crate) fn parse(
 // ============================================================================
 
 /// Trait abstracting over CronRegisterJob/CronRemoveJob for `spawn_cmd_generic`.
-trait SpawnCmdTarget: CronJobBase + BufferedReaderParent + bun_spawn::ProcessExitOwner {
+trait SpawnCmdTarget: CronJobBase + bun_spawn::ProcessExitOwner {
     fn process_slot(&self) -> &JsCell<Option<ProcessHandle>>;
-    #[cfg(unix)]
-    fn stdout_reader(&self) -> &JsCell<OutputReader>;
-    #[cfg(windows)]
-    fn stderr_reader(&self) -> &JsCell<OutputReader>;
+}
+
+/// # Safety
+/// `owner` is the one a live job gave its reader. The job may be freed.
+pub(crate) unsafe fn on_io(owner: Owner, event: IoEvent) {
+    // SAFETY: fn contract.
+    unsafe {
+        if owner.tag() == PollTag::CronRegister {
+            CronRegisterJob::on_io(ThisPtr::new(owner.ptr().cast()), event);
+        } else {
+            CronRemoveJob::on_io(ThisPtr::new(owner.ptr().cast()), event);
+        }
+    }
 }
 
 bun_spawn::link_impl_ProcessExit! {
@@ -1858,26 +1788,10 @@ impl SpawnCmdTarget for CronRegisterJob {
     fn process_slot(&self) -> &JsCell<Option<ProcessHandle>> {
         &self.process
     }
-    #[cfg(unix)]
-    fn stdout_reader(&self) -> &JsCell<OutputReader> {
-        &self.stdout_reader
-    }
-    #[cfg(windows)]
-    fn stderr_reader(&self) -> &JsCell<OutputReader> {
-        &self.stderr_reader
-    }
 }
 impl SpawnCmdTarget for CronRemoveJob {
     fn process_slot(&self) -> &JsCell<Option<ProcessHandle>> {
         &self.process
-    }
-    #[cfg(unix)]
-    fn stdout_reader(&self) -> &JsCell<OutputReader> {
-        &self.stdout_reader
-    }
-    #[cfg(windows)]
-    fn stderr_reader(&self) -> &JsCell<OutputReader> {
-        &self.stderr_reader
     }
 }
 
@@ -1892,7 +1806,7 @@ fn spawn_cmd_generic<T: SpawnCmdTarget>(
     stdin_opt: spawn::Stdio,
     stdout_opt: spawn::Stdio,
 ) {
-    let Ok(process) = spawn_cmd_prepare(this, argv, stdin_opt, stdout_opt) else {
+    let Ok(process) = spawn_cmd_prepare(&*this, argv, stdin_opt, stdout_opt) else {
         return T::finish(this);
     };
     process.set_exit_handler(this);
@@ -1912,19 +1826,13 @@ fn spawn_cmd_generic<T: SpawnCmdTarget>(
 }
 
 /// Spawns the command and wires the output readers. `Err` records the error
-/// via `set_err` (for the caller to `finish`). `this.as_ptr()` is stored as
-/// the readers' parent pointer.
-/// The `stdout_reader().start(..)` failure path synchronously re-enters this
-/// job (`on_reader_error` -> `note_reader_error` writes the `remaining_fds`/
-/// `err_msg` cells through the parent backref); it never touches the reader
-/// cell itself, so the reader's `with_mut` borrow is the only one live.
+/// via `set_err` (for the caller to `finish`).
 fn spawn_cmd_prepare<T: SpawnCmdTarget>(
-    this: ThisPtr<T>,
+    this: &T,
     argv: &[&CStr],
     stdin_opt: spawn::Stdio,
     stdout_opt: spawn::Stdio,
 ) -> Result<ProcessHandle, ()> {
-    let this_ptr: *mut core::ffi::c_void = this.as_ptr().cast();
     this.has_called_process_exit().set(false);
     this.exit_status().set(None);
     this.remaining_fds().set(0);
@@ -1962,26 +1870,9 @@ fn spawn_cmd_prepare<T: SpawnCmdTarget>(
     #[cfg(unix)]
     let env = None;
     #[cfg(windows)]
-    let envp_owned;
+    let envp_owned = VirtualMachine::get().transpiler.get().env().map.to_envp();
     #[cfg(windows)]
-    let env = {
-        match VirtualMachine::get()
-            .transpiler
-            .get()
-            .env()
-            .map
-            .create_null_delimited_env_map()
-        {
-            Ok(v) => {
-                envp_owned = v;
-                Some(envp_owned.as_list())
-            }
-            Err(_) => {
-                this.set_err(format_args!("Failed to create environment block"));
-                return Err(());
-            }
-        }
-    };
+    let env = Some(envp_owned.as_list());
 
     let cwd = FileSystem::get().top_level_dir();
     let spawn_options = SpawnOptions {
@@ -2020,48 +1911,32 @@ fn spawn_cmd_prepare<T: SpawnCmdTarget>(
     {
         if let Some(stdout) = spawned.stdout.take().map(sys::File::into_raw) {
             if !spawned.memfds[1] {
-                this.stdout_reader().with_mut(|r| r.set_parent(this_ptr));
                 let _ = sys::set_nonblocking(stdout);
                 this.remaining_fds().set(this.remaining_fds().get() + 1);
-                let started = this.stdout_reader().with_mut(|r| {
-                    use bun_io::pipe_reader::PosixFlags;
-                    r.flags.insert(PosixFlags::NONBLOCKING | PosixFlags::SOCKET);
-                    r.flags.remove(
+                let reader = this.output_reader();
+                reader.update_flags(|f| {
+                    f.insert(PosixFlags::NONBLOCKING | PosixFlags::SOCKET);
+                    f.remove(
                         PosixFlags::MEMFD
                             | PosixFlags::RECEIVED_EOF
                             | PosixFlags::CLOSED_WITHOUT_REPORTING,
                     );
-                    r.start(stdout, true)
                 });
-                if started.is_err() {
+                let Ok(result) = reader.start(bun_io::js_vm_ctx(), stdout, true) else {
                     this.set_err(format_args!("Failed to start reading stdout"));
                     return Err(());
-                }
-                this.stdout_reader().with_mut(|r| {
-                    if let Some(p) = r.handle.get_poll() {
-                        p.set_flag(bun_io::FilePollFlag::Socket);
-                    }
-                });
+                };
+                this.note_read_result(result);
             } else {
-                this.stdout_reader().with_mut(|r| {
-                    r.set_parent(this_ptr);
-                    r.start_memfd(stdout);
-                });
+                this.output_reader().start_memfd(stdout);
             }
         }
     }
     #[cfg(windows)]
     {
         if let spawn::WindowsStdioResult::Buffer(pipe) = spawned.stderr.take() {
-            this.stderr_reader().with_mut(|r| {
-                r.set_source(bun_io::Source::Pipe(pipe));
-                r.set_parent(this_ptr);
-            });
             this.remaining_fds().set(this.remaining_fds().get() + 1);
-            let started = this
-                .stderr_reader()
-                .with_mut(|r| r.start_with_current_pipe());
-            if started.is_err() {
+            if this.output_reader().start_with_pipe(pipe).is_err() {
                 this.set_err(format_args!("Failed to start reading stderr"));
                 return Err(());
             }

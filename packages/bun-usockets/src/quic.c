@@ -20,6 +20,7 @@
 #include <netinet/in.h>
 #include <netinet/ip.h>
 #include <arpa/inet.h>
+#include <pthread.h>
 #else
 #include <ws2tcpip.h>
 #endif
@@ -67,8 +68,8 @@ struct us_quic_socket_context_s {
     lsquic_engine_t *engine;
     struct lsquic_engine_settings settings;
     SSL_CTX *ssl_ctx;
-    /* serverName -> SSL_CTX*, in the tree TCP listeners use (crypto/sni_tree.cpp). */
-    void *sni;
+    /* serverName -> SSL_CTX*, in the tree TCP listeners use (crypto/sni_tree.h). */
+    struct us_sni_tree_t *sni;
     int processing;
     int closing;
     /* us_quic_socket_context_shutdown ran while `processing` was set;
@@ -460,7 +461,7 @@ static SSL_CTX *us_quic_get_ssl_ctx(void *peer_ctx, const struct sockaddr *local
 static SSL_CTX *us_quic_lookup_cert(void *cert_ctx, const struct sockaddr *local, const char *sni) {
     (void) local;
     us_quic_socket_context_t *ctx = (us_quic_socket_context_t *) cert_ctx;
-    SSL_CTX *match = sni && ctx->sni ? (SSL_CTX *) sni_find(ctx->sni, sni) : NULL;
+    SSL_CTX *match = sni && ctx->sni ? sni_find(ctx->sni, sni) : NULL;
     return match ? match : ctx->ssl_ctx;
 }
 
@@ -821,9 +822,7 @@ static int us_quic_log_buf(void *ctx, const char *buf, size_t len) {
 static const struct lsquic_logger_if us_quic_logger = { us_quic_log_buf };
 #endif
 
-/* Called once via a thread-safe static local in uws_h3_create_app
- * (libuwsockets_h3.cpp), so quic.c stays free of pthread/call_once. */
-void us_quic_global_init(void) {
+static void us_quic_global_init(void) {
     lsquic_global_init(LSQUIC_GLOBAL_SERVER | LSQUIC_GLOBAL_CLIENT);
 #ifdef BUN_DEBUG
     if (getenv("BUN_DEBUG_lsquic")) {
@@ -831,6 +830,25 @@ void us_quic_global_init(void) {
         lsquic_set_log_level("debug");
     }
 #endif
+}
+
+#ifdef _WIN32
+static BOOL CALLBACK us_quic_global_init_win(PINIT_ONCE o, PVOID p, PVOID *c) {
+    (void) o; (void) p; (void) c;
+    us_quic_global_init();
+    return TRUE;
+}
+#endif
+
+lsquic_engine_t *us_quic_engine_new(unsigned flags, const struct lsquic_engine_api *api) {
+#ifdef _WIN32
+    static INIT_ONCE once = INIT_ONCE_STATIC_INIT;
+    InitOnceExecuteOnce(&once, us_quic_global_init_win, NULL, NULL);
+#else
+    static pthread_once_t once = PTHREAD_ONCE_INIT;
+    pthread_once(&once, us_quic_global_init);
+#endif
+    return lsquic_engine_new(flags, api);
 }
 
 static void us_quic_prepare_ssl_ctx(SSL_CTX *ssl, const struct us_bun_socket_context_options_t *options) {
@@ -889,7 +907,7 @@ us_quic_socket_context_t *us_create_quic_socket_context(
     api.ea_hsi_if = &us_quic_hset_if;
     api.ea_hsi_ctx = ctx;
 
-    ctx->engine = lsquic_engine_new(LSENG_HTTP_SERVER, &api);
+    ctx->engine = us_quic_engine_new(LSENG_HTTP_SERVER, &api);
     if (!ctx->engine) {
         SSL_CTX_free(ssl);
         us_free(ctx);
@@ -902,10 +920,6 @@ us_quic_socket_context_t *us_create_quic_socket_context(
     return ctx;
 }
 
-static void us_quic_sni_free(void *ssl_ctx) {
-    SSL_CTX_free((SSL_CTX *) ssl_ctx);
-}
-
 int us_quic_socket_context_add_server_name(us_quic_socket_context_t *ctx,
     const char *hostname, struct us_bun_socket_context_options_t options)
 {
@@ -916,7 +930,7 @@ int us_quic_socket_context_add_server_name(us_quic_socket_context_t *ctx,
     SSL_CTX_set_verify(ssl, SSL_CTX_get_verify_mode(ssl) | SSL_CTX_get_verify_mode(ctx->ssl_ctx),
         SSL_CTX_get_verify_callback(ssl));
     if (!ctx->sni) ctx->sni = sni_new();
-    SSL_CTX_free((SSL_CTX *) sni_add(ctx->sni, hostname, ssl));
+    sni_add(ctx->sni, hostname, ssl);
     return 0;
 }
 
@@ -956,7 +970,7 @@ void us_quic_socket_context_free(us_quic_socket_context_t *ctx) {
     while (ctx->listeners) us_udp_socket_close(ctx->listeners->udp);
     if (ctx->engine) { lsquic_engine_destroy(ctx->engine); ctx->engine = NULL; }
     if (ctx->ssl_ctx) { SSL_CTX_free(ctx->ssl_ctx); ctx->ssl_ctx = NULL; }
-    if (ctx->sni) sni_free(ctx->sni, us_quic_sni_free);
+    sni_free(ctx->sni);
     for (us_quic_listen_socket_t *ls = ctx->closed_listeners; ls; ) {
         us_quic_listen_socket_t *next = ls->next;
         us_free(ls);
@@ -1437,7 +1451,7 @@ us_quic_socket_context_t *us_create_quic_client_context(
     api.ea_hsi_if = &us_quic_hset_if;
     api.ea_hsi_ctx = ctx;
 
-    ctx->engine = lsquic_engine_new(LSENG_HTTP, &api);
+    ctx->engine = us_quic_engine_new(LSENG_HTTP, &api);
     if (!ctx->engine) {
         SSL_CTX_free(ssl);
         us_free(ctx);

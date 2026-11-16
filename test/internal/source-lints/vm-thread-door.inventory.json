@@ -22,19 +22,8 @@
   "src/jsc/RuntimeTranspilerStore.rs": {
     "WorkPool::schedule*": 1
   },
-  "src/jsc/VirtualMachine.rs": {
-    "unsafe impl Send": [
-      "Shared"
-    ]
-  },
   "src/jsc/hot_reloader.rs": {
-    "thread spawn": 1,
-    "unsafe impl Send": [
-      "WatchChangedPaths"
-    ],
-    "unsafe impl Sync": [
-      "WatchChangedPaths"
-    ]
+    "thread spawn": 1
   },
   "src/jsc/thread_isolated.rs": {
     "unsafe impl Send": [
@@ -95,10 +84,7 @@
     "thread spawn": 1
   },
   "src/runtime/cli/run_compiled.rs": {
-    "thread spawn": 1,
-    "unsafe impl Send": [
-      "SharedWatcher"
-    ]
+    "thread spawn": 1
   },
   "src/runtime/cli/test/ShardsByReach.rs": {
     "thread spawn": 1
@@ -124,9 +110,24 @@
     ]
   },
   "src/runtime/napi/napi_body.rs": {
+    "VmBound<": [
+      "TsfnJsSide"
+    ],
     "WorkPool::schedule*": 1,
     "intrusive_work_task!": [
-      "napi_async_work"
+      "AsyncWorkOffThread"
+    ],
+    "unsafe impl Send": [
+      "AddonData"
+    ],
+    "unsafe impl Sync": [
+      "AddonData"
+    ]
+  },
+  "src/runtime/napi/uv_posix.rs": {
+    "WorkPool::schedule*": 1,
+    "unsafe impl Send": [
+      "WorkRef"
     ]
   },
   "src/runtime/node/fs_events.rs": {
@@ -170,13 +171,10 @@
       "CStrPtr"
     ]
   },
-  "src/runtime/node/node_zlib_binding.rs": {
-    "WorkPool::schedule*": 1
-  },
   "src/runtime/node/path_watcher.rs": {
     "thread spawn": 2,
-    "unsafe impl Sync": [
-      "PathWatcherManager"
+    "unsafe impl Send": [
+      "PathWatcher"
     ]
   },
   "src/runtime/shell/builtin/cp.rs": {
@@ -195,11 +193,6 @@
   },
   "src/runtime/webcore/Blob.rs": {
     "WorkPool::schedule*": 1
-  },
-  "src/runtime/webcore/CompressionStreamCoder.rs": {
-    "unsafe impl Send": [
-      "CompressionAsyncCtx"
-    ]
   },
   "src/runtime/webcore/blob/copy_file.rs": {
     "unsafe impl Send": [

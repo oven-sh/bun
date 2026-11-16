@@ -19,10 +19,6 @@ use core::fmt;
 use bun_alloc::AllocError;
 use bun_core::strings;
 
-/// The lists that a plain `Vec` has to be copied into.
-pub trait InAstHeap {}
-impl<T> InAstHeap for bun_alloc::AstVec<T> {}
-
 pub trait VecExt<T>: Sized {
     // ── constructors ──────────────────────────────────────────────────────
     fn init_capacity(n: usize) -> Self;
@@ -30,12 +26,6 @@ pub trait VecExt<T>: Sized {
     fn from_slice(items: &[T]) -> Self
     where
         T: Clone;
-    fn move_from_list(list: Vec<T>) -> Self
-    where
-        Self: InAstHeap;
-    fn from_owned_slice(items: Box<[T]>) -> Self
-    where
-        Self: InAstHeap;
     /// Copies `items` into a fresh `A` allocation.
     fn from_arena_slice(items: &[T]) -> Self
     where
@@ -74,8 +64,7 @@ pub trait VecExt<T>: Sized {
     where
         T: Copy;
     fn ordered_remove(&mut self, index: usize) -> T;
-    /// Reserves `additional` and returns the first `additional` slots of
-    /// spare capacity as `MaybeUninit<T>`. The
+    /// Reserves `additional` and returns that many slots of spare capacity. The
     /// caller writes some prefix then calls `set_len` (or [`uv_commit`] for
     /// `Vec<u8>`) to commit. Unlike `spare_capacity_mut()` the returned slice
     /// is exactly `additional` long, not `capacity - len`.
@@ -115,19 +104,6 @@ impl<T, A: Allocator + Default> VecExt<T> for Vec<T, A> {
         let mut v = Vec::with_capacity_in(items.len(), A::default());
         v.extend_from_slice(items);
         v
-    }
-    #[inline]
-    fn move_from_list(list: Vec<T>) -> Self {
-        let mut v = Vec::with_capacity_in(list.len(), A::default());
-        v.extend(list);
-        v
-    }
-    #[inline]
-    fn from_owned_slice(items: Box<[T]>) -> Self
-    where
-        Self: InAstHeap,
-    {
-        Self::move_from_list(items.into_vec())
     }
     #[inline]
     fn from_arena_slice(items: &[T]) -> Self
@@ -288,7 +264,7 @@ pub trait ByteVecExt {
     fn write_latin1(&mut self, str: &[u8]) -> Result<u32, AllocError>;
     fn write_utf16(&mut self, str: &[u16]) -> Result<u32, AllocError>;
 
-    /// `suggested` bytes of spare capacity for libuv to read to.
+    /// `suggested` bytes of spare capacity for libuv to read into.
     fn uv_alloc_spare(&mut self, suggested: usize) -> *mut [u8];
     /// Commit `nread` bytes that the FFI/syscall just wrote into the slice
     /// returned by [`uv_alloc_spare`]: bumps `len` by `nread`. Debug-asserts `len + nread <= capacity`.
@@ -318,12 +294,6 @@ impl ByteVecExt for Vec<u8> {
     }
     fn write_utf16(&mut self, str: &[u16]) -> Result<u32, AllocError> {
         let initial = self.len();
-        let estimate = if (self.capacity() - self.len()) <= (str.len() * 3 + 2) {
-            bun_simdutf_sys::simdutf::length::utf8::from::utf16::le(str)
-        } else {
-            str.len()
-        };
-        self.reserve(estimate);
         strings::convert_utf16_to_utf8_append(self, str);
         Ok((self.len() - initial) as u32)
     }
@@ -382,6 +352,10 @@ impl OffsetByteList {
 
     pub fn len(&self) -> usize {
         self.byte_list.len() - self.head
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
     }
 
     pub fn clear_and_free(&mut self) {

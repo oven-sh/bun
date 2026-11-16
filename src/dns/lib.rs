@@ -66,13 +66,14 @@ impl AddrInfoList {
             _ => Err(status),
         }
     }
-}
 
-impl core::ops::Deref for AddrInfoList {
-    type Target = addrinfo;
-    fn deref(&self) -> &addrinfo {
+    pub fn addresses(&self) -> Addresses<'_> {
         // SAFETY: live until `drop`.
-        unsafe { self.0.as_ref() }
+        Addresses(Some(unsafe { self.0.as_ref() }))
+    }
+
+    pub fn to_list(&self) -> ResultList {
+        self.addresses().into_list()
     }
 }
 
@@ -80,6 +81,39 @@ impl Drop for AddrInfoList {
     fn drop(&mut self) {
         // SAFETY: from `getaddrinfo`.
         unsafe { sock::freeaddrinfo(self.0.as_ptr()) }
+    }
+}
+
+/// Iterator over the bytes of each non-null `ai_addr` of a `getaddrinfo` result.
+#[derive(Clone)]
+pub struct Addresses<'a>(Option<&'a addrinfo>);
+
+impl Addresses<'_> {
+    fn into_list(self) -> ResultList {
+        let mut list = ResultList::with_capacity(self.clone().count());
+        list.extend(self.map(|address| GetAddrInfoResult {
+            address: Address::from_bytes(address),
+            // no TTL in POSIX getaddrinfo()
+            ttl: 0,
+        }));
+        list
+    }
+}
+
+impl<'a> Iterator for Addresses<'a> {
+    type Item = &'a [u8];
+
+    fn next(&mut self) -> Option<&'a [u8]> {
+        loop {
+            let entry = self.0?;
+            // SAFETY: `ai_next` is null or the next entry of the list.
+            self.0 = unsafe { entry.ai_next.as_ref() };
+            if !entry.ai_addr.is_null() {
+                let (addr, len) = (entry.ai_addr.cast::<u8>(), entry.ai_addrlen as usize);
+                // SAFETY: `getaddrinfo` initialized `ai_addrlen` bytes at `ai_addr`.
+                return Some(unsafe { core::slice::from_raw_parts(addr, len) });
+            }
+        }
     }
 }
 
@@ -330,38 +364,12 @@ pub struct GetAddrInfoResult {
 
 pub type ResultList = Vec<GetAddrInfoResult>;
 
+#[cfg(windows)]
 impl GetAddrInfoResult {
-    pub fn to_list(addrinfo: &sock::addrinfo) -> ResultList {
-        let mut list = ResultList::with_capacity(addr_info_count(addrinfo) as usize);
-
-        let mut addr: *const sock::addrinfo = addrinfo;
-        while !addr.is_null() {
-            // SAFETY: addr is non-null, points into the getaddrinfo result chain
-            let a = unsafe { &*addr };
-            if let Some(r) = Self::from_addr_info(a) {
-                list.push(r);
-            }
-            addr = a.ai_next;
-        }
-
-        list
-    }
-
-    fn from_addr_info(addrinfo: &sock::addrinfo) -> Option<GetAddrInfoResult> {
-        let sockaddr = addrinfo.ai_addr;
-        if sockaddr.is_null() {
-            return None;
-        }
-        Some(GetAddrInfoResult {
-            // SAFETY: `ai_addr` is non-null and points to a valid sockaddr per
-            // getaddrinfo's contract. `.cast()` erases the nominal-type
-            // mismatch on Windows (ws2_32::sockaddr ↔ the libuv-sys mirror
-            // `bun_sys::posix::sockaddr` routes to) — both are the 16-byte
-            // ws2def.h `SOCKADDR`.
-            address: unsafe { Address::init_posix(sockaddr.cast()) },
-            // no TTL in POSIX getaddrinfo()
-            ttl: 0,
-        })
+    /// # Safety
+    /// `addrinfo` is an entry of a `getaddrinfo` result.
+    pub unsafe fn to_list(addrinfo: &sock::addrinfo) -> ResultList {
+        Addresses(Some(addrinfo)).into_list()
     }
 }
 
@@ -411,18 +419,6 @@ pub fn address_to_string(address: &Address) -> BunString {
         }
         _ => BunString::EMPTY,
     }
-}
-
-fn addr_info_count(addrinfo: &sock::addrinfo) -> u32 {
-    let mut count: u32 = 1;
-    let mut current: *mut sock::addrinfo = addrinfo.ai_next;
-    while !current.is_null() {
-        // SAFETY: current is non-null, points into the getaddrinfo result chain
-        let cur = unsafe { &*current };
-        count += (!cur.ai_addr.is_null()) as u32;
-        current = cur.ai_next;
-    }
-    count
 }
 
 // ──────────────────────────────────────────────────────────────────────────

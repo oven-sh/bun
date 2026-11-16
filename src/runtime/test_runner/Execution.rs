@@ -38,17 +38,18 @@
 use core::cell::{Cell, OnceCell};
 
 use bun_core::{Timespec, TimespecMockMode};
-use bun_jsc::{JSGlobalObject, JSValue, JsResult, Strong};
+use bun_jsc::{JSGlobalObject, JSValue, JsResult, Strong, StrongCell};
 // `bun_jsc::VirtualMachine` is the *module* re-export; the struct lives one level deeper.
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_core::scoped_log;
+use bun_ptr::CellExt as _;
 
 use super::debug::group as group_log; // bun_test.debug.group
 use super::bun_test::{
     group_begin, AddedInPhase, Around, AroundPhase, BunTest, BunTestPtr, Calling, EntryData, ExecutionEntry,
-    ExecutionEntryCfg, HandleUncaughtExceptionResult, Order, RefDataValue, ScopeMode, Step, StepId, StepResult,
+    ExecutionEntryCfg, HandleUncaughtExceptionResult, Order, RefDataValue, ScopeMode, SequenceEntry, SequenceEntryId,
+    StepResult,
 };
-use super::cells::{CellExt as _, StrongCell};
 use super::expect::expect_deferred::ExpectDeferred;
 use super::test_context::{self, Deferred, TestContext};
 use super::test_context_around::{self, AroundHook};
@@ -82,14 +83,14 @@ impl TimespecExt for Timespec {
 bun_core::declare_scope!(jest, visible);
 
 pub(crate) struct Execution {
-    schedule: OnceCell<Schedule>,
+    order: OnceCell<LoadedOrder>,
     pub(crate) group_index: Cell<usize>,
     /// The entry whose callback is on the stack, which `get_current_state_data()` can't name in a concurrent group.
     /// Cleared before the call's microtasks drain, because those can resume other tests in the group.
     pub(crate) on_stack: Cell<Option<EntryData>>,
 }
 
-struct Schedule {
+struct LoadedOrder {
     groups: Box<[ConcurrentGroup]>,
     sequences: Box<[ExecutionSequence]>,
 }
@@ -142,10 +143,10 @@ pub(crate) enum ExpectAssertions {
 }
 
 pub(crate) struct ExecutionSequence {
-    pub(crate) first_entry: Option<StepId>,
+    pub(crate) first_entry: Option<SequenceEntryId>,
     /// The entry that is not started or currently running
-    pub(crate) active_entry: Cell<Option<StepId>>,
-    pub(crate) test_entry: Option<StepId>,
+    pub(crate) active_entry: Cell<Option<SequenceEntryId>>,
+    pub(crate) test_entry: Option<SequenceEntryId>,
     pub(crate) remaining_repeat_count: Cell<u32>,
     pub(crate) remaining_retry_count: Cell<u32>,
     pub(crate) attempt: Cell<u32>,
@@ -158,7 +159,7 @@ pub(crate) struct ExecutionSequence {
     pub(crate) expect_assertions: Cell<ExpectAssertions>,
     pub(crate) maybe_skip: Cell<bool>,
     pub(crate) context: StrongCell,
-    deferred: Cell<Vec<(Deferred, StepId)>>,
+    deferred: Cell<Vec<(Deferred, SequenceEntryId)>>,
     /// Matchers the active entry called that still wait on a promise. The entry can't end until they've run.
     pub(crate) pending_matchers: Cell<u32>,
     /// The active entry's callback is done, and only `pending_matchers` keeps the entry open.
@@ -173,8 +174,8 @@ pub(crate) struct ExecutionSequence {
 
 impl ExecutionSequence {
     pub(crate) fn init(
-        first_entry: Option<StepId>,
-        test_entry: Option<StepId>,
+        first_entry: Option<SequenceEntryId>,
+        test_entry: Option<SequenceEntryId>,
         retry_count: u32,
         repeat_count: u32,
     ) -> ExecutionSequence {
@@ -241,18 +242,24 @@ impl ExecutionSequence {
     }
 
     fn has_vitest_entry(&self, buntest: &BunTest) -> bool {
-        buntest.steps_from(self.first_entry).any(|(_, step)| buntest.entry(step.entry).calling.is_vitest())
+        buntest
+            .sequence_entries_from(self.first_entry)
+            .any(|(_, sequence_entry)| buntest.entry(sequence_entry.entry).calling.is_vitest())
     }
 
-    pub(crate) fn test_follows(&self, buntest: &BunTest, entry: StepId) -> bool {
-        buntest.steps_from(buntest.step(entry).next.get()).any(|(id, _)| Some(id) == self.test_entry)
+    fn test_is_at_or_after(&self, buntest: &BunTest, first: Option<SequenceEntryId>) -> bool {
+        buntest.sequence_entries_from(first).any(|(id, _)| Some(id) == self.test_entry)
+    }
+
+    pub(crate) fn test_follows(&self, buntest: &BunTest, entry: SequenceEntryId) -> bool {
+        self.test_is_at_or_after(buntest, buntest.sequence_entry(entry).next.get())
     }
 
     /// Whether an `aroundEach` hook has yet to start. The active entry may be setting up a fixture for it.
     pub(crate) fn is_before_run_test(&self, buntest: &BunTest) -> bool {
         buntest
-            .steps_from(self.active_entry.get())
-            .any(|(_, step)| buntest.entry(step.entry).around == Some((Around::Each, AroundPhase::SetUp)))
+            .sequence_entries_from(self.active_entry.get())
+            .any(|(_, sequence_entry)| buntest.entry(sequence_entry.entry).around == Some((Around::Each, AroundPhase::SetUp)))
     }
 
     /// For `test.failing`, `Result::Pass` means the callback threw, which is a failed attempt here.
@@ -269,7 +276,7 @@ impl ExecutionSequence {
             "skip"
         } else if self.attempt_failed(buntest) {
             "fail"
-        } else if buntest.steps_from(self.active_entry.get()).any(|(id, _)| Some(id) == self.test_entry) {
+        } else if self.test_is_at_or_after(buntest, self.active_entry.get()) {
             "run"
         } else {
             "pass"
@@ -283,11 +290,11 @@ impl ExecutionSequence {
             around: (when == Deferred::Around).then_some((Around::Each, AroundPhase::TearDown)),
             ..Default::default()
         };
-        let entry = buntest.create_step(Some(callback), cfg, AddedInPhase::Execution);
+        let entry = buntest.create_sequence_entry(Some(callback), cfg, AddedInPhase::Execution);
         self.deferred.with_taken(|deferred| deferred.push((when, entry)));
     }
 
-    fn take_deferred(&self, buntest: &BunTest) -> Option<StepId> {
+    fn take_deferred(&self, buntest: &BunTest) -> Option<SequenceEntryId> {
         self.deferred.with_taken(|deferred| {
             loop {
                 let next = (0..deferred.len()).rev().min_by_key(|&index| deferred[index].0)?;
@@ -327,12 +334,12 @@ impl ExecutionSequence {
         }
     }
 
-    fn evaluate_timeout(&self, buntest: &BunTest, id: StepId, now: &Timespec) -> bool {
-        let step = buntest.step(id);
-        let timespec = step.timespec.get();
+    fn evaluate_timeout(&self, buntest: &BunTest, id: SequenceEntryId, now: &Timespec) -> bool {
+        let sequence_entry = buntest.sequence_entry(id);
+        let timespec = sequence_entry.timespec.get();
         if !timespec.eql(&Timespec::EPOCH) && timespec.order(now) == core::cmp::Ordering::Less {
             // timed out
-            let entry = buntest.entry(step.entry);
+            let entry = buntest.entry(sequence_entry.entry);
             let has_done_parameter = entry.calling == Calling::Jest { done: true };
             self.result.set(if entry.around.is_some() {
                 // `report_around_timeout` fails the sequence with an error.
@@ -437,14 +444,14 @@ impl Result {
 impl Execution {
     pub(crate) fn init() -> Execution {
         Execution {
-            schedule: OnceCell::new(),
+            order: OnceCell::new(),
             group_index: Cell::new(0),
             on_stack: Cell::new(None),
         }
     }
 
     pub(crate) fn load_from_order(&self, order: Order::Order<'_>) {
-        let loaded = self.schedule.set(Schedule {
+        let loaded = self.order.set(LoadedOrder {
             groups: order.groups.into_boxed_slice(),
             sequences: order.sequences.into_boxed_slice(),
         });
@@ -452,11 +459,11 @@ impl Execution {
     }
 
     pub(crate) fn groups(&self) -> &[ConcurrentGroup] {
-        self.schedule.get().map_or(&[], |schedule| &schedule.groups)
+        self.order.get().map_or(&[], |order| &order.groups)
     }
 
     pub(crate) fn sequences(&self) -> &[ExecutionSequence] {
-        self.schedule.get().map_or(&[], |schedule| &schedule.sequences)
+        self.order.get().map_or(&[], |order| &order.sequences)
     }
 
     /// The kill-only half of [`BunTest::handle_timeout`]: reaps a timed-out test's spawned processes without touching the runner's queue, so it may run from inside `spawnSync`'s isolated loop.
@@ -470,7 +477,7 @@ impl Execution {
                 let sequence = &sequences[0];
                 if let Some(entry) = sequence.active_entry.get() {
                     let now = Timespec::now_force_real_time();
-                    if buntest.step(entry).timespec.get().order(&now) == core::cmp::Ordering::Less {
+                    if buntest.sequence_entry(entry).timespec.get().order(&now) == core::cmp::Ordering::Less {
                         let kill_count = global_this.bun_vm().auto_killer.kill();
                         if kill_count.processes > 0 {
                             bun_core::pretty_errorln!(
@@ -611,17 +618,17 @@ impl Execution {
         }
         sequence.callback_done.set(false);
         if let Some(active_entry) = sequence.active_entry.get() {
-            let step = buntest.step(active_entry);
-            let entry = buntest.entry(step.entry);
+            let sequence_entry = buntest.sequence_entry(active_entry);
+            let entry = buntest.entry(sequence_entry.entry);
             if entry.added_in_phase == AddedInPhase::Preload {
                 bun_jsc::compiled_program::did_run_preloads(VirtualMachine::get().global());
             }
 
             sequence.executing.set(false);
             sequence.active_entry.set(if sequence.maybe_skip.take() {
-                step.failure_skip_past.get().and_then(|failure_skip_past| buntest.step(failure_skip_past).next.get())
+                sequence_entry.failure_skip_past.get().and_then(|id| buntest.sequence_entry(id).next.get())
             } else {
-                step.next.get()
+                sequence_entry.next.get()
             });
             if entry.calling.is_vitest() {
                 if Some(active_entry) == sequence.test_entry {
@@ -720,7 +727,7 @@ impl Execution {
         }
     }
 
-    fn on_entry_started(step: &Step, entry: &ExecutionEntry) {
+    fn on_entry_started(sequence_entry: &SequenceEntry, entry: &ExecutionEntry) {
         if !entry.callback.is_some() {
             return;
         }
@@ -728,10 +735,10 @@ impl Execution {
         let _g = group_begin!();
         if entry.timeout != 0 {
             group_log::log(format_args!("-> entry.timeout: {}", entry.timeout));
-            step.timespec.set(Timespec::ms_from_now_force_real_time(entry.timeout as i64));
+            sequence_entry.timespec.set(Timespec::ms_from_now_force_real_time(entry.timeout as i64));
         } else {
             group_log::log(format_args!("-> entry.timeout: 0"));
-            step.timespec.set(Timespec::EPOCH);
+            sequence_entry.timespec.set(Timespec::EPOCH);
         }
     }
 
@@ -813,15 +820,15 @@ impl Execution {
         {
             // reset the entries
             let mut current_entry = sequence.first_entry;
-            while let Some(step) = current_entry.map(|id| buntest.step(id)) {
+            while let Some(current) = current_entry.map(|id| buntest.sequence_entry(id)) {
                 // remove entries that were added in the execution phase
-                while let Some(next) = step.next.get().map(|id| buntest.step(id))
+                while let Some(next) = current.next.get().map(|id| buntest.sequence_entry(id))
                     && buntest.entry(next.entry).added_in_phase == AddedInPhase::Execution
                 {
-                    step.next.set(next.next.get());
+                    current.next.set(next.next.get());
                 }
-                step.timespec.set(Timespec::EPOCH);
-                current_entry = step.next.get();
+                current.timespec.set(Timespec::EPOCH);
+                current_entry = current.next.get();
             }
         }
 
@@ -960,7 +967,7 @@ fn step_group(
                 .sequences(this)
                 .iter()
                 .filter_map(|sequence| sequence.test_entry)
-                .map(|entry| buntest.step(entry).timespec.get())
+                .map(|entry| buntest.sequence_entry(entry).timespec.get())
                 .fold(Timespec::EPOCH, |latest, timespec| if timespec.order(&latest).is_gt() { timespec } else { latest });
             if timeout.eql(&Timespec::EPOCH) || timeout.order(now).is_gt() {
                 return Ok(StepResult::Waiting { timeout });
@@ -1107,7 +1114,7 @@ fn step_sequence_one(
         }
         group_log::log(format_args!("runOne: can't advance; already executing"));
         return Ok(Some(AdvanceSequenceStatus::Execute {
-            timeout: buntest.step(active_entry).timespec.get(),
+            timeout: buntest.sequence_entry(active_entry).timespec.get(),
         }));
     }
 
@@ -1118,14 +1125,14 @@ fn step_sequence_one(
         group_log::log(format_args!("runOne: no more entries; sequence complete."));
         return Ok(Some(AdvanceSequenceStatus::Done));
     };
-    let next_step = buntest.step(next_id);
-    let next_item = buntest.entry(next_step.entry);
+    let next_entry = buntest.sequence_entry(next_id);
+    let next_item = buntest.entry(next_entry.entry);
     sequence.executing.set(true);
     // The first entry becomes active again after its fixture setup entries, so `started_at` guards against a second start.
     if Some(next_id) == sequence.first_entry && sequence.started_at.get().eql(&Timespec::EPOCH) {
         Execution::on_sequence_started(buntest, global_this, sequence);
     }
-    Execution::on_entry_started(next_step, next_item);
+    Execution::on_entry_started(next_entry, next_item);
     if next_item.added_in_phase == AddedInPhase::Preload {
         bun_jsc::compiled_program::will_run_preloads(global_this);
     }
@@ -1186,8 +1193,8 @@ fn step_sequence_one(
                 Ok(NextFixture::Ready) => {}
                 Ok(NextFixture::SetUp(set_up)) => {
                     let set_up = buntest.create_vitest_entry(set_up, next_item.timeout);
-                    buntest.step(set_up).next.set(Some(next_id));
-                    buntest.step(set_up).failure_skip_past.set(next_step.failure_skip_past.get());
+                    buntest.sequence_entry(set_up).next.set(Some(next_id));
+                    buntest.sequence_entry(set_up).failure_skip_past.set(next_entry.failure_skip_past.get());
                     sequence.active_entry.set(Some(set_up));
                     sequence.executing.set(false);
                     return Ok(None); // run again
@@ -1232,7 +1239,7 @@ fn step_sequence_one(
             args,
             next_item.calling == Calling::Jest { done: true },
             callback_data,
-            &next_step.timespec.get(),
+            &next_entry.timespec.get(),
         )
         .is_some()
         {
@@ -1244,7 +1251,7 @@ fn step_sequence_one(
                 report_around_timeout(buntest, global_this, next_item, &callback_data)?;
             } else if sequence.waits_for_matchers() {
                 return Ok(Some(AdvanceSequenceStatus::Execute {
-                    timeout: next_step.timespec.get(),
+                    timeout: next_entry.timespec.get(),
                 }));
             }
 
@@ -1253,7 +1260,7 @@ fn step_sequence_one(
             return Ok(None); // run again
         }
         return Ok(Some(AdvanceSequenceStatus::Execute {
-            timeout: next_step.timespec.get(),
+            timeout: next_entry.timespec.get(),
         }));
     } else {
         match next_item.base.mode {

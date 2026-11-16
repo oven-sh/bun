@@ -4,7 +4,6 @@ use std::collections::VecDeque;
 use crate::api::cron::CronJob;
 use crate::jsc::virtual_machine::VirtualMachine;
 use crate::jsc_hooks::timer_all;
-use crate::test_runner::cells::{CellExt as _, StrongCell};
 use crate::timer::{
     AbortSignalTimeout, Clock, EventLoopTimer, EventLoopTimerState, EventLoopTimerTag,
     InHeap, Popped, TimerHeap, TimerObjectInternals,
@@ -14,8 +13,9 @@ use bun_core::{Timespec, TimespecMockMode};
 use bun_jsc::bindgen::{JsHeap, JsLocal, JsScope};
 use bun_jsc::{
     JSFunction, JSGlobalObject, JSHostFn, JSPromiseStrong, JSValue, JsError, JsResult, Strong,
-    StrongOptional,
+    StrongCell, StrongOptional,
 };
+use bun_ptr::CellExt as _;
 
 // JSMock C++ bindings (fake timers are only used by bun:test, so these stay local).
 unsafe extern "C" {
@@ -461,7 +461,7 @@ enum Step {
 }
 
 #[derive(Copy, Clone)]
-enum Pick {
+enum WhichTimer {
     First,
     FirstIfDue(Timespec),
     FirstImmediate,
@@ -929,12 +929,12 @@ impl FakeTimers {
     // Below, a returned `JSValue` is the exception a timer callback threw, or empty. A `JsError` means the VM is terminating.
 
     /// `None` if the heap has no such timer.
-    fn fire(global: &JSGlobalObject, pick: Pick) -> JsResult<Option<JSValue>> {
+    fn pop_and_fire(global: &JSGlobalObject, which: WhichTimer) -> JsResult<Option<JSValue>> {
         let this = &timer_all().fake_timers;
-        let Some(timer) = (match pick {
-            Pick::FirstIfDue(until) if this.first_due(&until).is_none() => None,
-            Pick::First | Pick::FirstIfDue(_) => this.timers.delete_min(),
-            Pick::FirstImmediate => this.timers.delete_first_immediate(),
+        let Some(timer) = (match which {
+            WhichTimer::FirstIfDue(until) if this.first_due(&until).is_none() => None,
+            WhichTimer::First | WhichTimer::FirstIfDue(_) => this.timers.delete_min(),
+            WhichTimer::FirstImmediate => this.timers.delete_first_immediate(),
         }) else {
             return Ok(None);
         };
@@ -994,7 +994,7 @@ impl FakeTimers {
     fn run_next(global: &JSGlobalObject) -> Result<Option<JSValue>, Stop> {
         Self::run_ticks(global)?;
         let _firing = Firing::begin();
-        let Some(thrown) = Self::fire(global, Pick::First)? else {
+        let Some(thrown) = Self::pop_and_fire(global, WhichTimer::First)? else {
             return Ok(None);
         };
         if thrown.is_empty() {
@@ -1016,7 +1016,7 @@ impl FakeTimers {
             if this.installs() != installs {
                 break;
             }
-            let Some(thrown) = Self::fire(global, Pick::FirstIfDue(until))? else {
+            let Some(thrown) = Self::pop_and_fire(global, WhichTimer::FirstIfDue(until))? else {
                 this.advance_clock_to(global, until);
                 break;
             };
@@ -1070,7 +1070,7 @@ impl FakeTimers {
         let this = &timer_all().fake_timers;
         let limit = this.loop_limit.get();
         for _ in 0..limit {
-            let Some(thrown) = Self::fire(global, Pick::FirstImmediate)? else {
+            let Some(thrown) = Self::pop_and_fire(global, WhichTimer::FirstImmediate)? else {
                 return Ok(JSValue::ZERO);
             };
             if !thrown.is_empty() {
@@ -1171,7 +1171,7 @@ impl FakeTimers {
                 Self::run_ticks(global)?;
                 let step = this.next_of_tick(global, id);
                 if let Some(Step::Again) = step
-                    && let Some(thrown) = Self::fire(global, Pick::First)?
+                    && let Some(thrown) = Self::pop_and_fire(global, WhichTimer::First)?
                 {
                     Self::drive_threw(global, id, thrown);
                 }
@@ -1196,7 +1196,7 @@ impl FakeTimers {
             Drive::Next(0, _) => Ok(Some(Step::Finished)),
             Drive::Next(steps, NextStep::First) => {
                 this.set_drive(id, Drive::Next(steps, NextStep::AfterFirst), false);
-                let Some(thrown) = Self::fire(global, Pick::First)? else {
+                let Some(thrown) = Self::pop_and_fire(global, WhichTimer::First)? else {
                     return Ok(Some(Step::Finished));
                 };
                 Self::drive_threw(global, id, thrown);
@@ -1208,7 +1208,7 @@ impl FakeTimers {
                 }
                 this.set_drive(id, Drive::Next(steps, NextStep::SameInstant), true);
                 Self::run_ticks(global)?;
-                let Some(thrown) = Self::fire(global, Pick::FirstIfDue(this.now()))? else {
+                let Some(thrown) = Self::pop_and_fire(global, WhichTimer::FirstIfDue(this.now()))? else {
                     let none_left = this.is_empty();
                     return Ok(this.with_drive(id, |drive| {
                         if steps == 1 || none_left || drive.thrown.has() {
@@ -1513,7 +1513,7 @@ fn use_fake_timers_with_default(
         }
         Flavor::Jest => options
             .now
-            .unwrap_or_else(|| JSMock__getCurrentUnixTimeMs()),
+            .unwrap_or_else(JSMock__getCurrentUnixTimeMs),
     };
     error_if_reading_globals(global)?;
     let ended = FakeTimers::install(global, &options, date_now)?;

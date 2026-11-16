@@ -237,16 +237,11 @@ impl Scripts {
             let cwd: &[u8] = 'brk: {
                 let Ok(cwd_handle) =
                     bun_sys::open_dir_no_renaming_or_deleting_windows(Fd::INVALID, cwd_.slice_z())
+                        .map(bun_sys::Dir::from_fd)
                 else {
                     break 'brk cwd_.slice();
                 };
-                // Resolve the canonical path, then close the directory HANDLE.
-                // (`Fd` is `Copy` with no `Drop`, so without this explicit
-                // close one kernel directory HANDLE leaks per script-bearing
-                // package.)
-                let path = bun_sys::get_fd_path(cwd_handle, &mut cwd_buf);
-                let _ = bun_sys::close(cwd_handle);
-                match path {
+                match cwd_handle.get_fd_path(&mut cwd_buf) {
                     Ok(p) => p,
                     Err(_) => cwd_.slice(),
                 }

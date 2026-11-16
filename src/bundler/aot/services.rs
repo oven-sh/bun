@@ -59,13 +59,9 @@ impl BuildContext {
         &self.bundle().transpiler().options
     }
 
-    pub(crate) fn with_worker<R>(
-        &self,
-        work: impl FnOnce(&mut Transpiler<'static>, &Arena) -> R,
-    ) -> R {
+    pub(crate) fn with_worker<R>(&self, work: impl FnOnce(&mut Transpiler<'static>) -> R) -> R {
         let mut worker = Worker::get(self.bundle());
-        let data = worker.data.as_mut().expect("Worker::get creates it");
-        with_ast_scope(|arena| work(&mut data.transpiler, arena))
+        with_ast_scope(|_| work(&mut worker.transpiler))
     }
 }
 
@@ -209,7 +205,6 @@ pub(crate) fn with_test_context<R>(
         None,
         &arena,
         Some(NonNull::from(&event_loop)),
-        false,
         None,
         &arena,
     );

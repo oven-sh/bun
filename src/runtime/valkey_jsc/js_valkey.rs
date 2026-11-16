@@ -21,17 +21,6 @@ use super::valkey_command_body::Command;
 use bun_jsc::url::Parsed;
 use bun_valkey::valkey_protocol as protocol;
 
-// ───────────────────────────────────────────────────────────────────────────
-// Local shims / extension traits (adapt-on-our-side)
-// ───────────────────────────────────────────────────────────────────────────
-
-/// Bridge JS-thread `VirtualMachine` to the aio-level `EventLoopCtx` used by
-/// `KeepAlive::ref_/unref`. Valkey always runs on the JS event loop.
-#[inline]
-fn vm_event_loop_ctx() -> bun_io::EventLoopCtx {
-    bun_io::posix_event_loop::get_vm_ctx(bun_io::AllocatorType::Js)
-}
-
 bun_output::define_scoped_log!(debug, RedisJS, visible);
 
 type Socket = uws::AnySocket;
@@ -908,7 +897,7 @@ impl JSValkeyClient {
         let _update = UpdatePollRefOnDrop(self);
 
         if self.client.get().status == valkey::Status::NeverConnected {
-            self.poll_ref.ref_(vm_event_loop_ctx());
+            self.poll_ref.ref_(bun_io::js_vm_ctx());
 
             if let Err(err) = self.connect() {
                 debug!(
@@ -1131,7 +1120,7 @@ impl JSValkeyClient {
         let _guard = self.ref_guard();
 
         // Ref the poll to keep event loop alive during connection
-        self.poll_ref.ref_(vm_event_loop_ctx());
+        self.poll_ref.ref_(bun_io::js_vm_ctx());
 
         if let Err(err) = self.connect() {
             debug!(
@@ -1558,10 +1547,10 @@ impl JSValkeyClient {
         if has_activity || status == valkey::Status::Connecting {
             // If we currently have pending activity or we are connecting, we need to keep the
             // event loop alive.
-            self.poll_ref.ref_(vm_event_loop_ctx());
+            self.poll_ref.ref_(bun_io::js_vm_ctx());
         } else {
             // There is no pending activity so it is safe to remove the event loop.
-            self.poll_ref.unref(vm_event_loop_ctx());
+            self.poll_ref.unref(bun_io::js_vm_ctx());
         }
 
         if self.this_value.get().is_empty() {

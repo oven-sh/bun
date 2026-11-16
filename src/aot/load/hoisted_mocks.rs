@@ -23,13 +23,6 @@ pub(crate) fn shown_name_of_namespace(name: &[u8]) -> Option<&[u8]> {
     is_namespace_of_hoisted_import(name).then(|| &name[NAMESPACE_PREFIX.len()..])
 }
 
-fn text_of<'a>(atoms: &'a Interner<'_>, text: Atom) -> &'a [u8] {
-    match text.is_none() {
-        true => b"",
-        false => atoms.bytes(text),
-    }
-}
-
 #[derive(Copy, Clone, PartialEq, Eq)]
 enum MockApi {
     Vi,
@@ -88,8 +81,8 @@ impl<'a, 'r, 's> Planner<'a, 'r, 's> {
             StmtKind::Import(import) => Some(import),
             _ => None,
         });
-        let of_runner = imports
-            .filter(|&it| !hir[it].type_only && is_test_module(text_of(atoms, hir[it].spec)));
+        let of_runner =
+            imports.filter(|&it| !hir[it].type_only && is_test_module(atoms.bytes(hir[it].spec)));
         let imported_apis = of_runner
             .flat_map(|it| hir[it].named.iter())
             .filter_map(|it| {
@@ -230,7 +223,7 @@ impl<'a, 'r, 's> Planner<'a, 'r, 's> {
         let imports = body.iter().filter(|&&it| match self.hir[it].kind {
             StmtKind::Import(import) => {
                 !self.hir.is_type_only_import(import)
-                    && !is_test_module(text_of(self.atoms, self.hir[import].spec))
+                    && !is_test_module(self.atoms.bytes(self.hir[import].spec))
             }
             _ => false,
         });
@@ -292,7 +285,7 @@ impl<'a, 'r, 's> Planner<'a, 'r, 's> {
         if node.type_only || node.spec.is_none() {
             return Place::InPlace;
         }
-        let path = text_of(self.atoms, node.spec);
+        let path = self.atoms.bytes(node.spec);
         if is_test_module(path) || table::module_by_specifier(path) == Some(RuntimeModule::Bun) {
             return Place::BeforeHoisted;
         }
@@ -605,9 +598,9 @@ impl Plan {
         let lowered: Vec<(StmtId, ImportId)> = lowered.collect();
         let locals = lowered.iter().enumerate().map(|(position, it)| {
             let mut local = NAMESPACE_PREFIX.as_bytes().to_vec();
-            match text_of(atoms, file[it.1].namespace) {
+            match atoms.bytes(file[it.1].namespace) {
                 b"" => {
-                    let path = PathName::init(text_of(atoms, file[it.1].spec)).fmt_identifier();
+                    let path = PathName::init(atoms.bytes(file[it.1].spec)).fmt_identifier();
                     local.extend(format!("import_{path}${}", position + 1).into_bytes());
                 }
                 written => local.extend_from_slice(written),

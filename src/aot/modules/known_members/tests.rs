@@ -81,6 +81,14 @@ fn members_of_enums_that_the_program_stores_into() {
         "import { set } from './helper'; set(State, 'Ready');",
         "import * as helpers from './helper'; helpers.set(State, 'Ready');",
         "import * as all from './states'; (all.State as any).Ready = 9;",
+        "const box = { set(held: any) { held.Ready = 9; } }; box.set(State);",
+        "class Kinds { static set(held: any) { held.Ready = 9; } } Kinds.set(State);",
+        "function set(_: any, held: any) { held['Ready'] = 9; } (set as any)(...[1], State);",
+        "const all: any = { State }; all.State.Ready = 9;",
+        "const all: any = { State }; all.State[process.argv[2]] = 9;",
+        "const get = (): any => State; get().Ready = 9;",
+        "for (const held of [State] as any[]) delete held.Ready;",
+        "function set(this: any) { this.Ready = 9; } set.call(State);",
     ] {
         assert!(is_read_off_object_behind(store), "{store}");
     }
@@ -92,6 +100,9 @@ fn members_of_enums_that_the_program_stores_into() {
         "console.log([State].length);",
         "const held: any = { ...State }; held.Ready = 9;",
         "import { read } from './helper'; read(State);",
+        "class Kind { Ready: any; constructor() { this.Ready = 9; } } console.log(new Kind(), State);",
+        "const paint: any = {}; paint.Ready = 9; console.log(paint, State);",
+        "const box = { set(held: any) { held.Ready = 9; } }; box.set({});",
     ] {
         assert!(!is_read_off_object_behind(read), "{read}");
     }

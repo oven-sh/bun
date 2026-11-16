@@ -1078,6 +1078,46 @@ describe.each(implementations)("ws over a JS stream ($name)", ({ ws: implementat
       ]);
     });
 
+    // Without a resume 'close' waits for the 30 s close timer, which is longer than this test's timeout.
+    test.each(["message", "error"])(
+      "a protocol error resumes a stream that was paused in a %j listener",
+      async name => {
+        await using connection = await open(implementation, role);
+        const { ws, peer, events, closed } = connection;
+        ws.on(name, () => ws.pause());
+        peer.write(Buffer.concat([peer.frame(OP.text, "hello"), peer.frame(3, "reserved")]));
+        await peer.echoClose();
+        expect(await closed).toBe(false);
+        expect(events).toEqual([
+          'message Buffer("hello") text rs=1',
+          `error ${invalidFrame("invalid opcode 3", "WS_ERR_INVALID_OPCODE")} rs=2`,
+          abnormalClose,
+        ]);
+      },
+      15_000,
+    );
+
+    test.each([{ left: "a frame" }, { left: "half a frame" }])(
+      "a chunk that arrives in a listener waits for $left that is left of the chunk being parsed, after resume() too",
+      async ({ left }) => {
+        await using connection = await open(implementation, role);
+        const { ws, stream, peer, events } = connection;
+        const [first, second, third] = ["first", "second", "third"].map(text => peer.frame(OP.text, text));
+        const cut = left === "a frame" ? second.length : 4;
+        ws.once("message", () => {
+          ws.pause();
+          ws.resume();
+          stream.push(Buffer.concat([second.subarray(cut), third]));
+          // Bun.build() ticks the event loop until a plugin's setup() settles.
+          const setup = () => new Promise<void>(resolve => setImmediate(resolve));
+          Bun.build({ entrypoints: ["./none.js"], plugins: [{ name: "spin", setup }] }).catch(() => {});
+        });
+        stream.push(Buffer.concat([first, second.subarray(0, cut)]));
+        expect(await peer.roundTrip()).toEqual([]);
+        expect(events).toEqual(["first", "second", "third"].map(text => `message Buffer("${text}") text rs=1`));
+      },
+    );
+
     test("1 MiB text and binary messages in both directions", async () => {
       await using connection = await open(implementation, role);
       const { ws, peer } = connection;

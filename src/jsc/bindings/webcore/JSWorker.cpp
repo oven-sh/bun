@@ -30,6 +30,7 @@
 #include <sys/resource.h>
 #if defined(__APPLE__)
 #include <mach/mach.h>
+#include <pthread.h>
 #endif
 #endif
 
@@ -918,14 +919,12 @@ static inline JSC::EncodedJSValue jsWorkerPrototypeFunction_cpuUsageInternalBody
 #elif defined(__APPLE__)
         // Darwin has no RUSAGE_THREAD; RUSAGE_SELF would report whole-process
         // CPU for every worker. Use mach thread_info for this thread only.
-        mach_port_t machThread = mach_thread_self();
         thread_basic_info_data_t tinfo;
         mach_msg_type_number_t tcount = THREAD_BASIC_INFO_COUNT;
-        if (thread_info(machThread, THREAD_BASIC_INFO, reinterpret_cast<thread_info_t>(&tinfo), &tcount) == KERN_SUCCESS) {
+        if (thread_info(pthread_mach_thread_np(pthread_self()), THREAD_BASIC_INFO, reinterpret_cast<thread_info_t>(&tinfo), &tcount) == KERN_SUCCESS) {
             user = static_cast<double>(tinfo.user_time.seconds) * 1e6 + static_cast<double>(tinfo.user_time.microseconds);
             sys = static_cast<double>(tinfo.system_time.seconds) * 1e6 + static_cast<double>(tinfo.system_time.microseconds);
         }
-        mach_port_deallocate(mach_task_self(), machThread);
 #else
         struct rusage ru;
         memset(&ru, 0, sizeof(ru));

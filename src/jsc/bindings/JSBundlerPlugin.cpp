@@ -415,8 +415,7 @@ JSC_DEFINE_HOST_FUNCTION(jsBundlerPluginFunction_onBeforeParse, (JSC::JSGlobalOb
         Bun::throwError(globalObject, scope, ErrorCode::ERR_INVALID_ARG_TYPE, "Expected node_addon (2nd argument) to have a napiDlopenHandle property"_s);
         return {};
     }
-    Bun::NapiModuleMeta* meta = (Bun::NapiModuleMeta*)napi_external->value();
-    void* dlopen_handle = meta->dlopenHandle;
+    void* dlopen_handle = napi_external->value();
     UTF8CString utf8 = on_before_parse_symbol.utf8();
 
 #if OS(WINDOWS)

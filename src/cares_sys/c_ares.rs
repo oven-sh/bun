@@ -1234,6 +1234,34 @@ impl struct_ares_txt_reply {
     }
 }
 
+/// Extended c-ares TXT reply with the boundary of each DNS resource record.
+/// The legacy reply is still used by resolveAny.
+#[repr(C)]
+pub struct struct_ares_txt_ext {
+    pub next: *mut struct_ares_txt_ext,
+    txt: *mut u8,
+    length: usize,
+    pub record_start: u8,
+}
+
+impl AresReply for struct_ares_txt_ext {
+    const PARSE: unsafe extern "C" fn(*const u8, c_int, *mut *mut Self) -> c_int =
+        ares_parse_txt_reply_ext;
+}
+
+impl struct_ares_txt_ext {
+    /// Safe view of the c-ares-owned TXT character-string bytes.
+    #[inline]
+    pub fn txt_bytes(&self) -> &[u8] {
+        if self.txt.is_null() {
+            &[]
+        } else {
+            // SAFETY: the parser owns txt for the lifetime of this reply list.
+            unsafe { core::slice::from_raw_parts(self.txt, self.length) }
+        }
+    }
+}
+
 #[repr(C)]
 pub struct struct_ares_naptr_reply {
     pub next: *mut struct_ares_naptr_reply,
@@ -1510,6 +1538,11 @@ unsafe extern "C" {
         abuf: *const u8,
         alen: c_int,
         txt_out: *mut *mut struct_ares_txt_reply,
+    ) -> c_int;
+    pub fn ares_parse_txt_reply_ext(
+        abuf: *const u8,
+        alen: c_int,
+        txt_out: *mut *mut struct_ares_txt_ext,
     ) -> c_int;
     pub fn ares_parse_naptr_reply(
         abuf: *const u8,

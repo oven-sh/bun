@@ -1815,7 +1815,7 @@ impl_cares_record_type!(
     super::cares_jsc::soa_reply_to_js_response
 );
 impl_cares_record_type!(
-    c_ares::struct_ares_txt_reply,
+    c_ares::struct_ares_txt_ext,
     "txt",
     "queryTxt",
     Txt,
@@ -2568,7 +2568,7 @@ impl Resolver {
                 self.do_resolve_cares::<c_ares::struct_ares_srv_reply>(name, global_this, context)
             }
             RecordType::TXT => {
-                self.do_resolve_cares::<c_ares::struct_ares_txt_reply>(name, global_this, context)
+                self.do_resolve_cares::<c_ares::struct_ares_txt_ext>(name, global_this, context)
             }
         }
     }
@@ -2838,7 +2838,7 @@ impl Resolver {
         global_resolve_txt,
         resolve_txt,
         "resolveTxt",
-        c_ares::struct_ares_txt_reply,
+        c_ares::struct_ares_txt_ext,
         false
     );
     resolve_record_fn!(

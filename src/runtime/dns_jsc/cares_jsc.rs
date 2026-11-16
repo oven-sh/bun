@@ -367,23 +367,36 @@ fn mx_reply_to_js(
     Ok(obj)
 }
 
-// ── struct_ares_txt_reply ──────────────────────────────────────────────────
+// ── TXT replies ───────────────────────────────────────────────────────────
 pub(crate) fn txt_reply_to_js_response(
-    this: &mut c_ares::struct_ares_txt_reply,
+    this: &mut c_ares::struct_ares_txt_ext,
     global_this: &JSGlobalObject,
     _lookup_name: &'static [u8],
 ) -> JsResult<JSValue> {
-    cares_list_to_js_array(this, global_this, txt_reply_to_js)
-}
+    let records = JSValue::create_empty_array(global_this, 0)?;
+    let mut record_index = 0;
+    let mut chunk_index = 0;
+    let mut chunks = JSValue::UNDEFINED;
+    let mut p: *const c_ares::struct_ares_txt_ext = this;
 
-fn txt_reply_to_js(
-    this: &c_ares::struct_ares_txt_reply,
-    global_this: &JSGlobalObject,
-) -> JsResult<JSValue> {
-    let array = JSValue::create_empty_array(global_this, 1)?;
-    let value = this.txt_bytes();
-    array.put_index(global_this, 0, utf8_to_js(global_this, value)?)?;
-    Ok(array)
+    while !p.is_null() {
+        // SAFETY: c-ares owns the entire linked list until the caller frees it.
+        let part = unsafe { &*p };
+        if record_index == 0 || part.record_start != 0 {
+            chunks = JSValue::create_empty_array(global_this, 0)?;
+            records.put_index(global_this, record_index, chunks)?;
+            record_index += 1;
+            chunk_index = 0;
+        }
+        chunks.put_index(
+            global_this,
+            chunk_index,
+            utf8_to_js(global_this, part.txt_bytes())?,
+        )?;
+        chunk_index += 1;
+        p = part.next;
+    }
+    Ok(records)
 }
 
 fn txt_reply_to_js_for_any(

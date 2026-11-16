@@ -1684,6 +1684,45 @@ describe("bundler", () => {
       run: { file: "/out/entry.js", stdout: "named: function named true true" },
     });
 
+    // The component module is the entry point, so the chunk exports the function too.
+    for (const format of ["cjs", "esm"] as const) {
+      itBundled(`jsx/FastRefreshNamedDefaultHooks-${format}`, {
+        files: {
+          "/index.tsx": `
+            globalThis.$RefreshSig$ = () => fn => fn;
+            globalThis.$RefreshReg$ = fn => { globalThis.registered = fn; };
+            function useThing() { return 1; }
+            export default function Counter() { return useThing(); }
+            console.log(Counter.name, Counter(), globalThis.registered === Counter);
+          `,
+        },
+        backend: "cli",
+        format,
+        reactFastRefresh: true,
+        run: { stdout: "Counter 1 true" },
+      });
+    }
+
+    itBundled("jsx/FastRefreshDefaultFunctionWithHookDeclaresNameOnce", {
+      files: {
+        "/index.tsx": /* js */ `
+          globalThis.$RefreshSig$ = () => fn => fn;
+          globalThis.$RefreshReg$ = () => {};
+          function useThing() { return 1; }
+          export default function A() {
+            return useThing();
+          }
+          console.log(A());
+        `,
+      },
+      backend: "api",
+      reactFastRefresh: true,
+      onAfterBundle(api) {
+        expect(api.readFile("out.js").match(/\b(var|let|const|function) A\b/g)).toEqual(["function A"]);
+      },
+      run: { stdout: "1" },
+    });
+
     // `require()` of an ES module wraps the module. A function declaration moves outside the wrapper.
     itBundled("jsx/FastRefreshDefaultFunctionWithHookWrapped", {
       files: {

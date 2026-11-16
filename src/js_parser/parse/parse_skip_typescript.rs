@@ -27,7 +27,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
     }
 
     #[inline]
-    pub(crate) fn skip_typescript_return_type_with_metadata(&mut self) -> Result<Metadata, Error> {
+    pub(crate) fn skip_typescript_return_type_with_metadata(
+        &mut self,
+    ) -> Result<Metadata<'a>, Error> {
         let mut result = Metadata::DEFAULT;
         self.skip_type_script_type_with_opts::<true>(
             Level::Lowest,
@@ -47,7 +49,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
     pub(crate) fn skip_type_script_type_with_metadata(
         &mut self,
         level: Level,
-    ) -> Result<Metadata, Error> {
+    ) -> Result<Metadata<'a>, Error> {
         self.mark_type_script_only();
         let mut result = Metadata::DEFAULT;
         self.skip_type_script_type_with_opts::<true>(
@@ -212,7 +214,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
     ///
     pub(crate) fn skip_type_script_paren_or_fn_type<const GET_METADATA: bool>(
         &mut self,
-        result: Option<&mut Metadata>,
+        result: Option<&mut Metadata<'a>>,
     ) -> Result<(), Error> {
         self.mark_type_script_only();
 
@@ -241,7 +243,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
         &mut self,
         level: Level,
         opts: SkipTypeOptionsBitset,
-        mut result: Option<&mut Metadata>,
+        mut result: Option<&mut Metadata<'a>>,
     ) -> Result<(), Error> {
         self.mark_type_script_only();
 

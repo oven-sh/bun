@@ -16,22 +16,22 @@ type PResult<T = ()> = crate::Result<T>;
 type DupMap = bun_collections::HashMap<u64, (), bun_collections::IdentityContext<u64>>;
 
 pub(crate) struct Parser<'a, 's, 'i> {
-    contents: &'s [u8],
+    contents: &'a [u8],
     source: &'s Source<'s>,
-    log: &'a Log,
+    log: &'s Log,
     arena: &'a AstArena,
-    idx: &'i mut StructuralIndex<'s>,
+    idx: &'i mut StructuralIndex<'a>,
     pub cursor: usize,
     opts: JSONOptions,
     token_start: usize,
     prev_error_loc: Loc,
     stack_check: StackCheck,
-    scratch_props: Vec<E::PropertyJSON>,
-    scratch_json_items: Vec<E::JsonValue>,
+    scratch_props: Vec<E::PropertyJSON<'a>>,
+    scratch_json_items: Vec<E::JsonValue<'a>>,
     scratch_prop_value_locs: Vec<Loc>,
     scratch_item_locs: Vec<Loc>,
     scratch_str: Vec<u8>,
-    tape: Option<core::ptr::NonNull<E::JsonTape>>,
+    tape: Option<core::ptr::NonNull<E::JsonTape<'a>>>,
     tape_owned: bool,
     dup_hashes: Vec<u64>,
     dup_maps: Vec<DupMap>,
@@ -71,7 +71,7 @@ impl Drop for Parser<'_, '_, '_> {
     }
 }
 
-pub(crate) fn to_json_value(data: Data) -> E::JsonValue {
+pub(crate) fn to_json_value(data: Data<'_>) -> E::JsonValue<'_> {
     match data {
         Data::ENumber(n) => E::JsonValue::Number(n),
         Data::EBoolean(b) => E::JsonValue::Boolean(b.value),
@@ -101,28 +101,25 @@ pub(crate) fn is_exotic_whitespace(cp: CodePoint) -> bool {
 impl<'a, 's, 'i> Parser<'a, 's, 'i> {
     pub(crate) fn new(
         source: &'s Source<'s>,
-        log: &'a Log,
+        contents: &'a [u8],
+        log: &'s Log,
         arena: &'a AstArena,
-        idx: &'i mut StructuralIndex<'s>,
+        idx: &'i mut StructuralIndex<'a>,
         opts: JSONOptions,
-        tape_alloc: E::TapeAlloc,
+        tape_alloc: E::TapeAlloc<'a>,
     ) -> Self {
         // `root_ptr` both times: it takes `&mut JsonTape`, so neither arm can
         // hand `tape` a frozen, shared-reborrow pointer. The parser writes
         // through `tape` for the rest of the parse.
         let (tape, tape_owned) = match tape_alloc {
             E::TapeAlloc::Global => (Box::leak(Box::new(E::JsonTape::empty())).root_ptr(), true),
-            E::TapeAlloc::Arena(arena) => {
-                // SAFETY: the caller's arena (lifetime-erased) outlives the parse and the AST.
-                let arena: &Bump = unsafe { arena.as_ref() };
-                (
-                    arena.alloc(E::JsonTape::empty_in(tape_alloc)).root_ptr(),
-                    false,
-                )
-            }
+            E::TapeAlloc::Arena(arena) => (
+                arena.alloc(E::JsonTape::empty_in(tape_alloc)).root_ptr(),
+                false,
+            ),
         };
         Parser {
-            contents: &source.contents,
+            contents,
             source,
             log,
             arena,
@@ -145,7 +142,7 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
         }
     }
 
-    pub(crate) fn take_tape(&mut self) -> Option<Box<E::JsonTape>> {
+    pub(crate) fn take_tape(&mut self) -> Option<Box<E::JsonTape<'a>>> {
         let tape = self.tape.take()?;
         if !self.tape_owned {
             return None;
@@ -165,7 +162,7 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
     }
 
     #[inline(always)]
-    fn run(&mut self, cursor: usize) -> &'s [u8] {
+    fn run(&mut self, cursor: usize) -> &'a [u8] {
         let (a, b) = (self.pos_at(cursor), self.pos_at(cursor + 1));
         &self.contents[a..b]
     }
@@ -378,7 +375,7 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
         self.unexpected(self.cursor)
     }
 
-    pub(crate) fn parse_value(&mut self) -> PResult<Expr> {
+    pub(crate) fn parse_value(&mut self) -> PResult<Expr<'a>> {
         let cursor = self.cursor;
         let start = self.pos_at(cursor);
         if start >= self.contents.len() {
@@ -404,12 +401,12 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
     /// built, and every such write invalidates a pointer derived from a shared
     /// reborrow (see [`E::ObjectJSON::new`]).
     #[inline]
-    fn tape_ptr(&self) -> core::ptr::NonNull<E::JsonTape> {
+    fn tape_ptr(&self) -> core::ptr::NonNull<E::JsonTape<'a>> {
         self.tape.expect("the tape was already taken")
     }
 
     #[inline]
-    fn tape_mut(&mut self) -> &mut E::JsonTape {
+    fn tape_mut(&mut self) -> &mut E::JsonTape<'a> {
         // SAFETY: allocated in `Parser::new` and exclusively owned until
         // `take_tape`; a fresh reborrow of the root pointer per call.
         unsafe { self.tape.expect("the tape was already taken").as_mut() }
@@ -446,7 +443,7 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
     }
 
     #[inline(always)]
-    fn parse_json_value(&mut self) -> PResult<(E::JsonValue, Loc)> {
+    fn parse_json_value(&mut self) -> PResult<(E::JsonValue<'a>, Loc)> {
         let cursor = self.cursor;
         let start = self.pos_at(cursor);
         if start >= self.contents.len() {
@@ -479,7 +476,7 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
     }
 
     #[inline(always)]
-    fn string_body_at(&mut self, open: usize) -> PResult<(&'s [u8], bool)> {
+    fn string_body_at(&mut self, open: usize) -> PResult<(&'a [u8], bool)> {
         let i = self.cursor;
         debug_assert_eq!(open, self.pos_at(i));
         let close = self.pos_at(i + 1);
@@ -496,13 +493,13 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
         Ok((body, dirty))
     }
 
-    fn parse_string(&mut self) -> PResult<E::EString> {
+    fn parse_string(&mut self) -> PResult<E::EString<'a>> {
         let open = self.pos_at(self.cursor);
         Ok(E::EString::init(self.parse_string_utf8_at(open)?.slice()))
     }
 
     #[inline(always)]
-    fn parse_string_utf8_at(&mut self, open: usize) -> PResult<E::Str> {
+    fn parse_string_utf8_at(&mut self, open: usize) -> PResult<E::Str<'a>> {
         let (body, dirty) = self.string_body_at(open)?;
         if dirty {
             return Ok(self.parse_string_slow(body)?.data);
@@ -510,12 +507,13 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
         Ok(E::Str::new(body))
     }
 
-    fn alloc_owned_str(&mut self, bytes: &[u8]) -> E::Str {
-        self.tape_mut().alloc_str(bytes)
+    fn alloc_owned_str(&mut self, bytes: &[u8]) -> E::Str<'a> {
+        // SAFETY: a tape in the arena is never dropped. `ParseOutput` owns any other, and its users stop reading `root` before they drop it.
+        unsafe { self.tape_mut().alloc_str(bytes) }
     }
 
     #[cold]
-    fn parse_string_slow(&mut self, body: &'s [u8]) -> PResult<E::EString> {
+    fn parse_string_slow(&mut self, body: &'a [u8]) -> PResult<E::EString<'a>> {
         let mut first_special = None;
         for (k, &b) in body.iter().enumerate() {
             if b == b'\\' || b < 0x20 {
@@ -557,7 +555,7 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
         decode_string_escapes::<false, _>(self, body, buf)
     }
 
-    fn parse_scalar(&mut self, loc: Loc) -> PResult<Expr> {
+    fn parse_scalar(&mut self, loc: Loc) -> PResult<Expr<'a>> {
         let cursor = self.cursor;
         let run = self.run(cursor);
         debug_assert!(!run.is_empty());
@@ -623,7 +621,7 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
         true
     }
 
-    fn parse_array(&mut self, loc: Loc) -> PResult<Expr> {
+    fn parse_array(&mut self, loc: Loc) -> PResult<Expr<'a>> {
         if !self.stack_check.is_safe_to_recurse() {
             return Err(self.too_deeply_nested(loc));
         }
@@ -710,7 +708,7 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
         ))
     }
 
-    fn parse_object(&mut self, loc: Loc) -> PResult<Expr> {
+    fn parse_object(&mut self, loc: Loc) -> PResult<Expr<'a>> {
         if !self.stack_check.is_safe_to_recurse() {
             return Err(self.too_deeply_nested(loc));
         }
@@ -891,7 +889,7 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
         );
     }
 
-    fn parse_number(&mut self, loc: Loc) -> PResult<Expr> {
+    fn parse_number(&mut self, loc: Loc) -> PResult<Expr<'a>> {
         let cursor = self.cursor;
         let full_run = self.run(cursor);
         let start = self.pos_at(cursor);
@@ -909,7 +907,7 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
     }
 
     #[cold]
-    fn parse_negative_number_at(&mut self, minus_pos: usize, loc: Loc) -> PResult<Expr> {
+    fn parse_negative_number_at(&mut self, minus_pos: usize, loc: Loc) -> PResult<Expr<'a>> {
         self.token_start = minus_pos;
         let contents = self.contents;
         let Some(q) = crate::json::skip_ws_and_comments(contents, minus_pos + 1) else {
@@ -1157,7 +1155,7 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
     }
 
     #[cold]
-    fn parse_scalar_cold(&mut self, loc: Loc) -> PResult<Expr> {
+    fn parse_scalar_cold(&mut self, loc: Loc) -> PResult<Expr<'a>> {
         let cursor = self.cursor;
         let run = self.run(cursor);
         let start = self.pos_at(cursor);
@@ -1189,7 +1187,7 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
     }
 
     #[cold]
-    fn parse_scalar_tail(&mut self, pos: usize) -> PResult<Expr> {
+    fn parse_scalar_tail(&mut self, pos: usize) -> PResult<Expr<'a>> {
         let end = self.pos_at(self.cursor + 1);
         let tail = &self.contents[pos..end];
         let loc_tail = usize2loc(pos);
@@ -1232,7 +1230,7 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
     }
 
     #[cold]
-    fn parse_escaped_identifier(&mut self, start: usize, loc: Loc) -> PResult<Expr> {
+    fn parse_escaped_identifier(&mut self, start: usize, loc: Loc) -> PResult<Expr<'a>> {
         let cursor = self.cursor;
         let run = &self.contents[start..self.pos_at(cursor + 1)];
         self.token_start = start;
@@ -1416,13 +1414,13 @@ impl LexerLog for MiniLog<'_, '_> {
     }
 }
 
-pub(crate) fn decode_auto_quoted(
+pub(crate) fn decode_auto_quoted<'a>(
     source: &Source,
     log: &Log,
-    bump: &Bump,
+    bump: &'a Bump,
     body: &[u8],
     opts: JSONOptions,
-) -> crate::Result<E::String> {
+) -> crate::Result<E::String<'a>> {
     let mut l = MiniLog {
         log,
         source,

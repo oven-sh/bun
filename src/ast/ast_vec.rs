@@ -6,7 +6,7 @@ use core::mem::MaybeUninit;
 use core::ops::{Deref, DerefMut};
 use core::ptr::NonNull;
 
-use crate::{AstArena, StoreRef, StoreSlice};
+use crate::{AstArena, StoreSlice};
 
 /// Not generic, so that `grow` and `with_capacity_in` are compiled once.
 struct RawAstVec {
@@ -15,7 +15,7 @@ struct RawAstVec {
     cap: u32,
 }
 
-// SAFETY: only `AstVec<T>` holds a `RawAstVec`. It owns its items as `Vec<T>` does, and its `PhantomData<T>`
+// SAFETY: only `AstVec<T>` holds a `RawAstVec`. It owns its items as `Vec<T>` does, and its `PhantomData`
 // requires `T: Send`.
 unsafe impl Send for RawAstVec {}
 // SAFETY: as for `Send`, with `T: Sync`. `&AstVec<T>` only hands out `&T`.
@@ -60,15 +60,15 @@ impl RawAstVec {
 }
 
 /// Items are never dropped. An outgrown buffer is freed when the arena resets.
-pub struct AstVec<T> {
-    /// `ptr` is aligned for `T` and valid for `cap` items. The first `len` are initialized.
+pub struct AstVec<'a, T> {
+    /// `ptr` is aligned for `T` and valid for `cap` items during `'a`. The first `len` are initialized.
     buf: RawAstVec,
-    _marker: PhantomData<T>,
+    _marker: PhantomData<(&'a (), T)>,
 }
 
 const _: () = assert!(size_of::<AstVec<u64>>() == 16);
 
-impl<T> AstVec<T> {
+impl<'a, T> AstVec<'a, T> {
     #[inline]
     pub const fn new() -> Self {
         const { assert!(!core::mem::needs_drop::<T>()) };
@@ -83,7 +83,7 @@ impl<T> AstVec<T> {
     }
 
     #[inline]
-    pub fn with_capacity_in(capacity: usize, arena: &AstArena) -> Self {
+    pub fn with_capacity_in(capacity: usize, arena: &'a AstArena) -> Self {
         let mut list = Self::new();
         if capacity > 0 {
             list.buf = RawAstVec::with_capacity_in(capacity, Layout::new::<T>(), arena);
@@ -92,7 +92,7 @@ impl<T> AstVec<T> {
     }
 
     #[inline]
-    pub fn from_slice_in(items: &[T], arena: &AstArena) -> Self
+    pub fn from_slice_in(items: &[T], arena: &'a AstArena) -> Self
     where
         T: Copy,
     {
@@ -105,7 +105,7 @@ impl<T> AstVec<T> {
         list
     }
 
-    pub fn from_iter_in(items: impl IntoIterator<Item = T>, arena: &AstArena) -> Self {
+    pub fn from_iter_in(items: impl IntoIterator<Item = T>, arena: &'a AstArena) -> Self {
         let items = items.into_iter();
         let mut list = Self::with_capacity_in(items.size_hint().0, arena);
         list.extend(arena, items);
@@ -159,7 +159,7 @@ impl<T> AstVec<T> {
     }
 
     #[inline]
-    pub fn reserve(&mut self, arena: &AstArena, additional: usize) {
+    pub fn reserve(&mut self, arena: &'a AstArena, additional: usize) {
         if additional > (self.buf.cap - self.buf.len) as usize {
             // SAFETY: every allocation of `self.buf` uses the layout of `T`.
             unsafe { self.buf.grow(arena, Layout::new::<T>(), additional) };
@@ -167,7 +167,7 @@ impl<T> AstVec<T> {
     }
 
     #[inline]
-    pub fn push(&mut self, arena: &AstArena, item: T) {
+    pub fn push(&mut self, arena: &'a AstArena, item: T) {
         self.reserve(arena, 1);
         // SAFETY: `len < cap` after `reserve`.
         unsafe { self.buf.ptr.cast::<T>().add(self.len()).write(item) };
@@ -175,7 +175,7 @@ impl<T> AstVec<T> {
     }
 
     #[inline]
-    pub fn extend_from_slice(&mut self, arena: &AstArena, items: &[T])
+    pub fn extend_from_slice(&mut self, arena: &'a AstArena, items: &[T])
     where
         T: Copy,
     {
@@ -184,7 +184,7 @@ impl<T> AstVec<T> {
         self.buf.len += items.len() as u32;
     }
 
-    pub fn extend(&mut self, arena: &AstArena, items: impl IntoIterator<Item = T>) {
+    pub fn extend(&mut self, arena: &'a AstArena, items: impl IntoIterator<Item = T>) {
         let items = items.into_iter();
         self.reserve(arena, items.size_hint().0);
         for item in items {
@@ -238,32 +238,28 @@ impl<T> AstVec<T> {
         self.truncate(kept);
     }
 
-    pub(crate) fn try_deep_clone_with<E>(
-        &self,
-        arena: &AstArena,
-        mut clone_one: impl FnMut(&T) -> Result<T, E>,
-    ) -> Result<Self, E> {
-        let mut clones = Self::with_capacity_in(self.len(), arena);
-        for item in self {
-            clones.push(arena, clone_one(item)?);
+    #[inline]
+    pub fn leak(self) -> &'a mut [T] {
+        // SAFETY: the first `len` items are initialized and valid for `'a`, and `self` gives them up.
+        unsafe {
+            NonNull::slice_from_raw_parts(self.buf.ptr.cast(), self.buf.len as usize).as_mut()
         }
-        Ok(clones)
     }
 
     #[inline]
-    pub fn into_store_slice(mut self) -> StoreSlice<T> {
-        StoreSlice::new_mut(self.slice_mut())
+    pub fn into_store_slice(self) -> StoreSlice<'a, T> {
+        StoreSlice::new_mut(self.leak())
     }
 }
 
-impl<T> Default for AstVec<T> {
+impl<T> Default for AstVec<'_, T> {
     #[inline]
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl<T> Deref for AstVec<T> {
+impl<T> Deref for AstVec<'_, T> {
     type Target = [T];
     #[inline]
     fn deref(&self) -> &[T] {
@@ -271,14 +267,14 @@ impl<T> Deref for AstVec<T> {
     }
 }
 
-impl<T> DerefMut for AstVec<T> {
+impl<T> DerefMut for AstVec<'_, T> {
     #[inline]
     fn deref_mut(&mut self) -> &mut [T] {
         self.slice_mut()
     }
 }
 
-impl<'a, T> IntoIterator for &'a AstVec<T> {
+impl<'a, T> IntoIterator for &'a AstVec<'_, T> {
     type Item = &'a T;
     type IntoIter = core::slice::Iter<'a, T>;
     #[inline]
@@ -287,7 +283,7 @@ impl<'a, T> IntoIterator for &'a AstVec<T> {
     }
 }
 
-impl<'a, T> IntoIterator for &'a mut AstVec<T> {
+impl<'a, T> IntoIterator for &'a mut AstVec<'_, T> {
     type Item = &'a mut T;
     type IntoIter = core::slice::IterMut<'a, T>;
     #[inline]
@@ -296,29 +292,40 @@ impl<'a, T> IntoIterator for &'a mut AstVec<T> {
     }
 }
 
-/// A [`StoreRef`] that is not `Copy`. The value is never dropped.
-pub struct AstBox<T>(StoreRef<T>);
+/// The value is never dropped. Covariant in `T`, unlike [`crate::StoreRef`], because it is not `Copy`.
+#[repr(C, packed(4))]
+pub struct AstBox<'a, T>(NonNull<T>, PhantomData<(&'a (), T)>);
 
-impl<T> AstBox<T> {
+// SAFETY: it owns its value as `Box<T>` does.
+unsafe impl<T: Send> Send for AstBox<'_, T> {}
+// SAFETY: as for `Send`. `&AstBox<T>` only hands out `&T`.
+unsafe impl<T: Sync> Sync for AstBox<'_, T> {}
+
+impl<'a, T> AstBox<'a, T> {
     #[inline]
-    pub fn new_in(value: T, arena: &AstArena) -> Self {
+    pub fn new_in(value: T, arena: &'a AstArena) -> Self {
         const { assert!(!core::mem::needs_drop::<T>()) };
-        AstBox(arena.alloc_node(value))
+        AstBox(
+            NonNull::from(arena.alloc_node(value).into_mut()),
+            PhantomData,
+        )
     }
 }
 
-impl<T> Deref for AstBox<T> {
+impl<T> Deref for AstBox<'_, T> {
     type Target = T;
     #[inline]
     fn deref(&self) -> &T {
-        &self.0
+        // SAFETY: the value is valid for `'a`, and `self` has the only pointer to it.
+        unsafe { &*self.0.as_ptr() }
     }
 }
 
-impl<T> DerefMut for AstBox<T> {
+impl<T> DerefMut for AstBox<'_, T> {
     #[inline]
     fn deref_mut(&mut self) -> &mut T {
-        &mut self.0
+        // SAFETY: as for `deref`.
+        unsafe { &mut *self.0.as_ptr() }
     }
 }
 
@@ -357,7 +364,6 @@ mod tests {
         let (first, second) = (AstArena::new(), AstArena::new());
         let mut list = AstVec::from_slice_in(&[1u64, 2], &first);
         list.push(&second, 3);
-        drop(first);
         assert_eq!(*list, [1, 2, 3]);
     }
 

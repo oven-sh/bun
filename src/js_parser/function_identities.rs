@@ -161,7 +161,7 @@ struct Walker<'p, 'a> {
     /// The functions being walked, outermost first, one for each of `frames` that is a function's or the module's.
     open: Vec<Open<'p, 'a>>,
     /// The property the function walked next is the value of, and what kind of property.
-    key_of_next_function: Option<(&'p Expr, u8)>,
+    key_of_next_function: Option<(&'p Expr<'a>, u8)>,
     /// For each class, where in `out` the functions that initialize its instance's and its own fields are.
     fields: Vec<[Option<usize>; 2]>,
     /// The class (in `fields`) and which of its two groups: of the field being walked, of the function opened next.
@@ -180,17 +180,17 @@ const MAX_DEPTH: u32 = 512;
 /// A function met in the code around it. It is walked after that code, from `Walker::run`, so that neither the stack
 /// nor the depth count grows with how deeply functions are nested.
 struct Pending<'p, 'a> {
-    function: PendingFunction<'p>,
-    key: Option<(&'p Expr, u8)>,
+    function: PendingFunction<'p, 'a>,
+    key: Option<(&'p Expr<'a>, u8)>,
     private_names: Vec<std::rc::Rc<HashMap<&'a [u8], u32>>>,
     fields: Option<(usize, usize)>,
 }
 
 #[derive(Clone, Copy)]
-enum PendingFunction<'p> {
-    Function(&'p G::Fn, /* is_expression */ bool),
-    Arrow(&'p ast::E::Arrow, ast::Loc),
-    StaticBlock(&'p G::ClassStaticBlock),
+enum PendingFunction<'p, 'ast> {
+    Function(&'p G::Fn<'ast>, /* is_expression */ bool),
+    Arrow(&'p ast::E::Arrow<'ast>, ast::Loc),
+    StaticBlock(&'p G::ClassStaticBlock<'ast>),
 }
 
 /// A function whose own code was walked, and whose functions are being.
@@ -358,7 +358,7 @@ impl<'p, 'a> Walker<'p, 'a> {
 
     /// In the code around it a function is that there is one; the functions' names follow the code's hash in the
     /// order they are written (`end_function`).
-    fn defer(&mut self, function: PendingFunction<'p>) {
+    fn defer(&mut self, function: PendingFunction<'p, 'a>) {
         let key = self.key_of_next_function.take();
         let fields = self.fields_being_walked;
         self.byte(tag::FUNCTION);
@@ -747,7 +747,7 @@ impl<'p, 'a> Walker<'p, 'a> {
         self.number(identity);
     }
 
-    fn func(&mut self, func: &'p G::Fn, is_expression: bool) {
+    fn func(&mut self, func: &'p G::Fn<'a>, is_expression: bool) {
         let is_async = func.flags.contains(ast::flags::Function::IsAsync);
         let is_generator = func.flags.contains(ast::flags::Function::IsGenerator);
         self.open_function(
@@ -773,7 +773,7 @@ impl<'p, 'a> Walker<'p, 'a> {
         self.stmts(func.body.stmts.slice());
     }
 
-    fn arrow(&mut self, arrow: &'p ast::E::Arrow, loc: ast::Loc) {
+    fn arrow(&mut self, arrow: &'p ast::E::Arrow<'a>, loc: ast::Loc) {
         // JavaScriptCore's start is the parameters: past `async`. Its inner function, if it makes one, starts at the
         // body: the block, or the expression past the `=>`.
         let start = if arrow.is_async {
@@ -812,7 +812,7 @@ impl<'p, 'a> Walker<'p, 'a> {
         }
     }
 
-    fn args(&mut self, args: &'p [G::Arg]) {
+    fn args(&mut self, args: &'p [G::Arg<'a>]) {
         self.number(args.len() as u64);
         for arg in args {
             self.binding(&arg.binding);
@@ -820,7 +820,7 @@ impl<'p, 'a> Walker<'p, 'a> {
         }
     }
 
-    fn class(&mut self, class: &'p G::Class, is_expression: bool) {
+    fn class(&mut self, class: &'p G::Class<'a>, is_expression: bool) {
         self.byte(tag::CLASS);
         // A class expression's name is its own; a declaration's is already the function's around it.
         if let (true, Some(name)) = (is_expression, &class.class_name) {
@@ -944,7 +944,7 @@ impl<'p, 'a> Walker<'p, 'a> {
         }
     }
 
-    fn binding(&mut self, binding: &'p ast::Binding) {
+    fn binding(&mut self, binding: &'p ast::Binding<'a>) {
         if !self.enter() {
             return;
         }
@@ -952,7 +952,7 @@ impl<'p, 'a> Walker<'p, 'a> {
         self.leave();
     }
 
-    fn binding_at_depth(&mut self, binding: &'p ast::Binding) {
+    fn binding_at_depth(&mut self, binding: &'p ast::Binding<'a>) {
         match &binding.data {
             B::BIdentifier(id) => {
                 self.byte(tag::BINDING);
@@ -985,7 +985,7 @@ impl<'p, 'a> Walker<'p, 'a> {
         }
     }
 
-    fn stmts(&mut self, stmts: &'p [Stmt]) {
+    fn stmts(&mut self, stmts: &'p [Stmt<'a>]) {
         // (Not how many: some say nothing.)
         for stmt in stmts {
             self.stmt(stmt);
@@ -993,14 +993,14 @@ impl<'p, 'a> Walker<'p, 'a> {
         self.byte(tag::END);
     }
 
-    fn optional_stmt(&mut self, stmt: Option<&'p Stmt>) {
+    fn optional_stmt(&mut self, stmt: Option<&'p Stmt<'a>>) {
         match stmt {
             Some(stmt) => self.stmt(stmt),
             None => self.byte(tag::NONE),
         }
     }
 
-    fn optional_expr(&mut self, expr: Option<&'p Expr>) {
+    fn optional_expr(&mut self, expr: Option<&'p Expr<'a>>) {
         match expr {
             Some(expr) => self.expr(expr),
             None => self.byte(tag::NONE),
@@ -1022,14 +1022,14 @@ impl<'p, 'a> Walker<'p, 'a> {
         true
     }
 
-    fn stmt(&mut self, stmt: &'p Stmt) {
+    fn stmt(&mut self, stmt: &'p Stmt<'a>) {
         if self.enter() {
             self.stmt_at_depth(stmt);
             self.leave();
         }
     }
 
-    fn stmt_at_depth(&mut self, stmt: &'p Stmt) {
+    fn stmt_at_depth(&mut self, stmt: &'p Stmt<'a>) {
         let t = tag::STMT;
         // `else if` after `else if` is as deep as it is long.
         let mut stmt = stmt;
@@ -1217,7 +1217,7 @@ impl<'p, 'a> Walker<'p, 'a> {
         }
     }
 
-    fn expr(&mut self, expr: &'p Expr) {
+    fn expr(&mut self, expr: &'p Expr<'a>) {
         if self.enter() {
             self.expr_at_depth(expr);
             self.leave();
@@ -1228,7 +1228,7 @@ impl<'p, 'a> Walker<'p, 'a> {
         clippy::large_unopt_stack_frames,
         reason = "expr::Data variants are arena-backed StoreRef; live residency is bounded"
     )]
-    fn expr_at_depth(&mut self, expr: &'p Expr) {
+    fn expr_at_depth(&mut self, expr: &'p Expr<'a>) {
         let t = tag::EXPR;
         // A long `a + b + c + ...` is as deep to the left as it is long, and `a.b().c()...` at its target: what each
         // link adds, then what is left of it.
@@ -1402,7 +1402,7 @@ impl<'p, 'a> Walker<'p, 'a> {
     }
 
     /// The value of a property and what a field is initialized to: a function there is named with the property.
-    fn value_of_property(&mut self, property: &'p G::Property) {
+    fn value_of_property(&mut self, property: &'p G::Property<'a>) {
         for value in [&property.value, &property.initializer] {
             if let (Some(key), Some(value)) = (&property.key, value) {
                 if !property.flags.contains(ast::flags::Property::IsComputed)
@@ -1423,14 +1423,14 @@ impl<'p, 'a> Walker<'p, 'a> {
     }
 
     /// The name of a property: a string there is a name, and says what it says.
-    fn key(&mut self, key: &'p Expr) {
+    fn key(&mut self, key: &'p Expr<'a>) {
         match &key.data {
             Data::EString(name) => self.string(name),
             _ => self.expr(key),
         }
     }
 
-    fn optional_key(&mut self, key: Option<&'p Expr>) {
+    fn optional_key(&mut self, key: Option<&'p Expr<'a>>) {
         match key {
             Some(key) => self.key(key),
             None => self.byte(tag::NONE),

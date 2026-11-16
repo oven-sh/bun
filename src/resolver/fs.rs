@@ -585,7 +585,7 @@ pub fn read_file_contents_in_arena<'a>(
         size.max(initial_len)
     };
 
-    let slot = arena.alloc_uninit_slice::<u8>(cap + 1);
+    let slot = (arena.try_alloc_uninit_slice::<u8>(cap + 1)).ok_or_else(bun_sys::Error::oom)?;
     slot[cap].write(0);
     let mut buf = BorrowedBuf::from(&mut slot[..cap]);
     buf.unfilled().append(initial_buf.filled());

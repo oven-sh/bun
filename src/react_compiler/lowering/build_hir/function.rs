@@ -5,12 +5,12 @@ use crate::diagnostics::{
     CompilerDiagnostic, CompilerError, CompilerErrorDetail, ErrorCategory, SourceLocation,
 };
 use crate::hir::{
-    Effect, FunctionExpressionType, HirAlloc, InstructionKind, InstructionValue, LValue,
+    Effect, Expr, FunctionExpressionType, HirAlloc, InstructionKind, InstructionValue, LValue,
     LoweredFunction, ObjectProperty, ObjectPropertyKey, ObjectPropertyType, Place, StoreStr,
     VariableBinding,
 };
 use bun_ast::expr::Data;
-use bun_ast::{self as ast, E, Expr, G, Loc, Ref};
+use bun_ast::{self as ast, E, G, Loc, Ref};
 use std::rc::Rc;
 
 use super::super::hir_builder::{HirBuilder, convert_loc};
@@ -20,7 +20,7 @@ use super::{gather_captured_context, lower_inner};
 
 pub(super) fn lower_function_to_value(
     builder: &mut HirBuilder<'_>,
-    func: FunctionNode<'_>,
+    func: FunctionNode<'_, 'static>,
     func_loc: Loc,
     expr_type: FunctionExpressionType,
 ) -> Result<InstructionValue, CompilerDiagnostic> {
@@ -40,7 +40,7 @@ pub(super) fn lower_function_to_value(
 
 fn lower_function(
     builder: &mut HirBuilder<'_>,
-    func: FunctionNode<'_>,
+    func: FunctionNode<'_, 'static>,
     func_loc: Loc,
 ) -> Result<LoweredFunction, CompilerDiagnostic> {
     let loc = convert_loc(func_loc);
@@ -101,7 +101,7 @@ fn lower_function(
 /// Lower a function declaration statement to a FunctionExpression + StoreLocal.
 pub(super) fn lower_function_declaration(
     builder: &mut HirBuilder<'_>,
-    func_decl: &G::Fn,
+    func_decl: &G::Fn<'static>,
     stmt_loc: Loc,
 ) -> Result<(), CompilerError> {
     let loc = convert_loc(stmt_loc);
@@ -229,7 +229,7 @@ pub(super) fn lower_function_declaration(
 /// Lower a function expression used as an object method.
 fn lower_function_for_object_method(
     builder: &mut HirBuilder<'_>,
-    method: &G::Fn,
+    method: &G::Fn<'static>,
     method_loc: Loc,
 ) -> Result<LoweredFunction, CompilerError> {
     let func_loc = convert_loc(method_loc);
@@ -280,7 +280,7 @@ fn lower_function_for_object_method(
 
 pub(super) fn lower_object_method(
     builder: &mut HirBuilder<'_>,
-    method: &G::Property,
+    method: &G::Property<'static>,
 ) -> Result<Option<ObjectProperty>, CompilerError> {
     use ast::flags::Property as PF;
     let key_expr = method.key.as_ref();
@@ -410,7 +410,7 @@ fn lower_object_property_key(
     }
 }
 
-fn estring_to_store_str(s: &E::EString) -> StoreStr {
+fn estring_to_store_str(s: &E::EString<'static>) -> StoreStr {
     debug_assert!(s.next.is_none());
     if s.is_utf16 {
         HirAlloc::dupe_str(bun_core::strings::to_utf8_alloc(s.slice16()).as_slice())

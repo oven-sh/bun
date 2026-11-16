@@ -47,8 +47,7 @@ declare_scope!(ParseTask, hidden);
 // the per-file parse arena is held as `bump: &'static Bump` (the
 // worker arena is pinned for the entire bundle pass — see `Worker::arena`),
 // so `bump.alloc_*` / `ArenaString::into_bump_str` already yield `&'static`
-// borrows directly. No erasure helper is needed; `StoreStr::new` covers the
-// remaining AST-string sites (`E::String.data`, `FileLoaderHash.key`).
+// borrows directly. No erasure helper is needed.
 
 // `JSBundlerPlugin::{has_on_before_parse_plugins, call_on_before_parse_plugins}`
 // live on the canonical `impl Plugin` in `bundle_v2.rs::api::JSBundler` next to
@@ -99,8 +98,8 @@ pub struct ParseTask<'a> {
     // BACKREF; `None` only before enqueue (`Default`, runtime source).
     pub(crate) ctx: Option<bun_ptr::ParentRef<BundleV2<'a>, bun_ptr::Mut>>,
     // Borrows package_json (resolver arena); valid for the bundle pass.
-    pub(crate) package_version: ast::StoreStr,
-    pub(crate) package_name: ast::StoreStr,
+    pub(crate) package_version: ast::StoreStr<'a>,
+    pub(crate) package_name: ast::StoreStr<'a>,
     pub(crate) is_entry_point: bool,
 }
 
@@ -159,14 +158,14 @@ pub(crate) struct Success<'a> {
     pub(crate) side_effects: bun_ast::SideEffects,
 
     /// Used by "file" loader files.
-    pub(crate) unique_key_for_additional_file: ast::StoreStr,
+    pub(crate) unique_key_for_additional_file: ast::StoreStr<'a>,
     /// Used by "file" loader files.
     pub(crate) content_hash_for_additional_file: u64,
 
     pub(crate) loader: Loader,
 
     /// The package name from package.json, used for barrel optimization.
-    pub(crate) package_name: ast::StoreStr,
+    pub(crate) package_name: ast::StoreStr<'a>,
 }
 
 pub(crate) struct ResultError {
@@ -607,7 +606,7 @@ pub mod parse_worker {
     // We only touch the disjoint `options.define` field.
     fn get_empty_css_ast(
         log: &Log,
-        transpiler: *mut Transpiler,
+        transpiler: *mut Transpiler<'static>,
         opts: ParserOptions<'static>,
         bump: &'static AstArena,
         source: &'static Source<'static>,
@@ -624,9 +623,9 @@ pub mod parse_worker {
         ))
     }
 
-    fn get_empty_ast<RootType: Default + bun_ast::expr::IntoExprData>(
+    fn get_empty_ast<RootType: Default + bun_ast::expr::IntoExprData<'static>>(
         log: &Log,
-        transpiler: *mut Transpiler,
+        transpiler: *mut Transpiler<'static>,
         opts: ParserOptions<'static>,
         bump: &'static AstArena,
         source: &'static Source<'static>,
@@ -644,8 +643,8 @@ pub mod parse_worker {
     // FileLoaderHash
     // ───────────────────────────────────────────────────────────────────────────
 
-    pub(crate) struct FileLoaderHash {
-        pub(crate) key: ast::StoreStr,
+    pub(crate) struct FileLoaderHash<'a> {
+        pub(crate) key: ast::StoreStr<'a>,
         pub(crate) content_hash: u64,
     }
 
@@ -654,7 +653,7 @@ pub mod parse_worker {
         bump: &'b Bump,
         source: &Source,
         unique_key_prefix: u64,
-        unique_key_for_additional_file: &mut FileLoaderHash,
+        unique_key_for_additional_file: &mut FileLoaderHash<'b>,
     ) -> &'b [u8] {
         use core::fmt::Write as _;
         let mut buf = bun_alloc::ArenaString::new_in(bump);
@@ -678,7 +677,7 @@ pub mod parse_worker {
 
     /// `require("<unique key>")`. Unlike `import.meta.require`, the call target
     /// prints per output format, so `--bytecode` (CommonJS) can compile it.
-    fn require_embedded_asset(bump: &AstArena, unique_key: &[u8]) -> Expr {
+    fn require_embedded_asset<'a>(bump: &'a AstArena, unique_key: &'a [u8]) -> Expr<'a> {
         let import_path = Expr::allocate(
             bump,
             E::String {
@@ -711,7 +710,7 @@ pub mod parse_worker {
     // ───────────────────────────────────────────────────────────────────────────
 
     fn css_symbols_to_parser_symbols(
-        src: &[bun_ast::Symbol],
+        src: &[bun_ast::Symbol<'static>],
         bump: &'static Bump,
     ) -> bun_ast::symbol::List<'static> {
         use bun_ast::symbol::{Kind as PKind, Symbol as PSym};
@@ -726,7 +725,7 @@ pub mod parse_worker {
             // — same nominal type, no bridge needed.
             let link: bun_ast::Ref = s.link.get();
             out.push(PSym {
-                original_name: bun_ast::StoreStr::new(s.original_name.slice()),
+                original_name: s.original_name,
                 // CSS-module locals are never ES6 namespace-aliased (the CSS parser
                 // never assigns `namespace_alias`); drop rather than bridge the
                 // distinct `NamespaceAlias` mirrors.
@@ -753,13 +752,13 @@ pub mod parse_worker {
     #[allow(clippy::too_many_arguments)]
     fn get_ast(
         log: &Log,
-        transpiler: *mut Transpiler,
+        transpiler: *mut Transpiler<'static>,
         mut opts: ParserOptions<'static>,
         bump: &'static AstArena,
         source: &'static Source<'static>,
         loader: Loader,
         unique_key_prefix: u64,
-        unique_key_for_additional_file: &mut FileLoaderHash,
+        unique_key_for_additional_file: &mut FileLoaderHash<'static>,
         has_any_css_locals: &AtomicU32,
         stylesheet: &mut Option<Box<bun_css::BundlerStyleSheet<'static>>>,
     ) -> core::result::Result<JSAst<'static>, AnyError> {

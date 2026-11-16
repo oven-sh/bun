@@ -37,40 +37,40 @@ impl PrivateLoweredInfo {
 
 type PrivateLoweredMap = HashMap<u32, PrivateLoweredInfo>;
 
-struct LoweredClass {
+struct LoweredClass<'a> {
     /// `var` statement for the temporaries the class body now refers to.
-    temps: Option<Stmt>,
+    temps: Option<Stmt<'a>>,
     /// `let` statement for `inner_class_ref`. Block scoped, so that a class
     /// evaluated in a loop gets a fresh binding each time.
-    inner_binding: Option<Stmt>,
-    class_decorators: Option<ClassDecorators>,
+    inner_binding: Option<Stmt<'a>>,
+    class_decorators: Option<ClassDecorators<'a>>,
 }
 
-struct ClassDecorators {
+struct ClassDecorators<'a> {
     /// Evaluates the decorator list, before the class.
-    evaluate: Expr,
+    evaluate: Expr<'a>,
     /// What the decorators returned.
     decorated: Ref,
     /// Runs their extra initializers, once the class is bound to its name.
-    run_extra_initializers: Expr,
+    run_extra_initializers: Expr<'a>,
 }
 
 /// How an instance field names an anonymous function it is initialized with.
 #[derive(Clone, Copy)]
-enum FieldName {
+enum FieldName<'a> {
     /// A string or number key, or `"#name"` for a private one.
-    Key(Expr),
+    Key(Expr<'a>),
     /// The temporary that holds a computed key.
-    Computed(Expr),
+    Computed(Expr<'a>),
     Unknown,
 }
 
 /// The initializer of a decorated field or accessor.
-struct DecoratedInitializer {
+struct DecoratedInitializer<'a> {
     /// `__runInitializers(_init, n, this, initializer)`
-    value: Expr,
+    value: Expr<'a>,
     /// Runs the extra initializers once the member is defined.
-    extra: Expr,
+    extra: Expr<'a>,
 }
 
 fn is_constructor(prop: &Property) -> bool {
@@ -107,8 +107,8 @@ fn initializer_group(prop: &Property) -> Option<usize> {
 /// Puts `inserted` in `constructor` right after a top-level `super()`
 /// statement returns, which is after the last instance field.
 fn insert_after_super<'a>(
-    constructor: &mut Property,
-    inserted: &[Stmt],
+    constructor: &mut Property<'a>,
+    inserted: &[Stmt<'a>],
     arena: &'a bun_alloc::Arena,
 ) {
     let func = match &mut constructor.value.as_mut().unwrap().data {
@@ -134,7 +134,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
 
     /// recordUsage + E.Identifier in one call.
     #[inline]
-    fn use_ref(&mut self, ref_: Ref, l: bun_ast::Loc) -> Expr {
+    fn use_ref(&mut self, ref_: Ref, l: bun_ast::Loc) -> Expr<'a> {
         self.record_usage(ref_);
         self.new_expr(
             E::Identifier {
@@ -146,7 +146,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
     }
 
     /// Allocate args + callRuntime in one call.
-    fn call_rt(&mut self, l: bun_ast::Loc, name: &'static [u8], args: &[Expr]) -> Expr {
+    fn call_rt(&mut self, l: bun_ast::Loc, name: &'static [u8], args: &[Expr<'a>]) -> Expr<'a> {
         let bump = self.arena;
         let a = bump.alloc_slice_copy(args);
         let list = ExprNodeList::from_slice_in(a, self.ast_arena);
@@ -161,12 +161,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
     }
 
     /// recordUsage + Expr.assign.
-    fn assign_to(&mut self, ref_: Ref, value: Expr, l: bun_ast::Loc) -> Expr {
+    fn assign_to(&mut self, ref_: Ref, value: Expr<'a>, l: bun_ast::Loc) -> Expr<'a> {
         Expr::assign(self.ast_arena, self.use_ref(ref_, l), value)
     }
 
     /// `new WeakMap` / `new WeakSet`
-    fn new_global_expr(&mut self, name: &'static [u8], l: bun_ast::Loc) -> Expr {
+    fn new_global_expr(&mut self, name: &'static [u8], l: bun_ast::Loc) -> Expr<'a> {
         let ref_ = self.find_symbol(l, name).expect("unreachable").r#ref;
         let target = self.new_expr(E::Identifier::init(ref_), l);
         self.new_expr(
@@ -181,7 +181,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
     }
 
     /// `static { a; b; }`
-    fn make_static_block(&mut self, exprs: &[Expr], l: bun_ast::Loc) -> Property {
+    fn make_static_block(&mut self, exprs: &[Expr<'a>], l: bun_ast::Loc) -> Property<'a> {
         let stmts = self.effect_stmts(exprs, l);
         let stmts_list = AstVec::from_slice_in(&stmts, self.ast_arena);
         let sb = self.ast_arena.alloc_node(G::ClassStaticBlock {
@@ -216,7 +216,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
 
     // ── Private access rewriting ─────────────────────────
 
-    fn private_get_expr(&mut self, obj: Expr, info: &PrivateLoweredInfo, l: bun_ast::Loc) -> Expr {
+    fn private_get_expr(
+        &mut self,
+        obj: Expr<'a>,
+        info: &PrivateLoweredInfo,
+        l: bun_ast::Loc,
+    ) -> Expr<'a> {
         if let Some(desc_ref) = info.accessor_desc_ref {
             let storage = self.use_ref(info.storage_ref, l);
             let desc = self.use_ref(desc_ref, l);
@@ -246,11 +251,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
 
     fn private_set_expr(
         &mut self,
-        obj: Expr,
+        obj: Expr<'a>,
         info: &PrivateLoweredInfo,
-        val: Expr,
+        val: Expr<'a>,
         l: bun_ast::Loc,
-    ) -> Expr {
+    ) -> Expr<'a> {
         if let Some(desc_ref) = info.accessor_desc_ref {
             let storage = self.use_ref(info.storage_ref, l);
             let desc = self.use_ref(desc_ref, l);
@@ -274,7 +279,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
         }
     }
 
-    fn rewrite_private_accesses_in_expr(&mut self, expr: &mut Expr, map: &PrivateLoweredMap) {
+    fn rewrite_private_accesses_in_expr(&mut self, expr: &mut Expr<'a>, map: &PrivateLoweredMap) {
         if !self.stack_check.is_safe_to_recurse() || self.reported_stack_overflow.get() {
             self.report_stack_overflow(expr.loc);
             return;
@@ -459,8 +464,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
 
     fn rewrite_private_accesses_in_fn(
         &mut self,
-        args: bun_ast::StoreSlice<G::Arg>,
-        body: &mut G::FnBody,
+        args: bun_ast::StoreSlice<'a, G::Arg<'a>>,
+        body: &mut G::FnBody<'a>,
         map: &PrivateLoweredMap,
     ) {
         // A `var` of the body is not visible to a parameter default: the
@@ -476,7 +481,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
         body.stmts = self.declare_capture_temps_in_fn_body(body.stmts, temps_before, body.loc);
     }
 
-    fn rewrite_private_accesses_in_class(&mut self, class: &mut G::Class, map: &PrivateLoweredMap) {
+    fn rewrite_private_accesses_in_class(
+        &mut self,
+        class: &mut G::Class<'a>,
+        map: &PrivateLoweredMap,
+    ) {
         if let Some(extends) = &mut class.extends {
             self.rewrite_private_accesses_in_expr(extends, map);
         }
@@ -487,7 +496,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
 
     fn rewrite_private_accesses_in_property(
         &mut self,
-        prop: &mut Property,
+        prop: &mut Property<'a>,
         map: &PrivateLoweredMap,
     ) {
         if prop.flags.contains(Flags::Property::IsComputed)
@@ -508,7 +517,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
 
     fn rewrite_private_accesses_in_binding(
         &mut self,
-        binding: js_ast::Binding,
+        binding: js_ast::Binding<'a>,
         map: &PrivateLoweredMap,
     ) {
         if !self.stack_check.is_safe_to_recurse() || self.reported_stack_overflow.get() {
@@ -541,7 +550,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
 
     /// Drain receiver-capture temporaries created past `baseline` into a
     /// single `var` declaration statement; `None` if none were created.
-    fn drain_capture_temp_decls(&mut self, baseline: usize, loc: bun_ast::Loc) -> Option<Stmt> {
+    fn drain_capture_temp_decls(&mut self, baseline: usize, loc: bun_ast::Loc) -> Option<Stmt<'a>> {
         let total = self.temp_refs_to_declare.len();
         if total == baseline {
             return None;
@@ -574,10 +583,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
     /// the same call site through that getter would clobber the shared temp.
     fn declare_capture_temps_in_fn_body(
         &mut self,
-        stmts: js_ast::StmtNodeList,
+        stmts: js_ast::StmtNodeList<'a>,
         temps_before: usize,
         body_loc: bun_ast::Loc,
-    ) -> js_ast::StmtNodeList {
+    ) -> js_ast::StmtNodeList<'a> {
         let Some(decl_stmt) = self.drain_capture_temp_decls(temps_before, body_loc) else {
             return stmts;
         };
@@ -590,13 +599,21 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
 
     /// The declaration in the head of `for (const { a = this.#x } of ...)`. An
     /// assignment target there is not a read and stays as written.
-    fn rewrite_private_accesses_in_loop_head(&mut self, init: &mut Stmt, map: &PrivateLoweredMap) {
+    fn rewrite_private_accesses_in_loop_head(
+        &mut self,
+        init: &mut Stmt<'a>,
+        map: &PrivateLoweredMap,
+    ) {
         if matches!(init.data, js_ast::StmtData::SLocal(_)) {
             self.rewrite_private_accesses_in_stmts(core::slice::from_mut(init), map);
         }
     }
 
-    fn rewrite_private_accesses_in_stmts(&mut self, stmts: &mut [Stmt], map: &PrivateLoweredMap) {
+    fn rewrite_private_accesses_in_stmts(
+        &mut self,
+        stmts: &mut [Stmt<'a>],
+        map: &PrivateLoweredMap,
+    ) {
         if !self.stack_check.is_safe_to_recurse() || self.reported_stack_overflow.get() {
             self.report_stack_overflow(stmts.first().map_or(bun_ast::Loc::EMPTY, |stmt| stmt.loc));
             return;
@@ -746,8 +763,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
 
     pub(crate) fn lower_standard_decorators_stmt(
         &mut self,
-        stmt: Stmt,
-        out: &mut BumpVec<'a, Stmt>,
+        stmt: Stmt<'a>,
+        out: &mut BumpVec<'a, Stmt<'a>>,
     ) {
         let mut s_class = match stmt.data {
             js_ast::StmtData::SClass(c) => c,
@@ -774,10 +791,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
 
     pub(crate) fn lower_standard_decorators_expr(
         &mut self,
-        expr: Expr,
-        class: &mut G::Class,
+        expr: Expr<'a>,
+        class: &mut G::Class<'a>,
         name_from_context: Option<&'a [u8]>,
-    ) -> Expr {
+    ) -> Expr<'a> {
         let lowered = self.lower_class_body(class, expr.loc, name_from_context);
         let has_own_stmt_list = !self.is_param_default_or_field_initializer();
         if let Some(stmt_list) = self.nearest_stmt_list_mut() {
@@ -865,10 +882,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
     #[allow(clippy::too_many_lines)]
     fn lower_class_body(
         &mut self,
-        class: &mut G::Class,
+        class: &mut G::Class<'a>,
         loc: bun_ast::Loc,
         name_from_context: Option<&'a [u8]>,
-    ) -> LoweredClass {
+    ) -> LoweredClass<'a> {
         let p = self;
         let bump = p.arena;
         let temps_before = p.temp_refs_to_declare.len();
@@ -1398,12 +1415,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
         &mut self,
         init_ref: Ref,
         flags: f64,
-        name: Expr,
+        name: Expr<'a>,
         dec: Ref,
-        target: Expr,
-        extra: Option<Expr>,
+        target: Expr<'a>,
+        extra: Option<Expr<'a>>,
         loc: bun_ast::Loc,
-    ) -> Expr {
+    ) -> Expr<'a> {
         let mut args = BumpVec::<Expr>::with_capacity_in(6, self.arena);
         args.push(self.use_ref(init_ref, loc));
         args.push(self.new_expr(E::Number::new(flags), loc));
@@ -1423,9 +1440,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
         &mut self,
         init_ref: Ref,
         flags: f64,
-        target: Expr,
+        target: Expr<'a>,
         loc: bun_ast::Loc,
-    ) -> Expr {
+    ) -> Expr<'a> {
         let args = [
             self.use_ref(init_ref, loc),
             self.new_expr(E::Number::new(flags), loc),
@@ -1439,10 +1456,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
     /// keeps a computed key in a temporary for that, which is also returned.
     fn host_key_effects(
         &mut self,
-        prop: &mut Property,
-        effects: &mut BumpVec<'a, Expr>,
+        prop: &mut Property<'a>,
+        effects: &mut BumpVec<'a, Expr<'a>>,
         reuse_key: bool,
-    ) -> (Expr, Option<Expr>) {
+    ) -> (Expr<'a>, Option<Expr<'a>>) {
         let key = prop.key.expect("a class member has a key");
         let is_constant =
             !prop.flags.contains(Flags::Property::IsComputed) || is_constant_key(&key);
@@ -1465,7 +1482,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
 
     /// The key of `prop` as the expression a computed key needs. The visit pass
     /// keys the field of a TypeScript parameter property by an identifier.
-    fn key_as_value(&mut self, prop: &Property, key: Expr) -> Expr {
+    fn key_as_value(&mut self, prop: &Property, key: Expr<'a>) -> Expr<'a> {
         if !prop.flags.contains(Flags::Property::IsComputed)
             && let js_ast::ExprData::EIdentifier(id) = &key.data
         {
@@ -1481,9 +1498,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
     /// is the temporary `host_key_effects` left the key in.
     fn append_key_effects(
         &mut self,
-        prop: &mut Property,
-        effects: &[Expr],
-        key_temp: Option<Expr>,
+        prop: &mut Property<'a>,
+        effects: &[Expr<'a>],
+        key_temp: Option<Expr<'a>>,
     ) {
         let key = prop.key.expect("a class member has a key");
         let mut parts = BumpVec::<Expr>::with_capacity_in(effects.len() + 2, self.arena);
@@ -1515,10 +1532,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
     /// anonymous function or class is not named by the field any more.
     fn hosted_initializer(
         &mut self,
-        initializer: Option<Expr>,
-        field_name: FieldName,
+        initializer: Option<Expr<'a>>,
+        field_name: FieldName<'a>,
         loc: bun_ast::Loc,
-    ) -> Expr {
+    ) -> Expr<'a> {
         let Some(value) = initializer else {
             return self.new_expr(E::Undefined {}, loc);
         };
@@ -1573,9 +1590,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
         &mut self,
         init_ref: Ref,
         index: usize,
-        initializer: Option<Expr>,
+        initializer: Option<Expr<'a>>,
         loc: bun_ast::Loc,
-    ) -> DecoratedInitializer {
+    ) -> DecoratedInitializer<'a> {
         let mut args = BumpVec::<Expr>::with_capacity_in(4, self.arena);
         args.push(self.use_ref(init_ref, loc));
         args.push(self.new_expr(E::Number::new(((4 + 2 * index) << 1) as f64), loc));
@@ -1596,10 +1613,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
     fn storage_init_effects(
         &mut self,
         storage: Ref,
-        initializer: Option<Expr>,
+        initializer: Option<Expr<'a>>,
         decorated: Option<(Ref, usize)>,
         loc: bun_ast::Loc,
-    ) -> BumpVec<'a, Expr> {
+    ) -> BumpVec<'a, Expr<'a>> {
         let mut effects = BumpVec::<Expr>::with_capacity_in(2, self.arena);
         let (value, extra) = match decorated {
             Some((init_ref, index)) => {
@@ -1619,7 +1636,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
     }
 
     /// `function() { return __privateGet(this, storage) }`
-    fn accessor_getter(&mut self, storage: Ref, loc: bun_ast::Loc) -> Expr {
+    fn accessor_getter(&mut self, storage: Ref, loc: bun_ast::Loc) -> Expr<'a> {
         let this = self.new_expr(E::This {}, loc);
         let storage = self.use_ref(storage, loc);
         let get = self.call_rt(loc, b"__privateGet", &[this, storage]);
@@ -1637,7 +1654,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
     }
 
     /// `function(v) { __privateSet(this, storage, v) }`
-    fn accessor_setter(&mut self, storage: Ref, loc: bun_ast::Loc) -> Expr {
+    fn accessor_setter(&mut self, storage: Ref, loc: bun_ast::Loc) -> Expr<'a> {
         let param = self.new_sym(js_ast::symbol::Kind::Other, b"v");
         let this = self.new_expr(E::This {}, loc);
         let storage = self.use_ref(storage, loc);
@@ -1659,7 +1676,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
         self.new_expr(E::Function { func }, loc)
     }
 
-    fn expr_stmt(&mut self, value: Expr, loc: bun_ast::Loc) -> Stmt {
+    fn expr_stmt(&mut self, value: Expr<'a>, loc: bun_ast::Loc) -> Stmt<'a> {
         self.s(
             S::SExpr {
                 value,
@@ -1669,7 +1686,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
         )
     }
 
-    fn effect_stmts(&mut self, effects: &[Expr], loc: bun_ast::Loc) -> BumpVec<'a, Stmt> {
+    fn effect_stmts(&mut self, effects: &[Expr<'a>], loc: bun_ast::Loc) -> BumpVec<'a, Stmt<'a>> {
         let mut stmts = BumpVec::<Stmt>::with_capacity_in(effects.len(), self.arena);
         for effect in effects {
             stmts.push(self.s(
@@ -1687,9 +1704,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
     fn new_constructor(
         &mut self,
         is_derived: bool,
-        effects: &[Expr],
+        effects: &[Expr<'a>],
         loc: bun_ast::Loc,
-    ) -> Property {
+    ) -> Property<'a> {
         let mut stmts = BumpVec::<Stmt>::with_capacity_in(effects.len() + 1, self.arena);
         if is_derived {
             let arguments = self.new_sym(js_ast::symbol::Kind::Unbound, arguments_str);

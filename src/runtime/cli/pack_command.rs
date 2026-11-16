@@ -1188,7 +1188,7 @@ fn get_package_bins(json: &Expr) -> Vec<BinInfo> {
 }
 
 /// Like npm, an empty `"bin"` (`""`, `{}`) counts as absent, so `"directories.bin"` applies.
-pub(crate) fn non_empty_bin(json: &Expr) -> Option<bun_ast::expr::Query> {
+pub(crate) fn non_empty_bin<'a>(json: &Expr<'a>) -> Option<bun_ast::expr::Query<'a>> {
     json.as_property(b"bin").filter(|bin| match &bin.expr.data {
         ExprData::EString(bin_str) => bin_str.is_present(),
         ExprData::EObject(bin_obj) => bin_obj.properties.len_u32() != 0,
@@ -1510,17 +1510,17 @@ pub(crate) fn published_files(
 pub(crate) fn package_json_root(
     manager: &mut PackageManager,
     abs_package_json_path: &ZStr,
-) -> Expr {
+) -> Expr<'static> {
     let log = manager.log();
     let cache = &mut manager.workspace_package_json_cache;
     package_json_entry(cache, log, abs_package_json_path).root
 }
 
-fn package_json_entry<'a>(
-    cache: &'a mut WorkspacePackageJSONCache::WorkspacePackageJSONCache,
+fn package_json_entry<'a, 'ast>(
+    cache: &'a mut WorkspacePackageJSONCache::WorkspacePackageJSONCache<'ast>,
     log: &bun_ast::Log,
     abs_package_json_path: &ZStr,
-) -> &'a WorkspacePackageJSONCache::MapEntry {
+) -> &'a WorkspacePackageJSONCache::MapEntry<'ast> {
     match cache.get_with_path(
         log,
         abs_package_json_path.as_bytes(),
@@ -1771,13 +1771,12 @@ pub(crate) fn pack(
     let cache = &mut ctx.manager.workspace_package_json_cache;
     let json = package_json_entry(cache, log, abs_package_json_path);
     // Edit a copy: the next workspace of `bun publish -r` still reads the cached tree.
-    let root = json.root.deep_clone(bump);
-    let mut root = root.map_err(|_| PackError::OutOfMemory)?;
+    let mut root = json.root.deep_clone_json(bump);
     let edited_package_json = edit_root_package_json(
         workspace_manifests.as_ref(),
         abs_workspace_path,
         root,
-        &json.source,
+        json.source,
         json.indentation,
     )?;
 
@@ -2017,7 +2016,7 @@ pub(crate) fn pack(
             package_version,
             &mut root,
             bump,
-            &json.source,
+            json.source,
             shasum,
             integrity,
             workspace_readme,
@@ -2664,7 +2663,6 @@ fn edit_root_package_json(
             package_dir,
             dependency_name,
         ) {
-            // `E::EString::init` keeps a pointer to the bytes, so they go into the pack arena.
             Ok(published) => bump.alloc_slice_copy(&published),
             Err((what, why)) => {
                 Output::err_generic(
@@ -2694,6 +2692,7 @@ fn edit_root_package_json(
 
     if let Err(err) = js_printer::print_json(
         &mut package_json_writer,
+        bump,
         root,
         // shouldn't be used
         source,

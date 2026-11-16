@@ -142,7 +142,7 @@ fn num_to_u32(n: f64) -> u32 {
 // ─────────────────────────────────────────────────────────────────────────────
 
 struct Parser<'a, 'tool> {
-    json: Expr,
+    json: Expr<'a>,
     source: &'a bun_ast::Source<'a>,
     log: &'a bun_ast::Log,
     // Holding both a `TransformOptions` pointer (= `&ctx.args`) and `ctx`

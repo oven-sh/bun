@@ -33,16 +33,14 @@ pub(crate) use bun_jsc::webcore_types::store::{
 // ──────────────────────────────────────────────────────────────────────────
 
 pub(crate) trait StoreExt {
-    fn to_any_blob(&mut self) -> Option<super::Any>;
     fn init_s3(
-        pathlike: PathLike<'static>,
-        mime_type: Option<MimeType>,
-        credentials: S3Credentials,
+        pathlike: PathLike<'_>,
+        aws_options: S3CredentialsWithOptions,
     ) -> Result<RefPtr<Store>, crate::Error>
     where
         Self: Sized;
     fn init_file(
-        pathlike: PathOrFileDescriptor<'static>,
+        pathlike: PathOrFileDescriptor<'_>,
         mime_type: Option<MimeType>,
     ) -> Result<RefPtr<Store>, crate::Error>
     where
@@ -57,7 +55,6 @@ pub(crate) trait S3Ext {
         global_object: &JSGlobalObject,
     ) -> JsResult<S3CredentialsWithOptions>;
     /// `store` is the heap `Store` that owns `self` (`self == &store.data.S3`).
-    /// It's an owned ref because reading the options runs user JS, which can detach the store from its Blob.
     fn unlink(
         &self,
         store: RefPtr<Store>,
@@ -91,36 +88,21 @@ fn mime_from_path_ext(sliced: &[u8]) -> Option<MimeType> {
 }
 
 impl StoreExt for Store {
-    /// Caller is responsible for derefing the Store.
-    fn to_any_blob(&mut self) -> Option<super::Any> {
-        if self.has_one_ref() {
-            if let Data::Bytes(bytes) = &mut self.data {
-                return Some(super::Any::from_owned_slice(bytes.take_vec()));
-            }
-        }
-
-        None
-    }
-
     fn init_s3(
-        pathlike: PathLike<'static>,
-        mime_type: Option<MimeType>,
-        credentials: S3Credentials,
+        pathlike: PathLike<'_>,
+        aws_options: S3CredentialsWithOptions,
     ) -> Result<RefPtr<Store>, crate::Error> {
-        let path = pathlike.thread_isolated_copy();
-
-        // Compute the extension-derived fallback before moving `path` into the
-        // Store so we don't need to clone the owned PathLike.
-        let mime_type = mime_type.or_else(|| mime_from_path_ext(path.slice()));
+        let path = pathlike.into_vec();
+        let mime_type = mime_from_path_ext(&path);
 
         Ok(RefPtr::new(Store::new(
-            Data::S3(S3::init(path, mime_type, credentials)),
+            Data::S3(S3::init(path, mime_type, aws_options)),
             bun_http_types::MimeType::NONE,
         )))
     }
 
     fn init_file(
-        pathlike: PathOrFileDescriptor<'static>,
+        pathlike: PathOrFileDescriptor<'_>,
         mime_type: Option<MimeType>,
     ) -> Result<RefPtr<Store>, crate::Error> {
         // Compute the extension-derived fallback before moving `pathlike` into
@@ -139,15 +121,14 @@ impl StoreExt for Store {
     fn serialize(&self, writer: &mut impl bun_io::Write) -> Result<(), crate::Error> {
         match &self.data {
             Data::File(file) => {
-                let pathlike_tag: PathOrFileDescriptorSerializeTag =
-                    if matches!(file.pathlike, PathOrFileDescriptor::Fd(_)) {
-                        PathOrFileDescriptorSerializeTag::Fd
-                    } else {
-                        PathOrFileDescriptorSerializeTag::Path
-                    };
+                let pathlike_tag: PathOrFileDescriptorSerializeTag = if file.fd().is_some() {
+                    PathOrFileDescriptorSerializeTag::Fd
+                } else {
+                    PathOrFileDescriptorSerializeTag::Path
+                };
                 writer.write_int_le::<u8>(pathlike_tag as u8)?;
 
-                match &file.pathlike {
+                match &file.pathlike() {
                     PathOrFileDescriptor::Fd(fd) => {
                         // Write the raw bytes of the FD wrapper. `bun_sys::Fd` is
                         // `#[repr(transparent)]` over an integer (`i32` posix /
@@ -166,7 +147,7 @@ impl StoreExt for Store {
                 let pathlike_tag = PathOrFileDescriptorSerializeTag::Path;
                 writer.write_int_le::<u8>(pathlike_tag as u8)?;
 
-                let path_slice = s3.pathlike.slice();
+                let path_slice = &s3.path_as_written;
                 writer.write_int_le::<u32>(path_slice.len() as u32)?;
                 writer.write_all(path_slice)?;
             }
@@ -185,7 +166,7 @@ impl StoreExt for Store {
 
 impl FileExt for File {
     fn unlink(&self, cx: &bun_jsc::JsThread<'_>) -> JsResult<JSValue> {
-        match &self.pathlike {
+        match &self.pathlike() {
             PathOrFileDescriptor::Path(path_like) => Ok(node_fs::async_::Unlink::schedule(
                 cx,
                 node_fs::args::Unlink::owned(path_like.slice().to_vec()),
@@ -211,13 +192,9 @@ impl S3Ext for S3 {
         options: Option<JSValue>,
         global_object: &JSGlobalObject,
     ) -> JsResult<S3CredentialsWithOptions> {
-        // The associated fn (surfaced via `S3CredentialsExt` in `webcore/S3Client.rs`)
-        // takes `&S3Credentials` instead of by-value because `S3Credentials` carries a
-        // private intrusive ref-count and cannot be struct-copied; the impl deep-copies
-        // internally.
         use crate::webcore::s3_client::S3CredentialsExt as _;
         S3Credentials::get_credentials_with_options(
-            self.get_credentials(),
+            &self.credentials,
             self.options,
             options,
             self.acl,

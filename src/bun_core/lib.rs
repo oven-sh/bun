@@ -918,7 +918,7 @@ pub fn concat_into<'b, T: Copy>(dest: &'b mut [T], parts: &[&[T]]) -> &'b mut [T
 ///
 /// ```ignore
 /// impl Data {
-///     bun_core::enum_unwrap!(pub Data, File  => fn as_file  / as_file_mut  -> File);
+///     bun_core::enum_unwrap!(pub Data, File  => fn as_file -> File);
 ///     bun_core::enum_unwrap!(pub Data, Bytes => fn as_bytes / as_bytes_mut -> Bytes);
 /// }
 /// impl<'b> PrepareResult<'b> {
@@ -932,7 +932,7 @@ pub fn concat_into<'b, T: Copy>(dest: &'b mut [T], parts: &[&[T]]) -> &'b mut [T
 /// to satisfy the declared return type.
 #[macro_export]
 macro_rules! enum_unwrap {
-    ($vis:vis $Enum:ident, $Variant:ident => fn $get:ident / $get_mut:ident -> $Out:ty) => {
+    ($vis:vis $Enum:ident, $Variant:ident => fn $get:ident -> $Out:ty) => {
         #[inline]
         #[track_caller]
         $vis fn $get(&self) -> &$Out {
@@ -945,6 +945,9 @@ macro_rules! enum_unwrap {
                 ),
             }
         }
+    };
+    ($vis:vis $Enum:ident, $Variant:ident => fn $get:ident / $get_mut:ident -> $Out:ty) => {
+        $crate::enum_unwrap!($vis $Enum, $Variant => fn $get -> $Out);
         #[inline]
         #[track_caller]
         $vis fn $get_mut(&mut self) -> &mut $Out {

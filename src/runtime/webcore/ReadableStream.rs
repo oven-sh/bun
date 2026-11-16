@@ -524,7 +524,7 @@ impl ReadableStream {
         blob: &Blob,
         recommended_chunk_size: webcore::blob::SizeType,
     ) -> JsResult<JSValue> {
-        let Some(store) = blob.store.get() else {
+        let Some(store) = blob.store() else {
             return ReadableStream::empty(cx.global());
         };
         match &store.data {
@@ -558,7 +558,7 @@ impl ReadableStream {
                 reader.to_readable_stream(cx)
             }
             webcore::blob::store::Data::S3(s3) => {
-                let credentials = s3.get_credentials();
+                let credentials = &s3.credentials;
                 let path = s3.path();
                 crate::webcore::s3::client::readable_stream(
                     credentials,

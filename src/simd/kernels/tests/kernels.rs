@@ -712,10 +712,11 @@ fn odd_blocks() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "reads only a slice")]
 fn byte_set() {
     let ranges = [9..=9, 32..=33, 35..=91, 93..=126, 128..=250, 252..=255];
     let set = kernels::ByteSet::new(&ranges);
-    for byte in sample(0..=255, 40) {
+    for byte in 0..=255 {
         let is_member = ranges.iter().any(|range| range.contains(&byte));
         assert_eq!(set.contains(byte), is_member, "{byte}");
         for at in [0, 15, 16, 63, 64, 130] {
@@ -724,8 +725,8 @@ fn byte_set() {
             check(at + usize::from(is_member), || set.prefix_len(&t));
         }
     }
-    for len in sample(0..210, 70) {
-        for at in sample(0..=len, 30) {
+    for len in 0..210 {
+        for at in 0..=len {
             let t = [vec![b'a'; at], vec![b'\r'; len - at]].concat();
             check(at, || set.prefix_len(&t));
         }
@@ -980,7 +981,7 @@ fn hex_digits() {
         });
         check(want, || filled(70, |out| kernels::decode_hex(&hex, out)));
     }
-    for apart in [8, 16, 32] {
+    for apart in sample([8, 16, 32], 3) {
         let mut hex = [*b"00"; 70];
         (hex[1][0], hex[1 + apart][0]) = (b'g', b'g');
         check(vec![0], || filled(70, |out| kernels::decode_hex(&hex, out)));

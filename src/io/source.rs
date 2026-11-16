@@ -118,7 +118,7 @@ impl OpenFile {
     }
 
     /// # Safety
-    /// The bytes of `iov` stay until `callback` runs or they are moved to `buffer`.
+    /// On `Ok` the bytes of `iov` stay until `callback` runs.
     pub(crate) unsafe fn submit_write(
         &self,
         iov: uv::uv_buf_t,
@@ -174,12 +174,7 @@ impl Drop for OpenFile {
 /// - The `fs` is properly deinitialized before reuse
 /// - Cancellation is only attempted when an operation is in-flight
 ///
-/// Typical usage pattern:
-/// 1. Check `can_start()` - returns true if ready for a new operation
-/// 2. Call `prepare()` - marks fs as in-use
-/// 3. Set up buffer and call `uv_fs_write()` (`submit_read()` does both steps for a read)
-/// 4. In callback, call `on_complete()` first to clean up
-/// 5. Process the result
+/// `submit_read()` / `submit_write()` start an operation, and its callback calls `on_complete()` first.
 ///
 /// Cancellation:
 /// - Call `stop()` to cancel an in-flight operation
@@ -192,7 +187,7 @@ pub struct File {
     fs: UnsafeCell<uv::fs_t>,
 
     /// The reader or writer that hears of a completion.
-    pub(crate) parent: Cell<*mut c_void>,
+    parent: Cell<*mut c_void>,
 
     loop_: &'static bun_uws_sys::Loop,
 
@@ -266,7 +261,7 @@ impl File {
 
     /// Mark the file as in-use for an operation.
     /// Must only be called when can_start() returns true.
-    pub(crate) fn prepare(&self) {
+    fn prepare(&self) {
         debug_assert!(self.can_start());
         self.state.set(FileState::Operating);
     }
@@ -275,7 +270,7 @@ impl File {
     ///
     /// # Safety
     /// libuv has refused the operation, or is calling its callback.
-    pub(crate) unsafe fn complete(&self, was_canceled: bool) {
+    unsafe fn complete(&self, was_canceled: bool) {
         debug_assert!(self.is_busy());
         if was_canceled {
             debug_assert!(self.state.get() == FileState::Canceling);

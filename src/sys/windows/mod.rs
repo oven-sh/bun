@@ -21,6 +21,7 @@ use bun_windows_sys::externs;
 use crate as bun_sys;
 use crate::{E, Fd, MaybeExt, NtCreateFileOptions, SystemErrno};
 
+pub use bun_windows_sys::CONTEXT;
 pub use bun_windows_sys::externs::SetFilePointerEx;
 pub use bun_windows_sys::kernel32::GetLastError;
 pub use bun_windows_sys::ntdll;
@@ -1247,10 +1248,9 @@ pub struct EXCEPTION_RECORD {
 }
 /// `EXCEPTION_POINTERS` (winnt.h) — passed to vectored handlers.
 #[repr(C)]
-pub struct EXCEPTION_POINTERS {
-    pub ExceptionRecord: *mut EXCEPTION_RECORD,
-    /// `PCONTEXT` — opaque here (arch-specific 1232-byte blob on x64).
-    pub ContextRecord: *mut core::ffi::c_void,
+pub struct EXCEPTION_POINTERS<'a> {
+    pub ExceptionRecord: &'a EXCEPTION_RECORD,
+    pub ContextRecord: Option<&'a CONTEXT>,
 }
 
 /// Best-effort `major.build` string from `RtlGetVersion`. Cached in a

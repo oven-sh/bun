@@ -473,8 +473,6 @@ pub mod comptime_string_map_jsc;
 pub(crate) mod declared_results_testing;
 #[path = "EventLoopHandle.rs"]
 pub mod event_loop_handle;
-#[path = "FFI.rs"]
-pub mod ffi;
 #[path = "JSCScheduler.rs"]
 pub mod jsc_scheduler;
 #[path = "ProcessAutoKiller.rs"]
@@ -1242,9 +1240,9 @@ pub mod event_loop;
 pub use self::event_loop as EventLoop;
 pub mod job;
 pub use self::event_loop::{
-    AnyEventLoop, AnyTaskWithExtraContext, ConcurrentCppTask, ConcurrentTask, CppTask,
-    DeferredTaskQueue, EventLoopHandle, EventLoopTask, GarbageCollectionController, MiniEventLoop,
-    PosixSignalTask, Stopped, Task, WorkPool, WorkPoolTask,
+    AnyTaskWithExtraContext, ConcurrentCppTask, ConcurrentTask, CppTask, DeferredTaskQueue,
+    EventLoopHandle, EventLoopTask, GarbageCollectionController, MiniEventLoop, PosixSignalTask,
+    Stopped, Task, WorkPool, WorkPoolTask,
 };
 pub use self::job::{Completion, Job, JobContext, JsPtr, JsThread};
 #[cfg(unix)]

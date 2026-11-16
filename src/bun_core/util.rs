@@ -1814,7 +1814,7 @@ pub struct RacyCell<T: ?Sized>(core::cell::Cell<T>);
 // exact contract `static mut` already imposed. **Do not** wrap *payloads*
 // whose `!Sync` is load-bearing (`Cell<U>`, `Rc<U>`, `RefCell<U>`); use
 // `thread_local!` or a real lock for those. (The inner storage here is
-// `Cell<T>` purely so `read`/`write` bodies are safe code — the cross-thread
+// `Cell<T>` purely so the body of `write` is safe code — the cross-thread
 // hazard is fully accounted for by this `unsafe impl Sync`.)
 unsafe impl<T: ?Sized> Sync for RacyCell<T> {}
 
@@ -1829,29 +1829,14 @@ impl<T> RacyCell<T> {
     pub const fn get(&self) -> *mut T {
         self.0.as_ptr()
     }
-    /// Convenience: read a `Copy` value. Single load, no aliasing assertion.
-    ///
-    /// # Safety
-    /// Caller guarantees no concurrent writer on another thread.
-    #[inline]
-    pub unsafe fn read(&self) -> T
-    where
-        T: Copy,
-    {
-        self.0.get()
-    }
     /// Convenience: overwrite the value.
     ///
     /// # Safety
     /// Caller guarantees no concurrent reader/writer on another thread.
+    #[cfg(windows)]
     #[inline]
     pub unsafe fn write(&self, value: T) {
         self.0.set(value)
-    }
-}
-impl<T: Default> Default for RacyCell<T> {
-    fn default() -> Self {
-        Self::new(T::default())
     }
 }
 
@@ -1934,7 +1919,7 @@ impl ThreadLock {
                 // swap observes it. Debug-only diagnostic on the panic path.
                 let stored = self.locked_at.get();
                 crate::dump_stack_trace(
-                    &stored.trace(),
+                    stored.trace(),
                     crate::DumpStackTraceOptions {
                         frame_count: 10,
                         stop_at_jsc_llint: true,
@@ -3511,16 +3496,16 @@ pub use bun_alloc::secure_zero;
 // ── argv ──────────────────────────────────────────────────────────────────
 // `bun.argv` — process argv as a slice of NUL-terminated byte strings.
 // The owned `ZBox` backing for the
-// initial OS argv lives in `ARGV_STORAGE`; `ARGV` is the mutable *view*
+// initial OS argv lives in `ARGV_STORAGE`; `ARGV` points to the *view*
 // slice that call sites read (and that `set_argv` swaps for the
 // `--compile` exec-argv splicing path). Exposed via a tiny
 // `Argv` wrapper so call sites can use it both as a slice (`.get(0)`,
 // `.iter()`, `.len()`, `.as_slice()`) and as an `IntoIterator<Item = &[u8]>`
 // for `for arg in argv()`.
 static ARGV_STORAGE: Once<Vec<ZBox>> = Once::new();
-static ARGV_VIEW: Once<Vec<&'static ZStr>> = Once::new();
-static ARGV: RacyCell<&'static [&'static ZStr]> = RacyCell::new(&[]);
-static ARGV_INIT: std::sync::Once = std::sync::Once::new();
+/// Null, or from a `&'static`.
+static ARGV: core::sync::atomic::AtomicPtr<&'static [&'static ZStr]> =
+    core::sync::atomic::AtomicPtr::new(core::ptr::null_mut());
 
 /// Raw `(argc, argv)` as passed to `main` by the C runtime. Captured by
 /// [`init_argv`] before any other code runs. On glibc / macOS / Windows,
@@ -3609,27 +3594,29 @@ fn argv_storage() -> &'static [ZBox] {
 
 #[cold]
 #[inline(never)]
-fn argv_view_init() {
-    let storage: &'static [ZBox] = argv_storage();
-    // ARGV_STORAGE is process-static via `Once`; `as_zstr` borrows for `'static`.
-    let mut view: Vec<&'static ZStr> = storage.iter().map(ZBox::as_zstr).collect();
-    // Splice BUN_OPTIONS tokens after argv[0].
-    if let Some(opts) = crate::env_var::BUN_OPTIONS.get() {
-        let original_len = view.len();
-        append_options_env::<&'static ZStr>(opts, &mut view);
-        set_bun_options_argc(view.len() - original_len);
-    }
-    let view: &'static [&'static ZStr] = ARGV_VIEW.get_or_init(move || view);
-    // SAFETY: single-threaded lazy init guarded by Once.
-    unsafe { ARGV.write(view) };
+fn argv_view_init() -> &'static &'static [&'static ZStr] {
+    use core::sync::atomic::Ordering::{Relaxed, Release};
+    static INITIAL: Once<&'static [&'static ZStr]> = Once::new();
+    let initial = INITIAL.get_or_init(|| {
+        let mut view: Vec<&'static ZStr> = argv_storage().iter().map(ZBox::as_zstr).collect();
+        // Splice BUN_OPTIONS tokens after argv[0].
+        if let Some(opts) = crate::env_var::BUN_OPTIONS.get() {
+            let original_len = view.len();
+            append_options_env::<&'static ZStr>(opts, &mut view);
+            set_bun_options_argc(view.len() - original_len);
+        }
+        view.leak()
+    });
+    let published = core::ptr::from_ref(initial).cast_mut();
+    let _ = ARGV.compare_exchange(core::ptr::null_mut(), published, Release, Relaxed);
+    initial
 }
 
 #[inline]
 fn argv_view() -> &'static [&'static ZStr] {
-    ARGV_INIT.call_once(argv_view_init);
-    // SAFETY: ARGV is a Copy fat-pointer; only mutated via `set_argv` during
-    // single-threaded startup or by the Once above.
-    unsafe { ARGV.read() }
+    let view = ARGV.load(core::sync::atomic::Ordering::Acquire);
+    // SAFETY: see `ARGV`.
+    unsafe { view.as_ref() }.unwrap_or_else(argv_view_init)
 }
 
 #[derive(Clone, Copy)]
@@ -3875,29 +3862,11 @@ pub fn append_options_env<A: OptionsEnvArg>(env: &[u8], args: &mut Vec<A>) {
     }
 }
 
-/// Swap the global argv view. Call sites are single-threaded
-/// startup (CLI parsing in the `--compile` path), so this writes the static
-/// without synchronization.
-///
-/// # Safety
-/// Caller must ensure no concurrent reads of `argv()` are in flight.
+/// Swap the global argv view.
 #[inline]
-pub unsafe fn set_argv(v: &'static [&'static ZStr]) {
-    // Prevent the lazy OS-argv init from later clobbering a manually-set view.
-    ARGV_INIT.call_once(|| {});
-    // SAFETY: see fn doc — single-threaded startup.
-    unsafe { ARGV.write(v) };
-}
-
-/// Park an owned argv `Vec` in process-static storage and return the
-/// now-`'static` slice. Used by the `--compile` exec-argv splice path
-/// (`cli_body.rs`) which needs to extend argv beyond the original
-/// OS-provided storage and then hand sub-slices to [`set_argv`]. Single-shot:
-/// the slot is a `Once`, so a second call drops `v` and returns the
-/// first-stored slice.
-pub fn intern_argv(v: Vec<&'static ZStr>) -> &'static [&'static ZStr] {
-    static SLOT: Once<Box<[&'static ZStr]>> = Once::new();
-    SLOT.get_or_init(move || v.into_boxed_slice())
+pub fn set_argv(view: &'static &'static [&'static ZStr]) {
+    let view = core::ptr::from_ref(view).cast_mut();
+    ARGV.store(view, core::sync::atomic::Ordering::Release);
 }
 
 // ── getcwd ────────────────────────────────────────────────────────────────

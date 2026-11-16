@@ -18,7 +18,7 @@ use bun_core::ZBox;
 use bun_core::{Global, Output};
 use bun_core::{ZStr, strings};
 use bun_dotenv as dot_env;
-use bun_event_loop::{self, AnyEventLoop, EventLoopHandle};
+use bun_event_loop::{self, EventLoopHandle};
 use bun_http as http;
 use bun_ini as ini;
 use bun_paths::resolve_path::{self, PosixToWinNormalizer, platform};
@@ -611,7 +611,7 @@ pub struct PackageManager {
     // that the project's own package.json files declare.
     pub(crate) known_npm_aliases: NpmAliasMap,
 
-    pub(crate) event_loop: AnyEventLoop,
+    pub(crate) event_loop: EventLoopHandle,
 
     // During `installPackages` we learn exactly what dependencies from --trust
     // actually have scripts to run, and we add them to this list
@@ -1465,9 +1465,9 @@ fn allocate_package_manager(
         wr!(
             event_loop,
             if runtime_auto_install {
-                AnyEventLoop::js_current()
+                EventLoopHandle::js_current()
             } else {
-                AnyEventLoop::init()
+                EventLoopHandle::leak_mini()
             }
         );
         wr!(
@@ -2533,11 +2533,9 @@ pub fn init(
     {
         // SAFETY: singleton fully initialized; main thread, no workers yet.
         let manager = unsafe { &mut *manager_ptr };
-        // Build the handle from `manager.event_loop` and write it back as the loop's
-        // parent so uSockets timers / lifecycle subprocess waiters can find the
-        // mini event loop on tick.
-        let uws_loop = manager.event_loop.r#loop();
-        EventLoopHandle::from_any(&manager.event_loop).set_as_parent_of(uws_loop);
+        // So that uSockets timers / lifecycle subprocess waiters can find the mini event loop on tick.
+        let event_loop = manager.event_loop;
+        event_loop.set_as_parent_of(event_loop.r#loop());
     }
     {
         // make sure folder packages can find the root package without creating a new one

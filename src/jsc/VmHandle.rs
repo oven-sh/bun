@@ -883,7 +883,7 @@ const _: () = assert!(State::Open as u8 == 0);
 /// takes one more ticket.
 pub enum ConcurrentPoster {
     Js(Ticket),
-    Mini(bun_ptr::BackRef<bun_event_loop::MiniEventLoop::MiniEventLoop>),
+    Mini(&'static bun_event_loop::MiniEventLoop::MiniEventLoop),
 }
 
 impl Clone for ConcurrentPoster {
@@ -891,7 +891,7 @@ impl Clone for ConcurrentPoster {
     fn clone(&self) -> Self {
         match self {
             ConcurrentPoster::Js(t) => ConcurrentPoster::Js(t.clone()),
-            ConcurrentPoster::Mini(m) => ConcurrentPoster::Mini(*m),
+            ConcurrentPoster::Mini(m) => ConcurrentPoster::Mini(m),
         }
     }
 }
@@ -908,7 +908,7 @@ impl ConcurrentPoster {
                 let vm = unsafe { &*owner.bun_vm().cast::<VirtualMachine>() };
                 ConcurrentPoster::Js(vm.ticket())
             }
-            bun_event_loop::EventLoopHandle::Mini(mini) => ConcurrentPoster::Mini(*mini),
+            bun_event_loop::EventLoopHandle::Mini(mini) => ConcurrentPoster::Mini(mini),
         }
     }
 

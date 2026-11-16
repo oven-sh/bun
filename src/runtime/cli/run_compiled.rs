@@ -1187,8 +1187,8 @@ pub(crate) fn load_program_file() -> bun_standalone_graph::Result<Option<*mut Gr
         Err(_) => path.to_vec(),
     };
     argv[0] = Box::leak(Box::new(ZBox::from_bytes(typed.unwrap_or(&file)))).as_zstr();
-    // SAFETY: no other thread has started.
-    unsafe { bun_core::set_argv(Vec::leak(argv)) };
+    static ARGV: bun_core::Once<&[&bun_core::ZStr]> = bun_core::Once::new();
+    bun_core::set_argv(ARGV.get_or_init(|| argv.leak()));
     // The program finds the environment that the launcher found.
     #[cfg(unix)]
     if has_launcher {

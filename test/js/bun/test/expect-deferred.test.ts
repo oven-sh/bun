@@ -87,6 +87,39 @@ describe.concurrent(".resolves and .rejects", () => {
     expect(exitCode).toBe(0);
   });
 
+  test.each([
+    ["bun:test", "resolves", "resolve"],
+    ["bun:test", "rejects", "reject"],
+    ["vitest", "resolves", "resolve"],
+  ])("%s: .%s waits when it is called while another matcher starts to wait", async (module, modifier, settle) => {
+    const { stdout, results, exitCode, signalCode } = await run(["test"], {
+      "a.test.js": `
+        import { expect, test } from "${module}";
+        test("nested", async () => {
+          expect.extend({ "": () => ({ pass: true }) });
+          const resolvers = Promise.withResolvers();
+          const kept = expect(resolvers.promise).${modifier};
+          const nested = [];
+          // A function without a name is named after its Symbol.toStringTag.
+          Object.defineProperty(kept[""], Symbol.toStringTag, {
+            get() {
+              if (nested.length === 0) nested.push(kept.toBe(1), kept.toBe(2));
+            },
+          });
+          const outer = kept[""]();
+          resolvers.${settle}(1);
+          console.log((await Promise.allSettled([outer, ...nested])).map(result => result.status).join());
+        });
+      `,
+    });
+    expect({ stdout, results, exitCode, signalCode }).toEqual({
+      stdout: ["fulfilled,fulfilled,rejected"],
+      results: ["(pass) nested"],
+      exitCode: 0,
+      signalCode: null,
+    });
+  });
+
   test("run nothing else before the matcher call returns", async () => {
     const { stdout, exitCode, signalCode } = await runTests(`
       test("the promise is settled by what follows the call", async () => {

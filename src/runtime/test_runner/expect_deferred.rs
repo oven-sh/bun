@@ -1105,36 +1105,39 @@ impl Expect {
         matcher: Matcher<'_, 'a>,
     ) -> JsResult<JSValue> {
         let this_value = call.this;
-        let first_call = expect_js::result_value_get_cached(this_value).is_none();
-        if first_call {
-            let global = cx.global();
-            let received =
-                expect_js::captured_value_get_cached(this_value).unwrap_or(JSValue::UNDEFINED);
-            let promise = Self::received_promise(global, received)?;
-            expect_js::result_value_set_cached(
-                this_value,
-                global,
-                promise.map_or(JSValue::NULL, AnyPromise::as_value),
-            );
-            // bun:test checks a settled promise right away and throws, as it always has. Vitest always returns a promise.
-            let always_defer = self.is_vitest();
-            if let Some(promise) =
-                promise.filter(|promise| always_defer || promise.status() == Status::Pending)
-            {
+        let global = cx.global();
+        let kept = expect_js::result_value_get_cached(this_value);
+        let first_call = kept.is_none();
+        let promise = match kept {
+            Some(kept) => kept.as_any_promise(),
+            None => {
+                let received =
+                    expect_js::captured_value_get_cached(this_value).unwrap_or(JSValue::UNDEFINED);
+                let promise = Self::received_promise(global, received)?;
+                expect_js::result_value_set_cached(
+                    this_value,
+                    global,
+                    promise.map_or(JSValue::NULL, AnyPromise::as_value),
+                );
+                promise
+            }
+        };
+        // bun:test checks a settled promise right away and throws, as it always has. Vitest always returns a promise.
+        let always_defer = first_call && self.is_vitest();
+        let result = match promise.filter(|promise| always_defer || promise.status() == Status::Pending) {
+            Some(promise) => {
                 let deferred = ExpectDeferred::waiting(global);
                 js::awaited_set_cached(deferred, global, promise.as_value());
-                let deferred = ExpectDeferred::defer(deferred, self, global, call);
-                expect_js::result_value_set_cached(this_value, global, JSValue::ZERO);
-                return deferred;
+                ExpectDeferred::defer(deferred, self, global, call)
             }
-        }
-        let result = match matcher(cx) {
-            Ok(_) => Ok(JSPromise::resolved_promise_value(
-                cx.global(),
-                JSValue::UNDEFINED,
-            )),
-            Err(JsError::Thrown) => self.matcher_threw(cx.global(), call),
-            Err(err) => Err(err),
+            None => match matcher(cx) {
+                Ok(_) => Ok(JSPromise::resolved_promise_value(
+                    cx.global(),
+                    JSValue::UNDEFINED,
+                )),
+                Err(JsError::Thrown) => self.matcher_threw(cx.global(), call),
+                Err(err) => Err(err),
+            },
         };
         if first_call {
             expect_js::result_value_set_cached(this_value, cx.global(), JSValue::ZERO);

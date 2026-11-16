@@ -187,7 +187,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionPrepareHoldersBeforeLookupsUnder, (JSC::JSGlo
 extern "C" BunLoaderType Bun__getDefaultLoader(JSC::JSGlobalObject*, const BunString* specifier, const BunString* typeAttribute);
 extern "C" bool Bun__compiledProgramRunsInPlace();
 extern "C" bool Bun__compiledProgramNamesPlugin();
-extern "C" JSC::AOT::PluginResolveResult Bun__AOT__resolveWithPlugins(JSC::JSGlobalObject*, const BunString* name, const BunString* importer, BunString* resolvedWithoutPlugins);
+extern "C" JSC::AOT::PluginResolveResult Bun__AOT__resolveWithPlugins(JSC::JSGlobalObject*, const BunString* name, const BunString* importer, Bun::OwnedString* resolvedWithoutPlugins);
 extern "C" BunString Bun__AOT__resolveWithoutPlugins(JSC::JSGlobalObject*, const BunString* name, const BunString* importer);
 extern "C" bool Bun__compiledProgramHoldsFileAsItIs(const BunString*);
 extern "C" bool Bun__compiledProgramDataFileIsPrintedAsJavaScript(JSC::JSGlobalObject*, const BunString*);
@@ -305,7 +305,7 @@ void recordFileRunFromSource(JSGlobalObject*, const String& path, ASCIILiteral w
 // A module from `build.module()`, or an onResolve filter that matches. A mock is in the same table but is no function.
 static bool isGivenByPlugin(Zig::GlobalObject* global, const String& name)
 {
-    auto* modules = global->onLoadPlugins.virtualModules;
+    auto* modules = global->onLoadPlugins.virtualModules.get();
     auto given = modules ? modules->get(name) : JSC::Strong<JSC::JSObject>();
     return given && given->isCallable();
 }
@@ -315,7 +315,7 @@ static bool hasResolvePlugins(JSGlobalObject* globalObject)
     auto* global = uncheckedDowncast<Zig::GlobalObject>(globalObject);
     if (!global->onResolvePlugins.isEmpty())
         return true;
-    auto* modules = global->onLoadPlugins.virtualModules;
+    auto* modules = global->onLoadPlugins.virtualModules.get();
     if (!modules)
         return false;
     for (auto& given : modules->values()) {
@@ -429,9 +429,9 @@ static String resolveWithoutPlugins(JSGlobalObject* globalObject, const String& 
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(getVM(globalObject));
     BunString nameArgument = Bun::toString(name);
     BunString importerArgument = Bun::toString(importer);
-    BunString found = Bun__AOT__resolveWithoutPlugins(globalObject, &nameArgument, &importerArgument);
+    auto found = OwnedString::adopt(Bun__AOT__resolveWithoutPlugins(globalObject, &nameArgument, &importerArgument));
     (void)scope.tryClearException();
-    return found.isDead() ? String() : found.transferToWTFString();
+    return found.transferToWTFString();
 }
 
 static AOT::PluginResolveResult resolveWithPlugins(JSGlobalObject* globalObject, const String& name, const String& importer, String& resolvedWithoutPlugins)
@@ -442,7 +442,7 @@ static AOT::PluginResolveResult resolveWithPlugins(JSGlobalObject* globalObject,
         auto scope = DECLARE_TOP_EXCEPTION_SCOPE(getVM(globalObject));
         BunString nameArgument = Bun::toString(name);
         BunString importerArgument = Bun::toString(importer);
-        BunString found = { BunStringTag::Dead };
+        OwnedString found;
         {
             SetForScope engineAsks(threadPluginResolutions().engineAsks, true);
             SetForScope importStatement(global->onResolvePlugins.isResolvingImportStatement, true);
@@ -500,7 +500,7 @@ static std::optional<AOT::ModuleID> findDefaultForm(const String& path)
     if (!hasCompiledModules() || Bun__compiledProgramRunsInPlace())
         return std::nullopt;
     BunString pathArgument = Bun::toString(path);
-    BunString pathOfForm = Bun__AOT__pathOfDefaultForm(&pathArgument);
+    auto pathOfForm = OwnedString::adopt(Bun__AOT__pathOfDefaultForm(&pathArgument));
     if (pathOfForm.isDead())
         return std::nullopt;
     return findModuleForPath(pathOfForm.transferToWTFString());
@@ -609,7 +609,7 @@ static std::optional<AOT::ModuleID> findFormOfModule(JSGlobalObject* globalObjec
     BunString pathArgument = Bun::toString(path);
     BunString typeArgument = Bun::toString(type);
     bool isFormWithoutAttributes = false;
-    BunString pathOfForm = Bun__AOT__pathOfForm(&pathArgument, &typeArgument, &isFormWithoutAttributes);
+    auto pathOfForm = OwnedString::adopt(Bun__AOT__pathOfForm(&pathArgument, &typeArgument, &isFormWithoutAttributes));
     if (pathOfForm.isDead())
         return std::nullopt;
     std::optional<AOT::ModuleID> module = compiledModuleForPath(pathOfForm.transferToWTFString());
@@ -861,7 +861,7 @@ static bool isReadAsCodeByRequire(Zig::GlobalObject* globalObject, AOT::ModuleID
 JSValue requireCompiledModuleForTestRunner(Zig::GlobalObject* globalObject, const String& key)
 {
     auto module = findModuleForPath(key);
-    auto* virtualModules = globalObject->onLoadPlugins.virtualModules;
+    auto* virtualModules = globalObject->onLoadPlugins.virtualModules.get();
     if (!module || (virtualModules && virtualModules->contains(key)) || rejectsRequester(globalObject, *module, AOT::LoadKind::Require))
         return {};
     return AOT::requireModule(globalObject, *module);
@@ -1185,7 +1185,7 @@ void didDeleteRequireCacheEntry(Zig::GlobalObject* globalObject, const String& k
     if (module && ranDuringWaitingMock(globalObject, *module))
         RELEASE_AND_RETURN(scope, AOT::didDeletePendingMockEntry(globalObject, *module));
     // Under a mock the original has its own key and outlives the entry. If the end of the mock moved it back under this key, it goes with the entry.
-    auto* mocks = globalObject->onLoadPlugins.virtualModules;
+    auto* mocks = globalObject->onLoadPlugins.virtualModules.get();
     if (module && AOT::isEvicted(globalObject, *module) && AOT::wasOriginalRestoredToOwnKey(globalObject, *module) && !(mocks && mocks->contains(key)))
         AOT::clearRetainedOriginalExports(globalObject, *module);
     evictFromProgram(globalObject, key, [](JSGlobalObject* realm, AOT::ModuleID module) {
@@ -1426,7 +1426,7 @@ void forEachEvaluatedCompiledFile(Zig::GlobalObject* globalObject, const WTF::Fu
 static void willSetNodeBuiltinCacheEntry(Zig::GlobalObject* globalObject, const String& name)
 {
     BunString nameArgument = Bun::toString(name);
-    BunString path = Bun__AOT__nodeModuleNamedWithoutPrefix(&nameArgument);
+    auto path = OwnedString::adopt(Bun__AOT__nodeModuleNamedWithoutPrefix(&nameArgument));
     if (path.isDead())
         return;
     if (auto module = findModuleForPath(path.transferToWTFString()))
@@ -1808,8 +1808,7 @@ static void didDiscardModuleEvaluation(JSGlobalObject* realm, JSObject* object, 
 String pathInExecutable(const String& path)
 {
     BunString pathArgument = Bun::toString(path);
-    BunString known = Bun__AOT__pathInExecutable(&pathArgument);
-    return known.isDead() ? String() : known.transferToWTFString();
+    return Bun__AOT__pathInExecutable(&pathArgument).transferToWTFString();
 }
 
 JSValue mainModuleOfExecutable(Zig::GlobalObject* globalObject)

@@ -125,8 +125,8 @@ impl Checker<'_, '_> {
         let (options, module) = (&files.options, files.module(file));
         let is_commonjs_module = module.is_commonjs()
             && (options.module == ModuleKind::CommonJs || options.module.is_node());
-        module.hir.kind != FileKind::Declaration
-            && (module.hir.has_module_syntax || is_commonjs_module)
+        module.facts.kind != FileKind::Declaration
+            && (module.facts.has_module_syntax || is_commonjs_module)
     }
 
     /// FOR SPEED: true if `checkExternalEmitHelpers` can't report anything in `file`, whichever helper is requested,

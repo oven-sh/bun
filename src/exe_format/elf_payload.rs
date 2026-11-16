@@ -785,9 +785,10 @@ mod tests {
     use bun_core::slice_to_nul;
 
     use super::*;
-    use crate::elf_ranges::reserve_payload_segments;
-    use crate::elf_ranges::tests::toy_elf;
-    use crate::image::{AddressRange, Architecture, ImageEditor};
+    use crate::cut_model::{CutCapacity, RemovableBytes};
+    use crate::elf_ranges::tests::{HEADERS_WITH_ONE_CUT, limit_header_room, toy_elf};
+    use crate::elf_ranges::{cut_model, remove_ranges, reserve_payload_segments};
+    use crate::image::{AddressRange, Architecture, ImageEditor, ImageError};
 
     const ARCHITECTURES: [Architecture; 2] = [Architecture::X86_64, Architecture::Aarch64];
     const PHDR_SIZE: usize = size_of::<Elf64_Phdr>();
@@ -862,7 +863,10 @@ mod tests {
         let page = page_size(elf);
         let start = align_up(find_section(elf, b".text").sh_addr, page);
         let end = start + 4 * page;
-        let cut = AddressRange { start, end };
+        remove(elf, AddressRange { start, end })
+    }
+
+    fn remove(elf: &mut Vec<u8>, cut: AddressRange) -> AddressRange {
         let mut editor = ImageEditor::open(elf).unwrap();
         editor.remove_ranges(&[cut]).unwrap();
         cut
@@ -1178,6 +1182,97 @@ mod tests {
             assert_both_fail(&longer_span, 100, ElfError::BunSectionAlreadyWritten);
             let moved_span = edited::<Elf64_Phdr>(&first, span_offset, |span| span.p_vaddr += page);
             assert_both_fail(&moved_span, 100, ElfError::BunSectionAlreadyWritten);
+        }
+    }
+
+    #[test]
+    fn payload_with_code_is_replaced_after_another_cut() {
+        for architecture in ARCHITECTURES {
+            let mut trimmed = template(architecture);
+            let first_cut = remove_text_pages(&mut trimmed);
+            let page = page_size(&trimmed);
+            let second_cut = AddressRange {
+                start: first_cut.end,
+                end: first_cut.end + page,
+            };
+            let mut cut_once = template(architecture);
+            let both_cuts = AddressRange {
+                start: first_cut.start,
+                end: second_cut.end,
+            };
+            remove(&mut cut_once, both_cuts);
+
+            let free_slots = |elf: &[u8]| cut_model(elf).free_slots();
+            let payloads = [
+                (4 * page, page - 8..3 * page - 8),
+                (2 * page - 8, page - 8..2 * page - 8),
+                (6 * page, 2 * page - 8..5 * page - 8),
+            ];
+            for (length, code) in payloads.clone() {
+                let first = write_with_code(&trimmed, &create_payload(length), code);
+                assert_eq!(free_slots(&first), free_slots(&trimmed));
+
+                let mut cut_twice = first.clone();
+                remove(&mut cut_twice, second_cut);
+                assert_eq!(find_reserved_segment(&cut_twice), None);
+                assert_eq!(free_slots(&cut_twice), free_slots(&first));
+
+                for (length, code) in payloads.clone() {
+                    let payload = create_payload(length);
+                    let built = write_with_code(&cut_twice, &payload, code.clone());
+                    assert!(built == write_with_code(&cut_once, &payload, code));
+                }
+                let payload = create_payload(3 * page);
+                let without_code = write_in_pieces(&cut_twice, &payload).0;
+                assert!(without_code == write_in_pieces(&cut_once, &payload).0);
+            }
+        }
+    }
+
+    #[test]
+    fn full_table_holds_the_empty_piece_of_a_payload() {
+        for architecture in ARCHITECTURES {
+            let mut trimmed = template(architecture);
+            limit_header_room(&mut trimmed, HEADERS_WITH_ONE_CUT);
+            let first_cut = remove_text_pages(&mut trimmed);
+            let page = page_size(&trimmed);
+            let [beside, apart] = [0, 2].map(|pages| AddressRange {
+                start: first_cut.end + pages * page,
+                end: first_cut.end + (pages + 1) * page,
+            });
+
+            let code_to_the_end = (2 * page - 8, page - 8..2 * page - 8);
+            let code_in_the_middle = (4 * page, page - 8..3 * page - 8);
+            for (length, code) in [code_to_the_end, code_in_the_middle.clone()] {
+                let first = write_with_code(&trimmed, &create_payload(length), code);
+                assert_eq!(usize::from(read_ehdr(&first).e_phnum), HEADERS_WITH_ONE_CUT);
+                assert_eq!(cut_model(&first).capacity, CutCapacity::Cuts(0));
+                let mut refused = first.clone();
+                let result = remove_ranges(&mut refused, &[apart]);
+                assert_eq!(result, Err(ImageError::HeaderRoomExhausted));
+                assert!(refused == first);
+
+                let removable = [beside, apart].map(|range| RemovableBytes {
+                    range,
+                    is_code: true,
+                    can_be_cut: true,
+                    can_be_filled: true,
+                });
+                let plan = cut_model(&first).choose(&removable);
+                assert_eq!(plan.cuts, [beside]);
+                let mut cut_twice = first;
+                remove(&mut cut_twice, beside);
+                let (length, code) = code_in_the_middle.clone();
+                let built = write_with_code(&cut_twice, &create_payload(length), code);
+                assert_eq!(
+                    payload_segments(&built),
+                    [
+                        (PF_R, 0, page),
+                        (PF_R | PF_X, page, 2 * page),
+                        (PF_R, 3 * page, 2 * page),
+                    ]
+                );
+            }
         }
     }
 

@@ -5,7 +5,7 @@
 //! (S3 I/O, streaming, JS host-fns, async readers) on top via the `BlobExt` /
 //! `StoreExt` / … extension traits in that crate. Defining the data shapes here
 //! lets lower-tier crates (`bun_http_jsc`, `bun_sql_jsc`) downcast a `JSValue`
-//! to `*mut Blob` and read its bytes without a `bun_runtime` forward-dep.
+//! to `Blob` and read its bytes without a `bun_runtime` forward-dep.
 //!
 //! Everything that touches the
 //! event loop / fs / network stays in `bun_runtime`.
@@ -23,7 +23,7 @@ use bun_ptr::RefPtr;
 
 use crate::JsCell;
 use crate::node_path::{PathLike, PathOrFileDescriptor};
-use crate::{JSGlobalObject, JSValue, JsClass};
+use crate::{JSGlobalObject, JSValue, JsClass, WrapperGuard};
 
 /// Blob size type. Values are masked to 52 bits at the boundary.
 pub type SizeType = u64;
@@ -209,7 +209,7 @@ const _: () = {
     // The class is generated into `bun_runtime`, which has its members (`BlobExt`).
     unsafe extern "C" {
         safe fn Bun__Bindgen__Blob__fromJS(value: JSValue) -> *mut c_void;
-        safe fn Bun__Bindgen__Blob__fromJSDirect(value: JSValue) -> *mut c_void;
+        fn Bun__Bindgen__Blob__fromJSDirect(value: JSValue) -> *mut c_void;
         fn Bun__Bindgen__Blob__create(global: *mut JSGlobalObject, wrapped: *mut c_void)
         -> JSValue;
     }
@@ -218,26 +218,28 @@ const _: () = {
     // wraps a `Blob`, so downcasting to `Blob` must also match it. The struct
     // lives in `bun_runtime`, so resolve the fallback at link time.
     //
-    // safe: by-value `JSValue` (tagged i64); the Rust-ABI body in `bun_runtime`
-    // only type-checks the encoded value and returns the stored payload pointer
-    // (or `None`) — no precondition beyond the link succeeding.
+    // safe: the Rust-ABI body in `bun_runtime` is a safe function.
     unsafe extern "Rust" {
-        safe fn __bun_blob_from_build_artifact(value: JSValue) -> Option<*mut Blob>;
+        safe fn __bun_blob_from_build_artifact(value: JSValue) -> *mut Blob;
     }
 
     impl JsClass for Blob {
-        fn from_js(value: JSValue) -> Option<*mut Self> {
-            let blob = match Bun__Bindgen__Blob__fromJS(value) {
-                blob if blob.is_null() => __bun_blob_from_build_artifact(value),
-                blob => Some(blob.cast()),
+        fn from_js(value: &JSValue) -> Option<WrapperGuard<'_, Self>> {
+            let blob = match Bun__Bindgen__Blob__fromJS(*value) {
+                blob if blob.is_null() => __bun_blob_from_build_artifact(*value),
+                blob => blob.cast(),
             };
             // C++ `mayHoldBlob` (blob.h) answers for a cell of any other type without this call.
-            debug_assert!(blob.is_none() || value.js_type() == crate::JSType::DOMWrapper);
-            blob
+            debug_assert!(blob.is_null() || value.js_type() == crate::JSType::DOMWrapper);
+            // SAFETY: a `JSBlob` holds a ref on what it wraps, and so does a `JSBuildArtifact`, of which the `Blob` is a field.
+            unsafe { WrapperGuard::new(value, blob) }
         }
-        fn from_js_direct(value: JSValue) -> Option<*mut Self> {
-            let blob = Bun__Bindgen__Blob__fromJSDirect(value);
-            (!blob.is_null()).then(|| blob.cast())
+        fn from_js_direct(value: &JSValue) -> Option<WrapperGuard<'_, Self>> {
+            if !value.is_cell() {
+                return None;
+            }
+            // SAFETY: `value` is a cell, and a `JSBlob` holds a ref on what it wraps.
+            unsafe { WrapperGuard::new(value, Bun__Bindgen__Blob__fromJSDirect(*value).cast()) }
         }
         fn to_js(self, global: &JSGlobalObject) -> JSValue {
             // Heap-promote and hand

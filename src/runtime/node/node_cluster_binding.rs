@@ -606,24 +606,13 @@ pub(crate) fn cluster_raw_bind<'a>(
                 hints.ai_family = family;
                 hints.ai_socktype = socktype;
                 let host = bun_core::ZStr::from_buf(&addr_z, addr_bytes.len());
-                let Ok(ai) = bun_dns::AddrInfoList::lookup(Some(host), None, Some(&hints)) else {
+                let list = bun_dns::AddrInfoList::lookup(Some(host), None, Some(&hints));
+                let Some(first) = list.iter().flat_map(|list| list.addresses()).next() else {
                     return Ok(BindResult::Errno(-(libc::EINVAL)));
                 };
-                // SAFETY: ai_addr/ai_addrlen describe a sockaddr of the hinted family, which fits in `ss`.
-                unsafe {
-                    core::ptr::copy_nonoverlapping(
-                        ai.ai_addr.cast::<u8>(),
-                        (&raw mut ss).cast::<u8>(),
-                        ai.ai_addrlen as usize,
-                    );
-                    if family == libc::AF_INET6 {
-                        (*(&raw mut ss).cast::<libc::sockaddr_in6>()).sin6_port =
-                            (port as u16).to_be();
-                    } else {
-                        (*(&raw mut ss).cast::<libc::sockaddr_in>()).sin_port =
-                            (port as u16).to_be();
-                    }
-                }
+                let mut address = bun_dns::Address::from_bytes(first);
+                address.set_port(port as u16);
+                ss = address.into_storage();
             }
             ss_len = if family == libc::AF_INET6 {
                 core::mem::size_of::<libc::sockaddr_in6>() as libc::socklen_t

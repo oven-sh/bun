@@ -155,17 +155,6 @@ impl AnyEventLoop {
     pub fn loop_(&self) -> &'static UwsLoop {
         self.r#loop()
     }
-
-    /// See [`bun_io::uws_to_native`].
-    #[inline]
-    pub fn native_loop(&self) -> bun_io::LoopRef {
-        bun_io::uws_to_native(self.r#loop())
-    }
-
-    #[inline]
-    pub fn wakeup(&self) {
-        self.r#loop().wakeup();
-    }
 }
 
 // ─────────────────────────── EventLoopHandle ───────────────────────────────
@@ -253,7 +242,7 @@ impl EventLoopHandle {
     #[inline]
     fn into_tag_ptr(self) -> (core::ffi::c_char, *mut core::ffi::c_void) {
         match self {
-            EventLoopHandle::Js { owner, .. } => (1, owner.owner.cast()),
+            EventLoopHandle::Js { owner, .. } => (1, owner.owner().cast()),
             EventLoopHandle::Mini(mini) => (2, mini.as_const_ptr().cast_mut().cast()),
         }
     }
@@ -378,18 +367,10 @@ impl EventLoopHandle {
         self.r#loop()
     }
 
-    /// See [`bun_io::uws_to_native`].
-    #[inline]
-    pub fn native_loop(self) -> bun_io::LoopRef {
-        bun_io::uws_to_native(self.r#loop())
-    }
-
-    /// Windows convenience alias for [`native_loop`](Self::native_loop)
-    /// (kept for existing `cfg(windows)` callers that spell `uv_loop`).
     #[cfg(windows)]
     #[inline]
     pub fn uv_loop(self) -> *mut bun_io::Loop {
-        self.native_loop()
+        self.r#loop().uv_loop()
     }
 
     pub fn env(self) -> *mut DotEnvLoader {

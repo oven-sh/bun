@@ -19,9 +19,7 @@ use core::ffi::c_void;
 use bun_collections::VecExt;
 use bun_jsc::JsCell;
 use bun_jsc::virtual_machine::VirtualMachine;
-use bun_sys::Fd;
-#[cfg(not(windows))]
-use bun_sys::FdExt as _;
+use bun_sys::File;
 #[cfg(not(windows))]
 use bun_uws as uws;
 #[cfg(not(windows))]
@@ -158,7 +156,8 @@ impl Default for WindowsBackend {
 impl Channel {
     /// Adopt a duplex fd into the channel and start reading. POSIX: the
     /// socketpair end. Windows: the inherited named-pipe end (worker side).
-    pub(crate) fn adopt(&self, vm: &VirtualMachine, fd: Fd) -> bool {
+    pub(crate) fn adopt(&self, vm: &VirtualMachine, end: File) -> bool {
+        let fd = end.fd();
         #[cfg(windows)]
         {
             let _ = vm;
@@ -188,6 +187,8 @@ impl Channel {
                 );
                 return false;
             }
+            // `pipe` closes it.
+            end.into_raw();
             return self.adopt_pipe(pipe);
         }
         #[cfg(not(windows))]
@@ -195,11 +196,10 @@ impl Channel {
             let g = Self::ensure_posix_group(vm);
             let this = core::ptr::from_ref(self).cast_mut();
             let Some(sock) = Socket::from_fd(g, uws::SocketKind::Dynamic, fd, this, true) else {
-                // us_socket_from_fd does NOT take ownership on failure; leaving
-                // the inherited IPC endpoint open keeps the peer process alive.
-                fd.close();
                 return false;
             };
+            // `sock` closes it.
+            end.into_raw();
             self.backend.socket.set(sock);
             sock.set_timeout(0);
             true

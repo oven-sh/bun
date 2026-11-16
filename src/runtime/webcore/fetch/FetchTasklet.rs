@@ -34,7 +34,7 @@ use crate::webcore::response::HeadersRef;
 use crate::webcore::sink::ReadableSinkController;
 use crate::webcore::streams::EncodedChunk;
 use crate::webcore::streams::{SourceHandle, StreamError, StreamResult, Writable};
-use crate::webcore::{AbortSignal, DrainResult, FetchHeaders, InternalBlob, Response, SinkHandle};
+use crate::webcore::{AbortSignal, DrainResult, InternalBlob, Response, SinkHandle};
 use bun_jsc::AbortSignalRef;
 
 // `bun_event_loop::JsResult` (cycle-broken erased error) — used by
@@ -1496,12 +1496,7 @@ impl FetchTasklet {
             b"statusText".as_slice(),
             bun_string_jsc::create_utf8_for_js(global_this, response.status_text())?,
         );
-        // SAFETY: `create_from_pico_headers` returns a fresh refcount=1 FetchHeaders*.
-        let mut headers = unsafe {
-            HeadersRef::adopt(FetchHeaders::create_from_pico_headers(
-                response.headers().list,
-            ))
-        };
+        let mut headers = HeadersRef::create_from_headers(response.headers());
         error.put(
             global_this,
             b"headers".as_slice(),
@@ -1701,7 +1696,7 @@ impl FetchTasklet {
         // at this point we always should have metadata
         let metadata = self.metadata.as_ref().unwrap();
         // reshaped for borrowck — capture metadata fields before to_body_value() takes &mut self
-        let headers = FetchHeaders::create_from_pico_headers(metadata.headers().list);
+        let headers = HeadersRef::create_from_headers(metadata.headers());
         let status_code = metadata.status_code() as u16;
         // Fast path: when the wire reason phrase matches the canonical text for
         // this status code, store a StaticEncodedSlice and skip the WTF allocation.
@@ -1722,8 +1717,7 @@ impl FetchTasklet {
         };
         Response::init(
             crate::webcore::response::Init {
-                // SAFETY: create_from_pico_headers returns a fresh refcount=1 FetchHeaders*.
-                headers: Some(unsafe { HeadersRef::adopt(headers) }),
+                headers: Some(headers),
                 status_code,
                 status_text,
                 ..Default::default()

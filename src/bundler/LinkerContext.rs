@@ -410,19 +410,29 @@ impl<'l, 'a> LinkerContext<'l, 'a> {
         self.graph
     }
 
-    fn process_html_import_files(&mut self) {
+    fn process_html_import_files(&mut self, log: &mut Log) -> Result<(), LinkError> {
         let parse_graph = self.parse_graph();
         let server_source_indices = &parse_graph.html_imports;
+        let mut is_page_missing = false;
         if !server_source_indices.is_empty() {
             let actual_ref = self.graph.runtime_function(b"__jsonParse");
             let sources = parse_graph.input_files.items_source();
             let browser_paths = &parse_graph.build_graphs[Target::Browser];
 
             for &html_import in server_source_indices.iter() {
-                let path_text = sources[html_import as usize].path.text;
-                let source_index: u32 = browser_paths.get(path_text).unwrap_or_else(|| {
-                    panic!("Assertion failed: HTML import file not found in pathToSourceIndexMap");
-                });
+                let path = &sources[html_import as usize].path;
+                let Some(source_index) = browser_paths.get_path(path) else {
+                    log.add_error_fmt(
+                        Some(&sources[html_import as usize]),
+                        bun_ast::Loc::EMPTY,
+                        format_args!(
+                            "{} is imported as an HTML page, but the build has no page of it",
+                            bun_core::fmt::quote(path.pretty)
+                        ),
+                    );
+                    is_page_missing = true;
+                    continue;
+                };
 
                 self.graph.html_source_indices.push(source_index);
 
@@ -455,6 +465,10 @@ impl<'l, 'a> LinkerContext<'l, 'a> {
                     )
                     .expect("OOM");
             }
+        }
+        match is_page_missing {
+            true => Err(LinkError::BuildFailed),
+            false => Ok(()),
         }
     }
 
@@ -505,7 +519,7 @@ impl<'l, 'a> LinkerContext<'l, 'a> {
             self.compute_data_for_source_map();
         }
 
-        self.process_html_import_files();
+        self.process_html_import_files(log)?;
 
         if FeatureFlags::HELP_CATCH_MEMORY_ISSUES {
             self.check_for_memory_corruption();
@@ -4452,6 +4466,13 @@ impl InsideWrapperPrefix {
 }
 
 impl InsideWrapperPrefix {
+    /// A directive stays ahead of the dependency calls inserted at `sync_dependencies_end`.
+    pub(crate) fn append_directive(&mut self, stmt: Stmt) {
+        debug_assert!(self.stmts.len() == self.sync_dependencies_end && !self.has_async_dependency);
+        self.stmts.push(stmt);
+        self.sync_dependencies_end += 1;
+    }
+
     pub(crate) fn append_non_dependency(&mut self, stmt: Stmt) -> Result<(), AllocError> {
         self.stmts.push(stmt);
         Ok(())

@@ -5,12 +5,11 @@
 use super::client_session::ClientSession;
 use super::stream::Stream;
 use super::{LOCAL_INITIAL_WINDOW_SIZE, LOCAL_MAX_HEADER_LIST_SIZE, WRITE_BUFFER_HIGH_WATER};
-use crate::HTTPClient;
 use crate::h2_frame_parser as wire;
 use crate::http_request_body::HTTPRequestBody;
 use crate::internal_state::HTTPStage;
+use crate::{HTTPClient, Request};
 use bun_core::strings;
-use bun_picohttp as picohttp;
 
 pub(crate) fn write_preface(session: &mut ClientSession) {
     session.queue(wire::CLIENT_PREFACE);
@@ -89,7 +88,7 @@ pub(crate) fn write_request(
     session: &mut ClientSession,
     client: &mut HTTPClient,
     stream: &mut Stream,
-    request: &picohttp::Request<'_>,
+    request: &Request<'_>,
 ) -> crate::Result<()> {
     // `encode_scratch` would be borrowed mutably
     // alongside `&mut *session` below; pull the Vec out, push it back at the end.

@@ -1149,9 +1149,15 @@ impl TestFailure {
     pub(crate) fn record_log_message(slot: &mut Option<TestFailure>, thrown: jsc::JSValue) {
         let (name, msg): (&[u8], _) =
             if let Some(error) = thrown.as_class_ref::<jsc::ResolveMessage>() {
-                (b"ResolveMessage", &error.msg)
+                (
+                    b"ResolveMessage",
+                    jsc::WrapperGuard::map(error, |error| &error.msg),
+                )
             } else if let Some(error) = thrown.as_class_ref::<jsc::BuildMessage>() {
-                (b"BuildMessage", &error.msg)
+                (
+                    b"BuildMessage",
+                    jsc::WrapperGuard::map(error, |error| &error.msg),
+                )
             } else {
                 return;
             };
@@ -3182,37 +3188,14 @@ impl TestCommand {
         {
             vm.hot_reload.set(ctx.debug.hot_reload);
 
-            // Install the --changed trigger collector BEFORE the watcher
-            // thread starts so a file edit during runAllTests is still
-            // recorded. The addFileByPathSlow seeding stays after
-            // runAllTests (separate concern; see O_EVTONLY comment
-            // below).
-            if ctx.test_options.changed.is_some()
-                && vm.hot_reload.get() == jsc::virtual_machine::HotReload::Watch
-            {
-                ChangedFilesFilter::init_watch_trigger();
-            }
-
             match vm.hot_reload.get() {
                 jsc::virtual_machine::HotReload::Hot => {
-                    // SAFETY: `vm` is the process-lifetime main-thread VM; it
-                    // outlives the leaked reloader.
-                    unsafe {
-                        jsc::hot_reloader::HotReloader::enable_hot_module_reloading(
-                            std::ptr::from_ref(vm).cast_mut(),
-                            None,
-                        );
-                    }
+                    jsc::hot_reloader::enable_hot_module_reloading(vm, None, None);
                 }
                 jsc::virtual_machine::HotReload::Watch => {
-                    // SAFETY: `vm` is the process-lifetime main-thread VM; it
-                    // outlives the leaked reloader.
-                    unsafe {
-                        jsc::hot_reloader::WatchReloader::enable_hot_module_reloading(
-                            std::ptr::from_ref(vm).cast_mut(),
-                            None,
-                        );
-                    }
+                    let trigger_file = (ctx.test_options.changed.as_ref())
+                        .and_then(|_| ChangedFilesFilter::init_watch_trigger());
+                    jsc::hot_reloader::enable_hot_module_reloading(vm, None, trigger_file);
                     run_compiled::watch_files_of_check(vm);
                 }
                 _ => {}
@@ -3312,17 +3295,8 @@ impl TestCommand {
         // "Ran N tests" summary (printed after this), so seeding completes
         // before the next file edit.
         if ctx.test_options.changed.is_some() && vm.is_watcher_enabled() {
-            // SAFETY: `bun_watcher` is the `*mut ImportWatcher` set by
-            // `enable_hot_module_reloading`; non-null because
-            // `is_watcher_enabled()` checked it.
-            let watcher = unsafe {
-                &mut *vm
-                    .bun_watcher
-                    .get()
-                    .cast::<jsc::hot_reloader::ImportWatcher>()
-            };
             for path in &changed_module_graph_files {
-                let _ = watcher.add_file_by_path_slow(path);
+                vm.add_to_watcher_if_needed(path);
             }
         }
 

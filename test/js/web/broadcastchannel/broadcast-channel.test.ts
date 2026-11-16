@@ -270,3 +270,26 @@ test("custom inspect handles options with numeric keys", () => {
   expect(inspectCustom.call(bc, 2, opts, util.inspect)).toBe("BroadcastChannel { name: 'hello', active: true }");
   bc.close();
 });
+
+const collect = (create: string) => `
+  (() => { for (let i = 0; i < 20; i++) ${create}; })();
+  Bun.gc(true);
+  if (require("bun:jsc").heapStats().objectTypeCounts.BroadcastChannel >= 20) console.log("nothing was collected");`;
+test.concurrent.each([
+  ["a closed channel does not", `const channel = new BroadcastChannel("x"); channel.close(); channel.ref();`, ""],
+  ["an open channel that was collected does", collect(`new BroadcastChannel("x")`), "alive\n"],
+  ["an open channel that was collected with unref() does not", collect(`new BroadcastChannel("x").unref()`), ""],
+  [
+    "an open channel of a realm that was collected does not",
+    `let realm = new ShadowRealm();
+     realm.evaluate('new BroadcastChannel("x"); 0');
+     realm = null;
+     Bun.gc(true);`,
+    "",
+  ],
+])("%s keep the process alive", async (_, code, expected) => {
+  const whenAlive = expected ? `setTimeout(() => (console.log("alive"), process.exit()), 1).unref();` : "";
+  await using proc = Bun.spawn({ cmd: [bunExe(), "-e", code + whenAlive], env: bunEnv, stderr: "pipe" });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr, exitCode }).toEqual({ stdout: expected, stderr: "", exitCode: 0 });
+});

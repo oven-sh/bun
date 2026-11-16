@@ -1897,7 +1897,8 @@ describe.concurrent("a module mocked without a factory", () => {
   });
 });
 
-// jest.requireActual(), jest.requireMock() and jest.createMockFromModule() resolve a name as the calling file loads it.
+// In a file that Bun runs as CommonJS, jest.requireActual(), jest.requireMock() and jest.createMockFromModule() of a name that has no mock
+// load the file that require() loads. A mock of a name stands for the file that an import loads, and its original is that file for every caller.
 describe.concurrent("jest's lookups of a name that import and require() resolve to two files", () => {
   const esm = `export const which = "esm"; export const fn = () => "esm";`;
   const cjs = `module.exports = { which: "cjs", fn: () => "cjs" };`;
@@ -1950,7 +1951,7 @@ describe.concurrent("jest's lookups of a name that import and require() resolve 
   const of = (which: string) => `[["${which}", "${which}"], ["${which}", undefined], ["${which}", undefined]]`;
 
   test.each(isolationFlags)(
-    "a CommonJS file gets the file that require() loads, and an ES module the file that an import loads %j",
+    "with no mock, a CommonJS file gets the file that require() loads, and an ES module the file that an import loads %j",
     async args => {
       // `own` is the kind of the test file, and `other` the kind of the helper that it calls.
       const tests = (own: string, other: string) => `
@@ -1968,12 +1969,19 @@ describe.concurrent("jest's lookups of a name that import and require() resolve 
           const found = ["import-only", "require-only", "#os", "#handle"].map(name => jest.requireActual(name).which);
           expect(found).toEqual(["esm", "cjs", "esm", "esm"]);
         });
-        test("through a builtin, in code from a string, and after jest.resetModules()", () => {
-          const found = () =>
-            [["dual"].map(jest.requireActual)[0], eval('jest.requireActual("dual")'), jest.requireActual("dual")].map(module => module.which);
-          expect(found()).toEqual(["${own}", "${own}", "${own}"]);
+        test("through a builtin, and after jest.resetModules()", () => {
+          const found = () => [["dual"].map(jest.requireActual)[0], jest.requireActual("dual")].map(module => module.which);
+          expect(found()).toEqual(["${own}", "${own}"]);
           jest.resetModules();
-          expect(found()).toEqual(["${own}", "${own}", "${own}"]);
+          expect(found()).toEqual(["${own}", "${own}"]);
+        });
+        // Such code has the path of the code that made it, and nothing says of which kind that code is.
+        test("code from a string gets the file that an import loads", () => {
+          const made = new Function("jest", 'return jest.requireActual("dual").which');
+          const heard = [];
+          // A module of Bun calls this one.
+          new EventEmitter().on("event", new Function("jest", "heard", 'heard.push(jest.requireActual("dual").which)')).emit("event", jest, heard);
+          expect([eval('jest.requireActual("dual").which'), made(jest), ...heard]).toEqual(["esm", "esm", "esm"]);
         });
       `;
       await expectFixturesToPass(
@@ -1983,63 +1991,215 @@ describe.concurrent("jest's lookups of a name that import and require() resolve 
           "lookups.mjs": `import { jest } from "bun:test"; export default ${lookups};`,
           "commonjs.test.cjs": `
             const { expect, jest, test } = require("bun:test");
+            const { EventEmitter } = require("node:events");
             const inTheOtherKind = require("./lookups.mjs").default;
             ${tests("cjs", "esm")}
           `,
           "module.test.mjs": `
             import { expect, jest, test } from "bun:test";
+            import { EventEmitter } from "node:events";
             import inTheOtherKind from "./lookups.cjs";
             ${tests("esm", "cjs")}
           `,
         },
-        16,
+        18,
         args,
       );
     },
   );
 
-  test("under a mock of the name, and under a mock of the path that require() resolves it to", async () => {
-    const lookups = `name => [jest.requireMock(name), jest.requireActual(name), jest.createMockFromModule(name)].map(module => module.which)`;
-    await expectFixturesToPass(
-      {
-        ...files,
-        "by-name.test.cjs": `
-          const { expect, jest, test } = require("bun:test");
-          const lookups = ${lookups};
+  // What jest.requireMock(), jest.requireActual() and jest.createMockFromModule() give for a name.
+  const three = `name => [jest.requireMock(name), jest.requireActual(name), jest.createMockFromModule(name)].map(module => module.which)`;
+  const kinds = [
+    ["cjs", `const { expect, jest, mock, test } = require("bun:test");`],
+    [
+      "mjs",
+      `import { expect, jest, mock, test } from "bun:test"; import { createRequire } from "node:module"; const require = createRequire(import.meta.url);`,
+    ],
+  ];
+
+  test("a mock of the name gives the file that an import loads as its original, to a caller of each kind", async () => {
+    const fixtures = kinds.flatMap(([kind, head]) => [
+      [
+        `by-name.test.${kind}`,
+        `${head}
+          const three = ${three};
           test.each(${names})("%s", async name => {
             jest.doMock(name, () => ({ which: "mock" }));
-            expect([...lookups(name), (await import(name)).which]).toEqual(["mock", "cjs", "cjs", "mock"]);
+            expect([...three(name), (await import(name)).which]).toEqual(["mock", "esm", "esm", "mock"]);
           });
           test("a name with one file", () => {
             jest.doMock("one", () => ({ which: "mock" }));
-            expect(lookups("one")).toEqual(["mock", "one", "one"]);
-          });
-        `,
-        "partial.test.cjs": `
-          const { expect, jest, test } = require("bun:test");
+            expect(three("one")).toEqual(["mock", "one", "one"]);
+          });`,
+      ],
+      [
+        `partial.test.${kind}`,
+        `${head}
           jest.mock("dual", () => ({ ...jest.requireActual("dual"), extra: 1 }));
           test("a factory that spreads the original", async () => {
             const mocked = await import("dual");
-            expect([mocked.which, mocked.fn(), mocked.extra]).toEqual(["cjs", "cjs", 1]);
+            expect([mocked.which, mocked.fn(), mocked.extra]).toEqual(["esm", "esm", 1]);
           });
-        `,
+          // mock.module() calls the factory of a loaded module before it registers the mock.
+          test("the factory of a module that is loaded already", async () => {
+            expect((await import("dual/sub")).which).toBe("esm");
+            let seen;
+            jest.doMock("dual/sub", () => {
+              seen = [jest.requireActual("dual/sub").which, jest.createMockFromModule("dual/sub").which];
+              return { which: "mock" };
+            });
+            expect([(await import("dual/sub")).which, seen]).toEqual(["mock", ["esm", "esm"]]);
+          });`,
+      ],
+    ]);
+    await expectFixturesToPass({ ...files, ...Object.fromEntries(fixtures) }, 16);
+  });
+
+  test("a mock of the path that require() resolves the name to, alone and beside a mock of the name", async () => {
+    // What the factory of each mock gets for the name, and what the file gets after both mocks stand.
+    const both = (ofName: string, ofPath: string, outside: string) => `
+      test("both mocks, in each factory and outside", async () => {
+        const seen = {};
+        mock.module("dual", async importOriginal => {
+          seen.ofName = [(await importOriginal()).which, jest.requireActual("dual").which, jest.createMockFromModule("dual").which];
+          return { which: "mock of the name" };
+        });
+        mock.module(require.resolve("dual"), () => {
+          seen.ofPath = [jest.requireActual("dual").which, jest.createMockFromModule("dual").which];
+          return { which: "mock of the path" };
+        });
+        expect([(await import("dual")).which, require("dual").which]).toEqual(["mock of the name", "mock of the path"]);
+        expect(seen).toEqual({ ofName: ${ofName}, ofPath: ${ofPath} });
+        expect(three("dual")).toEqual(${outside});
+      });
+    `;
+    await expectFixturesToPass(
+      {
+        ...files,
         "by-path.test.cjs": `
-          const { expect, jest, mock, test } = require("bun:test");
-          const lookups = ${lookups};
+          ${kinds[0][1]}
+          const three = ${three};
           test.each(${names})("%s", async name => {
-            mock.module(name, () => ({ which: "mock of the name" }));
             mock.module(require.resolve(name), () => ({ which: "mock of the path" }));
-            expect(lookups(name)).toEqual(["mock of the path", "cjs", "cjs"]);
-            expect([require(name).which, (await import(name)).which]).toEqual(["mock of the path", "mock of the name"]);
+            expect(three(name)).toEqual(["mock of the path", "cjs", "cjs"]);
+            expect([require(name).which, (await import(name)).which]).toEqual(["mock of the path", "esm"]);
           });
           test("a name with one file", () => {
-            mock.module("one", () => ({ which: "mock of the name" }));
             mock.module(require.resolve("one"), () => ({ which: "mock of the path" }));
-            expect(lookups("one")).toEqual(["mock of the path", "one", "one"]);
+            expect(three("one")).toEqual(["mock of the path", "one", "one"]);
+          });
+        `,
+        "both.test.cjs": `
+          ${kinds[0][1]}
+          const three = ${three};
+          ${both(`["esm", "esm", "esm"]`, `["cjs", "cjs"]`, `["mock of the path", "cjs", "cjs"]`)}
+        `,
+        "both.test.mjs": `
+          ${kinds[1][1]}
+          const three = ${three};
+          ${both(`["esm", "esm", "esm"]`, `["esm", "esm"]`, `["mock of the name", "esm", "esm"]`)}
+        `,
+      },
+      8,
+    );
+  });
+
+  // Each build of "state" makes its own apps, and a build of "feature" takes the apps of its own build alone: the two builds of firebase/app and firebase/auth do so.
+  test("a partial mock of a package with state is made of the build that its importers load", async () => {
+    const build = (kind: string, exports: (name: string) => string) => ({
+      [`node_modules/state/${kind}`]: `${exports("createApp")} = () => ({ madeBy: "${kind}" });`,
+      [`node_modules/feature/${kind}`]: `
+        ${exports("use")} = app => {
+          if (app.madeBy !== "${kind}") throw new Error("feature of ${kind} is not registered in an app of " + app.madeBy);
+          return "used";
+        };
+        ${exports("extra")} = () => "real";
+      `,
+    });
+    const twoBuilds = (name: string) => ({
+      [`node_modules/${name}/package.json`]: JSON.stringify({
+        name,
+        exports: { import: "./esm.mjs", require: "./cjs.cjs" },
+      }),
+    });
+    await expectFixturesToPass(
+      {
+        "package.json": `{ "name": "project" }`,
+        ...twoBuilds("state"),
+        ...twoBuilds("feature"),
+        ...build("esm.mjs", name => `export const ${name}`),
+        ...build("cjs.cjs", name => `exports.${name}`),
+        // The code under test: an ES module.
+        "source.mjs": `
+          import { createApp } from "state";
+          import { extra, use } from "feature";
+          export const run = () => [use(createApp()), extra()];
+        `,
+        "factory.test.cjs": `
+          const { expect, jest, test } = require("bun:test");
+          jest.mock("feature", () => ({ ...jest.requireActual("feature"), extra: () => "mock" }));
+          test("a test file with require() alone, and a factory", () => {
+            expect(require("./source.mjs").run()).toEqual(["used", "mock"]);
+          });
+        `,
+        "__mocks__/feature.js": `
+          const { jest } = require("bun:test");
+          module.exports = { ...jest.requireActual("feature"), extra: () => "mock" };
+        `,
+        "manual.test.ts": `
+          import { expect, jest, test } from "bun:test";
+          import { run } from "./source.mjs";
+          jest.mock("feature");
+          test("a CommonJS file of __mocks__", () => {
+            expect(run()).toEqual(["used", "mock"]);
           });
         `,
       },
-      13,
+      2,
+    );
+  });
+
+  // The parser decides which kind a file is: by its extension, by the "type" of its package.json, and by what the file uses.
+  test("a file is of the kind that Bun runs it as", async () => {
+    const body = (expected: string) => `
+      test("the file that jest.requireActual() loads, and whether require() loads the same", () => {
+        expect([jest.requireActual("dual").which, jest.requireActual("dual") === require("dual")]).toEqual(["${expected}", ${expected === "cjs"}]);
+      });
+    `;
+    const withRequire = `const { expect, jest, test } = require("bun:test");`;
+    await expectFixturesToPass(
+      {
+        ...files,
+        "module/package.json": `{ "type": "module" }`,
+        "require.test.js": withRequire + body("cjs"),
+        "require.test.ts": withRequire + body("cjs"),
+        "import-type.test.ts": `import type { Mock } from "bun:test"; ${withRequire} ${body("cjs")}`,
+        // The functions of bun:test are globals in a test file.
+        "globals.test.js": body("cjs"),
+        // One import makes an ES module of a file that loads the name with require().
+        "import.test.js": `import { expect, jest, test } from "bun:test"; ${body("esm")}`,
+        "module/require.test.js": withRequire + body("esm"),
+        "module/exports.test.js": `${withRequire} module.exports = {}; ${body("cjs")}`,
+      },
+      7,
+    );
+  });
+
+  // The build of `bun test --aot` reads a name that is written out, and follows it as it follows the name of a require().
+  test("an ES module that writes the name out gets the file that an import loads", async () => {
+    await expectFixturesToPass(
+      {
+        ...files,
+        "written.test.mjs": `
+          import { expect, jest, test } from "bun:test";
+          test("the three, with no mock", () => {
+            const found = [jest.requireActual("dual"), jest.createMockFromModule("dual"), jest.requireMock("dual")];
+            expect(found.map(module => module.which)).toEqual(["esm", "esm", "esm"]);
+          });
+        `,
+      },
+      1,
     );
   });
 
@@ -2130,14 +2290,19 @@ describe.concurrent("jest's lookups of a name that import and require() resolve 
   });
 
   test("a name that an onResolve plugin answers", async () => {
-    const tests = (own: string) => `
-      // What the call gives, and what it asks the plugin for: the name, once.
-      const answered = name => (globalThis.asked.length = 0, [jest.requireActual(name).which, [...globalThis.asked]]);
+    // `asks` is how one call asks the plugin: as an import and, in a CommonJS file, as require() too.
+    const tests = (own: string, asks: string) => `
+      const answered = name => (globalThis.asked.length = 0, [jest.requireActual(name).which, globalThis.asked.join(", ")]);
       test("the answer is resolved as the calling file loads it", () => {
-        expect(answered("alias")).toEqual(["${own}", ["alias"]]);
+        expect(answered("alias")).toEqual(["${own}", "${asks}"]);
+      });
+      test("a plugin that answers by the kind of the request", () => {
+        const sameAsRequire = name => jest.requireActual(name) === require(name);
+        expect(["by-kind", "virtual-by-kind"].map(name => jest.requireActual(name).which)).toEqual(${own === "cjs" ? `["one", "virtual"]` : `["esm", "esm"]`});
+        expect(["by-kind", "virtual-by-kind"].map(sameAsRequire)).toEqual([${own === "cjs"}, ${own === "cjs"}]);
       });
       test("an answer that only an onLoad backs for require()", () => {
-        expect(answered("backed-by-onLoad")).toEqual(["onLoad", ["backed-by-onLoad"]]);
+        expect(jest.requireActual("backed-by-onLoad").which).toBe("onLoad");
       });
     `;
     await expectFixturesToPass(
@@ -2152,19 +2317,23 @@ describe.concurrent("jest's lookups of a name that import and require() resolve 
           Bun.plugin({
             name: "answers",
             setup(build) {
-              build.onResolve({ filter: /^(alias|backed-by-onLoad)$/ }, ({ path }) => {
-                globalThis.asked.push(path);
-                return { path: path === "alias" ? "dual" : "import-only/sub.js?q" };
+              build.module("virtual-module", () => ({ exports: { which: "virtual" }, loader: "object" }));
+              build.onResolve({ filter: /^(alias|by-kind|virtual-by-kind|backed-by-onLoad)$/ }, ({ path, kind }) => {
+                globalThis.asked.push(kind);
+                if (path === "alias") return { path: "dual" };
+                if (path === "by-kind") return { path: kind === "require-call" ? "one" : "dual" };
+                if (path === "virtual-by-kind") return { path: kind === "require-call" ? "virtual-module" : "dual" };
+                return { path: "import-only/sub.js?q" };
               });
               // An import resolves "import-only/sub.js?q" to a file. require() does not, and this serves it.
               build.onLoad({ filter: /import-only/ }, () => ({ exports: { which: "onLoad" }, loader: "object" }));
             },
           });
         `,
-        "plugin.test.cjs": `const { expect, jest, test } = require("bun:test"); ${tests("cjs")}`,
-        "plugin.test.mjs": `import { expect, jest, test } from "bun:test"; ${tests("esm")}`,
+        "plugin.test.cjs": `const { expect, jest, test } = require("bun:test"); ${tests("cjs", "dynamic-import, require-call")}`,
+        "plugin.test.mjs": `import { expect, jest, test } from "bun:test"; ${tests("esm", "dynamic-import")}`,
       },
-      4,
+      6,
       ["--preload", "./plugin.js"],
     );
   });

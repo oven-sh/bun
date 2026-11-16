@@ -48,7 +48,8 @@ test("the three of jest", async () => {
   expect(await runTests(String(dir), "--aot")).toEqual(plain);
 });
 
-// A package with a file for `import` and a file for `require()`. In a CommonJS file the three load the second, as the build does.
+// A package with a file for `import` and a file for `require()`. In a CommonJS file the three load the second, as the build does, while the name has no mock.
+// A mock of the name stands for the first, which is its original.
 const twoFiles = {
   "package.json": `{}`,
   "node_modules/dual/package.json": JSON.stringify({
@@ -67,14 +68,31 @@ const twoFiles = {
       const made = jest.createMockFromModule("dual");
       console.log("createMockFromModule:", made.which, jest.isMockFunction(made.plain), String(made.plain()));
     });`,
+  "6.test.cjs": `const { jest, test } = require("bun:test");
+    jest.mock("dual", () => ({ ...jest.requireActual("dual"), extra: 1 }));
+    test("the three of jest under a mock of the name", async () => {
+      const mocked = await import("dual");
+      console.log("the mock:", mocked.which, mocked.plain(), mocked.extra);
+      console.log("requireActual:", jest.requireActual("dual").which);
+      console.log("createMockFromModule:", jest.createMockFromModule("dual").which);
+      console.log("requireMock:", jest.requireMock("dual").which, jest.requireMock("dual").extra);
+    });`,
 };
 
 test("the three of jest, for a name with two files", async () => {
   using dir = tempDir("runner-loads-by-name", twoFiles);
   const plain = await runTests(String(dir));
   expect(plain).toEqual({
-    printed: ["requireActual: cjs true", "requireMock: manual cjs", "createMockFromModule: cjs true undefined"],
-    results: ["pass the three of jest in a CommonJS file"],
+    printed: [
+      "requireActual: cjs true",
+      "requireMock: manual cjs",
+      "createMockFromModule: cjs true undefined",
+      "the mock: esm esm 1",
+      "requireActual: esm",
+      "createMockFromModule: esm",
+      "requireMock: esm 1",
+    ],
+    results: ["pass the three of jest in a CommonJS file", "pass the three of jest under a mock of the name"],
     exitCode: 0,
   });
   expect(await runTests(String(dir), "--aot")).toEqual(plain);

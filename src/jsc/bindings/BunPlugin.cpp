@@ -4326,24 +4326,32 @@ static String callerPath(JSC::VM& vm, JSC::CallFrame* callframe)
     return !sourceOrigin.isNull() && url.isValid() && url.protocolIsFile() ? url.fileSystemPath() : String("."_s);
 }
 
-// Whether the caller is code of a CommonJS module, which Bun runs as a program and not as a module.
-static bool isCallerCommonJS(JSC::VM& vm, JSC::CallFrame* callframe)
+// Whether the code at callerPath() is a CommonJS module, which Bun evaluates as a program and not as a module.
+static bool isCallerCommonJS(JSC::VM& vm, JSC::CallFrame* callframe, const String& path)
 {
 #if ENABLE(AOT)
-    if (auto module = vm.hasCompiledCode() ? Bun::compiledModuleForPath(callerPath(vm, callframe)) : std::nullopt)
+    if (auto module = vm.hasCompiledCode() ? Bun::compiledModuleForPath(path) : std::nullopt)
         return !JSC::AOT::isESModule(*module);
 #endif
-    bool isProgram = false;
+    // A module of Bun itself is a program too, without a file.
+    if (!isAbsolutePath(path))
+        return false;
+    bool isCommonJS = false;
+    bool isFirstFrame = true;
+    // The frame that CallFrame::callerSourceOrigin() takes the path from.
     JSC::StackVisitor::visit(callframe, vm, [&](JSC::StackVisitor& visitor) -> WTF::IterationStatus {
-        // Native code, builtins and code from a string have no source URL. The frame that called them counts.
-        auto* provider = visitor->codeBlock() ? visitor->codeBlock()->ownerExecutable()->source().provider() : nullptr;
-        if (!provider || provider->sourceURL().isEmpty())
+        auto* codeBlock = visitor->codeBlock();
+        if (std::exchange(isFirstFrame, false) || !codeBlock)
             return WTF::IterationStatus::Continue;
-        isProgram = !provider->isModuleType();
+        auto* executable = codeBlock->ownerExecutable();
+        if (auto* function = dynamicDowncast<JSC::FunctionExecutable>(executable); function && function->isPrivateBuiltinFunction())
+            return WTF::IterationStatus::Continue;
+        // Code from a string has the path of the code that made it and no URL of its own. It is not taken for CommonJS.
+        auto* provider = executable->source().provider();
+        isCommonJS = provider && !provider->sourceURL().isEmpty() && !provider->isModuleType();
         return WTF::IterationStatus::Done;
     });
-    // A module of Bun itself is a program too, without a file.
-    return isProgram && isAbsolutePath(callerPath(vm, callframe));
+    return isCommonJS;
 }
 
 #if ENABLE(AOT)
@@ -4459,8 +4467,6 @@ struct ModuleMockSpecifier {
     // The path that require() resolves the name to, if that is another file than `key`, the one an import of it resolves to.
     WTF::String requireKey;
     WTF::String written;
-
-    const WTF::String& keyForRequire() const { return requireKey.isNull() ? key : requireKey; }
 };
 
 static ModuleMockSpecifier moduleMockSpecifierArgument(Zig::GlobalObject* globalObject, JSC::CallFrame* callframe, ASCIILiteral signature, bool forRequire = false)
@@ -7057,20 +7063,39 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionImportActualModule, (JSC::JSGlobalObject * le
     return JSValue::encode(loading);
 }
 
+// The key that jest's lookups of `specifier` use. In a CommonJS file that is the path that require() resolves the name to, unless a mock of the name
+// stands or runs its factory: a mock of a name replaces the file that an import loads, and that file is its original.
+static const String& keyOfJestLookup(Zig::GlobalObject* globalObject, const ModuleMockSpecifier& specifier)
+{
+    if (specifier.requireKey.isNull())
+        return specifier.key;
+    // The factory of a loaded module runs before its mock is registered.
+    for (JSObject* factory : factoriesInAsyncContext(globalObject)) {
+        const String& running = uncheckedDowncast<JSModuleMock>(factory)->specifier->tryGetValue().data;
+        if (running == specifier.key)
+            return specifier.key;
+        if (running == specifier.requireKey)
+            return specifier.requireKey;
+    }
+    if (!moduleMockForTest(globalObject, specifier.requireKey) && moduleMockForTest(globalObject, specifier.key))
+        return specifier.key;
+    return specifier.requireKey;
+}
+
 JSC_DEFINE_HOST_FUNCTION(jsFunctionRequireActualModule, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callframe))
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     Zig::GlobalObject* globalObject = defaultGlobalObject(lexicalGlobalObject);
 
-    auto specifier = moduleMockSpecifierArgument(globalObject, callframe, "requireActual(module)"_s, isCallerCommonJS(vm, callframe));
+    String from = callerPath(vm, callframe);
+    auto specifier = moduleMockSpecifierArgument(globalObject, callframe, "requireActual(module)"_s, isCallerCommonJS(vm, callframe, from));
     RETURN_IF_EXCEPTION(scope, {});
 
-    // With two files, a mock of the name is of the file that an import loads, so it is not looked up here.
-    const String& key = specifier.keyForRequire();
+    const String& key = keyOfJestLookup(globalObject, specifier);
     if (JSModuleMock* mock = moduleMockForTest(globalObject, key))
         RELEASE_AND_RETURN(scope, JSValue::encode(requireOriginalModule(globalObject, mock)));
-    RELEASE_AND_RETURN(scope, JSValue::encode(requireModuleKey(globalObject, callerPath(vm, callframe), key)));
+    RELEASE_AND_RETURN(scope, JSValue::encode(requireModuleKey(globalObject, from, key)));
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsFunctionImportMockDidLoad, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callframe))
@@ -7136,19 +7161,16 @@ static JSC::EncodedJSValue requireMockModule(JSC::JSGlobalObject* lexicalGlobalO
     auto scope = DECLARE_THROW_SCOPE(vm);
     Zig::GlobalObject* globalObject = defaultGlobalObject(lexicalGlobalObject);
 
-    bool forRequire = isCallerCommonJS(vm, callframe);
+    String from = callerPath(vm, callframe);
+    bool forRequire = isCallerCommonJS(vm, callframe, from);
     auto specifier = moduleMockSpecifierArgument(globalObject, callframe, signature, forRequire);
     RETURN_IF_EXCEPTION(scope, {});
-    String from = callerPath(vm, callframe);
 
-    const String& key = specifier.keyForRequire();
+    const String& key = keyOfJestLookup(globalObject, specifier);
     JSModuleMock* mock = moduleMockForTest(globalObject, key);
     if (!fromOriginal) {
         if (mock)
             RELEASE_AND_RETURN(scope, JSValue::encode(requireModuleKey(globalObject, from, key)));
-        // A mock of the name is registered under the path that an import resolves it to.
-        if (!specifier.requireKey.isNull() && moduleMockForTest(globalObject, specifier.key))
-            RELEASE_AND_RETURN(scope, JSValue::encode(requireModuleKey(globalObject, from, specifier.key)));
         JSC::JSString* manualMock = findManualModuleMock(globalObject, from, specifier.written, key, forRequire);
         RETURN_IF_EXCEPTION(scope, {});
         if (manualMock) {

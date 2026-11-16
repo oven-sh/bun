@@ -517,9 +517,6 @@ pub struct Resolver<'a> {
     /// When this is null, it is as if it is set to `&.{ path.dirname(referrer) }`.
     pub custom_dir_paths: Option<&'a [bun_core::String]>,
 
-    /// The caller takes a miss for an answer, so `VirtualMachine::_resolve` does not list a folder again to look once more.
-    pub miss_is_an_answer: bool,
-
     /// The importer is a file that the executable loaded from disk, so files on disk take precedence over compiled ones.
     pub resolves_for_code_from_disk: bool,
 
@@ -590,7 +587,6 @@ impl<'a> Resolver<'a> {
             // Transient per-resolve scratch (only set for `require(..., {paths})`);
             // never carried across worker init.
             custom_dir_paths: None,
-            miss_is_an_answer: false,
             resolves_for_code_from_disk: false,
             packages_of_code_from_disk: Vec::new(),
             esm_failure: None,
@@ -945,7 +941,6 @@ impl<'a> Resolver<'a> {
             outfile_of_build: None,
             prefer_module_field: true,
             custom_dir_paths: None,
-            miss_is_an_answer: false,
             resolves_for_code_from_disk: false,
             packages_of_code_from_disk: Vec::new(),
             esm_failure: None,

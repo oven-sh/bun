@@ -187,3 +187,31 @@ impl Pass {
         Ok(out)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::lossy::{MacroblockMode, SubblockMode};
+
+    #[test]
+    fn one_macroblock_is_enough_to_have_subblock_modes() -> Result<()> {
+        let chroma = MacroblockMode::Dc;
+        let whole = luma::Mode::Whole(chroma);
+        let subblocks = luma::Mode::Subblocks([[SubblockMode::Dc; 4]; 4]);
+        for (lumas, expected) in [
+            ([whole; 2], false),
+            ([whole, subblocks], true),
+            ([subblocks, whole], true),
+            ([subblocks; 2], true),
+        ] {
+            let pass = Pass {
+                tokens: Tokens::new(0)?,
+                modes: lumas.map(|luma| Modes { luma, chroma }).into(),
+                modes_cost: 0,
+                max_edges: [0; SEGMENTS],
+            };
+            assert_eq!(pass.has_subblock_modes(), expected);
+        }
+        Ok(())
+    }
+}

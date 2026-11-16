@@ -202,6 +202,15 @@ describe("the container", () => {
     expect(await decodes(withModes(255))).toBe(false);
   });
 
+  test("the modes of a macroblock can take less than 3.5 bits", async () => {
+    const frame = await vp8(1024, 1024);
+    expect(frame.toString("latin1", 0, 4)).toBe("VP8 ");
+    expect((frame.readUIntLE(8, 3) >> 5) * 8).toBeLessThan(3.5 * 64 * 64);
+    expect(await new Bun.Image(riff(frame)).resize(1).png().bytes().then(decode)).toHaveProperty("pixels", [
+      "000000ff",
+    ]);
+  });
+
   test("the two bits above the width and the height of a lossy image do not count", async () => {
     const frame = await vp8(2, 1);
     const expected = await decode(riff(frame));
@@ -297,10 +306,10 @@ describe("memory is written to as the rows come, not when the header does", asyn
   const lossless = (side: number, ...stream: [number, number][]) =>
     riff(chunk("VP8L", [...bits([0x2f, 8], [side - 1, 14], [side - 1, 14], [0, 4], ...stream), ...someRows]));
   const small = await vp8(16, 16);
-  /** With enough modes for all macroblocks, and not enough coefficients. */
+  /** With the longest first partition, which no size is refused for, and not enough coefficients. */
   const frame = (side: number) => {
-    const [tag, more] = [small.readUIntLE(8, 3), 400_000];
-    const modesEnd = 8 + 10 + (tag >> 5);
+    const tag = small.readUIntLE(8, 3);
+    const [modesEnd, more] = [8 + 10 + (tag >> 5), 2 ** 19 - 1 - (tag >> 5)];
     const resized = Buffer.concat([small.subarray(8, modesEnd), Buffer.alloc(more), small.subarray(modesEnd)]);
     resized.writeUIntLE(tag + (more << 5), 0, 3);
     resized.writeUInt32LE(side | (side << 16), 6);

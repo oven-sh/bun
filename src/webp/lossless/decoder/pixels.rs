@@ -12,12 +12,14 @@ use crate::error::{Error, Result};
 use crate::lossless::{
     LENGTH_CODES, LITERAL_CODES, MAX_CACHE_BITS, MAX_CODE_LENGTH, NEIGHBORS, color_cache_key,
 };
-use crate::slice::{self, InBounds};
+use crate::slice::{self, InBounds, known};
 use crate::vec;
 
 const MAX_COPY_LEN: usize = 4096;
 /// Short copies are made this many pixels at a time, whether or not that is too many.
 const COPY_STEP: usize = 8;
+/// What is short. A call of `memcpy()` takes longer, above all musl's.
+const MAX_STEPPED_LEN: usize = 4 * COPY_STEP;
 /// Among so few it does not pay to look for steps that are all like the pixel before.
 const FEW_STEPS: usize = 8;
 /// How many pixels are read before the image grows again.
@@ -332,7 +334,15 @@ fn copy<P: Pixel>(
         let reach = reach.and_then(<[_]>::split_first_mut);
         return reach.map(|(first, rest)| rest.as_chunks_mut().0.fill([*first; COPY_STEP]));
     }
-    let copied = if count <= 4 * COPY_STEP {
+    let copied = if distance == 2 {
+        cold_path();
+        let reach = pixels.get_mut(at - 2..at + count.next_multiple_of(COPY_STEP));
+        let reach = reach.and_then(<[_]>::split_first_chunk_mut);
+        reach.map(|(&mut [a, b], rest)| {
+            let steps = rest.as_chunks_mut::<COPY_STEP>().0;
+            steps.fill([a, b, a, b, a, b, a, b]);
+        })
+    } else if count <= MAX_STEPPED_LEN {
         let (mut to, mut back) = (at, distance);
         loop {
             let copied = copy_step(pixels, to - back, to);
@@ -346,7 +356,7 @@ fn copy<P: Pixel>(
             }
         }
     } else {
-        let reach = pixels.get_mut(at - distance..at + count);
+        let reach = pixels.get_mut(at - distance..at + count + COPY_STEP);
         reach.map(|reach| repeat(reach, distance))
     };
     // What repeats counts the last time.
@@ -361,16 +371,26 @@ fn copy_step<P: Pixel>(pixels: &mut [P], from: usize, to: usize) -> Option<()> {
     Some(())
 }
 
-/// Fills `pixels` with repetitions of the first `period`.
+/// Fills `pixels` with repetitions of the first `period`. The last `COPY_STEP` get anything.
 #[inline(never)]
 fn repeat<P: Pixel>(pixels: &mut [P], period: usize) {
-    // For more, glibc uses `rep movsb`, which is slow on AMD CPUs if `period` is a bit more than a page.
+    // For more, glibc uses `rep movsb`, which is slow on AMD CPUs from a little more than whole pages back.
+    // https://bugs.launchpad.net/ubuntu/+source/glibc/+bug/2030515
     const PIECE_BYTES: usize = 2048;
+    let piece = PIECE_BYTES / size_of::<P>();
     let mut done = period;
-    while let Some((from, to @ [_, ..])) = pixels.split_at_mut_checked(done) {
-        let len = PIECE_BYTES / size_of::<P>();
-        let pieces = from.chunks(len).zip(to.chunks_mut(len));
-        pieces.for_each(|(from, to)| slice::copy(from, to));
+    while let Some((from, to)) = pixels.split_at_mut_checked(done)
+        && to.len() > COPY_STEP
+    {
+        let len = done.min(to.len() - COPY_STEP);
+        if len <= MAX_STEPPED_LEN {
+            for from in (0..len).step_by(COPY_STEP) {
+                known(copy_step(pixels, from, done + from));
+            }
+        } else {
+            let pieces = from.part(..len).chunks(piece).zip(to.chunks_mut(piece));
+            pieces.for_each(|(from, to)| slice::copy(from, to));
+        }
         done *= 2;
     }
 }
@@ -401,6 +421,32 @@ mod tests {
         assert_eq!(read(0..1), Ok(1));
         assert_eq!(read(0..2), Err(Error::Internal));
         Ok(())
+    }
+
+    #[test]
+    fn a_copy_repeats_what_is_in_front_of_it() {
+        fn check<P: Pixel + PartialEq>(distance: usize, count: usize) {
+            const START: usize = 3;
+            let pixel = |i: usize| P::from_rgba([(i >> 8) as u8, (i % 251) as u8, 0, 0]);
+            let (at, spare) = (START + distance, pixel(usize::MAX));
+            let mut pixels = Vec::new();
+            pixels.extend((0..at).map(pixel));
+            pixels.resize(at + count + 2 * COPY_STEP, spare);
+            let copied = copy(&mut pixels, at, distance, count, &mut NoCache);
+            let (copies, rest) = pixels.part(at..).split_at(count);
+            let expected = (0..count).map(|i| pixel(START + i % distance));
+            assert!(
+                copied.is_some()
+                    && expected.eq(copies.iter().copied())
+                    && rest.ends_with(&[spare; COPY_STEP]),
+                "{count} from {distance} back"
+            );
+        }
+        let lens = || (1..70).chain([511, 513, 2047, 2049, MAX_COPY_LEN]);
+        for (distance, count) in lens().flat_map(|it| lens().map(move |other| (it, other))) {
+            check::<u8>(distance, count);
+            check::<Rgba>(distance, count);
+        }
     }
 
     #[test]

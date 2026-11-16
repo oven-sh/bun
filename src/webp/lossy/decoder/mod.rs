@@ -32,7 +32,7 @@ impl Header<'_> {
     /// `alpha` is the content of the ALPH chunk.
     pub(crate) fn decode(self, alpha: Option<&[u8]>) -> Result<Vec<[u8; 4]>> {
         let (width, height) = (usize::from(self.width), usize::from(self.height));
-        let columns = width.div_ceil(16);
+        let [columns, rows] = self.macroblocks();
         let mut parameters = Parameters::parse(&self)?;
         let mut memory = Vec::new();
         let mut planes = Planes::new(width, height, parameters.filter_type, alpha, &mut memory)?;
@@ -45,7 +45,7 @@ impl Header<'_> {
         let mut strengths = vec::filled(FilterStrength::default(), columns)?;
         let mut residuals = Residuals::new();
 
-        for y in 0..height.div_ceil(16) {
+        for y in 0..rows {
             let mut tokens = *parameters.token_partition(y);
             let mut modes_left = [SubblockMode::Dc; 4];
             let mut context_left = Context::default();

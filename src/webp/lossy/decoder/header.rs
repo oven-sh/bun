@@ -49,6 +49,11 @@ impl<'a> Header<'a> {
             rest,
         })
     }
+
+    /// Columns and rows.
+    pub(super) fn macroblocks(&self) -> [usize; 2] {
+        [self.width, self.height].map(|it| usize::from(it.div_ceil(16)))
+    }
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -86,7 +91,7 @@ impl<'a> Parameters<'a> {
             .rest
             .split_at_checked(header.first_partition_len)
             .ok_or(Error::UnexpectedEof)?;
-        let [columns, rows] = [header.width, header.height].map(|it| usize::from(it.div_ceil(16)));
+        let [columns, rows] = header.macroblocks();
         // The modes of a macroblock take more than 3 bits.
         if 8 * first_partition.len() < 3 * columns * rows {
             return Err(Error::UnexpectedEof);

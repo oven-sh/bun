@@ -3156,8 +3156,10 @@ it("http2 session.altsvc() and session.origin() refuse a URL with an opaque orig
   const outcomes = [];
   const server = http2.createServer();
   let client;
+  let serverSession;
   try {
     server.on("session", session => {
+      serverSession = session;
       for (const origin of [
         "ftps://a.example/path",
         new URL("blob:ws://b.example/"),
@@ -3204,7 +3206,8 @@ it("http2 session.altsvc() and session.origin() refuse a URL with an opaque orig
       "SENT",
     ]);
   } finally {
-    client?.close();
+    client?.destroy();
+    serverSession?.destroy();
     server.close();
   }
 });

@@ -683,7 +683,11 @@ impl DevServer {
         self.graph_safety_lock.assert_locked();
         let graph = &mut self.graphs.client;
         let was_stale = graph
-            .get_file_index(ctx.sources[index.get() as usize].path.key_for_incremental_graph())
+            .get_file_index(
+                ctx.sources[index.get() as usize]
+                    .path
+                    .key_for_incremental_graph(),
+            )
             .is_none_or(|file_index| {
                 graph.stale_files.bit_length() <= file_index.get() as usize
                     || graph.stale_files.is_set(file_index.get() as usize)

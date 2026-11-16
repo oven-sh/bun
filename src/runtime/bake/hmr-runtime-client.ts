@@ -24,6 +24,7 @@ import {
   setRefreshRuntime,
 } from "./hmr-module";
 import { td } from "./shared";
+import { createUpdateQueue } from "./update-queue";
 
 const consoleErrorWithoutInspector = console.error;
 
@@ -83,6 +84,7 @@ const scriptTags: Map<string, PendingHmrQueue> =
   ((globalThis as any)[pendingScriptSymbol] as Map<string, PendingHmrQueue> | undefined) ??
   new Map<string, PendingHmrQueue>();
 (globalThis as any)[pendingScriptSymbol] = scriptTags;
+const replaceModulesInOrder = createUpdateQueue(replaceModules);
 
 globalThis[Symbol.for("bun:hmr")] = (modules: any, id: string) => {
   const queue = scriptTags.get(id);
@@ -104,7 +106,7 @@ globalThis[Symbol.for("bun:hmr")] = (modules: any, id: string) => {
   };
   addMapping(url, map);
   script.remove();
-  replaceModules(modules, map).catch(e => {
+  replaceModulesInOrder(modules, map).catch(e => {
     console.error(e);
     fullReload();
   });

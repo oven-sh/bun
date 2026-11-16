@@ -1,6 +1,7 @@
 // Hot tests ensure that the `import.meta.hot` interface is functional
-import { expect } from "bun:test";
+import { expect, test } from "bun:test";
 import { renameSync, unlinkSync, writeFileSync } from "node:fs";
+import { createUpdateQueue } from "../../../src/runtime/bake/update-queue";
 import { devTest, emptyHtmlFile } from "../bake-harness";
 
 devTest("import.meta.hot.accept basic", {
@@ -879,3 +880,127 @@ for (const [withDispose, asyncDependency] of [
     },
   );
 }
+
+for (const gate of ["load", "dispose"] as const) {
+  devTest(`serializes hot updates while an asynchronous ${gate} is pending`, {
+    files: {
+      "index.html": emptyHtmlFile({ scripts: ["index.ts"], body: "<h1>0</h1>" }),
+      "index.ts": `
+        import './x.ts';
+        import './y.ts';
+        globalThis.acceptedX = [];
+        globalThis.acceptedY = [];
+        globalThis.disposed = [];
+        globalThis.lifecycle = [];
+        globalThis.gate = new Promise(resolve => { globalThis.releaseGate = resolve; });
+        let update = 0;
+        let completed = 0;
+        import.meta.hot.on('bun:beforeUpdate', () => { globalThis.lifecycle.push('before:' + ++update); });
+        import.meta.hot.on('bun:afterUpdate', () => {
+          const value = globalThis.versionX + '|' + globalThis.versionY;
+          globalThis.lifecycle.push('after:' + value);
+          document.querySelector('h1').textContent = String(++completed);
+        });
+        console.log('ready');
+      `,
+      "x.ts": `
+        export const x = 'X0';
+        globalThis.versionX = x;
+        import.meta.hot.accept(mod => { globalThis.acceptedX.push([x, mod.x]); });
+        import.meta.hot.dispose(() => { globalThis.disposed.push(x); });
+      `,
+      "y.ts": `
+        export const y = 'Y0';
+        globalThis.versionY = y;
+        import.meta.hot.accept(mod => { globalThis.acceptedY.push([y, mod.y]); });
+        import.meta.hot.dispose(${gate === "dispose" ? "async" : ""} () => {
+          globalThis.disposed.push(y);
+          ${gate === "dispose" ? "console.log('holding'); await globalThis.gate;" : ""}
+        });
+      `,
+    },
+    async test(dev) {
+      await using client = await dev.client("/", { storeHotChunks: true });
+      await client.expectMessage("ready");
+      const x = (value: string) => `
+        export const x = '${value}';
+        globalThis.versionX = x;
+        import.meta.hot.accept(mod => { globalThis.acceptedX.push([x, mod.x]); });
+        import.meta.hot.dispose(() => { globalThis.disposed.push(x); });
+      `;
+      const batch = await dev.batchChanges({ errors: null });
+      await dev.write("x.ts", x("X1"));
+      await dev.write(
+        "y.ts",
+        `
+        ${gate === "load" ? "console.log('holding'); await globalThis.gate;" : ""}
+        export const y = 'Y1';
+        globalThis.versionY = y;
+        import.meta.hot.accept(mod => { globalThis.acceptedY.push([y, mod.y]); });
+      `,
+      );
+      const applied = batch![Symbol.asyncDispose]();
+      void applied.catch(() => {});
+      let held;
+      let disposed;
+      try {
+        await client.expectMessage("holding");
+        await client.getMostRecentHmrChunk();
+        writeFileSync(dev.join("x.ts"), x("X2"));
+        expect(await client.getMostRecentHmrChunk()).toContain("X2");
+        held =
+          await client.js`({ x: globalThis.versionX, lifecycle: globalThis.lifecycle, acceptedX: globalThis.acceptedX })`;
+        disposed = await client.js<string[]>`globalThis.disposed`;
+      } finally {
+        await client.js`globalThis.releaseGate()`;
+        await applied;
+      }
+      await client.expectElemText("h1", "2");
+      expect(held).toEqual({ x: gate === "load" ? "X1" : "X0", lifecycle: ["before:1"], acceptedX: [] });
+      expect(disposed!.sort()).toEqual(["X0", "Y0"]);
+      expect(
+        await client.js`({ x: globalThis.acceptedX, y: globalThis.acceptedY, lifecycle: globalThis.lifecycle })`,
+      ).toEqual({
+        x: [
+          ["X0", "X1"],
+          ["X1", "X2"],
+        ],
+        y: [["Y0", "Y1"]],
+        lifecycle: ["before:1", "after:X1|Y1", "before:2", "after:X2|Y1"],
+      });
+      expect(await client.js`globalThis.disposed[2]`).toBe("X1");
+      expect(await client.js`globalThis.disposed.length`).toBe(3);
+    },
+  });
+}
+
+test("hot update queues reserve their tail before reentrant callbacks", async () => {
+  const events: string[] = [];
+  let nested!: Promise<void>;
+  const update = createUpdateQueue(async (version: number) => {
+    events.push(`start:${version}`);
+    if (version === 1) {
+      nested = update(2);
+      events.push("enqueued:2");
+      await Promise.resolve();
+    }
+    events.push(`end:${version}`);
+  });
+  await update(1);
+  await nested;
+  expect(events).toEqual(["start:1", "enqueued:2", "end:1", "start:2", "end:2"]);
+});
+
+test("hot update queues continue after a rejected operation", async () => {
+  const events: number[] = [];
+  const failure = new Error("expected update failure");
+  const update = createUpdateQueue(async (version: number) => {
+    events.push(version);
+    if (version === 1) throw failure;
+  });
+  const rejected = update(1);
+  const recovered = update(2);
+  await expect(rejected).rejects.toBe(failure);
+  await recovered;
+  expect(events).toEqual([1, 2]);
+});

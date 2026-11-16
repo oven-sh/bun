@@ -4332,18 +4332,12 @@ static bool isCallerCommonJS(JSC::VM& vm, JSC::CallFrame* callframe, const Strin
     // A module of Bun itself is a program too, without a file.
     if (!isAbsolutePath(path))
         return false;
-    // The source of the frame that CallFrame::callerSourceOrigin() takes the path from. Compiled code has none.
+    // The source of the frame that CallFrame::callerSourceOrigin() takes the path from.
     JSC::SourceProvider* provider = nullptr;
     bool isFirstFrame = true;
     JSC::StackVisitor::visit(callframe, vm, [&](JSC::StackVisitor& visitor) -> WTF::IterationStatus {
-        if (std::exchange(isFirstFrame, false))
-            return WTF::IterationStatus::Continue;
-#if ENABLE(AOT)
-        if (visitor->isCompiledFrame())
-            return WTF::IterationStatus::Done;
-#endif
         auto* codeBlock = visitor->codeBlock();
-        if (!codeBlock)
+        if (std::exchange(isFirstFrame, false) || !codeBlock)
             return WTF::IterationStatus::Continue;
         auto* executable = codeBlock->ownerExecutable();
         if (auto* function = dynamicDowncast<JSC::FunctionExecutable>(executable); function && function->isPrivateBuiltinFunction())

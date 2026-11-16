@@ -155,6 +155,8 @@ const noUnify: readonly string[] = [
   "src/jsc/bindings/highway_xml.cpp",
   // Seventh highway TU (PNG scanline filters) — same reason.
   "src/jsc/bindings/highway_png.cpp",
+  // Eighth highway TU (byte sets) — same reason.
+  "src/jsc/bindings/highway_byte_set.cpp",
   // The highway TUs of the WebP codec — same reason.
   "src/jsc/bindings/highway_webp_decoder.cpp",
   "src/jsc/bindings/highway_webp_encoder.cpp",

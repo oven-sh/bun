@@ -260,7 +260,7 @@ public:
         size_t len;
         std::span<const uint8_t> span() const { return { ptr, len }; }
     };
-    // Same layout as `bun_picohttp::Header`.
+    // Matches `HandshakeRawHeader` in CppWebSocket.rs.
     struct HandshakeRawHeader {
         FfiSlice name;
         FfiSlice value;

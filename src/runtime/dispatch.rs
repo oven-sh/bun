@@ -136,7 +136,7 @@ use crate::api::native_promise_context::DeferredDerefTask as NativePromiseContex
 #[cfg(not(windows))]
 use bun_spawn::static_pipe_writer::Poll as StaticPipeWriterPoll;
 
-use crate::napi::{NapiFinalizerTask, ThreadSafeFunction, napi_async_work};
+use crate::napi::{NapiFinalizerTask, ThreadSafeFunction, TsfnRefRequest, napi_async_work};
 
 use bun_jsc::PosixSignalTask;
 use bun_jsc::RuntimeTranspilerStore;
@@ -558,14 +558,25 @@ pub(crate) fn run_task(
                 work: *mut napi_async_work = cast_ptr!(napi_async_work),
                 global: &JSGlobalObject = global,
             ) -> JsResult<()> {
-                // SAFETY: §Dispatch — tag identifies pointee; live for this dispatch.
-                unsafe { &mut *work }.run_from_js(global)?;
-                Ok(())
+                // SAFETY: §Dispatch — tag identifies pointee, which the pool posted back.
+                unsafe { napi_async_work::run_from_js(work, global) }
             }
         )?,
-        task_tag::ThreadSafeFunction => {
-            feature_arm!([NativeAddons], |function: ThreadSafeFunction| {
-                ThreadSafeFunction::on_dispatch(function);
+        task_tag::ThreadSafeFunction => in_features!(
+            [NativeAddons],
+            (
+                function: *mut ThreadSafeFunction = cast_ptr!(ThreadSafeFunction),
+                el: &EventLoop = el,
+                vm: &VirtualMachine = vm,
+            ) {
+                // SAFETY: §Dispatch — tag identifies pointee; the task owns a ref.
+                let function = unsafe { std::sync::Arc::from_raw(function) };
+                ThreadSafeFunction::on_dispatch(function, el, vm);
+            }
+        ),
+        task_tag::ThreadSafeFunctionRefRequest => {
+            boxed_arm!(task, [NativeAddons], |request: TsfnRefRequest| {
+                request.run()
             })
         }
         task_tag::NapiFinalizerTask => boxed_arm!(
@@ -575,13 +586,9 @@ pub(crate) fn run_task(
         )?,
         task_tag::UvLoopDispatch => {
             #[cfg(unix)]
-            {
-                use crate::napi::uv_posix::UvLoop;
-                feature_arm!([NativeAddons], |uv_loop: UvLoop| {
-                    // SAFETY: `schedule_dispatch` posted this VM's live loop.
-                    unsafe { UvLoop::dispatch(uv_loop) };
-                })
-            }
+            in_features!([NativeAddons], (vm: &VirtualMachine = vm) {
+                crate::jsc_hooks::runtime_state_of(vm).uv_loop.dispatch(vm);
+            });
             #[cfg(not(unix))]
             unreachable!("posix-only");
         }
@@ -589,10 +596,34 @@ pub(crate) fn run_task(
             #[cfg(unix)]
             {
                 use crate::napi::uv_posix::UvHandle;
-                feature_arm!([NativeAddons], |uv_handle: UvHandle| -> JsResult<()> {
-                    // SAFETY: `uv_close` posted this handle.
-                    unsafe { UvHandle::run_close(uv_handle) }
-                })?;
+                in_features!(
+                    [NativeAddons],
+                    (
+                        uv_handle: *mut UvHandle = cast_ptr!(UvHandle),
+                        global: &JSGlobalObject = global,
+                    ) -> JsResult<()> {
+                        // SAFETY: `uv_close` posted this handle.
+                        unsafe { UvHandle::run_close(uv_handle, global) }
+                    }
+                )?;
+            }
+            #[cfg(not(unix))]
+            unreachable!("posix-only");
+        }
+        task_tag::UvWorkDone => {
+            #[cfg(unix)]
+            {
+                use crate::napi::uv_posix::UvWork;
+                in_features!(
+                    [NativeAddons],
+                    (
+                        uv_work: *mut UvWork = cast_ptr!(UvWork),
+                        vm: &VirtualMachine = vm,
+                    ) -> JsResult<()> {
+                        // SAFETY: the pool posted this request.
+                        unsafe { UvWork::run_done(uv_work, vm) }
+                    }
+                )?;
             }
             #[cfg(not(unix))]
             unreachable!("posix-only");
@@ -805,7 +836,7 @@ fn run_task_cold(task: &Task) {
 /// `release_task_unrun` track `bun_event_loop::task_tag::COUNT`. Bump when
 /// adding a variant — and give it an arm in both.
 const _: () = assert!(
-    task_tag::COUNT == 82,
+    task_tag::COUNT == 84,
     "dispatch::run_task / release_task_unrun arm count out of sync with bun_event_loop::task_tag",
 );
 
@@ -1436,9 +1467,12 @@ pub(crate) unsafe fn fire_timer(
                 use crate::napi::uv_posix::UvTimerNode;
                 in_features!(
                     [NativeAddons],
-                    (c: *mut UvTimerNode = owner!(UvTimerNode, event_loop_timer)) -> JsResult<()> {
+                    (
+                        c: *mut UvTimerNode = owner!(UvTimerNode, event_loop_timer),
+                        vm: &VirtualMachine = vm,
+                    ) -> JsResult<()> {
                         // SAFETY: per fn contract, `c` is a started `uv_timer_t`'s node.
-                        unsafe { UvTimerNode::on_fire(c) }
+                        unsafe { UvTimerNode::on_fire(c, vm) }
                     }
                 )
             }
@@ -1699,6 +1733,9 @@ fn __bun_release_task_unrun(task: bun_event_loop::Task) {
         task_tag::ShellAsyncCpTask => release_boxed_in!([Shell], crate::node::fs::ShellAsyncCpTask),
         task_tag::StreamPending => release_boxed_in!([WebStreams], StreamPending),
         task_tag::ThreadSafeFunction => release_in!([NativeAddons], ThreadSafeFunction),
+        task_tag::ThreadSafeFunctionRefRequest => {
+            release_boxed_in!([NativeAddons], TsfnRefRequest)
+        }
         task_tag::UvLoopDispatch => {
             #[cfg(unix)]
             release_in!([NativeAddons], crate::napi::uv_posix::UvLoop);
@@ -1708,6 +1745,12 @@ fn __bun_release_task_unrun(task: bun_event_loop::Task) {
         task_tag::UvHandleClose => {
             #[cfg(unix)]
             release_in!([NativeAddons], crate::napi::uv_posix::UvHandle);
+            #[cfg(not(unix))]
+            unreachable!("posix-only tag");
+        }
+        task_tag::UvWorkDone => {
+            #[cfg(unix)]
+            release_in!([NativeAddons], crate::napi::uv_posix::UvWork);
             #[cfg(not(unix))]
             unreachable!("posix-only tag");
         }

@@ -12,9 +12,9 @@ use bun_boringssl as boringssl;
 use bun_boringssl::c::OwnedSslCtx;
 use bun_core::String as BunString;
 use bun_core::ffi::FfiSlice;
+use bun_http1::Response;
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{ContextId, JSGlobalObject, JSValue, JsResult, VirtualMachineRef};
-use bun_picohttp as picohttp;
 use bun_ptr::{RefPtr, ThisPtr};
 use bun_uws_sys::Socket;
 
@@ -68,6 +68,13 @@ pub(crate) enum HandshakeVerdict {
     NotAccepted,
 }
 
+/// Matches `WebCore::WebSocket::HandshakeRawHeader` (WebSocket.h).
+#[repr(C)]
+struct HandshakeRawHeader<'a> {
+    name: FfiSlice<'a>,
+    value: FfiSlice<'a>,
+}
+
 /// Matches `WebCore::WebSocket::HandshakeResult` (WebSocket.h).
 #[repr(C)]
 struct HandshakeResult {
@@ -112,8 +119,7 @@ unsafe extern "C" {
         websocket_context: &CppWebSocket,
         status_code: u16,
         status_message: FfiSlice<'_>,
-        // C++ reads these as `WebCore::WebSocket::HandshakeRawHeader`, which has the same layout.
-        headers: FfiSlice<'_, picohttp::Header>,
+        headers: FfiSlice<'_, HandshakeRawHeader<'_>>,
         is_upgrade: bool,
         body: FfiSlice<'_>,
     ) -> HandshakeResult;
@@ -213,16 +219,24 @@ impl CppWebSocket {
     /// Dispatch the native `'handshake'` event; C++ copies all slices synchronously.
     pub(crate) fn did_receive_handshake_response(
         &self,
-        response: &picohttp::Response,
+        response: &Response,
         is_upgrade: bool,
         body: &[u8],
     ) -> HandshakeVerdict {
+        let headers: Vec<_> = response
+            .headers
+            .iter()
+            .map(|header| HandshakeRawHeader {
+                name: header.name().into(),
+                value: header.value().into(),
+            })
+            .collect();
         let _scope = VirtualMachine::get().enter_event_loop_scope();
         let result = WebSocket__didReceiveHandshakeResponse(
             self,
             u16::try_from(response.status_code).unwrap_or(0),
-            response.status.into(),
-            response.headers.list.into(),
+            response.status_text().into(),
+            headers.as_slice().into(),
             is_upgrade,
             body.into(),
         );

@@ -805,6 +805,13 @@ _ZN3bun6N_AVX2L10UnfilterUpEPhPKhm                                             [
 
 
 # ----------------------------------------------------------------------------
+# Bun byte sets (src/jsc/bindings/highway_byte_set.cpp).
+# Gate: BUN_HWY_DISPATCH (highway_dispatch.h) via hwy::SupportedTargets. (1 symbol)
+# ----------------------------------------------------------------------------
+_ZN3bun6N_AVX227LongByteSetPrefixLengthImplEPKhmS2_                            [AVX, AVX2]
+
+
+# ----------------------------------------------------------------------------
 # Bun WebP kernels (src/jsc/bindings/highway_webp_decoder.cpp, highway_webp_encoder.cpp).
 # Gate: BUN_HWY_DISPATCH (highway_dispatch.h) via hwy::SupportedTargets. (14 symbols)
 # ----------------------------------------------------------------------------

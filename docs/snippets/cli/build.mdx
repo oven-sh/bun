@@ -112,7 +112,8 @@ bun build <entry points>
 </ParamField>
 
 <ParamField path="--public-path" type="string">
-  Prefix the bundler adds to import paths in bundled code
+  Prefix the bundler adds to import paths in bundled code. It is joined with each file's path relative to
+  <code>--outdir</code>. Use an absolute path or URL.
 </ParamField>
 
 <ParamField path="--external" type="string">

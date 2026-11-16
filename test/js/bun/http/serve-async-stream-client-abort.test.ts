@@ -90,6 +90,7 @@ test.concurrent.each([
   { transport: "TCP", how: "FIN", answer: "failing stream", target: "a:1", heard: ["end"] },
   { transport: "TCP", how: "RST", answer: "direct stream", target: "a:1", heard: ["end"] },
   { transport: "TLS", how: "RST", answer: "stream", target: "a:1", heard: ["end", "abort"] },
+  { transport: "TCP", how: "FIN before the handler returns", answer: "stream", target: "a:1", heard: ["end", "abort"] },
   // Not a tunnel: the body has a length.
   { transport: "TCP", how: "FIN", answer: "file", target: "/", heard: ["abort", "AbortError"] },
 ])(

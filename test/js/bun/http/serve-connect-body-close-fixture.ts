@@ -2,6 +2,7 @@
 import { tls } from "harness";
 
 const [transport, how, answer, target] = process.argv.slice(2);
+const [signal, when] = how.split(" before ");
 const heard: string[] = [];
 const reading = Promise.withResolvers<void>();
 const closed = Promise.withResolvers<void>();
@@ -16,6 +17,11 @@ const server = Bun.serve({
     req.signal.addEventListener("abort", () => heard.push("abort"));
     const text = req.text();
     reading.resolve();
+    if (when === "the handler returns") {
+      // Runs the event loop until setup() settles.
+      const plugins = [{ name: "waits", setup: () => closed.promise }];
+      Bun.build({ entrypoints: ["/a.js"], files: { "/a.js": "" }, plugins });
+    }
     heard.push(
       await text.then(
         () => "end",
@@ -68,7 +74,7 @@ const client = await Bun.connect({
   },
 });
 await reading.promise;
-if (how === "FIN") client.shutdown();
+if (signal === "FIN") client.shutdown();
 else client.terminate();
 await closed.promise;
 

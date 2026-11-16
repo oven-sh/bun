@@ -6,4 +6,4 @@ export type * from "../../../vendor/WebKit/Source/JavaScriptCore/aot/builtins/ge
 const engineModule: typeof import("../../../vendor/WebKit/Source/JavaScriptCore/aot/builtins/generator/check-host-uses.ts") =
   await import(engineFile("builtins/generator/check-host-uses.ts"));
 
-export const { checkHostUses, checkNamesReadByNativeCode } = engineModule;
+export const { checkHostUses } = engineModule;

@@ -1,0 +1,25 @@
+# What the turns of a short loop define and code behind the loop reads has a name on each way out of the turns. One block takes all that leaves the loop, and here it is walked twice:
+# once for the ways of closed arms, which leave by the break, and once for the others. Each walk joins the names of its own ways, so every edge behind the block brings them on.
+# `return -1 - i` is entered from the closed walk alone: it reads the counter of the turn that was left, 0 or 1, and never the 2 that the passing way brings.
+# The counter is a constant on every way, and a constant lies in no block: no verifier sees a wrong one
+# f1 = firstBad. f2 = twoLeave: the second value is 10 or 13 where the loop is left, 16 behind both turns
+# -- source: a-counter-that-leaves-the-turns-has-the-name-of-its-way-behind-a-block-walked-apart.ts
+# const unseen = (x: any): any => [x][JSON.parse("0")];
+# class Item { flags: number = 0; kind: number = 0; constructor(flags: number, kind: number) { this.flags = flags; this.kind = kind; } }
+# function firstBad(items: Item[], j: number, limit: number, rounds: number): number { let work = 0; for (let w = 0; w < rounds; w++) work = (work + w) | 0; const node = items[j]; let seen = 0; let i = 0; for (; i < 2; i++) { if (node.kind === undefined) break; seen = seen + node.kind; if (seen === limit) seen = 0; } if (i < 2) return -1 - i; return seen + work; }
+# function twoLeave(items: Item[], j: number, limit: number, rounds: number): number { let work = 0; for (let w = 0; w < rounds; w++) work = (work + w) | 0; const node = items[j]; let seen = 0; let i = 0; let k = 10; for (; i < 2; i++, k = k + 3) { if (node.kind === undefined) break; seen = seen + node.kind; if (seen === limit) seen = 0; } if (i < 2) return -1 - i - k; return seen + work + k; }
+# const two: number = unseen(2);
+# const good: Item[] = [new Item(1, 5), new Item(2, 7)];
+# const odd: Item[] = [JSON.parse('{"flags":3}')];
+# let sum = 0;
+# for (let r = 0; r < 300; r++) sum += firstBad(good, r & 1, 1000, two) + twoLeave(good, r & 1, 1000, two);
+# console.log(sum, firstBad(odd, 0, 1000, two), twoLeave(odd, 0, 1000, two));
+# -- end of source
+# RUN: walk f1 mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK-NOT: = Integer integer=-3
+# RUN(TURNS): walk f1 mechanisms=all
+# TURNS-COUNT-2: = ShapeTest {{*}}layouts=[L0]
+# RUN(TWO): walk f2 mechanisms=all
+# TWO-LABEL: code f2:Body
+# TWO-NOT: = Integer integer=-19

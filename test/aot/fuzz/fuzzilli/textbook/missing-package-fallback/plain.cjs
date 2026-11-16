@@ -1,0 +1,1 @@
+exports.red = text => text;

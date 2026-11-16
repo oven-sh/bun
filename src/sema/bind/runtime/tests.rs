@@ -5,7 +5,7 @@ use super::{
     PrivateMembers, PrivateName, PrivateNameId, RuntimeBindings, RuntimeBindingsIn,
     RuntimeTablesIn, StoreKind, SymbolStore,
 };
-use crate::atom::known;
+use crate::atom::{Atom, known};
 use crate::bind::decorator_metadata::MetadataReference;
 use crate::bind::{Decl, ScopeId, SymbolId};
 use crate::hir::*;
@@ -181,6 +181,7 @@ fn jsx_references_precede_decorator_metadata() {
         kind,
         name: known::React,
         binding: Binding::Free,
+        member: Atom::NONE,
     };
     let type_name = |node| {
         let recorded = MetadataReference::TypeName(TypeNodeId(node));

@@ -10,7 +10,7 @@ import { addHostInstances } from "./host-instances";
 import { setUpPrefix } from "./run-workers";
 import { collectTargets } from "./targets";
 
-export type WorkerRequest = { filter: string; index: number; count: number; finished: string[] };
+export type WorkerRequest = { filter: string; index: number; count: number; finished: string[]; toldQuiet?: string };
 
 const [requestPath, reportsPath] = process.argv.slice(2);
 const { filter, index, count, finished }: WorkerRequest = JSON.parse(readFileSync(requestPath, "utf8"));

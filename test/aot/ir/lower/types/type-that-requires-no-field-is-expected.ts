@@ -5,8 +5,8 @@
 // CHECK: variable {{*}}name="d" module=[[entry]] declared={type=undefined|null|{{*}}|L{{*}} flags=[IsExpected, OmitsNull]}
 // CHECK: variable {{*}}name="e" module=[[entry]] declared={type=undefined|null|{{*}}|L{{*}} flags=[IsExpected, OmitsNull]}
 // CHECK: variable {{*}}name="f" module=[[entry]] declared={type=undefined|null|{{*}}|L{{*}} flags=[IsExpected, OmitsNull]}
-// CHECK: variable {{*}}name="g" module=[[entry]] declared={type=undefined|null|object|absent site=
-// CHECK: variable {{*}}name="h" module=[[entry]] declared={type=undefined|null|absent|L{{*}} site=
+// CHECK: variable {{*}}name="g" module=[[entry]] declared={type=undefined|null|object|absent
+// CHECK: variable {{*}}name="h" module=[[entry]] declared={type=undefined|null|absent|L{{*}}
 
 // A layout tells objects apart by the fields they must have. Every object is of a type whose members are all optional, and a member with an index or a symbol for a name is no field. So the layout of such a type is only expected: no object fails a test there. A type that is only an index signature has no layout and is `object`. One required field is enough for a test.
 interface Options {

@@ -38,6 +38,14 @@ fn specifier_finds_module() {
 }
 
 #[test]
+fn only_module_of_node_has_a_name_without_the_prefix() {
+    let find = name_without_node_prefix;
+    assert_eq!(find(RuntimeModule::NodeFs), Some(&b"fs"[..]));
+    assert_eq!(find(RuntimeModule::BunSqlite), None);
+    assert_eq!(find(RuntimeModule::Bun), None);
+}
+
+#[test]
 fn other_text_finds_no_module() {
     assert_eq!(module_by_specifier(b"node:no-such-module"), None);
     assert_eq!(module_by_specifier(b"NodeFs"), None);

@@ -1,0 +1,22 @@
+# -- source: five-functions-that-reach-unseen-code-behind-a-name-called-on-them-leave-the-flow-closed.js
+# const hide = x => [x][JSON.parse("0")];
+# function a(x, y) { return "a" + x; }
+# function b(x, y) { return "b" + x; }
+# function c(x, y) { return "c" + x; }
+# function d(x, y) { return "d" + x; }
+# function e(x, y) { return "e" + x; }
+# function pick(i) { i %= 5; return i === 0 ? a : i === 1 ? b : i === 2 ? c : i === 3 ? d : e; }
+# function through(handed) { try { return handed.join("-"); } catch (error) { return error.constructor.name; } }
+# let out = "";
+# for (let i = 0; i < 5; i++) out += through(pick(i)) + ",";
+# hide(Object.setPrototypeOf)(hide(a), hide(Array.prototype));
+# for (let i = 0; i < 5; i++) out += through(pick(i)) + ",";
+# print(out, pick(1)(3));
+# -- end of source
+# A name is called on five lost functions; only behind that call does one of them reach code that nobody sees, which lays the prototype of lists above it. The rule of the call opened with a question that nobody watched (has the family reached unseen code?): run once more over the solved sets it took the other road and added something: under the checking word FlowFixpoint the build stopped by name (FlowEndedTooEarly). The question is gone: what unseen code may lay on or above an escaped function arrives at the pool's node and is called there.
+# OPTIONS: check=FlowFixpoint
+# RUN: link functions mechanisms=all
+# CHECK-NOT: FlowEndedTooEarly
+# CHECK: function f1 
+# RUN(ANSWERS): run-in-shell
+# ANSWERS: TypeError,TypeError,TypeError,TypeError,TypeError,-,TypeError,TypeError,TypeError,TypeError, b3

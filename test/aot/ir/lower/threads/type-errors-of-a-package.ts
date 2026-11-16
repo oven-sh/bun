@@ -1,6 +1,8 @@
 // RUN(ONE): link
-// DIAGNOSTIC: TS100010 2
+// STATISTIC: SourceFilesChecked = 3
 // OPTIONS(ONE): threads=1
+// ONE: function [[one]] name="one" {{*}}flags=[IsChecked, HasExplicitName] {{*}}parameters=[{type=undefined|null|[[merged]] flags=[OmitsNull, OmitsUndefined]}] results=[{type=number}]
+// ONE: function [[two]] name="two" {{*}}flags=[IsChecked, HasExplicitName] {{*}}parameters=[{type=undefined|null|[[merged]] flags=[OmitsNull, OmitsUndefined]}] results=[{type=number}]
 // RUN(T2A): link
 // OPTIONS(T2A): threads=2
 // SAME: ONE T2A
@@ -8,7 +10,7 @@
 // OPTIONS(T8A): threads=8
 // SAME: ONE T8A
 
-// The base types of an interface are resolved once for all its declarations, so one evaluation finds the TS2312 of every file that declares a wrong base. A later file is the first to ask. It leaves the error in first.ts to that file's own check, which must still get to report it.
+// An interface that extends a union is a type error, here in both files of the package. Nobody looks for type errors, so both files keep their types and nothing is reported, whatever the number of threads and whichever file is the first to ask for the base types of `Merged`.
 
 // FILE: main.ts
 import { one } from "ships-typescript/first.ts";

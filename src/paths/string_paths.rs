@@ -16,9 +16,7 @@ use bun_core::{WStr, ZStr};
 /// form of [`WStr::from_raw`] for the dominant call shape in this module: a
 /// stack `WPathBuffer` filled to `len` with a NUL written at `wbuf[len]`.
 /// The slice borrow proves `wbuf[..=len]` lies in one allocation and ties the
-/// returned lifetime to it; the NUL is debug-asserted (release relies on the
-/// caller upholding the documented `wbuf[len] == 0` precondition).
-/// Mirrors [`ZStr::from_buf`].
+/// returned lifetime to it.
 #[inline(always)]
 fn wstr_in_buf(wbuf: &[u16], len: usize) -> &WStr {
     WStr::from_buf(wbuf, len)
@@ -162,12 +160,12 @@ fn add_nt_path_prefix<'a>(wbuf: &'a mut [u16], utf16: &[u16]) -> &'a WStr {
 }
 
 pub fn add_nt_path_prefix_if_needed<'a>(wbuf: &'a mut [u16], utf16: &[u16]) -> &'a WStr {
-    if strings::has_prefix_comptime_type::<u16>(utf16, &windows::NT_OBJECT_PREFIX) {
+    if utf16.starts_with(&windows::NT_OBJECT_PREFIX) {
         wbuf[..utf16.len()].copy_from_slice(utf16);
         wbuf[utf16.len()] = 0;
         return wstr_in_buf(wbuf, utf16.len());
     }
-    if strings::has_prefix_comptime_type::<u16>(utf16, &windows::LONG_PATH_PREFIX) {
+    if utf16.starts_with(&windows::LONG_PATH_PREFIX) {
         // Replace prefix
         return add_nt_path_prefix(wbuf, &utf16[windows::LONG_PATH_PREFIX.len()..]);
     }
@@ -510,7 +508,7 @@ mod tests {
                     | u32::from(input[i + 2] & 0x3F);
                 if (0xD800..=0xDFFF).contains(&cp) {
                     return SIMDUTFResult {
-                        status: Status::SURROGATE,
+                        status: Status(6), // SURROGATE
                         count: i,
                     };
                 }

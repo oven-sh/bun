@@ -1,5 +1,5 @@
 // Classes that reach native code may be constructed under any new.target: what a constructor stores under a name that no class declares is found on the instance, whichever class the instance gets its shape from.
-// STATISTIC: FlowAppendedFields <= 8
+// STATISTIC: FlowAppendedFields <= 8 Todo: the count takes in the functions of Bun's library that come into this executable
 function throughNativeCode(value) {
   let found;
   [value].forEach(function (each) {

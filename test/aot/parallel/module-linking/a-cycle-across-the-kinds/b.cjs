@@ -1,1 +1,0 @@
-let seen; try { const a = require("./a.mjs"); seen = Object.keys(a).join() + ":" + (() => { try { return a.a; } catch (e) { return e.constructor.name; } })(); } catch (e) { seen = "require: " + e.constructor.name; } exports.seen = seen;

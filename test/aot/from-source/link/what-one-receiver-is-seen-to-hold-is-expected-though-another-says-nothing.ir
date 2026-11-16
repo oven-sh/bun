@@ -1,0 +1,22 @@
+# -- source: main.js
+# const descriptor = { value: undefined, enumerable: false };
+# function Inner(n) { this.n = n; }
+# function Other(n) { this.n = n; }
+# function Holder(n) { lay(this, n); }
+# function lay(inst, n) { descriptor.value = new Inner(n); Object.defineProperty(inst, "_z", descriptor); descriptor.value = undefined; }
+# const loose = { _z: new Other(1000) };
+# if (pick()) loose._z = { m: 1 };
+# function read(list) { var total = 0; for (const each of list) { if (each._z) total += each._z.n; } return total; }
+# print(read([new Holder(1), new Holder(2), loose]));
+# -- end of source
+# What is known of `each` are its uses: the literal and the instances have the name, and both are expected. The literal is seen to hold two layouts that no family holds, which says nothing; what the instances are seen to hold is expected all the same:
+# an expectation is tested, so one receiver that says nothing does not silence the others. Two layouts have the name `n`, so the name alone says nothing. f5 = read
+# RUN(WALK): walk f5 mechanisms=all
+# WALK-LABEL: code f5:Body
+# WALK: GetSlot {{*}}key="n" receivers=[L0]
+# RUN(ANSWERS): run-in-shell globalThis.pick = () => false;
+# ANSWERS: 1003
+# ANSWERS-NEXT: exited with 0
+# RUN(OTHER): run-in-shell globalThis.pick = () => true;
+# OTHER: NaN
+# OTHER-NEXT: exited with 0

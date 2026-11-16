@@ -14,6 +14,8 @@ use crate::report::testing::{
     at, location, witness,
 };
 
+const MODULE_WITHOUT_TEXT: u32 = RUNTIME + 1;
+
 fn use_of_word(builtin: u32, uses: BuiltinUse) -> BuiltinUseRecord {
     BuiltinUseRecord {
         builtin,
@@ -335,7 +337,7 @@ fn cause_line_has_builtin_and_position() {
             BuiltinId::Eval.to_wire(),
             location(PROGRAM, LINE_2_COLUMN_14),
         ),
-        unseen_record(ABSENT_WORD, location(RUNTIME, 3)),
+        unseen_record(ABSENT_WORD, location(MODULE_WITHOUT_TEXT, 3)),
         unseen_record(ABSENT_WORD, NO_LOCATION),
     ];
     let mut fixture = ReportFixture::new(ResultRecords {
@@ -362,7 +364,7 @@ fn cause_line_has_builtin_and_position() {
             ),
             line(
                 "blocked by runtime-code: the program can run code that isn't in the executable",
-                at(RUNTIME, 3),
+                at(MODULE_WITHOUT_TEXT, 3),
             ),
             line(
                 "blocked by dynamic-import: the program calls import() or require() with a dynamic path",

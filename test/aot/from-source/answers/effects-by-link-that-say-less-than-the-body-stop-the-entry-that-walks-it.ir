@@ -1,0 +1,11 @@
+# -- source: main.js
+# const state = { count: 0 };
+# function put(flag, ...rest) { if (!flag) return 0; state.count = rest.length; return 1; }
+# globalThis.put = put;
+# print(globalThis.put(true, 1, 2), state.count, globalThis.put(false));
+# -- end of source
+# Link's effects of f1 are taken to name no write of ObjectFields, as the verifier of a unit reads them. The generic call entry of f1 walks the body, so the store of the body stands in the entry too, and the verifier stops that unit as it stops the body. No run is needed.
+# OPTIONS: check=Validate testing=UnderstateEffects:Summary/f1/ObjectFields
+# DIAGNOSTIC: EffectsNotCounted
+# RUN: walk f1:GenericCallEntry mechanisms=all
+# CHECK-NOT: code f1:GenericCallEntry

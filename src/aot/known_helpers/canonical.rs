@@ -6,7 +6,7 @@ use bun_sema::hir::{
     self, BinOp, ExprId, ExprKind, Flags, FnBody, FnId, FnKind, PatId, PatKind, PropKey, PropKind,
     StmtId, StmtKind, UnOp, VarDeclId, VarKind,
 };
-use bun_sema::util::FxHashMap;
+use smallvec::SmallVec;
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub(super) enum OuterName {
@@ -26,6 +26,8 @@ pub(super) struct CanonicalInput<'a, 's> {
     pub(super) file: &'a FindInput<'a, 's>,
     pub(super) max_bytes: usize,
     pub(super) is_outer_name: &'a dyn Fn(Atom) -> bool,
+    /// The only functions of interest, in ascending order.
+    pub(super) known: Option<&'a [Box<[u8]>]>,
 }
 
 #[derive(Copy, Clone)]
@@ -98,13 +100,18 @@ enum Tag {
     Case,
 }
 
+const USUAL_BYTES: usize = 256;
+
 struct Writer<'a, 's> {
     input: &'a CanonicalInput<'a, 's>,
-    locals: FxHashMap<SymbolId, u32>,
+    locals: SmallVec<[SymbolId; 8]>,
     labels: Vec<Atom>,
     found: CanonicalFunction,
     root: FnId,
     is_unsupported: bool,
+    /// Those of `CanonicalInput::known` that begin with the first `compared` bytes.
+    known: Option<&'a [Box<[u8]>]>,
+    compared: usize,
 }
 
 pub(super) fn canonical_function(
@@ -113,11 +120,16 @@ pub(super) fn canonical_function(
 ) -> Option<CanonicalFunction> {
     let mut writer = Writer {
         input,
-        locals: FxHashMap::default(),
+        locals: SmallVec::new(),
         labels: Vec::new(),
-        found: CanonicalFunction::default(),
+        found: CanonicalFunction {
+            bytes: Vec::with_capacity(USUAL_BYTES),
+            ..CanonicalFunction::default()
+        },
         root: function,
         is_unsupported: false,
+        known: input.known,
+        compared: 0,
     };
     writer.function(function);
     (!writer.is_unsupported).then_some(writer.found)
@@ -125,8 +137,25 @@ pub(super) fn canonical_function(
 
 impl Writer<'_, '_> {
     fn is_stopped(&mut self) -> bool {
-        self.is_unsupported |= self.found.bytes.len() > self.input.max_bytes;
+        self.is_unsupported |=
+            self.found.bytes.len() > self.input.max_bytes || !self.may_become_known();
         self.is_unsupported
+    }
+
+    fn may_become_known(&mut self) -> bool {
+        let Some(known) = self.known else {
+            return true;
+        };
+        let written = &self.found.bytes[self.compared..];
+        if written.is_empty() {
+            return !known.is_empty();
+        }
+        let from = self.compared;
+        let start = known.partition_point(|it| &it[from..] < written);
+        let count = known[start..].partition_point(|it| it[from..].starts_with(written));
+        self.known = Some(&known[start..start + count]);
+        self.compared = self.found.bytes.len();
+        count != 0
     }
 
     fn tag(&mut self, tag: Tag) {
@@ -138,7 +167,9 @@ impl Writer<'_, '_> {
     }
 
     fn number(&mut self, number: u32) {
-        self.found.bytes.extend_from_slice(&number.to_le_bytes());
+        for byte in number.to_le_bytes() {
+            self.found.bytes.push(byte);
+        }
     }
 
     fn text(&mut self, text: Atom) {
@@ -167,10 +198,13 @@ impl Writer<'_, '_> {
             CodeUnit::File | CodeUnit::FieldInitializer(_) => false,
         };
         if is_declared_inside || symbol == bound.declared_symbol(Decl::Fn(self.root)) {
-            let next = self.locals.len() as u32;
-            let index = *self.locals.entry(symbol).or_insert(next);
+            let known = self.locals.iter().position(|&local| local == symbol);
+            let index = known.unwrap_or_else(|| {
+                self.locals.push(symbol);
+                self.locals.len() - 1
+            });
             self.tag(Tag::Local);
-            self.number(index);
+            self.number(index as u32);
             return;
         }
         self.outer(OuterName::Symbol(symbol));
@@ -348,7 +382,9 @@ impl Writer<'_, '_> {
     }
 
     fn node(&mut self, head: &[u8], expressions: &[ExprId], statements: &[StmtId]) {
-        self.found.bytes.extend_from_slice(head);
+        for &byte in head {
+            self.found.bytes.push(byte);
+        }
         for &expression in expressions {
             self.expression(expression);
         }

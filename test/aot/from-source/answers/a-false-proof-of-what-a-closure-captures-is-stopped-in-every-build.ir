@@ -1,0 +1,30 @@
+# A value that a closure captures either has been shown to have the capture's type or is checked where the closure is created. Link types a capture by the values that it sees captured,
+# and the closure's function reads the capture without a check.
+# The failing control. Fault injection, testing=AssumeUnknownCallsReturnUndefined: Link assumes that the shell's `id` returns undefined, so `captured` is undefined, but a number is captured.
+# In the second run the function that creates the closure is called with an argument of another type than the declared one, so its slow version creates the closure.
+# Such a version goes through the walk, and the entry check is there too.
+# OPTIONS: testing=AssumeUnknownCallsReturnUndefined
+# RUN(MADE): run-in-shell mechanisms=all-Inlining globalThis.which = 1;
+# MADE: bun: internal AOT error: type check failed
+# MADE-NEXT: found int32 in a captured variable
+# MADE-NOT: went on
+# MADE: crashed with
+# RUN(SLOW): run-in-shell mechanisms=all-Inlining globalThis.which = 2;
+# SLOW: bun: internal AOT error: type check failed
+# SLOW-NEXT: found int32 in a captured variable
+# SLOW-NOT: went on
+# SLOW: crashed with
+# The passing control: the same closure, over a value that fits.
+# RUN(NONE): run-in-shell mechanisms=all globalThis.which = 0;
+# NONE: undefined
+# NONE-NEXT: went on
+# NONE-NEXT: exited with 0
+# -- source: a-false-proof-of-what-a-closure-captures-is-stopped-in-every-build.ts
+# declare function id(value: unknown): any;
+# declare function print(...values: unknown[]): void;
+# declare const which: number;
+# function captures(flag: number) { const captured = flag ? id(7) : undefined; return () => typeof captured; }
+# if (which === 2) print((captures as any)("text")());
+# print(captures(which)());
+# print("went on");
+# -- end of source

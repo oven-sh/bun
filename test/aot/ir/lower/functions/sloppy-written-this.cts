@@ -20,7 +20,7 @@
 
 function unused(this: string) {}
 
-function used(this: number) {
+function used(this: number): number {
   return this;
 }
 

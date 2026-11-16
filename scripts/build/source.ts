@@ -409,13 +409,6 @@ export interface CargoBuild {
    * unit-separator (\x1f) encoding so multi-word flags work.
    */
   rustflags?: string[];
-  /**
-   * Tier 3 targets (e.g. aarch64-unknown-freebsd) have no prebuilt std, so
-   * `rustup target add` (dep_cargo_cross rule) won't help. When true, passes
-   * `-Zbuild-std=std,panic_abort` so cargo builds std from source. Requires
-   * nightly cargo + `rustup component add rust-src`.
-   */
-  buildStd?: boolean;
 }
 
 /**
@@ -436,16 +429,6 @@ export interface Provides {
   includes: string[];
   /** Preprocessor defines to add to bun's compilation. */
   defines?: string[];
-  /**
-   * Source files (relative to the SOURCE dir) that bun compiles directly
-   * into its own binary — no nested build producing a `.a`. Declared as
-   * implicit outputs of the fetch rule so ninja knows where they come from;
-   * bun.ts adds them to its C/C++ source lists.
-   *
-   * Most deps provide `.a` files via `libs`. This is for the rare case of
-   * a single-file dep with no build system (picohttpparser: one .c file).
-   */
-  sources?: string[];
   /**
    * Other files of a prebuilt tarball that an edge of the graph reads,
    * relative to the extracted directory. Implicit outputs of the fetch edge,
@@ -473,7 +456,6 @@ export type DepName =
   | "cares"
   | "highway"
   | "libdeflate"
-  | "libjpeg-turbo"
   | "libuv"
   | "libwebp"
   | "lolhtml"
@@ -482,7 +464,6 @@ export type DepName =
   | "lsquic"
   | "mimalloc"
   | "nodejs"
-  | "picohttpparser"
   | "rust-argon2"
   | "sqlite"
   | "tinycc"
@@ -501,11 +482,7 @@ export interface Dependency {
   /**
    * Patch files to apply after extraction. Paths relative to repo root.
    * Patches are included in the source identity hash — changing a patch
-   * invalidates the fetched source and triggers re-fetch.
-   *
-   * Files ending in `.patch` are applied with `git apply`. Other files are
-   * OVERLAYS — copied into the source root as-is. Useful for injecting a
-   * CMakeLists.txt into a project that lacks one (tinycc).
+   * invalidates the fetched source and triggers re-fetch. Applied with `git apply`.
    */
   patches?: string[];
 
@@ -563,11 +540,6 @@ export interface ResolvedDep {
   /** Absolute include paths for -I flags. */
   includes: string[];
   defines: string[];
-  /**
-   * Absolute paths to .c/.cpp files bun compiles directly (from
-   * Provides.sources). Empty for most deps — they provide .a files.
-   */
-  sources: string[];
   /**
    * The final build output(s). Use these as implicit inputs on anything
    * downstream that needs this dep built first.
@@ -658,8 +630,7 @@ export function registerDepRules(n: Ninja, cfg: Config): void {
     // "the dir exists" — also repairs a partially auto-installed pinned
     // toolchain (no distributable manifest, which would otherwise error with
     // `Missing manifest in toolchain '<channel>-<host>'` before cargo even
-    // ran). ~70ms no-op when complete. Same pattern as `rust_build_cross` in
-    // rust.ts — see the longer comment there.
+    // ran). ~70ms no-op when complete.
     const rustup = q(join(dirname(cfg.cargo), `rustup${cfg.host.exeSuffix}`));
     const cargoCrossEnsure =
       cfg.rustToolchain !== undefined
@@ -667,7 +638,7 @@ export function registerDepRules(n: Ninja, cfg: Config): void {
         : `${stream} $env ${rustup} -q target add $rust_target`;
     // Windows: ninja runs commands via CreateProcess (no shell) — wrap in
     // `cmd /c "..."` so `&&` is interpreted as a chain operator instead of
-    // being passed as a literal arg. See rust.ts `rust_build_cross`.
+    // being passed as a literal arg.
     const cargoCrossChain = `${cargoCrossEnsure} && ${stream} --cwd=$manifestdir $env ${q(cfg.cargo)} build $args`;
     n.rule("dep_cargo_cross", {
       command: hostWin ? `cmd /c "${cargoCrossChain}"` : cargoCrossChain,
@@ -831,15 +802,10 @@ export function resolveDep(
   // we don't want patches changing between emitFetch and the hash check.
   const patches = dep.patches ?? [];
 
-  // Sources bun compiles directly (from Provides.sources). Resolved to
-  // absolute paths for (a) the ResolvedDep return and (b) declaring as
-  // implicit outputs of fetch so ninja knows where they come from.
-  const resolvedSources = (provides.sources ?? []).map(s => resolve(srcDir, s));
-
-  // DirectBuild sources are ALSO compiled in our ninja graph, so they need
-  // the same implicit-output-of-fetch treatment. Include the codegen tool
-  // source, its input, and any HeaderSubst templates — all read at build
-  // time from the fetched tree.
+  // DirectBuild sources are compiled in our ninja graph, so they are declared
+  // as implicit outputs of fetch: ninja then knows where they come from.
+  // Include the codegen tool source, its input, and any HeaderSubst
+  // templates — all read at build time from the fetched tree.
   const directSources: string[] = [];
   if (buildSpec.kind === "direct") {
     assert(
@@ -866,7 +832,7 @@ export function resolveDep(
   // For local/in-tree: source is already on disk.
   let sourceStamp: string | undefined;
   if (source.kind === "github-archive") {
-    sourceStamp = emitFetch(n, cfg, dep.name, source, patches, [...resolvedSources, ...directSources]);
+    sourceStamp = emitFetch(n, cfg, dep.name, source, patches, directSources);
   } else {
     // Local/in-tree: no .ref to write. Use the build system's manifest file
     // as the stamp — touching it triggers a rebuild.
@@ -927,9 +893,7 @@ export function resolveDep(
     generatedHeaders = buildSpec.consumerOutputs ?? [];
     configureInputs = buildSpec.configureInputs ?? [];
   } else {
-    // No build step. The fetch stamp (if any) is the only output. For deps
-    // with provides.sources (picohttpparser), emitBun adds a phony pointing
-    // at the compiled .o files so `--target <name>` actually compiles them.
+    // No build step. The fetch stamp (if any) is the only output.
     libs = [];
     outputs = sourceStamp === undefined ? [] : [sourceStamp];
   }
@@ -951,7 +915,6 @@ export function resolveDep(
     objects,
     includes,
     defines: provides.defines ?? [],
-    sources: resolvedSources,
     outputs,
     generatedHeaders,
     configureInputs,
@@ -996,9 +959,9 @@ function emitFetch(
 
   n.build({
     outputs: [refStamp],
-    // Source files bun compiles directly (picohttpparser.c). Declaring
-    // them as outputs tells ninja "fetch creates these" — otherwise ninja
-    // errors "missing and no known rule to make it" on fresh checkouts.
+    // Source files our graph compiles. Declaring them as outputs tells
+    // ninja "fetch creates these" — otherwise ninja errors "missing and no
+    // known rule to make it" on fresh checkouts.
     ...(compiledSources.length > 0 && { implicitOutputs: compiledSources }),
     rule: "dep_fetch",
     inputs: [],
@@ -1104,7 +1067,6 @@ function emitPrebuilt(
     configureInputs: provides.contentsDecideGraph ? [stamp] : [],
     includes,
     defines: provides.defines ?? [],
-    sources: [],
     outputs,
   };
 }
@@ -1146,7 +1108,6 @@ function emitCargo(n: Ninja, cfg: Config, name: DepName, spec: CargoBuild, input
   const args: string[] = ["--locked", "--target-dir", targetDir];
   if (cfg.release) args.push("--release");
   if (spec.rustTarget) args.push("--target", spec.rustTarget);
-  if (spec.buildStd) args.push("-Zbuild-std=std,panic_abort");
 
   // ─── Environment ───
   // CARGO_ENCODED_RUSTFLAGS: the separator is U+001F (unit separator), not
@@ -1208,10 +1169,8 @@ function emitCargo(n: Ninja, cfg: Config, name: DepName, spec: CargoBuild, input
   }
 
   // ─── Emit build node ───
-  // dep_cargo_cross prepends `rustup target add` for Tier 2 cross targets.
-  // Tier 3 targets (buildStd=true) have no prebuilt std, so target-add would
-  // fail — they use plain dep_cargo with -Zbuild-std instead.
-  const cross = cfg.crossTarget !== undefined && spec.rustTarget !== undefined && !spec.buildStd;
+  // dep_cargo_cross prepends `rustup target add` for cross targets.
+  const cross = cfg.crossTarget !== undefined && spec.rustTarget !== undefined;
   const node = {
     outputs: [lib],
     inputs: [],

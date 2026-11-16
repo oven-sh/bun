@@ -81,6 +81,7 @@ fn default_settings() -> TranspileSettings {
         experimental_decorators: false,
         emits_decorator_metadata: false,
         use_define_for_class_fields: None,
+        bun_run_assigns_class_fields: false,
     }
 }
 
@@ -184,6 +185,7 @@ fn default_host_leaves_tree_and_payload_unchanged() {
             is_library: false,
             host_values: &[],
             jsx: JsxMode::Classic,
+            own_name: b"",
         },
         &atoms,
         arena,

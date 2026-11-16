@@ -1,24 +1,21 @@
 // RUN: lower
 // CHECK-LABEL: function {{*}}name="element"
 // CHECK: [[item]] = ElemGet [[xs]], [[i]]
-// CHECK-NEXT: [[convertedItem]] = Convert [[item]] declared={type=number site=w{{*}}} illTypedCause=ContainerWriterUnseen
-// CHECK-NEXT: Return [[convertedItem]]
+// CHECK-NEXT: Return [[item]]
 // CHECK-LABEL: function {{*}}name="field"
-// CHECK: results=[{type=number site=[[result]]}]
+// CHECK: results=[{type=number}]
 // CHECK: [[x]] = PropGet [[p]] key="x"
-// CHECK-NEXT: [[returned]] = Convert [[x]] declared={type=number site=[[result]]} @
+// CHECK-NEXT: [[returned]] = Convert [[x]] declared={type=number} @
 // CHECK-NEXT: Return [[returned]]
 // CHECK-LABEL: function {{*}}name="store"
 // CHECK-NEXT: ([[target]]: {{*}}, [[v]]:
-// CHECK: [[converted]] = Convert [[v]] declared={type=number site=w{{*}}} illTypedCause=FromLooseType
-// CHECK-NEXT: PropSet [[target]], [[converted]] key="x"
+// CHECK: PropSet [[target]], [[v]] key="x"
 // CHECK-LABEL: function {{*}}name="untyped"
 // CHECK-NEXT: ([[typed]]:
-// CHECK: [[receiver]] = Convert [[typed]] declared={type={{*}}flags=[IsExpected]}
-// CHECK-NEXT: [[read]] = PropGet [[receiver]] key="x"
+// CHECK: [[read]] = PropGet [[typed]] key="x"
 // CHECK-NEXT: Return [[read]]
 
-// An array does not say what it holds, so an element that is read is converted to the element type. The slot of a field holds what the field's type says, so a field that is read is not converted: the only conversion in `field` is the one to the result of the function. What is stored in a field is converted to the field's type. A member of `any` has no type to be converted to.
+// An element or a field that is read is converted to nothing: the engine follows what is stored. The only conversion in `field` is the one to the result of the function, which is written. The layout says what a field is declared to hold, so what is stored in a field is not converted either. A cast to `any` says nothing, and neither does a member of `any`.
 interface P {
   x: number;
 }
@@ -27,7 +24,7 @@ export function element(xs: number[], i: number) {
   return xs[i];
 }
 
-export function field(p: P) {
+export function field(p: P): number {
   return p.x;
 }
 

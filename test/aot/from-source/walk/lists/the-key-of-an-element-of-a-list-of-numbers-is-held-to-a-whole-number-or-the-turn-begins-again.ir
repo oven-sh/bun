@@ -1,0 +1,72 @@
+# `this.cells[square + step]` in a loop over written steps. `square` is declared a number, so nothing says that the key is whole. In the specialized loop `square` is asked for an int32 in front,
+# because the sum is a key and is cut by a bitwise operator: the sum is an integer (made, texts).
+# A product has no such addend: the key of an element of a list declared to hold numbers alone is asked for an int32 in the iteration, and where it is none (1.5, NaN, 2 ** 32) the iteration restarts as written (scaled).
+# A key that goes round the loop, the header's own parameter or a step of it, is left to the counters, which hold it to an int32 by themselves (round).
+# -- source: main.ts
+# declare function print(...values: unknown[]): void;
+# declare function hand(...values: unknown[]): void;
+# const STEPS = [-33, -31, -18, -14, 14, 18, 31, 33];
+# class Field {
+#   cells: number[] = [];
+#   names: string[] = [];
+#   constructor() { for (let i = 0; i < 128; i++) { this.cells.push(i % 7); this.names.push("n" + i % 7); } }
+#   made(square: number, want: number): number {
+#     let seen = 0;
+#     for (const step of STEPS) {
+#       const from = square + step;
+#       if (!(from & 0x88) && this.cells[from] === want) return from * 1000 + seen;
+#       seen++;
+#     }
+#     return -1 - seen;
+#   }
+#   scaled(square: number, want: number): number {
+#     let seen = 0;
+#     for (const step of STEPS) {
+#       const from = square * step;
+#       if (!(from & 0x88) && this.cells[from] === want) return from * 1000 + seen;
+#       seen++;
+#     }
+#     return -1 - seen;
+#   }
+#   round(from: number, by: number): number {
+#     let sum = 0;
+#     for (let at = from; at >= 0; at--) sum = sum * by + this.cells[at]!;
+#     return sum;
+#   }
+#   texts(square: number, want: string): number {
+#     let seen = 0;
+#     for (const step of STEPS) {
+#       const from = square + step;
+#       if (!(from & 0x88) && this.names[from] === want) return from * 1000 + seen;
+#       seen++;
+#     }
+#     return -1 - seen;
+#   }
+# }
+# const field = new Field();
+# (field.cells as any)["38.5"] = 90;
+# hand(field);
+# print(field.made(52, 3), field.made(52, 99), field.made(52.5, 90), field.made(52.5, 3), field.made(NaN, 3), field.made(2 ** 32 + 52, 3), field.made(-0, 0), field.scaled(-2, 3), field.scaled(-2, 99), field.scaled(-0.5, 3), field.scaled(NaN, 3), field.scaled(2 ** 32, 3), field.round(5, 0.5), field.round(2.5, 0.5), field.texts(52, "n3"), field.texts(52.5, "n3"));
+# -- end of source
+# f2 = made, f3 = scaled, f4 = round, f5 = texts
+# RUN(EVENT): compile NumberKeysGuardedInIterations mechanisms=all
+# One: the list is asked in front for one kind of storage that takes both.
+# EVENT: statistic NumberKeysGuardedInIterations 1
+# RUN(MADE): walk f2 mechanisms=all
+# MADE-LABEL: code f2:Body
+# MADE: = TypeTest {{*}}testedType=i32
+# MADE: = Add {{*}}form=Integers
+# MADE: = GetArrayElement {{*}}arrayStorage=Double level=Proven [keyIsIntegral
+# RUN(SCALED): walk f3 mechanisms=all
+# SCALED-LABEL: code f3:Body
+# SCALED: = TypeTest {{*}}testedType=i32
+# SCALED: = NumberToInteger
+# SCALED: = GetArrayElement {{*}}arrayStorage=Double level=Proven [keyIsIntegral, admitsInt32Storage]
+# RUN(ROUND): walk f4 mechanisms=all
+# ROUND-LABEL: code f4:Body
+# ROUND-NOT: = NumberToInteger
+# RUN(TEXTS): walk f5 mechanisms=all
+# TEXTS-LABEL: code f5:Body
+# TEXTS: = Add {{*}}form=Integers
+# RUN(ANSWERS): run-in-shell hand = function () { };
+# ANSWERS: 38003 -9 38503 -9 -9 -9 -9 66000 -9 -9 -9 -9 1.78125 NaN 38003 -9

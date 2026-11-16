@@ -1,8 +1,7 @@
 // RUN: lower
 // CHECK-LABEL: function {{*}}name="clauses"
 // CHECK: [[absent]] = Absent
-// CHECK: Switch {{*}}cases=[1, 2]
-// CHECK: Jump -> next [[second]]([[absent]])
+// CHECK: Switch {{*}}cases=[1, 2] -> case [[first]](| 0), case [[second]]([[absent]])
 // CHECK: [[second]]([[y]]):
 // CHECK: CheckInitialized [[y]] name="y"
 

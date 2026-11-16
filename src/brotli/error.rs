@@ -32,4 +32,11 @@ impl bun_core::output::ErrName for Error {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum InitError {
+    CreateInstance,
+    PrepareDictionary,
+    AttachDictionary,
+}
+
 pub type Result<T, E = Error> = core::result::Result<T, E>;

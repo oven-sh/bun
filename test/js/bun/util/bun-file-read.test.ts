@@ -14,8 +14,7 @@ it("offset should work in Bun.file() #4963", async () => {
 
 // do_read_loop picks its read target per iteration: the 64 KB stack buffer
 // when self.buffer's spare capacity is smaller, otherwise the Vec's spare
-// capacity directly. Cover both branches plus the max_length cap so the
-// branch selection and the commit_spare path stay tied to the same decision.
+// capacity directly. Cover both branches plus the max_length cap.
 describe("Bun.file read-loop target selection", () => {
   function pattern(size: number, seed: number) {
     const out = Buffer.alloc(size);

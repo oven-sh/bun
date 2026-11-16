@@ -1,7 +1,7 @@
 // The ways in which a program writes the path of a file beside it, and starts a Worker with the path. No file but this one is named when the program is built.
 // Alone: which files the build compiles for a Worker depends on what else the executable holds
 // Env of the executable: BUN_JSC_crashIfInterpreterIsUsed=1
-// STATISTIC: EngineRuns = 1
+// An earlier compiler ran the engine again where a first run showed that the load had missed or taken too much, and counted the runs: EngineRuns = 1. A build runs the engine once now.
 import { Worker as NodeWorker } from "node:worker_threads";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import * as path from "node:path";

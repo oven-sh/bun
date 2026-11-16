@@ -5,12 +5,11 @@
 use super::client_session::ClientSession;
 use super::stream::Stream;
 use super::{LOCAL_INITIAL_WINDOW_SIZE, LOCAL_MAX_HEADER_LIST_SIZE, WRITE_BUFFER_HIGH_WATER};
-use crate::HTTPClient;
 use crate::h2_frame_parser as wire;
 use crate::http_request_body::HTTPRequestBody;
 use crate::internal_state::HTTPStage;
+use crate::{HTTPClient, Request};
 use bun_core::strings;
-use bun_picohttp as picohttp;
 
 pub(crate) fn write_preface(session: &mut ClientSession) {
     session.queue(wire::CLIENT_PREFACE);
@@ -89,7 +88,7 @@ pub(crate) fn write_request(
     session: &mut ClientSession,
     client: &mut HTTPClient,
     stream: &mut Stream,
-    request: &picohttp::Request<'_>,
+    request: &Request<'_>,
 ) -> crate::Result<()> {
     // `encode_scratch` would be borrowed mutably
     // alongside `&mut *session` below; pull the Vec out, push it back at the end.
@@ -205,7 +204,7 @@ pub(crate) fn write_request(
     session.encode_scratch = encoded;
     if has_inline_body {
         stream.pending_body = body;
-        drain_send_body(session, stream, usize::MAX);
+        write_body(session, client, stream, usize::MAX);
     } else if !is_streaming {
         stream.sent_end_stream();
     }
@@ -306,13 +305,21 @@ pub(crate) fn write_data_windowed(
 /// Push as much of `stream`'s request body as the send windows allow.
 /// Buffers into `write_buffer`; caller flushes.
 pub(crate) fn drain_send_body(session: &mut ClientSession, stream: &mut Stream, cap: usize) {
+    if let Some(mut client) = stream.client.take() {
+        write_body(session, &mut client, stream, cap);
+        stream.client = Some(client);
+    }
+}
+
+fn write_body(
+    session: &mut ClientSession,
+    client: &mut HTTPClient,
+    stream: &mut Stream,
+    cap: usize,
+) {
     if stream.local_closed() || stream.awaiting_continue || stream.fatal_error.is_some() {
         return;
     }
-    let Some(client_ptr) = stream.client else {
-        return;
-    };
-    let client = super::client_session::stream_client_mut(client_ptr);
     match &mut client.state.original_request_body {
         HTTPRequestBody::Bytes(_) => {
             let pending = stream.pending_body;
@@ -326,7 +333,7 @@ pub(crate) fn drain_send_body(session: &mut ClientSession, stream: &mut Stream, 
         }
         HTTPRequestBody::Stream(body) => {
             let ended = body.ended;
-            let Some(sb) = body.buffer_ref() else {
+            let Some(sb) = body.buffer.as_deref() else {
                 return;
             };
             let mut locked = sb.lock();
@@ -354,7 +361,7 @@ pub(crate) fn drain_send_body(session: &mut ClientSession, stream: &mut Stream, 
             }
             drop(locked);
             if stream.local_closed() {
-                body.detach();
+                body.buffer = None;
             }
         }
         HTTPRequestBody::Sendfile(_) => unreachable!(),
@@ -380,7 +387,7 @@ pub(crate) fn drain_send_bodies(session: &mut ClientSession) -> bool {
         // and re-borrow each pass.
         let mut i = 0usize;
         while i < session.streams.count() {
-            let stream = session.streams.values()[i];
+            let stream = session.streams.values()[i].as_ptr();
             let s = super::client_session::stream_mut(stream);
             i += 1;
             if s.local_closed() || s.send_window <= 0 {

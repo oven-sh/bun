@@ -1,0 +1,8 @@
+# -- source: arrays-are-added-to-strings.ts
+# declare function sink(value: unknown): void;
+# function texts(list: number[], turns: number) { let n = 0; for (let k = 0; k < turns; k++) n += ("" + list).length; return n; }
+# sink(texts([1, 2, 3], 1000));
+# -- end of source
+# The operation is called without the stub of additions.
+# RUN: compile ArraysAddedToStrings mechanisms=all
+# CHECK: statistic ArraysAddedToStrings 1

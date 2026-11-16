@@ -33,7 +33,7 @@ export const closeCallback = b.fn({
   export: "Bun__FFI__closeCallback",
   feature: "Ffi",
   args: { callback: b.any },
-  uses: { callback: [...table.handedOver, table.definesName(["ptr"], table.strictNull)] },
+  uses: { callback: [...table.retainedByNativeCode, table.definesName(["ptr"], table.strictNull)] },
 });
 export const cfunction = b.fn({
   ...method,
@@ -42,11 +42,14 @@ export const cfunction = b.fn({
 });
 
 // `bun:ffi` calls these. Each wraps the `Bun.FFI` function with the same `name` and throws the error that function returns.
-// A signature is read through `args` (own, an array of type numbers or strings), `threadsafe`, `returns` and `ptr`.
-// Nothing is retained, and no error message formats a value.
+// Of a signature `args` is read as an own property and must be a list of type numbers or texts; `threadsafe`, `returns` and `ptr` are read
+// through the prototype chain, and so is a hole of `args`. A String object in `args` and whatever lies under `returns` are converted to a
+// text; `ptr` never is. Nothing is retained, and no error message formats a value.
 const signatureFields = table.named("args", "threadsafe", "returns", "ptr");
-const signature = [table.runsTransitively("OwnValues", "ToPrimitive", signatureFields)];
-const signaturesByName = [table.runsTransitively("OwnKeys", "OwnValues", "ToPrimitive", signatureFields)];
+const signature = [table.runsTransitively("OwnValues", "PrototypeChain", "ToPrimitive", signatureFields)];
+const signaturesByName = [
+  table.runsTransitively("OwnKeys", "OwnValues", "PrototypeChain", "ToPrimitive", signatureFields),
+];
 const newLibrary = b.any.returning(table.instance("FFI").fresh.spec);
 const readsSignatures = {
   ...method,
@@ -76,6 +79,7 @@ export const makeFunction = b.fn({
   name: "cfunction",
   length: 1,
   args: { options: b.any, name: b.string.allowStringObject.otherAsNull },
+  returns: b.any.returning(table.callable.spec),
   uses: { options: signature },
 });
 /** Native code calls the function with primitives only and converts its result to the declared return type. */
@@ -84,6 +88,7 @@ export const makeCallback = b.fn({
   name: "callback",
   length: 1,
   args: { options: b.any, callback: b.any },
+  returns: b.any.returning(table.instance("FFICallback").spec),
   uses: {
     options: signature,
     callback: [
@@ -93,7 +98,7 @@ export const makeCallback = b.fn({
         times: "PerEvent",
         this: table.undefined,
         args: [],
-        spreadArgs: table.union(table.f64, table.bigint, table.bool, table.string, table.strictNull, table.undefined),
+        spreadArgs: table.union(table.f64, table.bigint, table.bool, table.string, table.strictNull),
         result: "Escapes",
       }),
     ],
@@ -108,4 +113,10 @@ export const printSource = b.fn({
   uses: { symbols: signaturesByName },
 });
 
-export const cc = b.fn({ ...method, args: { options: b.any }, returns: FFI });
+/** It alone takes napi_env and napi_value in a signature: the C code that it compiles makes whatever native code can make, and a function of `symbols` hands it out. */
+export const cc = b.fn({
+  ...method,
+  args: { options: b.any },
+  returns: FFI,
+  uses: { options: [table.everything, table.createdIn(table.any, table.nativeMemory)] },
+});

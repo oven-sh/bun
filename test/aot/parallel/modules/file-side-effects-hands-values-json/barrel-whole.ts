@@ -1,1 +1,0 @@
-export { settings } from "./whole";

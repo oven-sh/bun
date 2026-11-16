@@ -1,6 +1,7 @@
-import { expect, test } from "bun:test";
-import { isASAN, rss } from "harness";
+import { expect } from "bun:test";
+import { isASAN, rss, testThatMeasuresOwnMemory } from "harness";
 
+const test = testThatMeasuresOwnMemory(import.meta.path);
 const ASAN_MULTIPLIER = isASAN ? 1 / 10 : 1;
 
 const constructorArgs: [any, RequestInit?][] = [

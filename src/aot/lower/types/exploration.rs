@@ -6,6 +6,13 @@ use super::{Component, ExploredType, TypeEdges};
 use crate::ir::generated::LimitId;
 use crate::lower::{CheckerTypeId, FileLowering};
 
+pub(super) enum Explored {
+    Exhausted,
+    /// The parts of the type are mapped.
+    Alone(ExploredType),
+    Components(SmallVec<[Component; 1]>),
+}
+
 #[derive(Copy, Clone)]
 enum NodeState {
     Open { index: u32 },
@@ -20,7 +27,6 @@ struct Visit {
     open_start: usize,
 }
 
-/// Empty between two walks, which use their memory one after the other.
 #[derive(Default)]
 pub(super) struct Walk {
     states: FxHashMap<CheckerTypeId, NodeState>,
@@ -45,13 +51,19 @@ fn leave_type(walk: &mut Walk) {
     let Some(finished) = walk.path.pop() else {
         return;
     };
-    walk.open.push(finished.explored);
-    if finished.lowest_link == finished.index {
-        let component: Component = walk.open.drain(finished.open_start..).collect();
-        for member in &component {
-            walk.states.insert(member.ty, NodeState::Closed);
+    let closes_component = finished.lowest_link == finished.index;
+    if closes_component && walk.open.len() == finished.open_start {
+        walk.states.insert(finished.explored.ty, NodeState::Closed);
+        walk.components.push(smallvec![finished.explored]);
+    } else {
+        walk.open.push(finished.explored);
+        if closes_component {
+            let component: Component = walk.open.drain(finished.open_start..).collect();
+            for member in component.iter() {
+                walk.states.insert(member.ty, NodeState::Closed);
+            }
+            walk.components.push(component);
         }
-        walk.components.push(component);
     }
     if let Some(parent) = walk.path.last_mut() {
         parent.lowest_link = parent.lowest_link.min(finished.lowest_link);
@@ -59,23 +71,30 @@ fn leave_type(walk: &mut Walk) {
 }
 
 impl FileLowering<'_, '_, '_, '_> {
-    // Nothing, where the limit on the types of one walk is exhausted.
-    pub(super) fn explore(&mut self, root: CheckerTypeId) -> Option<SmallVec<[Component; 1]>> {
+    pub(super) fn explore(&mut self, root: CheckerTypeId) -> Explored {
         debug_assert!(
-            !self.types.mapped.contains_key(&root),
+            self.find_mapped(root).is_none(),
             "only an unmapped type is explored"
         );
         if self.types.exhausted.contains(&root) {
-            return None;
+            return Explored::Exhausted;
         }
         let edges = collect_edges(self, root);
-        // Most types have no part, or parts that are mapped: a component by itself, which needs no walk to be found.
-        if edges
-            .iter()
-            .all(|edge| self.types.mapped.contains_key(&edge.target))
-        {
-            return Some(smallvec![smallvec![ExploredType { ty: root, edges }]]);
+        let mut parts = edges.iter();
+        if parts.all(|edge| self.find_mapped(edge.target).is_some()) {
+            return Explored::Alone(ExploredType { ty: root, edges });
         }
+        match self.explore_parts(root, edges) {
+            Some(components) => Explored::Components(components),
+            None => Explored::Exhausted,
+        }
+    }
+
+    fn explore_parts(
+        &mut self,
+        root: CheckerTypeId,
+        edges: TypeEdges,
+    ) -> Option<SmallVec<[Component; 1]>> {
         let mut walk = core::mem::take(&mut self.types.walk);
         enter_type(&mut walk, root, edges);
         let is_complete = self.walk_from_root(&mut walk, root);
@@ -95,7 +114,7 @@ impl FileLowering<'_, '_, '_, '_> {
                 continue;
             };
             visit.next_edge += 1;
-            if self.types.mapped.contains_key(&edge.target) {
+            if self.find_mapped(edge.target).is_some() {
                 continue;
             }
             if self.types.exhausted.contains(&edge.target) {
@@ -119,7 +138,6 @@ impl FileLowering<'_, '_, '_, '_> {
         true
     }
 
-    // Nothing, where they are more than the limit.
     pub(super) fn count_reachable_types(&mut self, root: CheckerTypeId) -> Option<u32> {
         let limit = self.inputs.limits.get(LimitId::MaxTypeNodes);
         let mut visited = FxHashSet::default();

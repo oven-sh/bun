@@ -1,0 +1,17 @@
+# -- source: main.js
+# function cut(flag) { if (flag === 1) arguments.length = 0; return arguments.length; }
+# function grown(flag) { if (flag === 1) Array.prototype.push.call(arguments, "more", "still more"); return arguments.length; }
+# function gone(flag) { if (flag === 1) delete arguments.length; return arguments.length; }
+# function early(flag) { if (flag === 0) return "early" + arguments.length; if (flag === 1) arguments.length = 7; return arguments.length; }
+# function risky(flag) { if (flag === 1) throw new Error("risk"); }
+# function caught(flag) { if (flag === 1) arguments.length = 0; try { risky(flag); } catch (e) { return "caught" + arguments.length; } return "went on"; }
+# globalThis.fs = { cut, grown, gone, early, caught };
+# const fs = globalThis.fs;
+# print(fs.cut(1, 2, 3), fs.cut(2, 2, 3), fs.grown(1, 2, 3), fs.grown(2, 2, 3), fs.gone(1, 2, 3), fs.gone(2, 2, 3));
+# print(fs.early(0, 1), fs.early(1, 1), fs.early(2, 1), [1, 2].map(fs.cut).join(), fs.caught(1, 2), fs.caught(2, 2));
+# -- end of source
+# One way names the object and changes its length, the other does not, and both come to a read of the length. That read is not in front of the making: a way leads to it from there. Such a function makes its list at the entry as before.
+# RUN: run-in-shell
+# CHECK: 0 3 5 3 undefined 3
+# CHECK-NEXT: early2 7 2 0,3 caught0 went on
+# CHECK-NEXT: exited with 0

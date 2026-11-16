@@ -4012,14 +4012,12 @@ const TYPED_EXTENSIONS: [(&[u8], &[u8]); 3] = [
     (b".cjs", b".aot.cts"),
 ];
 
-/// `index.aot.ts` for `index.js`.
 pub fn typed_path_beside(javascript: &[u8]) -> Option<Vec<u8>> {
     TYPED_EXTENSIONS
         .iter()
         .find_map(|(from, to)| Some([javascript.strip_suffix(*from)?, *to].concat()))
 }
 
-/// `index.js` for `index.aot.ts`.
 pub fn javascript_path_beside(typed: &[u8]) -> Option<Vec<u8>> {
     TYPED_EXTENSIONS
         .iter()
@@ -4139,9 +4137,9 @@ impl ModuleTypes {
 
 fn is_project_source(checker: &Checker<'_, '_>, file: FileId) -> bool {
     let module = checker.p.files.module(file);
-    (matches!(module.hir.kind, FileKind::Ts | FileKind::Tsx)
-        || module.hir.kind == FileKind::Declaration && !module.is_lib && module.is_module())
-        && !module.hir.is_js
+    (matches!(module.facts.kind, FileKind::Ts | FileKind::Tsx)
+        || module.facts.kind == FileKind::Declaration && !module.is_lib && module.is_module())
+        && !module.facts.is_js
         && !module.is_from_external_library
 }
 
@@ -4442,7 +4440,7 @@ pub fn module_types(checker: &mut Checker<'_, '_>, file: FileId) -> Option<Modul
             };
             if let ModuleName::String(_) = hir[declared].name
                 && let [_, specifier @ .., _] = syntax.word(hir[declared].name_pos)
-                && let Some(path) = services.resolve_module_name(specifier).and_then(&is_source)
+                && let Some(path) = services.resolve_module_name(specifier).and_then(is_source)
             {
                 augmented_modules.push((statement.start, path));
             }
@@ -4609,7 +4607,6 @@ fn typed_outputs(
     Ok(found)
 }
 
-/// Rewrites `./chunk.js` to `./chunk.aot.ts` where `chunk.js` is one of `outputs`.
 fn import_typed_outputs(
     typed_path: &[u8],
     text: &[u8],

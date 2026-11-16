@@ -3,8 +3,7 @@ import { bunEnv, bunExe, tempDir } from "harness";
 import { run } from "./harness/run";
 import { test } from "./supported";
 
-// The builders time themselves. What the process that runs the tests does in front of the first build, between two builds and behind the last one
-// up to the first result was in no log.
+// The stages of the compiler time themselves. These lines are for what a run does in front of the build, and behind it up to the first result.
 const files: Record<string, string> = {
   "tsconfig.json": "{}",
   "package.json": `{ "name": "steps", "dependencies": { "twice": "1.0.0" } }`,
@@ -21,17 +20,17 @@ test("two", () => expect(four() + 1).toBe(5));
 `,
 };
 
-test("each step of a run over layers is logged once, in order, with its time", async () => {
+test("each step of a test run is logged in order, with its time", async () => {
   using dir = tempDir("aot-steps-of-a-test-run", files);
   const directory = String(dir);
   const stepsOf = async (more: Record<string, string>) => {
     const env = {
       ...bunEnv,
       ...more,
-      BUN_DEBUG_TEST_AOT_WORDS: "TestRunLayers:2,TestRunPartFiles:1",
       BUN_TMPDIR: directory,
     };
-    const ran = await run([bunExe(), "test", "--aot", "--isolate", "--parallel=1", "."], directory, env);
+    // One worker is no pool: the files then run in the process that found them.
+    const ran = await run([bunExe(), "test", "--aot", "--isolate", "--parallel=2", "."], directory, env);
     const lines = (ran.stdout + "\n" + ran.stderr).split("\n");
     expect(lines.filter(line => /^ *\d+ (pass|fail)$/.test(line))).toEqual([" 2 pass", " 0 fail"]);
     return lines.flatMap(line => {
@@ -42,22 +41,15 @@ test("each step of a run over layers is logged once, in order, with its time", a
   const steps = await stepsOf({ BUN_JSC_logAOTPhaseTimes: "1" });
   expect(steps.map(it => it.step)).toEqual([
     "2 test files are found",
+    // The process that builds the program starts another to run it, which looks for the files again. Its clock begins anew.
+    "2 test files are found",
     "2 test files are to run",
     "the coordinator is set up",
-    "the build begins: the packages that test files share",
-    "the build has ended: the packages that test files share",
-    // It begins beside the build below and waits for it.
-    "the build begins: what computed imports reach",
-    "the build begins: what test files share",
-    "the build has ended: what computed imports reach",
-    "the build has ended: what test files share",
-    "the first build of test files begins",
-    "the first build of test files has ended",
-    "the first worker is started",
     "the first worker is ready",
     "the first test file has begun",
     "the first result is there",
   ]);
-  expect(steps.map(it => it.ms)).toEqual(steps.map(it => it.ms).sort((a, b) => a - b));
+  const timesOfSecondProcess = steps.slice(1).map(it => it.ms);
+  expect(timesOfSecondProcess).toEqual(timesOfSecondProcess.toSorted((a, b) => a - b));
   expect(await stepsOf({})).toEqual([]);
 }, 240_000);

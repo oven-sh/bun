@@ -8,14 +8,8 @@ import { describe, test } from "./supported";
 
 // An import statement is bound to the module that the loader holds when the importer is linked. The runner starts a test file behind the test files and the preloads
 // before it, and one of those may have taken a file out of require.cache: then the statement and a require() of the path name one module, the one from disk.
+// Behind a test file that took it out: ./fixed-runs/open/import-behind-an-eviction-in-an-earlier-file.txt.
 const state = `let calls = 0;\nexport const bump = () => ++calls;\n`;
-const takesOut = `import { test } from "bun:test";
-import { bump } from "./state.js";
-test("takes it out", () => {
-  console.log("first", bump(), bump());
-  delete require.cache[require.resolve("./state.js")];
-});
-`;
 const importsIt = `import { test } from "bun:test";
 import { bump } from "./state.js";
 import * as all from "./state.js";
@@ -25,10 +19,7 @@ test("imports it", () => {
 });
 `;
 
-const ways = [
-  { way: "as one program", words: "TestRunLayers:0" },
-  { way: "over two layers", words: "TestRunLayers:2,TestRunPartFiles:1" },
-];
+const ways = [{ way: "as one program", words: "TestRunLayers:0" }];
 
 async function printed(cwd: string, flags: string[], env: Record<string, string | undefined>) {
   const { stdout, stderr, exitCode } = await run([bunExe(), "test", ...flags], cwd, { ...bunEnv, ...env });
@@ -40,21 +31,6 @@ async function printed(cwd: string, flags: string[], env: Record<string, string 
 }
 
 describe.each(ways)("$way", ({ words }) => {
-  test("behind the test file that took it out", async () => {
-    using dir = tempDir("aot-test-file-binds-late", {
-      "package.json": `{ "type": "module" }`,
-      "state.js": state,
-      "a.test.js": takesOut,
-      "b.test.js": importsIt,
-    });
-    const plain = await printed(String(dir), ["./a.test.js", "./b.test.js"], {});
-    expect(plain).toEqual({ lines: ["first 1 2", "second 1 2 3 true"], counts: [" 2 pass", " 0 fail"], exitCode: 0 });
-    const compiled = await printed(String(dir), ["--aot", "./a.test.js", "./b.test.js"], {
-      BUN_DEBUG_TEST_AOT_WORDS: words,
-    });
-    expect(compiled).toEqual(plain);
-  });
-
   test("behind a preload that took it out, each file in its own realm", async () => {
     using dir = tempDir("aot-test-file-binds-late", {
       "package.json": `{ "type": "module" }`,

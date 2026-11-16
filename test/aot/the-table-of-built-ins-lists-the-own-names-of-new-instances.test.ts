@@ -3,11 +3,10 @@
 // constructed, in a process of its own, and the own names of the instance are held against the table.
 import { expect } from "bun:test";
 import { bunEnv, bunExe } from "harness";
-import { findBuiltinTable } from "./harness/builtin-table";
+import { builtinTableOf } from "./harness/builtin-table";
 import { test } from "./supported";
 
 const title = "the table of built-ins lists the own names of a new instance of every class";
-const table = findBuiltinTable(bunExe());
 
 // What a function has besides `length` and `name` follows from its kind, which the compiler knows for a function of the program; it follows no function made from text.
 const classesOfFunctions = ["Function", "WebAssembly.Suspending"];
@@ -59,9 +58,10 @@ console.log(JSON.stringify(found));
 process.exit(0);
 `;
 
-test.skipIf(table === undefined)(title, () => {
+test(title, () => {
+  const table = builtinTableOf(bunExe());
   const { stdout, exitCode } = Bun.spawnSync({
-    cmd: [bunExe(), "-e", script, table!],
+    cmd: [bunExe(), "-e", script, table],
     env: bunEnv,
     stdout: "pipe",
     stderr: "inherit",

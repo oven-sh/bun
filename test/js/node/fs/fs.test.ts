@@ -4,6 +4,7 @@ import {
   bunExe,
   gc,
   getMaxFD,
+  isASAN,
   isBroken,
   isDebug,
   isFreeBSD,
@@ -1756,6 +1757,18 @@ it("readdirSync works on directories with under 32 files", () => {
   const results = readdirSync(path);
   expect(results.length).toBe(1);
   expect(results[0]).toBe("a");
+});
+
+// NTFS counts UTF-16 units, so a name can be three times as long in UTF-8.
+it.if(isWindows).each([180, 255])("lists and removes a name of %d three-byte characters", async length => {
+  const name = Buffer.alloc(3 * length, "あ").toString();
+  using dir = tempDir("long-name", { tree: { [name]: { [name]: "" } } });
+  const tree = join(String(dir), "tree");
+  expect(readdirSync(tree, { recursive: true })).toEqual([name, join(name, name)]);
+  expect((await promises.readdir(tree, { recursive: true })).sort()).toEqual([name, join(name, name)]);
+  expect(readdirSync(tree, { encoding: "buffer" })).toEqual([Buffer.from(name)]);
+  rmSync(tree, { recursive: true });
+  expect(existsSync(tree)).toBe(false);
 });
 
 it("readdirSync throws when given a file path", () => {
@@ -3894,6 +3907,25 @@ describe("rm", () => {
     expect(existsSync(path)).toBe(false);
   });
 
+  it.skipIf(isWindows)("closes a directory that got the number of a closed standard stream", async () => {
+    using dir = tempDir("rm-closed-stdin", { "tree/nested/file.txt": "" });
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const fs = require("fs");
+         fs.closeSync(0);
+         fs.rmSync("tree", { recursive: true });
+         console.log(fs.existsSync("tree"), fs.openSync(".", "r"));`,
+      ],
+      env: bunEnv,
+      cwd: String(dir),
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "false 0\n", stderr: "", exitCode: 0 });
+  });
+
   // On Windows a leading-separator, drive-less path like "/foo/bar" is
   // "rooted" and must be resolved against the cwd's drive. existsSync/
   // statSync/unlinkSync all do this; recursive rmSync must agree
@@ -5163,6 +5195,8 @@ describe("fs/promises", () => {
   for (let withFileTypes of [false, true] as const) {
     const warmup = 1;
     const iterCount = isDebug ? 4 : 200;
+    // Sorting the 200 lists of some 7,000 names takes 12 of 14 seconds where ASAN sees the allocations of strings.
+    const timeout = isASAN ? 30_000 : 10_000;
     const full = resolve(import.meta.dir, "../");
 
     const doIt = async () => {
@@ -5196,9 +5230,9 @@ describe("fs/promises", () => {
     };
 
     if (withFileTypes) {
-      it("readdirSync(path, {recursive: true, withFileTypes: true} should work x 100", doIt, 10_000);
+      it("readdirSync(path, {recursive: true, withFileTypes: true} should work x 100", doIt, timeout);
     } else {
-      it("readdirSync(path, {recursive: true} should work x 100", doIt, 10_000);
+      it("readdirSync(path, {recursive: true} should work x 100", doIt, timeout);
     }
   }
 
@@ -7602,6 +7636,15 @@ it("fs.writeFile (callback) keeps the source buffer attached while the write is 
   expect(buf.buffer.detached).toBe(true);
 
   expect(readFileSync(file, "latin1")).toBe("FFFFFFFF");
+});
+
+it("fs.promises.readdir({ recursive: true }) is done with a buffer path argument when it returns", async () => {
+  using dir = tempDir("fs-readdir-path-unpinned", { "a/b.txt": "" });
+  const path = new TextEncoder().encode(String(dir)).slice();
+  const promise = fs.promises.readdir(path as any, { recursive: true });
+  new Uint8Array(path.buffer.transfer()).fill(0);
+  expect(path.buffer.detached).toBe(true);
+  expect((await promise).sort()).toEqual(["a", join("a", "b.txt")]);
 });
 
 it("fs.promises.writeFile keeps a buffer path argument attached while options are read", async () => {

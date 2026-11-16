@@ -197,6 +197,7 @@ export const generators: Record<string, () => Generator> = {
   "built-ins-asked-in-place": () => require("./generate-built-ins-asked-in-place"),
   "built-ins-on-written-structure": () => require("./programs/generate-replaced-iteration"),
   "builtin-modules": () => require("./generate/builtin-modules"),
+  "byte-literals": () => require("./generate/byte-literals"),
   "callees-replaced-behind-their-test": () => require("./generate/callees-replaced-behind-their-test"),
   "calls": () => require("./generate/calls"),
   "classes": () => require("./generate/classes"),

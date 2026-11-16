@@ -1,0 +1,13 @@
+# -- source: main.cjs
+# const values = JSON.parse('[0,"a",null]');
+# function counted(x) { let s = 0; for (let i = 0; i < 20; i++) { if (x) s += 2; else s += 1; } return s; }
+# console.log(counted(values[0]), counted(values[1]), counted(values[2]));
+# -- end of source
+# Nothing is known of `x`, so whether it is truthy is asked by the generic form, which goes through a stub. The value stands in front of the loop, every turn asks, and the question has no effects at all: it neither
+# runs code nor throws nor reads memory that anything writes. A test that may branch left a loop only where it read memory, so this one was asked again in every turn.
+# f1 = counted
+# RUN: walk f1:Body mechanisms=all
+# CHECK: = ToBoolean
+# CHECK: isLoopHead=true
+# CHECK-NOT: = ToBoolean
+# CHECK: Return

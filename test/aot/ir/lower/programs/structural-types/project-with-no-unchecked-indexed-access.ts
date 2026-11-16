@@ -155,100 +155,81 @@ attempt("honest again", () => [firstPlusOne([1]), checkedInPlace([1]), total([1,
 
 // GENERATED: score rest get drop
 // CHECK-LABEL: function {{*}}name="score"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|object site=[[w_1]] flags=[OmitsNull, OmitsUndefined]}, {type=undefined|null|string site=[[w_2]] flags=[OmitsNull, OmitsUndefined]}] results=[{type=number site=[[w_3]]}] {
+// CHECK: module=[[m_0]] position={{*}} sourceRange={{*}} flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|object flags=[OmitsNull, OmitsUndefined]}, {type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] results=[{type=number}] {
 // CHECK-NEXT: b0(v0: undefined|null|object, v1: undefined|null|string):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
 // CHECK-NEXT: v2 = ElemGet v0, v1
-// CHECK-NEXT: v3 = Convert v2 declared={type=undefined|number site=[[w_4]]} illTypedCause=FromLooseType
-// CHECK-NEXT: v4 = TypeTest v3 testedType=undefined
-// CHECK-NEXT: Branch v4 -> taken b2(| 0), notTaken b4(| 0)
-// CHECK-NEXT: b2(v5):
-// CHECK-NEXT: Jump -> next b3()
-// CHECK-NEXT: b3():
-// CHECK-NEXT: v6 = Integer integer=-1
-// CHECK-NEXT: Jump -> next b6(v6)
-// CHECK-NEXT: b4(v7):
-// CHECK-NEXT: Jump -> next b5()
-// CHECK-NEXT: b5():
-// CHECK-NEXT: v8 = Convert v7 declared={type=number} illTypedCause=Assertion
-// CHECK-NEXT: v9 = Integer integer=1
-// CHECK-NEXT: v10 = Add v8, v9
-// CHECK-NEXT: Jump -> next b6(v10)
-// CHECK-NEXT: b6(v11):
-// CHECK-NEXT: v12 = Convert v11 declared={type=number site=[[w_3]]}
-// CHECK-NEXT: Return v12
+// CHECK-NEXT: v3 = TypeTest v2 testedType=undefined
+// CHECK-NEXT: Branch v3 -> taken b1(| 0), notTaken b2(| 0)
+// CHECK-NEXT: b1(v4):
+// CHECK-NEXT: v5 = Integer integer=-1
+// CHECK-NEXT: Jump -> next b3(v5)
+// CHECK-NEXT: b2(v6):
+// CHECK-NEXT: v7 = NarrowByTest v2, v6
+// CHECK-NEXT: v8 = Integer integer=1
+// CHECK-NEXT: v9 = Add v7, v8
+// CHECK-NEXT: Jump -> next b3(v9)
+// CHECK-NEXT: b3(v10):
+// CHECK-NEXT: v11 = Convert v10 declared={type=number}
+// CHECK-NEXT: Return v11
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="rest"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|Array<number> site=[[w_5]] flags=[OmitsNull, OmitsUndefined]}] results=[{type=number site=[[w_6]]}] {
+// CHECK: module=[[m_0]] position={{*}} sourceRange={{*}} flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|Array<number> flags=[OmitsNull, OmitsUndefined]}] results=[{type=number}] {
 // CHECK-NEXT: b0(v0: undefined|null|Array<number>):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
 // CHECK-NEXT: v1 = IteratorOpen v0 elementCount=1 [isDestructuring, hasRest]
-// CHECK-NEXT: Jump -> next b2()
-// CHECK-NEXT: b2() handler=b9():
+// CHECK-NEXT: Jump -> next b1()
+// CHECK-NEXT: b1() handler=b6():
 // CHECK-NEXT: v2 = IteratorResume v1 stepIndex=0
 // CHECK-NEXT: v3 = ResultAt v2
 // CHECK-NEXT: v4 = ResultAt v2 index=1
 // CHECK-NEXT: v5 = NewArray contents=anything
-// CHECK-NEXT: Jump -> next b3()
-// CHECK-NEXT: b3() handler=b9():
+// CHECK-NEXT: Jump -> next b2()
+// CHECK-NEXT: b2() handler=b6():
 // CHECK-NEXT: LoopHint
 // CHECK-NEXT: v7 = IteratorResume v1 stepIndex=1
 // CHECK-NEXT: v8 = ResultAt v7
 // CHECK-NEXT: v9 = ResultAt v7 index=1
-// CHECK-NEXT: Branch v8 -> taken b4(), notTaken b8()
-// CHECK-NEXT: b4() handler=b9():
-// CHECK-NEXT: v10 = Convert v5 declared={type=undefined|null|Array<number> site=[[w_7]] flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType
-// CHECK-NEXT: Jump -> next b5()
-// CHECK-NEXT: b5() handler=b9():
-// CHECK-NEXT: Jump -> next b6()
-// CHECK-NEXT: b6():
+// CHECK-NEXT: Branch v8 -> taken b3(), notTaken b5()
+// CHECK-NEXT: b3() handler=b6():
+// CHECK-NEXT: Jump -> next b4()
+// CHECK-NEXT: b4():
 // CHECK-NEXT: IteratorClose v1
-// CHECK-NEXT: Jump -> next b7()
-// CHECK-NEXT: b7():
-// CHECK-NEXT: v12 = GetModuleVariable variable=[[g_8]]
-// CHECK-NEXT: v13 = Call v12, -, v10 calleeName="total"
-// CHECK-NEXT: ReturnCall v13 casts=[{declared={type=number site=[[w_9]]}}, {declared={type=number site=[[w_6]]}}]
-// CHECK-NEXT: b8() handler=b9():
+// CHECK-NEXT: v11 = GetModuleVariable variable=[[g_1]]
+// CHECK-NEXT: v12 = Call v11, -, v5 calleeName="total"
+// CHECK-NEXT: ReturnCall v12 casts=[{declared={type=number}}]
+// CHECK-NEXT: b5() handler=b6():
 // CHECK-NEXT: AppendElement v5, v9
-// CHECK-NEXT: Jump -> next b3()
-// CHECK-NEXT: b9() role=IterationCleanup subject=v1:
-// CHECK-NEXT: v15 = CatchException
+// CHECK-NEXT: Jump -> next b2()
+// CHECK-NEXT: b6() role=IterationCleanup subject=v1:
+// CHECK-NEXT: v14 = CatchException
 // CHECK-NEXT: IteratorClose v1 completion=Throw
-// CHECK-NEXT: Rethrow v15
+// CHECK-NEXT: Rethrow v14
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="get"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow flags=[IsChecked] captures=[{type=env [[L_10]] flags=[IsFromCompiler]}] thisType={type=anything} results=[{type=undefined|1 site=[[w_11]]}] functionTypes={{*}}[[f_12]]] {
-// CHECK-NEXT: b0(v0: env [[L_10]]):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v1 = GetEnvironmentField v0 layout=[[L_10]]
+// CHECK: module=[[m_0]] position={{*}} sourceRange={{*}} kind=Arrow flags=[IsChecked] captures=[{type=env [[L_2]] flags=[IsFromCompiler]}] thisType={type=anything} results=[{type=anything}] {
+// CHECK-NEXT: b0(v0: env [[L_2]]):
+// CHECK-NEXT: v1 = GetEnvironmentField v0 layout=[[L_2]]
 // CHECK-NEXT: v2 = CheckInitialized v1 name="reads"
 // CHECK-NEXT: v3 = ToNumeric v2
 // CHECK-NEXT: v4 = Increment v3
-// CHECK-NEXT: v5 = Convert v4 declared={type=number site=[[w_13]]}
-// CHECK-NEXT: v6 = GetEnvironmentField v0 layout=[[L_10]]
+// CHECK-NEXT: v5 = Convert v4 declared={type=number}
+// CHECK-NEXT: v6 = GetEnvironmentField v0 layout=[[L_2]]
 // CHECK-NEXT: v7 = CheckInitialized v6 name="reads"
-// CHECK-NEXT: PutEnvironmentField v0, v5 layout=[[L_10]]
+// CHECK-NEXT: PutEnvironmentField v0, v5 layout=[[L_2]]
 // CHECK-NEXT: v9 = Integer
 // CHECK-NEXT: v10 = StrictEq v3, v9
-// CHECK-NEXT: Branch v10 -> taken b2(), notTaken b3()
-// CHECK-NEXT: b2():
+// CHECK-NEXT: Branch v10 -> taken b1(), notTaken b2()
+// CHECK-NEXT: b1():
 // CHECK-NEXT: v11 = Integer integer=1
-// CHECK-NEXT: Jump -> next b4(v11)
-// CHECK-NEXT: b3():
+// CHECK-NEXT: Jump -> next b3(v11)
+// CHECK-NEXT: b2():
 // CHECK-NEXT: v12 = Undefined
-// CHECK-NEXT: Jump -> next b4(v12)
-// CHECK-NEXT: b4(v13):
-// CHECK-NEXT: v14 = Convert v13 declared={type=undefined|1 site=[[w_11]]}
-// CHECK-NEXT: Return v14
+// CHECK-NEXT: Jump -> next b3(v12)
+// CHECK-NEXT: b3(v13):
+// CHECK-NEXT: Return v13
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="drop"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow flags=[IsChecked] captures=[{type=undefined|null|object site=[[w_14]] flags=[OmitsNull, OmitsUndefined] variableName="scores"}] thisType={type=anything} results=[{type=anything}] functionTypes={{*}}[[f_15]]] {
+// CHECK: module=[[m_0]] position={{*}} sourceRange={{*}} kind=Arrow flags=[IsChecked] captures=[{type=undefined|null|object flags=[OmitsNull, OmitsUndefined] variableName="scores"}] thisType={type=anything} results=[{type=anything}] {
 // CHECK-NEXT: b0(v0: undefined|null|object):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
 // CHECK-NEXT: v1 = PropDelete v0 key="a"
 // CHECK-NEXT: v2 = Undefined
 // CHECK-NEXT: Return v2

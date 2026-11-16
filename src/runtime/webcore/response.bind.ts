@@ -33,7 +33,7 @@ export const Request = b.class({
   memoryCost: true,
   estimatedSize: true,
   types: [table.viewType("Request"), table.exactType("$Bindgen.Request")],
-  lockedObjects: ["prototype"],
+  lockedMembers: ["prototype"],
   construct: { args: { input: b.any, init: b.any }, ...js, passStructure: true, length: 0 },
   internalFields: ["stream"],
   proto: {
@@ -72,7 +72,7 @@ export const Response = b.class({
   rustTraits: body.rustTraits,
   estimatedSize: true,
   types: [table.viewType("Response"), table.exactType("$Bindgen.Response")],
-  lockedObjects: ["prototype"],
+  lockedMembers: ["prototype"],
   construct: { args: { body: b.any, init: b.any }, ...js, passStructure: true, length: 0 },
   internalFields: ["stream", "transform"],
   proto: {
@@ -97,19 +97,8 @@ export const Response = b.class({
   static: {
     error: { returns: b.any.returning("Response"), capability: "js" },
     /** `Response.json()` is an empty body and `Response.json(undefined)` throws. */
-    json: {
-      ...factory,
-      rustName: "construct_json",
-      jsonTextForm: { argument: 0, nativeSymbol: "Response__constructJSONFromText" },
-    },
+    json: { ...factory, rustName: "construct_json" },
     /** `Response.redirect()` is to "" and `Response.redirect(undefined)` to "undefined". */
     redirect: factory,
   },
-});
-
-/** `Response.json(value, init)` for compiled code that has already serialized `value`: argument 0 is the JSON text (`jsonTextForm`). */
-export const constructJSONFromText = b.fn({
-  ...factory,
-  export: "Response__constructJSONFromText",
-  rustPath: "crate::webcore::response::construct_json_from_text",
 });

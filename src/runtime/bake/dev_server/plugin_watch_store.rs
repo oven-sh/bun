@@ -93,7 +93,7 @@ impl PluginWatchStore {
     pub(crate) fn invalidate(
         &mut self,
         event: &mut HotReloadEvent,
-        watcher: &mut Watcher,
+        watcher: &Watcher,
     ) -> Result<(), AllocError> {
         let mut modules = Vec::new();
         for graph in &mut self.modules {
@@ -168,7 +168,7 @@ impl DevServer {
                 None
             } else {
                 let parent = bun_paths::resolve_path::dirname::<bun_paths::platform::Auto>(file);
-                watch_plugin_directory(&mut self.bun_watcher, parent)
+                watch_plugin_directory(&self.bun_watcher, parent)
             };
             dependencies.files.push(WatchedFile {
                 path: file.clone(),
@@ -176,7 +176,7 @@ impl DevServer {
             });
         }
         for directory in dirs {
-            if let Some(watched) = watch_plugin_directory(&mut self.bun_watcher, directory) {
+            if let Some(watched) = watch_plugin_directory(&self.bun_watcher, directory) {
                 if !dependencies
                     .dirs
                     .iter()
@@ -189,7 +189,7 @@ impl DevServer {
                             directory,
                         );
                         if !parent.is_empty() && parent != directory.as_ref() {
-                            let _ = watch_plugin_directory(&mut self.bun_watcher, parent);
+                            let _ = watch_plugin_directory(&self.bun_watcher, parent);
                         }
                     }
                     dependencies.dirs.push(WatchedDirectory {
@@ -203,10 +203,9 @@ impl DevServer {
     }
 }
 
-fn watch_plugin_directory(watcher: &mut Watcher, mut directory: &[u8]) -> Option<Box<[u8]>> {
+fn watch_plugin_directory(watcher: &Watcher, mut directory: &[u8]) -> Option<Box<[u8]>> {
     loop {
-        match watcher.add_directory::<true>(
-            bun_sys::Fd::INVALID,
+        match watcher.add_directory(
             directory,
             Watcher::get_hash(directory),
         ) {

@@ -2,7 +2,7 @@
 // react is big and we do lots of stuff like fast refresh.
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
-import { symlinkSync } from "node:fs";
+import { closeSync, ftruncateSync, openSync, symlinkSync, writeSync } from "node:fs";
 import { join } from "node:path";
 import { Client, devTest, emptyHtmlFile, minimalFramework } from "../bake-harness";
 
@@ -935,7 +935,11 @@ test("bun bake hydrates a .tsx page, and Fast Refresh keeps its state after an e
   await client.click("button");
   await client.expectElemText("button", "count 2");
 
-  await Bun.write(join(String(dir), "app/pages/index.tsx"), page("clicks"));
+  // Not Bun.write(): on Windows it empties the file first, and the dev server can build the empty file
+  // in between. The page then has no component, so the next update reloads the tab.
+  const fd = openSync(join(String(dir), "app/pages/index.tsx"), "r+");
+  ftruncateSync(fd, writeSync(fd, page("clicks")));
+  closeSync(fd);
   // A full reload would reset the count to 0.
   await client.expectElemText("button", "clicks 2");
 });

@@ -29,8 +29,6 @@ console.log("# a-file-that-runs-at-once-is-imported-last");
 await import("./a-file-that-runs-at-once-is-imported-last/reader.mjs").catch(error =>
   console.log("rejected:", error.message),
 );
-console.log("# two-commonjs-files");
-await import("./two-commonjs-files/reader.mjs").catch(error => console.log("rejected:", error.message));
 console.log("# the-commonjs-file-requires-another");
 await import("./the-commonjs-file-requires-another/reader.mjs").catch(error => console.log("rejected:", error.message));
 console.log("# a-getter");

@@ -1,0 +1,21 @@
+# A type names one built-in, and none beside unseen: a built-in that it cannot name goes into unseen. It came in sight, so the unseen that stands for it stands in sight.
+# While that unseen took its mark from the two sides of the join, the join was not one answer in every order: (Math, JSON, what code out of sight may have stored) ended unseen in sight,
+# (what code out of sight may have stored, JSON, Math) unseen by escape alone, and in the held reading `far` answered with i32 alone in the order that a build has.
+# The three come to `far` in one step along edges that lie already: outer(1, 2, 3) lays them, `late` is reached rounds later. Each hop turns the order round once under `newest first`: at `near` the orders agree, at `far` they part.
+# `run` holds the three orders of the worklist against each other.
+# RUN: link held functions mechanisms=all
+# CHECK: function f1 callers-known one-callee cycle=0 rank=0 returns=anything
+# CHECK: function f2 callers-known one-callee cycle=0 rank=0 returns=anything
+# -- source: two-built-ins-and-unseen-come-along-edges-that-lie-already-from-source.js
+# function near(p) { return typeof p === "function" ? p() : 0; }
+# function far(p) { return typeof p === "function" ? p() : 0; }
+# function inner(a, b, u) { return [far(a), far(b), far(u)]; }
+# function outer(a, b, u) { return [near(a), near(b), near(u), inner(a, b, u)]; }
+# const o = { x: 1 };
+# globalThis.o = o;
+# const A = Math, B = JSON, U = o.x;
+# console.log(outer(1, 2, 3).length);
+# function late() { return outer(A, B, U).length; }
+# const w1 = h => h(), w2 = h => h(), w3 = h => h(), w4 = h => h();
+# console.log(w1(() => w2(() => w3(() => w4(late)))));
+# -- end of source

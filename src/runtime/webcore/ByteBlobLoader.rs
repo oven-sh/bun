@@ -11,7 +11,6 @@ use crate::webcore::streams;
 
 pub struct ByteBlobLoader {
     pub offset: Cell<blob::SizeType>,
-    // LIFETIMES.tsv: SHARED — ref() on setup, deref() in clearData
     pub(crate) store: JsCell<Option<RefPtr<Store>>>,
     pub(crate) chunk_size: blob::SizeType,
     pub(crate) remain: Cell<blob::SizeType>,
@@ -84,10 +83,6 @@ impl readable_stream::SourceContext for ByteBlobLoader {
         self.clear_data();
     }
 
-    fn deinit_fn(&self) {
-        self.clear_data();
-    }
-
     fn drain_internal_buffer(&self) -> Vec<u8> {
         let rest = self.remaining();
 
@@ -121,9 +116,7 @@ impl readable_stream::SourceContext for ByteBlobLoader {
         action: streams::BufferActionTag,
     ) -> JsResult<JSValue> {
         if let Some(mut blob) = self.to_any_blob(cx.global()) {
-            let result = blob.to_promise(cx, action);
-            blob.detach();
-            return result;
+            return blob.to_promise(cx, action);
         }
 
         // globalThis.ERR(.BODY_ALREADY_USED, "...", .{}).reject()

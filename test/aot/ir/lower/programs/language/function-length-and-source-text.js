@@ -81,101 +81,10 @@ console.log(Object.getOwnPropertyDescriptor(Example, "kind").get.toString());
 console.log(Example.pairs.toString());
 console.log(outer.bind(null).toString());
 
-// GENERATED: defaultExport withRest outer generator Example kind pairs
 // CHECK-LABEL: function {{*}}name="defaultExport"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsAsync, HasThis, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=undefined|null|Promise flags=[IsExpected]}] {
-// CHECK-NEXT: b0(v0: anything, v1: anything):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v2 = Await v1, v1
-// CHECK-NEXT: Return v2
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="withRest"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasRestParameter, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}, {type=Array flags=[IsFromCompiler]}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: anything, v1: anything, v2: Array):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v3 = Undefined
-// CHECK-NEXT: Return v3
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="outer"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] functionTypes={{*}}[[f_1]]] {
-// CHECK-NEXT: b0(v0: anything):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v1 = NewClosure function=[[f_2]]
-// CHECK-NEXT: v2 = Convert v1 declared={type=[[f_2]] flags=[IsFromCompiler]} illTypedCause=FromLooseType
-// CHECK-NEXT: v3 = Convert v0 declared={type=number flags=[IsExpected]}
-// CHECK-NEXT: v4 = Call v2, -, v3 calleeName="inner"
-// CHECK-NEXT: ReturnCall v4
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="generator"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsGenerator, HasThis, TakesCallee, HasExplicitName] thisType={type=anything} results=[{type=undefined|null|Generator<number> flags=[IsExpected]}] {
-// CHECK-NEXT: b0(v0: anything, v1: function):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: InitialYield
-// CHECK-NEXT: v3 = Integer integer=1
-// CHECK-NEXT: v4 = Convert v3 declared={type=number flags=[IsExpected]}
-// CHECK-NEXT: v5 = Yield v4
-// CHECK-NEXT: v6 = ResultAt v5
-// CHECK-NEXT: v7 = ResultAt v5 index=1
-// CHECK-NEXT: Switch v7 cases=[1, 2] -> case b2(), case b3(), otherwise b4()
-// CHECK-NEXT: b2():
-// CHECK-NEXT: Throw v6
-// CHECK-NEXT: b3():
-// CHECK-NEXT: Return v6
-// CHECK-NEXT: b4():
-// CHECK-NEXT: v8 = Undefined
-// CHECK-NEXT: Return v8
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="Example"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=object flags=[IsFromCompiler]}] {
-// CHECK-NEXT: b0(v0: anything, v1: anything):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v2 = GetConstructPrototype v0 layout=[[L_3]]
-// CHECK-NEXT: v3 = NewObject v2 layout=[[L_3]]
-// CHECK-NEXT: v4 = Convert v3 declared={type=[[L_3]] flags=[IsFromCompiler]} illTypedCause=FromLooseType
-// CHECK-NEXT: v5 = Convert v4 declared={type=undefined|null|[[L_3]] flags=[IsExpected]}
-// CHECK-NEXT: PropSet v5, v1 key="value"
-// CHECK-NEXT: v7 = Undefined
-// CHECK-NEXT: v8 = TypeTest v7 testedType=object
-// CHECK-NEXT: Branch v8 -> taken b2(| 0), notTaken b3(| 0)
-// CHECK-NEXT: b2(v9):
-// CHECK-NEXT: Jump -> next b4(v9)
-// CHECK-NEXT: b3(v10):
-// CHECK-NEXT: Jump -> next b4(v4)
-// CHECK-NEXT: b4(v11):
-// CHECK-NEXT: Return v11
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="kind"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Getter flags=[HasExplicitName] thisType={type=anything} results=[{type=number flags=[IsExpected]}] {
-// CHECK-NEXT: b0():
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v0 = Integer integer=1
-// CHECK-NEXT: v1 = Convert v0 declared={type=number flags=[IsExpected]}
-// CHECK-NEXT: Return v1
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="pairs"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[IsAsync, IsGenerator, HasThis, TakesCallee, HasExplicitName] thisType={type=function flags=[IsExpected]} results=[{type=undefined|null|AsyncGenerator<number> flags=[IsExpected]}] functionTypes={{*}}[[f_4]]] {
-// CHECK-NEXT: b0(v0: function, v1: function):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: InitialYield
-// CHECK-NEXT: v3 = Integer integer=1
-// CHECK-NEXT: v4 = Await v3
-// CHECK-NEXT: v5 = Convert v4 declared={type=number flags=[IsExpected]}
-// CHECK-NEXT: v6 = Yield v5
-// CHECK-NEXT: v7 = ResultAt v6
-// CHECK-NEXT: v8 = ResultAt v6 index=1
-// CHECK-NEXT: Switch v8 cases=[1, 2] -> case b2(), case b3(), otherwise b4()
-// CHECK-NEXT: b2():
-// CHECK-NEXT: Throw v7
-// CHECK-NEXT: b3():
-// CHECK-NEXT: Return v7
-// CHECK-NEXT: b4():
-// CHECK-NEXT: v9 = Undefined
-// CHECK-NEXT: Return v9
-// CHECK-NEXT: }

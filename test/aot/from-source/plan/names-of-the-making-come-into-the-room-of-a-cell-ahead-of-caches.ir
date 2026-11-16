@@ -1,0 +1,30 @@
+# The cell has room for three references. `cached` and `found` are declared first and are stored into objects that arrive; `origin`, `mapper`, `owner` are stored into what makeLinks() has just handed over.
+# Link does not see what `new (makerFromOutside())()` makes: the stores go to the layout that has every name of their run.
+# -- source: names-of-the-making-come-into-the-room-of-a-cell-ahead-of-caches.ts
+# declare function sink(...values: unknown[]): void;
+# const enum Flags { None = 0, A = 1, B = 2 }
+# class Mark { tag: string; constructor(tag: string) { this.tag = tag; } }
+# interface Links { flags: Flags; more: Flags; last: Flags; cached?: Mark; found?: Mark; origin?: Mark; mapper?: Mark; owner?: Mark; }
+# function LinksMaker(this: Links) { this.flags = Flags.None; this.more = Flags.A; this.last = Flags.B; }
+# declare function makerFromOutside(): new () => Links;
+# function makeLinks(): Links { const made = new (makerFromOutside())(); return made; }
+# function cachedOf(links: Links): Mark { return links.cached || (links.cached = new Mark("cached")); }
+# function foundOf(links: Links): Mark { return links.found || (links.found = new Mark("found")); }
+# function copyOf(origin: Mark, mapper: Mark): Links { const made = makeLinks(); made.origin = origin; made.mapper = mapper; return made; }
+# function ownedBy(owner: Mark): Links { const made = makeLinks(); made.owner = owner; return made; }
+# sink(cachedOf, foundOf, copyOf, ownedBy, new (LinksMaker as any)());
+# -- end of source
+# RUN: link fields mechanisms=all
+# CHECK: "origin" appended {{*}}stored-by-follower-of-maker
+# CHECK: "mapper" appended {{*}}stored-by-follower-of-maker
+# CHECK: "owner" appended {{*}}stored-by-follower-of-maker
+# RUN(NONE): link fields mechanisms=all
+# NONE-NOT: "cached" appended {{*}}stored-by-follower-of-maker
+# NONE-NOT: "found" appended {{*}}stored-by-follower-of-maker
+# RUN(PLAN): plan layouts mechanisms=all
+# PLAN: size=48
+# PLAN: "cached" appended JSValue OutOfLine
+# PLAN: "found" appended JSValue OutOfLine
+# PLAN: "origin" appended OptionalCell32 Inline
+# PLAN: "mapper" appended OptionalCell32 Inline
+# PLAN: "owner" appended OptionalCell32 Inline

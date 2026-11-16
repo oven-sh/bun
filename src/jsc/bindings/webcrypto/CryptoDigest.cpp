@@ -26,6 +26,7 @@
 #include "config.h"
 #include "CryptoDigest.h"
 
+#include "OpenSSLCryptoUniquePtr.h"
 #include <openssl/digest.h>
 #include <openssl/sha.h>
 
@@ -114,29 +115,26 @@ struct CryptoDigestContextEVP : public CryptoDigestContext {
 
     explicit CryptoDigestContextEVP(const EVP_MD* md)
     {
-        EVP_MD_CTX_init(&m_context);
-        int rc = EVP_DigestInit_ex(&m_context, md, nullptr);
+        int rc = EVP_DigestInit_ex(m_context.get(), md, nullptr);
         ASSERT_UNUSED(rc, rc == 1);
     }
 
-    ~CryptoDigestContextEVP() override { EVP_MD_CTX_cleanup(&m_context); }
-
     void addBytes(const void* input, size_t length) override
     {
-        int rc = EVP_DigestUpdate(&m_context, input, length);
+        int rc = EVP_DigestUpdate(m_context.get(), input, length);
         ASSERT_UNUSED(rc, rc == 1);
     }
 
     Vector<uint8_t> computeHash() override
     {
-        Vector<uint8_t> result(EVP_MD_CTX_size(&m_context));
-        int rc = EVP_DigestFinal_ex(&m_context, result.begin(), nullptr);
+        Vector<uint8_t> result(EVP_MD_CTX_size(m_context.get()));
+        int rc = EVP_DigestFinal_ex(m_context.get(), result.begin(), nullptr);
         ASSERT_UNUSED(rc, rc == 1);
         return result;
     }
 
 private:
-    EVP_MD_CTX m_context;
+    WebCore::OpenSSLCryptoScoped<EVP_MD_CTX, EVP_MD_CTX_init, EVP_MD_CTX_cleanup> m_context;
 };
 
 CryptoDigest::CryptoDigest()

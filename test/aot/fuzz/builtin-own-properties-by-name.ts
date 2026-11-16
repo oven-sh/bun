@@ -1,7 +1,6 @@
 // Reads own properties of the running Bun's built-ins by their literal names, stores the results in fields of a
 // literal, and prints their types. Enumerating with computed keys would only test the run time; literal names test what
-// the compiler believes about, say, `process.env.TZ`. Run it with --validate: the executable then stops at a value the
-// compiler assumed impossible, which says more than the output.
+// the compiler believes about, say, `process.env.TZ`.
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";

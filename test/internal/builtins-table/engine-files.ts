@@ -1,4 +1,5 @@
 // What an engine was compiled with: the folder that src/codegen/builtins/index.ts takes as --prebuilt-generated.
+import { bunEnv } from "harness";
 import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -6,6 +7,9 @@ import { generateForEngine } from "../../../src/codegen/builtins/engine.ts";
 import { engineDirectory } from "../../../src/codegen/engine-directory.ts";
 
 export { engineDirectory };
+
+// The generator is a tool here. Recording a stack at every simulated throw triples its time under AddressSanitizer. Exception scopes are still verified.
+export const generatorEnv = { ...bunEnv, BUN_JSC_dumpSimulatedThrows: "0" };
 
 const holdsEngineFiles = (directory: string | undefined): directory is string =>
   directory !== undefined && existsSync(join(directory, "AOTBuiltinEngineDeclarations.json"));

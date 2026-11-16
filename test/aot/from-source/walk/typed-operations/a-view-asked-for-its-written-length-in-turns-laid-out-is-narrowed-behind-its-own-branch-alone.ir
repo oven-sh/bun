@@ -1,0 +1,11 @@
+# -- source: a-view-asked-for-its-written-length-in-turns-laid-out-is-narrowed-behind-its-own-branch-alone.ts
+# declare function sink(...values: unknown[]): void;
+# function run(a: Float64Array): number { let x = 0; for (let c = 0; c < 8; c++) { x = a[c]!; if (c + 1 < a.length) a[c + 1] = x; } return x; }
+# sink(run(new Float64Array([3.5, 1.5, 2.5, 4.5, 5.5, 6.5, 7.5, 8.5])));
+# -- end of source
+# Eight turns over a view of eight written elements. The first read asks whether 7 lies below the length; every later read meets that question answered, in a block that does not stand behind its branch:
+# the length was narrowed there by a test that the block does not follow, and the verifier stopped the build under check=Validate and in every build with assertions.
+# OPTIONS: check=Validate
+# RUN: walk f1 mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK: = GetTypedArrayElement {{*}}isInsideView

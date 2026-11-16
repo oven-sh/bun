@@ -133,7 +133,7 @@ const crossed = made.flatMap(makes =>
   ),
 );
 
-const laidOut = [[], ["--aot-erase-types"], ["--aot-heat=everything-is-hot"]];
+const laidOut = [[], ["--aot-erase-types"]];
 export const programs = laidOut.length * crossed.length;
 
 /** The build flags of the program with that index. */

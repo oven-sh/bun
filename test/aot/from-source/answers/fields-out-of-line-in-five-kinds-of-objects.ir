@@ -1,0 +1,95 @@
+# fields that lie in the Extension are read, asked for and stored outside loops and in one, in objects of five kinds:
+# `bare` has no Extension . `low` and `high` have one that lacks the granules of the other . `full` holds them all . `one` holds a granule of bytes and one of narrow words with one slot filled in each
+# m00 .. m09 are stored most often and take the room in the cell. m10 .. m23 hold numbers: eight bytes each. b0 .. b7 hold booleans: a byte each. r0 .. r3 hold objects: four bytes each
+# `w` is listed by every maker and gets a value late: where it lies out of line its bytes do not say whether the object lists it
+# again() reads a field, stores it through another name for what may be the same object, and reads it once more
+# -- source: main.js
+# let kept;
+# function make() { const alone = { c: 1, w: undefined }; kept = alone; return alone; }
+# function fillLow(o) { o.m00 = 0; o.m00 = "x"; o.m00 = 0; o.m00 = "x"; o.m00 = 0; o.m00 = "x"; o.m00 = 0; o.m00 = "x"; o.m00 = 0; o.m00 = "x"; o.m00 = 0; o.m00 = "x"; o.m01 = 0; o.m01 = "x"; o.m01 = 0; o.m01 = "x"; o.m01 = 0; o.m01 = "x"; o.m01 = 0; o.m01 = "x"; o.m01 = 0; o.m01 = "x"; o.m01 = 0; o.m01 = "x"; o.m02 = 0; o.m02 = "x"; o.m02 = 0; o.m02 = "x"; o.m02 = 0; o.m02 = "x"; o.m02 = 0; o.m02 = "x"; o.m02 = 0; o.m02 = "x"; o.m02 = 0; o.m02 = "x"; o.m03 = 0; o.m03 = "x"; o.m03 = 0; o.m03 = "x"; o.m03 = 0; o.m03 = "x"; o.m03 = 0; o.m03 = "x"; o.m03 = 0; o.m03 = "x"; o.m03 = 0; o.m03 = "x"; o.m04 = 0; o.m04 = "x"; o.m04 = 0; o.m04 = "x"; o.m04 = 0; o.m04 = "x"; o.m04 = 0; o.m04 = "x"; o.m04 = 0; o.m04 = "x"; o.m04 = 0; o.m04 = "x"; o.m05 = 0; o.m05 = "x"; o.m05 = 0; o.m05 = "x"; o.m05 = 0; o.m05 = "x"; o.m05 = 0; o.m05 = "x"; o.m05 = 0; o.m05 = "x"; o.m05 = 0; o.m05 = "x"; o.m06 = 0; o.m06 = "x"; o.m06 = 0; o.m06 = "x"; o.m06 = 0; o.m06 = "x"; o.m06 = 0; o.m06 = "x"; o.m06 = 0; o.m06 = "x"; o.m06 = 0; o.m06 = "x"; o.m07 = 0; o.m07 = "x"; o.m07 = 0; o.m07 = "x"; o.m07 = 0; o.m07 = "x"; o.m07 = 0; o.m07 = "x"; o.m07 = 0; o.m07 = "x"; o.m07 = 0; o.m07 = "x"; o.m08 = 0; o.m08 = "x"; o.m08 = 0; o.m08 = "x"; o.m08 = 0; o.m08 = "x"; o.m08 = 0; o.m08 = "x"; o.m08 = 0; o.m08 = "x"; o.m08 = 0; o.m08 = "x"; o.m09 = 0; o.m09 = "x"; o.m09 = 0; o.m09 = "x"; o.m09 = 0; o.m09 = "x"; o.m09 = 0; o.m09 = "x"; o.m09 = 0; o.m09 = "x"; o.m09 = 0; o.m09 = "x"; o.m10 = 0; o.m10 = 10; o.m11 = 0; o.m11 = 11; o.m12 = 0; o.m12 = 12; }
+# function fillHigh(o) { o.m13 = 0; o.m13 = 13; o.m14 = 0; o.m14 = 14; o.m15 = 0; o.m15 = 15; o.m16 = 0; o.m16 = 16; o.m17 = 0; o.m17 = 17; o.m18 = 0; o.m18 = 18; o.m19 = 0; o.m19 = 19; o.m20 = 0; o.m20 = 20; o.m21 = 0; o.m21 = 21; o.m22 = 0; o.m22 = 22; o.m23 = 0; o.m23 = 23; o.w = 0; o.w = 7; }
+# function once(o) { let s = "="; s = s + o.m10; s = s + o.m11; s = s + o.m12; s = s + o.m13; s = s + o.m14; s = s + o.m15; s = s + o.m16; s = s + o.m17; s = s + o.m18; s = s + o.m19; s = s + o.m20; s = s + o.m21; s = s + o.m22; s = s + o.m23; return s; }
+# function turns(o, n) { let s = "="; for (let i = 0; i < n; i = i + 1) { print(i); s = s + "="; s = s + o.m10; s = s + o.m11; s = s + o.m12; s = s + o.m13; s = s + o.m14; s = s + o.m15; s = s + o.m16; s = s + o.m17; s = s + o.m18; s = s + o.m19; s = s + o.m20; s = s + o.m21; s = s + o.m22; s = s + o.m23; } return s; }
+# function has(o) { return ("m10" in o) + ":" + ("m20" in o) + ":" + ("w" in o) + ":" + o.w; }
+# function again(o, p) { const a = o.m20; p.m20 = 99; const b = o.m20; return a + ":" + b; }
+# function fillKinds(o, other) { o.b0 = false; o.b0 = true; o.b2 = false; o.b2 = true; o.b4 = false; o.b4 = true; o.b6 = false; o.b6 = true; o.b1 = true; o.b1 = false; o.b3 = true; o.b3 = false; o.b5 = true; o.b5 = false; o.b7 = true; o.b7 = false; o.r0 = o; o.r0 = other; o.r2 = o; o.r2 = other; o.r1 = other; o.r1 = o; o.r3 = other; o.r3 = o; }
+# function fillOne(o) { o.b5 = false; o.b5 = true; o.r3 = o; o.r3 = o; }
+# function kinds(o, other) { let s = "="; s = s + o.b0; s = s + o.b1; s = s + o.b2; s = s + o.b3; s = s + o.b4; s = s + o.b5; s = s + o.b6; s = s + o.b7; s = s + (o.r0 === other); s = s + (o.r1 === other); s = s + (o.r2 === other); s = s + (o.r3 === other); return s; }
+# for (let i = 0; i < 2; i = i + 1) {
+#     const bare = make(), low = make(), high = make(), full = make(), one = make();
+#     fillLow(low); fillHigh(high); fillLow(full); fillHigh(full); fillKinds(full, low); fillOne(one);
+#     print(once(bare)); print(once(low)); print(once(high)); print(once(full));
+#     print(turns(high, 2));
+#     print(has(bare)); print(has(low)); print(has(high)); print(has(full));
+#     print(kinds(bare, low)); print(kinds(low, low)); print(kinds(full, low)); print(kinds(full, full)); print(kinds(one, one));
+#     print(again(full, low)); print(again(full, full)); print(once(full)); print(has(low));
+# }
+# kept.c;
+# -- end of source
+# RUN: run-in-shell
+# CHECK: =undefinedundefinedundefinedundefinedundefinedundefinedundefinedundefinedundefinedundefinedundefinedundefinedundefinedundefined
+# CHECK-NEXT: =101112undefinedundefinedundefinedundefinedundefinedundefinedundefinedundefinedundefinedundefinedundefined
+# CHECK-NEXT: =undefinedundefinedundefined1314151617181920212223
+# CHECK-NEXT: =1011121314151617181920212223
+# CHECK-NEXT: 0
+# CHECK-NEXT: 1
+# CHECK-NEXT: ==undefinedundefinedundefined1314151617181920212223=undefinedundefinedundefined1314151617181920212223
+# CHECK-NEXT: false:false:true:undefined
+# CHECK-NEXT: true:false:true:undefined
+# CHECK-NEXT: false:true:true:7
+# CHECK-NEXT: true:true:true:7
+# CHECK-NEXT: =undefinedundefinedundefinedundefinedundefinedundefinedundefinedundefinedfalsefalsefalsefalse
+# CHECK-NEXT: =undefinedundefinedundefinedundefinedundefinedundefinedundefinedundefinedfalsefalsefalsefalse
+# CHECK-NEXT: =truefalsetruefalsetruefalsetruefalsetruefalsetruefalse
+# CHECK-NEXT: =truefalsetruefalsetruefalsetruefalsefalsetruefalsetrue
+# CHECK-NEXT: =undefinedundefinedundefinedundefinedundefinedtrueundefinedundefinedfalsefalsefalsetrue
+# CHECK-NEXT: 20:20
+# CHECK-NEXT: 20:99
+# CHECK-NEXT: =1011121314151617181999212223
+# CHECK-NEXT: true:true:true:undefined
+# CHECK-NEXT: =undefinedundefinedundefinedundefinedundefinedundefinedundefinedundefinedundefinedundefinedundefinedundefinedundefinedundefined
+# CHECK-NEXT: =101112undefinedundefinedundefinedundefinedundefinedundefinedundefinedundefinedundefinedundefinedundefined
+# CHECK-NEXT: =undefinedundefinedundefined1314151617181920212223
+# CHECK-NEXT: =1011121314151617181920212223
+# CHECK-NEXT: 0
+# CHECK-NEXT: 1
+# CHECK-NEXT: ==undefinedundefinedundefined1314151617181920212223=undefinedundefinedundefined1314151617181920212223
+# CHECK-NEXT: false:false:true:undefined
+# CHECK-NEXT: true:false:true:undefined
+# CHECK-NEXT: false:true:true:7
+# CHECK-NEXT: true:true:true:7
+# CHECK-NEXT: =undefinedundefinedundefinedundefinedundefinedundefinedundefinedundefinedfalsefalsefalsefalse
+# CHECK-NEXT: =undefinedundefinedundefinedundefinedundefinedundefinedundefinedundefinedfalsefalsefalsefalse
+# CHECK-NEXT: =truefalsetruefalsetruefalsetruefalsetruefalsetruefalse
+# CHECK-NEXT: =truefalsetruefalsetruefalsetruefalsefalsetruefalsetrue
+# CHECK-NEXT: =undefinedundefinedundefinedundefinedundefinedtrueundefinedundefinedfalsefalsefalsetrue
+# CHECK-NEXT: 20:20
+# CHECK-NEXT: 20:99
+# CHECK-NEXT: =1011121314151617181999212223
+# CHECK-NEXT: true:true:true:undefined
+# CHECK-NEXT: exited with 0
+# CHECK-NEXT: the source prints the same
+# REPEAT: i = 0..9
+# REPEAT: j = 0..5
+# END REPEAT
+# END REPEAT
+# REPEAT: i = 10..12
+# END REPEAT
+# REPEAT: i = 13..23
+# END REPEAT
+# REPEAT: i = 10..23
+# END REPEAT
+# REPEAT: i = 10..23
+# END REPEAT
+# REPEAT: i = 0 2 4 6
+# END REPEAT
+# REPEAT: i = 1 3 5 7
+# END REPEAT
+# REPEAT: i = 0 2
+# END REPEAT
+# REPEAT: i = 1 3
+# END REPEAT
+# REPEAT: i = 0..7
+# END REPEAT
+# REPEAT: i = 0..3
+# END REPEAT

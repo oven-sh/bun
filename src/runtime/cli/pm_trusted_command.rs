@@ -1,4 +1,3 @@
-use core::ptr::NonNull;
 use core::sync::atomic::Ordering;
 
 use bun_alloc::Arena as Bump;
@@ -37,7 +36,7 @@ pub(crate) fn read_trusted_dependencies(pm: &mut PackageManager) -> Option<Trust
     {
         Ok(recorded) => recorded,
         Err(err) => {
-            let _ = log.print(std::ptr::from_mut(Output::error_writer()));
+            let _ = log.print(Output::error_writer());
             Output::err(err, "failed to read trustedDependencies", ());
             Global::crash();
         }
@@ -59,6 +58,8 @@ enum Action {
 struct Blocked {
     dep_id: DependencyID,
     package_id: PackageID,
+    /// The id in the install tree, for a hoisted package.
+    tree_id: Option<tree::Id>,
     /// Scripts run deepest first, like during an install.
     depth: usize,
     scripts_list: ScriptsList,
@@ -72,14 +73,14 @@ impl Blocked {
     /// The same check as in the installers: the scripts of the project and its workspaces always
     /// run, and every other package needs trust.
     fn scripts_at(
-        log: &mut bun_ast::Log,
-        lockfile: &Lockfile,
+        pm: &PackageManager,
         dep_id: DependencyID,
         package_id: PackageID,
         folder: &mut AutoAbsPath,
     ) -> crate::Result<Option<ScriptsList>> {
+        let lockfile: &Lockfile = &pm.lockfile;
         let buf = lockfile.buffers.string_bytes.as_slice();
-        let packages = lockfile.packages.slice();
+        let packages = &lockfile.packages;
         let package_id = package_id as usize;
         // called alias because a dependency name is not always the package name
         let alias = lockfile.buffers.dependencies.as_slice()[dep_id as usize]
@@ -90,6 +91,7 @@ impl Blocked {
             resolution.tag,
             ResolutionTag::Root | ResolutionTag::Workspace
         ) || lockfile.has_trusted_dependency(
+            &pm.options,
             alias,
             packages.items_name()[package_id].slice(buf),
             resolution,
@@ -99,7 +101,7 @@ impl Blocked {
 
         let mut scripts = packages.items_scripts()[package_id];
         // Pass `true` to get the scripts that will run once the package is trusted.
-        match scripts.get_list(log, lockfile, folder, alias, resolution, true) {
+        match scripts.get_list(pm.log_mut(), folder, alias, resolution, true) {
             Ok(list) => Ok(list.filter(|list| list.total > 0)),
             Err(bun_install::Error::Sys(bun_errno::SystemErrno::ENOENT)) => Ok(None),
             Err(e) => Err(e.into()),
@@ -120,7 +122,6 @@ impl Blocked {
     }
 
     fn find_in_store(pm: &PackageManager) -> crate::Result<Vec<Blocked>> {
-        let log = pm.log_mut();
         let lockfile: &Lockfile = &pm.lockfile;
         let buf = lockfile.buffers.string_bytes.as_slice();
 
@@ -142,8 +143,7 @@ impl Blocked {
                 lockfile.packages.items_name()[folder.pkg_id as usize]
             };
             let _ = path.append(name.slice(buf));
-            let Some(scripts_list) =
-                Self::scripts_at(log, lockfile, folder.dep_id, folder.pkg_id, &mut path)?
+            let Some(scripts_list) = Self::scripts_at(pm, folder.dep_id, folder.pkg_id, &mut path)?
             else {
                 continue;
             };
@@ -151,6 +151,7 @@ impl Blocked {
             blocked.push(Blocked {
                 dep_id: folder.dep_id,
                 package_id: folder.pkg_id,
+                tree_id: None,
                 depth: folder.depth,
                 scripts_list,
                 in_global_store: !is_link
@@ -162,7 +163,6 @@ impl Blocked {
     }
 
     fn find_in_tree(pm: &PackageManager) -> crate::Result<Vec<Blocked>> {
-        let log = pm.log_mut();
         let lockfile: &Lockfile = &pm.lockfile;
         let buf = lockfile.buffers.string_bytes.as_slice();
         let resolutions = lockfile.buffers.resolutions.as_slice();
@@ -194,12 +194,11 @@ impl Blocked {
                         .name
                         .slice(buf),
                 );
-                if let Some(scripts_list) =
-                    Self::scripts_at(log, lockfile, dep_id, package_id, &mut path)?
-                {
+                if let Some(scripts_list) = Self::scripts_at(pm, dep_id, package_id, &mut path)? {
                     blocked.push(Blocked {
                         dep_id,
                         package_id,
+                        tree_id: Some(node_modules.tree_id),
                         depth: node_modules.depth,
                         scripts_list,
                         in_global_store: false,
@@ -209,6 +208,28 @@ impl Blocked {
             }
         }
         Ok(blocked)
+    }
+
+    fn find_bin_conflicts(pm: &mut PackageManager, blocked: &mut [Blocked]) -> crate::Result<()> {
+        if blocked.iter().all(|info| info.tree_id.is_none()) {
+            return Ok(());
+        }
+        bun_install::prune::with_install_tree(pm, |pm| {
+            let direct_packages = bun_install::bin::LinkOrder::direct_packages(&pm.lockfile)?;
+            for info in blocked {
+                if let Some(tree_id) = info.tree_id
+                    && info.action == Action::Run
+                {
+                    info.scripts_list.bin_conflicts = bun_install::bin::find_bin_conflicts(
+                        &pm.lockfile,
+                        &direct_packages,
+                        tree_id,
+                        info.dep_id,
+                    );
+                }
+            }
+            Ok(())
+        })?
     }
 
     /// (dependency name, the name `trustedDependencies` knows the package by)
@@ -441,7 +462,7 @@ impl TrustCommand {
         let named = |name: &[u8]| {
             packages_to_trust
                 .iter()
-                .any(|package_name_from_cli| strings::eql_long(package_name_from_cli, name, true))
+                .any(|package_name_from_cli| strings::eql_long(package_name_from_cli, name))
         };
         for info in &mut blocked {
             let (alias, trusted_name) = info.names(lockfile);
@@ -478,6 +499,8 @@ impl TrustCommand {
             return Ok(());
         }
 
+        Blocked::find_bin_conflicts(pm, &mut blocked)?;
+
         // Opened before any script runs: a script whose trust cannot be recorded must not run.
         let root_package_json_path = pm.root_package_json_path;
         let (cwd, flags) = (bun_sys::Fd::cwd(), bun_sys::O::RDWR | bun_sys::O::CLOEXEC);
@@ -496,17 +519,15 @@ impl TrustCommand {
             }
         };
 
-        let mut scripts_node: Progress::Node;
+        let scripts_node = Progress::NodeId::Scripts;
         let show_progress = log_level.show_progress();
 
         if show_progress {
             pm.progress.supports_ansi_escape_codes = Output::enable_ansi_colors_stderr();
-            // `Node::start` returns an owned `Node` with raw backrefs into `pm.progress`.
-            scripts_node = pm
-                .progress
-                .start(b"", 0)
-                .start(ProgressStrings::script(), scripts_count);
-            pm.scripts_node = Some(NonNull::from(&mut scripts_node));
+            pm.progress.start(b"", 0);
+            pm.progress
+                .start_child(scripts_node, ProgressStrings::script(), scripts_count);
+            pm.scripts_node = Some(scripts_node);
         }
 
         for same_depth in blocked.chunk_by(|a, b| a.depth == b.depth) {
@@ -519,7 +540,7 @@ impl TrustCommand {
                     >= max_concurrent
                 {
                     if log_level.is_verbose()
-                        && PackageManager::has_enough_time_passed_between_waiting_messages()
+                        && pm.has_enough_time_passed_between_waiting_messages()
                     {
                         bun_core::pretty_errorln!(
                             "<d>[PackageManager]<r> waiting for {} scripts\n",
@@ -533,7 +554,6 @@ impl TrustCommand {
                 let output_in_foreground = false;
                 let optional = false;
                 pm.spawn_package_lifecycle_scripts(
-                    &mut *ctx,
                     info.scripts_list.clone(),
                     optional,
                     output_in_foreground,
@@ -541,10 +561,7 @@ impl TrustCommand {
                 )?;
 
                 if show_progress {
-                    if let Some(sn) = pm.scripts_node {
-                        // SAFETY: points at our stack-local `scripts_node`.
-                        unsafe { sn.as_ptr().as_mut().unwrap().activate() };
-                    }
+                    pm.progress.activate(scripts_node);
                     pm.progress.refresh();
                 }
             }
@@ -555,7 +572,7 @@ impl TrustCommand {
         }
 
         if show_progress {
-            pm.progress.root.end();
+            pm.progress.end();
             pm.progress = Progress::Progress::default();
             pm.scripts_node = None;
         }
@@ -579,9 +596,7 @@ impl TrustCommand {
         ) {
             Ok(v) => v,
             Err(err) => {
-                let _ = ctx
-                    .log_ref()
-                    .print(std::ptr::from_mut(Output::error_writer()));
+                let _ = ctx.log_ref().print(Output::error_writer());
 
                 Output::err_generic("failed to parse package.json: {s}", (err.name(),));
                 Global::crash();
@@ -661,7 +676,7 @@ impl TrustCommand {
             .pwrite_all(new_package_json_contents, 0)
             .map_err(crate::Error::from)?;
         let _ = bun_sys::ftruncate(root_file.handle, new_package_json_contents.len() as i64);
-        let _ = root_file.close();
+        drop(root_file);
 
         if total_scripts_ran > 0 {
             bun_core::pretty!(

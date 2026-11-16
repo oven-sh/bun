@@ -2,6 +2,7 @@
 
 #if OS(DARWIN)
 
+#include "OutPtr.h"
 #include "Secrets.h"
 #include <dlfcn.h>
 #include <Security/Security.h>
@@ -14,6 +15,8 @@ namespace Bun {
 namespace Secrets {
 
 using namespace WTF;
+
+template<typename T> using CFPtr = std::unique_ptr<std::remove_pointer_t<T>, void (*)(CFTypeRef)>;
 
 class SecurityFramework {
 public:
@@ -61,6 +64,8 @@ public:
         , cf_handle(nullptr)
     {
     }
+
+    template<typename T> CFPtr<T> adopt(T ref) const { return { ref, CFRelease }; }
 
     bool load()
     {
@@ -171,35 +176,6 @@ static SecurityFramework* securityFramework()
     return framework->handle ? &framework.get() : nullptr;
 }
 
-class ScopedCFRef {
-public:
-    explicit ScopedCFRef(CFTypeRef ref)
-        : _ref(ref)
-    {
-    }
-    ~ScopedCFRef()
-    {
-        if (_ref && securityFramework()) {
-            securityFramework()->CFRelease(_ref);
-        }
-    }
-
-    ScopedCFRef(ScopedCFRef&& other) noexcept
-        : _ref(other._ref)
-    {
-        other._ref = nullptr;
-    }
-
-    ScopedCFRef(const ScopedCFRef&) = delete;
-    ScopedCFRef& operator=(const ScopedCFRef&) = delete;
-
-    CFTypeRef get() const { return _ref; }
-    operator bool() const { return _ref != nullptr; }
-
-private:
-    CFTypeRef _ref;
-};
-
 static String CFStringToWTFString(CFStringRef cfstring)
 {
     auto* framework = securityFramework();
@@ -231,15 +207,8 @@ static String errorStatusToString(OSStatus status)
     auto* framework = securityFramework();
     if (!framework) return "Security framework not loaded"_s;
 
-    CFStringRef errorMessage = framework->SecCopyErrorMessageString(status, NULL);
-    String errorString;
-
-    if (errorMessage) {
-        errorString = CFStringToWTFString(errorMessage);
-        framework->CFRelease(errorMessage);
-    }
-
-    return errorString;
+    auto errorMessage = framework->adopt(framework->SecCopyErrorMessageString(status, NULL));
+    return errorMessage ? CFStringToWTFString(errorMessage.get()) : String();
 }
 
 static void updateError(Error& err, OSStatus status)
@@ -275,30 +244,27 @@ static void updateError(Error& err, OSStatus status)
     }
 }
 
-static ScopedCFRef createQuery(const UTF8CString& service, const UTF8CString& name)
+static CFPtr<CFMutableDictionaryRef> createQuery(SecurityFramework* framework, const UTF8CString& service, const UTF8CString& name)
 {
-    auto* framework = securityFramework();
-    if (!framework) return ScopedCFRef(nullptr);
-
-    ScopedCFRef cfServiceName(framework->CFStringCreateWithCString(
+    auto cfServiceName = framework->adopt(framework->CFStringCreateWithCString(
         framework->kCFAllocatorDefault, service.legacyCStringPointer(), kCFStringEncodingUTF8));
-    ScopedCFRef cfUser(framework->CFStringCreateWithCString(
+    auto cfUser = framework->adopt(framework->CFStringCreateWithCString(
         framework->kCFAllocatorDefault, name.legacyCStringPointer(), kCFStringEncodingUTF8));
 
-    if (!cfServiceName || !cfUser) return ScopedCFRef(nullptr);
+    if (!cfServiceName || !cfUser) return framework->adopt<CFMutableDictionaryRef>(nullptr);
 
-    CFMutableDictionaryRef query = framework->CFDictionaryCreateMutable(
+    auto query = framework->adopt(framework->CFDictionaryCreateMutable(
         framework->kCFAllocatorDefault, 0,
         framework->kCFTypeDictionaryKeyCallBacks,
-        framework->kCFTypeDictionaryValueCallBacks);
+        framework->kCFTypeDictionaryValueCallBacks));
 
-    if (!query) return ScopedCFRef(nullptr);
+    if (!query) return query;
 
-    framework->CFDictionaryAddValue(query, framework->kSecClass, framework->kSecClassGenericPassword);
-    framework->CFDictionaryAddValue(query, framework->kSecAttrAccount, cfUser.get());
-    framework->CFDictionaryAddValue(query, framework->kSecAttrService, cfServiceName.get());
+    framework->CFDictionaryAddValue(query.get(), framework->kSecClass, framework->kSecClassGenericPassword);
+    framework->CFDictionaryAddValue(query.get(), framework->kSecAttrAccount, cfUser.get());
+    framework->CFDictionaryAddValue(query.get(), framework->kSecAttrService, cfServiceName.get());
 
-    return ScopedCFRef(query);
+    return query;
 }
 
 Error setPassword(const UTF8CString& service, const UTF8CString& name, UTF8CString&& password, bool allowUnrestrictedAccess, Persist)
@@ -323,55 +289,47 @@ Error setPassword(const UTF8CString& service, const UTF8CString& name, UTF8CStri
         return err;
     }
 
-    ScopedCFRef cfPassword(framework->CFDataCreate(
+    auto cfPassword = framework->adopt(framework->CFDataCreate(
         framework->kCFAllocatorDefault,
         reinterpret_cast<const UInt8*>(password.data()),
         password.length()));
 
-    ScopedCFRef query = createQuery(service, name);
+    auto query = createQuery(framework, service, name);
     if (!query || !cfPassword) {
         err.type = ErrorType::PlatformError;
         err.message = "Failed to create query or password data"_s;
         return err;
     }
 
-    framework->CFDictionaryAddValue((CFMutableDictionaryRef)query.get(),
+    framework->CFDictionaryAddValue(query.get(),
         framework->kSecValueData, cfPassword.get());
 
     // For headless CI environments (like MacStadium), optionally create an access object
     // that allows all applications to access this keychain item without user interaction
-    SecAccessRef accessRef = nullptr;
     if (allowUnrestrictedAccess) {
-        ScopedCFRef accessDescription(framework->CFStringCreateWithCString(
+        auto accessDescription = framework->adopt(framework->CFStringCreateWithCString(
             framework->kCFAllocatorDefault, "Bun secrets access", kCFStringEncodingUTF8));
 
         if (accessDescription) {
+            auto accessRef = framework->adopt<SecAccessRef>(nullptr);
             OSStatus accessStatus = framework->SecAccessCreate(
-                (CFStringRef)accessDescription.get(),
+                accessDescription.get(),
                 nullptr, // trustedList - nullptr means all applications have access
-                &accessRef);
+                outPtr(accessRef));
 
+            // A failure is not fatal: continue without the access control.
             if (accessStatus == errSecSuccess && accessRef) {
-                framework->CFDictionaryAddValue((CFMutableDictionaryRef)query.get(),
-                    framework->kSecAttrAccess, accessRef);
-            } else {
-                // If access creation failed, that's not necessarily a fatal error
-                // but we should continue without the access control
-                accessRef = nullptr;
+                framework->CFDictionaryAddValue(query.get(),
+                    framework->kSecAttrAccess, accessRef.get());
             }
         }
     }
 
-    OSStatus status = framework->SecItemAdd((CFDictionaryRef)query.get(), NULL);
-
-    // Clean up accessRef if it was created
-    if (accessRef) {
-        framework->CFRelease(accessRef);
-    }
+    OSStatus status = framework->SecItemAdd(query.get(), NULL);
 
     if (status == errSecDuplicateItem) {
         // Password exists -- update it
-        ScopedCFRef attributesToUpdate(framework->CFDictionaryCreateMutable(
+        auto attributesToUpdate = framework->adopt(framework->CFDictionaryCreateMutable(
             framework->kCFAllocatorDefault, 0,
             framework->kCFTypeDictionaryKeyCallBacks,
             framework->kCFTypeDictionaryValueCallBacks));
@@ -382,10 +340,10 @@ Error setPassword(const UTF8CString& service, const UTF8CString& name, UTF8CStri
             return err;
         }
 
-        framework->CFDictionaryAddValue((CFMutableDictionaryRef)attributesToUpdate.get(),
+        framework->CFDictionaryAddValue(attributesToUpdate.get(),
             framework->kSecValueData, cfPassword.get());
-        status = framework->SecItemUpdate((CFDictionaryRef)query.get(),
-            (CFDictionaryRef)attributesToUpdate.get());
+        status = framework->SecItemUpdate(query.get(),
+            attributesToUpdate.get());
     }
 
     updateError(err, status);
@@ -403,21 +361,20 @@ std::optional<WTF::Vector<uint8_t>> getPassword(const UTF8CString& service, cons
         return std::nullopt;
     }
 
-    ScopedCFRef query = createQuery(service, name);
+    auto query = createQuery(framework, service, name);
     if (!query) {
         err.type = ErrorType::PlatformError;
         err.message = "Failed to create query"_s;
         return std::nullopt;
     }
 
-    framework->CFDictionaryAddValue((CFMutableDictionaryRef)query.get(),
+    framework->CFDictionaryAddValue(query.get(),
         framework->kSecReturnData, framework->kCFBooleanTrue);
 
-    CFTypeRef result = nullptr;
-    OSStatus status = framework->SecItemCopyMatching((CFDictionaryRef)query.get(), &result);
+    auto cfPassword = framework->adopt<CFTypeRef>(nullptr);
+    OSStatus status = framework->SecItemCopyMatching(query.get(), outPtr(cfPassword));
 
-    if (status == errSecSuccess && result) {
-        ScopedCFRef cfPassword(result);
+    if (status == errSecSuccess && cfPassword) {
         CFDataRef passwordData = (CFDataRef)cfPassword.get();
         const UInt8* bytes = framework->CFDataGetBytePtr(passwordData);
         CFIndex length = framework->CFDataGetLength(passwordData);
@@ -440,14 +397,14 @@ bool deletePassword(const UTF8CString& service, const UTF8CString& name, Error& 
         return false;
     }
 
-    ScopedCFRef query = createQuery(service, name);
+    auto query = createQuery(framework, service, name);
     if (!query) {
         err.type = ErrorType::PlatformError;
         err.message = "Failed to create query"_s;
         return false;
     }
 
-    OSStatus status = framework->SecItemDelete((CFDictionaryRef)query.get());
+    OSStatus status = framework->SecItemDelete(query.get());
 
     updateError(err, status);
 

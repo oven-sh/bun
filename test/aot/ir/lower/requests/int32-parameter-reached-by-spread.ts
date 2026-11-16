@@ -1,7 +1,7 @@
 // RUN: lower
 // DIAGNOSTIC: UnprovenInt32
 // CHECK-LABEL: function {{*}}name="f"
-// CHECK: = Convert [[list]] declared={type=i32 site=w{{*}} flags=[IsInt32Promise]} illTypedCause=FromLooseType
+// CHECK: = Convert [[list]] declared={type=i32 flags=[IsInt32Promise]} @
 // CHECK-NOT: Convert
 // CHECK: = CallList {{*}}, [[list]] calleeName="g"
 

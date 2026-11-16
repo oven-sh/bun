@@ -1,6 +1,8 @@
 import { spawn } from "bun";
 import { describe, expect, it, test } from "bun:test";
 import { bunEnv, bunExe, isLinux, isMacOS, isWindows, tempDir, withoutAggressiveGC } from "harness";
+import { join } from "node:path";
+import storesThatEndInADefinition from "../bun/jsc/stores-that-end-in-a-definition-fixture.js";
 
 test("exists", () => {
   expect(typeof URL !== "undefined").toBe(true);
@@ -146,6 +148,138 @@ test.concurrent("worker: onmessage assignment through a Proxy of self", async ()
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect(stderr).toBe("");
   expect(stdout).toBe("echo:hi\n");
+  expect(exitCode).toBe(0);
+});
+
+// Each store of the fixture ends in a definition of the value on the global object. The handler is installed, a
+// later direct store replaces it, and a clear through a proxy removes it: nothing keeps the process or the worker
+// alive after that.
+const storesFixture = join(import.meta.dir, "..", "bun", "jsc", "stores-that-end-in-a-definition-fixture.js");
+
+test.concurrent(
+  "onmessage/onerror: every store that ends in a definition on globalThis installs the handler",
+  async () => {
+    const script = `
+    const stores = require(${JSON.stringify(storesFixture)});
+    const events = {
+      onmessage: () => new MessageEvent("message", { data: "payload" }),
+      onerror: () => new ErrorEvent("error", { error: "payload" }),
+    };
+    for (const [what, store] of Object.entries(stores)) {
+      for (const [name, makeEvent] of Object.entries(events)) {
+        const where = what + ", " + name;
+        const seen = [];
+        const first = event => seen.push("first:" + (event.data ?? event.error));
+        const second = event => seen.push("second:" + (event.data ?? event.error));
+        store(globalThis, name, first);
+        if (globalThis[name] !== first) throw new Error(where + ": not read back");
+        dispatchEvent(makeEvent());
+        globalThis[name] = second;
+        dispatchEvent(makeEvent());
+        new Proxy(globalThis, {})[name] = null;
+        if (globalThis[name] !== null) throw new Error(where + ": not cleared through a proxy");
+        dispatchEvent(makeEvent());
+        if (seen.join() !== "first:payload,second:payload") throw new Error(where + ": dispatched " + JSON.stringify(seen));
+        const descriptor = Object.getOwnPropertyDescriptor(globalThis, name);
+        if (JSON.stringify(descriptor) !== '{"value":null,"writable":true,"enumerable":true,"configurable":true}')
+          throw new Error(where + ": descriptor " + JSON.stringify(descriptor));
+      }
+    }
+    console.log("ok");
+  `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toBe("ok\n");
+    expect(exitCode).toBe(0);
+  },
+);
+
+// The global of a node:vm context made from globalThis answers for the properties of globalThis. As the receiver of a
+// Reflect.set it is what the native setter gets as its `this`, and it is no global object of Bun's own.
+test.concurrent(
+  "onmessage/onerror: Reflect.set with the global of a node:vm context of globalThis as the receiver",
+  async () => {
+    const script = `
+    const vm = require("node:vm");
+    const contextGlobal = vm.runInContext("globalThis", vm.createContext(globalThis));
+    const events = {
+      onmessage: () => new MessageEvent("message", { data: "payload" }),
+      onerror: () => new ErrorEvent("error", { error: "payload" }),
+    };
+    const seen = [];
+    for (const [name, makeEvent] of Object.entries(events)) {
+      const handler = event => seen.push(name + ":" + (event.data ?? event.error));
+      if (!Reflect.set({}, name, handler, contextGlobal)) throw new Error(name + ": Reflect.set answered false");
+      if (globalThis[name] !== handler) throw new Error(name + ": not read back");
+      dispatchEvent(makeEvent());
+      if (!Reflect.set({}, name, null, contextGlobal)) throw new Error(name + ": Reflect.set answered false");
+      if (globalThis[name] !== null) throw new Error(name + ": not cleared");
+      dispatchEvent(makeEvent());
+    }
+    console.log(seen.join());
+  `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toBe("onmessage:payload,onerror:payload\n");
+    expect(exitCode).toBe(0);
+  },
+);
+
+test.concurrent("worker: every store that ends in a definition on self installs onmessage", async () => {
+  using dir = tempDir("worker-definition-onmessage", {
+    "worker.js": `
+      const stores = require(${JSON.stringify(storesFixture)});
+      const forms = Object.keys(stores);
+      const next = () => {
+        const what = forms.shift();
+        if (what === undefined) {
+          new Proxy(self, {}).onmessage = null;
+          return;
+        }
+        stores[what](self, "onmessage", e => {
+          postMessage(what + ": " + e.data);
+          next();
+        });
+        postMessage("ready");
+      };
+      next();
+    `,
+    "main.js": `
+      const expected = Object.keys(require(${JSON.stringify(storesFixture)})).map(what => what + ": echo");
+      const worker = new Worker(new URL("./worker.js", import.meta.url).href);
+      const answers = [];
+      worker.onmessage = e => {
+        if (e.data === "ready") return worker.postMessage("echo");
+        answers.push(e.data);
+        // A store that did not install its handler leaves the one before it in place.
+        if (e.data !== expected[answers.length - 1]) worker.terminate();
+      };
+      worker.onerror = event => {
+        answers.push("error: " + event.message);
+        worker.terminate();
+      };
+      worker.addEventListener("close", () => console.log(JSON.stringify(answers)));
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "main.js"],
+    env: bunEnv,
+    cwd: String(dir),
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(JSON.parse(stdout)).toEqual(Object.keys(storesThatEndInADefinition).map(what => what + ": echo"));
   expect(exitCode).toBe(0);
 });
 

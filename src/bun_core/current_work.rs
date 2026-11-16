@@ -94,7 +94,10 @@ fn milliseconds_now() -> u64 {
     START.get_or_init(Instant::now).elapsed().as_millis() as u64
 }
 
-struct GivesRecordBack;
+struct GivesRecordBack {
+    #[cfg(unix)]
+    signal_stack: core::cell::OnceCell<SignalStack>,
+}
 
 impl Drop for GivesRecordBack {
     fn drop(&mut self) {
@@ -105,10 +108,79 @@ impl Drop for GivesRecordBack {
     }
 }
 
+/// A mapping for the one alternate signal stack of the thread that made it.
+#[cfg(unix)]
+struct SignalStack(core::ptr::NonNull<core::ffi::c_void>);
+
+#[cfg(unix)]
+impl Drop for SignalStack {
+    fn drop(&mut self) {
+        let none = libc::stack_t {
+            ss_sp: core::ptr::null_mut(),
+            ss_flags: libc::SS_DISABLE,
+            ss_size: 0,
+        };
+        // SAFETY: the thread takes no signal on the mapping once it has none, and nobody else knows it.
+        unsafe {
+            libc::sigaltstack(&raw const none, core::ptr::null_mut());
+            libc::munmap(self.0.as_ptr(), GivesRecordBack::SIGNAL_STACK_SIZE);
+        }
+    }
+}
+
+#[cfg(unix)]
+impl GivesRecordBack {
+    const SIGNAL_STACK_SIZE: usize = 512 * 1024;
+
+    fn ensure_signal_stack(&self) {
+        if self.signal_stack.get().is_some() {
+            return;
+        }
+        // SAFETY: all-zero is a valid `stack_t`.
+        let mut current: libc::stack_t = unsafe { core::mem::zeroed() };
+        // SAFETY: `current` is a valid out-pointer.
+        let is_asked = unsafe { libc::sigaltstack(core::ptr::null(), &raw mut current) } == 0;
+        if !is_asked || current.ss_flags & libc::SS_DISABLE == 0 {
+            return;
+        }
+        // SAFETY: a private mapping of its own.
+        let memory = unsafe {
+            libc::mmap(
+                core::ptr::null_mut(),
+                Self::SIGNAL_STACK_SIZE,
+                libc::PROT_READ | libc::PROT_WRITE,
+                libc::MAP_PRIVATE | libc::MAP_ANON,
+                -1,
+                0,
+            )
+        };
+        let Some(memory) = core::ptr::NonNull::new(memory)
+            .filter(|memory| memory.as_ptr() != libc::MAP_FAILED)
+            .map(SignalStack)
+        else {
+            return;
+        };
+        let stack = libc::stack_t {
+            ss_sp: memory.0.as_ptr(),
+            ss_flags: 0,
+            ss_size: Self::SIGNAL_STACK_SIZE,
+        };
+        // SAFETY: `memory` is not unmapped before the thread has stopped using it.
+        if unsafe { libc::sigaltstack(&raw const stack, core::ptr::null_mut()) } == 0 {
+            let _ = self.signal_stack.set(memory);
+        }
+    }
+}
+
 thread_local! {
     /// It has no destructor, so whoever reports a crash reads it on any thread without registering one.
     static RECORD: Cell<Option<&'static Record>> = const { Cell::new(None) };
-    static AT_END_OF_THREAD: GivesRecordBack = const { GivesRecordBack };
+    static AT_END_OF_THREAD: GivesRecordBack = const {
+        GivesRecordBack {
+            #[cfg(unix)]
+            signal_stack: core::cell::OnceCell::new(),
+        }
+    };
     /// What the record says, for the guard that puts it back.
     static CURRENT: Cell<Option<(Step, *const [u8], u64)>> = const { Cell::new(None) };
 }
@@ -150,12 +222,23 @@ impl Drop for WorkGuard<'_> {
 pub fn working_on(step: Step, path: &[u8]) -> WorkGuard<'_> {
     let started_at = milliseconds_now();
     let previous = CURRENT.replace(Some((step, core::ptr::from_ref(path), started_at)));
+    ensure_build_signal_stack();
     if let Some(record) = record_of_this_thread() {
         record.set(Some((step, path, started_at)));
     }
     WorkGuard {
         previous,
         path: PhantomData,
+    }
+}
+
+/// Gives this thread an alternate signal stack, so that a build that overflows the stack can report it. Does nothing
+/// outside a build.
+#[inline]
+pub fn ensure_build_signal_stack() {
+    #[cfg(unix)]
+    if STEP_OF_BUILD.load(Relaxed) != 0 {
+        let _ = AT_END_OF_THREAD.try_with(GivesRecordBack::ensure_signal_stack);
     }
 }
 

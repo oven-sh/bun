@@ -721,16 +721,17 @@ pub(crate) fn migrate_pnpm_lockfile(
         'next_dep: for dep_id in deps.begin()..deps.end() {
             let dep = lockfile.buffers.dependencies[dep_id as usize].clone();
 
-            if dep.behavior.is_workspace()
-                || !matches!(
-                    dep.version.tag,
-                    VersionTag::Folder | VersionTag::Workspace | VersionTag::Symlink
-                )
-                || (dep.version.tag == VersionTag::Symlink
-                    && !dependency::is_link_path(
-                        dep.version.symlink().slice(string_bytes!(lockfile)),
-                    ))
-            {
+            if dep.behavior.is_workspace() {
+                continue;
+            }
+            let is_local = match &dep.version.value {
+                dependency::Value::Folder(_) | dependency::Value::Workspace(_) => true,
+                dependency::Value::Symlink(target) => {
+                    dependency::is_link_path(target.slice(string_bytes!(lockfile)))
+                }
+                _ => false,
+            };
+            if !is_local {
                 continue;
             }
             let Some(version_str) = importer_versions.get(dep.name.slice(string_bytes!(lockfile)))
@@ -745,7 +746,7 @@ pub(crate) fn migrate_pnpm_lockfile(
             };
 
             // create a link package for the workspace dependency only if it doesn't already exist
-            if dep.version.tag == VersionTag::Workspace {
+            if dep.version.tag() == VersionTag::Workspace {
                 // A link that does not fit a path buffer names no workspace.
                 let link_path_buf = join_top_level_dir(&[workspace_path, link_path])
                     .ok_or(MigratePnpmLockfileError::NonExistentWorkspaceDependency)?;
@@ -999,7 +1000,7 @@ pub(crate) fn migrate_pnpm_lockfile(
                 None => {
                     let url = crate::extract_tarball::build_url(
                         registry,
-                        &strings::StringOrTinyString::init(name.slice(string_bytes!(lockfile))),
+                        name.slice(string_bytes!(lockfile)),
                         res.npm().version,
                         string_bytes!(lockfile),
                     )?;
@@ -1070,10 +1071,12 @@ pub(crate) fn migrate_pnpm_lockfile(
             let string_buf = string_bytes!(lockfile);
 
             // implicit workspace dependencies
-            if dep.behavior.is_workspace() {
+            if dep.behavior.is_workspace()
+                && let dependency::Value::Workspace(path) = &dep.version.value
+            {
                 let mut path_buf = bun_paths::AutoAbsPath::init_top_level_dir();
                 // bounded input
-                let _ = path_buf.join(&[dep.version.workspace().slice(string_buf)]);
+                let _ = path_buf.join(&[path.slice(string_buf)]);
                 if let Some(workspace_pkg_id) = pkg_map.get(path_buf.slice()) {
                     lockfile.buffers.resolutions[dep_id as usize] = *workspace_pkg_id;
                     continue;
@@ -1165,7 +1168,7 @@ pub(crate) fn migrate_pnpm_lockfile(
                 continue;
             } else {
                 if matches!(
-                    dep.version.tag,
+                    dep.version.tag(),
                     VersionTag::Folder | VersionTag::Symlink | VersionTag::Workspace
                 ) && let Some(link_pkg_id) =
                     join_top_level_dir(&[strings::without_prefix(reference, b"link:")])
@@ -1347,10 +1350,9 @@ fn declare_folder_dependencies_relative_to_their_package(
 
         for dep_id in rows.begin() as usize..rows.end() as usize {
             let dep = &lockfile.buffers.dependencies[dep_id];
-            if dep.version.tag != VersionTag::Folder {
+            let dependency::Value::Folder(folder) = dep.version.value else {
                 continue;
-            }
-            let folder = *dep.version.folder();
+            };
 
             literal.clear();
             literal.extend_from_slice(b"file:");

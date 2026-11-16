@@ -1,0 +1,3 @@
+const { mock } = require("bun:test");
+mock.module("pack/lib.cjs", () => ({ a: "preload", n: -9 }));
+globalThis.heldByThePreload = require("pack/lib.cjs");

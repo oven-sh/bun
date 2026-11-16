@@ -1,0 +1,15 @@
+# An accessor is laid over an inherited field on an object of the class below. What arrives in `a` is no longer known in either class, and it is written late in both: that is told at the declaration.
+# That a field may not be filled holds below alone: the class below does not take the cells of its base.
+# -- source: an-accessor-is-laid-on-an-object-of-the-class-below.ts
+# class Base { a = 1; b = 2; }
+# class Below extends Base { c = 3; }
+# const base = new Base();
+# const below = new Below();
+# Object.defineProperty(below, "a", { get() { return 7; }, configurable: true });
+# console.log(base.a, base.b, below.a, below.c);
+# -- end of source
+# RUN: link fields mechanisms=all
+# CHECK: field L0.0 "a" writers-known filled
+# CHECK: field L0.1 "b" proven=int[0, 2147483647] writers-known written-at-construction-alone filled
+# CHECK: field L1.1 "a" writers-known of-birth
+# CHECK: field L1.2 "b" proven=int[0, 2147483647] writers-known written-at-construction-alone filled beside-what-descriptors-define

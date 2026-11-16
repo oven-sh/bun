@@ -13,16 +13,13 @@
 // ABSENT-LABEL: function {{*}}name="absent"
 // ABSENT-NOT: GetModuleVariable
 // ABSENT: [[namespace]] = ModuleNamespace module=m
-// ABSENT-NEXT: [[object]] = Convert [[namespace]]
-// ABSENT-NEXT: [[receiver]] = Convert [[object]] declared={type={{*}}flags=[IsExpected]}
-// ABSENT-NEXT: = PropGet [[receiver]] key="missing"
+// ABSENT-NEXT: = PropGet [[namespace]] key="missing"
 // ABSENT: Return
 
 // RUN(COMPUTED): lower
 // COMPUTED-LABEL: function {{*}}name="computed"
 // COMPUTED: [[namespace]] = ModuleNamespace module=m
-// COMPUTED-NEXT: [[object]] = Convert [[namespace]]
-// COMPUTED-NEXT: = ElemGet [[object]],
+// COMPUTED-NEXT: = ElemGet [[namespace]],
 // COMPUTED: Return
 
 import * as all from "./imports/values";

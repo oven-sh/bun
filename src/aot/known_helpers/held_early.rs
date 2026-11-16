@@ -1,3 +1,5 @@
+use crate::builtins::RuntimeModule;
+use crate::modules::find_files_that_unknown_names_may_require;
 use bun_sema::components::strongly_connected_components;
 use bun_sema::import_sites::ImportSiteKind;
 use bun_sema::program::{CodeAnswer, ComputedTargets, Files};
@@ -6,27 +8,42 @@ use bun_sema::program::{CodeAnswer, ComputedTargets, Files};
 enum Load {
     AheadOfTheBody,
     AtACall,
-    /// The site loads nothing, or it answers a promise that is settled when the file has run to its end.
     NotInTime,
 }
 
-fn classify(kind: ImportSiteKind) -> Load {
+fn classify(kind: ImportSiteKind, bodies_may_drain_jobs: bool) -> Load {
     match kind {
+        ImportSiteKind::ImportCall(_) if bodies_may_drain_jobs => Load::AtACall,
         ImportSiteKind::ImportEquals(_)
         | ImportSiteKind::Require(_)
-        | ImportSiteKind::ImportMetaRequire(_) => Load::AtACall,
+        | ImportSiteKind::ImportMetaRequire(_)
+        | ImportSiteKind::RequireByTestRunner(_) => Load::AtACall,
         ImportSiteKind::ImportCall(_)
         | ImportSiteKind::RequireResolve(_)
         | ImportSiteKind::ImportMetaResolve(_)
         | ImportSiteKind::GetBuiltinModule(_)
-        | ImportSiteKind::MockModule(_) => Load::NotInTime,
+        | ImportSiteKind::MockModule(_)
+        | ImportSiteKind::ImportByTestRunner(_) => Load::NotInTime,
         _ => Load::AheadOfTheBody,
     }
 }
 
-/// For each file, whether code of another file can call what the file exports before the file has run to its end: the file lies on a cycle of imports and requires, a `require` names it, or such a file imports it.
+fn imports_drain_microtasks(files: &Files<'_>) -> bool {
+    let compiled = files.compiled_files().iter();
+    let mut answers = compiled
+        .filter_map(|&file| files.compiled(file))
+        .flat_map(|it| it.code_answers);
+    answers.any(|answer| match answer {
+        CodeAnswer::HostModule(id) => {
+            RuntimeModule::from_registry_id(id.0) == Some(RuntimeModule::BunJsc)
+        }
+        _ => false,
+    })
+}
+
 pub(super) fn find_files_held_early(files: &Files<'_>) -> Vec<bool> {
     let file_count = files.modules.len();
+    let bodies_may_drain_jobs = imports_drain_microtasks(files);
     let mut all: Vec<Vec<u32>> = vec![Vec::new(); file_count];
     let mut ahead_of_the_body: Vec<Vec<u32>> = vec![Vec::new(); file_count];
     let mut is_held_early = vec![false; file_count];
@@ -40,12 +57,11 @@ pub(super) fn find_files_held_early(files: &Files<'_>) -> Vec<bool> {
             .iter()
             .zip(compiled.code_answers)
         {
-            let load = classify(site.kind);
+            let load = classify(site.kind, bodies_may_drain_jobs);
             let loaded = match answer {
                 _ if load == Load::NotInTime => &[][..],
                 CodeAnswer::File(ref loaded) => core::slice::from_ref(loaded),
                 CodeAnswer::Computed(ComputedTargets::Modules { files, .. }) => files,
-                // A call loads a file that nobody can name.
                 CodeAnswer::Computed(ComputedTargets::All { .. }) => return vec![true; file_count],
                 _ => &[][..],
             };
@@ -63,7 +79,9 @@ pub(super) fn find_files_held_early(files: &Files<'_>) -> Vec<bool> {
         is_held_early[file] |=
             components[component_of[file] as usize].len() > 1 || targets.contains(&(file as u32));
     }
-    // A function declaration of a file that has not run yet calls those of the files that it imports.
+    for loaded in find_files_that_unknown_names_may_require(files) {
+        is_held_early[loaded.idx()] = true;
+    }
     let is_marked = is_held_early.iter();
     let mut pending: Vec<u32> = (0..)
         .zip(is_marked)

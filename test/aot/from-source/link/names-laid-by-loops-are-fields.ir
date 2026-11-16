@@ -1,0 +1,17 @@
+# -- source: main.mjs
+# const logger = {};
+# for (const level of ["debug", "info"]) logger[level] = text => level + text;
+# const app = { base: 1 };
+# ["get", "put"].forEach(function (name) { app[name] = function (x) { return this.base + name.length + x; }; });
+# function run(turns) { let n = 0; for (let i = 0; i < turns; i++) n += logger.info("a").length + logger.debug("bb").length + app.get(i) + app.put(1); return n; }
+# print(run(4), run(0));
+# -- end of source
+# The literal lists the names that loops over written lists lay on it, and nothing else is laid.
+# RUN: link mechanisms=all
+# CHECK: field L0.1 "get" proven=f4
+# CHECK: field L0.2 "put" proven=f4
+# CHECK: field L1.0 "debug" proven=f2
+# CHECK: layout L0 changes=[]
+# CHECK: layout L1 changes=[]
+# RUN(ANSWERS): run-in-shell mechanisms=all
+# ANSWERS: 90 0

@@ -234,6 +234,25 @@ pub(crate) fn rename_symbols_in_chunk<'a>(
         let wrap = all_flags[source_index as usize].wrap;
         let parts: &[Part] = all_parts[source_index as usize].as_slice();
 
+        // In the dev server format, a module's statements print inside a
+        // per-module wrapper function, not at the chunk top level, so its
+        // top-level declarations live in that function's scope. Rename them
+        // as nested scopes (like CommonJS wrappers) instead of chunk
+        // top-level symbols, so two modules may both declare `App` without
+        // the second becoming `App2` (oven-sh/bun#18017). The runtime file
+        // prints unwrapped at the top level, so it keeps the normal path
+        // below; CommonJS modules already take the nested path below.
+        if c.options.output_format == crate::options::OutputFormat::InternalBakeDev
+            && wrap != WrapKind::Cjs
+            && !crate::Index::source(source_index).is_runtime()
+        {
+            nested_scopes.push((
+                source_index,
+                &raw const all_module_scopes[source_index as usize],
+            ));
+            continue;
+        }
+
         match wrap {
             // Modules wrapped in a CommonJS closure look like this:
             //

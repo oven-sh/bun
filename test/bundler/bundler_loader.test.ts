@@ -750,4 +750,28 @@ describe("bundler", async () => {
       },
     });
   });
+
+  // Two modules declaring the same top-level name must keep it: each
+  // module prints inside its own wrapper function, so the names live in
+  // separate scopes. https://github.com/oven-sh/bun/issues/18017
+  describe("internal_bake_dev duplicate top-level names", () => {
+    itBundled("bake-dev/duplicate-function-name", {
+      format: "internal_bake_dev",
+      files: {
+        "/entry.ts": /* js */ `
+          import { App as OtherApp } from "./other.ts";
+          export function App() {}
+          console.log(App.name, OtherApp.name);
+        `,
+        "/other.ts": /* js */ `
+          export function App() {}
+        `,
+      },
+      onAfterBundle(api) {
+        const output = api.readFile("/out.js");
+        expect(output.match(/function App\(\) \{/g)).toHaveLength(2);
+        expect(output).not.toContain("App2");
+      },
+    });
+  });
 });

@@ -478,8 +478,8 @@ fn check_assignment<'a>(
     )
 }
 
-/// Handles an `AssignmentExpression`, an `AssignmentPattern` and a `VariableDeclarator`. `left_span` is ESLint's range
-/// of `left`, which includes its type annotation.
+/// Handles an `AssignmentExpression`, an `AssignmentPattern` and a `VariableDeclarator`. `left_span` is the range of
+/// `left` including its type annotation.
 fn check_assignment_to_target<'a>(
     cx: &Context<'a>,
     left: Target<'a>,
@@ -511,9 +511,9 @@ fn check_property<'a>(cx: &Context<'a>, node: Prop<'a>, value: Expr<'a>) {
     let type_of_name = || type_of_key(file, key, || NameOf(node).ty());
     match node.kind() {
         PropKind::Spread => {}
-        // `{ a = 1 }` is an `AssignmentPattern`. In an object that tsgolint doesn't visit as a pattern, it checks the
-        // name as the value, whatever the default is.
+        // `{ a = 1 }` is an `AssignmentPattern`.
         PropKind::Shorthand if value.tag() == ExprTag::Assign => {
+            // Where tsgolint doesn't visit the object as a pattern, it checks the name as the value.
             if file.language().is_oxlint
                 && let Some((_, name, _)) = value.as_assign()
             {

@@ -13,7 +13,7 @@ pub struct PreferImportingJestGlobals {
     types: [bool; 6],
 }
 
-const PREFER_IMPORTING_JEST_GLOBALS: Message = Message::new(
+const PREFER_IMPORTING_JEST_GLOBALS: &Message = &Message::new(
     "",
     "Import the following Jest functions from `@jest/globals`: {{globals}}",
 );

@@ -1,12 +1,29 @@
 //! JS code for bake
-/// <reference path="../../runtime/bake/bake.d.ts" />
-import type { Bake } from "bun";
 
-type FrameworkPrerender = Bake.ServerEntryPoint["prerender"];
-type FrameworkGetParams = Bake.ServerEntryPoint["getParams"];
+// `Bake.ServerEntryPoint` of src/runtime/bake/bake.d.ts, as far as this file uses it.
+type RouteParams = Record<string, string | string[]>;
+interface RouteMetadata {
+  pageModule: unknown;
+  layouts: unknown[];
+  params: RouteParams | null;
+  modules: string[];
+  modulepreload: string[];
+  styles: string[];
+}
+interface PrerenderResult {
+  files?: Record<string, Blob | NodeJS.TypedArray | ArrayBufferLike | string | Bun.BlobPart[]>;
+}
+type GetParamIterator = AsyncIterable<RouteParams> | Iterable<RouteParams> | { pages: RouteParams[] };
+type FrameworkPrerender =
+  ((routeMetadata: RouteMetadata) => PrerenderResult | null | Promise<PrerenderResult | null>) | undefined;
+interface ParamsMetadata {
+  pageModule: unknown;
+  layouts: unknown[];
+}
+type FrameworkGetParams =
+  ((paramsMetadata: ParamsMetadata) => GetParamIterator | Promise<GetParamIterator>) | undefined;
 type TypeAndFlags = number;
 type FileIndex = number;
-type RouteParams = Record<string, string | string[]>;
 
 /**
  * This layer is implemented in JavaScript to reduce Native <-> JS context switches,
@@ -47,9 +64,9 @@ export async function renderRoutesForProdStatic(
     type: number,
     noClient: boolean,
     i: number,
-    layouts: any[],
-    pageModule: any,
-    params: Record<string, string | string[]> | null,
+    layouts: unknown[],
+    pageModule: unknown,
+    params: RouteParams | null,
   ) {
     // Call the framework's rendering function
     const callback = renderStatic[type];
@@ -62,7 +79,7 @@ export async function renderRoutesForProdStatic(
       layouts,
       pageModule,
       params,
-    } satisfies Bake.RouteMetadata);
+    } satisfies RouteMetadata);
     if (results == null) {
       throw new Error(`Route ${JSON.stringify(sourceRouteFiles[i])} cannot be pre-rendered to a static page.`);
     }
@@ -94,9 +111,9 @@ export async function renderRoutesForProdStatic(
     type: number,
     noClient: boolean,
     i: number,
-    layouts: any[],
-    pageModule: any,
-    params: Record<string, string | string[]>,
+    layouts: unknown[],
+    pageModule: unknown,
+    params: RouteParams,
   ) {
     for (const param of paramInformation[i]!) {
       if (params[param] === undefined) {
@@ -106,7 +123,7 @@ export async function renderRoutesForProdStatic(
     return doGenerateRoute(type, noClient, i, layouts, pageModule, params);
   }
 
-  let modulesForFiles: any[][] = [];
+  let modulesForFiles: unknown[][] = [];
   for (const fileList of files) {
     $assert(fileList.length > 0);
     if (fileList.length > 1) {
@@ -132,7 +149,7 @@ export async function renderRoutesForProdStatic(
       if (paramInformation[i] != null) {
         const getParam = getParams[type];
         $assert(getParam != null && $isCallable(getParam));
-        const paramGetter: Bake.GetParamIterator = await getParam({
+        const paramGetter: GetParamIterator = await getParam({
           pageModule,
           layouts,
         });

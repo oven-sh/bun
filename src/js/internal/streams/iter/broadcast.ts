@@ -81,9 +81,20 @@ interface PendingDrain {
   reject: (reason: unknown) => void;
 }
 
+interface PendingWrite {
+  __proto__?: null;
+  chunk: Uint8Array[] | null;
+  resolve: () => void;
+  reject: (reason: unknown) => void;
+}
+
+interface WriteOptions {
+  signal?: AbortSignal;
+}
+
 class BroadcastImpl {
   declare [kOnBufferDrained]: (() => void) | null;
-  #buffer = new RingBuffer();
+  #buffer = new RingBuffer<Uint8Array[]>();
   #bufferStart = 0;
   #consumers = new Set<BroadcastConsumerState>();
   #waiters: BroadcastConsumerState[] = []; // Consumers with pending resolve (subset of #consumers)
@@ -100,7 +111,7 @@ class BroadcastImpl {
     this[kOnBufferDrained] = null;
   }
 
-  setWriter(writer) {
+  setWriter(writer: BroadcastWriter) {
     this.#writer = writer;
   }
 
@@ -418,14 +429,15 @@ class BroadcastImpl {
 // BroadcastWriter
 // =============================================================================
 
-let getBroadcastPendingWrites;
+let getBroadcastPendingWrites: (writer: BroadcastWriter) => RingBuffer<PendingWrite>;
+type RingBuffer<T> = InstanceType<typeof RingBuffer<T>>;
 
 class BroadcastWriter {
-  #broadcast;
+  #broadcast: BroadcastImpl;
   #totalBytes = 0;
-  #closed;
+  #closed: Promise<number> | undefined;
   #aborted = false;
-  #pendingWrites = new RingBuffer();
+  #pendingWrites = new RingBuffer<PendingWrite>();
   #pendingDrains: PendingDrain[] = [];
 
   static {
@@ -434,7 +446,7 @@ class BroadcastWriter {
     getBroadcastPendingWrites = obj => obj.#pendingWrites;
   }
 
-  constructor(broadcastImpl) {
+  constructor(broadcastImpl: BroadcastImpl) {
     this.#broadcast = broadcastImpl;
 
     this.#broadcast[kOnBufferDrained] = () => {
@@ -466,11 +478,11 @@ class BroadcastWriter {
     return this.#isClosedOrAborted() ? null : this.#broadcast[kGetDesiredSize]();
   }
 
-  #canUseWriteFastPath(options) {
+  #canUseWriteFastPath(options: WriteOptions | undefined) {
     return !options?.signal && !this.#isClosed() && !this.#aborted && this.#broadcast[kCanWrite]();
   }
 
-  write(chunk, options) {
+  write(chunk: Uint8Array | string, options?: WriteOptions) {
     // Fast path: no signal, writer open, buffer has space
     if (this.#canUseWriteFastPath(options)) {
       const converted = toUint8Array(chunk);
@@ -481,7 +493,7 @@ class BroadcastWriter {
     return this.#writevSlow([chunk], options);
   }
 
-  writev(chunks, options) {
+  writev(chunks: Array<Uint8Array | string>, options?: WriteOptions) {
     if (!Array.isArray(chunks)) {
       throw $ERR_INVALID_ARG_TYPE("chunks", "Array", chunks);
     }
@@ -497,7 +509,7 @@ class BroadcastWriter {
     return this.#writevSlow(chunks, options);
   }
 
-  async #writevSlow(chunks, options) {
+  async #writevSlow(chunks: Array<Uint8Array | string>, options: WriteOptions | undefined) {
     const signal = options?.signal;
 
     // Check for pre-aborted
@@ -532,7 +544,7 @@ class BroadcastWriter {
     return this.#createPendingWrite(converted, signal);
   }
 
-  writeSync(chunk) {
+  writeSync(chunk: Uint8Array | string) {
     if (this.#isClosedOrAborted()) return false;
     if (!this.#broadcast[kCanWrite]()) return false;
     const converted = toUint8Array(chunk);
@@ -543,7 +555,7 @@ class BroadcastWriter {
     return false;
   }
 
-  writevSync(chunks) {
+  writevSync(chunks: Array<Uint8Array | string>) {
     if (!Array.isArray(chunks)) {
       throw $ERR_INVALID_ARG_TYPE("chunks", "Array", chunks);
     }
@@ -608,9 +620,9 @@ class BroadcastWriter {
    * promise rejects. Signal listeners are cleaned up on normal resolution.
    * @returns {Promise<void>}
    */
-  #createPendingWrite(chunk, signal) {
-    const { promise, resolve, reject } = PromiseWithResolvers();
-    const entry = { __proto__: null, chunk, resolve, reject };
+  #createPendingWrite(chunk: Uint8Array[], signal: AbortSignal | undefined) {
+    const { promise, resolve, reject } = PromiseWithResolvers<void>();
+    const entry: PendingWrite = { __proto__: null, chunk, resolve, reject };
     this.#pendingWrites.push(entry);
     if (signal) {
       wireBroadcastWriteSignal(entry, signal, resolve, reject, this);
@@ -620,8 +632,8 @@ class BroadcastWriter {
 
   #resolvePendingWrites() {
     while (this.#pendingWrites.length > 0 && this.#broadcast[kCanWrite]()) {
-      const pending = this.#pendingWrites.shift();
-      const chunk = pending.chunk;
+      const pending = this.#pendingWrites.shift()!;
+      const chunk = pending.chunk!;
       if (this.#broadcast[kWrite](chunk)) {
         for (let i = 0; i < chunk.length; i++) {
           this.#totalBytes += chunk[i].byteLength;
@@ -636,7 +648,7 @@ class BroadcastWriter {
 
   #rejectPendingWrites(error) {
     while (this.#pendingWrites.length > 0) {
-      this.#pendingWrites.shift().reject(error);
+      this.#pendingWrites.shift()!.reject(error);
     }
   }
 
@@ -657,7 +669,13 @@ class BroadcastWriter {
   }
 }
 
-function wireBroadcastWriteSignal(entry, signal, resolve, reject, self) {
+function wireBroadcastWriteSignal(
+  entry: PendingWrite,
+  signal: AbortSignal,
+  resolve: () => void,
+  reject: (reason: unknown) => void,
+  self: BroadcastWriter,
+) {
   const onAbort = () => {
     const pendingWrites = getBroadcastPendingWrites(self);
     const idx = pendingWrites.indexOf(entry);
@@ -678,7 +696,7 @@ function wireBroadcastWriteSignal(entry, signal, resolve, reject, self) {
   signal.addEventListener("abort", onAbort, { __proto__: null, once: true });
 }
 
-function onBroadcastCancel(broadcastImpl, signal) {
+function onBroadcastCancel(broadcastImpl: BroadcastImpl, signal: AbortSignal) {
   onSignalAbort(signal, () => broadcastImpl.cancel(signal.reason));
 }
 
@@ -718,13 +736,13 @@ function broadcast(options: BroadcastOptions = { __proto__: null }) {
   return { __proto__: null, writer, broadcast: broadcastImpl };
 }
 
-function isBroadcastable(value) {
+function isBroadcastable(value): value is Record<symbol, (options?: unknown) => unknown> {
   return hasProtocol(value, broadcastProtocol);
 }
 
 const Broadcast = {
   __proto__: null,
-  from(input, options) {
+  from(input, options?: BroadcastOptions) {
     if (isBroadcastable(input)) {
       const bc = input[broadcastProtocol](options);
       if (bc === null || typeof bc !== "object") {
@@ -750,8 +768,8 @@ const Broadcast = {
               if (!w.writevSync(chunks)) {
                 await w.writev(chunks, signal ? { signal } : undefined);
               }
-            } else if (!w.writeSync(chunks)) {
-              await w.write(chunks, signal ? { signal } : undefined);
+            } else if (!w.writeSync(chunks as Uint8Array | string)) {
+              await w.write(chunks as Uint8Array | string, signal ? { signal } : undefined);
             }
           }
         } else if (isSyncIterable(input)) {
@@ -761,8 +779,8 @@ const Broadcast = {
               if (!w.writevSync(chunks)) {
                 await w.writev(chunks, signal ? { signal } : undefined);
               }
-            } else if (!w.writeSync(chunks)) {
-              await w.write(chunks, signal ? { signal } : undefined);
+            } else if (!w.writeSync(chunks as Uint8Array | string)) {
+              await w.write(chunks as Uint8Array | string, signal ? { signal } : undefined);
             }
           }
         }

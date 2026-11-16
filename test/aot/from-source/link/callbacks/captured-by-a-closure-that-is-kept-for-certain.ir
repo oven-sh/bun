@@ -1,0 +1,21 @@
+# In each of these the arrow only calls `f`, and the arrow itself is made in the heap for certain: it is returned, laid in a variable, handed to `keep`, which keeps what arrives, or handed over in a tail call, behind which the frame is gone.
+# A closure lent at `f` would be moved to the heap by the run time at every call, where the maker's stub makes it there for a tenth of that: none of them gets the word. `twice` has it.
+# f1 = twice, f2 = keep, f3 = returned, f4 = stored, f5 = handedToKeeper, f6 = inTailPosition, f7 = maker
+# -- source: captured-by-a-closure-that-is-kept-for-certain.ts
+# declare function sink(...values: unknown[]): void;
+# let held: (() => number) | undefined;
+# function twice(job: () => number): number { return job() + job(); }
+# function keep(job: () => number): number { held = job; return 1; }
+# function returned(f: () => number): () => number { return () => f() + 1; }
+# function stored(f: () => number): number { held = () => f() + 2; return 1; }
+# function handedToKeeper(f: () => number): number { const t = keep(() => f() + 3); return t + 1; }
+# function inTailPosition(f: () => number): number { return twice(() => f() + 4); }
+# function maker(k: number) { const a = returned(() => k); const b = stored(() => k + 1); const c = handedToKeeper(() => k + 2); const d = inTailPosition(() => k + 3); return [a, b, c, d]; }
+# sink(maker(1), maker(2), () => held);
+# -- end of source
+# RUN: link functions mechanisms=all
+# CHECK-LABEL: function f1
+# CHECK: parameter 0 {{*}}only-called
+# CHECK-LABEL: function f2
+# CHECK-NOT: only-called
+# CHECK-LABEL: function f7

@@ -1,0 +1,35 @@
+# A piece of a text that is only parsed, converted, compared with a written text or appended is never made: the operation reads the code units [start, end) out of the text itself.
+# The two ends come out of a clamp against the length, which leaves its lower half out where the walk has told that the position is no less than nought, or straight from the walk.
+# Under CheckBoundsAtRunTime and under CheckProofsAtRunTime each reader asks `start <= end <= length` where it stands (BelowEqual, twice) and stops by name.
+# f1 = parsed, f2 = converted, f3 = compared, f4 = joined. The append asks BelowEqual for the room of its builder in every build, four times in this function: there the two more are the witness.
+# RUN(PARSED): emit f1:Body mechanisms=all
+# PARSED-NOT: BelowEqual
+# RUN(PARSEDHELD): emit f1:Body mechanisms=all testing=CheckBoundsAtRunTime
+# PARSEDHELD: BelowEqual
+# RUN(CONVERTED): emit f2:Body mechanisms=all
+# CONVERTED-NOT: BelowEqual
+# RUN(CONVERTEDHELD): emit f2:Body mechanisms=all testing=CheckBoundsAtRunTime
+# CONVERTEDHELD: BelowEqual
+# RUN(COMPARED): emit f3:Body mechanisms=all
+# COMPARED-NOT: BelowEqual
+# RUN(COMPAREDHELD): emit f3:Body mechanisms=all testing=CheckBoundsAtRunTime
+# COMPAREDHELD: BelowEqual
+# RUN(JOINED): emit f4:Body mechanisms=all
+# JOINED-COUNT-4: BelowEqual
+# JOINED-NOT: BelowEqual
+# RUN(JOINEDHELD): emit f4:Body mechanisms=all testing=CheckBoundsAtRunTime
+# JOINEDHELD-COUNT-6: BelowEqual
+# RUN(ANSWERS): run-in-shell mechanisms=all testing=CheckBoundsAtRunTime
+# ANSWERS: 16740 123,234,345,456,567,678,789,
+# -- source: main.ts
+# declare function print(...values: unknown[]): void;
+# declare function id<T>(value: T): T;
+# function parsed(text: string): number { let sum = 0; for (let i = 0; i < 8; i++) sum += parseInt(text.slice(i, i + 2), 10); return sum; }
+# function converted(text: string): number { let sum = 0; for (let i = 0; i < 8; i++) sum += Number(text.slice(i, i + 2)); return sum; }
+# function compared(text: string): number { let sum = 0; for (let i = 0; i < 8; i++) if (text.slice(i, i + 2) === "34") sum++; return sum; }
+# function joined(text: string, pieces: number): string { let out = ""; for (let i = 0; i < pieces; i++) { out += text.substring(i, i + 3); out += ","; } return out; }
+# const text = id("1234567890");
+# let sum = 0;
+# for (let i = 0; i < 20; i++) sum += parsed(text) + converted(text) + compared(text) + joined(text, 7).length;
+# print(sum, joined(text, 7));
+# -- end of source

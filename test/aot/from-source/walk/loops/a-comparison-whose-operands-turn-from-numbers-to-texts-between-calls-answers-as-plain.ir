@@ -1,0 +1,142 @@
+# The program misleads the compiler's speculation: the same loop is entered with numbers, then with strings, then with a number and a string, then with numbers again.
+# Each entry runs the guard in its first iteration. The failing path leads to another version of the loop, built without the guard.
+# -- source: a-comparison-whose-operands-turn-from-numbers-to-texts-between-calls-answers-as-plain.js
+# const table = { go: (a, b) => a < b, sum: (a, b) => a + b }, names = JSON.parse('["go","sum"]'), values = JSON.parse('[0.5,1.25,"b","a",null]');
+# const less = table[names[0]], sum = table[names[1]];
+# function run(x, y) { let c = 0, last; for (let i = 0; i < 50; i++) { c += less(x, y) ? 1 : 2; last = sum(x, y); } return c + ":" + last; }
+# print(run(values[0], values[1]), run(values[2], values[3]), run(values[0], values[2]), run(values[4], values[1]), run(values[1], values[0]));
+# -- end of source
+# RUN(ANSWERS): run-in-shell testing=CheckProofsAtRunTime,CheckWalkAtRunTime
+# ANSWERS: 50:1.75 100:ba 100:0.5b 50:1.25 100:1.75
+
+module m0 path="a-comparison-whose-operands-turn-from-numbers-to-texts-between-calls-answers-as-plain.js" displayPath="a-comparison-whose-operands-turn-from-numbers-to-texts-between-calls-answers-as-plain.js" body=f0 namespaceLayout=L(m0)
+module m1 path="/$bun/js/engine/ArrayIteratorPrototype.ts" displayPath="/$bun/js/engine/ArrayIteratorPrototype.ts" flags=[IsLibrary] namespaceLayout=L(m1)
+entry module=m0
+layout L0 module=m0 position=14 fields=[{key="go" declared={type=anything} flags=[IsRequired]}, {key="sum" declared={type=anything} flags=[IsRequired]}] place=14 ownFieldCount=2
+variable g0 name="less" module=m0 declared={type=anything|absent} flags=[IsImmutable] place=5
+variable g1 name="sum" module=m0 declared={type=anything|absent} flags=[IsImmutable] place=6
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f1 @0
+    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]} @0
+    v2 = NewClosure function=f2 @20
+    v3 = NewClosure function=f3 @42
+    v4 = NewObject -, v2, v3 layout=L0 fields=[0, 1] @14
+    v5 = FinishObject v4 @14
+    v6 = Builtin builtin=JSON @69
+    v7 = PropGet v6 key="parse" @69
+    v8 = Convert v7 declared={type=builtin(JSONParse) flags=[IsExpected]} @69
+    v9 = String string="[\"go\",\"sum\"]" @80
+    v10 = Call v8, v6, v9 calleeKey="parse" calleeName="JSON.parse" @74
+    v11 = Builtin builtin=JSON @106
+    v12 = PropGet v11 key="parse" @106
+    v13 = Convert v12 declared={type=builtin(JSONParse) flags=[IsExpected]} @106
+    v14 = String string="[0.5,1.25,\"b\",\"a\",null]" @117
+    v15 = Call v13, v11, v14 calleeKey="parse" calleeName="JSON.parse" @111
+    v16 = Integer @164
+    v17 = ElemGet v10, v16 @164
+    v18 = ElemGet v5, v17 @158
+    PutModuleVariable v18 variable=g0 @151
+    v20 = Integer integer=1 @187
+    v21 = ElemGet v10, v20 @187
+    v22 = ElemGet v5, v21 @181
+    PutModuleVariable v22 variable=g1 @175
+    v24 = Builtin builtin=GlobalThis @337
+    v25 = PropGet v24 key="print" [isFreeName] @337
+    v26 = Integer @347
+    v27 = ElemGet v15, v26 @347
+    v28 = Integer integer=1 @358
+    v29 = ElemGet v15, v28 @358
+    v30 = Call v1, -, v27, v29 calleeName="run" @343
+    v31 = Integer integer=2 @374
+    v32 = ElemGet v15, v31 @374
+    v33 = Integer integer=3 @385
+    v34 = ElemGet v15, v33 @385
+    v35 = Call v1, -, v32, v34 calleeName="run" @370
+    v36 = Integer @401
+    v37 = ElemGet v15, v36 @401
+    v38 = Integer integer=2 @412
+    v39 = ElemGet v15, v38 @412
+    v40 = Call v1, -, v37, v39 calleeName="run" @397
+    v41 = Integer integer=4 @428
+    v42 = ElemGet v15, v41 @428
+    v43 = Integer integer=1 @439
+    v44 = ElemGet v15, v43 @439
+    v45 = Call v1, -, v42, v44 calleeName="run" @424
+    v46 = Integer integer=1 @455
+    v47 = ElemGet v15, v46 @455
+    v48 = Integer @466
+    v49 = ElemGet v15, v48 @466
+    v50 = Call v1, -, v47, v49 calleeName="run" @451
+    v51 = Call v25, -, v30, v35, v40, v45, v50 calleeName="print" @337
+    v52 = Undefined @337
+    Return v52 @337
+}
+function f1 name="run" module=m0 position=198 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything, v1: anything):
+    v2 = Integer @227
+    v3 = Convert v2 declared={type=number flags=[IsExpected]} @227
+    v4 = Undefined @223
+    v5 = Integer @249
+    v6 = Convert v5 declared={type=number flags=[IsExpected]} @249
+    Jump -> next b1(v3, v4, v6) @245
+  b1(v7, v8, v9):
+    LoopHint @245
+    v11 = Integer integer=50 @256
+    v12 = Less v9, v11 @256
+    Branch v12 -> taken b2(), notTaken b6() @256
+  b2():
+    v13 = GetModuleVariable variable=g0 @272
+    v14 = CheckInitialized v13 name="less" @272
+    v15 = Call v14, -, v0, v1 calleeName="less" @272
+    v16 = ToBoolean v15 @272
+    Branch v16 -> taken b3(| 0), notTaken b4(| 0) @272
+  b3(v17):
+    v18 = Integer integer=1 @285
+    Jump -> next b5(v18) @285
+  b4(v19):
+    v20 = Integer integer=2 @289
+    Jump -> next b5(v20) @289
+  b5(v21):
+    v22 = Add v7, v21 @289
+    v23 = Convert v22 declared={type=number flags=[IsExpected]} @267
+    v24 = GetModuleVariable variable=g1 @299
+    v25 = CheckInitialized v24 name="sum" @299
+    v26 = Call v25, -, v0, v1 calleeName="sum" @299
+    v27 = Increment v9 @260
+    v28 = Convert v27 declared={type=number flags=[IsExpected]} @260
+    Jump -> next b1(v23, v26, v28) @260
+  b6():
+    v29 = String string=":" @323
+    v30 = Add v7, v29 @323
+    v31 = Add v30, v8 @329
+    Return v31 @329
+}
+function f2 name="go" module=m0 position=20 kind=Arrow length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything, v1: anything):
+    v2 = Less v0, v1 @34
+    Return v2 @34
+}
+function f3 name="sum" module=m0 position=42 kind=Arrow length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything, v1: anything):
+    v2 = Add v0, v1 @56
+    Return v2 @56
+}
+function f4 name="next" module=m1 position=25 kind=Method role=Library flags=[HasThis, IsChecked, IsHiddenInStackTraces, HasExplicitName] enclosingRuntimeFunction=ArrayIteratorPrototypeNext thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: anything):
+    v1 = HasJSType v0 first=5 last=5 @78
+    v2 = ToBoolean v1 @78
+    Branch v2 -> taken b1(| 0), notTaken b2(| 0) @78
+  b1(v3):
+    v4 = Convert v0 declared={type=object flags=[IsFromCompiler, IsClaim]} @229
+    v5 = StepArrayIterator v4 @229
+    v6 = ResultAt v5 index=1 @286
+    v7 = ResultAt v5 @334
+    v8 = Convert v7 declared={type=boolean flags=[IsFromCompiler, IsClaim]} @266
+    v9 = CreateIteratorResult v6, v8 @266
+    Return v9 @266
+  b2(v10):
+    v11 = ThrowNewError errorKind=TypeError message="%ArrayIteratorPrototype%.next requires that |this| be an Array Iterator instance" @110
+    Unreachable @110
+}
+runtimefunction id=ArrayIteratorPrototypeNext function=f4 visibility=Private

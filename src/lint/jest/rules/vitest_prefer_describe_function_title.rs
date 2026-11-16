@@ -8,8 +8,8 @@ use std::cell::OnceCell;
 /// hardcoded string.
 pub struct PreferDescribeFunctionTitle<const RUNNER: u8 = { jest::VITEST }>;
 
-const PREFER_DESCRIBE_FUNCTION_TITLE: Message =
-    Message::new("", "Title description can not have the same content as a imported function name.");
+const PREFER_DESCRIBE_FUNCTION_TITLE: &Message =
+    &Message::new("", "Title description can not have the same content as a imported function name.");
 
 impl<const RUNNER: u8> Rule for PreferDescribeFunctionTitle<RUNNER> {
     const META: Meta = jest::meta_with_risky_fix(RUNNER, "prefer-describe-function-title", Kind::Suggestion);

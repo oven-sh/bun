@@ -4,7 +4,7 @@ use smallvec::SmallVec;
 /// Disallow duplicate conditions in if-else-if chains.
 pub struct NoDupeElseIf;
 
-const UNEXPECTED: Message = Message::new(
+const UNEXPECTED: &Message = &Message::new(
     "unexpected",
     "This branch can never execute. Its condition is a duplicate or covered by previous conditions in the if-else-if chain.",
 );

@@ -12,18 +12,18 @@ namespace Bun {
 using namespace JSC;
 using namespace WebCore;
 
-#define DEFINE_LLHTTP_CALLBACK(name)                                                                            \
-    static int name(llhttp_t* data)                                                                             \
-    {                                                                                                           \
-        HTTPParser* parser = (HTTPParser*)(reinterpret_cast<char*>(data) - offsetof(HTTPParser, m_parserData)); \
-        return parser->name();                                                                                  \
+#define DEFINE_LLHTTP_CALLBACK(name)                                                                                   \
+    static int name(llhttp_t* data)                                                                                    \
+    {                                                                                                                  \
+        HTTPParser* parser = (HTTPParser*)(reinterpret_cast<char*>(data) - OBJECT_OFFSETOF(HTTPParser, m_parserData)); \
+        return parser->name();                                                                                         \
     }
 
-#define DEFINE_LLHTTP_DATA_CALLBACK(name)                                                                       \
-    static int name(llhttp_t* data, const char* at, size_t length)                                              \
-    {                                                                                                           \
-        HTTPParser* parser = (HTTPParser*)(reinterpret_cast<char*>(data) - offsetof(HTTPParser, m_parserData)); \
-        return parser->name(at, length);                                                                        \
+#define DEFINE_LLHTTP_DATA_CALLBACK(name)                                                                              \
+    static int name(llhttp_t* data, const char* at, size_t length)                                                     \
+    {                                                                                                                  \
+        HTTPParser* parser = (HTTPParser*)(reinterpret_cast<char*>(data) - OBJECT_OFFSETOF(HTTPParser, m_parserData)); \
+        return parser->name(at, length);                                                                               \
     }
 
 DEFINE_LLHTTP_CALLBACK(onMessageBegin);
@@ -182,7 +182,7 @@ JSValue HTTPParser::execute(JSGlobalObject* globalObject, const char* data, size
 
     if (!m_parserData.upgrade && err != HPE_OK) {
         JSObject* error = createError(globalObject, "Parse Error"_s);
-        error->putDirect(vm, Identifier::fromString(vm, "bytesParsed"_s), nreadValue);
+        Bun::putDirectNamed(vm, error, "bytesParsed"_s, nreadValue);
         RETURN_IF_EXCEPTION(scope, {});
 
         const char* errorReason = llhttp_get_error_reason(&m_parserData);
@@ -202,7 +202,7 @@ JSValue HTTPParser::execute(JSGlobalObject* globalObject, const char* data, size
 
         error->putDirect(vm, builtinNames.codePublicName(), jsString(vm, codeString));
         RETURN_IF_EXCEPTION(scope, {});
-        error->putDirect(vm, Identifier::fromString(vm, "reason"_s), jsString(vm, reasonString));
+        Bun::putDirectNamed(vm, error, "reason"_s, jsString(vm, reasonString));
         RETURN_IF_EXCEPTION(scope, {});
 
         return error;

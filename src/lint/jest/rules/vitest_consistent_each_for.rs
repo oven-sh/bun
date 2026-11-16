@@ -8,7 +8,7 @@ pub struct ConsistentEachFor {
     not_allowed_methods: [Option<&'static str>; 4],
 }
 
-const CONSISTENT_EACH_FOR: Message = Message::new(
+const CONSISTENT_EACH_FOR: &Message = &Message::new(
     "",
     "`{{fn_kind}}` can not be used with `.{{method_used}}` to create parameterized test.",
 );

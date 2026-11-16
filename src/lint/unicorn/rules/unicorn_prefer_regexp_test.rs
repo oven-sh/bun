@@ -6,8 +6,8 @@ use bun_lint::utils::visible::{VisibleRegExp, is_visibly_string, visible_regexp}
 /// Prefers `RegExp#test()` over `String#match()` and `String#exec()`.
 pub struct PreferRegexpTest;
 
-const PREFER_REGEXP_TEST: Message =
-    Message::new("", "Prefer `RegExp#test()` over `String#match()` and `RegExp#exec()`.");
+const PREFER_REGEXP_TEST: &Message =
+    &Message::new("", "Prefer `RegExp#test()` over `String#match()` and `RegExp#exec()`.");
 
 /// A literal that isn't a regular expression.
 fn is_other_literal(e: Expr) -> bool {

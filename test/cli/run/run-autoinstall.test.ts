@@ -8,7 +8,8 @@ import {
   isDebug,
   isLinux,
   isWindows,
-  tempDir,
+  runCommandMaxRSS,
+  autoInstallTempDir as tempDir,
   tls,
   unprivilegedSpawnOptions,
 } from "harness";
@@ -584,16 +585,12 @@ describe.concurrent("auto-install reads every dependency group of the project's 
       ),
     });
     const peak = async (...flags: string[]) => {
-      await using proc = Bun.spawn({
+      const { stdout, stderr, exitCode, maxRSS } = await runCommandMaxRSS({
         cmd: [bunExe(), ...flags, "index.js"],
         cwd: String(dir),
-        env: bunEnv,
-        stdout: "pipe",
-        stderr: "pipe",
       });
-      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
       expect({ stdout, stderr, exitCode }).toEqual({ stdout: "ok\n", stderr: "", exitCode: 0 });
-      return proc.resourceUsage()!.maxRSS;
+      return maxRSS;
     };
 
     const without = await peak("--no-install");
@@ -1692,6 +1689,24 @@ describe.concurrent("a failed registry lookup is retried by the next resolve", (
       requestsPerLookup: 2,
     },
   };
+
+  test("a lookup in a beforeExit listener leaves nothing for the event loop to run", async () => {
+    using registry = flakyRegistry(() => notFound());
+    const { stdout, exitCode } = await run(
+      registry,
+      `
+        let emitted = 0;
+        process.on("beforeExit", () => {
+          if (++emitted < 3) try { require("flaky-pkg"); } catch {}
+        });
+        process.on("exit", () => console.log(emitted));
+      `,
+    );
+
+    expect(stdout).toBe("1");
+    expect(registry.lookups).toEqual([["/flaky-pkg"]]);
+    expect(exitCode).toBe(0);
+  });
 
   test.each(Object.entries(failures))("%s", async (_, { respond, requestsPerLookup }) => {
     using registry = flakyRegistry(respond);

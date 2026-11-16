@@ -364,7 +364,7 @@ impl<'p> SymbolFinder<'_, 'p, '_> {
         if let Some(found) = self.get_symbol_of_name_in_class_extends(e) {
             return Some(found);
         }
-        match hir[e].kind {
+        match hir.checked_kind(e) {
             // Not bound.
             _ if matches!(bound.parent_of_expr(e), Parent::None) => None,
             ExprKind::Ident(name) => self.get_symbol_of_identifier(e, name),
@@ -479,7 +479,7 @@ impl<'p> SymbolFinder<'_, 'p, '_> {
                 Parent::Expr(access)
                     if access.is_some()
                         && !is_parenthesized(hir, whole)
-                        && matches!(hir[access].kind, ExprKind::Dot { obj, .. } if obj == whole) =>
+                        && matches!(hir.checked_kind(access), ExprKind::Dot { obj, .. } if obj == whole) =>
                 {
                     whole = access;
                 }
@@ -489,7 +489,7 @@ impl<'p> SymbolFinder<'_, 'p, '_> {
         // `IsEntityNameExpression`
         let (mut names, mut at) = (Vec::new(), e);
         loop {
-            match hir[at].kind {
+            match hir.checked_kind(at) {
                 ExprKind::Ident(name) => names.push(name),
                 ExprKind::Dot { obj, name, .. } if !is_parenthesized(hir, obj) => {
                     names.push(name);
@@ -564,7 +564,7 @@ impl<'p> SymbolFinder<'_, 'p, '_> {
             }
             _ => return None,
         };
-        match hir[parent].kind {
+        match hir.checked_kind(parent) {
             // `a["name"]`, `a[0]`
             ExprKind::Index { obj, index, .. } if index == e && !is_parenthesized(hir, e) => {
                 let ty = self.c.type_of_expr(file, obj);

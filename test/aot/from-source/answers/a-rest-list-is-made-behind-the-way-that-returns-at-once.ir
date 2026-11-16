@@ -1,0 +1,19 @@
+# -- source: main.js
+# let on = false;
+# function log(...args) { if (!on) return "off"; args.push("end"); return args.join(" "); }
+# globalThis.log = log;
+# const say = globalThis.log;
+# print(say("a", "b"), say());
+# on = true;
+# print(say("a", "b"), say(), say(1, 2, 3, 4, 5, 6, 7, 8, 9, 10), say.call(null, "c"), say.apply(null, ["d", "e"]), [7].map(say).join());
+# -- end of source
+# The function is called by value. Its generic entry walks the body itself: the arguments lie in the entry's own frame, and the list is made in the block where the first way that names it parts, so the way that returns at once makes none. No call of the body stands in the entry.
+# RUN: run-in-shell
+# CHECK: off off
+# CHECK-NEXT: a b end end 1 2 3 4 5 6 7 8 9 10 end c end d e end 7 0 7 end
+# CHECK-NEXT: exited with 0
+# RUN(FORM): walk f1:GenericCallEntry mechanisms=all
+# FORM-NOT: CreateRest
+# FORM: Branch
+# FORM: CreateRest
+# FORM-NOT: CallDirect {{*}} function=f1

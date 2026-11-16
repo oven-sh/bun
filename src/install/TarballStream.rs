@@ -2,134 +2,106 @@
 //!
 //! The HTTP thread hands each body chunk to `on_chunk`, which appends to a
 //! small pending buffer and (if not already running) schedules
-//! `drain_task` on `PackageManager.thread_pool`. The drain task calls into
-//! libarchive to gunzip and untar whatever is available, writing files as
-//! their data arrives, until libarchive asks for more compressed bytes
-//! than are currently buffered. At that point the read callback returns
-//! `ARCHIVE_RETRY`, libarchive propagates it (see the BUN PATCHes in
-//! `vendor/libarchive`), and the drain task returns — the worker is
-//! released. The next HTTP chunk reschedules the drain task, which calls
-//! back into libarchive and resumes exactly where it left off because the
-//! `struct archive *`, the gzip inflate state, the partially-read tar
-//! header and the open output `bun.FD` all live on the heap in this
-//! struct.
+//! `drain_task` on `THREAD_POOL`. The drain task feeds
+//! whatever is available to a `bun_tar::Decoder`, writing files as their
+//! data arrives, until the decoder has consumed everything that is
+//! buffered. At that point the drain task returns and the worker is
+//! released. The next HTTP chunk reschedules the drain task, which resumes
+//! exactly where it left off because the decoder and the open output
+//! `bun.FD` live on the heap in this struct.
 //!
 //! This lets `bun install` overlap download and extraction on the normal
 //! resolve thread pool without ever parking a worker on a condvar, and
 //! without holding the full compressed or decompressed tarball in memory.
 
-use core::ffi::{c_int, c_void};
-use core::mem::ManuallyDrop;
-use core::sync::atomic::{AtomicBool, Ordering};
-
+use bun_archive::tar::{self, Event};
 use bun_collections::VecExt;
 #[cfg(windows)]
 use bun_core::strings;
-use bun_core::{self, Output, ZBox, env_var, fmt as bun_fmt};
-use bun_libarchive::lib;
+use bun_core::{self, Output, env_var, fmt as bun_fmt};
 use bun_paths::resolve_path::{self, platform};
 use bun_paths::{self, OSPathChar, OSPathSliceZ};
+#[cfg(windows)]
+use bun_sys::Dir;
 #[cfg(not(windows))]
 use bun_sys::FdDirExt;
-use bun_sys::{self, Dir, Fd, FdExt, FileKind, Mode, O};
-use bun_threading::{Mutex, thread_pool};
+use bun_sys::{self, Fd, File, FileKind, Mode, O};
+use bun_threading::{Guarded, thread_pool};
 
 use crate::NetworkTask;
 use crate::bun_fs::FileSystem;
-use crate::cache_publish::StagedEntry;
+use crate::cache_publish::UnfinishedEntry;
 use crate::integrity::{self, Integrity};
-use crate::package_manager_real::PackageManager;
-
-// `crate::Task` is a `()` stub; the real Task lives in `package_manager_task`.
-// `'static` is sound here because we only ever hold raw `*mut Task` and never
-// materialise a `&'static` borrow of the inner `Request` lifetime.
-type Task = crate::package_manager_task::Task<'static>;
+use crate::package_manager_real::{INBOX, PackageManager, THREAD_POOL};
 
 type OSPathZ<'a> = &'a OSPathSliceZ;
-type OSPathZMut<'a> = &'a mut OSPathSliceZ;
 
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum Phase {
-    /// Call `archive_read_next_header` next.
-    WantHeader,
-    /// Currently writing the body of `out`; call
-    /// `archive_read_data_block` next.
-    WantData,
-    /// `archive_read_next_header` returned EOF; we are done.
-    Done,
-}
-
-// `extract_task` / `package_manager` are raw pointers, not
-// `&'a mut` / `&'a`. This struct is heap-allocated (`heap::alloc`),
-// crosses threads via `drain_task`, and self-destroys in `finish()`, so a
-// borrowed lifetime cannot be sound. Holding `&'a mut Task` here while
-// `populate_result` materialises another `&mut Task` from a raw copy of it
-// would be aliased UB; raw pointers avoid forming aliased references.
+// Crosses threads via `drain_task` and frees itself in `finish()`, so it cannot borrow its tasks.
 pub struct TarballStream {
-    // ---------------------------------------------------------------------
-    // Cross-thread producer state (HTTP → worker)
-    // ---------------------------------------------------------------------
-    mutex: Mutex,
-
-    /// Compressed .tgz bytes that have arrived from the HTTP thread but have
-    /// not yet been consumed by libarchive.
-    pending: Vec<u8>,
-
-    /// True once the HTTP thread has delivered the final chunk (or an error).
-    closed: bool,
-
-    /// Set if the HTTP request failed mid-stream. Unless libarchive still
-    /// reached end-of-archive and the digest verifies, this — not
-    /// libarchive's truncation error — is the failure, and `finish()` hands
-    /// the NetworkTask back to be retried as a failed download.
-    http_err: Option<crate::Error>,
+    incoming: Guarded<Incoming>,
 
     /// Cached response status (metadata only arrives on the first callback).
     pub(crate) status_code: u32,
 
-    /// True while a drain task is either queued on the thread pool or
-    /// running. `on_chunk` sets it before scheduling; `drain` clears it when
-    /// it runs out of input and decides to yield. Both transitions happen
-    /// with `mutex` held, and whoever does not own it stops touching `*this`
-    /// at the following `unlock()`.
-    draining: AtomicBool,
-
     // ---------------------------------------------------------------------
     // Drain-side state (touched only by one drain task at a time)
     // ---------------------------------------------------------------------
-    /// Bytes currently being consumed by libarchive. Populated by swapping
-    /// with `pending` under the mutex so the HTTP thread can keep appending
-    /// while libarchive decompresses without the lock held. libarchive's
-    /// read callback hands out `reading[read_pos..]` and advances
-    /// `read_pos`; the slice must remain valid until the next callback, so
-    /// we only recycle this buffer on the *following* swap.
+    /// Bytes currently being decoded. Populated by swapping with `pending`
+    /// under the mutex so the HTTP thread can keep appending while the
+    /// decoder works without the lock held.
     reading: Vec<u8>,
     read_pos: usize,
-    archive_holds_reading: bool,
 
-    archive: Option<lib::ReadArchive>,
-
-    /// Where we are in the per-entry state machine between drain
-    /// invocations. libarchive preserves everything else (filter buffers,
-    /// zlib stream, tar header progress) on its own heap.
-    phase: Phase,
-
-    /// Output file for the entry currently being written. `None` while
-    /// between entries or when the current entry is being skipped.
-    out: Option<lib::EntryWriter>,
-    write_strategy: lib::WriteStrategy,
-
-    /// Temp directory files are written into before being renamed into the
-    /// cache. Lazily opened on the first drain so the HTTP thread never
-    /// touches the filesystem.
-    dest: Option<Fd>,
-    /// Owned copy of the temp-directory name.
-    // `ZBox` is the owned NUL-terminated counterpart of `&ZStr`.
-    tmpname: ZBox,
+    decoder: Option<tar::Decoder>,
+    extraction: Extraction,
 
     /// Incremental SHA over the *compressed* bytes, matching
     /// `Integrity.verify` / `Integrity.forBytes` in the buffered path.
     hasher: integrity::Streaming,
+
+    /// `Content-Length` of the response, when the server sent one.
+    pub(crate) content_length: Option<usize>,
+    fail: Option<crate::Error>,
+
+    /// Thread-pool task that runs `drain`. Re-enqueued whenever new data
+    /// arrives and no drain is currently in flight.
+    drain_task: thread_pool::Task,
+
+    network_task: *mut NetworkTask,
+}
+
+/// What the HTTP thread hands to the drain task.
+#[derive(Default)]
+struct Incoming {
+    /// Compressed .tgz bytes that have not yet been moved to `reading`.
+    pending: Vec<u8>,
+    /// True once the HTTP thread has delivered the final chunk (or an error).
+    closed: bool,
+    /// The request failed mid-stream, which is the failure unless the archive is whole and verifies.
+    http_err: Option<crate::Error>,
+    bytes_received: usize,
+    /// A drain task is queued or running. Whoever doesn't own it is done with the stream on unlock.
+    draining: bool,
+}
+
+/// What the decoder's events are applied to. Nothing in here is touched by the HTTP thread, so the
+/// drain task can hold `&mut` to it for as long as it likes.
+struct Extraction {
+    /// The decoder reached the end of the archive.
+    done: bool,
+
+    /// Output file for the entry currently being written. `None` while
+    /// between entries or when the current entry is being skipped.
+    out: Option<bun_archive::EntryWriter>,
+    write_strategy: bun_archive::WriteStrategy,
+
+    /// Temp directory files are written into before being renamed into the
+    /// cache. Lazily opened on the first drain so the HTTP thread never
+    /// touches the filesystem.
+    // Not a `Dir`, which closes 0-2: auto-install can run after script has closed one of them.
+    dest: Option<File>,
+    /// After `dest`: Windows can't remove a directory that is open.
+    staging: Option<UnfinishedEntry>,
 
     /// Resolved first-directory name for GitHub tarballs (written to
     /// `.bun-tag` and used for the cache folder name).
@@ -137,34 +109,24 @@ pub struct TarballStream {
     want_first_dirname: bool,
     npm_mode: bool,
 
-    bytes_received: usize,
-    /// Compressed bytes handed to libarchive by the read callback so far.
+    /// Compressed bytes the decoder has consumed so far.
     bytes_consumed: usize,
-    /// `Content-Length` of the response, when the server sent one.
-    pub(crate) content_length: Option<usize>,
     entry_count: u32,
-    fail: Option<crate::Error>,
-    /// libarchive's error string for `fail == Some(Fail)`.
+    /// The decoder's message for `fail == Some(Fail)`.
     fail_detail: Vec<u8>,
     invalid_name: bool,
-
-    /// Thread-pool task that runs `drain`. Re-enqueued whenever new data
-    /// arrives and no drain is currently in flight.
-    drain_task: thread_pool::Task,
 
     /// Completion task that carries the final result back to the main
     /// thread. Populated by `finish()` and pushed onto `resolve_tasks` there.
     /// BACKREF — `*mut Task` constructed via `ParentRef::from_raw_mut` so the
-    /// read-only `request_extract()` accessor in `open_destination` goes
+    /// read-only `tarball()` accessor in `open_destination` goes
     /// through safe `Deref`; `finish()` recovers the raw via `as_mut_ptr()`.
     extract_task: bun_ptr::ParentRef<Task, bun_ptr::Mut>,
-    network_task: *mut NetworkTask,
-    package_manager: *mut PackageManager,
 }
 
 impl TarballStream {
     /// Minimum Content-Length for which the streaming path is used. Below
-    /// this the whole body is buffered as before; the resumable libarchive
+    /// this the whole body is buffered as before; the resumable
     /// state machine is only worth its per-chunk overhead for tarballs that
     /// would otherwise consume a noticeable amount of memory.
     pub(crate) fn min_size() -> usize {
@@ -189,22 +151,16 @@ impl TarballStream {
     pub(crate) fn init(
         extract_task: *mut Task,
         network_task: *mut NetworkTask,
-        manager: *mut PackageManager,
-    ) -> *mut TarballStream {
+    ) -> Box<TarballStream> {
         // Caller guarantees `extract_task` is live for the lifetime of this
         // stream (it is published back to the main thread only in `finish()`).
-        // Wrapped once as `ParentRef` so
-        // the union read goes through the centralised tag-checked
-        // `request_extract()` accessor; `extract` is the active `Request`
-        // variant for streaming tarballs (set by `enqueue_extract_npm_package`,
-        // `tag == Tag::Extract`).
         let extract_task =
             core::ptr::NonNull::new(extract_task).expect("extract_task non-null (Zig *Task)");
         // SAFETY: `extract_task` is the caller's live task pointer.
         let extract_task = unsafe {
             bun_ptr::ParentRef::<Task, bun_ptr::Mut>::from_raw_mut(extract_task.as_ptr())
         };
-        let tarball = &extract_task.request_extract().tarball;
+        let tarball = extract_task.tarball();
 
         // For GitHub/URL/local tarballs we need a SHA-512 to record in the
         // lockfile even when there is no expected value to verify against,
@@ -217,16 +173,7 @@ impl TarballStream {
 
         let npm_mode = tarball.resolution.tag != ResolutionTag::Github;
         // An existing lockfile bun-tag keys the cache lookup; prefer it over the root dir name.
-        let lockfile_github_tag = tarball.github_resolved.slice();
-        let resolved_github_dirname: &'static [u8] =
-            if tarball.resolution.tag == ResolutionTag::Github && !lockfile_github_tag.is_empty() {
-                FileSystem::instance()
-                    .dirname_store()
-                    .append(lockfile_github_tag)
-                    .expect("unreachable")
-            } else {
-                b""
-            };
+        let resolved_github_dirname = tarball.github_resolved;
         let want_first_dirname =
             tarball.resolution.tag == ResolutionTag::Github && resolved_github_dirname.is_empty();
         let hasher = integrity::Streaming::init(
@@ -238,53 +185,45 @@ impl TarballStream {
             compute_if_missing,
         );
 
-        // bun.TrivialNew(@This()) → heap::alloc(Box::new(...)). Pointer is
-        // recovered via `container_of` from the thread-pool callback and
-        // freed in `finish()` via heap::take.
-        bun_core::heap::into_raw(Box::new(TarballStream {
-            mutex: Mutex::new(),
-            pending: Vec::new(),
-            closed: false,
-            http_err: None,
+        Box::new(TarballStream {
+            incoming: Guarded::default(),
             status_code: 0,
-            draining: AtomicBool::new(false),
             reading: Vec::new(),
             read_pos: 0,
-            archive_holds_reading: false,
-            archive: None,
-            phase: Phase::WantHeader,
-            out: None,
-            write_strategy: lib::WriteStrategy::default(),
-            dest: None,
-            tmpname: ZBox::from_bytes(b""),
+            decoder: None,
+            extraction: Extraction {
+                done: false,
+                out: None,
+                write_strategy: bun_archive::WriteStrategy::default(),
+                dest: None,
+                staging: None,
+                resolved_github_dirname,
+                want_first_dirname,
+                npm_mode,
+                bytes_consumed: 0,
+                entry_count: 0,
+                fail_detail: Vec::new(),
+                invalid_name: false,
+                extract_task,
+            },
             hasher,
-            resolved_github_dirname,
-            want_first_dirname,
-            npm_mode,
-            bytes_received: 0,
-            bytes_consumed: 0,
             content_length: None,
-            entry_count: 0,
             fail: None,
-            fail_detail: Vec::new(),
-            invalid_name: false,
             drain_task: thread_pool::Task {
                 node: thread_pool::Node::default(),
                 callback: drain_callback,
             },
-            extract_task,
             network_task,
-            package_manager: manager,
-        }))
+        })
     }
 
     /// Called from the HTTP thread for each response-body chunk. Returns
-    /// without touching the filesystem or libarchive; actual processing is
+    /// without touching the filesystem or the decoder; actual processing is
     /// deferred to `drain` on a worker so the HTTP event loop stays
     /// responsive.
     ///
     /// # Safety
-    /// `this` must be the live pointer returned by `init()`. Runs on the
+    /// `this` must point to the live stream that `init()` boxed. Runs on the
     /// HTTP thread concurrently with `drain()` on a worker, so this never
     /// materialises `&mut TarballStream` — all access is via raw-ptr field
     /// projection.
@@ -298,25 +237,22 @@ impl TarballStream {
         // SAFETY: see fn-level # Safety — `this` is live, raw-ptr field
         // projection only (no `&mut TarballStream` formed).
         unsafe {
-            (*this).mutex.lock();
-            if !chunk.is_empty() {
-                (*this).pending.extend_from_slice(chunk);
-                (*this).bytes_received += chunk.len();
-            }
-            if is_last {
-                (*this).closed = true;
-            }
-            if let Some(e) = err {
-                (*this).http_err = Some(e);
-            }
-            let pending_len = (*this).pending.len();
-
-            // Batch sub-threshold chunks so each one doesn't re-wake a worker
-            // once the drain has yielded; `is_last`/`err` always schedule so
-            // `finish()` never waits on the threshold.
-            let schedule = (is_last || err.is_some() || pending_len >= drain_threshold)
-                && !(*this).draining.swap(true, Ordering::AcqRel);
-            (*this).mutex.unlock();
+            let schedule = {
+                let mut incoming = (*this).incoming.lock();
+                if !chunk.is_empty() {
+                    incoming.pending.extend_from_slice(chunk);
+                    incoming.bytes_received += chunk.len();
+                }
+                if is_last {
+                    incoming.closed = true;
+                }
+                if let Some(e) = err {
+                    incoming.http_err = Some(e);
+                }
+                // One wakeup per batch of small chunks. `finish()` never waits on the threshold.
+                (is_last || err.is_some() || incoming.pending.len() >= drain_threshold)
+                    && !core::mem::replace(&mut incoming.draining, true)
+            };
 
             if schedule {
                 Self::schedule_drain(this);
@@ -326,33 +262,28 @@ impl TarballStream {
 
     /// # Safety
     /// `this` must be live and the caller must have just taken `draining`
-    /// (false -> true) with `mutex` held, so no worker is inside `drain()`.
+    /// (false -> true) with `incoming` locked, so no worker is inside `drain()`.
     /// Never forms `&mut TarballStream`.
     unsafe fn schedule_drain(this: *mut Self) {
-        // SAFETY: see fn-level # Safety — `this` is live; `package_manager`
-        // outlives this stream (it owns the thread pool that runs us). Field
+        // SAFETY: see fn-level # Safety — `this` is live. Field
         // projections via raw ptr — no `&mut TarballStream` is formed.
         unsafe {
-            // `addr_of_mut!` (not `&mut (*this).drain_task`) so the raw
+            // `&raw mut` (not `&mut (*this).drain_task`) so the raw
             // pointer inherits `this`'s full-struct provenance: the
             // thread-pool callback recovers the parent `*mut TarballStream`
             // via `offset_of!`, which is OOB for a
             // pointer whose provenance is limited to the `drain_task` field
             // bytes. See ThreadPool.rs:442 for the same pattern.
-            (*(*this).package_manager)
-                .thread_pool
-                .schedule(thread_pool::Batch::from(core::ptr::addr_of_mut!(
-                    (*this).drain_task
-                )));
+            THREAD_POOL.schedule(thread_pool::Batch::from(&raw mut (*this).drain_task));
         }
     }
 
-    /// Pull whatever compressed bytes are available into libarchive, writing
-    /// entries to disk, until libarchive reports `ARCHIVE_RETRY` (out of
-    /// input — yield) or a terminal state (EOF / error — finish).
+    /// Feed whatever compressed bytes are available to the decoder, writing
+    /// entries to disk, until it is out of input (yield) or in a terminal
+    /// state (EOF / error — finish).
     ///
     /// # Safety
-    /// `this` must be the live pointer returned by `init()`. Runs on a
+    /// `this` must point to the live stream that `init()` boxed. Runs on a
     /// worker thread; the HTTP thread may concurrently call `on_chunk()`
     /// touching the mutex-guarded producer fields, so this never holds a
     /// `&mut TarballStream` across those accesses. May free `*this` (via
@@ -366,8 +297,8 @@ impl TarballStream {
         // free `*this`; each `return` after it touches nothing.
         unsafe {
             loop {
-                if (*this).fail.is_none() && (*this).phase != Phase::Done {
-                    // Only pull bytes into `reading` while libarchive is still
+                if (*this).fail.is_none() && !(*this).extraction.done {
+                    // Only pull bytes into `reading` while the decoder is still
                     // going to consume them. After EOF/failure `step()` is
                     // never called again, so appending here would let
                     // `reading` grow by one HTTP chunk per wakeup for the
@@ -376,61 +307,54 @@ impl TarballStream {
 
                     if let Err(err) = Self::step(this) {
                         // If the body was cut short by a transport error,
-                        // that is the failure; libarchive's complaint about
+                        // that is the failure; the decoder's complaint about
                         // the truncated input is just its symptom.
-                        (*this).mutex.lock();
-                        let http_err = (*this).http_err;
-                        (*this).mutex.unlock();
+                        let http_err = (*this).incoming.lock().http_err;
                         (*this).fail = Some(match (err, http_err) {
                             (crate::Error::Fail, Some(http_err)) => http_err,
                             (err, _) => err,
                         });
-                        (*this).close_output_file();
+                        (*this).extraction.out = None;
                     }
 
-                    if (*this).fail.is_none() && (*this).phase != Phase::Done {
+                    if (*this).fail.is_none() && !(*this).extraction.done {
                         if more {
                             continue;
                         }
-                        // libarchive consumed everything we had. Yield the
+                        // The decoder consumed everything we had. Yield the
                         // worker until the HTTP thread delivers the next
                         // chunk.
-                        (*this).mutex.lock();
-                        let again = !(*this).pending.is_empty() || (*this).closed;
-                        if !again {
-                            (*this).draining.store(false, Ordering::Release);
+                        let mut incoming = (*this).incoming.lock();
+                        if incoming.pending.is_empty() && !incoming.closed {
+                            incoming.draining = false;
+                            return;
                         }
-                        (*this).mutex.unlock();
-                        if again {
-                            continue;
-                        }
-                        return;
+                        continue;
                     }
                 }
 
-                // Terminal: archive finished or extraction failed. libarchive
+                // Terminal: archive finished or extraction failed. The decoder
                 // will not be called again, so `reading` is dead — drop it
                 // now rather than carrying its capacity until `finish()`.
-                // `reading` is drain-local (only the read callback touches
-                // it, and that runs inside `step()`), so this needs no lock.
+                // `reading` is drain-local, so this needs no lock.
                 (*this).reading = Vec::new();
                 (*this).read_pos = 0;
 
-                (*this).mutex.lock();
-                // Hash any bytes that arrived after libarchive hit
+                let mut incoming = (*this).incoming.lock();
+                // Hash any bytes that arrived after the decoder hit
                 // end-of-archive so the integrity digest covers the full
                 // response (tar zero-padding, gzip footer). Skip this once
                 // an error is recorded — the digest won't be checked anyway.
-                if (*this).fail.is_none() && !(*this).pending.is_empty() {
-                    (*this).hasher.update(&(*this).pending);
+                if (*this).fail.is_none() && !incoming.pending.is_empty() {
+                    (*this).hasher.update(&incoming.pending);
                 }
-                // After EOF/failure we stop feeding libarchive but must keep
+                // After EOF/failure we stop feeding the decoder but must keep
                 // consuming (and discarding) chunks until the HTTP thread
                 // closes the stream; freeing ourselves earlier would let the
                 // next `notify` dereference a dead pointer.
-                (*this).pending.clear();
-                let closed = (*this).closed;
-                (*this).mutex.unlock();
+                incoming.pending.clear();
+                let closed = incoming.closed;
+                drop(incoming);
                 if closed {
                     Self::finish(this);
                     // `this` is freed; nothing below may touch it.
@@ -440,258 +364,145 @@ impl TarballStream {
                 // Archive is done (or failed) but the HTTP response has not
                 // finished yet. Yield; the next `on_chunk` will reschedule us
                 // to discard the new bytes and eventually observe `closed`.
-                (*this).mutex.lock();
-                let again = !(*this).pending.is_empty() || (*this).closed;
-                if !again {
-                    (*this).draining.store(false, Ordering::Release);
+                let mut incoming = (*this).incoming.lock();
+                if incoming.pending.is_empty() && !incoming.closed {
+                    incoming.draining = false;
+                    return;
                 }
-                (*this).mutex.unlock();
-                if again {
-                    continue;
-                }
-                return;
             }
         } // unsafe
     }
 
-    /// Move any bytes still sitting in `pending` into `reading` so the read
-    /// callback can hand them to libarchive. Returns true if new bytes were
-    /// added or the stream is now closed.
+    /// Move any bytes still sitting in `pending` into `reading` for `step()`.
+    /// Returns true if new bytes were added or the stream is now closed.
     ///
     /// # Safety
-    /// `this` must be live. Called both from `drain()` and re-entrantly
-    /// from inside libarchive's read callback (while `step()` is on the
-    /// stack), so this must NOT materialise `&mut TarballStream` — all
-    /// access is via raw-ptr field projection. Producer fields (`pending`/`closed`)
-    /// are synchronised by `mutex`; drain-side fields (`reading`/
+    /// `this` must be live. The HTTP thread may be inside `on_chunk()`, so
+    /// this must NOT materialise `&mut TarballStream` — all
+    /// access is via raw-ptr field projection. Drain-side fields (`reading`/
     /// `read_pos`/`hasher`) are owned by the single active drain task.
     unsafe fn take_pending(this: *mut Self) -> bool {
         // SAFETY: see fn-level # Safety — raw-ptr field projection only.
         unsafe {
-            (*this).mutex.lock();
+            let mut incoming = (*this).incoming.lock();
 
-            if (*this).pending.is_empty() {
-                let closed = (*this).closed;
-                (*this).mutex.unlock();
-                return closed;
+            if incoming.pending.is_empty() {
+                return incoming.closed;
             }
 
-            // Hash before libarchive sees the bytes so integrity covers exactly
+            // Hash before the decoder sees the bytes so integrity covers exactly
             // what came off the socket.
-            (*this).hasher.update(&(*this).pending);
+            (*this).hasher.update(&incoming.pending);
 
             if (*this).reading.len() == (*this).read_pos {
                 // Previous buffer fully consumed — swap so the HTTP thread can
                 // reuse its capacity without reallocating.
                 (*this).reading.clear();
-                core::mem::swap(&mut (*this).reading, &mut (*this).pending);
+                core::mem::swap(&mut (*this).reading, &mut incoming.pending);
                 (*this).read_pos = 0;
             } else {
-                // libarchive still holds a slice into `reading` (the read
-                // callback contract keeps the last-returned buffer valid until
-                // the next call). Appending would realloc and invalidate that
-                // slice, so instead shift the unconsumed tail down and append
-                // in place — the callback is not running concurrently with us
-                // (single drain at a time) and will be re-primed with the new
-                // base on its next invocation.
+                // Keep the unconsumed tail in front of the new bytes.
                 let read_pos = (*this).read_pos;
                 (*this).reading.drain_front(read_pos);
                 (*this).read_pos = 0;
-                (*this).reading.extend_from_slice(&(*this).pending);
-                (*this).pending.clear();
+                (*this).reading.extend_from_slice(&incoming.pending);
+                incoming.pending.clear();
             }
-            (*this).mutex.unlock();
             true
         } // unsafe
     }
 
-    /// Run libarchive until it needs more input (`Retry`) or hits a
-    /// terminal state. All libarchive state persists on the heap, so
-    /// returning from here and re-entering later is safe.
+    /// Run the decoder until it needs more input or hits a terminal state.
     ///
     /// # Safety
-    /// `this` must be live. Takes `*mut Self` (not `&mut self`) because
-    /// `open_archive()` hands `this` to libarchive as client_data and the
-    /// read callback dereferences it across MULTIPLE `step()` invocations.
-    /// A `&mut self` receiver would mint a fresh Unique tag on each call,
-    /// popping the SharedRW tag the stored client_data pointer carries and
-    /// leaving the callback with dead provenance (Stacked Borrows UB).
-    /// Threading the Box-rooted `*mut Self` from `drain()` keeps one
-    /// provenance alive for the lifetime of the archive.
+    /// `this` must be live, and the caller the one active drain task. The
+    /// HTTP thread may be inside `on_chunk()`.
     unsafe fn step(this: *mut Self) -> crate::Result<()> {
-        // SAFETY: see fn-level # Safety — raw-ptr field projection only; no
-        // `&mut TarballStream` is held across any libarchive call (which may
-        // re-enter `archive_read_callback` and access `*this` via the same
-        // provenance). Transient `&mut *this` for `open_destination` /
-        // `begin_entry` / `write_block` / `finish_output_file` is sound:
-        // those do not call into libarchive.
+        // SAFETY: see fn-level # Safety. Everything but `incoming` is drain-local.
         unsafe {
-            if (*this).archive.is_none() {
+            let incoming = (*this).incoming.lock();
+            // Nothing follows `reading` once the body has ended and all of it was taken.
+            let eof = incoming.closed && incoming.pending.is_empty();
+            drop(incoming);
+
+            if (*this).decoder.is_none() {
                 let head: &[u8] = &(*this).reading;
+                if head.len() < 2 && !eof {
+                    // Telling gzip from tar takes two bytes.
+                    return Ok(());
+                }
+                // Plain tar is what a .tgz sent with `Content-Encoding: gzip` arrives as,
+                // because the HTTP client has already decompressed it.
                 let gzip = head.starts_with(&[0x1f, 0x8b]);
-                if head.len() < 2 {
-                    // Telling gzip from tar takes two bytes. Wait for more unless the body ended.
-                    (*this).mutex.lock();
-                    let closed = (*this).closed;
-                    (*this).mutex.unlock();
-                    if !closed {
-                        return Ok(());
-                    }
-                }
-                Self::open_archive(this, gzip, (*this).npm_mode)?;
+                let dialect = if (*this).extraction.npm_mode {
+                    tar::Dialect::Npm
+                } else {
+                    tar::Dialect::General
+                };
+                (*this).decoder = Some(
+                    tar::Decoder::new(tar::Options::for_host(dialect), gzip)
+                        .map_err(|_| crate::Error::Alloc(bun_alloc::AllocError))?,
+                );
             }
-            if (*this).dest.is_none() {
-                (*this).open_destination()?;
+            // References to single drain-local fields, never to the whole struct.
+            let extraction = &mut (*this).extraction;
+            if extraction.dest.is_none() {
+                extraction.open_destination()?;
             }
-
-            // `archive` points to a libarchive heap allocation disjoint from
-            // `*this`; holding `&lib::Archive` across the loop does not
-            // alias any access to `*this`.
-            let archive: &lib::Archive = (*this).archive.as_deref().unwrap();
-
-            loop {
-                match (*this).phase {
-                    Phase::Done => return Ok(()),
-                    Phase::WantHeader => {
-                        let mut entry: *mut lib::Entry = core::ptr::null_mut();
-                        match archive.read_next_header(&mut entry) {
-                            lib::Result::Retry if (*this).archive_holds_reading => continue,
-                            lib::Result::Retry => return Ok(()),
-                            lib::Result::Eof => {
-                                // A body that is not an archive also ends here, because the tar
-                                // reader skips every block that is not a valid header.
-                                if (*this).entry_count == 0 {
-                                    (*this).fail_detail = b"archive is empty".to_vec();
-                                    return Err(crate::Error::Fail);
-                                }
-                                (*this).phase = Phase::Done;
-                                return Ok(());
-                            }
-                            lib::Result::Ok | lib::Result::Warn => {
-                                // libarchive returned OK/WARN with a valid entry
-                                // pointer owned by `archive`; it stays valid until
-                                // the next `read_next_header`. No other Rust
-                                // reference to it exists.
-                                (*this).begin_entry(&mut *entry)?;
-                            }
-                            lib::Result::Failed | lib::Result::Fatal => {
-                                (*this).fail_detail = archive.error_string().to_vec();
-                                return Err(crate::Error::Fail);
-                            }
-                        }
-                    }
-                    Phase::WantData => {
-                        let mut offset: i64 = 0;
-                        let Some(block) = archive.next(&mut offset) else {
-                            // This is the end of the entry's data, and `offset` is its length.
-                            (*this).finish_output_file(offset)?;
-                            (*this).phase = Phase::WantHeader;
-                            continue;
-                        };
-                        match block.result {
-                            lib::Result::Retry if !(*this).archive_holds_reading => return Ok(()),
-                            lib::Result::Ok | lib::Result::Warn => {
-                                (*this).write_block(&block)?;
-                            }
-                            _ => {
-                                (*this).fail_detail = archive.error_string().to_vec();
-                                return Err(crate::Error::Fail);
-                            }
-                        }
-                    }
-                }
-            }
-        } // unsafe
-    }
-
-    /// # Safety
-    /// `this` must be live and rooted at the Box allocation (i.e. the
-    /// pointer threaded from `drain_callback` → `drain` → `step`, NOT a
-    /// `&mut self as *mut Self` reborrow). libarchive stores `this` as
-    /// client_data and `archive_read_callback` dereferences it across the
-    /// lifetime of the archive — see `step()` # Safety for the provenance
-    /// requirement.
-    unsafe fn open_archive(this: *mut Self, gzip: bool, npm: bool) -> crate::Result<()> {
-        let archive = lib::ReadArchive::new();
-        // Bypass bidding entirely. `gzip` is false for a .tgz sent with `Content-Encoding: gzip`,
-        // because the HTTP client has already decompressed it to a plain tar.
-        // With patches/libarchive/select-registered-only.patch,
-        // archive_read_append_filter / archive_read_set_format only select a
-        // filter/format that was already registered, so register gzip and tar
-        // first. Tar must also be registered before read_set_options (so the
-        // option has a slot) and set_format must come after it: libarchive's
-        // archive_set_format_option() clobbers `a->format` while dispatching,
-        // and losing the selected format means archive_read_open1() falls
-        // back to bidding, which fails when the first HTTP chunk is short.
-        // ARCHIVE_FILTER_GZIP = 1, ARCHIVE_FORMAT_TAR = 0x30000.
-        if gzip {
-            let _ = archive.read_support_filter_gzip();
-            // SAFETY: archive is a valid non-null handle from read_new(); FFI call has no other preconditions.
-            if unsafe { lib::archive_read_append_filter(archive.as_mut_ptr(), 1) } != 0 {
-                return Err(crate::Error::Fail);
-            }
-        }
-        let _ = archive.read_support_format_tar();
-        // patches/libarchive/tar-npm-compat.patch adds the `npm` option.
-        let _ = archive.read_set_options(if npm {
-            c"npm"
-        } else {
-            c"read_concatenated_archives"
-        });
-        // SAFETY: archive is a valid non-null handle from read_new(); FFI call has no other preconditions.
-        if unsafe { lib::archive_read_set_format(archive.as_mut_ptr(), 0x30000) } != 0 {
-            return Err(crate::Error::Fail);
-        }
-
-        // SAFETY: archive is a valid handle; `this` outlives the archive
-        // (dropped below on failure, otherwise as a field of `*this`). See
-        // fn-level # Safety for why client_data must be the Box-rooted
-        // `this` and not a `&mut self`-derived pointer.
-        let rc_raw: c_int = unsafe {
-            lib::archive_read_open(
-                archive.as_mut_ptr(),
-                this.cast::<c_void>(),
-                None,
-                Some(archive_read_callback),
-                None,
-            )
-        };
-        // PORTING.md §Forbidden: `transmute::<c_int, enum>` is UB for any value not
-        // declared as a discriminant. Map known ARCHIVE_* codes explicitly and treat
-        // anything else as Fatal.
-        let rc: lib::Result = match rc_raw {
-            x if x == lib::Result::Ok as c_int => lib::Result::Ok,
-            x if x == lib::Result::Eof as c_int => lib::Result::Eof,
-            x if x == lib::Result::Retry as c_int => lib::Result::Retry,
-            x if x == lib::Result::Warn as c_int => lib::Result::Warn,
-            x if x == lib::Result::Failed as c_int => lib::Result::Failed,
-            _ => lib::Result::Fatal,
-        };
-        match rc {
-            lib::Result::Ok | lib::Result::Warn => {}
-            lib::Result::Retry => {
-                // open() runs the filter bidder which we bypassed, but the
-                // client open path may still probe; treat as transient.
-                // SAFETY: see fn-level # Safety — raw-ptr field write.
-                unsafe { (*this).archive = Some(archive) };
+            let Some(decoder) = (*this).decoder.as_mut() else {
                 return Ok(());
-            }
-            _ => {
-                // SAFETY: see fn-level # Safety — raw-ptr field write.
-                unsafe { (*this).fail_detail = archive.error_string().to_vec() };
-                return Err(crate::Error::Fail);
+            };
+            extraction.run(decoder, &(*this).reading, &mut (*this).read_pos, eof)
+        }
+    }
+}
+
+impl Extraction {
+    fn run(
+        &mut self,
+        decoder: &mut tar::Decoder,
+        reading: &[u8],
+        read_pos: &mut usize,
+        eof: bool,
+    ) -> crate::Result<()> {
+        loop {
+            let (used, event) = match decoder.next(&reading[*read_pos..], eof) {
+                Ok(next) => next,
+                Err(tar::Error::Alloc(err)) => return Err(err.into()),
+                Err(err) => {
+                    self.fail_detail = err.to_string().into_bytes();
+                    return Err(crate::Error::Fail);
+                }
+            };
+            *read_pos += used;
+            self.bytes_consumed += used;
+            match event {
+                Event::NeedInput => return Ok(()),
+                Event::Entry(entry) => {
+                    self.begin_entry(entry)?;
+                    if self.out.is_none() {
+                        decoder.skip_entry();
+                    }
+                }
+                Event::Data { offset, bytes } => self.write_block(offset, bytes)?,
+                Event::EndOfEntry { size } => self.finish_output_file(size)?,
+                Event::EndOfArchive => {
+                    // A body that is not an archive also ends here, because the tar
+                    // reader skips every block that is not a valid header.
+                    if self.entry_count == 0 {
+                        self.fail_detail = b"archive is empty".to_vec();
+                        return Err(crate::Error::Fail);
+                    }
+                    self.done = true;
+                    return Ok(());
+                }
             }
         }
-        // SAFETY: see fn-level # Safety — raw-ptr field write.
-        unsafe { (*this).archive = Some(archive) };
-        Ok(())
     }
 
     fn open_destination(&mut self) -> crate::Result<()> {
         // BACKREF: `extract_task` is live until `finish()` publishes it.
-        // `request_extract()` is the tag-checked union accessor (`tag ==
-        // Tag::Extract` for streaming tarballs).
-        let tarball = &self.extract_task.request_extract().tarball;
+        let tarball = self.extract_task.tarball();
         let (_, basename) = tarball.name_and_basename();
         let truncated_basename = &basename[0..basename.len().min(32)];
         let tmpname_suffix: &[u8] =
@@ -707,17 +518,12 @@ impl TarballStream {
             };
         let mut buf = bun_paths::path_buffer_pool::get();
         let tmpname = FileSystem::tmpname(tmpname_suffix, &mut buf[..], bun_core::fast_random())?;
-        // allocator.dupeZ → owned NUL-terminated copy.
-        self.tmpname = ZBox::from_bytes(tmpname.as_bytes());
+        let tmpdir = &tarball.temp_dir.handle;
+        self.staging = Some(UnfinishedEntry::new(tmpdir.fd(), tmpname.as_bytes()));
 
-        self.dest = Some(
-            bun_sys::make_path::make_open_path(
-                Dir::borrow(&tarball.temp_dir),
-                self.tmpname.as_bytes(),
-                Default::default(),
-            )?
-            .into_raw(),
-        );
+        let dest =
+            bun_sys::make_path::make_open_path(tmpdir, tmpname.as_bytes(), Default::default())?;
+        self.dest = Some(File::from_fd(dest.into_raw()));
         Ok(())
     }
 
@@ -726,43 +532,32 @@ impl TarballStream {
         let Some(mut out) = self.out.take() else {
             return Ok(());
         };
-        let result = out.finish(end);
-        out.fd().close();
-        result.map_err(|e| e.to_zig_err().into())
+        out.finish(end).map_err(|e| e.to_zig_err().into())
     }
 
-    /// For an entry that did not reach its end.
-    fn close_output_file(&mut self) {
-        if let Some(out) = self.out.take() {
-            out.fd().close();
-        }
-    }
-
-    fn write_block(&mut self, block: &lib::Block<'_>) -> crate::Result<()> {
+    fn write_block(&mut self, offset: i64, bytes: &[u8]) -> crate::Result<()> {
         let Some(out) = self.out.as_mut() else {
             return Ok(());
         };
-        out.write(&mut self.write_strategy, block.offset, block.bytes)
+        out.write(&mut self.write_strategy, offset, bytes)
             .map_err(|e| e.to_zig_err().into())
     }
 
-    /// Process one entry header returned by `read_next_header`. Opens the
-    /// output file (or creates the directory) and transitions to
-    /// `WantData` so the next `step()` iteration starts pulling its body.
-    fn begin_entry(&mut self, entry: &mut lib::Entry) -> crate::Result<()> {
-        #[cfg(windows)]
-        let pathname: OSPathZ = entry.pathname_w();
-        #[cfg(not(windows))]
-        let pathname: OSPathZ = entry.pathname();
+    /// Process one entry header. Opens the output file (or creates the
+    /// directory). With `out` left empty, the entry's data is skipped.
+    fn begin_entry(&mut self, entry: &tar::Entry) -> crate::Result<()> {
+        debug_assert!(self.out.is_none());
+        let mut os_path_buf: Vec<OSPathChar> = Vec::new();
+        let pathname: &[OSPathChar] = bun_archive::os_path(entry, &mut os_path_buf)?;
 
         if self.want_first_dirname {
             self.want_first_dirname = false;
             // GitHub's first entry is the folder `repo-sha/`. A mirror's may be `repo-sha/file`.
-            let root = bun_libarchive::first_path_component(&pathname[..]);
+            let root = bun_archive::first_path_component(pathname);
             #[cfg(windows)]
             {
                 let result = strings::to_utf8_list_with_type(Vec::new(), root)?;
-                self.resolved_github_dirname = FileSystem::instance()
+                self.resolved_github_dirname = FileSystem::get()
                     .dirname_store()
                     .append(&result)
                     .expect("unreachable");
@@ -770,20 +565,18 @@ impl TarballStream {
             #[cfg(not(windows))]
             {
                 // bun.asByteSlice(root) — on posix OSPathChar==u8, so this is a no-op cast.
-                self.resolved_github_dirname = FileSystem::instance()
+                self.resolved_github_dirname = FileSystem::get()
                     .dirname_store()
                     .append(root)
                     .expect("unreachable");
             }
         }
 
-        let kind = bun_sys::kind_from_mode(entry.filetype() as Mode);
+        let kind = entry.kind();
 
         if self.npm_mode && kind != FileKind::File {
-            // npm tarballs only contain files; matching the libarchive path
-            // in Archiver.extractToDir we skip everything else.
-            self.phase = Phase::WantData;
-            self.out = None;
+            // npm tarballs only contain files; like Archiver.extractToDir
+            // we skip everything else.
             return Ok(());
         }
 
@@ -794,8 +587,6 @@ impl TarballStream {
             .split(|c| *c == ('/' as OSPathChar))
             .filter(|s| !s.is_empty());
         if tokenizer.next().is_none() {
-            self.phase = Phase::WantData;
-            self.out = None;
             return Ok(());
         }
         // tokenizeScalar.rest() — need byte offset of remainder, not just
@@ -804,31 +595,27 @@ impl TarballStream {
         // straight to `normalize_buf_t` (which takes `&[OSPathChar]`, not a
         // NUL-terminated slice) so there is no need to reconstruct an
         // `OSPathSliceZ` suffix view here.
-        let rest: &[OSPathChar] = tokenize_rest_after_first(&pathname[..], self.npm_mode);
+        let rest: &[OSPathChar] = tokenize_rest_after_first(pathname);
 
         let mut norm_buf = bun_paths::os_path_buffer_pool::get();
-        if rest.len() >= norm_buf.len() {
+        let normalized = if self.npm_mode {
+            bun_archive::normalize_npm_entry_path(entry, &mut norm_buf[..])?
+        } else {
+            (rest.len() < norm_buf.len()).then(|| {
+                resolve_path::normalize_buf_t::<OSPathChar, platform::Auto>(rest, &mut norm_buf[..])
+            })
+        };
+        let Some(normalized) = normalized else {
             bun_core::warn!(
                 "Skipping entry with a path longer than the maximum path length: {}\n",
                 bun_fmt::EscapeControlChars(bun_fmt::fmt_os_path(rest, Default::default())),
             );
-            self.phase = Phase::WantData;
-            self.out = None;
             return Ok(());
-        }
-        let normalized = if self.npm_mode {
-            bun_libarchive::normalize_npm_entry_path(rest, &mut norm_buf[..])
-        } else {
-            resolve_path::normalize_buf_t::<OSPathChar, platform::Auto>(rest, &mut norm_buf[..])
         };
         let norm_len = normalized.len();
         norm_buf[norm_len] = 0;
-        // SAFETY: norm_buf[norm_len] == 0 written above.
-        let path: OSPathZMut =
-            unsafe { OSPathSliceZ::from_raw_mut(norm_buf.as_mut_ptr(), norm_len) };
+        let path = &mut norm_buf[..norm_len];
         if path.is_empty() || (path.len() == 1 && path[0] == ('.' as OSPathChar)) {
-            self.phase = Phase::WantData;
-            self.out = None;
             return Ok(());
         }
         // `normalize_buf_t` collapses interior `..` but leaves a leading `..`
@@ -841,33 +628,25 @@ impl TarballStream {
             && path[1] == ('.' as OSPathChar)
             && (path.len() == 2 || path[2] == bun_paths::SEP as OSPathChar)
         {
-            self.phase = Phase::WantData;
-            self.out = None;
             return Ok(());
         }
         #[cfg(windows)]
         {
-            if bun_paths::is_absolute_windows_wtf16(&path[..]) {
-                self.phase = Phase::WantData;
-                self.out = None;
-                return Ok(());
-            }
             if self.npm_mode {
                 apply_windows_npm_path_escapes(path);
             }
+            if bun_archive::starts_elsewhere_on_windows(path) {
+                return Ok(());
+            }
         }
 
-        // Mutation (Windows escape rewrite) is done; reborrow as shared so
-        // `path` and `path_slice` can coexist.
-        let path: OSPathZ = &*path;
+        let path: OSPathZ = OSPathSliceZ::from_buf(&norm_buf[..], norm_len);
         let path_slice: &[OSPathChar] = &path[..];
-        let dest = self.dest.unwrap();
+        let dest = self.dest.as_ref().unwrap().fd();
 
         match kind {
             FileKind::Directory => {
                 make_directory(entry, dest, path, path_slice);
-                self.phase = Phase::WantData;
-                self.out = None;
             }
             FileKind::File => {
                 #[cfg(windows)]
@@ -876,41 +655,34 @@ impl TarballStream {
                 // archive never reach `openat`'s mode argument.
                 #[cfg(not(windows))]
                 let mode: Mode = Mode::try_from((entry.perm() & 0o777) | 0o666).expect("int cast");
-                let fd = open_output_file(dest, path, path_slice, mode)?;
+                let file = File::from_fd(open_output_file(dest, path, path_slice, mode)?);
                 self.entry_count += 1;
-                self.out = Some(lib::EntryWriter::new(fd));
-                self.phase = Phase::WantData;
+                self.out = Some(bun_archive::EntryWriter::new(file));
             }
-            _ => {
-                self.phase = Phase::WantData;
-                self.out = None;
-            }
+            _ => {}
         }
         Ok(())
     }
+}
 
+impl TarballStream {
     /// # Safety
-    /// `this` must be the live pointer returned by `init()`. Frees `*this`
+    /// `this` must point to the live stream that `init()` boxed. Frees `*this`
     /// — caller must not touch it after return. Takes a raw pointer (not
-    /// `&mut self`) so no Rust reference dangles across the
-    /// `heap::take` self-destruction.
-    // The `&(&(*task).request.extract)` wrappers below are deliberate — they
-    // sidestep `dangerous_implicit_autorefs` by making the ref explicit before
-    // the union deref. `needless_borrow` flags them as redundant but they are not.
-    #[allow(clippy::needless_borrow)]
+    /// `&mut self`) so no Rust reference dangles across the drop of the
+    /// `Box` in `network_task.tarball_stream`.
     unsafe fn finish(this: *mut Self) {
-        // SAFETY: see fn-level # Safety — `this`/`task`/`network`/`manager`
+        // SAFETY: see fn-level # Safety — `this`/`task`/`network`
         // are live raw pointers; this fn is the sole owner. After
-        // `heap::take(this)` nothing touches `this`.
+        // `tarball_stream.take()` is dropped nothing touches `this`.
         unsafe {
             // Fields are already raw pointers (see the struct-level note), so copying
-            // them out before `heap::take(this)` is just a pointer copy — no
+            // them out before the stream is dropped is just a pointer copy — no
             // reborrow of `&mut Task` is ever materialised from a stored `&mut`.
-            let task: *mut Task = (*this).extract_task.as_mut_ptr();
+            let task: *mut Task = (*this).extraction.extract_task.as_mut_ptr();
             let network: *mut NetworkTask = (*this).network_task;
-            let manager: *mut PackageManager = (*this).package_manager;
 
-            (*this).close_output_file();
+            (*this).extraction.out = None;
 
             // The HTTP thread has delivered the final `has_more=false` chunk
             // (that's the only way `closed` gets set) and `notify()` does not
@@ -922,34 +694,23 @@ impl TarballStream {
             // SAFETY: see comment above; network_task is live until published below.
             (*network).response_buffer = Default::default();
 
-            // The HTTP thread delivered its final chunk before `closed` was
-            // set, so `http_err` is stable without the lock.
-            let http_err = (*this).http_err;
-
             // SAFETY: `task` is live until pushed onto `resolve_tasks` below.
-            // `(*this).extract_task` is a raw `*mut Task` (not `&mut`), so this
+            // `(*this).extraction.extract_task` is a raw `*mut Task` (not `&mut`), so this
             // is the only writer — no aliasing with a stored reference.
-            // `populate_result` does not touch `(*this).extract_task`.
-            (*this).populate_result(task, http_err);
-
-            // Temp-dir cleanup must happen before we release the stream or
-            // publish the task: both `(*this).tmpname` and
-            // `task.request.extract.tarball.temp_dir` become invalid once
-            // `Drop` runs / the main thread recycles the Task.
-            // SAFETY: task is live (see above).
-            if (*task).status != TaskStatus::Success && !(*this).tmpname.is_empty() {
-                // `populate_result` closes `dest` on the success path before the
-                // rename; the early-return failure paths leave it open, so close
-                // it here first — Windows can't remove an open directory.
-                if let Some(d) = (*this).dest.take() {
-                    d.close();
+            // `populate_result` does not touch `(*this).extraction.extract_task`.
+            let Job::Extract { tarball, data, .. } = &mut (*task).job else {
+                unreachable!("`create_extract_task_for_streaming` built it");
+            };
+            match (*this).populate_result(tarball, &mut (*task).log) {
+                Ok(extracted) => {
+                    *data = Some(extracted);
+                    (*task).err = None;
+                    (*task).status = TaskStatus::Success;
                 }
-                // SAFETY: task is live (see above). `request` is an untagged
-                // union; `extract` is the active variant. Explicit `&` (no
-                // implicit autoref through the raw-ptr deref) for the
-                // `ManuallyDrop` → `ExtractRequest` deref.
-                let _ = Dir::borrow(&(&(*task).request.extract).tarball.temp_dir)
-                    .delete_tree((*this).tmpname.as_bytes());
+                Err(err) => {
+                    (*task).err = Some(err);
+                    (*task).status = TaskStatus::Fail;
+                }
             }
 
             if let Some(crate::Error::Http(err)) = (*task).err
@@ -963,16 +724,14 @@ impl TarballStream {
                 (*network).response.fail = Some(err);
                 (*network).streaming_committed = false;
                 drop((*network).tarball_stream.take());
-                (*manager)
-                    .async_network_task_queue
-                    .push(core::ptr::NonNull::new_unchecked(network));
-                PackageManager::wake_raw(manager);
+                (INBOX.network_tasks).push(core::ptr::NonNull::new_unchecked(network));
+                INBOX.wake();
                 return;
             }
 
             // The `Box<TarballStream>` lives in `(*network).tarball_stream`
-            // (runTasks.rs:1863 stores `Some(heap::take(init(..)))` there). Take
-            // it out via the Option and drop the Box — this both runs `Drop` and
+            // (`generate_network_task_for_tarball` stores `Some(init(..))` there). Take
+            // it out via the Option and drop the Box — this both frees it and
             // leaves `tarball_stream = None` so `HiveArray::put`'s
             // `drop_in_place<NetworkTask>` (1e76047) does not double-free a
             // dangling Box. Before 1e76047 the dangling `Some` was harmless
@@ -984,191 +743,135 @@ impl TarballStream {
             );
             drop((*network).tarball_stream.take());
 
-            // `task.apply_patch_task` is intentionally not touched: the
-            // buffered `.extract` path (`enqueue_extract_npm_package` →
-            // `Task.callback`) never populates it for npm tarballs either —
-            // patching is handled later by the install phase.
-            //
             // Publish last: once the task is on `resolve_tasks` the main
             // thread may immediately recycle it *and* the NetworkTask it
             // references, so nothing below this line may touch either.
-            // SAFETY: manager/task outlive this stream by construction; manager
-            // is `*mut` and shared across
-            // threads, so we mutate via raw-ptr deref without forming a
-            // long-lived `&mut PackageManager`.
-            (*manager)
-                .resolve_tasks
-                .push(core::ptr::NonNull::new_unchecked(task));
-            PackageManager::wake_raw(manager);
+            (INBOX.resolve_tasks).push(core::ptr::NonNull::new_unchecked(task));
+            INBOX.wake();
         } // unsafe
     }
 
-    /// # Safety
-    /// `task` must be live and exclusively owned by this drain. Takes a raw
-    /// pointer so `tarball` (a borrow into
-    /// `task.request`) can coexist with writes to `task.log`/`task.data`.
-    // The `&(&(*task).request.extract)` wrapper below sidesteps
-    // `dangerous_implicit_autorefs`; `needless_borrow` is wrong here.
-    #[allow(clippy::needless_borrow)]
-    unsafe fn populate_result(&mut self, task: *mut Task, http_err: Option<crate::Error>) {
-        // SAFETY: see fn-level # Safety — `task` is live and exclusively
-        // owned by this drain; union field `extract` is the active variant
-        // for streaming tarballs (set by `enqueue_extract_npm_package`).
-        unsafe {
-            let tarball = &(&(*task).request.extract).tarball;
-            (*task).data = TaskData {
-                extract: ManuallyDrop::new(Default::default()),
-            };
-            (*task).err = None;
-
-            if let Some(err) = self.fail {
-                if matches!(err, crate::Error::Http(_)) {
-                    // Reported (or retried) by `run_tasks`; see `finish()`.
-                } else if self.invalid_name {
-                    (*task).log.add_error_fmt(
-                        None,
-                        bun_ast::Loc::EMPTY,
-                        format_args!(
-                            "Refusing to install package with invalid name \"{}\"",
-                            bun_fmt::for_terminal(bstr::BStr::new(tarball.name_and_basename().0)),
-                        ),
-                    );
-                } else {
-                    (*task).log.add_error_fmt(
-                        None,
-                        bun_ast::Loc::EMPTY,
-                        format_args!(
-                            "{} extracting tarball for \"{}\"{}{} (at byte {} of {})",
-                            err.name(),
-                            bun_fmt::for_terminal(bstr::BStr::new(tarball.name.slice())),
-                            if self.fail_detail.is_empty() {
-                                ""
-                            } else {
-                                ": "
-                            },
-                            bun_fmt::EscapeControlChars(bstr::BStr::new(&self.fail_detail)),
-                            self.bytes_consumed,
-                            self.content_length
-                                .as_ref()
-                                .map_or(&"unknown" as &dyn core::fmt::Display, |n| n),
-                        ),
-                    );
-                }
-                (*task).err = Some(err);
-                (*task).status = TaskStatus::Fail;
-                return;
-            }
-
-            if !tarball.skip_verify && tarball.integrity.tag.is_supported() {
-                if !self.hasher.verify() {
-                    if let Some(http_err) = http_err {
-                        // libarchive found the end-of-archive marker but the
-                        // body still ended early (gzip trailer, tar padding):
-                        // the same failed download as above.
-                        (*task).err = Some(http_err);
-                        (*task).status = TaskStatus::Fail;
-                        return;
-                    }
-                    (*task).log.add_error_fmt(
-                        None,
-                        bun_ast::Loc::EMPTY,
-                        format_args!(
-                            "Integrity check failed for tarball: {}",
-                            bun_fmt::for_terminal(bstr::BStr::new(tarball.name.slice())),
-                        ),
-                    );
-                    (*task).err = Some(crate::Error::IntegrityCheckFailed);
-                    (*task).status = TaskStatus::Fail;
-                    return;
-                }
-            }
-
-            if tarball.resolution.tag == ResolutionTag::Github {
-                'insert_tag: {
-                    if self.resolved_github_dirname.is_empty() {
-                        break 'insert_tag;
-                    }
-                    if bun_sys::File::openat(
-                        self.dest.unwrap(),
-                        bun_core::zstr!(".bun-tag"),
-                        O::WRONLY
-                            | O::CREAT
-                            | O::TRUNC
-                            | if cfg!(windows) { 0 } else { O::NOFOLLOW },
-                        0o664,
-                    )
-                    .and_then(|f| f.write_all(self.resolved_github_dirname))
-                    .is_err()
-                    {
-                        let _ = bun_sys::unlinkat(self.dest.unwrap(), bun_core::zstr!(".bun-tag"));
-                    }
-                }
-            }
-
-            // Close the temp dir handle before renaming so Windows can move it.
-            if let Some(d) = self.dest.take() {
-                d.close();
-            }
-
-            let (name, basename) = tarball.name_and_basename();
-
-            let integrity = tarball.lockfile_integrity(|| self.hasher.final_());
-            let mut result = match tarball.move_to_cache_directory(
-                &mut (*task).log,
-                StagedEntry::new(tarball.temp_dir, self.tmpname.as_zstr()),
-                name,
-                basename,
-                self.resolved_github_dirname,
-                &integrity,
-            ) {
-                Ok(r) => r,
-                Err(err) => {
-                    (*task).err = Some(err);
-                    (*task).status = TaskStatus::Fail;
-                    return;
-                }
-            };
-            result.integrity = integrity;
-
-            if PackageManager::verbose_install() {
-                bun_core::pretty_errorln!(
-                    "[{}] Streamed {} tarball → {} entries<r>",
-                    bun_fmt::for_terminal(bstr::BStr::new(name)),
-                    bun_fmt::size(self.bytes_received, Default::default()),
-                    self.entry_count,
+    fn populate_result(
+        &mut self,
+        tarball: &crate::ExtractTarball,
+        log: &mut bun_ast::Log,
+    ) -> Result<crate::ExtractData, crate::Error> {
+        if let Some(err) = self.fail {
+            if matches!(err, crate::Error::Http(_)) {
+                // Reported (or retried) by `run_tasks`; see `finish()`.
+            } else if self.extraction.invalid_name {
+                log.add_error_fmt(
+                    None,
+                    bun_ast::Loc::EMPTY,
+                    format_args!(
+                        "Refusing to install package with invalid name \"{}\"",
+                        bun_fmt::for_terminal(bstr::BStr::new(tarball.name_and_basename().0)),
+                    ),
                 );
-                Output::flush();
+            } else {
+                log.add_error_fmt(
+                    None,
+                    bun_ast::Loc::EMPTY,
+                    format_args!(
+                        "{} extracting tarball for \"{}\"{}{} (at byte {} of {})",
+                        err.name(),
+                        bun_fmt::for_terminal(bstr::BStr::new(tarball.name.slice())),
+                        if self.extraction.fail_detail.is_empty() {
+                            ""
+                        } else {
+                            ": "
+                        },
+                        bun_fmt::EscapeControlChars(bstr::BStr::new(&self.extraction.fail_detail)),
+                        self.extraction.bytes_consumed,
+                        self.content_length
+                            .as_ref()
+                            .map_or(&"unknown" as &dyn core::fmt::Display, |n| n),
+                    ),
+                );
             }
+            return Err(err);
+        }
 
-            (*task).data = TaskData {
-                extract: ManuallyDrop::new(result),
-            };
-            (*task).status = TaskStatus::Success;
-        } // unsafe
+        if !tarball.skip_verify && tarball.integrity.tag.is_supported() {
+            if !self.hasher.verify() {
+                if let Some(http_err) = self.incoming.get_mut().http_err {
+                    // The decoder found the end-of-archive marker but the
+                    // body still ended early (gzip trailer, tar padding):
+                    // the same failed download as above.
+                    return Err(http_err);
+                }
+                log.add_error_fmt(
+                    None,
+                    bun_ast::Loc::EMPTY,
+                    format_args!(
+                        "Integrity check failed for tarball: {}",
+                        bun_fmt::for_terminal(bstr::BStr::new(tarball.name.slice())),
+                    ),
+                );
+                return Err(crate::Error::IntegrityCheckFailed);
+            }
+        }
+
+        if (self.decoder.as_ref()).is_some_and(tar::Decoder::skipped_header) {
+            tarball.warn_about_skipped_header(log);
+        }
+
+        if tarball.resolution.tag == ResolutionTag::Github {
+            'insert_tag: {
+                if self.extraction.resolved_github_dirname.is_empty() {
+                    break 'insert_tag;
+                }
+                let dest = self.extraction.dest.as_ref().unwrap().fd();
+                if File::openat(
+                    dest,
+                    bun_core::zstr!(".bun-tag"),
+                    O::WRONLY | O::CREAT | O::TRUNC | if cfg!(windows) { 0 } else { O::NOFOLLOW },
+                    0o664,
+                )
+                .and_then(|f| f.write_all(self.extraction.resolved_github_dirname))
+                .is_err()
+                {
+                    let _ = bun_sys::unlinkat(dest, bun_core::zstr!(".bun-tag"));
+                }
+            }
+        }
+
+        // Close the temp dir handle before renaming so Windows can move it.
+        self.extraction.dest = None;
+
+        let (name, basename) = tarball.name_and_basename();
+
+        let integrity = tarball.lockfile_integrity(|| self.hasher.final_());
+        let staging = self.extraction.staging.take().unwrap();
+        let mut result = staging.finish(|staged| {
+            let resolved = self.extraction.resolved_github_dirname;
+            tarball.move_to_cache_directory(log, staged, name, basename, resolved, &integrity)
+        })?;
+        result.integrity = integrity;
+
+        if PackageManager::verbose_install() {
+            bun_core::pretty_errorln!(
+                "[{}] Streamed {} tarball → {} entries<r>",
+                bun_fmt::for_terminal(bstr::BStr::new(name)),
+                bun_fmt::size(self.incoming.get_mut().bytes_received, Default::default()),
+                self.extraction.entry_count,
+            );
+            Output::flush();
+        }
+
+        Ok(result)
     }
 
     /// Prepare this stream for another HTTP attempt after a failed request
     /// that never scheduled a drain.
     pub(crate) fn reset_for_retry(&mut self) {
-        self.mutex.lock();
-        self.pending.clear();
-        self.closed = false;
-        self.http_err = None;
+        let incoming = self.incoming.get_mut();
+        incoming.pending.clear();
+        incoming.closed = false;
+        incoming.http_err = None;
+        incoming.bytes_received = 0;
         self.status_code = 0;
-        self.bytes_received = 0;
         self.content_length = None;
-        self.mutex.unlock();
-    }
-}
-
-impl Drop for TarballStream {
-    fn drop(&mut self) {
-        if let Some(out) = self.out.take() {
-            out.fd().close();
-        }
-        if let Some(d) = self.dest {
-            d.close();
-        }
     }
 }
 
@@ -1187,98 +890,6 @@ fn drain_callback(task: *mut thread_pool::Task) {
     // the callback, and only one drain runs at a time (see `draining` flag).
     // `drain` may free `this`; nothing touches it after this call.
     unsafe { TarballStream::drain(this) };
-}
-
-/// libarchive client read callback. Returns whatever compressed bytes
-/// are currently buffered in `reading`; if none, returns `ARCHIVE_RETRY`
-/// (when more data is still expected) so libarchive unwinds with a
-/// resumable status, or `0` (EOF) once the HTTP response is complete.
-///
-/// Safe-fn: only ever invoked by libarchive itself (never from Rust), with
-/// `ctx`/`out_buffer` it threaded through from `open_archive()`. Every
-/// pointer dereference inside carries its own SAFETY justification grounded
-/// in that setup, so there is no caller-side precondition to encode in the
-/// signature. The fn-pointer still coerces to the binding's expected type.
-extern "C" fn archive_read_callback(
-    _a: *mut lib::Archive,
-    ctx: *mut c_void,
-    out_buffer: *mut *const c_void,
-) -> lib::la_ssize_t {
-    // SAFETY: `ctx` is the Box-rooted `*mut TarballStream` threaded from
-    // `drain()` → `step()` → `open_archive()`; libarchive passes it back
-    // unchanged. `step()`/`open_archive()` take `*mut Self` (not
-    // `&mut self`) precisely so this pointer's provenance survives every
-    // re-entry — see `step()` # Safety. We keep `this` as a raw pointer and
-    // access fields through it directly; no `&mut TarballStream` is live anywhere on the
-    // call stack while libarchive runs. All fields touched here (`reading`,
-    // `read_pos`, `mutex`, `pending`, `closed`, `hasher`) are drain-side /
-    // mutex-guarded and are not accessed by `step()` across the FFI call
-    // boundary.
-    let this: *mut TarballStream = ctx.cast::<TarballStream>();
-
-    // SAFETY: `this` is valid (see above); `reading`/`read_pos` are owned by
-    // the single active drain task.
-    unsafe {
-        // Explicit `&` on the `Vec` field (no implicit autoref through the
-        // raw-ptr deref) for `Index::index`.
-        let remaining = &(&(*this).reading)[(*this).read_pos..];
-        if !remaining.is_empty() {
-            *out_buffer = remaining.as_ptr().cast();
-            (*this).read_pos = (*this).reading.len();
-            (*this).bytes_consumed += remaining.len();
-            (*this).archive_holds_reading = true;
-            return lib::la_ssize_t::try_from(remaining.len()).expect("int cast");
-        }
-        (*this).archive_holds_reading = false;
-    }
-
-    // No data left in `reading`. Check for more under the lock —
-    // libarchive may have called us more than once for a single
-    // `step()` (e.g. gzip header + first deflate block), and `on_chunk`
-    // might have landed a fresh chunk in the meantime.
-    // SAFETY: `mutex`/`pending`/`closed` accessed via raw ptr; producer side
-    // is synchronised by the mutex itself.
-    let (has_pending, closed) = unsafe {
-        (*this).mutex.lock();
-        let r = (!(*this).pending.is_empty(), (*this).closed);
-        (*this).mutex.unlock();
-        r
-    };
-
-    if has_pending {
-        // Pull the new bytes into `reading` and retry the read. We are
-        // the only consumer of `reading`/`read_pos`, and `take_pending`
-        // only touches producer state under the same mutex.
-        // SAFETY: `take_pending` takes `*mut Self` and accesses fields via
-        // raw-ptr projection, never forming `&mut TarballStream`; `step()`
-        // holds no `&mut TarballStream` across the libarchive call that
-        // re-entered us.
-        unsafe {
-            let _ = TarballStream::take_pending(this);
-            // Explicit `&` on the `Vec` field (no implicit autoref through
-            // the raw-ptr deref) for `Index::index`.
-            let again = &(&(*this).reading)[(*this).read_pos..];
-            if !again.is_empty() {
-                *out_buffer = again.as_ptr().cast();
-                (*this).read_pos = (*this).reading.len();
-                (*this).bytes_consumed += again.len();
-                (*this).archive_holds_reading = true;
-                return lib::la_ssize_t::try_from(again.len()).expect("int cast");
-            }
-        }
-    }
-
-    if closed {
-        // SAFETY: out_buffer is a valid out-param; ptr is unused when len==0.
-        unsafe { *out_buffer = this.cast() };
-        return 0;
-    }
-
-    // Tell libarchive to unwind with a resumable status. The BUN PATCHes
-    // in vendor/libarchive make every layer (filter_ahead → gzip → tar)
-    // preserve its state and propagate ARCHIVE_RETRY to our `step()`
-    // loop, which then returns so this worker can be reused.
-    lib::Result::Retry as lib::la_ssize_t
 }
 
 fn open_output_file(
@@ -1325,7 +936,7 @@ fn open_output_file(
     }
 }
 
-fn make_directory(entry: &mut lib::Entry, dest_fd: Fd, path: OSPathZ, path_slice: &[OSPathChar]) {
+fn make_directory(entry: &tar::Entry, dest_fd: Fd, path: OSPathZ, path_slice: &[OSPathChar]) {
     #[cfg(windows)]
     {
         let _ = bun_sys::make_path::make_path::<u16>(Dir::borrow(&dest_fd), &path[..]);
@@ -1333,7 +944,11 @@ fn make_directory(entry: &mut lib::Entry, dest_fd: Fd, path: OSPathZ, path_slice
     }
     #[cfg(not(windows))]
     {
-        match bun_sys::mkdirat_z(dest_fd, path, bun_libarchive::directory_mode(entry.perm())) {
+        match bun_sys::mkdirat_z(
+            dest_fd,
+            path,
+            bun_archive::directory_mode(entry.perm() as Mode),
+        ) {
             Ok(()) => {}
             Err(e) => match e.get_errno() {
                 bun_sys::E::EEXIST | bun_sys::E::ENOTDIR => {}
@@ -1350,15 +965,11 @@ fn make_directory(entry: &mut lib::Entry, dest_fd: Fd, path: OSPathZ, path_slice
 }
 
 #[cfg(windows)]
-fn apply_windows_npm_path_escapes(path: OSPathZMut) {
+fn apply_windows_npm_path_escapes(path: &mut [OSPathChar]) {
     // Same transformation as Archiver.extractToDir: encode characters
     // Windows rejects in filenames into the 0xf000 private-use range so
     // the extraction round-trips with node-tar.
-    let mut remain: &mut [OSPathChar] = path.as_mut_slice();
-    if strings::starts_with_windows_drive_letter_t(&*remain) {
-        remain = &mut remain[2..];
-    }
-    for ch in remain.iter_mut() {
+    for ch in path.iter_mut() {
         match *ch {
             c if c == ('|' as OSPathChar)
                 || c == ('<' as OSPathChar)
@@ -1376,11 +987,9 @@ fn apply_windows_npm_path_escapes(path: OSPathZMut) {
 // Skips any leading `/` delimiters, then returns everything after the first
 // path component, so for `"package/index.js"` the result is `"index.js"`
 // (no leading `/`).
-// With `npm`, leading `/` delimiters are not skipped. As in npm, the empty name before them is the
-// first component, so for `"/package/index.js"` the result is `"package/index.js"`.
-fn tokenize_rest_after_first(s: &[OSPathChar], npm: bool) -> &[OSPathChar] {
+fn tokenize_rest_after_first(s: &[OSPathChar]) -> &[OSPathChar] {
     let mut i = 0;
-    while !npm && i < s.len() && s[i] == ('/' as OSPathChar) {
+    while i < s.len() && s[i] == ('/' as OSPathChar) {
         i += 1;
     }
     while i < s.len() && s[i] != ('/' as OSPathChar) {
@@ -1392,7 +1001,5 @@ fn tokenize_rest_after_first(s: &[OSPathChar], npm: bool) -> &[OSPathChar] {
     &s[i..]
 }
 
-// Resolved Phase-B paths: Resolution::Tag is the real npm/git/tarball
-// discriminant; Data/Status live on PackageManagerTask.
-use crate::package_manager_task::{Data as TaskData, Status as TaskStatus};
+use crate::package_manager_task::{Job, Status as TaskStatus, Task};
 use crate::resolution::Tag as ResolutionTag;

@@ -1,0 +1,10 @@
+# nobody reads the frames of an error that the rehearsal makes: they would be the frames of the rehearsal. Its realm begins with Error.stackTraceLimit at 0, so the engine gathers none.
+# The program may lay the limit as it likes and reads back what it laid.
+# -- source: errors-of-the-rehearsal-gather-no-frames.ts
+# new RegExp("limit" + Error.stackTraceLimit);
+# Error.stackTraceLimit = 7;
+# new RegExp("laid" + Error.stackTraceLimit);
+# -- end of source
+# RUN: regexp-texts mechanisms=all
+# CHECK: text /laid7/
+# CHECK: text /limit0/

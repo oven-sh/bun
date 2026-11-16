@@ -1,0 +1,18 @@
+# JSON.parse("null")(Bun.build)
+# The control: whoever gets the function calls it with options that nobody knows, and the program itself handed it on.
+# RUN: features
+# CHECK: feature JIT by BunBuild named at f0
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=JSON
+    v1 = PropGet v0 key="parse"
+    v2 = String string="null"
+    v3 = Call v1, v0, v2 calleeKey="parse"
+    v4 = Builtin builtin=Bun
+    v5 = PropGet v4 key="build"
+    v6 = Convert v5 declared={type=builtin(BunBuild) flags=[IsExpected]}
+    v7 = Call v3, -, v6
+    Return v7
+}

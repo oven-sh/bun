@@ -46,16 +46,10 @@ impl RuntimeTranspilerCacheExt for RuntimeTranspilerCache {
     }
 }
 
-// ══════════════════════════════════════════════════════════════════════════
-// `Entry`/`Contents`/`ExternalFreeFunction` are defined
-// canonically in `bun_resolver::cache` (lower tier) because `Resolver.caches`
-// is typed by them and the resolver crate cannot depend on the bundler.
-// Re-export here so `crate::cache::Entry` and `bun_resolver::cache::Entry`
-// are the SAME nominal type — `ParseTask::get_code_for_parse_task_*` receives
-// a resolver-produced `Entry` and hands it to bundler-typed consumers without
-// a structural shim. See src/resolver/lib.rs `pub mod cache`.
-// ══════════════════════════════════════════════════════════════════════════
-pub use bun_resolver::cache::{Contents, Entry, ExternalFreeFunction};
+pub use bun_resolver::cache::ExternalFreeFunction;
+
+/// What a parse task parses. A worker's arena, the bundle or a plugin owns the bytes.
+pub(crate) type Entry<'a> = bun_resolver::cache::Entry<&'a [u8]>;
 
 pub struct JavaScript {}
 
@@ -74,14 +68,14 @@ impl JavaScript {
         opts: js_parser::ParserOptions<'a>,
         defines: &'a Define,
         log: &mut bun_ast::Log,
-        source: &'a bun_ast::Source,
+        source: &'a bun_ast::Source<'a>,
     ) -> Result<Option<js_parser::Result<'a>>, crate::Error> {
         let mut temp_log = bun_ast::Log::init();
         temp_log.level = log.level;
         let parser = match js_parser::Parser::init(opts, &mut temp_log, source, defines, bump) {
             Ok(p) => p,
             Err(_) => {
-                let _ = temp_log.append_to_maybe_recycled(log, source);
+                temp_log.append_to(log);
                 return Ok(None);
             }
         };
@@ -103,23 +97,23 @@ impl JavaScript {
                 if temp_log.errors == 0 {
                     log.add_range_error(Some(source), bun_ast::Range::None, err.name().as_bytes());
                 }
-                let _ = temp_log.append_to_maybe_recycled(log, source);
+                temp_log.append_to(log);
                 return Ok(None);
             }
         };
 
-        let _ = temp_log.append_to_maybe_recycled(log, source);
+        temp_log.append_to(log);
         Ok(Some(result))
     }
 
     pub fn scan<'a>(
         &mut self,
         bump: &'a Bump,
-        scan_pass_result: &mut js_parser::ScanPassResult,
+        scan_pass_result: &mut js_parser::ScanPassResult<'a>,
         opts: js_parser::ParserOptions<'a>,
         defines: &'a Define,
         log: &mut bun_ast::Log,
-        source: &'a bun_ast::Source,
+        source: &'a bun_ast::Source<'a>,
     ) -> Result<(), crate::Error> {
         if strings::trim(source.contents(), b"\n\t\r ").is_empty() {
             return Ok(());
@@ -127,19 +121,18 @@ impl JavaScript {
 
         let mut temp_log = bun_ast::Log::init();
         // scopeguard cannot capture &mut temp_log while it's used below;
-        // explicit `append_to_maybe_recycled` calls at each exit.
+        // explicit `append_to` calls at each exit.
 
-        let mut parser = match js_parser::Parser::init(opts, &mut temp_log, source, defines, bump) {
+        let parser = match js_parser::Parser::init(opts, &mut temp_log, source, defines, bump) {
             Ok(p) => p,
             Err(_) => {
-                let _ = temp_log.append_to_maybe_recycled(log, source);
+                temp_log.append_to(log);
                 return Ok(());
             }
         };
 
         let res = parser.scan_imports(scan_pass_result);
-        drop(parser);
-        let _ = temp_log.append_to_maybe_recycled(log, source);
+        temp_log.append_to(log);
         res.map_err(Into::into)
     }
 }

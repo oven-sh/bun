@@ -1,0 +1,41 @@
+The factory of a mock answers a promise that settles behind the call: the object it makes stands in place of the module, read at each use.
+#### later.test.js
+import { mock, test } from "bun:test";
+const act = async (kind, lay, load) => {
+  let reads = 0;
+  const made = { get v() { return "mock " + ++reads; }, f: () => "mock f", extra: 1 };
+  try {
+    await lay(made);
+    const user = await load();
+    console.log("| CASE", kind, "behind the mock |", user.read());
+    made.f = () => "stored f";
+    made.later = 2;
+    console.log("| CASE", kind, "behind a store |", user.read());
+  } catch (error) {
+    console.log("| CASE", kind, "THROWS |", error.constructor.name, error.message.replace(/'\/[^']*\//g, "'"));
+  }
+};
+const later = made => async () => { await 1; return made; };
+test("awaited", () => act("awaited", made => mock.module("./lib-a.js", later(made)), () => import("./user-a.js")));
+test("not awaited", () => act("not awaited", made => { mock.module("./lib-b.js", later(made)); }, () => import("./user-b.js")));
+test("a CommonJS file", () => act("a CommonJS file", made => mock.module("./lib-c.cjs", later(made)), () => import("./user-c.js")));
+#### lib-a.js
+export let v = "real"; export const f = () => "real f"; export default "real default";
+#### lib-b.js
+export let v = "real"; export const f = () => "real f"; export default "real default";
+#### lib-c.cjs
+exports.v = "real"; exports.f = () => "real f";
+#### package.json
+{ "name": "mock-async-factory", "type": "module" }
+#### user-a.js
+import whole, { v, f, missing } from "./lib-a.js";
+import * as all from "./lib-a.js";
+export const read = () => [v, f(), String(missing), typeof whole, Object.keys(all).join()].join(" ");
+#### user-b.js
+import whole, { v, f, missing } from "./lib-b.js";
+import * as all from "./lib-b.js";
+export const read = () => [v, f(), String(missing), typeof whole, Object.keys(all).join()].join(" ");
+#### user-c.js
+import whole, { v, f, missing } from "./lib-c.cjs";
+import * as all from "./lib-c.cjs";
+export const read = () => [v, f(), String(missing), typeof whole, Object.keys(all).join()].join(" ");

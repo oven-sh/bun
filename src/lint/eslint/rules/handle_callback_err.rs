@@ -11,7 +11,7 @@ enum ErrorArgument {
     Pattern(Option<Box<Regex>>),
 }
 
-const EXPECTED: Message = Message::new("expected", "Expected error to be handled.");
+const EXPECTED: &Message = &Message::new("expected", "Expected error to be handled.");
 
 /// Returns the first identifier that `func`'s parameters bind.
 fn first_parameter(func: Func<'_>) -> Option<Pat<'_>> {

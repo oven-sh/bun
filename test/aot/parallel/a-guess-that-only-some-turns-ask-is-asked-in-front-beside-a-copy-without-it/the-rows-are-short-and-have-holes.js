@@ -1,0 +1,4 @@
+// The same lines; the rows are shorter than the size and have holes.
+class Matrix { constructor(modules) { this.size = modules.length; this.modules = modules; } runs() { const { size, modules } = this; let score = 0; const line = get => { let run = 1; for (let i = 1; i <= size; i++) { if (i < size && get(i) === get(i - 1)) { run++; continue; } if (run >= 3) score += run - 2; run = 1; } }; for (let i = 0; i < size; i++) { line(k => modules[i][k]); line(k => modules[k][i]); } return score; } }
+const rows = JSON.parse("[[1,1,1,1,0,0],[0,1,1,1,1,0],[0,0,0,0,1,1],[1,0,1,0,1,0],[1,1,1,1,1,1],[0,0,0,1,1,1]]");
+const ragged = rows.map((row, r) => row.slice(0, 6 - (r % 3))); delete ragged[4][2]; delete ragged[0][0]; const rounds = JSON.parse("2"); for (let t = 0; t < rounds; t++) console.log(new Matrix(ragged).runs());

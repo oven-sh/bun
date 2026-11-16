@@ -1,0 +1,22 @@
+# f1 = scale
+# f2 = append
+# -- source: main.mjs
+# function scale(o, n) { for (let i = 0; i < n; i++) o.d[i] = o.s[i] * 2; return o.d[3]; }
+# function append(o, n) { o.p = 0; for (let i = 0; i < n; i++) o.t[o.p++ & 7] = i; return o.t[3]; }
+# const o = JSON.parse('{"d":0,"s":0,"t":0,"p":0}');
+# o.d = new Float64Array(8); o.s = new Float64Array([1.5, 2, 3, 4, 5, 6, 7, 8]); o.t = new Int32Array(8);
+# print(scale(o, 8), append(o, 20));
+# -- end of source
+# Both fields are read once before the loop. The second is expected of the class of the first.
+# RUN: walk f1:Body mechanisms=all
+# CHECK: testedType=Float64Array
+# CHECK: PutTypedArrayElement
+# CHECK: = GetValueAtSiteOrAbsent {{*}} key="d"
+# CHECK: = GetValueAtSiteOrAbsent {{*}} key="s"
+# A loop that stores under another name reads the array's field before it too.
+# RUN(APPEND): walk f2:Body mechanisms=all
+# APPEND: testedType=Int32Array
+# APPEND: PutTypedArrayElement
+# APPEND: = GetValueAtSiteOrAbsent {{*}} key="t"
+# RUN(ANSWERS): run-in-shell mechanisms=all
+# ANSWERS: 8 19

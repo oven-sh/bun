@@ -11,8 +11,8 @@ pub struct NoNodejsModules {
     allow: FxHashSet<Box<[u8]>>,
 }
 
-const NO_NODEJS_MODULES: Message = Message::new("", "Do not import Node.js builtin module \"{{name}}\"");
-const OXLINT: Message = Message::new("", "Do not import Node.js builtin module `{{module_name}}`");
+const NO_NODEJS_MODULES: &Message = &Message::new("", "Do not import Node.js builtin module \"{{name}}\"");
+const OXLINT: &Message = &Message::new("", "Do not import Node.js builtin module `{{module_name}}`");
 
 pub struct State<'a> {
     /// `None` for oxlint, which only checks the name.

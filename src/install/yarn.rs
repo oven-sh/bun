@@ -478,8 +478,8 @@ fn bind_importer_dependency(
     spec: &mut Vec<u8>,
 ) -> Option<PackageID> {
     let string_bytes = this.buffers.string_bytes.as_slice();
-    if dep.version.tag == dependency::Tag::Workspace {
-        let path = dep.version.workspace().slice(string_bytes);
+    if let dependency::Value::Workspace(workspace) = &dep.version.value {
+        let path = workspace.slice(string_bytes);
         return workspace_id_by_path.get(path).copied();
     }
     // Yarn never locked these peers, so bind them the way loading a bun.lock does.
@@ -509,9 +509,9 @@ fn bind_importer_dependency(
     }
     // yarn.lock spells a `file:` or `link:` path relative to yarn.lock. The parsed path matches
     // that; the literal in a workspace's package.json is relative to the workspace.
-    let (protocol, range) = match dep.version.tag {
-        dependency::Tag::Folder => (b"file:".as_slice(), dep.version.folder()),
-        dependency::Tag::Symlink => (b"link:".as_slice(), dep.version.symlink()),
+    let (protocol, range) = match &dep.version.value {
+        dependency::Value::Folder(folder) => (b"file:".as_slice(), folder),
+        dependency::Value::Symlink(symlink) => (b"link:".as_slice(), symlink),
         _ => (b"".as_slice(), &dep.version.literal),
     };
     spec.clear();
@@ -574,12 +574,12 @@ fn bind_importer_dependencies(
     unlocked
 }
 
-pub(crate) fn migrate_yarn_lockfile<'a>(
-    this: &'a mut Lockfile,
+pub(crate) fn migrate_yarn_lockfile(
+    this: &mut Lockfile,
     manager: &mut PackageManager,
     log: &mut bun_ast::Log,
     data: &[u8],
-) -> Result<LoadResult<'a>, Error> {
+) -> Result<LoadResult, Error> {
     // Yarn reads a file as v1 only when the marker is in the comment lines at its top.
     let is_berry = strings::contains(data, b"\n__metadata:") || data.starts_with(b"__metadata:");
     let has_v1_marker = match strings::index_of(data, b"# yarn lockfile v1") {
@@ -611,7 +611,9 @@ pub(crate) fn migrate_yarn_lockfile<'a>(
         if !dep.behavior.is_workspace() {
             continue;
         }
-        let workspace_path = *dep.version.workspace();
+        let dependency::Value::Workspace(workspace_path) = dep.version.value else {
+            continue;
+        };
         let workspace = append_package_json(this, manager, log, Some(workspace_path))?;
         workspace_id_by_path.put(
             workspace_path.slice(this.buffers.string_bytes.as_slice()),
@@ -921,7 +923,6 @@ pub(crate) fn migrate_yarn_lockfile<'a>(
     )?;
 
     Ok(LoadResult::Ok(lockfile::LoadResultOk {
-        lockfile: this,
         migrated: lockfile::Migrated::Yarn,
         serializer_result: Default::default(),
         format: lockfile::LockfileFormat::Binary,

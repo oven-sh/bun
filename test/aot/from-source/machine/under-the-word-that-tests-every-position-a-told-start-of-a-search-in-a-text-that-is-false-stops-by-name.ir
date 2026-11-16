@@ -1,0 +1,17 @@
+# Fault injection, testing=TreatEqualIntegersAsLess: the code generator compiles `<` of two integers as `<=`. So -1 passes `-1 < at`, after which the walk has proven that `at` is at least zero.
+# The start index of a forward search comes from a clamp against the length, and the clamp omits its lower bound because of that proof.
+# The search routine tests the start index itself, so no memory is touched. It returned a result, and the false range went unnoticed.
+# With CheckBoundsAtRunTime (which --aot-harden=ignore-told-ranges enables), the search itself checks `start <= length`, and a failure crashes the process with a named error.
+# A backward search takes its argument as it is and relies on no proof.
+# RUN(RIGHT): run-in-shell mechanisms=all testing=CheckBoundsAtRunTime
+# RIGHT: 2
+# RIGHT-NEXT: exited with 0
+# RUN(STOPPED): run-in-shell mechanisms=all testing=CheckBoundsAtRunTime,TreatEqualIntegersAsLess
+# STOPPED: bun: internal AOT error: redundancy elimination check failed at {{*}} (found)
+# STOPPED: crashed with
+# -- source: main.ts
+# declare function print(...values: unknown[]): void;
+# declare function id<T>(value: T): T;
+# function found(text: string, from: number): number { let sum = 0; for (let i = 0; i < 2; i++) { const at = (from | 0) + i; if (-1 < at) sum += text.indexOf("3", at); } return sum; }
+# print(found(id("1234567890"), id(-1)));
+# -- end of source

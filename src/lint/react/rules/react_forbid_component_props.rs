@@ -38,9 +38,9 @@ pub struct ForbidComponentProps {
     is_empty_list: bool,
 }
 
-const PROP_IS_FORBIDDEN: Message = Message::new("propIsForbidden", "Prop \"{{prop}}\" is forbidden on Components");
-const CUSTOM: Message = Message::new("", "{{message}}");
-const FORBID_COMPONENT_PROPS: Message = Message::new("", "Prop \"{{prop}}\" is forbidden on Components");
+const PROP_IS_FORBIDDEN: &Message = &Message::new("propIsForbidden", "Prop \"{{prop}}\" is forbidden on Components");
+const CUSTOM: &Message = &Message::new("", "{{message}}");
+const FORBID_COMPONENT_PROPS: &Message = &Message::new("", "Prop \"{{prop}}\" is forbidden on Components");
 
 impl Rule for ForbidComponentProps {
     const META: Meta = Meta::plugin(Plugin::React, "forbid-component-props", Kind::None);

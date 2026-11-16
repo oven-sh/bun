@@ -1,0 +1,18 @@
+# -- source: main.cjs
+# "use strict";
+# class Subject { constructor() { this.subs = []; } subscribe(fn) { this.subs.push(fn); } next(v) { for (const fn of this.subs) fn(v); } }
+# function f(t) { const sub = new Subject(); let s = 0; for (let i = 0; i < 6; i++) sub.subscribe(v => { s += v + i; }); for (let i = 0; i < 24; i++) sub.next(i + t); return s; }
+# let all = 0; for (let t = 0; t < 3; t++) all += f(t);
+# sink(all);
+# -- end of source
+# `fn` is what the iteration yields: each turn makes it anew, so nothing can ask it in front of a typed copy of the loop, and hearing the call that only throws as a call buys nothing.
+# It bears the effects of a throw wherever it stands. Heard as a call it made every turn loud: 8,824 > 15,982 instructions a call.
+# f4 = next
+# RUN: walk f4 mechanisms=all
+# CHECK-LABEL: code f4:Body
+# CHECK: isLoopHead=true
+# CHECK-NOT: calleeName="fn" traits=[mayThrow, mayThrowByRule, mayCollect, mayCallUnknownCode
+# CHECK: Call {{*}}calleeName="fn" traits=[mayThrow, mayThrowByRule, mayCollect, mayTouchMemory]
+# RUN(ANSWERS): run-in-shell globalThis.sink = all => { print(all); };
+# ANSWERS: 6480
+# ANSWERS-NEXT: exited with 0

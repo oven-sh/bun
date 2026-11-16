@@ -1,0 +1,19 @@
+# f5 = silent
+# -- source: main.cjs
+# function Core(n) { this.audioIndex = 0; this.total = 0; this.buffer = null; this.start(n); }
+# Core.prototype.start = function (n) { this.total = (n - (n % 5)) | 0; this.buffer = this.make(this.total, "int32"); };
+# Core.prototype.make = function (n, kind) { try { switch (kind) { case "int8": var v = new Int8Array(n); break; case "int32": var v = new Int32Array(n); break; case "float32": var v = new Float32Array(n); } } catch (e) { var v = []; } return v; };
+# Core.prototype.out = function () { unseen(this); };
+# Core.prototype.silent = function (samples) { while (--samples > -1) { this.buffer[this.audioIndex++] = 0xF0F0; if (this.audioIndex == this.total) { this.audioIndex = 0; this.out(); } } };
+# const unseen = (0, eval)("(function (box) { return globalThis.act ? globalThis.act(box) : 0; })");
+# globalThis.cores = [Core];
+# const core = new Core(400);
+# core.silent(3000);
+# console.log(core.audioIndex, core.buffer[5]);
+# -- end of source
+# The iterations that call nothing go to the header; what is known of the object is asked again behind a call alone.
+# RUN: walk f5 mechanisms=all
+# CHECK: isLoopHead=true:
+# CHECK: isLoopHead=true:
+# CHECK: isLoopHead=true:
+# CHECK-NEXT: IsNotFrozen

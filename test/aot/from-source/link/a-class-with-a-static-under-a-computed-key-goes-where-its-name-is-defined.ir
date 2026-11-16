@@ -1,0 +1,13 @@
+# The control of the-name-of-a-class-above-which-a-constructor-function-stands-is-defined-and-the-class-stays-in-sight.ir: the class itself has a static under a computed key, which may be `name`: the definition may lay over a member that nobody knows: the class goes as before. L0 = Keyed.
+# RUN: link layouts mechanisms=all
+# CHECK: layout L0 changes=[IsFrozen, GainsProperty, LosesProperty, ChangesPrototype, GetsAccessor]
+# -- source: a-class-with-a-static-under-a-computed-key-goes-where-its-name-is-defined.js
+# const key = process.argv.length > 99 ? "other" : "name";
+# class Keyed {
+#   static [key]() { return "a static method"; }
+#   constructor() { this.own = "own"; }
+# }
+# Object.defineProperty(Keyed, "name", { value: "Outer" });
+# const made = new Keyed();
+# console.log(made.own, Keyed.name);
+# -- end of source

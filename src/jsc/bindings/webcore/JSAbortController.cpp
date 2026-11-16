@@ -97,6 +97,7 @@ using JSAbortControllerDOMConstructor = JSDOMConstructor<JSAbortController>;
 
 template<> EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSAbortControllerDOMConstructor::construct(JSGlobalObject* lexicalGlobalObject, CallFrame* callFrame)
 {
+    BUN_REMOVABLE_HOST_FUNCTION_DEFINITION(AbortSignal, JSAbortControllerDOMConstructor::construct);
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     auto* castedThis = uncheckedDowncast<JSAbortControllerDOMConstructor>(callFrame->jsCallee());
@@ -274,11 +275,12 @@ bool JSAbortControllerOwner::isReachableFromOpaqueRoots(JSC::Handle<JSC::Unknown
     return false;
 }
 
-void JSAbortControllerOwner::finalize(JSC::Handle<JSC::Unknown> handle, void* context)
+JSC::WeakHandleOwner::FinalizeResult JSAbortControllerOwner::finalize(JSC::Handle<JSC::Unknown> handle, void* context)
 {
     auto* jsAbortController = static_cast<JSAbortController*>(handle.slot()->asCell());
     auto& world = *static_cast<DOMWrapperWorld*>(context);
     uncacheWrapper(world, &jsAbortController->wrapped(), jsAbortController);
+    return FinalizeResult::KeepImpl;
 }
 
 void JSAbortController::finishCreation(VM& vm)

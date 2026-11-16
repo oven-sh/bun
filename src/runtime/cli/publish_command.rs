@@ -3,6 +3,7 @@ use std::io::Write as _;
 
 use crate::Error;
 use bun_alloc::AllocError;
+use bun_archive::tar;
 use bun_ast::{E, Expr, G};
 use bun_core::MutableString;
 use bun_core::fmt as bun_fmt;
@@ -12,12 +13,10 @@ use bun_http as http;
 use bun_install::package_manager::options::PublishTarget;
 use bun_install::package_manager::workspace_manifests;
 use bun_install::{self as install, Npm, PackageManager, Subcommand};
-use bun_libarchive::lib::{Archive, ArchiveIterator, IteratorResult as ArchiveIterResult};
 use bun_parsers::json as json_mod;
 use bun_paths as path;
 use bun_paths::resolve_path::{join_abs_string_buf_checked, normalize_buf_z_spill};
 use bun_sha_hmac as sha;
-use bun_simdutf_sys::simdutf;
 use bun_sys::dir_iterator as DirIterator;
 use bun_sys::{self, Fd, File, FileKind};
 use bun_url::URL;
@@ -71,20 +70,14 @@ fn is_readme_filename<T: bun_core::NoUninit + Into<u32>>(name: &[T]) -> bool {
         && (name.len() == README.len() || name[README.len()].into() == u32::from(b'.'))
 }
 
-fn archive_ok<T>(result: ArchiveIterResult<T>) -> T {
-    match result {
-        ArchiveIterResult::Result(value) => value,
-        ArchiveIterResult::Err { archive, message } => {
-            Output::err_generic(
-                "{}: {}",
-                (
-                    bstr::BStr::new(message),
-                    bstr::BStr::new(Archive::opaque_ref(archive).error_string()),
-                ),
-            );
-            Global::crash();
+fn archive_ok<T>(result: Result<T, tar::Error>, message: &str) -> Result<T, PackError> {
+    result.map_err(|err| {
+        if matches!(err, tar::Error::Alloc(_)) {
+            return PackError::OutOfMemory;
         }
-    }
+        Output::err_generic("{}: {}", (message, err));
+        Global::crash();
+    })
 }
 
 /// `E::String` erases the lifetime of its bytes, so these have to outlive the printing of the AST.
@@ -99,7 +92,7 @@ fn string_property(key: &'static [u8], value: &'static [u8]) -> G::Property {
 fn object_expr(properties: Vec<G::Property>) -> Expr {
     Expr::init(
         E::Object {
-            properties: G::PropertyList::move_from_list(properties),
+            properties: bun_alloc::AstAlloc::vec_from_iter(properties),
             ..Default::default()
         },
         bun_ast::Loc::EMPTY,
@@ -172,25 +165,26 @@ impl Context {
         let mut maybe_readme: Option<ReadmeInfo> = None;
         let mut files: Vec<Vec<u8>> = Vec::new();
 
-        let mut iter = archive_ok(ArchiveIterator::init(&tarball_bytes));
+        let mut reader = archive_ok(
+            bun_archive::open_memory(&tarball_bytes, tar::Dialect::Npm),
+            "failed to read tarball",
+        )?;
+        let mut os_path_buf: Vec<OSPathChar> = Vec::new();
 
         let mut unpacked_size: usize = 0;
         let mut total_files: usize = 0;
 
         Output::print(format_args!("\n"));
 
-        while let Some(next) = archive_ok(iter.next()) {
-            // SAFETY: `next.entry` is valid until the next `iter.next()` call.
-            let entry = unsafe { &*next.entry };
-            #[cfg(windows)]
-            let pathname: &[OSPathChar] = entry.pathname_w().as_slice();
-            #[cfg(not(windows))]
-            let pathname: &[OSPathChar] = entry.pathname().as_bytes();
+        while let Some(entry) = archive_ok(reader.next_entry(), "failed to read archive header")? {
+            let pathname: &[OSPathChar] = bun_archive::os_path(entry, &mut os_path_buf)
+                .map_err(|_| PackError::OutOfMemory)?;
+            let kind = entry.kind();
 
             let size = usize::try_from(entry.size().max(0)).expect("int cast");
 
             unpacked_size += size;
-            total_files += usize::from(next.kind == FileKind::File);
+            total_files += usize::from(kind == FileKind::File);
 
             // this is option `strip: 1` (npm expects a `package/` prefix for all paths)
             let stripped = (pathname.iter().position(|&c| bun_paths::is_sep_any_t(c)))
@@ -214,7 +208,7 @@ impl Context {
             );
 
             let Some(filename) = stripped else { continue };
-            if next.kind != FileKind::File {
+            if kind != FileKind::File {
                 continue;
             }
             #[cfg(not(windows))]
@@ -228,18 +222,25 @@ impl Context {
             if maybe_package_json_contents.is_none()
                 && strings::eql_case_insensitive_t(filename, b"package.json")
             {
-                maybe_package_json_contents = Some(archive_ok(iter.read_entry_data(&next)?));
+                let mut contents = Vec::new();
+                archive_ok(
+                    reader.read_data(size, &mut contents),
+                    "failed to read archive data",
+                )?;
+                maybe_package_json_contents = Some(contents.into_boxed_slice());
             } else if maybe_readme.is_none() && is_readme_filename(filename) {
-                let contents = archive_ok(iter.read_entry_data(&next)?).into_vec();
                 #[cfg(not(windows))]
                 let filename: Vec<u8> = filename.to_vec();
                 #[cfg(windows)]
                 let filename: Vec<u8> = strings::to_utf8_alloc(filename);
+                let mut contents = Vec::new();
+                archive_ok(
+                    reader.read_data(size, &mut contents),
+                    "failed to read archive data",
+                )?;
                 maybe_readme = Some(ReadmeInfo { filename, contents });
             }
         }
-
-        archive_ok(iter.close());
 
         let Some(package_json_contents) = maybe_package_json_contents else {
             Output::err_generic(
@@ -257,9 +258,7 @@ impl Context {
                 Ok(j) => j,
                 Err(bun_parsers::Error::Alloc(_)) => return Err(PackError::OutOfMemory),
                 Err(_) => {
-                    let _ = manager
-                        .log_mut()
-                        .print(std::ptr::from_mut(Output::error_writer()));
+                    let _ = manager.log_mut().print(Output::error_writer());
                     Output::err_generic("failed to parse tarball package.json", ());
                     Global::crash();
                 }
@@ -672,7 +671,7 @@ impl PublishCommand {
             return false;
         };
 
-        let mut req = manager.registry_request(
+        let req = manager.registry_request(
             http::Method::GET,
             package_url,
             headers.entries,
@@ -680,7 +679,7 @@ impl PublishCommand {
             b"",
         );
 
-        let Ok(res) = manager.send_with_retries(&mut req, &mut response_buf) else {
+        let Ok(res) = manager.send_with_retries(req, &mut response_buf) else {
             return false;
         };
         Self::print_npm_notice(&res);
@@ -728,7 +727,7 @@ impl PublishCommand {
     }
 
     fn send_or_crash(
-        req: &mut http::AsyncHTTP<'_>,
+        req: Box<http::AsyncHTTP<'_>>,
         response_buf: &mut MutableString,
         failure: &str,
     ) -> Result<http::HTTPResponseMetadata, AllocError> {
@@ -799,14 +798,14 @@ impl PublishCommand {
         let mut response_buf = MutableString::init(1024)?;
         let publish_url = Self::package_url(registry, &ctx.package_name);
 
-        let mut req = manager.registry_request(
+        let req = manager.registry_request(
             http::Method::PUT,
             publish_url.clone(),
             publish_headers.entries,
             publish_headers.content.written_slice(),
             publish_req_body,
         );
-        let res = Self::send_or_crash(&mut req, &mut response_buf, "failed to publish package")?;
+        let res = Self::send_or_crash(req, &mut response_buf, "failed to publish package")?;
 
         if res.status_code() < 400 {
             return Ok(true);
@@ -840,7 +839,7 @@ impl PublishCommand {
 
         if !prompt_for_otp {
             Npm::response_error::<false>(
-                &req,
+                publish_url.href,
                 &res,
                 Some((&ctx.package_name, &ctx.package_version)),
                 &mut response_buf,
@@ -858,19 +857,18 @@ impl PublishCommand {
 
         response_buf.reset();
 
-        let mut otp_req = manager.registry_request(
+        let otp_req = manager.registry_request(
             http::Method::PUT,
-            publish_url,
+            publish_url.clone(),
             otp_headers.entries,
             otp_headers.content.written_slice(),
             publish_req_body,
         );
-        let otp_res =
-            Self::send_or_crash(&mut otp_req, &mut response_buf, "failed to publish package")?;
+        let otp_res = Self::send_or_crash(otp_req, &mut response_buf, "failed to publish package")?;
 
         if otp_res.status_code() >= 400 {
             Npm::response_error::<true>(
-                &otp_req,
+                publish_url.href,
                 &otp_res,
                 Some((&ctx.package_name, &ctx.package_version)),
                 &mut response_buf,
@@ -1004,15 +1002,14 @@ impl PublishCommand {
             loop {
                 response_buf.reset();
 
-                let mut req = manager.registry_request(
+                let req = manager.registry_request(
                     http::Method::GET,
                     done_url.clone(),
                     auth_headers.entries.clone()?,
                     auth_headers.content.written_slice(),
                     b"",
                 );
-                let res =
-                    Self::send_or_crash(&mut req, response_buf, "failed to send OTP request")?;
+                let res = Self::send_or_crash(req, response_buf, "failed to send OTP request")?;
 
                 match res.status_code() {
                     202 => {
@@ -1054,7 +1051,7 @@ impl PublishCommand {
                     }
                     _ => {
                         Npm::response_error::<false>(
-                            &req,
+                            done_url.href,
                             &res,
                             Some((&ctx.package_name, &ctx.package_version)),
                             response_buf,
@@ -1180,17 +1177,16 @@ impl PublishCommand {
 
     /// The first README `readdir` returns, as `npm publish` picks it.
     pub(crate) fn find_workspace_readme(abs_workspace_path: &[u8]) -> Option<ReadmeInfo> {
-        let workspace_dir = bun_sys::open_dir_absolute(abs_workspace_path).ok()?;
-        let _close = bun_sys::CloseOnDrop::new(workspace_dir);
+        let workspace_dir = bun_sys::Dir::open(abs_workspace_path).ok()?;
 
-        let mut iter = DirIterator::iterate(workspace_dir);
+        let mut iter = DirIterator::iterate(workspace_dir.fd());
         while let Some(entry) = pack::next_dir_entry(&mut iter, b"") {
             let name = entry.name.slice_u8();
             // Symlinks are not packed, so a symlinked README is not the readme either.
             if entry.kind == bun_sys::EntryKind::File && is_readme_filename(name) {
                 return Some(ReadmeInfo {
                     filename: name.to_vec(),
-                    contents: bun_sys::File::read_from(workspace_dir, name).ok()?,
+                    contents: bun_sys::File::read_from(&workspace_dir, name).ok()?,
                 });
             }
         }
@@ -1357,7 +1353,7 @@ impl PublishCommand {
             bun_sys::O::DIRECTORY,
             0,
         ) {
-            Ok(fd) => fd,
+            Ok(fd) => bun_sys::Dir::from_fd(fd),
             Err(e) => {
                 Output::err(
                     e,
@@ -1368,30 +1364,23 @@ impl PublishCommand {
             }
         };
 
-        let mut dirs: Vec<(Fd, Box<[u8]>)> = vec![(bin_dir, normalized_bin_dir.as_bytes().into())];
+        let mut dirs: Vec<(bun_sys::Dir, Box<[u8]>)> =
+            vec![(bin_dir, normalized_bin_dir.as_bytes().into())];
 
         while let Some((dir, dir_subpath)) = dirs.pop() {
-            let _close = bun_sys::CloseOnDrop::new(dir);
-
-            let mut iter = DirIterator::iterate(dir);
+            let mut iter = DirIterator::iterate(dir.fd());
             while let Some(entry) = pack::next_dir_entry(&mut iter, &dir_subpath) {
-                let name = entry.name.slice_u8();
+                let name = entry.name.as_zstr();
                 let mut join: Vec<u8> = Vec::new();
                 let _ = write!(
                     &mut join,
-                    "{}{}{}\0",
+                    "{}{}{}",
                     bstr::BStr::new(&dir_subpath),
                     // only using posix separators
                     if dir_subpath.is_empty() { "" } else { "/" },
-                    bstr::BStr::new(strings::without_trailing_slash(name)),
+                    bstr::BStr::new(name.as_bytes()),
                 );
-                let join_len = join.len() - 1;
-                let interned: &'static [u8] = cli_dupe(&join);
-                let subpath = &interned[..join_len];
-                // SAFETY: name is the trailing segment of `interned`, NUL-terminated
-                let name = unsafe {
-                    ZStr::from_raw(interned.as_ptr().add(join_len - name.len()), name.len())
-                };
+                let subpath: &'static [u8] = cli_dupe(&join);
 
                 if matches!(name.as_bytes(), b"" | b"." | b"..") {
                     continue;
@@ -1403,10 +1392,10 @@ impl PublishCommand {
                 ));
 
                 if entry.kind == bun_sys::EntryKind::Directory {
-                    let Ok(subdir) = bun_sys::openat(dir, name, bun_sys::O::DIRECTORY, 0) else {
+                    let Ok(subdir) = bun_sys::openat(&dir, name, bun_sys::O::DIRECTORY, 0) else {
                         continue;
                     };
-                    dirs.push((subdir, subpath.into()));
+                    dirs.push((bun_sys::Dir::from_fd(subdir), subpath.into()));
                 }
             }
         }
@@ -1519,14 +1508,7 @@ impl PublishCommand {
             ),
         );
 
-        // SAFETY: `encode_raw` writes exactly `encoded_tarball_len` bytes into the reserved spare
-        // capacity; `fill_spare` commits exactly that count.
-        let count = unsafe {
-            bun_core::vec::fill_spare(&mut buf, encoded_tarball_len, |spare| {
-                let n = simdutf::base64::encode_raw(&ctx.tarball_bytes, spare.as_mut_ptr(), false);
-                (n, n)
-            })
-        };
+        let count = bun_base64::encode_append(&mut buf, &ctx.tarball_bytes);
         debug_assert!(count == encoded_tarball_len);
 
         let _ = write!(&mut buf, "\",\"length\":{}}}}}}}", ctx.tarball_bytes.len());

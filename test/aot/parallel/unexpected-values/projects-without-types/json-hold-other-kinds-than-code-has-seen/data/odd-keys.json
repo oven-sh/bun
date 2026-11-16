@@ -1,0 +1,8 @@
+{
+  "items": [{ "name": "a", "price": 1, "tags": ["x"], "__proto__": { "price": 100, "inherited": true } }, { "name": "b", "__proto__": { "price": 100 }, "tags": [] }],
+  "count": 2,
+  "limit": 10,
+  "constructor": "a text",
+  "toString": null,
+  "hasOwnProperty": 1
+}

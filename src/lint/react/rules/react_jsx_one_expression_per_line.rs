@@ -16,7 +16,7 @@ enum Allow {
     NonJsx,
 }
 
-const MOVE_TO_NEW_LINE: Message = Message::new("moveToNewLine", "`{{descriptor}}` must be placed on a new line");
+const MOVE_TO_NEW_LINE: &Message = &Message::new("moveToNewLine", "`{{descriptor}}` must be placed on a new line");
 
 /// A child that isn't whitespace.
 #[derive(Copy, Clone)]

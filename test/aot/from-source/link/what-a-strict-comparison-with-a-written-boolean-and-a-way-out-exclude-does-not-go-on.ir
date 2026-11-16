@@ -1,0 +1,24 @@
+# -- source: main.cjs
+# 'use strict';
+# class Leaf { constructor(n) { this.n = n; } weigh(by) { return this.n * by.k; } }
+# function make(r) { return r % 3 === 0 ? true : r % 3 === 1 ? false : new Leaf(r); }
+# function keep(kept, v) { if (v === true || v === false) return v; kept.push(0); return [v]; }
+# function keepOnOneWay(kept, v, r) { if (r & 1) { if (v === true) return v; } return [v]; }
+# const by = { k: 3 }, kept = [];
+# let said = 0;
+# for (let r = 0; r < 12; r++) { const held = keep(kept, make(r)); if (held !== true && held !== false) said += held[0].weigh(by); said += typeof keepOnOneWay(kept, make(r), r) === 'object' ? 1 : 2; }
+# print(said + kept.length);
+# -- end of source
+# `answer.weigh(by)` where the answer may be `true` by Link is a call that nobody can follow: Boolean.prototype takes new names: the call is left to unseen code and `by` with it. Behind
+# `if (v === true || v === false) return` no boolean goes on: the uses of v read a join that lets through every object and every primitive but the two. Where one way to a join carries no such
+# comparison, nothing is excluded.
+# f2 = keep, f3 = keepOnOneWay
+# RUN(KEEP): summary f2
+# KEEP: edge Parameter 1 -> [[first]] passes=undefined|null|false|number|string|symbol|bigint
+# KEEP: edge [[first]] -> [[second]] passes=undefined|null|true|number|string|symbol|bigint
+# KEEP: edge [[second]] -> Contents Element of ClassInstance Array
+# KEEP-NOT: edge Parameter 1 -> Contents Element
+# RUN(ONEWAY): summary f3
+# ONEWAY: edge Parameter 1 -> Contents Element of ClassInstance Array
+# RUN(ANSWERS): run-in-shell
+# ANSWERS: 96

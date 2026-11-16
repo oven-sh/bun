@@ -314,7 +314,7 @@ describe("fetch() decodes Content-Encoding case-insensitively", () => {
     await once(server.listen(0, "127.0.0.1"), "listening");
     try {
       const { port } = server.address() as import("node:net").AddressInfo;
-      expect(async () => await fetch(`http://127.0.0.1:${port}/`)).toThrow("UnsupportedTransferEncoding");
+      await expect(async () => await fetch(`http://127.0.0.1:${port}/`)).toThrow("UnsupportedTransferEncoding");
     } finally {
       server.close();
     }
@@ -699,7 +699,7 @@ describe("corrupt compressed responses", () => {
 
   it("redirect loop with a non-empty body rejects with TooManyRedirects", async () => {
     // Real-world 302s carry an HTML body, which routes the intermediate
-    // head through clone_metadata(); hitting the redirect limit must still
+    // head through store_metadata(); hitting the redirect limit must still
     // reject fetch() rather than resolve with that 302.
     const body = "<html><body>Moved.</body></html>";
     const srv = createNetServer(sock => {

@@ -11,10 +11,10 @@ pub struct DefaultPropsMatchPropTypes {
     allow_required_defaults: bool,
 }
 
-const REQUIRED_HAS_DEFAULT: Message =
-    Message::new("requiredHasDefault", "defaultProp \"{{name}}\" defined for isRequired propType.");
-const DEFAULT_HAS_NO_TYPE: Message =
-    Message::new("defaultHasNoType", "defaultProp \"{{name}}\" has no corresponding propTypes declaration.");
+const REQUIRED_HAS_DEFAULT: &Message =
+    &Message::new("requiredHasDefault", "defaultProp \"{{name}}\" defined for isRequired propType.");
+const DEFAULT_HAS_NO_TYPE: &Message =
+    &Message::new("defaultHasNoType", "defaultProp \"{{name}}\" has no corresponding propTypes declaration.");
 
 impl Rule for DefaultPropsMatchPropTypes {
     const META: Meta =

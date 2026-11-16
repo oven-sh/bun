@@ -1,0 +1,18 @@
+# -- source: main.js
+# class Frozen { static 404() { return "not found"; } static describe(n) { return "code " + n; } constructor(n) { this.n = n; } }
+# class Sealed { static get 7() { return "seven"; } static describe(n) { return "sealed " + n; } constructor(n) { this.n = n; } }
+# class Below { 5() { return 5; } more() { return this.n + 1; } constructor(n) { this.n = n; } }
+# Object.freeze(Frozen);
+# Object.seal(Sealed);
+# Object.freeze(Below.prototype);
+# let sum = 0;
+# for (let turn = 0; turn < 300; turn++) sum += new Frozen(turn & 1).n + new Sealed(turn & 1).n + new Below(turn & 1).more();
+# print(Frozen.describe(7), Sealed.describe(3), sum, Object.isFrozen(Frozen), Object.isSealed(Sealed), Object.isFrozen(Below.prototype));
+# -- end of source
+# A member under a number lies in the indexed storage of its holder. Freezing or sealing the holder defines each of its members again as it is, the ones under numbers too.
+# RUN: run-in-shell
+# CHECK: code 7 sealed 3 750 true true true
+# CHECK-NEXT: exited with 0
+# RUN(CALLED): run-in-shell mechanisms=all-Inlining
+# CALLED: code 7 sealed 3 750 true true true
+# CALLED-NEXT: exited with 0

@@ -4,7 +4,7 @@ use bun_collections::VecExt;
 use bun_jsc::{JSGlobalObject, JSValue, JsCell, JsResult};
 use bun_ptr::RefPtr;
 
-use crate::webcore::blob::store::StoreExt as _;
+use crate::webcore::blob::store::Data;
 use crate::webcore::blob::{self, Blob, BlobExt as _, Store};
 use crate::webcore::readable_stream;
 use crate::webcore::streams;
@@ -135,7 +135,7 @@ bun_core::impl_field_parent! { ByteBlobLoader => Source.context; fn shared paren
 impl ByteBlobLoader {
     pub(crate) fn setup(&mut self, blob: &Blob, user_chunk_size: blob::SizeType) {
         // In-place init — `self` is a pre-allocated slot inside `Source`.
-        let store = blob.store.get().as_ref().unwrap().clone();
+        let store = blob.store().unwrap().clone();
         // `Blob` is not `Clone`, so use the non-mutating `resolved_size()` helper.
         let (offset, size) = blob.resolved_size();
         let content_type = if blob.content_type_was_set.get() {
@@ -170,17 +170,13 @@ impl ByteBlobLoader {
 
     pub(crate) fn to_any_blob(&self, global: &JSGlobalObject) -> Option<blob::Any> {
         // Take ownership via detach_store() up front.
-        let store = self.detach_store()?;
+        let mut store = self.detach_store()?;
         if self.offset.get() == 0
             && self.remain.get() == store.size()
             && self.content_type.get().is_empty()
+            && let Some(Data::Bytes(bytes)) = Store::get_mut(&mut store).map(|it| &mut it.data)
         {
-            // SAFETY: `RefPtr<Store>` deref is `&Store`; `to_any_blob` needs `&mut` to move bytes out.
-            // We hold the only outstanding ref (just detached) so exclusive access is sound.
-            if let Some(blob) = unsafe { (*store.as_ptr()).to_any_blob() } {
-                drop(store);
-                return Some(blob);
-            }
+            return Some(blob::Any::from_owned_slice(bytes.take_vec()));
         }
 
         let blob = Blob::init_with_store(store, global);

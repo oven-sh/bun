@@ -11,7 +11,6 @@ use bun_resolver::fs::StatHash;
 use bun_sys::{self, Fd};
 use bun_uws::{AnyRequest, AnyResponse};
 
-use crate::node::types::PathOrFileDescriptor;
 use crate::server::file_response_stream::{
     StartOptions as FileResponseStreamOptions, StreamFd, StreamOwner,
 };
@@ -21,7 +20,6 @@ use bun_jsc::bun_string_jsc;
 use crate::server::{
     AnyServer, FileResponseStream, HTTPStatusText, PendingRequest, RangeRequest, Served,
 };
-use crate::webcore::blob::store::Data as StoreData;
 use crate::webcore::body::Value as BodyValue;
 use crate::webcore::{Blob, FetchHeaders, Response};
 
@@ -159,12 +157,7 @@ impl FileRoute {
                 // `needs_to_read_file()` ⇒ `store` is Some and `data` is `File`.
                 let is_fd = matches!(
                     body_value,
-                    BodyValue::Blob(b)
-                        if matches!(
-                            b.store.get().as_ref().unwrap().data,
-                            StoreData::File(ref f)
-                                if matches!(f.pathlike, PathOrFileDescriptor::Fd(_))
-                        )
+                    BodyValue::Blob(b) if b.file().is_some_and(|f| f.fd().is_some())
                 );
                 if is_fd {
                     return Err(global.throw_todo(

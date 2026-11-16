@@ -709,7 +709,7 @@ impl AnyRoute {
             // are 404'ing when the user goes to the route. You want to find
             // that out immediately so that the health check on startup fails
             // and the process exits with a non-zero status code.
-            if let Some(store) = blob.store.get().as_deref() {
+            if let Some(store) = blob.store() {
                 if let Some(store_path) = store.get_path() {
                     // NOTE: `sys::exists_at_type` takes `&ZStr`; the store
                     // path is a borrowed byte slice. NUL-terminate into a path
@@ -1951,7 +1951,7 @@ where
                 }
 
                 if let Some(body__) = init.fast_get(global, jsc::BuiltinName::Body)? {
-                    match Blob::get::<true, false>(global, body__) {
+                    match Blob::get::<false>(global, body__) {
                         Ok(new_blob) => body = BodyValue::Blob(new_blob),
                         Err(err) => {
                             return Ok(JSPromise::rejected_promise_with_caught_exception(

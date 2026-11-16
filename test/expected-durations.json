@@ -50031,7 +50031,7 @@
     "windows": 100,
     "windows-aarch64": 100
   },
-  "js/bun/s3/s3-moved-store.test.ts": {
+  "js/bun/s3/s3-shared-store.test.ts": {
     "default": 100,
     "asan": 400,
     "musl": 100,

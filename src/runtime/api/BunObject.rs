@@ -1318,7 +1318,7 @@ fn get_s3_default_client(global_this: &JSGlobalObject, _: &JSObject) -> JsResult
         return Ok(v);
     }
     // NOTE (layering): `bun_dotenv::Loader::get_s3_credentials` returns the
-    // T2 POD mirror; lift it into the refcounted `bun_s3_signing::S3Credentials`
+    // T2 POD mirror; lift it into the `bun_s3_signing::S3Credentials`
     // here at the high-tier call site (dotenv ≤T2 may not name s3_signing T5).
     let env_creds =
         crate::webcore::fetch::s3_credentials_from_env(vm.env_loader().get_s3_credentials());
@@ -1337,7 +1337,7 @@ fn get_s3_default_client(global_this: &JSGlobalObject, _: &JSObject) -> JsResult
         Err(err) => return Err(err),
     };
     let client = S3Client {
-        credentials: aws_options.credentials.dupe(),
+        credentials: aws_options.credentials,
         options: aws_options.options,
         acl: aws_options.acl,
         storage_class: aws_options.storage_class,
@@ -1986,7 +1986,6 @@ pub(crate) mod JSZstd {
 // LazyProperty initializers for stdin/stderr/stdout
 mod stdio_stores {
     use super::*;
-    use crate::node::types::PathOrFileDescriptor;
     use crate::webcore::blob::store::{Data, File as FileStore};
     use crate::webcore::blob::{Blob, BlobExt as _, Store};
     use bun_ptr::RefPtr;
@@ -2004,12 +2003,7 @@ mod stdio_stores {
             Err(_) => 0,
         };
         RefPtr::new(Store::new(
-            Data::File(FileStore {
-                pathlike: PathOrFileDescriptor::Fd(fd),
-                is_atty: Some(is_atty),
-                mode,
-                ..Default::default()
-            }),
+            Data::File(FileStore::init_stdio(fd, is_atty, mode)),
             bun_http_types::MimeType::NONE,
         ))
     }

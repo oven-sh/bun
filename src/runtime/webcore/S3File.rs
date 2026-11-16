@@ -38,7 +38,7 @@ where
     F: bun_jsc::ConsoleFormatter,
 {
     writer.write_str(pfmt!("<r>S3Ref<r>", ENABLE_ANSI_COLORS))?;
-    let credentials = s3.get_credentials();
+    let credentials = &s3.credentials;
     // detect virtual host style bucket name
     let bucket_name: &[u8] = if credentials.virtual_hosted_style && !credentials.endpoint.is_empty()
     {
@@ -118,12 +118,7 @@ pub(crate) fn parse_s3_path_or_blob(
         bun_jsc::call_frame::ArgumentsSlice::init(global.bun_vm(), core::slice::from_ref(&path));
     let path_or_blob = PathOrBlob::from_js_no_copy(global, &mut args)?;
     if let PathOrBlob::Blob(blob) = &path_or_blob {
-        if blob.store.get().is_none()
-            || !matches!(
-                blob.store.get().as_ref().unwrap().data,
-                blob::store::Data::S3(_)
-            )
-        {
+        if !blob.is_s3() {
             return Err(global.throw_invalid_arguments(format_args!("{error_message}")));
         }
     }
@@ -172,7 +167,6 @@ fn construct_s3_file_internal_store(
     construct_s3_file_with_s3_credentials(global, path, options, &existing_credentials)
 }
 
-/// if the credentials have changed, we need to clone it, if not we can just ref/deref it
 pub(crate) fn construct_s3_file_with_s3_credentials_and_options(
     global: &JSGlobalObject,
     path: PathLike<'static>,
@@ -183,7 +177,7 @@ pub(crate) fn construct_s3_file_with_s3_credentials_and_options(
     default_storage_class: Option<s3::StorageClass>,
     default_request_payer: bool,
 ) -> JsResult<Blob> {
-    let mut aws_options = <s3::S3Credentials>::get_credentials_with_options(
+    let aws_options = <s3::S3Credentials>::get_credentials_with_options(
         default_credentials,
         default_options,
         options,
@@ -192,52 +186,9 @@ pub(crate) fn construct_s3_file_with_s3_credentials_and_options(
         default_request_payer,
         global,
     )?;
-
-    let credentials = if aws_options.changed_credentials {
-        std::mem::take(&mut aws_options.credentials)
-    } else {
-        default_credentials.clone()
-    };
-    let store = blob::Store::init_s3(path, None, credentials).expect("oom");
-    finish_s3_blob(global, store, &aws_options, options)
-}
-
-pub(crate) fn construct_s3_file_with_s3_credentials(
-    global: &JSGlobalObject,
-    path: PathLike<'static>,
-    options: Option<JSValue>,
-    existing_credentials: &s3::S3Credentials,
-) -> JsResult<Blob> {
-    let mut aws_options = <s3::S3Credentials>::get_credentials_with_options(
-        existing_credentials,
-        Default::default(),
-        options,
-        None,
-        None,
-        false,
-        global,
-    )?;
-    let credentials = std::mem::take(&mut aws_options.credentials);
-    let store = blob::Store::init_s3(path, None, credentials).expect("oom");
-    finish_s3_blob(global, store, &aws_options, options)
-}
-
-/// Shared constructor epilogue: copies the parsed per-request settings onto
-/// the store, wraps it in a `Blob`, and applies an `options.type` override.
-/// Unlike the write path, a non-string or invalid `type` is ignored here.
-fn finish_s3_blob(
-    global: &JSGlobalObject,
-    store: RefPtr<Store>,
-    aws_options: &s3::S3CredentialsWithOptions,
-    options: Option<JSValue>,
-) -> JsResult<Blob> {
-    let s3 = Store::data_mut(&store).as_s3_mut();
-    s3.options = aws_options.options;
-    s3.acl = aws_options.acl;
-    s3.storage_class = aws_options.storage_class;
-    s3.request_payer = aws_options.request_payer;
-
+    let store = Store::init_s3(path, aws_options).expect("oom");
     let blob = Blob::init_with_store(store, global);
+    // Unlike the write path, a non-string or invalid `type` is ignored here.
     if let Some(opts) = options {
         if opts.is_object() {
             if let Some(file_type) = opts.get_truthy(global, "type")? {
@@ -259,8 +210,25 @@ fn finish_s3_blob(
     Ok(blob)
 }
 
-#[derive(Clone, Copy, strum::IntoStaticStr)]
-#[strum(serialize_all = "lowercase")]
+pub(crate) fn construct_s3_file_with_s3_credentials(
+    global: &JSGlobalObject,
+    path: PathLike<'static>,
+    options: Option<JSValue>,
+    existing_credentials: &s3::S3Credentials,
+) -> JsResult<Blob> {
+    construct_s3_file_with_s3_credentials_and_options(
+        global,
+        path,
+        options,
+        existing_credentials,
+        Default::default(),
+        None,
+        None,
+        false,
+    )
+}
+
+#[derive(Clone, Copy)]
 enum StatQuery {
     Exists,
     Size,
@@ -311,16 +279,7 @@ impl S3BlobStatTask {
 
     /// Sends the HEAD request behind `exists()`, `size()` and `stat()`.
     fn start(cx: &bun_jsc::JsThread<'_>, blob: &Blob, query: StatQuery) -> JsResult<JSValue> {
-        let store = match s3_store(blob, cx.global(), query.into()) {
-            Ok(store) => store,
-            Err(err) => {
-                return Ok(bun_jsc::JSPromise::rejected_promise_with_caught_exception(
-                    cx.global(),
-                    err,
-                )?
-                .to_js());
-            }
-        };
+        let store = blob.store().expect("infallible: store present");
         let this = S3BlobStatTask {
             query,
             promise: bun_jsc::JSPromiseStrong::init(cx.global()),
@@ -329,7 +288,7 @@ impl S3BlobStatTask {
         };
         let (promise, s3_store) = (this.promise.value(), store.data.as_s3());
         s3::stat(
-            s3_store.get_credentials(),
+            &s3_store.credentials,
             cx.context(),
             s3_store.path(),
             Box::new(move |result| this.on_resolved(result)),
@@ -351,26 +310,9 @@ impl S3BlobStatTask {
     }
 
     #[inline(never)]
-    pub(crate) fn size(cx: &bun_jsc::JsThread<'_>, blob: &mut Blob) -> JsResult<JSValue> {
+    pub(crate) fn size(cx: &bun_jsc::JsThread<'_>, blob: &Blob) -> JsResult<JSValue> {
         bun_removable_features::removable_definition!(S3Client, Self::size);
         Self::start(cx, blob, StatQuery::Size)
-    }
-}
-
-/// Running script can detach the store from `blob`: clone it first.
-fn s3_store<'a>(
-    blob: &'a Blob,
-    global: &JSGlobalObject,
-    verb: &str,
-) -> JsResult<&'a RefPtr<Store>> {
-    match blob.store() {
-        Some(store) if matches!(store.data, blob::store::Data::S3(_)) => Ok(store),
-        _ => Err(global
-            .err(
-                bun_jsc::ErrorCode::INVALID_THIS,
-                format_args!("{verb} is only possible for s3:// files"),
-            )
-            .throw()),
     }
 }
 
@@ -389,14 +331,16 @@ pub(crate) fn get_presign_url_from(
     let mut method: Method = Method::GET;
     let mut expires: usize = 86400; // 1 day default
 
-    // Our own ref: the option getters below can detach it from `this`.
-    let store = s3_store(this, global, "presign")?.clone();
-    let s3 = store.data.as_s3();
+    let s3 = this
+        .store()
+        .expect("infallible: store present")
+        .data
+        .as_s3();
     // `acl`/`storage_class`/`content_*` deliberately stay at their `None`
     // defaults here — they are only seeded from the store when extra_options
     // is provided (via `getCredentialsWithOptions` below).
     let mut credentials_with_options = s3::S3CredentialsWithOptions {
-        credentials: (**s3.get_credentials()).clone(),
+        credentials: (*s3.credentials).clone(),
         request_payer: s3.request_payer,
         ..Default::default()
     };
@@ -453,11 +397,11 @@ pub(crate) fn get_presign_url_from(
 }
 
 fn get_bucket_name(this: &Blob) -> Option<&[u8]> {
-    let store = this.store.get().as_ref()?;
+    let store = this.store()?;
     if !matches!(store.data, blob::store::Data::S3(_)) {
         return None;
     }
-    let credentials = store.data.as_s3().get_credentials();
+    let credentials = &store.data.as_s3().credentials;
     let mut full_path = store.data.as_s3().path();
     if strings::starts_with(full_path, b"/") {
         full_path = &full_path[1..];

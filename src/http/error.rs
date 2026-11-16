@@ -35,8 +35,6 @@ pub enum Error {
     InvalidURL,
     #[error("ERR_TLS_CERT_ALTNAME_INVALID")]
     ERR_TLS_CERT_ALTNAME_INVALID,
-    #[error("ClientAborted")]
-    ClientAborted,
     #[error("HTTP2Unsupported")]
     HTTP2Unsupported,
     #[error("ConnectionClosed")]
@@ -79,10 +77,6 @@ pub enum Error {
     UnexpectedRedirect,
     #[error("ShortRead")]
     ShortRead,
-    #[error("WantRead")]
-    WantRead,
-    #[error("WantWrite")]
-    WantWrite,
     #[error("HTTP3HandshakeFailed")]
     HTTP3HandshakeFailed,
     #[error("HTTP3ProtocolError")]
@@ -283,7 +277,6 @@ impl Error {
             Self::AbortedBeforeConnecting => "AbortedBeforeConnecting",
             Self::InvalidURL => "InvalidURL",
             Self::ERR_TLS_CERT_ALTNAME_INVALID => "ERR_TLS_CERT_ALTNAME_INVALID",
-            Self::ClientAborted => "ClientAborted",
             Self::HTTP2Unsupported => "HTTP2Unsupported",
             Self::ConnectionClosed => "ConnectionClosed",
             Self::DNSResolveFailed => "DNSResolveFailed",
@@ -305,8 +298,6 @@ impl Error {
             Self::InvalidRedirectURL => "InvalidRedirectURL",
             Self::UnexpectedRedirect => "UnexpectedRedirect",
             Self::ShortRead => "ShortRead",
-            Self::WantRead => "WantRead",
-            Self::WantWrite => "WantWrite",
             Self::HTTP3HandshakeFailed => "HTTP3HandshakeFailed",
             Self::HTTP3ProtocolError => "HTTP3ProtocolError",
             Self::HTTP3HeaderEncodingError => "HTTP3HeaderEncodingError",

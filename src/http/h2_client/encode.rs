@@ -204,7 +204,7 @@ pub(crate) fn write_request(
     session.encode_scratch = encoded;
     if has_inline_body {
         stream.pending_body = body;
-        drain_send_body(session, stream, usize::MAX);
+        write_body(session, client, stream, usize::MAX);
     } else if !is_streaming {
         stream.sent_end_stream();
     }
@@ -305,13 +305,21 @@ pub(crate) fn write_data_windowed(
 /// Push as much of `stream`'s request body as the send windows allow.
 /// Buffers into `write_buffer`; caller flushes.
 pub(crate) fn drain_send_body(session: &mut ClientSession, stream: &mut Stream, cap: usize) {
+    if let Some(mut client) = stream.client.take() {
+        write_body(session, &mut client, stream, cap);
+        stream.client = Some(client);
+    }
+}
+
+fn write_body(
+    session: &mut ClientSession,
+    client: &mut HTTPClient,
+    stream: &mut Stream,
+    cap: usize,
+) {
     if stream.local_closed() || stream.awaiting_continue || stream.fatal_error.is_some() {
         return;
     }
-    let Some(client_ptr) = stream.client else {
-        return;
-    };
-    let client = super::client_session::stream_client_mut(client_ptr);
     match &mut client.state.original_request_body {
         HTTPRequestBody::Bytes(_) => {
             let pending = stream.pending_body;

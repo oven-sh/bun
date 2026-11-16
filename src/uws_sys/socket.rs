@@ -178,9 +178,7 @@ macro_rules! on_socket {
 // NewSocketHandler<IS_SSL>
 // ──────────────────────────────────────────────────────────────────────────
 
-/// The const generic only
-/// selects `*SSL` vs fd for `get_native_handle`; it is NOT forwarded to C —
-/// TLS is per-socket there.
+/// The const generic only gates `ssl`; it is NOT forwarded to C — TLS is per-socket there.
 #[derive(Copy, Clone)]
 pub struct NewSocketHandler<const IS_SSL: bool> {
     pub socket: InternalSocket,
@@ -204,7 +202,7 @@ impl<const IS_SSL: bool> NewSocketHandler<IS_SSL> {
 
     // ── const-generic discriminant casts ────────────────────────────────────
     // Layout is identical (single `InternalSocket` field — the bool only gates
-    // `get_native_handle`); these are safe field moves with a matching debug
+    // `ssl`); these are safe field moves with a matching debug
     // assert that the caller passed the right arm.
     #[inline]
     pub const fn assume_ssl(self) -> NewSocketHandler<true> {
@@ -600,54 +598,33 @@ impl<const IS_SSL: bool> NewSocketHandler<IS_SSL> {
         }
     }
 
-    /// The session an SSLWrapper-backed socket got last from the new-session callback, borrowed.
-    pub fn wrapper_latest_session(&self) -> *mut bun_boringssl_sys::SSL_SESSION {
+    /// The session an SSLWrapper-backed socket got last from the new-session callback.
+    pub fn wrapper_latest_session(&self) -> Option<bun_boringssl_sys::OwnedSslSession> {
         match self.socket {
             InternalSocket::UpgradedDuplex(d) => duplex(d).latest_session(),
             #[cfg(windows)]
             InternalSocket::Pipe(p) => pipe(p).latest_session(),
-            _ => core::ptr::null_mut(),
+            _ => None,
         }
     }
 
-    /// `SSL*` if this is a TLS socket, else `None`.
+    /// `None` if the socket has no `SSL`.
+    ///
+    /// # Safety
+    /// The socket has not been freed, and the result is not used after the socket closes: the close frees the `SSL`.
     #[inline]
-    pub fn ssl(&self) -> Option<*mut bun_boringssl_sys::SSL> {
-        // A connecting socket has no `SSL` yet (its native handle is a
-        // sentinel, not a pointer).
-        if !IS_SSL || matches!(self.socket, InternalSocket::Connecting(_)) {
+    pub unsafe fn ssl<'a>(&self) -> Option<&'a bun_boringssl_sys::SSL> {
+        if !IS_SSL {
             return None;
         }
-        self.get_native_handle().map(|h| h.cast())
-    }
-
-    /// The socket's `SSL` handle as a borrow (`SSL` is a zero-sized opaque,
-    /// so this is the safe spelling of [`ssl`](Self::ssl)).
-    #[inline]
-    pub fn ssl_mut(&self) -> Option<&mut bun_boringssl_sys::SSL> {
-        self.ssl()
-            .filter(|p| !p.is_null())
-            .map(bun_opaque::opaque_deref_mut)
-    }
-
-    /// `*SSL` when `IS_SSL`, raw fd-as-ptr otherwise. Type-erased to
-    /// `*mut c_void` here because const-generic type dispatch
-    /// (`NativeSocketHandleType(is_ssl)`) is unsupported in stable Rust;
-    /// callers `cast()` immediately anyway.
-    pub fn get_native_handle(&self) -> Option<*mut c_void> {
-        match self.socket {
-            InternalSocket::Connected(s) => sock(s).get_native_handle(),
-            InternalSocket::Connecting(s) => {
-                let h = conn(s).get_native_handle();
-                if h.is_null() { None } else { Some(h) }
-            }
-            InternalSocket::UpgradedDuplex(s) if IS_SSL => duplex(s).ssl().map(|p| p.cast()),
-            InternalSocket::UpgradedDuplex(_) => None,
-            #[cfg(windows)]
-            InternalSocket::Pipe(s) if IS_SSL => pipe(s).ssl().map(|p| p.cast()),
-            #[cfg(windows)]
-            InternalSocket::Pipe(_) => None,
-            InternalSocket::Detached => None,
+        // SAFETY: fn contract.
+        unsafe {
+            on_socket!(self.socket;
+                connected s => s.ssl(),
+                duplex d => d.ssl(),
+                pipe p => p.ssl(),
+                else => None,
+            )
         }
     }
 
@@ -971,6 +948,17 @@ impl AnySocket {
         }
     }
 
+    /// # Safety
+    /// As for [`NewSocketHandler::ssl`].
+    #[inline]
+    pub unsafe fn ssl(&self) -> Option<&bun_boringssl_sys::SSL> {
+        match self {
+            AnySocket::SocketTcp(_) => None,
+            // SAFETY: fn contract.
+            AnySocket::SocketTls(s) => unsafe { s.ssl() },
+        }
+    }
+
     any_socket_forward! {
         fn is_closed(&self) -> bool;
         fn is_shutdown(&self) -> bool;
@@ -982,6 +970,5 @@ impl AnySocket {
         fn shutdown(&self);
         fn shutdown_read(&self);
         fn local_port(&self) -> Option<u16>;
-        fn get_native_handle(&self) -> Option<*mut c_void>;
     }
 }

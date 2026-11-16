@@ -158,7 +158,8 @@ unsafe extern "C" fn SHA256(data: *const u8, len: usize, out: *mut u8) -> *mut u
     out
 }
 
-static SHA256_MARKER: u8 = 0;
+/// `u16`, because `EVP_MD` has alignment 2.
+static SHA256_MARKER: u16 = 0;
 
 #[unsafe(no_mangle)]
 #[linkage = "weak"]
@@ -180,6 +181,12 @@ unsafe fn sha256_context<'a>(ctx: *mut EVP_MD_CTX) -> &'a mut SHA256_CTX {
     }
 }
 
+#[unsafe(no_mangle)]
+#[linkage = "weak"]
+extern "C" fn EVP_MD_size(md: *const EVP_MD) -> usize {
+    assert!(md == EVP_sha256(), "only SHA-256 has a stand-in");
+    32
+}
 #[unsafe(no_mangle)]
 #[linkage = "weak"]
 extern "C" fn EVP_MD_CTX_init(ctx: &mut EVP_MD_CTX) {
@@ -219,7 +226,7 @@ unsafe extern "C" fn EVP_DigestUpdate(
 }
 #[unsafe(no_mangle)]
 #[linkage = "weak"]
-unsafe extern "C" fn EVP_DigestFinal(
+unsafe extern "C" fn EVP_DigestFinal_ex(
     ctx: *mut EVP_MD_CTX,
     md_out: *mut u8,
     out_size: *mut c_uint,
@@ -232,8 +239,8 @@ unsafe extern "C" fn EVP_DigestFinal(
         if !out_size.is_null() {
             out_size.write(32);
         }
-        EVP_MD_CTX_cleanup(ctx)
     }
+    1
 }
 #[unsafe(no_mangle)]
 #[linkage = "weak"]
@@ -251,7 +258,7 @@ unsafe extern "C" fn EVP_Digest(
     unsafe {
         EVP_DigestInit(ctx, type_);
         EVP_DigestUpdate(ctx, data, len);
-        EVP_DigestFinal(ctx, md_out, md_out_size)
+        EVP_DigestFinal_ex(ctx, md_out, md_out_size)
     }
 }
 
@@ -497,7 +504,7 @@ mod tests {
             for part in parts {
                 assert_eq!(EVP_DigestUpdate(ctx, part.as_ptr().cast(), part.len()), 1);
             }
-            assert_eq!(EVP_DigestFinal(ctx, digest.as_mut_ptr(), null_mut()), 1);
+            assert_eq!(EVP_DigestFinal_ex(ctx, digest.as_mut_ptr(), null_mut()), 1);
             assert_eq!(EVP_MD_CTX_cleanup(ctx), 1);
         }
         digest

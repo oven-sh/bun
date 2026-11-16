@@ -1084,7 +1084,7 @@ impl ReadWriteLoop {
 #[cfg(windows)]
 extern "C" fn on_read(req: *mut libuv::fs_t) {
     // SAFETY: `req` is the `io_request` of the box that `read_write_loop_read` left to libuv.
-    let mut this = unsafe { bun_core::heap::take(CopyFileWindows::from_uv_fs(req)) };
+    let mut this = unsafe { CopyFileWindows::take_from_uv_fs(req) };
 
     let source_fd = this.read_write_loop.source_fd;
     // reshaped for borrowck — `read_buf.items` is `Vec` len-slice.
@@ -1120,7 +1120,7 @@ extern "C" fn on_read(req: *mut libuv::fs_t) {
 #[cfg(windows)]
 extern "C" fn on_write(req: *mut libuv::fs_t) {
     // SAFETY: `req` is the `io_request` of the box that `read_write_loop_write` left to libuv.
-    let mut this = unsafe { bun_core::heap::take(CopyFileWindows::from_uv_fs(req)) };
+    let mut this = unsafe { CopyFileWindows::take_from_uv_fs(req) };
     let buf_len = this.read_write_loop.read_buf.len();
 
     let destination_fd = this.read_write_loop.destination_fd;
@@ -1531,30 +1531,17 @@ impl CopyFileWindows {
     fn mkdirp(mut self: Box<Self>) {
         bun_sys::syslog!("mkdirp");
         self.mkdirp_if_not_exists = false;
-        let path: *const [u8] = {
-            let destination = &self.destination_file_store.data.as_file();
-            if !matches!(destination.pathlike, PathOrFileDescriptor::Path(_)) {
-                self.throw(bun_sys::Error {
-                    errno: bun_sys::SystemErrno::EINVAL as u16,
-                    syscall: bun_sys::Tag::mkdir,
-                    ..Default::default()
-                });
-                return;
-            }
-            let path_slice = destination.pathlike.path().slice();
-            // BORROW: points into `destination_file_store`, alive until `completion` runs.
-            bun_paths::dirname(path_slice)
-                // this shouldn't happen
-                .unwrap_or(path_slice) as *const [u8]
-        };
+        let destination = self.destination_file_store.data.as_file();
+        if !matches!(destination.pathlike, PathOrFileDescriptor::Path(_)) {
+            self.throw(bun_sys::Error {
+                errno: bun_sys::SystemErrno::EINVAL as u16,
+                syscall: bun_sys::Tag::mkdir,
+                ..Default::default()
+            });
+            return;
+        }
 
-        node_fs::async_::AsyncMkdirp::schedule(node_fs::async_::AsyncMkdirp {
-            completion: on_mkdirp_complete_concurrent,
-            completion_ctx: bun_core::heap::into_raw(self).cast::<()>(),
-            path,
-            ticket: jsc::VirtualMachine::VirtualMachine::get().ticket(),
-            task: Default::default(),
-        });
+        node_fs::async_::AsyncMkdirp::schedule(self);
     }
 
     pub(crate) fn on_mkdirp_complete(mut self: Box<Self>) {
@@ -1579,7 +1566,7 @@ impl Drop for CopyFileWindows {
 #[cfg(windows)]
 extern "C" fn on_copy_file(req: *mut libuv::fs_t) {
     // SAFETY: `req` is the `io_request` of the box that `copyfile` left to libuv.
-    let mut this = unsafe { bun_core::heap::take(CopyFileWindows::from_uv_fs(req)) };
+    let mut this = unsafe { CopyFileWindows::take_from_uv_fs(req) };
 
     let rc = this.io_request.result;
 
@@ -1656,7 +1643,7 @@ extern "C" fn on_copy_file(req: *mut libuv::fs_t) {
 #[cfg(windows)]
 extern "C" fn on_chmod(req: *mut libuv::fs_t) {
     // SAFETY: `req` is the `io_request` of the box that `on_complete` left to libuv.
-    let this = unsafe { bun_core::heap::take(CopyFileWindows::from_uv_fs(req)) };
+    let this = unsafe { CopyFileWindows::take_from_uv_fs(req) };
 
     let rc = this.io_request.result;
     if let Some(mut err) = rc.to_error(bun_sys::Tag::chmod) {
@@ -1673,31 +1660,24 @@ extern "C" fn on_chmod(req: *mut libuv::fs_t) {
 }
 
 #[cfg(windows)]
-fn on_mkdirp_complete_concurrent(ctx: *mut (), err_: bun_sys::Maybe<()>, ticket: &jsc::Ticket) {
-    bun_sys::syslog!("mkdirp complete");
-    // SAFETY: `ctx` is the `*mut CopyFileWindows` stored in `AsyncMkdirp.completion_ctx`
-    // by `mkdirp` above; sole owner on this concurrent path.
-    let this = unsafe { bun_ptr::callback_ctx::<CopyFileWindows>(ctx.cast()) };
-    debug_assert!(this.err.is_none());
-    this.err = match err_ {
-        bun_sys::Result::Err(e) => Some(e),
-        bun_sys::Result::Ok(()) => None,
-    };
-    ticket.post(jsc::ConcurrentTask::create_from(
-        ctx.cast::<CopyFileWindows>(),
-    ));
+impl node_fs::async_::AsyncMkdirpTarget for CopyFileWindows {
+    fn directory(&self) -> &[u8] {
+        let destination = self.destination_file_store.data.as_file();
+        let path = destination.pathlike.path().slice();
+        bun_paths::dirname(path).unwrap_or(path)
+    }
+    fn set_error(&mut self, err: bun_sys::Error) {
+        self.err = Some(err);
+    }
 }
 
 /// `mkdirp` finished on the work pool: the hop back to the JS thread.
 #[cfg(windows)]
-impl bun_event_loop::Taskable for CopyFileWindows {
+impl bun_event_loop::BoxedTask for CopyFileWindows {
     const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::CopyFileWindowsMkdirp;
-    unsafe fn release_unrun(this: *mut Self) {
-        // SAFETY: fn contract: the box that `on_mkdirp_complete_concurrent` posted.
-        unsafe { bun_core::heap::destroy(this) };
-    }
+    fn release_unrun(self: Box<Self>) {}
     /// Enters no context.
-    unsafe fn context(_: *const Self) -> bun_event_loop::ContextId {
+    fn context(&self) -> bun_event_loop::ContextId {
         bun_event_loop::ContextId::NONE
     }
 }

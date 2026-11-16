@@ -26,21 +26,20 @@ use bun_sys::windows::libuv;
 use bun_sys::windows::libuv::UvHandle as _;
 use bun_uws as uws;
 
-use crate::EventLoopHandle;
 use crate::event_loop::EventLoop;
 use crate::virtual_machine::VirtualMachine;
-use crate::vm_handle::IsolatedPosterInner;
+use crate::vm_handle::IsolatedPoster;
 
 /// RAII scope that sets `vm.suppress_microtask_drain = true` for its lifetime
 /// and restores the prior value on drop.
-struct SuppressMicrotaskDrain<'a> {
+pub(crate) struct SuppressMicrotaskDrain<'a> {
     vm: &'a VirtualMachine,
     prev: bool,
 }
 
 impl<'a> SuppressMicrotaskDrain<'a> {
     #[inline]
-    fn new(vm: &'a VirtualMachine) -> Self {
+    pub(crate) fn new(vm: &'a VirtualMachine) -> Self {
         let prev = vm.suppress_microtask_drain.replace(true);
         Self { vm, prev }
     }
@@ -115,15 +114,15 @@ impl SpawnSyncEventLoop {
             #[cfg(windows)]
             uv_timer: Default::default(),
             did_timeout: Cell::new(false),
-            event_loop: Box::new(EventLoop::new_on(vm, loop_)),
+            event_loop: Box::new(EventLoop::with_uws_loop(vm, loop_)),
         });
 
         let event_loop = this.event_loop();
         let _ = event_loop
             .isolated_poster
-            .set(IsolatedPosterInner::new(event_loop));
+            .set(IsolatedPoster::new(event_loop));
         // Set up the loop's internal data to point to this isolated event loop
-        EventLoopHandle::init(event_loop.as_erased_ptr()).set_as_parent_of(loop_);
+        event_loop.as_handle().set_as_parent_of(loop_);
         loop_.internal_loop_data.jsc_vm.set(core::ptr::null());
         Some(this)
     }

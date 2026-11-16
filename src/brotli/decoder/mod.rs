@@ -240,7 +240,7 @@ impl Decoder {
         true
     }
 
-    /// `None` if the dictionary is too large, for the format or for the memory.
+    /// `None` if the dictionary is above 1 GiB, or too large for the memory.
     pub fn with_dictionary(dictionary: &[u8]) -> Option<Self> {
         if dictionary.len() > MAX_DICTIONARY_SIZE {
             return None;

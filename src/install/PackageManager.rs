@@ -251,7 +251,7 @@ pub use self::patch_package::PatchCommitResult;
 
 pub use self::run_tasks::{
     flush_dependency_queue, flush_network_queue, flush_patch_task_queue,
-    generate_network_task_for_tarball, get_network_task, run_tasks, schedule_tasks,
+    generate_network_task_for_tarball, get_network_task, schedule_tasks,
 };
 
 pub use self::update_package_json_and_install::{
@@ -535,8 +535,8 @@ pub struct PackageManager {
     ///
     /// TODO: Does this need to be atomic? It seems to be accessed only from the main thread.
     pub(crate) pending_pre_calc_hashes: AtomicU32,
-    pub pending_tasks: AtomicU32,
-    pub total_tasks: u32,
+    pub(crate) pending_tasks: AtomicU32,
+    pub(crate) total_tasks: u32,
     pub(crate) preallocated_network_tasks: PreallocatedNetworkTasks,
     pub(crate) preallocated_resolve_tasks: PreallocatedTaskStore,
 
@@ -558,8 +558,6 @@ pub struct PackageManager {
     pub(crate) global_link_dir: Option<bun_sys::Dir>,
     pub global_dir: Option<bun_sys::Dir>,
     pub(crate) global_link_dir_path: &'static [u8],
-
-    pub(crate) on_wake: WakeHandler,
 
     pub(crate) peer_dependencies: LinearFifo<DependencyID, DynamicBuffer<DependencyID>>,
 
@@ -853,12 +851,6 @@ pub enum TrackInstalledBin {
     Basename(Box<[u8]>),
 }
 
-// MOVE_DOWN: the data struct lives in `bun_install_types::WakeHandler`
-// (single definition the resolver also stores). The `handler` second arg is
-// erased to `*mut c_void` there because that crate cannot name
-// `PackageManager`; `wake_raw()` casts it back at the call site.
-pub use bun_install_types::resolver_hooks::WakeHandler;
-
 // ──────────────────────────────────────────────────────────────────────────
 // Globals / statics
 // ──────────────────────────────────────────────────────────────────────────
@@ -1025,11 +1017,6 @@ impl PackageManager {
 
     pub(crate) fn crash(&mut self) -> ! {
         if self.options.log_level != package_manager_options::LogLevel::Silent {
-            // SAFETY: `self.log` points to a separate `bun_ast::Log` allocation (borrowed from
-            // `ctx.log`) that outlives the singleton. `&mut self` only covers the pointer field,
-            // not the pointee. `bun_ast::Log::print` takes `&self`,
-            // so we only need a shared borrow here — the sole invariant is
-            // that no `&mut bun_ast::Log` to the pointee is live, which holds on this path.
             let _ = self.log_mut().print(Output::error_writer());
         }
         Global::crash();
@@ -1108,8 +1095,7 @@ impl PackageManager {
     /// Raw-pointer wake for concurrent task-thread callers (see
     /// `isolated_install::Installer::Task::callback`). Never materializes
     /// `&mut PackageManager`, so two task threads finishing simultaneously do
-    /// not hold aliased exclusive borrows. `on_wake` is read-only; the handler
-    /// receives the raw `*mut`;
+    /// not hold aliased exclusive borrows.
     /// `event_loop.wakeup()` is the cross-thread signal and is
     /// internally synchronized; the borrow covers only the event-loop field.
     ///
@@ -1120,10 +1106,6 @@ impl PackageManager {
         // only form field pointers via `addr_of!` (no whole-struct
         // borrow) and `wakeup()` is internally synchronized for cross-thread use.
         unsafe {
-            if let Some(wake) = (*core::ptr::addr_of!((*this).on_wake)).0 {
-                // `bun_install_types` cannot name `PackageManager`: the second arg is erased.
-                (wake.handler)(wake.context.as_ptr(), this.cast::<c_void>());
-            }
             (*core::ptr::addr_of!((*this).event_loop)).wakeup();
             if *core::ptr::addr_of!((*this).options.runtime_auto_install) {
                 crate::auto_installer::Parked::wake_all();
@@ -1214,12 +1196,11 @@ fn configure_env_for_scripts_run(this: &mut PackageManager) -> Result<(), Error>
         // https://github.com/nodejs/node-gyp/blob/7d883b5cf4c26e76065201f85b0be36d5ebdcc0e/lib/build.js#L150-L184
         let thread_count = bun_core::get_thread_count();
         if thread_count > 2 {
-            let t_env = this.env_mut();
-            if !t_env.has(b"JOBS") {
+            let env = this.env_mut();
+            if !env.has(b"JOBS") {
                 let mut int_buf = bun_core::fmt::ItoaBuf::new();
                 let jobs_str = bun_core::fmt::itoa(&mut int_buf, thread_count);
-                t_env
-                    .map
+                env.map
                     .put_alloc_value(b"JOBS", jobs_str)
                     .expect("unreachable");
             }
@@ -1564,7 +1545,6 @@ fn allocate_package_manager(
         wr!(global_link_dir, None);
         wr!(global_dir, None);
         wr!(global_link_dir_path, b"");
-        wr!(on_wake, WakeHandler::default());
         wr!(
             peer_dependencies,
             LinearFifo::<DependencyID, DynamicBuffer<DependencyID>>::init()
@@ -1815,7 +1795,7 @@ pub fn config_ignores_scripts(
     env: &dot_env::Loader,
     cwd: &[u8],
 ) -> Result<bool, Error> {
-    ::bun_bunfig::arguments::load_config(
+    bun_bunfig::arguments::load_config(
         bun_options_types::command_tag::Tag::InstallCommand,
         None,
         ctx,
@@ -1843,7 +1823,7 @@ pub fn config_ignores_scripts(
 /// Those are the files that the `bun add` spawned by `bunx` reads. This is for `bunx`, which has no
 /// `PackageManager`.
 pub fn user_cache_directory(env: &dot_env::Loader, cwd: &[u8]) -> Option<Box<[u8]>> {
-    let bunfig = (::bun_bunfig::arguments::load_user_install_section().ok())
+    let bunfig = (bun_bunfig::arguments::load_user_install_section().ok())
         .flatten()
         .unwrap_or_default();
     if bunfig.cache_directory.is_some() {
@@ -2253,9 +2233,9 @@ pub fn init(
     if cli.global {
         // `globalDir` is only read from the user's own bunfig or from the `--config` file.
         if cli.config.is_some() {
-            ::bun_bunfig::arguments::load_config(CONFIG_TAG, cli.config, ctx)?;
+            bun_bunfig::arguments::load_config(CONFIG_TAG, cli.config, ctx)?;
         } else {
-            ::bun_bunfig::arguments::load_global_bunfig(CONFIG_TAG, ctx);
+            bun_bunfig::arguments::load_global_bunfig(CONFIG_TAG, ctx);
         }
 
         // Non-consuming peek: `ctx.install` is
@@ -2454,7 +2434,7 @@ pub fn init(
     // `loadConfig` was moved down into `bun_bunfig`
     // (MOVE_DOWN b0) so install can call it directly — no fn-pointer hook.
     if !(cli.global && cli.config.is_some()) {
-        ::bun_bunfig::arguments::load_config(CONFIG_TAG, cli.config, ctx)?;
+        bun_bunfig::arguments::load_config(CONFIG_TAG, cli.config, ctx)?;
     }
     // SAFETY: main-thread global
     let root_package_json_path: &'static ZStr = unsafe {
@@ -2874,7 +2854,7 @@ fn init_with_runtime_once(
             merged = &mut nearer_bunfig;
             continue;
         }
-        match ::bun_bunfig::arguments::load_install_section(dir) {
+        match bun_bunfig::arguments::load_install_section(dir) {
             Ok(Some(nearer)) => match merged.as_deref_mut() {
                 Some(above) => overlay_bunfig_install(above, *nearer),
                 None => *merged = Some(nearer),
@@ -2885,7 +2865,7 @@ fn init_with_runtime_once(
     }
     // This also finds a scanner in a folder between the two. `bun install` wouldn't read that file,
     // but when in doubt, the scanner counts.
-    let has_scanner = ::bun_bunfig::arguments::has_security_scanner(start_dir, project_dir);
+    let has_scanner = bun_bunfig::arguments::has_security_scanner(start_dir, project_dir);
     // A scanner only sees what `bun install` is about to install, so auto-install is refused.
     if [
         bun_install,

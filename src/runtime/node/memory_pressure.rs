@@ -76,7 +76,7 @@ pub(crate) type WatcherSlot = bun_jsc::JsCell<Option<posix::MemoryPressureWatche
 pub(crate) type WatcherSlot = bun_jsc::JsCell<Option<windows::MemoryPressureWatcher>>;
 
 fn slot(vm: &VirtualMachine) -> &WatcherSlot {
-    &crate::jsc_hooks::state_of(vm).memory_pressure_watcher
+    &crate::jsc_hooks::runtime_state_of(vm).memory_pressure_watcher
 }
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -369,12 +369,10 @@ mod windows {
                 break;
             }
             let task = ConcurrentTask::create(super::pressure_task(super::level::CRITICAL));
-            if let bun_jsc::vm_handle::Posted::Refused(task) =
+            if let bun_jsc::vm_handle::Posted::Refused(_) =
                 vm.post(bun_jsc::LoopKind::Regular, task)
             {
                 // VM torn down: drop the notification.
-                // SAFETY: refused ⇒ we own the task box.
-                unsafe { drop(bun_core::heap::take(task.as_ptr())) };
                 break;
             }
             if WaitForSingleObject(handles[0], HOLDOFF_MS) == WAIT_OBJECT_0 {

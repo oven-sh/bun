@@ -33,7 +33,7 @@ pub use error::{Error, Result};
 
 pub use WatchItemKind as Kind;
 pub use watcher_impl::{
-    AnyResolveWatcher, ChangedFilePath, Event, FdOwnership, HashType, MAX_COUNT, Op, PackageJSON,
+    AnyResolveWatcher, ChangedFilePath, Event, HashType, MAX_COUNT, Op, PackageJSON,
     REQUIRES_FILE_DESCRIPTORS, WATCH_OPEN_FLAGS, WATCHES_BY_PATH, WatchEvent, WatchItemColumns,
     WatchItemIndex, WatchItemKind, WatchList, Watcher, WatcherContext,
 };

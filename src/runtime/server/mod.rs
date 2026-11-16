@@ -338,7 +338,7 @@ impl<const SSL: bool, const DEBUG: bool> Drop for NewServer<SSL, DEBUG> {
         }
         self.app.set(None);
 
-        // Before `config`, which owns the arena the dev server's transpilers and views live in.
+        // Before `config`, which owns the arena the dev server's transpilers borrow.
         drop(self.dev_server.take());
         if let Some(plugins) = self.plugins.get() {
             // SAFETY: the intrusive refcount permits mutation through any owner. Each server has its
@@ -3155,7 +3155,7 @@ trait AnyRequestPool: Any {
 
 impl<T: 'static, const N: usize> AnyRequestPool for bun_collections::hive_array::Fallback<T, N> {
     fn is_in_use(&self) -> bool {
-        self.hive.used.iter_set().next().is_some()
+        Self::is_in_use(self)
     }
 }
 
@@ -3978,17 +3978,13 @@ pub(crate) struct ServerAllConnectionsClosedTask {
     pub(crate) context: jsc::ContextId,
 }
 
-impl bun_event_loop::Taskable for ServerAllConnectionsClosedTask {
+impl bun_event_loop::BoxedTask for ServerAllConnectionsClosedTask {
     const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::ServerAllConnectionsClosedTask;
     /// A `server.stop()` whose all-closed notification will not run: drop the
     /// promise handle with the box.
-    unsafe fn release_unrun(this: *mut Self) {
-        // SAFETY: fn contract — the box `schedule` queued.
-        drop(unsafe { bun_core::heap::take(this) });
-    }
-    unsafe fn context(this: *const Self) -> bun_event_loop::ContextId {
-        // SAFETY: fn contract.
-        unsafe { (*this).context }
+    fn release_unrun(self: Box<Self>) {}
+    fn context(&self) -> bun_event_loop::ContextId {
+        self.context
     }
 }
 
@@ -3999,26 +3995,15 @@ impl ServerAllConnectionsClosedTask {
 
     /// Resolve the `server.stop()` promise
     /// once uws reports all sockets closed.
-    ///
-    /// # Safety
-    /// `this` must be the unique owning pointer heap-allocated in
-    /// [`Self::schedule`]; ownership is reclaimed and `this` must not be used
-    /// after this returns.
-    pub(crate) fn run_from_js_thread(this: *mut Self) -> JsResult<()> {
+    pub(crate) fn run_from_js_thread(&mut self) -> JsResult<()> {
         httplog!("ServerAllConnectionsClosedTask runFromJSThread");
 
-        // SAFETY: `this` was `heap::alloc`'d in `schedule()`; reclaim
-        // ownership. Keep the `Box` because `Self` has a `Drop`
-        // impl, which forbids per-field moves.
-        let mut this = unsafe { bun_core::heap::take(this) };
         // S008: `JSGlobalObject` is an `opaque_ffi!` ZST handle — safe
         // `*const → &` via `opaque_deref` (set from the live per-VM global in
         // `schedule()`; the task is only dispatched on that VM's JS thread).
-        let global_object: &jsc::JSGlobalObject = bun_opaque::opaque_deref(this.global_object);
-        let _dispatch = this.tracker.dispatch(global_object);
+        let global_object: &jsc::JSGlobalObject = bun_opaque::opaque_deref(self.global_object);
+        let _dispatch = self.tracker.dispatch(global_object);
 
-        // `JSPromiseStrong`'s Drop runs when `this` falls out of scope.
-        this.promise.resolve(global_object, JSValue::UNDEFINED)?;
-        Ok(())
+        self.promise.resolve(global_object, JSValue::UNDEFINED)
     }
 }

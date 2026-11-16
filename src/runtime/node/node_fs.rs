@@ -211,8 +211,8 @@ fn read_large_file(fd: FD, buf: &mut Vec<u8>, len: usize, position: u64) -> Mayb
             break;
         }
     }
-    // SAFETY: `total` ends with the first part that is not full.
-    unsafe { buf.set_len(buf.len() + total) };
+    // SAFETY: `total` counts the bytes read, up to and including the first short part.
+    unsafe { bun_core::vec::commit_spare(buf, total) };
     Ok(total)
 }
 
@@ -1250,55 +1250,53 @@ mod _async_tasks {
         const _: () = assert!(WriteFile::HAVE_ABORT_SIGNAL);
 
         #[cfg(windows)]
-        /// Used internally. Not from JavaScript.
-        pub(crate) struct AsyncMkdirp {
-            pub(crate) completion_ctx: *mut (),
-            /// Pool thread; `ticket` is this task's, for the callee to post its
-            /// hop back through.
-            pub(crate) completion: fn(*mut (), Maybe<()>, &bun_jsc::Ticket),
-            /// Memory is not owned by this struct
-            pub path: *const [u8], // BORROW: not owned
-            pub(crate) ticket: bun_jsc::Ticket,
-            pub task: WorkPoolTask,
+        pub(crate) trait AsyncMkdirpTarget: bun_event_loop::BoxedTask {
+            /// Pool thread.
+            fn directory(&self) -> &[u8];
+            /// Pool thread.
+            fn set_error(&mut self, err: sys::Error);
         }
 
         #[cfg(windows)]
-        bun_threading::owned_task!(AsyncMkdirp, task);
+        /// Used internally. Not from JavaScript.
+        pub(crate) struct AsyncMkdirp<T: AsyncMkdirpTarget> {
+            /// Always posted back to its thread.
+            target: Box<T>,
+            ticket: bun_jsc::Ticket,
+            task: WorkPoolTask,
+        }
 
         #[cfg(windows)]
-        impl AsyncMkdirp {
-            /// Heap-allocate and hand the task to the work pool, which owns the
-            /// allocation and frees it after `run_owned` returns.
-            pub(crate) fn schedule(init: AsyncMkdirp) {
-                WorkPool::schedule_new(init);
+        bun_threading::owned_task!([T: AsyncMkdirpTarget] AsyncMkdirp<T>, task);
+
+        #[cfg(windows)]
+        impl<T: AsyncMkdirpTarget> AsyncMkdirp<T> {
+            pub(crate) fn schedule(target: Box<T>) {
+                WorkPool::schedule_new(Self {
+                    target,
+                    ticket: VirtualMachine::get().ticket(),
+                    task: Default::default(),
+                });
             }
 
             #[allow(clippy::boxed_local)]
-            fn run_owned(self: Box<Self>) {
-                let mut node_fs = NodeFS::default();
-                // SAFETY: the scheduling caller keeps `path` alive until `completion`
-                // runs (it points into caller-owned state, not this box).
-                let path = unsafe { &*self.path };
-                let result = node_fs.mkdir_recursive(&args::Mkdir {
-                    path: PathLike::borrowed(path),
-                    recursive: true,
-                    ..Default::default()
-                });
-                match result {
-                    Err(err) => {
-                        (self.completion)(
-                            self.completion_ctx,
-                            // `with_path` already clones into a fresh `Box<[u8]>`; pass the
-                            // existing path slice.
-                            Err(err.with_path(&err.path)),
-                            &self.ticket,
-                        );
-                    }
-                    Ok(_) => {
-                        (self.completion)(self.completion_ctx, Ok(()), &self.ticket);
-                    }
+            fn run_owned(mut self: Box<Self>) {
+                if let Err(err) = mkdirp(self.target.directory()) {
+                    self.target.set_error(err);
                 }
+                self.ticket
+                    .post(ConcurrentTask::ConcurrentTask::create_boxed(self.target));
             }
+        }
+
+        #[cfg(windows)]
+        fn mkdirp(path: &[u8]) -> Maybe<()> {
+            let result = NodeFS::default().mkdir_recursive(&args::Mkdir {
+                path: PathLike::borrowed(path),
+                recursive: true,
+                ..Default::default()
+            });
+            result.map(|_| ()).map_err(|err| err.with_path(&err.path))
         }
     }
 
@@ -2235,7 +2233,7 @@ mod _async_tasks {
         /// subtask via the `subtask_count` refcount (see `on_subtask_done`). Stored
         /// as `ParentRef` (constructed from the `*mut` with `Box::leak` provenance)
         /// so shared reads are safe-projected and `as_mut_ptr()` round-trips the
-        /// original write provenance for the `Box` reclaimed after `on_subtask_done`.
+        /// original write provenance for the `Box` that `on_subtask_done` reclaims.
         pub(crate) cp_task: bun_ptr::ParentRef<NewAsyncCpTask<IS_SHELL>, bun_ptr::Mut>,
         /// Single owned allocation laid out as `<src>\0<dest>\0`. Ownership is
         /// encoded directly as `Box<[OSPathChar]>` and
@@ -2291,7 +2289,7 @@ mod _async_tasks {
 
         fn run_owned(self: Box<Self>) {
             // `ParentRef` preserves the `Box::leak` mutable provenance so
-            // the completion can reclaim the `Box` from `as_mut_ptr()`
+            // `on_subtask_done` can reclaim the `Box` from `as_mut_ptr()`
             // once the refcount reaches zero.
             let cp_task = self.cp_task;
             // Shared borrow only — other workpool threads (and the directory-scan
@@ -2338,7 +2336,7 @@ mod _async_tasks {
         }
     }
 
-    impl<const IS_SHELL: bool> bun_event_loop::Taskable for NewAsyncCpTask<IS_SHELL> {
+    impl<const IS_SHELL: bool> bun_event_loop::BoxedTask for NewAsyncCpTask<IS_SHELL> {
         const TAG: bun_event_loop::TaskTag = if IS_SHELL {
             bun_event_loop::task_tag::ShellAsyncCpTask
         } else {
@@ -2346,13 +2344,9 @@ mod _async_tasks {
         };
         /// A finished fs.cp whose completion will not run: the drop releases
         /// its promise handle, protected arguments and keep-alive.
-        unsafe fn release_unrun(this: *mut Self) {
-            // SAFETY: fn contract — posted by `on_subtask_done` with the count at zero.
-            unsafe { bun_core::heap::destroy(this) }
-        }
-        unsafe fn context(this: *const Self) -> bun_event_loop::ContextId {
-            // SAFETY: fn contract.
-            unsafe { (*this).context }
+        fn release_unrun(self: Box<Self>) {}
+        fn context(&self) -> bun_event_loop::ContextId {
+            self.context
         }
     }
 
@@ -2510,10 +2504,7 @@ mod _async_tasks {
         /// drops to zero) enqueues `runFromJSThread`, which resolves the promise
         /// and destroys `this`.
         ///
-        /// Takes a raw `*mut Self` (not `&self`) so the pointer retains the
-        /// mutable provenance from the original `Box::leak`; the JS-thread
-        /// callback later reclaims the `Box`, which would be UB if the
-        /// pointer were derived from a shared reference.
+        /// Takes the pointer that `schedule_new` leaked, because the last caller reclaims the `Box`.
         fn on_subtask_done(this: *mut Self) {
             // SAFETY: `this` is a live Box-leaked task; shared access only here —
             // other workpool threads may concurrently hold `&Self` until the
@@ -2525,36 +2516,28 @@ mod _async_tasks {
                 return;
             }
 
+            // SAFETY: the count reached zero, so nothing else uses the box that `schedule_new` leaked.
+            let this = unsafe { bun_core::heap::take(this) };
+
             // All subtasks have finished. If none reported an error, the copy succeeded.
-            if !this_ref.has_result.load(Ordering::Relaxed) {
-                this_ref.has_result.store(true, Ordering::Relaxed);
-                // count reached zero ⇒ this thread now has exclusive access.
-                this_ref.result.set(Ok(()));
+            if !this.has_result.load(Ordering::Relaxed) {
+                this.has_result.store(true, Ordering::Relaxed);
+                this.result.set(Ok(()));
             }
 
-            // Count reached zero ⇒ exclusive access. `this` carries mutable
-            // provenance from `Box::leak`, so the enqueued callback may safely
-            // reclaim the `Box` on the JS thread.
-            let poster = this_ref
+            let poster = this
                 .poster
                 .take()
                 .expect("fs.cp in flight holds its poster");
             if poster.is_js() {
-                poster.post_js(ConcurrentTask::ConcurrentTask::create(bun_jsc::Task::init(
-                    this,
-                )));
+                poster.post_js(ConcurrentTask::ConcurrentTask::create_boxed(this));
             } else {
-                let at =
-                    AnyTaskWithExtraContext::from_callback_auto_deinit(this, |p: *mut Self, _| {
-                        // SAFETY: subtask count hit zero ⇒ exclusive access to the leaked task.
-                        let task = unsafe { bun_core::heap::take(p) };
-                        let _ = task.run_from_js_thread(); // TODO: properly propagate exception upwards
-                    });
+                let at = AnyTaskWithExtraContext::from_callback_auto_deinit(this, |task, _| {
+                    let _ = task.run_from_js_thread(); // TODO: properly propagate exception upwards
+                });
                 // `from_callback_auto_deinit` heap-allocates; never null.
                 poster.post_mini(core::ptr::NonNull::new(at).expect("heap task"));
             }
-            // The pool side is done (`this` may already be freed by its loop).
-            drop(poster);
         }
 
         pub(crate) fn run_from_js_thread(mut self: Box<Self>) -> JsResult<()> {
@@ -2761,7 +2744,7 @@ mod _async_tasks {
             if let Err(err) = Self::cp_async_directory(
                 nodefs,
                 // Pass the raw `*mut Self` (Box::leak provenance) so spawned
-                // `CpSingleTask`s store a pointer the completion can reclaim the `Box` from.
+                // `CpSingleTask`s store a pointer that `on_subtask_done` can reclaim the `Box` from.
                 *_done,
                 &mut src_buf,
                 src_len,
@@ -2814,7 +2797,7 @@ mod _async_tasks {
             // `CpSingleTask`s on other workpool threads may concurrently hold `&Self`.
             // The raw `*mut` is threaded through (instead of `&Self`) so that the
             // `cp_task` pointers stored in subtasks retain mutable provenance for
-            // the `Box` reclaimed after `on_subtask_done`.
+            // the `Box` that `on_subtask_done` reclaims.
             let this_ref = unsafe { &*this };
             // SAFETY: callers NUL-terminate at src_dir_len/dest_dir_len before calling.
             // Platform-generic — `OSPathBuffer` is `[u16;N]` on Windows, `[u8;N]` on POSIX,

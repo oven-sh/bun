@@ -76,7 +76,7 @@ impl GitEnv {
             .map(|git| ZBox::from_bytes(git.as_bytes()));
 
         GitEnv {
-            envp: bun_core::handle_oom(map.create_null_delimited_env_map()),
+            envp: map.to_envp(),
             git,
             is_settled: configured.is_some(),
         }

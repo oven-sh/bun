@@ -32,7 +32,7 @@ bun_core::declare_scope!(FileSink, visible);
 
 // R-2 (`&mut self` host-fn re-entrancy → noalias UB): JS-reachable host-fns
 // take `&self` and mutate via `Cell`/`JsCell`. Paths that may drop the last
-// ref (`finalize`, the PipeWriter IO callbacks, the promise handlers) take the
+// ref (the PipeWriter IO callbacks, the promise handlers) take the
 // canonical `*mut FileSink` instead of any receiver — see the `borrow = ptr`
 // note on the `impl_streaming_writer_parent!` invocation below.
 #[derive(bun_ptr::CellRefCounted)]
@@ -1065,27 +1065,9 @@ impl FileSink {
         }
     }
 
-    /// # Safety
-    /// `this` is the live sink whose JS wrapper holds the +1 released here; it
-    /// must not be used after the call, which may free it.
-    pub(crate) unsafe fn finalize(this: *mut FileSink) {
-        // Called from (a) `~JSFileSink` during lazy sweep, and (b) synchronously
-        // from `${name}__doClose` (prototype `.close()`). Must satisfy both
-        // contexts: no touching live JS cells (sweep), and no tearing down
-        // state that in-flight IO still needs (close).
-
-        // SAFETY: caller contract — the ref that `to_js` / `to_js_for_subprocess` gave the wrapper.
-        let this = unsafe { RefPtr::from_raw(this) };
-        this.release_ref_stranded_by_shutdown();
-
-        // `pending`/`pipe` are left for `deinit` (Box drop) since in-flight IO
-        // may still need them.
-        this.js_sink_ref.set(Default::default());
-    }
-
     /// A `ReadableSinkController` was collected with this sink still attached. `pipe` roots that cell until
     /// `release_pipe` detaches it, so it only dies attached in the heap's last sweep. Unlike the
-    /// wrapper in [`finalize`](Self::finalize) it holds no ref: there is none to release for it.
+    /// wrapper with its [`WrapperRef`] it holds no ref: there is none to release for it.
     ///
     /// # Safety
     /// `this` is the cell's live sink; it must not be used after the call, which may free it.
@@ -1290,8 +1272,7 @@ impl FileSink {
     }
 
     pub fn to_js(this: RefPtr<FileSink>, global_this: &JSGlobalObject) -> JSValue {
-        // The wrapper's ref, which `finalize` takes back.
-        JSSink::create_object(global_this, this.into_non_null(), None)
+        JSSink::create_object(global_this, WrapperRef(this), None)
     }
 
     /// As [`to_js`](Self::to_js), for the stdin of `subprocess`, which is notified when the object closes or is collected.
@@ -1300,8 +1281,7 @@ impl FileSink {
         global_this: &JSGlobalObject,
         subprocess: NonNull<Subprocess<'static>>,
     ) -> JSValue {
-        // The wrapper's ref, which `finalize` takes back.
-        JSSink::create_object(global_this, this.into_non_null(), Some(subprocess))
+        JSSink::create_object(global_this, WrapperRef(this), Some(subprocess))
     }
 
     pub(crate) fn end_from_js(&self, cx: &bun_jsc::JsThread<'_>) -> sys::Result<JSValue> {
@@ -1416,15 +1396,29 @@ impl FileSink {
 
 pub(crate) type JSSink = crate::webcore::sink::JSSink<FileSink>;
 
+/// The JS wrapper's ref.
+pub(crate) struct WrapperRef(RefPtr<FileSink>);
+
+impl Drop for WrapperRef {
+    /// Does not clear `pending` or `pipe`: I/O in flight may still need them.
+    fn drop(&mut self) {
+        self.0.release_ref_stranded_by_shutdown();
+        self.0.js_sink_ref.set(Default::default());
+    }
+}
+
+impl crate::webcore::sink::WrappedSink for FileSink {
+    type Wrapped = WrapperRef;
+    fn as_non_null(wrapped: &WrapperRef) -> NonNull<Self> {
+        wrapped.0.as_non_null()
+    }
+}
+
 impl crate::webcore::sink::JsSinkType for FileSink {
     const NAME: &'static str = "FileSink";
 
     crate::impl_js_sink_forwarders!(start_takes_context);
 
-    unsafe fn finalize(this: *mut Self) {
-        // SAFETY: same contract, forwarded.
-        unsafe { Self::finalize(this) }
-    }
     fn end_from_js(&mut self, cx: &bun_jsc::JsThread<'_>) -> sys::Result<JSValue> {
         Self::end_from_js(self, cx)
     }

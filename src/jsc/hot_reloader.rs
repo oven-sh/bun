@@ -59,7 +59,7 @@ impl ImportWatcher {
     }
 
     #[inline]
-    pub fn add_owned_file(
+    pub fn add_file(
         &mut self,
         file: Option<bun_sys::File>,
         file_path: &[u8],
@@ -70,7 +70,7 @@ impl ImportWatcher {
     ) -> bun_sys::Result<()> {
         match self {
             ImportWatcher::Hot(watcher) | ImportWatcher::Watch(watcher) => {
-                watcher.add_owned_file(file, file_path, hash, package_json)
+                watcher.add_file::<true>(file, file_path, hash, package_json)
             }
         }
     }
@@ -594,7 +594,7 @@ where
             let handle = (*core::ptr::addr_of!((*self.reloader).reload_handle))
                 .as_ref()
                 .expect("reload_handle set for a reloader that enqueues");
-            if let crate::vm_handle::Posted::Refused(_) = handle.post(
+            if let crate::vm_handle::Posted::Refused(()) = handle.post_intrusive(
                 crate::LoopKind::Regular,
                 core::ptr::NonNull::from(concurrent),
             ) {
@@ -805,7 +805,7 @@ where
         let kinds = watchlist.items_kind();
         let hashes = watchlist.items_hash();
         let parents = watchlist.items_parent_hash();
-        let file_descriptors = watchlist.items_fd();
+        let files = watchlist.items_file();
         // Note: reshaped for borrowck — `ctx` is held as a raw pointer so
         // `self` can be reborrowed inside the loop body for tombstone access,
         // and so the deferred `flush_evictions` doesn't hold `&mut Watcher`
@@ -837,7 +837,7 @@ where
         let top_level_dir = fs.top_level_dir();
         let rfs: &mut Fs::file_system::RealFS = &mut fs.fs;
         #[cfg(windows)]
-        let _ = (changed_files, parents, file_descriptors, rfs);
+        let _ = (changed_files, parents, files, rfs);
         let mut _on_file_update_path_buf = bun_paths::path_buffer_pool::get();
 
         for event in events.iter() {
@@ -963,11 +963,9 @@ where
                                             name_buf[basename.len()] = 0;
                                             // SAFETY: name_buf[..=basename.len()] is NUL-terminated.
                                             let z = ZStr::from_buf(&name_buf[..], basename.len());
-                                            bun_sys::faccessat(
-                                                file_descriptors[event.index as usize],
-                                                z,
+                                            files[event.index as usize].as_ref().is_some_and(
+                                                |dir| bun_sys::faccessat(dir.fd(), z).is_ok(),
                                             )
-                                            .is_ok()
                                         } else {
                                             false
                                         };
@@ -1149,7 +1147,7 @@ where
                                             file_hash = Watcher::get_hash(path_string.as_bytes());
                                             for (entry_id, hash) in hashes.iter().enumerate() {
                                                 if *hash == file_hash {
-                                                    if file_descriptors[entry_id].is_valid() {
+                                                    if files[entry_id].is_some() {
                                                         if prev_entry_id != entry_id {
                                                             record_changed_path(
                                                                 path_string.as_bytes(),

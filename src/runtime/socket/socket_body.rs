@@ -839,7 +839,8 @@ impl<const SSL: bool> NewSocket<SSL> {
         if this.socket.get().is_detached() {
             return Ok(());
         }
-        if this.native_callback.get().on_writable() {
+        if let Some(h2) = this.native_callback.get().h2_ref() {
+            h2.on_native_writable();
             return Ok(());
         }
         let handlers = this.get_handlers();
@@ -2155,8 +2156,8 @@ impl<const SSL: bool> NewSocket<SSL> {
         if this.socket.get().is_detached() {
             return Ok(());
         }
-        if this.native_callback.get().on_data(data)? {
-            return Ok(());
+        if let Some(h2) = this.native_callback.get().h2_ref() {
+            return h2.on_native_read(data);
         }
         let handlers = this.get_handlers();
         log!(
@@ -3635,27 +3636,12 @@ pub(crate) enum NativeCallbacks {
 }
 
 impl NativeCallbacks {
-    /// `&self` borrows the socket's `JsCell<NativeCallbacks>`; the dispatch
-    /// re-enters JS, which can `detach_native_callback` and overwrite that cell.
-    /// Copy the parser pointer out first; the callee's `keepalive()` holds it.
-    /// `Ok(false)`: nothing attached, dispatch to the JS handlers.
-    pub(crate) fn on_data(&self, data: &[u8]) -> JsResult<bool> {
-        let h2 = match self {
-            NativeCallbacks::H2(h2) => h2.as_ptr(),
-            NativeCallbacks::None => return Ok(false),
-        };
-        // SAFETY: `on_native_read` takes a keepalive; `h2` stays live across re-entry.
-        unsafe { (*h2).on_native_read(data) }?;
-        Ok(true)
-    }
-    pub(crate) fn on_writable(&self) -> bool {
-        let h2 = match self {
-            NativeCallbacks::H2(h2) => h2.as_ptr(),
-            NativeCallbacks::None => return false,
-        };
-        // SAFETY: `on_native_writable` takes a keepalive; `h2` stays live across re-entry.
-        unsafe { (*h2).on_native_writable() };
-        true
+    /// Returns a new ref: the dispatch re-enters JS, which can `detach_native_callback`.
+    fn h2_ref(&self) -> Option<RefPtr<H2FrameParser>> {
+        match self {
+            NativeCallbacks::H2(h2) => Some(h2.clone()),
+            NativeCallbacks::None => None,
+        }
     }
 }
 

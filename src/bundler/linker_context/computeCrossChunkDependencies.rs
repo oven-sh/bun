@@ -598,7 +598,7 @@ fn compute_cross_chunk_dependencies_with_chunk_metas(
         let mut evaluation_rank: Vec<u32> = vec![u32::MAX; chunks.len()];
         // We move the per-chunk fields we
         // mutate (`imports_from_other_chunks`, `cross_chunk_imports`) out via `take`, drop
-        // the `chunk` borrow, hand the whole `chunks` slice to `sorted_cross_chunk_imports`
+        // the `chunk` borrow, hand the whole `chunks` slice to `sort_cross_chunk_imports`
         // (which only reads `chunks[other].exports_to_other_chunks` — disjoint), then write
         // the fields back at loop end.
         for chunk_index in 0..chunks.len() {
@@ -624,7 +624,7 @@ fn compute_cross_chunk_dependencies_with_chunk_metas(
             for (rank, &other) in reached.iter().enumerate() {
                 evaluation_rank[other as usize] = rank as u32;
             }
-            Chunk::sorted_cross_chunk_imports(
+            Chunk::sort_cross_chunk_imports(
                 &mut order,
                 chunks,
                 &mut imports_from_other_chunks,

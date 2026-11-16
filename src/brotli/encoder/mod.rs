@@ -76,7 +76,7 @@ impl Encoder {
         }
     }
 
-    /// `None` if the dictionary is too large, for the format or for the memory.
+    /// `None` if the dictionary is above 1 GiB, or too large for the memory.
     #[inline(never)]
     pub fn with_dictionary(dictionary: &[u8]) -> Option<Self> {
         bun_removable_features::removable_definition!(BrotliEncoder, Self::with_dictionary);

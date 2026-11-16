@@ -404,15 +404,15 @@ impl Debugger {
         bun_core::scoped_log!(debugger, "startJSDebuggerThread");
         jsc::mark_binding();
 
-        let vm = VirtualMachine::init(crate::virtual_machine::InitOptions {
-            // Lives as long as the VM, which this thread never tears down.
-            env_loader: Some(bun_core::heap::alloc_nn(bun_dotenv::Loader::init_with_map(
-                env_map,
-            ))),
+        let mut log = bun_ast::Log::default();
+        let mut env_loader = bun_dotenv::Loader::init_with_map(env_map);
+        let options = crate::virtual_machine::InitOptions {
+            env_loader: Some(core::ptr::NonNull::from(&mut env_loader)),
             is_main_thread: false,
             ..Default::default()
-        })
-        .unwrap_or_else(|_| panic!("Failed to create Debugger VM"));
+        };
+        let vm = VirtualMachine::init(&raw mut log, options)
+            .unwrap_or_else(|_| panic!("Failed to create Debugger VM"));
         vm.event_loop().ensure_waker();
 
         extern "C" fn start_trampoline(ctx: *mut c_void) {
@@ -431,7 +431,7 @@ impl Debugger {
     /// Runs inside `holdAPILock` on the debugger thread. Publishes the
     /// inspector URL(s), wakes the futex the debuggee VM is blocked on, then
     /// spins this thread's event loop forever.
-    fn start(init: DebuggerThreadInit) {
+    fn start(init: DebuggerThreadInit) -> ! {
         jsc::mark_binding();
 
         let this: &VirtualMachine = VirtualMachine::get();

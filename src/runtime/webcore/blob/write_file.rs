@@ -513,7 +513,7 @@ mod windows_impl {
     use bun_io::{self as aio, IntrusiveUvFs as _, JsKeepAlive};
     // `bun_jsc::EventLoop` is a *module* (namespace re-export); the struct
     // lives one level deeper.
-    use bun_jsc::{ConcurrentTask, event_loop::EventLoop};
+    use bun_jsc::event_loop::EventLoop;
     use bun_sys::ReturnCodeExt as _;
     use bun_sys::windows::libuv as uv;
 
@@ -540,21 +540,28 @@ mod windows_impl {
 
     bun_io::intrusive_uv_fs!(WriteFileWindows, io_request);
 
-    /// `mkdirp` finished on the work pool: the hop back to the JS thread.
-    impl bun_event_loop::Taskable for WriteFileWindows {
-        const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::WriteFileWindowsMkdirp;
-        unsafe fn release_unrun(this: *mut Self) {
-            // SAFETY: fn contract: the box that `on_mkdirp_complete_concurrent` posted.
-            drop(unsafe { bun_core::heap::take(this) });
+    impl crate::node::fs::async_::AsyncMkdirpTarget for WriteFileWindows {
+        fn directory(&self) -> &[u8] {
+            let path = self.path();
+            bun_core::dirname(path).unwrap_or(path)
         }
+        fn set_error(&mut self, err: sys::Error) {
+            self.err = Some(err);
+        }
+    }
+
+    /// `mkdirp` finished on the work pool: the hop back to the JS thread.
+    impl bun_event_loop::BoxedTask for WriteFileWindows {
+        const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::WriteFileWindowsMkdirp;
+        fn release_unrun(self: Box<Self>) {}
         /// Enters no context.
-        unsafe fn context(_: *const Self) -> bun_event_loop::ContextId {
+        fn context(&self) -> bun_event_loop::ContextId {
             bun_event_loop::ContextId::NONE
         }
     }
 
     impl WriteFileWindows {
-        pub(crate) fn create(
+        pub(crate) fn start(
             event_loop: &'static EventLoop,
             script_context: &bun_jsc::ScriptExecutionContext,
             file_blob: Blob,
@@ -643,7 +650,7 @@ mod windows_impl {
 
         extern "C" fn on_open(req: *mut uv::fs_t) {
             // SAFETY: `req` is the `io_request` of the box that `open` left to libuv.
-            let mut this = unsafe { bun_core::heap::take(WriteFileWindows::from_uv_fs(req)) };
+            let mut this = unsafe { WriteFileWindows::take_from_uv_fs(req) };
             let rc = this.io_request.result;
             #[cfg(debug_assertions)]
             bun_output::scoped_log!(
@@ -675,17 +682,7 @@ mod windows_impl {
         fn mkdirp(mut self: Box<Self>) {
             bun_output::scoped_log!(WriteFile, "mkdirp");
             self.mkdirp_if_not_exists = false;
-
-            let path = self.path();
-            // BORROW: points into the store of `file_blob`, alive until `completion` runs.
-            let path: *const [u8] = bun_core::dirname(path).unwrap_or(path);
-            crate::node::fs::async_::AsyncMkdirp::schedule(crate::node::fs::async_::AsyncMkdirp {
-                completion: Self::on_mkdirp_complete_concurrent,
-                completion_ctx: bun_core::heap::into_raw(self).cast::<()>(),
-                path,
-                ticket: bun_jsc::virtual_machine::VirtualMachine::get().ticket(),
-                task: Default::default(),
-            });
+            crate::node::fs::async_::AsyncMkdirp::schedule(self);
         }
 
         pub(crate) fn on_mkdirp_complete(mut self: Box<Self>) {
@@ -695,26 +692,9 @@ mod windows_impl {
             });
         }
 
-        fn on_mkdirp_complete_concurrent(
-            ctx: *mut (),
-            err_: bun_sys::Result<()>,
-            ticket: &bun_jsc::Ticket,
-        ) {
-            // SAFETY: `ctx` is the `*mut Self` stored in `AsyncMkdirp.completion_ctx`
-            // by `mkdirp` above; sole owner on this concurrent path.
-            let this = unsafe { bun_ptr::callback_ctx::<WriteFileWindows>(ctx.cast()) };
-            bun_output::scoped_log!(WriteFile, "mkdirp complete");
-            debug_assert!(this.err.is_none());
-            this.err = match err_ {
-                bun_sys::Result::Err(e) => Some(e),
-                bun_sys::Result::Ok(()) => None,
-            };
-            ticket.post(ConcurrentTask::create_from(ctx.cast::<Self>()));
-        }
-
         extern "C" fn on_write_complete(req: *mut uv::fs_t) {
             // SAFETY: `req` is the `io_request` of the box that `do_write_loop` left to libuv.
-            let mut this = unsafe { bun_core::heap::take(WriteFileWindows::from_uv_fs(req)) };
+            let mut this = unsafe { WriteFileWindows::take_from_uv_fs(req) };
             let rc = this.io_request.result;
             if let Some(err) = rc.to_error(sys::Tag::write) {
                 fold(this.throw(err));
@@ -728,7 +708,6 @@ mod windows_impl {
         fn on_finish(mut self: Box<Self>) -> jsc::JsResult<()> {
             let _exit = self.event_loop.enter_scope();
 
-            // We don't need to enqueue task since this is already in a task.
             let (mut promise, global_this) = (self.promise.take(), self.global_this);
             let _context =
                 bun_jsc::virtual_machine::VirtualMachine::get().enter_context(self.context);

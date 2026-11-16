@@ -41,6 +41,17 @@ webWorker.onmessage = event => {
 // On the worker thread, `postMessage` is automatically "routed" to the parent thread.
 postMessage({ hello: "world" });
 
+// On the worker thread, the global is a DedicatedWorkerGlobalScope with a `location`.
+tsd.expectType<string>(location.href);
+tsd.expectType<string>(location.origin);
+tsd.expectType<string>(location.pathname);
+tsd.expectType<WorkerLocation>(location);
+if (globalThis instanceof WorkerGlobalScope) {
+  tsd.expectType<WorkerLocation>(globalThis.location);
+}
+tsd.expectType<boolean>(globalThis instanceof DedicatedWorkerGlobalScope);
+tsd.expectType<DedicatedWorkerGlobalScope>(DedicatedWorkerGlobalScope.prototype);
+
 // On the main thread
 nodeWorker.postMessage({ hello: "world" });
 

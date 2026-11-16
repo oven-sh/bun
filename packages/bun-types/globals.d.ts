@@ -1565,6 +1565,68 @@ interface Navigator {
 
 declare var navigator: Navigator;
 
+/**
+ * The location of a Web Worker: the URL of the script the worker was started
+ * with. A file path is a `file:` URL. A `blob:` or `data:` URL is kept as is.
+ *
+ * [MDN Reference](https://developer.mozilla.org/docs/Web/API/WorkerLocation)
+ */
+interface WorkerLocation {
+  readonly href: string;
+  readonly origin: string;
+  readonly protocol: string;
+  readonly host: string;
+  readonly hostname: string;
+  readonly port: string;
+  readonly pathname: string;
+  readonly search: string;
+  readonly hash: string;
+  toString(): string;
+}
+declare var WorkerLocation: {
+  prototype: WorkerLocation;
+  new (): never;
+};
+
+/**
+ * The global scope of a Web Worker (`new Worker()`). `self instanceof WorkerGlobalScope`
+ * is true inside such a worker.
+ *
+ * Not defined on the main thread or in a `node:worker_threads` worker.
+ *
+ * [MDN Reference](https://developer.mozilla.org/docs/Web/API/WorkerGlobalScope)
+ */
+interface WorkerGlobalScope extends EventTarget {
+  readonly location: WorkerLocation;
+}
+declare var WorkerGlobalScope: {
+  prototype: WorkerGlobalScope;
+  new (): never;
+};
+
+/**
+ * The global scope of a Web Worker (`new Worker()`): the prototype of its `globalThis`.
+ *
+ * Not defined on the main thread or in a `node:worker_threads` worker.
+ *
+ * [MDN Reference](https://developer.mozilla.org/docs/Web/API/DedicatedWorkerGlobalScope)
+ */
+interface DedicatedWorkerGlobalScope extends WorkerGlobalScope {}
+declare var DedicatedWorkerGlobalScope: {
+  prototype: DedicatedWorkerGlobalScope;
+  new (): never;
+};
+
+/**
+ * The location of the current Web Worker (`new Worker()`).
+ *
+ * Only defined in a Web Worker thread. On the main thread and in a
+ * `node:worker_threads` worker it is `undefined`.
+ *
+ * [MDN Reference](https://developer.mozilla.org/docs/Web/API/WorkerGlobalScope/location)
+ */
+declare var location: Bun.__internal.UseLibDomIfAvailable<"location", WorkerLocation>;
+
 interface BlobPropertyBag {
   /** Set a default "type". Not yet implemented. */
   type?: string;

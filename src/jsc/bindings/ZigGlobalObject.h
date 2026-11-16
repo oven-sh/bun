@@ -436,6 +436,11 @@ public:
     /* node:worker_threads worker: { stdin?, stdout, stderr } MessagePorts from the parent Worker; */        \
     /* process.stdin/stdout/stderr are built over these lazily (BunProcess.cpp constructStd*). */            \
     V(private, WriteBarrier<JSObject>, m_nodeWorkerStdioPorts)                                               \
+    /* Web Worker only (WorkerOptions::Kind::Web): the prototypes installWorkerGlobalScope() put above the */ \
+    /* global object, and the WorkerLocation made on the first read of `location`. Null elsewhere. */        \
+    V(public, WriteBarrier<JSObject>, m_workerGlobalScopePrototype)                                          \
+    V(public, WriteBarrier<JSObject>, m_dedicatedWorkerGlobalScopePrototype)                                 \
+    V(public, WriteBarrier<JSObject>, m_workerLocation)                                                      \
     V(private, LazyPropertyOfGlobalObject<Structure>, m_moduleGraphFrameStructure)                           \
                                                                                                              \
     /* The original, unmodified Error.prepareStackTrace. */                                                  \

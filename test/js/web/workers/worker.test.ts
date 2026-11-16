@@ -746,6 +746,150 @@ describe("web worker", () => {
       expect(exitCode).toBe(0);
     });
   });
+
+  // https://html.spec.whatwg.org/multipage/workers.html#the-workerglobalscope-common-interface
+  describe.concurrent("WorkerGlobalScope", () => {
+    // What the worker reports of its global scope and of `location`.
+    const report = `
+      const chain = [];
+      for (let p = Object.getPrototypeOf(globalThis); p; p = Object.getPrototypeOf(p)) chain.push(p[Symbol.toStringTag] ?? p.constructor.name);
+      const thrown = fn => { try { fn(); return "no throw"; } catch (e) { return e.name + ": " + e.message; } };
+      postMessage({
+        types: [typeof WorkerGlobalScope, typeof DedicatedWorkerGlobalScope, typeof WorkerLocation, typeof location, typeof importScripts],
+        chain,
+        instanceOf: [self instanceof WorkerGlobalScope, self instanceof DedicatedWorkerGlobalScope, self instanceof EventTarget],
+        constructorName: self.constructor.name,
+        tag: Object.prototype.toString.call(self),
+        sameLocation: self.location === location && globalThis.location === location && location instanceof WorkerLocation,
+        location: {
+          href: location.href,
+          origin: location.origin,
+          protocol: location.protocol,
+          host: location.host,
+          hostname: location.hostname,
+          port: location.port,
+          pathname: location.pathname,
+          search: location.search,
+          hash: location.hash,
+          toString: String(location),
+          tag: Object.prototype.toString.call(location),
+        },
+        constructors: [thrown(() => new WorkerGlobalScope()), thrown(() => new DedicatedWorkerGlobalScope()), thrown(() => new WorkerLocation())],
+        strictAssign: thrown(() => { "use strict"; self.location = 1; }),
+        brandChecks: [
+          thrown(() => Object.getOwnPropertyDescriptor(WorkerGlobalScope.prototype, "location").get.call({})),
+          thrown(() => Object.getOwnPropertyDescriptor(WorkerLocation.prototype, "href").get.call({})),
+        ],
+      });
+    `;
+
+    async function reportOf(worker: Worker) {
+      try {
+        return await new Promise<any>((resolve, reject) => {
+          worker.onerror = e => reject(e.error ?? new Error(e.message));
+          worker.onmessage = e => resolve(e.data);
+        });
+      } finally {
+        worker.terminate();
+      }
+    }
+
+    function expectScope(data: any) {
+      expect(data).toMatchObject({
+        types: ["function", "function", "function", "object", "undefined"],
+        chain: ["DedicatedWorkerGlobalScope", "WorkerGlobalScope", "EventTarget", "Object"],
+        instanceOf: [true, true, true],
+        constructorName: "DedicatedWorkerGlobalScope",
+        tag: "[object DedicatedWorkerGlobalScope]",
+        sameLocation: true,
+        constructors: [
+          "TypeError: Illegal constructor",
+          "TypeError: Illegal constructor",
+          "TypeError: Illegal constructor",
+        ],
+        strictAssign: "TypeError: Attempted to assign to readonly property.",
+        brandChecks: [
+          "TypeError: Can only call WorkerGlobalScope.location on instances of WorkerGlobalScope",
+          "TypeError: Can only call WorkerLocation.href on instances of WorkerLocation",
+        ],
+      });
+      expect(data.location.tag).toBe("[object WorkerLocation]");
+      expect(data.location.origin).toBe("null");
+      expect(data.location.toString).toBe(data.location.href);
+    }
+
+    test("a file worker: location is the file: URL of the entry", async () => {
+      using dir = tempDir("worker-global-scope", { "worker.js": report });
+      const file = path.join(String(dir), "worker.js");
+      const data = await reportOf(new Worker(file));
+      expectScope(data);
+      expect(data.location).toMatchObject({
+        href: Bun.pathToFileURL(file).href,
+        protocol: "file:",
+        host: "",
+        pathname: Bun.pathToFileURL(file).pathname,
+        search: "",
+        hash: "",
+      });
+    });
+
+    test("a blob worker: location is the blob: URL", async () => {
+      const url = URL.createObjectURL(new Blob([report]));
+      const data = await reportOf(new Worker(url));
+      expectScope(data);
+      expect(data.location).toMatchObject({
+        href: url,
+        protocol: "blob:",
+        host: "",
+        pathname: url.slice("blob:".length),
+      });
+    });
+
+    test("a data: worker: location is the data: URL", async () => {
+      const url = "data:text/javascript," + encodeURIComponent(report);
+      const data = await reportOf(new Worker(url));
+      expectScope(data);
+      expect(data.location).toMatchObject({ href: url, protocol: "data:", host: "" });
+    });
+
+    test("the worker can still replace the prototype of its global", async () => {
+      const data = await reportOf(
+        new Worker(
+          URL.createObjectURL(
+            new Blob([
+              `class Custom {}
+               Object.setPrototypeOf(globalThis, Custom.prototype);
+               postMessage([self instanceof Custom, self instanceof WorkerGlobalScope, typeof location]);`,
+            ]),
+          ),
+        ),
+      );
+      expect(data).toEqual([true, false, "undefined"]);
+    });
+
+    test("the main thread has none of them", () => {
+      expect([
+        typeof WorkerGlobalScope,
+        typeof DedicatedWorkerGlobalScope,
+        typeof WorkerLocation,
+        typeof location,
+      ]).toEqual(["undefined", "undefined", "undefined", "undefined"]);
+      expect(Object.getPrototypeOf(globalThis)).toBe(Object.prototype);
+    });
+
+    test("a node:worker_threads worker has none of them", async () => {
+      const worker = new wt.Worker(
+        `require("node:worker_threads").parentPort.postMessage([typeof WorkerGlobalScope, typeof DedicatedWorkerGlobalScope, typeof WorkerLocation, typeof location, Object.getPrototypeOf(globalThis) === Object.prototype])`,
+        { eval: true },
+      );
+      try {
+        const [data] = await once(worker, "message");
+        expect(data).toEqual(["undefined", "undefined", "undefined", "undefined", true]);
+      } finally {
+        await worker.terminate();
+      }
+    });
+  });
 });
 
 // TODO: move to node:worker_threads tests directory

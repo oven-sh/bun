@@ -164,6 +164,7 @@
 #include <JavaScriptCore/WebAssemblyCompileOptions.h>
 #include "JSWebSocket.h"
 #include "JSWorker.h"
+#include "JSWorkerGlobalScope.h"
 #include "streams/JSWritableStream.h"
 #include "streams/JSWritableStreamDefaultController.h"
 #include "streams/JSWritableStreamDefaultWriter.h"
@@ -833,6 +834,10 @@ extern "C" JSC::JSGlobalObject* Zig__GlobalObject__create(int32_t executionConte
                 globalObject->scriptExecutionContext()->setSharedEnvStore(*store);
                 globalObject->m_processEnvObject.set(vm, globalObject, Bun::createSharedEnvironmentVariablesMap(globalObject).getObject());
             }
+
+            // The global of a Web Worker is a DedicatedWorkerGlobalScope. A node:worker_threads worker has none, as in Node.
+            if (options.kind == WebCore::WorkerOptions::Kind::Web)
+                WebCore::installWorkerGlobalScope(globalObject);
 
             // Ensure that the TerminationException singleton is constructed. Workers need this so
             // that we can request their termination from another thread. For the main thread, we

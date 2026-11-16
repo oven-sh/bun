@@ -47,6 +47,26 @@ declare var self: Worker;
 
 You can use `import` and `export` syntax in your worker code. Unlike in browsers, you don't need to pass `{type: "module"}` to use ES modules.
 
+### `WorkerGlobalScope` and `location`
+
+As in browsers, the global object of a worker is a [`DedicatedWorkerGlobalScope`](https://developer.mozilla.org/en-US/docs/Web/API/DedicatedWorkerGlobalScope). Its prototype chain is `DedicatedWorkerGlobalScope.prototype`, `WorkerGlobalScope.prototype`, `EventTarget.prototype`, `Object.prototype`. Libraries use this to detect that they run in a worker.
+
+```ts worker.ts icon="file-code"
+self instanceof WorkerGlobalScope; // true
+self instanceof DedicatedWorkerGlobalScope; // true
+Object.prototype.toString.call(self); // "[object DedicatedWorkerGlobalScope]"
+```
+
+[`location`](https://developer.mozilla.org/en-US/docs/Web/API/WorkerGlobalScope/location) is a `WorkerLocation` for the URL the worker was started with. A file path becomes a `file:` URL. A `blob:` or `data:` URL is kept as is. Its `origin` is `"null"` for all of them.
+
+```ts worker.ts icon="file-code"
+location.href; // "file:///path/to/worker.ts"
+location.pathname; // "/path/to/worker.ts"
+location.origin; // "null"
+```
+
+These globals exist only in workers created with `new Worker()`. They are `undefined` on the main thread and in `node:worker_threads` workers, as in Node.js. Every Bun worker is a module worker, so there is no `importScripts()`. Use `import` or `require()` instead.
+
 If the worker's script fails to resolve, Bun emits an `"error"` event on the `Worker` object.
 
 ```js

@@ -145,6 +145,7 @@ public:
     IsoSubspace* m_subspaceForPerformanceTiming { nullptr };
     IsoSubspace* m_subspaceForWorker { nullptr };
     IsoSubspace* m_subspaceForWorkerGlobalScope { nullptr };
+    IsoSubspace* m_subspaceForWorkerLocation { nullptr };
 
     IsoSubspace* m_subspaceForBakeGlobalScope { nullptr };
 

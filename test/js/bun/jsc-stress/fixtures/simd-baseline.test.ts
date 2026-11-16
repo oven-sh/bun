@@ -235,49 +235,128 @@ function pngFile(width: number, height: number, depth: number, colorType: number
   ]);
 }
 
-describe("JPEG codec: libjpeg-turbo jsimd runtime dispatch", () => {
-  // libjpeg-turbo picks its kernels per codec instance from CPUID (simd/jsimd.c; on
-  // x64: AVX2, else SSE2; Neon on aarch64). On the emulated baseline CPU the
-  // AVX2 kernels must stay unselected, so this traps if that gate breaks.
-  // 72 px wide: two full 32-pixel AVX2 / 16-pixel SSE2 column iterations plus an
-  // 8-pixel tail; 40 px tall keeps h2v2 chroma downsampling and upsampling busy.
-  const width = 72;
-  const height = 40;
+/** The rows of `file`, each behind its filter type. */
+function linesOf(file: Uint8Array): Buffer {
+  const view = new DataView(file.buffer, file.byteOffset);
+  const idat: Uint8Array[] = [];
+  for (let at = 8; at < file.length; at += 12 + view.getUint32(at)) {
+    if (view.getUint32(at + 4) === 0x49444154) idat.push(file.subarray(at + 8, at + 8 + view.getUint32(at)));
+  }
+  return inflateSync(Buffer.concat(idat));
+}
 
-  /** 8-bit RGB PNG whose pixel (x, y) is `rgb(x, y)`. */
-  function png(rgb: (x: number, y: number) => [number, number, number]): Uint8Array {
-    const stride = 1 + width * 3;
-    const raw = new Uint8Array(height * stride);
-    for (let y = 0; y < height; y++) {
-      for (let x = 0; x < width; x++) raw.set(rgb(x, y), y * stride + 1 + x * 3);
+describe("JPEG codec: Highway runtime dispatch", () => {
+  // src/jsc/bindings/highway_jpeg.cpp is compiled for SSSE3 and for AVX2 on x64, and has separate code for arm64. All
+  // three have to give the same bytes. These checksums are from libjpeg-turbo 3.2.0.
+  // Two groups of 32 pixels and a remainder, and partial blocks on both edges.
+  const width = 75;
+  const height = 37;
+
+  function noise(length: number, mask: number): Buffer {
+    const bytes = Buffer.alloc(length);
+    let state = 1;
+    for (let i = 0; i < length; i++) {
+      state = (Math.imul(state, 1664525) + 1013904223) >>> 0;
+      bytes[i] = (state >>> 24) & mask;
     }
-    return pngFile(width, height, 8, 2, raw); // 8 bits per sample, truecolor
+    return bytes;
   }
 
-  test("flat grey survives encode, decode, encode byte for byte", async () => {
-    // Every 8x8 block of a flat image is a lone DC coefficient, which quality
-    // 100 stores exactly, and a grey value converts to YCbCr and back exactly.
-    // So decoding the JPEG gives back the exact source pixels, and encoding
-    // them again has to reproduce the first file. That runs the colour
-    // conversion, downsampling, DCT, quantization and Huffman kernels on the
-    // encode side and the IDCT, upsampling and colour conversion kernels on the
-    // decode side, and checks their results, not just that they did not trap.
-    const first = await new Bun.Image(png(() => [77, 77, 77])).jpeg({ quality: 100 }).bytes();
-    const second = await new Bun.Image(first).jpeg({ quality: 100 }).bytes();
-    expect(first.subarray(0, 2)).toEqual(new Uint8Array([0xff, 0xd8]));
-    expect(second).toEqual(first);
+  /** YCbCr with random coefficients of 1 to 3 bits. */
+  function jpegFile(lumaSampling: number, step: number, acSymbols = [0x01, 0x02, 0x13, 0x03]): Buffer {
+    // The codes 0, 10, 110 and 1110. Without four ones in a row, any bits are valid.
+    const counts = [1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+    return Buffer.concat([
+      Buffer.from([0xff, 0xd8, 0xff, 0xdb, 0, 131, 0x10]),
+      Buffer.alloc(128, Buffer.from([step >> 8, step & 255])),
+      Buffer.from([0xff, 0xc0, 0, 17, 8, 0, height, 0, width, 3, 1, lumaSampling, 0, 2, 0x11, 0, 3, 0x11, 0]),
+      Buffer.from([0xff, 0xc4, 0, 23, 0x00, ...counts, 0, 1, 2, 3]),
+      Buffer.from([0xff, 0xc4, 0, 23, 0x10, ...counts, ...acSymbols]),
+      Buffer.from([0xff, 0xda, 0, 12, 3, 1, 0, 2, 0, 3, 0, 0, 63, 0]),
+      noise(4096, 0x77),
+      Buffer.from([0xff, 0xd9]),
+    ]);
+  }
+
+  /** At 1/8 to 8/8 of the size. The decoder scales to these itself. */
+  async function checksums(file: Buffer): Promise<number[]> {
+    const sums: number[] = [];
+    for (let eighths = 1; eighths <= 8; eighths++) {
+      const [w, h] = [Math.ceil((width * eighths) / 8), Math.ceil((height * eighths) / 8)];
+      const png = await new Bun.Image(file).resize(w, h, { fit: "fill" }).png({ compressionLevel: 0 }).bytes();
+      sums.push(Bun.hash.crc32(linesOf(png)));
+    }
+    return sums;
+  }
+
+  test.each([
+    {
+      name: "4:4:4",
+      lumaSampling: 0x11,
+      expected: [0xdf362e97, 0x848849e1, 0xeb0932a5, 0xaf4262f5, 0x19afcb90, 0x8dd0fb7d, 0x441e7bdc, 0xc0af7673],
+    },
+    {
+      name: "4:2:2",
+      lumaSampling: 0x21,
+      expected: [0x98c41678, 0x5b7e5919, 0x1087358d, 0xddbb89d8, 0x3803b37a, 0x30b05c66, 0x016d7b1c, 0xe73c7ad3],
+    },
+    // Below 8/8, chroma gets an IDCT of twice the size.
+    {
+      name: "4:2:0",
+      lumaSampling: 0x22,
+      expected: [0x5729f58c, 0xa5ce966f, 0xc6381a69, 0xb719dbfa, 0xb401b545, 0x1c760a27, 0x4495887e, 0x09b98b79],
+    },
+  ])("decode $name at every scale", async ({ lumaSampling, expected }) => {
+    expect(await checksums(jpegFile(lumaSampling, 7))).toEqual(expected);
   });
 
-  test("gradient round-trips through baseline and progressive encoders", async () => {
-    // Non-flat content drives the AC coefficient paths of the Huffman kernels
-    // and of the progressive encoder's coefficient preparation.
-    const source = png((x, y) => [x * 3, y * 6, (x + y) & 0xff]);
-    for (const progressive of [false, true]) {
-      const jpeg = await new Bun.Image(source).jpeg({ quality: 90, progressive }).bytes();
-      expect(await new Bun.Image(jpeg).metadata()).toEqual({ width, height, format: "jpeg" });
-      const decoded = await new Bun.Image(jpeg).png().bytes();
-      expect(await new Bun.Image(decoded).metadata()).toEqual({ width, height, format: "png" });
-    }
+  // Out-of-range checksums are from test/js/bun/image/jpeg-golden/model.ts.
+  test.each([
+    {
+      step: 255,
+      expected: [0x4cab1463, 0x072a2234, 0xe1c74f4b, 0x0d236dc2, 0x1b629600, 0x1d4aff3f, 0x04be1ae7, 0x8c04dfff],
+    },
+    {
+      step: 9999,
+      expected: [0xabd57f9a, 0x024f6f0a, 0x44dd2a4a, 0xaa6c089a, 0xca2b36e4, 0xa2522916, 0x053d1182, 0x70e25041],
+    },
+  ])("decode out-of-range coefficients, quantization step $step", async ({ step, expected }) => {
+    expect(await checksums(jpegFile(0x22, step))).toEqual(expected);
+  });
+
+  // More than half of the blocks have only DC. Steps above 7 are out of range.
+  test.each([
+    {
+      step: 7,
+      expected: [0xa67fb013, 0xbe9cf025, 0x1e26834d, 0x557065fa, 0x0fe5c1f6, 0xa5b5aa66, 0x4317ebb4, 0x62d5763f],
+    },
+    {
+      step: 255,
+      expected: [0x8d9317a3, 0x2cf2e5d6, 0xfdda9ada, 0xc8d514fd, 0x3f002844, 0x1271948e, 0x35022add, 0x3ef68fd5],
+    },
+    {
+      step: 9999,
+      expected: [0xb7c9ecd0, 0x21e1dce4, 0xb3732c01, 0x66722d11, 0x24e5f4fc, 0xef38c213, 0xd37d6369, 0x7392d52a],
+    },
+    {
+      step: 40000,
+      expected: [0xd1c842b1, 0x968b43a6, 0x7ac16001, 0xf648a4e5, 0x22202101, 0xe906df4a, 0x02f29c81, 0x10fd209e],
+    },
+  ])("decode blocks with few AC coefficients, quantization step $step", async ({ step, expected }) => {
+    expect(await checksums(jpegFile(0x22, step, [0x00, 0x03, 0x12, 0x71]))).toEqual(expected);
+  });
+
+  test.each([
+    { quality: 20, expected: [0xe2d5c0c5, 0x3917f1ee] },
+    { quality: 80, expected: [0x1b2e030e, 0x7f932e5d] },
+    { quality: 100, expected: [0x4bc87526, 0x4c691afb] },
+  ])("encode at quality $quality, baseline and progressive", async ({ quality, expected }) => {
+    const lines = noise(height * (1 + width * 4), 0xff);
+    for (let y = 0; y < height; y++) lines[y * (1 + width * 4)] = 0;
+    const png = pngFile(width, height, 8, 6, lines);
+    const baseline = await new Bun.Image(png).jpeg({ quality }).bytes();
+    const progressive = await new Bun.Image(png).jpeg({ quality, progressive: true }).bytes();
+    expect([Bun.hash.crc32(baseline), Bun.hash.crc32(progressive)]).toEqual(expected);
   });
 });
 
@@ -292,16 +371,6 @@ describe("PNG codec: Highway runtime dispatch", () => {
   // Once on any bytes, and once on bytes within 6 of their neighbors, where Paeth often has two to pick from.
   const filterTypes = [...someFilterTypes, ...someFilterTypes];
   const height = filterTypes.length;
-
-  /** The rows of `file`, each behind its filter type. */
-  function linesOf(file: Uint8Array): Buffer {
-    const view = new DataView(file.buffer, file.byteOffset);
-    const idat: Uint8Array[] = [];
-    for (let at = 8; at < file.length; at += 12 + view.getUint32(at)) {
-      if (view.getUint32(at + 4) === 0x49444154) idat.push(file.subarray(at + 8, at + 8 + view.getUint32(at)));
-    }
-    return inflateSync(Buffer.concat(idat));
-  }
 
   // Under Intel SDE code is slow the first time it runs: the first of these tests took 6 s, the fifth 0.1 s. Hence
   // plain loops and few functions, so that less runs for the first time, and the small pictures first, to spread it.

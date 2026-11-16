@@ -1,16 +1,146 @@
 //! A text in a text.
-use bun_simd::{Int, Matches, SharedU8, Source};
+use bun_simd::{Int, Isa, Matches, SharedU8, Source, opaque};
+use core::ops::{ControlFlow, ControlFlow::*, Range};
 use core::ptr;
 
 pub(crate) trait Unit = Source<Lane: Ord + From<u8> + Into<u32>>;
 type SharedU16 = [SharedU8; 2];
 
-/// After so many bytes or false candidates, it pays to find out which units are rare.
+/// After so many bytes or false candidates, it pays to look for better units than the ends.
 const BYTES_BEFORE_LEARNING: usize = 4096;
-const MISSES_BEFORE_LEARNING: usize = 32;
-const LONGEST_SAMPLE: usize = 4096;
-/// In units that `two_way` gets through in the same time.
-const COST_OF_LONG_CANDIDATE: usize = 64;
+const MISSES_BEFORE_LEARNING: usize = 16;
+const MOST_MISSES: usize = 128;
+const _: () = assert!(
+    MOST_MISSES + 255 / 4 < 255,
+    "the counts of `scan` have to fit"
+);
+const SAMPLE_LEN: usize = 256;
+
+/// Costs are in steps of `two_way`.
+const COST_OF_MISS: usize = 3;
+const COST_OF_CALL: usize = 32;
+const COST_OF_TURN: usize = 64;
+const COST_OF_SAMPLE: usize = 4 * SAMPLE_LEN;
+const COMPARED_PER_STEP: usize = 8;
+const SCANNED_PER_STEP: usize = 32;
+
+/// How many starts a pair of units has passed, and at which cost.
+type Turn = [usize; 2];
+
+/// Which two units of the needle are tested.
+struct Plan {
+    pair: [usize; 2],
+    best: [usize; 2],
+    to_beat: Turn,
+    /// The ends of the needle, or its rarest units.
+    usual: [usize; 2],
+    is_trial: bool,
+    trials: usize,
+    /// The misses that the best pair may have.
+    patience: usize,
+}
+
+impl Plan {
+    fn new(usual: [usize; 2], to_beat: Turn, starts_with_trial: bool) -> Self {
+        Self {
+            pair: usual,
+            best: usual,
+            to_beat,
+            usual,
+            is_trial: !starts_with_trial,
+            trials: usize::from(!starts_with_trial),
+            patience: MISSES_BEFORE_LEARNING / 2,
+        }
+    }
+
+    /// Returns the misses that the next turn may have. `telling` has differed most often.
+    #[inline(never)]
+    fn next_turn(&mut self, turn: Turn, telling: [usize; 2], rare: Option<[usize; 2]>) -> usize {
+        let cross = |a: Turn, b: Turn| a[0] as u128 * b[1] as u128;
+        if !self.is_trial || cross(turn, self.to_beat) > cross(self.to_beat, turn) {
+            (self.best, self.to_beat) = (self.pair, turn);
+        }
+        let is_too_slow = self.to_beat[1] > self.to_beat[0];
+        self.is_trial = !self.is_trial || rare.is_some() || is_too_slow;
+        if !self.is_trial {
+            (self.pair, self.patience) = (self.best, MOST_MISSES.min(2 * self.patience));
+            return self.patience;
+        }
+        self.pair = match (rare, self.trials % 3) {
+            (Some(rare), _) => rare,
+            (_, 1) if telling[0] != telling[1] => telling,
+            (_, 2) if is_too_slow || !self.best.iter().all(|it| self.usual.contains(it)) => {
+                self.usual
+            }
+            _ if telling[0] == self.pair[0] => self.pair,
+            _ => [telling[0], self.pair[0]],
+        };
+        self.trials += 1;
+        MISSES_BEFORE_LEARNING
+    }
+}
+
+/// What the turns may still cost.
+struct Budget {
+    /// Until units are ranked, this time and the next time.
+    until_ranking: [usize; 2],
+    /// More than `two_way` would.
+    until_fallback: usize,
+    /// About what it takes to prepare `two_way`.
+    setup: usize,
+    longest_fallback: usize,
+}
+
+impl Budget {
+    fn new(len: usize, is_ranked: bool, spent: usize) -> Self {
+        let setup = len.saturating_add(128).saturating_mul(4);
+        let ranking = if is_ranked {
+            COST_OF_SAMPLE
+        } else {
+            len + len / 2
+        };
+        Self {
+            until_ranking: [ranking.saturating_sub(spent), ranking],
+            until_fallback: setup,
+            setup,
+            longest_fallback: setup,
+        }
+    }
+
+    fn pay_for_ranking(&mut self) {
+        let next = self.until_ranking[1].saturating_add(COST_OF_SAMPLE);
+        self.until_ranking = [next, next.saturating_mul(2)];
+    }
+
+    /// Returns how far `two_way` must and may go, if it has to take over.
+    #[inline(never)]
+    fn pay_for(&mut self, [distance, cost]: Turn) -> Option<[usize; 2]> {
+        self.until_ranking[0] = self.until_ranking[0].saturating_sub(cost);
+        let (has, cost) = (
+            self.until_fallback.saturating_add(distance),
+            cost + COST_OF_TURN,
+        );
+        let Some(debt) = cost.checked_sub(has) else {
+            self.until_fallback = self.setup.min(has - cost);
+            return None;
+        };
+        let longest = self.longest_fallback;
+        (self.until_fallback, self.longest_fallback) =
+            (4 * COST_OF_TURN, longest.saturating_mul(2));
+        Some([debt, longest])
+    }
+}
+
+/// The false candidates of a turn.
+#[derive(Default)]
+struct Misses {
+    left: isize,
+    /// Where the last one that was compared in full has differed.
+    in_needle: usize,
+    in_haystack: usize,
+    /// How many units were equal.
+    compared: usize,
+}
 
 #[inline(always)]
 fn next<const FORWARD: bool>(matches: &mut Matches) -> Option<usize> {
@@ -18,6 +148,12 @@ fn next<const FORWARD: bool>(matches: &mut Matches) -> Option<usize> {
         true => matches.next(),
         false => matches.next_back(),
     }
+}
+
+/// How many of the `starts` are up to and at `at`.
+#[inline(always)]
+fn seen_at<const FORWARD: bool>(at: usize, starts: usize) -> usize {
+    if FORWARD { at + 1 } else { starts - at }
 }
 
 #[inline(always)]
@@ -46,7 +182,7 @@ pub(crate) fn index_with<'a, S, const FORWARD: bool>(
 
 #[bun_simd::foreach_target]
 pub(crate) mod simd {
-    use isa::{U8, U16, Vector};
+    use isa::{Mask, U8, U16, Vector};
 
     #[inline(always)]
     fn have_equal_ends<S: Unit, const N: usize>(a: &[S], b: &[S]) -> Option<bool> {
@@ -55,11 +191,12 @@ pub(crate) mod simd {
         Some(are_first_equal && load(a.split_last_chunk()?.1) == load(b.split_last_chunk()?.1))
     }
 
-    /// For slices of the same length that start and end alike. `None` if they are long.
+    /// For slices of the same length that start and end alike. `None` if they may differ in the middle.
     #[inline(always)]
-    fn are_equal<S: Unit>(a: &[S], b: &[S]) -> Option<bool> {
+    fn are_equal<S: Unit, const M: usize>(a: &[S], b: &[S]) -> Option<bool> {
         match a.len() {
-            17.. => None,
+            len if len > 2 * M => have_equal_ends::<S, M>(a, b).filter(|it| !it),
+            len if len >= M => have_equal_ends::<S, M>(a, b),
             8.. => have_equal_ends::<S, 8>(a, b),
             4.. => have_equal_ends::<S, 4>(a, b),
             len => Some(a.get(len / 2)?.get() == b.get(len / 2)?.get()),
@@ -78,77 +215,261 @@ pub(crate) mod simd {
         }
     }
 
-    /// The last place where slices of the same length differ. `None` if that is below `M`.
-    #[inline(always)]
-    fn last_mismatch<S, const N: usize, const M: usize>(a: &[S], b: &[S]) -> Option<usize>
+    /// The first or the last index at which they differ.
+    #[inline(never)]
+    fn difference<S, const N: usize, const M: usize, const FORWARD: bool>(
+        a: &[S],
+        b: &[S],
+    ) -> Option<usize>
     where
         S: Unit<Lane: Int<N> + Int<M>>,
     {
-        match a.len() >= N {
-            true => Vector::<_, N>::position_past::<S, 2, false>([a, b], 0, |[a, b]| a.simd_ne(b)),
-            false => Vector::<_, M>::position_past::<S, 2, false>([a, b], 0, |[a, b]| a.simd_ne(b)),
+        match a.len().min(b.len()) {
+            len if len >= N => {
+                Vector::<_, N>::position_near::<S, 2, FORWARD>([a, b], |[a, b]| a.simd_ne(b))
+            }
+            len if len >= M => {
+                Vector::<_, M>::position_near::<S, 2, FORWARD>([a, b], |[a, b]| a.simd_ne(b))
+            }
+            _ => difference_by_units::<S, FORWARD>(a, b),
         }
     }
 
-    /// By Crochemore and Perrin. The time is linear even if `needle` has changed since it was split.
+    /// Compares in full those that do not differ like the last one.
     #[inline(never)]
-    pub(crate) fn two_way<'a, S, const N: usize, const M: usize, const FORWARD: bool>(
+    fn first_match<'a, S, const N: usize, const M: usize, const FORWARD: bool>(
         haystack: &'a [S],
         needle: &[S],
-        mut at: usize,
-        [split, shift, known_after_shift]: [usize; 3],
+        mut candidates: Matches,
+        misses: &mut Misses,
     ) -> Option<&'a S>
     where
         S: Unit<Lane: Int<N> + Int<M>>,
     {
-        let (len, mut known) = (needle.len(), 0);
-        let (is_near_end, split_if_short) = (len < split + M, if len < M { split } else { 0 });
-        let starts = haystack.len().checked_sub(len)? + 1;
-        // The unit that each window compares first while it knows nothing, and those of the windows.
-        let at_split = nth::<S, FORWARD>(needle, split)?;
-        let firsts = haystack.get(if FORWARD { split } else { len - 1 - split }..)?;
-        let is_first = |[v]: [Vector<_, N>; 1]| v.simd_eq(Vector::splat(at_split));
-        loop {
-            let window = window(haystack, at, len)?;
-            let differs = |&i: &usize| nth::<S, FORWARD>(needle, i) != nth::<S, FORWARD>(window, i);
-            let differs_past = |seen| {
-                let differ = |[a, b]: [Vector<_, M>; 2]| a.simd_ne(b);
-                let at = Vector::position_past::<S, 2, FORWARD>([needle, window], seen, differ)?;
-                Some(if FORWARD { at } else { len - 1 - at })
+        while let Some(at) = next::<FORWARD>(&mut candidates) {
+            let candidate = window(haystack, at, needle.len())?;
+            let differs = |i: usize| Some(needle.get(i)?.get() != candidate.get(i)?.get());
+            if differs(misses.in_needle)?
+                || differs(misses.in_haystack.wrapping_sub(at)) == Some(true)
+            {
+                continue;
+            }
+            let Some(found) = difference::<S, N, M, FORWARD>(needle, candidate) else {
+                return candidate.first();
             };
-            let from = split.max(known);
-            let soon = if is_near_end { len } else { from + 8 };
-            let by;
-            (by, known) = match (from..soon).find(differs).or_else(|| differs_past(soon)) {
-                // Then the classic algorithm moves by one unit, and here it would again.
-                Some(first)
-                    if first == split
-                        && if FORWARD { at + N < starts } else { at >= N }
-                        && firsts
-                            .get(if FORWARD { at + 1 } else { at - 1 })
-                            .is_some_and(|next| next.get() != at_split) =>
+            let equal = if FORWARD {
+                found
+            } else {
+                needle.len() - 1 - found
+            };
+            [misses.in_needle, misses.in_haystack] = [found, at + found];
+            (misses.compared, misses.left) =
+                (misses.compared.saturating_add(equal), misses.left - 3);
+        }
+        None
+    }
+
+    #[inline(always)]
+    fn is_past<S: Unit<Lane: Int<N>>, const N: usize>(needle: &[S]) -> Mask<S::Lane, N> {
+        Vector::iota().simd_ge(S::Lane::from(needle.len().min(N) as u8))
+    }
+
+    /// Returns a match, or how far `range` and the misses have lasted. Counts which units were there.
+    #[inline(never)]
+    fn scan<'a, S, const N: usize, const M: usize, const FORWARD: bool>(
+        haystack: &'a [S],
+        needle: &[S],
+        &[head, tail, x, y]: &[Vector<S::Lane, N>; 4],
+        places: [&[S]; 2],
+        range: Range<usize>,
+        (misses, counts_so_far): (&mut Misses, &mut [Vector<S::Lane, N>; 2]),
+    ) -> ControlFlow<&'a S, usize>
+    where
+        S: Unit<Lane: Int<N> + Int<M>>,
+    {
+        // If LLVM knows it, it does not add under a mask register.
+        let one = if isa::Isa::HAS_MASK_REGISTERS {
+            opaque(1)
+        } else {
+            1
+        };
+        let (one, past) = (
+            Vector::splat(S::Lane::from(one as u8)),
+            is_past::<S, N>(needle),
+        );
+        let test = |[a, b]: [Vector<_, N>; 2]| a.simd_eq(x) & b.simd_eq(y);
+        let (mut left, mut counts, starts) = (misses.left, *counts_so_far, places[0].len());
+        let mut seen = range.end;
+        for mut block in Vector::matches_in::<S, 2, FORWARD>(places, range, test) {
+            let mut until = seen_with::<S, N, FORWARD>(&block, starts);
+            // Not in the last block of all, where the turn could end before it began.
+            if block.clone().count() > left.cast_unsigned() && until < starts {
+                block.truncate::<FORWARD>(left.cast_unsigned());
+                let farthest = match FORWARD {
+                    true => block.clone().next_back(),
+                    false => block.clone().next(),
+                };
+                until = farthest.map_or(until, |at| seen_at::<FORWARD>(at, starts));
+            }
+            left -= block.clone().count().cast_signed();
+            block.retain(|at| {
+                let units = window(haystack, at, needle.len().max(N)).unwrap_or_default();
+                let (Some(a), Some((_, b))) = (units.first_chunk(), units.split_last_chunk())
+                else {
+                    return true;
+                };
+                let same = [head.simd_eq(Vector::load(a)), tail.simd_eq(Vector::load(b))];
+                counts[0] += same[0].select(one, Vector::zero());
+                counts[1] += same[1].select(one, Vector::zero());
+                (same[0] & same[1]).covers(!past)
+            });
+            if !block.is_empty() {
+                misses.left = left;
+                if let Some(found) =
+                    first_match::<S, N, M, FORWARD>(haystack, needle, block.clone(), misses)
                 {
-                    let seen = if FORWARD { at + 1 } else { starts - at };
-                    let firsts = firsts.get(..starts)?;
-                    at = Vector::position_past::<S, 1, FORWARD>([firsts], seen, is_first)?;
-                    known = 0;
-                    continue;
+                    return Break(found);
                 }
-                Some(first) => (first + 1 - split, 0),
-                None if (known..split_if_short).any(|i| differs(&i)) => (shift, known_after_shift),
-                None if differs_past(known).is_some() => (shift, known_after_shift),
-                None => return window.first(),
-            };
-            at = match FORWARD {
-                true => at + by,
-                false => at.checked_sub(by)?,
+                left = misses.left;
+            }
+            if left <= 0 {
+                seen = until;
+                break;
+            }
+        }
+        (misses.left, *counts_so_far) = (left, counts);
+        Continue(seen)
+    }
+
+    /// Runs `two_way` as far as it must, then while there are many candidates, as far as it may.
+    #[inline(never)]
+    fn cross<'a, S, const N: usize, const M: usize, const FORWARD: bool>(
+        haystack: &'a [S],
+        needle: &[S],
+        halves: Halves,
+        (places, [x, y]): ([&[S]; 2], [Vector<S::Lane, N>; 2]),
+        [mut seen, mut must, may]: [usize; 3],
+    ) -> ControlFlow<Option<&'a S>, usize>
+    where
+        S: Unit<Lane: Int<N> + Int<M>>,
+    {
+        let (block, difference) = (
+            Vector::<S::Lane, N>::BLOCK_LEN,
+            difference::<S, N, M, FORWARD>,
+        );
+        let test = |[a, b]: [Vector<_, N>; 2]| a.simd_eq(x) & b.simd_eq(y);
+        loop {
+            seen = two_way::<S, FORWARD>(haystack, needle, seen..must, halves, difference)?;
+            must = seen + block;
+            let next = Vector::matches_in::<S, 2, FORWARD>(places, seen..must, test).next();
+            if seen >= may || next.map_or(0, Iterator::count) * COST_OF_MISS < block {
+                return Continue(seen);
+            }
+        }
+    }
+
+    /// Takes turns between the best pair of units so far and another one.
+    #[inline(never)]
+    fn find_far<'a, S, const N: usize, const M: usize, const FORWARD: bool>(
+        haystack: &'a [S],
+        needle: &[S],
+        mut seen: usize,
+        differs: usize,
+    ) -> Option<&'a S>
+    where
+        S: Unit<Lane: Int<N> + Int<M>>,
+    {
+        let (len, last) = (needle.len(), needle.len().checked_sub(1)?);
+        let starts = haystack.len().checked_sub(last)?;
+        let unit = |index: usize| Some(Vector::<_, N>::splat(needle.get(index)?.get()));
+        let place = |index: usize| haystack.get(index..)?.get(..starts);
+        let of = |[a, b]: [usize; 2]| Some(([place(a)?, place(b)?], [unit(a)?, unit(b)?]));
+        let [head] = Vector::<_, N>::load_or_zero(needle);
+        let tail = needle.last_chunk().map_or(head, |it| Vector::load(it));
+        let (usual, has_hint) = (if FORWARD { [last, 0] } else { [0, last] }, differs != 0);
+        let spent = COST_OF_MISS * MISSES_BEFORE_LEARNING;
+        let (mut turn, mut telling) = ([seen, spent], [differs; 2]);
+        let mut plan = Plan::new(usual, turn, has_hint);
+        let (mut misses, mut counts, mut stretch) = (Misses::default(), [Vector::zero(); 2], 8 * N);
+        let (mut is_ranked, mut halves) = (len <= 16, None);
+        let mut budget = Budget::new(len, is_ranked, if has_hint { 0 } else { spent });
+        loop {
+            let mut rare = None;
+            if budget.until_ranking[0] == 0 {
+                let sample = match (is_ranked, FORWARD) {
+                    (false, _) => needle,
+                    (true, true) => haystack.get(seen..)?.chunks(SAMPLE_LEN).next()?,
+                    (true, false) => haystack
+                        .get(..starts - seen + last)?
+                        .rchunks(SAMPLE_LEN)
+                        .next()?,
+                };
+                rare = Some(rarest_two(needle, sample));
+                plan.usual = rare.filter(|_| !is_ranked).unwrap_or(plan.usual);
+                budget.pay_for_ranking();
+                (is_ranked, stretch) = (true, 8 * N);
+            }
+            let left = plan.next_turn(turn, telling, rare).cast_signed();
+            let (began, mut cost) = (seen, 0);
+            (misses.left, misses.compared, counts) = (left, 0, counts.map(|it| it >> 2));
+            while misses.left > 0 && cost < budget.until_ranking[0] {
+                let (places, [x, y]) = of(plan.pair)?;
+                // From here, it could not go back to an aligned address.
+                let is_early = seen < N;
+                let skipped = match is_early {
+                    true => seen,
+                    false => Vector::skip::<S, FORWARD>(places[0], seen, |v| [v.simd_eq(x); 2]),
+                };
+                let has_paid = is_early || skipped >= seen + 32 * N;
+                stretch = if has_paid { 8 * N } else { stretch };
+                let range = skipped.max(seen)..skipped.saturating_add(stretch);
+                let (units, state) = ([head, tail, x, y], (&mut misses, &mut counts));
+                match scan::<S, N, M, FORWARD>(haystack, needle, &units, places, range, state) {
+                    Break(found) => return Some(found),
+                    Continue(until) if until >= starts => return None,
+                    Continue(until) => seen = until,
+                }
+                if has_paid {
+                    cost += if is_early { 0 } else { COST_OF_CALL };
+                } else if misses.left > 0 {
+                    plan.pair.swap(0, 1);
+                    // Close to the end, a ranking would not pay.
+                    cost += stretch.min(starts - seen) / SCANNED_PER_STEP;
+                    stretch = stretch.saturating_mul(4);
+                }
+            }
+            cost += COST_OF_MISS.min(len / 2) * left.abs_diff(misses.left);
+            cost += misses.compared / COMPARED_PER_STEP;
+            turn = [seen - began, cost];
+            if let Some(far) = budget.pay_for(turn) {
+                let halves = *halves.get_or_insert_with(|| halves_of::<S, FORWARD>(needle));
+                let [must, may] = far.map(|it| seen.saturating_add(it));
+                let (usual, far) = (of(plan.usual)?, [seen, must, may]);
+                match cross::<S, N, M, FORWARD>(haystack, needle, halves, usual, far) {
+                    Break(found) => return found,
+                    Continue(until) if until >= starts => return None,
+                    Continue(until) if until < may => seen = until,
+                    Continue(until) => (seen, budget.until_ranking[0]) = (until, 0),
+                }
+            }
+            let [in_head, in_tail] = counts.map(|it| it | is_past::<S, N>(needle).to_vector());
+            let lowest = in_head.simd_min(in_tail).to_array();
+            let least = lowest.iter().fold(lowest[0], |a, &b| a.min(b));
+            let (a, b) = (
+                in_head.simd_eq(least).first_set(),
+                in_tail.simd_eq(least).last_set(),
+            );
+            let b = b.map(|lane| lane + len.saturating_sub(N));
+            telling = match misses.compared {
+                0 => [a.or(b)?, b.or(a)?],
+                _ => [misses.in_needle; 2],
             };
         }
     }
 
-    /// Replaces the units that turn out to be common. `matches` has all, or there is a whole block.
+    /// Learns from the nearest candidate, unless there is only this block.
     #[inline(never)]
-    fn find_far<'a, S, const N: usize, const M: usize, const FORWARD: bool>(
+    fn find_long<'a, S, const N: usize, const M: usize, const FORWARD: bool>(
         haystack: &'a [S],
         needle: &[S],
         mut matches: Matches,
@@ -156,120 +477,18 @@ pub(crate) mod simd {
     where
         S: Unit<Lane: Int<N> + Int<M>>,
     {
-        let (len, last) = (needle.len(), needle.len().checked_sub(1)?);
-        let starts = haystack.len().checked_sub(last)?;
-        let [mut fixed, mut learned] = if FORWARD { [0, last] } else { [last, 0] };
-        // Where the last full comparison found a difference.
-        let mut previous = learned;
-        let (shortest, worth_skipping) = (8 * N, 64 * N);
-        let (mut rare, mut stretch, mut longest) = (learned, shortest, shortest);
-        let (mut patience, mut left, mut patience_to_sample) = (2isize, 2, 8);
-        let mut budget = (haystack.len() / 2 + 1024).saturating_add(len.saturating_mul(8));
-        let (mut offset, [mut part]) = (0, Vector::<_, M>::load_or_zero(needle));
-        let is_inside = Vector::iota().simd_lt(S::Lane::from(len.min(M) as u8));
-        let differ = |a: Vector<_, M>, b: &[S; M]| a.simd_ne(Vector::load(b)) & is_inside;
-        let unit = |index: usize| Some(Vector::<_, N>::splat(needle.get(index)?.get()));
-        let place = |index: usize| haystack.get(index..)?.get(..starts);
-        let (mut seen, mut seen_before) = (0, 0);
-        let at = loop {
-            if let Some(at) = next::<FORWARD>(&mut matches) {
-                let window = haystack.get(at..)?;
-                let units = window.get(offset..)?.first_chunk();
-                let is_last = seen_with::<S, N, FORWARD>(&matches, starts) >= starts;
-                match units.map(|units| differ(part, units)) {
-                    None if needle.iter().zip(window).any(|(a, b)| a.get() != b.get()) => {}
-                    None => return window.first(),
-                    Some(differ) if differ.any() && is_last => {}
-                    Some(differ) if differ.any() => {
-                        let lane = learned.wrapping_sub(offset).min(M);
-                        let is_later = Vector::iota().simd_gt(S::Lane::from(lane as u8));
-                        let [later, first] = [(differ & is_later).first_set(), differ.first_set()];
-                        learned = offset + later.or(first)?;
-                    }
-                    // The anchor keeps one of the last two differences, the part the other.
-                    Some(_) => {
-                        let Some(differs) = last_mismatch::<S, N, M>(needle, window.get(..len)?)
-                        else {
-                            return window.first();
-                        };
-                        let cost = (last - differs) / 2 + COST_OF_LONG_CANDIDATE;
-                        let Some(budget_left) = budget.checked_sub(cost) else {
-                            break at;
-                        };
-                        (budget, learned, previous) = (budget_left, previous, differs);
-                        left -= 8;
-                        offset = differs.min(len.checked_sub(M)?);
-                        part = Vector::load(needle.get(offset..)?.first_chunk()?);
-                    }
-                }
-                if is_last {
-                    match matches.is_empty() {
-                        true => return None,
-                        false => continue,
-                    }
-                }
-                seen = if FORWARD { at + 1 } else { starts - at };
-                (rare, stretch) = (learned, shortest);
-            } else if seen + shortest < starts {
-                let unit = unit(rare)?;
-                let skipped =
-                    Vector::skip::<S, FORWARD>(place(rare)?, seen, |x| [x.simd_eq(unit); 2]);
-                if skipped < seen + worth_skipping {
-                    rare = if rare == fixed { learned } else { fixed };
-                    left -= (stretch / shortest).cast_signed();
-                    longest = longest.max(2 * stretch);
-                } else {
-                    longest = shortest;
-                }
-                (seen, stretch) = (skipped, longest);
-            }
-            if seen >= starts {
-                return None;
-            }
-            if left < 0 {
-                (patience, left) = (2 * patience, 2 * patience);
-                // More than a third were candidates, and that has taken long for what is left.
-                let since = seen.saturating_sub(seen_before);
-                if patience.cast_unsigned() > ((starts - seen) / 16 + 256).max(since / 3 * 2) {
-                    break if FORWARD { seen } else { starts - 1 - seen };
-                }
-                seen_before = seen;
-                if patience >= patience_to_sample {
-                    // Longer in a long text, which pays for it.
-                    let size = patience.cast_unsigned() + 32;
-                    let size =
-                        size.max((3 * patience.cast_unsigned() + size).min((starts - seen) / 256));
-                    let size = size.min(LONGEST_SAMPLE).min(starts - seen);
-                    let from = if FORWARD { seen } else { starts - seen - size };
-                    rare = rarest(needle, haystack.get(from..)?.get(..size)?);
-                    learned = if rare == learned { fixed } else { learned };
-                    (fixed, stretch) = (rare, shortest);
-                    patience_to_sample = 16 * patience + len.cast_signed();
-                }
-            }
-            let [x, y] = [unit(fixed)?, unit(learned)?];
-            let (places, range) = ([place(fixed)?, place(learned)?], seen..seen + stretch);
-            let test = |[a, b]: [Vector<_, N>; 2]| a.simd_eq(x) & b.simd_eq(y);
-            // Some texts have no rare unit.
-            let worth_a_look = |mut block: Matches| {
-                left -= block.clone().count().cast_signed();
-                if left < 0 {
-                    return Some(block);
-                }
-                loop {
-                    let mut others = block.clone();
-                    let units = window(haystack, next::<FORWARD>(&mut others)? + offset, M);
-                    match units.and_then(<[S]>::first_chunk) {
-                        Some(units) if differ(part, units).any() => block = others,
-                        _ => return Some(block),
-                    }
-                }
-            };
-            let mut blocks = Vector::matches_in::<S, 2, FORWARD>(places, range, test);
-            matches = blocks.find_map(worth_a_look).unwrap_or_default();
-            seen += stretch;
+        let starts = haystack.len() - needle.len() + 1;
+        if starts <= Vector::<S::Lane, N>::BLOCK_LEN {
+            let misses = &mut Misses::default();
+            return first_match::<S, N, M, FORWARD>(haystack, needle, matches, misses);
+        }
+        let at = next::<FORWARD>(&mut matches)?;
+        let candidate = window(haystack, at, needle.len())?;
+        let Some(differs) = difference::<S, N, M, FORWARD>(needle, candidate) else {
+            return candidate.first();
         };
-        two_way::<S, N, M, FORWARD>(haystack, needle, at, halves::<S, FORWARD>(needle))
+        let seen = seen_at::<FORWARD>(at, starts);
+        find_far::<S, N, M, FORWARD>(haystack, needle, seen, differs)
     }
 
     /// The places of the first and the last unit of the needle, and those units.
@@ -311,20 +530,21 @@ pub(crate) mod simd {
                 let mut others = matches.clone();
                 let at = next::<FORWARD>(&mut others)?;
                 let candidate = window(haystack, at, needle.len())?;
-                match are_equal(needle, candidate) {
+                match are_equal::<S, M>(needle, candidate) {
                     Some(true) => return candidate.first(),
                     Some(false) if left > 0 => (matches, left) = (others, left - 1),
-                    _ => return find_far::<S, N, M, FORWARD>(haystack, needle, matches),
+                    Some(false) => {
+                        let seen = seen_at::<FORWARD>(at, starts);
+                        return find_far::<S, N, M, FORWARD>(haystack, needle, seen, 0);
+                    }
+                    None => return find_long::<S, N, M, FORWARD>(haystack, needle, matches),
                 }
             }
         }
-        let done = range.end - Vector::<S::Lane, N>::BLOCK_LEN;
-        let rest = match FORWARD {
-            _ if starts <= range.end => return None,
-            true => haystack.get(done..)?,
-            false => haystack.get(..haystack.len() - done)?,
-        };
-        find_far::<S, N, M, FORWARD>(rest, needle, Matches::default())
+        match range.end < starts {
+            true => find_far::<S, N, M, FORWARD>(haystack, needle, range.end, 0),
+            false => None,
+        }
     }
 
     #[inline(always)]
@@ -345,14 +565,16 @@ pub(crate) mod simd {
             }
             matches = Vector::matches_in::<S, 2, FORWARD>(places, block..starts, test).next()?;
         }
+        let mut left = MISSES_BEFORE_LEARNING;
+        #[rustc_unroll(never)]
         while !matches.is_empty() {
             let mut others = matches.clone();
             let at = next::<FORWARD>(&mut others)?;
             let candidate = window(haystack, at, needle.len())?;
-            match are_equal(needle, candidate) {
+            match are_equal::<S, M>(needle, candidate) {
                 Some(true) => return candidate.first(),
-                Some(false) => matches = others,
-                None => return find_far::<S, N, M, FORWARD>(haystack, needle, matches),
+                Some(false) if left > 0 => (matches, left) = (others, left - 1),
+                _ => return find_long::<S, N, M, FORWARD>(haystack, needle, matches),
             }
         }
         match seen_with::<S, N, FORWARD>(&matches, starts) {
@@ -409,36 +631,40 @@ pub(crate) mod simd {
     }
 }
 
-#[inline(always)]
-fn nth<S: Unit, const FORWARD: bool>(units: &[S], n: usize) -> Option<S::Lane> {
-    let from_end = units.len().wrapping_sub(n + 1);
-    Some(units.get(if FORWARD { n } else { from_end })?.get())
+/// The places of the two units of `needle` whose low bytes are rarest in `sample`.
+#[inline(never)]
+fn rarest_two<S: Unit>(needle: &[S], sample: &[S]) -> [usize; 2] {
+    let (mut counts, low_byte) = ([0u32; 256], |unit: &S| unit.get().into() as usize & 0xFF);
+    for unit in sample {
+        counts[low_byte(unit)] = counts[low_byte(unit)].wrapping_add(1);
+    }
+    let (places, count) = (0..needle.len(), |&i: &usize| counts[low_byte(&needle[i])]);
+    let first = places.clone().min_by_key(count).unwrap_or(0);
+    let second = places.rev().filter(|&i| i != first).min_by_key(count);
+    [first, second.unwrap_or(0)]
 }
 
-/// By the low byte. Counting waits for itself in a run, which only a long sample is worth.
-#[inline(never)]
-fn rarest<S: Unit>(needle: &[S], sample: &[S]) -> usize {
-    let (mut ranks, low_byte) = ([0; 256], |unit: &S| unit.get().into() as usize & 0xFF);
-    for (i, unit) in sample.iter().enumerate() {
-        let rank = &mut ranks[low_byte(unit)];
-        *rank = 1 + if sample.len() > 64 { *rank } else { i as u16 };
-    }
-    let (mut rarest, mut lowest) = (0, u16::MAX);
-    for (i, unit) in needle.iter().enumerate() {
-        match ranks[low_byte(unit)] {
-            0 => return i,
-            rank if rank < lowest => (rarest, lowest) = (i, rank),
-            _ => {}
-        }
-    }
-    rarest
+#[inline(always)]
+fn nth<S: Unit, const FORWARD: bool>(units: &[S], n: usize) -> S::Lane {
+    units[if FORWARD { n } else { units.len() - 1 - n }].get()
 }
+
+#[inline(always)]
+fn difference_by_units<S: Unit, const FORWARD: bool>(a: &[S], b: &[S]) -> Option<usize> {
+    let (mut pairs, differ) = (a.iter().zip(b), |(a, b): (&S, &S)| a.get() != b.get());
+    match FORWARD {
+        true => pairs.position(differ),
+        false => pairs.rposition(differ),
+    }
+}
+
+type Difference<S> = fn(&[S], &[S]) -> Option<usize>;
 
 /// Where the greatest suffix in the given order starts, and its period.
 fn maximal_suffix<S: Unit, const FORWARD: bool>(needle: &[S], is_ascending: bool) -> [usize; 2] {
     let (mut start, mut candidate, mut offset, mut period) = (0, 1, 0, 1);
-    let nth = |n| nth::<S, FORWARD>(needle, n);
-    while let (Some(a), Some(b)) = (nth(candidate + offset), nth(start + offset)) {
+    while candidate + offset < needle.len() {
+        let [a, b] = [candidate, start].map(|from| nth::<S, FORWARD>(needle, from + offset));
         if a == b && offset + 1 < period {
             offset += 1;
         } else if a == b {
@@ -453,26 +679,71 @@ fn maximal_suffix<S: Unit, const FORWARD: bool>(needle: &[S], is_ascending: bool
     [start, period]
 }
 
+/// Where to split the needle, and its period if it has one.
+type Halves = (usize, Option<usize>);
+
 #[inline(never)]
-fn halves<S: Unit, const FORWARD: bool>(needle: &[S]) -> [usize; 3] {
+fn halves_of<S: Unit, const FORWARD: bool>(needle: &[S]) -> Halves {
     let nth = nth::<S, FORWARD>;
     let [ascending, descending] = [true, false].map(|it| maximal_suffix::<S, FORWARD>(needle, it));
     let [split, period] = ascending.max(descending);
     let is_periodic = (0..split).all(|i| nth(needle, i) == nth(needle, period + i));
-    split_at(split, needle.len(), is_periodic.then_some(period))
+    (split, is_periodic.then_some(period))
 }
 
-/// With how far to move if only the second half matches, and how much is known to match then.
-fn split_at(split: usize, len: usize, period: Option<usize>) -> [usize; 3] {
-    match period {
-        Some(period) if split < period => [split, period, len - period],
-        _ => [split, split.max(len - split) + 1, 0],
+/// The algorithm of Crochemore and Perrin, in linear time even if `needle` has changed since.
+#[inline(never)]
+fn two_way<'a, S: Unit, const FORWARD: bool>(
+    haystack: &'a [S],
+    needle: &[S],
+    Range {
+        start: mut seen,
+        end,
+    }: Range<usize>,
+    (split, period): Halves,
+    difference: Difference<S>,
+) -> ControlFlow<Option<&'a S>, usize> {
+    let len = needle.len();
+    // How far to move if only the right half matches, and how much is known to match then.
+    let (shift, known_after_shift) = match period {
+        Some(period) if split < period => (period, len - period),
+        _ => (split.max(len - split) + 1, 0),
+    };
+    let (mut known, mut step) = (0, len);
+    // What is known has been paid for.
+    while seen < end || known > 0 {
+        let Some(left) = haystack.len().checked_sub(seen + len) else {
+            return Break(None);
+        };
+        let window = &haystack[if FORWARD { seen } else { left }..][..len];
+        // The first `n` for which `nth` differs.
+        let mismatch = |start: usize, end: usize| {
+            let part = if FORWARD {
+                start..end
+            } else {
+                len - end..len - start
+            };
+            let (a, b) = (&needle[part.clone()], &window[part]);
+            // The call pays only if much is equal, as it was the last time.
+            let at = match step > 16 {
+                true => difference(a, b)?,
+                false => difference_by_units::<S, FORWARD>(a, b)?,
+            };
+            Some(if FORWARD { start + at } else { end - 1 - at })
+        };
+        (step, known) = match mismatch(split.max(known), len) {
+            Some(n) => (n - split + 1, 0),
+            None if mismatch(known.min(split), split).is_some() => (shift, known_after_shift),
+            None => return Break(window.first()),
+        };
+        seen += step;
     }
+    Continue(seen)
 }
 
 #[cfg(all(test, not(miri)))]
 mod tests {
-    use super::{simd::portable::two_way, *};
+    use super::*;
     use core::hint::black_box;
 
     /// All that have three letters at most.
@@ -481,18 +752,14 @@ mod tests {
         (0..3u32.pow(len)).map(text)
     }
 
-    fn find<const M: usize, const FORWARD: bool>(text: &[u8], needle: &[u8]) -> Option<usize>
-    where
-        u8: Int<M>,
-    {
-        index_with::<_, FORWARD>(text, needle, |text, needle| {
-            let at = if FORWARD {
-                0
-            } else {
-                text.len() - needle.len()
-            };
-            two_way::<_, M, M, FORWARD>(text, needle, at, halves::<_, FORWARD>(needle))
-        })
+    fn with<'a, const FORWARD: bool>(a: &'a [u8], b: &[u8], halves: Halves) -> Option<&'a u8> {
+        let difference = difference_by_units::<_, FORWARD>;
+        two_way::<_, FORWARD>(a, b, 0..usize::MAX, halves, difference).break_value()?
+    }
+
+    fn find<const FORWARD: bool>(text: &[u8], needle: &[u8]) -> Option<usize> {
+        let halves = halves_of::<_, FORWARD>(needle);
+        index_with::<_, FORWARD>(text, needle, |a, b| with::<FORWARD>(a, b, halves))
     }
 
     #[test]
@@ -500,71 +767,81 @@ mod tests {
         let needles: Vec<_> = (1..=5).flat_map(texts).collect();
         for (text, needle) in texts(8).flat_map(|it| needles.iter().map(move |n| (it.clone(), n))) {
             let places = || (0..text.len()).filter(|&at| text[at..].starts_with(needle));
-            let [first, last] = [places().next(), places().next_back()];
-            assert_eq!(
-                [find::<1, true>, find::<16, true>].map(|f| f(&text, needle)),
-                [first; 2]
-            );
-            assert_eq!(
-                [find::<1, false>, find::<16, false>].map(|f| f(&text, needle)),
-                [last; 2]
-            );
+            assert_eq!(find::<true>(&text, needle), places().next());
+            assert_eq!(find::<false>(&text, needle), places().next_back());
         }
     }
 
-    /// With the vectors of the widest targets, over texts long enough to skip many of them.
-    #[test]
-    fn two_way_skips_like_wide_targets() {
-        use super::simd::portable64::two_way;
-        let mut seed = 1u32;
-        let mut random = |below: usize| {
-            seed = seed.wrapping_mul(1_103_515_245).wrapping_add(12_345);
-            (seed >> 16) as usize % below
-        };
-        for _ in 0..3000 {
-            let needle: Vec<u8> = (0..1 + random(6)).map(|_| random(3) as u8).collect();
-            let len = needle.len() + random(400);
-            let rare = 1 + random(16);
-            let mut text: Vec<u8> = (0..len)
-                .map(|_| {
-                    if random(rare) == 0 {
-                        random(3) as u8
-                    } else {
-                        3
-                    }
-                })
-                .collect();
-            if random(2) == 0 {
-                let at = random(len - needle.len() + 1);
-                text[at..][..needle.len()].copy_from_slice(&needle);
+    fn long_needles<const FORWARD: bool>() {
+        let turn = |mut it: Vec<u8>| {
+            if !FORWARD {
+                it.reverse();
             }
-            let places = || (0..text.len()).filter(|&at| text[at..].starts_with(&needle));
-            let halves = |forward| match forward {
-                true => halves::<_, true>(&needle),
-                false => halves::<_, false>(&needle),
-            };
-            let found = two_way::<_, 64, 16, true>(&text, &needle, 0, halves(true));
-            let last = text.len() - needle.len();
-            let found_last = two_way::<_, 64, 16, false>(&text, &needle, last, halves(false));
-            let index = |found: Option<&u8>| {
-                found.map(|it| ptr::from_ref(it).addr() - text.as_ptr().addr())
-            };
-            assert_eq!(
-                [index(found), index(found_last)],
-                [places().next(), places().next_back()]
-            );
+            it
+        };
+        let (text, len) = (b"ab".repeat(1 << 22), 1 << 22);
+        for (changed, split, period) in [(0, 1, 2), (len - 4, len - 1, 1)] {
+            let mut needle = text[..len].to_vec();
+            needle[changed] = b'c';
+            let (text, needle) = (turn(text.clone()), turn(needle));
+            assert_eq!(find::<FORWARD>(&text, &needle), None);
+            black_box(with::<FORWARD>(&text, &needle, (split, Some(period))));
         }
+        let text_in_steps = turn((0..64).cycle().take(len).collect());
+        let needle = turn(
+            [64].into_iter()
+                .chain((1..65).map(|it| it % 64).cycle())
+                .take(len / 2)
+                .collect(),
+        );
+        let (mut seen, difference) = (0, difference_by_units::<_, FORWARD>);
+        while let Continue(next) = two_way::<_, FORWARD>(
+            &text_in_steps,
+            &needle,
+            seen..seen + 64,
+            (63, Some(64)),
+            difference,
+        ) {
+            seen = next;
+        }
+        let almost = [&text[1..len], b"c"].concat();
+        let needle = turn([b"c", &text[..len]].concat());
+        assert_eq!(find::<FORWARD>(&turn(almost.repeat(3)), &needle), None);
+        let needle = turn([b"a", &almost[..], &almost].concat());
+        assert_eq!(halves_of::<_, FORWARD>(&needle), (len, None));
     }
 
     /// Does not end unless the time is linear.
     #[test]
-    fn long_needle_that_has_changed() {
-        let (text, mut needle) = (b"ab".repeat(1 << 22), b"ab".repeat(1 << 21));
-        needle[0] = b'c';
-        assert_eq!(find::<16, true>(&text, &needle), None);
-        for (split, period) in [(needle.len() - 1, 1), (1, 2)] {
-            let halves = split_at(split, needle.len(), Some(period));
-            black_box(two_way::<_, 16, 16, true>(&text, &needle, 0, halves));
-        }
+    fn long_needles_that_may_have_changed() {
+        long_needles::<true>();
+        long_needles::<false>();
+    }
+
+    #[test]
+    fn falls_back_for_what_it_owes() {
+        let mut budget = Budget::new(72, false, 8);
+        assert_eq!((budget.until_ranking, budget.setup), ([100, 108], 800));
+        assert_eq!(budget.pay_for([1 << 20, 30]), None);
+        assert_eq!(budget.pay_for([100, 835]), None);
+        assert_eq!(budget.pay_for([10, 40]), Some([93, 800]));
+        assert_eq!(budget.pay_for([10, 200]), None);
+        assert_eq!(budget.pay_for([0, 0]), Some([62, 1600]));
+        assert_eq!(budget.until_ranking[0], 0);
+    }
+
+    #[test]
+    fn keeps_the_best_pair() {
+        let mut plan = Plan::new([9, 0], [100, 48], false);
+        let mut next = |turn, rare| (plan.next_turn(turn, [3, 4], rare), plan.pair);
+        assert_eq!(next([100, 48], None), (16, [9, 0]));
+        assert_eq!(next([200, 48], None), (16, [3, 4]));
+        assert_eq!(next([201, 48], None), (32, [3, 4]));
+        assert_eq!(next([400, 96], None), (16, [9, 0]));
+        assert_eq!(next([200, 48], None), (64, [3, 4]));
+        assert_eq!(next([191, 192], None), (16, [3, 4]));
+        assert_eq!(next([16, 48], None), (16, [3, 4]));
+        assert_eq!(next([16, 48], Some([5, 6])), (16, [5, 6]));
+        assert_eq!(next([999, 48], None), (128, [5, 6]));
     }
 }

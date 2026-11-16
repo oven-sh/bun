@@ -123,7 +123,7 @@ mod simd {
                 }
                 seen = Self::skip::<S, FORWARD>(slice, seen, &tests);
             }
-            Self::nearest_past::<S, 1, FORWARD>([slice], seen, k, &test)
+            Self::nearest_past::<S, FORWARD>(slice, seen, k, &test)
         }
 
         /// The first or last `i` for which `test` holds for all `slices[..][i]`, with less code, if it is near.
@@ -165,15 +165,6 @@ mod simd {
                 return Self::nearest_in_short::<S, P, FORWARD>(slices, test);
             }
             Self::nearest_at::<S, P, FORWARD>(slices, 0, 1, &test)
-        }
-
-        /// The same without the `seen` nearest, but for at least `N`. `None` if there are fewer.
-        pub fn position_past<S: Source<Lane = T>, const P: usize, const FORWARD: bool>(
-            slices: [&[S]; P],
-            seen: usize,
-            test: impl Fn([Self; P]) -> Mask<T, N>,
-        ) -> Option<usize> {
-            Self::nearest_past::<S, P, FORWARD>(of_same_len(slices), seen, 1, &test)
         }
 
         /// Each such `i` in the first or the last block.
@@ -358,20 +349,20 @@ mod simd {
 
         /// For a few blocks of `k` chunks. The last one overlaps.
         #[inline(always)]
-        fn nearest_past<S: Source<Lane = T>, const P: usize, const FORWARD: bool>(
-            slices: [&[S]; P],
+        fn nearest_past<S: Source<Lane = T>, const FORWARD: bool>(
+            slice: &[S],
             mut seen: usize,
             k: usize,
-            test: &impl Fn([Self; P]) -> Mask<T, N>,
+            test: &impl Fn([Self; 1]) -> Mask<T, N>,
         ) -> Option<usize> {
-            let (len, last) = (slices[0].len(), slices[0].len().checked_sub(k * N)?);
+            let (len, last) = (slice.len(), slice.len().checked_sub(k * N)?);
             #[rustc_unroll(never)]
             while seen < len {
                 let start = match FORWARD {
                     true => seen.min(last),
                     false => last.saturating_sub(seen),
                 };
-                let masks = Self::block(slices, start, k, test)?;
+                let masks = Self::block([slice], start, k, test)?;
                 if let Some(found) = Isa::nearest_set::<T, N, FORWARD>(&masks[..k], start) {
                     return Some(found);
                 }

@@ -376,10 +376,34 @@ fn check_memmem<T: PartialEq>(widen: fn(u8) -> T, [forward, back]: Searches<T>) 
             check_both(&[&broken[..], &ends, &broken].concat(), &ends);
         }
     }
-    for (end, joined) in (0..6).flat_map(|end| (0..200).map(move |joined| (end, joined))) {
-        let mut text = b"aaaaac".repeat(200);
+    for (end, joined) in (0..6).flat_map(|end| (0..500).map(move |joined| (end, joined))) {
+        let mut text = b"aaaaac".repeat(500);
         text[6 * joined + 5] = b'a';
-        check_both(&text[end..1200 - end], b"aaaaaa");
+        check_both(&text[end..3000 - end], b"aaaaaa");
+    }
+    for (len, joined) in [40, 150]
+        .into_iter()
+        .flat_map(|len| (0..60).map(move |it| (len, it)))
+    {
+        let mut text = [&vec![b'a'; len - 1][..], b"c"].concat().repeat(60);
+        text[len * joined + len - 1] = b'a';
+        check_both(&text, &vec![b'a'; len]);
+        let needle = &b"abcdefghijklm".repeat(12)[..len];
+        let mut text = b"abcdefghijklm".repeat(5 * len);
+        (0..text.len())
+            .step_by(len - 13)
+            .for_each(|i| text[i] = b'#');
+        text.splice(len * joined..len * joined, needle.iter().copied());
+        check_both(&text, needle);
+    }
+    let runs = b"aaaaaaaaaaaaaaaaaaac".repeat(100);
+    (600..2000).for_each(|len| check_both(&runs[7..len], &[b'a'; 20]));
+    // The unit that is rare in the text is not rare in the needle.
+    let needle = [vec![0; 150], vec![1; 300], vec![0; 150]].concat();
+    for one_in in [2, 3, 32] {
+        let noise = (0..20_000).map(|_| 2 * u8::from(below(one_in) == 0));
+        let noise: Vec<u8> = noise.collect();
+        check_both(&[&noise[..], &needle, &noise].concat(), &needle);
     }
     for _ in 0..400 {
         let (len, period, letters) = (20 + below(20), 1 + below(40), 2 + below(2));
@@ -416,7 +440,7 @@ fn check_memmem<T: PartialEq>(widen: fn(u8) -> T, [forward, back]: Searches<T>) 
         );
     }
     check_both(&all_bytes().repeat(2), &all_bytes()[236..]);
-    // So many near copies that it goes on with another algorithm, which has to find the needle.
+    // Many near copies, then the needle.
     let fib = b"abaababaabaababaababaabaababaa";
     let (near, dots) = ([&b"#"[..], &fib[1..]].concat().repeat(60), vec![b'.'; 7024]);
     check_both(&[&near[..], &dots, fib].concat(), fib);
@@ -429,6 +453,26 @@ fn check_memmem<T: PartialEq>(widen: fn(u8) -> T, [forward, back]: Searches<T>) 
         .flat_map(|i| [&needle[..31], b"#", &cut(i)[32..]].concat())
         .collect();
     check_both(&[needle, &middles[..]].concat(), needle);
+    // After many false candidates: several matches next to each other, and one near either end.
+    for (len, rest) in [3, 9, 31, 33, 70, 140]
+        .map(|len| (0..70).map(move |it| (len, it)))
+        .into_iter()
+        .flatten()
+    {
+        let needle = [
+            &vec![b'a'; len / 2][..],
+            b"b",
+            &vec![b'a'; len - len / 2 - 1],
+        ]
+        .concat();
+        let (many, few) = (vec![b'a'; 700], vec![b'a'; rest]);
+        check_both(&[&many[..], &needle, &few].concat(), &needle);
+        check_both(&[&few[..], &needle, &many].concat(), &needle);
+        check_both(
+            &[&many[..], &needle, &few, &needle, &needle, &many].concat(),
+            &needle,
+        );
+    }
 }
 
 #[test]
@@ -457,6 +501,13 @@ fn check_long_needles<T: Copy + From<u8>>(searches: Searches<T>) {
     (1..=4).for_each(|i| text[(i << 21) - 1] = c);
     for search in searches.concat() {
         check(None, || search(&text, needle));
+    }
+
+    let mut text = b"defghijklmnopqrs".map(T::from).repeat(1 << 19);
+    let needle = text[..1 << 21].to_vec();
+    (1..=4).for_each(|i| text[(i << 21) - 100] = c);
+    for search in searches.concat() {
+        check(None, || search(&text, &needle));
     }
 }
 
@@ -557,9 +608,7 @@ fn widths() {
             kernels::visible_latin1_width_exclude_ansi(&t)
         });
     }
-    // Each kind starts at each place around the end of a block, and goes on for more than one,
-    // also in one of another kind or the same, which ends before it would. Blocks start at a
-    // control byte in front.
+    // Each kind starts at each place around the end of a block, also inside of another.
     let starts: [&[u8]; 14] = [
         b"\x1B[",
         b"\x1B]",
@@ -2085,31 +2134,99 @@ fn palettes_end_after_256_colors() {
 #[test]
 #[cfg_attr(miri, ignore = "slow")]
 fn memmem_with_a_concurrent_writer() {
-    const NEEDLE: &[u8] = b"a needle of some length";
-    for (len, unit) in [3, 9, 23].map(|len| [(len, b'a'), (len, b'x')]).concat() {
-        let needle = atomic(&NEEDLE[..len]);
-        let [flickers, stays] = [5000, 7000];
-        let mut text = vec![unit; flickers + stays];
-        for at in [100, flickers, stays, stays + 2000, stays + 4000] {
-            text[at..][..len].copy_from_slice(&NEEDLE[..len]);
-            text[at + len / 2] ^= u8::from(at != stays);
-        }
-        let bytes = &atomic(&text);
+    // `stays` has the first and the last match that is always there.
+    let race = |text: &[u8], needle: &[u8], flickering: [usize; 2], stays: [usize; 2]| {
+        let can_match = |at: usize| {
+            let mut pairs = (at..).zip(needle);
+            pairs.all(|(i, &unit)| text[i] == unit || flickering.contains(&i))
+        };
+        let wide = |it: &[u8]| atomic(&it.iter().flat_map(|&unit| [unit, 0]).collect::<Vec<_>>());
+        let (text, needle) = (&[atomic(text), wide(text)], [atomic(needle), wide(needle)]);
         std::thread::scope(|s| {
             let reader = Arc::new(());
             let reader_if_alive = Arc::downgrade(&reader);
             s.spawn(move || {
                 while reader_if_alive.strong_count() > 0 {
-                    bytes[flickers + len / 2].fetch_xor(1, Relaxed);
-                    bytes[stays + 2000 + len / 2].fetch_xor(1, Relaxed);
+                    for at in flickering {
+                        text[0][at].fetch_xor(1, Relaxed);
+                        text[1][2 * at].fetch_xor(1, Relaxed);
+                    }
                 }
             });
-            let [text, needle] = [bytes, &needle].map(|it| SharedU8::from_slice(it));
-            for _ in targets().flat_map(|_| 0..200) {
-                let first = kernels::memmem_shared(text, needle);
-                assert!([Some(flickers), Some(stays)].contains(&first));
-                let last = kernels::memrmem_shared(text, needle);
-                assert!([Some(stays), Some(stays + 2000)].contains(&last));
+            let [a, b] = [&text[0], &needle[0]].map(|it| SharedU8::from_slice(it));
+            let [c, d] = [&text[1], &needle[1]].map(|it| SharedU8::from_slice(it).as_chunks().0);
+            for _ in targets().flat_map(|_| 0..100) {
+                for first in [kernels::memmem_shared(a, b), kernels::memmem16_shared(c, d)] {
+                    assert!(first.is_some_and(|at| at <= stays[0] && can_match(at)));
+                }
+                for last in [
+                    kernels::memrmem_shared(a, b),
+                    kernels::memrmem16_shared(c, d),
+                ] {
+                    assert!(last.is_some_and(|at| at >= stays[1] && can_match(at)));
+                }
+            }
+        });
+    };
+    for len in [3, 9, 23, 40, 150] {
+        let needle = &b"a needle of some length".repeat(7)[..len];
+        for unit in *b"ax" {
+            let mut text = vec![unit; 12_000];
+            for at in [100, 5000, 7000, 9000, 11_000] {
+                text[at..][..len].copy_from_slice(needle);
+                text[at + len / 2] ^= u8::from(at != 7000);
+            }
+            race(
+                &text,
+                needle,
+                [5000, 9000].map(|at| at + len / 2),
+                [7000; 2],
+            );
+        }
+        let mut runs = [&vec![b'b'; len - 1][..], b"c"]
+            .concat()
+            .repeat(12_000 / len);
+        let [before, joint, after] = [5000, 7000, 9000].map(|at| at / len * len - 1);
+        runs[joint] = b'b';
+        race(
+            &runs,
+            &vec![b'b'; len],
+            [before, after],
+            [joint + 1 - len, joint],
+        );
+    }
+}
+
+#[test]
+#[cfg_attr(miri, ignore = "slow")]
+fn memmem_of_a_needle_that_changes() {
+    for (len, period) in [
+        (9, &b"b"[..]),
+        (40, b"b"),
+        (150, b"bd"),
+        (700, b"bdfhjlnprtvxz"),
+    ] {
+        let (needle, changes) = (period.repeat(len), [0, len / 3, len - 2]);
+        let mut text = period.repeat(20_000 / period.len());
+        (0..text.len())
+            .step_by(len - 1)
+            .for_each(|i| text[i] = b'#');
+        let (text, needle) = (atomic(&text), &atomic(&needle[..len]));
+        std::thread::scope(|s| {
+            let reader = Arc::new(());
+            let reader_if_alive = Arc::downgrade(&reader);
+            s.spawn(move || {
+                for at in changes.into_iter().cycle() {
+                    needle[at].fetch_xor(1, Relaxed);
+                    if reader_if_alive.strong_count() == 0 {
+                        break;
+                    }
+                }
+            });
+            let [a, b] = [&text, needle].map(|it| SharedU8::from_slice(it));
+            for _ in targets().flat_map(|_| 0..100) {
+                assert_eq!(kernels::memmem_shared(a, b), None);
+                assert_eq!(kernels::memrmem_shared(a, b), None);
             }
         });
     }

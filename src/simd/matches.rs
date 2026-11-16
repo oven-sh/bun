@@ -24,6 +24,30 @@ impl Matches {
         self.start
     }
 
+    /// Asks for each, from the first.
+    #[inline(always)]
+    pub fn retain(&mut self, mut keeps: impl FnMut(usize) -> bool) {
+        let (mut rest, start) = (core::mem::take(&mut self.bits), self.start);
+        while let Some(bit) = rest.lowest_one() {
+            if keeps(start + bit as usize) {
+                self.bits |= 1 << bit;
+            }
+            rest &= rest - 1;
+        }
+    }
+
+    /// Keeps so many of the first or the last.
+    #[inline(always)]
+    pub fn truncate<const FORWARD: bool>(&mut self, count: usize) {
+        let (all, mut last) = (self.bits.count_ones() as usize, self.bits);
+        let kept = count.min(all);
+        #[rustc_unroll(never)]
+        for _ in 0..if FORWARD { kept } else { all - kept } {
+            last &= last - 1;
+        }
+        self.bits = if FORWARD { self.bits ^ last } else { last };
+    }
+
     #[inline(always)]
     pub fn is_empty(&self) -> bool {
         self.bits == 0

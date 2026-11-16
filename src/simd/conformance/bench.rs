@@ -562,6 +562,17 @@ fn substrings(js: &[u8]) {
     let absent = |text: &[u8], needle: &[u8]| (text.to_vec(), [needle, b"\x01", needle].concat());
     let at = |at: usize, needle: &[u8]| ([&js[..at], needle, &js[..at]].concat(), needle.to_vec());
     let letters = |len, needle, of| (Random(8).bytes(len, of), Random(9).bytes(needle, of));
+    let broken_copies = |needle: &[u8], len: usize| {
+        let (mut text, random) = (needle.repeat(len / needle.len()), &mut Random(4));
+        for copy in text.chunks_mut(needle.len()) {
+            copy[random.below(needle.len())] = b'#';
+        }
+        (text, needle.to_vec())
+    };
+    let before_letters =
+        |(text, needle): (Vec<u8>, _)| ([text, Random(5).bytes(190_000, b"ab")].concat(), needle);
+    let wide = js[..1 << 15].iter().flat_map(|&byte| [byte, 0]).collect();
+    let mostly_zeros = Random(5).bytes(1 << 18, &[&[0; 32][..], &[2]].concat());
     let broken_runs = |len: usize| {
         let needle = vec![b'a'; len];
         (
@@ -590,6 +601,15 @@ fn substrings(js: &[u8]) {
         ("that almost match", almost(b"ab", 400)),
         ("in shorter runs", broken_runs(9)),
         ("in shorter runs", broken_runs(40)),
+        ("in shorter runs", broken_runs(512)),
+        (
+            "in far shorter runs",
+            (b"aab".repeat(20_000), vec![b'a'; 40]),
+        ),
+        (
+            "in source around runs",
+            ([all, &broken_runs(80).0, all].concat(), vec![b'a'; 80]),
+        ),
         ("in records that start alike", records),
         (
             "of two letters",
@@ -608,6 +628,41 @@ fn substrings(js: &[u8]) {
         (
             "in 64 KB of source",
             absent(&js[..1 << 16], b"\n--boundary-"),
+        ),
+        (
+            "between spaces",
+            (js[..1 << 16].to_vec(), b" frxm ".to_vec()),
+        ),
+        ("in zeros", (vec![0; 1 << 16], vec![0, 0, 1, 0xB3, 0])),
+        (
+            "in 500 zeros",
+            (vec![0; 500], [&[0], &js[..32], &[0]].concat()),
+        ),
+        (
+            "in mostly zeros",
+            (
+                mostly_zeros,
+                [[0; 150], [1; 150], [1; 150], [0; 150]].concat(),
+            ),
+        ),
+        ("in UTF-16", (wide, b"\0z\0q\0".to_vec())),
+        ("in broken copies", broken_copies(&js[1000..1020], 1 << 15)),
+        ("in broken copies", broken_copies(&js[1000..1032], 1 << 20)),
+        ("in broken copies", broken_copies(&js[1000..1200], 1 << 15)),
+        (
+            "in broken copies",
+            broken_copies(&b"abcdefghijklm".repeat(80), 1 << 15),
+        ),
+        (
+            "in broken copies, then letters",
+            before_letters(broken_copies(b"aacababbbabaabbczaabbbcbabaabb", 72_000)),
+        ),
+        (
+            "in a period",
+            (
+                b"cababaab".repeat(512),
+                b"baababaabaabaaaabaaaabbaaabbba".to_vec(),
+            ),
         ),
         ("after 100", at(100, b"\r\n")),
         ("after 300", at(300, b"\r\n\r\n")),

@@ -105,6 +105,9 @@ mod simd {
             let selected = from_fn(|i| if want[i] { a[i] } else { b[i] });
             assert_eq!(got.to_bitmask(), bits, "{name} {a:?} {b:?}");
             assert_eq!(got.first_set(), first, "{name}");
+            assert_eq!(got.last_set(), want.iter().rposition(|&it| it), "{name}");
+            let is_in_less = (0..N).all(|i| want[i] || a[i].into() >= b[i].into());
+            assert_eq!(got.covers(x.simd_lt(y)), is_in_less, "{name}");
             assert_eq!(
                 [got.any(), got.none(), got.all()],
                 [any, !any, all],
@@ -266,6 +269,7 @@ mod simd {
                 let mask = U8::from_array(black_box(from_fn(|i| (bits >> i & 1) as u8))).simd_eq(1);
                 assert_eq!(mask.to_bitmask(), bits);
                 assert_eq!(mask.first_set(), bits.lowest_one().map(|it| it as usize));
+                assert_eq!(mask.last_set(), bits.highest_one().map(|it| it as usize));
                 assert_eq!(
                     [mask.any(), mask.all()],
                     [bits != 0, bits.count_ones() == N as u32]

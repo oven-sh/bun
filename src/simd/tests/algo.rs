@@ -165,6 +165,15 @@ mod simd {
                     .filter(|at| (start..start + block).contains(at))
             };
             assert_eq!(matches.clone().count(), want().count());
+            let (mut odd, mut asked) = (matches.clone(), want());
+            odd.retain(|at| asked.next() == Some(at) && at % 2 == 1);
+            assert!(odd.start() == start && odd.eq(want().filter(|at| at % 2 == 1)));
+            for count in [0, 1, 2, 7, 64, usize::MAX] {
+                let [mut first, mut last] = [matches.clone(), matches.clone()];
+                first.truncate::<true>(count);
+                last.truncate::<false>(count);
+                assert!(first.eq(want().take(count)) && last.rev().eq(want().rev().take(count)));
+            }
             assert!(matches.clone().eq(want()) && matches.rev().eq(want().rev()));
             if FORWARD {
                 len.min(start + block)
@@ -206,9 +215,6 @@ mod simd {
             }
             let mut none = Vector::matches_in::<T, 2, FORWARD>(both, !from..usize::MAX, test);
             assert!(none.next().is_none());
-            let past = Vector::position_past::<T, 2, FORWARD>(both, from, test).map(turn);
-            let last = len.checked_sub(N).filter(|_| from < len);
-            assert_eq!(past, last.and_then(|last| next(in_both, from.min(last))));
             if from <= len.saturating_sub(N) {
                 let skipped = Vector::skip::<T, FORWARD>(both[0], from, |v| [v.simd_eq(one); 2]);
                 let first = next(in_a, skipped.min(from)).unwrap_or(len);
@@ -614,7 +620,6 @@ mod simd {
         let mut blocks = U8::matches_in::<_, 2, FORWARD>(pair, 1..usize::MAX, test);
         assert!(blocks.next().is_none());
         assert_eq!(U8::position_near::<_, 2, FORWARD>(pair, test), None);
-        assert_eq!(U8::position_past::<_, 2, FORWARD>(pair, 1, test), None);
         let skipped = U8::skip::<_, FORWARD>(slice, 1, |v| [v.simd_eq(255); 2]);
         assert!(slice.len() - skipped < 4 * U8::LEN);
     }

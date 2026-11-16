@@ -858,18 +858,13 @@ test.skipIf(!isLinux || !Bun.which("cc"))("udpSocket() closes a socket that refu
   using dir = tempDir("udp-v6only", {
     "shim.c": /* c */ `
       #define _GNU_SOURCE
-      #include <errno.h>
-      #include <netinet/in.h>
       #include <sys/socket.h>
       #include <sys/syscall.h>
       #include <unistd.h>
 
-      int setsockopt(int fd, int level, int name, const void *value, socklen_t length) {
-        if (level == IPPROTO_IPV6 && name == IPV6_V6ONLY) {
-          errno = EINVAL;
-          return -1;
-        }
-        return syscall(SYS_setsockopt, fd, level, name, value, length);
+      // The kernel refuses the option on an IPv4 socket, whether or not the machine has IPv6.
+      int socket(int domain, int type, int protocol) {
+        return syscall(SYS_socket, domain == AF_INET6 ? AF_INET : domain, type, protocol);
       }
     `,
   });
@@ -880,18 +875,21 @@ test.skipIf(!isLinux || !Bun.which("cc"))("udpSocket() closes a socket that refu
       /* js */ `
         const open = () => require("fs").readdirSync("/proc/self/fd").length;
         const before = open();
-        let failed = 0;
+        const codes = new Set();
         for (let i = 0; i < 10; i++) {
-          try { await Bun.udpSocket({ hostname: "::1" }); } catch { failed++; }
+          try { await Bun.udpSocket({ hostname: "::1" }); } catch (error) { codes.add(error.code); }
         }
-        console.log(JSON.stringify({ failed, leaked: open() - before }));
+        console.log(JSON.stringify({ codes: [...codes], leaked: open() - before }));
       `,
     ],
     env: { ...bunEnv, LD_PRELOAD: compileFixture(path.join(String(dir), "shim.c")) },
     stdout: "pipe",
-    stderr: "inherit",
+    stderr: "pipe",
   });
-  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
-  expect(stdout.trim()).toBe(JSON.stringify({ failed: 10, leaked: 0 }));
-  expect(exitCode).toBe(0);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+    stdout: JSON.stringify({ codes: ["ENOPROTOOPT"], leaked: 0 }),
+    stderr: "",
+    exitCode: 0,
+  });
 });

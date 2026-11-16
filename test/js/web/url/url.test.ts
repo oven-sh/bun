@@ -394,7 +394,7 @@ describe("url", () => {
   // https://github.com/oven-sh/bun/issues/28661: right through bun 1.1.4, wrong from 1.1.5.
   // The host setter of the URL Standard (https://url.spec.whatwg.org/#dom-url-host) sets the port to null
   // when the value has the default port of the scheme.
-  describe("host setter with a default port", () => {
+  describe("host setter with a port", () => {
     const cases = [
       ["http://localhost:3000/foo", "some-domain:80", "http://some-domain/foo"],
       ["https://localhost:3000/foo", "some-domain:443", "https://some-domain/foo"],
@@ -410,6 +410,14 @@ describe("url", () => {
       ["http://example.net:8080/", "example.com:81", "http://example.com:81/"],
       ["https://example.net:8080/", "example.com:80", "https://example.com:80/"],
       ["foo://example.net:8080/", "example.com:80", "foo://example.com:80/"],
+      // After an IPv6 address the port starts at the first ":" and ends at the next one. A file URL takes no port.
+      ["http://example.net:8080/p", "[::1]:9000:80", "http://[::1]:9000/p"],
+      ["http://example.net:8080/p", "[::1]:9000:81", "http://[::1]:9000/p"],
+      ["http://example.net:8080/p", "[::1]:80:9000", "http://[::1]/p"],
+      ["http://example.net:8080/p", "[::1]::80", "http://[::1]:8080/p"],
+      ["https://example.net:8080/p", "[::1]:x:443", "https://[::1]:8080/p"],
+      ["foo://example.net:8080/p", "[::1]:9000:80", "foo://[::1]:9000/p"],
+      ["file:///a/b", "[::1]::80", "file:///a/b"],
     ] as const;
 
     for (const [href, value, expected] of cases) {
@@ -419,13 +427,6 @@ describe("url", () => {
         expect(url.href).toBe(expected);
       });
     }
-
-    // After "[::1]" the port ends at the next ":", so the standard gives the port 9000 here. WTF::URL takes the last ":".
-    it.failing('new URL("http://example.net:8080/p").host = "[::1]:9000:80"', () => {
-      const url = new URL("http://example.net:8080/p");
-      url.host = "[::1]:9000:80";
-      expect(url.href).toBe("http://[::1]:9000/p");
-    });
   });
 
   describe("URL.canParse", () => {

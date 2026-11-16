@@ -133,6 +133,9 @@ void URLDecomposition::setHost(StringView value)
         // Multiple colons are acceptable only in case of IPv6.
         if (value.find(':') != separator && ipv6Separator == notFound)
             return;
+        // After an IPv6 address the port starts at the first colon (host state). A file URL has no port (file host state).
+        if (ipv6Separator != notFound && !fullURL.protocolIsFile())
+            separator = value.find(':', ipv6Separator);
         unsigned portLength = countASCIIDigits(value.substring(separator + 1));
         if (!portLength)
             fullURL.setHost(value.left(separator));

@@ -1,4 +1,4 @@
-use core::ops::ControlFlow::{self, Continue};
+use core::ops::ControlFlow::{self, Break, Continue};
 use core::sync::atomic::Ordering;
 
 use crate::Error;
@@ -63,7 +63,7 @@ impl<const IS_SSL: bool> ClientHandler<'_, '_, IS_SSL> {
     fn stop_on_break(&mut self, flow: ControlFlow<NextStep>) {
         if flow.is_break() {
             self.next_step = flow;
-            if self.client.proxy_tunnel.is_none() || !is_reusable(self.wrapper) {
+            if !matches!(flow, Break(NextStep::ReleaseSocket)) || !is_reusable(self.wrapper) {
                 self.wrapper.deinit();
             }
         }
@@ -81,32 +81,11 @@ fn on_tunnel_open(client: &mut HTTPClient<'_>, wrapper: &SSLWrapper) {
     client.state.response_stage = HTTPStage::ProxyHandshake;
     client.state.request_stage = HTTPStage::ProxyHandshake;
     if let Some(ssl_ptr) = wrapper.ssl.get() {
-        let _hostname = crate::get_tls_hostname(client, false);
+        let hostname = crate::get_tls_hostname(client, false);
 
         // SAFETY: `ssl_ptr` is the live SSL handle from the tunnel's SSLWrapper.
         let ssl = unsafe { &mut *ssl_ptr.as_ptr() };
-        if bun_core::ip_address::is_ip_host(_hostname) {
-            // SNI is null (IP literal — no SNI).
-            crate::configure_http_client_with_alpn(ssl, core::ptr::null(), AlpnOffer::H1);
-        } else {
-            // SAFETY: TEMP_HOSTNAME is only accessed from the single HTTP thread.
-            let temp_hostname = crate::temp_hostname();
-            if _hostname.len() < temp_hostname.len() {
-                temp_hostname[.._hostname.len()].copy_from_slice(_hostname);
-                temp_hostname[_hostname.len()] = 0;
-                // `temp_hostname` is NUL-terminated and outlives this call.
-                crate::configure_http_client_with_alpn(
-                    ssl,
-                    temp_hostname.as_ptr().cast(),
-                    AlpnOffer::H1,
-                );
-            } else {
-                let mut owned = _hostname.to_vec();
-                owned.push(0);
-                // `owned` is NUL-terminated and outlives this call.
-                crate::configure_http_client_with_alpn(ssl, owned.as_ptr().cast(), AlpnOffer::H1);
-            }
-        }
+        crate::configure_http_client_with_alpn(ssl, hostname, AlpnOffer::H1);
     }
 }
 
@@ -403,7 +382,7 @@ impl ProxyTunnel {
                 .as_usockets_for_client_verification()
                 .create_ssl_context(&mut err),
             // The context a direct connection uses: it holds the thread's CA options (`bun install --ca`).
-            None => Some(crate::http_thread().default_ssl_ctx()),
+            None => this.tunnel_ssl_ctx.cloned(),
         };
         let Some(ssl_ctx) = ssl_ctx else {
             // Invalid TLS options; the errors a direct request reports for them.

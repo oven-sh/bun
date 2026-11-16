@@ -804,11 +804,7 @@ where
                 if let Some(ssl) = socket.ssl_mut() {
                     bun_http::configure_http_client_with_alpn(
                         ssl,
-                        if bun_core::ip_address::is_ip_host(hostname.as_bytes()) {
-                            core::ptr::null()
-                        } else {
-                            hostname.as_ptr()
-                        },
+                        hostname.as_bytes(),
                         bun_http::AlpnOffer::H1,
                     );
                 }

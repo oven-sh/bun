@@ -1215,10 +1215,10 @@ impl Store {
     /// Counts fired one-shot polls awaiting rearm. They're still in the JS loop's `num_polls` but can't fire.
     pub fn disarmed_count(&self) -> i32 {
         let mut count = 0;
-        let mut used = self.hive.hive.used.iter_set();
+        let mut used = self.hive.hive().used().iter_set();
         while let Some(index) = used.next() {
             // SAFETY: slots are only claimed through `get_init`, so a used slot is initialized.
-            let poll = unsafe { &*self.hive.hive.ptr_at(index) };
+            let poll = unsafe { &*self.hive.hive().ptr_at(index) };
             count += i32::from(
                 poll.event_loop.is(EventLoopCtxKind::Js)
                     && poll.has_flag(Flags::HasIncrementedPollCount)
@@ -1340,12 +1340,6 @@ impl<const FORCE_UNREGISTER: bool> Drop for OwnedFilePoll<FORCE_UNREGISTER> {
 // ──────────────────────────────────────────────────────────────────────────
 
 // `Pollable` is a single-variant tagged-pointer union over `FilePoll`.
-//
-// Note: `bun_collections::TaggedPtrUnion<(FilePoll,)>` cannot be
-// instantiated here — `impl_tagged_ptr_union!` would generate
-// `impl TypeList for (FilePoll,)`, which trips the orphan rule (foreign trait
-// on a tuple). Since the union has exactly one variant, wrap the raw
-// `TaggedPtr` directly with the same tag scheme (`1024 - index`).
 #[cfg(not(windows))]
 #[derive(Copy, Clone)]
 pub(crate) struct Pollable {

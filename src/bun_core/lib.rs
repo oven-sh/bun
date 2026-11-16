@@ -25,7 +25,7 @@ pub mod result;
 pub mod thread_id;
 pub mod tty;
 pub mod util;
-pub use atomic_cell::{Atom, AtomicCell, ThreadCell};
+pub use atomic_cell::{Atom, AtomicCell};
 pub use c_str_list::{CStrList, CStrRef, CStringList};
 
 /// Shared state-machine tag for the streaming (de)compressors in

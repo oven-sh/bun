@@ -234,19 +234,15 @@ impl WebSocketProxyTunnel {
         if let Some(ssl_ptr) = ssl {
             if let Some(hostname) = this.sni_hostname.as_deref() {
                 if !bun_core::ip_address::is_ip_host(hostname) {
-                    // Set SNI hostname
-                    let hostname_z = bun_core::ZBox::from_vec_with_nul(hostname.to_vec());
                     // Route through bun_http's
                     // tier-neutral helper which does SNI + ALPN(h1) (no
                     // verify-hostname — that is checked manually in
                     // `on_handshake`).
-                    // `hostname_z` is a NUL-terminated owned buffer in scope.
                     bun_http::configure_http_client_with_alpn(
                         bun_opaque::opaque_deref_mut(ssl_ptr.as_ptr()),
-                        hostname_z.as_ptr(),
+                        hostname,
                         bun_http::AlpnOffer::H1,
                     );
-                    // hostname_z dropped here (owned NUL-terminated copy)
                 }
             }
         }

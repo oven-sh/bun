@@ -1,8 +1,9 @@
 //! Outbound request encoding for the fetch() HTTP/2 client: connection
 //! preface, HEADERS/CONTINUATION serialisation via HPACK, and DATA framing
-//! under both flow-control windows. Free functions over `&mut ClientSession`.
+//! under both flow-control windows. Free functions over a
+//! `ClientSession` or its `FrameWriter`.
 
-use super::client_session::ClientSession;
+use super::client_session::{ClientSession, FrameWriter};
 use super::stream::Stream;
 use super::{LOCAL_INITIAL_WINDOW_SIZE, LOCAL_MAX_HEADER_LIST_SIZE, WRITE_BUFFER_HIGH_WATER};
 use crate::h2_frame_parser as wire;
@@ -12,7 +13,7 @@ use crate::{HTTPClient, Request};
 use bun_core::strings;
 
 pub(crate) fn write_preface(session: &mut ClientSession) {
-    session.queue(wire::CLIENT_PREFACE);
+    session.writer.queue(wire::CLIENT_PREFACE);
 
     let mut settings = [0u8; 3 * wire::SettingsPayloadUnit::BYTE_SIZE];
     encode_setting(
@@ -30,12 +31,16 @@ pub(crate) fn write_preface(session: &mut ClientSession) {
         wire::SettingsType::SETTINGS_MAX_HEADER_LIST_SIZE,
         LOCAL_MAX_HEADER_LIST_SIZE,
     );
-    session.write_frame(wire::FrameType::HTTP_FRAME_SETTINGS, 0, 0, &settings);
+    session
+        .writer
+        .write_frame(wire::FrameType::HTTP_FRAME_SETTINGS, 0, 0, &settings);
 
     // Connection-level window starts at 64 KiB regardless of SETTINGS;
     // open it to match the per-stream window so the first response isn't
     // throttled before our first WINDOW_UPDATE.
-    session.write_window_update(0, LOCAL_INITIAL_WINDOW_SIZE - wire::DEFAULT_WINDOW_SIZE);
+    session
+        .writer
+        .write_window_update(0, LOCAL_INITIAL_WINDOW_SIZE - wire::DEFAULT_WINDOW_SIZE);
     session.preface_sent = true;
 }
 
@@ -193,7 +198,7 @@ pub(crate) fn write_request(
     }
 
     write_header_block(
-        session,
+        &mut session.writer,
         stream.id,
         &encoded,
         !has_inline_body && !is_streaming,
@@ -204,7 +209,7 @@ pub(crate) fn write_request(
     session.encode_scratch = encoded;
     if has_inline_body {
         stream.pending_body = body;
-        write_body(session, client, stream, usize::MAX);
+        write_body(&mut session.writer, client, stream, usize::MAX);
     } else if !is_streaming {
         stream.sent_end_stream();
     }
@@ -212,12 +217,12 @@ pub(crate) fn write_request(
 }
 
 pub(crate) fn write_header_block(
-    session: &mut ClientSession,
+    writer: &mut FrameWriter,
     stream_id: u32,
     block: &[u8],
     end_stream: bool,
 ) {
-    let max: usize = session.remote_max_frame_size as usize;
+    let max: usize = writer.remote_max_frame_size as usize;
     let mut remaining = block;
     let mut first = true;
     loop {
@@ -231,7 +236,7 @@ pub(crate) fn write_header_block(
         if first && end_stream {
             flags |= wire::HeadersFrameFlags::END_STREAM as u8;
         }
-        session.write_frame(
+        writer.write_frame(
             if first {
                 wire::FrameType::HTTP_FRAME_HEADERS
             } else {
@@ -252,7 +257,7 @@ pub(crate) fn write_header_block(
 /// both flow-control windows. Returns bytes consumed; END_STREAM is set
 /// on the final frame only when `end_stream` and all of `data` fit.
 pub(crate) fn write_data_windowed(
-    session: &mut ClientSession,
+    writer: &mut FrameWriter,
     stream: &mut Stream,
     data: &[u8],
     end_stream: bool,
@@ -261,15 +266,14 @@ pub(crate) fn write_data_windowed(
     let mut remaining = data;
     let mut consumed: usize = 0;
     loop {
-        let window: usize =
-            usize::try_from(stream.send_window.min(session.conn_send_window).max(0))
-                .expect("int cast");
+        let window: usize = usize::try_from(stream.send_window.min(writer.conn_send_window).max(0))
+            .expect("int cast");
         if !remaining.is_empty() && window == 0 {
             break;
         }
         // Socket-side backpressure: don't keep memcpy'ing into write_buffer
         // once it's past the high-water mark — onWritable resumes us.
-        if !remaining.is_empty() && session.write_buffer.size() >= WRITE_BUFFER_HIGH_WATER {
+        if !remaining.is_empty() && writer.write_buffer.size() >= WRITE_BUFFER_HIGH_WATER {
             break;
         }
         if consumed >= cap && !remaining.is_empty() {
@@ -277,7 +281,7 @@ pub(crate) fn write_data_windowed(
         }
         let chunk_len = remaining
             .len()
-            .min(session.remote_max_frame_size as usize)
+            .min(writer.remote_max_frame_size as usize)
             .min(window);
         let last = chunk_len == remaining.len();
         let flags: u8 = if last && end_stream {
@@ -285,14 +289,14 @@ pub(crate) fn write_data_windowed(
         } else {
             0
         };
-        session.write_frame(
+        writer.write_frame(
             wire::FrameType::HTTP_FRAME_DATA,
             flags,
             stream.id,
             &remaining[0..chunk_len],
         );
         stream.send_window -= i32::try_from(chunk_len).expect("int cast");
-        session.conn_send_window -= i32::try_from(chunk_len).expect("int cast");
+        writer.conn_send_window -= i32::try_from(chunk_len).expect("int cast");
         consumed += chunk_len;
         remaining = &remaining[chunk_len..];
         if last {
@@ -304,26 +308,21 @@ pub(crate) fn write_data_windowed(
 
 /// Push as much of `stream`'s request body as the send windows allow.
 /// Buffers into `write_buffer`; caller flushes.
-pub(crate) fn drain_send_body(session: &mut ClientSession, stream: &mut Stream, cap: usize) {
+pub(crate) fn drain_send_body(writer: &mut FrameWriter, stream: &mut Stream, cap: usize) {
     if let Some(mut client) = stream.client.take() {
-        write_body(session, &mut client, stream, cap);
+        write_body(writer, &mut client, stream, cap);
         stream.client = Some(client);
     }
 }
 
-fn write_body(
-    session: &mut ClientSession,
-    client: &mut HTTPClient,
-    stream: &mut Stream,
-    cap: usize,
-) {
+fn write_body(writer: &mut FrameWriter, client: &mut HTTPClient, stream: &mut Stream, cap: usize) {
     if stream.local_closed() || stream.awaiting_continue || stream.fatal_error.is_some() {
         return;
     }
     match &mut client.state.original_request_body {
         HTTPRequestBody::Bytes(_) => {
             let pending = stream.pending_body;
-            let sent = write_data_windowed(session, stream, pending.slice(), true, cap);
+            let sent = write_data_windowed(writer, stream, pending.slice(), true, cap);
             // pending_body[sent..] is a suffix of the original slice.
             stream.pending_body = bun_ptr::RawSlice::new(&pending.slice()[sent..]);
             if stream.pending_body.is_empty() {
@@ -338,16 +337,14 @@ fn write_body(
             };
             let mut locked = sb.lock();
             let buffer = &mut locked.buffer;
-            let data_ptr = buffer.list.as_ptr();
-            let data_len = buffer.size();
-            let cursor = buffer.cursor;
+            let data = buffer.slice();
+            let data_len = data.len();
             if data_len == 0 && !ended {
                 drop(locked);
                 return;
             }
-            // SAFETY: data_ptr[cursor..cursor+data_len] is the readable slice.
-            let data = unsafe { bun_core::ffi::slice(data_ptr.add(cursor), data_len) };
-            let sent = write_data_windowed(session, stream, data, ended, cap);
+
+            let sent = write_data_windowed(writer, stream, data, ended, cap);
             buffer.cursor += sent;
             let drained = buffer.is_empty();
             if drained {
@@ -370,32 +367,26 @@ fn write_body(
 
 /// True if it stopped at `WRITE_BUFFER_HIGH_WATER` with body bytes still sendable.
 pub(crate) fn drain_send_bodies(session: &mut ClientSession) -> bool {
+    let writer = &mut session.writer;
     // Round-robin: each pass gives every uploader at most one
     // remote_max_frame_size slice before the next stream gets a turn, so
     // the lowest-index stream can't monopolise conn_send_window.
-    let slice: usize = session.remote_max_frame_size as usize;
+    let slice: usize = writer.remote_max_frame_size as usize;
     loop {
-        if session.conn_send_window <= 0 {
+        if writer.conn_send_window <= 0 {
             return false;
         }
-        if session.write_buffer.size() >= WRITE_BUFFER_HIGH_WATER {
+        if writer.write_buffer.size() >= WRITE_BUFFER_HIGH_WATER {
             return true;
         }
         let mut progressed = false;
-        // Iterating `session.streams.values()` while passing `session` mutably
-        // to `drain_send_body` would conflict; iterate by index
-        // and re-borrow each pass.
-        let mut i = 0usize;
-        while i < session.streams.count() {
-            let stream = session.streams.values()[i].as_ptr();
-            let s = super::client_session::stream_mut(stream);
-            i += 1;
+        for s in session.streams.values_mut() {
             if s.local_closed() || s.send_window <= 0 {
                 continue;
             }
-            let before = session.conn_send_window;
-            drain_send_body(session, s, slice);
-            if session.conn_send_window != before || s.local_closed() {
+            let before = writer.conn_send_window;
+            drain_send_body(writer, s, slice);
+            if writer.conn_send_window != before || s.local_closed() {
                 progressed = true;
             }
         }

@@ -17,6 +17,7 @@ use bun_uws::quic;
 use super::ClientSession;
 use super::client_context::ClientContext;
 use super::client_session::{quic_socket_mut, session_mut};
+use crate::HTTPThread;
 
 pub struct PendingConnect {
     session: RefPtr<ClientSession>,
@@ -28,23 +29,30 @@ unsafe impl Send for PendingConnect {}
 
 unsafe extern "Rust" {
     /// Defined in `bun_runtime::dns_jsc::internal`, which this crate cannot depend on.
-    safe fn __bun_dns_register_quic(pc: PendingConnect);
+    safe fn __bun_dns_register_quic(pc: PendingConnect) -> Option<PendingConnect>;
 }
 
 impl PendingConnect {
-    pub(crate) fn register(session: *mut ClientSession, pc: quic::OwnedPendingConnect) {
-        __bun_dns_register_quic(PendingConnect {
+    pub(crate) fn register(
+        thread: &mut HTTPThread,
+        session: *mut ClientSession,
+        pc: quic::OwnedPendingConnect,
+    ) {
+        let resolved = __bun_dns_register_quic(PendingConnect {
             // SAFETY: caller passes a live intrusive-refcounted ClientSession.
             session: unsafe { RefPtr::init_ref(session) },
             pc,
         });
+        if let Some(resolved) = resolved {
+            resolved.on_dns_resolved(thread);
+        }
     }
 
     pub fn addrinfo(&self) -> *mut c_void {
         self.pc.addrinfo()
     }
 
-    pub fn on_dns_resolved(self) {
+    fn on_dns_resolved(self, thread: &mut HTTPThread) {
         let session = self.session.as_ptr();
 
         // session is kept alive by the ref `self` holds for the duration of this
@@ -55,12 +63,12 @@ impl PendingConnect {
             // connection nobody will use.
             drop(self.pc);
             if !s.closed {
-                Self::fail_session(session, crate::Error::Aborted);
+                Self::fail_session(thread, session, crate::Error::Aborted);
             }
             return;
         }
         let Some(qs) = self.pc.resolved() else {
-            Self::fail_session(session, crate::Error::DNSResolutionFailed);
+            Self::fail_session(thread, session, crate::Error::DNSResolutionFailed);
             return;
         };
         s.qsocket = Some(qs);
@@ -74,19 +82,23 @@ impl PendingConnect {
     /// next loop iteration after the wakeup.
     pub fn on_dns_resolved_threadsafe(self) {
         RESOLVED.lock().push(self);
-        crate::HTTPThread::wakeup();
+        HTTPThread::wakeup();
     }
 
-    pub(crate) fn drain_resolved() {
+    pub(crate) fn drain_resolved(thread: &mut HTTPThread) {
         let batch = core::mem::take(&mut *RESOLVED.lock());
         for pc in batch {
-            pc.on_dns_resolved();
+            pc.on_dns_resolved(thread);
         }
     }
 
     /// Tear down a session that never reached `on_conn_close` (DNS failure or
     /// every waiter aborted while DNS was in flight).
-    pub(crate) fn fail_session(session: *mut ClientSession, err: crate::Error) {
+    pub(crate) fn fail_session(
+        thread: &mut HTTPThread,
+        session: *mut ClientSession,
+        err: crate::Error,
+    ) {
         // Caller guarantees `session` is live (held by an intrusive ref) —
         // `session_mut` centralises the backref upgrade.
         let s = session_mut(session);
@@ -95,17 +107,11 @@ impl PendingConnect {
             ClientContext::get().and_then(|ctx| ClientContext::as_mut(ctx).unregister(s));
         while !s.pending.is_empty() {
             let stream = s.pending[0].as_ptr();
-            s.fail(stream, err);
+            s.fail(thread, stream, err);
         }
     }
 }
 
 /// Queue of `PendingConnect`s whose DNS resolved off the HTTP thread, drained
-/// on the next `HTTPThread::drain_events`. Conceptually a field of
-/// [`HTTPThread`](crate::HTTPThread) (there is exactly one), but kept as a
-/// module static because `http_thread()` hands out `&'static mut HTTPThread`
-/// to the HTTP thread — projecting a shared `&` to an interior field from the
-/// DNS worker would alias that exclusive borrow under Stacked Borrows. A
-/// dedicated `Sync` static sidesteps that without weakening the singleton
-/// accessor's `&mut` contract.
+/// on the next `HTTPThread::drain_events`.
 static RESOLVED: Guarded<Vec<PendingConnect>> = Guarded::new(Vec::new());

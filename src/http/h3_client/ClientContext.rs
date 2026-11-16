@@ -13,8 +13,8 @@ use bun_uws::quic::context::ConnectResult;
 use super::callbacks;
 use super::client_session::{ClientSession, quic_socket_mut, session_mut};
 use super::pending_connect::PendingConnect;
-use crate::InFlightRequest;
 use crate::http_thread::WriteMessageType;
+use crate::{HTTPThread, InFlightRequest};
 
 use crate::h3_client::h3_client;
 
@@ -94,6 +94,7 @@ impl ClientContext {
     /// Find or open a connection to `port` on the host of `client` and queue `client` on it.
     pub(crate) fn connect(
         &mut self,
+        thread: &mut HTTPThread,
         client: InFlightRequest,
         port: u16,
     ) -> Result<(), InFlightRequest> {
@@ -158,7 +159,7 @@ impl ClientContext {
                     bstr::BStr::new(hostname),
                     port,
                 );
-                PendingConnect::register(session, pending);
+                PendingConnect::register(thread, session, pending);
             }
             ConnectResult::Err => {
                 bun_core::scoped_log!(
@@ -171,7 +172,7 @@ impl ClientContext {
                 let client = s.pending[0].client.take().expect("enqueued above");
                 s.detach(s.pending[0].as_ptr());
                 let _registry_ref = self.unregister(s);
-                PendingConnect::fail_session(session, crate::Error::ConnectionRefused);
+                PendingConnect::fail_session(thread, session, crate::Error::ConnectionRefused);
                 return Err(client);
             }
         }
@@ -198,7 +199,7 @@ impl ClientContext {
         Some(registry_ref)
     }
 
-    pub(crate) fn abort_by_http_id(async_http_id: u32) -> bool {
+    pub(crate) fn abort_by_http_id(thread: &mut HTTPThread, async_http_id: u32) -> bool {
         let Some(this) = Self::get() else {
             return false;
         };
@@ -209,7 +210,7 @@ impl ClientContext {
         let ctx = bun_ptr::BackRef::from(this);
         for s in ctx.sessions.iter().map(RefPtr::as_ptr) {
             // Registry only holds live sessions — `session_mut` upgrade.
-            if session_mut(s).abort_by_http_id(async_http_id) {
+            if session_mut(s).abort_by_http_id(thread, async_http_id) {
                 return true;
             }
         }
@@ -228,7 +229,11 @@ impl ClientContext {
         }
     }
 
-    pub(crate) fn stream_body_by_http_id(async_http_id: u32, message: WriteMessageType) {
+    pub(crate) fn stream_body_by_http_id(
+        thread: &mut HTTPThread,
+        async_http_id: u32,
+        message: WriteMessageType,
+    ) {
         let Some(this) = Self::get() else {
             return;
         };
@@ -236,7 +241,7 @@ impl ClientContext {
         let ctx = bun_ptr::BackRef::from(this);
         for s in ctx.sessions.iter().map(RefPtr::as_ptr) {
             // Registry only holds live sessions — `session_mut` upgrade.
-            if session_mut(s).stream_body_by_http_id(async_http_id, message) {
+            if session_mut(s).stream_body_by_http_id(thread, async_http_id, message) {
                 return;
             }
         }

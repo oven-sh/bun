@@ -1,4 +1,5 @@
 use crate::Error;
+use crate::http_thread::LibdeflateState;
 use bun_core::MutableString;
 use bun_core::Output;
 use bun_http1::{ChunkedDecoder, ResponseParser};
@@ -295,7 +296,8 @@ impl<'a> InternalState<'a> {
                 self.flags.is_libdeflate_fast_path_disabled = true;
 
                 log!("Decompressing {} bytes with libdeflate\n", buffer.len());
-                let deflater = crate::http_thread().deflater();
+                let mut deflater = LibdeflateState::get();
+                let deflater: &mut LibdeflateState = &mut deflater;
 
                 // If we know that the stream is going to be larger than our
                 // pre-allocated buffer, then let's dynamically allocate the exact
@@ -342,7 +344,7 @@ impl<'a> InternalState<'a> {
                 let decompressor = deflater
                     .decompressor
                     .as_ref()
-                    .expect("set in HttpThread::deflater()");
+                    .expect("set in LibdeflateState::get()");
                 let result = decompressor.decompress(buffer, &mut deflater.shared_buffer, format);
 
                 // libdeflate decodes a single member; unconsumed input means

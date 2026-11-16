@@ -18,7 +18,7 @@ use crate::h3_client as H3;
 use crate::http_thread::WriteMessageType;
 use crate::internal_state::HTTPStage;
 use crate::signals::Field as Signal;
-use crate::{HeaderResult, InFlightRequest, Protocol};
+use crate::{HTTPThread, HeaderResult, InFlightRequest, Protocol};
 
 use crate::h3_client::h3_client;
 
@@ -142,6 +142,7 @@ impl ClientSession {
 
     pub(crate) fn stream_body_by_http_id(
         &mut self,
+        thread: &mut HTTPThread,
         async_http_id: u32,
         message: WriteMessageType,
     ) -> bool {
@@ -155,7 +156,7 @@ impl ClientSession {
             }
             if let crate::HTTPRequestBody::Stream(s) = &mut client.state.original_request_body {
                 if message == WriteMessageType::LengthMismatch {
-                    self.fail(stream_ptr, crate::Error::RequestBodyLengthMismatch);
+                    self.fail(thread, stream_ptr, crate::Error::RequestBodyLengthMismatch);
                     return true;
                 }
                 s.ended = message == WriteMessageType::End;
@@ -214,11 +215,11 @@ impl ClientSession {
         }
     }
 
-    pub(crate) fn fail(&mut self, stream: *mut Stream, err: crate::Error) {
+    pub(crate) fn fail(&mut self, thread: &mut HTTPThread, stream: *mut Stream, err: crate::Error) {
         let client = stream_mut(stream).client.take();
         self.detach_with(stream, true);
         if let Some(client) = client {
-            client.fail(err);
+            client.fail(thread, err);
         }
     }
 
@@ -228,20 +229,25 @@ impl ClientSession {
     /// behavior for the GOAWAY / stateless-reset / port-reuse race where a
     /// pooled session goes stale between the `matches()` check and the first
     /// stream open.
-    pub(crate) fn retry_or_fail(&mut self, stream: *mut Stream, err: crate::Error) {
+    pub(crate) fn retry_or_fail(
+        &mut self,
+        thread: &mut HTTPThread,
+        stream: *mut Stream,
+        err: crate::Error,
+    ) {
         let st = stream_mut(stream);
         let Some(mut client) = st.client.take() else {
-            return self.fail(stream, err);
+            return self.fail(thread, stream, err);
         };
         // RFC 9110 §9.2.2: the origin may have acted on a request that was written.
         let replay_safe = !st.headers_sent || st.peer_rejected || client.method.is_idempotent();
         if client.flags.h3_retried || st.is_streaming_body || !replay_safe {
             self.detach_with(stream, true);
-            return client.fail(err);
+            return client.fail(thread, err);
         }
         let Some(ctx) = ClientContext::get() else {
             self.detach_with(stream, true);
-            return client.fail(err);
+            return client.fail(thread, err);
         };
         client.flags.h3_retried = true;
         // The end of one stream leaves the connection usable, and connect() may
@@ -259,12 +265,12 @@ impl ClientSession {
             bstr::BStr::new(err.name()),
         );
         self.detach_with(stream, true);
-        if let Err(client) = ClientContext::as_mut(ctx).connect(client, port) {
-            client.fail(err);
+        if let Err(client) = ClientContext::as_mut(ctx).connect(thread, client, port) {
+            client.fail(thread, err);
         }
     }
 
-    pub(crate) fn abort_by_http_id(&mut self, async_http_id: u32) -> bool {
+    pub(crate) fn abort_by_http_id(&mut self, thread: &mut HTTPThread, async_http_id: u32) -> bool {
         // `fail` mutates `pending`, so it cannot be called while the iterator
         // holds `&self.pending`, and only one entry can match — so locate
         // first via raw-ptr reads, then act.
@@ -278,7 +284,7 @@ impl ClientSession {
             }
         }
         if !found.is_null() {
-            self.fail(found, crate::Error::Aborted);
+            self.fail(thread, found, crate::Error::Aborted);
             return true;
         }
         false
@@ -288,7 +294,7 @@ impl ClientSession {
     /// `done` = the lsquic stream is gone; deliver whatever is buffered then
     /// detach. Mirrors H2's `ClientSession.deliverStream` so the HTTPClient state
     /// machine sees the same call sequence regardless of transport.
-    pub(crate) fn deliver(&mut self, stream: *mut Stream, done: bool) {
+    pub(super) fn deliver(&mut self, stream: *mut Stream, done: bool) {
         let st = stream_mut(stream);
         let Some(mut client) = st.client.take() else {
             if done {
@@ -299,7 +305,7 @@ impl ClientSession {
 
         if client.signals.get(Signal::Aborted) {
             self.detach_with(stream, true);
-            return client.fail(crate::Error::Aborted);
+            return fail(client, crate::Error::Aborted);
         }
 
         if st.status_code != 0 && !st.headers_delivered {
@@ -310,7 +316,7 @@ impl ClientSession {
                 Ok(r) => r,
                 Err(e) => {
                     self.detach_with(stream, true);
-                    return client.fail(e);
+                    return fail(client, e);
                 }
             };
             // `is_done()`: Content-Length: 0 can arrive as `HasBody` (e.g. an SSE content-type).
@@ -320,7 +326,7 @@ impl ClientSession {
             {
                 if client.state.flags.is_redirect_pending {
                     self.detach(stream);
-                    return client.do_redirect_multiplexed();
+                    return HTTPThread::enter(|thread| client.do_redirect_multiplexed(thread));
                 }
                 client.store_metadata(response);
                 client.state.flags.received_last_chunk = true;
@@ -340,14 +346,12 @@ impl ClientSession {
             st.client = Some(client);
             if done {
                 // Stream closed before headers — handshake/reset failure.
-                return self.retry_or_fail(
-                    stream,
-                    if st.status_code == 0 {
-                        crate::Error::HTTP3StreamReset
-                    } else {
-                        crate::Error::ConnectionClosed
-                    },
-                );
+                let err = if st.status_code == 0 {
+                    crate::Error::HTTP3StreamReset
+                } else {
+                    crate::Error::ConnectionClosed
+                };
+                HTTPThread::enter(|thread| self.retry_or_fail(thread, stream, err));
             }
             return;
         }
@@ -361,7 +365,7 @@ impl ClientSession {
                 Err(e) => {
                     st.body_buffer.clear();
                     self.detach_with(stream, true);
-                    return client.fail(e);
+                    return fail(client, e);
                 }
             };
             st.body_buffer.clear();
@@ -372,7 +376,7 @@ impl ClientSession {
             if report {
                 if client.state.is_done() {
                     self.detach(stream);
-                    return client.finish();
+                    return HTTPThread::enter(|thread| client.finish(thread));
                 }
                 client.send_partial_result();
             }
@@ -383,7 +387,7 @@ impl ClientSession {
         if done {
             self.detach(stream);
             if let Err(err) = client.state.finalize_body_on_eof() {
-                return client.fail(err);
+                return fail(client, err);
             }
             return finish(client);
         }
@@ -459,13 +463,18 @@ pub(super) fn session_mut<'a>(p: *mut ClientSession) -> &'a mut ClientSession {
     unsafe { &mut *p }
 }
 
+#[cold]
+fn fail(client: InFlightRequest, err: crate::Error) {
+    HTTPThread::enter(|thread| client.fail(thread, err));
+}
+
 fn finish(client: InFlightRequest) {
     if let Some(cl) = client.state.content_length {
         if client.state.total_body_received != cl {
-            return client.fail(crate::Error::HTTP3ContentLengthMismatch);
+            return fail(client, crate::Error::HTTP3ContentLengthMismatch);
         }
     }
-    client.finish();
+    HTTPThread::enter(|thread| client.finish(thread));
 }
 
 impl Drop for ClientSession {

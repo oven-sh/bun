@@ -1,14 +1,9 @@
-//! [`AtomicCell<T>`] and [`ThreadCell<T>`] — the two named replacements for
-//! [`RacyCell`](crate::RacyCell) when state crosses (or is asserted *not* to
-//! cross) a thread boundary.
-//!
-//! `RacyCell` is overloaded for three unrelated invariants. This module splits two of them
-//! into types the compiler / debug build can check:
+//! [`AtomicCell<T>`] — the named replacement for
+//! [`RacyCell`](crate::RacyCell) when state crosses a thread boundary.
 //!
 //! | Invariant                                      | Type                  |
 //! | ---------------------------------------------- | --------------------- |
 //! | small `Copy` scalar, read+written from ≥2 threads | [`AtomicCell<T>`]  |
-//! | thread-confined scratch (HTTP-thread-only buffer, resolver watermark) | [`ThreadCell<T>`] |
 //! | init-once-then-read-only                       | `std::sync::OnceLock` |
 //!
 //! After migration, `RacyCell` should remain only for FFI-shaped `.bss`
@@ -425,107 +420,6 @@ unsafe impl<U> Atom for Option<NonNull<U>> {
                 Err(x) => Err(NonNull::new(x)),
             }
         }
-    }
-}
-
-// ═══════════════════════════════════════════════════════════════════════════
-// ThreadCell<T>
-// ═══════════════════════════════════════════════════════════════════════════
-
-/// `RacyCell<T>` + a debug-only owner latch.
-///
-/// For state whose `// SAFETY:` comment says "HTTP-thread-only" /
-/// "resolver-thread-only" / "single watcher thread" and that claim is
-/// **load-bearing but unchecked**. `ThreadCell` converts the comment into a
-/// checked invariant: once [`claim`](Self::claim) is called from the owning
-/// thread, every subsequent [`get`](Self::get) on a different thread panics
-/// in debug builds. Release builds compile the latch away — `ThreadCell<T>`
-/// has the same layout as `RacyCell<T>`.
-///
-/// This is the worker-thread sibling of `JsCell<T>` (which is JS-thread-
-/// affine and additionally documents reentrancy as the hazard).
-///
-/// **Migration note:** until [`claim`](Self::claim) is called, `get()` does
-/// *not* assert (matching `RacyCell`). This lets a static be initialized on
-/// the spawning thread, then claimed from the worker thread's entry point.
-/// Existing `RacyCell` sites can swap to `ThreadCell` as a drop-in first
-/// step, then add `claim()` once cross-thread callers are routed away.
-#[repr(C)]
-pub struct ThreadCell<T: ?Sized> {
-    #[cfg(debug_assertions)]
-    owner: AtomicU64,
-    inner: UnsafeCell<T>,
-}
-
-// SAFETY: same lie as `RacyCell` (caller promises thread-affinity), now
-// *checked* in debug via `owner`.
-unsafe impl<T: ?Sized> Sync for ThreadCell<T> {}
-
-#[cfg(debug_assertions)]
-const UNCLAIMED: u64 = 0;
-
-impl<T> ThreadCell<T> {
-    #[inline]
-    pub const fn new(value: T) -> Self {
-        Self {
-            #[cfg(debug_assertions)]
-            owner: AtomicU64::new(UNCLAIMED),
-            inner: UnsafeCell::new(value),
-        }
-    }
-}
-
-impl<T: ?Sized> ThreadCell<T> {
-    /// Bind this cell to the calling thread. Idempotent on the owner; panics
-    /// if a *different* thread has already claimed it. Call once from the
-    /// owning thread's entry point (e.g. `HTTPThread::on_start`).
-    #[inline]
-    pub fn claim(&self) {
-        #[cfg(debug_assertions)]
-        {
-            let me = crate::util::debug_thread_id();
-            match self
-                .owner
-                .compare_exchange(UNCLAIMED, me, Ordering::AcqRel, Ordering::Acquire)
-            {
-                Ok(_) => {}
-                Err(prev) if prev == me => {}
-                Err(prev) => {
-                    panic!("ThreadCell: thread {me} tried to claim, already owned by thread {prev}")
-                }
-            }
-        }
-    }
-
-    /// Debug-panic if the cell is claimed by a different thread.
-    #[inline]
-    pub(crate) fn assert_owner(&self) {
-        #[cfg(debug_assertions)]
-        {
-            let owner = self.owner.load(Ordering::Acquire);
-            if owner != UNCLAIMED {
-                let me = crate::util::debug_thread_id();
-                assert!(
-                    owner == me,
-                    "ThreadCell: accessed from thread {me}, owned by thread {owner}"
-                );
-            }
-        }
-    }
-
-    /// Raw pointer to the contained value (debug-asserts owner if claimed).
-    /// Mirrors [`RacyCell::get`](crate::RacyCell::get) — callers stay in
-    /// raw-ptr land and deref per-access.
-    #[inline]
-    pub fn get(&self) -> *mut T {
-        self.assert_owner();
-        self.inner.get()
-    }
-}
-
-impl<T: Default> Default for ThreadCell<T> {
-    fn default() -> Self {
-        Self::new(T::default())
     }
 }
 

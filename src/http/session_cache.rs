@@ -98,7 +98,7 @@ impl SessionCache {
 
 /// Per-`SSL` sink. Box-allocated; uSockets holds the raw pointer and frees the Box on `SSL_free`.
 pub(crate) struct SessionSink {
-    ctx: *const crate::HttpsContext,
+    cache: *const SessionCache,
     hostname: Box<[u8]>,
     port: u16,
     proxy_auth_hash: u64,
@@ -125,9 +125,8 @@ pub fn on_new_session(socket: &mut bun_uws::us_socket_t, session: *mut SSL_SESSI
     // holds a borrow of the sink during that call.
     let sink = unsafe { owner.as_ref() };
     if sink.armed {
-        // SAFETY: `ctx` is the `HTTPContext<true>` owning this socket's
-        // group; it outlives every SSL attached to it.
-        unsafe { &*sink.ctx }.session_cache.insert(
+        // SAFETY: `socket` is open, see [`install`]'s contract.
+        unsafe { &*sink.cache }.insert(
             &sink.hostname,
             sink.port,
             sink.proxy_auth_hash,
@@ -169,26 +168,23 @@ pub(crate) fn eligible(client: &crate::HTTPClient<'_>) -> bool {
 /// Offer any cached session for this key and install an unarmed sink.
 ///
 /// # Safety
-/// `socket` must be live and `ssl` its pre-handshake `SSL*`; `ctx` must outlive `ssl`.
+/// `socket` must be live and `ssl` its pre-handshake `SSL*`; `cache` must be valid and shared until `socket` is closed.
 pub(crate) unsafe fn install(
     socket: *mut bun_uws::us_socket_t,
     ssl: *mut SSL,
-    ctx: *const crate::HttpsContext,
+    cache: &SessionCache,
     hostname: &[u8],
     port: u16,
     proxy_auth_hash: u64,
     unix_path: &[u8],
 ) {
     debug_assert!(!ssl.is_null());
-    debug_assert!(!ctx.is_null());
-    // SAFETY: caller contract.
-    let cache = unsafe { &(*ctx).session_cache };
     if let Some(session) = cache.take(hostname, port, proxy_auth_hash, unix_path) {
         // SAFETY: `ssl` is live and pre-handshake; it takes its own reference.
         unsafe { SSL_set_session(ssl, session.as_ptr()) };
     }
     let sink = Box::new(SessionSink {
-        ctx,
+        cache,
         hostname: Box::<[u8]>::from(hostname),
         port,
         proxy_auth_hash,
@@ -209,7 +205,7 @@ pub(crate) unsafe fn install(
 /// Flush the parked TLS 1.2 session and admit later TLS 1.3 tickets.
 ///
 /// # Safety
-/// `socket` must be a live socket on the HTTP thread.
+/// `socket` must be an open socket on the HTTP thread.
 pub(crate) unsafe fn arm(socket: *mut bun_uws::us_socket_t) {
     // SAFETY: caller contract.
     let owner = unsafe { us_socket_session_sink(socket) };
@@ -224,8 +220,8 @@ pub(crate) unsafe fn arm(socket: *mut bun_uws::us_socket_t) {
     }
     sink.armed = true;
     if let Some(session) = sink.pending.take() {
-        // SAFETY: `ctx` outlives `ssl` per [`install`]'s contract.
-        unsafe { &*sink.ctx }.session_cache.insert(
+        // SAFETY: `socket` is open, see [`install`]'s contract.
+        unsafe { &*sink.cache }.insert(
             &sink.hostname,
             sink.port,
             sink.proxy_auth_hash,

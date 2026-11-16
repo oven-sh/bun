@@ -44,14 +44,9 @@
 "freed_while_borrowed:src/http/AsyncHTTP.rs" = 1
 "generic_body_not_generic:src/http/HTTPContext.rs" = 1
 "generic_body_not_generic:src/http/lib.rs" = 2
-"safe_fn_returns_shared_mut:src/http/HTTPContext.rs" = 1
-"safe_fn_returns_shared_mut:src/http/HTTPThread.rs" = 2
-"safe_fn_returns_shared_mut:src/http/h2_client/ClientSession.rs" = 2
-"safe_fn_returns_shared_mut:src/http/h3_client/AltSvc.rs" = 1
 "safe_fn_returns_shared_mut:src/http/h3_client/ClientContext.rs" = 1
 "safe_fn_returns_shared_mut:src/http/h3_client/ClientSession.rs" = 5
 "safe_fn_returns_shared_mut:src/http/h3_client/callbacks.rs" = 2
-"safe_fn_returns_shared_mut:src/http/lib.rs" = 6
 
 [bun_http_jsc]
 "generic_body_not_generic:src/http_jsc/websocket_client.rs" = 6

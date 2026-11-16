@@ -99,21 +99,6 @@ impl<const CAPACITY: usize> HiveBitSet<CAPACITY> {
     /// Forward iterator over set bits. Mirrors `IntegerBitSet::iter_set`.
     #[inline]
     pub fn iter_set(&self) -> HiveBitSetIter<CAPACITY> {
-        self.iterator::<true, true>()
-    }
-
-    /// Signature mirrors `IntegerBitSet::iterator` so existing
-    /// `hive.used.iterator::<true, true>()` callers compile unchanged. Only
-    /// the `<KIND_SET=true, DIR_FWD=true>` combination is implemented (the
-    /// only one used in-tree); other params assert.
-    #[inline]
-    pub fn iterator<const KIND_SET: bool, const DIR_FWD: bool>(&self) -> HiveBitSetIter<CAPACITY> {
-        const {
-            assert!(
-                KIND_SET && DIR_FWD,
-                "HiveBitSet::iterator only supports <true,true>"
-            )
-        };
         // Snapshot the live words into a non-`Cell` array so the iterator can
         // outlive transient mutations of the source bitset.
         HiveBitSetIter {
@@ -149,12 +134,12 @@ impl<const CAPACITY: usize> HiveBitSetIter<CAPACITY> {
 /// The pointers are intended to be stable
 /// Sorta related to https://www.open-std.org/jtc1/sc22/wg21/docs/papers/2021/p0447r15.html
 ///
-/// All slot operations take `&self` and the buffer is `UnsafeCell` — slot
+/// The operations on slot pointers take `&self` and the buffer is `UnsafeCell` — slot
 /// pointers come from `UnsafeCell::get()` and so survive `&self` reborrows of
 /// the pool (the `bumpalo` / `typed-arena` shape). `HiveArray` is `!Sync`.
 pub struct HiveArray<T, const CAPACITY: usize> {
     buffer: UnsafeCell<[MaybeUninit<T>; CAPACITY]>,
-    pub used: HiveBitSet<CAPACITY>,
+    used: HiveBitSet<CAPACITY>,
 }
 
 impl<T, const CAPACITY: usize> HiveArray<T, CAPACITY> {
@@ -217,8 +202,65 @@ impl<T, const CAPACITY: usize> HiveArray<T, CAPACITY> {
         }
     }
 
+    /// The indices of the slots in use.
+    pub fn used(&self) -> &HiveBitSet<CAPACITY> {
+        &self.used
+    }
+
+    /// Moves `value` into the slot at `index`. Leaks the value that is there, if any.
+    pub fn insert(&mut self, index: usize, value: T) -> &mut T {
+        let slot = &mut self.buffer.get_mut()[index];
+        debug_assert!(!self.used.is_set(index));
+        self.used.set(index);
+        asan::unpoison(slot.as_mut_ptr().cast(), size_of::<T>());
+        slot.write(value)
+    }
+
+    pub fn get_mut(&mut self, index: usize) -> Option<&mut T> {
+        let slot = self.buffer.get_mut().get_mut(index)?;
+        // SAFETY: only `Fallback` calls `claim`, and it lends no `&mut` to its hive. So `insert` set this bit.
+        (self.used.is_set(index)).then(|| unsafe { slot.assume_init_mut() })
+    }
+
+    /// The first index, at `from` or above, whose value `predicate` accepts.
+    pub fn position(
+        &mut self,
+        from: usize,
+        mut predicate: impl FnMut(&T) -> bool,
+    ) -> Option<usize> {
+        let mut wanted = usize::MAX << (from % WORD_BITS);
+        for word in from / WORD_BITS..HiveBitSet::<CAPACITY>::NUM_WORDS {
+            let mut used = self.used.masks[word].get() & wanted;
+            wanted = usize::MAX;
+            while used != 0 {
+                let index = word * WORD_BITS + used.trailing_zeros() as usize;
+                used &= used - 1;
+                // SAFETY: as in `get_mut`.
+                if predicate(unsafe { self.buffer.get_mut()[index].assume_init_ref() }) {
+                    return Some(index);
+                }
+            }
+        }
+        None
+    }
+
+    /// Drops the value in place. Returns whether there was one.
+    pub fn remove(&mut self, index: usize) -> bool {
+        let Some(slot) = self.buffer.get_mut().get_mut(index) else {
+            return false;
+        };
+        if !self.used.is_set(index) {
+            return false;
+        }
+        self.used.unset(index);
+        // SAFETY: as in `get_mut`, and the slot is no longer in use.
+        unsafe { slot.assume_init_drop() };
+        asan::poison(slot.as_mut_ptr().cast(), size_of::<T>());
+        true
+    }
+
     /// Reserves a slot to [`write`](HiveSlot::write). `None` if the hive is full.
-    pub fn claim(&self) -> Option<HiveSlot<'_, T, CAPACITY>> {
+    fn claim(&self) -> Option<HiveSlot<'_, T, CAPACITY>> {
         let index = self.used.find_first_unset()?;
         self.used.set(index);
         // SAFETY: `index < CAPACITY` ⇒ in-bounds; `UnsafeCell::get` is non-null.
@@ -230,13 +272,6 @@ impl<T, const CAPACITY: usize> HiveArray<T, CAPACITY> {
             slot,
             owner: Some(self),
         })
-    }
-
-    pub fn at(&self, index: u16) -> *mut T {
-        debug_assert!((index as usize) < CAPACITY);
-        let ret = self.ptr_at(index as usize);
-        asan::assert_unpoisoned(ret.cast::<u8>());
-        ret
     }
 
     fn index_of(&self, value: *const T) -> Option<u32> {
@@ -265,7 +300,7 @@ impl<T, const CAPACITY: usize> HiveArray<T, CAPACITY> {
     /// If `value` points into this hive, it must point to a fully-initialized
     /// `T` previously handed out by this hive and written by the caller. The slot is dropped in place; passing a moved-from or
     /// uninitialized slot is UB for `T` with drop glue.
-    pub unsafe fn put(&self, value: *mut T) -> bool {
+    unsafe fn put(&self, value: *mut T) -> bool {
         let Some(index) = self.index_of(value) else {
             return false;
         };
@@ -393,7 +428,7 @@ impl<T, const CAPACITY: usize> Drop for HiveSlot<'_, T, CAPACITY> {
 // at module scope with the same parameters as `HiveArray`. The hive is always
 // materialized; the `CAPACITY > 0` checks below gate its use.
 pub struct Fallback<T, const CAPACITY: usize> {
-    pub hive: HiveArray<T, CAPACITY>,
+    hive: HiveArray<T, CAPACITY>,
 }
 
 impl<T, const CAPACITY: usize> Fallback<T, CAPACITY> {
@@ -401,6 +436,10 @@ impl<T, const CAPACITY: usize> Fallback<T, CAPACITY> {
         Self {
             hive: HiveArray::init(),
         }
+    }
+
+    pub fn hive(&self) -> &HiveArray<T, CAPACITY> {
+        &self.hive
     }
 
     /// Placement-new constructor — see [`HiveArray::init_in_place`]. Only
@@ -695,18 +734,44 @@ mod tests {
     }
 
     #[test]
-    fn at_returns_claimed_slot() {
+    fn insert_get_mut_remove() {
+        let mut a = HiveArray::<Box<u8>, 1>::init();
+        assert_eq!(a.get_mut(0), None);
+        assert_eq!(a.insert(0, Box::new(1)), &mut Box::new(1));
+        assert_eq!(a.get_mut(0), Some(&mut Box::new(1)));
+        assert_eq!(a.get_mut(1), None);
+        assert_eq!(a.position(0, |v| **v == 1), Some(0));
+        assert_eq!(a.position(1, |v| **v == 1), None);
+        assert_eq!(a.position(0, |v| **v == 2), None);
+        assert!(!a.remove(1));
+        assert!(a.remove(0));
+        assert!(!a.remove(0));
+    }
+
+    #[test]
+    fn position_crosses_words() {
+        let mut a = HiveArray::<usize, 128>::init();
+        for index in [3, 63, 64, 127] {
+            a.insert(index, index);
+        }
+        for (from, found) in [(0, 3), (4, 63), (63, 63), (64, 64), (65, 127), (127, 127)] {
+            assert_eq!(a.position(from, |_| true), Some(found));
+        }
+        assert_eq!(a.position(4, |&v| v != 63), Some(64));
+        assert_eq!(a.position(128, |_| true), None);
+    }
+
+    #[test]
+    fn ptr_at_returns_claimed_slot() {
         let a = HiveArray::<u64, 4>::init();
         let p0 = a.claim().unwrap().write(100);
         let p1 = a.claim().unwrap().write(200);
-        assert_eq!(a.at(0), p0.as_ptr());
-        assert_eq!(a.at(1), p1.as_ptr());
         assert_eq!(a.ptr_at(0), p0.as_ptr());
         assert_eq!(a.ptr_at(1), p1.as_ptr());
         // SAFETY: both slots are initialized.
         unsafe {
-            assert_eq!(*a.at(0), 100);
-            assert_eq!(*a.at(1), 200);
+            assert_eq!(*a.ptr_at(0), 100);
+            assert_eq!(*a.ptr_at(1), 200);
         }
         // SAFETY: only token for its slot.
         assert!(unsafe { a.put(p0.as_ptr()) });
@@ -946,12 +1011,6 @@ mod tests {
         assert_eq!(a.used.find_first_unset(), Some(0));
 
         let mut it = a.used.iter_set();
-        assert_eq!(it.next(), Some(1));
-        assert_eq!(it.next(), Some(3));
-        assert_eq!(it.next(), None);
-
-        // The explicit-param form is the same as iter_set().
-        let mut it = a.used.iterator::<true, true>();
         assert_eq!(it.next(), Some(1));
         assert_eq!(it.next(), Some(3));
         assert_eq!(it.next(), None);

@@ -15,10 +15,10 @@ use super::client_context::ClientContext;
 use super::client_session::{ClientSession, session_mut, stream_mut, stream_ref};
 use super::encode;
 use super::stream::Stream;
-use crate::Headers;
 use crate::h2_client::dispatch::{
     is_malformed_response_field, is_malformed_response_value, trim_response_value,
 };
+use crate::{HTTPThread, Headers};
 
 use crate::h3_client::h3_client;
 
@@ -148,14 +148,12 @@ extern "C" fn on_conn_close(qs: *mut quic::Socket) {
         let stream = session.pending[0].as_ptr();
         // pending holds live Stream pointers owned by the session.
         debug_assert!(stream_ref(stream).qstream.is_none());
-        session.retry_or_fail(
-            stream,
-            if session.handshake_done {
-                crate::Error::ConnectionClosed
-            } else {
-                crate::Error::HTTP3HandshakeFailed
-            },
-        );
+        let err = if session.handshake_done {
+            crate::Error::ConnectionClosed
+        } else {
+            crate::Error::HTTP3HandshakeFailed
+        };
+        HTTPThread::enter(|thread| session.retry_or_fail(thread, stream, err));
     }
 }
 
@@ -205,12 +203,17 @@ extern "C" fn on_stream_open(s: *mut quic::Stream, is_client: c_int) {
     s.want_write(true);
 }
 
+#[cold]
+fn fail(session: &mut ClientSession, stream: *mut Stream, err: crate::Error) {
+    HTTPThread::enter(|thread| session.fail(thread, stream, err));
+}
+
 extern "C" fn on_stream_headers(s: *mut quic::Stream) {
     let s = qstream_arg(s);
     let Some(stream) = stream_of(s) else { return };
     let session = stream.session_mut();
     if s.headers_too_large() {
-        session.fail(stream, crate::Error::ResponseHeadersTooLarge);
+        fail(session, stream, crate::Error::ResponseHeadersTooLarge);
         return;
     }
     let n = s.header_count();
@@ -240,7 +243,7 @@ extern "C" fn on_stream_headers(s: *mut quic::Stream) {
         if stream.status_code == 0
             && (is_malformed_response_field(name) || is_malformed_response_value(value))
         {
-            session.fail(stream, crate::Error::HTTP3ProtocolError);
+            fail(session, stream, crate::Error::HTTP3ProtocolError);
             return;
         }
         headers.append(name, trim_response_value(value));
@@ -253,7 +256,7 @@ extern "C" fn on_stream_headers(s: *mut quic::Stream) {
         if stream.status_code != 0 {
             return;
         }
-        session.fail(stream, crate::Error::HTTP3ProtocolError);
+        fail(session, stream, crate::Error::HTTP3ProtocolError);
         return;
     }
     if status >= 100 && status < 200 {
@@ -294,7 +297,7 @@ extern "C" fn on_stream_writable(s: *mut quic::Stream) {
         stream.headers_sent = true;
         let session = stream.session_mut();
         if let Err(e) = encode::write_request(session, stream_mut(stream_ptr), s) {
-            session.fail(stream_ptr, e);
+            fail(session, stream_ptr, e);
         }
         return;
     }

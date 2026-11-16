@@ -1,5 +1,7 @@
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe, isASAN } from "harness";
+import { once } from "node:events";
+import { createServer, type AddressInfo } from "node:net";
 
 // Evicting a custom SSL context while it still has in-flight sockets closes
 // those sockets via no-op callbacks (cleanCallbacks runs first in
@@ -43,6 +45,33 @@ test("aborting fetches whose custom SSL context was evicted does not crash", asy
   );
 
   expect(results).toEqual(Array.from({ length: runs }, () => ({ stdout: "ok\n", stderr: "", exitCode: 0 })));
+});
+
+test("aborting a coalesced HTTP/2 fetch rejects after its SSL context was evicted", async () => {
+  // Never answers the ClientHello.
+  await using server = createServer(socket => socket.on("error", () => {})).listen(0, "127.0.0.1");
+  await once(server, "listening");
+  const url = `https://127.0.0.1:${(server.address() as AddressInfo).port}/`;
+  const start = (config: number, signal: AbortSignal) =>
+    fetch(url, { protocol: "http2", signal, tls: { serverName: `host-${config}.test` } }).catch(e => e.name);
+
+  const waiterController = new AbortController();
+  const othersController = new AbortController();
+  const others = [start(0, othersController.signal)];
+  const waiter = start(0, waiterController.signal);
+  try {
+    await once(server, "connection");
+    // ssl_context_cache_max_size more configs evict config 0.
+    for (let config = 1; config <= 60; config++) {
+      others.push(start(config, othersController.signal));
+      await once(server, "connection");
+    }
+    waiterController.abort();
+    expect(await waiter).toBe("AbortError");
+  } finally {
+    othersController.abort();
+    await Promise.all(others);
+  }
 });
 
 // The HTTP client thread's queued tasks are popped FIFO and each task's

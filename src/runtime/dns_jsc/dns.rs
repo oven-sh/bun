@@ -1676,13 +1676,14 @@ pub(crate) mod internal {
         }
     }
 
-    /// QUIC analogue of `Bun__addrinfo_set`, declared in `bun_http`.
+    /// QUIC analogue of `Bun__addrinfo_set`, declared in `bun_http`. Gives `pc` back if the answer is there.
     #[unsafe(no_mangle)]
-    fn __bun_dns_register_quic(pc: PendingConnect) {
+    fn __bun_dns_register_quic(pc: PendingConnect) -> Option<PendingConnect> {
         // SAFETY: `pc` holds this ref from `Bun__addrinfo_get` until `on_dns_resolved`.
         let request = unsafe { &*pc.addrinfo().cast::<Request>() };
-        if let Err(DNSRequestOwner::Quic(pc)) = request.join(DNSRequestOwner::Quic(pc)) {
-            pc.on_dns_resolved();
+        match request.join(DNSRequestOwner::Quic(pc)) {
+            Err(DNSRequestOwner::Quic(pc)) => Some(pc),
+            _ => None,
         }
     }
 }

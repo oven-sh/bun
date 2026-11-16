@@ -1043,6 +1043,40 @@ describe.concurrent("fetch() over HTTP/2 (BUN_FEATURE_FLAG_EXPERIMENTAL_HTTP2_CL
       );
     });
 
+    test.each([
+      [
+        "REFUSED_STREAM is retried",
+        (conn: RawConn, id: number) => conn.rst(id, http2.constants.NGHTTP2_REFUSED_STREAM),
+      ],
+      [
+        "a redirect is followed",
+        (conn: RawConn, id: number) =>
+          conn.headers(id, Buffer.concat([hpackLit(":status", "302"), hpackLit("location", "/")]), { endStream: true }),
+      ],
+    ])("%s on a new connection with SETTINGS_MAX_CONCURRENT_STREAMS=1", async (_, turnAway) => {
+      const requests: number[] = [];
+      await withRawH2Server(
+        (conn, id, connIndex) => {
+          requests.push(connIndex);
+          if (connIndex > 0) return conn.headers(id, hpackStatus(204), { endStream: true });
+          conn.socket.write(frame(4, 0, 0, Buffer.concat([Buffer.from([0, 3]), u32be(1)])));
+          turnAway(conn, id);
+        },
+        async url => {
+          await using proc = await spawnFetch(`
+            console.log(await fetch("${url}", { tls: { rejectUnauthorized: false } }).then(r => r.status, e => e.code));
+          `);
+          const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+          expect({ stdout, stderr, requests, exitCode }).toEqual({
+            stdout: "204\n",
+            stderr: "",
+            requests: [0, 1],
+            exitCode: 0,
+          });
+        },
+      );
+    });
+
     test("RST_STREAM(NO_ERROR) after a complete response keeps the response; a later RST is ignored", async () => {
       // RFC 9113 §8.1: the server may finish the response before the request
       // body and reset with NO_ERROR; DATA we had in flight can then draw a
@@ -1852,6 +1886,36 @@ describe.concurrent("fetch() over HTTP/2 (BUN_FEATURE_FLAG_EXPERIMENTAL_HTTP2_CL
             stderr: "",
             exitCode: 0,
             served: ["0:1", "0:3", "1:1"],
+          });
+        },
+      );
+    }, 30_000);
+
+    test("the SSL context of a connection that waits for the ACK can be evicted", async () => {
+      let pings = 0;
+      await withRawH2Server(
+        (conn, id, connIndex) => {
+          if (connIndex > 0) conn.headers(id, hpackStatus(204), { endStream: true });
+        },
+        async (url, state) => {
+          state.onPing = () => pings++;
+          const result = await runLiveness(
+            url,
+            [state],
+            `
+            const config = n => ({ tls: { ...tls, serverName: "host-" + n + ".test" } });
+            console.log(await abortAfter(1100, config(0)));
+            // ssl_context_cache_max_size more configs evict config 0.
+            for (let n = 1; n <= 60; n++) await get(config(n));
+            console.log(await get(config(0)));
+            `,
+          );
+          expect({ ...result, pings, connections: state.connections }).toEqual({
+            stdout: ["AbortError", "204"],
+            stderr: "",
+            exitCode: 0,
+            pings: 1,
+            connections: 62,
           });
         },
       );

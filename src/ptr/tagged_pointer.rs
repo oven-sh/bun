@@ -1,11 +1,10 @@
 use core::ffi::c_void;
-use core::marker::PhantomData;
 
 /// Logically a u49. Rust has no native u49, so we carry it in a u64 and mask.
 pub(crate) type AddressableSize = u64;
 
 /// `TaggedPtr::Tag` — logically u15, carried in u16. (Inherent assoc types are nightly; hoisted here.)
-pub type TagType = u16;
+pub(crate) type TagType = u16;
 /// Bit layout:
 ///   bits  0..49 → `_ptr`
 ///   bits 49..64 → `data`
@@ -65,93 +64,5 @@ impl From<*mut c_void> for TaggedPtr {
     #[inline]
     fn from(val: *mut c_void) -> Self {
         TaggedPtr(val as usize as u64)
-    }
-}
-impl From<Option<*mut c_void>> for TaggedPtr {
-    #[inline]
-    fn from(val: Option<*mut c_void>) -> Self {
-        TaggedPtr(val.map_or(0, |p| p as usize as u64))
-    }
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// TaggedPointerUnion
-// ─────────────────────────────────────────────────────────────────────────────
-//
-// Modeled with two traits:
-//
-//   - `TypeList`      : implemented for the tuple `(T1, T2, ...)`; carries the
-//                       tag range.
-//   - `UnionMember<L>`: implemented for each `Ti` against its list `L`; carries
-//                       that type's tag value.
-//
-// Membership checks become a `T: UnionMember<Ts>` bound — the compile error is
-// the trait-bound failure.
-
-/// Implemented for the tuple of types passed to `TaggedPtrUnion<(...)>`.
-pub trait TypeList {}
-
-/// `T: UnionMember<Ts>` ⇔ `T` is one of the types in the list `Ts`.
-pub trait UnionMember<Ts: TypeList> {
-    const TAG: TagType;
-}
-
-#[repr(transparent)]
-pub struct TaggedPtrUnion<Ts: TypeList> {
-    pub(crate) repr: TaggedPtr,
-    _types: PhantomData<Ts>,
-}
-
-impl<Ts: TypeList> Clone for TaggedPtrUnion<Ts> {
-    fn clone(&self) -> Self {
-        *self
-    }
-}
-impl<Ts: TypeList> Copy for TaggedPtrUnion<Ts> {}
-
-impl<Ts: TypeList> TaggedPtrUnion<Ts> {
-    // pub type TagInt → use module-level TagType
-
-    #[inline]
-    pub fn get<Type: UnionMember<Ts>>(self) -> Option<*mut Type> {
-        if self.is::<Type>() {
-            Some(self.as_unchecked::<Type>())
-        } else {
-            None
-        }
-    }
-
-    /// unsafely cast a tagged pointer to a specific type, without checking that it's really that type
-    // `as` is a Rust keyword, hence `as_unchecked`.
-    #[inline]
-    pub fn as_unchecked<Type: UnionMember<Ts>>(self) -> *mut Type {
-        self.repr.get::<Type>()
-    }
-
-    #[inline]
-    pub fn is<Type: UnionMember<Ts>>(self) -> bool {
-        self.repr.data() == Type::TAG
-    }
-
-    #[inline]
-    pub fn from(ptr: Option<*mut c_void>) -> Self {
-        Self {
-            repr: TaggedPtr::from(ptr),
-            _types: PhantomData,
-        }
-    }
-
-    #[inline]
-    pub fn ptr(self) -> *mut c_void {
-        self.repr.to()
-    }
-
-    #[inline]
-    pub fn init<Type: UnionMember<Ts>>(ptr: *const Type) -> Self {
-        // there will be a compiler error if the passed in type doesn't exist in the enum
-        Self {
-            repr: TaggedPtr::init(ptr, Type::TAG),
-            _types: PhantomData,
-        }
     }
 }

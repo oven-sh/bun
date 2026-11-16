@@ -45,7 +45,7 @@ pub(crate) struct ExecState {
 enum ParseFlag {
     ContinueParsing,
     Done,
-    IllegalOption(Box<[u8]>),
+    IllegalOption(u8),
 }
 
 impl Ls {
@@ -78,7 +78,7 @@ impl Ls {
                             interp,
                             cmd,
                             Some(Kind::Ls),
-                            format_args!("illegal option -- {}\n", bstr::BStr::new(&opt[..])),
+                            format_args!("illegal option -- {}\n", bstr::BStr::new(&[opt])),
                         )
                         .to_vec();
                         Self::state_mut(interp, cmd).state = State::WaitingWriteErr;
@@ -195,7 +195,7 @@ impl Ls {
 
     /// Returns the index of the first non-flag arg, or `None` if there are no
     /// positional args. `Err` carries the offending flag byte.
-    fn parse_opts(interp: &Interpreter, cmd: NodeId) -> Result<Option<usize>, Box<[u8]>> {
+    fn parse_opts(interp: &Interpreter, cmd: NodeId) -> Result<Option<usize>, u8> {
         let argc = Builtin::of(interp, cmd).args_slice().len();
         if argc == 0 {
             return Ok(None);
@@ -206,7 +206,7 @@ impl Ls {
             match Self::parse_flag(&mut Self::state_mut(interp, cmd).opts, flag) {
                 ParseFlag::Done => return Ok(Some(idx)),
                 ParseFlag::ContinueParsing => {}
-                ParseFlag::IllegalOption(s) => return Err(s),
+                ParseFlag::IllegalOption(ch) => return Err(ch),
             }
             idx += 1;
         }
@@ -219,7 +219,7 @@ impl Ls {
         }
         // FIXME windows
         if flag.len() == 1 {
-            return ParseFlag::IllegalOption(Box::from(&b"-"[..]));
+            return ParseFlag::IllegalOption(b'-');
         }
         for &ch in &flag[1..] {
             match ch {
@@ -233,7 +233,7 @@ impl Ls {
                 | b'h' | b'H' | b'i' | b'I' | b'k' | b'L' | b'm' | b'n' | b'N' | b'o' | b'p'
                 | b'q' | b'Q' | b's' | b'S' | b't' | b'T' | b'u' | b'U' | b'v' | b'w' | b'x'
                 | b'X' | b'Z' => {}
-                _ => return ParseFlag::IllegalOption(Box::from(&flag[1..2])),
+                _ => return ParseFlag::IllegalOption(ch),
             }
         }
         ParseFlag::ContinueParsing

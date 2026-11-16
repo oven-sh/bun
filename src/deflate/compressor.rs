@@ -65,7 +65,7 @@ pub struct Compressor {
 }
 
 impl Compressor {
-    /// Returns how many bytes it wrote.
+    /// Returns how many bytes it wrote. It may take up to 8 bytes more room than that.
     #[inline(never)]
     pub fn compress(
         &mut self,

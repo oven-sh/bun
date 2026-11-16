@@ -325,8 +325,8 @@ fn memory_is_limited_and_kept() {
     for (effort, for_little, for_much) in most_kib {
         let mut kib = |compressor: &mut Compressor, data| {
             let output = Output::Slice(&mut room);
-            let compress = || _ = compressor.compress(data, Format::Raw, level(effort), output);
-            bytes_allocated_by(compress).div_ceil(1024)
+            let compress = || compressor.compress(data, Format::Raw, level(effort), output);
+            bytes_allocated_by(|| assert!(compress().is_ok())).div_ceil(1024)
         };
         let mut compressor = Compressor::default();
         assert!(kib(&mut Compressor::default(), &data[..500]) <= for_little);

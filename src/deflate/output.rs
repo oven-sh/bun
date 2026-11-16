@@ -2,10 +2,12 @@
 
 use crate::{Error, Result, copy_prefix};
 
-/// How far at most a `Vec` is zeroed ahead of what is written, so that the zeros are still in the cache.
+/// How much at most the decoder has zeroed at once, so that the zeros are still in the cache, and how far ahead it prefetches.
 pub(crate) const MAX_STEP: usize = 8 * 1024;
 /// Above this, glibc's `memset` takes `rep stosb`, which is slower.
 const FILL_LEN: usize = 2 * 1024;
+/// No system has smaller pages.
+const PAGE_LEN: usize = 4 * 1024;
 
 pub enum Output<'a> {
     /// What follows the result may be overwritten too.
@@ -67,12 +69,17 @@ impl<'a> Sink<'a> {
         Ok(())
     }
 
-    /// Makes [`Self::bytes`] at least `len` long, and longer if there is capacity.
+    /// Makes [`Self::bytes`] at least `len` long, and a step longer if there is capacity.
     pub(crate) fn extend(&mut self, len: usize) -> Result<()> {
         self.make_room(len)?;
         if let Output::Vec { vec, limit } = &mut self.output {
             let most = vec.capacity().min(self.start.saturating_add(*limit));
             let end = (vec.len() + self.step).max(self.start + len).min(most);
+            // Some CPUs are slow to get new pages within `memset`, others to prefetch from pages that are not there yet.
+            let ahead = usize::from(self.step == MAX_STEP) * (PAGE_LEN + 1);
+            let touched = end - vec.len() + ahead;
+            let touched = vec.spare_capacity_mut().iter_mut().take(touched);
+            touched.step_by(PAGE_LEN).for_each(|byte| _ = byte.write(0));
             while vec.len() < end {
                 vec.resize(end.min(vec.len() + FILL_LEN), 0);
             }
@@ -86,8 +93,8 @@ impl<'a> Sink<'a> {
         self.bytes().get_mut(..len).ok_or(Error::InsufficientSpace)
     }
 
-    /// `at` is at most the length of [`Self::bytes`].
     pub(crate) fn write(&mut self, at: usize, bytes: &[u8]) -> Result<()> {
+        debug_assert!(at <= self.bytes().len());
         self.make_room(at + bytes.len())?;
         let copied = copy_prefix(self.bytes().get_mut(at..).unwrap_or_default(), bytes);
         if let Output::Vec { vec, .. } = &mut self.output {

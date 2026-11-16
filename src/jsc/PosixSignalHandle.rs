@@ -12,33 +12,49 @@ use bun_threading::SignalRing;
 #[cfg(unix)]
 const BUFFER_SIZE: usize = 8192;
 
-/// Signal numbers queued by signal handlers on any thread for the main loop.
+/// Signal numbers queued by signal handlers on any thread for the main VM.
 #[cfg(unix)]
-#[derive(Default)]
-pub struct PosixSignalHandle {
-    ring: SignalRing<BUFFER_SIZE>,
+static PENDING_SIGNALS: SignalRing<BUFFER_SIZE> = SignalRing::new();
+
+/// Added to the queued number of a signal that arrived while the main VM was in macro mode.
+#[cfg(unix)]
+const MACRO_MODE_BIT: u8 = 0x80;
+
+/// `macro_mode` of the main VM, mirrored for `Bun__onPosixSignal`.
+#[cfg(unix)]
+static IS_MACRO_MODE: AtomicBool = AtomicBool::new(false);
+
+#[cfg(unix)]
+pub(crate) fn mirror_macro_mode(vm: &VirtualMachine) {
+    if vm.is_main_thread.get() {
+        IS_MACRO_MODE.store(vm.macro_mode.get(), Ordering::Relaxed);
+    }
 }
 
 #[cfg(unix)]
-impl PosixSignalHandle {
-    // `pub const new = bun.TrivialNew(@This());`
-    pub(crate) fn new(init: Self) -> Box<Self> {
-        Box::new(init)
-    }
-
-    /// Returns `false` if the ring is full. The caller wakes the loop on `true`.
-    pub(crate) fn enqueue(&self, signal: u8) -> bool {
-        self.ring.enqueue(signal)
-    }
-
-    /// Drain as many signals as possible and enqueue them as tasks in the event loop.
-    /// Called by the main thread, the ring's single consumer.
-    pub(crate) fn drain(&self, event_loop: &EventLoop) {
-        while let Some(signal) = self.ring.dequeue() {
+impl EventLoop {
+    /// Enqueues a task for each queued signal, if this loop is the single consumer of the queue.
+    pub(crate) fn drain_pending_signals(&self) {
+        if PENDING_SIGNALS.is_empty()
+            || !core::ptr::eq(self, self.vm_ref().event_loop())
+            || VirtualMachine::get_main_thread_vm()
+                .is_none_or(|main| !core::ptr::eq(main, self.vm_ref()))
+        {
+            return;
+        }
+        let mut for_regular_loop = Vec::new();
+        while let Some(queued) = PENDING_SIGNALS.dequeue() {
+            if queued & MACRO_MODE_BIT == 0 && self.vm_ref().macro_mode.get() {
+                for_regular_loop.push(queued);
+                continue;
+            }
             // `Task` is a plain `{ tag, ptr }` pair (no bitfield packing), so build it
             // directly — `bun_runtime::dispatch::run_task` unpacks `task.ptr as usize as u8`.
-            let task = Task::init(signal as usize as *mut PosixSignalTask);
-            event_loop.enqueue_task(task);
+            let task = Task::init((queued & !MACRO_MODE_BIT) as usize as *mut PosixSignalTask);
+            self.enqueue_task(task);
+        }
+        for queued in for_regular_loop {
+            PENDING_SIGNALS.enqueue(queued);
         }
     }
 }
@@ -68,22 +84,20 @@ extern "C" fn Bun__onPosixSignal(number: i32) {
         let Some(vm) = VirtualMachine::get_main_thread_vm() else {
             return;
         };
-        // SAFETY: `vm` and its event loop are process-lifetime. This is any thread: it reads only
-        // the `signal_handler` slot, which is written once.
-        let handler = unsafe { (*vm).event_loop().signal_handler.get() };
-        if let Some(handler) = handler {
-            // `BackRef::deref` is the centralised set-once-NonNull proof; the
-            // pointee is all-atomic (`Sync`), so a `&PosixSignalHandle` from
-            // async-signal context is sound.
-            // No panic path in a signal handler: drop a number outside 1..=255.
-            let Some(signal) = u8::try_from(number).ok().filter(|&s| s != 0) else {
-                return;
-            };
-            if handler.enqueue(signal) {
-                // SAFETY: same process-lifetime event loop as above; `wakeup`
-                // is one async-signal-safe write to the loop's wakeup fd.
-                unsafe { (*vm).event_loop().wakeup() };
-            }
+        // No panic path in a signal handler: drop a number outside 1..=127.
+        let Some(mut signal) = u8::try_from(number)
+            .ok()
+            .filter(|s| (1..MACRO_MODE_BIT).contains(s))
+        else {
+            return;
+        };
+        if IS_MACRO_MODE.load(Ordering::Relaxed) {
+            signal |= MACRO_MODE_BIT;
+        }
+        if PENDING_SIGNALS.enqueue(signal) {
+            // SAFETY: `vm` is process-lifetime. `wakeup` reads a field that `init` sets, and is one
+            // async-signal-safe write to the loop's wakeup fd.
+            unsafe { (*vm).regular_event_loop.wakeup() };
         }
     }
     #[cfg(not(unix))]
@@ -265,24 +279,6 @@ impl PosixSignalTask {
         {
             bun_core::Output::flush();
             bun_core::Global::exit(0);
-        }
-    }
-}
-
-#[unsafe(no_mangle)]
-extern "C" fn Bun__ensureSignalHandler() {
-    #[cfg(unix)]
-    {
-        if let Some(vm) = VirtualMachine::get_main_thread_vm() {
-            // SAFETY: `vm` and its event loop are process-lifetime. A Worker can be the caller:
-            // only this slot is reached.
-            let handler = &unsafe { &*vm }.event_loop().signal_handler;
-            if handler.get().is_none() {
-                let boxed = PosixSignalHandle::new(PosixSignalHandle::default());
-                handler.set(Some(bun_ptr::BackRef::from(bun_core::heap::into_raw_nn(
-                    boxed,
-                ))));
-            }
         }
     }
 }

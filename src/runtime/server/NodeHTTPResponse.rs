@@ -1243,8 +1243,7 @@ impl NodeHTTPResponse {
                 utf8.slice()
             }
             WholeBody::Converted(Some(StringOrJsBytes::Bytes(bytes))) => {
-                buffer =
-                    bun_jsc::MarkedArrayBuffer::from_array_buffer(global_object, bytes.to_js());
+                buffer = bun_jsc::ArrayBuffer::from_typed_array(global_object, bytes.to_js());
                 buffer.slice()
             }
         };

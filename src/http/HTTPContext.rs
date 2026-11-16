@@ -12,7 +12,7 @@ use crate::{
 use bun_boringssl::ssl_ctx_setup;
 use bun_boringssl_sys::OwnedSslCtx;
 use bun_collections::{HiveArray, TaggedPtrUnion};
-use bun_core::strings;
+use bun_core::{ZBox, strings};
 use bun_ptr::{AliasableBox, RefCount, RefCounted, RefPtr};
 use bun_uws as uws;
 
@@ -562,13 +562,14 @@ impl<const SSL: bool> HTTPContext<SSL> {
         init_opts: &HTTPThreadInitOpts,
     ) -> Result<(), InitError> {
         debug_assert!(SSL, "ssl only");
+        let ca: Vec<_> = init_opts.ca.iter().map(ZBox::as_ptr).collect();
         let opts = uws::SocketContext::BunSocketContextOptions {
-            ca: if !init_opts.ca.is_empty() {
-                init_opts.ca.as_ptr().cast()
+            ca: if !ca.is_empty() {
+                ca.as_ptr()
             } else {
                 core::ptr::null()
             },
-            ca_count: u32::try_from(init_opts.ca.len()).expect("int cast"),
+            ca_count: u32::try_from(ca.len()).expect("int cast"),
             ca_file_name: if !init_opts.abs_ca_file_name.is_empty() {
                 init_opts.abs_ca_file_name.as_ptr()
             } else {

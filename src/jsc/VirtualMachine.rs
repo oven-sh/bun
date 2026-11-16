@@ -1769,6 +1769,8 @@ impl VirtualMachine {
             t.resolver.caches.fs.use_alternate_source_cache = true;
         });
         self.macro_mode.set(true);
+        #[cfg(unix)]
+        crate::posix_signal_handle::mirror_macro_mode(self);
         self.event_loop.set(&raw const self.macro_event_loop);
         bun_analytics::features::macros.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
         self.transpiler_store.enabled.set(false);
@@ -1780,6 +1782,8 @@ impl VirtualMachine {
             t.resolver.caches.fs.use_alternate_source_cache = false;
         });
         self.macro_mode.set(false);
+        #[cfg(unix)]
+        crate::posix_signal_handle::mirror_macro_mode(self);
         self.event_loop.set(&raw const self.regular_event_loop);
         self.transpiler_store.enabled.set(true);
     }

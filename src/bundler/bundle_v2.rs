@@ -395,7 +395,7 @@ pub mod bv2_impl {
     use bun_ast::server_component_boundary;
     use bun_ast::{Binding, E, Expr, G, S};
     use bun_ast::{ExportsKind, ImportKind, ImportRecord};
-    use bun_collections::{ArrayHashMap, DynamicBitSet, DynamicBitSetUnmanaged, VecExt};
+    use bun_collections::{ArrayHashMap, DynamicBitSet, VecExt};
     use bun_core::strings;
     use bun_core::{FeatureFlags, Output};
     use bun_resolver::DataURL;
@@ -1924,13 +1924,13 @@ pub mod bv2_impl {
         pub(crate) all_exports_kinds: &'a [ExportsKind],
         pub(crate) all_targets: &'a [Target],
         /// Files which are Server Component Boundaries
-        pub(crate) scb_bitset: Option<DynamicBitSetUnmanaged>,
+        pub(crate) scb_bitset: Option<DynamicBitSet>,
         pub(crate) scb_list: &'a server_component_boundary::List,
 
         /// Files inlined in CSS whose output path a JS or HTML importer or their own entry point chunk prints
-        pub(crate) additional_files_needed_outside_css: &'a mut DynamicBitSetUnmanaged,
+        pub(crate) additional_files_needed_outside_css: &'a mut DynamicBitSet,
         /// Files which are imported by CSS and inlined in CSS
-        pub(crate) additional_files_imported_by_css_and_inlined: &'a mut DynamicBitSetUnmanaged,
+        pub(crate) additional_files_imported_by_css_and_inlined: &'a mut DynamicBitSet,
 
         pub(crate) stack: Vec<ReachFrame>,
     }
@@ -2165,12 +2165,12 @@ pub mod bv2_impl {
             };
 
             let mut additional_files_needed_outside_css =
-                DynamicBitSetUnmanaged::init_empty(self.graph.input_files.len())?;
+                DynamicBitSet::init_empty(self.graph.input_files.len())?;
             for entry_point in self.graph.entry_points.iter() {
                 additional_files_needed_outside_css.set(entry_point.get() as usize);
             }
             let mut additional_files_imported_by_css_and_inlined =
-                DynamicBitSetUnmanaged::init_empty(self.graph.input_files.len())?;
+                DynamicBitSet::init_empty(self.graph.input_files.len())?;
 
             self.dynamic_import_entry_points = ArrayHashMap::new();
 

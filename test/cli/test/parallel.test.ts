@@ -1,5 +1,5 @@
 import { afterAll, describe, expect, test } from "bun:test";
-import { readdirSync, readFileSync, unlinkSync, writeFileSync } from "fs";
+import { existsSync, readdirSync, readFileSync, unlinkSync, writeFileSync } from "fs";
 import { open } from "fs/promises";
 import {
   bunEnv,
@@ -1355,8 +1355,8 @@ describe.concurrent("--parallel: the run ends", () => {
       process.kill(process.ppid, "SIGSTOP");
       setTimeout(() => { closeSync(3); process.kill(process.ppid, "SIGCONT"); });`);
     const { stderr, exitCode } = await run(a, file("b", closesDuringTheReport), ["--no-isolate"]);
-    expect(stderr.slice(-300)).toContain(lostChannel);
-    expect(stderr.slice(-300)).toContain("\n 1 pass\n 1 todo\n 0 fail\n 1 error\n");
+    expect(stderr.slice(-400)).toContain(lostChannel);
+    expect(stderr.slice(-400)).toContain("\n 1 pass\n 1 todo\n 0 fail\n 1 error\n");
     expect(exitCode).toBe(1);
   });
 
@@ -1511,6 +1511,41 @@ describe.skipIf(!isLinux)("--parallel: a worker that has exited gets no file", (
     expect(stderr).toContain("(pass) b");
     expect(stderr).toContain(summary);
     expect(await proc.exited).toBe(expectedExitCode);
+  });
+
+  test.concurrent("after its file, unable to say why, in the middle of another file", async () => {
+    using dir = tempDir("parallel-exited-worker", {
+      ...files(`setTimeout(() => { closeSync(2); closeSync(3); });`),
+      "b.test.js": `import {test} from "bun:test"; import {existsSync, writeFileSync} from "fs";
+        test("b1", () => {});
+        test("b2", () => { while (!existsSync("go")) Bun.sleepSync(1); });
+        test("b3", () => {
+          writeFileSync("b3", "");
+          const deadline = performance.now() + 20_000;
+          while (!existsSync("said") && performance.now() < deadline) Bun.sleepSync(1);
+        });`,
+    });
+    await using proc = start(String(dir), ["--parallel-delay=0"]);
+    const [one, other] = proc.stderr.tee();
+    const [stderr] = await Promise.all([
+      readAnd(one, /^(?=[^]*\(pass\) b1)[^]*\(pass\) pid (\d+)/, worker =>
+        whileStopped(proc, async () => {
+          writeFileSync(path.join(String(dir), "go"), "");
+          await untilEveryThreadIs("Z", worker);
+          await until(
+            () => existsSync(path.join(String(dir), "b3")),
+            () => "b3 has not started",
+          );
+        }),
+      ),
+      readAnd(other, /test worker (\d+) exited/, async () => writeFileSync(path.join(String(dir), "said"), "")),
+    ]);
+    expect(stderr).toContain(
+      "\n\nerror: test worker 1 exited between files (exit code 74), as it does when something closed fd 3. " +
+        "What it had not reported yet, such as coverage, is lost.\n\nb.test.js:\n(pass) b3",
+    );
+    expect(stderr).toContain("\n 5 pass\n 0 fail\n 1 error\n");
+    expect(await proc.exited).toBe(1);
   });
 
   test.concurrent("after its first Ready frame", async () => {

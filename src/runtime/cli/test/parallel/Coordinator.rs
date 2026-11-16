@@ -895,7 +895,15 @@ impl<'a> Coordinator<'a> {
         } else if is_panic_status(status) && self.stop_reason != Some(StopReason::WorkerPanicked) {
             self.abort_on_idle_worker_panic(status);
         } else if matches!(status, SpawnStatus::Exited(e) if e.code == EXIT_CODE_OF_LOST_CHANNEL) {
-            // No file to blame, but the coverage of the files that it ran is gone.
+            self.break_dots();
+            self.end_group();
+            let mut buf = [0u8; 32];
+            bun_core::pretty_error!(
+                "\n<r><red>error<r>: test worker {} exited between files ({}), as it does when something closed fd 3. What it had not reported yet, such as coverage, is lost.\n",
+                worker_idx + 1,
+                bstr::BStr::new(describe_status(&mut buf, status)),
+            );
+            Output::flush();
             (self.reporter.jest.unhandled_errors_between_tests).update(|n| n + 1);
         }
 

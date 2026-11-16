@@ -11,6 +11,7 @@ use crate::webcore::jsc::{
 };
 use bun_collections::{ByteVecExt, VecExt};
 use bun_core::{FeatureFlags, strings};
+use bun_removable_features::removable_body_behind_value;
 use bun_sys::{self as sys, Error as SysError, Fd};
 use bun_uws as uws;
 
@@ -927,18 +928,16 @@ impl SourceHandle {
             SourceHandle::ByteStream(p) => p.on_ready(),
             SourceHandle::FileReader(p) => p.on_ready(),
             SourceHandle::FetchResponseBody(p) => {
-                bun_removable_features::removable_body!(HttpClient, Abort, { p.on_ready() })
+                removable_body_behind_value!(HttpClient, { p.on_ready() })
             }
             SourceHandle::ServerRequestBody(any) => {
-                bun_removable_features::removable_body!(Serve, Abort, {
-                    any.on_request_body_stream_drained()
-                })
+                removable_body_behind_value!(Serve, { any.on_request_body_stream_drained() })
             }
             SourceHandle::HTMLRewriter(p) => {
-                bun_removable_features::removable_body!(HtmlRewriter, Abort, { p.on_ready() })
+                removable_body_behind_value!(HtmlRewriter, { p.on_ready() })
             }
             SourceHandle::S3DownloadBody(p) => {
-                bun_removable_features::removable_body!(S3Client, Abort, { p.on_stream_drained() })
+                removable_body_behind_value!(S3Client, { p.on_stream_drained() })
             }
             SourceHandle::TestingCancelOnDrain(p) => {
                 p.on_cancel();

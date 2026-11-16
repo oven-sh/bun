@@ -194,6 +194,19 @@ impl Cluster {
         estimate
     }
 
+    /// Not if nothing is added, or more of the only symbol.
+    #[inline(always)]
+    fn costs_more_with(&self, other: &Counts, part: usize, alphabet: Alphabet) -> bool {
+        let symbols = |counts: &Counts| counts.parts.at(part).population.symbols;
+        match (symbols(&self.counts), symbols(other)) {
+            (_, 0) => false,
+            (1, 1) => alphabet
+                .blocks()
+                .all(|index| self.counts.non_zero.at(index) & other.non_zero.at(index) == 0),
+            _ => true,
+        }
+    }
+
     /// Close to the cost if the symbols are scattered. `None` if they turn out not to be.
     #[inline(always)]
     fn least_cost_with(&self, other: &Counts, part: usize, alphabet: Alphabet) -> Option<Cost> {
@@ -227,9 +240,11 @@ impl Cluster {
         limit: i64,
         is_likely: bool,
     ) -> Option<i64> {
+        let costs_more: [bool; 5] =
+            core::array::from_fn(|part| self.costs_more_with(other, part, *alphabets.at(part)));
         let mut least_costs: [Cost; 5] = core::array::from_fn(|part| {
             let (a, b) = (self.counts.parts.at(part), other.parts.at(part));
-            if b.population.symbols == 0 {
+            if !costs_more.at(part) {
                 return a.cost;
             }
             let symbols = a.population.symbols.max(b.population.symbols);
@@ -238,7 +253,7 @@ impl Cluster {
         let mut total = least_costs.iter().sum::<Cost>() as i64;
         for (part, (&alphabet, least_cost)) in alphabets.iter().zip(&mut least_costs).enumerate() {
             if is_likely
-                && other.parts.at(part).population.symbols > 0
+                && *costs_more.at(part)
                 && let Some(closer) = self.least_cost_with(other, part, alphabet)
             {
                 total += closer as i64 - core::mem::replace(least_cost, closer) as i64;
@@ -248,7 +263,7 @@ impl Cluster {
             }
         }
         for (part, (&alphabet, least_cost)) in alphabets.iter().zip(least_costs).enumerate() {
-            if other.parts.at(part).population.symbols > 0 {
+            if *costs_more.at(part) {
                 let estimate = self.estimate_with::<false>(other, part, alphabet, |_, _, _, _| {});
                 let cost = estimate.cost(alphabet.len);
                 debug_assert!(cost >= least_cost);

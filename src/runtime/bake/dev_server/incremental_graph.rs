@@ -685,7 +685,7 @@ impl DevServer {
         let was_stale = graph
             .get_file_index(ctx.sources[index.get() as usize].path.key_for_incremental_graph())
             .is_none_or(|file_index| {
-                graph.stale_files.bit_length <= file_index.get() as usize
+                graph.stale_files.bit_length() <= file_index.get() as usize
                     || graph.stale_files.is_set(file_index.get() as usize)
             });
         let (file_index, found_existing) = graph.get_or_put_chunk_file(ctx, index, &content)?;

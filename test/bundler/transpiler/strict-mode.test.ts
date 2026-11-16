@@ -195,6 +195,7 @@ describe("strict mode early errors", () => {
       ["'use strict'; ({ m(implements) {} })", '"implements" is a reserved word and cannot be used in strict mode'],
       ["'use strict'; let { a: interface } = x", '"interface" is a reserved word and cannot be used in strict mode'],
       ["'use strict'; let [private] = x", '"private" is a reserved word and cannot be used in strict mode'],
+      ["'use strict'; var { package } = x", '"package" is a reserved word and cannot be used in strict mode'],
       ["'use strict'; for (let public of x) ;", '"public" is a reserved word and cannot be used in strict mode'],
       ["'use strict'; for (var static in x) ;", '"static" is a reserved word and cannot be used in strict mode'],
       ["'use strict'; 0123", "Legacy octal literals cannot be used in strict mode"],
@@ -331,6 +332,7 @@ describe("strict mode early errors", () => {
       ["({ f(arguments) { 'use strict' } })", argsDecl],
       ["(eval) => { 'use strict' }", evalDecl],
       ["function protected() { 'use strict' }", '"protected" is a reserved word and cannot be used in strict mode'],
+      ["function f() { 'use strict'; var package }", '"package" is a reserved word and cannot be used in strict mode'],
       ["function f(a, a) { 'use strict' }", bindingError],
       ["function *f(a, a) { 'use strict' }", bindingError],
       ["async function f(a, a) { 'use strict' }", bindingError],
@@ -599,6 +601,16 @@ describe("strict mode early errors", () => {
       const inModule = "Legacy octal literals cannot be used in an ECMAScript module";
       expectTSParseError("export {}; declare const y: number; const x = 010;", inModule);
       expectTSParseError("export {}; const x = 010; declare const y = 011;", inModule);
+    });
+    test("a name in erased code is not a declaration of strict mode code", () => {
+      expectNoTSParseError("'use strict'; enum E { package }");
+      expectNoTSParseError("'use strict'; function f(package: number): void; function f(x: any) {}");
+      expectNoTSParseError("'use strict'; declare function f(package: number): void;");
+      expectNoTSParseError("'use strict'; abstract class A { abstract m(package: number): void }");
+      expectTSParseError(
+        "class A { constructor(public package: number) {} }",
+        '"package" is a reserved word and cannot be used in strict mode',
+      );
     });
     // An import that only types use is not in the output, so its name is not a declaration of strict mode code.
     test("an unused import can have a reserved word as its name", () => {

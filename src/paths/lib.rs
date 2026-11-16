@@ -142,11 +142,8 @@ macro_rules! path_literal {
             }
             o // o[__N] == 0 (NUL terminator)
         };
-        // Explicit `&__OUT` borrow for guaranteed rvalue static promotion
-        // (mirrors `os_path_literal!`).
-        const __REF: &[u8; __N + 1] = &__OUT;
-        // SAFETY: __REF[__N] == 0 (NUL terminator); len excludes it.
-        unsafe { ::bun_core::ZStr::from_raw(__REF.as_ptr(), __N) }
+        const __Z: &::bun_core::ZStr = ::bun_core::ZStr::from_slice_with_nul(&__OUT);
+        __Z
     }};
 }
 
@@ -184,13 +181,8 @@ macro_rules! os_path_literal {
                 }
                 out
             };
-            // Explicit `&__W` borrow so rvalue static promotion is guaranteed
-            // (mirrors `wstr!`): relying on the implicit autoref inside
-            // `__W.as_ptr()` to promote is not spec-guaranteed in all
-            // contexts, and a non-promoted `__W` would dangle immediately.
-            const __WREF: &[u16; __N + 1] = &__W;
-            // SAFETY: __WREF[__N] == 0 (NUL terminator); len excludes it.
-            unsafe { ::bun_core::WStr::from_raw(__WREF.as_ptr(), __N) }
+            const __Z: &::bun_core::WStr = ::bun_core::WStr::from_slice_with_nul(&__W);
+            __Z
         }
     }};
 }
@@ -481,7 +473,6 @@ pub fn is_package_path_not_absolute(non_absolute_path: &[u8]) -> bool {
 // ──────────────────────────────────────────────────────────────────────────
 pub mod fs {
     use core::sync::atomic::{AtomicBool, AtomicU32, Ordering};
-    use std::io::Write as _;
     use std::sync::OnceLock;
 
     use bun_core::ZStr;
@@ -560,26 +551,20 @@ pub mod fs {
             extname: &[u8],
             buf: &'b mut [u8],
             hash: u64,
-        ) -> crate::Result<&'b mut ZStr> {
+        ) -> crate::Result<&'b ZStr> {
             let hex_value: u64 = hash ^ (bun_core::time::nano_timestamp() as u64);
 
-            let len = buf.len();
-            let mut cursor = &mut buf[..];
             // Fixed-width, zero-padded hex (u64 → 16 digits, u32 → 8).
-            write!(
-                &mut cursor,
-                ".{:016x}-{:08X}.{}",
-                hex_value,
-                TMPNAME_ID_NUMBER.fetch_add(1, Ordering::Relaxed),
-                bun_core::fmt::s(extname),
+            bun_core::fmt::buf_print_z(
+                buf,
+                format_args!(
+                    ".{:016x}-{:08X}.{}",
+                    hex_value,
+                    TMPNAME_ID_NUMBER.fetch_add(1, Ordering::Relaxed),
+                    bun_core::fmt::s(extname),
+                ),
             )
-            .map_err(|_| crate::Error::Sys(bun_errno::SystemErrno::ENOSPC))?;
-            let written = len - cursor.len();
-            if written >= len {
-                return Err(crate::Error::Sys(bun_errno::SystemErrno::ENOSPC));
-            }
-            buf[written] = 0;
-            Ok(ZStr::from_buf_mut(buf, written))
+            .map_err(|_| crate::Error::Sys(bun_errno::SystemErrno::ENOSPC))
         }
     }
 

@@ -581,9 +581,9 @@ impl ShellMvBatchedTask {
             if n >= bun_paths::MAX_PATH_BYTES {
                 return Err(bun_sys::Error::from_code(E::ENAMETOOLONG, Tag::readlink));
             }
-            buf[n] = 0;
+            let target = ZStr::nul_terminate(&mut buf, n);
             let _ = bun_sys::unlinkat(dst_dir, dst);
-            bun_sys::symlinkat(ZStr::from_buf(&buf[..], n), dst_dir, dst)?;
+            bun_sys::symlinkat(target, dst_dir, dst)?;
             return bun_sys::unlinkat(src_dir, src);
         }
 
@@ -703,8 +703,7 @@ impl ShellMvBatchedTask {
                 }
                 path[..dir.len()].copy_from_slice(dir);
                 len = dir.len();
-                path[len] = 0;
-                shell_statat(dst_dir, ZStr::from_buf(&path[..], len))?
+                shell_statat(dst_dir, ZStr::nul_terminate(&mut path, len))?
             }
         };
         if is_src(&made_in) {
@@ -720,9 +719,8 @@ impl ShellMvBatchedTask {
             }
             path[len..len + up.len()].copy_from_slice(up);
             len += up.len();
-            path[len] = 0;
             // Stop at a parent we can't stat. `move_across_devices` still checks every directory it enters.
-            let Ok(parent) = shell_statat(dst_dir, ZStr::from_buf(&path[..], len)) else {
+            let Ok(parent) = shell_statat(dst_dir, ZStr::nul_terminate(&mut path, len)) else {
                 break;
             };
             if (parent.st_dev, parent.st_ino) == below {

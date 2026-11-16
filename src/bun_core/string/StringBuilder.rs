@@ -42,12 +42,11 @@ impl StringBuilder {
         let start = self.len;
         let dst = self.writable();
         dst[..slice.len()].copy_from_slice(slice);
-        dst[slice.len()] = 0;
         self.len += slice.len() + 1;
 
         debug_assert!(self.len <= self.cap);
 
-        ZStr::from_buf(&self.allocated_slice()[start..], slice.len())
+        ZStr::nul_terminate(&mut self.allocated_slice()[start..], slice.len())
     }
 
     pub fn append(&mut self, slice: &[u8]) -> &[u8] {

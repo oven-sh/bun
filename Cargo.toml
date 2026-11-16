@@ -89,6 +89,7 @@ members = [
   "src/ast_jsc",
   "src/png",
   "src/jpeg",
+  "src/webp",
   "src/s3_signing",
   "src/sql_jsc",
   "src/zlib",
@@ -366,14 +367,10 @@ rust-argon2 = { path = "vendor/rust-argon2" }
 bcrypt = "0.19"
 getrandom = "0.4"
 strum = { version = "0.26", features = ["derive"] }
-# `allocator-api2` feature gives `hashbrown::HashMap<K, V, S, A>` an externally-
-# implementable `A` bound. We can't use hashbrown's own `nightly` feature (which
-# would bind `A` to `core::alloc::Allocator` directly) because it also enables
-# `min_specialization` on `T: Copy`, which our pinned nightly rejects with
-# "cannot specialize on trait `Copy`". So: use the polyfill trait, and bridge
-# `bun_alloc::{AstAlloc, DefaultAlloc}` to it (see `bun_alloc/hashbrown_bridge.rs`).
+# hashbrown's `A` is bounded on `allocator-api2`'s trait, which that crate's `nightly` feature makes a re-export of
+# `core::alloc::Allocator`. hashbrown's own `nightly` feature does not compile ("cannot specialize on trait `Copy`").
 hashbrown = { version = "0.15", default-features = false, features = ["inline-more", "allocator-api2"] }
-allocator-api2 = { version = "0.2", default-features = false, features = ["alloc"] }
+allocator-api2 = { version = "0.2", default-features = false, features = ["alloc", "nightly"] }
 bstr = { version = "1", default-features = false, features = ["alloc"] }
 scopeguard = "1"
 const_format = "0.2"
@@ -522,13 +519,17 @@ bun_simd_kernels = { path = "src/simd/kernels" }
 bun_simd_macros = { path = "src/simd/macros" }
 bun_simd_trusted = { path = "src/simd/trusted" }
 bun_simdutf_sys = { path = "src/simdutf_sys" }
+bun_webp = { path = "src/webp" }
 bun_which = { path = "src/which" }
 
 # Loops over every byte of an image: unoptimized, a debug build takes seconds per megapixel. Assertions and overflow
-# checks stay on.
+# checks stay on. scripts/build/flags.ts does the same for highway_webp_*.cpp.
 [profile.dev.package.bun_png]
 opt-level = 3
 [profile.dev.package.bun_jpeg]
+opt-level = 3
+
+[profile.dev.package.bun_webp]
 opt-level = 3
 
 # Runs for every line of a response head and every chunk of a body.

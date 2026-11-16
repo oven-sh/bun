@@ -1140,7 +1140,7 @@ impl SendQueue {
         self.get_global_this()
             .bun_vm()
             .event_loop()
-            .enqueue_task(Task::init(queue.into_raw()));
+            .enqueue_task(Task::from_ref::<Self>(queue));
     }
 
     /// `task_tag::SendQueueDeferred` dispatch, under the task's ref: drain the pending flags.
@@ -1832,14 +1832,12 @@ unsafe impl uv::StreamReader for SendQueue {
     }
 }
 
-impl bun_event_loop::Taskable for SendQueue {
+impl bun_event_loop::RefTask for SendQueue {
     const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::SendQueueDeferred;
-    unsafe fn release_unrun(this: *mut Self) {
-        // SAFETY: fn contract — the SendQueue root queued with a held ref.
-        drop(unsafe { RefPtr::from_raw(this) });
-    }
+    type Ref = RefPtr<Self>;
+    fn release_unrun(_: Self::Ref) {}
     /// The channel's own close hop.
-    unsafe fn context(_: *const Self) -> bun_event_loop::ContextId {
+    fn context(_: &Self::Ref) -> bun_event_loop::ContextId {
         bun_event_loop::ContextId::NONE
     }
 }

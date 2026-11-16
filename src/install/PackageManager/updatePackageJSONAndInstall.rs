@@ -401,7 +401,6 @@ fn update_package_json_and_install_with_manager_with_updates(
             add_catalog::edit_root_entry_before_install(manager, root, root_package_json_path)?;
         }
 
-        // SAFETY: root_package_json_path_buf[root_package_json_path_len] == 0 written above
         break 'root_package_json_path ZStr::from_buf(
             &root_package_json_path_buf[..],
             root_package_json_path_len,

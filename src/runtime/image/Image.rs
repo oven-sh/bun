@@ -1,5 +1,5 @@
 //! `Bun.Image` — Sharp-shaped image pipeline backed by the statically linked
-//! libwebp codec, `bun_jpeg`, `bun_png` and the SIMD resize kernel.
+//! `bun_jpeg`, `bun_png` and `bun_webp` codecs and the SIMD resize kernel.
 //!
 //! Shape: the constructor only captures the *input* (path or bytes). Chainable
 //! mutators (`resize`, `rotate`, `flip`, `flop`, `jpeg`/`png`/`webp`) each
@@ -662,7 +662,7 @@ impl Image {
     /// nobody mutates a buffer they just handed to a decoder. The contract is
     /// documented and `.shared`/`.resizable` are refused at construction. The
     /// codec layer is hardened so a hostile mid-decode mutation degrades to
-    /// `DecodeFailed`, not OOB/heap-leak — see `codec_webp.rs` owned canvas. (If the attacker already runs
+    /// `DecodeFailed`, not OOB/heap-leak. (If the attacker already runs
     /// JS in-process the threat model is moot anyway; the surface that matters
     /// is hostile *bytes*, which the codec validation handles.)
     fn pin_for_task(
@@ -1126,7 +1126,7 @@ impl Image {
         &self,
         global: &JSGlobalObject,
         this_value: JSValue,
-    ) -> JsResult<(codecs::Encoded, &'static ZStr)> {
+    ) -> JsResult<(Vec<u8>, &'static ZStr)> {
         bun_removable_features::removable_definition!(Image, Self::encode_for_body);
         // The body-init contract is synchronous, so a `.blob` source can't go
         // through the async read chain here. For the common case (file by path)
@@ -1194,12 +1194,6 @@ impl Image {
             TaskResult::Meta { .. } => unreachable!(),
         }
     }
-}
-
-fn into_buffer(out: codecs::Encoded, global: &JSGlobalObject) -> JsResult<JSValue> {
-    let (bytes, free) = out.into_raw();
-    // SAFETY: JSC takes the allocation and calls `free`, which ignores the null ctx, once.
-    unsafe { JSValue::create_buffer_with_ctx(global, bytes, core::ptr::null_mut(), free) }
 }
 
 // ───────────────────────────── worker task ──────────────────────────────────
@@ -1461,7 +1455,7 @@ pub(crate) enum Kind {
 
 pub(crate) enum TaskResult {
     Encoded {
-        out: codecs::Encoded,
+        out: Vec<u8>,
         format: codecs::Format,
         w: u32,
         h: u32,
@@ -1714,29 +1708,15 @@ impl PipelineTask {
         match result {
             TaskResult::Encoded { out, format, .. } => {
                 match &mut js.deliver {
-                    // The codec's own allocation is handed straight to JS with the
-                    // codec's free as the finalizer — no dupe of the output.
-                    Deliver::Uint8Array => {
-                        let (mut bytes, free) = out.into_raw();
-                        // SAFETY: as in `into_buffer`.
-                        let v = unsafe {
-                            ArrayBuffer::from_bytes(bytes.as_mut(), jsc::JSType::Uint8Array)
-                                .to_js_with_context(global, core::ptr::null_mut(), Some(free))
-                        };
-                        match v {
-                            Ok(v) => promise.resolve(global, v)?,
-                            Err(_) => return promise.reject(global, Err(jsc::JsError::Thrown)),
-                        }
+                    Deliver::Uint8Array => promise.settle(
+                        global,
+                        ArrayBuffer::from_default_allocator(global, jsc::JSType::Uint8Array, out),
+                    )?,
+                    Deliver::Buffer => {
+                        promise.settle(global, JSValue::create_buffer(global, out))?
                     }
-                    // createBufferWithCtx returns plain JSValue (its C++ side asserts
-                    // the no-throw contract), so the .uint8array catch is unmatched
-                    // here by construction, not omission.
-                    Deliver::Buffer => promise.settle(global, into_buffer(out, global))?,
                     Deliver::Blob => {
-                        // Blob.Store owns a `Vec`; dupe for that path.
-                        let owned = out.to_vec();
-                        drop(out);
-                        let blob = Blob::init(owned, global);
+                        let blob = Blob::init(out, global);
                         blob.content_type
                             .set(crate::webcore::blob::BlobContentType::Static(
                                 format.mime().as_bytes(),
@@ -1771,15 +1751,14 @@ impl PipelineTask {
                         };
                         promise.resolve(global, str)?;
                     }
-                    // `.write(dest)` — wrap the codec buffer as a Buffer (codec's
-                    // own free is the finalizer; no dupe), hand it to the SAME
+                    // `.write(dest)` — wrap the codec buffer as a Buffer, hand it to the SAME
                     // implementation `Bun.write` uses, and resolve our promise
                     // with that Promise<number>. So `dest` may be a path string,
                     // `Bun.file()`, `Bun.s3()`, or an fd — anything `Bun.write`
                     // accepts — and we don't reimplement any of it.
                     Deliver::WriteDest(dest) => {
                         let dest_js = dest.get();
-                        let data = match into_buffer(out, global) {
+                        let data = match JSValue::create_buffer(global, out) {
                             Ok(d) => d,
                             Err(e) => return promise.reject(global, Err(e)),
                         };

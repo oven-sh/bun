@@ -180,7 +180,10 @@ pub(crate) fn compile_programs(ctx: Context<'_>) -> ! {
 }
 
 fn write_to_unnamed_file(bytes: &[u8]) -> Fd {
-    let created = bun_sys::memfd_create(c"bun-compiled-program", bun_sys::MemfdFlags::Executable);
+    let created = bun_sys::memfd_create(
+        c"bun-compiled-program".into(),
+        bun_sys::MemfdFlags::Executable,
+    );
     let Ok(descriptor) = created else {
         stop("The file for the compiled program could not be created");
     };

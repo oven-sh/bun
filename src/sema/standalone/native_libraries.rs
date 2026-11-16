@@ -426,7 +426,6 @@ macro_rules! not_asked_by_the_front_end {
 not_asked_by_the_front_end! {
     URL__getFileURLString
     __bun_macro_context_call
-    __bun_dispatch__TranspilerCacheImpl__Jsc__get
 }
 
 #[cfg(test)]

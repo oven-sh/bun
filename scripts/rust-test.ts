@@ -65,6 +65,7 @@ const crates = [
   "bun_standalone_graph",
   "bun_threading",
   "bun_trim",
+  "bun_webp",
   "bun_wyhash",
 ];
 
@@ -173,7 +174,7 @@ if (extraArgs.length) {
 }
 
 // The crates of the list whose documentation has examples that run. `--no-run` builds none of them.
-const cratesWithExamples = ["bun_pod", "bun_simd"];
+const cratesWithExamples = ["bun_collections", "bun_pod", "bun_simd"];
 
 // It asks for a path below `/` that a test cannot create.
 const programArgs = ["--skip", "realpath_under_the_marked_root_stays_under_it"];

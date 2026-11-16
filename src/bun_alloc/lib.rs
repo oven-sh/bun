@@ -164,11 +164,6 @@ pub mod mimalloc_arena;
 
 pub mod ast_alloc;
 pub use ast_alloc::{AstAlloc, AstBox, AstVec, ast_box};
-mod hashbrown_bridge;
-/// Re-export so `bun_collections` can name the polyfill trait in
-/// `StringHashMap`'s `A` bound without taking its own direct dep on
-/// `allocator-api2`.
-pub use allocator_api2::alloc::Allocator as HashbrownAllocator;
 
 // ── tier-0 local primitives ───────────────────────────────────────────────
 // Real, self-contained helpers used by the BSS containers below. These are the
@@ -2151,11 +2146,6 @@ impl<ValueType, const COUNT: usize, const REMOVE_TRAILING_SLASHES: bool>
         self.index.remove(&_key).is_some()
     }
 }
-
-/// Legacy default-allocator ZST. With `#[global_allocator]` set,
-/// this is just a unit marker.
-#[derive(Clone, Copy, Default)]
-pub struct DefaultAlloc;
 
 // `GenericAllocator` / `Borrowed<A>` / `Nullable<A>` are dropped — they modelled
 // an allocator-borrowing discipline (avoid double-free), which Rust's

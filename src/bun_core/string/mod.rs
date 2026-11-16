@@ -1457,8 +1457,7 @@ impl<'a> EncodedSlice<'a> {
         if written >= buf.len() {
             return Err(crate::CrateError::NoSpaceLeft);
         }
-        buf[written] = 0;
-        Ok(ZStr::from_buf(&buf[..], written))
+        Ok(ZStr::nul_terminate(buf, written))
     }
 
     /// Re-wrap a sub-range of the underlying storage, preserving the

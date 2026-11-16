@@ -2411,15 +2411,14 @@ impl<'a> Injected<'a> {
         cwd: &[u8],
         temp_path_buf: &'a mut PathBuffer,
     ) -> Injected<'a> {
-        let len = path::resolve_path::join_abs_string_buf_z::<path::platform::Auto>(
+        let temp_path = path::resolve_path::join_abs_string_buf_z::<path::platform::Auto>(
             cwd,
             &mut temp_path_buf[..],
             &[copy.name.as_bytes()],
-        )
-        .len();
+        );
         Injected {
             file: copy.file.take().expect("taken once"),
-            temp_path: ZStr::from_buf(&temp_path_buf[..], len),
+            temp_path,
         }
     }
 }
@@ -2503,17 +2502,17 @@ pub(crate) fn inject<'a>(
             strings::copy_u8_into_u16(&mut out_buf, zname.as_bytes());
             out_buf[zname.len()] = 0;
 
-            use bun_sys::windows as w;
-            // SAFETY: both buffers NUL-terminated above; `CopyFileW` does not
-            // retain the pointers past return.
-            if unsafe { w::CopyFileW(in_buf.as_ptr(), out_buf.as_ptr(), w::FALSE) } == w::FALSE {
+            use bun_core::WStr;
+            use bun_sys::windows::{self as w, Win32ErrorExt as _};
+            let out = WStr::from_buf(&out_buf[..], zname.len());
+            if let Err(err) = w::CopyFileW(WStr::from_buf(&in_buf[..], self_exe.len()), out, false)
+            {
                 bun_core::pretty_errorln!(
                     "<r><red>error<r><d>:<r> failed to copy bun executable into temporary file: {}",
-                    w::last_system_errno()
+                    err.to_system_errno()
                 );
                 return None;
             }
-            let out = &out_buf[..zname.len()];
             let file = match Syscall::open_file_at_windows(
                 Fd::invalid(),
                 out,
@@ -3148,7 +3147,6 @@ pub fn target_executable(
         let mut version_str: Vec<u8> = Vec::new();
         let _ = write!(&mut version_str, "{}", target);
         version_str.push(0);
-        // SAFETY: trailing 0 byte appended above.
         let version_zstr = ZStr::from_slice_with_nul(&version_str[..]);
 
         let mut needs_download: bool = true;
@@ -3390,10 +3388,7 @@ pub fn to_executable(
 
         use bun_sys::windows;
         // Move the file using MoveFileExW
-        // SAFETY: NUL-terminated wide strings constructed above. Pass the
-        // full-buffer pointer (not a `[..len]` sub-slice) so the pointer's
-        // provenance covers the trailing NUL at index `len` that the W-suffix
-        // API will read.
+        // SAFETY: NUL-terminated wide strings constructed above.
         if unsafe {
             windows::kernel32::MoveFileExW(
                 temp_buf_u16.as_ptr(),
@@ -3428,10 +3423,8 @@ pub fn to_executable(
             || windows_options.copyright.is_some()
         {
             // The file has been moved to dest_path
-            // SAFETY: full-buffer pointer so provenance includes the NUL at
-            // `dest_buf_u16[dest_w_len]` (FFI reads it as a C wide string).
             if let Err(e) = windows::rescle::set_windows_metadata(
-                dest_buf_u16.as_ptr(),
+                bun_core::WStr::from_buf(dest_buf_u16, dest_w_len),
                 windows_options.icon.as_deref(),
                 windows_options.title.as_deref(),
                 windows_options.publisher.as_deref(),

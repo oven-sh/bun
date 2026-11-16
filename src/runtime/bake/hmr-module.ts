@@ -98,6 +98,7 @@ export class HMRModule {
   /** ES Modules have different semantics for `.exports` and `.cjs` */
   esm: boolean;
   state: State = State.Pending;
+  loadPromise: Promise<HMRModule> | null = null;
   /** The ESM namespace object. `null` if not yet initialized. */
   exports: any = null;
   /** For ESM, this is the converted CJS exports.
@@ -153,7 +154,16 @@ export class HMRModule {
   dynamicImport(id: Id, opts?: ImportCallOptions) {
     const found = loadModuleAsync(id, true, this);
     if (found) {
-      if ((found as HMRModule).id === id) return Promise.resolve(getEsmExports(found as HMRModule));
+      if ((found as HMRModule).id === id) {
+        const mod = found as HMRModule;
+        if (mod.state === State.Pending) {
+          // Let the current static dependency traversal publish its pending load first.
+          return Promise.resolve()
+            .then(() => loadModuleAsync(id, false, this))
+            .then(getEsmExports);
+        }
+        return Promise.resolve(getEsmExports(mod));
+      }
       return (found as Promise<HMRModule>).then(getEsmExports);
     }
     return opts
@@ -310,6 +320,7 @@ function prepareModule(mod: HMRModule | undefined, id: Id, isCommonJS: boolean, 
   if (importer) {
     mod.importers.add(importer);
   }
+  mod.loadPromise = null;
   return mod;
 }
 
@@ -414,7 +425,8 @@ export function loadModuleAsync<IsUserDynamic extends boolean>(
       if (importer) {
         mod.importers.add(importer);
       }
-      return mod;
+      // Recursive static cycles reach Pending records before their load promise exists.
+      return state === State.Pending ? (mod.loadPromise ?? mod) : mod;
     }
   }
   const loadOrEsmModule = unloadedModuleRegistry[id];
@@ -460,19 +472,40 @@ export function loadModuleAsync<IsUserDynamic extends boolean>(
 
     // Running finishLoadModuleAsync synchronously when there are no promises is
     // not a performance optimization but a behavioral correctness issue.
-    return isAsync
-      ? Promise.all(list).then(
-          list => finishLoadModuleAsync(mod, load, list),
-          e => {
-            mod.state = State.Stale;
-            throw e;
-          },
-        )
-      : finishLoadModuleAsync(
-          mod,
-          load,
-          list as HMRModule[], // no promises as by assert above
-        );
+    if (!isAsync && !loadOrEsmModule[ESMProps.isAsync]) {
+      return finishLoadModuleAsync(mod, load, list as HMRModule[]);
+    }
+
+    let resolve!: (loaded: HMRModule) => void;
+    let reject!: (error: unknown) => void;
+    const promise = new Promise<HMRModule>((done, fail) => {
+      resolve = done;
+      reject = fail;
+    });
+    // Publish after static dependency traversal, before the body can reenter through import().
+    mod.loadPromise = promise;
+    const fail = (error: unknown) => {
+      if (mod.loadPromise === promise) mod.loadPromise = null;
+      reject(error);
+    };
+    try {
+      const result = isAsync
+        ? Promise.all(list).then(
+            list => finishLoadModuleAsync(mod, load, list),
+            e => {
+              mod.state = State.Stale;
+              throw e;
+            },
+          )
+        : finishLoadModuleAsync(mod, load, list as HMRModule[]);
+      Promise.resolve(result).then(loaded => {
+        if (mod.loadPromise === promise) mod.loadPromise = null;
+        resolve(loaded);
+      }, fail);
+    } catch (error) {
+      fail(error);
+    }
+    return promise;
   }
 }
 
@@ -738,6 +771,7 @@ function disposeModules(toDispose: Set<HMRModule>): Promise<void>[] {
 function reloadModules(toReload: Map<HMRModule, HotAcceptFunction | null>): Promise<HMRModule>[] {
   for (const mod of toReload.keys()) {
     mod.state = State.Stale;
+    mod.loadPromise = null;
     mod.selfAccept = null;
     mod.depAccepts = null;
   }

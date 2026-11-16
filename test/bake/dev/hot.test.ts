@@ -881,6 +881,123 @@ for (const [withDispose, asyncDependency] of [
   );
 }
 
+for (const reentrant of [false, true]) {
+  devTest(
+    `batched importers wait for an already pending asynchronous dependency${reentrant ? " during reentrant dynamic import" : ""}`,
+    {
+      files: {
+        "index.html": emptyHtmlFile({ scripts: ["index.ts"] }),
+        "index.ts": `
+      import { b } from './b.ts';
+      globalThis.events = [];
+      globalThis.gate = new Promise(resolve => { globalThis.releaseGate = resolve; });
+      console.log(b);
+      import.meta.hot.accept();
+    `,
+        "b.ts": `export const b = 'B0'; import.meta.hot.accept();`,
+      },
+      async test(dev) {
+        await using client = await dev.client("/");
+        await client.expectMessage("B0");
+        const batch = await dev.batchChanges({ errors: null });
+        await dev.write(
+          "b.ts",
+          `
+        globalThis.events.push('dependency:start');
+        console.log('holding dependency');
+        ${reentrant ? "void import('./index.ts');" : ""}
+        await globalThis.gate;
+        export const b = 'B1';
+        globalThis.events.push('dependency:end');
+        import.meta.hot.accept();
+      `,
+        );
+        await dev.write(
+          "index.ts",
+          `
+        import { b } from './b.ts';
+        globalThis.events.push('importer:' + b);
+        console.log('updated importer');
+        import.meta.hot.accept();
+      `,
+        );
+        const applied = batch![Symbol.asyncDispose]();
+        void applied.catch(() => {});
+        let held;
+        try {
+          await client.expectMessage("holding dependency");
+          held = await client.js`globalThis.events.slice()`;
+        } finally {
+          await client.js`globalThis.releaseGate()`;
+          await applied;
+        }
+        await client.expectMessage("updated importer");
+        expect(held).toEqual(["dependency:start"]);
+        expect(await client.js`globalThis.events`).toEqual(["dependency:start", "dependency:end", "importer:B1"]);
+      },
+    },
+  );
+}
+
+devTest("dynamic imports wait for an ancestor's pending asynchronous load", {
+  files: {
+    "index.html": emptyHtmlFile({ scripts: ["index.ts"] }),
+    "index.ts": `
+      import { b } from './b.ts';
+      export const value = 'I0';
+      globalThis.events = [];
+      globalThis.imported = null;
+      globalThis.gate = new Promise(resolve => { globalThis.releaseGate = resolve; });
+      console.log(b);
+      import.meta.hot.accept();
+    `,
+    "b.ts": `export const b = 'B0'; import.meta.hot.accept();`,
+  },
+  async test(dev) {
+    await using client = await dev.client("/");
+    await client.expectMessage("B0");
+    const batch = await dev.batchChanges({ errors: null });
+    await dev.write(
+      "index.ts",
+      `
+        import { b } from './b.ts';
+        export const value = 'I1';
+        globalThis.events.push('importer:' + b);
+        import.meta.hot.accept();
+      `,
+    );
+    await dev.write(
+      "b.ts",
+      `
+        globalThis.events.push('dependency:start');
+        void import('./index.ts').then(mod => {
+          globalThis.imported = mod.value;
+          console.log('dynamic import completed');
+        });
+        console.log('holding dependency');
+        await globalThis.gate;
+        export const b = 'B1';
+        globalThis.events.push('dependency:end');
+        import.meta.hot.accept();
+      `,
+    );
+    const applied = batch![Symbol.asyncDispose]();
+    void applied.catch(() => {});
+    let held;
+    try {
+      await client.expectMessage("holding dependency");
+      held = await client.js`({ events: globalThis.events.slice(), imported: globalThis.imported })`;
+    } finally {
+      await client.js`globalThis.releaseGate()`;
+      await applied;
+    }
+    await client.expectMessage("dynamic import completed");
+    expect(held).toEqual({ events: ["dependency:start"], imported: null });
+    expect(await client.js`globalThis.imported`).toBe("I1");
+    expect(await client.js`globalThis.events`).toEqual(["dependency:start", "dependency:end", "importer:B1"]);
+  },
+});
+
 for (const gate of ["load", "dispose"] as const) {
   devTest(`serializes hot updates while an asynchronous ${gate} is pending`, {
     files: {
@@ -1106,36 +1223,40 @@ devTest("CSS-only completion waits for an earlier script to execute", {
   },
 });
 
-test("hot update queues reserve their tail before reentrant callbacks", async () => {
-  const events: string[] = [];
-  let nested!: Promise<void>;
-  const update = createUpdateQueue(async (version: number) => {
-    events.push(`start:${version}`);
-    if (version === 1) {
-      nested = update(2);
-      events.push("enqueued:2");
-      await Promise.resolve();
-    }
-    events.push(`end:${version}`);
+try {
+  test("hot update queues reserve their tail before reentrant callbacks", async () => {
+    const events: string[] = [];
+    let nested!: Promise<void>;
+    const update = createUpdateQueue(async (version: number) => {
+      events.push(`start:${version}`);
+      if (version === 1) {
+        nested = update(2);
+        events.push("enqueued:2");
+        await Promise.resolve();
+      }
+      events.push(`end:${version}`);
+    });
+    await update(1);
+    await nested;
+    expect(events).toEqual(["start:1", "enqueued:2", "end:1", "start:2", "end:2"]);
   });
-  await update(1);
-  await nested;
-  expect(events).toEqual(["start:1", "enqueued:2", "end:1", "start:2", "end:2"]);
-});
 
-test("hot update queues continue after a rejected operation", async () => {
-  const events: number[] = [];
-  const failure = new Error("expected update failure");
-  const update = createUpdateQueue(async (version: number) => {
-    events.push(version);
-    if (version === 1) throw failure;
+  test("hot update queues continue after a rejected operation", async () => {
+    const events: number[] = [];
+    const failure = new Error("expected update failure");
+    const update = createUpdateQueue(async (version: number) => {
+      events.push(version);
+      if (version === 1) throw failure;
+    });
+    const rejected = update(1);
+    const recovered = update(2);
+    await expect(rejected).rejects.toBe(failure);
+    await recovered;
+    expect(events).toEqual([1, 2]);
   });
-  const rejected = update(1);
-  const recovered = update(2);
-  await expect(rejected).rejects.toBe(failure);
-  await recovered;
-  expect(events).toEqual([1, 2]);
-});
+} catch {
+  // Outside `bun test`, devTest handles interactive registrations.
+}
 
 devTest("a save of a CommonJS module reaches the ES modules that import it", {
   files: {

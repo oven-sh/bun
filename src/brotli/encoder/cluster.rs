@@ -87,6 +87,7 @@ impl Clusters {
 
 /// The best one comes first.
 #[derive(Default)]
+#[cfg_attr(mordant, allow(parallel_vecs))] // `brotli_remove_pairs` loads SIMD vectors of each.
 struct Pairs {
     cost_changes: Vec<f64>,
     /// In ascending order.

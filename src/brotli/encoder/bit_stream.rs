@@ -452,19 +452,20 @@ impl<const DISTANCES: usize> CurrentCodes<'_, DISTANCES> {
             .with_distance(self.distances[command.distance_context()][command.distance().symbol()])
     }
 
-    /// Returns how many commands, literals and distances it wrote before it ran out of any of them. All commands copy.
+    /// Returns how many commands, literals and indices into `table` there were before it ran out of any of them. All commands copy.
     #[inline(never)]
-    fn write_batch(
+    fn index_batch(
         &self,
         commands: &[Command],
         literals: &[u16],
         table: &mut [Code],
         indices: &mut [u32; BATCH_SIZE],
-        writer: &mut BitWriter,
     ) -> [usize; 3] {
         const FEW: usize = Literals::SLACK;
         let first_slot = table.len() - SLOTS;
-        let (mut rest, mut count, mut slot) = (literals, 0, first_slot as u32);
+        let mut rest = literals;
+        let mut count = 0;
+        let mut slot = first_slot as u32;
         for (command, slots) in commands.iter().zip(table[first_slot..].as_chunks_mut().0) {
             let inserted = command.insert_length();
             if inserted > FEW || inserted + FEW > rest.len() || count + FEW + 2 > BATCH_SIZE {
@@ -480,11 +481,14 @@ impl<const DISTANCES: usize> CurrentCodes<'_, DISTANCES> {
             rest = &rest[inserted..];
             slot += 2;
         }
-        writer.write_codes::<4, _>(&indices[..count], |index| table[index as usize]);
-        let written = (slot as usize - first_slot) / 2;
-        let literal_count = literals.len() - rest.len();
-        [written, literal_count, count - written - literal_count]
+        let command_count = (slot as usize - first_slot) / 2;
+        [command_count, literals.len() - rest.len(), count]
     }
+}
+
+#[inline(never)]
+fn write_indexed(indices: &[u32], table: &[Code], writer: &mut BitWriter) {
+    writer.write_codes::<4, _>(indices, |index| table[index as usize]);
 }
 
 #[inline(never)]
@@ -516,11 +520,12 @@ fn write_commands<const DISTANCES: usize>(
         let max_literals = literal_blocks.cursor.left().min(BATCH_SIZE);
         let padded = &literals[..literals.len().min(max_literals + Literals::SLACK)];
         writer.try_reserve(14 * count + 2 * padded.len())?;
-        let [command_count, literal_count, distance_count] =
-            current.write_batch(&commands[..count], padded, table, &mut indices, writer);
+        let [command_count, literal_count, index_count] =
+            current.index_batch(&commands[..count], padded, table, &mut indices);
+        write_indexed(&indices[..index_count], table, writer);
         command_blocks.cursor.skip(command_count);
         literal_blocks.cursor.skip(literal_count);
-        distance_blocks.cursor.skip(distance_count);
+        (distance_blocks.cursor).skip(index_count - command_count - literal_count);
         literals = &literals[literal_count..];
 
         let [command, rest @ ..] = &commands[command_count..] else {

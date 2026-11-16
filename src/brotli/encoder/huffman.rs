@@ -371,19 +371,20 @@ impl TreeBuilder {
     }
 }
 
-/// The higher symbols come first in `leaves`.
+/// The higher symbols come first in `unsorted`.
 #[inline(always)]
-fn sort(leaves: &mut [u64], count: usize, ties: Ties, sorted: &mut [u64]) {
+fn sort(unsorted: &[u64], count: usize, ties: Ties, sorted: &mut [u64]) {
     const MIN_FOR_GAPS: usize = 13;
     /// Without gaps, the kernel compares each leaf with each.
     const MAX_FOR_KERNEL: usize = 128;
     let has_gaps = matches!(ties, Ties::Unordered) && count >= MIN_FOR_GAPS;
-    if (has_gaps || count <= MAX_FOR_KERNEL) && brotli_sort_leaves(leaves, count, has_gaps, sorted)
+    if (has_gaps || count <= MAX_FOR_KERNEL)
+        && brotli_sort_leaves(unsorted, count, has_gaps, sorted)
     {
         return;
     }
     let sorted = &mut sorted[..count];
-    sorted.copy_from_slice(&leaves[..count]);
+    sorted.copy_from_slice(&unsorted[..count]);
     if has_gaps {
         shell_sort(sorted);
     } else {

@@ -307,6 +307,7 @@ fn find<H: Hasher>(
 
 /// Takes the best match at a position, unless the next position has a much better one. Returns where it stopped, and `skip_after`.
 #[inline(never)]
+#[cfg_attr(mordant, allow(generic_body_not_generic))] // The locals of the loop, which stay in registers.
 fn add_greedily<H: Hasher>(
     hasher: &mut H,
     block: &InputBlock<'_>,

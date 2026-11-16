@@ -116,7 +116,7 @@ function getBuildkiteEmoji(emoji: Emoji): string {
 type Abi = Exclude<HostAbi, "gnu">;
 type Distro = "debian" | "ubuntu" | "alpine";
 type Tier = "latest" | "previous" | "oldest" | "beta";
-type Profile = "release" | "assert" | "debug" | "asan" | "hardened";
+type Profile = "release" | "assert" | "debug" | "asan" | "hardened" | "hardened-unlocked";
 
 interface Target {
   os: Os;
@@ -217,6 +217,8 @@ const buildPlatforms: Platform[] = [
   // In no release either. The build checks the layout of the file that it links and of the one that it strips
   // (scripts/build/verify-binary.ts).
   { os: "linux", arch: "x64", profile: "hardened", distro: "debian", release: "13" },
+  { os: "linux", arch: "aarch64", profile: "hardened", distro: "debian", release: "13" },
+  { os: "linux", arch: "aarch64", profile: "hardened-unlocked", distro: "debian", release: "13" },
   { os: "linux", arch: "aarch64", abi: "musl", distro: "debian", release: "13" },
   { os: "linux", arch: "x64", abi: "musl", distro: "debian", release: "13" },
   // Android: cross-compiled from the debian-13 aarch64 host via NDK sysroot.
@@ -260,9 +262,9 @@ const testPlatforms: Platform[] = [
   { os: "linux", arch: "x64", profile: "asan", distro: "debian", release: "13", tier: "latest" },
   // A Bun built with --hardened=on never reads the environment variables that tests steer Bun with, so it runs the tests
   // that are written for it. On any other build they skip themselves. The last never does.
-  {
+  ...(["x64", "aarch64"] as const).map((arch): Platform => ({
     os: "linux",
-    arch: "x64",
+    arch,
     profile: "hardened",
     distro: "debian",
     release: "13",
@@ -276,7 +278,10 @@ const testPlatforms: Platform[] = [
       "aot/texts-that-tell-builds-apart",
       "aot/the-build-under-test",
     ],
-  },
+  })),
+  // With --lock-environment=off it reads them, so it runs every test.
+  { os: "linux", arch: "aarch64", profile: "hardened-unlocked", distro: "debian", release: "13", tier: "latest" },
+  { os: "linux", arch: "aarch64", profile: "hardened-unlocked", distro: "ubuntu", release: "25.04", tier: "latest" },
   { os: "linux", arch: "aarch64", distro: "ubuntu", release: "25.04", tier: "latest" },
   { os: "linux", arch: "x64", distro: "ubuntu", release: "25.04", tier: "latest" },
   { os: "linux", arch: "aarch64", abi: "musl", distro: "alpine", release: "3.23", tier: "latest" },
@@ -286,7 +291,7 @@ const testPlatforms: Platform[] = [
 ];
 
 /** Pull requests build and test the other profiles. main and release branches do not: nothing ships them. */
-const isInRelease = ({ profile }: Target) => profile !== "asan" && profile !== "hardened";
+const isInRelease = ({ profile }: Target) => profile !== "asan" && !profile?.startsWith("hardened");
 
 function getPlatformKey(platform: Platform): string {
   const { distro, release } = platform;
@@ -561,7 +566,8 @@ function getBuildArgs(target: Target, options: PipelineOptions): string {
 
   if (baseline) args.push("--baseline=on");
   if (profile === "asan") args.push("--asan=on");
-  if (profile === "hardened") args.push("--hardened=on");
+  if (profile?.startsWith("hardened")) args.push("--hardened=on");
+  if (profile === "hardened-unlocked") args.push("--lock-environment=off");
 
   if (canary === false) args.push("--canary=off");
 
@@ -623,7 +629,7 @@ function getTargetTriplet(platform: Target): string {
   if (baseline) {
     triplet += "-baseline";
   }
-  if (profile === "hardened") {
+  if (profile?.startsWith("hardened")) {
     triplet += "-hardened";
   }
   return triplet;

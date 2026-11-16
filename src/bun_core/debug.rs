@@ -283,7 +283,7 @@ fn caller_of_compiled_frame(
     } else {
         fp
     };
-    let caller_pc = load(place_of_record.checked_add(WORD)?)?;
+    let caller_pc = strip_return_address_signature(load(place_of_record.checked_add(WORD)?)?);
     let caller_sp = place_of_record.checked_add(2 * WORD + frame.bytes_above_return_address)?;
     Some((caller_pc, caller_sp, caller_fp))
 }

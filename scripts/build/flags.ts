@@ -137,6 +137,9 @@ export const hardeningFlags = [
   "-DENABLE_AOT_POSITION_INDEPENDENT_IMAGE=1",
 ];
 
+/** On top of `hardeningFlags` for arm64: `SIGNED_RETURN_ADDRESSES` in lanes.mjs. */
+const signedReturnAddressFlags = ["-mbranch-protection=pac-ret", "-DENABLE_RETURN_ADDRESS_SIGNING=1"];
+
 // ═══════════════════════════════════════════════════════════════════════════
 // GLOBAL COMPILER FLAGS
 //   Applied to BOTH bun's own sources AND vendored deps
@@ -2137,7 +2140,10 @@ export function computeTargetLinkFlags(cfg: Config): string[] {
 
 export function computeHardeningFlags(cfg: Config): string[] {
   if (!cfg.hardened) return [];
-  return hardeningFlags.filter(flag => (cfg.release && !cfg.asan) || !flag.startsWith("-D_FORTIFY_SOURCE"));
+  return [
+    ...hardeningFlags.filter(flag => (cfg.release && !cfg.asan) || !flag.startsWith("-D_FORTIFY_SOURCE")),
+    ...(cfg.arm64 ? signedReturnAddressFlags : []),
+  ];
 }
 
 /** Just the -march/-mcpu/-mtune flags: rust.ts translates them into rustc's -Ctarget-cpu so Rust code targets the same CPU as the C++. */

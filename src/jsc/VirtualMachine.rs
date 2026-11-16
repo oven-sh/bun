@@ -5195,7 +5195,7 @@ impl VirtualMachine {
         let is_from_disk = vm.is_code_from_disk(source.to_utf8().slice());
         vm.transpiler
             .with_mut(|t| t.resolver.resolves_for_code_from_disk = is_from_disk);
-        // A name that only an `import` resolves misses here at every call. A miss that lists the folder again keeps each listing in memory (#11083).
+        // A name that only an `import` resolves misses here at every call, and a miss that lists the folder again keeps each listing in memory.
         vm.takes_miss_for_answer.set(true);
         // An answer that only an `onLoad` backs is a miss here: `require()` of that answer does not find it.
         let for_require = Self::resolve_without_on_resolve::<true>(

@@ -884,6 +884,10 @@ public:
         this->resetTimeout();
     }
 
+    bool isConnectRequest() {
+        return getHttpResponseData()->isConnectRequest;
+    }
+
     /* For a handler that can read the request body: maxRequestBodySize holds from here on. Returns false, with the request answered, if its Content-Length is already over it. */
     bool acceptRequestBody() {
         HttpResponseData<SSL> *httpResponseData = getHttpResponseData();

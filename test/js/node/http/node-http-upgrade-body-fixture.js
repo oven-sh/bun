@@ -25,6 +25,10 @@ async function run({
   tunnelBytes = "",
   // The listener reads the upgrade socket and writes more to it than a client that does not read takes.
   spill = false,
+  // The second half of the body does not come. "RST": the connection is reset. Any other value is an `act`.
+  truncate,
+  // The listener writes to a ServerResponse when the request ends or closes. "assigned": it has the socket.
+  respond,
 }) {
   const server = (secure ? https : http).createServer(
     secure
@@ -37,13 +41,13 @@ async function run({
 
   const events = [];
   let eofs = 0;
-  let client;
+  let client, tcp;
   const serverSocketClosed = Promise.withResolvers();
   const clientClosed = Promise.withResolvers();
   const onUncaughtException = err => events.push(`uncaughtException: ${err.message}`);
   process.on("uncaughtException", onUncaughtException);
 
-  function letGo(req, socket) {
+  function letGo(act, req, socket) {
     switch (act) {
       case "req.destroy()":
         return void req.destroy();
@@ -88,6 +92,16 @@ async function run({
       socket.write("HTTP/1.1 101 Switching Protocols\r\nConnection: Upgrade\r\nUpgrade: test\r\n\r\n");
       socket.write(Buffer.alloc(16 * 1024 * 1024, "x"));
     }
+    if (respond) {
+      const res = new http.ServerResponse(req);
+      if (respond === "assigned") res.assignSocket(socket);
+      for (const name of ["end", "close"]) {
+        req.on(name, () => {
+          res.write("a");
+          res.write("b");
+        });
+      }
+    }
 
     let received = 0;
     function onChunk(chunk) {
@@ -95,11 +109,13 @@ async function run({
       received += chunk.length;
       if (received < body.length) {
         // In a later turn of the event loop than the read that carried the first half.
+        if (truncate === "RST") return void setImmediate(() => tcp.resetAndDestroy());
+        if (truncate) return void setImmediate(letGo, truncate, req, socket);
         return void setImmediate(() => client.write(body.slice(received)));
       }
       // The close of a socket with spilled bytes waits for them, or for the reset that this causes.
       if (spill) process.nextTick(() => client.destroy());
-      letGo(req, socket);
+      letGo(act, req, socket);
     }
     if (read === "data") {
       req.on("data", onChunk);
@@ -113,7 +129,12 @@ async function run({
 
   server.listen(0, "127.0.0.1", () => {
     const options = { port: server.address().port, host: "127.0.0.1", allowHalfOpen: tunnelBytes !== "" };
-    client = secure ? tls.connect({ ...options, rejectUnauthorized: false }) : net.connect(options);
+    if (secure && truncate === "RST") {
+      tcp = net.connect(options);
+      client = tls.connect({ socket: tcp, rejectUnauthorized: false });
+    } else {
+      tcp = client = secure ? tls.connect({ ...options, rejectUnauthorized: false }) : net.connect(options);
+    }
     client.on("error", () => {});
     client.on("close", clientClosed.resolve);
     if (spill) client.pause();
@@ -122,7 +143,7 @@ async function run({
     client.on(secure ? "secureConnect" : "connect", () => {
       client.write(
         `POST /upgrade HTTP/1.1\r\nHost: a\r\nConnection: Upgrade\r\nUpgrade: test\r\nContent-Length: ${body.length}\r\n\r\n` +
-          (split ? body.slice(0, 50) : body),
+          (split || truncate ? body.slice(0, 50) : body),
       );
     });
   });

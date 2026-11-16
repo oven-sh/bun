@@ -124,6 +124,9 @@ impl Response {
         false
     }
     pub(crate) fn uncork(&mut self) {}
+    pub(crate) fn is_connect_request(&self) -> bool {
+        false
+    }
     pub(crate) fn prepare_for_sendfile(&mut self) {}
     pub(crate) fn get_remote_socket_info(&mut self) -> Option<SocketAddress> {
         let mut port: i32 = 0;

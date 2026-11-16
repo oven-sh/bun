@@ -282,7 +282,8 @@ private:
         HttpContextData<SSL> *httpContextData = getSocketContextDataS(s);
 
         /* No end of its own is left for the body of a Bun.serve CONNECT, or of a node:http Upgrade request that waits to leave HTTP. */
-        bool endBody = httpResponseData->isConnectRequest;
+        /* Bun.serve ends it from onAborted, once that is set. */
+        bool endBody = httpResponseData->isConnectRequest && !httpResponseData->onAborted;
         if constexpr (IsNodeHttp) endBody = (httpResponseData->state & HttpResponseData<SSL>::HTTP_NODE_LEAVE_AFTER_BODY) != 0;
         if (endBody && httpResponseData->inStream) {
             httpResponseData->inStream(reinterpret_cast<HttpResponse<SSL> *>(s), "", 0, true, httpResponseData->userData);
@@ -298,6 +299,8 @@ private:
         }
         ((HttpResponse<SSL> *) s)->abortRequest();
 
+        /* A write from one of the callbacks corks again. */
+        ((AsyncSocket<SSL> *)s)->uncorkWithoutSending();
 
         /* Destruct the type onOpen<IsNodeHttp> constructed */
         if constexpr (IsNodeHttp) {

@@ -1,5 +1,5 @@
 // What the compiler reads in place of src/js/node/_http_server.ts, which `bun run` evaluates. The two do the same.
-// Written against that file with the SHA-256 ded6f2207b1ea80f62edd4516ede66930c63539b54dc7c6e18f131e5c02565ad.
+// Written against that file with the SHA-256 6b1066e202f9815e6a8b3c9f3c42b10b7980fb9962ad76fa5cf94b93d0d530b6.
 // When that file changes, bring the change here and write the new hash: test/internal/second-texts-of-modules.test.ts.
 
 // Hardcoded module "node:_http_server"
@@ -3264,6 +3264,8 @@ function onConnectionClosed(
   }
   if (socket.destroyed || http.closeError) {
     // The handle's own close, right behind this, reports the error.
+  } else if (socket[kHandedOff] && socket.writableFinished) {
+    // It also reports the EOF: the FIN that answers this side's comes as a close.
   } else if (!http.peerEnded) {
     // This side closed it, so there's no EOF to report.
     socket.destroy();

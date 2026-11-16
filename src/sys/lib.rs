@@ -4493,13 +4493,9 @@ pub fn pread(fd: Fd, buf: &mut [u8], off: i64) -> Maybe<usize> {
     pread_buf(fd, BorrowedBuf::from(buf).unfilled(), off)
 }
 
-pub(crate) fn pread_buf(fd: Fd, mut cursor: BorrowedCursor<'_, u8>, off: i64) -> Maybe<usize> {
+pub fn pread_buf(fd: Fd, mut cursor: BorrowedCursor<'_, u8>, off: i64) -> Maybe<usize> {
     // SAFETY: as in `read_buf`.
     unsafe { pread_uninit(fd, cursor.as_mut(), off).inspect(|&n| _ = cursor.advance(n)) }
-}
-
-pub fn recv_non_block(fd: Fd, buf: &mut [u8]) -> Maybe<usize> {
-    recv_non_block_buf(fd, BorrowedBuf::from(buf).unfilled())
 }
 
 pub fn recv_non_block_buf(fd: Fd, mut cursor: BorrowedCursor<'_, u8>) -> Maybe<usize> {
@@ -7300,18 +7296,23 @@ const RWF_NOWAIT: u32 = 0x00000008;
 
 /// `preadv2(RWF_NOWAIT)` with no fallback: `Ok(None)` means this fd's file type (or the kernel) lacks it and the caller should remember that.
 #[cfg(any(target_os = "linux", target_os = "android"))]
-pub fn read_nowait(fd: Fd, buf: &mut [u8]) -> Maybe<Option<usize>> {
+pub fn read_nowait_buf(fd: Fd, mut cursor: BorrowedCursor<'_, u8>) -> Maybe<Option<usize>> {
     if !linux::RWFFlagSupport::is_maybe_supported() {
         return Ok(None);
     }
     loop {
-        let iov = [libc::iovec {
-            iov_base: buf.as_mut_ptr().cast(),
-            iov_len: buf.len(),
-        }];
-        // SAFETY: fd valid; iov points at a live stack array.
-        let rc = unsafe { sys_preadv2(fd.native(), iov.as_ptr(), 1, -1, RWF_NOWAIT) };
+        // SAFETY: as in `read_buf`; iov is a live stack value.
+        let rc = unsafe {
+            let buf = cursor.as_mut();
+            let iov = libc::iovec {
+                iov_base: buf.as_mut_ptr().cast(),
+                iov_len: buf.len(),
+            };
+            sys_preadv2(fd.native(), &raw const iov, 1, -1, RWF_NOWAIT)
+        };
         if rc >= 0 {
+            // SAFETY: as in `read_buf`.
+            unsafe { cursor.advance(rc as usize) };
             return Ok(Some(rc as usize));
         }
         match last_errno() {

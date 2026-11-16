@@ -157,6 +157,10 @@ impl<const SSL: bool> Response<SSL> {
         }
     }
 
+    pub(crate) fn is_connect_request(&mut self) -> bool {
+        c::uws_res_is_connect_request(Self::ssl_flag(), self.as_raw())
+    }
+
     pub(crate) fn flush_headers(&mut self, flush_immediately: bool) {
         c::uws_res_flush_headers(Self::ssl_flag(), self.as_raw(), flush_immediately)
     }
@@ -1149,6 +1153,10 @@ impl AnyResponse {
         any_dispatch!(self, |r| r.clear_on_data())
     }
 
+    pub fn is_connect_request(self) -> bool {
+        any_dispatch!(self, |r| r.is_connect_request())
+    }
+
     pub fn end_stream(self, close_connection: bool) {
         any_dispatch!(self, |r| r.end_stream(close_connection))
     }
@@ -1324,6 +1332,7 @@ pub mod c {
             port: &mut i32,
             is_ipv6: &mut bool,
         ) -> usize;
+        pub(crate) safe fn uws_res_is_connect_request(ssl: i32, res: &mut uws_res) -> bool;
         pub(crate) safe fn uws_res_uncork(ssl: i32, res: &mut uws_res);
         pub(crate) safe fn uws_res_send_corked(ssl: i32, res: &mut uws_res);
         pub(crate) safe fn uws_res_send_when_complete(ssl: i32, res: &mut uws_res);

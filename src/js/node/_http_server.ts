@@ -2436,6 +2436,8 @@ function onConnectionClosed(this: any, tracked, left) {
   }
   if (socket.destroyed || http.closeError) {
     // The handle's own close, right behind this, reports the error.
+  } else if (socket[kHandedOff] && socket.writableFinished) {
+    // It also reports the EOF: the FIN that answers this side's comes as a close.
   } else if (!http.peerEnded) {
     // This side closed it, so there's no EOF to report.
     socket.destroy();

@@ -561,7 +561,7 @@ impl<const SSL_ENABLED: bool, const DEBUG_MODE: bool, const MUX: bool>
             return;
         }
         // SAFETY: FFI handle valid while resp is Some
-        resp.on_aborted(Self::on_abort, self.as_ctx_ptr());
+        resp.on_aborted(Self::on_close, self.as_ctx_ptr());
     }
 
     pub(crate) fn set_cookies(&self, cookie_map: Option<*mut CookieMap>) {
@@ -1360,6 +1360,25 @@ impl<const SSL_ENABLED: bool, const DEBUG_MODE: bool, const MUX: bool>
         ctx_log!("create<d> ({:p})<r>", this.as_ptr());
     }
 
+    fn on_close(this: *mut Self, resp: uws::AnyResponse) {
+        let pinned = RequestContextRef::pin(this);
+        let ctx = pinned.ctx();
+        // The parser gives the body of a tunnel no last chunk: the close ends it.
+        // Over an open socket, uWS refuses the body or gives the connection up.
+        if !MUX
+            && ctx.flags.is_waiting_for_request_body()
+            && resp.is_connect_request()
+            && resp.is_closed()
+        {
+            Self::on_buffered_body_chunk(this, b"", true);
+            // Answered or released: nothing is left to abort.
+            if ctx.resp.get().is_none() || resp.has_responded() {
+                return;
+            }
+        }
+        Self::on_abort(this, resp);
+    }
+
     fn on_abort(this: *mut Self, resp: uws::AnyResponse) {
         ctx_log!("onAbort");
         let pinned = RequestContextRef::pin(this);
@@ -1825,6 +1844,15 @@ impl<const SSL_ENABLED: bool, const DEBUG_MODE: bool, const MUX: bool>
             // SAFETY: FFI handle
             resp.end(b"", close);
             self.end_request_streaming_and_drain();
+            return;
+        }
+
+        // A closed HTTP/1 socket takes no handler, so `FileResponseStream` would not hear of the close.
+        if !MUX && resp.is_closed() {
+            if is_regular {
+                let _base_ref = self.detach_response();
+                self.end_request_streaming_and_drain();
+            }
             return;
         }
 

@@ -100,8 +100,6 @@ JSVMClientData::~JSVMClientData()
     ASSERT(m_sqliteDatabases.isEmpty());
 
     m_normalWorld = nullptr;
-    if (vmHandle)
-        Bun__VmHandle__release(std::exchange(vmHandle, nullptr));
 }
 void JSVMClientData::create(VM* vm, void* bunVM, WorkerMessagingProxy* worker)
 {
@@ -110,8 +108,8 @@ void JSVMClientData::create(VM* vm, void* bunVM, WorkerMessagingProxy* worker)
     clientData->bunVM = bunVM;
     clientData->m_isWorkerVM = !!worker;
     clientData->m_isNodeWorkerVM = worker && worker->options().kind == WorkerOptions::Kind::Node;
-    clientData->vmHandle = Bun__VmHandle__retain(bunVM);
-    clientData->vmHandleState = Bun__VmHandle__stateAddress(clientData->vmHandle);
+    clientData->vmHandle = adoptRef(Bun__VmHandle__retain(bunVM));
+    clientData->vmHandleState = Bun__VmHandle__stateAddress(clientData->vmHandle.get());
     vm->deferredWorkTimer->onAddPendingWork = [clientData](Ref<JSC::DeferredWorkTimer::Ticket>&& ticket, JSC::DeferredWorkTimer::WorkType kind) -> void {
         Bun::JSCTaskScheduler::onAddPendingWork(clientData, WTF::move(ticket), kind);
     };

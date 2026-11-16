@@ -7626,8 +7626,9 @@ impl NodeFS {
         };
         let mut heap_buffer: Vec<u8> = Vec::new();
         let pre_stat_max = args.max_size.map_or(usize::MAX, |v| v as usize);
-        let mut pre_stat_buf = match scratch.as_deref_mut() {
+        let mut pre_stat_buf = match &mut scratch {
             Some(scratch) => {
+                let scratch = scratch.as_mut_slice();
                 let len = scratch.len().min(pre_stat_max);
                 BorrowedBuf::from(&mut scratch[..len])
             }

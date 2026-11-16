@@ -70,12 +70,15 @@ impl FdPipe {
         if !cfg!(target_os = "linux") {
             return false;
         }
-        let ctx = bun_io::js_vm_ctx();
         self.poll.with_mut(|poll| {
-            let owner = Owner::new(PollTag::FdPipe, core::ptr::from_ref(self).cast_mut().cast());
-            poll.get_or_insert_with(|| bun_io::OwnedFilePoll::new(ctx, self.fd, owner))
-                .register(ctx.loop_(), Flags::Writable, true)
-                .is_ok()
+            poll.get_or_insert_with(|| {
+                let owner =
+                    Owner::new(PollTag::FdPipe, core::ptr::from_ref(self).cast_mut().cast());
+                // SAFETY: `owner` points to the heap allocation that holds this poll.
+                unsafe { bun_io::OwnedFilePoll::new(bun_io::js_vm_ctx(), self.fd, owner) }
+            })
+            .register(Flags::Writable, true)
+            .is_ok()
         })
     }
 

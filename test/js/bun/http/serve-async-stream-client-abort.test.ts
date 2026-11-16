@@ -2,9 +2,9 @@ import { expect, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 import { join } from "node:path";
 
-async function runFixture(name: string) {
+async function runFixture(name: string, ...args: string[]) {
   await using proc = Bun.spawn({
-    cmd: [bunExe(), join(import.meta.dir, name)],
+    cmd: [bunExe(), join(import.meta.dir, name), ...args],
     env: bunEnv,
     stdout: "pipe",
     stderr: "pipe",
@@ -83,3 +83,39 @@ test.concurrent("a req.signal abort listener cannot write to the direct stream o
   });
   expect({ exitCode, signalCode }).toEqual({ exitCode: 0, signalCode: null });
 });
+
+test.concurrent.each([
+  { transport: "TCP", how: "FIN", answer: "file", request: "CONNECT a:1", heard: ["end"] },
+  { transport: "TCP", how: "FIN", answer: "stream", request: "CONNECT a:1", heard: ["end", "abort"] },
+  { transport: "TCP", how: "FIN", answer: "failing stream", request: "CONNECT a:1", heard: ["end"] },
+  { transport: "TCP", how: "RST", answer: "direct stream", request: "CONNECT a:1", heard: ["end"] },
+  { transport: "TLS", how: "RST", answer: "stream", request: "CONNECT a:1", heard: ["end", "abort"] },
+  { transport: "TCP", how: "FIN", answer: "file", request: "CONNECT /", heard: ["end"] },
+  // Not a tunnel: the body has a length.
+  { transport: "TCP", how: "FIN", answer: "file", request: "POST /", heard: ["abort", "AbortError"] },
+  // Refused, not ended.
+  {
+    transport: "TCP",
+    how: "maxRequestBodySize",
+    answer: "file",
+    request: "CONNECT a:1",
+    heard: ["abort", "Error"],
+    status: "HTTP/1.1 413",
+  },
+])(
+  "the body of $request settles on $how and the handler answers with a $answer ($transport)",
+  async ({ transport, how, answer, request, heard, status = "" }) => {
+    const { stdout, stderr, exitCode, signalCode } = await runFixture(
+      "serve-connect-body-close-fixture.ts",
+      transport,
+      how,
+      answer,
+      request,
+    );
+
+    if (answer === "failing stream") expect(stderr).toContain("error: failing stream");
+    else expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({ heard, status, pendingRequests: 0, later: "ok" });
+    expect({ exitCode, signalCode }).toEqual({ exitCode: 0, signalCode: null });
+  },
+);

@@ -3,9 +3,7 @@
 use super::modes::LumaMode;
 use super::residuals::{BlockRow, Residuals};
 use crate::array::At;
-use crate::error::{Error, Result};
 use crate::lossy::MacroblockMode;
-use crate::vec;
 
 /// What counts as being above the picture, and to its left.
 const ABOVE: u8 = 127;
@@ -19,65 +17,57 @@ pub(super) struct Samples {
 
 /// The last row of a macroblock.
 #[derive(Clone, Copy)]
-struct LastRow {
+pub(super) struct LastRow {
     y: [u8; 16],
     uv: [u8; 16],
 }
 
-/// What the next macroblock is predicted from.
+impl LastRow {
+    pub(super) const ABOVE_PICTURE: Self = Self::filled(ABOVE);
+
+    const fn filled(sample: u8) -> Self {
+        Self {
+            y: [sample; 16],
+            uv: [sample; 16],
+        }
+    }
+}
+
+/// What the next macroblock is predicted from, besides the row above.
 pub(super) struct Neighbors {
-    above: Vec<LastRow>,
     left: Samples,
     above_left: LastRow,
-    has_above: bool,
+    in_picture: InPicture,
 }
 
 impl Neighbors {
-    pub(super) fn new(columns: usize) -> Result<Self> {
-        let above = LastRow {
-            y: [ABOVE; 16],
-            uv: [ABOVE; 16],
-        };
-        Ok(Self {
-            above: vec::filled(above, columns)?,
+    /// For the first macroblock of row `y`.
+    pub(super) fn new(y: usize) -> Self {
+        Self {
             left: Samples {
                 y: [[LEFT; 16]; 16],
                 uv: [[LEFT; 16]; 8],
             },
-            above_left: above,
-            has_above: false,
-        })
+            above_left: LastRow::filled(if y > 0 { LEFT } else { ABOVE }),
+            in_picture: InPicture {
+                above: y > 0,
+                left: false,
+            },
+        }
     }
 
-    pub(super) fn start_row(&mut self, y: usize) {
-        self.has_above = y > 0;
-        self.left.y = [[LEFT; 16]; 16];
-        self.left.uv = [[LEFT; 16]; 8];
-        let corner = [if self.has_above { LEFT } else { ABOVE }; 16];
-        self.above_left = LastRow {
-            y: corner,
-            uv: corner,
-        };
-    }
-
+    /// The new last row takes the place of `above`.
     pub(super) fn reconstruct(
         &mut self,
-        x: usize,
+        above: &mut LastRow,
+        above_right: Option<&LastRow>,
         luma_mode: &LumaMode,
         chroma_mode: MacroblockMode,
         residuals: &Residuals,
-    ) -> Result<&Samples> {
-        let (above, further) = self
-            .above
-            .get_mut(x..)
-            .and_then(<[LastRow]>::split_first_mut)
-            .ok_or(Error::Internal)?;
+    ) -> &Samples {
         let [luma_residuals @ .., _, _] = &residuals.rows;
         let [_, _, _, _, chroma_residuals @ ..] = &residuals.rows;
-        let in_picture = InPicture {
-            above: self.has_above,
-            left: x > 0,
-        };
+        let in_picture = self.in_picture;
         // The new samples take the place of those on the left.
         let Samples { y, uv } = &mut self.left;
 
@@ -87,7 +77,7 @@ impl Neighbors {
                 add_residuals(y, luma_residuals, residuals.non_zero);
             }
             LumaMode::Subblocks(modes) => {
-                let [a, b, c, d, ..] = further.first().map_or([above.y[15]; 16], |next| next.y);
+                let [a, b, c, d, ..] = above_right.map_or([above.y[15]; 16], |it| it.y);
                 let mut left = [self.above_left.y[15]; 20];
                 for (left, row) in left[1..].iter_mut().zip(&*y) {
                     *left = row[15];
@@ -106,12 +96,13 @@ impl Neighbors {
         predict(chroma_mode, uv, &above.uv, &self.above_left.uv, in_picture);
         add_residuals(uv, chroma_residuals, residuals.non_zero >> 16);
 
+        self.in_picture.left = true;
         self.above_left = *above;
         *above = LastRow {
             y: y[15],
             uv: uv[7],
         };
-        Ok(&self.left)
+        &self.left
     }
 }
 

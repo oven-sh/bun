@@ -3,7 +3,7 @@
 use bun_highway::webp::{self, Block, GammaTable, LinearColors, Macroblock};
 
 use crate::array::At;
-use crate::error::{Error, Result};
+use crate::error::Result;
 use crate::slice::{self, InBounds, known};
 use crate::vec;
 
@@ -38,9 +38,10 @@ impl Picture {
                     pad(from, width, columns, rows, &mut padded);
                     (from, stride) = (padded.as_flattened(), 16);
                 }
+                let mut from = from.chunks(stride);
                 let mut pixels = [&[[0; 4]; 16]; 16];
-                for (to, row) in pixels.iter_mut().zip(from.chunks(stride)) {
-                    *to = known(row.first_chunk()).unwrap_or(to);
+                for to in &mut pixels {
+                    *to = known(from.next().and_then(<[_]>::first_chunk)).unwrap_or(to);
                 }
                 let is_translucent = has_alpha && !is_opaque(&pixels);
                 if !repeats_left(band, width, x) {
@@ -49,9 +50,7 @@ impl Picture {
                     } else {
                         average(&pixels, &mut colors, sums);
                     }
-                    if !webp::convert(from, stride, &colors, &LINEAR_TO_GAMMA, &mut converted) {
-                        return Err(Error::Internal);
-                    }
+                    webp::convert(&pixels, &colors, &LINEAR_TO_GAMMA, &mut converted);
                 }
                 let samples = macroblocks.push_mut(converted);
                 if is_translucent {

@@ -10,7 +10,7 @@ use super::Quality;
 use super::entropy::{Cost, div_round};
 use super::histogram::{Alphabet, Histogram};
 use crate::array::At;
-use crate::error::Result;
+use crate::error::{Error, Result};
 use crate::slice::{InBounds, known};
 use crate::vec;
 
@@ -197,12 +197,7 @@ impl Clusters {
     /// If merging them changes the total by less than `limit`.
     fn pair(&self, a: usize, b: usize, limit: i64) -> Option<Pair> {
         let (low, high) = (a.min(b), a.max(b));
-        let both = self.clusters.get(low).zip(self.clusters.get(high));
-        let change = both.and_then(|(a, b)| self.change_by_merging(a, b, limit))?;
-        Some(Pair { low, high, change })
-    }
-
-    fn change_by_merging(&self, a: &Cluster, b: &Cluster, limit: i64) -> Option<i64> {
+        let (a, b) = known(self.clusters.get(low).zip(self.clusters.get(high)))?;
         let (a, b) = if a.symbols() > b.symbols() {
             (a, b)
         } else {
@@ -210,20 +205,20 @@ impl Clusters {
         };
         let apart = cost(&a.counts.parts) + cost(&b.counts.parts);
         let are_many = self.clusters.len() > MANY;
-        Some(a.cost_with(&b.counts, &self.alphabets, apart + limit, are_many)? - apart)
+        let change = a.cost_with(&b.counts, &self.alphabets, apart + limit, are_many)? - apart;
+        Some(Pair { low, high, change })
     }
 
     /// Into the first of the two.
     fn merge(&mut self, pair: Pair) {
         let clusters = self.clusters.get_disjoint_mut([pair.low, pair.high]);
-        let ids = clusters.map(|[low, high]| {
-            low.add(&high.counts, &self.alphabets, i64::MAX);
-            (high.id, low.id)
-        });
-        let (gone, into) = known(ids.ok()).unwrap_or_default();
-        self.merged.push((gone, into));
+        let Some([low, high]) = known(clusters.ok()) else {
+            return;
+        };
+        low.add(&high.counts, &self.alphabets, i64::MAX);
+        self.merged.push((high.id, low.id));
         for other in 0..self.stay_apart.ids {
-            self.stay_apart.set(into, other, false);
+            self.stay_apart.set(low.id, other, false);
         }
     }
 
@@ -370,13 +365,10 @@ impl Clusters {
         let batches = tiles.tiles.chunks(at_once);
         for (batch, ids_then_indices) in batches.zip(ids_then_indices.chunks_mut(at_once)) {
             let all = batch.iter().zip(&*ids_then_indices).zip(&mut searches);
-            for ((tile, &id), search) in all {
+            for ((tile, &id), search) in all.filter(|((tile, _), _)| tile.is_used()) {
                 // With a good guess, the others are out sooner.
                 let guess = indices.value(id.into());
-                let cluster = known(self.clusters.get(guess));
-                let Some(cluster) = cluster.filter(|_| tile.is_used()) else {
-                    continue;
-                };
+                let cluster = self.clusters.get(guess).ok_or(Error::Internal)?;
                 search.counts.fill(tile, tiles.entries(tile));
                 search.least = i64::MAX / 2;
                 look_at(search, guess, cluster);
@@ -458,4 +450,37 @@ pub(super) fn find(tiles: &TileHistograms, quality: Quality) -> Result<Groups> {
         of_tiles,
         histograms,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::slice::checked;
+
+    #[test]
+    fn nothing_comes_of_clusters_that_are_not_there() -> Result<()> {
+        let mut tiles = TileHistograms::new(1, 0)?;
+        let [histogram] = &mut *vec::array(Histogram::EMPTY)?;
+        histogram.add_copy(2, 1);
+        tiles.push(histogram)?;
+        let mut clusters = Clusters {
+            alphabets: tiles.alphabets,
+            clusters: Vec::new(),
+            merged: Vec::new(),
+            stay_apart: StayApart::default(),
+        };
+        let pair = checked(|| Ok(clusters.pair(0, 1, 0).is_some()));
+        assert_eq!(pair, Err(Error::Internal));
+        let merged = checked(|| {
+            clusters.merge(Pair {
+                low: 0,
+                high: 1,
+                change: -1,
+            });
+            Ok(())
+        });
+        assert_eq!(merged, Err(Error::Internal));
+        assert_eq!(clusters.assign(&tiles, &mut [0]), Err(Error::Internal));
+        Ok(())
+    }
 }

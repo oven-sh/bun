@@ -37,3 +37,14 @@ pub(crate) fn copied<T: Copy>(from: &[T]) -> Result<Vec<T>> {
     vec.extend_from_slice(from);
     Ok(vec)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn an_array_is_full() {
+        assert_eq!(filled(7, 1).and_then(boxed).as_deref(), Ok(&[7]));
+        assert_eq!(with_room(1).and_then(boxed::<u8, 1>), Err(Error::Internal));
+    }
+}

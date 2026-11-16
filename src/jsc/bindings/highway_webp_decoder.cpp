@@ -285,7 +285,7 @@ static HWY_INLINE void FilterInnerEdge(D d, V* v, WebpFilterStrength strength, s
 {
     const hn::RebindToSigned<D> di;
     const EdgeMasks<D> masks = Classify(d, v, strength.edge_limit, strength);
-    const auto is_filtered = lanes < hn::MaxLanes(d) ? hn::And(masks.is_filtered, hn::FirstN(di, lanes)) : masks.is_filtered;
+    const auto is_filtered = hn::And(masks.is_filtered, hn::FirstN(di, lanes));
     const auto p1 = ToSigned(d, v[2]), q1 = ToSigned(d, v[5]);
     auto p0 = ToSigned(d, v[3]), q0 = ToSigned(d, v[4]);
     const auto outer = hn::IfThenZeroElse(masks.is_smooth, hn::SaturatedSub(p1, q1));
@@ -449,12 +449,11 @@ static HWY_INLINE void AtInnerVerticalEdges(D d, const Planes& planes, const Fil
         planes.StoreAcross(D16(), v[i], i, 0);
 }
 
-// `filter` gets the four rows above `edge` and the four below, and changes up to `kChanged` of each.
-template<ptrdiff_t kChanged, class D, class Planes, class Filter>
+// `filter` gets `kRead` of the four rows above `edge` and of the four below, and changes up to `kChanged` of each.
+template<ptrdiff_t kRead, ptrdiff_t kChanged, class D, class Planes, class Filter>
 static HWY_INLINE void AtHorizontalEdge(D, const Planes& planes, ptrdiff_t edge, const Filter& filter)
 {
-    // The simple filter has two rows above the macroblock, and looks no further.
-    constexpr ptrdiff_t kRead = kChanged == 1 ? 2 : 4;
+    static_assert(kChanged < kRead && kRead <= 4);
     hn::Vec<D> v[8];
     HWY_UNROLL(8)
     for (ptrdiff_t i = -kRead; i < kRead; i++)
@@ -484,8 +483,8 @@ static HWY_INLINE void FilterNormally(D d, const Planes& planes, WebpFilterStren
             AtVerticalEdge(d, planes, 4, inner);
         }
     }
-    if (has_above) AtHorizontalEdge<3>(d, planes, 0, outer);
-    if (strength.filters_inner_edges) AtHorizontalEdge<2>(d, planes, 4, inner);
+    if (has_above) AtHorizontalEdge<4, 3>(d, planes, 0, outer);
+    if (strength.filters_inner_edges) AtHorizontalEdge<4, 2>(d, planes, 4, inner);
 }
 
 void WebpFilterNormally(uint8_t* HWY_RESTRICT y, size_t y_stride, uint8_t* HWY_RESTRICT u, uint8_t* HWY_RESTRICT v, size_t uv_stride,
@@ -505,7 +504,7 @@ void WebpFilterNormally(uint8_t* HWY_RESTRICT y, size_t y_stride, uint8_t* HWY_R
 #endif
         if (!strength.filters_inner_edges) continue;
         for (ptrdiff_t edge = 8; edge < 16; edge += 4)
-            AtHorizontalEdge<2>(d, luma, edge, [&](hn::Vec<D16>* rows) HWY_ATTR { FilterInnerEdge(d, rows, strength, 16); });
+            AtHorizontalEdge<4, 2>(d, luma, edge, [&](hn::Vec<D16>* rows) HWY_ATTR { FilterInnerEdge(d, rows, strength, 16); });
     }
 }
 
@@ -527,10 +526,11 @@ void WebpFilterSimply(uint8_t* HWY_RESTRICT y, size_t y_stride, const WebpFilter
                 inner(v + 8);
             });
         }
-        if (has_above) AtHorizontalEdge<1>(d, luma, 0, outer);
+        // Two rows are all that there is above the macroblock.
+        if (has_above) AtHorizontalEdge<2, 1>(d, luma, 0, outer);
         if (!strength.filters_inner_edges) continue;
         for (ptrdiff_t edge = 4; edge < 16; edge += 4)
-            AtHorizontalEdge<1>(d, luma, edge, inner);
+            AtHorizontalEdge<2, 1>(d, luma, edge, inner);
     }
 }
 

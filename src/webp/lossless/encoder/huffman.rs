@@ -69,7 +69,7 @@ struct Node {
 }
 
 /// A symbol that gets a code.
-#[derive(Clone, Copy, Default)]
+#[derive(Clone, Copy)]
 struct Leaf {
     symbol: u16,
     len: u8,

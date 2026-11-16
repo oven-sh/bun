@@ -74,16 +74,17 @@ impl<'a> Rows<'a> {
 
     /// The alpha of the next row of the picture, or of up to `ROW_STEP` if they have one pixel. `pixels` are those that
     /// are there already, from the start of that row.
-    pub(crate) fn next(&mut self, count: usize, pixels: &[[u8; 4]]) -> Result<&[u8]> {
+    // With early exits: behind `InBounds` the loops over `pixels` are not vectorized.
+    pub(crate) fn next(&mut self, count: usize, pixels: &[[u8; 4]]) -> Option<&[u8]> {
         let (len, left) = (count * self.width, self.first_above);
-        let row = self.row.get_mut(..len).ok_or(Error::Internal)?;
+        let row = self.row.get_mut(..len)?;
         let filter = match (self.filter, self.y) {
             (Filter::Vertical, 0) => Filter::Horizontal,
             (filter, _) => filter,
         };
         match &mut self.source {
             Source::Raw(unread) => {
-                let (raw, rest) = unread.split_at_checked(len).ok_or(Error::Internal)?;
+                let (raw, rest) = unread.split_at_checked(len)?;
                 unfilter(filter, raw.iter().copied(), row, left);
                 *unread = rest;
             }
@@ -93,13 +94,13 @@ impl<'a> Rows<'a> {
                 unfilter(filter, filtered.iter().copied(), row, left);
             }
             Source::InPlace => {
-                let pixels = pixels.get(..len).ok_or(Error::Internal)?.iter();
+                let pixels = pixels.get(..len)?.iter();
                 unfilter(filter, pixels.map(|&[_, green, ..]| green), row, left);
             }
         }
-        self.first_above = *row.get(len - self.width).ok_or(Error::Internal)?;
+        self.first_above = *row.get(len - self.width)?;
         self.y += count;
-        Ok(&self.row)
+        Some(&self.row)
     }
 }
 
@@ -123,5 +124,30 @@ fn unfilter(filter: Filter, filtered: impl Iterator<Item = u8>, row: &mut [u8], 
                 above_left = core::mem::replace(alpha, left);
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_row_is_all_there() -> Result<()> {
+        let mut rows = Rows {
+            source: Source::InPlace,
+            filter: Filter::None,
+            y: 0,
+            width: 1,
+            row: vec::filled(0, 2)?,
+            first_above: 0,
+        };
+        assert_eq!(rows.next(1, &[[7; 4]]), Some([7, 0].as_slice()));
+        assert_eq!(rows.next(2, &[[7; 4]]), None);
+        assert_eq!(rows.next(3, &[[7; 4]; 3]), None);
+        rows.source = Source::Raw(&[7]);
+        assert_eq!(rows.next(2, &[]), None);
+        rows.width = 0;
+        assert_eq!(rows.next(1, &[]), None);
+        Ok(())
     }
 }

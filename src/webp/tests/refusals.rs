@@ -81,8 +81,7 @@ mod native_test_shims {
 
     #[unsafe(no_mangle)]
     extern "C" fn highway_webp_convert(
-        &[red, ..]: &[u8; 4],
-        _: usize,
+        &[&[[red, ..], ..], ..]: &[&[[u8; 4]; 16]; 16],
         _: P,
         _: P,
         out: &mut Macroblock,
@@ -167,7 +166,7 @@ fn refused_memory_is_an_error_when_lossless() {
         // Few colors: better off without a palette, with one, and with one that bundles.
         (40, 40, |x, y, _| [(x + y) as u8; 4]),
         (128, 80, |_, _, [n, ..]| [n % 3, n % 7, 0, 255]),
-        (70, 70, |x, y, [n, ..]| {
+        (60, 80, |x, y, [n, ..]| {
             [(x / 5 + y / 3) as u8 % 5 + u8::from(n < 9), 0, 0, 255]
         }),
         (70, 70, |x, _, [n, ..]| match x % 2 {
@@ -178,8 +177,8 @@ fn refused_memory_is_an_error_when_lossless() {
     for (width, height, paint) in pictures {
         back(&there(width, height, Compression::Lossless, paint));
     }
-    // A palette that bundles, and green subtracted after that.
-    back(b"RIFF\x1a\0\0\0WEBPVP8L\x0d\0\0\0/\0\0\0\0\x0f\x10\x11\x11EDD\0\0");
+    // All four transforms, two of them behind a palette that bundles.
+    back(b"RIFF \0\0\0WEBPVP8L\x13\0\0\0/\0\0\0\0=\x80\x88\x88\x08DD\xc4 \x22\x22\x10\x11\x11\0");
 }
 
 #[test]
@@ -193,7 +192,8 @@ fn refused_memory_is_an_error_when_lossy() {
         |x, y, [n, ..]| [1, 0, 0, 1 + (x * y / 8) as u8 + n % 2],
     ];
     for paint in pictures {
-        back(&there(40, 40, lossy, paint));
+        back(&there(50, 33, lossy, paint));
+        back(&there(33, 50, lossy, paint));
     }
     // Some of these frames end just where their room does, and some have several pages of tokens.
     for macroblocks in 1..12 {
@@ -313,18 +313,4 @@ fn every_pixel_has_a_tile() {
     needs([1], |[spare]| {
         kernels::undo_cross_color(&mut [[0; 4]], &[[0; 4]], tile_bits(spare));
     });
-}
-
-#[test]
-fn a_macroblock_is_converted_from_16_rows() {
-    let gamma = kernels::GammaTable {
-        values: [0; _],
-        slopes: [0; _],
-    };
-    let converts = |len| {
-        let (colors, mut out) = Default::default();
-        kernels::convert(&vec![[0; 4]; len], 20, &colors, &gamma, &mut out)
-    };
-    assert!(converts(15 * 20 + 16));
-    assert!(!converts(15 * 20 + 15));
 }

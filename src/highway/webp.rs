@@ -227,9 +227,8 @@ pub fn undo_cross_color(row: &mut [[u8; 4]], tiles: &[[u8; 4]], tile_bits: u32) 
 // ─── Lossy encoder ──────────────────────────────────────────────────────────
 
 unsafe extern "C" {
-    fn highway_webp_convert(
-        pixels: *const [u8; 4],
-        stride: usize,
+    safe fn highway_webp_convert(
+        pixels: &[&[[u8; 4]; 16]; 16],
         colors: &LinearColors,
         gamma: &GammaTable,
         out: &mut Macroblock,
@@ -479,23 +478,15 @@ const _: () = assert!(
         && size_of::<Histograms>() == 16
 );
 
-/// Luma from 16 rows of 16 `pixels`, which start `stride` apart, and chroma from `colors`. Returns whether there are
-/// so many pixels.
+/// Luma from the rows of `pixels`, and chroma from `colors`.
 #[inline(always)]
-#[must_use]
 pub fn convert(
-    pixels: &[[u8; 4]],
-    stride: usize,
+    pixels: &[&[[u8; 4]; 16]; 16],
     colors: &LinearColors,
     gamma: &GammaTable,
     out: &mut Macroblock,
-) -> bool {
-    let fits = stride.saturating_mul(15).saturating_add(16) <= pixels.len();
-    if fits {
-        // SAFETY: the last row ends `15 * stride + 16` pixels from the start.
-        unsafe { highway_webp_convert(pixels.as_ptr(), stride, colors, gamma, out) };
-    }
-    fits
+) {
+    highway_webp_convert(pixels, colors, gamma, out);
 }
 
 #[inline(always)]

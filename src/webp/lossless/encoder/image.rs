@@ -280,12 +280,12 @@ impl Unfinished {
     fn finish(mut self, pixels: Pixels, tile_bits: u32) -> Result<Vec<u8>> {
         self.writer.make_room(self.missing_bits);
         let tiles_per_row = subsampled(pixels.width, tile_bits);
-        for_each_piece(pixels, &self.copies, tile_bits, |x, y, piece| {
+        for_each_piece::<Error>(pixels, &self.copies, tile_bits, |x, y, piece| {
             let group = self.groups.of_tiles.value(y * tiles_per_row + x);
             let words = self.groups.histograms.get(usize::from(group));
-            words
-                .map(|words| piece.write(pixels, self.cache_bits, &words.counts, &mut self.writer))
-                .ok_or(Error::Internal)
+            let words = &words.ok_or(Error::Internal)?.counts;
+            piece.write(pixels, self.cache_bits, words, &mut self.writer);
+            Ok(())
         })?;
         self.writer.finish()
     }

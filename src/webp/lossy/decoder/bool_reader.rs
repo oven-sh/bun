@@ -1,6 +1,6 @@
 //! The arithmetic decoder of RFC 6386 section 7.
 
-use core::hint::select_unpredictable;
+use core::hint::{cold_path, select_unpredictable};
 
 use crate::error::{Error, Result};
 
@@ -104,7 +104,7 @@ impl<'a> BoolReader<'a> {
     #[inline(always)]
     fn split(&mut self, probability: u8) -> (bool, [u32; 2]) {
         if self.spare_bits < 0 {
-            core::hint::cold_path();
+            cold_path();
             self.refill();
         }
         let product = self.range * u32::from(probability);
@@ -125,7 +125,7 @@ impl<'a> BoolReader<'a> {
     pub(super) fn read_sign(&mut self, magnitude: i32) -> i32 {
         debug_assert!(self.range < 254);
         if self.spare_bits < 0 {
-            core::hint::cold_path();
+            cold_path();
             self.refill();
         }
         let last_plus = self.range >> 1;

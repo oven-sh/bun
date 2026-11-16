@@ -809,7 +809,7 @@ _ZN3bun6N_AVX2L10UnfilterUpEPhPKhm                                             [
 # Gate: BUN_HWY_DISPATCH (highway_dispatch.h) via hwy::SupportedTargets. (14 symbols)
 # ----------------------------------------------------------------------------
 _ZN3bun6N_AVX211WebpAnalyzeEPKNS_4webp10MacroblockEPKNS1_5EdgesES7_PA2_NS1_10HistogramsE  [AVX, AVX2]
-_ZN3bun6N_AVX211WebpConvertEPKhmPKNS_4webp12LinearColorsEPKNS3_10GammaTableEPNS3_10MacroblockE  [AVX, AVX2]
+_ZN3bun6N_AVX211WebpConvertEPKPKhPKNS_4webp12LinearColorsEPKNS5_10GammaTableEPNS5_10MacroblockE  [AVX, AVX2]
 _ZN3bun6N_AVX212WebpUpsampleEPKhS2_PhS3_m                                      [AVX, AVX2]
 _ZN3bun6N_AVX213WebpYuvToRgbaEPKhS2_S2_S2_Phm                                  [AVX, AVX2]
 _ZN3bun6N_AVX214WebpInverseDctEPsj                                             [AVX, AVX2]

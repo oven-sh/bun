@@ -1032,7 +1032,7 @@ static HWY_INLINE V8 Lookup32(const uint8_t (&table)[32], V8 indices)
 }
 
 // https://github.com/webmproject/libwebp/blob/4fa21912338357f89e4fd51cf2368325b59e9bd9/src/dsp/yuv.h#L206
-void WebpConvert(const uint8_t* HWY_RESTRICT pixels, size_t stride, const webp::LinearColors* HWY_RESTRICT colors,
+void WebpConvert(const uint8_t* const* HWY_RESTRICT pixels, const webp::LinearColors* HWY_RESTRICT colors,
     const webp::GammaTable* HWY_RESTRICT gamma, webp::Macroblock* HWY_RESTRICT out)
 {
     const D16 d;
@@ -1041,7 +1041,7 @@ void WebpConvert(const uint8_t* HWY_RESTRICT pixels, size_t stride, const webp::
     static constexpr Table<1> kByColumn([](size_t, size_t i) -> uint8_t { return i % 4 * 4 + i / 4; });
     for (size_t block = 0; block < 16; block += kPairs) {
         const auto row = [&](size_t y) HWY_ATTR {
-            const V8 rgba = hn::LoadU(d8, pixels + 4 * ((block / 4 * 4 + y) * stride + block % 4 * 4));
+            const V8 rgba = hn::LoadU(d8, pixels[block / 4 * 4 + y] + 4 * (block % 4 * 4));
             const V16 red_blue = hn::And(hn::BitCast(d, rgba), hn::Set(d, 255));
             // The factor for green does not fit 15 bits.
             return Mixed<16839, 6420, 33059 / 2, 33059 - 33059 / 2, 16>(red_blue, Lookup16(rgba, kGreens.Dup(0)), (16 << 16) + (1 << 15));
@@ -1196,10 +1196,10 @@ extern "C" uint8_t highway_webp_try_diagonal_modes(uint64_t edge_start, uint64_t
     return BUN_HWY_DISPATCH(WebpTryDiagonalModes)(edge_start, edge_end, context, block, source, quantizer, texture_lambda, out);
 }
 
-extern "C" void highway_webp_convert(const uint8_t* pixels, size_t stride, const webp::LinearColors* colors,
+extern "C" void highway_webp_convert(const uint8_t* const* pixels, const webp::LinearColors* colors,
     const webp::GammaTable* gamma, webp::Macroblock* out)
 {
-    BUN_HWY_DISPATCH(WebpConvert)(pixels, stride, colors, gamma, out);
+    BUN_HWY_DISPATCH(WebpConvert)(pixels, colors, gamma, out);
 }
 
 extern "C" void highway_webp_analyze(const webp::Macroblock* samples, const webp::Edges* luma_edges,

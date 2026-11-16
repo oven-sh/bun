@@ -74,7 +74,9 @@ impl<T> InBounds<T> for [T] {
     #[inline(always)]
     fn set_chunk<const N: usize>(&mut self, start: usize, values: [T; N]) {
         let chunk = self.get_mut(start..).and_then(<[T]>::first_chunk_mut);
-        known(chunk).map(|it| *it = values).unwrap_or_default();
+        if let Some(chunk) = known(chunk) {
+            *chunk = values;
+        }
     }
 
     #[inline(always)]

@@ -6,7 +6,8 @@ use super::header::FilterType;
 use super::reconstruct::Samples;
 use crate::alpha;
 use crate::array::At;
-use crate::error::{Error, Result};
+use crate::error::Result;
+use crate::slice::{InBounds, known};
 use crate::vec;
 
 /// In front of each row. Chroma has its first sample repeated there.
@@ -53,36 +54,28 @@ impl Plane<'_> {
     }
 
     /// From `before` samples in front of it. The first kept row has index 0.
-    fn row(&self, index: usize, before: usize) -> Result<&[u8]> {
+    fn row(&self, index: usize, before: usize) -> &[u8] {
         let start = index * self.stride + MARGIN - before;
-        self.samples.get(start..).ok_or(Error::Internal)
+        known(self.samples.get(start..)).unwrap_or(self.samples)
     }
 
     fn first_of_row(&self, index: usize) -> u8 {
-        let sample = self.samples.get(index * self.stride + MARGIN);
-        sample.copied().unwrap_or_default()
+        self.samples.value(index * self.stride + MARGIN)
     }
 
     /// Repeats the first and the last sample of each row, of which `width` are in the picture.
+    #[inline(always)]
     fn extend_rows(&mut self, width: usize) {
         for row in self.samples.chunks_exact_mut(self.stride.max(1)) {
-            if let Some([before, row @ .., behind]) = row.get_mut(MARGIN - 1..=MARGIN + width) {
-                *before = row.first().copied().unwrap_or_default();
-                *behind = row.last().copied().unwrap_or_default();
-            }
+            let (first, last) = (row.value(MARGIN), row.value(MARGIN + width - 1));
+            row.set(MARGIN - 1, first);
+            row.set(MARGIN + width, last);
         }
     }
 
     fn keep_last_rows(&mut self) {
-        let new_len = self.samples.len().saturating_sub(self.start());
-        if let Some((kept, new)) = self
-            .samples
-            .split_at_mut_checked(self.kept_rows * self.stride)
-            && let Some(last) = new.get(new_len.saturating_sub(kept.len())..new_len)
-            && last.len() == kept.len()
-        {
-            kept.copy_from_slice(last);
-        }
+        let last = self.samples.len().saturating_sub(self.start());
+        self.samples.copy_within(last.., 0);
     }
 }
 
@@ -93,11 +86,10 @@ struct Upsampled<'a> {
 }
 
 impl Upsampled<'_> {
-    fn fill(&mut self, plane: &Plane, [upper, lower]: [usize; 2]) -> Result<()> {
-        let from = [plane.row(upper, 1)?, plane.row(lower, 1)?];
+    #[inline(always)]
+    fn fill(&mut self, plane: &Plane, rows: [usize; 2]) {
         let to = self.rows.each_mut().map(|row| &mut **row);
-        kernels::upsample(from, to, self.pairs);
-        Ok(())
+        kernels::upsample(rows.map(|row| plane.row(row, 1)), to, self.pairs);
     }
 
     /// The first sample is outside of the picture.
@@ -149,53 +141,48 @@ impl<'a> Planes<'a> {
         let y_len = (2 * kept_chroma_rows + 16) * y_stride + MARGIN;
         let uv_len = (kept_chroma_rows + 8) * uv_stride + MARGIN;
         let pairs = width / 2 + 1;
-        let upsampled_len = 2 * pairs.next_multiple_of(ROW_STEP) + MARGIN;
-        *memory = vec::filled(0, y_len + 2 * uv_len + 4 * upsampled_len + padded)?;
+        let row_len = 2 * pairs.next_multiple_of(ROW_STEP) + MARGIN;
+        let lens = [
+            y_len, uv_len, uv_len, row_len, row_len, row_len, row_len, padded,
+        ];
+        *memory = vec::filled(0, lens.iter().sum())?;
         let mut rest = memory.as_mut_slice();
-        let mut take = |len| rest.split_off_mut(..len).ok_or(Error::Internal);
-        let mut plane = |len, stride, kept_rows| {
-            take(len).map(|samples| Plane {
-                samples,
-                stride,
-                kept_rows,
-            })
+        let [y, u, v, upper_u, lower_u, upper_v, lower_v, opaque] =
+            lens.map(|len| rest.split_off_mut(..len).unwrap_or_default());
+        opaque.fill(255);
+        let plane = |samples, stride, kept_rows| Plane {
+            samples,
+            stride,
+            kept_rows,
         };
-        let y = plane(y_len, y_stride, 2 * kept_chroma_rows)?;
-        let u = plane(uv_len, uv_stride, kept_chroma_rows)?;
-        let v = plane(uv_len, uv_stride, kept_chroma_rows)?;
-        let mut upsampled = || -> Result<_> {
-            let rows = [take(upsampled_len)?, take(upsampled_len)?];
-            Ok(Upsampled { rows, pairs })
-        };
-        let (upsampled_u, upsampled_v) = (upsampled()?, upsampled()?);
-        rest.fill(255);
+        let upsampled = |rows| Upsampled { rows, pairs };
         Ok(Self {
-            y,
-            u,
-            v,
-            upsampled_u,
-            upsampled_v,
+            y: plane(y, y_stride, 2 * kept_chroma_rows),
+            u: plane(u, uv_stride, kept_chroma_rows),
+            v: plane(v, uv_stride, kept_chroma_rows),
+            upsampled_u: upsampled([upper_u, lower_u]),
+            upsampled_v: upsampled([upper_v, lower_v]),
             filter_type,
             width,
             height,
             alpha,
-            opaque: rest,
+            opaque,
             pixels,
             rows_done: 0,
         })
     }
 
     #[inline(always)]
-    pub(super) fn store(&mut self, x: usize, samples: &Samples) -> Result<()> {
+    pub(super) fn store(&mut self, x: usize, samples: &Samples) {
         let halves = samples.uv.as_flattened().as_chunks::<8>().0.as_chunks().0;
         let y = self.y.store(x, samples.y.iter().copied());
         let u = self.u.store(x, halves.iter().map(|&[u, _]| u));
         let v = self.v.store(x, halves.iter().map(|&[_, v]| v));
-        y.and(u).and(v).ok_or(Error::Internal)
+        known(y.and(u).and(v));
     }
 
     /// All macroblocks of row `y` are stored.
-    pub(super) fn finish_row(&mut self, y: usize, strengths: &[FilterStrength]) -> Result<()> {
+    pub(super) fn finish_row(&mut self, y: usize, strengths: &[FilterStrength]) {
         match self.filter_type {
             FilterType::None => {}
             FilterType::Simple => kernels::filter_simply(self.y.for_filter(), strengths, y > 0),
@@ -210,18 +197,17 @@ impl<'a> Planes<'a> {
             false => self.height,
         };
         match self.width {
-            1 => self.convert_column(y, end)?,
-            _ => self.convert_rows(y, end)?,
+            1 => self.convert_column(y, end),
+            _ => self.convert_rows(y, end),
         }
         self.rows_done = end;
 
         self.y.keep_last_rows();
         self.u.keep_last_rows();
         self.v.keep_last_rows();
-        Ok(())
     }
 
-    fn convert_rows(&mut self, y: usize, end: usize) -> Result<()> {
+    fn convert_rows(&mut self, y: usize, end: usize) {
         let chroma_width = self.width.div_ceil(2);
         self.u.extend_rows(chroma_width);
         self.v.extend_rows(chroma_width);
@@ -232,25 +218,23 @@ impl<'a> Planes<'a> {
             if !is_lower || row == 0 {
                 let chroma_rows = [row / 2, last_chroma_row.min(row.div_ceil(2))];
                 let chroma_rows = chroma_rows.map(|row| row + self.u.kept_rows - 8 * y);
-                self.upsampled_u.fill(&self.u, chroma_rows)?;
-                self.upsampled_v.fill(&self.v, chroma_rows)?;
+                self.upsampled_u.fill(&self.u, chroma_rows);
+                self.upsampled_v.fill(&self.v, chroma_rows);
             }
+            let pixels = self.pixels.get(start..).unwrap_or_default();
+            let alpha = self.alpha.as_mut().and_then(|it| known(it.next(1, pixels)));
             let yuva = [
-                self.y.row(row + self.y.kept_rows - 16 * y, 0)?,
+                self.y.row(row + self.y.kept_rows - 16 * y, 0),
                 self.upsampled_u.row(is_lower),
                 self.upsampled_v.row(is_lower),
-                match &mut self.alpha {
-                    Some(alpha) => alpha.next(1, self.pixels.get(start..).unwrap_or_default())?,
-                    None => self.opaque,
-                },
+                alpha.unwrap_or(self.opaque),
             ];
             kernels::yuv_to_rgba(yuva, &mut self.pixels, start, self.width);
         }
-        Ok(())
     }
 
     /// The same for rows of one pixel, which are converted as if they were a single row.
-    fn convert_column(&mut self, y: usize, end: usize) -> Result<()> {
+    fn convert_column(&mut self, y: usize, end: usize) {
         let (start, count) = (self.rows_done, end - self.rows_done);
         let [mut luma, mut u, mut v] = [[0; ROW_STEP]; 3];
         for (row, x) in (start..end).zip(0..) {
@@ -266,15 +250,42 @@ impl<'a> Planes<'a> {
             *luma.at_mut(x) = self.y.first_of_row(row + self.y.kept_rows - 16 * y);
             (*u.at_mut(x), *v.at_mut(x)) = (upsampled(&self.u), upsampled(&self.v));
         }
-        let alpha = match &mut self.alpha {
-            Some(alpha) => alpha.next(count, self.pixels.get(start..).unwrap_or_default())?,
-            None => self.opaque,
-        };
-        kernels::yuv_to_rgba([&luma, &u, &v, alpha], &mut self.pixels, start, count);
-        Ok(())
+        let pixels = self.pixels.get(start..).unwrap_or_default();
+        let alpha = self
+            .alpha
+            .as_mut()
+            .and_then(|it| known(it.next(count, pixels)));
+        let yuva = [&luma, &u, &v, alpha.unwrap_or(self.opaque)];
+        kernels::yuv_to_rgba(yuva, &mut self.pixels, start, count);
     }
 
     pub(super) fn into_pixels(self) -> Vec<[u8; 4]> {
         self.pixels
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::error::Error;
+    use crate::slice::checked;
+
+    #[test]
+    fn there_is_nothing_outside_of_a_plane() {
+        let mut plane = Plane {
+            samples: &mut [0; 3 * MARGIN],
+            stride: 3 * MARGIN,
+            kept_rows: 0,
+        };
+        assert_eq!(checked(|| Ok(plane.row(0, 0).len())), Ok(2 * MARGIN));
+        assert_eq!(checked(|| Ok(plane.row(1, 0).len())), Err(Error::Internal));
+        let mut store = |kept_rows, x| {
+            plane.kept_rows = kept_rows;
+            plane.store(x, [[0; MARGIN]].into_iter())
+        };
+        assert_eq!(store(0, 1), Some(()));
+        for outside in [1, 2] {
+            assert_eq!([store(outside, 1), store(0, 1 + outside)], [None; 2]);
+        }
     }
 }

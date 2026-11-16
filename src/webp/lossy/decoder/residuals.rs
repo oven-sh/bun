@@ -320,3 +320,20 @@ fn inverse_wht(y2: &BlockRow, luma: &mut [BlockRow; 4]) {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn nothing_is_read_behind_the_last_coefficient() {
+        let block = Block {
+            steps: &Steps::default(),
+            quantizers: [1; 2],
+            first: 16,
+        };
+        let (reader, mut row) = (&mut BoolReader::new(&[254; 8]), [0; 64]);
+        assert_eq!(block.read_to_end(reader, &[128; 11], &mut row, 0), None);
+        assert_eq!(row, [0; 64]);
+    }
+}

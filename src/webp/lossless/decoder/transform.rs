@@ -184,9 +184,9 @@ impl<T: Copy> Lookup<T> {
         to: &mut Vec<T>,
     ) {
         let table = self.table.as_chunks::<N>().0.first_chunk::<256>();
-        known(table).inspect(|table| {
+        if let Some(table) = known(table) {
             to.extend(coded.iter().flat_map(|it| *table.at(bundle(it).into())));
-        });
+        }
     }
 }
 
@@ -204,5 +204,24 @@ fn add_up(pixels: &mut [Rgba], mut before: Rgba) {
     for pixel in pixels {
         before = core::array::from_fn(|i| pixel.at(i).wrapping_add(*before.at(i)));
         *pixel = before;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::error::Error;
+
+    #[test]
+    fn nothing_is_looked_up_without_a_table() {
+        let lookup = Lookup::<u8> {
+            table: Vec::new(),
+            bundle_bits: 0,
+        };
+        let found = slice::checked(|| {
+            lookup.append(&[0], |&bundle| bundle, &mut Vec::new());
+            Ok(())
+        });
+        assert_eq!(found, Err(Error::Internal));
     }
 }

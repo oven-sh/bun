@@ -1,13 +1,14 @@
 // A library writes over the return address that a compiled function has saved. A build that does not sign goes where it says,
 // which shows that the library has found the word.
+// It is not in test/aot, whose files CI runs on one distribution alone and without showing what they print.
 import { expect } from "bun:test";
 import { bunEnv, bunExe, isLinux, tempDir } from "harness";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { locksEnvironment } from "./hardened";
-import { withoutCoreDump } from "./harness/commands";
-import { run } from "./harness/run";
-import { describe, test } from "./supported";
+import { locksEnvironment } from "../../aot/hardened";
+import { withoutCoreDump } from "../../aot/harness/commands";
+import { run } from "../../aot/harness/run";
+import { describe, test } from "../../aot/supported";
 
 const compiler = Bun.which("cc") || Bun.which("gcc") || Bun.which("clang");
 const signs =

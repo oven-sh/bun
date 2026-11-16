@@ -278,6 +278,7 @@ const testPlatforms: Platform[] = [
       "aot/executable-memory-filter",
       "aot/texts-that-tell-builds-apart",
       "aot/the-build-under-test",
+      "cli/run/signed-return-addresses",
     ],
   })),
   // With --lock-environment=off it reads them, so it runs every test.
@@ -1667,6 +1668,23 @@ async function getPipeline(options: PipelineOptions = {}): Promise<Pipeline | un
   const { skipEverything } = options;
   if (skipEverything) {
     return;
+  }
+
+  // One file, with the binaries of the build that the subject of the commit names.
+  const [, earlierBuild] = /\[return addresses of ([0-9a-f-]{36})\]/.exec(getCommitMessage() ?? "") ?? [];
+  if (earlierBuild) {
+    const distros = [
+      { distro: "debian", release: "13" },
+      { distro: "ubuntu", release: "25.04" },
+    ] as const;
+    const steps = (["hardened", "hardened-unlocked", "hardened-unsigned"] as const).flatMap(profile =>
+      distros.map(distro => {
+        const tests = ["cli/run/signed-return-addresses"];
+        const platform: Platform = { os: "linux", arch: "aarch64", profile, ...distro, tier: "latest", tests };
+        return getTestBunStep(platform, options, { buildId: earlierBuild });
+      }),
+    );
+    return { priority, steps };
   }
 
   const { buildPlatforms = [], testPlatforms = [] } = options;

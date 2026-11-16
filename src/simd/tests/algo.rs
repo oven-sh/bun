@@ -8,6 +8,7 @@ use std::cell::Cell;
 use std::fmt::Debug;
 use std::hint::black_box;
 use std::ops::Range;
+use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU8, Ordering::Relaxed};
 
 const PAGE: usize = 4096;
@@ -523,6 +524,7 @@ mod simd {
             copied,
             from.iter().take_while(|&&byte| byte != stop).count()
         );
+        assert_eq!(g, [&from[..copied], &want[copied..]].concat());
         let (slice, test) = (shared(from), |v: U8| v.simd_eq(255));
         assert_eq!(U8::position(slice, test), None);
         assert_eq!(U8::rposition(slice, test), None);
@@ -665,15 +667,15 @@ fn readers_see_only_old_and_new_values() {
     on_each_target(|| {
         for len in [2, 6, 18, 70] {
             let bytes: Vec<_> = (0..len).map(|i| AtomicU8::new(1 + i % 2)).collect();
-            let is_done = AtomicBool::new(false);
             std::thread::scope(|scope| {
-                scope.spawn(|| {
-                    while !is_done.load(Relaxed) {
+                let (writer, bytes) = (Arc::new(()), &bytes);
+                let writer_if_alive = Arc::downgrade(&writer);
+                scope.spawn(move || {
+                    while writer_if_alive.strong_count() > 0 {
                         assert!(bytes.iter().all(|byte| byte.load(Relaxed) != 0));
                     }
                 });
-                (0..rounds).for_each(|_| simd::swap_pairs(&bytes));
-                is_done.store(true, Relaxed);
+                (0..rounds).for_each(|_| simd::swap_pairs(bytes));
             });
         }
     });

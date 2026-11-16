@@ -1,5 +1,5 @@
 use crate::native::{self, as_group};
-use crate::{BitIndices, Int, Isa, Mask, Vector};
+use crate::{BitIndices, Int, Isa, Mask, Out, Vector};
 use bun_simd_trusted::{SharedU8, shared};
 use core::arch::x86_64::*;
 use core::array::from_fn;
@@ -264,8 +264,8 @@ impl<I: Zmm> Vector<f32, 16, I> {
 
 pub mod sse4 {
     pub(crate) use crate::native::{load_shared, store_shared};
+    pub(crate) use crate::portable::masked::*;
     pub use crate::portable::{bit_indices, prefix_xor};
-    pub(crate) use crate::portable::{load_shared_masked, rotate_bytes, store_shared_masked};
 
     crate::isa::vector_types!(super::Sse4, 16);
 }
@@ -273,7 +273,7 @@ pub mod sse4 {
 pub mod avx2 {
     use super::*;
     pub use crate::portable::bit_indices;
-    pub(crate) use crate::portable::{load_shared_masked, rotate_bytes, store_shared_masked};
+    pub(crate) use crate::portable::masked::*;
 
     crate::isa::vector_types!(Avx2, 32);
 
@@ -312,6 +312,18 @@ mod avx512 {
     pub(crate) use super::shared::load64_masked as load_shared_masked;
     pub(crate) use super::shared::store64_masked as store_shared_masked;
     use super::*;
+
+    #[inline]
+    #[target_feature(enable = "avx512bw")]
+    pub(crate) fn load_to_last<T: Int<N>, const N: usize>(from: &[T]) -> u8x64 {
+        shared::load64_masked::<true>(from)
+    }
+
+    #[inline]
+    #[target_feature(enable = "avx512bw")]
+    pub(crate) fn fill_from_last<T: Int<N>, const N: usize>(v: u8x64, to: Out<'_, T>) -> &mut [T] {
+        to.fill_from_last(v)
+    }
 
     #[inline]
     #[target_feature(enable = "avx512f")]

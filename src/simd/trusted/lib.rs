@@ -32,8 +32,7 @@ pub mod x86_64;
 pub use aarch64::Features;
 pub use atomic_fn::AtomicFn;
 pub use opaque::{opaque, opaque16};
-pub use output::{Append, Out, Writer, extend_vec, spare_capacity};
-pub use output::{UNROLL, load_masked_to_last, quarters};
+pub use output::{Append, Out, UNROLL, Writer, extend_vec, quarters, spare_capacity};
 pub use shared_u8::SharedU8;
 pub use target::Target;
 #[cfg(target_arch = "x86_64")]

@@ -143,7 +143,6 @@ probes! {
     "faminmax": "famax v0.4s, v1.4s, v2.4s";
     "sve": "add z0.b, z0.b, z1.b";
     "f32mm": "fmmla z0.s, z1.s, z2.s";
-    "f64mm": "ptrue p0.b", "ld1rob {{z0.b}}, p0/z, [x1]";
     "sve2": "ptrue p0.b", "match p1.b, p0/z, z0.b, z1.b";
     "sve2p1": "addqv v0.16b, p0, z1.b";
     "sve2-aes": "aese z0.b, z0.b, z1.b", "pmullb z0.q, z1.d, z2.d";

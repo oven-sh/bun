@@ -85,7 +85,7 @@ const IN_CPUINFO: &str = cfg_select! {
         "
         neon=asimd crc=crc32 lse=atomics lse2=uscat rcpc=lrcpc rcpc2=ilrcpc rcpc3=lrcpc3
         rdm=asimdrdm jsconv=jscvt dotprod=asimddp fp16=asimdhp fhm=asimdfhm frintts=frint
-        f32mm=svef32mm f64mm=svef64mm sve2-aes=svepmull sve2-bitperm=svebitperm
+        f32mm=svef32mm sve2-aes=svepmull sve2-bitperm=svebitperm
         sve2-sha3=svesha3 sve2-sm4=svesm4"
     }
 };

@@ -1,8 +1,8 @@
 use crate::Int;
 use crate::isa::movemask_of;
 pub(crate) use crate::native::{load_shared, store_shared};
+pub(crate) use crate::portable::masked::*;
 pub use crate::portable::{bit_indices, prefix_xor};
-pub(crate) use crate::portable::{load_shared_masked, rotate_bytes, store_shared_masked};
 use core::arch::aarch64::*;
 use core::simd::{ToBytes, prelude::*};
 

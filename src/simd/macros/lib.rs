@@ -93,17 +93,24 @@ fn add_attributes(before: &mut Vec<TokenTree>, features: &[&str], span_of_fn: Sp
         .step_by(2)
         .take_while(|&at| is(before.get(at - 1), "#"))
         .find(|&at| is_inline(&before[at]));
-    let replacement = match inline.map(|at| before[at].to_string()) {
-        // rustc refuses `#[inline(always)]` next to `#[target_feature]`.
-        Some(how) if how.contains("always") && !features.is_empty() => Some("rustc_force_inline"),
+    let how = inline.map_or(String::new(), |at| before[at].to_string().replace(' ', ""));
+    let (replacement, addition) = match (&how[..], features) {
+        ("", _) => (None, "#[inline]"),
         // A portable copy is then compiled only if it is used.
-        Some(how) if how.contains("never") && features.is_empty() => Some("inline"),
-        _ => None,
+        ("[inline(never)]" | "[inline(exported)]", []) => (Some("inline"), ""),
+        // rustc refuses `#[inline(always)]` next to `#[target_feature]`.
+        ("[inline(always)]", [_, ..]) => (Some("rustc_force_inline"), ""),
+        // A debug build optimizes the crate of the kernels, and not that of the caller.
+        ("[inline(exported)]", _) => (
+            Some("cfg_attr(not(debug_assertions), inline)"),
+            "#[cfg_attr(debug_assertions, inline(never))]",
+        ),
+        _ => (None, ""),
     };
     if let Some((at, replacement)) = inline.zip(replacement) {
         before[at] = Group::new(Delimiter::Bracket, parse(replacement)).into();
     }
-    let mut attributes = String::from(if inline.is_none() { "#[inline]" } else { "" });
+    let mut attributes = String::from(addition);
     for feature in features {
         attributes += &format!("#[target_feature(enable = {feature:?})]");
     }
@@ -242,10 +249,11 @@ fn take_exports(module: TokenStream) -> (TokenStream, TokenStream) {
 
         let signature = std::iter::from_fn(|| rest.next_if(|t| !is_group(t, Delimiter::Brace)));
         let signature: Vec<TokenTree> = signature.collect();
-        body.extend(parse(match signature.iter().any(is_inline) {
-            // A debug build optimizes the crate of the kernels, and not that of the caller.
-            true => "#[cfg_attr(debug_assertions, inline(never))] #[cfg_attr(not(debug_assertions), inline)]",
-            false => "#[inline(never)]",
+        let inline = signature.iter().find(|it| is_inline(it));
+        body.extend(parse(match inline.map(|it| it.to_string()).as_deref() {
+            None => "#[inline(never)]",
+            Some("[inline]") => "#[inline(exported)]",
+            Some(other) => panic!("expected `#[inline]` on an export, not `#{other}`"),
         }));
         body.extend(without_inline(&signature).cloned());
         export.extend(signature_to_export(&signature));

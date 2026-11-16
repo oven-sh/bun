@@ -1,10 +1,8 @@
 //! Each access touches its bytes and no others.
 #![cfg(all(unix, not(miri), any(target_arch = "x86_64", target_arch = "aarch64")))]
 #![feature(portable_simd)]
-use bun_simd_trusted::{Features, Out, SharedU8, detected, load_masked_to_last, shared::*};
-use core::fmt::Debug;
-use core::hint::black_box;
-use core::simd::{Simd, SimdElement};
+use bun_simd_trusted::{Features, SharedU8, detected, shared::*};
+use core::simd::Simd;
 use core::sync::atomic::{AtomicU8, Ordering::Relaxed};
 
 const ROOM: usize = 1 << 16;
@@ -229,54 +227,48 @@ fn masked_16() {
     masked("sve", false, load16_masked, store16_masked);
 }
 
-#[inline(always)]
-fn last_lanes_of_plain<T: SimdElement + Default + From<u8> + PartialEq + Debug, const N: usize>() {
+#[cfg(target_arch = "x86_64")]
+#[target_feature(enable = "avx512bw")]
+fn last_lanes_of_plain<T: core::simd::SimdElement + From<u8> + Eq + core::fmt::Debug>() {
     let room = fenced();
+    let size = size_of::<T>();
     // SAFETY: nothing else refers to the room, which is aligned to a page and has zeros.
-    let room: &mut [T] = unsafe {
-        core::slice::from_raw_parts_mut(room.as_ptr().cast_mut().cast(), ROOM / size_of::<T>())
+    let room: &mut [T] =
+        unsafe { core::slice::from_raw_parts_mut(room.as_ptr().cast_mut().cast(), ROOM / size) };
+    let byte = |i: usize| {
+        if i.is_multiple_of(size) {
+            1 + i as u8
+        } else {
+            0
+        }
     };
-    let lanes: [T; N] = core::array::from_fn(|i| T::from(1 + i as u8));
-    for len in 0..N + 3 {
-        let (end, fit) = (room.len(), len.min(N));
+    let bytes = Simd::from_array(core::array::from_fn(byte));
+    for len in 0..64 / size + 3 {
+        let (end, skipped) = (room.len(), 64 - (len * size).min(64));
         for start in [0, 77, end - len] {
-            let to = black_box(&mut room[start..start + len]);
-            let filled = Out::from(to).fill_masked::<true, _>(Simd::from_array(lanes));
-            assert_eq!(filled, &lanes[N - fit..]);
-            let mut want = lanes;
-            want[..N - fit].fill(T::default());
-            let from = black_box(&room[start..start + len]);
-            assert_eq!(load_masked_to_last(from).to_array(), want);
-            room[start..start + fit].fill(T::default());
-            assert!(room.iter().all(|&lane| lane == T::default()));
+            let to = bun_simd_trusted::Out::from(&mut room[start..start + len]);
+            let filled = to.fill_from_last(bytes);
+            let want = (skipped..64).step_by(size).map(|i| T::from(byte(i)));
+            assert_eq!(filled, want.collect::<Vec<_>>());
+            let (fit, mut want) = (filled.len(), bytes);
+            want[..skipped].fill(0);
+            assert_eq!(load64_masked::<true>(&room[start..start + len]), want);
+            room[start..start + fit].fill(T::from(0));
+            assert!(room.iter().all(|&lane| lane == T::from(0)));
         }
     }
 }
 
-#[inline(always)]
-fn last_lanes_of_each_type() {
-    last_lanes_of_plain::<u8, 64>();
-    last_lanes_of_plain::<u8, 16>();
-    last_lanes_of_plain::<u16, 32>();
-    last_lanes_of_plain::<u16, 8>();
-    last_lanes_of_plain::<u32, 16>();
-    last_lanes_of_plain::<u64, 8>();
-}
-
-#[test]
-fn last_lanes() {
-    last_lanes_of_each_type();
-}
-
 #[cfg(target_arch = "x86_64")]
 #[test]
-fn last_lanes_with_masked_instructions() {
-    #[target_feature(enable = "avx512bw,avx512vl")]
-    fn run() {
-        last_lanes_of_each_type();
-    }
-    if detected().contains(Features::named(&["avx512bw", "avx512vl"])) {
-        // SAFETY: the CPU has the features.
-        unsafe { run() };
+fn last_lanes() {
+    if detected().contains(Features::named(&["avx512bw"])) {
+        // SAFETY: the CPU has the feature.
+        unsafe {
+            last_lanes_of_plain::<u8>();
+            last_lanes_of_plain::<u16>();
+            last_lanes_of_plain::<u32>();
+            last_lanes_of_plain::<u64>();
+        }
     }
 }

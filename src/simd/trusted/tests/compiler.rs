@@ -63,7 +63,7 @@ fn implied_features_on_x86_64() {
 #[test]
 fn implied_features_on_aarch64() {
     let all = all_of_aarch64();
-    assert_eq!(all.len(), 37);
+    assert_eq!(all.len(), 36);
     each_needs_what_it_implies(AARCH64, all, |name| {
         set(aarch64::Features::named(&[name]).names())
     });

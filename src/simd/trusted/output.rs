@@ -1,7 +1,7 @@
-//! Output to memory that may be uninitialized, and masked access to the last lanes of a vector.
+//! Output to memory that may be uninitialized.
 use alloc::vec::Vec;
 use core::mem::MaybeUninit;
-use core::simd::{Mask, MaskElement, Simd, SimdElement, cmp::SimdPartialOrd};
+use core::simd::{Simd, SimdElement, cmp::SimdPartialOrd};
 
 /// A slice that can only be written to. A `&mut [T]` comes back for the part that was written.
 pub struct Out<'a, T>(&'a mut [MaybeUninit<T>]);
@@ -24,28 +24,6 @@ impl<'a, T: Copy> From<&'a mut [MaybeUninit<T>]> for Out<'a, T> {
 #[inline(always)]
 fn write<T: Copy, const N: usize>(to: &mut [MaybeUninit<T>; N], values: [T; N]) -> &mut [T] {
     to.write_copy_of_slice(&values)
-}
-
-/// Selects the first or the last `len` lanes, which are at most `N`, and says how many are before them.
-#[inline(always)]
-fn lanes_for<M: MaskElement, const N: usize, const ARE_LAST: bool>(
-    len: usize,
-) -> (Mask<M, N>, usize) {
-    const { assert!(N < 256) };
-    let index = Simd::from_array(core::array::from_fn(|i| i as u8));
-    match ARE_LAST {
-        true => (index.simd_ge(Simd::splat((N - len) as u8)).cast(), N - len),
-        false => (index.simd_lt(Simd::splat(len as u8)).cast(), 0),
-    }
-}
-
-/// To the last lanes if `from` is too short, after zeros. What the load skips is before `from`.
-#[inline(always)]
-pub fn load_masked_to_last<T: SimdElement + Default, const N: usize>(from: &[T]) -> Simd<T, N> {
-    let (enable, skipped) = lanes_for::<_, N, true>(from.len().min(N));
-    let lane_0 = from.as_ptr().wrapping_sub(skipped);
-    // SAFETY: lane `i` comes from `lane_0.wrapping_add(i)`, which is in `from` if it is enabled.
-    unsafe { Simd::load_select_ptr(lane_0, enable, Simd::default()) }
 }
 
 /// Where four pieces start that cover `piece..=4 * piece` elements.
@@ -157,20 +135,32 @@ impl<'a, T: Copy> Out<'a, T> {
         Writer { all, len }.finish()
     }
 
-    /// As many of the first or the last lanes as fit, with a masked store.
+    /// As many lanes as fit, with a masked store.
     #[inline(always)]
-    pub fn fill_masked<const FROM_LAST: bool, const N: usize>(
-        self,
-        lanes: Simd<T, N>,
-    ) -> &'a mut [T]
+    pub fn fill_masked<const N: usize>(self, lanes: Simd<T, N>) -> &'a mut [T]
     where
         T: SimdElement,
     {
+        const { assert!(N < 256) };
         let len = self.len().min(N);
-        let (enable, skipped) = lanes_for::<_, N, FROM_LAST>(len);
-        let lane_0 = self.0.as_mut_ptr().cast::<T>().wrapping_sub(skipped);
-        // SAFETY: lane `i` goes to `lane_0.wrapping_add(i)`, which is in `self` if it is enabled.
-        unsafe { lanes.store_select_ptr(lane_0, enable) };
+        let index = Simd::from_array(core::array::from_fn(|i| i as u8));
+        let enable = index.simd_lt(Simd::splat(len as u8)).cast();
+        // SAFETY: the first `len` lanes are enabled, and `self` has that many.
+        unsafe { lanes.store_select_ptr(self.0.as_mut_ptr().cast(), enable) };
+        Writer { all: self.0, len }.finish()
+    }
+
+    /// As many of the last bytes as fit.
+    #[cfg(target_arch = "x86_64")]
+    #[inline]
+    #[target_feature(enable = "avx512bw")]
+    pub fn fill_from_last(self, bytes: core::simd::u8x64) -> &'a mut [T]
+    where
+        T: SimdElement,
+    {
+        let cells = core::cell::Cell::from_mut(&mut *self.0).as_slice_of_cells();
+        crate::shared::store64_masked::<true>(bytes, cells);
+        let len = self.len().min(64 / size_of::<T>());
         Writer { all: self.0, len }.finish()
     }
 }

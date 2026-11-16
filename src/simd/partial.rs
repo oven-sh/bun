@@ -2,7 +2,7 @@
 use crate::source::Memory;
 use crate::swizzle::Repeat;
 use crate::{Int, Isa, Lane, Mask, Out, Source, Vector};
-use bun_simd_trusted::{load_masked_to_last, quarters};
+use bun_simd_trusted::quarters;
 use core::array::{from_fn, from_ref};
 use core::hint::unlikely;
 use core::simd::{Simd, Swizzle, ToBytes, u8x32, u8x64, u32x4};
@@ -88,7 +88,7 @@ impl<T: Int<N>, const N: usize, I: Isa> Vector<T, N, I> {
     }
 
     #[inline(always)]
-    fn to_64_bytes(self) -> u8x64 {
+    pub(crate) fn to_64_bytes(self) -> u8x64 {
         match const { size_of::<Self>() } {
             16 => self.first_bytes::<16>().resize(0),
             32 => self.first_bytes::<32>().resize(0),
@@ -223,6 +223,7 @@ mod simd {
 
         #[inline(always)]
         pub(crate) fn store_pieces(self, to: Out<'_, T>) -> &mut [T] {
+            debug_assert!(to.len() < N);
             match const { size_of::<T>() } {
                 _ if Self::IS_MASKED => self.store_with_mask(to),
                 1 => self.store_pieces_of::<4, 16>(to),
@@ -354,7 +355,8 @@ mod simd {
                 Memory::Plain(from)
                     if Self::is_slow_with_mask(size_of::<Self>(), from.as_ptr()) =>
                 {
-                    Self::new(load_masked_to_last(from)).rotate(from.len().wrapping_sub(N))
+                    let last = shared::load_to_last::<T, N>(from);
+                    Self::from_first_bytes(rotate_bytes(last, size_of_val(from)))
                 }
                 Memory::Plain(from) => Self::new(Simd::load_or_default(from)),
                 Memory::Shared(from) if Self::is_slow_with_mask(64, from.as_ptr()) => {
@@ -372,18 +374,12 @@ mod simd {
             if to.is_empty() {
                 &mut []
             } else if Self::is_slow_with_mask(size_of::<Self>(), to.as_ptr()) {
-                let last = self.rotate(N.wrapping_sub(to.len()));
-                to.fill_masked::<true, N>(last.0)
+                let size = to.len() * size_of::<T>();
+                let last = rotate_bytes(self.to_64_bytes(), size.wrapping_neg());
+                shared::fill_from_last::<T, N>(last, to)
             } else {
-                to.fill_masked::<false, N>(self.0)
+                to.fill_masked(self.0)
             }
-        }
-
-        /// In a vector of 64 bytes that has zeros after `self`.
-        #[inline(always)]
-        fn rotate(self, by: usize) -> Self {
-            let by = by.wrapping_mul(size_of::<T>());
-            Self::from_first_bytes(rotate_bytes(self.to_64_bytes(), by))
         }
     }
 

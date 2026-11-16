@@ -247,7 +247,7 @@ const HWCAP: &str = "
     neon neon - aes aes sha2 sha2 crc lse fp16 fp16 - rdm jsconv fcma rcpc - sha3 sm4 sm4
     dotprod sha3 sve fhm - lse2 rcpc2 flagm";
 const HWCAP2: &str = "
-    - sve2 sve2-aes sve2-aes sve2-bitperm sve2-sha3 sve2-sm4 flagm2 frintts i8mm f32mm f64mm
+    - sve2 sve2-aes sve2-aes sve2-bitperm sve2-sha3 sve2-sm4 flagm2 frintts i8mm f32mm -
     bf16 i8mm bf16 - - - - - - - - - - - - - - - - - - - cssc - sve2p1 - - - - - - mops hbc
     - rcpc3 lse128 - lut faminmax";
 
@@ -302,7 +302,7 @@ fn i8mm_and_bf16_with_sve() {
 #[test]
 fn each_windows_feature() {
     let all = aarch64::from_windows(|_| true);
-    assert_eq!(names(all).len(), 22);
+    assert_eq!(names(all).len(), 21);
     for number in 0..100 {
         // As in winnt.h
         let gone: &[_] = match number {
@@ -322,7 +322,6 @@ fn each_windows_feature() {
             55 => &["sve2-sha3"],
             57 | 66 => &["i8mm"],
             58 => &["f32mm"],
-            59 => &["f64mm"],
             62 => &["lse2"],
             64 | 65 => &["sha3"],
             67 => &["fp16"],

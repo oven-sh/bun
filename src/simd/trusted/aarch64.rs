@@ -70,7 +70,6 @@ impl Arch for Aarch64 {
         row!("faminmax", ["neon"], from(&[64 + 50], &[], &[])),
         row!("sve", ["fp16"], from(&[22], &[], &[46])),
         row!("f32mm", ["sve"], from(&[64 + 10], &[], &[58])),
-        row!("f64mm", ["sve"], from(&[64 + 11], &[], &[59])),
         row!("sve2", ["sve"], from(&[64 + 1], &[], &[47])),
         row!("sve2p1", ["sve2"], from(&[64 + 36], &[], &[48])),
         row!("sve2-aes", ["sve2", "aes"], from(&[64 + 2, 64 + 3], &[], &[49, 50])),

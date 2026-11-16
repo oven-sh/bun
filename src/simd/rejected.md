@@ -612,6 +612,17 @@ mod simd {
 }
 ```
 
+A kind of inlining that the macro would drop:
+
+```rust,compile_fail
+#[bun_simd::foreach_target]
+mod simd {
+    #[export]
+    #[inline(always)]
+    pub fn f() {}
+}
+```
+
 An attribute that only the macro may use:
 
 ```rust,compile_fail,E0658

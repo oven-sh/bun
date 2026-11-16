@@ -1,6 +1,6 @@
 pub(crate) use crate::native::{load_shared, store_shared};
 use crate::portable;
-pub(crate) use crate::portable::rotate_bytes;
+pub(crate) use crate::portable::masked::*;
 pub use crate::portable::{bit_indices, prefix_xor};
 use bun_simd_trusted::{SharedU8, shared};
 use core::simd::u8x64;

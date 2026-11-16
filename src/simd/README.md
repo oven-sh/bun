@@ -189,9 +189,8 @@ What you have to trust:
 - **Detection.** A feature counts only if the CPU reports it and the system saves its registers. The same has to hold for every feature that it implies. SVE does not count on Linux before 6.2 but for 5.14.0, as [for glibc](https://sourceware.org/pipermail/glibc-cvs/2024q2/084813.html): it traps after each system call. Arm requires and LLVM assumes that the length of its vectors is a power of two. `trusted/os.rs` makes the queries. The decoders are pure functions of the answers.
 - **`if_supported!` and `AtomicFn`**, which stores the chosen pointer.
 - **`opaque`**, which is `asm!` without an instruction.
-- **`Out`, `Writer` and `spare_capacity`.** They write only initialized values, and count them. Miri runs their tests.
-- **Masked loads and stores.** `load_masked_to_last` and `fill_masked` touch only the lanes that are in the slice. The address of the first lane may be before it.
-- **Access to shared memory.** A `SharedArrayBuffer` can change while a kernel reads it, so it is never a `&[u8]`. It is a `&[SharedU8]` for input and a `&[AtomicU8]` for output. Rust has no vector access that may race. `trusted/shared.rs` has an `asm!` load and store for each width, which stand for a relaxed access to each byte. This relies on the CPU not to tear a byte. The loops do not depend on two reads giving the same value.
+- **`Out`, `Writer` and `spare_capacity`.** They write only initialized values, and count them. Miri runs their tests, but for `fill_from_last`, which needs AVX-512.
+- **Access to shared memory.** A `SharedArrayBuffer` can change while a kernel reads it, so it is never a `&[u8]`. It is a `&[SharedU8]` for input and a `&[AtomicU8]` for output. Rust has no vector access that may race. `trusted/shared.rs` has an `asm!` load and store for each width, which stand for a relaxed access to each byte. This relies on the CPU not to tear a byte. A masked access that skips what is before a slice is `asm!` for plain memory too, since LLVM takes its own to start in the object. The loops do not depend on two reads giving the same value.
 
 ## What the ops avoid
 

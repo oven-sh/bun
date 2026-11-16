@@ -34,6 +34,7 @@
 #include <JavaScriptCore/ArrayBuffer.h>
 
 #include <JavaScriptCore/JSArrayBuffer.h>
+#include <JavaScriptCore/WeakInlines.h>
 
 static inline WebCore::JSDOMGlobalObject* getDefaultGlobal(JSC::JSGlobalObject* lexicalGlobalObject)
 {
@@ -54,9 +55,9 @@ JSC::JSArrayBuffer* WebCoreTypedArrayController::toJS(JSC::JSGlobalObject* lexic
     return uncheckedDowncast<JSC::JSArrayBuffer>(WebCore::toJS(lexicalGlobalObject, getDefaultGlobal(globalObject), buffer));
 }
 
-void WebCoreTypedArrayController::registerWrapper(JSC::JSGlobalObject* globalObject, JSC::ArrayBuffer& native, JSC::JSArrayBuffer& wrapper)
+void WebCoreTypedArrayController::registerWrapper(JSC::JSGlobalObject*, JSC::ArrayBuffer& native, JSC::JSArrayBuffer& wrapper)
 {
-    cacheWrapper(static_cast<JSVMClientData*>(JSC::getVM(globalObject).clientData)->normalWorld(), &native, &wrapper);
+    native.m_wrapper = JSC::Weak<JSC::JSArrayBuffer>(&wrapper, &m_owner);
 }
 
 bool WebCoreTypedArrayController::isAtomicsWaitAllowedOnCurrentThread()
@@ -72,10 +73,10 @@ bool WebCoreTypedArrayController::JSArrayBufferOwner::isReachableFromOpaqueRoots
     return visitor.containsOpaqueRoot(wrapper.impl());
 }
 
-JSC::WeakHandleOwner::FinalizeResult WebCoreTypedArrayController::JSArrayBufferOwner::finalize(JSC::Handle<JSC::Unknown> handle, void* context)
+JSC::WeakHandleOwner::FinalizeResult WebCoreTypedArrayController::JSArrayBufferOwner::finalize(JSC::Handle<JSC::Unknown> handle, void*)
 {
     auto& wrapper = *static_cast<JSC::JSArrayBuffer*>(handle.slot()->asCell());
-    uncacheWrapper(*static_cast<DOMWrapperWorld*>(context), wrapper.impl(), &wrapper);
+    weakClear(wrapper.impl()->m_wrapper, &wrapper);
     return FinalizeResult::KeepImpl;
 }
 

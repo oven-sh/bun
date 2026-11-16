@@ -164,6 +164,8 @@ void JSFoo::visitOutputConstraints(JSCell* cell, Visitor& visitor) {
 }
 ```
 
+DOM wrappers get both entry points from `JSDOMInterfaceWithAdditionalChildren` (`src/jsc/bindings/webcore/JSDOMInterface.h`) and only define `visitAdditionalChildrenInGCThread`.
+
 **Why two entry points?** `visitChildren` runs once when the cell turns grey. But marking may later discover that some _other_ native object (an opaque root) is live, which retroactively makes more of _this_ cell's references live. `visitOutputConstraints` is re-invoked by `DOMGCOutputConstraint` during the constraint fixpoint to catch that.
 
 To make a class participate, its IsoSubspace must be registered as an **output-constraint subspace** (`clientSubspaceFor*` with `outputConstraint` in `BunClientData`).
@@ -184,6 +186,8 @@ bool JSBarOwner::isReachableFromOpaqueRoots(Handle<Unknown> h, void* ctx,
     return v.containsOpaqueRoot(bar->ownerNode());
 }
 ```
+
+For DOM wrappers the owner is `JSDOMWrapperOwner<JSBar>` (`src/jsc/bindings/JSDOMWrapperCache.h`), which calls `JSBar::isReachableFromOpaqueRoots(visitor, reason)`.
 
 The opaque-root set is just a `HashSet<void*>` rebuilt each cycle. It's how DOM trees stay alive as a unit.
 

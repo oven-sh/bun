@@ -31,49 +31,20 @@ template<> EventInit convertDictionary<EventInit>(JSGlobalObject& lexicalGlobalO
 {
     auto& vm = JSC::getVM(&lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
-    bool isNullOrUndefined = value.isUndefinedOrNull();
-    auto* object = isNullOrUndefined ? nullptr : value.getObject();
-    if (!isNullOrUndefined && !object) [[unlikely]] {
+    EventInit result;
+    if (value.isUndefinedOrNull())
+        return result;
+    auto* object = value.getObject();
+    if (!object) [[unlikely]] {
         throwTypeError(&lexicalGlobalObject, throwScope);
         return {};
     }
-    EventInit result;
-    JSValue bubblesValue;
-    if (isNullOrUndefined)
-        bubblesValue = jsUndefined();
-    else {
-        bubblesValue = object->get(&lexicalGlobalObject, Identifier::fromString(vm, "bubbles"_s));
-        RETURN_IF_EXCEPTION(throwScope, {});
-    }
-    if (!bubblesValue.isUndefined()) {
-        result.bubbles = convert<IDLBoolean>(lexicalGlobalObject, bubblesValue);
-        RETURN_IF_EXCEPTION(throwScope, {});
-    } else
-        result.bubbles = false;
-    JSValue cancelableValue;
-    if (isNullOrUndefined)
-        cancelableValue = jsUndefined();
-    else {
-        cancelableValue = object->get(&lexicalGlobalObject, Identifier::fromString(vm, "cancelable"_s));
-        RETURN_IF_EXCEPTION(throwScope, {});
-    }
-    if (!cancelableValue.isUndefined()) {
-        result.cancelable = convert<IDLBoolean>(lexicalGlobalObject, cancelableValue);
-        RETURN_IF_EXCEPTION(throwScope, {});
-    } else
-        result.cancelable = false;
-    JSValue composedValue;
-    if (isNullOrUndefined)
-        composedValue = jsUndefined();
-    else {
-        composedValue = object->get(&lexicalGlobalObject, Identifier::fromString(vm, "composed"_s));
-        RETURN_IF_EXCEPTION(throwScope, {});
-    }
-    if (!composedValue.isUndefined()) {
-        result.composed = convert<IDLBoolean>(lexicalGlobalObject, composedValue);
-        RETURN_IF_EXCEPTION(throwScope, {});
-    } else
-        result.composed = false;
+    convertDictionaryMember<IDLBoolean>(lexicalGlobalObject, *object, Identifier::fromString(vm, "bubbles"_s), result.bubbles);
+    RETURN_IF_EXCEPTION(throwScope, {});
+    convertDictionaryMember<IDLBoolean>(lexicalGlobalObject, *object, Identifier::fromString(vm, "cancelable"_s), result.cancelable);
+    RETURN_IF_EXCEPTION(throwScope, {});
+    convertDictionaryMember<IDLBoolean>(lexicalGlobalObject, *object, Identifier::fromString(vm, "composed"_s), result.composed);
+    RETURN_IF_EXCEPTION(throwScope, {});
     return result;
 }
 

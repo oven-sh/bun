@@ -109,8 +109,8 @@ leak:fromErrorInstance
 
 # JSC_TO_STRING_TAG_WITHOUT_TRANSITION
 leak:TLSSocket__create
-leak:WebCore::JSReadableStreamDefaultReaderPrototype::finishCreation
-leak:WebCore::JSReadableStreamDefaultControllerPrototype::finishCreation
+leak:WebCore::JSDOMPrototype<WebCore::JSReadableStreamDefaultReader,*>::finishCreation
+leak:WebCore::JSDOMPrototype<WebCore::JSReadableStreamDefaultController,*>::finishCreation
 
 # file comments below are where it was first seen, not an exhaustive list
 # test/js/web/atomics.test.ts — RunLoop::scheduleTimer's DispatchTimer captures

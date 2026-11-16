@@ -1,10 +1,9 @@
-use core::cell::{OnceCell, UnsafeCell};
-
 use bun_ast as js_ast;
 use bun_collections::{ArrayHashMap, StringArrayHashMap};
 use bun_core::StackCheck;
 use bun_core::strings;
 use bun_js_parser::lexer as js_lexer;
+use bun_paths::resolve_path::{SpillBuf, join_spill};
 use bun_paths::{self as resolve_path, MAX_PATH_BYTES, PathBuffer, SEP_STR};
 use bun_semver as Semver;
 use bun_semver::String as SemverString;
@@ -287,21 +286,8 @@ impl SideEffects {
     }
 }
 
-// ── Local extension shims so `parse` can call shapes that live in higher-tier
-//    crates (full FileSystem). Bodies forward to bun_paths. ────────────────
-
-/// Thin extension trait that delegates to `bun_paths::resolve_path`.
-trait FileSystemPackageJsonExt {
-    /// Returns a slice of `spill` if the result is too long for the thread-local join buffer.
-    fn join<'a>(&self, spill: &'a mut Vec<u8>, parts: &[&[u8]]) -> &'a [u8];
-}
-impl FileSystemPackageJsonExt for crate::fs::FileSystem {
-    fn join<'a>(&self, spill: &'a mut Vec<u8>, parts: &[&[u8]]) -> &'a [u8] {
-        resolve_path::resolve_path::join_spill::<resolve_path::resolve_path::platform::Auto>(
-            spill, parts,
-        )
-    }
-}
+/// Not `MAX_PATH_BYTES`: the file opens through `dirname_fd`.
+const MAX_PACKAGE_JSON_PATH_LEN: usize = 4096;
 
 impl PackageJSON {
     pub fn parse_macros_json(
@@ -384,6 +370,7 @@ impl PackageJSON {
     #[inline(never)]
     pub fn parse<const INCLUDE_DEPENDENCIES: IncludeDependencies>(
         r: &mut resolver::Resolver<'_>,
+        buf: &mut PathBuffer,
         input_path: &[u8],
         dirname_fd: Fd,
         package_id: Option<PackageID>,
@@ -401,7 +388,9 @@ impl PackageJSON {
 
         // TODO: remove this extra copy
         let parts: [&[u8]; 2] = [input_path, b"package.json"];
-        let Ok(package_json_path_) = r_fs.abs_checked(&parts) else {
+        let mut path_buf = SpillBuf::new(buf);
+        let package_json_path_ = r_fs.abs_spill(&parts, &mut path_buf);
+        if package_json_path_.len() > MAX_PACKAGE_JSON_PATH_LEN {
             r_log.add_error_fmt(
                 None,
                 bun_ast::Loc::EMPTY,
@@ -411,7 +400,7 @@ impl PackageJSON {
                 ),
             );
             return None;
-        };
+        }
         let package_json_path = r_fs
             .dirname_store
             .append_slice(package_json_path_)
@@ -595,7 +584,6 @@ impl PackageJSON {
                     // The value is an object
 
                     // Remap all files in the browser field
-                    let mut key_spill: Vec<u8> = Vec::new();
                     for prop in obj.properties() {
                         // Normalize the path so we can compare against it without getting
                         // confused by "./". There is no distinction between package paths and
@@ -609,7 +597,7 @@ impl PackageJSON {
                         let key: &[u8] = resolve_path::resolve_path::normalize_string_spill::<
                             true,
                             resolve_path::platform::Auto,
-                        >(&mut key_spill, prop.key.slice());
+                        >(&mut path_buf, prop.key.slice());
 
                         match &prop.value {
                             js_ast::E::JsonValue::String(str) => {
@@ -692,8 +680,6 @@ impl PackageJSON {
                     }
                 }
 
-                let mut spill: Vec<u8> = Vec::new();
-
                 // If the array is empty, treat it as false (no side effects)
                 if !has_globs && !has_exact {
                     package_json.side_effects = SideEffects::False;
@@ -710,10 +696,10 @@ impl PackageJSON {
                             }
 
                             // Store the pattern relative to the package directory
-                            let joined: [&[u8]; 2] =
-                                [json_source.path.name().dir_with_trailing_slash(), name];
+                            let joined: [&[u8]; 2] = [json_source.path.source_dir(), name];
 
-                            let pattern = r_fs.join(&mut spill, &joined);
+                            let pattern =
+                                join_spill::<resolve_path::platform::Auto>(&mut path_buf, &joined);
 
                             if strings::contains_char(name, b'*')
                                 || strings::contains_char(name, b'?')
@@ -747,10 +733,10 @@ impl PackageJSON {
                             }
 
                             // Store the pattern relative to the package directory
-                            let joined: [&[u8]; 2] =
-                                [json_source.path.name().dir_with_trailing_slash(), name];
+                            let joined: [&[u8]; 2] = [json_source.path.source_dir(), name];
 
-                            let pattern = r_fs.join(&mut spill, &joined);
+                            let pattern =
+                                join_spill::<resolve_path::platform::Auto>(&mut path_buf, &joined);
                             // Normalize pattern to use forward slashes for cross-platform compatibility
                             let normalized_pattern = Self::normalize_path_for_glob(pattern)
                                 .unwrap_or_else(|_| pattern.to_vec());
@@ -764,10 +750,10 @@ impl PackageJSON {
                     map.reserve(items.len());
                     for item in items {
                         if let Some(name) = item.as_str() {
-                            let joined: [&[u8]; 2] =
-                                [json_source.path.name().dir_with_trailing_slash(), name];
+                            let joined: [&[u8]; 2] = [json_source.path.source_dir(), name];
 
-                            let pattern = r_fs.join(&mut spill, &joined);
+                            let pattern =
+                                join_spill::<resolve_path::platform::Auto>(&mut path_buf, &joined);
                             let _ = map.insert(StringHashMapUnownedKey::init(pattern), ());
                         }
                     }
@@ -1326,6 +1312,8 @@ impl Entry {
 pub type ConditionsMap = StringArrayHashMap<()>;
 
 pub(crate) struct ESModule<'a> {
+    pub(crate) resolve_target_buf: &'a mut PathBuffer,
+    pub(crate) resolve_target_buf2: &'a mut PathBuffer,
     pub(crate) debug_logs: Option<&'a mut resolver::DebugLogs>,
     pub(crate) conditions: &'a ConditionsMap,
     /// `resolve_target` uses bigger stack frames than the JSON parser, so it can overflow on a target that parsed.
@@ -1533,37 +1521,6 @@ use bun_core::strings::{replace, replacement_size};
 
 const INVALID_PERCENT_CHARS: [&[u8]; 4] = [b"%2f", b"%2F", b"%5c", b"%5C"];
 
-struct ModuleBufs {
-    resolved_path_buf_percent: PathBuffer,
-    resolve_target_buf: PathBuffer,
-    resolve_target_buf2: PathBuffer,
-}
-
-thread_local! {
-    // Heap-allocate the buffer struct on first use and store only a pointer
-    // in TLS so the static-TLS template stays small (PE/COFF has no
-    // TLS-BSS; ELF PT_TLS MemSiz scales with this — see test/js/bun/binary/tls-segment-size).
-    // resolve_target / resolve_target_reverse are RECURSIVE (Map/Array arms call themselves), so a
-    // RefCell + escaped `&mut PathBuffer` would create aliased `&mut` at the inner call → UB.
-    // Use raw-pointer access; only form `&mut PathBuffer` inside the non-recursive `String` arms
-    // where the buffers are actually written (no overlap with a live outer `&mut`).
-    static MODULE_BUFS: OnceCell<Box<UnsafeCell<ModuleBufs>>> = const { OnceCell::new() };
-}
-
-#[inline]
-fn module_bufs() -> *mut ModuleBufs {
-    MODULE_BUFS.with(|slot| {
-        slot.get_or_init(|| {
-            Box::new(UnsafeCell::new(ModuleBufs {
-                resolved_path_buf_percent: PathBuffer::ZEROED,
-                resolve_target_buf: PathBuffer::ZEROED,
-                resolve_target_buf2: PathBuffer::ZEROED,
-            }))
-        })
-        .get()
-    })
-}
-
 impl<'a> ESModule<'a> {
     pub(crate) fn resolve(
         &mut self,
@@ -1572,7 +1529,7 @@ impl<'a> ESModule<'a> {
         exports: &Entry,
     ) -> Resolution {
         let r = self.resolve_exports(package_url, subpath, exports);
-        Self::finalize(r)
+        self.finalize(r)
     }
 
     pub(crate) fn resolve_imports(&mut self, specifier: &[u8], imports: &Entry) -> Resolution {
@@ -1590,11 +1547,11 @@ impl<'a> ESModule<'a> {
                 status: Status::PackageImportNotDefined,
                 ..Default::default()
             },
-            _ => Self::finalize(result),
+            _ => self.finalize(result),
         }
     }
 
-    pub(crate) fn finalize(result_: Resolution) -> Resolution {
+    pub(crate) fn finalize(&mut self, result_: Resolution) -> Resolution {
         let mut result = result_;
         if result.status != Status::Exact
             && result.status != Status::ExactEndsWithStar
@@ -1626,10 +1583,7 @@ impl<'a> ESModule<'a> {
             };
         }
 
-        // SAFETY: threadlocal UnsafeCell; finalize() does not recurse, so this is the unique
-        // live `&mut` to resolved_path_buf_percent on this thread.
-        let resolved_path_buf_percent: &mut PathBuffer =
-            unsafe { &mut (*module_bufs()).resolved_path_buf_percent };
+        let resolved_path_buf_percent = &mut *self.resolve_target_buf;
         let len = match bun_url::PercentEncoding::decode_into(
             &mut resolved_path_buf_percent.0,
             &result.path,
@@ -1848,15 +1802,8 @@ impl<'a> ESModule<'a> {
         }
         match &target.data {
             EntryData::String(str) => {
-                let mb = module_bufs();
-                // SAFETY: threadlocal UnsafeCell; the `String` arm does NOT recurse into
-                // resolve_target, so these are the unique live `&mut`s on this thread for
-                // the duration of this arm. Map/Array arms below DO recurse and must not
-                // hold these — that's why acquisition is here, not at fn entry.
-                let resolve_target_buf: &mut PathBuffer = unsafe { &mut (*mb).resolve_target_buf };
-                // SAFETY: see above — disjoint field of the same threadlocal struct.
-                let resolve_target_buf2: &mut PathBuffer =
-                    unsafe { &mut (*mb).resolve_target_buf2 };
+                let resolve_target_buf = &mut *self.resolve_target_buf;
+                let resolve_target_buf2 = &mut *self.resolve_target_buf2;
                 let str: &[u8] = str;
                 if let Some(log) = self.debug_logs.as_deref_mut() {
                     log.add_note_fmt(format_args!(

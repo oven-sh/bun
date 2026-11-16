@@ -4,7 +4,7 @@ use std::sync::OnceLock;
 
 use bun_options_types::standalone_path::is_bun_standalone_file_path;
 use bun_paths::is_sep_native;
-use bun_paths::resolve_path::Platform;
+use bun_paths::resolve_path::{Platform, SpillBuf, relative_spill};
 
 use crate::package_json::{Package, split_at_star};
 use crate::resolver::Resolver;
@@ -939,7 +939,8 @@ impl CompiledProgram {
         if !bun_paths::is_absolute(path) || is_bun_standalone_file_path(path) {
             return None;
         }
-        let below_root = [b"./", bun_paths::resolve_path::relative(root, path)].concat();
+        let below_root =
+            SpillBuf::with_scratch(|buf| [b"./", relative_spill(buf, root, path)].concat());
         self.join_public_path(public_root, public_root, &below_root)
     }
 

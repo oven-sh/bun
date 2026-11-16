@@ -8,6 +8,7 @@ use bun_collections::StringSet;
 use bun_core::{Output, ZBox};
 #[cfg(not(windows))]
 use bun_paths::SEP;
+use bun_paths::resolve_path::fmt_relative;
 #[cfg(not(windows))]
 use bun_paths::strings;
 #[cfg(not(windows))]
@@ -422,10 +423,7 @@ impl bun_watcher::WatcherContext for HotReloader {
                     if self.verbose {
                         Self::debug(format_args!(
                             "File changed: {}",
-                            bstr::BStr::new(bun_paths::resolve_path::relative(
-                                top_level_dir,
-                                file_path
-                            ))
+                            fmt_relative(top_level_dir, file_path)
                         ));
                     }
 
@@ -710,10 +708,7 @@ impl bun_watcher::WatcherContext for HotReloader {
                                     if self.verbose {
                                         Self::debug(format_args!(
                                             "File change: {}",
-                                            bstr::BStr::new(bun_paths::resolve_path::relative(
-                                                top_level_dir,
-                                                abs_path,
-                                            ))
+                                            fmt_relative(top_level_dir, abs_path)
                                         ));
                                     }
                                 }
@@ -723,10 +718,7 @@ impl bun_watcher::WatcherContext for HotReloader {
                         if self.verbose {
                             Self::debug(format_args!(
                                 "Dir change: {} (affecting {})",
-                                bstr::BStr::new(bun_paths::resolve_path::relative(
-                                    top_level_dir,
-                                    file_path
-                                )),
+                                fmt_relative(top_level_dir, file_path),
                                 affected.len()
                             ));
                         }

@@ -90,13 +90,11 @@ pub(crate) fn exec(
     let args: Vec<Vec<u8>> = typed
         .iter()
         .map(|&arg| {
-            use bun_paths::resolve_path::{join_abs_string, platform};
+            use bun_paths::resolve_path::{join_abs_string_vec, platform};
             match (arg.strip_prefix(b"~/"), bun_core::env_var::HOME.get()) {
-                (Some(rest), Some(home)) => {
-                    join_abs_string::<platform::Auto>(home, &[rest]).to_vec()
-                }
+                (Some(rest), Some(home)) => join_abs_string_vec::<platform::Auto>(home, &[rest]),
                 _ if looks_like_path(arg) && !bun_paths::is_absolute(arg) => {
-                    join_abs_string::<platform::Auto>(original_cwd, &[arg]).to_vec()
+                    join_abs_string_vec::<platform::Auto>(original_cwd, &[arg])
                 }
                 _ => arg.to_vec(),
             }
@@ -2182,7 +2180,7 @@ fn string_pairs(e: Option<&bun_ast::Expr>, bump: &Bump) -> Vec<(Vec<u8>, Vec<u8>
 /// Returns one of `INSTALL_FIELDS` as sorted pairs, normalized so that two spellings that install
 /// the same thing compare equal. A registry rewrites some fields when a package is published.
 fn install_view(json: &bun_ast::Expr, field: &[u8], bump: &Bump) -> Vec<(Vec<u8>, Vec<u8>)> {
-    use bun_paths::resolve_path::{join_abs_string_checked, platform};
+    use bun_paths::resolve_path::{join_abs_string_buf_checked, platform};
     let Some(value) = json.get(field) else {
         return Vec::new();
     };
@@ -2196,10 +2194,11 @@ fn install_view(json: &bun_ast::Expr, field: &[u8], bump: &Bump) -> Vec<(Vec<u8>
             ) {
                 pairs.push((name.to_vec(), path.to_vec()));
             }
+            let mut buf = [0u8; 4096];
             for (name, path) in &mut pairs {
                 *name = bun_paths::basename(name).to_vec();
                 if let Some(normal) =
-                    join_abs_string_checked::<platform::Posix>(b"/", &[path.as_slice()])
+                    join_abs_string_buf_checked::<platform::Posix>(b"/", &mut buf, &[path])
                 {
                     *path = normal.to_vec();
                 }

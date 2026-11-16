@@ -99,8 +99,8 @@ describe.skipIf(isWindows)("Glob path length", () => {
       scanProc.exited,
     ]);
 
-    // The absolute walk joins dir + entry through ResolvePath's fixed
-    // thread-local buffer; an over-long directory must surface
+    // The absolute walk joins dir + entry through a fixed
+    // path buffer; an over-long directory must surface
     // ENAMETOOLONG like the relative walk above, not abort the process.
     expect(scanStdout.trim()).toBe("ERR:ENAMETOOLONG");
     expect(scanCode).toBe(0);
@@ -108,8 +108,7 @@ describe.skipIf(isWindows)("Glob path length", () => {
 
   // Linux-only: this needs a directory that is still walkable (absolute path
   // under MAX_PATH_BYTES, 4096 there) while joining one more name onto it
-  // exceeds the 4096-byte join buffer. Everywhere else MAX_PATH_BYTES is
-  // 1024, so a matched path can never reach the join buffer's size.
+  // exceeds the 4096-byte join buffer.
   test.skipIf(!isLinux)("matched file whose absolute path exceeds the join buffer is returned", async () => {
     const root = tmpdirSync("bun-glob-overflow-abs-file-");
     const segName = "D".repeat(255);

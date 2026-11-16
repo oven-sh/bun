@@ -243,7 +243,7 @@ describe.concurrent("long import path overflow", () => {
 
   it("tsconfig paths wildcard (matched text captured from import path)", async () => {
     using dir = makeDir();
-    // matchTSConfigPaths: bun.concat into fixed tsconfig_match_full_buf3
+    // match_tsconfig_paths substitutes the text in a fixed buffer
     await run(String(dir), `\`@x/${long}\``);
   });
 
@@ -255,7 +255,7 @@ describe.concurrent("long import path overflow", () => {
 
   it("relative path full of `..` segments (exercises normalization fallback)", async () => {
     using dir = makeDir();
-    // Concat length >> PATH_MAX but normalizes down; JoinScratch heap fallback
+    // Concat length >> PATH_MAX but normalizes down; heap fallback
     await run(String(dir), `\`./\${"x/../".repeat(${len})}${long}.js\``);
   });
 

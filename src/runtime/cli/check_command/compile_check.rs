@@ -7,6 +7,7 @@ use bun_core::{Global, Output};
 use bun_options_types::aot_options::{AotOptions, DependencyTypeErrors, ExplainSet};
 use bun_options_types::context::ContextData;
 use bun_options_types::schema::api;
+use bun_paths::resolve_path::{SpillBuf, relative_spill};
 use bun_sema::util::SharedSort;
 use bun_sema_driver::format::{self, Layout};
 use bun_sema_driver::{CommandLine, CompilerOption};
@@ -237,9 +238,11 @@ fn write_plain_message(
     out.extend_from_slice(indent);
     if let Some(location) = data.location.as_ref().filter(|it| it.line > 0) {
         let file: &[u8] = &location.file;
-        out.extend_from_slice(match bun_paths::is_absolute(file) {
-            true => bun_paths::resolve_path::relative(cwd, file),
-            false => file,
+        SpillBuf::with_scratch(|buf| {
+            out.extend_from_slice(match bun_paths::is_absolute(file) {
+                true => relative_spill(buf, cwd, file),
+                false => file,
+            })
         });
         let _ = write!(out, "({},{}): ", location.line, location.column);
     }

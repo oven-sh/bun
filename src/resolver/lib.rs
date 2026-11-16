@@ -49,10 +49,10 @@ pub use tsconfig_json::TSConfigJSON;
 // `result` / `standalone_module_graph` sibling modules.
 /// Re-export so dependents can spell `bun_resolver::install_types::AutoInstaller`.
 pub use ::bun_install_types::resolver_hooks as install_types;
-pub use resolver::{BrowserMapPathKind, Bufs, Dirname, Resolver, module_type_from_ext};
+pub use resolver::{BrowserMapPathKind, Dirname, Resolver, module_type_from_ext};
 pub use result::{
-    DebugLogs, DirEntryResolveQueueItem, ExternalKind, FlushMode, LoadResult, MatchResult,
-    MatchStatus, PathPair, Result, ResultFlags, ResultUnion,
+    DebugLogs, ExternalKind, FlushMode, LoadResult, MatchResult, MatchStatus, PathPair, Result,
+    ResultFlags, ResultUnion,
 };
 pub use standalone_module_graph::{
     BytecodeModule, LINKED_BYTECODE_REGION_COUNT, StandaloneModuleGraph,
@@ -319,50 +319,14 @@ pub mod fs {
             normalize_string_buf::<false, platform::Auto, false>(str, buf)
         }
 
-        /// Joins against `top_level_dir`
-        /// into the resolver-shared threadlocal join buffer.
-        pub fn abs(&self, parts: &[&[u8]]) -> &[u8] {
-            use bun_paths::resolve_path::{join_abs_string, platform};
-            join_abs_string::<platform::Loose>(self.top_level_dir(), parts)
-        }
-
-        /// `ENAMETOOLONG` on overflow.
-        pub(crate) fn abs_checked(
+        /// Like `abs_buf`, for a result of any length.
+        pub fn abs_spill<'b>(
             &self,
             parts: &[&[u8]],
-        ) -> core::result::Result<&[u8], bun_errno::SystemErrno> {
-            use bun_paths::resolve_path::{join_abs_string_checked, platform};
-            join_abs_string_checked::<platform::Loose>(self.top_level_dir(), parts)
-                .ok_or(bun_errno::SystemErrno::ENAMETOOLONG)
-        }
-
-        /// Like `abs`, but interns the joined path into `DirnameStore` and
-        /// returns the `'static` copy.
-        pub(crate) fn abs_alloc(
-            &self,
-            parts: &[&[u8]],
-        ) -> core::result::Result<&'static [u8], bun_alloc::AllocError> {
-            use bun_paths::resolve_path::{join_abs_string, platform};
-            let joined = join_abs_string::<platform::Loose>(self.top_level_dir(), parts);
-            // Route through DirnameStore so
-            // the resolver's `&'static [u8]` storage contract holds.
-            DirnameStore::instance()
-                .append_slice(joined)
-                .map_err(|_| bun_alloc::AllocError)
-        }
-
-        /// Relative path from `from` to `to`. Returns a slice into the
-        /// resolver-shared threadlocal relative buffer; caller must dup
-        /// before the next call.
-        pub fn relative(&self, from: &[u8], to: &[u8]) -> &'static [u8] {
-            bun_paths::resolve_path::relative(from, to)
-        }
-
-        /// Relative path from
-        /// `top_level_dir` to `to`. Returns a slice into the resolver-shared
-        /// threadlocal relative buffer; caller must dup before the next call.
-        pub fn relative_to(&self, to: &[u8]) -> &'static [u8] {
-            bun_paths::resolve_path::relative(self.top_level_dir(), to)
+            buf: &'b mut bun_paths::resolve_path::SpillBuf<'_>,
+        ) -> &'b [u8] {
+            use bun_paths::resolve_path::{join_abs_string_spill, platform};
+            join_abs_string_spill::<platform::Loose>(self.top_level_dir(), buf, parts)
         }
 
         /// Returns the process cwd. `process.chdir()` on any thread replaces it.
@@ -664,27 +628,11 @@ pub mod fs {
     use bun_sys::Fd;
     use bun_threading::Mutex;
 
-    // Port of `threadlocal var temp_entries_option: EntriesOption = undefined` —
-    // `read_directory*` returns a pointer into this when the entry-cache is
-    // disabled or the path is `mark_not_found`. `RefCell` (not `UnsafeCell`) so
-    // the per-thread unique-borrow is debug-checked; matches the sibling
-    // `TEMP_ENTRIES_OPTION` in `fs.rs`.
-    thread_local! {
-        static TEMP_ENTRIES_OPTION: core::cell::RefCell<core::mem::MaybeUninit<EntriesOption>> =
-            const { core::cell::RefCell::new(core::mem::MaybeUninit::uninit()) };
-    }
-
-    fn temp_entries_option_write(value: EntriesOption) -> &'static EntriesOption {
-        TEMP_ENTRIES_OPTION.with_borrow_mut(|slot| {
-            slot.write(value);
-            // SAFETY: just wrote; threadlocal storage outlives the caller.
-            // Re-erase to 'static for the BSSMap-shaped
-            // unbounded `&EntriesOption` return type — the `RefMut` guard
-            // drops immediately on return, so no live `RefCell` borrow aliases
-            // the escaped reference.
-            unsafe { &*slot.as_ptr() }
-        })
-    }
+    /// What `read_directory*` returns for a path that is `mark_not_found`.
+    const NOT_FOUND: &EntriesOption = &EntriesOption::Err(dir_entry::Err {
+        original_err: crate::Error::Sys(bun_errno::SystemErrno::ENOENT),
+        canonical_error: crate::Error::Sys(bun_errno::SystemErrno::ENOENT),
+    });
 
     // Modeled as
     // an unbounded `&mut DirEntry` so resolver match arms (`Entries(entries) =>
@@ -951,8 +899,7 @@ pub mod fs {
             Ok(dir)
         }
 
-        /// Cache (or threadlocal-
-        /// stash) an `EntriesOption::Err` for `dir` and hand back its address.
+        /// Cache an `EntriesOption::Err` for `dir` and hand back its address.
         fn read_directory_error(
             &mut self,
             dir: &[u8],
@@ -961,12 +908,7 @@ pub mod fs {
             let mut get_or_put_result = self.entries.get_or_put(dir)?;
             if err == crate::Error::Sys(bun_errno::SystemErrno::ENOENT) {
                 self.entries.mark_not_found(get_or_put_result);
-                return Ok(temp_entries_option_write(EntriesOption::Err(
-                    dir_entry::Err {
-                        original_err: err,
-                        canonical_error: err,
-                    },
-                )));
+                return Ok(NOT_FOUND);
             }
             let opt = self.entries.put(
                 &mut get_or_put_result,
@@ -979,7 +921,6 @@ pub mod fs {
             Ok(unsafe { &*opt })
         }
 
-        /// A missing directory's `Err` is this thread's scratch slot; read it before the next call.
         pub fn read_directory(
             &mut self,
             dir_: &[u8],
@@ -1031,12 +972,7 @@ pub mod fs {
                     }
                 } else if cache_result.status == bun_alloc::ItemStatus::NotFound && generation == 0
                 {
-                    return Ok(temp_entries_option_write(EntriesOption::Err(
-                        dir_entry::Err {
-                            original_err: crate::Error::Sys(bun_errno::SystemErrno::ENOENT),
-                            canonical_error: crate::Error::Sys(bun_errno::SystemErrno::ENOENT),
-                        },
-                    )));
+                    return Ok(NOT_FOUND);
                 }
             }
 

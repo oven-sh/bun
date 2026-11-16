@@ -23,6 +23,7 @@ use bun_js_parser::parser::Runtime;
 use bun_options_types::compile_target::CompileTarget;
 use bun_options_types::context::{ContextData, MacroOptions};
 use bun_options_types::schema::api;
+use bun_paths::resolve_path::SpillBuf;
 use bun_resolver::fs::FileSystem;
 use bun_standalone_graph::StandaloneModuleGraph::{Flags, RuntimeOptions, target_base_public_path};
 use bun_sys::Fd;
@@ -143,7 +144,8 @@ fn note_library_entry_point(package_name: &[u8], executable_names: &[Vec<u8>]) {
 
 #[cold]
 fn note_installed_executable(working_directory: &[u8], name: &[u8], path: &[u8]) {
-    let shown_path = bun_paths::resolve_path::relative(working_directory, path);
+    let mut buf = SpillBuf::default();
+    let shown_path = bun_paths::resolve_path::relative_spill(&mut buf, working_directory, path);
     let mut line = [name, b" is ", shown_path].concat();
     if let Some(package_name) = find_package_name(path) {
         line.extend_from_slice(b", from the package ");

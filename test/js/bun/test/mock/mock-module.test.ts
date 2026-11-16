@@ -9,6 +9,7 @@ import { describe, expect, jest, mock, spyOn, test, vi } from "bun:test";
 import { autoInstallTempDir, bunEnv, bunExe, Heap, isASAN, isDebug, isWindows, tempDir } from "harness";
 import { readdirSync } from "node:fs";
 import { join } from "node:path";
+import { installEnv, TestRegistry } from "registry";
 import { default as defaultValue, fn, iCallFn, rexported, rexportedAs, variable } from "./mock-module-fixture";
 import * as spyFixture from "./spymodule-fixture";
 
@@ -2079,6 +2080,10 @@ describe.concurrent("jest's lookups of a name that import and require() resolve 
             mock.module(require.resolve("one"), () => ({ which: "mock of the path" }));
             expect(three("one")).toEqual(["mock of the path", "one", "one"]);
           });
+          test("a name that only require() resolves", () => {
+            mock.module(require.resolve("require-only"), () => ({ which: "mock of the path" }));
+            expect(three("require-only")).toEqual(["mock of the path", "cjs", "cjs"]);
+          });
         `,
         "both.test.cjs": `
           ${kinds[0][1]}
@@ -2102,7 +2107,7 @@ describe.concurrent("jest's lookups of a name that import and require() resolve 
           ${both(`["esm", "esm", "esm"]`, `["esm", "esm"]`, `["mock of the name", "esm", "esm"]`)}
         `,
       },
-      9,
+      10,
     );
   });
 
@@ -2221,7 +2226,8 @@ describe.concurrent("jest's lookups of a name that import and require() resolve 
   });
 
   test("jest.requireMock() loads the file of __mocks__ that the calling file would load", async () => {
-    const found = `["dual", "./lib", "one"].map(name => jest.requireMock(name).which)`;
+    // "./only" has a file of __mocks__ for the file that an import loads alone.
+    const found = `["dual", "./lib", "one", "./only"].map(name => jest.requireMock(name).which)`;
     // Here a module of Bun makes the call. It has no file, and gets what it got before.
     const withoutFile = `
       test("a caller without a file", () => {
@@ -2236,16 +2242,19 @@ describe.concurrent("jest's lookups of a name that import and require() resolve 
         "__mocks__/lib.mjs": `export const which = "manual esm";`,
         "__mocks__/lib.cjs": `module.exports = { which: "manual cjs" };`,
         "__mocks__/one.js": `module.exports = { which: "manual one" };`,
+        "only.mjs": esm,
+        "only.cjs": cjs,
+        "__mocks__/only.mjs": `export const which = "manual esm";`,
         "manual.test.cjs": `
           const { expect, jest, test } = require("bun:test");
           const { AsyncResource } = require("node:async_hooks");
-          test("in a CommonJS file", () => expect(${found}).toEqual(["manual cjs", "manual cjs", "manual one"]));
+          test("in a CommonJS file", () => expect(${found}).toEqual(["manual cjs", "manual cjs", "manual one", "manual esm"]));
           ${withoutFile}
         `,
         "manual.test.mjs": `
           import { expect, jest, test } from "bun:test";
           import { AsyncResource } from "node:async_hooks";
-          test("in an ES module", () => expect(${found}).toEqual(["manual esm", "manual esm", "manual one"]));
+          test("in an ES module", () => expect(${found}).toEqual(["manual esm", "manual esm", "manual one", "manual esm"]));
           ${withoutFile}
         `,
       },
@@ -2314,9 +2323,10 @@ describe.concurrent("jest's lookups of a name that import and require() resolve 
         expect(answered("alias")).toEqual(["${own}", "${asks}"]);
       });
       test("a plugin that answers by the kind of the request", () => {
-        const sameAsRequire = name => jest.requireActual(name) === require(name);
-        expect(["by-kind", "virtual-by-kind"].map(name => jest.requireActual(name).which)).toEqual(${own === "cjs" ? `["one", "virtual"]` : `["esm", "esm"]`});
-        expect(["by-kind", "virtual-by-kind"].map(sameAsRequire)).toEqual([${own === "cjs"}, ${own === "cjs"}]);
+        // The last two answers differ in their query, the last one in nothing else.
+        const names = ["by-kind", "virtual-by-kind", "query-by-kind", "query-alone-by-kind"];
+        expect(names.map(name => jest.requireActual(name).which)).toEqual(${own === "cjs" ? `["one", "virtual", "cjs", "cjs"]` : `["esm", "esm", "esm", "cjs"]`});
+        expect(names.map(name => jest.requireActual(name) === require(name))).toEqual(Array(4).fill(${own === "cjs"}));
       });
       test("an answer that only an onLoad backs for require()", () => {
         expect(jest.requireActual("backed-by-onLoad").which).toBe("onLoad");
@@ -2335,11 +2345,14 @@ describe.concurrent("jest's lookups of a name that import and require() resolve 
             name: "answers",
             setup(build) {
               build.module("virtual-module", () => ({ exports: { which: "virtual" }, loader: "object" }));
-              build.onResolve({ filter: /^(alias|by-kind|virtual-by-kind|backed-by-onLoad)$/ }, ({ path, kind }) => {
+              build.onResolve({ filter: /^(alias|by-kind|virtual-by-kind|query-by-kind|query-alone-by-kind|backed-by-onLoad)$/ }, ({ path, kind }) => {
                 globalThis.asked.push(kind);
+                const isRequire = kind === "require-call";
                 if (path === "alias") return { path: "dual" };
-                if (path === "by-kind") return { path: kind === "require-call" ? "one" : "dual" };
-                if (path === "virtual-by-kind") return { path: kind === "require-call" ? "virtual-module" : "dual" };
+                if (path === "by-kind") return { path: isRequire ? "one" : "dual" };
+                if (path === "virtual-by-kind") return { path: isRequire ? "virtual-module" : "dual" };
+                if (path === "query-by-kind") return { path: isRequire ? "./lib.cjs?require" : "./lib.mjs?import" };
+                if (path === "query-alone-by-kind") return { path: isRequire ? "./lib.cjs?require" : "./lib.cjs?import" };
                 return { path: "import-only/sub.js?q" };
               });
               // An import resolves "import-only/sub.js?q" to a file. require() does not, and this serves it.
@@ -2383,21 +2396,9 @@ describe.concurrent("jest's lookups of a name that import and require() resolve 
 
   // `bun test` takes packages from node_modules alone. A script can also take them from the cache of auto-install.
   test("in a script, the second resolve installs nothing and takes no file of another copy of the package", async () => {
-    const packages = join(import.meta.dir, "..", "..", "..", "..", "cli", "install", "registry", "packages");
-    const requests: string[] = [];
-    using registry = Bun.serve({
-      hostname: "127.0.0.1",
-      port: 0,
-      async fetch(request) {
-        const [, name, , tarball] = new URL(request.url).pathname.split("/");
-        requests.push(name);
-        if (tarball) return new Response(Bun.file(join(packages, name, tarball)));
-        const manifest = await Bun.file(join(packages, name, "package.json")).text();
-        return new Response(manifest.replaceAll("http://localhost:4873", `http://127.0.0.1:${registry.port}`));
-      },
-    });
+    using registry = new TestRegistry({ recordRequests: true }).start();
     using dir = autoInstallTempDir("mock-module-script", {
-      "bunfig.toml": `[install]\nregistry = "http://127.0.0.1:${registry.port}/"\n`,
+      "bunfig.toml": `[install]\nregistry = "${registry.url}"\n`,
       // The registry has "no-deps" and "a-dep". node_modules has another copy of the first, and none of the second.
       "package.json": JSON.stringify({
         name: "project",
@@ -2417,19 +2418,21 @@ describe.concurrent("jest's lookups of a name that import and require() resolve 
       await using proc = Bun.spawn({
         cmd: [bunExe(), ...args],
         cwd: String(dir),
-        env: { ...bunEnv, BUN_INSTALL_CACHE_DIR: join(String(dir), ".bun-cache") },
+        env: installEnv(String(dir)),
         stdout: "pipe",
         stderr: "pipe",
       });
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-      return { stdout, stderr, exitCode, requests: requests.splice(0) };
+      return { stdout, stderr, exitCode, requests: registry.requests.splice(0).map(request => request.path) };
     };
     const ran = (stdout: string, requests: string[] = []) => ({ stdout, stderr: "", exitCode: 0, requests });
     expect(await run("no-deps.cjs")).toEqual(ran("cjs\n"));
     // An import of "#local" finds a file, and require() of it a package that only the registry has.
     expect(await run("--install=fallback", "local.cjs")).toEqual(ran("local\n"));
     // With "force" an import and require() take the package of the registry, whatever node_modules has.
-    expect(await run("--install=force", "no-deps.cjs")).toEqual(ran("2.0.0\n", ["no-deps", "no-deps"]));
+    expect(await run("--install=force", "no-deps.cjs")).toEqual(
+      ran("2.0.0\n", ["/no-deps", "/no-deps/-/no-deps-2.0.0.tgz"]),
+    );
   });
 });
 

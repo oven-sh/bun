@@ -967,23 +967,21 @@ pub(crate) fn bun_resolve_for_import_and_require(
         return JSValue::ZERO;
     };
     jsc::to_js_host_call(global, || {
-        let mut query_string = BunString::EMPTY;
-        let (for_import, path_for_require) = match VirtualMachine::resolve_for_import_and_require(
+        let (for_import, other) = VirtualMachine::resolve_for_import_and_require(
             global,
             &specifier_str,
             source,
-            &mut query_string,
             for_require.is_some(),
-        )? {
-            Ok(paths) => paths,
-            Err(err) if err.is::<jsc::ResolveMessage>() => return Ok(JSValue::UNDEFINED),
-            // e.g. an onResolve plugin returned an invalid result
-            Err(err) => return Err(global.throw_value(err)),
-        };
-        if let (Some(for_require), Some(path)) = (for_require, path_for_require) {
-            *for_require = with_query(path, &query_string);
+        )?;
+        if let (Some(for_require), Some((path, query))) = (for_require, other) {
+            *for_require = with_query(path, &query);
         }
-        with_query(for_import, &query_string).into_js(global)
+        match for_import {
+            Ok((path, query)) => with_query(path, &query).into_js(global),
+            Err(err) if err.is::<jsc::ResolveMessage>() => Ok(JSValue::UNDEFINED),
+            // e.g. an onResolve plugin returned an invalid result
+            Err(err) => Err(global.throw_value(err)),
+        }
     })
 }
 

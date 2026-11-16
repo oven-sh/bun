@@ -4463,6 +4463,11 @@ __attribute__((minsize)) static bool resolveModuleMockSpecifier(Zig::GlobalObjec
         }
         return false;
     }
+    // Only require() resolves the name.
+    if (!forRequire.isDead()) {
+        *requireKey = forRequire.transferToWTFString();
+        return false;
+    }
 
     if (!specifier.startsWith("./"_s) && !specifier.startsWith(".."_s))
         return false;
@@ -4539,9 +4544,9 @@ __attribute__((minsize)) static JSC::JSString* findManualModuleMock(Zig::GlobalO
     Bun::OwnedString pathForRequire;
     JSValue resolved = JSValue::decode(Bun__resolveForImportAndRequire(globalObject, JSValue::encode(jsString(vm, candidate)), &fromString, forRequire ? &pathForRequire : nullptr));
     RETURN_IF_EXCEPTION(scope, nullptr);
-    if (!resolved.isString())
-        return nullptr;
-    return pathForRequire.isDead() ? asString(resolved) : jsString(vm, pathForRequire.transferToWTFString());
+    if (!pathForRequire.isDead())
+        return jsString(vm, pathForRequire.transferToWTFString());
+    return resolved.isString() ? asString(resolved) : nullptr;
 }
 
 // `source` is the factory of the mock of `specifier`. importActual() of another module doesn't count.
@@ -7218,6 +7223,11 @@ static JSC::EncodedJSValue requireMockModule(JSC::JSGlobalObject* lexicalGlobalO
             RELEASE_AND_RETURN(scope, JSValue::encode(requireModuleKey(globalObject, from, key)));
         JSC::JSString* manualMock = findManualModuleMock(globalObject, from, specifier.written, key, forRequire);
         RETURN_IF_EXCEPTION(scope, {});
+        // A module of the project with two files may have a file of `__mocks__` for the one that an import loads alone.
+        if (!manualMock && key != specifier.key && isAbsolutePath(specifier.key) && !isInNodeModules(specifier.key)) {
+            manualMock = findManualModuleMock(globalObject, from, specifier.written, specifier.key, forRequire);
+            RETURN_IF_EXCEPTION(scope, {});
+        }
         if (manualMock) {
             String manualMockKey = manualMock->value(globalObject);
             RETURN_IF_EXCEPTION(scope, {});

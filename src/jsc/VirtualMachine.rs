@@ -5032,38 +5032,41 @@ impl VirtualMachine {
         )
     }
 
-    /// Resolves `specifier` as an `import` does and, with `also_for_require`, as `require()` does. The second path is `None` if it is the first one, a miss or a builtin module.
+    /// Resolves `specifier` as an `import` does and, with `also_for_require`, as `require()` does. Each answer is a path and its query. The second is `None` if it is the first one, a miss or a builtin module.
     pub fn resolve_for_import_and_require(
         global: &JSGlobalObject,
         specifier: &bun_core::String,
         source: &bun_core::String,
-        query_string: &mut bun_core::String,
         also_for_require: bool,
-    ) -> JsResult<Result<(bun_core::String, Option<bun_core::String>), JSValue>> {
-        let for_import = match Self::resolve_maybe_needs_trailing_slash::<true>(
+    ) -> JsResult<(Result<PathAndQuery, JSValue>, Option<PathAndQuery>)> {
+        let mut query = bun_core::String::EMPTY;
+        let for_import = Self::resolve_maybe_needs_trailing_slash::<true>(
             global,
             specifier,
             source,
-            Some(&mut *query_string),
+            Some(&mut query),
             ResolveMode::Esm,
-        )? {
-            Ok(path) => path,
-            Err(error) => return Ok(Err(error)),
-        };
+        )?
+        .map(|path| (path, query));
         let vm = global.bun_vm();
         let global_cache = vm.transpiler.get().resolver.opts.global_cache;
+        // A name that only `require()` resolves is a miss of the first pass. Any other error ends the resolve.
+        let is_answered = match &for_import {
+            Ok(_) => true,
+            Err(error) => error.is::<crate::ResolveMessage>(),
+        };
         // The second pass installs nothing. With `force` an `import` skips node_modules, so the file there is of another copy of the package.
-        if !also_for_require || global_cache == bun_resolver::GlobalCache::force {
-            return Ok(Ok((for_import, None)));
+        if !also_for_require || !is_answered || global_cache == bun_resolver::GlobalCache::force {
+            return Ok((for_import, None));
         }
         let mode = ResolveMode::Require;
         let name = match Self::ask_on_resolve::<true>(global, specifier, source, mode, false)? {
             None => specifier.clone(),
-            Some(Err(error)) => return Ok(Err(error)),
+            Some(Err(error)) => return Ok((Err(error), None)),
             Some(Ok(OnResolveAnswer::Unresolved(answer, _))) => answer,
             Some(Ok(OnResolveAnswer::VirtualModule(key))) => {
-                let other = (!key.eql(&for_import)).then_some(key);
-                return Ok(Ok((for_import, other)));
+                let other = (key, bun_core::String::EMPTY);
+                return Ok(Self::unless_same(for_import, Some(other)));
             }
         };
         // A file that the executable loaded from disk looks on disk first, as in the first pass.
@@ -5072,12 +5075,13 @@ impl VirtualMachine {
             .with_mut(|t| t.resolver.resolves_for_code_from_disk = is_from_disk);
         // A name that only an `import` resolves misses here at every call, and a miss that lists the folder again keeps each listing in memory.
         vm.takes_miss_for_answer.set(true);
+        let mut query = bun_core::String::EMPTY;
         // An answer that only an `onLoad` backs is a miss here: `require()` of that answer does not find it.
         let for_require = Self::resolve_without_on_resolve::<true>(
             global,
             &name,
             source,
-            None,
+            Some(&mut query),
             mode,
             bun_resolver::GlobalCache::disable,
         );
@@ -5088,10 +5092,24 @@ impl VirtualMachine {
         let is_builtin = |path: &bun_core::String| {
             bun_resolve_builtins::Module::MAP.contains_key(&path.to_utf8())
         };
-        Ok(Ok(match for_require? {
-            Ok(path) if !path.eql(&for_import) && !is_builtin(&path) => (for_import, Some(path)),
-            _ => (for_import, None),
-        }))
+        let other = match for_require? {
+            Ok(path) if !is_builtin(&path) => Some((path, query)),
+            _ => None,
+        };
+        Ok(Self::unless_same(for_import, other))
+    }
+
+    fn unless_same(
+        for_import: Result<PathAndQuery, JSValue>,
+        other: Option<PathAndQuery>,
+    ) -> (Result<PathAndQuery, JSValue>, Option<PathAndQuery>) {
+        let is_same = match (&for_import, &other) {
+            (Ok((path, query)), Some((other, other_query))) => {
+                path.eql(other) && query.eql(other_query)
+            }
+            _ => false,
+        };
+        (for_import, other.filter(|_| !is_same))
     }
 
     /// `None` when no `onResolve` claims `specifier`, or `same_is_no_answer` is set and it returns `specifier` unchanged.
@@ -7483,6 +7501,9 @@ fn wrap_unhandled_rejection_error_for_uncaught_exception(
         )
         .to_js())
 }
+
+/// A resolved path and the query of its specifier.
+pub type PathAndQuery = (bun_core::String, bun_core::String);
 
 /// What `VirtualMachine::ask_on_resolve` returns.
 enum OnResolveAnswer {

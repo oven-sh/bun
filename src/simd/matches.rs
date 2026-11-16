@@ -1,54 +1,32 @@
-use crate::{Int, Isa, Mask};
+use crate::{Int, Isa, Mask, opaque};
+use core::num::NonZero;
 
-/// The indices at which a test holds, for as many as a vector has lanes.
-#[derive(Clone, Copy)]
+/// Up to 64 indices at which a test holds.
+#[derive(Clone, Default)]
 pub struct Matches {
-    /// The lowest bit of each lane.
-    bits: u64,
-    log2_bits_per_lane: u32,
-    start: usize,
+    pub(crate) bits: u64,
+    pub(crate) start: usize,
 }
 
 impl Matches {
     #[inline(always)]
-    pub(crate) fn new<T: Int<N>, const N: usize, I: Isa>(
-        mask: Mask<T, N, I>,
+    pub(crate) fn of<T: Int<N>, const N: usize, I: Isa>(
+        masks: &[(Mask<T, N, I>, usize)],
         start: usize,
     ) -> Self {
-        let (bits, bits_per_lane) = I::movemask(mask);
-        Self {
-            bits: bits & (u64::MAX / (u64::MAX >> (64 - bits_per_lane))),
-            log2_bits_per_lane: bits_per_lane.ilog2(),
-            start,
-        }
+        let bits = I::bitmask_of(masks);
+        Self { bits, start }
+    }
+
+    /// The first index that was tested.
+    #[inline(always)]
+    pub fn start(&self) -> usize {
+        self.start
     }
 
     #[inline(always)]
-    pub(crate) fn from_bitmask(bits: u64) -> Self {
-        Self {
-            bits,
-            log2_bits_per_lane: 0,
-            start: 0,
-        }
-    }
-
-    /// Without the first `count` lanes, which are not all of them. `None` if no match is left.
-    #[inline(always)]
-    pub(crate) fn skip_lanes(mut self, count: usize) -> Option<Self> {
-        self.bits &= u64::MAX << (count << self.log2_bits_per_lane);
-        (self.bits != 0).then_some(self)
-    }
-
-    /// Only the first `count` lanes, which are at least one. `None` if no match is left.
-    #[inline(always)]
-    pub(crate) fn take_lanes(mut self, count: usize) -> Option<Self> {
-        self.bits &= u64::MAX >> (64 - (count << self.log2_bits_per_lane));
-        (self.bits != 0).then_some(self)
-    }
-
-    #[inline(always)]
-    fn index_of(self, bit: u32) -> usize {
-        self.start + (bit >> self.log2_bits_per_lane) as usize
+    pub fn is_empty(&self) -> bool {
+        self.bits == 0
     }
 }
 
@@ -59,15 +37,22 @@ impl Iterator for Matches {
     fn next(&mut self) -> Option<usize> {
         let bit = self.bits.lowest_one()?;
         self.bits &= self.bits - 1;
-        Some(self.index_of(bit))
+        Some(self.start + bit as usize)
+    }
+
+    #[inline(always)]
+    fn count(self) -> usize {
+        self.bits.count_ones() as usize
     }
 }
 
 impl DoubleEndedIterator for Matches {
     #[inline(always)]
     fn next_back(&mut self) -> Option<usize> {
-        let bit = self.bits.highest_one()?;
-        self.bits ^= 1 << bit;
-        Some(self.index_of(bit))
+        // `bsr` is slow before Zen 4, and waits for what it overwrites unless LLVM sets that.
+        let zeros = opaque(NonZero::new(self.bits)?.get()).leading_zeros();
+        let bit = 63 ^ opaque(zeros.into());
+        self.bits = opaque(self.bits ^ 1 << bit);
+        Some(self.start + bit as usize)
     }
 }

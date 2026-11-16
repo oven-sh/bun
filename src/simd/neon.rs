@@ -1,9 +1,10 @@
-use crate::Int;
-use crate::isa::movemask_of;
+use crate::isa::{bitmask_of, nearest_set};
 pub(crate) use crate::native::{load_shared, store_shared};
 pub(crate) use crate::portable::masked::*;
 pub use crate::portable::{bit_indices, prefix_xor};
+use crate::{Int, opaque};
 use core::arch::aarch64::*;
+use core::array::from_fn;
 use core::simd::{ToBytes, prelude::*};
 
 #[cfg(target_endian = "big")]
@@ -61,29 +62,20 @@ impl<const S: bool> crate::Isa for Neon<S> {
     }
 
     #[inline(always)]
-    fn first_set_of<T: Int<N>, const N: usize, const K: usize>(
-        masks: [(crate::Mask<T, N, Self>, usize); K],
+    fn nearest_set<T: Int<N>, const N: usize, const FORWARD: bool>(
+        masks: &[(crate::Mask<T, N, Self>, usize)],
+        start: usize,
     ) -> Option<usize> {
-        if size_of::<[T; N]>() != 16 {
-            return movemask_of(masks).0.lowest_one().map(|lane| lane as usize);
+        if size_of::<[T; N]>() != 16 || masks.len() == 1 {
+            return nearest_set::<T, N, Self, FORWARD>(masks, start);
         }
-        let first = crate::opaque(
-            select_indices(masks.into_iter().rev(), 0, 0xFF)
-                .reduce_min()
-                .into(),
-        );
-        (first != 0xFF).then_some(first as usize / size_of::<T>())
-    }
-
-    #[inline(always)]
-    fn last_set_of<T: Int<N>, const N: usize, const K: usize>(
-        masks: [(crate::Mask<T, N, Self>, usize); K],
-    ) -> Option<usize> {
-        if size_of::<[T; N]>() != 16 {
-            return movemask_of(masks).0.highest_one().map(|lane| lane as usize);
+        let masks = masks.iter().copied();
+        if FORWARD {
+            let first = opaque(select_indices(masks.rev(), 0, 0xFF).reduce_min().into());
+            return (first != 0xFF).then_some(start + first as usize / size_of::<T>());
         }
-        let end = crate::opaque(select_indices(masks.into_iter(), 1, 0).reduce_max().into());
-        (end != 0).then_some(end.wrapping_sub(1) as usize / size_of::<T>())
+        let end = opaque(select_indices(masks, 1, 0).reduce_max().into());
+        (end != 0).then(|| start + (end - 1) as usize / size_of::<T>())
     }
 
     /// There is no `popcnt` for general registers.
@@ -104,14 +96,25 @@ impl<const S: bool> crate::Isa for Neon<S> {
     }
 
     #[inline(always)]
-    fn bitmask_of_four<const N: usize>(masks: [crate::Mask<u8, N, Self>; 4]) -> u64
-    where
-        u8: Int<N>,
-    {
+    fn bitmask_of<T: Int<N>, const N: usize>(masks: &[(crate::Mask<T, N, Self>, usize)]) -> u64 {
         let own_bit = u64x2::splat(0x8040_2010_0804_0201).to_ne_bytes();
-        let [a, b, c, d] = masks.map(|mask| mask.to_vector().first_bytes::<16>() & own_bit);
-        let sums = pairwise_add(pairwise_add(a, b), pairwise_add(c, d));
-        u64x2::from_ne_bytes(pairwise_add(sums, sums))[0]
+        let bytes = |i: usize| masks[i % masks.len()].0.to_vector().first_bytes::<16>();
+        let sums = match (size_of::<T>(), N) {
+            (1, 16) => {
+                let [a, b, c, d] = from_fn(|i| bytes(i) & own_bit);
+                pairwise_add(pairwise_add(a, b), pairwise_add(c, d))
+            }
+            (2, 8) => {
+                let [ab, cd] = from_fn(|i| bytes(2 * i).deinterleave(bytes(2 * i + 1)).0 & own_bit);
+                pairwise_add(pairwise_add(ab, cd), pairwise_add(ab, cd))
+            }
+            _ => return bitmask_of(masks),
+        };
+        let (all, mut bits) = (u64x2::from_ne_bytes(pairwise_add(sums, sums))[0], 0);
+        for i in 0..masks.len() {
+            bits |= (all >> (N * i) & !(u64::MAX << N)) << masks[i].1;
+        }
+        bits
     }
 
     #[inline(always)]

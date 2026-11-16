@@ -35,14 +35,6 @@ fn ranges<T>(n: usize, alignments: usize) -> impl Iterator<Item = Range<usize>> 
     starts.flat_map(move |start| (start..start + 13 * n).map(move |end| start..end))
 }
 
-/// Whether to stop at this index.
-type Visit<'a> = &'a mut dyn FnMut(usize) -> bool;
-
-fn some(matches: Matches) -> Matches {
-    assert_ne!(matches.count(), 0);
-    matches
-}
-
 fn plain<T>(slice: &mut [T]) -> &[T] {
     slice
 }
@@ -91,9 +83,12 @@ mod simd {
                     Vector::position_refined(slice, |v| [v.simd_ne(other), test(v)]),
                     first
                 );
-                assert_eq!(Vector::position_near(slice, test), first);
                 assert_eq!(Vector::rposition(slice, test), last);
-                assert_eq!(Vector::rposition_near(slice, test), last);
+                let near = [
+                    Vector::position_near::<S, 1, true>([slice], |[v]| test(v)),
+                    Vector::position_near::<S, 1, false>([slice], |[v]| test(v)),
+                ];
+                assert_eq!(near, [first, last]);
             }
             room[range].fill(padding);
         }
@@ -123,15 +118,10 @@ mod simd {
         }
     }
 
-    /// Each index comes once and in its turn.
     fn matches<T: Int<N> + From<u8> + PartialEq, const N: usize>(alignments: usize) {
         let (zero, one, mut random) = (T::from(0), T::from(1), 1u32);
         let (mut a, mut b) = (Room::new(one), Room::new(one));
         let (a, b) = (a.all(), &mut b.all()[3..]);
-        let (test, both) = (
-            |v: Vector<T, N>| v.simd_eq(one),
-            |a: Vector<T, N>, b: Vector<T, N>| (a & b).simd_eq(one),
-        );
         for range in ranges::<T>(N, alignments) {
             for one_in in [1, 3, 5 * N as u32] {
                 for at in range.clone() {
@@ -143,32 +133,87 @@ mod simd {
                 let b = &longer[..a.len()];
                 let in_a: Vec<_> = (0..a.len()).filter(|&i| a[i] == one).collect();
                 let in_both: Vec<_> = in_a.iter().copied().filter(|&i| b[i] == one).collect();
-                let in_both_from_end: Vec<_> = in_both.iter().copied().rev().collect();
-                assert_eq!(Vector::position_near(a, test), in_a.first().copied());
-                assert_eq!(Vector::rposition_near(a, test), in_a.last().copied());
-                for stop_at in [0, in_both.len() / 2, usize::MAX] {
-                    let check = |want: &[usize], run: &dyn Fn(Visit<'_>) -> Option<usize>| {
-                        let mut seen = vec![];
-                        let found = run(&mut |at| {
-                            seen.push(at);
-                            seen.len() > stop_at
-                        });
-                        assert_eq!(found, want.get(stop_at).copied());
-                        assert_eq!(seen, want[..want.len().min(stop_at.saturating_add(1))]);
-                    };
-                    check(&in_both, &|f| {
-                        Vector::zip_find_map(a, longer, both, |it| some(it).find(|&at| f(at)))
-                    });
-                    check(&in_both, &|f| {
-                        Vector::zip_find_map_near(longer, a, both, |it| some(it).find(|&at| f(at)))
-                    });
-                    check(&in_both_from_end, &|f| {
-                        Vector::zip_rfind_map(a, longer, both, |it| some(it).rfind(|&at| f(at)))
-                    });
-                }
+                from_either_end::<T, N, true>([a, longer], &in_a, &in_both);
+                from_either_end::<T, N, false>([a, longer], &in_a, &in_both);
             }
             a[range.clone()].fill(one);
             b[range].fill(one);
+        }
+    }
+
+    fn from_either_end<T: Int<N> + From<u8>, const N: usize, const FORWARD: bool>(
+        both: [&[T]; 2],
+        in_a: &[usize],
+        in_both: &[usize],
+    ) {
+        let (one, len, block) = (T::from(1), both[0].len(), Vector::<T, N>::BLOCK_LEN);
+        let test = |[a, b]: [Vector<T, N>; 2]| (a & b).simd_eq(one);
+        let turn = |at: usize| if FORWARD { at } else { len - 1 - at };
+        let next = |all: &[usize], from| {
+            all.iter()
+                .map(|&at| turn(at))
+                .filter(|&it| it >= from)
+                .min()
+        };
+        // How many are up to and in the block.
+        let check = |matches: Matches| {
+            let start = matches.start();
+            let want = || {
+                in_both
+                    .iter()
+                    .copied()
+                    .filter(|at| (start..start + block).contains(at))
+            };
+            assert_eq!(matches.clone().count(), want().count());
+            assert!(matches.clone().eq(want()) && matches.rev().eq(want().rev()));
+            if FORWARD {
+                len.min(start + block)
+            } else {
+                len - start
+            }
+        };
+        let near = Vector::matches_near::<T, 2, FORWARD>(both, test);
+        assert_eq!(check(near), len.min(block));
+        let near = Vector::position_near::<T, 2, FORWARD>([both[1], both[0]], test);
+        assert_eq!(near.map(turn), next(in_both, 0));
+        let near = Vector::position_near::<T, 1, FORWARD>([both[0]], |[v]| v.simd_eq(one));
+        assert_eq!(near.map(turn), next(in_a, 0));
+        for from in [
+            0,
+            1,
+            len / 3,
+            len / 2,
+            len.saturating_sub(N),
+            len.saturating_sub(1),
+            len,
+            len + block + 1,
+        ] {
+            for until in [0, from, from + block, from + 3 * block + 5, usize::MAX] {
+                let (mut seen, until_end) = (from, until.min(len));
+                let has_none = |from, to| next(in_both, from).is_none_or(|first| first >= to);
+                for matches in Vector::matches_in::<T, 2, FORWARD>(both, from..until, test) {
+                    assert!(len >= block && !matches.is_empty());
+                    let now = check(matches);
+                    assert!(seen < now && now <= until_end && has_none(seen, now - block));
+                    assert!(now == until_end || (now - from) % block == 0);
+                    seen = now;
+                }
+                assert!(if until_end < block {
+                    seen == from
+                } else {
+                    has_none(seen, until_end)
+                });
+            }
+            let mut none = Vector::matches_in::<T, 2, FORWARD>(both, !from..usize::MAX, test);
+            assert!(none.next().is_none());
+            let past = Vector::position_past::<T, 2, FORWARD>(both, from, test).map(turn);
+            let last = len.checked_sub(N).filter(|_| from < len);
+            assert_eq!(past, last.and_then(|last| next(in_both, from.min(last))));
+            if (N..=len.saturating_sub(N)).contains(&from) {
+                let skipped = Vector::skip::<T, FORWARD>(both[0], from, |v| [v.simd_eq(one); 2]);
+                let first = next(in_a, skipped.min(from)).unwrap_or(len);
+                assert!(from < skipped + N && (skipped..skipped + 4 * N).contains(&first));
+            }
         }
     }
 
@@ -454,7 +499,7 @@ mod simd {
             assert_eq!([is_padding, all].map(|it| padded.count(it)), [0, len]);
             assert_eq!(
                 [is_padding, all].map(|it| padded.to_bitmask(it)),
-                [0, (1 << len) - 1]
+                [0, u64::MAX >> (64 - len)]
             );
         }
     }
@@ -541,12 +586,22 @@ mod simd {
         assert_eq!(U8::position(slice, test), None);
         assert_eq!(U8::rposition(slice, test), None);
         assert_eq!(U8::count(slice, test), 0);
-        let both = |a, b| test(a & b);
-        assert!(U8::zip_find_map(slice, slice, both, Some).is_none());
-        assert!(U8::zip_rfind_map(slice, slice, both, Some).is_none());
+        finds_no_255::<true>(slice);
+        finds_no_255::<false>(slice);
         U8::map_to_shared(slice, to, |v| v - 1);
         U8::map_in_place(from, |v| v + 2);
         assert_eq!(from, want);
+    }
+
+    fn finds_no_255<const FORWARD: bool>(slice: &[SharedU8]) {
+        let (pair, test) = ([slice; 2], |[a, b]: [U8; 2]| (a & b).simd_eq(255));
+        assert!(U8::matches_near::<_, 2, FORWARD>(pair, test).is_empty());
+        let mut blocks = U8::matches_in::<_, 2, FORWARD>(pair, 1..usize::MAX, test);
+        assert!(blocks.next().is_none());
+        assert_eq!(U8::position_near::<_, 2, FORWARD>(pair, test), None);
+        assert_eq!(U8::position_past::<_, 2, FORWARD>(pair, 1, test), None);
+        let skipped = U8::skip::<_, FORWARD>(slice, 1, |v| [v.simd_eq(255); 2]);
+        assert!(slice.len() - skipped < 4 * U8::LEN);
     }
 
     /// As if another thread wrote between two reads.
@@ -568,13 +623,22 @@ mod simd {
             };
             check(goes.min(stays), &|| U8::position(slice, test));
             check(goes.max(stays), &|| U8::rposition(slice, test));
-            let first = |it| some(it).find(|&at| at == stays);
-            let last = |it| some(it).rfind(|&at| at == stays);
-            let tests: [&dyn Fn(U8, U8) -> _; 2] = [&|v, _| test(v), &|_, v| test(v)];
-            for test in tests {
-                check(stays, &|| U8::zip_find_map(slice, slice, test, first));
-                check(stays, &|| U8::zip_find_map_near(slice, slice, test, first));
-                check(stays, &|| U8::zip_rfind_map(slice, slice, test, last));
+            let first = |mut it: Matches| it.find(|&at| at == stays);
+            let last = |mut it: Matches| it.rfind(|&at| at == stays);
+            let tests: [&dyn Fn([U8; 2]) -> _; 2] = [&|[v, _]| test(v), &|[_, v]| test(v)];
+            for (pair, test) in tests.map(|test| ([slice; 2], test)) {
+                check(goes.min(stays), &|| {
+                    U8::position_near::<_, 2, true>(pair, test)
+                });
+                check(goes.max(stays), &|| {
+                    U8::position_near::<_, 2, false>(pair, test)
+                });
+                check(stays, &|| {
+                    U8::matches_in::<_, 2, true>(pair, 0..usize::MAX, test).find_map(first)
+                });
+                check(stays, &|| {
+                    U8::matches_in::<_, 2, false>(pair, 0..usize::MAX, test).find_map(last)
+                });
             }
             to[goes].set(0);
             to[stays].set(0);
@@ -592,14 +656,31 @@ mod simd {
     }
 
     #[export]
-    pub fn firsts_lasts_and_count(slice: &[SharedU8], stays: usize) -> ([Option<usize>; 5], usize) {
-        let (test, both) = (|v: U8| v.simd_eq(1), |a: U8, b: U8| (a & b).simd_eq(1));
+    pub fn firsts_lasts_and_count(
+        slice: &[SharedU8],
+        stays: usize,
+    ) -> ([[Option<usize>; 2]; 3], usize) {
+        let (test, both) = (|v: U8| v.simd_eq(1), |[a, b]: [U8; 2]| (a & b).simd_eq(1));
+        let (pair, all, is_it) = ([slice; 2], 0..usize::MAX, |&at: &usize| at == stays);
+        let after_others = match slice.len() {
+            ..64 => [
+                U8::matches_near::<_, 2, true>(pair, both).find(is_it),
+                U8::matches_near::<_, 2, false>(pair, both).rfind(is_it),
+            ],
+            _ => [
+                U8::matches_in::<_, 2, true>(pair, all.clone(), both)
+                    .find_map(|mut it| it.find(is_it)),
+                U8::matches_in::<_, 2, false>(pair, all, both).find_map(|mut it| it.rfind(is_it)),
+            ],
+        };
+        let near = [
+            U8::position_near::<_, 2, true>(pair, both),
+            U8::position_near::<_, 2, false>(pair, both),
+        ];
         let found = [
-            U8::position(slice, test),
-            U8::rposition(slice, test),
-            U8::zip_find_map(slice, slice, both, |mut it| it.find(|&at| at == stays)),
-            U8::zip_find_map_near(slice, slice, both, |mut it| it.find(|&at| at == stays)),
-            U8::zip_rfind_map(slice, slice, both, |mut it| it.rfind(|&at| at == stays)),
+            [U8::position(slice, test), U8::rposition(slice, test)],
+            near,
+            after_others,
         ];
         (found, U8::count(slice, test))
     }
@@ -813,10 +894,12 @@ fn searches_with_a_concurrent_writer() {
                 is_done.store(true, Relaxed);
                 found
             });
-            for ([first, last, others @ ..], count) in found {
-                assert!([Some(flickers.min(stays)), Some(stays)].contains(&first));
-                assert!([Some(flickers.max(stays)), Some(stays)].contains(&last));
-                assert_eq!(others, [Some(stays); 3]);
+            for ([nearest @ .., after_others], count) in found {
+                for [first, last] in nearest {
+                    assert!([Some(flickers.min(stays)), Some(stays)].contains(&first));
+                    assert!([Some(flickers.max(stays)), Some(stays)].contains(&last));
+                }
+                assert_eq!(after_others, [Some(stays); 2]);
                 assert!(matches!(count, 1 | 2));
             }
         }

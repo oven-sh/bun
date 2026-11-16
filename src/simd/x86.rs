@@ -44,6 +44,7 @@ impl<const FIRST: usize> Swizzle<64> for Unpack<FIRST> {
 
 impl Isa for Sse4 {
     const HAS_UNSIGNED_COMPARE: bool = false;
+    const HAS_LEADING_ZEROS: bool = false;
 
     #[inline(always)]
     fn movemask<T: Int<N>, const N: usize>(mask: Mask<T, N, Self>) -> (u64, usize) {

@@ -10,6 +10,7 @@ pub trait Isa: Copy {
     /// It takes hundreds of cycles to skip lanes in an unmapped page.
     const IS_SLOW_TO_SKIP_PAGE: bool = true;
     const HAS_UNSIGNED_COMPARE: bool = true;
+    const HAS_LEADING_ZEROS: bool = true;
     /// `load_interleaved4` and `store_interleaved4` take one instruction.
     const HAS_INTERLEAVED_MEMORY: bool = false;
     /// The result of a simple op is there as soon as in a general register.
@@ -36,33 +37,21 @@ pub trait Isa: Copy {
         before.count_ones() as usize / bits_per_lane
     }
 
-    /// For masks with the index of their first lane: two halves without gaps, within 64 bytes.
+    /// For masks with the index of their first lane, after `start`: two halves without gaps, from 0 on.
     #[doc(hidden)]
     #[inline(always)]
-    fn first_set_of<T: Int<N>, const N: usize, const K: usize>(
-        masks: [(Mask<T, N, Self>, usize); K],
+    fn nearest_set<T: Int<N>, const N: usize, const FORWARD: bool>(
+        masks: &[(Mask<T, N, Self>, usize)],
+        start: usize,
     ) -> Option<usize> {
-        let (bits, bits_per_lane) = movemask_of(masks);
-        (bits != 0).then_some(bits.trailing_zeros() as usize / bits_per_lane)
+        nearest_set::<T, N, Self, FORWARD>(masks, start)
     }
 
+    /// One bit per lane.
     #[doc(hidden)]
     #[inline(always)]
-    fn last_set_of<T: Int<N>, const N: usize, const K: usize>(
-        masks: [(Mask<T, N, Self>, usize); K],
-    ) -> Option<usize> {
-        let (bits, bits_per_lane) = movemask_of(masks);
-        (bits != 0).then_some((63 ^ bits.leading_zeros()) as usize / bits_per_lane)
-    }
-
-    /// For masks of 16 lanes.
-    #[doc(hidden)]
-    #[inline(always)]
-    fn bitmask_of_four<const N: usize>([a, b, c, d]: [Mask<u8, N, Self>; 4]) -> u64
-    where
-        u8: Int<N>,
-    {
-        a.to_bitmask() | b.to_bitmask() << 16 | c.to_bitmask() << 32 | d.to_bitmask() << 48
+    fn bitmask_of<T: Int<N>, const N: usize>(masks: &[(Mask<T, N, Self>, usize)]) -> u64 {
+        bitmask_of(masks)
     }
 
     #[doc(hidden)]
@@ -87,15 +76,40 @@ pub trait Isa: Copy {
 }
 
 #[inline(always)]
-pub(crate) fn movemask_of<T: Int<N>, const N: usize, I: Isa, const K: usize>(
-    masks: [(Mask<T, N, I>, usize); K],
-) -> (u64, usize) {
+pub(crate) fn nearest_set<T: Int<N>, const N: usize, I: Isa, const FORWARD: bool>(
+    masks: &[(Mask<T, N, I>, usize)],
+    start: usize,
+) -> Option<usize> {
     let (mut all, bits_per_lane) = I::movemask(masks[0].0);
-    for (mask, start) in &masks[1..] {
+    for &(mask, at) in &masks[1..] {
         // LLVM would put them together in a vector.
-        all |= opaque(I::movemask(*mask).0) << (start * bits_per_lane);
+        all |= opaque(I::movemask(mask).0) << (at * bits_per_lane);
     }
-    (if K == 1 { opaque(all) } else { all }, bits_per_lane)
+    if I::HAS_MASK_REGISTERS {
+        all = opaque(all);
+    }
+    let zeros = if FORWARD {
+        all.trailing_zeros()
+    } else {
+        all.leading_zeros()
+    } as usize;
+    (all != 0).then_some(match (FORWARD, I::HAS_LEADING_ZEROS) {
+        (true, _) => start + zeros / bits_per_lane,
+        // For `63 - zeros`, LLVM picks `bsr`, which is slow before Zen 4.
+        (false, true) => (start + 63 / bits_per_lane).wrapping_sub(zeros / bits_per_lane),
+        (false, false) => start + (63 ^ zeros) / bits_per_lane,
+    })
+}
+
+#[inline(always)]
+pub(crate) fn bitmask_of<T: Int<N>, const N: usize, I: Isa>(
+    masks: &[(Mask<T, N, I>, usize)],
+) -> u64 {
+    let mut all = 0;
+    for &(mask, start) in masks {
+        all |= mask.to_bitmask() << start;
+    }
+    all
 }
 
 /// The types in `isa`, for vectors of `$bytes` bytes.

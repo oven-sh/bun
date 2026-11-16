@@ -89,6 +89,22 @@ mod simd {
             ]
         }
 
+        /// The first one, two or four chunks. The last one repeats.
+        #[inline(always)]
+        pub(crate) fn load_chunks<S: Source<Lane = T>>(from: &[S], k: usize) -> Option<[Self; 4]> {
+            let chunks = from.as_chunks().0;
+            Some(match k {
+                4 => Self::load4(chunks.first_chunk()?),
+                2 => {
+                    let two = chunks.first_chunk()?;
+                    let last = Self::load_nth::<S, 2, 1>(two);
+                    [Self::load_nth::<S, 2, 0>(two), last, last, last]
+                }
+                1 => [Self::load(chunks.first()?); 4],
+                _ => unreachable!(),
+            })
+        }
+
         pub(crate) fn load_nth<S: Source<Lane = T>, const K: usize, const AT: usize>(
             from: &[[S; N]; K],
         ) -> Self {

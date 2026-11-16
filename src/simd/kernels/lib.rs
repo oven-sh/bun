@@ -23,6 +23,7 @@ mod xml;
 mod xxhash;
 
 use bun_simd::SharedU8;
+use memmem::index_with;
 
 pub use byte_set::ByteSet;
 pub use convert::simd::{
@@ -39,7 +40,6 @@ pub use image::simd::{cmyk_to_rgba, flip_horizontally, modulate, nearest_in_pale
 pub use image::{Filter, flip_vertically, resize, rotate_90, rotate_180, rotate_270};
 pub use json::class as json_class;
 pub use json::simd::index_chunk as json_structural_index_chunk;
-pub use memmem::simd::{memmem16_shared, memrmem16, memrmem16_shared};
 pub use paths::simd::{
     common_prefix_length, count_slashes, index_of_untidy_slash, index_of_untidy_slash_or_non_ascii,
     last_index_of_slash, last_index_of_slash_or_dot,
@@ -76,7 +76,7 @@ pub use xxhash::simd::{xxhash3_64_shared, xxhash32, xxhash32_shared, xxhash64, x
 pub fn memmem(haystack: &[u8], needle: &[u8]) -> Option<usize> {
     match *needle {
         [byte] => index_of_char(haystack, byte),
-        _ => memmem::simd::memmem(haystack, needle),
+        _ => index_with::<_, true>(haystack, needle, memmem::simd::memmem),
     }
 }
 
@@ -84,7 +84,7 @@ pub fn memmem(haystack: &[u8], needle: &[u8]) -> Option<usize> {
 pub fn memmem_shared(haystack: &[SharedU8], needle: &[SharedU8]) -> Option<usize> {
     match needle {
         [byte] => index_of_char_shared(haystack, byte.get()),
-        _ => memmem::simd::memmem_shared(haystack, needle),
+        _ => index_with::<_, true>(haystack, needle, memmem::simd::memmem_shared),
     }
 }
 
@@ -92,7 +92,7 @@ pub fn memmem_shared(haystack: &[SharedU8], needle: &[SharedU8]) -> Option<usize
 pub fn memrmem(haystack: &[u8], needle: &[u8]) -> Option<usize> {
     match *needle {
         [byte] => last_index_of_char(haystack, byte),
-        _ => memmem::simd::memrmem(haystack, needle),
+        _ => index_with::<_, false>(haystack, needle, memmem::simd::memrmem),
     }
 }
 
@@ -100,8 +100,23 @@ pub fn memrmem(haystack: &[u8], needle: &[u8]) -> Option<usize> {
 pub fn memrmem_shared(haystack: &[SharedU8], needle: &[SharedU8]) -> Option<usize> {
     match needle {
         [byte] => last_index_of_char_shared(haystack, byte.get()),
-        _ => memmem::simd::memrmem_shared(haystack, needle),
+        _ => index_with::<_, false>(haystack, needle, memmem::simd::memrmem_shared),
     }
+}
+
+#[inline(always)]
+pub fn memmem16_shared(haystack: &[[SharedU8; 2]], needle: &[[SharedU8; 2]]) -> Option<usize> {
+    index_with::<_, true>(haystack, needle, memmem::simd::memmem16_shared)
+}
+
+#[inline(always)]
+pub fn memrmem16(haystack: &[u16], needle: &[u16]) -> Option<usize> {
+    index_with::<_, false>(haystack, needle, memmem::simd::memrmem16)
+}
+
+#[inline(always)]
+pub fn memrmem16_shared(haystack: &[[SharedU8; 2]], needle: &[[SharedU8; 2]]) -> Option<usize> {
+    index_with::<_, false>(haystack, needle, memmem::simd::memrmem16_shared)
 }
 
 /// The tables are constants if `chars` is.

@@ -55,8 +55,8 @@ An op has the name that `core::simd` gives it, where there is one.
 | ---------------------- | -------------------------------------------------------------------------------------- |
 | `vector.rs`, `mask.rs` | The ops that are the same code on every target                                         |
 | `portable.rs`          | The definition of the other ops. `x86.rs` and `neon.rs` implement them with intrinsics |
-| `algo.rs`              | `position`, `rposition`, `zip_find_map`, `count`, `map` and others, for any length     |
-| `matches.rs`           | The indices that `zip_find_map` has found                                              |
+| `algo.rs`              | `position`, `rposition`, `matches_near`, `count`, `map` and others, for any length     |
+| `matches.rs`           | The indices that `matches_near` and `matches_in` have found                            |
 | `bit_indices.rs`       | From a bitmask to a list of positions                                                  |
 | `trusted/output.rs`    | `Out` and `Writer`, for output to memory that may be uninitialized                     |
 | `partial.rs`           | Loads and stores for a slice that is shorter than a vector                             |

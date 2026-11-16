@@ -4,7 +4,7 @@ use crate::swizzle::Repeat;
 use crate::{Int, Isa, Lane, Mask, Out, SharedOutU8, Source, Vector};
 use bun_simd_trusted::quarters;
 use core::array::{from_fn, from_ref};
-use core::hint::unlikely;
+use core::hint::cold_path;
 use core::simd::{Simd, Swizzle, ToBytes, u8x32, u8x64, u32x4};
 
 /// A slice shorter than a vector.
@@ -82,8 +82,7 @@ impl<T: Int<N>, const N: usize, I: Isa> Vector<T, N, I> {
     /// For an instruction that covers `size` bytes, and a slice that is not empty.
     #[inline(always)]
     fn is_slow_with_mask<E>(size: usize, start: *const E) -> bool {
-        let is_at_end_of_page = start.addr().wrapping_add(size) & (4096 - size) == 0;
-        I::IS_SLOW_TO_SKIP_PAGE && unlikely(is_at_end_of_page)
+        I::IS_SLOW_TO_SKIP_PAGE && start.addr().wrapping_add(size) & (4096 - size) == 0
     }
 
     #[inline(always)]
@@ -355,11 +354,13 @@ mod simd {
                 Memory::Plain(from)
                     if Self::is_slow_with_mask(size_of::<Self>(), from.as_ptr()) =>
                 {
+                    cold_path();
                     let last = shared::load_to_last::<T, N>(from);
                     Self::from_first_bytes(rotate_bytes(last, size_of_val(from)))
                 }
                 Memory::Plain(from) => Self::new(Simd::load_or_default(from)),
                 Memory::Shared(from) if Self::is_slow_with_mask(64, from.as_ptr()) => {
+                    cold_path();
                     let last = shared::load_shared_masked::<true>(from);
                     Self::from_first_bytes(rotate_bytes(last, from.len()))
                 }
@@ -374,6 +375,7 @@ mod simd {
             if to.is_empty() {
                 &mut []
             } else if Self::is_slow_with_mask(size_of::<Self>(), to.as_ptr()) {
+                cold_path();
                 let size = to.len() * size_of::<T>();
                 let last = rotate_bytes(self.to_64_bytes(), size.wrapping_neg());
                 shared::fill_from_last::<T, N>(last, to)
@@ -453,6 +455,7 @@ mod simd {
             let (len, lanes) = (to.len(), self.to_array());
             if len == 0 {
             } else if Self::IS_MASKED && Self::is_slow_with_mask(64, to.as_ptr()) {
+                cold_path();
                 let last = rotate_bytes(self.to_64_bytes(), len.wrapping_neg());
                 shared::store_shared_masked::<true>(last, to);
             } else if Self::IS_MASKED {

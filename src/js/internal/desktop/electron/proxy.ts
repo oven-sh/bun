@@ -1,4 +1,7 @@
 // Which proxy a request goes through.
+const keywordsOfProtocols = { "http:": "PROXY", "https:": "HTTPS", "socks4:": "SOCKS" };
+const defaultPorts = { PROXY: 80, HTTPS: 443 };
+
 const fs = require("node:fs");
 const path = require("node:path");
 const { glob } = require("internal/desktop/electron/policy");
@@ -88,8 +91,8 @@ function toAnswer(route: Route) {
     .map(proxy => {
       if (proxy === null) return "DIRECT";
       const { protocol, hostname, port } = new URL(proxy);
-      const keyword = { "http:": "PROXY", "https:": "HTTPS", "socks4:": "SOCKS" }[protocol] ?? "SOCKS5";
-      return `${keyword} ${hostname}:${port || ({ PROXY: 80, HTTPS: 443 }[keyword] ?? 1080)}`;
+      const keyword = keywordsOfProtocols[protocol] ?? "SOCKS5";
+      return `${keyword} ${hostname}:${port || (defaultPorts[keyword] ?? 1080)}`;
     })
     .join("; ");
 }

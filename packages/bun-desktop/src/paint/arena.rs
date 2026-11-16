@@ -5,7 +5,7 @@ use std::ops::Range;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use parking_lot::Mutex;
+use crate::sync::Mutex;
 
 const PAGE: usize = 16 << 10;
 const SHARED: usize = 2 << 20;

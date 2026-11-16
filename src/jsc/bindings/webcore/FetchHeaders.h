@@ -133,10 +133,10 @@ public:
     void setGuard(Guard);
     Guard guard() const { return m_guard; }
 
+private:
     FetchHeaders(Guard, HTTPHeaderMap&&);
     explicit FetchHeaders(const FetchHeaders&);
 
-private:
     // An iterator points into the map while the counter stands still, so the one way to a map that can be changed moves it.
     class CountedHeaderMap {
     public:

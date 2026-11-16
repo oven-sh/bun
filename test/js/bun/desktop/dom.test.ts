@@ -434,6 +434,26 @@ test("bun:desktop/dom makes the global object a window", async () => {
   expect(exitCode).toBe(0);
 });
 
+test("an initial value does not depend on the element that it is first written for", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `import "bun:desktop/dom";
+      document.body.innerHTML = '<p style="color: red"></p><b style="color: blue"></b>';
+      const [p, b] = document.body.children;
+      getComputedStyle(p).textEmphasis;
+      b.style.textEmphasis = "dot";
+      console.log(b.style.textEmphasisColor, getComputedStyle(b).textEmphasisColor);`,
+    ],
+    env: bunEnv,
+    stderr: "inherit",
+  });
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  expect(stdout).toBe("currentcolor rgb(0, 0, 255)\n");
+  expect(exitCode).toBe(0);
+});
+
 test("selectAll stays in the shadow tree that has the caret", () => {
   using page = open("<p>outside</p><div></div>");
   const root = page.$("div").attachShadow({ mode: "open" });
@@ -487,6 +507,43 @@ test("an element that is moved with boxes to build still gets boxes for what is 
   const before = page.$("#row").offsetHeight;
   page.$("#row").insertAdjacentHTML("beforeend", "<p style='margin: 0; height: 7px'></p>");
   expect(page.$("#row").offsetHeight).toBe(before + 7);
+});
+
+test("elements that look alike get the rules that match where they are", () => {
+  using page = open(`<style>
+    p { width: 1px } [data-on] p { width: 2px } .late p { width: 3px } p:last-child { height: 4px } p + p { margin-left: 5px }
+    [style*="color"] > p { padding-left: 6px } @scope (.from) to (.limit) { p { padding-top: 7px } }
+  </style><main></main>`);
+  const add = (html: string) => {
+    page.$("main").insertAdjacentHTML("beforeend", html);
+    return [...page.$("main").lastElementChild.querySelectorAll("p")].map(it => {
+      const { width, height, marginLeft, paddingLeft, paddingTop } = page.window.getComputedStyle(it);
+      return [width, height, marginLeft, paddingLeft, paddingTop].map(parseFloat).join();
+    });
+  };
+  expect(add("<div><p></p><p></p></div>")).toEqual(["1,0,0,0,0", "1,4,5,0,0"]);
+  expect(add("<div><p></p></div>")).toEqual(["1,4,0,0,0"]);
+  expect(add("<div data-on><p></p></div>")).toEqual(["2,4,0,0,0"]);
+  expect(add("<div class=late><p></p></div>")).toEqual(["3,4,0,0,0"]);
+  expect(add("<div style='top: 0'><p></p></div>")).toEqual(["1,4,0,0,0"]);
+  expect(add("<div style='color: red'><p></p></div>")).toEqual(["1,4,0,6,0"]);
+  expect(add("<div class=from><p></p><div class=limit><p></p></div></div>")).toEqual(["1,0,0,0,7", "1,4,0,0,0"]);
+  page.$("main").setAttribute("data-on", "");
+  expect(add("<div><p></p></div>")).toEqual(["2,4,0,0,0"]);
+});
+
+test("styles stay right after many rule lists have come and gone", () => {
+  using page = open("<style>p { height: 3px }</style><p id=kept style='width: 9px'></p><main></main>");
+  for (let round = 0; round < 3; round++) {
+    page.$("main").innerHTML = Array.from(
+      { length: 600 },
+      (_, i) => `<p style="width: ${round * 600 + i}px"></p>`,
+    ).join("");
+    expect(page.$("main").lastElementChild.offsetWidth).toBe(round * 600 + 599);
+    page.render();
+  }
+  page.$("#kept").className = "other";
+  expect([page.$("#kept").offsetWidth, page.$("#kept").offsetHeight]).toEqual([9, 3]);
 });
 
 describe("content-visibility", () => {
@@ -545,7 +602,8 @@ test.skipIf(isWindows)("a panic in the engine does not end the process", async (
        state();
        for (let i = 0; i < 3; i++) engine.panicForTesting(), state();`,
     ],
-    env: bunEnv,
+    // What a panic interrupts is leaked on purpose (src/dom/recovery.rs).
+    env: { ...bunEnv, ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "detect_leaks=0"].filter(Boolean).join(":") },
     stderr: "pipe",
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
@@ -619,9 +677,34 @@ describe("removed trees are collected", () => {
       return element => element.addEventListener("click", () => element, { signal });
     },
   };
-  test.each(Object.keys(cases))("%s", async name => {
-    using page = open();
-    expect(await survivors(page, cases[name](page))).toBeLessThan(COUNT / 10);
+  // A compilation that is under way on another thread holds on to the values that it has seen.
+  test("in each case", async () => {
+    const entries = Object.entries(cases).map(([name, use]) => `[${JSON.stringify(name)}, ${use}]`);
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const { desktopInternals } = require("bun:internal-for-testing");
+         let nextFontScope = 1;
+         const COUNT = ${COUNT};
+         ${open}
+         ${survivors}
+         for (const [name, use] of [${entries}]) {
+           using page = open();
+           console.log(JSON.stringify([name, await survivors(page, use(page))]));
+         }`,
+      ],
+      env: { ...bunEnv, BUN_JSC_useConcurrentJIT: "0" },
+      stderr: "inherit",
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    const found = stdout
+      .trim()
+      .split("\n")
+      .map(line => JSON.parse(line));
+    expect(found.map(([name]) => name)).toEqual(Object.keys(cases));
+    expect(found.filter(([, alive]) => alive >= COUNT / 10)).toEqual([]);
+    expect(exitCode).toBe(0);
   });
 
   test("an animation that fills forwards applies again when the element comes back", async () => {
@@ -665,4 +748,49 @@ describe("removed trees are collected", () => {
     expect(references.filter(it => it.deref() !== undefined).length).toBeLessThan(COUNT / 4);
     expect(all.length).toBe(0);
   });
+});
+
+test.each([
+  `<b onclick=x>a</b><a href=" java\tscript:x">b</a>`,
+  `<form><math><mtext></form><form><mglyph><style></math><img src=x onerror=x>`,
+  `<math><mtext><table><mglyph><style><!--</style><img title="--&gt;&lt;img src=x onerror=x&gt;">`,
+  `a<template><img src=x onerror=x></template>`,
+  `<svg><a><animate attributeName=href values="x;javascript:x" /><text>a</text></a></svg>`,
+])("what is pasted has no scripts: %s", html => {
+  const clipboard = { readText: () => "a", readHTML: () => html };
+  const page = desktopInternals.createPage({ native: null, surface: 0, fontScope: nextFontScope++, clipboard });
+  using _ = { [Symbol.dispose]: page.dispose };
+  page.parseHTML("<!doctype html><div contenteditable></div>");
+  const editor = page.document.querySelector("div");
+  editor.focus();
+  page.edit("paste");
+  expect(editor.childNodes.length).toBeGreaterThan(0);
+  expect(editor.querySelector("[onclick], [onerror], [href], template, animate")).toBeNull();
+});
+
+test("a <source> in a document without a window", async () => {
+  const page = desktopInternals.createPage({ native: null, surface: 0, fontScope: nextFontScope++ });
+  using _ = { [Symbol.dispose]: page.dispose };
+  const errors: string[] = [];
+  page.window.addEventListener("error", (event: ErrorEvent) => errors.push(event.message));
+  const parsed = new page.window.DOMParser().parseFromString(
+    "<video><source src=http://a.test/a.webm></video>",
+    "text/html",
+  );
+  await Promise.resolve();
+  expect([parsed.querySelector("video").currentSrc, errors]).toEqual(["http://a.test/a.webm", []]);
+});
+
+test("the clone of a declarative shadow root is available to ElementInternals", () => {
+  const page = desktopInternals.createPage({ native: null, surface: 0, fontScope: nextFontScope++ });
+  using _ = { [Symbol.dispose]: page.dispose };
+  page.parseHTML("<!doctype html><body>");
+  page.document.body.setHTMLUnsafe("<a-b><template shadowrootmode=closed shadowrootclonable>x</template></a-b>");
+  page.window.customElements.define(
+    "a-b",
+    class extends page.window.HTMLElement {
+      internals = this.attachInternals();
+    },
+  );
+  expect(page.document.querySelector("a-b").cloneNode(true).internals.shadowRoot.textContent).toBe("x");
 });

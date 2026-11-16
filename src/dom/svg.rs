@@ -506,6 +506,7 @@ impl Document {
             .take_while(|it| self.tree.element(*it).is_some_and(has_svg_children))
             .find(is_viewport);
         let viewport = around
+            .filter(|_| bun_core::StackCheck::init().is_safe_to_recurse())
             .and_then(|it| self.svg_node(it))
             .map_or([0.0; 2], |it| self.inner_viewport(&it));
         Some(Node {
@@ -1532,7 +1533,7 @@ impl Document {
             None => true,
             Some((Shape::Url(url), _)) => self
                 .svg_resource(node.id, url, name!("clipPath"))
-                .filter(|_| node.depth < MAX_DEPTH)
+                .filter(|_| node.depth < MAX_DEPTH && self.spend_svg_budget())
                 .is_none_or(|clip| {
                     let clip = Node {
                         depth: node.depth + MAX_DEPTH / 8,

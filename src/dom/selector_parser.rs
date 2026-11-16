@@ -432,7 +432,8 @@ impl Reader<'_> {
                 selector.compounds.reverse();
                 return Some(selector);
             }
-            (after == After::Nothing && !within.only_compounds).then_some(())?;
+            (after == After::Nothing && !within.only_compounds && selector.compounds.len() < 128)
+                .then_some(())?;
             selector
                 .compounds
                 .last_mut()?

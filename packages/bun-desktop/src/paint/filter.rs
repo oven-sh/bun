@@ -1,8 +1,7 @@
-use resvg::tiny_skia::Transform;
-
 use super::graph;
 use super::raster::{Clip, Layer, Paint, average_scale, demultiply, multiply, premultiply};
 use crate::abi::Filter;
+use crate::gfx::Transform;
 
 /// https://drafts.fxtf.org/filter-effects/#ShorthandEquivalents: three rows, each with an offset.
 fn color_matrix(filter: Filter) -> Option<[[f32; 4]; 3]> {

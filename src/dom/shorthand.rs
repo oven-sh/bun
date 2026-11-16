@@ -1,7 +1,7 @@
 //! Splits the value of a shorthand into those of its longhands, and joins them again.
 
-use core::cell::OnceCell;
 use std::borrow::Cow;
+use std::sync::{LazyLock, OnceLock};
 
 use bun_core::strings;
 
@@ -33,21 +33,21 @@ pub(crate) struct Shorthand {
     ids: [Box<[Id]>; Flow::COUNT],
 }
 
-thread_local! {
-    static ALL: (&'static [&'static Definition], &'static [OnceCell<Shorthand>]) = {
-        let all: Vec<_> = grammar::definitions().iter().filter(|it| it.is_shorthand()).collect();
-        let cells: Vec<_> = all.iter().map(|_| OnceCell::new()).collect();
-        (all.leak(), cells.leak())
-    };
-}
+static ALL: LazyLock<Vec<&'static Definition>> = LazyLock::new(|| {
+    grammar::definitions()
+        .iter()
+        .filter(|it| it.is_shorthand())
+        .collect()
+});
 
 pub(crate) fn definitions() -> &'static [&'static Definition] {
-    ALL.with(|it| it.0)
+    &ALL
 }
 
 pub(crate) fn get(index: u8) -> &'static Shorthand {
-    let (definitions, cells) = ALL.with(|it| *it);
-    cells[usize::from(index)].get_or_init(|| Shorthand::new(definitions[usize::from(index)]))
+    static COMPILED: LazyLock<Vec<OnceLock<Shorthand>>> =
+        LazyLock::new(|| ALL.iter().map(|_| OnceLock::new()).collect());
+    COMPILED[usize::from(index)].get_or_init(|| Shorthand::new(ALL[usize::from(index)]))
 }
 
 fn named(name: &str) -> Option<&'static Shorthand> {

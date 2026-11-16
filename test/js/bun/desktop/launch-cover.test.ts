@@ -1,7 +1,7 @@
 import { hasLibrary } from "./library";
 
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, isMacOS, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, isMacOS, isWindows, tempDir } from "harness";
 import { statSync } from "node:fs";
 import { join } from "node:path";
 
@@ -27,12 +27,15 @@ test.skipIf(!hasLibrary || isWindows)(
     expect(["LaunchCover", "LaunchCover.json"].map(name => statSync(join(data, name)).mode & 0o777)).toEqual([
       0o600, 0o600,
     ]);
-    for (const step of ["type", "keep", "unfocused", "click", "changed", "wider"]) await launch(step);
+    for (const step of ["type", "early", "discarded", "keep", "unfocused", "click", "changed", "wider"])
+      await launch(step);
     await launch("type", "--hidden");
-    for (const step of ["crash", "type", "save", "part", "changed", "clear", "type"]) await launch(step);
+    for (const step of ["crash", "type", "save", "part", "changed", "clear", "type", "uncovered"]) await launch(step);
     expect(seen).toEqual([
       "save: false [] [] true",
       "type: true [] waits [b]",
+      "early: true [] waits [s]",
+      "discarded: false [] []",
       "keep: true [] waits [bc] true click [bc]",
       "unfocused: true [] waits []",
       "click: true [] waits click []",
@@ -46,7 +49,8 @@ test.skipIf(!hasLibrary || isWindows)(
       "changed: true [] waits click []",
       "clear: true [] []",
       "type: false [b] [b]",
+      "uncovered: false b c [bc] [bc]",
     ]);
   },
-  60_000,
+  isDebug || isASAN ? 240_000 : 60_000,
 );

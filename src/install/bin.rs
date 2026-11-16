@@ -15,7 +15,7 @@ use bun_paths::{self as path, AbsPath, SEP};
 use bun_semver::{ExternalString, String};
 #[cfg(not(windows))]
 use bun_sys::Mode;
-use bun_sys::{self as sys, Fd, FdExt as _};
+use bun_sys::{self as sys, Fd};
 
 use crate::PackageID;
 use crate::bun_json::{Expr, ExprData};
@@ -557,7 +557,7 @@ pub(crate) struct NamesIterator<'a> {
     pub(crate) bin: Bin,
     pub(crate) i: usize,
     pub(crate) done: bool,
-    pub(crate) dir_iterator: Option<sys::dir_iterator::WrappedIterator>,
+    pub(crate) dir_iterator: Option<sys::dir_iterator::OwnedIterator>,
     pub(crate) package_name: String,
     /// Borrowed view of the destination `node_modules` directory fd; the
     /// caller owns the underlying `Dir`. Default is `Fd::INVALID`, which
@@ -586,9 +586,8 @@ impl<'a> NamesIterator<'a> {
             let joined = resolve_path::join_string_buf::<PlatformAuto>(&mut self.buf[..], &parts);
             let child_dir = sys::Dir::borrow(&dir)
                 .open_at(joined)
-                .map_err(Error::from)?
-                .into_raw();
-            self.dir_iterator = Some(sys::iterate_dir(child_dir));
+                .map_err(Error::from)?;
+            self.dir_iterator = Some(sys::dir_iterator::iterate_owned(child_dir));
         }
 
         let iter = self.dir_iterator.as_mut().unwrap();
@@ -601,8 +600,7 @@ impl<'a> NamesIterator<'a> {
             return Ok(Some(strings::copy(&mut self.buf[..], name)));
         }
         self.done = true;
-        let dir = self.dir_iterator.take().unwrap().dir();
-        dir.close();
+        self.dir_iterator = None;
         Ok(None)
     }
 

@@ -382,6 +382,15 @@ mod _impl {
 
     #[cfg(target_os = "macos")]
     fn cpus_impl_darwin(global_this: &JSGlobalObject) -> Result<JSValue, OsError> {
+        /// What `host_processor_info` maps into this task.
+        struct LoadInfo(*mut c::processor_cpu_load_info, c::mach_msg_type_number_t);
+        impl Drop for LoadInfo {
+            fn drop(&mut self) {
+                // SAFETY: nothing borrows the mapping any more.
+                unsafe { c::vm_deallocate(c::mach_task_self(), self.0 as usize, self.1 as usize) };
+            }
+        }
+
         // Fetch the CPU info structure
         let mut num_cpus: c::natural_t = 0;
         let mut info: *mut c::processor_cpu_load_info = core::ptr::null_mut();
@@ -399,10 +408,7 @@ mod _impl {
         {
             return Err(OsError::Any);
         }
-        scopeguard::defer! {
-            // SAFETY: info/info_size returned by host_processor_info
-            unsafe { let _ = c::vm_deallocate(c::mach_task_self(), info as usize, info_size as usize); }
-        };
+        let info = LoadInfo(info, info_size);
 
         // Ensure we got the amount of data we expected to guard against buffer overruns
         if info_size != c::PROCESSOR_CPU_LOAD_INFO_COUNT * num_cpus {
@@ -447,7 +453,7 @@ mod _impl {
         let values = JSValue::create_empty_array(global_this, num_cpus as usize)?;
         let mut cpu_index: u32 = 0;
         // SAFETY: info points to num_cpus entries per host_processor_info contract
-        let info_slice = unsafe { bun_core::ffi::slice(info, num_cpus as usize) };
+        let info_slice = unsafe { bun_core::ffi::slice(info.0, num_cpus as usize) };
         while cpu_index < num_cpus {
             let ticks = &info_slice[cpu_index as usize].cpu_ticks;
             let times = CPUTimes {

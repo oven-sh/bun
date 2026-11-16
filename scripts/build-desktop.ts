@@ -11,9 +11,6 @@ import { spawnSync } from "node:child_process";
 import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { parseArgs } from "node:util";
-import { sharedCacheDir } from "./build/config.ts";
-
-const ZED_COMMIT = "24d37721115bd410b8f73998f8da5c4598b64a03";
 
 const root = resolve(import.meta.dirname, "..");
 const { values, positionals: cargoArguments } = parseArgs({
@@ -42,22 +39,6 @@ function platformOf(triple: string | undefined) {
   const os = triple.includes("-darwin") ? "darwin" : triple.includes("-windows-") ? "win32" : "linux";
   return { os, cpu: triple.startsWith("aarch64-") ? "arm64" : "x64" };
 }
-
-const patchDirectory = join(root, "patches", "zed");
-const patches = readdirSync(patchDirectory)
-  .filter(name => name.endsWith(".patch"))
-  .sort()
-  .map(name => join(patchDirectory, name));
-run(process.execPath, [
-  join(root, "scripts", "build", "fetch-cli.ts"),
-  "dep",
-  "zed",
-  "zed-industries/zed",
-  ZED_COMMIT,
-  join(root, "vendor", "zed"),
-  join(sharedCacheDir(root), "tarballs"),
-  ...patches,
-]);
 
 const outputDirectory = join(root, "build", "desktop");
 const targetDirectory = resolve(process.env.CARGO_TARGET_DIR ?? join(outputDirectory, "target"));

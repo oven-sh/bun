@@ -5936,6 +5936,14 @@ node:tty.ReadStream.prototype setRawMode("a", 1)
   throws TypeError: fd must be a number, stores [rawModeState] <- every object
   throws TypeError: Attempted to assign to readonly property. <- a number, a string
   throws TypeError: Cannot access property of undefined or null <- undefined, null
+node:tty.ReadStream.prototype _read()
+  throws RangeError ERR_OUT_OF_RANGE: The value of "size" is out of range. It must be >= 0 && <= 4294967296. Received NaN <- every object, a number, a string
+  throws TypeError: undefined is not an object <- undefined
+  throws TypeError: null is not an object <- null
+node:tty.ReadStream.prototype _read("a", 1)
+  throws RangeError ERR_OUT_OF_RANGE: The value of "size" is out of range. It must be >= 0 && <= 4294967296. Received NaN <- every object, a number, a string
+  throws TypeError: undefined is not an object <- undefined
+  throws TypeError: null is not an object <- null
 node:tty.ReadStream.prototype _destroy()
   throws TypeError: what is called is not a function <- every object, a number, a string
   throws TypeError: undefined is not an object <- undefined

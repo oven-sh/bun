@@ -1,7 +1,7 @@
 // https://w3c.github.io/webappsec-csp/
 const { hashesIn, originOf, privilegesOf } = require("internal/desktop/electron/policy");
 
-type Policy = { directives: Map<string, string[]>; text: string; isEnforced: boolean };
+type Policy = { directives: Map<string, string[]>; text: string; isEnforced: boolean; isInjected?: boolean };
 type Details = { blockedURI: string; sample?: string; element?: object };
 type Fetched = {
   nonce?: string;
@@ -144,7 +144,7 @@ class ContentSecurityPolicy {
 
   isFromHeader = false;
 
-  add(header: string, isEnforced = true, isFromMarkup = false) {
+  add(header: string, isEnforced = true, isFromMarkup = false, isInjected = false) {
     for (const policy of header.split(",")) {
       const directives = new Map<string, string[]>();
       for (const directive of policy.split(";")) {
@@ -153,7 +153,7 @@ class ContentSecurityPolicy {
         if (!isFromMarkup || !/^(?:sandbox|frame-ancestors|report-uri)$/i.test(name))
           directives.$set(name.toLowerCase(), sources);
       }
-      if (directives.$size > 0) this.#policies.push({ directives, text: policy.trim(), isEnforced });
+      if (directives.$size > 0) this.#policies.push({ directives, text: policy.trim(), isEnforced, isInjected });
       this.isFromHeader ||= directives.$size > 0 && !isFromMarkup;
     }
   }
@@ -295,7 +295,9 @@ class ContentSecurityPolicy {
   }
 
   restrictsScripts() {
-    return this.#enforced().some(({ directives }) => directives.$has("script-src") || directives.$has("default-src"));
+    return this.#enforced().some(
+      it => !it.isInjected && (it.directives.$has("script-src") || it.directives.$has("default-src")),
+    );
   }
 
   /** For "base-uri" and "form-action". */

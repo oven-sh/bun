@@ -1120,8 +1120,21 @@ type FontSource = { url?: string; local?: string; bytes?: Uint8Array };
 const fraction = (text: string) => (text.endsWith("%") ? parseFloat(text) / 100 : undefined);
 const unquote = (text: string) => text.trim().replace(/^(["'])(.*)\1$/s, "$2");
 
+const keywords = {
+  __proto__: null,
+  "bold": 700,
+  "ultra-condensed": 50,
+  "extra-condensed": 62.5,
+  "condensed": 75,
+  "semi-condensed": 87.5,
+  "semi-expanded": 112.5,
+  "expanded": 125,
+  "extra-expanded": 150,
+  "ultra-expanded": 200,
+};
+
 function pair(text: string, normal: number): number[] {
-  const [first, second = first] = splitTokens(text).map(it => (it === "bold" ? 700 : parseFloat(it) || normal));
+  const [first, second = first] = splitTokens(text).map(it => keywords[it] ?? (parseFloat(it) || normal));
   return [first, second];
 }
 
@@ -1154,6 +1167,9 @@ function validDescriptor(name: string, value: string): string | null {
   return parse(value) ?? (name === "family" ? parse(JSON.stringify(value)) : undefined) ?? null;
 }
 
+/** For the blank windows that a page opens: they have its realm and its policies. */
+const fontsOfWindows = new Map<string, Uint8Array>();
+
 class Face {
   js: object;
   values: Descriptors;
@@ -1167,6 +1183,8 @@ class Face {
   /** The ids in the library. */
   registered = new Map<Page, number>();
   isFromCss = false;
+  /** The highest one wins. */
+  order = 0x7fffffff;
 
   constructor(js: object, values: Descriptors, sources: FontSource[]) {
     this.js = js;
@@ -1184,6 +1202,8 @@ class Face {
       weight: this.autos.includes("weight") ? undefined : pair(it.weight, 400),
       stretch: this.autos.includes("stretch") ? undefined : pair(it.stretch, 100),
       style: this.autos.includes("style") ? undefined : it.style.split(" ")[0],
+      slope: it.style.startsWith("oblique ") ? pair(it.style.slice(8), 0) : undefined,
+      order: this.order,
       unicodeRange: it.unicodeRange === descriptors.unicodeRange ? undefined : parseRanges(it.unicodeRange),
       sizeAdjust: fraction(it.sizeAdjust),
       ascentOverride: fraction(it.ascentOverride),
@@ -1235,7 +1255,12 @@ class Face {
     this.status = "loading";
     for (const user of this.registered.keys()) fontsOf(user).started(this);
     for (const source of this.sources) {
-      const bytes = source.url === undefined ? source.bytes : (await load(page, source.url, "font"))?.bytes;
+      const isShared = source.url !== undefined && page.container === null && page.mirror === null;
+      let bytes = isShared ? fontsOfWindows.$get(source.url!) : source.bytes;
+      if (bytes === undefined && source.url !== undefined) {
+        bytes = (await load(page, source.url, "font"))?.bytes;
+        if (isShared && bytes !== undefined && fontsOfWindows.size < 4) fontsOfWindows.$set(source.url, bytes);
+      }
       if (page.isDisposed || (bytes === undefined && source.local === undefined)) continue;
       const { native } = page;
       if (bytes !== undefined && native !== null && !native.ask("font.decode", native.putBlob(bytes))) {
@@ -1356,6 +1381,7 @@ class Fonts {
   fromCss = new Map<string, Face>();
   /** The rules, until a script wants to see them. */
   rules: string | null = null;
+  lastRules = "";
   loading = new Set<Face>();
   done: Face[] = [];
   ready = Promise.withResolvers<object>();
@@ -1377,13 +1403,22 @@ class Fonts {
 
   setRules(rules: string) {
     this.rules = rules;
-    for (const [rule, face] of this.fromCss) if (!rules.includes(rule) && this.fromCss.$delete(rule)) this.remove(face);
+    this.lastRules = rules;
+    for (const [rule, face] of this.fromCss) {
+      const order = rules.lastIndexOf(rule);
+      if (order < 0 && this.fromCss.$delete(rule)) this.remove(face);
+      if (order < 0 || order === face.order) continue;
+      face.order = order;
+      const id = face.registered.$get(this.page);
+      if (id && this.page.native.ask("font.order", { id, order })) fontsChanged(this.page);
+    }
   }
 
   faceFor(rule: string): Face {
     let face = this.fromCss.$get(rule);
     if (face === undefined) {
       this.fromCss.$set(rule, (face = faceFromRule(rule)));
+      face.order = Math.max(this.lastRules.lastIndexOf(rule), 0);
       this.add(face);
     }
     return face;
@@ -2737,7 +2772,7 @@ function nextSource(node: N, after: N | null) {
 function urlOfSource(holder: N) {
   const isSource = holder.name === "source";
   if (isSource && !playable.test(getAttr(holder, "type") || "audio/wav")) return "";
-  if (isSource && !holder.doc.engine.matchMedia(getAttr(holder, "media") ?? "")) return "";
+  if (isSource && holder.doc.engine?.matchMedia(getAttr(holder, "media") ?? "") === false) return "";
   return resolveUrl(holder.doc, getAttr(holder, "src") || "//") ?? "";
 }
 
@@ -3002,6 +3037,7 @@ function dispose(page: Page) {
 }
 
 export default {
+  scriptType,
   canvas,
   flushCanvases,
   dispose,

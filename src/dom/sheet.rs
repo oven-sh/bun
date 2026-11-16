@@ -506,8 +506,39 @@ pub(crate) struct FontFace {
     pub(crate) family: Str,
     /// What `src/js/internal/desktop/dom/fonts.ts` loads.
     pub(crate) json: Str,
-    pub(crate) weight: [f32; 2],
-    pub(crate) is_italic: bool,
+    /// The ranges of the stretch, the slope and the weight.
+    pub(crate) offers: [[f32; 2]; 3],
+}
+
+impl FontFace {
+    pub(crate) const ITALIC: f32 = 14.0;
+
+    /// <https://drafts.csswg.org/css-fonts-4/#font-style-matching>
+    pub(crate) fn distance(&self, [stretch, slope, weight]: [f32; 3]) -> [u32; 3] {
+        let directed = |wanted: f32, [low, high]: [f32; 2], prefers_lower: bool| {
+            let (above, below) = ((low - wanted).max(0.0), (wanted - high).max(0.0));
+            above
+                + below
+                + if (if prefers_lower { above } else { below }) > 0.0 {
+                    1e4
+                } else {
+                    0.0
+                }
+        };
+        let [stretches, slopes, weights] = self.offers;
+        let is_last = (400.0..=500.0).contains(&weight) && weights[0] > 500.0;
+        let slope = directed(
+            slope,
+            slopes,
+            slope < if slope < 0.0 { -10.99 } else { 11.0 },
+        );
+        [
+            directed(stretch, stretches, stretch <= 100.0),
+            slope,
+            directed(weight, weights, weight < 400.0) + f32::from(is_last) * 2e4,
+        ]
+        .map(|it| (it * 4.0) as u32)
+    }
 }
 
 pub(crate) struct Import {
@@ -568,7 +599,7 @@ struct Outline {
 }
 
 impl Outline {
-    fn new(source: &[u8], defers: bool) -> Outline {
+    fn new(source: &[u8], is_quirky: bool) -> Outline {
         let (mut outline, mut at, mut depth) = (Outline::default(), 0, 0);
         let (mut unescaped, mut required) = (Vec::new(), Vec::new());
         loop {
@@ -589,7 +620,7 @@ impl Outline {
                 Next::Block { start, brace } => (start, brace),
             };
             let prelude = &source[start..brace];
-            let name = (prelude[0] == b'@').then(|| scan::at_keyword(prelude));
+            let name = prelude.starts_with(b"@").then(|| scan::at_keyword(prelude));
             if name.is_some_and(|name| {
                 ["media", "supports", "layer", "container", "starting-style"]
                     .iter()
@@ -604,6 +635,7 @@ impl Outline {
             let (end, has_blocks) = scan::end_of_block(source, brace);
             at = (end + 1).min(source.len());
             let range = [start, brace, end].map(|it| it as u32);
+            let defers = !is_quirky || is_lowercase_without_ids(prelude);
             match defers
                 && name.is_none()
                 && !has_blocks
@@ -653,6 +685,13 @@ impl Outline {
     }
 }
 
+fn is_lowercase_without_ids(selectors: &[u8]) -> bool {
+    let next = selectors.iter().skip(1).chain(b" ");
+    selectors.iter().zip(next).all(|(it, next)| {
+        !it.is_ascii_uppercase() && *it != b'#' && !(*it == b'\\' && next.is_ascii_hexdigit())
+    })
+}
+
 /// The source of a sheet that another thread scans.
 pub(crate) struct Prepared {
     source: Source,
@@ -685,7 +724,7 @@ impl Prepared {
         Prepared {
             source,
             thread: thread
-                .spawn(move || crate::recovery::attempt(|| Outline::new(bytes, true)))
+                .spawn(move || crate::recovery::attempt(|| Outline::new(bytes, false)))
                 .ok(),
         }
     }
@@ -776,7 +815,7 @@ impl Sheet {
         } = prepared
             .join()
             .filter(|_| within != Within::Quirks)
-            .unwrap_or_else(|| Outline::new(&source, within != Within::Quirks));
+            .unwrap_or_else(|| Outline::new(&source, within == Within::Quirks));
         let sheet = Sheet {
             source: source.clone(),
             base_url: base_url.into(),
@@ -887,8 +926,10 @@ impl Sheet {
                 AtKind::FontPaletteValues => {
                     Defined::Descriptors(descriptors("font-palette-values", body).into())
                 }
+                AtKind::ViewTransition => {
+                    Defined::Descriptors(descriptors("view-transition", body).into())
+                }
                 AtKind::FontFeatureValues => Defined::FeatureValues(feature_values(body).into()),
-                _ => Defined::Invalid,
             })
         };
         rule.defined
@@ -967,9 +1008,34 @@ impl Sheet {
             json.extend_from_slice(b"},");
         }
         json.extend_from_slice(b"null]");
+        let mut offers = [[100.0; 2], [0.0; 2], [400.0; 2]];
         for (name, value) in all.iter().filter(|it| &*it.0 != "src") {
             let computed = definition(&format!("@font-face/{name}"))
                 .and_then(|it| it.write(value.as_bytes(), Mode::Computed(&cx)));
+            if let (Some(index), Some(value)) = (
+                ["font-stretch", "font-style", "font-weight"]
+                    .iter()
+                    .position(|it| *it == &**name),
+                &computed,
+            ) {
+                let number = |it: &str| {
+                    if it == "bold" {
+                        Some(700.0)
+                    } else {
+                        it.trim_end_matches(['%', 'd', 'e', 'g'])
+                            .parse::<f32>()
+                            .ok()
+                    }
+                };
+                let mut numbers = text(value).split(' ').filter_map(number);
+                match (numbers.next(), numbers.next()) {
+                    (Some(a), b) => offers[index] = [a.min(b.unwrap_or(a)), a.max(b.unwrap_or(a))],
+                    _ if matches!(&**value, b"italic" | b"oblique") => {
+                        offers[index] = [FontFace::ITALIC; 2]
+                    }
+                    _ => {}
+                }
+            }
             json.extend(format!(",\"{name}\":").bytes());
             crate::json_string(
                 if &**name == "font-family" {
@@ -981,19 +1047,10 @@ impl Sheet {
             );
         }
         json.push(b'}');
-        let weight = with_parser(get("font-weight").unwrap_or_default(), |p| {
-            match (keyword(p, "bold"), number(p, &cx), number(p, &cx)) {
-                (true, ..) => [700.0; 2],
-                (_, Some(a), b) => [a.min(b.unwrap_or(a)), a.max(b.unwrap_or(a))],
-                _ => [400.0; 2],
-            }
-        });
-        let is_italic = get("font-style").is_some_and(|it| !matches!(it, b"normal" | b"auto"));
         Some(FontFace {
             family: text(&family).into(),
             json: text(&json).into(),
-            weight,
-            is_italic,
+            offers,
         })
     }
 }

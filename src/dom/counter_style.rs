@@ -172,6 +172,8 @@ impl CounterStyle {
             Vec::new(),
         );
         match self.system {
+            System::Alphabetic | System::Numeric if count < 2 => return None,
+            System::Cyclic | System::Symbolic if count == 0 => return None,
             System::Cyclic => all.push((i64::from(value) - 1).rem_euclid(count as i64) as usize),
             System::Fixed => all.push(
                 usize::try_from(i64::from(value) - i64::from(self.first))
@@ -189,7 +191,9 @@ impl CounterStyle {
                     rest = (rest - 1) / count;
                 }
             }
-            System::Additive if rest == 0 => all.push(self.weights.iter().position(|it| *it == 0)?),
+            System::Additive if rest == 0 => {
+                all.push(self.weights.iter().position(|weight| *weight == 0i32)?)
+            }
             System::Additive => {
                 for (index, weight) in self
                     .weights
@@ -206,21 +210,33 @@ impl CounterStyle {
                 }
                 (rest == 0).then_some(())?;
             }
-            System::Chinese if rest > 9999 => return None,
             System::Chinese if rest > 0 => {
-                for (place, unit) in [(3, 1000), (2, 100), (1, 10), (0, 1)] {
-                    match rest / unit % 10 {
-                        0 if rest % unit == 0 || all.last().is_none_or(|it| *it == 0) => {}
-                        1 if self.first == 0 && (10..20).contains(&rest) && place == 1 => {
-                            all.push(10)
+                let (is_informal, is_korean) = (self.first & 1 == 0, self.first & 2 != 0);
+                for (index, group) in [
+                    (2, rest / 100_000_000),
+                    (1, rest / 10_000 % 10_000),
+                    (0, rest % 10_000),
+                ] {
+                    all.extend((is_korean && group > 0 && !all.is_empty()).then_some(15));
+                    for (place, unit) in [(3, 1000), (2, 100), (1, 10), (0, 1)] {
+                        match group / unit % 10 {
+                            0 if is_korean
+                                || group > 0 && group % unit == 0
+                                || all.last().is_none_or(|it| *it == 0) => {}
+                            1 if is_informal && place > 0 && (is_korean || group < 20) => {
+                                all.push(9 + place)
+                            }
+                            1 if is_informal && is_korean && index > 0 => {}
+                            digit => all.extend(
+                                [digit]
+                                    .into_iter()
+                                    .chain((digit > 0 && place > 0).then_some(9 + place)),
+                            ),
                         }
-                        digit => all.extend(
-                            [digit]
-                                .into_iter()
-                                .chain((digit > 0 && place > 0).then_some(9 + place)),
-                        ),
                     }
+                    all.extend((group > 0 && index > 0).then_some(12 + index));
                 }
+                all.pop_if(|it| *it == 0);
             }
             System::Ethiopic if rest == 1 => all.push(0),
             System::Ethiopic => {
@@ -331,9 +347,13 @@ fn predefined(name: &str) -> Option<Rc<CounterStyle>> {
     let Defined::CounterStyle(mut style) = found? else {
         return None;
     };
-    if name.as_bytes().get(4..13) == Some(b"-chinese-") {
+    let is_korean = name.starts_with("korean-");
+    if is_korean || name.as_bytes().get(4..13) == Some(b"-chinese-") {
         let style = Rc::make_mut(&mut style);
-        (style.system, style.first) = (System::Chinese, (!name.ends_with("informal")).into());
+        (style.system, style.first) = (
+            System::Chinese,
+            i32::from(!name.ends_with("informal")) | i32::from(is_korean) << 1,
+        );
     } else if name == "ethiopic-numeric" {
         Rc::make_mut(&mut style).system = System::Ethiopic;
     }

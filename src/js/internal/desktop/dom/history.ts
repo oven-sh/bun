@@ -1123,13 +1123,19 @@ for (const ctor of [NavigateEvent, Navigation, NavigationCurrentEntryChangeEvent
 }
 
 /** `to` is undefined if the next document is of another origin. */
-function willSwap(page: Page, navigationType: string, to?: Entry) {
+function willSwap(page: Page, navigationType: string, to?: Entry): number {
+  const fire = (viewTransition: object | null) => firePageSwap(page, navigationType, to, viewTransition);
+  if (to === undefined || navigationType === "reload") return (fire(null), 0);
+  return require("internal/desktop/dom/view_transition").swap(page, page.canvasColor(), fire);
+}
+
+function firePageSwap(page: Page, navigationType: string, to: Entry | undefined, viewTransition: object | null) {
   if (!events.hasListeners(page.target, "pageswap")) return;
   const entry = to && (page.entries.find(it => it.id === to.id) ?? createEntry(to.url, { ...to, isOfDocument: false }));
   const activation =
     entry &&
     createActivation({ from: wrapEntry(page, currentOf(page)), entry: wrapEntry(page, entry), navigationType });
-  events.dispatch(page.target, new events.PageSwapEvent("pageswap", { activation }));
+  events.dispatch(page.target, new events.PageSwapEvent("pageswap", { activation, viewTransition }));
 }
 
 /** `isRemoved`: its frame is gone. */

@@ -422,7 +422,7 @@ class Page {
       return;
     if (!this.hasPainted || this.isDisposed || this.wasResized || !this.doc.scheduled) return;
     const engine = sync(this.doc);
-    engine.setTime(now);
+    engine.setTime(now - this.timeOrigin);
     engine.updateLayout();
     if (deliversResizes) {
       for (let depth = 0; (depth = observers.deliverResizes(this, depth)) !== Infinity && depth >= 0;)
@@ -441,6 +441,10 @@ class Page {
 
   isAwaited() {
     return this.frameCallbacks.size > 0 || this.doc.needsSync || (this.doc.engine.pending() & 8) !== 0;
+  }
+
+  canvasColor(): number {
+    return this.environment.transparent ? 0 : this.background || 0xffffffff;
   }
 
   render() {
@@ -623,6 +627,7 @@ class Page {
 
   loadHtml(source: string) {
     core.replaceAll(null, this.doc.node);
+    this.#remember(source);
     const parser = documents.startParser(this.doc);
     parser.ended = true;
     parser.write(source);
@@ -635,9 +640,31 @@ class Page {
     doc.isHtml = false;
     doc.engine.setState(doc.node.id, 3, true);
     doc.contentType = contentType;
+    this.#remember(source, contentType);
     const parser = documents.startParser(doc);
     parser.startXml(source);
     parser.run();
+  }
+
+  #source = "";
+  #xmlType: string | undefined;
+  #inlineScripts: Set<string> | undefined;
+
+  #remember(source: string, xmlType?: string) {
+    this.#source = this.host.needsSource?.() === false ? "" : source;
+    this.#xmlType = xmlType;
+    this.#inlineScripts = undefined;
+  }
+
+  forgetSource() {
+    this.#source = "";
+  }
+
+  /** Whether it was in the markup that was loaded, as opposed to put into the document since. */
+  cameWith(script: string) {
+    this.#inlineScripts ??= documents.inlineScriptsOf(this.#source, this.#xmlType) as Set<string>;
+    this.#source = "";
+    return this.#inlineScripts.$has(script);
   }
 
   reached(milestone: string, time = performance.now()) {
@@ -661,7 +688,7 @@ class Page {
         loader.takeRequests(this);
         if (this.loadDelays > 0) return;
       }
-      this.doc.engine.controlSmil(0, 9, performance.now());
+      this.doc.engine.controlSmil(0, 9, performance.now() - this.timeOrigin);
       this.doc.engine.controlSmil(0, 0, 0);
       for (const node of core.filterDescendants(this.doc.node, awaitsSvgLoad)) events.fire(node, "load");
       if (this.host.restoresScroll?.()) this.history().restoreScroll(this);
@@ -1011,15 +1038,21 @@ function updateRendering(page: Page) {
   page.isInFrame = doc.scheduled = true;
   page.needsAnotherFrame = false;
   try {
-    sync(doc).setTime(time);
-    if (!page.isRevealed) {
+    sync(doc).setTime(time - page.timeOrigin);
+    if (!page.isRevealed && core.documentElement(doc) !== null) {
       page.isRevealed = true;
-      if (events.hasListeners(page.target, "pagereveal"))
-        events.dispatch(page.target, new events.PageRevealEvent("pagereveal"));
+      const ticket = page.host.inboundTransition?.() | 0;
+      const fire = (viewTransition: object | null) =>
+        void (
+          events.hasListeners(page.target, "pagereveal") &&
+          events.dispatch(page.target, new events.PageRevealEvent("pagereveal", { viewTransition }))
+        );
+      if (ticket === 0) fire(null);
+      else require("internal/desktop/dom/view_transition").reveal(page, ticket, fire);
     }
     const lists = doc.cachedLists;
     if (lists.length > 0) doc.cachedLists = lists.filter(forget => !forget(lists.length > 256));
-    if (page.earlyCallbacks.length > 0) runEarlyCallbacks(page, time);
+    if (page.earlyCallbacks.length > 0) runEarlyCallbacks(page, time - page.timeOrigin);
     if (page.autofocusCandidates.length > 0) focusing.autofocus(page);
     if (page.wasResized) {
       page.wasResized = false;
@@ -1037,7 +1070,7 @@ function updateRendering(page: Page) {
     }
     animation.dispatchEvents(page);
     if (page.fullscreenEvents !== null) interactive.fireFullscreenEvents(page);
-    if (page.frameCallbacks.size > 0) runFrameCallbacks(page, time);
+    if (page.frameCallbacks.size > 0) runFrameCallbacks(page, time - page.timeOrigin);
 
     let version = sync(doc).updateLayout();
     if (page.hasNewObservations || (version !== page.layoutVersion && engine.sizesVersion() !== page.sizesVersion)) {
@@ -1071,7 +1104,7 @@ function updateRendering(page: Page) {
       showSelection(page);
       updateBackground(page);
       if (page.transition !== null) {
-        page.transition.perform(page.environment.transparent ? 0 : page.background || 0xffffffff);
+        page.transition.perform(page.canvasColor());
         page.needsAnotherFrame = true;
       }
       engine.paint(page.surface);

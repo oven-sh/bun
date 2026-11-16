@@ -248,6 +248,8 @@ function open(file: string) {
   return sql;
 }
 
+const hashOf = (origin: string) => Bun.CryptoHasher.hash("sha256", origin, "hex").slice(0, 32);
+
 class Storage {
   #directory: string | null;
   #sql: any;
@@ -326,10 +328,14 @@ class Storage {
     return require("internal/desktop/web/origin_files").caches(this.sql, origin);
   }
 
+  #fileSystems() {
+    return (this.#files ??=
+      this.#directory === null ? temporaryDirectory() : path.join(this.#directory, "File System"));
+  }
+
   /** Of the origin private file system. */
   directoryOf(origin: string) {
-    this.#files ??= this.#directory === null ? temporaryDirectory() : path.join(this.#directory, "File System");
-    const directory = path.join(this.#files, Bun.CryptoHasher.hash("sha256", origin, "hex").slice(0, 32));
+    const directory = path.join(this.#fileSystems(), hashOf(origin));
     fs.mkdirSync(directory, { recursive: true, mode: 0o700 });
     return directory;
   }
@@ -349,6 +355,23 @@ class Storage {
       if (matches(origin)) this.localStorage(origin).clear();
     }
     this.flush();
+  }
+
+  clearCaches(matches: (origin: string) => boolean) {
+    for (const [id, origin] of this.sql.query("SELECT id, origin FROM caches").values()) {
+      if (!matches(origin)) continue;
+      this.sql.run("DELETE FROM cache_entries WHERE cache = ?", [id]);
+      this.sql.run("DELETE FROM caches WHERE id = ?", [id]);
+    }
+  }
+
+  clearFiles(origins: string[], areKept: boolean) {
+    const [all, listed] = [this.#fileSystems(), origins.map(hashOf)];
+    for (const name of fs.existsSync(all) ? fs.readdirSync(all) : []) {
+      if (listed.includes(name) === areKept) continue;
+      for (const entry of fs.readdirSync(path.join(all, name)))
+        fs.rmSync(path.join(all, name, entry), { recursive: true, force: true });
+    }
   }
 
   clearIndexedDB(matches: (origin: string) => boolean) {

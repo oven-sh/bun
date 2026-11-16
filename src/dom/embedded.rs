@@ -20,6 +20,8 @@ use crate::values::{Ctx, Lp, Size, Str, text};
 
 /// In the id of an image that the library does not know.
 const VECTOR: u32 = 1 << 31;
+use crate::recovery::attempt;
+
 const MAX_NESTING: u32 = 8;
 
 #[derive(Clone, Copy, PartialEq)]
@@ -51,9 +53,10 @@ pub(crate) fn is_vector(image: u32) -> bool {
     image & VECTOR != 0
 }
 
+/// One that has panicked stays borrowed, and so shows nothing from then on.
 fn with_vector<R>(id: u32, visit: impl FnOnce(&mut Vector) -> R) -> Option<R> {
     let vector = VECTORS.with(|it| it.borrow().get(&id).cloned())?;
-    Some(visit(&mut *vector.try_borrow_mut().ok()?))
+    attempt(move || Some(visit(&mut *vector.try_borrow_mut().ok()?))).flatten()
 }
 
 struct Builder<'a> {
@@ -167,7 +170,7 @@ impl<'a> Builder<'a> {
         {
             let url = document.resolve_url(source);
             let image = document.image(&url).unwrap_or_default();
-            document.generated_images.insert(id, url);
+            document.generated_images.insert(id, (url, 1.0));
             document.set_replaced(id, Some(image));
         }
         Some(())
@@ -209,9 +212,12 @@ fn parse(
         ],
         sheets: Vec::new(),
     };
-    builder.add(&root, DOCUMENT, 0)?;
-    builder.document.set_sheets(DOCUMENT, &builder.sheets);
-    Some((builder.document, builder.sheets))
+    let root = &root;
+    attempt(move || {
+        builder.add(root, DOCUMENT, 0)?;
+        builder.document.set_sheets(DOCUMENT, &builder.sheets);
+        Some((builder.document, builder.sheets))
+    })?
 }
 
 impl Vector {
@@ -259,7 +265,6 @@ impl Vector {
         document.update_style();
         document.start_pending_animations();
         document.update_picture();
-        crate::layout::set_scale_of_units(environment.scale);
         let picture = Rc::new(document.pictures.lend()?);
         self.is_animated = document.next_wake(false).is_finite();
         self.document = self.is_animated.then_some(document);
@@ -282,7 +287,7 @@ pub(crate) fn create_vector(source: &[u8], url: &[u8], font_scope: u32) -> (u32,
         start: None,
         pictures: Vec::new(),
     };
-    let Some(document) = vector.open() else {
+    let Some(document) = attempt(|| vector.open()).flatten() else {
         return (0, Replaced::default());
     };
     let (id, natural) = (LAST_ID.get() + 1, document.natural);
@@ -343,10 +348,9 @@ impl Document {
             },
             &self.environment,
         );
-        let (Some(picture), Some(renderer)) = (
-            with_vector(id, |it| it.picture(key, environment)).flatten(),
-            crate::platform::renderer(),
-        ) else {
+        let picture = with_vector(id, |it| it.picture(key, environment)).flatten();
+        crate::layout::set_scale_of_units(environment.scale);
+        let (Some(picture), Some(renderer)) = (picture, crate::platform::renderer()) else {
             return 0;
         };
         // SAFETY: the picture outlives the call.
@@ -569,6 +573,7 @@ impl Painter<'_> {
         })
         .flatten();
         NESTING.set(NESTING.get() - 1);
+        crate::layout::set_scale_of_units(document.environment.scale);
         let Some((picture, is_animated)) = painted.filter(|_| !self.is_hidden) else {
             return;
         };

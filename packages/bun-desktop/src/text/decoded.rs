@@ -3,11 +3,12 @@
 use std::fs::{self, File};
 use std::hash::{Hash as _, Hasher as _};
 use std::io::Write as _;
-use std::path::Path;
+use std::os::fd::AsRawFd as _;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use parking_lot::Mutex;
-use rustc_hash::{FxHashMap, FxHasher};
+use crate::hash::{FastHasher, FastMap};
+use crate::sync::Mutex;
 use skrifa::FontRef;
 
 use super::woff;
@@ -20,13 +21,33 @@ struct Decoded {
 
 type Slot = Arc<Mutex<Vec<Decoded>>>;
 
-static BY_HASH: Mutex<Option<FxHashMap<u64, Slot>>> = Mutex::new(None);
+static BY_HASH: Mutex<Option<FastMap<u64, Slot>>> = Mutex::new(None);
 
 pub fn map(path: &Path) -> Option<&'static [u8]> {
-    // SAFETY: fonts are replaced, not written to.
-    Some(Box::leak(Box::new(
-        unsafe { memmap2::Mmap::map(&File::open(path).ok()?) }.ok()?,
-    )))
+    let file = File::open(path).ok()?;
+    let len = file.metadata().ok()?.len().try_into().ok()?;
+    // SAFETY: it is never unmapped, and fonts are replaced, not written to.
+    unsafe {
+        let start = libc::mmap(
+            std::ptr::null_mut(),
+            len,
+            libc::PROT_READ,
+            libc::MAP_SHARED,
+            file.as_raw_fd(),
+            0,
+        );
+        (start != libc::MAP_FAILED).then(|| std::slice::from_raw_parts(start.cast(), len))
+    }
+}
+
+fn cache_directory() -> Option<PathBuf> {
+    if cfg!(target_os = "macos") {
+        return Some(std::env::home_dir()?.join("Library/Caches"));
+    }
+    let chosen = std::env::var_os("XDG_CACHE_HOME")
+        .map(PathBuf::from)
+        .filter(|it| it.is_absolute());
+    chosen.or_else(|| Some(std::env::home_dir()?.join(".cache")))
 }
 
 /// The file has the original, and then what it decodes to.
@@ -66,7 +87,7 @@ fn write(path: &Path, original: &[u8], data: &[u8]) -> std::io::Result<()> {
 /// Equal bytes have the same result.
 pub fn decode(original: Vec<u8>, may_be_slow: bool) -> Option<&'static [u8]> {
     const WORTH_STORING: usize = 16 << 10;
-    let mut hasher = FxHasher::default();
+    let mut hasher = FastHasher::default();
     original.hash(&mut hasher);
     let hash = hasher.finish();
     let slot = BY_HASH
@@ -87,7 +108,7 @@ pub fn decode(original: Vec<u8>, may_be_slow: bool) -> Option<&'static [u8]> {
         return Some(known.data);
     }
     let decoded = if woff::is_compressed(&original) {
-        let directory = dirs::cache_dir().filter(|_| original.len() >= WORTH_STORING);
+        let directory = cache_directory().filter(|_| original.len() >= WORTH_STORING);
         let path = directory.map(|it| it.join(format!("bun/desktop-fonts-1/{hash:016x}")));
         match path.as_ref().and_then(|path| read(path, &original)) {
             Some(decoded) => decoded,

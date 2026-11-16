@@ -374,6 +374,23 @@ describe.skipIf(!hasLibrary).concurrent("bun:desktop/electron", () => {
     ).toEqual([[{ n: 1 }, { n: 2 }, { n: 3 }]]);
   });
 
+  test("location.reload() can be prevented", async () => {
+    expect(
+      await run(
+        `serve({ "/": "" });
+         const page = await open();
+         page.once("will-navigate", event => event.preventDefault());
+         const asked = once(page, "will-navigate");
+         await page.executeJavaScript("globalThis.kept = 1; location.reload()");
+         await asked;
+         print([page.isLoading(), await page.executeJavaScript("globalThis.kept")]);
+         page.executeJavaScript("location.reload()");
+         await once(page, "did-finish-load");
+         print(await page.executeJavaScript("typeof kept"));`,
+      ),
+    ).toEqual([[false, 1], "undefined"]);
+  });
+
   test("message ports reach pages and utility processes", async () => {
     expect(
       await run(
@@ -403,6 +420,35 @@ describe.skipIf(!hasLibrary).concurrent("bun:desktop/electron", () => {
         },
       ),
     ).toEqual([["utility", "argument"], 21]);
+  });
+
+  test("net.fetch of a utility process", async () => {
+    expect(
+      await run(
+        `const { tls } = require("./tls.json");
+         electron.app.commandLine.appendSwitch("ignore-certificate-errors");
+         const server = Bun.serve({
+           port: 0,
+           tls,
+           fetch: request => (request.url.endsWith("/away") ? Response.redirect("/") : request.text().then(text => new Response(text))),
+         });
+         const child = electron.utilityProcess.fork(path.join(__dirname, "utility.js"), [server.url.href]);
+         print((await once(child, "message"))[0]);
+         child.kill();
+         await once(child, "exit");
+         server.stop(true);`,
+        {
+          "tls.json": JSON.stringify({ tls }),
+          "utility.js": `
+            const { net } = require("electron");
+            const url = process.argv.at(-1);
+            Promise.all([
+              net.fetch(url, { method: "POST", body: "body" }).then(response => response.text()),
+              net.fetch(url + "away", { redirect: "error" }).catch(error => error.message),
+            ]).then(results => process.parentPort.postMessage(results));`,
+        },
+      ),
+    ).toEqual([["body", "Attempted to redirect, but redirect policy was 'error'"]]);
   });
 
   test("modules, import maps and uncaught errors", async () => {
@@ -602,7 +648,19 @@ describe.skipIf(!hasLibrary).concurrent("bun:desktop/electron", () => {
         [],
         isLinux ? { SSL_CERT_FILE: "authority.pem" } : { NODE_EXTRA_CA_CERTS: "authority.pem" },
       ),
-    ).toEqual([["ok", "ok", 1], ["localhost", "-----BEGIN CERTIFICATE-----", !isLinux], "net::ERR_FAILED"]);
+    ).toEqual([["ok", "ok", 1], ["localhost", "-----BEGIN CERTIFICATE-----", false], "net::ERR_FAILED"]);
+  });
+
+  test("frames, timelines and performance.now() share the origin of the document", async () => {
+    expect(
+      await run(`
+        serve({ "/": "<p>a" });
+        const page = await open();
+        print(await page.executeJavaScript(\`new Promise(resolve => {
+          const before = performance.now();
+          requestAnimationFrame(time => resolve([before <= time + 1, time <= performance.now() + 1, document.timeline.currentTime - time < 1]));
+        })\`));`),
+    ).toEqual([[true, true, true]]);
   });
 
   test("storage outlives the document", async () => {
@@ -775,8 +833,9 @@ describe.skipIf(!hasLibrary).concurrent("bun:desktop/electron", () => {
         const page = view.webContents;
         await page.loadURL("app://trusted/");
         print(await page.executeJavaScript("[innerWidth, innerHeight]"));
+        const scale = await page.executeJavaScript("devicePixelRatio");
         page.setZoomFactor(2);
-        print(await page.executeJavaScript("[innerWidth, innerHeight, devicePixelRatio]"));
+        print(await page.executeJavaScript("[innerWidth, innerHeight, devicePixelRatio / " + scale + "]"));
         page.on("before-input-event", (event, input) => input.key === "b" && event.preventDefault());
         page.focus();
         await page.executeJavaScript("typed = []; onkeydown = event => typed.push(event.key); document.querySelector('input').focus()");
@@ -784,7 +843,7 @@ describe.skipIf(!hasLibrary).concurrent("bun:desktop/electron", () => {
         page.sendInputEvent({ type: "char", keyCode: "a" });
         print(await page.executeJavaScript("[typed, document.activeElement.value]"));
         const image = await page.capturePage({ x: 190, y: 90, width: 2, height: 1 });
-        print([image.getSize(), [...image.toBitmap()]]);
+        print([Object.values(image.getSize()).map(it => it / scale), [...image.toBitmap().subarray(0, 8)]]);
         page.findInPage("nothing");
         print((await once(page, "found-in-page"))[1].matches);
         page.close();
@@ -793,7 +852,10 @@ describe.skipIf(!hasLibrary).concurrent("bun:desktop/electron", () => {
       [200, 100],
       [100, 50, 2],
       [["a"], "a"],
-      [{ width: 2, height: 1 }, [0, 0, 255, 255, 0, 0, 255, 255]],
+      [
+        [2, 1],
+        [0, 0, 255, 255, 0, 0, 255, 255],
+      ],
       0,
       [true, 0],
     ]);

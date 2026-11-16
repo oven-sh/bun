@@ -23,11 +23,12 @@ use bun_paths::WPathBuffer;
 use bun_paths::strings;
 use bun_paths::{self as paths, DELIMITER, MAX_PATH_BYTES, PathBuffer, SEP};
 use bun_resolver::package_json::PackageJSON;
-use bun_sys::{self as sys, Fd, FdExt as _};
+use bun_sys::{self as sys, Fd};
 use bun_which::which;
 
 use crate::cli;
 use crate::cli::arguments;
+use crate::cli::cli_arena;
 use crate::cli::command::{ContextData, Tag as CommandTag};
 use crate::cli::shell_completions::ShellCompletions;
 
@@ -48,14 +49,6 @@ macro_rules! path_literal {
             $posix
         }
     }};
-}
-
-/// Process-lifetime arena for the runner's `Transpiler`; threads an
-/// `&'static Arena` per PORTING.md §AST crates. Route through the shared
-/// `cli::cli_arena()` (a `LazyLock` — `MimallocArena` is `Sync`).
-#[inline]
-fn runner_arena() -> &'static bun_alloc::Arena {
-    crate::cli::cli_arena()
 }
 
 // Passthrough-arg shell escaping. The escape tables + helpers are the lower-tier
@@ -436,7 +429,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
 
         // TODO: remember to free this when we add --filter or --concurrent
         // in the meantime we don't need to free it.
-        let envp = env.map.create_null_delimited_env_map()?;
+        let envp = env.map.to_envp();
 
         #[cfg(windows)]
         bun_spawn::ctrl_c::install();
@@ -632,7 +625,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         let env_is_none = env.is_none();
         // Process-lifetime arena singleton for the runner's transpiler;
         // threads an `&'static Arena` per PORTING.md §AST crates.
-        let arena: &'static bun_alloc::Arena = runner_arena();
+        let arena: &'static bun_alloc::Arena = cli_arena();
         let this_transpiler = this_transpiler.insert(Transpiler::init(arena, ctx.log, args, env)?);
         this_transpiler.options.env.behavior = api::DotEnvBehavior::LoadAll;
         let env_loader = this_transpiler.env_mut();
@@ -923,7 +916,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         let mut args = ctx.args.clone();
         args.write = Some(false);
         args.target = Some(api::Target::Bun);
-        let mut bundle = Transpiler::init(runner_arena(), ctx.log, args, None)?;
+        let mut bundle = Transpiler::init(cli_arena(), ctx.log, args, None)?;
         bundle.run_env_loader(bundle.options.env.disable_default_env_files)?;
 
         let mini = bun_event_loop::MiniEventLoop::init_global(
@@ -1091,10 +1084,9 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
                 period = bstr::BStr::new(&escaped_period),
             );
             // process-lifetime (runner never returns) — store both
-            // the script bytes and the synthetic entry path in the runner arena
+            // the script bytes and the synthetic entry path in `cli_arena()`
             // so the `Source` stored in the VM can backref into them.
-            let cron_script: &'static [u8] =
-                runner_arena().alloc_slice_copy(cron_script.as_bytes());
+            let cron_script: &'static [u8] = cli_arena().alloc_slice_copy(cron_script.as_bytes());
 
             // entry_path must end with /[eval] for the transpiler to use eval_source
             let mut cwd_buf = bun_paths::path_buffer_pool::get();
@@ -1103,7 +1095,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
             let mut eval_path: Vec<u8> = Vec::with_capacity(cwd_bytes.len() + EVAL_TRIGGER.len());
             eval_path.extend_from_slice(cwd_bytes);
             eval_path.extend_from_slice(EVAL_TRIGGER);
-            let heap_entry: &'static [u8] = runner_arena().alloc_slice_copy(&eval_path);
+            let heap_entry: &'static [u8] = cli_arena().alloc_slice_copy(&eval_path);
 
             let source = bun_ast::Source::init_path_string(heap_entry, cron_script);
             let _ = vm.module_loader.eval_source.set(Box::new(source));
@@ -1347,7 +1339,7 @@ pub(crate) struct Run<'a> {
     vm: &'a VirtualMachine,
     /// `vm.main` already points into these bytes; `'static` because the hot
     /// reloader stores them too (`boot` leaks the `Box<[u8]>`, cron mode uses
-    /// the runner arena). `None` for `bun bake`, which has no entry module.
+    /// `cli_arena()`). `None` for `bun bake`, which has no entry module.
     entry_path: Option<&'static [u8]>,
     /// `--check` under `--watch`: what to type check before the program runs. With errors the
     /// program is not run, and the process waits for a change.
@@ -1438,13 +1430,12 @@ impl Run<'_> {
                     let Some(redis) = bun_object.get(global, "redis")? else {
                         return Ok(());
                     };
-                    let Some(client) = redis.as_::<crate::valkey_jsc::js_valkey::JSValkeyClient>()
+                    let Some(client) =
+                        redis.as_class_ref::<crate::valkey_jsc::js_valkey::JSValkeyClient>()
                     else {
                         return Ok(());
                     };
-                    // SAFETY: `as_` returns a live payload pointer owned by the JS
-                    // wrapper; accessed here under the API lock.
-                    unsafe { &*client }.do_connect(global, redis)?;
+                    client.do_connect(global, redis)?;
                     Ok(())
                 })
             };
@@ -1487,14 +1478,7 @@ impl Run<'_> {
         match ctx.debug.hot_reload {
             cli::command::HotReload::Hot => {
                 bun_removable_features::removable_body!(HotReload, Abort, {
-                    // SAFETY: `vm` is the boxed-and-leaked main-thread VM
-                    // (process-lifetime); it outlives the leaked reloader.
-                    unsafe {
-                        bun_jsc::hot_reloader::HotReloader::enable_hot_module_reloading(
-                            std::ptr::from_ref(vm).cast_mut(),
-                            entry,
-                        )
-                    }
+                    bun_jsc::hot_reloader::enable_hot_module_reloading(vm, entry, None);
                     // `bun bake` (no entry module) starts again when `bake.config.ts` changes: the kill signal's JS handlers run first, as in watch mode.
                     if entry.is_none() {
                         bun_jsc::posix_signal_handle::set_watch_kill_signal(
@@ -1505,14 +1489,7 @@ impl Run<'_> {
             }
             cli::command::HotReload::Watch => {
                 bun_removable_features::removable_body!(HotReload, Abort, {
-                    // SAFETY: `vm` is the boxed-and-leaked main-thread VM
-                    // (process-lifetime); it outlives the leaked reloader.
-                    unsafe {
-                        bun_jsc::hot_reloader::WatchReloader::enable_hot_module_reloading(
-                            std::ptr::from_ref(vm).cast_mut(),
-                            entry,
-                        )
-                    }
+                    bun_jsc::hot_reloader::enable_hot_module_reloading(vm, entry, None);
                     bun_jsc::posix_signal_handle::enable_watch_mode_signals(
                         ctx.debug.watch_kill_signal,
                     );
@@ -1876,10 +1853,9 @@ impl RunCommand {
             target_path_buffer[total] = 0;
 
             // Park the
-            // bytes in the per-process `runner_arena()` instead of leaking
+            // bytes in the per-process `cli_arena()` instead of leaking
             // (PORTING.md §Forbidden bars per-call leaks).
-            let stored: &'static [u8] =
-                runner_arena().alloc_slice_copy(&target_path_buffer[..=total]);
+            let stored: &'static [u8] = cli_arena().alloc_slice_copy(&target_path_buffer[..=total]);
             // SAFETY: `stored[total] == 0` (written above before the copy);
             // arena-backed slice lives for process lifetime.
             Ok(ZStr::from_buf(&stored[..], total))
@@ -2103,8 +2079,8 @@ impl RunCommand {
         if bun_core::FeatureFlags::WINDOWS_BUNX_FAST_PATH && executable.ends_with(b".exe") {
             debug_assert!(paths::is_absolute(executable));
 
-            let buf = &mut *bun_paths::w_path_buffer_pool::get();
-            let w = strings::to_nt_path(buf, executable);
+            let mut buf = bun_paths::w_path_buffer_pool::get();
+            let w = strings::to_nt_path(&mut buf, executable);
             let w_len = w.len();
             debug_assert!(w_len > sys::windows::NT_OBJECT_PREFIX.len() + b".exe".len());
             let new_len = w_len + b".bunx".len() - b".exe".len();
@@ -2112,7 +2088,7 @@ impl RunCommand {
             buf[new_len - bunx.len()..new_len].copy_from_slice(bunx);
             buf[new_len] = 0;
 
-            BunXFastPath::try_launch(ctx, buf, new_len, env, passthrough);
+            BunXFastPath::try_launch(ctx, &mut buf, new_len, env, passthrough);
         }
 
         Self::run_binary_without_bunx_path(
@@ -2174,7 +2150,7 @@ impl RunCommand {
 
         // TODO: remember to free this when we add --filter or --concurrent
         // in the meantime we don't need to free it.
-        let envp = env.map.create_null_delimited_env_map()?;
+        let envp = env.map.to_envp();
 
         // POSIX forwards signals inside `sync::spawn`; on Windows the child shares
         // our console and gets Ctrl+C itself, we just have to outlive it.
@@ -2429,7 +2405,7 @@ impl RunCommand {
         // otherwise faulted in for a plain `bun run <script>`).
         let (this_transpiler, root_dir_info) = Self::configure_env_for_run_without_linker(
             ctx,
-            runner_arena().alloc(None),
+            cli_arena().alloc(None),
             None,
             ConfigureEnvOptions {
                 log_errors,
@@ -2679,7 +2655,7 @@ impl RunCommand {
             && !ctx.runtime_options.check
             && !crate::cli::run_compiled::is_requested(ctx)
         {
-            let buf = &mut *bun_paths::w_path_buffer_pool::get();
+            let mut buf = bun_paths::w_path_buffer_pool::get();
             // NT object-manager prefix (`\??\`), NOT the Win32 long-path
             // `\\?\` — `try_launch` hands this to NtCreateFile.
             let root = bun_core::w!("\\??\\");
@@ -2707,7 +2683,7 @@ impl RunCommand {
                 buf[ptr] = 0;
 
                 let passthrough: Vec<Box<[u8]>> = ctx.passthrough.clone();
-                BunXFastPath::try_launch(ctx, buf, ptr, env_loader, &passthrough);
+                BunXFastPath::try_launch(ctx, &mut buf, ptr, env_loader, &passthrough);
             }
         }
 
@@ -2953,49 +2929,30 @@ impl RunCommand {
         // `script_name_buf[..open_len]` is init.
         let open_z = bun_core::ZStr::from_buf(&script_name_buf[..], open_len);
 
-        // Open read-only.
-        let Ok(fd) = bun_sys::open(open_z, bun_sys::O::RDONLY, 0) else {
-            return false;
-        };
-        // `.makeLibUVOwnedForSyscall(.open, .close_on_fail)` — hands the
-        // HANDLE off to libuv ownership on Windows; pass-through on POSIX.
-        let Ok(fd) = fd.make_lib_uv_owned_for_syscall(sys::Tag::open, sys::ErrorCase::CloseOnFail)
-        else {
-            return false;
-        };
-
-        // fstat: directories cannot be run. if only there was a faster way to
-        // check this
-        let is_dir = match bun_sys::fstat(fd) {
-            Ok(st) => bun_sys::S::ISDIR(st.st_mode as _),
-            Err(_) => {
-                let _ = bun_sys::close(fd);
-                return false;
-            }
-        };
-        if is_dir {
-            let _ = bun_sys::close(fd);
-            return false;
-        }
-
-        Global::configure_allocator(core::Global::AllocatorConfiguration {
-            long_running: true,
-            ..Default::default()
-        });
-
-        // Re-derive the canonical absolute path from the open fd (resolves
-        // symlinks).
         let absolute_script_path: Box<[u8]> = {
-            let resolved = match bun_sys::get_fd_path(fd, &mut script_name_buf) {
-                Ok(p) => p,
-                Err(_) => {
-                    let _ = bun_sys::close(fd);
-                    return false;
-                }
+            let Ok(file) = bun_sys::open(open_z, bun_sys::O::RDONLY, 0)
+                .map(sys::CloseOnDrop::new)
+                .and_then(|file| file.make_lib_uv_owned_for_syscall(sys::Tag::open))
+            else {
+                return false;
             };
-            resolved.to_vec().into_boxed_slice()
+
+            match file.stat() {
+                Ok(stat) if !bun_sys::S::ISDIR(stat.st_mode as _) => {}
+                _ => return false,
+            }
+
+            Global::configure_allocator(core::Global::AllocatorConfiguration {
+                long_running: true,
+                ..Default::default()
+            });
+
+            // With symlinks resolved.
+            let Ok(resolved) = file.get_path(&mut script_name_buf) else {
+                return false;
+            };
+            resolved.into()
         };
-        let _ = bun_sys::close(fd);
 
         Self::boot_and_handle_error(ctx, &absolute_script_path, None)
     }
@@ -3564,7 +3521,7 @@ impl RunCommand {
 
         let args = ctx.args.clone();
 
-        let Ok(mut this_transpiler) = Transpiler::init(runner_arena(), ctx.log, args, None) else {
+        let Ok(mut this_transpiler) = Transpiler::init(cli_arena(), ctx.log, args, None) else {
             return Ok(shell_out);
         };
         this_transpiler.options.env.behavior = api::DotEnvBehavior::LoadAll;
@@ -3839,16 +3796,16 @@ impl RunCommand {
         this_transpiler.resolver.care_about_scripts = false;
 
         // `ShellCompletions` borrows the keys for `'static`: the arena never runs `Drop`.
-        let results: &'static ResultList = runner_arena().alloc(results);
+        let results: &'static ResultList = cli_arena().alloc(results);
         bun_core::asan::register_root_region(
             std::ptr::from_ref::<ResultList>(results).cast(),
             ::core::mem::size_of::<ResultList>(),
         );
         let mut all_keys: Vec<&'static [u8]> = results.keys().iter().map(|k| &**k).collect();
         strings::sort_asc(&mut all_keys);
-        shell_out.commands = std::borrow::Cow::Borrowed(runner_arena().alloc_slice_copy(&all_keys));
+        shell_out.commands = std::borrow::Cow::Borrowed(cli_arena().alloc_slice_copy(&all_keys));
         shell_out.descriptions =
-            std::borrow::Cow::Borrowed(runner_arena().alloc_slice_copy(&descriptions));
+            std::borrow::Cow::Borrowed(cli_arena().alloc_slice_copy(&descriptions));
 
         Ok(shell_out)
     }
@@ -3944,6 +3901,8 @@ impl BunXFastPath {
         env: &mut DotEnv::Loader,
         passthrough: &[Box<[u8]>],
     ) {
+        use bun_install::windows_shim::bun_shim_impl;
+
         if !bun_core::FeatureFlags::WINDOWS_BUNX_FAST_PATH {
             return;
         }
@@ -3957,22 +3916,8 @@ impl BunXFastPath {
         );
         debug_assert!(paths::is_absolute_windows_wtf16(path_to_use));
 
-        let handle = match sys::open_file_at_windows(
-            Fd::INVALID, // absolute path is given
-            path_to_use,
-            sys::NtCreateFileOptions {
-                access_mask: sys::windows::STANDARD_RIGHTS_READ
-                    | sys::windows::FILE_READ_DATA
-                    | sys::windows::FILE_READ_ATTRIBUTES
-                    | sys::windows::FILE_READ_EA
-                    | sys::windows::SYNCHRONIZE,
-                disposition: sys::windows::FILE_OPEN,
-                options: sys::windows::FILE_NON_DIRECTORY_FILE
-                    | sys::windows::FILE_SYNCHRONOUS_IO_NONALERT,
-                ..Default::default()
-            },
-        ) {
-            Ok(fd) => fd.native(),
+        let metadata_file = match bun_shim_impl::MetadataFile::open(path_to_use) {
+            Ok(file) => file,
             Err(err) => {
                 bun_core::scoped_log!(BUNX_FAST_PATH_LOG, "Failed to open bunx file: '{}'", err);
                 return;
@@ -3995,16 +3940,14 @@ impl BunXFastPath {
 
         let env_block = env.map.write_windows_env_block();
 
-        let run_ctx = bun_install::windows_shim::bun_shim_impl::FromBunRunContext {
-            handle,
-            base_path: path_to_use[4..].as_mut_ptr(),
-            base_path_len: path_to_use.len() - 4,
-            arguments: command_line.as_mut_ptr(),
-            arguments_len: i,
+        let run_ctx = bun_shim_impl::FromBunRunContext {
+            metadata_file,
+            base_path: &path_to_use[4..],
+            arguments: &command_line[..i],
             force_use_bun: ctx.debug.run_in_bun,
             direct_launch_with_bun_js: Self::direct_launch_callback,
-            cli_context: ::core::ptr::from_mut(ctx),
-            environment: Some(env_block.as_ptr()),
+            cli_context: ctx,
+            environment: &env_block,
         };
 
         bun_core::scoped_log!(
@@ -4013,7 +3956,7 @@ impl BunXFastPath {
             run_ctx.force_use_bun
         );
 
-        bun_install::windows_shim::bun_shim_impl::try_startup_from_bun_js(run_ctx);
+        bun_shim_impl::try_startup_from_bun_js(run_ctx);
 
         bun_core::scoped_log!(BUNX_FAST_PATH_LOG, "did not start via shim");
     }

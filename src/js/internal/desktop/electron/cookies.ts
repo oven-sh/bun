@@ -1,3 +1,5 @@
+const sameSiteNames = { lax: "lax", strict: "strict", none: "no_restriction" };
+
 const EventEmitter = require("node:events");
 const { Event } = require("internal/desktop/app");
 const crypt = require("internal/desktop/electron/os_crypt");
@@ -137,7 +139,7 @@ function parse(header: string, url: URL, partition?: string): Cookie | undefined
     httpOnly: "httponly" in found,
     session: expires === undefined,
     ...(expires !== undefined && { expirationDate: Math.min(expires, now + MAX_AGE) }),
-    sameSite: { lax: "lax", strict: "strict", none: "no_restriction" }[found.samesite?.toLowerCase()] ?? "unspecified",
+    sameSite: sameSiteNames[found.samesite?.toLowerCase()] ?? "unspecified",
     ...("partitioned" in found && { partition: partitionOf(partition ?? url.href) }),
   };
 }

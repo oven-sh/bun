@@ -522,11 +522,11 @@ impl Engine {
         ratio: f64,
     ) {
         self.0
-            .set_replaced(node, Some(replaced(image, width, height, ratio)));
+            .set_own_replaced(node, Some(replaced(image, width, height, ratio)));
     }
 
     pub(crate) fn clear_replaced(&mut self, node: u32) {
-        self.0.set_replaced(node, None);
+        self.0.set_own_replaced(node, None);
     }
 
     pub(crate) fn set_top_layer(&mut self, mut nodes: Vec<u32>) {
@@ -569,7 +569,7 @@ impl Engine {
         owner: u32,
     ) -> u32 {
         let source = source.strip_prefix(b"\xEF\xBB\xBF").unwrap_or(source);
-        match bun_core::strings::is_valid_utf8(source) {
+        match self.0.has_prepared(source) || bun_core::strings::is_valid_utf8(source) {
             true => self.0.create_sheet(source, base_url, media, owner),
             false => self.0.create_sheet(
                 String::from_utf8_lossy(source).as_bytes(),
@@ -801,10 +801,15 @@ impl Engine {
                 .0
                 .update_view_transition()
                 .map_or(0, |is_animated| 1 + u8::from(is_animated)),
-            _ => {
+            3 => {
                 self.0.end_view_transition();
                 1
             }
+            4 => {
+                self.0.hand_over_old_state(canvas);
+                1
+            }
+            _ => self.0.take_over_old_state(canvas).into(),
         }
     }
 
@@ -906,6 +911,9 @@ impl Engine {
         if property == b"-internal-text" {
             let (document, node) = self.laid_out(node);
             return document.generated_text(node, pseudo);
+        }
+        if property == b"@view-transition" {
+            return self.0.navigation_transition();
         }
         self.0.catch_up_with_compositor();
         self.0
@@ -1009,6 +1017,7 @@ impl Engine {
             14 if document.tree[node].layout_box == 0 => 1.0,
             14 => document.zoom_of(node),
             15..17 => document.position_in_document(node)[which - 15],
+            17 => self.painted().is_unobscured(node).into(),
             _ => document.offset_metrics(node)[(which - 8) % 5],
         })
     }
@@ -1567,7 +1576,7 @@ impl Engine {
     }
 
     pub(crate) fn get_animations(&mut self, node: u32, subtree: bool) -> Vec<u32> {
-        self.0.update_layout();
+        self.0.update_layout_for(self.0.node(node));
         self.0.relevant_animations(node, subtree)
     }
 

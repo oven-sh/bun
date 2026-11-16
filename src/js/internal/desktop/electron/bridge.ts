@@ -139,6 +139,7 @@ function adopt<T, U>(
 function ownError(error: any) {
   const { name, message } = error;
   if (name === "Error") return new Error(message);
+  if (name === "RangeError") return new RangeError(message);
   return name === "TypeError" ? new TypeError(message) : new DOMException(message, name);
 }
 

@@ -1,6 +1,6 @@
 //! `bun:desktop`: loads the UI library (`packages/bun-desktop`) and makes the event loop wait in the window system's.
 //!
-//! The library is not linked, so that `bun` does not depend on X11, Vulkan or AppKit. It holds no JS value: it queues
+//! The library is not linked, so that `bun` does not depend on X11 or AppKit. It holds no JS value: it queues
 //! events, which JavaScript takes once the library has returned.
 
 use core::cell::{Cell, RefCell};
@@ -16,10 +16,8 @@ use bun_standalone_graph::StandaloneModuleGraph::CompileTarget;
 use bun_standalone_graph::desktop as bundle;
 
 #[path = "../../dom/abi.rs"]
-#[allow(dead_code, unreachable_pub)]
 mod abi;
 mod host;
-#[allow(dead_code, unreachable_pub)]
 mod host_abi;
 #[cfg(unix)]
 pub(crate) mod quick_fs;
@@ -83,6 +81,12 @@ impl Library {
         if version != Some(abi::ABI_VERSION) {
             return Err(failure(&"it was built for another version of Bun"));
         }
+        #[cfg(not(bun_asan))]
+        if let Some(set) = library.lookup::<extern "C" fn(&'static host_abi::Allocator)>(
+            bun_core::zstr!("bun_desktop_set_allocator"),
+        ) {
+            set(&host::ALLOCATOR);
+        }
         if let Some(set_host) = library.lookup::<extern "C" fn(&'static host_abi::Host)>(
             bun_core::zstr!("bun_desktop_set_host"),
         ) {
@@ -140,9 +144,15 @@ thread_local! {
     static IDLE_WORK: Cell<*mut c_void> = const { Cell::new(core::ptr::null_mut()) };
 }
 
-/// `internal/desktop/native.ts` calls `load` before it calls anything else.
+/// For what only the library itself sets going.
 fn library() -> &'static Library {
     LIBRARY.get().expect("bun:desktop was loaded")
+}
+
+fn loaded_library<'a>(heap: &JsHeap<'a>) -> bindgen::Result<'a, &'static Library> {
+    LIBRARY
+        .get()
+        .ok_or_else(|| heap.error(format_args!("bun:desktop has not loaded its UI library")))
 }
 
 /// The `abi::Renderer` for `bun_dom`, or null.
@@ -159,11 +169,9 @@ unsafe extern "C" {
         wait: Option<extern "C" fn(source: isize, timeout_ns: c_longlong)>,
     );
     fn us_loop_foreign_wait_reenter(loop_: &bun_uws::Loop);
-    safe fn Bun__DesktopIdleWork__create(
-        vm: &bun_jsc::VM,
-        has_input: extern "C" fn() -> bool,
-    ) -> *mut c_void;
+    safe fn Bun__DesktopIdleWork__create(vm: &bun_jsc::VM) -> *mut c_void;
     fn Bun__DesktopIdleWork__beforeWait(work: *mut c_void, timeout_ns: c_longlong) -> c_longlong;
+    fn Bun__DesktopIdleWork__didGetEvents(work: *mut c_void, has_input: bool);
 }
 
 struct DesktopEventsTask;
@@ -184,7 +192,14 @@ extern "C" fn wait_for_ui(source: isize, mut timeout_ns: c_longlong) {
         // SAFETY: it is never freed, and this is the thread of its VM.
         timeout_ns = unsafe { Bun__DesktopIdleWork__beforeWait(IDLE_WORK.get(), timeout_ns) };
     }
-    if (library().pump)(source, timeout_ns, IS_TICKING.replace(false)) && !IS_QUEUED.replace(true) {
+    if !(library().pump)(source, timeout_ns, IS_TICKING.replace(false)) {
+        return;
+    }
+    if !IDLE_WORK.get().is_null() {
+        // SAFETY: as above.
+        unsafe { Bun__DesktopIdleWork__didGetEvents(IDLE_WORK.get(), (library().has_input)()) };
+    }
+    if !IS_QUEUED.replace(true) {
         let task = Task::init(core::ptr::dangling_mut::<DesktopEventsTask>());
         VirtualMachine::get().event_loop().enqueue_task(task);
     }
@@ -217,7 +232,7 @@ pub(crate) struct VmState {
 }
 
 fn state(global: &JSGlobalObject) -> &VmState {
-    &crate::jsc_hooks::state_of(global.bun_vm()).desktop
+    &crate::jsc_hooks::runtime_state_of(global.bun_vm()).desktop
 }
 
 pub(crate) fn on_events(global: &JSGlobalObject) {
@@ -265,10 +280,7 @@ pub(crate) fn load<'a>(cx: &mut JsScope<'a>, on_events: JsLocal<'a, Callable>) -
             unsafe { us_loop_set_foreign_wait(loop_, Some(wait_for_ui)) };
             bun_core::Global::set_before_exit_callback(close_everything);
             if global.bun_vm().hand_over_idle_collections() {
-                IDLE_WORK.set(Bun__DesktopIdleWork__create(
-                    global.vm(),
-                    library().has_input,
-                ));
+                IDLE_WORK.set(Bun__DesktopIdleWork__create(global.vm()));
             }
         }
     }
@@ -282,17 +294,20 @@ pub(crate) fn call<'a>(
     heap: &JsHeap<'a>,
     json: &[u8],
 ) -> bindgen::Result<'a, JsLocal<'a, JSString>> {
-    library().call(json, |reply| heap.create_utf8_string(reply))
+    loaded_library(heap)?.call(json, |reply| heap.create_utf8_string(reply))
 }
 
 pub(crate) fn post(command: u32, surface: u32, argument: u32) {
-    (library().post)(command, surface, argument);
+    if let Some(library) = LIBRARY.get() {
+        (library.post)(command, surface, argument);
+    }
 }
 
 pub(crate) fn draw(numbers: &[u8], len: u32, text: &[u8]) {
+    let Some(library) = LIBRARY.get() else { return };
     let numbers = &numbers[..numbers.len().min(len as usize * 8)];
     // SAFETY: live slices.
-    unsafe { (library().draw)(numbers.as_ptr(), numbers.len(), text.as_ptr(), text.len()) };
+    unsafe { (library.draw)(numbers.as_ptr(), numbers.len(), text.as_ptr(), text.len()) };
 }
 
 fn with_numbers<'a, R>(
@@ -305,23 +320,27 @@ fn with_numbers<'a, R>(
 }
 
 pub(crate) fn measure<'a>(heap: &JsHeap<'a>, numbers: JsLocal<'a, BufferSource>, text: &[u8]) {
+    let Some(library) = LIBRARY.get() else { return };
     with_numbers(heap, numbers, |numbers| {
         if let Some(numbers) = numbers.first_chunk_mut() {
             // SAFETY: a live array and a live slice.
-            unsafe { (library().measure)(numbers, text.as_ptr(), text.len()) };
+            unsafe { (library.measure)(numbers, text.as_ptr(), text.len()) };
         }
     });
 }
 
 pub(crate) fn drain_numbers<'a>(heap: &JsHeap<'a>, numbers: JsLocal<'a, BufferSource>) -> u32 {
+    let Some(library) = LIBRARY.get() else {
+        return 0;
+    };
     with_numbers(heap, numbers, |numbers| {
         // SAFETY: a live slice.
-        unsafe { (library().drain_numbers)(numbers.as_mut_ptr(), numbers.len()) as u32 }
+        unsafe { (library.drain_numbers)(numbers.as_mut_ptr(), numbers.len()) as u32 }
     })
 }
 
 pub(crate) fn drain<'a>(heap: &JsHeap<'a>) -> bindgen::Result<'a, JsLocal<'a, JSString>> {
-    let library = library();
+    let library = loaded_library(heap)?;
     library.read((library.drain)(), |events| heap.create_utf8_string(events))
 }
 
@@ -374,23 +393,29 @@ pub(crate) fn encode_text<'a>(
 
 /// Blocks until the UI has events.
 pub(crate) fn wait() {
-    while !(library().pump)(NO_SOURCE, FOREVER, false) {}
+    let Some(library) = LIBRARY.get() else { return };
+    while !(library.pump)(NO_SOURCE, FOREVER, false) {}
 }
 
 pub(crate) fn present() {
-    (library().present)();
+    if let Some(library) = LIBRARY.get() {
+        (library.present)();
+    }
 }
 
 pub(crate) fn put_blob(bytes: &[u8]) -> u32 {
+    let Some(library) = LIBRARY.get() else {
+        return 0;
+    };
     // SAFETY: a live slice, which is copied.
-    unsafe { (library().put_blob)(bytes.as_ptr(), bytes.len()) }
+    unsafe { (library.put_blob)(bytes.as_ptr(), bytes.len()) }
 }
 
 pub(crate) fn take_blob<'a>(
     heap: &JsHeap<'a>,
     id: u32,
 ) -> bindgen::Result<'a, JsLocal<'a, BufferSource>> {
-    let library = library();
+    let library = loaded_library(heap)?;
     library.read((library.take_blob)(id), |bytes| heap.create_buffer(bytes))
 }
 

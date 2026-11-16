@@ -251,6 +251,9 @@ impl Document {
     }
 
     fn update_top_layer(&mut self) {
+        if self.top_layer.is_empty() && self.leaving_top_layer.is_empty() {
+            return;
+        }
         let tree = &self.tree;
         let stays = |id: &NodeId| {
             tree.style(*id)
@@ -926,6 +929,9 @@ impl Document {
             true => _ = self.scrolling.states.entry(id).or_default(),
             false => _ = self.scrolling.states.remove(&id),
         }
+        if matches!(style.rare.content, Content::Items(..)) || !self.replacements.is_empty() {
+            self.update_replacement(id, style);
+        }
         self.register_snapping(id, style);
         self.register_target_group(id, style);
         self.register_remembering(id, style);
@@ -1068,6 +1074,13 @@ impl Document {
             self.display_of_group_changed(id);
         }
         self.counters_are_stale |= total.contains(Damage::COUNTERS);
+        if total.contains(Damage::COUNTERS)
+            && (new.display().is_list_item()
+                || !old.rare.counter_reset.is_empty()
+                || !new.rare.counter_reset.is_empty())
+        {
+            total |= Damage::PARENT | Damage::CONTENTS;
+        }
         self.needs_layout |= self.counters_are_stale && !self.counter_users.is_empty();
         if total.contains(Damage::GENERATED)
             && self.tree.element(id).is_some_and(Element::is_generated)

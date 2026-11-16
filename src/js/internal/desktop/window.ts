@@ -121,9 +121,7 @@ class Window extends EventEmitter {
     }
     native.start();
     if (!hasDisplay()) {
-      throw new Error(
-        "There is no display server: neither WAYLAND_DISPLAY nor DISPLAY is set. Set BUN_DESKTOP_HEADLESS=1 to run without one.",
-      );
+      throw new Error("There is no display server: DISPLAY is not set. Set BUN_DESKTOP_HEADLESS=1 to run without one.");
     }
     const title = String(options.title ?? app.name);
     const hiddenTitleBar =
@@ -187,7 +185,9 @@ class Window extends EventEmitter {
     };
     if (options.launchCover === false) cover.discard();
     const missed = reserved !== 0 ? cover.adopt(creation, { uncovered: () => this.#uncovered() }) : undefined;
-    if (!missed) native.ask("window.create", creation);
+    if (options.launchCover && !missed && windows.$size === 0) cover.holdKeys();
+    const waitsForOpacity = !missed && creation.show && options.opacity < 1;
+    if (!missed) native.ask("window.create", waitsForOpacity ? { ...creation, show: false } : creation);
     windows.$set(this.id, this);
     native.hold();
     this.#geometry = this.#ask("geometry");
@@ -210,9 +210,10 @@ class Window extends EventEmitter {
       roundedCorners: options.frame !== false || (options.roundedCorners !== false && !options.transparent),
     });
     if (options.alwaysOnTop) this.setAlwaysOnTop(true);
+    if (options.opacity !== undefined) this.setOpacity(options.opacity);
+    if (waitsForOpacity) this.#tell("show", creation.focus);
     if (isMac && this.#visible && this.#parent) this.#tell(this.#modal ? "sheet" : "parent", this.#parent.id);
     if (options.skipTaskbar) this.setSkipTaskbar(true);
-    if (options.opacity !== undefined) this.setOpacity(options.opacity);
     this.#updateMenus();
     if (!options[kBare]) this.#createPage();
     if (!this.#internal) app.emit("window-created", new Event(), this);
@@ -299,7 +300,7 @@ class Window extends EventEmitter {
   }
 
   endLaunchCover(options?: { dropInput?: boolean; keep?: object[] }) {
-    if (!cover.isShownIn(this.id)) return;
+    if (!cover.isShownIn(this.id)) return cover.releaseKeys(!options?.dropInput);
     const tasks = require("internal/desktop/tasks");
     tasks.post(tasks.BLOCKING, () => {
       tasks.render();
@@ -307,13 +308,20 @@ class Window extends EventEmitter {
     });
   }
 
-  saveLaunchCover(rect?: object, field?: { bounds: any; color?: string; letterSpacing?: number }): Promise<boolean> {
+  /** `behind` is the color for where the window is see-through. */
+  saveLaunchCover(
+    rect?: object,
+    field?: { bounds: any; color?: string; letterSpacing?: number },
+    behind?: string,
+  ): Promise<boolean> {
     this.#check();
-    if (!field) return this.#saveCover({ rect });
+    const backdrop = behind === undefined ? undefined : parseColor(behind);
+    if (!field) return this.#saveCover({ rect, backdrop });
     const { x, y, width, height } = field.bounds;
     const color = field.color === undefined ? undefined : parseColor(field.color);
     return this.#saveCover({
       rect,
+      backdrop,
       field: { rect: { x, y, width, height }, color, letterSpacing: field.letterSpacing },
     });
   }
@@ -509,7 +517,7 @@ class Window extends EventEmitter {
     this.#page.removeInsertedCSS(this.#defaultStyle);
     if (url !== undefined) this.#page.setUrl(new URL(url).href);
     const loaded = new Promise<void>(resolve => this.once("did-finish-load", resolve));
-    require("internal/desktop/host").willLoad(String(html), this.#page.document.URL);
+    require("internal/desktop/host").willLoad(this.#page.document.URL);
     this.#page.loadHTML(String(html));
     return loaded;
   }

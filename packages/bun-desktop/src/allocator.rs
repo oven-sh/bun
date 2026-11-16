@@ -1,15 +1,26 @@
-//! The allocator of macOS keeps large blocks that were freed, and they count as memory in use.
+//! Bun's allocator, if it lends one.
 
 use std::alloc::{GlobalAlloc, Layout, System};
-use std::sync::Mutex;
+use std::sync::{Mutex, OnceLock};
+
+use crate::bun::abi;
+
+static LENT: OnceLock<&'static abi::Allocator> = OnceLock::new();
+
+/// Before anything is allocated.
+#[unsafe(no_mangle)]
+pub extern "C" fn bun_desktop_set_allocator(allocator: &'static abi::Allocator) {
+    LENT.set(allocator).ok();
+}
 
 const LARGE: usize = 128 << 10;
 const PAGE: usize = 16 << 10;
 
 pub struct Allocator;
 
+/// The allocator of macOS keeps large blocks that were freed, and they count as memory in use.
 fn is_mapped(size: usize, align: usize) -> bool {
-    size >= LARGE && align <= 4096
+    cfg!(target_os = "macos") && size >= LARGE && align <= 4096
 }
 
 /// Few sizes, so that what was freed fits again.
@@ -38,6 +49,9 @@ fn keep(start: *mut u8, size: usize) -> bool {
 }
 
 pub fn release_memory() {
+    if let Some(lent) = LENT.get() {
+        return (lent.release)();
+    }
     let kept = KEPT
         .try_lock()
         .map(|mut kept| std::mem::take(&mut *kept))
@@ -62,9 +76,12 @@ fn map(size: usize) -> *mut u8 {
     }
 }
 
-// SAFETY: which of the two has a block follows from its layout.
+// SAFETY: which of them has a block follows from its layout.
 unsafe impl GlobalAlloc for Allocator {
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
+        if let Some(lent) = LENT.get() {
+            return (lent.allocate)(layout.size(), layout.align()).cast();
+        }
         if !is_mapped(layout.size(), layout.align()) {
             // SAFETY: the caller's contract.
             return unsafe { System.alloc(layout) };
@@ -74,6 +91,9 @@ unsafe impl GlobalAlloc for Allocator {
     }
 
     unsafe fn alloc_zeroed(&self, layout: Layout) -> *mut u8 {
+        if let Some(lent) = LENT.get() {
+            return (lent.allocate_zeroed)(layout.size(), layout.align()).cast();
+        }
         if !is_mapped(layout.size(), layout.align()) {
             // SAFETY: the caller's contract.
             return unsafe { System.alloc_zeroed(layout) };
@@ -88,7 +108,9 @@ unsafe impl GlobalAlloc for Allocator {
     unsafe fn dealloc(&self, start: *mut u8, layout: Layout) {
         // SAFETY: the caller's contract.
         unsafe {
-            if !is_mapped(layout.size(), layout.align()) {
+            if let Some(lent) = LENT.get() {
+                (lent.free)(start.cast());
+            } else if !is_mapped(layout.size(), layout.align()) {
                 System.dealloc(start, layout);
             } else if !keep(start, mapped_size(layout.size())) {
                 libc::munmap(start.cast(), mapped_size(layout.size()));
@@ -102,6 +124,9 @@ unsafe impl GlobalAlloc for Allocator {
         let [before, after] = [layout.size(), size].map(mapped_size);
         // SAFETY: the caller's contract.
         unsafe {
+            if let Some(lent) = LENT.get() {
+                return (lent.reallocate)(start.cast(), size, layout.align()).cast();
+            }
             if !was_mapped && !is_mapped {
                 return System.realloc(start, layout, size);
             }

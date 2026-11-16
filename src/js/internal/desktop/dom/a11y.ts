@@ -1,4 +1,6 @@
 // The tree that assistive technologies see.
+const livenessOfRoles = { alert: "assertive", log: "polite", status: "polite" };
+
 const core = require("internal/desktop/dom/core");
 const aria = require("internal/desktop/dom/aria");
 const events = require("internal/desktop/dom/events");
@@ -68,7 +70,7 @@ function describe(node: N, role: string) {
     min: numberOf(node, "aria-valuemin", hasRange?.min()),
     max: numberOf(node, "aria-valuemax", hasRange?.max()),
     now: numberOf(node, "aria-valuenow", hasRange ? +hasRange.value() : undefined),
-    live: getAttr(node, "aria-live") ?? { alert: "assertive", log: "polite", status: "polite" }[role],
+    live: getAttr(node, "aria-live") ?? livenessOfRoles[role],
     url: role === "link" ? core.wrap(node).href : undefined,
     modal: (node.state & states.MODAL) !== 0 || getAttr(node, "aria-modal") === "true",
   };

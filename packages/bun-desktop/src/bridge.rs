@@ -5,12 +5,11 @@ use std::collections::VecDeque;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::atomic::{AtomicU32, Ordering};
 
-use anyhow::{Context as _, Result, anyhow};
-use parking_lot::Mutex;
-use rustc_hash::FxHashMap;
-use serde_json::{Value, json};
-use smallvec::SmallVec;
-
+use crate::error::{Context as _, Result, failure};
+use crate::hash::FastMap;
+use crate::json::{Value, json};
+use crate::small_vec::SmallVec;
+use crate::sync::Mutex;
 use crate::{diagnostics, host};
 
 /// The first number of a record. `internal/desktop/native.ts` has the same list, and what follows each.
@@ -31,7 +30,7 @@ const MAX_FIELDS: usize = 10;
 
 struct Queued {
     kind: Kind,
-    fields: SmallVec<[f64; MAX_FIELDS]>,
+    fields: SmallVec<f64, MAX_FIELDS>,
     json: Value,
     is_replaceable: bool,
 }
@@ -40,7 +39,7 @@ static EVENTS: Mutex<VecDeque<Queued>> = Mutex::new(VecDeque::new());
 /// What the `Json` records that JavaScript took stand for.
 static TAKEN: Mutex<Vec<Value>> = Mutex::new(Vec::new());
 static NAMES: Mutex<Vec<String>> = Mutex::new(Vec::new());
-static BLOBS: Mutex<Option<FxHashMap<u32, Vec<u8>>>> = Mutex::new(None);
+static BLOBS: Mutex<Option<FastMap<u32, Vec<u8>>>> = Mutex::new(None);
 static NEXT_BLOB: AtomicU32 = AtomicU32::new(1);
 
 /// How many `Frame` and `Resize` events were queued, and how many of them JavaScript took.
@@ -72,6 +71,7 @@ static EDITS: AtomicU32 = AtomicU32::new(0);
 static EDITS_TAKEN: AtomicU32 = AtomicU32::new(0);
 
 pub fn will_edit_text() {
+    count_input();
     EDITS.fetch_add(1, Ordering::Relaxed);
 }
 
@@ -94,6 +94,9 @@ pub fn has_events_but_frames() -> bool {
 /// Writes records of `[kind, length, ...fields]`, and returns how many numbers that is.
 pub fn drain_numbers(buffer: &mut [f64]) -> usize {
     let (mut events, mut taken, mut length) = (EVENTS.lock(), TAKEN.lock(), 0);
+    if events.len() == 1 && events[0].kind == Kind::Frame {
+        host::thread::hold_jobs();
+    }
     while let Some(event) = events.pop_front_if(|_| length + 2 + MAX_FIELDS <= buffer.len()) {
         let fields = if event.kind == Kind::Json {
             &[taken.len() as f64]
@@ -113,6 +116,11 @@ pub fn drain_numbers(buffer: &mut [f64]) -> usize {
         if event.kind == Kind::Text || event.kind == Kind::Json && is_edit() {
             EDITS_TAKEN.fetch_add(1, Ordering::Relaxed);
         }
+        crate::diagnostics::trace!(
+            "JavaScript takes event {} {}",
+            event.kind as u8,
+            event.json["t"]
+        );
         count(event.kind, &DRAINED);
         if event.kind == Kind::Json {
             taken.push(event.json);
@@ -122,7 +130,9 @@ pub fn drain_numbers(buffer: &mut [f64]) -> usize {
 }
 
 pub fn drain_json() -> Vec<u8> {
-    serde_json::to_vec(&std::mem::take(&mut *TAKEN.lock())).unwrap_or_else(|_| b"[]".to_vec())
+    json!(std::mem::take(&mut *TAKEN.lock()))
+        .to_string()
+        .into_bytes()
 }
 
 pub fn clear() {
@@ -135,7 +145,24 @@ pub fn clear() {
     NAMES.lock().clear();
 }
 
+static CHANGES: [AtomicU32; 2] = [const { AtomicU32::new(0) }; 2];
+
+/// How often a window was moved or resized, and how often anything else may have changed.
+pub fn changes() -> [u32; 2] {
+    CHANGES
+        .each_ref()
+        .map(|counter| counter.load(Ordering::Relaxed))
+}
+
+pub fn expect_changes() {
+    CHANGES[1].fetch_add(1, Ordering::Relaxed);
+}
+
 fn push(event: Queued, is_same: impl Fn(&Queued) -> bool) {
+    if matches!(event.kind, Kind::Json | Kind::Resize) {
+        CHANGES[usize::from(event.kind == Kind::Json && event.json["e"] != "bounds")]
+            .fetch_add(1, Ordering::Relaxed);
+    }
     let mut events = EVENTS.lock();
     if event.is_replaceable {
         // Stops at the first event that may not be reordered with this one.
@@ -158,7 +185,7 @@ fn push(event: Queued, is_same: impl Fn(&Queued) -> bool) {
 }
 
 pub fn emit(json: Value) {
-    log::info!("-> {:.200}", json.to_string());
+    crate::diagnostics::log!("-> {:.200}", json.to_string());
     push(
         Queued {
             kind: Kind::Json,
@@ -172,7 +199,7 @@ pub fn emit(json: Value) {
 
 /// Replaces an event of the same type and target that JavaScript has not taken yet.
 pub fn emit_latest(json: Value) {
-    log::info!("-> {:.200}", json.to_string());
+    crate::diagnostics::log!("-> {:.200}", json.to_string());
     let target = ["t", "s", "w", "e"].map(|key| (key, json[key].clone()));
     let event = Queued {
         kind: Kind::Json,
@@ -181,11 +208,29 @@ pub fn emit_latest(json: Value) {
         is_replaceable: true,
     };
     push(event, |queued| {
-        target.iter().all(|(key, value)| queued.json[key] == *value)
+        target
+            .iter()
+            .all(|(key, value)| queued.json[*key] == *value)
     });
 }
 
 static INPUTS: AtomicU32 = AtomicU32::new(0);
+
+#[cfg(target_os = "macos")]
+thread_local! {
+    static LAST_INPUT: std::cell::Cell<std::time::Instant> = std::cell::Cell::new(std::time::Instant::now());
+}
+
+fn count_input() {
+    INPUTS.fetch_add(1, Ordering::Relaxed);
+    #[cfg(target_os = "macos")]
+    LAST_INPUT.set(std::time::Instant::now());
+}
+
+#[cfg(target_os = "macos")]
+pub fn last_input() -> std::time::Instant {
+    LAST_INPUT.get()
+}
 
 /// How many events there were whose result the user is waiting for.
 pub fn inputs() -> u32 {
@@ -195,16 +240,16 @@ pub fn inputs() -> u32 {
 /// The first field is the surface.
 pub fn emit_numbers(kind: Kind, fields: &[f64], is_replaceable: bool) {
     if diagnostics::logs_frames() || kind == Kind::Resize {
-        log::info!("-> {kind:?} {fields:?}");
+        crate::diagnostics::log!("-> {kind:?} {fields:?}");
     }
     if matches!(kind, Kind::Key | Kind::Text | Kind::Resize)
         || kind == Kind::Mouse && !is_replaceable
     {
-        INPUTS.fetch_add(1, Ordering::Relaxed);
+        count_input();
     }
     let event = Queued {
         kind,
-        fields: fields.into(),
+        fields: fields.iter().copied().collect(),
         json: Value::Null,
         is_replaceable,
     };
@@ -273,13 +318,13 @@ fn next_job() -> Option<Job> {
     Some(pool.jobs.remove(0))
 }
 
-/// Works without GPUI, and so without a display.
+/// Works without a display.
 pub fn in_background(id: u64, work: impl FnOnce() -> Result<Value> + Send + 'static) {
     spawn(move || {
         let result = catch_unwind(AssertUnwindSafe(work));
         reply(
             id,
-            result.unwrap_or_else(|panic| Err(anyhow!(panic_message(panic)))),
+            result.unwrap_or_else(|panic| Err(failure!("{}", panic_message(panic)))),
         );
     });
 }

@@ -1,25 +1,28 @@
-//! Draws what `gpu.rs` made of the scenes: the tiles that changed where there is no GPU, and what has to be read back
-//! where there is one.
+//! Draws what `flatten.rs` made of the scenes: the tiles that changed, and what has to be read back.
 
-use std::borrow::Cow;
 use std::cell::RefCell;
 use std::ops::Range;
 use std::rc::Rc;
 
-use gpui::embed::{Painted, Pixels};
-use gpui::{
-    AtlasKey, AtlasTextureId, AtlasTextureKind, AtlasTile, Bounds, DevicePixels, PlatformAtlas,
-    Size, TileId, point, size,
-};
-use rustc_hash::FxHashMap;
-use smallvec::SmallVec;
-
 use super::arena::{Arena, Block};
-use super::gpu::{Kind, Primitive};
+use super::flatten::{Kind, Primitive};
 use super::raster::{
-    IntRect, Layer, Pixel, blend_row, demultiply, fill_row, fill_through, over, premultiply, scale,
-    set_row,
+    IntRect, Layer, Pixel, blend_row, fill_row, fill_through, over, premultiply, scale, set_row,
 };
+use crate::hash::FastMap;
+#[cfg(any(test, not(target_os = "macos")))]
+use crate::platform::{Painted, Pixels};
+use crate::small_vec::SmallVec;
+
+/// A part of a texture.
+#[derive(Clone, Copy)]
+pub struct Sprite {
+    pub texture: u32,
+    pub is_color: bool,
+    /// Another one for each texture that there ever was.
+    id: u32,
+    pub part: IntRect,
+}
 
 pub(super) const TILE_WIDTH: i32 = 64;
 pub(super) const TILE_HEIGHT: i32 = 16;
@@ -30,8 +33,6 @@ pub(super) struct Texture {
     /// A byte for each pixel of a mask, and premultiplied BGRA otherwise.
     pub block: Option<Block>,
     is_opaque: bool,
-    key: Option<AtlasKey>,
-    uploaded: Option<AtlasTile>,
 }
 
 impl Texture {
@@ -45,119 +46,45 @@ pub(super) struct Textures {
     pub slots: Vec<Texture>,
     arena: Arena,
     free: Vec<u32>,
-    tiles: FxHashMap<AtlasKey, AtlasTile>,
     last_id: u32,
-    to_unload: Vec<AtlasKey>,
 }
 
 #[derive(Default)]
 pub struct Atlas(pub(super) RefCell<Textures>);
 
-impl PlatformAtlas for Atlas {
-    fn get_or_insert_with<'a>(
-        &self,
-        key: AtlasKey,
-        build: &mut dyn FnMut() -> anyhow::Result<Option<(Size<DevicePixels>, Cow<'a, [u8]>)>>,
-    ) -> anyhow::Result<Option<AtlasTile>> {
+impl Atlas {
+    pub fn insert(&self, is_color: bool, width: usize, height: usize, data: &[u8]) -> Sprite {
         let textures = &mut *self.0.borrow_mut();
-        if let Some(tile) = textures.tiles.get(&key) {
-            return Ok(Some(*tile));
-        }
-        let Some((extent, data)) = build()? else {
-            return Ok(None);
-        };
-        let kind = key.texture_kind();
-        let is_opaque = kind == AtlasTextureKind::Polychrome
-            && data.as_chunks::<4>().0.iter().all(|it| it[3] == 255);
-        let index = textures.free.pop().unwrap_or_else(|| {
+        let is_opaque = is_color && data.as_chunks::<4>().0.iter().all(|it| it[3] == 255);
+        let texture = textures.free.pop().unwrap_or_else(|| {
             textures.slots.push(Texture::default());
             textures.slots.len() as u32 - 1
         });
-        let (width, block) = (extent.width.0 as usize, Some(textures.arena.store(&data)));
-        textures.slots[index as usize] = Texture {
+        textures.slots[texture as usize] = Texture {
             width,
-            block,
+            block: Some(textures.arena.store(data)),
             is_opaque,
-            key: Some(key.clone()),
-            uploaded: None,
         };
         textures.last_id += 1;
-        let tile = AtlasTile {
-            texture_id: AtlasTextureId { index, kind },
-            tile_id: TileId(textures.last_id),
-            padding: 0,
-            bounds: Bounds::new(Default::default(), extent),
-        };
-        textures.tiles.insert(key, tile);
-        Ok(Some(tile))
+        Sprite {
+            texture,
+            is_color,
+            id: textures.last_id,
+            part: IntRect::new(0, 0, width as i32, height as i32),
+        }
     }
 
-    fn remove(&self, key: &AtlasKey) {
+    pub fn remove(&self, sprite: Sprite) {
         let textures = &mut *self.0.borrow_mut();
-        if let Some(tile) = textures.tiles.remove(key) {
-            if std::mem::take(&mut textures.slots[tile.texture_id.index as usize])
-                .uploaded
-                .is_some()
-            {
-                textures.to_unload.push(key.clone());
-            }
-            textures.free.push(tile.texture_id.index);
-        }
-    }
-}
-
-impl Atlas {
-    /// The same in the atlas of the GPU.
-    pub fn uploaded(&self, tile: AtlasTile, gpu: &dyn PlatformAtlas) -> Option<AtlasTile> {
-        const MAX_BYTES_KEPT: usize = 256 << 10;
-        let texture = &mut self.0.borrow_mut().slots[tile.texture_id.index as usize];
-        if texture.uploaded.is_none() {
-            let data = texture.block.as_ref().map_or(&[][..], Block::bytes);
-            let (mut bytes, mut pixels) = (Cow::Borrowed(data), data.len());
-            if tile.texture_id.kind == AtlasTextureKind::Polychrome {
-                pixels /= 4;
-                if !texture.is_opaque {
-                    bytes
-                        .to_mut()
-                        .as_chunks_mut()
-                        .0
-                        .iter_mut()
-                        .for_each(|pixel| *pixel = demultiply(*pixel));
-                }
-            }
-            let extent = size(
-                DevicePixels(texture.width as i32),
-                DevicePixels((pixels / texture.width.max(1)) as i32),
-            );
-            let mut build = || Ok(Some((extent, Cow::Borrowed(&*bytes))));
-            texture.uploaded = gpu
-                .get_or_insert_with(texture.key.clone()?, &mut build)
-                .ok()
-                .flatten();
-            if texture.uploaded.is_some() && bytes.len() > MAX_BYTES_KEPT {
-                (texture.width, texture.block) = (0, None);
-            }
-        }
-        let whole = texture.uploaded?;
-        Some(AtlasTile {
-            bounds: Bounds::new(whole.bounds.origin + tile.bounds.origin, tile.bounds.size),
-            ..whole
-        })
+        textures.slots[sprite.texture as usize] = Texture::default();
+        textures.free.push(sprite.texture);
     }
 
     pub fn release_memory(&self) {
         self.0.borrow_mut().arena.release_empty_chunks();
     }
 
-    pub fn unload(&self, gpu: &dyn PlatformAtlas) {
-        self.0
-            .borrow_mut()
-            .to_unload
-            .drain(..)
-            .for_each(|key| gpu.remove(&key));
-    }
-
-    /// What the primitives look like in `area`, at `1 / reduction` of the resolution, unless only the GPU knows.
+    /// What the primitives look like in `area`, at `1 / reduction` of the resolution.
     pub fn snapshot(
         &self,
         primitives: &[Primitive],
@@ -174,9 +101,6 @@ impl Atlas {
             let visible = covered(primitive).intersect(area);
             if visible.is_empty() {
                 continue;
-            }
-            if let Kind::Mask(tile, _) | Kind::Image(tile) = primitive.kind {
-                (textures.slots[tile.texture_id.index as usize].width > 0).then_some(())?;
             }
             band.paint(primitive, visible);
         }
@@ -286,7 +210,7 @@ pub(super) fn is_shaped(primitive: &Primitive) -> bool {
     primitive.radii != [0.; 4] || border_of(primitive) != [0.; 4]
 }
 
-/// `fs_quad` in GPUI's shaders: how much of a pixel is inside of the outer edge, and outside of the inner one.
+/// How much of a pixel is inside of the outer edge, and outside of the inner one.
 fn coverage(from_corner: [f32; 2], radius: f32, border: [f32; 2]) -> (u8, u8) {
     let border = border.map(|width| if width == 0. { -0.5 } else { width });
     let [u, v] = from_corner.map(|distance| distance + radius);
@@ -313,11 +237,13 @@ fn coverage(from_corner: [f32; 2], radius: f32, border: [f32; 2]) -> (u8, u8) {
 struct Corner {
     side: usize,
     pixels: Vec<(u8, u8)>,
+    /// For each row, how many pixels are not completely inside of both edges.
+    curved: Vec<i32>,
 }
 
 fn corner(radius: f32, border: [f32; 2]) -> Rc<Corner> {
     thread_local! {
-        static KNOWN: RefCell<FxHashMap<[u32; 3], Rc<Corner>>> = RefCell::default();
+        static KNOWN: RefCell<FastMap<[u32; 3], Rc<Corner>>> = RefCell::default();
     }
     KNOWN.with_borrow_mut(|known| {
         if known.len() > 64 {
@@ -334,9 +260,21 @@ fn corner(radius: f32, border: [f32; 2]) -> Rc<Corner> {
                         border,
                     )
                 };
-                Rc::new(Corner {
-                    side,
-                    pixels: (0..side * side).map(at).collect(),
+                Rc::new({
+                    let pixels: Vec<_> = (0..side * side).map(at).collect();
+                    let curved = |row: &[(u8, u8)]| match row
+                        .iter()
+                        .rposition(|it| *it != (255, 0))
+                        .map_or(0, |it| it + 1)
+                    {
+                        all if all == side => i32::MAX / 2,
+                        some => some as i32,
+                    };
+                    Corner {
+                        side,
+                        curved: pixels.chunks(side).map(curved).collect(),
+                        pixels,
+                    }
                 })
             });
         corner.clone()
@@ -367,6 +305,31 @@ impl Outline<'_> {
         Outline { primitive, corners }
     }
 
+    /// The columns of a row in which `coverage` is the same.
+    fn middle(&self, y: i32) -> Range<i32> {
+        let (straight, bounds) = (middle_of_row(self.primitive, y), self.primitive.bounds);
+        let Some(known) = &self.corners else {
+            return straight;
+        };
+        let (below_top, above_bottom) = (
+            y - bounds.y as i32,
+            (bounds.y + bounds.height) as i32 - 1 - y,
+        );
+        let (row, corners) = if below_top < above_bottom {
+            (below_top, [0, 1])
+        } else {
+            (above_bottom, [3, 2])
+        };
+        let [left, right] = corners
+            .map(|index| known[index].curved[(row.max(0) as usize).min(known[index].side - 1)]);
+        let inside = bounds.x as i32 + left..(bounds.x + bounds.width) as i32 - right;
+        if inside.len() > straight.len() {
+            inside
+        } else {
+            straight
+        }
+    }
+
     /// Calls `f` with the `coverage` of each of the columns.
     #[inline(always)]
     fn visit(&self, y: i32, columns: impl Iterator<Item = i32>, mut f: impl FnMut(i32, (u8, u8))) {
@@ -379,7 +342,7 @@ impl Outline<'_> {
         );
         if let Some(known) = &self.corners {
             let rows = corners.map(|index| {
-                let Corner { side, pixels } = &*known[index];
+                let Corner { side, pixels, .. } = &*known[index];
                 &pixels[(-from_edge as usize).min(side - 1) * side..][..*side]
             });
             let (first, last) = (bounds.x as i32, (bounds.x + bounds.width) as i32 - 1);
@@ -414,7 +377,7 @@ impl Outline<'_> {
     }
 }
 
-/// The columns of a row in which `coverage` is the same.
+/// The columns of a row that are between the corners.
 fn middle_of_row(primitive: &Primitive, y: i32) -> Range<i32> {
     let (bounds, [tl, tr, br, bl], [_, right, _, left]) =
         (primitive.bounds, primitive.radii, border_of(primitive));
@@ -521,7 +484,7 @@ impl<'a> Band<'a> {
         for y in area.top..area.bottom {
             let span = self.span(y, area);
             let row = &mut self.pixels[span];
-            let middle = middle_of_row(primitive, y);
+            let middle = outline.middle(y);
             let (start, end) = (
                 middle.start.clamp(area.left, area.right),
                 middle.end.clamp(area.left, area.right),
@@ -564,40 +527,40 @@ impl<'a> Band<'a> {
         }
     }
 
-    fn image(&mut self, primitive: &Primitive, tile: &AtlasTile, texture: &Texture, area: IntRect) {
-        let (bounds, Bounds { origin, size }) = (primitive.bounds, tile.bounds);
+    fn image(&mut self, primitive: &Primitive, tile: &Sprite, texture: &Texture, area: IntRect) {
+        let (bounds, part) = (primitive.bounds, tile.part);
         let texels = texture.data().as_chunks::<4>().0;
         let texel_row = |row: u32| &texels[row as usize * texture.width..][..texture.width];
         let column_at = samples(
-            origin.x.0,
-            size.width.0,
+            part.left,
+            part.width() as i32,
             texture.width,
             bounds.x,
             bounds.width,
         );
         let row_at = samples(
-            origin.y.0,
-            size.height.0,
+            part.top,
+            part.height() as i32,
             texels.len() / texture.width,
             bounds.y,
             bounds.height,
         );
-        let is_aligned = bounds.width == size.width.0 as f32 && bounds.x.fract() == 0.;
+        let is_aligned = bounds.width == part.width() as f32 && bounds.x.fract() == 0.;
         let (opacity, is_shaped) = (alpha(primitive.opacity), is_shaped(primitive));
         let outline = is_shaped.then(|| Outline::of(primitive));
         self.columns.clear();
-        if !is_aligned && size.width.0 > 1 {
+        if !is_aligned && (part.width() as i32) > 1 {
             self.columns.extend((area.left..area.right).map(&column_at));
         }
         for y in area.top..area.bottom {
-            let (above, below, down) = if size.height.0 == 1 {
-                (origin.y.0 as u32, 0, 0)
+            let (above, below, down) = if (part.height() as i32) == 1 {
+                (part.top as u32, 0, 0)
             } else {
                 row_at(y)
             };
             let (above, below, span) = (texel_row(above), texel_row(below), self.span(y, area));
             let (row, colors) = (&mut self.pixels[span], &mut self.colors);
-            let first = (origin.x.0 + area.left - bounds.x as i32) as usize;
+            let first = (part.left + area.left - bounds.x as i32) as usize;
             if is_aligned && down == 0 && !is_shaped {
                 match texture.is_opaque && opacity == 255 {
                     true => row.copy_from_slice(&above[first..first + row.len()]),
@@ -612,15 +575,15 @@ impl<'a> Band<'a> {
                     mix(above[column], below[column], down)
                 }
             };
-            if size.width.0 == 1 && !is_shaped {
-                fill_row(row, scale(texel(origin.x.0 as usize), opacity));
+            if (part.width() as i32) == 1 && !is_shaped {
+                fill_row(row, scale(texel(part.left as usize), opacity));
                 continue;
             }
             colors.clear();
             if is_aligned {
                 colors.extend((first..first + row.len()).map(texel));
-            } else if size.width.0 == 1 {
-                colors.resize(row.len(), texel(origin.x.0 as usize));
+            } else if (part.width() as i32) == 1 {
+                colors.resize(row.len(), texel(part.left as usize));
             } else if let (Some(&(first, ..)), Some(&(_, last, _))) =
                 (self.columns.first(), self.columns.last())
                 && (last - first) as usize <= row.len()
@@ -642,7 +605,7 @@ impl<'a> Band<'a> {
                 );
             }
             if let Some(outline) = &outline {
-                let middle = middle_of_row(primitive, y);
+                let middle = outline.middle(y);
                 let (start, end) = (
                     middle.start.clamp(area.left, area.right),
                     middle.end.clamp(area.left, area.right),
@@ -671,9 +634,8 @@ impl<'a> Band<'a> {
 
     fn paint(&mut self, primitive: &Primitive, area: IntRect) {
         let textures = self.textures;
-        let texture = |tile: &AtlasTile| {
-            Some(&textures[tile.texture_id.index as usize]).filter(|it| it.width > 0)
-        };
+        let texture =
+            |tile: &Sprite| Some(&textures[tile.texture as usize]).filter(|it| it.width > 0);
         match &primitive.kind {
             Kind::Quad {
                 color,
@@ -731,12 +693,12 @@ impl Summary {
                 pair(c.to_bits(), d.to_bits()),
             ]
         };
-        let of_tile = |tile: AtlasTile, color: u32| {
-            let Bounds { origin, size } = tile.bounds;
+        let of_tile = |tile: Sprite, color: u32| {
+            let part = tile.part;
             [
-                pair(tile.tile_id.0, color),
-                pair(origin.x.0, origin.y.0),
-                pair(size.width.0, size.height.0),
+                pair(tile.id, color),
+                pair(part.left, part.top),
+                pair(part.width() as i32, part.height() as i32),
             ]
         };
         let (bounds, mut band, mut uniform, mut color) =
@@ -744,7 +706,7 @@ impl Summary {
         let kind = match primitive.kind {
             Kind::Mask(tile, color) => of_tile(tile, color),
             Kind::Image(tile) => {
-                if tile.bounds.size.height.0 == 1 && !is_shaped(primitive) {
+                if tile.part.height() == 1 && !is_shaped(primitive) {
                     band = i32::MIN..i32::MAX;
                 }
                 of_tile(tile, 0)
@@ -790,6 +752,11 @@ pub(super) struct Grid {
 }
 
 impl Grid {
+    /// The index of its first tile.
+    pub fn start_of(&self, row: i32) -> usize {
+        (row - self.window.top / TILE_HEIGHT) as usize * self.columns
+    }
+
     pub fn columns_of(&self, area: IntRect) -> Range<i32> {
         area.left / TILE_WIDTH..(area.right - 1) / TILE_WIDTH + 1
     }
@@ -821,6 +788,27 @@ impl Grid {
         IntRect::new(left, row * TILE_HEIGHT, right, (row + 1) * TILE_HEIGHT).intersect(self.window)
     }
 
+    pub fn around(&self, is_included: impl Fn(usize) -> bool) -> IntRect {
+        let (mut rows, mut columns) = (i32::MAX..0, i32::MAX..0);
+        for row in self.rows_of(self.window) {
+            let is_included = |column: &i32| is_included(self.start_of(row) + *column as usize);
+            let mut all = self.columns_of(self.window);
+            let Some(first) = all.find(is_included) else {
+                continue;
+            };
+            let last = all.rfind(is_included).unwrap_or(first);
+            (rows, columns) = (
+                rows.start.min(row)..row + 1,
+                columns.start.min(first)..columns.end.max(last + 1),
+            );
+        }
+        if rows.is_empty() {
+            return IntRect::default();
+        }
+        self.rect(rows.start, columns.clone())
+            .union(self.rect(rows.end - 1, columns))
+    }
+
     /// From the top to the bottom. What has the same columns does not have the same rows.
     pub fn areas(&self, is_included: impl Fn(usize) -> bool) -> Vec<IntRect> {
         let mut areas: Vec<IntRect> = Vec::new();
@@ -848,8 +836,7 @@ impl Grid {
     ) {
         let mut start = columns.start;
         for column in columns.start..=columns.end {
-            if column == columns.end || !is_included(row as usize * self.columns + column as usize)
-            {
+            if column == columns.end || !is_included(self.start_of(row) + column as usize) {
                 if start < column {
                     f(self.rect(row, start..column));
                 }
@@ -869,6 +856,11 @@ pub(super) struct Tile {
 }
 
 impl Tile {
+    #[cfg(any(test, target_os = "macos"))]
+    pub fn is_clear(&self) -> bool {
+        self.is_flat && self.base == [0; 4]
+    }
+
     fn flat(base: Pixel, first: usize) -> Tile {
         Tile {
             hash: combine(0, u32::from_ne_bytes(base).into()),
@@ -902,8 +894,7 @@ fn survey_again(
     });
     let columns = grid.columns_of(wanted);
     for row in grid.rows_of(wanted) {
-        tiles[row as usize * grid.columns..][columns.start as usize..columns.end as usize]
-            .fill(empty);
+        tiles[grid.start_of(row)..][columns.start as usize..columns.end as usize].fill(empty);
     }
     for (index, summary) in summaries.iter().enumerate().skip(empty.first as usize) {
         let area = summary.area.offset(0, down).intersect(grid.window);
@@ -911,11 +902,23 @@ fn survey_again(
         if visited.is_empty() {
             continue;
         }
-        let (filled_columns, filled_rows) = grid.inside(summary.uniform.offset(0, down));
         let (all, color) = (grid.columns_of(visited), summary.color);
+        let placed = combine(summary.shape, (summary.y + down as f32).to_bits().into());
+        if summary.band.is_empty() && summary.uniform.is_empty() && !summary.has_one_color {
+            let value = combine(
+                combine(placed, pair(area.left, area.right)),
+                pair(area.top, area.bottom),
+            );
+            for row in grid.rows_of(visited) {
+                for tile in &mut tiles[grid.start_of(row)..][all.start as usize..all.end as usize] {
+                    (tile.hash, tile.is_flat) = (combine(tile.hash, value), false);
+                }
+            }
+            continue;
+        }
+        let (filled_columns, filled_rows) = grid.inside(summary.uniform.offset(0, down));
         let filled_columns = filled_columns.start.clamp(all.start, all.end)
             ..filled_columns.end.clamp(all.start, all.end);
-        let placed = combine(summary.shape, (summary.y + down as f32).to_bits().into());
         for row in grid.rows_of(visited) {
             let (top, bottom) = (
                 area.top.max(row * TILE_HEIGHT),
@@ -936,8 +939,7 @@ fn survey_again(
             } else {
                 all.end..all.end
             };
-            let tiles =
-                &mut tiles[row as usize * grid.columns..][all.start as usize..all.end as usize];
+            let tiles = &mut tiles[grid.start_of(row)..][all.start as usize..all.end as usize];
             let (before, rest) = tiles.split_at_mut((filled.start - all.start) as usize);
             let (inside, after) = rest.split_at_mut(filled.len());
             for tile in before.iter_mut().chain(after) {
@@ -983,10 +985,26 @@ fn differing<'a>(
 }
 
 /// How far down most of what moved did.
+/// By how much most of it has moved, if more has than has stayed.
+pub(super) fn shift(before: &[Summary], after: &[Summary]) -> Option<i32> {
+    let down = movement(before, after).filter(|it| *it != 0)?;
+    let places: FastMap<_, _> = before
+        .iter()
+        .map(|it| ((it.shape, it.y.round() as i32), ()))
+        .collect();
+    let count = |down: i32| {
+        after
+            .iter()
+            .filter(|it| places.contains_key(&(it.shape, it.y.round() as i32 - down)))
+            .count()
+    };
+    (count(down) > count(0)).then_some(down)
+}
+
 pub(super) fn movement(before: &[Summary], after: &[Summary]) -> Option<i32> {
     const SAMPLES: usize = 12;
     let (_, before, after) = differing(before, after);
-    let mut votes: SmallVec<[(i32, u32); 32]> = SmallVec::new();
+    let mut votes: SmallVec<(i32, u32), 32> = SmallVec::new();
     for sample in after
         .iter()
         .step_by(after.len() / SAMPLES + 1)
@@ -1040,15 +1058,21 @@ pub(super) struct Plan<'a> {
 impl Plan<'_> {
     /// `area` is made of whole tiles.
     pub fn paint(&self, band: &mut Band, area: IntRect) {
-        let Plan {
-            grid,
-            tiles,
-            actions,
-            has_changes,
-            ..
-        } = self;
-        for row in grid.rows_of(area).filter(|row| has_changes[*row as usize]) {
-            let (first, columns) = (row as usize * grid.columns, grid.columns_of(area));
+        let (
+            Plan {
+                grid,
+                tiles,
+                actions,
+                has_changes,
+                ..
+            },
+            top,
+        ) = (self, self.grid.window.top / TILE_HEIGHT);
+        for row in grid
+            .rows_of(area)
+            .filter(|row| has_changes[(*row - top) as usize])
+        {
+            let (first, columns) = (grid.start_of(row), grid.columns_of(area));
             let mut column = columns.start;
             while column < columns.end {
                 let (start, base) = (column, tiles[first + column as usize].base);
@@ -1075,7 +1099,7 @@ impl Plan<'_> {
                 |tile: usize| actions[tile] == Action::Paint && tiles[tile].first <= index as u32;
             for row in grid
                 .rows_of(visible)
-                .filter(|row| has_changes[*row as usize])
+                .filter(|row| has_changes[(*row - top) as usize])
             {
                 grid.runs(row, grid.columns_of(visible), is_needed, |run| {
                     band.paint(primitive, run.intersect(visible))
@@ -1093,12 +1117,32 @@ pub struct Compositor {
     /// The survey of `shown`.
     pub(super) tiles: Vec<Tile>,
     pub(super) window: IntRect,
+    #[cfg(any(test, not(target_os = "macos")))]
     capacity: (usize, usize),
     /// For each tile, a hash of what is in it. The one that is shown comes first.
-    buffers: SmallVec<[(u64, Vec<u64>); 3]>,
+    #[cfg(any(test, not(target_os = "macos")))]
+    buffers: SmallVec<(u64, Vec<u64>), 3>,
+}
+
+/// What a `Compositor` knows about one of several planes.
+#[cfg(any(test, target_os = "macos"))]
+#[derive(Default)]
+pub struct Plane {
+    pub primitives: Vec<Primitive>,
+    shown: Vec<Summary>,
+    tiles: Vec<Tile>,
+    window: IntRect,
 }
 
 impl Compositor {
+    #[cfg(any(test, target_os = "macos"))]
+    pub fn exchange(&mut self, plane: &mut Plane) {
+        std::mem::swap(&mut self.primitives, &mut plane.primitives);
+        std::mem::swap(&mut self.shown, &mut plane.shown);
+        std::mem::swap(&mut self.tiles, &mut plane.tiles);
+        std::mem::swap(&mut self.window, &mut plane.window);
+    }
+
     /// While `window` is that of `shown`.
     pub(super) fn survey(&mut self, summaries: &[Summary], grid: &Grid) -> Vec<Tile> {
         let mut tiles = std::mem::take(&mut self.tiles);
@@ -1136,6 +1180,7 @@ impl Compositor {
         tiles
     }
 
+    #[cfg(any(test, not(target_os = "macos")))]
     pub fn paint(&mut self, pixels: Pixels) -> Painted {
         const TILES_PER_THREAD: usize = 2400;
         const MAX_THREADS: usize = 4;
@@ -1145,7 +1190,7 @@ impl Compositor {
         let extent = |shown: i32, tile: i32, limit: usize| {
             ((shown.max(1) + tile - 1) / tile * tile).min(limit as i32)
         };
-        let (right, bottom) = (pixels.shown.width.0, pixels.shown.height.0);
+        let (right, bottom) = pixels.shown;
         let window = IntRect::new(
             0,
             0,
@@ -1191,14 +1236,13 @@ impl Compositor {
             .flatten()
             .unwrap_or(0);
         if down != 0 {
-            let changed = grid.areas(|tile| actions[tile] == Action::Paint);
-            let changed = changed.into_iter().fold(IntRect::default(), IntRect::union);
+            let changed = grid.around(|tile| actions[tile] == Action::Paint);
             let moved = survey(&self.shown, grid, down, changed);
             for (row, column) in grid
                 .rows_of(changed)
                 .flat_map(|row| grid.columns_of(changed).map(move |column| (row, column)))
             {
-                let tile = row as usize * grid.columns + column as usize;
+                let tile = grid.start_of(row) + column as usize;
                 // Few large areas are less work for the platform than many small ones.
                 let is_worth_it =
                     pixels.platform_moves || actions[tile] == Action::Paint && !tiles[tile].is_flat;
@@ -1270,24 +1314,13 @@ impl Compositor {
         if known != Some(0) {
             actions = compare(Some(0));
         }
-        let bounds = |it: &IntRect| {
-            let extent = size(
-                DevicePixels(it.width() as i32),
-                DevicePixels(it.height() as i32),
-            );
-            Bounds::new(point(DevicePixels(it.left), DevicePixels(it.top)), extent)
-        };
-        let areas = grid
-            .areas(|tile| actions[tile] == Action::Paint)
-            .iter()
-            .map(bounds)
-            .collect();
+        let areas = grid.areas(|tile| actions[tile] == Action::Paint);
         self.buffers.retain(|(id, _)| *id != pixels.id);
         self.buffers.truncate(2);
         self.buffers.insert(0, (pixels.id, hashes));
         (self.shown, self.tiles) = (summaries, tiles);
         Painted {
-            moved: moved.iter().map(bounds).collect(),
+            moved,
             moved_by: down,
             areas,
         }

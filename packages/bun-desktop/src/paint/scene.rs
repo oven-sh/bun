@@ -2,15 +2,13 @@ use std::cell::Cell;
 use std::ops::Range;
 use std::time::Instant;
 
-use parking_lot::Mutex;
-use resvg::tiny_skia::Transform;
-use zeno::PathBuilder as _;
-
 use super::raster::{Path, map_rect};
 use super::warp::Projection;
 use crate::abi::{
     self, Filter, Glyph, GradientStop, Item, LineStyle, PathVerb, Rect, Region, RoundedRect, Span,
 };
+use crate::gfx::{self, PathBuilder as _, Transform};
+use crate::sync::Mutex;
 
 /// What an item and, for a `Push*`, everything up to its `Pop` cover.
 #[derive(Clone, Copy, Default)]
@@ -34,6 +32,7 @@ pub struct Scene {
     pub regions: Vec<Region>,
     pub caret: Option<Rect>,
     pub has_backdrops: bool,
+    pub has_cross_fades: bool,
     /// Those that have not been asked for, with their sizes.
     pub new_images: Mutex<Vec<(u32, [f32; 2])>>,
     extents: Vec<Extent>,
@@ -54,6 +53,7 @@ impl Default for Scene {
             regions: Vec::new(),
             caret: None,
             has_backdrops: false,
+            has_cross_fades: false,
             new_images: Mutex::default(),
             extents: Vec::new(),
             submitted: Vec::new(),
@@ -242,6 +242,16 @@ pub fn has_graph(filters: &[Filter]) -> bool {
 }
 
 /// Whether it changes what is under it where it has nothing.
+pub fn cross_fades(item: &Item) -> bool {
+    matches!(
+        item,
+        Item::PushLayer {
+            blend: abi::BlendMode::PlusLighter,
+            ..
+        }
+    )
+}
+
 pub fn erases(item: &Item) -> bool {
     use abi::BlendMode::{DestinationIn, SourceIn, SourceOut};
     matches!(
@@ -365,6 +375,7 @@ impl Scene {
     pub fn index(&mut self) {
         self.caret = None;
         self.has_backdrops = false;
+        self.has_cross_fades = self.items.iter().any(cross_fades);
         self.new_images.get_mut().clear();
         self.extents.clear();
         let mut open: Vec<usize> = Vec::new();
@@ -457,9 +468,8 @@ impl Scene {
         match self.items[push] {
             Item::PushClip(shape) => intersect(content, outset(shape.rect, 1.)),
             Item::PushClipPath { verbs, .. } => {
-                let bounds = zeno::bounds(&self.path(verbs), zeno::Fill::NonZero, None);
-                let (x, y, width, height) =
-                    (bounds.min.x, bounds.min.y, bounds.width(), bounds.height());
+                let bounds = gfx::bounds(&self.path(verbs));
+                let (x, y, width, height) = (bounds.x, bounds.y, bounds.width, bounds.height);
                 intersect(
                     content,
                     Rect {

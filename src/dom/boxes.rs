@@ -539,7 +539,7 @@ impl Document {
     }
 
     /// `None` for an inline element.
-    fn kind_of(&self, id: NodeId, style: &Style) -> Option<Kind> {
+    pub(crate) fn kind_of(&self, id: NodeId, style: &Style) -> Option<Kind> {
         let element = self.tree.element(id)?;
         let tag = element.html_tag();
         if crate::svg::has_svg_children(element) {

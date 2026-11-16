@@ -28,7 +28,7 @@ Bun statically links these libraries:
 | [`ls-qpack`](https://github.com/litespeedtech/ls-qpack) | MIT |
 | [`lsquic`](https://github.com/litespeedtech/lsquic) | MIT (portions derived from [Chromium proto-quic](https://github.com/litespeedtech/lsquic/blob/master/LICENSE.chrome), BSD 3-Clause) |
 | [`mimalloc`](https://github.com/microsoft/mimalloc) | MIT |
-| [`picohttp`](https://github.com/h2o/picohttpparser) | dual-licensed under the Perl License or the MIT License |
+| [`picohttpparser`](https://github.com/h2o/picohttpparser) (not linked: `src/http1` is derived from parts of it) | dual-licensed under the Perl License or the MIT License |
 | [`zstd`](https://github.com/facebook/zstd) | dual-licensed under the BSD License or GPLv2 license |
 | [`simdutf`](https://github.com/simdutf/simdutf) | Apache 2.0 |
 | [`tinycc`](https://github.com/tinycc/tinycc) | LGPL v2.1 |
@@ -39,7 +39,7 @@ Bun statically links these libraries:
 | [`libbase64`](https://github.com/aklomp/base64/blob/master/LICENSE) | BSD 2-Clause |
 | [`libuv`](https://github.com/libuv/libuv) (on Windows) | MIT |
 | [`libdeflate`](https://github.com/ebiggers/libdeflate) | MIT |
-| [`libjpeg-turbo`](https://github.com/libjpeg-turbo/libjpeg-turbo) | [BSD 3-Clause / IJG / zlib](https://github.com/libjpeg-turbo/libjpeg-turbo/blob/main/LICENSE.md) |
+| [`libjpeg-turbo`](https://github.com/libjpeg-turbo/libjpeg-turbo) (not linked: the JPEG codec is derived from parts of it, and so based in part on the work of the Independent JPEG Group) | [BSD 3-Clause / IJG / zlib](https://github.com/libjpeg-turbo/libjpeg-turbo/blob/main/LICENSE.md) |
 | [`libspng`](https://github.com/randy408/libspng) (not linked: `src/png` is derived from parts of it) | BSD 2-Clause |
 | [`stb_image`](https://github.com/nothings/stb) (not linked: the PNG codec finds the Paeth predictor its way) | MIT or public domain |
 | [`libwebp`](https://github.com/webmproject/libwebp) | BSD 3-Clause |
@@ -84,33 +84,15 @@ It is not part of Bun's binary. Bun downloads it for `bun:desktop`, and `--deskt
 
 | Library | License |
 |---------|---------|
-| [`GPUI`](https://github.com/zed-industries/zed/tree/main/crates/gpui), patched with `patches/zed` | Apache 2.0 |
-| [`wgpu`](https://github.com/gfx-rs/wgpu) | MIT or Apache 2.0 |
-| [`accesskit`](https://github.com/AccessKit/accesskit) | MIT or Apache 2.0 |
 | [`harfrust`](https://github.com/harfbuzz/harfrust) | MIT |
 | [`skrifa`](https://github.com/googlefonts/fontations) | MIT or Apache 2.0 |
-| [`fontique`](https://github.com/linebender/parley) | MIT or Apache 2.0 |
-| [`zeno`](https://github.com/dfrg/zeno) | MIT or Apache 2.0 |
-| [`resvg`](https://github.com/linebender/resvg) | MIT or Apache 2.0 |
-| [`tiny-skia`](https://github.com/linebender/tiny-skia) | BSD 3-Clause |
-| [`image`](https://github.com/image-rs/image) | MIT or Apache 2.0 |
-| [`brotli-decompressor`](https://github.com/dropbox/rust-brotli-decompressor) | BSD 3-Clause or MIT |
-| [`unicode-bidi`](https://github.com/servo/unicode-bidi) | MIT or Apache 2.0 |
-| [`unicode-linebreak`](https://github.com/axelf4/unicode-linebreak) | Apache 2.0 |
-| [`ICU4X`](https://github.com/unicode-org/icu4x) | Unicode 3.0 |
-| [`rfd`](https://github.com/PolyMeilex/rfd) | MIT |
-| [`trash`](https://github.com/Byron/trash-rs) | MIT |
-| [`global-hotkey`](https://github.com/tauri-apps/global-hotkey) | MIT or Apache 2.0 |
-| [`tray-icon`](https://github.com/tauri-apps/tray-icon) | MIT or Apache 2.0 |
-| [`calloop`](https://github.com/Smithay/calloop) | MIT |
-| [`wayland-rs`](https://github.com/Smithay/wayland-rs) | MIT |
-| [`x11rb`](https://github.com/psychon/x11rb) | MIT or Apache 2.0 |
-| [`zbus`](https://github.com/z-galaxy/zbus) | MIT |
-| [`objc2`](https://github.com/madsmtm/objc2) | MIT |
-| [`windows-rs`](https://github.com/microsoft/windows-rs) | MIT or Apache 2.0 |
-| [`option-ext`](https://github.com/soc/option-ext) | MPL 2.0 |
+| [`libc`](https://github.com/rust-lang/libc) | MIT or Apache 2.0 |
+| [`bitflags`](https://github.com/bitflags/bitflags) | MIT or Apache 2.0 |
+| [`bytemuck`](https://github.com/Lokathor/bytemuck) | Zlib, MIT or Apache 2.0 |
+| [`once_cell`](https://github.com/matklad/once_cell) | MIT or Apache 2.0 |
+| [`smallvec`](https://github.com/servo/rust-smallvec) | MIT or Apache 2.0 |
 
-`bun:desktop` embeds the [Public Suffix List](https://publicsuffix.org/list/) (MPL 2.0). Parts of its layout, painting and line breaking follow algorithms of [Chromium](https://chromium.googlesource.com/chromium/src/+/main/LICENSE) (BSD 3-Clause; parts of Blink are LGPL 2).
+`bun:desktop` embeds the [Public Suffix List](https://publicsuffix.org/list/) (MPL 2.0). Parts of its layout, painting and line breaking follow algorithms of [Chromium](https://chromium.googlesource.com/chromium/src/+/main/LICENSE) (BSD 3-Clause; parts of Blink are LGPL 2). The stroker in the UI library (`src/gfx/stroke.rs`) is derived from [Skia](https://skia.googlesource.com/skia) and [`tiny-skia`](https://github.com/linebender/tiny-skia) (BSD 3-Clause). Its text shaper (`src/text/shaper`) is derived from [HarfBuzz](https://github.com/harfbuzz/harfbuzz) (["Old MIT"](https://github.com/harfbuzz/harfbuzz/blob/main/COPYING)) and [`harfrust`](https://github.com/harfbuzz/harfrust) (MIT). Its hinter (`src/text/autohint`) is derived from [FreeType](https://freetype.org) ([FreeType License](https://gitlab.freedesktop.org/freetype/freetype/-/blob/master/docs/FTL.TXT); portions are copyright © The FreeType Project, all rights reserved) and [`skrifa`](https://github.com/googlefonts/fontations) (MIT or Apache 2.0), and its font reader (`src/text/sfnt`) follows `skrifa` in how it rounds.
 
 ## Polyfills
 

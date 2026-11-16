@@ -107,7 +107,7 @@ pub(crate) struct Snapshots {
     _current_file: Option<File>,
     /// Directory whose `__snapshots__/` was last created (or found existing).
     snapshot_dir_path: Option<&'static [u8]>,
-    inline_snapshots_to_write: IndexMap<FileId, (&'static [u8], Vec<InlineSnapshotToWrite>)>,
+    inline_snapshots_to_write: IndexMap<FileId, InlineSnapshotsOfFile>,
     pub(crate) last_error_snapshot_name: Option<Box<[u8]>>,
 }
 
@@ -120,8 +120,8 @@ impl Snapshots {
     #[cfg(not(windows))]
     const SNAPSHOTS_DIR_NAME: &'static [u8] = b"__snapshots__/";
 
-    pub(crate) fn init(update_snapshots: bool) -> Box<Snapshots> {
-        Box::new(Snapshots {
+    pub(crate) fn init(update_snapshots: bool) -> Snapshots {
+        Snapshots {
             update_snapshots,
             total: 0,
             added: 0,
@@ -134,11 +134,16 @@ impl Snapshots {
             snapshot_dir_path: None,
             inline_snapshots_to_write: IndexMap::new(),
             last_error_snapshot_name: None,
-        })
+        }
     }
 }
 
 // hoisted out of `impl Snapshots` — inherent associated types are unstable.
+
+struct InlineSnapshotsOfFile {
+    path: &'static [u8],
+    snapshots: Vec<InlineSnapshotToWrite>,
+}
 
 pub(crate) struct InlineSnapshotToWrite {
     pub(crate) line: c_ulong,
@@ -541,7 +546,7 @@ impl Snapshots {
             .sequences()
             .iter()
             .filter(|sequence| matches!(sequence.result.get(), TestResult::Pass | TestResult::Todo))
-            .filter_map(|sequence| sequence.test_entry.map(|entry| buntest.step(entry).entry))
+            .filter_map(|sequence| sequence.test_entry.map(|entry| buntest.sequence_entry(entry).entry))
             .collect();
         Self::keep_entries_of_tests(&mut self.values, file.format, buntest, done);
         file.dirty = true;
@@ -724,8 +729,11 @@ impl Snapshots {
         test_file: TestFile,
         value: InlineSnapshotToWrite,
     ) -> Result<(), Error> {
-        let (_, list) = self.inline_snapshots_to_write.entry(test_file.id).or_insert_with(|| (test_file.path, Vec::new()));
-        list.push(value);
+        self.inline_snapshots_to_write
+            .entry(test_file.id)
+            .or_insert_with(|| InlineSnapshotsOfFile { path: test_file.path, snapshots: Vec::new() })
+            .snapshots
+            .push(value);
         Ok(())
     }
 
@@ -737,7 +745,7 @@ impl Snapshots {
         // The arena is reset() inside the loop, bulk-freeing per-iteration scratch.
         let mut arena = bun_alloc::Arena::new();
 
-        for (test_file_path, ils_info) in self.inline_snapshots_to_write.values_mut() {
+        for InlineSnapshotsOfFile { path: test_file_path, snapshots: ils_info } in self.inline_snapshots_to_write.values_mut() {
             arena.reset();
 
             let mut log = ReportedLog { log: bun_ast::Log::init(), success: &success };
@@ -1164,7 +1172,7 @@ impl Snapshots {
             return Err(bun_sys::Error::from_code(bun_sys::E::ENAMETOOLONG, bun_sys::Tag::open));
         };
 
-        if !self.snapshot_dir_path.is_some_and(|cached| strings::eql_long(dir_path, cached, true)) {
+        if !self.snapshot_dir_path.is_some_and(|cached| strings::eql_long(dir_path, cached)) {
             let after_dir = core::mem::replace(&mut buf[dir_len], 0);
             match bun_sys::mkdir(ZStr::from_buf(&buf[..], dir_len), 0o777) {
                 Err(err) if err.get_errno() != bun_sys::Errno::EEXIST => return Err(err),

@@ -1,4 +1,6 @@
 // Permissions, notifications and `navigator.storage`.
+const mediaOfDevices = { camera: "video", microphone: "audio" };
+
 const idl = require("internal/desktop/web/idl");
 
 const { expose, internal, scope, usv } = idl;
@@ -22,7 +24,7 @@ class PermissionStatus extends idl.EventTarget {
     return this.#name;
   }
   get state() {
-    const mediaType = { camera: "video", microphone: "audio" }[this.#name];
+    const mediaType = mediaOfDevices[this.#name];
     return scope.env.checkPermission(inElectron[this.#name] ?? this.#name, mediaType && { mediaType });
   }
 }

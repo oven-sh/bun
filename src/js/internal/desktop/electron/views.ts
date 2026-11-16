@@ -185,6 +185,8 @@ class ImageView extends View {
   setImage = unsupported.throws("ImageView");
 }
 
+const toCssColor = (color: string) => "#" + parseColor(color).toString(16).padStart(8, "0");
+
 class BaseWindow extends Window {
   #contentView!: View;
   #backgroundColor: string;
@@ -193,7 +195,12 @@ class BaseWindow extends Window {
   #flags: Record<string, boolean>;
 
   constructor(options: any = {}) {
-    super({ focus: options.focusable, ...options, backgroundColor: undefined, [kBare]: true });
+    super({
+      focus: options.focusable,
+      ...options,
+      backgroundColor: options.backgroundColor ? toCssColor(options.backgroundColor) : undefined,
+      [kBare]: true,
+    });
     this.#flags = {
       autoHideMenuBar: !!options.autoHideMenuBar,
       contentProtected: false,
@@ -326,7 +333,7 @@ class BaseWindow extends Window {
 
   setBackgroundColor(color: string) {
     this.#backgroundColor = color;
-    super.setBackgroundColor("#" + parseColor(color).toString(16).padStart(8, "0"));
+    super.setBackgroundColor(toCssColor(color));
   }
 
   setTitleBarOverlay(options: object) {

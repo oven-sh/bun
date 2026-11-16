@@ -949,7 +949,6 @@ macro_rules! keywords {
                 None
             }
 
-            #[allow(dead_code)]
             pub(crate) fn name(self) -> &'static str {
                 match self { $($name::$variant => $first),+ }
             }

@@ -33,6 +33,8 @@ class Page extends Client {
   id = nextId++;
   handle: any;
   title = "";
+  /** What the previous document has captured, or 0. */
+  inboundTransition = 0;
   isInitial: boolean;
   controller: any;
   /** The `<iframe>`s in the web engine. */
@@ -46,9 +48,7 @@ class Page extends Client {
   #preload: any;
   #preloadWorld: any;
   #env: any;
-  #markup = "";
   #lastCookies = { all: undefined, url: "", text: "" };
-  #inlineScripts: Set<string> | undefined;
   #opener: { page: Page; createPage: Function } | undefined;
   context: any;
   agent: any;
@@ -111,11 +111,9 @@ class Page extends Client {
   }
 
   /** The first document of a window leaves its global object to the next one of the same origin. */
-  renew(next: Page, options: any, markup: string) {
+  renew(next: Page, options: any) {
     if (!this.isInitial || !this.agent || !this.controller || next.originKey !== this.originKey) return false;
     this.url = this.#env.url = this.#env.dom.url = next.url;
-    this.#markup = markup;
-    this.#inlineScripts = undefined;
     this.#configure(options);
     Object.assign(this.#env.dom, this.#aboutDocument());
     this.#env.javascript = this.#runsScripts();
@@ -286,7 +284,7 @@ class Page extends Client {
     if (!request) return Promise.$resolve("granted");
     return new Promise(resolve =>
       request(this.webContents, name, (granted: boolean) => resolve(granted ? "granted" : "denied"), {
-        isMainFrame: true,
+        isMainFrame: this.parent === undefined,
         requestingUrl: this.url,
         ...more,
       }),
@@ -371,6 +369,7 @@ class Page extends Client {
       historyEntries: state.history.entries,
       historyLength: state.history.length,
       activation: state.history.activation,
+      inboundTransition: () => this.inboundTransition,
       restoresScroll: () => this.restoresScroll,
       isInitial: () => this.isInitial,
       opened: () => {
@@ -409,9 +408,10 @@ class Page extends Client {
       fetchResource: this.fetchResource,
       canPreload,
       contentSecurityPolicy: (text: string) => {
-        this.csp.add(text, true, true);
+        this.csp.add(text, true, true, !this.#cameWith("\0" + text));
         this.#applyPolicy();
       },
+      needsSource: () => compiled.isExclusive || !this.csp.restrictsScripts(),
       hasPolicyFromHeader: () => this.csp.isFromHeader,
       allowsInlineImages: () => this.csp.allowsInlineImages(),
       allowsBase: (url: string) => this.csp.allowsFor("base-uri", url),
@@ -422,7 +422,7 @@ class Page extends Client {
       navigate: (url: string, options: object = {}) => callbacks.navigate(this, url, options),
       historyChanged: (url: string, how: object) => callbacks.historyChanged(this, url, how),
       traverse: (delta: number) => state.history.go(delta, this),
-      reload: () => queueTask(() => this.disposed || state.reload(true)),
+      reload: () => queueTask(() => this.disposed || state.reload()),
       stop: () => state.stop(),
       open: (url: string, target: string, features: string, createPage: Function, options?: object) => {
         const guest = callbacks.open(this, url, target, features, createPage, options);
@@ -564,7 +564,7 @@ class Page extends Client {
 
   #cameWith(script: string): boolean {
     if (this.#opener) return this.#opener.page.#cameWith(script);
-    return (this.#inlineScripts ??= policy.inlineScriptsOf(this.#markup)).has(script);
+    return this.controller.cameWith(script) === true;
   }
 
   #applyPolicy() {
@@ -573,7 +573,7 @@ class Page extends Client {
     if (!this.csp.allowsWebAssembly()) main?.disableWebAssembly();
     if (this.csp.restrictsStyleAttributes()) this.controller?.checkStyleAttributes();
     if (this.csp.watchesEval()) main?.watchEval(this.csp.requiresTrustedTypes());
-    if (this.csp.restrictsScripts() && !compiled.isExclusive) this.#markup = "";
+    if (this.csp.restrictsScripts() && !compiled.isExclusive) this.controller?.forgetSource();
   }
 
   #sharedEnv() {
@@ -757,16 +757,15 @@ class Page extends Client {
   }
 
   /** Makes the realm and the empty document, and runs the preload scripts. */
-  start(markup: string) {
+  start() {
     started.$add(this);
-    this.#markup = markup;
     const preferences = this.#preferences;
     const dom = this.#domHost();
     if (this.#opener) {
       const { reportError, messaging, fileFromPath, createPlayer, describeError } =
         this.#opener.page.controller.page.host;
       this.controller = this.#opener.createPage({
-        ...dom,
+        __proto__: this.#opener.page.world(0).guard(dom),
         reportError,
         messaging,
         fileFromPath,
@@ -801,6 +800,7 @@ class Page extends Client {
       (this.#env = {
         ...this.#sharedEnv(),
         dom,
+        isOfHost: (value: unknown) => value instanceof Object,
         shared: this.agent?.root?.controller.shared(),
         baseUrl: this.#baseUrl,
         javascript: this.#runsScripts(),

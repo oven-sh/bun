@@ -1791,7 +1791,7 @@ fn decode_sni_result(
     core::ptr::null_mut()
 }
 
-/// `openssl.c`'s `us_select_cert_cb` (the early select-certificate callback)
+/// `openssl.cpp`'s `us_select_cert_cb` (the early select-certificate callback)
 /// calls this FIRST for every ClientHello carrying a servername - the user
 /// SNICallback takes precedence over the static SNI tree (Node semantics) -
 /// so the JS callback can pick a context for the requested hostname. The

@@ -1,4 +1,7 @@
 // From the events of the UI library to those of the DOM.
+const dragCursors = { none: "no-drop", copy: "copy", link: "alias" };
+const mediaTypes = { img: "image", video: "video", audio: "audio", canvas: "canvas" };
+
 const core = require("internal/desktop/dom/core");
 const events = require("internal/desktop/dom/events");
 const editing = require("internal/desktop/dom/editing");
@@ -643,7 +646,7 @@ function dragOver(page: Page) {
       if (isAllowed) drag.effect = store.dropEffect;
     } else if (acceptsText(target, drag)) drag.effect = defaultEffect(drag, mouse.modifiers);
   }
-  setCursor(page, { none: "no-drop", copy: "copy", link: "alias" }[drag.effect] ?? "grabbing");
+  setCursor(page, dragCursors[drag.effect] ?? "grabbing");
   core.invalidate(page.doc);
 }
 
@@ -841,7 +844,9 @@ function mouseDown(page: Page, button: number, isFirst: boolean) {
     if (!(target.flags & CONNECTED) || target.doc !== doc) target = elementAt(page, mouse.x, mouse.y)!;
     if (mouse.scrollControl !== 0) return selectionOf(doc).clear();
     const { selectionSerial } = page;
+    const owner = outOfControl(target);
     focusing.focusOnMouseDown(doc, target);
+    if (!(target.flags & CONNECTED) && owner.flags & CONNECTED) target = elementAt(page, mouse.x, mouse.y)!;
     const selected = selectionSerial === page.selectionSerial ? null : selectionOf(doc).r;
     if (
       selected?.collapsed === false &&
@@ -1000,7 +1005,7 @@ function describePoint(page: Page, x: number, y: number) {
   const link = chain.find(node => isHtml(node, "a") && core.hasAttr(node, "href"));
   const resolve = (node: N | undefined, name: string) =>
     (node && core.resolveUrl(doc, getAttr(node, name) ?? "")) ?? "";
-  const mediaType = { img: "image", video: "video", audio: "audio", canvas: "canvas" }[target.name] ?? "none";
+  const mediaType = mediaTypes[target.name] ?? "none";
   const can = (name: string) => editing.isEnabled(doc, name);
   const isEditable = editing.editTarget(doc) !== null && core.containsFlat(editing.editTarget(doc)!, target);
   return {

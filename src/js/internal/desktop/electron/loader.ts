@@ -215,6 +215,7 @@ function referrerFor(source: string | undefined, target: string, policy: string)
 }
 
 function upgrade(url: URL) {
+  if (isSecure(url.href)) return;
   if (url.protocol === "http:") url.protocol = "https:";
   else if (url.protocol === "ws:") url.protocol = "wss:";
 }
@@ -418,7 +419,7 @@ async function load(session: any, request: Load) {
       source = "cache";
       return session.cache().exchange(partition, url, method, headers, request.cache, connect);
     };
-    const server = request.mode && session.servers.get(url.origin);
+    const server = (request.mode || request.isFromPage) && session.servers.get(url.origin);
     const answer = server ? serve(server, url, options, network) : network();
     if (app.listenerCount("request-answered") === 0) return answer;
     const started = performance.now();
@@ -451,7 +452,7 @@ async function load(session: any, request: Load) {
       throw Object.assign(netError("BLOCKED_BY_CLIENT"), { needsWebEngine: destination === "iframe" });
     const response = method === "GET" ? await network() : undefined;
     if (
-      response?.headers.has("location") ||
+      ([301, 302, 303, 307, 308].includes(response?.status!) && response!.headers.has("location")) ||
       /^\s*attachment/i.test(response?.headers.get("content-disposition") ?? "")
     ) {
       return response!;

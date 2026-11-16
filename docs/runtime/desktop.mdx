@@ -3,7 +3,7 @@ title: Desktop apps
 description: Open windows that show a DOM document, with menus, dialogs, notifications and the rest of what a desktop app needs
 ---
 
-`bun:desktop` opens native windows on macOS, Linux (X11 and Wayland) and Windows. A window shows a DOM document. Bun has its own implementation of the DOM, CSS and layout, and draws with [GPUI](https://www.gpui.rs). There is no browser process and no IPC: your components, `node:fs` and the layout of the window run on one thread.
+`bun:desktop` opens native windows on macOS and Linux (X11, and Wayland through Xwayland). A window shows a DOM document. Bun has its own implementation of the DOM, CSS, layout and painting. There is no browser process and no IPC: your components, `node:fs` and the layout of the window run on one thread.
 
 <Warning>
   `bun:desktop` is experimental. It implements much of the web platform, not all of it. See [what is
@@ -158,7 +158,7 @@ window.on("context-menu", (event, { isEditable }) => {
 });
 ```
 
-The menu bar is native on macOS. On Linux and Windows, Bun draws it at the top of each window. Bun draws pop-up menus on every platform, inside of the window.
+The menu bar is native on macOS. On Linux, Bun draws it at the top of each window. Bun draws pop-up menus on every platform, inside of the window.
 
 ## The rest
 
@@ -286,7 +286,7 @@ Compiled scripts are part of your program: `process`, `Bun`, `require` and `glob
 | Variable               | Effect                                                                                                                           |
 | ---------------------- | -------------------------------------------------------------------------------------------------------------------------------- |
 | `BUN_DESKTOP_LOG`      | `1` prints what the UI library does, and `frames` every frame as well.                                                           |
-| `BUN_DESKTOP_RENDERER` | `software` or `gpu`. The default on macOS is `layers`, which paints small changes with the CPU and large ones with the GPU.      |
+| `BUN_DESKTOP_RENDERER` | `software` paints everything with the CPU. On macOS, the GPU otherwise paints large changes.                                     |
 | `BUN_DESKTOP_SPELLING` | `0` does not ask macOS to check the spelling of text that is being edited.                                                       |
 | `BUN_DESKTOP_THREADS`  | `1` draws on the thread that runs JavaScript. `2` draws on another thread, which on macOS is the default for packaged apps only. |
 
@@ -320,6 +320,7 @@ test("counts", () => {
 
 ## What is missing
 
+- Windows is not supported yet, and neither are screen readers on Linux.
 - `<video>` and `<audio>` do not play. There is no WebGL, WebGPU, WebRTC or Web Audio.
 - In an `<iframe>`, screen readers see nothing, drags do not cross the border, and only text is copied and pasted on Wayland.
 - There are no touch or pen events, no image maps, and no pickers for the date and time types of `<input>`, which are text fields.

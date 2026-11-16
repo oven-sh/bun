@@ -1,7 +1,7 @@
 //! The properties, and the computed style that has a value for each.
 
-use core::cell::OnceCell;
 use std::rc::Rc;
+use std::sync::OnceLock;
 
 use crate::abi::FontMetrics;
 use crate::custom::Customs;
@@ -424,7 +424,7 @@ const SQUARE: Corner = Pair(NO_PADDING, NO_PADDING);
 
 longhands! {
     font: Font, inherited = true {
-        FontFamily "font-family" family: Families = Families(b"\x01serif\0"[..].into());
+        FontFamily "font-family" family: Families = Families((if cfg!(target_os = "macos") { &b"Times\0"[..] } else { b"Times New Roman\0" }).into());
         FontSize "font-size" size: FontSize = FontSize(16.0);
         FontWeight "font-weight" weight: FontWeight = FontWeight(400.0);
         FontStyle "font-style" style: FontStyle = FontStyle::Normal;
@@ -1046,7 +1046,7 @@ impl Id {
     }
 
     pub(crate) fn syntax(self) -> &'static Definition {
-        LONGHANDS.with(|it| it[self as usize].0)
+        LONGHANDS.with(|it| it[self as usize])
     }
 
     /// As it is specified.
@@ -1058,21 +1058,22 @@ impl Id {
 
     /// As it is computed.
     pub(crate) fn initial_text(self) -> &'static str {
-        LONGHANDS.with(|it| {
-            *it[self as usize].1.get_or_init(|| {
-                let mut out = Out::new();
-                match self.syntax().note("i=").filter(|_| !self.has_type()) {
-                    Some(source) => out.extend(
-                        self.syntax()
-                            .write(source.as_bytes(), Mode::Computed(&Ctx::dummy()))
-                            .into_iter()
-                            .flatten(),
-                    ),
-                    None => initial(self).write(&mut out),
-                }
-                text(out.leak())
-            })
-        })
+        static TEXTS: [OnceLock<Box<[u8]>>; Id::ALL.len()] =
+            [const { OnceLock::new() }; Id::ALL.len()];
+        text(TEXTS[self as usize].get_or_init(|| {
+            let mut out = Out::new();
+            let write = || match self.syntax().note("i=").filter(|_| !self.has_type()) {
+                Some(source) => out.extend(
+                    self.syntax()
+                        .write(source.as_bytes(), Mode::Computed(&Ctx::dummy()))
+                        .into_iter()
+                        .flatten(),
+                ),
+                None => initial(self).write(&mut out),
+            };
+            with_zoom(1.0, || crate::color::without_current_color(write));
+            out.into()
+        }))
     }
 
     fn write_text(self, text: &str, out: &mut Out) {
@@ -1119,8 +1120,7 @@ impl Id {
 
 thread_local! {
     static INITIAL: Groups = Groups::default();
-    static LONGHANDS: Vec<(&'static Definition, OnceCell<&'static str>)> =
-        Id::ALL.iter().filter_map(|id| Some((definition(id.name())?, OnceCell::new()))).collect();
+    static LONGHANDS: Vec<&'static Definition> = Id::ALL.iter().filter_map(|id| definition(id.name())).collect();
     static PROPERTIES: Map<Name, Prop> = {
         let longhands = Id::ALL.iter().map(|id| (id.name(), Prop::Long(*id)));
         let logical = logical().map(|(name, id)| (name, Prop::Logical(id)));

@@ -1,0 +1,1 @@
+process.argv.splice(1, 1);(0, eval)("xyz");

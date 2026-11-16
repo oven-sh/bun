@@ -7,7 +7,7 @@ use crate::counter_style::CounterStyle;
 use crate::document::Document;
 use crate::name::name;
 use crate::properties::Style;
-use crate::tree::{AFTER, BEFORE, DOCUMENT, Data, Element, MARKER, Namespace, NodeId};
+use crate::tree::{AFTER, BEFORE, DOCUMENT, Data, Element, MARKER, Namespace, NodeId, Replaced};
 use crate::types::*;
 use crate::values::Str;
 
@@ -21,6 +21,42 @@ pub(crate) fn is_disclosure(style: &Style) -> bool {
 
 pub(crate) fn bullet_size(style: &Style, scale: f32) -> f32 {
     ((((style.metrics.ascent * scale).round() * 2.0 / 3.0).floor() + 1.0) / 2.0).floor() / scale
+}
+
+/// From CLDR, for the languages that differ from English.
+const QUOTES: [(&str, &str); 22] = [
+    ("«»‹›", "am fa fr-ch rm ti-er"),
+    ("”“’‘", "ar ur"),
+    ("«»„“", "be os ru sah uk kk-kz"),
+    ("„“„“", "bg lt"),
+    ("«»“”", "ast br ca el es-es eu it pt-pt sc sq"),
+    ("„“‚‘", "bs-cyrl cs de dsb et hr hsb is lb mk sk sl"),
+    ("„”‘’", "bs"),
+    ("””’’", "fi he se sv"),
+    ("«»«»", "fr hy"),
+    ("«»”“", "fr-ca"),
+    ("„”»«", "hu"),
+    ("「」『』", "ja yue zh-hant zh-hk zh-mo zh-tw"),
+    ("„“«»", "ka"),
+    ("«»“”", "kk"),
+    ("«»„“", "ky"),
+    ("‘’‘’", "nl"),
+    ("«»‘’", "nb nn no"),
+    ("„”«»", "pl ro"),
+    ("„“‘‘", "sr"),
+    ("»«›‹", "ug"),
+    ("“”’‘", "uz"),
+    ("«»„”", "shi zgh"),
+];
+
+fn quotes_for(locale: &str) -> &'static str {
+    let locale = locale
+        .trim_matches('"')
+        .to_ascii_lowercase()
+        .replace('_', "-");
+    let mut tags = core::iter::successors(Some(&*locale), |it| Some(it.rsplit_once('-')?.0));
+    tags.find_map(|tag| QUOTES.iter().find(|it| it.1.split(' ').any(|it| it == tag)))
+        .map_or("“”‘’", |it| it.0)
 }
 
 #[derive(Default)]
@@ -58,6 +94,7 @@ impl Counters {
         &mut self,
         item: &ContentItem,
         style: &Style,
+        locale: &str,
         represent: impl Fn(i32, &ListStyleType) -> String,
     ) -> String {
         match item {
@@ -85,15 +122,21 @@ impl Counters {
                 }
                 let side = usize::from(!open);
                 let quote = match &style.text.quotes.0 {
-                    _ if !visible => "",
-                    None => ["“", "”", "‘", "’"][self.quote_depth.min(1) * 2 + side],
+                    _ if !visible => String::new(),
+                    None => quotes_for(locale)
+                        .chars()
+                        .skip(self.quote_depth.min(1) * 2 + side)
+                        .take(1)
+                        .collect(),
                     Some(quotes) => {
                         let pair = self.quote_depth.min((quotes.len() / 2).saturating_sub(1));
-                        quotes.get(pair * 2 + side).map_or("", |it| it)
+                        quotes
+                            .get(pair * 2 + side)
+                            .map_or_else(String::new, |it| it.to_string())
                     }
                 };
                 self.quote_depth += usize::from(*open);
-                quote.into()
+                quote
             }
         }
     }
@@ -179,16 +222,78 @@ impl Document {
     }
 
     fn append_generated_image(&mut self, parent: NodeId, image: &Image, style: &Style) {
-        let Some((Image::Url(url), _)) =
+        let mut element = Element::new(name!(""), Namespace::Html);
+        element.style = Some(self.anonymous_style(style, Display::InlineBlock));
+        let is_marker = self
+            .tree
+            .element(parent)
+            .is_some_and(|it| it.pseudo == crate::selector::Pseudo::Marker);
+        let child = self.append_generated(parent, Data::Element(Box::new(element)));
+        let shown = self.show_image(child, image, if is_marker { None } else { Some(0.0) });
+        self.tree
+            .element_mut(child)
+            .into_iter()
+            .for_each(|it| it.replaced = Some(shown));
+    }
+
+    /// `size` is that of an image that is drawn.
+    fn show_image(&mut self, id: NodeId, image: &Image, size: Option<f32>) -> Replaced {
+        self.generated_images.remove(&id);
+        self.drawn_images.remove(&id);
+        if let Some((Image::Url(url), resolution)) =
             image.chosen(self.environment.scale * self.environment.zoom)
+        {
+            self.generated_images
+                .insert(id, (Rc::clone(url), resolution));
+            return self.image(url).map_or(
+                Replaced {
+                    size: [Some(0.0); 2],
+                    ..Default::default()
+                },
+                |it| it.at_resolution(resolution),
+            );
+        }
+        self.drawn_images.insert(id, image.clone());
+        Replaced {
+            size: [size; 2],
+            ..Default::default()
+        }
+    }
+
+    /// An element whose `content` is one image is replaced by it.
+    pub(crate) fn update_replacement(&mut self, id: NodeId, style: &Style) {
+        let Some(element) = self
+            .tree
+            .element(id)
+            .filter(|it| !it.is_generated() && it.namespace == Namespace::Html)
         else {
             return;
         };
-        let mut element = Element::new(name!(""), Namespace::Html);
-        element.replaced = Some(self.image(url).unwrap_or_default());
-        element.style = Some(self.anonymous_style(style, Display::InlineBlock));
-        let child = self.append_generated(parent, Data::Element(Box::new(element)));
-        self.generated_images.insert(child, Rc::clone(url));
+        match &style.rare.content {
+            Content::Items(items, _) if let [ContentItem::Image(image)] = &**items => {
+                self.replacements.entry(id).or_insert(element.replaced);
+                let shown = self.show_image(id, image, Some(0.0));
+                self.set_replaced(id, Some(shown));
+            }
+            _ => self.end_replacement(id),
+        }
+    }
+
+    pub(crate) fn end_replacement(&mut self, id: NodeId) {
+        let Some(own) = self.replacements.remove(&id) else {
+            return;
+        };
+        self.generated_images.remove(&id);
+        self.drawn_images.remove(&id);
+        self.set_replaced(id, own);
+    }
+
+    /// What the element shows by itself.
+    pub(crate) fn set_own_replaced(&mut self, id: NodeId, replaced: Option<Replaced>) {
+        match self.replacements.get_mut(&id) {
+            Some(own) => *own = replaced,
+            None => self.set_replaced(id, replaced),
+        }
     }
 
     /// Makes the children of a pseudo-element. Those of a marker without `content` are left to `number_list_items`.
@@ -241,7 +346,7 @@ impl Document {
         }
         let list = core::iter::once(parent)
             .chain(self.tree.flat_ancestors(parent))
-            .find(|it| self.is_list(*it))
+            .find(|it| self.owns_items(*it))
             .unwrap_or(parent);
         if has_items && list != parent {
             self.deep_lists.insert(list);
@@ -267,7 +372,7 @@ impl Document {
                     continue;
                 };
                 items.extend((id != list && style.display().is_list_item()).then_some(id));
-                if id == list || !self.is_list(id) {
+                if id == list || !self.owns_items(id) {
                     let first = pending.len();
                     pending.extend(self.tree.flat_children(id));
                     pending[first..].reverse();
@@ -288,7 +393,13 @@ impl Document {
             1
         };
         let start = ordered.and_then(|it| it.number(name!("start")));
-        let mut next = start.map_or_else(
+        let of_items = |all: &[Counter], missing| {
+            all.iter()
+                .filter(|it| &*it.0 == "list-item")
+                .map(|it| it.1.unwrap_or(missing))
+                .collect::<Vec<i32>>()
+        };
+        let first = start.map_or_else(
             || {
                 if step < 0 {
                     items.clone().count() as i32
@@ -298,13 +409,36 @@ impl Document {
             },
             |it| it as i32,
         );
+        let reset = self
+            .tree
+            .style(list)
+            .and_then(|it| of_items(&it.rare.counter_reset, 0).pop());
+        let mut last = reset.unwrap_or_else(|| first.saturating_sub(step));
         for element in items.filter_map(|it| self.tree.element(it)) {
-            let value = element
-                .number(name!("value"))
-                .filter(|_| element.html_tag() == name!("li"))
-                .map_or(next, |it| it as i32);
-            next = value.saturating_add(step);
-            self.ordinals.push((element.generated[MARKER], value));
+            let Some(rare) = element.style.as_ref().map(|it| &it.rare) else {
+                continue;
+            };
+            let value = || {
+                element
+                    .number(name!("value"))
+                    .filter(|_| element.html_tag() == name!("li"))
+                    .map(|it| it as i32)
+            };
+            let added = of_items(&rare.counter_increment, 1)
+                .into_iter()
+                .reduce(i32::saturating_add)
+                .unwrap_or(step);
+            let next = || {
+                of_items(&rare.counter_reset, 0)
+                    .pop()
+                    .unwrap_or(last)
+                    .saturating_add(added)
+            };
+            last = of_items(&rare.counter_set, 0)
+                .pop()
+                .or_else(value)
+                .unwrap_or_else(next);
+            self.ordinals.push((element.generated[MARKER], last));
         }
         for (marker, value) in core::mem::take(&mut self.ordinals) {
             let Some(style) = self.tree.style(marker) else {
@@ -366,7 +500,7 @@ impl Document {
         }
         for it in rare.counter_increment.iter() {
             counters.change(&it.0, parent, |value| {
-                value.saturating_add(it.1.unwrap_or(1))
+                value.checked_add(it.1.unwrap_or(1)).unwrap_or(value)
             });
         }
         if let Some(value) = number(name!("value"))
@@ -382,16 +516,15 @@ impl Document {
     fn list_of(&self, item: NodeId) -> NodeId {
         self.tree
             .flat_ancestors(item)
-            .find(|it| self.is_list(*it))
+            .find(|it| self.owns_items(*it))
             .unwrap_or_else(|| self.tree.flat_parent(item))
     }
 
-    fn is_list(&self, id: NodeId) -> bool {
-        crate::name::is_name!(self.tree.html_tag(id), "ol" | "ul" | "menu")
-            && self
-                .tree
-                .style(id)
-                .is_some_and(|it| it.display() != Display::Contents)
+    fn owns_items(&self, id: NodeId) -> bool {
+        let is_list = crate::name::is_name!(self.tree.html_tag(id), "ol" | "ul" | "menu");
+        self.tree.style(id).is_some_and(|it| {
+            it.display() != Display::Contents && (is_list || it.contain().contains(Contain::STYLE))
+        })
     }
 
     fn list_step(&self, list: NodeId) -> i32 {
@@ -433,11 +566,24 @@ impl Document {
 
     fn count(&self, parent: NodeId, counters: &mut Counters, texts: &mut Vec<(NodeId, String)>) {
         let outer = counters.in_scope.len();
+        self.count_children(parent, parent, outer, counters, texts);
+        counters.in_scope.truncate(outer);
+    }
+
+    /// `parent` is what has the boxes of the children of `of`.
+    fn count_children(
+        &self,
+        of: NodeId,
+        parent: NodeId,
+        outer: usize,
+        counters: &mut Counters,
+        texts: &mut Vec<(NodeId, String)>,
+    ) {
         for id in self
             .carousels
-            .markers_of(parent)
+            .markers_of(of)
             .into_iter()
-            .chain(self.rendered_children(parent))
+            .chain(self.rendered_children(of))
         {
             let Some(style) = self
                 .tree
@@ -447,6 +593,10 @@ impl Document {
                 continue;
             };
             let (rare, contained) = (&style.rare, (counters.contained_from, counters.quote_depth));
+            if style.display() == Display::Contents && !self.counter_users.contains_key(&id) {
+                self.count_children(id, parent, outer, counters, texts);
+                continue;
+            }
             if style.display() != Display::Contents {
                 self.apply_counters(id, style, parent, counters);
             }
@@ -459,19 +609,20 @@ impl Document {
                 Content::Items(items, alt) if self.counter_users.contains_key(&id) => {
                     let represent =
                         |value, kind: &ListStyleType| self.represent(id, value, kind, false);
-                    let shown = items
-                        .iter()
-                        .filter(|it| !matches!(it, ContentItem::Image(Image::Gradient(_))));
-                    for (item, child) in shown.zip(self.tree.children(id)) {
+                    let outside = Some(of)
+                        .filter(|it| self.tree.html_tag(*it) == name!("q"))
+                        .and_then(|it| self.tree.style(self.tree.flat_parent(it)));
+                    let locale = &outside.unwrap_or(style).font.locale.0;
+                    for (item, child) in items.iter().zip(self.tree.children(id)) {
                         if self.tree[child].text().is_some() {
-                            texts.push((child, counters.text(item, style, represent)));
+                            texts.push((child, counters.text(item, style, locale, represent)));
                         }
                     }
                     if let Some(alt) = alt {
                         texts.push((
                             id,
                             alt.iter()
-                                .map(|it| counters.text(it, style, represent))
+                                .map(|it| counters.text(it, style, locale, represent))
                                 .collect(),
                         ));
                     }
@@ -482,18 +633,22 @@ impl Document {
                 (counters.contained_from, counters.quote_depth) = contained;
             }
             let (above, own) = counters.in_scope.split_at(outer);
+            let from = counters.contained_from.min(outer);
             if own
                 .iter()
-                .any(|it| above.iter().any(|above| above.0 == it.0))
+                .any(|it| above[from..].iter().any(|above| above.0 == it.0))
             {
                 let own = counters.in_scope.split_off(outer);
                 let kept: Vec<_> = own
                     .into_iter()
-                    .filter(|it| !counters.in_scope.iter().any(|above| above.0 == it.0))
+                    .filter(|it| {
+                        !counters.in_scope[from..]
+                            .iter()
+                            .any(|above| above.0 == it.0)
+                    })
                     .collect();
                 counters.in_scope.extend(kept);
             }
         }
-        counters.in_scope.truncate(outer);
     }
 }

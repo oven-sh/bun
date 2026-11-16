@@ -1,20 +1,81 @@
 //! The system's fonts, which are only opened to be used.
 
-use std::ffi::{CStr, CString, OsStr};
+use std::ffi::{CStr, CString, OsStr, c_char, c_double, c_int, c_void};
+use std::ops::Deref;
 use std::os::unix::ffi::OsStrExt as _;
 use std::ptr::null_mut;
-use std::sync::Arc;
+use std::sync::{Arc, LazyLock};
 
-use fontconfig_sys::constants::*;
-use fontconfig_sys::statics::{LIB, LIB_RESULT};
-use fontconfig_sys::{FcConfig, FcFontSet, FcMatchPattern, FcPattern, FcResultMatch, FcSetSystem};
-use rustc_hash::FxHashMap;
+use crate::hash::FastMap;
 use skrifa::{FontRef, MetadataProvider as _, Tag};
 
 use super::decoded::map;
 use super::fonts::{Capabilities, DEFAULT_OBLIQUE_ANGLE};
 
 pub type FamilyId = u32;
+
+type FcConfig = c_void;
+type FcPattern = c_void;
+type Key = *const c_char;
+
+#[repr(C)]
+struct FcFontSet {
+    nfont: c_int,
+    sfont: c_int,
+    fonts: *mut *mut FcPattern,
+}
+
+const MATCH: c_int = 0;
+
+macro_rules! functions {
+    ($($name:ident: fn($($argument:ty),*) $(-> $result:ty)?;)+) => {
+        #[expect(non_snake_case)]
+        struct Functions {
+            $($name: unsafe extern "C" fn($($argument),*) $(-> $result)?,)+
+        }
+
+        // SAFETY: those are the signatures in fontconfig.h, and the library stays loaded.
+        static LOADED: LazyLock<Option<Functions>> = LazyLock::new(|| unsafe {
+            let library = Some(libc::dlopen(c"libfontconfig.so.1".as_ptr(), libc::RTLD_LAZY)).filter(|it| !it.is_null())?;
+            Some(Functions {$(
+                $name: std::mem::transmute::<*mut c_void, Option<unsafe extern "C" fn($($argument),*) $(-> $result)?>>(
+                    libc::dlsym(library, concat!(stringify!($name), "\0").as_ptr().cast()),
+                )?,
+            )+})
+        });
+    };
+}
+
+functions! {
+    FcConfigGetCurrent: fn() -> *mut FcConfig;
+    FcConfigGetFonts: fn(*mut FcConfig, c_int) -> *mut FcFontSet;
+    FcConfigSubstitute: fn(*mut FcConfig, *mut FcPattern, c_int) -> c_int;
+    FcDefaultSubstitute: fn(*mut FcPattern);
+    FcFontMatch: fn(*mut FcConfig, *mut FcPattern, *mut c_int) -> *mut FcPattern;
+    FcFontSort: fn(*mut FcConfig, *mut FcPattern, c_int, *mut *mut c_void, *mut c_int) -> *mut FcFontSet;
+    FcPatternCreate: fn() -> *mut FcPattern;
+    FcPatternDestroy: fn(*mut FcPattern);
+    FcPatternAddString: fn(*mut FcPattern, Key, *const c_char) -> c_int;
+    FcPatternAddBool: fn(*mut FcPattern, Key, c_int) -> c_int;
+    FcPatternGetString: fn(*mut FcPattern, Key, c_int, *mut *mut c_char) -> c_int;
+    FcPatternGetDouble: fn(*mut FcPattern, Key, c_int, *mut c_double) -> c_int;
+    FcPatternGetBool: fn(*mut FcPattern, Key, c_int, *mut c_int) -> c_int;
+    FcPatternGetCharSet: fn(*mut FcPattern, Key, c_int, *mut *mut c_void) -> c_int;
+    FcCharSetHasChar: fn(*mut c_void, u32) -> c_int;
+}
+
+/// For what only exists once it is loaded.
+struct Library;
+
+static LIB: Library = Library;
+
+impl Deref for Library {
+    type Target = Functions;
+
+    fn deref(&self) -> &Functions {
+        LOADED.as_ref().expect("it is loaded")
+    }
+}
 
 /// A pattern that is never freed.
 #[derive(Clone, Copy)]
@@ -31,9 +92,8 @@ impl Font {
         let mut value = null_mut();
         // SAFETY: the pattern owns the string.
         unsafe {
-            let found =
-                (LIB.FcPatternGetString)(self.0, key.as_ptr(), index, &mut value) == FcResultMatch;
-            found.then(|| CStr::from_ptr(value.cast()))
+            let found = (LIB.FcPatternGetString)(self.0, key.as_ptr(), index, &mut value) == MATCH;
+            found.then(|| CStr::from_ptr(value))
         }
     }
 
@@ -47,7 +107,7 @@ impl Font {
         let mut value = 0.;
         // SAFETY: the pattern is alive.
         let result = unsafe { (LIB.FcPatternGetDouble)(self.0, key.as_ptr(), 0, &mut value) };
-        (result == FcResultMatch).then_some(value as f32)
+        (result == MATCH).then_some(value as f32)
     }
 
     fn is(self, key: &CStr) -> bool {
@@ -61,15 +121,14 @@ impl Font {
         let mut characters = null_mut();
         // SAFETY: the pattern owns the set.
         unsafe {
-            (LIB.FcPatternGetCharSet)(self.0, FC_CHARSET.as_ptr(), 0, &mut characters)
-                == FcResultMatch
+            (LIB.FcPatternGetCharSet)(self.0, c"charset".as_ptr(), 0, &mut characters) == MATCH
                 && (LIB.FcCharSetHasChar)(characters, character.into()) != 0
         }
     }
 
     /// The high half numbers the named instances of a variable font.
     fn index(self) -> u32 {
-        self.number(FC_INDEX).unwrap_or(0.) as u32
+        self.number(c"index").unwrap_or(0.) as u32
     }
 }
 
@@ -111,11 +170,11 @@ pub struct Catalog {
     config: *mut FcConfig,
     all: &'static [Font],
     /// In lower case.
-    names: FxHashMap<String, FamilyId>,
+    names: FastMap<String, FamilyId>,
     families: Vec<Vec<Font>>,
-    generics: FxHashMap<String, Option<FamilyId>>,
-    sorted_by_language: FxHashMap<Vec<u8>, &'static [Font]>,
-    mapped: FxHashMap<&'static CStr, Option<&'static [u8]>>,
+    generics: FastMap<String, Option<FamilyId>>,
+    sorted_by_language: FastMap<Vec<u8>, &'static [Font]>,
+    mapped: FastMap<&'static CStr, Option<&'static [u8]>>,
 }
 
 // SAFETY: as for `Font`.
@@ -124,15 +183,13 @@ unsafe impl Send for Catalog {}
 impl Catalog {
     pub fn new() -> Catalog {
         // SAFETY: the configuration is never freed.
-        let (config, all) = LIB_RESULT
-            .as_ref()
-            .map_or((null_mut(), &[][..]), |fc| unsafe {
-                let config = (fc.FcConfigGetCurrent)();
-                (config, fonts_of((fc.FcConfigGetFonts)(config, FcSetSystem)))
-            });
-        let (mut names, mut families) = (FxHashMap::default(), Vec::<Vec<Font>>::new());
+        let (config, all) = LOADED.as_ref().map_or((null_mut(), &[][..]), |fc| unsafe {
+            let config = (fc.FcConfigGetCurrent)();
+            (config, fonts_of((fc.FcConfigGetFonts)(config, 0)))
+        });
+        let (mut names, mut families) = (FastMap::default(), Vec::<Vec<Font>>::new());
         for font in all.iter().filter(|font| font.index() >> 16 == 0) {
-            let mut aliases = font.strings(FC_FAMILY).map(str::to_lowercase);
+            let mut aliases = font.strings(c"family").map(str::to_lowercase);
             let Some(name) = aliases.next() else { continue };
             let family = *names.entry(name).or_insert(families.len() as FamilyId);
             families.resize_with(families.len().max(family as usize + 1), Vec::new);
@@ -141,7 +198,7 @@ impl Catalog {
         for (family, fonts) in (0..).zip(&families) {
             for alias in fonts
                 .iter()
-                .flat_map(|font| font.strings(FC_FAMILY).skip(1))
+                .flat_map(|font| font.strings(c"family").skip(1))
             {
                 names.entry(alias.to_lowercase()).or_insert(family);
             }
@@ -163,7 +220,7 @@ impl Catalog {
     }
 
     pub fn load(&mut self, font: &Font) -> Option<(&'static [u8], u32)> {
-        let path = font.bytes(FC_FILE, 0)?;
+        let path = font.bytes(c"file", 0)?;
         let data = self
             .mapped
             .entry(path)
@@ -177,7 +234,7 @@ impl Catalog {
 
     fn family_of(&self, font: Font) -> Option<FamilyId> {
         self.names
-            .get(&font.strings(FC_FAMILY).next()?.to_lowercase())
+            .get(&font.strings(c"family").next()?.to_lowercase())
             .copied()
     }
 
@@ -189,10 +246,10 @@ impl Catalog {
         unsafe {
             let pattern = (LIB.FcPatternCreate)();
             if !value.is_empty() {
-                (LIB.FcPatternAddString)(pattern, key.as_ptr(), value.as_ptr().cast());
+                (LIB.FcPatternAddString)(pattern, key.as_ptr(), value.as_ptr());
             }
-            (LIB.FcPatternAddBool)(pattern, FC_SCALABLE.as_ptr(), 1);
-            (LIB.FcConfigSubstitute)(self.config, pattern, FcMatchPattern);
+            (LIB.FcPatternAddBool)(pattern, c"scalable".as_ptr(), 1);
+            (LIB.FcConfigSubstitute)(self.config, pattern, 0);
             (LIB.FcDefaultSubstitute)(pattern);
             let result = f(pattern);
             (LIB.FcPatternDestroy)(pattern);
@@ -203,14 +260,14 @@ impl Catalog {
     pub fn family_names(&mut self) -> impl Iterator<Item = &str> {
         self.families
             .iter()
-            .filter_map(|fonts| fonts[0].strings(FC_FAMILY).next())
+            .filter_map(|fonts| fonts[0].strings(c"family").next())
     }
 
     pub fn generic(&mut self, name: &str) -> Option<FamilyId> {
         if let Some(family) = self.generics.get(name) {
             return *family;
         }
-        let family = self.query(FC_FAMILY, name.as_bytes(), |pattern| {
+        let family = self.query(c"family", name.as_bytes(), |pattern| {
             // SAFETY: both are alive.
             let font = unsafe { (LIB.FcFontMatch)(self.config, pattern, &mut 0) };
             (!font.is_null()).then(|| self.family_of(Font(font)))?
@@ -224,15 +281,15 @@ impl Catalog {
     fn capabilities(&mut self, font: Font) -> Capabilities {
         let fixed = |value: f32| (value, value);
         let mut capabilities = Capabilities {
-            weight: fixed(font.number(FC_WEIGHT).map_or(400., css_weight)),
-            stretch: fixed(font.number(FC_WIDTH).unwrap_or(100.)),
-            slope: fixed(if font.number(FC_SLANT).unwrap_or(0.) > 0. {
+            weight: fixed(font.number(c"weight").map_or(400., css_weight)),
+            stretch: fixed(font.number(c"width").unwrap_or(100.)),
+            slope: fixed(if font.number(c"slant").unwrap_or(0.) > 0. {
                 DEFAULT_OBLIQUE_ANGLE
             } else {
                 0.
             }),
         };
-        let loaded = font.is(FC_VARIABLE).then(|| self.load(&font)).flatten();
+        let loaded = font.is(c"variable").then(|| self.load(&font)).flatten();
         let Some(font) = loaded.and_then(|(data, index)| FontRef::from_index(data, index).ok())
         else {
             return capabilities;
@@ -255,8 +312,8 @@ impl Catalog {
     pub fn fonts(&mut self, family: FamilyId) -> Arc<[(Font, Capabilities)]> {
         let mut fonts = self.families[family as usize].clone();
         // A variable font is also listed as its default instance.
-        fonts.sort_by_key(|font| (font.bytes(FC_FILE, 0), font.index(), !font.is(FC_VARIABLE)));
-        fonts.dedup_by_key(|font| (font.bytes(FC_FILE, 0), font.index()));
+        fonts.sort_by_key(|font| (font.bytes(c"file", 0), font.index(), !font.is(c"variable")));
+        fonts.dedup_by_key(|font| (font.bytes(c"file", 0), font.index()));
         fonts
             .into_iter()
             .map(|font| (font, self.capabilities(font)))
@@ -280,13 +337,13 @@ impl Catalog {
                         &mut 0,
                     ))
                 };
-                let sorted = self.query(FC_LANG, language, sort).unwrap_or_default();
+                let sorted = self.query(c"lang", language, sort).unwrap_or_default();
                 self.sorted_by_language.insert(language.to_owned(), sorted);
                 sorted
             });
         let suitable = sorted
             .iter()
-            .filter(|font| font.is(FC_COLOR) == color && font.has(character));
+            .filter(|font| font.is(c"color") == color && font.has(character));
         let mut families: Vec<_> = suitable.filter_map(|font| self.family_of(*font)).collect();
         families.dedup();
         families
@@ -296,8 +353,8 @@ impl Catalog {
     pub fn by_full_name(&mut self, name: &str) -> Option<Font> {
         let name = name.to_lowercase();
         let names = |font: Font| {
-            font.strings(FC_FULLNAME)
-                .chain(font.strings(FC_POSTSCRIPT_NAME))
+            font.strings(c"fullname")
+                .chain(font.strings(c"postscriptname"))
         };
         self.all
             .iter()

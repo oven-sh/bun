@@ -33,9 +33,8 @@ class Callable {
 
 const objectPrototype: any = Object.create(null);
 const isObject = (value: unknown) => typeof value === "object" && value !== null;
-const isPlain = (value: unknown) =>
-  isObject(value) &&
-  !($isArray(value) || value instanceof Callable || value instanceof RegExp || value instanceof Date);
+/** What a script makes does not inherit from `Object.prototype`. */
+const isPlain = (value: unknown) => isObject(value) && !(value instanceof Object);
 
 function step() {
   if (++steps > MAX_STEPS) throw new Abort("The script takes too long");
@@ -61,7 +60,8 @@ function invoke(callee: unknown, self: unknown, args: unknown[]) {
 
 function toPrimitive(value: any): any {
   if (!isObject(value)) return value;
-  if ($isArray(value)) return bounded(value.map(item => (item == null ? "" : toPrimitive(item))).join());
+  if ($isArray(value))
+    return bounded(Array.prototype.map.$call(value, item => (item == null ? "" : toPrimitive(item))).join());
   if (value instanceof Callable) return "function";
   if (!isPlain(value)) return String(value);
   for (const name of ["valueOf", "toString"]) {
@@ -75,12 +75,17 @@ const toKey = (value: unknown) => String(toPrimitive(value));
 const native = (run: (...args: any[]) => unknown) => new Callable((_, args) => bounded(run(...args)));
 const primitive = (run: (...args: any[]) => unknown) => native((...args) => run(...args.map(toPrimitive)));
 
-function methods(prototype: object, names: string, convert: (argument: unknown, index: number) => unknown) {
+function methods(
+  prototype: object,
+  accepts: (self: unknown) => boolean,
+  names: string,
+  convert: (argument: unknown, index: number) => unknown,
+) {
   const table = Object.create(objectPrototype);
   for (const name of names.trim().split(/\s+/)) {
     const method = prototype[name];
     table[name] = new Callable((self, args) => {
-      if (isPlain(self) || self instanceof Callable) throw new TypeError(name + " called on an incompatible receiver");
+      if (!accepts(self)) throw new TypeError(name + " called on an incompatible receiver");
       steps += (self as any)?.length >> 4;
       return bounded(method.$apply(self, args.map(convert)));
     });
@@ -96,24 +101,36 @@ const forText = (value: unknown) =>
       : toPrimitive(value);
 const strings = methods(
   String.prototype,
+  self => self != null && !isObject(self),
   `charAt charCodeAt concat endsWith includes indexOf lastIndexOf localeCompare match replace replaceAll search slice
   split startsWith substr substring toLowerCase toString toUpperCase trim trimEnd trimStart valueOf`,
   forText,
 );
+const isArray = (self: unknown) => $isArray(self);
 const arrays = Object.assign(
-  methods(Array.prototype, "concat includes indexOf lastIndexOf pop push reverse shift slice splice unshift", it => it),
-  methods(Array.prototype, "every filter find findIndex forEach map reduce some sort", (it, index) =>
-    index === 0 && it instanceof Callable ? (...args: unknown[]) => invoke(it, undefined, args) : it,
+  methods(
+    Array.prototype,
+    isArray,
+    "concat includes indexOf lastIndexOf pop push reverse shift slice splice unshift",
+    it => it,
+  ),
+  methods(Array.prototype, isArray, "every filter find findIndex forEach map reduce some sort", (it, index) =>
+    index === 0 && it !== undefined ? (...args: unknown[]) => invoke(it, undefined, args) : it,
   ),
 );
 arrays.join = new Callable((self: any, [separator]) =>
-  bounded(self.map(item => (item == null ? "" : toPrimitive(item))).join(toPrimitive(separator))),
+  bounded(
+    Array.prototype.map
+      .$call(isArray(self) ? self : [], item => (item == null ? "" : toPrimitive(item)))
+      .join(toPrimitive(separator)),
+  ),
 );
 arrays.toString = new Callable(toPrimitive);
-const patterns = methods(RegExp.prototype, "exec test toString", toPrimitive);
-const numbers = methods(Number.prototype, "toFixed toString valueOf", toPrimitive);
+const patterns = methods(RegExp.prototype, self => self instanceof RegExp, "exec test toString", toPrimitive);
+const numbers = methods(Number.prototype, self => typeof self === "number", "toFixed toString valueOf", toPrimitive);
 const dates = methods(
   Date.prototype,
+  self => self instanceof Date,
   `getDate getDay getFullYear getHours getMinutes getMonth getSeconds getTime getTimezoneOffset getUTCDate getUTCDay
   getUTCFullYear getUTCHours getUTCMinutes getUTCMonth getUTCSeconds toISOString toString valueOf`,
   toPrimitive,
@@ -137,6 +154,7 @@ function get(value: any, key: string | number) {
   }
   if (value instanceof Date) return dates[key];
   if (typeof value !== "object") return typeof value === "number" ? numbers[key] : objectPrototype[key];
+  if (!isPlain(value)) throw new Abort("Not an object of the script");
   return key === "__proto__" ? Object.getPrototypeOf(value) : value[key];
 }
 

@@ -2,103 +2,69 @@
 
 use std::cell::RefCell;
 use std::collections::VecDeque;
-use std::io::Cursor;
 use std::panic::catch_unwind;
 use std::rc::Rc;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, LazyLock};
 use std::time::{Duration, Instant};
 
-use anyhow::{Context as _, Result, bail, ensure};
-use image::codecs::{gif::GifDecoder, png::PngDecoder, webp::WebPDecoder};
-use image::metadata::Orientation;
-use image::{
-    AnimationDecoder, DynamicImage, ImageDecoder as _, ImageFormat, ImageReader, RgbaImage,
-};
-use parking_lot::{Condvar, Mutex};
-use resvg::tiny_skia::{IntSize, Pixmap, Transform};
-use resvg::usvg::{self, fontdb, roxmltree};
-use rustc_hash::FxHashMap;
-use serde_json::{Value, json};
-use smallvec::SmallVec;
-
-use crate::abi::{self, Rect};
+use crate::abi::Rect;
+use crate::codec::{self, Format, Rgba};
+use crate::error::{Context as _, Result, bail};
+use crate::gfx::{Pixmap, Transform};
+use crate::hash::FastMap;
+use crate::icc::Conversion;
+use crate::json::{Value, json};
 use crate::paint::cpu::Painter;
 use crate::paint::raster::{Clip, IntRect, Layer, demultiply, multiply};
 use crate::paint::scene::{Frame, Scene};
-use crate::{bridge, canvas, png_rows, svg_limits, text, webview};
+use crate::small_vec::SmallVec;
+use crate::sync::{Condvar, Mutex};
+use crate::{bridge, canvas, png_rows, webview};
 
-const MAX_SIDE: u32 = 32768;
-const MAX_BYTES: usize = 512 << 20;
 const MAX_ANIMATION_BYTES: usize = 64 << 20;
 /// The GPU has what is on screen.
 const DECODED_BYTES: usize = 16 << 20;
 /// From there on, an image is decoded once it is known how large it is drawn.
 const DEFERRED_PIXELS: u64 = 1 << 18;
+/// From there on it only grows, or two boxes that show the same image would take turns forever.
+const FEW_SIZES: u32 = 3;
 const POLL: Duration = Duration::from_millis(3);
 
 type Size = (u32, u32);
 
-pub enum Svg {
-    Tree {
-        tree: usvg::Tree,
-        keeps_ratio: bool,
-    },
-    /// What the engine has painted of an SVG file.
-    Recording {
-        scene: Scene,
-        size: [f32; 2],
-    },
+/// What the engine has painted of an SVG file.
+pub struct Svg {
+    scene: Scene,
+    size: [f32; 2],
 }
 
 impl Svg {
     pub fn draw(&self, target: &mut Layer, rect: Rect, matrix: &Transform) {
-        match self {
-            Svg::Tree { tree, keeps_ratio } => {
-                let size = tree.size();
-                let (mut x, mut y) = (rect.width / size.width(), rect.height / size.height());
-                if *keeps_ratio {
-                    (x, y) = (x.min(y), x.min(y));
-                }
-                let (left, top) = (
-                    (rect.width - size.width() * x) / 2.,
-                    (rect.height - size.height() * y) / 2.,
-                );
-                crate::paint::svg::draw(
-                    target,
-                    tree,
-                    &matrix
-                        .pre_translate(rect.x + left, rect.y + top)
-                        .pre_scale(x, y),
-                );
-            }
-            Svg::Recording { scene, size } => {
-                let matrix = matrix
-                    .pre_translate(rect.x, rect.y)
-                    .pre_scale(rect.width / size[0], rect.height / size[1]);
-                let painter = Painter {
-                    scene,
-                    frame: &Frame::new(1., false),
-                    limit: usize::MAX,
-                };
-                painter.paint(
-                    0..scene.items.len(),
-                    target,
-                    &matrix,
-                    &Clip::new(target.rect),
-                );
-            }
-        }
+        let matrix = matrix
+            .pre_translate(rect.x, rect.y)
+            .pre_scale(rect.width / self.size[0], rect.height / self.size[1]);
+        let painter = Painter {
+            scene: &self.scene,
+            frame: &Frame::new(1., false),
+            limit: usize::MAX,
+            left_out: &[],
+        };
+        painter.paint(
+            0..self.scene.items.len(),
+            target,
+            &matrix,
+            &Clip::new(target.rect),
+        );
     }
 }
 
 pub fn record(mut list: Scene, size: [f32; 2]) -> u32 {
     let (id, mut scene) = (next_id(), Scene::default());
     scene.replace(&[], &mut list);
-    IMAGES.lock().insert(
-        id,
-        Arc::new(Image::Svg(Box::new(Svg::Recording { scene, size }))),
-    );
+    IMAGES
+        .lock()
+        .insert(id, Arc::new(Image::Svg(Box::new(Svg { scene, size }))));
     id
 }
 
@@ -125,6 +91,8 @@ struct Bitmap {
     encoded: Option<Vec<u8>>,
     frames: Mutex<Option<Arc<Frames>>>,
     last_used: AtomicU32,
+    /// In seconds since `start`.
+    last_played: AtomicU32,
     is_deferred: bool,
     fitted: Mutex<Fitted>,
     was_fitted: Condvar,
@@ -150,7 +118,7 @@ pub struct Info {
     pub is_deferred: bool,
 }
 
-static IMAGES: LazyLock<Mutex<FxHashMap<u32, Arc<Image>>>> = LazyLock::new(Mutex::default);
+static IMAGES: LazyLock<Mutex<FastMap<u32, Arc<Image>>>> = LazyLock::new(Mutex::default);
 static NEXT_ID: AtomicU32 = AtomicU32::new(1);
 static USES: AtomicU32 = AtomicU32::new(1);
 /// The sizes of the last deferred images, and what they were drawn at first.
@@ -169,6 +137,7 @@ impl Bitmap {
             encoded,
             frames: Mutex::new(Some(Arc::new(frames))),
             last_used: AtomicU32::new(USES.fetch_add(1, Ordering::Relaxed)),
+            last_played: AtomicU32::new(0),
             is_deferred: false,
             fitted: Mutex::default(),
             was_fitted: Condvar::new(),
@@ -190,7 +159,10 @@ impl Bitmap {
         let whole = self.frames.lock().clone();
         match whole {
             Some(frames) => resample(&frames[0].0, size),
-            None => decode_at(self.encoded.as_ref()?, self.size, size),
+            None => self
+                .encoded
+                .as_ref()
+                .and_then(|bytes| Some(in_srgb(decode_at(bytes, self.size, size)?, bytes))),
         }
         .map(Arc::new)
     }
@@ -207,9 +179,13 @@ impl Bitmap {
             drawn.push_front((self.size, size));
         }
         loop {
+            let halves = if fitted.other_sizes < FEW_SIZES { 3 } else { 2 };
+            let will_do = |it: Size| {
+                is_rounded_differently(it, size)
+                    || it.0 * 2 >= size.0 * halves && it.1 * 2 >= size.1 * halves
+            };
             let fits = |it: &Arc<Pixmap>| {
-                size_of(it) == size
-                    || frame.deadline.is_some() && is_rounded_differently(size_of(it), size)
+                size_of(it) == size || frame.deadline.is_some() && will_do(size_of(it))
             };
             if fitted.is_broken || fitted.pixels.as_ref().is_some_and(fits) {
                 return fitted.pixels.clone();
@@ -252,7 +228,14 @@ impl Bitmap {
         index
     }
 
+    fn is_playing(&self) -> bool {
+        self.ends.len() > 1
+            && self.start.elapsed().as_secs() as u32 <= self.last_played.load(Ordering::Relaxed) + 2
+    }
+
     fn frames(&self) -> Option<Arc<Frames>> {
+        self.last_played
+            .store(self.start.elapsed().as_secs() as u32, Ordering::Relaxed);
         self.last_used
             .store(USES.fetch_add(1, Ordering::Relaxed), Ordering::Relaxed);
         let known = self.frames.lock().clone();
@@ -274,6 +257,12 @@ fn start_fitting(image: &Arc<Image>, fitted: &mut Fitted, size: Size) {
     } else {
         0
     };
+    let known = fitted
+        .pixels
+        .as_deref()
+        .map(size_of)
+        .filter(|_| fitted.other_sizes >= FEW_SIZES);
+    let size = known.map_or(size, |it| (it.0.max(size.0), it.1.max(size.1)));
     // It is being resized.
     let (keeps_whole, image) = (fitted.other_sizes > 1, image.clone());
     bridge::spawn(move || {
@@ -302,22 +291,40 @@ fn start_fitting(image: &Arc<Image>, fitted: &mut Fitted, size: Size) {
     });
 }
 
-/// It is about to be drawn, that many device pixels large.
-pub fn expect(id: u32, width: f32, height: f32) {
+/// They are about to be drawn, that many device pixels large.
+pub fn expect_all(images: impl Iterator<Item = (u32, [f32; 2])>) {
+    // More than what is kept would be decoded again and again.
+    let mut budget = DECODED_BYTES / 4 * 3;
+    images.for_each(|(id, [width, height])| expect(id, width, height, &mut budget));
+}
+
+fn expect(id: u32, width: f32, height: f32, budget: &mut usize) {
     let Some(image) = IMAGES.lock().get(&id).cloned() else {
         return;
     };
     if let Image::Bitmap(bitmap) = &*image
         && bitmap.is_deferred
     {
-        bitmap
-            .last_used
-            .store(USES.fetch_add(1, Ordering::Relaxed), Ordering::Relaxed);
         let (size, mut fitted) = (
             reduced_size(bitmap.size, width, height),
             bitmap.fitted.lock(),
         );
-        if !fitted.is_broken && fitted.pixels.is_none() {
+        let bytes = (size.0 as usize * size.1 as usize * 4)
+            .max(fitted.pixels.as_ref().map_or(0, |it| it.data().len()));
+        let Some(left) = budget.checked_sub(bytes) else {
+            return;
+        };
+        *budget = left;
+        bitmap
+            .last_used
+            .store(USES.fetch_add(1, Ordering::Relaxed), Ordering::Relaxed);
+        if !fitted.is_broken
+            && fitted
+                .pixels
+                .as_ref()
+                .is_none_or(|it| it.width() + 1 < size.0 || it.height() + 1 < size.1)
+        {
+            fitted.was_missed |= fitted.pixels.is_some();
             start_fitting(&image, &mut fitted, size);
         }
     }
@@ -334,15 +341,20 @@ fn drop_pixels(kept: usize) {
         .collect();
     decoded
         .sort_unstable_by_key(|bitmap| std::cmp::Reverse(bitmap.last_used.load(Ordering::Relaxed)));
-    let (mut total, mut small) = (0, 0);
+    let (mut still, mut playing, mut small) = (0, 0, 0);
     for (index, bitmap) in decoded.into_iter().enumerate() {
         let (mut fitted, mut frames) = (bitmap.fitted.lock(), bitmap.frames.lock());
-        total += frames
+        let (total, most) = if kept > 0 && bitmap.is_playing() {
+            (&mut playing, 4 * MAX_ANIMATION_BYTES)
+        } else {
+            (&mut still, kept)
+        };
+        *total += frames
             .iter()
             .flat_map(|it| it.iter())
             .map(|it| it.0.data().len())
             .sum::<usize>();
-        if total > kept && (index > 0 || kept == 0) {
+        if *total > most && (index > 0 || kept == 0) {
             frames.take();
         }
         small += fitted.pixels.as_ref().map_or(0, |it| it.data().len());
@@ -355,7 +367,6 @@ fn drop_pixels(kept: usize) {
 pub fn release_memory() {
     drop_pixels(0);
     REDUCED.take();
-    INLINE.take();
 }
 
 fn with_changing<R>(id: u32, f: impl FnOnce(&Pixmap, u32) -> R) -> Option<R> {
@@ -395,38 +406,72 @@ pub fn info(id: u32, frame: &Frame) -> Option<Info> {
     }
 }
 
-/// With pixels of the `reduced_size`.
+/// What is scaled is likely to be animated, so that it is stretched from one of few sizes.
+pub fn size_to_draw(id: u32, frame: &Frame, matrix: &Transform, needed: Size) -> Size {
+    if frame.deadline.is_none() || frame.is_translation(matrix) {
+        return needed;
+    }
+    let Some(image) = IMAGES.lock().get(&id).cloned() else {
+        return needed;
+    };
+    let Image::Bitmap(bitmap) = &*image else {
+        return needed;
+    };
+    let mut fitted = bitmap.fitted.lock();
+    let Some(mut size) = fitted.pixels.as_deref().map(size_of) else {
+        return needed;
+    };
+    if size != bitmap.size && (needed.0 > size.0 + size.0 / 8 || needed.1 > size.1 + size.1 / 8) {
+        let larger = (
+            (size.0 * 2).max(needed.0).min(bitmap.size.0),
+            (size.1 * 2).max(needed.1).min(bitmap.size.1),
+        );
+        start_fitting(&image, &mut fitted, larger);
+        fitted.was_missed = true;
+        frame.changes_at(frame.now + POLL);
+    }
+    while size.0 / 2 >= needed.0 && size.1 / 2 >= needed.1 {
+        size = (size.0 / 2, size.1 / 2);
+    }
+    size
+}
+
+/// With pixels of the size that `pick` makes of that of the image.
 pub fn with_size<R>(
     id: u32,
     frame: &Frame,
-    width: f32,
-    height: f32,
+    pick: impl FnOnce(Size) -> Size,
     f: impl FnOnce(Content) -> R,
 ) -> Option<R> {
-    let reduce = |content: Content, version: u32, whole: Option<Size>| match content {
-        Content::Pixels(pixmap) => {
-            match reduced_size(whole.unwrap_or(size_of(pixmap)), width, height) {
-                size if size == size_of(pixmap) => Some(f(content)),
-                size => Some(f(Content::Pixels(&*resampled(id, version, pixmap, size)?))),
-            }
-        }
-        Content::Svg(_) => Some(f(content)),
+    let resize = |pixmap: &Pixmap, version: u32, size: Size, f: &mut dyn FnMut(&Pixmap)| match size
+        == size_of(pixmap)
+    {
+        true => f(pixmap),
+        false => resampled(id, version, pixmap, size)
+            .iter()
+            .for_each(|it| f(it)),
     };
+    let (mut f, mut result) = (Some(f), None);
+    let mut call = |content: Content| result = f.take().map(|f| f(content));
     let image = IMAGES.lock().get(&id).cloned();
     match image.as_ref().map(|image| (image, &**image)) {
         Some((image, Image::Bitmap(bitmap))) if bitmap.is_deferred => {
-            let (size, version) = (
-                reduced_size(bitmap.size, width, height),
-                bitmap.generation.load(Ordering::Relaxed),
-            );
-            reduce(
-                Content::Pixels(&*bitmap.fitted(image, frame, size)?),
+            let (version, size) = (bitmap.generation.load(Ordering::Relaxed), pick(bitmap.size));
+            resize(
+                &*bitmap.fitted(image, frame, size)?,
                 version,
-                Some(bitmap.size),
-            )
+                size,
+                &mut |it| call(Content::Pixels(it)),
+            );
         }
-        _ => with(id, frame, |content, version| reduce(content, version, None))?,
+        _ => with(id, frame, |content, version| match content {
+            Content::Pixels(pixmap) => resize(pixmap, version, pick(size_of(pixmap)), &mut |it| {
+                call(Content::Pixels(it))
+            }),
+            Content::Svg(_) => call(content),
+        })?,
     }
+    result
 }
 
 fn likely_size(whole: Size, density: f32, scale: f32) -> Size {
@@ -489,21 +534,19 @@ pub fn alpha(id: u32, width: u32, height: u32) -> Option<Vec<u8>> {
                 height: height as f32,
             };
             svg.draw(&mut layer, rect, &Transform::identity());
-            Some(layer.pixmap.pixels().iter().map(|it| it.alpha()).collect())
+            Some(layer.alpha().data)
         }
         Content::Pixels(pixmap) => {
             let source = |at: u32, to: u32, from: u32| {
                 ((at as u64 * 2 + 1) * from as u64 / (to as u64 * 2)) as u32
             };
             let pixel = |x, y| {
-                pixmap.pixel(
-                    source(x, width, pixmap.width()),
-                    source(y, height, pixmap.height()),
-                )
+                source(y, height, pixmap.height()) as usize * pixmap.width() as usize
+                    + source(x, width, pixmap.width()) as usize
             };
             Some(
                 (0..height)
-                    .flat_map(|y| (0..width).map(move |x| pixel(x, y).map_or(0, |it| it.alpha())))
+                    .flat_map(|y| (0..width).map(move |x| pixmap.data()[pixel(x, y) * 4 + 3]))
                     .collect(),
             )
         }
@@ -531,11 +574,11 @@ pub fn pixmap_from_rgba(width: u32, height: u32, mut rgba: Vec<u8>) -> Option<Pi
     {
         (*r, *g, *b) = (multiply(*r, *a), multiply(*g, *a), multiply(*b, *a));
     }
-    Pixmap::from_vec(rgba, IntSize::from_wh(width, height)?)
+    Pixmap::from_vec(rgba, width, height)
 }
 
-fn pixmap_from(image: RgbaImage) -> Option<Pixmap> {
-    pixmap_from_rgba(image.width(), image.height(), image.into_raw())
+fn pixmap_from(image: Rgba) -> Option<Pixmap> {
+    pixmap_from_rgba(image.width, image.height, image.data)
 }
 
 pub fn straight_rgba(layer: &Layer) -> Vec<u8> {
@@ -546,249 +589,67 @@ pub fn straight_rgba(layer: &Layer) -> Vec<u8> {
         .collect()
 }
 
-fn limits() -> image::Limits {
-    let mut limits = image::Limits::default();
-    (limits.max_image_width, limits.max_image_height) = (Some(MAX_SIDE), Some(MAX_SIDE));
-    limits.max_alloc = Some(MAX_BYTES as u64);
-    limits
-}
-
-pub fn decode_still(bytes: &[u8]) -> Result<DynamicImage> {
-    decode_oriented(bytes, true)
-}
-
-fn decode_oriented(bytes: &[u8], is_oriented: bool) -> Result<DynamicImage> {
-    let mut reader = ImageReader::new(Cursor::new(bytes)).with_guessed_format()?;
-    reader.limits(limits());
-    let mut decoder = reader.into_decoder()?;
-    let (width, height) = decoder.dimensions();
-    ensure!(
-        u64::from(width) * u64::from(height) * 4 <= MAX_BYTES as u64,
-        "the image is too large"
-    );
-    let orientation = decoder.orientation()?;
-    let mut image = DynamicImage::from_decoder(decoder)?;
-    if is_oriented {
-        image.apply_orientation(orientation);
+fn in_srgb(mut pixmap: Pixmap, encoded: &[u8]) -> Pixmap {
+    if let Some(conversion) = codec::profile(encoded).and_then(|it| Conversion::of(&it)) {
+        conversion.apply(pixmap.data_mut().as_chunks_mut().0);
     }
-    Ok(image)
+    pixmap
+}
+
+pub fn decode_still(bytes: &[u8]) -> Result<Rgba> {
+    codec::decode(bytes, true, (0, 0)).context("the image could not be decoded")
 }
 
 pub fn decode_pixmap(bytes: &[u8]) -> Option<Pixmap> {
-    pixmap_from(decode_still(bytes).ok()?.into_rgba8())
+    pixmap_from(codec::decode(bytes, true, (0, 0))?)
 }
 
 /// Stops at a frame that is broken or does not fit in memory.
-fn decode_frames<'a>(decoder: impl AnimationDecoder<'a>) -> Frames {
-    let (mut end, mut bytes) = (Duration::ZERO, 0);
-    let frames = decoder.into_frames().map_while(|frame| {
-        let frame = frame.ok()?;
-        let delay = Duration::from(frame.delay());
+fn decode_animation(bytes: &[u8]) -> Frames {
+    let (mut frames, mut end, mut total) = (Frames::new(), Duration::ZERO, 0);
+    codec::frames(bytes, &mut |frame, delay| {
         // What browsers do with a delay that is too short.
         end += if delay <= Duration::from_millis(10) {
             Duration::from_millis(100)
         } else {
             delay
         };
-        bytes += frame.buffer().len();
-        Some((pixmap_from(frame.into_buffer())?, end)).filter(|_| bytes <= MAX_ANIMATION_BYTES)
+        total += frame.data.len();
+        let frame = (total <= MAX_ANIMATION_BYTES)
+            .then(|| pixmap_from(frame.clone()))
+            .flatten();
+        frame.map(|it| frames.push((it, end))).is_some()
     });
-    frames.collect()
-}
-
-fn decode_animation(bytes: &[u8]) -> Option<Frames> {
-    let frames = match image::guess_format(bytes).ok()? {
-        ImageFormat::Gif => {
-            let mut decoder = GifDecoder::new(Cursor::new(bytes)).ok()?;
-            decoder.set_limits(limits()).ok()?;
-            decode_frames(decoder)
-        }
-        ImageFormat::Png => {
-            let decoder = PngDecoder::with_limits(Cursor::new(bytes), limits()).ok()?;
-            decoder.is_apng().ok()?.then_some(())?;
-            decode_frames(decoder.apng().ok()?)
-        }
-        ImageFormat::WebP => {
-            let decoder = WebPDecoder::new(Cursor::new(bytes))
-                .ok()
-                .filter(WebPDecoder::has_animation)?;
-            let (width, height) = decoder.dimensions();
-            (u64::from(width) * u64::from(height) * 4 <= MAX_BYTES as u64).then_some(())?;
-            decode_frames(decoder)
-        }
-        _ => return None,
-    };
-    Some(frames).filter(|frames| !frames.is_empty())
-}
-
-fn add_font(
-    database: &mut Arc<fontdb::Database>,
-    data: &'static [u8],
-    index: u32,
-) -> Option<fontdb::ID> {
-    let find = |database: &fontdb::Database| {
-        let is_it = |face: &&fontdb::FaceInfo| match &face.source {
-            fontdb::Source::Binary(known) => {
-                face.index == index && std::ptr::eq((**known).as_ref(), data)
-            }
-            _ => false,
-        };
-        database.faces().find(is_it).map(|face| face.id)
-    };
-    find(database).or_else(|| {
-        Arc::make_mut(database).load_font_source(fontdb::Source::Binary(Arc::new(data)));
-        find(database)
-    })
-}
-
-fn svg_options() -> usvg::Options<'static> {
-    let select_font = |font: &usvg::Font, database: &mut Arc<fontdb::Database>| {
-        let mut families = Vec::new();
-        for family in font.families() {
-            match family {
-                usvg::FontFamily::Named(name) if name != "system-ui" => {
-                    families.extend(name.as_bytes())
-                }
-                generic => {
-                    families.push(abi::GENERIC_FAMILY);
-                    families.extend(generic.to_string().trim_matches('"').as_bytes());
-                }
-            }
-            families.push(0);
-        }
-        let is_italic = font.style() != usvg::FontStyle::Normal;
-        let file = text::file_for_family(&families, font.weight().into(), is_italic)?;
-        add_font(database, file.data, file.index)
-    };
-    let select_fallback =
-        |character: char, used: &[fontdb::ID], database: &mut Arc<fontdb::Database>| {
-            let file = text::file_for_character(character)?;
-            add_font(database, file.data, file.index).filter(|id| !used.contains(id))
-        };
-    usvg::Options {
-        font_size: 16.,
-        default_size: usvg::Size::from_wh(300., 150.).expect("it is a size"),
-        font_resolver: usvg::FontResolver {
-            select_font: Box::new(select_font),
-            select_fallback: Box::new(select_fallback),
-        },
-        // An image does not get to read files.
-        image_href_resolver: usvg::ImageHrefResolver {
-            resolve_data: Box::new(resolve_data),
-            resolve_string: Box::new(|_, _| None),
-        },
-        ..usvg::Options::default()
-    }
-}
-
-fn resolve_data(_: &str, data: Arc<Vec<u8>>, _: &usvg::Options) -> Option<usvg::ImageKind> {
-    let Ok(format) = image::guess_format(&data) else {
-        let mut options = svg_options();
-        options.image_href_resolver.resolve_data = Box::new(|_, _, _| None);
-        let document = parse_xml(std::str::from_utf8(&data).ok()?).ok()?;
-        return usvg::Tree::from_xmltree(&document, &options)
-            .ok()
-            .map(usvg::ImageKind::SVG);
-    };
-    let (width, height) = ImageReader::with_format(Cursor::new(&data[..]), format)
-        .into_dimensions()
-        .ok()?;
-    (u64::from(width) * u64::from(height) * 4 <= MAX_ANIMATION_BYTES as u64).then_some(())?;
-    Some(match format {
-        ImageFormat::Jpeg => usvg::ImageKind::JPEG(data),
-        ImageFormat::Png => usvg::ImageKind::PNG(data),
-        ImageFormat::Gif => usvg::ImageKind::GIF(data),
-        ImageFormat::WebP => usvg::ImageKind::WEBP(data),
-        _ => return None,
-    })
-}
-
-fn parse_xml(source: &str) -> Result<roxmltree::Document<'_>> {
-    ensure!(
-        svg_limits::is_shallow(source),
-        "the document is nested too deeply"
-    );
-    let options = roxmltree::ParsingOptions {
-        allow_dtd: true,
-        ..roxmltree::ParsingOptions::default()
-    };
-    let document = roxmltree::Document::parse_with_options(source, options)?;
-    ensure!(svg_limits::is_small(&document), "the document is too large");
-    Ok(document)
-}
-
-fn decode_svg(bytes: &[u8]) -> Result<(Image, Value)> {
-    let document = parse_xml(std::str::from_utf8(bytes)?)?;
-    let tree = usvg::Tree::from_xmltree(&document, &svg_options())?;
-    let root = document.root_element();
-    let is_absolute = |name| {
-        root.attribute(name)
-            .is_some_and(|it| !it.trim_end().ends_with('%') && it != "auto")
-    };
-    let (has_width, has_height) = (is_absolute("width"), is_absolute("height"));
-    let view_box = root.attribute("viewBox").and_then(|view_box| {
-        let numbers = view_box
-            .split([' ', ','])
-            .filter_map(|number| number.parse::<f32>().ok());
-        let [_, _, width, height] = numbers.collect::<Vec<_>>().try_into().ok()?;
-        (width > 0. && height > 0.).then_some(width / height)
-    });
-    let size = tree.size();
-    let ratio = if has_width && has_height {
-        Some(size.width() / size.height())
-    } else {
-        view_box
-    };
-    let info = json!({
-        "width": has_width.then_some(size.width()),
-        "height": has_height.then_some(size.height()),
-        "ratio": ratio,
-        "svg": true,
-    });
-    let stretches = root
-        .attribute("preserveAspectRatio")
-        .is_some_and(|it| it.trim() == "none");
-    let keeps_ratio = view_box.is_some() && !stretches;
-    Ok((Image::Svg(Box::new(Svg::Tree { tree, keeps_ratio })), info))
+    frames
 }
 
 fn decode_bitmap(bytes: &[u8], is_oriented: bool) -> Result<Frames> {
-    if let Some(frames) = decode_animation(bytes) {
+    let frames = if codec::is_animated(bytes) {
+        decode_animation(bytes)
+    } else {
+        Frames::new()
+    };
+    if !frames.is_empty() {
         return Ok(frames);
     }
+    let image = codec::decode(bytes, is_oriented, (0, 0))
+        .and_then(pixmap_from)
+        .map(|it| in_srgb(it, bytes));
     Ok(vec![(
-        pixmap_from(decode_oriented(bytes, is_oriented)?.into_rgba8())
-            .context("the image is empty")?,
+        image.context("the image could not be decoded")?,
         Duration::ZERO,
     )])
 }
 
 /// The size of a large still image.
 fn size_to_defer(bytes: &[u8]) -> Option<Size> {
-    let format = image::guess_format(bytes).ok()?;
-    let is_still = match format {
-        ImageFormat::Jpeg => true,
-        ImageFormat::Png => !PngDecoder::with_limits(Cursor::new(bytes), limits())
-            .ok()?
-            .is_apng()
-            .ok()?,
-        ImageFormat::WebP => !WebPDecoder::new(Cursor::new(bytes)).ok()?.has_animation(),
-        _ => false,
-    };
-    let mut reader = ImageReader::with_format(Cursor::new(bytes), is_still.then_some(format)?);
-    reader.limits(limits());
-    let mut decoder = reader.into_decoder().ok()?;
-    let (width, height) = decoder.dimensions();
-    (DEFERRED_PIXELS..=MAX_BYTES as u64 / 4)
-        .contains(&(u64::from(width) * u64::from(height)))
-        .then_some(())?;
-    Some(match decoder.orientation().ok()? {
-        Orientation::Rotate90
-        | Orientation::Rotate270
-        | Orientation::Rotate90FlipH
-        | Orientation::Rotate270FlipH => (height, width),
-        _ => (width, height),
-    })
+    let is_still = matches!(
+        Format::of(bytes)?,
+        Format::Jpeg | Format::Png | Format::WebP
+    ) && !codec::is_animated(bytes);
+    is_still
+        .then(|| codec::size(bytes))?
+        .filter(|(width, height)| u64::from(*width) * u64::from(*height) >= DEFERRED_PIXELS)
 }
 
 /// Never has all of the pixels. What comes after an error stays transparent.
@@ -821,40 +682,28 @@ fn decode_png_at(bytes: &[u8], whole: Size, size: Size) -> Option<Pixmap> {
 }
 
 fn decode_at(bytes: &[u8], whole: Size, size: Size) -> Option<Pixmap> {
-    decode_png_at(bytes, whole, size).or_else(|| match decode_still(bytes).ok()? {
-        DynamicImage::ImageRgb8(image) => Resampler::<3>::all(whole, size, &image),
-        image => pixmap_from(image.into_rgba8()).and_then(|it| {
-            if size == whole {
-                Some(it)
-            } else {
-                resample(&it, size)
-            }
-        }),
+    decode_png_at(bytes, whole, size).or_else(|| {
+        let decoded = pixmap_from(codec::decode(bytes, true, size)?)?;
+        if size_of(&decoded) == size {
+            Some(decoded)
+        } else {
+            resample(&decoded, size)
+        }
     })
 }
 
 fn decode(bytes: Vec<u8>, is_oriented: bool) -> Result<Value> {
-    let (image, mut info) = if let Some(size) = size_to_defer(&bytes).filter(|_| is_oriented) {
-        let info = json!({ "width": size.0, "height": size.1, "svg": false });
-        (
-            Image::Bitmap(Bitmap::deferred(size, bytes).context("out of memory")?),
-            info,
-        )
-    } else if image::guess_format(&bytes).is_err() {
-        decode_svg(&bytes).context("the image could not be decoded")?
-    } else {
-        let bitmap = Bitmap::new(
+    let bitmap = match size_to_defer(&bytes).filter(|_| is_oriented) {
+        Some(size) => Bitmap::deferred(size, bytes).context("out of memory")?,
+        None => Bitmap::new(
             decode_bitmap(&bytes, is_oriented)?,
             is_oriented.then_some(bytes),
-        );
-        let info = json!({ "width": bitmap.size.0, "height": bitmap.size.1, "svg": false });
-        (Image::Bitmap(bitmap), info)
+        ),
     };
-    let id = next_id();
-    IMAGES.lock().insert(id, Arc::new(image));
+    let (id, (width, height)) = (next_id(), bitmap.size);
+    IMAGES.lock().insert(id, Arc::new(Image::Bitmap(bitmap)));
     drop_pixels(DECODED_BYTES);
-    info["id"] = id.into();
-    Ok(info)
+    Ok(json!({ "id": id, "width": width, "height": height }))
 }
 
 pub fn command(name: &str, arguments: &Value, reply: Option<u64>) -> Result<Value> {
@@ -883,7 +732,7 @@ pub fn command(name: &str, arguments: &Value, reply: Option<u64>) -> Result<Valu
                 )),
             );
             let likely = likely_size((width, height), number("density"), number("scale"));
-            expect(id, likely.0 as f32, likely.1 as f32);
+            expect_all([(id, [likely.0 as f32, likely.1 as f32])].into_iter());
             return Ok(json!({ "id": id, "width": width, "height": height }));
         }
         "release" => drop(
@@ -894,35 +743,6 @@ pub fn command(name: &str, arguments: &Value, reply: Option<u64>) -> Result<Valu
         _ => bail!("unknown command image.{name}"),
     }
     Ok(Value::Null)
-}
-
-thread_local! {
-    static INLINE: RefCell<FxHashMap<u64, Option<Rc<usvg::Tree>>>> = RefCell::default();
-}
-
-pub fn inline_svg(hash: u64, source: &[u8]) -> Option<Rc<usvg::Tree>> {
-    INLINE.with_borrow_mut(|trees| {
-        if trees.len() >= 512 {
-            trees.clear();
-        }
-        let parse = || {
-            let document = parse_xml(std::str::from_utf8(source).ok()?).ok()?;
-            usvg::Tree::from_xmltree(&document, &svg_options())
-                .ok()
-                .map(Rc::new)
-        };
-        trees.entry(hash).or_insert_with(parse).clone()
-    })
-}
-
-pub fn svg_bounds(tree: &usvg::Tree) -> Rect {
-    let bounds = tree.root().abs_layer_bounding_box();
-    Rect {
-        x: bounds.x(),
-        y: bounds.y(),
-        width: bounds.width(),
-        height: bounds.height(),
-    }
 }
 
 type ReducedKey = (u32, u32, Size);
@@ -950,7 +770,7 @@ fn resampled(id: u32, version: u32, source: &Pixmap, size: Size) -> Option<Rc<Pi
 }
 
 /// For each pixel of the result: the first source pixel that it covers, and the weights from there on, 256 in all.
-fn area_weights(from: u32, to: u32) -> Vec<(usize, SmallVec<[u16; 8]>)> {
+fn area_weights(from: u32, to: u32) -> Vec<(usize, SmallVec<u16, 8>)> {
     let (from, to) = (u64::from(from), u64::from(to));
     let weights = (0..to).map(|index| {
         let (start, end) = (index * from, (index + 1) * from);
@@ -967,8 +787,8 @@ fn area_weights(from: u32, to: u32) -> Vec<(usize, SmallVec<[u16; 8]>)> {
 
 /// Averages rows of RGB or premultiplied RGBA as they come.
 struct Resampler<const CHANNELS: usize> {
-    columns: Vec<(usize, SmallVec<[u16; 8]>)>,
-    rows: Vec<(usize, SmallVec<[u16; 8]>)>,
+    columns: Vec<(usize, SmallVec<u16, 8>)>,
+    rows: Vec<(usize, SmallVec<u16, 8>)>,
     sums: Vec<u16>,
     taken: usize,
     finished: usize,

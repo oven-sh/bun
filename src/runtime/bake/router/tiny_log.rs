@@ -4,6 +4,7 @@ use core::fmt;
 
 use bun_collections::BoundedArray;
 use bun_core::Output;
+use bun_io::Write as _;
 use bun_paths::MAX_PATH_BYTES;
 
 use super::*;
@@ -75,8 +76,10 @@ impl TinyLog {
                 bstr::BStr::new(&after[cursor_len.min(after.len())..]),
             ),
         );
-        let w = Output::error_writer_buffered();
-        if writer_splat_byte_all(w, b' ', "error: \"".len() + cursor_at).is_err() {
+        let mut w = Output::error_writer_buffered();
+        if w.splat_byte_all(b' ', "error: \"".len() + cursor_at)
+            .is_err()
+        {
             return;
         }
         if Output::enable_ansi_colors_stderr() {
@@ -93,7 +96,7 @@ impl TinyLog {
                     return;
                 }
             } else {
-                if writer_splat_byte_all(w, b'-', cursor_len - 1).is_err() {
+                if w.splat_byte_all(b'-', cursor_len - 1).is_err() {
                     return;
                 }
             }
@@ -101,7 +104,9 @@ impl TinyLog {
         if w.write_all(b"\n").is_err() {
             return;
         }
-        if writer_splat_byte_all(w, b' ', "error: \"".len() + cursor_at).is_err() {
+        if w.splat_byte_all(b' ', "error: \"".len() + cursor_at)
+            .is_err()
+        {
             return;
         }
         if w.write_all(self.msg.const_slice()).is_err() {
@@ -110,18 +115,6 @@ impl TinyLog {
         bun_core::pretty_error!("<r>\n");
         Output::flush();
     }
-}
-
-/// Local shim — `bun_core::io::Writer` exposes only `write_all`/`print`.
-fn writer_splat_byte_all(w: &bun_core::io::Writer, byte: u8, n: usize) -> crate::Result<()> {
-    let chunk = [byte; 256];
-    let mut remain = n;
-    while remain > 0 {
-        let take = remain.min(chunk.len());
-        w.write_all(&chunk[..take])?;
-        remain -= take;
-    }
-    Ok(())
 }
 
 fn writer_splat_bytes_all(w: &bun_core::io::Writer, bytes: &str, n: usize) -> crate::Result<()> {

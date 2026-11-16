@@ -516,6 +516,10 @@ impl Interpolation {
         }
     }
 
+    pub(crate) fn is_polar(self) -> bool {
+        self.space.hue_index().is_some()
+    }
+
     pub(crate) fn mix(self, from: &Exact, to: &Exact, t: f32) -> Exact {
         let (mut a, mut b) = (from.converted(self.space), to.converted(self.space));
         for index in 0..4 {
@@ -1180,6 +1184,14 @@ thread_local! {
 /// Lets `write` and `lerp` resolve `currentcolor`.
 pub(crate) fn with_current_color<R>(color: Rgba, run: impl FnOnce() -> R) -> R {
     let outer = CURRENT_COLOR.replace(Some(color));
+    let result = run();
+    CURRENT_COLOR.set(outer);
+    result
+}
+
+/// For what is written once and kept.
+pub(crate) fn without_current_color<R>(run: impl FnOnce() -> R) -> R {
+    let outer = CURRENT_COLOR.take();
     let result = run();
     CURRENT_COLOR.set(outer);
     result

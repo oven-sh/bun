@@ -1,12 +1,12 @@
 use std::hash::{Hash, Hasher};
 use std::sync::{Arc, LazyLock, OnceLock};
 
-use anyhow::{Context as _, Result, bail};
+use crate::error::{Context as _, Result, bail};
+use crate::hash::{FastHasher, FastMap};
+use crate::json::{Deserialize as _, Value, json, record};
+use crate::small_vec::SmallVec;
+use crate::sync::{Mutex, RwLock};
 use harfrust::{Feature, ShapePlan, Shaper, ShaperData, ShaperInstance};
-use parking_lot::{Mutex, RwLock};
-use rustc_hash::{FxHashMap, FxHasher};
-use serde::{Deserialize, Serialize};
-use serde_json::{Value, json};
 use skrifa::charmap::Charmap;
 use skrifa::instance::{LocationRef, NormalizedCoord, Size};
 use skrifa::metrics::Metrics;
@@ -15,15 +15,13 @@ use skrifa::outline::OutlineGlyphCollection;
 use skrifa::raw::TableProvider as _;
 use skrifa::string::StringId;
 use skrifa::{FontRef, MetadataProvider as _, Tag};
-use smallvec::SmallVec;
-use unicode_properties::UnicodeEmoji as _;
-use unicode_script::{Script, UnicodeScript as _};
 
 use super::catalog::{Catalog, FamilyId, Font};
 use super::decoded;
 use super::reach::{Reach, reach};
 use crate::abi::{self, FontMetrics};
 use crate::bridge;
+use crate::unicode::{self, Script};
 
 pub const DEFAULT_OBLIQUE_ANGLE: f32 = 14.;
 const BOLD_THRESHOLD: f32 = 600.;
@@ -37,7 +35,6 @@ struct Axis {
 /// Never freed. Equal bytes are loaded once.
 pub struct File {
     pub data: &'static [u8],
-    pub index: u32,
     pub font: FontRef<'static>,
     pub outlines: OutlineGlyphCollection<'static>,
     #[cfg(target_os = "macos")]
@@ -67,7 +64,6 @@ impl File {
         });
         Some(Box::leak(Box::new(File {
             data,
-            index,
             outlines: font.outline_glyphs(),
             #[cfg(target_os = "macos")]
             native: super::catalog::NativeFont::of(data, index),
@@ -197,7 +193,7 @@ pub struct Face {
     pub shaper: Shaper<'static>,
     instance: &'static ShaperInstance,
     metrics: Metrics,
-    plans: Mutex<FxHashMap<PlanKey, Arc<ShapePlan>>>,
+    plans: Mutex<FastMap<PlanKey, Arc<ShapePlan>>>,
 }
 
 impl Face {
@@ -297,22 +293,27 @@ fn setting_tag(name: &str) -> Option<Tag> {
     Some(Tag::new(name.as_bytes().try_into().ok()?))
 }
 
-#[derive(Clone, Default, Serialize, Deserialize)]
-#[serde(default, rename_all = "camelCase")]
-struct Descriptors {
-    scope: u32,
-    family: String,
-    local: Option<String>,
-    weight: Option<Range>,
-    stretch: Option<Range>,
-    style: Option<String>,
-    unicode_range: Option<Vec<(u32, u32)>>,
-    size_adjust: Option<f32>,
-    ascent_override: Option<f32>,
-    descent_override: Option<f32>,
-    line_gap_override: Option<f32>,
-    features: Vec<(String, f32)>,
-    variations: Vec<(String, f32)>,
+record! {
+    default
+    #[derive(Clone, Default)]
+    struct Descriptors {
+        scope: u32,
+        family: String,
+        local: Option<String>,
+        weight: Option<Range>,
+        stretch: Option<Range>,
+        style: Option<String>,
+        slope: Option<Range>,
+        /// Among faces that match as well, the highest wins.
+        order: u32,
+        unicode_range: Option<Vec<(u32, u32)>>,
+        size_adjust: Option<f32>,
+        ascent_override: Option<f32>,
+        descent_override: Option<f32>,
+        line_gap_override: Option<f32>,
+        features: Vec<(String, f32)>,
+        variations: Vec<(String, f32)>,
+    }
 }
 
 struct WebFont {
@@ -375,7 +376,7 @@ impl Description {
     }
 
     fn hash(&self) -> u64 {
-        let mut hasher = FxHasher::default();
+        let mut hasher = FastHasher::default();
         (self.scope, &self.families, self.style, &self.language).hash(&mut hasher);
         (
             self.weight.to_bits(),
@@ -415,7 +416,7 @@ pub struct Candidate {
     is_taller: bool,
     embolden: bool,
     skew: bool,
-    faces: SmallVec<[(u32, &'static Face); 1]>,
+    faces: SmallVec<(u32, &'static Face), 1>,
 }
 
 impl Candidate {
@@ -484,7 +485,7 @@ pub struct Resolved {
     primary: usize,
     /// The candidate for each ASCII character, plus one, once it is known.
     ascii: [u16; 128],
-    fallbacks: FxHashMap<(char, Presentation), u16>,
+    fallbacks: FastMap<(char, Presentation), u16>,
     pub language: Option<harfrust::Language>,
     pub device_scale: f32,
     emoji: u8,
@@ -497,22 +498,22 @@ struct Described {
 
 struct System {
     catalog: Catalog,
-    files: FxHashMap<(u64, u32), Option<&'static File>>,
-    families: FxHashMap<FamilyId, Arc<[(Font, Capabilities)]>>,
-    fallbacks: FxHashMap<(char, bool, u64), Option<FamilyId>>,
+    files: FastMap<(u64, u32), Option<&'static File>>,
+    families: FastMap<FamilyId, Arc<[(Font, Capabilities)]>>,
+    fallbacks: FastMap<(char, bool, u64), Option<FamilyId>>,
 }
 
 #[derive(Default)]
-struct Instances(FxHashMap<(usize, Vec<NormalizedCoord>, bool, bool, Palette), &'static Face>);
+struct Instances(FastMap<(usize, Vec<NormalizedCoord>, bool, bool, Palette), &'static Face>);
 
 pub struct Fonts {
     system: System,
     instances: Instances,
     described: Vec<Described>,
-    ids: FxHashMap<u64, SmallVec<[u32; 1]>>,
+    ids: FastMap<u64, SmallVec<u32, 1>>,
     web: Vec<Arc<WebFont>>,
     /// By the address of the data.
-    web_files: FxHashMap<usize, Option<&'static File>>,
+    web_files: FastMap<usize, Option<&'static File>>,
     next_web_id: u32,
 }
 
@@ -520,15 +521,15 @@ pub static FONTS: LazyLock<Mutex<Fonts>> = LazyLock::new(|| {
     Mutex::new(Fonts {
         system: System {
             catalog: Catalog::new(),
-            files: FxHashMap::default(),
-            families: FxHashMap::default(),
-            fallbacks: FxHashMap::default(),
+            files: FastMap::default(),
+            families: FastMap::default(),
+            fallbacks: FastMap::default(),
         },
         instances: Instances::default(),
         described: Vec::new(),
-        ids: FxHashMap::default(),
+        ids: FastMap::default(),
         web: Vec::new(),
-        web_files: FxHashMap::default(),
+        web_files: FastMap::default(),
         next_web_id: 1,
     })
 });
@@ -699,12 +700,12 @@ impl System {
     }
 
     fn fallback(&mut self, character: char, color: bool, language: &[u8]) -> Option<FamilyId> {
-        let language = if character.script() == Script::Han {
+        let language = if Script::of(character) == Script::HAN {
             language
         } else {
             &[]
         };
-        let mut hasher = FxHasher::default();
+        let mut hasher = FastHasher::default();
         language.hash(&mut hasher);
         let key = (character, color, hasher.finish());
         if let Some(found) = self.fallbacks.get(&key) {
@@ -714,7 +715,7 @@ impl System {
         let found = families
             .into_iter()
             .find(|family| self.covers(*family, character, color));
-        log::info!("fallback for {character:?}: {found:?}");
+        crate::diagnostics::log!("fallback for {character:?}: {found:?}");
         self.fallbacks.insert(key, found);
         found
     }
@@ -815,7 +816,7 @@ fn candidate(
             *tag = Tag::new(small);
         }
     }
-    let mut hasher = FxHasher::default();
+    let mut hasher = FastHasher::default();
     (&wanted.language, wanted.language_override).hash(&mut hasher);
     for (tag, value) in &features {
         (tag, *value as u32).hash(&mut hasher);
@@ -920,10 +921,11 @@ fn resolve(wanted: &Description, system: &mut System, web: &[Arc<WebFont>]) -> R
         if name.as_bytes() == wanted.palette_family {
             with_palette = candidates.len()..usize::MAX;
         }
-        let declared: Vec<_> = (web.iter().rev())
+        let mut declared: Vec<_> = (web.iter().rev())
             .filter(|font| !is_generic && font.descriptors.scope == wanted.scope)
             .filter(|font| font.descriptors.family.eq_ignore_ascii_case(name))
             .collect();
+        declared.sort_by_key(|font| std::cmp::Reverse(font.descriptors.order));
         if let Some(chosen) = best(wanted, &declared, |font| font.capabilities, false) {
             let segments = declared
                 .iter()
@@ -938,7 +940,7 @@ fn resolve(wanted: &Description, system: &mut System, web: &[Arc<WebFont>]) -> R
         } else {
             system.named(name)
         };
-        log::info!(
+        crate::diagnostics::log!(
             "font family {name:?} is {}",
             if family.is_some() {
                 "installed"
@@ -972,7 +974,7 @@ fn resolve(wanted: &Description, system: &mut System, web: &[Arc<WebFont>]) -> R
             .unwrap_or(0),
         candidates,
         ascii: [0; 128],
-        fallbacks: FxHashMap::default(),
+        fallbacks: FastMap::default(),
         language: harfrust::Language::new(&language),
         emoji: wanted.emoji,
         device_scale: wanted.device_scale,
@@ -1037,7 +1039,7 @@ impl Fonts {
         }
         let first = cluster.chars().next()?;
         let is_open = matches!(presentation, Presentation::Any | Presentation::PrefersColor)
-            && first.is_emoji_char();
+            && unicode::is_emoji(first);
         let presentation = match resolved.emoji {
             abi::EMOJI_AS_TEXT if is_open => Presentation::Text,
             abi::EMOJI_IN_COLOR if is_open && !first.is_ascii() => Presentation::Color,
@@ -1193,7 +1195,9 @@ impl Fonts {
                 .stretch
                 .map_or_else(|| axis(b"wdth", 100.), ordered),
             slope: match descriptors.style.as_deref() {
-                Some("italic" | "oblique") => (DEFAULT_OBLIQUE_ANGLE, DEFAULT_OBLIQUE_ANGLE),
+                Some("italic" | "oblique") => descriptors
+                    .slope
+                    .map_or((DEFAULT_OBLIQUE_ANGLE, DEFAULT_OBLIQUE_ANGLE), ordered),
                 Some(_) => (0., 0.),
                 None => file
                     .axis(b"slnt")
@@ -1250,17 +1254,19 @@ pub fn describe(description: Description) -> u32 {
     })
 }
 
-/// A font for the next run.
-#[derive(Serialize, Deserialize)]
-pub struct Recipe {
-    families: Vec<u8>,
-    numbers: [f32; 4],
-    style: [u8; 2],
-    switches: [bool; 2],
-    settings: [Vec<([u8; 4], f32)>; 2],
-    language: Vec<u8>,
-    web: Option<Descriptors>,
-    pub size_adjust: f32,
+record! {
+    required
+    /// A font for the next run.
+    pub struct Recipe {
+        families: Vec<u8>,
+        numbers: [f32; 4],
+        style: [u8; 2],
+        switches: [bool; 2],
+        settings: [Vec<([u8; 4], f32)>; 2],
+        language: Vec<u8>,
+        web: Option<Descriptors>,
+        pub size_adjust: f32,
+    }
 }
 
 impl Recipe {
@@ -1441,38 +1447,6 @@ pub fn em_box(font: u32, size: f32) -> (f32, f32) {
     (ascent, size - ascent)
 }
 
-/// For SVG text, which resvg shapes itself.
-pub fn file_for_family(families: &[u8], weight: f32, italic: bool) -> Option<&'static File> {
-    let mut description = Description::new(families, weight);
-    let fonts = FONTS.lock();
-    let declares = |font: &&Arc<WebFont>| {
-        family_names(families).any(|(_, name)| font.descriptors.family.eq_ignore_ascii_case(name))
-    };
-    description.scope = fonts
-        .web
-        .iter()
-        .rev()
-        .find(declares)
-        .map_or(0, |font| font.descriptors.scope);
-    drop(fonts);
-    description.style = if italic {
-        abi::FONT_ITALIC
-    } else {
-        abi::FONT_NORMAL
-    };
-    let font = describe(description);
-    let mut fonts = FONTS.lock();
-    let resolved = fonts.resolved(font)?;
-    Some(resolved.candidates[resolved.primary].file)
-}
-
-pub fn file_for_character(character: char) -> Option<&'static File> {
-    let system = &mut FONTS.lock().system;
-    let family = (system.fallback(character, false, &[]))
-        .or_else(|| system.fallback(character, true, &[]))?;
-    Some(system.candidate(family, &Description::new(&[], 400.))?.file)
-}
-
 pub fn command(name: &str, arguments: &Value, reply: Option<u64>) -> Result<Value> {
     if name == "decode" {
         let bytes = bridge::blob(arguments)?;
@@ -1493,6 +1467,34 @@ pub fn command(name: &str, arguments: &Value, reply: Option<u64>) -> Result<Valu
                 let font = fonts.web.remove(index);
                 fonts.invalidate(font.descriptors.scope);
             }
+        }
+        "order" => {
+            let Some(font) = fonts.web.iter_mut().find(|font| font.id == number("id")) else {
+                return Ok(false.into());
+            };
+            let descriptors = Descriptors {
+                order: number("order"),
+                ..font.descriptors.clone()
+            };
+            *font = Arc::new(WebFont {
+                id: font.id,
+                file: font.file,
+                capabilities: font.capabilities,
+                descriptors,
+            });
+            let font = font.clone();
+            let is_rival = |it: &Arc<WebFont>| {
+                let (a, b) = (&it.descriptors, &font.descriptors);
+                it.id != font.id
+                    && a.scope == b.scope
+                    && it.capabilities == font.capabilities
+                    && a.family.eq_ignore_ascii_case(&b.family)
+            };
+            let matters = fonts.web.iter().any(is_rival);
+            if matters {
+                fonts.invalidate(font.descriptors.scope);
+            }
+            return Ok(matters.into());
         }
         "dropScope" => {
             fonts

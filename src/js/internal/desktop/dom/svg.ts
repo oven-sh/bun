@@ -1,3 +1,5 @@
+const secondsPerUnit = { ms: 0.001, s: 1, min: 60, h: 3600 };
+
 const core = require("internal/desktop/dom/core");
 const events = require("internal/desktop/dom/events");
 const nodes = require("internal/desktop/dom/node");
@@ -231,7 +233,7 @@ function control(node: N, operation: number, value = 0): ArrayLike<number> {
   if (!isClockSet && node.doc.page !== null) {
     isClockSet = true;
     queueMicrotask(() => (isClockSet = false));
-    engine.controlSmil(0, 9, performance.now());
+    engine.controlSmil(0, 9, performance.now() - node.doc.page.timeOrigin);
   }
   const result = engine.controlSmil(node.id, operation, value);
   if (node.doc.page !== null && operation !== 1 && operation !== 8) invalidate(node.doc);
@@ -581,7 +583,7 @@ function listen(node: N) {
       if (id !== undefined && (type === "begin" || type === "end")) continue;
       const base = id === undefined ? targetOf(node) : core.elementById(node.scope, id.replace(/\\/g, ""));
       if (base === null) continue;
-      const offset = sign === undefined ? 0 : +(sign + amount) * { ms: 0.001, s: 1, min: 60, h: 3600 }[unit]!;
+      const offset = sign === undefined ? 0 : +(sign + amount) * secondsPerUnit[unit]!;
       const [target, name] = [wrap(base), type.replace(/\\/g, "")];
       const listener = () => control(node, attribute === "begin" ? 6 : 7, offset);
       addEventListener.$call(target, name, listener);

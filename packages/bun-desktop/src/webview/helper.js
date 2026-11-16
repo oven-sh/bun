@@ -261,8 +261,40 @@ const preferencesFor = ({ session: id, preferences, scale, isFrame }) => ({
   disableHtmlFullscreenWindowResize: true,
 });
 
+/** Electron neither sizes what `window.open()` has made offscreen, nor emits "paint" before it has changed its process. */
+function driveOpened(view, { width, height, scale }) {
+  const { window, webContents } = view;
+  window.setContentSize = async (width, height) => {
+    BrowserWindow.prototype.setContentSize.call(window, width, height);
+    const metrics = { width, height, deviceScaleFactor: scale, mobile: false };
+    await inspectorOf(webContents.getOrCreateDevToolsTargetId()).sendCommand(
+      "Emulation.setDeviceMetricsOverride",
+      metrics,
+    );
+  };
+  const subscribe = () =>
+    webContents.beginFrameSubscription(image => {
+      view.dirty = { x: 0, y: 0, ...image.getSize() };
+      view.image = image;
+      sendFrame(view);
+    });
+  const own = {
+    invalidate: subscribe,
+    startPainting: subscribe,
+    stopPainting: () => webContents.endFrameSubscription(),
+  };
+  Object.assign(webContents, own);
+  webContents.once("paint", () => {
+    webContents.endFrameSubscription();
+    for (const name in own) delete webContents[name];
+  });
+  window.setContentSize(width, height).catch(() => {});
+  subscribe();
+}
+
 function createView(options, webContents) {
   const { id, width, height, file, isFrame, background } = options;
+  const isOpened = !!webContents;
   const window = new BrowserWindow({
     show: false,
     frame: false,
@@ -283,6 +315,7 @@ function createView(options, webContents) {
   views.set(id, view);
   ids.set(webContents, id);
   webContents.setFrameRate(options.frameRate);
+  if (isOpened) driveOpened(view, options);
   webContents.on("paint", (_, dirty, image) => {
     view.dirty = view.dirty ? union(view.dirty, dirty) : dirty;
     view.image = image;

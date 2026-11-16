@@ -1,13 +1,12 @@
 use std::hash::{Hash, Hasher};
 use std::ops::Range;
 
-use resvg::tiny_skia::Transform;
-
 use super::cpu::{self, Painter};
 use super::raster::{IntRect, map_point, map_rect, transform};
 use super::scene::{Scene, erases};
 use super::stretch::Stretch;
 use crate::abi::{Filter, GradientShape, Item, Outline, PathVerb, Rect, RoundedRect, Stroke, Tile};
+use crate::gfx::Transform;
 use crate::images;
 
 struct Wide([u64; 2]);
@@ -377,6 +376,7 @@ impl Digest {
         for index in scene
             .children(range)
             .take_while(|index| *index < painter.limit)
+            .filter(|it| !painter.left_out.contains(it))
         {
             let item = &scene.items[index];
             let is_marker = matches!(item, Item::Mask { .. } | Item::Input);

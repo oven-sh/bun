@@ -248,6 +248,9 @@ fn snapped(mut sizes: Vec<f32>, total: f32) -> Vec<f32> {
     sizes
 }
 
+/// That spans can make.
+const MAX_COLUMNS: usize = 4096;
+
 fn distribute_fixed(columns: &[Column], width: f32) -> Vec<f32> {
     let is_auto = |it: &Column| !it.is_fixed && it.fraction.is_none();
     let fixed: f32 = columns
@@ -386,7 +389,10 @@ impl Document {
                         new.is_collapsed =
                             self.boxes[*column].style.ink.visibility.0 == Visibility::Collapse;
                         new.is_merged = new.fraction.is_none() && new.max == 0.0;
-                        let span = self.span(*column, name!("span")).unwrap_or(1).max(1);
+                        let span = self
+                            .span(*column, name!("span"))
+                            .unwrap_or(1)
+                            .clamp(1, MAX_COLUMNS.saturating_sub(grid.columns.len()).max(1));
                         grid.column_boxes.push((
                             *column,
                             grid.columns.len(),
@@ -438,7 +444,7 @@ impl Document {
                             },
                         )
                         .unwrap_or(1)
-                        .max(1);
+                        .clamp(1, MAX_COLUMNS.saturating_sub(column).max(1));
                     let rows = match self.span(cell, name!("rowspan")).unwrap_or(1) {
                         0 => end - index,
                         rows => rows.min(end - index),

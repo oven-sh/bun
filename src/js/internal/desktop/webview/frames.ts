@@ -1,6 +1,6 @@
 // An `<iframe>` of a page of the app. The web engine has it in an empty document with the origin and the policies of the page.
 const { carryPorts } = require("internal/desktop/electron/ipc");
-const { originOf } = require("internal/desktop/electron/policy");
+const { originOf, resolveBlob } = require("internal/desktop/electron/policy");
 const { ContentSecurityPolicy } = require("internal/desktop/web/csp");
 const { queueTask } = require("internal/desktop/electron/stubs");
 const { isAvailable } = require("internal/desktop/webview/engine");
@@ -29,11 +29,31 @@ const ofSubframes =
 const ofAnyFrame =
   /^(?:certificate-error|console-message|context-menu|login|media-.*|audio-state-changed|select-.*|update-target-url)$/;
 
-/** Without what the `Permissions-Policy` of the page does not let it delegate. */
-function restrict(allow = "", policy = "") {
-  const limited = Array.from(policy.matchAll(/([\w-]+)=\(\s*(?:self\s*)?\)/g), match => match[1]);
-  const kept = allow.split(";").filter(it => !limited.includes(it.trim().split(/\s/)[0]));
-  return [...kept, ...limited.map(name => `${name} 'none'`)].join(";");
+/** Without what the page does not have, or may not delegate. */
+function restrict(allow = "", page: any) {
+  const lists = new Map<string, string>();
+  for (const [, name, list] of (page.permissionsPolicy ?? "").matchAll(/([\w-]+)=\(([^)]*)\)/g)) lists.$set(name, list);
+  const kept = allow.split(";").filter(it => {
+    const name = it.trim().split(/\s/)[0];
+    return !lists.$has(name) && page.allowsFeature?.(name) !== false;
+  });
+  const asked = new Map(allow.split(";").map(it => [it.trim().split(/\s/)[0], it.trim().split(/\s+/).slice(1)]));
+  lists.$forEach((list, name) => {
+    const origins = Array.from(list.matchAll(/\x22([^\x22]*)\x22/g), match => match[1]);
+    const wanted = asked.$get(name)?.filter(it => it !== "'src'");
+    const granted = wanted
+      ? origins.filter(it => wanted.length === 0 || wanted.includes("*") || wanted.includes(it))
+      : [];
+    kept.push(`${name} ${granted.join(" ") || "'none'"}`);
+  });
+  return kept.join(";");
+}
+
+/** What the attribute allows of what the page is allowed. */
+function confine(attribute: string | null | undefined, { sandbox }: any) {
+  if (sandbox === undefined) return attribute;
+  const own = attribute?.toLowerCase().split(/\s+/);
+  return [...sandbox].filter(flag => own?.includes(flag) ?? true).join(" ");
 }
 
 class Frame extends Remote {
@@ -166,13 +186,11 @@ class Frame extends Remote {
   }
 
   navigate(given: Record<string, string>) {
-    const attributes = {
-      ...given,
-      src: this.engine.toEngine(given.src),
-      allow: restrict(given.allow, this.#page.permissionsPolicy),
-    };
+    const attributes = { ...given, src: this.engine.toEngine(given.src), allow: restrict(given.allow, this.#page) };
+    const sandbox = confine(given.sandbox, this.#page);
+    if (sandbox != null) (attributes as any).sandbox = sandbox;
     const isBlob = given.src.startsWith("blob:") && originOf(given.src) === this.#page.origin;
-    this.#send("navigate", attributes, isBlob && require("node:buffer").resolveObjectURL(given.src));
+    this.#send("navigate", attributes, isBlob && resolveBlob(given.src));
   }
 
   /** It is `window.opener` to the page that `guest` is for. */
@@ -189,7 +207,11 @@ class Frame extends Remote {
   }
 
   attribute(name: string, value: string | null) {
-    this.#send("attribute", name, name === "allow" ? restrict(value ?? "", this.#page.permissionsPolicy) : value);
+    this.#send(
+      "attribute",
+      name,
+      name === "allow" ? restrict(value ?? "", this.#page) : name === "sandbox" ? confine(value, this.#page) : value,
+    );
   }
 
   location(path: number[], method: string, url: string) {

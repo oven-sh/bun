@@ -93,22 +93,22 @@ const scripts = {
     };
   },
   messaging: () => messaging,
-  allowsInlineScript: (source: string) => allowsInline("script", source),
-  allowsInline,
 };
 
 const policy = () => require("internal/desktop/electron/policy");
-/** The scripts in the markup that the app has loaded, and the directories that it is from. */
-const loadedScripts = new Set<string>();
+/** The directories of the markup that the app has loaded. */
 const loadedFrom = new Set<string>();
 
-function willLoad(html: string, url: string) {
-  for (const script of policy().inlineScriptsOf(html)) loadedScripts.$add(script);
+function willLoad(url: string) {
   if (url.startsWith("file:")) loadedFrom.$add(new URL(".", url).href);
 }
 
-function allowsInline(kind: string, text: string) {
-  return kind !== "script" || loadedScripts.$has(text);
+function create(host: any, options?: object): Page {
+  host.allowsInline = (kind: string, text: string) => kind !== "script" || page.cameWith(text);
+  host.allowsInlineScript = (source: string) => page.cameWith(source);
+  const page = createPage(host, options);
+  page.parseHTML("<!doctype html>");
+  return page;
 }
 
 function isOfApp(url: string) {
@@ -132,7 +132,6 @@ function hostFor(window: any, surface: number) {
     messaging: scripts.messaging,
     fetchResource,
     fileFromPath,
-    allowsInline,
     createRemoteFrame(element: object) {
       return require("internal/desktop/webview/frames").createIn(window, surface, this, element);
     },
@@ -195,19 +194,14 @@ let unshown: { page: Page; host: object } | undefined;
 
 function installGlobals() {
   const host = { native: null, surface: 0, fontScope: 0x7fffffff, fetchResource, fileFromPath, ...scripts };
-  const page = createPage(host, { global: globalThis });
+  const page = create(host, { global: globalThis });
   unshown = { page, host };
-  page.parseHTML("<!doctype html>");
   return page;
 }
 
 function pageFor(window: any, surface: number, mayBeGlobal: boolean): Page {
   const host = hostFor(window, surface);
-  if (unshown === undefined || !mayBeGlobal) {
-    const page = createPage(host);
-    page.parseHTML("<!doctype html>");
-    return page;
-  }
+  if (unshown === undefined || !mayBeGlobal) return create(host);
   const { page } = unshown;
   Object.defineProperties(unshown.host, Object.getOwnPropertyDescriptors(host));
   unshown = undefined;

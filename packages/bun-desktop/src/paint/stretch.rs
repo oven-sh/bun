@@ -1,13 +1,12 @@
 //! A box without most of its middle, along which nothing changes.
 
-use resvg::tiny_skia::Transform;
-use smallvec::SmallVec;
-
 use super::border::inset;
 use super::cpu::{Painter, snap_shadow};
 use super::raster::{Clip, IntRect, Layer, Paint, Pixel, map_rect};
 use super::scene::intersect;
 use crate::abi::{Item, LineStyle, RoundedRect};
+use crate::gfx::Transform;
+use crate::small_vec::SmallVec;
 
 /// What is stretched is the middle one of three equal pixels, because the GPU interpolates.
 pub const STRETCHED: i32 = 3;
@@ -27,7 +26,7 @@ impl Stretch {
             return None;
         }
         let (frame, mut item) = (painter.frame, painter.scene.items[index]);
-        let mut shapes: SmallVec<[&mut RoundedRect; 2]> = SmallVec::new();
+        let mut shapes: SmallVec<&mut RoundedRect, 2> = SmallVec::new();
         let (mut margins, mut has_center) = ([0.; 4], false);
         match &mut item {
             Item::Fill { shape, .. } => {
@@ -119,12 +118,12 @@ impl Stretch {
 
     /// Parts of `area`, and where they go.
     pub fn pieces(&self) -> impl Iterator<Item = (IntRect, IntRect)> {
-        let spans = |low: i32, middle: i32, high: i32, removed: i32| -> SmallVec<[[i32; 4]; 3]> {
+        let spans = |low: i32, middle: i32, high: i32, removed: i32| -> SmallVec<[i32; 4], 3> {
             if removed == 0 {
-                return SmallVec::from_elem([low, high, low, high], 1);
+                return SmallVec::from_iter([[low, high, low, high]]);
             }
             let (from, to) = (middle + 1, middle + 2);
-            SmallVec::from_buf([
+            SmallVec::from_iter([
                 [low, from, low, from],
                 [from, to, from, to + removed],
                 [to, high, to + removed, high + removed],

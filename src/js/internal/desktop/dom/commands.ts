@@ -1997,12 +1997,30 @@ defineBlockCommand("inserthorizontalrule", value => {
 
 const neverInserted = names("script style meta link title base");
 
-defineBlockCommand("inserthtml", value => {
+const isScriptUrl = /^[\0- ]*javascript:/i;
+
+/** Of the nodes that are inserted, because markup can mean something else when it is parsed again. */
+function removeScripts(root: N) {
+  for (const node of descendants(root)) {
+    if (/^(?:script|iframe|object|embed|template|animate|set)$/.test(node.name)) core.remove(node);
+    else {
+      const isScript = (name: string) =>
+        /^on/.test(name) || isScriptUrl.test(core.getAttr(node, name)!.replace(/[\t\n\r]/g, ""));
+      for (const name of node.attrs?.filter((it, i) => i % 2 === 0 && isScript(it)) ?? []) core.removeAttr(node, name);
+    }
+  }
+}
+
+defineBlockCommand("inserthtml", value => insertHtml(value, false));
+defineBlockCommand("insertpasted", value => insertHtml(value, true));
+
+function insertHtml(value: string, isPasted: boolean) {
   deleteSelection();
   if (!canInsert()) return true;
   leaveTextAtItsEnds();
   const around = active.startNode.type === ELEMENT ? active.startNode : active.startNode.parent!;
   const fragment = hooks.parseFragment(isIn(around, rowHolders) ? around : create("body"), value);
+  if (isPasted) removeScripts(fragment);
   for (const node of descendants(fragment)) if (isIn(node, neverInserted)) core.remove(node);
   if (isPlain(around)) return insertText(core.textContent(fragment));
   const [last, inside] = [fragment.last, descendants(fragment)];
@@ -2025,7 +2043,7 @@ defineBlockCommand("inserthtml", value => {
   collapseAfter(last);
   inside.forEach(fixDisallowedAncestors);
   return true;
-});
+}
 
 defineBlockCommand("insertimage", value => {
   deleteSelection(true, false);
@@ -2279,7 +2297,7 @@ function enter<T>(it: Doc, fallback: T, body: () => T): T {
 }
 
 const forPlainText = names(
-  "delete forwarddelete deleteselection inserttext insertlinebreak insertparagraph inserthtml",
+  "delete forwarddelete deleteselection inserttext insertlinebreak insertparagraph inserthtml insertpasted",
 );
 
 function isEnabledNow(name: string): boolean {

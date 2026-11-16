@@ -1918,6 +1918,23 @@ impl Document {
                     )
                 })
             }
+            Some(replaced)
+                if replaced.size.contains(&None)
+                    && self
+                        .tree
+                        .element(self.tree[it.node].parent)
+                        .is_some_and(|it| it.pseudo == crate::selector::Pseudo::Marker) =>
+            {
+                let natural = replaced.size.map(|it| Some(it? * style.zoom));
+                it.turned
+                    .turn_axes(crate::background::concrete_size(
+                        [None; 2],
+                        natural,
+                        replaced.ratio,
+                        [style.metrics.ascent.round() / 2.0; 2],
+                    ))
+                    .map(Some)
+            }
             Some(replaced) => it
                 .turned
                 .turn_axes(replaced.viewed(style).0.size)

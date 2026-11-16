@@ -207,6 +207,7 @@ class Observation {
   height = -1;
   /** How many thresholds it has crossed, for an intersection. */
   crossed = -1;
+  isVisible = false;
   reportedAt = -Infinity;
   serial = nextSerial++;
   /** -1 after `unobserve`. */
@@ -248,6 +249,7 @@ class BoxObserver {
   margins: number[] = [];
   thresholds: readonly number[] = [];
   delay = 0;
+  tracksVisibility = false;
 
   constructor(js: object, callback: Function, active: Set<Observation>) {
     this.js = js;
@@ -325,6 +327,7 @@ class Watched {
   hasSvgTargets = false;
   /** The indexes of those whose root is the viewport of a document above. */
   acrossFrames: number[] = [];
+  tracked: number[] = [];
 
   updateSizes(page: Page) {
     const version = sizesVersion + core.watchedVersion();
@@ -361,7 +364,8 @@ class Watched {
       records[at++] = observer.thresholds.length;
     }
     this.settings = new Float64Array(settings);
-    this.hasSvgTargets = intersections.some(it => it.node.ns === core.SVG);
+    this.tracked = intersections.flatMap((it, i) => (it.observer.tracksVisibility ? [i] : []));
+    this.hasSvgTargets = this.tracked.length > 0 || intersections.some(it => it.node.ns === core.SVG);
     const had = this.acrossFrames.length > 0;
     this.acrossFrames =
       page.container === null ? [] : intersections.flatMap((it, i) => (it.observer.root === null ? [i] : []));
@@ -510,6 +514,13 @@ class IntersectionObserver {
     observer.root = init.root == null ? null : unwrap(init.root, "IntersectionObserver");
     if (observer.root !== null) observer.root.flags |= WATCHED;
     observer.delay = init.delay | 0;
+    observer.tracksVisibility = !!init.trackVisibility;
+    if (observer.tracksVisibility && observer.delay < 100) {
+      throw domError(
+        "NotSupportedError",
+        "To enable the 'trackVisibility' option, you must also use a 'delay' option with a value of at least 100.",
+      );
+    }
     observer.rootMargin = rootMargin.text;
     observer.scrollMargin = scrollMargin.text;
     observer.margins = [...rootMargin.values, ...scrollMargin.values];
@@ -531,8 +542,7 @@ class IntersectionObserver {
     return this.$impl.delay;
   }
   get trackVisibility() {
-    this.$impl.delay;
-    return false;
+    return this.$impl.tracksVisibility;
   }
   observe(target: any) {
     const node = unwrap(target, "observe");
@@ -581,6 +591,11 @@ function intersectAcrossFrames(page: Page, id: number, { margins }: BoxObserver)
   return result;
 }
 
+function isUnobscured(page: Page, id: number): boolean {
+  if (page.doc.engine.metric(id, 17) === 0) return false;
+  return page.container === null || isUnobscured(page.container.page, page.container.node.id);
+}
+
 function updateIntersections(page: Page, time: number) {
   const { watched } = page;
   const { engine } = page.doc;
@@ -588,7 +603,9 @@ function updateIntersections(page: Page, time: number) {
   const records = watched.intersectionRecords;
   let changed: Iterable<number> | null =
     records.length === 0 ? null : engine.changedIntersections(records, watched.settings);
-  if (watched.acrossFrames.length > 0) changed = new Set([...(changed ?? []), ...watched.acrossFrames]);
+  if (watched.acrossFrames.length + watched.tracked.length > 0) {
+    changed = new Set([...(changed ?? []), ...watched.acrossFrames, ...watched.tracked]);
+  }
   if (changed == null) return;
   for (const index of changed) {
     const observation = watched.intersections[index];
@@ -610,7 +627,9 @@ function updateIntersections(page: Page, time: number) {
     const ratio = area > 0 ? Math.min(1, (result[7] * result[8]) / area) : +isIntersecting;
     let crossed = 0;
     while (isIntersecting && crossed < thresholds.length && thresholds[crossed] <= ratio) crossed++;
-    if (crossed === observation.crossed) continue;
+    const isVisible = observer.tracksVisibility && isIntersecting && isUnobscured(page, id);
+    if (crossed === observation.crossed && isVisible === observation.isVisible) continue;
+    observation.isVisible = isVisible;
     records[index * INTERSECTION_RECORD + 2] = observation.crossed = crossed;
     observation.reportedAt = time;
     if (observation.isDormant()) intersectionsVersion++;
@@ -622,7 +641,7 @@ function updateIntersections(page: Page, time: number) {
         boundingClientRect: rectAt(result, 1),
         intersectionRect: rectAt(result, 5),
         isIntersecting: crossed > 0,
-        isVisible: false,
+        isVisible,
         intersectionRatio: ratio,
         target: wrap(observation.node),
       }),

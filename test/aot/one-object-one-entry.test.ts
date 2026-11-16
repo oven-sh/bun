@@ -9,6 +9,7 @@ const script = `
 const table = JSON.parse(require("fs").readFileSync(process.argv[1], "utf8"));
 const entries = new Map(table.entries.map(entry => [entry.token, entry]));
 const isModule = path => /^(node:|bun:)/.test(path) || require("module").builtinModules.includes(path.split(".")[0]);
+const changeTheProcess = ["bun:desktop/dom", "bun:desktop/electron"];
 const reached = new Map();
 function reach(token) {
   if (reached.has(token)) return reached.get(token);
@@ -17,7 +18,7 @@ function reach(token) {
   let value;
   try {
     if (entry.path === "globalThis") value = globalThis;
-    else if (entry.holder === null) value = isModule(entry.path) ? require(entry.path) : undefined;
+    else if (entry.holder === null) value = isModule(entry.path) && !changeTheProcess.includes(entry.path) ? require(entry.path) : undefined;
     else if (!entry.isSymbolName && entry.kind !== "Accessor") {
       const holder = reach(entry.holder);
       if (Object(holder) === holder && Object.hasOwn(holder, entry.name)) value = holder[entry.name];

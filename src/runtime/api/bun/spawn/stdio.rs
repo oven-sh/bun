@@ -436,9 +436,6 @@ impl Stdio {
             *out_stdio = Stdio::Fd(fd);
             return Ok(());
         } else if let Some(blob) = value.as_class_ref::<webcore::Blob>() {
-            // `as_class_ref` is the safe shared-borrow downcast (centralised
-            // deref proof in `JSValue`); the JS wrapper roots the payload while
-            // `value` is on the stack. `dupe()` only bumps the store refcount.
             return out_stdio.extract_blob(cx.global(), webcore::blob::Any::Blob(blob.dupe()), i);
         } else if let Some(req) = value.as_class_ref::<webcore::Request>() {
             return Self::extract_body_value(out_stdio, cx, i, req.get_body_value(), is_sync);

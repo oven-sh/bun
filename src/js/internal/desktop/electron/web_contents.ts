@@ -1,3 +1,5 @@
+const pointerPhases = { mouseDown: "down", mouseUp: "up", mouseLeave: "leave" };
+
 const EventEmitter = require("node:events");
 const fs = require("node:fs");
 const path = require("node:path");
@@ -248,6 +250,14 @@ class Debugger extends EventEmitter {
 const featuresOfWindow =
   /^(?:(?:min|max)(?:Width|Height)|opacity|show|center|useContentSize|frame|transparent|hasShadow|movable|closable|focusable|minimizable|maximizable|fullscreenable|alwaysOnTop|skipTaskbar|modal|acceptFirstMouse|autoHideMenuBar|title|backgroundColor|titleBarStyle|vibrancy|resizable)$/;
 
+const isOfItsKind = (name: string, value: unknown) =>
+  typeof value ===
+  (/^(?:min|max)[WH]|^opacity/.test(name)
+    ? "number"
+    : /^(?:title|backgroundColor|vibrancy)/.test(name)
+      ? "string"
+      : "boolean");
+
 function canEvaluate() {
   try {
     return globalThis.eval("true");
@@ -353,7 +363,13 @@ class WebContents extends EventEmitter {
         this.#callbacks.navigate(page, url, {}, { handle: frame, origin: frame?.origin ?? "null" }),
       navigate: (url: string, options: object, initiator: any) =>
         this.#callbacks.navigate(this.#page, url, options, initiator),
-      reload: (mayUnload?: boolean) => this.#reload(mayUnload),
+      reload: () => {
+        const page = this.#page;
+        const isAllowed = ["will-frame-navigate", "will-navigate"].every(name =>
+          this.#emitNavigation(name, page.url, false, page),
+        );
+        if (isAllowed) this.#reload(true);
+      },
       stop: () => this.stop(),
       close: () => this.close(),
       destroy: () => this.destroy(),
@@ -363,7 +379,7 @@ class WebContents extends EventEmitter {
       takeOver: (url: string, frame: any, history: string | number = "push") => {
         if (!this.#hasShownTrusted || !this.#isTrusted(url)) return false;
         const { guest } = state;
-        const initiator = { handle: frame, origin: frame.origin };
+        const initiator = { handle: frame, origin: frame?.origin ?? "null" };
         const load = () => state.guest === guest && !this.#pending && this.#load(url, { history, initiator });
         Promise.resolve(guest?.fetchCookies())
           .then(load)
@@ -450,7 +466,7 @@ class WebContents extends EventEmitter {
   }
 
   #show(page: any, html: string, xmlType?: string) {
-    if (!page.controller) page.start(html);
+    if (!page.controller) page.start();
     if (page.isInitial && page.agent) {
       this.#frame?.element.measure();
       if (this.#size) page.controller.handleEvent({ ...this.#size, isQuiet: true });
@@ -950,7 +966,8 @@ class WebContents extends EventEmitter {
         },
       });
     }
-    const type = (loader.find(loaded.headers, "content-type") ?? "text/html").toLowerCase();
+    const declared = loader.find(loaded.headers, "content-type") ?? "text/html";
+    const type = mime.extract(declared)?.essence ?? "text/plain";
     const isAttachment = /^\s*attachment/i.test(loader.find(loaded.headers, "content-disposition") ?? "");
     const isPlugin = /^(?:object|embed)$/.test(this.#frame?.element.kind);
     if (this.#canFallBack() && loaded.status >= 400) throw loader.netError("ABORTED");
@@ -969,7 +986,7 @@ class WebContents extends EventEmitter {
     const bytes = (!isImage && (await loaded.response?.bytes())) || new Uint8Array();
     loaded.encoding =
       mime.sniffBom(bytes) ??
-      mime.encodingOf(mime.extract(type)?.parameters.get("charset")) ??
+      mime.encodingOf(mime.extract(declared)?.parameters.get("charset")) ??
       (xmlType === undefined ? mime.prescan(bytes) : mime.declaredInXml(bytes)) ??
       (xmlType === undefined && parent?.origin === originOf(loaded.url) ? parent.encodingOfFrames : undefined) ??
       (xmlType === undefined && isWeb.test(loaded.url) && !/json/.test(type) ? "windows-1252" : "utf-8");
@@ -995,10 +1012,10 @@ class WebContents extends EventEmitter {
     let html = isImage
       ? `<!doctype html><body style="margin:0"><img src="${Bun.escapeHTML(loaded.url)}">`
       : (navigation.markup ?? navigation.srcdoc ?? mime.decode(bytes, loaded.encoding));
-    if (xmlType === undefined && !/html|^image/.test(type))
+    if (xmlType === undefined && !isImage && type !== "text/html")
       html = `<!doctype html><pre style="word-wrap:break-word;white-space:pre-wrap">\n${Bun.escapeHTML(html)}</pre>`;
     if (navigation.markup !== undefined) loaded.encoding = "utf-8";
-    else loaded.essence = type.split(";")[0].trim();
+    else loaded.essence = type;
     if (this.#pending !== pending) return;
     this.#commit(loaded, navigation, html, xmlType);
   }
@@ -1042,7 +1059,7 @@ class WebContents extends EventEmitter {
     if (navigation.markup !== undefined)
       Object.assign(page, { origin: options.creator.origin, originKey: options.creator.originKey });
     if (!this.#page.isInitial) this.#willSwap(page, loaded, navigation.history);
-    if (this.#page.renew(page, options, html)) page = this.#page;
+    if (this.#page.renew(page, options)) page = this.#page;
     else this.#page.dispose();
     if (this.#destroyed) return;
     this[kPrivate].guest?.destroy();
@@ -1068,7 +1085,7 @@ class WebContents extends EventEmitter {
         ? this.#item()
         : undefined;
     const isVisible = next.originKey === this.#page.originKey && !internal?.crossedOrigins;
-    this.#page.controller?.willSwap(
+    next.inboundTransition = this.#page.controller?.willSwap(
       isTraversal ? "traverse" : history,
       isVisible ? { ...known?.state, url } : undefined,
     );
@@ -1105,7 +1122,7 @@ class WebContents extends EventEmitter {
 
   #openGuest(opener: any, details: any) {
     let guest;
-    this.#openWindow(opener, details, webPreferences => {
+    this.#owner.#openWindow(opener, details, webPreferences => {
       const opened = new WebContents({ ...webPreferences, session: this.session }, "window", { opener });
       guest = opened.#newGuest(undefined, true).commit();
       return opened;
@@ -1181,7 +1198,9 @@ class WebContents extends EventEmitter {
     if (answer?.action !== "allow" || this.#destroyed) return null;
 
     const { left: x, top: y, width = 800, height = 600 } = mime.windowFeatures(features);
-    const rest = Object.fromEntries(Object.entries(parsed).filter(([name]) => featuresOfWindow.test(name)));
+    const rest = Object.fromEntries(
+      Object.entries(parsed).filter(([name, value]) => featuresOfWindow.test(name) && isOfItsKind(name, value)),
+    );
     const { sandbox, contextIsolation, javascript, nodeIntegration } = this.#preferences;
     const override = answer.overrideBrowserWindowOptions ?? {};
     const webPreferences = { sandbox, contextIsolation, javascript, nodeIntegration, ...override.webPreferences };
@@ -1278,7 +1297,10 @@ class WebContents extends EventEmitter {
         if (scheme === "javascript") return;
         if (!/^(?:https?|file|about|data|blob)$/.test(scheme) && !this.session.protocol.isProtocolHandled(scheme)) {
           return void page
-            .requestPermission("openExternal", { externalURL: url })
+            .requestPermission("openExternal", {
+              externalURL: url,
+              ...(initiator !== page && { isMainFrame: false, requestingUrl: initiator?.url ?? initiator?.origin }),
+            })
             .then(state => state === "granted" && require("internal/desktop/system").api.shell.openExternal(url));
         }
         const restored = page.isInitial && this.#frame ? this.#item() : undefined;
@@ -1731,7 +1753,7 @@ class WebContents extends EventEmitter {
     if (type.startsWith("mouse")) {
       const b = Math.max(["left", "middle", "right"].indexOf(event.button), 0);
       const held = has("leftbuttondown") | (has("rightbuttondown") << 1) | (has("middlebuttondown") << 2);
-      const e = { mouseDown: "down", mouseUp: "up", mouseLeave: "leave" }[type] ?? "move";
+      const e = pointerPhases[type] ?? "move";
       return input({
         t: "mouse",
         e,

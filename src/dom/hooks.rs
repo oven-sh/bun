@@ -631,9 +631,10 @@ pub(crate) const HOOKS: &[(&str, Hook)] = &[
         })
     }),
     ("symbols", |_, _, source| {
-        let needs_two = ["symbols(alphabetic", "symbols(numeric"]
+        let inside = source.get(8..)?.trim_ascii_start();
+        let needs_two = ["alphabetic", "numeric"]
             .iter()
-            .any(|it| source.len() > it.len() && eq(&source[..it.len()], it));
+            .any(|it| inside.len() > it.len() && eq(&inside[..it.len()], it));
         (!needs_two || words(&source[8..source.len() - 1]).len() > 2).then_some(())
     }),
     ("unprefix", |m, start, _| {
@@ -807,6 +808,9 @@ pub(crate) const HOOKS: &[(&str, Hook)] = &[
     }),
     ("not-zero", |_, _, source| {
         (literal(source) != Some(0.0)).then_some(())
+    }),
+    ("not-number", |_, _, source| {
+        text(source).trim().parse::<f64>().is_err().then_some(())
     }),
     ("as-written", |m, start, source| {
         replace(m, start, |_| words(source).join(&b' ').to_ascii_lowercase())

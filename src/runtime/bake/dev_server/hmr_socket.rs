@@ -278,7 +278,7 @@ impl HmrSocket {
         }
     }
 
-    /// Gives back what this socket counts for in `dev`.
+    /// Drops this socket's visualizer subscriptions, `active_viewers` count and source map refs.
     pub(super) fn release(&self, dev: &mut DevServer) {
         Self::on_unsubscribe(dev, self.subscriptions);
 

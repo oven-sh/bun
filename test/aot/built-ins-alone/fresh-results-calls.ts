@@ -547,6 +547,39 @@ export const families: { rows: RegExp; callee(path: string, mode: string): strin
       "1, 1",
     ],
   },
+  {
+    rows: /^%DesktopEngine%|^native:Bindgen:dom\.bind\.ts:|^%NativeFunctions%\.DomBindTs/,
+    callee(path) {
+      const engine = 'load("bun:internal-for-testing").desktopInternals.engine';
+      if (path === "%DesktopEngine%") return `new (${engine}.Engine)`;
+      const name = /(?:prototype\.|ts:|BindTs)(\w+)$/.exec(path)![1];
+      return path.startsWith("%DesktopEngine%")
+        ? `new (${engine}.Engine)(0, "https://example.com/").${name}`
+        : `${engine}.${name[0].toLowerCase()}${name.slice(1)}`;
+    },
+    operands: [
+      "",
+      "1",
+      "1, 1",
+      "1, 1, 1",
+      "1, 1, 0, 1",
+      "1, 1, 0, 1, 0",
+      "1, true",
+      "1, 0, true",
+      "1, 0, 1, 0, true",
+      "1, 1, 0, true, 0, 0, 0",
+      "1, 1, []",
+      '1, "a"',
+      '"top"',
+      '"a", true',
+      '"a{top:0}", false, false',
+      '"style", "inset", "0", false',
+      '"media", "all", null, ""',
+      "new Float64Array([1, 0, 1, 1]), 1",
+      "new Float64Array([0, 0, 1, 0, 0]), new Float64Array(16)",
+      'new Uint8Array(1), "a.svg", 0',
+    ],
+  },
 ];
 
 /** Names that a library module puts on an object of the table when it is loaded, which the compiler sees it do. */

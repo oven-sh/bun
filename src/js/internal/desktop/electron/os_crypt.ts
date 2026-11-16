@@ -46,9 +46,16 @@ async function readKey(): Promise<Buffer> {
 /** Old versions of Electron left out " Key". */
 async function keychainPassword(owner: string) {
   const service = owner + " Safe Storage";
-  return (
-    (await Bun.secrets.get({ service, name: owner + " Key" })) ?? (await Bun.secrets.get({ service, name: owner }))
-  );
+  return (await readSecret({ service, name: owner + " Key" })) ?? (await readSecret({ service, name: owner }));
+}
+
+const prompt = Promise.withResolvers<void>();
+
+async function readSecret(item: { service: string; name: string }) {
+  const { blob, asks } = await native.request("keychain.read", item).catch(() => ({}));
+  if (blob) return Buffer.from(native.takeBlob(blob)).toString();
+  if (asks) prompt.resolve();
+  return Bun.secrets.get(item);
 }
 
 function load() {
@@ -118,4 +125,11 @@ const safeStorage = {
   }),
 };
 
-export default { canEncrypt: () => key !== undefined || isLinux, decrypt, encrypt, load, safeStorage };
+export default {
+  canEncrypt: () => key !== undefined || isLinux,
+  decrypt,
+  encrypt,
+  load,
+  safeStorage,
+  whenAsking: prompt.promise,
+};

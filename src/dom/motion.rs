@@ -219,9 +219,22 @@ impl Document {
         let (follows, degrees) = parse_all(style.other(Id::OffsetRotate).as_bytes(), |p| {
             Some((keyword(p, "auto"), degrees(p, &cx).unwrap_or(0.0)))
         })?;
-        let turn = rotation(degrees.to_radians() + if follows { radians } else { 0.0 });
+        let without_noise = |noise: f32| {
+            move |it: f32| {
+                if (it - it.round()).abs() < noise {
+                    it.round()
+                } else {
+                    it
+                }
+            }
+        };
+        let turn = rotation(degrees.to_radians() + if follows { radians } else { 0.0 })
+            .map(without_noise(5e-4));
         let moved = multiply(
-            &translation([point[0] - own.x - origin[0], point[1] - own.y - origin[1]]),
+            &translation(
+                [point[0] - own.x - origin[0], point[1] - own.y - origin[1]]
+                    .map(without_noise(0.02)),
+            ),
             &turn,
         );
         Some(multiply(

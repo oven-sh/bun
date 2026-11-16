@@ -1,7 +1,6 @@
-use resvg::tiny_skia::Transform;
-
 use super::raster::{Pixel, map_point};
 use crate::abi::GradientStop;
+use crate::gfx::Transform;
 
 #[derive(Clone, Copy)]
 pub enum Geometry {

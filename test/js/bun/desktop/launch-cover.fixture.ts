@@ -11,9 +11,19 @@ const click = (x: number, y: number) => {
 
 await app.whenReady();
 if (step === "crash") process.kill(process.pid, "SIGKILL");
+if (step === "early" || step === "discarded") {
+  // Before the app has made the window, whose id is 1.
+  const other: any = new Window({ show: false });
+  const { id } = other;
+  other.id = 1;
+  for (const type of ["keyDown", "keyUp"]) other.sendInputEvent({ type, keyCode: "s" });
+  other.id = id;
+  await new Promise(setImmediate);
+  if (step === "discarded") new Window({ show: false, launchCover: false });
+}
 const window = new Window({
-  x: 10,
-  y: 20,
+  x: 100,
+  y: 100,
   width: step === "wider" ? 400 : 300,
   height: 200,
   autoHideMenuBar: true,
@@ -25,10 +35,19 @@ await window.loadHTML(
 );
 const field = window.document.querySelector("input")!;
 window.document.querySelector("button")!.onclick = () => log.push("click");
+if (step === "uncovered") {
+  for (const key of ["b", "Enter", "c"]) type(key);
+  await new Promise(resolve => window.window.requestAnimationFrame(() => setImmediate(resolve)));
+  field.onkeydown = event => log.push(event.key);
+}
 if (step !== "unfocused") field.focus();
 if (step === "type" || step === "unfocused" || step === "keep") type("b");
 if (step === "click" || step === "changed") click(50, 120);
 await new Promise(resolve => window.window.requestAnimationFrame(() => setImmediate(resolve)));
+if (step === "type" || step === "uncovered") {
+  for (let i = 0; i < 60 && !window.isLaunchCoverShown() && field.value.length < (step === "type" ? 1 : 2); i++)
+    await new Promise(resolve => window.window.requestAnimationFrame(resolve));
+}
 log.push(`[${field.value}]`);
 if (window.hasLaunchCoverInput()) log.push("waits");
 if (step === "keep") {

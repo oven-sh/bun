@@ -122,7 +122,8 @@ impl Floats {
             let (edge, end) = match is_line && it.area.is_some() {
                 true => (
                     it.edge_between(top + y, top + y + height),
-                    (it.bottom - top).min(y + 1.0f32.max((it.bottom - it.top) / 4096.0)),
+                    (it.bottom - top)
+                        .min((y + 1.0f32.max((it.bottom - it.top) / 4096.0)).max(y.next_up())),
                 ),
                 false => (Some(it.x), it.bottom - top),
             };

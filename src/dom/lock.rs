@@ -177,6 +177,15 @@ impl Document {
         match style.layout.content_visibility {
             ContentVisibility::Visible => ContentVisibility::Visible,
             it if !is_svg && style.display().can_skip_contents() => it,
+            it if style.display().is_inline_box()
+                && !is_svg
+                && self.kind_of(id, style).is_some() =>
+            {
+                it
+            }
+            it if is_svg && style.display() != Display::None && self.outer_svg(id) == Some(id) => {
+                it
+            }
             _ => ContentVisibility::Visible,
         }
     }

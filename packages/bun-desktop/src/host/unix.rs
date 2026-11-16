@@ -76,7 +76,7 @@ pub fn poll(pipe: &Pipe, source: Option<isize>, timeout: Option<Duration>) -> bo
         ) -> i32;
     }
     let count = source.unwrap_or(0).max(wake) + 1;
-    let mut set: smallvec::SmallVec<[u32; 8]> =
+    let mut set: crate::small_vec::SmallVec<u32, 8> =
         std::iter::repeat_n(0, count as usize / 32 + 1).collect();
     source
         .into_iter()
@@ -92,26 +92,46 @@ pub fn poll(pipe: &Pipe, source: Option<isize>, timeout: Option<Duration>) -> bo
     result < 0 || source.is_some_and(is_set)
 }
 
-/// Returns whether `source` is readable.
+/// Returns whether `source` is readable, and keeps the `others` that are.
 #[cfg(not(target_os = "macos"))]
-pub fn poll(pipe: &Pipe, source: Option<isize>, timeout: Option<Duration>) -> bool {
+pub fn poll(
+    pipe: &Pipe,
+    source: Option<isize>,
+    others: &mut Vec<i32>,
+    timeout: Option<Duration>,
+) -> bool {
     let entry = |fd| libc::pollfd {
         fd,
         events: libc::POLLIN,
         revents: 0,
     };
-    let mut entries = [
-        entry(source.map_or(-1, |source| source as i32)),
-        entry(pipe.fd()),
-    ];
-    let timeout = timeout.map_or(-1, |timeout| {
-        timeout.as_micros().div_ceil(1000).min(i32::MAX as u128) as i32
+    let first = [source.map_or(-1, |source| source as i32), pipe.fd()];
+    let mut entries: crate::small_vec::SmallVec<_, 8> =
+        first.iter().chain(&*others).copied().map(entry).collect();
+    let timeout = timeout.map(|it| libc::timespec {
+        tv_sec: it.as_secs() as _,
+        tv_nsec: it.subsec_nanos() as _,
     });
+    let timeout = timeout
+        .as_ref()
+        .map_or(std::ptr::null(), std::ptr::from_ref);
     // SAFETY: the array and its length.
-    let result = unsafe { libc::poll(entries.as_mut_ptr(), 2, timeout) };
+    let result = unsafe {
+        libc::ppoll(
+            entries.as_mut_ptr(),
+            entries.len() as _,
+            timeout,
+            std::ptr::null(),
+        )
+    };
     if entries[1].revents != 0 {
         pipe.clear();
     }
+    others.retain(|fd| {
+        entries[2..]
+            .iter()
+            .any(|it| it.fd == *fd && it.revents != 0)
+    });
     // A signal is for the event loop to look at.
     result < 0 || entries[0].revents != 0
 }

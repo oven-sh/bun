@@ -698,8 +698,13 @@ impl Selector {
                         };
                         report(key::STRUCTURE, relation, with);
                         for selector in of.iter().flat_map(|list| list.iter()) {
-                            selector.features(relation, report, into_has);
-                            selector.features(relation | sibling, report, into_has);
+                            let mut both = |key, relation: Relation, with| {
+                                report(key, relation, with);
+                                if !relation.contains(sibling) {
+                                    report(key, relation | sibling, with);
+                                }
+                            };
+                            selector.features(relation, &mut both, into_has);
                         }
                     }
                     Simple::Is(list) | Simple::Not(list) | Simple::Host(Some(list)) => {

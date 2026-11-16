@@ -13,7 +13,7 @@ use bun_sema::check::aot::{
     write_queries,
 };
 use bun_sema::fold::FoldInputs;
-use bun_sema::program::{Files, ReadingNoTrees};
+use bun_sema::program::Files;
 use bun_sema::resolve::{AOT_CONDITION, CodeOptions, Host};
 use bun_sema::session::Session;
 use bun_sema_driver::host::from_native;
@@ -58,7 +58,6 @@ fn write_diagnostic(reported: &BuildDiagnostic, files: &Files<'_>, root: &[u8], 
     let diagnostic = &reported.diagnostic;
     match diagnostic.file {
         Some(file) => {
-            let _reading = ReadingNoTrees::begin();
             let name = files.module(file).file_name();
             out.extend_from_slice(name.strip_prefix(root).unwrap_or(name));
             out.extend_from_slice(format!(":{}", diagnostic.line).as_bytes());

@@ -1,42 +1,55 @@
 {
   "src/jsc/CppTask.rs": {
     "WorkPool::schedule*": 1,
-    "owned_task!": ["ConcurrentCppTask"]
+    "owned_task!": [
+      "ConcurrentCppTask"
+    ]
   },
   "src/jsc/Debugger.rs": {
     "thread spawn": 1
   },
   "src/jsc/JSSecrets.rs": {
-    "unsafe impl Send": ["SecretsOptions"]
+    "unsafe impl Send": [
+      "SecretsOptions"
+    ]
   },
   "src/jsc/NodeCompileCache.rs": {
     "thread spawn": 1,
-    "unsafe impl Send": ["AlignedBlob"]
+    "unsafe impl Send": [
+      "AlignedBlob"
+    ]
   },
   "src/jsc/RuntimeTranspilerStore.rs": {
     "WorkPool::schedule*": 1
   },
-  "src/jsc/VirtualMachine.rs": {
-    "unsafe impl Send": ["Shared"]
-  },
   "src/jsc/hot_reloader.rs": {
-    "thread spawn": 1,
-    "unsafe impl Send": ["WatchChangedPaths"],
-    "unsafe impl Sync": ["WatchChangedPaths"]
+    "thread spawn": 1
   },
   "src/jsc/thread_isolated.rs": {
-    "unsafe impl Send": ["ThreadIsolated<T>"]
+    "unsafe impl Send": [
+      "ThreadIsolated<T>"
+    ]
   },
   "src/jsc/web_worker.rs": {
     "thread spawn": 1,
-    "unsafe impl Send": ["OwnedByThread"]
+    "unsafe impl Send": [
+      "OwnedByThread"
+    ]
   },
   "src/jsc/webcore_types.rs": {
-    "unsafe impl Send": ["Blob", "Store"],
-    "unsafe impl Sync": ["Blob", "Store"]
+    "unsafe impl Send": [
+      "Blob",
+      "Store"
+    ],
+    "unsafe impl Sync": [
+      "Blob",
+      "Store"
+    ]
   },
   "src/runtime/api/JSTranspiler.rs": {
-    "unsafe impl Send": ["TransformTask"]
+    "unsafe impl Send": [
+      "TransformTask"
+    ]
   },
   "src/runtime/api/bun/Terminal.rs": {
     "thread spawn": 1
@@ -45,17 +58,24 @@
     "thread spawn": 1
   },
   "src/runtime/api/glob.rs": {
-    "unsafe impl Send": ["WalkTask"]
+    "unsafe impl Send": [
+      "WalkTask"
+    ]
   },
   "src/runtime/bake/production/mod.rs": {
-    "unsafe impl Sync": ["DotenvSingleton"]
+    "unsafe impl Sync": [
+      "DotenvSingleton"
+    ]
   },
   "src/runtime/cli/fuzzilli_compile_loop.rs": {
     "thread spawn": 1
   },
   "src/runtime/cli/lint_js.rs": {
     "thread spawn": 1,
-    "unsafe impl Send": ["Posted", "Shared"]
+    "unsafe impl Send": [
+      "Posted",
+      "Shared"
+    ]
   },
   "src/runtime/cli/open.rs": {
     "thread spawn": 1
@@ -64,59 +84,102 @@
     "thread spawn": 1
   },
   "src/runtime/cli/run_compiled.rs": {
-    "thread spawn": 1,
-    "unsafe impl Send": ["SharedWatcher"]
+    "thread spawn": 1
   },
   "src/runtime/cli/test/ShardsByReach.rs": {
     "thread spawn": 1
   },
   "src/runtime/crypto/PBKDF2.rs": {
-    "unsafe impl Send": ["Digest"]
+    "unsafe impl Send": [
+      "Digest"
+    ]
+  },
+  "src/runtime/desktop/main_thread.rs": {
+    "thread spawn": 1
   },
   "src/runtime/dns_jsc/dns.rs": {
     "WorkPool::schedule*": 1,
-    "unsafe impl Send": ["DNSRequestOwner", "ResultEntry"],
-    "unsafe impl Sync": ["ResultEntry"]
+    "unsafe impl Send": [
+      "DNSRequestOwner",
+      "ResultEntry"
+    ],
+    "unsafe impl Sync": [
+      "ResultEntry"
+    ]
   },
   "src/runtime/image/Image.rs": {
-    "unsafe impl Send": ["PipelineTask"]
+    "unsafe impl Send": [
+      "PipelineTask"
+    ]
   },
   "src/runtime/napi/napi_body.rs": {
+    "VmBound<": [
+      "TsfnJsSide"
+    ],
     "WorkPool::schedule*": 1,
-    "intrusive_work_task!": ["napi_async_work"]
+    "intrusive_work_task!": [
+      "AsyncWorkOffThread"
+    ],
+    "unsafe impl Send": [
+      "AddonData"
+    ],
+    "unsafe impl Sync": [
+      "AddonData"
+    ]
   },
   "src/runtime/napi/uv_posix.rs": {
+    "WorkPool::schedule*": 1,
+    "unsafe impl Send": [
+      "WorkRef"
+    ],
     "uv_queue_work": 1
   },
   "src/runtime/node/fs_events.rs": {
     "thread spawn": 1,
-    "unsafe impl Send": ["CoreFoundation"],
-    "unsafe impl Sync": ["CoreFoundation", "FSEventsLoop"]
+    "unsafe impl Send": [
+      "CoreFoundation"
+    ],
+    "unsafe impl Sync": [
+      "CoreFoundation",
+      "FSEventsLoop"
+    ]
   },
   "src/runtime/node/memory_pressure.rs": {
     "thread spawn": 1
   },
   "src/runtime/node/node_crypto_binding.rs": {
-    "unsafe impl Send": ["OwnedCtx"]
+    "unsafe impl Send": [
+      "OwnedCtx"
+    ]
   },
   "src/runtime/node/node_fs.rs": {
     "WorkPool::schedule*": 4,
-    "owned_task!": ["AsyncMkdirp", "CpSingleTask", "ReaddirSubtask"],
-    "unsafe impl Send": ["AsyncFSTask<R, A, F>", "AsyncReaddirRecursiveTask"]
+    "owned_task!": [
+      "AsyncMkdirp",
+      "CpSingleTask",
+      "ReaddirSubtask"
+    ],
+    "unsafe impl Send": [
+      "AsyncFSTask<R, A, F>",
+      "AsyncReaddirRecursiveTask"
+    ]
   },
   "src/runtime/node/node_fs_stat_watcher.rs": {
     "WorkPool::schedule*": 2,
-    "owned_task!": ["InitialStatTask"]
+    "owned_task!": [
+      "InitialStatTask"
+    ]
   },
   "src/runtime/node/node_process.rs": {
-    "unsafe impl Sync": ["CStrPtr"]
-  },
-  "src/runtime/node/node_zlib_binding.rs": {
-    "WorkPool::schedule*": 1
+    "unsafe impl Sync": [
+      "CStrPtr"
+    ]
   },
   "src/runtime/node/path_watcher.rs": {
     "thread spawn": 2,
-    "unsafe impl Sync": ["PathWatcherManager"]
+    "unsafe impl Send": [
+      "PathWatcher"
+    ]
   },
   "src/runtime/shell/builtin/cp.rs": {
     "WorkPool::schedule*": 1
@@ -125,7 +188,9 @@
     "WorkPool::schedule*": 2
   },
   "src/runtime/shell/dispatch_tasks.rs": {
-    "unsafe impl Send": ["ShellGlobTask"]
+    "unsafe impl Send": [
+      "ShellGlobTask"
+    ]
   },
   "src/runtime/shell/interpreter.rs": {
     "WorkPool::schedule*": 1
@@ -133,20 +198,25 @@
   "src/runtime/webcore/Blob.rs": {
     "WorkPool::schedule*": 1
   },
-  "src/runtime/webcore/CompressionStreamCoder.rs": {
-    "unsafe impl Send": ["CompressionAsyncCtx"]
-  },
   "src/runtime/webcore/blob/copy_file.rs": {
-    "unsafe impl Send": ["CopyFile"]
+    "unsafe impl Send": [
+      "CopyFile"
+    ]
   },
   "src/runtime/webcore/blob/read_file.rs": {
     "WorkPool::schedule*": 2,
-    "intrusive_work_task!": ["ReadFile"],
-    "unsafe impl Send": ["ReadFile"]
+    "intrusive_work_task!": [
+      "ReadFile"
+    ],
+    "unsafe impl Send": [
+      "ReadFile"
+    ]
   },
   "src/runtime/webcore/blob/write_file.rs": {
     "WorkPool::schedule*": 2,
-    "intrusive_work_task!": ["WriteFile"]
+    "intrusive_work_task!": [
+      "WriteFile"
+    ]
   },
   "src/runtime/webcore/fetch/FetchTasklet.rs": {
     "HTTPThread::schedule": 1

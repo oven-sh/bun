@@ -1,49 +1,36 @@
-//! GPUI as a guest of Bun's event loop.
+//! The window system as a guest of Bun's event loop.
 
 #[cfg_attr(target_os = "macos", path = "host/macos.rs")]
-#[cfg_attr(target_os = "windows", path = "host/windows.rs")]
-#[cfg_attr(
-    not(any(target_os = "macos", target_os = "windows")),
-    path = "host/linux.rs"
-)]
-mod platform;
+#[cfg_attr(not(target_os = "macos"), path = "host/linux.rs")]
+mod system;
 pub mod thread;
-#[cfg(unix)]
 mod unix;
 
 use std::cell::{Cell, OnceCell, RefCell};
-use std::rc::Rc;
+#[cfg(target_os = "macos")]
+use std::sync::LazyLock;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::{Duration, Instant};
 
-use anyhow::{Context as _, Result, ensure};
-use gpui::embed::{Painter, RawKey};
-use gpui::{
-    AnyWindowHandle, App, AppContext as _, ApplicationHandle, AsyncApp, DispatchEventResult,
-    Platform, PlatformInput, Window, WindowId, accesskit,
-};
-
-use crate::{accessibility, app, bridge, input, native, surface, window};
-
-struct Running {
-    handle: ApplicationHandle,
-    app: AsyncApp,
-    platform: Rc<dyn Platform>,
-}
+use crate::diagnostics::{self, Step};
+use crate::error::{Context as _, Result};
+use crate::platform::Platform;
+use crate::{app, bridge, input, surface, window};
 
 const FOR_RESIZE: Duration = Duration::from_millis(100);
 
-type DeferredFrame = (WindowId, Box<dyn FnOnce()>);
-
 thread_local! {
+    /// The window, when that was, and when the next one is due.
+    #[cfg(target_os = "macos")]
+    static SCROLL_FRAME: Cell<Option<(u32, Instant, Instant)>> = const { Cell::new(None) };
     /// Never dropped: the process exits with the display's connection open.
-    static RUNNING: OnceCell<&'static Running> = const { OnceCell::new() };
+    static PLATFORM: OnceCell<&'static dyn Platform> = const { OnceCell::new() };
     static TICK: Cell<Option<extern "C" fn()>> = const { Cell::new(None) };
     /// The event loop is waiting in `pump`, and neither it nor JavaScript is in the middle of something.
     static CAN_TICK: Cell<bool> = const { Cell::new(false) };
     static DID_TICK: Cell<bool> = const { Cell::new(false) };
     static LAST_PUMP: Cell<Option<Instant>> = const { Cell::new(None) };
-    static DEFERRED_FRAMES: RefCell<Vec<DeferredFrame>> = RefCell::default();
+    static DEFERRED_FRAMES: RefCell<Vec<u32>> = RefCell::default();
     static DEFERRED_SINCE: Cell<Option<Instant>> = const { Cell::new(None) };
     /// What `bridge::taken` was when JavaScript last finished with its events.
     static HANDLED: Cell<[u32; 2]> = const { Cell::new([0; 2]) };
@@ -53,8 +40,10 @@ thread_local! {
     static IS_URGENT: Cell<bool> = const { Cell::new(false) };
 }
 
-fn running() -> Option<&'static Running> {
-    RUNNING.with(|running| running.get().copied())
+pub fn platform() -> Result<&'static dyn Platform> {
+    PLATFORM
+        .with(|platform| platform.get().copied())
+        .context("the UI has not been started")
 }
 
 static INTERVAL: AtomicU32 = AtomicU32::new(16_667);
@@ -72,7 +61,7 @@ pub fn set_interval(interval: Duration) {
 }
 
 pub fn init(has_main_thread: bool) {
-    platform::init();
+    system::init();
     match has_main_thread {
         true => thread::expect(),
         false => thread::spawn(run_ui_thread),
@@ -92,148 +81,101 @@ pub fn run_main_thread() -> ! {
 pub fn wake() {
     // This thread looks at the queue before it waits.
     if TICK.get().is_none() {
-        platform::wake();
+        system::wake();
     }
 }
 
-struct Hooks;
-
-impl gpui::embed::Host for Hooks {
-    fn raw_key(&self, key: RawKey) {
-        input::raw_key(key);
+/// macOS sends one scroll event per refresh, so the frame begins with it. Returns whether it has.
+#[cfg(target_os = "macos")]
+pub fn has_scrolled(window: u32) -> bool {
+    static IS_WANTED: LazyLock<bool> =
+        LazyLock::new(|| std::env::var("BUN_DESKTOP_SCROLL").map_or(true, |it| it == "event"));
+    if !*IS_WANTED || !thread::exists() {
+        return false;
     }
-
-    fn input(&self, window: WindowId, event: &PlatformInput) -> Option<DispatchEventResult> {
-        input::handle(&*window::state_for(window)?, event)
+    let now = Instant::now();
+    let next = SCROLL_FRAME.get().map_or(now, |(_, _, next)| next);
+    if now + interval() * 3 / 10 < next {
+        return true;
     }
+    SCROLL_FRAME.set(None);
+    frame_is_due(window);
+    SCROLL_FRAME.set(Some((
+        window,
+        now,
+        next.max(now - interval() / 2) + interval(),
+    )));
+    true
+}
 
-    fn before_frame(&self, window: WindowId) {
-        let was_deferred = thread::exists() && native::paints_pixels();
-        if platform::IS_REENTRANT
-            && !was_deferred
-            && let Some(state) = window::state_for(window)
-        {
-            surface::begin_frame(&state);
-            IS_IN_FRAME.set(true);
-            if !IS_URGENT.take() || !thread::exists() {
-                deliver_events(interval() / 2);
-            }
-            IS_IN_FRAME.set(false);
-        }
-    }
-
-    fn defer_frame(&self, window: WindowId, frame: Box<dyn FnOnce()>) {
-        if let Some(state) = window::state_for(window) {
-            WAS_LATE.set(HANDLED.get() != bridge::emitted());
-            surface::begin_frame(&state);
-        }
-        DEFERRED_FRAMES.with_borrow_mut(|frames| frames.push((window, frame)));
-        DEFERRED_SINCE.set(DEFERRED_SINCE.get().or_else(|| Some(Instant::now())));
-    }
-
-    fn a11y_action(&self, request: &accesskit::ActionRequest) {
-        accessibility::perform(request);
-    }
-
-    fn paints_pixels(&self) -> bool {
-        native::paints_pixels()
-    }
-
-    fn has_time_to_paint(&self) -> bool {
-        thread::exists()
-    }
-
-    fn painter(&self, window: WindowId) -> Option<Painter> {
-        window::painter(window)
-    }
-
+pub fn frame_is_due(window: u32) {
     #[cfg(target_os = "macos")]
-    fn present(&self, window: WindowId, layer: *mut std::ffi::c_void) {
-        // SAFETY: the layer of a view that is alive.
-        if let Some(layer) = unsafe { objc2::rc::Retained::retain(layer.cast()) } {
-            window::layers::present(window, layer);
-        }
+    if SCROLL_FRAME
+        .get()
+        .is_some_and(|(id, last, _)| id == window && last.elapsed() < interval() * 3 / 2)
+    {
+        window::request_frame(window);
+        return;
     }
-
-    #[cfg(target_os = "macos")]
-    fn accepts_first_mouse(&self, window: WindowId, position: gpui::Point<gpui::Pixels>) -> bool {
-        window::state_for(window).is_none_or(|state| input::accepts_first_mouse(&state, position))
-    }
-
-    #[cfg(target_os = "macos")]
-    fn before_resized_frame(&self, window: WindowId) {
-        let Some(state) =
-            window::state_for(window).filter(|it| it.is_shown() && it.cover.get().is_none())
-        else {
-            return;
-        };
-        let deadline = Instant::now() + FOR_RESIZE / 2;
+    let Ok(state) = window::state(window) else {
+        return;
+    };
+    crate::diagnostics::trace!("frame of window {window}");
+    if system::IS_REENTRANT && !thread::exists() {
         IS_IN_FRAME.set(true);
+        surface::begin_frame(&state);
+        IS_URGENT.set(false);
+        deliver_events(Duration::ZERO);
+        IS_IN_FRAME.set(false);
+        return window::draw_if_stale(window);
+    }
+    WAS_LATE.set(HANDLED.get() != bridge::emitted());
+    if !is_about_to_draw(window) {
+        DEFERRED_FRAMES.with_borrow_mut(|frames| frames.push(window));
+    }
+    surface::begin_frame(&state);
+    DEFERRED_SINCE.set(DEFERRED_SINCE.get().or_else(|| Some(Instant::now())));
+    #[cfg(target_os = "macos")]
+    if presentation_deadline().is_some_and(|deadline| deadline <= Instant::now()) {
+        present();
+        window::layers::flush();
+    }
+}
+
+/// The window has another size, and shows what is drawn next together with that.
+#[cfg(target_os = "macos")]
+pub fn before_resized_frame(window: u32) {
+    let Some(state) = window::state(window)
+        .ok()
+        .filter(|it| it.is_shown() && it.cover.get().is_none())
+    else {
+        return;
+    };
+    if IS_IN_FRAME.replace(true) {
+        return;
+    }
+    let deadline = Instant::now() + FOR_RESIZE / 2;
+    crate::guard("error", (), || {
         deliver_events(FOR_RESIZE / 2);
         surface::begin_frames_at_once(&state);
         deliver_events(deadline.saturating_duration_since(Instant::now()));
-        IS_IN_FRAME.set(false);
-    }
+    });
+    IS_IN_FRAME.set(false);
 }
 
-pub fn is_started() -> bool {
-    running().is_some()
+pub fn start(platform: Box<dyn Platform>) {
+    crate::diagnostics::log!("launched");
+    system::started();
+    PLATFORM.with(|cell| cell.set(Box::leak(platform)).ok());
 }
 
-pub fn start(platform: Rc<dyn Platform>, run: impl FnOnce() -> ApplicationHandle) {
-    gpui::embed::set_host(Rc::new(Hooks));
-    let handle = run();
-    log::info!("launched");
-    platform::started(&*platform);
-    let running = Box::leak(Box::new(Running {
-        app: handle.to_async(),
-        handle,
-        platform,
-    }));
-    RUNNING.with(|cell| cell.set(running).ok());
+pub fn forget_frames(window: u32) {
+    DEFERRED_FRAMES.with_borrow_mut(|frames| frames.retain(|id| *id != window));
 }
-
-pub fn update<R>(f: impl FnOnce(&mut App) -> R) -> Result<R> {
-    let running = running().context("the UI has not been started")?;
-    ensure!(!running.handle.is_borrowed(), "the UI is busy");
-    Ok(running.app.update(f))
-}
-
-pub fn update_window<R>(
-    window: AnyWindowHandle,
-    f: impl FnOnce(&mut Window, &mut App) -> R,
-) -> Result<R> {
-    let mut app = running()
-        .context("the UI has not been started")?
-        .app
-        .clone();
-    app.update_window(window, |_, window, cx| f(window, cx))
-}
-
-/// Gives the clipboard's contents to whoever keeps them once this process is gone.
-pub fn hand_over_clipboard() {
-    if let Some(running) =
-        running().filter(|_| cfg!(any(target_os = "linux", target_os = "freebsd")))
-    {
-        running.platform.quit();
-    }
-}
-
-pub fn forget_frames(window: WindowId) {
-    let frames = DEFERRED_FRAMES.take();
-    DEFERRED_FRAMES.set(frames.into_iter().filter(|(id, _)| *id != window).collect());
-}
-
-fn can_tick() -> bool {
-    CAN_TICK.get() && running().is_some_and(|running| !running.handle.is_borrowed())
-}
-
-#[cfg(target_os = "macos")]
-pub use platform::{leave_next_event, post_empty_event, run_when_idle};
 
 /// Runs JavaScript from inside of a callback of the platform, if that is possible.
 fn tick() {
-    if !can_tick() {
+    if !CAN_TICK.get() {
         return;
     }
     CAN_TICK.set(false);
@@ -246,7 +188,7 @@ fn tick() {
 
 /// For a callback whose result depends on what JavaScript does.
 pub fn deliver_events(patience: Duration) {
-    if !platform::IS_REENTRANT {
+    if !system::IS_REENTRANT {
         return;
     }
     if !thread::exists() {
@@ -255,10 +197,7 @@ pub fn deliver_events(patience: Duration) {
         }
         return;
     }
-    if patience.is_zero()
-        || thread::is_answering()
-        || running().is_none_or(|running| running.handle.is_borrowed())
-    {
+    if patience.is_zero() || thread::is_answering() {
         return;
     }
     let deadline = Instant::now() + patience;
@@ -273,6 +212,7 @@ pub fn events_were_handled() {
         if HANDLED.replace(taken) != taken {
             thread::post(move || HANDLED.set(taken));
         }
+        thread::release_jobs();
     } else if taken == bridge::emitted()
         || DEFERRED_SINCE
             .get()
@@ -285,14 +225,14 @@ pub fn events_were_handled() {
 fn present() {
     DEFERRED_SINCE.set(None);
     IS_URGENT.set(false);
-    for (_, frame) in DEFERRED_FRAMES.take() {
-        frame();
-    }
+    DEFERRED_FRAMES
+        .take()
+        .into_iter()
+        .for_each(window::draw_if_stale);
 }
 
-pub fn is_about_to_draw(window: WindowId) -> bool {
-    IS_IN_FRAME.get()
-        || DEFERRED_FRAMES.with_borrow(|frames| frames.iter().any(|(id, _)| *id == window))
+pub fn is_about_to_draw(window: u32) -> bool {
+    IS_IN_FRAME.get() || DEFERRED_FRAMES.with_borrow(|frames| frames.contains(&window))
 }
 
 /// The frame that begins does not wait for JavaScript.
@@ -313,7 +253,7 @@ fn presentation_deadline() -> Option<Instant> {
             if WAS_LATE.get() {
                 since
             } else {
-                since + interval() / 2
+                since + interval() / if cfg!(target_os = "macos") { 3 } else { 2 }
             }
         })
     }
@@ -324,9 +264,7 @@ fn next_deadline() -> Option<Instant> {
         .into_iter()
         .chain(window::next_redraw());
     #[cfg(target_os = "macos")]
-    let deadlines = deadlines
-        .chain(window::layers::next_release())
-        .chain(crate::menu::next_change());
+    let deadlines = deadlines.chain(window::layers::next_release());
     deadlines.min()
 }
 
@@ -334,10 +272,7 @@ fn run_what_is_due() {
     surface::begin_overdue_frames();
     window::redraw_what_is_due();
     #[cfg(target_os = "macos")]
-    {
-        window::layers::release_what_is_due();
-        crate::menu::change_what_is_due();
-    }
+    window::layers::release_what_is_due();
 }
 
 fn time_until_next_turn() -> Option<Duration> {
@@ -356,7 +291,7 @@ fn time_until_next_turn() -> Option<Duration> {
 /// What the UI thread does whenever the platform is done.
 fn turn() {
     input::flush_raw_key();
-    thread::run_jobs();
+    diagnostics::measure(Step::Jobs, thread::run_jobs);
     if app::is_exiting() {
         thread::stop();
     }
@@ -369,11 +304,7 @@ fn turn() {
 fn run_ui_thread() {
     loop {
         crate::guard("fatal", (), || {
-            platform::wait(
-                running().map(|running| &*running.platform),
-                None,
-                &mut time_until_next_turn,
-            );
+            system::wait(platform().ok(), None, &mut time_until_next_turn);
             turn();
         });
     }
@@ -394,8 +325,9 @@ pub fn pump(source: isize, timeout_ns: i64, from_tick: bool) -> bool {
     const MIN_INTERVAL: Duration = Duration::from_millis(1);
     let (start, source) = (Instant::now(), Some(source).filter(|source| *source != -1));
     if thread::is_elsewhere() {
+        thread::release_jobs();
         if timeout_ns != 0 && !bridge::has_events() && !thread::has_calls() {
-            platform::wait_for_events(
+            system::wait_for_events(
                 source,
                 u64::try_from(timeout_ns).ok().map(Duration::from_nanos),
             );
@@ -411,7 +343,7 @@ pub fn pump(source: isize, timeout_ns: i64, from_tick: bool) -> bool {
     };
     if from_tick {
         run_what_is_due();
-        platform::arm(
+        system::arm(
             source,
             if bridge::has_events() {
                 Some(Duration::ZERO)
@@ -438,11 +370,7 @@ pub fn pump(source: isize, timeout_ns: i64, from_tick: bool) -> bool {
                 timeout()
             }
         };
-        let is_ready = platform::wait(
-            running().map(|running| &*running.platform),
-            source,
-            &mut timeout,
-        );
+        let is_ready = system::wait(platform().ok(), source, &mut timeout);
         input::flush_raw_key();
         run_what_is_due();
         if bridge::has_events() && !IS_URGENT.get() {

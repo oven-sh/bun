@@ -148,6 +148,9 @@ export const mimalloc: Dependency = {
     // bun_alloc's lazy arena opt out the same way on their side.
     if (cfg.linux) defines.MI_DEFAULT_ALLOW_THP = 0;
 
+    // Without it the heap profiler records no stacks.
+    if (cfg.darwin) defines.MI_HAS_EXECINFOH = 1;
+
     if (cfg.abi === "musl") defines.MI_LIBC_MUSL = 1;
     if (cfg.hardened) defines.MI_SECURE = 1;
     if (cfg.lockEnvironment) defines.MI_GETENV_ALLOWED = namesReadFromLockedEnvironment.join(",");

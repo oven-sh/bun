@@ -599,14 +599,14 @@ impl Expect {
     }
 
     pub(crate) fn is_asymmetric_matcher(value: JSValue) -> bool {
-        if ExpectCustomAsymmetricMatcher::from_js(value).is_some() { return true; }
-        if ExpectAny::from_js(value).is_some() { return true; }
-        if ExpectAnything::from_js(value).is_some() { return true; }
-        if ExpectStringMatching::from_js(value).is_some() { return true; }
-        if ExpectCloseTo::from_js(value).is_some() { return true; }
-        if ExpectObjectContaining::from_js(value).is_some() { return true; }
-        if ExpectStringContaining::from_js(value).is_some() { return true; }
-        if ExpectArrayContaining::from_js(value).is_some() { return true; }
+        if value.is::<ExpectCustomAsymmetricMatcher>() { return true; }
+        if value.is::<ExpectAny>() { return true; }
+        if value.is::<ExpectAnything>() { return true; }
+        if value.is::<ExpectStringMatching>() { return true; }
+        if value.is::<ExpectCloseTo>() { return true; }
+        if value.is::<ExpectObjectContaining>() { return true; }
+        if value.is::<ExpectStringContaining>() { return true; }
+        if value.is::<ExpectArrayContaining>() { return true; }
         false
     }
 
@@ -691,10 +691,9 @@ impl Expect {
             custom_label = message.to_bun_string(global_this)?;
         }
 
-        let active_execution_entry_ref = if let Some(buntest_strong_) = bun_test::clone_active_strong() {
-            let buntest_strong = buntest_strong_;
-            let state = state.unwrap_or_else(|| buntest_strong.get_current_state_data());
-            Some(bun_test::BunTest::ref_(&buntest_strong, state))
+        let active_execution_entry_ref = if let Some(buntest) = bun_test::clone_active_strong() {
+            let state = state.unwrap_or_else(|| buntest.get_current_state_data());
+            Some(bun_test::BunTest::ref_(&buntest, state))
         } else {
             None
         };
@@ -1210,14 +1209,14 @@ impl Expect {
             // 1. find the src loc of the snapshot
             let srcloc = ExpectDeferred::call_site(global_this, this_value)
                 .unwrap_or_else(|| global_this.get_caller_src_loc());
-            let fget_source_path_text = buntest.file.path;
+            let path = buntest.file.path;
 
-            if !srcloc.str.eql_utf8(fget_source_path_text) {
+            if !srcloc.str.eql_utf8(path) {
                 let signature = Self::get_signature(fn_name, "", false);
                 return throw!(
                     this, global_this, signature,
                     "\n\n<b>Matcher error<r>: Inline snapshot matchers must be called from the test file:\n  Expected to be called from file: <green>{:?}<r>\n  {} called from file: <red>{:?}<r>\n",
-                    bstr::BStr::new(fget_source_path_text),
+                    bstr::BStr::new(path),
                     fn_name,
                     // `{:?}` on BStr renders a quoted, escaped string
                     bstr::BStr::new(srcloc.str.to_utf8().slice()),

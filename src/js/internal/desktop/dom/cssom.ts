@@ -384,7 +384,7 @@ class InlineStyle extends Declarations {
   }
   willChange() {
     const { node } = this;
-    if (!(node.flags & CUSTOM || node.doc.observedOldValues & 2)) return;
+    if (!(node.flags & CUSTOM || core.isOldStyleObserved(node))) return;
     this.old = node.flags & STYLE_DIRTY ? this.text() : core.getAttr(node, "style");
   }
   changed() {
@@ -1009,7 +1009,7 @@ const ruleTypes = {
   "counter-style": 11,
   supports: 12,
   "font-feature-values": 14,
-  "view-transition": 15,
+  "view-transition": 0,
 };
 expose(CSSRule, {
   STYLE_RULE: 1,

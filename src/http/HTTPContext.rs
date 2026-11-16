@@ -368,6 +368,11 @@ impl<const SSL: bool> HTTPContext<SSL> {
         ActiveSocket::<SSL>::init(dead_socket())
     }
 
+    /// Whether a request is still attached to `socket`.
+    pub(crate) fn has_client(socket: HTTPSocket<SSL>) -> bool {
+        Self::get_tagged_from_socket(socket).is::<HTTPClient<'static>>()
+    }
+
     /// Write `tagged` into `socket`'s ext slot.
     ///
     /// INVARIANT (centralised here): the ext slot of every HTTP-thread socket
@@ -841,7 +846,7 @@ impl<const SSL: bool> HTTPContext<SSL> {
                 if socket.target_port != target_port {
                     continue;
                 }
-                if !strings::eql_long(&socket.target_hostname, target_hostname, true) {
+                if !strings::eql_long(&socket.target_hostname, target_hostname) {
                     continue;
                 }
                 // proxy_tunnel.is_some() guaranteed by want_tunnel match above.
@@ -849,7 +854,7 @@ impl<const SSL: bool> HTTPContext<SSL> {
                     continue;
                 }
             } else if transport == Transport::Unix
-                && !strings::eql_long(&socket.target_hostname, target_hostname, true)
+                && !strings::eql_long(&socket.target_hostname, target_hostname)
             {
                 continue;
             }
@@ -860,7 +865,6 @@ impl<const SSL: bool> HTTPContext<SSL> {
             if strings::eql_long(
                 &socket.hostname_buf[..socket.hostname_len as usize],
                 hostname,
-                true,
             ) {
                 let http_socket = socket.http_socket;
 

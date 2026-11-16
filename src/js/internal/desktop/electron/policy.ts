@@ -46,7 +46,19 @@ function matchPattern(pattern: string): (url: URL) => boolean {
 const trusted: RegExp[] = [];
 
 const excepted: RegExp[] = [];
-const isExcepted = (href: string) => excepted.some(pattern => pattern.test(href));
+/** As it is, and as a server may take it. */
+function spellingsOf(href: string) {
+  const url = URL.parse(href);
+  if (!url?.host) return [href];
+  url.username = url.password = "";
+  const plain = url.href;
+  url.pathname = unescape(url.pathname)
+    .replace(/;[^/]*/g, "")
+    .replace(/[\\/]+/g, "/");
+  return [plain, url.href];
+}
+const isExcepted = (href: string) =>
+  excepted.length > 0 && spellingsOf(href).some(it => excepted.some(pattern => pattern.test(it)));
 const exceptedWhenLoaded: RegExp[] = [];
 const endsTrustedDocument = (href: string) =>
   isExcepted(href) && !exceptedWhenLoaded.some(pattern => pattern.test(href));
@@ -77,7 +89,15 @@ function trust(
 /** What a page has made up is not trusted because the page is. */
 function isTrustedInFrame(href: string, appPath: string) {
   const scheme = /^(?:about|blob|data):/.exec(href)?.[0];
-  if (!trustsFrames) return isTrustedOrigin(originOf(href)) && trustedInFrames.some(pattern => pattern.test(href));
+  if (!trustsFrames) {
+    const isListed = (list: RegExp[], it: string) =>
+      list.reduce((longest, pattern) => (pattern.test(it) ? Math.max(longest, pattern.source.length) : longest), 0);
+    // The more specific pattern wins.
+    return (
+      isTrustedOrigin(originOf(href)) &&
+      spellingsOf(href).every(it => isListed(trustedInFrames, it) > isListed(excepted, it))
+    );
+  }
   if (href.startsWith("javascript:")) return true;
   return scheme === undefined
     ? isTrusted(href, appPath)
@@ -89,11 +109,11 @@ const isTrustedOrigin = (origin: string) => trusted.some(pattern => pattern.test
 /** There is no sandbox, so the scripts of a document can do what the app can. */
 function isTrusted(href: string, appPath: string) {
   const url = new URL(href);
+  if (url.protocol === "blob:" || isExcepted(url.href)) return false;
   if (url.protocol === "file:") {
     const relative = path.relative(appPath, Bun.fileURLToPath(url));
     return relative !== ".." && !relative.startsWith(".." + path.sep) && !path.isAbsolute(relative);
   }
-  if (url.protocol === "blob:" || isExcepted(url.href)) return false;
   const origin = originOf(href);
   return isTrustedOrigin(origin === "null" ? url.protocol : origin);
 }
@@ -118,25 +138,6 @@ function isSameSite(href: string, other: string, ignoresScheme = false) {
   if (a.hostname === b.hostname) return true;
   const tail = (url: URL) => /[^.]*\.[^.]*\.?$/.exec(url.hostname)?.[0];
   return tail(a) === tail(b) && siteOf(a.hostname) === siteOf(b.hostname);
-}
-
-const entities = { amp: "&", apos: "'", gt: ">", lt: "<", quot: '"' };
-const unescapeHtml = (text: string) =>
-  text.replace(/&(?:#(x?)([\da-f]{1,6})|(\w+));/gi, (whole, isHex, code, name) =>
-    code ? String.fromCharCode(parseInt(code, isHex ? 16 : 10)) : (entities[name] ?? whole),
-  );
-
-/** The scripts, event handlers and `javascript:` URLs in the markup of a document. */
-function inlineScriptsOf(html: string) {
-  const text = html.replace(/\r\n?/g, "\n");
-  const found = new Set<string>();
-  for (const match of text.matchAll(/<script\b[^>]*>(.*?)<\/script/gis)) found.$add(match[1]);
-  for (const match of text.matchAll(/\s(on\w+|href)\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))/gi)) {
-    const value = unescapeHtml(match[2] ?? match[3] ?? match[4]);
-    if (match[1].toLowerCase() !== "href") found.$add(value);
-    else if (value.startsWith("javascript:")) found.$add(value.slice("javascript:".length));
-  }
-  return found;
 }
 
 /** `integrity` is the attribute of an element. */
@@ -169,7 +170,6 @@ export default {
   hashesIn,
   isSameSite,
   siteOf,
-  inlineScriptsOf,
   schemes,
   privilegesOf,
   originOf,

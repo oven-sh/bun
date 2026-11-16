@@ -2,7 +2,7 @@
 const fs = require("node:fs");
 const path = require("node:path");
 const native = require("internal/desktop/native");
-const { allocateSurfaceId, surfaces } = require("internal/desktop/surfaces");
+const { allocateSurfaceId, surfaces, trap } = require("internal/desktop/surfaces");
 const { app } = require("internal/desktop/app");
 
 type Input = { t: string; s: number; [key: string]: any };
@@ -119,6 +119,7 @@ const acceptsText = (surface: number | null) => !!surface && native.ask("cover.a
 
 function forget() {
   isShown = isPartial = false;
+  inputs = [];
   clearTimeout(timer);
   waitsForInput?.resolve();
   launched();
@@ -206,6 +207,47 @@ function finish(replays: boolean, keep: Rect[]) {
   })();
 }
 
+let earlyKeys: Input[] = [];
+function dropKeys() {
+  trap.early = null;
+  clearTimeout(timer);
+  return earlyKeys.splice(0);
+}
+
+/** Without a picture, what is typed waits for the field all the same. */
+function holdKeys() {
+  if (!isPossible()) return;
+  timer = setTimeout(dropKeys, COVER_TIMEOUT).unref();
+  trap.early = (event: Input) => {
+    if (event.t === "mouse" || event.key === "Tab") {
+      if (event.e === "down") dropKeys();
+      return false;
+    }
+    if (acceptsText(event.s)) {
+      type(dropKeys(), event.s);
+      return false;
+    }
+    if (event.t === "key" && (event.key === "Enter" || !edits.test(event.key) || (event.m & ~typing) !== 0))
+      return false;
+    if (earlyKeys.push(event) === 1) setTimeout(typeEarlyKeys, 16).unref();
+    // The page may listen for keys.
+    return event.t === "text";
+  };
+}
+
+function typeEarlyKeys() {
+  if (earlyKeys.length === 0) return;
+  for (const surface of surfaces.$keys()) if (acceptsText(surface)) return type(dropKeys(), surface);
+  setTimeout(typeEarlyKeys, 16).unref();
+}
+
+function releaseKeys(replays: boolean) {
+  if (trap.early === null) return;
+  if (!replays || earlyKeys.length === 0) return void dropKeys();
+  clearTimeout(timer);
+  timer = setTimeout(dropKeys, 500).unref();
+}
+
 function discard() {
   if (!isShown || covered) return;
   native.send("cover.discard");
@@ -264,6 +306,8 @@ export default {
   end,
   firstFreeId: () => (isReserved ? WINDOW + 1 : 1),
   hasInput,
+  holdKeys,
+  releaseKeys,
   whenInput,
   isShownIn: (id: number) => isShown && covered !== undefined && id === WINDOW,
   isSaved: () => fs.existsSync(description),

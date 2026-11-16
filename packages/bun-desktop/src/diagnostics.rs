@@ -1,34 +1,56 @@
-//! `BUN_DESKTOP_LOG=1` prints what happens, and `BUN_DESKTOP_LOG=frames` every frame as well.
+//! `BUN_DESKTOP_LOG=1` prints what happens, `BUN_DESKTOP_LOG=misses` which frames each scroll has missed, and
+//! `BUN_DESKTOP_LOG=frames` every frame as well.
 
+use std::cell::RefCell;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use crate::surface::milliseconds;
 
+static LOGS: AtomicBool = AtomicBool::new(false);
 static LOGS_FRAMES: AtomicBool = AtomicBool::new(false);
+static LOGS_MISSES: AtomicBool = AtomicBool::new(false);
 
-struct Logger;
+pub fn logs() -> bool {
+    LOGS.load(Ordering::Relaxed)
+}
 
-impl log::Log for Logger {
-    fn enabled(&self, metadata: &log::Metadata) -> bool {
-        metadata.level() <= log::Level::Warn
-            || ["bun_desktop", "gpui"]
-                .iter()
-                .any(|it| metadata.target().starts_with(it))
-    }
+#[cold]
+pub fn print(module: &str, message: std::fmt::Arguments) {
+    eprintln!(
+        "[desktop {:9.2}] {module}: {message}",
+        milliseconds(Instant::now())
+    );
+}
 
-    fn log(&self, record: &log::Record) {
-        if self.enabled(record.metadata()) {
-            let (time, level, target) = (
-                milliseconds(Instant::now()),
-                record.level(),
-                record.target(),
-            );
-            eprintln!("[desktop {time:9.2}] {level} {target}: {}", record.args());
+macro_rules! log {
+    ($($format:tt)+) => {
+        if $crate::diagnostics::logs() {
+            $crate::diagnostics::print(module_path!(), format_args!($($format)+))
         }
-    }
+    };
+}
 
-    fn flush(&self) {}
+pub(crate) use log;
+
+#[cfg(target_os = "macos")]
+fn age_of_process() -> Option<std::time::Duration> {
+    let size = size_of::<libc::proc_bsdinfo>() as i32;
+    // SAFETY: integers and arrays of them, and `size` is its size.
+    let info = unsafe {
+        let mut info: libc::proc_bsdinfo = std::mem::zeroed();
+        (libc::proc_pidinfo(
+            libc::getpid(),
+            libc::PROC_PIDTBSDINFO,
+            0,
+            (&raw mut info).cast(),
+            size,
+        ) == size)
+            .then_some(info)?
+    };
+    let start = std::time::UNIX_EPOCH
+        + std::time::Duration::new(info.pbi_start_tvsec, info.pbi_start_tvusec as u32 * 1000);
+    start.elapsed().ok()
 }
 
 pub fn init() {
@@ -36,16 +58,150 @@ pub fn init() {
         return;
     };
     LOGS_FRAMES.store(what == "frames", Ordering::Relaxed);
-    log::set_logger(&Logger).ok();
-    log::set_max_level(log::LevelFilter::Info);
+    LOGS_MISSES.store(what == "frames" || what == "misses", Ordering::Relaxed);
+    LOGS.store(true, Ordering::Relaxed);
     std::panic::set_hook(Box::new(|panic| {
-        log::error!("{panic}\n{}", std::backtrace::Backtrace::force_capture())
+        log!("{panic}\n{}", std::backtrace::Backtrace::force_capture())
     }));
-    log::info!(
+    log!(
         "loaded on {} {}",
         std::env::consts::OS,
         std::env::consts::ARCH
     );
+    #[cfg(target_os = "macos")]
+    log!("the process started {:?} ago", age_of_process());
+}
+
+/// A step from an event to the pixels.
+macro_rules! trace {
+    ($($format:tt)+) => {
+        if $crate::diagnostics::logs_frames() {
+            $crate::diagnostics::log!($($format)+)
+        }
+    };
+}
+
+pub(crate) use trace;
+
+#[derive(Clone, Copy)]
+pub enum Step {
+    Jobs,
+    Flatten,
+    Paint,
+    #[cfg(target_os = "macos")]
+    Commit,
+}
+
+#[derive(Clone, Copy)]
+pub enum Incident {
+    NothingMoved,
+    CaughtUp,
+    Anticipated,
+    OffsetWasSet,
+    WheelLeftToScript,
+    #[cfg(any(test, target_os = "macos"))]
+    NewSurface,
+    #[cfg(any(test, target_os = "macos"))]
+    PaintedByCpu,
+}
+
+/// The last one is for time that no `Step` took.
+const STEPS: [&str; 5] = ["jobs", "flatten", "paint", "commit", "elsewhere"];
+const INCIDENTS: [&str; 7] = [
+    "nothing moved",
+    "caught up",
+    "anticipated",
+    "offset was set",
+    "wheel left to script",
+    "new surface",
+    "painted by the CPU",
+];
+
+#[derive(Default)]
+struct Scroll {
+    frames: u32,
+    /// Of a frame that another one had to follow.
+    began_at: Option<Instant>,
+    /// Since then.
+    spent: [Duration; 4],
+    total: [Duration; 4],
+    longest: [Duration; 4],
+    missed: [u32; 5],
+    slow: [u32; 5],
+    incidents: [u32; 7],
+}
+
+thread_local! {
+    static SCROLL: RefCell<Scroll> = RefCell::default();
+}
+
+pub fn measure<R>(step: Step, f: impl FnOnce() -> R) -> R {
+    let start = LOGS_MISSES.load(Ordering::Relaxed).then(Instant::now);
+    let result = f();
+    if let Some(start) = start {
+        SCROLL.with_borrow_mut(|it| it.spent[step as usize] += start.elapsed());
+    }
+    result
+}
+
+pub fn note(incident: Incident) {
+    if LOGS_MISSES.load(Ordering::Relaxed) {
+        SCROLL.with_borrow_mut(|it| it.incidents[incident as usize] += 1);
+    }
+}
+
+pub fn frame_began(at: Instant, interval: Duration, is_scrolling: bool, is_followed: bool) {
+    if !LOGS_MISSES.load(Ordering::Relaxed) {
+        return;
+    }
+    SCROLL.with_borrow_mut(|it| {
+        let spent = std::mem::take(&mut it.spent);
+        if let Some(gap) =
+            std::mem::replace(&mut it.began_at, is_followed.then_some(at)).map(|last| at - last)
+        {
+            let (busy, worst) = (
+                spent.iter().sum::<Duration>(),
+                (0..4).max_by_key(|step| spent[*step]).unwrap_or(0),
+            );
+            let missed = (gap.div_duration_f64(interval) - 0.5) as u32;
+            it.frames += 1;
+            it.missed[if busy > interval / 2 { worst } else { 4 }] += missed;
+            it.slow[worst] += u32::from(missed == 0 && busy > interval / 2);
+            for (step, spent) in spent.into_iter().enumerate() {
+                (it.total[step], it.longest[step]) =
+                    (it.total[step] + spent, it.longest[step].max(spent));
+            }
+            if missed > 0 || busy > interval / 2 {
+                log!(
+                    "{gap:.1?} between two frames, jobs, flatten, paint and commit took {spent:.1?}"
+                );
+            }
+        }
+        if !is_scrolling {
+            let it = std::mem::take(it);
+            let list = |names: &[&str], counts: &[u32]| {
+                names
+                    .iter()
+                    .zip(counts)
+                    .map(|(name, count)| format!(" {name} {count};"))
+                    .collect::<String>()
+            };
+            if it.frames > 0 {
+                log!(
+                    "scrolled for {} frames of {interval:.1?}, missed:{} slow:{}",
+                    it.frames,
+                    list(&STEPS, &it.missed),
+                    list(&STEPS, &it.slow)
+                );
+                log!(
+                    "average {:.2?}, longest {:.1?},{}",
+                    it.total.map(|total| total / it.frames),
+                    it.longest,
+                    list(&INCIDENTS, &it.incidents)
+                );
+            }
+        }
+    });
 }
 
 pub fn logs_frames() -> bool {

@@ -2,7 +2,22 @@
 const idl = require("internal/desktop/web/idl");
 
 const { error, expose, internal, need, scope, usv } = idl;
-const fs = scope.env.fs();
+const fs: any = {};
+for (const name of "close copyFile fstat fsync ftruncate mkdir open read readFile readdir rename rm stat write writeFile".split(
+  " ",
+)) {
+  const run = scope.env.fs()[name + "Sync"];
+  fs[name + "Sync"] = (...args: unknown[]) => {
+    try {
+      return run(...args);
+    } catch ({ code }: any) {
+      throw idl.error(
+        code === "ENOENT" ? "NotFoundError" : code === "ENOSPC" ? "QuotaExceededError" : "InvalidStateError",
+        `${code}`,
+      );
+    }
+  };
+}
 let base: string | undefined;
 
 /** The names on disk have nothing that a file system could refuse, or mistake for another name. */

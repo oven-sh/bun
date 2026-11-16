@@ -1,10 +1,9 @@
 use std::cell::RefCell;
 
-use resvg::tiny_skia::Transform;
-use rustc_hash::FxHashMap;
-
 use super::{Shaped, face, glyph_path, shape};
 use crate::abi::{Cluster, Face, Glyph, GlyphExtent, Rect, TextRun};
+use crate::gfx::{self, Fill, Transform};
+use crate::hash::FastMap;
 use crate::paint::raster::{Coverage, IntRect, Path};
 
 /// Text that does not wrap, from its left end on the baseline.
@@ -67,7 +66,7 @@ impl Line {
         for (run, glyphs) in &self.runs {
             let Some(face) = face(run.id) else { continue };
             for glyph in glyphs {
-                let shift = zeno::Transform::translation(glyph.x, glyph.y);
+                let shift = Transform::from_translate(glyph.x, glyph.y);
                 path.extend(
                     glyph_path(face, glyph.id, run.size)
                         .iter()
@@ -79,9 +78,13 @@ impl Line {
     }
 
     pub fn ink_bounds(&self) -> Rect {
-        let bounds = zeno::bounds(&self.path(), zeno::Fill::NonZero, None);
-        let (mut left, mut top, mut right, mut bottom) =
-            (bounds.min.x, bounds.min.y, bounds.max.x, bounds.max.y);
+        let bounds = gfx::bounds(&self.path());
+        let (mut left, mut top, mut right, mut bottom) = (
+            bounds.x,
+            bounds.y,
+            bounds.x + bounds.width,
+            bounds.y + bounds.height,
+        );
         for (run, glyphs) in &self.runs {
             let Some(face) = face(run.id).filter(|face| face.file.has_color) else {
                 continue;
@@ -112,21 +115,21 @@ fn ink_span(
 ) -> Option<[f32; 2]> {
     const SAMPLES: f32 = 4.;
     let path = glyph_path(face, glyph, size);
-    let bounds = zeno::bounds(&path, zeno::Fill::NonZero, None);
-    if bounds.max.y <= top || bounds.min.y >= bottom {
+    let bounds = gfx::bounds(&path);
+    if bounds.y + bounds.height <= top || bounds.y >= bottom {
         return None;
     }
     let band = Rect {
-        x: bounds.min.x * SAMPLES,
+        x: bounds.x * SAMPLES,
         y: 0.,
-        width: bounds.width() * SAMPLES,
+        width: bounds.width * SAMPLES,
         height: (bottom - top) * SAMPLES,
     };
     let (area, zoom) = (
         IntRect::around(band),
         Transform::from_row(SAMPLES, 0., 0., SAMPLES, 0., -top * SAMPLES),
     );
-    let coverage = Coverage::of_path(&path, zeno::Fill::NonZero, &zoom, area);
+    let coverage = Coverage::of_path(&path, Fill::NonZero, &zoom, area);
     let rows = || coverage.data.chunks(area.width().max(1));
     let first = rows()
         .filter_map(|row| row.iter().position(|value| *value > 32))
@@ -139,16 +142,9 @@ fn ink_span(
 
 pub fn glyph_extent(face_id: u32, size: f32, glyph: u32) -> Option<GlyphExtent> {
     let face = face(face_id)?;
-    let bounds = zeno::bounds(&glyph_path(face, glyph, size), zeno::Fill::NonZero, None);
-    let ink = Rect {
-        x: bounds.min.x,
-        y: bounds.min.y,
-        width: bounds.width(),
-        height: bounds.height(),
-    };
     Some(GlyphExtent {
         advance: face.advance(glyph, size),
-        ink,
+        ink: gfx::bounds(&glyph_path(face, glyph, size)),
     })
 }
 
@@ -161,7 +157,7 @@ pub fn ink_spans(
     spans: &mut Vec<[f32; 2]>,
 ) {
     thread_local! {
-        static KNOWN: RefCell<FxHashMap<[u32; 5], Option<[f32; 2]>>> = RefCell::default();
+        static KNOWN: RefCell<FastMap<[u32; 5], Option<[f32; 2]>>> = RefCell::default();
     }
     let Some(face) = face(face_id) else { return };
     KNOWN.with_borrow_mut(|known| {

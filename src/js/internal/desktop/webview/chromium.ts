@@ -54,6 +54,8 @@ type Session = {
   schemes: Set<string>;
   filters: Map<string, Function>;
   userAgent?: string;
+  proxy?: object;
+  visited: Set<string>;
 };
 type Frame = { id: number; key: string; view: number; parent?: number; url: string; origin: string; name: string };
 
@@ -112,7 +114,13 @@ class Page {
 
   emitNavigation(name: string, key: string, url: string, isSameDocument = false) {
     const details = { url, isSameDocument, isMainFrame: key === this.target, frame: this.handle(key) };
-    return this.emitForFrame(name, key, { ...details, initiator: this.handle(key) }, url, isSameDocument);
+    return this.emitForFrame(
+      name,
+      key,
+      { ...details, initiator: this.frames.$size === 1 ? this.handle(key) : undefined },
+      url,
+      isSameDocument,
+    );
   }
 
   addFrame(key: string, session: string, parent?: string) {
@@ -320,6 +328,7 @@ class Page {
   methods = {
     __proto__: null,
     loadURL: async (url: string, { extraHeaders, postData, httpReferrer, baseURLForDataURL }: any = {}) => {
+      this.stub = undefined;
       if (baseURLForDataURL) {
         this.stub = {
           url: toEngine(baseURLForDataURL).split("#")[0],
@@ -486,7 +495,7 @@ class Backend {
     const page = this.pages.$get(frameId);
     const isDocument = resourceType === "Document";
     const isMainFrame = isDocument && frameId === page?.target;
-    if (isMainFrame && page.stub && page.isExpected) {
+    if (isMainFrame && page.isExpected && request.url === page.stub?.url) {
       return page.stub.url.startsWith("file:")
         ? reply("continueRequest")
         : fulfill(200, { "content-type": "text/html" }, page.stub.html);
@@ -496,6 +505,7 @@ class Backend {
     const session = page?.owner ?? only;
     if (!session) return this.#refuse(params, "BlockedByClient");
     const url = fromEngine(request.url);
+    if (isDocument) session.visited.add(originOf(url));
     const ask = (name: string, more?: object) => {
       const details = {
         ...{ id: +requestId.replace(/\D/g, "").slice(-15), url, method: request.method, timestamp: Date.now() },
@@ -702,11 +712,35 @@ class Backend {
     const session = this.sessions.$get(id)!;
     if (method === "setUserAgent") return (userAgent: string) => (session.userAgent = userAgent);
     if (method === "setProxy") return (config: any) => this.#setProxy(session, config);
-    if (/^clear(?:Storage)?Data$/.test(method)) return () => this.#renew(session);
+    if (/^clear(?:Storage)?Data$/.test(method)) return (options?: object) => this.#clear(session, options);
     if (/^(?:clear|close|force|setSpell|disableNetwork)/.test(method)) return () => {};
   }
 
+  /** The cookies come from the app, which has removed those that have to go. */
+  async #clear(session: Session, { origin, origins, excludeOrigins = [], storages, dataTypes }: any = {}) {
+    const names = {
+      cachestorage: "cache_storage",
+      filesystem: "file_systems",
+      filesystems: "file_systems",
+      indexdb: "indexeddb",
+      indexeddb: "indexeddb",
+      localstorage: "local_storage",
+      serviceworkers: "service_workers",
+    };
+    const storageTypes = (storages ?? dataTypes ?? Object.keys(names))
+      .map(it => names[it.toLowerCase()])
+      .filter(Boolean)
+      .join();
+    const wanted: string[] =
+      origins ?? (origin ? [origin] : [...session.visited].filter(it => !excludeOrigins.map(originOf).includes(it)));
+    const page = [...this.views.values()].find(it => it.owner === session);
+    if (!page) return void (wanted.length > 0 && storageTypes && (await this.#renew(session, session.proxy)));
+    for (const it of storageTypes ? wanted : [])
+      await page.tell("Storage.clearDataForOrigin", { origin: originOf(toEngine(originOf(it) + "/")), storageTypes });
+  }
+
   async #renew(session: Session, proxy?: object) {
+    session.proxy = proxy;
     const old = session.context;
     ({ browserContextId: session.context } = await this.engine.inspect("Target.createBrowserContext", proxy));
     const downloads = { behavior: "deny", eventsEnabled: true, browserContextId: session.context };
@@ -753,7 +787,7 @@ class Backend {
       this.#waiting.$delete(id);
     },
     session: (id: number) => {
-      this.sessions.$set(id, { id, schemes: new Set(), filters: new Map() });
+      this.sessions.$set(id, { id, schemes: new Set(), filters: new Map(), visited: new Set() });
       return this.#renew(this.sessions.$get(id)!);
     },
     cookies: async (id: number, stored: any[], removed: any[]) => {

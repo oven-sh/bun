@@ -78,6 +78,7 @@ pub(crate) struct Picture {
     pub(crate) local_verbs: Vec<Span>,
     pub(crate) bytes: Vec<u8>,
     pub(crate) regions: Vec<abi::Region>,
+    pub(crate) region_nodes: Vec<NodeId>,
     pub(crate) links: Vec<Link>,
     pub(crate) hits: Vec<Hit>,
     pub(crate) scrollers: Vec<abi::Scroller>,
@@ -700,12 +701,17 @@ impl Document {
 
     pub(crate) fn submit(&mut self, surface: u32) {
         let (zoom, is_composited) = (self.environment.zoom, self.compositor.is_on);
+        if self.update_picture().is_submitted {
+            return;
+        }
+        let regions = self.regions_in_tree_order();
         let picture = self.update_picture();
-        if let (false, Some(renderer)) = (
-            core::mem::replace(&mut picture.is_submitted, true),
-            crate::platform::renderer(),
-        ) {
-            let list = picture.list(zoom);
+        picture.is_submitted = true;
+        if let Some(renderer) = crate::platform::renderer() {
+            let list = abi::DisplayList {
+                regions: Slice::new(&regions),
+                ..picture.list(zoom)
+            };
             let compositing = abi::Compositing {
                 scrollers: Slice::new(&picture.scrollers),
                 drivers: Slice::new(&picture.drivers),
@@ -726,6 +732,35 @@ impl Document {
             let scrollers = picture.scrollers.clone();
             self.compositor.keep_scrollers(&scrollers);
         }
+    }
+
+    /// Only those that decide about dragging.
+    fn regions_in_tree_order(&self) -> Vec<abi::Region> {
+        let Some(picture) = self.pictures.current() else {
+            return Vec::new();
+        };
+        let overlap = |a: &abi::Rect, b: &abi::Rect| {
+            a.x < b.x + b.width
+                && b.x < a.x + a.width
+                && a.y < b.y + b.height
+                && b.y < a.y + a.height
+        };
+        let drags: Vec<_> = picture.regions.iter().filter(|it| it.drag).collect();
+        let all = picture.regions.iter().zip(&picture.region_nodes);
+        let mut found: Vec<_> = all
+            .filter(|(region, _)| drags.iter().any(|it| overlap(&it.rect, &region.rect)))
+            .collect();
+        found.sort_by_cached_key(|(_, node)| {
+            let ancestors =
+                core::iter::successors(Some(**node), |it| Some(self.tree.parent_or_host(*it)))
+                    .take_while(|it| *it != 0 && self.tree.contains(*it));
+            let mut path: Vec<_> = ancestors
+                .map(|it| self.tree.previous_elements(it).count())
+                .collect();
+            path.reverse();
+            path
+        });
+        found.into_iter().map(|it| *it.0).collect()
     }
 
     /// Moves what can be hit to where the renderer shows it.
@@ -865,6 +900,68 @@ impl Document {
             Target::InSvg(node) => self.svg_elements_at(node, point),
             Target::Scrollbar(id, _) => vec![self.scrollbar_owner(id)],
         })
+    }
+
+    /// <https://w3c.github.io/IntersectionObserver/v2/#calculate-visibility-algo>
+    pub(crate) fn is_unobscured(&self, node: NodeId) -> bool {
+        let styles = |id: NodeId| {
+            core::iter::once(id)
+                .chain(self.tree.flat_ancestors(id))
+                .filter_map(|it| Some((it, self.tree.style(it)?)))
+        };
+        let (Some(picture), Some((own, _))) = (
+            self.pictures.current(),
+            self.local_rects(node).first().copied(),
+        ) else {
+            return false;
+        };
+        let [a, b, c, d, ..] = self.to_viewport(own);
+        if (b, c) != (0.0, 0.0)
+            || a != d
+            || a < 1.0
+            || styles(node).any(|(_, it)| {
+                it.effects.opacity.0 < 1.0
+                    || !it.effects.filter.0.is_empty()
+                    || it.effects.blend != Blend::Normal
+            })
+        {
+            return false;
+        }
+        let shown = self
+            .bounding_rect(node)
+            .intersection(&self.border_box(VIEWPORT));
+        let covers = |hit: &&Hit| {
+            let (Target::Node(other) | Target::InSvg(other)) = hit.target else {
+                return false;
+            };
+            let shadows = match self.tree[other].text() {
+                Some(_) => self
+                    .tree
+                    .style(self.tree.flat_parent(other))
+                    .map(|it| &*it.ink.text_shadow.0.0),
+                None => self.tree.style(other).map(|it| &*it.paint.box_shadow.0),
+            };
+            let cast = shadows
+                .unwrap_or_default()
+                .iter()
+                .filter(|it| !it.inset)
+                .map(|it| hit.shape.rect.moved(it.offset).grown(it.spread + it.blur));
+            let ink = styles(other).fold(
+                cast.fold(hit.shape.rect, |a, b| a.union(&b)),
+                |ink, (id, style)| self.filtered(id, style, ink, hit.shape.rect),
+            );
+            let mut link = &picture.links[hit.link as usize];
+            let mut rect = ink.transformed(&link.matrix).intersection(&shown);
+            while link.depth > 0 {
+                if let Item::PushClip(clip) = &link.item {
+                    rect = rect.intersection(&clip.rect.transformed(&link.matrix));
+                }
+                link = &picture.links[link.parent as usize];
+            }
+            !rect.is_empty() && styles(other).all(|it| it.1.effects.opacity.0 > 0.0)
+        };
+        let top = picture.hits.iter().rev().find(covers).map(|it| it.target);
+        matches!(top, Some(Target::Node(it) | Target::InSvg(it)) if it == node || self.tree.flat_ancestors(it).any(|it| it == node))
     }
 
     pub(crate) fn scrollbar_at(&self, point: [f32; 2]) -> Option<(BoxId, usize)> {
@@ -1134,8 +1231,7 @@ impl<'a> Painter<'a> {
         let is_opaque =
             |it: &Rc<Style>| alpha(it.paint.background_color.resolve(it.color())) == 0xff;
         document.tree.is_root(document.boxes[id].node)
-            && (style.has_effects()
-                || style.has_transform()
+            && (style.has_effects() && !style.has_transform()
                 || document.layers(id).contains(Layers::HAS_BLEND)
                     && !document
                         .tree
@@ -2662,6 +2758,7 @@ impl<'a> Painter<'a> {
                 rect,
                 drag: it.style.ink.app_region == AppRegion::Drag,
             });
+            self.out.region_nodes.push(it.node);
         }
         let padding = it.layout.padding;
         let frame = Frame {
@@ -2837,21 +2934,29 @@ impl<'a> Painter<'a> {
                 .caret_color
                 .0
                 .map_or(style.color(), |it| it.resolve(style.color()));
-            let rect = Rect {
-                x: self.snap(rect.x),
-                ..rect
-            }
-            .moved(space.origin);
-            self.emit(
-                Item::Caret {
-                    rect: Rect {
-                        width: rect.width,
-                        ..self.snap_rect(rect)
-                    },
-                    color,
+            let is_block = style.other_if_set(Id::CaretShape) == Some("block");
+            let color = if is_block && style.ink.caret_color.0.is_none() {
+                color & !0xff | alpha(color).div_ceil(2)
+            } else {
+                color
+            };
+            let rect = match is_block {
+                true => self.snap_rect(rect.moved(space.origin)),
+                false => Rect {
+                    width: rect.width,
+                    ..self.snap_rect(
+                        Rect {
+                            x: self.snap(rect.x),
+                            ..rect
+                        }
+                        .moved(space.origin),
+                    )
                 },
-                space,
-            );
+            };
+            match style.other_if_set(Id::CaretAnimation) {
+                Some(_) => self.fill(square(rect), color, space),
+                None => self.emit(Item::Caret { rect, color }, space),
+            }
         }
     }
 
@@ -2960,6 +3065,19 @@ impl<'a> Painter<'a> {
             Some(contour) => {
                 painter.contoured_outline(contour, &frame, offset, width, line, color, space)
             }
+            None if offset < 0.0 && -2.0 * offset > shape.rect.width.min(shape.rect.height) => {
+                let [x, y] =
+                    [shape.rect.width, shape.rect.height].map(|it| offset.max(-it / 2.0) + width);
+                painter.emit(
+                    Item::Border {
+                        shape: shape.outset([y, x, y, x]),
+                        widths: [width; 4],
+                        colors: [color; 4],
+                        styles: [line; 4],
+                    },
+                    space,
+                );
+            }
             None => painter.emit(
                 Item::Border {
                     shape: shape.spread(offset + width),
@@ -3042,7 +3160,23 @@ impl<'a> Painter<'a> {
             .and_then(|it| it.replaced)
             .filter(|it| it.image != 0)
         else {
-            return;
+            let Some(ready) = document
+                .drawn_images
+                .get(&it.node)
+                .and_then(|it| document.ready(it, style))
+            else {
+                return;
+            };
+            return self.draw(
+                &ready,
+                clip,
+                abi::Tile {
+                    rect: clip.rect,
+                    step: [0.0; 2],
+                },
+                style,
+                space,
+            );
         };
         let rect = self.snap_rect(object_rect(style, image, content));
         if document.overflow_clip(id).is_none() {

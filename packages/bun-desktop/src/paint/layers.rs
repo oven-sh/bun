@@ -9,17 +9,16 @@ use std::ops::Range;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use rustc_hash::FxHashMap;
-use smallvec::SmallVec;
-
 use super::arena::Chunk;
-use super::gpu::{Kind, Primitive};
+use super::flatten::{Kind, Primitive};
 use super::raster::{IntRect, Pixel};
 use super::software::{
     Action, Band, Compositor, Grid, Plan, Summary, TILE_HEIGHT, TILE_WIDTH, Texture, alpha, bgra,
     is_shaped, last_to_hide, movement, survey,
 };
-use crate::diagnostics;
+use crate::diagnostics::{self, Incident};
+use crate::hash::FastMap;
+use crate::small_vec::SmallVec;
 
 const CELL_WIDTH: i32 = 1024;
 const CELL_HEIGHT: i32 = 512;
@@ -74,13 +73,13 @@ pub struct Instance {
 
 pub struct Batch {
     pub instances: Range<usize>,
-    pub slots: SmallVec<[Arc<Chunk>; SLOTS]>,
+    pub slots: SmallVec<Arc<Chunk>, SLOTS>,
 }
 
 pub struct Pass<'a, S> {
     pub surface: &'a S,
     pub rect: IntRect,
-    pub batches: SmallVec<[Batch; 1]>,
+    pub batches: SmallVec<Batch, 1>,
 }
 
 fn instance<'a>(
@@ -117,16 +116,16 @@ fn instance<'a>(
         Kind::Mask(tile, color) => (tile, 2, bgra(color, primitive.opacity), 1),
         Kind::Image(tile) => (tile, 3 + u32::from(is_shaped(primitive)), [0; 4], 4),
     };
-    let texture = Some(&textures[tile.texture_id.index as usize]).filter(|it| it.width > 0)?;
-    let (block, part) = (texture.block.as_ref()?, tile.bounds);
+    let texture = Some(&textures[tile.texture as usize]).filter(|it| it.width > 0)?;
+    let (block, part) = (texture.block.as_ref()?, tile.part);
     let instance = Instance {
         kind,
         color,
         part: [
-            part.origin.x.0,
-            part.origin.y.0,
-            part.size.width.0,
-            part.size.height.0,
+            part.left,
+            part.top,
+            part.width() as i32,
+            part.height() as i32,
         ],
         offset: block.offset as u32,
         width: texture.width as u32,
@@ -143,7 +142,7 @@ fn batches(
     textures: &[Texture],
     area: IntRect,
     instances: &mut Vec<Instance>,
-) -> SmallVec<[Batch; 1]> {
+) -> SmallVec<Batch, 1> {
     let empty = |start: usize| Batch {
         instances: start..start,
         slots: SmallVec::new(),
@@ -198,27 +197,11 @@ impl Sample {
     };
 
     fn new() -> Sample {
-        use gpui::{AtlasKey, AtlasTextureKind, DevicePixels, PlatformAtlas as _, size};
         let mut compositor = Compositor::default();
-        let texture = |kind, bytes: Vec<u8>| {
-            let mut build = || {
-                Ok(Some((
-                    size(DevicePixels(16), DevicePixels(8)),
-                    bytes[..].into(),
-                )))
-            };
-            compositor
-                .atlas
-                .get_or_insert_with(AtlasKey::Custom(kind, 0), &mut build)
-                .ok()
-                .flatten()
-        };
-        let mask = texture(
-            AtlasTextureKind::Monochrome,
-            (0..128).map(|it| it * 2).collect(),
-        );
+        let texture = |is_color, bytes: Vec<u8>| compositor.atlas.insert(is_color, 16, 8, &bytes);
+        let mask = texture(false, (0..128).map(|it| it * 2).collect());
         let image = texture(
-            AtlasTextureKind::Polychrome,
+            true,
             (0..128)
                 .flat_map(|it| [it, it / 2, 127 - it, 128 + it])
                 .collect(),
@@ -247,13 +230,13 @@ impl Sample {
         ];
         compositor
             .primitives
-            .extend(mask.map(|it| at(140., 17., 16., 8., 0., Kind::Mask(it, 0x8000_40FF))));
+            .push(at(140., 17., 16., 8., 0., Kind::Mask(mask, 0x8000_40FF)));
         compositor
             .primitives
-            .extend(image.map(|it| at(160., 30., 16., 8., 0., Kind::Image(it))));
+            .push(at(160., 30., 16., 8., 0., Kind::Image(image)));
         compositor
             .primitives
-            .extend(image.map(|it| at(100.5, 24.25, 40., 20., 6., Kind::Image(it))));
+            .push(at(100.5, 24.25, 40., 20., 6., Kind::Image(image)));
         let summaries = compositor.primitives.iter().map(Summary::of).collect();
         Sample(compositor, summaries)
     }
@@ -323,9 +306,12 @@ fn origin((column, row): Position) -> (i32, i32) {
 /// For each tile in `area`, its index in the window and in the cell.
 fn tiles_in(grid: &Grid, area: IntRect) -> impl Iterator<Item = (usize, usize)> {
     let (rows, columns) = (grid.rows_of(area), grid.columns_of(area));
-    let (top, left) = (rows.start, columns.start);
+    let (top, left) = (
+        area.top / CELL_HEIGHT * (CELL_HEIGHT / TILE_HEIGHT),
+        columns.start,
+    );
     rows.flat_map(move |row| {
-        let index = move |column| row as usize * grid.columns + column as usize;
+        let index = move |column| grid.start_of(row) + column as usize;
         columns.clone().map(move |column| {
             (
                 index(column),
@@ -333,6 +319,42 @@ fn tiles_in(grid: &Grid, area: IntRect) -> impl Iterator<Item = (usize, usize)> 
             )
         })
     })
+}
+
+#[cfg(target_os = "macos")]
+fn in_parallel(count: usize, work: &(dyn Fn(usize) + Sync)) {
+    use std::ffi::c_void;
+    unsafe extern "C" {
+        fn dispatch_apply_f(
+            count: usize,
+            queue: *mut c_void,
+            context: *mut c_void,
+            work: unsafe extern "C" fn(*mut c_void, usize),
+        );
+    }
+    unsafe extern "C" fn call(work: *mut c_void, index: usize) {
+        // SAFETY: what is passed below.
+        crate::guard("error", (), || unsafe {
+            (*work.cast::<&(dyn Fn(usize) + Sync)>())(index)
+        });
+    }
+    match count {
+        1 => work(0),
+        // SAFETY: it returns when all calls have, and no queue stands for the threads that suit this one.
+        _ => unsafe {
+            dispatch_apply_f(
+                count,
+                std::ptr::null_mut(),
+                (&raw const work).cast_mut().cast(),
+                call,
+            )
+        },
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+fn in_parallel(count: usize, work: &(dyn Fn(usize) + Sync)) {
+    (0..count).for_each(work);
 }
 
 struct Shared(Locked);
@@ -344,7 +366,7 @@ unsafe impl Sync for Shared {}
 
 pub struct Layers<T: Target> {
     pub target: T,
-    shown: FxHashMap<Position, Buffer<T::Surface>>,
+    shown: FastMap<Position, Buffer<T::Surface>>,
     spare: Vec<Buffer<T::Surface>>,
     instances: Vec<Instance>,
 }
@@ -353,7 +375,7 @@ impl<T: Target> Layers<T> {
     pub fn new(target: T) -> Self {
         Layers {
             target,
-            shown: FxHashMap::default(),
+            shown: FastMap::default(),
             spare: Vec::new(),
             instances: Vec::new(),
         }
@@ -380,14 +402,21 @@ impl<T: Target> Layers<T> {
     }
 
     fn back_buffer(&mut self, position: Position, size: (i32, i32)) -> Option<Buffer<T::Surface>> {
-        let free = self
-            .spare
+        let now = Instant::now();
+        let mut fitting: SmallVec<usize, 32> = (0..self.spare.len())
+            .filter(|it| self.spare[*it].size == size)
+            .collect();
+        fitting.sort_by_key(|it| match &self.spare[*it] {
+            it if it.position == position => (false, now - it.last_shown),
+            it => (true, Duration::MAX - (now - it.last_shown)),
+        });
+        let best = fitting
             .iter()
-            .enumerate()
-            .filter(|(_, it)| it.size == size && !T::is_in_use(&it.surface));
-        let best = free
-            .max_by_key(|(_, it)| (it.position == position).then_some(it.last_shown))
-            .map(|(index, _)| index);
+            .copied()
+            .find(|it| !T::is_in_use(&self.spare[*it].surface));
+        if best.is_none() {
+            diagnostics::note(Incident::NewSurface);
+        }
         let mut buffer = match best {
             Some(index) => self.spare.swap_remove(index),
             None => Buffer {
@@ -395,7 +424,7 @@ impl<T: Target> Layers<T> {
                 size,
                 position,
                 hashes: Box::new([UNKNOWN; TILES]),
-                last_shown: Instant::now(),
+                last_shown: now,
             },
         };
         if std::mem::replace(&mut buffer.position, position) != position {
@@ -404,19 +433,21 @@ impl<T: Target> Layers<T> {
         Some(buffer)
     }
 
-    pub fn paint(&mut self, compositor: &mut Compositor, width: i32, height: i32) {
+    /// What `is_in_front` has no cells where there is nothing, and only cells of one height.
+    pub fn paint(&mut self, compositor: &mut Compositor, wanted: IntRect, is_in_front: bool) {
         const WORTH_DRAWING: usize = 480;
         const WORTH_A_PASS: usize = 24;
         const WORTH_MOVING: usize = 32;
-        const TILES_PER_THREAD: usize = 1200;
+        const TILES_PER_THREAD: usize = 400;
         const MAX_THREADS: usize = 4;
         let start = diagnostics::logs_frames().then(Instant::now);
         let round_up = |length: i32, step: i32| (length.max(1) + step - 1) / step * step;
+        let top = wanted.top / TILE_HEIGHT * TILE_HEIGHT;
         let window = IntRect::new(
             0,
-            0,
-            round_up(width, TILE_WIDTH),
-            round_up(height, TILE_HEIGHT),
+            top,
+            round_up(wanted.right, TILE_WIDTH),
+            round_up(wanted.bottom, TILE_HEIGHT),
         );
         let grid = &Grid {
             window,
@@ -426,27 +457,34 @@ impl<T: Target> Layers<T> {
         let tiles = compositor.survey(&summaries, grid);
         let before = std::mem::replace(&mut compositor.window, window);
 
-        let (columns, rows) = (
-            round_up(width, CELL_WIDTH) / CELL_WIDTH,
-            round_up(height, CELL_HEIGHT) / CELL_HEIGHT,
-        );
-        for (position, buffer) in self
-            .shown
-            .extract_if(|(column, row), _| *column >= columns || *row >= rows)
-        {
+        let columns = 0..round_up(window.right, CELL_WIDTH) / CELL_WIDTH;
+        let rows = top / CELL_HEIGHT..round_up(window.bottom, CELL_HEIGHT) / CELL_HEIGHT;
+        let area_of = |position| {
+            let (left, top) = origin(position);
+            IntRect::new(left, top, left + CELL_WIDTH, top + CELL_HEIGHT).intersect(window)
+        };
+        let is_empty = |position| {
+            is_in_front && tiles_in(grid, area_of(position)).all(|(tile, _)| tiles[tile].is_clear())
+        };
+        let is_gone =
+            |it: &Position| !columns.contains(&it.0) || !rows.contains(&it.1) || is_empty(*it);
+        for (position, buffer) in self.shown.extract_if(|it, _| is_gone(it)) {
             self.target.remove(position);
             self.spare.push(buffer);
         }
         let (mut actions, mut changes, mut is_complete) =
             (vec![Action::Keep; tiles.len()], Vec::new(), true);
-        for position in (0..rows).flat_map(|row| (0..columns).map(move |column| (column, row))) {
-            let (left, top) = origin(position);
-            let area =
-                IntRect::new(left, top, left + CELL_WIDTH, top + CELL_HEIGHT).intersect(window);
-            let size = (
-                round_up(area.right - left, CELL_WIDTH / 4),
-                round_up(area.bottom - top, CELL_HEIGHT / 4),
-            );
+        let positions = rows
+            .clone()
+            .flat_map(|row| columns.clone().map(move |column| (column, row)));
+        for position in positions.filter(|it| !is_empty(*it)) {
+            let ((left, top), area) = (origin(position), area_of(position));
+            let height = if is_in_front {
+                CELL_HEIGHT
+            } else {
+                round_up(area.bottom - top, CELL_HEIGHT / 4)
+            };
+            let size = (round_up(area.right - left, CELL_WIDTH / 4), height);
             let is_right = |it: &Buffer<_>| {
                 tiles_in(grid, area).all(|(tile, own)| it.hashes[own] == tiles[tile].hash)
             };
@@ -496,8 +534,8 @@ impl<T: Target> Layers<T> {
                 .iter()
                 .filter(|change| change.work >= WORTH_A_PASS)
                 .map(|change| {
-                    let (IntRect { left, top, .. }, (width, height)) =
-                        (change.area, change.buffer.size);
+                    let ((left, top), (width, height)) =
+                        (origin(change.buffer.position), change.buffer.size);
                     let batches = batches(
                         primitives,
                         &summaries,
@@ -531,11 +569,13 @@ impl<T: Target> Layers<T> {
             .flatten()
             .unwrap_or(0);
         if down != 0 {
-            let changed = grid.areas(|tile| actions[tile] == Action::Paint);
-            let changed = changed.into_iter().fold(IntRect::default(), IntRect::union);
+            let changed = grid.around(|tile| actions[tile] == Action::Paint);
             let moved = survey(&compositor.shown, grid, down, changed);
             for (tile, action) in actions.iter_mut().enumerate() {
-                let (row, column) = ((tile / grid.columns) as i32, (tile % grid.columns) as i32);
+                let (row, column) = (
+                    top / TILE_HEIGHT + (tile / grid.columns) as i32,
+                    (tile % grid.columns) as i32,
+                );
                 let source = grid.rect(row, column..column + 1).offset(0, -down);
                 let is_there = |y: i32| {
                     self.shown
@@ -555,7 +595,7 @@ impl<T: Target> Layers<T> {
 
         let copies = [(Action::Copy, 0), (Action::Move, down)]
             .map(|(action, down)| (grid.areas(|tile| actions[tile] == action), down));
-        let mut sources: FxHashMap<Position, Shared> = FxHashMap::default();
+        let mut sources: FastMap<Position, Shared> = FastMap::default();
         for source in copies
             .iter()
             .flat_map(|(areas, down)| areas.iter().map(move |area| area.offset(0, -down)))
@@ -580,9 +620,13 @@ impl<T: Target> Layers<T> {
             has_changes,
         };
         let paint_cell = |(area, Shared(target)): &(IntRect, Shared)| {
-            // SAFETY: the surface is locked, at least as large as `area`, and this thread's.
+            let above = (area.top % CELL_HEIGHT) as usize * target.stride;
+            // SAFETY: the surface is locked, reaches to the end of `area`, and is this thread's.
             let pixels = unsafe {
-                std::slice::from_raw_parts_mut(target.start, target.stride * area.height())
+                std::slice::from_raw_parts_mut(
+                    target.start.add(above),
+                    target.stride * area.height(),
+                )
             };
             for (part, down) in copies
                 .iter()
@@ -612,20 +656,17 @@ impl<T: Target> Layers<T> {
             .filter(is_painted)
             .map(|it| (it.area, Shared(T::lock(&it.buffer.surface, true))));
         let locked: Vec<_> = locked.collect();
+        locked
+            .iter()
+            .for_each(|_| diagnostics::note(Incident::PaintedByCpu));
         let left = tiles.len() - count(Action::Keep, &actions);
         let threads = left.div_ceil(TILES_PER_THREAD).clamp(1, MAX_THREADS);
-        std::thread::scope(|scope| {
-            let share = |first: usize| {
-                locked
-                    .iter()
-                    .skip(first)
-                    .step_by(threads)
-                    .for_each(paint_cell)
-            };
-            for first in 1..threads {
-                scope.spawn(move || share(first));
-            }
-            share(0);
+        in_parallel(threads, &|first| {
+            locked
+                .iter()
+                .skip(first)
+                .step_by(threads)
+                .for_each(paint_cell)
         });
         changes
             .iter()
@@ -640,20 +681,16 @@ impl<T: Target> Layers<T> {
                 changes.iter().filter(|change| change.is_drawn).count(),
                 self.spare.len(),
             );
-            log::info!(
+            crate::diagnostics::log!(
                 "{} cells ({drawn} by the GPU, {left} tiles by the CPU, {spare} spare) in {:?}",
                 changes.len(),
                 start.elapsed()
             );
         }
         let now = Instant::now();
-        for Change { area, buffer, .. } in changes {
-            let rect = IntRect::new(
-                area.left,
-                area.top,
-                area.left + buffer.size.0,
-                area.top + buffer.size.1,
-            );
+        for Change { buffer, .. } in changes {
+            let (left, top) = origin(buffer.position);
+            let rect = IntRect::new(left, top, left + buffer.size.0, top + buffer.size.1);
             self.target.show(buffer.position, rect, &buffer.surface);
             let old = self.shown.insert(buffer.position, buffer);
             self.spare.extend(old.map(|old| Buffer {
@@ -673,15 +710,13 @@ impl<T: Target> Layers<T> {
 
 #[cfg(test)]
 mod tests {
-    use std::borrow::Cow;
     use std::cell::{Cell, UnsafeCell};
     use std::rc::Rc;
 
-    use gpui::embed::Pixels;
-    use gpui::{AtlasKey, AtlasTextureKind, DevicePixels, PlatformAtlas as _, size};
-
     use super::*;
     use crate::abi::Rect;
+    use crate::paint::software::Sprite;
+    use crate::platform::Pixels;
 
     struct Memory {
         pixels: UnsafeCell<Vec<Pixel>>,
@@ -693,7 +728,7 @@ mod tests {
     #[derive(Default)]
     struct Screen {
         all: Vec<Rc<Memory>>,
-        shown: FxHashMap<Position, (IntRect, Rc<Memory>)>,
+        shown: FastMap<Position, (IntRect, Rc<Memory>)>,
     }
 
     impl Target for Screen {
@@ -761,7 +796,24 @@ mod tests {
         }
     }
 
-    fn page(compositor: &mut Compositor, (width, height): (i32, i32), scrolled: i32, caret: bool) {
+    fn lines(compositor: &Compositor) -> Vec<Sprite> {
+        let mask = |line: i32| {
+            (0..900 * 30)
+                .map(|it| ((it * (line + 3)) % 251) as u8)
+                .collect::<Vec<_>>()
+        };
+        (0..200)
+            .map(|line| compositor.atlas.insert(false, 900, 30, &mask(line)))
+            .collect()
+    }
+
+    fn page(
+        compositor: &mut Compositor,
+        lines: &[Sprite],
+        (width, height): (i32, i32),
+        scrolled: i32,
+        caret: bool,
+    ) {
         let window = IntRect::new(0, 0, width, height);
         let quad = |x: i32, y: i32, width: i32, height: i32, clip: IntRect, color: u32| {
             let bounds = Rect {
@@ -790,21 +842,7 @@ mod tests {
         )];
         let port = IntRect::new(300, 70, width - 20, height - 130);
         for line in 0..200 {
-            let key = AtlasKey::Custom(AtlasTextureKind::Monochrome, line as u128);
-            let mut build = || {
-                let mask = (0..900 * 30)
-                    .map(|it| ((it * (line + 3)) % 251) as u8)
-                    .collect();
-                Ok(Some((
-                    size(DevicePixels(900), DevicePixels(30)),
-                    Cow::Owned(mask),
-                )))
-            };
-            let tile = compositor
-                .atlas
-                .get_or_insert_with(key, &mut build)
-                .unwrap()
-                .unwrap();
+            let tile = lines[line as usize];
             let y = 80 + line * 47 - scrolled;
             if line % 7 == 0 {
                 all.push(Primitive {
@@ -826,6 +864,54 @@ mod tests {
     }
 
     #[test]
+    fn shows_any_part_of_a_plane() {
+        let (mut layers, mut compositor, size) = (
+            Layers::new(Screen::default()),
+            Compositor::default(),
+            (1536, 6400),
+        );
+        let (kept, mut whole) = (lines(&compositor), vec![[0; 4]; (size.0 * size.1) as usize]);
+        for (frame, top) in [2048, 2176, 2304, 2176, 1920, 2560, 4096, 3968, 128, 0]
+            .into_iter()
+            .enumerate()
+        {
+            let scrolled = frame as i32 / 4 * 47;
+            let without_background = |compositor: &mut Compositor, lines: &[Sprite]| {
+                page(compositor, lines, size, scrolled, false);
+                compositor.primitives.remove(0);
+            };
+            without_background(&mut compositor, &kept);
+            layers.paint(
+                &mut compositor,
+                IntRect::new(0, top, size.0, top + 1280),
+                true,
+            );
+            layers.target.next_frame(frame as u32 % 3);
+            let mut fresh = Compositor::default();
+            let again = lines(&fresh);
+            without_background(&mut fresh, &again);
+            fresh.paint(Pixels {
+                id: 1,
+                data: &mut whole,
+                width: size.0 as usize,
+                shown: size,
+                platform_moves: false,
+            });
+            for y in top..top + 1280 {
+                let expected = &whole[(y * size.0) as usize..][..size.0 as usize];
+                assert!(
+                    layers.target.row(y, 0, 1024) == &expected[..1024],
+                    "frame {frame}, row {y}"
+                );
+                assert!(
+                    layers.target.row(y, 1024, size.0) == &expected[1024..],
+                    "frame {frame}, row {y}"
+                );
+            }
+        }
+    }
+
+    #[test]
     fn shows_what_a_single_buffer_does() {
         let (mut layers, mut compositor) = (Layers::new(Screen::default()), Compositor::default());
         let sizes = [
@@ -836,15 +922,15 @@ mod tests {
             (2100, 700),
         ];
         let steps = [0, 7, 120, 0, -33, 600, -1, 512, 0, -512, 16, 3000, -64];
-        let mut scrolled = 1000;
+        let (mut scrolled, kept) = (1000, lines(&compositor));
         for (frame, (size, step)) in sizes
             .iter()
             .flat_map(|size| steps.iter().map(move |step| (*size, *step)))
             .enumerate()
         {
             scrolled = (scrolled + step) % 6000;
-            page(&mut compositor, size, scrolled, frame % 2 == 0);
-            layers.paint(&mut compositor, size.0, size.1);
+            page(&mut compositor, &kept, size, scrolled, frame % 2 == 0);
+            layers.paint(&mut compositor, IntRect::new(0, 0, size.0, size.1), false);
             layers.target.next_frame(frame as u32 % 3);
             if frame % 20 == 19 {
                 layers.release_spares(Duration::ZERO);
@@ -855,13 +941,13 @@ mod tests {
                 Compositor::default(),
                 vec![[0; 4]; (size.0 * size.1) as usize],
             );
-            page(&mut fresh, size, scrolled, frame % 2 == 0);
-            let shown = gpui::size(DevicePixels(size.0), DevicePixels(size.1));
+            let again = lines(&fresh);
+            page(&mut fresh, &again, size, scrolled, frame % 2 == 0);
             fresh.paint(Pixels {
                 id: 1,
                 data: &mut data,
                 width: size.0 as usize,
-                shown,
+                shown: size,
                 platform_moves: false,
             });
             for (y, expected) in (0..).zip(data.chunks(size.0 as usize)) {

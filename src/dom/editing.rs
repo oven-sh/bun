@@ -671,7 +671,67 @@ impl Document {
     }
 
     pub(crate) fn caret_to_paint(&self) -> Option<(BoxId, Rect)> {
-        self.caret_rect(self.marks.selection?[1], self.marks.caret?)
+        let (point, upstream) = (self.marks.selection?[1], self.marks.caret?);
+        let (id, bar) = self.caret_rect(point, upstream)?;
+        let style = self.inherited_style(id);
+        let Some(shape) = style
+            .other_if_set(crate::properties::Id::CaretShape)
+            .filter(|it| *it != "bar")
+        else {
+            return Some((id, bar));
+        };
+        let shaped = |it: Rect| match shape {
+            "block" => it,
+            _ => Rect {
+                y: it.bottom() - bar.width.min(bar.height),
+                height: bar.width.min(bar.height),
+                ..it
+            },
+        };
+        let Some(place) = self.place_of(point, upstream) else {
+            return Some((
+                id,
+                shaped(Rect {
+                    width: style.metrics.zero_advance,
+                    ..bar
+                }),
+            ));
+        };
+        let inline = self.inline(id)?;
+        let line = inline
+            .lines
+            .lines
+            .get(inline.line_index(place.at, place.upstream))?;
+        let next = inline
+            .lines
+            .fragments_of(line)
+            .iter()
+            .filter(|it| matches!(it.kind, FragmentKind::Text { .. }))
+            .find_map(|fragment| {
+                let (_, x, advance) = inline
+                    .lines
+                    .positions(fragment)
+                    .find(|it| it.0 == place.at && it.2 > 0.0)?;
+                Some(Rect::new([x, fragment.y, advance, fragment.height]))
+            });
+        let after = || {
+            let bar = self.caret_at(place)?;
+            let is_pushed_back =
+                !line.rtl && bar.right() >= inline.lines.bounds.right() && bar.x > line.left;
+            let x = if line.rtl {
+                bar.right() - style.metrics.zero_advance
+            } else if is_pushed_back {
+                bar.right()
+            } else {
+                bar.x
+            };
+            Some(Rect {
+                x,
+                width: style.metrics.zero_advance,
+                ..bar
+            })
+        };
+        Some((id, self.from_lines(id, shaped(next.or_else(after)?))))
     }
 
     fn place_on_line(&self, lines: BoxId, line: &Line, x: f32) -> Option<Place> {
@@ -1285,7 +1345,7 @@ impl Document {
 
     pub(crate) fn inner_text(&self, id: NodeId) -> Vec<u8> {
         let mut out = InnerText::default();
-        if !self.hides_contents(id) {
+        if !self.tree[id].has(crate::tree::Flags::SKIPPED) && !self.is_in_skipped_contents(id) {
             self.collect_contents(id, &mut out);
         }
         out.text
@@ -1341,11 +1401,9 @@ impl Document {
             }
             return;
         }
-        let Some(style) = self
-            .tree
-            .style(id)
-            .filter(|it| it.display() != Display::None && !self.hides_contents(id))
-        else {
+        let Some(style) = self.tree.style(id).filter(|it| {
+            it.display() != Display::None && !self.tree[id].has(crate::tree::Flags::SKIPPED)
+        }) else {
             return;
         };
         if self.tree[id].layout_box == 0 || !style.is_visible() {

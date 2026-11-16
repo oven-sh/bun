@@ -170,7 +170,11 @@ pub(crate) fn gradient_stops(
     current: Rgba,
     out: &mut Vec<GradientStop>,
 ) {
-    const STEPS: usize = 32;
+    let steps = if gradient.interpolation.is_polar() {
+        256
+    } else {
+        32
+    };
     let position = |stop: &Stop| Some(stop.position.as_ref()?.resolve(length) / length.max(0.001));
     let colored = || gradient.stops.iter().filter(|it| it.color.is_some());
     let mut offsets = spread_positions(colored().map(position).collect()).into_iter();
@@ -194,8 +198,8 @@ pub(crate) fn gradient_stops(
             let middle = hint.map_or(0.5, |it| {
                 ((it - from.offset) / (to.offset - from.offset)).clamp(0.001, 0.999)
             });
-            out.extend((0..=STEPS).map(|step| {
-                let at = step as f32 / STEPS as f32;
+            out.extend((0..=steps).map(|step| {
+                let at = step as f32 / steps as f32;
                 let t = at.powf(0.5f32.ln() / middle.ln());
                 let color = match is_plain {
                     true => mix_colors(from.color, to.color, t),
@@ -857,6 +861,13 @@ impl<'a> Painter<'a> {
 
 impl Replaced {
     /// What `object-view-box` leaves of it, and where that is in fractions of the whole.
+    pub(crate) fn at_resolution(self, resolution: f32) -> Replaced {
+        Replaced {
+            size: self.size.map(|it| Some(it? / resolution)),
+            ..self
+        }
+    }
+
     pub(crate) fn viewed(self, style: &Style) -> (Replaced, Rect) {
         let view = || {
             let ([Some(width), Some(height)], _) =

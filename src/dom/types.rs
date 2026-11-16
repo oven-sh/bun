@@ -1492,12 +1492,17 @@ impl Image {
             let image = string(p)
                 .map(|url| Image::Url(cx.url(url)))
                 .or_else(|| Image::parse(p, cx))?;
-            let resolution = quantity(p, cx, Kind::Resolution, 0.0).unwrap_or(1.0);
-            let kind = function(p).and_then(|_| nested(p, string));
+            let kind =
+                |p: &mut P| function(p).and_then(|_| nested(p, |p| string(p).map(<[u8]>::to_vec)));
+            let (before, resolution) = (
+                attempt(p, |p| kind(p).filter(|it| !it.is_empty())),
+                quantity(p, cx, Kind::Resolution, 0.0).unwrap_or(1.0),
+            );
+            let kind = before.or_else(|| kind(p));
             Some((
                 image,
                 resolution,
-                kind.is_none_or(|it| TYPES.iter().any(|known| eq(it, known))),
+                kind.is_none_or(|it| TYPES.iter().any(|known| eq(&it, known))),
             ))
         });
         let mut options: Vec<_> = options?
@@ -1506,6 +1511,7 @@ impl Image {
             .map(|it| (it.0, it.1))
             .collect();
         options.sort_by(|a, b| a.1.total_cmp(&b.1));
+        options.dedup_by(|a, b| a.1 == b.1);
         Some(Image::Set(options.into()))
     }
 }
@@ -1741,7 +1747,7 @@ impl Css for TextShadows {
         }
         write_list(&self.0.0, ", ", out, |it, out| {
             it.write(out);
-            out.truncate(out.iter().rposition(|it| *it == b' ').unwrap_or(0));
+            out.truncate(bun_core::strings::last_index_of_char(out, b' ').unwrap_or(0));
         });
     }
     fn lerp(&self, to: &Self, t: Mixing) -> Option<Self> {
@@ -2996,7 +3002,9 @@ fn linear_points(p: &mut P, cx: &Ctx) -> Option<Rc<[[f32; 2]]>> {
 
 /// Fills in the positions of gradient stops or of `linear()` points, from 0 to 1.
 pub(crate) fn spread_positions(mut positions: Vec<Option<f32>>) -> Vec<f32> {
-    let last = positions.len() - 1;
+    let Some(last) = positions.len().checked_sub(1) else {
+        return Vec::new();
+    };
     positions[0].get_or_insert(0.0);
     positions[last].get_or_insert(1.0);
     let mut resolved: Vec<f32> = Vec::with_capacity(positions.len());

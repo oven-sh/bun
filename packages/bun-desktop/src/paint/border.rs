@@ -1,13 +1,11 @@
 //! Borders and text decorations, after Blink's `BoxBorderPainter` and `StyledStrokeData`.
 
-use resvg::tiny_skia::Transform;
-use zeno::{Cap, Fill, PathBuilder as _, Stroke};
-
 use super::raster::{
     Clip, Coverage, IntRect, Layer, Paint, Path, add_rounded_rect, has_radii, premultiply,
     rounded_rect_path,
 };
 use crate::abi::{LineStyle, Rect, RoundedRect};
+use crate::gfx::{self, Cap, Fill, PathBuilder as _, Stroke, Transform};
 
 pub fn inset(shape: &RoundedRect, [top, right, bottom, left]: [f32; 4]) -> RoundedRect {
     let shrink = |[x, y]: [f32; 2], by_x: f32, by_y: f32| [(x - by_x).max(0.), (y - by_y).max(0.)];
@@ -74,7 +72,7 @@ fn dashed(
     scale: f32,
     area: IntRect,
 ) -> Coverage {
-    let length = zeno::length(path, None);
+    let length = gfx::length(path);
     let mut stroke = Stroke::new(width);
     let extra = if !closed && style == LineStyle::Dotted && width * scale > 3. {
         width
@@ -84,7 +82,7 @@ fn dashed(
     let pattern = dashes(style, width * scale, (length + extra) * scale, closed);
     let pattern = pattern.map(|(lengths, cap)| (lengths.map(|length| length / scale), cap));
     if let Some((lengths, cap)) = &pattern {
-        stroke.dash(lengths, 0.).cap(*cap);
+        (stroke.dashes, stroke.cap) = (lengths, *cap);
     }
     Coverage::of_path(path, stroke, matrix, area)
 }

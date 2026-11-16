@@ -1,4 +1,6 @@
 // The browser engine that renders, in sandboxed processes of its own, what the app does not trust.
+const executablesOfElectron = { darwin: "Electron.app/Contents/MacOS/Electron", win32: "electron.exe" };
+
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
@@ -25,7 +27,7 @@ function choose(wanted: Choice | null) {
 
 function find(): Choice | null {
   if (choice !== undefined) return choice;
-  const executable = { darwin: "Electron.app/Contents/MacOS/Electron", win32: "electron.exe" }[process.platform];
+  const executable = executablesOfElectron[process.platform];
   const bundled = path.join(
     native.resourcesPath() ?? (process as any).resourcesPath ?? app.getAppPath(),
     "electron",
@@ -81,6 +83,7 @@ class Engine {
   /** Listeners for the events of each session of the DevTools protocol. */
   inspected = new Map<string | undefined, (method: string, params: any, session: string) => void>();
   isClosed = false;
+  hasAnswered = false;
   creationTime = Date.now();
   /** On Wayland it is for the application that has the focus. */
   hasOwnClipboard: boolean;
@@ -136,11 +139,17 @@ class Engine {
 
     if (type === "chromium") {
       let partial: Buffer[] = [];
-      child.stdio[4].on("data", (chunk: Buffer) => {
+      child.stdio[4]?.on("data", (chunk: Buffer) => {
         for (let end; (end = chunk.indexOf(0)) !== -1; chunk = chunk.subarray(end + 1)) {
           const text = Buffer.concat([...partial, chunk.subarray(0, end)]).toString();
           partial = [];
-          this.#receiveFromInspector(JSON.parse(text));
+          try {
+            this.#receiveFromInspector(JSON.parse(text));
+          } catch (error) {
+            setImmediate(() => {
+              throw error;
+            });
+          }
         }
         partial.push(chunk);
       });
@@ -153,9 +162,12 @@ class Engine {
       );
       return;
     }
-    child.stdio[6].on(
+    child.stdio[6]?.on(
       "data",
-      wire.splitter((bytes: Buffer) => this.#receive(wire.decode(bytes, this.#fromHandle))),
+      wire.splitter((bytes: Buffer) => {
+        this.hasAnswered = true;
+        return this.#receive(wire.decode(bytes, this.#fromHandle));
+      }),
     );
     const { schemes } = require("internal/desktop/electron/policy");
     this.#answer({
@@ -169,6 +181,17 @@ class Engine {
 
   get pid(): number | undefined {
     return this.#child.pid;
+  }
+
+  /** The processes that it has started, as of the last time. */
+  metrics: any[] = [];
+
+  measure() {
+    if (this.type !== "electron") return;
+    this.perform("module", "app", "getAppMetrics").then(
+      metrics => (this.metrics = metrics.filter(it => it.type !== "Browser")),
+      () => {},
+    );
   }
 
   newId() {
@@ -192,7 +215,7 @@ class Engine {
   };
 
   #answer(value: unknown) {
-    this.#child.stdio[7].write(wire.encode(value, this.#handleOf));
+    this.#child.stdio[7]?.write(wire.encode(value, this.#handleOf));
   }
 
   #settle(id: number, isError: boolean, value: unknown) {
@@ -225,6 +248,7 @@ class Engine {
   }
 
   #receiveFromInspector({ id, result, error, method, params, sessionId }: any) {
+    this.hasAnswered = true;
     if (id === undefined) return this.inspected.$get(sessionId)?.(method, params, sessionId);
     this.#settle(id, !!error, error ? Object.assign(new Error(error.message), { code: error.code }) : result);
   }
@@ -241,7 +265,7 @@ class Engine {
   send(...message: unknown[]) {
     if (this.isClosed) return;
     if (this.#backend) this.#backend.run(message);
-    else this.#child.stdio[5].write(wire.encode(message, this.#handleOf));
+    else this.#child.stdio[5]?.write(wire.encode(message, this.#handleOf));
   }
 
   /** `holdsUp` the commands after it until it has finished. */
@@ -260,7 +284,7 @@ class Engine {
 
   #sendToInspector(message: object) {
     const text = JSON.stringify(message);
-    if (this.type === "chromium") this.#child.stdio[3].write(text + "\0");
+    if (this.type === "chromium") this.#child.stdio[3]?.write(text + "\0");
     else this.send("inspect", text);
   }
 

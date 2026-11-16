@@ -1,19 +1,18 @@
 //! The pixels of a page that a browser engine renders in another process.
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::fs::File;
 use std::io::{Read, Seek as _, SeekFrom};
 use std::sync::mpsc::Receiver;
 use std::time::Duration;
 
-use anyhow::{Context as _, Result, bail, ensure};
-use parking_lot::Mutex;
-use resvg::tiny_skia::Pixmap;
-use rustc_hash::FxHashMap;
-use serde_json::{Value, json};
-
 use crate::abi::{Rect, Region};
+use crate::error::{Context as _, Result, bail, ensure};
+use crate::gfx::Pixmap;
+use crate::hash::FastMap;
+use crate::json::{Deserialize as _, Value, json};
 use crate::paint::raster::IntRect;
+use crate::sync::Mutex;
 use crate::{bridge, images, surface};
 
 const TILE: i32 = 256;
@@ -31,8 +30,10 @@ pub struct View {
 }
 
 thread_local! {
-    static VIEWS: RefCell<FxHashMap<u32, View>> = RefCell::default();
+    static VIEWS: RefCell<FastMap<u32, View>> = RefCell::default();
     static CHANNEL: RefCell<Option<Receiver<Vec<u8>>>> = RefCell::default();
+    /// Frames that were announced and have not arrived.
+    static OWED: Cell<usize> = const { Cell::new(0) };
 }
 
 static SPARE: Mutex<Vec<u8>> = Mutex::new(Vec::new());
@@ -84,6 +85,7 @@ fn open_channel() -> Result<Value> {
             while next().is_some() {}
         })?;
     CHANNEL.set(Some(receiver));
+    OWED.set(0);
     Ok(theirs.into_raw_fd().into())
 }
 
@@ -221,8 +223,7 @@ pub fn command(name: &str, arguments: &Value) -> Result<Value> {
         }
         "show" => surface::show_image(arguments["surface"].as_u64().unwrap_or(0) as u32, id),
         "regions" => {
-            let regions: Vec<([f32; 4], bool)> =
-                serde_json::from_value(arguments["regions"].clone())?;
+            let regions: Vec<([f32; 4], bool)> = Vec::deserialize(&arguments["regions"])?;
             let region = |([x, y, width, height], drag): ([f32; 4], bool)| Region {
                 rect: Rect {
                     x,
@@ -270,8 +271,13 @@ pub fn command(name: &str, arguments: &Value) -> Result<Value> {
             });
         }
         "frame" => VIEWS.with_borrow_mut(|views| {
-            let channel =
-                |it: &Option<Receiver<_>>| it.as_ref()?.recv_timeout(Duration::from_secs(1)).ok();
+            let channel = |it: &Option<Receiver<_>>| loop {
+                let received = it.as_ref()?.recv_timeout(Duration::from_secs(1)).ok()?;
+                if OWED.replace(OWED.get() - 1) == 1 {
+                    break Some(received);
+                }
+            };
+            OWED.set(OWED.get() + usize::from(arguments["isSent"] == true));
             let received = if arguments["isSent"] == true {
                 CHANNEL.with_borrow(channel)
             } else {

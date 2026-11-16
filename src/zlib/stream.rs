@@ -2,11 +2,12 @@
 //! pointer to the stream from init on, so a `&mut` to it across a zlib call
 //! is an aliasing violation (oven-sh/bun#46598).
 
-use core::ffi::{c_char, c_int};
+use core::ffi::{CStr, c_int};
 use core::mem::size_of;
 use core::ptr::NonNull;
 
-use bun_zlib_sys::shared::{DataType, ReturnCode, uInt, zStream_struct};
+use bun_core::vec::BorrowedCursor;
+use bun_zlib_sys::shared::{DataType, ReturnCode, uInt, z_streamp, zStream_struct};
 
 #[allow(non_snake_case)]
 mod ZlibAllocator {
@@ -15,19 +16,17 @@ mod ZlibAllocator {
 }
 
 /// Heap-pinned `z_stream`. The owner ends the zlib state before this drops.
-pub struct ZStream {
+pub(crate) struct ZStream {
     ptr: NonNull<zStream_struct>,
 }
 
-impl Default for ZStream {
-    fn default() -> Self {
-        Self::new()
-    }
-}
+// SAFETY: the stream and the zlib state behind it are heap memory that only `self` reaches, and
+// their allocator frees on any thread.
+unsafe impl Send for ZStream {}
 
 impl ZStream {
     /// A zeroed stream with Bun's zlib allocator installed.
-    pub fn new() -> Self {
+    pub(crate) fn new() -> Self {
         let ptr = bun_core::heap::alloc_nn(zStream_struct {
             next_in: core::ptr::null(),
             avail_in: 0,
@@ -47,27 +46,27 @@ impl ZStream {
         Self { ptr }
     }
 
-    /// The pointer to hand to zlib.
+    /// `next_in` and `next_out` dangle outside `with_buffers`: only for calls that dereference neither.
     #[inline]
-    pub fn as_ptr(&self) -> *mut zStream_struct {
+    pub(crate) fn as_ptr(&self) -> z_streamp {
         self.ptr.as_ptr()
     }
 
     /// `deflateInit2_` against the linked zlib's version and struct size.
-    pub fn deflate_init(
+    pub(crate) fn deflate_init(
         &mut self,
         level: c_int,
-        method: c_int,
         window_bits: c_int,
         mem_level: c_int,
         strategy: c_int,
     ) -> ReturnCode {
+        const Z_DEFLATED: c_int = 8;
         // SAFETY: `ptr` is a live z_stream; version/size match the linked zlib.
         unsafe {
             crate::deflateInit2_(
                 self.as_ptr(),
                 level,
-                method,
+                Z_DEFLATED,
                 window_bits,
                 mem_level,
                 strategy,
@@ -78,7 +77,7 @@ impl ZStream {
     }
 
     /// `inflateInit2_` against the linked zlib's version and struct size.
-    pub fn inflate_init(&mut self, window_bits: c_int) -> ReturnCode {
+    pub(crate) fn inflate_init(&mut self, window_bits: c_int) -> ReturnCode {
         // SAFETY: `ptr` is a live z_stream; version/size match the linked zlib.
         unsafe {
             crate::inflateInit2_(
@@ -91,57 +90,41 @@ impl ZStream {
     }
 
     #[inline]
-    pub fn next_in(&self) -> *const u8 {
+    pub(crate) fn avail_out(&self) -> uInt {
         // SAFETY: `ptr` is a live allocation owned by `self`, read through
         // the raw pointer only.
-        unsafe { (*self.as_ptr()).next_in }
-    }
-
-    #[inline]
-    pub fn avail_in(&self) -> uInt {
-        // SAFETY: see `next_in`.
-        unsafe { (*self.as_ptr()).avail_in }
-    }
-
-    #[inline]
-    pub fn avail_out(&self) -> uInt {
-        // SAFETY: see `next_in`.
         unsafe { (*self.as_ptr()).avail_out }
     }
 
-    #[inline]
-    pub fn err_msg(&self) -> *const c_char {
-        // SAFETY: see `next_in`.
-        unsafe { (*self.as_ptr()).err_msg }
-    }
-
-    /// `msg` as bytes, if zlib set one.
-    pub fn error_message(&self) -> Option<&[u8]> {
-        let msg = self.err_msg();
-        if msg.is_null() {
-            return None;
-        }
-        // SAFETY: zlib sets `msg` to a NUL-terminated static C string.
-        Some(unsafe { bun_core::ffi::cstr(msg) }.to_bytes())
-    }
-
-    /// Point `next_in`/`avail_in` at the next input chunk.
-    #[inline]
-    pub fn set_input(&mut self, next_in: *const u8, avail_in: uInt) {
-        // SAFETY: see `next_in`.
+    /// `msg`, if zlib set one.
+    pub(crate) fn error_message(&self) -> Option<&'static CStr> {
+        // SAFETY: see `avail_out`. zlib only points `msg` at string literals.
         unsafe {
-            (*self.as_ptr()).next_in = next_in;
-            (*self.as_ptr()).avail_in = avail_in;
+            let msg = (*self.as_ptr()).err_msg;
+            (!msg.is_null()).then(|| bun_core::ffi::cstr(msg))
         }
     }
 
-    /// Point `next_out`/`avail_out` at the next output window.
-    #[inline]
-    pub fn set_output(&mut self, next_out: *mut u8, avail_out: uInt) {
-        // SAFETY: see `set_input`.
+    /// Runs `call` on at most `u32::MAX` bytes of each buffer. Returns how much input it consumed.
+    pub(crate) fn with_buffers(
+        &mut self,
+        input: &[u8],
+        mut out: BorrowedCursor<'_, u8>,
+        call: impl FnOnce(z_streamp) -> ReturnCode,
+    ) -> (usize, ReturnCode) {
+        let strm = self.as_ptr();
+        let in_len = input.len().min(uInt::MAX as usize);
+        let out_len = out.capacity().min(uInt::MAX as usize);
+        // SAFETY: see `avail_out`. Only zlib lowers the two counts, `avail_out` by as many bytes as
+        // it wrote at the start of `out`.
         unsafe {
-            (*self.as_ptr()).next_out = next_out;
-            (*self.as_ptr()).avail_out = avail_out;
+            (*strm).next_in = input.as_ptr();
+            (*strm).avail_in = in_len as uInt;
+            (*strm).next_out = out.as_mut().as_mut_ptr().cast::<u8>();
+            (*strm).avail_out = out_len as uInt;
+            let rc = call(strm);
+            out.advance(out_len - (*strm).avail_out as usize);
+            (in_len - (*strm).avail_in as usize, rc)
         }
     }
 }

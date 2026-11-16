@@ -294,6 +294,15 @@ pub(crate) fn end_of_statement(source: &[u8], at: usize) -> usize {
     skip(source, at, |byte| byte == b';').0 + 1
 }
 
+/// That is not important, and that ends with its semicolon.
+pub(crate) fn is_one_declaration(source: &[u8]) -> bool {
+    let value = &source[..source.len() - 1];
+    bun_core::strings::index_of_any(value, b"{}()[]\"'\\/;!").is_none()
+        || matches!(next_item(source, 0), Next::Statement { .. })
+            && end_of_statement(source, 0) == source.len()
+            && !without_priority(value).1
+}
+
 pub(crate) fn at_keyword(rule: &[u8]) -> &[u8] {
     &rule[1..1 + rule[1..].iter().take_while(|it| is_name(**it)).count()]
 }
@@ -346,6 +355,7 @@ struct Selectors<'a> {
     /// The start, the end and the value of a name that has been read.
     known: Option<(usize, usize, Name)>,
     unescaped: &'a mut Vec<u8>,
+    depth: u32,
 }
 
 impl Selectors<'_> {
@@ -470,8 +480,12 @@ impl Selectors<'_> {
                     if self.source.get(self.at) == Some(&b'(') {
                         self.at += 1;
                         if is("is") || is("where") {
+                            (self.depth < 32).then_some(())?;
                             let start = self.at;
-                            match self.alternatives() {
+                            self.depth += 1;
+                            let inner = self.alternatives();
+                            self.depth -= 1;
+                            match inner {
                                 Some(inner) => {
                                     own = inner.own;
                                     found.also_own.extend(inner.also_own);
@@ -504,7 +518,7 @@ impl Selectors<'_> {
                     let above = core::mem::take(&mut found.above);
                     let left = core::mem::take(&mut found);
                     found.above = above;
-                    if !rest[..count].iter().any(|it| matches!(it, b'+' | b'~')) {
+                    if bun_core::strings::index_of_any(&rest[..count], b"+~").is_none() {
                         found.above.extend(left.all());
                     }
                 }
@@ -531,6 +545,7 @@ pub(crate) fn requirements(
         at: 0,
         known: None,
         unescaped,
+        depth: 0,
     };
     out.clear();
     loop {

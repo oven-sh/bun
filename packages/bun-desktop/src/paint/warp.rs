@@ -1,9 +1,8 @@
 //! Pixels that are painted once and then repeated or distorted.
 
-use resvg::tiny_skia::{Pixmap, Transform};
-
-use super::raster::{Clip, IntRect, Layer, Paint, Pixel, map_point};
-use crate::abi::{Rect, Tile};
+use super::raster::{Clip, Coverage, IntRect, Layer, Paint, Pixel, map_point, map_rect};
+use crate::abi::{Rect, RoundedRect, Tile};
+use crate::gfx::{Pixmap, Transform};
 
 const MAX_SIDE: f32 = 4096.;
 
@@ -133,8 +132,7 @@ pub fn project(
         scale_y.min(MAX_SIDE / bounds.height),
     );
     let matrix = Transform::from_scale(scale_x, scale_y);
-    let Some(mut flat) = Layer::new(IntRect::around(super::raster::map_rect(&matrix, bounds)))
-    else {
+    let Some(mut flat) = Layer::new(IntRect::around(map_rect(&matrix, bounds))) else {
         return;
     };
     paint(&mut flat, &matrix);
@@ -159,6 +157,91 @@ pub fn project(
         }
     };
     target.fill(clip.rect, None, clip, &Paint::Shader(&shade));
+}
+
+/// Shows the part of `source` that is in `rect`. `placement` puts it in the space of `rect`.
+pub fn draw(
+    target: &mut Layer,
+    source: &Pixmap,
+    rect: Rect,
+    placement: Transform,
+    matrix: &Transform,
+    smooth: bool,
+) {
+    const ONE: f32 = 65536.;
+    let Some(inverse) = matrix.pre_concat(placement).invert() else {
+        return;
+    };
+    let (pixels, width): (&[Pixel], _) = (source.data().as_chunks().0, source.width() as usize);
+    let (last_column, last_row) = (
+        i64::from(source.width()) - 1,
+        i64::from(source.height()) - 1,
+    );
+    let row_at = |y: i64| &pixels[y.clamp(0, last_row) as usize * width..][..width];
+    // Two channels at a time, with 8 bits after the point.
+    let spread = |pixel: Pixel| {
+        u64::from(u32::from_le_bytes(pixel) & 0xff_00ff)
+            | u64::from(u32::from_le_bytes(pixel) & 0xff00_ff00) << 24
+    };
+    let mix = |[a, b]: [u64; 2], by: i64| {
+        ((a * (256 - by as u64) + b * by as u64 + 0x80_0080_0080_0080) >> 8) & 0xff_00ff_00ff_00ff
+    };
+    let shade = |first: i32, y: i32, row: &mut [Pixel]| {
+        let (u, v) = map_point(&inverse, first as f32 + 0.5, y as f32 + 0.5);
+        let fixed = |it: f32| (it * ONE).clamp(-1e13, 1e13).round() as i64;
+        let (mut u, mut v, du, dv) = (fixed(u), fixed(v), fixed(inverse.sx), fixed(inverse.ky));
+        if !smooth {
+            for pixel in row {
+                *pixel = row_at(v >> 16)[(u >> 16).clamp(0, last_column) as usize];
+                (u, v) = (u + du, v + dv);
+            }
+            return;
+        }
+        (u, v) = (u - (1 << 15) + 128, v - (1 << 15) + 128);
+        let (mut rows, mut columns, mut known) = ([row_at(0); 2], [0; 2], (i64::MIN, i64::MIN));
+        for pixel in row {
+            if known != (u >> 16, v >> 8) {
+                if known.1 >> 8 != v >> 16 {
+                    rows = [row_at(v >> 16), row_at((v >> 16) + 1)];
+                }
+                let column = |x: i64| {
+                    mix(
+                        rows.map(|row| spread(row[x.clamp(0, last_column) as usize])),
+                        v >> 8 & 255,
+                    )
+                };
+                columns = [
+                    if known == ((u >> 16) - 1, v >> 8) {
+                        columns[1]
+                    } else {
+                        column(u >> 16)
+                    },
+                    column((u >> 16) + 1),
+                ];
+                known = (u >> 16, v >> 8);
+            }
+            let mixed = mix(columns, u >> 8 & 255);
+            *pixel = ((mixed | mixed >> 24) as u32).to_le_bytes();
+            (u, v) = (u + du, v + dv);
+        }
+    };
+    let (mapped, paint) = (map_rect(matrix, rect), Paint::Shader(&shade));
+    let area = IntRect::around(mapped).intersect(target.rect);
+    if !matrix.has_skew() && IntRect::around(mapped).to_rect() == mapped {
+        return target.fill(area, None, &Clip::new(area), &paint);
+    }
+    target.fill_coverage(
+        &Coverage::of_shape(
+            &RoundedRect {
+                rect,
+                ..RoundedRect::default()
+            },
+            matrix,
+            area,
+        ),
+        &Clip::new(area),
+        &paint,
+    );
 }
 
 /// Shows `part` of the pixels in each tile.

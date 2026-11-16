@@ -2,47 +2,39 @@
 
 use super::*;
 
+use bun_jsc::vm_handle::Posted;
+use core::sync::atomic::AtomicPtr;
+
 /// `DevServer.HotReloadEvent` — produced by the watcher thread.
-// Note: cache-line alignment makes each inline `WatcherAtomics.events: [3]`
-// element occupy its own cache line, avoiding false sharing on
-// `contention_indicator` between watcher and dev-server threads. 128 matches
-// the cache line on x86_64/aarch64 (Bun's tier-1 targets) and absorbs Intel
-// adjacent-line prefetch.
-#[repr(align(128))]
+#[derive(Default)]
 pub(crate) struct HotReloadEvent {
-    /// BACKREF (LIFETIMES.tsv): element of `WatcherAtomics.events: [3]`.
-    /// Nulled by `Drop for DevServer` when an event is still queued; `run`
-    /// checks for null before dereferencing.
-    pub(crate) owner: *mut DevServer,
-    /// BACKREF to the owning `Box<WatcherAtomics>`; `run` reclaims it when
-    /// `owner` has been nulled.
-    pub(crate) atomics: *mut WatcherAtomics,
-    pub(crate) concurrent_task: bun_event_loop::ConcurrentTask::ConcurrentTask,
-    pub(crate) files: StringArrayHashMap<()>,
-    pub(crate) dirs: StringArrayHashMap<()>,
+    files: StringArrayHashMap<()>,
+    dirs: StringArrayHashMap<()>,
     /// NUL-joined absolute paths.
-    pub(crate) extra_files: Vec<u8>,
-    pub(crate) timer: std::time::Instant,
-    /// 1 if referenced, 0 if unreferenced; see `WatcherAtomics`.
-    #[cfg(debug_assertions)]
-    pub(crate) contention_indicator: core::sync::atomic::AtomicU32,
-    #[cfg(debug_assertions)]
-    pub(crate) debug_mutex: bun_threading::Mutex,
+    extra_files: Vec<u8>,
 }
 
-impl bun_event_loop::Taskable for HotReloadEvent {
-    const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::BakeHotReloadEvent;
-    /// An inline slot of the watcher's `WatcherAtomics`. If its DevServer is
-    /// gone (`owner` nulled by `Drop for DevServer`, which then leaves the
-    /// atomics to the queued event), this was the last thing keeping the
-    /// atomics alive; otherwise the DevServer still owns them.
+/// Hands changes from the watcher thread to the JS thread.
+pub(crate) struct PendingReloadEvent {
+    /// Null once the `DevServer` is dropped.
+    owner: AtomicPtr<DevServer>,
+    pub(super) state: bun_threading::Guarded<PendingState>,
+}
+
+pub(super) struct PendingState {
+    pub(super) event: HotReloadEvent,
+    /// When the first change in `event` was seen.
+    pub(super) timer: Instant,
+    /// No task is posted while set. `process_reload_events` clears it once `event` is empty.
+    pub(super) scheduled: bool,
+}
+
+/// The queued pointer is from `Arc::into_raw`.
+impl bun_event_loop::Taskable for PendingReloadEvent {
+    const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::BakePendingReloadEvent;
     unsafe fn release_unrun(this: *mut Self) {
-        // SAFETY: fn contract; `atomics` is the heap WatcherAtomics `this` lives in.
-        unsafe {
-            if (*this).owner.is_null() {
-                bun_core::heap::destroy((*this).atomics);
-            }
-        }
+        // SAFETY: fn contract.
+        drop(unsafe { Arc::from_raw(this) });
     }
     /// The dev server is the realm's.
     unsafe fn context(_: *const Self) -> bun_event_loop::ContextId {
@@ -51,44 +43,12 @@ impl bun_event_loop::Taskable for HotReloadEvent {
 }
 
 impl HotReloadEvent {
-    pub(crate) fn init_empty(owner: *mut DevServer) -> HotReloadEvent {
-        HotReloadEvent {
-            owner,
-            atomics: core::ptr::null_mut(),
-            concurrent_task: Default::default(),
-            files: Default::default(),
-            dirs: Default::default(),
-            extra_files: Vec::new(),
-            timer: std::time::Instant::now(),
-            #[cfg(debug_assertions)]
-            contention_indicator: core::sync::atomic::AtomicU32::new(0),
-            #[cfg(debug_assertions)]
-            debug_mutex: bun_threading::Mutex::default(),
-        }
-    }
-
     pub(crate) fn is_empty(&self) -> bool {
         (self.files.count() + self.dirs.count()) == 0
     }
 
-    /// Debug-asserts that the owning [`DevServer`]'s watcher thread-lock is
-    /// held. Centralises the back-ref deref so the call sites in
-    /// `watcher_acquire_event` / `watcher_release_and_submit_event` stay safe.
-    #[inline]
-    pub(crate) fn assert_watcher_thread_locked(&self) {
-        // SAFETY: BACKREF — `owner` is the live DevServer whose `watcher_atomics`
-        // holds this event; only reached from the watcher thread while
-        // `Watcher.mutex` is held, so `owner` has not been nulled. Raw place
-        // projection so this does not alias any live `&mut HotReloadEvent`.
-        unsafe { (*self.owner).bun_watcher.thread_lock.assert_locked() };
-    }
-
     /// Invalidates items in IncrementalGraph, appending all new items to `entry_points`.
-    pub(crate) fn process_file_list(
-        &mut self,
-        dev: &mut DevServer,
-        entry_points: &mut EntryPointList,
-    ) {
+    fn process_file_list(&mut self, dev: &mut DevServer, entry_points: &mut EntryPointList) {
         // RAII: `ThreadLockGuard` stores a raw `*const ThreadLock` and unlocks on
         // drop, so it does not hold a borrow of `dev` for the scope.
         let _g = dev.graph_safety_lock.guard();
@@ -209,9 +169,7 @@ impl HotReloadEvent {
         }
     }
 
-    pub(crate) fn reset(&mut self) {
-        #[cfg(debug_assertions)]
-        self.debug_mutex.unlock();
+    fn reset(&mut self) {
         self.files.clear_retaining_capacity();
         self.dirs.clear_retaining_capacity();
         self.extra_files.clear();
@@ -247,25 +205,42 @@ impl HotReloadEvent {
         self.extra_files.extend_from_slice(sub_path);
         self.extra_files.push(0);
     }
+}
 
-    /// Main-thread side of the watcher → DevServer hand-off.
-    ///
+impl PendingReloadEvent {
+    pub(super) fn new(owner: *mut DevServer) -> Arc<Self> {
+        Arc::new(Self {
+            owner: AtomicPtr::new(owner),
+            state: bun_threading::Guarded::new(PendingState {
+                event: HotReloadEvent::default(),
+                timer: Instant::now(),
+                scheduled: false,
+            }),
+        })
+    }
+
+    pub(super) fn detach(&self) {
+        self.owner.store(core::ptr::null_mut(), Ordering::SeqCst);
+    }
+
+    pub(super) fn post(self: &Arc<Self>, vm_handle: &bun_jsc::VmHandle) {
+        let queued = Arc::into_raw(Arc::clone(self));
+        let task = bun_event_loop::ConcurrentTask::create_from(queued.cast_mut());
+        if let Posted::Refused(_) = vm_handle.post(bun_jsc::LoopKind::Regular, task) {
+            // SAFETY: from `into_raw` above, and not queued.
+            drop(unsafe { Arc::from_raw(queued) });
+        }
+    }
+
     /// # Safety
-    /// `first` points into `(*(*first).atomics).events` of a live heap
-    /// `WatcherAtomics`. `(*first).owner` is either the live owning
-    /// `DevServer` or null (set by `Drop for DevServer` while this event was
-    /// still queued). Must run on the DevServer thread.
+    /// `this` came off the queue of the thread that owns the `DevServer`.
     #[inline(never)]
-    pub(crate) unsafe fn run(first: *mut HotReloadEvent) {
+    pub(crate) unsafe fn run(this: *mut Self) {
         bun_removable_features::removable_definition!(Bundler, Self::run);
-        // SAFETY: caller contract. With a null `owner`, `atomics` (the `heap::alloc_nn` pointer) has
-        // no other owner. Otherwise the slot is this thread's until it is recycled.
-        let (event, dev) = unsafe {
-            let Some(dev) = (*first).owner.as_mut() else {
-                bun_core::heap::destroy((*first).atomics);
-                return;
-            };
-            (&mut *first, dev)
+        // SAFETY: fn contract. `Drop for DevServer` clears `owner` on this thread.
+        let Some(dev) = (unsafe { Arc::from_raw(this).owner.load(Ordering::SeqCst).as_mut() })
+        else {
+            return;
         };
         debug_assert!(dev.magic == Magic::Valid);
         bun_core::scoped_log!(DevServer, "HMR Task start");
@@ -273,22 +248,13 @@ impl HotReloadEvent {
             bun_core::scoped_log!(DevServer, "HMR Task end");
         }
 
-        #[cfg(debug_assertions)]
-        {
-            debug_assert!(event.debug_mutex.try_lock());
-            debug_assert!(event.contention_indicator.load(Ordering::SeqCst) == 0);
-        }
-
         if dev.current_bundle.is_some() {
-            dev.next_bundle.reload_event = Some(first);
+            dev.next_bundle.has_reload_event = true;
             return;
         }
 
         let mut entry_points = EntryPointList::default();
-        event.process_file_list(dev, &mut entry_points);
-        let timer = event.timer;
-        // SAFETY: as above.
-        unsafe { dev.process_reload_events(first, &mut entry_points) };
+        let timer = dev.process_reload_events(&mut entry_points);
 
         if entry_points.set.count() == 0 {
             return;
@@ -315,26 +281,23 @@ impl HotReloadEvent {
 }
 
 impl DevServer {
-    /// SAFETY: `first` is a slot of `self.watcher_atomics` that was submitted and not yet recycled.
-    pub(super) unsafe fn process_reload_events(
-        &mut self,
-        first: *mut HotReloadEvent,
-        entry_points: &mut EntryPointList,
-    ) {
-        let mut current = first;
-        // SAFETY: caller contract, which also holds for the slot that recycling returns.
-        unsafe {
-            loop {
-                (*current).process_file_list(self, entry_points);
-                let atomics = self.watcher_atomics.as_ptr();
-                let Some(next) = WatcherAtomics::recycle_event_from_dev_server(atomics, current)
-                else {
-                    break;
-                };
-                current = next;
-                #[cfg(debug_assertions)]
-                debug_assert!((*current).debug_mutex.try_lock());
+    /// Returns the time of the first change.
+    pub(super) fn process_reload_events(&mut self, entry_points: &mut EntryPointList) -> Instant {
+        let mut event = core::mem::take(&mut self.spare_reload_event);
+        let mut first_seen = None;
+        loop {
+            {
+                let mut pending = self.pending_reload_event.state.lock();
+                let timer = *first_seen.get_or_insert(pending.timer);
+                if pending.event.is_empty() {
+                    pending.scheduled = false;
+                    self.spare_reload_event = event;
+                    return timer;
+                }
+                core::mem::swap(&mut pending.event, &mut event);
             }
+            event.process_file_list(self, entry_points);
+            event.reset();
         }
     }
 }

@@ -4,14 +4,14 @@ use std::cell::RefCell;
 use std::hash::{Hash, Hasher};
 use std::ops::Range;
 
+use crate::hash::{FastHasher, FastMap};
 use harfrust::{
     BufferFlags, Direction, Feature, Language, ShapeOptions, ShapePlan, Tag, UnicodeBuffer,
 };
-use rustc_hash::{FxHashMap, FxHasher};
-use unicode_script::Script;
 
 use super::fonts::Face;
 use super::reach::Reach;
+use crate::unicode::Script;
 
 /// What variations add to kerning is not a whole number of font units.
 pub const STEPS_PER_UNIT: i32 = 64;
@@ -52,8 +52,7 @@ impl Shaping<'_> {
             (_, true) => Direction::RightToLeft,
             _ => Direction::LeftToRight,
         };
-        let script =
-            harfrust::Script::from_iso15924_tag(Tag::from_u32(self.script.as_iso15924_tag()));
+        let script = harfrust::Script::from_iso15924_tag(Tag::new(&self.script.0));
         let mut input = buffer.take().unwrap_or_default();
         for (offset, character) in text[range.clone()].char_indices() {
             match self.capitalizes {
@@ -107,7 +106,7 @@ impl Shaping<'_> {
     }
 
     fn identity(&self) -> u64 {
-        let mut hasher = FxHasher::default();
+        let mut hasher = FastHasher::default();
         let size = if self.face.file.has_tracking {
             self.size.to_bits()
         } else {
@@ -128,7 +127,7 @@ struct Word {
 
 #[derive(Default)]
 pub struct Words {
-    known: FxHashMap<u64, Word>,
+    known: FastMap<u64, Word>,
     text: Vec<u8>,
     glyphs: Vec<Placed>,
     buffer: Option<UnicodeBuffer>,
@@ -215,10 +214,7 @@ impl Words {
     ) {
         const MAX_GLYPHS: usize = 1 << 16;
         const MAX_REACH: usize = 12;
-        let has_words = matches!(
-            shaping.script,
-            Script::Latin | Script::Common | Script::Cyrillic | Script::Greek
-        );
+        let has_words = matches!(&shaping.script.0, b"Latn" | b"Zyyy" | b"Cyrl" | b"Grek");
         let reach = (has_words && !shaping.is_rtl)
             .then(|| shaping.face.file.reach())
             .flatten();
@@ -246,7 +242,7 @@ impl Words {
             let context = widen(text, &word, &item, reach);
             let identity =
                 identity ^ (start - context.start) as u64 ^ ((context.end - end) as u64) << 8;
-            let mut hasher = FxHasher::default();
+            let mut hasher = FastHasher::default();
             (identity, &bytes[context.clone()]).hash(&mut hasher);
             let hash = hasher.finish();
             let is_it = |known: &&Word| {
@@ -289,10 +285,11 @@ mod tests {
 
     #[test]
     fn makes_no_difference() {
+        crate::system_icu::install();
         let text = "To  AVAT. \"Type\" Y a -> b => c != d, (A) fi ffl 1/2 x:y 12:30 - T - Te\u{301}st W. A' T' -- www <!-- x --> \
             1 000 000 \u{301}a A - B a - b A : B ( A ) x * 2 2 x 2 \u{2192} f f i T o Another , . ! ? L ' T \
             averyveryveryveryveryveryveryveryveryveryveryverylongword T ";
-        let families = command("families", &serde_json::Value::Null, None).unwrap();
+        let families = command("families", &crate::json::Value::Null, None).unwrap();
         let (mut words, mut buffer) = (Words::default(), None);
         for family in families.as_array().unwrap() {
             let font = describe(Description::new(family.as_str().unwrap().as_bytes(), 400.));
@@ -300,7 +297,7 @@ mod tests {
             let Some(primary) = fonts.primary(font) else {
                 continue;
             };
-            let (face, script) = (fonts.instance(font, primary, 16.).1, Script::Latin);
+            let (face, script) = (fonts.instance(font, primary, 16.).1, Script::LATIN);
             let shaping = Shaping {
                 face,
                 size: 16.,

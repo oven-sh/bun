@@ -21,11 +21,11 @@ mod retire;
 pub use self::code_file::byte_range_of_node;
 pub use self::code_graph::*;
 pub use self::code_load::CompileInputs;
-pub use self::retire::{ModuleCell, ReadingNoTrees, ReadingTask};
+pub use self::retire::{ModuleCell, ReadingTask, ReadingWithoutKeeping};
 pub(crate) use self::retire::{forget_blocks_of, free_after_tasks};
 
 use self::code_load::{
-    BuildFile, CodeFiles, CodeLoadContext, CompileLoad, RootTables, TypesQuestion,
+    BuildFile, CodeFiles, CodeLoadContext, CompileLoad, ModuleSlots, RootTables, TypesQuestion,
 };
 use crate::atom::{Atom, Interner, known};
 use crate::bind::{self, Bound, Decl, ScopeId, ScopeKind, SymFlags, Symbol, SymbolId};
@@ -63,6 +63,7 @@ use bun_paths::resolve_path::dirname;
 use bun_threading::Guarded;
 use smallvec::SmallVec;
 use std::borrow::Cow;
+use std::cell::UnsafeCell;
 use std::hint::cold_path;
 use std::io::Write;
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicUsize, Ordering};
@@ -108,15 +109,15 @@ enum TransientCandidate<'s> {
 }
 
 fn add_transient_symbols<'s>(
-    module: &mut Module<'s>,
+    trees: &mut ModuleTrees<'s>,
     created: Vec<(TransientSymbol, Symbol<'s>)>,
     arena: &'s Arena,
 ) {
-    module.bound.symbols.reserve_exact(created.len());
+    trees.bound.symbols.reserve_exact(created.len());
     for (mut links, symbol) in created {
-        links.symbol = SymbolId(module.bound.symbols.len() as u32);
-        module.bound.symbols.push(symbol, arena);
-        module.transient_symbols.push(links);
+        links.symbol = SymbolId(trees.bound.symbols.len() as u32);
+        trees.bound.symbols.push(symbol, arena);
+        trees.transient_symbols.push(links);
     }
 }
 
@@ -138,10 +139,10 @@ fn slice_in<'s, T: Copy>(list: &[T], arena: &'s Arena) -> &'s [T] {
 /// count `None` entries.
 fn each_module<'s>(
     host: &dyn Host,
-    modules: &mut [Option<ArenaBox<'s, Module<'s>>>],
-    work: &(dyn Fn(usize, &mut Module<'s>) + Sync),
+    modules: &mut [Option<ArenaBox<'s, ModuleWithTrees<'s>>>],
+    work: &(dyn Fn(usize, &mut ModuleWithTrees<'s>) + Sync),
 ) {
-    let modules: Vec<Guarded<&mut ArenaBox<'s, Module<'s>>>> =
+    let modules: Vec<Guarded<&mut ArenaBox<'s, ModuleWithTrees<'s>>>> =
         modules.iter_mut().flatten().map(Guarded::new).collect();
     host.parallel(modules.len(), &|at| work(at, &mut modules[at].lock()));
 }
@@ -169,14 +170,11 @@ fn few_in<T>(list: Vec<T>, arena: &Arena) -> ArenaFew<'_, T> {
     ArenaFew::from_iter_in(list.into_iter(), arena)
 }
 
+/// What any task may read of any file. It stays as it is when the `ModuleTrees` are freed.
 pub struct Module<'s> {
     /// `text`: `Path()`, which identifies the file. `pretty`: `FileName()`.
     pub path: Path<'s>,
-    pub hir: hir::File<'s>,
-    pub bound: Bound<'s>,
-    /// Lives as long as `bound`. Whether an alias resolves to the symbol synthesized for it can
-    /// only be decided from types.
-    transient_symbols: ArenaVec<'s, TransientSymbol>,
+    pub facts: TreeFacts,
     /// `IsSourceFileDefaultLibrary`: one of TypeScript's own `lib.*.d.ts`, or the file that
     /// `libReplacement` reads in its place.
     pub is_lib: bool,
@@ -288,6 +286,71 @@ pub struct Module<'s> {
     pub holds_code_that_never_runs: bool,
 }
 
+/// The HIR and the binder's tables, which `Files::free_tree` and `ModuleCell::let_go` overwrite while other tasks run.
+pub(crate) struct ModuleTrees<'s> {
+    pub(crate) hir: hir::File<'s>,
+    pub(crate) bound: Bound<'s>,
+    /// Lives as long as `bound`. Whether an alias resolves to the symbol synthesized for it can
+    /// only be decided from types.
+    transient_symbols: ArenaVec<'s, TransientSymbol>,
+}
+
+/// Copied from the `ModuleTrees`, for the tasks that ask about files whose trees they may not read.
+#[derive(Copy, Clone)]
+pub struct TreeFacts {
+    pub kind: FileKind,
+    pub is_js: bool,
+    pub source_len: u32,
+    pub(crate) check_directive: Option<bool>,
+    pub(crate) has_module_syntax: bool,
+    has_commonjs_indicator: bool,
+    pub(crate) has_export_stars: bool,
+    /// The length of `Bound::classes_of_private_names`.
+    pub(crate) private_name_class_count: u32,
+}
+
+impl TreeFacts {
+    fn of(hir: &hir::File<'_>, bound: &Bound<'_>) -> TreeFacts {
+        TreeFacts {
+            kind: hir.kind,
+            is_js: hir.is_js,
+            source_len: hir.source_len,
+            check_directive: hir.check_directive,
+            has_module_syntax: hir.has_module_syntax,
+            has_commonjs_indicator: bound.commonjs_indicator.is_some(),
+            has_export_stars: !bound.export_stars.is_empty(),
+            private_name_class_count: bound.classes_of_private_names.len() as u32,
+        }
+    }
+}
+
+/// The trees lie beside the `Module`, so that a `&Module` does not lead to them.
+struct ModuleWithTrees<'s> {
+    module: Module<'s>,
+    trees: UnsafeCell<ModuleTrees<'s>>,
+}
+
+impl<'s> ModuleWithTrees<'s> {
+    fn set_trees(&mut self, hir: hir::File<'s>, bound: Bound<'s>) {
+        self.module.facts = TreeFacts::of(&hir, &bound);
+        let trees = self.trees.get_mut();
+        (trees.hir, trees.bound) = (hir, bound);
+    }
+}
+
+impl<'s> std::ops::Deref for ModuleWithTrees<'s> {
+    type Target = Module<'s>;
+    fn deref(&self) -> &Module<'s> {
+        &self.module
+    }
+}
+
+impl<'s> std::ops::DerefMut for ModuleWithTrees<'s> {
+    fn deref_mut(&mut self) -> &mut Module<'s> {
+        &mut self.module
+    }
+}
+
 /// The files of a directory come before the files of the directories in it.
 fn compare_as_listed(left: &[u8], right: &[u8]) -> std::cmp::Ordering {
     let mut left = strings::split(left, b"/").peekable();
@@ -394,13 +457,13 @@ impl<'s> Module<'s> {
 impl Module<'_> {
     /// True if its top-level declarations are local to it.
     pub fn is_module(&self) -> bool {
-        self.hir.has_module_syntax || self.is_commonjs()
+        self.facts.has_module_syntax || self.is_commonjs()
     }
 
     /// True for JavaScript that contains `require(..)`, `module.exports = ..` or `exports.a = ..`,
     /// and has neither imports nor exports.
     pub fn is_commonjs(&self) -> bool {
-        self.bound.commonjs_indicator.is_some()
+        self.facts.has_commonjs_indicator
     }
 }
 
@@ -1138,7 +1201,7 @@ fn keep_list<'s, T: Clone + Send + Sync + 'static>(session: &'s Session, list: &
 /// `'r`: the paths belong to the `Resolver`.
 struct Loaded<'s, 'r> {
     /// Without `hir` and `bound` if `parse` has them. Boxed because it's large and moves from list to list.
-    module: ArenaBox<'s, Module<'s>>,
+    module: ArenaBox<'s, ModuleWithTrees<'s>>,
     /// Argument for `Prefetch::take_parse`: the `Parse` it shares with the other copies of the file.
     parse: Option<u32>,
     imports: Vec<Resolution<'r>>,
@@ -1857,7 +1920,7 @@ impl<'s> FileNumbers<'s> {
         &mut self,
         path: &[u8],
         is_lib: bool,
-        modules: &mut Vec<Option<ArenaBox<'s, Module<'s>>>>,
+        modules: &mut ModuleSlots<'s>,
         depths: &mut Vec<u32>,
         found: &mut Found<'s>,
     ) -> FileId {
@@ -4431,9 +4494,9 @@ impl<'s> Included<'_, 's> {
             by_path,
             ..
         } = self;
-        let module: &Module = &self.modules[file.idx()];
-        let hir = &module.hir;
-        let text: &[u8] = &module.hir.text;
+        let module = &self.modules[file.idx()];
+        let hir = &module.trees().hir;
+        let text: &[u8] = &hir.text;
         let (resolver, from) =
             code_types::resolver_of_governed_module(project_resolvers, program_resolver, module);
         let options = resolver.options();
@@ -4735,15 +4798,16 @@ impl<'s> Included<'_, 's> {
                 with_id(code, vec![name.clone()], id.as_ref())
             }
             IncludeReason::Reference(it) => {
-                let from: &Module = &self.modules[it.from.idx()];
+                let from = &self.modules[it.from.idx()];
+                let hir = &from.trees().hir;
                 // `referenceFileLocation.text`
                 let location_text = match it.code {
                     1395 => b"\"tslib\"".to_vec(),
                     1397 => {
-                        let runtime = jsx_runtime_of(options, &from.hir, self.atoms);
+                        let runtime = jsx_runtime_of(options, hir, self.atoms);
                         [&b"\""[..], &runtime.unwrap_or_default(), b"\""].concat()
                     }
-                    _ => (from.hir.text.get(it.start as usize..it.end as usize))
+                    _ => (hir.text.get(it.start as usize..it.end as usize))
                         .unwrap_or_default()
                         .to_vec(),
                 };
@@ -5208,7 +5272,7 @@ pub(crate) fn source_file_may_be_emitted(
     module: &Module,
     is_case_sensitive: bool,
 ) -> bool {
-    if module.hir.kind == FileKind::Declaration || module.is_from_external_library {
+    if module.facts.kind == FileKind::Declaration || module.is_from_external_library {
         return false;
     }
     // The referenced project emits its own sources.
@@ -5221,7 +5285,7 @@ pub(crate) fn source_file_may_be_emitted(
         root_dir => root_dir,
     };
     // `GetSourceFilePathInNewDirWorker`: a JSON file outside that directory would overwrite itself.
-    module.hir.kind != FileKind::Json
+    module.facts.kind != FileKind::Json
         || !options.out_dir.is_empty()
             && (common.is_empty()
                 || contains_path(common, module.file_name(), is_case_sensitive)
@@ -5459,7 +5523,7 @@ fn output_path_errors(
     };
     for module in sources {
         let path = module.file_name();
-        let is_json = module.hir.kind == FileKind::Json;
+        let is_json = module.facts.kind == FileKind::Json;
         if !options.emit_declaration_only {
             let output =
                 own_emit_output_file_path(options, path, common.as_deref(), is_case_sensitive);
@@ -5712,7 +5776,7 @@ impl<'s> Files<'s> {
             by_name: FxHashMap::default(),
         };
         let mut all_found = Found::default();
-        let mut modules: Vec<Option<ArenaBox<Module>>> = Vec::new();
+        let mut modules: ModuleSlots = Vec::new();
         // `parseTaskData.lowestDepth`, indexed by `FoundFile::first`: the lowest number of steps
         // into packages (`increaseDepth`) that a task for the file has run at.
         let mut depths: Vec<u32> = Vec::new();
@@ -5949,7 +6013,7 @@ impl<'s> Files<'s> {
         all_found.files.reserve(code_file_count);
         let mut add = |path: &[u8],
                        is_lib: bool,
-                       modules: &mut Vec<Option<ArenaBox<'s, Module<'s>>>>,
+                       modules: &mut ModuleSlots<'s>,
                        depths: &mut Vec<u32>,
                        found: &mut Found<'s>| {
             numbers.add(path, is_lib, modules, depths, found)
@@ -6107,7 +6171,7 @@ impl<'s> Files<'s> {
         let mut add_numbered = |number: u32,
                                 path: &[u8],
                                 is_lib: bool,
-                                modules: &mut Vec<Option<ArenaBox<'s, Module<'s>>>>,
+                                modules: &mut ModuleSlots<'s>,
                                 depths: &mut Vec<u32>,
                                 found: &mut Found<'s>|
          -> FileId {
@@ -6331,7 +6395,8 @@ impl<'s> Files<'s> {
                             }
                             let mut file_trace = std::mem::take(&mut loaded.type_resolutions_trace);
                             package_json_info_cache.get_package_json_infos(host, &mut file_trace);
-                            for &(kind, value, ..) in &loaded.module.hir.references {
+                            for &(kind, value, ..) in &loaded.module.trees.get_mut().hir.references
+                            {
                                 if kind == ReferenceKind::Lib
                                     && !options.no_lib
                                     && let Some(lib) =
@@ -6640,7 +6705,7 @@ impl<'s> Files<'s> {
             true => bun_wyhash::hash_ascii_lowercase(0, name),
             false => bun_wyhash::hash_ascii_lowercase(0, &to_file_name_lower_case(name)),
         };
-        let is_relative_name = |spec: Atom| spec.is_some() && is_relative(atoms.bytes(spec));
+        let is_relative_name = |spec: Atom| is_relative(atoms.bytes(spec));
         let count = modules.len();
         let is_referred_to: Vec<AtomicBool> = (0..count).map(|_| AtomicBool::new(false)).collect();
         // Ambient modules with `export .. from "./relative"` (2439). The other errors reported
@@ -6697,14 +6762,15 @@ impl<'s> Files<'s> {
                     module.redirected_imports = few_in(redirected, own);
                 }
             }
-            keep_list(session, &mut module.hir.diagnostics);
-            keep_list(session, &mut module.hir.jsdoc_member_comments);
-            keep_list(session, &mut module.hir.jsdoc_param_errors);
+            let (module, trees) = (&module.module, module.trees.get_mut());
+            keep_list(session, &mut trees.hir.diagnostics);
+            keep_list(session, &mut trees.hir.jsdoc_member_comments);
+            keep_list(session, &mut trees.hir.jsdoc_param_errors);
             // The merge appends symbols on the thread that called `load`, so move these lists to its arena. No other
             // list of a module grows after this.
-            module.bound.symbols.transfer_to(arena);
-            transfer_arena(&mut module.transient_symbols, arena);
-            let (hir, bound) = (&module.hir, &module.bound);
+            trees.bound.symbols.transfer_to(arena);
+            transfer_arena(&mut trees.transient_symbols, arena);
+            let (hir, bound) = (&trees.hir, &trees.bound);
             let target_count = module.edges.len() + module.imports.len() + module.code_edges.len();
             let mut targets: Vec<FileId> = Vec::with_capacity(target_count);
             targets.extend_from_slice(module.edges);
@@ -6793,7 +6859,7 @@ impl<'s> Files<'s> {
             });
             // `Files::settle_text`
             if !may_be_unread {
-                keep_list(session, &mut module.hir.text);
+                keep_list(session, &mut trees.hir.text);
             }
         });
         steps.end("each module by itself");
@@ -6824,7 +6890,7 @@ impl<'s> Files<'s> {
         let has_redirects = !options.referenced_projects.is_empty() && !options.no_resolve;
         for module in modules.iter().filter(|_| has_redirects) {
             let from = module.file_name();
-            for &(kind, value, ..) in &module.hir.references {
+            for &(kind, value, ..) in &module.trees().hir.references {
                 if kind != ReferenceKind::Path {
                     continue;
                 }
@@ -6861,7 +6927,8 @@ impl<'s> Files<'s> {
         for (i, summary) in summaries.iter().enumerate().skip(1) {
             if summary.may_be_leaf && !is_referred_to[i].load(Ordering::Relaxed) {
                 let module = &mut modules[i];
-                let imports_from_one = imports_from_one(&module.hir, &module.bound);
+                let trees = module.trees();
+                let imports_from_one = imports_from_one(&trees.hir, &trees.bound);
                 module.is_leaf = !imports_from_one && !summary.lists_declarations_for_every_task;
                 module.is_read_by_every_task =
                     !imports_from_one && summary.lists_declarations_for_every_task;
@@ -6872,11 +6939,14 @@ impl<'s> Files<'s> {
             .zip(&modules)
             .filter(|it| it.0.may_be_unread);
         for (summary, module) in may_be_unread {
-            summary.is_unread_unless_reached = !imports_from_one(&module.hir, &module.bound);
+            let trees = module.trees();
+            summary.is_unread_unless_reached = !imports_from_one(&trees.hir, &trees.bound);
         }
         // What is bound looks into what it refers to.
         let waits = |file: usize| {
-            file != 0 && modules[file].bound.is_unbound && summaries[file].is_unread_unless_reached
+            file != 0
+                && modules[file].trees().bound.is_unbound
+                && summaries[file].is_unread_unless_reached
         };
         #[derive(Copy, Clone, PartialEq, PartialOrd)]
         enum Read {
@@ -6891,7 +6961,7 @@ impl<'s> Files<'s> {
             others.map(|file| (FileId(file as u32), false)).collect();
         while let Some((file, is_named)) = pending.pop() {
             let module = &modules[file.idx()];
-            let now = match module.bound.is_bound_in_part && !is_named {
+            let now = match module.trees().bound.is_bound_in_part && !is_named {
                 true => Read::Part,
                 false => Read::Whole,
             };
@@ -6905,7 +6975,7 @@ impl<'s> Files<'s> {
                 continue;
             }
             let path = module.path.pretty;
-            let uses = module.hir.specifier_uses.iter();
+            let uses = module.trees().hir.specifier_uses.iter();
             let seen = uses.filter(|it| host.is_seen_by_every_file(path, it.pos));
             let seen: FxHashSet<Atom> = seen.map(|it| it.spec).collect();
             let imports = module.imports.iter().filter(|it| seen.contains(&it.0.0));
@@ -6916,7 +6986,8 @@ impl<'s> Files<'s> {
         .zip(&mut summaries)
         .zip(is_read)
         .filter(|((module, _), is_read)| {
-            module.bound.is_unbound || module.bound.is_bound_in_part && *is_read == Read::Whole
+            let bound = &module.trees().bound;
+            bound.is_unbound || bound.is_bound_in_part && *is_read == Read::Whole
         })
         .map(|((module, summary), is_read)| Guarded::new((is_read != Read::No, module, summary)))
         .collect();
@@ -6924,7 +6995,7 @@ impl<'s> Files<'s> {
             |unbound: &Guarded<(bool, &mut ModuleCell<'s>, &mut ModuleSummary<'s>)>| {
                 let unbound = unbound.lock();
                 match unbound.0 {
-                    true => unbound.1.hir.source_len as usize,
+                    true => unbound.1.facts.source_len as usize,
                     false => 0,
                 }
             };
@@ -6932,9 +7003,11 @@ impl<'s> Files<'s> {
         parallel_largest_first(host, &sizes, &|at| {
             let mut unbound = unbound[at].lock();
             let (is_read, module, summary) = &mut *unbound;
+            let module = &mut *module.module;
             if !*is_read {
-                module.hir = stub_of(&mut module.hir);
-                module.bound = Bound::empty_in(module.hir.arena());
+                let stub = stub_of(&mut module.trees.get_mut().hir);
+                let no_tables = Bound::empty_in(stub.arena());
+                module.set_trees(stub, no_tables);
                 module.is_leaf = true;
                 return;
             }
@@ -6943,12 +7016,13 @@ impl<'s> Files<'s> {
                 None => options.for_parsing(),
             };
             Self::bind_reached(session, run, host, for_parsing, &atoms, module);
-            keep_list(session, &mut module.hir.diagnostics);
-            keep_list(session, &mut module.hir.jsdoc_member_comments);
-            keep_list(session, &mut module.hir.jsdoc_param_errors);
-            module.bound.symbols.transfer_to(arena);
-            summary.symbols = module.bound.symbols.len();
-            summary.type_nodes = module.hir.types.len() as u32;
+            let ModuleTrees { hir, bound, .. } = module.trees.get_mut();
+            keep_list(session, &mut hir.diagnostics);
+            keep_list(session, &mut hir.jsdoc_member_comments);
+            keep_list(session, &mut hir.jsdoc_param_errors);
+            bound.symbols.transfer_to(arena);
+            summary.symbols = bound.symbols.len();
+            summary.type_nodes = hir.types.len() as u32;
         });
         drop(unbound);
         steps.end("leaves, what is read, binding of what is reached");
@@ -7278,7 +7352,7 @@ impl<'s> Files<'s> {
                 |(), (), _| {
                     load(LoadSteps::Read, false);
                 },
-                &mut vec![(); io.max_threads()],
+                &vec![(); io.max_threads()],
                 || on_all_threads(LoadSteps::Process),
             ),
             // Any one of these finishes the load by itself.
@@ -7403,35 +7477,34 @@ impl<'s> Files<'s> {
         host: &dyn Host,
         options: ParseOptions,
         atoms: &Interner<'s>,
-        module: &mut Module<'s>,
+        module: &mut ModuleWithTrees<'s>,
     ) {
-        debug_assert!(module.bound.is_unbound || module.bound.is_bound_in_part);
+        let (path, specifies_esm) = (module.path.pretty, module.specifies_esm);
+        let trees = module.trees.get_mut();
+        debug_assert!(trees.bound.is_unbound || trees.bound.is_bound_in_part);
         let arena = session.arena();
-        let path = module.path.pretty;
-        if module.bound.is_bound_in_part
+        if trees.bound.is_bound_in_part
             && let Some(run) = run.filter(|run| run.has_file(host, path))
         {
             let key = ParseKey {
                 options,
                 script_kind: host.script_kind(path),
                 is_lib: false,
-                specifies_esm: module.specifies_esm,
+                specifies_esm,
                 origin: host.origin(path),
                 is_part: false,
             };
             let parse = run.parse(host, path, key, None);
-            debug_assert!(parse.bound.specifiers[..] == module.bound.specifiers[..]);
-            module.hir = parse.hir.share(arena, session);
-            module.bound = parse.bound.share(arena);
+            debug_assert!(parse.bound.specifiers[..] == trees.bound.specifiers[..]);
+            module.set_trees(parse.hir.share(arena, session), parse.bound.share(arena));
             return;
         }
         // A module that waits has given up its tree, and its text unless other programs share it.
-        let text = match module.bound.is_bound_in_part || module.hir.text.is_empty() {
+        let text = match trees.bound.is_bound_in_part || trees.hir.text.is_empty() {
             true => host.read_source(path),
-            false => std::mem::take(&mut module.hir.text),
+            false => std::mem::take(&mut trees.hir.text),
         };
-        let specifies_esm = module.specifies_esm;
-        let (hir, bound) = Self::parse_and_bind(
+        let (mut hir, bound) = Self::parse_and_bind(
             arena,
             host,
             options,
@@ -7442,12 +7515,9 @@ impl<'s> Files<'s> {
             text,
             BindTime::Now,
         );
-        module.hir = hir;
-        rename_private_names(&mut module.hir, &bound, atoms, path);
-        debug_assert!(
-            bound.ran_out_of_stack || bound.specifiers[..] == module.bound.specifiers[..]
-        );
-        module.bound = bound;
+        rename_private_names(&mut hir, &bound, atoms, path);
+        debug_assert!(bound.ran_out_of_stack || bound.specifiers[..] == trees.bound.specifiers[..]);
+        module.set_trees(hir, bound);
     }
 
     /// Sets `hir` and `bound` of `module`, the copy of a package file that's in the program. If `parse`
@@ -7458,11 +7528,11 @@ impl<'s> Files<'s> {
         host: &dyn Host,
         options: &Options,
         atoms: &Interner<'s>,
-        module: &mut Module<'s>,
+        module: &mut ModuleWithTrees<'s>,
         parse: Option<Parse<'s>>,
     ) {
         let path = module.file_name();
-        let parse = parse.unwrap_or_else(|| {
+        let mut parse = parse.unwrap_or_else(|| {
             let (hir, bound) = Self::parse_and_bind(
                 arena,
                 host,
@@ -7480,12 +7550,12 @@ impl<'s> Files<'s> {
                 is_shared: false,
             }
         });
-        (module.hir, module.bound) = (parse.hir, parse.bound);
         // A parse from the run already went through `rename_private_names`, with the path of the copy that was parsed.
         // No other module has that path.
         if !parse.is_shared {
-            rename_private_names(&mut module.hir, &module.bound, atoms, path);
+            rename_private_names(&mut parse.hir, &parse.bound, atoms, path);
         }
+        module.set_trees(parse.hir, parse.bound);
     }
 
     /// Builds `Files::package_jsons` and `Files::linked_directories` in the calling thread's arena.
@@ -7546,22 +7616,22 @@ impl<'s> Files<'s> {
     /// # Safety
     /// Only the task that checks `file` may call this, and only at the end of the task, because an
     /// entry of its buffer can hold a value that's bound to an earlier file of the task. If the file
-    /// `is_read_by_every_task`, every task must have ended. No reference into `hir` or `bound` of the file may be alive.
+    /// `is_read_by_every_task`, every task must have ended. No reference into its `ModuleTrees` may be alive on any thread.
     pub unsafe fn free_tree(&self, file: FileId) {
         let cell = &self.modules[file.idx()];
         debug_assert!(cell.is_leaf || cell.is_read_by_every_task);
-        // SAFETY: no file refers to it, so no other task reads its HIR.
-        let module: &mut Module<'s> = unsafe { &mut *cell.module.get() };
+        // SAFETY: caller contract.
+        let trees = unsafe { &mut *cell.module.trees.get() };
         // The load has left a stub of a module that was never bound.
-        if module.bound.symbols.len() > 0 || !module.hir.stmts.is_empty() {
-            if module.hir.owns_its_lists() {
+        if trees.bound.symbols.len() > 0 || !trees.hir.stmts.is_empty() {
+            if trees.hir.owns_its_lists() {
                 // SAFETY: caller contract, and no other program shares the cells of a file that owns its lists.
-                unsafe { module.hir.clear_caches() };
+                unsafe { trees.hir.clear_caches() };
             }
-            module.hir = stub_of(&mut module.hir);
-            module.bound = Bound::empty_in(module.hir.arena());
+            trees.hir = stub_of(&mut trees.hir);
+            trees.bound = Bound::empty_in(trees.hir.arena());
         }
-        module.transient_symbols.clear();
+        trees.transient_symbols.clear();
     }
 
     /// Frees most of the HIR and of the binder's tables of every file. What is small waits for the end of the session.
@@ -7572,22 +7642,25 @@ impl<'s> Files<'s> {
     pub unsafe fn free_long_lists(&self, index: usize) {
         self.forget_what_went(index);
         // SAFETY: caller contract.
-        let module: &mut Module<'s> = unsafe { &mut *self.modules[index].module.get() };
-        if module.hir.owns_its_lists() {
+        let trees = unsafe { &mut *self.modules[index].module.trees.get() };
+        if trees.hir.owns_its_lists() {
             // SAFETY: caller contract, and no other program shares the cells of a file that owns its lists.
-            unsafe { module.hir.clear_caches() };
+            unsafe { trees.hir.clear_caches() };
         }
-        module.hir.free_long_lists();
-        module.bound.free_long_lists();
+        trees.hir.free_long_lists();
+        trees.bound.free_long_lists();
     }
 
     /// The load of a build leaves the text of a source file that no code loads with the file.
+    ///
+    /// # Safety
+    /// No reference into the `ModuleTrees` of `file` may be alive on any thread.
     pub unsafe fn settle_text(&self, file: FileId, is_read: bool) {
-        // SAFETY: nothing else reads or writes the module now.
-        let module: &mut Module<'s> = unsafe { &mut *self.modules[file.idx()].module.get() };
+        // SAFETY: caller contract.
+        let trees = unsafe { &mut *self.modules[file.idx()].module.trees.get() };
         match is_read {
-            true => keep_list(self.session, &mut module.hir.text),
-            false => module.hir.text = Cow::default(),
+            true => keep_list(self.session, &mut trees.hir.text),
+            false => trees.hir.text = Cow::default(),
         }
     }
 
@@ -7673,7 +7746,7 @@ impl<'s> Files<'s> {
         // A project lists far more files than a program reads, and the load holds them all until the last is in.
         // `bind_reached` reads a module that waits again, so what is left of one does not grow with its text.
         if waits_alone {
-            let hir = &mut loaded.module.hir;
+            let hir = &mut loaded.module.trees.get_mut().hir;
             if hir.owns_its_lists() {
                 // SAFETY: the file is of this load alone, and no other thread has seen it yet.
                 unsafe { hir.clear_caches() };
@@ -8114,8 +8187,7 @@ impl<'s> Files<'s> {
             is_shared: false,
         });
         let module = Module {
-            hir: parse.hir,
-            bound: parse.bound,
+            facts: TreeFacts::of(&parse.hir, &parse.bound),
             is_lib,
             // `load` fills `path`, `imports` and `edges`.
             path: Path::init(b""),
@@ -8152,7 +8224,6 @@ impl<'s> Files<'s> {
             is_closed,
             has_conditional_or_mapped_type,
             identifiers,
-            transient_symbols: ArenaVec::new_in(arena),
             role,
             compiled: None,
             code_edges: &[],
@@ -8160,8 +8231,13 @@ impl<'s> Files<'s> {
             runs_other_code: false,
             holds_code_that_never_runs: false,
         };
+        let trees = UnsafeCell::new(ModuleTrees {
+            hir: parse.hir,
+            bound: parse.bound,
+            transient_symbols: ArenaVec::new_in(arena),
+        });
         Loaded {
-            module: ArenaBox::new_in(module, arena),
+            module: ArenaBox::new_in(ModuleWithTrees { module, trees }, arena),
             parse: None,
             imports,
             references,
@@ -8207,7 +8283,7 @@ impl<'s> Files<'s> {
         if !crate::resolve::is_jsx_file_name(module.file_name()) {
             return None;
         }
-        let runtime = jsx_runtime_of(self.module_options(file), &module.hir, &self.atoms)?;
+        let runtime = jsx_runtime_of(self.module_options(file), self.hir(file), &self.atoms)?;
         self.atoms.lookup(&runtime)
     }
 
@@ -8300,9 +8376,9 @@ impl<'s> Files<'s> {
 
     /// True if `mergeModuleAugmentation` merges `symbol` of `file`.
     pub fn merges_module_augmentation(&self, file: FileId, symbol: SymbolId) -> bool {
-        let module = self.module(file);
-        let collected = module_augmentations(&module.hir, &self.atoms);
-        merges_module_augmentation(&module.bound, &collected, symbol)
+        let trees = self.trees(file);
+        let collected = module_augmentations(&trees.hir, &self.atoms);
+        merges_module_augmentation(&trees.bound, &collected, symbol)
     }
 
     /// `declaring` is `order` minus the modules without a global augmentation, an `export as namespace` or a
@@ -8320,19 +8396,19 @@ impl<'s> Files<'s> {
                 continue;
             }
             let file = id.idx();
-            let module = &self.modules[file];
+            let ModuleTrees { hir, bound, .. } = self.trees(id);
             let mut additions: Vec<(Atom, SymbolId)> = Vec::new();
-            if !augmentations && !module.is_module() {
-                additions.extend(module.bound.table(module.bound.scopes[0].locals));
+            if !augmentations && !self.modules[file].is_module() {
+                additions.extend(bound.table(bound.scopes[0].locals));
             }
-            if augmentations && !module.bound.global_augmentations.is_empty() {
-                let collected = module_augmentations(&module.hir, &self.atoms);
-                for &augmentation in &module.bound.global_augmentations {
-                    if !merges_module_augmentation(&module.bound, &collected, augmentation) {
+            if augmentations && !bound.global_augmentations.is_empty() {
+                let collected = module_augmentations(hir, &self.atoms);
+                for &augmentation in &bound.global_augmentations {
+                    if !merges_module_augmentation(bound, &collected, augmentation) {
                         continue;
                     }
-                    let exports = module.bound.symbol(augmentation).exports;
-                    additions.extend(module.bound.table(exports));
+                    let exports = bound.symbol(augmentation).exports;
+                    additions.extend(bound.table(exports));
                 }
             }
             for (name, s) in additions {
@@ -8347,7 +8423,7 @@ impl<'s> Files<'s> {
             // The first declaration of a name owns it. What a later file declares under the name of
             // a module is merged into the module.
             if !augmentations {
-                for &(name, symbol) in self.modules[file].bound.umd_globals.iter() {
+                for &(name, symbol) in self.modules[file].trees().bound.umd_globals.iter() {
                     if !self.globals.contains_key(name) {
                         self.globals.insert(
                             name,
@@ -8363,15 +8439,14 @@ impl<'s> Files<'s> {
         // Such a name is global, as for the project of its file. Where TypeScript would report a duplicate it stays the
         // file's own, as in a module.
         for &id in declaring {
-            let module = &self.modules[id.idx()];
-            if !module.hir.is_script_with_code {
+            let ModuleTrees { hir, bound, .. } = self.trees(id);
+            if !hir.is_script_with_code {
                 continue;
             }
-            let erased = find_erased_declarations(&module.hir);
-            let locals = module.bound.table(module.bound.scopes[0].locals).iter();
+            let erased = find_erased_declarations(hir);
+            let locals = bound.table(bound.scopes[0].locals).iter();
             let is_erased = |symbol: SymbolId| {
-                module
-                    .bound
+                bound
                     .symbol(symbol)
                     .decls
                     .iter()
@@ -8397,7 +8472,7 @@ impl<'s> Files<'s> {
             }
         }
         if let Some(id) = last_resort {
-            let bound = &self.modules[id.idx()].bound;
+            let bound = self.bound(id);
             let locals: Vec<(Atom, SymbolId)> = bound.table(bound.scopes[0].locals).to_vec();
             for (name, symbol) in locals {
                 if !self.globals.contains_key(name) {
@@ -8417,7 +8492,8 @@ impl<'s> Files<'s> {
         {
             let file = id.idx();
             // `c.patternAmbientModules`
-            for &(name, symbol) in self.modules[file].bound.pattern_ambient_modules.iter() {
+            let bound = &self.modules[file].trees().bound;
+            for &(name, symbol) in bound.pattern_ambient_modules.iter() {
                 let text = self.atoms.bytes(name);
                 if let Some(star) = strings::index_of_char_usize(text, b'*') {
                     let prefix = slice_in(&text[..star], self.arena);
@@ -8430,17 +8506,17 @@ impl<'s> Files<'s> {
                 }
             }
             let mut collected: Option<Vec<ModuleId>> = None;
-            for at in 0..self.modules[file].bound.ambient_modules.len() {
-                let (name, symbol, is_global) = self.modules[file].bound.ambient_modules[at];
+            for at in 0..self.bound(id).ambient_modules.len() {
+                let (name, symbol, is_global) = self.bound(id).ambient_modules[at];
                 let sym = Sym {
                     file: id,
                     id: symbol,
                 };
                 if !is_global {
-                    let module = &self.modules[file];
+                    let trees = self.trees(id);
                     let collected = collected
-                        .get_or_insert_with(|| module_augmentations(&module.hir, &self.atoms));
-                    if merges_module_augmentation(&module.bound, collected, symbol) {
+                        .get_or_insert_with(|| module_augmentations(&trees.hir, &self.atoms));
+                    if merges_module_augmentation(&trees.bound, collected, symbol) {
                         augmentations.push((id, name, sym));
                     }
                     continue;
@@ -8537,7 +8613,7 @@ impl<'s> Files<'s> {
         }
         for (index, module) in self.modules.iter().enumerate() {
             let file = FileId(index as u32);
-            for &(import, taker) in module.bound.names_taken_from_imports() {
+            for &(import, taker) in module.trees().bound.names_taken_from_imports() {
                 self.placeholders.push((Sym { file, id: import }, taker));
             }
         }
@@ -8551,7 +8627,9 @@ impl<'s> Files<'s> {
                     *symbol = file_placeholders[i].1;
                 }
             };
-            let bound = &mut self.modules[file_placeholders[0].0.file.idx()].bound;
+            let bound = &mut self.modules[file_placeholders[0].0.file.idx()]
+                .trees_mut()
+                .bound;
             bound.entries.make_owned_in(self.arena);
             (bound.expr_symbol).change_each_in(self.arena, is_placeholder);
             bound
@@ -8614,13 +8692,13 @@ impl<'s> Files<'s> {
     }
 
     fn symbols_mut(&mut self, file: FileId) -> &mut bind::Symbols<'s> {
-        &mut self.modules[file.idx()].bound.symbols
+        &mut self.modules[file.idx()].trees_mut().bound.symbols
     }
 
     /// `newSymbol`: a symbol of the first file.
     fn new_symbol(&mut self, flags: SymFlags, name: Atom) -> Sym {
         let arena = self.arena;
-        let symbols = &mut self.modules[0].bound.symbols;
+        let symbols = &mut self.modules[0].trees_mut().bound.symbols;
         let symbol = Symbol {
             name,
             flags: flags | SymFlags::TRANSIENT,
@@ -8722,11 +8800,11 @@ impl<'s> Files<'s> {
     /// `symbol`. Unlike `clone_symbol` it leaves `symbol` unchanged, and no merge is recorded.
     fn clone_type_as_module_type(&mut self, symbol: Sym, originating_import: Sym) -> Sym {
         let created = vec![self.transient_symbol_for(originating_import.id, symbol, false)];
-        let module = &mut self.modules[originating_import.file.idx()];
-        add_transient_symbols(module, created, self.arena);
+        let trees = self.modules[originating_import.file.idx()].trees_mut();
+        add_transient_symbols(trees, created, self.arena);
         let clone = Sym {
             file: originating_import.file,
-            id: SymbolId(module.bound.symbols.len() as u32 - 1),
+            id: SymbolId(trees.bound.symbols.len() as u32 - 1),
         };
         let parts = vec_from_iter_in(self.parts(symbol).iter().copied(), self.arena);
         self.merged_parts.insert(clone, parts);
@@ -8847,7 +8925,7 @@ impl<'s> Files<'s> {
             // One already exists if it was merged into during the symbol merge.
             if !symbol.flags.contains(SymFlags::ALIAS)
                 || self.canonical(alias) != alias
-                || (self.module(file).transient_symbols.iter()).any(|created| created.alias == id)
+                || (self.trees(file).transient_symbols.iter()).any(|created| created.alias == id)
             {
                 continue;
             }
@@ -8949,7 +9027,7 @@ impl<'s> Files<'s> {
         host.parallel(order.len(), &|at| {
             let file = order[at];
             *found[at].lock() = files.transient_candidates_of(file);
-            let count = files.modules[file.idx()].bound.symbols.len();
+            let count = files.bound(file).symbols.len();
             counts[file.idx()].store(count, Ordering::Relaxed);
         });
         let mut counts: Vec<usize> = counts.into_iter().map(AtomicUsize::into_inner).collect();
@@ -8960,11 +9038,11 @@ impl<'s> Files<'s> {
             }
             self.has_symbols_to_combine |= created.iter().any(|it| it.0.is_combined);
             counts[file.idx()] = counts[file.idx()].saturating_add(created.len());
-            add_transient_symbols(&mut self.modules[file.idx()], created, self.arena);
+            add_transient_symbols(self.modules[file.idx()].trees_mut(), created, self.arena);
         }
         for (count, module) in counts.iter_mut().zip(self.modules.iter()) {
             if *count == NOT_COUNTED {
-                *count = module.bound.symbols.len();
+                *count = module.trees().bound.symbols.len();
             }
         }
         counts
@@ -9216,7 +9294,7 @@ impl<'s> Files<'s> {
     /// placeholder symbol for `target` there, and the declarations of `rejected_symbol` keep their symbol.
     fn redirect_name_to(&mut self, rejected_symbol: Sym, target: Sym) {
         let arena = self.arena;
-        let bound = &mut self.modules[rejected_symbol.file.idx()].bound;
+        let bound = &mut self.modules[rejected_symbol.file.idx()].trees_mut().bound;
         let placeholder = SymbolId(bound.symbols.len() as u32);
         let (name, parent) = {
             let symbol = bound.symbol(rejected_symbol.id);
@@ -9313,18 +9391,23 @@ impl<'s> Files<'s> {
     }
 
     #[inline]
+    fn trees(&self, file: FileId) -> &ModuleTrees<'s> {
+        self.modules[file.idx()].trees()
+    }
+
+    #[inline]
     pub fn hir(&self, file: FileId) -> &hir::File<'s> {
-        &self.modules[file.idx()].hir
+        &self.trees(file).hir
     }
 
     #[inline]
     pub fn bound(&self, file: FileId) -> &Bound<'s> {
-        &self.modules[file.idx()].bound
+        &self.trees(file).bound
     }
 
     #[inline(always)]
     pub fn symbol(&self, sym: Sym) -> Symbol<'_> {
-        self.modules[sym.file.idx()].bound.symbol(sym.id)
+        self.modules[sym.file.idx()].trees().bound.symbol(sym.id)
     }
 
     #[inline]
@@ -9655,15 +9738,14 @@ impl<'s> Files<'s> {
     /// The type parameter list of a symbol with exactly one declaration.
     #[inline]
     pub(crate) fn only_type_param_list(&self, sym: Sym) -> Option<(FileId, Span<TypeParamId>)> {
-        let module = self.module(sym.file);
-        let symbol = module.bound.symbol(sym.id);
+        let ModuleTrees { hir, bound, .. } = self.trees(sym.file);
+        let symbol = bound.symbol(sym.id);
         let [decl] = symbol.decls[..] else {
             return None;
         };
         if symbol.flags.contains(SymFlags::MERGED) {
             return None;
         }
-        let hir = &module.hir;
         let params = match decl {
             Decl::Class(c) => hir[c].type_params,
             Decl::Interface(i) => hir[i].type_params,
@@ -9781,8 +9863,8 @@ impl<'s> Files<'s> {
         ) {
             return None;
         }
-        let module = self.module(file);
-        let hir = &module.hir;
+        let module = &self.modules[file.idx()];
+        let ModuleTrees { hir, bound, .. } = module.trees();
         let mode_of_import = |specified_mode: ResolutionMode| match specified_mode {
             ResolutionMode::None => module.default_mode,
             _ => specified_mode,
@@ -9806,7 +9888,7 @@ impl<'s> Files<'s> {
                     .then_some((export.spec, mode, hir[s].local))
             }
             Decl::Require(pat) => {
-                let (spec, name) = module.bound.required_by(hir, pat)?;
+                let (spec, name) = bound.required_by(hir, pat)?;
                 Some((spec, self.mode_of_require(file), name?))
             }
             _ => None,
@@ -10219,13 +10301,13 @@ impl<'s> Files<'s> {
             let imported = self.module(target);
             let is_made_by_loader = importer.role != FileRole::Inferred
                 && self.is_compiled(target)
-                && imported.hir.source_len == 0;
+                && imported.facts.source_len == 0;
             if is_made_by_loader && let Some(pattern) = find_pattern() {
                 return Some(pattern);
             }
             return imported
                 .is_module()
-                .then(|| self.sym(target, imported.bound.file_symbol));
+                .then(|| self.sym(target, self.bound(target).file_symbol));
         }
         find_pattern()
     }
@@ -10319,7 +10401,7 @@ impl<'s> Files<'s> {
                 // `GetEmitModuleFormatOfFile`: a referenced project determines what its declaration
                 // files are emitted as.
                 ResolutionMode::None
-                    if file.hir.kind == FileKind::Declaration
+                    if file.facts.kind == FileKind::Declaration
                         && file.redirect_for_resolution.is_some_and(|redirect| {
                             (ModuleKind::Es2015..=ModuleKind::EsNext).contains(&redirect.module)
                         }) =>
@@ -10481,7 +10563,7 @@ impl<'s> Files<'s> {
             return found;
         }
         for &file in self.order.iter() {
-            let (hir, bound) = (&self.module(file).hir, &self.module(file).bound);
+            let ModuleTrees { hir, bound, .. } = self.trees(file);
             let aliases = bound.symbols.with_flags(SymFlags::ALIAS);
             for &decl in aliases.flat_map(|symbol| symbol.decls.iter()) {
                 let specifier = match decl {
@@ -11159,12 +11241,12 @@ impl<'s> Files<'s> {
         if !self.flags(symbol).contains(SymFlags::TRANSIENT) {
             return None;
         }
-        let mut created = self.module(symbol.file).transient_symbols.iter();
+        let mut created = self.trees(symbol.file).transient_symbols.iter();
         created.find(|created| created.symbol == symbol.id).copied()
     }
 
     fn transient_symbol_of_alias(&self, alias: Sym, is_combined: bool) -> Option<Sym> {
-        let mut created = self.module(alias.file).transient_symbols.iter();
+        let mut created = self.trees(alias.file).transient_symbols.iter();
         let created = created
             .find(|created| created.alias == alias.id && created.is_combined == is_combined)?;
         Some(Sym {

@@ -40,6 +40,8 @@ pub(crate) struct RuleList {
     /// The `epoch` of the `Stylist` when an element last matched it.
     epoch: Cell<u32>,
     shared: RefCell<SmallVec<[Shared; 1]>>,
+    /// Of the declarations of custom properties that win.
+    customs: OnceCell<u64>,
     plan: OnceCell<Box<Plan>>,
     other_plans: OnceCell<Box<[OnceCell<Box<Plan>>; Flow::COUNT - 1]>>,
 }
@@ -111,6 +113,8 @@ pub(crate) struct Stylist {
     pub(crate) bloom: Option<Bloom>,
     pub(crate) recent_customs: Recent<Inherited>,
     recent_groups: (Recent<Font>, Recent<TextGroup>, Recent<Ink>),
+    /// By `RuleList::customs` and what is inherited, both of which the value keeps alive, if they depend on nothing else.
+    customs: RefCell<Map<(u64, *const Inherited), (Customs, Rc<Inherited>, Box<[Matched]>)>>,
     blocks: Map<u64, Rc<Block>>,
     substituted: RefCell<Map<u64, (Option<Rc<[Value]>>, Deps, u32)>>,
 }
@@ -127,6 +131,7 @@ impl Stylist {
         self.has_results.undo_leak();
         self.lists.undo_leak();
         self.substituted.undo_leak();
+        core::mem::forget(core::mem::take(&mut self.customs));
         core::mem::forget(core::mem::take(&mut self.recent_groups));
         core::mem::forget(core::mem::take(&mut self.recent_customs));
     }
@@ -153,6 +158,7 @@ impl Stylist {
             bloom: None,
             recent_customs: Recent::default(),
             recent_groups: Default::default(),
+            customs: RefCell::default(),
             blocks: Map::default(),
             substituted: RefCell::default(),
         };
@@ -216,6 +222,7 @@ impl Stylist {
             .get_mut()
             .values()
             .for_each(|list| list.shared.borrow_mut().clear());
+        self.customs.get_mut().clear();
     }
 
     fn intern(&self, found: Found) -> Rc<RuleList> {
@@ -240,6 +247,7 @@ impl Stylist {
             matched,
             epoch: Cell::new(self.epoch.0),
             shared: RefCell::default(),
+            customs: OnceCell::new(),
             plan: OnceCell::new(),
             other_plans: OnceCell::new(),
         });
@@ -537,7 +545,6 @@ impl Lookup for Resolver<'_> {
     }
 
     fn env(&self, name: Name, indices: &[i32]) -> Option<Out> {
-        self.cx.uses(Deps::VIEWPORT);
         let area = [
             name!("titlebar-area-x"),
             name!("titlebar-area-y"),
@@ -547,7 +554,10 @@ impl Lookup for Resolver<'_> {
         let mut out = Out::new();
         match area.iter().position(|it| *it == name) {
             _ if !indices.is_empty() => return None,
-            Some(index) => write_px(self.document.environment.titlebar_area?[index], &mut out),
+            Some(index) => {
+                self.cx.uses(Deps::VIEWPORT);
+                write_px(self.document.environment.titlebar_area?[index], &mut out);
+            }
             None if name == name!("preferred-text-scale") => out.push(b'1'),
             None => is_name!(
                 name,
@@ -1664,6 +1674,7 @@ impl Document {
             matched,
             epoch: Cell::default(),
             shared: Default::default(),
+            customs: Default::default(),
             plan: OnceCell::new(),
             other_plans: OnceCell::new(),
         };
@@ -1846,6 +1857,40 @@ impl Document {
         }
     }
 
+    fn shared_customs(&self, id: NodeId, rules: &RuleList, parent: &Style) -> (Customs, Deps) {
+        let winners = &rules.plan(Flow::DEFAULT).customs;
+        if winners.len() < 8 {
+            return self.cascade_customs(id, rules, parent, parent, &[]);
+        }
+        let hash = rules.customs.get_or_init(|| {
+            let mut hasher = FastHasher::default();
+            winners
+                .iter()
+                .for_each(|it| core::ptr::from_ref(rules.declaration(it.1).0).hash(&mut hasher));
+            hasher.finish()
+        });
+        let key = (*hash, Rc::as_ptr(&parent.customs.inherited));
+        if let Some(known) = self.styles.customs.borrow().get(&key) {
+            return (known.0.clone(), Deps::empty());
+        }
+        let (customs, deps) = self.cascade_customs(id, rules, parent, parent, &[]);
+        if deps.is_empty() {
+            let mut known = self.styles.customs.borrow_mut();
+            if known.len() >= 512 {
+                known.clear();
+            }
+            known.insert(
+                key,
+                (
+                    customs.clone(),
+                    Rc::clone(&parent.customs.inherited),
+                    rules.matched.clone(),
+                ),
+            );
+        }
+        (customs, deps)
+    }
+
     fn cascade_customs(
         &self,
         id: NodeId,
@@ -1899,6 +1944,7 @@ impl Document {
                         cx.deps.get(),
                     );
                 }
+                cx.uses(Deps::PARENT);
                 substituted.extend(resolver.reverting.iter().filter_map(|(name, wide)| {
                     Some((winners.iter().find(|it| it.0 == *name)?.1, *wide))
                 }));
@@ -2013,7 +2059,10 @@ impl Document {
         animated_customs: &[(Name, Option<Text>)],
         animated: &[Value],
     ) -> Style {
-        let (customs, deps) = self.cascade_customs(id, rules, parent, parent, animated_customs);
+        let (customs, deps) = match animated_customs.is_empty() && parent.zoom == 1.0 {
+            true => self.shared_customs(id, rules, parent),
+            false => self.cascade_customs(id, rules, parent, parent, animated_customs),
+        };
         let animate = |style: &mut Style, phase| {
             animated
                 .iter()

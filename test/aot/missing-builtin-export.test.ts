@@ -30,6 +30,8 @@ test("every name in src/codegen/builtins/data/module-exports.txt is exported", a
   const absent: string[] = [];
   for (const line of lines) {
     const [specifier, ...names] = line.split(" ");
+    // One starts an app in this process and the other makes its global object a window. test/js/bun/desktop imports them.
+    if (specifier === "bun:desktop/electron" || specifier === "bun:desktop/dom") continue;
     const namespace = await import(specifier);
     for (const name of names) if (!(name in namespace)) absent.push(specifier + " " + name);
   }

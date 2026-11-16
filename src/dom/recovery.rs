@@ -85,6 +85,7 @@ impl Document {
         self.animations.watched.clear();
         self.measuring = 0;
         self.is_measuring_stroke.set(false);
+        self.is_measuring_text.set(false);
         self.svg_size_in_layout.set(None);
         self.svg_ids = Default::default();
         self.referenced_svgs.undo_leak();

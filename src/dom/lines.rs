@@ -1072,6 +1072,21 @@ impl<'a> Placement<'a> {
                 });
             };
             match item.kind {
+                ItemKind::Control
+                    if inline.has_bidi
+                        && range
+                            .clone()
+                            .any(|it| matches!(inline.character(it), '\u{2066}'..='\u{2069}')) =>
+                {
+                    push(
+                        0..0,
+                        0.0,
+                        range
+                            .map(|it| inline.clusters[it as usize].bidi_level)
+                            .min()
+                            .unwrap_or(base_level),
+                    );
+                }
                 ItemKind::Control | ItemKind::Float(_) => {}
                 ItemKind::Open(_)
                 | ItemKind::Close(_)
@@ -1139,7 +1154,7 @@ impl<'a> Placement<'a> {
             let mut next = base_level;
             for piece in pieces.iter_mut().rev() {
                 match inline.items[piece.item].kind {
-                    ItemKind::Close(_) | ItemKind::Annotation(..) => {}
+                    ItemKind::Close(_) | ItemKind::Annotation(..) | ItemKind::Control => {}
                     _ if piece.level == u8::MAX => piece.level = next,
                     _ => next = piece.level,
                 }
@@ -1152,6 +1167,7 @@ impl<'a> Placement<'a> {
                 previous = piece.level;
             }
             reorder(&mut pieces);
+            pieces.retain(|it| it.is_hyphen || inline.items[it.item].kind != ItemKind::Control);
             move_edges_outside(inline, &mut pieces);
         }
         pieces

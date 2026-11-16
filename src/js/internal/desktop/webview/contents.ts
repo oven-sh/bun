@@ -191,6 +191,7 @@ class Remote {
   }
 
   update(mirrored: any) {
+    if (mirrored.pid !== this.mirrored.pid) this.engine.measure();
     this.mirrored = mirrored;
     const before = this.frames;
     this.frames = mirrored.frames.map(frame => WebFrameMain.update(this.engine, frame)).filter(it => it[kId]);
@@ -425,7 +426,8 @@ class Guest extends Remote {
     }
     emitOn(this.webContents, name, event, args);
     const returns = /^will-(?:navigate|redirect)$/.test(name) && event.isMainFrame && !event.defaultPrevented;
-    if (returns && this.state.takeOver(event.url, this.mainFrame)) event.preventDefault();
+    if (returns && this.state.takeOver(event.url, name === "will-navigate" ? event.initiator : this.mainFrame))
+      event.preventDefault();
     const hasArrived = name === "did-navigate" ? args[1] < 300 : name === "did-navigate-in-page" && args[1];
     if (hasArrived && !this.#isDestroyed) this.state.takeOver(args[0], this.mainFrame, this.state.index);
   }
@@ -435,8 +437,9 @@ class Guest extends Remote {
   }
 
   engineClosed() {
+    const reason = this.view.engine.hasAnswered ? "crashed" : "launch-failed";
     this.destroy();
-    emitOn(this.webContents, "render-process-gone", new Event(), [{ reason: "crashed", exitCode: -1 }]);
+    emitOn(this.webContents, "render-process-gone", new Event(), [{ reason, exitCode: -1 }]);
   }
 
   destroy() {

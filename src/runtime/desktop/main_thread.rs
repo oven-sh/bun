@@ -113,6 +113,7 @@ fn shows_nothing() -> bool {
 
 /// Does not return if it is.
 #[cfg(unix)]
+#[inline(never)]
 pub(crate) fn lend_if_needed(run: fn() -> !) {
     use bun_core::env_var;
     // What the main thread has.
@@ -157,6 +158,7 @@ pub(crate) fn lend_if_needed(run: fn() -> !) {
         return IS_LENT.store(false, Ordering::Relaxed);
     }
     ROLE.set(Role::Main);
-    let known = KNOWN_LIBRARY.get_or_init(|| Library::open(&path?).ok());
+    let opened = path.and_then(|path| Library::open(&path).ok());
+    let known = KNOWN_LIBRARY.get_or_init(|| opened);
     (known.as_ref().unwrap_or_else(|| LIBRARY.wait()).run)()
 }

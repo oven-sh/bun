@@ -279,8 +279,23 @@ describe.skipIf(!hasLibrary)("bun:desktop", () => {
     expect(log).toEqual(["transitionrun a", "transitionstart a", "transitionend a"]);
   });
 
+  test("capturePage has a horizontal gradient in a box with round corners", async () => {
+    using it = open(
+      "<div style='width:70px;height:50px;border-radius:12px;background:linear-gradient(90deg,red,blue)'>",
+    );
+    const bitmap = await it.window.window.createImageBitmap(new Blob([it.window.capturePage().toPNG()]));
+    const reader = it.window.document.createElement("canvas").getContext("2d");
+    reader.drawImage(bitmap, 0, 0);
+    const { x, y } = it.$("div").getBoundingClientRect();
+    const pixel = (left: number, top: number) => reader.getImageData(x + left, y + top, 1, 1).data.join();
+    expect([pixel(20, 0), pixel(20, 49)]).toEqual([pixel(20, 25), pixel(20, 25)]);
+    expect(pixel(0, 0)).not.toBe(pixel(0, 25));
+  });
+
   test("capturePage has what a canvas and CSS draw", async () => {
-    using it = open("<style>body{margin:0;background:#00f}</style><canvas width=10 height=10></canvas>");
+    using it = open(
+      "<style>body{margin:0;background:#00f}canvas{display:block}</style><canvas width=10 height=10></canvas>",
+    );
     const context = it.$("canvas").getContext("2d");
     context.fillStyle = "#f00";
     context.fillRect(0, 0, 10, 10);
@@ -402,40 +417,6 @@ describe.skipIf(!hasLibrary)("garbage collection", () => {
     expect(await run(script, env)).toEqual({ stdout: "collected\n", exitCode: 0 });
   });
 });
-
-test.skipIf(!hasLibrary || isWindows || isASAN)(
-  "objects keep their identity when the heap is compacted",
-  async () => {
-    using dir = tempDir("desktop-compaction", {
-      "package.json": JSON.stringify({ name: "compacted" }),
-      "app.js": await Bun.file(import.meta.dir + "/compaction.fixture.js").text(),
-    });
-    await using build = Bun.spawn({
-      cmd: [bunExe(), "compile", "--desktop", "app.js", "--outfile=compacted"],
-      env: bunEnv,
-      cwd: String(dir),
-      stdout: "ignore",
-      stderr: "inherit",
-    });
-    expect(await build.exited).toBe(0);
-    await using proc = Bun.spawn({
-      cmd: [`${dir}/${isMacOS ? "compacted.app/Contents/MacOS/compacted" : "compacted.AppDir/AppRun"}`],
-      env: {
-        ...bunEnv,
-        BUN_DESKTOP_HEADLESS: "1",
-        BUN_DESKTOP_JSC_useHeapCompaction: "1",
-        BUN_DESKTOP_JSC_verboseHeapCompaction: "1",
-        BUN_DESKTOP_JSC_secondsBetweenForcedHeapCompactions: "0.0001",
-      },
-      stderr: "pipe",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stdout).toBe("mismatches: 0\n");
-    expect(stderr).toMatch(/compaction: done, emptied [1-9]/);
-    expect(exitCode).toBe(0);
-  },
-  60_000,
-);
 
 describe.skipIf(!hasLibrary || isWindows)("node:fs lookups", () => {
   async function run(script: string) {

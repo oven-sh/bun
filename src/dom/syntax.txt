@@ -34,7 +34,7 @@ value. `keep=`: what is written if everything could be left out.
 <url-modifiers> = cross-origin( anonymous | use-credentials ) || integrity( <string> ) || referrer-policy( no-referrer | no-referrer-when-downgrade | same-origin | origin | strict-origin | origin-when-cross-origin | strict-origin-when-cross-origin | unsafe-url )
 <image-or-none> = none | <image>
 <image-set> = ^unprefix [ image-set( <image-set-option># ) | -webkit-image-set( <image-set-option># ) ]
-<image-set-option> = [ <string-url> | <url> | <gradient> ] [ <resolution [0,inf]> && <image-type>? | [ +1x ]~~1x ++1dppx <image-type>? ]
+<image-set-option> = [ <string-url> | <url> | <gradient> ] [ <resolution [0,inf]> && <image-type> | <resolution [0,inf]> | [ +1x ]~~1x ++1dppx <image-type>? ]
 <image-type> = type( <string> )
 <gradient> = ^gradient [ linear-gradient( <linear> ) | repeating-linear-gradient( <linear> ) | radial-gradient( <radial> ) | repeating-radial-gradient( <radial> ) | conic-gradient( <conic> ) | repeating-conic-gradient( <conic> ) ] | -webkit-linear-gradient( <old-linear> ) | -webkit-repeating-linear-gradient( <old-linear> ) | -webkit-radial-gradient( <old-radial> ) | -webkit-repeating-radial-gradient( <old-radial> ) | -webkit-gradient( <oldest> )
 <linear> = [ [ [ <angle0>~180deg | [ to [ [ left | right ] || [ top | bottom ] ] ]~to_bottom ] || <interpolation> ] , ]? <stops>
@@ -229,7 +229,7 @@ border-left-width i=medium = <line-width>
 border-right-color = <color>
 border-right-style = <line-style>
 border-right-width i=medium = <line-width>
-border-shape i=none ~ = none | <basic-shape> <geometry-box>?~~border-box <basic-shape> <geometry-box>?~~padding-box | <basic-shape> [ <geometry-box> | half-border-box ]?~~half-border-box
+border-shape i=none ~ = none | <basic-shape> [ <geometry-box> | half-border-box ]?~~border-box <basic-shape> [ <geometry-box> | half-border-box ]?~~padding-box | <basic-shape> [ <geometry-box> | half-border-box ]?~~half-border-box
 border-top-color = <color>
 border-top-left-radius = <radius>
 border-top-right-radius = <radius>
@@ -620,13 +620,13 @@ corner-left-shape : corner-top-left-shape corner-bottom-left-shape = sides
 corner-right-shape : corner-top-right-shape corner-bottom-right-shape = sides
 corner-shape : corner-top-left-shape corner-top-right-shape corner-bottom-right-shape corner-bottom-left-shape = sides
 corner-top-shape : corner-top-left-shape corner-top-right-shape = sides
-flex : flex-grow=1 flex-shrink flex-basis=0% full cfull = [ <'flex-grow'> <'flex-shrink'>? ] || <'flex-basis'> | none @flex-grow=0 @flex-shrink=0 @flex-basis=auto
+flex : flex-grow=1 flex-shrink flex-basis=0% full cfull = <'flex-grow'> <'flex-shrink'>? <'flex-basis'>? | ^not-number <'flex-basis'> [ <'flex-grow'> <'flex-shrink'>? ]? | none @flex-grow=0 @flex-shrink=0 @flex-basis=auto
 flex-flow : flex-direction flex-wrap cfull = any
 font : font-style font-variant-ligatures font-variant-caps font-variant-numeric font-variant-east-asian font-variant-alternates font-variant-position font-variant-emoji font-weight font-stretch font-size line-height font-family font-optical-sizing font-size-adjust font-kerning font-feature-settings font-variation-settings font-language-override = [ <'font-style'> || @font-variant-caps [ normal | small-caps ] || <'font-weight'> || @font-stretch <font-stretch-keyword> ]? <'font-size'> [ / <'line-height'> ]? <'font-family'> | [ caption | icon | menu | message-box | small-caption | status-bar | -webkit-control | -webkit-small-control | -webkit-mini-control ] @font-size=16px @font-family=system-ui
 font-synthesis : font-synthesis-weight=none font-synthesis-style=none font-synthesis-small-caps=none = none | weight @font-synthesis-weight=auto || style @font-synthesis-style=auto || small-caps @font-synthesis-small-caps=auto
 font-variant : font-variant-ligatures font-variant-caps font-variant-alternates font-variant-numeric font-variant-east-asian font-variant-position font-variant-emoji = normal | @font-variant-ligatures none | @font-variant-ligatures <common-ligatures> || @font-variant-ligatures <discretionary-ligatures> || @font-variant-ligatures <historical-ligatures> || @font-variant-ligatures <contextual> || @font-variant-caps <caps> || @font-variant-alternates <alternate> || @font-variant-alternates <alternate> || @font-variant-alternates <alternate> || @font-variant-alternates <alternate> || @font-variant-alternates <alternate> || @font-variant-alternates <alternate> || @font-variant-alternates <alternate> || @font-variant-numeric <figures> || @font-variant-numeric <figure-spacing> || @font-variant-numeric <fractions> || @font-variant-numeric ordinal || @font-variant-numeric slashed-zero || @font-variant-east-asian <east-asian-variant> || @font-variant-east-asian <east-asian-width> || @font-variant-east-asian ruby || @font-variant-position [ sub | super ] || @font-variant-emoji [ text | emoji | unicode ]
 gap : row-gap column-gap = sides
-grid : grid-template-rows grid-template-columns grid-template-areas grid-auto-flow grid-auto-rows grid-auto-columns = <'grid-template'> | [ [ auto-flow && dense ] @grid-auto-flow=dense | auto-flow @grid-auto-flow=row ] <'grid-auto-rows'>? / <'grid-template-columns'> | <'grid-template-rows'> / [ [ auto-flow && dense ] @grid-auto-flow=column @grid-auto-flow=dense | auto-flow @grid-auto-flow=column ] <'grid-auto-columns'>?
+grid : grid-template-rows grid-template-columns grid-template-areas grid-auto-flow grid-auto-rows grid-auto-columns = [ [ auto-flow && dense ] @grid-auto-flow=dense | auto-flow @grid-auto-flow=row ] <'grid-auto-rows'>? / <'grid-template-columns'> | <'grid-template-rows'> / [ [ auto-flow && dense ] @grid-auto-flow=column @grid-auto-flow=dense | auto-flow @grid-auto-flow=column ] <'grid-auto-columns'>? | <'grid-template'>
 grid-area : grid-row-start grid-column-start=? grid-row-end=? grid-column-end=? = <'grid-row-start'> [ / <'grid-column-start'> [ / <'grid-row-end'> [ / <'grid-column-end'> ]? ]? ]?
 grid-column : grid-column-start grid-column-end=? = <'grid-column-start'> [ / <'grid-column-end'> ]?
 grid-row : grid-row-start grid-row-end=? = <'grid-row-start'> [ / <'grid-row-end'> ]?

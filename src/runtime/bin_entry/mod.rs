@@ -173,7 +173,13 @@ pub(crate) unsafe extern "C" fn main(argc: c_int, argv: *const *const c_char) ->
     unsafe { bun_core::init_argv(argc, argv) };
 
     #[cfg(unix)]
-    crate::desktop::main_thread::lend_if_needed(run);
+    bun_removable_features::call_removable_or!(
+        Desktop,
+        ReturnDefault,
+        {},
+        crate::desktop::main_thread::lend_if_needed,
+        run
+    );
     run()
 }
 
@@ -238,9 +244,7 @@ fn run() -> ! {
 /// so grow it to 1024 now. Fails with EINVAL (and does nothing) past RLIMIT_NOFILE.
 #[cfg(any(target_os = "linux", target_os = "android"))]
 fn pregrow_fd_table() {
-    if let Ok(fd) = bun_sys::dup_at_least(bun_sys::Fd::stdin(), 1023) {
-        let _ = bun_sys::close(fd);
-    }
+    let _ = bun_sys::dup_at_least(bun_sys::Fd::stdin(), 1023).map(bun_sys::CloseOnDrop::new);
 }
 
 /// Point the bundled C/C++ dependencies that have an allocator hook at

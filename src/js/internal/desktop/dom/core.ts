@@ -1374,6 +1374,18 @@ function notifyObservers() {
   for (const slot of slots) hooks.fire(slot, "slotchange", true);
 }
 
+function isOldStyleObserved(target: N): boolean {
+  if (!(target.doc.observedOldValues & 2)) return false;
+  for (let node: N | null = target; node !== null; node = node.parent) {
+    if (!(node.flags & F.Observed)) continue;
+    for (const it of node.rare!.observers!) {
+      if (it.oldValues & 2 && (node === target || it.subtree) && (it.filter === null || it.filter.$has("style")))
+        return true;
+    }
+  }
+  return false;
+}
+
 function queueRecord(
   type: number,
   target: N,
@@ -1908,6 +1920,7 @@ function clone(node: N, doc: Doc, deep: boolean, parent: N | null = null, fallba
     to.clonable = true;
     to.serializable = from.serializable;
     to.declarative = from.declarative;
+    to.availableToInternals = from.availableToInternals;
     to.referenceTarget = from.referenceTarget;
     to.keepsRegistryNull = from.keepsRegistryNull;
     if (shadow.rare?.registry !== undefined) rare(root).registry = shadow.rare.registry;
@@ -2315,6 +2328,7 @@ export default {
   prefixOf,
   qualifiedName,
   queueReaction,
+  isOldStyleObserved,
   queueRecord,
   rare,
   react,

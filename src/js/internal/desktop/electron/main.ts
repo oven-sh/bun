@@ -44,13 +44,25 @@ function mainProcess() {
   const { MessageChannelMain, ipcMain } = require("internal/desktop/electron/ipc");
   const { netLog, protocol, session } = require("internal/desktop/electron/session");
   const { webContents, webFrameMain } = require("internal/desktop/electron/web_contents");
-  const { target: _, ...views } = require("internal/desktop/electron/views");
+  const {
+    BaseWindow,
+    BrowserView,
+    BrowserWindow,
+    ImageView,
+    View,
+    WebContentsView,
+  } = require("internal/desktop/electron/views");
   Object.assign(process, system.processMethods);
   outliveExceptions(system.exports.dialog);
   setImmediate(startSoon);
   return {
     ...system.exports,
-    ...views,
+    BaseWindow,
+    BrowserView,
+    BrowserWindow,
+    ImageView,
+    View,
+    WebContentsView,
     MessageChannelMain,
     app,
     ipcMain,

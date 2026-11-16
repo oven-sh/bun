@@ -75,6 +75,7 @@ const blockEnd =
 const headings = set("h1 h2 h3 h4 h5 h6");
 /** What is deeper becomes a sibling, as in Chromium. */
 const MAX_DEPTH = 512;
+const MAX_XML_DEPTH = 5000;
 const MAX_ATTRIBUTES = 4096;
 const headTags = set("base basefont bgsound link meta noframes script style template title");
 const tableParts = set("caption col colgroup tbody td tfoot th thead tr");
@@ -1580,8 +1581,9 @@ declare global {
 }
 type ParserImpl = Parser;
 
-function parseDocument(doc: Doc, html: string, allowShadow = false) {
+function parseDocument(doc: Doc, html: string, allowShadow = false, scripting = doc.page !== null) {
   const parser = new Parser(doc);
+  parser.scripting = scripting;
   parser.allowShadow = allowShadow;
   parser.ended = true;
   parser.write(html);
@@ -1644,6 +1646,7 @@ const entityReference = /&([^\s;&<#]+);/g;
 function* xmlSteps(source: string, root: N, context: N | null, loader: Parser | null): Generator<void> {
   let hasHtmlEntities = false;
   let expansions = 0;
+  let room = source.length * 10 + 1_000_000;
   const fail = (message: string): never => {
     throw core.domError("SyntaxError", message);
   };
@@ -1655,6 +1658,7 @@ function* xmlSteps(source: string, root: N, context: N | null, loader: Parser | 
       const isPredefined = name !== "nbsp" && Object.hasOwn(commonEntities, name);
       if (isPredefined) return commonEntities[name];
       const known = entities.$get(name) ?? (hasHtmlEntities ? decode(`&${name};`, false) : undefined);
+      if ((room -= known?.length ?? 0) < 0) fail("Too many entity references");
       return known ?? fail(`Entity '${name}' not defined`);
     });
   const { doc } = root;
@@ -1676,7 +1680,8 @@ function* xmlSteps(source: string, root: N, context: N | null, loader: Parser | 
           ? text.matchAll(entityReference).find(it => entities.$get(it[1])?.includes("<"))
           : undefined;
       if (reference !== undefined) {
-        if (++expansions > 1000) fail("Too many entity references");
+        if (++expansions > 1000 || (room -= entities.$get(reference[1])!.length) < 0)
+          fail("Too many entity references");
         source =
           source.slice(0, at + reference.index) +
           entities.$get(reference[1]) +
@@ -1740,8 +1745,8 @@ function* xmlSteps(source: string, root: N, context: N | null, loader: Parser | 
         loader.isInserting = false;
         core.react();
       }
-      if (!selfClosing) open.push((parent = node));
-      else closed = node;
+      if (selfClosing) closed = node;
+      else if (open.push((parent = node)) > MAX_XML_DEPTH) fail("Excessive depth in document");
     } else if (end !== undefined) {
       closed = parent;
       if (open.length === 0 || core.qualifiedName(open.pop()!) !== end) fail("Opening and ending tag mismatch: " + end);

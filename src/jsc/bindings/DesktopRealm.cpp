@@ -249,7 +249,11 @@ static void trackRejection(JSGlobalObject* realm, JSPromise* promise, JSPromiseR
         MarkedArgumentBuffer promises;
         for (unsigned i = 0; i < rejected->length(); i++)
             promises.append(rejected->getIndexQuickly(i));
-        rejected->setLength(realm, 0);
+        {
+            auto scope = DECLARE_TOP_EXCEPTION_SCOPE(realm->vm());
+            rejected->setLength(realm, 0);
+            scope.assertNoExceptionExceptTermination();
+        }
         for (unsigned i = 0; i < promises.size(); i++) {
             auto* promise = uncheckedDowncast<JSPromise>(promises.at(i));
             if (!promise->isHandled())
@@ -457,7 +461,6 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionCreateDesktopRealm, (JSGlobalObject * globalO
             proxy->setTarget(vm, realm);
             realm->addressOfGlobalThis()->set(vm, realm, proxy);
         }
-        realm->setConsole(realm);
 #if ENABLE(AOT)
         if (runsCompiledProgram) {
             AOT::acceptForeignBinaryData(globalObject);
@@ -666,7 +669,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionDesktopRealmDefineLazily, (JSGlobalObject * r
     for (unsigned i = 0; i < names->length(); i++) {
         auto name = names->getIndexQuickly(i).toPropertyKey(realm);
         RETURN_IF_EXCEPTION(scope, {});
-        realm->putDirectCustomAccessor(vm, name, accessor, lazyAttributes | PropertyAttribute::CustomValue);
+        putOrReplaceCustomAccessor(vm, realm, name, accessor, lazyAttributes | PropertyAttribute::CustomValue);
     }
     return JSValue::encode(jsUndefined());
 }
@@ -709,7 +712,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionDesktopRealmCacheAccessors, (JSGlobalObject *
                 continue;
             asObject(constants)->putDirectNonIndexAccessor(vm, name, uncheckedDowncast<GetterSetter>(accessor), attributes);
         }
-        realm->putDirectCustomAccessor(vm, name, lazy, PropertyAttribute::CustomValue | PropertyAttribute::ReadOnly | (attributes & (PropertyAttribute::DontEnum | PropertyAttribute::DontDelete)));
+        putOrReplaceCustomAccessor(vm, realm, name, lazy, PropertyAttribute::CustomValue | PropertyAttribute::ReadOnly | (attributes & (PropertyAttribute::DontEnum | PropertyAttribute::DontDelete)));
     }
     return JSValue::encode(jsUndefined());
 }
@@ -760,7 +763,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionDesktopRealmShareGlobals, (JSGlobalObject * r
         else if (entry.attributes() & PropertyAttribute::Accessor)
             realm->putDirectNonIndexAccessor(vm, name, uncheckedDowncast<GetterSetter>(value), entry.attributes());
         else if (entry.attributes() & PropertyAttribute::CustomAccessorOrValue)
-            realm->putDirectCustomAccessor(vm, name, value, entry.attributes());
+            putOrReplaceCustomAccessor(vm, realm, name, value, entry.attributes());
         else
             realm->putDirect(vm, name, value, entry.attributes());
     }
@@ -774,7 +777,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionDesktopRealmShareGlobals, (JSGlobalObject * r
     for (auto& entry : *Zig::GlobalObject::info()->staticPropHashTable) {
         auto name = Identifier::fromString(vm, entry.m_key);
         if (entry.attributes() & PropertyAttribute::BuiltinOrFunctionOrLazyProperty && !page->getDirect(vm, name) && isShared(name))
-            realm->putDirectCustomAccessor(vm, name, accessor, lazyAttributes | PropertyAttribute::CustomValue);
+            putOrReplaceCustomAccessor(vm, realm, name, accessor, lazyAttributes | PropertyAttribute::CustomValue);
     }
     return JSValue::encode(jsUndefined());
 }

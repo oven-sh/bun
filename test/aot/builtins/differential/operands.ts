@@ -55,6 +55,7 @@ export const neverCalled: ReadonlyMap<RegExp, string> = new Map([
   [/^bun:(ffi|test|test\/vitest|jsc|sqlite|internal-for-testing)\./, "it reaches outside JavaScript"],
   [/^Bun\.FFI\.(read\.\w+|toArrayBuffer|toBuffer|CString)$/, "it dereferences an arbitrary pointer"],
   [/^native:Bindgen:bake_plugins\.bind\.ts:setPages$/, "it changes how modules are loaded"],
+  [/^native:Bindgen:desktop\.bind\.ts:(load|wait|waitFor)$|^%NativeFunctions%\.DesktopBindTs(Load|Wait|WaitFor)$/, "it loads machine code, or blocks the thread"],
   [/^%CompilerHelpers%\.(ownEntriesFlat|definePropertiesFrom)$/, "it works on the instance of a compiled program, and this process has none"],
   [/^%CompilerHelpers%\.plainQuery(Entries|Keys|Values)$/, "the compiler hands it what another helper answered for the same operands, and takes that on trust"],
   [/^%CompilerHelpers%\.(appendIterable|takeFromIterable)$/, "it is written with the intrinsics that read @@iterator and step generators, and only compiled code has those"],

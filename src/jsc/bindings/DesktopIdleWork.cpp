@@ -3,11 +3,13 @@
 #include "BunClientData.h"
 
 #if ENABLE(AOT)
+#include <JavaScriptCore/AOTInstance.h>
+#include <JavaScriptCore/AOTInstanceLayout.h>
+#include <JavaScriptCore/AOTState.h>
 #include <JavaScriptCore/AOTTimingOfModuleLoads.h>
+#include <JavaScriptCore/AOTVMState.h>
 #endif
 #include <JavaScriptCore/GCActivityCallback.h>
-#include <JavaScriptCore/HeapCompaction.h>
-#include <JavaScriptCore/HeapCompactionInterrupt.h>
 #include <JavaScriptCore/HeapObserver.h>
 #include <JavaScriptCore/IncrementalSweeper.h>
 #include <JavaScriptCore/IntlObject.h>
@@ -21,18 +23,20 @@ extern "C" void** ucal_open(const UChar*, int32_t, const char*, UCalendarType, U
 extern "C" void ucal_close(void**);
 #endif
 #include <wtf/MonotonicTime.h>
+#include <wtf/OSAllocator.h>
+#include <wtf/PageBlock.h>
+
+#if OS(DARWIN) || OS(LINUX)
+#include <sys/mman.h>
+#endif
 
 #if defined(__GLIBC__)
 #include <malloc.h>
+#elif OS(DARWIN)
+#include <malloc/malloc.h>
 #endif
 #if USE(MIMALLOC)
 #include <mimalloc.h>
-#endif
-#if OS(DARWIN)
-#include <mach-o/getsect.h>
-#include <mach-o/ldsyms.h>
-#elif OS(LINUX)
-#include <link.h>
 #endif
 
 extern "C" void JSC__VM__collectWhileParked(JSC::VM*, JSC::CollectionScope, bool isIdle);
@@ -43,58 +47,51 @@ namespace Bun {
 
 using namespace JSC;
 
-#if USE(MIMALLOC)
-static void forEachStaticVariable(const HeapCompaction::ScanSpan& scan)
-{
-#if OS(DARWIN)
-    for (const char* name : { SEG_DATA, "__DATA_DIRTY" }) {
-        unsigned long size = 0;
-        if (uint8_t* start = getsegmentdata(&_mh_execute_header, name, &size))
-            scan(start, start + size);
-    }
-#elif OS(LINUX)
-    dl_iterate_phdr([](dl_phdr_info* executable, size_t, void* argument) {
-        auto& scan = *static_cast<const HeapCompaction::ScanSpan*>(argument);
-        for (auto& header : std::span { executable->dlpi_phdr, executable->dlpi_phnum }) {
-            auto* start = header.p_type == PT_TLS ? static_cast<uint8_t*>(executable->dlpi_tls_data) : reinterpret_cast<uint8_t*>(executable->dlpi_addr + header.p_vaddr);
-            if (start && (header.p_type == PT_TLS || (header.p_type == PT_LOAD && (header.p_flags & PF_W))))
-                scan(start, start + header.p_memsz);
-        }
-        return 1; }, const_cast<HeapCompaction::ScanSpan*>(&scan));
-#else
-    UNUSED_PARAM(scan);
-#endif
-}
-
-// Block by block in the pages of this thread. Those of other threads can only be read as a whole, and can go away
-// meanwhile, which the scan survives for spans of 4 KB and more.
-static void forEachAllocation(const HeapCompaction::ScanSpan& scan)
-{
-    forEachStaticVariable(scan);
-    struct Walk {
-        const HeapCompaction::ScanSpan& scan;
-        std::array<const void*, 4096> ownPages;
-        size_t numberOfOwnPages { 0 };
-        std::span<const void*> visited() { return std::span { ownPages }.first(numberOfOwnPages); }
-    } walk { scan, {} };
-    mi_theap_visit_blocks(mi_theap_get_default(), true, [](const mi_heap_t*, const mi_heap_area_t* area, void* block, size_t size, void* argument) {
-        auto& walk = *static_cast<Walk*>(argument);
-        if (block)
-            walk.scan(block, static_cast<uint8_t*>(block) + size);
-        else if (walk.numberOfOwnPages < walk.ownPages.size())
-            walk.ownPages[walk.numberOfOwnPages++] = area->blocks;
-        return true; }, &walk);
-    std::ranges::sort(walk.visited());
-    mi_subproc_visit_heaps(mi_subproc_current(), [](mi_heap_t* heap, void* argument) { return mi_heap_visit_blocks(heap, false, [](const mi_heap_t*, const mi_heap_area_t* area, void*, size_t, void* argument) {
-        auto& walk = *static_cast<Walk*>(argument);
-        if (area->used && !std::ranges::binary_search(walk.visited(), area->blocks))
-            walk.scan(area->blocks, static_cast<uint8_t*>(area->blocks) + std::max<size_t>(area->committed, 4 * KB));
-        return true; }, argument); }, &walk);
-}
-#endif
-
 // Paces garbage collection by what the user sees instead of by timers: collections start in the pauses between interactions,
 // and memory is given back once the program has gone quiet.
+#if ENABLE(AOT) && (OS(DARWIN) || OS(LINUX))
+static void giveBackPagesOfZeros(uint8_t* begin, uint8_t* end)
+{
+#if OS(DARWIN)
+    std::array<char, 4096> residency;
+#else
+    std::array<unsigned char, 4096> residency;
+#endif
+    size_t sizeOfPage = pageSize();
+    auto holdsOnlyZeros = [&](const uint8_t* page) { return !page[0] && !memcmp(page, page + 1, sizeOfPage - 1); };
+    begin = reinterpret_cast<uint8_t*>(roundUpToMultipleOf(sizeOfPage, reinterpret_cast<uintptr_t>(begin)));
+    while (begin < end && static_cast<size_t>(end - begin) >= sizeOfPage) {
+        size_t count = std::min(residency.size(), static_cast<size_t>(end - begin) / sizeOfPage);
+        if (mincore(begin, count * sizeOfPage, residency.data()))
+            return;
+        for (size_t page = 0; page < count; ++page) {
+            size_t first = page;
+            while (page < count && (residency[page] & 1) && holdsOnlyZeros(begin + page * sizeOfPage))
+                ++page;
+            if (page > first)
+                OSAllocator::decommit(begin + first * sizeOfPage, (page - first) * sizeOfPage);
+        }
+        begin += count * sizeOfPage;
+    }
+}
+
+// On the thread of the VM, with no collection under way. The poll page and the method table are protected or map the image.
+static void giveBackPagesOfZeros(VM& vm)
+{
+    using AOT::InstanceLayout;
+    for (AOT::Instance* instance : vm.aotState().instances) {
+        auto sizes = instance->tables().instanceSizes;
+        auto* start = reinterpret_cast<uint8_t*>(instance);
+        uint8_t* pollPage = start + InstanceLayout::offsetOfLoopPollPage();
+        giveBackPagesOfZeros(start - InstanceLayout::bytesReservedBelowInstance(sizes), pollPage);
+        giveBackPagesOfZeros(pollPage + InstanceLayout::bytesReservedForLoopPollPage, start + InstanceLayout::offsetOfMethodTable(sizes));
+        giveBackPagesOfZeros(start + InstanceLayout::offsetOfSiteCaches(sizes), start + InstanceLayout::bytesReservedFromInstance(sizes));
+        for (auto [pages, size] : instance->state->pages.ranges())
+            giveBackPagesOfZeros(static_cast<uint8_t*>(pages), static_cast<uint8_t*>(pages) + size);
+    }
+}
+#endif
+
 class DesktopIdleWork final : public HeapObserver {
 public:
     explicit DesktopIdleWork(VM& vm)
@@ -114,6 +111,12 @@ public:
         auto now = MonotonicTime::now();
         uint64_t allocated = heap.totalBytesAllocated();
         m_burst = std::max(0.0, m_burst - bytesPerSecondOfChatter * (now - m_lastWait).seconds()) + (allocated - m_allocatedAtLastWait);
+        // What a program does in the background does not put off settling.
+        m_work = std::max(0.0, m_work - bytesPerSecondOfChores * (now - m_lastWait).seconds()) + (allocated - m_allocatedAtLastWait);
+        if (m_work > workBytes) {
+            m_work = 0;
+            m_settlesAt = now + quietAfter + settleAfter;
+        }
         m_lastWait = now;
         m_allocatedAtLastWait = allocated;
         if (m_burst > activityBytes) {
@@ -126,10 +129,6 @@ public:
         if (isCollecting()) {
             heap.stopIfNecessary();
             return std::min(timeout, 5_ms);
-        }
-        if (double seconds = Options::secondsBetweenForcedHeapCompactions(); seconds && now - m_lastRequest >= Seconds(seconds)) [[unlikely]] {
-            compact();
-            m_lastRequest = MonotonicTime::now();
         }
         if (now < m_due) {
             // The allocator sweeps a block when it needs one. Freeing the empty ones now has it fault them in again.
@@ -148,6 +147,20 @@ public:
         return std::min(timeout, std::max(0_s, m_due - MonotonicTime::now()));
     }
 
+    // Scrolling and typing can allocate next to nothing.
+    void didGetEvents(bool hasInput)
+    {
+        auto now = MonotonicTime::now();
+        if (hasInput || now - m_lastEvent > lullAfter)
+            m_framesSince = now;
+        m_lastEvent = now;
+        if (hasInput) {
+            m_due = std::max(m_due, now + quietAfterInput);
+            m_quietSince = now;
+        } else if (now - m_framesSince < longestWaitForFramesToEnd)
+            m_due = std::max(m_due, now + lullAfter);
+    }
+
 private:
     enum class Step : uint8_t { Collect,
         CollectOld,
@@ -164,7 +177,7 @@ private:
         case Step::Collect:
             if (allocated - m_allocatedAtLastRelease < worthReleasing) {
                 m_step = Step::Settle;
-                m_due = now + settleAfter;
+                m_due = std::max(now, m_settlesAt);
                 return;
             }
             m_step = Step::CollectOld;
@@ -185,27 +198,20 @@ private:
             if (heap.sweeper().timeUntilFire())
                 return;
             heap.objectSpace().shrink();
-            if (std::exchange(m_hasJustCompacted, false))
-                m_holesAfterLastCompaction = HeapCompaction::bytesInHoles(heap);
             m_step = Step::Release;
             return;
         case Step::Release:
             release();
+#if ENABLE(AOT) && (OS(DARWIN) || OS(LINUX))
+            if (Options::runsCompiledImage())
+                giveBackPagesOfZeros(m_vm);
+#endif
             m_allocatedAtLastRelease = allocated;
             m_step = Step::Settle;
-            m_due = now + settleAfter;
+            m_due = std::max(now, m_settlesAt);
             return;
         case Step::Settle:
-            if (now >= m_nextCompaction && isWorthCompacting()) {
-                m_nextCompaction = now + betweenIdleFullCollections;
-                agesCode(now);
-                if (compact()) {
-                    m_nextIdleFullCollection = now + betweenIdleFullCollections;
-                    m_step = Step::Sweep;
-                    return;
-                }
-            }
-            if (now >= m_nextIdleFullCollection && (agesCode(now) || hasGrown(growthWhenSettled) || hasClosedViews())) {
+            if (now >= m_nextIdleFullCollection && (agesCode(now) || hasGrown(growthWhenSettled) || hasClosedViews() || mayHaveLetGo(now))) {
                 m_step = Step::Sweep;
                 collectOld(now);
                 return;
@@ -238,6 +244,8 @@ private:
     bool hasGrown(double factor) const { return m_vm.heap.sizeAfterLastCollection() > m_vm.heap.sizeAfterLastFullCollection() * factor; }
     // What was behind them is old, and has died without the heap growing.
     bool hasClosedViews() const { return Bun__DOM__freedNodes() - m_freedNodesAtLastFullCollection >= nodesOfAView; }
+    // Programs drop what they kept for quick reuse on timers. Once after each stretch of work.
+    bool mayHaveLetGo(MonotonicTime now) const { return now >= m_settlesAt + restFor && m_nextIdleFullCollection < m_settlesAt + restFor + betweenIdleFullCollections; }
     bool isCollecting() const { return WebCore::clientData(m_vm)->idleCollectionsPending.load() || m_vm.heap.collectionScope(); }
 
     void collect(CollectionScope scope, bool isIdle)
@@ -251,21 +259,6 @@ private:
         collect(CollectionScope::Full, true);
     }
 
-    bool isWorthCompacting() const { return Options::useHeapCompaction() && HeapCompaction::bytesInHoles(m_vm.heap) >= m_holesAfterLastCompaction + worthCompacting; }
-
-    // Returns whether that collected.
-    bool compact()
-    {
-#if USE(MIMALLOC)
-        JSLockHolder lock(m_vm);
-        auto result = HeapCompaction::collectAndCompact(m_vm.heap, [](const HeapCompaction::ScanSpan& scan) { forEachAllocation(scan); });
-        m_hasJustCompacted = result.skipped.isNull();
-        return result.didCollect;
-#else
-        return false;
-#endif
-    }
-
     static void release()
     {
         WTF::releaseFastMallocFreeMemory();
@@ -275,6 +268,8 @@ private:
 #endif
 #if defined(__GLIBC__)
         malloc_trim(0);
+#elif OS(DARWIN)
+        malloc_zone_pressure_relief(nullptr, 0);
 #endif
     }
 
@@ -287,18 +282,21 @@ private:
         m_stopsSweeper = true;
     }
 
-    static constexpr uint32_t nodesOfAView = 600;
+    static constexpr uint32_t nodesOfAView = 120;
     static constexpr uint64_t nurseryBytes = 24 * MB;
     static constexpr uint64_t worthReleasing = 4 * MB;
-    static constexpr size_t worthCompacting = 8 * MB;
     static constexpr double activityBytes = 256 * KB;
     static constexpr double bytesPerSecondOfChatter = 256 * KB;
+    static constexpr double workBytes = 3 * MB;
+    static constexpr double bytesPerSecondOfChores = 1 * MB;
     // What a render leaves behind dies soon after it has been promoted. Until it is freed, survivors are spread over ever more blocks.
     static constexpr double growthWhileBusy = 1.35;
     static constexpr double growthWhenQuiet = 1.12;
     static constexpr double growthWhenSettled = 1.06;
     static constexpr Seconds minimumGap = 100_ms;
     static constexpr Seconds lullAfter = 150_ms;
+    static constexpr Seconds quietAfterInput = 1_s;
+    static constexpr Seconds longestWaitForFramesToEnd = 10_s;
     static constexpr Seconds quietAfter = 2_s;
     static constexpr Seconds settleAfter = 8_s;
     static constexpr Seconds restFor = 30_s;
@@ -311,26 +309,26 @@ private:
     uint64_t m_allocatedAtLastRelease { 0 };
     uint64_t m_allocatedAtLastWait { 0 };
     double m_burst { 0 };
+    double m_work { 0 };
     MonotonicTime m_lastWait { MonotonicTime::now() };
     MonotonicTime m_due { m_lastWait + quietAfter };
     MonotonicTime m_quietSince { m_lastWait };
+    MonotonicTime m_lastEvent;
+    MonotonicTime m_framesSince;
+    MonotonicTime m_settlesAt { m_due + settleAfter };
     MonotonicTime m_lastRequest;
     MonotonicTime m_nextShrink;
-    MonotonicTime m_nextCompaction;
     MonotonicTime m_nextIdleFullCollection;
-    size_t m_holesAfterLastCompaction { 0 };
     size_t m_agingRounds { 0 };
     Step m_step { Step::Collect };
-    bool m_hasJustCompacted { false };
     bool m_hasBeenQuiet { false };
     std::atomic<bool> m_stopsSweeper { false };
 };
 
 } // namespace Bun
 
-extern "C" Bun::DesktopIdleWork* Bun__DesktopIdleWork__create(JSC::VM* vm, bool (*hasInput)())
+extern "C" Bun::DesktopIdleWork* Bun__DesktopIdleWork__create(JSC::VM* vm)
 {
-    JSC::setHeapCompactionInterruptCheck(hasInput);
     if (JSC::Options::runsCompiledImage()) {
         WTF::Thread::create("WarmICU"_s, [] {
             JSC::initializeAvailableTimeZones();
@@ -347,6 +345,11 @@ extern "C" long long Bun__DesktopIdleWork__beforeWait(Bun::DesktopIdleWork* work
 {
     Seconds timeout = work->beforeWait(timeoutNs < 0 ? Seconds::infinity() : Seconds::fromNanoseconds(timeoutNs));
     return timeout.isInfinity() ? -1 : timeout.nanosecondsAs<long long>();
+}
+
+extern "C" void Bun__DesktopIdleWork__didGetEvents(Bun::DesktopIdleWork* work, bool hasInput)
+{
+    work->didGetEvents(hasInput);
 }
 
 extern "C" void JSC__useOptionsForDesktopProgram(const char* envp[], size_t envc)

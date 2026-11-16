@@ -1,4 +1,6 @@
 // https://w3c.github.io/html-aam/ and https://w3c.github.io/accname/
+const captionNames = { __proto__: null, fieldset: "legend", table: "caption" };
+
 const core = require("internal/desktop/dom/core");
 const focusing = require("internal/desktop/dom/focus");
 const forms = require("internal/desktop/dom/forms");
@@ -256,7 +258,7 @@ function nativeName(node: N, walk: Walk): string | null {
     const label = fromAll(forms.labelsOf(node), walk, false);
     if (hasText(label)) return label;
   }
-  const caption = { __proto__: null, fieldset: "legend", table: "caption" }[node.name];
+  const caption = captionNames[node.name];
   if (caption) return fromAll(html.childrenNamed(node, caption).slice(0, 1), walk, false);
   if (node.name === "img" || node.name === "area") return getAttr(node, "alt");
   if (node.name === "optgroup" || node.name === "option") return getAttr(node, "label");

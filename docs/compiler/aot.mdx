@@ -149,13 +149,13 @@ await Bun.build({
 
 - **Record the start you want to speed up.** A start of another kind gains less.
 - **Several profiles** cover several ways of starting the app: `--aot-order=interactive.order,oneshot.order`. List the most important one first. A function that more than one of them lists lies where the first one lists it.
-- **Profiles keep working as your code changes.** A function that is gone or renamed is skipped, and new code goes behind the recorded code. A build that differs in a version or a date alone finds every function.
+- **Profiles keep working as your code changes.** A function that is gone or renamed is skipped, and new code goes behind the recorded code. A build that differs in a version or a date alone, that runs in another folder, or whose files were moved or renamed, finds every function.
 - **Only an executable built with `--aot-record-order` can record.** Every other one has no recorder and reads no environment variable for it.
 - **Regular expressions made from strings at run time are left out**, because they can hold what someone typed. Set `BUN_AOT_ORDER_DYNAMIC_REGEXPS=1` to record them, so that the next build compiles them.
 - **No function is compiled differently**, and builds stay reproducible. The profile contains module paths and function names, not source code.
 - **Regular expressions made from strings are recorded too.** A pattern that the build can't work out is interpreted. The profile lists the ones that the run used, and the next build compiles them to machine code. If a pattern comes from user input, that text is in the profile.
 - **On Linux, the executable asks for that part of the file when it starts**, so a cold start waits for the disk once and not for one page after the other.
-- A profile that can't be read is an error. A file that isn't a profile prints a warning, and nothing is placed by it. A profile that was cut off is used as far as it goes.
+- A profile that can't be read is an error. A file that isn't a profile prints a warning, and nothing is placed by it. So does a profile of another program, which lists none of this program's functions. A profile that was cut off is used as far as it goes.
 - `%p` in `BUN_AOT_ORDER_OUT` becomes the process id. `Worker` threads are recorded too. A run that records is several times slower.
 - Recording works on Linux.
 

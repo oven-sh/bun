@@ -3475,15 +3475,15 @@ impl AnyServer {
     /// `None` if `value` is not what `Bun.serve` returns. `value` keeps the server alive.
     pub(crate) fn from_js(value: JSValue) -> Option<AnyServer> {
         if let Some(server) = value.as_class_ref::<HTTPServer>() {
-            Some(Self::from(std::ptr::from_ref(server)))
+            Some(Self::from(server.as_ptr()))
         } else if let Some(server) = value.as_class_ref::<HTTPSServer>() {
-            Some(Self::from(std::ptr::from_ref(server)))
+            Some(Self::from(server.as_ptr()))
         } else if let Some(server) = value.as_class_ref::<DebugHTTPServer>() {
-            Some(Self::from(std::ptr::from_ref(server)))
+            Some(Self::from(server.as_ptr()))
         } else {
             value
                 .as_class_ref::<DebugHTTPSServer>()
-                .map(|server| Self::from(std::ptr::from_ref(server)))
+                .map(|server| Self::from(server.as_ptr()))
         }
     }
 

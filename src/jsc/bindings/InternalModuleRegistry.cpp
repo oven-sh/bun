@@ -518,10 +518,9 @@ static bool encodeInternalModule(const String& text, const String& moduleName, c
     RefPtr<JSC::CachedBytecode> result = JSC::encodeBuiltinFunction(vm, executable, source, sourceStamp, externalStrings, JSC::BytecodeCacheUpdatable::No);
     if (!result)
         return false;
-    result->ref();
     *bytes = result->span().data();
     *size = result->size();
-    *handle = result.get();
+    *handle = result.leakRef();
     return true;
 }
 

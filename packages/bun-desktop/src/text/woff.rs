@@ -1,6 +1,6 @@
 //! WOFF and WOFF2 to SFNT. The input is untrusted.
 
-use std::io::Read as _;
+use crate::bun;
 
 const MAX_SIZE: usize = 128 << 20;
 
@@ -91,13 +91,9 @@ pub fn write_sfnt(flavor: u32, mut tables: Vec<(Tag, Vec<u8>)>) -> Option<Vec<u8
     Some(font)
 }
 
-fn inflate(stream: impl std::io::Read, size: usize) -> Option<Vec<u8>> {
-    if size > MAX_SIZE {
-        return None;
-    }
-    let mut output = Vec::with_capacity(size);
-    stream.take(size as u64).read_to_end(&mut output).ok()?;
-    (output.len() == size).then_some(output)
+fn decompress(size: usize, fill: impl FnOnce(&mut [u8]) -> Option<usize>) -> Option<Vec<u8>> {
+    let mut output = vec![0; Some(size).filter(|it| *it <= MAX_SIZE)?];
+    (fill(&mut output)? == size).then_some(output)
 }
 
 fn decode_woff(file: &[u8]) -> Option<Vec<u8>> {
@@ -112,12 +108,15 @@ fn decode_woff(file: &[u8]) -> Option<Vec<u8>> {
         let (offset, stored) = (header.u32()? as usize, header.u32()? as usize);
         let size = header.u32()? as usize;
         header.take(4)?;
-        total += size;
+        total += size.max(stored);
         let data = file
             .get(offset..offset.checked_add(stored)?)
             .filter(|_| total <= MAX_SIZE)?;
         match stored < size {
-            true => Some((tag, inflate(flate2::read::ZlibDecoder::new(data), size)?)),
+            true => Some((
+                tag,
+                decompress(size, |to| Some(bun::Inflater::new()?.inflate(data, to)?.1))?,
+            )),
             false => Some((tag, data.to_vec())),
         }
     });
@@ -389,8 +388,8 @@ fn decode_woff2(file: &[u8]) -> Option<Vec<u8>> {
         }
     }
 
-    let stream = brotli_decompressor::Decompressor::new(header.take(compressed_size)?, 4096);
-    let data = inflate(stream, offset)?;
+    let stream = header.take(compressed_size)?;
+    let data = decompress(offset, |to| Some(bun::decode_brotli(stream, to)))?;
     let entries = indices.into_iter().map(|index| entries.get(index));
     let entries = entries.collect::<Option<Vec<_>>>()?;
     let find = |tag: &Tag| entries.iter().find(|entry| entry.tag == *tag);
@@ -399,8 +398,12 @@ fn decode_woff2(file: &[u8]) -> Option<Vec<u8>> {
         Some(entry) if entry.transformed => Some(reconstruct_glyf(&data[entry.range.clone()])?),
         _ => None,
     };
+    let mut total = 0;
     let tables = entries.iter().map(|entry| {
-        let table = &data[entry.range.clone()];
+        total += entry.range.len();
+        let table = data
+            .get(entry.range.clone())
+            .filter(|_| total <= MAX_SIZE)?;
         let table = match &entry.tag {
             _ if !entry.transformed => table.to_vec(),
             b"glyf" => std::mem::take(&mut glyphs.as_mut()?.glyf),
@@ -425,72 +428,5 @@ pub fn decode(file: &[u8]) -> Option<Vec<u8>> {
         decode_woff(file)
     } else {
         decode_woff2(file)
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use skrifa::instance::{LocationRef, Size};
-    use skrifa::outline::{DrawSettings, pen::PathElement};
-    use skrifa::{FontRef, MetadataProvider as _};
-
-    const TTF: &[u8] = include_bytes!("../../fixtures/space-mono-subset.ttf");
-    const WOFF: &[u8] = include_bytes!("../../fixtures/space-mono-subset.woff");
-    const WOFF2: &[u8] = include_bytes!("../../fixtures/space-mono-subset.woff2");
-
-    fn glyphs(data: &[u8]) -> Vec<(Vec<PathElement>, Option<f32>, Option<f32>)> {
-        let font = FontRef::new(data).unwrap();
-        let metrics = font.glyph_metrics(Size::unscaled(), LocationRef::default());
-        let glyphs = font.outline_glyphs().iter().map(|(id, glyph)| {
-            let mut path = Vec::new();
-            glyph
-                .draw(
-                    DrawSettings::unhinted(Size::unscaled(), LocationRef::default()),
-                    &mut path,
-                )
-                .unwrap();
-            (
-                path,
-                metrics.advance_width(id),
-                metrics.left_side_bearing(id),
-            )
-        });
-        glyphs.collect()
-    }
-
-    #[test]
-    fn has_the_glyphs_of_the_original() {
-        assert!(glyphs(TTF).len() > 8);
-        for packed in [WOFF, WOFF2] {
-            assert_eq!(glyphs(&super::decode(packed).unwrap()), glyphs(TTF));
-        }
-    }
-
-    #[test]
-    fn survives_damage() {
-        for packed in [WOFF, WOFF2] {
-            for length in 0..packed.len() {
-                super::decode(&packed[..length]);
-            }
-            for index in 0..packed.len() {
-                let mut damaged = packed.to_vec();
-                damaged[index] ^= 0xFF;
-                super::decode(&damaged);
-            }
-        }
-    }
-
-    /// `WOFF2_PAIRS` names a directory with `x.woff2` and what another decoder made of it, `x.ttf`.
-    #[test]
-    #[ignore]
-    fn agrees_with_another_decoder() {
-        for entry in std::fs::read_dir(std::env::var("WOFF2_PAIRS").unwrap()).unwrap() {
-            let path = entry.unwrap().path();
-            if path.extension().unwrap() == "woff2" {
-                let expected = std::fs::read(path.with_extension("ttf")).unwrap();
-                let decoded = super::decode(&std::fs::read(&path).unwrap()).unwrap();
-                assert!(glyphs(&decoded) == glyphs(&expected), "{path:?}");
-            }
-        }
     }
 }

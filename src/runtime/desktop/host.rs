@@ -58,6 +58,18 @@ pub(super) static HOST: Host = Host {
     compose: Bun__DesktopHost__compose,
 };
 
+#[cfg(not(bun_asan))]
+pub(super) static ALLOCATOR: host_abi::Allocator = {
+    use bun_alloc::mimalloc::*;
+    host_abi::Allocator {
+        allocate: mi_malloc_aligned,
+        allocate_zeroed: mi_zalloc_aligned,
+        reallocate: mi_realloc_aligned,
+        free: mi_free,
+        release: mi_on_thread_idle,
+    }
+};
+
 /// # Safety
 /// `rgba` has 4 bytes for each pixel.
 unsafe fn pixels<'a>(rgba: *const u8, [width, height]: [u32; 2]) -> &'a [u8] {

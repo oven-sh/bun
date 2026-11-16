@@ -292,7 +292,7 @@ class Client {
         ...options,
         referrer: options.referrer ?? this.referrerUrl(),
         referrerPolicy: options.referrerPolicy || loader.parseReferrerPolicy(this.referrerPolicy),
-        ...(!this.checksOrigins && { mode: undefined }),
+        ...(!this.checksOrigins && { mode: undefined, isFromPage: true }),
       })
       .then(
         loaded => Object.assign(loaded, { done: (size: number) => void (loaded.completed?.(), record(loaded, size)) }),

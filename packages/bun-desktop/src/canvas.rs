@@ -3,22 +3,21 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use anyhow::{Context as _, Result, bail};
-use image::codecs::{jpeg::JpegEncoder, png::PngEncoder, webp::WebPEncoder};
-use image::{DynamicImage, RgbaImage};
-use resvg::tiny_skia::{self, BlendMode, FilterQuality, Pattern, Pixmap, SpreadMode, Transform};
-use rustc_hash::FxHashMap;
-use serde_json::{Value, json};
-use zeno::{Cap, Fill, Join, PathBuilder as _, Stroke};
-
 use crate::abi::{self, Filter, FontSetting, GradientStop, Rect, RoundedRect, TextRun};
+use crate::codec::Rgba;
+use crate::error::{Context as _, Result, bail};
+use crate::gfx::{self, Cap, Fill, Join, PathBuilder as _, Pixmap, Point, Stroke, Transform};
+use crate::hash::FastMap;
 use crate::images::{self, Content};
+use crate::json::{Value, json};
+use crate::paint::blend::Mode as BlendMode;
 use crate::paint::gradient::{Geometry, Gradient, Spread};
 use crate::paint::raster::{
     Clip, Coverage, IntRect, Layer, Paint, Path, Pixel, blur_extent, demultiply, map_point,
     map_rect, premultiply, rounded_rect_path, scale,
 };
 use crate::paint::scene::{Frame, outset};
+use crate::paint::warp;
 use crate::paint::{cpu, filter};
 use crate::text::{self, Description, Line};
 use crate::{bridge, surface};
@@ -65,7 +64,7 @@ struct Canvas {
 }
 
 thread_local! {
-    static CANVASES: RefCell<FxHashMap<u32, Rc<RefCell<Canvas>>>> = RefCell::default();
+    static CANVASES: RefCell<FastMap<u32, Rc<RefCell<Canvas>>>> = RefCell::default();
 }
 
 fn get(id: u32) -> Option<Rc<RefCell<Canvas>>> {
@@ -220,7 +219,7 @@ impl Reader<'_> {
 }
 
 thread_local! {
-    static PATTERNS: RefCell<FxHashMap<u32, Rc<Pixmap>>> = RefCell::default();
+    static PATTERNS: RefCell<FastMap<u32, Rc<Pixmap>>> = RefCell::default();
 }
 
 const MODES: [BlendMode; 27] = [
@@ -266,25 +265,18 @@ fn fade(row: &mut [Pixel], alpha: f32) {
 }
 
 fn path_bounds(path: &Path) -> Rect {
-    let bounds = zeno::bounds(path, Fill::NonZero, None);
-    Rect {
-        x: bounds.min.x,
-        y: bounds.min.y,
-        width: bounds.width(),
-        height: bounds.height(),
-    }
+    gfx::bounds(path)
 }
 
 fn transformed(path: &Path, by: &Transform) -> Path {
-    let by = zeno::Transform::new(by.sx, by.ky, by.kx, by.sy, by.tx, by.ty);
-    path.iter().map(|command| command.transform(&by)).collect()
+    path.iter().map(|command| command.transform(by)).collect()
 }
 
 /// Without the segments that have no length, and the subpaths that have nothing else.
 fn pruned(path: &Path) -> Path {
-    use zeno::Command::{Close, CurveTo, LineTo, MoveTo, QuadTo};
+    use gfx::Command::{Close, CurveTo, LineTo, MoveTo, QuadTo};
     let (mut kept, mut at, mut start, mut has_segments) =
-        (Path::new(), zeno::Point::ZERO, zeno::Point::ZERO, false);
+        (Path::new(), Point::ZERO, Point::ZERO, false);
     for command in path {
         let end = match *command {
             MoveTo(to) => {
@@ -373,12 +365,22 @@ impl State {
     }
 
     fn pen(&self) -> Stroke<'_> {
-        let mut pen = Stroke::new(self.line_width);
-        pen.cap(self.cap)
-            .join(self.join)
-            .miter_limit(self.miter_limit)
-            .dash(&self.dashes, self.dash_offset);
-        pen
+        let State {
+            line_width: width,
+            cap,
+            join,
+            miter_limit,
+            dash_offset,
+            ..
+        } = *self;
+        Stroke {
+            width,
+            cap,
+            join,
+            miter_limit,
+            dashes: &self.dashes,
+            dash_offset,
+        }
     }
 
     fn with_paint(&self, style: &Style, f: impl FnOnce(&Paint)) {
@@ -656,12 +658,11 @@ impl State {
                 return layer.fill(part.offset(dx, dy), None, clip, &Paint::Shader(&copy));
             }
             // What is around the part does not bleed into it.
-            let crop = tiny_skia::IntRect::from_ltrb(part.left, part.top, part.right, part.bottom);
             let is_all = part.to_rect() == all;
             let cropped = if is_all {
                 None
             } else {
-                crop.and_then(|crop| pixmap.clone_rect(crop))
+                pixmap.cropped(part.left, part.top, part.right, part.bottom)
             };
             let pixmap = cropped.as_ref().unwrap_or(pixmap);
             let (scale_x, scale_y) = placement.get_scale();
@@ -675,33 +676,26 @@ impl State {
                 width / pixmap.width() as f32,
                 height / pixmap.height() as f32,
             );
-            let paint = tiny_skia::Paint {
-                shader: Pattern::new(
-                    pixmap.as_ref(),
-                    SpreadMode::Pad,
-                    if self.is_smooth {
-                        FilterQuality::Bilinear
-                    } else {
-                        FilterQuality::Nearest
-                    },
-                    self.alpha,
-                    Transform::from_row(
-                        stretch_x,
-                        0.,
-                        0.,
-                        stretch_y,
-                        part.left as f32,
-                        part.top as f32,
-                    ),
-                ),
-                ..tiny_skia::Paint::default()
-            };
-            let rect = tiny_skia::Rect::from_xywh(from.x, from.y, from.width, from.height);
-            let (Some(mut drawn), Some(rect)) = (Layer::new(clip.rect), rect) else {
+            let stretch = Transform::from_row(
+                stretch_x,
+                0.,
+                0.,
+                stretch_y,
+                part.left as f32,
+                part.top as f32,
+            );
+            let Some(mut drawn) = Layer::new(clip.rect) else {
                 return;
             };
-            let matrix = placement.post_translate(-clip.rect.left as f32, -clip.rect.top as f32);
-            drawn.pixmap.fill_rect(rect, &paint, matrix, None);
+            warp::draw(
+                &mut drawn,
+                pixmap,
+                from,
+                stretch,
+                &placement,
+                self.is_smooth,
+            );
+            drawn.scale_alpha(self.alpha);
             layer.draw(&drawn, None, clip);
         });
     }
@@ -903,7 +897,7 @@ fn describe_font(arguments: &Value) -> u32 {
     let features = arguments["features"].as_array().into_iter().flatten();
     let tags = features.filter_map(|tag| tag.as_str()?.as_bytes().try_into().ok());
     text::describe(Description {
-        scope: number("scope", 0.) as u32,
+        scope: arguments["scope"].as_u64().unwrap_or(0) as u32,
         stretch: number("stretch", 100.),
         style: number("style", 0.) as u8,
         kerning: arguments["kerning"] != false,
@@ -991,28 +985,28 @@ fn encode(
     format: &str,
     quality: f64,
 ) -> Result<Value> {
-    let mut bytes = Vec::new();
-    let mut image =
-        RgbaImage::from_raw(width, height, premultiplied).context("the canvas is empty")?;
-    if format == "image/jpeg" {
+    let mut image = Rgba {
+        width,
+        height,
+        data: premultiplied,
+    };
+    let bytes = if format == "image/jpeg" {
         // Premultiplied colors are those on black.
-        let encoder = JpegEncoder::new_with_quality(
-            &mut bytes,
-            (quality * 100.).round().clamp(1., 100.) as u8,
-        );
-        DynamicImage::from(image)
-            .into_rgb8()
-            .write_with_encoder(encoder)?;
+        image.to_jpeg((quality * 100.).round().clamp(1., 100.) as u8)
     } else {
         image
-            .pixels_mut()
-            .for_each(|pixel| pixel.0 = demultiply(pixel.0));
-        match format {
-            "image/webp" => image.write_with_encoder(WebPEncoder::new_lossless(&mut bytes))?,
-            _ => image.write_with_encoder(PngEncoder::new(&mut bytes))?,
+            .data
+            .as_chunks_mut()
+            .0
+            .iter_mut()
+            .for_each(|pixel| *pixel = demultiply(*pixel));
+        if format == "image/webp" {
+            image.to_webp()
+        } else {
+            image.to_png()
         }
-    }
-    Ok(bridge::put_blob(bytes).into())
+    };
+    Ok(bridge::put_blob(bytes.context("the canvas is empty")?).into())
 }
 
 fn area(arguments: &Value) -> IntRect {

@@ -1,29 +1,25 @@
 //! What a document is painted on: a rectangle in a window, or in none.
 
 use std::cell::RefCell;
-use std::io::Cursor;
 use std::rc::Rc;
 use std::sync::LazyLock;
 use std::time::{Duration, Instant};
 
-use anyhow::{Context as _, Result, bail};
-use gpui::CursorStyle;
-use image::ImageEncoder as _;
-use image::codecs::png::{CompressionType, FilterType, PngEncoder};
-use parking_lot::Mutex;
-use resvg::tiny_skia::Transform;
-use rustc_hash::FxHashMap;
-use serde::Deserialize;
-use serde_json::{Value, json};
-
 use crate::abi::{self, Item, Rect, RoundedRect};
 use crate::bridge::Kind;
+use crate::diagnostics::{self, Incident, trace};
+use crate::error::{Context as _, Result, bail};
+use crate::gfx::Transform;
+use crate::hash::FastMap;
 use crate::host::{self, thread};
 use crate::input::{self, Ime};
+use crate::json::{Deserialize as _, Value, json};
 use crate::motion::{Motion, Next, Tables};
 use crate::paint::cpu::Painter;
 use crate::paint::raster::{Clip, IntRect, Layer};
 use crate::paint::scene::{Frame, Scene, copy};
+use crate::platform::Cursor;
+use crate::sync::Mutex;
 use crate::window::{self, WindowState};
 use crate::{accessibility, bridge, images};
 
@@ -44,9 +40,11 @@ pub struct Surface {
     canvas: u32,
     image: u32,
     pub scene: Scene,
-    motion: Motion,
+    pub motion: Motion,
     /// When the window last asked for a frame.
     last_tick: Instant,
+    /// The frame that began before the move that it should have shown.
+    starved_at: Option<Instant>,
     pub caret_moved_at: Instant,
     /// When the `frame` event that was asked for is sent if no window has asked for a frame by then.
     frame_deadline: Option<Instant>,
@@ -54,13 +52,13 @@ pub struct Surface {
     /// What `bridge::inputs` was then.
     inputs: u32,
     last_early_frame: Instant,
-    pub cursor: CursorStyle,
+    pub cursor: Cursor,
     pub ime: Ime,
     pub accessibility: accessibility::Tree,
 }
 
 thread_local! {
-    static SURFACES: RefCell<FxHashMap<u32, Rc<RefCell<Surface>>>> = RefCell::default();
+    static SURFACES: RefCell<FastMap<u32, Rc<RefCell<Surface>>>> = RefCell::default();
 }
 
 pub fn get(id: u32) -> Option<Rc<RefCell<Surface>>> {
@@ -235,18 +233,30 @@ impl Surface {
     fn advance(&mut self, now: Instant) {
         self.last_tick = now;
         let next = self.motion.next;
-        if self
+        self.motion.anticipate(milliseconds(now));
+        let has_changed = self
             .motion
-            .advance(self.id, &mut self.scene, milliseconds(now))
-            || self.motion.next != next
-        {
-            self.refresh();
-            if self.motion.is_scrolling() {
-                host::present_at_once();
-            }
+            .advance(self.id, &mut self.scene, milliseconds(now));
+        self.starved_at =
+            (!has_changed && self.motion.is_touched(milliseconds(now))).then_some(now);
+        if self.starved_at.is_some() {
+            diagnostics::note(Incident::NothingMoved);
         }
-        if self.motion.next == Next::Frame {
-            self.window.map(window::request_frame);
+        let must_draw = has_changed || self.motion.next != next;
+        if must_draw {
+            self.refresh();
+        }
+        if self.motion.is_scrolling() && (must_draw || self.starved_at.is_some()) {
+            host::present_at_once();
+        }
+        self.keep_moving();
+    }
+
+    pub fn keep_moving(&self) {
+        match self.motion.next {
+            Next::Frame => drop(self.window.map(window::request_frame)),
+            Next::Leisurely => drop(self.window.map(window::request_leisurely_frame)),
+            _ => {}
         }
     }
 
@@ -258,7 +268,7 @@ impl Surface {
         match self.motion.next {
             Next::Never => None,
             Next::At(time) => Some(*EPOCH + Duration::from_secs_f64(time / 1000.)),
-            Next::Frame => Some(self.last_tick + Duration::from_millis(50)),
+            Next::Frame | Next::Leisurely => Some(self.last_tick + Duration::from_millis(50)),
         }
     }
 
@@ -281,6 +291,7 @@ impl Surface {
         let inputs = bridge::inputs();
         if self.inputs != inputs && now >= self.last_early_frame + host::interval() {
             (self.inputs, self.last_early_frame, self.frame_deadline) = (inputs, now, Some(now));
+            trace!("early frame for {}", self.id);
             return self.begin_frame(now);
         }
         let has_source = self.is_visible && self.window.is_some_and(window::request_frame);
@@ -315,6 +326,7 @@ impl Surface {
                 scene: &self.scene,
                 frame: &frame,
                 limit: usize::MAX,
+                left_out: &[],
             };
             let matrix = Transform::from_row(
                 frame.scale,
@@ -362,6 +374,7 @@ impl Surface {
             scene: &self.scene,
             frame: &frame,
             limit: usize::MAX,
+            left_out: &[],
         };
         let matrix = Transform::from_scale(frame.scale, frame.scale);
         painter.paint(
@@ -384,10 +397,13 @@ impl Surface {
             images::straight_rgba(&layer),
         );
         if arguments["format"] != "rgba" {
-            let mut png = Cursor::new(Vec::new());
-            PngEncoder::new_with_quality(&mut png, CompressionType::Fast, FilterType::Adaptive)
-                .write_image(&bytes, width, height, image::ExtendedColorType::Rgba8)?;
-            bytes = png.into_inner();
+            bytes = crate::codec::Rgba {
+                width,
+                height,
+                data: bytes,
+            }
+            .to_png()
+            .context("nothing was captured")?;
         }
         Ok(json!({ "blob": bridge::put_blob(bytes), "width": width, "height": height }))
     }
@@ -414,6 +430,7 @@ static SPARE: Mutex<Option<Submission>> = Mutex::new(None);
 /// # Safety
 /// The slices of `list` and `compositing` are valid.
 pub unsafe fn submit(id: u32, list: &abi::DisplayList, compositing: Option<&abi::Compositing>) {
+    trace!("JavaScript has painted {id}");
     let mut submission = SPARE.lock().take().unwrap_or_default();
     let (scene, tables) = &mut *submission;
     // SAFETY: the caller's contract.
@@ -430,6 +447,7 @@ pub unsafe fn submit(id: u32, list: &abi::DisplayList, compositing: Option<&abi:
         }
     }
     thread::post(move || {
+        trace!("the scene of {id} has arrived");
         let window = get(id).and_then(|surface| surface.borrow_mut().adopt(&mut submission));
         *SPARE.lock() = Some(submission);
         window.into_iter().for_each(window::draw_now);
@@ -461,6 +479,22 @@ pub fn with_motion(
         surface.window.map(window::request_frame);
     }
     was_used
+}
+
+/// Shows a move that has just missed its frame.
+pub fn catch_up(id: u32) {
+    let Some(surface) = get(id) else { return };
+    let mut surface = surface.borrow_mut();
+    if surface
+        .starved_at
+        .is_some_and(|it| it.elapsed() < host::interval() * 3 / 5)
+    {
+        diagnostics::note(Incident::CaughtUp);
+        surface.advance(Instant::now());
+        let window = surface.window;
+        drop(surface);
+        window.into_iter().for_each(window::draw_now);
+    }
 }
 
 pub fn change_motion(id: u32, f: impl FnOnce(&mut Motion)) {
@@ -498,11 +532,13 @@ pub fn image_changed(id: u32) {
 }
 
 pub fn begin_frame(state: &WindowState) {
-    let now = Instant::now();
+    let (now, mut is_scrolling, mut is_followed) = (Instant::now(), false, false);
     for surface in in_window(state) {
         let surface = &mut *surface.borrow_mut();
         if surface.is_visible {
             surface.advance(now);
+            is_scrolling |= surface.is_scrolling();
+            is_followed |= surface.is_scrolling() && surface.motion.next == Next::Frame;
         }
         if now >= surface.last_early_frame + host::interval() / 2 {
             surface.begin_frame(now);
@@ -510,6 +546,7 @@ pub fn begin_frame(state: &WindowState) {
             window::request_frame(state.id);
         }
     }
+    diagnostics::frame_began(now, host::interval(), is_scrolling, is_followed);
 }
 
 #[cfg(target_os = "macos")]
@@ -550,19 +587,19 @@ pub fn request_frame(id: u32) {
 
 /// `index` is into `cursors` in `internal/desktop/native.ts`.
 pub fn set_cursor(id: u32, index: u32) {
-    use CursorStyle::*;
-    const CURSORS: [CursorStyle; 21] = [
+    use Cursor::*;
+    const CURSORS: [Cursor; 22] = [
         Arrow,
         PointingHand,
         IBeam,
-        IBeamCursorForVerticalLayout,
+        VerticalIBeam,
         Crosshair,
         OpenHand,
         ClosedHand,
-        OperationNotAllowed,
+        NotAllowed,
         DragLink,
         DragCopy,
-        ContextualMenu,
+        ContextMenu,
         ResizeColumn,
         ResizeRow,
         ResizeLeft,
@@ -573,6 +610,7 @@ pub fn set_cursor(id: u32, index: u32) {
         ResizeUpDown,
         ResizeUpLeftDownRight,
         ResizeUpRightDownLeft,
+        Hidden,
     ];
     let Some(surface) = get(id) else { return };
     let cursor = CURSORS.get(index as usize).copied().unwrap_or_default();
@@ -633,13 +671,14 @@ pub fn command(name: &str, arguments: &Value) -> Result<Value> {
             image: 0,
             scene: Scene::default(),
             motion: Motion::default(),
+            starved_at: None,
             last_tick: Instant::now(),
             caret_moved_at: Instant::now(),
             frame_deadline: None,
             last_frame: Instant::now(),
             inputs: u32::MAX,
             last_early_frame: *EPOCH,
-            cursor: CursorStyle::Arrow,
+            cursor: Cursor::Arrow,
             ime: Ime::default(),
             accessibility: accessibility::Tree::default(),
         };
@@ -723,11 +762,11 @@ pub fn command(name: &str, arguments: &Value) -> Result<Value> {
         }
         "ime" => {
             let before = std::mem::replace(&mut shared.borrow_mut().ime, Ime::parse(arguments));
-            if arguments["edits"] != bridge::edits() {
+            if arguments["edits"] != u64::from(bridge::edits()) {
                 shared.borrow_mut().ime.keep_text_of(&before);
             }
             if let Some(state) = state {
-                input::ime_changed(&state, &before, &shared.borrow().ime);
+                input::ime_changed(&state, &before, id);
             }
         }
         "capture" => return shared.borrow().capture(arguments),

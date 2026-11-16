@@ -1,3 +1,16 @@
+const selectionUnits = { word: 0, sentence: 1, block: 1 };
+const shiftedCommands = { z: "redo", v: "pasteandmatchstyle" };
+const commandsOfLetters = {
+  a: "selectall",
+  c: "copy",
+  x: "cut",
+  v: "paste",
+  z: "undo",
+  b: "bold",
+  i: "italic",
+  u: "underline",
+};
+
 const core = require("internal/desktop/dom/core");
 const events = require("internal/desktop/dom/events");
 const ranges = require("internal/desktop/dom/range");
@@ -126,7 +139,7 @@ hooks.modifySelection = (selection, alter, direction, granularity) => {
 };
 
 hooks.expandRange = (range, unit) => {
-  const by = { word: 0, sentence: 1, block: 1 }[unit];
+  const by = selectionUnits[unit];
   const root = core.rootOf(range.startNode);
   if (root.scope === null) return;
   if (unit === "document") return range.set(root, 0, root, lengthOf(root));
@@ -592,21 +605,6 @@ function copy(doc: Doc, isCut: boolean, silent: boolean): boolean {
   return !isCut || replace(doc, "deleteByCut", {}, spanOf, "", "deleteselection", silent);
 }
 
-const isScriptUrl = /^[\0- ]*javascript:/i;
-
-function withoutScripts(doc: Doc, html: string): string {
-  const fragment = hooks.parseFragment(core.createPlainElement(doc, "body", HTML), html);
-  for (const node of core.filterDescendants(fragment, () => true)) {
-    if (/^(?:script|iframe|object|embed)$/.test(node.name)) core.remove(node);
-    else {
-      const isScript = (name: string) =>
-        /^on/.test(name) || isScriptUrl.test(core.getAttr(node, name)!.replace(/[\t\n\r]/g, ""));
-      for (const name of node.attrs?.filter((it, i) => i % 2 === 0 && isScript(it)) ?? []) core.removeAttr(node, name);
-    }
-  }
-  return hooks.serializeInner(fragment);
-}
-
 function insertTransfer(
   doc: Doc,
   data: InstanceType<typeof transfer.DataTransfer>,
@@ -619,7 +617,7 @@ function insertTransfer(
   const html = asText || styleBits(target) & PLAIN_TEXT ? "" : data.getData("text/html");
   const details = textControl(target) !== null ? { data: text } : { dataTransfer: data };
   if (html === "") return replace(doc, inputType, details, spanOf, text, "inserttext");
-  return replace(doc, inputType, details, spanOf, text, "inserthtml", false, withoutScripts(doc, html));
+  return replace(doc, inputType, details, spanOf, text, "insertpasted", false, html);
 }
 
 /** For the middle button on Linux. */
@@ -744,9 +742,9 @@ function shortcut({ key, code, shiftKey, altKey, ctrlKey, metaKey }: any): strin
   if (!isMac && key === "Delete" && shiftKey) return "cut";
   if (isMac ? !metaKey || ctrlKey : !ctrlKey || altKey || metaKey) return;
   const letter = /^[a-z]$/i.test(key) ? key.toLowerCase() : code.replace(/^Key/, "").toLowerCase();
-  if (shiftKey) return { z: "redo", v: "pasteandmatchstyle" }[letter];
+  if (shiftKey) return shiftedCommands[letter];
   if (letter === "y") return isMac ? undefined : "redo";
-  return { a: "selectall", c: "copy", x: "cut", v: "paste", z: "undo", b: "bold", i: "italic", u: "underline" }[letter];
+  return commandsOfLetters[letter];
 }
 
 /** The default action of `keydown`. */

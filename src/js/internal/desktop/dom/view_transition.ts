@@ -15,6 +15,8 @@ const enum Step {
   CaptureNew,
   Follow,
   End,
+  HandOver,
+  TakeOver,
 }
 const TIMEOUT = 4000;
 const reserved = /^(?:none$|-ua-)/i;
@@ -38,6 +40,7 @@ class Transition {
   timer: any = null;
   js: any = null;
   typeSet: any = null;
+  isInbound = false;
 
   constructor(page: Page, update: Function | null) {
     this.page = page;
@@ -122,7 +125,7 @@ class Transition {
       schedule(this);
     } else if (this.phase === Phase.Animating) {
       const state = sync(page.doc).viewTransition(Step.Follow, 0);
-      if (state === 0) return this.fail();
+      if (state === 0 || (this.isInbound && typesForNavigation(page) === null)) return this.fail();
       if (state === 2 || this.waits > 0) return;
       page.queueTask(() => this.finish());
     }
@@ -251,4 +254,47 @@ function start(page: Page | null, argument: any) {
   return transition.js;
 }
 
-export default { start };
+function typesForNavigation(page: Page): string[] | null {
+  const types: string = sync(page.doc).computedStyle(1, "", "@view-transition");
+  return types === "none" ? null : types.split(" ").filter(Boolean);
+}
+
+function forNavigation(page: Page, types: string[]): Transition {
+  const transition = new Transition(page, null);
+  for (const type of types) transition.types.add(type);
+  transition.js = make(ViewTransition, transition);
+  $pokePromiseAsHandled(transition.ready.promise);
+  transition.updated.resolve();
+  return transition;
+}
+
+/** Returns what `reveal` takes. */
+function swap(page: Page, canvas: number, fire: (transition: object | null) => void): number {
+  const types = page.isRevealed && page.isVisible ? typesForNavigation(page) : null;
+  if (types === null) return (fire(null), 0);
+  page.transition?.skip(domError("AbortError", "Transition was skipped because navigation started"));
+  const transition = forNavigation(page, types);
+  transition.phase = Phase.UpdateCallbackCalled;
+  transition.setActive(true);
+  fire(transition.js);
+  if (!transition.isActive()) return 0;
+  const ticket =
+    sync(page.doc).viewTransition(Step.CaptureOld, canvas) === 0 ? 0 : (Math.random() * 0x7ffffffe + 1) | 0;
+  if (ticket !== 0) page.doc.engine.viewTransition(Step.HandOver, ticket);
+  transition.fail();
+  return ticket;
+}
+
+function reveal(page: Page, ticket: number, fire: (transition: object | null) => void) {
+  const types = page.transition === null && page.isVisible ? typesForNavigation(page) : null;
+  if (types === null || page.doc.engine.viewTransition(Step.TakeOver, ticket) === 0) return fire(null);
+  const transition = forNavigation(page, types);
+  transition.phase = Phase.UpdateCallbackCalled;
+  transition.isInbound = true;
+  transition.setActive(true);
+  fire(transition.js);
+  transition.activate();
+  require("internal/desktop/dom/events").microtaskCheckpoint();
+}
+
+export default { reveal, start, swap };

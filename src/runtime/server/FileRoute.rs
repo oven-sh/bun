@@ -148,9 +148,6 @@ impl FileRoute {
         global: &JSGlobalObject,
         argument: JSValue,
     ) -> JsResult<Option<RefPtr<FileRoute>>> {
-        // `as_class_ref` is the safe shared-borrow downcast (one audited
-        // unsafe in `JSValue`); `get_body_value`/`get_init_headers`/
-        // `status_code` all take `&self`.
         if let Some(response) = argument.as_class_ref::<Response>() {
             let body_value = response.get_body_value();
             body_value.to_blob_if_possible();

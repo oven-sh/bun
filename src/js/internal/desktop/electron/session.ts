@@ -1,3 +1,5 @@
+const addressFamilies = { A: 4, AAAA: 6 };
+
 const EventEmitter = require("node:events");
 const path = require("node:path");
 const { app, Event } = require("internal/desktop/app");
@@ -371,9 +373,10 @@ class DownloadItem extends EventEmitter {
       if (filePath) item.savePath = filePath;
       else item.cancel();
     }
+    let partial = "";
     try {
       controller.signal.throwIfAborted();
-      const writer = Bun.file(item.savePath).writer();
+      const writer = Bun.file((partial = `${item.savePath}.${crypto.randomUUID().slice(0, 8)}.download`)).writer();
       for await (const chunk of loaded.response?.body ?? []) {
         await item.#resumed?.promise;
         controller.signal.throwIfAborted();
@@ -382,10 +385,11 @@ class DownloadItem extends EventEmitter {
         item.emit("updated", new Event(), "progressing");
       }
       await writer.end();
+      require("node:fs").renameSync(partial, item.savePath);
       item.#state = "completed";
     } catch {
       if (item.#state === "progressing") item.#state = "interrupted";
-      if (item.savePath) require("node:fs").rmSync(item.savePath, { force: true });
+      if (partial) require("node:fs").rmSync(partial, { force: true });
     }
     item.#ended = Date.now() / 1000;
     item.emit("done", new Event(), item.#state);
@@ -524,9 +528,8 @@ class Session extends EventEmitter {
       cache: () => (cache ??= new (require("internal/desktop/web/http_cache").HttpCache)(storagePath)),
       clearSite: async (origin: string, kinds: string[]) => {
         const asksFor = (kind: string) => kinds.includes(`"${kind}"`) || kinds.includes('"*"');
-        const site = policy.siteOf(new URL(origin).hostname);
-        if (asksFor("cookies")) this.#clear(other => policy.siteOf(new URL(other).hostname) === site, ["cookies"]);
-        if (asksFor("storage")) this.#clear(other => other === origin, ["localstorage", "indexdb"]);
+        if (asksFor("cookies")) this.#clear(["cookies"], [origin]);
+        if (asksFor("storage")) this.#clear(["localstorage", "indexdb", "cachestorage", "filesystem"], [origin]);
         if (asksFor("cache")) await this[kState].cache().clear();
       },
       preloads: [],
@@ -563,7 +566,7 @@ class Session extends EventEmitter {
       const proxy = route[i] !== null && {
         url: route[i],
         respectNoProxy: false,
-        headers: { "user-agent": this.getUserAgent() },
+        headers: url.protocol === "https:" ? { "user-agent": this.getUserAgent() } : undefined,
       };
       this.#pool ??= new Bun.FetchSession({
         tls: this.#tls(),
@@ -659,7 +662,7 @@ class Session extends EventEmitter {
 
   async resolveHost(host: string, options: { queryType?: string } = {}) {
     try {
-      const family = { A: 4, AAAA: 6 }[options.queryType!] ?? 0;
+      const family = addressFamilies[options.queryType!] ?? 0;
       const name =
         mapHost(new URL("http://" + (host.includes(":") ? `[${host}]` : host)))?.hostname.replace(/^\[|\]$/g, "") ??
         host;
@@ -698,25 +701,31 @@ class Session extends EventEmitter {
     this[kState].checkPermission = handler;
   }
 
-  #clear(matches: (origin: string) => boolean, kinds: string[] | undefined) {
+  /** Of `only`, or else of all origins but `except`. */
+  #clear(kinds: string[] | undefined, only: string[] | undefined, except: string[] = []) {
     const { storage, jar } = this[kState];
+    const listed = (only ?? except).map(policy.originOf);
+    const matches = (bucket: string) => listed.includes(bucket.split("^")[0]) === (only !== undefined);
     const includes = (pattern: RegExp) => !kinds || kinds.some(kind => pattern.test(kind));
     if (includes(/^localstorage$/i)) storage.clearLocalStorage(matches);
     if (includes(/^index(?:ed)?db$/i)) storage.clearIndexedDB(matches);
+    if (includes(/^(?:cachestorage|serviceworkers)$/i)) storage.clearCaches(matches);
+    if (includes(/^filesystems?$/i)) storage.clearFiles(listed, only === undefined);
     if (!includes(/^cookies$/)) return;
+    const sites = listed.map(origin => policy.siteOf(URL.parse(origin)?.hostname ?? ""));
     for (const cookie of jar.all()) {
-      const host = withoutDot(cookie.domain);
-      if (matches(`https://${host}`) || matches(`http://${host}`)) jar.remove(cookie, "explicit");
+      if (sites.includes(policy.siteOf(withoutDot(cookie.domain))) === (only !== undefined))
+        jar.remove(cookie, "explicit");
     }
   }
 
   async clearStorageData({ origin, storages }: { origin?: string; storages?: string[] } = {}) {
-    this.#clear(other => !origin || other === policy.originOf(origin), storages);
+    this.#clear(storages, origin ? [origin] : undefined);
   }
 
   async clearData({ dataTypes, origins, excludeOrigins }: Record<string, string[] | undefined> = {}) {
-    const has = (list: string[], origin: string) => list.some(it => policy.originOf(it) === origin);
-    this.#clear(origin => (origins ? has(origins, origin) : !has(excludeOrigins ?? [], origin)), dataTypes);
+    this.#clear(dataTypes, origins, excludeOrigins);
+    if (!dataTypes || dataTypes.includes("cache")) await this.clearCache();
   }
 
   async clearAuthCache() {

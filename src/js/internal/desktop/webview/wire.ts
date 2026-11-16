@@ -151,7 +151,13 @@ function splitter(receive) {
       chunks = [all.subarray(wanted)];
       have -= wanted;
       wanted = 4;
-      receive(message);
+      try {
+        receive(message);
+      } catch (error) {
+        setImmediate(() => {
+          throw error;
+        });
+      }
     }
   };
 }

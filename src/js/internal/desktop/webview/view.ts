@@ -1,4 +1,14 @@
 // A page in the web engine: its pixels, and the input that goes to it.
+const documentEnds = { ArrowUp: "Beginning", ArrowDown: "End" };
+const controlCommands = {
+  a: "moveToBeginningOfParagraph",
+  e: "moveToEndOfParagraph",
+  k: "deleteToEndOfParagraph",
+  d: "deleteForward",
+};
+const popupMouseEvents = { move: "mouseMove", down: "mouseDown", up: "mouseUp" };
+const dragPhases = { drop: "drop", leave: "dragCancel" };
+
 const fs = require("node:fs");
 const path = require("node:path");
 const native = require("internal/desktop/native");
@@ -65,17 +75,12 @@ function editingCommand({ key, m }: any): string | undefined {
   const deletes = { Backspace: ["Backward", "Beginning"], Delete: ["Forward", "End"] }[key];
   if (deletes) return command ? `deleteTo${deletes[1]}OfLine` : `delete${option ? "Word" : ""}${deletes[0]}`;
   const side = /^Arrow(Left|Right)$/.exec(key)?.[1];
-  const end = { ArrowUp: "Beginning", ArrowDown: "End" }[key];
+  const end = documentEnds[key];
   let move = side && (command ? `moveTo${side}EndOfLine` : `move${option ? "Word" : ""}${side}`);
   if (end) move = command ? `moveTo${end}OfDocument` : option ? `moveTo${end}OfParagraph` : `move${key.slice(5)}`;
   if (move) return m & 1 ? move + "AndModifySelection" : move;
   if (m !== 2) return;
-  return {
-    a: "moveToBeginningOfParagraph",
-    e: "moveToEndOfParagraph",
-    k: "deleteToEndOfParagraph",
-    d: "deleteForward",
-  }[key];
+  return controlCommands[key];
 }
 
 /** It runs beside the scripts of the page, which do not see it. What it returns is only as honest as the page's process. */
@@ -112,10 +117,13 @@ const deepest = step => {
   }
 };
 globalThis.hit = (x, y) => {
-  for (const [id, owner] of owners) {
-    const [left, top, scale] = around(owner);
-    if (owner.isConnected && owner.getRootNode().elementFromPoint((x - left) / scale, (y - top) / scale) === owner) return [id, ...place(owner)];
-  }
+  const isOnTop = it => {
+    const root = it.getRootNode(), [left, top, scale] = around(it);
+    if (root.elementFromPoint((x - left) / scale, (y - top) / scale) !== it) return false;
+    const { ownerDocument } = it;
+    return ownerDocument === document || isOnTop(ownerDocument.defaultView.frameElement);
+  };
+  for (const [id, owner] of owners) if (owner.isConnected && isOnTop(owner)) return [id, ...place(owner)];
 };
 globalThis.focusOwner = id => {
   const owner = owners.get(id);
@@ -411,7 +419,7 @@ class View {
     const leave = (target?: Target) =>
       target && this.#tell(target, "Input.dispatchMouseEvent", { type: "mouseMoved", x: -1, y: -1 });
     if (kind === "leave") return leave(this.#hovered);
-    if (await this.#toPopup({ move: "mouseMove", down: "mouseDown", up: "mouseUp" }[kind], event)) {
+    if (await this.#toPopup(popupMouseEvents[kind], event)) {
       return kind === "up" && this.#inspectFocus();
     }
     const target = (!this.#drag && this.#captured) || (await this.#targetAt(x, y));
@@ -486,7 +494,7 @@ class View {
     if (!target) return;
     if (!this.#drag) this.#startDrag({ items: [], files: paths, dragOperationsMask: 1 });
     const local = { x: (x - target.x) / target.scale, y: (y - target.y) / target.scale, modifiers: modifiersOf(m) };
-    await this.#continueDrag(target, { drop: "drop", leave: "dragCancel" }[kind] ?? "dragOver", local);
+    await this.#continueDrag(target, dragPhases[kind] ?? "dragOver", local);
   }
 
   #describeKey({ key, code, location, repeat, m }: any) {

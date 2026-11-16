@@ -21,7 +21,8 @@ class UtilityProcess extends EventEmitter {
     // The entry point of an executable loads this module first, and then only goes on in the main process.
     const inExecutable = compiled.pathOf(Bun.pathToFileURL(modulePath).href);
     const { resourcesPath } = process as any;
-    const about = { serviceName, resourcesPath, userAgent: app.userAgentFallback, inExecutable };
+    const trustsAll = app.commandLine.hasSwitch("ignore-certificate-errors");
+    const about = { serviceName, resourcesPath, userAgent: app.userAgentFallback, inExecutable, trustsAll };
     const child = (this.#child = require("node:child_process").spawn(
       process.execPath,
       inExecutable
@@ -124,7 +125,7 @@ function enter() {
   if (about === undefined) return;
   delete process.env[MARKER];
   delete process.env.BUN_BE_BUN;
-  const { serviceName, resourcesPath, userAgent, inExecutable } = JSON.parse(about);
+  const { serviceName, resourcesPath, userAgent, inExecutable, trustsAll } = JSON.parse(about);
   const parentPort = new ParentPort(process.send!.bind(process));
   process.send = undefined;
   process.once("disconnect", () => process.exit());
@@ -135,13 +136,29 @@ function enter() {
     queueMicrotask(() => compiled.run(inExecutable, true));
   }
   const nativeFetch = fetch;
+  /** Reading the authorities of the system is slow, so it waits for a server that needs them. */
+  let tls: object | undefined = trustsAll ? { rejectUnauthorized: false } : undefined;
   return {
     parentPort,
     net: {
-      fetch(input: any, init?: any) {
-        const request = new Request(input, init);
-        if (!request.headers.has("user-agent")) request.headers.set("user-agent", userAgent);
-        return nativeFetch(request);
+      async fetch(input: any, init?: any) {
+        const canRepeat = !(input instanceof Request || init?.body instanceof ReadableStream);
+        for (;;) {
+          const request = new Request(input, init);
+          if (!request.headers.has("user-agent")) request.headers.set("user-agent", userAgent);
+          const trusted = tls;
+          try {
+            return await nativeFetch(request, { tls } as any);
+          } catch (error: any) {
+            if (error?.code === "UnexpectedRedirect") {
+              throw new Error("Attempted to redirect, but redirect policy was 'error'");
+            }
+            if (trusted || !/CERT|ISSUER|SIGNATURE/.test(error?.code)) throw error;
+            const { getCACertificates } = require("node:tls");
+            tls ??= { ca: [...getCACertificates("default"), ...getCACertificates("system")] };
+            if (!canRepeat) throw error;
+          }
+        }
       },
       request: require("internal/desktop/electron/stubs").unsupported.throws("net.request in a utility process"),
       isOnline: () => true,

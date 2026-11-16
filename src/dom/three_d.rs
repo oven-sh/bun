@@ -120,7 +120,7 @@ fn sort(mut pieces: Vec<Piece>, budget: &mut u32, out: &mut Vec<Piece>) {
     const THRESHOLD: f64 = 0.05;
     let Some(normal) = pieces
         .first()
-        .filter(|_| *budget > 0)
+        .filter(|_| *budget > 0 && bun_core::StackCheck::init().is_safe_to_recurse())
         .and_then(|it| normal(&it.polygon))
     else {
         return out.append(&mut pieces);
@@ -135,7 +135,8 @@ fn sort(mut pieces: Vec<Piece>, budget: &mut u32, out: &mut Vec<Piece>) {
         .filter(|it| it.abs() > THRESHOLD)
         .unwrap_or(0.0)
     };
-    let (mut front, mut level, mut back) = (Vec::new(), Vec::new(), Vec::new());
+    let mut pieces = pieces.into_iter();
+    let (mut front, mut level, mut back) = (Vec::new(), Vec::from_iter(pieces.next()), Vec::new());
     for piece in pieces {
         match [1.0, -1.0].map(|sign| piece.polygon.iter().any(|it| side(it) * sign > 0.0)) {
             [false, false] => level.push(piece),

@@ -218,15 +218,7 @@ extern "C" void Blob__onStructuredCloneSerialize(void* blob, CloneSerializer*);
 extern "C" JSC::EncodedJSValue Blob__onStructuredCloneDeserialize(JSC::JSGlobalObject*, const uint8_t** ptr, const uint8_t* end);
 extern "C" void BlockList__onStructuredCloneSerialize(void* blockList, CloneSerializer*);
 extern "C" JSC::EncodedJSValue BlockList__onStructuredCloneDeserialize(JSC::JSGlobalObject*, const uint8_t** ptr, const uint8_t* end);
-// Releases the +1 taken by `BlockList__onStructuredCloneSerialize` so the
-// shared backing is freed once the SerializedScriptValue holding the raw
-// pointer is gone.
-extern "C" void BlockList__onStructuredCloneDestroy(void*);
-// A clone of a `node:perf_hooks` histogram shares its counts. The wire has an id, which keeps the
-// counts alive until `Histogram__releaseStructuredClone`.
-extern "C" uint64_t Histogram__retainForStructuredClone(JSC::EncodedJSValue histogram);
 extern "C" JSC::EncodedJSValue Histogram__fromStructuredClone(JSC::JSGlobalObject*, uint64_t id);
-extern "C" void Histogram__releaseStructuredClone(uint64_t id);
 
 enum ArrayBufferViewSubtag {
     DataViewTag = 0,
@@ -768,8 +760,8 @@ public:
         WasmMemoryHandleArray& wasmMemoryHandles,
 #endif
         Vector<uint8_t>& out, SerializationContext context, ArrayBufferContentsArray& sharedBuffers,
-        Vector<void*>& serializedBlockListRefs,
-        Vector<uint64_t>& serializedHistogramIds,
+        Vector<std::unique_ptr<SerializedBlockList>>& serializedBlockLists,
+        Vector<SerializedHistogram>& serializedHistograms,
         SerializationForStorage forStorage, SerializationForCrossProcessTransfer forTransfer)
     {
         CloneSerializer serializer(lexicalGlobalObject, messagePorts, arrayBuffers,
@@ -779,8 +771,8 @@ public:
 #endif
             out, context, sharedBuffers, forStorage, forTransfer);
         auto code = serializer.serialize(value);
-        serializedBlockListRefs = WTF::move(serializer.m_serializedBlockListRefs);
-        serializedHistogramIds = WTF::move(serializer.m_serializedHistogramIds);
+        serializedBlockLists = WTF::move(serializer.m_serializedBlockLists);
+        serializedHistograms = WTF::move(serializer.m_serializedHistograms);
         return code;
     }
 
@@ -1454,7 +1446,7 @@ private:
                 }
                 write(Bun__nodenet_BlockList);
                 BlockList__onStructuredCloneSerialize(blockList->wrapped(), this);
-                m_serializedBlockListRefs.append(blockList->wrapped());
+                m_serializedBlockLists.constructAndAppend(static_cast<SerializedBlockList*>(blockList->wrapped()));
                 return true;
             }
 
@@ -1466,10 +1458,9 @@ private:
                 }
                 if (!startObjectInternal(histogram)) // handle duplicates
                     return true;
-                uint64_t id = Histogram__retainForStructuredClone(JSValue::encode(histogram));
-                m_serializedHistogramIds.append(id);
+                m_serializedHistograms.constructAndAppend(histogram);
                 write(Bun__NodePerformanceHooksHistogramTag);
-                write(id);
+                write(m_serializedHistograms.last().id());
                 return true;
             }
 
@@ -1513,37 +1504,26 @@ private:
                     write(handle.symmetricKey());
                     return true;
                 }
-                case CryptoKeyType::Public: {
-                    auto* pkey = handle.asymmetricKey().get();
-
-                    BIO* bio = BIO_new(BIO_s_mem());
-
-                    PEM_write_bio_PUBKEY(bio, pkey);
-
-                    const uint8_t* pemData = nullptr;
-                    uint64_t pemSize = 0;
-                    BIO_mem_contents(bio, &pemData, reinterpret_cast<size_t*>(&pemSize));
-
-                    write(pemSize);
-                    write(pemData, pemSize);
-                    BIO_free(bio);
-
-                    return true;
-                }
+                case CryptoKeyType::Public:
                 case CryptoKeyType::Private: {
                     auto* pkey = handle.asymmetricKey().get();
+                    auto bio = ncrypto::BIOPointer::NewMem();
 
-                    BIO* bio = BIO_new(BIO_s_mem());
-
-                    PEM_write_bio_PrivateKey(bio, pkey, nullptr, nullptr, 0, nullptr, nullptr);
+                    bool isEncoded = handle.type() == CryptoKeyType::Public
+                        ? PEM_write_bio_PUBKEY(bio.get(), pkey)
+                        : PEM_write_bio_PrivateKey(bio.get(), pkey, nullptr, nullptr, 0, nullptr, nullptr);
+                    if (!isEncoded) {
+                        ERR_clear_error();
+                        code = SerializationReturnCode::DataCloneError;
+                        return true;
+                    }
 
                     const uint8_t* pemData = nullptr;
                     uint64_t pemSize = 0;
-                    BIO_mem_contents(bio, &pemData, reinterpret_cast<size_t*>(&pemSize));
+                    BIO_mem_contents(bio.get(), &pemData, reinterpret_cast<size_t*>(&pemSize));
 
                     write(pemSize);
                     write(pemData, pemSize);
-                    BIO_free(bio);
 
                     return true;
                 }
@@ -2021,8 +2001,8 @@ private:
     Identifier m_emptyIdentifier;
     SerializationContext m_context;
     ArrayBufferContentsArray& m_sharedBuffers;
-    Vector<void*> m_serializedBlockListRefs;
-    Vector<uint64_t> m_serializedHistogramIds;
+    Vector<std::unique_ptr<SerializedBlockList>> m_serializedBlockLists;
+    Vector<SerializedHistogram> m_serializedHistograms;
 #if ENABLE(WEBASSEMBLY)
     WasmModuleArray& m_wasmModules;
     WasmMemoryHandleArray& m_wasmMemoryHandles;
@@ -3178,12 +3158,12 @@ private:
         return true;
     }
 
-    bool read(BIO** bio, uint64_t length)
+    bool read(ncrypto::BIOPointer& bio, uint64_t length)
     {
         if (static_cast<uint64_t>(m_end - m_ptr) < length)
             return false;
-        *bio = BIO_new_mem_buf(m_ptr, length);
-        if (!*bio)
+        bio.reset(BIO_new_mem_buf(m_ptr, length));
+        if (!bio)
             return false;
         m_ptr += length;
         return true;
@@ -3571,16 +3551,14 @@ private:
         }
 
         ncrypto::ClearErrorOnReturn clear_error_on_return;
-        X509* ptr = nullptr;
         const uint8_t* data = buffer.begin();
 
-        auto cert = d2i_X509(&ptr, &data, buffer.size());
-        if (!cert) {
+        ncrypto::X509Pointer cert_ptr(d2i_X509(nullptr, &data, buffer.size()));
+        if (!cert_ptr) {
             fail();
             return JSValue();
         }
 
-        auto cert_ptr = ncrypto::X509Pointer(cert);
         auto* domGlobalObject = defaultGlobalObject(m_globalObject);
         auto* cert_obj = Bun::JSX509Certificate::create(m_lexicalGlobalObject->vm(), domGlobalObject->m_JSX509CertificateClassStructure.get(domGlobalObject), m_globalObject, WTF::move(cert_ptr));
         m_gcBuffer.appendWithCrashOnOverflow(cert_obj);
@@ -3623,32 +3601,31 @@ private:
                 return JSValue();
             }
 
-            BIO* rawBio = nullptr;
-            if (!read(&rawBio, pemSize)) {
+            ncrypto::BIOPointer bio;
+            if (!read(bio, pemSize)) {
                 fail();
                 return JSValue();
             }
-            ncrypto::BIOPointer bio(rawBio);
 
             if (keyType == CryptoKeyType::Public) {
-                EVP_PKEY* pkey = PEM_read_bio_PUBKEY(bio.get(), nullptr, nullptr, nullptr);
+                ncrypto::EVPKeyPointer pkey(PEM_read_bio_PUBKEY(bio.get(), nullptr, nullptr, nullptr));
                 if (!pkey) {
                     fail();
                     return JSValue();
                 }
-                auto keyObject = KeyObject::create(CryptoKeyType::Public, ncrypto::EVPKeyPointer(pkey));
+                auto keyObject = KeyObject::create(CryptoKeyType::Public, WTF::move(pkey));
                 Structure* structure = globalObject->m_JSPublicKeyObjectClassStructure.get(m_globalObject);
                 auto* obj = JSPublicKeyObject::create(vm, structure, m_globalObject, WTF::move(keyObject));
                 addTerminalToObjectPool(obj);
                 return obj;
             }
 
-            EVP_PKEY* pkey = PEM_read_bio_PrivateKey(bio.get(), nullptr, nullptr, nullptr);
+            ncrypto::EVPKeyPointer pkey(PEM_read_bio_PrivateKey(bio.get(), nullptr, nullptr, nullptr));
             if (!pkey) {
                 fail();
                 return JSValue();
             }
-            auto keyObject = KeyObject::create(CryptoKeyType::Private, ncrypto::EVPKeyPointer(pkey));
+            auto keyObject = KeyObject::create(CryptoKeyType::Private, WTF::move(pkey));
             Structure* structure = globalObject->m_JSPrivateKeyObjectClassStructure.get(m_globalObject);
             auto* obj = JSPrivateKeyObject::create(vm, structure, m_globalObject, WTF::move(keyObject));
             addTerminalToObjectPool(obj);
@@ -4372,13 +4349,7 @@ error:
     return std::make_pair(JSValue(), SerializationReturnCode::ValidationError);
 }
 
-SerializedScriptValue::~SerializedScriptValue()
-{
-    for (auto* ptr : m_serializedBlockListRefs)
-        BlockList__onStructuredCloneDestroy(ptr);
-    for (uint64_t id : m_serializedHistogramIds)
-        Histogram__releaseStructuredClone(id);
-}
+SerializedScriptValue::~SerializedScriptValue() = default;
 
 SerializedScriptValue::SerializedScriptValue(Vector<uint8_t>&& buffer, std::unique_ptr<ArrayBufferContentsArray>&& arrayBufferContentsArray)
     : m_data(WTF::move(buffer))
@@ -4711,11 +4682,13 @@ private:
 
     JSValue copyArray(JSArray* array, unsigned depth)
     {
+        auto scope = DECLARE_THROW_SCOPE(m_vm);
         unsigned length = array->length();
         if (array->structure()->maxOffset() != invalidOffset || hasAnyArrayStorage(array->indexingType()))
             return {};
         if (hasInt32(array->indexingType()) || hasDouble(array->indexingType())) {
             auto* numbers = JSArray::fastSlice(&m_globalObject, array, 0, length);
+            RETURN_IF_EXCEPTION(scope, {});
             if (!numbers)
                 return {};
             m_copies.add(array, numbers);
@@ -4727,22 +4700,25 @@ private:
         m_copies.add(array, result);
         for (unsigned i = 0; i < length; i++) {
             JSValue element = array->canGetIndexQuickly(i) ? copy(array->getIndexQuickly(i), depth) : JSValue();
+            RETURN_IF_EXCEPTION(scope, {});
             if (!element)
                 return {};
             result->putDirectIndex(&m_globalObject, i, element);
+            RETURN_IF_EXCEPTION(scope, {});
         }
         return result;
     }
 
     JSValue copyObject(JSObject* object, unsigned depth)
     {
+        auto scope = DECLARE_THROW_SCOPE(m_vm);
         auto* structure = object->structure();
         auto* realm = structure->realm();
         if (!realm || structure->hasPolyProto() || structure->storedPrototype() != realm->objectPrototype())
             return {};
         auto& known = m_knownShapes[(std::bit_cast<uintptr_t>(structure) >> 4) % m_knownShapes.size()];
         if (known.first == structure)
-            return copySlots(object, known.second, depth);
+            RELEASE_AND_RETURN(scope, copySlots(object, known.second, depth));
 
         Vector<std::pair<UniquedStringImpl*, JSValue>, 16> properties;
         bool isInOrder = false;
@@ -4760,10 +4736,13 @@ private:
         } else if (!listCompiledProperties(object, properties))
             return {};
 
-        auto* result = constructEmptyObject(&m_globalObject, m_globalObject.objectPrototype(), std::min<unsigned>(properties.size(), JSFinalObject::maxInlineCapacity));
+        auto* result = properties.isEmpty()
+            ? constructEmptyObject(&m_globalObject)
+            : constructEmptyObject(&m_globalObject, m_globalObject.objectPrototype(), std::min<unsigned>(properties.size(), JSFinalObject::maxInlineCapacity));
         m_copies.add(object, result);
         for (auto [name, value] : properties) {
             JSValue copied = copy(value, depth);
+            RETURN_IF_EXCEPTION(scope, {});
             if (!copied)
                 return {};
             result->putDirect(m_vm, name, copied);
@@ -4775,11 +4754,13 @@ private:
 
     JSValue copySlots(JSObject* object, Structure* to, unsigned depth)
     {
+        auto scope = DECLARE_THROW_SCOPE(m_vm);
         auto* result = constructEmptyObject(m_vm, to);
         m_copies.add(object, result);
         unsigned capacity = object->structure()->inlineCapacity();
         for (unsigned i = 0, size = to->inlineSize(); i < size; i++) {
             JSValue copied = copy(object->getDirect(offsetForPropertyNumber(i, capacity)), depth);
+            RETURN_IF_EXCEPTION(scope, {});
             if (!copied)
                 return {};
             result->putDirectOffset(m_vm, i, copied);
@@ -5167,23 +5148,14 @@ ExceptionOr<Ref<SerializedScriptValue>> SerializedScriptValue::create(JSGlobalOb
     WasmMemoryHandleArray wasmMemoryHandles;
 #endif
     std::unique_ptr<ArrayBufferContentsArray> sharedBuffers = makeUnique<ArrayBufferContentsArray>();
-    Vector<void*> serializedBlockListRefs;
-    Vector<uint64_t> serializedHistogramIds;
+    Vector<std::unique_ptr<SerializedBlockList>> serializedBlockLists;
+    Vector<SerializedHistogram> serializedHistograms;
     auto code = CloneSerializer::serialize(&lexicalGlobalObject, value, messagePorts, arrayBuffers,
 #if ENABLE(WEBASSEMBLY)
         wasmModules,
         wasmMemoryHandles,
 #endif
-        buffer, context, *sharedBuffers, serializedBlockListRefs, serializedHistogramIds, forStorage, forTransfer);
-
-    auto releaseSerializedRefs = [&] {
-        for (auto* ptr : serializedBlockListRefs)
-            BlockList__onStructuredCloneDestroy(ptr);
-        serializedBlockListRefs.clear();
-        for (uint64_t id : serializedHistogramIds)
-            Histogram__releaseStructuredClone(id);
-        serializedHistogramIds.clear();
-    };
+        buffer, context, *sharedBuffers, serializedBlockLists, serializedHistograms, forStorage, forTransfer);
 
     // Serialize may throw an exception. This code looks weird, but we'll rethrow it
     // in maybeThrowExceptionIfSerializationFailed (since that may also throw other
@@ -5194,23 +5166,17 @@ ExceptionOr<Ref<SerializedScriptValue>> SerializedScriptValue::create(JSGlobalOb
 
     // If we rethrew an exception just now, or we failed with a status code other than success,
     // we should exit right now.
-    if (scope.exception() || code != SerializationReturnCode::SuccessfullyCompleted) [[unlikely]] {
-        releaseSerializedRefs();
+    if (scope.exception() || code != SerializationReturnCode::SuccessfullyCompleted) [[unlikely]]
         RELEASE_AND_RETURN(scope, exceptionForSerializationFailure(code));
-    }
 
     // Most calls have no transfer list; this keeps them at one branch.
     std::unique_ptr<ArrayBufferContentsArray> arrayBufferContentsArray;
     if (!transferList.isEmpty()) {
-        if (auto exception = transferListChangedDuringSerialization(vm, transferList, arrayBuffers, messagePorts)) [[unlikely]] {
-            releaseSerializedRefs();
+        if (auto exception = transferListChangedDuringSerialization(vm, transferList, arrayBuffers, messagePorts)) [[unlikely]]
             RELEASE_AND_RETURN(scope, WTF::move(*exception));
-        }
         auto transferred = transferArrayBuffers(vm, arrayBuffers);
-        if (transferred.hasException()) {
-            releaseSerializedRefs();
+        if (transferred.hasException())
             RELEASE_AND_RETURN(scope, transferred.releaseException());
-        }
         arrayBufferContentsArray = transferred.releaseReturnValue();
     }
 
@@ -5221,8 +5187,8 @@ ExceptionOr<Ref<SerializedScriptValue>> SerializedScriptValue::create(JSGlobalOb
         makeUnique<WasmModuleArray>(wasmModules), context == SerializationContext::WorkerPostMessage ? makeUnique<WasmMemoryHandleArray>(wasmMemoryHandles) : nullptr
 #endif
         ));
-    result->m_serializedBlockListRefs = WTF::move(serializedBlockListRefs);
-    result->m_serializedHistogramIds = WTF::move(serializedHistogramIds);
+    result->m_serializedBlockLists = WTF::move(serializedBlockLists);
+    result->m_serializedHistograms = WTF::move(serializedHistograms);
     return result;
 }
 
@@ -5257,11 +5223,8 @@ Ref<JSC::ArrayBuffer> SerializedScriptValue::toArrayBuffer()
         return ArrayBuffer::create(static_cast<size_t>(0), static_cast<unsigned>(1));
     }
 
-    this->ref();
     auto arrayBuffer = ArrayBuffer::createFromBytes(
-        { this->m_data.begin(), this->m_data.size() }, createSharedTask<void(void*)>([protectedThis = Ref { *this }](void* p) {
-            protectedThis->deref();
-        }));
+        { this->m_data.begin(), this->m_data.size() }, createSharedTask<void(void*)>([protectedThis = Ref { *this }](void*) {}));
 
     // Note: using the SharedArrayBufferContents::create function directly didn't work.
     arrayBuffer->makeShared();
@@ -5286,11 +5249,6 @@ JSC::JSValue SerializedScriptValue::fromArrayBuffer(JSC::JSGlobalObject& domGlob
     auto blobURLs = Vector<String> {};
     auto blobFiles = Vector<String> {};
 
-    if (arrayBuffer->isShared()) {
-        // prevent detaching while in-use
-        arrayBuffer->pin();
-    }
-
     auto* data = static_cast<uint8_t*>(arrayBuffer->data()) + byteOffset;
     auto size = std::min(arrayBuffer->byteLength(), maxByteLength);
     auto span = std::span<uint8_t> { data, size };
@@ -5301,10 +5259,6 @@ JSC::JSValue SerializedScriptValue::fromArrayBuffer(JSC::JSGlobalObject& domGlob
         nullptr, nullptr
 #endif
     );
-
-    if (arrayBuffer->isShared()) {
-        arrayBuffer->unpin();
-    }
 
     if (didFail) {
         *didFail = result.second != SerializationReturnCode::SuccessfullyCompleted;

@@ -1,7 +1,7 @@
 const EventEmitter = require("node:events");
 const path = require("node:path");
 const native = require("internal/desktop/native");
-const { app, Event } = require("internal/desktop/app");
+const { app, Event, hasDisplay } = require("internal/desktop/app");
 const policy = require("internal/desktop/electron/policy");
 const { inert, properties, unsupported } = require("internal/desktop/electron/stubs");
 
@@ -34,10 +34,54 @@ const windows = () => require("internal/desktop/window").Window;
 // The key of `safeStorage` can only be read asynchronously, and has to be there when the app is ready.
 const ready = Promise.withResolvers<void>();
 let isReady = false;
-const loadKey = (): Promise<unknown> =>
-  switches.$get("password-store") !== "basic" && !native.options.headless
-    ? require("internal/desktop/electron/os_crypt").load()
-    : Promise.$resolve();
+
+/** Below the middle of the screen and without the focus, which the prompt of the system needs. */
+function showWaitForKey() {
+  const { Window, kInternal } = require("internal/desktop/window");
+  const { x, y, width, height } = require("internal/desktop/system").api.screen.getPrimaryDisplay().workArea;
+  const window = new Window({
+    title: app.name,
+    x: Math.round(x + width / 2 - 210),
+    y: Math.round(y + height * 0.7),
+    width: 420,
+    height: 90,
+    show: false,
+    resizable: false,
+    minimizable: false,
+    closable: false,
+    autoHideMenuBar: true,
+    [kInternal]: true,
+  });
+  window.insertCSS("body{padding:20px;text-align:center}");
+  window.document.body.textContent = `${app.name} is waiting for the keychain. It starts when you have answered the prompt.`;
+  window.showInactive();
+  if (process.platform === "darwin") window.moveTop();
+  return window;
+}
+
+let keyWait: Promise<void> | undefined;
+async function waitForKey() {
+  if (switches.$get("password-store") === "basic" || native.options.headless) return;
+  const { load, whenAsking } = require("internal/desktop/electron/os_crypt");
+  let note: any;
+  let isWaiting = true;
+  const explain = () => {
+    if (!isWaiting || note) return;
+    // It would show a password that is typed into it.
+    require("internal/desktop/cover").discard();
+    native.start();
+    if (hasDisplay()) note = showWaitForKey();
+  };
+  const timer = setTimeout(explain, 1500);
+  whenAsking.then(explain);
+  await load();
+  isWaiting = false;
+  clearTimeout(timer);
+  // The app has a turn to make a window first.
+  if (note) ready.promise.then(() => setImmediate(() => note.destroy()));
+}
+const loadKey = () => (keyWait ??= waitForKey());
+
 const isLoadingEntryPoint = $bindgen("desktop.bind.ts", "isLoadingEntryPoint");
 // The main script may be waiting for it at its top level.
 let isAwaited = false;
@@ -124,6 +168,7 @@ inert(app, {
     const utilities = [...require("internal/desktop/electron/utility").running].filter(([child]) => child.pid);
     const engine = require("internal/desktop/webview/engine").running();
     if (engine?.pid) utilities.push([engine, { serviceName: "Web Engine", creationTime: engine.creationTime }]);
+    engine?.measure();
     return [
       {
         pid: process.pid,
@@ -141,6 +186,7 @@ inert(app, {
         creationTime,
         memory: { workingSetSize: 0, peakWorkingSetSize: 0 },
       })),
+      ...(engine?.metrics ?? []),
     ];
   },
   getApplicationInfoForProtocol: unsupported.rejects("getApplicationInfoForProtocol"),

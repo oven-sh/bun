@@ -354,7 +354,7 @@ const htmlOrSvg = {
   get tabIndex() {
     const node = (this as any).$impl;
     const index = parseInteger(getAttr(node, "tabindex"));
-    if (index === index) return index;
+    if (index === (index | 0)) return index;
     return focusableByDefault.$has(node.name) || hooks.isDetailsSummary(node) ? 0 : -1;
   },
   set tabIndex(value) {
@@ -613,7 +613,7 @@ class HTMLElement extends Element {
   }
   get innerText() {
     const node = this.$impl;
-    if (!(styleBits(node) & (1 | 64))) return core.textContent(node);
+    if (!(styleBits(node) & (1 | 64 | 256))) return core.textContent(node);
     return node.doc.engine.innerText(node.id);
   }
   set innerText(text) {

@@ -111,6 +111,8 @@ export class Realm {
     const hidden = this.#hiddenRoots.get(entry.path);
     if (hidden) return hidden();
     if (entry.scope === "Module") return this.#findInAnswersOfBindings(entry.token);
+    // One makes the global object a window, and the other starts an app.
+    if (/^bun:desktop\/(dom|electron)$/.test(entry.path)) return undefined;
     // A package that Bun answers for by itself where none is installed.
     return entry.path.startsWith("%") || !(isBuiltin(entry.path) || modulesInPlaceOfPackages.includes(entry.path)) ? undefined : require(entry.path);
   }

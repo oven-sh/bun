@@ -86,7 +86,7 @@ function messageOptions(...given: [any, Options?]): Options {
   };
 }
 
-/** Linux has no alerts, and GPUI only shows those of Windows over a window. */
+/** Linux has no alerts. */
 function isNative(options: Options) {
   if (process.platform === "linux" || native.options.headless) return false;
   return isMac || (options.window?.isVisible() && !options.checkboxLabel && !options.signal);

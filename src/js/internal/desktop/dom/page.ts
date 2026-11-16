@@ -213,6 +213,8 @@ function createPage(host: any, options?: { global?: object; baseUrl?: string; mi
     dispatchTask: (event: any) => task(() => events.dispatch(page.target, event)),
     loadHTML: (source: string) => task(() => page.loadHtml(source)),
     loadXML: (source: string, contentType: string) => task(() => page.loadXml(source, contentType)),
+    cameWith: (script: string) => page.cameWith(script),
+    forgetSource: () => page.forgetSource(),
     /** Without scripts, and without a `load` event. */
     parseHTML: (source: string) => require("internal/desktop/dom/parser").parseDocument(page.doc, source),
     remoteWindow: (handle: object) => require("internal/desktop/dom/remote_frame").popup(page, handle),
@@ -248,7 +250,11 @@ function createPage(host: any, options?: { global?: object; baseUrl?: string; mi
     },
     onlineChanged: (is: boolean) =>
       task(() => events.dispatch(page.target, new events.Event(is ? "online" : "offline"))),
-    willSwap: (type: string, to?: object) => task(() => page.history().willSwap(page, type, to)),
+    willSwap(type: string, to?: object) {
+      let ticket = 0;
+      task(() => (ticket = page.history().willSwap(page, type, to)));
+      return ticket;
+    },
     /** False if the page wants to stay. */
     beforeUnload() {
       const event = new events.BeforeUnloadEvent("beforeunload", { cancelable: true });

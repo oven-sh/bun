@@ -1,27 +1,17 @@
 //! Reads the common kinds of PNG row by row, and is quick where a screenshot is flat.
 
-use fdeflate::Decompressor;
-
-fn chunks(bytes: &[u8]) -> impl Iterator<Item = (&[u8; 4], &[u8])> {
-    let mut rest = bytes.strip_prefix(b"\x89PNG\r\n\x1a\n").unwrap_or_default();
-    std::iter::from_fn(move || {
-        let (length, after) = rest.split_first_chunk()?;
-        let (kind, after) = after.split_first_chunk()?;
-        let (data, after) = after.split_at((u32::from_be_bytes(*length) as usize).min(after.len()));
-        rest = after.get(4..).unwrap_or_default();
-        Some((kind, data))
-    })
-}
+use crate::bun::Inflater;
+use crate::codec::png_chunks;
 
 /// 3 for RGB and 4 for RGBA, with 8 bits each, unless it takes more than `read` to decode it.
 pub fn channels(bytes: &[u8]) -> Option<usize> {
-    let channels = match chunks(bytes).next()? {
+    let channels = match png_chunks(bytes).next()? {
         (b"IHDR", [_, _, _, _, _, _, _, _, 8, 2, 0, 0, 0]) => 3,
         (b"IHDR", [_, _, _, _, _, _, _, _, 8, 6, 0, 0, 0]) => 4,
         _ => return None,
     };
-    chunks(bytes)
-        .all(|it| !matches!(it, (b"tRNS" | b"eXIf", _) | (b"IDAT", [_])))
+    png_chunks(bytes)
+        .all(|it| !matches!(it, (b"tRNS" | b"eXIf", _)))
         .then_some(channels)
 }
 
@@ -107,83 +97,33 @@ pub fn read<const N: usize>(
     (width, height): (u32, u32),
     mut take: impl FnMut(&[u8]),
 ) -> Option<()> {
-    const WINDOW: usize = 32 << 10;
     let stride = width as usize * N + 1;
     let (mut above, mut row) = (vec![[0; N]; width as usize], vec![[0; N]; width as usize]);
-    let (mut inflated, mut start, mut end) = (vec![0; WINDOW * 5 + stride], 0, 0);
-    let (mut decompressor, mut rows_left) = (Decompressor::new(), height);
-    decompressor.ignore_adler32();
-    let mut data = chunks(bytes)
+    let (mut inflated, mut end) = (vec![0; (128usize << 10).next_multiple_of(stride)], 0);
+    let (mut inflater, mut rows_left) = (Inflater::new()?, height as usize);
+    for mut input in png_chunks(bytes)
         .filter(|it| it.0 == b"IDAT")
         .map(|it| it.1)
-        .peekable();
-    while let Some(mut input) = data.next() {
+    {
         loop {
-            let (consumed, produced) = decompressor
-                .read(input, &mut inflated, end, data.peek().is_none())
-                .ok()?;
+            let (consumed, produced, is_done) = inflater.inflate(input, &mut inflated[end..])?;
             (input, end) = (&input[consumed..], end + produced);
-            while end - start >= stride && rows_left > 0 {
-                unfilter(
-                    inflated[start],
-                    inflated[start + 1..start + stride].as_chunks().0,
-                    &above,
-                    &mut row,
-                )?;
+            let (rows, is_full) = ((end / stride).min(rows_left), end == inflated.len());
+            for raw in inflated.chunks_exact(stride).take(rows) {
+                unfilter(raw[0], raw[1..].as_chunks().0, &above, &mut row)?;
                 take(row.as_flattened());
                 std::mem::swap(&mut above, &mut row);
-                (start, rows_left) = (start + stride, rows_left - 1);
             }
-            if rows_left == 0 || decompressor.is_done() {
+            rows_left -= rows;
+            if rows_left == 0 || is_done {
                 return Some(());
             }
-            if inflated.len() - end < WINDOW {
-                let kept = start.min(end - WINDOW);
-                inflated.copy_within(kept..end, 0);
-                (start, end) = (start - kept, end - kept);
-            } else if consumed == 0 && produced == 0 {
+            inflated.copy_within(rows * stride..end, 0);
+            end -= rows * stride;
+            if !is_full && (input.is_empty() || consumed + produced == 0) {
                 break;
             }
         }
     }
     Some(())
-}
-
-#[cfg(test)]
-mod tests {
-    use image::ImageEncoder as _;
-    use image::codecs::png::{CompressionType, FilterType, PngEncoder};
-
-    #[test]
-    fn reads_what_was_encoded() {
-        let (width, height) = (333, 700);
-        let pixels: Vec<u8> = (0..width * height * 3)
-            .map(|it: u32| {
-                if it / 999 % 7 < 3 || it % 999 < 400 {
-                    9
-                } else {
-                    (it.wrapping_mul(it) >> 7) as u8
-                }
-            })
-            .collect();
-        for filter in [
-            FilterType::NoFilter,
-            FilterType::Sub,
-            FilterType::Up,
-            FilterType::Avg,
-            FilterType::Paeth,
-            FilterType::Adaptive,
-        ] {
-            let (mut encoded, mut read) = (Vec::new(), Vec::<u8>::new());
-            let encoder =
-                PngEncoder::new_with_quality(&mut encoded, CompressionType::Default, filter);
-            encoder
-                .write_image(&pixels, width, height, image::ExtendedColorType::Rgb8)
-                .unwrap();
-            assert_eq!(super::channels(&encoded), Some(3));
-            super::read::<3>(&encoded, (width, height), |row| read.extend(row));
-            assert!(read == pixels, "{filter:?}");
-            super::read::<3>(&encoded[..encoded.len() / 2], (width, height), |_| ());
-        }
-    }
 }

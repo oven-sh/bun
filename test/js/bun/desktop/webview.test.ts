@@ -32,7 +32,7 @@ const prelude = `
   };
   const inbox = "<script>const seen = [], waiting = []; onmessage = e => (waiting.shift() ?? (e => seen.push(e)))(e); next = () => new Promise(r => seen.length ? r(seen.shift()) : waiting.push(r));</script>";
   const click = (page, x, y) => { for (const type of ["mouseMove", "mouseDown", "mouseUp"]) page.sendInputEvent({ type, x, y, button: "left" }); };
-  const pixel = async (page, x, y) => [...(await page.capturePage({ x, y, width: 1, height: 1 })).toBitmap()].join();
+  const pixel = async (page, x, y) => [...(await page.capturePage({ x, y, width: 1, height: 1 })).toBitmap().subarray(0, 4)].join();
   const until = async condition => {
     for (const end = Date.now() + 60_000; !(await condition()); await new Promise(setImmediate)) if (Date.now() > end) process.exit(2);
   };
@@ -497,6 +497,22 @@ for (const engine of engines) {
       ).toEqual(["app://trusted"]);
     });
 
+    test("what covers a frame gets the click, however deep the frame is", async () => {
+      expect(
+        await run(`
+          const fill = "style='position:fixed;inset:0;width:100%;height:100%;border:0'";
+          const other = site({ "/": "<body bgcolor=blue onmousedown='top.postMessage(0, &quot;*&quot;)' " + fill + ">" }).replace("127.0.0.1", "localhost");
+          const origin = site({ "/": inbox + "<iframe src=/inner " + fill + "></iframe><p onclick='postMessage(1)' style='position:fixed;inset:0 50% 0 0;margin:0;background:red'>", "/inner": "<iframe src='" + other + "' " + fill + "></iframe>" });
+          const { webContents: page } = new BrowserWindow({ width: 400, height: 300 });
+          await page.loadURL(origin);
+          await until(async () => (await pixel(page, 300, 100)) === "255,0,0,255");
+          for (const x of [300, 100]) {
+            click(page, x, 100);
+            print(await page.executeJavaScript("next().then(e => e.data)"));
+          }`),
+      ).toEqual([0, 1]);
+    });
+
     test("the background of the view is that of the page", async () => {
       expect(
         await run(`
@@ -669,6 +685,17 @@ for (const engine of engines) {
       ]);
     });
 
+    test.skipIf(!isElectron)("getAppMetrics has the process of a page", async () => {
+      expect(
+        await run(`
+          const { webContents: page } = new BrowserWindow();
+          await page.loadURL(site({}));
+          const find = () => app.getAppMetrics().find(it => it.pid === page.getOSProcessId());
+          await until(find);
+          print([find().type, typeof find().cpu.cumulativeCPUUsage, find().memory.workingSetSize > 0]);`),
+      ).toEqual([["Tab", "number", true]]);
+    });
+
     test("sessions", async () => {
       expect(
         await run(`
@@ -736,6 +763,41 @@ for (const engine of engines) {
           await webContents.loadURL(origin);
           print(await webContents.executeJavaScript("1 + 1"));`),
       ).toEqual(["crashed", 2]);
+    });
+
+    test("a window that the page opens is painted, in the size of its window", async () => {
+      expect(
+        await run(`
+          const other = site({ "/": "<body bgcolor=blue>" }).replace("127.0.0.1", "localhost");
+          const { webContents: page } = new BrowserWindow({ width: 400, height: 300 });
+          await page.loadURL(site({}));
+          const painted = new Promise(resolve => page.once("did-create-window", opened => opened.once("ready-to-show", () => resolve(opened))));
+          await page.executeJavaScript("popup = open('about:blank', '', 'width=300,height=200'), popup.document.body.bgColor = 'lime', 0", true);
+          const opened = await painted;
+          const shows = async (color, width) => {
+            await until(async () => (await opened.webContents.executeJavaScript("innerWidth")) === width);
+            await until(async () => (await pixel(opened.webContents, width - 5, 5)) === color);
+            print((await opened.capturePage()).getSize().width);
+          };
+          await shows("0,255,0,255", 300);
+          opened.setContentSize(320, 200);
+          await shows("0,255,0,255", 320);
+          await opened.loadURL(other);
+          await shows("255,0,0,255", 320);
+          opened.setContentSize(340, 200);
+          await shows("255,0,0,255", 340);`),
+      ).toEqual([300, 320, 320, 340]);
+    });
+
+    test("an engine that does not start", async () => {
+      expect(
+        await run(`
+          app.setWebEngine({ ...JSON.parse(process.env.ENGINE), path: process.execPath + ".missing" });
+          const { webContents } = new WebContentsView();
+          const gone = once(webContents, "render-process-gone");
+          webContents.loadURL(site({})).catch(() => {});
+          print((await gone)[1].reason);`),
+      ).toEqual(["launch-failed"]);
     });
 
     test("a frame in a Window", async () => {

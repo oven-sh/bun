@@ -212,7 +212,7 @@ export default b.declarations(
   extendAll(["Ffi"], "bun:ffi", "%FFI%", "%FFICallback%"),
 
   extendAll(
-    ["Desktop", "Buffer", "LegacyEncodings"],
+    ["Desktop", "Buffer", "Image", "LegacyEncodings"],
     ...nativeBindings(
       "Bindgen",
       "desktop.bind.ts",

@@ -1,4 +1,6 @@
 // XPath 1.0. An expression is compiled to closures.
+const resultTypes = { number: 1, string: 2, boolean: 3, object: 4 };
+
 const core = require("internal/desktop/dom/core");
 const nodes = require("internal/desktop/dom/node");
 
@@ -425,7 +427,7 @@ class XPathResult {
   constructor(key?: symbol, value?: Value, type?: number, doc?: $Dom.Doc) {
     if (key !== internal) core.illegalConstructor();
     if (type! > 9) throw domError("NotSupportedError", "The result type is not supported.");
-    type ||= { number: 1, string: 2, boolean: 3, object: 4 }[typeof value as string];
+    type ||= resultTypes[typeof value as string];
     this.#type = type!;
     this.#value = ([toNumber, toText, toBoolean][type! - 1] ?? toNodes)(value!);
     this.#doc = doc!;

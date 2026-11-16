@@ -945,6 +945,31 @@ class DOMParser {
 }
 expose(DOMParser);
 
+/** The scripts, event handlers and `javascript:` URLs that a document came with, and its policies after a NUL. */
+function inlineScriptsOf(source: string, xmlType: string | undefined) {
+  const doc = xmlType === undefined ? createHtmlDoc() : createXmlDoc(xmlType);
+  if (xmlType === undefined) parsing.parseDocument(doc, source, true, true);
+  else parsing.parseXmlDocument(doc, source);
+  const found = new Set<string>();
+  const roots = [doc.node];
+  for (const root of roots) {
+    for (let node: N | null = root; node !== null; node = core.following(node, root)) {
+      if (isHtml(node, "template")) roots.push(node.x);
+      if (node.rare?.shadow) roots.push(node.rare.shadow);
+      if (node.name === "script" && require("internal/desktop/dom/loader").scriptType(node) !== null)
+        found.$add(core.childText(node));
+      const attrs = node.attrs ?? [];
+      for (let i = 0; i < attrs.length; i += 2) {
+        const [name, value] = [attrs[i], attrs[i + 1]];
+        if (name.startsWith("on")) found.$add(value);
+        else if (name === "href" && value.startsWith("javascript:")) found.$add(value.slice("javascript:".length));
+        else if (name === "content" && isHtml(node, "meta") && isHtml(node.parent, "head")) found.$add("\0" + value);
+      }
+    }
+  }
+  return found;
+}
+
 /** Of `XMLHttpRequest`. Null if it is not well-formed. */
 function parseResponse(source: string, { isHtml, contentType, encoding, url, lastModified }: any) {
   const doc = isHtml ? createHtmlDoc() : createXmlDoc(contentType);
@@ -961,4 +986,4 @@ class XMLSerializer {
 }
 expose(XMLSerializer);
 
-export default { abortParser, createHtmlDoc, parseResponse, setReadyState, startParser, titleOf };
+export default { abortParser, createHtmlDoc, inlineScriptsOf, parseResponse, setReadyState, startParser, titleOf };

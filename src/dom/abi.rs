@@ -1,6 +1,7 @@
 //! What `bun_dom` and the UI library pass to each other. `packages/bun-desktop` compiles this file too.
 //!
 //! Lengths are CSS pixels, y grows down, and colors are `0xRRGGBBAA` in sRGB, not premultiplied.
+#![allow(dead_code, unreachable_pub)] // Each side uses its half.
 
 /// Bumped with every change to this file, to the library's exports, or to its JSON messages.
 pub const ABI_VERSION: u32 = 9;

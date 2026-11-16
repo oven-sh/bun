@@ -1,5 +1,6 @@
 //! <https://drafts.csswg.org/css-view-transitions-2/>
 
+use core::cell::RefCell;
 use std::rc::Rc;
 
 use crate::abi::{self, Item, Matrix, Rect};
@@ -8,11 +9,11 @@ use crate::document::Document;
 use crate::geometry::translation;
 use crate::inline::ItemKind;
 use crate::name::{Name, Set, name};
-use crate::paint::{Painter, Picture, Space, alpha, square};
+use crate::paint::{Painter, Picture, Space, square};
 use crate::properties::{Id, Style};
 use crate::rules::Level;
 use crate::selector::{Pseudo, TransitionPart as Part};
-use crate::sheet::{Block, Keyframe};
+use crate::sheet::{AtKind, Block, Defined, Keyframe};
 use crate::svg::scaling;
 use crate::tree::{BACKDROP, DOCUMENT, Data, Element, Flags, Namespace, NodeId, Replaced, State};
 use crate::types::{Blend, IDENTITY, ObjectFit, invert, multiply};
@@ -59,6 +60,11 @@ pub(crate) struct ViewTransition {
     size: [f32; 2],
     canvas: u32,
     was_composited: bool,
+}
+
+thread_local! {
+    /// What documents have captured for the ones that replace them.
+    static OUTBOUND: RefCell<Vec<(u32, Box<ViewTransition>)>> = const { RefCell::new(Vec::new()) };
 }
 
 struct Named {
@@ -353,6 +359,45 @@ impl Document {
             (it.groups, it.captured) = (groups, Set::default());
         }
         true
+    }
+
+    pub(crate) fn hand_over_old_state(&mut self, ticket: u32) {
+        OUTBOUND.with_borrow_mut(|all| {
+            all.drain(..all.len().saturating_sub(3));
+            all.extend(self.view_transition.take().map(|it| (ticket, it)));
+        });
+    }
+
+    pub(crate) fn take_over_old_state(&mut self, ticket: u32) -> bool {
+        let Some((_, mut transition)) =
+            OUTBOUND.with_borrow_mut(|all| all.extract_if(.., |it| it.0 == ticket).next())
+        else {
+            return false;
+        };
+        self.end_view_transition();
+        transition.was_composited = self.stop_compositing();
+        self.view_transition = Some(transition);
+        true
+    }
+
+    /// The types, or `none` if navigations have no transition.
+    pub(crate) fn navigation_transition(&mut self) -> Out {
+        self.update_style();
+        let Some((Defined::Descriptors(all), _)) =
+            self.find_defined(DOCUMENT, AtKind::ViewTransition, "")
+        else {
+            return b"none".into();
+        };
+        let value = |name: &str| {
+            all.iter()
+                .rfind(|it| &*it.0 == name)
+                .map_or("none", |it| &it.1)
+        };
+        match (value("navigation"), value("types")) {
+            ("auto", "none") => Out::new(),
+            ("auto", types) => types.into(),
+            _ => b"none".into(),
+        }
     }
 
     fn add_pseudo(&mut self, parent: NodeId, pseudo: Pseudo, classes: &[Name]) -> NodeId {
@@ -729,12 +774,9 @@ impl Document {
         })
     }
 
-    /// The opacity that gives the same result without blending, for an image that fades into another opaque one.
+    /// The opacity that gives the same result without blending, where the image that fades in is opaque.
     pub(crate) fn opacity_in_cross_fade(&self, node: NodeId) -> Option<f32> {
-        let transition = self
-            .view_transition
-            .as_ref()
-            .filter(|it| alpha(it.canvas) == 0xff)?;
+        let transition = self.view_transition.as_ref()?;
         let group = transition
             .groups
             .iter()

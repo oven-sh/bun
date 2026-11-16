@@ -56,7 +56,7 @@ macro_rules! lengths {
     };
 }
 
-lengths!(items glyphs stops filters verbs local_verbs bytes regions links hits scrollers scroller_nodes drivers numbers wheel_hits seen driven clips);
+lengths!(items glyphs stops filters verbs local_verbs bytes regions region_nodes links hits scrollers scroller_nodes drivers numbers wheel_hits seen driven clips);
 
 #[derive(Clone, Copy, PartialEq)]
 pub(crate) enum Painted {
@@ -233,12 +233,12 @@ impl Segments {
             .map_or(it.lengths, |growth| it.lengths.plus(&growth.by))
     }
 
-    fn replace(&mut self, old: Position) {
+    fn replace(&mut self, old: &Position) {
         let kept = self
             .keeps_as
             .filter(|_| old.kept == NONE)
             .unwrap_or(old.kept);
-        self.replaced.insert(old.serial, Position { kept, ..old });
+        self.replaced.insert(old.serial, Position { kept, ..*old });
     }
 
     fn position(&self, index: u32, outer: &Position, link: u32, growths: &[Growth]) -> Position {
@@ -309,7 +309,8 @@ impl Pictures {
 
     pub(crate) fn discard(&mut self) {
         (self.links_are_for, *self.last_hit.get_mut()) = (None, None);
-        if let Some(picture) = self.current.take().or(self.outdated.take()) {
+        let outdated = self.outdated.take();
+        if let Some(picture) = self.current.take().or(outdated) {
             self.spare = picture;
         }
     }
@@ -394,7 +395,7 @@ impl Document {
             (segments.last_serial, segments.next_order) = (0, 0);
         }
         if let Some(root) = segments.old {
-            segments.replace(root);
+            segments.replace(&root);
         }
         segments.last_serial += 1;
         (segments.new, segments.reads_contents) = (
@@ -897,7 +898,7 @@ impl Painter<'_> {
         if by == Lengths::default() {
             lengths.copy(&Lengths::of(old), old, &mut painter.out);
         } else {
-            painter.copy(old, base, &end, &rest, [0.0; 2], None);
+            painter.copy(old, &base, &end, &rest, [0.0; 2], None);
             if painter.out.first_hit >= end.hits as usize && painter.out.first_hit > 0 {
                 painter.out.first_hit =
                     (painter.out.first_hit as u32).wrapping_add(by.hits) as usize;
@@ -1081,7 +1082,7 @@ impl Painter<'_> {
                 } else {
                     self.segments.base
                 };
-                self.copy(picture, base, &old.start, &known.lengths, by, Some(space));
+                self.copy(picture, &base, &old.start, &known.lengths, by, Some(space));
                 if sticks {
                     self.layers_depend_on_scroller(it.parent);
                 }
@@ -1097,7 +1098,7 @@ impl Painter<'_> {
             }
         }
         if let Some(old) = moved {
-            self.segments.replace(old);
+            self.segments.replace(&old);
         }
         self.segments.last_serial += 1;
         new.serial = self.segments.last_serial;
@@ -1147,7 +1148,7 @@ impl Painter<'_> {
     fn copy(
         &mut self,
         old: &Picture,
-        base: Lengths,
+        base: &Lengths,
         start: &Lengths,
         lengths: &Lengths,
         by: [f32; 2],
@@ -1159,8 +1160,8 @@ impl Painter<'_> {
             by,
         };
         start
-            .minus(&base)
-            .copy(&start.minus(&base).plus(lengths), old, out);
+            .minus(base)
+            .copy(&start.minus(base).plus(lengths), old, out);
         shift.relocate_all(out, &first);
         let link = |link: u32, links: &[Link], contents: &Map<BoxId, Space>| match space {
             _ if link >= start.links => link.wrapping_add(shift.tables.links),
@@ -1212,7 +1213,9 @@ impl Painter<'_> {
             if let Some((source, samples)) = &mut it.driver {
                 driver(source, samples);
                 out.numbers[samples.range()]
-                    .chunks_exact_mut(7)
+                    .as_chunks_mut::<7>()
+                    .0
+                    .iter_mut()
                     .for_each(|it| shift.matrix(&mut it[1..]));
             }
         }

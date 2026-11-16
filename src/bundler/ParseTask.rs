@@ -103,6 +103,8 @@ pub struct ParseTask<'a> {
     pub(crate) package_version: ast::StoreStr,
     pub(crate) package_name: ast::StoreStr,
     pub(crate) is_entry_point: bool,
+    /// The import of this HTML file waits for the onLoad plugins: see `BundleV2::html_import_after_on_load`.
+    pub(crate) on_load_decides_html_import: bool,
 }
 
 pub enum ParseTaskStage<'a> {
@@ -119,7 +121,7 @@ pub struct Result<'a> {
     pub(crate) task: AnyTaskWithExtraContext,
     pub(crate) ctx: bun_ptr::ParentRef<BundleV2<'static>, bun_ptr::Mut>,
     pub(crate) value: ResultValue<'a>,
-    pub(crate) watcher_data: WatcherData,
+    pub(crate) file_to_watch: Option<SourceFd>,
     /// This is used for native onBeforeParsePlugins to store
     /// a function pointer and context pointer to free the
     /// returned source code by the plugin. After `value`, which may borrow it.
@@ -151,19 +153,6 @@ impl ResultValue<'_> {
     }
 }
 
-pub(crate) struct WatcherData {
-    pub(crate) file: Option<SourceFd>,
-    pub(crate) dir_fd: Fd,
-}
-
-impl WatcherData {
-    /// When no files to watch, this encoding is used.
-    pub(crate) const NONE: WatcherData = WatcherData {
-        file: None,
-        dir_fd: Fd::INVALID,
-    };
-}
-
 pub(crate) struct Success<'a> {
     pub(crate) ast: JSAst<'a>,
     pub(crate) stylesheet: Option<Box<bun_css::BundlerStyleSheet<'a>>>,
@@ -181,6 +170,28 @@ pub(crate) struct Success<'a> {
 
     /// The package name from package.json, used for barrel optimization.
     pub(crate) package_name: ast::StoreStr,
+
+    /// Set for a "use client" file, which is parsed once more for another graph.
+    pub(crate) client_copy_options: Option<Box<TsconfigOptions>>,
+}
+
+/// The options of one file that its tsconfig.json decides.
+pub(crate) struct TsconfigOptions {
+    pub(crate) jsx: options::jsx::Pragma,
+    pub(crate) emit_decorator_metadata: bool,
+    pub(crate) experimental_decorators: bool,
+    pub(crate) use_define_for_class_fields: bool,
+}
+
+impl Default for TsconfigOptions {
+    fn default() -> Self {
+        Self {
+            jsx: Default::default(),
+            emit_decorator_metadata: false,
+            experimental_decorators: false,
+            use_define_for_class_fields: true,
+        }
+    }
 }
 
 pub(crate) struct ResultError {
@@ -276,6 +287,7 @@ impl<'a> ParseTask<'a> {
             },
             stage: ParseTaskStage::NeedsSourceCode,
             is_entry_point: false,
+            on_load_decides_html_import: false,
         }
     }
 
@@ -316,6 +328,7 @@ impl Default for ParseTask<'_> {
             package_version: ast::StoreStr::EMPTY,
             package_name: ast::StoreStr::EMPTY,
             is_entry_point: false,
+            on_load_decides_html_import: false,
         }
     }
 }
@@ -588,6 +601,7 @@ pub mod parse_worker {
             package_version: ast::StoreStr::EMPTY,
             package_name: ast::StoreStr::EMPTY,
             is_entry_point: false,
+            on_load_decides_html_import: false,
         };
         let source = Source {
             path: bun_paths::fs::Path {
@@ -2515,6 +2529,14 @@ pub mod parse_worker {
             side_effects: task.side_effects,
             loader,
             package_name: task.package_name,
+            client_copy_options: (use_directive == UseDirective::Client).then(|| {
+                Box::new(TsconfigOptions {
+                    jsx: task.jsx.clone(),
+                    emit_decorator_metadata: task.emit_decorator_metadata,
+                    experimental_decorators: task.experimental_decorators,
+                    use_define_for_class_fields: task.use_define_for_class_fields,
+                })
+            }),
 
             // Hash the files in here so that we do it in parallel.
             content_hash_for_additional_file: unique_key_for_additional_file.content_hash,
@@ -2539,12 +2561,9 @@ pub mod parse_worker {
         let mut log = Log::init();
         debug_assert!(this.source_index.is_valid()); // forgot to set source_index
 
-        let mut watcher_data = match this.contents_or_fd {
-            ContentsOrFd::Fd { file, dir } => WatcherData {
-                file: file.unwrap_valid().map(SourceFd::Borrowed),
-                dir_fd: dir,
-            },
-            ContentsOrFd::Contents(_) => WatcherData::NONE,
+        let mut file_to_watch = match this.contents_or_fd {
+            ContentsOrFd::Fd { file, .. } => file.unwrap_valid().map(SourceFd::Borrowed),
+            ContentsOrFd::Contents(_) => None,
         };
 
         let value: ResultValue = 'value: {
@@ -2578,11 +2597,8 @@ pub mod parse_worker {
                 }
             };
 
-            watcher_data = WatcherData {
-                // Without a watcher, a file that the task opened closes here.
-                file: entry.file.filter(|_| ctx.bun_watcher.is_some()),
-                dir_fd: Fd::INVALID,
-            };
+            // Without a watcher, a file that the task opened closes here.
+            file_to_watch = entry.file.filter(|_| ctx.bun_watcher.is_some());
 
             let (bump, contents) = (worker.arena(), entry.contents);
             match run_with_source_code(&mut this, &mut worker, &mut step, &mut log, bump, contents)
@@ -2628,7 +2644,7 @@ pub mod parse_worker {
             // `ExternalFreeFunction`
             // doesn't derive `Copy`, so move it out (task is consumed here).
             external: core::mem::take(&mut this.external_free_function),
-            watcher_data,
+            file_to_watch,
         });
         // Before the post: the bundle can then finish and free what the task borrows.
         drop(this);

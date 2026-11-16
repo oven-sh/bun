@@ -231,7 +231,7 @@ fn frame_tracks(list: Option<&str>, gap: u32) -> String {
     .map(|it| {
         match (
             dimension(it).map(|it| it.0.min(i32::MAX.into())),
-            it.trim_ascii().bytes().find(|it| matches!(it, b'%' | b'*')),
+            bun_core::strings::index_of_any(it.as_bytes(), b"%*").map(|at| it.as_bytes()[at]),
         ) {
             (number, Some(b'*')) => (number.unwrap_or(1.0).floor().max(1.0), b'*'),
             (None, None) => (1.0, b'*'),
@@ -589,8 +589,9 @@ fn html_hints(element: &Element, table: Option<&Element>, declare: &mut dyn FnMu
 fn hints(element: &Element, table: Option<&Element>, is_outer_svg: bool) -> Out {
     let mut out = Out::new();
     let mut declare = |property: &str, value: &str| {
-        if !bun_core::strings::contains_char(value.as_bytes(), b';') || value.starts_with("url(") {
-            out.extend(format!("{property}:{value};").bytes());
+        let declaration = format!("{property}:{value};");
+        if crate::scan::is_one_declaration(declaration.as_bytes()) {
+            out.extend(declaration.bytes());
         }
     };
     if let Some(language) = element

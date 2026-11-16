@@ -172,6 +172,7 @@ pub(crate) struct Document {
     pub(crate) animated_vectors: RefCell<Set<(u32, NodeId)>>,
     /// A transform may depend on a stroke that depends on the transform.
     pub(crate) is_measuring_stroke: Cell<bool>,
+    pub(crate) is_measuring_text: Cell<bool>,
     pub(crate) svg_size_in_layout: Cell<Option<[f32; 2]>>,
     pub(crate) blends_in_svg: Cell<bool>,
     pub(crate) smil: crate::smil::Smil,
@@ -179,7 +180,10 @@ pub(crate) struct Document {
     pub(crate) svg_zoom: crate::abi::Matrix,
     /// With the alternative text of their content.
     pub(crate) counter_users: Map<NodeId, String>,
-    pub(crate) generated_images: Map<NodeId, Str>,
+    pub(crate) generated_images: Map<NodeId, (Str, f32)>,
+    pub(crate) drawn_images: Map<NodeId, crate::types::Image>,
+    /// What `content` hides.
+    pub(crate) replacements: Map<NodeId, Option<Replaced>>,
     pub(crate) stale_directions: Set<NodeId>,
     pub(crate) has_base_selects: bool,
     pub(crate) has_auto_direction: bool,
@@ -325,12 +329,15 @@ impl Document {
             view_transition: None,
             animated_vectors: Default::default(),
             is_measuring_stroke: Cell::new(false),
+            is_measuring_text: Cell::new(false),
             svg_size_in_layout: Cell::new(None),
             blends_in_svg: Cell::new(false),
             smil: Default::default(),
             svg_zoom: crate::types::IDENTITY,
             counter_users: Default::default(),
             generated_images: Default::default(),
+            drawn_images: Default::default(),
+            replacements: Default::default(),
             stale_directions: Default::default(),
             has_base_selects: false,
             has_auto_direction: false,
@@ -595,11 +602,16 @@ impl Document {
                 self.deep_lists.remove(&id);
             }
             self.captured_node_freed(id);
+            if !self.replacements.is_empty() && self.replacements.remove(&id).is_some() {
+                self.generated_images.remove(&id);
+                self.drawn_images.remove(&id);
+            }
             match &self.tree[id].data {
                 Data::ShadowRoot { .. } => _ = self.styles.scopes.remove(&id),
                 Data::Element(element) if element.is_generated() => {
                     self.counter_users.remove(&id);
                     self.generated_images.remove(&id);
+                    self.drawn_images.remove(&id);
                     self.shape_images.get_mut().retain(|it| it.1 != id);
                     self.changed_formulas.remove(&id);
                 }
@@ -1018,6 +1030,10 @@ impl Document {
         {
             self.prepared.push(Prepared::new(source));
         }
+    }
+
+    pub(crate) fn has_prepared(&self, source: &[u8]) -> bool {
+        self.prepared.iter().any(|it| it.source() == source)
     }
 
     fn finish_sheet(&mut self, id: u32) {
@@ -1469,7 +1485,15 @@ impl Document {
     }
 
     pub(crate) fn use_font(&mut self, family: &[u8], weight: u16, is_italic: bool) {
-        let used = (Name::lowercase(family), weight, is_italic);
+        let used = (
+            Name::lowercase(family),
+            [
+                100.0,
+                f32::from(is_italic) * FontFace::ITALIC,
+                weight.into(),
+            ]
+            .map(f32::to_bits),
+        );
         if self.fonts.used.get_mut().insert(used) {
             self.fonts.newly_used.get_mut().push(used);
         }
@@ -1501,29 +1525,13 @@ impl Document {
         } else {
             newly_used
         };
-        for (family, weight, is_italic) in used {
+        for (family, wanted) in used {
             let of_family = || {
                 faces
                     .iter()
                     .filter(|it| Name::lowercase(it.family.as_bytes()) == family)
             };
-            let distance = |face: &FontFace| {
-                let (weight, [min, max]) = (f32::from(weight), face.weight);
-                let (lighter, heavier) = ((weight - max).max(0.0), (min - weight).max(0.0));
-                let against = if weight > 500.0 {
-                    lighter
-                } else if weight < 400.0 || min > 500.0 {
-                    heavier
-                } else {
-                    0.0
-                };
-                let penalty = f32::from(face.is_italic != is_italic) * 4000.0
-                    + f32::from(against > 0.0) * 1000.0;
-                (penalty
-                    + f32::from(weight <= 500.0 && weight >= 400.0 && lighter > 0.0) * 500.0
-                    + lighter
-                    + heavier) as u32
-            };
+            let distance = |face: &FontFace| face.distance(wanted.map(f32::from_bits));
             let best = of_family().map(|it| distance(it)).min();
             for face in of_family().filter(|it| Some(distance(it)) == best) {
                 if !self.requested_fonts.iter().any(|it| Rc::ptr_eq(it, face)) {
@@ -1572,12 +1580,12 @@ impl Document {
         let users: Vec<_> = self
             .generated_images
             .iter()
-            .filter(|it| &**it.1 == url)
-            .map(|it| *it.0)
+            .filter(|it| &*it.1.0 == url)
+            .map(|it| (*it.0, it.1.1))
             .collect();
-        users
-            .into_iter()
-            .for_each(|id| self.set_replaced(id, Some(image)));
+        users.into_iter().for_each(|(id, resolution)| {
+            self.set_replaced(id, Some(image.at_resolution(resolution)))
+        });
         self.externals
             .values_mut()
             .flatten()

@@ -1,0 +1,367 @@
+// For `paint/layers`: surfaces, the layers that show them, and the GPU that draws on them.
+#import "bridge.h"
+#import <IOSurface/IOSurfaceObjC.h>
+#import <Metal/Metal.h>
+#import <QuartzCore/QuartzCore.h>
+#import <os/lock.h>
+
+void bd_release(void* object) { CFRelease(object); }
+
+void* bd_surface_create(int32_t width, int32_t height)
+{
+    @autoreleasepool {
+        IOSurface* surface = [[IOSurface alloc] initWithProperties:@{
+            IOSurfacePropertyKeyWidth : @(width),
+            IOSurfacePropertyKeyHeight : @(height),
+            IOSurfacePropertyKeyBytesPerElement : @4,
+            IOSurfacePropertyKeyBytesPerRow : @(width * 4),
+            IOSurfacePropertyKeyPixelFormat : @((OSType)'BGRA'),
+        }];
+        if (surface)
+            IOSurfaceSetValue((__bridge IOSurfaceRef)surface, kIOSurfaceColorSpace, kCGColorSpaceSRGB);
+        return (__bridge_retained void*)surface;
+    }
+}
+
+bool bd_surface_is_in_use(IOSurfaceRef surface) { return IOSurfaceIsInUse(surface); }
+
+/// With the GPU, so that there is nothing to fetch.
+static const bool sharesMemory = TARGET_CPU_ARM64;
+
+void* bd_surface_lock(IOSurfaceRef surface, bool writes, size_t* bytesPerRow)
+{
+    if (writes || !sharesMemory)
+        IOSurfaceLock(surface, writes ? 0 : kIOSurfaceLockReadOnly, NULL);
+    *bytesPerRow = IOSurfaceGetBytesPerRow(surface);
+    return IOSurfaceGetBaseAddress(surface);
+}
+
+void bd_surface_unlock(IOSurfaceRef surface, bool wrote)
+{
+    if (wrote || !sharesMemory)
+        IOSurfaceUnlock(surface, wrote ? 0 : kIOSurfaceLockReadOnly, NULL);
+}
+
+/// What is being drawn, and what only waits for its moment.
+static NSMutableArray<void (^)(void)>*changes, *ready;
+static os_unfair_lock readyLock = OS_UNFAIR_LOCK_INIT;
+static bool hasChangedLayers;
+static NSMutableArray<id<MTLCommandBuffer>>* unfinished;
+
+static bool commitsAfterGpu(void)
+{
+    static int does = -1;
+    return does = does < 0 ? !strcmp(getenv("BUN_DESKTOP_COMMIT") ?: "", "gpu") : does;
+}
+
+static void change(void* pointer, void (^body)(CALayer* layer))
+{
+    CALayer* layer = (__bridge CALayer*)pointer;
+    changes = changes ?: [NSMutableArray new];
+    [changes addObject:^{
+        body(layer);
+    }];
+}
+
+/// On any thread.
+void commitWhatIsReady(void)
+{
+    @autoreleasepool {
+        os_unfair_lock_lock(&readyLock);
+        if (ready) {
+            [CATransaction begin];
+            for (void (^body)(void) in ready)
+                body();
+            [CATransaction commit];
+            ready = nil;
+            bd_trace("committed in time", 0);
+        }
+        os_unfair_lock_unlock(&readyLock);
+    }
+}
+
+void bd_layers_apply(bool flushes, bool mayWait)
+{
+    @autoreleasepool {
+        if (!flushes)
+            [unfinished.lastObject waitUntilScheduled];
+        os_unfair_lock_lock(&readyLock);
+        NSMutableArray* all = ready ?: changes;
+        if (ready && changes)
+            [all addObjectsFromArray:changes];
+        changes = nil;
+        bool waits = mayWait && commitsInTime();
+        if (commitsAfterGpu() && unfinished.count && flushes)
+            waits = unfinished.lastObject.status < MTLCommandBufferStatusCompleted;
+        ready = waits ? all : nil;
+        os_unfair_lock_unlock(&readyLock);
+        for (void (^body)(void) in waits ? nil : all)
+            body();
+        if (flushes && (!waits || hasChangedLayers))
+            [CATransaction flush];
+        hasChangedLayers = !flushes;
+    }
+}
+
+/// `isPinned` is for what `bd_layer_pin` gets.
+void* bd_layer_create(void* parent, bool isPinned)
+{
+    @autoreleasepool {
+        CALayer* layer = [CALayer new];
+        NSArray* keys = @[ @"anchorPoint", @"backgroundColor", @"bounds", @"cornerRadius", @"masksToBounds", @"opacity", @"contents", @"contentsScale", @"onOrderIn", @"onOrderOut", @"position", @"sublayers", @"zPosition" ];
+        NSMutableDictionary* actions = [NSMutableDictionary new];
+        for (NSString* key in keys)
+            actions[key] = NSNull.null;
+        layer.actions = actions;
+        layer.anchorPoint = CGPointZero;
+        layer.edgeAntialiasingMask = 0;
+        if (isPinned) {
+            [(__bridge CALayer*)parent addSublayer:layer];
+            hasChangedLayers = true;
+        } else
+            change(parent, ^(CALayer* it) {
+                [it addSublayer:layer];
+            });
+        return (__bridge_retained void*)layer;
+    }
+}
+
+/// Moves `corner` to the top left of its parent. Returns whether `y` grows downwards there.
+bool bd_layer_pin(void* corner)
+{
+    CALayer *layer = (__bridge CALayer*)corner, *root = layer.superlayer;
+    bool isFlipped = root.contentsAreFlipped;
+    CGPoint position = CGPointMake(0, isFlipped ? 0 : root.bounds.size.height);
+    if (!CGPointEqualToPoint(layer.position, position)) {
+        layer.position = position;
+        hasChangedLayers = true;
+    }
+    return isFlipped;
+}
+
+void bd_layer_place(void* pointer, double x, double y, double width, double height, double scale, bool isOpaque)
+{
+    change(pointer, ^(CALayer* layer) {
+        layer.frame = CGRectMake(x, y, width, height);
+        layer.contentsScale = scale;
+        layer.opaque = isOpaque;
+    });
+}
+
+void bd_layer_show(void* pointer, void* surface)
+{
+    id contents = (__bridge id)surface;
+    change(pointer, ^(CALayer* layer) {
+        layer.contents = contents;
+    });
+}
+
+void bd_layer_blink(void* pointer, uint32_t rgba, double secondsAgo)
+{
+    @autoreleasepool {
+        id color = CFBridgingRelease(CGColorCreateSRGB((rgba >> 24) / 255., (rgba >> 16 & 255) / 255., (rgba >> 8 & 255) / 255., (rgba & 255) / 255.));
+        CAKeyframeAnimation* blinking = [CAKeyframeAnimation animationWithKeyPath:@"opacity"];
+        blinking.calculationMode = kCAAnimationDiscrete;
+        blinking.values = @[ @1, @0 ];
+        blinking.keyTimes = @[ @0, @0.5, @1 ];
+        blinking.duration = 1;
+        blinking.repeatCount = HUGE_VALF;
+        blinking.beginTime = CACurrentMediaTime() - secondsAgo;
+        change(pointer, ^(CALayer* layer) {
+            layer.backgroundColor = (__bridge CGColorRef)color;
+            layer.opaque = NO;
+            layer.zPosition = 1e7;
+            [layer addAnimation:blinking forKey:@"blinking"];
+        });
+    }
+}
+
+void bd_layer_move(void* pointer, double x, double y)
+{
+    change(pointer, ^(CALayer* layer) {
+        layer.position = CGPointMake(x, y);
+    });
+}
+
+void bd_layer_set_order(void* layer, double order) { ((__bridge CALayer*)layer).zPosition = order; }
+
+void bd_layer_clip(void* pointer, double radius, float opacity, double order)
+{
+    change(pointer, ^(CALayer* layer) {
+        layer.opaque = NO;
+        layer.masksToBounds = YES;
+        layer.cornerRadius = radius;
+        layer.opacity = opacity;
+        layer.zPosition = order;
+    });
+}
+
+void bd_layer_center(void* pointer, double x, double y, double width, double height, double scale)
+{
+    change(pointer, ^(CALayer* layer) {
+        layer.anchorPoint = CGPointMake(0.5, 0.5);
+        layer.bounds = CGRectMake(0, 0, width, height);
+        layer.position = CGPointMake(x, y);
+        layer.contentsScale = scale;
+    });
+}
+
+/// A sample is a position and an opacity or a matrix.
+void bd_layer_animate(void* pointer, bool fades, const double* samples, size_t count, double secondsAgo, double cycle, double cycles)
+{
+    @autoreleasepool {
+        NSString* key = fades ? @"opacity" : @"transform";
+        if (!count)
+            return change(pointer, ^(CALayer* layer) {
+                [layer removeAnimationForKey:key];
+            });
+        NSMutableArray *times = [NSMutableArray new], *values = [NSMutableArray new];
+        for (const double* it = samples; count--; it += fades ? 2 : 7) {
+            CGAffineTransform matrix = fades ? CGAffineTransformIdentity : CGAffineTransformMake(it[1], it[2], it[3], it[4], it[5], it[6]);
+            id value = fades ? @(fmax(0, fmin(it[1], 1))) : [NSValue valueWithCATransform3D:CATransform3DMakeAffineTransform(matrix)];
+            if (!times.count && it[0] > 0) {
+                [times addObject:@0];
+                [values addObject:value];
+            }
+            [times addObject:@(fmax(0, fmin(it[0], 1)))];
+            [values addObject:value];
+            if (!count && it[0] < 1) {
+                [times addObject:@1];
+                [values addObject:value];
+            }
+        }
+        CAKeyframeAnimation* animation = [CAKeyframeAnimation animationWithKeyPath:key];
+        animation.values = values;
+        animation.keyTimes = times;
+        animation.duration = cycle;
+        animation.repeatCount = MIN(cycles, HUGE_VALF);
+        animation.beginTime = CACurrentMediaTime() - secondsAgo;
+        animation.fillMode = kCAFillModeBoth;
+        animation.removedOnCompletion = NO;
+        animation.preferredFrameRateRange = (CAFrameRateRange) { 30, 60, 60 };
+        change(pointer, ^(CALayer* layer) {
+            [layer addAnimation:animation forKey:key];
+        });
+    }
+}
+
+void bd_layer_remove(void* pointer)
+{
+    change(pointer, ^(CALayer* layer) {
+        [layer removeFromSuperlayer];
+    });
+}
+
+static id<MTLDevice> device;
+static id<MTLCommandQueue> queue;
+static id<MTLRenderPipelineState> pipeline;
+
+/// The name of the device.
+char* bd_gpu_start(const char* shader)
+{
+    return answer(^id {
+        device = MTLCreateSystemDefaultDevice();
+        if (!device.hasUnifiedMemory || ![device supportsFamily:MTLGPUFamilyApple1])
+            fail(@"there is none, or it has memory of its own");
+        NSError* error;
+        id<MTLLibrary> library = [device newLibraryWithSource:@(shader) options:nil error:&error];
+        if (!library)
+            fail(error.description);
+        MTLRenderPipelineDescriptor* descriptor = [MTLRenderPipelineDescriptor new];
+        descriptor.vertexFunction = [library newFunctionWithName:@"place"];
+        descriptor.fragmentFunction = [library newFunctionWithName:@"paint"];
+        MTLRenderPipelineColorAttachmentDescriptor* color = descriptor.colorAttachments[0];
+        color.pixelFormat = MTLPixelFormatBGRA8Unorm;
+        color.blendingEnabled = YES;
+        color.sourceRGBBlendFactor = color.sourceAlphaBlendFactor = MTLBlendFactorOne;
+        color.destinationRGBBlendFactor = color.destinationAlphaBlendFactor = MTLBlendFactorOneMinusSourceAlpha;
+        pipeline = [device newRenderPipelineStateWithDescriptor:descriptor error:&error];
+        if (!pipeline)
+            fail(error.description);
+        return device.name;
+    });
+}
+
+/// Around whole pages, or with memory of its own if `start` is null.
+void* bd_gpu_buffer(void* start, size_t length)
+{
+    id<MTLBuffer> buffer = start ? [device newBufferWithBytesNoCopy:start length:length options:MTLResourceStorageModeShared deallocator:nil]
+                                 : [device newBufferWithLength:length options:MTLResourceStorageModeShared];
+    return (__bridge_retained void*)buffer;
+}
+
+void bd_gpu_rest(void) { queue = nil; }
+void* bd_gpu_contents(void* buffer) { return ((__bridge id<MTLBuffer>)buffer).contents; }
+
+void* bd_gpu_texture(IOSurfaceRef surface)
+{
+    @autoreleasepool {
+        MTLTextureDescriptor* descriptor = [MTLTextureDescriptor texture2DDescriptorWithPixelFormat:MTLPixelFormatBGRA8Unorm
+                                                                                              width:IOSurfaceGetWidth(surface)
+                                                                                             height:IOSurfaceGetHeight(surface)
+                                                                                          mipmapped:NO];
+        descriptor.usage = MTLTextureUsageRenderTarget;
+        descriptor.storageMode = MTLStorageModeShared;
+        return (__bridge_retained void*)[device newTextureWithDescriptor:descriptor iosurface:surface plane:0];
+    }
+}
+
+typedef struct { size_t offset, count; void* slots[8]; } BDBatch;
+typedef struct { void* texture; float cell[4]; size_t batches; } BDPass;
+
+char* bd_gpu_finish(void)
+{
+    return answer(^id {
+        NSArray* all = unfinished;
+        unfinished = nil;
+        [all makeObjectsPerformSelector:@selector(waitUntilCompleted)];
+        for (id<MTLCommandBuffer> commands in all)
+            if (commands.status != MTLCommandBufferStatusCompleted)
+                fail(commands.error.description ?: @"it did not complete");
+        return nil;
+    });
+}
+
+/// From when it returns, the window server only gets to read the surfaces after they were drawn on.
+char* bd_gpu_draw(void* instances, const BDPass* passes, size_t count, const BDBatch* batches)
+{
+    return answer(^id {
+        id<MTLBuffer> all = (__bridge id<MTLBuffer>)instances;
+        queue = queue ?: [device newCommandQueue];
+        id<MTLCommandBuffer> commands = [queue commandBuffer];
+        const BDBatch* batch = batches;
+        for (const BDPass* pass = passes; pass < passes + count; pass++) {
+            MTLRenderPassDescriptor* descriptor = [MTLRenderPassDescriptor new];
+            descriptor.colorAttachments[0].texture = (__bridge id<MTLTexture>)pass->texture;
+            descriptor.colorAttachments[0].loadAction = MTLLoadActionClear;
+            descriptor.colorAttachments[0].clearColor = MTLClearColorMake(0, 0, 0, 0);
+            descriptor.colorAttachments[0].storeAction = MTLStoreActionStore;
+            id<MTLRenderCommandEncoder> encoder = [commands renderCommandEncoderWithDescriptor:descriptor];
+            if (!encoder)
+                fail(@"there is no encoder");
+            [encoder setRenderPipelineState:pipeline];
+            [encoder setVertexBytes:pass->cell length:sizeof pass->cell atIndex:1];
+            [encoder setFragmentBytes:pass->cell length:sizeof pass->cell atIndex:1];
+            for (const BDBatch* end = batch + pass->batches; batch < end; batch++) {
+                [encoder setVertexBuffer:all offset:batch->offset atIndex:0];
+                [encoder setFragmentBuffer:all offset:batch->offset atIndex:0];
+                for (int slot = 0; slot < 8; slot++)
+                    [encoder setFragmentBuffer:(__bridge id<MTLBuffer>)batch->slots[slot] offset:0 atIndex:2 + slot];
+                [encoder drawPrimitives:MTLPrimitiveTypeTriangleStrip vertexStart:0 vertexCount:4 instanceCount:batch->count];
+            }
+            [encoder endEncoding];
+        }
+        if (commitsAfterGpu())
+            [commands addCompletedHandler:^(id<MTLCommandBuffer> unused) {
+                commitWhatIsReady();
+            }];
+        [commands commit];
+        if (!commitsAfterGpu())
+            [commands waitUntilScheduled];
+        if (getenv("BUN_DESKTOP_WAIT"))
+            [commands waitUntilCompleted];
+        unfinished = unfinished ?: [NSMutableArray new];
+        [unfinished addObject:commands];
+        return nil;
+    });
+}

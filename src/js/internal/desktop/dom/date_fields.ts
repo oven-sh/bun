@@ -1,4 +1,6 @@
 // The fields and the pop-up of `<input type=date>` and its like.
+const millisecondsPerField = { minute: 60000, second: 1000, millisecond: 1 };
+
 const core = require("internal/desktop/dom/core");
 const html = require("internal/desktop/dom/html");
 const interactive = require("internal/desktop/dom/interactive");
@@ -270,7 +272,7 @@ class DateFields {
     if (key === "F4" || key === " " || (altKey && key === "ArrowDown")) return (this.setOpen(!this.isOpen()), true);
     if (key === "ArrowUp" || key === "ArrowDown") {
       const { min, max, value, kind } = field;
-      const unit = { minute: 60000, second: 1000, millisecond: 1 }[kind] ?? NaN;
+      const unit = millisecondsPerField[kind] ?? NaN;
       const step = (max + 1) % (this.it.step() / unit) === 0 ? Math.max(1, this.it.step() / unit) : 1;
       const isUp = key === "ArrowUp";
       const next = isUp ? (Math.floor(value / step) + 1) * step : (Math.ceil(value / step) - 1) * step;

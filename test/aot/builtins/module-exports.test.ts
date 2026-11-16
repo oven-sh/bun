@@ -81,7 +81,9 @@ test("the programs import every module of module-exports.txt", () => {
       match => match[1],
     );
   });
-  expect(imported.sort()).toEqual([...written.keys()].filter(specifier => !specifier.startsWith("bun:test")).sort());
+  // Importing bun:desktop/electron starts an app: test/bundler/compile-desktop.test.ts.
+  const leftOut = /^bun:(test|desktop\/electron$)/;
+  expect(imported.sort()).toEqual([...written.keys()].filter(specifier => !leftOut.test(specifier)).sort());
 });
 
 test("formatModuleExports writes what parseModuleExports reads", () => {

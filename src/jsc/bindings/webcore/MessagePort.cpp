@@ -29,7 +29,6 @@
 #include <wtf/SetForScope.h>
 #include <JavaScriptCore/JSArrayBuffer.h>
 
-#include "BunClientData.h"
 #include "EventNames.h"
 #include "GlobalEventScope.h"
 #include "JSMessagePort.h"
@@ -222,22 +221,7 @@ void MessagePort::close()
     // it in hasPendingActivity()); marking our side Closed is sufficient.
     m_pipe->close(m_side, MessagePortPipe::CloseKind::Explicit);
 
-    // Release the self-reference taken by jsRef() (set when .onmessage is
-    // assigned or .ref() is called from JS). The JS .close() binding calls
-    // jsUnref() first; stop() and contextDestroyed() do not.
-    if (m_hasRef) {
-        m_hasRef = false;
-        if (auto* context = scriptExecutionContext())
-            context->unrefEventLoop();
-        deref();
-    }
-
-    // close() can run without a prior jsUnref() (warn-and-close, contextDestroyed());
-    // clear the listener keepalive so a later listener add can't re-ref the loop.
-    if (m_isRefd) {
-        m_isRefd = false;
-        updateListenerEventLoopRef();
-    }
+    jsUnref();
 
     // Defer 'close' to a task (node fires it at uv close-callback timing, i.e.
     // after sync code and microtasks), so a listener added after close() still
@@ -283,40 +267,18 @@ void MessagePort::peerClosed()
     // Fire 'close' (guarded against a double dispatch) and release this side's loop refs
     // so the loop can idle, matching node.
     dispatchCloseEvent();
-    // jsUnref() clears both the listener loop-ref (m_isRefd) and the onmessage/ref()
-    // keepalive (m_hasRef), so a listening transferred port stops pinning the loop.
-    auto* globalObject = defaultGlobalObject(context->globalObject());
-    jsUnref(globalObject);
+    jsUnref();
 }
 
 TransferredMessagePort MessagePort::disentangle()
 {
     ASSERT(isEntangled());
 
-    // Drop any message listeners (and the event-loop ref they carry) while
-    // this port is still attached to its context; after observeContext(null)
-    // there would be nothing to unref.
     removeAllEventListeners();
     m_hasMessageEventListener = false;
 
-    // Release the self-reference taken by jsRef() on the sending side. After
-    // transfer this object is inert (the receiving side gets a fresh
-    // MessagePort for the same pipe endpoint) and is no longer a destruction
-    // observer, so nothing else will ever release a ref taken here.
-    // The caller (disentanglePorts) holds a RefPtr, so deref() is safe.
-    if (m_hasRef) {
-        m_hasRef = false;
-        if (auto* context = scriptExecutionContext())
-            context->unrefEventLoop();
-        deref();
-    }
-
-    // A transferred port is inert; clear the listener keepalive too so hasRef()
-    // reports false (the disentangle analogue of the close() reset above).
-    if (m_isRefd) {
-        m_isRefd = false;
-        updateListenerEventLoopRef();
-    }
+    // This object is inert from here: the receiving side gets a fresh MessagePort. The caller holds a RefPtr.
+    jsUnref();
 
     // Hand the pipe endpoint to its next owner. Messages that arrive while
     // in transit buffer in the pipe; the receiving context's entangle()
@@ -483,23 +445,6 @@ Vector<RefPtr<MessagePort>> MessagePort::entanglePorts(ScriptExecutionContext& c
     });
 }
 
-// Reconcile the message-listener loop-ref with (m_isRefd && m_messageEventCount > 0),
-// so .unref() releases the listener ref and .ref() re-acquires it.
-void MessagePort::updateListenerEventLoopRef()
-{
-    bool shouldHold = m_isRefd && m_messageEventCount > 0;
-    if (shouldHold == m_listenerLoopRefActive)
-        return;
-    auto* context = scriptExecutionContext();
-    if (!context)
-        return;
-    if (shouldHold)
-        context->refEventLoop();
-    else
-        context->unrefEventLoop();
-    m_listenerLoopRefActive = shouldHold;
-}
-
 void MessagePort::onDidChangeListenerImpl(EventTarget& self, const AtomString& eventType, OnDidChangeListenerKind kind)
 {
     if (eventType != eventNames().messageEvent)
@@ -518,7 +463,7 @@ void MessagePort::onDidChangeListenerImpl(EventTarget& self, const AtomString& e
         port.m_messageEventCount = 0;
         break;
     }
-    port.updateListenerEventLoopRef();
+    port.updateKeepAlive();
 }
 
 bool MessagePort::addEventListener(const AtomString& eventType, Ref<EventListener>&& listener, const AddEventListenerOptions& options)
@@ -559,7 +504,7 @@ WebCoreOpaqueRoot root(MessagePort* port)
     return WebCoreOpaqueRoot { port };
 }
 
-void MessagePort::jsRef(JSGlobalObject* lexicalGlobalObject)
+void MessagePort::jsRef()
 {
     // A closed or transferred-away port can never receive messages again, so
     // taking a self-ref (and an event-loop ref) here would only leak:
@@ -572,32 +517,18 @@ void MessagePort::jsRef(JSGlobalObject* lexicalGlobalObject)
     if (!isEntangled() || m_pipe->isOtherSideClosedByRequest(m_side))
         return;
 
-    // Re-acquire the message-listener loop-ref (if a listener is present) that .unref() released.
-    if (!m_isRefd) {
-        m_isRefd = true;
-        updateListenerEventLoopRef();
-    }
-
-    if (!m_hasRef) {
-        m_hasRef = true;
-        ref();
-        Bun__eventLoop__refKeepAlive(WebCore::clientData(lexicalGlobalObject->vm())->bunVM, 1);
-    }
+    m_isRefd = true;
+    if (!m_protectedThis)
+        m_protectedThis = this;
+    updateKeepAlive();
 }
 
-void MessagePort::jsUnref(JSGlobalObject* lexicalGlobalObject)
+void MessagePort::jsUnref()
 {
-    // Also release the listener loop-ref; otherwise an always-listening transferred
-    // port (a postMessageToThread control port) would pin the event loop forever.
-    if (m_isRefd) {
-        m_isRefd = false;
-        updateListenerEventLoopRef();
-    }
-    if (m_hasRef) {
-        m_hasRef = false;
-        deref();
-        Bun__eventLoop__refKeepAlive(WebCore::clientData(lexicalGlobalObject->vm())->bunVM, -1);
-    }
+    // Also for its listeners: an always-listening port (a postMessageToThread control port) would pin the loop forever.
+    m_isRefd = false;
+    updateKeepAlive();
+    m_protectedThis = nullptr;
 }
 
 } // namespace WebCore

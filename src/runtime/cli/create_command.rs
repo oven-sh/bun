@@ -1199,7 +1199,7 @@ impl CreateCommand {
 
         env_loader.load_process()?;
 
-        let home_dir_buf = &mut *bun_paths::path_buffer_pool::get();
+        let mut home_dir_buf = bun_paths::path_buffer_pool::get();
         // Returns the length of the NUL-terminated path in `buf`, or `None` if it is too long.
         let join = |parts: &[&[u8]], buf: &mut PathBuffer| {
             bun_paths::resolve_path::join_abs_string_buf_z_checked::<
@@ -1211,7 +1211,7 @@ impl CreateCommand {
             let positional = positionals[0];
 
             let parts = [filesystem.top_level_dir(), positional];
-            let Some(len) = join(&parts, home_dir_buf) else {
+            let Some(len) = join(&parts, &mut home_dir_buf) else {
                 pretty_errorln!("<r><red>error<r>: template name too long");
                 Global::exit(1);
             };
@@ -1256,7 +1256,7 @@ impl CreateCommand {
                 home_dir.map(|dir| vec![dir, BUN_CREATE_DIR, positional]),
             ];
             for parts in template_dirs.iter().flatten() {
-                let Some(len) = join(parts, home_dir_buf) else {
+                let Some(len) = join(parts, &mut home_dir_buf) else {
                     continue;
                 };
                 let outdir_path_ = bun_core::ZStr::from_buf(&home_dir_buf[..], len);
@@ -1525,7 +1525,7 @@ impl Example {
             progress.end();
         }
 
-        let home_dir_buf = &mut *bun_paths::path_buffer_pool::get();
+        let mut home_dir_buf = bun_paths::path_buffer_pool::get();
         let create_dir = env_loader.map.get(b"BUN_CREATE_DIR");
         let home_dir = env_loader.map.get(bun_core::env_var::HOME.key());
         let folders: [Option<bun_sys::Dir>; 3] = [
@@ -1534,7 +1534,7 @@ impl Example {
             home_dir.map(|dir| vec![dir, BUN_CREATE_DIR]),
         ]
         .map(|parts| -> Option<bun_sys::Dir> {
-            bun_sys::Dir::open(filesystem.abs_buf(&parts?, home_dir_buf)).ok()
+            bun_sys::Dir::open(filesystem.abs_buf(&parts?, &mut home_dir_buf)).ok()
         });
 
         for folder in folders.iter().flatten() {
@@ -2023,7 +2023,7 @@ impl GitHandler {
                 bun_core::pretty_errorln!("git backend: {}", bstr::BStr::new(git));
             }
 
-            let env = DotEnv::Map::for_git_child()?.create_null_delimited_env_map()?;
+            let env = DotEnv::Map::for_git_child()?.to_envp();
             use spawn_sync::SyncStdio::{self, Buffer, Ignore, Inherit};
             let spawn = |args: &[&[u8]], output: SyncStdio| -> crate::Result<spawn_sync::Result> {
                 Ok(spawn_sync::spawn(&spawn_sync::Options {

@@ -982,7 +982,7 @@ impl Document {
         let tag = self.math_tag(id);
         match () {
             () if tag == name!("mspace") => Schema::Space,
-            () if tag == name!("mpadded") => Schema::Padded,
+            () if tag == name!("mpadded") && !self.in_flow(id).is_empty() => Schema::Padded,
             () if tag == name!("msqrt") || tag == name!("mroot") && self.in_flow(id).len() == 2 => {
                 Schema::Radical
             }

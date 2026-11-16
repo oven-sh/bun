@@ -10,6 +10,9 @@ namespace Bun {
 bool isUsedByLazyProperties(JSC::VM&, JSC::PropertyName);
 void replaceLazyProperty(JSC::VM&, JSC::JSObject*, JSC::PropertyName, JSC::JSValue, unsigned attributes);
 
+// JSObject::putDirectCustomAccessor() is for properties that the object does not have.
+void putOrReplaceCustomAccessor(JSC::VM&, JSC::JSObject*, JSC::PropertyName, JSC::JSValue accessor, unsigned attributes);
+
 // Without it, each change makes a structure.
 class ChangesInPlace {
 public:

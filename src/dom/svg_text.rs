@@ -338,6 +338,7 @@ impl Document {
                 .map(|it| Piece {
                     from: it.to,
                     to: it.from,
+                    tangents: it.tangents.map(|[a, b]| [b, a].map(|it| it.map(|it| -it))),
                 })
                 .collect();
         }
@@ -668,7 +669,12 @@ impl Document {
         } else {
             self.svg_node(self.tree.flat_ancestors(node.id).find(is_text)?)?
         };
-        Some(self.lay_out_svg_text(&text, self.screen_scale(&self.svg_matrix(text.id))))
+        let mut matrix = crate::types::IDENTITY;
+        if !self.is_measuring_text.replace(true) {
+            matrix = self.svg_matrix(text.id);
+            self.is_measuring_text.set(false);
+        }
+        Some(self.lay_out_svg_text(&text, self.screen_scale(&matrix)))
     }
 
     pub(crate) fn svg_text_bounds<'a>(&'a self, node: &Node<'a>) -> Option<Rect> {

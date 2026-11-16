@@ -106,8 +106,10 @@ class WorkerClient extends Client {
     const calls = {
       ...services,
       socketOptions: async (url: string, given: object) => {
-        const { proxy, headers } = await services.socketOptions(url, given);
-        return { proxy, headers };
+        const { proxy, headers, tls } = await services.socketOptions(url, given);
+        if (!url.startsWith("wss:")) return { proxy, headers };
+        if (tls.checkServerIdentity) throw new Error("The certificate cannot be verified from a worker.");
+        return { proxy, headers, tls };
       },
       loadSync: this.loadWhole,
       loadScriptSync: this.loadScript,

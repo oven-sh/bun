@@ -19,7 +19,7 @@ use crate::rare_data::RareData;
 use crate::saved_source_map::SavedSourceMap;
 use crate::{
     self as jsc, Exception, JSGlobalObject, JSInternalPromise, JSValue, JsCell, JsResult,
-    OpaqueCallback, PlatformEventLoop, ResolvedSource, VM, ZigException,
+    PlatformEventLoop, ResolvedSource, VM, ZigException,
 };
 
 pub use crate::process_auto_killer as ProcessAutoKiller;
@@ -161,10 +161,8 @@ pub struct VirtualMachine {
     // self-referential and cannot carry `<'a>`, so we erase to `'static` and the
     // owner guarantees the borrowed `log` outlives the VM (see `init`).
     pub transpiler: JsCell<Transpiler<'static>>,
-    /// Hot-reload import watcher (heap `Box`, installed by
-    /// [`crate::hot_reloader::HotReloaderCtx::install_bun_watcher`]); null when
-    /// hot reload is disabled. Read via [`Self::bun_watcher_ptr`].
-    pub bun_watcher: Cell<*mut crate::hot_reloader::ImportWatcher>,
+    /// `None` when hot reload is disabled.
+    pub bun_watcher: JsCell<Option<std::sync::Arc<bun_watcher::Watcher>>>,
     pub(crate) console: Box<crate::console_object::ConsoleObject>,
     // BORROW_PARAM (`&'a mut bun_ast::Log` per LIFETIMES.tsv) — raw NonNull
     // used because VM is self-referential and cannot carry `<'a>`.
@@ -306,8 +304,10 @@ pub struct VirtualMachine {
 
     pub transpiler_store: crate::runtime_transpiler_store::RuntimeTranspilerStore,
 
+    #[cfg(not(windows))]
     pub(crate) after_event_loop_callback_ctx: Cell<Option<*mut c_void>>,
-    pub(crate) after_event_loop_callback: Cell<Option<OpaqueCallback>>,
+    #[cfg(not(windows))]
+    pub(crate) after_event_loop_callback: Cell<Option<bun_io::OpaqueCallback>>,
 
     pub(crate) remap_stack_frames_mutex: bun_threading::Mutex,
 
@@ -1429,44 +1429,12 @@ impl VirtualMachine {
         VM::opaque_ref(self.jsc_vm.get())
     }
 
-    /// Raw accessor for the hot-reload import watcher. `bun_watcher` is the
-    /// `*mut ImportWatcher` installed by
-    /// [`crate::hot_reloader::HotReloaderCtx::install_bun_watcher`] (separate
-    /// `Box` heap allocation), or null when hot reload is disabled.
-    ///
-    /// NOTE: unlike `event_loop`, the pointee is **not** JS-thread-only —
-    /// the inner `Box<Watcher>` is held as `&mut Watcher` for the lifetime of
-    /// the spawned file-watcher thread (`Watcher::thread_main`), and
-    /// `RuntimeTranspilerStore` reads it from transpiler workers. The pointee
-    /// guards itself with an internal mutex, so we
-    /// return the raw pointer and leave the `unsafe` deref at the call site to
-    /// keep the cross-thread hazard visible. Callers must scope any reborrow to
-    /// a single mutex-guarded `Watcher` operation.
-    #[inline]
-    pub(crate) fn bun_watcher_ptr(&self) -> *mut crate::hot_reloader::ImportWatcher {
-        self.bun_watcher.get()
-    }
-
-    /// Shuts down the file watcher. Its thread reads this VM while handling a change, so this waits
-    /// for the current change to finish and prevents new ones.
-    fn stop_import_watcher(&self) {
-        use crate::hot_reloader::ImportWatcher;
-        if self.bun_watcher.get().is_null() {
-            return;
+    /// Call it after the transpile jobs have ended: their copies of the transpiler hold no count.
+    fn stop_watcher(&self) {
+        if let Some(watcher) = self.bun_watcher.take() {
+            watcher.shutdown();
+            self.transpiler.with_mut(|t| t.resolver.watcher = None);
         }
-        // SAFETY: `install_bun_watcher` leaked this box, and the other threads that read it have finished.
-        // Keep it installed until `shutdown` returns because the in-progress change still reads it.
-        let (ImportWatcher::Hot(w) | ImportWatcher::Watch(w)) =
-            unsafe { &mut *self.bun_watcher.get() };
-        // SAFETY: the box is the one `Watcher::init` returned.
-        unsafe { bun_watcher::Watcher::shutdown(&raw mut **w, false) };
-        self.transpiler.with_mut(|t| t.resolver.watcher = None);
-        let watcher = self.bun_watcher.replace(core::ptr::null_mut());
-        // SAFETY: as above.
-        let watcher = unsafe { bun_core::heap::take(watcher) };
-        let (ImportWatcher::Hot(w) | ImportWatcher::Watch(w)) = *watcher;
-        // `shutdown` transferred ownership to the watcher thread.
-        let _ = Box::into_raw(w);
     }
 
     /// `event_loop().enter()` now, `.exit()` on drop.
@@ -1644,6 +1612,7 @@ impl VirtualMachine {
     }
 
     pub fn on_after_event_loop(&self) {
+        #[cfg(not(windows))]
         if let Some(cb) = self.after_event_loop_callback.take() {
             let ctx = self.after_event_loop_callback_ctx.take();
             // SAFETY: `cb` was registered with the matching `ctx`.
@@ -1719,7 +1688,7 @@ impl VirtualMachine {
         // e.g. `process.stdout` on a pipe with nothing left to write.
         let disarmed = rare
             .and_then(|rare| rare.file_polls.get())
-            .map_or(0, |polls| polls.get().disarmed_count());
+            .map_or(0, |polls| polls.disarmed_count());
         let fires_nothing = i32::from(timers_hold_loop_ref) + i32::from(has_coordinator) + disarmed;
         self.platform_loop_opt()
             .is_some_and(|h| h.num_polls.get() > fires_nothing)
@@ -1984,7 +1953,7 @@ impl VirtualMachine {
     }
 
     pub fn is_watcher_enabled(&self) -> bool {
-        !self.bun_watcher.get().is_null()
+        self.bun_watcher.get().is_some()
     }
 
     /// Thin setter so callers don't need `.with` plumbing on the thread-local.
@@ -2267,7 +2236,8 @@ impl VirtualMachine {
                 _ => break,
             };
             for hook in hooks {
-                (hook.func)(hook.ctx);
+                // SAFETY: `push_cleanup_hook`'s contract, and the list no longer has it.
+                unsafe { (hook.func)(hook.ctx) };
                 // A hook's C signature returns nothing, so one that entered JS
                 // (an addon finalizer) leaves what it threw pending: fold it here,
                 // this loop being its dispatcher.
@@ -2458,7 +2428,7 @@ impl VirtualMachine {
             rare.cleanup_hooks.with_mut(|hooks| hooks.extend(held_back));
         }
         vm.run_cleanup_hooks();
-        vm.stop_import_watcher();
+        vm.stop_watcher();
         // The exiting main thread now parks the process-wide HTTP thread —
         // after the children it also served are joined and this VM's own
         // requests are back — so it cannot touch what process exit frees. If
@@ -2911,7 +2881,7 @@ pub struct RuntimeHooks {
 bun_io::link_impl_EventLoopCtx! {
     Js for VirtualMachine => |this| {
         loop_() => (*this).uws_loop(),
-        file_polls_ptr() => (*this).rare_data().file_polls_ptr(),
+        file_polls_ptr() => (*this).rare_data().file_polls(),
         // CROSS-THREAD: reached via `KeepAlive::unref_on_next_tick`.
         increment_pending_unref_counter() => {
             (*this)
@@ -3008,11 +2978,8 @@ pub fn runtime_hooks() -> Option<&'static RuntimeHooks> {
 
 #[allow(improper_ctypes)] // VirtualMachine is opaque to C++; passed as `void*`
 unsafe extern "C" {
-    // safe: `console`/`worker_ptr` are opaque round-trip pointers C++ stores
-    // into the new ZigGlobalObject (never dereferenced as Rust data); remaining
-    // args are by-value scalars.
+    // safe: `worker_ptr` is C++'s own pointer handed back; remaining args are by-value scalars.
     safe fn Zig__GlobalObject__create(
-        console: *mut c_void,
         context_id: i32,
         mini_mode: bool,
         eval_mode: bool,
@@ -3100,7 +3067,7 @@ impl VirtualMachine {
         let vm = VirtualMachine {
             global: Cell::new(core::ptr::null_mut()),
             transpiler: JsCell::new(transpiler),
-            bun_watcher: Cell::new(core::ptr::null_mut()),
+            bun_watcher: JsCell::new(None),
             console,
             log: Cell::new(NonNull::new(log)),
             main: JsCell::new(None),
@@ -3159,7 +3126,9 @@ impl VirtualMachine {
             preloads_kept_for_reload: Cell::new(false),
             has_patched_run_main: Cell::new(false),
             transpiler_store: crate::runtime_transpiler_store::RuntimeTranspilerStore::init(),
+            #[cfg(not(windows))]
             after_event_loop_callback_ctx: Cell::new(None),
+            #[cfg(not(windows))]
             after_event_loop_callback: Cell::new(None),
             remap_stack_frames_mutex: bun_threading::Mutex::new(),
             argv: opts.argv,
@@ -3251,16 +3220,8 @@ impl VirtualMachine {
                 crate::compiled_program::use_image(graph);
             }
         }
-        // `console`/`worker_ptr` are opaque round-trip pointers C++ stores into
-        // the new global. `worker_ptr` is the C++ `WebCore::Worker*` (or null on
-        // the main thread).
-        let global = Zig__GlobalObject__create(
-            vm.console.as_client_ptr(),
-            context_id,
-            opts.mini_mode,
-            opts.eval_mode,
-            opts.worker_ptr,
-        );
+        let global =
+            Zig__GlobalObject__create(context_id, opts.mini_mode, opts.eval_mode, opts.worker_ptr);
         // Sets the bound for a thread that skipped it at start (`configure_thread_no_js`).
         bun_core::StackCheck::configure_thread();
         vm.global.set(global);
@@ -3788,22 +3749,7 @@ impl<'a> bun_js_printer::OnSourceMapChunk for SourceMapHandlerGetter<'a> {
             .ctx
             .buffer
             .append_assume_capacity(SOURCE_MAP_URL_PREFIX_START);
-        {
-            // `MutableString::list` is a `Vec<u8>`; write into spare capacity,
-            // then commit the written length.
-            let buf = &mut printer.ctx.buffer.list;
-            // SAFETY: `grow_if_needed` reserved ≥encode_len spare; encode writes
-            // `wrote<=encode_len` bytes.
-            let wrote = unsafe {
-                bun_base64::encode(
-                    &mut bun_core::vec::spare_bytes_mut(buf)[..encode_len],
-                    temp_json_buffer.list.as_slice(),
-                )
-            };
-            // SAFETY: `wrote <= encode_len` bytes were just initialized in the
-            // spare capacity reserved by `grow_if_needed` above.
-            unsafe { bun_core::vec::commit_spare(buf, wrote) };
-        }
+        bun_base64::encode_append(&mut printer.ctx.buffer.list, &temp_json_buffer.list);
         printer
             .ctx
             .buffer
@@ -4027,9 +3973,7 @@ fn normalize_source(source: &[u8]) -> &[u8] {
 }
 
 // `JSGlobalObject` / `VM` are opaque `UnsafeCell`-backed ZST handles, so
-// `&T` is ABI-identical to a non-null `T*`. `BakeCreateProdGlobal`'s
-// `console_ptr` is an opaque round-trip pointer C++ stores into the new global
-// (never dereferenced as Rust data) — same contract as `Zig__GlobalObject__create`.
+// `&T` is ABI-identical to a non-null `T*`.
 unsafe extern "C" {
     safe fn Bun__promises__isErrorLike(global: &JSGlobalObject, reason: JSValue) -> bool;
     safe fn Bun__promises__emitUnhandledRejectionWarning(
@@ -4042,7 +3986,7 @@ unsafe extern "C" {
         global: &JSGlobalObject,
         reason: JSValue,
     ) -> JSValue;
-    safe fn BakeCreateProdGlobal(console_ptr: *mut c_void) -> *mut JSGlobalObject;
+    safe fn BakeCreateProdGlobal() -> *mut JSGlobalObject;
 }
 
 impl VirtualMachine {
@@ -4460,7 +4404,7 @@ impl VirtualMachine {
             if !self.hot_reload_deferred.get() {
                 break;
             }
-            self.reload(None);
+            self.reload();
             // This reload wasn't started by a task, so run its microtasks here before the loop sleeps.
             self.tick();
         }
@@ -4477,46 +4421,9 @@ impl VirtualMachine {
     /// Adds a file that the module loader has not loaded to the file watcher when watch mode is
     /// enabled.
     pub fn add_to_watcher_if_needed(&self, path: &[u8]) {
-        if !self.is_watcher_enabled() || path.is_empty() {
-            return;
+        if let Some(watcher) = self.bun_watcher.get() {
+            let _ = watcher.add_file_by_path_slow(path);
         }
-        let watcher = self.bun_watcher_ptr();
-        if !watcher.is_null() {
-            // SAFETY: `bun_watcher` is a live `Box<ImportWatcher>` leaked in
-            // `enable_hot_module_reloading`. The pointee is shared with the
-            // file-watcher thread (see `bun_watcher_ptr` doc) — the enum
-            // discriminant is write-once at install and read-only thereafter,
-            // and `add_file_by_path_slow` serializes the inner watchlist write
-            // via `Watcher.mutex`. Borrow is scoped to this single
-            // mutex-guarded call.
-            let _ = unsafe { (*watcher).add_file_by_path_slow(path) };
-        }
-    }
-
-    /// `add_to_watcher_if_needed`, for threads that work for this one. `None` unless watch mode is
-    /// enabled.
-    pub fn watcher_for_threads(&self) -> Option<impl Fn(&[u8]) + Send + Sync + 'static> {
-        struct Shared {
-            watcher: *mut crate::hot_reloader::ImportWatcher,
-            _ticket: crate::Ticket,
-        }
-        // SAFETY: it carries a `Ticket` for the VM that has the watcher. The pointee is made to be
-        // shared with other threads (see `bun_watcher_ptr`).
-        unsafe impl Send for Shared {}
-        if !self.is_watcher_enabled() {
-            return None;
-        }
-        // One of these threads at a time has the `&mut`.
-        let shared = bun_threading::Guarded::new(Shared {
-            watcher: self.bun_watcher_ptr(),
-            _ticket: self.ticket(),
-        });
-        Some(move |path: &[u8]| {
-            let shared = shared.lock();
-            let watcher = shared.watcher;
-            // SAFETY: as in `add_to_watcher_if_needed`.
-            let _ = unsafe { (*watcher).add_file_by_path_slow(path) };
-        })
     }
 
     /// `bun_resolver` holds the manager as an opaque forward-decl (it cannot
@@ -4554,7 +4461,7 @@ impl VirtualMachine {
     }
 
     /// Performs a hot reload: re-evaluates the entry point once any pending entry-point load settles.
-    pub(crate) fn reload(&self, _: Option<&mut crate::hot_reloader::HotReloadTask>) {
+    pub(crate) fn reload(&self) {
         if self.hot_reload.get() == HotReload::Watch {
             // Watch reload replaces the process: never defer on a pending
             // entry promise (node restarts regardless of child state).
@@ -4784,8 +4691,7 @@ impl VirtualMachine {
         // instead of `ZigGlobalObject__create`. Route through `init` then
         // swap the global.
         let vm = Self::init(log, init_opts)?;
-        // `console` is the opaque round-trip pointer C++ stores into the new global.
-        let new_global = BakeCreateProdGlobal(vm.console.as_client_ptr());
+        let new_global = BakeCreateProdGlobal();
         vm.global.set(new_global);
         VMHolder::set_cached_global_object(Some(new_global));
         vm.regular_event_loop.global.set(NonNull::new(new_global));
@@ -5932,12 +5838,9 @@ impl VirtualMachine {
         self.module_loader.macro_load_states.clear();
 
         let old_global = self.global.get();
-        // `old_global` valid for VM lifetime (safe ZST-handle deref);
-        // `console` is the live per-VM ConsoleObject.
-        let new_global: *mut JSGlobalObject = JSGlobalObject::create_for_test_isolation(
-            JSGlobalObject::opaque_ref(old_global),
-            self.console.as_client_ptr(),
-        );
+        // `old_global` valid for VM lifetime (safe ZST-handle deref).
+        let new_global: *mut JSGlobalObject =
+            JSGlobalObject::create_for_test_isolation(JSGlobalObject::opaque_ref(old_global));
         self.global.set(new_global);
         VMHolder::set_cached_global_object(Some(new_global));
         self.regular_event_loop.global.set(NonNull::new(new_global));
@@ -6190,8 +6093,6 @@ impl VirtualMachine {
         }
 
         if value.js_type() == jsc::JSType::DOMWrapper {
-            // `as_class_ref` is the audited `as_::<T>() → &T` backref-deref;
-            // R-2: shared borrow — `logged` is `Cell<bool>`.
             if let Some(build_error) = value.as_class_ref::<crate::BuildMessage>() {
                 if !build_error.logged.get() {
                     if self.had_errors.get() {
@@ -6883,16 +6784,6 @@ impl VirtualMachine {
             };
         }
         #[inline]
-        fn splat_space(w: &mut dyn bun_io::Write, mut n: u64) -> crate::CrateResult<()> {
-            const SPACES: &[u8; 32] = b"                                ";
-            while n > 0 {
-                let chunk = n.min(32) as usize;
-                w.write_all(&SPACES[..chunk])?;
-                n -= chunk as u64;
-            }
-            Ok(())
-        }
-        #[inline]
         fn count_digits(n: i32) -> u64 {
             bun_core::fmt::digit_count(n) as u64
         }
@@ -6916,7 +6807,7 @@ impl VirtualMachine {
             let int_size = count_digits(display_line);
             let pad = max_line_number_pad.saturating_sub(int_size);
             last_pad = pad;
-            splat_space(writer, pad)?;
+            writer.splat_byte_all(b' ', pad as usize)?;
 
             let trimmed = source.trimmed_text();
             let clamped = &trimmed[..trimmed.len().min(MAX_LINE_LENGTH)];
@@ -7044,7 +6935,7 @@ impl VirtualMachine {
                     let display_line = source.line + 1;
                     let int_size = count_digits(display_line);
                     let pad = max_line_number_pad.saturating_sub(int_size);
-                    splat_space(writer, pad)?;
+                    writer.splat_byte_all(b' ', pad as usize)?;
 
                     let clamped = &trimmed[..trimmed.len().min(MAX_LINE_LENGTH)];
                     let hl = bun_core::fmt::fmt_javascript(
@@ -7074,7 +6965,7 @@ impl VirtualMachine {
                         {
                             let indent =
                                 max_line_number_pad + b" | ".len() as u64 + col.max(0) as u64;
-                            splat_space(writer, indent)?;
+                            writer.splat_byte_all(b' ', indent as usize)?;
                             pretty_write!(writer, "<red><b>^<r>\n")?;
                         } else {
                             writer.write_all(b"\n")?;
@@ -7196,7 +7087,7 @@ impl VirtualMachine {
 
                     let pad_left = longest_name.saturating_sub(field.length());
                     is_first_property = false;
-                    splat_space(writer, pad_left as u64)?;
+                    writer.splat_byte_all(b' ', pad_left)?;
                     pretty_write!(writer, " {}<r><d>:<r> ", field)?;
 
                     if allow_side_effects && global_ref.has_exception() {
@@ -7229,7 +7120,7 @@ impl VirtualMachine {
             if let Some(code_str) = code {
                 let pad_left = longest_name.saturating_sub(b"code".len());
                 is_first_property = false;
-                splat_space(writer, pad_left as u64)?;
+                writer.splat_byte_all(b' ', pad_left)?;
                 pretty_write!(
                     writer,
                     " code<r><d>:<r> <green>{}<r>\n",
@@ -7245,7 +7136,7 @@ impl VirtualMachine {
                         if cause == error_instance || formatter.visited_contains(cause) {
                             let pad_left = longest_name.saturating_sub(b"cause".len());
                             is_first_property = false;
-                            splat_space(writer, pad_left as u64)?;
+                            writer.splat_byte_all(b' ', pad_left)?;
                             pretty_write!(
                                 writer,
                                 " cause<r><d>:<r> <r><cyan>[Circular]<r><r><d>,<r>\n"
@@ -7363,11 +7254,7 @@ impl VirtualMachine {
                             } else {
                                 let msg_chars = message.latin1();
                                 msg_chars.len() > code.len() + 2 + 1
-                                    && bun_core::strings::eql_long(
-                                        &msg_chars[..code.len()],
-                                        code,
-                                        false,
-                                    )
+                                    && bun_core::strings::eql_long(&msg_chars[..code.len()], code)
                                     && msg_chars[code.len()] == b':'
                                     && msg_chars[code.len() + 1] == b' '
                             };

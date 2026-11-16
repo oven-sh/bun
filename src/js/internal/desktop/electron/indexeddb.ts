@@ -666,7 +666,7 @@ function defineReading(prototype: object, it: (self: any) => State) {
       if (direction.endsWith("unique"))
         chosen = chosen.filter((entry, i) => !i || keyOf(state, entry) !== keyOf(state, chosen[i - 1]));
       if (direction[0] === "p") chosen.reverse();
-      return chosen.slice(0, count || Infinity).map(entry => read(state, entry));
+      return Array.from(chosen.slice(0, count || Infinity), entry => read(state, entry));
     });
   }
   function allOf(source: object, given: unknown, count: unknown, read: typeof readKey) {

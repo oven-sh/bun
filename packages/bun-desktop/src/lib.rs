@@ -1,4 +1,4 @@
-//! The native half of `bun:desktop`: GPUI behind a C ABI that `bun` loads with `dlopen`.
+//! The native half of `bun:desktop`: windows and what is in them, behind a C ABI that `bun` loads with `dlopen`.
 //!
 //! Everything here is called on Bun's main thread. Its event loop waits in `bun_desktop_pump`, and JavaScript takes
 //! the events (`drain`) when that has returned.
@@ -7,31 +7,35 @@
 #[allow(dead_code)]
 mod abi;
 mod accessibility;
-#[cfg(target_os = "macos")]
 mod allocator;
 mod app;
 mod bridge;
+mod bun;
 mod canvas;
-#[cfg(not(target_os = "macos"))]
-mod clipboard;
+mod codec;
 mod cover;
 mod diagnostics;
-#[cfg_attr(target_os = "macos", path = "dialog/macos.rs")]
-mod dialog;
+mod error;
 mod frame;
+mod gfx;
+mod hash;
 mod host;
+mod icc;
 mod images;
 mod input;
+mod json;
 mod keys;
-mod menu;
 mod motion;
-mod native;
 mod paint;
+mod platform;
 mod png_rows;
+mod small_vec;
 mod surface;
-mod svg_limits;
+mod sync;
+#[cfg(test)]
+mod system_icu;
 mod text;
-mod tray;
+mod unicode;
 mod webview;
 mod window;
 
@@ -39,12 +43,12 @@ use std::cell::RefCell;
 use std::ffi::c_void;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::Once;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use host::thread;
-use serde_json::{Value, json};
 
-#[cfg(target_os = "macos")]
+use crate::json::{Value, json};
+
 #[global_allocator]
 static ALLOCATOR: allocator::Allocator = allocator::Allocator;
 
@@ -256,7 +260,7 @@ pub extern "C" fn bun_desktop_init(tick: extern "C" fn(), has_main_thread: bool)
         init(has_main_thread);
         #[cfg(target_os = "macos")]
         if !has_main_thread {
-            native::create_application();
+            platform::macos::create_application();
         }
     });
 }
@@ -294,9 +298,9 @@ pub extern "C" fn bun_desktop_run() -> ! {
     init(true);
     host::thread::enter();
     #[cfg(target_os = "macos")]
-    if native::create_application() {
+    if platform::macos::create_application() {
         // It takes a while, and JavaScript is going to ask for it.
-        let options = json!({ "headless": false, "accessory": native::is_accessory() });
+        let options = json!({ "headless": false, "accessory": platform::macos::is_accessory() });
         guard("fatal", (), || {
             bridge::report(app::execute("start", &options, None).map(drop))
         });
@@ -317,8 +321,68 @@ pub extern "C" fn bun_desktop_renderer() -> *const abi::Renderer {
 pub unsafe extern "C" fn bun_desktop_call(json: *const u8, len: usize) -> Bytes {
     // SAFETY: the caller's contract.
     let request = unsafe { borrow(json, len) };
+    let asks = |name: &str| {
+        request
+            .get(2..)
+            .is_some_and(|it| it.starts_with(name.as_bytes()))
+    };
+    if !thread::is_elsewhere()
+        || ![
+            "window.geometry\"",
+            "window.isFocused\"",
+            "displays\"",
+            "info\"",
+        ]
+        .into_iter()
+        .any(asks)
+    {
+        if !["surface.", "image", "font.", "canvas."]
+            .into_iter()
+            .any(asks)
+        {
+            bridge::expect_changes();
+        }
+        return call(request).into();
+    }
+    let ([moves, changes], now) = (bridge::changes(), Instant::now());
+    let state = [if asks("window.geometry") { moves } else { 0 }, changes];
+    ANSWERS.with_borrow_mut(|answers| answers.retain(|it| now < it.until));
+    let known = ANSWERS.with_borrow(|answers| {
+        answers
+            .iter()
+            .find(|it| it.state == state && it.request == request)
+            .map(|it| it.reply.clone())
+    });
+    known
+        .unwrap_or_else(|| {
+            let reply = call(request);
+            let answer = Answer {
+                request: request.to_vec(),
+                reply: reply.clone(),
+                state,
+                until: now + Duration::from_millis(100),
+            };
+            ANSWERS.with_borrow_mut(|answers| answers.push(answer));
+            reply
+        })
+        .into()
+}
+
+/// To a question that is asked several times for each frame of a resize.
+struct Answer {
+    request: Vec<u8>,
+    reply: Vec<u8>,
+    state: [u32; 2],
+    until: Instant,
+}
+
+thread_local! {
+    static ANSWERS: RefCell<Vec<Answer>> = RefCell::default();
+}
+
+fn call(request: &[u8]) -> Vec<u8> {
     let result = catch_unwind(|| {
-        let mut request: Value = serde_json::from_slice(request)?;
+        let mut request: Value = crate::json::parse(request)?;
         if request[0] == "surface.ime" {
             request[1]["edits"] = bridge::edits_taken().into();
         }
@@ -328,7 +392,8 @@ pub unsafe extern "C" fn bun_desktop_call(json: *const u8, len: usize) -> Bytes 
         let runs_here = name.starts_with("font.")
             || is_about_images
             || name.starts_with("defaults.")
-            || name == "canvas.font";
+            || name == "canvas.font"
+            || name == "keychain.read";
         let is_awaited = request[3] != true;
         let run = move || {
             app::execute(
@@ -347,12 +412,12 @@ pub unsafe extern "C" fn bun_desktop_call(json: *const u8, len: usize) -> Bytes 
         }
     });
     let reply = match result {
-        Ok(Ok(Value::Null)) => return Vec::new().into(),
+        Ok(Ok(Value::Null)) => return Vec::new(),
         Ok(Ok(value)) => json!({ "value": value }),
         Ok(Err(error)) => json!({ "error": format!("{error:#}") }),
         Err(panic) => json!({ "error": bridge::panic_message(panic) }),
     };
-    reply.to_string().into_bytes().into()
+    reply.to_string().into_bytes()
 }
 
 /// The commands that are sent for every frame, mouse move or key.

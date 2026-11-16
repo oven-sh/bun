@@ -1,4 +1,4 @@
-//! Unless `BUN_DESKTOP_THREADS=1`, GPUI and everything that it shows is not on the thread that runs JavaScript.
+//! Unless `BUN_DESKTOP_THREADS=1`, windows and everything that they show are not on the thread that runs JavaScript.
 
 use std::cell::{Cell, OnceCell};
 use std::collections::VecDeque;
@@ -8,9 +8,8 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, mpsc};
 use std::time::{Duration, Instant};
 
-use parking_lot::{Condvar, Mutex};
-
-use super::platform;
+use super::system;
+use crate::sync::{Condvar, Mutex};
 
 type Job = Box<dyn FnOnce() + Send>;
 
@@ -93,6 +92,8 @@ static CALLS: Queue = Queue::new();
 thread_local! {
     static IS_CURRENT: Cell<bool> = const { Cell::new(false) };
     static IS_JAVASCRIPT: Cell<bool> = const { Cell::new(false) };
+    static HOLDS_JOBS: Cell<bool> = const { Cell::new(false) };
+    static HAS_HELD_JOBS: Cell<bool> = const { Cell::new(false) };
     static HAS_ANSWERED: Cell<bool> = const { Cell::new(false) };
     static IS_ANSWERING: Cell<bool> = const { Cell::new(false) };
 }
@@ -107,7 +108,7 @@ pub fn is_elsewhere() -> bool {
 
 pub fn spawn(run: fn()) {
     let is_wanted = std::env::var("BUN_DESKTOP_THREADS").as_deref() != Ok("1");
-    if platform::RUNS_ON_ANY_THREAD && is_wanted && !EXISTS.swap(true, Ordering::Relaxed) {
+    if system::RUNS_ON_ANY_THREAD && is_wanted && !EXISTS.swap(true, Ordering::Relaxed) {
         let thread = std::thread::Builder::new()
             .name("UI".into())
             .stack_size(8 << 20)
@@ -133,7 +134,23 @@ pub fn post(job: impl FnOnce() + Send + 'static) {
         return job();
     }
     if JOBS.push(Box::new(job)) {
-        platform::wake_ui();
+        if HOLDS_JOBS.get() {
+            HAS_HELD_JOBS.set(true)
+        } else {
+            system::wake_ui()
+        }
+    }
+}
+
+/// So that the UI thread wakes once for all that this one posts.
+pub fn hold_jobs() {
+    HOLDS_JOBS.set(true);
+}
+
+pub fn release_jobs() {
+    HOLDS_JOBS.set(false);
+    if HAS_HELD_JOBS.take() {
+        system::wake_ui();
     }
 }
 
@@ -154,6 +171,7 @@ pub fn ask<R: Send + 'static>(job: impl FnOnce() -> R + Send + 'static) -> R {
             false => drop(sender.send(result)),
         }
     });
+    release_jobs();
     let result = OnceCell::new();
     if is_for_javascript {
         REPLIES.run_until(|| receiver.try_recv().is_ok_and(|it| result.set(it).is_ok()));
@@ -173,13 +191,13 @@ pub fn run_jobs() {
     const MAX_ROUNDS: usize = 32;
     for _ in 0..MAX_ROUNDS {
         while let Some(job) = JOBS.pop() {
-            job();
+            crate::guard("error", (), job);
         }
         if !HAS_ANSWERED.take() || !JOBS.wait(Some(Instant::now())) {
             return;
         }
     }
-    platform::wake_ui();
+    system::wake_ui();
 }
 
 /// JavaScript is waiting for this thread.
@@ -237,7 +255,7 @@ pub unsafe fn call_on_javascript_thread(function: Function, context: *mut c_void
     }
     JOBS.run_until(|| is_done.load(Ordering::Relaxed));
     if has_jobs() {
-        platform::wake_ui();
+        system::wake_ui();
     }
 }
 

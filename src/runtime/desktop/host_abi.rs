@@ -1,4 +1,5 @@
 //! What the UI library borrows from the libraries that are linked into Bun. Any thread may call these.
+#![allow(dead_code, unreachable_pub)] // Each side uses its half.
 
 use core::ffi::c_void;
 
@@ -77,4 +78,15 @@ pub struct Host {
     pub decompose: extern "C" fn(character: u32) -> u64,
     /// 0 if there is no such character.
     pub compose: extern "C" fn(first: u32, second: u32) -> u32,
+}
+
+/// The last argument of the first three is the alignment.
+#[repr(C)]
+pub struct Allocator {
+    pub allocate: extern "C" fn(usize, usize) -> *mut c_void,
+    pub allocate_zeroed: extern "C" fn(usize, usize) -> *mut c_void,
+    pub reallocate: unsafe extern "C" fn(*mut c_void, usize, usize) -> *mut c_void,
+    pub free: unsafe extern "C" fn(*mut c_void),
+    /// Gives the system what the calling thread does not use.
+    pub release: extern "C" fn(),
 }

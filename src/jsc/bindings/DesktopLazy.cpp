@@ -37,6 +37,28 @@ void replaceLazyProperty(VM& vm, JSObject* object, PropertyName name, JSValue va
     vm.invalidateStructureChainIntegrity(VM::StructureChainIntegrityEvent::Change, object, name.uid());
 }
 
+void putOrReplaceCustomAccessor(VM& vm, JSObject* object, PropertyName name, JSValue accessor, unsigned attributes)
+{
+    Structure* structure = object->structure();
+    PropertyOffset offset = structure->isCompiledStructure() || structure->isImmutableProperty(name.uid()) ? invalidOffset : structure->get(vm, name);
+    if (!isValidOffset(offset)) {
+        object->putDirectCustomAccessor(vm, name, accessor, attributes);
+        return;
+    }
+    object->putDirectOffset(vm, offset, accessor);
+    structure->didReplaceProperty(offset);
+    {
+        DeferredStructureTransitionWatchpointFire deferred(vm, structure);
+        object->setStructure(vm, Structure::attributeChangeTransition(vm, structure, name, attributes, &deferred));
+        if (object->mayBePrototype())
+            vm.invalidateStructureChainIntegrity(VM::StructureChainIntegrityEvent::Change, object, name.uid());
+    }
+    structure = object->structure();
+    if (attributes & PropertyAttribute::ReadOnly)
+        structure->setContainsReadOnlyProperties();
+    structure->setHasAnyKindOfGetterSetterPropertiesWithProtoCheck(name == vm.propertyNames->underscoreProto);
+}
+
 static JSValue callWith(JSGlobalObject* globalObject, JSValue function, std::initializer_list<JSValue> values)
 {
     MarkedArgumentBuffer arguments;
@@ -58,7 +80,7 @@ static void defineAll(JSGlobalObject* globalObject, JSObject* object, JSValue na
         RETURN_IF_EXCEPTION(scope, );
         Identifier identifier = asString(name)->toIdentifier(globalObject);
         RETURN_IF_EXCEPTION(scope, );
-        object->putDirectCustomAccessor(vm, identifier, accessor, attributes);
+        putOrReplaceCustomAccessor(vm, object, identifier, accessor, attributes);
     }
 }
 

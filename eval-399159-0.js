@@ -1,0 +1,1 @@
+process.argv.splice(1, 1);try { require("http://localhost/path?query=´5&foo=bar"); } catch (e) { console.log("caught", e.constructor.name); }

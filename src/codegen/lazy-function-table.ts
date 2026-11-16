@@ -339,7 +339,7 @@ export function findLazyFunctions(source: string): LazyFunctionTable | null {
         if (kind === "template" || kind === "templateHead") {
           const before = tokens[inner - 1];
           if (
-            before.kind === "identifier" ||
+            (before.kind === "identifier" && (before.text !== "of" || isPropertyName(tokens, inner - 1))) ||
             before.kind === "template" ||
             before.kind === "templateTail" ||
             before.text === ")" ||

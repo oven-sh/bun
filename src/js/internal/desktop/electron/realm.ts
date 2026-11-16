@@ -614,7 +614,27 @@ const isSameForDocument = `customElements document frames history indexedDB isSe
   /\s+/,
 );
 
+/** What the functions of `host` throw is made anew in this realm. */
+function guarded(host: any, isOfHost: (value: unknown) => boolean) {
+  const result = Object.create(host);
+  for (const name in host) {
+    if (!$isCallable(host[name])) continue;
+    result[name] = function (this: unknown) {
+      try {
+        return host[name].$apply(this, arguments);
+      } catch (error) {
+        throw isOfHost(error) ? bridge.ownError(error) : error;
+      }
+    };
+  }
+  return result;
+}
+
 function page(env: any) {
+  const guard = (host: object) => guarded(host, isOfHost);
+  const { isOfHost } = env;
+  env = guard(env);
+  env.dom = guard(env.dom);
   if (env.never) replaceable(env.never);
   const { createPage } = env.shared ?? require("internal/desktop/dom/page");
   const mirror = env.shared && new (require("internal/desktop/dom/mirror").Mirror)(env.shared);
@@ -725,7 +745,18 @@ function page(env: any) {
   const preload = env.sharesWorldWithPreload && require("internal/desktop/electron/preload");
   seal({ ...hooks, ...loader.hooks, origin: env.originOf }, hiddenFrom(env));
   documentChanged();
-  return { ...world, ...policies, release: () => disposeRealm(), env, controller, preload, report, hooks, messaging };
+  return {
+    ...world,
+    ...policies,
+    release: () => disposeRealm(),
+    env,
+    controller,
+    preload,
+    report,
+    hooks,
+    messaging,
+    guard,
+  };
 }
 
 const ofEachRealm = `AggregateError Array ArrayBuffer AsyncDisposableStack Atomics BigInt BigInt64Array BigUint64Array Boolean

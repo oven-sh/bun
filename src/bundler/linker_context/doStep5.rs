@@ -586,29 +586,21 @@ impl LinkerContext<'_, '_> {
             } else {
                 self.export_runtime_function()
             });
-            // `bumpalo::Vec` → `Vec` via the global heap;
-            // `G::PropertyList` is `Vec<Property>` and currently has no
-            // arena-backed `move_from_list`, so re-own.
-            let mut owned_props: Vec<G::Property> = Vec::with_capacity(properties.len());
-            owned_props.extend(properties.drain(..));
-            let mut args: Vec<Expr> = Vec::with_capacity(3);
+            let mut args = bun_ast::ExprNodeList::init_capacity(2 + usize::from(is_lifted));
             args.push(Expr::init_identifier(exports_ref, loc));
             args.push(Expr::allocate(
                 arena,
                 E::Object {
-                    properties: G::PropertyList::move_from_list(owned_props),
+                    properties: G::PropertyList::from_bump_vec(properties),
                     ..Default::default()
                 },
                 loc,
             ));
             if is_lifted {
-                let mut owned_setters: Vec<G::Property> =
-                    Vec::with_capacity(setter_properties.len());
-                owned_setters.extend(setter_properties.drain(..));
                 args.push(Expr::allocate(
                     arena,
                     E::Object {
-                        properties: G::PropertyList::move_from_list(owned_setters),
+                        properties: G::PropertyList::from_bump_vec(setter_properties),
                         ..Default::default()
                     },
                     loc,
@@ -627,7 +619,7 @@ impl LinkerContext<'_, '_> {
                         arena,
                         E::Call {
                             target: Expr::init_identifier(export_ref, loc),
-                            args: bun_ast::ExprNodeList::from_owned_slice(args.into_boxed_slice()),
+                            args,
                             ..Default::default()
                         },
                         loc,

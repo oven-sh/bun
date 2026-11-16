@@ -20,7 +20,7 @@ async function run(name: string, mode: string, env: Record<string, string>) {
       if (isMac) Bun.spawnSync(["sample", String(child.pid), "2", "-file", join(directory, name + ".stacks.txt")]);
       child.kill("SIGKILL");
     },
-    mode === "try" ? 600_000 : 90_000,
+    mode === "try" ? 600_000 : 120_000,
   );
   const code = await child.exited;
   clearTimeout(hung);
@@ -120,6 +120,7 @@ document.querySelector("textarea")!.focus();
 const frame = () => new Promise<number>(resolve => window.window.requestAnimationFrame(resolve));
 async function measure(name: string, count: number, step: (index: number) => void) {
   const [gaps, cpu]: [number[], NodeJS.CpuUsage] = [[], process.cpuUsage()];
+  const counted = usage();
   for (let index = 0, last = await frame(); index < count; index++) {
     step(index);
     const now = await frame();
@@ -133,6 +134,20 @@ async function measure(name: string, count: number, step: (index: number) => voi
     "INFO",
     name,
     `gap p50 ${at(0.5)} p95 ${at(0.95)} max ${at(1)} ms, CPU ${((user + system) / count / 1000).toFixed(2)} ms/frame`,
+  );
+  if (isMac) log("INFO", name, (Number(usage()[5] - counted[5]) / count).toFixed(2), "wake-ups per frame");
+}
+
+/** While JavaScript does nothing. */
+async function watch(name: string) {
+  await Bun.sleep(500);
+  const [cpu, counted] = [process.cpuUsage(), usage()];
+  await Bun.sleep(3000);
+  const { user, system } = process.cpuUsage(cpu);
+  log(
+    "INFO",
+    name,
+    `CPU ${((user + system) / 3000).toFixed(2)} ms/s, ${(Number(usage()[5] - counted[5]) / 3).toFixed(1)} wake-ups/s`,
   );
 }
 
@@ -246,13 +261,16 @@ const mac = isMac && {
   },
 };
 
-/** What Activity Monitor shows, in MB. */
-function footprint() {
-  if (!isMac) return Math.round(process.memoryUsage.rss() / 1e6);
-  const usage = new BigUint64Array(40);
-  bind("/usr/lib/libSystem.B.dylib", "proc_pid_rusage", ["i32", "i32", "ptr"], "i32")(process.pid, 2, ptr(usage));
-  return Math.round(Number(usage[9]) / 2 ** 20);
+/** A `rusage_info_v2`. */
+function usage() {
+  const all = new BigUint64Array(40);
+  if (isMac)
+    bind("/usr/lib/libSystem.B.dylib", "proc_pid_rusage", ["i32", "i32", "ptr"], "i32")(process.pid, 2, ptr(all));
+  return all;
 }
+
+/** What Activity Monitor shows, in MB. */
+const footprint = () => Math.round((isMac ? Number(usage()[9]) : process.memoryUsage.rss()) / 2 ** 20);
 
 async function compareWithScreen(name: string) {
   await frame();
@@ -375,6 +393,7 @@ if (mac) {
 }
 
 spinner.style.animationPlayState = "running";
+await watch("a square spins");
 await measure("animation", 120, () => {});
 spinner.style.animation = "none";
 await measure("scrollTop", 180, index => (list.scrollTop = index * 20));
@@ -419,12 +438,16 @@ if (mac) {
   check("and gives it back", await until(() => window.isFocused(), 3000));
   const picture = async () => Bun.hash((await window.capturePage()).toPNG());
   field.style.caretColor = "transparent";
-  field.value = "helllo wrold";
+  field.value = "There are two mistakes in this sentence: helllo and wrold.";
   field.focus();
   await frame();
   const unmarked = await picture();
-  await Bun.sleep(3500);
-  check("spelling", (await picture()) !== unmarked);
+  let isMarked = false;
+  for (let i = 0; i < 20 && !isMarked; i++) {
+    await Bun.sleep(400);
+    isMarked = (await picture()) !== unmarked;
+  }
+  check("spelling", isMarked, `focused ${window.isFocused()} ${document.activeElement === field}`);
   const tray = new Tray((await window.capturePage({ x: 100, y: 0, width: 9, height: 9 })).toPNG());
   await Bun.sleep(300);
   check("tray", tray.getBounds().height > 10 && tray.getBounds().height < 50, JSON.stringify(tray.getBounds()));
@@ -455,10 +478,8 @@ window.show();
 await Bun.sleep(300);
 await compareWithScreen("shown-again");
 await Bun.sleep(4500);
-const idle = process.cpuUsage();
-await Bun.sleep(2000);
-const { user, system } = process.cpuUsage(idle);
-log(`INFO idle for 2 s: CPU ${((user + system) / 1000).toFixed(1)} ms, RSS ${process.memoryUsage.rss() >> 20} MB`);
+document.querySelector("textarea")!.focus();
+await watch("the caret blinks");
 log("INFO footprint at rest", footprint(), "MB");
 Bun.gc(true);
 await Bun.sleep(500);

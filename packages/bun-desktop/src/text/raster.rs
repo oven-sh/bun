@@ -2,9 +2,8 @@ use std::cell::Cell;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::{Arc, LazyLock, OnceLock};
 
-use parking_lot::Mutex;
-use resvg::tiny_skia::{self, FilterQuality, Pixmap, PixmapPaint, Transform};
-use rustc_hash::FxHashMap;
+use crate::hash::FastMap;
+use crate::sync::Mutex;
 use skrifa::bitmap::{BitmapData, BitmapGlyph, Origin};
 use skrifa::color::{Brush, ColorPainter, CompositeMode, Extend};
 use skrifa::instance::Size;
@@ -13,10 +12,10 @@ use skrifa::outline::{
 };
 use skrifa::raw::types::BoundingBox;
 use skrifa::{GlyphId, MetadataProvider as _};
-use zeno::PathBuilder as _;
 
 use super::fonts::Face;
 use crate::abi::{GradientStop, Rect, RoundedRect};
+use crate::gfx::{self, Fill, PathBuilder as _, Pixmap, Stroke, Transform};
 use crate::images;
 use crate::paint::edges;
 use crate::paint::gradient::{Geometry, Gradient, Spread};
@@ -78,7 +77,7 @@ fn despite_bad_font<R>(f: impl FnOnce() -> Option<R>) -> Option<R> {
     catch_unwind(AssertUnwindSafe(f)).ok().flatten()
 }
 
-static HINTERS: LazyLock<Mutex<FxHashMap<(u32, u32), Option<Arc<HintingInstance>>>>> =
+static HINTERS: LazyLock<Mutex<FastMap<(u32, u32), Option<Arc<HintingInstance>>>>> =
     LazyLock::new(Mutex::default);
 
 pub fn release_memory() {
@@ -140,7 +139,6 @@ fn flip(face: &Face) -> Transform {
 /// With y down and the origin on the baseline.
 pub fn glyph_path(face: &Face, glyph: u32, size: f32) -> Path {
     let flip = flip(face);
-    let flip = zeno::Transform::new(flip.sx, flip.ky, flip.kx, flip.sy, 0., 0.);
     let path = outline(face, glyph, Size::new(size), None);
     path.iter()
         .map(|command| command.transform(&flip))
@@ -159,13 +157,7 @@ fn device_bounds(bounds: Rect, matrix: &Transform) -> Option<IntRect> {
 }
 
 fn path_bounds(path: &Path, outset: f32) -> Rect {
-    let bounds = zeno::bounds(path, zeno::Fill::NonZero, None);
-    Rect {
-        x: bounds.min.x - outset,
-        y: bounds.min.y - outset,
-        width: bounds.width() + outset * 2.,
-        height: bounds.height() + outset * 2.,
-    }
+    crate::paint::scene::outset(gfx::bounds(path), outset)
 }
 
 fn rasterize_bitmap(
@@ -182,10 +174,7 @@ fn rasterize_bitmap(
                 .0
                 .iter()
                 .flat_map(|[b, g, r, a]| [*r, *g, *b, *a]);
-            Pixmap::from_vec(
-                rgba.collect(),
-                tiny_skia::IntSize::from_wh(bitmap.width, bitmap.height)?,
-            )?
+            Pixmap::from_vec(rgba.collect(), bitmap.width, bitmap.height)?
         }
         BitmapData::Mask(_) => return None,
     };
@@ -212,20 +201,7 @@ fn rasterize_bitmap(
     let reduced = images::reduce(&pixmap, width * device_scale, height * device_scale);
     let pixmap = reduced.as_ref().unwrap_or(&pixmap);
     let mut layer = Layer::new(device_bounds(bounds, matrix)?)?;
-    let placement = matrix
-        .post_translate(-layer.rect.left as f32, -layer.rect.top as f32)
-        .pre_translate(bounds.x, bounds.y)
-        .pre_scale(
-            width / pixmap.width() as f32,
-            height / pixmap.height() as f32,
-        );
-    let paint = PixmapPaint {
-        quality: FilterQuality::Bilinear,
-        ..PixmapPaint::default()
-    };
-    layer
-        .pixmap
-        .draw_pixmap(0, 0, pixmap.as_ref(), &paint, placement, None);
+    crate::paint::cpu::draw_pixmap(&mut layer, pixmap, bounds, matrix, true);
     Some(GlyphImage {
         rect: layer.rect,
         pixels: GlyphPixels::Color(layer),
@@ -272,7 +248,7 @@ impl ColorPainter for ColorGlyphPainter<'_> {
 
     fn push_clip_glyph(&mut self, glyph: GlyphId) {
         let path = outline(self.face, glyph.to_u32(), Size::unscaled(), None);
-        self.push_clip(|matrix, area| Coverage::of_path(&path, zeno::Fill::NonZero, matrix, area));
+        self.push_clip(|matrix, area| Coverage::of_path(&path, Fill::NonZero, matrix, area));
     }
 
     fn push_clip_box(&mut self, bounds: BoundingBox<f32>) {
@@ -378,7 +354,7 @@ impl ColorPainter for ColorGlyphPainter<'_> {
     }
 
     fn pop_layer_with_mode(&mut self, mode: CompositeMode) {
-        use tiny_skia::BlendMode as To;
+        use crate::paint::blend::Mode as To;
         let mode = match mode {
             CompositeMode::Clear => To::Clear,
             CompositeMode::Src => To::Source,
@@ -565,7 +541,7 @@ pub fn rasterize(
     if face.embolden {
         coverage.unite(&Coverage::of_path(
             &path,
-            zeno::Stroke::new(stroke),
+            Stroke::new(stroke),
             &matrix,
             rect,
         ));

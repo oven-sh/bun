@@ -71,6 +71,16 @@ pub struct RSA_PSS_PARAMS {
     pub maskHash: *mut X509_ALGOR,
 }
 
+#[repr(transparent)]
+struct OwnedRsaPssParams(core::ptr::NonNull<RSA_PSS_PARAMS>);
+
+impl Drop for OwnedRsaPssParams {
+    fn drop(&mut self) {
+        // SAFETY: only `d2i_RSA_PSS_PARAMS` makes one.
+        unsafe { RSA_PSS_PARAMS_free(self.0.as_ptr()) }
+    }
+}
+
 // ═══════════════════════════════════════════════════════════════════════════
 // Opaque handles
 // ═══════════════════════════════════════════════════════════════════════════
@@ -663,12 +673,13 @@ impl X509 {
                 return NID_undef;
             };
             let mut input = der.data.cast_const();
-            let params =
-                d2i_RSA_PSS_PARAMS(core::ptr::null_mut(), &raw mut input, der.length as c_long);
-            let Some(hash) = params.as_ref().map(|params| params.hashAlgorithm) else {
+            let Some(params) =
+                d2i_RSA_PSS_PARAMS(core::ptr::null_mut(), &raw mut input, der.length as c_long)
+            else {
                 ERR_clear_error();
                 return NID_undef;
             };
+            let hash = params.0.as_ref().hashAlgorithm;
             // RFC 4055 §3.1: `hashAlgorithm [0] HashAlgorithm DEFAULT sha1Identifier`
             digest_nid = NID_sha1;
             if !hash.is_null() {
@@ -681,7 +692,6 @@ impl X509 {
                 );
                 digest_nid = OBJ_obj2nid(object);
             }
-            RSA_PSS_PARAMS_free(params);
         }
         digest_nid
     }
@@ -962,7 +972,7 @@ unsafe extern "C" {
         out: *mut *mut RSA_PSS_PARAMS,
         inp: *mut *const u8,
         len: c_long,
-    ) -> *mut RSA_PSS_PARAMS;
+    ) -> Option<OwnedRsaPssParams>;
     fn RSA_PSS_PARAMS_free(params: *mut RSA_PSS_PARAMS);
     fn OBJ_obj2nid(obj: *const ASN1_OBJECT) -> c_int;
     fn X509_digest(

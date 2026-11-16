@@ -1,10 +1,14 @@
 //! Scrolling and animations that do not wait for JavaScript.
 
-use resvg::tiny_skia::{Point, Transform};
-use rustc_hash::FxHashMap;
+use std::sync::LazyLock;
 
 use crate::abi::{self, Driver, Hit, Item, Rect, Scroller, Source};
 use crate::bridge::{self, Kind};
+use crate::diagnostics::{self, Incident};
+use crate::gfx::{Point, Transform};
+use crate::hash::FastMap;
+#[cfg(target_os = "macos")]
+use crate::paint::flatten::Mover;
 use crate::paint::raster::map_rect;
 use crate::paint::scene::{Scene, intersect, union};
 use crate::surface::contains;
@@ -115,6 +119,8 @@ pub enum Next {
     Never,
     At(f64),
     Frame,
+    /// A fast display may leave out every other one.
+    Leisurely,
 }
 
 impl Next {
@@ -122,7 +128,8 @@ impl Next {
         match (self, other) {
             (Next::At(a), Next::At(b)) => Next::At(a.min(b)),
             (Next::Never, next) | (next, Next::Never) => next,
-            _ => Next::Frame,
+            (Next::Frame, _) | (_, Next::Frame) => Next::Frame,
+            _ => Next::Leisurely,
         }
     }
 }
@@ -162,7 +169,7 @@ pub struct Motion {
     first_item: usize,
     /// For each driver, where its item can be.
     reaches: Vec<Rect>,
-    scrolled: FxHashMap<u32, Scrolled>,
+    scrolled: FastMap<u32, Scrolled>,
     latch: Option<Latch>,
     drag: Option<Drag>,
     /// Rises if the engine answers most of the reports of a scroll with something else to show.
@@ -170,7 +177,30 @@ pub struct Motion {
     /// The turns that were followed since `wheel_reported_at`.
     wheel: Option<[f64; 10]>,
     wheel_reported_at: f64,
+    /// Until when the next move of the fingers is expected.
+    is_touched_until: f64,
+    /// How far the fingers have moved on each axis lately.
+    trend: [f32; 2],
+    /// Their last move, if a frame has shown it.
+    last_move: [f64; 2],
+    is_move_shown: bool,
+    /// What was shown of a move that has not come yet.
+    anticipated: [f64; 2],
     pub next: Next,
+    next_of_scrolls: Next,
+    /// The items that follow the time and can be seen.
+    moving: Vec<(usize, Next)>,
+    /// Those that the system moves.
+    lifted: Vec<usize>,
+    /// How far right, and since when.
+    #[cfg(target_os = "macos")]
+    sideways: FastMap<u32, (f32, f64)>,
+    /// The scroller that fingers have come down on.
+    #[cfg(target_os = "macos")]
+    expected: Option<u32>,
+    /// For each scroller, how far down it is, since when, and how many times in a row that has changed.
+    #[cfg(target_os = "macos")]
+    heights: FastMap<u32, (f32, f64, u32)>,
 }
 
 /// Calls `f` with each item, and the matrix and the clip around it.
@@ -208,7 +238,10 @@ fn walk(scene: &Scene, mut f: impl FnMut(usize, &Transform, Rect)) {
 }
 
 /// The values at `position`, and up to which position they stay the same.
-fn sample<const N: usize>(samples: &[[f32; N]], position: f32) -> Option<([f32; N], Option<f32>)> {
+pub fn sample<const N: usize>(
+    samples: &[[f32; N]],
+    position: f32,
+) -> Option<([f32; N], Option<f32>)> {
     let after = samples.partition_point(|sample| sample[0] <= position);
     let (Some(from), Some(to)) = (
         after.checked_sub(1).map(|index| samples[index]),
@@ -271,6 +304,7 @@ impl Motion {
     /// After `scene` and `tables` were replaced.
     pub fn adopt(&mut self, scene: &Scene, first_item: usize) {
         self.first_item = first_item;
+        self.lifted.clear();
         if self.is_scrolling() {
             self.reactions = (self.reactions + 3).min(12);
         }
@@ -294,6 +328,7 @@ impl Motion {
             };
             let scrolled = self.scrolled.entry(id).or_insert_with(at_rest);
             if scrolled.generation != generation {
+                diagnostics::note(Incident::OffsetWasSet);
                 *scrolled = at_rest();
             }
         }
@@ -324,7 +359,11 @@ impl Motion {
 
     fn advance_scrolls(&mut self, surface: u32, now: f64) -> Next {
         const DISTANCE_UNREPORTED: f64 = 200.;
-        let mut next = Next::Never;
+        let mut next = if self.is_touched(now) {
+            Next::Frame
+        } else {
+            Next::Never
+        };
         let latch = self.latch.filter(|latch| latch.until > now);
         for scroller in &self.tables.scrollers {
             let Some(scrolled) = self
@@ -407,6 +446,36 @@ impl Motion {
             .for_each(|(id, it)| it.report(surface, *id));
     }
 
+    /// For a frame that the next move of the fingers is late for.
+    pub fn anticipate(&mut self, now: f64) {
+        static IS_WANTED: LazyLock<bool> =
+            LazyLock::new(|| std::env::var("BUN_DESKTOP_ANTICIPATE").as_deref() == Ok("1"));
+        if !std::mem::replace(&mut self.is_move_shown, true) || !self.is_touched(now) || !*IS_WANTED
+        {
+            return;
+        }
+        let half = std::mem::take(&mut self.last_move).map(|it| it / 2.);
+        let Some(scroller) = self.latch.and_then(|it| self.scroller(it.id?)).copied() else {
+            return;
+        };
+        if let Some(scrolled) = self
+            .scrolled
+            .get_mut(&scroller.id)
+            .filter(|it| it.is_scrolling && half != [0.; 2])
+        {
+            diagnostics::note(Incident::Anticipated);
+            scrolled.total = Motion::clamp(
+                &scroller,
+                [0, 1].map(|axis| scrolled.total[axis] + half[axis]),
+            );
+            self.anticipated = half;
+        }
+    }
+
+    pub fn is_touched(&self, now: f64) -> bool {
+        now < self.is_touched_until
+    }
+
     pub fn is_scrolling(&self) -> bool {
         self.scrolled.values().any(|scrolled| scrolled.is_scrolling)
     }
@@ -480,7 +549,12 @@ impl Motion {
                 until,
             ) if now < start + cycle * cycles => {
                 let cycles = ((now - start) / cycle).floor();
-                until.map_or(Next::Frame, |until| {
+                let soon = if now - start > 1000. || !matches!(item, Item::PushTransform(_)) {
+                    Next::Leisurely
+                } else {
+                    Next::Frame
+                };
+                until.map_or(soon, |until| {
                     Next::At(start + (cycles + f64::from(until)) * cycle + 0.1)
                 })
             }
@@ -491,8 +565,9 @@ impl Motion {
 
     /// Returns whether that changed `scene`.
     pub fn advance(&mut self, surface: u32, scene: &mut Scene, now: f64) -> bool {
-        self.next = self.advance_scrolls(surface, now);
-        let (mut has_changed, mut moving) = (false, FxHashMap::default());
+        self.next_of_scrolls = self.advance_scrolls(surface, now);
+        self.moving.clear();
+        let (mut has_changed, mut moving) = (false, FastMap::default());
         for (driver, reach) in self.tables.drivers.iter().zip(&self.reaches) {
             let index = self.first_item + driver.item as usize;
             let Some(item) = scene.items.get_mut(index) else {
@@ -517,20 +592,150 @@ impl Motion {
                 };
                 let shown = intersect(map_rect(matrix, *reach), clip);
                 if shown.width > 0. && shown.height > 0. {
-                    (self.next, has_changed) = (self.next.or(*next), has_changed | differs);
+                    self.moving.push((index, *next));
+                    has_changed |= *differs && !self.lifted.contains(&index);
                 }
             });
         }
+        self.find_next();
         has_changed
+    }
+
+    fn find_next(&mut self) {
+        let own = self
+            .moving
+            .iter()
+            .filter(|(index, _)| !self.lifted.contains(index));
+        self.next = own.fold(self.next_of_scrolls, |all, (_, next)| all.or(*next));
+    }
+
+    #[cfg(target_os = "macos")]
+    pub fn set_lifted(&mut self, items: Vec<usize>) {
+        self.lifted = items;
+        self.find_next();
+    }
+
+    /// The items that scroll what keeps moving up or down, with the offset that was painted.
+    #[cfg(target_os = "macos")]
+    pub fn sliders(&mut self, now: f64, lasts: f64) -> Vec<(usize, f32)> {
+        let (mut heights, mut sliders) = (FastMap::default(), Vec::new());
+        for driver in &self.tables.drivers {
+            let Source::Scroll { scroller: index } = driver.source else {
+                continue;
+            };
+            let Some(scroller) = self.tables.scrollers.get(index as usize) else {
+                continue;
+            };
+            let height = scroller.offset[1] + self.moved(index)[1];
+            let is_touched = self.expected.take_if(|id| *id == scroller.id).is_some();
+            let is_touched = is_touched
+                || self
+                    .scrolled
+                    .get(&scroller.id)
+                    .is_some_and(|it| it.is_scrolling);
+            let (since, times) = match self.heights.get(&scroller.id) {
+                _ if is_touched && scroller.min[1] != scroller.max[1] => (now, 3),
+                Some(&(before, since, times)) if before == height => (since, times),
+                Some(&(_, since, times)) if now - since < lasts => (now, times + 1),
+                _ => (now, 0),
+            };
+            heights.insert(scroller.id, (height, since, times));
+            let left = scroller.offset[0] + self.moved(index)[0];
+            let sideways = self.sideways.entry(scroller.id).or_insert((left, 0.));
+            if sideways.0 != left {
+                *sideways = (left, now);
+            }
+            if times >= 3 && now - since < lasts && now - sideways.1 >= lasts {
+                sliders.push((self.first_item + driver.item as usize, scroller.offset[1]));
+            }
+        }
+        self.sideways.retain(|id, _| heights.contains_key(id));
+        self.heights = heights;
+        sliders
+    }
+
+    #[cfg(target_os = "macos")]
+    pub fn expect_scrolling(&mut self, scene: &Scene, position: [f32; 2]) -> bool {
+        self.expected = [1., -1.]
+            .into_iter()
+            .find_map(|down| self.target(scene, position, [0., down])?);
+        self.expected.is_some()
+    }
+
+    /// The items that move something by how far it is scrolled.
+    #[cfg(target_os = "macos")]
+    pub fn sticky(&self) -> impl Iterator<Item = usize> {
+        self.tables
+            .drivers
+            .iter()
+            .filter(|it| matches!(it.source, Source::Offset { .. }))
+            .map(|it| self.first_item + it.item as usize)
+    }
+
+    /// What goes on for a while, and is not moved twice.
+    #[cfg(target_os = "macos")]
+    pub fn movers(&self, scene: &Scene, now: f64) -> Vec<Mover<'_>> {
+        const WORTH_IT: f64 = 300.;
+        let items = || {
+            self.tables
+                .drivers
+                .iter()
+                .map(|it| (self.first_item + it.item as usize, it))
+                .filter(|it| it.0 < scene.items.len())
+        };
+        let mover = |((item, driver), reach): ((usize, &Driver), &Rect)| {
+            let Source::Time {
+                start,
+                cycle,
+                cycles,
+            } = driver.source
+            else {
+                return None;
+            };
+            let follows_time = |it: &Driver| matches!(it.source, Source::Time { .. });
+            let moves = |index: usize| matches!(scene.items[index], Item::PushTransform(_));
+            let around = || {
+                items().filter(move |(other, it)| {
+                    follows_time(it) && (other + 1..scene.end(*other)).contains(&item)
+                })
+            };
+            let inside =
+                || items().filter(move |(other, _)| (item + 1..scene.end(item)).contains(other));
+            let inner = inside()
+                .filter(|(other, _)| self.moving.iter().any(|it| it.0 == *other))
+                .count();
+            let matrices = around().filter(|it| moves(it.0)).count()
+                + usize::from(moves(item))
+                + usize::from(inside().any(|it| moves(it.0)));
+            let is_simple = matrices <= 1 && inside().all(|it| follows_time(it.1));
+            let lasts = start <= now
+                && cycle * cycles >= WORTH_IT
+                && self.moving.iter().any(|it| it.0 == item);
+            let samples = self.tables.numbers.get(driver.samples.range())?;
+            (lasts && is_simple).then_some(Mover {
+                item,
+                inner,
+                reach: *reach,
+                start,
+                cycle,
+                cycles,
+                samples,
+            })
+        };
+        if self.moving.is_empty() {
+            Vec::new()
+        } else {
+            items().zip(&self.reaches).filter_map(mover).collect()
+        }
     }
 
     fn hit(&self, scene: &Scene, [x, y]: [f32; 2]) -> Option<Hit> {
         let (mut hits, mut found) = (self.tables.hits.iter().peekable(), None);
         walk(scene, |index, matrix, clip| {
             while let Some(hit) = hits.next_if(|hit| self.first_item + hit.item as usize <= index) {
-                let mut point = Point::from_xy(x, y);
+                let mut point = Point::new(x, y);
                 if let Some(inverse) = matrix.invert().filter(|_| contains(clip, x, y)) {
-                    inverse.map_point(&mut point);
+                    point = inverse.map(point);
                     found = Some(*hit)
                         .filter(|hit| contains(hit.rect, point.x, point.y))
                         .or(found);
@@ -576,7 +781,7 @@ impl Motion {
         &mut self,
         scene: &Scene,
         position: [f32; 2],
-        delta: [f32; 2],
+        mut delta: [f32; 2],
         glides: bool,
         ends: bool,
         now: f64,
@@ -589,6 +794,14 @@ impl Motion {
         let latch = self
             .latch
             .filter(|latch| latch.until > now && is_near(latch));
+        // `MouseWheelRailsFilterMac` in Chromium.
+        if cfg!(target_os = "macos") && !glides {
+            self.trend = [0, 1].map(|axis| self.trend[axis] * 0.8 + delta[axis].abs());
+            delta[usize::from(self.trend[0] > self.trend[1])] = 0.;
+            if delta == [0.; 2] {
+                return latch.is_some_and(|it| it.id.is_some());
+            }
+        }
         let id = match latch.map_or_else(
             || self.target(scene, position, delta),
             |latch| Some(latch.id).filter(Option::is_some),
@@ -626,12 +839,16 @@ impl Motion {
                 0.
             }
         };
-        let to = Motion::clamp(
-            &scroller,
-            [0, 1].map(|axis| from[axis] + f64::from(allowed(axis))),
+        let (by, shown) = (
+            [0, 1].map(|axis| f64::from(allowed(axis))),
+            std::mem::take(&mut self.anticipated),
         );
+        let left = |axis: usize| by[axis] - shown[axis].clamp(by[axis].min(0.), by[axis].max(0.));
+        let to = Motion::clamp(&scroller, [0, 1].map(|axis| from[axis] + left(axis)));
         if !glides {
+            (self.last_move, self.is_move_shown) = (by, false);
             (scrolled.total, scrolled.glide) = (to, None);
+            self.is_touched_until = now + crate::host::interval().as_secs_f64() * 2500.;
         } else if to != from {
             let current = scrolled.glide.map_or(scrolled.total, |glide| glide.at(now));
             scrolled.glide = Some(Glide::toward(current, to, now, scrolled.glide));
@@ -641,6 +858,7 @@ impl Motion {
     }
 
     pub fn begin_gesture(&mut self) -> bool {
+        (self.trend, self.anticipated) = Default::default();
         self.latch = None;
         false
     }

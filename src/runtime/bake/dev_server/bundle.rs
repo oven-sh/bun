@@ -1,6 +1,7 @@
 //! Starting bundles: choosing entry points, the bundle queue, and plugin loading.
 
 use super::*;
+use bun_ptr::detach_lifetime_mut;
 
 impl DevServer {
     pub(super) fn append_route_entry_points_if_not_stale(
@@ -374,13 +375,14 @@ impl DevServer {
         let heap_ref: &'static bun_alloc::Arena = unsafe { &*heap_ptr };
         // SAFETY: `self` holds the transpilers at a fixed address and outlives every use of `bv2`.
         // Until `bv2` is dropped, nothing else uses the client and SSR ones. `self` still uses the
-        // server one on this thread (`watch_directory`, `finalize_bundle`).
+        // server one on this thread (`finalize_bundle`).
         let (ssr_transpiler, server_transpiler, client_transpiler) = unsafe {
-            use bun_ptr::detach_lifetime_mut as detach;
             (
-                self.ssr_transpiler.as_mut().map(|ssr| detach(ssr)),
-                detach(&mut self.server_transpiler),
-                detach(&mut self.client_transpiler),
+                self.ssr_transpiler
+                    .as_mut()
+                    .map(|ssr| detach_lifetime_mut(ssr)),
+                detach_lifetime_mut(&mut self.server_transpiler),
+                detach_lifetime_mut(&mut self.client_transpiler),
             )
         };
         let framework = server_transpiler.options.framework.clone();
@@ -394,13 +396,12 @@ impl DevServer {
             }),
             heap_ref,
             event_loop,
-            false, // watching is handled separately
             Some(::core::ptr::NonNull::from(
                 bun_threading::work_pool::WorkPool::get(),
             )),
             heap_ref,
         );
-        bv2.bun_watcher = Some(::core::ptr::NonNull::from(&mut **self.bun_watcher));
+        bv2.bun_watcher = Some(Arc::clone(&self.bun_watcher));
         bv2.asynchronous = true;
         bv2.dev_server = Some(self.bundler_handle());
 
@@ -469,18 +470,14 @@ impl DevServer {
         debug_assert!(self.current_bundle.is_none());
 
         // If there were pending requests, begin another bundle.
-        if self.next_bundle.reload_event.is_some() || self.next_bundle.requests.first().is_some() {
+        if self.next_bundle.has_reload_event || self.next_bundle.requests.first().is_some() {
             let mut entry_points = EntryPointList::empty();
 
-            let (is_reload, timer) = if let Some(event) = self.next_bundle.reload_event.take() {
-                // SAFETY: `HotReloadEvent::run` left `event` here without recycling it.
-                unsafe {
-                    let timer = (*event).timer;
-                    self.process_reload_events(event, &mut entry_points);
-                    (true, timer)
-                }
+            let is_reload = core::mem::take(&mut self.next_bundle.has_reload_event);
+            let timer = if is_reload {
+                self.process_reload_events(&mut entry_points)
             } else {
-                (false, Instant::now())
+                Instant::now()
             };
 
             // Note: iterate by index — `route_bundle_ptr` /

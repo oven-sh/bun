@@ -540,7 +540,7 @@ const clocks = new Set<Page>();
 function advanceClock(page: Page) {
   if (page.isInFrame || clocks.$has(page)) return;
   if (clocks.$add(page).size === 1) setImmediate(() => clocks.$clear());
-  const now = performance.now();
+  const now = performance.now() - page.timeOrigin;
   if (now - page.doc.engine.timelineState(0)[0] < 17) return;
   page.doc.engine.advanceClock(now);
   takeEvents(page);

@@ -554,9 +554,9 @@ fn spawn(
         // CString Vector — lives until Bun__Chrome__ensure returns, after which
         // posix_spawn has copied argv into the child.
         argv.extend(extra_argv.iter().copied().map(Some));
-        let argv = CStrList::terminate(&mut argv);
+        let argv = CStrList::from_unterminated(&mut argv);
 
-        let env = vm.env_loader().map.create_null_delimited_env_map()?;
+        let env = vm.env_loader().map.to_envp();
 
         let opts = SpawnOptions {
             stdin: Stdio::Ignore,

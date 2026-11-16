@@ -18,7 +18,7 @@ use super::explain::NOWHERE;
 use super::sink::{NO_DIRECTIVE, held};
 use super::*;
 use crate::bind::{ClassOwner, Decl, Parent, PatParent, SymbolId};
-use crate::program::{ReadingNoTrees, TypeOnlyDeclaration, source_file_may_be_emitted};
+use crate::program::{TypeOnlyDeclaration, source_file_may_be_emitted};
 use crate::resolve::{
     ModuleKind, Options, ScriptTarget, file_extension_is, get_relative_path_from_directory,
     has_ts_implementation_extension, is_declaration_file_name, join, path_is_relative,
@@ -418,8 +418,6 @@ impl Checker<'_, '_> {
         let files = self.files();
         self.are_module_exports_checked(module, file)
             || files.files_with_alias_from_exports_of(module).any(|other| {
-                let _reading = ReadingNoTrees::begin();
-                // A leaf's data is freed after its task.
                 (other == file || !files.module(other).is_leaf)
                     && self.is_checked_no_later_than(other, file)
             })

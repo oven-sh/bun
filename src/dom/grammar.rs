@@ -9,8 +9,8 @@
 //! - `^hook term` passes what is written through one of `hooks::HOOKS`.
 //! - In a shorthand, `<'a'>` and `@a,b term` are the values of longhands, and `@a=text` sets one.
 
-use core::cell::OnceCell;
 use core::ops::Range;
+use std::sync::{LazyLock, OnceLock};
 
 use bun_core::strings;
 use bun_css::Token;
@@ -79,28 +79,34 @@ pub(crate) struct Definition {
     /// What is between the name and the syntax.
     pub(crate) notes: Text,
     source: Text,
-    term: OnceCell<Term>,
+    term: OnceLock<Term>,
 }
 
-thread_local! {
-    static DEFINITIONS: (&'static [Definition], Map<Text, &'static Definition>) = {
-        let source = include_bytes!("syntax.txt");
-        let lines = strings::tokenize(source, b"\n").filter_map(|line| {
-            let at = strings::index_of(line, b" = ")?;
-            let (name, notes) = strings::split_once_char(&line[..at], b' ').unwrap_or((&line[..at], b""));
-            Some(Definition { name: text(name), notes: text(notes), source: text(&line[at + 3..]), term: OnceCell::new() })
-        });
-        let all: &'static [Definition] = lines.collect::<Vec<_>>().leak();
-        (all, all.iter().map(|it| (it.name, it)).collect())
-    };
-}
+static SOURCE: &[u8] = include_bytes!("syntax.txt");
+
+static DEFINITIONS: LazyLock<Vec<Definition>> = LazyLock::new(|| {
+    let lines = strings::tokenize(SOURCE, b"\n").filter_map(|line| {
+        let at = strings::index_of(line, b" = ")?;
+        let (name, notes) =
+            strings::split_once_char(&line[..at], b' ').unwrap_or((&line[..at], b""));
+        Some(Definition {
+            name: text(name),
+            notes: text(notes),
+            source: text(&line[at + 3..]),
+            term: OnceLock::new(),
+        })
+    });
+    lines.collect()
+});
 
 pub(crate) fn definitions() -> &'static [Definition] {
-    DEFINITIONS.with(|it| it.0)
+    &DEFINITIONS
 }
 
 pub(crate) fn definition(name: &str) -> Option<&'static Definition> {
-    DEFINITIONS.with(|it| it.1.get(name).copied())
+    static BY_NAME: LazyLock<Map<Text, &'static Definition>> =
+        LazyLock::new(|| DEFINITIONS.iter().map(|it| (it.name, it)).collect());
+    BY_NAME.get(name).copied()
 }
 
 impl Definition {
@@ -139,9 +145,12 @@ struct Compiler {
     captures: bool,
 }
 
+/// Of a part of `SOURCE`.
 fn spaced(source: Text) -> Text {
+    static SPACED: LazyLock<Vec<u8>> = LazyLock::new(|| strings::replace_owned(SOURCE, b"_", b" "));
     match strings::contains_char(source.as_bytes(), b'_') {
-        true => text(strings::replace_owned(source.as_bytes(), b"_", b" ").leak()).trim_ascii(),
+        true => text(&SPACED[source.as_ptr().addr() - SOURCE.as_ptr().addr()..][..source.len()])
+            .trim_ascii(),
         false => source,
     }
 }

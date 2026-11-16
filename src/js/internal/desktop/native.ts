@@ -272,7 +272,7 @@ function start() {
   hooks.started();
 }
 
-const needsNoDisplay = /^(?:(?:surface|font|image|canvas|defaults)\.|image$)/;
+const needsNoDisplay = /^(?:(?:surface|font|image|canvas|defaults|keychain)\.|image$)/;
 function prepare(command: string) {
   if (started) return;
   if (needsNoDisplay.test(command)) loadRenderer();

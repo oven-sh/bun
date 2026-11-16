@@ -3,7 +3,9 @@
 // of views, and sees the move by what the cell weighs. A row that takes bytes in a place that may be any object is called where `routes` has a call for it.
 //
 //   bun small-views.ts <aot_builtin_table.json> [<path>]      the last line that it prints is `SmallViewsFound` below, as JSON; the rows of <path> are read as if they did not write TypedArrayStorage
+import { aotBuiltinEntries, aotBuiltinValue, desktopInternals } from "bun:internal-for-testing";
 import { deserialize, estimateShallowMemoryUsageOf, serialize } from "bun:jsc";
+import { hasLibrary } from "../../js/bun/desktop/library";
 import { readTable, type Entry, type Overload, type Parameter, type TableType } from "./table";
 
 export interface SmallViewsFound {
@@ -228,6 +230,34 @@ const routes: Record<string, Route[]> = {
 for (const name of ["MD4", "MD5", "SHA1", "SHA224", "SHA256", "SHA384", "SHA512", "SHA512_256"] as const) {
   routes[`Bun.${name}.prototype.update`] = [[view => new Bun[name]().update(view)]];
   routes[`Bun.${name}.prototype.digest`] = [[view => new Bun[name]().digest(view), () => new Uint8Array(64)]];
+}
+
+const engine = () => new desktopInternals.engine.Engine(0, "https://example.com/");
+const oneRecord = () => new Float64Array(5);
+Object.assign(routes, {
+  "%DesktopEngine%.prototype.changedIntersections": [
+    [view => engine().changedIntersections(view, new Float64Array(16)), oneRecord],
+    [view => engine().changedIntersections(oneRecord(), view), () => new Float64Array(16)],
+  ],
+  "%DesktopEngine%.prototype.changedSizes": [[view => engine().changedSizes(view, 1), () => new Float64Array(4)]],
+  "%DesktopEngine%.prototype.createSheetFromUtf8": [
+    [view => engine().createSheetFromUtf8(view, "https://example.com/", ""), () => bytesOf("a{top:0}")],
+  ],
+  "%DesktopEngine%.prototype.createVector": [
+    [view => engine().createVector(view, "a.svg", 0), () => bytesOf("<svg/>")],
+  ],
+  "%DesktopEngine%.prototype.prepareSheet": [[view => engine().prepareSheet(view), () => bytesOf("a{top:0}")]],
+  "%DesktopEngine%.prototype.setExternal": [[view => engine().setExternal("a.svg", view), () => bytesOf("<svg/>")]],
+} satisfies Record<string, Route[]>);
+
+// Without the library of bun:desktop these take their operands and do nothing.
+if (hasLibrary) desktopInternals.native.loadRenderer();
+for (const [name, ...rest] of [["drainNumbers"], ["draw", 0, ""], ["measure", "a"], ["putBlob"]] as const) {
+  const path = `native:Bindgen:desktop.bind.ts:${name}`;
+  const { id } = aotBuiltinEntries().entries.find(entry => entry.path === path)!;
+  routes[path] = routes[`%NativeFunctions%.DesktopBindTs${name[0].toUpperCase()}${name.slice(1)}`] = [
+    [view => (aotBuiltinValue(id, "object") as Function)(view, ...rest), () => new Float64Array(32)],
+  ];
 }
 
 const notCalled: Record<string, string> = {

@@ -401,7 +401,7 @@ export { log };`,
 
     test("imports at once of graphs whose files queue jobs or throw", async () => {
       using dir = project(
-        { name: "notes", module: "app.mjs" },
+        { name: "notes", module: "app.mjs", desktop: { name: "Memo" } },
         {
           "app.mjs": `globalThis.log = [];
 const all = await Promise.allSettled([import("./a.mjs"), import("./b.mjs"), import("./c.mjs"), import("./a.mjs")]);
@@ -422,7 +422,7 @@ console.log(all.map(one => one.value?.default ?? one.reason.message).join(), log
 
     test.skipIf(!hasLibrary)("--aot-assume", async () => {
       using dir = project(
-        { name: "notes" },
+        { name: "notes", desktop: { name: "Memo" } },
         {
           "app.js": `const { app, BrowserWindow, protocol } = require("bun:desktop/electron");
 protocol.registerSchemesAsPrivileged([{ scheme: "app", privileges: { standard: true, secure: true } }]);
@@ -455,6 +455,26 @@ import(self.origin + "/rare.js").then(rare => console.log([sizeOf(new Box(1)), s
       expect(outputs).toEqual(["2,7,a0,replaced,5\n", "2,7,a1,TypeError,5\n"]);
       const { stderr } = await bun(dir, "compile", "--aot-assume=anything", "app.js");
       expect(stderr).toContain("separate-realms, locked-builtins, complete-order");
+    });
+
+    test("bun:desktop/dom replaces the globals of Bun", async () => {
+      using dir = project(
+        { name: "notes" },
+        {
+          "app.js": `import "bun:desktop/dom";
+const heard = [];
+document.body.addEventListener("a", event => heard.push(event.target.localName));
+for (const event of [new Event("a"), new CustomEvent("a"), new ErrorEvent("a")]) document.body.dispatchEvent(event);
+addEventListener("b", event => heard.push(event.target === self));
+dispatchEvent(new Event("b"));
+console.log(heard.join(), document.body instanceof EventTarget, new FormData(document.createElement("form")).has("a"));`,
+        },
+      );
+      expect(await bun(dir, "compile", "app.js", "--outfile=out")).toMatchObject({ exitCode: 0 });
+      expect(await run([join(String(dir), isWindows ? "out.exe" : "out")], String(dir))).toMatchObject({
+        stdout: "body,body,body,true true false\n",
+        exitCode: 0,
+      });
     });
 
     test("finds a missing library before it compiles", async () => {

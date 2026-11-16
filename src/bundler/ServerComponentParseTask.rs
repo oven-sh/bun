@@ -21,7 +21,7 @@ use crate::Worker;
 use crate::bundle_v2::BundleV2;
 use crate::cache::ExternalFreeFunction;
 use crate::options::{Loader, Target};
-use crate::parse_task::{self, ResultValue, Success, WatcherData};
+use crate::parse_task::{self, ResultValue, Success};
 
 /// `'a` is the bundle's, as for [`parse_task::ParseTask`].
 pub(crate) struct ServerComponentParseTask<'a> {
@@ -97,7 +97,7 @@ fn task_callback_wrap(thread_pool_task: *mut ThreadPoolTask) {
         task: Default::default(),
         value,
         external: ExternalFreeFunction::NONE,
-        watcher_data: WatcherData::NONE,
+        file_to_watch: None,
     });
     parse_task::parse_worker::post_result(result);
 }
@@ -146,6 +146,7 @@ fn task_callback(
         unique_key_for_additional_file: bun_ast::StoreStr::EMPTY,
         content_hash_for_additional_file: 0,
         package_name: bun_ast::StoreStr::EMPTY,
+        client_copy_options: None,
     })
 }
 

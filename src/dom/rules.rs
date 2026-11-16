@@ -28,6 +28,8 @@ struct Entry {
     /// For an element that has the key.
     always_matches: bool,
     follows_from_signature: bool,
+    /// The roots of its `@scope` do.
+    has_known_roots: bool,
 }
 
 /// What a rule set has for the elements with the same signature.
@@ -37,6 +39,8 @@ struct Memo {
     /// `RuleSet::generated`
     generated: u8,
     undecided: Vec<Entry>,
+    /// How far away they are.
+    roots: Vec<(*const ScopeRule, SmallVec<[u16; 2]>)>,
 }
 
 impl Entry {
@@ -532,15 +536,15 @@ impl RuleSet {
         }
         let mut scopes =
             core::iter::successors(rule.context.scope.as_ref(), |it| it.outer.as_ref());
-        let follows_from_signature = selector.follows_from_signature()
-            && scopes.all(|it| {
-                it.start.is_some()
-                    && it
-                        .start
-                        .iter()
-                        .chain(&it.end)
-                        .all(|it| it.iter().all(|it| it.follows_from_signature()))
-            });
+        let has_known_roots = scopes.all(|it| {
+            it.start.is_some()
+                && it
+                    .start
+                    .iter()
+                    .chain(&it.end)
+                    .all(|it| it.iter().all(|it| it.follows_from_signature()))
+        });
+        let follows_from_signature = has_known_roots && selector.follows_from_signature();
         let entry = Entry {
             ancestors: selector.ancestor_hashes(),
             states: selector.states(),
@@ -548,6 +552,7 @@ impl RuleSet {
             slot,
             always_matches: false,
             follows_from_signature,
+            has_known_roots,
         };
         if !is_host
             && combinator == Combinator::None
@@ -834,8 +839,17 @@ impl RuleSet {
         host: NodeId,
         decide: impl Fn(&Entry, &mut Memo, &dyn Fn(&Query) -> Option<u16>),
     ) -> Rc<Memo> {
-        if let Some(known) = self.memos.borrow().get(&key) {
-            return Rc::clone(known);
+        let known = self.memos.borrow().get(&key).cloned();
+        if let Some(known) = known {
+            let up =
+                |distance: u16| (0..distance).fold(query.id, |id, _| query.tree.parent_or_host(id));
+            query.roots.borrow_mut().extend(
+                known
+                    .roots
+                    .iter()
+                    .map(|(scope, all)| (*scope, all.iter().map(|it| (*it, up(*it))).collect())),
+            );
+            return known;
         }
         let mut memo = Memo::default();
         self.visit_candidates(query, part, |entry| {
@@ -852,13 +866,36 @@ impl RuleSet {
                         },
                         host,
                     ),
-                    false => query
-                        .bloom
-                        .is_none_or(|it| it.may_have(&entry.ancestors))
-                        .then_some(0),
+                    false => {
+                        let scope = entry
+                            .rule
+                            .context
+                            .scope
+                            .as_ref()
+                            .filter(|_| entry.has_known_roots);
+                        (query.bloom.is_none_or(|it| it.may_have(&entry.ancestors))
+                            && scope.is_none_or(|it| !scope_roots(it, query, host).is_empty()))
+                        .then_some(0)
+                    }
                 },
             );
         });
+        for scope in memo
+            .undecided
+            .iter()
+            .filter(|it| it.has_known_roots)
+            .filter_map(|it| it.rule.context.scope.as_ref())
+        {
+            if !memo.roots.iter().any(|it| it.0 == Rc::as_ptr(scope)) {
+                memo.roots.push((
+                    Rc::as_ptr(scope),
+                    scope_roots(scope, query, host)
+                        .iter()
+                        .map(|it| it.0)
+                        .collect(),
+                ));
+            }
+        }
         let (memo, mut memos) = (Rc::new(memo), self.memos.borrow_mut());
         if memos.len() >= 2048 {
             memos.clear();

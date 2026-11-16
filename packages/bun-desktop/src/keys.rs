@@ -1,6 +1,3 @@
-use gpui::{Keystroke, Modifiers, MouseButton};
-use serde_json::Value;
-
 /// By evdev code.
 const CODES: [&str; 128] = [
     "",
@@ -150,48 +147,7 @@ fn evdev_code(virtual_key: u32) -> u32 {
         .map_or(0, |code| (*code).into())
 }
 
-#[cfg(target_os = "windows")]
-fn evdev_code(scan_code: u32) -> u32 {
-    match scan_code {
-        0x45 => 119,
-        0x01..=0x58 => scan_code,
-        0x59 => 117,
-        0x64..=0x6E => scan_code - 0x64 + 183,
-        0x70 => 93,
-        0x71 => 123,
-        0x72 => 122,
-        0x73 => 89,
-        0x76 => 194,
-        0x79 => 92,
-        0x7B => 94,
-        0x7D => 124,
-        0x7E => 121,
-        0xE010 => 165,
-        0xE019 => 163,
-        0xE01C => 96,
-        0xE01D => 97,
-        0xE020 => 113,
-        0xE022 => 164,
-        0xE024 => 166,
-        0xE02E => 114,
-        0xE030 => 115,
-        0xE035 => 98,
-        0xE036 => 54,
-        0xE037 => 99,
-        0xE038 => 100,
-        0xE045 => 69,
-        0xE047..=0xE049 => scan_code - 0xE047 + 102,
-        0xE04B => 105,
-        0xE04D => 106,
-        0xE04F..=0xE053 => scan_code - 0xE04F + 107,
-        0xE05B..=0xE05D => scan_code - 0xE05B + 125,
-        0xE069 => 159,
-        0xE06A => 158,
-        _ => 0,
-    }
-}
-
-#[cfg(not(any(target_os = "macos", target_os = "windows")))]
+#[cfg(not(target_os = "macos"))]
 fn evdev_code(code: u32) -> u32 {
     code
 }
@@ -256,8 +212,10 @@ pub fn location(code: &str) -> u8 {
     }
 }
 
+pub const SHIFT: u8 = 1;
+pub const CONTROL: u8 = 2;
+pub const META: u8 = 8;
 pub const ALT_GRAPH: u8 = 16;
-pub const CAPS_LOCK: u8 = 32;
 
 /// The bit that is set while the key is down. `None` for a key that is no modifier.
 pub fn modifier_bit(key: &str) -> Option<u8> {
@@ -272,29 +230,31 @@ pub fn modifier_bit(key: &str) -> Option<u8> {
     })
 }
 
-/// The `key` of a DOM `KeyboardEvent`, if it is known without the text that the key types.
-#[cfg(any(target_os = "macos", target_os = "windows"))]
+/// The `key` of a DOM `KeyboardEvent`, from the character that the key stands for.
+#[cfg(target_os = "macos")]
 pub fn key_for_symbol(symbol: u32, code: &'static str) -> Option<String> {
-    const VK_PROCESSKEY: u32 = 0xE5;
-    let key = code.trim_end_matches("Left").trim_end_matches("Right");
+    const NAMED: &str =
+        "Enter Tab Backspace Escape Delete Insert Home End PageUp PageDown ContextMenu";
     let is_printable = |it: &char| !it.is_control() && !('\u{F700}'..='\u{F8FE}').contains(it);
-    let typed = char::from_u32(symbol).filter(|it| cfg!(target_os = "macos") && is_printable(it));
-    match symbol {
-        _ if typed.is_some() => typed.map(String::from),
-        u32::MAX => Some("Dead".to_owned()),
-        VK_PROCESSKEY => Some("Process".to_owned()),
-        _ if code.starts_with("Audio")
-            || code.starts_with("Media")
-            || code.starts_with("Browser") =>
-        {
-            Some(code.to_owned())
+    let side = code.trim_end_matches("Left").trim_end_matches("Right");
+    let is_function = code
+        .strip_prefix('F')
+        .is_some_and(|it| it.parse::<u8>().is_ok());
+    Some(match code {
+        "NumpadEnter" => "Enter".to_owned(),
+        "NumLock" => "Clear".to_owned(),
+        _ if is_function || code.starts_with("Arrow") || code.starts_with("Audio") => {
+            code.to_owned()
         }
-        _ => modifier_bit(key).map(|_| key.to_owned()),
-    }
+        _ if NAMED.split(' ').any(|it| it == code) => code.to_owned(),
+        _ if modifier_bit(side).is_some() => side.to_owned(),
+        _ if symbol == u32::MAX => "Dead".to_owned(),
+        _ => char::from_u32(symbol).filter(is_printable)?.into(),
+    })
 }
 
 /// The `key` of a DOM `KeyboardEvent`, from a keysym.
-#[cfg(not(any(target_os = "macos", target_os = "windows")))]
+#[cfg(not(target_os = "macos"))]
 pub fn key_for_symbol(symbol: u32, code: &'static str) -> Option<String> {
     let named = match symbol {
         0xFF08 => "Backspace",
@@ -340,14 +300,14 @@ pub fn key_for_symbol(symbol: u32, code: &'static str) -> Option<String> {
         0xFE03 | 0xFE11 => "AltGraph",
         0xFE50..=0xFE93 => "Dead",
         0x1008_FF00..=0x1008_FFFF if !code.is_empty() => code,
-        _ => return xkeysym::Keysym::new(symbol).key_char().map(String::from),
+        _ => return crate::platform::keysym_to_char(symbol).map(String::from),
     };
     Some(named.to_owned())
 }
 
-/// The `key` of a DOM `KeyboardEvent`.
-pub fn dom_key(keystroke: &Keystroke) -> String {
-    let named = match keystroke.key.as_str() {
+/// The `key` of a DOM `KeyboardEvent`, from a name that `internal/desktop/accelerator.ts` writes.
+pub fn dom_key(name: &str, modifiers: u8, typed: Option<&str>) -> String {
+    let named = match name {
         "enter" => "Enter",
         "escape" => "Escape",
         "tab" => "Tab",
@@ -374,77 +334,15 @@ pub fn dom_key(keystroke: &Keystroke) -> String {
             return key.to_uppercase();
         }
         key => {
-            return match &keystroke.key_char {
+            return match typed {
                 Some(typed) if !typed.is_empty() && !typed.contains(char::is_control) => {
-                    typed.clone()
+                    typed.to_owned()
                 }
                 _ if key.is_ascii() && key.len() != 1 => "Unidentified".to_owned(),
-                _ if keystroke.modifiers.shift => key.to_uppercase(),
+                _ if modifiers & SHIFT != 0 => key.to_uppercase(),
                 _ => key.to_owned(),
             };
         }
     };
     named.to_owned()
-}
-
-/// Shift 1, control 2, alt 4, meta 8.
-pub fn modifier_bits(modifiers: &Modifiers) -> u8 {
-    u8::from(modifiers.shift)
-        | u8::from(modifiers.control) << 1
-        | u8::from(modifiers.alt) << 2
-        | u8::from(modifiers.platform) << 3
-}
-
-pub fn modifiers_from_bits(bits: u64) -> Modifiers {
-    Modifiers {
-        shift: bits & 1 != 0,
-        control: bits & 2 != 0,
-        alt: bits & 4 != 0,
-        platform: bits & 8 != 0,
-        function: false,
-    }
-}
-
-pub fn button_number(button: MouseButton) -> u8 {
-    match button {
-        MouseButton::Left => 0,
-        MouseButton::Middle => 1,
-        MouseButton::Right => 2,
-        MouseButton::Navigate(gpui::NavigationDirection::Back) => 3,
-        MouseButton::Navigate(gpui::NavigationDirection::Forward) => 4,
-    }
-}
-
-pub fn button_from_number(number: u64) -> MouseButton {
-    match number {
-        1 => MouseButton::Middle,
-        2 => MouseButton::Right,
-        3 => MouseButton::Navigate(gpui::NavigationDirection::Back),
-        4 => MouseButton::Navigate(gpui::NavigationDirection::Forward),
-        _ => MouseButton::Left,
-    }
-}
-
-/// `[key, modifierBits]` with GPUI's key names, as `internal/desktop/accelerator.ts` writes them.
-#[derive(Clone, PartialEq)]
-pub struct Chord {
-    key: String,
-    modifiers: u8,
-}
-
-impl Chord {
-    pub fn parse(value: &Value) -> Option<Chord> {
-        Some(Chord {
-            key: value.get(0)?.as_str()?.to_owned(),
-            modifiers: value.get(1)?.as_u64()? as u8,
-        })
-    }
-
-    pub fn keystroke(&self) -> Keystroke {
-        Keystroke {
-            modifiers: modifiers_from_bits(self.modifiers.into()),
-            key: self.key.clone(),
-            key_char: None,
-        }
-    }
 }

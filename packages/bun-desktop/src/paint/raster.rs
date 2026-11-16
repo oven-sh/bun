@@ -2,16 +2,12 @@
 
 use std::rc::Rc;
 
-use resvg::tiny_skia::{
-    self, LineCap, LineJoin, PathSegment, PathStroker, Pixmap, PixmapPaint, StrokeDash, Transform,
-};
-use smallvec::SmallVec;
-use zeno::{Command, PathBuilder as _, Point};
-
-use super::edges;
+use super::{blend, edges};
 use crate::abi::{Matrix, Rect, RoundedRect};
+pub use crate::gfx::Path;
+use crate::gfx::{Command, Fill, PathBuilder as _, Pixmap, Point, Style, Transform};
+use crate::small_vec::SmallVec;
 
-pub type Path = Vec<Command>;
 /// Premultiplied.
 pub type Pixel = [u8; 4];
 
@@ -25,6 +21,14 @@ pub struct IntRect {
     pub bottom: i32,
 }
 
+/// Baseline x86-64 has no instruction for `f32::floor`.
+#[inline]
+fn floor(value: f32) -> i32 {
+    const LIMIT: f32 = (1 << 24) as f32;
+    let value = value.clamp(-LIMIT, LIMIT);
+    value as i32 - i32::from(value < value as i32 as f32)
+}
+
 impl IntRect {
     pub fn new(left: i32, top: i32, right: i32, bottom: i32) -> IntRect {
         IntRect {
@@ -36,10 +40,11 @@ impl IntRect {
     }
 
     pub fn around(rect: Rect) -> IntRect {
-        const LIMIT: f32 = (1 << 24) as f32;
         const SLACK: f32 = 1. / 256.;
-        let down = |value: f32| (value + SLACK).floor().clamp(-LIMIT, LIMIT) as i32;
-        let up = |value: f32| (value - SLACK).ceil().clamp(-LIMIT, LIMIT) as i32;
+        let (down, up) = (
+            |value: f32| floor(value + SLACK),
+            |value: f32| -floor(SLACK - value),
+        );
         IntRect::new(
             down(rect.x),
             down(rect.y),
@@ -49,8 +54,7 @@ impl IntRect {
     }
 
     pub fn nearest(rect: Rect) -> IntRect {
-        const LIMIT: f32 = (1 << 24) as f32;
-        let round = |value: f32| (value + 0.5).floor().clamp(-LIMIT, LIMIT) as i32;
+        let round = |value: f32| floor(value + 0.5);
         IntRect::new(
             round(rect.x),
             round(rect.y),
@@ -331,18 +335,41 @@ pub fn over(target: Pixel, source: Pixel) -> Pixel {
 /// Written so that it compiles to vector instructions.
 #[inline(always)]
 fn over_four(target: &mut [Pixel; 4], source: &[Pixel; 4]) {
-    let (target, source) = (target.as_flattened_mut(), source.as_flattened());
+    let kept = |it: Pixel| ((!u32::from_le_bytes(it) >> 24) * 0x0101_0101).to_le_bytes();
+    let kept = [
+        kept(source[0]),
+        kept(source[1]),
+        kept(source[2]),
+        kept(source[3]),
+    ];
+    let (target, source, kept) = (
+        target.as_flattened_mut(),
+        source.as_flattened(),
+        kept.as_flattened(),
+    );
     for index in 0..16 {
-        target[index] =
-            source[index].saturating_add(multiply(target[index], 255 - source[index | 3]));
+        let kept = if cfg!(target_arch = "x86_64") {
+            kept[index]
+        } else {
+            255 - source[index | 3]
+        };
+        target[index] = source[index].saturating_add(multiply(target[index], kept));
     }
 }
 
 #[inline(always)]
 fn scale_four(pixels: &[Pixel; 4], by: [u8; 4]) -> [Pixel; 4] {
-    let mut scaled = *pixels;
+    let [a, b, c, d] = by;
+    let (mut scaled, spread) = (*pixels, [[a; 4], [b; 4], [c; 4], [d; 4]]);
     for (index, channel) in scaled.as_flattened_mut().iter_mut().enumerate() {
-        *channel = multiply(*channel, by[index / 4]);
+        *channel = multiply(
+            *channel,
+            if cfg!(target_arch = "x86_64") {
+                spread.as_flattened()[index]
+            } else {
+                by[index / 4]
+            },
+        );
     }
     scaled
 }
@@ -354,7 +381,10 @@ pub fn fill_through(row: &mut [Pixel], color: Pixel, coverage: &[u8]) {
         .zip(covered_runs)
         .filter(|(_, coverage)| **coverage != [0; 4])
     {
-        over_four(pixels, &scale_four(&[color; 4], *coverage));
+        match *coverage == [255; 4] && color[3] == 255 {
+            true => *pixels = [color; 4],
+            false => over_four(pixels, &scale_four(&[color; 4], *coverage)),
+        }
     }
     rest.iter_mut()
         .zip(covered_rest)
@@ -372,9 +402,19 @@ pub fn fill_row(row: &mut [Pixel], color: Pixel) {
         255 => set_row(row, color),
         0 => {}
         _ => {
-            let (runs, rest) = row.as_chunks_mut();
-            runs.iter_mut()
-                .for_each(|pixels| over_four(pixels, &[color; 4]));
+            let (runs, rest) = row.as_chunks_mut::<8>();
+            let (mut before, mut after) = ([[0; 4]; 8], [color; 8]);
+            for pixels in runs {
+                if *pixels != before {
+                    (before, after) = (*pixels, *pixels);
+                    after
+                        .as_chunks_mut()
+                        .0
+                        .iter_mut()
+                        .for_each(|four| over_four(four, &[color; 4]));
+                }
+                *pixels = after;
+            }
             rest.iter_mut()
                 .for_each(|pixel| *pixel = over(*pixel, color));
         }
@@ -401,55 +441,6 @@ pub fn blend_row(row: &mut [Pixel], colors: &[Pixel], by: u8) {
         .for_each(|(pixel, color)| *pixel = over(*pixel, scale(*color, by)));
 }
 
-pub fn path_from(path: &tiny_skia::Path) -> Path {
-    let point = |point: tiny_skia::Point| Point::new(point.x, point.y);
-    (path.segments())
-        .map(|segment| match segment {
-            PathSegment::MoveTo(to) => Command::MoveTo(point(to)),
-            PathSegment::LineTo(to) => Command::LineTo(point(to)),
-            PathSegment::QuadTo(a, to) => Command::QuadTo(point(a), point(to)),
-            PathSegment::CubicTo(a, b, to) => Command::CurveTo(point(a), point(b), point(to)),
-            PathSegment::Close => Command::Close,
-        })
-        .collect()
-}
-
-fn outline(path: &[Command], stroke: &zeno::Stroke, matrix: &Transform) -> Option<Path> {
-    let mut builder = tiny_skia::PathBuilder::new();
-    for command in path {
-        match *command {
-            Command::MoveTo(to) => builder.move_to(to.x, to.y),
-            Command::LineTo(to) => builder.line_to(to.x, to.y),
-            Command::QuadTo(a, to) => builder.quad_to(a.x, a.y, to.x, to.y),
-            Command::CurveTo(a, b, to) => builder.cubic_to(a.x, a.y, b.x, b.y, to.x, to.y),
-            Command::Close => builder.close(),
-        }
-    }
-    let (mut path, resolution) = (
-        builder.finish()?,
-        PathStroker::compute_resolution_scale(matrix),
-    );
-    if let Some(dash) = StrokeDash::new(stroke.dashes.to_vec(), stroke.offset) {
-        path = path.dash(&dash, resolution)?;
-    }
-    let style = tiny_skia::Stroke {
-        width: stroke.width,
-        miter_limit: stroke.miter_limit,
-        line_cap: match stroke.start_cap {
-            zeno::Cap::Butt => LineCap::Butt,
-            zeno::Cap::Square => LineCap::Square,
-            zeno::Cap::Round => LineCap::Round,
-        },
-        line_join: match stroke.join {
-            zeno::Join::Bevel => LineJoin::Bevel,
-            zeno::Join::Miter => LineJoin::Miter,
-            zeno::Join::Round => LineJoin::Round,
-        },
-        dash: None,
-    };
-    Some(path_from(&path.stroke(&style, resolution)?))
-}
-
 /// Zero outside of `rect`.
 #[derive(Clone, Default)]
 pub struct Coverage {
@@ -471,19 +462,16 @@ impl Coverage {
     /// The part of the path that is in `area`.
     pub fn of_path<'a>(
         path: &[Command],
-        style: impl Into<zeno::Style<'a>>,
+        style: impl Into<Style<'a>>,
         matrix: &Transform,
         area: IntRect,
     ) -> Coverage {
         match style.into() {
             _ if area.is_empty() || !matrix.is_finite() => Coverage::filled(area, 0),
-            zeno::Style::Fill(rule) => edges::fill(path, rule == zeno::Fill::EvenOdd, matrix, area),
-            zeno::Style::Stroke(stroke) => edges::fill(
-                &outline(path, &stroke, matrix).unwrap_or_default(),
-                false,
-                matrix,
-                area,
-            ),
+            Style::Fill(rule) => edges::fill(path, rule == Fill::EvenOdd, matrix, area),
+            Style::Stroke(stroke) => {
+                edges::fill(&stroke.outline(path, matrix), false, matrix, area)
+            }
         }
     }
 
@@ -496,36 +484,27 @@ impl Coverage {
         edges::fill_where(path, |winding| winding * sign < 0, matrix, area)
     }
 
-    /// For a path that does not overlap itself.
-    fn of_simple_path(path: &[Command], matrix: &Transform, area: IntRect) -> Coverage {
-        let mut coverage = Coverage::filled(area, 0);
-        if !coverage.data.is_empty() && matrix.is_finite() {
-            let (x, y) = (matrix.tx - area.left as f32, matrix.ty - area.top as f32);
-            zeno::Mask::new(path)
-                .transform(Some(zeno::Transform::new(
-                    matrix.sx, matrix.ky, matrix.kx, matrix.sy, x, y,
-                )))
-                .size(area.width() as u32, area.height() as u32)
-                .render_into(&mut coverage.data, None);
-        }
-        coverage
-    }
-
     pub fn of_shape(shape: &RoundedRect, matrix: &Transform, area: IntRect) -> Coverage {
         let (path, inside) = (
             rounded_rect_path(shape),
             inner_band(shape, matrix).intersect(area),
         );
-        // Zeno has 24.8 fixed point numbers, and does not return once they overflow.
-        if !area
-            .outset(1 << 20)
-            .contains(IntRect::around(map_rect(matrix, shape.rect)))
-        {
-            return edges::fill(&path, false, matrix, area);
-        }
+        let Rect {
+            x,
+            y,
+            width,
+            height,
+        } = shape.rect;
+        let corners = [
+            (x, y),
+            (x + width, y),
+            (x + width, y + height),
+            (x, y + height),
+        ]
+        .map(|(x, y)| matrix.map(Point::new(x, y)));
         let of_piece = |piece| match has_radii(shape) {
-            true => Coverage::of_path(&path, zeno::Fill::NonZero, matrix, piece),
-            false => Coverage::of_simple_path(&path, matrix, piece),
+            true => Coverage::of_path(&path, Fill::NonZero, matrix, piece),
+            false => edges::fill_exactly(corners, piece),
         };
         if inside.is_empty() {
             return of_piece(area);
@@ -534,7 +513,7 @@ impl Coverage {
         for piece in area
             .without(inside)
             .filter(|_| !coverage.rect.is_empty())
-            .collect::<SmallVec<[_; 4]>>()
+            .collect::<SmallVec<_, 4>>()
         {
             let edge = of_piece(piece);
             for (y, row) in (piece.top..).zip(edge.data.chunks(piece.width())) {
@@ -736,15 +715,24 @@ impl Layer {
                 (Paint::Solid(color), None) => fill_row(row, *color),
                 (Paint::Solid(color), Some(coverage)) => fill_through(row, *color, coverage),
                 (Paint::Shader(shade), coverage) => {
-                    colors.resize(row.len(), [0; 4]);
-                    shade(area.left, y, &mut colors);
+                    let end = coverage.map_or(row.len(), |it| {
+                        it.iter().rposition(|it| *it != 0).map_or(0, |it| it + 1)
+                    });
+                    let start = coverage
+                        .and_then(|it| it.iter().position(|it| *it != 0))
+                        .unwrap_or(0);
+                    if start == end {
+                        continue;
+                    }
+                    colors.resize(end - start, [0; 4]);
+                    shade(area.left + start as i32, y, &mut colors);
                     if let Some(coverage) = coverage {
                         colors
                             .iter_mut()
-                            .zip(coverage)
+                            .zip(&coverage[start..])
                             .for_each(|(color, by)| *color = scale(*color, *by));
                     }
-                    blend_row(row, &colors, 255);
+                    blend_row(&mut row[start..end], &colors, 255);
                 }
             }
         }
@@ -810,23 +798,12 @@ impl Layer {
     }
 
     /// For any mode: blends all of the clip, with `source` transparent outside of its bounds.
-    pub fn draw_with_mode(&mut self, source: &Layer, mode: tiny_skia::BlendMode, clip: &Clip) {
+    pub fn draw_with_mode(&mut self, source: &Layer, mode: blend::Mode, clip: &Clip) {
         let area = clip.rect.intersect(self.rect);
         let (Some(mut blended), Some(source)) = (self.copy(area), source.copy(area)) else {
             return;
         };
-        let paint = PixmapPaint {
-            blend_mode: mode,
-            ..PixmapPaint::default()
-        };
-        (blended.pixmap).draw_pixmap(
-            0,
-            0,
-            source.pixmap.as_ref(),
-            &paint,
-            Transform::identity(),
-            None,
-        );
+        blend::blend(blended.pixels_mut(), source.pixels(), mode);
         self.replace(&blended, clip);
     }
 
@@ -902,7 +879,7 @@ fn box_line<const N: usize>(
             }
         }
     };
-    (0..after).for_each(|index| change(&mut sum, line.get(index), 1.));
+    (0..after.min(line.len())).for_each(|index| change(&mut sum, line.get(index), 1.));
     for (index, output) in output.iter_mut().enumerate() {
         change(&mut sum, line.get(index + after), 1.);
         *output = sum.map(|channel| channel * scale);
@@ -918,6 +895,10 @@ fn blur<const N: usize>(data: &mut [u8], width: usize, [x, y]: [f32; 2]) {
     if !data.is_empty() {
         let pixels: &mut [[u8; N]] = data.as_chunks_mut().0;
         let height = pixels.len() / width;
+        // Three boxes that wide leave less than half a step.
+        if x > width as f32 * 5. || y > height as f32 * 5. {
+            return pixels.fill([0; N]);
+        }
         blur_lines(pixels, [height, width, 1, width], x);
         blur_lines(pixels, [width, height, width, 1], y);
     }
@@ -942,7 +923,7 @@ fn blur_lines<const N: usize>(
     let total: f32 = kernel.iter().sum();
     kernel.iter_mut().for_each(|weight| *weight /= total);
     // https://drafts.fxtf.org/filter-effects/#feGaussianBlurElement
-    let window = (sigma * 3. * (2. * std::f32::consts::PI).sqrt() / 4. + 0.5) as usize;
+    let window = (sigma * 3. * (2. * std::f32::consts::PI).sqrt() / 4. + 0.5).min(1e9) as usize;
     let half = window / 2;
     let passes = match window % 2 {
         1 => [(half, half); 3],

@@ -4,7 +4,7 @@ use core::ops::Range;
 
 use smallvec::SmallVec;
 
-use crate::abi::{Face, Glyph, Item, LineStyle, Radii, Rect, RoundedRect, Span};
+use crate::abi::{Face, Glyph, Item, LineStyle, Rect, RoundedRect, Span};
 use crate::background::Frame;
 use crate::boxes::{BoxId, Kind};
 use crate::editing::Mark;
@@ -65,6 +65,14 @@ impl<'a> Painter<'a> {
             return;
         };
         let mut decorations = self.block_decorations(id);
+        let is_under_text = self.out.caret.is_some_and(|it| it.0 == id)
+            && document
+                .inherited_style(id)
+                .other_if_set(crate::properties::Id::CaretShape)
+                == Some("block");
+        if layer == 0 && is_under_text {
+            self.caret_in(id, physical);
+        }
         let node_of = |item: &crate::inline::Item| {
             if item.node == 0 {
                 document.boxes[document.boxes[id].parent].node
@@ -179,7 +187,7 @@ impl<'a> Painter<'a> {
                 }
             }
         }
-        if layer == 0 {
+        if layer == 0 && !is_under_text {
             self.caret_in(id, physical);
         }
     }
@@ -216,21 +224,49 @@ impl<'a> Painter<'a> {
             style.border(),
             resolve_padding(style, width),
         );
-        if style.rare.decoration_break == DecorationBreak::Slice {
+        let mut cut = [false; 4];
+        if style.rare.decoration_break == DecorationBreak::Slice && edges != [true; 2] {
+            let (p, whole) = (&style.paint, shape.rect);
+            let mut radii = [&p.top_left, &p.top_right, &p.bottom_right, &p.bottom_left]
+                .map(|it| [it.0.0.resolve(whole.width), it.1.0.resolve(whole.height)]);
             for side in [3, 1]
                 .into_iter()
                 .filter(|it| !edges[usize::from(*it == 1)])
                 .map(|it| mode.sides()[it])
             {
-                (border[side], padding[side]) = (0.0, 0.0);
+                (border[side], padding[side], cut[side]) = (0.0, 0.0, true);
                 [side, (side + 1) % 4]
                     .into_iter()
-                    .for_each(|corner| shape.radii[corner] = Radii::default()[0]);
+                    .for_each(|corner| radii[corner] = [0.0; 2]);
             }
+            shape = crate::paint::fit(whole, radii);
         }
         if item.node != 0 {
             self.hit(item.node, style, shape, space);
         }
+        let (outside, mut inside) = (space, *space);
+        if cut.contains(&true) && !style.paint.box_shadow.0.is_empty() {
+            let reach = style
+                .paint
+                .box_shadow
+                .0
+                .iter()
+                .map(|it| it.offset[0].abs() + it.offset[1].abs() + it.spread.abs() + it.blur * 2.0)
+                .fold(0.0, f32::max)
+                .ceil();
+            self.clip(
+                square(
+                    shape
+                        .rect
+                        .shrunk(cut.map(|it| if it { 0.0 } else { -reach })),
+                ),
+                &mut inside,
+            );
+            shape.rect = shape
+                .rect
+                .shrunk(cut.map(|it| if it { -reach } else { 0.0 }));
+        }
+        let space = &inside;
         let has_image = style.background.border_image.0.is_some()
             || style.background.image.iter().any(|it| it.0.is_some());
         let whole = (has_image
@@ -300,7 +336,7 @@ impl<'a> Painter<'a> {
             }
         });
         self.border(style, &frame, space);
-        self.outline(style, rect, space);
+        self.outline(style, rect, outside);
     }
 
     /// The text in the box, opaque.

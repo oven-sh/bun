@@ -1,25 +1,11 @@
 //! The system's fonts. Core Text finds them, and draws the ones whose formats are Apple's own.
 
-use std::ffi::c_void;
+use std::ffi::{CString, c_char, c_void};
 use std::path::PathBuf;
-use std::ptr::{NonNull, null, null_mut};
 use std::sync::{Arc, LazyLock};
 
-use objc2_core_foundation::{
-    CFArray, CFDictionary, CFNumber, CFRange, CFRetained, CFString, CFURL, CGAffineTransform,
-    CGPoint,
-};
-use objc2_core_graphics::{
-    CGBitmapContextCreate, CGColorSpace, CGImageAlphaInfo, CGPath, CGPathElement,
-    CGPathElementType, kCGColorSpaceSRGB,
-};
-use objc2_core_text::{
-    CTFont, CTFontDescriptor, CTFontManagerCopyAvailableFontFamilyNames, CTFontOptions,
-    CTFontOrientation, CTFontSymbolicTraits, CTFontTableOptions, CTFontUIFontType,
-    kCTFontFamilyNameAttribute, kCTFontURLAttribute, kCTFontWeightTrait,
-};
-use parking_lot::Mutex;
-use rustc_hash::FxHashMap;
+use crate::hash::FastMap;
+use crate::sync::Mutex;
 use skrifa::attribute::Style;
 use skrifa::outline::OutlinePen;
 use skrifa::{FontRef, MetadataProvider as _, Tag};
@@ -29,6 +15,42 @@ use super::fonts::{Capabilities, DEFAULT_OBLIQUE_ANGLE, index_of};
 use super::woff::write_sfnt;
 use crate::abi::Rect;
 use crate::paint::raster::{IntRect, Layer};
+use crate::platform::macos::{Object, take_string};
+
+type AddToPath = unsafe extern "C" fn(pen: *mut c_void, kind: i32, points: *const [f64; 2]);
+
+unsafe extern "C" {
+    fn bd_font_named(name: *const c_char) -> Object;
+    safe fn bd_font_of_system() -> Option<Object>;
+    safe fn bd_font_with_traits(font: &c_void, is_bold: bool, is_italic: bool) -> Option<Object>;
+    safe fn bd_font_unscaled(font: &c_void) -> Object;
+    safe fn bd_font_sized(font: &c_void, size: f64) -> Object;
+    fn bd_font_for_text(base: &c_void, text: *const c_char, language: *const c_char) -> Object;
+    fn bd_fonts_of_family(family: *const c_char, fonts: *mut Object, capacity: usize) -> usize;
+    safe fn bd_font_families() -> *mut c_char;
+    safe fn bd_font_family_name(font: &c_void) -> *mut c_char;
+    safe fn bd_font_postscript_name(font: &c_void) -> *mut c_char;
+    safe fn bd_font_full_name(font: &c_void) -> *mut c_char;
+    safe fn bd_font_path(font: &c_void) -> *mut c_char;
+    safe fn bd_font_weight(font: &c_void) -> f64;
+    safe fn bd_font_table(
+        font: &c_void,
+        tag: u32,
+        bytes: &mut *const u8,
+        length: &mut usize,
+    ) -> Option<Object>;
+    fn bd_font_outline(font: &c_void, glyph: u16, scale: f64, pen: *mut c_void, add: AddToPath);
+    safe fn bd_glyph_bounds(font: &c_void, glyph: u16) -> Rect;
+    fn bd_glyph_draw(
+        font: &c_void,
+        glyph: u16,
+        x: f64,
+        y: f64,
+        pixels: *mut u8,
+        width: usize,
+        height: usize,
+    );
+}
 
 const SYMBOL_FAMILIES: &[&str] = &[
     "Lucida Grande",
@@ -50,31 +72,26 @@ pub struct Font {
 
 /// One unit of the font is one point.
 #[derive(Clone)]
-pub struct NativeFont(CFRetained<CTFont>);
+pub struct NativeFont(Object);
 
 // SAFETY: Core Text documents its font objects as immutable and usable on any thread.
 unsafe impl Send for NativeFont {}
 // SAFETY: as above.
 unsafe impl Sync for NativeFont {}
 
-static NATIVE_FONTS: LazyLock<Mutex<FxHashMap<(u64, u32), NativeFont>>> =
+static NATIVE_FONTS: LazyLock<Mutex<FastMap<(u64, u32), NativeFont>>> =
     LazyLock::new(Mutex::default);
 
-unsafe extern "C-unwind" fn add_to_path(pen: *mut c_void, element: NonNull<CGPathElement>) {
-    // SAFETY: the argument of `outline`, and as many points as the type of the element takes.
+unsafe extern "C" fn add_to_path(pen: *mut c_void, kind: i32, points: *const [f64; 2]) {
+    // SAFETY: the argument of `outline`, and as many points as the kind takes.
     unsafe {
-        let (pen, element) = (&mut **pen.cast::<&mut dyn OutlinePen>(), element.as_ref());
-        let [x, y] = [0, 1].map(|axis| {
-            move |index| {
-                let point = element.points.add(index).read();
-                [point.x, point.y][axis] as f32
-            }
-        });
-        match element.r#type {
-            CGPathElementType::MoveToPoint => pen.move_to(x(0), y(0)),
-            CGPathElementType::AddLineToPoint => pen.line_to(x(0), y(0)),
-            CGPathElementType::AddQuadCurveToPoint => pen.quad_to(x(0), y(0), x(1), y(1)),
-            CGPathElementType::AddCurveToPoint => pen.curve_to(x(0), y(0), x(1), y(1), x(2), y(2)),
+        let pen = &mut **pen.cast::<&mut dyn OutlinePen>();
+        let [x, y] = [0, 1].map(|axis| move |index| points.add(index).read()[axis] as f32);
+        match kind {
+            0 => pen.move_to(x(0), y(0)),
+            1 => pen.line_to(x(0), y(0)),
+            2 => pen.quad_to(x(0), y(0), x(1), y(1)),
+            3 => pen.curve_to(x(0), y(0), x(1), y(1), x(2), y(2)),
             _ => pen.close(),
         }
     }
@@ -90,122 +107,100 @@ impl NativeFont {
 
     /// `scale` is in pixels per unit.
     pub fn outline(&self, glyph: u32, scale: f32, mut pen: &mut dyn OutlinePen) {
-        let matrix = CGAffineTransform {
-            a: scale.into(),
-            b: 0.,
-            c: 0.,
-            d: scale.into(),
-            tx: 0.,
-            ty: 0.,
-        };
-        // SAFETY: the pointers are only used during the calls.
+        // SAFETY: the pointer is only used during the call.
         unsafe {
-            let path = self.0.path_for_glyph(glyph as u16, &raw const matrix);
-            CGPath::apply(
-                path.as_deref(),
+            bd_font_outline(
+                &self.0,
+                glyph as u16,
+                scale.into(),
                 (&raw mut pen).cast(),
-                path.as_ref().map(|_| add_to_path as _),
-            );
-        }
+                add_to_path,
+            )
+        };
     }
 
     /// The glyph's origin is at `x` and `y`.
     pub fn draw(&self, glyph: u32, size: f32, x: f32, y: f32) -> Option<Layer> {
-        let glyph = glyph as u16;
-        // SAFETY: one glyph at one position, and a bitmap that outlives the context.
+        let (font, glyph) = (bd_font_sized(&self.0, size.into()), glyph as u16);
+        let Rect {
+            x: from_x,
+            y: from_y,
+            width,
+            height,
+        } = bd_glyph_bounds(&font, glyph);
+        let (left, top) = (x + from_x, y - from_y - height);
+        let rect = IntRect::around(Rect {
+            x: left - 1.,
+            y: top - 1.,
+            width: width + 2.,
+            height: height + 2.,
+        });
+        let mut layer = Layer::new(rect)?;
+        let (x, y, pixels) = (
+            x - rect.left as f32,
+            rect.bottom as f32 - y,
+            layer.pixmap.data_mut().as_mut_ptr(),
+        );
+        // SAFETY: a bitmap of that size.
         unsafe {
-            let font = self.0.copy_with_attributes(size.into(), null(), None);
-            let bounds = font.bounding_rects_for_glyphs(
-                CTFontOrientation::Horizontal,
-                (&glyph).into(),
-                null_mut(),
-                1,
-            );
-            let (width, height) = (bounds.size.width as f32, bounds.size.height as f32);
-            let (left, top) = (
-                x + bounds.origin.x as f32,
-                y - bounds.origin.y as f32 - height,
-            );
-            let rect = IntRect::around(Rect {
-                x: left - 1.,
-                y: top - 1.,
-                width: width + 2.,
-                height: height + 2.,
-            });
-            let mut layer = Layer::new(rect)?;
-            let context = CGBitmapContextCreate(
-                layer.pixmap.data_mut().as_mut_ptr().cast(),
+            bd_glyph_draw(
+                &font,
+                glyph,
+                x.into(),
+                y.into(),
+                pixels,
                 rect.width(),
                 rect.height(),
-                8,
-                rect.width() * 4,
-                CGColorSpace::with_name(Some(kCGColorSpaceSRGB)).as_deref(),
-                CGImageAlphaInfo::PremultipliedLast.0,
-            )?;
-            let position = CGPoint::new(
-                (x - rect.left as f32).into(),
-                (rect.bottom as f32 - y).into(),
-            );
-            font.draw_glyphs((&glyph).into(), (&position).into(), 1, &context);
-            drop(context);
-            layer
-                .pixels()
-                .iter()
-                .any(|pixel| pixel[3] != 0)
-                .then_some(layer)
-        }
+            )
+        };
+        layer
+            .pixels()
+            .iter()
+            .any(|pixel| pixel[3] != 0)
+            .then_some(layer)
     }
 }
 
-/// A style sheet is no reason to show a dialog.
-const WITHOUT_ASKING: CTFontOptions =
-    CTFontOptions::PreventAutoActivation.union(CTFontOptions::PreventAutoDownload);
-
-fn named(name: &str) -> CFRetained<CTFont> {
-    // SAFETY: the matrix is optional.
-    unsafe { CTFont::with_name_and_options(&CFString::from_str(name), 12., null(), WITHOUT_ASKING) }
+fn terminated(text: impl Into<Vec<u8>>) -> CString {
+    CString::new(text).unwrap_or_default()
 }
 
-fn family_name(font: &CTFont) -> String {
-    // SAFETY: a getter.
-    unsafe { font.family_name() }.to_string()
+fn named(name: &str) -> Object {
+    // SAFETY: a string.
+    unsafe { bd_font_named(terminated(name).as_ptr()) }
 }
 
-fn postscript_name(font: &CTFont) -> String {
-    // SAFETY: as above.
-    unsafe { font.post_script_name() }.to_string()
+fn string_of(font: &Object, get: extern "C" fn(&c_void) -> *mut c_char) -> String {
+    // SAFETY: each of them returns a copy.
+    unsafe { take_string(get(font)) }
 }
 
-fn with_traits(font: &CTFont, traits: CTFontSymbolicTraits) -> Option<CFRetained<CTFont>> {
-    // SAFETY: the matrix is optional.
-    unsafe { font.copy_with_symbolic_traits(0., null(), traits, traits) }
+fn family_name(font: &Object) -> String {
+    string_of(font, bd_font_family_name)
 }
 
-fn members_of(family: &str) -> Vec<CFRetained<CTFont>> {
-    // SAFETY: the attribute is a string, and the result an array of descriptors.
+fn postscript_name(font: &Object) -> String {
+    string_of(font, bd_font_postscript_name)
+}
+
+fn members_of(family: &str) -> Vec<Object> {
+    let mut fonts = Vec::with_capacity(256);
+    // SAFETY: it writes as many as it says.
     unsafe {
-        let attributes = CFDictionary::from_slices(
-            &[kCTFontFamilyNameAttribute],
-            &[&*CFString::from_str(family)],
+        let count = bd_fonts_of_family(
+            terminated(family).as_ptr(),
+            fonts.as_mut_ptr(),
+            fonts.capacity(),
         );
-        let found = CTFontDescriptor::with_attributes(attributes.as_opaque())
-            .matching_font_descriptors(None);
-        let found =
-            found.map(|found| CFRetained::cast_unchecked::<CFArray<CTFontDescriptor>>(found));
-        let fonts = found.iter().flat_map(|found| found.iter());
-        let fonts = fonts
-            .map(|it| CTFont::with_font_descriptor_and_options(&it, 12., null(), WITHOUT_ASKING));
-        fonts.filter(|font| family_name(font) == family).collect()
+        fonts.set_len(count);
     }
+    fonts.retain(|font| family_name(font) == family);
+    fonts
 }
 
-fn css_weight(font: &CTFont) -> Option<f32> {
+fn css_weight(font: &Object) -> Option<f32> {
     const STOPS: [f64; 9] = [-0.8, -0.6, -0.4, 0., 0.23, 0.3, 0.4, 0.56, 0.62];
-    // SAFETY: a dictionary of numbers.
-    let weight = unsafe {
-        let traits = CFRetained::cast_unchecked::<CFDictionary<CFString, CFNumber>>(font.traits());
-        traits.get(kCTFontWeightTrait)?.as_f64()?
-    };
+    let weight = bd_font_weight(font);
     let nearest = (0..9).min_by(|a, b| {
         (STOPS[*a] - weight)
             .abs()
@@ -215,15 +210,20 @@ fn css_weight(font: &CTFont) -> Option<f32> {
 }
 
 /// What it takes to shape text.
-fn without_glyphs(font: &CTFont) -> Option<&'static [u8]> {
+fn without_glyphs(font: &Object) -> Option<&'static [u8]> {
     const TABLES: [&[u8; 4]; 19] = [
         b"head", b"hhea", b"maxp", b"OS/2", b"cmap", b"hmtx", b"name", b"post", b"vhea", b"vmtx",
         b"VORG", b"GDEF", b"GPOS", b"GSUB", b"kern", b"kerx", b"morx", b"ankr", b"feat",
     ];
     let table = |tag: &&[u8; 4]| {
-        // SAFETY: any tag may be asked for.
-        let data = unsafe { font.table(u32::from_be_bytes(**tag), CTFontTableOptions::NoOptions) };
-        Some((**tag, data?.to_vec()))
+        let (mut bytes, mut length) = (std::ptr::null(), 0);
+        let _owner = bd_font_table(font, u32::from_be_bytes(**tag), &mut bytes, &mut length)
+            .filter(|_| length > 0)?;
+        // SAFETY: it has them.
+        Some((
+            **tag,
+            unsafe { std::slice::from_raw_parts(bytes, length) }.to_vec(),
+        ))
     };
     Some(write_sfnt(0x0001_0000, TABLES.iter().filter_map(table).collect())?.leak())
 }
@@ -259,14 +259,14 @@ fn capabilities(font: &FontRef) -> Capabilities {
 #[derive(Default)]
 pub struct Catalog {
     /// What was asked for, in lower case.
-    names: FxHashMap<String, Option<FamilyId>>,
+    names: FastMap<String, Option<FamilyId>>,
     /// As Core Text spells them.
-    ids: FxHashMap<String, FamilyId>,
+    ids: FastMap<String, FamilyId>,
     /// One member of each.
     families: Vec<NativeFont>,
     available: Vec<String>,
-    mapped: FxHashMap<PathBuf, Option<&'static [u8]>>,
-    opened: FxHashMap<String, Option<(Font, Capabilities)>>,
+    mapped: FastMap<PathBuf, Option<&'static [u8]>>,
+    opened: FastMap<String, Option<(Font, Capabilities)>>,
 }
 
 impl Catalog {
@@ -282,14 +282,10 @@ impl Catalog {
         Some((font.data, font.index))
     }
 
-    fn file_of(&mut self, font: &CTFont, name: &str) -> Option<Font> {
-        // SAFETY: a getter.
-        let url = unsafe { font.attribute(kCTFontURLAttribute) }?
-            .downcast::<CFURL>()
-            .ok()?;
+    fn file_of(&mut self, font: &Object, name: &str) -> Option<Font> {
         let data = (*self
             .mapped
-            .entry(url.to_file_path()?)
+            .entry(string_of(font, bd_font_path).into())
             .or_insert_with_key(|path| map(path)))?;
         Some(Font {
             data,
@@ -297,7 +293,7 @@ impl Catalog {
         })
     }
 
-    fn open(&mut self, native: &CTFont) -> Option<(Font, Capabilities)> {
+    fn open(&mut self, native: &Object) -> Option<(Font, Capabilities)> {
         let name = postscript_name(native);
         if let Some(opened) = self.opened.get(&name) {
             return *opened;
@@ -325,17 +321,14 @@ impl Catalog {
                     css_weight(native).map_or(capabilities.weight, |weight| (weight, weight));
             }
             if file.is_none() || has(&font, &[b"sbix"]) {
-                // SAFETY: the matrix and the attributes are optional.
-                let native = unsafe {
-                    native.copy_with_attributes(native.units_per_em().into(), null(), None)
-                };
-                NATIVE_FONTS
-                    .lock()
-                    .insert(Catalog::identity(&font), NativeFont(native));
+                NATIVE_FONTS.lock().insert(
+                    Catalog::identity(&font),
+                    NativeFont(bd_font_unscaled(native)),
+                );
             }
             Some((font, capabilities))
         });
-        log::info!(
+        crate::diagnostics::log!(
             "font {name}: has a file {}, opened {}",
             file.is_some(),
             opened.is_some()
@@ -344,7 +337,7 @@ impl Catalog {
         opened
     }
 
-    fn family_of(&mut self, font: CFRetained<CTFont>) -> FamilyId {
+    fn family_of(&mut self, font: Object) -> FamilyId {
         *self.ids.entry(family_name(&font)).or_insert_with(|| {
             self.families.push(NativeFont(font));
             self.families.len() as u32 - 1
@@ -376,16 +369,12 @@ impl Catalog {
 
     pub fn family_names(&mut self) -> impl Iterator<Item = &str> {
         if self.available.is_empty() {
-            // SAFETY: an array of strings.
-            let names = unsafe {
-                CFRetained::cast_unchecked::<CFArray<CFString>>(
-                    CTFontManagerCopyAvailableFontFamilyNames(),
-                )
-            };
+            // SAFETY: it returns a copy.
+            let names = unsafe { take_string(bd_font_families()) };
             self.available = names
-                .iter()
-                .map(|name| name.to_string())
+                .lines()
                 .filter(|it| !it.starts_with('.'))
+                .map(str::to_owned)
                 .collect();
         }
         self.available.iter().map(String::as_str)
@@ -393,13 +382,7 @@ impl Catalog {
 
     pub fn generic(&mut self, name: &str) -> Option<FamilyId> {
         match name {
-            "system-ui" => {
-                // SAFETY: the language is optional.
-                let font = unsafe {
-                    CTFont::new_ui_font_for_language(CTFontUIFontType::System, 12., None)
-                }?;
-                Some(self.family_of(font))
-            }
+            "system-ui" => Some(self.family_of(bd_font_of_system()?)),
             "emoji" => self.family("Apple Color Emoji"),
             "math" => self.family("STIX Two Math"),
             "fangsong" => self.family("STFangsong"),
@@ -408,10 +391,6 @@ impl Catalog {
     }
 
     pub fn fonts(&mut self, family: FamilyId) -> Arc<[(Font, Capabilities)]> {
-        let (bold, italic) = (
-            CTFontSymbolicTraits::TraitBold,
-            CTFontSymbolicTraits::TraitItalic,
-        );
         let member = self.families[family as usize].0.clone();
         let name = family_name(&member);
         let mut members = if name.starts_with('.') {
@@ -420,10 +399,9 @@ impl Catalog {
             members_of(&name)
         };
         if members.is_empty() {
+            let traits = [(true, false), (false, true), (true, true)].into_iter();
             members.extend(
-                [bold, italic, bold | italic]
-                    .into_iter()
-                    .filter_map(|traits| with_traits(&member, traits)),
+                traits.filter_map(|(bold, italic)| bd_font_with_traits(&member, bold, italic)),
             );
         }
         members.push(member);
@@ -441,16 +419,11 @@ impl Catalog {
         if color {
             return self.generic("emoji").into_iter().collect();
         }
-        let text = CFString::from_str(character.encode_utf8(&mut [0; 4]));
-        let language = std::str::from_utf8(language)
-            .ok()
-            .filter(|it| !it.is_empty())
-            .map(CFString::from_str);
-        let range = CFRange::new(0, text.length());
-        // SAFETY: the range is within the string.
-        let found = unsafe {
-            named("Helvetica").for_string_with_language(&text, range, language.as_deref())
-        };
+        let text = terminated(character.to_string());
+        let language = terminated(std::str::from_utf8(language).unwrap_or(""));
+        // SAFETY: strings.
+        let found =
+            unsafe { bd_font_for_text(&named("Helvetica"), text.as_ptr(), language.as_ptr()) };
         let found = Some(found).filter(|font| !family_name(font).contains("LastResort"));
         let mut families: Vec<_> = found.map(|font| self.family_of(font)).into_iter().collect();
         families.extend(SYMBOL_FAMILIES.iter().filter_map(|name| self.family(name)));
@@ -459,11 +432,7 @@ impl Catalog {
 
     pub fn by_full_name(&mut self, name: &str) -> Option<Font> {
         let font = named(name);
-        // SAFETY: a getter.
-        let names = [
-            postscript_name(&font),
-            unsafe { font.full_name() }.to_string(),
-        ];
+        let names = [postscript_name(&font), string_of(&font, bd_font_full_name)];
         names
             .iter()
             .any(|it| it.to_lowercase() == name.to_lowercase())

@@ -1,4 +1,6 @@
 // The part of the Chrome DevTools Protocol that automation tools need.
+const pointerPhases = { mousePressed: "down", mouseReleased: "up" };
+
 const native = require("internal/desktop/native");
 const { app } = require("internal/desktop/app");
 const { kPrivate, webContents } = require("internal/desktop/electron/web_contents");
@@ -224,7 +226,7 @@ class Input {
       const at = { ...this.#at(x, y), m: toModifiers(modifiers) };
       if (type === "mouseWheel")
         return this.#input({ t: "wheel", ...at, dx: deltaX, dy: deltaY, precise: true, phase: "move" });
-      const e = { mousePressed: "down", mouseReleased: "up" }[type] ?? "move";
+      const e = pointerPhases[type] ?? "move";
       if (e === "down") this.#contents.focus();
       const b = Math.max(["left", "middle", "right", "back", "forward"].indexOf(button), 0);
       if (pointerType !== "pen") return this.#input({ t: "mouse", e, ...at, b, buttons, n: clickCount });

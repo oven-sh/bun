@@ -30,8 +30,8 @@ pub(crate) struct Fonts {
     pub(crate) scope: u32,
     metrics: RefCell<Map<(u32, u32), FontMetrics>>,
     /// Family in lowercase, weight, and whether it is slanted.
-    pub(crate) used: RefCell<Set<(Name, u16, bool)>>,
-    pub(crate) newly_used: RefCell<Vec<(Name, u16, bool)>>,
+    pub(crate) used: RefCell<Set<(Name, [u32; 3])>>,
+    pub(crate) newly_used: RefCell<Vec<(Name, [u32; 3])>>,
 }
 
 pub(crate) fn features(style: &Groups) -> Vec<FontSetting> {
@@ -134,11 +134,15 @@ impl Fonts {
 
     pub(crate) fn describe(&self, groups: &Groups, defined: &Defined) -> u32 {
         let font = &groups.font;
+        let slope = match font.style {
+            FontStyle::Normal => 0.0,
+            FontStyle::Italic => crate::sheet::FontFace::ITALIC,
+            FontStyle::Oblique(angle) => angle,
+        };
         for family in font.family.names() {
             let used = (
                 Name::lowercase(family),
-                font.weight.0 as u16,
-                font.style != FontStyle::Normal,
+                [font.stretch.0, slope, font.weight.0].map(|it| it.round().to_bits()),
             );
             if self.used.borrow_mut().insert(used) {
                 self.newly_used.borrow_mut().push(used);

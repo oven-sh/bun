@@ -1,4 +1,4 @@
-// Electron's accelerators ("CmdOrCtrl+Shift+P") as `[key, modifiers]` with the key names of GPUI.
+// Electron's accelerators ("CmdOrCtrl+Shift+P") as `[key, modifiers]`.
 const SHIFT = 1;
 const CONTROL = 2;
 const ALT = 4;

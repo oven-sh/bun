@@ -3,14 +3,13 @@
 use std::rc::Rc;
 use std::sync::LazyLock;
 
-use resvg::tiny_skia::{self, Transform};
-
 use super::cpu::blend_mode;
 use super::raster::{
     Clip, IntRect, Layer, Paint, Pixel, demultiply, map_point, map_rect, multiply,
 };
 use super::scene::Scene;
 use crate::abi::{self, BlendMode, Filter, Primitive, Rect};
+use crate::gfx::Transform;
 
 /// To sRGB, and to linearRGB.
 static TABLES: LazyLock<[[u8; 256]; 2]> = LazyLock::new(|| {
@@ -76,7 +75,7 @@ struct Graph<'a> {
     rect: IntRect,
     matrix: &'a Transform,
     source: Image,
-    results: Vec<Image>,
+    results: Vec<Option<Image>>,
 }
 
 fn at(layer: &Layer, x: i32, y: i32) -> Pixel {
@@ -103,7 +102,7 @@ fn generate(rect: IntRect, area: IntRect, f: impl Fn(i32, i32) -> Pixel) -> Opti
     Some(output)
 }
 
-fn composite(top: &Layer, bottom: &Layer, mode: tiny_skia::BlendMode) -> Option<Layer> {
+fn composite(top: &Layer, bottom: &Layer, mode: super::blend::Mode) -> Option<Layer> {
     let mut output = bottom.copy(bottom.rect)?;
     output.draw_with_mode(top, mode, &Clip::new(bottom.rect));
     Some(output)
@@ -144,19 +143,32 @@ fn morphology(input: &Layer, [rx, ry]: [i32; 2], dilates: bool) -> Option<Layer>
         })
     };
     let rect = input.rect;
-    let (rx, ry) = (rx.min(rect.width() as i32), ry.min(rect.height() as i32));
-    let across = generate(rect, rect, |x, y| {
-        (x - rx..=x + rx)
-            .map(|x| at(input, x, y))
-            .reduce(pick)
-            .unwrap_or_default()
-    })?;
-    generate(rect, rect, |x, y| {
-        (y - ry..=y + ry)
-            .map(|y| at(&across, x, y))
-            .reduce(pick)
-            .unwrap_or_default()
-    })
+    let (width, height) = (rect.width() as usize, rect.height() as usize);
+    if rx < 0 || ry < 0 {
+        return Layer::new(rect);
+    }
+    let (mut output, mut line) = (input.copy(rect)?, Vec::new());
+    let pixels = output.pixels_mut();
+    for (radius, count, length, step, stride) in [
+        (rx as usize, height, width, 1, width),
+        (ry as usize, width, height, width, 1),
+    ] {
+        let radius = radius.min(length);
+        for start in (0..count).map(|it| it * stride) {
+            line.clear();
+            line.resize(length + 2 * radius, Pixel::default());
+            (0..length).for_each(|it| line[radius + it] = pixels[start + it * step]);
+            // Each stands for the `covered` ones that start with it.
+            let mut covered = 1;
+            while covered < 2 * radius + 1 {
+                let more = covered.min(2 * radius + 1 - covered);
+                (0..line.len() - more).for_each(|it| line[it] = pick(line[it], line[it + more]));
+                covered += more;
+            }
+            (0..length).for_each(|it| pixels[start + it * step] = line[it]);
+        }
+    }
+    Some(output)
 }
 
 struct Noise {
@@ -256,7 +268,7 @@ impl Graph<'_> {
                     ..self.source
                 }
             }
-            0.0.. => self.results.get(which as usize)?.clone(),
+            0.0.. => self.results.get(which as usize)?.clone()?,
             _ => Image {
                 layer: Rc::new(Layer::new(self.rect)?),
                 linear,
@@ -515,7 +527,7 @@ impl Graph<'_> {
         arguments: &[f32],
         draw: &dyn Fn(usize, &mut Layer),
     ) -> Option<Image> {
-        use tiny_skia::BlendMode as Mode;
+        use super::blend::Mode;
         let (&[first, second, x, y, width, height], rest) = arguments.split_first_chunk()?;
         let area = IntRect::around(map_rect(
             self.matrix,
@@ -754,7 +766,23 @@ pub fn apply(
         source,
         results: Vec::new(),
     };
-    for primitive in primitives {
+    let mut last_use: Vec<usize> = (0..primitives.len()).collect();
+    for (index, primitive) in primitives.iter().enumerate() {
+        let Filter::Primitive { arguments, .. } = *primitive else {
+            return;
+        };
+        // Not all of them are inputs.
+        scene
+            .floats(arguments)
+            .iter()
+            .filter(|it| (0.0..index as f32).contains(*it))
+            .for_each(|it| last_use[*it as usize] = index);
+    }
+    let (mut kept, most) = (
+        Vec::new(),
+        ((1 << 28) / (rect.width() as usize * rect.height() as usize).max(1)).max(8),
+    );
+    for (index, primitive) in primitives.iter().enumerate() {
         let Filter::Primitive {
             kind,
             linear,
@@ -766,7 +794,13 @@ pub fn apply(
         let result = graph
             .run(kind, linear, &scene.floats(arguments), draw)
             .or_else(|| graph.input(abi::INPUT_NOTHING, linear));
-        graph.results.extend(result);
+        graph.results.push(result);
+        kept.extract_if(.., |it: &mut usize| last_use[*it] <= index)
+            .for_each(|it| graph.results[it] = None);
+        kept.push(index);
+        if kept.len() > most {
+            return;
+        }
     }
     if let Some(result) = primitives
         .len()

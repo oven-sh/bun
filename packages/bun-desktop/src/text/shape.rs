@@ -1,13 +1,11 @@
 use harfrust::{Feature, Tag};
-use unicode_bidi::{Level, ParagraphBidiInfo};
-use unicode_properties::emoji::{EmojiStatus, UnicodeEmoji as _};
-use unicode_script::{Script, UnicodeScript as _};
-use unicode_segmentation::UnicodeSegmentation as _;
 
 use super::breaks::{Breaks, breaks_in_ascii};
 use super::fonts::{FONTS, Fonts, Presentation, is_default_ignorable};
 use super::words::{Placed, STEPS_PER_UNIT, Shaping, WORDS};
 use crate::abi::{self, Cluster, Glyph, Span, TextRun};
+use crate::bun::abi::BREAK_GRAPHEMES;
+use crate::unicode::{self, Script};
 
 #[derive(Default)]
 pub struct Shaped {
@@ -42,18 +40,11 @@ fn presentation(cluster: &str) -> Presentation {
         Some('\u{FE0F}' | '\u{20E3}') => Presentation::Color,
         Some('\u{FE0E}') => Presentation::Text,
         _ if first < '\u{231A}' => Presentation::Any,
-        Some('\u{200D}' | '\u{1F3FB}'..='\u{1F3FF}') if first.is_emoji_char() => {
+        Some('\u{200D}' | '\u{1F3FB}'..='\u{1F3FF}') if unicode::is_emoji(first) => {
             Presentation::Color
         }
-        _ => match first.emoji_status() {
-            EmojiStatus::EmojiPresentation
-            | EmojiStatus::EmojiPresentationAndModifierBase
-            | EmojiStatus::EmojiPresentationAndEmojiComponent
-            | EmojiStatus::EmojiPresentationAndModifierAndEmojiComponent => {
-                Presentation::PrefersColor
-            }
-            _ => Presentation::Any,
-        },
+        _ if unicode::has_emoji_presentation(first) => Presentation::PrefersColor,
+        _ => Presentation::Any,
     }
 }
 
@@ -61,11 +52,11 @@ fn is_hanging_space(character: char) -> bool {
     matches!(character, ' ' | '\t' | '\u{1680}' | '\u{2000}'..='\u{2006}' | '\u{2008}'..='\u{200A}' | '\u{205F}' | '\u{3000}')
 }
 
-/// Joiners and soft hyphens stay in their item, where they affect the shapes around them.
+/// Joiners and soft hyphens stay in their item, where they affect the shapes around them. Isolates end it.
 fn is_undrawn(character: char) -> bool {
     matches!(
         character,
-        '\t' | '\n' | '\r' | '\u{FFFC}' | '\u{2028}' | '\u{2029}'
+        '\t' | '\n' | '\r' | '\u{FFFC}' | '\u{2028}' | '\u{2029}' | '\u{2066}'..='\u{2069}'
     )
 }
 
@@ -77,15 +68,10 @@ fn may_be_bidirectional(text: &str) -> bool {
         })
 }
 
-fn is_specific(script: Script) -> bool {
-    !matches!(script, Script::Common | Script::Inherited | Script::Unknown)
-}
-
 fn is_cursive(script: Script) -> bool {
-    use Script::*;
     matches!(
-        script,
-        Arabic | Hanifi_Rohingya | Mandaic | Mongolian | Nko | Phags_Pa | Syriac
+        &script.0,
+        b"Arab" | b"Rohg" | b"Mand" | b"Mong" | b"Nkoo" | b"Phag" | b"Syrc"
     )
 }
 
@@ -108,9 +94,9 @@ impl Shaped {
     fn itemize_ascii(&mut self, text: &str, runs: &[TextRun], fonts: &mut Fonts) {
         let bytes = text.as_bytes();
         let script = if bytes.iter().any(u8::is_ascii_alphabetic) {
-            Script::Latin
+            Script::LATIN
         } else {
-            Script::Common
+            Script::COMMON
         };
         let mut start = 0;
         self.clusters.reserve(bytes.len());
@@ -163,17 +149,14 @@ impl Shaped {
         }
     }
 
-    fn itemize(
-        &mut self,
-        text: &str,
-        runs: &[TextRun],
-        levels: Option<&[Level]>,
-        fonts: &mut Fonts,
-    ) {
+    fn itemize(&mut self, text: &str, runs: &[TextRun], levels: Option<&[u8]>, fonts: &mut Fonts) {
         let mut breaks = Breaks::default();
-        let mut script = (text.chars().map(|character| character.script()))
-            .find(|script| is_specific(*script))
-            .unwrap_or(Script::Common);
+        let mut script = text
+            .chars()
+            .map(Script::of)
+            .find(|it| it.is_specific())
+            .unwrap_or(Script::COMMON);
+        let mut graphemes = Vec::new();
         let mut start = 0;
         for (index, run) in runs.iter().enumerate() {
             let end = (run.end as usize).clamp(start, text.len());
@@ -185,9 +168,11 @@ impl Shaped {
                 let first = cluster.chars().next().unwrap_or(' ');
                 let draws = !is_undrawn(first);
                 if first.is_ascii_alphabetic() {
-                    script = Script::Latin;
-                } else if !first.is_ascii() && is_specific(first.script()) {
-                    script = first.script();
+                    script = Script::LATIN;
+                } else if !first.is_ascii() {
+                    script = Some(Script::of(first))
+                        .filter(|it| it.is_specific())
+                        .unwrap_or(script);
                 }
                 let previous = self.items.last().filter(|item| item.run == index);
                 if previous.is_some_and(|item| item.script != script) {
@@ -199,7 +184,7 @@ impl Shaped {
                     _ => fonts.select(run.font, cluster, presentation(cluster), &mut fallbacks),
                 };
                 let flag = |on: bool, flag: u8| if on { flag } else { 0 };
-                let level = levels.map_or(0, |levels| levels[offset].number());
+                let level = levels.map_or(0, |levels| levels[offset]);
                 self.clusters.push(Cluster {
                     start: offset as u32,
                     advance: 0.,
@@ -225,10 +210,22 @@ impl Shaped {
                 self.extend_items(item);
             };
             let mut rest = piece;
+            graphemes.clear();
             while !rest.is_empty() {
                 let length = match rest.as_bytes() {
                     [first @ ..0x80, ..0x80, ..] if *first != b'\r' => 1,
-                    _ => rest.graphemes(true).next().map_or(rest.len(), str::len),
+                    _ if rest.chars().take(2).all(unicode::stands_alone) => {
+                        rest.ceil_char_boundary(1)
+                    }
+                    _ => {
+                        if graphemes.is_empty() {
+                            unicode::find_breaks(BREAK_GRAPHEMES, piece, &mut graphemes);
+                        }
+                        let done = piece.len() - rest.len();
+                        let next =
+                            graphemes.get(graphemes.partition_point(|it| *it as usize <= done));
+                        next.map_or(rest.len(), |it| *it as usize - done)
+                    }
                 };
                 add(end - rest.len(), &rest[..length]);
                 rest = &rest[length..];
@@ -431,17 +428,9 @@ pub fn shape(text: &str, runs: &[TextRun], direction: u8, output: &mut Shaped) {
     output.glyphs.clear();
     output.faces.clear();
     output.items.clear();
-    let bidi = (direction == abi::DIRECTION_RTL || may_be_bidirectional(text)).then(|| {
-        let level = match direction {
-            abi::DIRECTION_LTR => Some(Level::ltr()),
-            abi::DIRECTION_RTL => Some(Level::rtl()),
-            _ => None,
-        };
-        ParagraphBidiInfo::new(text, level)
-    });
-    output.base_level = bidi
-        .as_ref()
-        .map_or(0, |bidi| bidi.paragraph_level.number());
+    let bidi = (direction == abi::DIRECTION_RTL || may_be_bidirectional(text))
+        .then(|| unicode::resolve_bidi(text, direction));
+    output.base_level = bidi.as_ref().map_or(0, |bidi| bidi.0);
 
     let fonts = &mut *FONTS.lock();
     if bidi.is_none()
@@ -452,12 +441,7 @@ pub fn shape(text: &str, runs: &[TextRun], direction: u8, output: &mut Shaped) {
     {
         output.itemize_ascii(text, runs, fonts);
     } else {
-        output.itemize(
-            text,
-            runs,
-            bidi.as_ref().map(|bidi| &bidi.levels[..]),
-            fonts,
-        );
+        output.itemize(text, runs, bidi.as_ref().map(|bidi| &bidi.1[..]), fonts);
     }
     let mut first = 0;
     for index in 0..output.items.len() {

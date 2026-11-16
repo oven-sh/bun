@@ -2305,7 +2305,6 @@ pub struct StyleSheet<'bump, AtRule> {
     /// A list of top-level rules within the style sheet.
     pub rules: CssRuleList<'bump, AtRule>,
     pub sources: Vec<Box<[u8]>>,
-    pub source_map_urls: Vec<Option<Box<[u8]>>>,
     pub license_comments: Vec<&'bump [u8]>,
     /// [`ParserOptions::css_modules`] of the parse.
     pub css_modules: Option<css_modules::Config>,
@@ -2329,7 +2328,6 @@ impl<AtRule> StyleSheet<'_, AtRule> {
         Self {
             rules: CssRuleList::default(),
             sources: Vec::new(),
-            source_map_urls: Vec::new(),
             license_comments: Vec::new(),
             css_modules: None,
             flags: ParserFlags::default(),
@@ -2592,8 +2590,6 @@ mod stylesheet_impl {
             }
 
             let sources: Vec<Box<[u8]>> = vec![Box::<[u8]>::from(options.filename)];
-            let source_map_urls: Vec<Option<Box<[u8]>>> =
-                vec![parser.current_source_map_url().map(Box::<[u8]>::from)];
 
             // Dispatch through the `CustomAtRuleParser::take_layer_names` hook
             // (default = empty; `BundlerAtRuleParser` overrides to move its list
@@ -2606,7 +2602,6 @@ mod stylesheet_impl {
                 Self {
                     rules,
                     sources,
-                    source_map_urls,
                     license_comments,
                     css_modules: options.css_modules,
                     flags: options.flags,
@@ -3126,10 +3121,6 @@ impl<'a, 'bump> Parser<'a, 'bump> {
 
     pub fn current_source_location(&self) -> SourceLocation {
         self.input.tokenizer.current_source_location()
-    }
-
-    pub fn current_source_map_url(&self) -> Option<&[u8]> {
-        self.input.tokenizer.current_source_map_url()
     }
 
     /// Return a slice of the CSS input, from the given position to the current one.
@@ -4028,7 +4019,6 @@ pub struct CachedToken<'bump> {
 pub struct Tokenizer<'bump> {
     pub src: &'bump [u8],
     pub position: usize,
-    pub source_map_url: Option<&'bump [u8]>,
     pub current_line_start_position: usize,
     pub current_line_number: u32,
     pub arena: &'bump Bump,
@@ -4050,15 +4040,10 @@ impl<'bump> Tokenizer<'bump> {
         Tokenizer {
             src,
             position: 0,
-            source_map_url: None,
             current_line_start_position: 0,
             current_line_number: 0,
             arena,
         }
-    }
-
-    pub fn current_source_map_url(&self) -> Option<&[u8]> {
-        self.source_map_url
     }
 
     pub fn get_position(&self) -> usize {
@@ -4904,9 +4889,7 @@ impl<'bump> Tokenizer<'bump> {
                     self.advance(1);
                     if self.next_byte() == Some(b'/') {
                         self.advance(1);
-                        let contents = &self.src[start_position..end_position];
-                        self.check_for_source_map(contents);
-                        return contents;
+                        return &self.src[start_position..end_position];
                     }
                 }
                 b'\n' | FORM_FEED_BYTE | b'\r' => self.consume_newline(),
@@ -4918,26 +4901,7 @@ impl<'bump> Tokenizer<'bump> {
                 }
             }
         }
-        let contents = self.slice_from(start_position);
-        self.check_for_source_map(contents);
-        contents
-    }
-
-    pub fn check_for_source_map(&mut self, contents: &'bump [u8]) {
-        {
-            let directive = b"# sourceMappingURL=";
-            let directive_old = b"@ sourceMappingURL=";
-            if contents.starts_with(directive) || contents.starts_with(directive_old) {
-                self.source_map_url = split_source_map(&contents[directive.len()..]);
-            }
-        }
-        {
-            let directive = b"# sourceURL=";
-            let directive_old = b"@ sourceURL=";
-            if contents.starts_with(directive) || contents.starts_with(directive_old) {
-                self.source_map_url = split_source_map(&contents[directive.len()..]);
-            }
-        }
+        self.slice_from(start_position)
     }
 
     pub fn consume_newline(&mut self) {
@@ -5086,21 +5050,6 @@ fn byte_to_decimal_digit(b: u8) -> Option<u32> {
     } else {
         None
     }
-}
-
-pub fn split_source_map(contents: &[u8]) -> Option<&[u8]> {
-    // A byte scan suffices: the delimiters are all ASCII and ASCII bytes never
-    // occur inside a multi-byte UTF-8 sequence. The returned slice ends *after*
-    // the matched byte — hence `i + 1`.
-    for (i, &c) in contents.iter().enumerate() {
-        match c {
-            b' ' | b'\t' | FORM_FEED_BYTE | b'\r' | b'\n' => {
-                return Some(&contents[0..i + 1]);
-            }
-            _ => {}
-        }
-    }
-    None
 }
 
 // ───────────────────────────── Token ─────────────────────────────

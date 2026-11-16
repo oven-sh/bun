@@ -1,0 +1,1 @@
+process.argv.splice(1, 1);await Bun.sleep(3000)

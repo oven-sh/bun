@@ -1,5 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { hasLibrary } from "./library";
 
 /** What `script` returns, and the colors that the page then has at `points`. */
@@ -162,7 +164,7 @@ describe.skipIf(!hasLibrary).concurrent("paint", () => {
         const it = document.body.appendChild(document.createElement("div"));
         it.style.font = 10 + index + "px sans-serif";
         it.textContent = "x";
-        return it.getBoundingClientRect().height * 2;
+        return it.getBoundingClientRect().height * devicePixelRatio;
       })`,
       [],
       2,
@@ -185,6 +187,126 @@ test.skipIf(!hasLibrary)("a large inline image is complete at once, and is avera
   ]);
   expect(state).toEqual([true, 600]);
   expect([left.slice(0, 2), left.slice(4, 6), right.slice(0, 2), right.slice(4, 6)]).toEqual(["ff", "00", "00", "ff"]);
+});
+
+describe.skipIf(!hasLibrary).concurrent("web fonts", () => {
+  const font = (type: string) =>
+    readFileSync(
+      join(import.meta.dir, "../../../../packages/bun-desktop/fixtures/space-mono-subset." + type),
+      "base64",
+    );
+  const prelude = `
+    const fonts = ${JSON.stringify(["ttf", "woff", "woff2"].map(font))}.map(it => Uint8Array.fromBase64(it));
+    const draw = async (family, bytes) => {
+      document.fonts.add(await new FontFace(family, bytes).load());
+      const context = new OffscreenCanvas(400, 60).getContext("2d");
+      context.font = "40px " + family;
+      context.fillText("AÅÉabcéñ012.,", 0, 45);
+      return context.getImageData(0, 0, 400, 60).data.join();
+    };`;
+
+  test("WOFF and WOFF2 have the glyphs of the original", async () => {
+    const script = `${prelude}
+      const [ttf, woff, woff2] = [await draw("a", fonts[0]), await draw("b", fonts[1]), await draw("c", fonts[2])];
+      return [ttf.includes("255"), woff === ttf, woff2 === ttf];`;
+    expect(await render("", script)).toEqual([[true, true, true]]);
+  });
+
+  test("a damaged font is refused or drawn", async () => {
+    const script = `${prelude}
+      const results = new Set();
+      for (const [kind, font] of fonts.entries())
+        for (let index = 0; index < font.length; index += 23)
+          results.add(await draw("f" + kind + "x" + index, font.with(index, font[index] ^ 255)).then(() => "drawn", error => error.name));
+      return [...results].sort();`;
+    expect(await render("", script)).toEqual([["SyntaxError", "drawn"]]);
+  });
+});
+
+describe.skipIf(!hasLibrary).concurrent("untrusted markup", () => {
+  const times = (text: string, count: number) => Buffer.alloc(text.length * count, text).toString();
+  test.each([
+    ["text with a transform-box", `<svg><text style="transform-box:fill-box;scale:2">a</text></svg>`],
+    ["a group with a transform-box", `<svg><g style="transform-box:fill-box;rotate:1deg"><text>a</text></g></svg>`],
+    ["a gradient without stops", `<img src="${svg(`style="background:-webkit-gradient(linear,0 0,0 9)">`)}">`],
+    ["rules without a prelude", times("<style>{}</style>", 3) + `<img src="${svg("><style>{}</style>")}">`],
+    [
+      "a huge plane",
+      `<b style="display:block;transform-style:preserve-3d;transform:rotate3d(1,2,3,40deg) scale(1e15)"></b>`,
+    ],
+    ["nested :is()", `<style>${times(":is(", 20000)}a${times(")", 20000)}{color:red}</style>`],
+    ["nested :nth-child()", `<style>${times(":nth-child(n of ", 30)}a${times(")", 30)}{color:red}</style>`],
+    ["a long selector", `<style>${times("*+", 40000)}p{color:red}</style>${times("<p hidden></p>", 40001)}`],
+    ["a number system with one digit", `<ol style='list-style-type:symbols( numeric "a")'><li>x</ol>`],
+    [
+      "a shape far down",
+      `<p style="font-size:1e9px">a <i style="shape-outside:circle();float:left;width:9px;height:9px"></i>b c`,
+    ],
+    ["an empty mpadded", times("<math><mpadded hidden=until-found>x</mpadded></math>", 3)],
+    ["wide cells", `<table rules=all><tr>${times("<td colspan=1000>", 300)}${times("<tr>", 100)}</table>`],
+    [
+      "a clip path that clips itself",
+      `<svg><clipPath id=c>${times("<rect clip-path=url(#c) />", 12)}</clipPath><rect width=99 height=99 clip-path=url(#c) /></svg>`,
+    ],
+    [
+      "a huge blur",
+      `<canvas></canvas><script>const it = document.querySelector("canvas").getContext("2d"); it.shadowBlur = 1e12; it.shadowColor = "red"; it.fillRect(0, 0, 9, 9)</script>`,
+    ],
+    [
+      "frames that are larger than their image",
+      `<img src="data:image/gif;base64,${btoa("GIF89a\x01\0\x01\0\0\0\0,\0\0\0\0\x01\0\x01\0\0\x02\0" + times(",\0\0\0\0A-A-\0\x02\0", 2000) + ";")}">`,
+    ],
+  ])("survives %s", async (_, html) => {
+    const mark = `<div style="position:fixed;z-index:1;left:100px;top:50px;width:9px;height:9px;background:#0f0"></div>`;
+    const script = `
+      await Promise.allSettled(Array.from(document.images, it => it.decode()));
+      document.elementFromPoint(5, 5);
+      return document.querySelector("div").offsetWidth;`;
+    expect(await render(mark + html, script, [[105, 55]])).toEqual([9, "00ff00"]);
+  });
+
+  test("feMorphology, and results that are used later", async () => {
+    const html = `<svg width=200 height=100><filter id=f x=0 y=0 width=200 height=100 filterUnits=userSpaceOnUse color-interpolation-filters=sRGB>
+      <feMorphology radius="7 3" operator=dilate result=wide /><feFlood flood-color=#00f /><feComposite in2=wide operator=in result=blue />
+      ${times("<feOffset />", 50)}<feMorphology in=SourceGraphic radius=2 /><feMerge><feMergeNode in=blue /><feMergeNode /></feMerge>
+    </filter><rect x=20 y=20 width=20 height=20 fill=#0f0 filter=url(#f) /></svg>`;
+    const row = [12, 13, 21, 22, 37, 38, 46, 47].map(x => [x, 30]);
+    const column = [16, 17, 42, 43].map(y => [30, y]);
+    expect((await render(html, "", [...row, ...column])).join()).toBe(
+      ",ffffff,0000ff,0000ff,00ff00,00ff00,0000ff,0000ff,ffffff,ffffff,0000ff,0000ff,ffffff",
+    );
+  });
+
+  test("a font whose tables are larger than it says is refused", async () => {
+    const script = `const count = 4000, view = new DataView(new ArrayBuffer(44 + count * 20 + 200000));
+      view.setUint32(0, 0x774f4646), view.setUint32(4, 0x10000), view.setUint16(12, count);
+      for (let i = 0; i < count; i++) view.setUint32(44 + i * 20, 0x61000000 + i), view.setUint32(52 + i * 20, view.byteLength);
+      return new FontFace("a", "url(" + URL.createObjectURL(new Blob([view])) + ")").load().catch(it => it.name)`;
+    expect(await render("", script)).toEqual(["NetworkError"]);
+  });
+
+  test("an attribute is one declaration", async () => {
+    const values = ["url(#a);position:fixed", "a{}position:fixed", "url(#a) red;position:fixed", "red!important"];
+    const script = `return ${JSON.stringify(values)}.map(value => {
+      document.body.setHTML("<svg></svg>");
+      document.body.firstChild.setAttribute("fill", value);
+      const { position, fill } = getComputedStyle(document.body.firstChild);
+      return position + " " + fill;
+    })`;
+    expect(await render("", script)).toEqual([values.map(() => "static rgb(0, 0, 0)")]);
+    const table = `<table background="data:,a;b"></table><svg fill="url('a;b') red"></svg>`;
+    const kept = `const of = it => getComputedStyle(document.querySelector(it));
+      return [of("table").backgroundImage, of("svg").fill.endsWith('a;b") rgb(255, 0, 0)')]`;
+    expect(await render(table, kept)).toEqual([['url("data:,a;b")', true]]);
+  });
+
+  test("XML is limited in depth and in what entities expand to", async () => {
+    const script = `const fails = source => new DOMParser().parseFromString(source, "text/xml").querySelector("parsererror") !== null;
+      const entities = count => "<!DOCTYPE a [<!ENTITY b '" + "x".repeat(9000) + "'>]><a>" + "&b;".repeat(count) + "</a>";
+      const nested = count => "<a>".repeat(count) + "</a>".repeat(count);
+      return [entities(10), entities(1000), nested(1000), nested(6000)].map(fails)`;
+    expect(await render("", script)).toEqual([[false, true, false, true]]);
+  });
 });
 
 function bmp(width: number, height: number, pixels: number[][]) {

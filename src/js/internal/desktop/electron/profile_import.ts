@@ -45,7 +45,7 @@ function unsnappy(data: Buffer) {
   return output;
 }
 
-type Put = (key: Buffer, sequence: bigint, value: Buffer | null) => void;
+type Put = (key: Buffer, sequence: number, value: Buffer | null) => void;
 
 function readTable(file: Buffer, put: Put) {
   function* entries(handle: Reader) {
@@ -66,8 +66,8 @@ function readTable(file: Buffer, put: Put) {
   footer.number();
   for (const [, handle] of entries(footer)) {
     for (const [key, value] of entries(new Reader(handle))) {
-      const trailer = key.readBigUInt64LE(key.length - 8);
-      put(key.subarray(0, -8), trailer >> 8n, (trailer & 255n) === 1n ? value : null);
+      // A byte for the type, and then the sequence number, which no profile takes past 48 bits.
+      put(key.subarray(0, -8), key.readUIntLE(key.length - 7, 6), key[key.length - 8] === 1 ? value : null);
     }
   }
 }
@@ -87,7 +87,7 @@ function readLog(file: Buffer, put: Put) {
     parts.push(file.subarray(at + 7, (at = end)));
     if (type === 2 || type === 3) continue;
     const batch = new Reader(Buffer.concat(parts));
-    let sequence = batch.bytes(12).readBigUInt64LE();
+    let sequence = batch.bytes(12).readUIntLE(0, 6);
     while (batch.at < batch.data.length) {
       const isValue = batch.number() === 1;
       put(batch.bytes(), sequence++, isValue ? batch.bytes() : null);
@@ -96,10 +96,10 @@ function readLog(file: Buffer, put: Put) {
 }
 
 function readLevelDB(directory: string) {
-  const newest = new Map<string, [bigint, Buffer | null]>();
+  const newest = new Map<string, [number, Buffer | null]>();
   const put: Put = (key, sequence, value) => {
     const name = key.latin1Slice();
-    if (!((newest.$get(name)?.[0] ?? -1n) > sequence)) newest.$set(name, [sequence, value]);
+    if (!((newest.$get(name)?.[0] ?? -1) > sequence)) newest.$set(name, [sequence, value]);
   };
   for (const name of fs.readdirSync(directory)) {
     const read = { ".log": readLog, ".ldb": readTable, ".sst": readTable }[path.extname(name)];

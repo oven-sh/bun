@@ -1,13 +1,11 @@
 //! Curves as the lines that `SkAnalyticEdge` makes of them, which start and end at quarters of a pixel. That is what
 //! makes horizontal stems of glyphs crisp in Chromium.
 
-use resvg::tiny_skia::Transform;
-use smallvec::SmallVec;
-use zeno::{Command, Point};
+use super::raster::{Coverage, IntRect, map_point};
+use crate::gfx::{Command, Path, Point, Transform};
+use crate::small_vec::SmallVec;
 
-use super::raster::{Coverage, IntRect, Path, map_point};
-
-type Points = SmallVec<[Point; 8]>;
+type Points = SmallVec<Point, 8>;
 
 fn snap(y: f32) -> f32 {
     (y * 4. + 0.5).floor() / 4.
@@ -21,7 +19,7 @@ fn subdivisions(dx: f32, dy: f32) -> u32 {
 }
 
 fn lerp(a: Point, b: Point, t: f32) -> Point {
-    a + (b - a) * t
+    a.lerp(b, t)
 }
 
 /// From top to bottom, without turning around.
@@ -30,7 +28,7 @@ fn quadratic([a, b, c]: [Point; 3]) -> Points {
         1 << subdivisions((2. * b.x - a.x - c.x) / 4., (2. * b.y - a.y - c.y) / 4.).clamp(1, 6);
     let (offset, bottom) = (snap(a.y) - a.y, snap(c.y));
     let (mut last, mut last_y) = (Point::new(a.x, snap(a.y)), a.y);
-    let mut points = Points::from_elem(last, 1);
+    let mut points = Points::from_iter([last]);
     for step in 1..count {
         let t = step as f32 / count as f32;
         let exact = lerp(lerp(a, b, t), lerp(b, c, t), t);
@@ -59,7 +57,7 @@ fn cubic([a, b, c, d]: [Point; 4]) -> Points {
     let count = 1
         << (subdivisions(from_line(a.x, b.x, c.x, d.x), from_line(a.y, b.y, c.y, d.y)) + 1).min(6);
     let (offset, bottom) = (snap(a.y) - a.y, snap(d.y));
-    let mut points = Points::from_elem(Point::new(a.x, snap(a.y)), 1);
+    let mut points = Points::from_iter([Point::new(a.x, snap(a.y))]);
     points.extend((1..count).map(|step| {
         let t = step as f32 / count as f32;
         let (ab, bc, cd) = (lerp(a, b, t), lerp(b, c, t), lerp(c, d, t));
@@ -83,15 +81,17 @@ fn add<const N: usize>(mut curve: [Point; N], flatten: fn([Point; N]) -> Points,
 }
 
 /// Where between 0 and 1 `a t² + b t + c` is zero, ascending.
-fn roots(a: f32, b: f32, c: f32) -> SmallVec<[f32; 2]> {
+fn roots(a: f32, b: f32, c: f32) -> SmallVec<f32, 2> {
     let discriminant = b * b - 4. * a * c;
     let q = -0.5 * (b + discriminant.sqrt().copysign(b));
-    let mut roots: SmallVec<[f32; 2]> = [q / a, c / q]
+    let mut roots: SmallVec<f32, 2> = [q / a, c / q]
         .into_iter()
         .filter(|t| *t > 1e-5 && *t < 1. - 1e-5)
         .collect();
     roots.sort_by(f32::total_cmp);
-    roots.dedup();
+    if roots.first() == roots.get(1) {
+        roots.truncate(1);
+    }
     roots
 }
 
@@ -183,7 +183,45 @@ fn accumulate(row: &mut [f32], from: f32, to: f32, height: f32) {
     }
 }
 
-/// Unlike with Zeno, contours that overlap in a pixel do not count twice.
+/// How much of each pixel the corners enclose.
+pub fn fill_exactly(corners: [Point; 4], area: IntRect) -> Coverage {
+    let mut coverage = Coverage::filled(area, 0);
+    let place =
+        |at: f32, origin: i32| ((at - origin as f32).clamp(-1e7, 1e7) * 256.).trunc() / 256.;
+    let corners = corners.map(|it| Point::new(place(it.x, area.left), place(it.y, area.top)));
+    let mut sums = vec![0.; area.width() + 2];
+    for (y, row) in coverage.data.chunks_mut(area.width().max(1)).enumerate() {
+        for (from, to) in (0..4).map(|it| (corners[it], corners[(it + 1) % 4])) {
+            let [start, end] = [from.y, to.y].map(|it| it.clamp(y as f32, y as f32 + 1.));
+            if start != end {
+                let x = |y: f32| from.x + (to.x - from.x) * (y - from.y) / (to.y - from.y);
+                accumulate(&mut sums, x(start), x(end), end - start);
+            }
+        }
+        add_up(&mut sums, row, |sum| (sum.abs() * 256. - 1. / 1024.) as u8);
+    }
+    coverage
+}
+
+/// Clears `differences`, most of which are zero.
+fn add_up(differences: &mut [f32], row: &mut [u8], value: impl Fn(f32) -> u8) {
+    const RUN: usize = 8;
+    let (mut sum, mut last) = (0., 0);
+    for (values, differences) in row.chunks_mut(RUN).zip(differences.chunks_mut(RUN)) {
+        if differences.iter().fold(0, |all, it| all | it.to_bits()) == 0 {
+            values.fill(last);
+            continue;
+        }
+        for (target, difference) in values.iter_mut().zip(differences) {
+            sum += std::mem::take(difference);
+            last = value(sum);
+            *target = last;
+        }
+    }
+    differences[row.len()..].fill(0.);
+}
+
+/// Contours that overlap in a pixel do not count twice.
 pub fn fill(path: &[Command], is_even_odd: bool, matrix: &Transform, area: IntRect) -> Coverage {
     let mask = if is_even_odd { 1 } else { -1 };
     fill_where(path, |winding| winding & mask != 0, matrix, area)
@@ -251,12 +289,7 @@ pub fn fill_where(
                 edge.x += edge.step;
             }
         }
-        let mut sum = 0.;
-        for (value, difference) in row.iter_mut().zip(&sums) {
-            sum += difference;
-            *value = (sum * 255. + 0.5) as u8;
-        }
-        sums.fill(0.);
+        add_up(&mut sums, row, |sum| (sum * 255. + 0.5) as u8);
     }
     coverage
 }

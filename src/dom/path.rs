@@ -277,6 +277,8 @@ pub(crate) struct Path {
 pub(crate) struct Piece {
     pub(crate) from: Point,
     pub(crate) to: Point,
+    /// The directions of the curve at both ends.
+    pub(crate) tangents: Option<[Point; 2]>,
 }
 
 impl Piece {
@@ -546,12 +548,29 @@ impl Path {
         for (from, verb, to) in self.steps() {
             match verb {
                 PathVerb::Move(_) => {}
-                PathVerb::Line(_) | PathVerb::Close => pieces.push(Piece { from, to }),
+                PathVerb::Line(_) | PathVerb::Close => pieces.push(Piece {
+                    from,
+                    to,
+                    tangents: None,
+                }),
                 PathVerb::Cubic(a, b, _) => {
                     let at = |step: usize| cubic_at([from, a, b, to], step as f32 / STEPS as f32);
+                    let tangent = |step: usize| {
+                        let (t, u) = (step as f32 / STEPS as f32, 1.0 - step as f32 / STEPS as f32);
+                        [0, 1].map(|i| {
+                            u * u * (a[i] - from[i])
+                                + 2.0 * u * t * (b[i] - a[i])
+                                + t * t * (to[i] - b[i])
+                        })
+                    };
+                    let tangents = |step| {
+                        Some([tangent(step), tangent(step + 1)])
+                            .filter(|it| !it.contains(&[0.0; 2]))
+                    };
                     pieces.extend((0..STEPS).map(|step| Piece {
                         from: at(step),
                         to: at(step + 1),
+                        tangents: tangents(step),
                     }));
                 }
             }
@@ -617,7 +636,7 @@ impl Path {
         }
         closed.verbs.push(PathVerb::Close);
         let pieces = closed.pieces();
-        let crossings = pieces.iter().filter(|Piece { from, to }| {
+        let crossings = pieces.iter().filter(|Piece { from, to, .. }| {
             (from[1] <= y) != (to[1] <= y)
                 && x < from[0] + (y - from[1]) / (to[1] - from[1]) * (to[0] - from[0])
         });
@@ -732,17 +751,14 @@ pub(crate) fn at_distance(pieces: &[Piece], distance: f32) -> Option<(Point, f32
     while let Some(piece) = drawn.next() {
         let length = f64::from(piece.length());
         if rest <= length || drawn.peek().is_none() {
-            let point = [0, 1].map(|axis| {
-                mix(
-                    piece.from[axis],
-                    piece.to[axis],
-                    (rest / length).min(1.0) as f32,
-                )
-            });
-            return Some((
-                point,
-                (piece.to[1] - piece.from[1]).atan2(piece.to[0] - piece.from[0]),
-            ));
+            let between = |[from, to]: [Point; 2]| {
+                [0, 1].map(|axis| mix(from[axis], to[axis], (rest / length).min(1.0) as f32))
+            };
+            let [x, y] = piece.tangents.map_or_else(
+                || [0, 1].map(|axis| piece.to[axis] - piece.from[axis]),
+                between,
+            );
+            return Some((between([piece.from, piece.to]), y.atan2(x)));
         }
         rest -= length;
     }

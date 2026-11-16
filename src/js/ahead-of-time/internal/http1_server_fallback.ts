@@ -1,5 +1,5 @@
 // What the compiler reads in place of src/js/internal/http1_server_fallback.ts, which `bun run` evaluates. The two do the same.
-// Written against that file with the SHA-256 e4b8dcbaf1c5f417b364123f622fca1dc49854b6315f6d837dae2b57bdd08251.
+// Written against that file with the SHA-256 37be1c95f20e59d7ca04c75c4a2db1839465120d83c7a29fa3d22b9a616da0e2.
 // When that file changes, bring the change here and write the new hash: test/internal/second-texts-of-modules.test.ts.
 
 // JS HTTP/1 server path over an arbitrary Duplex with a JS stand-in for NodeHTTPResponse.
@@ -462,6 +462,8 @@ function connectionListenerHTTP1(
 
   let req: $Node.IncomingMessage | null = null;
   let pendingUpgrade: $Node.IncomingMessage | null = null;
+  // The response to the last request whose upgrade was declined.
+  let declinedUpgrade: $Node.ServerResponse | null = null;
   // Node's per-connection state.requestsCount, behind server.maxRequestsPerSocket.
   let requestsCount = 0;
 
@@ -538,6 +540,7 @@ function connectionListenerHTTP1(
     };
 
     const res: $Node.ServerResponse = new ServerResponseClass(req!);
+    if (upgrade) declinedUpgrade = res;
     // The native dispatcher seeds these from the server; renderNativeHeaders
     // reads them to decide the Keep-Alive auto-header bits, so the fallback
     // path must carry them too or keep-alive responses lose their timeout line.
@@ -696,7 +699,16 @@ function connectionListenerHTTP1(
       } else {
         socket.destroy();
       }
+    } else if (declinedUpgrade && typeof ret === "number" && ret < data.length) {
+      // The parser left the rest to another protocol, which only the 'request' listener can still switch to.
+      parser.remove();
+      declinedUpgrade.req[kReqShouldKeepAlive] = false;
+      if (declinedUpgrade.writableFinished) endUnlessSwitched();
+      else declinedUpgrade.once("finish", endUnlessSwitched);
     }
+  }
+  function endUnlessSwitched() {
+    if (declinedUpgrade!.statusCode !== 101 && socket.writable) socket.end();
   }
   function onHttp1SocketErrorListener(err: Error) {
     onHttp1SocketError(err, undefined);

@@ -80,7 +80,7 @@ impl HTTPParser {
         this_value: JsWrapper<'a, Self>,
         cx: &mut JsScope<'a>,
     ) -> JsResult<()> {
-        if self.is_closed() {
+        if !matches!(self.state.get(), State::Initialized(_)) {
             return Ok(());
         }
         self.set_state(State::Removed);

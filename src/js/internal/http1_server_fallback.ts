@@ -406,6 +406,8 @@ function connectionListenerHTTP1(server, socket, options) {
 
   let req: Http1FallbackRequest | null = null;
   let pendingUpgrade: Http1FallbackRequest | null = null;
+  // The response to the last request whose upgrade was declined.
+  let declinedUpgrade: import("node:http").ServerResponse | null = null;
   // Node's per-connection state.requestsCount, behind server.maxRequestsPerSocket.
   let requestsCount = 0;
 
@@ -482,6 +484,7 @@ function connectionListenerHTTP1(server, socket, options) {
     };
 
     const res = new ServerResponseClass(req);
+    if (upgrade) declinedUpgrade = res;
     // The native dispatcher seeds these from the server; renderNativeHeaders
     // reads them to decide the Keep-Alive auto-header bits, so the fallback
     // path must carry them too or keep-alive responses lose their timeout line.
@@ -637,7 +640,16 @@ function connectionListenerHTTP1(server, socket, options) {
       } else {
         socket.destroy();
       }
+    } else if (declinedUpgrade && typeof ret === "number" && ret < data.length) {
+      // The parser left the rest to another protocol, which only the 'request' listener can still switch to.
+      parser.remove();
+      declinedUpgrade.req[kReqShouldKeepAlive] = false;
+      if (declinedUpgrade.writableFinished) endUnlessSwitched();
+      else declinedUpgrade.once("finish", endUnlessSwitched);
     }
+  }
+  function endUnlessSwitched() {
+    if (declinedUpgrade!.statusCode !== 101 && socket.writable) socket.end();
   }
   function onHttp1SocketErrorListener(err) {
     onHttp1SocketError(err, undefined);

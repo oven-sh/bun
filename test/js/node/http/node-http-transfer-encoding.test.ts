@@ -328,8 +328,8 @@ describe("Transfer-Encoding without chunked on a CONNECT or Upgrade request", ()
   const upgradeHead = (te: string, connection: string, upgrade = "Upgrade: x", version = "1.1") =>
     `GET /a HTTP/${version}\r\nHost: x\r\n${connection}\r\n${upgrade}\r\nTransfer-Encoding: ${te}\r\n\r\n`;
 
-  // llhttp's own verdict on a head, so that each table below is checked against the parser it
-  // mirrors: the upgrade flag that llhttp passes to kOnHeadersComplete, and the error of execute().
+  // HTTPParser's verdict on a head, so that each table below is checked against the parser it
+  // mirrors: the upgrade flag that it passes to kOnHeadersComplete, and the error of execute().
   function llhttpVerdict(head: string, options: ServerOptions = {}) {
     const parser = new HTTPParser();
     parser.initialize(

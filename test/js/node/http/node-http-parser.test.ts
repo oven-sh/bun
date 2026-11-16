@@ -159,6 +159,7 @@ describe("HTTPParser before initialize()", () => {
 
     // and the parser is still usable once initialised
     const parser = new HTTPParser();
+    parser.remove();
     expect(() => parser.finish()).toThrow(expect.objectContaining({ code: "ERR_INVALID_STATE" }));
     parser.initialize(HTTPParser.REQUEST, {});
     const input = Buffer.from("GET / HTTP/1.1\r\nHost: a\r\n\r\n");
@@ -398,7 +399,6 @@ describe("HTTPParser.prototype.execute", () => {
     expect(whole.calls).toEqual(expected);
 
     // In a buffer that is overwritten for each read.
-    const withoutBodies = (calls: unknown[][]) => calls.filter(call => call[0] !== "body");
     for (const size of [1, 7]) {
       const { parser, calls } = recorded(type);
       const buffer = Buffer.alloc(size);
@@ -406,7 +406,13 @@ describe("HTTPParser.prototype.execute", () => {
         const length = buffer.write(text.slice(i, i + size), "latin1");
         expect(parser.execute(buffer.subarray(0, length))).toBe(length);
       }
-      expect(withoutBodies(calls)).toEqual(withoutBodies(expected));
+      const joined: unknown[][] = [];
+      for (const call of calls) {
+        const last = joined.at(-1);
+        if (call[0] === "body" && last?.[0] === "body") last[1] = `${last[1]}${call[1]}`;
+        else joined.push(call);
+      }
+      expect(joined).toEqual(expected);
     }
   });
 

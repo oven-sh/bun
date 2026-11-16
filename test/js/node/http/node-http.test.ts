@@ -6610,28 +6610,96 @@ it("connectionListener reads the body of a Connection: close request that is alr
   }
 });
 
-it("connectionListener lets the 'request' listener switch protocols", async () => {
-  const switched = "HTTP/1.1 101 Switching Protocols\r\nConnection: upgrade\r\nUpgrade: a\r\n\r\n";
-  const server = createServer(({ socket }) => {
-    socket.write(switched);
-    socket.on("data", data => socket.write(data));
-  });
-  const [clientSide, serverSide] = duplexPair();
-  try {
+describe("connectionListener without an 'upgrade' listener", () => {
+  const upgrade = "POST /a HTTP/1.1\r\nHost: x\r\nConnection: upgrade\r\nUpgrade: a\r\n";
+  const next = "GET /b HTTP/1.1\r\nHost: x\r\n\r\n";
+  const switching = { Connection: "upgrade", Upgrade: "a" };
+
+  function connectTo(listener: http.RequestListener) {
+    const [clientSide, serverSide] = duplexPair();
+    const urls: (string | undefined)[] = [];
+    const server = createServer((req, res) => {
+      urls.push(req.url);
+      listener(req, res);
+    });
     server.emit("connection", serverSide);
-    for (const [sent, expected] of [
-      ["GET / HTTP/1.1\r\nHost: x\r\nConnection: upgrade\r\nUpgrade: a\r\n\r\n", switched],
-      ["one", "one"],
-      ["two", "two"],
-    ]) {
-      clientSide.write(sent);
-      expect(String(await once(clientSide, "data"))).toBe(expected);
-    }
-    expect(serverSide.destroyed).toBe(false);
-  } finally {
-    clientSide.destroy();
-    serverSide.destroy();
+    return Object.assign(clientSide, {
+      serverSide,
+      urls,
+      async readAll() {
+        let received = "";
+        for await (const chunk of clientSide) received += chunk;
+        return received.replace(/(Date|Keep-Alive|Content-Length): .*\r\n/g, "");
+      },
+      [Symbol.dispose]() {
+        clientSide.destroy();
+        serverSide.destroy();
+      },
+    });
   }
+
+  describe.each<[string, http.RequestListener]>([
+    ["socket.write()", ({ socket }) => socket.write("HTTP/1.1 101 Switching Protocols\r\n\r\n")],
+    ["res.end()", (req, res) => res.writeHead(101, switching).end()],
+    ["a later res.end()", (req, res) => setImmediate(() => res.writeHead(101, switching).end())],
+  ])("lets the 'request' listener switch protocols with %s", (_, switchProtocols) => {
+    it.each(["", "zero", next])("and %j behind the request", async early => {
+      using client = connectTo((req, res) => {
+        switchProtocols(req, res);
+        req.socket.on("data", data => req.socket.write(data));
+      });
+      client.write(`${upgrade}\r\n${early}`);
+      expect(String(await once(client, "data"))).toStartWith("HTTP/1.1 101 ");
+      for (const text of ["one", "two"]) {
+        client.write(text);
+        expect(String(await once(client, "data"))).toBe(text);
+      }
+      expect(client.serverSide.writable).toBe(true);
+      expect(client.urls).toEqual(["/a"]);
+    });
+  });
+
+  it.each<[string, string[], http.RequestListener]>([
+    ["keep-alive", [`${upgrade}\r\nzero`], (req, res) => res.end()],
+    ["close", [`${upgrade}\r\nzero`, next], (req, res) => setImmediate(() => res.end())],
+    [
+      "close",
+      [`${upgrade}Transfer-Encoding: chunked\r\n\r\n0\r\n\r\n${next}`],
+      (req, res) => text(req).then(() => res.end()),
+    ],
+  ])("answers with Connection: %s and ends the connection after %j", async (connection, writes, listener) => {
+    using client = connectTo(listener);
+    for (const written of writes) client.write(written);
+    expect(await client.readAll()).toBe(`HTTP/1.1 200 OK\r\nConnection: ${connection}\r\n\r\n`);
+    expect(client.urls).toEqual(["/a"]);
+  });
+
+  it("answers the requests before it first", async () => {
+    using client = connectTo((req, res) => (req.url === "/a" ? res.end("a") : setImmediate(() => res.end("b"))));
+    client.write(`${next}${upgrade}\r\nzero`);
+    expect(await client.readAll()).toMatch(/^HTTP\/1.1 200 [^]*\r\n\r\nbHTTP\/1.1 200 [^]*\r\n\r\na$/);
+  });
+
+  it("ends the connection at once if the response is already sent", async () => {
+    const { promise: sent, resolve } = Promise.withResolvers<void>();
+    using client = connectTo((req, res) => res.end(resolve));
+    client.write(`${upgrade}Content-Length: 1\r\n\r\n`);
+    await sent;
+    client.write(`c${next}`);
+    expect(await client.readAll()).toBe("HTTP/1.1 200 OK\r\nConnection: keep-alive\r\n\r\n");
+    expect(client.urls).toEqual(["/a"]);
+  });
+
+  it("serves the requests that wait for the response", async () => {
+    using client = connectTo((req, res) => setImmediate(() => res.end()));
+    for (const request of [`${upgrade}\r\n`, next]) {
+      client.write(request);
+      expect(String(await once(client, "data"))).toContain("\r\nConnection: keep-alive\r\n");
+    }
+    client.write(`${upgrade}\r\nzero`);
+    expect(await client.readAll()).toBe("HTTP/1.1 200 OK\r\nConnection: close\r\n\r\n");
+    expect(client.urls).toEqual(["/a", "/b", "/a"]);
+  });
 });
 
 // https://github.com/oven-sh/bun/issues/4733

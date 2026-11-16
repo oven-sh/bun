@@ -349,7 +349,7 @@ impl MessageParser {
                     self.state = State::AfterMessage;
                     return Ok(self.deliver(Event::MessageComplete));
                 }
-                State::AfterMessage => self.end_message(input)?,
+                State::AfterMessage => self.end_message()?,
                 State::Closed => return self.skip_after_close(input),
             };
         }
@@ -434,7 +434,7 @@ impl MessageParser {
         self.status_code
     }
 
-    /// The URL, or the status text if it is well-formed.
+    /// The URL, or until the body the status text if it is well-formed.
     pub fn start_line_text<'a>(&'a self, input: &'a [u8]) -> &'a [u8] {
         if self.flags.contains(Flags::MALFORMED_STATUS_TEXT) {
             return &[];
@@ -572,6 +572,9 @@ impl MessageParser {
         {
             return Ok(State::MessageDone);
         }
+        if !self.is_request() {
+            self.texts.clear_first();
+        }
         if is_chunked {
             return Ok(State::Chunks(ChunkPart::SizeStart));
         }
@@ -621,13 +624,11 @@ impl MessageParser {
     }
 
     #[inline(always)]
-    fn end_message(&mut self, input: &[u8]) -> Step<State> {
+    fn end_message(&mut self) -> Step<State> {
         let switches_protocol = self.is_upgrade();
-        let leaves_bytes =
-            switches_protocol && !input.iter().skip(self.consumed).copied().all(is_newline);
         let is_last = self.flags.contains(Flags::IS_LAST);
         let is_interim = matches!(self.status_code, 100 | 102..=199);
-        let next = match (is_last && !is_interim) || leaves_bytes {
+        let next = match is_last && !is_interim {
             true => State::Closed,
             false => State::Start,
         };

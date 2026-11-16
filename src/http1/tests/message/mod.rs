@@ -1304,18 +1304,10 @@ mod bodies {
 
     #[test]
     fn after_an_upgrade() {
-        const IGNORED: Event = Event::Done(1);
-        for (rest, next) in [
-            (&b""[..], Event::MessageBegin),
-            (b"\r\n", Event::MessageBegin),
-            (b"\r\na", IGNORED),
-        ] {
-            let mut parser = REQUEST.parser();
-            let read = [UPGRADE, rest].concat();
-            advance_to(&mut parser, &read, Event::Done(UPGRADE.len()));
-            assert!(!parser.is_upgrade());
-            assert_eq!(parser.advance(b"G"), next);
-        }
+        let mut parser = REQUEST.parser();
+        advance_to(&mut parser, UPGRADE, Event::Done(UPGRADE.len()));
+        assert!(!parser.is_upgrade());
+        assert_eq!(parser.advance(b"G"), Event::MessageBegin);
 
         for (setup, read) in [
             (REQUEST, &b"GET / HTTP/1.1\r\nConnection: close\r\n\r\n"[..]),
@@ -1325,7 +1317,7 @@ mod bodies {
             advance_to(&mut parser, read, Event::HeadComplete);
             parser.switch_protocol();
             advance_to(&mut parser, read, Event::Done(read.len()));
-            assert_eq!(parser.advance(b"G"), IGNORED);
+            assert_eq!(parser.advance(b"G"), Event::Done(1));
         }
     }
 
@@ -1992,6 +1984,12 @@ mod control {
         assert_eq!(show_fields(&parser, b""), "[Transfer-Encoding=b]");
         parser.clear_fields();
         assert_eq!(show_fields(&parser, b""), "[]");
+
+        let mut parser = RESPONSE.parser();
+        let read = b"HTTP/1.1 200 a\r\nb: c\r\n\r\nd";
+        assert_eq!(events(&mut parser, read, 3)[2], Event::DoneInBody(24));
+        assert_eq!(parser.start_line_text(b""), b"");
+        assert_eq!(show_fields(&parser, b""), "[b=c]");
     }
 
     #[test]

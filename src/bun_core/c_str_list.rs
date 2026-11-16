@@ -162,7 +162,7 @@ mod tests {
 
     #[test]
     fn from_unterminated_adds_the_null() {
-        let mut items = vec![Some(c"a".into()), Some(ZStr::from_static(b"bc\0").into())];
+        let mut items = vec![Some(c"a".into()), Some(crate::zstr!("bc").into())];
         let list = CStrList::from_unterminated(&mut items);
         assert_eq!(read(list.0), [Some(&b"a"[..]), Some(b"bc"), None]);
         assert!(CStrList::new(&items).first().is_some());

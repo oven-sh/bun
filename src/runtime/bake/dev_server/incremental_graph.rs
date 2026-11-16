@@ -1803,7 +1803,7 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
         let runtime: bake::HmrRuntime = match kind {
             ChunkKind::InitialResponse => bake::get_hmr_runtime(Side::Client),
             ChunkKind::HmrChunk => bake::HmrRuntime {
-                code: bun_core::ZStr::from_static(b"self[Symbol.for(\"bun:hmr\")]({\n\0"),
+                code: bun_core::zstr!("self[Symbol.for(\"bun:hmr\")]({\n"),
                 line_count: 1,
             },
         };
@@ -1953,7 +1953,7 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
         let runtime: bake::HmrRuntime = match options.kind {
             ChunkKind::InitialResponse => bake::get_hmr_runtime(Side::Server),
             ChunkKind::HmrChunk => bake::HmrRuntime {
-                code: bun_core::ZStr::from_static(b"({\0"),
+                code: bun_core::zstr!("({"),
                 line_count: 0,
             },
         };

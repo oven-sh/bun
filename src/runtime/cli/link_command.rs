@@ -252,8 +252,7 @@ fn link(ctx: command::Context) -> crate::Result<()> {
             );
             let mut link_path_buf = bun_paths::path_buffer_pool::get();
             link_path_buf.0[..top_level.len()].copy_from_slice(top_level);
-            link_path_buf.0[top_level.len()] = 0;
-            let link_path = ZStr::from_buf(&link_path_buf.0[..], top_level.len());
+            let link_path = ZStr::nul_terminate(&mut link_path_buf, top_level.len());
             let global_path = pm::global_link_dir_path(manager);
             let dest_path =
                 resolve_path::join_abs_string_z::<platform::Windows>(global_path, &[name]);

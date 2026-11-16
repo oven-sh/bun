@@ -888,10 +888,8 @@ fn load_factory() {
     if dll.is_null() {
         return;
     }
-    let Some(sym) = windows::GetProcAddressA(
-        Some(dll),
-        bun_core::ZStr::from_static(b"WICConvertBitmapSource\0"),
-    ) else {
+    let Some(sym) = windows::GetProcAddressA(Some(dll), bun_core::zstr!("WICConvertBitmapSource"))
+    else {
         return;
     };
     // SAFETY: sym is the export of WICConvertBitmapSource — fn-ptr transmute.

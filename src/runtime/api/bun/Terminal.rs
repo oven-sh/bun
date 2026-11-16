@@ -233,14 +233,6 @@ impl Options {
     }
 }
 
-/// Result from creating a Terminal
-pub(crate) struct CreateResult {
-    /// The new terminal; its initial ref belongs to the JS wrapper (`js_value`),
-    /// which holds itself strong until the terminal closes.
-    pub terminal: bun_ptr::BackRef<Terminal, bun_ptr::Mut>,
-    pub js_value: JSValue,
-}
-
 #[derive(thiserror::Error, Debug, strum::IntoStaticStr)]
 pub enum InitError {
     #[error("OpenPtyFailed")]
@@ -484,18 +476,14 @@ impl Terminal {
     }
 
     /// Create a Terminal from Bun.spawn options (not from JS constructor)
-    /// Returns the Terminal and its JS wrapper value
     /// The slave_fd should be used for the subprocess's stdin/stdout/stderr
-    pub(crate) fn create_from_spawn(
-        cx: &jsc::JsThread<'_>,
+    pub(crate) fn create_from_spawn<'a>(
+        cx: &'a jsc::JsThread<'_>,
         options: &Options,
-    ) -> Result<CreateResult, InitError> {
-        let terminal = Self::open(cx.global(), options)?.into_raw();
-        let js_value = js::to_js(terminal, cx.global());
-        // SAFETY: `js_value` owns the ref.
-        let terminal = unsafe { bun_ptr::BackRef::from_raw_mut(terminal) };
-        terminal.attach(cx.global(), cx.context(), options, js_value);
-        Ok(CreateResult { terminal, js_value })
+    ) -> Result<jsc::WrapperGuard<'a, Self>, InitError> {
+        let terminal = js::wrap(Self::open(cx.global(), options)?, cx.global());
+        terminal.attach(cx.global(), cx.context(), options, terminal.to_js());
+        Ok(terminal)
     }
 
     /// Get the slave fd for subprocess to use

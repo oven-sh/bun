@@ -2129,8 +2129,7 @@ fn tarball_destination<'a>(
             Global::crash();
         }
         dest_buf[..pack_filename.len()].copy_from_slice(pack_filename);
-        dest_buf[pack_filename.len()] = 0;
-        return (ZStr::from_buf(&dest_buf[..], pack_filename.len()), 0);
+        return (ZStr::nul_terminate(dest_buf, pack_filename.len()), 0);
     }
 
     #[cold]

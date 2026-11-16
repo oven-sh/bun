@@ -182,6 +182,9 @@ impl Rows {
             self.above.set(self.current.len() - 1, first);
             (x, to) = (1, to.part_mut(1..));
         }
+        if to.is_empty() {
+            return;
+        }
         let (above, row) = (self.above.part(x - 1..), self.current.part_mut(x - 1..));
         let subtract = match if y == 0 { 1 } else { mode } {
             0 => subtract::<0>,

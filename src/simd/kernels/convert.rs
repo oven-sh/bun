@@ -1,6 +1,6 @@
 //! Ports of highway_strings.cpp: from one buffer to another, or in place.
-use bun_simd::{Out, SharedU8, SharedWriter, Sink, Source};
-use core::sync::atomic::{AtomicU8, Ordering::Relaxed};
+use bun_simd::{Out, SharedOutU8, SharedU8, SharedWriter, Sink, Source};
+use core::sync::atomic::AtomicU8;
 
 #[bun_simd::foreach_target]
 pub(crate) mod simd {
@@ -22,9 +22,8 @@ pub(crate) mod simd {
     #[inline(always)]
     fn reverse_each<const SIZE: usize>(bytes: &[AtomicU8]) {
         let words = bytes.as_chunks::<SIZE>().0.as_flattened();
-        U8::map_to_shared(words, words, |v| {
-            v.lookup(U8::iota() & 15 ^ (SIZE as u8 - 1))
-        });
+        let (from, to) = (SharedU8::from_slice(words), SharedOutU8::from_slice(words));
+        U8::map_to_shared(from, to, |v| v.lookup(U8::iota() & 15 ^ (SIZE as u8 - 1)));
     }
 
     #[export]
@@ -43,14 +42,14 @@ pub(crate) mod simd {
     }
 
     #[export]
-    pub fn copy_ascii_prefix_to_shared(from: &[u8], to: &[AtomicU8]) -> usize {
+    pub fn copy_ascii_prefix_to_shared(from: &[u8], to: &[SharedOutU8]) -> usize {
         U8::map_to_shared_until(from, to, |v| v, |v| v.bitcast::<I8>().simd_lt(0).cast())
     }
 
     /// The same for a few dozen bytes.
     #[export(baseline)]
     #[inline]
-    pub fn copy_short_ascii_prefix_to_shared(from: &[u8], to: &[AtomicU8]) -> usize {
+    pub fn copy_short_ascii_prefix_to_shared(from: &[u8], to: &[SharedOutU8]) -> usize {
         let len = from.len().min(to.len());
         let (from, to) = (&from[..len], &to[..len]);
         let copy = |from: &[u8; 8], to| {
@@ -72,14 +71,14 @@ pub(crate) mod simd {
             return len;
         }
         while done < len && from[done].is_ascii() {
-            to[done].store(from[done], Relaxed);
+            to[done].set(from[done]);
             done += 1;
         }
         done
     }
 
     #[inline(always)]
-    fn copy_ends_if_ascii<const N: usize>(from: &[u8], to: &[AtomicU8]) -> Option<bool> {
+    fn copy_ends_if_ascii<const N: usize>(from: &[u8], to: &[SharedOutU8]) -> Option<bool> {
         let (first, last) = (*from.first_chunk::<N>()?, *from.split_last_chunk::<N>()?.1);
         let (start, end) = (to.first_chunk()?, to.split_last_chunk()?.1);
         let (first, last) = (Vector::from_array(first), Vector::from_array(last));
@@ -94,7 +93,7 @@ pub(crate) mod simd {
     /// Copies all or nothing: all if it is ASCII, fits and has up to 16 bytes.
     #[export(baseline)]
     #[inline]
-    pub fn copy_few_ascii_to_shared(from: &[u8], to: &[AtomicU8]) -> bool {
+    pub fn copy_few_ascii_to_shared(from: &[u8], to: &[SharedOutU8]) -> bool {
         let len = from.len();
         if len > 16 || len > to.len() {
             return false;
@@ -108,7 +107,7 @@ pub(crate) mod simd {
             let all = [0, len / 2, len - 1];
             let is_ascii = all.iter().fold(0, |bits, &at| bits | from[at]).is_ascii();
             if is_ascii {
-                all.iter().for_each(|&at| to[at].store(from[at], Relaxed));
+                all.iter().for_each(|&at| to[at].set(from[at]));
             }
             is_ascii
         } else {
@@ -137,7 +136,7 @@ pub(crate) mod simd {
     }
 
     #[export]
-    pub fn copy_u16_to_shared(from: &[u16], to: &[AtomicU8]) -> usize {
+    pub fn copy_u16_to_shared(from: &[u16], to: &[SharedOutU8]) -> usize {
         let mut to = SharedWriter::new(to);
         append_low_bytes(from, &mut to);
         to.len()

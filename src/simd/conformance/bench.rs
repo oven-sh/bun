@@ -3,6 +3,7 @@
 use crate::pairs::{self, Pairs};
 use crate::room::Room;
 use crate::{Random, columns, highway, shared, write_line};
+use bun_simd::{Out, SharedOutU8};
 use bun_simd_kernels::{self as rust, Filter};
 use core::fmt::Arguments;
 use core::hint::black_box as opaque;
@@ -340,7 +341,7 @@ fn pieces(js: &[u8]) {
             "copy_ascii_prefix of 20000 {name}",
             each(all, |t| _ = highway::copy_ascii_prefix(t, out)),
             each(all, |t| {
-                _ = rust::copy_ascii_prefix_to_shared(t, AtomicU8::from_mut_slice(out))
+                _ = rust::copy_ascii_prefix_to_shared(t, shared_out(out))
             })
         );
         compare!("fill_with_mask of 20000 {name}", |k| {
@@ -855,50 +856,53 @@ fn from_shared(js: &[u8]) {
     }
 }
 
+fn shared_out(bytes: &mut [u8]) -> &[SharedOutU8] {
+    Out::from(bytes).into_shared()
+}
+
 #[optimize(size)]
 fn to_shared() {
-    let shared = AtomicU8::from_mut_slice;
     for n in [12, 32, 64, 100, 1000, 65536] {
         let (t, wide, out) = (&vec![b'a'; 2 * n], &vec![0x61; 2 * n], &mut vec![0; n]);
         compare!(
             "to shared: decode_hex {n}",
             highway::decode_hex(opaque(t).as_chunks().0, out).len(),
-            rust::decode_hex_to_shared(opaque(t).as_chunks().0, shared(out))
+            rust::decode_hex_to_shared(opaque(t).as_chunks().0, shared_out(out))
         );
         compare!(
             "to shared: decode_hex16 {n}",
             highway::decode_hex16(opaque(wide).as_chunks().0, out).len(),
-            rust::decode_hex16_to_shared(opaque(wide).as_chunks().0, shared(out))
+            rust::decode_hex16_to_shared(opaque(wide).as_chunks().0, shared_out(out))
         );
         compare!(
             "to shared: copy_u16_to_u8 {n}",
             highway::copy_u16_to_u8(opaque(&wide[..n]), out),
-            rust::copy_u16_to_shared(opaque(&wide[..n]), shared(out))
+            rust::copy_u16_to_shared(opaque(&wide[..n]), shared_out(out))
         );
         compare!(
             "to shared: copy_ascii_prefix {n}",
             highway::copy_ascii_prefix(opaque(&t[..n]), out).len(),
-            rust::copy_ascii_prefix_to_shared(opaque(&t[..n]), shared(out))
+            rust::copy_ascii_prefix_to_shared(opaque(&t[..n]), shared_out(out))
         );
         if n <= 64 {
             compare!(
                 "to shared: copy_short_ascii_prefix {n}",
                 highway::copy_ascii_prefix(opaque(&t[..n]), out).len(),
-                rust::copy_short_ascii_prefix_to_shared(opaque(&t[..n]), shared(out))
+                rust::copy_short_ascii_prefix_to_shared(opaque(&t[..n]), shared_out(out))
             );
         }
         if n <= 16 {
             compare!(
                 "to shared: copy_few_ascii {n}",
                 highway::copy_ascii_prefix(opaque(&t[..n]), out).len(),
-                rust::copy_few_ascii_to_shared(opaque(&t[..n]), shared(out))
+                rust::copy_few_ascii_to_shared(opaque(&t[..n]), shared_out(out))
             );
         }
         for (name, highway, rust) in pairs::SWAPS {
             compare!(
                 "shared: {name} {n}",
                 highway(opaque(out)),
-                rust(shared(opaque(out)))
+                rust(AtomicU8::from_mut_slice(opaque(out)))
             );
         }
     }

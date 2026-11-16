@@ -5,11 +5,10 @@ use crate::node::types::Encoding;
 use crate::webcore::jsc::{JSGlobalObject, JSValue, JsResult, StringJsc as _};
 use bun_core::String as BunString;
 use bun_core::strings;
-use bun_simd::Out;
+use bun_simd::{Out, SharedOutU8, SharedU8};
 use bun_simd_kernels as kernels;
 use bun_simdutf_sys::simdutf as bun_simdutf;
 use core::mem::MaybeUninit;
-use core::sync::atomic::Ordering;
 
 // `bun_core::String` exposes safe `Vec<u8>`/`Vec<u16>` → WTF::ExternalStringImpl
 // constructors; delegate so the FFI ownership-transfer invariant is enforced
@@ -273,8 +272,8 @@ unsafe extern "C" fn Bun__encoding__toString(
 ) -> JSValue {
     let encoding = encoding_from_u8(encoding);
     let string = if encoding == Encoding::Hex {
-        // SAFETY: forwarded from this fn's contract.
-        let input = unsafe { bun_core::ffi::shared_bytes(input, len) };
+        // SAFETY: forwarded from this fn's contract. `SharedU8` has the layout of `u8`.
+        let input = unsafe { bun_core::ffi::slice(input.cast::<SharedU8>(), len) };
         hex_string(len, |out| kernels::encode_hex_lower_shared(input, out)).into_js(global_object)
     } else {
         // SAFETY: forwarded from this fn's contract.
@@ -500,8 +499,8 @@ pub(crate) unsafe fn write_u8<const ENCODING: u8, const ALLOW_PARTIAL_WRITE: boo
         return Ok(0);
     }
     if matches!(encoding_from_u8(ENCODING), Encoding::Hex | Encoding::Utf8) {
-        // SAFETY: forwarded from this fn's contract. Both only store.
-        let to = unsafe { bun_core::ffi::atomic_bytes(to, to_len) };
+        // SAFETY: forwarded from this fn's contract. `SharedOutU8` has the layout of `u8`.
+        let to = unsafe { bun_core::ffi::slice(to.cast::<SharedOutU8>(), to_len) };
         if matches!(encoding_from_u8(ENCODING), Encoding::Hex) {
             return Ok(kernels::decode_hex_to_shared(input.as_chunks().0, to));
         }
@@ -511,7 +510,7 @@ pub(crate) unsafe fn write_u8<const ENCODING: u8, const ALLOW_PARTIAL_WRITE: boo
         // whose 2-byte sequence straddles the end still gets its lead byte.
         if ALLOW_PARTIAL_WRITE && written < to.len() && r.read < input.len() {
             debug_assert!(input[r.read] >= 0x80);
-            to[written].store(0xC0 | (input[r.read] >> 6), Ordering::Relaxed);
+            to[written].set(0xC0 | (input[r.read] >> 6));
             written += 1;
         }
         return Ok(written);
@@ -614,88 +613,45 @@ pub(crate) unsafe fn write_u16<const ENCODING: u8, const ALLOW_PARTIAL_WRITE: bo
         return Ok(0);
     }
 
-    // NOTE: Do NOT eagerly materialize `&[u16]` / `&mut [u8]` slices over `input`/`to` here.
-    // The Ucs2/Utf16le arm is spec'd to accept overlapping input/output (it copies with
-    // memmove semantics). Building a `&mut [u8]` whose memory is also
-    // covered by a live `&[u16]` would violate `slice::from_raw_parts_mut`'s exclusive-access
-    // contract (aliased-&mut UB). Each arm below constructs only the slice views it needs,
-    // and the Ucs2/Utf16le arm stays raw-pointer-only.
+    // string is already encoded, just need to copy the data
+    if matches!(
+        encoding_from_u8(ENCODING),
+        Encoding::Ucs2 | Encoding::Utf16le
+    ) {
+        let fit = (len * 2).min(to_len);
+        let written = if ALLOW_PARTIAL_WRITE { fit } else { fit & !1 };
+        // SAFETY: both ranges have `written` bytes. They may overlap, so neither becomes a slice.
+        unsafe { core::ptr::copy(input.cast::<u8>(), to, written) };
+        return Ok(written);
+    }
+
+    // SAFETY: caller guarantees `input[..len]` and `to[..to_len]` are valid and non-overlapping
+    // for the other encodings. `SharedOutU8` has the layout of `u8`.
+    let (input, output) = unsafe {
+        (
+            bun_core::ffi::slice(input, len),
+            bun_core::ffi::slice(to.cast::<SharedOutU8>(), to_len),
+        )
+    };
 
     match encoding_from_u8(ENCODING) {
         Encoding::Utf8 => {
-            // SAFETY: caller guarantees `input[..len]` and `to[..to_len]` are valid and
-            // non-overlapping for this encoding. The transcoder only stores to `to`.
-            let (input_slice, to_slice) = unsafe {
-                (
-                    bun_core::ffi::slice(input, len),
-                    bun_core::ffi::atomic_bytes(to, to_len),
-                )
-            };
-            Ok(
-                strings::copy_utf16_into_utf8_impl::<ALLOW_PARTIAL_WRITE>(to_slice, input_slice)
-                    .written,
-            )
+            Ok(strings::copy_utf16_into_utf8_impl::<ALLOW_PARTIAL_WRITE>(output, input).written)
         }
         Encoding::Latin1 | Encoding::Ascii | Encoding::Buffer => {
-            // SAFETY: caller guarantees `input[..len]` and `to[..to_len]` are valid and
-            // non-overlapping for this encoding. The kernel only stores to `to`.
-            let (input_slice, to_slice) = unsafe {
-                (
-                    bun_core::ffi::slice(input, len),
-                    bun_core::ffi::atomic_bytes(to, to_len),
-                )
-            };
-            Ok(kernels::copy_u16_to_shared(input_slice, to_slice))
+            Ok(kernels::copy_u16_to_shared(input, output))
         }
-        // string is already encoded, just need to copy the data
-        Encoding::Ucs2 | Encoding::Utf16le => {
-            if ALLOW_PARTIAL_WRITE {
-                let bytes_input_len = len * 2;
-                let written = bytes_input_len.min(to_len);
-                let input_u8 = input.cast::<u8>();
-                // SAFETY: ranges may overlap; use ptr::copy (memmove).
-                unsafe { core::ptr::copy(input_u8, to, written) };
-                Ok(written)
-            } else {
-                let bytes_input_len = len * 2;
-                let written = bytes_input_len.min(to_len);
-                if written < 2 {
-                    return Ok(0);
-                }
-
-                let fixed_len = (written / 2) * 2;
-                let input_u8 = input.cast::<u8>();
-                // SAFETY: ranges may overlap; use ptr::copy (memmove).
-                unsafe { core::ptr::copy(input_u8, to, fixed_len) };
-                Ok(fixed_len)
-            }
-        }
-
-        Encoding::Hex => {
-            // SAFETY: caller guarantees `input[..len]` and `to[..to_len]` are valid and
-            // non-overlapping for this encoding. The kernel only stores to `to`.
-            let (input_slice, to_slice) = unsafe {
-                (
-                    bun_core::ffi::slice(input, len),
-                    bun_core::ffi::atomic_bytes(to, to_len),
-                )
-            };
-            let pairs = input_slice.as_chunks().0;
-            Ok(kernels::decode_hex16_to_shared(pairs, to_slice))
-        }
-
+        Encoding::Ucs2 | Encoding::Utf16le => unreachable!(),
+        Encoding::Hex => Ok(kernels::decode_hex16_to_shared(input.as_chunks().0, output)),
         Encoding::Base64 | Encoding::Base64url => {
             // Match Node.js: two-byte strings are decoded from the low byte of
             // each UTF-16 code unit (so e.g. U+013D behaves like '=' and
             // U+1234 like '4'), the same narrowing Node's lenient fallback
             // decoder applies.
-            // SAFETY: caller guarantees `input[..len]` is valid.
-            let input_slice = unsafe { bun_core::ffi::slice(input, len) };
-            let narrowed = narrow_u16_to_u8(input_slice);
-            // SAFETY: caller guarantees `to[..to_len]` is valid for writing; `input_slice`
-            // is dead by now, so no other view of caller memory is live.
+            let narrowed = narrow_u16_to_u8(input);
+            // SAFETY: forwarded from this fn's contract. `output` is not used again.
             unsafe { write_u8::<ENCODING, ALLOW_PARTIAL_WRITE>(&narrowed, to, to_len) }
-        } // else => return &[_]u8{};
+        }
     }
 }
 

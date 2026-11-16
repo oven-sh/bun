@@ -1,10 +1,10 @@
 use core::ffi::c_void;
-use core::sync::atomic::AtomicU8;
 
 use bun_core::strings;
 use bun_jsc::HostReturn as _;
 use bun_jsc::js_string::Iterator as JSStringIterator;
 use bun_jsc::{ArrayBuffer, JSGlobalObject, JSString, JSType, JSValue, JsResult};
+use bun_simd::{Out, SharedOutU8};
 use bun_simdutf_sys::simdutf::WithUtf8Len;
 
 // `const TextEncoder = @This();` — file is a namespace of exported fns; no wrapper struct needed.
@@ -110,7 +110,7 @@ unsafe extern "C" fn TextEncoder__encode16(
         return JSValue::ZERO;
     };
     debug_assert!(array_buffer.len == need);
-    let bytes = AtomicU8::from_mut_slice(array_buffer.byte_slice_mut());
+    let bytes = Out::from(array_buffer.byte_slice_mut()).into_shared();
     let result = strings::copy_utf16_into_utf8_with_utf8_len(bytes, input);
     if result.written == need && result.read == slice.len() {
         return uint8array;
@@ -244,7 +244,7 @@ extern "C" fn TextEncoder__encodeRopeString(
 // HOST_EXPORT(TextEncoder__encodeInto16, c)
 pub(crate) fn encode_into16(
     input: &[u16],
-    output: &[AtomicU8],
+    output: &[SharedOutU8],
 ) -> bun_core::strings::EncodeIntoResult {
     strings::copy_utf16_into_shared_utf8(output, input)
 }
@@ -252,7 +252,7 @@ pub(crate) fn encode_into16(
 // HOST_EXPORT(TextEncoder__encodeInto8, c)
 pub(crate) fn encode_into8(
     input: &[u8],
-    output: &[AtomicU8],
+    output: &[SharedOutU8],
 ) -> bun_core::strings::EncodeIntoResult {
     strings::copy_latin1_into_shared_utf8(output, input)
 }

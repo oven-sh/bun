@@ -1195,8 +1195,8 @@ pub use crate::string::immutable::{
 /// duplicates an `immutable` scanner; when both layers need the same helper,
 /// the single implementation lives here and `immutable` re-exports it.
 pub(crate) mod strings_impl {
+    use bun_simd::{Out, SharedOutU8};
     use bun_simd_kernels as kernels;
-    use core::sync::atomic::{AtomicU8, Ordering::Relaxed};
 
     // ─── UTF-16 surrogate-pair encoding (ICU U16_LEAD / U16_TRAIL) ─────────────
     // Defined here in
@@ -1708,11 +1708,11 @@ pub(crate) mod strings_impl {
     /// Returns units read / bytes written. Caller is responsible for sizing `buf`.
     #[inline]
     pub fn copy_utf16_into_utf8(buf: &mut [u8], utf16: &[u16]) -> EncodeIntoResult {
-        copy_utf16_into_shared_utf8(AtomicU8::from_mut_slice(buf), utf16)
+        copy_utf16_into_shared_utf8(Out::from(buf).into_shared(), utf16)
     }
 
     /// [`copy_utf16_into_utf8`] for the bytes of a JS buffer.
-    pub fn copy_utf16_into_shared_utf8(buf: &[AtomicU8], utf16: &[u16]) -> EncodeIntoResult {
+    pub fn copy_utf16_into_shared_utf8(buf: &[SharedOutU8], utf16: &[u16]) -> EncodeIntoResult {
         if utf16.is_empty() || buf.is_empty() {
             return EncodeIntoResult::default();
         }
@@ -1722,7 +1722,7 @@ pub(crate) mod strings_impl {
     }
 
     pub fn copy_utf16_into_utf8_with_utf8_len(
-        buf: &[AtomicU8],
+        buf: &[SharedOutU8],
         input: WithUtf8Len<'_, u16>,
     ) -> EncodeIntoResult {
         let utf16 = input.slice();
@@ -1752,7 +1752,7 @@ pub(crate) mod strings_impl {
     /// `None` if `buf` may be too short, or if there is an unpaired surrogate.
     #[inline]
     pub(crate) fn copy_all_utf16_into_shared_utf8(
-        buf: &[AtomicU8],
+        buf: &[SharedOutU8],
         input: WithUtf8Len<'_, u16>,
     ) -> Option<EncodeIntoResult> {
         if input.utf8_len() > buf.len() {
@@ -1767,21 +1767,21 @@ pub(crate) mod strings_impl {
 
     /// As many of a few bytes as fit.
     #[inline]
-    pub(crate) fn store_bytes(to: &[AtomicU8], bytes: &[u8]) {
+    pub(crate) fn store_bytes(to: &[SharedOutU8], bytes: &[u8]) {
         for (to, &byte) in to.iter().zip(bytes) {
-            to.store(byte, Relaxed);
+            to.set(byte);
         }
     }
 
     /// Port of `copyLatin1IntoUTF8` — encode Latin-1 into a fixed-size UTF-8 buffer.
     #[inline]
     pub fn copy_latin1_into_utf8(buf: &mut [u8], latin1: &[u8]) -> EncodeIntoResult {
-        copy_latin1_into_shared_utf8(AtomicU8::from_mut_slice(buf), latin1)
+        copy_latin1_into_shared_utf8(Out::from(buf).into_shared(), latin1)
     }
 
     /// [`copy_latin1_into_utf8`] for the bytes of a JS buffer.
     #[inline]
-    pub fn copy_latin1_into_shared_utf8(buf: &[AtomicU8], latin1: &[u8]) -> EncodeIntoResult {
+    pub fn copy_latin1_into_shared_utf8(buf: &[SharedOutU8], latin1: &[u8]) -> EncodeIntoResult {
         if kernels::copy_few_ascii_to_shared(latin1, buf) {
             return EncodeIntoResult {
                 read: latin1.len(),
@@ -1801,7 +1801,10 @@ pub(crate) mod strings_impl {
         copy_latin1_into_shared_utf8_by_runs(buf, latin1)
     }
 
-    fn copy_latin1_into_shared_utf8_by_runs(buf: &[AtomicU8], latin1: &[u8]) -> EncodeIntoResult {
+    fn copy_latin1_into_shared_utf8_by_runs(
+        buf: &[SharedOutU8],
+        latin1: &[u8],
+    ) -> EncodeIntoResult {
         let (mut to, mut from) = (buf, latin1);
         loop {
             let copied = copy_ascii_prefix_to_shared(to, from);
@@ -1820,7 +1823,7 @@ pub(crate) mod strings_impl {
     }
 
     #[inline]
-    fn copy_ascii_prefix_to_shared(to: &[AtomicU8], from: &[u8]) -> usize {
+    fn copy_ascii_prefix_to_shared(to: &[SharedOutU8], from: &[u8]) -> usize {
         const MIN_LEN_FOR_DISPATCH: usize = 64;
         if from.len().min(to.len()) >= MIN_LEN_FOR_DISPATCH {
             return kernels::copy_ascii_prefix_to_shared(from, to);
@@ -1830,7 +1833,7 @@ pub(crate) mod strings_impl {
 
     /// Copies up to the first byte that is not ASCII or does not fit, and returns the count.
     pub fn copy_ascii_prefix(to: &mut [u8], from: &[u8]) -> usize {
-        copy_ascii_prefix_to_shared(AtomicU8::from_mut_slice(to), from)
+        copy_ascii_prefix_to_shared(Out::from(to).into_shared(), from)
     }
 
     /// Null-terminated variant of `to_utf8_from_latin1`. Returns `ZBox` so
@@ -2386,28 +2389,6 @@ pub mod ffi {
     pub use bun_opaque::ffi::{slice, slice_mut, wcslen, wstr_units};
 
     pub use bun_simd::SharedU8;
-    use core::sync::atomic::AtomicU8;
-
-    /// [`slice`] for bytes that other threads may write meanwhile, as they may those of any JS buffer.
-    ///
-    /// # Safety
-    /// `ptr` is valid for reading `len` initialized bytes for `'a`, or `len` is 0. No `&mut` covers them.
-    #[inline(always)]
-    pub unsafe fn shared_bytes<'a>(ptr: *const u8, len: usize) -> &'a [SharedU8] {
-        // SAFETY: the caller's. `AtomicU8` has the layout of `u8`, and `SharedU8` only loads from it.
-        SharedU8::from_slice(unsafe { slice(ptr.cast::<AtomicU8>(), len) })
-    }
-
-    /// The same for [`slice_mut`].
-    ///
-    /// # Safety
-    /// `ptr` is valid for writing `len` bytes for `'a`, or `len` is 0. No `&[u8]` or `&mut` covers
-    /// them. What is not initialized is not loaded.
-    #[inline(always)]
-    pub unsafe fn atomic_bytes<'a>(ptr: *mut u8, len: usize) -> &'a [AtomicU8] {
-        // SAFETY: the caller's. `AtomicU8` has the layout of `u8`.
-        unsafe { slice(ptr.cast(), len) }
-    }
 
     /// Borrow a NUL-terminated C string from an FFI pointer.
     ///

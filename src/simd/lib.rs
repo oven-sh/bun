@@ -46,7 +46,7 @@ pub use bun_simd_trusted::AtomicFn;
 pub use bun_simd_trusted::{Append, Out, Writer, extend_vec, spare_capacity};
 #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 pub use bun_simd_trusted::{Features, detected, if_supported};
-pub use bun_simd_trusted::{SharedU8, Target, opaque};
+pub use bun_simd_trusted::{SharedOutU8, SharedU8, Target, opaque};
 pub use dispatch::limit_to;
 pub use isa::Isa;
 pub use mask::Mask;

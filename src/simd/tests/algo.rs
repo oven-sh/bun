@@ -2,7 +2,7 @@
 #![forbid(unsafe_code)]
 mod common;
 
-use bun_simd::{Int, Matches, Out, SharedU8, SharedWriter, Sink, Source, extend_vec};
+use bun_simd::{Int, Matches, Out, SharedOutU8, SharedU8, SharedWriter, Sink, Source, extend_vec};
 use common::on_each_target;
 use std::cell::Cell;
 use std::fmt::Debug;
@@ -47,8 +47,17 @@ fn plain<T>(slice: &mut [T]) -> &[T] {
     slice
 }
 
-fn shared(slice: &mut [u8]) -> &[AtomicU8] {
-    AtomicU8::from_mut_slice(slice)
+fn shared(slice: &mut [u8]) -> &[SharedU8] {
+    in_place(slice).0
+}
+
+fn shared_out(slice: &mut [u8]) -> &[SharedOutU8] {
+    Out::from(slice).into_shared()
+}
+
+fn in_place(slice: &mut [u8]) -> (&[SharedU8], &[SharedOutU8]) {
+    let slice = AtomicU8::from_mut_slice(slice);
+    (SharedU8::from_slice(slice), SharedOutU8::from_slice(slice))
 }
 
 #[bun_simd::foreach_target]
@@ -283,14 +292,14 @@ mod simd {
                 from[start + at] = 0;
                 let (input, output) = (view(&mut from[range.clone()]), &mut to[range.clone()]);
                 let got =
-                    U8::map_to_shared_until(input, shared(output), |v| v + 1, |v| v.simd_eq(0));
+                    U8::map_to_shared_until(input, shared_out(output), |v| v + 1, |v| v.simd_eq(0));
                 assert_eq!(got, at);
                 assert!(output[..at].iter().all(|&byte| byte == 2));
                 output[..at].fill(7);
                 assert!(to[..start + len + U8::LEN].iter().all(|&byte| byte == 7));
                 let mut both = from[range.clone()].to_vec();
-                let view = shared(&mut both);
-                let got = U8::map_to_shared_until(view, view, |v| v + 1, |v| v.simd_eq(0));
+                let (input, output) = in_place(&mut both);
+                let got = U8::map_to_shared_until(input, output, |v| v + 1, |v| v.simd_eq(0));
                 assert_eq!((got, &both[at..]), (at, &from[start + at..start + len]));
                 assert!(both[..at].iter().all(|&byte| byte == 2));
                 from[start + at] = u8::from(at < len && at % 3 != 0);
@@ -306,7 +315,7 @@ mod simd {
             room[range.clone()].fill(0);
             for at in (0..range.len()).step_by(2) {
                 room[range.start + at..][..2].copy_from_slice(&[1, 2]);
-                let bytes = SharedU8::from_slice(shared(&mut room[range.clone()]));
+                let bytes = shared(&mut room[range.clone()]);
                 let pairs: &[[_; 2]] = black_box(bytes.as_chunks().0);
                 assert_eq!(pairs[at / 2].get(), 0x201);
                 assert_eq!(U16::position(pairs, test), Some(at / 2));
@@ -359,22 +368,22 @@ mod simd {
             U8::map_in_place(copy(from, to), |v| v + 1)
         });
         maps(bytes(), |from, to| {
-            U8::map_to_shared(from, shared(to), |v| v + 1)
+            U8::map_to_shared(from, shared_out(to), |v| v + 1)
         });
         maps(bytes(), |from, to| {
-            let both = shared(copy(from, to));
-            U8::map_to_shared(both, both, |v| v + 1);
+            let (from, to) = in_place(copy(from, to));
+            U8::map_to_shared(from, to, |v| v + 1);
         });
         maps(bytes(), |from, to| {
             append_plus_one(from, &mut Out::from(to).into_writer())
         });
         maps(bytes(), |from, to| {
-            append_plus_one(from, &mut SharedWriter::new(shared(to)))
+            append_plus_one(from, &mut SharedWriter::new(shared_out(to)))
         });
         stops(alignments, plain);
         stops(alignments, shared);
         maps(ranges::<u8>(16, alignments), |from, to| {
-            x128::U8::map_to_shared(from, shared(to), |v| v + 1)
+            x128::U8::map_to_shared(from, shared_out(to), |v| v + 1)
         });
         plain_maps::<u8, 16>(alignments);
         plain_maps::<u8, 32>(alignments);
@@ -466,8 +475,8 @@ mod simd {
             let [mut a, mut b, mut c] = [vec![0; len], from.clone(), from.clone()];
             U8::map(&from, a[..].as_mut().into(), reverse);
             U8::map_in_place(&mut b, reverse);
-            let both = shared(&mut c);
-            U8::map_to_shared(both, both, reverse);
+            let (from, to) = in_place(&mut c);
+            U8::map_to_shared(from, to, reverse);
             assert_eq!([&a, &b, &c], [&want; 3]);
         }
     }
@@ -518,24 +527,24 @@ mod simd {
         let [mut d, mut e, mut f, mut g] = [(); 4].map(|()| from.to_vec());
         U8::map_in_place(&mut d, plus_one);
         U8::zip_in_place(&mut e, from, |a, b| a + a - b + 1);
-        U8::map_to_shared(from, shared(&mut f), plus_one);
-        append_plus_one(from, &mut SharedWriter::new(shared(&mut g)));
+        U8::map_to_shared(from, shared_out(&mut f), plus_one);
+        append_plus_one(from, &mut SharedWriter::new(shared_out(&mut g)));
         assert_eq!([&a, &b, &c, &d, &e, &f, &g], [&want; 7]);
         let stop = from.last().map_or(0, |last| last / 2);
-        let copied = U8::map_to_shared_until(from, shared(&mut g), |v| v, |v| v.simd_eq(stop));
+        let copied = U8::map_to_shared_until(from, shared_out(&mut g), |v| v, |v| v.simd_eq(stop));
         assert_eq!(
             copied,
             from.iter().take_while(|&&byte| byte != stop).count()
         );
         assert_eq!(g, [&from[..copied], &want[copied..]].concat());
-        let (slice, test) = (shared(from), |v: U8| v.simd_eq(255));
+        let ((slice, to), test) = (in_place(from), |v: U8| v.simd_eq(255));
         assert_eq!(U8::position(slice, test), None);
         assert_eq!(U8::rposition(slice, test), None);
         assert_eq!(U8::count(slice, test), 0);
         let both = |a, b| test(a & b);
         assert!(U8::zip_find_map(slice, slice, both, Some).is_none());
         assert!(U8::zip_rfind_map(slice, slice, both, Some).is_none());
-        U8::map_to_shared(slice, slice, |v| v - 1);
+        U8::map_to_shared(slice, to, |v| v - 1);
         U8::map_in_place(from, |v| v + 2);
         assert_eq!(from, want);
     }
@@ -544,17 +553,17 @@ mod simd {
     #[export]
     pub fn matches_that_go_once_they_are_seen() {
         let bytes = &mut [0; 13 * U8::LEN];
-        let (slice, last) = (shared(bytes), 13 * U8::LEN - 1);
+        let ((slice, to), last) = (in_place(bytes), 13 * U8::LEN - 1);
         for (goes, stays) in (0..=last).flat_map(|at| [(at, last / 3), (at, last - last / 3)]) {
             let test = |v: U8| {
                 if v.simd_eq(1).any() {
-                    slice[goes].store(0, Relaxed);
+                    to[goes].set(0);
                 }
                 v.simd_ne(0)
             };
             let check = |or: usize, run: &dyn Fn() -> Option<usize>| {
-                slice[goes].store(1, Relaxed);
-                slice[stays].store(2, Relaxed);
+                to[goes].set(1);
+                to[stays].set(2);
                 assert!([Some(or), Some(stays)].contains(&run()));
             };
             check(goes.min(stays), &|| U8::position(slice, test));
@@ -567,13 +576,13 @@ mod simd {
                 check(stays, &|| U8::zip_find_map_near(slice, slice, test, first));
                 check(stays, &|| U8::zip_rfind_map(slice, slice, test, last));
             }
-            slice[goes].store(0, Relaxed);
-            slice[stays].store(0, Relaxed);
+            to[goes].set(0);
+            to[stays].set(0);
         }
     }
 
     #[export]
-    pub fn firsts_lasts_and_count(slice: &[AtomicU8], stays: usize) -> ([Option<usize>; 5], usize) {
+    pub fn firsts_lasts_and_count(slice: &[SharedU8], stays: usize) -> ([Option<usize>; 5], usize) {
         let (test, both) = (|v: U8| v.simd_eq(1), |a: U8, b: U8| (a & b).simd_eq(1));
         let found = [
             U8::position(slice, test),
@@ -587,7 +596,8 @@ mod simd {
 
     #[export]
     pub fn swap_pairs(bytes: &[AtomicU8]) {
-        U8::map_to_shared(bytes, bytes, U8::swap_pairs);
+        let (from, to) = (SharedU8::from_slice(bytes), SharedOutU8::from_slice(bytes));
+        U8::map_to_shared(from, to, U8::swap_pairs);
     }
 
     #[export]
@@ -601,7 +611,7 @@ mod simd {
     }
 
     #[export]
-    pub fn append_a_whole_vector(to: &[AtomicU8]) {
+    pub fn append_a_whole_vector(to: &[SharedOutU8]) {
         U8::zero().append_partial(&mut SharedWriter::new(to), U8::LEN);
     }
 }
@@ -647,7 +657,7 @@ fn each_loop_once() {
 #[should_panic]
 #[cfg_attr(miri, ignore = "compares only lengths")]
 fn append_a_whole_vector() {
-    simd::append_a_whole_vector(shared(&mut [0; 100]));
+    simd::append_a_whole_vector(shared_out(&mut [0; 100]));
 }
 
 #[test]
@@ -737,7 +747,7 @@ fn searches_with_a_concurrent_writer() {
                     }
                 });
                 let found: Vec<_> = (0..rounds)
-                    .map(|_| simd::firsts_lasts_and_count(&slice, stays))
+                    .map(|_| simd::firsts_lasts_and_count(SharedU8::from_slice(&slice), stays))
                     .collect();
                 is_done.store(true, Relaxed);
                 found

@@ -129,22 +129,15 @@ const fnHeadRe = /^\s*pub(?:\([^)]*\))?\s+(unsafe\s+)?fn\s+([A-Za-z_][A-Za-z0-9_
 function ptrify(ty: string): { cTy: string; deref: (n: string) => string; extraLen?: boolean } {
   ty = ty.trim();
   // `&[T]` — C passes `(const T* name, size_t name_len)`; the thunk rebuilds
-  // the slice (null/0 → empty). The bytes of a JS buffer are `&[SharedU8]` to
-  // read and `&[AtomicU8]` to write.
+  // the slice (null/0 → empty).
   const slice = /^&\s*\[\s*([^;]+?)\s*\]$/.exec(ty);
   if (slice) {
     const elem = slice[1].trim();
-    const [cTy, rebuild] =
-      elem === "SharedU8"
-        ? ["*const u8", "shared_bytes"]
-        : elem === "AtomicU8"
-          ? ["*mut u8", "atomic_bytes"]
-          : [`*const ${elem}`, "slice"];
     return {
-      cTy,
+      cTy: `*const ${elem}`,
       extraLen: true,
       deref: n =>
-        `{\n        // SAFETY: C++ caller passes \`${n}_len\` live elements at \`${n}\` (or 0).\n        unsafe { ::bun_core::ffi::${rebuild}(${n}, ${n}_len) }\n    }`,
+        `{\n        // SAFETY: C++ caller passes \`${n}_len\` live elements at \`${n}\` (or 0).\n        unsafe { ::bun_core::ffi::slice(${n}, ${n}_len) }\n    }`,
     };
   }
   // `&mut [MaybeUninit<T>]` — room for a result: `(T* name, size_t name_len)`.
@@ -505,6 +498,9 @@ const importCandidates: Array<[string, string]> = [
   ["core::ffi", "c_char"],
   ["core::ffi", "c_int"],
   ["core::ffi", "c_void"],
+  ["core::sync::atomic", "AtomicU8"],
+  ["bun_simd", "SharedU8"],
+  ["bun_simd", "SharedOutU8"],
   ["bun_jsc", "host_fn"],
   ["bun_jsc", "JSGlobalObject"],
   ["bun_jsc", "JSValue"],

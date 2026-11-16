@@ -1900,6 +1900,9 @@ version = "0.0.0"
 [[package]]
 name = "bun_simdutf_sys"
 version = "0.0.0"
+dependencies = [
+ "bun_simd",
+]
 
 [[package]]
 name = "bun_sort_by_number"

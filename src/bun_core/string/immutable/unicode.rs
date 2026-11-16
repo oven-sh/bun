@@ -4,7 +4,7 @@ use crate::string::immutable::{
 };
 use crate::strings_impl::{copy_all_utf16_into_shared_utf8, store_bytes};
 use bun_alloc::AllocError;
-use core::sync::atomic::AtomicU8;
+use bun_simd::SharedOutU8;
 
 use crate::string::immutable::CodePoint; // i32
 /// Borrow `wbuf[..len]` as `&WStr` (NUL at `wbuf[len]`). Local copy of the
@@ -943,7 +943,7 @@ fn cp1252_to_codepoint_bytes_assume_not_ascii16(char: u32) -> u16 {
 /// expect(buffer[0]).toBe(0xc8);
 /// ```
 pub fn copy_utf16_into_utf8_impl<const ALLOW_TRUNCATED_UTF8_SEQUENCE: bool>(
-    buf: &[AtomicU8],
+    buf: &[SharedOutU8],
     utf16: &[u16],
 ) -> EncodeIntoResult {
     if utf16.is_empty() {

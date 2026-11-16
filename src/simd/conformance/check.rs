@@ -2,7 +2,7 @@
 use crate::pairs::{self, Pairs};
 use crate::room::Room;
 use crate::{Random, columns, highway, shared, write_line};
-use bun_simd::Out;
+use bun_simd::{Out, SharedOutU8};
 use bun_simd_kernels::{self as rust, ColumnsFilled, Filter, MappingsState};
 use core::sync::atomic::AtomicU8;
 
@@ -322,7 +322,7 @@ impl Round<'_> {
         from: &[T],
         highway: impl Fn(&[T], &mut [u8]) -> usize,
         rust: Option<for<'a> fn(&[T], Out<'a, u8>) -> &'a mut [u8]>,
-        to_shared: fn(&[T], &[AtomicU8]) -> usize,
+        to_shared: fn(&[T], &[SharedOutU8]) -> usize,
     ) {
         let ([a, b, ..], mut want) = (&mut *self.rooms, vec![0; from.len()]);
         let (len, ones) = (highway(from, &mut want), vec![0xFF; from.len()]);
@@ -330,7 +330,7 @@ impl Round<'_> {
         let (from, got) = (a.copy_of(from, self.offset), b.copy_of(&ones, self.offset));
         let is_same = rust.is_none_or(|rust| len == rust(from, got.into()).len() && want == got);
         got.fill(0xFF);
-        let got_len = to_shared(from, AtomicU8::from_mut_slice(got));
+        let got_len = to_shared(from, Out::from(&mut *got).into_shared());
         self.failures
             .unless(is_same && len == got_len && want == got, name);
     }

@@ -1,8 +1,7 @@
 //! The definition of the ops that have intrinsics. Debug builds panic on input for which targets differ.
-use crate::{BitIndices, Int, Out, SharedU8};
+use crate::{BitIndices, Int, Out, SharedOutU8, SharedU8};
 use core::array;
 use core::simd::{ToBytes, prelude::*};
-use core::sync::atomic::{AtomicU8, Ordering::Relaxed};
 pub(crate) use masked::*;
 
 /// Runs anywhere, and takes the paths of the targets whose vectors have `BYTES` bytes.
@@ -136,10 +135,10 @@ pub(crate) mod masked {
 
     /// As many of the first or the last lanes as fit.
     #[inline(always)]
-    pub(crate) fn store_shared_masked<const FROM_LAST: bool>(v: u8x64, to: &[AtomicU8]) {
+    pub(crate) fn store_shared_masked<const FROM_LAST: bool>(v: u8x64, to: &[SharedOutU8]) {
         let skipped = if FROM_LAST { 64 - to.len().min(64) } else { 0 };
         for (to, &byte) in to.iter().zip(&v[skipped..]) {
-            to.store(byte, Relaxed);
+            to.set(byte);
         }
     }
 
@@ -171,7 +170,7 @@ pub(crate) fn load_shared<A, const K: usize, const AT: usize>(from: &[SharedU8])
 #[inline(always)]
 pub(crate) fn store_shared<const N: usize, const K: usize, const AT: usize>(
     v: Simd<u8, N>,
-    to: &[AtomicU8],
+    to: &[SharedOutU8],
 ) {
     store_shared_masked::<false>(v.resize(0), &to[AT * N..][..N]);
 }

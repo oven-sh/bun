@@ -1,7 +1,7 @@
 //! Each access touches its bytes and no others.
 #![cfg(all(unix, not(miri), any(target_arch = "x86_64", target_arch = "aarch64")))]
 #![feature(portable_simd)]
-use bun_simd_trusted::{Features, SharedU8, detected, shared::*};
+use bun_simd_trusted::{Features, SharedOutU8, SharedU8, detected, shared::*};
 use core::simd::Simd;
 use core::sync::atomic::{AtomicU8, Ordering::Relaxed};
 
@@ -50,7 +50,7 @@ fn group<B, const N: usize>(bytes: &[B]) -> &Group<B, N> {
 fn whole<T: AsBytes<N>, const N: usize>(
     feature: &str,
     loads: [unsafe fn(&Group<SharedU8, N>) -> T; 3],
-    stores: [unsafe fn(T, &Group<AtomicU8, N>); 2],
+    stores: [unsafe fn(T, &Group<SharedOutU8, N>); 2],
 ) {
     if !detected().contains(Features::named(&[feature])) {
         return;
@@ -59,7 +59,7 @@ fn whole<T: AsBytes<N>, const N: usize>(
     for start in [0, 1, 77, ROOM - 3 * N - 1, ROOM - 3 * N] {
         let (from, to) = (
             group(SharedU8::from_slice(&room[start..])),
-            group(&room[start..]),
+            group(SharedOutU8::from_slice(&room[start..])),
         );
         reset(room);
         // SAFETY: the CPU has the feature.
@@ -167,7 +167,7 @@ fn masked<const N: usize>(
     feature: &str,
     are_last: bool,
     load: unsafe fn(&[SharedU8]) -> Simd<u8, N>,
-    store: unsafe fn(Simd<u8, N>, &[AtomicU8]),
+    store: unsafe fn(Simd<u8, N>, &[SharedOutU8]),
 ) {
     if !detected().contains(Features::named(&[feature])) {
         return;
@@ -175,8 +175,8 @@ fn masked<const N: usize>(
     let room = fenced();
     for len in 0..N + 6 {
         for start in [0, 77, ROOM - len] {
-            let to = &room[start..start + len];
-            let text = SharedU8::from_slice(to);
+            let bytes = &room[start..start + len];
+            let (text, to) = (SharedU8::from_slice(bytes), SharedOutU8::from_slice(bytes));
             reset(room);
             let skipped = if are_last { N - len.min(N) } else { 0 };
             let want = |byte: fn(usize) -> u8| -> [u8; N] {

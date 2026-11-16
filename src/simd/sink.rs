@@ -1,7 +1,6 @@
 //! What bytes are appended to.
-use crate::{Int, Out, Writer};
+use crate::{Int, Out, SharedOutU8, Writer};
 use bun_simd_trusted::UNROLL;
-use core::sync::atomic::AtomicU8;
 
 /// A `Writer` of bytes, to plain or to shared memory. What follows the bytes is left as it is.
 pub trait Sink {
@@ -13,7 +12,7 @@ pub trait Sink {
     fn append_either(
         &mut self,
         plain: impl for<'a> FnOnce(Out<'a, u8>) -> &'a mut [u8],
-        shared: impl FnOnce(&[AtomicU8]) -> usize,
+        shared: impl FnOnce(&[SharedOutU8]) -> usize,
     );
 }
 
@@ -32,7 +31,7 @@ impl Sink for Writer<'_, u8> {
     fn append_either(
         &mut self,
         plain: impl for<'a> FnOnce(Out<'a, u8>) -> &'a mut [u8],
-        _: impl FnOnce(&[AtomicU8]) -> usize,
+        _: impl FnOnce(&[SharedOutU8]) -> usize,
     ) {
         self.append(plain);
     }
@@ -40,13 +39,13 @@ impl Sink for Writer<'_, u8> {
 
 /// Fills shared memory from the start.
 pub struct SharedWriter<'a> {
-    rest: &'a [AtomicU8],
+    rest: &'a [SharedOutU8],
     len: usize,
 }
 
 impl<'a> SharedWriter<'a> {
     #[inline(always)]
-    pub fn new(rest: &'a [AtomicU8]) -> Self {
+    pub fn new(rest: &'a [SharedOutU8]) -> Self {
         Self { rest, len: 0 }
     }
 }
@@ -66,7 +65,7 @@ impl Sink for SharedWriter<'_> {
     fn append_either(
         &mut self,
         _: impl for<'a> FnOnce(Out<'a, u8>) -> &'a mut [u8],
-        shared: impl FnOnce(&[AtomicU8]) -> usize,
+        shared: impl FnOnce(&[SharedOutU8]) -> usize,
     ) {
         let added = shared(self.rest).min(self.rest.len());
         (self.rest, self.len) = (&self.rest[added..], self.len + added);
@@ -114,7 +113,7 @@ mod simd {
 
         #[inline(always)]
         fn fill_chunks_shared<A>(
-            to: &[AtomicU8],
+            to: &[SharedOutU8],
             from: &[A],
             f: &impl Fn(&[A; N]) -> Option<Self>,
         ) -> usize {
@@ -135,7 +134,7 @@ mod simd {
 
         #[inline(always)]
         fn fill_each_shared<A>(
-            to: &[[AtomicU8; N]],
+            to: &[[SharedOutU8; N]],
             from: &[[A; N]],
             filled: &mut usize,
             f: &impl Fn(&[A; N]) -> Option<Self>,

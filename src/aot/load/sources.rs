@@ -136,6 +136,19 @@ pub(crate) fn parsed_source<'s>(files: &Files<'s>, file: FileId) -> Option<&'s P
     files.host_payload(file)?.downcast_ref::<ParsedSource>()
 }
 
+/// `f.constructor(text)` evaluates too, where a file names an evaluator only to test it.
+pub(crate) fn may_evaluate_text(files: &Files<'_>) -> bool {
+    let sources = || {
+        let compiled = files.compiled_files().iter();
+        compiled.filter_map(|&file| Some((file, parsed_source(files, file)?)))
+    };
+    sources().any(|(_, source)| source.builtins.evaluator_comes_out())
+        || (sources().any(|(_, source)| source.builtins.mentions_evaluator())
+            && sources().any(|(file, source)| {
+                source.builtins.may_call_unnamed_evaluator(files.hir(file))
+            }))
+}
+
 pub(crate) fn parsed_source_in<'f>(
     files: &'f dyn CodeView<'_>,
     file: FileId,

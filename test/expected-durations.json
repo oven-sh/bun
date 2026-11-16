@@ -16,6 +16,10 @@
       "windows-aarch64": "windows-aarch64-11-test-bun"
     }
   },
+  "aot/a-file-that-only-asks-about-evaluators-is-built-where-code-from-disk-is-allowed.test.ts": {
+    "default": 4800,
+    "asan": 19200
+  },
   "aot/type-errors-that-several-projects-are-asked-about.test.ts": {
     "default": 30000,
     "asan": 120000

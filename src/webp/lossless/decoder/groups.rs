@@ -1,5 +1,7 @@
 //! The five prefix codes that a pixel is read with, and which five are for which tile of the image.
 
+use core::hint::select_unpredictable;
+
 use super::Rgba;
 use super::bit_reader::BitReader;
 use super::huffman::{Code, CodeLengths, Entry};
@@ -125,8 +127,9 @@ impl Group {
 pub(super) struct Groups {
     groups: Vec<Group>,
     second_tables: Vec<Entry>,
-    /// For each tile the index of its group.
-    tiles: Vec<u16>,
+    /// For each tile the index of its group, then up to where in a row of the image that goes on. Both have the upper
+    /// byte first.
+    tiles: Vec<[u8; 4]>,
     tiles_per_row: usize,
     tile_bits: u32,
 }
@@ -134,7 +137,7 @@ pub(super) struct Groups {
 impl Groups {
     /// One for all of the image.
     pub(super) fn read_one(reader: &mut BitReader, cache_bits: u32) -> Result<Self> {
-        let mut tiles = vec::filled(0, 1)?;
+        let mut tiles = vec::filled([0; 4], 1)?;
         let (groups, second_tables) = read_groups(reader, cache_bits, &mut tiles)?;
         Ok(Self {
             groups,
@@ -154,10 +157,17 @@ impl Groups {
     ) -> Result<Self> {
         let tile_bits = MIN_TILE_BITS + reader.read(TILE_BITS_BITS);
         let tiles_per_row = subsampled(width, tile_bits);
-        let image = pixels::read_subimage(reader, tiles_per_row, subsampled(height, tile_bits))?;
-        let mut tiles = vec::with_room(image.len())?;
-        tiles.extend(image.iter().map(|&[r, g, ..]| u16::from_be_bytes([r, g])));
-        drop(image);
+        let rows = subsampled(height, tile_bits);
+        let mut tiles = pixels::read_subimage(reader, tiles_per_row, rows)?;
+        for row in tiles.chunks_exact_mut(tiles_per_row.max(1)) {
+            let (mut end, mut next_group) = (0, usize::MAX);
+            for (column, tile) in row.iter_mut().enumerate().rev() {
+                let own_end = width.min((column + 1) << tile_bits);
+                end = select_unpredictable(group_of(*tile) == next_group, end, own_end);
+                next_group = group_of(*tile);
+                tile.set_chunk(2, (end as u16).to_be_bytes());
+            }
+        }
         let (groups, second_tables) = read_groups(reader, cache_bits, &mut tiles)?;
         Ok(Self {
             groups,
@@ -172,34 +182,40 @@ impl Groups {
     #[inline(always)]
     pub(super) fn at(&self, x: usize, y: usize, width: usize) -> Result<(&Group, &[Entry], usize)> {
         let (column, row) = (x >> self.tile_bits, y >> self.tile_bits);
-        let index = self.tiles.get(row * self.tiles_per_row + column);
-        let group = index.and_then(|&index| self.groups.get(usize::from(index)));
+        let tile = self.tiles.get(row * self.tiles_per_row + column);
+        let found = tile.and_then(|it| self.groups.get(group_of(*it)).zip(Some(it)));
+        let (group, &[.., upper, lower]) = found.ok_or(Error::Internal)?;
         let end = match self.tiles_per_row {
             1 => (((row + 1) << self.tile_bits) - y) * width,
-            _ => width.min((column + 1) << self.tile_bits),
+            _ => u16::from_be_bytes([upper, lower]).into(),
         };
-        let group = group.ok_or(Error::Internal)?;
         let tables = self.second_tables.part(group.second_tables..);
         Ok((group, tables, end - x))
     }
+}
+
+#[inline(always)]
+fn group_of([upper, lower, ..]: [u8; 4]) -> usize {
+    u16::from_be_bytes([upper, lower]).into()
 }
 
 /// Keeps the groups that a tile refers to, and changes `tiles` to their indices among those.
 fn read_groups(
     reader: &mut BitReader,
     cache_bits: u32,
-    tiles: &mut [u16],
+    tiles: &mut [[u8; 4]],
 ) -> Result<(Vec<Group>, Vec<Entry>)> {
-    let stored = tiles.iter().max().map_or(0, |&max| usize::from(max) + 1);
+    let stored = tiles.iter().map(|&it| group_of(it) + 1).max().unwrap_or(0);
     let mut kept_index: Vec<Option<u16>> = vec::filled(None, stored)?;
     for &tile in &*tiles {
-        kept_index.set(tile.into(), Some(0));
+        kept_index.set(group_of(tile), Some(0));
     }
     for (index, kept) in (0..=u16::MAX).zip(kept_index.iter_mut().flatten()) {
         *kept = index;
     }
     for tile in tiles {
-        *tile = known(kept_index.value((*tile).into())).unwrap_or_default();
+        let index = known(kept_index.value(group_of(*tile))).unwrap_or_default();
+        tile.set_chunk(0, index.to_be_bytes());
     }
 
     let cache_len = if cache_bits > 0 { 1 << cache_bits } else { 0 };

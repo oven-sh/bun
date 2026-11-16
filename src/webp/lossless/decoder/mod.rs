@@ -178,7 +178,7 @@ impl<'a> Stream<'a> {
         bundle: impl Fn(&T) -> u8,
     ) -> Result<Vec<Rgba>> {
         let mut pixels = vec::with_room(self.width * self.height + MAX_BUNDLE_LEN)?;
-        if self.coded_width == self.width {
+        if self.coded_width << lookup.bundle_bits == self.width {
             lookup.append(coded, bundle, &mut pixels);
             return Ok(pixels);
         }

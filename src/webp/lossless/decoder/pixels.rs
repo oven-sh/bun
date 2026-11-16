@@ -1,6 +1,6 @@
 //! Entropy-coded pixels: literals, copies of earlier pixels and colors from the cache.
 
-use core::hint::{cold_path, select_unpredictable};
+use core::hint::cold_path;
 use core::ops::Range;
 
 use super::Rgba;
@@ -18,6 +18,8 @@ use crate::vec;
 const MAX_COPY_LEN: usize = 4096;
 /// Short copies are made this many pixels at a time, whether or not that is too many.
 const COPY_STEP: usize = 8;
+/// Among so few it does not pay to look for steps that are all like the pixel before.
+const FEW_STEPS: usize = 8;
 /// How many pixels are read before the image grows again.
 const GROWTH: usize = 8192;
 
@@ -144,6 +146,20 @@ struct ColorCache {
     spare_bits: u32,
 }
 
+impl ColorCache {
+    /// All but the first of `pixels`, which is there to compare with.
+    #[inline(never)]
+    fn remember_steps(&mut self, pixels: &[Rgba]) {
+        let (mut last, steps) = (pixels.value(0), pixels.as_rchunks().1);
+        for step in steps {
+            if steps.len() <= FEW_STEPS || *step != [last; COPY_STEP] {
+                step.iter().for_each(|&it| self.remember(it));
+                [.., last] = *step;
+            }
+        }
+    }
+}
+
 impl Cache<Rgba> for ColorCache {
     #[inline(always)]
     fn remember(&mut self, pixel: Rgba) {
@@ -154,18 +170,13 @@ impl Cache<Rgba> for ColorCache {
 
     #[inline(always)]
     fn remember_last(&mut self, pixels: &[Rgba], count: usize) {
-        if count < COPY_STEP {
-            let last = pixels.part(pixels.len() - count..);
-            return last.iter().for_each(|&it| self.remember(it));
+        if count >= COPY_STEP {
+            // A few more in front of them change nothing.
+            let start = pixels.len() - count.next_multiple_of(COPY_STEP);
+            return self.remember_steps(pixels.part(start - 1..));
         }
-        // A few more in front of them change nothing.
-        let start = pixels.len() - count.next_multiple_of(COPY_STEP);
-        let mut last = pixels.value(start - 1);
-        for step in pixels.part(start..).as_chunks().0 {
-            if *step != [last; COPY_STEP] {
-                step.iter().for_each(|&it| self.remember(it));
-                [.., last] = *step;
-            }
+        for &pixel in pixels.part(pixels.len() - count..) {
+            self.remember(pixel);
         }
     }
 
@@ -267,6 +278,8 @@ fn read_run<P: Pixel>(
         } else if let Some(key) = symbol.checked_sub(LITERAL_CODES + LENGTH_CODES) {
             cache.recall(key)
         } else {
+            // Not rare, but the registers are better spent on the rest of the loop.
+            cold_path();
             let count = read_prefixed(symbol - LITERAL_CODES, reader);
             let prefix = group.distance.read_byte(tables, reader) as usize;
             reader.ensure(18 + ROOT_BITS);
@@ -285,21 +298,20 @@ fn read_run<P: Pixel>(
 /// What a distance code stands for.
 #[inline(always)]
 fn distance(code: usize, width: usize) -> usize {
-    let (left, up) = *NEIGHBORS.at((code - 1).min(NEIGHBORS.len() - 1));
-    let neighbor = i32::from(up) * width as i32 + i32::from(left);
-    select_unpredictable(
-        code > NEIGHBORS.len(),
-        code.wrapping_sub(NEIGHBORS.len()),
-        neighbor.max(1) as usize,
-    )
+    match NEIGHBORS.get(code - 1) {
+        Some(&(left, up)) => (i32::from(up) * width as i32 + i32::from(left)).max(1) as usize,
+        None => code - NEIGHBORS.len(),
+    }
 }
 
 /// A length or a distance code, 1 or more, from its prefix and the extra bits.
 #[inline(always)]
 fn read_prefixed(symbol: usize, reader: &mut BitReader) -> usize {
-    let extra_bits = (symbol as u32).saturating_sub(2) / 2;
-    let first = select_unpredictable(symbol < 2, symbol, (2 + symbol % 2) << extra_bits);
-    first + reader.take(extra_bits) as usize + 1
+    if symbol < 4 {
+        return symbol + 1;
+    }
+    let extra_bits = (symbol as u32 - 2) / 2;
+    ((2 + symbol % 2) << extra_bits) + reader.take(extra_bits) as usize + 1
 }
 
 /// `count` pixels from `distance` back to `at`, which may repeat what it has just written. Up to `COPY_STEP` more

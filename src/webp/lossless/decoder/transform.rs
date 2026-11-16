@@ -1,5 +1,7 @@
 //! What was done to the pixels to make them compress better, and how it is undone.
 
+use core::array;
+
 use bun_highway::webp::{undo_cross_color, undo_prediction};
 
 use super::Rgba;
@@ -10,7 +12,7 @@ use crate::error::Result;
 use crate::lossless::{
     BLACK, MAX_PALETTE_LEN, MIN_TILE_BITS, TILE_BITS_BITS, TransformType, bundle_bits, subsampled,
 };
-use crate::slice::{self, known};
+use crate::slice::{self, InBounds, known};
 use crate::vec;
 
 pub(crate) const MAX_BUNDLE_LEN: usize = 8;
@@ -63,7 +65,11 @@ impl Transform {
                     undo_cross_color(row, along, tiles.bits);
                 }
             }
-            Self::SubtractGreen => add_green(rows),
+            Self::SubtractGreen => {
+                let (steps, rest) = rows.as_chunks_mut::<16>();
+                steps.iter_mut().for_each(add_green);
+                rest.iter_mut().map(array::from_mut).for_each(add_green);
+            }
             Self::ColorIndexing(palette) => {
                 for pixel in rows {
                     let [_, index, ..] = *pixel;
@@ -151,10 +157,15 @@ impl Palette {
         let bundle_bits = if width == 1 { 0 } else { self.bundle_bits };
         let per_byte = 1 << bundle_bits;
         let index_bits = 8 >> self.bundle_bits;
-        let mut table = vec::with_room(256 * per_byte)?;
-        for byte in 0..256usize {
-            let index = |i| (byte >> (i * index_bits)) & ((1 << index_bits) - 1);
-            table.extend((0..per_byte).map(|i| keep(*self.colors.at(index(i)))));
+        let first = |byte: usize| keep(*self.colors.at(byte & ((1 << index_bits) - 1)));
+        let mut table = vec::filled(first(0), 256 * per_byte + MAX_BUNDLE_LEN)?;
+        for byte in 1..256 {
+            table.set(byte * per_byte, first(byte));
+            if per_byte > 1 {
+                // The other indices are those of a lower byte. What is too much is overwritten.
+                let others: [_; MAX_BUNDLE_LEN] = table.chunk((byte >> index_bits) * per_byte);
+                table.set_chunk(byte * per_byte + 1, others);
+            }
         }
         Ok(Lookup { table, bundle_bits })
     }
@@ -163,7 +174,7 @@ impl Palette {
 /// For each byte, the colors that the indices in it stand for.
 pub(super) struct Lookup<T> {
     table: Vec<T>,
-    bundle_bits: u32,
+    pub(super) bundle_bits: u32,
 }
 
 impl<T: Copy> Lookup<T> {
@@ -190,19 +201,20 @@ impl<T: Copy> Lookup<T> {
     }
 }
 
-fn add_green(row: &mut [Rgba]) {
-    for pixel in row {
-        let rgba = u32::from_le_bytes(*pixel);
-        let green = (rgba >> 8) & 0xff;
-        let red_blue = (rgba & 0x00ff_00ff) + (green << 16 | green);
-        *pixel = (rgba & 0xff00_ff00 | red_blue & 0x00ff_00ff).to_le_bytes();
+/// In the form, and for the `N` of 16, that the compiler makes additions of vectors of bytes of.
+#[inline(always)]
+fn add_green<const N: usize>(pixels: &mut [Rgba; N]) {
+    let greens = pixels.map(|[_, green, ..]| [green, 0, green, 0]);
+    let bytes = pixels.as_flattened_mut().iter_mut();
+    for (byte, green) in bytes.zip(greens.as_flattened()) {
+        *byte = byte.wrapping_add(*green);
     }
 }
 
 /// Adds to each pixel the one before it, channel by channel.
 fn add_up(pixels: &mut [Rgba], mut before: Rgba) {
     for pixel in pixels {
-        before = core::array::from_fn(|i| pixel.at(i).wrapping_add(*before.at(i)));
+        before = array::from_fn(|i| pixel.at(i).wrapping_add(*before.at(i)));
         *pixel = before;
     }
 }

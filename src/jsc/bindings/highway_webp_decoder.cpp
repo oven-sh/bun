@@ -625,33 +625,35 @@ static HWY_INLINE void AddToAll(uint8_t* HWY_RESTRICT row, size_t at, size_t end
             hn::StoreU(hn::Add(hn::LoadU(d, row + at), predict(d, at)), d, row + at);
     };
     add(hn::CappedTag<uint8_t, 32>());
+    if constexpr (HWY_MAX_BYTES > 16) add(D16());
     add(DPixel());
 }
 
-static HWY_INLINE hn::Vec<D16> Repeated(VPixel pixel)
+template<int kPixel, class V>
+static HWY_INLINE hn::Vec<D16> Repeated(V pixels)
 {
-    const hn::Repartition<uint32_t, D16> pixels;
-    return hn::BitCast(D16(), hn::Broadcast<0>(hn::ResizeBitCast(pixels, pixel)));
+    return hn::BitCast(D16(), hn::Broadcast<kPixel>(hn::ResizeBitCast(hn::Repartition<uint32_t, D16>(), pixels)));
 }
 
-// Four pixels, each predicted to be like the one to its left. Returns the last.
-static HWY_INLINE VPixel AddLeftToFour(uint8_t* HWY_RESTRICT pixels, VPixel left)
+// The first of four pixels, the sum of the first two and so on.
+static HWY_INLINE hn::Vec<D16> RunningSums(const uint8_t* HWY_RESTRICT pixels)
 {
     const D16 d;
-    auto sum = hn::LoadU(d, pixels);
-    sum = hn::Add(sum, hn::ShiftLeftBytes<4>(d, sum));
-    sum = hn::Add(sum, hn::ShiftLeftBytes<8>(d, sum));
-    sum = hn::Add(sum, Repeated(left));
-    hn::StoreU(sum, d, pixels);
-    return hn::ResizeBitCast(DPixel(), hn::ShiftRightBytes<12>(d, sum));
+    auto sums = hn::LoadU(d, pixels);
+    sums = hn::Add(sums, hn::ShiftLeftBytes<4>(d, sums));
+    return hn::Add(sums, hn::ShiftLeftBytes<8>(d, sums));
 }
 
 static HWY_INLINE void AddLeft(uint8_t* HWY_RESTRICT row, size_t at, size_t end)
 {
     const DPixel d;
-    VPixel left = hn::LoadU(d, row + at - 4);
-    for (; at + 16 <= end; at += 16)
-        left = AddLeftToFour(row + at, left);
+    auto lefts = Repeated<0>(hn::LoadU(d, row + at - 4));
+    for (; at + 16 <= end; at += 16) {
+        const auto sums = RunningSums(row + at);
+        hn::StoreU(hn::Add(sums, lefts), D16(), row + at);
+        lefts = hn::Add(lefts, Repeated<3>(sums));
+    }
+    VPixel left = hn::ResizeBitCast(d, lefts);
     for (; at < end; at += 4) {
         left = hn::Add(left, hn::LoadU(d, row + at));
         hn::StoreU(left, d, row + at);
@@ -686,7 +688,9 @@ static HWY_INLINE void AddGradient(uint8_t* HWY_RESTRICT row, const uint8_t* HWY
     };
     for (; at + 16 <= end; at += 16) {
         if (hn::AllTrue(D16(), hn::Eq(hn::LoadU(D16(), above + at), hn::LoadU(D16(), above + at - 4)))) {
-            left = AddLeftToFour(row + at, left);
+            const auto pixels = hn::Add(RunningSums(row + at), Repeated<0>(left));
+            hn::StoreU(pixels, D16(), row + at);
+            left = hn::ResizeBitCast(d, hn::ShiftRightBytes<12>(D16(), pixels));
         } else {
             one(at);
             one(at + 4);
@@ -732,9 +736,13 @@ static HWY_INLINE void UndoPrediction(uint8_t mode, uint8_t* HWY_RESTRICT row, c
         return AddGradient(row, above, at, end, [&](VPixel l, VPixel tl, VPixel t, VPixel residual) HWY_ATTR {
             const hn::Repartition<uint32_t, DPixel> d32;
             const auto distance = [&](VPixel from) HWY_ATTR {
+#if HWY_TARGET_IS_NEON
+                return hn::BitCast(hn::RebindToSigned<decltype(d32)>(), hn::SumsOf4(hn::AbsDiff(from, tl)));
+#else
                 // The other four bytes are alike.
                 const auto with_corner = [&](VPixel p) HWY_ATTR { return InterleaveLowerAs<uint32_t>(D8(), hn::ResizeBitCast(D8(), p), hn::ResizeBitCast(D8(), tl)); };
                 return hn::ResizeBitCast(hn::RebindToSigned<decltype(d32)>(), hn::SumsOf8AbsDiff(with_corner(from), with_corner(tl)));
+#endif
             };
             const auto take_left = hn::RebindMask(d32, hn::Gt(distance(l), distance(t)));
             return hn::BitCast(d, hn::IfThenElse(take_left, hn::BitCast(d32, hn::Add(l, residual)), hn::BitCast(d32, hn::Add(t, residual))));

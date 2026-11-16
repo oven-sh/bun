@@ -6426,7 +6426,8 @@ __attribute__((minsize)) static JSC::EncodedJSValue mockModule(JSC::JSGlobalObje
         && JSC::AOT::tryKeepOriginalIntact(globalObject, *loaded.compiledModule, !isReleasedFromLoader && !loadedByTestFile && !remainsOriginal && !isDoMock, Bun::compiledModuleForPath(callerPath(vm, callframe)), !mock->importsOriginal || mock->factory.get() || (JSC::AOT::hasInstances(globalObject, *loaded.compiledModule) && JSC::AOT::isSynchronousESModule(globalObject, *loaded.compiledModule) && !JSC::AOT::isFailedLoadRoot(globalObject, *loaded.compiledModule)));
     RETURN_IF_EXCEPTION(scope, {});
     mock->coversImportedActual = keepsCompiledModule && coversImportedActual;
-    mock->coversFileOfPreload = coversFileOfPreload && !wasLoadedByImportActual;
+    bool isBehindUnmock = !previous && keepsCompiledModule && isReleasedFromLoader && ranBy == JSC::AOT::LoadedBy::Preload && !isInNodeModules(specifier) && !JSC::AOT::isESModule(*loaded.compiledModule) && !JSC::AOT::isDataFile(*loaded.compiledModule);
+    mock->coversFileOfPreload = (coversFileOfPreload || isBehindUnmock) && !wasLoadedByImportActual;
     if (isOnlyUnderActualKey)
         globalObject->onLoadPlugins.filesWithRestoredOriginal.set(specifier, globalObject->onLoadPlugins.testFile);
     if (actualKeyExports == JSC::AOT::ActualKeyExports::Superseded && mock->isOfVitest() && !coversImportedActual)

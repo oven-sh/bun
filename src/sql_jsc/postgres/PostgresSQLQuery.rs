@@ -1,11 +1,11 @@
 use core::cell::Cell;
 
-use crate::jsc::{CallFrame, JSGlobalObject, JSValue, JsRef, JsResult, VirtualMachineSqlExt as _};
+use crate::jsc::{JSGlobalObject, JSValue, JsRef, JsResult, VirtualMachineSqlExt as _};
 use crate::shared::cached_structure::Undescribed;
-use crate::shared::query_ctor_args::QueryCtorArgs;
+use crate::shared::query_ctor_args;
 use bun_core::String as BunString;
-use bun_jsc::JsCell;
 use bun_jsc::bindgen::{JsLocal, JsScope, JsWrapper};
+use bun_jsc::{JSArray, JsCell};
 use bun_ptr::{AsCtxPtr, RefPtr};
 
 use super::PostgresSQLConnection;
@@ -248,14 +248,17 @@ impl PostgresSQLQuery {
             return;
         };
 
-        let vm = crate::jsc::VirtualMachine::get().as_mut();
-        let function = vm
+        let vm = crate::jsc::VirtualMachine::get();
+        let Some(function) = vm
             .sql_state()
             .postgresql_context
+            .get()
             .on_query_reject_fn
             .get()
-            .unwrap();
-        let event_loop = vm.event_loop_mut();
+        else {
+            return;
+        };
+        let event_loop = vm.event_loop();
         event_loop.run_callback(
             bun_event_loop::ContextId::NONE,
             function,
@@ -332,14 +335,17 @@ impl PostgresSQLQuery {
             return;
         };
 
-        let vm = crate::jsc::VirtualMachine::get().as_mut();
-        let function = vm
+        let vm = crate::jsc::VirtualMachine::get();
+        let Some(function) = vm
             .sql_state()
             .postgresql_context
+            .get()
             .on_query_resolve_fn
             .get()
-            .unwrap();
-        let event_loop = vm.event_loop_mut();
+        else {
+            return;
+        };
+        let event_loop = vm.event_loop();
 
         event_loop.run_callback(
             bun_event_loop::ContextId::NONE,
@@ -374,16 +380,17 @@ impl PostgresSQLQuery {
         0
     }
 
-    // Registered directly as `createQuery` via
-    // `put_host_functions!` in `postgres.rs`, so no exported symbol is needed.
-    pub(crate) fn call(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
-        let QueryCtorArgs {
-            query,
-            values,
-            pending_value,
-            bigint,
-            simple,
-        } = QueryCtorArgs::parse(global_this, callframe.arguments())?;
+    pub(crate) fn create_query<'a>(
+        cx: &mut JsScope<'a>,
+        query: bun_core::String,
+        values: JsLocal<'a, JSArray>,
+        pending_value: JsLocal<'a, JSArray>,
+        bigint: bool,
+        simple: bool,
+    ) -> JsResult<JSValue> {
+        let global_this = cx.global();
+        let (values, pending_value) = (values.to_js(), pending_value.to_js());
+        query_ctor_args::validate(global_this, &query, values, simple)?;
 
         let ptr = bun_core::heap::into_raw(Box::new(PostgresSQLQuery::default()));
 
@@ -392,7 +399,7 @@ impl PostgresSQLQuery {
 
         // SAFETY: ptr is exclusively owned here until returned to JS.
         unsafe {
-            (*ptr).query = query.to_bun_string(global_this)?;
+            (*ptr).query = query;
             (*ptr).this_value.set(JsRef::init_weak(this_value));
             (*ptr).flags.set(Flags {
                 bigint,
@@ -521,11 +528,7 @@ impl PostgresSQLQuery {
         connection.count(self, RequestCounter::Pending);
         self.connection.set(Some(connection.ref_guard()));
         // Request is enqueued: keep the event loop alive until the server responds.
-        connection.poll_ref.with_mut(|r| {
-            r.ref_(bun_io::posix_event_loop::get_vm_ctx(
-                bun_io::AllocatorType::Js,
-            ))
-        });
+        connection.poll_ref.ref_(bun_io::js_vm_ctx());
         self.this_value.with_mut(|r| r.upgrade(global_object));
         js::target_set_cached(this_value, global_object, query);
 

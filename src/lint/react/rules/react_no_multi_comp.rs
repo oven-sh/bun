@@ -11,8 +11,8 @@ pub struct NoMultiComp {
     ignore_stateless: bool,
 }
 
-const ONLY_ONE_COMPONENT: Message = Message::new("onlyOneComponent", "Declare only one React component per file");
-const NO_MULTI_COMP: Message = Message::new("", "Declare only one React component per file. Found: {{component_name}}");
+const ONLY_ONE_COMPONENT: &Message = &Message::new("onlyOneComponent", "Declare only one React component per file");
+const NO_MULTI_COMP: &Message = &Message::new("", "Declare only one React component per file. Found: {{component_name}}");
 
 struct DetectedComponent<'a> {
     /// `None`: `UnnamedComponent`

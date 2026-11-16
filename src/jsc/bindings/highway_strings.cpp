@@ -18,6 +18,42 @@
 #include <cstddef>
 #include <cstdint>
 
+// How PackWordsImpl and UnpackWordsImpl move the bytes of four words. The guard keeps a single copy.
+#ifndef BUN_HIGHWAY_STRINGS_PACKED_WORDS
+#define BUN_HIGHWAY_STRINGS_PACKED_WORDS
+namespace bun {
+
+// A row for each control byte, which has two bits for each word: the word has 0, 1, 2 or 4 bytes.
+struct PackedWordTables {
+    alignas(16) uint8_t packing[256][16] {};
+    alignas(16) uint8_t unpacking[256][16] {};
+    uint8_t sizes[256] {};
+
+    constexpr PackedWordTables()
+    {
+        // TableLookupBytesOr0 gives a zero for it.
+        constexpr uint8_t noByte = 0x80;
+        for (unsigned control = 0; control < 256; ++control) {
+            uint8_t packed = 0;
+            for (unsigned byte = 0; byte < 16; ++byte)
+                packing[control][byte] = unpacking[control][byte] = noByte;
+            for (unsigned word = 0; word < 4; ++word) {
+                unsigned size = (1u << (control >> (2 * word) & 3)) >> 1;
+                for (unsigned byte = 0; byte < size; ++byte) {
+                    uint8_t whole = static_cast<uint8_t>(4 * word + byte);
+                    unpacking[control][whole] = packed;
+                    packing[control][packed++] = whole;
+                }
+            }
+            sizes[control] = packed;
+        }
+    }
+};
+static constexpr PackedWordTables packedWordTables;
+
+} // namespace bun
+#endif
+
 // The scalar half of Bun.stringWidth's ANSI-aware width count. This file is
 // re-included once per SIMD target; the guard keeps a single copy, compiled with
 // the translation unit's own (baseline) flags rather than a target's.
@@ -344,6 +380,60 @@ size_t LineStartsImpl(const uint8_t* HWY_RESTRICT text, size_t text_len, uint32_
     return static_cast<size_t>(end - out);
 }
 
+// Packs groups of four words: the sign of each is folded into its lowest bit, then it's written in 0, 1, 2 or 4 bytes.
+// Writes a control byte for each group. `data` has 16 bytes of room for each. Returns the number of bytes used there.
+size_t PackWordsImpl(const uint32_t* HWY_RESTRICT words, size_t groups, uint8_t* HWY_RESTRICT controls, uint8_t* HWY_RESTRICT data)
+{
+    const hn::FixedTag<uint32_t, 4> d32;
+    const hn::FixedTag<int32_t, 4> di32;
+    const hn::FixedTag<uint8_t, 16> d8;
+    alignas(16) static constexpr uint8_t lowestBytes[16] = { 0, 4, 8, 12, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80 };
+    const auto vec_lowest = hn::Load(d8, lowestBytes);
+    const auto vec_zero = hn::Zero(d32);
+    const auto vec_three = hn::Set(d32, 3u);
+
+    size_t at = 0;
+    for (size_t group = 0; group < groups; ++group) {
+        const auto word = hn::LoadU(d32, words + 4 * group);
+        const auto sign = hn::BitCast(d32, hn::BroadcastSignBit(hn::BitCast(di32, word)));
+        const auto folded = hn::Xor(hn::ShiftLeft<1>(word), sign);
+        // Each comparison that holds subtracts one from the code of the longest form.
+        const auto is_zero = hn::VecFromMask(d32, hn::Eq(folded, vec_zero));
+        const auto fits_one = hn::VecFromMask(d32, hn::Eq(hn::ShiftRight<8>(folded), vec_zero));
+        const auto fits_two = hn::VecFromMask(d32, hn::Eq(hn::ShiftRight<16>(folded), vec_zero));
+        const auto codes = hn::Add(vec_three, hn::Add(is_zero, hn::Add(fits_one, fits_two)));
+        const auto four_codes = hn::TableLookupBytesOr0(hn::BitCast(d8, codes), vec_lowest);
+        const uint32_t control = hn::GetLane(hn::BitCast(d32, four_codes)) * 0x01041040u >> 24;
+        const auto packed = hn::TableLookupBytesOr0(hn::BitCast(d8, folded), hn::Load(d8, packedWordTables.packing[control]));
+        hn::StoreU(packed, d8, data + at);
+        controls[group] = static_cast<uint8_t>(control);
+        at += packedWordTables.sizes[control];
+    }
+    return at;
+}
+
+// Unpacks groups that PackWordsImpl packed, as long as 16 bytes of `data` can be read. Returns the number of groups,
+// and in `used` the number of their bytes.
+size_t UnpackWordsImpl(const uint8_t* HWY_RESTRICT controls, size_t groups, const uint8_t* HWY_RESTRICT data, size_t data_len, uint32_t* HWY_RESTRICT words, size_t* HWY_RESTRICT used)
+{
+    const hn::FixedTag<uint32_t, 4> d32;
+    const hn::FixedTag<uint8_t, 16> d8;
+    const auto vec_zero = hn::Zero(d32);
+    const auto vec_one = hn::Set(d32, 1u);
+
+    size_t at = 0;
+    size_t group = 0;
+    for (; group < groups && data_len - at >= 16; ++group) {
+        const size_t control = controls[group];
+        const auto folded = hn::BitCast(d32, hn::TableLookupBytesOr0(hn::LoadU(d8, data + at), hn::Load(d8, packedWordTables.unpacking[control])));
+        const auto sign = hn::Sub(vec_zero, hn::And(folded, vec_one));
+        hn::StoreU(hn::Xor(hn::ShiftRight<1>(folded), sign), d32, words + 4 * group);
+        at += packedWordTables.sizes[control];
+    }
+    *used = at;
+    return group;
+}
+
 // --- Implementation Details ---
 
 size_t IndexOfAnyCharImpl(const uint8_t* HWY_RESTRICT text, size_t text_len, const uint8_t* HWY_RESTRICT chars, size_t chars_len)
@@ -486,6 +576,153 @@ size_t LastIndexOfAnyCharImpl(const uint8_t* HWY_RESTRICT text, size_t text_len,
     }
     return text_len;
 }
+
+// --- node:path (src/node_path/tidy.rs) ---------------------------------------
+
+// Whether the part of `path` that starts at `start` is empty, "." or "..". A part ends in front of a '/' or where `path` ends.
+static HWY_INLINE bool IsUntidyPathPartAt(const uint8_t* HWY_RESTRICT path, size_t len, size_t start)
+{
+    if (path[start] != '.') return path[start] == '/';
+    if (start + 1 == len || path[start + 1] == '/') return true;
+    return path[start + 1] == '.' && (start + 2 == len || path[start + 2] == '/');
+}
+
+// `path` has more bytes than `d` has lanes.
+template<bool stops_at_non_ascii, class D>
+static HWY_INLINE size_t IndexOfUntidySlashBy(D d, const uint8_t* HWY_RESTRICT path, size_t len)
+{
+    const hn::RebindToSigned<D> ds;
+    const size_t N = hn::Lanes(d);
+    const auto slash = hn::Set(d, uint8_t { '/' });
+    const auto lowest_bit = hn::Set(d, uint8_t { 1 });
+    // The last block ends with the path, so it may overlap the one before it.
+    const size_t last = len - N - 1;
+    size_t at = 0;
+    while (true) {
+        const auto bytes = hn::LoadU(d, path + at);
+        // A '/' with a '/' or a '.' after it. '.' is '/' without its lowest bit.
+        auto suspects = hn::And(hn::Eq(bytes, slash),
+            hn::Eq(hn::Or(hn::LoadU(d, path + at + 1), lowest_bit), slash));
+        if constexpr (stops_at_non_ascii)
+            suspects = hn::Or(suspects, hn::RebindMask(d, hn::Lt(hn::BitCast(ds, bytes), hn::Zero(ds))));
+        if (HWY_UNLIKELY(!hn::AllFalse(d, suspects))) {
+            for (uint64_t bits = hn::BitsFromMask(d, suspects); bits != 0; bits &= bits - 1) {
+                const size_t found = at + hwy::Num0BitsBelowLS1Bit_Nonzero64(bits);
+                if ((stops_at_non_ascii && path[found] != '/') || IsUntidyPathPartAt(path, len, found + 1)) return found;
+            }
+        }
+        if (at == last) return stops_at_non_ascii && path[len - 1] >= 0x80 ? len - 1 : len;
+        at = HWY_MIN(at + N, last);
+    }
+}
+
+template<bool stops_at_non_ascii>
+static HWY_INLINE size_t IndexOfUntidySlash(const uint8_t* HWY_RESTRICT path, size_t len)
+{
+    const hn::CappedTag<uint8_t, 32> d32;
+    const hn::CappedTag<uint8_t, 16> d16;
+    const hn::CappedTag<uint8_t, 8> d8;
+    if (len > hn::Lanes(d32)) return IndexOfUntidySlashBy<stops_at_non_ascii>(d32, path, len);
+    if (hn::Lanes(d16) < hn::Lanes(d32) && len > hn::Lanes(d16)) return IndexOfUntidySlashBy<stops_at_non_ascii>(d16, path, len);
+    if (len > hn::Lanes(d8)) return IndexOfUntidySlashBy<stops_at_non_ascii>(d8, path, len);
+    for (size_t at = 0; at + 1 < len; ++at) {
+        if (stops_at_non_ascii && path[at] >= 0x80) return at;
+        if (path[at] == '/' && IsUntidyPathPartAt(path, len, at + 1)) return at;
+    }
+    return stops_at_non_ascii && len != 0 && path[len - 1] >= 0x80 ? len - 1 : len;
+}
+
+// Index of the first '/' in front of a part that is empty, "." or "..", or `len` if there is none.
+size_t IndexOfUntidySlashImpl(const uint8_t* HWY_RESTRICT path, size_t len)
+{
+    return IndexOfUntidySlash<false>(path, len);
+}
+
+// Index of the first byte that is such a '/' or is not ASCII, or `len` if there is none.
+size_t IndexOfUntidySlashOrNonAsciiImpl(const uint8_t* HWY_RESTRICT path, size_t len)
+{
+    return IndexOfUntidySlash<true>(path, len);
+}
+
+// Entered only at the target the build is compiled for: see highway_last_index_of_slash.
+#if HWY_TARGET == HWY_STATIC_TARGET
+
+// Index of the last byte that is `a` or `b`, or `len` if there is none. It is expected near the end.
+template<uint8_t a, uint8_t b>
+static HWY_INLINE size_t LastIndexOfEitherNearEnd(const uint8_t* HWY_RESTRICT text, size_t len)
+{
+    const hn::CappedTag<uint8_t, 16> d16;
+    const hn::CappedTag<uint8_t, 8> d8;
+    size_t end = len;
+    while (end >= hn::Lanes(d16)) {
+        end -= hn::Lanes(d16);
+        const auto bytes = hn::LoadU(d16, text + end);
+        const intptr_t at = hn::FindLastTrue(d16, hn::Or(hn::Eq(bytes, hn::Set(d16, a)), hn::Eq(bytes, hn::Set(d16, b))));
+        if (at >= 0) return end + static_cast<size_t>(at);
+    }
+    if (end >= hn::Lanes(d8)) {
+        end -= hn::Lanes(d8);
+        const auto bytes = hn::LoadU(d8, text + end);
+        const intptr_t at = hn::FindLastTrue(d8, hn::Or(hn::Eq(bytes, hn::Set(d8, a)), hn::Eq(bytes, hn::Set(d8, b))));
+        if (at >= 0) return end + static_cast<size_t>(at);
+    }
+    while (end-- > 0) {
+        if (text[end] == a || text[end] == b) return end;
+    }
+    return len;
+}
+
+size_t LastIndexOfSlashImpl(const uint8_t* HWY_RESTRICT path, size_t len)
+{
+    return LastIndexOfEitherNearEnd<'/', '/'>(path, len);
+}
+
+size_t LastIndexOfSlashOrDotImpl(const uint8_t* HWY_RESTRICT path, size_t len)
+{
+    return LastIndexOfEitherNearEnd<'/', '.'>(path, len);
+}
+
+// How many of their first `len` bytes `a` and `b` have in common.
+size_t CommonPrefixLengthImpl(const uint8_t* HWY_RESTRICT a, const uint8_t* HWY_RESTRICT b, size_t len)
+{
+    const hn::CappedTag<uint8_t, 16> d16;
+    const hn::CappedTag<uint8_t, 8> d8;
+    size_t at = 0;
+    for (; at + hn::Lanes(d16) <= len; at += hn::Lanes(d16)) {
+        const intptr_t differs = hn::FindFirstTrue(d16, hn::Ne(hn::LoadU(d16, a + at), hn::LoadU(d16, b + at)));
+        if (differs >= 0) return at + static_cast<size_t>(differs);
+    }
+    if (at + hn::Lanes(d8) <= len) {
+        const intptr_t differs = hn::FindFirstTrue(d8, hn::Ne(hn::LoadU(d8, a + at), hn::LoadU(d8, b + at)));
+        if (differs >= 0) return at + static_cast<size_t>(differs);
+        at += hn::Lanes(d8);
+    }
+    while (at < len && a[at] == b[at])
+        ++at;
+    return at;
+}
+
+// CountCharImpl of '/' for a few dozen bytes.
+size_t CountSlashesImpl(const uint8_t* HWY_RESTRICT text, size_t len)
+{
+    constexpr uint8_t needle = '/';
+    const hn::CappedTag<uint8_t, 16> d16;
+    const hn::CappedTag<uint8_t, 8> d8;
+    size_t count = 0;
+    size_t at = 0;
+    for (; at + hn::Lanes(d16) <= len; at += hn::Lanes(d16)) {
+        count += hn::CountTrue(d16, hn::Eq(hn::LoadU(d16, text + at), hn::Set(d16, needle)));
+    }
+    if (at + hn::Lanes(d8) <= len) {
+        count += hn::CountTrue(d8, hn::Eq(hn::LoadU(d8, text + at), hn::Set(d8, needle)));
+        at += hn::Lanes(d8);
+    }
+    for (; at < len; ++at)
+        count += text[at] == needle ? 1 : 0;
+    return count;
+}
+
+#endif // HWY_TARGET == HWY_STATIC_TARGET
 
 // Index of the first byte that HTML-escapes: one of " & ' < >.
 // Returns text_len if none are present.
@@ -2522,6 +2759,8 @@ HWY_EXPORT(IndexOfNewlineOrNonASCIIImpl);
 HWY_EXPORT(IndexOfNewlineOrNonASCIIOrHashOrAtImpl);
 HWY_EXPORT(IndexOfNotCharImpl);
 HWY_EXPORT(IndexOfSpaceOrNewlineOrNonASCIIImpl);
+HWY_EXPORT(IndexOfUntidySlashImpl);
+HWY_EXPORT(IndexOfUntidySlashOrNonAsciiImpl);
 HWY_EXPORT(LastIndexOfAnyCharImpl);
 HWY_EXPORT(LastIndexOfCharImpl);
 HWY_EXPORT(LineStartsImpl);
@@ -2532,7 +2771,9 @@ HWY_EXPORT(MemRMemImpl);
 HWY_EXPORT(MemMem16Impl);
 HWY_EXPORT(MemRMem16Impl);
 HWY_EXPORT(OddBlocksImpl);
+HWY_EXPORT(PackWordsImpl);
 HWY_EXPORT(ScannerRunStopsImpl);
+HWY_EXPORT(UnpackWordsImpl);
 HWY_EXPORT(VisibleLatin1WidthExcludeANSIImpl);
 HWY_EXPORT(VisibleLatin1WidthImpl);
 HWY_EXPORT(VisibleUTF16WidthImpl);
@@ -2623,6 +2864,42 @@ size_t highway_last_index_of_any_char(const uint8_t* HWY_RESTRICT text, size_t t
     return BUN_HWY_DISPATCH(LastIndexOfAnyCharImpl)(text, text_len, chars, chars_len);
 }
 
+// Up to 32 bytes no target has a wider vector to use, and the call through the table is what would cost.
+size_t highway_index_of_untidy_slash(const uint8_t* HWY_RESTRICT path, size_t len)
+{
+    if (len <= 32) return HWY_STATIC_DISPATCH(IndexOfUntidySlashImpl)(path, len);
+    return BUN_HWY_DISPATCH(IndexOfUntidySlashImpl)(path, len);
+}
+
+size_t highway_index_of_untidy_slash_or_non_ascii(const uint8_t* HWY_RESTRICT path, size_t len)
+{
+    if (len <= 32) return HWY_STATIC_DISPATCH(IndexOfUntidySlashOrNonAsciiImpl)(path, len);
+    return BUN_HWY_DISPATCH(IndexOfUntidySlashOrNonAsciiImpl)(path, len);
+}
+
+// These look at one or two vectors of 16 bytes: the name at the end of a path, what two paths start with, the folders
+// to leave. A call through the table would double that, so they enter the kernel of the target that the build is
+// compiled for, and LTO inlines it into the caller.
+size_t highway_last_index_of_slash(const uint8_t* HWY_RESTRICT path, size_t len)
+{
+    return HWY_STATIC_DISPATCH(LastIndexOfSlashImpl)(path, len);
+}
+
+size_t highway_last_index_of_slash_or_dot(const uint8_t* HWY_RESTRICT path, size_t len)
+{
+    return HWY_STATIC_DISPATCH(LastIndexOfSlashOrDotImpl)(path, len);
+}
+
+size_t highway_common_prefix_length(const uint8_t* HWY_RESTRICT a, const uint8_t* HWY_RESTRICT b, size_t len)
+{
+    return HWY_STATIC_DISPATCH(CommonPrefixLengthImpl)(a, b, len);
+}
+
+size_t highway_count_slashes(const uint8_t* HWY_RESTRICT path, size_t len)
+{
+    return HWY_STATIC_DISPATCH(CountSlashesImpl)(path, len);
+}
+
 size_t highway_index_of_char(const uint8_t* HWY_RESTRICT haystack, size_t haystack_len,
     uint8_t needle)
 {
@@ -2650,6 +2927,16 @@ size_t highway_count_char(const uint8_t* HWY_RESTRICT haystack, size_t haystack_
 size_t highway_line_starts(const uint8_t* HWY_RESTRICT text, size_t text_len, uint32_t* HWY_RESTRICT out)
 {
     return BUN_HWY_DISPATCH(LineStartsImpl)(text, text_len, out);
+}
+
+size_t highway_pack_words(const uint32_t* HWY_RESTRICT words, size_t groups, uint8_t* HWY_RESTRICT controls, uint8_t* HWY_RESTRICT data)
+{
+    return BUN_HWY_DISPATCH(PackWordsImpl)(words, groups, controls, data);
+}
+
+size_t highway_unpack_words(const uint8_t* HWY_RESTRICT controls, size_t groups, const uint8_t* HWY_RESTRICT data, size_t data_len, uint32_t* HWY_RESTRICT words, size_t* HWY_RESTRICT used)
+{
+    return BUN_HWY_DISPATCH(UnpackWordsImpl)(controls, groups, data, data_len, words, used);
 }
 
 size_t highway_index_of_escape_char8(const uint8_t* HWY_RESTRICT input, size_t len)

@@ -4,7 +4,7 @@ use bun_lint::rule::Plugin;
 /// Disallow TypeScript `const enum`
 pub struct NoConstEnum;
 
-const NO_CONST_ENUM: Message = Message::new("", "Unexpected const enum");
+const NO_CONST_ENUM: &Message = &Message::new("", "Unexpected const enum");
 
 impl Rule for NoConstEnum {
     const META: Meta = Meta::oxlint(Plugin::Oxc, "no-const-enum", Kind::Suggestion).fixable(Fixable::Code);

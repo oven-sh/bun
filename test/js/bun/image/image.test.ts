@@ -1,6 +1,8 @@
 import { S3Client } from "bun";
+import { estimateShallowMemoryUsageOf } from "bun:jsc";
 import { afterAll, describe, expect, test } from "bun:test";
 import { isMacOS, isWindows, tempDir } from "harness";
+import { closeSync, openSync, truncateSync } from "node:fs";
 import zlib from "node:zlib";
 import { join } from "path";
 
@@ -124,7 +126,7 @@ function decodePngRaw(png: Uint8Array): { w: number; h: number; data: Uint8Array
     off += 12 + len;
   }
   const raw = zlib.inflateSync(Buffer.concat(idats));
-  // Undo per-row filter. libspng may pick filter ≠ 0; handle 0–4.
+  // Undo per-row filter. The encoder may pick filter ≠ 0; handle 0–4.
   const stride = w * 4;
   const out = new Uint8Array(w * h * 4);
   let p = 0;
@@ -193,15 +195,47 @@ describe("Bun.Image", () => {
     expect((await res.bytes()).subarray(8, 12)).toEqual(Buffer.from("WEBP"));
   });
 
+  test("Bun.file() input can have up to 256 MiB, like a path", async () => {
+    using dir = tempDir("image-file-size", { "src.png": cornersPng });
+    const path = join(String(dir), "src.png");
+    const outcome = (image: Bun.Image) =>
+      image.metadata().then(
+        ({ format }) => format,
+        error => error.code,
+      );
+    const limit = 256 * 1024 * 1024;
+
+    truncateSync(path, limit);
+    const file = Bun.file(path);
+    expect(await outcome(file.image())).toBe("png");
+
+    truncateSync(path, limit + 1);
+    expect(await outcome(new Bun.Image(path))).toBe("ERR_IMAGE_TOO_MANY_PIXELS");
+    expect(await outcome(file.image())).toBe("ERR_IMAGE_TOO_MANY_PIXELS");
+    expect(await outcome(file.slice(0, cornersPng.length).image())).toBe("png");
+    const fd = openSync(path, "r");
+    try {
+      expect(await outcome(Bun.file(fd).image())).toBe("ERR_IMAGE_TOO_MANY_PIXELS");
+    } finally {
+      closeSync(fd);
+    }
+
+    truncateSync(path, cornersPng.length);
+    expect(await outcome(file.image())).toBe("png");
+    expect(file.size).toBe(cornersPng.length);
+  });
+
   // Store-backed Blob sources are read at terminal time through the Blob's
   // own store dispatch. The Bun.file() test above covers the file store; this
   // covers the S3 download callback (bytes and error arm) and the synchronous
   // in-memory delivery.
   test("S3 and zero-length in-memory Blob sources are read through the same chain", async () => {
+    const ranges: (string | null)[] = [];
     using server = Bun.serve({
       port: 0,
       fetch(req) {
         const { pathname } = new URL(req.url);
+        ranges.push(req.headers.get("range"));
         if (req.method === "GET" && pathname.endsWith("/src.png")) {
           return new Response(cornersPng, { headers: { "Content-Type": "image/png" } });
         }
@@ -229,6 +263,7 @@ describe("Bun.Image", () => {
       // Second terminal reuses the downloaded bytes.
       expect((await fromS3.png().bytes())[0]).toBe(0x89);
       expect(await client.file("src.png").image().metadata()).toEqual({ width: 4, height: 3, format: "png" });
+      expect(ranges).toEqual([null, null]);
 
       // Download failure rejects the terminal with the S3 error.
       expect(
@@ -534,7 +569,7 @@ describe("Bun.Image", () => {
     }
 
     // Walk a JPEG byte-stream and concatenate every APP2 `ICC_PROFILE\0`
-    // segment's payload. libjpeg-turbo splits profiles above 65 519 bytes
+    // segment's payload. The encoder splits profiles above 65 519 bytes
     // into multiple APP2 markers with sequence + total-count header; this
     // helper reassembles them regardless of whether the source needed
     // splitting. Returns null when no ICC_PROFILE APP2 is found.
@@ -577,9 +612,9 @@ describe("Bun.Image", () => {
       return null;
     }
 
-    // Distinctive binary payload that round-trips through libspng's
-    // deflate/inflate and libjpeg-turbo's APP2 chunking without
-    // modification. Neither library validates ICC internals. The wide byte
+    // Distinctive binary payload that round-trips through the PNG codec's
+    // deflate/inflate and the JPEG codec's APP2 chunking without
+    // modification. Neither codec validates ICC internals. The wide byte
     // range (0-255, prime-step LCG) exercises binary-safe transport so a
     // stray text-mode decode would corrupt and fail the round-trip. 384
     // bytes fits comfortably in a single APP2 segment; the multi-segment
@@ -587,7 +622,7 @@ describe("Bun.Image", () => {
     const fakeProfile = new Uint8Array(384);
     for (let i = 0; i < fakeProfile.length; i++) fakeProfile[i] = (i * 37 + 11) & 0xff;
 
-    // Above libjpeg-turbo's 65 519-byte per-APP2 split threshold so the
+    // Above the 65 519 bytes that fit in an APP2 segment, so the
     // PNG → JPEG path emits two APP2 segments and exercises the
     // reassembly loop in `extractJpegIcc`. Built once for the multi-
     // segment test only — most tests use the small profile to keep the
@@ -665,11 +700,8 @@ describe("Bun.Image", () => {
     });
 
     test("> 64 KiB profile splits across multiple APP2 segments and reassembles", async () => {
-      // libjpeg-turbo splits at 65 519 bytes per APP2; 70 000 forces two
-      // segments and exercises the seq/total header ordering the extractor
-      // loop walks across. If this breaks because libjpeg-turbo's cap
-      // changes, shift the threshold — the goal is "> one segment", not
-      // the exact number.
+      // An APP2 segment has room for 65 519 bytes; 70 000 forces two and
+      // exercises the seq/total header ordering the extractor loop walks across.
       const src = pngWithIccp(cornersPng, bigProfile);
       const jpg = await new Bun.Image(src).jpeg({ quality: 90 }).bytes();
       // Count the APP2 ICC_PROFILE segments to confirm the split happened
@@ -846,7 +878,7 @@ describe("Bun.Image", () => {
       expectQuadrants(data, w, 0.5);
     });
 
-    // libjpeg warns "extraneous bytes before marker 0xd9" and finishes the decode.
+    // djpeg warns "extraneous bytes before marker 0xd9" and finishes the decode.
     test.each([
       ["CMYK", cmykJpeg],
       ["YCCK", ycckJpeg],
@@ -887,7 +919,7 @@ describe("Bun.Image", () => {
     expect(raw).toEqual({ width: 4, height: 2, format: "jpeg" });
   });
 
-  // libjpeg skips stray bytes before a marker with a warning, so the decode accepts this file.
+  // The decoder skips stray bytes before a marker, so it accepts this file.
   // The orientation reader has to skip them too, or the picture comes out sideways with no error.
   test("EXIF Orientation=6 survives junk bytes before the APP1 segment", async () => {
     const jpg = await new Bun.Image(makePng(4, 2, (x, y) => [x * 60, y * 200, 128, 255])).jpeg({ quality: 90 }).bytes();
@@ -904,7 +936,7 @@ describe("Bun.Image", () => {
     expect([jpg[2], jpg[3]]).toEqual([0xff, 0xe0]);
     const app0End = 4 + ((jpg[4] << 8) | jpg[5]);
     const withExif = Buffer.concat([jpg.subarray(0, app0End), app1, jpg.subarray(app0End)]);
-    // Zero bytes, then 0xFF00: libjpeg's next_marker() discards both kinds.
+    // Zero bytes, then 0xFF00: the decoder discards both kinds.
     const junk = Buffer.from([...new Array<number>(14).fill(0), 0xff, 0x00]);
     const withJunk = Buffer.concat([jpg.subarray(0, app0End), junk, app1, jpg.subarray(app0End)]);
 
@@ -1117,6 +1149,15 @@ describe("Bun.Image", () => {
       expect(blob.type).toBe("image/png");
       const back = decodePngRaw(new Uint8Array(await blob.arrayBuffer()));
       expect(back.w).toBe(16);
+    });
+
+    test(".blob() tells the GC the size of its bytes", async () => {
+      // Noise, so that the PNG is far larger than the estimate for an empty Blob.
+      let seed = 1;
+      const noise = () => (seed = (Math.imul(seed, 1103515245) + 12345) >>> 0) >>> 24;
+      const blob = await new Bun.Image(makePng(64, 64, () => [noise(), noise(), noise(), 255])).png().blob();
+      expect(blob.size).toBeGreaterThan(4096);
+      expect(estimateShallowMemoryUsageOf(blob)).toBeGreaterThan(blob.size);
     });
 
     test(".buffer() returns a Node Buffer", async () => {
@@ -1729,7 +1770,7 @@ describe("Bun.Image.backend", () => {
 
   // Same input → both backends → both must round-trip pixels exactly. The
   // system path goes through ImageIO/WIC + vImage; the bun path is
-  // spng/libwebp + Highway. Reflect/rotate are pure permutations so byte
+  // bun_png/libwebp + Highway. Reflect/rotate are pure permutations so byte
   // equality holds; resize uses lanczos3 (the only filter the system path
   // accepts) so we just check dimensions and that it's not all-black.
   test.each(["bun", "system"] as const)("backend=%s pipeline parity", async backend => {

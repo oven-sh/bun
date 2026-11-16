@@ -13,8 +13,8 @@ use std::cmp::Reverse;
 /// Disallow usage of Array index in keys
 pub struct NoArrayIndexKey;
 
-const NO_ARRAY_INDEX: Message = Message::new("noArrayIndex", "Do not use Array index in keys");
-const NO_ARRAY_INDEX_KEY: Message = Message::new("", "Usage of Array index in keys is not allowed");
+const NO_ARRAY_INDEX: &Message = &Message::new("noArrayIndex", "Do not use Array index in keys");
+const NO_ARRAY_INDEX_KEY: &Message = &Message::new("", "Usage of Array index in keys is not allowed");
 
 #[derive(Default)]
 pub struct State<'a> {

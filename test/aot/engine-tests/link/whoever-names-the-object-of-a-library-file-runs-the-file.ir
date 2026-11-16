@@ -1,0 +1,40 @@
+# path.basename("b"), where `path` names the object of node:path as a built-in and no written request of the file stands beside it.
+# Whoever names the object runs the file: the run time takes the record from the file itself, at the first use. So the body of the file is reached from there, and the record that it returns is what the name holds.
+# If the name reached nothing, it would hold nothing in Link's eyes, and all that stands behind it in the body would count as never run.
+# LIBRARY: own
+# OPTIONS: exclude=CodeOutsideImage
+# RUN: link fields functions modules mechanisms=all
+# CHECK: field L0.0 "basename" proven=f2
+# CHECK-NOT: function f1 unreached
+# CHECK-NOT: function f2 unreached
+# CHECK: function f3 unreached
+# CHECK: module m1 value-stays-with-compiled-code
+
+layout L0 module=m1 fields=[{key="basename" declared={type=anything} flags=[IsRequired]}, {key="join" declared={type=anything} flags=[IsRequired]}]
+module m0 path="main.js" displayPath="main.js" body=f0
+module m1 path="node:path" displayPath="node:path" kind=RuntimeSource exportRule=RuntimeModule requireResult=DefaultExport runtimeModule=NodePath body=f1
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=NodePath
+    v1 = PropGet v0 key="basename"
+    v2 = String string="b"
+    v3 = Call v1, v0, v2 calleeKey="basename" calleeName="path.basename"
+    Return v3
+}
+function f1 module=m1 kind=Module role=Library thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f2
+    v1 = NewClosure function=f3
+    v2 = NewObject -, v0, v1 layout=L0 fields=[0, 1]
+    v3 = FinishObject v2
+    Return v3
+}
+function f2 name="basename" module=m1 role=Library length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}
+function f3 name="join" module=m1 role=Library length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}

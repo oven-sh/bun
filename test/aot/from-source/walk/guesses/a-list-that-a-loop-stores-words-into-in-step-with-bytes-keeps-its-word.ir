@@ -1,0 +1,17 @@
+# -- source: a-list-that-a-loop-stores-words-into-in-step-with-bytes-keeps-its-word.js
+# function schedule(bytes, words) {
+#   for (let i = 0; i < 4; i++) words[i] = bytes[i * 4] << 24 | bytes[i * 4 + 1] << 16 | bytes[i * 4 + 2] << 8 | bytes[i * 4 + 3];
+#   return words;
+# }
+# sink(schedule);
+# print(schedule(new Uint8Array(16).fill(1), [0, 0, 0, 0]).join(), schedule([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16], [0, 0, 0, 0]).join());
+# -- end of source
+# In the copy of a loop that is built for bytes another holder that the turns walk in step is expected to be bytes too, one that the loop STORES into as well. Here words of four bytes each go into a
+# list: asked for bytes, the front of that copy fails, and the loop goes on in the copy behind it, which asks for the list: the list keeps its typed store. (Once the failing front led into the closed copy, and a hash lost a tenth.)
+# f1 = schedule
+# RUN: walk f1:Body mechanisms=all
+# CHECK: = TypeTest v1 testedType=Buffer|Uint8Array
+# CHECK: = TypeTest v1 testedType=Array<number>
+# CHECK: = PutContiguousIndex
+# RUN(ANSWERS): run-in-shell globalThis.sink = () => {};
+# ANSWERS: 16843009,16843009,16843009,16843009 16909060,84281096,151653132,219025168

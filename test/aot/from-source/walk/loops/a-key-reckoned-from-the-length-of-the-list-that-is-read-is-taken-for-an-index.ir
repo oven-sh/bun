@@ -1,0 +1,19 @@
+# `corners[corners.length - 1 - i]`: the list read from its end. The list is only guessed in front of the loop, so in the preview its length is anything; the look ahead notes the length of what is proven or
+# guessed to be a list as a whole number, follows whole numbers through + - * and %, and takes that note for the key of a read. So the list is among those tested in front, the turn is quiet, the variables
+# of the file are read in front of the loop, and the helper is copied into it (frame 1). No rule reads the shape of the key: `(i + 1) % corners.length` goes the same way.
+# f1 = fromTheEnd
+# -- source: a-key-reckoned-from-the-length-of-the-list-that-is-read-is-taken-for-an-index.cjs
+# var kit = Object.freeze({ __proto__: null, place: function place(out, a, m) { var x = a[0], y = a[1], z = a[2], w = m[3] * x + m[7] * y + m[11] * z + m[15]; w = w || 1.0; out[0] = (m[0] * x + m[4] * y + m[8] * z + m[12]) / w; out[1] = (m[1] * x + m[5] * y + m[9] * z + m[13]) / w; out[2] = (m[2] * x + m[6] * y + m[10] * z + m[14]) / w; return out; } });
+# var corners = JSON.parse("[[1,2,3],[4,5,6],[7,8,9],[2,4,8],[3,9,27]]"), frame = new Float32Array(16), out = new Float32Array(3);
+# frame[0] = frame[5] = frame[10] = frame[15] = 1; frame[12] = 2;
+# const place = kit.place;
+# function fromTheEnd(corners) { var s = 0; for (var i = 0; i < corners.length; i++) { place(out, corners[corners.length - 1 - i], frame); s += out[0]; } return s; }
+# globalThis.kept = fromTheEnd(corners);
+# -- end of source
+# RUN(WALK): walk f1 mechanisms=all
+# WALK-LABEL: code f1:Body
+# WALK: frame 0 callee=f1
+# WALK: frame 1 callee=
+# WALK: = IsPristine {{*}}builtinClass=Array aspects=[Storage, Names]
+# WALK: = HasArrayStorage
+# WALK: = Mul

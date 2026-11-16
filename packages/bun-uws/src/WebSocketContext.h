@@ -31,10 +31,7 @@ struct WebSocketContext {
     template <bool> friend struct TemplatedApp;
     template <bool, typename> friend struct WebSocketProtocol;
 private:
-    /* Real heap-allocated owner; group.ext = this. Replaces the old
-     * reinterpret_cast over a us_create_child_socket_context() blob. */
-    WebSocketContext(TopicTree<TopicTreeMessage, TopicTreeBigMessage> *topicTree) : data(topicTree) {}
-
+    /* group.ext == this */
     us_socket_group_t group{};
     WebSocketContextData<SSL, USERDATA> data;
 
@@ -106,8 +103,8 @@ private:
 
         /* Decompress using shared or dedicated decompressor */
         InflateResult inflated = webSocketData->inflationStream
-            ? webSocketData->inflationStream->inflate(loopData->zlibContext, {data, length}, webSocketContextData->maxPayloadLength, false)
-            : loopData->inflationStream->inflate(loopData->zlibContext, {data, length}, webSocketContextData->maxPayloadLength, true);
+            ? webSocketData->inflationStream->inflate(loopData->zlibContext.get(), {data, length}, webSocketContextData->maxPayloadLength, false)
+            : loopData->inflationStream->inflate(loopData->zlibContext.get(), {data, length}, webSocketContextData->maxPayloadLength, true);
 
         if (inflated.closeCode == FAIL_OUT_OF_MEMORY.closeCode) {
             failOutOfMemory(s);
@@ -321,7 +318,6 @@ private:
             auto *webSocketContextData = getExtS(s);
 
             /* Make sure to unsubscribe from any pub/sub node at exit */
-            webSocketContextData->topicTree->freeSubscriber(webSocketData->subscriber);
             webSocketData->subscriber = nullptr;
 
             if (webSocketContextData->closeHandler) {
@@ -466,25 +462,22 @@ private:
         /* on_handshake */    nullptr,
     };
 
-    void free() {
+public:
+    ~WebSocketContext() {
         us_socket_group_deinit(&group);
-        delete this;
     }
 
-public:
     /* WebSocket contexts adopt sockets from a parent HTTP context's loop. No
      * SSL_CTX needed — the socket already has its `s->ssl` from accept time. */
-    static WebSocketContext *create(Loop *loop, TopicTree<TopicTreeMessage, TopicTreeBigMessage> *topicTree) {
-        WebSocketContext *webSocketContext = new WebSocketContext(topicTree);
+    WebSocketContext(Loop *loop, TopicTree<TopicTreeMessage, TopicTreeBigMessage> *topicTree) : data(topicTree) {
         /* WebSocket::getContextData() recovers &data as
          * (us_socket_group_t*)group.ext + 1 to avoid pulling this header into
          * WebSocket.h. That's only sound if `group` is the first member and `data`
          * sits immediately after it with no inserted base/field. (offsetof is not
          * usable here: the struct is not standard-layout.) The layout can differ
          * per ABI, so check it in every build; this runs once per context. */
-        RELEASE_ASSERT((void *) &webSocketContext->data == (void *) ((us_socket_group_t *) webSocketContext + 1));
-        us_socket_group_init(&webSocketContext->group, (us_loop_t *) loop, &wsVTable, webSocketContext);
-        return webSocketContext;
+        RELEASE_ASSERT((void *) &data == (void *) ((us_socket_group_t *) this + 1));
+        us_socket_group_init(&group, (us_loop_t *) loop, &wsVTable, this);
     }
 };
 

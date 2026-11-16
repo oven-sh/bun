@@ -87,9 +87,9 @@ private:
     bool m_inputPending = false;
     bool m_scrollPending = false;
 
-    objc::WKWebView m_webview;
-    objc::NSWindow m_window;
-    objc::NavigationDelegate m_delegate;
+    objc::Owned<objc::WKWebView> m_webview;
+    objc::Owned<objc::NSWindow> m_window;
+    objc::Owned<objc::NavigationDelegate> m_delegate;
     bool m_closed = false;
     // Cached for viewport→window coord flip and wheel event location;
     // updated in resize().

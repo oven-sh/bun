@@ -21,8 +21,8 @@ using namespace WebCore;
 
 // External C functions declarations
 extern "C" {
-SYSV_ABI EncodedJSValue JSS3File__presign(void* ptr, JSC::JSGlobalObject*, JSC::CallFrame* callframe);
-SYSV_ABI EncodedJSValue JSS3File__stat(void* ptr, JSC::JSGlobalObject*, JSC::CallFrame* callframe);
+SYSV_ABI EncodedJSValue JSS3File__presign(void* ptr, JSC::JSGlobalObject*, EncodedJSValue options);
+SYSV_ABI EncodedJSValue JSS3File__stat(void* ptr, JSC::JSGlobalObject*);
 SYSV_ABI EncodedJSValue JSS3File__bucket(void* ptr, JSC::JSGlobalObject*);
 }
 
@@ -91,7 +91,8 @@ JSC_DEFINE_HOST_FUNCTION(functionS3File_presign, (JSGlobalObject * globalObject,
         return {};
     }
 
-    return JSS3File__presign(thisObject->wrapped(), globalObject, callframe);
+    // `presign(undefined)` signs with the `acl` and `storageClass` of the store, `presign()` without.
+    return JSS3File__presign(thisObject->wrapped(), globalObject, JSValue::encode(callframe->argumentCount() ? callframe->uncheckedArgument(0) : JSValue()));
 }
 
 JSC_DEFINE_HOST_FUNCTION(functionS3File_stat, (JSGlobalObject * globalObject, CallFrame* callframe))
@@ -103,7 +104,7 @@ JSC_DEFINE_HOST_FUNCTION(functionS3File_stat, (JSGlobalObject * globalObject, Ca
         Bun::throwError(globalObject, scope, Bun::ErrorCode::ERR_INVALID_THIS, "Expected a S3File instance"_s);
         return {};
     }
-    return JSS3File__stat(thisObject->wrapped(), globalObject, callframe);
+    return JSS3File__stat(thisObject->wrapped(), globalObject);
 }
 
 const JSC::ClassInfo JSS3File::s_info = { "S3File"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSS3File) };

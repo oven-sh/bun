@@ -1,0 +1,31 @@
+# `sum = sum + blend(low, high, share)` in a loop, in a file without types. `blend` is `a + b * c` and has no loop of its own; `low`, `high` and `share` are constants of the file whose values come out of
+# a text at run time. The copy of `blend` stands in the caller's loop, so its product is a product in a loop; what it reckons with stays the same through the turns, so each is asked once, in front of the
+# loop, whether it is a number. Behind "yes" the turns add one number. `blend` by itself, outside any loop, asks nothing.
+# f1 = blend, f2 = total, f3 = other
+# -- source: main.js
+# const parts = JSON.parse("[0.5,1.25,2.75,\"3\",null]");
+# const low = parts[0], high = parts[1], share = parts[2], text = parts[3], nothing = parts[4];
+# function blend(a, b, c) { return a + b * c; }
+# function total(turn) { let sum = turn & 1; for (let i = 0; i < 40; i++) sum = sum + blend(low, high, share); return sum; }
+# function other(turn) { let sum = turn & 1; for (let i = 0; i < 40; i++) sum = sum + blend(low, text, nothing) + blend(text, high, share).length; return sum; }
+# let all = 0;
+# for (let turn = 0; turn < 6; turn++) all += total(turn);
+# print(all, other(0), other(1));
+# try { blend(1, 2n, 3); } catch (error) { print(error.constructor.name); }
+# -- end of source
+# RUN(WALK): walk f2:Body mechanisms=all
+# WALK: TypeTest {{*}} testedType=number
+# WALK: TypeTest {{*}} testedType=number
+# WALK: Mul {{*}} form=Numbers
+# WALK: TypeTest {{*}} testedType=number
+# WALK: Add {{*}} form=Numbers
+# WALK-NOT: TypeTest
+# WALK: Add {{*}} form=Numbers
+# WALK-NOT: TypeTest
+# WALK: Return
+# RUN(ALONE): walk f1:Body mechanisms=all
+# ALONE: Mul {{*}} form=Generic
+# RUN(ANSWERS): run-in-shell
+# ANSWERS: 948 300 301
+# ANSWERS-NEXT: TypeError
+# ANSWERS-NEXT: exited with 0

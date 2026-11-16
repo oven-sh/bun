@@ -17,11 +17,7 @@ public:
     {
     }
 
-    void performTask()
-    {
-        m_task();
-        delete this;
-    }
+    void performTask() { m_task(); }
 
 private:
     Function<void()> m_task;

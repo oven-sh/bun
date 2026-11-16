@@ -12,11 +12,8 @@ use bun_core::String as BunString;
 use bun_core::ZStr;
 use bun_core::strings;
 use bun_jsc::EncodedSliceJsc as _;
-use bun_jsc::StringJsc as _;
-use bun_jsc::bun_string_jsc;
 use bun_jsc::{
-    self as jsc, CallFrame, JSArrayIterator, JSGlobalObject, JSValue, JsResult,
-    MarkedArgumentBuffer,
+    self as jsc, JSArrayIterator, JSGlobalObject, JSValue, JsResult, MarkedArgumentBuffer,
 };
 use bun_simdutf_sys::simdutf;
 use bun_sys::{self as sys, SystemError};
@@ -383,7 +380,7 @@ pub(crate) fn handle_template_value(
             )));
         }
 
-        if let Some(_req) = template_value.as_::<crate::webcore::Response>() {
+        if template_value.is::<crate::webcore::Response>() {
             let idx = out_jsobjs.size();
             out_jsobjs.append(template_value);
             let mut cursor = std::io::Cursor::new(&mut jsobjref_buf[..]);
@@ -607,8 +604,6 @@ impl<'a> ShellSrcBuilder<'a> {
     }
 
     pub(crate) fn append_utf16_impl(&mut self, utf16: &[u16]) -> Result<(), bun_alloc::AllocError> {
-        let size = simdutf::length::utf8::from::utf16::le(utf16);
-        self.outbuf.reserve(size);
         strings::convert_utf16_to_utf8_append(self.outbuf, utf16);
         // Infallible: invalid UTF-16 takes the WTF-8 fallback inside the
         // conversion, and Rust aborts on OOM.
@@ -658,74 +653,43 @@ impl<'a> ShellSrcBuilder<'a> {
 /// Used in JS tests, see `internal-for-testing.ts` and shell tests.
 pub(crate) mod testing_apis {
     use super::*;
+    use bun_jsc::bindgen::{JsLocal, JsScope};
 
-    #[bun_jsc::host_fn]
-    pub(crate) fn disabled_on_this_platform(
-        global: &JSGlobalObject,
-        callframe: &CallFrame,
-    ) -> JsResult<JSValue> {
+    pub(crate) fn disabled_on_this_platform(builtin: &[u8]) -> bool {
         #[cfg(windows)]
         {
-            let _ = (global, callframe);
-            return Ok(JSValue::FALSE);
+            let _ = builtin;
+            false
         }
         #[cfg(not(windows))]
         {
-            // SAFETY: bun_vm() is non-null for a Bun-owned global.
-            let vm = global.bun_vm();
-            let mut arguments = jsc::ArgumentsSlice::init(vm, callframe.arguments());
-            let string: JSValue = match arguments.next_eat() {
-                Some(s) => s,
-                None => {
-                    return Err(global.throw(format_args!(
-                        "shellInternals.disabledOnPosix: expected 1 arguments, got 0"
-                    )));
-                }
-            };
-
-            let bunstr = string.to_bun_string(global)?;
-            let utf8str = bunstr.to_utf8();
-
-            for disabled in crate::shell::builtin::Kind::DISABLED_ON_POSIX {
-                // `strum::IntoStaticStr` would yield the PascalCase variant name
-                // ("Cp"), so use `Kind::as_str` for the lowercase name.
-                if utf8str.slice() == disabled.as_str().as_bytes() {
-                    return Ok(JSValue::TRUE);
-                }
-            }
-            Ok(JSValue::FALSE)
+            // `strum::IntoStaticStr` would yield the PascalCase variant name
+            // ("Cp"), so use `Kind::as_str` for the lowercase name.
+            crate::shell::builtin::Kind::DISABLED_ON_POSIX
+                .iter()
+                .any(|disabled| builtin == disabled.as_str().as_bytes())
         }
     }
 
-    /// Codegen (`generated_js2native.rs`) wraps this with `host_fn_result`, so we
-    /// expose the bare `JsHostFnZig` signature here and do the buffer scope inline.
-    pub(crate) fn shell_lex(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
-        MarkedArgumentBuffer::new(|buf| shell_lex_impl(global, callframe, buf))
+    pub(crate) fn shell_lex<'a>(
+        cx: &mut JsScope<'a>,
+        strings: JsLocal<'a>,
+        template_args: JsLocal<'a>,
+    ) -> JsResult<String> {
+        let global = cx.global();
+        MarkedArgumentBuffer::new(|buf| {
+            shell_lex_impl(global, strings.to_js(), template_args.to_js(), buf)
+        })
     }
 
     fn shell_lex_impl(
         global: &JSGlobalObject,
-        callframe: &CallFrame,
+        string_args: JSValue,
+        template_args_js: JSValue,
         marked_argument_buffer: &mut MarkedArgumentBuffer,
-    ) -> JsResult<JSValue> {
-        // SAFETY: bun_vm() is non-null for a Bun-owned global.
-        let vm = global.bun_vm();
-        let mut arguments = jsc::ArgumentsSlice::init(vm, callframe.arguments());
-        let string_args: JSValue = match arguments.next_eat() {
-            Some(s) => s,
-            None => {
-                return Err(global.throw(format_args!("shell_parse: expected 2 arguments, got 0")));
-            }
-        };
-
+    ) -> JsResult<String> {
         let arena = Bump::new();
 
-        let template_args_js: JSValue = match arguments.next_eat() {
-            Some(s) => s,
-            None => {
-                return Err(global.throw(format_args!("shell: expected 2 arguments, got 0")));
-            }
-        };
         let mut template_args = template_args_js.array_iterator(global)?;
         let mut jsstrings: Vec<BunString> = Vec::with_capacity(4);
 
@@ -766,41 +730,31 @@ pub(crate) mod testing_apis {
             test_tokens.push(test_tok);
         }
 
-        let str = format!("{}", test::tokens_json_fmt(&test_tokens[..]));
-        let bun_str = BunString::from_bytes(str.as_bytes());
-        bun_str.to_js(global)
+        Ok(format!("{}", test::tokens_json_fmt(&test_tokens[..])))
     }
 
     /// Testing API: parse the shell template-string arguments and return the
     /// AST as a JSON string (or throw on a parse error). Arguments are pinned
     /// in a `MarkedArgumentBuffer` for GC safety while parsing.
-    pub(crate) fn shell_parse(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
-        MarkedArgumentBuffer::new(|buf| shell_parse_impl(global, callframe, buf))
+    pub(crate) fn shell_parse<'a>(
+        cx: &mut JsScope<'a>,
+        strings: JsLocal<'a>,
+        template_args: JsLocal<'a>,
+    ) -> JsResult<String> {
+        let global = cx.global();
+        MarkedArgumentBuffer::new(|buf| {
+            shell_parse_impl(global, strings.to_js(), template_args.to_js(), buf)
+        })
     }
 
     fn shell_parse_impl(
         global: &JSGlobalObject,
-        callframe: &CallFrame,
+        string_args: JSValue,
+        template_args_js: JSValue,
         marked_argument_buffer: &mut MarkedArgumentBuffer,
-    ) -> JsResult<JSValue> {
-        // SAFETY: bun_vm() is non-null for a Bun-owned global.
-        let vm = global.bun_vm();
-        let mut arguments = jsc::ArgumentsSlice::init(vm, callframe.arguments());
-        let string_args: JSValue = match arguments.next_eat() {
-            Some(s) => s,
-            None => {
-                return Err(global.throw(format_args!("shell_parse: expected 2 arguments, got 0")));
-            }
-        };
-
+    ) -> JsResult<String> {
         let arena = Bump::new();
 
-        let template_args_js: JSValue = match arguments.next_eat() {
-            Some(s) => s,
-            None => {
-                return Err(global.throw(format_args!("shell: expected 2 arguments, got 0")));
-            }
-        };
         let mut template_args = template_args_js.array_iterator(global)?;
         let mut jsstrings: Vec<BunString> = Vec::with_capacity(4);
         let mut script: Vec<u8> = Vec::new();
@@ -843,13 +797,9 @@ pub(crate) mod testing_apis {
 
         // `crate::shell::ast::Script` is a `'static`-erased alias of
         // `bun_shell_parser::ast::Script`, so it formats directly.
-        let str = format!(
+        Ok(format!(
             "{}",
             bun_shell_parser::json_fmt::script_json_fmt(&script_ast)
-        );
-        bun_string_jsc::create_utf8_for_js(global, str.as_bytes())
+        ))
     }
 }
-// `generated_js2native.rs` snake-cases `TestingAPIs` as `testing_ap_is`
-// (the codegen splits on capitalisation runs).
-pub(crate) use testing_apis as testing_ap_is;

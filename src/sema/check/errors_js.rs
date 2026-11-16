@@ -5,6 +5,7 @@
 //! runs in the parser: `hir::DiagnosticKind::Js`.
 
 use super::*;
+use crate::bind::FnOwner;
 
 /// `plainJSErrors` (compiler/program.go): the codes reported for JavaScript that isn't opted into checking. Sorted.
 pub(super) const PLAIN_JS_ERRORS: [u32; 91] = [
@@ -35,29 +36,28 @@ pub(super) const GRAMMAR_ERRORS: [u32; 164] = [
 impl Checker<'_, '_> {
     /// `IsCheckJSEnabledForFile`
     pub(super) fn is_check_js(&self, file: FileId) -> bool {
-        self.hir(file)
-            .check_directive
+        (self.files().module(file).facts.check_directive)
             .unwrap_or_else(|| self.files().options.check_js == Some(true))
     }
 
     /// `IsPlainJSFile`: JavaScript for which checking is neither enabled nor disabled.
     pub(super) fn is_plain_js(&self, file: FileId) -> bool {
-        let hir = self.hir(file);
-        hir.is_js && hir.check_directive.is_none() && self.files().options.check_js.is_none()
+        let facts = self.files().module(file).facts;
+        facts.is_js && facts.check_directive.is_none() && self.files().options.check_js.is_none()
     }
 
     /// `SkipTypeChecking`: true if anything other than syntax errors is reported.
     pub fn reports_semantic_errors(&self, file: FileId) -> bool {
         let options = &self.files().options;
-        let hir = self.hir(file);
+        let module = self.files().module(file);
         if options.no_check
-            || options.skip_lib_check && hir.kind == FileKind::Declaration
-            || options.skip_default_lib_check && self.files().module(file).is_lib
+            || options.skip_lib_check && module.facts.kind == FileKind::Declaration
+            || options.skip_default_lib_check && module.is_lib
         {
             return false;
         }
-        hir.check_directive != Some(false)
-            && (!hir.is_js || self.is_plain_js(file) || self.is_check_js(file))
+        module.facts.check_directive != Some(false)
+            && (!module.facts.is_js || self.is_plain_js(file) || self.is_check_js(file))
     }
 }
 
@@ -100,17 +100,23 @@ impl Checker<'_, '_> {
         if !hir.is_js || hir.legacy_decorators || self.is_check_js(file) {
             return;
         }
+        let bound = self.bound(file);
         let mut previous_owner = None;
         for &(owner, decorator) in &hir.decorators {
             if previous_owner.replace(owner) != Some(owner)
-                && matches!(owner, DecoratorOwner::Param(_))
+                && let DecoratorOwner::Param(parameter) = owner
             {
                 // `decorator.Loc`, which starts at the end of the previous token. `export` and `default` can come
                 // before it.
                 let at_sign = self.decorator_position(file, decorator).at_sign;
                 let pos = self.end_of_token_before(file, at_sign);
                 let at = (file, pos, end_of_expr(hir, decorator));
-                self.add_diagnostic(Reported::bare(at, 1206));
+                // `bun run` reads one on a parameter of a member of a class.
+                let function = bound.fns.get(bound.param_fn[parameter.idx()].idx());
+                let is_in_class = function.is_some_and(|it| matches!(it.owner, FnOwner::Member(_)));
+                let class =
+                    DiagnosticClass::early_error_if(!is_in_class, DiagnosticClass::of_code(1206));
+                self.add_diagnostic(Reported::bare(at, 1206).with_class(class));
             }
         }
     }

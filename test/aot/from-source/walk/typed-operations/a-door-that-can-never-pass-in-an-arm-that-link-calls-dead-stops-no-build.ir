@@ -1,0 +1,28 @@
+# -- source: main.js
+# let kept = null;
+# async function run() {
+#   const list = Object.freeze([1, 2, 3, 4]);
+#   for (let r = 0; r < 6; r++) {
+#     for (const x of list) {
+#       await null;
+#       if (typeof x === "string") kept = x.length;
+#     }
+#   }
+#   return [typeof kept, String(kept)].join("|");
+# }
+# run().then((said) => { print(said); return run(); }).then((said) => print(said));
+# -- end of source
+# A RIGHT PROGRAM. f1 = run. No element of the list is a text, so Link, which narrows by the test, lets nothing arrive at `x.length` and leaves the store out of what it
+# proves of `kept`: null. The walk has lost the type of x behind the await and walks the arm. There a raw number comes to a door that takes null: the door can never pass. That is true and no fault: the arm is dead. A build that
+# verifies (check=Validate) stopped on it: `a door of kind 3 can never pass: what comes is number, and what is proven is null|absent`. The walk cannot ask whether Link takes an operation to be reached, so no build stops: the door is
+# built, as in every other build, and is the stop by name should the arm ever run; nothing behind a check that never passes runs, so the block ends there.
+# OPTIONS: check=Validate
+# RUN(BUILDS): run-in-shell
+# BUILDS: object|null
+# BUILDS-NEXT: object|null
+# BUILDS-NEXT: exited with 0
+# BUILDS-NEXT: the source prints the same
+# RUN(ENDS): walk f1:CoroutineBody mechanisms=all
+# ENDS: = GetStringLength
+# ENDS: CheckProof {{*}} checkedType=null|absent {{*}}source=Variable
+# ENDS-NEXT: Unreachable

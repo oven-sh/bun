@@ -4,12 +4,13 @@
 use core::cell::Cell;
 use core::sync::atomic::{AtomicBool, Ordering};
 
-use bun_io::KeepAlive;
-use bun_jsc::bindgen::JsScope;
-use bun_jsc::{self as jsc, CallFrame, JSGlobalObject, JSValue, JsCell, JsResult};
+use bun_io::JsKeepAlive;
+use bun_jsc::bindgen::{JsLocal, JsScope};
+use bun_jsc::{self as jsc, JSGlobalObject, JSValue, JsCell, JsResult};
 use bun_uws as uws;
 
-use crate::socket::{Listener, NativeCallbacks, NewSocket, SocketFlags, TCPSocket, TLSSocket};
+use crate::generated_bindgen::socket_body::SocketHandle;
+use crate::socket::{Listener, NativeCallbacks, NewSocket, SocketFlags};
 
 static AUTO_SELECT_FAMILY_DEFAULT: AtomicBool = AtomicBool::new(true);
 
@@ -50,7 +51,7 @@ pub(crate) fn new_detached_socket(cx: &mut JsScope<'_>, is_ssl: bool) -> JSValue
     // Only `socket`, `ref_count`, `protos`, `handlers` are
     // specified; the rest take their struct defaults.
     fn make<const SSL: bool>(global: &JSGlobalObject) -> JSValue {
-        let socket = NewSocket::<SSL>::new(NewSocket::<SSL> {
+        let socket = bun_ptr::RefPtr::new(NewSocket::<SSL> {
             socket: Cell::new(uws::NewSocketHandler::<SSL>::DETACHED),
             ref_count: bun_ptr::RefCount::init(),
             protos: JsCell::new(None),
@@ -62,7 +63,7 @@ pub(crate) fn new_detached_socket(cx: &mut JsScope<'_>, is_ssl: bool) -> JSValue
             // policy in JS, so a hostname mismatch is never enforced natively.
             flags: Cell::new(SocketFlags::default() | SocketFlags::DEFERS_SERVER_IDENTITY),
             this_value: JsCell::new(jsc::JsRef::empty()),
-            poll_ref: JsCell::new(KeepAlive::init()),
+            poll_ref: JsKeepAlive::default(),
             ref_pollref_on_connect: Cell::new(true),
             connection: JsCell::new(None),
             server_name: JsCell::new(None),
@@ -71,11 +72,12 @@ pub(crate) fn new_detached_socket(cx: &mut JsScope<'_>, is_ssl: bool) -> JSValue
             native_callback: JsCell::new(NativeCallbacks::None),
             twin: JsCell::new(None),
             verify_error: JsCell::new(None),
-            latest_session: core::cell::Cell::new(None),
+            latest_session: JsCell::new(None),
         });
         // Weak while idle: `_handle` owns it, and `this_value_for_connect` pins each attempt.
-        let value = socket.to_js(global);
-        socket.this_value.set(jsc::JsRef::init_weak(value));
+        let this = socket.this_ptr();
+        let value = NewSocket::to_js(socket, global);
+        this.this_value.set(jsc::JsRef::init_weak(value));
         value
     }
 
@@ -86,15 +88,15 @@ pub(crate) fn new_detached_socket(cx: &mut JsScope<'_>, is_ssl: bool) -> JSValue
     }
 }
 
-#[bun_jsc::host_fn]
-pub(crate) fn do_connect(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-    let [prev, opts] = frame.arguments_as_array::<2>();
-    let maybe_tcp = prev.as_::<TCPSocket>();
-    let maybe_tls = prev.as_::<TLSSocket>();
-    Listener::connect_inner(
-        &global.js_thread_of_caller(frame),
-        maybe_tcp,
-        maybe_tls,
-        opts,
-    )
+pub(crate) fn do_connect<'a>(
+    cx: &mut JsScope<'a>,
+    socket: SocketHandle<'a>,
+    options: JsLocal<'a>,
+) -> JsResult<JSValue> {
+    let (maybe_tcp, maybe_tls) = match socket {
+        SocketHandle::Tcp(socket) => (Some(socket), None),
+        SocketHandle::Tls(socket) => (None, Some(socket)),
+        SocketHandle::Ignored(_) => (None, None),
+    };
+    Listener::connect_inner(&cx.js_thread(), maybe_tcp, maybe_tls, options.to_js())
 }

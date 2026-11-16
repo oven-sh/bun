@@ -1,0 +1,36 @@
+# const host = process;  function listen() { host.on("exit", done); }  function done() {}  listen();
+# Link holds process as the object through the constant as it does behind the written name, so it follows what `on` does with its receiver there too, and the look leaves that to it:
+# the program says what `process.on("exit", done)` says. If the look asked only for a name written in the same body, process would be let go here, and with it all that it holds.
+# OPTIONS: exclude=CodeOutsideImage
+# RUN: causes mechanisms=all
+# CHECK-NOT: cause
+# CHECK: unseen-code cannot-run
+
+variable g0 name="host" module=m0 declared={type=anything} flags=[IsImmutable]
+module m0 path="main.mjs" displayPath="main.mjs" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=Process
+    PutModuleVariable v0 variable=g0
+    v2 = NewClosure function=f1
+    v3 = Call v2 calleeName="listen"
+    v4 = Undefined
+    Return v4
+}
+function f1 name="listen" module=m0 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = GetModuleVariable variable=g0
+    v1 = CheckInitialized v0 name="host"
+    v2 = PropGet v1 key="on"
+    v3 = String string="exit"
+    v4 = NewClosure function=f2
+    v5 = Call v2, v1, v3, v4 calleeKey="on" calleeName="host.on"
+    v6 = Undefined
+    Return v6
+}
+function f2 name="done" module=m0 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Undefined
+    Return v0
+}

@@ -15,7 +15,7 @@ export const PostgresSQLQuery = b.class({
     copyFail: { args: { message: b.string.loose.utf8 }, capability: "js" },
     copyResume: {},
     copyWrite: { ...js, args: { chunk: b.any }, returns: b.bool },
-    describeResult: { ...js, args: { number: b.any }, returns: b.any },
+    describeResult: { ...js, args: { number: b.any }, returns: b.any.returning("object", "null") },
     run: { ...js, args: { connection: PostgresSQLConnection, query: b.any }, passThis: true },
     setCopy: { args: { callback: b.any, writable: b.bool.loose }, capability: "js", passThis: true },
     setMode: { ...js, args: { mode: b.any } },

@@ -24,7 +24,7 @@ pub struct MapEntry {
     /// The nodes are allocated in the process heap and never freed, because a mimalloc heap per
     /// entry would cost 30 KB.
     pub root: Expr,
-    pub source: Source,
+    pub source: Source<'static>,
     pub indentation: Indentation,
     indentation_guessed: bool,
     /// Owns the path bytes that `source.path.{text,pretty,name.*}` borrow,
@@ -237,11 +237,11 @@ impl WorkspacePackageJSONCache {
 
         let value = MapEntry {
             root,
-            source,
+            // SAFETY: `source.path` borrows `key`, which the entry keeps beside it.
+            // The heap address is stable across the move into the map.
+            source: unsafe { source.into_static() },
             indentation: parsed.indentation,
             indentation_guessed: opts.guess_indentation,
-            // `source.path` borrows this allocation; the `Box<[u8]>` heap
-            // address is stable across the move into the map.
             _path_storage: key,
             stale_contents: Vec::new(),
         };

@@ -1,6 +1,8 @@
 // This is the file that loads for `bun bake`, when the project has no `bake` script or file of its own.
 // It serves the app in the working directory: the pages in `app/pages/` and the server in `app/server.*`.
-import type { HTMLBundle, Serve, Server } from "bun";
+import type { Serve } from "bun";
+type Glob = import("bun").Glob;
+type HTMLBundle = Bun.HTMLBundle;
 const initial = performance.now();
 const argv = process.argv;
 
@@ -12,11 +14,11 @@ const {
   serveOnFreePort,
   printBannerAndHandleShortcuts,
 } = require("internal/serve_cli");
-const setConfigPlugins = $newRustFunction("bake/config/plugins.rs", "setConfigPlugins", 2);
-const isRestart = $newRustFunction("bake/config/plugins.rs", "isRestart", 0);
-const restartProcess = $newRustFunction("bake/config/plugins.rs", "restartProcess", 0);
-const setPages = $newRustFunction("bake/config/plugins.rs", "setPages", 1);
-const checkFramework = $newRustFunction("bake/config/plugins.rs", "checkFramework", 1);
+const setConfigPlugins = $bindgen("bake_plugins.bind.ts", "setConfigPlugins");
+const isRestart = $bindgen("bake_plugins.bind.ts", "isRestart");
+const restartProcess = $bindgen("bake_plugins.bind.ts", "restartProcess");
+const setPages = $bindgen("bake_plugins.bind.ts", "setPages");
+const checkFramework = $bindgen("bake_plugins.bind.ts", "checkFramework");
 
 // `app/server.ts` runs before the code that checks its export, and can change these on the prototypes.
 const ObjectKeys = Object.keys;
@@ -92,7 +94,7 @@ function routeOfPage(file: string): string {
 async function loadPages(pagesDir: string): Promise<Page[]> {
   let files: string[];
   try {
-    files = [...new Bun.Glob("**/*.html").scanSync({ cwd: pagesDir, onlyFiles: true, followSymlinks: true })];
+    files = [...(new Bun.Glob("**/*.html") as Glob).scanSync({ cwd: pagesDir, onlyFiles: true, followSymlinks: true })];
   } catch (error: any) {
     if (error?.code === "ENOENT") return [];
     throw error;
@@ -157,7 +159,7 @@ async function loadConfig(cwd: string): Promise<Config> {
   }
 
   const name = display(file);
-  const key = file + "\0" + Bun.hash(await Bun.file(file).bytes());
+  const key = file + "\0" + Bun.hash(await (Bun.file(file) as Blob).bytes());
   // A promise, a function, or a function that returns a promise: each gives the config.
   let config = await (await import(file)).default;
   if ($isCallable(config)) config = await config({ mode: "development" });
@@ -260,7 +262,7 @@ function loadFramework(name: string, dir: string, pluginName: string, value: any
 function componentPages(pagesDir: string): string[] {
   try {
     return [
-      ...new Bun.Glob("**/*.{tsx,jsx}").scanSync({ cwd: pagesDir, onlyFiles: true, followSymlinks: true }),
+      ...(new Bun.Glob("**/*.{tsx,jsx}") as Glob).scanSync({ cwd: pagesDir, onlyFiles: true, followSymlinks: true }),
     ].filter(relative => !relative.split(/[\\/]/).some(part => part.startsWith("_")));
   } catch (error: any) {
     if (error?.code === "ENOENT") return [];
@@ -457,7 +459,7 @@ async function start() {
   const exportedPort = exported?.port;
   // A `unix` socket in the export is kept unless a flag asks for a TCP address.
   const useUnix = exported?.unix !== undefined && flags.hostname === undefined && flags.port === undefined;
-  let server: Server<undefined>;
+  let server: Bun.Server<undefined>;
   try {
     server = serveOnFreePort(
       "bun bake",

@@ -39,8 +39,11 @@
 #include <cstdint>
 #include <cstring>
 #include <limits>
+#include <memory>
 #include <optional>
+#include <ranges>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 namespace uWS {
@@ -399,13 +402,28 @@ struct Http2Connection {
     bool filteredOpen = false;
     bool filteredAccept = false;
 
-    /* >0 while this connection is dispatching into user code; deletion of
-     * the connection and its streams waits for the outermost frame. */
+    /* Held by a frame that dispatches into user code, or by the sweep list. The last one frees a closed connection. */
+    struct Pin {
+        explicit Pin(Http2Connection *connection) : conn(connection) { conn->busy++; }
+        Pin(Pin &&other) noexcept : conn(std::exchange(other.conn, nullptr)) {}
+        ~Pin() { if (conn && --conn->busy == 0 && conn->closed) delete conn; }
+
+        Http2Connection *get() const { return conn; }
+        Http2Connection *operator->() const { return conn; }
+        bool isOutermost() const { return conn->busy == 1; }
+
+    private:
+        Http2Connection *conn;
+    };
+
+private:
     int busy = 0;
+
+public:
     bool closed = false;
     bool inSweepList = false;
 
-    std::vector<Http2Response *> streams;
+    WTF::Vector<std::unique_ptr<Http2Response>> streams;
     std::vector<Http2Response *> drainedAgain;
     /* Streams we sent RST_STREAM on; frames for them may still be in flight
      * and are ignored (§5.1 closed). Anything else on a closed id is an error. */
@@ -420,7 +438,7 @@ struct Http2Connection {
     bool wasResetByPeer(uint32_t id) const { for (uint32_t r : resetByPeer) if (r == id) return true; return false; }
     std::vector<Http2Response *> writable;
     std::vector<Http2Response *> draining;
-    std::vector<Http2Response *> pendingFree;
+    WTF::Vector<std::unique_ptr<Http2Response>> pendingFree;
     /* Seconds of silence before onTimeout; recomputed when a stream sets a
      * timeout or retires (see Http2Response::timeoutS). */
     unsigned idleTimeoutS = 0;
@@ -432,15 +450,18 @@ struct Http2Connection {
         lshpack_dec_init(&dec);
     }
     ~Http2Connection() {
-        for (Http2Response *stream : pendingFree) delete stream;
-        for (Http2Response *stream : streams) delete stream;
         lshpack_enc_cleanup(&enc);
         lshpack_dec_cleanup(&dec);
     }
 
+    Http2Response *openStream(uint32_t id) {
+        streams.append(std::make_unique<Http2Response>(this, id, peerInitialWindowSize));
+        return streams.last().get();
+    }
+
     Http2Response *findStream(uint32_t id) {
         /* Newest streams are the busy ones. */
-        for (size_t i = streams.size(); i-- > 0;) if (streams[i]->id == id) return streams[i];
+        for (auto &stream : streams | std::views::reverse) if (stream->id == id) return stream.get();
         return nullptr;
     }
 
@@ -588,7 +609,7 @@ struct Http2Connection {
     inline void scheduleFlush();
 
     bool drainedAfterGoaway() {
-        return !closed && streams.empty() && (goawaySent || goawayReceived) && out->length() == 0;
+        return !closed && streams.isEmpty() && (goawaySent || goawayReceived) && out->length() == 0;
     }
 
     bool takeResetToken() {
@@ -661,7 +682,7 @@ struct Http2Context {
     std::vector<unsigned char> encodeBuffer;
     int dispatchDepth = 0;
 
-    std::vector<Http2Connection *> sweepList;
+    std::vector<Http2Connection::Pin> sweepList;
 
     static Http2Connection *connection(us_socket_t *s) {
         return *(Http2Connection **) us_socket_ext(s);
@@ -672,21 +693,14 @@ struct Http2Context {
         return v > 0xffffff ? 0xffffff : (uint32_t) v;
     }
 
-    static Http2Context *create(Loop *loop, unsigned idleTimeoutS) {
-        Http2Context *ctx = new Http2Context;
-        ctx->loop = loop;
-        ctx->idleTimeoutS = idleTimeoutS;
-        us_socket_group_init(&ctx->group, (us_loop_t *) loop, &vtable, ctx);
-        return ctx;
+    Http2Context(Loop *loop, unsigned idleTimeoutS) : loop(loop), idleTimeoutS(idleTimeoutS) {
+        us_socket_group_init(&group, (us_loop_t *) loop, &vtable, this);
     }
 
-    void free() {
+    ~Http2Context() {
         closeAll();
         if (parent && detachFromParent) detachFromParent(parent, this);
-        for (Http2Connection *conn : sweepList) { conn->inSweepList = false; if (--conn->busy == 0 && conn->closed) delete conn; }
-        sweepList.clear();
         us_socket_group_deinit(&group);
-        delete this;
     }
 
     /* Hook into an HttpContext<SSL>'s data so its connections can migrate here. */
@@ -773,14 +787,14 @@ struct Http2Context {
     /* fn may close connections (and run JS that closes others), so snapshot
      * the group's list first and pin each entry across the call. */
     template <typename F> void forEachConnection(F &&fn) {
-        std::vector<Http2Connection *> list;
+        std::vector<Http2Connection::Pin> list;
         for (us_socket_t *s = group.head_sockets; s; s = s->next) {
             Http2Connection *conn = connection(s);
-            if (!conn->closed) { conn->busy++; list.push_back(conn); }
+            if (!conn->closed) list.emplace_back(conn);
         }
-        for (Http2Connection *conn : list) {
-            if (!conn->closed) fn(conn);
-            if (--conn->busy == 0 && conn->closed) delete conn;
+        for (auto &entry : list) {
+            Http2Connection::Pin conn = std::move(entry);
+            if (!conn->closed) fn(conn.get());
         }
     }
 
@@ -801,10 +815,10 @@ struct Http2Context {
     size_t closeIdle(bool closeWhenIdle) {
         size_t closedNow = 0;
         forEachConnection([&](Http2Connection *conn) {
-            if (!conn->streams.empty() && !closeWhenIdle) return;
+            if (!conn->streams.isEmpty() && !closeWhenIdle) return;
             if (!conn->goawaySent) conn->writeGoaway(http2::ERR_NO_ERROR);
             conn->flush();
-            if (conn->streams.empty()) {
+            if (conn->streams.isEmpty()) {
                 us_socket_close(conn->s, 0, nullptr);
                 closedNow++;
             }
@@ -820,13 +834,10 @@ struct Http2Context {
 
     bool drainScheduled = false;
 
-    /* Queued connections are pinned (busy) so they can't be deleted before
-     * the pass reaches them. */
     void scheduleSweep(Http2Connection *conn) {
         if (conn->inSweepList || conn->closed) return;
         conn->inSweepList = true;
-        conn->busy++;
-        sweepList.push_back(conn);
+        sweepList.emplace_back(conn);
         if (!drainScheduled && scheduleDrain) {
             drainScheduled = true;
             scheduleDrain(scheduleDrainUser, this);
@@ -849,55 +860,42 @@ struct Http2Context {
      * free retired streams. Runs from the embedder's deferred queue (see
      * scheduleDrain) and after every socket event on that connection. */
     void sweep() {
-        std::vector<Http2Connection *> batch;
+        std::vector<Http2Connection::Pin> batch;
         batch.swap(sweepList);
-        if (batch.empty()) return;
-        for (Http2Connection *conn : batch) {
+        for (auto &entry : batch) {
+            Http2Connection::Pin conn = std::move(entry);
             conn->inSweepList = false;
-            conn->busy--; /* the queue's pin */
-            if (conn->closed) { if (conn->busy == 0) delete conn; continue; }
+            if (conn->closed) continue;
             /* Inside its own socket event (the deferred queue runs after every
              * JS callback): the event's epilogue flushes once for the whole
              * batch and frees retired streams. Flushing here would be one
              * write() per response. */
-            if (conn->busy > 0) continue;
-            conn->busy++;
+            if (!conn.isOutermost()) continue;
             conn->borrowSharedOut();
             conn->pump();
             conn->returnSharedOut();
-            conn->busy--;
             if (!sweepConnection(conn)) continue;
             if (conn->drainedAfterGoaway()) us_socket_close(conn->s, 0, nullptr);
         }
     }
 
-    /* Delete retired streams, telling each holder first. Returns false if
-     * the connection closed meanwhile (and was deleted if nothing else of
-     * ours is on the stack). */
-    static bool sweepConnection(Http2Connection *conn) {
-        if (conn->busy > 0) {
+    /* Delete retired streams, telling each holder first. Returns false if the connection closed meanwhile. */
+    static bool sweepConnection(const Http2Connection::Pin &conn) {
+        if (!conn.isOutermost()) {
             /* A frame of ours further up the stack (a nested event-loop tick
              * got us here) may still hold one of these streams; its epilogue
              * sweeps when it unwinds. */
             return !conn->closed;
         }
-        conn->busy++;
-        while (!conn->pendingFree.empty() && !conn->closed) {
-            Http2Response *stream = conn->pendingFree.back();
-            conn->pendingFree.pop_back();
+        while (!conn->pendingFree.isEmpty() && !conn->closed) {
+            std::unique_ptr<Http2Response> stream = conn->pendingFree.takeLast();
             if (stream->data.onAborted) {
                 auto cb = stream->data.onAborted;
                 stream->data.onAborted = nullptr;
-                cb(stream, stream->data.userData);
+                cb(stream.get(), stream->data.userData);
             }
-            delete stream;
         }
-        conn->busy--;
-        if (conn->closed) {
-            if (conn->busy == 0) delete conn;
-            return false;
-        }
-        return true;
+        return !conn->closed;
     }
 
 private:
@@ -912,24 +910,21 @@ private:
     }
 
     static us_socket_t *onWritable(us_socket_t *s) {
-        Http2Connection *conn = connection(s);
-        conn->busy++;
+        Http2Connection::Pin conn(connection(s));
         conn->flush();
         conn->borrowSharedOut();
         if (!conn->closed) conn->drainWritable();
-        conn->busy--;
         return epilogue(conn, s);
     }
 
     static us_socket_t *onClose(us_socket_t *s, int, void *) {
-        Http2Connection *conn = connection(s);
+        Http2Connection::Pin conn(connection(s));
         Http2Context *ctx = conn->ctx;
         conn->closed = true;
-        if (ctx->sharedOutHolder == conn) { ctx->sharedOut.clear(); ctx->sharedOutHolder = nullptr; conn->out = &conn->ownOut; }
-        conn->busy++;
-        for (Http2Response *stream : conn->streams) {
+        if (ctx->sharedOutHolder == conn.get()) { ctx->sharedOut.clear(); ctx->sharedOutHolder = nullptr; conn->out = &conn->ownOut; }
+        for (auto &stream : conn->streams) {
             stream->dead = true;
-            conn->pendingFree.push_back(stream);
+            conn->pendingFree.append(std::move(stream));
         }
         conn->streams.clear();
         conn->writable.clear();
@@ -937,35 +932,28 @@ private:
         /* Every holder learns its Http2Response* is going away. The objects
          * themselves are deleted with the connection once no frame of ours
          * is still running (~Http2Connection). */
-        for (Http2Response *stream : conn->pendingFree) {
+        for (auto &stream : conn->pendingFree) {
             if (stream->data.onAborted) {
                 auto cb = stream->data.onAborted;
                 stream->data.onAborted = nullptr;
-                cb(stream, stream->data.userData);
+                cb(stream.get(), stream->data.userData);
             }
         }
         if (ctx->notifyParentClosed) {
             ctx->notifyParentClosed(ctx->parent, s, conn->filteredOpen, conn->filteredAccept);
         }
-        conn->busy--;
-        if (conn->busy == 0) delete conn;
         return s;
     }
 
     /* No traffic either way for idleTimeoutS (or a drained going-away
      * connection): streams in flight are aborted through onClose. */
     static us_socket_t *onTimeout(us_socket_t *s) {
-        Http2Connection *conn = connection(s);
-        conn->busy++;
-        std::vector<Http2Response *> open = conn->streams;
+        Http2Connection::Pin conn(connection(s));
+        auto open = WTF::map(conn->streams, [](auto &stream) { return stream.get(); });
         for (Http2Response *stream : open) {
             if (!stream->dead && stream->data.onTimeout) stream->data.onTimeout(stream, stream->data.userData);
         }
-        conn->busy--;
-        if (conn->closed) {
-            if (conn->busy == 0) delete conn;
-            return s;
-        }
+        if (conn->closed) return s;
         if (!conn->goawaySent) conn->writeGoaway(http2::ERR_NO_ERROR);
         conn->flush();
         return us_socket_close(s, 0, nullptr);
@@ -979,15 +967,12 @@ private:
 
     /* After user code ran from a socket event: push bytes out, free what
      * retired, close a drained going-away connection. */
-    static us_socket_t *epilogue(Http2Connection *conn, us_socket_t *s) {
+    static us_socket_t *epilogue(const Http2Connection::Pin &conn, us_socket_t *s) {
         if (conn->closed) {
             conn->returnSharedOut();
-            if (conn->busy == 0) delete conn;
             return s;
         }
-        conn->busy++;
         conn->pump();
-        conn->busy--;
         conn->returnSharedOut();
         if (!sweepConnection(conn)) return s;
         if (conn->drainedAfterGoaway()) return us_socket_close(s, 0, nullptr);
@@ -1036,9 +1021,9 @@ inline void Http2Connection::touch() {
 inline void Http2Connection::recomputeIdleTimeout() {
     /* Most permissive among open streams (0 = never); a stream that never
      * asked counts as the context default, as does a connection with none. */
-    unsigned t = streams.empty() ? ctx->idleTimeoutS : 0;
-    bool never = streams.empty() && ctx->idleTimeoutS == 0;
-    for (Http2Response *stream : streams) {
+    unsigned t = streams.isEmpty() ? ctx->idleTimeoutS : 0;
+    bool never = streams.isEmpty() && ctx->idleTimeoutS == 0;
+    for (auto &stream : streams) {
         unsigned s = stream->timeoutS == 255 ? ctx->idleTimeoutS : stream->timeoutS;
         if (s == 0) { never = true; break; }
         t = std::max(t, s);
@@ -1202,8 +1187,9 @@ inline void Http2Connection::drainWritable() {
 inline void Http2Connection::retireStream(Http2Response *stream, bool abortNow) {
     if (stream->dead) return;
     stream->dead = true;
-    auto it = std::find(streams.begin(), streams.end(), stream);
-    if (it != streams.end()) streams.erase(it);
+    size_t index = streams.findIf([&](auto &open) { return open.get() == stream; });
+    std::unique_ptr<Http2Response> retired = std::move(streams[index]);
+    streams.removeAt(index);
     if (stream->wantsWrite) {
         auto wit = std::find(writable.begin(), writable.end(), stream);
         if (wit != writable.end()) writable.erase(wit);
@@ -1216,7 +1202,7 @@ inline void Http2Connection::retireStream(Http2Response *stream, bool abortNow) 
         stream->data.onAborted = nullptr;
         cb(stream, stream->data.userData);
     }
-    pendingFree.push_back(stream);
+    pendingFree.append(std::move(retired));
     if (closed) return;
     /* Freed (and a drained going-away connection closed) after the current
      * socket event, or from the deferred pass if we're outside one; never
@@ -1260,13 +1246,12 @@ inline bool Http2Connection::streamError(uint32_t streamId, Http2Response *strea
 }
 
 inline void Http2Connection::onData(const char *data, size_t length) {
-    busy++;
+    Pin pin(this);
     if (prefaceOffset < http2::CLIENT_PREFACE_LEN) {
         size_t n = std::min<size_t>(http2::CLIENT_PREFACE_LEN - prefaceOffset, length);
         if (memcmp(data, http2::CLIENT_PREFACE + prefaceOffset, n) != 0) {
             connectionError(http2::ERR_PROTOCOL_ERROR);
-            busy--;
-            Http2Context::epilogue(this, s);
+            Http2Context::epilogue(pin, s);
             return;
         }
         prefaceOffset += (uint8_t) n;
@@ -1294,14 +1279,12 @@ inline void Http2Connection::onData(const char *data, size_t length) {
         uint32_t streamId = http2::readU32BE(h + 5) & 0x7fffffff;
         if (flen > http2::LOCAL_MAX_FRAME_SIZE) {
             connectionError(http2::ERR_FRAME_SIZE_ERROR);
-            busy--;
-            Http2Context::epilogue(this, s);
+            Http2Context::epilogue(pin, s);
             return;
         }
         if (avail - consumed < http2::FRAME_HEADER_SIZE + flen) break;
         if (!handleFrame(type, flags, streamId, h + http2::FRAME_HEADER_SIZE, flen) || closed) {
-            busy--;
-            Http2Context::epilogue(this, s);
+            Http2Context::epilogue(pin, s);
             return;
         }
         consumed += http2::FRAME_HEADER_SIZE + flen;
@@ -1314,10 +1297,9 @@ inline void Http2Connection::onData(const char *data, size_t length) {
     }
     /* Only frames that move a stream count as activity: a peer holding
      * streams open at a zero window can't keep the connection alive on PINGs. */
-    if (progressed || streams.empty()) touch();
+    if (progressed || streams.isEmpty()) touch();
     progressed = false;
-    busy--;
-    Http2Context::epilogue(this, s);
+    Http2Context::epilogue(pin, s);
 }
 
 inline bool Http2Connection::handleSettings(uint8_t flags, const unsigned char *payload, uint32_t length) {
@@ -1351,11 +1333,11 @@ inline bool Http2Connection::handleSettings(uint8_t flags, const unsigned char *
             if (value > (uint32_t) http2::MAX_WINDOW_SIZE) return connectionError(http2::ERR_FLOW_CONTROL_ERROR);
             int64_t delta = (int64_t) value - peerInitialWindowSize;
             peerInitialWindowSize = (int32_t) value;
-            for (Http2Response *stream : streams) {
+            for (auto &stream : streams) {
                 int64_t w = (int64_t) stream->sendWindow + delta;
                 if (w > http2::MAX_WINDOW_SIZE) return connectionError(http2::ERR_FLOW_CONTROL_ERROR);
                 stream->sendWindow = (int32_t) w;
-                if (delta > 0) markWantsWrite(stream);
+                if (delta > 0) markWantsWrite(stream.get());
             }
             break;
         }
@@ -1649,9 +1631,8 @@ inline bool Http2Connection::handleHeaderBlock(uint32_t streamId, uint8_t flags,
     }
     lastProcessedStreamId = streamId;
     if (tooLarge) {
-        Http2Response *stream = new Http2Response(this, streamId, peerInitialWindowSize);
+        Http2Response *stream = openStream(streamId);
         stream->remoteClosed = endStream;
-        streams.push_back(stream);
         stream->writeStatus("431")->end();
         return !closed;
     }
@@ -1707,10 +1688,9 @@ inline bool Http2Connection::handleHeaderBlock(uint32_t streamId, uint8_t flags,
         return streamError(streamId, nullptr, http2::ERR_PROTOCOL_ERROR);
     }
 
-    Http2Response *stream = new Http2Response(this, streamId, peerInitialWindowSize);
+    Http2Response *stream = openStream(streamId);
     stream->declaredContentLength = contentLength;
     stream->remoteClosed = endStream;
-    streams.push_back(stream);
     progressed = true;
     if (!http2::isKnownMethod(method)) {
         /* RFC 9110 §15.6.2. The router would dispatch it to the "any" handler,
@@ -1963,17 +1943,11 @@ inline void Http2Response::growReceiveWindow() {
 }
 
 inline Http2Response *Http2Response::cork(MoveOnlyFunction<void()> &&fn) {
-    Http2Connection *c = conn;
-    c->busy++;
+    Http2Connection::Pin c(conn);
     fn();
-    c->busy--;
-    if (c->closed) {
-        if (c->busy == 0) delete c;
-        return this;
-    }
     /* Outermost holder outside a socket event: whatever fn() queued (bytes
      * in out, retired streams) goes to the deferred pass. */
-    if (c->busy == 0) c->ctx->scheduleSweep(c);
+    if (!c->closed && c.isOutermost()) c->ctx->scheduleSweep(c.get());
     return this;
 }
 

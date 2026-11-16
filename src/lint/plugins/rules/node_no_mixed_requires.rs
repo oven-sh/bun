@@ -8,8 +8,8 @@ pub struct NoMixedRequires {
     allow_call: bool,
 }
 
-const NO_MIX_REQUIRE: Message = Message::new("", "Do not mix 'require' and other declarations.");
-const NO_MIX_CORE_MODULE_FILE_COMPUTED: Message = Message::new("", "Do not mix core, module, file and computed requires.");
+const NO_MIX_REQUIRE: &Message = &Message::new("", "Do not mix 'require' and other declarations.");
+const NO_MIX_CORE_MODULE_FILE_COMPUTED: &Message = &Message::new("", "Do not mix core, module, file and computed requires.");
 
 /// `require("module").builtinModules` in Node.js 13.8. Sorted.
 const BUILTIN_MODULES: [&str; 54] = [

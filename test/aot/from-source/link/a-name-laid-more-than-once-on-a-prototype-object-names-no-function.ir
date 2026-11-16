@@ -1,0 +1,21 @@
+# One name is stored and also defined as an accessor; another is defined twice with different getters. The tables name no function for either, proven or expected. A name that is laid once keeps its getter.
+# -- source: main.js
+# function Mid() { this.more = 2; }
+# function Plain() { this.more = 3; }
+# Mid.prototype.tell = () => 9;
+# Object.defineProperty(Mid.prototype, "tell", { get() { return 7; }, configurable: true });
+# Object.defineProperty(Mid.prototype, "twice", { get() { return 1; }, configurable: true });
+# Object.defineProperty(Mid.prototype, "twice", { get() { return 2; }, configurable: true });
+# Object.defineProperty(Plain.prototype, "once", { get() { return this.more; }, configurable: true });
+# print(new Mid().tell, new Mid().twice, new Plain().once);
+# -- end of source
+# RUN: link members layouts mechanisms=all
+# CHECK: on-prototype L0
+# CHECK-NOT: =f
+# CHECK: on-prototype L1 "once" getter=f
+# CHECK: layout L0 {{*}}changes=[] stays-with-compiled-code
+# CHECK: layout L1 {{*}}changes=[] stays-with-compiled-code
+# RUN(ALL): run-in-shell mechanisms=all
+# ALL: 7 2 3
+# RUN(CHECKED): run-in-shell testing=CheckProofsAtRunTime
+# CHECKED: 7 2 3

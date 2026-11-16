@@ -30,6 +30,7 @@
 #include <sys/resource.h>
 #if defined(__APPLE__)
 #include <mach/mach.h>
+#include <pthread.h>
 #endif
 #endif
 
@@ -137,6 +138,7 @@ using JSWorkerDOMConstructor = JSDOMConstructor<JSWorker>;
 
 template<> __attribute__((minsize)) JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSWorkerDOMConstructor::construct(JSGlobalObject* lexicalGlobalObject, CallFrame* callFrame)
 {
+    BUN_REMOVABLE_HOST_FUNCTION_DEFINITION(WorkerConstructor, JSWorkerDOMConstructor::construct);
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     auto* castedThis = uncheckedDowncast<JSWorkerDOMConstructor>(callFrame->jsCallee());
@@ -158,8 +160,10 @@ template<> __attribute__((minsize)) JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES
     }
     RETURN_IF_EXCEPTION(throwScope, {});
     // node:worker_threads' `eval: true` arrives here as a blob: URL of the source.
-    if (Bun::isDataOrBlobURL(scriptUrl)) [[unlikely]] {
-        THROW_AND_RETURN_IF_CODE_GENERATION_FROM_STRINGS_IS_STRICT(lexicalGlobalObject, throwScope, {});
+    // Where no flag asks for the error, the Worker starts and reports what its entry point fails to load with.
+    if (Bun::isDataOrBlobURL(scriptUrl) && Bun::isCodeGenerationFromStringsStrictByFlags()) [[unlikely]] {
+        JSC::throwException(lexicalGlobalObject, throwScope, Bun::createCodeGenerationFromStringsError(lexicalGlobalObject));
+        return {};
     }
     EnsureStillAliveScope argument1 = callFrame->argument(1);
 
@@ -606,6 +610,7 @@ static inline JSC::EncodedJSValue jsWorkerPrototypeFunction_terminateBody(JSC::J
 
 JSC_DEFINE_HOST_FUNCTION(jsWorkerPrototypeFunction_terminate, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
+    BUN_REMOVABLE_HOST_FUNCTION_DEFINITION(Worker, jsWorkerPrototypeFunction_terminate);
     return IDLOperation<JSWorker>::call<jsWorkerPrototypeFunction_terminateBody>(*lexicalGlobalObject, *callFrame, "terminate");
 }
 
@@ -682,6 +687,7 @@ static inline JSC::EncodedJSValue jsWorkerPrototypeFunction_postMessageOverloadD
 
 JSC_DEFINE_HOST_FUNCTION(jsWorkerPrototypeFunction_postMessage, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
+    BUN_REMOVABLE_HOST_FUNCTION_DEFINITION(Worker, jsWorkerPrototypeFunction_postMessage);
     return IDLOperation<JSWorker>::call<jsWorkerPrototypeFunction_postMessageOverloadDispatcher>(*lexicalGlobalObject, *callFrame, "postMessage");
 }
 
@@ -693,6 +699,7 @@ static inline JSC::EncodedJSValue jsWorkerPrototypeFunction_refBody(JSC::JSGloba
 
 JSC_DEFINE_HOST_FUNCTION(jsWorkerPrototypeFunction_ref, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
+    BUN_REMOVABLE_HOST_FUNCTION_DEFINITION(Worker, jsWorkerPrototypeFunction_ref);
     return IDLOperation<JSWorker>::call<jsWorkerPrototypeFunction_refBody>(*lexicalGlobalObject, *callFrame, "ref");
 }
 
@@ -704,6 +711,7 @@ static inline JSC::EncodedJSValue jsWorkerPrototypeFunction_unrefBody(JSC::JSGlo
 
 JSC_DEFINE_HOST_FUNCTION(jsWorkerPrototypeFunction_unref, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
+    BUN_REMOVABLE_HOST_FUNCTION_DEFINITION(Worker, jsWorkerPrototypeFunction_unref);
     return IDLOperation<JSWorker>::call<jsWorkerPrototypeFunction_unrefBody>(*lexicalGlobalObject, *callFrame, "unref");
 }
 
@@ -776,6 +784,7 @@ static inline JSC::EncodedJSValue jsWorkerPrototypeFunction_getHeapSnapshotBody(
         heapProfiler.clearSnapshots();
         JSC::BunV8HeapSnapshotBuilder builder(heapProfiler);
         String snapshot = builder.json();
+        heapProfiler.clearSnapshots();
 
         ScriptExecutionContext::postTaskTo(parentId, parentLoopKind,
             [reqId, protectedProxy = WTF::move(protectedProxy), snapshot = snapshot.isolatedCopy()](ScriptExecutionContext& parentCtx) {
@@ -910,14 +919,12 @@ static inline JSC::EncodedJSValue jsWorkerPrototypeFunction_cpuUsageInternalBody
 #elif defined(__APPLE__)
         // Darwin has no RUSAGE_THREAD; RUSAGE_SELF would report whole-process
         // CPU for every worker. Use mach thread_info for this thread only.
-        mach_port_t machThread = mach_thread_self();
         thread_basic_info_data_t tinfo;
         mach_msg_type_number_t tcount = THREAD_BASIC_INFO_COUNT;
-        if (thread_info(machThread, THREAD_BASIC_INFO, reinterpret_cast<thread_info_t>(&tinfo), &tcount) == KERN_SUCCESS) {
+        if (thread_info(pthread_mach_thread_np(pthread_self()), THREAD_BASIC_INFO, reinterpret_cast<thread_info_t>(&tinfo), &tcount) == KERN_SUCCESS) {
             user = static_cast<double>(tinfo.user_time.seconds) * 1e6 + static_cast<double>(tinfo.user_time.microseconds);
             sys = static_cast<double>(tinfo.system_time.seconds) * 1e6 + static_cast<double>(tinfo.system_time.microseconds);
         }
-        mach_port_deallocate(mach_task_self(), machThread);
 #else
         struct rusage ru;
         memset(&ru, 0, sizeof(ru));
@@ -947,26 +954,31 @@ static inline JSC::EncodedJSValue jsWorkerPrototypeFunction_cpuUsageInternalBody
 
 JSC_DEFINE_HOST_FUNCTION(jsWorkerPrototypeFunction_cpuUsageInternal, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
+    BUN_REMOVABLE_HOST_FUNCTION_DEFINITION(Worker, jsWorkerPrototypeFunction_cpuUsageInternal);
     return IDLOperation<JSWorker>::call<jsWorkerPrototypeFunction_cpuUsageInternalBody>(*lexicalGlobalObject, *callFrame, "cpuUsageInternal");
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsWorkerPrototypeFunction_startCpuProfileInternal, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
+    BUN_REMOVABLE_HOST_FUNCTION_DEFINITION(Worker, jsWorkerPrototypeFunction_startCpuProfileInternal);
     return IDLOperation<JSWorker>::call<jsWorkerPrototypeFunction_startCpuProfileInternalBody>(*lexicalGlobalObject, *callFrame, "startCpuProfileInternal");
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsWorkerPrototypeFunction_stopCpuProfileInternal, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
+    BUN_REMOVABLE_HOST_FUNCTION_DEFINITION(Worker, jsWorkerPrototypeFunction_stopCpuProfileInternal);
     return IDLOperation<JSWorker>::call<jsWorkerPrototypeFunction_stopCpuProfileInternalBody>(*lexicalGlobalObject, *callFrame, "stopCpuProfileInternal");
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsWorkerPrototypeFunction_getHeapStatistics, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
+    BUN_REMOVABLE_HOST_FUNCTION_DEFINITION(Worker, jsWorkerPrototypeFunction_getHeapStatistics);
     return IDLOperation<JSWorker>::call<jsWorkerPrototypeFunction_getHeapStatisticsBody>(*lexicalGlobalObject, *callFrame, "getHeapStatistics");
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsWorkerPrototypeFunction_getHeapSnapshot, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
+    BUN_REMOVABLE_HOST_FUNCTION_DEFINITION(Worker, jsWorkerPrototypeFunction_getHeapSnapshot);
     return IDLOperation<JSWorker>::call<jsWorkerPrototypeFunction_getHeapSnapshotBody>(*lexicalGlobalObject, *callFrame, "getHeapSnapshot");
 }
 
@@ -998,11 +1010,12 @@ bool JSWorkerOwner::isReachableFromOpaqueRoots(JSC::Handle<JSC::Unknown> handle,
     return false;
 }
 
-void JSWorkerOwner::finalize(JSC::Handle<JSC::Unknown> handle, void* context)
+JSC::WeakHandleOwner::FinalizeResult JSWorkerOwner::finalize(JSC::Handle<JSC::Unknown> handle, void* context)
 {
     auto* jsWorker = static_cast<JSWorker*>(handle.slot()->asCell());
     auto& world = *static_cast<DOMWrapperWorld*>(context);
     uncacheWrapper(world, &jsWorker->wrapped(), jsWorker);
+    return FinalizeResult::KeepImpl;
 }
 
 #if ENABLE(BINDING_INTEGRITY)
@@ -1040,8 +1053,9 @@ JSC::JSValue toJSNewlyCreated(JSC::JSGlobalObject*, JSDOMGlobalObject* globalObj
     return createWrapper<Worker>(globalObject, WTF::move(impl));
 }
 
-JSC::JSValue toJS(JSC::JSGlobalObject* lexicalGlobalObject, JSDOMGlobalObject* globalObject, Worker& impl)
+NEVER_INLINE JSC::JSValue toJS(JSC::JSGlobalObject* lexicalGlobalObject, JSDOMGlobalObject* globalObject, Worker& impl)
 {
+    BUN_REMOVABLE_DEFINITION(Worker, static_cast<JSC::JSValue (*)(JSC::JSGlobalObject*, JSDOMGlobalObject*, Worker&)>(toJS));
     return wrap(lexicalGlobalObject, globalObject, impl);
 }
 

@@ -229,6 +229,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsJSBunRequestGetParams, (JSC::JSGlobalObject * globalO
 
 JSC_DEFINE_CUSTOM_GETTER(jsJSBunRequestGetCookies, (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::PropertyName))
 {
+    BUN_REMOVABLE_HOST_FUNCTION_DEFINITION(Cookie, jsJSBunRequestGetCookies);
     JSBunRequest* request = dynamicDowncast<JSBunRequest>(JSValue::decode(thisValue));
     if (!request)
         return JSValue::encode(jsUndefined());

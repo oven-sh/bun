@@ -6,8 +6,8 @@ use smallvec::SmallVec;
 /// Disallow duplicate enum member values.
 pub struct NoDuplicateEnumValues;
 
-const DUPLICATE_VALUE: Message =
-    Message::new("duplicateValue", "Duplicate enum member value {{value}}.");
+const DUPLICATE_VALUE: &Message =
+    &Message::new("duplicateValue", "Duplicate enum member value {{value}}.");
 
 #[derive(Copy, Clone)]
 enum Value<'a> {

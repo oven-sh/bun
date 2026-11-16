@@ -16,20 +16,18 @@ impl Expect {
         let (this, value, not) =
             self.matcher_prelude(global, this_value.to_js(), "toMatch", "<green>expected<r>")?;
 
-        let mut formatter = super::make_formatter(global);
-
         let expected = expected.to_js();
         if !expected.is_string() && !expected.is_reg_exp() {
             return Err(global.throw(format_args!(
                 "Expected value must be a string or regular expression: {}",
-                expected.to_fmt(&mut formatter),
+                expected.to_fmt(&mut super::make_formatter(global)),
             )));
         }
 
         if !value.is_string() {
             return Err(global.throw(format_args!(
                 "Received value must be a string: {}",
-                value.to_fmt(&mut formatter),
+                value.to_fmt(&mut super::make_formatter(global)),
             )));
         }
 
@@ -49,6 +47,7 @@ impl Expect {
             return Ok(JSValue::UNDEFINED);
         }
 
+        let mut formatter = super::make_formatter(global);
         let mut formatter2 = super::make_formatter(global);
         let expected_fmt = expected.to_fmt(&mut formatter);
         let value_fmt = value.to_fmt(&mut formatter2);

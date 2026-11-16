@@ -1,0 +1,18 @@
+# the record of the birth names what the body stores on every way to its end. The one look behind the allocation asks the guards of all those names, so the stores behind the head are typed without a second row of looks and a second closed arm
+# f1 = Node, f2 = make
+# -- source: stores-further-on-in-a-copied-constructor-function-ask-for-no-look-of-their-own.ts
+# declare function sink(...values: unknown[]): void;
+# function Node(this: any, kind: number, pos: number) { this.kind = kind; this.pos = pos; this.isLeaf = kind === 1; this.end = pos; }
+# function make(kind: number) { return new (Node as any)(kind, -1); }
+# sink(make);
+# -- end of source
+# RUN: walk f2 mechanisms=all
+# CHECK-LABEL: code f2:Body
+# CHECK: = NewObject {{*}}fields=[0, 1]
+# CHECK: = PutSlotOrAdd {{*}}key="isLeaf"
+# CHECK: = PutSlotOrAdd {{*}}key="end"
+# RUN(ONCE): walk f2 mechanisms=all
+# ONCE-COUNT-1: = AreMembersUnchanged
+# ONCE-NOT: = AreMembersUnchanged
+# RUN(NEVER): walk f2 mechanisms=all
+# NEVER-NOT: = PropSet

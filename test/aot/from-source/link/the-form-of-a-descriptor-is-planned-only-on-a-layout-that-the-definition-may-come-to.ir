@@ -1,0 +1,16 @@
+# A Row is written at `hide`'s parameter; the one call that runs hands it a number, and the definition throws. No Row comes to it: the layout changes in no way, so `mark`, which a plain store appends, is planned as a plain field:
+# it was planned in the form of the descriptor, an accessor, and the store stopped the run (RedefineProperty).
+# -- source: main.ts
+# declare function print(value: any): void;
+# function hide(row: Row) { Object.defineProperty(row, "mark", { get() { return 7; }, configurable: true }); }
+# class Row { size: number; constructor(n: number) { this.size = n + 1; } seal() { hide(this); } }
+# function fill(count: number) { const rows: Row[] = []; for (let i = 0; i < count; i++) { const row = new Row(i); (row as any).mark = i; rows.push(row); } return rows; }
+# try { hide(0 as any); } catch {}
+# const rows = fill(30);
+# print(String(rows.length) + (rows[3] as any).mark + Object.keys(rows[4]).join());
+# -- end of source
+# RUN(HELD): link held fields
+# HELD: "mark" appended proven=int|whole writers-known stored-by-follower-of-maker
+# RUN(ANSWERS): run-in-shell
+# ANSWERS: 303size,mark
+# ANSWERS-NEXT: exited with 0

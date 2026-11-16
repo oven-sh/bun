@@ -15,7 +15,7 @@
 
 // The repacked ICU data archive (and the patched udata.cpp that calls this
 // hook) are produced by oven-sh/WebKit's Dockerfile / Dockerfile.musl /
-// Dockerfile.windows. On macOS ICU is the unmodified system one, so there is
+// Dockerfile.windows / Dockerfile.freebsd / Dockerfile.android. On macOS ICU is the unmodified system one, so there is
 // nothing to decompress and the weak externs below would have no definer —
 // gate the implementation to the platforms whose prebuilts carry compressed
 // items.
@@ -26,7 +26,7 @@
 // repacked sicudt.lib defines them anyway (an unresolved weak external only
 // becomes a problem when two TUs reference it, see the WTFTimer__* notes in
 // oven-sh/WebKit).
-#if OS(LINUX) || OS(WINDOWS)
+#if OS(LINUX) || OS(WINDOWS) || OS(FREEBSD)
 
 #include "MimallocWTFMalloc.h"
 
@@ -75,20 +75,18 @@ public:
         // tryAlignedMalloc asserts size is a multiple of alignment in debug
         // builds; ICU item sizes are only 4-aligned, so round up.
         size_t alloc = WTF::roundUpToMultipleOf<16>(static_cast<size_t>(dlen));
-        void* buf = MimallocMalloc::tryAlignedMalloc(alloc, 16);
+        std::unique_ptr<void, decltype([](void* block) { MimallocMalloc::free(block); })> buf { MimallocMalloc::tryAlignedMalloc(alloc, 16) };
         if (!buf)
             return p;
         size_t r = m_ddict
-            ? ZSTD_decompress_usingDDict(m_dctx, buf, static_cast<size_t>(dlen), p, clen, m_ddict)
-            : ZSTD_decompressDCtx(m_dctx, buf, static_cast<size_t>(dlen), p, clen);
-        if (ZSTD_isError(r)) {
-            MimallocMalloc::free(buf);
+            ? ZSTD_decompress_usingDDict(m_dctx, buf.get(), static_cast<size_t>(dlen), p, clen, m_ddict)
+            : ZSTD_decompressDCtx(m_dctx, buf.get(), static_cast<size_t>(dlen), p, clen);
+        if (ZSTD_isError(r))
             return p;
-        }
 
-        m_cache.add(p, buf);
+        m_cache.add(p, buf.get());
         *length = static_cast<int32_t>(dlen);
-        return buf;
+        return buf.release();
     }
 
 private:
@@ -118,9 +116,12 @@ extern "C" const void* bun_icu_maybe_decompress(const void* p, int32_t* length)
         return p;
     uint32_t magic;
     std::memcpy(&magic, p, sizeof(magic));
+    // "BUNI": the 16 bytes `--trim` leaves where it removed a language's items.
+    if (magic == 0x494E5542u && !std::memcmp(p, "BUNICUREMOVED\0\0\0", 16)) [[unlikely]]
+        Bun__abortForRemovedLocaleData();
     if (magic != ZSTD_MAGICNUMBER) [[likely]]
         return p;
     return Bun::ICUDecompressor::get().decompress(p, length);
 }
 
-#endif // OS(LINUX)
+#endif // OS(LINUX) || OS(WINDOWS) || OS(FREEBSD)

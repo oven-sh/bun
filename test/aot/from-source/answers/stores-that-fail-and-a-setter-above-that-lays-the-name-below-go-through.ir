@@ -1,0 +1,24 @@
+# -- source: main.mjs
+# class Base { static make() { return 1; } static get label() { return "base"; } static set label(text) { Object.defineProperty(this, "label", { value: text, writable: true, enumerable: true, configurable: true }); } }
+# class Lowest extends Base {}
+# class Shut extends Base {}
+# function plain() { return 1; }
+# function lay(value) {
+#   let said = ""; for (let i = 0; i < 2; i++) said += "";
+#   try { Shut.make = value; } catch (error) { said += error.name + " "; }
+#   try { plain.tag = value; } catch (error) { said += error.name + " "; }
+#   Lowest.label = "own";
+#   return said;
+# }
+# new Base(); new Lowest(); new Shut();
+# Object.freeze(Shut); Object.freeze(plain);
+# print(lay(3) + Shut.make() + " " + plain.tag + " " + Lowest.label + " " + Base.label);
+# -- end of source
+# A store below a static method and a store on a closure both throw, for the class object and the function are frozen: nothing has changed behind them, and an error is on its way while that is looked at.
+# A store that finds a setter above runs it, and the setter defines the name on the class object below.
+# RUN: run-in-shell
+# CHECK: TypeError TypeError 1 undefined own base
+# CHECK-NEXT: exited with 0
+# RUN(CALLED): run-in-shell mechanisms=all-Inlining
+# CALLED: TypeError TypeError 1 undefined own base
+# CALLED-NEXT: exited with 0

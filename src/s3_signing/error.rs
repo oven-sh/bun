@@ -5,14 +5,16 @@ pub struct ErrorCodeAndMessage {
     pub message: &'static [u8],
 }
 
-pub fn get_sign_error_message(e: Error) -> &'static [u8] {
+pub fn get_sign_error_message(e: Error) -> &'static str {
     match e {
-        Error::MissingCredentials => b"Missing S3 credentials. 'accessKeyId', 'secretAccessKey', 'bucket', and 'endpoint' are required",
-        Error::InvalidMethod => b"Method must be GET, PUT, DELETE or HEAD when using s3:// protocol",
-        Error::InvalidPath => b"Invalid S3 bucket, key combination",
-        Error::InvalidEndpoint => b"Invalid S3 endpoint",
-        Error::InvalidSessionToken => b"Invalid session token",
-        _ => b"Failed to retrieve S3 content. Are the credentials correct?",
+        Error::MissingCredentials => {
+            "Missing S3 credentials. 'accessKeyId', 'secretAccessKey', 'bucket', and 'endpoint' are required"
+        }
+        Error::InvalidMethod => "Method must be GET, PUT, DELETE or HEAD when using s3:// protocol",
+        Error::InvalidPath => "Invalid S3 bucket, key combination",
+        Error::InvalidEndpoint => "Invalid S3 endpoint",
+        Error::InvalidSessionToken => "Invalid session token",
+        _ => "Failed to retrieve S3 content. Are the credentials correct?",
     }
 }
 
@@ -21,27 +23,27 @@ pub fn get_sign_error_code_and_message(e: Error) -> ErrorCodeAndMessage {
     match e {
         Error::MissingCredentials => ErrorCodeAndMessage {
             code: b"ERR_S3_MISSING_CREDENTIALS",
-            message: get_sign_error_message(Error::MissingCredentials),
+            message: get_sign_error_message(Error::MissingCredentials).as_bytes(),
         },
         Error::InvalidMethod => ErrorCodeAndMessage {
             code: b"ERR_S3_INVALID_METHOD",
-            message: get_sign_error_message(Error::InvalidMethod),
+            message: get_sign_error_message(Error::InvalidMethod).as_bytes(),
         },
         Error::InvalidPath => ErrorCodeAndMessage {
             code: b"ERR_S3_INVALID_PATH",
-            message: get_sign_error_message(Error::InvalidPath),
+            message: get_sign_error_message(Error::InvalidPath).as_bytes(),
         },
         Error::InvalidEndpoint => ErrorCodeAndMessage {
             code: b"ERR_S3_INVALID_ENDPOINT",
-            message: get_sign_error_message(Error::InvalidEndpoint),
+            message: get_sign_error_message(Error::InvalidEndpoint).as_bytes(),
         },
         Error::InvalidSessionToken => ErrorCodeAndMessage {
             code: b"ERR_S3_INVALID_SESSION_TOKEN",
-            message: get_sign_error_message(Error::InvalidSessionToken),
+            message: get_sign_error_message(Error::InvalidSessionToken).as_bytes(),
         },
         _ => ErrorCodeAndMessage {
             code: b"ERR_S3_INVALID_SIGNATURE",
-            message: get_sign_error_message(Error::SignError),
+            message: get_sign_error_message(Error::SignError).as_bytes(),
         },
     }
 }

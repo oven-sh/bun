@@ -6,7 +6,7 @@ pub struct NoUnusedExpressions {
     config: Config,
 }
 
-const UNUSED_EXPRESSION: Message = Message::new(
+const UNUSED_EXPRESSION: &Message = &Message::new(
     "unusedExpression",
     "Expected an assignment or function call and instead saw an expression.",
 );
@@ -144,11 +144,11 @@ pub fn check<'a, R: Rule>(config: Config, statement: Stmt<'a>, prologue: &mut Pr
         && !(config.ignore_directives && is_in_directive_prologue(statement, prologue))
     {
         cx.report(statement, UNUSED_EXPRESSION).hint(match e.kind() {
-            ExprKind::Ident(_) | ExprKind::Dot { .. } => "Nothing uses the value. Did you mean to call it, with ()?",
+            ExprKind::Ident(_) | ExprKind::Dot { .. } => "The value is unused. Did you mean to call it?",
             ExprKind::Binary { op: BinOp::EqEq | BinOp::EqEqEq, .. } => {
-                "Nothing uses the result of the comparison. Did you mean to assign, with =?"
+                "The result is unused. Did you mean =?"
             }
-            _ => "Nothing uses the value, so the statement does nothing.",
+            _ => "The value is unused, so this does nothing.",
         });
     }
 }

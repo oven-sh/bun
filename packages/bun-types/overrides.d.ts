@@ -349,6 +349,22 @@ declare module "node:fs/promises" {
   function exists(path: Bun.PathLike): Promise<boolean>;
 }
 
+declare module "node:fs" {
+  interface StreamOptions {
+    /**
+     * A raw Win32 `HANDLE` to read from or write to, in place of a path or `fd`.
+     * Use it for a handle that is not a CRT file descriptor, such as an
+     * anonymous pipe handle inherited from another process.
+     *
+     * The stream wraps the handle in a file descriptor that it owns and
+     * closes. Windows only: on other platforms the constructor throws
+     * `ERR_FEATURE_UNAVAILABLE_ON_PLATFORM`. It cannot be combined with `fd`
+     * or `fs`.
+     */
+    windowsHandle?: bigint | undefined;
+  }
+}
+
 declare module "node:tls" {
   interface BunConnectionOptions extends Omit<ConnectionOptions, "key" | "ca" | "tls" | "cert"> {
     /**

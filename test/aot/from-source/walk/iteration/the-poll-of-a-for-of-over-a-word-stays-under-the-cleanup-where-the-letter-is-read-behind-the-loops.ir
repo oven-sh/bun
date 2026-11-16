@@ -1,0 +1,17 @@
+# -- source: main.ts
+# declare function sink(...values: unknown[]): void;
+# function total(words: string[]): number {
+#   let sum = 0, last = "";
+#   for (const word of words) { for (const letter of word) { sum += letter.charCodeAt(0); last = letter; } }
+#   return sum + last.length;
+# }
+# sink(total);
+# -- end of source
+# f1 = total
+# The twin of the-poll-of-a-for-of-over-a-word-leaves-the-cleanup-where-the-letter-is-only-asked-for-its-code.ir: the letter goes round and is read behind the loops, so the sweep keeps its text: a likely turn does
+# collect, an error may come to be owed in a turn, and the poll of the head must throw it to the cleanup: the leave that the walk gave is taken back and the head keeps its handler edge.
+# RUN: walk f1 mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK: isInLoop=true isLoopHead=true handler=
+# RUN(NEVER): walk f1 mechanisms=all
+# NEVER-NOT: LeavesOwedError

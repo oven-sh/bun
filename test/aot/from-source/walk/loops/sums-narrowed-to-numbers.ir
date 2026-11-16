@@ -1,0 +1,14 @@
+# A number enters a loop that adds numbers to it. Its type was number or string only because the call's result was not known yet: the loop carries a double.
+# LIBRARY: own
+# -- source: main.ts
+# const known: Record<number, number> = { 1: 1 }, scores: Record<number, { score: number }> = { 3: { score: 2 } };
+# function steps(n: number): number { const found = known[n]; if (found !== undefined) return found; const next = n & 1 ? n * 3 + 1 : n >> 1; return next < 4000 ? (known[n] = steps(next) + 1) : steps(next) + 1; }
+# function total(turns: number): number { let sum = 0; for (let t = 0; t < turns; t++) { for (let i = 1; i < 60; i++) sum += steps(i); for (let i = 0; i < 64; i++) { const found = scores[i * 3]; if (found) sum += found.score; } sum %= 100000; } return sum; }
+# publish((turns: number) => total(turns));
+# declare function publish(run: (turns: number) => number): void;
+# -- end of source
+# RUN: walk f2:Body mechanisms=all
+# CHECK-LABEL: code f2:Body
+# CHECK: : number @Double, {{*}}: int[1, 60] @Int32) {{*}}isLoopHead=true
+# RUN(SHELL): run-in-shell globalThis.publish = (run) => { print(run(3)); };
+# SHELL: 4497

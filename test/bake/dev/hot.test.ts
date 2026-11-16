@@ -105,6 +105,27 @@ devTest("import.meta.hot.accept patches imports", {
     expect(await c.js<string>`callFunction()`).toBe("B!3!6");
   },
 });
+devTest("import.meta.hot.accept patches an imported JSON file each time it changes", {
+  files: {
+    "index.html": emptyHtmlFile({
+      scripts: ["a.ts"],
+    }),
+    "a.ts": `
+      import words from "./i18n.json";
+      console.log(words.word);
+      import.meta.hot.accept();
+    `,
+    "i18n.json": `{ "word": "one" }`,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage("one");
+    await dev.write("i18n.json", `{ "word": "two" }`);
+    await c.expectMessage("two");
+    await dev.write("i18n.json", `{ "word": "three" }`);
+    await c.expectMessage("three");
+  },
+});
 devTest("import.meta.hot.accept specifier", {
   timeoutMultiplier: 3,
   files: {
@@ -689,5 +710,158 @@ devTest("dev.write resolves only after the new module body has run", {
     // dev.write resolves on bun:afterUpdate, i.e. after replaceModules has
     // awaited the 500ms TLA. Acking on WS receipt would see "initial" here.
     expect(await c.js`globalThis.marker`).toBe("updated");
+  },
+});
+
+devTest("import.meta.hot.accept(dep) disposes the modules loaded again between dep and the change", {
+  files: {
+    "index.html": emptyHtmlFile({
+      scripts: ["index.ts"],
+    }),
+    "index.ts": `
+      import list from "./list.ts";
+      console.log("index " + list);
+      import.meta.hot.accept("./list.ts", m => console.log("accepted " + m.default));
+    `,
+    "list.ts": `
+      import item from "./item.ts";
+      import.meta.hot.dispose(() => console.log("disposed list:" + item));
+      export default "list:" + item;
+    `,
+    "item.ts": `
+      export default "a";
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage("index list:a");
+    await dev.write("item.ts", `export default "b";`);
+    await c.expectMessage("disposed list:a", "accepted list:b");
+    // Only the latest list.ts is disposed: the first one's callback ran once and is gone.
+    await dev.write("item.ts", `export default "c";`);
+    await c.expectMessage("disposed list:b", "accepted list:c");
+  },
+});
+devTest("import.meta.hot.accept(dep) takes an update reaching dep through its imports", {
+  files: {
+    "index.html": emptyHtmlFile({
+      scripts: ["index.ts"],
+    }),
+    "index.ts": `
+      import list from "./list.ts";
+      console.log("index " + list);
+      import.meta.hot.accept("./list.ts", m => console.log("accepted " + m.default));
+    `,
+    "list.ts": `
+      import item from "./item.ts";
+      export default "list:" + item;
+    `,
+    "item.ts": `
+      export default "a";
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage("index list:a");
+    // item.ts is not imported by index.ts: the update reaches the accept through list.ts,
+    // which is loaded again, so the callback sees the new item.
+    await dev.write("item.ts", `export default "b";`);
+    await c.expectMessage("accepted list:b");
+    await dev.write("item.ts", `export default "c";`);
+    await c.expectMessage("accepted list:c");
+  },
+});
+devTest("import.meta.hot.accept(dep) sees every path from the change to dep loaded again", {
+  files: {
+    "index.html": emptyHtmlFile({
+      scripts: ["index.ts"],
+    }),
+    "index.ts": `
+      import both from "./both.ts";
+      console.log("index " + both);
+      import.meta.hot.accept("./both.ts", m => console.log("accepted " + m.default));
+    `,
+    // item.ts reaches both.ts by two paths.
+    "both.ts": `
+      import left from "./left.ts";
+      import right from "./right.ts";
+      export default left + "," + right;
+    `,
+    "left.ts": `
+      import item from "./item.ts";
+      export default "left:" + item;
+    `,
+    "right.ts": `
+      import item from "./item.ts";
+      export default "right:" + item;
+    `,
+    "item.ts": `
+      export default "a";
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage("index left:a,right:a");
+    await dev.write("item.ts", `export default "b";`);
+    await c.expectMessage("accepted left:b,right:b");
+  },
+});
+devTest("import.meta.hot.accept(dep) is called once when dep and what it imports change together", {
+  files: {
+    "index.html": emptyHtmlFile({
+      scripts: ["index.ts"],
+    }),
+    "index.ts": `
+      import list from "./list.ts";
+      console.log("index " + list);
+      import.meta.hot.accept("./list.ts", m => console.log("accepted " + m.default));
+    `,
+    "list.ts": `
+      import item from "./item.ts";
+      export default "list:" + item;
+    `,
+    "item.ts": `
+      export default "a";
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage("index list:a");
+    {
+      await using _batch = await dev.batchChanges();
+      await dev.write("item.ts", `export default "b";`);
+      await dev.write("list.ts", `import item from "./item.ts";\nexport default "List:" + item;`);
+    }
+    await c.expectMessage("accepted List:b");
+  },
+});
+devTest("import.meta.hot.accept(dep) sees every module between dep and the change loaded again in order", {
+  files: {
+    "index.html": emptyHtmlFile({
+      scripts: ["index.ts"],
+    }),
+    "index.ts": `
+      import list from "./list.ts";
+      console.log("index " + list);
+      import.meta.hot.accept("./list.ts", m => console.log("accepted " + m.default));
+    `,
+    // Each computes its value from the one it imports, when it runs.
+    "list.ts": `
+      import group from "./group.ts";
+      export default "list:" + group;
+    `,
+    "group.ts": `
+      import item from "./item.ts";
+      export default "group:" + item;
+    `,
+    "item.ts": `
+      export default "a";
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage("index list:group:a");
+    await dev.write("item.ts", `export default "b";`);
+    await c.expectMessage("accepted list:group:b");
   },
 });

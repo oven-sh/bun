@@ -117,7 +117,7 @@ fn modules() {
         "import {{ a }} from \"a\";\n{}export {{ A }};\nexport default e;\nexport * as b from \"b\";\n",
         DECLARATIONS.repeat(4)
     );
-    compare(text.as_bytes(), 100);
+    assert!(compare(text.as_bytes(), 100) > Some(0));
 }
 
 #[test]

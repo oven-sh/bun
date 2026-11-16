@@ -1136,6 +1136,8 @@ enum Done {
     Unchanged,
     /// It isn't formatted, or wasn't until this run wrote it. Holds how long that took.
     Different(Duration),
+    /// The same, with what is written once the search for files has succeeded.
+    Unwritten(Vec<u8>, Duration),
     /// Skipped: neither formatted nor written. See [`git::Files::is_partly_staged`].
     PartlyStaged,
     /// It has Tailwind CSS classes whose order isn't known yet.
@@ -1145,6 +1147,9 @@ enum Done {
     /// Also exits with 2.
     NotFormatted(Failure),
 }
+
+/// The size of all [`Done::Unwritten`]. Further files are formatted again.
+const MAX_UNWRITTEN_BYTES: usize = 64 << 20;
 
 /// The result for one file, with the warnings about it.
 type Finished = (Done, Vec<Problem>);
@@ -1765,7 +1770,17 @@ impl Run<'_> {
             let linked = target.linked.filter(|_| !is_read_only);
             linked.map(|(_, inode)| link_locks[inode as usize % link_locks.len()].lock())
         };
-        // Leaves the warnings in `scratch`. `None` if the file has to be written, and `may_write` is false.
+        let write = |target: &Target, formatted: &[u8], began: Instant, before: Duration| {
+            match fs::write_atomically(&written_files, cwd, &target.path, formatted) {
+                Ok(()) => Done::Different(before + began.elapsed()),
+                Err(why) => {
+                    let name = paths::relative(cwd, &target.path);
+                    Done::Failed([b"Unable to write file \"", &name[..], b"\":\n", &why].concat())
+                }
+            }
+        };
+        let unwritten_bytes = AtomicUsize::new(0);
+        // Leaves the warnings in `scratch`. `None` if it's to be called again with `may_write`.
         let format_target =
             |target: &Target, mut options: Resolved, scratch: &mut Scratches, may_write: bool| {
                 let _link_lock = lock_for(target);
@@ -1809,14 +1824,15 @@ impl Run<'_> {
                     if is_partly_staged(target) {
                         return Some(Done::PartlyStaged);
                     }
-                    if !may_write {
+                    if may_write {
+                        return Some(write(target, &formatted, began, Duration::ZERO));
+                    }
+                    let kept = unwritten_bytes.fetch_add(formatted.len(), Ordering::Relaxed);
+                    if kept > MAX_UNWRITTEN_BYTES {
                         scratch.warnings.clear();
                         return None;
                     }
-                    let path = &target.path;
-                    if let Err(why) = fs::write_atomically(&written_files, cwd, path, &formatted) {
-                        return failure(b"Unable to write file \"", &why);
-                    }
+                    return Some(Done::Unwritten(formatted, began.elapsed()));
                 }
                 Some(Done::Different(began.elapsed()))
             };
@@ -2047,6 +2063,12 @@ impl Run<'_> {
         let mut results = Guarded::new(done);
         let format_at = |at: usize, scratch: &mut Scratches| {
             let (index, target) = work[at];
+            let before = results.lock()[index].take();
+            if let Some(Done::Unwritten(formatted, took)) = before {
+                let done = write(target, &formatted, Instant::now(), took);
+                results.lock()[index] = Some(done);
+                return;
+            }
             let done = match configs.options_for(&target.scope, &target.path) {
                 Ok(options) => format_target(target, options, scratch, true),
                 Err(error) => Some(Done::Failed(error.0)),
@@ -2058,7 +2080,7 @@ impl Run<'_> {
             results.lock()[index] = done;
         };
         let left: Vec<usize> = (0..work.len())
-            .filter(|&at| results.lock()[work[at].0].is_none())
+            .filter(|&at| matches!(results.lock()[work[at].0], None | Some(Done::Unwritten(..))))
             .collect();
         let size: u64 = work.iter().map(|it| it.1.size).sum();
         let format_each = |count: usize, at: &(dyn Fn(usize) -> usize + Sync)| {
@@ -2175,7 +2197,7 @@ impl Run<'_> {
                 self.report_warnings(&display_name, &all);
             }
             match done {
-                None => {}
+                None | Some(Done::Unwritten(..)) => {}
                 Some(Done::Unchanged) => {
                     unchanged += 1;
                     if options.debug_check {

@@ -5825,6 +5825,39 @@ describe.concurrent("what a package requires is loaded when it's used", () => {
       "original",
     ],
     [
+      "a member of a member that another module replaces",
+      {
+        "index.js": `const value = require("./a").nested.value; exports.f = () => (require("./b"), value);`,
+        "a.js": `exports.nested = { value: 1 };`,
+        "b.js": `require("./a").nested.value = 2;`,
+      },
+      1,
+    ],
+    [
+      "an argument that's a property",
+      {
+        "index.js": `const debug = require("debug"); const it = { name: "a" }; const log = debug(it.name); it.name = "b"; exports.f = () => log;`,
+        "node_modules/debug/index.js": `module.exports = it => it;`,
+      },
+      "a",
+    ],
+    [
+      "a function that's called in place and changes what the module reads",
+      {
+        "index.js": `const a = require("./a"); let got; (function () { globalThis.changed = true; got = a.value; })(); exports.f = () => got;`,
+        "a.js": `exports.value = "changed" in globalThis;`,
+      },
+      false,
+    ],
+    [
+      "a getter that calls a method",
+      {
+        "index.js": `const queue = ["./a"]; let a; module.exports = { get a() { return a ??= require(queue.shift()); }, f() { return this.a; } };`,
+        "a.js": `module.exports = "a";`,
+      },
+      "a",
+    ],
+    [
       "an extension that's added just before a require",
       {
         "index.js": `require.extensions[".foo"] = module => { module.exports = "foo"; };
@@ -5953,6 +5986,26 @@ describe.concurrent("what a package requires is loaded when it's used", () => {
     timeout,
   );
 
+  test.each([
+    "{ ...p.rules }",
+    "Object.assign({}, p.rules)",
+    "structuredClone(p.rules)",
+    "Object.fromEntries(Object.entries(p.rules))",
+    "(({ ...rest }) => rest)(p.rules)",
+    "JSON.parse(JSON.stringify(p.rules))",
+  ])(
+    "%s of properties that haven't been read",
+    async expression => {
+      const files = {
+        "index.js": `exports.rules = { a: require("./a"), plain: 1, b: require("./b") };`,
+        "a.js": noted("a"),
+        "b.js": noted("b"),
+      };
+      expect(await evaluate(files, expression)).toEqual(both({ a: { name: "a" }, plain: 1, b: { name: "b" } }));
+    },
+    timeout,
+  );
+
   test(
     "an export that a setter or a proxy gets",
     async () => {
@@ -6006,6 +6059,23 @@ describe.concurrent("what a package requires is loaded when it's used", () => {
         "a.js": `globalThis.effect = { value: 1 };`,
       };
       expect(await evaluate(files, `effect.value`)).toEqual(both(1));
+    },
+    timeout,
+  );
+
+  test(
+    "a plugin that's called like a member of Object.prototype",
+    async () => {
+      const { stdout, exitCode } = await lint(
+        {
+          "eslint.config.mjs": `const constructor = { rules: { one: { create: context => ({ Program: node => context.report({ node, message: "one" }) }) } } };
+            export default [{ files: ["a.js"], plugins: { constructor }, rules: { "constructor/one": "error" } }];`,
+          "a.js": "",
+        },
+        ["-f", "unix", "a.js"],
+      );
+      expect(stdout).toContain("one [Error/constructor/one]");
+      expect(exitCode).toBe(1);
     },
     timeout,
   );
@@ -6115,6 +6185,16 @@ describe.concurrent("what a package requires is loaded when it's used", () => {
       const { stdout, exitCode } = await lint(plugin({}, { "a.js": text }), ["-f", "unix", ...args, "a.js"]);
       expect(stdout).toContain(expected);
       expect(exitCode).toBe(1);
+    },
+    timeout,
+  );
+
+  test(
+    "the options of a rule that only --rule turns on are validated",
+    async () => {
+      const { stderr, exitCode } = await lint(plugin({}, { "a.js": "" }), ["--rule", `p/two: ["error", 1]`, "a.js"]);
+      expect(stderr).toContain("Value 1 should be string");
+      expect(exitCode).toBe(2);
     },
     timeout,
   );

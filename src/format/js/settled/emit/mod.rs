@@ -188,8 +188,8 @@ impl<'a, 't> Emitter<'a, 't> {
     }
 
     #[inline]
-    fn slice(&self, start: u32, end: u32) -> &'a [u8] {
-        (self.src.get(start as usize..end as usize)).unwrap_or_default()
+    fn slice(&self, from: u32, to: u32) -> &'a [u8] {
+        (self.src.get(from as usize..to as usize)).unwrap_or_default()
     }
 
     fn span(&self, id: Id) -> Span {
@@ -316,7 +316,7 @@ impl<'a, 't> Emitter<'a, 't> {
             return;
         }
         let flat = self.compare(node.start, node.end, &write);
-        if self.can_stand_in(node.start, node.end, &flat) {
+        if flat.can_stand_in(node.start, self.slice(node.start, node.end)) {
             self.has_stand_ins = true;
             return self.write_stand_in(node.start, node.end, flat);
         }
@@ -340,19 +340,12 @@ impl<'a, 't> Emitter<'a, 't> {
             return write(self);
         }
         let mut flat = self.compare(first.start, end, |e| e.group(&write));
-        if self.can_stand_in(first.start, end, &flat) {
+        if flat.can_stand_in(first.start, self.slice(first.start, end)) {
             flat.has_group = false;
             self.has_stand_ins = true;
             return self.write_stand_in(first.start, end, flat);
         }
         write(self);
-    }
-
-    fn can_stand_in(&self, start: u32, end: u32, flat: &sink::Flat) -> bool {
-        flat.matches
-            && flat.first_break != start
-            && flat.first_break != end
-            && !strings::contains_char(self.slice(start, end), b'\t')
     }
 
     /// For what's inspected after it's written.
@@ -383,8 +376,8 @@ impl<'a, 't> Emitter<'a, 't> {
         self.f.options().expand == Expand::Auto
     }
 
-    fn has_newline(&self, start: u32, end: u32) -> bool {
-        strings::contains_char(self.slice(start, end), b'\n')
+    fn has_newline(&self, from: u32, to: u32) -> bool {
+        strings::contains_char(self.slice(from, to), b'\n')
     }
 
     fn is_next_line_empty(&self, at: u32) -> bool {

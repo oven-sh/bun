@@ -116,7 +116,7 @@ impl Parser<'_> {
                     );
                     value
                 }
-                T::OpenBrace => self.jsx_container(self.text(name) == b"css", false)?,
+                T::OpenBrace => self.jsx_container(Some(name))?,
                 _ => return None,
             };
         }
@@ -127,7 +127,10 @@ impl Parser<'_> {
         Some(id)
     }
 
-    fn jsx_container(&mut self, may_be_css: bool, is_child: bool) -> P {
+    /// `attribute`: the name of the one whose value it is
+    fn jsx_container(&mut self, attribute: Option<Id>) -> P {
+        let is_child = attribute.is_none();
+        let may_be_css = attribute.is_none_or(|it| self.text(it) == b"css");
         let start = self.start();
         self.pass_prefix();
         let e = match self.token() {
@@ -153,7 +156,7 @@ impl Parser<'_> {
                     self.lx.next_jsx_child();
                     id
                 }
-                T::OpenBrace => self.jsx_container(true, true)?,
+                T::OpenBrace => self.jsx_container(None)?,
                 T::Lt if self.lx.src.get(self.lx.at.end as usize) == Some(&b'/') => {
                     return Some(());
                 }

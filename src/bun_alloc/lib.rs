@@ -2174,7 +2174,7 @@ pub mod basic;
 #[inline]
 pub fn prefault<T>(room: &mut [core::mem::MaybeUninit<T>]) {
     #[cfg(target_os = "linux")]
-    if size_of_val(room) >= 32 << 10 {
+    if size_of_val(room) >= 32 << 10 && !cfg!(miri) {
         populate(room.as_mut_ptr().cast(), size_of_val(room));
     }
     #[cfg(not(target_os = "linux"))]

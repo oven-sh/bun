@@ -75,11 +75,12 @@ struct FileCache<'r> {
 
 impl<'r> FileCache<'r> {
     /// `printed` is only looked at if [`Meta::help`] is set, in which case it's short.
-    fn new(printed: impl Iterator<Item = Problem<'r>> + Clone, meta: &Meta) -> FileCache<'r> {
+    fn new(printed: &mut dyn Iterator<Item = Problem<'r>>, meta: &Meta) -> FileCache<'r> {
         let Some(lint) = meta.help else {
             return FileCache::default();
         };
-        let rules: Vec<&RuleId> = (printed.clone())
+        let printed: Vec<Problem<'r>> = printed.collect();
+        let rules: Vec<&RuleId> = (printed.iter())
             .filter_map(|it| it.message.rule_id.as_ref())
             .collect();
         let mut files: Vec<&FileResult> = Vec::new();
@@ -543,7 +544,7 @@ pub(super) fn write_pretty(out: &mut Vec<u8>, results: &[FileResult], meta: &Met
 fn write_pretty_problems(out: &mut Vec<u8>, results: &[FileResult], meta: &Meta) {
     let problems = all(results);
     if problems.len() <= GROUP_THRESHOLD || meta.shows_all {
-        let cache = &mut FileCache::new(problems.iter().copied(), meta);
+        let cache = &mut FileCache::new(&mut problems.iter().copied(), meta);
         for (i, problem) in problems.into_iter().enumerate() {
             if i > 0 {
                 out.push(b'\n');
@@ -554,7 +555,7 @@ fn write_pretty_problems(out: &mut Vec<u8>, results: &[FileResult], meta: &Meta)
     }
     let groups = grouped(&problems, meta.is_native);
     let detailed_count = groups.len().min(MAX_GROUPS);
-    let cache = &mut FileCache::new(groups[..detailed_count].iter().map(|it| it[0]), meta);
+    let cache = &mut FileCache::new(&mut groups[..detailed_count].iter().map(|it| it[0]), meta);
     for group in &groups[..detailed_count] {
         let has_notes = write_pretty_problem(out, group[0], meta, cache);
         if group.len() > 1 {
@@ -743,14 +744,14 @@ fn write_agent_problem<'r>(
 pub(super) fn write_agent(out: &mut Vec<u8>, results: &[FileResult], meta: &Meta) {
     let problems = all(results);
     if problems.len() <= GROUP_THRESHOLD || meta.shows_all {
-        let cache = &mut FileCache::new(problems.iter().copied(), meta);
+        let cache = &mut FileCache::new(&mut problems.iter().copied(), meta);
         problems.iter().for_each(|problem| {
             write_agent_problem(out, std::slice::from_ref(problem), meta, cache)
         });
     } else {
         let groups = grouped(&problems, false);
         let listed_count = groups.len().min(MAX_GROUPS + MAX_COMPACT_GROUPS);
-        let cache = &mut FileCache::new(groups[..listed_count].iter().map(|it| it[0]), meta);
+        let cache = &mut FileCache::new(&mut groups[..listed_count].iter().map(|it| it[0]), meta);
         groups[..listed_count]
             .iter()
             .for_each(|group| write_agent_problem(out, group, meta, cache));

@@ -3,7 +3,7 @@
 //!
 //! ```js
 //! const a = require("a");                  const a = $Bun_defer(require, "a");
-//! const { b } = require("b");       =>     const b = $Bun_defer(require, "b", $Bun_it => $Bun_it.b, "b");
+//! const { b } = require("b");       =>     const b = $Bun_defer(require, "b", $Bun_it => $Bun_it.b, ["b"]);
 //! exports.f = () => a(b);                  exports.f = () => a()(b());
 //! exports.c = { d: require("d") };         exports.c = $Bun_lazy({ d: $Bun_defer(require, "d") }, "d");
 //! ```
@@ -13,6 +13,8 @@
 //!
 //! Whether it matters when a module is loaded can't be told from the module that requires it, so this is only for the
 //! packages of [`is_in_known_package`].
+
+#![cfg_attr(mordant, allow(generic_body_not_generic))]
 
 use bun_alloc::Arena;
 use bun_ast::binding::Data as BindingData;
@@ -70,7 +72,7 @@ pub(crate) fn function_called_in_place(call: &E::Call) -> Option<(Loc, js_ast::S
                 && !it.func.flags.contains(IsAsync)
                 && !it.func.flags.contains(IsGenerator) =>
         {
-            Some((it.func.open_parens_loc, it.func.body.stmts))
+            Some((target.loc, it.func.body.stmts))
         }
         ExprData::EArrow(it) if !it.is_async => Some((target.loc, it.body.stmts)),
         _ => None,
@@ -747,7 +749,9 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
                     || found.is_declared_again[it.ref_.inner_index() as usize];
                 symbol.kind != Kind::Arguments && (found.has_react_compiler || !varies)
             }
-            ExprData::EDot(it) => self.is_mere_value(it.target, found, into),
+            ExprData::EDot(it) => {
+                found.has_react_compiler && self.is_mere_value(it.target, found, into)
+            }
             ExprData::EUnary(it) => matches!(it.value.data, ExprData::ENumber(_)),
             ExprData::ENew(it) => {
                 let ExprData::EIdentifier(class) = it.target.data else {
@@ -818,12 +822,24 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
             let body = self.s(S::Return { value }, loc);
             args.push(arrow(self.arena, names.it, body));
         }
-        match (member, value.data) {
-            (Some(key), ExprData::EIdentifier(id)) if id.ref_ == names.it => args.push(key),
-            (Some(_), _) | (_, ExprData::EDot(_)) => {
-                args.push(self.new_expr(E::Boolean { value: true }, loc))
+        let mut keys = Vec::from_iter(member);
+        let mut object = value;
+        while let ExprData::EDot(it) = object.data {
+            keys.push(self.new_expr(E::EString::init(it.name.slice()), loc));
+            object = it.target;
+        }
+        keys.reverse();
+        match object.data {
+            _ if keys.is_empty() => {}
+            ExprData::EIdentifier(id) if id.ref_ == names.it => {
+                let items = js_ast::ExprNodeList::from_slice(&keys);
+                let keys = E::Array {
+                    items,
+                    ..Default::default()
+                };
+                args.push(self.new_expr(keys, loc))
             }
-            _ => {}
+            _ => args.push(self.new_expr(E::Boolean { value: true }, loc)),
         }
         self.call(names.defer, &args, loc)
     }

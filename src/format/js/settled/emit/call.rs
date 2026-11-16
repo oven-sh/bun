@@ -536,6 +536,7 @@ impl<'a> Emitter<'a, '_> {
         }
     }
 
+    #[cfg_attr(mordant, allow(guard_blind_to_action))]
     fn grouped_arguments(&mut self, call: Id, layout: Grouped) {
         let args = self.args(call);
         let last_index = args.len() - 1;

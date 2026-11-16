@@ -66,7 +66,7 @@ function describedOnce(prefix, plugin) {
   described.add(key);
   const packageOf = module => /.*[\\/]node_modules[\\/]((?:@[^\\/]+[\\/])?[^\\/]+)/.exec(module)?.[1];
   const name = objectId(plugin)?.replace(/(?<=.)@[^@]*$/, "") ?? packageOf(locateDeep(plugin)?.module);
-  const [usual, ...native] = builtIn[prefix] ?? [];
+  const [usual, ...native] = Object.hasOwn(builtIn, prefix) ? builtIn[prefix] : [];
   const isReplaced = !usual || usual === name;
   return describe(prefix, plugin, it => configured.has(`${prefix}/${it}`) && !(isReplaced && native.includes(it)));
 }

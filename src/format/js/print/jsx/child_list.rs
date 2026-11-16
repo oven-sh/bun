@@ -295,67 +295,9 @@ impl<'a, N: ChildNode> Children<'a, N> {
             }
         }
         children.meta.contains_multiple_expressions = expression_count > 1;
-        children.remove_redundant_separators();
+        children.parts =
+            without_redundant_separators(&children.parts, children.meta, children.is_mdx_block);
         children
-    }
-
-    /// Merges consecutive separators with nothing between them into one, and removes leading and trailing ones.
-    ///
-    /// Prettier walks from the end to the start and splices. Here the kept parts go on a stack, whose top is the part
-    /// after the current one.
-    fn remove_redundant_separators(&mut self) {
-        use Separator::{HardLine, JsxWhitespace, SoftLine};
-        let contains_text = self.meta.contains_text;
-        let mut kept: SmallVec<[Part; 32]> = SmallVec::with_capacity(self.parts.len());
-
-        for &part in self.parts.iter().rev() {
-            let (next, after_next) = match kept[..] {
-                [.., after_next, next] => (Some(next), Some(after_next)),
-                [next] => (Some(next), None),
-                [] => (None, None),
-            };
-            let (Part::Separator(separator), Some(next), Some(Part::Separator(after_next))) =
-                (part, next, after_next)
-            else {
-                kept.push(part);
-                continue;
-            };
-            if !next.is_empty_content() {
-                kept.push(part);
-                continue;
-            }
-            match (separator, after_next) {
-                (HardLine, HardLine) if !contains_text => kept.push(part),
-                (HardLine, HardLine)
-                | (SoftLine | HardLine, JsxWhitespace)
-                | (JsxWhitespace, JsxWhitespace)
-                | (SoftLine, HardLine)
-                | (HardLine, SoftLine) => {
-                    kept.pop();
-                }
-                (JsxWhitespace, SoftLine | HardLine) => {
-                    kept.pop();
-                    kept.pop();
-                    kept.push(part);
-                }
-                _ => kept.push(part),
-            }
-        }
-        kept.reverse();
-
-        let mut parts = &kept[..];
-        while let [rest @ .., last] = parts
-            && last.is_empty_content_or_any_line(self.is_mdx_block)
-        {
-            parts = rest;
-        }
-        while let [first, second, rest @ ..] = parts
-            && first.is_empty_content_or_any_line(self.is_mdx_block)
-            && second.is_empty_content_or_any_line(self.is_mdx_block)
-        {
-            parts = rest;
-        }
-        self.parts = SmallVec::from_slice(parts);
     }
 
     pub(crate) fn items_of(&self, part: Part) -> &[Item<'a, N>] {
@@ -367,6 +309,69 @@ impl<'a, N: ChildNode> Children<'a, N> {
             Part::Separator(_) => &[],
         }
     }
+}
+
+/// Merges consecutive separators with nothing between them into one, and removes leading and trailing ones.
+///
+/// Prettier walks from the end to the start and splices. Here the kept parts go on a stack, whose top is the part
+/// after the current one.
+fn without_redundant_separators(
+    parts: &[Part],
+    meta: ChildrenMeta,
+    is_mdx_block: bool,
+) -> SmallVec<[Part; 32]> {
+    use Separator::{HardLine, JsxWhitespace, SoftLine};
+    let contains_text = meta.contains_text;
+    let mut kept: SmallVec<[Part; 32]> = SmallVec::with_capacity(parts.len());
+
+    for &part in parts.iter().rev() {
+        let (next, after_next) = match kept[..] {
+            [.., after_next, next] => (Some(next), Some(after_next)),
+            [next] => (Some(next), None),
+            [] => (None, None),
+        };
+        let (Part::Separator(separator), Some(next), Some(Part::Separator(after_next))) =
+            (part, next, after_next)
+        else {
+            kept.push(part);
+            continue;
+        };
+        if !next.is_empty_content() {
+            kept.push(part);
+            continue;
+        }
+        match (separator, after_next) {
+            (HardLine, HardLine) if !contains_text => kept.push(part),
+            (HardLine, HardLine)
+            | (SoftLine | HardLine, JsxWhitespace)
+            | (JsxWhitespace, JsxWhitespace)
+            | (SoftLine, HardLine)
+            | (HardLine, SoftLine) => {
+                kept.pop();
+            }
+            (JsxWhitespace, SoftLine | HardLine) => {
+                kept.pop();
+                kept.pop();
+                kept.push(part);
+            }
+            _ => kept.push(part),
+        }
+    }
+    kept.reverse();
+
+    let mut parts = &kept[..];
+    while let [rest @ .., last] = parts
+        && last.is_empty_content_or_any_line(is_mdx_block)
+    {
+        parts = rest;
+    }
+    while let [first, second, rest @ ..] = parts
+        && first.is_empty_content_or_any_line(is_mdx_block)
+        && second.is_empty_content_or_any_line(is_mdx_block)
+    {
+        parts = rest;
+    }
+    SmallVec::from_slice(parts)
 }
 
 /// `{/* prettier-ignore */}`. `empty_expression` is the content of the braces.

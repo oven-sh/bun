@@ -16,7 +16,7 @@ pub(crate) fn share_heaps_of_libc() {
 
 static HAS_MEMORY_TO_SPARE: AtomicBool = AtomicBool::new(false);
 
-/// Trades memory for time, until the process has a quarter of what the machine or the container has free.
+/// Trades memory for time, until the process has a quarter of what the machine or the container has left.
 pub(crate) fn spend_spare_memory() {
     let is_set = |name| bun_core::getenv_z(name).is_some();
     if cfg!(bun_asan)
@@ -34,7 +34,7 @@ pub(crate) fn spend_spare_memory() {
 
 fn watch_memory() {
     std::thread::sleep(Duration::from_millis(4));
-    let spare = super::lint_js::memory_for_engines() / 2;
+    let spare = super::lint_js::memory_to_spare() / 2;
     let used = || bun_sys::self_process_memory_usage().unwrap_or(usize::MAX);
     if used() >= spare {
         return;

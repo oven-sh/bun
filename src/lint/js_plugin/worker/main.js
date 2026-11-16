@@ -1081,7 +1081,7 @@ function warnOnce(name) {
   const printed = new Map();
   console[name] = {
     [name](text) {
-      if (arguments.length === 1 && typeof text === "string" && text.length >= 40) {
+      if (arguments.length === 1 && typeof text === "string" && /deprecat|warn/i.test(text)) {
         const wasHeldBack = printed.get(text);
         if (wasHeldBack) {
           // It isn't said once after all.

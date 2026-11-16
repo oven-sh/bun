@@ -1413,12 +1413,15 @@ impl Run<'_> {
         Self::add_conditional_globals(global, ctx);
 
         if ctx.runtime_options.eval.reads_configuration {
-            // Nearly all that it allocates is alive until it exits, which is soon.
-            let spare = super::lint_js::memory_for_engines() / 4;
-            vm.allocate_without_collecting(spare.min(256 << 20));
-            crate::read_ahead::enable(vm, false);
-            let script = ctx.runtime_options.eval.script;
-            crate::read_ahead::expect(bun_lint_driver::configuration_read_by(script).into_iter());
+            bun_removable_features::removable_body_behind_value!(Tools, {
+                // Nearly all that it allocates is alive until it exits, which is soon.
+                let spare = super::lint_js::memory_to_spare() / 4;
+                vm.allocate_without_collecting(spare.min(256 << 20));
+                crate::read_ahead::enable(vm, false);
+                let script = ctx.runtime_options.eval.script;
+                let configuration = bun_lint_driver::configuration_read_by(script);
+                crate::read_ahead::expect(configuration.into_iter());
+            });
         }
 
         // ── redis preconnect (must run under the API lock) ─────────────────

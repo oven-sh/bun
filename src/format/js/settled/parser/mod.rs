@@ -426,14 +426,18 @@ impl<'a> Parser<'a> {
 
     #[inline]
     fn flag(&mut self, id: Id, flags: u32) {
-        if let Some(node) = self.tree.nodes.get_mut(id as usize) {
+        if id != NONE
+            && let Some(node) = self.tree.nodes.get_mut(id as usize)
+        {
             node.flags |= flags;
         }
     }
 
     #[inline]
     fn adopt(&mut self, child: Id, parent: Id) {
-        if let Some(node) = self.tree.nodes.get_mut(child as usize) {
+        if child != NONE
+            && let Some(node) = self.tree.nodes.get_mut(child as usize)
+        {
             node.parent = parent;
         }
     }

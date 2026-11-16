@@ -339,8 +339,34 @@ fn parse_limit(text: &[u8]) -> Option<usize> {
 }
 
 /// The lowest memory limit among this process's control groups. That's how a container limits it.
-#[cfg(target_os = "linux")]
 fn cgroup_memory_limit() -> Option<usize> {
+    least_in_cgroups(&|limit, _| limit)
+}
+
+/// The same, less what the processes in the group use. Nothing if that isn't known.
+fn cgroup_memory_left() -> Option<usize> {
+    least_in_cgroups(&|limit, directory| {
+        let read = |file: &[u8]| {
+            bun_sys::File::read_from(bun_sys::Fd::cwd(), &[directory, file].concat()).ok()
+        };
+        let used = read(b"memory.current").or_else(|| read(b"memory.usage_in_bytes"));
+        let Some(used) = used.and_then(|it| parse_limit(&it)) else {
+            return 0;
+        };
+        let cached = read(b"memory.stat").and_then(|it| parse_inactive_file(&it));
+        limit.saturating_sub(used.saturating_sub(cached.unwrap_or(0)))
+    })
+}
+
+/// From `memory.stat`: the cached files that the kernel drops first.
+fn parse_inactive_file(stat: &[u8]) -> Option<usize> {
+    let find = |name: &[u8]| strings::split(stat, b"\n").find_map(|it| it.strip_prefix(name));
+    parse_limit(find(b"total_inactive_file ").or_else(|| find(b"inactive_file "))?)
+}
+
+/// `of` gets the limit and the directory of each group that has a limit.
+#[cfg(target_os = "linux")]
+fn least_in_cgroups(of: &dyn Fn(usize, &[u8]) -> usize) -> Option<usize> {
     use bun_sys::{Fd, File};
     let groups = File::read_from(Fd::cwd(), b"/proc/self/cgroup").ok()?;
     let limits = strings::split(&groups, b"\n")
@@ -350,20 +376,22 @@ fn cgroup_memory_limit() -> Option<usize> {
                 Some(&it[..strings::last_index_of_char(it, b'/')?])
             });
             above.filter_map(move |it| {
-                parse_limit(&File::read_from(Fd::cwd(), &[root, it, b"/", file].concat()).ok()?)
+                let directory = [root, it, b"/"].concat();
+                let limit = File::read_from(Fd::cwd(), &[&directory, file].concat()).ok()?;
+                Some(of(parse_limit(&limit)?, &directory))
             })
         });
     limits.min()
 }
 
 #[cfg(not(target_os = "linux"))]
-fn cgroup_memory_limit() -> Option<usize> {
+fn least_in_cgroups(_: &dyn Fn(usize, &[u8]) -> usize) -> Option<usize> {
     None
 }
 
 /// The memory budget for all VMs together: half of what's available on the machine or in the container. A linter
 /// shouldn't take over the machine.
-pub(super) fn memory_for_engines() -> usize {
+fn memory_for_engines() -> usize {
     // A test's result must not depend on how much memory happens to be free on the machine that runs it.
     if let Some(override_bytes) = memory_override_for_tests() {
         return override_bytes / 2;
@@ -378,6 +406,15 @@ pub(super) fn memory_for_engines() -> usize {
     } else {
         memory().min(free)
     }) / 2
+}
+
+/// What can be traded for time: no more than [`memory_for_engines`], or half of what the container has left.
+pub(super) fn memory_to_spare() -> usize {
+    let left = match memory_override_for_tests() {
+        Some(_) => None,
+        None => cgroup_memory_left(),
+    };
+    memory_for_engines().min(left.map_or(usize::MAX, |it| it / 2))
 }
 
 fn memory_override_for_tests() -> Option<usize> {
@@ -419,6 +456,7 @@ struct Start {
     /// The same if no VM has much to do
     is_short: AtomicBool,
     memory: std::sync::OnceLock<usize>,
+    heavy_size: std::sync::OnceLock<usize>,
 }
 
 impl Start {
@@ -428,7 +466,8 @@ impl Start {
     }
 
     fn heavy_size(&self) -> usize {
-        heavy_size(self.memory(), usize::from(bun_core::get_thread_count()))
+        let threads = usize::from(bun_core::get_thread_count());
+        *(self.heavy_size).get_or_init(|| heavy_size(memory_to_spare(), threads))
     }
 
     /// As [`start_vm`].
@@ -1085,7 +1124,7 @@ impl Engine for Engines {
 
 #[cfg(test)]
 mod tests {
-    use super::{parse_cgroup_line, parse_limit};
+    use super::{parse_cgroup_line, parse_inactive_file, parse_limit};
 
     #[test]
     fn parses_cgroup_lines() {
@@ -1111,5 +1150,13 @@ mod tests {
         assert_eq!(parse_limit(b"629145600\n"), Some(629_145_600));
         assert_eq!(parse_limit(b"max\n"), None);
         assert_eq!(parse_limit(b""), None);
+    }
+
+    #[test]
+    fn parses_stat_file() {
+        assert_eq!(parse_inactive_file(b"anon 1\ninactive_file 2\n"), Some(2));
+        let with_total = b"inactive_file 2\ntotal_inactive_file 3\n";
+        assert_eq!(parse_inactive_file(with_total), Some(3));
+        assert_eq!(parse_inactive_file(b"anon 1\n"), None);
     }
 }

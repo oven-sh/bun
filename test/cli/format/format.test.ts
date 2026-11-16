@@ -11317,6 +11317,20 @@ describe.concurrent("files that are formatted, or nearly", () => {
     expect(results[0][0].stdout).toContain("0/among.a.ts");
   });
 
+  test("are written whether they're found early or late", async () => {
+    const files: Record<string, string> = {};
+    for (let i = 0; i < 40; i++)
+      files[
+        `${Array(i % 8)
+          .fill("d")
+          .join("/")}/${i}.js`.replace(/^\//, "")
+      ] = `f( ${i} )`;
+    const reads = Object.keys(files);
+    const result = await format(files, [], { reads });
+    expect(Object.values(result.files)).toEqual(reads.map(it => `f(${/(\d+)\.js/.exec(it)![1]});\n`));
+    expect(result.exitCode).toBe(0);
+  });
+
   test.skipIf(isDebug || isASAN)("take a fraction of the time", async () => {
     const files = {
       "a.js": around("h();\n")

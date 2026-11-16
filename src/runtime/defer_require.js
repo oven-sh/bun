@@ -92,17 +92,25 @@ let $Bun_defer, $Bun_lazy;
 
   // By file. They are read as soon as the module is loaded, by whomever, before anything can change them.
   const membersOf = new Map();
+  function isThere(object, keys) {
+    for (const key of keys) {
+      if (Object(object) !== object || isLazy(object, key)) return false;
+      const found = getOwnPropertyDescriptor(object, key);
+      if (found === undefined || !hasOwn(found, "value")) return false;
+      object = found.value;
+    }
+    return true;
+  }
   function pickMembersOf(file, module) {
     const members = membersOf.get(file);
     if (members === undefined) return;
     membersOf.delete(file);
-    if (Object(module) !== module) return;
-    for (const [key, make] of members) {
-      if (!isLazy(module, key) && hasOwn(getOwnPropertyDescriptor(module, key) ?? {}, "value")) make();
+    for (const [keys, make] of members) {
+      if (isThere(module, keys)) make();
     }
   }
 
-  // Without `require`, `pick` makes the value of others like it. `member`: it picks one, and which, if of the module itself.
+  // Without `require`, `pick` makes the value of others like it. `member`: it picks one, and the keys that lead to it from the module.
   $Bun_defer = function (require, specifier, pick, member) {
     if (require !== undefined && require !== lastRequire) {
       lastRequire = require;
@@ -136,7 +144,7 @@ let $Bun_defer, $Bun_lazy;
         pickMembersOf(file, module);
         return value;
       };
-      if (typeof member === "string") {
+      if (typeof member === "object") {
         const members = membersOf.get(file);
         if (members === undefined) membersOf.set(file, [[member, make]]);
         else members.push([member, make]);
@@ -220,7 +228,7 @@ let $Bun_defer, $Bun_lazy;
   const { __lookupGetter__: getterOf } = Object.prototype;
   const { toString: sourceOf } = Function.prototype;
   // To leave it by an exception leaves nothing half done.
-  const onlyRemembers = /^(?:[^=]|=>|\?\?=|\|\|=)*$/;
+  const onlyRemembers = /^(?!.*(?:\.\s*[\w$]+\s*\(|\+\+|--|\bdelete\b))(?:[^=]|=>|\?\?=|\|\|=)*$/s;
   // For Bun's own scripts, which go through all that is loaded: the property, or `otherwise` if to read it loads a module.
   $Bun_lazy.ifLoaded = (object, key, otherwise) => {
     if (isLazy(object, key)) return otherwise;

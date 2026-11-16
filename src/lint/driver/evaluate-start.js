@@ -18,7 +18,7 @@ const { writeSync } = fs;
 // some scripts take.
 const { path, marker, argument } = given;
 // src/runtime/defer_require.js. If this fails from now on, the other side runs it again without.
-if (typeof $Bun_lazy === "function") $Bun_lazy.onFirst = () => writeSync(1, marker);
+if (typeof $Bun_lazy === "function") $Bun_lazy.onFirst = () => writeAll(marker);
 // A configuration sees the command line of the command, as in ESLint, Prettier and oxlint, which run it in their own process, and
 // as a plugin does here.
 for (const it of given.commandLine) process.argv.push(it);
@@ -47,7 +47,12 @@ function finish(config, stringify = JSON.stringify) {
   const isLarge = file => /[\\/]typescript[\\/]lib[\\/]typescript\.js$/.test(file) && require.cache[file]?.paths;
   const large = Object.keys(require.cache).filter(isLarge);
   // `process.stdout` takes long to load. What the config has left in it is written after the last marker, if at all.
-  const bytes = Buffer.from(marker + stringify({ config, modules, large }) + marker);
+  writeAll(marker + stringify({ config, modules, large }) + marker);
+  process.exit(0);
+}
+
+function writeAll(text) {
+  const bytes = Buffer.from(text);
   for (let at = 0; at < bytes.length;) {
     try {
       at += writeSync(1, bytes, at);
@@ -56,5 +61,4 @@ function finish(config, stringify = JSON.stringify) {
       Bun.sleepSync(1);
     }
   }
-  process.exit(0);
 }

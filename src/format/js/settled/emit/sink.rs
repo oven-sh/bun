@@ -26,10 +26,24 @@ pub(super) struct Flat {
     /// No line break can be printed before this offset.
     pub(super) first_break: u32,
     /// Groups from this index on started during the comparison.
+    #[cfg_attr(mordant, allow(field_valid_only_when))]
     pub(super) first_group: usize,
 }
 
 impl Flat {
+    fn leave_unbreakable(&mut self, before: &Flat) {
+        (self.depth, self.flat_from) = (before.depth, before.flat_from);
+        (self.first_break, self.has_line) = (before.first_break, before.has_line);
+    }
+
+    /// `text`: what has been compared, which is at `start`
+    pub(super) fn can_stand_in(&self, start: u32, text: &[u8]) -> bool {
+        self.matches
+            && self.first_break != start
+            && self.first_break != start + text.len() as u32
+            && !bun_core::strings::contains_char(text, b'\t')
+    }
+
     pub(super) const OFF: Flat = Flat {
         is_on: false,
         matches: true,
@@ -239,8 +253,7 @@ impl<'a> Emitter<'a, '_> {
         self.flat.flat_from = before.flat_from.min(self.flat.depth);
         write(self);
         self.follow.is_waiting = is_waiting;
-        (self.flat.depth, self.flat.flat_from) = (before.depth, before.flat_from);
-        (self.flat.first_break, self.flat.has_line) = (before.first_break, before.has_line);
+        self.flat.leave_unbreakable(&before);
     }
 
     #[inline]
@@ -454,6 +467,11 @@ impl<'a> Emitter<'a, '_> {
         }
         write(self);
         self.follow.indentation = indentation;
+        self.end_indent(after);
+    }
+
+    #[inline]
+    fn end_indent(&mut self, after: Option<LineMode>) {
         match (self.flat.is_on, after) {
             (true, Some(after)) => self.flat_line(after),
             (true, None) => {}
@@ -527,6 +545,14 @@ impl<'a> Emitter<'a, '_> {
             let start = Tag::StartConditionalContent(condition);
             return self.tagged(start, Tag::EndConditionalContent, write);
         }
+        match (mode, self.is_condition_expanded(id)) {
+            (PrintMode::Flat, false) => write(self),
+            (PrintMode::Expanded, true) => self.only_if_expanded(write),
+            _ => {}
+        }
+    }
+
+    fn is_condition_expanded(&mut self, id: Option<GroupId>) -> bool {
         self.flat.first_break = self.flat.first_break.min(self.flat.cursor);
         let is_expanded = match id {
             Some(id) => {
@@ -537,11 +563,7 @@ impl<'a> Emitter<'a, '_> {
         };
         // To a measurement that started before it, a group is expanded.
         self.flat.matches &= is_expanded || id.is_some() || !self.follow.is_waiting;
-        match (mode, is_expanded) {
-            (PrintMode::Flat, false) => write(self),
-            (PrintMode::Expanded, true) => self.only_if_expanded(write),
-            _ => {}
-        }
+        is_expanded
     }
 
     pub(super) fn if_breaks(&mut self, id: Option<GroupId>, write: impl FnOnce(&mut Self)) {

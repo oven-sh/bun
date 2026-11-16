@@ -120,13 +120,17 @@ impl Emitter<'_, '_> {
 
     /// During a comparison, for a signature whose soft line breaks are removed.
     fn signature_on_one_line(&mut self, function: &Node, write: impl FnOnce(&mut Self)) {
-        // After `removeLines` the printer still chooses how to lay out a call.
+        self.flat.matches &= self.stays_on_one_line(function);
+        self.unbreakable(write);
+    }
+
+    /// After `removeLines` the printer still chooses how to lay out a call.
+    fn stays_on_one_line(&self, function: &Node) -> bool {
         let params = self.text_of(function.params());
-        self.flat.matches &= (self.is_oxfmt && function.kind == K::Arrow)
+        (self.is_oxfmt && function.kind == K::Arrow)
             || !self.is_on_long_line(self.flat.cursor)
             || (function.c == NONE
-                && !strings::contains_char(params.get(1..).unwrap_or_default(), b'('));
-        self.unbreakable(write);
+                && !strings::contains_char(params.get(1..).unwrap_or_default(), b'('))
     }
 
     pub(super) fn grouped_parameters_and_return_type(&mut self, id: Id) {
@@ -500,7 +504,8 @@ impl Emitter<'_, '_> {
                 || !self.params(id).is_empty();
             match self.flat.is_on && options.grouped.is_some() {
                 true => self.group(|e| {
-                    e.signature_on_one_line(node, |e| e.arrow_signature(id, false, false));
+                    let caches = false;
+                    e.signature_on_one_line(node, |e| e.arrow_signature(id, caches, false));
                 }),
                 false => self.watched_signature(id, |e| {
                     e.arrow_signature(id, options.caches, is_nested);

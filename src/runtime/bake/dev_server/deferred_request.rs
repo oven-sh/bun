@@ -58,7 +58,7 @@ impl List {
 #[must_use]
 pub(crate) struct FailOnDrop {
     pub(super) requests: List,
-    /// The request's handler has not returned: it gets the plugin error, like the requests that follow.
+    /// The handler of the oldest request has not returned: it gets the plugin error, like the requests that follow.
     pub(super) in_handler: bool,
     /// Completing the last request on a stopped server frees the DevServer, whose `deferred_request_pool` holds `requests`.
     pub(super) _pending: Option<PendingRequest>,
@@ -66,12 +66,12 @@ pub(crate) struct FailOnDrop {
 
 impl Drop for FailOnDrop {
     fn drop(&mut self) {
-        if !self.in_handler {
-            return self.requests.fail_all();
-        }
         while let Some(request) = self.requests.pop_first() {
             let handler = request.take_handler();
-            if let Some(resp) = handler.detach_response_for_error_page() {
+            let is_oldest = self.requests.first().is_none();
+            if !(self.in_handler && is_oldest) {
+                handler.fail();
+            } else if let Some(resp) = handler.detach_response_for_error_page() {
                 super::ensure_route::send_plugin_error(resp);
             }
         }

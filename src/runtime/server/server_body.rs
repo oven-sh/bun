@@ -1092,11 +1092,12 @@ impl ServePlugins {
     }
 
     fn fail_pending(&self) {
-        let in_handler = self.state.replace(ServePluginsState::Err) == ServePluginsState::Loading;
+        let mut in_handler =
+            self.state.replace(ServePluginsState::Err) == ServePluginsState::Loading;
         self.pending.set(None);
 
         for route in self.html_bundle_routes.take() {
-            bun_core::handle_oom(route.on_plugins_rejected(in_handler));
+            bun_core::handle_oom(route.on_plugins_rejected(core::mem::take(&mut in_handler)));
         }
         if let Some(server) = self.dev_server.take() {
             drop(server.with_dev_server(|dev| dev.on_plugins_rejected(in_handler)));

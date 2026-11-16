@@ -604,7 +604,7 @@ impl Route {
         self.resume_pending_responses(false);
     }
 
-    fn resume_pending_responses(&self, in_handler: bool) {
+    fn resume_pending_responses(&self, mut in_handler: bool) {
         // R-2: `JsCell::replace` moves the Vec out so the per-response loop
         // (which writes responses and may run uws callbacks) holds no borrow
         // into `self.pending_responses`.
@@ -628,7 +628,7 @@ impl Route {
                     }
                 }
                 // As for the requests that follow.
-                State::Err(_) if in_handler => resp.end_without_body(true),
+                State::Err(_) if core::mem::take(&mut in_handler) => resp.end_without_body(true),
                 State::Err(_log) => {
                     if self
                         .server

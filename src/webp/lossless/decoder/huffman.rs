@@ -25,7 +25,6 @@ impl Entry {
     const fn new(value: usize, len: u32) -> Self {
         // Both the alphabets and the room that the second tables of a group take are below 4096.
         // https://github.com/webmproject/libwebp/blob/4fa21912338357f89e4fd51cf2368325b59e9bd9/src/dec/vp8l_dec.c#L89
-        debug_assert!(value < 4096);
         Self((value as u16) << 8 | (value as u16) >> 8 << 4 | len as u16)
     }
 

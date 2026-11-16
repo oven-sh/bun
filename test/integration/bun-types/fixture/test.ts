@@ -69,6 +69,8 @@ describe("bun:test", () => {
     expect({ a: 1 }).toStrictEqual({ a: 1 });
     expect(new Set()).toHaveProperty("size");
     expect(new Uint8Array()).toHaveProperty("byteLength", 0);
+    expect({ [Symbol.iterator]: 1 }).toHaveProperty([Symbol.iterator], 1);
+    expect({ a: { [Symbol.iterator]: 1 } }).toHaveProperty(["a", Symbol.iterator, 0]);
     expect([]).toHaveLength(0);
     expect(["bun"]).toContain("bun");
     expect("hello").toContain("bun");

@@ -210,8 +210,7 @@ describe("fs.promises.glob", () => {
 
   it("returns an AsyncIterable over matched paths", async () => {
     const iter = fs.promises.glob("*.txt", { cwd: tmp });
-    // FIXME: .toHaveProperty does not support symbol keys
-    expect(iter[Symbol.asyncIterator]).toBeDefined();
+    expect(iter).toHaveProperty([Symbol.asyncIterator], expect.any(Function));
     for await (const path of iter) {
       expect(path).toMatch(/\.txt$/);
     }

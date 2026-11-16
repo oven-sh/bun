@@ -690,11 +690,16 @@ impl ModuleGraph {
     fn finish_site(&self, site: StoredSite) -> Site {
         let shows_mark = self.shape(site.target) == Shape::EsModule
             && self.plan.has(&self.plan.is_namespace_seen, site.target);
+        let is_child_of_referrer = match (site.target, site.referrer) {
+            (ModuleRef::Inner { .. }, _) => false,
+            (_, ModuleRef::Inner { file, .. }) => self.keeps_module_object(ModuleRef::File(file)),
+            (_, referrer) => self.keeps_module_object(referrer),
+        };
         Site::Evaluate {
             target: site.target,
             is_bare: site.is_bare,
             records: shows_mark
-                || self.keeps_module_object(site.referrer)
+                || is_child_of_referrer
                 || self.keeps_module_object(site.target)
                 || (self.plan.is_every_require_seen && matches!(site.target, ModuleRef::File(_)))
                 || matches!(site.target, ModuleRef::File(file) if self.tracks_first_load(file)),

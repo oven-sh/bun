@@ -20,26 +20,14 @@ const here = import.meta.dir;
 const appJs = join(here, "app.js");
 const { default: html } = await import(join(here, "index.html"));
 
-let ok = 0;
 const ITER = 10;
 for (let i = 0; i < ITER; i++) {
-  let server;
-  try {
-    server = Bun.serve({
-      port: 0,
-      development: true,
-      static: { "/": html },
-      fetch: () => new Response("no"),
-    });
-  } catch (e) {
-    // The DevServer watcher thread holds its inotify fd until it exits, which
-    // it only does after a later event wakes its blocked read(); in an
-    // inotify-constrained environment that can exhaust the per-user instance
-    // budget before all iterations run. The race under test hits on the
-    // first few iterations, so treat this as a soft stop.
-    if (!String((e as any)?.message).includes("EMFILE")) throw e;
-    break;
-  }
+  const server = Bun.serve({
+    port: 0,
+    development: true,
+    static: { "/": html },
+    fetch: () => new Response("no"),
+  });
   try {
     // Bundle once so app.js is in the watcher's watchlist.
     await (await fetch(server.url)).text();
@@ -54,10 +42,8 @@ for (let i = 0; i < ITER; i++) {
   }
   // Yield so the event loop drains the concurrent queue with the server gone.
   await 1;
-  ok++;
 }
-if (ok < 2) throw new Error("never reached the race window (ok=" + ok + ")");
-console.log("done", ok);
+console.log("done");
 `,
   });
 
@@ -138,7 +124,7 @@ test.skipIf(!isLinux)(
       "app.js": /*js*/ `import "./empty/missing.js";`,
       "empty": {},
       "run.ts": /*ts*/ `
-import { appendFileSync, readdirSync, readlinkSync } from "node:fs";
+import { readdirSync, readlinkSync } from "node:fs";
 import html from "./index.html";
 
 function count() {
@@ -157,10 +143,8 @@ async function serve() {
 }
 await serve();
 
-// The watcher thread ends when a change wakes it.
 for (const deadline = Date.now() + 3000; count() > 0 && Date.now() < deadline; await Bun.sleep(1)) {
   Bun.gc(true);
-  appendFileSync("app.js", ";");
 }
 console.log("stopped", count());
 `,

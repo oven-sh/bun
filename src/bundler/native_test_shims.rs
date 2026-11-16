@@ -20,7 +20,6 @@ macro_rules! not_called_by_tests {
 not_called_by_tests! {
     __bun_resolver_parse_dependency
     __bun_resolver_init_package_manager
-    __bun_macro_drop_source_code_printer
     __bun_macro_context_call
     __bun_macro_collect_vm_garbage
     __bun_jsc_wtf_string_hash
@@ -37,7 +36,6 @@ not_called_by_tests! {
     __bun_jsc_bytecode_link_encoder_add_module
     __bun_jsc_bytecode_link_encoder_add_internal_module_from_source
     __bun_jsc_bytecode_link_encoder_add_internal_module
-    __bun_dispatch__TranspilerCacheImpl__Jsc__get
     __bun_dispatch__JsEventLoop__Jsc__tick
     __bun_dispatch__JsEventLoop__Jsc__js_poster
     __bun_dispatch__JsEventLoop__Jsc__auto_tick

@@ -846,54 +846,30 @@ impl Channel {
         // "0000:0000:0000:0000:0000:ffff:192.168.100.228".length = 45
         const BUF_SIZE: usize = 46;
         let mut addr_buf = [0u8; BUF_SIZE];
-        let addr_ptr: *const c_char = 'brk: {
-            if ip_addr.is_empty() || ip_addr.len() >= BUF_SIZE {
-                break 'brk ptr::null();
-            }
-            copy_nul_terminated(&mut addr_buf, ip_addr)
-        };
+        let text =
+            bun_core::strings::copy_z(&mut addr_buf, ip_addr).filter(|text| !text.is_empty());
 
-        // https://c-ares.org/ares_inet_pton.html
-        // https://github.com/c-ares/c-ares/blob/7f3262312f246556d8c1bdd8ccc1844847f42787/src/lib/ares_gethostbyaddr.c#L71-L72
-        // `ares_inet_pton` allows passing raw bytes as `dst`,
-        // which can avoid the use of `struct_in_addr` to reduce extra bytes.
-        let mut addr = [0u8; 16];
-        if !addr_ptr.is_null() {
-            // SAFETY: c-ares FFI; addr_ptr is a NUL-terminated stack buffer, addr is 16-byte stack scratch.
-            if unsafe { ares_inet_pton(AF::INET, addr_ptr, addr.as_mut_ptr().cast::<c_void>()) } > 0
-            {
-                // SAFETY: c-ares FFI; addr holds a 4-byte in_addr written by ares_inet_pton; the thunk takes `ctx` back.
-                unsafe {
-                    ares_gethostbyaddr(
-                        self,
-                        addr.as_ptr().cast::<c_void>(),
-                        4,
-                        AF::INET,
-                        Some(struct_hostent::host_callback_wrapper::<T>),
-                        bun_core::heap::into_raw(ctx).cast::<c_void>(),
-                    );
-                }
-                return;
-            // SAFETY: c-ares FFI; addr_ptr is a NUL-terminated stack buffer, addr is 16-byte stack scratch.
-            } else if unsafe {
-                ares_inet_pton(AF::INET6, addr_ptr, addr.as_mut_ptr().cast::<c_void>())
-            } > 0
-            {
-                // SAFETY: c-ares FFI; addr holds a 16-byte in6_addr written by ares_inet_pton; the thunk takes `ctx` back.
-                unsafe {
-                    ares_gethostbyaddr(
-                        self,
-                        addr.as_ptr().cast::<c_void>(),
-                        16,
-                        AF::INET6,
-                        Some(struct_hostent::host_callback_wrapper::<T>),
-                        bun_core::heap::into_raw(ctx).cast::<c_void>(),
-                    );
-                }
-                return;
-            }
+        let (v4, v6);
+        let (addr, family): (&[u8], c_int) = if let Some(addr) = text.and_then(crate::pton::<4>) {
+            v4 = addr;
+            (&v4, AF::INET)
+        } else if let Some(addr) = text.and_then(crate::pton::<16>) {
+            v6 = addr;
+            (&v6, AF::INET6)
+        } else {
+            return ctx.on_hostent(Err(Error::ENOTIMP));
+        };
+        // SAFETY: c-ares FFI; `addr` has the size of an address of `family`; the thunk takes `ctx` back.
+        unsafe {
+            ares_gethostbyaddr(
+                self,
+                addr.as_ptr().cast::<c_void>(),
+                addr.len() as c_int,
+                family,
+                Some(struct_hostent::host_callback_wrapper::<T>),
+                bun_core::heap::into_raw(ctx).cast::<c_void>(),
+            );
         }
-        ctx.on_hostent(Err(Error::ENOTIMP));
     }
 
     /// https://c-ares.org/ares_getnameinfo.html
@@ -1296,39 +1272,16 @@ unsafe extern "C" {
 }
 
 #[repr(C)]
-#[derive(Copy, Clone)]
-union union_unnamed_4 {
-    addr4: in_addr,
-    addr6: struct_ares_in6_addr,
-}
-
-#[repr(C)]
 pub struct struct_ares_addr_port_node<'a> {
     pub next: Option<&'a Self>,
     pub family: c_int,
-    addr: union_unnamed_4,
+    /// A union of `in_addr` and `ares_in6_addr` in C, where nodes are allocated zeroed.
+    pub addr: [u8; 16],
     pub udp_port: c_int,
     pub tcp_port: c_int,
 }
-// SAFETY: `#[repr(C)]` POD — `Option<&Self>`, `c_int`s, and a byte-array union.
-// All-zero is the state callers fill before `ares_inet_pton` (S021).
+// SAFETY: `#[repr(C)]` POD — `Option<&Self>`, `c_int`s, and a byte array.
 unsafe impl bun_core::ffi::Zeroable for struct_ares_addr_port_node<'_> {}
-
-impl struct_ares_addr_port_node<'_> {
-    /// Type-erased pointer to the in_addr/in6_addr union, for `ares_inet_ntop`.
-    /// The union field stays private (active arm depends on `family`), but
-    /// callers need its address to round-trip through c-ares' presentation
-    /// converters.
-    #[inline]
-    pub fn addr_ptr(&self) -> *const c_void {
-        ptr::addr_of!(self.addr).cast::<c_void>()
-    }
-    /// Mutable counterpart of `addr_ptr` for `ares_inet_pton` to fill.
-    #[inline]
-    pub fn addr_mut_ptr(&mut self) -> *mut c_void {
-        ptr::addr_of_mut!(self.addr).cast::<c_void>()
-    }
-}
 
 unsafe extern "C" {
     fn ares_set_servers_ports(
@@ -1340,7 +1293,7 @@ unsafe extern "C" {
         servers: &mut Option<OwnedAddrPortNode>,
     ) -> c_int;
     /// https://c-ares.org/docs/ares_inet_ntop.html
-    pub fn ares_inet_ntop(
+    pub(crate) fn ares_inet_ntop(
         af: c_int,
         src: *const c_void,
         dst: *mut u8,
@@ -1352,7 +1305,7 @@ unsafe extern "C" {
     /// - `1` if `src` was valid for the specified address family
     /// - `0` if `src` was not parseable in the specified address family
     /// - `-1` if some system error occurred. `errno` will have been set.
-    pub fn ares_inet_pton(af: c_int, src: *const c_char, dst: *mut c_void) -> c_int;
+    pub(crate) fn ares_inet_pton(af: c_int, src: *const c_char, dst: *mut c_void) -> c_int;
 }
 
 const ARES_SUCCESS: c_int = 0;
@@ -1636,70 +1589,7 @@ pub const ARES_SOCKET_BAD: ares_socket_t = usize::MAX; // INVALID_SOCKET
 #[cfg(not(windows))]
 pub const ARES_SOCKET_BAD: ares_socket_t = -1;
 
-/// Creates a sockaddr structure from an address, port.
-///
-/// # Parameters
-/// - `addr`: A byte slice representing the IP address.
-/// - `port`: A 16-bit unsigned integer representing the port number.
-/// - `sa`: A pointer to a sockaddr structure where the result will be stored.
-///
-/// # Returns
-///
-/// This function returns 0 on success.
-pub fn get_sockaddr(addr: &[u8], port: u16, sa: &mut sockaddr_storage) -> c_int {
-    const BUF_SIZE: usize = 128;
-
-    let mut buf = [0u8; BUF_SIZE];
-    if addr.is_empty() || addr.len() >= BUF_SIZE {
-        return -1;
-    }
-    let addr_ptr = copy_nul_terminated(&mut buf, addr);
-
-    {
-        // SAFETY: caller-provided sockaddr storage; reinterpreting as sockaddr_in.
-        let in_: &mut sockaddr_in =
-            unsafe { &mut *std::ptr::from_mut::<sockaddr_storage>(sa).cast::<sockaddr_in>() };
-        // SAFETY: c-ares FFI; `addr_ptr` is a NUL-terminated stack buffer, dst is `sin_addr` storage.
-        if unsafe { ares_inet_pton(AF::INET, addr_ptr, (&raw mut in_.sin_addr).cast::<c_void>()) }
-            == 1
-        {
-            in_.sin_family = AF::INET as _;
-            in_.sin_port = port.to_be();
-            return 0;
-        }
-    }
-    let mut octets = [0u8; 16];
-    // SAFETY: c-ares FFI; `addr_ptr` is a NUL-terminated stack buffer, dst is a
-    // 16-byte `in6_addr`-sized buffer.
-    if unsafe { ares_inet_pton(AF::INET6, addr_ptr, (&raw mut octets).cast::<c_void>()) } != 1 {
-        return -1;
-    }
-
-    if octets[..12] == [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xff, 0xff] {
-        // IPv4-mapped `::ffff:a.b.c.d`: store as AF_INET. The consumer is
-        // `ares_getnameinfo`, which (unlike the OS getnameinfo Node uses) has
-        // no v4-mapped handling and would issue an ip6.arpa PTR query that
-        // never resolves.
-        // SAFETY: caller-provided sockaddr storage; reinterpreting as sockaddr_in.
-        let in_: &mut sockaddr_in =
-            unsafe { &mut *std::ptr::from_mut::<sockaddr_storage>(sa).cast::<sockaddr_in>() };
-        in_.sin_family = AF::INET as _;
-        in_.sin_port = port.to_be();
-        in_.sin_addr.s_addr = u32::from_ne_bytes([octets[12], octets[13], octets[14], octets[15]]);
-        return 0;
-    }
-
-    // SAFETY: caller-provided sockaddr storage; reinterpreting as sockaddr_in6.
-    let in6: &mut sockaddr_in6 =
-        unsafe { &mut *std::ptr::from_mut::<sockaddr_storage>(sa).cast::<sockaddr_in6>() };
-    in6.sin6_family = AF::INET6 as _;
-    in6.sin6_port = port.to_be();
-    in6.sin6_addr.s6_addr = octets;
-    0
-}
-
-/// The C `struct in_addr` (4-byte IPv4 address), as c-ares' `ares_options.servers`
-/// and the `ares_addr_node`/`ares_addr_port_node` unions declare it.
+/// The C `struct in_addr` (4-byte IPv4 address), as c-ares' `ares_options.servers` declares it.
 #[repr(C)]
 #[derive(Copy, Clone)]
 pub struct in_addr {

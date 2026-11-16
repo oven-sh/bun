@@ -23,6 +23,18 @@ impl KEventWatcher {
     }
 }
 
+impl Watcher {
+    pub(crate) fn wake(&self) {
+        let mut add: libc::kevent = bun_core::ffi::zeroed();
+        add.filter = libc::EVFILT_USER;
+        let mut trigger = add;
+        add.flags = libc::EV_ADD;
+        trigger.fflags = libc::NOTE_TRIGGER;
+        // SAFETY: only `watch_loop_cycle` waits on this kqueue, and it reads `udata` as an index.
+        let _ = unsafe { bun_sys::kevent(self.platform.fd.fd(), &[add, trigger], &mut [], None) };
+    }
+}
+
 fn watch_event_from_kevent(kevent: &libc::kevent) -> WatchEvent {
     let mut op = Op::empty();
     if (kevent.fflags & libc::NOTE_DELETE) > 0 {

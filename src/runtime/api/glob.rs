@@ -276,8 +276,6 @@ pub(crate) struct WalkTask {
     walker: AnyGlobWalker,
     err: Option<WalkTaskErr>,
 }
-// SAFETY: the walker owns its pattern/arena; nothing in it is thread-affine.
-unsafe impl Send for WalkTask {}
 
 #[derive(bun_jsc::JsAffine)]
 pub(crate) struct WalkJs {

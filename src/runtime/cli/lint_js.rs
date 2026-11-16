@@ -249,7 +249,7 @@ fn start_vm(log: *mut bun_ast::Log) -> Result<(), Vec<u8>> {
             t.configure_defines()
         })
         .map_err(|error| failed(error.name()))?;
-    vm.load_extra_env_and_source_code_printer();
+    vm.load_extra_env();
     vm.event_loop().ensure_waker();
     Ok(())
 }

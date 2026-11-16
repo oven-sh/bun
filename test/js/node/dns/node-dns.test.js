@@ -1191,11 +1191,12 @@ describe("resolve* ENODATA vs ENOTFOUND", () => {
   function parseQuestion(query) {
     const labels = [];
     let off = 12;
-    while (query[off] !== 0) {
+    while (off < query.length && query[off] !== 0) {
       const len = query[off];
       labels.push(query.toString("latin1", off + 1, off + 1 + len));
       off += len + 1;
     }
+    if (off + 5 > query.length) throw new Error("malformed DNS query");
     return {
       qname: labels.join("."),
       qtype: query.readUInt16BE(off + 1),
@@ -1256,9 +1257,11 @@ describe("resolve* ENODATA vs ENOTFOUND", () => {
     previousServers = dns.getServers();
     socket = dgram.createSocket("udp4");
     socket.on("message", (query, rinfo) => {
-      const { qname, qtype } = parseQuestion(query);
-      const ans = answerFor(qname, qtype);
-      socket.send(reply(query, ans.rcode, ans.rdata, ans.rrtype ?? qtype), rinfo.port, rinfo.address);
+      try {
+        const { qname, qtype } = parseQuestion(query);
+        const ans = answerFor(qname, qtype);
+        socket.send(reply(query, ans.rcode, ans.rdata, ans.rrtype ?? qtype), rinfo.port, rinfo.address);
+      } catch {}
     });
     socket.bind(0, "127.0.0.1");
     await once(socket, "listening");
@@ -1269,7 +1272,9 @@ describe("resolve* ENODATA vs ENOTFOUND", () => {
     try {
       if (previousServers) dns.setServers(previousServers);
     } finally {
-      socket?.close();
+      try {
+        socket?.close();
+      } catch {}
     }
   });
 
@@ -1277,10 +1282,10 @@ describe("resolve* ENODATA vs ENOTFOUND", () => {
     return { code: err.code, syscall: err.syscall, hostname: err.hostname, message: err.message };
   }
 
-  async function callbackResult(fn, ...args) {
-    return await new Promise(resolve => {
-      fn(...args, (err, value) => resolve(err ? errorOf(err) : { ok: value }));
-    });
+  function callbackResult(fn, ...args) {
+    const { promise, resolve } = Promise.withResolvers();
+    fn(...args, (err, value) => resolve(err ? errorOf(err) : { ok: value }));
+    return promise;
   }
 
   async function promiseResult(promise) {
@@ -1359,7 +1364,7 @@ describe("resolve* ENODATA vs ENOTFOUND", () => {
     expect(await callbackResult(resolver.resolve6.bind(resolver), AAAA_ONLY)).toEqual({ ok: ["2001:db8::1"] });
   });
 
-  test("resolveAny with no recognized records is ENODATA", async () => {
+  test("resolveAny of a name with no records is ENODATA", async () => {
     const resolver = new dns.Resolver({ timeout: 1000, tries: 1 });
     const promises = new dns_promises.Resolver({ timeout: 1000, tries: 1 });
     resolver.setServers(dns.getServers());

@@ -323,7 +323,7 @@ test.concurrent.each([
     env: bunEnv,
     cwd: String(dir),
     stdout: "pipe",
-    stderr: "ignore",
+    stderr: "inherit",
   });
   const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
 

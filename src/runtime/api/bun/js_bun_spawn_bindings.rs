@@ -397,7 +397,8 @@ fn spawn_maybe_sync(
     let mut windows_verbatim_arguments: bool = false;
     let mut abort_signal: Option<bun_jsc::AbortSignalRef> = None;
     let mut terminal_info = SpawnedTerminal::default();
-    let mut existing_terminal: Option<bun_ptr::BackRef<Terminal, bun_ptr::Mut>> = None; // Existing terminal passed by user
+    let terminal_slot;
+    let mut existing_terminal = None; // Existing terminal passed by user
     let mut terminal_js_value: JSValue = JSValue::ZERO;
 
     // Owned ZBox for `cwd` held here so the `&[u8]` borrow stays valid until
@@ -516,11 +517,7 @@ fn spawn_maybe_sync(
             }
 
             if let Some(signal_val) = args.get_truthy(cx.global(), "signal")? {
-                if let Some(signal) = WebCore::AbortSignal::from_js(signal_val) {
-                    // `from_js` returns a live FFI handle owned by JS.
-                    // `AbortSignal` is an `opaque_ffi!` ZST handle; `opaque_ref`
-                    // is the centralised non-null deref proof.
-                    let sig = WebCore::AbortSignal::opaque_ref(signal);
+                if let Some(sig) = WebCore::AbortSignal::from_js(&signal_val) {
                     if let Some(abort_error) = sig.node_abort_error_if_aborted(cx.global()) {
                         return Err(cx.global().throw_value(abort_error));
                     }
@@ -774,15 +771,8 @@ fn spawn_maybe_sync(
             if !is_sync {
                 if let Some(terminal_val) = args.get_truthy(cx.global(), "terminal")? {
                     // Check if it's an existing Terminal object
-                    if let Some(terminal) = terminal_body::js::from_js(terminal_val) {
-                        // `from_js` returns the live `Terminal` pointer borrowed
-                        // from the JS wrapper; it stays valid for as long as
-                        // `terminal_val` is reachable (kept alive below via
-                        // `terminal_js_value`), so the `BackRef` invariant
-                        // (pointee outlives holder) holds for this scope.
-                        // SAFETY: `terminal` is the wrapper's live heap pointer
-                        // (write provenance from its original allocation).
-                        let term = unsafe { bun_ptr::BackRef::from_raw_mut(terminal.as_ptr()) };
+                    terminal_slot = terminal_val;
+                    if let Some(term) = terminal_body::js::from_js(&terminal_slot) {
                         if term.is_closed() {
                             return Err(cx
                                 .global()
@@ -841,12 +831,12 @@ fn spawn_maybe_sync(
 
                     #[cfg(unix)]
                     {
-                        let slave_fd =
-                            existing_terminal
-                                .map(|t| t.get_slave_fd())
-                                .unwrap_or_else(|| {
-                                    terminal_info.0.as_ref().unwrap().terminal.get_slave_fd()
-                                });
+                        let slave_fd = existing_terminal
+                            .as_ref()
+                            .map(|t| t.get_slave_fd())
+                            .unwrap_or_else(|| {
+                                terminal_info.0.as_ref().unwrap().terminal.get_slave_fd()
+                            });
                         stdio[0] = Stdio::Fd(slave_fd);
                         stdio[1] = Stdio::Fd(slave_fd);
                         stdio[2] = Stdio::Fd(slave_fd);
@@ -1195,6 +1185,7 @@ fn spawn_maybe_sync(
         stdout_maxbuf: JsCell::new(None),
         terminal: Cell::new(
             existing_terminal
+                .as_ref()
                 .map(|t| t.as_ptr())
                 .or_else(|| terminal_info.0.as_ref().map(|info| info.terminal.as_ptr()))
                 .and_then(NonNull::new),

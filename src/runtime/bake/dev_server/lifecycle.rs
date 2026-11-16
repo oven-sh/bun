@@ -56,9 +56,12 @@ pub(crate) fn init(options: Options) -> JsResult<Box<DevServer>> {
         .transpose()?;
 
     let mut slot = Box::<DevServer>::new_uninit();
-    // Not dereferenced before `bun_watcher.start()`.
-    let p: *mut DevServer = slot.as_mut_ptr();
-    let bun_watcher = match Watcher::init::<DevServer>(p, top_level_dir) {
+    let pending_reload_event = PendingReloadEvent::new(slot.as_mut_ptr());
+    let watch_context = Box::new(watch::WatchContext {
+        pending_reload_event: Arc::clone(&pending_reload_event),
+        vm_handle: options.vm.handle(),
+    });
+    let bun_watcher = match Watcher::init(watch_context, top_level_dir) {
         Ok(w) => w,
         Err(err) => {
             return Err(global.throw_error(
@@ -75,7 +78,6 @@ pub(crate) fn init(options: Options) -> JsResult<Box<DevServer>> {
             inspector_server_id: DebuggerId::init(0), // TODO paper clover:
             configuration_hash_key: [0; 16],
             vm: bun_ptr::BackRef::new(options.vm),
-            vm_handle: options.vm.handle(),
             server: None,
             // Placeholder: the router is built once the framework is resolved.
             router: FrameworkRouter {
@@ -105,9 +107,10 @@ pub(crate) fn init(options: Options) -> JsResult<Box<DevServer>> {
             has_tailwind_plugin_hack: None,
             server_fetch_function_callback: jsc::StrongOptional::empty(),
             server_register_update_callback: jsc::StrongOptional::empty(),
-            bun_watcher: ::core::mem::ManuallyDrop::new(bun_watcher),
+            bun_watcher,
             directory_watchers: DirectoryWatchStore::default(),
-            watcher_atomics: WatcherAtomics::init(p),
+            pending_reload_event,
+            spare_reload_event: HotReloadEvent::default(),
             testing_batch_events: TestingBatchEvents::Disabled,
             generation: 0,
             bundles_since_last_error: 0,
@@ -121,7 +124,7 @@ pub(crate) fn init(options: Options) -> JsResult<Box<DevServer>> {
             current_bundle: None,
             next_bundle: NextBundle {
                 route_queue: Default::default(),
-                reload_event: None,
+                has_reload_event: false,
                 requests: deferred_request::List::default(),
             },
             deferred_request_pool: HiveArrayFallback::init(),
@@ -150,17 +153,14 @@ pub(crate) fn init(options: Options) -> JsResult<Box<DevServer>> {
         ));
     }
 
-    // `bun_resolver::AnyResolveWatcher` is now a re-export of
-    // `bun_watcher::AnyResolveWatcher` (LAYERING: same type), so the watcher's
-    // vtable flows directly into the resolver without conversion.
-    let resolve_watcher = dev.bun_watcher.get_resolve_watcher();
+    let watcher = Some(Arc::clone(&dev.bun_watcher));
     // The transpilers still point at the local that `log` moved out of.
     let log = &raw mut dev.log;
     for transpiler in dev.transpilers_mut() {
         transpiler.set_log(log);
         transpiler.options.log = log;
         transpiler.options.dev_server = dev_ptr as *const ();
-        transpiler.resolver.watcher = Some(resolve_watcher);
+        transpiler.resolver.watcher.clone_from(&watcher);
     }
 
     debug_assert!(dev.server_transpiler.resolver.opts.target != bun_ast::Target::Browser);
@@ -397,7 +397,6 @@ impl Drop for DevServer {
                 inspector_server_id: _,
                 configuration_hash_key: _,
                 vm: _,
-                vm_handle: _,
                 server: _,
                 router: _,
                 route_bundles: _,
@@ -422,7 +421,8 @@ impl Drop for DevServer {
                 server_register_update_callback: _,
                 bun_watcher: _,
                 directory_watchers: _,
-                watcher_atomics: _,
+                pending_reload_event: _,
+                spare_reload_event: _,
                 testing_batch_events: _,
                 generation: _,
                 bundles_since_last_error: _,
@@ -457,19 +457,7 @@ impl Drop for DevServer {
         }
 
         self.graph_safety_lock.lock();
-        // Hand ownership of the heap allocation to the watcher thread (which frees it in
-        // `thread_main` once `running` flips false). Auto-dropping the `Box`
-        // here would free the allocation out from under the still-running
-        // thread; on Windows the kernel additionally retains a pending
-        // `ReadDirectoryChangesW` against the inline 64 KiB `DirWatcher.buf` +
-        // `overlapped`, so the freed block being recycled by mimalloc for a
-        // later allocation is a kernel write into live unrelated heap data.
-        // SAFETY: `bun_watcher` was written exactly once in `init()` and is
-        // never taken elsewhere; this is `Drop`, so the field is not read again.
-        let watcher = unsafe { ::core::mem::ManuallyDrop::take(&mut self.bun_watcher) };
-        // SAFETY: `Box::into_raw` yields the unique heap pointer; ownership
-        // transfers to `shutdown`, which reclaims or hands off to the thread.
-        unsafe { Watcher::shutdown(Box::into_raw(watcher)) };
+        self.bun_watcher.shutdown();
 
         // The map's `Drop` runs `SerializedFailure::drop` for each value.
 
@@ -490,37 +478,7 @@ impl Drop for DevServer {
             debug_assert!(value.ref_count > 0);
         }
 
-        // `Watcher::shutdown` serialises with `dispatch_file_updates` on
-        // `Watcher.mutex`, so `next_event` is stable from the watcher side.
-        let atomics = self.watcher_atomics.as_ptr();
-        // SAFETY: `atomics` is the `heap::alloc_nn` pointer from `init()`.
-        let next = unsafe {
-            (*atomics)
-                .next_event
-                .load(::core::sync::atomic::Ordering::Acquire)
-        };
-        if next == crate::bake::dev_server::NextEvent::DONE.0 {
-            // SAFETY: `atomics` is the unique owner; no event is queued.
-            unsafe {
-                for event in &mut (*atomics).events {
-                    event.dirs.clear_and_free();
-                    event.files.clear_and_free();
-                    event.extra_files.clear();
-                }
-                bun_core::heap::destroy(atomics);
-            }
-        } else {
-            // A `HotReloadEvent.concurrent_task` is still linked in the
-            // concurrent queue; `HotReloadEvent::run` will see the nulled
-            // `owner` and reclaim this allocation.
-            // SAFETY: `atomics` is live; the main thread is the sole writer
-            // of `owner` here (watcher thread is serialised out).
-            unsafe {
-                for event in &mut (*atomics).events {
-                    event.owner = ::core::ptr::null_mut();
-                }
-            }
-        }
+        self.pending_reload_event.detach();
 
         if let TestingBatchEvents::Enabled(batch) | TestingBatchEvents::ReleaseAfterBundle(batch) =
             &mut self.testing_batch_events

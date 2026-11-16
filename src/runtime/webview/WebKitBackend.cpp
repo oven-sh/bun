@@ -13,6 +13,7 @@
 #include "ZigGlobalObject.h"
 #include "BunClientData.h"
 #include "GeneratedBlob.h"
+#include "OwnedFd.h"
 #include <JavaScriptCore/JSCInlines.h>
 #include <JavaScriptCore/TopExceptionScope.h>
 #include <JavaScriptCore/JSPromise.h>
@@ -25,6 +26,7 @@
 #include <JavaScriptCore/Strong.h>
 #include <wtf/text/MakeString.h>
 #include <wtf/text/Base64.h>
+#include <wtf/MmapSpan.h>
 #include <wtf/NeverDestroyed.h>
 #include <mutex>
 
@@ -143,8 +145,8 @@ bool HostClient::ensureSpawned(Zig::GlobalObject* zig, bool stdoutInherit, bool 
         txQueue.clear();
     }
 
-    int fd = Bun__WebViewHost__ensure(zig, stdoutInherit, stderrInherit);
-    if (fd < 0) {
+    OwnedFd fd { Bun__WebViewHost__ensure(zig, stdoutInherit, stderrInherit) };
+    if (!fd) {
         dead = true;
         return false;
     }
@@ -161,15 +163,12 @@ bool HostClient::ensureSpawned(Zig::GlobalObject* zig, bool stdoutInherit, bool 
     // READABLE|WRITABLE. ipc=0 — we're not doing SCM_RIGHTS fd passing.
     // us_poll_start_rc doesn't touch loop.active; updateKeepAlive is the
     // sole ref manager. kind=1 (.dynamic) → dispatch via s_hostVTable.
-    sock = us_socket_from_fd(&s_hostGroup, BUN_SOCKET_KIND_DYNAMIC, nullptr, sizeof(void*), fd, 0, 0);
+    sock = us_socket_from_fd(&s_hostGroup, BUN_SOCKET_KIND_DYNAMIC, nullptr, sizeof(void*), fd.get(), 0, 0);
     if (!sock) {
-        // us_socket_from_fd calls us_poll_free on failure but doesn't close
-        // the fd (ownership was ours). Leak it and the child stays alive
-        // forever with a dead read end.
-        ::close(fd);
         dead = true;
         return false;
     }
+    fd.leak();
     return true;
 }
 
@@ -215,19 +214,16 @@ void HostClient::onWritable()
 // its side before sendReply, so we're the sole mapper. O_RDWR + PROT_WRITE
 // because JS can be given the pages to write to. MAP_SHARED is required for POSIX shm
 // objects on macOS — MAP_PRIVATE returns EINVAL (the kernel's posix_shm
-// vfs doesn't implement VM_BEHAVIOR_COPY). Returns nullptr on failure
-// with errno set; caller reports it.
-static void* mapShm(const char* zname, size_t byteLen, int& outErr)
+// vfs doesn't implement VM_BEHAVIOR_COPY).
+static MmapSpan<uint8_t> mapShm(const char* zname, size_t byteLen, int& outErr)
 {
-    int fd = shm_open(zname, O_RDWR, 0);
-    if (fd < 0) {
+    OwnedFd fd { shm_open(zname, O_RDWR, 0) };
+    if (!fd) {
         outErr = errno;
-        return nullptr;
+        return {};
     }
-    void* map = mmap(nullptr, byteLen, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
-    outErr = (map == MAP_FAILED) ? errno : 0;
-    ::close(fd); // after capturing errno
-    if (map == MAP_FAILED) return nullptr;
+    auto map = MmapSpan<uint8_t>::mmap(nullptr, byteLen, PROT_READ | PROT_WRITE, MAP_SHARED, fd.get());
+    outErr = map ? 0 : errno;
     return map;
 }
 
@@ -264,7 +260,7 @@ static JSValue openShmScreenshot(JSGlobalObject* g, const char* name, uint32_t n
     }
 
     int shmErr = 0;
-    void* map = mapShm(zname.span().data(), byteLen, shmErr);
+    auto map = mapShm(zname.span().data(), byteLen, shmErr);
     // Unlink after we have a mapping — the name can go away, the physical
     // pages live until the last mapping drops. For the error path
     // (map==null), we still unlink to avoid leaking the name; the user
@@ -277,7 +273,7 @@ static JSValue openShmScreenshot(JSGlobalObject* g, const char* name, uint32_t n
     case ScreenshotEncoding::Blob: {
         // Blob adopts the mapping — no copy. Its store munmap's when dropped.
         // `await blob.bytes()` reads directly from these pages.
-        void* impl = Blob__fromMmapWithType(g, static_cast<uint8_t*>(map), byteLen, mime);
+        void* impl = Blob__fromMmapWithType(g, map.leakSpan().data(), byteLen, mime);
         ok = true;
         return Bun::Bindgen::createWrapper<Bun::Bindgen::Generated::JSBlob>(g, impl);
     }
@@ -287,18 +283,15 @@ static JSValue openShmScreenshot(JSGlobalObject* g, const char* name, uint32_t n
         // zero-copy as Blob, just wrapped as a Node Buffer
         // (JSUint8Array with JSBufferSubclassStructure).
         ok = true;
-        return JSValue::decode(JSBuffer__fromMmap(defaultGlobalObject(g), map, byteLen));
+        return JSValue::decode(JSBuffer__fromMmap(defaultGlobalObject(g), map.leakSpan().data(), byteLen));
     }
     case ScreenshotEncoding::Base64: {
         // base64Encode copies into the output String — one
         // materialization, unavoidable (the user explicitly wants the
         // text form). WTF's encoder is vectorized (SIMD on the 3→4
-        // table-lookup). Unmap after — the string owns its own copy.
-        WTF::String b64 = WTF::base64EncodeToString(
-            std::span<const uint8_t>(static_cast<const uint8_t*>(map), byteLen));
-        munmap(map, byteLen);
+        // table-lookup).
         ok = true;
-        return jsString(vm, WTF::move(b64));
+        return jsString(vm, WTF::base64EncodeToString(map.span()));
     }
     case ScreenshotEncoding::Shmem:
         RELEASE_ASSERT_NOT_REACHED(); // handled above

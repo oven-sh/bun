@@ -1584,6 +1584,10 @@ fn console_print_runtime_object_inner<const C: bool>(
         }
         Ok(true)
     }
+    fn timeout_id_and_kind(value: JSValue) -> Option<(u64, crate::timer::Kind)> {
+        let timer = value.as_class_ref::<crate::timer::TimeoutObject>()?;
+        Some((timer.internals.id, timer.internals.flags.get().kind()))
+    }
     let global = formatter.global_this;
 
     if let Some(response) = value.as_class_ref::<Response>() {
@@ -1640,12 +1644,10 @@ fn console_print_runtime_object_inner<const C: bool>(
         }
         // Spec falls through (no `return`) when `toJSON` is absent.
     }
-    if let Some(timer) = value.as_class_ref::<crate::timer::TimeoutObject>() {
-        let internals = &timer.internals;
-        let id = internals.id;
+    if let Some((id, kind)) = timeout_id_and_kind(value) {
         formatter.add_for_new_line("Timeout(# ) ".len() + bun_core::fmt::digit_count(id));
         let mut w = AsFmt::new(writer_);
-        if internals.flags.get().kind() == crate::timer::Kind::SetInterval {
+        if kind == crate::timer::Kind::SetInterval {
             formatter.add_for_new_line("repeats ".len() + bun_core::fmt::digit_count(id));
             let _ = write!(
                 w,
@@ -1963,18 +1965,6 @@ fn transpile_source_code_of_any_provenance<const DATA_ONLY: bool>(
             // arena. Declared after `arena_guard` so it drops before the
             // guard can reset that heap.
             let _ast_alloc_scope = bun_alloc::ast_alloc::ScopedAstAlloc::with_spill(arena_heap);
-            // ── Watcher package_json lookup ─────────────────────────────────
-            let mut package_json: Option<&'static bun_watcher::PackageJSON> = None;
-            {
-                let import_watcher: *mut bun_jsc::ImportWatcher = jsc_vm.bun_watcher.get().cast();
-                if !import_watcher.is_null() {
-                    // SAFETY: non-null per check above. Never read through the
-                    // watchlist's stored fd; see
-                    // `ImportWatcher::snapshot_package_json`.
-                    let iw = unsafe { &*import_watcher };
-                    package_json = iw.snapshot_package_json(hash);
-                }
-            }
 
             // ── RuntimeTranspilerCache ──────────────────────────────────────
             let mut cache = bun_ast::RuntimeTranspilerCache {
@@ -2169,14 +2159,7 @@ fn transpile_source_code_of_any_provenance<const DATA_ONLY: bool>(
                 let Some(mut parse_result) = parse_result else {
                     // Register with watcher even on parse failure.
                     if !disable_transpilying {
-                        maybe_watch_file(
-                            jsc_vm,
-                            &mut input_file,
-                            is_node_override,
-                            path,
-                            hash,
-                            package_json,
-                        );
+                        maybe_watch_file(jsc_vm, &mut input_file, is_node_override, path, hash);
                     }
                     arena_guard.2 = false; // give_back_arena = false
                     // Node compile cache: record the failed module so exit-time
@@ -2214,14 +2197,7 @@ fn transpile_source_code_of_any_provenance<const DATA_ONLY: bool>(
 
                 // Register with watcher on success too.
                 if !disable_transpilying {
-                    maybe_watch_file(
-                        jsc_vm,
-                        &mut input_file,
-                        is_node_override,
-                        path,
-                        hash,
-                        package_json,
-                    );
+                    maybe_watch_file(jsc_vm, &mut input_file, is_node_override, path, hash);
                 }
 
                 // SAFETY: `transpiler.log` was swapped to non-null `args.log` above.
@@ -2443,36 +2419,17 @@ fn transpile_source_code_of_any_provenance<const DATA_ONLY: bool>(
                     // `package_json_type_module` so the C++ loader applies the
                     // correct evaluation context on cache hits.
                     let tag = if is_commonjs_module && source.path.is_file() {
-                        // Prefer the watcher's already-
-                        // resolved `PackageJSON` (free under `--watch`/`--hot`)
-                        // and only fall back to the resolver dir-info walk
-                        // when the watcher had nothing for `hash`. The
-                        // unconditional `read_dir_info` cost +9.6% instructions
-                        // on the cache-hit path for a 222 KB CJS file.
-                        //
-                        // SAFETY: `bun_watcher::PackageJSON` is the opaque
-                        // forward-decl of `bun_resolver::package_json::
-                        // PackageJSON` (same layout, see the cast at the
-                        // `:561-592` arm below); `package_json` is a
-                        // VM-lifetime backref into the resolver cache.
-                        let pkg = package_json
-                            .map(|p| unsafe {
-                                &*core::ptr::from_ref(p)
-                                    .cast::<bun_resolver::package_json::PackageJSON>()
-                            })
-                            .or_else(|| {
-                                // SAFETY: JS thread;
-                                // `read_dir_info` is re-entrant on the JS
-                                // thread and returns a stable cache slot.
-                                match unsafe {
-                                    (*transpiler).resolver.read_dir_info(source.path.name().dir)
-                                } {
-                                    Ok(Some(dir_info)) => {
-                                        dir_info.package_json().or(dir_info.enclosing_package_json)
-                                    }
-                                    _ => None,
-                                }
-                            });
+                        // SAFETY: JS thread;
+                        // `read_dir_info` is re-entrant on the JS
+                        // thread and returns a stable cache slot.
+                        let pkg = match unsafe {
+                            (*transpiler).resolver.read_dir_info(source.path.name().dir)
+                        } {
+                            Ok(Some(dir_info)) => {
+                                dir_info.package_json().or(dir_info.enclosing_package_json)
+                            }
+                            _ => None,
+                        };
                         if pkg
                             .map(|p| p.module_type == ModuleType::Esm)
                             .unwrap_or(false)
@@ -2620,39 +2577,22 @@ fn transpile_source_code_of_any_provenance<const DATA_ONLY: bool>(
                 let tag = match loader {
                     L::Json | L::Jsonc => ResolvedSourceTag::JsonForObjectLoader,
                     L::Js | L::Jsx | L::Ts | L::Tsx => {
-                        // Note: `bun_watcher::PackageJSON` is an opaque
-                        // forward-decl of
-                        // `bun_resolver::package_json::PackageJSON`; cast
-                        // through to read `module_type`.
-                        // SAFETY: `package_json` (when set) is a VM-lifetime
-                        // backref into the resolver's package.json cache.
-                        let module_type_ = package_json
-                            .map(|pj| unsafe {
-                                (*std::ptr::from_ref::<bun_watcher::PackageJSON>(pj)
-                                    .cast::<bun_resolver::package_json::PackageJSON>())
-                                .module_type
-                            })
-                            .or_else(|| {
-                                // Recover the package.json lookup here so
-                                // a `.cjs` under `"type":"module"` still tags as
-                                // `PackageJsonTypeModule` (mirrors the cache-hit
-                                // branch above).
-                                let dir = path.name().dir;
-                                if !path.is_file() || !bun_paths::is_absolute(dir) {
-                                    return None;
-                                }
-                                // SAFETY: JS thread; `read_dir_info` is
-                                // re-entrant on the JS thread and returns a
-                                // stable cache slot.
-                                match unsafe { (*transpiler).resolver.read_dir_info(dir) } {
-                                    Ok(Some(dir_info)) => dir_info
-                                        .package_json()
-                                        .or(dir_info.enclosing_package_json)
-                                        .map(|p| p.module_type),
-                                    _ => None,
-                                }
-                            })
-                            .unwrap_or(module_type);
+                        // A `.cjs` under `"type":"module"` still tags as `PackageJsonTypeModule`.
+                        let dir = path.name().dir;
+                        let module_type_ = if path.is_file() && bun_paths::is_absolute(dir) {
+                            // SAFETY: JS thread; `read_dir_info` is
+                            // re-entrant on the JS thread and returns a
+                            // stable cache slot.
+                            match unsafe { (*transpiler).resolver.read_dir_info(dir) } {
+                                Ok(Some(dir_info)) => dir_info
+                                    .package_json()
+                                    .or(dir_info.enclosing_package_json)
+                                    .map_or(module_type, |p| p.module_type),
+                                _ => module_type,
+                            }
+                        } else {
+                            module_type
+                        };
                         match module_type_ {
                             ModuleType::Esm => ResolvedSourceTag::PackageJsonTypeModule,
                             ModuleType::Cjs => ResolvedSourceTag::PackageJsonTypeCommonjs,
@@ -2914,11 +2854,10 @@ fn maybe_watch_file(
     is_node_override: bool,
     path: &Fs::Path,
     hash: u32,
-    package_json: Option<&'static bun_watcher::PackageJSON>,
 ) {
-    if !jsc_vm.is_watcher_enabled() {
+    let Some(watcher) = jsc_vm.bun_watcher.get() else {
         return;
-    }
+    };
     if input_file.is_none() {
         return;
     }
@@ -2928,17 +2867,14 @@ fn maybe_watch_file(
     {
         return;
     }
-    // SAFETY: `bun_watcher` is the `*mut ImportWatcher` set when
-    // `is_watcher_enabled()`; cast recovers the concrete type.
-    let watcher = unsafe { &mut *jsc_vm.bun_watcher.get().cast::<bun_jsc::ImportWatcher>() };
-    let _ = watcher.add_file(input_file.take(), path.text, hash, package_json);
+    let _ = watcher.add_file(input_file.take(), path.text, hash);
 }
 
 /// Like `maybe_watch_file`, for a file the transpiler didn't open itself.
 fn auto_watch_file(jsc_vm: &VirtualMachine, path_text: &[u8]) {
-    if !jsc_vm.is_watcher_enabled() {
+    let Some(watcher) = jsc_vm.bun_watcher.get() else {
         return;
-    }
+    };
     if !bun_paths::is_absolute(path_text) || bun_core::strings::contains(path_text, b"node_modules")
     {
         return;
@@ -2958,10 +2894,7 @@ fn auto_watch_file(jsc_vm: &VirtualMachine, path_text: &[u8]) {
         None
     };
     let hash = bun_watcher::Watcher::get_hash(path_text);
-    // SAFETY: `bun_watcher` is the `*mut ImportWatcher` set when
-    // `is_watcher_enabled()`; cast recovers the concrete type.
-    let watcher = unsafe { &mut *jsc_vm.bun_watcher.get().cast::<bun_jsc::ImportWatcher>() };
-    let _ = watcher.add_file(file, path_text, hash, None);
+    let _ = watcher.add_file(file, path_text, hash);
 }
 
 struct CssModuleHost<'a>(&'a VirtualMachine);
@@ -4456,24 +4389,17 @@ pub(crate) fn resolve_embedded_file_to_buf(
 
     // 0600: the file persists, only the owning euid ever dlopens it, and the
     // embedded bytes may come from a binary that is not world-readable.
-    let mut tmpfile = bun_sys::Tmpfile::create_with_mode(tmpdir_fd, scratch_name, 0o600).ok()?;
-
-    let write_ok = bun_sys::File::borrow(&tmpfile.fd)
-        .write_all(file_contents)
-        .is_ok();
-    if !write_ok {
-        let _ = bun_sys::unlinkat(tmpdir_fd, scratch_name);
-        return None;
-    }
+    let tmpfile = bun_sys::Tmpfile::create_with_mode(tmpdir_fd, scratch_name, 0o600).ok()?;
+    tmpfile.file.write_all(file_contents).ok()?;
 
     // On sticky `/tmp` the rename fails EACCES/EPERM when another user owns
     // the destination; fall back to the scratch file.
-    let rename_ok = tmpfile.finish(canonical_name).is_ok();
-
-    let final_name = if rename_ok {
-        canonical_name
-    } else {
-        scratch_name
+    let final_name = match tmpfile.finish(canonical_name) {
+        Ok(()) => canonical_name,
+        Err((_, scratch)) => {
+            scratch.keep();
+            scratch_name
+        }
     };
     write_absolute(out_buf, Fs::RealFS::tmpdir_path(), final_name.as_bytes())
 }

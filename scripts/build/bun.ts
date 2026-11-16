@@ -12,7 +12,7 @@
  */
 
 import { existsSync, lstatSync, readdirSync, readFileSync, realpathSync } from "node:fs";
-import { relative, resolve, sep } from "node:path";
+import { dirname, relative, resolve, sep } from "node:path";
 import type { Sources } from "../glob-sources.ts";
 import { binaryExpectations, exportList, shimExpectations, strippedExpectations } from "./binary-expectations.ts";
 import { emitCodegen, type CodegenOutputs } from "./codegen.ts";
@@ -296,6 +296,11 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
   // force-include would lock those in before the source can speak.
   const noPchSources = new Set<string>();
 
+  // bsd.cpp defines __APPLE_USE_RFC_3542 before <netinet/in.h>. None of these use WTF.
+  for (const src of cxxSources) {
+    if (dirname(src) === resolve(cfg.cwd, "packages/bun-usockets/src")) noPchSources.add(src);
+  }
+
   // highway_json.cpp is compiled -O2 even in debug profiles (see its
   // fileOverrides entry in flags.ts); a TU at a different -O level than the
   // PCH cannot use the PCH ("__OPTIMIZE__ ... was disabled in precompiled
@@ -305,6 +310,7 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
     noPchSources.add(resolve(cfg.cwd, "src/jsc/bindings/highway_xml.cpp"));
     noPchSources.add(resolve(cfg.cwd, "src/jsc/bindings/highway_png.cpp"));
     noPchSources.add(resolve(cfg.cwd, "src/jsc/bindings/highway_byte_set.cpp"));
+    noPchSources.add(resolve(cfg.cwd, "src/jsc/bindings/highway_jpeg.cpp"));
   }
 
   // Windows-only cpp sources (rescle — PE resource editor for --compile).

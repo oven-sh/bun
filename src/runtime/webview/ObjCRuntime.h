@@ -28,7 +28,7 @@ namespace objc {
 
 // ---------------------------------------------------------------------------
 // Base for all ObjC wrapper types. Holds the raw id, provides typed
-// objc_msgSend. Non-owning — callers pair creates with explicit release().
+// objc_msgSend. Non-owning — creates return an Owned<T>.
 // The shared objc_msgSend pointer is populated once by ObjCRuntime::load().
 // ---------------------------------------------------------------------------
 struct Ref {
@@ -41,11 +41,6 @@ struct Ref {
     }
     operator id() const { return m_id; }
     explicit operator bool() const { return m_id != nullptr; }
-
-    void release()
-    {
-        if (m_id) msg<void>(s_release);
-    }
 
     bool isKindOf(Class c) const
     {
@@ -68,6 +63,29 @@ struct Ref {
     static R msgCls(Class cls, SEL op, A... a)
     {
         return reinterpret_cast<R (*)(Class, SEL, A...)>(s_msgSend)(cls, op, a...);
+    }
+};
+
+// A +1 reference.
+template<typename T>
+struct [[nodiscard]] Owned : T {
+    Owned() = default;
+    explicit Owned(id retained)
+        : T(retained)
+    {
+    }
+    Owned(Owned &&other)
+        : T(std::exchange(other.m_id, nullptr))
+    {
+    }
+    Owned &operator=(Owned other)
+    {
+        std::swap(this->m_id, other.m_id);
+        return *this;
+    }
+    ~Owned()
+    {
+        if (this->m_id) this->template msg<void>(Ref::s_release);
     }
 };
 
@@ -245,9 +263,9 @@ struct NSWindow : Ref {
     // -10000 is only for tests that don't need rendering/rAF.
     static SEL s_setAlphaValue;
     static SEL s_setIgnoresMouseEvents;
-    static NSWindow createOffscreen(double w, double h)
+    static Owned<NSWindow> createOffscreen(double w, double h)
     {
-        NSWindow win(msgCls<id>(hostCls, s_alloc));
+        Owned<NSWindow> win(msgCls<id>(hostCls, s_alloc));
         win.m_id = win.msg<id>(s_initWithContentRect_styleMask_backing_defer,
             CGRectMake(0, 0, w, h),
             (unsigned long)0 /* NSWindowStyleMaskBorderless */,
@@ -288,7 +306,7 @@ struct NSBitmapImageRep : Ref {
     static SEL s_initWithCGImage;
     static SEL s_representationUsingType_properties;
 
-    // Autoreleased NSData encoded bytes. rep is released before return.
+    // Autoreleased NSData encoded bytes.
     // NSBitmapImageFileType: PNG=4, JPEG=3. WebP is NOT in this enum —
     // representationUsingType: only does TIFF/BMP/GIF/JPEG/PNG/JPEG2000.
     // quality (0.0-1.0) goes via NSImageCompressionFactor in the properties
@@ -296,11 +314,9 @@ struct NSBitmapImageRep : Ref {
     // at some framework default ~0.75).
     static NSData encodeFromCGImage(id cgimage, unsigned long fileType, id propsDict)
     {
-        NSBitmapImageRep rep(msgCls<id>(cls, s_alloc));
+        Owned<NSBitmapImageRep> rep(msgCls<id>(cls, s_alloc));
         rep.m_id = rep.msg<id>(s_initWithCGImage, cgimage);
-        id data = rep.msg<id>(s_representationUsingType_properties, fileType, propsDict);
-        rep.release();
-        return data;
+        return rep.msg<id>(s_representationUsingType_properties, fileType, propsDict);
     }
 };
 
@@ -451,14 +467,16 @@ struct NSEvent : Ref {
     // The flip cancels out and locationInWindow lands exactly at (wx, wy).
     static NSEvent wheelEvent(float deltaX, float deltaY, NSWindow window, double wx, double wy)
     {
-        void *cgEvent = s_CGEventCreateScrollWheelEvent(
-            nullptr, /* kCGScrollEventUnitPixel */ 0, /* wheelCount */ 2,
-            static_cast<int32_t>(lroundf(-deltaY)), static_cast<int32_t>(lroundf(-deltaX)));
+        std::unique_ptr<void, decltype(s_CFRelease)> cgEvent {
+            s_CGEventCreateScrollWheelEvent(
+                nullptr, /* kCGScrollEventUnitPixel */ 0, /* wheelCount */ 2,
+                static_cast<int32_t>(lroundf(-deltaY)), static_cast<int32_t>(lroundf(-deltaX))),
+            s_CFRelease
+        };
         CGPoint screen = window.convertPointToScreen(wx, wy);
         double firstScreenH = s_CGDisplayBounds(s_CGMainDisplayID()).size.height;
-        s_CGEventSetLocation(cgEvent, CGPointMake(screen.x, firstScreenH - screen.y));
-        id ns = msgCls<id>(cls, s_eventWithCGEvent, cgEvent);
-        s_CFRelease(cgEvent);
+        s_CGEventSetLocation(cgEvent.get(), CGPointMake(screen.x, firstScreenH - screen.y));
+        id ns = msgCls<id>(cls, s_eventWithCGEvent, cgEvent.get());
         return Ref(ns).msg<id>(s_eventRelativeToWindow, window.m_id);
     }
 };
@@ -479,10 +497,9 @@ struct WKWebViewConfiguration : Ref {
     static SEL s_setWebsiteDataStore;
     static SEL s_setProcessPool;
 
-    // +1 retained.
-    static WKWebViewConfiguration createEphemeral()
+    static Owned<WKWebViewConfiguration> createEphemeral()
     {
-        WKWebViewConfiguration cfg(msgCls<id>(cls, s_alloc));
+        Owned<WKWebViewConfiguration> cfg(msgCls<id>(cls, s_alloc));
         cfg.m_id = cfg.msg<id>(s_init);
         cfg.msg<void>(s_setProcessPool, sharedProcessPool());
         id store = msgCls<id>(cls_WKWebsiteDataStore, s_nonPersistentDataStore);
@@ -491,15 +508,15 @@ struct WKWebViewConfiguration : Ref {
         return cfg;
     }
 
-    // +1 retained. All storage (localStorage, IndexedDB, cookies, cache)
+    // All storage (localStorage, IndexedDB, cookies, cache)
     // lives under `directory`. The store is cached by path: each
     // WKWebsiteDataStore runs its own NetworkProcess session with its own
     // sqlite handle, so two instances pointing at the same directory
     // DON'T share state. Caching gives views with the same dir the
     // same store instance.
-    static WKWebViewConfiguration createPersistent(const WTF::String &directory)
+    static Owned<WKWebViewConfiguration> createPersistent(const WTF::String &directory)
     {
-        WKWebViewConfiguration cfg(msgCls<id>(cls, s_alloc));
+        Owned<WKWebViewConfiguration> cfg(msgCls<id>(cls, s_alloc));
         cfg.m_id = cfg.msg<id>(s_init);
         cfg.msg<void>(s_setProcessPool, sharedProcessPool());
         cfg.msg<void>(s_setWebsiteDataStore, persistentStoreForDirectory(directory));
@@ -539,11 +556,11 @@ struct WKUserScript : Ref {
     static Class cls;
     static SEL s_initWithSource_injectionTime_forMainFrameOnly;
 
-    // +1 retained. WKUserScriptInjectionTimeAtDocumentStart = 0;
+    // WKUserScriptInjectionTimeAtDocumentStart = 0;
     // forMainFrameOnly NO so subframes get the wrap too.
-    static WKUserScript createAtDocumentStart(NSString source)
+    static Owned<WKUserScript> createAtDocumentStart(NSString source)
     {
-        WKUserScript s(msgCls<id>(cls, s_alloc));
+        Owned<WKUserScript> s(msgCls<id>(cls, s_alloc));
         s.m_id = s.msg<id>(s_initWithSource_injectionTime_forMainFrameOnly,
             source.m_id, (long)0, (signed char)0);
         return s;
@@ -589,12 +606,10 @@ struct WKWebView : Ref {
     static SEL s_setAfterScreenUpdates;
     static SEL s_takeSnapshotWithConfiguration_completionHandler;
 
-    // +1 retained. cfg is consumed (released).
-    static WKWebView create(WKWebViewConfiguration cfg, double w, double h)
+    static Owned<WKWebView> create(Owned<WKWebViewConfiguration> cfg, double w, double h)
     {
-        WKWebView web(msgCls<id>(cls, s_alloc));
+        Owned<WKWebView> web(msgCls<id>(cls, s_alloc));
         web.m_id = web.msg<id>(s_initWithFrame_configuration, CGRectMake(0, 0, w, h), cfg.m_id);
-        cfg.release();
         return web;
     }
     void setNavigationDelegate(id d) { msg<void>(s_setNavigationDelegate, d); }
@@ -706,11 +721,10 @@ struct WKWebView : Ref {
 
     void takeSnapshot(void *block)
     {
-        Ref cfg(msgCls<id>(cls_WKSnapshotConfiguration, s_alloc));
+        Owned<Ref> cfg(msgCls<id>(cls_WKSnapshotConfiguration, s_alloc));
         cfg.m_id = cfg.msg<id>(s_init);
         cfg.msg<void>(s_setAfterScreenUpdates, (signed char)1);
         msg<void>(s_takeSnapshotWithConfiguration_completionHandler, cfg.m_id, block);
-        cfg.release();
     }
 };
 
@@ -723,10 +737,9 @@ struct NavigationDelegate : Ref {
     static id (*s_getAssoc)(id, const void *);
     static char s_hostKey;
 
-    // +1 retained.
-    static NavigationDelegate create(WebViewHost *host)
+    static Owned<NavigationDelegate> create(WebViewHost *host)
     {
-        NavigationDelegate d(msgCls<id>(cls, s_alloc));
+        Owned<NavigationDelegate> d(msgCls<id>(cls, s_alloc));
         d.m_id = d.msg<id>(s_init);
         s_setAssoc(d.m_id, &s_hostKey, reinterpret_cast<id>(host), 0 /* OBJC_ASSOCIATION_ASSIGN */);
         return d;

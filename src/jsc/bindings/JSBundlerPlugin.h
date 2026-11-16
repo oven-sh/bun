@@ -129,7 +129,7 @@ public:
     };
 
 public:
-    bool anyMatchesCrossThread(JSC::VM&, BunString* namespaceStr, BunString* path, bool isOnLoad);
+    bool anyMatchesCrossThread(JSC::VM&, Bun::OwnedString* namespaceStr, Bun::OwnedString* path, bool isOnLoad);
 
     // The onResolve / onLoad requests this plugin chain currently holds (handed over by the bundle thread,
     // not yet answered). A request has exactly one answer, produced on this (the JS) thread: by the plugin

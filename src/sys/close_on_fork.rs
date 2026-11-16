@@ -1,6 +1,6 @@
 //! Linux and FreeBSD don't start a file that is open for writing anywhere (`ETXTBSY`), and `O_CLOEXEC` closes a child's copies of
 //! this process's descriptors at the end of its exec, after the parent of a `vfork` child continues. So an executable is written
-//! through a descriptor of this module: once `close` returns, no child has a copy either.
+//! through a [`File`] of this module: once it is dropped, no child has a copy either.
 
 use core::ffi::c_int;
 use core::ptr::NonNull;
@@ -8,7 +8,7 @@ use core::sync::atomic::{AtomicBool, Ordering};
 
 use bun_core::{Fd, Mutex, ZStr};
 
-use crate::{FdExt as _, Maybe, Mode};
+use crate::{Maybe, Mode};
 
 #[repr(C)]
 pub struct PendingFork {
@@ -62,17 +62,30 @@ fn update_fds<R>(update: impl FnOnce(&mut Vec<c_int>) -> R) -> R {
     update(&mut state.fds)
 }
 
-pub fn openat(directory: Fd, path: &ZStr, flags: i32, mode: Mode) -> Maybe<Fd> {
-    update_fds(|fds| {
-        let fd = crate::openat(directory, path, flags, mode)?;
-        fds.push(fd.native());
-        Ok(fd)
-    })
+pub struct File(Fd);
+
+impl File {
+    pub fn openat(directory: Fd, path: &ZStr, flags: i32, mode: Mode) -> Maybe<Self> {
+        update_fds(|fds| {
+            let fd = crate::openat(directory, path, flags, mode)?;
+            fds.push(fd.native());
+            Ok(Self(fd))
+        })
+    }
 }
 
-pub fn close(fd: Fd) {
-    update_fds(|fds| {
-        fd.close();
-        fds.retain(|it| *it != fd.native());
-    });
+impl core::ops::Deref for File {
+    type Target = crate::File;
+    fn deref(&self) -> &crate::File {
+        crate::File::borrow(&self.0)
+    }
+}
+
+impl Drop for File {
+    fn drop(&mut self) {
+        update_fds(|fds| {
+            let _ = crate::close(self.0);
+            fds.retain(|it| *it != self.0.native());
+        });
+    }
 }

@@ -2,11 +2,12 @@
 //! `JSValue`/`JSGlobalObject` types — the original methods on
 //! each `struct_ares_*_reply` are aliased to the free fns here.
 
-use core::ffi::c_int;
+use core::iter::successors;
 
 use ::bstr::BStr;
 use bun_cares_sys::c_ares_draft as c_ares;
 use bun_core as bstr;
+use bun_core::CStrRef;
 use bun_jsc::bindgen::{JsLocal, JsScope};
 use bun_jsc::{JSGlobalObject, JSValue, JsResult, StringJsc, SystemError, bun_string_jsc};
 
@@ -18,153 +19,76 @@ fn utf8_to_js(global: &JSGlobalObject, bytes: &[u8]) -> JsResult<JSValue> {
     bun_string_jsc::create_utf8_for_js(global, bytes)
 }
 
+fn c_str_to_js(global: &JSGlobalObject, string: CStrRef<'_>) -> JsResult<JSValue> {
+    utf8_to_js(global, string.to_cstr().to_bytes())
+}
+
 // ── struct_hostent ─────────────────────────────────────────────────────────
 pub(crate) fn hostent_to_js_response(
-    this: &mut c_ares::struct_hostent,
+    this: &c_ares::struct_hostent<'_>,
     global_this: &JSGlobalObject,
     lookup_name: &'static [u8], // PERF: could be monomorphized per lookup name — profile if hot
 ) -> JsResult<JSValue> {
     if lookup_name == b"cname" {
         // A cname lookup always returns a single record but we follow the common API here.
-        if this.h_name.is_null() {
+        let Some(name) = this.h_name else {
             return JSValue::create_empty_array(global_this, 0);
-        }
-        // SAFETY: h_name is non-null NUL-terminated C string from c-ares.
-        let name = unsafe { bun_core::ffi::cstr(this.h_name) }.to_bytes();
-        let name = [bstr::StringView::borrow_utf8(name)];
+        };
+        let name = [bstr::StringView::borrow_utf8(name.to_cstr().to_bytes())];
         return bun_string_jsc::to_js_array(global_this, bstr::StringView::as_strings(&name));
     }
 
-    if this.h_aliases.is_null() {
-        return JSValue::create_empty_array(global_this, 0);
-    }
+    cares_list_to_js_array(this.aliases(), global_this, |alias, g| {
+        c_str_to_js(g, alias)
+    })
+}
 
-    let mut count: u32 = 0;
-    // SAFETY: h_aliases is a non-null NULL-terminated array of C strings.
-    while unsafe { !(*this.h_aliases.add(count as usize)).is_null() } {
-        count += 1;
-    }
+// ── hostent_with_ttls ──────────────────────────────────────────────────────
+pub(crate) fn hostent_with_ttls_to_js_response(
+    this: &c_ares::hostent_with_ttls,
+    global_this: &JSGlobalObject,
+) -> JsResult<JSValue> {
+    let addresses = this.hostent.get().addresses();
+    let array = JSValue::create_empty_array(global_this, addresses.clone().count())?;
 
-    let array = JSValue::create_empty_array(global_this, count as usize)?;
-    count = 0;
+    for (index, ip) in (0..).zip(addresses) {
+        let Ok(addr_string) = address_to_js(&bun_dns::Address::from_ip(ip, 0), global_this) else {
+            return Ok(global_this.throw_out_of_memory_value());
+        };
 
-    loop {
-        // SAFETY: h_aliases is a non-null NULL-terminated array of C strings.
-        let alias = unsafe { *this.h_aliases.add(count as usize) };
-        if alias.is_null() {
-            break;
-        }
-        // SAFETY: alias is a non-null NUL-terminated C string from c-ares.
-        let alias_slice = unsafe { bun_core::ffi::cstr(alias) }.to_bytes();
-        array.put_index(global_this, count, utf8_to_js(global_this, alias_slice)?)?;
-        count += 1;
+        let ttl = this.ttls.get(index as usize).copied();
+        let result_object = JSValue::create_empty_object(global_this, 2);
+        result_object.put(global_this, b"address", addr_string);
+        result_object.put(
+            global_this,
+            b"ttl",
+            if let Some(val) = ttl {
+                JSValue::js_number(val as f64)
+            } else {
+                JSValue::UNDEFINED
+            },
+        );
+        array.put_index(global_this, index, result_object)?;
     }
 
     Ok(array)
 }
 
-// ── hostent_with_ttls ──────────────────────────────────────────────────────
-pub(crate) fn hostent_with_ttls_to_js_response(
-    this: &mut c_ares::hostent_with_ttls,
-    global_this: &JSGlobalObject,
-    lookup_name: &'static [u8], // PERF: could be monomorphized per lookup name — profile if hot
-) -> JsResult<JSValue> {
-    if lookup_name == b"a" || lookup_name == b"aaaa" {
-        // SAFETY: this.hostent is a c-ares-owned hostent pointer (non-null on success path).
-        let hostent = unsafe { &*this.hostent };
-        if hostent.h_addr_list.is_null() {
-            return JSValue::create_empty_array(global_this, 0);
-        }
-
-        let mut count: u32 = 0;
-        // SAFETY: h_addr_list is a non-null NULL-terminated array of address bytes.
-        while unsafe { !(*hostent.h_addr_list.add(count as usize)).is_null() } {
-            count += 1;
-        }
-
-        let array = JSValue::create_empty_array(global_this, count as usize)?;
-        count = 0;
-
-        loop {
-            // SAFETY: h_addr_list is a non-null NULL-terminated array of address bytes.
-            let addr = unsafe { *hostent.h_addr_list.add(count as usize) };
-            if addr.is_null() {
-                break;
-            }
-            // bun_dns::Address (= bun_sys::net::Address) only exposes init_posix,
-            // so build a sockaddr_in/in6 on the stack and copy through that.
-            let addr_string = {
-                // h_addrtype is c_short on Windows, c_int on POSIX; widen for the compare.
-                #[allow(clippy::useless_conversion)]
-                let address = if i32::from(hostent.h_addrtype) == c_ares::AF::INET6 {
-                    // SAFETY: addr points to ≥16 bytes for AF_INET6.
-                    let bytes: [u8; 16] = unsafe { *(addr as *const [u8; 16]) };
-                    let mut sa6: super::netc::sockaddr_in6 = bun_core::ffi::zeroed();
-                    sa6.sin6_family = super::netc::AF_INET6 as _;
-                    sa6.sin6_addr.s6_addr = bytes;
-                    // SAFETY: &sa6 is a valid sockaddr_in6.
-                    unsafe { bun_dns::Address::init_posix((&raw const sa6).cast()) }
-                } else {
-                    // SAFETY: addr points to ≥4 bytes for AF_INET.
-                    let bytes: [u8; 4] = unsafe { *(addr as *const [u8; 4]) };
-                    let mut sa4: super::netc::sockaddr_in = bun_core::ffi::zeroed();
-                    sa4.sin_family = super::netc::AF_INET as _;
-                    sa4.sin_addr.s_addr = u32::from_ne_bytes(bytes);
-                    // SAFETY: &sa4 is a valid sockaddr_in.
-                    unsafe { bun_dns::Address::init_posix((&raw const sa4).cast()) }
-                };
-                match address_to_js(&address, global_this) {
-                    Ok(v) => v,
-                    Err(_) => return Ok(global_this.throw_out_of_memory_value()),
-                }
-            };
-
-            let ttl: Option<c_int> = if (count as usize) < this.ttls.len() {
-                Some(this.ttls[count as usize])
-            } else {
-                None
-            };
-            let result_object = JSValue::create_empty_object(global_this, 2);
-            result_object.put(global_this, b"address", addr_string);
-            result_object.put(
-                global_this,
-                b"ttl",
-                if let Some(val) = ttl {
-                    JSValue::js_number(val as f64)
-                } else {
-                    JSValue::UNDEFINED
-                },
-            );
-            array.put_index(global_this, count, result_object)?;
-            count += 1;
-        }
-
-        Ok(array)
-    } else {
-        // Callers guarantee only "a"/"aaaa" reach here.
-        unreachable!("Unsupported hostent_with_ttls record type");
-    }
-}
-
 // ── struct_nameinfo ────────────────────────────────────────────────────────
 pub(crate) fn nameinfo_to_js_response(
-    this: &mut c_ares::struct_nameinfo,
+    this: &c_ares::struct_nameinfo<'_>,
     global_this: &JSGlobalObject,
 ) -> JsResult<JSValue> {
     let array = JSValue::create_empty_array(global_this, 2)?; // [node, service]
 
-    if !this.node.is_null() {
-        // SAFETY: node is a non-null NUL-terminated C string from c-ares.
-        let node_slice = unsafe { bun_core::ffi::cstr(this.node.cast()) }.to_bytes();
-        array.put_index(global_this, 0, utf8_to_js(global_this, node_slice)?)?;
+    if let Some(node) = this.node {
+        array.put_index(global_this, 0, c_str_to_js(global_this, node)?)?;
     } else {
         array.put_index(global_this, 0, JSValue::UNDEFINED)?;
     }
 
-    if !this.service.is_null() {
-        // SAFETY: service is a non-null NUL-terminated C string from c-ares.
-        let service_slice = unsafe { bun_core::ffi::cstr(this.service.cast()) }.to_bytes();
-        array.put_index(global_this, 1, utf8_to_js(global_this, service_slice)?)?;
+    if let Some(service) = this.service {
+        array.put_index(global_this, 1, c_str_to_js(global_this, service)?)?;
     } else {
         array.put_index(global_this, 1, JSValue::UNDEFINED)?;
     }
@@ -174,105 +98,30 @@ pub(crate) fn nameinfo_to_js_response(
 
 // ── AddrInfo ───────────────────────────────────────────────────────────────
 pub(crate) fn addr_info_to_js_array(
-    addr_info: &mut c_ares::AddrInfo,
+    addr_info: &c_ares::AddrInfo<'_>,
     global_this: &JSGlobalObject,
 ) -> JsResult<JSValue> {
-    // LIFETIMES.tsv rows 254/256: AddrInfo.node / AddrInfo_node.next are FFI → *mut AddrInfo_node.
-    if addr_info.node.is_null() {
-        return JSValue::create_empty_array(global_this, 0);
-    }
-    // SAFETY: node is non-null (checked above); c-ares owns the linked list.
-    let array =
-        JSValue::create_empty_array(global_this, unsafe { (*addr_info.node).count() } as usize)?;
-
-    {
-        let mut j: u32 = 0;
-        let mut current: *mut c_ares::AddrInfo_node = addr_info.node;
-        while !current.is_null() {
-            // SAFETY: current is non-null (loop guard); c-ares owns the linked list.
-            let this_node = unsafe { &*current };
-            // bun_dns::Address::init_posix copies from the raw sockaddr by family,
-            // so we hand it `this_node.addr` directly after asserting a known family.
-            debug_assert!(
-                this_node.family == c_ares::AF::INET || this_node.family == c_ares::AF::INET6
-            );
-            // SAFETY: addr is non-null sockaddr_in/in6 for AF_INET/AF_INET6 (c-ares contract).
-            let address = unsafe { bun_dns::Address::init_posix(this_node.addr.cast()) };
-            array.put_index(
-                global_this,
-                j,
-                result_to_js(
-                    &bun_dns::GetAddrInfoResult {
-                        address,
-                        ttl: this_node.ttl,
-                    },
-                    global_this,
-                )?,
-            )?;
-            j += 1;
-            current = this_node.next;
-        }
+    let array = JSValue::create_empty_array(global_this, addr_info.nodes().count())?;
+    for (index, node) in (0..).zip(addr_info.nodes()) {
+        let result = bun_dns::GetAddrInfoResult {
+            address: bun_dns::Address::from_bytes(node.address_bytes()),
+            ttl: node.ttl,
+        };
+        array.put_index(global_this, index, result_to_js(&result, global_this)?)?;
     }
 
     Ok(array)
 }
 
 // ── shared count-then-walk → JS array helper ───────────────────────────────
-//
-// Every `struct_ares_*_reply` is an intrusive singly-linked list with a
-// `.next: *mut Self` field. The two-pass walk (count, then
-// `create_empty_array` + `put_index`) is done once generically here.
-// The trait is `unsafe` because impls promise `next()`
-// is either null or a valid pointer into the same c-ares-owned list.
-
-/// SAFETY: impls must return null or a valid pointer into the same
-/// c-ares-owned linked list.
-unsafe trait CAresLinked {
-    fn next(&self) -> *mut Self;
-}
-
-macro_rules! impl_cares_linked {
-    ($($t:ty),+ $(,)?) => {$(
-        // SAFETY: `.next` is the c-ares-owned intrusive list pointer.
-        unsafe impl CAresLinked for $t {
-            #[inline]
-            fn next(&self) -> *mut Self { self.next }
-        }
-    )+};
-}
-
-impl_cares_linked!(
-    c_ares::struct_ares_caa_reply,
-    c_ares::struct_ares_srv_reply,
-    c_ares::struct_ares_mx_reply,
-    c_ares::struct_ares_txt_reply,
-    c_ares::struct_ares_naptr_reply,
-);
-
-fn cares_list_to_js_array<T: CAresLinked>(
-    head: &T,
+fn cares_list_to_js_array<T>(
+    list: impl Iterator<Item = T> + Clone,
     global_this: &JSGlobalObject,
-    mut to_js: impl FnMut(&T, &JSGlobalObject) -> JsResult<JSValue>,
+    mut to_js: impl FnMut(T, &JSGlobalObject) -> JsResult<JSValue>,
 ) -> JsResult<JSValue> {
-    let mut count: usize = 0;
-    let mut p: *const T = head;
-    while !p.is_null() {
-        // SAFETY: `p` walks the c-ares-owned linked list (CAresLinked invariant).
-        unsafe { p = (*p).next() };
-        count += 1;
-    }
-
-    let array = JSValue::create_empty_array(global_this, count)?;
-
-    p = head;
-    let mut i: u32 = 0;
-    while !p.is_null() {
-        // SAFETY: `p` walks the c-ares-owned linked list (CAresLinked invariant);
-        // shared access only — the `to_js` builders never mutate the reply.
-        let node = unsafe { &*p };
-        array.put_index(global_this, i, to_js(node, global_this)?)?;
-        p = node.next();
-        i += 1;
+    let array = JSValue::create_empty_array(global_this, list.clone().count())?;
+    for (index, item) in (0..).zip(list) {
+        array.put_index(global_this, index, to_js(item, global_this)?)?;
     }
 
     Ok(array)
@@ -280,15 +129,15 @@ fn cares_list_to_js_array<T: CAresLinked>(
 
 // ── struct_ares_caa_reply ──────────────────────────────────────────────────
 pub(crate) fn caa_reply_to_js_response(
-    this: &mut c_ares::struct_ares_caa_reply,
+    this: &c_ares::struct_ares_caa_reply<'_>,
     global_this: &JSGlobalObject,
-    _lookup_name: &'static [u8],
 ) -> JsResult<JSValue> {
-    cares_list_to_js_array(this, global_this, caa_reply_to_js)
+    let list = successors(Some(this), |reply| reply.next);
+    cares_list_to_js_array(list, global_this, caa_reply_to_js)
 }
 
 fn caa_reply_to_js(
-    this: &c_ares::struct_ares_caa_reply,
+    this: &c_ares::struct_ares_caa_reply<'_>,
     global_this: &JSGlobalObject,
 ) -> JsResult<JSValue> {
     let obj = JSValue::create_empty_object(global_this, 2);
@@ -308,15 +157,15 @@ fn caa_reply_to_js(
 
 // ── struct_ares_srv_reply ──────────────────────────────────────────────────
 pub(crate) fn srv_reply_to_js_response(
-    this: &mut c_ares::struct_ares_srv_reply,
+    this: &c_ares::struct_ares_srv_reply<'_>,
     global_this: &JSGlobalObject,
-    _lookup_name: &'static [u8],
 ) -> JsResult<JSValue> {
-    cares_list_to_js_array(this, global_this, srv_reply_to_js)
+    let list = successors(Some(this), |reply| reply.next);
+    cares_list_to_js_array(list, global_this, srv_reply_to_js)
 }
 
 fn srv_reply_to_js(
-    this: &c_ares::struct_ares_srv_reply,
+    this: &c_ares::struct_ares_srv_reply<'_>,
     global_this: &JSGlobalObject,
 ) -> JsResult<JSValue> {
     let obj = JSValue::create_empty_object(global_this, 4);
@@ -333,24 +182,22 @@ fn srv_reply_to_js(
     );
     obj.put(global_this, b"port", JSValue::js_number(this.port as f64));
 
-    // SAFETY: host is a non-null NUL-terminated C string from c-ares.
-    let host = unsafe { bun_core::ffi::cstr(this.host.cast()) }.to_bytes();
-    obj.put(global_this, b"name", utf8_to_js(global_this, host)?);
+    obj.put(global_this, b"name", c_str_to_js(global_this, this.host)?);
 
     Ok(obj)
 }
 
 // ── struct_ares_mx_reply ───────────────────────────────────────────────────
 pub(crate) fn mx_reply_to_js_response(
-    this: &mut c_ares::struct_ares_mx_reply,
+    this: &c_ares::struct_ares_mx_reply<'_>,
     global_this: &JSGlobalObject,
-    _lookup_name: &'static [u8],
 ) -> JsResult<JSValue> {
-    cares_list_to_js_array(this, global_this, mx_reply_to_js)
+    let list = successors(Some(this), |reply| reply.next);
+    cares_list_to_js_array(list, global_this, mx_reply_to_js)
 }
 
 fn mx_reply_to_js(
-    this: &c_ares::struct_ares_mx_reply,
+    this: &c_ares::struct_ares_mx_reply<'_>,
     global_this: &JSGlobalObject,
 ) -> JsResult<JSValue> {
     let obj = JSValue::create_empty_object(global_this, 2);
@@ -360,24 +207,26 @@ fn mx_reply_to_js(
         JSValue::js_number(this.priority as f64),
     );
 
-    // SAFETY: host is a non-null NUL-terminated C string from c-ares.
-    let host = unsafe { bun_core::ffi::cstr(this.host.cast()) }.to_bytes();
-    obj.put(global_this, b"exchange", utf8_to_js(global_this, host)?);
+    obj.put(
+        global_this,
+        b"exchange",
+        c_str_to_js(global_this, this.host)?,
+    );
 
     Ok(obj)
 }
 
 // ── struct_ares_txt_reply ──────────────────────────────────────────────────
 pub(crate) fn txt_reply_to_js_response(
-    this: &mut c_ares::struct_ares_txt_reply,
+    this: &c_ares::struct_ares_txt_reply<'_>,
     global_this: &JSGlobalObject,
-    _lookup_name: &'static [u8],
 ) -> JsResult<JSValue> {
-    cares_list_to_js_array(this, global_this, txt_reply_to_js)
+    let list = successors(Some(this), |reply| reply.next);
+    cares_list_to_js_array(list, global_this, txt_reply_to_js)
 }
 
 fn txt_reply_to_js(
-    this: &c_ares::struct_ares_txt_reply,
+    this: &c_ares::struct_ares_txt_reply<'_>,
     global_this: &JSGlobalObject,
 ) -> JsResult<JSValue> {
     let array = JSValue::create_empty_array(global_this, 1)?;
@@ -387,12 +236,12 @@ fn txt_reply_to_js(
 }
 
 fn txt_reply_to_js_for_any(
-    this: &mut c_ares::struct_ares_txt_reply,
+    this: &c_ares::struct_ares_txt_reply<'_>,
     global_this: &JSGlobalObject,
-    _lookup_name: &'static [u8],
 ) -> JsResult<JSValue> {
+    let list = successors(Some(this), |reply| reply.next);
     let array =
-        cares_list_to_js_array(this, global_this, |node, g| utf8_to_js(g, node.txt_bytes()))?;
+        cares_list_to_js_array(list, global_this, |node, g| utf8_to_js(g, node.txt_bytes()))?;
     let obj = JSValue::create_empty_object(global_this, 1);
     obj.put(global_this, b"entries", array);
     Ok(obj)
@@ -400,15 +249,15 @@ fn txt_reply_to_js_for_any(
 
 // ── struct_ares_naptr_reply ────────────────────────────────────────────────
 pub(crate) fn naptr_reply_to_js_response(
-    this: &mut c_ares::struct_ares_naptr_reply,
+    this: &c_ares::struct_ares_naptr_reply<'_>,
     global_this: &JSGlobalObject,
-    _lookup_name: &'static [u8],
 ) -> JsResult<JSValue> {
-    cares_list_to_js_array(this, global_this, naptr_reply_to_js)
+    let list = successors(Some(this), |reply| reply.next);
+    cares_list_to_js_array(list, global_this, naptr_reply_to_js)
 }
 
 fn naptr_reply_to_js(
-    this: &c_ares::struct_ares_naptr_reply,
+    this: &c_ares::struct_ares_naptr_reply<'_>,
     global_this: &JSGlobalObject,
 ) -> JsResult<JSValue> {
     let obj = JSValue::create_empty_object(global_this, 6);
@@ -420,24 +269,24 @@ fn naptr_reply_to_js(
     );
     obj.put(global_this, b"order", JSValue::js_number(this.order as f64));
 
-    // SAFETY: flags is a non-null NUL-terminated C string from c-ares.
-    let flags = unsafe { bun_core::ffi::cstr(this.flags.cast()) }.to_bytes();
-    obj.put(global_this, b"flags", utf8_to_js(global_this, flags)?);
+    obj.put(global_this, b"flags", c_str_to_js(global_this, this.flags)?);
 
-    // SAFETY: service is a non-null NUL-terminated C string from c-ares.
-    let service = unsafe { bun_core::ffi::cstr(this.service.cast()) }.to_bytes();
-    obj.put(global_this, b"service", utf8_to_js(global_this, service)?);
+    obj.put(
+        global_this,
+        b"service",
+        c_str_to_js(global_this, this.service)?,
+    );
 
-    // SAFETY: regexp is a non-null NUL-terminated C string from c-ares.
-    let regexp = unsafe { bun_core::ffi::cstr(this.regexp.cast()) }.to_bytes();
-    obj.put(global_this, b"regexp", utf8_to_js(global_this, regexp)?);
+    obj.put(
+        global_this,
+        b"regexp",
+        c_str_to_js(global_this, this.regexp)?,
+    );
 
-    // SAFETY: replacement is a non-null NUL-terminated C string from c-ares.
-    let replacement = unsafe { bun_core::ffi::cstr(this.replacement.cast()) }.to_bytes();
     obj.put(
         global_this,
         b"replacement",
-        utf8_to_js(global_this, replacement)?,
+        c_str_to_js(global_this, this.replacement)?,
     );
 
     Ok(obj)
@@ -445,16 +294,7 @@ fn naptr_reply_to_js(
 
 // ── struct_ares_soa_reply ──────────────────────────────────────────────────
 pub(crate) fn soa_reply_to_js_response(
-    this: &mut c_ares::struct_ares_soa_reply,
-    global_this: &JSGlobalObject,
-    _lookup_name: &'static [u8],
-) -> JsResult<JSValue> {
-    // PERF: a stack-fallback buffer + arena bulk-free could help — profile if hot
-    soa_reply_to_js(this, global_this)
-}
-
-fn soa_reply_to_js(
-    this: &mut c_ares::struct_ares_soa_reply,
+    this: &c_ares::struct_ares_soa_reply<'_>,
     global_this: &JSGlobalObject,
 ) -> JsResult<JSValue> {
     let obj = JSValue::create_empty_object(global_this, 7);
@@ -481,31 +321,22 @@ fn soa_reply_to_js(
         JSValue::js_number(this.minttl as f64),
     );
 
-    // SAFETY: nsname is a non-null NUL-terminated C string from c-ares.
-    let nsname = unsafe { bun_core::ffi::cstr(this.nsname.cast()) }.to_bytes();
-    obj.put(global_this, b"nsname", utf8_to_js(global_this, nsname)?);
+    obj.put(
+        global_this,
+        b"nsname",
+        c_str_to_js(global_this, this.nsname)?,
+    );
 
-    // SAFETY: hostmaster is a non-null NUL-terminated C string from c-ares.
-    let hostmaster = unsafe { bun_core::ffi::cstr(this.hostmaster.cast()) }.to_bytes();
     obj.put(
         global_this,
         b"hostmaster",
-        utf8_to_js(global_this, hostmaster)?,
+        c_str_to_js(global_this, this.hostmaster)?,
     );
 
     Ok(obj)
 }
 
 // ── struct_any_reply ───────────────────────────────────────────────────────
-pub(crate) fn any_reply_to_js_response(
-    this: &mut c_ares::struct_any_reply,
-    global_this: &JSGlobalObject,
-    _lookup_name: &'static [u8],
-) -> JsResult<JSValue> {
-    // PERF: a stack-fallback buffer + arena bulk-free could help — profile if hot
-    any_reply_to_js(this, global_this)
-}
-
 fn any_reply_append(
     global_this: &JSGlobalObject,
     array: JSValue,
@@ -547,7 +378,7 @@ fn any_reply_append_all(
     lookup_name: &'static [u8],
 ) -> JsResult<()> {
     // The caller computes `response` (via either `*_to_js_response` or, for txt,
-    // `txt_reply_to_js_for_any`) and passes it in directly — see any_reply_to_js below.
+    // `txt_reply_to_js_for_any`) and passes it in directly — see `any_reply_to_js_response`.
     if response.is_array() {
         let mut iterator = response.array_iterator(global_this)?;
         while let Some(item) = iterator.next()? {
@@ -559,80 +390,66 @@ fn any_reply_append_all(
     Ok(())
 }
 
-fn any_reply_to_js(
-    this: &mut c_ares::struct_any_reply,
+pub(crate) fn any_reply_to_js_response(
+    this: &c_ares::struct_any_reply,
     global_this: &JSGlobalObject,
 ) -> JsResult<JSValue> {
     // The field set is expanded manually here. Keep in lockstep with
     // `c_ares::struct_any_reply`'s fields.
     let len: usize = this.a_reply.is_some() as usize
         + this.aaaa_reply.is_some() as usize
-        + (!this.mx_reply.is_null()) as usize
-        + (!this.ns_reply.is_null()) as usize
-        + (!this.txt_reply.is_null()) as usize
-        + (!this.srv_reply.is_null()) as usize
-        + (!this.ptr_reply.is_null()) as usize
-        + (!this.naptr_reply.is_null()) as usize
-        + (!this.soa_reply.is_null()) as usize
-        + (!this.caa_reply.is_null()) as usize;
+        + this.mx_reply.is_some() as usize
+        + this.ns_reply.is_some() as usize
+        + this.txt_reply.is_some() as usize
+        + this.srv_reply.is_some() as usize
+        + this.ptr_reply.is_some() as usize
+        + this.naptr_reply.is_some() as usize
+        + this.soa_reply.is_some() as usize
+        + this.caa_reply.is_some() as usize;
 
     let array = JSValue::create_empty_array(global_this, len)?;
     let mut i: u32 = 0;
 
-    if let Some(reply) = this.a_reply.as_deref_mut() {
-        let response = hostent_with_ttls_to_js_response(reply, global_this, b"a")?;
+    if let Some(reply) = this.a_reply.as_deref() {
+        let response = hostent_with_ttls_to_js_response(reply, global_this)?;
         any_reply_append_all(global_this, array, &mut i, response, b"a")?;
     }
-    if let Some(reply) = this.aaaa_reply.as_deref_mut() {
-        let response = hostent_with_ttls_to_js_response(reply, global_this, b"aaaa")?;
+    if let Some(reply) = this.aaaa_reply.as_deref() {
+        let response = hostent_with_ttls_to_js_response(reply, global_this)?;
         any_reply_append_all(global_this, array, &mut i, response, b"aaaa")?;
     }
-    if !this.mx_reply.is_null() {
-        // SAFETY: non-null c-ares-owned linked list head.
-        let response = mx_reply_to_js_response(unsafe { &mut *this.mx_reply }, global_this, b"mx")?;
+    if let Some(reply) = &this.mx_reply {
+        let response = mx_reply_to_js_response(reply.get(), global_this)?;
         any_reply_append_all(global_this, array, &mut i, response, b"mx")?;
     }
-    if !this.ns_reply.is_null() {
-        // SAFETY: non-null c-ares-owned hostent.
-        let response = hostent_to_js_response(unsafe { &mut *this.ns_reply }, global_this, b"ns")?;
+    if let Some(reply) = &this.ns_reply {
+        let response = hostent_to_js_response(reply.get(), global_this, b"ns")?;
         any_reply_append_all(global_this, array, &mut i, response, b"ns")?;
     }
-    if !this.txt_reply.is_null() {
-        // SAFETY: non-null c-ares-owned linked list head.
+    if let Some(reply) = &this.txt_reply {
         // txt is the only reply type with the `to_js_for_any` shape (an `entries`
         // wrapper object) instead of the plain `to_js_response` shape.
-        let response =
-            txt_reply_to_js_for_any(unsafe { &mut *this.txt_reply }, global_this, b"txt")?;
+        let response = txt_reply_to_js_for_any(reply.get(), global_this)?;
         any_reply_append_all(global_this, array, &mut i, response, b"txt")?;
     }
-    if !this.srv_reply.is_null() {
-        // SAFETY: non-null c-ares-owned linked list head.
-        let response =
-            srv_reply_to_js_response(unsafe { &mut *this.srv_reply }, global_this, b"srv")?;
+    if let Some(reply) = &this.srv_reply {
+        let response = srv_reply_to_js_response(reply.get(), global_this)?;
         any_reply_append_all(global_this, array, &mut i, response, b"srv")?;
     }
-    if !this.ptr_reply.is_null() {
-        // SAFETY: non-null c-ares-owned hostent.
-        let response =
-            hostent_to_js_response(unsafe { &mut *this.ptr_reply }, global_this, b"ptr")?;
+    if let Some(reply) = &this.ptr_reply {
+        let response = hostent_to_js_response(reply.get(), global_this, b"ptr")?;
         any_reply_append_all(global_this, array, &mut i, response, b"ptr")?;
     }
-    if !this.naptr_reply.is_null() {
-        // SAFETY: non-null c-ares-owned linked list head.
-        let response =
-            naptr_reply_to_js_response(unsafe { &mut *this.naptr_reply }, global_this, b"naptr")?;
+    if let Some(reply) = &this.naptr_reply {
+        let response = naptr_reply_to_js_response(reply.get(), global_this)?;
         any_reply_append_all(global_this, array, &mut i, response, b"naptr")?;
     }
-    if !this.soa_reply.is_null() {
-        // SAFETY: non-null c-ares-owned soa reply.
-        let response =
-            soa_reply_to_js_response(unsafe { &mut *this.soa_reply }, global_this, b"soa")?;
+    if let Some(reply) = &this.soa_reply {
+        let response = soa_reply_to_js_response(reply.get(), global_this)?;
         any_reply_append_all(global_this, array, &mut i, response, b"soa")?;
     }
-    if !this.caa_reply.is_null() {
-        // SAFETY: non-null c-ares-owned linked list head.
-        let response =
-            caa_reply_to_js_response(unsafe { &mut *this.caa_reply }, global_this, b"caa")?;
+    if let Some(reply) = &this.caa_reply {
+        let response = caa_reply_to_js_response(reply.get(), global_this)?;
         any_reply_append_all(global_this, array, &mut i, response, b"caa")?;
     }
 

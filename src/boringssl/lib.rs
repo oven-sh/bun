@@ -795,7 +795,7 @@ pub fn server_identity_mismatch_message(ssl_ptr: &mut boring::SSL, hostname: &[u
     message
 }
 
-/// What a client says about the name on the server's certificate, inside the handshake. openssl.c's `US_IDENTITY_*`.
+/// What a client says about the name on the server's certificate, inside the handshake. openssl.cpp's `US_IDENTITY_*`.
 #[repr(i32)]
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum ServerIdentity {

@@ -11,7 +11,8 @@ use bun_core::Environment;
 use crate::virtual_machine::VirtualMachine;
 use crate::{
     ArrayBuffer, CommonString, ErrorCode, JSArray, JSGlobalObject, JSObject, JSString, JSValue,
-    JsError, JsThread, PinnedArrayBuffer, Strong, ThreadIsolated, ThreadIsolatedArg,
+    JsClass, JsError, JsThread, PinnedArrayBuffer, Strong, ThreadIsolated, ThreadIsolatedArg,
+    WrapperGuard,
 };
 
 #[path = "bindgen/extern_types.rs"]
@@ -473,6 +474,20 @@ impl<'a, T> JsLocal<'a, T> {
     #[inline(always)]
     pub fn as_value(self) -> JsLocal<'a> {
         JsLocal::from_raw(self.0)
+    }
+
+    /// As [`JSValue::as_class_ref`].
+    #[inline]
+    pub fn as_class_ref<C: JsClass>(self) -> Option<WrapperGuard<'a, C>> {
+        // The guard copies the value, which the call holds for 'a.
+        let WrapperGuard {
+            native, wrapper, ..
+        } = C::from_js(&self.0)?;
+        Some(WrapperGuard {
+            native,
+            wrapper,
+            _value: PhantomData,
+        })
     }
 
     /// The collector sees the value up to here.

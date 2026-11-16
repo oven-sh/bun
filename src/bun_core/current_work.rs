@@ -96,7 +96,7 @@ fn milliseconds_now() -> u64 {
 
 struct GivesRecordBack {
     #[cfg(unix)]
-    signal_stack: Cell<*mut core::ffi::c_void>,
+    signal_stack: core::cell::OnceCell<SignalStack>,
 }
 
 impl Drop for GivesRecordBack {
@@ -105,8 +105,26 @@ impl Drop for GivesRecordBack {
             record.set(None);
             record.is_taken.store(false, Release);
         }
-        #[cfg(unix)]
-        self.give_signal_stack_back();
+    }
+}
+
+/// A mapping for the one alternate signal stack of the thread that made it.
+#[cfg(unix)]
+struct SignalStack(core::ptr::NonNull<core::ffi::c_void>);
+
+#[cfg(unix)]
+impl Drop for SignalStack {
+    fn drop(&mut self) {
+        let none = libc::stack_t {
+            ss_sp: core::ptr::null_mut(),
+            ss_flags: libc::SS_DISABLE,
+            ss_size: 0,
+        };
+        // SAFETY: the thread takes no signal on the mapping once it has none, and nobody else knows it.
+        unsafe {
+            libc::sigaltstack(&raw const none, core::ptr::null_mut());
+            libc::munmap(self.0.as_ptr(), GivesRecordBack::SIGNAL_STACK_SIZE);
+        }
     }
 }
 
@@ -115,7 +133,7 @@ impl GivesRecordBack {
     const SIGNAL_STACK_SIZE: usize = 512 * 1024;
 
     fn ensure_signal_stack(&self) {
-        if !self.signal_stack.get().is_null() {
+        if self.signal_stack.get().is_some() {
             return;
         }
         // SAFETY: all-zero is a valid `stack_t`.
@@ -136,37 +154,20 @@ impl GivesRecordBack {
                 0,
             )
         };
-        if memory == libc::MAP_FAILED {
+        let Some(memory) = core::ptr::NonNull::new(memory)
+            .filter(|memory| memory.as_ptr() != libc::MAP_FAILED)
+            .map(SignalStack)
+        else {
             return;
-        }
+        };
         let stack = libc::stack_t {
-            ss_sp: memory,
+            ss_sp: memory.0.as_ptr(),
             ss_flags: 0,
             ss_size: Self::SIGNAL_STACK_SIZE,
         };
-        // SAFETY: the mapping lives until `give_signal_stack_back`.
-        if unsafe { libc::sigaltstack(&raw const stack, core::ptr::null_mut()) } != 0 {
-            // SAFETY: nobody else knows the mapping.
-            unsafe { libc::munmap(memory, Self::SIGNAL_STACK_SIZE) };
-            return;
-        }
-        self.signal_stack.set(memory);
-    }
-
-    fn give_signal_stack_back(&self) {
-        let memory = self.signal_stack.replace(core::ptr::null_mut());
-        if memory.is_null() {
-            return;
-        }
-        let none = libc::stack_t {
-            ss_sp: core::ptr::null_mut(),
-            ss_flags: libc::SS_DISABLE,
-            ss_size: 0,
-        };
-        // SAFETY: the thread takes no signal on the mapping once it has none, and nobody else knows it.
-        unsafe {
-            libc::sigaltstack(&raw const none, core::ptr::null_mut());
-            libc::munmap(memory, Self::SIGNAL_STACK_SIZE);
+        // SAFETY: `memory` is not unmapped before the thread has stopped using it.
+        if unsafe { libc::sigaltstack(&raw const stack, core::ptr::null_mut()) } == 0 {
+            let _ = self.signal_stack.set(memory);
         }
     }
 }
@@ -177,7 +178,7 @@ thread_local! {
     static AT_END_OF_THREAD: GivesRecordBack = const {
         GivesRecordBack {
             #[cfg(unix)]
-            signal_stack: Cell::new(core::ptr::null_mut()),
+            signal_stack: core::cell::OnceCell::new(),
         }
     };
     /// What the record says, for the guard that puts it back.

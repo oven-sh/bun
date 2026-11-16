@@ -927,7 +927,63 @@ pub struct EnsureStillAlive(pub JSValue);
 impl Drop for EnsureStillAlive {
     #[inline]
     fn drop(&mut self) {
-        self.0.ensure_still_alive();
+        // SAFETY: the template is only a comment. As in `JSC::ensureStillAliveHere`, the value is an input and memory is clobbered.
+        unsafe {
+            core::arch::asm!("/* {0} */", in(reg) self.0.encoded(), options(nostack, preserves_flags))
+        };
+    }
+}
+
+/// What a JS wrapper owns. Keeps the wrapper visible to the conservative stack scan until dropped. No root on the heap.
+pub struct WrapperGuard<'a, T> {
+    native: core::ptr::NonNull<T>,
+    wrapper: EnsureStillAlive,
+    /// Borrows the value that was cast.
+    _value: core::marker::PhantomData<&'a JSValue>,
+}
+impl<'a, T> WrapperGuard<'a, T> {
+    /// # Safety
+    /// `native` is null, or points to the struct that `wrapper` holds or to a part of it, valid and only shared until `wrapper` is collected.
+    #[doc(hidden)]
+    pub unsafe fn new(wrapper: &'a JSValue, native: *mut T) -> Option<Self> {
+        Some(Self {
+            native: core::ptr::NonNull::new(native)?,
+            wrapper: EnsureStillAlive(*wrapper),
+            _value: core::marker::PhantomData,
+        })
+    }
+
+    /// As [`core::cell::Ref::map`].
+    pub fn map<U>(this: Self, f: impl FnOnce(&T) -> &U) -> WrapperGuard<'a, U>
+    where
+        T: 'a,
+    {
+        WrapperGuard {
+            native: core::ptr::NonNull::from(f(&this)),
+            wrapper: this.wrapper,
+            _value: core::marker::PhantomData,
+        }
+    }
+
+    pub fn to_js(&self) -> JSValue {
+        self.wrapper.0
+    }
+
+    /// The pointer that the wrapper holds. After [`map`](Self::map), and for the `Blob` of a `BuildArtifact`, the address of the part.
+    pub fn as_ptr(&self) -> *mut T {
+        self.native.as_ptr()
+    }
+
+    /// Shadows [`bun_ptr::AsCtxPtr::as_ctx_ptr`], which is the address of `self`.
+    pub fn as_ctx_ptr(&self) -> *mut T {
+        self.as_ptr()
+    }
+}
+impl<T> core::ops::Deref for WrapperGuard<'_, T> {
+    type Target = T;
+    fn deref(&self) -> &T {
+        // SAFETY: the contract of `new`. `map` keeps a borrow of such a struct.
+        unsafe { self.native.as_ref() }
     }
 }
 
@@ -1159,7 +1215,6 @@ pub type ErrorableString = Errorable<bun_core::String>;
 
 #[path = "hot_reloader.rs"]
 pub mod hot_reloader;
-pub use self::hot_reloader::{HotReloader, ImportWatcher, NewHotReloader, WatchReloader};
 
 #[path = "RuntimeTranspilerCache.rs"]
 pub mod runtime_transpiler_cache;
@@ -1387,9 +1442,9 @@ pub use self::zig_exception::ZigException;
 /// What bindgen implements for the struct of a class (`docs/project/bindgen.mdx`).
 pub trait JsClass: Sized {
     fn to_js(self, global: &JSGlobalObject) -> JSValue;
-    fn from_js(value: JSValue) -> Option<*mut Self>;
+    fn from_js(value: &JSValue) -> Option<WrapperGuard<'_, Self>>;
     /// Only an instance with the structure of the class: no subclass, no own property.
-    fn from_js_direct(value: JSValue) -> Option<*mut Self>;
+    fn from_js_direct(value: &JSValue) -> Option<WrapperGuard<'_, Self>>;
 }
 
 /// Track whether an object should keep the event loop alive

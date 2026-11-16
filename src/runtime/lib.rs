@@ -6,6 +6,7 @@
 #![feature(thread_local)]
 #![feature(adt_const_params)]
 #![feature(core_io_borrowed_buf)]
+#![feature(vec_fallible_shrink)]
 // For `__rust_no_alloc_shim_is_unstable_v2` in bin_entry.
 #![feature(rustc_attrs)]
 #![allow(internal_features)]

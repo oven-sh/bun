@@ -19,15 +19,7 @@ import type { DepName } from "./source.ts";
 import { loadFeatures } from "./trim/features.ts";
 import { ucrtServicingLibDir } from "./winsysroot.ts";
 
-export const safeStackDependencies: readonly DepName[] = [
-  "brotli",
-  "libdeflate",
-  "libjpeg-turbo",
-  "libwebp",
-  "lshpack",
-  "zlib",
-  "zstd",
-];
+export const safeStackDependencies: readonly DepName[] = ["brotli", "libdeflate", "libwebp", "lshpack", "zlib", "zstd"];
 
 export function usesSafeStack(c: Pick<Config, "hardened" | "x64" | "abi" | "asan">): boolean {
   return c.hardened && c.x64 && c.abi === "gnu" && !c.asan;
@@ -48,6 +40,11 @@ export function safeStackFlags(c: Pick<Config, "hardened" | "x64" | "abi" | "asa
 }
 
 export type FlagValue = string | string[] | ((cfg: Config) => string | string[]);
+
+const keepTrimmedFunctions = (c: Config): string[] =>
+  [...new Set(loadFeatures(c.cwd).features.flatMap(feature => feature.cFunctions ?? []))]
+    .sort()
+    .flatMap(name => ["-mllvm", `-force-attribute=${name}:noinline`]);
 
 /**
  * Main-thread stack size for darwin executables (18 MB — JSC's interpreter
@@ -644,10 +641,7 @@ export const globalFlags: Flag[] = [
     // A `c-function` of src/trim/features is cut where it is defined. ThinLTO inlines a small one into its callers in
     // other files, also into Rust: then no function is left to cut, and all that it calls stays with the callers.
     // The attribute has to be in the bitcode: the pipeline that the link runs does not read the option.
-    flag: c =>
-      [...new Set(loadFeatures(c.cwd).features.flatMap(feature => feature.cFunctions ?? []))]
-        .sort()
-        .flatMap(name => ["-mllvm", `-force-attribute=${name}:noinline`]),
+    flag: keepTrimmedFunctions,
     when: c => c.trimmable && c.lto,
     lang: "c",
     desc: "Keep the C functions that trimming cuts as functions",
@@ -1985,6 +1979,18 @@ export const fileOverrides: FileOverride[] = [
     desc: "Disable LTO: LLD (first seen with 21; not re-checked on 23) emits glibc versioned symbols (exp@GLIBC_2.17) into .lto_discard which fails to parse '@'",
   },
   {
+    file: "packages/bun-usockets/src/crypto/openssl.cpp",
+    extraFlags: keepTrimmedFunctions,
+    when: c => c.trimmable && c.lto,
+    desc: "Defines the C functions that trimming cuts to remove TLS",
+  },
+  {
+    file: "packages/bun-usockets/src/quic.cpp",
+    extraFlags: keepTrimmedFunctions,
+    when: c => c.trimmable && c.lto,
+    desc: "Defines the C functions that trimming cuts to remove HTTP/3",
+  },
+  {
     file: "src/jsc/bindings/windows/rescle.cpp",
     extraFlags: "/EHsc",
     when: c => c.windows,
@@ -1995,6 +2001,12 @@ export const fileOverrides: FileOverride[] = [
     extraFlags: ["-O2"],
     when: c => c.debug,
     desc: "Same as highway_json.cpp below: the kernel runs over every line of an HTTP response head.",
+  },
+  {
+    file: "src/jsc/bindings/highway_jpeg.cpp",
+    extraFlags: ["-O2"],
+    when: c => c.debug,
+    desc: "Same as highway_json.cpp below: the kernels run over every sample of a JPEG image.",
   },
   {
     file: "src/jsc/bindings/highway_png.cpp",

@@ -160,11 +160,9 @@ pub(crate) fn do_send(
     #[cfg_attr(windows, allow(unused_mut, unused_variables))]
     let mut dup_err: Option<bun_sys::Error> = None;
     if !handle.is_undefined_or_null() {
-        if let Some(listener) = Listener::from_js(handle) {
+        if let Some(listener) = Listener::from_js(&handle) {
             log!("got listener");
-            // SAFETY: from_js returned a non-null `*mut Listener`; the JS
-            // wrapper holds it alive for the call.
-            match unsafe { (*listener).listener.get() } {
+            match listener.listener.get() {
                 crate::socket::listener::ListenerType::Uws(socket_uws) => {
                     // may need to handle ssl case
                     let fd = bun_opaque::opaque_deref_mut(socket_uws.as_ptr())
@@ -184,9 +182,8 @@ pub(crate) fn do_send(
                 crate::socket::listener::ListenerType::NamedPipe(_named_pipe) => {}
                 crate::socket::listener::ListenerType::None => {}
             }
-        } else if let Some(socket) = crate::socket::TCPSocket::from_js(handle) {
-            // SAFETY: from_js returned a non-null pointer; the JS wrapper
-            let fd = unsafe { (*socket).socket.get().fd() };
+        } else if let Some(socket) = crate::socket::TCPSocket::from_js(&handle) {
+            let fd = socket.socket.get().fd();
             if fd != bun_sys::Fd::INVALID {
                 log!("got tcp socket fd");
                 let keep_open = !options_.is_undefined_or_null()

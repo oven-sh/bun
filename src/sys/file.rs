@@ -50,6 +50,16 @@ impl File {
     pub fn into_raw(self) -> Fd {
         core::mem::ManuallyDrop::new(self).handle
     }
+    /// As [`FdExt::make_lib_uv_owned`].
+    pub fn make_lib_uv_owned(mut self) -> core::result::Result<Self, MakeLibUvOwnedError> {
+        self.handle = self.handle.make_lib_uv_owned()?;
+        Ok(self)
+    }
+    /// As [`FdExt::make_lib_uv_owned_for_syscall`].
+    pub fn make_lib_uv_owned_for_syscall(mut self, syscall_tag: Tag) -> Maybe<Self> {
+        self.handle = self.handle.make_lib_uv_owned_for_syscall(syscall_tag)?;
+        Ok(self)
+    }
     /// Non-owning `&File` view of an [`Fd`]. Mirrors `Path::new(&OsStr)`.
     #[inline]
     pub fn borrow(fd: &Fd) -> &File {

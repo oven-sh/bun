@@ -3,11 +3,12 @@
 use core::mem::size_of;
 use core::ptr;
 
-use crate::watcher_impl::{Op, WatchEvent, WatchItemColumns, WatchItemIndex, Watcher};
+use crate::watcher_impl::{
+    Op, WatchEvent, WatchItemColumns, WatchItemIndex, Watcher, WatcherThread,
+};
 use bun_core::strings;
 use bun_paths::PathBuffer;
 use bun_paths::resolve_path::{ParentEqual, is_parent_or_equal};
-use bun_ptr::{BackRef, RawSlice};
 
 use bun_collections::index_sort;
 use bun_sys::windows as w;
@@ -23,6 +24,9 @@ pub struct WindowsWatcher {
     pub(crate) buf: PathBuffer,
     pub(crate) base_idx: usize,
 }
+
+// SAFETY: handles belong to the process, and `overlapped` points at nothing.
+unsafe impl Send for WindowsWatcher {}
 
 impl Default for WindowsWatcher {
     fn default() -> Self {
@@ -58,12 +62,9 @@ pub enum Action {
     RenamedNew = w::FILE_ACTION_RENAMED_NEW_NAME,
 }
 
-struct FileEvent {
+struct FileEvent<'a> {
     pub action: Action,
-    // [`RawSlice`] (not a lifetime-carrying `&'a [u16]`) so `FileEvent` carries no lifetime param;
-    // the buffer is live until the next `prepare()` — encapsulated by the
-    // `RawSlice` outlives-holder invariant so callers read via safe `.slice()`.
-    pub filename: RawSlice<u16>,
+    pub filename: &'a [u16],
 }
 
 #[repr(C)]
@@ -74,7 +75,7 @@ pub struct DirWatcher {
     /// `FILE_NOTIFY_INFORMATION` is DWORD-aligned (4); the preceding
     /// `OVERLAPPED` (32 bytes, align 8) guarantees `buf` lands at offset 32,
     /// which the `assert_ffi_layout!` below locks in (and `32 % 4 == 0` is the
-    /// alignment proof for the `FILE_NOTIFY_INFORMATION` cast in
+    /// alignment proof for the cast of the name in
     /// `EventIterator::next`).
     pub(crate) buf: [u8; 64 * 1024],
     pub(crate) dir_handle: HANDLE,
@@ -83,7 +84,7 @@ pub struct DirWatcher {
 }
 
 // `OVERLAPPED` = 32 bytes / align 8 on Win64; `buf` must be ≥ 4-aligned for
-// the `*FILE_NOTIFY_INFORMATION` cast. Asserting the offset (not just the
+// `ReadDirectoryChangesW`. Asserting the offset (not just the
 // total size) is what proves that alignment requirement.
 bun_core::assert_ffi_layout!(
     DirWatcher,
@@ -135,56 +136,26 @@ impl DirWatcher {
 }
 
 /// Iterates `FILE_NOTIFY_INFORMATION` records out of a `DirWatcher`'s buffer.
-///
-/// holds a [`BackRef<DirWatcher>`] instead of a lifetime-carrying
-/// `&'a DirWatcher` so `WindowsWatcher::next` does not keep `&mut Watcher.platform`
-/// borrowed across `watch_loop_cycle`'s inner loop (which mutates sibling
-/// fields). The `BackRef` invariant — pointee outlives holder — is upheld
-/// because the iterator is only advanced while the owning `DirWatcher` is
-/// alive and `prepare()` has not been re-called; safe `Deref` replaces the
-/// previously open-coded raw `(*self.watcher).buf` projection.
 struct EventIterator {
-    pub watcher: BackRef<DirWatcher>,
     pub offset: usize,
     pub has_next: bool,
 }
 
 impl EventIterator {
-    fn next(&mut self) -> Option<FileEvent> {
+    fn next<'a>(&mut self, buf: &'a [u8]) -> Option<FileEvent<'a>> {
         if !self.has_next {
             return None;
         }
-        // The Rust binding includes `FileName: [WCHAR; 1]`, so `size_of` == 16
-        // while the fixed record header is 12 bytes. Use the field offset, not the struct
-        // size, to locate the variable-length filename.
-        let name_offset = core::mem::offset_of!(w::FILE_NOTIFY_INFORMATION, FileName);
-        // `self.watcher` is a `BackRef<DirWatcher>` — pointee live until the
-        // next `prepare()` (see the struct-level note) — so reading `buf` is safe.
-        let buf_ptr = self.watcher.buf.as_ptr();
-        // SAFETY: `buf` was filled by ReadDirectoryChangesW with a sequence of
-        // FILE_NOTIFY_INFORMATION records; `offset` is advanced only by
-        // NextEntryOffset values returned by the kernel, so each cast targets a
-        // properly-aligned record header.
-        let info: &w::FILE_NOTIFY_INFORMATION = unsafe {
-            &*(buf_ptr
-                .add(self.offset)
-                .cast::<w::FILE_NOTIFY_INFORMATION>())
-        };
-        // The variable-length filename begins at the `FileName` field of the
-        // record; `FileNameLength` (kernel-set) bounds the trailing UTF-16
-        // bytes which lie wholly inside `buf`. Safe bounds-checked sub-slice of
-        // the owned `[u8; 64K]` buffer, then a checked u8→u16 view
-        // (alignment holds: `buf` is DWORD-aligned per the static assert above,
-        // `self.offset` advances by kernel `NextEntryOffset` which is DWORD-
-        // aligned, and `name_offset` == 12). Wrap in `RawSlice` so callers
-        // re-borrow without an open-coded raw deref.
-        let name_start = self.offset + name_offset;
-        let name_bytes = &self.watcher.buf[name_start..name_start + info.FileNameLength as usize];
-        let filename: RawSlice<u16> = RawSlice::new(bun_core::cast_slice::<u8, u16>(name_bytes));
+        const NAME_OFFSET: usize = core::mem::offset_of!(w::FILE_NOTIFY_INFORMATION, FileName);
+        let record = &buf[self.offset..];
+        let [next_entry_offset, action, name_len]: [u32; 3] = bun_core::read_prefix(record)?;
+        let filename = bun_core::cast_slice(&record[NAME_OFFSET..][..name_len as usize]);
+        self.has_next = next_entry_offset != 0;
+        self.offset += next_entry_offset as usize;
 
         // `transmute` into an exhaustive #[repr(u32)] enum is immediate UB on an unlisted
         // discriminant. Use a checked match — kernel docs guarantee 1..=5 today.
-        let action: Action = match info.Action {
+        let action: Action = match action {
             w::FILE_ACTION_ADDED => Action::Added,
             w::FILE_ACTION_REMOVED => Action::Removed,
             w::FILE_ACTION_MODIFIED => Action::Modified,
@@ -192,21 +163,9 @@ impl EventIterator {
             w::FILE_ACTION_RENAMED_NEW_NAME => Action::RenamedNew,
             other => {
                 debug_assert!(false, "unexpected FILE_NOTIFY_INFORMATION.Action = {other}");
-                // Skip unknown action and advance to next record.
-                if info.NextEntryOffset == 0 {
-                    self.has_next = false;
-                } else {
-                    self.offset += info.NextEntryOffset as usize;
-                }
-                return self.next();
+                return self.next(buf);
             }
         };
-
-        if info.NextEntryOffset == 0 {
-            self.has_next = false;
-        } else {
-            self.offset += info.NextEntryOffset as usize;
-        }
 
         Some(FileEvent { action, filename })
     }
@@ -214,7 +173,7 @@ impl EventIterator {
 
 impl WindowsWatcher {
     // `Self` carries the 64 KiB `DirWatcher` buffer inline; it is moved once
-    // into `Box::new(Watcher { .. })` in `Watcher::init`.
+    // into `Box::new(WatcherThread { .. })` in `Watcher::init`.
     #[allow(clippy::large_unopt_stack_frames)]
     pub(crate) fn new(root: &[u8]) -> crate::Result<Self> {
         let mut this = Self::default();
@@ -264,24 +223,10 @@ impl WindowsWatcher {
             bun_core::scoped_log!(watcher, "failed to open directory for watching: {}", err.0);
             return Err(Error::CreateFileFailed.into());
         }
-        let handle_guard = scopeguard::guard(handle, |h| unsafe {
-            // SAFETY: handle was successfully opened by NtCreateFile above.
-            let _ = w::CloseHandle(h);
-        });
+        self.watcher.dir_handle = handle;
 
-        self.iocp = w::CreateIoCompletionPort(*handle_guard, ptr::null_mut(), 0, 1)
+        self.iocp = w::CreateIoCompletionPort(handle, ptr::null_mut(), 0, 1)
             .map_err(|_| crate::Error::from(Error::IocpFailed))?;
-        let iocp_guard = scopeguard::guard(self.iocp, |h| unsafe {
-            // SAFETY: iocp handle was successfully created above.
-            let _ = w::CloseHandle(h);
-        });
-
-        // Materializing an uninit `[u8; N]` by value is immediate UB, and constructing a 64KiB
-        // `DirWatcher` temporary on the stack defeats the in-place-init intent. Assign fields in
-        // place instead — `buf` was already zero-initialised by `Default` and is an output buffer
-        // filled by ReadDirectoryChangesW before any read.
-        self.watcher.overlapped = bun_core::ffi::zeroed::<w::OVERLAPPED>();
-        self.watcher.dir_handle = *handle_guard;
 
         self.buf[..root.len()].copy_from_slice(root);
         let needs_slash = root.is_empty() || !paths::char_is_any_slash(root[root.len() - 1]);
@@ -294,9 +239,6 @@ impl WindowsWatcher {
             root.len()
         };
 
-        // disarm the cleanup scopeguards on success
-        scopeguard::ScopeGuard::into_inner(iocp_guard);
-        scopeguard::ScopeGuard::into_inner(handle_guard);
         Ok(())
     }
 
@@ -344,7 +286,7 @@ impl WindowsWatcher {
                 if nbytes == 0 {
                     // ReadDirectoryChangesW internal change-buffer overflow — too many
                     // events arrived between drain and re-arm. This is NOT a shutdown
-                    // signal: stop() closes the dir handle, which surfaces as rc==0 /
+                    // signal: a closed dir handle surfaces as rc==0 /
                     // ERROR_OPERATION_ABORTED above, never as rc!=0 && nbytes==0. Per
                     // MSDN, the function returns zero bytes when its internal buffer
                     // overflows. Drop the lost events, re-arm, and keep watching so
@@ -361,7 +303,6 @@ impl WindowsWatcher {
                     continue;
                 }
                 return Ok(Some(EventIterator {
-                    watcher: BackRef::new(&self.watcher),
                     offset: 0,
                     has_next: true,
                 }));
@@ -378,11 +319,24 @@ impl WindowsWatcher {
             }
         }
     }
+}
 
-    pub(crate) fn stop(&mut self) {
-        // SAFETY: handles were opened in init() and are valid until stop() is called once.
+impl Drop for WindowsWatcher {
+    fn drop(&mut self) {
+        let (mut nbytes, mut key, mut overlapped) = (0, 0, ptr::null_mut());
+        // SAFETY: `self` owns both handles, and closing `INVALID_HANDLE_VALUE` does nothing.
         unsafe {
             w::CloseHandle(self.watcher.dir_handle);
+            // Closing `dir_handle` completes the read; until then the kernel may write to `buf`.
+            if self.watcher.read_pending {
+                w::kernel32::GetQueuedCompletionStatus(
+                    self.iocp,
+                    &mut nbytes,
+                    &mut key,
+                    &mut overlapped,
+                    w::INFINITE,
+                );
+            }
             w::CloseHandle(self.iocp);
         }
     }
@@ -395,17 +349,15 @@ pub(crate) enum Timeout {
     None = 0,
 }
 
-pub(crate) fn watch_loop_cycle(this: &mut Watcher) -> bun_sys::Result<()> {
-    // We re-borrow buf inside the inner loop instead of holding `&this.platform.buf`
-    // across calls to `this.platform.next()`.
-    let base_idx = this.platform.base_idx;
+pub(crate) fn watch_loop_cycle(this: &Watcher, thread: &mut WatcherThread) -> bun_sys::Result<()> {
+    let base_idx = thread.platform.base_idx;
 
     let mut event_id: usize = 0;
 
     // first wait has infinite timeout - we're waiting for the next event and don't want to spin
     let mut timeout = Timeout::Infinite;
     loop {
-        let mut iter = match this.platform.next(timeout)? {
+        let mut iter = match thread.platform.next(timeout)? {
             Some(it) => it,
             None => break,
         };
@@ -413,20 +365,16 @@ pub(crate) fn watch_loop_cycle(this: &mut Watcher) -> bun_sys::Result<()> {
         // NOTE: using a 1ms timeout would be ideal, but that actually makes the thread wait for at least 10ms more than it should
         // Instead we use a 0ms timeout, which may not do as much coalescing but is more responsive.
         timeout = Timeout::None;
-        while let Some(event) = iter.next() {
-            // `event.filename` is a `RawSlice<u16>` into `this.platform.watcher.buf`,
-            // live for the duration of this iteration (no `prepare()` until the
-            // outer loop reiterates) — encapsulated by the `RawSlice` invariant.
-            let filename: &[u16] = event.filename.slice();
+        while let Some(FileEvent { action, filename }) = iter.next(&thread.platform.watcher.buf) {
             let convert_res =
-                strings::copy_utf16_into_utf8(&mut this.platform.buf[base_idx..], filename);
+                strings::copy_utf16_into_utf8(&mut thread.platform.buf[base_idx..], filename);
             let eventpath_len = base_idx + convert_res.written;
 
             bun_core::scoped_log!(
                 watcher,
                 "watcher update event: (filename: {}, action: {}",
-                bstr::BStr::new(&this.platform.buf[..eventpath_len]),
-                <&'static str>::from(event.action)
+                bstr::BStr::new(&thread.platform.buf[..eventpath_len]),
+                <&'static str>::from(action)
             );
 
             // TODO this probably needs a more sophisticated search algorithm in the future
@@ -441,13 +389,13 @@ pub(crate) fn watch_loop_cycle(this: &mut Watcher) -> bun_sys::Result<()> {
             loop {
                 {
                     // Other threads append to the watchlist under this mutex, which can reallocate it.
-                    let _guard = this.mutex.lock_guard();
+                    let watchlist = &this.state.lock().watchlist;
                     // Eviction is a swap-remove, so walk from the end to avoid skipping items.
-                    item_idx = item_idx.min(this.watchlist.len());
-                    let eventpath = &this.platform.buf[..eventpath_len];
-                    while item_idx > 0 && event_id < this.watch_events.len() {
+                    item_idx = item_idx.min(watchlist.len());
+                    let eventpath = &thread.platform.buf[..eventpath_len];
+                    while item_idx > 0 && event_id < thread.watch_events.len() {
                         item_idx -= 1;
-                        let path = &this.watchlist.items_file_path()[item_idx];
+                        let path = &watchlist.items_file_path()[item_idx];
                         let rel = is_parent_or_equal(path.as_ref(), eventpath);
                         bun_core::scoped_log!(
                             watcher,
@@ -462,17 +410,15 @@ pub(crate) fn watch_loop_cycle(this: &mut Watcher) -> bun_sys::Result<()> {
                         if rel == ParentEqual::Unrelated {
                             continue;
                         }
-                        this.watch_events[event_id] =
-                            create_watch_event(&event, item_idx as WatchItemIndex);
+                        thread.watch_events[event_id] =
+                            create_watch_event(action, item_idx as WatchItemIndex);
                         event_id += 1;
                     }
                 }
                 if item_idx == 0 {
                     break;
                 }
-                process_watch_event_batch(this, event_id)?;
-                // The `&mut Watcher` passed above invalidated `iter.watcher`, so derive it again.
-                iter.watcher = BackRef::new(&this.platform.watcher);
+                process_watch_event_batch(this, thread, event_id)?;
                 event_id = 0;
             }
         }
@@ -480,20 +426,24 @@ pub(crate) fn watch_loop_cycle(this: &mut Watcher) -> bun_sys::Result<()> {
 
     // Process any remaining events in the final batch
     if event_id > 0 {
-        process_watch_event_batch(this, event_id)?;
+        process_watch_event_batch(this, thread, event_id)?;
     }
 
     Ok(())
 }
 
-fn process_watch_event_batch(this: &mut Watcher, event_count: usize) -> bun_sys::Result<()> {
+fn process_watch_event_batch(
+    this: &Watcher,
+    thread: &mut WatcherThread,
+    event_count: usize,
+) -> bun_sys::Result<()> {
     if event_count == 0 {
         return Ok(());
     }
 
     // log("event_count: {d}\n", .{event_count});
 
-    let all_events = &mut this.watch_events[0..event_count];
+    let all_events = &mut thread.watch_events[0..event_count];
     index_sort::sort_slice_unstable_by(all_events, |a, b| WatchEvent::sort_by_index(*a, *b));
 
     let mut last_event_index: usize = 0;
@@ -519,19 +469,19 @@ fn process_watch_event_batch(this: &mut Watcher, event_count: usize) -> bun_sys:
         last_event_index + 1
     );
 
-    this.dispatch_file_updates(last_event_index + 1, last_event_index + 1);
+    this.dispatch_file_updates(thread, last_event_index + 1, &[]);
     Ok(())
 }
 
-fn create_watch_event(event: &FileEvent, index: WatchItemIndex) -> WatchEvent {
+fn create_watch_event(action: Action, index: WatchItemIndex) -> WatchEvent {
     let mut op = Op::empty();
-    if event.action == Action::Removed {
+    if action == Action::Removed {
         op |= Op::DELETE;
     }
-    if event.action == Action::RenamedOld {
+    if action == Action::RenamedOld {
         op |= Op::RENAME;
     }
-    if event.action == Action::Modified {
+    if action == Action::Modified {
         op |= Op::WRITE;
     }
     WatchEvent {

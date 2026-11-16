@@ -7585,19 +7585,14 @@ impl NodeFS {
                         return Err(err.with_path(p.slice()));
                     }
                     Ok(fd) => {
-                        opened = fd
-                            .make_lib_uv_owned_for_syscall(
-                                sys::Tag::open,
-                                sys::ErrorCase::CloseOnFail,
-                            )
-                            .map(sys::File::from_fd)?;
+                        opened =
+                            sys::File::from_fd(fd).make_lib_uv_owned_for_syscall(sys::Tag::open)?;
                         &opened
                     }
                 }
             }
             PathOrFileDescriptor::Fd(fd) => {
-                lent =
-                    fd.make_lib_uv_owned_for_syscall(sys::Tag::open, sys::ErrorCase::LeakFdOnFail)?;
+                lent = fd.make_lib_uv_owned_for_syscall(sys::Tag::open)?;
                 sys::File::borrow(&lent)
             }
         };
@@ -8684,7 +8679,7 @@ impl NodeFS {
         }
     }
 
-    pub(crate) fn watch(&mut self, args: &args::Watch<'_>, _: Flavor) -> Maybe<ret::Watch> {
+    pub(crate) fn watch(&mut self, args: args::Watch<'_>, _: Flavor) -> Maybe<ret::Watch> {
         args.create_fs_watcher()
     }
 
@@ -10250,35 +10245,16 @@ impl Drop for CopyDest {
     }
 }
 
-/// Iterates a directory and closes it on drop.
-struct OwnedDirIterator(DirIterator::WrappedIterator);
-
-impl OwnedDirIterator {
-    fn new(dir: sys::Dir) -> Self {
-        Self(DirIterator::iterate(dir.into_raw()))
-    }
-
-    fn fd(&self) -> FD {
-        self.0.dir()
-    }
-}
-
-impl Drop for OwnedDirIterator {
-    fn drop(&mut self) {
-        self.fd().close();
-    }
-}
-
 struct DeleteTreeStackItem {
     /// Owned copy of the entry name (lives until popped). The very first item
     /// borrows `sub_path` instead — see `name_is_borrowed`.
     name: Vec<u8>,
     name_is_borrowed: bool,
     /// Non-owning alias of either `self_` (first item) or the previous stack
-    /// frame's `iter.fd()`. Ownership of the descriptor stays with the
+    /// frame's `iter.dir()`. Ownership of the descriptor stays with the
     /// owner; this is just the raw fd for `Dir::borrow` at call sites.
     parent_dir: FD,
-    iter: OwnedDirIterator,
+    iter: DirIterator::OwnedIterator,
 }
 
 pub(crate) fn zig_delete_tree(
@@ -10302,15 +10278,15 @@ pub(crate) fn zig_delete_tree(
         name: Vec::new(),
         name_is_borrowed: true,
         parent_dir: self_.fd,
-        iter: OwnedDirIterator::new(initial_iterable_dir),
+        iter: DirIterator::iterate_owned(initial_iterable_dir),
     });
 
     'process_stack: while !stack.is_empty() {
         let top_idx = stack.len() - 1;
-        let top_fd = stack[top_idx].iter.fd();
+        let top_fd = stack[top_idx].iter.dir();
         let has_room = stack.len() < stack.capacity();
         loop {
-            let entry = match stack[top_idx].iter.0.next() {
+            let entry = match stack[top_idx].iter.next() {
                 Ok(Some(e)) => e,
                 Ok(None) => break,
                 Err(err) => return Err(dt_err(err.get_errno())),
@@ -10327,7 +10303,7 @@ pub(crate) fn zig_delete_tree(
                                     name,
                                     name_is_borrowed: false,
                                     parent_dir: top_fd,
-                                    iter: OwnedDirIterator::new(iterable_dir),
+                                    iter: DirIterator::iterate_owned(iterable_dir),
                                 });
                                 continue 'process_stack;
                             }
@@ -10496,7 +10472,7 @@ pub(crate) fn zig_delete_tree(
                 name: top.name,
                 name_is_borrowed: top.name_is_borrowed,
                 parent_dir,
-                iter: OwnedDirIterator::new(iterable_dir),
+                iter: DirIterator::iterate_owned(iterable_dir),
             });
             continue 'process_stack;
         }

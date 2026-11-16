@@ -213,15 +213,7 @@ extern "C" void Blob__onStructuredCloneSerialize(void* blob, CloneSerializer*);
 extern "C" JSC::EncodedJSValue Blob__onStructuredCloneDeserialize(JSC::JSGlobalObject*, const uint8_t** ptr, const uint8_t* end);
 extern "C" void BlockList__onStructuredCloneSerialize(void* blockList, CloneSerializer*);
 extern "C" JSC::EncodedJSValue BlockList__onStructuredCloneDeserialize(JSC::JSGlobalObject*, const uint8_t** ptr, const uint8_t* end);
-// Releases the +1 taken by `BlockList__onStructuredCloneSerialize` so the
-// shared backing is freed once the SerializedScriptValue holding the raw
-// pointer is gone.
-extern "C" void BlockList__onStructuredCloneDestroy(void*);
-// A clone of a `node:perf_hooks` histogram shares its counts. The wire has an id, which keeps the
-// counts alive until `Histogram__releaseStructuredClone`.
-extern "C" uint64_t Histogram__retainForStructuredClone(JSC::EncodedJSValue histogram);
 extern "C" JSC::EncodedJSValue Histogram__fromStructuredClone(JSC::JSGlobalObject*, uint64_t id);
-extern "C" void Histogram__releaseStructuredClone(uint64_t id);
 
 enum ArrayBufferViewSubtag {
     DataViewTag = 0,
@@ -763,8 +755,8 @@ public:
         WasmMemoryHandleArray& wasmMemoryHandles,
 #endif
         Vector<uint8_t>& out, SerializationContext context, ArrayBufferContentsArray& sharedBuffers,
-        Vector<void*>& serializedBlockListRefs,
-        Vector<uint64_t>& serializedHistogramIds,
+        Vector<std::unique_ptr<SerializedBlockList>>& serializedBlockLists,
+        Vector<SerializedHistogram>& serializedHistograms,
         SerializationForStorage forStorage, SerializationForCrossProcessTransfer forTransfer)
     {
         CloneSerializer serializer(lexicalGlobalObject, messagePorts, arrayBuffers,
@@ -774,8 +766,8 @@ public:
 #endif
             out, context, sharedBuffers, forStorage, forTransfer);
         auto code = serializer.serialize(value);
-        serializedBlockListRefs = WTF::move(serializer.m_serializedBlockListRefs);
-        serializedHistogramIds = WTF::move(serializer.m_serializedHistogramIds);
+        serializedBlockLists = WTF::move(serializer.m_serializedBlockLists);
+        serializedHistograms = WTF::move(serializer.m_serializedHistograms);
         return code;
     }
 
@@ -1439,7 +1431,7 @@ private:
                 }
                 write(Bun__nodenet_BlockList);
                 BlockList__onStructuredCloneSerialize(blockList->wrapped(), this);
-                m_serializedBlockListRefs.append(blockList->wrapped());
+                m_serializedBlockLists.constructAndAppend(static_cast<SerializedBlockList*>(blockList->wrapped()));
                 return true;
             }
 
@@ -1451,10 +1443,9 @@ private:
                 }
                 if (!startObjectInternal(histogram)) // handle duplicates
                     return true;
-                uint64_t id = Histogram__retainForStructuredClone(JSValue::encode(histogram));
-                m_serializedHistogramIds.append(id);
+                m_serializedHistograms.constructAndAppend(histogram);
                 write(Bun__NodePerformanceHooksHistogramTag);
-                write(id);
+                write(m_serializedHistograms.last().id());
                 return true;
             }
 
@@ -1993,8 +1984,8 @@ private:
     Identifier m_emptyIdentifier;
     SerializationContext m_context;
     ArrayBufferContentsArray& m_sharedBuffers;
-    Vector<void*> m_serializedBlockListRefs;
-    Vector<uint64_t> m_serializedHistogramIds;
+    Vector<std::unique_ptr<SerializedBlockList>> m_serializedBlockLists;
+    Vector<SerializedHistogram> m_serializedHistograms;
 #if ENABLE(WEBASSEMBLY)
     WasmModuleArray& m_wasmModules;
     WasmMemoryHandleArray& m_wasmMemoryHandles;
@@ -4282,13 +4273,7 @@ error:
     return std::make_pair(JSValue(), SerializationReturnCode::ValidationError);
 }
 
-SerializedScriptValue::~SerializedScriptValue()
-{
-    for (auto* ptr : m_serializedBlockListRefs)
-        BlockList__onStructuredCloneDestroy(ptr);
-    for (uint64_t id : m_serializedHistogramIds)
-        Histogram__releaseStructuredClone(id);
-}
+SerializedScriptValue::~SerializedScriptValue() = default;
 
 SerializedScriptValue::SerializedScriptValue(Vector<uint8_t>&& buffer, std::unique_ptr<ArrayBufferContentsArray>&& arrayBufferContentsArray)
     : m_data(WTF::move(buffer))
@@ -4931,23 +4916,14 @@ ExceptionOr<Ref<SerializedScriptValue>> SerializedScriptValue::create(JSGlobalOb
     WasmMemoryHandleArray wasmMemoryHandles;
 #endif
     std::unique_ptr<ArrayBufferContentsArray> sharedBuffers = makeUnique<ArrayBufferContentsArray>();
-    Vector<void*> serializedBlockListRefs;
-    Vector<uint64_t> serializedHistogramIds;
+    Vector<std::unique_ptr<SerializedBlockList>> serializedBlockLists;
+    Vector<SerializedHistogram> serializedHistograms;
     auto code = CloneSerializer::serialize(&lexicalGlobalObject, value, messagePorts, arrayBuffers,
 #if ENABLE(WEBASSEMBLY)
         wasmModules,
         wasmMemoryHandles,
 #endif
-        buffer, context, *sharedBuffers, serializedBlockListRefs, serializedHistogramIds, forStorage, forTransfer);
-
-    auto releaseSerializedRefs = [&] {
-        for (auto* ptr : serializedBlockListRefs)
-            BlockList__onStructuredCloneDestroy(ptr);
-        serializedBlockListRefs.clear();
-        for (uint64_t id : serializedHistogramIds)
-            Histogram__releaseStructuredClone(id);
-        serializedHistogramIds.clear();
-    };
+        buffer, context, *sharedBuffers, serializedBlockLists, serializedHistograms, forStorage, forTransfer);
 
     // Serialize may throw an exception. This code looks weird, but we'll rethrow it
     // in maybeThrowExceptionIfSerializationFailed (since that may also throw other
@@ -4958,23 +4934,17 @@ ExceptionOr<Ref<SerializedScriptValue>> SerializedScriptValue::create(JSGlobalOb
 
     // If we rethrew an exception just now, or we failed with a status code other than success,
     // we should exit right now.
-    if (scope.exception() || code != SerializationReturnCode::SuccessfullyCompleted) [[unlikely]] {
-        releaseSerializedRefs();
+    if (scope.exception() || code != SerializationReturnCode::SuccessfullyCompleted) [[unlikely]]
         RELEASE_AND_RETURN(scope, exceptionForSerializationFailure(code));
-    }
 
     // Most calls have no transfer list; this keeps them at one branch.
     std::unique_ptr<ArrayBufferContentsArray> arrayBufferContentsArray;
     if (!transferList.isEmpty()) {
-        if (auto exception = transferListChangedDuringSerialization(vm, transferList, arrayBuffers, messagePorts)) [[unlikely]] {
-            releaseSerializedRefs();
+        if (auto exception = transferListChangedDuringSerialization(vm, transferList, arrayBuffers, messagePorts)) [[unlikely]]
             RELEASE_AND_RETURN(scope, WTF::move(*exception));
-        }
         auto transferred = transferArrayBuffers(vm, arrayBuffers);
-        if (transferred.hasException()) {
-            releaseSerializedRefs();
+        if (transferred.hasException())
             RELEASE_AND_RETURN(scope, transferred.releaseException());
-        }
         arrayBufferContentsArray = transferred.releaseReturnValue();
     }
 
@@ -4985,8 +4955,8 @@ ExceptionOr<Ref<SerializedScriptValue>> SerializedScriptValue::create(JSGlobalOb
         makeUnique<WasmModuleArray>(wasmModules), context == SerializationContext::WorkerPostMessage ? makeUnique<WasmMemoryHandleArray>(wasmMemoryHandles) : nullptr
 #endif
         ));
-    result->m_serializedBlockListRefs = WTF::move(serializedBlockListRefs);
-    result->m_serializedHistogramIds = WTF::move(serializedHistogramIds);
+    result->m_serializedBlockLists = WTF::move(serializedBlockLists);
+    result->m_serializedHistograms = WTF::move(serializedHistograms);
     return result;
 }
 
@@ -5021,11 +4991,8 @@ Ref<JSC::ArrayBuffer> SerializedScriptValue::toArrayBuffer()
         return ArrayBuffer::create(static_cast<size_t>(0), static_cast<unsigned>(1));
     }
 
-    this->ref();
     auto arrayBuffer = ArrayBuffer::createFromBytes(
-        { this->m_data.begin(), this->m_data.size() }, createSharedTask<void(void*)>([protectedThis = Ref { *this }](void* p) {
-            protectedThis->deref();
-        }));
+        { this->m_data.begin(), this->m_data.size() }, createSharedTask<void(void*)>([protectedThis = Ref { *this }](void*) {}));
 
     // Note: using the SharedArrayBufferContents::create function directly didn't work.
     arrayBuffer->makeShared();
@@ -5050,11 +5017,6 @@ JSC::JSValue SerializedScriptValue::fromArrayBuffer(JSC::JSGlobalObject& domGlob
     auto blobURLs = Vector<String> {};
     auto blobFiles = Vector<String> {};
 
-    if (arrayBuffer->isShared()) {
-        // prevent detaching while in-use
-        arrayBuffer->pin();
-    }
-
     auto* data = static_cast<uint8_t*>(arrayBuffer->data()) + byteOffset;
     auto size = std::min(arrayBuffer->byteLength(), maxByteLength);
     auto span = std::span<uint8_t> { data, size };
@@ -5065,10 +5027,6 @@ JSC::JSValue SerializedScriptValue::fromArrayBuffer(JSC::JSGlobalObject& domGlob
         nullptr, nullptr
 #endif
     );
-
-    if (arrayBuffer->isShared()) {
-        arrayBuffer->unpin();
-    }
 
     if (didFail) {
         *didFail = result.second != SerializationReturnCode::SuccessfullyCompleted;

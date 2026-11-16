@@ -300,7 +300,7 @@ impl FilePoll {
 
     /// # Safety
     /// See [`crate::OwnedFilePoll::new`].
-    pub unsafe fn set_owner(&self, owner: Owner) {
+    pub(crate) unsafe fn set_owner(&self, owner: Owner) {
         self.owner.set(owner);
     }
 

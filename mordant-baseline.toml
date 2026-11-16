@@ -66,10 +66,8 @@
 "generic_body_not_generic:src/install/extract_tarball.rs" = 1
 "generic_body_not_generic:src/install/lockfile/Tree.rs" = 1
 "generic_body_not_generic:src/install/lockfile/printer/Yarn.rs" = 1
-"generic_body_not_generic:src/install/windows-shim/bun_shim_impl.rs" = 1
 "interchangeable_aliases:src/install/lockfile/Tree.rs" = 1
 "safe_fn_returns_shared_mut:src/install/PackageManager.rs" = 2
-"unused_pub:src/install/windows-shim/bun_shim_impl.rs" = 1
 
 [bun_io]
 "generic_body_not_generic:src/io/pipes.rs" = 1
@@ -227,9 +225,6 @@
 
 [bun_uws_sys]
 "unused_pub:src/uws_sys/Loop.rs" = 2
-
-[bun_watcher]
-"generic_body_not_generic:src/watcher/Watcher.rs" = 1
 
 [bun_zstd]
 "unused_pub:src/zstd/lib.rs" = 2

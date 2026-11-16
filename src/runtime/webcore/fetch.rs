@@ -105,7 +105,7 @@ fn parse_unix(
 /// The HTTP thread connects to the `unix` path later and the keep-alive pool
 /// keys on it, so a relative path is anchored to `cwd` at call time, unnormalized.
 fn absolute_unix_socket_path(cwd: &[u8], path: Vec<u8>) -> Box<[u8]> {
-    // Windows: bsd.c has no long-path fallback. Leading NUL: Linux abstract socket.
+    // Windows: bsd.cpp has no long-path fallback. Leading NUL: Linux abstract socket.
     if cfg!(windows) || path.first() == Some(&0) || bun_paths::is_absolute(&path) {
         return path.into_boxed_slice();
     }
@@ -408,27 +408,10 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
         break 'brk None;
     };
 
-    // kept as raw `*mut Request` because the body re-borrows it
-    // multiple times across long-lived option/init reads.
-    let request: Option<*mut Request> = 'brk: {
-        if first_arg.is_cell() {
-            if let Some(request_) = first_arg.as_direct::<Request>() {
-                break 'brk Some(request_);
-            }
-        }
-        break 'brk None;
-    };
-    // Helper macro: short-lived `&Request` reborrow of the optional pointer.
-    macro_rules! request_ref {
-        () => {
-            // SAFETY: `request` was obtained from a live JS-owned Request via
-            // `as_direct`; each reborrow is non-overlapping at the call site.
-            request.map(|p| unsafe { &*p })
-        };
-    }
+    let request = first_arg.as_direct::<Request>();
 
     // If it's NOT a Request or a subclass of Request, treat the first argument as a URL.
-    let url_str_optional = if first_arg.as_::<Request>().is_none() {
+    let url_str_optional = if !first_arg.is::<Request>() {
         StringOrURL::from_js(first_arg, global_this)?
     } else {
         None
@@ -452,7 +435,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
             break 'extract_url str;
         }
 
-        if let Some(req) = request_ref!() {
+        if let Some(req) = &request {
             let _ = req.ensure_url(); // bun.handleOom — aborts on OOM
             break 'extract_url req.url.get().clone();
         }
@@ -511,7 +494,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
             }
         }
 
-        if let Some(req) = request_ref!() {
+        if let Some(req) = &request {
             break 'extract_method Some(req.method);
         }
 
@@ -769,7 +752,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
     // redirect: "follow" | "error" | "manual" | undefined;
     redirect_type = 'extract_redirect_type: {
         // First, try to use the Request object's redirect if available
-        if let Some(req) = request_ref!() {
+        if let Some(req) = &request {
             redirect_type = req.flags.redirect;
         }
 
@@ -934,7 +917,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
             }
         }
 
-        if let Some(req) = request_ref!() {
+        if let Some(req) = &request {
             if let Some(signal_) = req.abort_signal() {
                 break 'extract_signal Some(signal_.ref_());
             }
@@ -984,7 +967,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
             }
         }
 
-        if let Some(req) = request_ref!() {
+        if let Some(req) = &request {
             let body_value = req.get_body_value();
             let already_used = match body_value {
                 BodyValue::Used => true,
@@ -1097,7 +1080,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                 }
             }
 
-            if let Some(req) = request_ref!() {
+            if let Some(req) = &request {
                 if let Some(head) = req.get_fetch_headers_unless_empty() {
                     break 'brk Some(head.as_ptr());
                 }

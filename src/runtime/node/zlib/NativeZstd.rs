@@ -200,6 +200,8 @@ mod _impl {
         avail_out: usize,
         pledged_src_size: u64,
         error: Option<bun_zstd::ErrorCode>,
+        /// ZSTD_COMPRESS only: Node's `frame_output_emitted_ && !frame_complete_` (https://github.com/nodejs/node/blob/v26.12.1/src/node_zlib.cc#L1863-L1885).
+        frame_output_emitted: bool,
     }
 
     impl Context {
@@ -223,6 +225,7 @@ mod _impl {
                 avail_out: 0,
                 pledged_src_size: u64::MAX,
                 error: None,
+                frame_output_emitted: false,
             }
         }
 
@@ -233,6 +236,7 @@ mod _impl {
             self.state = Some(match self.mode {
                 NodeMode::ZSTD_COMPRESS => {
                     self.pledged_src_size = pledged_src_size;
+                    self.frame_output_emitted = false;
                     let mut state = OwnedCCtx::new().ok_or(Self::CREATE_FAILED)?;
                     // Node loads the dictionary before setting the pledged size.
                     if !dictionary.is_empty() && state.load_dictionary(dictionary).is_err() {
@@ -285,7 +289,15 @@ mod _impl {
 
     impl CompressionContext for Context {
         fn reset(&mut self) -> Result<(), Error> {
-            // Matches node's `ZstdContext::ResetStream()`, which calls `Init()`
+            // https://github.com/nodejs/node/blob/v26.12.1/src/node_zlib.cc#L1816-L1826
+            if self.frame_output_emitted {
+                return Err(Error::init(
+                    c"Cannot reset a zstd stream with an incomplete frame; end the frame or discard the output produced so far",
+                    c::ZSTD_error_stage_wrong as c_int,
+                    c"ERR_ZLIB_INCOMPLETE_FRAME",
+                ));
+            }
+            // Node.js before v26.10.0: `ZstdContext::ResetStream()` calls `Init()`
             // with its default (empty) dictionary — a reset drops the dictionary.
             // `init` frees the previous context itself.
             self.init(self.pledged_src_size, &[])
@@ -304,8 +316,14 @@ mod _impl {
                 // Driven before `init()`.
                 None => self.error = None,
                 Some(State::Compress(cctx)) => {
+                    let written = out.written();
                     let (consumed, result) = cctx.step(input, out.reborrow(), self.flush as c_uint);
                     input = &input[consumed..];
+                    if result == Ok(0) && self.flush == c::ZSTD_e_end as c_int {
+                        self.frame_output_emitted = false;
+                    } else if out.written() != written {
+                        self.frame_output_emitted = true;
+                    }
                     self.error = result.err();
                 }
                 Some(State::Decompress(dctx)) => loop {

@@ -754,14 +754,8 @@ impl Cmd {
                         ),
                     )));
                 }
-                let path_buf: Vec<u8> = {
-                    let raw = &interp.as_cmd(this).redirection_file;
-                    let len = raw.len().saturating_sub(1);
-                    let mut v = raw[..len].to_vec();
-                    v.push(0);
-                    v
-                };
-                let path = bun_core::ZStr::from_buf(&path_buf, path_buf.len() - 1);
+                let raw = &interp.as_cmd(this).redirection_file;
+                let path = &bun_core::ZBox::from_bytes(&raw[..raw.len() - 1]);
                 log!("Expanded Redirect: {}\n", bstr::BStr::new(path.as_bytes()));
                 let shell = &*interp.as_cmd(this).shell;
                 let cwd_fd = shell.cwd_fd.fd();
@@ -848,7 +842,6 @@ impl Cmd {
 
     pub(crate) fn deinit(interp: &Interpreter, this: NodeId) {
         log!("Cmd {} deinit", this);
-        // The teardown re-enters this Cmd via `buffered_input_close`, a no-op once `exec` is taken.
         let exec = core::mem::take(&mut interp.as_cmd_mut(this).exec);
         match exec {
             Exec::None => {}
@@ -867,7 +860,7 @@ impl Cmd {
                     // Stop any still-active stdio before the drop (only the
                     // VM-shutdown path reaches here in flight).
                     #[cfg(not(windows))]
-                    ShellSubprocess::deinit_in_flight_io(child);
+                    (*child).deinit_in_flight_io();
                     drop(bun_core::heap::take(child));
                 }
             }

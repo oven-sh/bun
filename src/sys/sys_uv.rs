@@ -266,7 +266,7 @@ pub fn unlink(file_path: &ZStr) -> Result<()> {
     }
 }
 
-pub(crate) fn readlink<'a>(file_path: &ZStr, buf: &'a mut [u8]) -> Result<&'a mut ZStr> {
+pub(crate) fn readlink<'a>(file_path: &ZStr, buf: &'a mut [u8]) -> Result<&'a ZStr> {
     let mut req = uv::fs_t::uninitialized();
     // Edge cases: http://docs.libuv.org/en/v1.x/fs.html#c.uv_fs_realpath
     // SAFETY: synchronous libuv fs call; req lives on the stack for the duration.
@@ -311,8 +311,7 @@ pub(crate) fn readlink<'a>(file_path: &ZStr, buf: &'a mut [u8]) -> Result<&'a mu
         );
         let len = slice.len();
         buf[0..len].copy_from_slice(slice);
-        buf[len] = 0;
-        return Result::Ok(ZStr::from_buf_mut(buf, len));
+        return Result::Ok(ZStr::nul_terminate(buf, len));
     }
 }
 

@@ -38,7 +38,7 @@ use crate::known_helpers::{self, Helper, KnownHelpers, resolve_callee};
 use crate::link::{Beside, run_steps_beside};
 use crate::load::Sources;
 use crate::load::react_compiler::POSITION;
-use crate::load::sources::{ParsedSource, SourceKind, parsed_source};
+use crate::load::sources::{ParsedSource, SourceKind, may_evaluate_text, parsed_source};
 use crate::lower::LeftOutDeclarations;
 use crate::modules::{
     Candidates, ExportBinding, ExportLookup, ExportUse, ImportBinding, KnownMemberValues,
@@ -2829,7 +2829,7 @@ impl<'a, 's> Walk<'a, 's> {
                 reacher.reach_every_export(module);
             }
         }
-        let is_read_by_evaluated_text = self.may_evaluate_text();
+        let is_read_by_evaluated_text = may_evaluate_text(input.files);
         if is_read_by_evaluated_text || input.graph.runs_code_out_of_sight() {
             reacher.hand_on_data_objects();
         }
@@ -2884,27 +2884,11 @@ impl<'a, 's> Walk<'a, 's> {
         found_lists
     }
 
-    /// `f.constructor(text)` evaluates too, where a file names an evaluator only to test it.
-    fn may_evaluate_text(&self) -> bool {
-        let files = self.input.files;
-        let sources = || {
-            let files_compiled = files.compiled_files().iter();
-            files_compiled.filter_map(|&file| parsed_source(files, file))
-        };
-        sources().any(|source| source.builtins.evaluator_comes_out())
-            || (sources().any(|source| source.builtins.mentions_evaluator())
-                && (files.compiled_files().iter()).any(|&file| {
-                    parsed_source(files, file).is_some_and(|source| {
-                        source.builtins.may_call_unnamed_evaluator(files.hir(file))
-                    })
-                }))
-    }
-
     fn reach_entry_points_seeded_last(&self, found: &mut Found, seeded_last: &[FileId]) {
         let input = self.input;
         let mut reacher = Reacher { walk: self, found };
         let hands_on_module_objects =
-            !input.files_started_by_runner.is_empty() || self.may_evaluate_text();
+            !input.files_started_by_runner.is_empty() || may_evaluate_text(input.files);
         for &file in seeded_last {
             reacher.reach_every_export(ModuleRef::File(file));
             if hands_on_module_objects {

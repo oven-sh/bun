@@ -886,7 +886,10 @@ fn load_factory() {
     let convert = unsafe {
         bun_sys::DynLib::open(b"windowscodecs.dll")
             .ok()
-            .and_then(|dll| dll.lookup_as(bun_core::zstr!("WICConvertBitmapSource")))
+            .and_then(|dll| {
+                dll.leak()
+                    .lookup_as(bun_core::zstr!("WICConvertBitmapSource"))
+            })
     };
     let Some(convert) = convert else {
         return;

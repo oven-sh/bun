@@ -125,6 +125,12 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         if bound.eval_scope(call).is_some() {
             return scope::lower_direct_eval(self, call);
         }
+        if let ExprKind::Fn(function) = hir[inner].kind
+            && hir.is_evaluated_function(function)
+        {
+            self.set_position(hir.replaced_callee_position(hir[function].start));
+            self.emit_test_of_replaced_callee(known::Function, BuiltinId::Function);
+        }
         if let ExprKind::Call(id) = hir[call].kind {
             if hir.is_settled_eval(id) {
                 return scope::lower_direct_eval(self, call);

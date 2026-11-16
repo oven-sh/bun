@@ -491,7 +491,7 @@ impl<'a> LifecycleScriptSubprocess<'a> {
     }
 
     fn event_loop(&self) -> bun_event_loop::EventLoopHandle {
-        bun_event_loop::EventLoopHandle::from_any(&self.manager().event_loop)
+        self.manager().event_loop
     }
 
     /// `true` if the reader has ended.

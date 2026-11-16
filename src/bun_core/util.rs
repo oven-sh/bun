@@ -6,17 +6,13 @@
 // ─── ZStr / WStr / zstr! (from bun_str) ───────────────────────────────────
 // NUL-terminated byte / u16 strings. Rust models the
 // borrowed forms as DSTs over the byte/u16 slice (NUL not counted in len).
-// TYPE_ONLY move-down; full impls (from_raw, as_cstr, …) live in bun_str which
-// re-exports these via `pub use bun_core::{ZStr, WStr}`.
 
 /// Borrowed NUL-terminated byte string — bytes are valid UTF-8-ish, len excludes the NUL.
 #[repr(transparent)]
 pub struct ZStr([u8]);
 
 impl ZStr {
-    // SAFETY: `b"\0"` is a 'static 1-byte allocation with `ptr[0] == 0`, so
-    // `ptr[len] == 0` holds for `len = 0` and `ptr[..0]` is trivially readable.
-    pub const EMPTY: &'static ZStr = unsafe { Self::from_raw(c"".as_ptr().cast::<u8>(), 0) };
+    pub const EMPTY: &'static ZStr = Self::from_slice_with_nul(b"\0");
 
     /// SAFETY: `ptr[len] == 0` and `ptr[..len]` is readable for `'a`.
     #[inline]
@@ -27,42 +23,38 @@ impl ZStr {
             &*(std::ptr::from_ref::<[u8]>(core::slice::from_raw_parts(ptr, len)) as *const ZStr)
         }
     }
-    /// SAFETY: `ptr[len] == 0` and `ptr[..=len]` is writable for `'a`.
+    /// Writes the NUL at `buf[len]` and borrows `buf[..len]`. Panics unless `len < buf.len()`.
     #[inline]
-    pub unsafe fn from_raw_mut<'a>(ptr: *mut u8, len: usize) -> &'a mut ZStr {
-        // SAFETY: caller contract above; `repr(transparent)` over `[u8]`.
-        unsafe {
-            &mut *(std::ptr::from_mut::<[u8]>(core::slice::from_raw_parts_mut(ptr, len))
-                as *mut ZStr)
-        }
+    pub fn nul_terminate(buf: &mut [u8], len: usize) -> &ZStr {
+        buf[len] = 0;
+        Self::from_buf(buf, len)
     }
-    /// Wrap a `&'static [u8]` literal that already includes the trailing
-    /// `\0` (e.g. `b".\0"`). The returned `&ZStr` excludes the NUL from
-    /// `len()` per the type invariant. Panics if no trailing NUL.
+    /// Borrows `buf[..len]`. Panics unless `buf[len]` is a NUL.
     #[inline]
-    pub const fn from_static(s: &'static [u8]) -> &'static ZStr {
-        Self::from_slice_with_nul(s)
-    }
-    /// Borrow `buf[..len]` as a `&ZStr`. Panics unless `buf[len]` is a NUL.
-    #[inline]
-    pub fn from_buf(buf: &[u8], len: usize) -> &ZStr {
-        assert!(buf[len] == 0);
-        // SAFETY: `buf[len]` is in bounds and a NUL.
+    pub const fn from_buf(buf: &[u8], len: usize) -> &ZStr {
+        assert!(len < buf.len() && buf[len] == 0);
+        // SAFETY: `buf[len]` is in bounds and a NUL, and `buf` is borrowed as long as the result.
         unsafe { Self::from_raw(buf.as_ptr(), len) }
     }
-    /// Borrow `buf[..buf.len()-1]` as a `&ZStr`. Panics unless the last byte is a NUL.
+    /// Borrows `buf` without its last byte. Panics unless that byte is a NUL.
     #[inline]
     pub const fn from_slice_with_nul(buf: &[u8]) -> &ZStr {
-        assert!(matches!(buf.last(), Some(0)));
-        // SAFETY: `buf` is not empty, and its last byte is a NUL.
-        unsafe { Self::from_raw(buf.as_ptr(), buf.len() - 1) }
+        // An empty `buf` wraps to `usize::MAX`, which `from_buf` refuses.
+        Self::from_buf(buf, buf.len().wrapping_sub(1))
     }
-    /// Mutable variant of [`from_buf`].
+    /// Borrows `buf` up to its first NUL. `None` if it has none.
     #[inline]
-    pub fn from_buf_mut(buf: &mut [u8], len: usize) -> &mut ZStr {
-        assert!(buf[len] == 0);
-        // SAFETY: `buf[len]` is in bounds and a NUL.
-        unsafe { Self::from_raw_mut(buf.as_mut_ptr(), len) }
+    pub fn from_slice_until_nul(buf: &[u8]) -> Option<&ZStr> {
+        let len = crate::strings::index_of_char_usize(buf, 0)?;
+        // SAFETY: the search found a NUL at `buf[len]`, and `buf` is borrowed as long as the result.
+        Some(unsafe { Self::from_raw(buf.as_ptr(), len) })
+    }
+    /// Panics if `start_index > self.len()`.
+    #[inline]
+    pub fn substring(&self, start_index: usize) -> &ZStr {
+        let rest = &self.0[start_index..];
+        // SAFETY: `rest` ends where `self` ends, so the NUL of `self` follows it.
+        unsafe { Self::from_raw(rest.as_ptr(), rest.len()) }
     }
     #[inline]
     pub const fn as_bytes(&self) -> &[u8] {
@@ -85,16 +77,6 @@ impl ZStr {
     pub fn as_bytes_with_nul(&self) -> &[u8] {
         // SAFETY: invariant — byte at `len` is NUL and owned by the same allocation.
         unsafe { core::slice::from_raw_parts(self.0.as_ptr(), self.0.len() + 1) }
-    }
-    /// View as `&CStr`, which ends at the first NUL. The `strlen` is optimized out where only the pointer is read.
-    #[inline]
-    pub fn as_cstr(&self) -> &core::ffi::CStr {
-        debug_assert!(
-            !crate::strings::contains_char(&self.0, 0),
-            "ZStr::as_cstr: interior NUL would truncate the C view",
-        );
-        // SAFETY: a NUL follows the bytes, and `&self` borrows them.
-        unsafe { core::ffi::CStr::from_ptr(self.as_ptr()) }
     }
     /// Borrow a `&CStr` as `&ZStr` — both are NUL-terminated, len excludes NUL.
     #[inline]
@@ -180,10 +162,6 @@ impl ZBox {
     pub fn as_zstr(&self) -> &ZStr {
         // SAFETY: invariant — `self.0[len] == 0`.
         unsafe { ZStr::from_raw(self.0.as_ptr(), self.len()) }
-    }
-    #[inline]
-    pub fn into_vec_with_nul(self) -> Vec<u8> {
-        self.0.into_vec()
     }
     /// Unwrap to the raw `Box<[u8]>` storage (trailing NUL at index `len()-1`).
     /// For call sites that must store sentinel and non-sentinel payloads in the
@@ -346,9 +324,7 @@ pub fn getenv_z_any_case(key: &ZStr) -> Option<&'static [u8]> {
 pub struct WStr([u16]);
 
 impl WStr {
-    // SAFETY: `[0u16]` is a 'static 1-unit allocation with `ptr[0] == 0`, so
-    // `ptr[len] == 0` holds for `len = 0` and `ptr[..0]` is trivially readable.
-    pub const EMPTY: &'static WStr = unsafe { Self::from_raw([0u16].as_ptr(), 0) };
+    pub const EMPTY: &'static WStr = Self::from_slice_with_nul(&[0]);
     /// SAFETY: `ptr[len] == 0` and `ptr[..len]` is readable for `'a`.
     #[inline]
     pub const unsafe fn from_raw<'a>(ptr: *const u16, len: usize) -> &'a WStr {
@@ -385,6 +361,19 @@ impl WStr {
     #[inline]
     pub const fn as_ptr(&self) -> *const u16 {
         self.0.as_ptr()
+    }
+    /// Mirrors [`ZStr::nul_terminate`].
+    #[inline]
+    pub fn nul_terminate(buf: &mut [u16], len: usize) -> &WStr {
+        buf[len] = 0;
+        Self::from_buf(buf, len)
+    }
+    /// Mirrors [`ZStr::substring`].
+    #[inline]
+    pub fn substring(&self, start_index: usize) -> &WStr {
+        let rest = &self.0[start_index..];
+        // SAFETY: `rest` ends where `self` ends, so the NUL of `self` follows it.
+        unsafe { Self::from_raw(rest.as_ptr(), rest.len()) }
     }
 }
 impl core::ops::Deref for WStr {
@@ -429,9 +418,9 @@ macro_rules! wstr {
 #[macro_export]
 macro_rules! zstr {
     ($s:literal) => {{
-        const __B: &[u8] = ::core::concat!($s, "\0").as_bytes();
-        // SAFETY: literal is NUL-terminated; len excludes the NUL.
-        unsafe { $crate::ZStr::from_raw(__B.as_ptr(), __B.len() - 1) }
+        const __Z: &$crate::ZStr =
+            $crate::ZStr::from_slice_with_nul(::core::concat!($s, "\0").as_bytes());
+        __Z
     }};
 }
 
@@ -1774,7 +1763,7 @@ pub struct RacyCell<T: ?Sized>(core::cell::Cell<T>);
 // exact contract `static mut` already imposed. **Do not** wrap *payloads*
 // whose `!Sync` is load-bearing (`Cell<U>`, `Rc<U>`, `RefCell<U>`); use
 // `thread_local!` or a real lock for those. (The inner storage here is
-// `Cell<T>` purely so `read`/`write` bodies are safe code — the cross-thread
+// `Cell<T>` purely so the body of `write` is safe code — the cross-thread
 // hazard is fully accounted for by this `unsafe impl Sync`.)
 unsafe impl<T: ?Sized> Sync for RacyCell<T> {}
 
@@ -1789,29 +1778,14 @@ impl<T> RacyCell<T> {
     pub const fn get(&self) -> *mut T {
         self.0.as_ptr()
     }
-    /// Convenience: read a `Copy` value. Single load, no aliasing assertion.
-    ///
-    /// # Safety
-    /// Caller guarantees no concurrent writer on another thread.
-    #[inline]
-    pub unsafe fn read(&self) -> T
-    where
-        T: Copy,
-    {
-        self.0.get()
-    }
     /// Convenience: overwrite the value.
     ///
     /// # Safety
     /// Caller guarantees no concurrent reader/writer on another thread.
+    #[cfg(windows)]
     #[inline]
     pub unsafe fn write(&self, value: T) {
         self.0.set(value)
-    }
-}
-impl<T: Default> Default for RacyCell<T> {
-    fn default() -> Self {
-        Self::new(T::default())
     }
 }
 
@@ -1894,7 +1868,7 @@ impl ThreadLock {
                 // swap observes it. Debug-only diagnostic on the panic path.
                 let stored = self.locked_at.get();
                 crate::dump_stack_trace(
-                    &stored.trace(),
+                    stored.trace(),
                     crate::DumpStackTraceOptions {
                         frame_count: 10,
                         stop_at_jsc_llint: true,
@@ -2379,6 +2353,13 @@ impl Pollable {
 // pulling `bun_sys::syslog!` (tier inversion). Same `[sys]` tag at runtime.
 crate::declare_scope!(SYS, visible);
 
+/// One `poll(2)` call — libc-convention return.
+#[cfg(not(windows))]
+pub fn poll_once(fds: &mut [libc::pollfd], timeout_ms: core::ffi::c_int) -> core::ffi::c_int {
+    // SAFETY: the kernel reads and writes `fds.len()` entries.
+    unsafe { libc::poll(fds.as_mut_ptr(), fds.len() as _, timeout_ms) }
+}
+
 /// Non-blocking poll for readability. POSIX-only.
 #[cfg(not(windows))]
 pub fn is_readable(fd: Fd) -> Pollable {
@@ -2388,8 +2369,7 @@ pub fn is_readable(fd: Fd) -> Pollable {
         events: libc::POLLIN | libc::POLLERR | libc::POLLHUP,
         revents: 0,
     }];
-    // SAFETY: polls is a valid 1-element array; timeout 0 = non-blocking.
-    let n = unsafe { libc::poll(polls.as_mut_ptr(), 1, 0) };
+    let n = poll_once(&mut polls, 0);
     let result = n > 0;
     let rc = if result && (polls[0].revents & (libc::POLLHUP | libc::POLLERR)) != 0 {
         Pollable::Hup
@@ -2427,8 +2407,7 @@ pub fn is_writable(fd: Fd) -> Pollable {
         events: libc::POLLOUT | libc::POLLERR | libc::POLLHUP,
         revents: 0,
     }];
-    // SAFETY: polls is a valid 1-element array; timeout 0 = non-blocking.
-    let n = unsafe { libc::poll(polls.as_mut_ptr(), 1, 0) };
+    let n = poll_once(&mut polls, 0);
     let result = n > 0;
     let rc = if result && (polls[0].revents & (libc::POLLHUP | libc::POLLERR)) != 0 {
         Pollable::Hup
@@ -3466,16 +3445,16 @@ pub use bun_alloc::secure_zero;
 // ── argv ──────────────────────────────────────────────────────────────────
 // `bun.argv` — process argv as a slice of NUL-terminated byte strings.
 // The owned `ZBox` backing for the
-// initial OS argv lives in `ARGV_STORAGE`; `ARGV` is the mutable *view*
+// initial OS argv lives in `ARGV_STORAGE`; `ARGV` points to the *view*
 // slice that call sites read (and that `set_argv` swaps for the
 // `--compile` exec-argv splicing path). Exposed via a tiny
 // `Argv` wrapper so call sites can use it both as a slice (`.get(0)`,
 // `.iter()`, `.len()`, `.as_slice()`) and as an `IntoIterator<Item = &[u8]>`
 // for `for arg in argv()`.
 static ARGV_STORAGE: Once<Vec<ZBox>> = Once::new();
-static ARGV_VIEW: Once<Vec<&'static ZStr>> = Once::new();
-static ARGV: RacyCell<&'static [&'static ZStr]> = RacyCell::new(&[]);
-static ARGV_INIT: std::sync::Once = std::sync::Once::new();
+/// Null, or from a `&'static`.
+static ARGV: core::sync::atomic::AtomicPtr<&'static [&'static ZStr]> =
+    core::sync::atomic::AtomicPtr::new(core::ptr::null_mut());
 
 /// Raw `(argc, argv)` as passed to `main` by the C runtime. Captured by
 /// [`init_argv`] before any other code runs. On glibc / macOS / Windows,
@@ -3564,27 +3543,29 @@ fn argv_storage() -> &'static [ZBox] {
 
 #[cold]
 #[inline(never)]
-fn argv_view_init() {
-    let storage: &'static [ZBox] = argv_storage();
-    // ARGV_STORAGE is process-static via `Once`; `as_zstr` borrows for `'static`.
-    let mut view: Vec<&'static ZStr> = storage.iter().map(ZBox::as_zstr).collect();
-    // Splice BUN_OPTIONS tokens after argv[0].
-    if let Some(opts) = crate::env_var::BUN_OPTIONS.get() {
-        let original_len = view.len();
-        append_options_env::<&'static ZStr>(opts, &mut view);
-        set_bun_options_argc(view.len() - original_len);
-    }
-    let view: &'static [&'static ZStr] = ARGV_VIEW.get_or_init(move || view);
-    // SAFETY: single-threaded lazy init guarded by Once.
-    unsafe { ARGV.write(view) };
+fn argv_view_init() -> &'static &'static [&'static ZStr] {
+    use core::sync::atomic::Ordering::{Relaxed, Release};
+    static INITIAL: Once<&'static [&'static ZStr]> = Once::new();
+    let initial = INITIAL.get_or_init(|| {
+        let mut view: Vec<&'static ZStr> = argv_storage().iter().map(ZBox::as_zstr).collect();
+        // Splice BUN_OPTIONS tokens after argv[0].
+        if let Some(opts) = crate::env_var::BUN_OPTIONS.get() {
+            let original_len = view.len();
+            append_options_env::<&'static ZStr>(opts, &mut view);
+            set_bun_options_argc(view.len() - original_len);
+        }
+        view.leak()
+    });
+    let published = core::ptr::from_ref(initial).cast_mut();
+    let _ = ARGV.compare_exchange(core::ptr::null_mut(), published, Release, Relaxed);
+    initial
 }
 
 #[inline]
 fn argv_view() -> &'static [&'static ZStr] {
-    ARGV_INIT.call_once(argv_view_init);
-    // SAFETY: ARGV is a Copy fat-pointer; only mutated via `set_argv` during
-    // single-threaded startup or by the Once above.
-    unsafe { ARGV.read() }
+    let view = ARGV.load(core::sync::atomic::Ordering::Acquire);
+    // SAFETY: see `ARGV`.
+    unsafe { view.as_ref() }.unwrap_or_else(argv_view_init)
 }
 
 #[derive(Clone, Copy)]
@@ -3830,63 +3811,33 @@ pub fn append_options_env<A: OptionsEnvArg>(env: &[u8], args: &mut Vec<A>) {
     }
 }
 
-/// Swap the global argv view. Call sites are single-threaded
-/// startup (CLI parsing in the `--compile` path), so this writes the static
-/// without synchronization.
-///
-/// # Safety
-/// Caller must ensure no concurrent reads of `argv()` are in flight.
+/// Swap the global argv view.
 #[inline]
-pub unsafe fn set_argv(v: &'static [&'static ZStr]) {
-    // Prevent the lazy OS-argv init from later clobbering a manually-set view.
-    ARGV_INIT.call_once(|| {});
-    // SAFETY: see fn doc — single-threaded startup.
-    unsafe { ARGV.write(v) };
-}
-
-/// Park an owned argv `Vec` in process-static storage and return the
-/// now-`'static` slice. Used by the `--compile` exec-argv splice path
-/// (`cli_body.rs`) which needs to extend argv beyond the original
-/// OS-provided storage and then hand sub-slices to [`set_argv`]. Single-shot:
-/// the slot is a `Once`, so a second call drops `v` and returns the
-/// first-stored slice.
-pub fn intern_argv(v: Vec<&'static ZStr>) -> &'static [&'static ZStr] {
-    static SLOT: Once<Box<[&'static ZStr]>> = Once::new();
-    SLOT.get_or_init(move || v.into_boxed_slice())
+pub fn set_argv(view: &'static &'static [&'static ZStr]) {
+    let view = core::ptr::from_ref(view).cast_mut();
+    ARGV.store(view, core::sync::atomic::Ordering::Release);
 }
 
 // ── getcwd ────────────────────────────────────────────────────────────────
-/// Writes the current working directory into the caller's `PathBuffer` and
-/// returns the NUL-terminated slice on success.
-pub fn getcwd(buf: &mut PathBuffer) -> crate::CrateResult<&ZStr> {
-    let len = getcwd_len(buf)?;
-    Ok(ZStr::from_buf(&buf.0, len))
-}
-
 /// `getcwd` tolerating an unreachable cwd (e.g. deleted while we run): falls
 /// back to the executable's directory like Node's `Environment::GetCwd`, so
 /// startup proceeds and `process.cwd()` surfaces the real error later.
 pub fn getcwd_or_exe_dir(buf: &mut PathBuffer) -> &ZStr {
-    let len = match getcwd_len(buf) {
-        Ok(n) => n,
-        Err(_) => {
-            let dir: &[u8] = self_exe_path()
-                .ok()
-                .and_then(|p| dirname(p.as_bytes()))
-                // Reject a dir that can't fit with its NUL (paths from
-                // /proc/self/exe are not bounded by MAX_PATH_BYTES).
-                .filter(|d| d.len() < buf.0.len())
-                .unwrap_or(if cfg!(windows) { b"C:\\" } else { b"/" });
-            buf.0[..dir.len()].copy_from_slice(dir);
-            buf.0[dir.len()] = 0;
-            dir.len()
-        }
-    };
-    ZStr::from_buf(&buf.0, len)
+    if let Ok(cwd) = getcwd(buf) {
+        return cwd;
+    }
+    let dir: &[u8] = self_exe_path()
+        .ok()
+        .and_then(|p| dirname(p.as_bytes()))
+        // Paths from /proc/self/exe are not bounded by MAX_PATH_BYTES.
+        .filter(|d| d.len() < buf.0.len())
+        .unwrap_or(if cfg!(windows) { b"C:\\" } else { b"/" });
+    buf.0[..dir.len()].copy_from_slice(dir);
+    ZStr::nul_terminate(buf, dir.len())
 }
 
-/// Length-returning core of [`getcwd`]; `buf` holds the NUL-terminated path.
-fn getcwd_len(buf: &mut PathBuffer) -> crate::CrateResult<usize> {
+/// Writes the current working directory into `buf` and returns it.
+pub fn getcwd(buf: &mut PathBuffer) -> crate::CrateResult<&ZStr> {
     #[cfg(unix)]
     // SAFETY: `buf` provides `MAX_PATH_BYTES` writable bytes for `getcwd`; on
     // success the returned pointer aliases `buf` and is NUL-terminated, so
@@ -3899,7 +3850,7 @@ fn getcwd_len(buf: &mut PathBuffer) -> crate::CrateResult<usize> {
             }
             return Err(crate::CrateError::Unexpected);
         }
-        Ok(libc::strlen(p))
+        Ok(ZStr::from_c_ptr(p))
     }
     #[cfg(windows)]
     {
@@ -3934,8 +3885,7 @@ fn getcwd_len(buf: &mut PathBuffer) -> crate::CrateResult<usize> {
             out[bi..bi + nb].copy_from_slice(&tmp[..nb]);
             bi += nb;
         }
-        out[bi] = 0;
-        Ok(bi)
+        Ok(ZStr::nul_terminate(out, bi))
     }
     #[cfg(not(any(unix, windows)))]
     {
@@ -3969,7 +3919,7 @@ pub(crate) fn which<'a>(
     }
     // If `bin` contains a separator, resolve relative to cwd only.
     let has_sep = bin.iter().copied().any(crate::path_sep::is_sep_native);
-    let check = |buf: &mut PathBuffer, dir: &[u8], bin: &[u8]| -> Option<usize> {
+    fn check<'a>(buf: &'a mut PathBuffer, dir: &[u8], bin: &[u8]) -> Option<&'a ZStr> {
         let mut n = 0usize;
         if !dir.is_empty() {
             if dir.len() + 1 + bin.len() + 1 > buf.0.len() {
@@ -3987,19 +3937,13 @@ pub(crate) fn which<'a>(
         }
         buf.0[n..n + bin.len()].copy_from_slice(bin);
         n += bin.len();
-        buf.0[n] = 0;
-        // SAFETY: `buf.0[n] == 0` was just written, so `buf.0.as_ptr()` is a
-        // valid NUL-terminated C string for `access(2)`.
-        unsafe {
-            if libc::access(buf.0.as_ptr().cast(), libc::X_OK) == 0 {
-                return Some(n);
-            }
-        }
-        None
-    };
+        let path = ZStr::nul_terminate(buf, n);
+        // SAFETY: `path` is NUL-terminated (`ZStr`).
+        (unsafe { libc::access(path.as_ptr(), libc::X_OK) } == 0).then_some(path)
+    }
     // Absolute `bin` → probe it directly without joining `cwd`.
     if crate::path_sep::is_absolute_native(bin) {
-        return check(buf, b"", bin).map(|n| ZStr::from_buf(&buf.0, n));
+        return check(buf, b"", bin);
     }
     if has_sep {
         // Relative with separator → resolve against cwd only; trim
@@ -4012,15 +3956,15 @@ pub(crate) fn which<'a>(
             c
         };
         let bin = bin.strip_prefix(b"./").unwrap_or(bin);
-        return check(buf, cwd, bin).map(|n| ZStr::from_buf(&buf.0, n));
+        return check(buf, cwd, bin);
     }
     // Bare names go straight to PATH — do NOT consult cwd.
     for dir in crate::strings::split(path, b":") {
         if dir.is_empty() {
             continue;
         }
-        if let Some(n) = check(buf, dir, bin) {
-            return Some(ZStr::from_buf(&buf.0, n));
+        if let Some(found) = check(buf, dir, bin) {
+            return Some(found);
         }
     }
     None
@@ -4428,7 +4372,7 @@ fn spawn_sync_inherit_impl(
                 // to cwd, matching posix_spawnp semantics for non-bare names).
                 ptrs[0]
             } else {
-                let path_env = getenv_z(ZStr::from_static(b"PATH\0")).unwrap_or(b"");
+                let path_env = getenv_z(crate::zstr!("PATH")).unwrap_or(b"");
                 match which(&mut pathbuf, path_env, b".", arg0) {
                     Some(z) => z.as_ptr(),
                     None => return Err(crate::CrateError::FileNotFound),
@@ -5228,45 +5172,62 @@ pub mod form_data {
 pub use form_data as FormData;
 
 #[cfg(test)]
-mod zstr_tests {
-    use super::ZStr;
+mod tests {
+    use super::*;
 
     #[test]
-    fn the_nul_is_behind_the_bytes() {
-        let mut buf = *b"ab\0c";
-        assert_eq!(ZStr::from_buf(&buf, 2).as_cstr(), c"ab");
-        assert_eq!(ZStr::from_buf_mut(&mut buf, 2).as_cstr(), c"ab");
-        assert_eq!(ZStr::from_slice_with_nul(&buf[..3]).as_cstr(), c"ab");
-        assert_eq!(ZStr::EMPTY.as_cstr(), c"");
+    fn nul_terminate_writes_the_nul() {
+        let mut bytes = *b"abc";
+        let string = ZStr::nul_terminate(&mut bytes, 2);
+        assert_eq!(string.as_bytes_with_nul(), b"ab\0");
+
+        let mut units = [1, 2, 3];
+        assert_eq!(WStr::nul_terminate(&mut units, 2).as_slice(), [1, 2]);
+        assert_eq!(units, [1, 2, 0]);
+    }
+
+    #[test]
+    fn from_slice_until_nul_ends_at_the_first_nul() {
+        let bytes = |slice| ZStr::from_slice_until_nul(slice).map(ZStr::as_bytes_with_nul);
+        assert_eq!(bytes(b"ab\0c\0"), Some(&b"ab\0"[..]));
+        assert_eq!(bytes(b"ab"), None);
+        assert_eq!(bytes(b""), None);
+    }
+
+    #[test]
+    fn substring_keeps_the_nul() {
+        assert_eq!(zstr!("abc").substring(1).as_bytes_with_nul(), b"bc\0");
+        assert_eq!(zstr!("abc").substring(3).as_bytes_with_nul(), b"\0");
+        assert_eq!(WStr::from_buf(&[1, 2, 0], 2).substring(1).as_slice(), [2]);
     }
 
     #[test]
     #[should_panic]
-    fn from_buf_refuses_another_byte() {
-        ZStr::from_buf(b"ab\0", 1);
+    fn substring_refuses_a_start_past_the_end() {
+        zstr!("abc").substring(4);
     }
 
     #[test]
     #[should_panic]
-    fn from_buf_refuses_the_end_of_the_buffer() {
+    fn nul_terminate_refuses_a_full_buffer() {
+        ZStr::nul_terminate(&mut [b'a'], 1);
+    }
+
+    #[test]
+    #[should_panic]
+    fn from_buf_refuses_a_length_past_the_end() {
         ZStr::from_buf(&b"ab\0"[..2], 2);
     }
 
     #[test]
     #[should_panic]
-    fn from_buf_mut_refuses_another_byte() {
-        ZStr::from_buf_mut(&mut [1, 0], 0);
+    fn from_buf_refuses_a_string_without_an_end() {
+        ZStr::from_buf(b"ab", 1);
     }
 
     #[test]
     #[should_panic]
-    fn from_slice_with_nul_refuses_a_string_without_an_end() {
-        ZStr::from_slice_with_nul(b"a\0b");
-    }
-
-    #[test]
-    #[should_panic]
-    fn from_slice_with_nul_refuses_nothing() {
+    fn from_slice_with_nul_refuses_an_empty_slice() {
         ZStr::from_slice_with_nul(b"");
     }
 }

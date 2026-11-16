@@ -96,7 +96,8 @@ mod tests {
     #[test]
     fn gathers_and_scatters() {
         let _g = crate::file::tests::FD_TEST_LOCK.lock();
-        let file = File::from_fd(crate::memfd_create(c"iovec", MemfdFlags::NonExecutable).unwrap());
+        let file =
+            File::from_fd(crate::memfd_create(c"iovec".into(), MemfdFlags::NonExecutable).unwrap());
         let fd = file.fd();
         let parts = [IoVec::new(b"ab"), IoVec::new(b""), IoVec::new(b"cde")];
         assert_eq!(crate::writev(fd, &parts).unwrap(), 5);

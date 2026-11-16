@@ -138,23 +138,6 @@ pub fn host_fn_lazy_passthrough(
     f(global)
 }
 
-/// Finalizer for a `refCounted: true` class: the wrapper held one ref on an
-/// intrusively refcounted payload. Runs the type's `&self` hook (clear a
-/// `this_value`, mark finalized, …) and drops that ref.
-///
-/// # Safety
-/// `this` is the live pointer the wrapper holds a ref on.
-#[inline]
-pub unsafe fn host_fn_finalize_ref_counted<T: bun_ptr::AnyRefCounted>(
-    this: *mut T,
-    f: impl FnOnce(&T),
-) {
-    // SAFETY: fn contract; other refs may exist, so only `&T` is formed.
-    f(unsafe { &*this });
-    // SAFETY: fn contract — releases the wrapper's ref.
-    unsafe { T::rc_deref(this) };
-}
-
 /// Convert the return value of a function returning an error union into a maybe-empty `JSValue`.
 ///
 /// The caller (the proc-macro expansion) passes a closure that performs the call, so this only

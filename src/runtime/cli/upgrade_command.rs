@@ -731,7 +731,7 @@ impl UpgradeCommand {
 
             // Reshaped for borrowck — use a stack-local PathBuffer instead of thread_local
             let mut tmpdir_path_buf = bun_paths::path_buffer_pool::get();
-            let tmpdir_path = match sys::get_fd_path(save_dir.fd(), &mut tmpdir_path_buf) {
+            let tmpdir_z = match sys::get_fd_path_z(save_dir.fd(), &mut tmpdir_path_buf) {
                 Ok(p) => p,
                 Err(err) => {
                     Output::err_generic(
@@ -742,14 +742,9 @@ impl UpgradeCommand {
                 }
             };
 
-            let tmpdir_path_len = tmpdir_path.len();
-            tmpdir_path_buf[tmpdir_path_len] = 0;
-            // SAFETY: buf[tmpdir_path_len] == 0 written above
-            let tmpdir_z = ZStr::from_buf(&tmpdir_path_buf[..], tmpdir_path_len);
             let _ = sys::chdir(tmpdir_z);
 
-            // SAFETY: literal ends with NUL.
-            let tmpname: &ZStr = ZStr::from_static(b"bun.zip\0");
+            let tmpname: &ZStr = bun_core::zstr!("bun.zip");
             let exe: &[u8] = if use_profile {
                 Self::PROFILE_EXE_SUBPATH.as_bytes()
             } else {
@@ -814,7 +809,7 @@ impl UpgradeCommand {
                     let unzip_result = match spawn_sync::spawn(&spawn_sync::Options {
                         argv: build_argv(&unzip_argv),
                         envp: None,
-                        cwd: Box::<[u8]>::from(&tmpdir_path_buf[..tmpdir_path_len]),
+                        cwd: Box::<[u8]>::from(tmpdir_z.as_bytes()),
                         stdin: spawn_sync::SyncStdio::Inherit,
                         stdout: spawn_sync::SyncStdio::Inherit,
                         stderr: spawn_sync::SyncStdio::Inherit,
@@ -864,7 +859,7 @@ impl UpgradeCommand {
                         &mut unzip_script,
                         "$global:ProgressPreference='SilentlyContinue';Expand-Archive -Path \"{}\" \"{}\" -Force",
                         bun_fmt::escape_powershell(bstr::BStr::new(tmpname.as_bytes())),
-                        bun_fmt::escape_powershell(bstr::BStr::new(&tmpdir_path_buf[..tmpdir_path_len])),
+                        bun_fmt::escape_powershell(bstr::BStr::new(tmpdir_z.as_bytes())),
                     )
                     .expect("oom");
 
@@ -915,7 +910,7 @@ impl UpgradeCommand {
                     let spawn_res = spawn_sync::spawn(&spawn_sync::Options {
                         argv: build_argv(&unzip_argv),
                         envp: None,
-                        cwd: Box::<[u8]>::from(&tmpdir_path_buf[..tmpdir_path_len]),
+                        cwd: Box::<[u8]>::from(tmpdir_z.as_bytes()),
                         stderr: spawn_sync::SyncStdio::Inherit,
                         stdout: spawn_sync::SyncStdio::Inherit,
                         stdin: spawn_sync::SyncStdio::Inherit,
@@ -959,7 +954,7 @@ impl UpgradeCommand {
                     let spawned = spawn_sync::spawn(&spawn_sync::Options {
                         argv: build_argv(&verify_argv),
                         envp: None,
-                        cwd: Box::<[u8]>::from(&tmpdir_path_buf[..tmpdir_path_len]),
+                        cwd: Box::<[u8]>::from(tmpdir_z.as_bytes()),
                         stdout: spawn_sync::SyncStdio::Buffer,
                         stderr: spawn_sync::SyncStdio::Ignore,
                         stdin: spawn_sync::SyncStdio::Ignore,
@@ -1080,9 +1075,7 @@ impl UpgradeCommand {
             // copy of `exe`.
             let mut exe_z_buf = bun_paths::path_buffer_pool::get();
             exe_z_buf[..exe.len()].copy_from_slice(exe);
-            exe_z_buf[exe.len()] = 0;
-            // SAFETY: NUL written above.
-            let exe_z: &ZStr = ZStr::from_buf(&exe_z_buf[..], exe.len());
+            let exe_z: &ZStr = ZStr::nul_terminate(&mut exe_z_buf, exe.len());
 
             if use_canary {
                 // Check if the versions are the same

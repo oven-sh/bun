@@ -24,10 +24,9 @@ mod unix {
         libc::pollfd,
         libc::sockaddr,
         libc::sockaddr_storage,
-        libc::sockaddr_un,
     );
     crate::impl_any_bit_pattern!(libc::timeval);
-    impl_pod!(libc::sockaddr_in, libc::sockaddr_in6);
+    impl_pod!(libc::sockaddr_in, libc::sockaddr_in6, libc::sockaddr_un);
     // A `u32` on Darwin, which the primitive impl covers.
     #[cfg(not(target_vendor = "apple"))]
     impl_zeroable!(libc::sigset_t);

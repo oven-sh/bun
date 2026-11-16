@@ -3,7 +3,7 @@ use bun_jsc::JSValue;
 use super::{Clock, Kind};
 
 // `Immediate`, declared in `Timer.bind.ts`.
-super::impl_timer_object!(ImmediateObject);
+super::impl_timer_object!(ImmediateObject, js_Immediate);
 
 impl ImmediateObject {
     pub(crate) fn init(

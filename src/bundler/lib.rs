@@ -364,12 +364,6 @@ pub mod options {
     pub use crate::bake_types::Framework;
 }
 
-/// Re-export so `crate::RuntimeTranspilerCache` resolves for `transpiler::ParseOptions`
-/// and downstream callers (`jsc_hooks` / `RuntimeTranspilerStore`). The struct
-/// is canonical in `bun_js_parser`; the bundler-tier `disabled` lives on
-/// `RuntimeTranspilerCacheExt`.
-pub use cache::RuntimeTranspilerCacheExt;
-
 // ──────────────────────────────────────────────────────────────────────────
 // Re-export the canonical `bake_types` defs from
 // `bundle_v2` so there is exactly ONE nominal `Side`/`Graph`/`Framework` etc.

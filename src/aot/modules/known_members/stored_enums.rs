@@ -90,10 +90,19 @@ impl Search<'_, '_> {
             self.hand_on_exports(module, seen);
         }
         for (site, answer) in &row.sites {
-            if !links_names_alone(*site)
-                && let StoredSiteAnswer::Module(module) = answer
-            {
-                self.hand_on_exports(*module, seen);
+            if links_names_alone(*site) {
+                continue;
+            }
+            match answer {
+                StoredSiteAnswer::Module(module) => self.hand_on_exports(*module, seen),
+                StoredSiteAnswer::Candidates(range) => {
+                    for spelled in &row.spellings[range.start as usize..range.end as usize] {
+                        self.hand_on_exports(spelled.module, seen);
+                    }
+                }
+                StoredSiteAnswer::AllModules
+                | StoredSiteAnswer::Failed(_)
+                | StoredSiteAnswer::Erased => {}
             }
         }
     }

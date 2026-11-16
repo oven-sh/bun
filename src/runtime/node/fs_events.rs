@@ -168,7 +168,7 @@ fn init_core_foundation() -> CoreFoundation {
     let load = || {
         // SAFETY: a framework of the system, which stays loaded, and the types that its headers give the symbols.
         unsafe {
-            let cf = DynLib::open_with_flags(path, RTLD::LAZY | RTLD::LOCAL)?;
+            let cf = DynLib::open_with_flags(path, RTLD::LAZY | RTLD::LOCAL)?.leak();
             Some(CoreFoundation {
                 array_create: cf.lookup_as(zstr!("CFArrayCreate"))?,
                 retain: cf.lookup_as(zstr!("CFRetain"))?,
@@ -195,7 +195,7 @@ fn init_core_services() -> CoreServices {
     let load = || {
         // SAFETY: as in `init_core_foundation`.
         unsafe {
-            let cs = DynLib::open_with_flags(path, RTLD::LAZY | RTLD::LOCAL)?;
+            let cs = DynLib::open_with_flags(path, RTLD::LAZY | RTLD::LOCAL)?.leak();
             Some(CoreServices {
                 fs_event_stream_create: cs.lookup_as(zstr!("FSEventStreamCreate"))?,
                 fs_event_stream_invalidate: cs.lookup_as(zstr!("FSEventStreamInvalidate"))?,

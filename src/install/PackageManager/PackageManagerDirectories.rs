@@ -558,8 +558,7 @@ impl<'a> ByteCursor<'a> {
     #[inline(always)]
     fn finish_z(self) -> &'a ZStr {
         let at = self.at;
-        self.buf[at] = 0;
-        ZStr::from_buf(self.buf, at)
+        ZStr::nul_terminate(self.buf, at)
     }
 }
 
@@ -919,8 +918,6 @@ pub fn setup_global_dir(manager: &mut PackageManager, ctx: &Command::Context) ->
     let path = FileSystem::get()
         .dirname_store()
         .append(result.as_bytes_with_nul())?;
-    // SAFETY: `path` includes the trailing NUL (we appended `as_bytes_with_nul`)
-    // and lives for program lifetime in the dirname store.
     manager.options.bin_path = ZStr::from_slice_with_nul(path);
     Ok(())
 }
@@ -1092,11 +1089,10 @@ pub fn compute_cache_dir_and_subpath<'a>(
             // example:
             //   "mineflayer": "file:."
             if folder.is_empty() || (folder.len() == 1 && folder[0] == b'.') {
-                cache_dir_subpath = z_static(b".\0");
+                cache_dir_subpath = bun_core::zstr!(".");
             } else {
                 folder_path_buf[..folder.len()].copy_from_slice(folder);
-                folder_path_buf[folder.len()] = 0;
-                cache_dir_subpath = ZStr::from_buf(folder_path_buf, folder.len());
+                cache_dir_subpath = ZStr::nul_terminate(folder_path_buf, folder.len());
             }
             cache_dir = Fd::cwd();
         }
@@ -1129,11 +1125,10 @@ pub fn compute_cache_dir_and_subpath<'a>(
             let folder = resolution.workspace().slice(buf);
             // Handle when a package depends on itself
             if folder.is_empty() || (folder.len() == 1 && folder[0] == b'.') {
-                cache_dir_subpath = z_static(b".\0");
+                cache_dir_subpath = bun_core::zstr!(".");
             } else {
                 folder_path_buf[..folder.len()].copy_from_slice(folder);
-                folder_path_buf[folder.len()] = 0;
-                cache_dir_subpath = ZStr::from_buf(folder_path_buf, folder.len());
+                cache_dir_subpath = ZStr::nul_terminate(folder_path_buf, folder.len());
             }
             cache_dir = Fd::cwd();
         }
@@ -1147,7 +1142,7 @@ pub fn compute_cache_dir_and_subpath<'a>(
                 .to_vec();
 
             if folder.is_empty() || (folder.len() == 1 && folder[0] == b'.') {
-                cache_dir_subpath = z_static(b".\0");
+                cache_dir_subpath = bun_core::zstr!(".");
                 cache_dir = Fd::cwd();
             } else {
                 // A path is relative to the project, a name to the global link dir.
@@ -1173,9 +1168,7 @@ pub fn compute_cache_dir_and_subpath<'a>(
                     }
                     ptr[off..off + folder.len()].copy_from_slice(&folder);
                     off += folder.len();
-                    ptr[off] = 0;
-                    let len = off;
-                    cache_dir_subpath = ZStr::from_buf(folder_path_buf, len);
+                    cache_dir_subpath = ZStr::nul_terminate(ptr, off);
                     cache_dir = directory;
                 }
             }
@@ -1195,7 +1188,7 @@ pub(crate) const NEW_PACKAGE_JSON: &[u8] = b"{\"dependencies\": {}}";
 
 pub(crate) fn attempt_to_create_package_json_and_open() -> Result<File, Error> {
     let package_json_file = match Dir::cwd().create_file_z(
-        z_static(b"package.json\0"),
+        bun_core::zstr!("package.json"),
         sys::CreateFlags {
             read: true,
             ..Default::default()
@@ -1357,7 +1350,7 @@ pub fn write_yarn_lock(this: &mut PackageManager) -> Result<(), Error> {
     this.lockfile.meta_hash = this.lockfile.generate_meta_hash(false, packages_len)?;
     let mut buf: Vec<u8> = Vec::with_capacity(4096);
     crate::lockfile_real::printer::Yarn::print(&this.lockfile, &mut buf)?;
-    crate::lockfile_real::replace_in_cwd(z_static(b"yarn.lock\0"), &buf, 0o666);
+    crate::lockfile_real::replace_in_cwd(bun_core::zstr!("yarn.lock"), &buf, 0o666);
     Ok(())
 }
 
@@ -1375,11 +1368,4 @@ fn verbose_install() -> bool {
     // SAFETY: `VERBOSE_INSTALL` is set once during single-threaded CLI startup
     // (PackageManagerOptions.load) and only read on the main thread.
     PackageManager::verbose_install()
-}
-
-/// `&'static ZStr` from a NUL-terminated literal.
-#[inline]
-const fn z_static(bytes_with_nul: &'static [u8]) -> &'static ZStr {
-    // `from_static` is the const-eval-safe form of `from_slice_with_nul`.
-    ZStr::from_static(bytes_with_nul)
 }

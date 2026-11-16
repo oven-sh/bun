@@ -274,8 +274,7 @@ impl FetchSession {
         }
         let check_server_identity = Self::parse_options(&mut this, cx.global(), init.to_js())?;
 
-        // SAFETY: the allocation's one ref, which the wrapper adopts.
-        let session = unsafe { RefPtr::from_raw(bun_core::heap::into_raw(this)) };
+        let session = RefPtr::from(this);
         let this = session.this_ptr();
         let this_value = structure.create(&cx.heap, session);
         this.this_value.set(JsRef::init_weak(this_value.to_js()));

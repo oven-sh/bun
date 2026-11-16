@@ -12,7 +12,7 @@ use bun_options_types::schema::api::DotEnvBehavior;
 use bun_standalone_graph::Graph;
 use bun_sys::{Fd, File, Maybe, O};
 use bun_threading::Guarded;
-use bun_watcher::{Evictions, WatchEvent, WatchList, Watcher, WatcherContext};
+use bun_watcher::{Evictions, OwnedWatcher, WatchEvent, WatchList, Watcher, WatcherContext};
 
 use super::compile_command::{
     CompileFailure, CompileProduct, RequestOrigin, compile_from_context, exit_with_failure,
@@ -417,7 +417,7 @@ fn hand_over(
 }
 
 struct WatchedFiles {
-    watcher: Arc<Watcher>,
+    watcher: OwnedWatcher,
     working_directory: Vec<u8>,
     paths: Guarded<Vec<Vec<u8>>>,
 }
@@ -659,9 +659,10 @@ fn create_shared_memory() -> Option<File> {
 fn create_unnamed_file(first: ProgramFile) -> Maybe<(File, ProgramFile)> {
     #[cfg(any(target_os = "linux", target_os = "android"))]
     if first == ProgramFile::Memfd && bun_sys::can_use_memfd() {
-        if let Ok(descriptor) =
-            bun_sys::memfd_create(c"bun-compiled-program", bun_sys::MemfdFlags::Executable)
-        {
+        if let Ok(descriptor) = bun_sys::memfd_create(
+            c"bun-compiled-program".into(),
+            bun_sys::MemfdFlags::Executable,
+        ) {
             return Ok((File::from_fd(descriptor), ProgramFile::Memfd));
         }
     }
@@ -1187,8 +1188,8 @@ pub(crate) fn load_program_file() -> bun_standalone_graph::Result<Option<*mut Gr
         Err(_) => path.to_vec(),
     };
     argv[0] = Box::leak(Box::new(ZBox::from_bytes(typed.unwrap_or(&file)))).as_zstr();
-    // SAFETY: no other thread has started.
-    unsafe { bun_core::set_argv(Vec::leak(argv)) };
+    static ARGV: bun_core::Once<&[&bun_core::ZStr]> = bun_core::Once::new();
+    bun_core::set_argv(ARGV.get_or_init(|| argv.leak()));
     // The program finds the environment that the launcher found.
     #[cfg(unix)]
     if has_launcher {

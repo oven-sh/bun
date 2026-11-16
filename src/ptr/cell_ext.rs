@@ -18,10 +18,6 @@ impl<T: Default> CellExt<T> for Cell<T> {
 pub trait OptionCellExt {
     /// One load, where `with_taken` copies a large `T` out and back.
     fn is_some(&self) -> bool;
-
-    fn is_none(&self) -> bool {
-        !self.is_some()
-    }
 }
 
 impl<T> OptionCellExt for Cell<Option<T>> {
@@ -46,7 +42,7 @@ mod tests {
         assert!(cell.is_some());
         assert_eq!(Rc::strong_count(&counted), 2);
         cell.set(None);
-        assert!(cell.is_none());
+        assert!(!cell.is_some());
         assert_eq!(Rc::strong_count(&counted), 1);
     }
 }

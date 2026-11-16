@@ -123,7 +123,8 @@ function formatProperty(property: Property): string {
       body += "}";
     }
   } else if ("$ref" in property) {
-    body += property.$ref;
+    const { $ref } = property;
+    body += primitiveTypes.has($ref) ? formatProperty({ type: $ref } as Property) : $ref;
   } else {
     body += "unknown";
   }
@@ -140,7 +141,8 @@ function formatProperty(property: Property): string {
  * Besides a type of the referring domain (`RemoteObject`) or of another one (`Network.RequestId`), a
  * `$ref` may name one of these, the types WebKit's protocol generator predeclares
  * (inspector/scripts/codegen/models.py, resolve_types): Runtime.PropertyDescriptor.isPrivate is a
- * `$ref` to `boolean`. There is nothing to declare for them.
+ * `$ref` to `boolean`. Nothing is declared for them: formatProperty writes such a `$ref` as it writes
+ * the same name in `type`, so that `integer` becomes `number`.
  */
 export const primitiveTypes: ReadonlySet<string> = new Set(["any", "boolean", "integer", "number", "object", "string"]);
 
@@ -300,9 +302,9 @@ function findPinnedCombinedDomains(): string | undefined {
  * Domains that Bun's WebKit fork declares as debuggable from JavaScript, but that bun registers no
  * agent for (see src/jsc/bindings/BunDebugger.cpp): bun answers every command in them with
  * "'<domain>' domain was not found". test/cli/inspect/bun-inspector-protocol.test.ts checks that
- * this is still true, so remove a domain from here once bun implements it.
+ * this is still true of each of them, so remove a domain from here once bun implements it.
  */
-const domainsWithoutAgent = new Set(["File", "Process"]);
+export const domainsWithoutAgent: ReadonlySet<string> = new Set(["File", "Process"]);
 
 if (import.meta.main) {
   const args = process.argv.slice(2);

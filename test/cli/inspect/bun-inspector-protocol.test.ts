@@ -16,6 +16,7 @@ import { expect, test } from "bun:test";
 import { bunEnv, bunExe, isDebug, tempDir } from "harness";
 import { basename, join } from "node:path";
 import {
+  domainsWithoutAgent,
   formatProtocol,
   primitiveTypes,
   selectJscDomains,
@@ -45,8 +46,8 @@ function resolveRef($ref: string, domain: string): { type: Property; domain: str
 
 /** What tsc reports for a .d.ts checked on its own, i.e. what a consumer would see without skipLibCheck. */
 async function typeErrors(dtsPath: string): Promise<string[]> {
-  // A debug build of bun takes longer to load typescript than a test may run by default, so only the test
-  // that needs it pays for it.
+  // Loaded here and not by a module-scope import: a debug build of bun takes longer to load typescript than
+  // a whole test may run by default, and the one test that calls this is skipped there.
   const ts = (await import("typescript")).default;
   const program = ts.createProgram([dtsPath], {
     strict: true,
@@ -191,12 +192,17 @@ const combinedDomains: Domain[] = [
     domain: "Page",
     debuggableTypes: ["web-page"],
     types: [
-      // Referred to by Debugger. Refers on to a primitive, to itself (the walk has to notice that to
+      // Referred to by Debugger. Refers on to two primitives, to itself (the walk has to notice that to
       // terminate) and, by bare name, to RequestIds, which refers on to a third domain.
       {
         id: "Frame",
         type: "object",
-        properties: [ref("boolean", "isMainFrame"), ref("Frame", "parent"), ref("RequestIds", "requests")],
+        properties: [
+          ref("boolean", "isMainFrame"),
+          ref("integer", "depth"),
+          ref("Frame", "parent"),
+          ref("RequestIds", "requests"),
+        ],
       },
       { id: "RequestIds", type: "array", items: ref("Network.RequestId") },
       { id: "PauseReason", type: "string", enum: ["breakpoint", "exception"] },
@@ -223,6 +229,7 @@ const combinedDomains: Domain[] = [
     commands: [{ name: "enable" }],
   },
 ];
+const version = { major: 1, minor: 0 };
 
 test("generate-protocol.ts carries along the types that the JavaScript domains refer to in other domains", () => {
   const selected = selectJscDomains(combinedDomains, new Set(["Process"]));
@@ -238,6 +245,8 @@ test("generate-protocol.ts carries along the types that the JavaScript domains r
     },
     { domain: "Process", description: expect.any(String), debuggableTypes: ["javascript"], types: ["Id"] },
   ]);
+  // A `$ref` to a primitive is written the way TypeScript spells that primitive: it has no `integer`.
+  expect(formatProtocol({ name: "JSC", version, domains: selected })).toMatch(/isMainFrame:boolean;\s*depth:number;/);
 });
 
 // The two tests above check the same thing at the protocol.json level; this one is what the consumers of the
@@ -245,7 +254,6 @@ test("generate-protocol.ts carries along the types that the JavaScript domains r
 test.skipIf(isDebug)("the generated index.d.ts type-checks without skipLibCheck", async () => {
   expect(await typeErrors(join(protocolDir, "jsc/index.d.ts"))).toEqual([]);
 
-  const version = { major: 1, minor: 0 };
   using dir = tempDir("bun-inspector-protocol-generated", {
     "selected.d.ts": formatProtocol({
       name: "JSC",
@@ -386,10 +394,10 @@ test("the protocol snapshot in packages/bun-inspector-protocol matches what bun 
       send("Debugger.setPauseOnDebuggerStatements", { enabled: true }),
     ]);
 
-    // Conversely, bun has no agent for these domains: generate-protocol.ts leaves File and Process out
-    // of the snapshot for that reason, and holds only the types of the others. Once bun answers one of
-    // them, its commands belong in the snapshot: update the generator's list and regenerate.
-    for (const domain of ["File", "Process", ...typesOnlyDomains]) {
+    // Conversely, bun has no agent for these domains: generate-protocol.ts leaves its domainsWithoutAgent
+    // out of the snapshot for that reason, and holds only the types of the others. Once bun answers one
+    // of them, its commands belong in the snapshot: update the generator's list and regenerate.
+    for (const domain of [...domainsWithoutAgent, ...typesOnlyDomains]) {
       const { error } = await request(`${domain}.enable`);
       if (error?.message !== `'${domain}' domain was not found`) {
         problems.push(`${domain}: bun implements this domain, but the snapshot has none of its commands`);

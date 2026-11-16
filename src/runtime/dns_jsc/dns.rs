@@ -5,7 +5,6 @@ use core::ffi::{c_char, c_int, c_void};
 use core::marker::PhantomData;
 use core::mem::{ManuallyDrop, MaybeUninit};
 use core::net::{IpAddr, Ipv4Addr, Ipv6Addr};
-use core::ops::DerefMut;
 use core::ptr;
 use core::sync::atomic::{AtomicUsize, Ordering};
 
@@ -14,9 +13,11 @@ use bun_collections::{ArrayHashMap, BoundedArray, IntegerBitSet};
 use bun_core::Output;
 use bun_core::{self as bun, env_var, fmt as bun_fmt};
 use bun_core::{ZStr, strings};
+#[cfg(any(windows, target_os = "macos"))]
+use bun_dns::GetAddrInfoResult;
 use bun_dns::{
-    self, AddrInfoList, Backend as GetAddrInfoBackend, GetAddrInfo, GetAddrInfoResult,
-    Options as GetAddrInfoOptions, ResultList as GetAddrInfoResultList,
+    self, AddrInfoList, Backend as GetAddrInfoBackend, GetAddrInfo, Options as GetAddrInfoOptions,
+    ResultList as GetAddrInfoResultList,
 };
 use bun_io::JsKeepAlive;
 use bun_jsc::bindgen::{JsLocal, JsScope};
@@ -57,7 +58,7 @@ pub(crate) mod netc {
     pub(crate) use bun_libuv_sys::{
         addrinfo, sockaddr, sockaddr_in, sockaddr_in6, sockaddr_storage,
     };
-    pub(crate) use bun_sys::windows::ws2_32::{AF_INET, AF_INET6, AF_UNSPEC, SOCK_STREAM};
+    pub(crate) use bun_sys::windows::ws2_32::{AF_INET, AF_INET6, AF_UNSPEC};
     /// The libuv spelling: `c_ares::Error::init_eai` reads UV_EAI_* codes on Windows.
     pub(crate) const EAI_NONAME: core::ffi::c_int = bun_libuv_sys::UV_EAI_NONAME;
 }
@@ -230,7 +231,7 @@ fn normalize_dns_name<'a>(name: &'a [u8], backend: &mut GetAddrInfoBackend) -> &
 // ResolveInfoRequest<T> — generic c-ares record request (SRV/SOA/TXT/…)
 // ──────────────────────────────────────────────────────────────────────────
 
-/// Each c-ares reply struct implements this with its record-type tag.
+/// A record type: the owner of its reply, or a marker where several share one.
 pub(crate) trait CAresRecordType: Sized + 'static {
     const TYPE_NAME: &'static str;
     /// `"query" + ucfirst(TYPE_NAME)` — each impl carries the precomputed
@@ -238,11 +239,10 @@ pub(crate) trait CAresRecordType: Sized + 'static {
     const SYSCALL: &'static str;
     /// The DNS RR type passed to `ares_query`.
     const NS_TYPE: c_ares::NSType;
-    /// The `ares_callback` thunk that parses raw reply bytes for this record type
-    /// and forwards to `ResolveInfoRequest<Self>::complete`. Used as
-    /// `ResolveHandler::RAW_CALLBACK` for the generic `Channel::resolve` dispatch.
-    const RAW_CALLBACK: unsafe extern "C" fn(*mut c_void, c_int, c_int, *mut u8, c_int);
     const KIND: QueryKind;
+    type Reply;
+    fn parse_reply(buffer: &[u8]) -> Result<Self::Reply, c_ares::Error>;
+    fn to_js(reply: &Self::Reply, global: &JSGlobalObject) -> JsResult<JSValue>;
 }
 
 pub(crate) struct ResolveInfoRequest<T: CAresRecordType> {
@@ -250,16 +250,13 @@ pub(crate) struct ResolveInfoRequest<T: CAresRecordType> {
     _record: PhantomData<T>,
 }
 
-impl<T: CAresRecordType> ResolveInfoRequest<T> {
-    fn complete<R>(
-        self,
-        result: Result<impl DerefMut<Target = R>, c_ares::Error>,
-        to_js: impl Fn(&mut R, &JSGlobalObject, &'static [u8]) -> JsResult<JSValue>,
-    ) {
-        match result {
-            Ok(mut reply) => self
-                .query
-                .resolve(|global| to_js(&mut reply, global, T::TYPE_NAME.as_bytes())),
+impl<T: CAresRecordType> c_ares::ResolveHandler for ResolveInfoRequest<T> {
+    const LOOKUP_NAME: &'static [u8] = T::TYPE_NAME.as_bytes();
+    const NS_TYPE: c_ares::NSType = T::NS_TYPE;
+
+    fn on_reply(self: Box<Self>, result: Result<&[u8], c_ares::Error>) {
+        match result.and_then(T::parse_reply) {
+            Ok(reply) => self.query.resolve(|global| T::to_js(&reply, global)),
             Err(err) => self
                 .query
                 .reject(err, T::SYSCALL.as_bytes())
@@ -268,18 +265,8 @@ impl<T: CAresRecordType> ResolveInfoRequest<T> {
     }
 }
 
-// Wires `ResolveInfoRequest<T>` into `Channel::resolve` — the per-record
-// `T::RAW_CALLBACK` parses the raw DNS reply and calls back into
-// `complete`.
-impl<T: CAresRecordType> c_ares::ResolveHandler for ResolveInfoRequest<T> {
-    const LOOKUP_NAME: &'static [u8] = T::TYPE_NAME.as_bytes();
-    const NS_TYPE: c_ares::NSType = T::NS_TYPE;
-    const RAW_CALLBACK: unsafe extern "C" fn(*mut c_void, c_int, c_int, *mut u8, c_int) =
-        T::RAW_CALLBACK;
-}
-
 impl c_ares::HostentHandler for PendingQuery {
-    fn on_hostent(self: Box<Self>, result: Result<&mut c_ares::struct_hostent, c_ares::Error>) {
+    fn on_hostent(self: Box<Self>, result: Result<&c_ares::struct_hostent<'_>, c_ares::Error>) {
         match result {
             Ok(host) => {
                 self.resolve(|global| super::cares_jsc::hostent_to_js_response(host, global, b""))
@@ -290,10 +277,10 @@ impl c_ares::HostentHandler for PendingQuery {
 }
 
 impl c_ares::NameinfoHandler for PendingQuery {
-    fn on_nameinfo(self: Box<Self>, result: Result<c_ares::struct_nameinfo, c_ares::Error>) {
+    fn on_nameinfo(self: Box<Self>, result: Result<c_ares::struct_nameinfo<'_>, c_ares::Error>) {
         match result {
-            Ok(mut info) => {
-                self.resolve(|global| super::cares_jsc::nameinfo_to_js_response(&mut info, global))
+            Ok(info) => {
+                self.resolve(|global| super::cares_jsc::nameinfo_to_js_response(&info, global))
             }
             Err(err) => self.reject(err, b"getnameinfo").request_completed(),
         }
@@ -405,7 +392,7 @@ mod lib_c {
                 debug_timer,
             );
             *self = match result {
-                Ok(list) => LibcBackend::Success(GetAddrInfoResult::to_list(&list)),
+                Ok(list) => LibcBackend::Success(list.to_list()),
                 Err(err) => LibcBackend::Err(err),
             };
         }
@@ -413,7 +400,7 @@ mod lib_c {
 }
 
 impl c_ares::AddrInfoHandler for PendingQuery {
-    fn on_addr_info(self: Box<Self>, result: Result<&mut c_ares::AddrInfo, c_ares::Error>) {
+    fn on_addr_info(self: Box<Self>, result: Result<&c_ares::AddrInfo<'_>, c_ares::Error>) {
         bun_output::scoped_log!(DNSLookup, "onCaresComplete");
         match result {
             Ok(info) => {
@@ -801,6 +788,7 @@ impl Resolver {
 pub(crate) mod internal {
     use super::*;
     use crate::generated_bindgen::dns::DNSCacheStats;
+    use bun_dns::Address;
     use bun_http::H3::PendingConnect;
     use bun_threading::Guarded;
     use core::sync::atomic::AtomicBool;
@@ -1110,52 +1098,24 @@ pub(crate) mod internal {
         let family = get_hints().ai_family;
         #[cfg(windows)]
         let family = netc::AF_UNSPEC;
-        let mut addrs: Vec<SockaddrStorage> = [
+        let addrs = [
             IpAddr::V6(Ipv6Addr::LOCALHOST),
             IpAddr::V4(Ipv4Addr::LOCALHOST),
         ]
-        .into_iter()
-        .filter(|ip| family == netc::AF_UNSPEC || ip.is_ipv6() == (family == netc::AF_INET6))
-        .map(|ip| bun_dns::Address::from_ip(ip, port).into_storage())
-        .collect();
-        let chain = addrinfo_chain(&mut addrs);
-        process_results(chain.as_ptr())
+        .map(|ip| Address::from_ip(ip, port));
+        process_results(
+            addrs
+                .iter()
+                .filter(|addr| family == netc::AF_UNSPEC || addr.family() == family)
+                .map(Address::as_bytes),
+        )
     }
 
     /// Chrome's `IsAllLocalhostOfOneFamily`: every address is loopback and only one family is present, the shape glibc's AI_ADDRCONFIG produces for a hosts-file loopback name (crbug 42058 / 49024).
-    fn is_all_loopback_of_one_family(mut info: *const AddrInfo) -> bool {
-        let (mut saw_v4, mut saw_v6) = (false, false);
-        while !info.is_null() {
-            // SAFETY: `info` walks a live addrinfo list whose `ai_addr` matches `ai_family`.
-            unsafe {
-                let addr = (*info).ai_addr;
-                if addr.is_null() {
-                    return false;
-                }
-                match (*info).ai_family {
-                    netc::AF_INET => {
-                        let octets = (*addr.cast::<netc::sockaddr_in>())
-                            .sin_addr
-                            .s_addr
-                            .to_ne_bytes();
-                        if !Ipv4Addr::from(octets).is_loopback() {
-                            return false;
-                        }
-                        saw_v4 = true;
-                    }
-                    netc::AF_INET6 => {
-                        let octets = (*addr.cast::<netc::sockaddr_in6>()).sin6_addr.s6_addr;
-                        if !Ipv6Addr::from(octets).is_loopback() {
-                            return false;
-                        }
-                        saw_v6 = true;
-                    }
-                    _ => return false,
-                }
-                info = (*info).ai_next;
-            }
-        }
-        saw_v4 != saw_v6
+    fn is_all_loopback_of_one_family<'a>(addrs: impl Iterator<Item = &'a [u8]>) -> bool {
+        let mut families = addrs.map(family_of_loopback);
+        let first = families.next().flatten();
+        first.is_some() && families.all(|family| family == first)
     }
 
     unsafe extern "C" {
@@ -1174,8 +1134,11 @@ pub(crate) mod internal {
     #[repr(C)]
     pub(crate) struct ResultEntry {
         pub(crate) info: AddrInfo,
-        pub(crate) addr: SockaddrStorage,
+        /// A `sockaddr_storage` in C.
+        addr: [u64; 16],
     }
+    const _: () = assert!(size_of::<[u64; 16]>() == size_of::<SockaddrStorage>());
+    const _: () = assert!(align_of::<[u64; 16]>() == align_of::<SockaddrStorage>());
 
     // SAFETY: `info` points only into the slice of entries that it is in.
     unsafe impl Send for ResultEntry {}
@@ -1185,109 +1148,97 @@ pub(crate) mod internal {
     // Pack getaddrinfo results into one allocation with address families
     // interleaved (RFC 8305 §4) so an unroutable family can never fill all
     // CONCURRENT_CONNECTIONS parallel connect attempts. See #4938 / #33278.
-    fn process_results(info: *const AddrInfo) -> Box<[ResultEntry]> {
-        let mut count: usize = 0;
-        let mut n_first: usize = 0;
-        let first_family = if info.is_null() {
-            netc::AF_UNSPEC
-        } else {
-            // SAFETY: info is a live addrinfo node; freed by caller after we return.
-            unsafe { (*info).ai_family }
-        };
-        let mut info_: *const AddrInfo = info;
-        while !info_.is_null() {
-            // SAFETY: info_ walks the libc-allocated addrinfo list; freed by caller after we return.
-            unsafe {
-                count += 1;
-                if (*info_).ai_family == first_family {
-                    n_first += 1;
-                }
-                info_ = (*info_).ai_next;
-            }
+    fn process_results<'a>(addrs: impl Iterator<Item = &'a [u8]> + Clone) -> Box<[ResultEntry]> {
+        let mut total = FamilyCounts::default();
+        for addr in addrs.clone() {
+            total.add(addr, 0);
         }
-        let n_other = count - n_first;
-
-        let mut results: Box<[MaybeUninit<ResultEntry>]> = Box::new_uninit_slice(count);
-
-        let mut i_first: usize = 0;
-        let mut i_other: usize = 0;
-        info_ = info;
-        while !info_.is_null() {
-            // SAFETY: info_ is a valid addrinfo node (counted above); the slot
-            // mapping is a bijection over 0..count so every MaybeUninit slot
-            // is fully initialized exactly once.
-            unsafe {
-                let i = if (*info_).ai_family == first_family {
-                    let i = i_first;
-                    i_first += 1;
-                    if i < n_other { 2 * i } else { n_other + i }
-                } else {
-                    let j = i_other;
-                    i_other += 1;
-                    if j < n_first { 2 * j + 1 } else { n_first + j }
-                };
-                let entry = results[i].as_mut_ptr();
-                (*entry).info = *info_;
-                // Always initialize `addr`: assume_init() below requires every byte written.
-                // Windows getaddrinfo may return non-null ai_addr with families other than
-                // AF_INET/AF_INET6; zero `addr` for those rather than leaving it uninit.
-                if !(*info_).ai_addr.is_null() && (*info_).ai_family == netc::AF_INET {
-                    (*entry).addr = bun_core::ffi::zeroed();
-                    let addr_in = (&raw mut (*entry).addr).cast::<netc::sockaddr_in>();
-                    *addr_in = *(*info_).ai_addr.cast::<netc::sockaddr_in>();
-                } else if !(*info_).ai_addr.is_null() && (*info_).ai_family == netc::AF_INET6 {
-                    (*entry).addr = bun_core::ffi::zeroed();
-                    let addr_in = (&raw mut (*entry).addr).cast::<netc::sockaddr_in6>();
-                    *addr_in = *(*info_).ai_addr.cast::<netc::sockaddr_in6>();
-                } else {
-                    (*entry).addr = bun_core::ffi::zeroed();
-                }
-                info_ = (*info_).ai_next;
-            }
+        let mut results = ResultEntry::zeroed_slice(total.first + total.other);
+        let (mut placed, pairs) = (FamilyCounts::default(), total.first.min(total.other));
+        for addr in addrs {
+            results[placed.add(addr, pairs)].set_addr(addr);
         }
+        link_results(results)
+    }
 
-        // SAFETY: every slot 0..count was written above
-        let mut results: Box<[ResultEntry]> = unsafe { results.assume_init() };
-
-        // set up pointers
-        for idx in 0..count {
-            let (left, right) = results.split_at_mut(idx + 1);
-            let entry = &mut left[idx];
-            entry.info.ai_canonname = ptr::null_mut();
-            if idx + 1 < count {
-                entry.info.ai_next = &raw mut right[0].info;
-            } else {
-                entry.info.ai_next = ptr::null_mut();
-            }
-            if !entry.info.ai_addr.is_null() {
-                entry.info.ai_addr = (&raw mut entry.addr).cast::<Sockaddr>();
-            }
+    fn link_results(mut results: Box<[ResultEntry]>) -> Box<[ResultEntry]> {
+        let mut next = ptr::null_mut();
+        for entry in results.iter_mut().rev() {
+            entry.info.ai_next = next;
+            entry.info.ai_addr = (&raw mut entry.addr).cast::<Sockaddr>();
+            next = &raw mut entry.info;
         }
 
         results
     }
 
-    /// addrinfo nodes for [`process_results`]; they point into `addrs`, which must outlive them.
-    fn addrinfo_chain(addrs: &mut [SockaddrStorage]) -> Box<[AddrInfo]> {
-        let mut nodes: Box<[AddrInfo]> = addrs
-            .iter_mut()
-            .map(|addr| {
-                let mut node: AddrInfo = bun_core::ffi::zeroed();
-                node.ai_family = addr.ss_family as c_int;
-                node.ai_socktype = netc::SOCK_STREAM;
-                node.ai_addrlen = if node.ai_family == netc::AF_INET6 {
-                    size_of::<netc::sockaddr_in6>() as _
-                } else {
-                    size_of::<netc::sockaddr_in>() as _
-                };
-                node.ai_addr = ptr::from_mut(addr).cast::<Sockaddr>();
-                node
-            })
-            .collect();
-        for i in 1..nodes.len() {
-            nodes[i - 1].ai_next = &raw mut nodes[i];
+    impl ResultEntry {
+        fn zeroed_slice(len: usize) -> Box<[Self]> {
+            let zeroed = |_| Self {
+                info: bun_core::ffi::zeroed(),
+                addr: [0; 16],
+            };
+            (0..len).map(zeroed).collect()
         }
-        nodes
+
+        /// uSockets reads `ai_family`, `ai_addrlen`, `ai_addr` and `ai_next`.
+        fn set_addr(&mut self, addr: &[u8]) {
+            let storage = bun_core::bytes_of_mut(&mut self.addr);
+            let len = addr.len().min(storage.len());
+            self.info.ai_family = family_of(addr);
+            self.info.ai_addrlen = len as _;
+            // Windows getaddrinfo may return other families than AF_INET and AF_INET6.
+            if let netc::AF_INET | netc::AF_INET6 = self.info.ai_family {
+                storage[..len].copy_from_slice(&addr[..len]);
+            }
+        }
+    }
+
+    /// The family has the same offset in every sockaddr.
+    fn family_of(addr: &[u8]) -> c_int {
+        bun_core::read_prefix::<netc::sockaddr_in>(addr)
+            .map_or(netc::AF_UNSPEC, |addr| addr.sin_family.into())
+    }
+
+    /// `None` unless `addr` is a loopback address.
+    fn family_of_loopback(addr: &[u8]) -> Option<c_int> {
+        let family = family_of(addr);
+        let ip = match family {
+            netc::AF_INET => bun_core::read_prefix::<netc::sockaddr_in>(addr)
+                .map(|v4| IpAddr::from(v4.sin_addr.s_addr.to_ne_bytes())),
+            netc::AF_INET6 => bun_core::read_prefix::<netc::sockaddr_in6>(addr)
+                .map(|v6| IpAddr::from(v6.sin6_addr.s6_addr)),
+            _ => None,
+        };
+        ip?.is_loopback().then_some(family)
+    }
+
+    /// Addresses of the family that comes first, and of any other.
+    #[derive(Default)]
+    struct FamilyCounts {
+        first_family: Option<c_int>,
+        first: usize,
+        other: usize,
+    }
+
+    impl FamilyCounts {
+        /// Counts `addr`, and returns its index in a list whose first `pairs` pairs have one of each.
+        fn add(&mut self, addr: &[u8], pairs: usize) -> usize {
+            let family = family_of(addr);
+            let is_other = *self.first_family.get_or_insert(family) != family;
+            let count = if is_other {
+                &mut self.other
+            } else {
+                &mut self.first
+            };
+            let i = *count;
+            *count += 1;
+            if i < pairs {
+                2 * i + usize::from(is_other)
+            } else {
+                pairs + i
+            }
+        }
     }
 
     fn after_result_entries(req: Arc<Request>, result: Result<Box<[ResultEntry]>, c_int>) {
@@ -1335,7 +1286,7 @@ pub(crate) mod internal {
             // Chrome's retries: AI_ADDRCONFIG left nothing, or only one family's loopback.
             if (hints.ai_flags & netc::AI_ADDRCONFIG) != 0
                 && match &result {
-                    Ok(list) => is_all_loopback_of_one_family(&raw const **list),
+                    Ok(list) => is_all_loopback_of_one_family(list.addresses()),
                     Err(err) => *err == netc::EAI_NONAME,
                 }
             {
@@ -1347,7 +1298,7 @@ pub(crate) mod internal {
             }
             result
         };
-        after_result_entries(req, result.map(|list| process_results(&raw const *list)));
+        after_result_entries(req, result.map(|list| process_results(list.addresses())));
     }
 
     #[cfg(target_os = "macos")]
@@ -1369,7 +1320,7 @@ pub(crate) mod internal {
             let (tag, ptr) = (*loop_).internal_loop_data.get_parent();
             jsc::EventLoopHandle::from_tag_ptr(tag, ptr)
         };
-        let Some(shared) = dns_sd::SharedConnection::get(
+        let Some(mut shared) = dns_sd::SharedConnection::get(
             crate::api::bun::process::event_loop_handle_to_ctx(handle),
         ) else {
             return Err(req);
@@ -1383,36 +1334,18 @@ pub(crate) mod internal {
         Ok(())
     }
 
-    /// Complete an internal request: build an addrinfo chain and reuse `process_results` (happy-eyeballs order).
+    /// Complete an internal request through `process_results` (happy-eyeballs order).
     #[cfg(target_os = "macos")]
-    pub(super) fn dns_sd_complete(req: Arc<Request>, results: &[GetAddrInfoResult]) {
-        let port = req.key.port;
-
+    pub(super) fn dns_sd_complete(req: Arc<Request>, results: &mut [GetAddrInfoResult]) {
         if results.is_empty() {
             after_result_entries(req, Err(dns_sd::EMPTY_STATUS));
             return;
         }
 
-        let mut addrs: Box<[SockaddrStorage]> = results
-            .iter()
-            .map(|r| {
-                let mut storage = r.address.into_storage();
-                match storage.ss_family as c_int {
-                    // SAFETY: ss_family == AF_INET ⇒ storage holds a sockaddr_in.
-                    netc::AF_INET => unsafe {
-                        (*(&raw mut storage).cast::<netc::sockaddr_in>()).sin_port = port.to_be()
-                    },
-                    // SAFETY: ss_family == AF_INET6 ⇒ storage holds a sockaddr_in6.
-                    netc::AF_INET6 => unsafe {
-                        (*(&raw mut storage).cast::<netc::sockaddr_in6>()).sin6_port = port.to_be()
-                    },
-                    _ => {}
-                }
-                storage
-            })
-            .collect();
-        let chain = addrinfo_chain(&mut addrs);
-        let results = process_results(chain.as_ptr());
+        for result in results.iter_mut() {
+            result.address.set_port(req.key.port);
+        }
+        let results = process_results(results.iter().map(|result| result.address.as_bytes()));
         after_result_entries(req, Ok(results));
     }
 
@@ -1440,7 +1373,7 @@ pub(crate) mod internal {
     fn addresses_for_testing(
         global: &JSGlobalObject,
         addresses: JSValue,
-    ) -> JsResult<Vec<SockaddrStorage>> {
+    ) -> JsResult<Vec<Address>> {
         if !addresses.is_array() {
             return Err(
                 global.throw_invalid_arguments(format_args!("expected addresses: string[]"))
@@ -1455,7 +1388,7 @@ pub(crate) mod internal {
             .map(|i| {
                 let address = addresses.get_index(global, i as u32)?.to_utf8(global)?;
                 match bun_core::ip_address::to_ip_address(address.slice()) {
-                    Some(ip) => Ok(bun_dns::Address::from_ip(ip, 0).into_storage()),
+                    Some(ip) => Ok(Address::from_ip(ip, 0)),
                     None => Err(global.throw_invalid_arguments(format_args!(
                         "addresses[{i}] is not an IPv4 or IPv6 literal"
                     ))),
@@ -1469,15 +1402,15 @@ pub(crate) mod internal {
         is_localhost_name(hostname)
     }
 
-    /// `bun:internal-for-testing`: [`is_all_loopback_of_one_family`] over `addresses` laid out as a getaddrinfo() answer.
+    /// `bun:internal-for-testing`: [`is_all_loopback_of_one_family`] over `addresses`.
     pub(crate) fn is_all_loopback_of_one_family_for_testing<'a>(
         cx: &mut JsScope<'a>,
         addresses: JsLocal<'a>,
     ) -> JsResult<bool> {
-        let mut addrs = addresses_for_testing(cx.global(), addresses.to_js())?;
-        let chain = addrinfo_chain(&mut addrs);
-        let head = chain.first().map_or(ptr::null(), ptr::from_ref);
-        Ok(is_all_loopback_of_one_family(head))
+        let addrs = addresses_for_testing(cx.global(), addresses.to_js())?;
+        Ok(is_all_loopback_of_one_family(
+            addrs.iter().map(Address::as_bytes),
+        ))
     }
 
     /// `bun:internal-for-testing`: seed the connect-path DNS cache for `hostname`
@@ -1489,12 +1422,11 @@ pub(crate) mod internal {
         addresses: JsLocal<'a>,
     ) -> JsResult<core::iter::Take<core::array::IntoIter<i32, MAX_ADDRESSES_FOR_TESTING>>> {
         let global = cx.global();
-        let mut addrs = addresses_for_testing(global, addresses.to_js())?;
+        let addrs = addresses_for_testing(global, addresses.to_js())?;
         if addrs.is_empty() {
             return Err(global.throw_invalid_arguments(format_args!("addresses must not be empty")));
         }
-        let chain = addrinfo_chain(&mut addrs);
-        let results = process_results(chain.as_ptr());
+        let results = process_results(addrs.iter().map(Address::as_bytes));
 
         let mut families = [0i32; MAX_ADDRESSES_FOR_TESTING];
         for (family, entry) in families.iter_mut().zip(results.iter()) {
@@ -1744,7 +1676,8 @@ pub(crate) mod internal {
     extern "C" fn Bun__addrinfo_getRequestResult(req: &Request) -> RequestResult {
         match req.result.get().unwrap() {
             Ok(entries) => RequestResult {
-                entries: entries.as_ptr(),
+                // Empty if no `addrinfo` had an address.
+                entries: entries.first().map_or(ptr::null(), ptr::from_ref),
                 error: 0,
             },
             Err(error) => RequestResult {
@@ -1771,7 +1704,7 @@ pub(crate) mod internal {
 
 // ──────────────────────────────────────────────────────────────────────────
 // CAresRecordType impls — each (struct, tag) pair is modeled as a
-// trait impl. ns/ptr/cname share `struct_hostent` and a/aaaa share
+// trait impl. ns/ptr/cname share `OwnedHostent` and a/aaaa share
 // `hostent_with_ttls`, so those get marker types to
 // keep the per-record monomorphizations (and pending caches) distinct.
 // ──────────────────────────────────────────────────────────────────────────
@@ -1785,21 +1718,20 @@ macro_rules! impl_cares_record_type {
             const TYPE_NAME: &'static str = $tag;
             const SYSCALL: &'static str = $syscall;
             const NS_TYPE: c_ares::NSType = c_ares::NSType::$ns_type;
-            const RAW_CALLBACK: unsafe extern "C" fn(*mut c_void, c_int, c_int, *mut u8, c_int) =
-                c_ares::ares_reply_callback::<$ty, ResolveInfoRequest<$ty>>;
             const KIND: QueryKind = QueryKind::$kind;
-        }
-        // Generic reply handler — forwards to `complete`.
-        impl c_ares::ReplyHandler<$ty> for ResolveInfoRequest<$ty> {
-            fn on_reply(self: Box<Self>, result: Result<&mut $ty, c_ares::Error>) {
-                self.complete(result, $to_js);
+            type Reply = Self;
+            fn parse_reply(buffer: &[u8]) -> Result<Self, c_ares::Error> {
+                <$ty>::parse(buffer)?.ok_or(c_ares::Error::ENOTFOUND)
+            }
+            fn to_js(reply: &Self, global: &JSGlobalObject) -> JsResult<JSValue> {
+                $to_js(reply.get(), global)
             }
         }
     };
 }
 
 impl_cares_record_type!(
-    c_ares::struct_ares_srv_reply,
+    c_ares::OwnedSrvReply,
     "srv",
     "querySrv",
     Srv,
@@ -1807,7 +1739,7 @@ impl_cares_record_type!(
     super::cares_jsc::srv_reply_to_js_response
 );
 impl_cares_record_type!(
-    c_ares::struct_ares_soa_reply,
+    c_ares::OwnedSoaReply,
     "soa",
     "querySoa",
     Soa,
@@ -1815,7 +1747,7 @@ impl_cares_record_type!(
     super::cares_jsc::soa_reply_to_js_response
 );
 impl_cares_record_type!(
-    c_ares::struct_ares_txt_reply,
+    c_ares::OwnedTxtReply,
     "txt",
     "queryTxt",
     Txt,
@@ -1823,7 +1755,7 @@ impl_cares_record_type!(
     super::cares_jsc::txt_reply_to_js_response
 );
 impl_cares_record_type!(
-    c_ares::struct_ares_naptr_reply,
+    c_ares::OwnedNaptrReply,
     "naptr",
     "queryNaptr",
     Naptr,
@@ -1831,7 +1763,7 @@ impl_cares_record_type!(
     super::cares_jsc::naptr_reply_to_js_response
 );
 impl_cares_record_type!(
-    c_ares::struct_ares_mx_reply,
+    c_ares::OwnedMxReply,
     "mx",
     "queryMx",
     Mx,
@@ -1839,7 +1771,7 @@ impl_cares_record_type!(
     super::cares_jsc::mx_reply_to_js_response
 );
 impl_cares_record_type!(
-    c_ares::struct_ares_caa_reply,
+    c_ares::OwnedCaaReply,
     "caa",
     "queryCaa",
     Caa,
@@ -1851,34 +1783,31 @@ impl CAresRecordType for c_ares::struct_any_reply {
     const TYPE_NAME: &'static str = "any";
     const SYSCALL: &'static str = "queryAny";
     const NS_TYPE: c_ares::NSType = c_ares::NSType::ns_t_any;
-    const RAW_CALLBACK: unsafe extern "C" fn(*mut c_void, c_int, c_int, *mut u8, c_int) =
-        c_ares::struct_any_reply::callback_wrapper::<ResolveInfoRequest<c_ares::struct_any_reply>>;
     const KIND: QueryKind = QueryKind::Any;
-}
-impl c_ares::AnyHandler for ResolveInfoRequest<c_ares::struct_any_reply> {
-    fn on_any(self: Box<Self>, result: Result<Box<c_ares::struct_any_reply>, c_ares::Error>) {
-        self.complete(result, super::cares_jsc::any_reply_to_js_response);
+    type Reply = Self;
+    fn parse_reply(buffer: &[u8]) -> Result<Self, c_ares::Error> {
+        Self::parse(buffer)
+    }
+    fn to_js(reply: &Self, global: &JSGlobalObject) -> JsResult<JSValue> {
+        super::cares_jsc::any_reply_to_js_response(reply, global)
     }
 }
 
-/// A record type whose reply is a `struct_hostent`.
+/// A record type whose reply is an `OwnedHostent`.
 macro_rules! hostent_record_type {
-    ($name:ident, $tag:literal, $syscall:literal, $kind:ident, $ns_type:ident, $wrapper:ident) => {
+    ($name:ident, $tag:literal, $syscall:literal, $kind:ident, $ns_type:ident, $parse:ident) => {
         pub(crate) enum $name {}
         impl CAresRecordType for $name {
             const TYPE_NAME: &'static str = $tag;
             const SYSCALL: &'static str = $syscall;
             const NS_TYPE: c_ares::NSType = c_ares::NSType::$ns_type;
-            const RAW_CALLBACK: unsafe extern "C" fn(*mut c_void, c_int, c_int, *mut u8, c_int) =
-                c_ares::struct_hostent::$wrapper::<ResolveInfoRequest<$name>>;
             const KIND: QueryKind = QueryKind::$kind;
-        }
-        impl c_ares::HostentHandler for ResolveInfoRequest<$name> {
-            fn on_hostent(
-                self: Box<Self>,
-                result: Result<&mut c_ares::struct_hostent, c_ares::Error>,
-            ) {
-                self.complete(result, super::cares_jsc::hostent_to_js_response);
+            type Reply = c_ares::OwnedHostent;
+            fn parse_reply(buffer: &[u8]) -> Result<Self::Reply, c_ares::Error> {
+                c_ares::OwnedHostent::$parse(buffer)?.ok_or(c_ares::Error::ENOTFOUND)
+            }
+            fn to_js(reply: &Self::Reply, global: &JSGlobalObject) -> JsResult<JSValue> {
+                super::cares_jsc::hostent_to_js_response(reply.get(), global, $tag.as_bytes())
             }
         }
     };
@@ -1892,39 +1821,27 @@ macro_rules! hostent_ttls_record_type {
             const TYPE_NAME: &'static str = $tag;
             const SYSCALL: &'static str = $syscall;
             const NS_TYPE: c_ares::NSType = c_ares::NSType::$ns_type;
-            const RAW_CALLBACK: unsafe extern "C" fn(*mut c_void, c_int, c_int, *mut u8, c_int) =
-                c_ares::hostent_with_ttls::callback_wrapper::<ResolveInfoRequest<$name>>;
             const KIND: QueryKind = QueryKind::$kind;
-        }
-        impl c_ares::HostentWithTtlsHandler for ResolveInfoRequest<$name> {
-            const PARSE: fn(&[u8]) -> Result<Box<c_ares::hostent_with_ttls>, c_ares::Error> =
-                c_ares::hostent_with_ttls::$parse;
-            fn on_hostent_with_ttls(
-                self: Box<Self>,
-                result: Result<Box<c_ares::hostent_with_ttls>, c_ares::Error>,
-            ) {
-                self.complete(result, super::cares_jsc::hostent_with_ttls_to_js_response);
+            type Reply = Box<c_ares::hostent_with_ttls>;
+            fn parse_reply(buffer: &[u8]) -> Result<Self::Reply, c_ares::Error> {
+                c_ares::hostent_with_ttls::$parse(buffer)
+            }
+            fn to_js(reply: &Self::Reply, global: &JSGlobalObject) -> JsResult<JSValue> {
+                super::cares_jsc::hostent_with_ttls_to_js_response(reply, global)
             }
         }
     };
 }
 
-hostent_record_type!(NsHostent, "ns", "queryNs", Ns, ns_t_ns, callback_wrapper_ns);
-hostent_record_type!(
-    PtrHostent,
-    "ptr",
-    "queryPtr",
-    Ptr,
-    ns_t_ptr,
-    callback_wrapper_ptr
-);
+hostent_record_type!(NsHostent, "ns", "queryNs", Ns, ns_t_ns, parse_ns);
+hostent_record_type!(PtrHostent, "ptr", "queryPtr", Ptr, ns_t_ptr, parse_ptr);
 hostent_record_type!(
     CnameHostent,
     "cname",
     "queryCname",
     Cname,
     ns_t_cname,
-    callback_wrapper_cname
+    parse_cname
 );
 hostent_ttls_record_type!(AHostentWithTtls, "a", "queryA", A, ns_t_a, parse_a);
 hostent_ttls_record_type!(
@@ -2546,25 +2463,25 @@ impl Resolver {
                 self.do_resolve_cares::<c_ares::struct_any_reply>(name, global_this, context)
             }
             RecordType::CAA => {
-                self.do_resolve_cares::<c_ares::struct_ares_caa_reply>(name, global_this, context)
+                self.do_resolve_cares::<c_ares::OwnedCaaReply>(name, global_this, context)
             }
             RecordType::CNAME => self.do_resolve_cares::<CnameHostent>(name, global_this, context),
             RecordType::MX => {
-                self.do_resolve_cares::<c_ares::struct_ares_mx_reply>(name, global_this, context)
+                self.do_resolve_cares::<c_ares::OwnedMxReply>(name, global_this, context)
             }
             RecordType::NAPTR => {
-                self.do_resolve_cares::<c_ares::struct_ares_naptr_reply>(name, global_this, context)
+                self.do_resolve_cares::<c_ares::OwnedNaptrReply>(name, global_this, context)
             }
             RecordType::NS => self.do_resolve_cares::<NsHostent>(name, global_this, context),
             RecordType::PTR => self.do_resolve_cares::<PtrHostent>(name, global_this, context),
             RecordType::SOA => {
-                self.do_resolve_cares::<c_ares::struct_ares_soa_reply>(name, global_this, context)
+                self.do_resolve_cares::<c_ares::OwnedSoaReply>(name, global_this, context)
             }
             RecordType::SRV => {
-                self.do_resolve_cares::<c_ares::struct_ares_srv_reply>(name, global_this, context)
+                self.do_resolve_cares::<c_ares::OwnedSrvReply>(name, global_this, context)
             }
             RecordType::TXT => {
-                self.do_resolve_cares::<c_ares::struct_ares_txt_reply>(name, global_this, context)
+                self.do_resolve_cares::<c_ares::OwnedTxtReply>(name, global_this, context)
             }
         }
     }
@@ -2784,21 +2701,21 @@ impl Resolver {
         global_resolve_srv,
         resolve_srv,
         "resolveSrv",
-        c_ares::struct_ares_srv_reply,
+        c_ares::OwnedSrvReply,
         false
     );
     resolve_record_fn!(
         global_resolve_soa,
         resolve_soa,
         "resolveSoa",
-        c_ares::struct_ares_soa_reply,
+        c_ares::OwnedSoaReply,
         true
     );
     resolve_record_fn!(
         global_resolve_caa,
         resolve_caa,
         "resolveCaa",
-        c_ares::struct_ares_caa_reply,
+        c_ares::OwnedCaaReply,
         false
     );
     resolve_record_fn!(global_resolve_ns, resolve_ns, "resolveNs", NsHostent, true);
@@ -2820,21 +2737,21 @@ impl Resolver {
         global_resolve_mx,
         resolve_mx,
         "resolveMx",
-        c_ares::struct_ares_mx_reply,
+        c_ares::OwnedMxReply,
         false
     );
     resolve_record_fn!(
         global_resolve_naptr,
         resolve_naptr,
         "resolveNaptr",
-        c_ares::struct_ares_naptr_reply,
+        c_ares::OwnedNaptrReply,
         false
     );
     resolve_record_fn!(
         global_resolve_txt,
         resolve_txt,
         "resolveTxt",
-        c_ares::struct_ares_txt_reply,
+        c_ares::OwnedTxtReply,
         false
     );
     resolve_record_fn!(
@@ -3080,8 +2997,7 @@ impl Resolver {
             )
         } == 1
         {
-            // SAFETY: `channel` is a live handle from `ares_init_options`; `addr` is the 16-byte in6_addr.
-            unsafe { c_ares::ares_set_local_ip6(channel, addr.as_ptr()) };
+            c_ares::ares_set_local_ip6(channel, &addr);
             return Ok(c_ares::AF::INET6);
         }
 
@@ -3117,19 +3033,7 @@ impl Resolver {
 
         let mut triples_iterator = argument.array_iterator(global_this)?;
 
-        if triples_iterator.len == 0 {
-            // SAFETY: FFI; channel is a live initialized ares_channel; null clears the server list.
-            let r = unsafe { c_ares::ares_set_servers_ports(channel, ptr::null_mut()) };
-            if r != c_ares::ARES_SUCCESS {
-                let err = c_ares::Error::get(r).unwrap();
-                return Err(global_this.throw_value(global_this.create_error_instance(
-                    format_args!("ares_set_servers_ports error: {}", err.label()),
-                )));
-            }
-            return Ok(());
-        }
-
-        let mut entries: Vec<c_ares::struct_ares_addr_port_node> =
+        let mut entries: Vec<c_ares::struct_ares_addr_port_node<'_>> =
             Vec::with_capacity(triples_iterator.len as usize);
 
         while let Some(triple) = triples_iterator.next()? {
@@ -3169,8 +3073,7 @@ impl Resolver {
                 netc::AF_INET6
             };
 
-            let mut node: c_ares::struct_ares_addr_port_node = bun_core::ffi::zeroed();
-            node.next = ptr::null_mut();
+            let mut node: c_ares::struct_ares_addr_port_node<'_> = bun_core::ffi::zeroed();
             node.family = af;
             node.udp_port = port;
             node.tcp_port = port;
@@ -3193,27 +3096,18 @@ impl Resolver {
 
             entries.push(node);
         }
-        // Link the list AFTER the Vec is fully populated (no reallocs past this point).
-        for i in 1..entries.len() {
-            // Reshaped for borrowck — raw ptr to avoid two &mut into entries.
-            let next: *mut _ = &raw mut entries[i];
-            entries[i - 1].next = next;
+        let mut head = None;
+        for entry in entries.iter_mut().rev() {
+            entry.next = head;
+            head = Some(&*entry);
         }
 
-        // SAFETY: FFI; channel is live; entries form a valid singly-linked list (next ptrs set above)
-        // and remain alive for the duration of the call (c-ares copies them internally).
-        let r = unsafe { c_ares::ares_set_servers_ports(channel, entries.as_mut_ptr()) };
-        if r != c_ares::ARES_SUCCESS {
-            let err = c_ares::Error::get(r).unwrap();
-            return Err(
-                global_this.throw_value(global_this.create_error_instance(format_args!(
-                    "ares_set_servers_ports error: {}",
-                    err.label()
-                ))),
-            );
-        }
-
-        Ok(())
+        channel.set_servers(head).map_err(|err| {
+            global_this.throw_value(global_this.create_error_instance(format_args!(
+                "ares_set_servers_ports error: {}",
+                err.label()
+            )))
+        })
     }
 
     pub(crate) fn set_global_servers(cx: &mut JsScope<'_>, servers: JsLocal<'_>) -> JsResult<()> {

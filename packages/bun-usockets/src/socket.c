@@ -241,7 +241,7 @@ void us_connecting_socket_close(struct us_connecting_socket_t *c) {
     if (c->pending_resolve_callback) {
         // The DNS callback has not been drained. Try to remove c from the
         // request's notify list so it never fires. Returns 0 if the result is
-        // already set (the callback has fired or is about to), in which case
+        // already set (the callback has fired), in which case
         // after_resolve will see c->closed and finish teardown.
         if (c->addrinfo_req && Bun__addrinfo_cancel(c->addrinfo_req, c)) {
 #ifdef _WIN32

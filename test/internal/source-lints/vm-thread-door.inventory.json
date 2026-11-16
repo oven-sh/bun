@@ -199,9 +199,6 @@
   "src/runtime/webcore/http_result_inbox.rs": {
     "AsyncHTTP::schedule": 1
   },
-  "src/runtime/webcore/s3/client.rs": {
-    "AsyncHTTP::schedule": 2
-  },
   "src/runtime/webcore/s3/simple_request.rs": {
     "AsyncHTTP::schedule": 1
   }

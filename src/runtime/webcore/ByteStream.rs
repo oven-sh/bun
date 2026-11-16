@@ -173,6 +173,13 @@ impl ProducerHold {
         self.source.set(Some(source));
     }
 
+    /// Cleared by `take`.
+    pub(crate) fn set_producer(&self, producer: streams::SourceHandle) {
+        if let Some(source) = self.source.get() {
+            source.producer.set(producer);
+        }
+    }
+
     fn sync_wrapper_root(&self) {
         if let Some(source) = self.source.get() {
             Self::sync_root(source);

@@ -502,17 +502,16 @@ pub(crate) fn run_task(
             // SAFETY: §Dispatch — tag identifies pointee.
             unsafe { FetchTasklet::on_progress_update(tasklet) }
         })?,
-        // `cast_ptr!` yields the heap-allocated S3 task; JS-thread dispatch
-        // is the sole owner here.
         task_tag::S3HttpSimpleTask => {
             feature_arm!([S3Client], |request: S3HttpSimpleTask| -> JsResult<()> {
-                S3HttpSimpleTask::on_response(request)?;
-                Ok(())
+                // SAFETY: §Dispatch — tag identifies pointee.
+                unsafe { S3HttpSimpleTask::on_response(request) }
             })?
         }
         task_tag::S3HttpDownloadStreamingTask => {
             feature_arm!([S3Client], |download: S3HttpDownloadStreamingTask| {
-                S3HttpDownloadStreamingTask::on_response(download);
+                // SAFETY: §Dispatch — tag identifies pointee.
+                unsafe { S3HttpDownloadStreamingTask::on_response(download) };
             })
         }
         task_tag::S3RefusedRequest => boxed_arm!(

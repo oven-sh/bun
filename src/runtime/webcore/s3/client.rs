@@ -3,14 +3,12 @@ use std::io::Write as _;
 use std::sync::Arc;
 
 use bun_collections::{ByteVecExt, VecExt};
-use bun_core::MutableString;
 use bun_http::HeadersExt as _;
 use bun_jsc::virtual_machine::VirtualMachine;
-use bun_jsc::{GlobalRef, JSValue, JsCell, JsResult, WeakGlobalRef};
-use bun_ptr::{AliasableBox, CellExt as _, OptionCellExt as _, RefCount, RefPtr};
+use bun_jsc::{GlobalRef, JSValue, JsCell, JsResult};
+use bun_ptr::{CellExt as _, OptionCellExt as _, RefCount, RefPtr};
 
 // Re-exports (thin aliases)
-pub(crate) use crate::webcore::s3::download_stream::S3HttpDownloadStreamingTask;
 pub(crate) use crate::webcore::s3::multipart::MultiPartUpload;
 pub(crate) use crate::webcore::s3::multipart_options::MultiPartUploadOptions;
 pub(crate) use bun_s3_signing::acl::ACL;
@@ -47,8 +45,10 @@ use crate::generated_bindgen::s3_upload_stream::{
 };
 use crate::webcore::ByteStream;
 use crate::webcore::ReadableStream;
+use crate::webcore::byte_stream::ProducerHold;
 use crate::webcore::readable_stream::Source as ReadableStreamPtr;
 use crate::webcore::readable_stream::Strong as ReadableStreamStrong;
+use crate::webcore::s3::download_stream::{S3HttpDownloadStreamingTask, fail_stream};
 use crate::webcore::s3::multipart::{State as MultiPartUploadState, UploadCallback};
 use crate::webcore::sink::ReadableSinkController;
 use crate::webcore::streams::{NetworkSink, SourceHandle};
@@ -286,69 +286,15 @@ pub(crate) fn list_objects(
     let headers = bun_http::Headers::from_pico_http_headers(&result.headers());
     let proxy_url = s3_simple_request::resolve_proxy(None, &result.url);
 
-    let task_ptr = bun_core::heap::into_raw(Box::new(S3HttpSimpleTask {
-        async_http_id: 0,
-        sign_result: result,
-        callback: Some(s3_simple_request::Callback::ListObjects(callback)),
-        headers,
-        http_ticket: None,
-        response_buffer: MutableString::default(),
-        result: bun_http::HTTPClientResult::default(),
-        concurrent_task: Default::default(),
-        proxy_url,
-        body: Box::default(),
-        _keep_alive: JsKeepAlive::active(),
-        signal_store: Default::default(),
-        abort_handle: bun_jsc::AbortHandle::for_owner::<S3HttpSimpleTask>(),
-        context: Default::default(),
-    }));
-    // SAFETY: just allocated, non-null, and `task` is not used once `task_ptr` is dereferenced.
-    // `'static`: `url`, `headers_buf` and `http_proxy` borrow heap buffers that `*task` owns and
-    // never writes again. They are stored in an `AsyncHTTP<'static>` that the HTTP
-    // thread reads, and remain valid until `task` is dropped in `on_response`.
-    let task: &'static mut S3HttpSimpleTask = unsafe { &mut *task_ptr };
-
-    let url = bun_url::URL::parse(&task.sign_result.url);
-    let headers_buf: &'static [u8] = task.headers.buf.as_slice();
-    let http_proxy = if !task.proxy_url.is_empty() {
-        Some(bun_url::URL::parse(&task.proxy_url))
-    } else {
-        None
-    };
-    // JS thread (request setup): read options from the current VM.
-    let vm = VirtualMachine::get();
-
-    let http = bun_http::AsyncHTTP::init(
+    S3HttpSimpleTask::schedule(
+        context,
         bun_http::Method::GET,
-        url,
-        task.headers.entries.clone().expect("OOM"),
-        headers_buf,
-        b"",
-        bun_http::FetchRedirect::Follow,
-        bun_http::async_http::Options {
-            http_proxy,
-            verbose: Some(vm.get_verbose_fetch()),
-            reject_unauthorized: Some(vm.get_tls_reject_unauthorized()),
-            tls_props: crate::socket::http_client_defaults(vm),
-            signals: Some(task.signal_store.to()),
-            ..Default::default()
-        },
+        result,
+        headers,
+        proxy_url,
+        Box::default(),
+        s3_simple_request::Callback::ListObjects(callback),
     );
-    task.async_http_id = http.async_http_id;
-
-    // Out on the HTTP thread until its final callback: its context aborts it
-    // when it stops, and the VM waits for it (the ticket).
-    task.http_ticket = Some(VirtualMachine::get().ticket());
-    task.context = context.id();
-    // SAFETY: the task is heap-allocated and drops its handle with itself.
-    unsafe { bun_jsc::AbortHandle::arm_owner(task_ptr, context) };
-    let callback = bun_http::HTTPClientResultCallback::new_with_release(
-        task_ptr,
-        S3HttpSimpleTask::http_callback,
-        S3HttpSimpleTask::release_at_shutdown,
-    );
-    // SAFETY: the callbacks post the task that frees `*task_ptr` once the request is dropped.
-    unsafe { bun_http::AsyncHTTP::schedule(http, callback) };
     Ok(())
 }
 
@@ -825,15 +771,17 @@ pub(crate) fn upload_stream(
 #[inline(never)]
 fn download_stream(
     this: &S3Credentials,
-    context: &bun_jsc::ScriptExecutionContext,
+    cx: &bun_jsc::JsThread<'_>,
+    path: &[u8],
     offset: usize,
     size: Option<usize>,
     request_payer: bool,
-    wrapper: AliasableBox<S3DownloadStreamWrapper>,
+    stream: ProducerHold,
 ) {
     bun_removable_features::removable_definition!(S3Client, download_stream);
-    if s3_simple_request::nothing_new_leaves(context) {
-        return wrapper.on_error(&s3_simple_request::NOTHING_NEW_LEAVES);
+    if s3_simple_request::nothing_new_leaves(cx.context()) {
+        let err = s3_simple_request::NOTHING_NEW_LEAVES;
+        return fail_stream(&stream, cx.global(), path, &err);
     }
     let range: Option<Vec<u8>> = 'brk: {
         if let Some(size_) = size {
@@ -855,7 +803,7 @@ fn download_stream(
 
     let result = match this.sign_request::<false>(
         &bun_s3_signing::SignOptions {
-            path: &wrapper.path,
+            path,
             method: bun_http::Method::GET,
             request_payer,
             content_hash: None,
@@ -873,10 +821,11 @@ fn download_stream(
         Err(sign_err) => {
             drop(range);
             let error_code_and_message = Error::get_sign_error_code_and_message(sign_err.into());
-            return wrapper.on_error(&Error::S3Error {
+            let err = Error::S3Error {
                 code: error_code_and_message.code,
                 message: error_code_and_message.message,
-            });
+            };
+            return fail_stream(&stream, cx.global(), path, &err);
         }
     };
 
@@ -888,203 +837,7 @@ fn download_stream(
         bun_http::Headers::from_pico_http_headers(&headers)
     };
     let owned_proxy = s3_simple_request::resolve_proxy(None, &result.url);
-    let task_ptr = bun_core::heap::into_raw(S3HttpDownloadStreamingTask::new(
-        S3HttpDownloadStreamingTask {
-            sign_result: result,
-            proxy_url: owned_proxy,
-            wrapper,
-            headers,
-            http_ticket: None,
-            has_schedule_callback: core::sync::atomic::AtomicBool::new(false),
-            signal_store: Default::default(),
-            poll_ref: JsKeepAlive::active(),
-            received: Default::default(),
-            // `State::default()` sets
-            // `has_more = true` (bit 48). Passing 0 here would start the task with
-            // `has_more == false`, tripping the `assert(state.has_more)` in
-            // `process_http_callback` on the very first HTTP-thread callback.
-            state: core::sync::atomic::AtomicU64::new(
-                crate::webcore::s3::download_stream::State::default().0,
-            ),
-            concurrent_task: Default::default(),
-            async_http_id: 0,
-            abort_handle: bun_jsc::AbortHandle::for_owner::<S3HttpDownloadStreamingTask>(),
-        },
-    ));
-    // SAFETY: just allocated, non-null, and `task` is not used once `task_ptr` is dereferenced.
-    // `'static`: `url`, `headers_buf` and `http_proxy` borrow heap buffers that `*task` owns and
-    // never writes again, for the HTTP thread. They remain valid until `task` is dropped in
-    // `S3HttpDownloadStreamingTask::on_response`. See `execute_simple_s3_request`.
-    let task: &'static mut S3HttpDownloadStreamingTask = unsafe { &mut *task_ptr };
-    let url = bun_url::URL::parse(&task.sign_result.url);
-    let headers_buf: &'static [u8] = task.headers.buf.as_slice();
-    let http_proxy = if !task.proxy_url.is_empty() {
-        Some(bun_url::URL::parse(&task.proxy_url))
-    } else {
-        None
-    };
-
-    let vm = VirtualMachine::get();
-    let verbose = vm.get_verbose_fetch();
-    let reject_unauthorized = vm.get_tls_reject_unauthorized();
-
-    let http = bun_http::AsyncHTTP::init(
-        bun_http::Method::GET,
-        url,
-        task.headers.entries.clone().expect("OOM"),
-        headers_buf,
-        b"",
-        bun_http::FetchRedirect::Follow,
-        bun_http::async_http::Options {
-            http_proxy,
-            verbose: Some(verbose),
-            signals: Some(task.signal_store.to_with_backpressure()),
-            reject_unauthorized: Some(reject_unauthorized),
-            tls_props: crate::socket::http_client_defaults(vm),
-            ..Default::default()
-        },
-    );
-    task.async_http_id = http.async_http_id;
-    task.wrapper.task.set(task_ptr);
-    // enable streaming
-    http.enable_response_body_streaming();
-    // Out on the HTTP thread until its final callback: its context aborts it
-    // when it stops, and the VM waits for it (the ticket).
-    task.http_ticket = Some(VirtualMachine::get().ticket());
-    // SAFETY: the task is heap-allocated and drops its handle with itself.
-    unsafe { bun_jsc::AbortHandle::arm_owner(task_ptr, context) };
-    let callback = bun_http::HTTPClientResultCallback::new_with_release(
-        task_ptr,
-        S3HttpDownloadStreamingTask::http_callback,
-        S3HttpDownloadStreamingTask::release_at_shutdown,
-    );
-    // SAFETY: the callbacks post the task that frees `*task_ptr` once the request is dropped.
-    unsafe { bun_http::AsyncHTTP::schedule(http, callback) };
-}
-
-pub struct S3DownloadStreamWrapper {
-    stream: crate::webcore::byte_stream::ProducerHold,
-    pub path: Box<[u8]>,
-    global: WeakGlobalRef,
-    /// Owns `self`, so it is live. Null until `download_stream` sets it and once the stream is cancelled.
-    pub task: Cell<*mut S3HttpDownloadStreamingTask>,
-}
-
-impl S3DownloadStreamWrapper {
-    pub(crate) fn on_error(&self, err: &Error::S3Error) {
-        let Some(global) = self.global.get() else {
-            return self.on_stream_cancelled();
-        };
-        let Some(bytes) = self.stream.take() else {
-            return;
-        };
-        bytes.on_data(crate::webcore::streams::StreamResult::Err(
-            crate::webcore::streams::StreamError::JSValue(bun_jsc::strong::Optional::create(
-                s3_error_to_js(err, &global, Some(&self.path)),
-                &global,
-            )),
-        ));
-    }
-
-    pub(crate) fn on_chunk(&self, chunk: &MutableString, has_more: bool) {
-        if self.global.get().is_none() {
-            return self.on_stream_cancelled();
-        }
-        if has_more {
-            let Some(bytes) = self.stream.bytes() else {
-                return;
-            };
-            bytes.on_data(crate::webcore::streams::StreamResult::Temporary(
-                chunk.list.as_slice(),
-            ));
-            // `on_data` can cancel us, which releases the hold.
-            if self.stream.is_held() {
-                self.after_chunk_delivered(&bytes);
-            }
-            return;
-        }
-        let Some(bytes) = self.stream.take() else {
-            return;
-        };
-        bytes.on_data(crate::webcore::streams::StreamResult::TemporaryAndDone(
-            chunk.list.as_slice(),
-        ));
-    }
-
-    /// The other half of this rule is in `S3HttpDownloadStreamingTask::process_http_callback`
-    /// (HTTP thread).
-    fn after_chunk_delivered(&self, bytes: &ByteStream) {
-        use crate::webcore::byte_stream::AfterDelivery;
-        let task = self.task.get();
-        if task.is_null() {
-            return;
-        }
-        match self.stream.after_delivery(bytes) {
-            // SAFETY: see `task`.
-            AfterDelivery::Resume => unsafe { (*task).resume_receive() },
-            // SAFETY: see `task`.
-            AfterDelivery::Pause => unsafe { (*task).signal_store.pause_receive() },
-            AfterDelivery::Park => {
-                // SAFETY: see `task`.
-                unsafe { (*task).signal_store.pause_receive() };
-                if self.stream.park() {
-                    // SAFETY: see `task`.
-                    unsafe { (*task).poll_ref.unref(bun_io::js_vm_ctx()) };
-                }
-            }
-        }
-    }
-
-    fn unpark(&self) {
-        let task = self.task.get();
-        if self.stream.unpark() && !task.is_null() {
-            // SAFETY: see `task`; reached from a consumer, so the task is still live.
-            unsafe { (*task).poll_ref.ref_(bun_io::js_vm_ctx()) };
-        }
-    }
-
-    pub(crate) fn on_stream_drained(&self) {
-        self.unpark();
-        let task = self.task.get();
-        if !task.is_null() {
-            // SAFETY: see `task`.
-            unsafe { (*task).resume_receive() };
-        }
-    }
-
-    pub(crate) fn on_consumer_attached(&self) {
-        self.unpark();
-    }
-
-    /// The stream's wrapper was collected: nothing can read the rest. Inside a GC sweep;
-    /// touches no JS cell.
-    pub(crate) fn on_stream_collected(&self) {
-        self.on_stream_cancelled();
-    }
-
-    pub(crate) fn on_stream_cancelled(&self) {
-        // The download may still be in progress, but `on_chunk` will see no stream and skip
-        // delivery. When the download finishes (has_more == false) the task frees this wrapper.
-        self.stream.release();
-        // Abort the in-flight HTTP request so the HTTP thread delivers a final
-        // callback with `has_more == false`, which frees the task and this wrapper.
-        // Without this, a server that never sends the terminal chunk would leak both.
-        let task = self.task.replace(core::ptr::null_mut());
-        if !task.is_null() {
-            // SAFETY: see `task`.
-            unsafe {
-                (*task)
-                    .signal_store
-                    .aborted
-                    .store(true, core::sync::atomic::Ordering::Relaxed);
-                (*task).poll_ref.unref(bun_io::js_vm_ctx());
-                // Wake the HTTP thread so it observes the abort even when the
-                // socket is idle; otherwise the final `has_more == false`
-                // callback never fires and both the task and wrapper leak.
-                bun_http::HTTPThread::schedule_shutdown((*task).async_http_id);
-            }
-        }
-    }
+    S3HttpDownloadStreamingTask::schedule(cx, result, headers, owned_proxy, path, stream);
 }
 
 /// returns a readable stream that reads from the s3 path
@@ -1110,22 +863,10 @@ pub(crate) fn readable_stream(
     reader.context.setup();
     let readable_value = reader.to_readable_stream(cx)?;
 
-    let wrapper = AliasableBox::new(S3DownloadStreamWrapper {
-        stream: Default::default(),
-        path: Box::<[u8]>::from(path),
-        global: WeakGlobalRef::new(cx.global()),
-        task: Cell::new(core::ptr::null_mut()),
-    });
+    let stream = ProducerHold::default();
     // SAFETY: `reader` is the live source made above.
-    unsafe { wrapper.stream.hold(&raw mut reader.context) };
+    unsafe { stream.hold(&raw mut reader.context) };
 
-    reader
-        .producer
-        .set(crate::webcore::streams::SourceHandle::S3DownloadBody(
-            // Cleared before `wrapper` is freed (`ProducerHold::take`).
-            bun_ptr::BackRef::from(wrapper.as_non_null()),
-        ));
-
-    download_stream(this, cx.context(), offset, size, request_payer, wrapper);
+    download_stream(this, cx, path, offset, size, request_payer, stream);
     Ok(readable_value)
 }

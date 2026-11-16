@@ -4,14 +4,6 @@ import { expect, test } from "bun:test";
 import { expectRssDeltaBelow } from "harness";
 
 // Test that ReadableStream objects from cancelled S3 download streams are properly GC'd.
-//
-// When a streaming S3 download body is cancelled mid-stream, S3DownloadStreamWrapper's
-// readable_stream_ref (a Strong GC root) is not released because:
-//   1. ByteStream.onCancel() doesn't notify the S3DownloadStreamWrapper
-//   2. The S3 download continues in the background, so has_more never becomes false
-//   3. The Strong ref prevents GC of the ReadableStream
-//
-// This is the same pattern as the FetchTasklet stream cancel leak.
 
 test("ReadableStream from S3 stream() should be GC'd after reader.cancel()", async () => {
   // Use a raw TCP server to mock an S3 GET response.

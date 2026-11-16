@@ -716,7 +716,7 @@ pub enum SourceHandle {
     Subprocess(BackRef<crate::api::bun::subprocess::Subprocess<'static>>),
     FetchResponseBody(BackRef<crate::webcore::fetch::fetch_tasklet::FetchTasklet>),
     ServerRequestBody(crate::server::AnyRequestContext),
-    S3DownloadBody(BackRef<crate::webcore::s3::client::S3DownloadStreamWrapper>),
+    S3DownloadBody(BackRef<crate::webcore::s3::download_stream::S3HttpDownloadStreamingTask>),
     HTMLRewriter(BackRef<crate::api::html_rewriter::RewriterPipe>),
     /// `bun:internal-for-testing` only: `ready()` re-enters the stream's
     /// `on_cancel`, making consumed-during-`signal_drained` re-entrancy

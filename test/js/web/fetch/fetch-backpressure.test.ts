@@ -1549,7 +1549,7 @@ async function quietOrigin() {
 }
 
 // S3 downloads go through the same HTTP client with their own body producer
-// (S3DownloadStreamWrapper). The same rule applies: a reader that stalls pauses the transport,
+// (S3HttpDownloadStreamingTask). The same rule applies: a reader that stalls pauses the transport,
 // an unread stream does not hold the process, and a collected one aborts the download.
 describe.concurrent("S3 receive backpressure", () => {
   // A GET-only fake bucket: every object is BODY bytes written as fast as the socket takes them.

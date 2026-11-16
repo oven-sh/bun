@@ -8,7 +8,7 @@ use core::sync::atomic::{AtomicBool, Ordering};
 
 use bun_core::{Fd, Mutex, ZStr};
 
-use crate::{FdExt as _, Maybe, Mode};
+use crate::{Maybe, Mode};
 
 #[repr(C)]
 pub struct PendingFork {
@@ -84,7 +84,7 @@ impl core::ops::Deref for File {
 impl Drop for File {
     fn drop(&mut self) {
         update_fds(|fds| {
-            self.0.close();
+            let _ = crate::close(self.0);
             fds.retain(|it| *it != self.0.native());
         });
     }

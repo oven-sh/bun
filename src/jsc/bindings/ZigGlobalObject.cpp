@@ -1059,7 +1059,7 @@ extern "C" [[ZIG_EXPORT(nothrow)]] __attribute__((minsize)) BunString Bun__evict
     }
     if (count > maxNotes)
         notes.append("\nnote: and "_s, count - maxNotes, " more"_s);
-    return Bun::toStringRef(notes.toString());
+    return Bun::toStringRef(notes.toString()).leak();
 }
 
 // The loader whose registry require.cache / require() of `requirer` (a CommonJS module, or
@@ -3989,7 +3989,7 @@ extern "C" void JSGlobalObject__clearTerminationException(JSC::JSGlobalObject* g
 
 extern "C" [[ZIG_EXPORT(check_slow)]] void Bun__performTask(Zig::GlobalObject* globalObject, WebCore::EventLoopTask* task)
 {
-    task->performTask(*globalObject->scriptExecutionContext());
+    std::unique_ptr<WebCore::EventLoopTask> { task }->performTask(*globalObject->scriptExecutionContext());
 }
 
 extern "C" void Bun__deleteEventLoopTask(WebCore::EventLoopTask* task)
@@ -4234,7 +4234,7 @@ JSC::Identifier GlobalObject::moduleLoaderResolve(JSGlobalObject* jsGlobalObject
         ErrorableString res;
         BunString keyZ = Bun::toString(keyString);
         BunString referrerZ = Bun::toString(referrerString);
-        BunString queryZ = BunStringEmpty;
+        Bun::OwnedString queryZ;
         SetForScope importStatement(globalObject->onResolvePlugins.isResolvingImportStatement, isImportStatement);
         Zig__GlobalObject__resolve(&res, globalObject, &keyZ, &referrerZ, &queryZ);
         RETURN_IF_EXCEPTION(scope, {});
@@ -4549,7 +4549,6 @@ JSC::JSPromise* GlobalObject::moduleLoaderFetch(JSGlobalObject* globalObject,
 }
 
 extern "C" JSModuleRecord* zig__ModuleInfoDeserialized__toJSModuleRecord(JSGlobalObject*, VM&, JSModuleLoader*, const Identifier&, const SourceCode&, bun_ModuleInfoDeserialized*);
-extern "C" void zig__ModuleInfoDeserialized__deinit(bun_ModuleInfoDeserialized*);
 
 // Synchronous fetch through Bun's loader (embedded modules are bytecode-backed and builtins are in-process, so neither
 // needs the transpiler thread).
@@ -4580,7 +4579,6 @@ static void releaseModuleInfo(Zig::GlobalObject* globalObject, JSSourceCode* jsS
     auto* provider = transpiledModuleProvider(jsSourceCode);
     // Same ownership rule as Bun__analyzeTranspiledModule: a provider shared across globals keeps its module_info.
     if (provider && !Bun::IsolatedModuleCache::canUse(globalObject->vm(), globalObject->bunVM())) {
-        zig__ModuleInfoDeserialized__deinit(provider->m_moduleInfo);
         provider->m_moduleInfo = nullptr;
     }
 }
@@ -4622,7 +4620,7 @@ static JSModuleRecord* createEmbeddedModuleRecord(Zig::GlobalObject* globalObjec
 {
     VM& vm = globalObject->vm();
     if (auto* provider = transpiledModuleProvider(source))
-        return zig__ModuleInfoDeserialized__toJSModuleRecord(globalObject, vm, loader, key, source->sourceCode(), provider->m_moduleInfo);
+        return zig__ModuleInfoDeserialized__toJSModuleRecord(globalObject, vm, loader, key, source->sourceCode(), provider->m_moduleInfo.get());
     uint32_t moduleIndex = PrelinkedModuleGraph::noModule;
     PrelinkedModuleGraph* graph = prelinkedGraphFor(globalObject, key.string(), moduleIndex);
     if (!graph || source->sourceCode().provider()->sourceType() != JSC::SourceProviderSourceType::BunTranspiledModule)

@@ -2027,15 +2027,15 @@ impl Drop for OwnedFd {
 }
 
 /// Same as `bun_sys::dup` on POSIX; on Windows the duped handle is converted
-/// to a libuv-owned fd via `makeLibUVOwnedForSyscall(.dup, .close_on_fail)` so
+/// to a libuv-owned fd via `make_lib_uv_owned_for_syscall` so
 /// the IOWriter/IOReader uv-based async write/read paths receive a uv fd
 /// instead of a raw NT handle.
 pub(crate) fn shell_dup(fd: Fd) -> bun_sys::Result<Fd> {
     #[cfg(windows)]
     {
-        use bun_sys::FdExt;
-        bun_sys::dup(fd)?
-            .make_lib_uv_owned_for_syscall(bun_sys::Tag::dup, bun_sys::ErrorCase::CloseOnFail)
+        bun_sys::File::from_fd(bun_sys::dup(fd)?)
+            .make_lib_uv_owned_for_syscall(bun_sys::Tag::dup)
+            .map(bun_sys::File::into_raw)
     }
     #[cfg(not(windows))]
     {
@@ -2170,7 +2170,6 @@ pub(crate) fn shell_openat(
 ) -> bun_sys::Result<Fd> {
     #[cfg(windows)]
     {
-        use bun_sys::FdExt;
         if flags & bun_sys::O::DIRECTORY != 0 {
             if bun_paths::Platform::Posix.is_absolute(path.as_bytes()) {
                 let mut buf = bun_paths::path_buffer_pool::get();
@@ -2184,11 +2183,10 @@ pub(crate) fn shell_openat(
                         ..Default::default()
                     },
                 )
+                .map(bun_sys::File::from_fd)
                 .map_err(|e| e.with_path(path.as_bytes()))?
-                .make_lib_uv_owned_for_syscall(
-                    bun_sys::Tag::open,
-                    bun_sys::ErrorCase::CloseOnFail,
-                );
+                .make_lib_uv_owned_for_syscall(bun_sys::Tag::open)
+                .map(bun_sys::File::into_raw);
             }
             return bun_sys::open_dir_at_windows_a(
                 dir,
@@ -2199,8 +2197,10 @@ pub(crate) fn shell_openat(
                     ..Default::default()
                 },
             )
+            .map(bun_sys::File::from_fd)
             .map_err(|e| e.with_path(path.as_bytes()))?
-            .make_lib_uv_owned_for_syscall(bun_sys::Tag::open, bun_sys::ErrorCase::CloseOnFail);
+            .make_lib_uv_owned_for_syscall(bun_sys::Tag::open)
+            .map(bun_sys::File::into_raw);
         }
         let mut buf = bun_paths::path_buffer_pool::get();
         let p = shell_get_path(dir, path, &mut buf, bun_sys::Tag::open)?;

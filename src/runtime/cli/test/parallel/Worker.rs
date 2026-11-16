@@ -190,9 +190,10 @@ impl Worker {
                         .map_err(|_| crate::Error::PipeStartFailed)?;
                 }
             }
-            if let Some(pipe) = extra_pipes.into_iter().next() {
+            let first = extra_pipes.into_iter().next();
+            if let Some(pipe) = first.and_then(bun_spawn::ExtraPipe::into_owned) {
                 // adopt() mutates the loop's socket context via interior mutability on the C side.
-                if !this.ipc.adopt(coord.vm, pipe.into_raw()) {
+                if !this.ipc.adopt(coord.vm, pipe) {
                     return Err(crate::Error::ChannelAdoptFailed);
                 }
             } else {

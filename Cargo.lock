@@ -1584,7 +1584,6 @@ dependencies = [
  "bun_sys",
  "bun_url",
  "bun_wyhash",
- "scopeguard",
  "strum",
  "thiserror",
 ]
@@ -2187,7 +2186,6 @@ dependencies = [
  "bun_core",
  "bun_errno",
  "bun_paths",
- "bun_ptr",
  "bun_sys",
  "bun_threading",
  "bun_wyhash",

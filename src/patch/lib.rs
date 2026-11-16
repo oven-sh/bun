@@ -11,7 +11,7 @@ use core::mem;
 use bun_core::strings;
 use bun_core::{CStrList, CStrRef, ZBox, ZStr};
 use bun_paths as paths;
-use bun_sys::{self as sys, Fd, FdExt};
+use bun_sys::{self as sys, Fd};
 
 bun_core::declare_scope!(Patch, visible);
 
@@ -121,9 +121,7 @@ fn change_mode(patch_dir: Fd, change: &FileModeChange<'_>) -> sys::Result<()> {
     let (parent, base) = resolve_target(patch_dir, change.path, None)?;
     let (file, _) = open_target_file(parent.fd(), &base, sys::O::RDONLY, 0)?;
     // On Windows, `fchmod` needs a CRT-backed fd. Closing that fd also closes the HANDLE.
-    let file = (file.into_raw())
-        .make_lib_uv_owned_for_syscall(sys::Tag::chmod, sys::ErrorCase::CloseOnFail)
-        .map(sys::CloseOnDrop::new)?;
+    let file = file.make_lib_uv_owned_for_syscall(sys::Tag::chmod)?;
     sys::fchmod(file.fd(), change.new_mode.to_bun_mode())
 }
 

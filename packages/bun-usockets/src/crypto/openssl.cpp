@@ -50,17 +50,7 @@
 
 using us_bio_ptr = us_unique_ptr<BIO, BIO_free>;
 using us_crypto_buffer_ptr = us_unique_ptr<CRYPTO_BUFFER, CRYPTO_BUFFER_free>;
-using us_ssl_ctx_ptr = us_unique_ptr<SSL_CTX, SSL_CTX_free>;
 using us_x509_ptr = us_unique_ptr<X509, X509_free>;
-
-/* Leaves `buffer` as it was when there is no memory. */
-template <typename T> static bool us_grow(us_unique_ptr<T, us_free> &buffer, size_t size) {
-  T *grown = (T *)us_realloc(buffer.get(), size);
-  if (!grown) return false;
-  buffer.release();
-  buffer.reset(grown);
-  return true;
-}
 
 extern "C" {
 
@@ -1192,7 +1182,7 @@ static int us_x509_store_ctx_common_name_error(X509_STORE_CTX *ctx) {
 
 /* What X509_verify_cert does not look for, a blocked public key (blocked_spkis.cpp) and
  * us_x509_store_ctx_common_name_error, is reported the way it reports its own errors: to the SSL's verify callback,
- * which says whether to go on. Without one, as in quic.c and node:quic, this returns 0 as it would. */
+ * which says whether to go on. Without one, as in quic.cpp and node:quic, this returns 0 as it would. */
 static int us_x509_verify_chain(X509_STORE_CTX *ctx) {
   int ok = X509_verify_cert(ctx);
   int error = us_x509_store_ctx_blocked_key_error(ctx);
@@ -1291,7 +1281,7 @@ int us_ssl_ctx_set_verify_signature_algorithms(SSL_CTX *ctx) {
   return SSL_CTX_set_verify_algorithm_prefs(ctx, algorithms, sizeof(algorithms) / sizeof(algorithms[0]));
 }
 
-/* Exported for quic.c (lsquic configures ALPN/transport-params on the SSL_CTX
+/* Exported for quic.cpp (lsquic configures ALPN/transport-params on the SSL_CTX
  * directly) and as the body of us_ssl_ctx_from_options. */
 SSL_CTX *us_ssl_ctx_build_raw(struct us_bun_socket_context_options_t options,
                               enum create_bun_socket_error_t *err) {
@@ -1655,7 +1645,7 @@ SSL_CTX *us_ssl_ctx_from_options(struct us_bun_socket_context_options_t options,
 
 /* SSL_CTX's own refcount IS the refcount; SSL_new() takes one more per socket
  * internally, so a socket outlives its SecureContext without help from us.
- * Exported so context.c / socket.c stay free of OpenSSL headers. */
+ * Exported so context.cpp / socket.c stay free of OpenSSL headers. */
 void us_internal_ssl_ctx_up_ref(SSL_CTX *p) {
   if (p) SSL_CTX_up_ref(p);
 }
@@ -3115,32 +3105,13 @@ void us_socket_start_tls_handshake(struct us_socket_t *s) {
 
 /* ── SNI on listen sockets ───────────────────────────────────────────────── */
 
-struct us_sni_tree_t : sni_node<us_ssl_ctx_ptr> {};
-
-struct us_sni_tree_t *sni_new() {
-  return new us_sni_tree_t;
-}
-
-void sni_free(struct us_sni_tree_t *sni) {
-  delete sni;
-}
-
-void sni_add(struct us_sni_tree_t *sni, const char *hostname, SSL_CTX *owned_ctx) {
-  sni->add(hostname, us_ssl_ctx_ptr{owned_ctx});
-}
-
-SSL_CTX *sni_find(struct us_sni_tree_t *sni, const char *hostname) {
-  const us_ssl_ctx_ptr *ctx = sni->find(hostname);
-  return ctx ? ctx->get() : NULL;
-}
-
 /* A ClientHello can arrive after its listen socket closed: one reference for the listen socket, one per accepted SSL. */
 struct us_server_names_t : us_allocated_t {
   unsigned int refs;
   /* NULL once the listen socket closed. */
   struct us_listen_socket_t *ls;
   /* NULL until the first name is added. */
-  std::unique_ptr<struct us_sni_tree_t> tree;
+  std::unique_ptr<sni_node<us_ssl_ctx_ptr>> tree;
   /* Returns the SSL_CTX to serve for `hostname` on the in-flight handshake only
    * (the caller does not cache it), or NULL to fall through to the tree. */
   struct ssl_ctx_st *(*on_server_name)(struct us_listen_socket_t *, const char *hostname, int *abort_handshake, struct us_socket_t *socket);
@@ -3168,7 +3139,8 @@ static void us_server_names_unref(struct us_server_names_t *names) {
 
 static SSL_CTX *us_server_names_find(struct us_server_names_t *names, const char *hostname) {
   if (!names || !names->tree) return NULL;
-  return sni_find(names->tree.get(), hostname);
+  const us_ssl_ctx_ptr *ctx = names->tree->find(hostname);
+  return ctx ? ctx->get() : NULL;
 }
 
 #define US_SNI_POLICY_REQUEST_CERT ((uintptr_t)1)
@@ -3403,14 +3375,14 @@ void us_listen_socket_add_server_name(struct us_listen_socket_t *ls,
 
   struct us_server_names_t *names = us_listen_socket_server_names(ls);
   if (!names->tree) {
-    names->tree = std::make_unique<us_sni_tree_t>();
+    names->tree = std::make_unique<sni_node<us_ssl_ctx_ptr>>();
     /* Idempotent across listeners sharing this SSL_CTX — the callback reads
      * the names off the SSL, not the arg. */
     SSL_CTX_set_tlsext_servername_callback(default_ctx, sni_cb);
   }
 
   SSL_CTX_up_ref(ctx);
-  sni_add(names->tree.get(), hostname_pattern, ctx);
+  names->tree->add(hostname_pattern, us_ssl_ctx_ptr{ctx});
 }
 
 /* Returns the SSL_CTX registered for `hostname_pattern` via

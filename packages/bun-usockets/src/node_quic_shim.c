@@ -436,7 +436,7 @@ void us_nq_settings_init(struct lsquic_engine_settings *s, int is_server,
     lsquic_engine_init_settings(s, flags);
     s->es_versions = (1u << LSQVER_I001) | (1u << LSQVER_I002);
     s->es_ecn = 0;
-    /* Static-table-only encoding, as quic.c does. The dynamic table also makes
+    /* Static-table-only encoding, as quic.cpp does. The dynamic table also makes
      * the decoder stream carry acks, and lsquic delays a server's MAX_STREAMS
      * grant while that stream has unsent data (lsquic_qdh_arm_if_unsent). */
     s->es_qpack_enc_max_size = 0;
@@ -552,7 +552,7 @@ void us_nq_stream_reset(lsquic_stream_t *s, uint64_t code) {
 
 /* ───── node:quic loop driver ─────
  *
- * The corking model quic.c uses for Bun.serve's HTTP/3 listener: JS marks the
+ * The corking model quic.cpp uses for Bun.serve's HTTP/3 listener: JS marks the
  * endpoint pending and one pass runs per loop turn, so a burst of writes is
  * one engine pass and one sendmmsg batch instead of one per call.
  */

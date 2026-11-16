@@ -20,11 +20,9 @@ use bun_bundler::{BundleV2, Transpiler};
 use bun_collections::{DynamicBitSet, StringHashMap, StringSet};
 use bun_core::PathBuffer as CorePathBuffer;
 use bun_core::strings;
-use bun_core::{self, Global, Output, env_var, fmt as bun_fmt};
+use bun_core::{self, Global, Output, ZBox, env_var, fmt as bun_fmt};
 #[cfg(not(windows))]
-use bun_core::{ZBox, ZStr, getenv_z};
-#[cfg(not(windows))]
-use bun_jsc as jsc;
+use bun_core::{ZStr, getenv_z};
 #[cfg(windows)]
 use bun_jsc::EventLoopHandle;
 use bun_jsc::virtual_machine::VirtualMachine;
@@ -311,18 +309,15 @@ const TRIGGER_FILE_ENV_VAR_Z: &ZStr =
     ZStr::from_static(b"BUN_INTERNAL_TEST_CHANGED_TRIGGER_FILE\0");
 
 /// Make sure the trigger-file env var is set (generating a fresh temp
-/// path if this is the first process in the --watch chain) and wire up
-/// the hot-reloader collector to record changed paths. The collector
-/// and the path string intentionally live for the rest of the process;
-/// --watch exec()s on reload so nothing accumulates across restarts.
-pub(crate) fn init_watch_trigger() {
+/// path if this is the first process in the --watch chain) and return the path.
+pub(crate) fn init_watch_trigger() -> Option<ZBox> {
     #[cfg(windows)]
     {
         // Windows --watch restarts via TerminateProcess + parent
         // respawn with the parent's (unchanged) env, so a setenv in
         // the first child would not reach subsequent children. Fall
         // back to re-querying git on each restart there for now.
-        return;
+        return None;
     }
 
     #[cfg(not(windows))]
@@ -357,16 +352,7 @@ pub(crate) fn init_watch_trigger() {
             fresh
         };
 
-        // Process-lifetime singletons — store in the CLI arena so the borrows
-        // are legitimately `&'static`.
-        let arena = crate::cli::cli_arena();
-        let set: &'static mut StringSet = arena.alloc(StringSet::new());
-        // Written once on the main thread before the watcher thread starts;
-        // after that only the watcher thread touches these. See doc on
-        // `hot_reloader::WATCH_CHANGED_PATHS`.
-        let _ = jsc::hot_reloader::WATCH_CHANGED_TRIGGER_FILE.set(arena.alloc(path).as_zstr());
-        let _ = jsc::hot_reloader::WATCH_CHANGED_PATHS
-            .set(jsc::hot_reloader::WatchChangedPaths::new(set));
+        Some(path)
     }
 }
 

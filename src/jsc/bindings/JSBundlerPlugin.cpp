@@ -74,7 +74,7 @@ void BundlerPlugin::NamespaceList::append(JSC::VM& vm, JSC::RegExp* filter, Stri
     nsGroup->append(WTF::move(filter_regexp));
 }
 
-static bool anyMatchesForNamespace(JSC::VM& vm, BundlerPlugin::NamespaceList& list, BunString* namespaceStr, BunString* path)
+static bool anyMatchesForNamespace(JSC::VM& vm, BundlerPlugin::NamespaceList& list, Bun::OwnedString* namespaceStr, Bun::OwnedString* path)
 {
     auto namespaceString = namespaceStr ? namespaceStr->transferToWTFString() : String();
     auto pathString = path->transferToWTFString();
@@ -98,7 +98,7 @@ static bool anyMatchesForNamespace(JSC::VM& vm, BundlerPlugin::NamespaceList& li
 
     return false;
 }
-bool BundlerPlugin::anyMatchesCrossThread(JSC::VM& vm, BunString* namespaceStr, BunString* path, bool isOnLoad)
+bool BundlerPlugin::anyMatchesCrossThread(JSC::VM& vm, Bun::OwnedString* namespaceStr, Bun::OwnedString* path, bool isOnLoad)
 {
     if (isOnLoad) {
         return anyMatchesForNamespace(vm, this->onLoad, namespaceStr, path);
@@ -415,8 +415,7 @@ JSC_DEFINE_HOST_FUNCTION(jsBundlerPluginFunction_onBeforeParse, (JSC::JSGlobalOb
         Bun::throwError(globalObject, scope, ErrorCode::ERR_INVALID_ARG_TYPE, "Expected node_addon (2nd argument) to have a napiDlopenHandle property"_s);
         return {};
     }
-    Bun::NapiModuleMeta* meta = (Bun::NapiModuleMeta*)napi_external->value();
-    void* dlopen_handle = meta->dlopenHandle;
+    void* dlopen_handle = napi_external->value();
     UTF8CString utf8 = on_before_parse_symbol.utf8();
 
 #if OS(WINDOWS)
@@ -565,7 +564,7 @@ void JSBundlerPlugin::finishCreation(JSC::VM& vm)
     Bun::reifyStaticPropertyTable(vm, JSBundlerPlugin::info(), JSBundlerPluginHashTable, *this);
 }
 
-extern "C" bool JSBundlerPlugin__anyMatches(Bun::JSBundlerPlugin* pluginObject, BunString* namespaceString, BunString* path, bool isOnLoad)
+extern "C" bool JSBundlerPlugin__anyMatches(Bun::JSBundlerPlugin* pluginObject, Bun::OwnedString* namespaceString, Bun::OwnedString* path, bool isOnLoad)
 {
     return pluginObject->plugin.anyMatchesCrossThread(pluginObject->vm(), namespaceString, path, isOnLoad);
 }
@@ -609,7 +608,7 @@ static void dispatchRequest(Bun::JSBundlerPlugin* plugin, BundlerPlugin::Request
     }
 }
 
-extern "C" void JSBundlerPlugin__matchOnLoad(Bun::JSBundlerPlugin* plugin, BunString* namespaceString, BunString* path, void* context, uint8_t defaultLoaderId, bool isServerSide)
+extern "C" void JSBundlerPlugin__matchOnLoad(Bun::JSBundlerPlugin* plugin, Bun::OwnedString* namespaceString, Bun::OwnedString* path, void* context, uint8_t defaultLoaderId, bool isServerSide)
 {
     dispatchRequest(plugin, BundlerPlugin::RequestKind::Load, context, plugin->onLoadFunction.get(plugin), [&](auto* globalObject, auto& scope, auto& arguments, JSValue id) {
         arguments.append(id);
@@ -622,7 +621,7 @@ extern "C" void JSBundlerPlugin__matchOnLoad(Bun::JSBundlerPlugin* plugin, BunSt
     });
 }
 
-extern "C" void JSBundlerPlugin__matchOnResolve(Bun::JSBundlerPlugin* plugin, BunString* namespaceString, BunString* path, BunString* importer, void* context, uint8_t kindId)
+extern "C" void JSBundlerPlugin__matchOnResolve(Bun::JSBundlerPlugin* plugin, Bun::OwnedString* namespaceString, Bun::OwnedString* path, Bun::OwnedString* importer, void* context, uint8_t kindId)
 {
     dispatchRequest(plugin, BundlerPlugin::RequestKind::Resolve, context, plugin->onResolveFunction.get(plugin), [&](auto* globalObject, auto& scope, auto& arguments, JSValue id) {
         arguments.append(path->transferToJS(globalObject));

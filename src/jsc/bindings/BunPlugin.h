@@ -90,7 +90,7 @@ public:
         {
         }
 
-        VirtualModuleMap* _Nullable virtualModules = nullptr;
+        std::unique_ptr<VirtualModuleMap> virtualModules;
         bool mustDoExpensiveRelativeLookup = false;
         // Set right before requestImportModule(), to tell moduleLoaderResolve() it's a script's import(), which can't use NUL-prefixed keys.
         bool isResolvingImportCall = false;
@@ -190,7 +190,6 @@ public:
         void clear()
         {
             Base::clear();
-            delete virtualModules;
             virtualModules = nullptr;
             mustDoExpensiveRelativeLookup = false;
             displacedPreloadModuleMocks.clear();
@@ -299,13 +298,6 @@ public:
             return replayFrame == frame ? replayingFile : WTF::nullString();
         }
 #endif
-
-        ~OnLoad()
-        {
-            if (virtualModules) {
-                delete virtualModules;
-            }
-        }
     };
 
     class OnResolve final : public Base {

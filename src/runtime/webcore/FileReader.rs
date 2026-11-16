@@ -7,7 +7,7 @@ use bun_io::pipe_reader::ReaderFlags;
 use bun_io::{BufferedReader, Chunk, IoEvent, Owner, PollTag, ReadResult, ReadState};
 use bun_jsc::JsCell;
 use bun_ptr::RefPtr;
-use bun_sys::{self as sys, Fd, FdExt};
+use bun_sys::{self as sys, Fd};
 
 use crate::webcore::SinkHandle;
 use crate::webcore::blob;
@@ -148,7 +148,9 @@ impl Lazy {
                         }
                     }
 
-                    fd.make_lib_uv_owned_for_syscall(sys::Tag::dup, sys::ErrorCase::CloseOnFail)?
+                    sys::File::from_fd(fd)
+                        .make_lib_uv_owned_for_syscall(sys::Tag::dup)?
+                        .into_raw()
                 }
             }
             PathOrFileDescriptor::Path(path) => {

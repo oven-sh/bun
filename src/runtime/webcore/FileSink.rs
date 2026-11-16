@@ -146,6 +146,7 @@ impl Options {
 }
 
 impl Drop for FileSink {
+    #[cold]
     fn drop(&mut self) {
         LIVE_COUNT.fetch_sub(1, Ordering::Relaxed);
         self.release_pipe_with(ReadableSinkController::detach_dropped_sink);

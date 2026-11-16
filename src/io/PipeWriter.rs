@@ -629,6 +629,7 @@ impl PosixStreamingWriter {
         handler.on_write(amount, status);
     }
 
+    #[cold]
     fn report_error_and_close(&self, handler: &impl WriteHandler, err: sys::Error) {
         handler.on_error(err);
         self.close(handler);
@@ -709,12 +710,8 @@ impl PosixStreamingWriter {
     fn maybe_write_newly_buffered_data(
         &self,
         handler: &impl WriteHandler,
-        buf_len: Result<usize, OOM>,
+        buf_len: usize,
     ) -> WriteResult {
-        let Ok(buf_len) = buf_len else {
-            return WriteResult::Err(sys::Error::oom());
-        };
-
         if self.should_buffer(0) {
             self.report_write(handler, buf_len, WriteStatus::Drained);
             self.register_poll(handler);
@@ -1734,11 +1731,9 @@ impl StreamBuffer {
         self.list.extend_from_slice(bun_core::bytes_of(&data));
     }
 
-    pub fn write_latin1<const CHECK_ASCII: bool>(&mut self, buffer: &[u8]) -> Result<(), OOM> {
-        if CHECK_ASCII {
-            if bun_core::strings::is_all_ascii(buffer) {
-                return self.write(buffer);
-            }
+    pub fn write_latin1(&mut self, buffer: &[u8]) -> Result<(), OOM> {
+        if bun_core::strings::is_all_ascii(buffer) {
+            return self.write(buffer);
         }
 
         self.compact();
@@ -1804,36 +1799,48 @@ impl StreamBufferCell {
         self.list.len() - self.cursor.get()
     }
 
-    fn write(&self, buffer: &[u8]) {
+    fn compact(&self) {
         if self.cursor.get() > 0 && self.cursor.get() >= self.size() {
-            self.with_taken(StreamBuffer::compact);
+            self.compact_slow();
         }
+    }
+
+    #[cold]
+    fn compact_slow(&self) {
+        self.with_taken(StreamBuffer::compact);
+    }
+
+    fn write(&self, buffer: &[u8]) {
+        self.compact();
         self.list.extend_from_slice(buffer);
     }
 
     /// For text that is not all ASCII. Returns the encoded length.
-    fn write_latin1(&self, buffer: &[u8]) -> Result<usize, OOM> {
-        let before_len = self.size();
-        self.with_taken(|it| it.write_latin1::<false>(buffer))?;
-        Ok(self.size() - before_len)
+    fn write_latin1(&self, buffer: &[u8]) -> usize {
+        self.compact();
+        let list = self.list.take();
+        let len = list.len();
+        let list = bun_core::strings::allocate_latin1_into_utf8_with_list(list, len, buffer);
+        self.list.put_back(list);
+        self.list.len() - len
     }
 
     /// Returns the encoded length.
-    fn write_utf16(&self, buffer: &[u16]) -> Result<usize, OOM> {
-        let before_len = self.size();
-        self.with_taken(|it| it.write_utf16(buffer))?;
-        Ok(self.size() - before_len)
+    fn write_utf16(&self, buffer: &[u16]) -> usize {
+        self.compact();
+        let mut list = self.list.take();
+        let len = list.len();
+        bun_core::strings::convert_utf16_to_utf8_append(&mut list, buffer);
+        self.list.put_back(list);
+        self.list.len() - len
     }
 
     #[cfg(windows)]
-    fn write_chunk(&self, chunk: WriteChunk<'_>) -> Result<usize, OOM> {
+    fn write_chunk(&self, chunk: WriteChunk<'_>) {
         match chunk {
-            WriteChunk::Bytes(bytes) => {
-                self.write(bytes);
-                Ok(bytes.len())
-            }
-            WriteChunk::Latin1(bytes) => self.write_latin1(bytes),
-            WriteChunk::Utf16(text) => self.write_utf16(text),
+            WriteChunk::Bytes(bytes) => self.write(bytes),
+            WriteChunk::Latin1(bytes) => _ = self.write_latin1(bytes),
+            WriteChunk::Utf16(text) => _ = self.write_utf16(text),
         }
     }
 
@@ -2078,21 +2085,18 @@ impl WindowsStreamingWriter {
         if let Some(fd) = self.sync_fd() {
             let result = match chunk {
                 WriteChunk::Bytes(bytes) => write_sync(fd, bytes),
-                chunk => match self.outgoing.write_chunk(chunk) {
-                    Ok(_) => self
-                        .outgoing
-                        .with_taken(|outgoing| write_sync(fd, outgoing.slice())),
-                    Err(_) => WriteResult::Err(sys::Error::oom()),
-                },
+                chunk => {
+                    self.outgoing.write_chunk(chunk);
+                    self.outgoing
+                        .with_taken(|outgoing| write_sync(fd, outgoing.slice()))
+                }
             };
             self.outgoing.reset();
             return Some(result);
         }
 
         let had_buffered_data = self.queued_len() > 0;
-        if self.outgoing.write_chunk(chunk).is_err() {
-            return Some(WriteResult::Err(sys::Error::oom()));
-        }
+        self.outgoing.write_chunk(chunk);
         had_buffered_data.then_some(WriteResult::Pending(0))
     }
 

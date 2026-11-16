@@ -740,7 +740,7 @@ static std::optional<AOT::ModuleID> evaluatedOriginalKeyModule(Zig::GlobalObject
     return module;
 }
 
-JSPromise* compiledModuleSource(Zig::GlobalObject* globalObject, const String& key, const ScriptFetchParameters* attributes)
+JSPromise* compiledModuleSource(Zig::GlobalObject* globalObject, const String& key, const ScriptFetchParameters* attributes, const String& importer)
 {
     auto& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -774,6 +774,10 @@ JSPromise* compiledModuleSource(Zig::GlobalObject* globalObject, const String& k
     AbstractModuleRecord* record = AOT::moduleRecord(globalObject, *module);
     if (scope.exception()) [[unlikely]]
         return rejected();
+    if (isBunTest) {
+        auto importing = importer.isEmpty() ? std::nullopt : findModuleForPath(importer);
+        AOT::noteImporterOfFetch(globalObject, *module, importing && !AOT::isEvicted(globalObject, *importing) ? *importing : AOT::ModuleID());
+    }
     // Another fetch in flight may request the module once it is mocked.
     bool isAlone = globalObject->onLoadPlugins.waitingMockFetches.isEmpty() && !AOT::hasBatchedFetches(globalObject);
     // A require() cannot wait.
@@ -2760,7 +2764,7 @@ const AOT::ModuleHost compiledModuleHost {};
 std::optional<AOT::ModuleID> compiledModuleForPath(const String&) { return std::nullopt; }
 std::optional<bool> isHiddenFromRequireCache(const String&) { return false; }
 std::optional<AOT::ModuleID> findMockedModule(const String&) { return std::nullopt; }
-JSPromise* compiledModuleSource(Zig::GlobalObject*, const String&, const ScriptFetchParameters*) { return nullptr; }
+JSPromise* compiledModuleSource(Zig::GlobalObject*, const String&, const ScriptFetchParameters*, const String&) { return nullptr; }
 JSPromise* importCompiledModule(Zig::GlobalObject*, const String&, const ScriptFetchParameters*, int64_t) { return nullptr; }
 JSValue requireCompiledModuleForTestRunner(Zig::GlobalObject*, const String&) { return {}; }
 bool requireCompiledModule(Zig::GlobalObject*, JSCommonJSModule*, const String&, bool) { return false; }

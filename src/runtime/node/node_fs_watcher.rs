@@ -579,16 +579,13 @@ impl<'a> Arguments<'a> {
 impl FSWatcher {
     /// The GC wrapper takes over `this`.
     fn init_js(this: RefPtr<Self>, listener: JSValue) {
-        let this_ref = this.into_this_ptr();
-        let this = this_ref.as_ptr();
+        let this_ref = this.this_ptr();
         if this_ref.persistent.get() {
             let vm_ctx = this_ref.ctx.loop_ctx();
             this_ref.poll_ref.ref_(vm_ctx);
         }
 
-        // SAFETY: the GC wrapper takes over the ref `this` was created with.
-        let js_this = unsafe { Self::to_js_ptr(this, &this_ref.global_this) };
-        js_this.ensure_still_alive();
+        let js_this = js::to_js(this, &this_ref.global_this);
         this_ref
             .js_this
             .set(JsRef::init_strong(js_this, &this_ref.global_this));
@@ -600,8 +597,8 @@ impl FSWatcher {
                 // safely abort next tick
                 Self::enqueue_abort(this_ref);
             } else {
-                // SAFETY: `this` is the live boxed FSWatcher; `detach()` disarms the handle.
-                unsafe { bun_jsc::AbortHandle::follow_owner(this, s.clone()) };
+                // SAFETY: this is the live boxed FSWatcher; `detach()` disarms the handle.
+                unsafe { bun_jsc::AbortHandle::follow_owner(this_ref.as_ptr(), s.clone()) };
             }
         }
     }
@@ -867,12 +864,9 @@ impl FSWatcher {
             s
         };
         let cwd = bun_resolver::fs::FileSystem::get().top_level_dir();
-        let joined_buf_len = joined_buf.len();
-        let Some(joined) = Path::join_abs_string_buf_checked::<platform::Auto>(
-            cwd,
-            &mut joined_buf[..joined_buf_len - 1],
-            &[slice],
-        ) else {
+        let Some(file_path) =
+            Path::join_abs_string_buf_z_checked::<platform::Auto>(cwd, &mut joined_buf, &[slice])
+        else {
             return Err(bun_sys::Error {
                 errno: SystemErrno::ENAMETOOLONG as _,
                 syscall: bun_sys::Tag::watch,
@@ -880,9 +874,6 @@ impl FSWatcher {
                 ..Default::default()
             });
         };
-        let joined_len = joined.len();
-        joined_buf[joined_len] = 0;
-        let file_path: &bun_core::ZStr = bun_core::ZStr::from_buf(&joined_buf[..], joined_len);
 
         let vm_ref = args.global_this.bun_vm();
         let is_aborted = args.signal.as_ref().is_some_and(|s| s.aborted());

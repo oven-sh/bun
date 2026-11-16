@@ -635,8 +635,7 @@ impl IoRequestLoop {
     }
 
     pub(crate) fn tick(&self) {
-        // SAFETY: literal is NUL-terminated; len excludes the NUL.
-        let name = bun_core::ZStr::from_static(b"IO Watcher\0");
+        let name = bun_core::zstr!("IO Watcher");
         bun_core::Output::Source::configure_named_thread(name);
 
         #[cfg(any(target_os = "linux", target_os = "android"))]

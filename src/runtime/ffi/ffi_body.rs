@@ -79,14 +79,7 @@ struct Offsets {
 }
 
 unsafe extern "C" {
-    // Written once by C++ before any Rust read. C++ mutates these bytes, so a
-    // plain non-`mut` extern static would assert immutability to the optimizer
-    // (UB). `RacyCell<T>` is `#[repr(transparent)]` over `UnsafeCell<T>`, so
-    // the extern layout is identical to `Offsets`.
-    #[link_name = "Bun__FFI__offsets"]
-    static BUN_FFI_OFFSETS: bun_core::RacyCell<Offsets>;
-    #[link_name = "Bun__FFI__ensureOffsetsAreLoaded"]
-    fn bun_ffi_ensure_offsets_are_loaded();
+    safe fn Bun__FFI__offsets() -> Offsets;
 }
 
 // ─── Local extern thin-wrappers (codegen / `bun_jsc` surface not yet wired) ──
@@ -201,19 +194,6 @@ fn new_runtime_function(
             add_ptr_property,
             input_function_ptr.unwrap_or(core::ptr::null_mut()),
         )
-    }
-}
-
-impl Offsets {
-    fn load_once() {
-        // SAFETY: extern "C" fn populating a static
-        unsafe { bun_ffi_ensure_offsets_are_loaded() };
-    }
-    pub(crate) fn get() -> &'static Offsets {
-        static ONCE: Once = Once::new();
-        ONCE.call_once(Self::load_once);
-        // SAFETY: BUN_FFI_OFFSETS is initialized by load_once and never mutated after
-        unsafe { &*BUN_FFI_OFFSETS.get() }
     }
 }
 
@@ -2084,7 +2064,6 @@ impl Function {
 
         CompilerRT::define(&mut state);
 
-        // SAFETY: source_code was NUL-terminated above
         if state
             .compile_string(ZStr::from_slice_with_nul(&source_code[..]))
             .is_err()
@@ -2585,7 +2564,7 @@ impl CompilerRT {
             }
         }
 
-        let offsets = Offsets::get();
+        let offsets = Bun__FFI__offsets();
         state.define_symbols(&[
             (
                 "Bun_FFI_PointerOffsetToArgumentsList",

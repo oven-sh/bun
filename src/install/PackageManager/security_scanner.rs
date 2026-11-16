@@ -1,5 +1,4 @@
 use crate::lockfile::package::PackageColumns as _;
-use core::ffi::CStr;
 use std::collections::VecDeque;
 use std::io::Write as _;
 
@@ -13,7 +12,7 @@ use crate::resolution::{append_without_url_credentials, append_without_url_useri
 use bun_collections::ArrayHashMap;
 use bun_core::fmt::{escape_control_chars, escape_control_chars_multiline};
 use bun_core::strings;
-use bun_core::{self, Output};
+use bun_core::{self, Output, ZStr, zstr};
 use bun_event_loop::EventLoopHandle;
 use bun_install::resolution::Tag as ResolutionTag;
 use bun_install::{
@@ -723,7 +722,7 @@ fn attempt_security_scan(
     )?;
     let code = replace_first(&code, b"__SCANNER_MODULE__", &quoted);
 
-    let event_loop_handle = EventLoopHandle::from_any(&manager.event_loop);
+    let event_loop_handle = manager.event_loop;
     let mut scanner = Box::new(SecurityScanSubprocess {
         manager,
         event_loop_handle,
@@ -808,9 +807,9 @@ impl<'a> SecurityScanSubprocess<'a> {
         // `.env` file on top.
         let code =
             std::ffi::CString::new(&*self.code).map_err(|_| crate::Error::InvalidCharacter)?;
-        let mut argv = vec![exec_path.as_cstr(), c"--no-install", c"--no-env-file"];
-        argv.extend(bun_core::Global::ca_store_flag().map(bun_core::ZStr::as_cstr));
-        argv.extend([c"-e", code.as_c_str()]);
+        let mut argv = vec![exec_path, zstr!("--no-install"), zstr!("--no-env-file")];
+        argv.extend(bun_core::Global::ca_store_flag());
+        argv.extend([zstr!("-e"), ZStr::from_cstr(&code)]);
         let env = self.manager.env_mut();
         // Set in the process environment after the loader copied it.
         if bun_io::parent_death_watchdog::is_enabled() {
@@ -837,7 +836,7 @@ impl<'a> SecurityScanSubprocess<'a> {
     #[cfg(unix)]
     fn spawn_posix(
         &mut self,
-        argv: &[&CStr],
+        argv: &[&ZStr],
         envp: bun_core::CStrList<'_>,
         [ipc_read, ipc_write]: [File; 2],
     ) -> Result<(), Error> {
@@ -855,7 +854,7 @@ impl<'a> SecurityScanSubprocess<'a> {
             ..Default::default()
         };
 
-        let mut spawned = spawn::spawn_process_cstr(&spawn_options, argv, Some(envp))?
+        let mut spawned = spawn::spawn_process_z(&spawn_options, argv, Some(envp))?
             .map_err(|e| e.to_zig_err())?;
 
         drop(ipc_write);
@@ -877,7 +876,7 @@ impl<'a> SecurityScanSubprocess<'a> {
     #[cfg(windows)]
     fn spawn_windows(
         &mut self,
-        argv: &[&CStr],
+        argv: &[&ZStr],
         envp: bun_core::CStrList<'_>,
         [ipc_read, ipc_write]: [File; 2],
     ) -> Result<(), Error> {
@@ -913,7 +912,7 @@ impl<'a> SecurityScanSubprocess<'a> {
             ..Default::default()
         };
 
-        let mut spawned = spawn::spawn_process_cstr(&spawn_options, argv, Some(envp))?
+        let mut spawned = spawn::spawn_process_z(&spawn_options, argv, Some(envp))?
             .map_err(|e| e.to_zig_err())?;
 
         drop((ipc_write, child_read));

@@ -222,11 +222,11 @@ pub(crate) fn run_as_coordinator(
         windows_job: windows_job.as_deref(),
     };
 
-    let _abort_guard = abort_handler::install();
+    let abort_guard = abort_handler::install();
 
     vm.event_loop().ensure_waker();
     crate::cli::run_compiled::log_step_of_test_run(format_args!("the coordinator is set up"));
-    vm.run_with_api_lock(|| coord.drive());
+    vm.run_with_api_lock(|| coord.drive(&abort_guard));
     reporter.timings.set(coord.timings.take());
     coord.end_group();
     crate::cli::run_compiled::log_largest_worker(

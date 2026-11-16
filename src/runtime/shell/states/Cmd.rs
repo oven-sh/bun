@@ -754,14 +754,8 @@ impl Cmd {
                         ),
                     )));
                 }
-                let path_buf: Vec<u8> = {
-                    let raw = &interp.as_cmd(this).redirection_file;
-                    let len = raw.len().saturating_sub(1);
-                    let mut v = raw[..len].to_vec();
-                    v.push(0);
-                    v
-                };
-                let path = bun_core::ZStr::from_buf(&path_buf, path_buf.len() - 1);
+                let raw = &interp.as_cmd(this).redirection_file;
+                let path = &bun_core::ZBox::from_bytes(&raw[..raw.len() - 1]);
                 log!("Expanded Redirect: {}\n", bstr::BStr::new(path.as_bytes()));
                 let shell = &*interp.as_cmd(this).shell;
                 let cwd_fd = shell.cwd_fd.fd();

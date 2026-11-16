@@ -375,7 +375,7 @@ impl WebWorker {
         exec_argv_len: usize,
         preload_modules_ptr: *const BunString,
         preload_modules_len: usize,
-    ) -> *mut WebWorker {
+    ) -> Option<bun_ptr::RefPtr<WebWorker>> {
         jsc::mark_binding();
         log!("[{}] create", this_context_id);
 
@@ -430,7 +430,7 @@ impl WebWorker {
                 }
             };
             // preloads dropped by RAII.
-            return core::ptr::null_mut();
+            return None;
         }
 
         // The VM of the Worker is created for a program. The Worker resolves the specifier again and reports what is wrong with it.
@@ -473,7 +473,7 @@ impl WebWorker {
                     message.extend_from_slice(arg.as_bytes());
                     *error_message = BunString::clone_utf8(&message);
                     *error_is_invalid_exec_argv = true;
-                    return core::ptr::null_mut();
+                    return None;
                 }
                 let parent_allows_addons = transform_options.allow_addons.unwrap_or(true);
                 transform_options.allow_addons = Some(parent_allows_addons && flags.allow_addons);
@@ -493,7 +493,7 @@ impl WebWorker {
                 Ok(loader) => loader,
                 Err(_) => {
                     *error_message = BunString::static_("Out of memory");
-                    return core::ptr::null_mut();
+                    return None;
                 }
             }
         };
@@ -584,14 +584,13 @@ impl WebWorker {
                 worker_ref.thread_start.set(None);
                 worker_ref.parent_poll_ref.unref(bun_io::js_vm_ctx());
                 *error_message = BunString::static_("Failed to spawn worker thread");
-                return core::ptr::null_mut();
+                return None;
             }
         }
-        let worker = worker.into_raw();
         parent
             .child_workers
-            .with_mut(|children| children.push(worker));
-        worker
+            .with_mut(|children| children.push(worker.as_ptr()));
+        Some(worker)
     }
 
     /// Spawn the thread and hand it `thread_start`, which stays where it is unless that succeeds. Parent thread.
@@ -994,7 +993,7 @@ impl WebWorker {
             return Ok(vm);
         }
 
-        vm.load_extra_env_and_source_code_printer();
+        vm.load_extra_env();
         Ok(vm)
     }
 

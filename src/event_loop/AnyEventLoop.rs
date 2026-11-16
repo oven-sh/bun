@@ -5,7 +5,7 @@ use bun_ptr::BackRef;
 use bun_uws::Loop as UwsLoop;
 
 use crate::AnyTaskWithExtraContext::AnyTaskWithExtraContext;
-use crate::ConcurrentTask::ConcurrentTask;
+use crate::ConcurrentTask::{BoxedTask, ConcurrentTask};
 use crate::MiniEventLoop::MiniEventLoop;
 use crate::{JsEventLoop, JsEventLoopKind};
 
@@ -410,6 +410,16 @@ pub enum Posted<T = Box<ConcurrentTask>> {
 pub trait PostToJs: Send + Sync {
     /// Queue `task` on the VM this poster was created for and wake it, or hand it back if the VM has closed.
     fn post(&self, task: Box<ConcurrentTask>) -> Posted;
+}
+
+impl dyn PostToJs + '_ {
+    /// As [`post`](PostToJs::post). A refused task is dropped on this thread.
+    pub fn post_boxed<T: BoxedTask>(&self, task: Box<T>) {
+        if let Posted::Refused(node) = self.post(ConcurrentTask::create_boxed(task)) {
+            // SAFETY: the task made above.
+            drop(unsafe { node.task.into_boxed::<T>() });
+        }
+    }
 }
 
 pub type JsPoster = std::sync::Arc<dyn PostToJs>;

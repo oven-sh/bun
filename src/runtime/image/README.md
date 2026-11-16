@@ -5,23 +5,23 @@ off the JS thread.
 
 ## Layout
 
-| file                                  | owns                                                                                               | touch when                               |
-| ------------------------------------- | -------------------------------------------------------------------------------------------------- | ---------------------------------------- |
-| `Image.bind.ts`                       | JS surface (codegen input)                                                                         | adding/renaming a JS method              |
-| `Image.rs`                            | JS↔native glue: arg parsing, op recording, `ConcurrentPromiseTask` scheduling, result delivery     | new options, new chainable, new terminal |
-| `codecs.rs`                           | thin wrappers over `bun_jpeg` / `bun_png` / libwebp + the `Format` sniffer + the pixel-limit guard | bumping a codec, adding a format         |
-| `exif.rs`                             | JPEG APP1/TIFF Orientation reader (tag 0x0112 only)                                                | extending EXIF coverage                  |
-| `quantize.rs`                         | median-cut RGBA → palette for `png({palette})`                                                     | dithering, perceptual weighting          |
-| `backend_coregraphics.rs`             | macOS ImageIO/CoreGraphics, lazy `dlopen`                                                          | macOS-specific behaviour                 |
-| `backend_wic.rs`                      | Windows WIC, COM                                                                                   | Windows-specific behaviour               |
-| `../bun.js/bindings/image_resize.cpp` | highway resize/rotate/flip/modulate kernels (`bun_image_*` C ABI)                                  | new filter, perf work                    |
+| file                                  | owns                                                                                                  | touch when                               |
+| ------------------------------------- | ----------------------------------------------------------------------------------------------------- | ---------------------------------------- |
+| `Image.bind.ts`                       | JS surface (codegen input)                                                                            | adding/renaming a JS method              |
+| `Image.rs`                            | JS↔native glue: arg parsing, op recording, `ConcurrentPromiseTask` scheduling, result delivery        | new options, new chainable, new terminal |
+| `codecs.rs`                           | thin wrappers over `bun_jpeg` / `bun_png` / `bun_webp` + the `Format` sniffer + the pixel-limit guard | bumping a codec, adding a format         |
+| `exif.rs`                             | JPEG APP1/TIFF Orientation reader (tag 0x0112 only)                                                   | extending EXIF coverage                  |
+| `quantize.rs`                         | median-cut RGBA → palette for `png({palette})`                                                        | dithering, perceptual weighting          |
+| `backend_coregraphics.rs`             | macOS ImageIO/CoreGraphics, lazy `dlopen`                                                             | macOS-specific behaviour                 |
+| `backend_wic.rs`                      | Windows WIC, COM                                                                                      | Windows-specific behaviour               |
+| `../bun.js/bindings/image_resize.cpp` | highway resize/rotate/flip/modulate kernels (`bun_image_*` C ABI)                                     | new filter, perf work                    |
 
 `system_backend` in `codecs.rs` is a cfg-gated module re-export — absent on Linux (callers gate on `HAS_SYSTEM_BACKEND`), so the dispatch
 compiles away. On macOS/Windows the backend is tried first; it returns
 a `BackendUnavailable` error for anything it can't do (palette PNG, lossless
 WebP, dlopen miss) and the static path takes over.
 
-The WebP codec is vendored via `scripts/build/deps/libwebp.ts`. JPEG and PNG are `src/jpeg` and `src/png`, in Rust, on the kernels in `src/jsc/bindings/highway_{jpeg,png}.cpp`.
+JPEG, PNG and WebP are `src/jpeg`, `src/png` and `src/webp`, in Rust, on the kernels in `src/jsc/bindings/highway_{jpeg,png,webp_decoder,webp_encoder}.cpp`.
 
 ## Adding a chainable op
 
@@ -46,11 +46,8 @@ The WebP codec is vendored via `scripts/build/deps/libwebp.ts`. JPEG and PNG are
 
 - Pixel format is **RGBA8 everywhere** between decode and encode. Decoders are
   configured to emit it; encoders are fed it. Nothing branches on channels.
-- **Decode** output is `bun.default_allocator`-owned `[]u8`. **Encode** output
-  is `Encoded{bytes, free}` where `free` is the _codec's_ deallocator
-  (`WebPFree`/`mi_free`); `then()` hands that buffer
-  straight to JS via `ArrayBuffer.toJSWithContext(..., free)` — no dupe. New
-  codecs return `Encoded` with the right `free`, not a default_allocator slice.
+- **Decode** and **encode** return a `Vec<u8>`. `then()` hands the encoded one
+  to JS without a copy.
 - The `max_pixels` guard fires **after the header read, before the RGBA alloc**
   in every codec. New codecs must do the same.
 - `image_resize.cpp` must stay in `noUnify` (see `scripts/build/unified.ts`) —

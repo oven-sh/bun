@@ -1081,10 +1081,8 @@ fn open(
     // only call toJS if connectUnixAnon does not fail immediately
     this.reset_connection_timeout();
     this.poll_ref.ref_(this.vm_ctx());
-    // The wrapper takes the ref.
-    let this = this.into_this_ptr();
-    let js_value = js::to_js(ptr, global_object);
-    js_value.ensure_still_alive();
+    let this = js::wrap(this, global_object);
+    let js_value = this.to_js();
     this.js_value
         .set(crate::jsc::JsRef::init_strong(js_value, global_object));
     js::onconnect_set_cached(js_value, global_object, params.on_connect);

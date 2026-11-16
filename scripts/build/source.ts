@@ -456,7 +456,6 @@ export type DepName =
   | "cares"
   | "highway"
   | "libuv"
-  | "libwebp"
   | "lolhtml"
   | "lshpack"
   | "lsqpack"

@@ -1,5 +1,4 @@
 use core::cell::Cell;
-use core::ptr::NonNull;
 
 use crate::generated_bindgen::js_my_sql_query::js_MySQLQuery as js;
 use crate::jsc::{
@@ -10,7 +9,7 @@ use crate::shared::cached_structure::Undescribed;
 use crate::shared::query_ctor_args;
 use bun_jsc::bindgen::{JsLocal, JsScope, JsWrapper};
 use bun_jsc::{JSArray, JsCell};
-use bun_ptr::{AsCtxPtr, BackRef, ParentRef, RefPtr};
+use bun_ptr::{AsCtxPtr, BackRef, RefPtr};
 use bun_sql::mysql::MySQLQueryResult;
 use bun_sql::mysql::protocol::any_mysql_error::{self as AnyMySQLError};
 use bun_sql::mysql::protocol::column_definition41::ColumnDefinition41;
@@ -64,17 +63,15 @@ impl JSMySQLQuery {
         let (values, pending_value) = (values.to_js(), pending_value.to_js());
         query_ctor_args::validate(global_this, &query, values, simple)?;
 
-        let this_ptr = bun_core::heap::into_raw(Box::new(Self {
+        let this = RefPtr::new(Self {
             this_value: JsCell::new(JsRef::empty()),
             ref_count: Cell::new(1),
             global_object: BackRef::new(global_this),
             query: JsCell::new(MySQLQuery::init(query, bigint, simple)),
             undescribed: JsCell::new(Undescribed::default()),
-        }));
-        let this = ParentRef::from(NonNull::new(this_ptr).expect("heap::into_raw non-null"));
-
-        let this_value = js::to_js(this_ptr, global_this);
-        this_value.ensure_still_alive();
+        });
+        let this = js::wrap(this, global_this);
+        let this_value = this.to_js();
         this.this_value.with_mut(|v| v.set_weak(this_value));
 
         js::binding_set_cached(this_value, global_this, values);

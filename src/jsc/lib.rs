@@ -946,11 +946,18 @@ impl<'a, T> WrapperGuard<'a, T> {
     /// `native` is null, or points to the struct that `wrapper` holds or to a part of it, valid and only shared until `wrapper` is collected.
     #[doc(hidden)]
     pub unsafe fn new(wrapper: &'a JSValue, native: *mut T) -> Option<Self> {
-        Some(Self {
-            native: core::ptr::NonNull::new(native)?,
-            wrapper: EnsureStillAlive(*wrapper),
+        // SAFETY: forwarded.
+        Some(unsafe { Self::from_parts(*wrapper, core::ptr::NonNull::new(native)?) })
+    }
+
+    /// SAFETY: as [`new`](Self::new).
+    #[doc(hidden)]
+    pub unsafe fn from_parts(wrapper: JSValue, native: core::ptr::NonNull<T>) -> Self {
+        Self {
+            native,
+            wrapper: EnsureStillAlive(wrapper),
             _value: core::marker::PhantomData,
-        })
+        }
     }
 
     /// As [`core::cell::Ref::map`].

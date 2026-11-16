@@ -57,11 +57,6 @@
   "src/runtime/api/bundle_thread.rs": {
     "thread spawn": 1
   },
-  "src/runtime/api/glob.rs": {
-    "unsafe impl Send": [
-      "WalkTask"
-    ]
-  },
   "src/runtime/bake/production/mod.rs": {
     "unsafe impl Sync": [
       "DotenvSingleton"

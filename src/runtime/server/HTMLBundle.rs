@@ -51,7 +51,7 @@ pub(crate) struct HTMLBundle {
 impl HTMLBundle {
     /// The JS wrapper takes over `this`' ref.
     pub(crate) fn to_js(this: RefPtr<HTMLBundle>, global: &JSGlobalObject) -> JSValue {
-        Self::to_js_nonnull(this.into_non_null(), global)
+        crate::generated_bindgen::html_bundle::js_HTMLBundle::to_js(this, global)
     }
 
     /// Initialize an HTMLBundle given a path.

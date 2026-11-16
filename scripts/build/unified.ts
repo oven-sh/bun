@@ -160,7 +160,10 @@ const noUnify: readonly string[] = [
   "src/jsc/bindings/highway_byte_set.cpp",
   // Ninth highway TU (JPEG transforms and color conversion) — same reason.
   "src/jsc/bindings/highway_jpeg.cpp",
-  // Tenth highway TU (CRC-32 of gzip) — same reason.
+  // The highway TUs of the WebP codec — same reason.
+  "src/jsc/bindings/highway_webp_decoder.cpp",
+  "src/jsc/bindings/highway_webp_encoder.cpp",
+  // The highway TU for the CRC-32 of gzip — same reason.
   "src/jsc/bindings/highway_crc32.cpp",
   // Declares its own minimal CGRect/kCFStringEncodingUTF8/kCFNumberDoubleType
   // so it doesn't pull a CoreGraphics load command; bundled with files that

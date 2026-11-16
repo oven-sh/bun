@@ -444,10 +444,14 @@ pub(crate) mod js_bundler {
         compile: JSValue,
         key: &str,
     ) -> JsResult<Vec<Vec<u8>>> {
+        match compile.get(global_this, key)? {
+            Some(value) => names_in(global_this, key, value),
+            None => Ok(Vec::new()),
+        }
+    }
+
+    fn names_in(global_this: &JSGlobalObject, key: &str, value: JSValue) -> JsResult<Vec<Vec<u8>>> {
         let mut list = Vec::new();
-        let Some(value) = compile.get(global_this, key)? else {
-            return Ok(list);
-        };
         if value.is_undefined_or_null() {
             return Ok(list);
         }
@@ -551,8 +555,9 @@ pub(crate) mod js_bundler {
             self.harden = read_names(global_this, compile, "aotHarden")?;
             self.testing = read_names(global_this, compile, "aotTesting")?;
             self.out = read_names(global_this, compile, "aotOut")?;
-            if compile.get(global_this, "aotOrder")? != Some(JSValue::FALSE) {
-                self.order = read_names(global_this, compile, "aotOrder")?;
+            let order = compile.get(global_this, "aotOrder")?;
+            if let Some(order) = order.filter(|order| *order != JSValue::FALSE) {
+                self.order = names_in(global_this, "aotOrder", order)?;
             }
             if compile.get_boolean_loose(global_this, "aotRecordOrder")? == Some(true) {
                 self.record_order.push(Vec::new());
@@ -1955,7 +1960,7 @@ pub(crate) mod js_bundler {
     /// (`JSBundlerPlugin__onResolveAsync`, `on_defer`,
     /// `JSBundlerPlugin__onLoadAsync`) stay safe at the call site. `plugins`
     /// is `Some` whenever the plugin chain is dispatched (asserted by
-    /// `enqueue_on_js_loop_for_plugins`). The `Plugin` storage is heap-
+    /// `js_loop_for_plugins`). The `Plugin` storage is heap-
     /// disjoint from `Resolve`/`Load`, so the returned `&mut` does not alias
     /// the caller's request.
     #[inline]
@@ -2041,7 +2046,7 @@ pub(crate) mod js_bundler {
             // decrement the pending item counter and increment the deferred
             // counter. Must land on the bundle's `any_loop()` (the loop
             // running BundleV2), which is distinct from the
-            // `enqueue_on_js_loop_for_plugins` target (the plugin host's JS loop)
+            // `js_loop_for_plugins` (the plugin host's JS loop)
             // when `Bun.build` runs the bundler on its own Mini event loop.
             let ctx = bv2_ref(self.bv2);
             // SAFETY: the answer, which frees `self`, goes into the same queue later.

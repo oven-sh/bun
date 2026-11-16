@@ -1630,9 +1630,8 @@ impl CronJob {
             }
         }
 
-        // `job`'s ref moves to the JS wrapper (released via `finalize`).
-        let js_value = Self::to_js_nonnull(job.as_non_null(), global);
-        let job = job.into_this_ptr();
+        let job = js::wrap(job, global);
+        let js_value = job.to_js();
         job.this_value.with_mut(|v| v.set_strong(js_value, global));
         js::cron_set_cached(js_value, global, schedule_value.to_js());
         js::callback_set_cached(

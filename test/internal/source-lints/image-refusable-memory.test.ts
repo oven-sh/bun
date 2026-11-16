@@ -8,8 +8,8 @@ import path from "node:path";
 //
 // What fills a `Vec` (`push()`, `extend()`, `resize()`) is invisible to this lint. It aborts in the same way once it
 // leaves the room that was reserved.
-const crates = ["deflate", "jpeg", "png"];
-test.each(crates)("bun_%s does not ask for memory in a way that aborts when it is refused", async name => {
+const crates = ["deflate", "jpeg", "png", "webp"];
+test.each(crates)("bun_%s does not ask for memory in a way that aborts on a refusal", async name => {
   const crate = path.resolve(import.meta.dir, "..", "..", "..", "src", name);
   const functions = `
     with_capacity reserve reserve_exact shrink_to shrink_to_fit into_boxed_slice to_vec to_owned into_owned to_string
@@ -29,7 +29,7 @@ test.each(crates)("bun_%s does not ask for memory in a way that aborts when it i
   const found: string[] = [];
   let scanned = 0;
   for await (const file of new Glob("**/*.rs").scan({ cwd: crate })) {
-    if (/^tests[\\/]/.test(file)) continue;
+    if (file.startsWith("tests" + path.sep)) continue;
     scanned++;
     readFileSync(path.join(crate, file), "utf8")
       .split("\n")

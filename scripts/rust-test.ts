@@ -63,6 +63,7 @@ const crates = [
   "bun_standalone_graph",
   "bun_threading",
   "bun_trim",
+  "bun_webp",
   "bun_wyhash",
 ];
 

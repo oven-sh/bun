@@ -16,7 +16,6 @@ import { brotli } from "./brotli.ts";
 import { cares } from "./cares.ts";
 import { highway } from "./highway.ts";
 import { libuv } from "./libuv.ts";
-import { libwebp } from "./libwebp.ts";
 import { lolhtml } from "./lolhtml.ts";
 import { lshpack } from "./lshpack.ts";
 import { lsqpack } from "./lsqpack.ts";
@@ -44,7 +43,6 @@ export const allDeps: readonly Dependency[] = [
   zlib,
   zstd,
   brotli,
-  libwebp,
   cares,
   highway,
   libuv,
@@ -72,7 +70,6 @@ export {
   cares,
   highway,
   libuv,
-  libwebp,
   lolhtml,
   lshpack,
   lsqpack,

@@ -133,9 +133,11 @@ pub mod task_tag {
         TCPSocketWriteCompletion, // bun_runtime::socket::DeferredWriteCompletion<false>
         TLSSocketWriteCompletion, // bun_runtime::socket::DeferredWriteCompletion<true>
         ThreadSafeFunction,
+        ThreadSafeFunctionRefRequest,
         UvDnsPollFree,            // a closed c-ares uv_poll_t (windows)
         UvHandleClose,            // an addon's uv_close (posix)
         UvLoopDispatch,           // an addon's uv_async_send (posix)
+        UvWorkDone,               // work that an addon thread queued (posix)
         ValkeyDeferredClose,
         ValkeyDeferredFailure,
         WindowsNamedPipe,

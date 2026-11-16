@@ -1597,6 +1597,33 @@ describe("a server session and its handshake", () => {
   });
 });
 
+describe("a handshake in flight", () => {
+  test.concurrent.each(["Bun.serve", "fetch", "node:quic"])(
+    "completes when %s makes its first QUIC engine",
+    async api => {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          join(import.meta.dir, "quic-handshake-in-flight-fixture.ts"),
+          api,
+          join(keysDir, "agent1-key.pem"),
+          join(keysDir, "agent1-cert.pem"),
+        ],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      // stderr contains the ExperimentalWarning.
+      expect({ stdout, stderr, exitCode }).toEqual({
+        stdout: '{"result":"answered","connections":1}\n',
+        stderr: expect.any(String),
+        exitCode: 0,
+      });
+    },
+  );
+});
+
 // lsquic queues a stateless reset for retry when its send would block.
 describe("endpoint.close() with an unsent stateless reset", () => {
   test.skipIf(!isASAN || !isLinux)(

@@ -197,7 +197,7 @@ where
         let mut path_buf = bun_paths::path_buffer_pool::get();
         path_buf[..b"node_modules".len()].copy_from_slice(b"node_modules");
 
-        for tree_id in 0..this.buffers.trees.as_slice().len() {
+        for tree_id in 0..this.buffers.trees.len() {
             w.begin_object()?;
 
             let tree = this.buffers.trees.as_slice()[tree_id];

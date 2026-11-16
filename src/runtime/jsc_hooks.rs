@@ -320,7 +320,7 @@ fn init_runtime_state(vm: &VirtualMachine, opts: &InitOptions) -> OpaqueRuntimeS
         memory_pressure_watcher: Default::default(),
         lint: core::cell::OnceCell::new(),
         #[cfg(unix)]
-        uv_loop: crate::napi::uv_posix::UvLoop::new(ptr::NonNull::from(vm), vm.handle()),
+        uv_loop: crate::napi::uv_posix::UvLoop::new(vm.handle()),
     }));
     RUNTIME_STATE.set(state);
 
@@ -752,7 +752,7 @@ fn auto_tick(vm: &VirtualMachine) {
     el.tick_immediate_tasks();
     let has_yielded_tasks = el.promote_yield_tasks(loop_.internal_loop_data.is_ticking());
     #[cfg(windows)]
-    if has_yielded_tasks || el.immediate_task_count() > 0 {
+    if has_yielded_tasks || el.immediate_task_count() > 0 || el.has_pending_tasks() {
         el.wakeup();
     }
 
@@ -795,7 +795,7 @@ fn auto_tick(vm: &VirtualMachine) {
     // ── addons' uv_idle_t / uv_prepare_t ────────────────────────────────
     // Run them before reading `has_pending_immediate` because their callbacks can queue work.
     #[cfg(unix)]
-    let uv_idle_started = state.uv_loop.before_poll();
+    let uv_idle_started = state.uv_loop.before_poll(vm);
     #[cfg(not(unix))]
     let uv_idle_started = false;
 
@@ -833,7 +833,7 @@ fn auto_tick(vm: &VirtualMachine) {
     #[cfg(unix)]
     {
         // ── addons' uv_check_t (libuv runs them right after its poll) ────
-        state.uv_loop.after_poll();
+        state.uv_loop.after_poll(vm);
         state.timer.drain_timers(vm);
     }
 
@@ -863,7 +863,7 @@ fn auto_tick_active(vm: &VirtualMachine) {
     el.tick_immediate_tasks();
     let has_yielded_tasks = el.promote_yield_tasks(loop_.internal_loop_data.is_ticking());
     #[cfg(windows)]
-    if has_yielded_tasks || el.immediate_task_count() > 0 {
+    if has_yielded_tasks || el.immediate_task_count() > 0 || el.has_pending_tasks() {
         el.wakeup();
     }
 
@@ -889,7 +889,7 @@ fn auto_tick_active(vm: &VirtualMachine) {
     state.timer.update_date_header_timer_if_necessary(loop_, vm);
 
     #[cfg(unix)]
-    let uv_idle_started = state.uv_loop.before_poll();
+    let uv_idle_started = state.uv_loop.before_poll(vm);
     #[cfg(not(unix))]
     let uv_idle_started = false;
 
@@ -917,7 +917,7 @@ fn auto_tick_active(vm: &VirtualMachine) {
 
     #[cfg(unix)]
     {
-        state.uv_loop.after_poll();
+        state.uv_loop.after_poll(vm);
         state.timer.drain_timers(vm);
     }
 

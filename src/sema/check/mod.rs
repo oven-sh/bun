@@ -631,7 +631,7 @@ impl<'s> Program<'s> {
     }
 
     #[allow(
-        clippy::large_stack_frames,
+        clippy::large_unopt_stack_frames,
         reason = "every table is made here and moved into the program, each with its chunks' addresses in line; runs once per program, close to the bottom of the stack"
     )]
     pub fn with_node_counts(

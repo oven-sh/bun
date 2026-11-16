@@ -2,7 +2,6 @@
 //! client engine and the live-session registry. Never freed — the engine
 //! lives for the process, same as the HTTP thread itself.
 
-use core::ffi::c_uint;
 use core::ptr::NonNull;
 
 use bun_ptr::RefPtr;
@@ -13,7 +12,6 @@ use bun_uws::quic::context::ConnectResult;
 use super::callbacks;
 use super::client_session::{ClientSession, quic_socket_mut, session_mut};
 use super::pending_connect::PendingConnect;
-use super::stream::Stream;
 use crate::ssl_config::SSLConfig;
 use crate::{Carrier, HTTPClient};
 
@@ -73,13 +71,7 @@ impl ClientContext {
         if let Some(i) = INSTANCE.load() {
             return Some(i);
         }
-        let qctx = quic::Context::create_client(
-            UwsLoop::get(),
-            0,
-            core::mem::size_of::<*mut ClientSession>() as c_uint,
-            core::mem::size_of::<*mut Stream>() as c_uint,
-        )?;
-        let qctx = NonNull::new(qctx).expect("us_create_quic_socket_context returned null");
+        let qctx = quic::Context::create_client(UwsLoop::get())?;
 
         // Process-lifetime singleton — published into `INSTANCE` below and
         // never torn down (the lsquic engine outlives every request).

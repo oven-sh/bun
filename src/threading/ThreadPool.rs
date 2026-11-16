@@ -367,8 +367,9 @@ impl ThreadPool {
 /// Shut down the thread pool and stop the worker threads.
 impl Drop for ThreadPool {
     fn drop(&mut self) {
-        self.shutdown();
-        self.join();
+        if self.shutdown().spawned() > 0 {
+            self.join();
+        }
     }
 }
 
@@ -1020,11 +1021,11 @@ impl ThreadPool {
         }
     }
 
-    /// Marks the thread pool as shutdown
+    /// Marks the thread pool as shutdown, and returns the previous `Sync`.
     #[inline(never)]
-    pub(crate) fn shutdown(&self) {
+    fn shutdown(&self) -> Sync {
         let mut sync = self.sync.load(Ordering::Relaxed);
-        while sync.state() != SyncState::Shutdown {
+        loop {
             let mut new_sync = sync;
             new_sync.set_notified(true);
             new_sync.set_state(SyncState::Shutdown);
@@ -1042,7 +1043,7 @@ impl ThreadPool {
                     if sync.idle() > 0 {
                         self.idle_event.shutdown();
                     }
-                    return;
+                    return sync;
                 }
             };
         }
@@ -1092,23 +1093,19 @@ impl ThreadPool {
         bun_ptr::BackRef::from(next_thread).join_event.notify();
     }
 
+    /// For a pool that had threads at `shutdown()`.
     fn join(&self) {
-        // Wait for the thread pool to be shutdown() then for all threads to enter a joinable state
-        let mut sync = self.sync.load(Ordering::Relaxed);
-        if !(sync.state() == SyncState::Shutdown && sync.spawned() == 0) {
-            self.join_event.wait(None);
-            sync = self.sync.load(Ordering::Relaxed);
-        }
+        // Also if `spawned` is 0 by now: the last thread uses `join_event` after its decrement.
+        self.join_event.wait(None);
 
+        // Acquire: what each thread did to the pool before its decrement happens before the drop.
+        let sync = self.sync.load(Ordering::Acquire);
         debug_assert!(sync.state() == SyncState::Shutdown);
         debug_assert!(sync.spawned() == 0);
 
         // If there are threads, start off the chain sending it the shutdown signal.
         // The thread receives the shutdown signal and sends it to the next thread, and the next..
-        // Use swap (not load) so join() is idempotent: a second call sees null and
-        // returns instead of touching freed worker stack memory.
-        let Some(thread) = NonNull::new(self.threads.swap(ptr::null_mut(), Ordering::Acquire))
-        else {
+        let Some(thread) = NonNull::new(self.threads.load(Ordering::Acquire)) else {
             return;
         };
         // `thread` is a registered worker blocked in `join_event.wait()`;
@@ -1572,6 +1569,8 @@ impl Event {
     /// Post a notification to the event if it doesn't have one already
     /// then wake up a waiting thread if there is one as well.
     fn notify(&self) {
+        // The waiter of a `join_event` frees it once it has the notification.
+        let state_ptr = &raw const self.state;
         let mut word = self.state.load(Ordering::Relaxed);
         loop {
             if word & Self::STATE_MASK == Self::SHUTDOWN {
@@ -1592,7 +1591,7 @@ impl Event {
         // EMPTY or NOTIFIED (a consumer that never parked took a notification and put EMPTY
         // back); the next notify() re-arms and wakes it.
         if word & Self::STATE_MASK == Self::WAITING {
-            Futex::wake(&self.state, 1);
+            Futex::wake_raw(state_ptr, 1);
         }
     }
 

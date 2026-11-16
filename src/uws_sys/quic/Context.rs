@@ -3,6 +3,7 @@
 //! lives for the process; the server creates one per `Bun.serve({http3:true})`.
 
 use core::ffi::{CStr, c_char, c_int, c_uint};
+use core::ptr::NonNull;
 
 use crate::Loop;
 use crate::quic::{OwnedPendingConnect, Socket, Stream};
@@ -83,15 +84,11 @@ pub fn prepare_client_ssl_ctx(ssl_ctx: &OwnedSslCtx) {
 
 impl Context {
     #[inline]
-    pub fn create_client(
-        loop_: &'static Loop,
-        ext_size: c_uint,
-        conn_ext: c_uint,
-        stream_ext: c_uint,
-    ) -> Option<*mut Context> {
-        // SAFETY: thin FFI forward; all args are POD, return is nullable.
-        let p = unsafe { us_create_quic_client_context(loop_, ext_size, conn_ext, stream_ext) };
-        if p.is_null() { None } else { Some(p) }
+    pub fn create_client(loop_: &'static Loop) -> Option<NonNull<Context>> {
+        // The slot of `Socket::ext` and `Stream::ext`.
+        const EXT: c_uint = size_of::<*mut ()>() as c_uint;
+        // SAFETY: the context keeps `loop_`, which is `'static`.
+        NonNull::new(unsafe { us_create_quic_client_context(loop_, 0, EXT, EXT) })
     }
 
     pub fn connect(

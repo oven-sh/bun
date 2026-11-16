@@ -960,26 +960,22 @@ void JSNodeHTTPServerSocket::onData(const char* data, int length, bool last)
     if (scriptExecutionContext) {
         auto scope = DECLARE_TOP_EXCEPTION_SCOPE(globalObject->vm());
         JSC::JSUint8Array* buffer = WebCore::createBuffer(globalObject, std::span<const uint8_t>(reinterpret_cast<const uint8_t*>(data), length));
-        auto chunk = JSC::JSValue(buffer);
         if (auto* exception = scope.exception()) {
             (void)scope.tryClearException();
             globalObject->reportUncaughtExceptionAtEventLoop(globalObject, exception);
             RETURN_IF_EXCEPTION(scope, );
             return;
         }
-        gcProtect(chunk);
         // JS gets the chunk in a task, so its readStop() comes after the read loop: bound what the loop queues.
         queuedTunnelBytes += length;
         if (queuedTunnelBytes >= LIBUS_RECV_BUFFER_LENGTH && !tunnelReadsQueuedFull) {
             tunnelReadsQueuedFull = true;
             applyTunnelReads();
         }
-        scriptExecutionContext->postTask([self = this, chunk = chunk, last = last, length = static_cast<size_t>(length)](ScriptExecutionContext& context) {
+        scriptExecutionContext->postTask([self = this, chunk = JSC::Strong<JSC::JSUint8Array>(globalObject->vm(), buffer), last = last, length = static_cast<size_t>(length)](ScriptExecutionContext& context) {
             auto* globalObject = defaultGlobalObject(context.globalObject());
             auto* thisObject = self;
             auto* callbackObject = thisObject->functionToCallOnData.get();
-            EnsureStillAliveScope ensureChunkStillAlive(chunk);
-            gcUnprotect(chunk);
             // After the callback: a readStop() from it keeps the reads paused, with no resume in between.
             auto delivered = WTF::makeScopeExit([&] {
                 thisObject->didDeliverQueuedTunnelBytes(length);
@@ -992,7 +988,7 @@ void JSNodeHTTPServerSocket::onData(const char* data, int length, bool last)
             }
 
             MarkedArgumentBuffer args;
-            args.append(chunk);
+            args.append(chunk.get());
             args.append(JSC::jsBoolean(last));
             EnsureStillAliveScope ensureStillAlive(self);
 

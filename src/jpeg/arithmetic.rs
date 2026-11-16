@@ -421,4 +421,8 @@ impl EntropyDecoder for Arithmetic<'_, '_> {
         self.dc_states = Default::default();
         self.coder = Some(Coder::new(self.window));
     }
+
+    fn has_data(&self) -> bool {
+        self.coder.is_some()
+    }
 }

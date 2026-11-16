@@ -170,13 +170,11 @@ impl Slot {
 
 /// Used as `dyn`, so that the loops over rows exist once. They only call it once for each row or batch.
 pub(crate) trait EntropyDecoder {
-    /// `mcus` are within one restart interval. Returns whether any but the first began while [`Self::has_data`].
+    /// `mcus` are within one restart interval. Returns false if smoothing has to take all but the first as missing.
     fn decode(&mut self, blocks: &mut [Block], slots: &[Slot], mcus: Range<usize>) -> Result<bool>;
     fn restart(&mut self, number: u8);
-    /// Only Huffman coding can tell.
-    fn has_data(&self) -> bool {
-        true
-    }
+    /// If not, all blocks up to the next restart stay as they are.
+    fn has_data(&self) -> bool;
     /// Whether the rest of the scan leaves all blocks as they are.
     fn is_over(&self) -> bool {
         false

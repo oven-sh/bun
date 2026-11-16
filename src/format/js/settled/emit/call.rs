@@ -536,7 +536,6 @@ impl<'a> Emitter<'a, '_> {
         }
     }
 
-    #[cfg_attr(mordant, allow(guard_blind_to_action))]
     fn grouped_arguments(&mut self, call: Id, layout: Grouped) {
         let args = self.args(call);
         let last_index = args.len() - 1;
@@ -587,7 +586,7 @@ impl<'a> Emitter<'a, '_> {
                     is_grouped: true,
                 }),
             };
-            if caches && self.may_be_decorated_function(call, argument) {
+            if caches && may_be_decorated_function(self.tree, call, argument) {
                 return self.give_up();
             }
             return self.follow_grouped_arguments(call, argument, options);
@@ -614,7 +613,7 @@ impl<'a> Emitter<'a, '_> {
         }
         let most_expanded = self.variant(|e| e.all_elements_broken_out(call, &elements));
         if caches {
-            if self.may_be_decorated_function(call, argument) {
+            if may_be_decorated_function(self.tree, call, argument) {
                 return self.give_up();
             }
             let mut function = argument;
@@ -756,19 +755,6 @@ impl<'a> Emitter<'a, '_> {
         }
         self.cache.insert(key, cleaned);
         true
-    }
-
-    fn may_be_decorated_function(&self, call: Id, argument: Id) -> bool {
-        let node = self.node(call);
-        node.kind == K::Call
-            && self.kind(node.a) == K::Call
-            && self.kind(argument) == K::Arrow
-            && self.kind(self.node(argument).d) == K::Body
-            && self.args(call).len() == 1
-            && matches!(
-                self.kind(node.parent),
-                K::Declarator | K::ExportDefault | K::Assign
-            )
     }
 
     fn is_react_hook_with_deps_array(&self, args: &[Id]) -> bool {
@@ -916,4 +902,17 @@ impl<'a> Emitter<'a, '_> {
             _ => false,
         }
     }
+}
+
+fn may_be_decorated_function(tree: &Tree, call: Id, argument: Id) -> bool {
+    let node = tree.node(call);
+    node.kind == K::Call
+        && tree.kind(node.a) == K::Call
+        && tree.kind(argument) == K::Arrow
+        && tree.kind(tree.node(argument).d) == K::Body
+        && tree.list(node.c).len() == 1
+        && matches!(
+            tree.kind(node.parent),
+            K::Declarator | K::ExportDefault | K::Assign
+        )
 }

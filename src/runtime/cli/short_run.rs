@@ -1,8 +1,9 @@
 //! Settings of the allocators for `bun check`, `bun lint` and `bun fmt`, which start many threads and end soon.
 
-use bun_alloc::mimalloc::{Option as Setting, mi_option_set};
+use bun_alloc::mimalloc::{Option as Setting, mi_arenas_purge, mi_option_set};
+use core::ffi::c_long;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 /// The executable allocates with mimalloc, but glibc allocates a few bytes for each new thread, and by default maps a
 /// heap for the thread to take them from. The page faults of all threads wait for that.
@@ -22,6 +23,7 @@ pub(crate) fn spend_spare_memory() {
     if cfg!(bun_asan)
         || is_set(bun_core::zstr!("MIMALLOC_PURGE_DELAY"))
         || is_set(bun_core::zstr!("MIMALLOC_PURGE_HOLES"))
+        || is_set(bun_core::zstr!("MIMALLOC_ARENA_PURGE_IMMEDIATE_SIZE"))
         || is_set(bun_core::zstr!("MIMALLOC_ALLOW_THP"))
     {
         return;
@@ -34,7 +36,8 @@ pub(crate) fn spend_spare_memory() {
 
 fn watch_memory() {
     std::thread::sleep(Duration::from_millis(4));
-    let spare = super::lint_js::memory_to_spare() / 2;
+    let find_spare = || super::lint_js::memory_to_spare() / 2;
+    let (mut spare, mut found_at) = (find_spare(), Instant::now());
     let used = || bun_sys::self_process_memory_usage().unwrap_or(usize::MAX);
     if used() >= spare {
         return;
@@ -42,11 +45,17 @@ fn watch_memory() {
     // Memory that is given back is faulted in again for the next file.
     mi_option_set(Setting::purge_delay, 10_000);
     mi_option_set(Setting::purge_holes, 0);
+    // In KB. What a huge buffer leaves behind when it grows is too small for it.
+    mi_option_set(Setting::arena_purge_immediate_size, 32 << 10);
     HAS_MEMORY_TO_SPARE.store(true, Ordering::Relaxed);
     bun_sema::session::keep_free_memory_while(|| HAS_MEMORY_TO_SPARE.load(Ordering::Relaxed));
 
     let (mut huge_pages, mut pause) = (None, Duration::from_millis(4));
     loop {
+        // Other processes grow too.
+        if found_at.elapsed() >= Duration::from_millis(100) {
+            (spare, found_at) = (find_spare(), Instant::now());
+        }
         let used = used();
         if used >= spare {
             break;
@@ -60,7 +69,10 @@ fn watch_memory() {
     drop(huge_pages);
     mi_option_set(Setting::purge_delay, 100);
     mi_option_set(Setting::purge_holes, 1);
+    mi_option_set(Setting::arena_purge_immediate_size, c_long::MAX);
     HAS_MEMORY_TO_SPARE.store(false, Ordering::Relaxed);
+    // Or else the next purge is still seconds away.
+    mi_arenas_purge();
 }
 
 /// The start and the size of the mappings that get pages of 2 MB, until this is dropped. A large program misses the
@@ -113,9 +125,9 @@ impl HugePages {
     }
 }
 
-#[cfg(target_os = "linux")]
 impl Drop for HugePages {
     fn drop(&mut self) {
+        #[cfg(target_os = "linux")]
         self.advise(libc::MADV_NOHUGEPAGE);
     }
 }

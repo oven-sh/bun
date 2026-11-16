@@ -1137,7 +1137,7 @@ enum Done {
     /// It isn't formatted, or wasn't until this run wrote it. Holds how long that took.
     Different(Duration),
     /// The same, with what is written once the search for files has succeeded.
-    Unwritten(Vec<u8>, Duration),
+    Unwritten(Unwritten),
     /// Skipped: neither formatted nor written. See [`git::Files::is_partly_staged`].
     PartlyStaged,
     /// It has Tailwind CSS classes whose order isn't known yet.
@@ -1146,6 +1146,12 @@ enum Done {
     Failed(Vec<u8>),
     /// Also exits with 2.
     NotFormatted(Failure),
+}
+
+struct Unwritten {
+    source: Vec<u8>,
+    formatted: Vec<u8>,
+    took: Duration,
 }
 
 /// The size of all [`Done::Unwritten`]. Further files are formatted again.
@@ -1827,12 +1833,18 @@ impl Run<'_> {
                     if may_write {
                         return Some(write(target, &formatted, began, Duration::ZERO));
                     }
-                    let kept = unwritten_bytes.fetch_add(formatted.len(), Ordering::Relaxed);
-                    if kept > MAX_UNWRITTEN_BYTES {
+                    let size = text.len() + formatted.len();
+                    let kept = unwritten_bytes.fetch_add(size, Ordering::Relaxed);
+                    if kept + size > MAX_UNWRITTEN_BYTES {
+                        unwritten_bytes.fetch_sub(size, Ordering::Relaxed);
                         scratch.warnings.clear();
                         return None;
                     }
-                    return Some(Done::Unwritten(formatted, began.elapsed()));
+                    return Some(Done::Unwritten(Unwritten {
+                        source: text,
+                        formatted,
+                        took: began.elapsed(),
+                    }));
                 }
                 Some(Done::Different(began.elapsed()))
             };
@@ -2064,10 +2076,15 @@ impl Run<'_> {
         let format_at = |at: usize, scratch: &mut Scratches| {
             let (index, target) = work[at];
             let before = results.lock()[index].take();
-            if let Some(Done::Unwritten(formatted, took)) = before {
-                let done = write(target, &formatted, Instant::now(), took);
-                results.lock()[index] = Some(done);
-                return;
+            if let Some(Done::Unwritten(it)) = before {
+                let now = git::read(only.as_ref(), &target.path);
+                if now.is_ok_and(|now| now == it.source) {
+                    let done = write(target, &it.formatted, Instant::now(), it.took);
+                    results.lock()[index] = Some(done);
+                    return;
+                }
+                // It has been saved in the meantime.
+                warnings.lock().retain(|it| it.0 != index);
             }
             let done = match configs.options_for(&target.scope, &target.path) {
                 Ok(options) => format_target(target, options, scratch, true),

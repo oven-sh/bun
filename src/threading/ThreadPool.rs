@@ -835,16 +835,26 @@ impl ThreadPool {
                     drop(gate);
                     Thread::run(pool, Some(task.0))
                 });
-            if spawned.is_err() {
+            if let Err(err) = spawned {
                 batch.push(first);
-                for _ in 0..batch.len {
-                    // SAFETY: as in `notify_slow`.
-                    unsafe { Self::unregister(self, None) };
-                }
+                self.unregister_refused(batch.len, &err);
                 self.schedule(batch);
                 // `notified` can be from when these threads were counted, and then nobody answers it.
                 return self.notify_slow(false);
             }
+        }
+    }
+
+    /// `spawned` counts `count` threads that the OS hasn't started.
+    #[cold]
+    fn unregister_refused(&self, count: usize, err: &std::io::Error) {
+        for _ in 0..count {
+            // SAFETY: `&self` keeps the pool live; `None` makes `unregister` return right after the decrement.
+            unsafe { Self::unregister(self, None) };
+        }
+        // The threads there are take the tasks. With none they would wait forever.
+        if !self.has_workers() && EXITS_WITHOUT_ANY_THREAD.load(Ordering::Relaxed) {
+            exit_spawn_failed(err);
         }
     }
 
@@ -1065,18 +1075,7 @@ impl ThreadPool {
                                 Ok(_handle) => {
                                     // detach by dropping
                                 }
-                                Err(err) => {
-                                    // The threads there are take the task. With none it would wait forever.
-                                    if new_sync.spawned() == 1
-                                        && EXITS_WITHOUT_ANY_THREAD.load(Ordering::Relaxed)
-                                    {
-                                        exit_spawn_failed(&err);
-                                    }
-                                    // SAFETY: `&self` keeps the pool live; `None` makes
-                                    // `unregister` return right after undoing the `spawned`
-                                    // increment CAS'd above (no per-thread wait past notify).
-                                    return unsafe { Self::unregister(self, None) };
-                                }
+                                Err(err) => self.unregister_refused(1, &err),
                             }
                             return;
                         }

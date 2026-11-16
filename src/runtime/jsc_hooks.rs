@@ -3941,9 +3941,7 @@ fn transpile_file<const DATA_ONLY: bool>(
             ModuleType::Cjs => ResolvedSourceTag::PackageJsonTypeCommonjs,
             ModuleType::Unknown => ResolvedSourceTag::Javascript,
         };
-        let loaded = bun_removable_features::removable_body_behind_value!(Tools, {
-            crate::read_ahead::load(jsc_vm, specifier, &lr.path, loader, module_type, tag)
-        });
+        let loaded = crate::read_ahead::load(jsc_vm, specifier, &lr.path, loader, module_type, tag);
         if let Some(loaded) = loaded {
             *ret = ErrorableResolvedSource::ok(loaded);
             return ptr::null_mut();

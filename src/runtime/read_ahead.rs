@@ -24,6 +24,7 @@ use bun_jsc::virtual_machine::{SharedResolution, VirtualMachine};
 use bun_jsc::{JSGlobalObject, ResolvedSource};
 use bun_options_types::Format;
 use bun_paths::fs::Path;
+use bun_removable_features::removable_body_behind_value;
 use bun_threading::{Condition, Guarded};
 
 use crate::typescript_front;
@@ -218,6 +219,10 @@ impl Version {
 
 /// Call it with the lock of `vm`, whose options are final and those of every other VM that it is called for.
 pub(crate) fn enable(vm: &VirtualMachine, has_several_vms: bool) {
+    removable_body_behind_value!(RuntimeTranspiler, { start(vm, has_several_vms) })
+}
+
+fn start(vm: &VirtualMachine, has_several_vms: bool) {
     if vm.debugger.get().is_some()
         || bun_core::env_var::feature_flag::BUN_FEATURE_FLAG_DISABLE_DEFERRED_REQUIRE::get()
             == Some(true)
@@ -465,7 +470,7 @@ impl ReadAhead {
         if jobs > state.idle && state.threads < self.max_threads {
             let started = std::thread::Builder::new()
                 .stack_size(bun_sema_driver::WORKER_STACK_SIZE as usize)
-                .spawn(move || self.work());
+                .spawn(move || removable_body_behind_value!(RuntimeTranspiler, { self.work() }));
             state.threads += usize::from(started.is_ok());
         }
     }

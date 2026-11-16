@@ -26,6 +26,8 @@ pub type mi_output_fun = extern "C" fn(*const c_char, *mut c_void);
 unsafe extern "C" {
     /// No preconditions.
     pub safe fn mi_collect(force: bool);
+    /// No preconditions.
+    pub safe fn mi_arenas_purge();
     /// Call when a thread goes idle: collects this thread's pending frees, discards the
     /// free blocks inside its still-used pages, and hands the arena purge to the scavenger.
     /// Safe on any thread; a no-op on a thread that never allocated. No preconditions.
@@ -169,6 +171,7 @@ pub enum Option {
     page_commit_on_demand = 40,
     page_max_reclaim = 41,
     page_cross_thread_max_reclaim = 42,
+    arena_purge_immediate_size = 53,
     purge_holes = 56,
 }
 

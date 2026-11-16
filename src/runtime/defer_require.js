@@ -92,12 +92,16 @@ let $Bun_defer, $Bun_lazy;
 
   // By file. They are read as soon as the module is loaded, by whomever, before anything can change them.
   const membersOf = new Map();
+  const { toString: sourceOf } = Function.prototype;
+  const onlyReturns = /^[^{=]*(?:\{\s*return\s+[\w$]+;?\s*\}|=>\s*[\w$]+)$/;
   function isThere(object, keys) {
     for (const key of keys) {
       if (Object(object) !== object || isLazy(object, key)) return false;
       const found = getOwnPropertyDescriptor(object, key);
-      if (found === undefined || !hasOwn(found, "value")) return false;
-      object = found.value;
+      if (found === undefined) return false;
+      if (hasOwn(found, "value")) object = found.value;
+      else if (found.get !== undefined && onlyReturns.test(sourceOf.call(found.get))) object = object[key];
+      else return false;
     }
     return true;
   }
@@ -226,14 +230,17 @@ let $Bun_defer, $Bun_lazy;
   };
 
   const { __lookupGetter__: getterOf } = Object.prototype;
-  const { toString: sourceOf } = Function.prototype;
-  // To leave it by an exception leaves nothing half done.
-  const onlyRemembers = /^(?!.*(?:\.\s*[\w$]+\s*\(|\+\+|--|\bdelete\b))(?:[^=]|=>|\?\?=|\|\|=)*$/s;
+  // To leave it by an exception leaves nothing half done: it changes nothing but by `??=`, and only loads before its one call.
+  const onlyRemembers = /^(?!.*(?:\.\s*[\w$]+\s*\(|\+\+|--|\bdelete\b|\(.*[(\0]))(?:[^=]|=>|\?\?=|\|\|=)*$/s;
+  function canBeLeft(getter) {
+    const source = sourceOf.call(getter);
+    return onlyRemembers.test(source.slice(source.indexOf(")")).replace(/\([\w$]+\?\.\(\)\)/g, "\0"));
+  }
   // For Bun's own scripts, which go through all that is loaded: the property, or `otherwise` if to read it loads a module.
   $Bun_lazy.ifLoaded = (object, key, otherwise) => {
     if (isLazy(object, key)) return otherwise;
     const getter = getterOf.call(object, key);
-    if (!isOfKnownPackage(getter) || !onlyRemembers.test(sourceOf.call(getter))) return object[key];
+    if (!isOfKnownPackage(getter) || !canBeLeft(getter)) return object[key];
     const resolveFilename = Module._resolveFilename;
     Module._resolveFilename = function () {
       const file = Reflect.apply(resolveFilename, this, arguments);

@@ -5834,6 +5834,33 @@ describe.concurrent("what a package requires is loaded when it's used", () => {
       1,
     ],
     [
+      "a getter that another module replaces",
+      {
+        "index.js": `const value = require("./a").nested.value; exports.f = () => (require("./b"), value);`,
+        "a.js": `exports.nested = { get value() { return 1; } };`,
+        "b.js": `Object.defineProperty(require("./a").nested, "value", { value: 2 });`,
+      },
+      1,
+    ],
+    [
+      "a member behind a getter that another module replaces",
+      {
+        "index.js": `const value = require("./a").nested.value; exports.f = () => (require("./b"), value);`,
+        "a.js": `const nested = { value: 1 }; Object.defineProperty(exports, "nested", { get: function () { return nested; } });`,
+        "b.js": `require("./a").nested.value = 2;`,
+      },
+      1,
+    ],
+    [
+      "a getter that breaks a cycle",
+      {
+        "index.js": `const { value } = require("./a"); exports.f = () => (require("./b"), value);`,
+        "a.js": `module.exports = { get value() { return require("./b").thing; } };`,
+        "b.js": `require("./a").x = 1; exports.thing = "thing";`,
+      },
+      "thing",
+    ],
+    [
       "an argument that's a property",
       {
         "index.js": `const debug = require("debug"); const it = { name: "a" }; const log = debug(it.name); it.name = "b"; exports.f = () => log;`,
@@ -5853,6 +5880,15 @@ describe.concurrent("what a package requires is loaded when it's used", () => {
       "a getter that calls a method",
       {
         "index.js": `const queue = ["./a"]; let a; module.exports = { get a() { return a ??= require(queue.shift()); }, f() { return this.a; } };`,
+        "a.js": `module.exports = "a";`,
+      },
+      "a",
+    ],
+    [
+      "a getter that calls a function for what it requires",
+      {
+        "index.js": `const queue = ["./a"]; function take() { return queue.shift(); } const load = it => require(it); let a;
+          module.exports = { get a() { return a ??= load(take()); }, f() { return this.a; } };`,
         "a.js": `module.exports = "a";`,
       },
       "a",

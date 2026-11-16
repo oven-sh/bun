@@ -6359,6 +6359,19 @@ exports.format = async text => "by Prettier";
     });
   });
 
+  test("keeps what is saved to a file while the search for files goes on", async () => {
+    const files = {
+      "a.js": "before( 1 )\n",
+      "z/prettier.config.cjs": `require("fs").writeFileSync(__dirname + "/../a.js", "after( 2 )\\n");\nmodule.exports = {};\n`,
+      "z/b.js": "b;\n",
+      // Enough for the search to go on on several threads.
+      ...Object.fromEntries(Array.from({ length: 40 }, (_, i) => [`d${i}/b.js`, "b;\n"])),
+    };
+    const result = await format(files, ["."], { reads: ["a.js"] });
+    expect(result.files["a.js"]).toBe("after(2);\n");
+    expect(result.exitCode).toBe(0);
+  });
+
   test.each([
     ["arrays", (depth: number) => Buffer.alloc(depth, "[").toString() + Buffer.alloc(depth, "]").toString()],
     [

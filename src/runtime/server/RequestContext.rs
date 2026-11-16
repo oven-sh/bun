@@ -149,9 +149,9 @@ pub(crate) struct RequestContext<
     pub(crate) if_range: Option<Box<[u8]>>,
 
     pub(crate) request_body_readable_stream_ref: bun_jsc::StrongCell,
-    /// Owning `+1` handle into the per-VM `Body::Value` hive pool. Shared with
+    /// Owning `+1` handle into the per-VM `Body` hive pool. Shared with
     /// `Request.body` (each holds its own `+1`). `Drop` releases the count.
-    pub(crate) request_body: JsCell<Option<body::BodyHiveHandle>>,
+    pub(crate) request_body: Cell<Option<body::BodyHiveHandle>>,
     pub(crate) request_body_buf: JsCell<Vec<u8>>,
     pub(crate) request_body_content_len: Cell<usize>,
     /// Total bytes forwarded to the request-body `ReadableStream`. The
@@ -327,14 +327,13 @@ where
 //
 /// The C++-owned cell pointer for `value`, or `None` if it is not a `Response`.
 ///
-/// Returns a raw pointer rather than `&mut Response` so it keeps the wrapper
+/// Returns a raw pointer so it keeps the wrapper
 /// allocation's provenance: `RequestContext::set_response` stores it in a
 /// `WeakPtr<Response>`, which outlives any reborrow and is read again after
 /// the Response has been written through other pointers.
 ///
 /// Callers must keep `value` GC-rooted for as
-/// long as they use the pointer, so the JSC-owned allocation outlives it, and
-/// must not form two overlapping `&mut Response` from it.
+/// long as they use the pointer, so the JSC-owned allocation outlives it.
 #[inline]
 fn as_response(value: JSValue) -> Option<*mut Response> {
     response::from_js(value).map(|p| p.cast::<Response>())
@@ -351,10 +350,9 @@ fn report_unhandled_error(vm: &jsc::VirtualMachine, global: &JSGlobalObject, val
 }
 
 /// Not to be held across script or a JS allocation unless the wrapper is rooted.
-fn live_response<'r>(weak: &JsCell<response::WeakRef>) -> Option<&'r mut Response> {
+fn live_response<'r>(weak: &JsCell<response::WeakRef>) -> Option<&'r Response> {
     // SAFETY: the weak handle just reported the value live.
-    weak.with_mut(|w| w.get())
-        .map(|mut p| unsafe { p.as_mut() })
+    weak.with_mut(|w| w.get()).map(|p| unsafe { p.as_ref() })
 }
 
 /// Release the body's hold on a stream the sink is done with, and mark a
@@ -365,9 +363,7 @@ fn release_body_stream(weak: &JsCell<response::WeakRef>, global_this: &JSGlobalO
     let Some(mut response) = live_response(weak) else {
         return;
     };
-    if let Body::Value::Locked(locked) = response.get_body_value()
-        && locked.has_consumer()
-    {
+    if response.body().has_consumer() {
         return;
     }
     if let Some(stream) = response.get_body_readable_stream() {
@@ -381,9 +377,8 @@ fn release_body_stream(weak: &JsCell<response::WeakRef>, global_this: &JSGlobalO
         response = live;
     }
     // Read after the stream calls: the check observes the post-detach state.
-    let body_value = response.get_body_value();
-    if matches!(body_value, Body::Value::Locked(_)) {
-        *body_value = Body::Value::Used;
+    if response.body().tag() == Body::Tag::Locked {
+        response.body().set(Body::Value::Used);
     }
 }
 
@@ -395,24 +390,12 @@ mod shim {
     use super::*;
 
     #[inline]
-    pub(super) fn response_body_stream(r: &mut Response) -> Option<ReadableStream> {
+    pub(super) fn response_body_stream(r: &Response) -> Option<ReadableStream> {
         r.get_body_readable_stream()
     }
     #[inline]
-    pub(super) fn response_detach_stream(r: &mut Response, g: &JSGlobalObject) {
+    pub(super) fn response_detach_stream(r: &Response, g: &JSGlobalObject) {
         r.detach_readable_stream(g)
-    }
-    /// `Blob::is_s3()` / `Blob::needs_to_read_file()` have duplicate impls
-    /// (E0034); inline the body here.
-    #[inline]
-    pub(super) fn blob_is_s3(b: &Blob) -> bool {
-        b.store()
-            .is_some_and(|s| matches!(s.data, crate::webcore::blob::store::Data::S3(_)))
-    }
-    #[inline]
-    pub(super) fn blob_needs_to_read_file(b: &Blob) -> bool {
-        b.store()
-            .is_some_and(|s| matches!(s.data, crate::webcore::blob::store::Data::File(_)))
     }
     /// The response is done with its natively piped body. A body still mid-stream is
     /// cancelled: it stayed locked to this response, so nothing else can read it.
@@ -477,24 +460,9 @@ where
         self.server.get().as_deref().copied()
     }
 
-    /// Mutably borrow the pooled request-body slot, if attached.
-    ///
-    /// Returns an unbounded `&'r mut` because the slot is a separate
-    /// `HiveArray` allocation, **not** a sub-field of `*self`, so callers may
-    /// hold it across disjoint reborrows of other `RequestContext` fields
-    /// (same pattern as [`server()`]).
-    #[inline]
-    #[allow(
-        clippy::mut_from_ref,
-        reason = "the body slot is a separate pooled allocation, not a field of *self (R-2)"
-    )]
-    fn request_body_mut(&self) -> Option<&mut Body::Value> {
-        // SAFETY: R-2 invariant — the slot is shared with `Request.body` but
-        // never `&mut`-borrowed concurrently (single-threaded event loop).
-        self.request_body
-            .get()
-            .as_ref()
-            .map(|h| unsafe { &mut (*h.as_ptr()).value })
+    /// The handle is put back after `f`, which can run script: the caller holds a ref on the context.
+    fn with_request_body<R>(&self, f: impl FnOnce(&Body::Body) -> R) -> Option<R> {
+        self.request_body.with_taken(|body| body.as_deref().map(f))
     }
 
     fn sink(&self) -> Option<RefPtr<HTTPServerWritable>> {
@@ -502,9 +470,8 @@ where
             .with_taken(|sink| sink.as_ref().map(|sink| sink.0.clone()))
     }
 
-    ///
     #[inline]
-    fn response_mut<'r>(&self) -> Option<&'r mut Response> {
+    fn response<'r>(&self) -> Option<&'r Response> {
         live_response(&self.response_weakref)
     }
 
@@ -520,7 +487,7 @@ where
     /// releases the `+1`.
     #[inline]
     fn request_body_take_unref(&self) {
-        drop(self.request_body.replace(None));
+        self.request_body.set(None);
     }
 
     pub(crate) fn set_signal_aborted(&self, reason: jsc::CommonAbortReason) {
@@ -596,9 +563,7 @@ where
 
     /// Cancel the body stream of a Response the server will not transmit, unless a consumer reads it.
     fn cancel_unread_body(response: &Response, global_this: &JSGlobalObject) {
-        if let Body::Value::Locked(locked) = response.get_body_value()
-            && locked.has_consumer()
-        {
+        if response.body().has_consumer() {
             return;
         }
         if let Some(stream) = response.get_body_readable_stream() {
@@ -607,7 +572,7 @@ where
             // Not `cancel()`: it skips a stream with no reader, which an unattached body is.
             crate::dispatch::fold(stream.cancel_with_reason(global_this, JSValue::UNDEFINED));
         }
-        *response.get_body_value() = Body::Value::Used;
+        response.body().set(Body::Value::Used);
     }
 
     /// [`Self::cancel_unread_body`] for a rooted handler result: a `Response` or a settled promise of one.
@@ -818,19 +783,17 @@ where
             && !self.flags.has_sendfile_ctx()
     }
 
+    fn is_request_body_locked(&self) -> bool {
+        self.with_request_body(Body::Body::tag) == Some(Body::Tag::Locked)
+    }
+
     pub(crate) fn is_dead_request(&self) -> bool {
         // check if has pending promise or extra reference (aka not the only reference)
         if self.unpinned_ref_count() > 1 {
             return false;
         }
         // check if the body is Locked (streaming)
-        if let Some(body) = self.request_body.get() {
-            if matches!(&**body, Body::Value::Locked(_)) {
-                return false;
-            }
-        }
-
-        true
+        !self.is_request_body_locked()
     }
 
     /// Takes a ref because it runs JS. Releasing it calls `deinit` again, which frees the slot.
@@ -1371,7 +1334,7 @@ where
             blob: JsCell::new(AnyBlob::Blob(Blob::default())),
             sendfile: Cell::new(SendfileContext::default()),
             request_body_readable_stream_ref: bun_jsc::StrongCell::default(),
-            request_body: JsCell::new(None),
+            request_body: Cell::new(None),
             request_body_buf: JsCell::new(Vec::new()),
             request_body_content_len: Cell::new(0),
             request_body_streamed_len: Cell::new(0),
@@ -1486,7 +1449,7 @@ where
                 any_js_calls.set(true);
             }
 
-            if let Some(response) = this.response_mut() {
+            if let Some(response) = this.response() {
                 if let Some(stream) = shim::response_body_stream(response) {
                     let _keep = jsc::EnsureStillAlive(stream.value);
                     shim::response_detach_stream(response, global_this);
@@ -1679,7 +1642,7 @@ where
         let Some(if_range) = self.if_range.as_deref() else {
             return true;
         };
-        let Some(response) = self.response_mut() else {
+        let Some(response) = self.response() else {
             return false;
         };
         let etag = response
@@ -1822,7 +1785,7 @@ where
         // `.slice(0, n)` blob has `n < stat_size`. Skip if the user
         // already set Content-Range or a non-200 status — they're
         // managing partial responses themselves.
-        let user_handles_range = if let Some(r) = self.response_mut() {
+        let user_handles_range = if let Some(r) = self.response() {
             r.status_code() != 200 || r.has_header(jsc::HTTPHeaderName::ContentRange)
         } else {
             false
@@ -1852,7 +1815,7 @@ where
                     drop(opened);
                     let mut crbuf = [0u8; RangeRequest::CONTENT_RANGE_BUF];
                     self.do_write_status(416);
-                    if let Some(response) = self.response_mut() {
+                    if let Some(response) = self.response() {
                         if let Some(headers_) = response.swap_init_headers() {
                             self.do_write_headers(&headers_);
                         }
@@ -1930,12 +1893,6 @@ where
                 on_error: Self::on_file_stream_error,
             },
         });
-    }
-
-    fn do_render_with_body_locked(this: NonNull<c_void>, value: &mut Body::Value) {
-        // SAFETY: the +1 taken at the `on_receive_value` registration site.
-        let this = unsafe { RefPtr::from_raw(this.cast::<Self>().as_ptr()) };
-        this.do_render_with_body(std::ptr::from_mut(value), None);
     }
 
     fn render_with_blob_from_body_value(&self) {
@@ -2098,12 +2055,12 @@ where
                         this.flags.set_has_marked_pending(true);
 
                         // TODO: should this timeout?
-                        let body_value = this.response_mut().unwrap().get_body_value();
-                        *body_value = Body::Value::Locked(Body::PendingValue {
-                            readable: readable_stream::Strong::init(*stream, global_this),
-                            global: std::ptr::from_ref(global_this),
-                            ..Default::default()
-                        });
+                        this.response().unwrap().body().set(
+                            Body::Value::from_readable_stream_without_lock_check(
+                                *stream,
+                                global_this,
+                            ),
+                        );
                         let cell = this.create_promise_cell(global_this);
                         effective_result.then_with_value(
                             global_this,
@@ -2250,15 +2207,12 @@ where
         let mut any_js_calls = false;
 
         // Reject a pending .text()/.json()/.blob()/... whose body never fully arrived.
-        if let Some(body) = self.request_body_mut() {
-            if matches!(body, Body::Value::Locked(_)) {
-                let global_this = self.server().global_this();
-                body.to_error_instance(
-                    Body::ValueError::AbortReason(jsc::CommonAbortReason::ConnectionClosed),
-                    global_this,
-                )?;
-                any_js_calls = true;
-            }
+        if self.is_request_body_locked() {
+            let global_this = self.server().global_this();
+            let err = Body::ValueError::AbortReason(jsc::CommonAbortReason::ConnectionClosed);
+            self.with_request_body(|body| body.to_error_instance(err, global_this))
+                .transpose()?;
+            any_js_calls = true;
         }
 
         // Nothing feeds our ByteStream from here on; after `req.clone()`/`textStream()` only this ref reaches it.
@@ -2336,8 +2290,8 @@ where
         // SAFETY: `response_ptr` is the live, GC-rooted cell pointer the
         // constructing frame put in the pair; it carries the cell's provenance.
         unsafe { this.set_response(response_ptr) };
-        // SAFETY: sole `&mut Response` for this cell in this frame.
-        let response = unsafe { &mut *response_ptr };
+        // SAFETY: as above.
+        let response = unsafe { &*response_ptr };
 
         // `render` drops the body for a null-body status on GET, so HEAD must
         // not derive framing from that body (or the user headers) either
@@ -2361,11 +2315,11 @@ where
         // from the body, so HEAD must too (RFC 9110 §9.3.2). Only a bodiless
         // Response leaves those headers as what GET would have sent (#15355).
         let body_decides_framing = {
-            let body_value = response.get_body_value();
+            let body_value = response.body();
             body_value.to_blob_if_possible();
             !matches!(
-                body_value,
-                Body::Value::Used | Body::Value::Null | Body::Value::Empty | Body::Value::Error(_)
+                body_value.tag(),
+                Body::Tag::Used | Body::Tag::Null | Body::Tag::Empty | Body::Tag::Error
             )
         };
         if !body_decides_framing {
@@ -2391,9 +2345,9 @@ where
         }
         // the body decides the framing (or there is neither a body nor a
         // handler-supplied Content-Length / Transfer-Encoding header)
-        let body_value = response.get_body_value();
-        match body_value {
-            Body::Value::InternalBlob(_) | Body::Value::WTFStringImpl(_) => {
+        let body_value = response.body();
+        match body_value.tag() {
+            Body::Tag::InternalBlob | Body::Tag::WTFStringImpl => {
                 let blob = body_value.use_as_any_blob_allow_non_utf8_string();
                 let size = blob.size();
                 this.render_metadata();
@@ -2406,18 +2360,18 @@ where
                 this.end_without_body(this.should_close_connection());
             }
 
-            Body::Value::Blob(blob) => {
-                // Size the blob *before* `render_metadata()`: it re-fetches the
-                // Response from `response_weakref`, so no borrow of the Response
-                // (here, `blob`) may still be live across it. Nothing is written
-                // to the socket in between, so the wire output is unchanged.
-                let blob_size = if shim::blob_is_s3(blob) {
-                    // Match the body GET sends (`render_bytes`). `resolve_size()` would set the blob's size to 0.
-                    blob.shared_view().len() as BlobSizeType
-                } else {
-                    blob.resolve_size();
-                    blob.size.get()
-                };
+            Body::Tag::Blob => {
+                let blob_size = body_value
+                    .with_blob(|blob| {
+                        if blob.is_s3() {
+                            // Match the body GET sends (`render_bytes`). `resolve_size()` would set the blob's size to 0.
+                            blob.shared_view().len() as BlobSizeType
+                        } else {
+                            blob.resolve_size();
+                            blob.size.get()
+                        }
+                    })
+                    .unwrap();
                 this.render_metadata();
 
                 if blob_size == crate::webcore::blob::MAX_SIZE {
@@ -2427,19 +2381,19 @@ where
                 }
                 this.end_without_body(this.should_close_connection());
             }
-            Body::Value::Locked(_) => {
+            Body::Tag::Locked => {
                 this.render_metadata();
                 if !MUX {
                     // SAFETY: FFI handle
                     resp.write_header(b"transfer-encoding", b"chunked");
                 }
                 // HEAD never transmits the body.
-                if let Some(response) = this.response_mut() {
+                if let Some(response) = this.response() {
                     Self::cancel_unread_body(response, global_this);
                 }
                 this.end_without_body(this.should_close_connection());
             }
-            Body::Value::Used | Body::Value::Null | Body::Value::Empty | Body::Value::Error(_) => {
+            Body::Tag::Used | Body::Tag::Null | Body::Tag::Empty | Body::Tag::Error => {
                 this.render_metadata();
                 // SAFETY: FFI handle
                 resp.write_header_int(b"content-length", 0);
@@ -2675,9 +2629,9 @@ where
         // from `&self`.
         let global_this = self.server().global_this();
         release_body_stream(&self.response_weakref, global_this);
-        if let Some(resp) = self.response_mut() {
+        if let Some(resp) = self.response() {
             // Unlike the reject path: used whatever it held, not only when `Locked`.
-            *resp.get_body_value() = Body::Value::Used;
+            resp.body().set(Body::Value::Used);
         }
 
         if self.is_aborted_or_ended() {
@@ -2836,11 +2790,9 @@ where
 
     pub(crate) fn do_render_with_body(
         &self,
-        value: *mut Body::Value,
+        body: &Body::Body,
         owned_readable: Option<WebCore::ReadableStream>,
     ) {
-        // SAFETY: `value` is the live body slot of the response being rendered.
-        let value = unsafe { &mut *value };
         let this = self;
         if this.drain_microtasks().is_err() {
             return;
@@ -2848,12 +2800,11 @@ where
 
         // If a ReadableStream can trivially be converted to a Blob, do so.
         // If it's a WTFStringImpl and it cannot be used as a UTF-8 string, convert it to a Blob.
-        value.to_blob_if_possible();
+        body.to_blob_if_possible();
         let global_this = this.server().global_this();
-        match value {
-            Body::Value::Error(err_ref) => {
-                let js_err = err_ref.to_js(global_this);
-                let _ = value.use_();
+        match body.tag() {
+            Body::Tag::Error => {
+                let js_err = body.error_to_js(global_this).unwrap();
                 if this.is_aborted_or_ended() {
                     return;
                 }
@@ -2863,29 +2814,28 @@ where
             // The handler returned a Response whose body was already used,
             // usually the same Response object returned for a second request.
             // A disturbed body is an error, not a silent empty 200.
-            Body::Value::Used => {
+            Body::Tag::Used => {
                 if this.is_aborted_or_ended() {
                     return;
                 }
                 this.refuse_used_body();
                 return;
             }
-            Body::Value::WTFStringImpl(_) | Body::Value::InternalBlob(_) | Body::Value::Blob(_) => {
+            Body::Tag::WTFStringImpl | Body::Tag::InternalBlob | Body::Tag::Blob => {
                 // toBlobIfPossible checks for WTFString needing a conversion.
-                this.blob.set(value.use_as_any_blob_allow_non_utf8_string());
+                this.blob.set(body.use_as_any_blob_allow_non_utf8_string());
                 this.render_with_blob_from_body_value();
                 return;
             }
-            Body::Value::Locked(lock) => {
+            Body::Tag::Locked => {
                 if this.is_aborted_or_ended() {
                     return;
                 }
                 let readable_stream: Option<WebCore::ReadableStream> = 'brk: {
-                    if let Some(stream) = lock.readable.get() {
+                    if let Some(stream) = body.readable() {
                         // we hold the stream alive until we're done with it
-                        // NOTE: `Strong` is move-only — take() transfers ownership.
                         this.response_body_readable_stream_ref
-                            .set(core::mem::take(&mut lock.readable));
+                            .set(body.take_readable());
                         break 'brk Some(stream);
                     }
                     if let Some(stream) = owned_readable {
@@ -2897,7 +2847,7 @@ where
                     None
                 };
                 if let Some(stream) = readable_stream {
-                    *value = Body::Value::Used;
+                    body.set(Body::Value::Used);
 
                     if stream.is_locked(global_this) {
                         stream_log!("was locked but it shouldn't be");
@@ -3014,34 +2964,29 @@ where
                     }
                 }
 
-                if lock.has_consumer() {
+                if body.has_consumer() {
                     this.refuse_used_body();
                     return;
                 }
 
-                if lock.task.is_some() {
-                    // The producer waits for `onStartStreaming`.
-                    let context = this.script_context();
-                    let readable = match value.to_readable_stream(&global_this.js_thread(context)) {
-                        Ok(readable) => readable,
-                        Err(err) => {
-                            this.run_error_handler(global_this.take_exception(err));
-                            return;
-                        }
-                    };
-                    readable.ensure_still_alive();
-                    this.do_render_with_body(std::ptr::from_mut(value), None);
+                if !body.has_producer() {
+                    // The stream was detached, so nothing settles the body.
+                    body.set(Body::Value::Used);
+                    this.flags.set_has_marked_pending(true);
                     return;
                 }
 
-                // No stream and no other consumer: wait for `Value::resolve`.
-                // The registered callback owns a +1 on `this`, released by
-                // `do_render_with_body_locked`.
-                this.flags.set_has_marked_pending(true);
-                lock.on_receive_value =
-                    Some(|ctx, value| Self::do_render_with_body_locked(ctx, value));
-                lock.task = Some(this.ref_guard().into_non_null().cast::<c_void>());
-
+                // The producer waits for `start_streaming`.
+                let context = this.script_context();
+                let readable = match body.to_readable_stream(&global_this.js_thread(context)) {
+                    Ok(readable) => readable,
+                    Err(err) => {
+                        this.run_error_handler(global_this.take_exception(err));
+                        return;
+                    }
+                };
+                readable.ensure_still_alive();
+                this.do_render_with_body(body, None);
                 return;
             }
             _ => {}
@@ -3167,7 +3112,7 @@ where
         {
             return true;
         }
-        let user_handles_range = self.response_mut().is_some_and(|response| {
+        let user_handles_range = self.response().is_some_and(|response| {
             response.status_code() != 200 || response.has_header(jsc::HTTPHeaderName::ContentRange)
         });
         if user_handles_range || !self.if_range_matches_response() {
@@ -3193,7 +3138,7 @@ where
                 };
                 self.do_write_status(416);
                 if let Some(headers) = self
-                    .response_mut()
+                    .response()
                     .and_then(|response| response.swap_init_headers())
                 {
                     self.do_write_headers(&headers);
@@ -3258,7 +3203,7 @@ where
         let this = self;
 
         let (status, app_content_length) = {
-            let response: &mut Response = this.response_mut().unwrap();
+            let response = this.response().unwrap();
             let status = response.status_code();
             // Parsed before render_metadata() fast_remove()s it and derefs the headers.
             let app_cl = (status == 304)
@@ -3276,8 +3221,8 @@ where
 
         // A null-body status never transmits the body.
         if let Some(server) = this.try_server()
-            && let Some(response) = this.response_mut()
-            && matches!(response.get_body_value(), Body::Value::Locked(_))
+            && let Some(response) = this.response()
+            && response.body().tag() == Body::Tag::Locked
         {
             Self::cancel_unread_body(response, server.global_this());
         }
@@ -3302,15 +3247,8 @@ where
         if self.is_aborted_or_ended() {
             return;
         }
-        let (value, owned_readable) = {
-            let response: &mut Response = self.response_mut().unwrap();
-            let owned_readable = response.get_body_readable_stream();
-            (
-                std::ptr::from_mut(response.get_body_value()),
-                owned_readable,
-            )
-        };
-        self.do_render_with_body(value, owned_readable);
+        let response = self.response().unwrap();
+        self.do_render_with_body(response.body(), response.get_body_readable_stream());
     }
 
     pub(crate) fn render_production_error(&self, status: u16) {
@@ -3552,7 +3490,7 @@ where
         // render() before any backpressure gap, so the Response is
         // always live here. File / stream bodies that call this after
         // an async hop keep the Response rooted via `response_root`.
-        let response: &mut Response = self.response_mut().unwrap();
+        let response = self.response().unwrap();
         let sendfile = self.sendfile.get();
         let mut status = response.status_code();
         let blob = self.blob.get();
@@ -3779,15 +3717,11 @@ where
     /// # Safety
     /// Same contract as [`Self::render`].
     unsafe fn protect_for_body_and_render(&self, response_value: JSValue, response: *mut Response) {
-        // SAFETY: caller contract: `response` is live. This is the only borrow
-        // of its body, and it ends before `render` reborrows the cell.
-        let body_value = unsafe { (*response).get_body_value() };
+        // SAFETY: caller contract: `response` is live.
+        let body_value = unsafe { (*response).body() };
         body_value.to_blob_if_possible();
-        let sent_after_return = match body_value {
-            Body::Value::Blob(blob) => shim::blob_needs_to_read_file(blob),
-            Body::Value::Locked(_) => true,
-            _ => false,
-        };
+        let sent_after_return =
+            body_value.tag() == Body::Tag::Locked || body_value.needs_to_read_file();
         if sent_after_return {
             self.response_root
                 .set_rooted(response_value, self.server().global_this());
@@ -3839,15 +3773,11 @@ where
                 let _exit = vm.enter_event_loop_scope();
 
                 // Body first (a tee branch after `req.clone()`), before endRequestStreaming()'s ConnectionClosed.
-                if let Some(body) = this.request_body_mut() {
-                    if matches!(body, Body::Value::Locked(_)) {
-                        let _ = body.to_error_instance(
-                            Body::ValueError::Message(BunString::static_(
-                                "Request body exceeded maxRequestBodySize",
-                            )),
-                            global_this,
-                        );
-                    }
+                if this.is_request_body_locked() {
+                    let err = Body::ValueError::Message(BunString::static_(
+                        "Request body exceeded maxRequestBodySize",
+                    ));
+                    let _ = this.with_request_body(|body| body.to_error_instance(err, global_this));
                 }
 
                 // Release the strong stream ref like the `last` arm does, then
@@ -3921,8 +3851,7 @@ where
         }
 
         // This is the start of a task, so it's a good time to drain
-        // The pooled body slot is a separate allocation decoupled from `*this`.
-        if let Some(body) = this.request_body_mut() {
+        if this.request_body.is_some() {
             // The up-front maxRequestBodySize check in the server only
             // sees Content-Length. HTTP/3 (and H1 chunked) bodies may
             // omit it, so cap accumulated bytes here too — otherwise a
@@ -3946,14 +3875,11 @@ where
                 // Reject the pending body first so endRequestStreaming()
                 // below (via this.endWithoutBody) doesn't substitute a
                 // generic ConnectionClosed. toErrorInstance handles
-                // .Locked itself (rejects the promise, deinits the
-                // readable, calls onReceiveValue).
-                let _ = body.to_error_instance(
-                    Body::ValueError::Message(BunString::static_(
-                        "Request body exceeded maxRequestBodySize",
-                    )),
-                    global_this,
-                );
+                // .Locked itself (rejects the promise, deinits the readable).
+                let err = Body::ValueError::Message(BunString::static_(
+                    "Request body exceeded maxRequestBodySize",
+                ));
+                let _ = this.with_request_body(|body| body.to_error_instance(err, global_this));
 
                 this.end_with_payload_too_large();
                 return;
@@ -3962,24 +3888,23 @@ where
             if last {
                 let mut bytes = this.request_body_buf.replace(Vec::new());
 
-                let mut old = core::mem::replace(body, Body::Value::Null);
-
                 let total = bytes.len() + chunk.len();
                 // Vec aborts on OOM (repo-wide abort-on-OOM policy).
                 bytes.reserve_exact(total.saturating_sub(bytes.len()));
                 bytes.extend_from_slice(chunk);
                 debug_assert_eq!(bytes.len(), total);
-                *body = Body::Value::InternalBlob(WebCore::InternalBlob {
+                let new_body = Body::Value::InternalBlob(WebCore::InternalBlob {
                     bytes,
                     was_string: false,
                 });
 
-                if matches!(old, Body::Value::Locked(_)) {
+                if this.is_request_body_locked() {
                     let _exit = vm.enter_event_loop_scope();
 
-                    let context = this.script_context();
-                    let _ =
-                        Body::Value::resolve(&mut old, body, &global_this.js_thread(context), None); // TODO: properly propagate exception upwards
+                    let cx = global_this.js_thread(this.script_context());
+                    let _ = this.with_request_body(|body| body.resolve(new_body, &cx, None)); // TODO: properly propagate exception upwards
+                } else {
+                    this.with_request_body(|body| body.set(new_body));
                 }
                 return;
             }
@@ -4114,7 +4039,7 @@ where
     }
 
     pub(crate) fn on_start_buffering(&self) {
-        if let Some(server) = self.try_server() {
+        if self.try_server().is_some() {
             ctx_log!("onStartBuffering");
             // `.text()`/`.json()` want the whole body; disable pre-stream backpressure.
             self.flags.set_request_body_buffer_all(true);
@@ -4122,58 +4047,17 @@ where
             if let Some(resp) = self.live_resp() {
                 resp.grow_request_window();
             }
-            // TODO: check if is someone calling onStartBuffering other than onStartBufferingCallback
-            // if is not, this should be removed and only keep protect + setAbortHandler
-            // HTTP/3 (RFC 9114): Content-Length is optional; the body is
-            // delimited by stream FIN, so the H1 "no CL + no TE ⇒ empty"
-            // shortcut would drop it.
-            if !MUX
-                && !self.flags.is_transfer_encoding()
-                && self.request_body_content_len.get() == 0
-            {
-                // no content-length or 0 content-length
-                // no transfer-encoding
-                if let Some(body) = self.request_body_mut() {
-                    let mut old = core::mem::replace(body, Body::Value::Null);
-                    if let Body::Value::Locked(l) = &mut old {
-                        l.on_receive_value = None;
-                    }
-                    let mut new_body: Body::Value = Body::Value::Null;
-                    let global_this = server.global_this();
-                    let _ = Body::Value::resolve(
-                        &mut old,
-                        &mut new_body,
-                        &global_this.js_thread(server.context()),
-                        None,
-                    ); // TODO: properly propagate exception upwards
-                    *body = new_body;
-                }
-            }
         }
     }
 
     pub(crate) fn on_request_body_readable_stream_available(
-        ptr: NonNull<c_void>,
+        &self,
         global_this: &JSGlobalObject,
         readable: WebCore::ReadableStream,
     ) {
-        // SAFETY: `ptr` is the registered live body-callback context.
-        let this = unsafe { ptr.cast::<Self>().as_ref() };
-        debug_assert!(!this.request_body_readable_stream_ref.is_some());
-        this.request_body_readable_stream_ref
+        debug_assert!(!self.request_body_readable_stream_ref.is_some());
+        self.request_body_readable_stream_ref
             .set(global_this, readable.value);
-    }
-
-    pub(crate) fn on_start_buffering_callback(this: NonNull<c_void>) {
-        // SAFETY: `this` is the registered live body-callback context.
-        unsafe { this.cast::<Self>().as_ref() }.on_start_buffering();
-    }
-
-    pub(crate) fn on_start_streaming_request_body_callback(
-        this: NonNull<c_void>,
-    ) -> WebCore::DrainResult {
-        // SAFETY: `this` is the registered live body-callback context.
-        unsafe { this.cast::<Self>().as_ref() }.on_start_streaming_request_body()
     }
 
     pub(crate) fn get_remote_socket_info(&self) -> Option<uws::SocketAddress> {
@@ -4286,7 +4170,7 @@ where
     ThisServer: ServerLike + 'static,
 {
     pub this: &'a RequestContext<ThisServer, SSL, DBG, MUX>,
-    /// The JS wrapper's cell pointer, not a `&mut Response`: the receiving
+    /// The JS wrapper's cell pointer: the receiving
     /// frame hands it to `set_response`, which stores it in a `WeakPtr` that
     /// outlives any reborrow. The cell is GC-rooted by the constructing frame.
     pub(crate) response: *mut Response,
@@ -4357,8 +4241,6 @@ bitflags::bitflags! {
         const HAS_CALLED_ERROR_HANDLER    = 1 << 5;
         const NEEDS_CONTENT_LENGTH        = 1 << 6;
         const NEEDS_CONTENT_RANGE         = 1 << 7;
-        /// Used to avoid looking at the uws.Request struct after it's been freed
-        const IS_TRANSFER_ENCODING        = 1 << 8;
         /// Used to identify if request can be safely deinitialized
         const IS_WAITING_FOR_REQUEST_BODY = 1 << 9;
         /// Used in renderMissing in debug mode to show the user an HTML page
@@ -4421,11 +4303,6 @@ impl<const DEBUG_MODE: bool> Flags<DEBUG_MODE> {
         needs_content_range,
         set_needs_content_range,
         NEEDS_CONTENT_RANGE
-    );
-    flag_accessor!(
-        is_transfer_encoding,
-        set_is_transfer_encoding,
-        IS_TRANSFER_ENCODING
     );
     flag_accessor!(
         is_waiting_for_request_body,

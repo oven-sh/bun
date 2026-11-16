@@ -26,6 +26,7 @@
 #pragma once
 
 #include "CryptoAlgorithmIdentifier.h"
+#include "CryptoAlgorithmParameters.h"
 #include "CryptoKeyFormat.h"
 #include "CryptoKeyPair.h"
 #include "CryptoKeyUsage.h"
@@ -42,8 +43,6 @@
 
 namespace WebCore {
 
-class CryptoAlgorithmParameters;
-class CryptoKey;
 class ScriptExecutionContext;
 
 using KeyData = std::variant<Vector<uint8_t>, JsonWebKey>;

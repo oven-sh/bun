@@ -28,7 +28,6 @@
 
 #if ENABLE(WEB_CRYPTO)
 
-#include "CryptoAlgorithmAesGcmParams.h"
 #include "CryptoKeyAES.h"
 #include "OpenSSLCryptoUniquePtr.h"
 #include "OpenSSLUtilities.h"
@@ -182,17 +181,17 @@ static std::optional<Vector<uint8_t>> cryptDecrypt(const Vector<uint8_t>& key, c
     return plainText;
 }
 
-ExceptionOr<Vector<uint8_t>> CryptoAlgorithmAES_GCM::platformEncrypt(const CryptoAlgorithmAesGcmParams& parameters, const CryptoKeyAES& key, const Vector<uint8_t>& plainText)
+ExceptionOr<Vector<uint8_t>> CryptoAlgorithmAES_GCM::platformEncrypt(const CryptoAlgorithmAeadParams& parameters, const CryptoKeyAES& key, const Vector<uint8_t>& plainText)
 {
-    auto output = cryptEncrypt(key.key(), parameters.ivVector(), plainText, parameters.additionalDataVector(), parameters.tagLength.value_or(0) / 8);
+    auto output = cryptEncrypt(key.key(), parameters.iv, plainText, parameters.additionalData, parameters.tagLength / 8);
     if (!output)
         return Exception { OperationError };
     return WTF::move(*output);
 }
 
-ExceptionOr<Vector<uint8_t>> CryptoAlgorithmAES_GCM::platformDecrypt(const CryptoAlgorithmAesGcmParams& parameters, const CryptoKeyAES& key, const Vector<uint8_t>& cipherText)
+ExceptionOr<Vector<uint8_t>> CryptoAlgorithmAES_GCM::platformDecrypt(const CryptoAlgorithmAeadParams& parameters, const CryptoKeyAES& key, const Vector<uint8_t>& cipherText)
 {
-    auto output = cryptDecrypt(key.key(), parameters.ivVector(), cipherText, parameters.additionalDataVector(), parameters.tagLength.value_or(0) / 8);
+    auto output = cryptDecrypt(key.key(), parameters.iv, cipherText, parameters.additionalData, parameters.tagLength / 8);
     if (!output)
         return Exception { OperationError };
     return WTF::move(*output);

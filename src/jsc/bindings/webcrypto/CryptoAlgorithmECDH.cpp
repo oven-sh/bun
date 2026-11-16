@@ -28,8 +28,6 @@
 
 #if ENABLE(WEB_CRYPTO)
 
-#include "CryptoAlgorithmEcKeyParams.h"
-#include "CryptoAlgorithmEcdhKeyDeriveParams.h"
 #include "CryptoKeyEC.h"
 #include "ScriptExecutionContext.h"
 
@@ -47,7 +45,7 @@ CryptoAlgorithmIdentifier CryptoAlgorithmECDH::identifier() const
 
 void CryptoAlgorithmECDH::generateKey(const CryptoAlgorithmParameters& parameters, bool extractable, CryptoKeyUsageBitmap usages, KeyOrKeyPairCallback&& callback, ExceptionCallback&& exceptionCallback, ScriptExecutionContext&)
 {
-    const auto& ecParameters = downcast<CryptoAlgorithmEcKeyParams>(parameters);
+    const auto& ecParameters = std::get<CryptoAlgorithmEcKeyParams>(parameters.dictionary);
 
     if (usages & (CryptoKeyUsageEncrypt | CryptoKeyUsageDecrypt | CryptoKeyUsageSign | CryptoKeyUsageVerify | CryptoKeyUsageWrapKey | CryptoKeyUsageUnwrapKey | CryptoKeyUsageKemMask)) {
         exceptionCallback(SyntaxError, ""_s);
@@ -68,13 +66,12 @@ void CryptoAlgorithmECDH::generateKey(const CryptoAlgorithmParameters& parameter
 
 void CryptoAlgorithmECDH::deriveBits(const CryptoAlgorithmParameters& parameters, Ref<CryptoKey>&& baseKey, std::optional<size_t> length, VectorCallback&& callback, ExceptionCallback&& exceptionCallback, ScriptExecutionContext& context, WorkQueue& workQueue)
 {
-    auto& ecParameters = downcast<CryptoAlgorithmEcdhKeyDeriveParams>(parameters);
+    auto& ecParameters = std::get<CryptoAlgorithmEcdhKeyDeriveParams>(parameters.dictionary);
 
     if (baseKey->type() != CryptoKey::Type::Private) {
         exceptionCallback(InvalidAccessError, ""_s);
         return;
     }
-    ASSERT(ecParameters.publicKey);
     if (ecParameters.publicKey->type() != CryptoKey::Type::Public) {
         exceptionCallback(InvalidAccessError, ""_s);
         return;
@@ -84,7 +81,7 @@ void CryptoAlgorithmECDH::deriveBits(const CryptoAlgorithmParameters& parameters
         return;
     }
     auto& ecBaseKey = downcast<CryptoKeyEC>(baseKey.get());
-    auto& ecPublicKey = downcast<CryptoKeyEC>(*(ecParameters.publicKey.get()));
+    auto& ecPublicKey = downcast<CryptoKeyEC>(ecParameters.publicKey.get());
     if (ecBaseKey.namedCurve() != ecPublicKey.namedCurve()) {
         exceptionCallback(InvalidAccessError, "Named curve mismatch"_s);
         return;
@@ -107,7 +104,7 @@ void CryptoAlgorithmECDH::deriveBits(const CryptoAlgorithmParameters& parameters
     // the result validation and callback dispatch into unifiedCallback.
     workQueue.dispatch(context.globalObject(),
         [baseKey = WTF::move(baseKey), publicKey = ecParameters.publicKey, length, unifiedCallback = WTF::move(unifiedCallback), contextIdentifier = context.identifier(), loopKind = context.currentLoopKind()]() mutable {
-            auto derivedKey = platformDeriveBits(downcast<CryptoKeyEC>(baseKey.get()), downcast<CryptoKeyEC>(*publicKey));
+            auto derivedKey = platformDeriveBits(downcast<CryptoKeyEC>(baseKey.get()), downcast<CryptoKeyEC>(publicKey.get()));
             ScriptExecutionContext::postTaskTo(contextIdentifier, loopKind, [derivedKey = WTF::move(derivedKey), length, unifiedCallback = WTF::move(unifiedCallback)](auto&) mutable {
                 unifiedCallback(WTF::move(derivedKey), length);
             });
@@ -116,7 +113,7 @@ void CryptoAlgorithmECDH::deriveBits(const CryptoAlgorithmParameters& parameters
 
 void CryptoAlgorithmECDH::importKey(CryptoKeyFormat format, KeyData&& data, const CryptoAlgorithmParameters& parameters, bool extractable, CryptoKeyUsageBitmap usages, KeyCallback&& callback, ExceptionCallback&& exceptionCallback)
 {
-    const auto& ecParameters = downcast<CryptoAlgorithmEcKeyParams>(parameters);
+    const auto& ecParameters = std::get<CryptoAlgorithmEcKeyParams>(parameters.dictionary);
 
     RefPtr<CryptoKeyEC> result;
     bool keyTypeMismatch = false;
@@ -154,7 +151,7 @@ void CryptoAlgorithmECDH::importKey(CryptoKeyFormat format, KeyData&& data, cons
             return;
         }
 
-        result = CryptoKeyEC::importJwk(ecParameters.identifier, ecParameters.namedCurve, WTF::move(key), extractable, usages);
+        result = CryptoKeyEC::importJwk(parameters.identifier, ecParameters.namedCurve, WTF::move(key), extractable, usages);
         break;
     }
     case CryptoKeyFormat::Raw:
@@ -162,21 +159,21 @@ void CryptoAlgorithmECDH::importKey(CryptoKeyFormat format, KeyData&& data, cons
             exceptionCallback(SyntaxError, "Unsupported key usage for an ECDH key"_s);
             return;
         }
-        result = CryptoKeyEC::importRaw(ecParameters.identifier, ecParameters.namedCurve, WTF::move(std::get<Vector<uint8_t>>(data)), extractable, usages);
+        result = CryptoKeyEC::importRaw(parameters.identifier, ecParameters.namedCurve, WTF::move(std::get<Vector<uint8_t>>(data)), extractable, usages);
         break;
     case CryptoKeyFormat::Spki:
         if (usages) {
             exceptionCallback(SyntaxError, "Unsupported key usage for an ECDH key"_s);
             return;
         }
-        result = CryptoKeyEC::importSpki(ecParameters.identifier, ecParameters.namedCurve, WTF::move(std::get<Vector<uint8_t>>(data)), extractable, usages, &keyTypeMismatch, &curveMismatch);
+        result = CryptoKeyEC::importSpki(parameters.identifier, ecParameters.namedCurve, WTF::move(std::get<Vector<uint8_t>>(data)), extractable, usages, &keyTypeMismatch, &curveMismatch);
         break;
     case CryptoKeyFormat::Pkcs8:
         if (usages && (usages ^ CryptoKeyUsageDeriveKey) && (usages ^ CryptoKeyUsageDeriveBits) && (usages ^ (CryptoKeyUsageDeriveKey | CryptoKeyUsageDeriveBits))) {
             exceptionCallback(SyntaxError, "Unsupported key usage for an ECDH key"_s);
             return;
         }
-        result = CryptoKeyEC::importPkcs8(ecParameters.identifier, ecParameters.namedCurve, WTF::move(std::get<Vector<uint8_t>>(data)), extractable, usages, &keyTypeMismatch, &curveMismatch);
+        result = CryptoKeyEC::importPkcs8(parameters.identifier, ecParameters.namedCurve, WTF::move(std::get<Vector<uint8_t>>(data)), extractable, usages, &keyTypeMismatch, &curveMismatch);
         break;
     }
     if (!result) {

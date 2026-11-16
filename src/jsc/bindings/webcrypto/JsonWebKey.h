@@ -26,8 +26,9 @@
 #pragma once
 
 #include "CryptoKeyUsage.h"
-#include "RsaOtherPrimesInfo.h"
+#include <optional>
 #include <wtf/Vector.h>
+#include <wtf/text/WTFString.h>
 
 #if ENABLE(WEB_CRYPTO)
 
@@ -57,7 +58,7 @@ struct JsonWebKey {
     String dp;
     String dq;
     String qi;
-    std::optional<Vector<RsaOtherPrimesInfo>> oth;
+    bool hasOth { false };
     String k;
     // JWK "AKP" key type (ML-DSA / ML-KEM), RFC draft-ietf-cose-dilithium.
     String pub;

@@ -29,7 +29,6 @@
 #if ENABLE(WEB_CRYPTO)
 
 #include "CryptoAlgorithmAKPShared.h"
-#include "CryptoAlgorithmMlDsaParams.h"
 #include "CryptoAlgorithmRegistry.h"
 #include "CryptoKeyAKP.h"
 #include "OpenSSLCryptoUniquePtr.h"
@@ -142,16 +141,16 @@ void CryptoAlgorithmMLDSA::sign(const CryptoAlgorithmParameters& parameters, Ref
         return;
     }
 
-    const auto& mlDsaParameters = downcast<CryptoAlgorithmMlDsaParams>(parameters);
+    const auto& mlDsaParameters = std::get<CryptoAlgorithmMlDsaParams>(parameters.dictionary);
     // Oversized contexts are rejected with a cause-carrying OperationError in
     // SubtleCrypto::sign; this is only a backstop.
-    if (mlDsaParameters.contextVector().size() > s_maxContextLength) {
+    if (mlDsaParameters.context.size() > s_maxContextLength) {
         exceptionCallback(OperationError, ""_s);
         return;
     }
 
     dispatchOperationInWorkQueue(workQueue, context, WTF::move(callback), WTF::move(exceptionCallback),
-        [key = WTF::move(key), contextString = mlDsaParameters.contextVector(), data = WTF::move(data)] {
+        [key = WTF::move(key), contextString = mlDsaParameters.context, data = WTF::move(data)] {
             return platformSign(downcast<CryptoKeyAKP>(key.get()), contextString, data);
         });
 }
@@ -163,14 +162,14 @@ void CryptoAlgorithmMLDSA::verify(const CryptoAlgorithmParameters& parameters, R
         return;
     }
 
-    const auto& mlDsaParameters = downcast<CryptoAlgorithmMlDsaParams>(parameters);
-    if (mlDsaParameters.contextVector().size() > s_maxContextLength) {
+    const auto& mlDsaParameters = std::get<CryptoAlgorithmMlDsaParams>(parameters.dictionary);
+    if (mlDsaParameters.context.size() > s_maxContextLength) {
         exceptionCallback(OperationError, ""_s);
         return;
     }
 
     dispatchOperationInWorkQueue(workQueue, context, WTF::move(callback), WTF::move(exceptionCallback),
-        [key = WTF::move(key), contextString = mlDsaParameters.contextVector(), signature = WTF::move(signature), data = WTF::move(data)] {
+        [key = WTF::move(key), contextString = mlDsaParameters.context, signature = WTF::move(signature), data = WTF::move(data)] {
             return platformVerify(downcast<CryptoKeyAKP>(key.get()), contextString, signature, data);
         });
 }

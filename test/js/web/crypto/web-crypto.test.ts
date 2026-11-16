@@ -291,9 +291,7 @@ describe("oversized inputs", () => {
         crypto.subtle.unwrapKey("raw", big, aesKey, { name: "AES-GCM", iv }, { name: "AES-GCM" }, false, ["encrypt"]),
       );
 
-      // BufferSource members of the algorithm dictionaries are copied into
-      // Vectors by the parameter classes' lazy accessors, not by the entry
-      // points, so they need their own guard.
+      // Members of the algorithm dictionaries have their own guard.
       await record(
         "encrypt additionalData",
         crypto.subtle.encrypt({ name: "AES-GCM", iv, additionalData: big }, aesKey, new Uint8Array(16)),
@@ -346,6 +344,318 @@ describe("oversized inputs", () => {
       });
     }
     expect(exitCode).toBe(0);
+  });
+});
+
+describe("dictionary conversion", () => {
+  const { subtle } = crypto;
+  const data = new Uint8Array(16);
+  const bytes = "(ArrayBufferView or ArrayBuffer)";
+  const hash = "(object or DOMString)";
+  const someKey = () => subtle.importKey("raw", data, { name: "HMAC", hash: "SHA-256" }, true, ["sign"]);
+  const calls: Record<string, (algorithm: any, key: CryptoKey) => Promise<unknown>> = {
+    encrypt: (algorithm, key) => subtle.encrypt(algorithm, key, data),
+    sign: (algorithm, key) => subtle.sign(algorithm, key, data),
+    deriveBits: (algorithm, key) => subtle.deriveBits(algorithm, key, 8),
+    generateKey: algorithm => subtle.generateKey(algorithm, true, []),
+    importKey: algorithm => subtle.importKey("spki", data, algorithm, true, []),
+  };
+  const logReads = (target: object, reads: string[]) =>
+    new Proxy(target, { get: (object: any, name) => (reads.push(String(name)), object[name]) });
+
+  // Members in the order they are read: [name, valid value, type named by the error when it is required].
+  describe.each([
+    [
+      "encrypt",
+      "AES-GCM",
+      "AesGcmParams",
+      [
+        ["additionalData", data],
+        ["iv", data, bytes],
+        ["tagLength", 128],
+      ],
+    ],
+    [
+      "encrypt",
+      "ChaCha20-Poly1305",
+      "AeadParams",
+      [
+        ["additionalData", data],
+        ["iv", data, bytes],
+        ["tagLength", 128],
+      ],
+    ],
+    ["encrypt", "AES-CBC", "AesCbcCfbParams", [["iv", data, bytes]]],
+    [
+      "encrypt",
+      "AES-CTR",
+      "AesCtrParams",
+      [
+        ["counter", data, bytes],
+        ["length", 64, "octet"],
+      ],
+    ],
+    ["encrypt", "RSA-OAEP", "RsaOaepParams", [["label", data]]],
+    ["sign", "ECDSA", "EcdsaParams", [["hash", "SHA-256", hash]]],
+    ["sign", "RSA-PSS", "RsaPssParams", [["saltLength", 0, "unsigned long"]]],
+    ["sign", "ML-DSA-44", "ContextParams", [["context", data]]],
+    [
+      "deriveBits",
+      "HKDF",
+      "HkdfParams",
+      [
+        ["hash", "SHA-256", hash],
+        ["info", data, bytes],
+        ["salt", data, bytes],
+      ],
+    ],
+    [
+      "deriveBits",
+      "PBKDF2",
+      "Pbkdf2Params",
+      [
+        ["hash", "SHA-256", hash],
+        ["iterations", 1, "unsigned long"],
+        ["salt", data, bytes],
+      ],
+    ],
+    ["generateKey", "AES-KW", "AesKeyParams", [["length", 128, "unsigned short"]]],
+    [
+      "generateKey",
+      "HMAC",
+      "HmacKeyParams",
+      [
+        ["hash", "SHA-256", hash],
+        ["length", 128],
+      ],
+    ],
+    ["generateKey", "ECDH", "EcKeyParams", [["namedCurve", "P-1", "DOMString"]]],
+    [
+      "generateKey",
+      "RSA-PSS",
+      "RsaHashedKeyGenParams",
+      [
+        ["modulusLength", 1, "unsigned long"],
+        ["publicExponent", data, "Uint8Array"],
+        ["hash", "SHA-256", hash],
+      ],
+    ],
+    ["importKey", "RSA-OAEP", "RsaHashedImportParams", [["hash", "SHA-256", hash]]],
+  ] as [string, string, string, [string, unknown, string?][]][])("%s %s", (operation, name, dictionary, members) => {
+    const valid = () => ({ name, ...Object.fromEntries(members.map(([member, value]) => [member, value])) });
+
+    it("reads the members in order", async () => {
+      const reads: string[] = [];
+      await calls[operation](logReads(valid(), reads), await someKey()).catch(() => {});
+      expect(reads).toEqual(["name", "name", ...members.map(([member]) => member)]);
+    });
+
+    it.each(members.filter(([, , type]) => type))("stops at a missing %s", async (member, _, type) => {
+      const reads: string[] = [];
+      await expect(
+        calls[operation](logReads({ ...valid(), [member]: undefined }, reads), await someKey()),
+      ).rejects.toMatchObject({
+        code: "ERR_MISSING_OPTION",
+        message: `Member ${dictionary}.${member} is required and must be an instance of ${type}`,
+      });
+      expect(reads.at(-1)).toBe(member);
+    });
+  });
+
+  it.each([
+    ["ECDH", "EcdhKeyDeriveParams"],
+    ["X25519", "X25519Params"],
+  ])("deriveBits %s reads public before it converts name again", async (name, dictionary) => {
+    const reads: string[] = [];
+    const algorithm = { name: { toString: () => (reads.push("toString"), name) }, public: null };
+    await expect(calls.deriveBits(logReads(algorithm, reads), await someKey())).rejects.toMatchObject({
+      code: "ERR_INVALID_ARG_TYPE",
+      message: `Member ${dictionary}.publicKey must be an instance of CryptoKey`,
+    });
+    expect(reads).toEqual(["name", "toString", "name", "public", "toString"]);
+  });
+
+  it("reads and writes the members of a JWK in the same order", async () => {
+    const order = "alg crv d dp dq e ext k key_ops kty n oth p priv pub q qi use x y".split(" ");
+    const reads: string[] = [];
+    await subtle.importKey("jwk", logReads({}, reads), "AES-GCM", true, ["encrypt"]).catch(() => {});
+    expect(reads).toEqual(order);
+    const { privateKey } = await subtle.generateKey({ name: "ECDSA", namedCurve: "P-256" }, true, ["sign"]);
+    expect(Object.keys(await subtle.exportKey("jwk", privateKey))).toEqual([
+      "crv",
+      "d",
+      "ext",
+      "key_ops",
+      "kty",
+      "x",
+      "y",
+    ]);
+  });
+
+  it.each([
+    [null, "d"],
+    [{ d: "AQ" }, "r"],
+    [{ d: "AQ", r: "AQ" }, "t"],
+  ])("validates oth: [%j]", async (prime, member) => {
+    await expect(subtle.importKey("jwk", { oth: [prime as any] }, "AES-GCM", true, ["encrypt"])).rejects.toMatchObject({
+      code: "ERR_MISSING_OPTION",
+      message: `Member RsaOtherPrimesInfo.${member} is required and must be an instance of DOMString`,
+    });
+  });
+});
+
+it("a worker can be terminated while a pending deriveKey holds the last reference to namedCurve", async () => {
+  const worker = `
+    const key = await crypto.subtle.importKey("raw", new Uint8Array(8), "PBKDF2", false, ["deriveKey"]);
+    for (let i = 0; i < 16; i++) {
+      let reads = 0;
+      const derived = {
+        get name() { return reads++ < 2 ? "ECDSA" : "AES-GCM"; },
+        namedCurve: Object.keys({ ["curve-" + i]: 1 })[0],
+        length: 128,
+      };
+      const algorithm = { name: "PBKDF2", hash: "SHA-256", salt: new Uint8Array(8), iterations: 50_000 };
+      crypto.subtle.deriveKey(algorithm, key, derived, true, ["encrypt"]).catch(() => {});
+    }
+    Bun.gc(true);
+    postMessage("pending");
+  `;
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `const worker = new Worker(URL.createObjectURL(new Blob([${JSON.stringify(worker)}])));
+       worker.onmessage = () => worker.terminate();
+       worker.addEventListener("close", () => console.log("closed"));`,
+    ],
+    env: bunEnv,
+    stderr: "inherit",
+  });
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  expect(stdout).toBe("closed\n");
+  expect(exitCode).toBe(0);
+});
+
+describe("algorithm members are copied when the algorithm is normalized", () => {
+  const { subtle } = crypto;
+  const bytes = (length: number) => new Uint8Array(length).fill(1);
+  const hex = async (key: CryptoKey) => Buffer.from(await subtle.exportKey("raw", key)).toString("hex");
+  const changes: [string, (buffer: Uint8Array<ArrayBuffer>) => void][] = [
+    ["overwritten", buffer => void buffer.fill(0xee)],
+    ["detached", buffer => void (buffer.byteLength && buffer.buffer.transfer())],
+  ];
+
+  describe.each(changes)("%s later in the same call", (_, change) => {
+    it.each([
+      ["PBKDF2", "salt", "60b95f36d8861995c5e6225b3dcc288a"],
+      ["HKDF", "salt", "94cfb5987142541ea82f125c15194d11"],
+      ["HKDF", "info", "94cfb5987142541ea82f125c15194d11"],
+    ] as const)("deriveKey %s %s", async (name, member, expected) => {
+      const base = await subtle.importKey("raw", new Uint8Array(8).fill(3), name, false, ["deriveKey"]);
+      const algorithm = { name, hash: "SHA-256", salt: bytes(8), info: bytes(8), iterations: 1 };
+      const derived = {
+        name: "AES-GCM",
+        get length() {
+          change(algorithm[member]);
+          return 128;
+        },
+      };
+      expect(await hex(await subtle.deriveKey(algorithm, base, derived, true, ["encrypt"]))).toBe(expected);
+    });
+
+    it("deriveKey HKDF info over 1024 bytes", async () => {
+      const base = await subtle.importKey("raw", bytes(8), "HKDF", false, ["deriveKey"]);
+      const algorithm = { name: "HKDF", hash: "SHA-256", salt: bytes(8), info: bytes(1025) };
+      const derived = {
+        name: "AES-GCM",
+        get length() {
+          change(algorithm.info);
+          return 128;
+        },
+      };
+      await expect(subtle.deriveKey(algorithm, base, derived, true, ["encrypt"])).rejects.toMatchObject({
+        name: "OperationError",
+        message: "algorithm.info must be at most 1024 bytes",
+      });
+    });
+
+    const secretKey = (name: string, format = "raw", length = 16) =>
+      subtle.importKey(format as "raw", bytes(length), name, false, ["wrapKey", "unwrapKey"]);
+    let rsaKeys: Promise<webcrypto.CryptoKeyPair> | undefined;
+
+    describe.each([
+      ["AES-GCM", "iv", () => ({ iv: bytes(12), additionalData: bytes(4) })],
+      ["AES-GCM", "additionalData", () => ({ iv: bytes(12), additionalData: bytes(4) })],
+      ["AES-CBC", "iv", () => ({ iv: bytes(16) })],
+      ["AES-CFB-8", "iv", () => ({ iv: bytes(16) })],
+      ["AES-CTR", "counter", () => ({ counter: bytes(16), length: 64 })],
+      ["ChaCha20-Poly1305", "iv", () => ({ iv: bytes(12), additionalData: bytes(4) })],
+      ["ChaCha20-Poly1305", "additionalData", () => ({ iv: bytes(12), additionalData: bytes(4) })],
+      ["RSA-OAEP", "label", () => ({ label: bytes(4) })],
+    ] as [string, string, () => any][])("%s %s", (name, member, members) => {
+      async function setUp() {
+        const secret = await subtle.importKey("raw", new Uint8Array(16).fill(5), "AES-GCM", true, ["encrypt"]);
+        if (name === "RSA-OAEP") {
+          const { publicKey, privateKey } = await (rsaKeys ??= subtle.generateKey(
+            { name, hash: "SHA-1", modulusLength: 2048, publicExponent: new Uint8Array([1, 0, 1]) },
+            false,
+            ["wrapKey", "unwrapKey"],
+          ));
+          return { secret, wrapper: publicKey, unwrapper: privateKey };
+        }
+        const key = await (name === "ChaCha20-Poly1305" ? secretKey(name, "raw-secret", 32) : secretKey(name));
+        return { secret, wrapper: key, unwrapper: key };
+      }
+
+      it("unwrapKey", async () => {
+        const { secret, wrapper, unwrapper } = await setUp();
+        const wrapped = await subtle.wrapKey("raw", secret, wrapper, { name, ...members() });
+        const algorithm = { name, ...members() };
+        const unwrappedAlgorithm = {
+          get name() {
+            change(algorithm[member]);
+            return "AES-GCM";
+          },
+        };
+        const key = await subtle.unwrapKey("raw", wrapped, unwrapper, algorithm, unwrappedAlgorithm, true, ["encrypt"]);
+        expect(await hex(key)).toBe("05050505050505050505050505050505");
+      });
+
+      it("wrapKey", async () => {
+        const { secret, wrapper, unwrapper } = await setUp();
+        const algorithm = { name, ...members() };
+        let promise,
+          calls = 0;
+        (Object.prototype as any).toJSON = function () {
+          calls++;
+          change(algorithm[member]);
+          return this;
+        };
+        try {
+          promise = subtle.wrapKey("jwk", secret, wrapper, algorithm);
+        } finally {
+          delete (Object.prototype as any).toJSON;
+        }
+        expect(calls).toBeGreaterThan(0);
+        const key = await subtle.unwrapKey("jwk", await promise, unwrapper, { name, ...members() }, "AES-GCM", true, [
+          "encrypt",
+        ]);
+        expect(await hex(key)).toBe("05050505050505050505050505050505");
+      });
+    });
+  });
+
+  it("after the getters of the algorithm itself, hash included", async () => {
+    const base = await subtle.importKey("raw", new Uint8Array(8).fill(3), "PBKDF2", false, ["deriveBits"]);
+    const salt = bytes(8);
+    const hash = {
+      get name() {
+        salt.fill(0xee);
+        return "SHA-256";
+      },
+    };
+    const bits = await subtle.deriveBits({ name: "PBKDF2", hash, salt, iterations: 1 }, base, 64);
+    expect(Buffer.from(bits).toString("hex")).toBe("9b378574a42e2e9e");
   });
 });
 

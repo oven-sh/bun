@@ -1140,7 +1140,7 @@ mod vm_loader_ctx {
                 match (*(*this).transpiler.as_ptr()).resolver.read_dir_info(dir) {
                     Ok(Some(dir_info)) => {
                         dir_info
-                            .package_json()
+                            .package_json
                             .or(dir_info.enclosing_package_json)
                     }
                     _ => None,
@@ -2455,7 +2455,7 @@ fn transpile_source_code_of_any_provenance<const DATA_ONLY: bool>(
                                     (*transpiler).resolver.read_dir_info(source.path.name().dir)
                                 } {
                                     Ok(Some(dir_info)) => {
-                                        dir_info.package_json().or(dir_info.enclosing_package_json)
+                                        dir_info.package_json.or(dir_info.enclosing_package_json)
                                     }
                                     _ => None,
                                 }
@@ -2633,7 +2633,7 @@ fn transpile_source_code_of_any_provenance<const DATA_ONLY: bool>(
                                 // stable cache slot.
                                 match unsafe { (*transpiler).resolver.read_dir_info(dir) } {
                                     Ok(Some(dir_info)) => dir_info
-                                        .package_json()
+                                        .package_json
                                         .or(dir_info.enclosing_package_json)
                                         .map(|p| p.module_type),
                                     _ => None,
@@ -3570,7 +3570,7 @@ fn package_json_of<'a>(
     }
     // SAFETY: `read_dir_info` is re-entrant on the JS thread.
     match unsafe { (*jsc_vm.transpiler.as_ptr()).resolver.read_dir_info(dir) } {
-        Ok(Some(dir_info)) => dir_info.package_json().or(dir_info.enclosing_package_json),
+        Ok(Some(dir_info)) => dir_info.package_json.or(dir_info.enclosing_package_json),
         _ => None,
     }
 }
@@ -3641,12 +3641,8 @@ fn intern_transpile_path(value: &[u8]) -> &'static [u8] {
     // Fast path: `value` already lives in the process-lifetime `FilenameStore`
     // backing arena (resolver-interned, or a prior `intern_transpile_path`
     // result) — no hash, no probe, no append.
-    if Fs::FilenameStore::instance().exists(value) {
-        // SAFETY: `exists` is a pointer-range check (like `is_slice_in_buffer`): the
-        // bytes lie wholly within `FilenameStore`'s backing storage, which is
-        // process-lifetime and never freed, so widening to `'static` is sound.
-        // Same widening as `FilenameStore::append_slice` itself performs.
-        return unsafe { core::slice::from_raw_parts(value.as_ptr(), value.len()) };
+    if let Some(interned) = Fs::FilenameStore::instance().as_interned(value) {
+        return interned;
     }
     TRANSPILE_PATH_INTERN.with(|cell| {
         let mut set = cell.borrow_mut();

@@ -45,7 +45,8 @@ function resolveRef($ref: string, domain: string): { type: Property; domain: str
 
 /** What tsc reports for a .d.ts checked on its own, i.e. what a consumer would see without skipLibCheck. */
 async function typeErrors(dtsPath: string): Promise<string[]> {
-  // Loading typescript takes tens of seconds in a debug build of bun, so only the test that needs it pays for it.
+  // A debug build of bun takes longer to load typescript than a test may run by default, so only the test
+  // that needs it pays for it.
   const ts = (await import("typescript")).default;
   const program = ts.createProgram([dtsPath], {
     strict: true,
@@ -240,7 +241,7 @@ test("generate-protocol.ts carries along the types that the JavaScript domains r
 });
 
 // The two tests above check the same thing at the protocol.json level; this one is what the consumers of the
-// package would see, but type-checking takes tens of seconds in a debug build of bun.
+// package would see, but typescript is too slow for it in a debug build of bun.
 test.skipIf(isDebug)("the generated index.d.ts type-checks without skipLibCheck", async () => {
   expect(await typeErrors(join(protocolDir, "jsc/index.d.ts"))).toEqual([]);
 

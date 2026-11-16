@@ -57,23 +57,31 @@ impl Probabilities {
         let updates = COEFFICIENT_UPDATE_PROBABILITIES
             .as_flattened()
             .as_flattened();
+        // No call gets to see the copy, so that it stays in registers.
+        let mut copy = *reader;
         for (value, &update) in values
             .as_flattened_mut()
             .iter_mut()
             .zip(updates.as_flattened())
         {
-            if reader.read_unlikely(update) {
+            if copy.read_unlikely(update) {
+                *reader = copy;
                 *value = reader.read_unsigned(8);
+                copy = *reader;
             }
         }
+        *reader = copy;
         let mut by_type = vec::default_array::<Steps, 4>()?;
-        for (steps, bands) in by_type.iter_mut().zip(&by_band) {
-            for (step, band) in steps.iter_mut().zip(BANDS) {
-                step.trees = *bands.at(band.into());
-            }
-            for (step, (index, position)) in steps.iter_mut().skip(1).zip((0..).zip(POSITIONS)) {
-                (step.index, step.position, step.is_ac) = (index, position, index > 0);
-            }
+        // One loop, which is too long to be unrolled.
+        for (i, step) in by_type.as_flattened_mut().iter_mut().enumerate() {
+            let (block_type, next) = (i / BANDS.len(), i % BANDS.len());
+            let index = next.saturating_sub(1);
+            *step = Step {
+                index: index as u8,
+                position: *POSITIONS.at(index),
+                is_ac: index > 0,
+                trees: *by_band.at(block_type).at((*BANDS.at(next)).into()),
+            };
         }
         Ok(Self(by_type))
     }
@@ -105,7 +113,8 @@ impl Context {
 /// Four rows of luma, then two with U on the left and V on the right.
 pub(super) struct Residuals {
     pub(super) rows: [BlockRow; 6],
-    /// A bit for each block, in the order of `rows`. One that is not set has only zeros.
+    /// A bit for each block, in the order of `rows`. One that is not set has only zeros. The loop filter asks whether
+    /// any is set.
     pub(super) non_zero: u32,
 }
 
@@ -139,7 +148,8 @@ impl Residuals {
         left: &mut Context,
     ) {
         let mut reader = *partition;
-        let mut non_zero = 0;
+        // The blocks that may have a coefficient, and those that go on behind the first, be it with zeros.
+        let (mut with_any, mut with_more) = (0, 0);
         let [luma @ .., _, _] = &mut self.rows;
         let (luma_type, first) = if has_y2 {
             let mut y2 = [0; 64];
@@ -148,11 +158,10 @@ impl Residuals {
                 quantizers: quantizers.y2,
                 first: 0,
             };
-            let end = block.read(&mut reader, [above.y2, left.y2], &mut y2, 0);
-            above.y2 = end > 0;
-            left.y2 = end > 0;
-            if end > 0 {
+            let context = [&mut above.y2, &mut left.y2];
+            if block.read(&mut reader, context, &mut y2, 0).is_some() {
                 inverse_wht(&y2, luma);
+                with_any = 0xffff;
             }
             (BlockType::LumaWithoutDc, 1)
         } else {
@@ -167,11 +176,11 @@ impl Residuals {
         // One loop has fewer ends to guess than two.
         for i in 0..16 {
             let (x, y) = (i % 4, i / 4);
-            let (above, left, row) = (above.luma.at_mut(x), left.luma.at_mut(y), luma.at_mut(y));
-            let end = block.read(&mut reader, [*above, *left], row, x);
-            *left = end > first;
-            *above = *left;
-            non_zero |= u32::from(is_non_zero(end, row, x)) << i;
+            let context = [above.luma.at_mut(x), left.luma.at_mut(y)];
+            if let Some(end) = block.read(&mut reader, context, luma.at_mut(y), x) {
+                with_any |= 1 << i;
+                with_more |= u32::from(end > 1) << i;
+            }
         }
 
         let block = Block {
@@ -182,22 +191,37 @@ impl Residuals {
         let [_, _, _, _, chroma @ ..] = &mut self.rows;
         for i in 0..8 {
             let (x, y) = (i / 4 * 2 + i % 2, i / 2 % 2);
-            let (above, left) = (above.chroma.at_mut(x), left.chroma.at_mut(i / 2));
-            let row = chroma.at_mut(y);
-            let end = block.read(&mut reader, [*above, *left], row, x);
-            *left = end > 0;
-            *above = *left;
-            non_zero |= u32::from(is_non_zero(end, row, x)) << (16 + 4 * y + x);
+            let context = [above.chroma.at_mut(x), left.chroma.at_mut(i / 2)];
+            if let Some(end) = block.read(&mut reader, context, chroma.at_mut(y), x) {
+                with_any |= 1 << (16 + 4 * y + x);
+                with_more |= u32::from(end > 1) << (16 + 4 * y + x);
+            }
         }
         *partition = reader;
-        self.non_zero = non_zero;
-        bun_highway::webp::inverse_dct(&mut self.rows, non_zero);
+
+        let (mut blocks, mut to_transform) = (15, 0);
+        for row in &mut self.rows {
+            if with_more & blocks != 0 {
+                to_transform |= with_any & blocks;
+            } else if with_any & blocks != 0 && spread_first(row) {
+                self.non_zero |= blocks;
+            }
+            blocks <<= 4;
+        }
+        if to_transform != 0 {
+            self.non_zero |= to_transform;
+            bun_highway::webp::inverse_dct(&mut self.rows, to_transform);
+        }
     }
 }
 
-/// Zeros that were spelled out behind the first coefficient count, for the loop filter.
-fn is_non_zero(end: usize, row: &BlockRow, x: usize) -> bool {
-    (end > 1) | (*row.at(4 * x) != 0)
+/// The inverse DCT of blocks that have no coefficient but the first. Returns whether one of those is not zero.
+#[inline(always)]
+fn spread_first(row: &mut BlockRow) -> bool {
+    let first: [i16; 16] = core::array::from_fn(|x| *row.at(x & !3));
+    let residuals = first.map(|it| it.wrapping_add(4) >> 3);
+    row.as_chunks_mut().0.fill(residuals);
+    first != [0; 16]
 }
 
 struct Block<'a> {
@@ -208,29 +232,40 @@ struct Block<'a> {
 }
 
 impl Block<'_> {
-    /// Returns the index behind the last coefficient that was coded.
+    /// Returns the index behind the last coefficient that was coded, if any was.
     #[inline(always)]
     fn read(
         &self,
         reader: &mut BoolReader,
-        [above, left]: [bool; 2],
+        [above, left]: [&mut bool; 2],
         row: &mut BlockRow,
         x: usize,
-    ) -> usize {
-        let context = usize::from(above) + usize::from(left);
-        let mut tree = self.steps.at(self.first).trees.at(context);
+    ) -> Option<u8> {
+        let context = usize::from(*above) + usize::from(*left);
+        let tree = self.steps.at(self.first).trees.at(context);
+        if !reader.read(tree[0]) {
+            (*above, *left) = (false, false);
+            return None;
+        }
+        (*above, *left) = (true, true);
+        Some(self.read_to_end(reader, tree, row, x).unwrap_or(16))
+    }
+
+    /// There is a coefficient to come. `None`: the block was coded up to its last.
+    #[inline(always)]
+    fn read_to_end<'a>(
+        &'a self,
+        reader: &mut BoolReader,
+        mut tree: &'a Tree,
+        row: &mut BlockRow,
+        x: usize,
+    ) -> Option<u8> {
         let mut steps = self.steps.iter();
-        steps.nth(self.first);
-        while let Some(mut step) = steps.next() {
-            if !reader.read(tree[0]) {
-                return step.index.into();
-            }
+        let mut step = steps.nth(self.first + 1)?;
+        loop {
             while !reader.read(tree[1]) {
                 tree = &step.trees[0];
-                let Some(next) = steps.next() else {
-                    return 16;
-                };
-                step = next;
+                step = steps.next()?;
             }
             let [_, after_one, after_more] = &step.trees;
             let magnitude;
@@ -241,8 +276,11 @@ impl Block<'_> {
             let quantizer = *self.quantizers.at(step.is_ac.into());
             let position = usize::from(step.position) + 4 * x;
             *row.at_mut(position) = (reader.read_sign(magnitude) * quantizer) as i16;
+            step = steps.next()?;
+            if !reader.read(tree[0]) {
+                return Some(step.index);
+            }
         }
-        16
     }
 }
 

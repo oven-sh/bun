@@ -26,7 +26,8 @@ impl Header<'_> {
         let (width, height) = (usize::from(self.width), usize::from(self.height));
         let columns = width.div_ceil(16);
         let mut parameters = Parameters::parse(&self)?;
-        let mut planes = Planes::new(width, height, parameters.filter_type, alpha)?;
+        let mut memory = Vec::new();
+        let mut planes = Planes::new(width, height, parameters.filter_type, alpha, &mut memory)?;
         let mut neighbors = Neighbors::new(columns)?;
         let mut contexts_above = vec::filled(([SubblockMode::Dc; 4], Context::default()), columns)?;
         let mut strengths = vec::filled(FilterStrength::default(), columns)?;

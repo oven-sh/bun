@@ -6,6 +6,8 @@ mod huffman;
 mod pixels;
 mod transform;
 
+use core::ops::Range;
+
 use self::bit_reader::BitReader;
 use self::pixels::Coding;
 pub(crate) use self::transform::MAX_BUNDLE_LEN;
@@ -63,10 +65,10 @@ pub(crate) struct IndexedGreen {
 }
 
 impl IndexedGreen {
-    /// And fewer than `MAX_BUNDLE_LEN` more. `to` has room for them.
-    pub(crate) fn append_row(&self, y: usize, to: &mut Vec<u8>) {
-        let start = y * self.bundles_per_row;
-        let bundles = self.bundles.part(start..start + self.bundles_per_row);
+    /// With fewer than `MAX_BUNDLE_LEN` more behind each, unless it has one pixel. `to` has room for them.
+    pub(crate) fn append_rows(&self, rows: Range<usize>, to: &mut Vec<u8>) {
+        let per_row = self.bundles_per_row;
+        let bundles = self.bundles.part(rows.start * per_row..rows.end * per_row);
         self.lookup.append(bundles, |&bundle| bundle, to);
     }
 }
@@ -76,7 +78,7 @@ pub(crate) fn decode_green(bytes: &[u8], width: usize, height: usize) -> Result<
     if let [Transform::ColorIndexing(palette)] = stream.transforms.as_slice()
         && stream.coding.green_stands_alone()
     {
-        let lookup = palette.lookup(|[_, green, ..]| green)?;
+        let lookup = palette.lookup(width, |[_, green, ..]| green)?;
         return Ok(Green::Indexed(IndexedGreen {
             bundles: stream.read_greens()?,
             bundles_per_row: stream.coded_width,
@@ -146,7 +148,7 @@ impl<'a> Stream<'a> {
         let mut around = transforms.split_inclusive(|it| matches!(it, Transform::ColorIndexing(_)));
         let (first, later) = (around.next(), around.next().unwrap_or_default());
         if let Some([earlier @ .., Transform::ColorIndexing(palette)]) = first {
-            let lookup = palette.lookup(|color| color)?;
+            let lookup = palette.lookup(self.width, |color| color)?;
             let mut pixels = if later.is_empty() && self.coding.green_stands_alone() {
                 let bundles = self.read_greens()?;
                 self.look_up(&lookup, &bundles, |&bundle| bundle)?
@@ -176,6 +178,10 @@ impl<'a> Stream<'a> {
         bundle: impl Fn(&T) -> u8,
     ) -> Result<Vec<Rgba>> {
         let mut pixels = vec::with_room(self.width * self.height + MAX_BUNDLE_LEN)?;
+        if self.coded_width == self.width {
+            lookup.append(coded, bundle, &mut pixels);
+            return Ok(pixels);
+        }
         for coded_row in coded.chunks_exact(self.coded_width.max(1)) {
             let end = pixels.len() + self.width;
             lookup.append(coded_row, &bundle, &mut pixels);

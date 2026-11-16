@@ -137,16 +137,20 @@ impl<'a> BoolReader<'a> {
         (magnitude ^ mask) - mask
     }
 
+    // These three are out of line: the header has many fields, each of which is read once.
+    #[inline(never)]
     pub(super) fn read_flag(&mut self) -> bool {
         self.read(128)
     }
 
     /// The highest bit comes first.
+    #[inline(never)]
     pub(super) fn read_unsigned(&mut self, bits: u32) -> u8 {
-        (0..bits).fold(0, |value, _| value << 1 | u8::from(self.read_flag()))
+        (0..bits).fold(0, |value, _| value << 1 | self.read_bit(128) as u8)
     }
 
     /// `None` if the flag in front of it is not set.
+    #[inline(never)]
     pub(super) fn read_optional_signed(&mut self, bits: u32) -> Option<i32> {
         self.read_flag().then(|| {
             let magnitude = i32::from(self.read_unsigned(bits));

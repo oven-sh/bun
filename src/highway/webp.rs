@@ -106,6 +106,7 @@ pub struct Plane<'a> {
 
 impl Plane<'_> {
     /// To the first of `count` macroblocks of `size` samples by `size`, which have `rows_above`.
+    #[inline(always)]
     fn as_mut_ptr(&mut self, size: usize, count: usize, rows_above: usize) -> *mut u8 {
         let below = self.samples.len().saturating_sub(self.start);
         assert!(

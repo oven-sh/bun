@@ -12,14 +12,15 @@ pub(crate) struct Rows<'a> {
     filter: Filter,
     y: usize,
     width: usize,
-    /// Both with the padding that `yuv_to_rgba()` reads.
+    /// With the padding that `yuv_to_rgba()` reads. Above the first are zeros.
     row: Vec<u8>,
-    above: Vec<u8>,
+    first_above: u8,
 }
 
 enum Source<'a> {
     Raw(&'a [u8]),
-    Indexed(IndexedGreen),
+    /// With room for a row.
+    Indexed(IndexedGreen, Vec<u8>),
     /// In the green of the pixels that the picture is about to be written over.
     InPlace,
 }
@@ -38,28 +39,32 @@ impl<'a> Rows<'a> {
         if header >> 4 > 1 || data.is_empty() {
             return Err(Error::InvalidAlpha);
         }
-        let filter = match (header >> 2) & 3 {
-            0 => Filter::None,
-            1 => Filter::Horizontal,
-            2 => Filter::Vertical,
+        let filter = match ((header >> 2) & 3, width) {
+            (0, _) => Filter::None,
+            // The filters differ from the second column on.
+            (1, _) | (_, 1) => Filter::Horizontal,
+            (2, _) => Filter::Vertical,
             _ => Filter::Gradient,
         };
+        let padded = width.next_multiple_of(ROW_STEP);
         let (source, pixels) = match header & 3 {
             NO_COMPRESSION if data.len() >= width * height => (Source::Raw(data), None),
             LOSSLESS_COMPRESSION => match decode_green(data, width, height)? {
-                Green::Indexed(green) => (Source::Indexed(green), None),
+                Green::Indexed(green) => {
+                    let row = vec::with_room(padded + MAX_BUNDLE_LEN)?;
+                    (Source::Indexed(green, row), None)
+                }
                 Green::Pixels(pixels) => (Source::InPlace, Some(pixels)),
             },
             _ => return Err(Error::InvalidAlpha),
         };
-        let padded = width + MAX_BUNDLE_LEN + ROW_STEP;
         let rows = Self {
             source,
             filter,
             y: 0,
             width,
             row: vec::filled(0, padded)?,
-            above: vec::filled(0, padded)?,
+            first_above: 0,
         };
         Ok((
             rows,
@@ -67,53 +72,55 @@ impl<'a> Rows<'a> {
         ))
     }
 
-    /// The alpha of the next row of the picture. `pixels` are those that are there already, from the start of that row.
-    pub(crate) fn next(&mut self, pixels: &[[u8; 4]]) -> Result<&[u8]> {
-        core::mem::swap(&mut self.row, &mut self.above);
-        self.row.clear();
+    /// The alpha of the next row of the picture, or of up to `ROW_STEP` if they have one pixel. `pixels` are those that
+    /// are there already, from the start of that row.
+    pub(crate) fn next(&mut self, count: usize, pixels: &[[u8; 4]]) -> Result<&[u8]> {
+        let (len, left) = (count * self.width, self.first_above);
+        let row = self.row.get_mut(..len).ok_or(Error::Internal)?;
+        let filter = match (self.filter, self.y) {
+            (Filter::Vertical, 0) => Filter::Horizontal,
+            (filter, _) => filter,
+        };
         match &mut self.source {
             Source::Raw(unread) => {
-                let (raw, rest) = unread.split_at_checked(self.width).ok_or(Error::Internal)?;
-                self.row.extend_from_slice(raw);
+                let (raw, rest) = unread.split_at_checked(len).ok_or(Error::Internal)?;
+                unfilter(filter, raw.iter().copied(), row, left);
                 *unread = rest;
             }
-            Source::Indexed(green) => green.append_row(self.y, &mut self.row),
+            Source::Indexed(green, filtered) => {
+                filtered.clear();
+                green.append_rows(self.y..self.y + count, filtered);
+                unfilter(filter, filtered.iter().copied(), row, left);
+            }
             Source::InPlace => {
-                let pixels = pixels.get(..self.width).ok_or(Error::Internal)?;
-                self.row.extend(pixels.iter().map(|&[_, green, ..]| green));
+                let pixels = pixels.get(..len).ok_or(Error::Internal)?.iter();
+                unfilter(filter, pixels.map(|&[_, green, ..]| green), row, left);
             }
         }
-        self.row.extend([0; ROW_STEP]);
-        let row = self.row.get_mut(..self.width).ok_or(Error::Internal)?;
-        unfilter(self.filter, row, &self.above, self.y == 0);
-        self.y += 1;
+        self.first_above = *row.get(len - self.width).ok_or(Error::Internal)?;
+        self.y += count;
         Ok(&self.row)
     }
 }
 
-/// Above the first row are zeros.
-fn unfilter(filter: Filter, row: &mut [u8], above: &[u8], is_first: bool) {
-    let first_above = above.first().copied().unwrap_or(0);
+/// In the place of the row above.
+#[inline(always)]
+fn unfilter(filter: Filter, filtered: impl Iterator<Item = u8>, row: &mut [u8], mut left: u8) {
+    let mut above_left = left;
+    let row = row.iter_mut().zip(filtered);
     match filter {
-        Filter::None => {}
-        Filter::Vertical if !is_first => {
-            for (alpha, &above) in row.iter_mut().zip(above) {
-                *alpha = alpha.wrapping_add(above);
-            }
-        }
-        Filter::Horizontal | Filter::Vertical => {
-            let mut left = first_above;
-            for alpha in row {
-                left = alpha.wrapping_add(left);
+        Filter::None => row.for_each(|(alpha, it)| *alpha = it),
+        Filter::Vertical => row.for_each(|(alpha, it)| *alpha = it.wrapping_add(*alpha)),
+        Filter::Horizontal => {
+            for (alpha, it) in row {
+                left = it.wrapping_add(left);
                 *alpha = left;
             }
         }
         Filter::Gradient => {
-            let (mut left, mut above_left) = (first_above, first_above);
-            for (alpha, &above) in row.iter_mut().zip(above) {
-                left = alpha.wrapping_add(gradient(left, above, above_left));
-                above_left = above;
-                *alpha = left;
+            for (alpha, it) in row {
+                left = it.wrapping_add(gradient(left, *alpha, above_left));
+                above_left = core::mem::replace(alpha, left);
             }
         }
     }

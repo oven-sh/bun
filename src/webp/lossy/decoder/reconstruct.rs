@@ -2,6 +2,7 @@
 
 use super::modes::LumaMode;
 use super::residuals::{BlockRow, Residuals};
+use crate::array::At;
 use crate::error::{Error, Result};
 use crate::lossy::MacroblockMode;
 use crate::vec;
@@ -27,8 +28,7 @@ struct LastRow {
 pub(super) struct Neighbors {
     above: Vec<LastRow>,
     left: Samples,
-    /// Y, U and V.
-    corner: [u8; 3],
+    above_left: LastRow,
     has_above: bool,
 }
 
@@ -44,7 +44,7 @@ impl Neighbors {
                 y: [[LEFT; 16]; 16],
                 uv: [[LEFT; 16]; 8],
             },
-            corner: [ABOVE; 3],
+            above_left: above,
             has_above: false,
         })
     }
@@ -53,7 +53,11 @@ impl Neighbors {
         self.has_above = y > 0;
         self.left.y = [[LEFT; 16]; 16];
         self.left.uv = [[LEFT; 16]; 8];
-        self.corner = [if self.has_above { LEFT } else { ABOVE }; 3];
+        let corner = [if self.has_above { LEFT } else { ABOVE }; 16];
+        self.above_left = LastRow {
+            y: corner,
+            uv: corner,
+        };
     }
 
     pub(super) fn reconstruct(
@@ -70,7 +74,6 @@ impl Neighbors {
             .ok_or(Error::Internal)?;
         let [luma_residuals @ .., _, _] = &residuals.rows;
         let [_, _, _, _, chroma_residuals @ ..] = &residuals.rows;
-        let [corner_y, corner_u, corner_v] = self.corner;
         let in_picture = InPicture {
             above: self.has_above,
             left: x > 0,
@@ -78,18 +81,17 @@ impl Neighbors {
         // The new samples take the place of those on the left.
         let Samples { y, uv } = &mut self.left;
 
-        let left_y = y.each_ref().map(|row| row[15]);
         match luma_mode {
             LumaMode::Whole(mode) => {
-                let average = || [in_picture.average(&above.y, &left_y); 16];
-                let left = left_y.map(|left| move || [left; 16]);
-                predict(*mode, y, &above.y, left, [corner_y; 16], average);
+                predict(*mode, y, &above.y, &self.above_left.y, in_picture);
                 add_residuals(y, luma_residuals, residuals.non_zero);
             }
             LumaMode::Subblocks(modes) => {
                 let [a, b, c, d, ..] = further.first().map_or([above.y[15]; 16], |next| next.y);
-                let mut left = [corner_y; 20];
-                left[1..17].copy_from_slice(&left_y);
+                let mut left = [self.above_left.y[15]; 20];
+                for (left, row) in left[1..].iter_mut().zip(&*y) {
+                    *left = row[15];
+                }
                 bun_highway::webp::reconstruct_subblocks(
                     &above.y,
                     &[a, b, c, d],
@@ -101,29 +103,16 @@ impl Neighbors {
             }
         }
 
-        let left_uv = uv.each_ref().map(|row| (row[7], row[15]));
-        let average = || {
-            let u = in_picture.average(&above.uv[..8], &left_uv.map(|(u, _)| u));
-            let v = in_picture.average(&above.uv[8..], &left_uv.map(|(_, v)| v));
-            halves(u, v)
-        };
-        let left = left_uv.map(|(u, v)| move || halves(u, v));
-        let corner = halves(corner_u, corner_v);
-        predict(chroma_mode, uv, &above.uv, left, corner, average);
+        predict(chroma_mode, uv, &above.uv, &self.above_left.uv, in_picture);
         add_residuals(uv, chroma_residuals, residuals.non_zero >> 16);
 
-        self.corner = [above.y[15], above.uv[7], above.uv[15]];
+        self.above_left = *above;
         *above = LastRow {
             y: y[15],
             uv: uv[7],
         };
         Ok(&self.left)
     }
-}
-
-#[inline(always)]
-fn halves(left: u8, right: u8) -> [u8; 16] {
-    core::array::from_fn(|x| if x < 8 { left } else { right })
 }
 
 /// Whether the neighbors are there or made up.
@@ -135,44 +124,59 @@ struct InPicture {
 
 impl InPicture {
     #[inline(always)]
-    fn average<const N: usize>(self, above: &[u8], left: &[u8; N]) -> u8 {
-        let sum = |edge: &[u8]| edge.iter().map(|&it| usize::from(it)).sum::<usize>();
+    fn average<const N: usize>(self, above: &[u8; N], left: impl Iterator<Item = u8>) -> u8 {
+        let above = || above.iter().copied().map(usize::from).sum::<usize>();
+        let left = || left.map(usize::from).sum::<usize>();
         let twice = match (self.above, self.left) {
-            (true, true) => sum(above) + sum(left),
-            (true, false) => 2 * sum(above),
-            (false, true) => 2 * sum(left),
+            (true, true) => above() + left(),
+            (true, false) => 2 * above(),
+            (false, true) => 2 * left(),
             (false, false) => return 128,
         };
         ((twice + N) / (2 * N)) as u8
     }
 }
 
-/// `left`, `corner` and `average` have for each column the value that counts there.
+/// For squares of `N` samples by `N` side by side, in the place of those on their left.
 #[inline(always)]
 fn predict<const N: usize>(
     mode: MacroblockMode,
     rows: &mut [[u8; 16]; N],
     above: &[u8; 16],
-    left: [impl Fn() -> [u8; 16]; N],
-    corner: [u8; 16],
-    average: impl Fn() -> [u8; 16],
+    above_left: &[u8; 16],
+    in_picture: InPicture,
 ) {
+    // In two steps, of which the compiler makes a single shuffle.
+    let spread_last = |row: &[u8; 16]| -> [u8; 16] {
+        let odd: [u8; 16] = core::array::from_fn(|x| *row.at(x | 1));
+        core::array::from_fn(|x| *odd.at(x | (N - 2)))
+    };
     match mode {
-        MacroblockMode::Dc => rows.fill(average()),
+        MacroblockMode::Dc => {
+            let mut averages = [0; 16];
+            let squares = averages.as_chunks_mut::<N>().0.iter_mut();
+            for (index, (square, above)) in squares.zip(above.as_chunks::<N>().0).enumerate() {
+                let left = rows.iter().map(|row| *row.at(index * N + N - 1));
+                *square.at_mut(N - 1) = in_picture.average(above, left);
+            }
+            rows.fill(spread_last(&averages));
+        }
         MacroblockMode::Vertical => rows.fill(*above),
         MacroblockMode::Horizontal => {
-            for (row, left) in rows.iter_mut().zip(left) {
-                *row = left();
+            for row in rows {
+                *row = spread_last(row);
             }
         }
         MacroblockMode::TrueMotion => {
-            for (row, left) in rows.iter_mut().zip(left) {
-                let around = above.iter().zip(left()).zip(corner);
-                for (sample, ((above, left), corner)) in row.iter_mut().zip(around) {
+            let (above, corner) = (*above, spread_last(above_left));
+            for row in rows {
+                let left = spread_last(row);
+                *row = core::array::from_fn(|x| {
+                    let (left, corner) = (*left.at(x), *corner.at(x));
                     // One of the two is zero.
                     let (up, down) = (left.saturating_sub(corner), corner.saturating_sub(left));
-                    *sample = above.saturating_add(up).saturating_sub(down);
-                }
+                    above.at(x).saturating_add(up).saturating_sub(down)
+                });
             }
         }
     }

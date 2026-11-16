@@ -143,18 +143,20 @@ impl Palette {
     }
 
     /// For looking up what `keep` keeps of each color.
-    pub(super) fn lookup<T: Copy + Default>(&self, keep: impl Fn(Rgba) -> T) -> Result<Lookup<T>> {
-        let per_byte = 1 << self.bundle_bits;
+    pub(super) fn lookup<T: Copy + Default>(
+        &self,
+        width: usize,
+        keep: impl Fn(Rgba) -> T,
+    ) -> Result<Lookup<T>> {
+        let bundle_bits = if width == 1 { 0 } else { self.bundle_bits };
+        let per_byte = 1 << bundle_bits;
         let index_bits = 8 >> self.bundle_bits;
         let mut table = vec::with_room(256 * per_byte)?;
         for byte in 0..256usize {
             let index = |i| (byte >> (i * index_bits)) & ((1 << index_bits) - 1);
             table.extend((0..per_byte).map(|i| keep(*self.colors.at(index(i)))));
         }
-        Ok(Lookup {
-            table,
-            bundle_bits: self.bundle_bits,
-        })
+        Ok(Lookup { table, bundle_bits })
     }
 }
 

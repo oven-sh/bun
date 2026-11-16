@@ -6904,6 +6904,17 @@ static void redisplacePreloadMock(Zig::GlobalObject* globalObject, JSModuleMock*
 }
 #endif
 
+#if ENABLE(AOT)
+static std::optional<JSC::AOT::ModuleID> commonJSFileOfPreloadSetAside(Zig::GlobalObject* globalObject, JSModuleMock* mock, const String& specifier)
+{
+    if (!globalObject->vm().hasCompiledCode() || !Bun::isBunTest || JSMock__isInPreload(globalObject) || isInNodeModules(specifier) || restoresCompiledFile(globalObject, mock, specifier))
+        return std::nullopt;
+    auto file = Bun::compiledModuleForPath(specifier);
+    bool isSetAside = file && !JSC::AOT::isESModule(*file) && !JSC::AOT::isDataFile(*file) && JSC::AOT::hasIntactOriginal(globalObject, *file) && !JSC::AOT::isEvicted(globalObject, *file);
+    return isSetAside && JSC::AOT::evaluatedBy(globalObject, *file) == JSC::AOT::LoadedBy::Preload ? file : std::nullopt;
+}
+#endif
+
 static JSC::EncodedJSValue unmock(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callframe, JSValue returned)
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
@@ -6924,6 +6935,7 @@ static JSC::EncodedJSValue unmock(JSC::JSGlobalObject* lexicalGlobalObject, JSC:
 #if ENABLE(AOT)
         if (auto file = vm.hasCompiledCode() && Bun::isBunTest ? Bun::compiledModuleForPath(specifier.key) : std::nullopt)
             JSC::AOT::tellIfMockedBelowImport(globalObject, *file, Bun::compiledModuleForPath(callerPath(vm, callframe)));
+        auto setAside = commonJSFileOfPreloadSetAside(globalObject, mock, specifier.key);
 #endif
         unmockModule(globalObject, mock, specifier.key);
         RETURN_IF_EXCEPTION(scope, {});
@@ -6931,6 +6943,8 @@ static JSC::EncodedJSValue unmock(JSC::JSGlobalObject* lexicalGlobalObject, JSC:
         globalObject->onLoadPlugins.filesWithEarlierOriginal.remove(specifier.key);
         didEndMockOverPreload(globalObject, mock, specifier.key);
         RETURN_IF_EXCEPTION(scope, {});
+        if (setAside)
+            JSC::AOT::letGoUntilEndOfTestFile(globalObject, *setAside);
 #endif
     }
     return JSValue::encode(returned);

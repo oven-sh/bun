@@ -1,6 +1,4 @@
-// JSWorkerLocation: the `location` of a Web Worker's global scope.
-// https://html.spec.whatwg.org/multipage/workers.html#worker-locations
-// One cell per worker, made on the first read of `location` (ZigGlobalObject.cpp).
+// The `location` of a Web Worker: https://html.spec.whatwg.org/multipage/workers.html#worker-locations
 #pragma once
 
 #include "root.h"
@@ -13,7 +11,7 @@
 
 namespace WebCore {
 
-// The URL of the worker's entry, read through the WHATWG URL accessors that DOMURL shares.
+// The worker's entry URL behind the WHATWG accessors that DOMURL shares.
 class WorkerLocation final : public URLDecomposition {
 public:
     explicit WorkerLocation(URL&& url)
@@ -63,8 +61,7 @@ private:
     WorkerLocation m_location;
 };
 
-// `new WorkerLocation()` throws "Illegal constructor". The constructor is a global of Web Workers so
-// `instanceof` and `.prototype` work.
+// `new WorkerLocation()` throws "Illegal constructor".
 using JSWorkerLocationConstructor = JSDOMConstructorNotConstructable<JSWorkerLocation>;
 
 } // namespace WebCore

@@ -56,10 +56,10 @@ namespace WebCore {
                                                                                                                                                                                                 macro(JSWasmStreamingCompiler)                           \
                                                                                                                                                                                                     macro(JSWebSocket)                                   \
                                                                                                                                                                                                         macro(JSWorker)                                  \
-                                                                                                                                                                                                            macro(JSWorkerLocation)                      \
                                                                                                                                                                                                             macro(JSWritableStream)                      \
                                                                                                                                                                                                                 macro(JSWritableStreamDefaultController) \
-                                                                                                                                                                                                                    macro(JSWritableStreamDefaultWriter)
+                                                                                                                                                                                                                    macro(JSWritableStreamDefaultWriter) \
+                                                                                                                                                                                                                        macro(JSWorkerLocation)
 
 #define DOM_STRUCTURE_SLOT_FORWARD_DECLARE(name) class name;
 FOR_EACH_DOM_STRUCTURE_SLOT(DOM_STRUCTURE_SLOT_FORWARD_DECLARE)

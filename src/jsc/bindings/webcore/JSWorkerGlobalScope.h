@@ -1,10 +1,5 @@
-// The WorkerGlobalScope and DedicatedWorkerGlobalScope interfaces of a Web Worker's global object.
+// WorkerGlobalScope and DedicatedWorkerGlobalScope: the global object of a Web Worker is the instance.
 // https://html.spec.whatwg.org/multipage/workers.html#the-workerglobalscope-common-interface
-//
-// The global object of a Web Worker (WorkerOptions::Kind::Web) is the DedicatedWorkerGlobalScope instance:
-// installWorkerGlobalScope() puts DedicatedWorkerGlobalScope.prototype (above it WorkerGlobalScope.prototype,
-// then EventTarget.prototype) on the global's prototype chain and the constructors on the global. Both
-// constructors throw "Illegal constructor". Neither has an instance cell of its own.
 #pragma once
 
 #include "root.h"
@@ -35,7 +30,7 @@ public:
 using JSWorkerGlobalScopeConstructor = JSDOMConstructorNotConstructable<JSWorkerGlobalScope>;
 using JSDedicatedWorkerGlobalScopeConstructor = JSDOMConstructorNotConstructable<JSDedicatedWorkerGlobalScope>;
 
-// Makes the global object of a Web Worker a DedicatedWorkerGlobalScope. Call it once, before any script runs in it.
+// Puts the scope prototypes above the global object and the constructors on it. Before any script runs.
 void installWorkerGlobalScope(Zig::GlobalObject*);
 
 } // namespace WebCore

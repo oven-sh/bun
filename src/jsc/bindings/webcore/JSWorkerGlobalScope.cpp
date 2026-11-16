@@ -14,8 +14,7 @@
 #include <JavaScriptCore/Lookup.h>
 #include <wtf/URL.h>
 
-// The entry of this VM as the module loader stored it (src/jsc/virtual_machine_exports.rs): an absolute file path, a
-// `blob:` or `data:` URL, or empty. Not the `Bun.main` override.
+// `vm.main` (src/jsc/virtual_machine_exports.rs): a file path, a `blob:` or `data:` URL, or empty.
 extern "C" BunString Bun__VirtualMachine__main(void* bunVM);
 
 namespace WebCore {
@@ -26,7 +25,7 @@ static JSC_DECLARE_CUSTOM_GETTER(jsWorkerGlobalScopePrototypeGetter_constructor)
 static JSC_DECLARE_CUSTOM_GETTER(jsWorkerGlobalScope_location);
 static JSC_DECLARE_CUSTOM_GETTER(jsDedicatedWorkerGlobalScopePrototypeGetter_constructor);
 
-// One prototype object class per interface. Both are plain objects whose ClassInfo names the interface.
+// A plain prototype object whose ClassInfo names the interface.
 #define DECLARE_SCOPE_PROTOTYPE(Name)                                                                                                         \
     class Name##Prototype final : public JSC::JSNonFinalObject {                                                                              \
     public:                                                                                                                                   \
@@ -84,8 +83,7 @@ template<> void JSWorkerGlobalScopeConstructor::initializeProperties(VM& vm, JSD
     initializeBaseProperties(vm, 0, "WorkerGlobalScope"_s, JSWorkerGlobalScope::prototype(vm, globalObject));
 }
 
-// `location` is a plain CustomAccessor, not a DOMAttribute: the receiver is the global object's proxy
-// (`self.location`, `globalThis.location`) or the global object itself (a bare `location`).
+// `location` is not a DOMAttribute: its receiver is the global object or its JSGlobalProxy.
 static const HashTableValue JSWorkerGlobalScopePrototypeTableValues[] = {
     { "constructor"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::GetterSetterType, jsWorkerGlobalScopePrototypeGetter_constructor, 0 } },
     { "location"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor), NoIntrinsic, { HashTableValue::GetterSetterType, jsWorkerGlobalScope_location, 0 } },
@@ -220,7 +218,6 @@ static Zig::GlobalObject* workerGlobalScopeOf(JSValue thisValue)
     return globalObject;
 }
 
-// https://html.spec.whatwg.org/multipage/workers.html#dom-workerglobalscope-location
 // Made on the first read: the entry is resolved after the global object is created.
 JSC_DEFINE_CUSTOM_GETTER(jsWorkerGlobalScope_location, (JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, PropertyName))
 {

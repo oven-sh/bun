@@ -81,8 +81,7 @@ pub fn set_sampling_profiler_directory(this: &VirtualMachine, directory: &BunStr
         .set(Some(absolute_directory(directory)));
 }
 
-/// The entry of this VM as the module loader stored it (`vm.main`): an absolute file path, a `blob:` or `data:`
-/// URL, or empty when there is none. Not the `Bun.main` override. The `location` of a Web Worker reads it.
+/// `vm.main` as stored (not the `Bun.main` override), or empty. The `location` of a Web Worker reads it.
 // HOST_EXPORT(Bun__VirtualMachine__main, c)
 pub fn main(this: &VirtualMachine) -> BunString {
     match this.main() {

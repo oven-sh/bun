@@ -61,11 +61,13 @@ fn in_backticks(ty: Type) -> Vec<u8> {
 }
 
 /// The range of an `ArrayPattern`'s element, or of the `value` of an `ObjectPattern`'s `Property`, including the
-/// default value.
-fn span_of_value(element: &TargetElement) -> Span {
+/// default value. In an assignment, tsgolint's node for it also has the parentheses around it.
+fn span_of_value(element: &TargetElement, is_oxlint: bool) -> Span {
+    let span_of = |e: Expr| if is_oxlint { e.outer_span() } else { e.span() };
     match element.node {
         Node::PatProp(it) => Span::new(it.value().span().start, it.span().end),
-        Node::Prop(it) => it.value().map_or_else(|| it.span(), |value| value.span()),
+        Node::Prop(it) => it.value().map_or_else(|| it.span(), span_of),
+        Node::Expr(it) => span_of(it),
         node => node.span(),
     }
 }
@@ -115,15 +117,17 @@ struct Destructured<'a> {
 
 impl<'a> Destructured<'a> {
     fn new(
+        cx: &Context<'a>,
         element: &TargetElement<'a>,
         target: Target<'a>,
         sender: Sender<'a>,
         message: &'static Message,
     ) -> Self {
-        // tsgolint looks at a binding element's name, whatever its default is.
-        let uses_name_only = matches!(target, Target::Pat(pat) if pat.file().language().is_oxlint);
+        let is_oxlint = cx.language().is_oxlint;
+        // tsgolint looks at the name of a binding element or of a shorthand property, whatever its default is.
+        let uses_name_only = is_oxlint && (matches!(target, Target::Pat(_)) || element.is_shorthand);
         Destructured {
-            span: if uses_name_only { target.span() } else { span_of_value(element) },
+            span: if uses_name_only { target.span() } else { span_of_value(element, is_oxlint) },
             has_default: element.default.is_some() && !uses_name_only,
             target,
             sender,
@@ -168,6 +172,8 @@ fn check_destructure<'a>(
         },
         for_comments: span,
     };
+    // tsgolint's node for the whole pattern doesn't have the type annotation.
+    let receiver_span = if cx.language().is_oxlint { receiver_node.span() } else { receiver_span };
     // Iterative, because a pattern can be nested as deeply as the parser allows. The next part to process is at the
     // end.
     let mut parts = Vec::new();
@@ -260,7 +266,7 @@ fn check_array_destructure<'a>(
             let (sender, message) = (Sender::Type(sender_type), UNSAFE_ARRAY_PATTERN_FROM_TUPLE);
             match (receiver_element.target, receiver_element.node) {
                 (Some(target), _) => {
-                    parts.push(Destructured::new(receiver_element, target, sender, message));
+                    parts.push(Destructured::new(cx, receiver_element, target, sender, message));
                 }
                 // tsgolint checks the `OmittedExpression` that represents a hole in an array literal.
                 (None, Node::Expr(hole)) if cx.language().is_oxlint => parts.push(Destructured {
@@ -314,6 +320,7 @@ fn check_object_destructure<'a>(
         };
         let sender = Sender::Property(property);
         parts.push(Destructured::new(
+            cx,
             receiver_property,
             target,
             sender,
@@ -471,8 +478,8 @@ fn check_assignment<'a>(
     )
 }
 
-/// Handles an `AssignmentExpression`, an `AssignmentPattern` and a `VariableDeclarator`. `left_span` is the range of
-/// `left` including its type annotation.
+/// Handles an `AssignmentExpression`, an `AssignmentPattern` and a `VariableDeclarator`. `left_span` is ESLint's range
+/// of `left`, which includes its type annotation.
 fn check_assignment_to_target<'a>(
     cx: &Context<'a>,
     left: Target<'a>,
@@ -504,8 +511,16 @@ fn check_property<'a>(cx: &Context<'a>, node: Prop<'a>, value: Expr<'a>) {
     let type_of_name = || type_of_key(file, key, || NameOf(node).ty());
     match node.kind() {
         PropKind::Spread => {}
-        // `{ a = 1 }` is an `AssignmentPattern`.
-        PropKind::Shorthand if value.tag() == ExprTag::Assign => {}
+        // `{ a = 1 }` is an `AssignmentPattern`. In an object that tsgolint doesn't visit as a pattern, it checks the
+        // name as the value, whatever the default is.
+        PropKind::Shorthand if value.tag() == ExprTag::Assign => {
+            if file.language().is_oxlint
+                && let Some((_, name, _)) = value.as_assign()
+            {
+                let receiver_type = || value.contextual_type().unwrap_or_else(type_of_name);
+                check_assignment(cx, &receiver_type, name, name.span(), name.span(), true);
+            }
+        }
         PropKind::Init | PropKind::Shorthand => {
             // `getContextualType(checker, key)` is the property's contextual type if the key is an identifier, and
             // nothing otherwise.

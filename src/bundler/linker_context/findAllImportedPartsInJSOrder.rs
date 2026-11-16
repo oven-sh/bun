@@ -8,7 +8,7 @@ use crate::{Chunk, EntryPoint, Index, IndexInt, LinkerContext, PartRange, chunk,
 use bun_core::perf;
 
 pub(crate) fn find_all_imported_parts_in_js_order<'a>(
-    this: &LinkerContext<'_, 'a>,
+    this: &mut LinkerContext<'_, 'a>,
     chunks: &mut [Chunk<'a>],
 ) -> Result<(), crate::Error> {
     let _trace = perf::trace("Bundler.findAllImportedPartsInJSOrder");
@@ -47,9 +47,6 @@ pub(crate) fn find_all_imported_parts_in_js_order<'a>(
         order: &'f WalkOrder,
     }
 
-    // One chunk per task. Each task writes only its own `Chunk` and, for
-    // server-component files, that file's `entry_point_chunk_index` slot (a
-    // file belongs to exactly one chunk), and reads the graph columns.
     let ctx = Ctx {
         c: this,
         chunk_of_file: &chunk_of_file,
@@ -73,6 +70,22 @@ pub(crate) fn find_all_imported_parts_in_js_order<'a>(
         },
         chunks,
     );
+
+    if this.graph.is_scb_bitset.bit_length() > 0 {
+        let entry_point_chunk_indices = this.graph.files.items_entry_point_chunk_index_mut();
+        for (chunk_index, chunk) in (0u32..).zip(&*chunks) {
+            let chunk::Content::Javascript(js) = &chunk.content else {
+                continue;
+            };
+            for &source_index in &js.files_in_chunk_order {
+                if this.graph.is_scb_bitset.is_set(source_index as usize) {
+                    // Without code splitting several chunks may contain this file: the last one wins.
+                    let slot = &mut entry_point_chunk_indices[source_index as usize];
+                    *slot = chunk_index.max(*slot);
+                }
+            }
+        }
+    }
     Ok(())
 }
 
@@ -124,9 +137,6 @@ pub(crate) fn find_imported_parts_in_js_order(
         part_ranges: Vec::new(),
         parts_prefix: Vec::new(),
         namespace_objects: Vec::new(),
-        chunk_index,
-        // The one column written through a shared `&LinkerContext` (see `place`).
-        entry_point_chunk_indices: this.graph.files.split_raw().entry_point_chunk_index,
     };
 
     // The runtime goes first: every helper a file calls is declared above it.
@@ -228,7 +238,7 @@ struct WalkPlan {
 impl WalkPlan {
     fn new(c: &LinkerContext, chunks: &[Chunk]) -> WalkPlan {
         let files_len = c.graph.files.len();
-        let entry_points = c.graph.entry_points.items_source_index();
+        let entry_points = &c.graph.entry_points;
         let code_splitting = c.graph.code_splitting;
         let mut plan = WalkPlan {
             chunk_of_file: Vec::new(),
@@ -677,7 +687,7 @@ enum LoadFrame {
 fn load_rank(c: &LinkerContext, entry_id_of_file: &[u32]) -> Vec<u32> {
     const QUEUED: u32 = u32::MAX - 1;
     let files_len = c.graph.files.len();
-    let entry_points = c.graph.entry_points.items_source_index();
+    let entry_points = &c.graph.entry_points;
     let entry_point_kinds = c.graph.files.items_entry_point_kind();
     let entry_bits = c.graph.files.items_entry_bits();
 
@@ -796,7 +806,7 @@ impl EntryWalk {
         let mut left = bun_core::handle_oom(AutoBitSet::init_empty(c.graph.files.len()));
         let mut stack: Vec<WalkFrame> = Vec::new();
         let mut css_placed: HashMap<u64, ()> = HashMap::default();
-        let root = c.graph.entry_points.items_source_index()[self.entry_id as usize];
+        let root = c.graph.entry_points[self.entry_id as usize];
         self.walk(
             c,
             plan,
@@ -995,9 +1005,6 @@ struct ChunkLayout<'a, 'ctx> {
     parts_prefix: Vec<PartRange>,
     /// A namespace object exists before any file runs: these print ahead of `part_ranges`.
     namespace_objects: Vec<PartRange>,
-    chunk_index: u32,
-    /// Raw `entry_point_chunk_index` column, for the one write in `place`.
-    entry_point_chunk_indices: *mut [u32],
 }
 
 impl ChunkLayout<'_, '_> {
@@ -1078,31 +1085,6 @@ impl ChunkLayout<'_, '_> {
         }
         if !leaves {
             return;
-        }
-
-        if self.c.graph.is_scb_bitset.bit_length() > 0
-            && self.c.graph.is_scb_bitset.is_set(source_index as usize)
-        {
-            // SAFETY: `entry_point_chunk_indices` is the raw column pointer
-            // for `entry_point_chunk_index` (distinct from every column read
-            // through `self.c`), valid for
-            // `graph.files.len()` writes for the duration of the link step.
-            // Chunks run in parallel and, without code splitting, several may
-            // contain this file: highest index wins, as
-            // when this ran chunk by chunk.
-            // Err = another chunk with a higher index already claimed it.
-            let _ = unsafe {
-                core::sync::atomic::AtomicU32::from_ptr(
-                    (*self.entry_point_chunk_indices)
-                        .as_mut_ptr()
-                        .add(source_index as usize),
-                )
-                .try_update(
-                    core::sync::atomic::Ordering::Relaxed,
-                    core::sync::atomic::Ordering::Relaxed,
-                    |cur| (cur < self.chunk_index).then_some(self.chunk_index),
-                )
-            };
         }
 
         self.files.push(source_index);

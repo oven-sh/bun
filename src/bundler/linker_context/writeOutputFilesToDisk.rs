@@ -9,7 +9,9 @@ use bun_paths as paths;
 use bun_wyhash::hash;
 
 use crate::LinkerContext;
-use crate::chunk::{Content, Flags as ChunkFlags, ReferencePathStyle, SourceMapShiftTracking};
+use crate::chunk::{
+    Content, Flags as ChunkFlags, IntermediateOutput, ReferencePathStyle, SourceMapShiftTracking,
+};
 use crate::linker_context::output_file_list_builder::OutputFileList;
 use crate::linker_context_mod::debug;
 use crate::options::{self, Loader, OutputFile, SourceMapOption};
@@ -31,6 +33,7 @@ pub(crate) fn write_output_files_to_disk(
     log: &bun_ast::Log,
     root_path: &[u8],
     chunks: &mut [Chunk],
+    intermediate_outputs: &mut [IntermediateOutput],
     output_files: &mut OutputFileList,
     standalone_chunk_contents: Option<&[Option<Box<[u8]>>]>,
     standalone_sourcemaps: &mut [Option<Box<[u8]>>],
@@ -68,11 +71,7 @@ pub(crate) fn write_output_files_to_disk(
 
     let mut pathbuf = bun_paths::path_buffer_pool::get();
 
-    // `code()`/`code_standalone()` take both `chunk` (an element of `chunks`)
-    // and `chunks` as
-    // `&Chunk` / `&[Chunk]` (read-only), so iterate by index and reborrow
-    // shared; the only per-chunk mutation is the `intermediate_output`
-    // take/restore done via `chunks[i]`.
+    let bundle = c.bundle();
     let chunks_len = chunks.len();
 
     for chunk_index_in_chunks_list in 0..chunks_len {
@@ -203,20 +202,16 @@ pub(crate) fn write_output_files_to_disk(
             }
         }
         let mut display_size: usize = 0;
-        let resolver_opts = &c.resolver.opts;
-        let public_path: &[u8] = &c.options_for_chunk(chunk).public_path;
+        let resolver_opts = &bundle.transpiler().resolver.opts;
+        let public_path: &[u8] = c.public_path_for_chunk(chunk);
 
-        // Take `intermediate_output` by value so its `&mut self` is
-        // disjoint from the `&chunks[i]` / `&[Chunk]` reads below.
-        let mut intermediate_output =
-            core::mem::take(&mut chunks[chunk_index_in_chunks_list].intermediate_output);
-        let chunk: &Chunk = &chunks[chunk_index_in_chunks_list];
+        let intermediate_output = &mut intermediate_outputs[chunk_index_in_chunks_list];
         let parse_graph = c.parse_graph();
 
         let mut code_result = if let Some(scc) = standalone_chunk_contents {
             match intermediate_output.code_standalone(
                 None,
-                c.bundle,
+                bundle,
                 &c.graph,
                 public_path,
                 chunk,
@@ -234,7 +229,7 @@ pub(crate) fn write_output_files_to_disk(
         } else {
             match intermediate_output.code(
                 None,
-                c.bundle,
+                bundle,
                 &c.graph,
                 public_path,
                 chunk,
@@ -254,7 +249,6 @@ pub(crate) fn write_output_files_to_disk(
         // Tail of the loop body needs `&mut chunk` (`output_source_map.finalize()`);
         // no `&[Chunk]` is needed past this point so an exclusive reborrow is fine.
         let chunk: &mut Chunk = &mut chunks[chunk_index_in_chunks_list];
-        chunk.intermediate_output = intermediate_output;
 
         let mut source_map_output_file: Option<OutputFile> = None;
 

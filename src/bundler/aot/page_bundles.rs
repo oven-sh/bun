@@ -158,23 +158,28 @@ fn run<'h>(
 
     bundle.scan_for_secondary_paths();
     bundle.process_server_component_manifest_files()?;
-    let mut linker_graph = bundle.create_linker_graph()?;
 
     let reachable_files = bundle.find_reachable_files()?;
-    linker_graph.additional_output_files = bundle.process_files_to_copy(&reachable_files)?;
+    let additional_output_files = bundle.process_files_to_copy(&reachable_files)?;
     bundle.add_server_component_boundaries_as_extra_entry_points()?;
 
-    let mut linker = LinkerContext::load(bundle, linker_graph, &reachable_files)?;
-    let mut chunks = linker.link(log)?;
-    if log.has_errors() {
-        return Err(crate::Error::BuildFailed);
-    }
+    let linker_graph = bundle.create_linker_graph(additional_output_files);
 
-    let output_files = crate::linker_context_mod::generate_chunks_in_parallel::<false>(
-        &mut linker,
-        log,
-        &mut chunks,
-    )?;
+    let mut linker = LinkerContext::load(bundle, linker_graph, &reachable_files)?;
+    let (chunks, output_files) = linker.with_source_map_tasks(|linker, source_map_tasks| {
+        let mut chunks = linker.link(log)?;
+        if log.has_errors() {
+            return Err(crate::Error::BuildFailed);
+        }
+
+        let output_files = crate::linker_context_mod::generate_chunks_in_parallel(
+            linker,
+            log,
+            &mut chunks,
+            source_map_tasks,
+        )?;
+        Ok((chunks, output_files))
+    })?;
 
     let manifests =
         write_page_manifests(bundle, &linker.graph, &chunks, &output_files, pages, log)?;

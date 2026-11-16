@@ -81,7 +81,7 @@ fn generate_chunk_json(
         let file_source_index = *file_source_index;
         // Counters are `AtomicUsize` because they're populated by the parallel
         // codegen workers; metafile emission runs strictly after the
-        // `each_iter` join in `generate_chunks_in_parallel`, so a relaxed
+        // `each_iter` join in `generate_compile_results`, so a relaxed
         // load observes the final value.
         let bytes_in_output = bytes_in_output.load(core::sync::atomic::Ordering::Relaxed);
         if file_source_index as usize >= sources.len() {
@@ -200,7 +200,7 @@ fn generate_chunk_json(
 /// Called after `generate_chunks_in_parallel` has emitted every chunk's output.
 /// Chunk references (unique_keys) are resolved to their final output paths.
 /// The caller is responsible for freeing the returned slice.
-pub(crate) fn generate(c: &LinkerContext, chunks: &[Chunk]) -> crate::Result<Box<[u8]>> {
+pub(crate) fn generate(c: &mut LinkerContext, chunks: &[Chunk]) -> crate::Result<Box<[u8]>> {
     // Use StringJoiner so we can use breakOutputIntoPieces to resolve chunk references
     let mut j = StringJoiner::default();
     // errdefer j.deinit() — handled by Drop
@@ -212,7 +212,7 @@ pub(crate) fn generate(c: &LinkerContext, chunks: &[Chunk]) -> crate::Result<Box
     let parse_graph = c.parse_graph();
     let sources = parse_graph.input_files.items_source();
     let loaders = parse_graph.input_files.items_loader();
-    let import_records_list = parse_graph.ast.items_import_records();
+    let import_records_list = c.graph.ast.items_import_records();
 
     // Iterate through all files in chunks to collect unique source indices
     let mut seen_sources = DynamicBitSet::init_empty(sources.len())?;
@@ -446,19 +446,15 @@ pub(crate) fn generate(c: &LinkerContext, chunks: &[Chunk]) -> crate::Result<Box
     }
 
     // Break output into pieces and resolve chunk references to final paths
-    let alloc = c.arena();
-    let mut intermediate = c.break_output_into_pieces(
-        alloc,
-        &mut j,
-        u32::try_from(chunks.len()).expect("int cast"),
-    )?;
+    let mut intermediate =
+        c.break_output_into_pieces(j, u32::try_from(chunks.len()).expect("int cast"))?;
 
     // Get final output with all chunk references resolved.
     // `code()` takes the dummy chunk and the full slice as `&`, so pass
     // `&chunks[0]` directly — overlapping shared borrows are fine.
     let code_result = intermediate.code(
         None,
-        c.bundle,
+        c.bundle(),
         &c.graph,
         b"", // no import prefix for metafile
         &chunks[0],

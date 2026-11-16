@@ -1,3 +1,4 @@
+use core::mem::ManuallyDrop;
 use core::sync::SyncView;
 
 use crate::bundled_ast;
@@ -9,9 +10,7 @@ use bun_ast::server_component_boundary;
 use bun_ast::symbol;
 use bun_ast::{AstArena, DeclaredSymbol, DeclaredSymbolList, Dependency, Symbol};
 use bun_collections::{AutoBitSet, DynamicBitSet as BitSet, MultiArrayList, VecExt};
-use bun_core::RawSlice;
 
-use crate::IndexStringMap::IndexStringMap;
 use crate::{ImportTracker, Index, JSAst, Part, Ref, UseDirective, import_record, index, part};
 // `items_<field>()` column accessors — bring the `*ListExt` traits into scope.
 // Note: `BundledAstColumns` is emitted by `bun_collections::multi_array_columns!`
@@ -20,28 +19,6 @@ use crate::{ImportTracker, Index, JSAst, Part, Ref, UseDirective, import_record,
 bun_core::declare_scope!(LinkerGraph, visible);
 
 pub mod entry_point {
-    use bun_collections::MultiArrayList;
-    use bun_core::RawSlice;
-
-    #[derive(Default)]
-    pub struct EntryPoint {
-        pub output_path: RawSlice<u8>,
-        pub source_index: crate::IndexInt,
-    }
-
-    pub type List = MultiArrayList<EntryPoint>;
-
-    bun_collections::multi_array_columns! {
-        pub trait EntryPointColumns for EntryPoint {
-            output_path: RawSlice<u8>,
-            source_index: crate::IndexInt,
-        }
-    }
-
-    impl EntryPoint {
-        pub type Kind = Kind;
-    }
-
     #[repr(u8)]
     #[derive(Clone, Copy, PartialEq, Eq, Default)]
     pub enum Kind {
@@ -191,7 +168,7 @@ pub mod js_meta {
     }
 }
 
-pub use entry_point::EntryPoint;
+pub use entry_point as EntryPoint;
 pub use js_meta::{
     ExportData, ImportData, JSMeta, RefImportData, ResolvedExports, TopLevelSymbolToParts,
 };
@@ -207,19 +184,17 @@ pub struct LinkerGraph<'a> {
     /// tree-shaking visited-check doesn't pull a full 272-byte `Part` into
     /// cache for a 1-bit answer.
     pub(crate) parts_live: Vec<AutoBitSet>,
-    pub(crate) entry_points: entry_point::List,
+    /// Source indices.
+    pub(crate) entry_points: Vec<index::Int>,
     pub(crate) symbols: symbol::Map<'a>,
 
-    /// The bundle's arena, `BundleV2.graph.heap`.
-    bump: &'a Arena,
     /// `BundleV2.graph.ast_arena`. `SyncView`: workers share `&LinkerGraph`, and `AstArena` is `!Sync`.
     ast_arena: SyncView<&'a AstArena>,
 
     pub(crate) code_splitting: bool,
 
-    // This is an alias from Graph
-    // it is not a clone!
-    pub(crate) ast: MultiArrayList<JSAst<'a>>,
+    /// Taken from `Graph`. `load` moves its `symbols` column to `symbols`.
+    pub ast: MultiArrayList<JSAst<'a>>,
     pub meta: MultiArrayList<JSMeta<'a>>,
 
     /// We should avoid traversing all files in the bundle, because the linker
@@ -256,13 +231,17 @@ impl Drop for LinkerGraph<'_> {
                 drop(core::mem::take(bits));
             }
         }
+        // Freed with their arenas. Those of the workers can be gone by now.
+        for symbols in core::mem::take(&mut self.symbols.symbols_for_source) {
+            let _ = ManuallyDrop::new(symbols);
+        }
     }
 }
 
 impl<'a> LinkerGraph<'a> {
     #[inline]
-    pub(crate) fn arena(&self) -> &'a Arena {
-        self.bump
+    pub(crate) fn arena(&mut self) -> &'a Arena {
+        self.ast_arena().heap()
     }
 
     #[inline]
@@ -275,9 +254,8 @@ impl<'a> LinkerGraph<'a> {
             files: FileList::default(),
             files_live: BitSet::default(),
             parts_live: Vec::new(),
-            entry_points: entry_point::List::default(),
+            entry_points: Vec::new(),
             symbols: symbol::Map::default(),
-            bump: ast_arena.heap(),
             ast_arena: SyncView::new(ast_arena),
             code_splitting: false,
             ast: MultiArrayList::default(),
@@ -304,7 +282,7 @@ impl<'a> LinkerGraph<'a> {
 // thin forwarders for call sites that don't have a split in hand.
 // ──────────────────────────────────────────────────────────────────────────
 
-fn runtime_function(named_exports: &[bundled_ast::NamedExports], name: &[u8]) -> Ref {
+pub(crate) fn runtime_function(named_exports: &[bundled_ast::NamedExports], name: &[u8]) -> Ref {
     named_exports[Index::RUNTIME.get() as usize]
         .get(name)
         .expect("runtime function must be a named export of the runtime module")
@@ -327,7 +305,6 @@ pub(crate) fn generate_new_symbol<'a>(
         RefTag::Symbol,
     );
 
-    // TODO: will this crash on resize due to using threadlocal mimalloc heap?
     source_symbols.push(Symbol {
         kind,
         original_name: bun_ast::StoreStr::new(original_name),
@@ -650,7 +627,6 @@ impl<'a> LinkerGraph<'a> {
         sources: &[bun_ast::Source],
         scb: &server_component_boundary::List,
         dynamic_import_entry_points: &[index::Int],
-        entry_point_original_names: &IndexStringMap,
     ) -> Result<(), crate::Error> {
         let ast_arena = self.ast_arena();
         self.files.set_capacity(sources.len())?;
@@ -662,9 +638,9 @@ impl<'a> LinkerGraph<'a> {
 
         // Setup entry points
         {
-            self.entry_points.set_capacity(
+            self.entry_points.reserve_exact(
                 entry_points.len() + scb.list.len() + dynamic_import_entry_points.len(),
-            )?;
+            );
             for i in entry_points {
                 let source = &sources[i.get() as usize];
                 debug_assert!(source.index.0 == i.get());
@@ -676,15 +652,7 @@ impl<'a> LinkerGraph<'a> {
                 }
                 entry_point_kinds[source.index.0 as usize] = entry_point::Kind::UserSpecified;
 
-                // Check if this entry point has an original name (from virtual entry resolution)
-                let output_path = match entry_point_original_names.get(i.get()) {
-                    Some(original_name) => RawSlice::new(original_name),
-                    None => RawSlice::new(source.path.text),
-                };
-                self.entry_points.append_assume_capacity(EntryPoint {
-                    source_index: source.index.0,
-                    output_path,
-                });
+                self.entry_points.push(source.index.0);
             }
 
             for &id in dynamic_import_entry_points {
@@ -695,13 +663,9 @@ impl<'a> LinkerGraph<'a> {
                     continue;
                 }
 
-                let source = &sources[id as usize];
                 entry_point_kinds[id as usize] = entry_point::Kind::DynamicImport;
 
-                self.entry_points.append_assume_capacity(EntryPoint {
-                    source_index: id,
-                    output_path: RawSlice::new(source.path.text),
-                });
+                self.entry_points.push(id);
             }
 
             let import_records_len = self.ast.items_import_records().len();
@@ -793,25 +757,14 @@ impl<'a> LinkerGraph<'a> {
             self.stable_source_indices = stable_source_indices.iter().map(|i| i.get()).collect();
         }
 
-        {
-            // Note: `Vec::clone` requires `T: Clone` which `Symbol` does not
-            // derive, so spell out the
-            // bitwise copy explicitly — `Symbol` has no `Drop` impl.
-            let src_symbols: &[symbol::List] = self.ast.items_symbols();
-            let mut symbols: symbol::NestedList = Vec::with_capacity(src_symbols.len());
-            for src in src_symbols {
-                let n = src.len();
-                let mut dest: Vec<symbol::Symbol> = Vec::with_capacity(n);
-                // SAFETY: `dest` has capacity `n`; `src` is `n` initialized
-                // `Symbol`s; `Symbol` is bitwise-copyable (no `Drop`).
-                unsafe {
-                    core::ptr::copy_nonoverlapping(src.as_ptr(), dest.as_mut_ptr(), n);
-                    dest.set_len(n);
-                }
-                symbols.push(dest);
-            }
-            self.symbols = symbol::Map::init_list(symbols);
-        }
+        let heap = self.arena();
+        let symbols = self.ast.items_symbols_mut().iter_mut();
+        self.symbols = symbol::Map::init_list(
+            symbols
+                .map(|symbols| core::mem::replace(symbols, symbol::List::new_in(heap)))
+                .collect(),
+        );
+        self.symbols.follow_all();
 
         // TODO: const_values
 
@@ -863,7 +816,7 @@ impl<'a> LinkerGraph<'a> {
     }
 
     /// `create_linker_graph` left each
-    /// `PartList`/import-record list with its allocator handle pointing at
+    /// part, import record and symbol list with its allocator handle pointing at
     /// the per-worker `mi_heap` that built it; re-tag to `heap` (the
     /// bundle-thread arena) so linker-side `add_part_to_file` pushes call
     /// `mi_heap_realloc_aligned(heap, worker_ptr, ..)` from the thread that
@@ -871,13 +824,16 @@ impl<'a> LinkerGraph<'a> {
     /// (lazy, mimalloc-internal) cross-heap migration on first realloc.
     ///
     /// `Vec<T, &Arena>` stores its allocator, so swap it here.
-    /// `part.dependencies` (an `AstVec`) and `self.symbols` (global heap) need no transfer.
+    /// `part.dependencies` (an `AstVec`) needs no transfer.
     pub(crate) fn take_ast_ownership(&mut self) {
-        let heap = self.bump;
+        let heap = self.arena();
         for v in self.ast.items_import_records_mut() {
             bun_alloc::transfer_arena(v, heap);
         }
         for v in self.ast.items_parts_mut() {
+            bun_alloc::transfer_arena(v, heap);
+        }
+        for v in self.ast.items_symbols_mut() {
             bun_alloc::transfer_arena(v, heap);
         }
     }

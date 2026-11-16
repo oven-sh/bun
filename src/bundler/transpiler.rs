@@ -779,7 +779,7 @@ pub(crate) fn resolver_bundle_options_subset(
         tsconfig_override_json: None,
         production: src.production,
         force_node_env: src.force_node_env,
-        // FORWARD_DECL: bundler-only fields read via `c.resolver.opts` in
+        // FORWARD_DECL: bundler-only fields read via `resolver.opts` in
         // `linker_context/*`. Project them so the linker sees the same values
         // the bundler configured.
         output_dir: src.output_dir.clone(),
@@ -1774,16 +1774,7 @@ impl<'a> Transpiler<'a> {
             "JSPrinter.print"
         });
 
-        // We can't borrow `ast.symbols` while moving `ast` into `print_ast`, so
-        // take the column out (the printer never reads `tree.symbols`; it
-        // walks `symbols` exclusively — `rg tree.symbols js_printer/lib.rs` is
-        // empty). `init_with_one_list` boxes the single inner list.
-        let arena = *ast.symbols.allocator();
-        let symbols = bun_ast::symbol::Map::init_with_one_list(
-            core::mem::replace(&mut ast.symbols, bun_alloc::ArenaVec::new_in(arena))
-                .into_iter()
-                .collect(),
-        );
+        let symbols = ast.take_symbols();
 
         // `target` is now forwarded via `to_bundle_enums_target` below — it
         // *does* affect the EsmAscii/bun-runtime path (js_printer/lib.rs:6872
@@ -2600,7 +2591,7 @@ impl<'a> Transpiler<'a> {
             );
             return None;
         }
-        let symbols = bun_ast::symbol::Map::init_list(vec![extra.symbols]);
+        let symbols = bun_ast::symbol::Map::init_with_one_list(extra.symbols);
         let result = match sheet.to_css(
             alloc,
             &bun_css::PrinterOptions {

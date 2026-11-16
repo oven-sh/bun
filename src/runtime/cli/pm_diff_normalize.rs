@@ -365,12 +365,7 @@ fn print_js<'a>(
 
     let chunk = core::cell::Cell::new(None);
     let mut printer = bun_js_printer::BufferPrinter::init(bun_js_printer::BufferWriter::init());
-    let sym_arena = *ast.symbols.allocator();
-    let symbols = bun_ast::symbol::Map::init_with_one_list(
-        core::mem::replace(&mut ast.symbols, bun_alloc::ArenaVec::new_in(sym_arena))
-            .into_iter()
-            .collect(),
-    );
+    let symbols = ast.take_symbols();
     let print_opts = bun_js_printer::Options {
         minify_syntax: options.minify_syntax,
         require_ref: Some(ast.require_ref),
@@ -552,7 +547,7 @@ impl<'s, 'ast> Namer<'s, 'ast> {
 
     fn root(symbols: &[bun_ast::Symbol], mut i: usize) -> usize {
         for _ in 0..64 {
-            let link = symbols[i].link.get();
+            let link = symbols[i].link;
             if !link.is_valid() || link.is_source_contents_slice() {
                 break;
             }

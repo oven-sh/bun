@@ -5,7 +5,7 @@ use super::*;
 pub(crate) struct HotUpdateContext<'a> {
     /// bundle_v2.Graph.input_files.items(.source)
     pub sources: &'a [bun_ast::Source<'a>],
-    /// bundle_v2.Graph.ast.items(.import_records)
+    /// LinkerGraph.ast.items(.import_records)
     pub import_records: &'a [bun_ast::import_record::List<'a>],
     /// bundle_v2.Graph.input_files.items(.loader)
     pub loaders: &'a [Loader],
@@ -187,11 +187,12 @@ fn finalize_bundle_inner(
 
     // `[js] | [css; n_css] | [html; ..]`
     let mut chunks = result.chunks;
+    let mut compile_results = result.compile_results;
     let n_css = result.css_file_list.count();
     let input_file_sources = bv2.graph.input_files.items_source();
     let input_file_loaders = bv2.graph.input_files.items_loader();
-    let import_records = bv2.graph.ast.items_import_records();
-    let targets = bv2.graph.ast.items_target();
+    let import_records = result.linker_graph.ast.items_import_records();
+    let targets = result.linker_graph.ast.items_target();
     let scbs = &bv2.graph.server_component_boundaries;
 
     let mut scb_bitset = DynamicBitSet::init_empty(input_file_sources.len())?;
@@ -235,14 +236,14 @@ fn finalize_bundle_inner(
     let js_chunk = &chunks[0];
     debug_assert_eq!(
         js_chunk.content.javascript().parts_in_chunk_in_order.len(),
-        js_chunk.compile_results_for_chunk.len()
+        compile_results[0].len()
     );
     for (part_range, compile_result) in js_chunk
         .content
         .javascript()
         .parts_in_chunk_in_order
         .iter()
-        .zip(js_chunk.compile_results_for_chunk.iter())
+        .zip(compile_results[0].iter())
     {
         let index = part_range.source_index;
         // Report a part that failed to print as its file's failure, like a parse error.
@@ -314,8 +315,10 @@ fn finalize_bundle_inner(
         }
     }
 
-    for (chunk_index, metadata) in (1..).zip(result.css_file_list.values()) {
-        let mut output = ::core::mem::take(&mut chunks[chunk_index].intermediate_output);
+    for ((chunk_index, metadata), code) in (1..)
+        .zip(result.css_file_list.values())
+        .zip(result.css_code)
+    {
         let chunk = &chunks[chunk_index];
         debug_assert!(matches!(chunk.content, bundler::chunk::Content::Css(_)));
 
@@ -325,7 +328,7 @@ fn finalize_bundle_inner(
         // good build's `receive_client_chunk` clears it.
         let entry_source = &ctx.sources[index.get() as usize];
         let log = Log::init();
-        for compile_result in chunk.compile_results_for_chunk.iter() {
+        for compile_result in compile_results[chunk_index].iter() {
             let (err, err_source_index) = match compile_result {
                 bundler::CompileResult::Css {
                     result: Err(err),
@@ -372,18 +375,6 @@ fn finalize_bundle_inner(
             continue;
         }
 
-        let code = output.code(
-            None,
-            bv2,
-            &result.linker_graph,
-            b"THIS_SHOULD_NEVER_BE_EMITTED_IN_DEV_MODE",
-            chunk,
-            &chunks,
-            None,
-            bundler::chunk::ReferencePathStyle::ImporterRelative,
-            bundler::chunk::SourceMapShiftTracking::Disabled,
-        )?;
-
         // Create an entry for this file.
         let key = ctx.sources[index.get() as usize]
             .path
@@ -392,14 +383,14 @@ fn finalize_bundle_inner(
         let h = hash(key);
         // Track css files that look like tailwind files.
         // Note: hoisted before `replace_asset_path` because that consumes
-        // `code.buffer`.
+        // `code`.
         let looks_like_tailwind = dev.has_tailwind_plugin_hack.is_some() && {
-            let first_1024 = &code.buffer[..code.buffer.len().min(1024)];
+            let first_1024 = &code[..code.len().min(1024)];
             strings::index_of(first_1024, b"tailwind").is_some()
         };
         dev.replace_asset_path(
             key,
-            crate::webcore::blob::Any::from_owned_slice(code.buffer.into()),
+            crate::webcore::blob::Any::from_owned_slice(code.into()),
             &MimeType::CSS,
             h,
         )?;
@@ -431,13 +422,13 @@ fn finalize_bundle_inner(
 
     let (js_and_css_chunks, html_chunks) = chunks.split_at_mut(1 + n_css);
     let (js_chunk, css_chunks) = (&js_and_css_chunks[0], &js_and_css_chunks[1..]);
-    for chunk in html_chunks.iter_mut() {
+    for (chunk, results) in (html_chunks.iter_mut()).zip(&mut compile_results[1 + n_css..]) {
         let index = bun_ast::Index::init(chunk.entry_point.source_index());
         let bundler::CompileResult::Html {
             code: compile_result_code,
             script_injection_offset: compile_result_offset,
             ..
-        } = &mut chunk.compile_results_for_chunk[0]
+        } = &mut results[0]
         else {
             unreachable!()
         };
@@ -515,7 +506,7 @@ fn finalize_bundle_inner(
         .javascript()
         .parts_in_chunk_in_order
         .iter()
-        .zip(js_chunk.compile_results_for_chunk.iter())
+        .zip(compile_results[0].iter())
     {
         // Pass 1 didn't resolve a file index for a part that failed to print.
         if matches!(
@@ -898,18 +889,15 @@ fn finalize_bundle_inner(
     w_int!(i32, -1);
 
     // If a chunk failed to print, the page keeps its last good stylesheet.
-    let css_chunk_printed = |chunk: &bundler::chunk::Chunk| {
-        !chunk
-            .compile_results_for_chunk
-            .iter()
-            .any(|compile_result| {
-                matches!(
-                    compile_result,
-                    bundler::CompileResult::Css { result: Err(_), .. }
-                )
-            })
+    let printed_css_chunks = || {
+        let results = css_chunks.iter().zip(&compile_results[1..]);
+        results.filter_map(|(chunk, results)| {
+            let failed = (results.iter())
+                .any(|result| matches!(result, bundler::CompileResult::Css { result: Err(_), .. }));
+            (!failed).then_some(chunk)
+        })
     };
-    let printed_css_count = css_chunks.iter().filter(|c| css_chunk_printed(c)).count();
+    let printed_css_count = printed_css_chunks().count();
     if will_hear_hot_update {
         if dev.graphs.client.current_chunk_len > 0 || printed_css_count > 0 {
             // Send CSS mutations
@@ -917,7 +905,7 @@ fn finalize_bundle_inner(
             w_int!(u32, u32::try_from(printed_css_count).expect("int cast"));
             use bun_bundler::Graph::InputFileColumns as _;
             let sources = bv2.graph.input_files.items_source();
-            for chunk in css_chunks.iter().filter(|c| css_chunk_printed(c)) {
+            for chunk in printed_css_chunks() {
                 let key = sources[chunk.entry_point.source_index() as usize]
                     .path
                     .key_for_incremental_graph();

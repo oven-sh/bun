@@ -44,6 +44,7 @@ use bun_ast::Index as AstIndex;
 /// is too deep for the thread's stack, and the caller reports it.
 pub(crate) fn find_imported_files_in_css_order<'a>(
     this: &LinkerContext<'_, 'a>,
+    arena: &'a Arena,
     entry_points: &[Index],
 ) -> Result<Vec<CssImportOrder<'a>>, CssImportChainTooDeep> {
     struct Visitor<'v, 'a> {
@@ -266,7 +267,6 @@ pub(crate) fn find_imported_files_in_css_order<'a>(
 
     let css_asts = &this.parse_graph().css_asts;
     let all_import_records_slice = this.graph.ast.items_import_records();
-    let arena = this.graph.arena();
 
     let mut visitor = Visitor {
         arena,

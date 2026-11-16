@@ -2135,14 +2135,7 @@ impl<'a> Repl<'a> {
         let buffer_writer = bun_js_printer::BufferWriter::init();
         let mut buffer_printer = bun_js_printer::BufferPrinter::init(buffer_writer);
 
-        // Create symbol map from ast.symbols
-        // Note: `Map::init_with_one_list` takes ownership of `ast.symbols`
-        // — see Symbol.rs note on the dangling-slice hazard.
-        let symbols_map = bun_ast::symbol::Map::init_with_one_list(
-            core::mem::replace(&mut ast.symbols, bun_alloc::ArenaVec::new_in(arena.heap()))
-                .into_iter()
-                .collect(),
-        );
+        let symbols_map = ast.take_symbols();
 
         if bun_js_printer::print_ast::<
             /* ASCII_ONLY */ true,

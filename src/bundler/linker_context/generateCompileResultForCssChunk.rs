@@ -103,7 +103,7 @@ pub(crate) fn generate_compile_result_for_css_chunk(
             let parse_graph = c.parse_graph();
             let import_info = ImportInfo {
                 import_records: &c.graph.ast.items_import_records()[idx.get() as usize],
-                ast_urls_for_css: parse_graph.ast.items_url_for_css(),
+                ast_urls_for_css: c.graph.ast.items_url_for_css(),
                 ast_unique_key_for_additional_file: parse_graph
                     .input_files
                     .items_unique_key_for_additional_file(),
@@ -218,7 +218,7 @@ fn layer_order_to_css(
 
 /// An "@import" takes one set of conditions, so the inner ones go into nested data URL imports.
 pub(crate) fn nest_external_imports<'a>(
-    c: &LinkerContext<'_, 'a>,
+    c: &mut LinkerContext<'_, 'a>,
     log: &bun_ast::Log,
     order: &mut [CssImportOrder<'a>],
 ) {

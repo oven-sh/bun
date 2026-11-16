@@ -55,7 +55,7 @@ fn block(head: &str, body: TokenStream) -> TokenStream {
 }
 
 /// Replaces the body of `mod name { .. }`.
-fn map_module(item: TokenStream, f: impl Fn(TokenStream) -> TokenStream) -> TokenStream {
+fn map_module(item: TokenStream, f: &dyn Fn(TokenStream) -> TokenStream) -> TokenStream {
     let mut item: Vec<TokenTree> = item.into_iter().collect();
     let is_module = is(item.iter().nth_back(2), "mod");
     let (true, Some(TokenTree::Group(body))) = (is_module, item.pop()) else {
@@ -98,7 +98,7 @@ fn add_attributes(before: &mut Vec<TokenTree>, features: &[&str], span_of_fn: Sp
         ("", _) => (None, "#[inline]"),
         // A portable copy is then compiled only if it is used.
         ("[inline(never)]" | "[inline(exported)]", []) => (Some("inline"), ""),
-        // rustc refuses `#[inline(always)]` next to `#[target_feature]`.
+        // LLVM makes better code of what rustc has inlined already.
         ("[inline(always)]", [_, ..]) => (Some("rustc_force_inline"), ""),
         // A debug build optimizes the crate of the kernels, and not that of the caller.
         ("[inline(exported)]", _) => (
@@ -266,7 +266,7 @@ fn take_exports(module: TokenStream) -> (TokenStream, TokenStream) {
 #[proc_macro_attribute]
 #[allow_internal_unstable(rustc_attrs)]
 pub fn foreach_target(_: TokenStream, item: TokenStream) -> TokenStream {
-    map_module(item, |module| {
+    map_module(item, &|module| {
         let (body, exports) = take_exports(module);
         let mut out = parse("#![allow(unreachable_pub)] #[allow(unused_imports)] use super::*;");
         for target in Target::ALL {
@@ -310,7 +310,7 @@ pub fn foreach_width(widths: TokenStream, item: TokenStream) -> TokenStream {
         "full,x128,x256" => &["full", "x128", "x256"],
         _ => panic!("expected nothing, `x128, x256` or `full, x128, x256`"),
     };
-    map_module(item, |module| {
+    map_module(item, &|module| {
         let copy = |&name| {
             let mut copy = parse("#[allow(unused_imports)] use super::super::*;");
             let path = parse(&format!("::{name}"));

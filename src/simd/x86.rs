@@ -116,7 +116,7 @@ impl<I: Xmm> Vector<u8, 16, I> {
     #[inline]
     #[target_feature(enable = "sse2")]
     pub fn pack(first: Vector<i16, 8, I>, second: Vector<i16, 8, I>) -> Self {
-        Self::new(_mm_packus_epi16(first.0.into(), second.0.into()))
+        Self::saturating_narrow(first, second)
     }
 }
 

@@ -629,7 +629,7 @@ pub fn forward_transform<const MASKS: usize>(
     // `c` becomes `(2 * c - (c < 0)) * divisors[0] / 2^15 * divisors[1] / 2^15`, rounded after each division.
     divisors: &[Block; 2],
     blocks: &mut [Block],
-    // In zigzag order: not zero or, in four masks, magnitude bit 0, bit 1, higher bits, and `c < 0`.
+    // In zigzag order: not zero or, in four masks, magnitude bit 0, bit 1, higher bits, and `c < 0` undivided.
     masks: &mut [[u64; MASKS]],
 ) -> Option<()> {
     const { assert!(MASKS == 1 || MASKS == 4) };

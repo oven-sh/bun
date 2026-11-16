@@ -27,7 +27,7 @@ pub(crate) mod simd {
         taps: impl Iterator<Item = (&'a Span, &'a [i16])>,
         dst: &mut [&mut [Pixel]; K],
     ) {
-        use x128::{I16, I32, U8, U32, U64};
+        use x128::{I16, I32, U8, U64};
         let by_channel = U8::load(&[
             0, 0x80, 4, 0x80, 1, 0x80, 5, 0x80, 2, 0x80, 6, 0x80, 3, 0x80, 7, 0x80,
         ]);
@@ -37,11 +37,11 @@ pub(crate) mod simd {
             let mut sums = [I32::splat(ROUND); K];
             #[rustc_unroll(never)]
             for (i, &[w0, w1]) in weight_pairs.iter().enumerate() {
-                let weights = U32::splat(u32::from(w0 as u16) | u32::from(w1 as u16) << 16);
+                let weights = I16::repeat([w0, w1]);
                 for k in 0..K {
                     let pair = u64::from_le_bytes(*rows[k].0[i].as_flattened().as_array().unwrap());
                     let channels = U64::from_first(pair).bitcast::<U8>().lookup(by_channel);
-                    sums[k] += I32::pairwise_dot(channels.bitcast::<I16>(), weights.bitcast());
+                    sums[k] += I32::pairwise_dot(channels.bitcast(), weights);
                 }
             }
             for k in 0..K {

@@ -211,8 +211,7 @@ pub(crate) mod simd {
             let (run, carry) = runs(letters & starts | (was / kind) & 1, ends);
             (hidden, *state) = (hidden | run, *state | (carry * kind));
         }
-        // A C1 byte that no sequence holds starts one. Here those that one holds start their own too,
-        // which for one of the same kind only leaves a hole where nothing is visible.
+        // A C1 byte in a sequence of its own kind only leaves a hole where nothing is visible.
         let (c1, mut nested) = ((csi | osc | string) & suspects & not_ascii & !hidden, 0);
         for (kind, starts, ends) in kinds {
             if c1 & starts != 0 {

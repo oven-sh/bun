@@ -37,10 +37,10 @@ cfg_select! {
     }
 }
 
-/// For ASan, whose red zones have 16 bytes or more. With a call, a loop takes 20 times as long.
+/// For ASan, whose red zones have 8 bytes or more. With a call, a loop takes 20 times as long.
 #[inline(always)]
 fn probes(len: usize) -> impl Iterator<Item = usize> {
-    (0..len).step_by(16).chain([len - 1])
+    (0..len).step_by(8).chain([len - 1])
 }
 
 #[inline(always)]

@@ -186,7 +186,7 @@ pub(crate) mod simd {
     #[export]
     pub fn index_of_escape_char16(text: &[u16]) -> Option<usize> {
         U16::position_refined(text, |v| {
-            let above = U8::repeat(0xFF81u16.to_ne_bytes());
+            let above = U8::repeat([0x81, 0xFF]);
             let escape: U16 = escape_at(v.bitcast::<U8>().saturating_sub(above)).bitcast();
             [(v & 0xFF70).simd_eq(0x10), escape.simd_eq(v ^ 0x1B00)]
         })

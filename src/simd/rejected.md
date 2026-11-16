@@ -244,6 +244,15 @@ fn f(byte: &bun_simd::SharedU8) {
 }
 ```
 
+A view that lives longer than the memory:
+
+```rust,compile_fail,E0597
+let view = {
+    let bytes = [std::sync::atomic::AtomicU8::new(0)];
+    bun_simd::SharedU8::from_slice(&bytes)
+};
+```
+
 A store to wider atomics:
 
 ```rust,compile_fail,E0308
@@ -262,6 +271,13 @@ A vector that moves while its spare capacity is lent:
 let mut vec = Vec::with_capacity(1);
 let (out, _) = bun_simd::spare_capacity(&mut vec);
 vec.reserve(100);
+out.into_writer().push([1]);
+```
+
+```rust,compile_fail,E0616
+let mut vec = Vec::<u8>::with_capacity(1);
+let (out, rest) = bun_simd::spare_capacity(&mut vec);
+rest.0.reserve(100);
 out.into_writer().push([1]);
 ```
 
@@ -313,6 +329,28 @@ A reference that lives less long than the memory promises:
 let (mut all, short) = ([&1u8; 1], 2);
 let all: &mut [&'static u8] = &mut all;
 bun_simd::Out::from(all).into_writer().push([&short]);
+```
+
+```rust,compile_fail
+fn f<'a>(rest: bun_simd::Append<'a, &'static u8>) -> bun_simd::Append<'a, &'a u8> {
+    rest
+}
+```
+
+An `Out` that lives longer than the memory:
+
+```rust,compile_fail,E0597
+let out = {
+    let mut bytes = [0u8; 2];
+    bun_simd::Out::from(&mut bytes[..])
+};
+```
+
+```rust,compile_fail,E0597
+let out = {
+    let mut bytes = [0u8; 2];
+    bun_simd::Out::from(&mut bytes[..]).into_chunks::<2>()
+};
 ```
 
 A value with a destructor:

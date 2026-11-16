@@ -209,7 +209,7 @@ impl PosixPipeWriter {
 
     fn start_polling(&self, ev: EventLoopHandle, file: MaybeOwnedFile) -> sys::Result<()> {
         // A poll from an earlier start() still holds that start's fd.
-        if self.handle.has_poll() {
+        if !file.is_owned() && self.handle.has_poll() {
             return self.register_poll();
         }
         self.handle.set_file(file);

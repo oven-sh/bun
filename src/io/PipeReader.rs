@@ -413,7 +413,7 @@ impl PosixBufferedReader {
             return sys::Result::Ok(ReadResult::Pending);
         }
         self.update_flags(|f| f.insert(PosixFlags::POLLABLE));
-        if self.get_fd() != file.fd() {
+        if file.is_owned() || self.get_fd() != file.fd() {
             self.handle.set_file(file);
         }
         // With nothing left to read the fd is never waited on: like a non-pollable source, the owner's first read request ends the reader.

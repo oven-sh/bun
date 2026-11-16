@@ -135,11 +135,10 @@ pub mod array_hash_map;
 pub use array_hash_map::{
     ArrayHashMap, ArrayHashMapExt, AutoContext, CaseInsensitiveAsciiStringArrayHashMap,
     CaseInsensitiveAsciiStringContext, Entry, GetOrPutResult, MapEntry, OccupiedEntry,
-    StringArrayHashMap, StringHashMap, StringHashMapContext, StringHashMapKey,
-    StringHashMapUnownedKey, StringSet, VacantEntry, string_hash_map,
+    StringArrayHashMap, StringHashMap, StringHashMapContext, StringHashMapUnownedKey, StringSet,
+    VacantEntry, string_hash_map,
 };
-/// Downstream crates name hashbrown's iterator/entry types in struct fields
-/// (e.g. `bun_resolver::DirEntryDirIter`). `StringHashMap` `Deref`s to a
+/// Downstream crates name hashbrown's iterator/entry types. `StringHashMap` `Deref`s to a
 /// `hashbrown::HashMap`, so those iterators are the API surface; re-export
 /// the crate so callers don't grow their own direct dep just to spell the
 /// type. (A type alias per iterator would work too, but every `.iter()` /

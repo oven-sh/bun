@@ -3495,13 +3495,8 @@ impl RunCommand {
                     .ok()
                     .flatten()
                 {
-                    if let Some(entries) = bin_dir.get_entries_const() {
-                        // `.data` iteration must hold `entries_mutex`
-                        // (uncontended on this single-threaded CLI path).
-                        let _entries_lock = bun_resolver::fs::FileSystem::get()
-                            .fs
-                            .entries_mutex()
-                            .lock_guard();
+                    let entries_map = bun_resolver::fs::FileSystem::get().fs.entries.lock();
+                    if let Some(entries) = entries_map.at_index(bin_dir.entries) {
                         let mut path_buf = bun_paths::path_buffer_pool::get();
                         let mut iter = entries.data.iter();
                         let mut has_copied = false;
@@ -3549,13 +3544,8 @@ impl RunCommand {
                 .ok()
                 .flatten()
             {
-                if let Some(entries) = dir_info.get_entries_const() {
-                    // `.data` iteration must hold `entries_mutex`
-                    // (uncontended on this single-threaded CLI path).
-                    let _entries_lock = bun_resolver::fs::FileSystem::get()
-                        .fs
-                        .entries_mutex()
-                        .lock_guard();
+                let entries_map = bun_resolver::fs::FileSystem::get().fs.entries.lock();
+                if let Some(entries) = entries_map.at_index(dir_info.entries) {
                     let mut iter = entries.data.iter();
 
                     while let Some(entry) = iter.next() {

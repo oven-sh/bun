@@ -5328,16 +5328,45 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         .expect("unreachable");
     }
 
-    /// For sloppy code in ESM output: the renamer keeps a name that a direct `eval` can reach.
+    /// For ESM output, after the visit pass: the renamer keeps each name that a direct `eval` can reach.
     #[cold]
-    fn check_pinned_name_for_reserved_word(&mut self, name: &[u8], loc: bun_ast::Loc) {
-        if js_lexer::is_strict_mode_reserved_word(name) {
-            self.mark_strict_mode_feature(
-                StrictModeFeature::ReservedWord,
-                js_lexer::range_of_identifier(self.source, loc),
-                name,
-            )
-            .expect("unreachable");
+    fn check_names_that_direct_eval_pins(&mut self, pins_module_scope: bool) {
+        let mut reported: Vec<Ref> = Vec::new();
+        let mut scopes = vec![self.module_scope_ref()];
+        while let Some(scope) = scopes.pop() {
+            if scope.strict_mode != js_ast::StrictModeKind::SloppyMode {
+                continue;
+            }
+            scopes.extend(
+                scope
+                    .children
+                    .iter()
+                    .filter(|child| child.contains_direct_eval),
+            );
+            if scope.parent.is_none() && !pins_module_scope {
+                continue;
+            }
+            for (name, member) in scope.members.iter() {
+                // The renamer moves an import, and `e_identifier` reports an unbound name.
+                let is_bound = !matches!(
+                    self.symbols[member.ref_.inner_index() as usize].kind,
+                    js_ast::symbol::Kind::Unbound | js_ast::symbol::Kind::Import
+                );
+                // A parameter is also a member of the body scope, and a hoisted `var` of each block around it.
+                if is_bound
+                    && js_lexer::is_strict_mode_reserved_word(name)
+                    && !reported.contains(&member.ref_)
+                {
+                    reported.push(member.ref_);
+                    let range = js_lexer::range_of_identifier(self.source, member.loc);
+                    self.mark_strict_mode_feature_in(
+                        scope,
+                        StrictModeFeature::ReservedWord,
+                        range,
+                        name,
+                    );
+                }
+            }
         }
     }
 
@@ -5484,8 +5513,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let current_scope = self.current_scope_ref();
         // We cannot rename anything inside a scope containing a direct eval() call
         if current_scope.contains_direct_eval {
-            let keeps_reserved_words =
-                !self.is_strict_mode() && self.is_strict_mode_output_format();
             let mut iter = current_scope.members.iter();
             while let Some(member) = iter.next() {
                 // Using direct eval when bundling is not a good idea in general because
@@ -5533,13 +5560,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 //     continue;
                 // }
 
-                // A parameter is also a member of the body scope, and a hoisted `var` of each block around it.
-                let symbol = &mut self.symbols[member.1.ref_.inner_index() as usize];
-                let is_first_pin = !symbol.must_not_be_renamed();
-                symbol.set_must_not_be_renamed(true);
-                if keeps_reserved_words && is_first_pin {
-                    self.check_pinned_name_for_reserved_word(member.0, member.1.loc);
-                }
+                self.symbols[member.1.ref_.inner_index() as usize].set_must_not_be_renamed(true);
             }
         }
 
@@ -9252,10 +9273,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         if self.module_scope().contains_direct_eval {
             let pin = bundling && exports_kind == js_ast::ExportsKind::Cjs;
             let module_scope = self.module_scope_ref();
-            let keeps_reserved_words = pin
-                && module_scope.strict_mode == js_ast::StrictModeKind::SloppyMode
-                && self.is_strict_mode_output_format();
-            for (name, member) in module_scope.members.iter() {
+            if self.is_strict_mode_output_format() {
+                self.check_names_that_direct_eval_pins(pin);
+            }
+            for member in module_scope.members.values() {
                 let kind = self.symbols[member.ref_.inner_index() as usize].kind;
                 if kind == js_ast::symbol::Kind::Import {
                     continue;
@@ -9263,14 +9284,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 if kind != js_ast::symbol::Kind::Unbound {
                     self.record_assignment(member.ref_);
                 }
-                let symbol = &mut self.symbols[member.ref_.inner_index() as usize];
-                let is_first_pin = pin && !symbol.must_not_be_renamed();
                 if pin {
-                    symbol.set_must_not_be_renamed(true);
-                }
-                // `e_identifier` reports an unbound reserved word.
-                if keeps_reserved_words && is_first_pin && kind != js_ast::symbol::Kind::Unbound {
-                    self.check_pinned_name_for_reserved_word(name, member.loc);
+                    self.symbols[member.ref_.inner_index() as usize].set_must_not_be_renamed(true);
                 }
             }
         }

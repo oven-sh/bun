@@ -376,7 +376,7 @@ fn find_worker_positions(
 ) -> Vec<(Vec<u8>, u32)> {
     let mut places = Vec::new();
     for &(file, start) in workers {
-        let hir = &files.module(file).hir;
+        let hir = files.hir(file);
         let ExprKind::New(call) = hir[start].kind else {
             continue;
         };
@@ -411,7 +411,7 @@ fn find_unknown_node_workers(
                 true => (Code::WorkerTextNotCompiled, &[]),
                 false => (Code::WorkerStartedFromUnknownValue, &[names_left_out]),
             };
-            let span = Span::of_node(&files.module(file).hir, file, start.at);
+            let span = Span::of_node(files.hir(file), file, start.at);
             said.push(Diagnostic::new(code, Some(span), arguments));
         }
     }
@@ -426,7 +426,7 @@ fn find_missing_node_workers(files: &Files<'_>, contents: &ProgramContents) -> V
         };
         let starts = source.contents.named_node_workers.iter();
         for &at in starts.filter(|&&at| !contents.is_followed_worker(file, at)) {
-            let span = Span::of_node(&files.module(file).hir, file, NodeData::Expr(at));
+            let span = Span::of_node(files.hir(file), file, NodeData::Expr(at));
             let code = Code::WorkerStartedFromUnknownValue;
             said.push(Diagnostic::new(code, Some(span), &[b""]));
         }

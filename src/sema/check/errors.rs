@@ -13,7 +13,7 @@ use super::explain::{Explained, NOWHERE};
 use super::sink::{MAX_SERIALIZATION_LEVEL, NO_DIRECTIVE, held};
 use super::*;
 use crate::bind::{ClassOwner, Decl, FnOwner, MemberOwner, Parent, PatParent, ScopeId, ScopeKind};
-use crate::program::{ReadingNoTrees, SymbolTable};
+use crate::program::SymbolTable;
 use crate::util::{PositionSet, SharedSort};
 use bun_core::current_work;
 use bun_core::strings;
@@ -246,7 +246,7 @@ impl Checker<'_, '_> {
         self.recent_symbol_types.begin_visit();
         self.task
             .begin_file(file, !self.files().module(file).is_leaf);
-        self.note_visited_module(file);
+        self.note_visited_trees(file);
         self.provisional.clear();
         self.rejected_expressions.clear();
         self.side_effect_free.get_mut().clear();
@@ -577,7 +577,6 @@ impl Checker<'_, '_> {
         }
         // `typesPackageExists`, `packageBundlesTypes`
         let (types_package, atoms) = (cat!(b"@types/", mangled), self.atoms());
-        let _reading = ReadingNoTrees::begin();
         let modules = self.files().modules.iter();
         let (mut has_types_package, mut has_declarations) = (false, false);
         for &(name, is_declaration_file) in modules.flat_map(|it| it.resolved_packages.iter()) {

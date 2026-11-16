@@ -4774,9 +4774,9 @@ fn check_named_files(
     let mut to_check: Vec<FileId> = (0..program.files.modules.len())
         .filter(|&i| {
             let module = &program.files.modules[i];
-            match module.hir.kind {
+            match module.facts.kind {
                 // Only parse errors are reported for JSON files.
-                FileKind::Json => module.hir.has_parse_diagnostics,
+                FileKind::Json => program.files.hir(FileId(i as u32)).has_parse_diagnostics,
                 // `SkipTypeChecking`, and nothing is emitted for a declaration file.
                 FileKind::Declaration => {
                     !skip_lib_check && !(skip_default_lib_check && module.is_lib)
@@ -4802,7 +4802,7 @@ fn check_named_files(
         }
         while let Some(i) = to_follow.pop() {
             // A page represents its scripts.
-            let specifiers = modules[i].bound.specifiers.iter();
+            let specifiers = program.files.bound(FileId(i as u32)).specifiers.iter();
             let specifiers = specifiers.map(|&it| program.files.atoms.bytes(it));
             let pages = specifiers.filter(|it| {
                 !request.plan_options.reports_only_requested_paths
@@ -4939,7 +4939,7 @@ fn check_loaded_files<'s>(loaded: LoadedFiles<'_, 's>) -> Report {
     } = loaded;
     let session = program.session;
     let first_round = file_work.map_or(0, |work| work.first_round);
-    let size = |f: FileId| program.files.modules[f.idx()].hir.source_len;
+    let size = |f: FileId| program.files.modules[f.idx()].facts.source_len;
     report.files_checked = to_check.len();
     // `SkipTypeChecking`: besides its syntax errors, such a file only has what `Emit` reports, which is called after
     // the semantic and global diagnostics of the whole program are collected. So these files come after the
@@ -4966,7 +4966,7 @@ fn check_loaded_files<'s>(loaded: LoadedFiles<'_, 's>) -> Report {
     if let Some(progress) = request.progress {
         let bytes = to_check
             .iter()
-            .map(|f| program.files.modules[f.idx()].hir.source_len as usize)
+            .map(|f| program.files.modules[f.idx()].facts.source_len as usize)
             .sum();
         progress.bytes_to_check.fetch_add(bytes, Ordering::Relaxed);
         progress
@@ -4986,7 +4986,7 @@ fn check_loaded_files<'s>(loaded: LoadedFiles<'_, 's>) -> Report {
         if module.is_lib {
             host.read(module.file_name()).unwrap_or_default()
         } else {
-            std::borrow::Cow::Borrowed(&module.hir.text[..])
+            std::borrow::Cow::Borrowed(&program.files.hir(file).text[..])
         }
     };
     // The text and the line starts of each file that related information in another file points into. Thousands of
@@ -5175,7 +5175,7 @@ fn check_loaded_files<'s>(loaded: LoadedFiles<'_, 's>) -> Report {
             .map(|one| Guarded::new(Some(one)))
             .collect();
         let finish = |i: usize| {
-            let _reading = bun_sema::program::ReadingNoTrees::begin();
+            let _reading = bun_sema::program::ReadingWithoutKeeping::begin();
             let (file, mut checked) = unfinished[i].lock().take().unwrap();
             if let Some(emitted_text) = checked.declaration_file.take() {
                 let path = program.files.modules[file.idx()].file_name().to_vec();
@@ -5251,12 +5251,8 @@ fn check_loaded_files<'s>(loaded: LoadedFiles<'_, 's>) -> Report {
         .map(|(index, &file)| (file, index)))
     .collect();
     let imports_of = |importer: usize| {
-        let (edges, code_edges) = {
-            let _reading = bun_sema::program::ReadingNoTrees::begin();
-            let module = program.files.module(to_check[importer]);
-            (module.edges, module.code_edges)
-        };
-        let imported = edges.iter().chain(code_edges);
+        let module = program.files.module(to_check[importer]);
+        let imported = module.edges.iter().chain(module.code_edges);
         imported.filter_map(|file| index_of_file.get(file).copied())
     };
     // `imports_of` every file, made when the first visit is discarded: where each file's begin, and all of them.
@@ -5330,7 +5326,6 @@ fn check_loaded_files<'s>(loaded: LoadedFiles<'_, 's>) -> Report {
         };
         // Counted while the trees are here.
         let (files_in_order, bytes_in_order) = {
-            let _reading = bun_sema::program::ReadingNoTrees::begin();
             let depends_on_order = |&&file: &&usize| {
                 let bound = program.files.bound(to_check[file]);
                 logs_round && bound.has_types_that_depend_on_order()
@@ -6163,7 +6158,7 @@ fn check_loaded_files<'s>(loaded: LoadedFiles<'_, 's>) -> Report {
         if stops {
             let suspects: Vec<FileId> = (0..program.files.modules.len())
                 .filter(|&i| {
-                    let hir = &program.files.modules[i].hir;
+                    let hir = program.files.hir(FileId(i as u32));
                     // A file that's nested too deeply is only reported when it's visited.
                     (hir.has_parse_diagnostics
                         || hir.has_parse_or_grammar_diagnostics()
@@ -6255,7 +6250,7 @@ fn check_loaded_files<'s>(loaded: LoadedFiles<'_, 's>) -> Report {
                 // file.
                 let is_excluded = match module.is_lib {
                     true => !options.lib_replacement,
-                    false => !matches!(module.hir.kind, FileKind::Declaration | FileKind::Json),
+                    false => !matches!(module.facts.kind, FileKind::Declaration | FileKind::Json),
                 };
                 if is_excluded || is_checked[i] {
                     continue;

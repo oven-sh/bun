@@ -4137,9 +4137,9 @@ impl ModuleTypes {
 
 fn is_project_source(checker: &Checker<'_, '_>, file: FileId) -> bool {
     let module = checker.p.files.module(file);
-    (matches!(module.hir.kind, FileKind::Ts | FileKind::Tsx)
-        || module.hir.kind == FileKind::Declaration && !module.is_lib && module.is_module())
-        && !module.hir.is_js
+    (matches!(module.facts.kind, FileKind::Ts | FileKind::Tsx)
+        || module.facts.kind == FileKind::Declaration && !module.is_lib && module.is_module())
+        && !module.facts.is_js
         && !module.is_from_external_library
 }
 

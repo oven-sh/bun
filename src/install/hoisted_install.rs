@@ -289,7 +289,7 @@ pub(crate) fn install_hoisted_packages(
                 let mut tree_ids_to_trees_the_id_depends_on = DynamicBitSetList::init_empty(
                     trees.len(),
                     u32::try_from(trees.len()).expect("int cast"),
-                );
+                )?;
 
                 {
                     // For each tree id, traverse through it's parents and mark all visited tree

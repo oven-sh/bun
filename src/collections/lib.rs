@@ -1,6 +1,7 @@
 //! bun_collections — crate root. Thin re-export hub.
 
 #![feature(
+    allocator_ext,
     type_info,
     adt_const_params,
     unsized_const_params,

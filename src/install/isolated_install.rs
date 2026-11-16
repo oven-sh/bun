@@ -544,7 +544,8 @@ fn build_store(
     }
     let peer_name_count: u32 = u32::try_from(peer_name_idx.count()).expect("int cast");
 
-    let mut leaking_peers = DynamicBitSetList::init_empty(lockfile.packages.len(), peer_name_count);
+    let mut leaking_peers =
+        DynamicBitSetList::init_empty(lockfile.packages.len(), peer_name_count)?;
 
     if peer_name_count != 0 {
         // The runtime child of a peer edge is whichever package an ancestor's
@@ -568,8 +569,9 @@ fn build_store(
         // Per-package bits computed once: own peer-dep names, and non-peer
         // dependency names that will appear in `node_dependencies` (i.e., not
         // filtered out by bundled/disabled/unresolved).
-        let mut own_peers = DynamicBitSetList::init_empty(lockfile.packages.len(), peer_name_count);
-        let mut provides = DynamicBitSetList::init_empty(lockfile.packages.len(), peer_name_count);
+        let mut own_peers =
+            DynamicBitSetList::init_empty(lockfile.packages.len(), peer_name_count)?;
+        let mut provides = DynamicBitSetList::init_empty(lockfile.packages.len(), peer_name_count)?;
         for pkg_idx in 0..lockfile.packages.len() {
             let pkg_id: PackageID = u32::try_from(pkg_idx).expect("int cast");
             let deps = pkg_dependency_slices[pkg_id as usize];

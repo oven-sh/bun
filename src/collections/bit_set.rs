@@ -690,11 +690,14 @@ pub struct DynamicBitSetList {
 }
 
 impl DynamicBitSetList {
-    pub fn init_empty(n: usize, bit_length: u32) -> Self {
-        Self {
-            buf: vec![0; num_masks_for(bit_length as usize) * n].into_boxed_slice(),
+    pub fn init_empty(n: usize, bit_length: u32) -> Result<Self, AllocError> {
+        let buf = Box::try_new_zeroed_slice(num_masks_for(bit_length as usize) * n)
+            .map_err(|_| AllocError)?;
+        Ok(Self {
+            // SAFETY: zero is a valid `usize`.
+            buf: unsafe { buf.assume_init() },
             bit_length,
-        }
+        })
     }
 
     fn row(&self, i: u32) -> core::ops::Range<usize> {
@@ -998,7 +1001,7 @@ mod tests {
 
     #[test]
     fn rows_of_a_list_are_separate() {
-        let mut list = DynamicBitSetList::init_empty(3, 65);
+        let mut list = DynamicBitSetList::init_empty(3, 65).unwrap();
         list.at_mut(1).set(64);
         let mut set = DynamicBitSet::init_empty(65).unwrap();
         set.set(0);
@@ -1008,6 +1011,9 @@ mod tests {
             [vec![], vec![0, 64], vec![]]
         );
         assert!(set.subset_of(&list.at(1)) && !set.eql(&list.at(1)));
-        assert_eq!(DynamicBitSetList::init_empty(3, 0).at(2).count(), 0);
+        assert_eq!(
+            DynamicBitSetList::init_empty(3, 0).unwrap().at(2).count(),
+            0
+        );
     }
 }

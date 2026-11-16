@@ -1455,7 +1455,7 @@ impl VirtualMachine {
         let (ImportWatcher::Hot(w) | ImportWatcher::Watch(w)) =
             unsafe { &mut *self.bun_watcher.get() };
         // SAFETY: the box is the one `Watcher::init` returned.
-        unsafe { bun_watcher::Watcher::shutdown(&raw mut **w, false) };
+        unsafe { bun_watcher::Watcher::shutdown(&raw mut **w) };
         self.transpiler.with_mut(|t| t.resolver.watcher = None);
         let watcher = self.bun_watcher.replace(core::ptr::null_mut());
         // SAFETY: as above.

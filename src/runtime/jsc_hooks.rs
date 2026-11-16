@@ -2931,7 +2931,7 @@ fn maybe_watch_file(
     // SAFETY: `bun_watcher` is the `*mut ImportWatcher` set when
     // `is_watcher_enabled()`; cast recovers the concrete type.
     let watcher = unsafe { &mut *jsc_vm.bun_watcher.get().cast::<bun_jsc::ImportWatcher>() };
-    let _ = watcher.add_owned_file(input_file.take(), path.text, hash, package_json);
+    let _ = watcher.add_file(input_file.take(), path.text, hash, package_json);
 }
 
 /// Like `maybe_watch_file`, for a file the transpiler didn't open itself.
@@ -2961,7 +2961,7 @@ fn auto_watch_file(jsc_vm: &VirtualMachine, path_text: &[u8]) {
     // SAFETY: `bun_watcher` is the `*mut ImportWatcher` set when
     // `is_watcher_enabled()`; cast recovers the concrete type.
     let watcher = unsafe { &mut *jsc_vm.bun_watcher.get().cast::<bun_jsc::ImportWatcher>() };
-    let _ = watcher.add_owned_file(file, path_text, hash, None);
+    let _ = watcher.add_file(file, path_text, hash, None);
 }
 
 struct CssModuleHost<'a>(&'a VirtualMachine);

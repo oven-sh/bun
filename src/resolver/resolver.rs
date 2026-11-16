@@ -6296,8 +6296,8 @@ impl<'a> Resolver<'a> {
             // For existent directories which don't find a match
             // Start watching it automatically,
             if let Some(watcher) = self.watcher.as_ref() {
-                if let Some((dir, fd)) = dir_entry.get().dir_and_fd() {
-                    watcher.watch(dir, fd);
+                if let Some(dir) = dir_entry.get().dir() {
+                    watcher.watch(dir);
                 }
             }
         }

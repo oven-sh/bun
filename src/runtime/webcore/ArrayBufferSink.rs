@@ -56,7 +56,7 @@ impl ArrayBufferSink {
         Ok(JSValue::js_number(0.0))
     }
 
-    pub(crate) fn write(&mut self, data: &streams::Result) -> streams::result::Writable {
+    pub(crate) fn write(&mut self, data: &streams::Result<'_>) -> streams::result::Writable {
         let len = match self.bytes.write(data.slice()) {
             Ok(len) => len,
             Err(_) => return streams::result::Writable::Err(syscall::Error::oom()),
@@ -64,7 +64,7 @@ impl ArrayBufferSink {
         streams::result::Writable::Owned(len as u64)
     }
 
-    pub(crate) fn write_latin1(&mut self, data: &streams::Result) -> streams::result::Writable {
+    pub(crate) fn write_latin1(&mut self, data: &streams::Result<'_>) -> streams::result::Writable {
         let len = match self.bytes.write_latin1(data.slice()) {
             Ok(len) => len,
             Err(_) => return streams::result::Writable::Err(syscall::Error::oom()),
@@ -128,10 +128,11 @@ impl crate::webcore::sink::JsSinkType for ArrayBufferSink {
 
     crate::impl_js_sink_forwarders!();
 
-    fn end_from_js(&mut self, cx: &bun_jsc::JsThread<'_>) -> bun_sys::Result<JSValue> {
-        match Self::end_from_js(self, cx) {
-            // Not `to_js`: its `mi_is_in_heap_region` probe would skip the
-            // deallocator when the global allocator isn't mimalloc.
+    fn end_from_js(
+        this: &mut Self::Entered<'_>,
+        cx: &bun_jsc::JsThread<'_>,
+    ) -> bun_sys::Result<JSValue> {
+        match Self::end_from_js(this, cx) {
             bun_sys::Result::Ok(ab) => bun_sys::Result::Ok(match ab.to_js_unchecked(cx.global()) {
                 Ok(v) => v,
                 Err(_) => JSValue::ZERO,

@@ -583,15 +583,6 @@ void us_internal_ssl_loop_state_restore(void **saved);
 
 #include <memory>
 
-/* Leaves `buffer`, a unique_ptr to a block of us_malloc's, as it was when there is no memory. */
-static inline bool us_grow(auto &buffer, size_t size) {
-    auto *grown = (decltype(buffer.get())) us_realloc(buffer.get(), size);
-    if (!grown) return false;
-    buffer.release();
-    buffer.reset(grown);
-    return true;
-}
-
 struct us_poll_deleter_t {
     struct us_loop_t *loop;
     void operator()(struct us_poll_t *p) const {

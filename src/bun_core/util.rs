@@ -349,22 +349,8 @@ pub fn getenv_z_any_case(key: &ZStr) -> Option<&'static [u8]> {
         // Walk `os::environ()` — WTF-8 `KEY=VALUE` C strings populated at
         // startup by `convert_env_to_wtf8`. Same scan as the unix arm above
         // but the block is owned by us (Box::leak'd) instead of libc.
-        // SAFETY: env block is process-lifetime; written exactly once at
-        // startup before any reader runs.
-        let environ = unsafe { crate::os::environ() };
-        for &entry in environ {
-            if entry.is_null() {
-                continue;
-            }
-            // SAFETY: each entry is a NUL-terminated WTF-8 string into the
-            // leaked `WTF8_ENV_BUF` allocation.
-            let line = unsafe {
-                let mut len = 0usize;
-                while *entry.add(len) != 0 {
-                    len += 1;
-                }
-                core::slice::from_raw_parts(entry.cast::<u8>(), len)
-            };
+        for entry in crate::os::environ().unterminated().iter().flatten() {
+            let line = entry.to_cstr().to_bytes();
             let key_end = crate::strings::index_of_char_usize(line, b'=').unwrap_or(line.len());
             if crate::strings::eql_case_insensitive_ascii_check_length(
                 &line[..key_end],
@@ -401,30 +387,18 @@ impl WStr {
     }
     /// Borrow `buf[..len]` as a `&WStr`, where `buf[len] == 0`. Safe-surface
     /// form of [`from_raw`] for the dominant call shape: a stack `WPathBuffer`
-    /// filled to `len` with a NUL written at `buf[len]`. The slice bound proves
-    /// `buf[..=len]` lies in one allocation; the NUL is debug-asserted (release
-    /// relies on the documented `buf[len] == 0` precondition). Mirrors
-    /// [`ZStr::from_buf`].
+    /// filled to `len` with a NUL written at `buf[len]`. Panics unless `buf[len]` is a NUL.
     #[inline]
     pub fn from_buf(buf: &[u16], len: usize) -> &WStr {
-        debug_assert!(len < buf.len(), "WStr::from_buf: NUL must lie within buf");
-        debug_assert_eq!(buf[len], 0, "WStr::from_buf: missing NUL at buf[len]");
-        // SAFETY: `buf[..=len]` is in-bounds (debug-asserted above; caller
-        // contract in release).
+        assert!(buf[len] == 0);
+        // SAFETY: `buf[len]` is in bounds and a NUL.
         unsafe { Self::from_raw(buf.as_ptr(), len) }
     }
-    /// Borrow `buf[..buf.len()-1]` as a `&WStr`, where the last unit of `buf`
-    /// is the NUL terminator. Mirrors [`ZStr::from_slice_with_nul`].
+    /// Borrow `buf[..buf.len()-1]` as a `&WStr`. Panics unless the last unit is a NUL.
     #[inline]
-    pub fn from_slice_with_nul(buf: &[u16]) -> &WStr {
-        debug_assert!(!buf.is_empty(), "WStr::from_slice_with_nul: empty slice");
-        debug_assert_eq!(
-            buf[buf.len() - 1],
-            0,
-            "WStr::from_slice_with_nul: missing trailing NUL"
-        );
-        // SAFETY: `buf[buf.len()-1] == 0` (debug-asserted; caller contract in
-        // release) and `buf[..buf.len()-1]` is in-bounds by slice invariant.
+    pub const fn from_slice_with_nul(buf: &[u16]) -> &WStr {
+        assert!(matches!(buf.last(), Some(0)));
+        // SAFETY: `buf` is not empty, and its last unit is a NUL.
         unsafe { Self::from_raw(buf.as_ptr(), buf.len() - 1) }
     }
     #[inline]
@@ -454,7 +428,7 @@ impl AsRef<[u16]> for WStr {
     }
 }
 
-/// `wstr!("lit")` → `&'static [u16; N+1]` (NUL-terminated). Compile-time
+/// `wstr!("lit")` → `&'static WStr`. Compile-time
 /// ASCII→UTF-16LE widening for Windows path / API literals.
 ///
 /// Restricted to ASCII (`debug_assert` in the const evaluator) — every call
@@ -474,7 +448,7 @@ macro_rules! wstr {
             }
             out
         };
-        &__W
+        const { $crate::WStr::from_slice_with_nul(&__W) }
     }};
 }
 
@@ -2445,6 +2419,13 @@ impl Pollable {
 // pulling `bun_sys::syslog!` (tier inversion). Same `[sys]` tag at runtime.
 crate::declare_scope!(SYS, visible);
 
+/// One `poll(2)` call — libc-convention return.
+#[cfg(not(windows))]
+pub fn poll_once(fds: &mut [libc::pollfd], timeout_ms: core::ffi::c_int) -> core::ffi::c_int {
+    // SAFETY: the kernel reads and writes `fds.len()` entries.
+    unsafe { libc::poll(fds.as_mut_ptr(), fds.len() as _, timeout_ms) }
+}
+
 /// Non-blocking poll for readability. POSIX-only.
 #[cfg(not(windows))]
 pub fn is_readable(fd: Fd) -> Pollable {
@@ -2454,8 +2435,7 @@ pub fn is_readable(fd: Fd) -> Pollable {
         events: libc::POLLIN | libc::POLLERR | libc::POLLHUP,
         revents: 0,
     }];
-    // SAFETY: polls is a valid 1-element array; timeout 0 = non-blocking.
-    let n = unsafe { libc::poll(polls.as_mut_ptr(), 1, 0) };
+    let n = poll_once(&mut polls, 0);
     let result = n > 0;
     let rc = if result && (polls[0].revents & (libc::POLLHUP | libc::POLLERR)) != 0 {
         Pollable::Hup
@@ -2493,8 +2473,7 @@ pub fn is_writable(fd: Fd) -> Pollable {
         events: libc::POLLOUT | libc::POLLERR | libc::POLLHUP,
         revents: 0,
     }];
-    // SAFETY: polls is a valid 1-element array; timeout 0 = non-blocking.
-    let n = unsafe { libc::poll(polls.as_mut_ptr(), 1, 0) };
+    let n = poll_once(&mut polls, 0);
     let result = n > 0;
     let rc = if result && (polls[0].revents & (libc::POLLHUP | libc::POLLERR)) != 0 {
         Pollable::Hup

@@ -16,32 +16,23 @@ pub mod winsock {
 /// `c_ares` and `c_ares_draft` resolve to the same module.
 pub use c_ares_draft as c_ares;
 
-// Crate-root re-exports for callers that reference `bun_cares_sys::ares_inet_*`
-// directly (e.g. `bun_boringssl`).
-pub use c_ares::{ares_inet_ntop, ares_inet_pton};
-
-/// Thin wrapper over `ares_inet_ntop`: writes the textual address into `dst`
+/// Thin wrapper over `ares_inet_ntop`: writes the text of the 4 or 16 `octets` into `dst`
 /// and returns the slice up to (excluding) the trailing NUL on success.
 /// `dst[len] == 0` is guaranteed on `Some`, so callers needing a C string can
 /// rely on it.
-///
-/// # Safety
-/// `src` must point to a valid `in_addr` (af == AF_INET) or `in6_addr`
-/// (af == AF_INET6).
 #[inline]
-pub unsafe fn ntop(
-    af: core::ffi::c_int,
-    src: *const core::ffi::c_void,
-    dst: &mut [u8],
-) -> Option<&[u8]> {
-    // SAFETY: caller contract guarantees `src` points to a valid `in_addr` /
-    // `in6_addr` matching `af`; `dst` is a Rust slice so `dst.as_mut_ptr()` is
-    // valid for `dst.len()` writes, and `ares_inet_ntop` writes at most `size`
-    // bytes (including the trailing NUL) per c-ares docs.
+pub fn ntop<'a>(octets: &[u8], dst: &'a mut [u8]) -> Option<&'a [u8]> {
+    let af = match octets.len() {
+        4 => c_ares::AF::INET,
+        16 => c_ares::AF::INET6,
+        _ => return None,
+    };
+    // SAFETY: `octets` has the size of an address of `af`, and `ares_inet_ntop` writes at most
+    // `size` bytes (including the trailing NUL) per c-ares docs.
     if unsafe {
         c_ares::ares_inet_ntop(
             af,
-            src,
+            octets.as_ptr().cast(),
             dst.as_mut_ptr(),
             dst.len() as c_ares::ares_socklen_t,
         )
@@ -51,4 +42,19 @@ pub unsafe fn ntop(
         return None;
     }
     Some(bun_core::ffi::slice_to_nul(dst))
+}
+
+/// `ares_inet_pton` for IPv4 (`N` is 4) or IPv6 (`N` is 16).
+pub fn pton<const N: usize>(text: &bun_core::ZStr) -> Option<[u8; N]> {
+    let af = const {
+        match N {
+            4 => c_ares::AF::INET,
+            16 => c_ares::AF::INET6,
+            _ => panic!("an address has 4 or 16 octets"),
+        }
+    };
+    let mut octets = [0; N];
+    // SAFETY: `text` is NUL-terminated, and `octets` has the size of an address of `af`.
+    let rc = unsafe { c_ares::ares_inet_pton(af, text.as_ptr(), octets.as_mut_ptr().cast()) };
+    (rc == 1).then_some(octets)
 }

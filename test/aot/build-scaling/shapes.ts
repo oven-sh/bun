@@ -6132,6 +6132,22 @@ console.log(typeof outmost.inner);
         `console.log(sum);\n`,
     }),
   },
+  // What an entry exports is followed to all that hangs on it. Where each row may hold any other one, each field of a row went through the fields of all rows: with a file
+  // from outside in what is exported the walk took 17 minutes of a program of 90,000 fields.
+  ...[false, true].map(isBesideFileFromOutside => ({
+    name: `rows that name each other in a list that the entry exports${isBesideFileFromOutside ? " beside a file that is left out of the build" : ""}`,
+    counted: "rows",
+    size: 500,
+    entry: "main.mjs",
+    flags: isBesideFileFromOutside ? ["--external", "./outside.node"] : [],
+    write: (size: number) => ({
+      "main.mjs":
+        `export const all = [];\nexport function pick(i) { return all[i]; }\nlet total = 0;\n` +
+        lines(size, index => `{ const o = { tag: ${index}, k${index}: ${index}, next: pick(${index >> 1}), run(x) { return x + this.k${index}; } }; all.push(o); }`) +
+        `for (const one of all) total += one.tag;\nconsole.log(total);\n` +
+        (isBesideFileFromOutside ? `export default globalThis.native ? require("./outside.node") : all;\n` : ""),
+    }),
+  })),
   {
     name: "closures that are set in one Map under texts of their own",
     counted: "closures",

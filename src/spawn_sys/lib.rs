@@ -12,7 +12,7 @@
 //!   - signal-forwarding / no-orphans `extern "C"` decls
 //!
 //! Dependencies are deliberately leaf-only: `libc`, `bun_sys`, `bun_core`,
-//! `bun_analytics`, and (Windows-only) `bun_libuv_sys`. There is **no**
+//! (Unix-only) `bun_analytics`, and (Windows-only) `bun_libuv_sys`. There is **no**
 //! `bun_event_loop`/`bun_io`/`bun_io`/`bun_threading` dependency — `Process`,
 //! `Poller`, `WaiterThread`, and the `sync` runner stay in `bun_spawn` and
 //! depend on this crate.

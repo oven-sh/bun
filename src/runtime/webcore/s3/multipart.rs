@@ -189,26 +189,20 @@ bun_jsc::impl_abort_handle_owner!(MultiPartUpload, abort_handle, |this, _cause| 
     }
 });
 
-/// [`MultiPartUpload::fail_writer_collected`]'s task: same pointer as the upload, its own tag.
-#[repr(transparent)]
-pub(crate) struct WriterCollected(MultiPartUpload);
-impl bun_event_loop::Taskable for WriterCollected {
+/// [`MultiPartUpload::fail_writer_collected`]'s task.
+pub(crate) struct WriterCollected;
+impl bun_event_loop::RefTask for WriterCollected {
     const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::S3UploadWriterCollected;
-    /// Drops the task's +1. The context that stopped fails the upload through `abort_handle`.
-    unsafe fn release_unrun(this: *mut Self) {
-        // SAFETY: fn contract — adopts the +1 `fail_writer_collected` was given.
-        drop(unsafe { RefPtr::from_raw(this.cast::<MultiPartUpload>()) });
-    }
+    type Ref = RefPtr<MultiPartUpload>;
+    /// The context that stopped fails the upload through `abort_handle`.
+    fn release_unrun(_: Self::Ref) {}
     /// The context of the script that made the writer.
-    unsafe fn context(this: *const Self) -> bun_event_loop::ContextId {
-        // SAFETY: fn contract — the live upload `fail_writer_collected` queued.
-        unsafe { (*this.cast::<MultiPartUpload>()).context }
+    fn context(upload: &Self::Ref) -> bun_event_loop::ContextId {
+        upload.context
     }
 }
 impl WriterCollected {
-    pub(crate) fn run(this: *mut Self) -> bun_jsc::JsResult<()> {
-        // SAFETY: adopts the +1 `fail_writer_collected` was given; released after `fail`.
-        let upload = unsafe { RefPtr::from_raw(this.cast::<MultiPartUpload>()) };
+    pub(crate) fn run(upload: &MultiPartUpload) -> bun_jsc::JsResult<()> {
         upload.fail(S3Error {
             code: b"UnknownError",
             message: b"S3 writer was garbage collected before end() was called",
@@ -574,9 +568,7 @@ impl MultiPartUpload {
     /// `fail` from a task: the caller is a finalizer inside a GC sweep, and `fail` settles promises.
     pub(crate) fn fail_writer_collected(this: RefPtr<Self>) {
         let event_loop = this.vm.event_loop();
-        event_loop.enqueue_task(bun_event_loop::Task::init(
-            this.into_raw().cast::<WriterCollected>(),
-        ));
+        event_loop.enqueue_task(bun_event_loop::Task::from_ref::<WriterCollected>(this));
     }
 
     fn take_self_ref(&self) -> RefPtr<Self> {
@@ -1005,7 +997,7 @@ impl MultiPartUpload {
         let before = self.buffered.get().size();
         self.buffered.with_mut(|buffered| match chunk {
             EncodedChunk::Bytes(bytes) => buffered.write(bytes),
-            EncodedChunk::Latin1(text) => buffered.write_latin1::<true>(text),
+            EncodedChunk::Latin1(text) => buffered.write_latin1(text),
             EncodedChunk::Utf16(text) => buffered.write_utf16(text),
         })?;
         self.uploaded_bytes

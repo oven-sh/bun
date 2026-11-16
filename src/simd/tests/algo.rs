@@ -1,9 +1,8 @@
 //! The loops and the handling of short slices, against plain code.
-#![cfg(not(miri))]
 #![forbid(unsafe_code)]
 mod common;
 
-use bun_simd::{Int, Matches, Out, SharedU8, SharedWriter, Sink, Source};
+use bun_simd::{Int, Matches, Out, SharedU8, SharedWriter, Sink, Source, extend_vec};
 use common::on_each_target;
 use std::fmt::Debug;
 use std::hint::black_box;
@@ -454,6 +453,37 @@ mod simd {
         }
     }
 
+    /// The results have allocations of their exact size.
+    #[export]
+    pub fn each_loop_once(from: &mut [u8]) {
+        let (len, plus_one) = (from.len(), |v: U8| v + 1);
+        let want: Vec<u8> = from.iter().map(|byte| byte + 1).collect();
+        let [mut a, mut b, mut c] = [(); 3].map(|()| Vec::with_capacity(len));
+        extend_vec(&mut a, len, |to| U8::map(from, to, plus_one));
+        extend_vec(&mut b, len, |to| U8::map(shared(from), to, plus_one));
+        extend_vec(&mut c, len, |to| {
+            let mut to = to.into_writer();
+            append_plus_one(from, &mut to);
+            to.finish()
+        });
+        let [mut d, mut e, mut f, mut g] = [(); 4].map(|()| from.to_vec());
+        U8::map_in_place(&mut d, plus_one);
+        U8::zip_in_place(&mut e, from, |a, b| a + a - b + 1);
+        U8::map_to_shared(from, shared(&mut f), plus_one);
+        append_plus_one(from, &mut SharedWriter::new(shared(&mut g)));
+        assert_eq!([&a, &b, &c, &d, &e, &f, &g], [&want; 7]);
+        let (slice, test) = (shared(from), |v: U8| v.simd_eq(255));
+        assert_eq!(U8::position(slice, test), None);
+        assert_eq!(U8::rposition(slice, test), None);
+        assert_eq!(U8::count(slice, test), 0);
+        let both = |a, b| test(a & b);
+        assert!(U8::zip_find_map(slice, slice, both, Some).is_none());
+        assert!(U8::zip_rfind_map(slice, slice, both, Some).is_none());
+        U8::map_to_shared(slice, slice, |v| v - 1);
+        U8::map_in_place(from, |v| v + 2);
+        assert_eq!(from, want);
+    }
+
     /// As if another thread wrote between two reads.
     #[export]
     pub fn matches_that_go_once_they_are_seen() {
@@ -466,14 +496,21 @@ mod simd {
                 }
                 v.simd_ne(0)
             };
-            slice[goes].store(1, Relaxed);
-            slice[stays].store(2, Relaxed);
-            let first = U8::position(slice, test);
-            assert!([Some(goes.min(stays)), Some(stays)].contains(&first));
-            slice[goes].store(1, Relaxed);
-            slice[stays].store(2, Relaxed);
-            let last = U8::rposition(slice, test);
-            assert!([Some(goes.max(stays)), Some(stays)].contains(&last));
+            let check = |or: usize, run: &dyn Fn() -> Option<usize>| {
+                slice[goes].store(1, Relaxed);
+                slice[stays].store(2, Relaxed);
+                assert!([Some(or), Some(stays)].contains(&run()));
+            };
+            check(goes.min(stays), &|| U8::position(slice, test));
+            check(goes.max(stays), &|| U8::rposition(slice, test));
+            let first = |it| some(it).find(|&at| at == stays);
+            let last = |it| some(it).rfind(|&at| at == stays);
+            let tests: [&dyn Fn(U8, U8) -> _; 2] = [&|v, _| test(v), &|_, v| test(v)];
+            for test in tests {
+                check(stays, &|| U8::zip_find_map(slice, slice, test, first));
+                check(stays, &|| U8::zip_find_map_near(slice, slice, test, first));
+                check(stays, &|| U8::zip_rfind_map(slice, slice, test, last));
+            }
             slice[goes].store(0, Relaxed);
             slice[stays].store(0, Relaxed);
         }
@@ -499,32 +536,51 @@ mod simd {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "slow")]
 fn searches() {
     on_each_target(|| simd::all_searches(2));
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "slow")]
 fn maps() {
     on_each_target(|| simd::all_maps(2));
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "slow")]
 fn groups_stay_together() {
     on_each_target(simd::groups_stay_together);
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "slow")]
 fn short_slices() {
     on_each_target(simd::short_slices);
 }
 
+/// For Miri.
+#[test]
+fn each_loop_once() {
+    on_each_target(|| {
+        for len in [0, 1, 2, 3, 4, 7, 8, 15, 16, 17, 31, 40, 63, 64, 100, 254] {
+            simd::each_loop_once(&mut Vec::from_iter(0..len));
+        }
+        for near_end_of_page in [127..128, 120..125, 110..140, 65..128] {
+            simd::each_loop_once(&mut Room::new(7).all()[near_end_of_page]);
+        }
+    });
+}
+
 #[test]
 #[should_panic]
+#[cfg_attr(miri, ignore = "compares only lengths")]
 fn append_a_whole_vector() {
     simd::append_a_whole_vector(shared(&mut [0; 100]));
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "slow")]
 fn blocks() {
     let text: Vec<u16> = (1..200).collect();
     for len in 0..text.len() {
@@ -546,6 +602,7 @@ fn more_alignments() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "slow")]
 fn matches_that_go_once_they_are_seen() {
     on_each_target(simd::matches_that_go_once_they_are_seen);
 }
@@ -561,8 +618,9 @@ fn searches_with_a_concurrent_writer() {
         [1200, 500, 900],
         [1200, 700, 300],
     ];
+    let (cases, rounds) = if cfg!(miri) { (4, 1) } else { (6, 2000) };
     on_each_target(|| {
-        for [len, flickers, stays] in LEN_FLICKERS_STAYS {
+        for &[len, flickers, stays] in &LEN_FLICKERS_STAYS[..cases] {
             let slice: Vec<_> = (0..len)
                 .map(|i| AtomicU8::new((i == stays).into()))
                 .collect();
@@ -573,7 +631,7 @@ fn searches_with_a_concurrent_writer() {
                         slice[flickers].fetch_xor(1, Relaxed);
                     }
                 });
-                let found: Vec<_> = (0..2000)
+                let found: Vec<_> = (0..rounds)
                     .map(|_| simd::firsts_lasts_and_count(&slice, stays))
                     .collect();
                 is_done.store(true, Relaxed);

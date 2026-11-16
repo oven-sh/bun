@@ -6133,7 +6133,8 @@ __attribute__((minsize)) static JSC::EncodedJSValue mockModule(JSC::JSGlobalObje
     bool didEvictPreloadMock = false;
     if (keepsLoadedModule && remainsOriginal && previous && previous->isFromPreload && !isPreviousMockKeyEmpty && loaded.compiledModule) {
         JSValue factoryOfPreload = previous->factory.get();
-        bool importsOriginal = previous->importsOriginal && !previous->isOfHook && !previous->wasLoadedByRequire && !previous->spy && previous->firstLoadTestFile == globalObject->onLoadPlugins.testFile && !isInNodeModules(specifier) && !(factoryOfPreload && factoryOfPreload.isString()) && JSC::AOT::activeMockReloadedBy(globalObject, *loaded.compiledModule) == JSC::AOT::LoadedBy::Nobody;
+        bool hasNoInstance = JSC::AOT::isESModule(*loaded.compiledModule) && !JSC::AOT::hasInstances(globalObject, *loaded.compiledModule);
+        bool importsOriginal = previous->importsOriginal && !previous->isOfHook && !previous->wasLoadedByRequire && !previous->spy && (hasNoInstance ? !!loadedByTestFile : previous->firstLoadTestFile == globalObject->onLoadPlugins.testFile && !isInNodeModules(specifier)) && !(factoryOfPreload && factoryOfPreload.isString()) && JSC::AOT::activeMockReloadedBy(globalObject, *loaded.compiledModule) == JSC::AOT::LoadedBy::Nobody;
         if (importsOriginal)
             JSC::AOT::didRequireOwnOriginal(globalObject, *loaded.compiledModule);
         isPreviousMockKeyEmpty = JSC::AOT::tryEvictRequirerOfOriginal(globalObject, *loaded.compiledModule);

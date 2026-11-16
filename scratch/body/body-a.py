@@ -55,7 +55,7 @@ notes = f"""<details><summary>Notes</summary>
 - bun's own client over loopback: 15 of 40 responses arrive, and the others never do.
 - The row for the first flight of a connection is a guard more than a proof. Without the patch it fails on a debug build, and in 8 of 99 runs on a release build. The other two rows fail in every run of both builds.
 
-**The callers.** `lsquic_stream_write()` now returns 0 while a header block of the stream waits. `us_quic_stream_write()` (`packages/bun-usockets/src/quic.c`) passes that on, `Http3Response` keeps the bytes in its backpressure buffer, `QuicStream::drain_outbound` (`src/runtime/node/quic/stream.rs`) keeps them in its queue, and the HTTP/3 client (`src/http/h3_client/encode.rs`) waits for the next write event.
+**The callers.** `lsquic_stream_write()` now returns 0 while a header block of the stream waits. `us_quic_stream_write()` (`packages/bun-usockets/src/quic.cpp`) passes that on, `Http3Response` keeps the bytes in its backpressure buffer, `QuicStream::drain_outbound` (`src/runtime/node/quic/stream.rs`) keeps them in its queue, and the HTTP/3 client (`src/http/h3_client/encode.rs`) waits for the next write event.
 
 **The lsquic bump.** v4.11.1 (2f4cd42f) has both commits. Of the 34 lsquic patches on this tree, 28 apply to it unchanged and one with fuzz. Five need work, 7 hunks in all: `node-quic-accessors` (1 of 96), `connection-close-pns` (1 of 6), `abort-error-code-zero` (2 of 4), `cubic-llp64-overflow` (2 of 2) and `merge-acks-contained-range` (1 of 1). Upstream has its own fix for the Cubic overflow and for the close code 0. v4.11.0 also removes the adaptive congestion controller, which is the default at the pin, and makes BBRv1 the default.
 

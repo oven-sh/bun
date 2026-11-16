@@ -784,7 +784,7 @@ JSC_DEFINE_HOST_FUNCTION(functionBunDeepEquals, (JSGlobalObject * globalObject, 
     JSC::JSValue strict = callFrame->argument(2);
     JSC::JSValue skipPrototype = callFrame->argument(3);
 
-    Vector<std::pair<JSValue, JSValue>, 16> stack;
+    Bun::DeepEqualsStack stack { JSValue() };
     MarkedArgumentBuffer gcBuffer;
 
     if (strict.isBoolean() && strict.asBoolean()) {
@@ -824,7 +824,7 @@ JSC_DEFINE_HOST_FUNCTION(functionBunDeepMatch, (JSGlobalObject * globalObject, J
         return {};
     }
 
-    Bun::DeepMatchState state;
+    Bun::DeepMatchState state { JSValue() };
     bool match = Bun__deepMatch</* enableAsymmetricMatchers */ false>(object, subset, globalObject, scope, state, false);
     RETURN_IF_EXCEPTION(scope, {});
     return JSValue::encode(jsBoolean(match));

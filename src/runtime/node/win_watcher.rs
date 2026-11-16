@@ -20,9 +20,9 @@ use crate::jsc_hooks::path_watchers;
 // The callbacks are *associated functions* on `FSWatcher`, not free fns.
 use crate::node::node_fs_watcher::{Event, FSWatcher, StringOrBytesToDecode};
 #[allow(non_upper_case_globals)]
-const on_path_update_fn: fn(Option<*mut c_void>, Event, bool) = FSWatcher::ON_PATH_UPDATE;
+const on_path_update_fn: fn(Option<*mut c_void>, Event, bool) = FSWatcher::on_path_update_windows;
 #[allow(non_upper_case_globals)]
-const on_update_end_fn: fn(Option<*mut c_void>) = FSWatcher::on_update_end;
+const on_update_end_fn: fn(Option<*mut c_void>) = FSWatcher::on_update_end_windows;
 
 // Rust identifiers cannot contain '.', so
 // the static is declared by hand (instead of via `declare_scope!`) with the

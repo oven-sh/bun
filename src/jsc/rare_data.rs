@@ -1,21 +1,21 @@
-use core::cell::OnceCell;
+use core::cell::{Cell, OnceCell};
 use core::ffi::c_void;
 use core::marker::PhantomData;
 use core::sync::atomic::Ordering;
 
-use crate::bindgen::JsHeap;
+use crate::bindgen::{self, JsHeap, JsLocal};
 use crate::node_path::PathOrFileDescriptor;
 use crate::spawn_sync_event_loop::SpawnSyncEventLoop;
-use crate::strong::Optional as Strong;
+use crate::strong::StrongCell;
 use crate::virtual_machine::VirtualMachine;
 use crate::webcore_types::store::{Data, File, Store};
-use crate::{JSGlobalObject, JsCell};
+use crate::{JSGlobalObject, JSString};
 use bun_boringssl::c as boring;
 use bun_collections::StringArrayHashMap;
 use bun_core::{Mutex, Output};
 use bun_libdeflate_sys::libdeflate;
 use bun_paths::MAX_PATH_BYTES;
-use bun_ptr::RefPtr;
+use bun_ptr::{CellExt as _, OptionCellExt as _, RefPtr, VecCellExt as _};
 use bun_sys::{self as syscall, Fd, Mode, Stdio};
 use bun_uws::{self as uws, SocketGroup};
 
@@ -50,7 +50,7 @@ use super::uuid::UUID;
 // ──────────────────────────────────────────────────────────────────────────
 
 pub struct HotMap {
-    _map: JsCell<StringArrayHashMap<HotMapEntry>>,
+    _map: Cell<StringArrayHashMap<HotMapEntry>>,
     _not_send: PhantomData<*mut ()>,
 }
 
@@ -72,19 +72,19 @@ impl Default for HotMapEntry {
 impl HotMap {
     pub(crate) fn init() -> HotMap {
         HotMap {
-            _map: JsCell::new(StringArrayHashMap::new()),
+            _map: Cell::new(StringArrayHashMap::new()),
             _not_send: PhantomData,
         }
     }
 
     pub fn get_entry(&self, key: &[u8]) -> Option<HotMapEntry> {
-        self._map.get().get(key).copied()
+        self._map.with_taken(|map| map.get(key).copied())
     }
 
     /// Untyped insert — typed `insert<T>` lives in `bun_runtime` where the
     /// `TaggedPointerUnion` payload list is named.
     pub fn insert_raw(&self, key: &[u8], entry: HotMapEntry) {
-        self._map.with_mut(|map| {
+        self._map.with_taken(|map| {
             let gop = bun_core::handle_oom(map.get_or_put(key));
             if gop.found_existing {
                 panic!("HotMap already contains key");
@@ -95,16 +95,8 @@ impl HotMap {
     }
 
     pub fn remove(&self, key: &[u8]) {
-        // The map owns the Box<[u8]> key and `swap_remove` drops it. The
-        // aliasing assert below means the caller must not pass the map's own
-        // key storage. Ordering doesn't matter for HotMap consumers.
-        let Some(i) = self._map.get().get_index(key) else {
-            return;
-        };
-        let stored = &self._map.get().keys()[i];
-        let is_same_slice = stored.as_ptr() == key.as_ptr() && stored.len() == key.len();
-        debug_assert!(!is_same_slice);
-        self._map.with_mut(|map| map.swap_remove(key));
+        // Ordering doesn't matter for HotMap consumers.
+        self._map.with_taken(|map| map.swap_remove(key));
     }
 }
 
@@ -113,14 +105,14 @@ impl HotMap {
 // ──────────────────────────────────────────────────────────────────────────
 
 pub struct EntropyCache {
-    pub(crate) cache: [u8; Self::SIZE],
-    pub(crate) index: usize,
+    cache: Cell<[u8; Self::SIZE]>,
+    index: Cell<usize>,
 }
 impl Default for EntropyCache {
     fn default() -> Self {
         Self {
-            cache: [0u8; Self::SIZE],
-            index: 0,
+            cache: Cell::new([0u8; Self::SIZE]),
+            index: Cell::new(0),
         }
     }
 }
@@ -128,18 +120,18 @@ impl EntropyCache {
     pub(crate) const BUFFERED_UUIDS_COUNT: usize = 16;
     pub(crate) const SIZE: usize = Self::BUFFERED_UUIDS_COUNT * 128;
 
-    pub(crate) fn fill(&mut self) {
-        bun_boringssl::rand_bytes(&mut self.cache);
-        self.index = 0;
+    pub(crate) fn fill(&self) {
+        bun_boringssl::rand_bytes_into_cells(self.cache.as_array_of_cells());
+        self.index.set(0);
     }
-    fn get<const N: usize>(&mut self) -> [u8; N] {
-        if self.index + N > self.cache.len() {
+    fn get<const N: usize>(&self) -> [u8; N] {
+        if self.index.get() + N > Self::SIZE {
             self.fill();
         }
-        let mut r = [0u8; N];
-        r.copy_from_slice(&self.cache[self.index..self.index + N]);
-        self.index += N;
-        r
+        let index = self.index.get();
+        let cells = &self.cache.as_array_of_cells()[index..index + N];
+        self.index.set(index + N);
+        core::array::from_fn(|i| cells[i].get())
     }
 }
 
@@ -181,15 +173,15 @@ pub struct RareData {
     /// Indexed by `Stdio`.
     stdio: [OnceCell<StdioStore>; 3],
 
-    entropy_cache: JsCell<Option<Box<EntropyCache>>>,
+    entropy_cache: OnceCell<Box<EntropyCache>>,
 
     hot_map: OnceCell<HotMap>,
 
     // TODO: make this per JSGlobalObject instead of global
     // This does not handle ShadowRealm correctly!
-    pub(crate) cleanup_hooks: JsCell<Vec<CleanupHook>>,
+    pub(crate) cleanup_hooks: Cell<Vec<CleanupHook>>,
     /// Joins `cleanup_hooks` once `VirtualMachine::teardown` has everything back from other threads.
-    pub(crate) cleanup_hooks_after_teardown_wait: JsCell<Vec<CleanupHook>>,
+    pub(crate) cleanup_hooks_after_teardown_wait: Cell<Vec<CleanupHook>>,
 
     #[cfg(not(windows))]
     pub(crate) file_polls: OnceCell<Box<FilePollStore>>,
@@ -208,7 +200,7 @@ pub struct RareData {
     /// SHA-256 + map lookup. Ref owned here. Lazy-init body lives in
     /// `bun_runtime` (it calls `SSLContextCache::get_or_create_opts`).
     /// Held until `tls.DEFAULT_CIPHERS` is assigned so the weak-cache entry never tombstones.
-    pub default_client_ssl_ctx: JsCell<Option<boring::OwnedSslCtx>>,
+    pub default_client_ssl_ctx: Cell<Option<boring::OwnedSslCtx>>,
 
     /// Watch-mode restart needs to RST every listen socket so the new process
     /// can rebind without `EADDRINUSE`. Written on the JS thread; drained on
@@ -219,11 +211,11 @@ pub struct RareData {
     pub pipe_read_scratch: Box<bun_event_loop::PipeReadScratch>,
 
     /// `node:http2` PADDED DATA scratch; see [`Self::take_h2_padded_frame_buffer`].
-    h2_padded_frame_buffer: JsCell<Option<Box<H2PaddedFrameBuffer>>>,
+    h2_padded_frame_buffer: Cell<Option<Box<H2PaddedFrameBuffer>>>,
     /// Output scratch for one JS-thread `CompressionStream` step; see [`Self::take_compression_scratch`].
-    compression_scratch: JsCell<Option<Vec<u8>>>,
+    compression_scratch: Cell<Option<Vec<u8>>>,
     /// Inflated payload of one `new WebSocket()` client message; see [`Self::take_websocket_inflate_scratch`].
-    websocket_inflate_scratch: JsCell<Option<Vec<u8>>>,
+    websocket_inflate_scratch: Cell<Option<Vec<u8>>>,
     /// One libdeflate handle for every JS-thread one-shot inflate; see [`Self::libdeflate_decompressor`].
     libdeflate_decompressor: OnceCell<libdeflate::OwnedDecompressor>,
 
@@ -232,18 +224,16 @@ pub struct RareData {
     // was always reached via the main-thread VM, so it was a singleton in
     // practice). Hosting it in the consumer crate removes the upward
     // `s3_signing → jsc` hook.
-    pub s3_default_client: JsCell<Strong>,
+    pub s3_default_client: StrongCell,
     /// Per-VM, like Node's quic `BindingData` (node/src/quic/bindingdata.h).
-    pub node_quic_callbacks: JsCell<Strong>,
+    pub node_quic_callbacks: StrongCell,
     default_csrf_secret: OnceCell<[u8; 16]>,
 
-    /// Owned NUL-terminated buffer. `len()` includes the trailing 0;
-    /// [`Self::tls_default_ciphers`] strips it.
-    tls_default_ciphers: JsCell<Option<Box<[u8]>>>,
+    tls_default_ciphers: Cell<Option<Box<[u8]>>>,
 
     spawn_sync_event_loop_: OnceCell<Box<SpawnSyncEventLoop>>,
 
-    pub path_buf: JsCell<PathBuf>,
+    pub path_buf: PathBuf,
 }
 
 #[cfg(not(windows))]
@@ -253,28 +243,28 @@ impl Default for RareData {
     fn default() -> Self {
         Self {
             stdio: Default::default(),
-            entropy_cache: JsCell::new(None),
+            entropy_cache: OnceCell::new(),
             hot_map: OnceCell::new(),
-            cleanup_hooks: JsCell::new(Vec::new()),
-            cleanup_hooks_after_teardown_wait: JsCell::new(Vec::new()),
+            cleanup_hooks: Cell::new(Vec::new()),
+            cleanup_hooks_after_teardown_wait: Cell::new(Vec::new()),
             #[cfg(not(windows))]
             file_polls: OnceCell::new(),
             spawn_ipc_group: SocketGroup::default(),
             test_parallel_ipc_group: SocketGroup::default(),
             socket_groups: SocketGroups::default(),
-            default_client_ssl_ctx: JsCell::new(None),
+            default_client_ssl_ctx: Cell::new(None),
             listening_sockets_for_watch_mode: Mutex::new(Vec::new()),
             pipe_read_scratch: Box::new(bun_event_loop::PipeReadScratch::new()),
-            h2_padded_frame_buffer: JsCell::new(None),
-            compression_scratch: JsCell::new(None),
-            websocket_inflate_scratch: JsCell::new(None),
+            h2_padded_frame_buffer: Cell::new(None),
+            compression_scratch: Cell::new(None),
+            websocket_inflate_scratch: Cell::new(None),
             libdeflate_decompressor: OnceCell::new(),
-            s3_default_client: JsCell::new(Strong::empty()),
-            node_quic_callbacks: JsCell::new(Strong::empty()),
+            s3_default_client: StrongCell::default(),
+            node_quic_callbacks: StrongCell::default(),
             default_csrf_secret: OnceCell::new(),
-            tls_default_ciphers: JsCell::new(None),
+            tls_default_ciphers: Cell::new(None),
             spawn_sync_event_loop_: OnceCell::new(),
-            path_buf: JsCell::default(),
+            path_buf: PathBuf::default(),
         }
     }
 }
@@ -284,37 +274,30 @@ impl Default for RareData {
 // ──────────────────────────────────────────────────────────────────────────
 
 /// Reusable heap buffer for path.resolve, path.relative, and path.toNamespacedPath.
-/// Three fixed-size tiers, lazily allocated on first use. Safe because JS is single-threaded.
+/// Three fixed-size tiers, each empty until first used and while it is taken.
 #[derive(Default)]
 pub struct PathBuf {
-    pub(crate) small: Option<Box<[u8; 2 * MAX_PATH_BYTES]>>,
-    pub(crate) medium: Option<Box<[u8; 8 * MAX_PATH_BYTES]>>,
-    pub(crate) large: Option<Box<[u8; 32 * MAX_PATH_BYTES]>>,
+    small: Cell<Box<[u8]>>,
+    medium: Cell<Box<[u8]>>,
+    large: Cell<Box<[u8]>>,
 }
 
 impl PathBuf {
     const S: usize = MAX_PATH_BYTES;
 
-    /// Returns the smallest lazily-allocated tier buffer that fits `min_len`.
-    // Revisit caller semantics for inputs exceeding the large tier.
-    pub fn get(&mut self, min_len: usize) -> &mut [u8] {
+    /// The smallest tier that fits `min_len`, and its size.
+    pub fn tier(&self, min_len: usize) -> Option<(&Cell<Box<[u8]>>, usize)> {
         if min_len <= 2 * Self::S {
-            &mut **self
-                .small
-                .get_or_insert_with(bun_core::boxed_zeroed::<[u8; 2 * MAX_PATH_BYTES]>)
+            Some((&self.small, 2 * Self::S))
         } else if min_len <= 8 * Self::S {
-            &mut **self
-                .medium
-                .get_or_insert_with(bun_core::boxed_zeroed::<[u8; 8 * MAX_PATH_BYTES]>)
+            Some((&self.medium, 8 * Self::S))
+        } else if min_len <= 32 * Self::S {
+            Some((&self.large, 32 * Self::S))
         } else {
-            &mut **self
-                .large
-                .get_or_insert_with(bun_core::boxed_zeroed::<[u8; 32 * MAX_PATH_BYTES]>)
+            None
         }
     }
 }
-
-// Drop is automatic for Option<Box<...>> fields — no explicit deinit needed.
 
 /// One max-size HTTP/2 PADDED DATA frame payload (pad-length byte + data + padding).
 pub type H2PaddedFrameBuffer = [u8; 16384];
@@ -465,8 +448,8 @@ impl SocketGroups {
 
 impl RareData {
     pub(crate) fn release_js_handles(&self) {
-        self.s3_default_client.set(Default::default());
-        self.node_quic_callbacks.set(Default::default());
+        self.s3_default_client.clear();
+        self.node_quic_callbacks.clear();
     }
 
     // ── lazy-init: hot_map ─────────────────────────────────────────────────
@@ -482,14 +465,12 @@ impl RareData {
 
     // ── lazy-init: entropy ─────────────────────────────────────────────────
     pub fn entropy<const N: usize>(&self) -> [u8; N] {
-        self.entropy_cache.with_mut(|cache| {
-            let cache = cache.get_or_insert_with(|| {
-                let mut c = Box::new(EntropyCache::default());
-                c.fill();
-                c
-            });
-            cache.get()
-        })
+        let cache = self.entropy_cache.get_or_init(|| {
+            let c = Box::new(EntropyCache::default());
+            c.fill();
+            c
+        });
+        cache.get()
     }
     pub fn next_uuid(&self) -> UUID {
         UUID::init_with(&self.entropy())
@@ -508,9 +489,9 @@ impl RareData {
 
     /// Hand a taken buffer back; the slot keeps the first one returned.
     pub fn put_back_h2_padded_frame_buffer(&self, buffer: Box<H2PaddedFrameBuffer>) {
-        self.h2_padded_frame_buffer.with_mut(|slot| {
-            slot.get_or_insert(buffer);
-        });
+        if self.h2_padded_frame_buffer.is_none() {
+            self.h2_padded_frame_buffer.set(Some(buffer));
+        }
     }
 
     /// Empty `Vec` with whatever capacity the last step left behind.
@@ -521,7 +502,7 @@ impl RareData {
     /// Hand a taken buffer back; the slot keeps the first one returned and lets an oversized one go.
     pub fn put_back_compression_scratch(&self, mut buffer: Vec<u8>) {
         const KEEP: usize = 256 * 1024;
-        if self.compression_scratch.get().is_none() && buffer.capacity() <= KEEP {
+        if self.compression_scratch.is_none() && buffer.capacity() <= KEEP {
             buffer.clear();
             self.compression_scratch.set(Some(buffer));
         }
@@ -537,7 +518,7 @@ impl RareData {
     /// Hand a taken buffer back; the slot keeps the first one returned and lets an oversized one go.
     pub fn put_back_websocket_inflate_scratch(&self, mut buffer: Vec<u8>) {
         const KEEP: usize = 256 * 1024;
-        if self.websocket_inflate_scratch.get().is_none() && buffer.capacity() <= KEEP {
+        if self.websocket_inflate_scratch.is_none() && buffer.capacity() <= KEEP {
             buffer.clear();
             self.websocket_inflate_scratch.set(Some(buffer));
         }
@@ -561,23 +542,17 @@ impl RareData {
         })
     }
 
-    pub(crate) fn tls_default_ciphers(&self) -> Option<&[u8]> {
-        // The stored buffer is NUL-terminated (set_tls_default_ciphers
-        // appends 0); the trailing NUL is stripped from the returned slice's
-        // length. Callers needing a C string can still take `.as_ptr()` — the
-        // NUL byte remains in storage one-past-the-end.
+    pub(crate) fn has_tls_default_ciphers(&self) -> bool {
+        self.tls_default_ciphers.is_some()
+    }
+
+    pub(crate) fn with_tls_default_ciphers<R>(&self, f: impl FnOnce(&[u8]) -> R) -> Option<R> {
         self.tls_default_ciphers
-            .get()
-            .as_deref()
-            .map(|s| &s[..s.len() - 1])
+            .with_taken(|ciphers| ciphers.as_deref().map(f))
     }
 
     pub(crate) fn set_tls_default_ciphers(&self, ciphers: &[u8]) {
-        // Old value (if any) drops here via Box<[u8]> Drop.
-        let mut owned = Vec::with_capacity(ciphers.len() + 1);
-        owned.extend_from_slice(ciphers);
-        owned.push(0);
-        self.tls_default_ciphers.set(Some(owned.into_boxed_slice()));
+        self.tls_default_ciphers.set(Some(ciphers.into()));
         // Built from the previous list. Open connections hold their own reference.
         self.default_client_ssl_ctx.set(None);
     }
@@ -591,7 +566,7 @@ impl RareData {
         func: CleanupHookFunction,
     ) {
         self.cleanup_hooks
-            .with_mut(|hooks| hooks.push(CleanupHook::from(global_this, ctx, func)));
+            .push(CleanupHook::from(global_this, ctx, func));
     }
 
     /// # Safety
@@ -603,7 +578,7 @@ impl RareData {
         func: CleanupHookFunction,
     ) {
         self.cleanup_hooks_after_teardown_wait
-            .with_mut(|hooks| hooks.push(CleanupHook::from(global_this, ctx, func)));
+            .push(CleanupHook::from(global_this, ctx, func));
     }
 
     /// `None` if the loop cannot be created; nothing is cached, so a later call retries.
@@ -773,14 +748,14 @@ pub(crate) fn set_tls_default_ciphers(heap: &JsHeap<'_>, ciphers: &[u8]) {
         .set_tls_default_ciphers(ciphers);
 }
 
-pub(crate) fn get_tls_default_ciphers<'a>(heap: &JsHeap<'a>) -> &'a [u8] {
+pub(crate) fn get_tls_default_ciphers<'a>(
+    heap: &JsHeap<'a>,
+) -> bindgen::Result<'a, JsLocal<'a, JSString>> {
     // SAFETY: only the VM is taken from it.
     let global_this = unsafe { heap.global() };
     let rare = global_this.bun_vm().rare_data();
-    match rare.tls_default_ciphers() {
-        Some(c) => c,
-        None => uws::get_default_ciphers().as_bytes(),
-    }
+    rare.with_tls_default_ciphers(|ciphers| heap.create_utf8_string(ciphers))
+        .unwrap_or_else(|| heap.create_utf8_string(uws::get_default_ciphers().as_bytes()))
 }
 
 // ──────────────────────────────────────────────────────────────────────────

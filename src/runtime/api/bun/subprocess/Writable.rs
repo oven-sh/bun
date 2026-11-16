@@ -4,7 +4,7 @@ use bun_io::{Owner, PollTag};
 #[cfg(not(windows))]
 use bun_jsc::SysErrorJsc as _;
 use bun_jsc::{JSGlobalObject, JSValue, JsCell, JsResult, event_loop::EventLoop};
-use bun_ptr::RefPtr;
+use bun_ptr::{OptionCellExt as _, RefPtr};
 use bun_sys::{self, Fd};
 
 use crate::api::bun_spawn::stdio::Stdio;
@@ -76,7 +76,7 @@ impl Writable {
     // Parent comes via `SourceHandle::Subprocess` (the whole `*mut Subprocess`), not `&mut self`
     // on the `stdin` field; accesses are disjoint so `&Subprocess` suffices.
     pub(crate) fn on_close(process: &Subprocess<'_>, _: Option<bun_sys::Error>) {
-        if let Some(this_jsvalue) = process.this_value.get().try_get() {
+        if let Some(this_jsvalue) = process.this_value.try_get() {
             if let Some(existing_value) = js::stdin_get_cached(this_jsvalue) {
                 file_sink::JSSink::forget_subprocess(existing_value);
             }
@@ -268,7 +268,7 @@ impl Writable {
                     subprocess
                         .weak_file_sink_stdin_ptr
                         .set(Some(pipe_ref.as_non_null()));
-                    if subprocess.stdin_sink_ref.get().is_none() {
+                    if subprocess.stdin_sink_ref.is_none() {
                         // `Writable::init()` already did this for fresh pipes;
                         // only take a new ref if `on_stdin_destroyed()` has since
                         // consumed it.
@@ -293,7 +293,7 @@ impl Writable {
     // Note: see `on_close` — the caller passes the parent; deriving it from
     // `&mut self` on `Writable` would be out-of-provenance.
     pub(crate) fn finalize(subprocess: &Subprocess<'_>) {
-        if let Some(this_jsvalue) = subprocess.this_value.get().try_get() {
+        if let Some(this_jsvalue) = subprocess.this_value.try_get() {
             if let Some(existing_value) = js::stdin_get_cached(this_jsvalue) {
                 file_sink::JSSink::forget_subprocess(existing_value);
             }

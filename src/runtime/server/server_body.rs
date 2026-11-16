@@ -34,7 +34,7 @@ use bun_jsc::{
     JSValue, JsError, JsResult, Node, PendingAbortSignal, StringJsc as _, host_fn,
 };
 use bun_paths as paths;
-use bun_ptr::{AsCtxPtr, CellExt as _, RefPtr};
+use bun_ptr::{AsCtxPtr, CellExt as _, RefPtr, VecCellExt as _};
 use bun_removable_features::{Feature, is_removed};
 use bun_resolver::fs::FileSystem;
 use bun_standalone_graph::StandaloneModuleGraph;
@@ -978,8 +978,7 @@ impl ServePlugins {
         match cb {
             ServePluginsCallback::HtmlBundleRoute(route) => {
                 let route = html_bundle::PendingBuild::new(RefPtr::from_this(route));
-                self.html_bundle_routes
-                    .with_taken(|routes| routes.push(route));
+                self.html_bundle_routes.push(route);
             }
             ServePluginsCallback::DevServer => {
                 // one dev server per server
@@ -1028,7 +1027,7 @@ impl ServePlugins {
         let plugin_js_array =
             bun_string_jsc::to_js_array(global, StringView::as_strings(&bunstring_array))?;
         // `bun bake`: the plugin objects of `bake.config.ts`, after the names of bunfig.toml.
-        if let Some(config_plugins) = global.bun_vm().bake_config_plugins.get().get() {
+        if let Some(config_plugins) = global.bun_vm().bake_config_plugins.get() {
             let mut iter = config_plugins.array_iterator(global)?;
             while let Some(config_plugin) = iter.next()? {
                 plugin_js_array.push(global, config_plugin)?;
@@ -2194,7 +2193,7 @@ where
 
     pub(crate) fn finalize(&self) {
         httplog!("finalize");
-        self.js_value.with_mut(|js_value| js_value.finalize());
+        self.js_value.finalize();
         // HTTP/3 connections are not counted, so a drained server can have a request pending.
         self.hold_open_ref();
         self.deinit_if_we_can();
@@ -2204,12 +2203,12 @@ where
         if self.is_closed() {
             return JSPromise::resolved_promise(global, JSValue::UNDEFINED).to_js();
         }
-        if self.all_closed_promise.get().has_value() {
-            return self.all_closed_promise.get().value();
-        }
-        self.all_closed_promise
-            .set(jsc::JSPromiseStrong::init(global));
-        self.all_closed_promise.get().value()
+        self.all_closed_promise.with_taken(|promise| {
+            if !promise.has_value() {
+                *promise = jsc::JSPromiseStrong::init(global);
+            }
+            promise.value()
+        })
     }
 
     // `notify_inspector_server_stopped` lives in the unbounded impl block

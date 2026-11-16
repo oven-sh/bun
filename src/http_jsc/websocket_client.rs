@@ -20,7 +20,7 @@ use bun_http::websocket::{Opcode, WebsocketHeader, is_valid_close_code};
 use bun_io::KeepAlive;
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{self as jsc, GlobalRef, JSGlobalObject};
-use bun_ptr::{BackRef, JsCell, RefPtr, ThisPtr};
+use bun_ptr::{BackRef, CellExt as _, RefPtr, ThisPtr};
 use bun_uws::{self as uws, NewSocketHandler, us_bun_verify_error_t};
 use bun_uws_sys::us_socket_t;
 
@@ -88,8 +88,10 @@ pub struct ConnectedOptions {
 }
 
 /// The underlying connection that frames are sent and received on.
+#[derive(Default)]
 enum Transport {
     /// `self.tcp`. Every transport is reset to this once the connection closes, with `tcp` detached.
+    #[default]
     Socket,
     /// wss:// through an HTTP proxy. The tunnel handles TLS, so this is only used with SSL=false.
     /// Holds one ref, released in `clear_data`.
@@ -99,8 +101,7 @@ enum Transport {
     Stream,
 }
 
-/// A copy of [`Transport`], so no borrow of the cell is held across a write.
-/// A write can re-enter and replace the transport.
+/// A copy of [`Transport`]: a write can re-enter and replace the transport.
 #[derive(Clone, Copy)]
 enum Io {
     Socket,
@@ -164,7 +165,7 @@ pub struct WebSocket<const SSL: bool> {
     io_ref: Cell<Option<RefPtr<Self>>>,
     /// C++ `WebSocket::m_connectedWebSocket` and the ref held on its behalf;
     /// released together when C++ lets go.
-    pub(crate) outgoing_websocket: JsCell<Option<(BackRef<CppWebSocket>, RefPtr<Self>)>>,
+    pub(crate) outgoing_websocket: Cell<Option<(BackRef<CppWebSocket>, RefPtr<Self>)>>,
 
     pub(crate) receive_state: Cell<ReceiveState>,
     pub(crate) receiving_type: Cell<Opcode>,
@@ -221,7 +222,7 @@ pub struct WebSocket<const SSL: bool> {
     /// Hostname the upgrade client verified. A renegotiation re-checks it: an IP host has no SNI.
     verified_hostname: Box<[u8]>,
 
-    transport: JsCell<Transport>,
+    transport: Cell<Transport>,
 }
 
 impl<const SSL: bool> WebSocket<SSL> {
@@ -238,11 +239,11 @@ impl<const SSL: bool> WebSocket<SSL> {
     }
 
     fn io(&self) -> Io {
-        match self.transport.get() {
+        self.transport.with_taken(|transport| match transport {
             Transport::Socket => Io::Socket,
             Transport::Tunnel(tunnel) => Io::Tunnel(tunnel.this_ptr()),
             Transport::Stream => Io::Stream,
-        }
+        })
     }
 
     fn tunnel(&self) -> Option<ThisPtr<WebSocketProxyTunnel>> {
@@ -254,7 +255,8 @@ impl<const SSL: bool> WebSocket<SSL> {
 
     /// C++'s back-reference, while it still holds one.
     fn cpp_websocket(&self) -> Option<BackRef<CppWebSocket>> {
-        self.outgoing_websocket.get().as_ref().map(|(ws, _)| *ws)
+        self.outgoing_websocket
+            .with_taken(|outgoing| outgoing.as_ref().map(|(ws, _)| *ws))
     }
 
     /// C++ let go of `m_connectedWebSocket`: forget the back-reference and
@@ -288,7 +290,7 @@ impl<const SSL: bool> WebSocket<SSL> {
         self.deflate.replace(None);
         drop(self.secure.take());
         // Detach the tunnel first so its shutdown callbacks cannot re-enter this path.
-        if let Transport::Tunnel(tunnel) = self.transport.replace(Transport::Socket) {
+        if let Transport::Tunnel(tunnel) = self.transport.take() {
             tunnel.clear_connected_web_socket();
             WebSocketProxyTunnel::shutdown(tunnel.this_ptr());
             drop(tunnel);
@@ -351,7 +353,7 @@ impl<const SSL: bool> WebSocket<SSL> {
     /// Every caller holds a ref guard (the uws dispatcher, a C++ entry point,
     /// or the tunnel callback), so `self` outlives the releases below.
     fn finish(&self, outcome: Outcome) {
-        let Some((ws, _cpp_ref)) = self.outgoing_websocket.replace(None) else {
+        let Some((ws, _cpp_ref)) = self.outgoing_websocket.take() else {
             return;
         };
         jsc::mark_binding!();
@@ -1565,7 +1567,7 @@ impl<const SSL: bool> WebSocket<SSL> {
             ref_count: bun_ptr::RefCount::init(),
             tcp: Cell::new(Socket::<SSL>::detached()),
             io_ref: Cell::new(None),
-            outgoing_websocket: JsCell::new(None),
+            outgoing_websocket: Cell::new(None),
             receive_state: Cell::new(ReceiveState::NeedHeader),
             receiving_type: Cell::new(Opcode::ResB),
             receiving_is_final: Cell::new(true),
@@ -1598,7 +1600,7 @@ impl<const SSL: bool> WebSocket<SSL> {
             message_is_compressed: Cell::new(false),
             secure: Cell::new(secure),
             verified_hostname: Box::from(verified_hostname),
-            transport: JsCell::new(transport),
+            transport: Cell::new(transport),
         });
         bun_core::scoped_log!(alloc, "new({}) = {:p}", Self::ALLOC_TYPE_NAME, ws.as_ptr());
         ws

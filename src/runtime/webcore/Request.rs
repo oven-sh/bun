@@ -76,7 +76,7 @@ pub(crate) struct Request {
     /// `Request` and (when served by `Bun.serve`) the `RequestContext` each
     /// hold their own `+1` on the same slot.
     body: BodyHiveHandle,
-    js_ref: JsCell<JsRef>,
+    js_ref: JsRef,
     pub method: Method,
     pub(crate) flags: Flags,
     pub(crate) request_context: Cell<AnyRequestContext>,
@@ -119,7 +119,7 @@ impl Default for Flags {
 impl crate::webcore::body::BodyOwnerJs for Request {
     #[inline]
     fn js_ref(&self) -> Option<JSValue> {
-        self.js_ref.get().try_get()
+        self.js_ref.try_get()
     }
     #[inline]
     fn body_get_cached(this: JSValue) -> Option<JSValue> {
@@ -325,8 +325,8 @@ impl Request {
         // `JSBunRequest::create` bypasses `to_js`, so seed the still-empty
         // `js_ref` for `check_body_stream_ref`; guarded so a pre-populated
         // Strong is never downgraded.
-        if cloned.js_ref.get().is_empty() {
-            cloned.js_ref.set(JsRef::init_weak(js_wrapper));
+        if cloned.js_ref.is_empty() {
+            cloned.js_ref.set_weak(js_wrapper);
         }
         cloned.check_body_stream_ref(global_this);
         self.sync_cloned_body_stream_caches(this_value, js_wrapper, global_this);
@@ -346,7 +346,7 @@ impl Request {
             headers: headers.map(OnceCell::from).unwrap_or_default(),
             signal: JsCell::new(None),
             body,
-            js_ref: JsCell::new(JsRef::empty()),
+            js_ref: JsRef::empty(),
             method,
             flags: Flags::default(),
             request_context: Cell::new(AnyRequestContext::NULL),
@@ -386,7 +386,7 @@ impl Request {
         let request = this.this_ptr();
         request.calculate_estimated_byte_size();
         let js_value = js::to_js(this.into_raw(), global_object);
-        request.js_ref.set(JsRef::init_weak(js_value));
+        request.js_ref.set_weak(js_value);
 
         request.check_body_stream_ref(global_object);
         js_value
@@ -858,7 +858,7 @@ impl Request {
             headers: OnceCell::new(),
             signal: JsCell::new(None),
             body,
-            js_ref: JsCell::new(JsRef::empty()),
+            js_ref: JsRef::empty(),
             method: Method::GET,
             flags: Flags::default(),
             request_context: Cell::new(AnyRequestContext::NULL),
@@ -1190,7 +1190,7 @@ impl Request {
         let request = RefPtr::new(request);
         let this = request.this_ptr();
         let this_value = structure.create(&cx.heap, request);
-        this.js_ref.set(JsRef::init_weak(this_value.to_js()));
+        this.js_ref.set_weak(this_value.to_js());
         this.check_body_stream_ref(cx.global());
         Ok(this_value)
     }
@@ -1225,7 +1225,7 @@ impl Request {
             headers: headers.map(OnceCell::from).unwrap_or_default(),
             signal: JsCell::new(self.signal.get().clone()),
             body,
-            js_ref: JsCell::new(JsRef::empty()),
+            js_ref: JsRef::empty(),
             method: self.method,
             flags: self.flags,
             request_context: Cell::new(AnyRequestContext::NULL),
@@ -1249,7 +1249,7 @@ impl Request {
             headers: OnceCell::new(),
             signal: JsCell::new(signal),
             body,
-            js_ref: JsCell::new(JsRef::empty()),
+            js_ref: JsRef::empty(),
             method,
             flags: Flags {
                 https,

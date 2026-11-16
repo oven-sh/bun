@@ -14,7 +14,7 @@ use crate::webcore::blob;
 use crate::webcore::jsc::SysErrorJsc as _;
 use crate::webcore::jsc::bindgen::{JsLocal, JsScope};
 use crate::webcore::jsc::{self as jsc, EventLoopHandle, JSValue};
-use crate::webcore::jsc::{EnsureStillAlive, strong::Optional as Strong};
+use crate::webcore::jsc::{EnsureStillAlive, StrongCell};
 use crate::webcore::node_types::PathOrFileDescriptor;
 use crate::webcore::readable_stream;
 use crate::webcore::streams;
@@ -26,7 +26,7 @@ pub struct FileReader {
     pub(crate) reader: BufferedReader,
     pub(crate) done: Cell<bool>,
     pub(crate) pending: streams::Pending,
-    pub(crate) pending_value: JsCell<Strong>, // Strong.Optional
+    pub(crate) pending_value: StrongCell,
     pub(crate) fd: Cell<Fd>,
     /// Read-only after construction (set via struct literal in `from_blob_*`).
     pub(crate) start_offset: Option<usize>,
@@ -56,7 +56,7 @@ impl Default for FileReader {
             reader: BufferedReader::init(),
             done: Cell::new(false),
             pending: streams::Pending::default(),
-            pending_value: JsCell::new(Strong::empty()),
+            pending_value: StrongCell::default(),
             fd: Cell::new(Fd::INVALID),
             start_offset: None,
             max_size: None,
@@ -518,8 +518,7 @@ impl FileReader {
         }
         self.done.set(true);
         // Nothing is read into the buffer of a pull that was waiting.
-        self.pending_value
-            .with_mut(|p| p.clear_without_deallocation());
+        self.pending_value.clear_without_deallocation();
         self.reader.update_ref(false);
         if !self.reader.is_done() {
             self.on_read_result(self.reader.close());
@@ -608,7 +607,6 @@ impl FileReader {
         let mut pending_array_buffer = self
             .pending_value
             .get()
-            .get()
             .and_then(|view| view.as_array_buffer(global))
             .unwrap_or_default();
         let pending_buf = pending_array_buffer.slice_mut();
@@ -619,7 +617,7 @@ impl FileReader {
             } else if pending_buf.len() >= buffered.len() {
                 pending_buf[..buffered.len()].copy_from_slice(&buffered);
                 streams::Result::IntoArrayAndDone(streams::IntoArray {
-                    value: self.pending_value.get().get().unwrap_or_default(),
+                    value: self.pending_value.get().unwrap_or_default(),
                     len: buffered.len() as u64,
                 })
             } else {
@@ -630,7 +628,7 @@ impl FileReader {
             let result = if pending_buf.len() >= chunk.len() {
                 pending_buf[..chunk.len()].copy_from_slice(&chunk);
                 let into = streams::IntoArray {
-                    value: self.pending_value.get().get().unwrap_or_default(),
+                    value: self.pending_value.get().unwrap_or_default(),
                     len: chunk.len() as u64,
                 };
                 if was_done {
@@ -650,8 +648,7 @@ impl FileReader {
             };
             (result, !was_done)
         };
-        self.pending_value
-            .with_mut(|p| p.clear_without_deallocation());
+        self.pending_value.clear_without_deallocation();
         self.pending.run(result);
         // Re-entrant cancel or a nested pull that read to EOF closed the reader; tell the io caller to stop so it does not re-read the captured fd.
         ret && !self.done.get() && !self.reader.is_done()
@@ -826,8 +823,7 @@ impl readable_stream::SourceContext for FileReader {
         if drained.len() > 0 {
             bun_core::scoped_log!(FileReader, "onPull({}) = {}", buffer.len(), drained.len());
 
-            self.pending_value
-                .with_mut(|p| p.clear_without_deallocation());
+            self.pending_value.clear_without_deallocation();
 
             if buffer.len() >= drained.len() as usize {
                 let drained_len = drained.len();
@@ -896,7 +892,7 @@ impl readable_stream::SourceContext for FileReader {
 
         let buffer_len = buffer.len();
         let global = self.parent_const().global_this();
-        self.pending_value.with_mut(|p| p.set(global, array));
+        self.pending_value.set(global, array);
         #[cfg(windows)]
         if self.flowing.get() {
             self.on_read_result(self.reader.unpause());

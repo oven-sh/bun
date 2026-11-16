@@ -256,7 +256,7 @@ pub(crate) fn preconnect(cx: &mut JsScope<'_>, url: &BunString) -> JsResult<()> 
         .snapshot()
         .get_http_proxy_for(&url)
         .is_some()
-        || vm.tls_default_ciphers().is_some()
+        || vm.has_tls_default_ciphers()
     {
         return Ok(());
     }

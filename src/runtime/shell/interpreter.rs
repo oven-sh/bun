@@ -32,7 +32,7 @@ use bun_event_loop::AnyTaskWithExtraContext::AnyTaskWithExtraContext;
 use bun_event_loop::BoxedTask;
 use bun_event_loop::ConcurrentTask::ConcurrentTask;
 use bun_jsc::bindgen::{JsLocal, JsPayload as _, JsScope, JsWrapper};
-use bun_jsc::{ConcurrentPoster, GlobalRef, JsCell, JsCellRefExt as _, JsRef};
+use bun_jsc::{ConcurrentPoster, GlobalRef, JsRef};
 use bun_options_types::context::ContextData;
 use bun_ptr::{AliasableBox, CellExt as _};
 use bun_threading::work_pool::{OwnedTask, WorkPool};
@@ -355,7 +355,7 @@ pub(crate) struct ShellInterpreter {
     /// Set by `finish`.
     exit_code: Cell<Option<ExitCode>>,
     /// The JS wrapper. Strong from `run_from_js` until `finish` has settled the promise.
-    this_value: JsCell<JsRef>,
+    this_value: JsRef,
     estimated_size_for_gc: usize,
 }
 
@@ -553,7 +553,7 @@ impl ShellInterpreter {
             context: Cell::new(None),
             global_this,
             exit_code: Cell::new(None),
-            this_value: JsCell::new(JsRef::empty()),
+            this_value: JsRef::empty(),
             estimated_size_for_gc,
         }
     }
@@ -1103,7 +1103,7 @@ impl ShellInterpreter {
 
     /// For callers that use `self` after `finish` may have dropped the strong `this_value`.
     pub(crate) fn ensure_still_alive(&self) -> bun_jsc::EnsureStillAlive {
-        bun_jsc::EnsureStillAlive(self.this_value.get_or_undefined())
+        bun_jsc::EnsureStillAlive(self.this_value.get())
     }
 
     /// Whose script the shell's completion continues.
@@ -1300,7 +1300,7 @@ impl ShellInterpreter {
         self.keep_alive.disable();
 
         // Roots the wrapper until the promise is settled.
-        let this_value = self.this_value.replace(JsRef::empty());
+        let this_value = self.this_value.take();
         let (Some(this_jsvalue), Some([stdout, stderr])) = (this_value.try_get(), output) else {
             return;
         };
@@ -1392,7 +1392,7 @@ impl ShellInterpreter {
             self.args.set(None);
             return Err(ShellErr::new_sys(&e).throw_js(global_this));
         }
-        self.this_value.with_mut(|r| r.upgrade(global_this));
+        self.this_value.upgrade(global_this);
         let vm = global_this.bun_vm();
         self.context.set(
             vm.as_graph_context(vm.context_of_caller())
@@ -2650,7 +2650,7 @@ pub(crate) fn create_shell_interpreter<'a>(
     if let Some(jsobjs) = parsed_shell_script::js::jsobjs_get_cached(parsed_shell_script_js) {
         js::jsobjs_set_cached(js_value, global, jsobjs);
     }
-    interp.this_value.set(JsRef::init_weak(js_value));
+    interp.this_value.set_weak(js_value);
     interp.keep_alive.ref_(global.bun_vm().loop_ctx());
     bun_analytics::features::shell.fetch_add(1, Ordering::Relaxed);
     Ok(this_value)

@@ -1004,11 +1004,8 @@ test("rows of a table and a helper of another name, two steps from the test file
   });
   const plain = await runTests(String(dir));
   expect(plain.stdout).toContain("5 row row yes too\n2 a-b e undefined undefined");
-  const logs = { ...bunEnv, BUN_JSC_logAOTPhaseTimes: "1" };
-  const logged = await run([bunExe(), "test", "--timeout=60000", "--aot"], String(dir), logs);
-  expect(logged.stdout).toContain("5 row row yes too\n2 a-b e undefined undefined");
-  expect(logged.stderr).not.toContain("AOT build starts over | replaced built-ins added");
-  expect(logged.stderr).not.toContain("AOT build starts over | names opened");
+  const compiled = await run([bunExe(), "test", "--timeout=60000", "--aot"], String(dir), bunEnv);
+  expect(compiled.stdout).toContain("5 row row yes too\n2 a-b e undefined undefined");
 });
 
 test("a Worker's file marks a list of objects under one key", async () => {

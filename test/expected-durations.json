@@ -16,6 +16,10 @@
       "windows-aarch64": "windows-aarch64-11-test-bun"
     }
   },
+  "aot/what-a-build-says-is-written-at-once.test.ts": {
+    "default": 60000,
+    "asan": 240000
+  },
   "aot/an-import-in-a-text-calls-the-replaced-eval.test.ts": {
     "default": 6200,
     "asan": 24800

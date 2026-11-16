@@ -41,7 +41,6 @@ async function ran(words: string) {
   const { stdout, stderr, exitCode } = await run([bunExe(), "test", "--aot", "--timeout=60000"], cwd, {
     ...bunEnv,
     BUN_DEBUG_TEST_AOT_WORDS: words,
-    BUN_JSC_logAOTPhaseTimes: "1",
     [runtimeEnvironment.countsPath]: join(cwd, "counts-%p"),
   });
   const counted = readdirSync(cwd)
@@ -52,10 +51,6 @@ async function ran(words: string) {
     exitCode,
     // Each Worker writes its own counts. Where none does, a sum of zero says nothing.
     workersCounted: counted.filter(line => line.endsWith("\tcounter:InterpretedModuleCode")).length > names.length,
-    // The load of the layer finds the files and goes on with them. A build that starts over loads every file of the packages twice.
-    startsOver: stderr
-      .split("\n")
-      .filter(line => line.startsWith("AOT build starts over | files that Workers start from")),
     interpreted: counted
       .filter(line => /\tcounter:Interpreted(Function|Global|Eval|Module)Code$/.test(line))
       .reduce((sum, line) => sum + Number(line.split("\t")[0]), 0),

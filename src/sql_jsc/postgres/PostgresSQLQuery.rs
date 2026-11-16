@@ -365,11 +365,8 @@ impl PostgresSQLQuery {
     }
 
     /// `result.statement` of the result for which `on_result` gave this number instead.
-    pub fn describe_result(&self, cx: &mut JsScope<'_>, number: JsLocal<'_>) -> JsResult<JSValue> {
-        match self
-            .undescribed
-            .with_mut(|results| results.take(number.to_js()))
-        {
+    pub fn describe_result(&self, cx: &mut JsScope<'_>, number: usize) -> JsResult<JSValue> {
+        match self.undescribed.with_mut(|results| results.take(number)) {
             Some((parameters, fields)) => describe(cx.global(), &self.query, &parameters, &fields),
             None => Ok(JSValue::NULL),
         }

@@ -2,9 +2,10 @@
 // `number` of a system column (postgres.js reads it unsigned, 65535) and the type of a MariaDB JSON column (mysql2 says 252).
 import { SQL, randomUUIDv7 } from "bun";
 import { beforeAll, describe, expect, test } from "bun:test";
-import { describeWithContainer } from "harness";
+import { bunEnv, bunExe, describeWithContainer } from "harness";
 import type { Socket } from "node:net";
 import {
+  closedPort,
   loopbackFence,
   pgCommandComplete,
   pgDataRow,
@@ -283,6 +284,63 @@ test("postgres: an OID over 2^31 is not negative", async () => {
   } finally {
     server.close();
   }
+});
+
+// `result.statement` asks the native query for its description by number. The native query is a
+// symbol-keyed property of the query, so a program can call it with any value. The child process
+// makes the calls because a regression here aborts the process.
+test.concurrent.each(["postgres", "mysql"])("%s: describeResult takes only the number of a result", async adapter => {
+  const port = await closedPort();
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `const sql = new Bun.SQL({ url: process.env.SQL_URL, max: 1 });
+const query = sql\`select 1\`;
+query.execute();
+query.catch(() => {});
+const handle =
+  query[
+    [query, Object.getPrototypeOf(query)]
+      .flatMap(object => Object.getOwnPropertySymbols(object))
+      .find(symbol => symbol.description === "handle")
+  ];
+if (typeof handle?.describeResult !== "function") throw new Error("the query has no native handle");
+const results = {};
+for (const [label, value] of [
+  ["string", "x"],
+  ["object", {}],
+  ["bigint", 1n],
+  ["undefined", undefined],
+  ["negative", -1],
+  ["fraction", 0.5],
+  ["a number no result has", 7],
+]) {
+  try {
+    results[label] = handle.describeResult(value);
+  } catch (e) {
+    results[label] = e.code;
+  }
+}
+console.log(JSON.stringify(results));
+await sql.close({ timeout: 0 });`,
+    ],
+    env: { ...bunEnv, SQL_URL: `${adapter}://user@127.0.0.1:${port}/db` },
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stderr).toBe("");
+  expect(JSON.parse(stdout)).toEqual({
+    string: "ERR_INVALID_ARG_TYPE",
+    object: "ERR_INVALID_ARG_TYPE",
+    bigint: "ERR_INVALID_ARG_TYPE",
+    undefined: "ERR_INVALID_ARG_TYPE",
+    negative: "ERR_OUT_OF_RANGE",
+    fraction: "ERR_OUT_OF_RANGE",
+    "a number no result has": null,
+  });
+  expect(exitCode).toBe(0);
 });
 
 for (const [dialect, image] of [

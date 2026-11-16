@@ -30,8 +30,8 @@ use bstr::BStr;
 use bun_alloc::AllocError;
 use bun_collections::linear_fifo::DynamicBuffer;
 use bun_collections::{
-    ArrayHashMap, DynamicBitSet, DynamicBitSetList, DynamicBitSetUnmanaged, HashMap, LinearFifo,
-    StringArrayHashMap, index_sort,
+    ArrayHashMap, DynamicBitSet, DynamicBitSetList, HashMap, LinearFifo, StringArrayHashMap,
+    index_sort,
 };
 use bun_core::{Global, Output, fast_random, fmt as bun_fmt};
 use bun_paths::path_options::AssumeOk as _;
@@ -544,8 +544,8 @@ fn build_store(
     }
     let peer_name_count: u32 = u32::try_from(peer_name_idx.count()).expect("int cast");
 
-    let leaking_peers: DynamicBitSetList =
-        DynamicBitSetList::init_empty(lockfile.packages.len(), peer_name_count as usize)?;
+    let mut leaking_peers =
+        DynamicBitSetList::init_empty(lockfile.packages.len(), peer_name_count)?;
 
     if peer_name_count != 0 {
         // The runtime child of a peer edge is whichever package an ancestor's
@@ -569,10 +569,9 @@ fn build_store(
         // Per-package bits computed once: own peer-dep names, and non-peer
         // dependency names that will appear in `node_dependencies` (i.e., not
         // filtered out by bundled/disabled/unresolved).
-        let own_peers: DynamicBitSetList =
-            DynamicBitSetList::init_empty(lockfile.packages.len(), peer_name_count as usize)?;
-        let provides: DynamicBitSetList =
-            DynamicBitSetList::init_empty(lockfile.packages.len(), peer_name_count as usize)?;
+        let mut own_peers =
+            DynamicBitSetList::init_empty(lockfile.packages.len(), peer_name_count)?;
+        let mut provides = DynamicBitSetList::init_empty(lockfile.packages.len(), peer_name_count)?;
         for pkg_idx in 0..lockfile.packages.len() {
             let pkg_id: PackageID = u32::try_from(pkg_idx).expect("int cast");
             let deps = pkg_dependency_slices[pkg_id as usize];
@@ -582,7 +581,7 @@ fn build_store(
                     continue;
                 };
                 if dep.behavior.is_peer() {
-                    own_peers.set(pkg_id as usize, bit);
+                    own_peers.at_mut(pkg_id).set(bit);
                 } else if !is_contained_folder(dep_id)
                     && !is_filtered_dependency_or_workspace(
                         dep_id,
@@ -595,12 +594,12 @@ fn build_store(
                         &mut linked,
                     )
                 {
-                    provides.set(pkg_id as usize, bit);
+                    provides.at_mut(pkg_id).set(bit);
                 }
             }
         }
 
-        let mut scratch = DynamicBitSetUnmanaged::init_empty(peer_name_count as usize)?;
+        let mut scratch = DynamicBitSet::init_empty(peer_name_count as usize)?;
 
         let mut changed = true;
         while changed {
@@ -609,28 +608,28 @@ fn build_store(
                 let pkg_id: PackageID = u32::try_from(pkg_idx).expect("int cast");
                 let deps = pkg_dependency_slices[pkg_id as usize];
 
-                scratch.copy_into(&own_peers.at(pkg_id as usize));
+                scratch.copy_from(&own_peers.at(pkg_id));
 
                 for dep_id in deps.begin()..deps.end() {
                     let dep = &dependencies[dep_id as usize];
                     if dep.behavior.is_peer() {
                         if let Some(bit) = peer_name_idx.get_index(&dep.name_hash) {
                             for &child in &peer_targets[bit] {
-                                scratch.set_union(&leaking_peers.at(child as usize));
+                                scratch.set_union(&leaking_peers.at(child));
                             }
                         }
                     } else {
                         let res_pkg = resolutions[dep_id as usize];
                         if res_pkg != invalid_package_id {
-                            scratch.set_union(&leaking_peers.at(res_pkg as usize));
+                            scratch.set_union(&leaking_peers.at(res_pkg));
                         }
                     }
                 }
-                scratch.set_exclude(&provides.at(pkg_id as usize));
+                scratch.set_exclude(&provides.at(pkg_id));
 
-                let mut dst = leaking_peers.at(pkg_id as usize);
+                let mut dst = leaking_peers.at_mut(pkg_id);
                 if !scratch.eql(&dst) {
-                    dst.copy_into(&scratch);
+                    dst.copy_from(&scratch);
                     changed = true;
                 }
             }
@@ -778,7 +777,7 @@ fn build_store(
                         0
                     } else {
                         'ctx: {
-                            let leaks = leaking_peers.at(entry.pkg_id as usize);
+                            let leaks = leaking_peers.at(entry.pkg_id);
                             if leaks.count() == 0 {
                                 break 'ctx 0;
                             }

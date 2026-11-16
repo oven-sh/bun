@@ -196,14 +196,14 @@ impl GraphTraceState {
     }
 
     pub(crate) fn clear(&mut self) {
-        self.server_bits.unmanaged.set_all(false);
-        self.client_bits.unmanaged.set_all(false);
+        self.server_bits.set_all(false);
+        self.client_bits.set_all(false);
         self.failures.clear();
     }
 
     pub(crate) fn resize(&mut self, side: Side, new_size: usize) -> Result<(), crate::Error> {
         let b = self.bits(side);
-        if b.unmanaged.bit_length < new_size {
+        if b.bit_length() < new_size {
             b.resize(new_size, false)?;
         }
         Ok(())

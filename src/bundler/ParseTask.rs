@@ -813,9 +813,14 @@ pub mod parse_worker {
                 let module_type = opts.module_type;
                 // Borrowed here: `topts` is a `&mut` that ends earlier borrows of the options.
                 opts.macro_remap = Some(&topts.macro_remap);
-                return if let Some(res) =
-                    (crate::cache::JavaScript {}).parse(bump, opts, &topts.define, log, source)?
-                {
+                return if let Some(res) = (crate::cache::JavaScript {}).parse(
+                    bump,
+                    opts,
+                    &topts.define,
+                    log,
+                    source,
+                    None,
+                )? {
                     // `Cached`/`AlreadyBundled` are runtime-loader
                     // states that never reach the bundler's `getAST`, so unwrap.
                     match res {

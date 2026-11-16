@@ -1330,6 +1330,64 @@ describe("expect()", () => {
     }).toThrow(expect.objectContaining({ code: "ERR_BAZ", name: "TypeError" }));
   });
 
+  describe("toThrow and .not.toThrow give opposite answers", () => {
+    const thrower = (/** @type {unknown} */ thrown) => () => {
+      throw thrown;
+    };
+    const passes = (/** @type {() => unknown} */ run, /** @type {boolean} */ not) => {
+      try {
+        run();
+        return true;
+      } catch (error) {
+        return didNotPass(error, not);
+      }
+    };
+    /** Whether the matcher passes without `.not`, and with it. */
+    const verdicts = (/** @type {unknown} */ thrown, /** @type {any} */ expected) => [
+      passes(() => expect(thrower(thrown)).toThrow(expected), false),
+      passes(() => expect(thrower(thrown)).not.toThrow(expected), true),
+    ];
+    const messageOf = (/** @type {() => unknown} */ run) => {
+      try {
+        run();
+      } catch (error) {
+        return stripVTControlCharacters(ANY(error).message);
+      }
+    };
+
+    test("for an asymmetric matcher", async () => {
+      expect.extend({ toHaveCode: (received, code) => ({ pass: ANY(received).code === code, message: () => "" }) });
+      const error = Object.assign(new TypeError("foo"), { code: 1 });
+      for (const [thrown, matches, differs] of [
+        [error, expect.objectContaining({ code: 1 }), expect.objectContaining({ code: 2 })],
+        [error, expect.not.objectContaining({ code: 2 }), expect.not.objectContaining({ code: 1 })],
+        [error, ANY(expect).toHaveCode(1), ANY(expect).toHaveCode(2)],
+        [error, expect.anything(), expect.stringContaining("foo")],
+        ["abc", expect.stringContaining("b"), expect.stringContaining("x")],
+        ["abc", expect.stringMatching(/b/), expect.stringMatching(/x/)],
+        [[1, 2], expect.arrayContaining([1]), expect.arrayContaining([3])],
+        [1.001, expect.closeTo(1), expect.closeTo(2)],
+      ]) {
+        expect(verdicts(thrown, matches)).toEqual([true, false]);
+        expect(verdicts(thrown, differs)).toEqual([false, true]);
+      }
+
+      expect(passes(() => expect(thrower(error)).not.toThrowError(expect.anything()), true)).toBe(false);
+      expect(() => {}).not.toThrow(expect.anything());
+
+      const rejectsWithout = async (/** @type {any} */ expected) =>
+        expect(Promise.reject(error)).rejects.not.toThrow(expected);
+      await rejectsWithout(expect.objectContaining({ code: 2 }));
+      expect(await rejectsWithout(expect.anything()).catch(failure => didNotPass(failure, true))).toBe(false);
+    });
+
+    test_skipIf(!isBun)("and .not prints the matcher that matched", () => {
+      expect(messageOf(() => expect(thrower("abc")).not.toThrow(expect.stringContaining("b")))).toBe(
+        'expect(received).not.toThrow(expected)\n\nExpected value: not StringContaining "b"\nReceived value: "abc"\n',
+      );
+    });
+  });
+
   test("toThrow", () => {
     expect(() => {
       throw new Error("hello");

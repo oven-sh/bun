@@ -115,7 +115,7 @@ fn compare_thrown(m: &Matcher<'_>, expected: JSValue, thrown: JSValue) -> Verdic
     let read_first = if !m.not() { Some(message_of(global, thrown)?) } else { None };
     let message = || read_first.map_or_else(|| message_of(global, thrown), Ok);
 
-    if !m.not() && expected.is_object() && Expect::is_asymmetric_matcher(expected) {
+    if expected.is_object() && Expect::is_asymmetric_matcher(expected) {
         if m.passes(thrown.jest_strict_deep_equals(expected, global)?) {
             return m.pass();
         }

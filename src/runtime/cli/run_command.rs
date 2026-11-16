@@ -3898,6 +3898,8 @@ impl BunXFastPath {
         env: &mut DotEnv::Loader,
         passthrough: &[Box<[u8]>],
     ) {
+        use bun_install::windows_shim::bun_shim_impl;
+
         if !bun_core::FeatureFlags::WINDOWS_BUNX_FAST_PATH {
             return;
         }
@@ -3911,22 +3913,8 @@ impl BunXFastPath {
         );
         debug_assert!(paths::is_absolute_windows_wtf16(path_to_use));
 
-        let handle = match sys::open_file_at_windows(
-            Fd::INVALID, // absolute path is given
-            path_to_use,
-            sys::NtCreateFileOptions {
-                access_mask: sys::windows::STANDARD_RIGHTS_READ
-                    | sys::windows::FILE_READ_DATA
-                    | sys::windows::FILE_READ_ATTRIBUTES
-                    | sys::windows::FILE_READ_EA
-                    | sys::windows::SYNCHRONIZE,
-                disposition: sys::windows::FILE_OPEN,
-                options: sys::windows::FILE_NON_DIRECTORY_FILE
-                    | sys::windows::FILE_SYNCHRONOUS_IO_NONALERT,
-                ..Default::default()
-            },
-        ) {
-            Ok(fd) => fd.native(),
+        let metadata_file = match bun_shim_impl::MetadataFile::open(path_to_use) {
+            Ok(file) => file,
             Err(err) => {
                 bun_core::scoped_log!(BUNX_FAST_PATH_LOG, "Failed to open bunx file: '{}'", err);
                 return;
@@ -3949,16 +3937,14 @@ impl BunXFastPath {
 
         let env_block = env.map.write_windows_env_block();
 
-        let run_ctx = bun_install::windows_shim::bun_shim_impl::FromBunRunContext {
-            handle,
-            base_path: path_to_use[4..].as_mut_ptr(),
-            base_path_len: path_to_use.len() - 4,
-            arguments: command_line.as_mut_ptr(),
-            arguments_len: i,
+        let run_ctx = bun_shim_impl::FromBunRunContext {
+            metadata_file,
+            base_path: &path_to_use[4..],
+            arguments: &command_line[..i],
             force_use_bun: ctx.debug.run_in_bun,
             direct_launch_with_bun_js: Self::direct_launch_callback,
-            cli_context: ::core::ptr::from_mut(ctx),
-            environment: Some(env_block.as_ptr()),
+            cli_context: ctx,
+            environment: &env_block,
         };
 
         bun_core::scoped_log!(
@@ -3967,7 +3953,7 @@ impl BunXFastPath {
             run_ctx.force_use_bun
         );
 
-        bun_install::windows_shim::bun_shim_impl::try_startup_from_bun_js(run_ctx);
+        bun_shim_impl::try_startup_from_bun_js(run_ctx);
 
         bun_core::scoped_log!(BUNX_FAST_PATH_LOG, "did not start via shim");
     }

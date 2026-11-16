@@ -1,4 +1,4 @@
-//! HTTP/3 client over lsquic via packages/bun-usockets/src/quic.c.
+//! HTTP/3 client over lsquic via packages/bun-usockets/src/quic.cpp.
 //!
 //! One `ClientContext` per HTTP-thread loop wraps the lsquic client engine;
 //! each `ClientSession` is one QUIC connection to an origin and multiplexes

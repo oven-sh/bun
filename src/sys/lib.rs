@@ -1143,7 +1143,7 @@ pub mod file;
 mod mmap;
 pub use mmap::Mmap;
 pub mod private_copy;
-pub use file::{File, ReadToEndResult};
+pub use file::{File, MaybeOwnedFile, ReadToEndResult};
 pub mod dir;
 pub use dir::*;
 

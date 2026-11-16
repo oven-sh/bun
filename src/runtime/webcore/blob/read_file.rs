@@ -9,6 +9,8 @@ use scopeguard::ScopeGuard;
 use crate::Error;
 #[cfg(windows)]
 use crate::node::types::PathLikeExt as _;
+#[cfg(windows)]
+use crate::server::file_response_stream::StreamFd;
 use crate::webcore::blob::store::{Data, File as FileStore};
 use crate::webcore::blob::{Blob, MAX_SIZE, SizeType, Store};
 #[cfg(not(windows))]
@@ -225,7 +227,7 @@ pub(crate) struct ReadFile {
     pub offset: SizeType,
     pub(crate) max_length: SizeType,
     pub(crate) total_size: SizeType,
-    pub(crate) opened_fd: Fd,
+    pub(crate) opened: bun_sys::MaybeOwnedFile,
     pub(crate) read_eof: bool,
     pub(crate) size: SizeType,
     pub(crate) buffer: Vec<u8>,
@@ -249,11 +251,8 @@ bun_io::intrusive_io_request!(ReadFile, io_request);
 // The default methods on the FileOpener/FileCloser traits provide the bodies.
 #[cfg(not(windows))]
 impl FileOpener for ReadFile {
-    fn opened_fd(&self) -> Fd {
-        self.opened_fd
-    }
-    fn set_opened_fd(&mut self, fd: Fd) {
-        self.opened_fd = fd;
+    fn opened(&mut self) -> &mut bun_sys::MaybeOwnedFile {
+        &mut self.opened
     }
     fn set_errno(&mut self, e: crate::Error) {
         self.errno = Some(e);
@@ -288,7 +287,7 @@ impl ReadFile {
             offset: blob.offset.get(),
             max_length: blob.size.get(),
             total_size: MAX_SIZE,
-            opened_fd: Fd::INVALID,
+            opened: bun_sys::MaybeOwnedFile::INVALID,
             read_eof: false,
             size: 0,
             buffer: Vec::new(),
@@ -379,7 +378,7 @@ impl ReadFile {
         io::Action::Readable(FileAction {
             on_error: Self::on_io_error_thunk,
             ctx: std::ptr::from_mut::<ReadFile>(this).cast::<()>(),
-            fd: this.opened_fd,
+            fd: this.opened.fd(),
             poll: &mut this.io_poll,
             tag: ReadFile::IO_TAG,
         })
@@ -426,9 +425,9 @@ impl ReadFile {
     fn do_read(&mut self, buf: BorrowedCursor<'_, u8>, retry: &mut bool) -> bool {
         let result: bun_sys::Result<usize> = 'brk: {
             if bun_sys::S::ISSOCK(self.file_store.mode) {
-                break 'brk bun_sys::recv_non_block_buf(self.opened_fd, buf);
+                break 'brk bun_sys::recv_non_block_buf(self.opened.fd(), buf);
             }
-            break 'brk crate::node::fs::read_descriptor(self.opened_fd, buf);
+            break 'brk crate::node::fs::read_descriptor(self.opened.fd(), buf);
         };
 
         loop {
@@ -519,16 +518,7 @@ impl ReadFile {
 
     fn run_async(&mut self, task: ReadFileTask) {
         self.io_task = Some(task);
-
-        if self.file_store.pathlike.is_fd() {
-            self.opened_fd = self.file_store.pathlike.fd();
-        }
-
         self.get_fd(Self::run_async_with_fd);
-    }
-
-    pub(crate) fn is_allowed_to_close(&self) -> bool {
-        self.file_store.pathlike.is_path()
     }
 
     fn on_finish(&mut self) {
@@ -536,7 +526,7 @@ impl ReadFile {
         self.size = self.buffer.len() as SizeType;
 
         {
-            if self.do_close(self.is_allowed_to_close()) {
+            if self.do_close() {
                 bloblog!("ReadFile.onFinish() = deferred");
                 // we have to wait for the close to finish
                 return;
@@ -736,7 +726,7 @@ impl ReadFile {
                         // call. We already know it's done.
                         && !self.read_eof
                     {
-                        match bun_core::is_readable(self.opened_fd) {
+                        match bun_core::is_readable(self.opened.fd()) {
                             bun_core::Pollable::NotReady => {}
                             bun_core::Pollable::Ready | bun_core::Pollable::Hup => continue,
                         }
@@ -782,7 +772,7 @@ pub(crate) struct ReadFileUV {
     pub(crate) store: RefPtr<Store>,
     pub offset: SizeType,
     pub(crate) max_length: SizeType,
-    pub(crate) opened_fd: Fd,
+    pub(crate) opened_fd: StreamFd,
     pub(crate) read_off: SizeType,
     pub(crate) buffer: Vec<u8>,
     pub(crate) system_error: Option<SystemError>,
@@ -815,7 +805,7 @@ impl ReadFileUV {
             store, // store.ref() — Arc clone owned here
             offset: blob.offset.get(),
             max_length: blob.size.get(),
-            opened_fd: Fd::INVALID,
+            opened_fd: StreamFd::borrowed(Fd::INVALID),
             read_off: 0,
             buffer: Vec::new(),
             system_error: None,
@@ -828,7 +818,7 @@ impl ReadFileUV {
         let _caller =
             jsc::virtual_machine::VirtualMachine::get().enter_event_loop_scope_without_checkpoint();
         if let PathOrFileDescriptor::Fd(fd) = this.file_store.pathlike {
-            this.opened_fd = fd;
+            this.opened_fd = StreamFd::borrowed(fd);
             this.queue_stat();
         } else {
             this.open();
@@ -869,7 +859,7 @@ impl ReadFileUV {
             return;
         }
 
-        this.opened_fd = Fd::from_uv(result.to_fd());
+        this.opened_fd = bun_sys::File::from_fd(Fd::from_uv(result.to_fd())).into();
         this.queue_stat();
     }
 
@@ -907,13 +897,9 @@ impl ReadFileUV {
         log!("ReadFileUV.finalize destroy");
     }
 
-    fn on_finish(self: Box<Self>) {
+    fn on_finish(mut self: Box<Self>) {
         log!("ReadFileUV.onFinish");
-        let fd = self.opened_fd;
-        if self.file_store.pathlike.is_path() && fd != Fd::INVALID && fd.stdio_tag().is_none() {
-            bun_io::Closer::close(fd, self.loop_);
-        }
-
+        self.opened_fd = StreamFd::borrowed(Fd::INVALID);
         self.finalize();
     }
 
@@ -927,7 +913,7 @@ impl ReadFileUV {
         log!("ReadFileUV.queueStat");
         self.req.deinit();
 
-        let (loop_, fd) = (self.loop_, self.opened_fd.uv());
+        let (loop_, fd) = (self.loop_, self.opened_fd.get().uv());
         let this = bun_core::heap::into_raw(self);
         // SAFETY: the VM's loop outlives the request, and libuv has `this` until
         // `on_file_initial_stat`.
@@ -1000,7 +986,7 @@ impl ReadFileUV {
 
         if this.offset > 0 {
             // We DO support offset in Bun.file()
-            match bun_sys::set_file_offset(this.opened_fd, this.offset) {
+            match bun_sys::set_file_offset(this.opened_fd.get(), this.offset) {
                 // we ignore errors because it should continue to work even if its a pipe
                 Err(_) | Ok(_) => {}
             }
@@ -1071,7 +1057,7 @@ impl ReadFileUV {
             self.req.assert_cleaned_up();
             let position = i64::try_from(self.offset + self.read_off).expect("int cast");
 
-            let (loop_, fd) = (self.loop_, self.opened_fd.uv());
+            let (loop_, fd) = (self.loop_, self.opened_fd.get().uv());
             let this = bun_core::heap::into_raw(self);
             // SAFETY: the VM's loop outlives the request, libuv copies `bufs` before it returns, and
             // it has `this`, whose `buffer` has the spare capacity they name, until `on_read`.

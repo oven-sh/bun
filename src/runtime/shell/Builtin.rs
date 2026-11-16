@@ -547,7 +547,7 @@ impl Builtin {
                 let mut is_socket = false;
                 let mut is_nonblocking = false;
 
-                let redirfd: bun_sys::Fd = if redirect.stdin() {
+                let redirfd: bun_sys::File = if redirect.stdin() {
                     let flags = redirect.to_flags();
                     let opened = shell_openat(cwd_fd, path, flags, perm).or_else(|error| {
                         let cwd = Self::shell(interp, cmd).cwd();
@@ -566,7 +566,7 @@ impl Builtin {
                                 ),
                             ));
                         }
-                        Ok(f) => f,
+                        Ok(f) => bun_sys::File::from_fd(f),
                     }
                 } else {
                     let cwd = Self::shell(interp, cmd).cwd();
@@ -602,7 +602,7 @@ impl Builtin {
                         }
                         Ok(f) => {
                             note_shell_redirect(cwd, path.as_bytes(), redirect.to_flags());
-                            f.into_raw()
+                            f
                         }
                     }
                 };
@@ -611,9 +611,6 @@ impl Builtin {
                     let r = IOReader::init(redirfd, evtloop);
                     r.set_interp(interp);
                     Self::of_mut(interp, cmd).stdin = BuiltinInput::Fd(r);
-                }
-
-                if !redirect.stdout() && !redirect.stderr() {
                     return None;
                 }
 

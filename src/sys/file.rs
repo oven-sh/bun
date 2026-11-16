@@ -25,6 +25,50 @@ impl Drop for File {
     }
 }
 
+/// A [`File`], or a descriptor that someone else closes.
+pub enum MaybeOwnedFile {
+    Owned(File),
+    Borrowed(Fd),
+}
+
+impl MaybeOwnedFile {
+    pub const INVALID: Self = Self::Borrowed(Fd::INVALID);
+
+    pub fn is_owned(&self) -> bool {
+        matches!(self, Self::Owned(_))
+    }
+
+    /// As [`File::into_raw`].
+    pub fn into_raw(self) -> Fd {
+        match self {
+            Self::Owned(file) => file.into_raw(),
+            Self::Borrowed(fd) => fd,
+        }
+    }
+}
+
+impl Default for MaybeOwnedFile {
+    fn default() -> Self {
+        Self::INVALID
+    }
+}
+
+impl From<File> for MaybeOwnedFile {
+    fn from(file: File) -> Self {
+        Self::Owned(file)
+    }
+}
+
+impl core::ops::Deref for MaybeOwnedFile {
+    type Target = File;
+    fn deref(&self) -> &File {
+        match self {
+            Self::Owned(file) => file,
+            Self::Borrowed(fd) => File::borrow(fd),
+        }
+    }
+}
+
 /// `{ bytes, err? }` pair so callers can recover the partially-read
 /// buffer even on error.
 #[derive(Default)]

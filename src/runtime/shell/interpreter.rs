@@ -501,7 +501,7 @@ impl Interpreter {
         let stdin_fd_res = if bun_core::output::stdio::is_stdin_null() {
             #[cfg(unix)]
             {
-                bun_sys::open(
+                File::open(
                     bun_core::ZStr::from_static(b"/dev/null\0"),
                     bun_sys::O::RDONLY,
                     0,
@@ -509,7 +509,7 @@ impl Interpreter {
             }
             #[cfg(windows)]
             {
-                bun_sys::open(bun_core::ZStr::from_static(b"NUL\0"), bun_sys::O::RDONLY, 0)
+                File::open(bun_core::ZStr::from_static(b"NUL\0"), bun_sys::O::RDONLY, 0)
             }
         } else {
             shell_dup(Fd::stdin())
@@ -1113,39 +1113,29 @@ impl Interpreter {
 
         // ── dup stdout ─────────────────────────────────────────────────────
         log!("Duping stdout");
-        let stdout = File::from_fd(if bun_core::output::stdio::is_stdout_null() {
+        let stdout = if bun_core::output::stdio::is_stdout_null() {
             open_null_device()?
         } else {
             shell_dup(Fd::stdout())?
-        });
+        };
 
         // ── dup stderr ─────────────────────────────────────────────────────
         log!("Duping stderr");
-        let stderr_fd = if bun_core::output::stdio::is_stderr_null() {
+        let stderr = if bun_core::output::stdio::is_stderr_null() {
             open_null_device()?
         } else {
             shell_dup(Fd::stderr())?
         };
 
-        let stdout_fd = stdout.into_raw();
-        let stdout_writer = IOWriter::init(
-            stdout_fd,
-            crate::shell::io_writer::Flags {
-                pollable: is_pollable(stdout_fd),
+        let [stdout_writer, stderr_writer] = [stdout, stderr].map(|file| {
+            let flags = crate::shell::io_writer::Flags {
+                pollable: is_pollable(file.fd()),
                 ..Default::default()
-            },
-            event_loop,
-        );
-        stdout_writer.set_interp(self);
-        let stderr_writer = IOWriter::init(
-            stderr_fd,
-            crate::shell::io_writer::Flags {
-                pollable: is_pollable(stderr_fd),
-                ..Default::default()
-            },
-            event_loop,
-        );
-        stderr_writer.set_interp(self);
+            };
+            let writer = IOWriter::init(file, flags, event_loop);
+            writer.set_interp(self);
+            writer
+        });
 
         // On the JS event loop, hook captured buffers so the JS
         // `Bun.$` API can read stdout/stderr after completion. The mini path
@@ -1940,10 +1930,10 @@ pub(crate) use crate::shell::states::assigns::AssignCtx;
 /// start so we have *something* to dup into the shell's root IO. Must be
 /// writable: `setup_io_before_run` installs the result as the stdout/stderr
 /// `IOWriter` target (and `init` uses it for stdin), so `RDWR` covers both.
-fn open_null_device() -> bun_sys::Result<Fd> {
+fn open_null_device() -> bun_sys::Result<File> {
     #[cfg(unix)]
     {
-        bun_sys::open(
+        File::open(
             bun_core::ZStr::from_static(b"/dev/null\0"),
             bun_sys::O::RDWR,
             0,
@@ -1952,7 +1942,7 @@ fn open_null_device() -> bun_sys::Result<Fd> {
     #[cfg(windows)]
     {
         // Windows NUL is bidirectional regardless of the open flags.
-        bun_sys::open(bun_core::ZStr::from_static(b"nul\0"), bun_sys::O::RDWR, 0)
+        File::open(bun_core::ZStr::from_static(b"nul\0"), bun_sys::O::RDWR, 0)
     }
 }
 
@@ -2030,17 +2020,8 @@ impl Drop for OwnedFd {
 /// to a libuv-owned fd via `make_lib_uv_owned_for_syscall` so
 /// the IOWriter/IOReader uv-based async write/read paths receive a uv fd
 /// instead of a raw NT handle.
-pub(crate) fn shell_dup(fd: Fd) -> bun_sys::Result<Fd> {
-    #[cfg(windows)]
-    {
-        bun_sys::File::from_fd(bun_sys::dup(fd)?)
-            .make_lib_uv_owned_for_syscall(bun_sys::Tag::dup)
-            .map(bun_sys::File::into_raw)
-    }
-    #[cfg(not(windows))]
-    {
-        bun_sys::dup(fd)
-    }
+pub(crate) fn shell_dup(fd: Fd) -> bun_sys::Result<File> {
+    File::from_fd(bun_sys::dup(fd)?).make_lib_uv_owned_for_syscall(bun_sys::Tag::dup)
 }
 
 /// Joins `parts` into an owned, normalized path. Fails with `ENAMETOOLONG` if the result is

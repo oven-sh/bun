@@ -1200,8 +1200,8 @@ impl BlobExt for Blob {
             #[cfg(windows)]
             {
                 let pathlike = &store.data.as_file().pathlike;
-                let fd: Fd = if let PathOrFileDescriptor::Fd(fd) = pathlike {
-                    *fd
+                let file = if let PathOrFileDescriptor::Fd(fd) = pathlike {
+                    bun_sys::MaybeOwnedFile::Borrowed(*fd)
                 } else {
                     let mut file_path = bun_paths::path_buffer_pool::get();
                     let path = pathlike.path().slice_z(&mut file_path);
@@ -1224,7 +1224,7 @@ impl BlobExt for Blob {
                     match result {
                         bun_sys::Result::Ok(result) => {
                             node::fs::note_opened_for_write(path.as_bytes(), true);
-                            result
+                            bun_sys::File::from_fd(result).into()
                         }
                         bun_sys::Result::Err(err) => {
                             return Ok(JSPromise::rejected_promise(
@@ -1238,11 +1238,11 @@ impl BlobExt for Blob {
 
                 let is_stdout_or_stderr = matches!(pathlike, PathOrFileDescriptor::Fd(_))
                     && matches!(
-                        fd.stdio_tag(),
+                        file.fd().stdio_tag(),
                         Some(bun_sys::Stdio::StdOut | bun_sys::Stdio::StdErr)
                     );
                 let sink = webcore::FileSink::init(
-                    fd,
+                    file.fd(),
                     jsc::EventLoopHandle::init(
                         self.global_this()
                             .expect("Blob.global_this set at construction")
@@ -1250,8 +1250,7 @@ impl BlobExt for Blob {
                             .event_loop_ptr(),
                     ),
                 );
-                let owns_fd = !matches!(pathlike, PathOrFileDescriptor::Fd(_));
-                let started = sink.start_writer(owns_fd, is_stdout_or_stderr);
+                let started = sink.start_writer(file, is_stdout_or_stderr);
                 if let bun_sys::Result::Err(err) = started {
                     return Ok(
                         JSPromise::rejected_promise(cx.global(), err.to_js(cx.global())).to_js(),
@@ -1393,8 +1392,8 @@ impl BlobExt for Blob {
         #[cfg(windows)]
         {
             let pathlike = &store.data.as_file().pathlike;
-            let fd: Fd = match pathlike {
-                PathOrFileDescriptor::Fd(fd) => *fd,
+            let file = match pathlike {
+                PathOrFileDescriptor::Fd(fd) => bun_sys::MaybeOwnedFile::Borrowed(*fd),
                 PathOrFileDescriptor::Path(p) => {
                     let mut file_path = bun_paths::path_buffer_pool::get();
                     let flags = bun_sys::O::WRONLY | bun_sys::O::CREAT | bun_sys::O::NONBLOCK;
@@ -1404,7 +1403,7 @@ impl BlobExt for Blob {
                     match bun_sys::open(p.slice_z(&mut file_path), flags, WRITE_PERMISSIONS) {
                         bun_sys::Result::Ok(result) => {
                             node::fs::note_opened_for_write(p.slice(), false);
-                            result
+                            bun_sys::File::from_fd(result).into()
                         }
                         bun_sys::Result::Err(err) => {
                             return Err(global_this
@@ -1416,12 +1415,12 @@ impl BlobExt for Blob {
 
             let is_stdout_or_stderr = matches!(pathlike, PathOrFileDescriptor::Fd(_))
                 && matches!(
-                    fd.stdio_tag(),
+                    file.fd().stdio_tag(),
                     Some(bun_sys::Stdio::StdOut | bun_sys::Stdio::StdErr)
                 );
 
             let sink = webcore::FileSink::init(
-                fd,
+                file.fd(),
                 jsc::EventLoopHandle::init(
                     self.global_this()
                         .expect("Blob.global_this set at construction")
@@ -1430,8 +1429,7 @@ impl BlobExt for Blob {
                 ),
             );
             // `to_js` gives init's ref to the wrapper; an early return drops it.
-            let owns_fd = !matches!(pathlike, PathOrFileDescriptor::Fd(_));
-            let start_result = sink.start_writer(owns_fd, is_stdout_or_stderr);
+            let start_result = sink.start_writer(file, is_stdout_or_stderr);
             if let bun_sys::Result::Err(err) = start_result {
                 return Err(global_this.throw_value(err.to_js(global_this)));
             }
@@ -3348,7 +3346,6 @@ pub(crate) fn mkdir_if_not_exists<T: MkdirpTarget>(
             bun_sys::Result::Err(err2) => {
                 this.set_errno_if_present(bun_errno::from_errno(err2.errno as i32).into());
                 this.set_system_error(err.with_path(err_path).to_system_error());
-                this.set_opened_fd_if_present(Fd::INVALID);
                 return Retry::Fail;
             }
         }
@@ -3374,14 +3371,13 @@ fn sys_error_with_path_like(
 }
 
 /// Receiver trait for `mkdir_if_not_exists`; impls optionally
-/// write `errno` / `opened_fd` via the defaulted setters.
+/// write `errno` via the defaulted setter.
 #[cfg(not(windows))]
 pub(crate) trait MkdirpTarget {
     fn mkdirp_if_not_exists(&self) -> bool;
     fn set_mkdirp_if_not_exists(&mut self, v: bool);
     fn set_system_error(&mut self, e: bun_sys::SystemError);
     fn set_errno_if_present(&mut self, _e: crate::Error) {}
-    fn set_opened_fd_if_present(&mut self, _fd: Fd) {}
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -5659,8 +5655,7 @@ pub(crate) trait FileOpener: Sized {
     const OPEN_FLAGS: i32 = bun_sys::O::RDONLY;
     const OPENER_FLAGS: i32 = bun_sys::O::NONBLOCK | bun_sys::O::CLOEXEC;
 
-    fn opened_fd(&self) -> Fd;
-    fn set_opened_fd(&mut self, fd: Fd);
+    fn opened(&mut self) -> &mut bun_sys::MaybeOwnedFile;
     fn set_errno(&mut self, e: crate::Error);
     fn set_system_error(&mut self, e: jsc::SystemError);
     /// Either `self.file_store.pathlike` or `self.file_blob.store.data.file.pathlike`.
@@ -5687,24 +5682,21 @@ pub(crate) trait FileOpener: Sized {
         let path = path_string.slice_z(&mut buf);
 
         loop {
-            match bun_sys::open(
+            match bun_sys::File::open(
                 path,
                 Self::OPEN_FLAGS | Self::OPENER_FLAGS,
                 crate::node::fs::DEFAULT_PERMISSION,
             ) {
-                bun_sys::Result::Ok(fd) => {
-                    self.set_opened_fd(fd);
+                bun_sys::Result::Ok(file) => {
+                    *self.opened() = file.into();
                     break;
                 }
                 bun_sys::Result::Err(err) => {
                     if err.get_errno() == bun_sys::E::ENOENT {
                         match self.try_mkdirp(err.clone(), path, path_string.slice()) {
                             Retry::Continue => continue,
-                            Retry::Fail => {
-                                // `mkdir_if_not_exists` has set `errno` and `system_error`.
-                                self.set_opened_fd(Fd::INVALID);
-                                break;
-                            }
+                            // `mkdir_if_not_exists` has set `errno` and `system_error`.
+                            Retry::Fail => break,
                             Retry::No => {}
                         }
                     }
@@ -5714,24 +5706,19 @@ pub(crate) trait FileOpener: Sized {
                     );
                     self.set_errno(bun_errno::from_errno(err.errno as i32).into());
                     self.set_system_error(jsc::SysErrorJsc::to_system_error(&err));
-                    self.set_opened_fd(Fd::INVALID);
                     break;
                 }
             }
         }
 
-        callback(self, self.opened_fd());
+        let fd = self.opened().fd();
+        callback(self, fd);
     }
 
     fn get_fd(&mut self, callback: fn(&mut Self, Fd)) {
-        if self.opened_fd() != Fd::INVALID {
-            callback(self, self.opened_fd());
-            return;
-        }
-
         if let PathOrFileDescriptor::Fd(fd) = self.pathlike() {
             let fd = *fd;
-            self.set_opened_fd(fd);
+            *self.opened() = bun_sys::MaybeOwnedFile::Borrowed(fd);
             callback(self, fd);
             return;
         }
@@ -5745,11 +5732,9 @@ pub(crate) use io_parking::IoParking;
 
 // TODO: move to bun_sys?
 #[cfg(not(windows))]
-pub(crate) trait FileCloser: Sized {
+pub(crate) trait FileCloser: FileOpener {
     const IO_TAG: bun_io::Tag;
 
-    fn opened_fd(&self) -> Fd;
-    fn set_opened_fd(&mut self, fd: Fd);
     fn close_after_io(&self) -> bool;
     fn state(&self) -> &core::sync::atomic::AtomicU8;
     fn io_request(&mut self) -> &mut bun_io::Request;
@@ -5780,7 +5765,7 @@ pub(crate) trait FileCloser: Sized {
     /// `container_of` deref locally, so a fn-level qualifier is redundant.
     fn on_close_io_request(task: *mut bun_jsc::WorkPoolTask);
 
-    fn do_close(&mut self, is_allowed_to_close_fd: bool) -> bool {
+    fn do_close(&mut self) -> bool {
         if self.close_after_io() {
             self.state().store(
                 ClosingState::Closing as u8,
@@ -5795,21 +5780,13 @@ pub(crate) trait FileCloser: Sized {
             return true;
         }
 
-        if is_allowed_to_close_fd
-            && self.opened_fd() != Fd::INVALID
-            && self.opened_fd().stdio_tag().is_none()
-        {
-            use bun_sys::FdExt as _;
-            let _ = self.opened_fd().close_allowing_bad_file_descriptor(None);
-            self.set_opened_fd(Fd::INVALID);
-        }
-
+        *self.opened() = bun_sys::MaybeOwnedFile::INVALID;
         false
     }
 }
 
 /// Implements [`FileCloser`] for a task struct with the standard field set
-/// (`opened_fd`, `close_after_io`, `state`, `io_request`, `io_poll`, `task`),
+/// (`opened`, `close_after_io`, `state`, `io_request`, `io_poll`, `task`),
 /// an inherent `update()`, and a [`bun_io::Tag`] variant named after the type.
 /// The type must also carry `bun_threading::intrusive_work_task!` and
 /// `bun_io::intrusive_io_request!`, which provide the parent-pointer recovery
@@ -5819,12 +5796,6 @@ macro_rules! impl_file_closer {
     ($T:ident) => {
         impl crate::webcore::blob::FileCloser for $T {
             const IO_TAG: ::bun_io::Tag = ::bun_io::Tag::$T;
-            fn opened_fd(&self) -> ::bun_sys::Fd {
-                self.opened_fd
-            }
-            fn set_opened_fd(&mut self, fd: ::bun_sys::Fd) {
-                self.opened_fd = fd;
-            }
             fn close_after_io(&self) -> bool {
                 self.close_after_io
             }
@@ -5853,7 +5824,7 @@ macro_rules! impl_file_closer {
                 // SAFETY: `request` is `&mut self.io_request` (intrusive), so `this` is the
                 // live parent; the `fd` copy and the `io_poll` field borrow are the only
                 // borrows formed.
-                let (fd, poll) = unsafe { ((*this).opened_fd, &mut (*this).io_poll) };
+                let (fd, poll) = unsafe { ((*this).opened.fd(), &mut (*this).io_poll) };
                 ::bun_io::Action::Close(::bun_io::CloseAction {
                     fd,
                     poll,

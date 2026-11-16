@@ -1937,7 +1937,7 @@ where
 
         let server = self.server();
         FileResponseStream::start(file_response_stream::StartOptions {
-            fd: opened.map_or(file_response_stream::StreamFd::Borrowed(fd), Into::into),
+            fd: opened.map_or_else(|| file_response_stream::StreamFd::borrowed(fd), Into::into),
             resp,
             vm: bun_ptr::BackRef::new(server.vm()),
             file_type,

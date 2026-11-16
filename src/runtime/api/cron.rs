@@ -1909,9 +1909,9 @@ fn spawn_cmd_prepare<T: SpawnCmdTarget>(
 
     #[cfg(unix)]
     {
-        if let Some(stdout) = spawned.stdout.take().map(sys::File::into_raw) {
+        if let Some(stdout) = spawned.stdout.take() {
             if !spawned.memfds[1] {
-                let _ = sys::set_nonblocking(stdout);
+                let _ = sys::set_nonblocking(stdout.fd());
                 this.remaining_fds().set(this.remaining_fds().get() + 1);
                 let reader = this.output_reader();
                 reader.update_flags(|f| {
@@ -1922,7 +1922,7 @@ fn spawn_cmd_prepare<T: SpawnCmdTarget>(
                             | PosixFlags::CLOSED_WITHOUT_REPORTING,
                     );
                 });
-                let Ok(result) = reader.start(bun_io::js_vm_ctx(), stdout, true) else {
+                let Ok(result) = reader.start(bun_io::js_vm_ctx(), stdout.into(), true) else {
                     this.set_err(format_args!("Failed to start reading stdout"));
                     return Err(());
                 };

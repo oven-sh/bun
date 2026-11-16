@@ -243,8 +243,8 @@ impl Cat {
                 }
 
                 let dir = Builtin::cwd(interp, cmd);
-                let fd = match shell_openat(dir, path, bun_sys::O::RDONLY, 0) {
-                    Ok(fd) => fd,
+                let file = match shell_openat(dir, path, bun_sys::O::RDONLY, 0) {
+                    Ok(fd) => bun_sys::File::from_fd(fd),
                     Err(e) => {
                         let buf =
                             Builtin::task_error_to_string(interp, cmd, Kind::Cat, &e).to_vec();
@@ -254,7 +254,7 @@ impl Cat {
                 };
 
                 let evtloop = Builtin::event_loop(interp, cmd);
-                let reader = IOReader::init(fd, evtloop);
+                let reader = IOReader::init(file, evtloop);
                 reader.set_interp(interp);
                 if let CatState::ExecFilepathArgs {
                     reader: slot,

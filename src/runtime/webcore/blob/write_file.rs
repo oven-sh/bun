@@ -91,7 +91,7 @@ pub(crate) struct WriteFile {
     pub(crate) file_blob: Blob,
     pub(crate) bytes_blob: Blob,
 
-    pub(crate) opened_fd: Fd,
+    pub(crate) opened: sys::MaybeOwnedFile,
     pub(crate) system_error: Option<SystemError>,
     pub(crate) errno: Option<Error>,
     pub task: WorkPoolTask,
@@ -122,11 +122,8 @@ impl FileOpener for WriteFile {
     const OPEN_FLAGS: i32 =
         bun_sys::O::WRONLY | bun_sys::O::CREAT | bun_sys::O::TRUNC | bun_sys::O::NONBLOCK;
 
-    fn opened_fd(&self) -> Fd {
-        self.opened_fd
-    }
-    fn set_opened_fd(&mut self, fd: Fd) {
-        self.opened_fd = fd;
+    fn opened(&mut self) -> &mut sys::MaybeOwnedFile {
+        &mut self.opened
     }
     fn set_errno(&mut self, e: Error) {
         self.errno = Some(e);
@@ -168,9 +165,6 @@ impl MkdirpTarget for WriteFile {
     }
     fn set_errno_if_present(&mut self, e: Error) {
         self.errno = Some(e);
-    }
-    fn set_opened_fd_if_present(&mut self, fd: Fd) {
-        self.opened_fd = fd;
     }
 }
 
@@ -222,7 +216,7 @@ impl WriteFile {
         }
         // SAFETY: `request` points to WriteFile.io_request (intrusive), so `this` is the
         // live parent; `fd` copy and the `io_poll` field borrow are the only borrows formed.
-        let (fd, poll) = unsafe { ((*this).opened_fd, &mut (*this).io_poll) };
+        let (fd, poll) = unsafe { ((*this).opened.fd(), &mut (*this).io_poll) };
         io::Action::Writable(io::FileAction {
             on_error: Self::on_io_error,
             ctx: this.cast::<()>(),
@@ -270,7 +264,7 @@ impl WriteFile {
         let write_file = WriteFile {
             file_blob,
             bytes_blob,
-            opened_fd: Fd::INVALID,
+            opened: sys::MaybeOwnedFile::INVALID,
             system_error: None,
             errno: None,
             task: WorkPoolTask {
@@ -293,7 +287,7 @@ impl WriteFile {
     // reshaped for borrowck — take (off, len) here and re-derive the slice
     // internally so callers don't hold a borrow of self across the &mut self call.
     pub(crate) fn do_write(&mut self, off: usize, len: usize) -> WriteStep {
-        let fd = self.opened_fd;
+        let fd = self.opened.fd();
         debug_assert!(fd != Fd::INVALID);
 
         // We do not use pwrite() because the file may not be
@@ -356,23 +350,11 @@ impl WriteFile {
         self.get_fd(Self::run_with_fd);
     }
 
-    pub(crate) fn is_allowed_to_close(&self) -> bool {
-        self.file_blob
-            .store
-            .get()
-            .as_ref()
-            .unwrap()
-            .data
-            .as_file()
-            .pathlike
-            .is_path()
-    }
-
     fn on_finish(&mut self) {
         bun_output::scoped_log!(WriteFile, "WriteFile.onFinish()");
 
         let close_after_io = self.close_after_io;
-        if self.do_close(self.is_allowed_to_close()) {
+        if self.do_close() {
             return;
         }
         if !close_after_io {
@@ -388,7 +370,7 @@ impl WriteFile {
             return;
         }
 
-        let fd = self.opened_fd;
+        let fd = self.opened.fd();
 
         self.could_block = 'brk: {
             if let Some(store) = self.file_blob.store.get().as_ref() {
@@ -473,7 +455,7 @@ impl WriteFile {
 
                 // Do not immediately attempt to write again if it's not a regular file.
                 if self.could_block
-                    && bun_core::is_writable(self.opened_fd) == bun_core::Pollable::NotReady
+                    && bun_core::is_writable(self.opened.fd()) == bun_core::Pollable::NotReady
                 {
                     self.wait_for_writable();
                     return;
@@ -510,7 +492,8 @@ pub(crate) use self::windows_impl::WriteFileWindows;
 mod windows_impl {
     use super::*;
     use crate::dispatch::fold;
-    use bun_io::{self as aio, IntrusiveUvFs as _, JsKeepAlive};
+    use crate::server::file_response_stream::StreamFd;
+    use bun_io::{IntrusiveUvFs as _, JsKeepAlive};
     // `bun_jsc::EventLoop` is a *module* (namespace re-export); the struct
     // lives one level deeper.
     use bun_jsc::event_loop::EventLoop;
@@ -529,13 +512,11 @@ mod windows_impl {
         pub(crate) context: bun_jsc::ContextId,
         pub(crate) mkdirp_if_not_exists: bool,
 
-        pub(crate) fd: uv::uv_file,
+        pub(crate) fd: StreamFd,
         pub(crate) err: Option<sys::Error>,
         pub(crate) total_written: usize,
         pub(crate) event_loop: &'static EventLoop,
         _keep_alive: JsKeepAlive,
-
-        pub(crate) owned_fd: bool,
     }
 
     bun_io::intrusive_uv_fs!(WriteFileWindows, io_request);
@@ -589,11 +570,10 @@ mod windows_impl {
                 mkdirp_if_not_exists: mkdirp,
                 io_request: bun_core::ffi::zeroed::<uv::fs_t>(),
                 event_loop,
-                fd: -1,
+                fd: StreamFd::borrowed(Fd::INVALID),
                 err: None,
                 total_written: 0,
                 _keep_alive: JsKeepAlive::active(),
-                owned_fd: false,
             });
             write_file.io_request.loop_ = event_loop.uv_loop();
 
@@ -601,7 +581,7 @@ mod windows_impl {
             let PathOrFileDescriptor::Fd(fd) = &store.data.as_file().pathlike else {
                 return write_file.open();
             };
-            write_file.fd = fd.uv();
+            write_file.fd = StreamFd::borrowed(Fd::from_uv(fd.uv()));
 
             write_file.do_write_loop()
         }
@@ -611,7 +591,7 @@ mod windows_impl {
             store.data.as_file().pathlike.path().slice()
         }
 
-        fn open(mut self: Box<Self>) -> jsc::JsResult<()> {
+        fn open(self: Box<Self>) -> jsc::JsResult<()> {
             let Ok(posix_path) = sys::to_posix_path(self.path()) else {
                 return self.throw(sys::Error {
                     errno: sys::E::NAMETOOLONG as _,
@@ -619,7 +599,6 @@ mod windows_impl {
                     ..Default::default()
                 });
             };
-            self.owned_fd = true;
             let loop_ = self.event_loop.uv_loop();
             let this = bun_core::heap::into_raw(self);
             // SAFETY: the VM's loop outlives the request, libuv copies the NUL-terminated path
@@ -674,7 +653,7 @@ mod windows_impl {
                 return;
             }
 
-            this.fd = i32::try_from(rc.int()).expect("int cast");
+            this.fd = sys::File::from_fd(Fd::from_uv(rc.to_fd())).into();
 
             fold(this.do_write_loop());
         }
@@ -766,7 +745,7 @@ mod windows_impl {
             };
             self.io_request.deinit();
 
-            let (loop_, fd) = (self.event_loop.uv_loop(), self.fd);
+            let (loop_, fd) = (self.event_loop.uv_loop(), self.fd.get().uv());
             let this = bun_core::heap::into_raw(self);
             // SAFETY: the VM's loop outlives the request, libuv copies `buf` before it returns, and
             // it has `this`, whose blob keeps the bytes, until `on_write_complete`.
@@ -794,14 +773,6 @@ mod windows_impl {
             };
             // SAFETY: libuv keeps nothing of a request that it refuses.
             unsafe { bun_core::heap::take(this) }.throw(err)
-        }
-    }
-
-    impl Drop for WriteFileWindows {
-        fn drop(&mut self) {
-            if self.fd > 0 && self.owned_fd {
-                aio::Closer::close(Fd::from_uv(self.fd), self.io_request.loop_);
-            }
         }
     }
 }

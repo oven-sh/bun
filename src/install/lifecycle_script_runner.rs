@@ -704,17 +704,17 @@ impl<'a> LifecycleScriptSubprocess<'a> {
             (Kind::Stderr, spawned.stderr.take()),
         ] {
             #[cfg(unix)]
-            if let Some(fd) = stdio.map(bun_sys::File::into_raw) {
+            if let Some(file) = stdio {
                 if spawned.memfds[kind as usize + 1] {
-                    self.reader(kind).start_memfd(fd);
+                    self.reader(kind).start_memfd(file);
                     continue;
                 }
-                let _ = bun_sys::set_nonblocking(fd);
+                let _ = bun_sys::set_nonblocking(file.fd());
                 self.remaining_fds += 1;
 
-                Self::reset_output_flags(self.reader(kind), fd);
+                Self::reset_output_flags(self.reader(kind), file.fd());
                 let event_loop = self.event_loop().as_event_loop_ctx();
-                match self.reader(kind).start(event_loop, fd, true) {
+                match self.reader(kind).start(event_loop, file.into(), true) {
                     Ok(result) => _ = self.note_read_result(result),
                     Err(err) => self.exit_with_error(err.into()),
                 }

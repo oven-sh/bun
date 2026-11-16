@@ -112,10 +112,15 @@ fn flat_blocks() {
             });
         }
     }
-    for at in 1..64 {
-        let mut block = ZERO;
-        block.0[at] = 400;
-        check(true, || inverse(&[block], &ones, 8) != [[128; 8]; 8]);
+    for (first, last) in (1..64).flat_map(|first| (first..64).map(move |last| (first, last))) {
+        for [a, between, b] in [[1, 0, 1], [1, 0, -1], [1; 3], [-1; 3], [256, 0, 256]] {
+            let mut block = ZERO;
+            block.0[first..=last].fill(between);
+            (block.0[first], block.0[last]) = (a, b);
+            check(true, || {
+                inverse(&[block], &JpegBlock([100; 64]), 8) != [[128; 8]; 8]
+            });
+        }
     }
 }
 
@@ -291,6 +296,12 @@ fn split_colors() {
         let pixel = |_| next().to_le_bytes();
         let width = 32 * (1 + round % 3);
         check_split(&(0..4 * width).map(pixel).collect::<Vec<_>>(), width);
+    }
+    // Each difference to green, next to an even one and to an odd one.
+    for (green, other) in [(0, 0), (0, 1), (255, 0), (255, 1)] {
+        let reds = (0..1024).map(|i| [(i / 2) as u8, green, other, 0]);
+        let blues = reds.clone().map(|[r, g, b, a]| [b, g, r, a]);
+        check_split(&reds.chain(blues).collect::<Vec<_>>(), 512);
     }
 }
 

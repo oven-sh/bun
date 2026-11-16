@@ -88,6 +88,17 @@ extern "C" fn f(v: bun_simd::sse4::U8) {}
 std::hint::black_box(f as extern "C" fn(_));
 ```
 
+A shuffle from past the second vector:
+
+```rust,compile_fail,E0080
+struct Past;
+impl bun_simd::Shuffle<16> for Past {
+    const FROM: [usize; 16] = [32; 16];
+}
+let v = bun_simd::sse4::U8::zero();
+v.shuffle::<Past>(v);
+```
+
 ## The gate
 
 Fewer features than the kernel has:

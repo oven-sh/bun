@@ -993,7 +993,7 @@ impl WebWorker {
             return Ok(vm);
         }
 
-        vm.load_extra_env_and_source_code_printer();
+        vm.load_extra_env();
         Ok(vm)
     }
 

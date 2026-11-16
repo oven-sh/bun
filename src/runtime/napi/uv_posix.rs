@@ -200,7 +200,7 @@ impl UvLoopShared {
 
     /// Posts the dispatch task. The state is `Pending`, so no other thread posts one.
     fn post_dispatch(&self) {
-        let task = ConcurrentTask::create_from(core::ptr::null_mut::<UvLoop>());
+        let task = core::ptr::null_mut::<UvLoop>();
         if let Posted::Refused(_) = self.handle.post(LoopKind::Regular, task) {
             // The VM is gone, so drop the callback like a closed libuv loop does.
             self.dispatch_state
@@ -1121,8 +1121,7 @@ pub(crate) unsafe extern "C" fn uv_close(handle: HandleRef<'_>, close_cb: Option
     }
     // The queued task keeps the loop alive until `close_cb` has run, like libuv's
     // closing list. If the VM is gone, the task is refused and `close_cb` never runs.
-    let task = ConcurrentTask::create_from(handle.ptr.as_ptr());
-    let _ = uv_loop.shared.handle.post(LoopKind::Regular, task);
+    let _ = (uv_loop.shared.handle).post(LoopKind::Regular, handle.ptr.as_ptr());
 }
 
 /// Implements `void uv_ref(uv_handle_t*)`. Idempotent. Only matters while the handle

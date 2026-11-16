@@ -91,7 +91,6 @@
 "defaulted_failure:src/jsc/ConsoleObject.rs" = 4
 "generic_body_not_generic:src/jsc/ConsoleObject.rs" = 5
 "generic_body_not_generic:src/jsc/JSPropertyIterator.rs" = 1
-"safe_fn_returns_shared_mut:src/jsc/RuntimeTranspilerStore.rs" = 1
 "safe_fn_returns_shared_mut:src/jsc/VirtualMachine.rs" = 2
 "safe_fn_returns_shared_mut:src/jsc/event_loop.rs" = 2
 "unsafe_send_covers_more_than_pointers:src/jsc/webcore_types.rs" = 3

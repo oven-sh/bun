@@ -6,7 +6,7 @@ use bun_ast::base::RefTag;
 use bun_ast::server_component_boundary;
 use bun_ast::symbol;
 use bun_ast::{DeclaredSymbol, DeclaredSymbolList, Dependency, Symbol};
-use bun_collections::{AutoBitSet, DynamicBitSetUnmanaged as BitSet, MultiArrayList, VecExt};
+use bun_collections::{AutoBitSet, DynamicBitSet as BitSet, MultiArrayList, VecExt};
 use bun_core::RawSlice;
 
 use crate::IndexStringMap::IndexStringMap;
@@ -265,7 +265,7 @@ impl Drop for LinkerGraph<'_> {
         // The slab-only `MultiArrayList::drop` does not drop these.
         for bits in self.files.items_entry_bits_mut() {
             if let AutoBitSet::Dynamic(bits) = bits {
-                bits.deinit();
+                drop(core::mem::take(bits));
             }
         }
     }
@@ -276,7 +276,6 @@ impl Drop for LinkerGraph<'_> {
 //   `ast.get()`, and each task writes only the rows of its own file or chunk. The gap:
 //   a file in two `internal_bake_dev` chunks has its import records written by both.
 //   Nothing writes `Part.scopes` or the `symbols` column of `ast` while workers run.
-// - The `BitSet`s, which workers only read.
 // - `Symbol.link`, a `Cell` that `follow()` writes only to shorten a chain.
 //   `LinkerContext::link()` shortens them all with `follow_all()` before workers
 //   follow any. The dev server skips `link()`: its links come from the parser and

@@ -69,11 +69,32 @@ pub(crate) type Platform = platform::Platform;
 pub struct Watcher {
     #[cfg(not(windows))]
     pub(crate) platform: Platform,
+    #[cfg(windows)]
+    pub(crate) port: Arc<std::os::windows::io::OwnedHandle>,
     /// Locked while a `WatcherContext` method runs.
     pub(crate) state: Guarded<State>,
     cwd: &'static [u8],
-    /// Cleared by `shutdown`, polled by `watch_loop`.
+    /// Cleared when the `OwnedWatcher` drops, polled by `watch_loop`.
     pub(crate) running: bun_core::AtomicCell<bool>,
+}
+
+/// Ends the watcher thread when it drops. The context is not called after that.
+#[must_use]
+pub struct OwnedWatcher(Arc<Watcher>);
+
+impl core::ops::Deref for OwnedWatcher {
+    type Target = Arc<Watcher>;
+    fn deref(&self) -> &Arc<Watcher> {
+        &self.0
+    }
+}
+
+impl Drop for OwnedWatcher {
+    fn drop(&mut self) {
+        let _state = self.state.lock();
+        self.running.store(false);
+        self.wake();
+    }
 }
 
 pub(crate) struct State {
@@ -108,16 +129,19 @@ impl Watcher {
     pub fn init(
         ctx: Box<dyn WatcherContext>,
         top_level_dir: &'static [u8],
-    ) -> Result<Arc<Watcher>, crate::Error> {
+    ) -> Result<OwnedWatcher, crate::Error> {
+        let thread = Box::new(WatcherThread {
+            watch_events: [WatchEvent::default(); MAX_COUNT],
+            #[cfg(windows)]
+            platform: Platform::new(top_level_dir)?,
+            ctx,
+        });
         let this = Arc::new(Watcher {
             #[cfg(not(windows))]
             platform: Platform::new(top_level_dir)?,
-            state: Guarded::new(State::new(Box::new(WatcherThread {
-                watch_events: [WatchEvent::default(); MAX_COUNT],
-                #[cfg(windows)]
-                platform: Platform::new(top_level_dir)?,
-                ctx,
-            }))),
+            #[cfg(windows)]
+            port: Arc::clone(&thread.platform.port),
+            state: Guarded::new(State::new(thread)),
             cwd: top_level_dir,
             running: bun_core::AtomicCell::new(true),
         });
@@ -125,7 +149,7 @@ impl Watcher {
         // Initialize trace file if BUN_WATCHER_TRACE env var is set
         WatcherTrace::init();
 
-        Ok(this)
+        Ok(OwnedWatcher(this))
     }
 
     /// Hands `watch_events[..event_count]` to the trace writer and to `on_file_update`.
@@ -182,12 +206,6 @@ impl Watcher {
         })
     }
 
-    /// The context is not called after this returns. The thread ends when a change next wakes it.
-    pub fn shutdown(&self) {
-        let _state = self.state.lock();
-        self.running.store(false);
-    }
-
     pub fn get_hash(filepath: &[u8]) -> HashType {
         bun_wyhash::hash(filepath) as HashType
     }
@@ -209,9 +227,6 @@ impl Watcher {
         if !self.running.load() {
             self.state.lock().watchlist.drop_elements();
         }
-
-        // Close trace file if open
-        WatcherTrace::deinit();
 
         Output::flush();
     }

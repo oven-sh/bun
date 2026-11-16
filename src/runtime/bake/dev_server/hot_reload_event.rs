@@ -2,7 +2,6 @@
 
 use super::*;
 
-use bun_jsc::vm_handle::Posted;
 use core::sync::atomic::AtomicPtr;
 
 /// `DevServer.HotReloadEvent` — produced by the watcher thread.
@@ -29,15 +28,12 @@ pub(super) struct PendingState {
     pub(super) scheduled: bool,
 }
 
-/// The queued pointer is from `Arc::into_raw`.
-impl bun_event_loop::Taskable for PendingReloadEvent {
+impl bun_event_loop::RefTask for PendingReloadEvent {
     const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::BakePendingReloadEvent;
-    unsafe fn release_unrun(this: *mut Self) {
-        // SAFETY: fn contract.
-        drop(unsafe { Arc::from_raw(this) });
-    }
+    type Ref = Arc<Self>;
+    fn release_unrun(_: Self::Ref) {}
     /// The dev server is the realm's.
-    unsafe fn context(_: *const Self) -> bun_event_loop::ContextId {
+    fn context(_: &Self::Ref) -> bun_event_loop::ContextId {
         bun_event_loop::ContextId::NONE
     }
 }
@@ -223,23 +219,11 @@ impl PendingReloadEvent {
         self.owner.store(core::ptr::null_mut(), Ordering::SeqCst);
     }
 
-    pub(super) fn post(self: &Arc<Self>, vm_handle: &bun_jsc::VmHandle) {
-        let queued = Arc::into_raw(Arc::clone(self));
-        let task = bun_event_loop::ConcurrentTask::create_from(queued.cast_mut());
-        if let Posted::Refused(_) = vm_handle.post(bun_jsc::LoopKind::Regular, task) {
-            // SAFETY: from `into_raw` above, and not queued.
-            drop(unsafe { Arc::from_raw(queued) });
-        }
-    }
-
     /// # Safety
-    /// `this` came off the queue of the thread that owns the `DevServer`.
-    #[inline(never)]
-    pub(crate) unsafe fn run(this: *mut Self) {
-        bun_removable_features::removable_definition!(Bundler, Self::run);
+    /// On the thread that owns the `DevServer`, which uses no other borrow of it during the call.
+    pub(crate) unsafe fn run(&self) {
         // SAFETY: fn contract. `Drop for DevServer` clears `owner` on this thread.
-        let Some(dev) = (unsafe { Arc::from_raw(this).owner.load(Ordering::SeqCst).as_mut() })
-        else {
+        let Some(dev) = (unsafe { self.owner.load(Ordering::SeqCst).as_mut() }) else {
             return;
         };
         debug_assert!(dev.magic == Magic::Valid);

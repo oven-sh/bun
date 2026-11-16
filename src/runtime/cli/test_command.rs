@@ -2868,7 +2868,7 @@ impl TestCommand {
             run_compiled::hand_on_environment(&env_loader.map);
         }
 
-        vm.load_extra_env_and_source_code_printer();
+        vm.load_extra_env();
         VirtualMachine::set_is_main_thread_vm(true);
 
         if ctx.test_options.isolate {

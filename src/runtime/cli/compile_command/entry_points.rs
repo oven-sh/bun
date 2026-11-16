@@ -136,8 +136,8 @@ pub(super) fn find_default_entry_point(
     working_directory: &[u8],
 ) -> Result<DefaultEntryPoint, EntryPointError> {
     use bun_paths::platform::Auto;
-    use bun_paths::resolve_path::join_abs_string;
-    let package_json = join_abs_string::<Auto>(working_directory, &[b"package.json"]).to_vec();
+    use bun_paths::resolve_path::join_abs_string_vec;
+    let package_json = join_abs_string_vec::<Auto>(working_directory, &[b"package.json"]);
     if let Some(contents) = read_package_json(&package_json) {
         return find_package_entry_point(working_directory, package_json, &contents);
     }
@@ -379,7 +379,7 @@ fn is_outside(directory: &[u8], path: &[u8]) -> bool {
 
 fn join(directory: &[u8], path: &[u8]) -> Vec<u8> {
     use bun_paths::platform::Auto;
-    bun_paths::resolve_path::join_abs_string::<Auto>(directory, &[path]).to_vec()
+    bun_paths::resolve_path::join_abs_string_vec::<Auto>(directory, &[path])
 }
 
 fn find_package_entry_point(
@@ -485,15 +485,15 @@ fn find_index_file(directory: &[u8]) -> Option<Box<[u8]>> {
         .find_map(|name| find_file(directory, name))
 }
 
-fn find_file(directory: &[u8], path: &[u8]) -> Option<Box<[u8]>> {
+pub(super) fn find_file(directory: &[u8], path: &[u8]) -> Option<Box<[u8]>> {
     use bun_paths::platform::Auto;
-    use bun_paths::resolve_path::join_abs_string_checked;
-    let absolute_path = join_abs_string_checked::<Auto>(directory, &[path])?;
-    if bun_core::strings::contains_char(absolute_path, 0) {
+    use bun_paths::resolve_path::join_abs_string_buf_z_checked;
+    let mut buf = [0u8; 4096 + 1];
+    let absolute_path = join_abs_string_buf_z_checked::<Auto>(directory, &mut buf, &[path])?;
+    if bun_core::strings::contains_char(absolute_path.as_bytes(), 0) {
         return None;
     }
-    let absolute_path = bun_core::ZBox::from_bytes(absolute_path);
-    match bun_sys::exists_at_type(bun_core::Fd::cwd(), &absolute_path) {
+    match bun_sys::exists_at_type(bun_core::Fd::cwd(), absolute_path) {
         Ok(bun_sys::ExistsAtType::File) => Some(absolute_path.as_bytes().into()),
         Ok(bun_sys::ExistsAtType::Directory) | Err(_) => None,
     }

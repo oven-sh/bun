@@ -514,6 +514,22 @@ describe("bundler", () => {
       "/Users/user/project/src/entry.ts": [`Could not resolve: "@helpers/x". Maybe you need to "bun install"?`],
     },
   });
+  itBundled("tsconfig/PathsTargetHasTSConfigWithExtends", {
+    files: {
+      "/Users/user/project/entry.ts": /* ts */ `
+        import foo from 'foo'
+        console.log(foo)
+      `,
+      "/Users/user/project/tsconfig.json": `{ "compilerOptions": { "paths": { "foo": ["./packages/foo"] } } }`,
+      "/Users/user/project/tsconfig.base.json": `{}`,
+      "/Users/user/project/packages/foo/tsconfig.json": `{ "extends": "../../tsconfig.base.json" }`,
+      "/Users/user/project/packages/foo/package.json": `{ "name": "foo", "main": "./src/entry.ts" }`,
+      "/Users/user/project/packages/foo/src/entry.ts": `export default 123`,
+    },
+    run: {
+      stdout: "123",
+    },
+  });
   itBundled("tsconfig/JSX", {
     files: {
       "/Users/user/project/entry.tsx": `console.log(<><div/><div/></>)`,

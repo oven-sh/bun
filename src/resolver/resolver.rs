@@ -7,7 +7,9 @@
 
 use crate::{is_package_path, is_package_path_not_absolute};
 
-use core::cell::{OnceCell, UnsafeCell};
+use core::cell::Cell;
+use core::mem::MaybeUninit;
+use core::ops::DerefMut;
 use core::ptr::NonNull;
 use core::sync::SyncView;
 use std::io::Write as _;
@@ -114,9 +116,6 @@ mod bun_paths {
         dispatch_platform!(platform, |P| {
             ::bun_paths::resolve_path::join_abs_string_buf_checked::<P>(cwd, buf, parts)
         })
-    }
-    pub(super) fn join(parts: &[&[u8]], platform: Platform) -> &'static [u8] {
-        dispatch_platform!(platform, |P| ::bun_paths::resolve_path::join::<P>(parts))
     }
     pub(super) fn join_string_buf<'b>(
         buf: &'b mut [u8],
@@ -240,11 +239,12 @@ use ::bun_core::{FeatureFlags, Generation, StackCheck};
 use bun_ast::Msg;
 use bun_collections::BoundedArray;
 use bun_dotenv::env_loader as DotEnv;
+use bun_paths::resolve_path::SpillBuf;
 use bun_paths::{MAX_PATH_BYTES, PathBuffer, SEP, SEP_STR};
 use bun_perf::system_timer::Timer;
 use bun_ptr::Interned;
 use bun_sys::Fd as FD;
-use bun_threading::Mutex;
+use bun_threading::Guarded;
 
 use crate::fs as Fs;
 use crate::fs::FilenameStoreAppender;
@@ -288,86 +288,86 @@ static ResolverDev: bun_core::output::ScopedLogger =
 // resolve without a per-site lifetime annotation.
 type Path = crate::fs::Path<'static>;
 
-/// A temporary threadlocal buffer with a lifetime more than the current
-/// function call.
-///
-/// These used to be individual `threadlocal var x: bun.PathBuffer = undefined`
-/// declarations. On Windows each `PathBuffer` is 96 KB (vs 4 KB on POSIX) and
-/// PE/COFF has no TLS-BSS, so 25 of them here cost ~2.5 MB of raw zeros in
-/// bun.exe and in every thread's TLS block. Grouping them behind a lazily
-/// allocated pointer brings that down to 8 bytes. See `bun.ThreadlocalBuffers`.
-///
-/// Experimenting with making this one struct instead of a bunch of different
-/// threadlocal vars yielded no performance improvement on macOS when bundling
-/// 10 copies of Three.js. Potentially revisit after https://github.com/oven-sh/bun/issues/2716
-pub struct Bufs {
-    pub(crate) extension_path: PathBuffer,
-    pub(crate) tsconfig_match_full_buf: PathBuffer,
-    pub(crate) tsconfig_match_full_buf3: PathBuffer,
-
-    pub(crate) esm_subpath: [u8; 512],
-    pub(crate) esm_absolute_package_path: PathBuffer,
-    pub(crate) esm_absolute_package_path_joined: PathBuffer,
-
-    pub(crate) dir_entry_paths_to_resolve: [core::mem::MaybeUninit<DirEntryResolveQueueItem>; 256],
-    pub(crate) open_dirs: [FD; 256],
-    pub(crate) resolve_without_remapping: PathBuffer,
-    pub(crate) index: PathBuffer,
-    pub(crate) dir_info_uncached_filename: PathBuffer,
-    pub(crate) node_bin_path: PathBuffer,
-    pub(crate) dir_info_uncached_path: PathBuffer,
-    pub(crate) tsconfig_base_url: PathBuffer,
-    pub(crate) relative_abs_path: PathBuffer,
-    pub(crate) load_as_file_or_directory_via_tsconfig_base_path: PathBuffer,
-    pub(crate) node_modules_check: PathBuffer,
-    pub(crate) field_abs_path: PathBuffer,
-    pub(crate) tsconfig_path_abs: PathBuffer,
-    pub(crate) check_browser_map: PathBuffer,
-    pub(crate) remap_path: PathBuffer,
-    pub(crate) load_as_file: PathBuffer,
-    pub(crate) remap_path_trailing_slash: PathBuffer,
-    pub(crate) path_in_global_disk_cache: PathBuffer,
-    pub(crate) abs_to_rel: PathBuffer,
-
-    #[cfg(windows)]
-    pub(crate) win32_normalized_dir_info_cache: [u8; MAX_PATH_BYTES * 2],
+/// The buffers of one resolution, nested by call depth.
+struct Bufs {
+    relative_abs_path: PathBuffer,
+    node_modules: NodeModulesBufs,
 }
-// The `bufs!()` macro hands out `&mut` to a
-// single field. This relies on the caller never holding two `bufs!()` borrows
-// simultaneously across the same field.
+
+struct NodeModulesBufs {
+    esm_subpath: [u8; 512],
+    esm_absolute_package_path: PathBuffer,
+    node_modules_check: PathBuffer,
+    target: TargetBufs,
+}
+
+/// For a target of `paths`, `exports` or `imports`.
+struct TargetBufs {
+    abs_path: PathBuffer,
+    substituted: PathBuffer,
+    main_field: MainFieldBufs,
+}
+
+struct MainFieldBufs {
+    field_abs_path: PathBuffer,
+    remap: RemapBufs,
+}
+
+struct RemapBufs {
+    remap_path: PathBuffer,
+    remap_path_trailing_slash: PathBuffer,
+    lookup: LookupBufs,
+}
+
+struct LookupBufs {
+    load_as_file: PathBuffer,
+    extension_path: PathBuffer,
+    index: PathBuffer,
+    check_browser_map: PathBuffer,
+    abs_to_rel: PathBuffer,
+}
+
+// SAFETY: byte arrays only.
+unsafe impl bun_core::Zeroable for Bufs {}
+
+// Boxed: PE/COFF has no TLS-BSS.
 thread_local! {
-    static BUFS: OnceCell<Box<UnsafeCell<Bufs>>> = const { OnceCell::new() };
+    static BUFS: Cell<Option<Box<Bufs>>> = const { Cell::new(None) };
 }
 
-#[inline(always)]
-fn bufs_storage_get() -> *mut Bufs {
-    BUFS.with(|bufs| bufs.get_or_init(bufs_storage_init).get())
+impl Bufs {
+    /// The thread's buffers, which go back on drop.
+    fn take() -> impl DerefMut<Target = Box<Bufs>> {
+        let bufs = BUFS.take().unwrap_or_else(bun_core::boxed_zeroed);
+        scopeguard::guard(bufs, |bufs| BUFS.set(Some(bufs)))
+    }
 }
 
-fn bufs_storage_init() -> Box<UnsafeCell<Bufs>> {
-    // SAFETY: every field of `Bufs` is a byte/integer array (`PathBuffer` =
-    // `[u8; N]`, `[u8; 512]`, `[FD; 256]` where `Fd` is a `#[repr(transparent)]`
-    // integer newtype with no niche) or `[MaybeUninit<_>; 256]`, so the
-    // all-zero bit-pattern is a valid `Bufs`. `new_zeroed` (not `new_uninit`)
-    // because integers must be initialized: a never-written `[u8; N]` is UB
-    // even though every bit pattern is a valid `u8`. Runs once per thread;
-    // `alloc_zeroed` of ~100 KiB is usually fresh OS-zeroed pages.
-    unsafe { Box::new_zeroed().assume_init() }
+/// The buffers of `dir_info_cached_maybe_log`.
+struct DirInfoBufs {
+    #[cfg(windows)]
+    win32_normalized_dir_info_cache: [u8; MAX_PATH_BYTES * 2],
+    miss: DirInfoMissBufs,
 }
 
-/// `bufs(.field)` → `bufs!(field)` returns `&mut <field type>`.
-/// // SAFETY: callers must not alias the same field; threadlocal so no cross-thread races.
-macro_rules! bufs {
-    ($field:ident) => {
-        // SAFETY: threadlocal storage; callers must not alias the same field within one call frame.
-        unsafe { &mut (*bufs_storage_get()).$field }
-    };
+struct DirInfoMissBufs {
+    dir_entry_paths_to_resolve: [MaybeUninit<DirEntryResolveQueueItem>; 256],
+    open_dirs: [MaybeUninit<FD>; 256],
+    dir_info_uncached_path: PathBuffer,
+    dir_info_uncached: PathBuffer,
 }
 
 // This is a global so even if multiple resolvers are created, the mutex will still work
-// `pub(crate)` so the `fs::EntriesMap::inner` debug-assert can verify it is held
-// (the resolver mutex is one of the two documented guards for the entries singleton).
-static RESOLVER_MUTEX: Mutex = Mutex::new();
+static RESOLVER_MUTEX: Guarded<DirInfoBufs> = Guarded::new(DirInfoBufs {
+    #[cfg(windows)]
+    win32_normalized_dir_info_cache: [0; MAX_PATH_BYTES * 2],
+    miss: DirInfoMissBufs {
+        dir_entry_paths_to_resolve: [MaybeUninit::uninit(); 256],
+        open_dirs: [MaybeUninit::uninit(); 256],
+        dir_info_uncached_path: PathBuffer::ZEROED,
+        dir_info_uncached: PathBuffer::ZEROED,
+    },
+});
 
 static BIN_FOLDERS: bun_threading::Guarded<BoundedArray<&'static [u8], 128>> =
     bun_threading::Guarded::new(BoundedArray::new());
@@ -454,7 +454,7 @@ pub struct Resolver<'a> {
     // reducing parallelism in the resolver helps the rest of the bundler go
     // faster. I'm not sure why this is but please don't change this unless you
     // do a lot of testing with various benchmarks and there aren't any regressions.
-    pub(crate) mutex: &'static Mutex,
+    mutex: &'static Guarded<DirInfoBufs>,
 
     /// This cache maps a directory path to information about that directory and
     /// all parent directories. When interacting with this structure, make sure
@@ -819,7 +819,13 @@ impl<'a> Resolver<'a> {
         if tsconfig.paths.count() == 0 {
             return MatchStatus::NotFound;
         }
-        self.match_tsconfig_paths(&tsconfig, import_path, kind, out)
+        self.match_tsconfig_paths(
+            &mut Bufs::take().node_modules.target,
+            &tsconfig,
+            import_path,
+            kind,
+            out,
+        )
     }
 
     pub(crate) fn flush_debug_logs(&mut self, flush_mode: FlushMode) -> crate::CrateResult<()> {
@@ -1853,7 +1859,7 @@ impl<'a> Resolver<'a> {
         Ok(())
     }
 
-    pub(crate) fn resolve_without_symlinks<'r>(
+    fn resolve_without_symlinks<'r>(
         &mut self,
         source_dir: &[u8],
         input_import_path: &'r [u8],
@@ -1862,6 +1868,7 @@ impl<'a> Resolver<'a> {
     ) -> ResultUnion<'r> {
         debug_assert!(bun_paths::is_absolute(source_dir));
 
+        let bufs: &mut Bufs = &mut Bufs::take();
         let mut import_path = input_import_path;
 
         // This implements the module resolution algorithm from node.js, which is
@@ -1887,9 +1894,9 @@ impl<'a> Resolver<'a> {
             // Collapse relative directory specifiers if they exist. Extremely
             // loose check to avoid always doing this copy, but avoid spending
             // too much time on the check.
-            if strings::index_of(import_path, b"..").is_some() {
+            let import_path: &[u8] = if strings::index_of(import_path, b"..").is_some() {
                 let ends_with_dir = Self::import_path_names_directory(import_path);
-                let buf = bufs!(relative_abs_path);
+                let buf = &mut bufs.relative_abs_path;
                 let Some(abs) = self.fs_ref().abs_buf_checked(&[import_path], buf) else {
                     return ResultUnion::NotFound;
                 };
@@ -1901,10 +1908,10 @@ impl<'a> Resolver<'a> {
                     buf[len] = bun_paths::Platform::AUTO.separator();
                     len += 1;
                 }
-                // `bufs!` hands out an unconstrained-lifetime `&mut PathBuffer`
-                // (threadlocal storage); a safe reborrow satisfies `&'static [u8]`.
-                import_path = &buf[..len];
-            }
+                &buf[..len]
+            } else {
+                import_path
+            };
 
             if let Some(debug) = self.debug_logs.as_mut() {
                 debug.add_note_fmt(format_args!(
@@ -1919,7 +1926,13 @@ impl<'a> Resolver<'a> {
                     if tsconfig.paths.count() > 0 {
                         let mut res = MatchResult::default();
                         if self
-                            .match_tsconfig_paths(&tsconfig, import_path, kind, &mut res)
+                            .match_tsconfig_paths(
+                                &mut bufs.node_modules.target,
+                                &tsconfig,
+                                import_path,
+                                kind,
+                                &mut res,
+                            )
                             .is_success()
                         {
                             // We don't set the directory fd here because it might remap an entirely different directory
@@ -1951,9 +1964,17 @@ impl<'a> Resolver<'a> {
                     ));
                 }
 
+                let path = if import_path != input_import_path {
+                    self.fs_ref()
+                        .dirname_store
+                        .append_slice(import_path)
+                        .expect("unreachable")
+                } else {
+                    input_import_path
+                };
                 return ResultUnion::Success(Result {
                     path_pair: PathPair {
-                        primary: Fs::Path::init(import_path),
+                        primary: Fs::Path::init(path),
                         secondary: None,
                     },
                     flags: ResultFlags::IS_EXTERNAL,
@@ -1966,6 +1987,7 @@ impl<'a> Resolver<'a> {
             let mut entry = MatchResult::default();
             if self
                 .load_as_file_or_directory(
+                    &mut bufs.node_modules.target.main_field,
                     normalizer.resolve(source_dir, import_path),
                     kind,
                     &mut entry,
@@ -2002,7 +2024,13 @@ impl<'a> Resolver<'a> {
                     // Where no folder on disk is known to stand for a folder of the executable, the disk is not asked: the working directory is none.
                     if !self.looks_in_executable_alone_from(custom_utf8.slice(), import_path) {
                         let on_disk = self.folder_on_disk_of_given_folder(custom_utf8.slice());
-                        match self.check_relative_path(&on_disk, import_path, kind, global_cache) {
+                        match self.check_relative_path(
+                            bufs,
+                            &on_disk,
+                            import_path,
+                            kind,
+                            global_cache,
+                        ) {
                             ResultUnion::Success(res) => return ResultUnion::Success(res),
                             ResultUnion::Failure(p) => return ResultUnion::Failure(p),
                             ResultUnion::NotFound => {}
@@ -2019,7 +2047,7 @@ impl<'a> Resolver<'a> {
                 debug_assert!(!check_package); // always from JavaScript
                 return ResultUnion::NotFound; // bail out now since there isn't anywhere else to check
             } else {
-                match self.check_relative_path(source_dir, import_path, kind, global_cache) {
+                match self.check_relative_path(bufs, source_dir, import_path, kind, global_cache) {
                     ResultUnion::Success(res) => return ResultUnion::Success(res),
                     ResultUnion::Failure(p) => return ResultUnion::Failure(p),
                     ResultUnion::NotFound => {}
@@ -2045,6 +2073,7 @@ impl<'a> Resolver<'a> {
                         .get_enclosing_browser_scope()
                         .is_some_and(|scope| {
                             self.check_browser_map::<{ BrowserMapPathKind::PackagePath }>(
+                                &mut bufs.node_modules.target.main_field.remap.lookup,
                                 scope,
                                 import_path_without_node_prefix,
                             )
@@ -2153,7 +2182,13 @@ impl<'a> Resolver<'a> {
                         return answer;
                     }
                     let on_disk = self.folder_on_disk_of_given_folder(given);
-                    match self.check_package_path(&on_disk, import_path, kind, global_cache) {
+                    match self.check_package_path(
+                        &mut bufs.node_modules,
+                        &on_disk,
+                        import_path,
+                        kind,
+                        global_cache,
+                    ) {
                         ResultUnion::Success(res) => return ResultUnion::Success(res),
                         ResultUnion::Failure(p) => return ResultUnion::Failure(p),
                         ResultUnion::NotFound => {}
@@ -2166,7 +2201,13 @@ impl<'a> Resolver<'a> {
                     }
                 }
             } else {
-                match self.check_package_path(source_dir, import_path, kind, global_cache) {
+                match self.check_package_path(
+                    &mut bufs.node_modules,
+                    source_dir,
+                    import_path,
+                    kind,
+                    global_cache,
+                ) {
                     ResultUnion::Success(res) => return ResultUnion::Success(res),
                     ResultUnion::Failure(p) => return ResultUnion::Failure(p),
                     ResultUnion::NotFound => {}
@@ -2196,8 +2237,9 @@ impl<'a> Resolver<'a> {
         rest.is_empty() || ResolvePath::is_sep_any(rest[rest.len() - 1])
     }
 
-    pub(crate) fn check_relative_path(
+    fn check_relative_path(
         &mut self,
+        bufs: &mut Bufs,
         source_dir: &[u8],
         import_path: &[u8],
         kind: ast::ImportKind,
@@ -2205,7 +2247,7 @@ impl<'a> Resolver<'a> {
     ) -> ResultUnion<'static> {
         let Some(abs_path) = self
             .fs_ref()
-            .abs_buf_checked(&[source_dir, import_path], bufs!(relative_abs_path))
+            .abs_buf_checked(&[source_dir, import_path], &mut bufs.relative_abs_path)
         else {
             return ResultUnion::NotFound;
         };
@@ -2249,6 +2291,7 @@ impl<'a> Resolver<'a> {
                     let pkg = import_dir_info.package_json.unwrap();
                     if let Some(remap) = self
                         .check_browser_map::<{ BrowserMapPathKind::AbsolutePath }>(
+                            &mut bufs.node_modules.target.main_field.remap.lookup,
                             import_dir_info,
                             abs_path,
                         )
@@ -2274,6 +2317,7 @@ impl<'a> Resolver<'a> {
                         let mut match_result = MatchResult::default();
                         if self
                             .resolve_without_remapping(
+                                &mut bufs.node_modules,
                                 import_dir_info,
                                 remap,
                                 kind,
@@ -2314,7 +2358,7 @@ impl<'a> Resolver<'a> {
             && !strings::ends_with_char(abs_path, SEP)
         {
             let len = abs_path.len();
-            let buf = bufs!(relative_abs_path);
+            let buf = &mut bufs.relative_abs_path;
             if len >= buf.len() {
                 self.extension_order = prev_extension_order;
                 return ResultUnion::NotFound;
@@ -2327,7 +2371,12 @@ impl<'a> Resolver<'a> {
 
         let mut res = MatchResult::default();
         let ret = if self
-            .load_as_file_or_directory(abs_path, kind, &mut res)
+            .load_as_file_or_directory(
+                &mut bufs.node_modules.target.main_field,
+                abs_path,
+                kind,
+                &mut res,
+            )
             .is_success()
         {
             ResultUnion::Success(Result {
@@ -2344,8 +2393,9 @@ impl<'a> Resolver<'a> {
         ret
     }
 
-    pub(crate) fn check_package_path<'r>(
+    fn check_package_path<'r>(
         &mut self,
+        bufs: &mut NodeModulesBufs,
         source_dir: &[u8],
         unremapped_import_path: &'r [u8],
         kind: ast::ImportKind,
@@ -2402,6 +2452,7 @@ impl<'a> Resolver<'a> {
                 if let Some(package_json) = browser_scope.package_json {
                     if let Some(remapped) = self
                         .check_browser_map::<{ BrowserMapPathKind::PackagePath }>(
+                            &mut bufs.target.main_field.remap.lookup,
                             browser_scope,
                             import_path,
                         )
@@ -2412,6 +2463,7 @@ impl<'a> Resolver<'a> {
                             let mut node_module = MatchResult::default();
                             if self
                                 .load_node_modules(
+                                    bufs,
                                     import_path,
                                     kind,
                                     source_dir_info,
@@ -2459,6 +2511,7 @@ impl<'a> Resolver<'a> {
 
         let mut res = MatchResult::default();
         match self.resolve_without_remapping(
+            bufs,
             source_dir_info,
             import_path,
             kind,
@@ -2505,6 +2558,7 @@ impl<'a> Resolver<'a> {
                     if let Some(browser_scope) = base_dir_info.get_enclosing_browser_scope() {
                         if let Some(remap) = self
                             .check_browser_map::<{ BrowserMapPathKind::AbsolutePath }>(
+                                &mut bufs.target.main_field.remap.lookup,
                                 browser_scope,
                                 result.path_pair.primary.text(),
                             )
@@ -2517,6 +2571,7 @@ impl<'a> Resolver<'a> {
                                 let mut remapped = MatchResult::default();
                                 if self
                                     .resolve_without_remapping(
+                                        bufs,
                                         browser_scope,
                                         remap,
                                         kind,
@@ -2655,8 +2710,9 @@ impl<'a> Resolver<'a> {
         a || b
     }
 
-    pub(crate) fn load_node_modules(
+    fn load_node_modules(
         &mut self,
+        bufs: &mut NodeModulesBufs,
         import_path: &[u8],
         kind: ast::ImportKind,
         mut dir_info: &'static DirInfo::DirInfo,
@@ -2680,7 +2736,7 @@ impl<'a> Resolver<'a> {
             // Try path substitutions first
             if tsconfig.paths.count() > 0 {
                 if self
-                    .match_tsconfig_paths(&tsconfig, import_path, kind, out)
+                    .match_tsconfig_paths(&mut bufs.target, &tsconfig, import_path, kind, out)
                     .is_success()
                 {
                     if let Some(d) = self.debug_logs.as_mut() {
@@ -2693,11 +2749,14 @@ impl<'a> Resolver<'a> {
             // Try looking up the path relative to the base URL
             if tsconfig.has_base_url() {
                 let base: &[u8] = &tsconfig.base_url;
-                if let Some(abs) = self.fs_ref().abs_buf_checked(
-                    &[base, import_path],
-                    bufs!(load_as_file_or_directory_via_tsconfig_base_path),
-                ) {
-                    if self.load_as_file_or_directory(abs, kind, out).is_success() {
+                if let Some(abs) = self
+                    .fs_ref()
+                    .abs_buf_checked(&[base, import_path], &mut bufs.node_modules_check)
+                {
+                    if self
+                        .load_as_file_or_directory(&mut bufs.target.main_field, abs, kind, out)
+                        .is_success()
+                    {
                         if let Some(d) = self.debug_logs.as_mut() {
                             d.decrease_indent();
                         }
@@ -2724,6 +2783,7 @@ impl<'a> Resolver<'a> {
 
             if import_path.starts_with(b"#") && !forbid_imports && package_json.imports.is_some() {
                 let r = self.load_package_imports(
+                    bufs,
                     import_path,
                     _dir_info_package_json,
                     kind,
@@ -2752,7 +2812,7 @@ impl<'a> Resolver<'a> {
             }
         }
 
-        let esm_ = crate::package_json::Package::parse(import_path, bufs!(esm_subpath));
+        let esm_ = crate::package_json::Package::parse(import_path, &mut bufs.esm_subpath);
 
         let source_dir_info = dir_info;
         let mut any_node_modules_folder = false;
@@ -2774,7 +2834,7 @@ impl<'a> Resolver<'a> {
                     } else {
                         match self.fs_ref().abs_buf_checked(
                             &[dir_info.abs_path, b"node_modules", import_path],
-                            bufs!(node_modules_check),
+                            &mut bufs.node_modules_check,
                         ) {
                             Some(p) => p,
                             None => break 'node_modules,
@@ -2797,7 +2857,7 @@ impl<'a> Resolver<'a> {
                         } else {
                             let parts = [dir_info.abs_path, b"node_modules".as_slice(), esm.name];
                             self.fs_ref()
-                                .abs_buf_checked(&parts, bufs!(esm_absolute_package_path))
+                                .abs_buf_checked(&parts, &mut bufs.esm_absolute_package_path)
                         };
 
                         if let Some(abs_package_path) = abs_package_path
@@ -2837,6 +2897,8 @@ impl<'a> Resolver<'a> {
                                                 }
                                                 _ => &self.opts.conditions.import,
                                             },
+                                            resolve_target_buf: &mut bufs.target.abs_path,
+                                            resolve_target_buf2: &mut bufs.target.substituted,
                                             debug_logs: self.debug_logs.as_mut(),
                                             stack_check: StackCheck::init(),
                                         }
@@ -2845,6 +2907,7 @@ impl<'a> Resolver<'a> {
 
                                         if self
                                             .handle_esm_resolution(
+                                                &mut bufs.target,
                                                 esm_resolution,
                                                 abs_package_path,
                                                 kind,
@@ -2893,6 +2956,8 @@ impl<'a> Resolver<'a> {
                                                 }
                                                 _ => &self.opts.conditions.import,
                                             },
+                                            resolve_target_buf: &mut bufs.target.abs_path,
+                                            resolve_target_buf2: &mut bufs.target.substituted,
                                             debug_logs: self.debug_logs.as_mut(),
                                             stack_check: StackCheck::init(),
                                         }
@@ -2903,6 +2968,7 @@ impl<'a> Resolver<'a> {
                                         );
                                         if self
                                             .handle_esm_resolution(
+                                                &mut bufs.target,
                                                 esm_resolution,
                                                 abs_package_path,
                                                 kind,
@@ -2964,7 +3030,7 @@ impl<'a> Resolver<'a> {
                     }
 
                     if self
-                        .load_as_file_or_directory(abs_path, kind, out)
+                        .load_as_file_or_directory(&mut bufs.target.main_field, abs_path, kind, out)
                         .is_success()
                     {
                         self.extension_order = prev_extension_order;
@@ -3002,7 +3068,7 @@ impl<'a> Resolver<'a> {
             for path in node_path.split(|&b| b == delim).filter(|s| !s.is_empty()) {
                 let Some(abs_path) = self
                     .fs_ref()
-                    .abs_buf_checked(&[path, import_path], bufs!(node_modules_check))
+                    .abs_buf_checked(&[path, import_path], &mut bufs.node_modules_check)
                 else {
                     continue;
                 };
@@ -3013,7 +3079,7 @@ impl<'a> Resolver<'a> {
                     ));
                 }
                 if self
-                    .load_as_file_or_directory(abs_path, kind, out)
+                    .load_as_file_or_directory(&mut bufs.target.main_field, abs_path, kind, out)
                     .is_success()
                 {
                     if let Some(d) = self.debug_logs.as_mut() {
@@ -3220,7 +3286,7 @@ impl<'a> Resolver<'a> {
                             &dependency_version,
                             version_buf.slice(manager.lockfile_string_bytes()),
                             package_json_dir,
-                            bufs!(path_in_global_disk_cache),
+                            &mut bufs.esm_absolute_package_path,
                         )
                     {
                         let found = self.dir_info_cached(folder);
@@ -3298,7 +3364,7 @@ impl<'a> Resolver<'a> {
                     let dir_path_for_resolution = match manager!().path_for_resolution(
                         resolved_package_id,
                         &resolution,
-                        bufs!(path_in_global_disk_cache),
+                        &mut bufs.esm_absolute_package_path,
                         log,
                     ) {
                         Ok(p) => p,
@@ -3347,7 +3413,11 @@ impl<'a> Resolver<'a> {
                         return MatchStatus::NotFound;
                     }
 
-                    self.dir_info_for_resolution(dir_path_for_resolution, resolved_package_id)
+                    self.dir_info_for_resolution(
+                        &mut bufs.node_modules_check,
+                        dir_path_for_resolution,
+                        resolved_package_id,
+                    )
                 };
 
                 match package_dir_info {
@@ -3373,6 +3443,8 @@ impl<'a> Resolver<'a> {
                                                 }
                                                 _ => &self.opts.conditions.import,
                                             },
+                                            resolve_target_buf: &mut bufs.target.abs_path,
+                                            resolve_target_buf2: &mut bufs.target.substituted,
                                             debug_logs: self.debug_logs.as_mut(),
                                             stack_check: StackCheck::init(),
                                         }
@@ -3380,6 +3452,7 @@ impl<'a> Resolver<'a> {
 
                                         if self
                                             .handle_esm_resolution(
+                                                &mut bufs.target,
                                                 esm_resolution,
                                                 abs_package_path,
                                                 kind,
@@ -3412,6 +3485,8 @@ impl<'a> Resolver<'a> {
                                                 }
                                                 _ => &self.opts.conditions.import,
                                             },
+                                            resolve_target_buf: &mut bufs.target.abs_path,
+                                            resolve_target_buf2: &mut bufs.target.substituted,
                                             debug_logs: self.debug_logs.as_mut(),
                                             stack_check: StackCheck::init(),
                                         }
@@ -3422,6 +3497,7 @@ impl<'a> Resolver<'a> {
                                         );
                                         if self
                                             .handle_esm_resolution(
+                                                &mut bufs.target,
                                                 esm_resolution,
                                                 abs_package_path,
                                                 kind,
@@ -3473,7 +3549,7 @@ impl<'a> Resolver<'a> {
 
                             let Some(abs_path) = self.fs_ref().abs_buf_checked(
                                 &[pkg_dir_info.abs_path, esm.subpath],
-                                bufs!(node_modules_check),
+                                &mut bufs.node_modules_check,
                             ) else {
                                 if let Some(d) = self.debug_logs.as_mut() {
                                     d.decrease_indent();
@@ -3488,7 +3564,12 @@ impl<'a> Resolver<'a> {
                             }
 
                             if self
-                                .load_as_file_or_directory(abs_path, kind, out)
+                                .load_as_file_or_directory(
+                                    &mut bufs.target.main_field,
+                                    abs_path,
+                                    kind,
+                                    out,
+                                )
                                 .is_success()
                             {
                                 out.is_node_module = true;
@@ -3517,6 +3598,7 @@ impl<'a> Resolver<'a> {
 
     fn dir_info_for_resolution(
         &mut self,
+        buf: &mut PathBuffer,
         dir_path_maybe_trail_slash: &[u8],
         package_id: Install::PackageID,
     ) -> crate::CrateResult<Option<&'static DirInfo::DirInfo>> {
@@ -3657,16 +3739,13 @@ impl<'a> Resolver<'a> {
                 .expect("unreachable");
         }
 
-        // `dir_path` is a slice into the threadlocal `bufs(.path_in_global_disk_cache)` buffer,
-        // which gets overwritten on the next auto-install resolution. `dir_info_uncached` stores
-        // its `path` argument directly as `DirInfo.abs_path` in the permanent `dir_cache`, so
-        // pass the interned copy from `DirEntry.dir` (always backed by `DirnameStore`) instead.
         // SAFETY: ARENA — `dir_entries_option` is a slot in `rfs.entries` (BSSMap) and
         // outlives the resolver. Hoist the `&'static [u8] dir` read out so no `&EntriesOption`
         // temporary is live when the raw `*mut` is passed below (avoids a needless Unique
         // retag that would pop the shared tag mid-argument-list under Stacked Borrows).
         let dir_entries_dir = unsafe { &*dir_entries_option }.entries().dir;
         self.dir_info_uncached(
+            buf,
             hash,
             dir_entries_dir,
             // already `*mut EntriesOption` — pass raw, no intermediate `&mut` retag
@@ -3739,6 +3818,7 @@ impl<'a> Resolver<'a> {
 
     fn handle_esm_resolution(
         &mut self,
+        bufs: &mut TargetBufs,
         mut esm_resolution: crate::package_json::Resolution,
         abs_package_path: &[u8],
         kind: ast::ImportKind,
@@ -3747,6 +3827,7 @@ impl<'a> Resolver<'a> {
         out: &mut MatchResult,
     ) -> MatchStatus {
         let status = self.load_esm_resolution(
+            bufs,
             &mut esm_resolution,
             abs_package_path,
             kind,
@@ -3762,6 +3843,7 @@ impl<'a> Resolver<'a> {
 
     fn load_esm_resolution(
         &mut self,
+        bufs: &mut TargetBufs,
         esm_resolution: &mut crate::package_json::Resolution,
         abs_package_path: &[u8],
         kind: ast::ImportKind,
@@ -3770,6 +3852,7 @@ impl<'a> Resolver<'a> {
         out: &mut MatchResult,
     ) -> MatchStatus {
         use crate::package_json::Status;
+        use bun_paths::resolve_path::{join_spill, platform};
         if !((matches!(
             esm_resolution.status,
             Status::Inexact | Status::Exact | Status::ExactEndsWithStar
@@ -3784,7 +3867,7 @@ impl<'a> Resolver<'a> {
                 abs_package_path,
                 strings::without_leading_path_separator(&esm_resolution.path),
             ],
-            bufs!(esm_absolute_package_path_joined),
+            &mut bufs.abs_path,
         ) {
             Some(p) => p,
             None => {
@@ -3837,6 +3920,7 @@ impl<'a> Resolver<'a> {
                         esm_resolution.status = Status::ModuleNotFound;
 
                         if self.probe_target_extensions(
+                            &mut bufs.main_field.remap.lookup.load_as_file,
                             resolved_dir_info,
                             dirname_fd,
                             package_json,
@@ -3855,6 +3939,7 @@ impl<'a> Resolver<'a> {
                     let ends_with_star = esm_resolution.status == Status::ExactEndsWithStar;
                     if ends_with_star
                         && self.probe_target_extensions(
+                            &mut bufs.main_field.remap.lookup.load_as_file,
                             resolved_dir_info,
                             dirname_fd,
                             package_json,
@@ -3872,7 +3957,7 @@ impl<'a> Resolver<'a> {
                     if ends_with_star {
                         if let Ok(Some(dir_info_ref)) = self.dir_info_cached(abs_esm_path) {
                             let index = b"index";
-                            let buf = bufs!(load_as_file);
+                            let buf = &mut bufs.main_field.remap.lookup.load_as_file;
                             buf[..index.len()].copy_from_slice(index);
                             for ext in self.opts.ext_order_slice(extension_order).iter() {
                                 let ext: &[u8] = ext;
@@ -3893,12 +3978,12 @@ impl<'a> Resolver<'a> {
                                             ms.extend_from_slice(&file_name[..]);
                                             let parts =
                                                 [package_json.name.as_ref(), package_subpath];
+                                            let mut join_buf = SpillBuf::default();
+                                            let import =
+                                                join_spill::<platform::Auto>(&mut join_buf, &parts);
                                             debug.add_note_fmt(format_args!(
                                                 "The import {} is missing the suffix {}",
-                                                bstr::BStr::new(ResolvePath::join(
-                                                    &parts,
-                                                    bun_paths::Platform::AUTO
-                                                )),
+                                                bstr::BStr::new(import),
                                                 bstr::BStr::new(&ms)
                                             ));
                                         }
@@ -3948,7 +4033,7 @@ impl<'a> Resolver<'a> {
                 // instead of a "*", we need to try CommonJS-style implicit
                 // extension and/or directory detection.
                 if self
-                    .load_as_file_or_directory(abs_esm_path, kind, out)
+                    .load_as_file_or_directory(&mut bufs.main_field, abs_esm_path, kind, out)
                     .is_success()
                 {
                     out.is_node_module = true;
@@ -3971,6 +4056,7 @@ impl<'a> Resolver<'a> {
     /// critical section.
     fn probe_target_extensions(
         &mut self,
+        buf: &mut PathBuffer,
         resolved_dir_info: &'static DirInfo::DirInfo,
         dirname_fd: FD,
         package_json: &'static PackageJSON,
@@ -3980,7 +4066,6 @@ impl<'a> Resolver<'a> {
         out: &mut MatchResult,
     ) -> bool {
         if is_wildcard && bun_paths::extension(base).is_empty() {
-            let buf = bufs!(load_as_file);
             buf[..base.len()].copy_from_slice(base);
             for ext in self.opts.ext_order_slice(extension_order).iter() {
                 let ext: &[u8] = ext;
@@ -4003,6 +4088,7 @@ impl<'a> Resolver<'a> {
                             ));
                         }
                         return self.build_wildcard_match(
+                            buf,
                             resolved_dir_info,
                             dirname_fd,
                             package_json,
@@ -4024,7 +4110,6 @@ impl<'a> Resolver<'a> {
 
             if !ts_exts.is_empty() {
                 let segment = &base[..last_dot];
-                let buf = bufs!(load_as_file);
                 buf[..segment.len()].copy_from_slice(segment);
                 for &replacement in ts_exts.iter() {
                     let file_name = &mut buf[0..segment.len() + replacement.len()];
@@ -4043,6 +4128,7 @@ impl<'a> Resolver<'a> {
                                 ));
                             }
                             return self.build_wildcard_match(
+                                buf,
                                 resolved_dir_info,
                                 dirname_fd,
                                 package_json,
@@ -4060,6 +4146,7 @@ impl<'a> Resolver<'a> {
 
     fn build_wildcard_match(
         &mut self,
+        buf: &mut PathBuffer,
         resolved_dir_info: &'static DirInfo::DirInfo,
         dirname_fd: FD,
         package_json: &'static PackageJSON,
@@ -4068,10 +4155,7 @@ impl<'a> Resolver<'a> {
     ) -> bool {
         let Ok(abs_path) = entry.abs_path_or_try_fill(|| {
             let parts = [entry.dir, entry.base()];
-            let abs = self
-                .fs_ref()
-                .abs_buf_checked(&parts, bufs!(remap_path))
-                .ok_or(())?;
+            let abs = self.fs_ref().abs_buf_checked(&parts, buf).ok_or(())?;
             Ok::<_, ()>(Interned::from_static(
                 self.fs_ref()
                     .dirname_store
@@ -4104,8 +4188,9 @@ impl<'a> Resolver<'a> {
         true
     }
 
-    pub(crate) fn resolve_without_remapping(
+    fn resolve_without_remapping(
         &mut self,
+        bufs: &mut NodeModulesBufs,
         source_dir_info: &'static DirInfo::DirInfo,
         import_path: &[u8],
         kind: ast::ImportKind,
@@ -4113,15 +4198,23 @@ impl<'a> Resolver<'a> {
         out: &mut MatchResult,
     ) -> MatchStatus {
         if is_package_path(import_path) {
-            self.load_node_modules(import_path, kind, source_dir_info, global_cache, false, out)
+            self.load_node_modules(
+                bufs,
+                import_path,
+                kind,
+                source_dir_info,
+                global_cache,
+                false,
+                out,
+            )
         } else {
             let Some(resolved) = self.fs_ref().abs_buf_checked(
                 &[source_dir_info.abs_path, import_path],
-                bufs!(resolve_without_remapping),
+                &mut bufs.node_modules_check,
             ) else {
                 return MatchStatus::NotFound;
             };
-            self.load_as_file_or_directory(resolved, kind, out)
+            self.load_as_file_or_directory(&mut bufs.target.main_field, resolved, kind, out)
         }
     }
 
@@ -4158,8 +4251,12 @@ impl<'a> Resolver<'a> {
         if result.has_base_url() {
             // this might leak
             if !bun_paths::is_absolute(&result.base_url) {
-                let abs = self.fs_ref().abs(&[file_dir, &result.base_url[..]]);
-                result.base_url = Box::from(abs);
+                result.base_url = SpillBuf::with_scratch(|buf| {
+                    Box::from(
+                        self.fs_ref()
+                            .abs_spill(&[file_dir, &result.base_url[..]], buf),
+                    )
+                });
             }
         }
 
@@ -4168,8 +4265,12 @@ impl<'a> Resolver<'a> {
                 || !bun_paths::is_absolute(&result.base_url_for_paths))
         {
             // this might leak
-            let abs = self.fs_ref().abs(&[file_dir, &result.base_url[..]]);
-            result.base_url_for_paths = Box::from(abs);
+            result.base_url_for_paths = SpillBuf::with_scratch(|buf| {
+                Box::from(
+                    self.fs_ref()
+                        .abs_spill(&[file_dir, &result.base_url[..]], buf),
+                )
+            });
         }
 
         // NOTE: return the `Box` so the caller (`dir_info_uncached`) takes
@@ -4191,8 +4292,9 @@ impl<'a> Resolver<'a> {
         }
     }
 
-    pub(crate) fn parse_package_json<const ALLOW_DEPENDENCIES: bool>(
+    fn parse_package_json<const ALLOW_DEPENDENCIES: bool>(
         &mut self,
+        buf: &mut PathBuffer,
         file: &[u8],
         dirname_fd: FD,
         package_id: Option<Install::PackageID>,
@@ -4209,6 +4311,7 @@ impl<'a> Resolver<'a> {
         let pkg = if ALLOW_DEPENDENCIES {
             PackageJSON::parse::<{ IncludeDependencies::Local }>(
                 self,
+                buf,
                 file,
                 dirname_fd,
                 package_id,
@@ -4217,6 +4320,7 @@ impl<'a> Resolver<'a> {
         } else {
             PackageJSON::parse::<{ IncludeDependencies::None }>(
                 self,
+                buf,
                 file,
                 dirname_fd,
                 package_id,
@@ -4255,9 +4359,8 @@ impl<'a> Resolver<'a> {
         enable_logging: bool,
         raw_input_path: &[u8],
     ) -> crate::CrateResult<Option<&'static DirInfo::DirInfo>> {
-        // `self.mutex` is `&'static Mutex` (Copy) — bind it first so the guard
-        // doesn't keep `self` borrowed across the body.
-        let _unlock = self.mutex.lock_guard();
+        let mut guard = self.mutex.lock();
+        let bufs = &mut *guard;
         let mut input_path = raw_input_path;
 
         if is_dot_slash(input_path) || input_path == b"." {
@@ -4283,7 +4386,7 @@ impl<'a> Resolver<'a> {
 
         #[cfg(windows)]
         {
-            let win32_normalized_dir_info_cache_buf = bufs!(win32_normalized_dir_info_cache);
+            let win32_normalized_dir_info_cache_buf = &mut bufs.win32_normalized_dir_info_cache;
             input_path = self
                 .fs_ref()
                 .normalize_buf(win32_normalized_dir_info_cache_buf, input_path);
@@ -4326,7 +4429,9 @@ impl<'a> Resolver<'a> {
         match self.dir_cache.get_or_put(hash) {
             DirInfo::Cached::Exists(info) => Ok(Some(info)),
             DirInfo::Cached::NotFound => Ok(None),
-            DirInfo::Cached::Unknown => self.dir_info_cached_miss(enable_logging, input_path, hash),
+            DirInfo::Cached::Unknown => {
+                self.dir_info_cached_miss(&mut bufs.miss, enable_logging, input_path, hash)
+            }
         }
     }
 
@@ -4339,13 +4444,14 @@ impl<'a> Resolver<'a> {
     #[inline(never)]
     fn dir_info_cached_miss(
         &mut self,
+        bufs: &mut DirInfoMissBufs,
         enable_logging: bool,
         input_path: &[u8],
         hash: u64,
     ) -> crate::CrateResult<Option<&'static DirInfo::DirInfo>> {
-        let dir_info_uncached_path_buf = bufs!(dir_info_uncached_path);
+        let dir_info_uncached_path_buf = &mut bufs.dir_info_uncached_path;
 
-        let mut queue = BorrowedBuf::from(&mut bufs!(dir_entry_paths_to_resolve)[..]);
+        let mut queue = BorrowedBuf::from(&mut bufs.dir_entry_paths_to_resolve[..]);
         let input_path_len = input_path.len();
         dir_info_uncached_path_buf[..input_path_len].copy_from_slice(input_path);
         // The slice spans one byte past the copied path so the NUL-splice/restore at
@@ -4357,7 +4463,7 @@ impl<'a> Resolver<'a> {
 
         queue.unfilled().append(&[DirEntryResolveQueueItem {
             hash,
-            unsafe_path: bun_ptr::RawSlice::new(&path[..input_path_len]),
+            path_len: input_path_len,
             safe_path: b"",
             fd: FD::INVALID,
         }]);
@@ -4410,7 +4516,7 @@ impl<'a> Resolver<'a> {
                 return Ok(None);
             }
             let mut item = DirEntryResolveQueueItem {
-                unsafe_path: bun_ptr::RawSlice::new(top),
+                path_len: top.len(),
                 hash,
                 safe_path: b"",
                 fd: FD::INVALID,
@@ -4447,7 +4553,7 @@ impl<'a> Resolver<'a> {
                         return Ok(None);
                     }
                     let mut item = DirEntryResolveQueueItem {
-                        unsafe_path: bun_ptr::RawSlice::new(root_path),
+                        path_len: root_path.len(),
                         hash,
                         safe_path: b"",
                         fd: FD::INVALID,
@@ -4475,26 +4581,24 @@ impl<'a> Resolver<'a> {
             }
         }
 
-        let open_dir_count = core::cell::Cell::new(0usize);
-
         // When this function halts, any item not processed means it's not found.
-        // NOTE: capture only what the cleanup needs by-value (store_fd) / by-Cell
-        // (open_dir_count) so the guard doesn't pin `&mut self` across the loop
+        // NOTE: capture `store_fd` by value so the guard doesn't pin `&mut self` across the loop
         // body. `need_to_close_files()` is evaluated AT DROP TIME,
         // not snapshotted up-front — the loop body calls
         // `Fs.FileSystem.setMaxFd()` which can flip `needToCloseFiles()`
         // mid-walk. Reach the RealFS via the `&'static` singleton accessor
         // instead of capturing a raw `*mut RealFS` (the read is `&self`-only).
         let close_dirs_store_fd = self.store_fd;
-        scopeguard::defer! {
-            let n = open_dir_count.get();
-            if n > 0 && (!close_dirs_store_fd || Fs::FileSystem::get().fs.need_to_close_files()) {
-                let open_dirs = &bufs!(open_dirs)[0..n];
-                for open_dir in open_dirs {
+        let open_dirs = BorrowedBuf::<FD>::from(&mut bufs.open_dirs[..]);
+        let mut open_dirs = scopeguard::guard(open_dirs, |open_dirs| {
+            if open_dirs.len() > 0
+                && (!close_dirs_store_fd || Fs::FileSystem::get().fs.need_to_close_files())
+            {
+                for open_dir in open_dirs.filled() {
                     open_dir.close();
                 }
             }
-        }
+        });
 
         // We want to walk in a straight line from the topmost directory to the desired directory
         // For each directory we visit, we get the entries, but not traverse into child directories
@@ -4512,7 +4616,6 @@ impl<'a> Resolver<'a> {
 
         // Start at the top.
         for (remaining, queue_top) in queue.filled().iter().enumerate().rev() {
-            let queue_top_unsafe_path: &[u8] = queue_top.unsafe_path.slice();
             let queue_top_safe_path = queue_top.safe_path;
 
             let open_dir: FD = if queue_top.fd.is_valid() {
@@ -4521,10 +4624,10 @@ impl<'a> Resolver<'a> {
                 'open_dir: {
                     // This saves us N copies of .toPosixPath
                     // which was likely the perf gain from resolving directories relative to the parent directory, anyway.
-                    // `queue_top_unsafe_path.len()` is ≤ `input_path_len` < `path.len()` for
+                    // `queue_top.path_len` is ≤ `input_path_len` < `path.len()` for
                     // every queue item, so this indexes in-bounds (the +1 sentinel slot for
                     // queue index 0 — see the `path` construction above).
-                    let nul_at = queue_top_unsafe_path.len();
+                    let nul_at = queue_top.path_len;
                     let prev_char = path[nul_at];
                     let sentinel = bun_core::ZStr::nul_terminate(path, nul_at);
 
@@ -4560,6 +4663,7 @@ impl<'a> Resolver<'a> {
                     // Restore the byte we NUL-terminated above.
                     // No early-return path exists between the write and here, so a guard is unnecessary.
                     path[nul_at] = prev_char;
+                    let queue_top_path = &path[..nul_at];
 
                     match open_req {
                         Ok(fd) => break 'open_dir fd,
@@ -4588,14 +4692,14 @@ impl<'a> Resolver<'a> {
                             {
                                 debuglog!(
                                     "treating permission-denied ancestor \"{}\" as empty: {}",
-                                    bstr::BStr::new(queue_top_unsafe_path),
+                                    bstr::BStr::new(queue_top_path),
                                     bstr::BStr::new(err.name())
                                 );
                                 break 'open_dir FD::INVALID;
                             }
                             let cached_dir_entry_result = rfs!()
                                 .entries
-                                .get_or_put(queue_top_unsafe_path)
+                                .get_or_put(queue_top_path)
                                 .expect("unreachable");
                             // If we don't properly cache not found, then we repeatedly attempt to open the same directories,
                             // which causes a perf trace that looks like this stupidity;
@@ -4606,7 +4710,7 @@ impl<'a> Resolver<'a> {
                             rfs!().entries.mark_not_found(cached_dir_entry_result);
                             if err != crate::Error::Sys(bun_errno::SystemErrno::ENOENT) {
                                 if enable_logging && let Some(log) = self.log() {
-                                    let pretty = queue_top_unsafe_path;
+                                    let pretty = queue_top_path;
                                     log.add_error_fmt(
                                         None,
                                         bun_ast::Loc::default(),
@@ -4630,8 +4734,7 @@ impl<'a> Resolver<'a> {
             if !queue_top.fd.is_valid() && open_dir.is_valid() {
                 Fs::FileSystem::set_max_fd(open_dir.native());
                 // these objects mostly just wrap the file descriptor, so it's fine to keep it.
-                bufs!(open_dirs)[open_dir_count.get()] = open_dir;
-                open_dir_count.set(open_dir_count.get() + 1);
+                open_dirs.unfilled().append(&[open_dir]);
             }
 
             let dir_path: &'static [u8] = if !queue_top_safe_path.is_empty() {
@@ -4652,19 +4755,20 @@ impl<'a> Resolver<'a> {
                 }
 
                 let safe_path = _safe_path.unwrap();
+                let queue_top_path = &path[..queue_top.path_len];
 
                 // An empty needle must yield index 0, not None. On Windows
-                // `queue_top_unsafe_path` is empty when
+                // `queue_top_path` is empty when
                 // `windows_filesystem_root` cannot classify the input — e.g.
                 // `import(":://x")` is "absolute" per std but has no drive root,
                 // so `root_path` is `path[0..0]`. Treat that as 0 so the
                 // resolver caches a not-found instead of panicking.
-                let dir_path_i = if queue_top_unsafe_path.is_empty() {
+                let dir_path_i = if queue_top_path.is_empty() {
                     0
                 } else {
-                    strings::index_of(safe_path, queue_top_unsafe_path).expect("unreachable")
+                    strings::index_of(safe_path, queue_top_path).expect("unreachable")
                 };
-                let mut end = dir_path_i + queue_top_unsafe_path.len();
+                let mut end = dir_path_i + queue_top_path.len();
 
                 // Directories must always end in a trailing slash or else various bugs can occur.
                 // This covers "what happens when the trailing"
@@ -4783,6 +4887,7 @@ impl<'a> Resolver<'a> {
             }
 
             top_parent = Some(self.dir_info_uncached(
+                &mut bufs.dir_info_uncached,
                 queue_top.hash,
                 dir_path,
                 dir_entries_option,
@@ -4798,8 +4903,9 @@ impl<'a> Resolver<'a> {
 
     // This closely follows the behavior of "tryLoadModuleUsingPaths()" in the
     // official TypeScript compiler
-    pub(crate) fn match_tsconfig_paths(
+    fn match_tsconfig_paths(
         &mut self,
+        bufs: &mut TargetBufs,
         tsconfig: &TSConfigJSON,
         path: &[u8],
         kind: ast::ImportKind,
@@ -4842,17 +4948,20 @@ impl<'a> Resolver<'a> {
 
                         if !bun_paths::is_absolute(absolute_original_path) {
                             let parts: [&[u8]; 2] = [abs_base_url, original_path.as_ref()];
-                            absolute_original_path = match self
-                                .fs_ref()
-                                .abs_buf_checked(&parts, bufs!(tsconfig_path_abs))
-                            {
-                                Some(p) => p,
-                                None => continue,
-                            };
+                            absolute_original_path =
+                                match self.fs_ref().abs_buf_checked(&parts, &mut bufs.abs_path) {
+                                    Some(p) => p,
+                                    None => continue,
+                                };
                         }
 
                         if self
-                            .load_as_file_or_directory(absolute_original_path, kind, out)
+                            .load_as_file_or_directory(
+                                &mut bufs.main_field,
+                                absolute_original_path,
+                                kind,
+                                out,
+                            )
                             .is_success()
                         {
                             return MatchStatus::Success;
@@ -4887,7 +4996,7 @@ impl<'a> Resolver<'a> {
                 // the pieces via the path joiner, which inserts a separator
                 // between parts and so only worked when '*' sat on a segment
                 // boundary. Substitute textually instead, then resolve once.
-                let substituted_buf = bufs!(tsconfig_match_full_buf3);
+                let substituted_buf = &mut bufs.substituted;
                 let substituted: &[u8] =
                     if let Some(star) = strings::index_of_char(original_path, b'*') {
                         let star = star as usize;
@@ -4914,15 +5023,19 @@ impl<'a> Resolver<'a> {
                 } else {
                     [abs_base_url, strings::trim_left(substituted, b"/\\")]
                 };
-                let Some(absolute_original_path) = self
-                    .fs_ref()
-                    .abs_buf_checked(&parts, bufs!(tsconfig_match_full_buf))
+                let Some(absolute_original_path) =
+                    self.fs_ref().abs_buf_checked(&parts, &mut bufs.abs_path)
                 else {
                     continue;
                 };
 
                 if self
-                    .load_as_file_or_directory(absolute_original_path, kind, out)
+                    .load_as_file_or_directory(
+                        &mut bufs.main_field,
+                        absolute_original_path,
+                        kind,
+                        out,
+                    )
                     .is_success()
                 {
                     return MatchStatus::Success;
@@ -4957,8 +5070,9 @@ impl<'a> Resolver<'a> {
         true
     }
 
-    pub(crate) fn load_package_imports(
+    fn load_package_imports(
         &mut self,
+        bufs: &mut NodeModulesBufs,
         import_path: &[u8],
         dir_info: &'static DirInfo::DirInfo,
         kind: ast::ImportKind,
@@ -5000,6 +5114,8 @@ impl<'a> Resolver<'a> {
                 }
                 _ => &self.opts.conditions.import,
             },
+            resolve_target_buf: &mut bufs.target.abs_path,
+            resolve_target_buf2: &mut bufs.target.substituted,
             debug_logs: self.debug_logs.as_mut(),
             stack_check: StackCheck::init(),
         }
@@ -5038,6 +5154,7 @@ impl<'a> Resolver<'a> {
             }
 
             return self.load_node_modules(
+                bufs,
                 &esm_resolution.path,
                 kind,
                 dir_info,
@@ -5048,6 +5165,7 @@ impl<'a> Resolver<'a> {
         }
 
         self.handle_esm_resolution(
+            &mut bufs.target,
             esm_resolution,
             package_json.source.path.name().dir,
             kind,
@@ -5057,8 +5175,9 @@ impl<'a> Resolver<'a> {
         )
     }
 
-    pub(crate) fn check_browser_map<const KIND: BrowserMapPathKind>(
+    fn check_browser_map<const KIND: BrowserMapPathKind>(
         &mut self,
+        bufs: &mut LookupBufs,
         dir_info: &DirInfo::DirInfo,
         input_path_: &[u8],
     ) -> Option<&'static [u8]> {
@@ -5096,7 +5215,7 @@ impl<'a> Resolver<'a> {
         // Normalize the path so we can compare against it without getting confused by "./"
         let cleaned = self
             .fs_ref()
-            .normalize_buf(bufs!(check_browser_map), input_path);
+            .normalize_buf(&mut bufs.check_browser_map, input_path);
 
         if cleaned.len() == 1 && cleaned[0] == b'.' {
             // No bundler supports remapping ".", so we don't either
@@ -5109,6 +5228,8 @@ impl<'a> Resolver<'a> {
             input_path,
             extension_order: self.opts.ext_order_slice(self.extension_order),
             map: &package_json.browser_map,
+            ext_buf: &mut bufs.extension_path,
+            index_buf: &mut bufs.index,
         };
 
         if checker.check_path(input_path) {
@@ -5117,7 +5238,7 @@ impl<'a> Resolver<'a> {
 
         // First try the import path as a package path
         if is_package_path(checker.input_path) {
-            let abs_to_rel = bufs!(abs_to_rel);
+            let abs_to_rel = &mut bufs.abs_to_rel;
             match KIND {
                 BrowserMapPathKind::AbsolutePath => {
                     abs_to_rel[0..2].copy_from_slice(b"./");
@@ -5155,8 +5276,9 @@ impl<'a> Resolver<'a> {
         None
     }
 
-    pub(crate) fn load_from_main_field(
+    fn load_from_main_field(
         &mut self,
+        bufs: &mut MainFieldBufs,
         path: &[u8],
         dir_info: &'static DirInfo::DirInfo,
         _field_rel_path: &[u8],
@@ -5187,7 +5309,7 @@ impl<'a> Resolver<'a> {
         // The field comes from package.json and can be any length.
         let Some(mut field_abs_path) = self
             .fs_ref()
-            .abs_buf_checked(&[path, field_rel_path], bufs!(field_abs_path))
+            .abs_buf_checked(&[path, field_rel_path], &mut bufs.field_abs_path)
         else {
             dec_ret!(MatchStatus::NotFound);
         };
@@ -5198,14 +5320,18 @@ impl<'a> Resolver<'a> {
                 if let Some(browser_json) = browser_scope.package_json {
                     if let Some(remap) = self
                         .check_browser_map::<{ BrowserMapPathKind::AbsolutePath }>(
+                            &mut bufs.remap.lookup,
                             browser_scope,
                             field_abs_path,
                         )
                     {
                         // Is the path disabled?
                         if remap.is_empty() {
-                            let paths = [path, field_rel_path];
-                            let new_path = self.fs_ref().abs_alloc(&paths).expect("unreachable");
+                            let new_path = self
+                                .fs_ref()
+                                .dirname_store
+                                .append_slice(field_abs_path)
+                                .expect("unreachable");
                             let mut _path = Path::init(new_path);
                             _path.is_disabled = true;
                             *out = MatchResult {
@@ -5222,7 +5348,7 @@ impl<'a> Resolver<'a> {
                         // `remap` is relative to the package that owns the browser map.
                         field_abs_path = match self.fs_ref().abs_buf_checked(
                             &[browser_scope.abs_path, remap],
-                            bufs!(field_abs_path),
+                            &mut bufs.field_abs_path,
                         ) {
                             Some(remapped) => remapped,
                             None => dec_ret!(MatchStatus::NotFound),
@@ -5233,7 +5359,11 @@ impl<'a> Resolver<'a> {
         }
 
         // Is this a file?
-        if let Some(result) = self.load_as_file(field_abs_path, extension_order) {
+        if let Some(result) = self.load_as_file(
+            &mut bufs.remap.lookup.load_as_file,
+            field_abs_path,
+            extension_order,
+        ) {
             if let Some(package_json) = dir_info.package_json {
                 *out = MatchResult {
                     path_pair: PathPair {
@@ -5264,6 +5394,7 @@ impl<'a> Resolver<'a> {
         };
 
         let r = self.load_as_index_with_browser_remapping(
+            &mut bufs.remap,
             field_dir_info,
             field_abs_path,
             extension_order,
@@ -5278,8 +5409,9 @@ impl<'a> Resolver<'a> {
     // node_module_paths / Resolver__propForRequireMainPaths: see src/jsc/resolver_jsc.rs
     // (exported to C++ only)
 
-    pub(crate) fn load_as_index(
+    fn load_as_index(
         &mut self,
+        bufs: &mut LookupBufs,
         dir_info: &'static DirInfo::DirInfo,
         extension_order: options::ExtOrder,
         out: &mut MatchResult,
@@ -5295,7 +5427,7 @@ impl<'a> Resolver<'a> {
             // `self.opts` and never mutated while the resolver runs.
             let ext = bun_ptr::RawSlice::new(&*self.opts.ext_order_slice(extension_order)[i]);
             if self
-                .load_index_with_extension(dir_info, &ext, out)
+                .load_index_with_extension(bufs, dir_info, &ext, out)
                 .is_success()
             {
                 return MatchStatus::Success;
@@ -5310,7 +5442,7 @@ impl<'a> Resolver<'a> {
             // `extra_cjs_extensions` is heap-stable for the resolver's life.
             let ext = bun_ptr::RawSlice::new(&*self.opts.extra_cjs_extensions[i]);
             if self
-                .load_index_with_extension(dir_info, &ext, out)
+                .load_index_with_extension(bufs, dir_info, &ext, out)
                 .is_success()
             {
                 return MatchStatus::Success;
@@ -5322,11 +5454,12 @@ impl<'a> Resolver<'a> {
 
     fn load_index_with_extension(
         &mut self,
+        bufs: &mut LookupBufs,
         dir_info: &'static DirInfo::DirInfo,
         ext: &[u8],
         out: &mut MatchResult,
     ) -> MatchStatus {
-        let ext_buf = bufs!(extension_path);
+        let ext_buf = &mut bufs.extension_path;
 
         if b"index".len() + ext.len() > ext_buf.len() {
             return MatchStatus::NotFound;
@@ -5359,7 +5492,7 @@ impl<'a> Resolver<'a> {
                     let parts = [dir_info.abs_path, &base[..]];
                     let out_buf_ = self
                         .fs_ref()
-                        .abs_buf_checked(&parts, bufs!(index))
+                        .abs_buf_checked(&parts, &mut bufs.index)
                         .ok_or(())?;
                     Ok::<_, ()>(Interned::from_static(
                         self.fs_ref()
@@ -5413,8 +5546,9 @@ impl<'a> Resolver<'a> {
         MatchStatus::NotFound
     }
 
-    pub(crate) fn load_as_index_with_browser_remapping(
+    fn load_as_index_with_browser_remapping(
         &mut self,
+        bufs: &mut RemapBufs,
         dir_info: &'static DirInfo::DirInfo,
         path_: &[u8],
         extension_order: options::ExtOrder,
@@ -5422,10 +5556,7 @@ impl<'a> Resolver<'a> {
     ) -> MatchStatus {
         // In order for our path handling logic to be correct, it must end with a trailing slash.
         let mut path = path_;
-        // Hoisted to fn-body scope so the immutable reborrow taken below can outlive
-        // the `if` block without lifetime erasure; the field is not touched again in
-        // this fn (only `remap_path` is, via a separate `bufs!` raw-ptr projection).
-        let path_buf = bufs!(remap_path_trailing_slash);
+        let path_buf = &mut bufs.remap_path_trailing_slash;
         if !strings::ends_with_char(path_, SEP) {
             // Leave room for the separator and the NUL.
             if path.len() + 2 > path_buf.len() {
@@ -5445,20 +5576,24 @@ impl<'a> Resolver<'a> {
                     let index_paths = [path, FIELD_REL_PATH];
                     let Some(index_abs_path) = self
                         .fs_ref()
-                        .abs_buf_checked(&index_paths, bufs!(remap_path))
+                        .abs_buf_checked(&index_paths, &mut bufs.remap_path)
                     else {
                         return MatchStatus::NotFound;
                     };
                     if let Some(remap) = self
                         .check_browser_map::<{ BrowserMapPathKind::AbsolutePath }>(
+                            &mut bufs.lookup,
                             browser_scope,
                             index_abs_path,
                         )
                     {
                         // Is the path disabled?
                         if remap.is_empty() {
-                            let new_path =
-                                self.fs_ref().abs_alloc(&index_paths).expect("unreachable");
+                            let new_path = self
+                                .fs_ref()
+                                .dirname_store
+                                .append_slice(index_abs_path)
+                                .expect("unreachable");
                             let mut _path = Path::init(new_path);
                             _path.is_disabled = true;
                             *out = MatchResult {
@@ -5474,15 +5609,19 @@ impl<'a> Resolver<'a> {
 
                         // `remap` is relative to the browser scope, which may be an ancestor of `path`.
                         let new_paths = [browser_scope.abs_path, remap];
-                        let Some(remapped_abs) =
-                            self.fs_ref().abs_buf_checked(&new_paths, bufs!(remap_path))
+                        let Some(remapped_abs) = self
+                            .fs_ref()
+                            .abs_buf_checked(&new_paths, &mut bufs.remap_path)
                         else {
                             return MatchStatus::NotFound;
                         };
 
                         // Is this a file
-                        if let Some(file_result) = self.load_as_file(remapped_abs, extension_order)
-                        {
+                        if let Some(file_result) = self.load_as_file(
+                            &mut bufs.lookup.load_as_file,
+                            remapped_abs,
+                            extension_order,
+                        ) {
                             *out = MatchResult {
                                 dirname_fd: file_result.dirname_fd,
                                 path_pair: PathPair {
@@ -5497,7 +5636,7 @@ impl<'a> Resolver<'a> {
                         // Is it a directory with an index?
                         if let Ok(Some(new_dir)) = self.dir_info_cached(remapped_abs) {
                             if self
-                                .load_as_index(new_dir, extension_order, out)
+                                .load_as_index(&mut bufs.lookup, new_dir, extension_order, out)
                                 .is_success()
                             {
                                 return MatchStatus::Success;
@@ -5510,11 +5649,12 @@ impl<'a> Resolver<'a> {
             }
         }
 
-        self.load_as_index(dir_info, extension_order, out)
+        self.load_as_index(&mut bufs.lookup, dir_info, extension_order, out)
     }
 
-    pub(crate) fn load_as_file_or_directory(
+    fn load_as_file_or_directory(
         &mut self,
+        bufs: &mut MainFieldBufs,
         path: &[u8],
         kind: ast::ImportKind,
         out: &mut MatchResult,
@@ -5522,7 +5662,9 @@ impl<'a> Resolver<'a> {
         let extension_order = self.extension_order;
 
         // Is this a file?
-        if let Some(file) = self.load_as_file(path, extension_order) {
+        if let Some(file) =
+            self.load_as_file(&mut bufs.remap.lookup.load_as_file, path, extension_order)
+        {
             // Determine the package folder by looking at the last node_modules/ folder in the path
             let nm_seg = const_format::concatcp!("node_modules", SEP_STR).as_bytes();
             if let Some(last_node_modules_folder) = strings::last_index_of(file.path, nm_seg) {
@@ -5637,6 +5779,7 @@ impl<'a> Resolver<'a> {
 
                     if !self
                         .load_from_main_field(
+                            bufs,
                             path,
                             dir_info,
                             field_rel_path,
@@ -5671,6 +5814,7 @@ impl<'a> Resolver<'a> {
                             if !main_rel_path.is_empty() {
                                 auto_main_found = self
                                     .load_from_main_field(
+                                        bufs,
                                         path,
                                         dir_info,
                                         main_rel_path,
@@ -5686,6 +5830,7 @@ impl<'a> Resolver<'a> {
                             // as the value for "main".
                             auto_main_found = self
                                 .load_as_index_with_browser_remapping(
+                                    &mut bufs.remap,
                                     dir_info,
                                     path,
                                     mf_ext_order,
@@ -5755,7 +5900,13 @@ impl<'a> Resolver<'a> {
 
         // Look for an "index" file with known extensions
         if self
-            .load_as_index_with_browser_remapping(dir_info, path, extension_order, out)
+            .load_as_index_with_browser_remapping(
+                &mut bufs.remap,
+                dir_info,
+                path,
+                extension_order,
+                out,
+            )
             .is_success()
         {
             out.package_json = out.package_json.or(package_json);
@@ -5765,8 +5916,9 @@ impl<'a> Resolver<'a> {
         dec_ret!(MatchStatus::NotFound);
     }
 
-    pub(crate) fn load_as_file(
+    fn load_as_file(
         &mut self,
+        buf: &mut PathBuffer,
         path: &[u8],
         extension_order: options::ExtOrder,
     ) -> Option<LoadResult> {
@@ -5850,7 +6002,7 @@ impl<'a> Resolver<'a> {
                     let abs_path_parts = [query.dir, query.base()];
                     let joined = self
                         .fs_ref()
-                        .abs_buf_checked(&abs_path_parts, bufs!(load_as_file))
+                        .abs_buf_checked(&abs_path_parts, buf)
                         .ok_or(())?;
                     Ok::<_, ()>(Interned::from_static(
                         self.fs_ref()
@@ -5881,7 +6033,7 @@ impl<'a> Resolver<'a> {
         if path.len() >= MAX_PATH_BYTES {
             dec_ret!(None);
         }
-        bufs!(load_as_file)[..path.len()].copy_from_slice(path);
+        buf[..path.len()].copy_from_slice(path);
         // NOTE: index by `0..len` so each iteration takes a fresh short
         // borrow of `self.opts` that ends before `&mut self` is taken by
         // `load_extension` (matches `extra_cjs_extensions` loop below).
@@ -5891,7 +6043,7 @@ impl<'a> Resolver<'a> {
             // body can take `&mut self`. Backing `Box<[u8]>` is owned by
             // `self.opts` and never mutated while the resolver runs.
             let ext = bun_ptr::RawSlice::new(&*self.opts.ext_order_slice(extension_order)[i]);
-            if let Some(result) = self.load_extension(base, path, &ext, dir_entry) {
+            if let Some(result) = self.load_extension(buf, base, path, &ext, dir_entry) {
                 dec_ret!(Some(result));
             }
         }
@@ -5904,7 +6056,7 @@ impl<'a> Resolver<'a> {
             // BACKREF: see `RawSlice` note above — backing `Box<[u8]>` in
             // `extra_cjs_extensions` is heap-stable for the resolver's life.
             let ext = bun_ptr::RawSlice::new(&*self.opts.extra_cjs_extensions[i]);
-            if let Some(result) = self.load_extension(base, path, &ext, dir_entry) {
+            if let Some(result) = self.load_extension(buf, base, path, &ext, dir_entry) {
                 dec_ret!(Some(result));
             }
         }
@@ -5918,7 +6070,7 @@ impl<'a> Resolver<'a> {
             });
             if !exts.is_empty() {
                 let segment = &base[0..last_dot];
-                let tail = &mut bufs!(load_as_file)[path.len() - base.len()..];
+                let tail = &mut buf[path.len() - base.len()..];
                 tail[..segment.len()].copy_from_slice(segment);
 
                 for ext_to_replace in exts {
@@ -6005,6 +6157,7 @@ impl<'a> Resolver<'a> {
 
     fn load_extension(
         &mut self,
+        buf: &mut PathBuffer,
         base: &[u8],
         path: &[u8],
         ext: &[u8],
@@ -6013,7 +6166,7 @@ impl<'a> Resolver<'a> {
         if path.len() + ext.len() >= MAX_PATH_BYTES {
             return None;
         }
-        let buffer = &mut bufs!(load_as_file)[0..path.len() + ext.len()];
+        let buffer = &mut buf[0..path.len() + ext.len()];
         buffer[path.len()..].copy_from_slice(ext);
         let file_name = &buffer[path.len() - base.len()..buffer.len()];
 
@@ -6057,6 +6210,7 @@ impl<'a> Resolver<'a> {
 
     fn dir_info_uncached(
         &mut self,
+        buf: &mut PathBuffer,
         hash: u64,
         path: &'static [u8],
         _entries: *mut Fs::file_system::real_fs::EntriesOption,
@@ -6074,17 +6228,6 @@ impl<'a> Resolver<'a> {
             () => {
                 dir_entries.get()
             };
-        }
-
-        if cfg!(debug_assertions) {
-            // `path` is stored in the permanent `dir_cache` as `DirInfo.abs_path`. It must not
-            // point into a reused threadlocal scratch buffer, or a later resolution will
-            // corrupt cached entries. Callers must intern it (e.g. via `DirnameStore`) first.
-            assert!(
-                !bun_alloc::is_slice_in_buffer(path, &bufs!(path_in_global_disk_cache)[..]),
-                "DirInfo.abs_path must not point into the threadlocal path_in_global_disk_cache buffer (got \"{}\")",
-                bstr::BStr::new(path)
-            );
         }
 
         let mut info = DirInfo::DirInfo {
@@ -6128,7 +6271,7 @@ impl<'a> Resolver<'a> {
                         .map(bun_sys::Dir::from_fd) else {
                             break 'append_bin_dir;
                         };
-                        let Ok(bin_path) = file.get_fd_path(bufs!(node_bin_path)) else {
+                        let Ok(bin_path) = file.get_fd_path(buf) else {
                             break 'append_bin_dir;
                         };
                         self.add_bin_dir(bin_path);
@@ -6144,7 +6287,7 @@ impl<'a> Resolver<'a> {
                             else {
                                 break 'append_bin_dir;
                             };
-                            let Ok(bin_path) = file.get_fd_path(bufs!(node_bin_path)) else {
+                            let Ok(bin_path) = file.get_fd_path(buf) else {
                                 break 'append_bin_dir;
                             };
                             self.add_bin_dir(bin_path);
@@ -6206,10 +6349,9 @@ impl<'a> Resolver<'a> {
                             }
                             info.abs_real_path = symlink;
                         } else if !parent_.abs_real_path.is_empty()
-                            && let Some(joined) = self.fs_ref().abs_buf_checked(
-                                &[parent_.abs_real_path, base],
-                                bufs!(dir_info_uncached_filename),
-                            )
+                            && let Some(joined) = self
+                                .fs_ref()
+                                .abs_buf_checked(&[parent_.abs_real_path, base], buf)
                         {
                             // this might leak a little i'm not sure
                             symlink = self
@@ -6256,6 +6398,7 @@ impl<'a> Resolver<'a> {
                         && !info.is_node_modules()
                     {
                         self.parse_package_json::<true>(
+                            buf,
                             path,
                             if FeatureFlags::STORE_FILE_DESCRIPTORS {
                                 fd
@@ -6268,6 +6411,7 @@ impl<'a> Resolver<'a> {
                         .flatten()
                     } else {
                         self.parse_package_json::<false>(
+                            buf,
                             path,
                             if FeatureFlags::STORE_FILE_DESCRIPTORS {
                                 fd
@@ -6315,9 +6459,7 @@ impl<'a> Resolver<'a> {
             if let Some(lookup) = entries!().get_comptime_query(b"tsconfig.json") {
                 if lookup.kind(self.rfs_ref(), self.store_fd) == Fs::file_system::EntryKind::File {
                     let parts = [path, b"tsconfig.json".as_slice()];
-                    tsconfig_path = self
-                        .fs_ref()
-                        .abs_buf_checked(&parts, bufs!(dir_info_uncached_filename));
+                    tsconfig_path = self.fs_ref().abs_buf_checked(&parts, buf);
                 }
             }
             if tsconfig_path.is_none() {
@@ -6326,9 +6468,7 @@ impl<'a> Resolver<'a> {
                         == Fs::file_system::EntryKind::File
                     {
                         let parts = [path, b"jsconfig.json".as_slice()];
-                        tsconfig_path = self
-                            .fs_ref()
-                            .abs_buf_checked(&parts, bufs!(dir_info_uncached_filename));
+                        tsconfig_path = self.fs_ref().abs_buf_checked(&parts, buf);
                     }
                 }
             }
@@ -6345,7 +6485,8 @@ impl<'a> Resolver<'a> {
                 if self.opts.tsconfig_override.is_some() {
                     self.set_log(None);
                 }
-                let loaded = self.load_tsconfig(tsconfigpath, fd);
+                let parsed = self.read_tsconfig(tsconfigpath, fd);
+                let loaded = self.extend_tsconfig(buf, parsed);
                 self.set_log(log);
                 match loaded {
                     Ok(loaded) => {
@@ -6362,20 +6503,13 @@ impl<'a> Resolver<'a> {
         tsconfig_error.map_or(Ok(info), Err)
     }
 
-    /// The configuration file at `tsconfigpath`, with what it inherits from those that it extends.
-    fn load_tsconfig(
-        &mut self,
-        tsconfigpath: &[u8],
-        fd: FD,
-    ) -> crate::CrateResult<Option<Box<TSConfigJSON>>> {
-        let parsed_tsconfig: Option<Box<TSConfigJSON>> = match self.parse_tsconfig(tsconfigpath, fd)
-        {
+    /// The configuration file at `tsconfigpath`, without what it inherits.
+    fn read_tsconfig(&mut self, tsconfigpath: &[u8], fd: FD) -> Option<Box<TSConfigJSON>> {
+        match self.parse_tsconfig(tsconfigpath, fd) {
             Ok(v) => v,
             Err(err) => {
                 let pretty = tsconfigpath;
-                let Some(log) = self.log() else {
-                    return Ok(None);
-                };
+                let log = self.log()?;
                 if err == crate::Error::Sys(bun_errno::SystemErrno::ENOENT) {
                     log.add_error_fmt(
                         None,
@@ -6397,7 +6531,15 @@ impl<'a> Resolver<'a> {
                 }
                 None
             }
-        };
+        }
+    }
+
+    /// Adds what the configuration file inherits from those that it extends.
+    fn extend_tsconfig(
+        &mut self,
+        buf: &mut PathBuffer,
+        parsed_tsconfig: Option<Box<TSConfigJSON>>,
+    ) -> crate::CrateResult<Option<Box<TSConfigJSON>>> {
         if let Some(mut current) = parsed_tsconfig {
             // With `current`, a chain of up to 64 configs.
             let mut parent_configs: BoundedArray<Box<TSConfigJSON>, 63> = BoundedArray::default();
@@ -6406,7 +6548,7 @@ impl<'a> Resolver<'a> {
                 // `extends` comes from the config file and can be any length.
                 let parsed = match ResolvePath::join_abs_string_buf_checked(
                     ts_dir_name,
-                    bufs!(tsconfig_path_abs),
+                    buf,
                     &[ts_dir_name, &current.extends],
                     bun_paths::Platform::AUTO,
                 ) {
@@ -6502,18 +6644,20 @@ impl<'a> Resolver<'a> {
             let z = bun_core::ZStr::from_slice_with_nul(&path);
             let is_directory = bun_sys::directory_exists_at(FD::cwd(), z).unwrap_or(false);
             path.pop();
+            let mut buf = bun_paths::path_buffer_pool::get();
             // As for `tsc -p`, and for the type check.
             if is_directory
                 && let Some(joined) = ResolvePath::join_abs_string_buf_checked(
                     &path,
-                    bufs!(tsconfig_path_abs),
+                    &mut buf,
                     &[b"tsconfig.json".as_slice()],
                     bun_paths::Platform::AUTO,
                 )
             {
                 path = joined.to_vec();
             }
-            let loaded = self.load_tsconfig(&path, FD::INVALID).ok().flatten();
+            let parsed = self.read_tsconfig(&path, FD::INVALID);
+            let loaded = self.extend_tsconfig(&mut buf, parsed).ok().flatten();
             self.opts.tsconfig_override_json = Some(loaded.map(Arc::from));
         }
         self.opts.tsconfig_override_json.clone()
@@ -6646,12 +6790,12 @@ pub(crate) struct BrowserMapPath<'b> {
     pub(crate) input_path: &'b [u8],
     pub(crate) extension_order: &'b [Box<[u8]>],
     pub(crate) map: &'static BrowserMap,
+    pub(crate) ext_buf: &'b mut PathBuffer,
+    pub(crate) index_buf: &'b mut PathBuffer,
 }
 
 impl<'b> BrowserMapPath<'b> {
-    /// On a match only `self.remapped` is updated; the matched candidate may
-    /// borrow threadlocal scratch buffers and must never be stored back into
-    /// the checker.
+    /// On a match only `self.remapped` is updated.
     pub(crate) fn check_path(&mut self, path_to_check: &[u8]) -> bool {
         let map = self.map;
 
@@ -6662,7 +6806,7 @@ impl<'b> BrowserMapPath<'b> {
             return true;
         }
 
-        let ext_buf = bufs!(extension_path);
+        let ext_buf = &mut *self.ext_buf;
 
         if cleaned.len() <= ext_buf.len() {
             ext_buf[..cleaned.len()].copy_from_slice(cleaned);
@@ -6690,11 +6834,7 @@ impl<'b> BrowserMapPath<'b> {
         let index_path: &[u8] = {
             let trimmed = strings::trim_right(path_to_check, &[SEP]);
             let parts = [trimmed, BROWSER_MAP_INDEX_SUFFIX.as_bytes()];
-            ResolvePath::join_string_buf(
-                bufs!(tsconfig_base_url),
-                &parts,
-                bun_paths::Platform::AUTO,
-            )
+            ResolvePath::join_string_buf(self.index_buf, &parts, bun_paths::Platform::AUTO)
         };
 
         if let Some(_remapped) = map.get(index_path) {

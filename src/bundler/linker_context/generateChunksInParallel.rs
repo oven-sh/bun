@@ -8,6 +8,7 @@ use bun_collections::StringHashMap;
 use bun_core::String as BunString;
 use bun_core::strings;
 use bun_paths as path;
+use bun_paths::resolve_path::SpillBuf;
 
 use crate::Chunk;
 use crate::Index;
@@ -599,6 +600,7 @@ pub(crate) fn generate_chunks_in_parallel<'a, const IS_DEV_SERVER: bool>(
     if is_standalone {
         let mut scc: Vec<Option<Box<[u8]>>> = vec![None; chunks.len()];
         standalone_sourcemaps = vec![None; chunks.len()];
+        let mut relative_buf = SpillBuf::default();
 
         // `IntermediateOutput.code_standalone` reads `&Chunk` /
         // `&[Chunk]` (chunk is `&chunks[ci]`). Take `intermediate_output` out
@@ -675,11 +677,10 @@ pub(crate) fn generate_chunks_in_parallel<'a, const IS_DEV_SERVER: bool>(
                                 if html_dir.is_empty() {
                                     &source_map_final_rel_path
                                 } else {
-                                    path::resolve_path::relative_platform::<
+                                    path::resolve_path::relative_platform_spill::<
                                         path::platform::Posix,
-                                        false,
                                     >(
-                                        html_dir, &source_map_final_rel_path
+                                        &mut relative_buf, html_dir, &source_map_final_rel_path
                                     )
                                 },
                             )

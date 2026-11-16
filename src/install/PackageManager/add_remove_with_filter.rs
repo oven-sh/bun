@@ -388,7 +388,7 @@ fn spell_relative_to(
             if abs.len() + components * b"../".len() >= buf.0.len() {
                 local_path_too_long(request);
             }
-            resolve_path::relative_platform_buf::<platform::Auto, true>(&mut buf.0, target_dir, abs)
+            resolve_path::relative_platform_buf::<platform::Auto>(&mut buf.0, target_dir, abs)
         }
         None => abs,
     };

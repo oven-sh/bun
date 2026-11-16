@@ -1994,11 +1994,10 @@ pub(crate) fn install_isolated_packages(
             let cache_dir_path = &manager.get_cache_directory().path;
             // Own a Vec<u8> with a trailing NUL so it can be re-borrowed as
             // a `&ZStr` for `Installer.global_store_path` below.
-            let joined = paths::resolve_path::join_abs_string::<paths::platform::Auto>(
+            let mut owned = paths::resolve_path::join_abs_string_vec::<paths::platform::Auto>(
                 cache_dir_path,
                 &[b"links"],
             );
-            let mut owned = joined.to_vec();
             owned.push(0);
             break 'global_store_path Some(owned);
         }

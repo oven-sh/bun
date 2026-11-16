@@ -2,7 +2,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use bun_core::{ZBox, ZStr, strings};
-use bun_paths::resolve_path::{self, Platform, platform};
+use bun_paths::resolve_path::{self, Platform, SpillBuf, platform};
 use bun_sys::{E, dir_iterator};
 use bun_threading::Guarded;
 use bun_threading::work_pool::{OwnedTask, WorkPool};
@@ -177,12 +177,9 @@ impl Rm {
                             // Check that none of the paths will delete the root.
                             {
                                 let cwd = Builtin::shell(interp, cmd).cwd();
-                                // Operands are unbounded user input, so neither
-                                // step may use the fixed-size thread-local
-                                // buffers behind `join` / `normalize_string`.
                                 // Normalizing never grows a path by more than
                                 // one byte.
-                                let mut join_spill = Vec::new();
+                                let mut join_buf = SpillBuf::default();
                                 let mut normalize_buf = Vec::new();
 
                                 for i in args_start..argc {
@@ -191,7 +188,7 @@ impl Rm {
                                         path
                                     } else {
                                         resolve_path::join_spill::<platform::Auto>(
-                                            &mut join_spill,
+                                            &mut join_buf,
                                             &[cwd, path],
                                         )
                                     };
@@ -697,9 +694,9 @@ impl Operand {
             }
             return ZBox::from_vec(out);
         }
-        let mut spill = Vec::new();
-        let joined = resolve_path::join_spill::<platform::Auto>(&mut spill, parts);
-        ZBox::from_bytes(joined)
+        SpillBuf::with_scratch(|buf| {
+            ZBox::from_bytes(resolve_path::join_spill::<platform::Auto>(buf, parts))
+        })
     }
 
     #[inline]

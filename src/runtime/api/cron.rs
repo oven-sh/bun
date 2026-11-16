@@ -1998,8 +1998,10 @@ fn make_temp_path(prefix: &'static str) -> Result<ZString, bun_alloc::AllocError
         bun_core::fast_random(),
     )
     .map_err(|_| bun_alloc::AllocError)?;
-    let joined = path::resolve_path::join_abs_string::<path::platform::Auto>(
+    let mut joined_buf = path::resolve_path::SpillBuf::default();
+    let joined = path::resolve_path::join_abs_string_spill::<path::platform::Auto>(
         RealFS::platform_temp_dir(),
+        &mut joined_buf,
         &[name.as_bytes()],
     );
     Ok(ZString::from_bytes(joined))

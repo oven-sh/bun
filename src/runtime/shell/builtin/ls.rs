@@ -2,6 +2,7 @@ use core::ops::ControlFlow;
 use std::io::Write as _;
 
 use bun_core::ZBox;
+use bun_paths::resolve_path::{SpillBuf, join_spill};
 use bun_sys::{E, O, S, dir_iterator};
 use bun_threading::work_pool::{OwnedTask, WorkPool};
 
@@ -359,11 +360,12 @@ impl ShellLsTask {
             v.extend_from_slice(child);
             return ZBox::from_vec(v);
         }
-        let out = bun_paths::resolve_path::join::<bun_paths::platform::Auto>(&[
-            self.path.as_bytes(),
-            child,
-        ]);
-        ZBox::from_bytes(out)
+        SpillBuf::with_scratch(|buf| {
+            ZBox::from_bytes(join_spill::<bun_paths::platform::Auto>(
+                buf,
+                &[self.path.as_bytes(), child],
+            ))
+        })
     }
 
     fn list(this: &mut ShellLsTask) {

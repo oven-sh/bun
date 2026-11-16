@@ -880,8 +880,14 @@ const _: () = assert!(State::Open as u8 == 0);
 /// takes one more ticket.
 pub enum ConcurrentPoster {
     Js(Ticket),
-    Mini(bun_ptr::BackRef<bun_event_loop::MiniEventLoop::MiniEventLoop>),
+    Mini(MiniPoster),
 }
+
+#[derive(Clone, Copy)]
+pub struct MiniPoster(bun_ptr::BackRef<bun_event_loop::MiniEventLoop::MiniEventLoop>);
+
+// SAFETY: only `post_mini` reads the field, to call `enqueue_task_concurrent`, which is for any thread.
+unsafe impl Send for MiniPoster {}
 
 impl Clone for ConcurrentPoster {
     #[track_caller]
@@ -905,7 +911,9 @@ impl ConcurrentPoster {
                 let vm = unsafe { &*owner.bun_vm().cast::<VirtualMachine>() };
                 ConcurrentPoster::Js(vm.ticket())
             }
-            bun_event_loop::EventLoopHandle::Mini(mini) => ConcurrentPoster::Mini(*mini),
+            bun_event_loop::EventLoopHandle::Mini(mini) => {
+                ConcurrentPoster::Mini(MiniPoster(*mini))
+            }
         }
     }
 
@@ -932,7 +940,7 @@ impl ConcurrentPoster {
         task: NonNull<bun_event_loop::AnyTaskWithExtraContext::AnyTaskWithExtraContext>,
     ) {
         match self {
-            ConcurrentPoster::Mini(mini) => mini.enqueue_task_concurrent(task),
+            ConcurrentPoster::Mini(mini) => mini.0.enqueue_task_concurrent(task),
             ConcurrentPoster::Js(..) => debug_assert!(false, "post_mini on a Js poster"),
         }
     }

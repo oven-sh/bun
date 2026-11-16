@@ -268,7 +268,8 @@ private:
                 httpContextData->onSocketData(httpResponseData->socketData, SSL, s, "", 0, true);
             }
             /* node:http: the body of a tunnel that started has had its last chunk from the parser. This close can come from inside that call. */
-            if(httpResponseData->inStream && (!IsNodeHttp || nodeHttpTunnelAfterBody)) {
+            /* Bun.serve ends the body from onAborted, once that is set. */
+            if(httpResponseData->inStream && (IsNodeHttp ? nodeHttpTunnelAfterBody : !httpResponseData->onAborted)) {
                 httpResponseData->inStream(reinterpret_cast<HttpResponse<SSL> *>(s), "", 0, true, httpResponseData->userData);
                 httpResponseData->inStream = nullptr;
             }
@@ -302,6 +303,8 @@ private:
             httpResponseData->onAborted((HttpResponse<SSL> *)s, httpResponseData->userData);
         }
 
+        /* A write from one of the callbacks corks again. */
+        ((AsyncSocket<SSL> *)s)->uncorkWithoutSending();
 
         /* Destruct the type onOpen<IsNodeHttp> constructed */
         if constexpr (IsNodeHttp) {

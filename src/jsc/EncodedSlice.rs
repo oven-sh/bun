@@ -61,9 +61,10 @@ pub trait EncodedSliceJsc: Sized {
     fn to_js(&self, global: &JSGlobalObject) -> JSValue;
     /// Transfers ownership of a globally-allocated buffer to JSC's
     /// external-string finalizer.
-    fn to_external_value(&self, global: &JSGlobalObject) -> JsResult<JSValue>;
-    /// As `to_external_value`, `None` where that throws.
-    fn try_to_external_value(&self, global: &JSGlobalObject) -> Option<JSValue>;
+    ///
+    /// # Safety
+    /// The caller gives up the buffer, which starts at the slice, and `len` is at most `String::max_length()`.
+    unsafe fn to_external_value(&self, global: &JSGlobalObject) -> JSValue;
     /// `JSON.parse` over the bytes.
     fn to_json_object(&self, global: &JSGlobalObject) -> JsResult<JSValue>;
     /// Like `to_external_value` but with a caller-supplied `ctx` + finalizer
@@ -96,28 +97,9 @@ impl EncodedSliceJsc for EncodedSlice<'_> {
     fn to_js(&self, global: &JSGlobalObject) -> JSValue {
         EncodedSlice__toValueGC(self, global)
     }
-    fn to_external_value(&self, global: &JSGlobalObject) -> JsResult<JSValue> {
-        self.try_to_external_value(global)
-            .ok_or_else(|| global.throw_string_too_long())
-    }
-    fn try_to_external_value(&self, global: &JSGlobalObject) -> Option<JSValue> {
-        if self.len > bun_core::String::max_length() {
-            // SAFETY: contract — bytes were allocated by the default (global)
-            // allocator. `default_alloc::free` agrees with the
-            // `#[global_allocator]` (`mi_free` normally; libc free under ASAN).
-            unsafe {
-                bun_alloc::default_alloc::free(
-                    self.byte_slice()
-                        .as_ptr()
-                        .cast_mut()
-                        .cast::<core::ffi::c_void>(),
-                )
-            };
-            return None;
-        }
-        // SAFETY: `self` is a valid `&EncodedSlice`; `JSGlobalObject` is an opaque
-        // `UnsafeCell`-backed handle so `&` → `*mut` is its intended FFI shape.
-        Some(unsafe { cpp::EncodedSlice__toExternalValue(self, global.as_ptr()) })
+    unsafe fn to_external_value(&self, global: &JSGlobalObject) -> JSValue {
+        // SAFETY: fn contract.
+        unsafe { cpp::EncodedSlice__toExternalValue(self, global.as_ptr()) }
     }
     fn to_json_object(&self, global: &JSGlobalObject) -> JsResult<JSValue> {
         // SAFETY: `self` is a live `&EncodedSlice` for the duration of the call.

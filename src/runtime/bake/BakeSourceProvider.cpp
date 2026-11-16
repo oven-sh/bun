@@ -184,8 +184,7 @@ extern "C" JSC::EncodedJSValue BakeGetOnModuleNamespace(
 ) {
   auto& vm = JSC::getVM(global);
   auto scope = DECLARE_THROW_SCOPE(vm);
-  const auto propertyString = String(StringImpl::createWithoutCopying({ byteCast<Latin1Character>(key), keyLength }));
-  const auto identifier = JSC::Identifier::fromString(vm, propertyString);
+  const auto identifier = JSC::Identifier::fromString(vm, std::span { byteCast<Latin1Character>(key), keyLength });
   const auto property = JSC::PropertyName(identifier);
   JSC::JSValue value = moduleNamespace->get(global, property);
   RETURN_IF_EXCEPTION(scope, {});

@@ -310,7 +310,7 @@ extern "C" JSC::EncodedJSValue Bun__CommonStringsForRust__toJS(CommonStringsForR
     return JSValue::encode(toJS(globalObject, commonString));
 }
 
-// `object[commonString]`, without a StringImpl and an atom-table probe per call:
+// `object[commonString]`, without an atom-table probe per call:
 // the JSString keeps the atom once it has been asked for its identifier.
 // Same return convention as JSC__JSValue__fastGet: empty for an exception,
 // the deleted value when the property does not exist.

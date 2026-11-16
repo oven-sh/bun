@@ -1404,10 +1404,17 @@ pub mod bv2_impl {
             }
         }
 
-        /// Opaque `JSC::EncoderStringTable` — one instance shared by every chunk's `encodeCodeBlock` in a `--compile --bytecode` build.
-        pub(crate) enum EncoderStringTable {}
-        /// Opaque `JSC::BytecodeLinkEncoder` — every chunk of a `--compile --bytecode` link encoded into one payload (`bytecode_order`).
-        pub(crate) enum BytecodeLinkEncoder {}
+        bun_opaque::sealed_handle! {
+            /// Opaque `JSC::EncoderStringTable` — one instance shared by every chunk's `encodeCodeBlock` in a `--compile --bytecode` build.
+            pub struct EncoderStringTable;
+            /// Opaque `JSC::BytecodeLinkEncoder` — every chunk of a `--compile --bytecode` link encoded into one payload (`bytecode_order`).
+            pub struct BytecodeLinkEncoder;
+        }
+
+        unsafe extern "C" {
+            fn Bun__EncoderStringTable__destroy(table: *mut EncoderStringTable);
+            fn Bun__BytecodeLinkEncoder__destroy(encoder: *mut BytecodeLinkEncoder);
+        }
 
         unsafe extern "Rust" {
             /// Defined `#[no_mangle]` in `bun_jsc::cached_bytecode`. Generic
@@ -1422,7 +1429,7 @@ pub mod bv2_impl {
                 source_provider_url: &bun_core::String,
                 depth: u32,
                 optimize: bool,
-                external_strings: Option<core::ptr::NonNull<EncoderStringTable>>,
+                external_strings: Option<&EncoderStringTable>,
             ) -> Option<Box<[u8]>>;
 
             /// Defined `#[no_mangle]` in `bun_jsc::cached_bytecode`: this executable's builtins section
@@ -1432,7 +1439,7 @@ pub mod bv2_impl {
             safe fn __bun_jsc_generate_internal_module_bytecode(
                 id: u32,
                 depth: u32,
-                external_strings: Option<core::ptr::NonNull<EncoderStringTable>>,
+                external_strings: Option<&EncoderStringTable>,
             ) -> Option<Box<[u8]>>;
             /// Same, for another executable's internal module given its source, registry name, url and source stamp.
             safe fn __bun_jsc_generate_internal_module_bytecode_from_source(
@@ -1441,26 +1448,23 @@ pub mod bv2_impl {
                 url: &[u8],
                 source_stamp: u32,
                 depth: u32,
-                external_strings: Option<core::ptr::NonNull<EncoderStringTable>>,
+                external_strings: Option<&EncoderStringTable>,
             ) -> Option<Box<[u8]>>;
 
             safe fn __bun_jsc_encoder_string_table_new() -> core::ptr::NonNull<EncoderStringTable>;
-            safe fn __bun_jsc_encoder_string_table_take(
-                table: core::ptr::NonNull<EncoderStringTable>,
+            safe fn __bun_jsc_encoder_string_table_serialize(
+                table: &EncoderStringTable,
                 hot_strings: &[u64],
             ) -> Box<[u8]>;
-            safe fn __bun_jsc_bytecode_link_encoder_new(
-                external_strings: core::ptr::NonNull<EncoderStringTable>,
+            fn __bun_jsc_bytecode_link_encoder_new(
+                external_strings: &EncoderStringTable,
                 hot_functions: &[u64],
                 known_functions: &[u64],
                 evaluated_modules: &[u64],
                 not_evaluated_modules: &[u64],
             ) -> core::ptr::NonNull<BytecodeLinkEncoder>;
-            safe fn __bun_jsc_bytecode_link_encoder_destroy(
-                encoder: core::ptr::NonNull<BytecodeLinkEncoder>,
-            );
             safe fn __bun_jsc_bytecode_link_encoder_add_module(
-                encoder: core::ptr::NonNull<BytecodeLinkEncoder>,
+                encoder: &BytecodeLinkEncoder,
                 format: crate::options_impl::Format,
                 source: &[u8],
                 source_provider_url: &bun_core::String,
@@ -1469,13 +1473,13 @@ pub mod bv2_impl {
                 names: &crate::bytecode_order::CodeNamesRef<'_>,
             ) -> bool;
             safe fn __bun_jsc_bytecode_link_encoder_add_internal_module(
-                encoder: core::ptr::NonNull<BytecodeLinkEncoder>,
+                encoder: &BytecodeLinkEncoder,
                 id: u32,
                 depth: u32,
                 names: &crate::bytecode_order::CodeNamesRef<'_>,
             ) -> bool;
             safe fn __bun_jsc_bytecode_link_encoder_add_internal_module_from_source(
-                encoder: core::ptr::NonNull<BytecodeLinkEncoder>,
+                encoder: &BytecodeLinkEncoder,
                 source: &[u8],
                 name: &[u8],
                 url: &[u8],
@@ -1483,13 +1487,13 @@ pub mod bv2_impl {
                 depth: u32,
                 names: &crate::bytecode_order::CodeNamesRef<'_>,
             ) -> bool;
-            safe fn __bun_jsc_bytecode_link_encoder_finish(
-                encoder: core::ptr::NonNull<BytecodeLinkEncoder>,
+            fn __bun_jsc_bytecode_link_encoder_finish(
+                encoder: &BytecodeLinkEncoder,
                 module_count: usize,
             ) -> Option<crate::bytecode_order::LinkedPayload>;
-            /// The runtime-resolvable slot for one module-info string (`EncoderStringTable::slot_for_wtf8`).
+            /// The runtime-resolvable slot for one module-info string (`EncoderStringTable::slotFor`).
             safe fn __bun_jsc_encoder_string_table_slot(
-                table: core::ptr::NonNull<EncoderStringTable>,
+                table: &EncoderStringTable,
                 wtf8: &[u8],
             ) -> u32;
             /// `WTF::StringImpl::hash()` of the string with these WTF-8 contents.
@@ -1511,7 +1515,7 @@ pub mod bv2_impl {
             source_provider_url: &bun_core::String,
             depth: u32,
             optimize: bool,
-            external_strings: Option<core::ptr::NonNull<EncoderStringTable>>,
+            external_strings: Option<&EncoderStringTable>,
         ) -> Option<Box<[u8]>> {
             // A CJS chunk is wrapped in `(function(exports, require, module, ...) {})`, so the module's top level is one function deep.
             let depth = match format {
@@ -1528,57 +1532,59 @@ pub mod bv2_impl {
             )
         }
 
-        /// Owns a `JSC::EncoderStringTable` for one link; `take()` serializes and frees it, `Drop` frees it on early return.
-        pub(crate) struct EncoderStringTableHandle(Option<core::ptr::NonNull<EncoderStringTable>>);
+        // SAFETY: each is only made from what its `_new` import returns.
+        bun_opaque::owned_handle! {
+            /// Owns a `JSC::EncoderStringTable` for one link; `take()` serializes and frees it, `Drop` frees it on early return.
+            pub(crate) struct EncoderStringTableHandle(EncoderStringTable) => unsafe Bun__EncoderStringTable__destroy;
+            struct OwnedBytecodeLinkEncoder(BytecodeLinkEncoder) => unsafe Bun__BytecodeLinkEncoder__destroy;
+        }
 
         impl EncoderStringTableHandle {
             #[inline]
             pub(crate) fn new() -> Self {
-                Self(Some(__bun_jsc_encoder_string_table_new()))
-            }
-            #[inline]
-            pub(crate) fn get(&self) -> Option<core::ptr::NonNull<EncoderStringTable>> {
-                self.0
+                Self(__bun_jsc_encoder_string_table_new())
             }
             /// `hot_strings`: a payload order file's strings (`bytecode_order`), whose records go first.
             #[inline]
-            pub(crate) fn take(mut self, hot_strings: &[u64]) -> Box<[u8]> {
-                __bun_jsc_encoder_string_table_take(self.0.take().expect("taken once"), hot_strings)
+            pub(crate) fn take(self, hot_strings: &[u64]) -> Box<[u8]> {
+                __bun_jsc_encoder_string_table_serialize(&self, hot_strings)
             }
             #[inline]
             pub(crate) fn slot(&self, wtf8: &[u8]) -> u32 {
-                __bun_jsc_encoder_string_table_slot(self.0.expect("not yet taken"), wtf8)
-            }
-        }
-
-        impl Drop for EncoderStringTableHandle {
-            fn drop(&mut self) {
-                if let Some(table) = self.0.take() {
-                    drop(__bun_jsc_encoder_string_table_take(table, &[]));
-                }
+                __bun_jsc_encoder_string_table_slot(self, wtf8)
             }
         }
 
         /// Owns a `JSC::BytecodeLinkEncoder`. Lives and dies on the thread that created it (it uses that thread's bytecode VM).
-        pub(crate) struct BytecodeLinkEncoderHandle {
-            encoder: core::ptr::NonNull<BytecodeLinkEncoder>,
+        pub(crate) struct BytecodeLinkEncoderHandle<'a> {
+            encoder: OwnedBytecodeLinkEncoder,
             module_count: usize,
+            _marker: core::marker::PhantomData<&'a EncoderStringTable>,
         }
 
-        impl BytecodeLinkEncoderHandle {
+        /// Keeps the table borrowed until the encoder is destroyed.
+        impl Drop for BytecodeLinkEncoderHandle<'_> {
+            fn drop(&mut self) {}
+        }
+
+        impl<'a> BytecodeLinkEncoderHandle<'a> {
             pub(crate) fn new(
-                external_strings: core::ptr::NonNull<EncoderStringTable>,
+                external_strings: &'a EncoderStringTable,
                 order: &crate::bytecode_order::BytecodeOrder,
             ) -> Self {
                 Self {
-                    encoder: __bun_jsc_bytecode_link_encoder_new(
-                        external_strings,
-                        &order.hot_functions,
-                        &order.known_functions,
-                        &order.evaluated_modules,
-                        &order.not_evaluated_modules,
-                    ),
+                    // SAFETY: `'a` keeps the table for as long as the encoder.
+                    encoder: OwnedBytecodeLinkEncoder(unsafe {
+                        __bun_jsc_bytecode_link_encoder_new(
+                            external_strings,
+                            &order.hot_functions,
+                            &order.known_functions,
+                            &order.evaluated_modules,
+                            &order.not_evaluated_modules,
+                        )
+                    }),
                     module_count: 0,
+                    _marker: core::marker::PhantomData,
                 }
             }
             /// Same arguments as `generate_cached_bytecode`, and what an order file calls the chunk's code; false on a
@@ -1597,7 +1603,7 @@ pub mod bv2_impl {
                     _ => depth,
                 };
                 let ok = __bun_jsc_bytecode_link_encoder_add_module(
-                    self.encoder,
+                    &self.encoder,
                     format,
                     source,
                     source_provider_url,
@@ -1622,7 +1628,7 @@ pub mod bv2_impl {
                 let ok = match target_source_stamp {
                     Some(source_stamp) => {
                         __bun_jsc_bytecode_link_encoder_add_internal_module_from_source(
-                            self.encoder,
+                            &self.encoder,
                             module.source,
                             module.name,
                             module.url,
@@ -1632,7 +1638,7 @@ pub mod bv2_impl {
                         )
                     }
                     None => __bun_jsc_bytecode_link_encoder_add_internal_module(
-                        self.encoder,
+                        &self.encoder,
                         id,
                         depth,
                         &names,
@@ -1641,14 +1647,9 @@ pub mod bv2_impl {
                 self.module_count += ok as usize;
                 ok
             }
-            pub(crate) fn finish(&mut self) -> Option<crate::bytecode_order::LinkedPayload> {
-                __bun_jsc_bytecode_link_encoder_finish(self.encoder, self.module_count)
-            }
-        }
-
-        impl Drop for BytecodeLinkEncoderHandle {
-            fn drop(&mut self) {
-                __bun_jsc_bytecode_link_encoder_destroy(self.encoder);
+            pub(crate) fn finish(self) -> Option<crate::bytecode_order::LinkedPayload> {
+                // SAFETY: called once, because this takes `self`.
+                unsafe { __bun_jsc_bytecode_link_encoder_finish(&self.encoder, self.module_count) }
             }
         }
 
@@ -1661,7 +1662,7 @@ pub mod bv2_impl {
         pub(crate) fn generate_internal_module_bytecode(
             id: u32,
             depth: u32,
-            external_strings: Option<core::ptr::NonNull<EncoderStringTable>>,
+            external_strings: Option<&EncoderStringTable>,
         ) -> Option<Box<[u8]>> {
             __bun_jsc_generate_internal_module_bytecode(id, depth, external_strings)
         }
@@ -1671,7 +1672,7 @@ pub mod bv2_impl {
             module: &bun_exe_format::builtins::Module<'_>,
             source_stamp: u32,
             depth: u32,
-            external_strings: Option<core::ptr::NonNull<EncoderStringTable>>,
+            external_strings: Option<&EncoderStringTable>,
         ) -> Option<Box<[u8]>> {
             __bun_jsc_generate_internal_module_bytecode_from_source(
                 module.source,

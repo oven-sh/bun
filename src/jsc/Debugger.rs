@@ -8,7 +8,8 @@
 //! through [`RuntimeHooks::retroactively_report_discovered_tests`].
 
 use core::cell::Cell;
-use core::ffi::{c_int, c_void};
+use core::ffi::c_int;
+use core::ptr::NonNull;
 use core::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 
 use bun_core::{String as BunString, StringView};
@@ -24,60 +25,50 @@ bun_core::declare_scope!(LifecycleAgent, visible);
 
 // ──────────────────────────────────────────────────────────────────────────
 // Agent types. `HTTPServerAgent` is the real sibling definition (re-exported
-// so `Debugger.http_server_agent` carries `next_server_id` state). Agents
-// implemented in higher-tier crates store their per-VM state in the
-// type-erased [`ErasedAgentSlot`] below.
+// so `Debugger.http_server_agent` carries `next_server_id` state).
 // ──────────────────────────────────────────────────────────────────────────
 
 pub use crate::http_server_agent::HTTPServerAgent;
 
-/// Type-erased per-`Debugger` slot for an inspector agent implemented in a
-/// higher-tier crate (a forward dep this crate cannot name).
-///
-/// `agent` is the opaque C++ inspector-agent pointer the backend pushes on
-/// domain enable (null while disabled) through a `HOST_EXPORT` defined next
-/// to the slot's owner; `sequence` is a free-running counter for the owner's
-/// use. `Debugger` only stores the slot — it never interprets either field.
-/// The fields are private so every outside access flows through the named
-/// accessors below, keeping the owning module's interpretation the only one.
-///
-/// Both fields are `Copy`, so `Cell<T>` gives interior mutability with zero
-/// `unsafe`.
-pub struct ErasedAgentSlot {
-    agent: Cell<*mut c_void>,
-    sequence: Cell<i32>,
-}
+/// An inspector agent that clears its [`AgentSlot`] before it is destroyed. Only C++ makes one.
+#[repr(transparent)]
+pub struct EnabledAgent<T>(NonNull<T>);
 
-impl ErasedAgentSlot {
-    /// The opaque agent pointer (null while the inspector domain is disabled).
-    #[inline]
-    pub fn agent_ptr(&self) -> *mut c_void {
-        self.agent.get()
+/// The C++ agent of an inspector domain, while the domain is enabled.
+pub struct AgentSlot<T>(Cell<Option<NonNull<T>>>);
+
+impl<T> AgentSlot<T> {
+    pub fn set(&self, agent: Option<EnabledAgent<T>>) {
+        self.0.set(agent.map(|agent| agent.0));
     }
 
-    /// Set the opaque agent pointer. Called by the slot owner's `HOST_EXPORT`
-    /// on domain enable/disable.
-    #[inline]
-    pub fn set_agent_ptr(&self, ptr: *mut c_void) {
-        self.agent.set(ptr);
+    pub fn is_enabled(&self) -> bool {
+        self.0.get().is_some()
     }
 
-    /// Wrapping post-increment of the owner's free-running counter.
-    #[inline]
-    pub fn post_increment_sequence(&self) -> i32 {
-        let id = self.sequence.get();
-        self.sequence.set(id.wrapping_add(1));
-        id
+    /// For one call into the agent, which runs no script.
+    pub fn get(&self) -> Option<&T> {
+        // SAFETY: from an `EnabledAgent`, which is still in its slot.
+        self.0.get().map(|agent| unsafe { agent.as_ref() })
     }
 }
 
-impl Default for ErasedAgentSlot {
+impl<T> Default for AgentSlot<T> {
     fn default() -> Self {
-        Self {
-            agent: Cell::new(core::ptr::null_mut()),
-            sequence: Cell::new(0),
-        }
+        Self(Cell::new(None))
     }
+}
+
+bun_opaque::sealed_handle! {
+    /// Opaque C++ `InspectorBunFrontendDevServerAgent` handle.
+    pub struct InspectorBunFrontendDevServerAgentHandle;
+}
+
+/// The state of `bun_runtime`'s `BunFrontendDevServerAgent`.
+#[derive(Default)]
+pub struct FrontendDevServerAgentState {
+    pub handle: AgentSlot<InspectorBunFrontendDevServerAgentHandle>,
+    pub next_connection_id: Cell<i32>,
 }
 
 /// `bun.GenericIndex(i32, Debugger)`
@@ -127,7 +118,7 @@ pub struct Debugger {
 
     pub test_reporter_agent: TestReporterAgent,
     pub lifecycle_reporter_agent: LifecycleAgent,
-    pub extension_agent: ErasedAgentSlot,
+    pub frontend_dev_server_agent: FrontendDevServerAgentState,
     pub http_server_agent: HTTPServerAgent,
     pub must_block_until_connected: Cell<bool>,
 }
@@ -146,7 +137,7 @@ impl Default for Debugger {
             protocol: Protocol::Jsc,
             test_reporter_agent: TestReporterAgent::default(),
             lifecycle_reporter_agent: LifecycleAgent::default(),
-            extension_agent: ErasedAgentSlot::default(),
+            frontend_dev_server_agent: FrontendDevServerAgentState::default(),
             http_server_agent: HTTPServerAgent::default(),
             must_block_until_connected: Cell::new(false),
         }
@@ -414,17 +405,7 @@ impl Debugger {
             .unwrap_or_else(|_| panic!("Failed to create Debugger VM"));
         vm.event_loop().ensure_waker();
 
-        extern "C" fn start_trampoline(ctx: *mut c_void) {
-            // SAFETY: `ctx` is `&mut slot` below; `hold_api_lock` calls this
-            // synchronously on the same frame.
-            let init = unsafe { (*ctx.cast::<Option<DebuggerThreadInit>>()).take() };
-            Debugger::start(init.expect("init"));
-        }
-        let mut slot = Some(init);
-        #[allow(deprecated)]
-        vm.global()
-            .vm()
-            .hold_api_lock((&raw mut slot).cast(), start_trampoline);
+        vm.run_with_api_lock(|| Debugger::start(init));
     }
 
     /// Runs inside `holdAPILock` on the debugger thread. Publishes the
@@ -712,7 +693,7 @@ pub fn will_dispatch_async_call(global_object: &JSGlobalObject, call: AsyncCallT
 
 #[derive(Default)]
 pub struct TestReporterAgent {
-    handle: Cell<*mut TestReporterHandle>,
+    handle: AgentSlot<TestReporterHandle>,
     /// Shared `describe`/`test` ID counter for both the live
     /// (`ScopeFunctions::call`) and retroactive reporting paths.
     pub next_test_id: Cell<i32>,
@@ -737,22 +718,22 @@ pub enum TestType {
     Describe = 1,
 }
 
-bun_opaque::opaque_ffi! { pub struct TestReporterHandle; }
+bun_opaque::sealed_handle! { pub struct TestReporterHandle; }
 
-// SAFETY (safe fn): `TestReporterHandle` is an `opaque_ffi!`
+// SAFETY (safe fn): `TestReporterHandle` is a `sealed_handle!`
 // ZST handle (`!Freeze` via `UnsafeCell`); `BunString` is a `#[repr(C)]`
 // in/out-param the C++ side reads/consumes in-place. Remaining args are
 // by-value scalars.
 unsafe extern "C" {
     safe fn Bun__TestReporterAgentReportTestFound(
-        agent: &mut TestReporterHandle,
+        agent: &TestReporterHandle,
         test_id: c_int,
         name: &BunString,
         item_type: TestType,
         parent_id: c_int,
     );
     safe fn Bun__TestReporterAgentReportTestFoundWithLocation(
-        agent: &mut TestReporterHandle,
+        agent: &TestReporterHandle,
         test_id: c_int,
         name: &BunString,
         item_type: TestType,
@@ -760,9 +741,9 @@ unsafe extern "C" {
         source_url: &BunString,
         line: c_int,
     );
-    safe fn Bun__TestReporterAgentReportTestStart(agent: &mut TestReporterHandle, test_id: c_int);
+    safe fn Bun__TestReporterAgentReportTestStart(agent: &TestReporterHandle, test_id: c_int);
     safe fn Bun__TestReporterAgentReportTestEnd(
-        agent: &mut TestReporterHandle,
+        agent: &TestReporterHandle,
         test_id: c_int,
         bun_test_status: TestStatus,
         elapsed: f64,
@@ -770,18 +751,8 @@ unsafe extern "C" {
 }
 
 impl TestReporterHandle {
-    pub(crate) fn report_test_found(
-        &mut self,
-        test_id: i32,
-        name: &BunString,
-        item_type: TestType,
-        parent_id: i32,
-    ) {
-        Bun__TestReporterAgentReportTestFound(self, test_id, name, item_type, parent_id);
-    }
-
     pub fn report_test_found_with_location(
-        &mut self,
+        &self,
         test_id: i32,
         name: &BunString,
         item_type: TestType,
@@ -793,26 +764,13 @@ impl TestReporterHandle {
             self, test_id, name, item_type, parent_id, source_url, line,
         );
     }
-
-    pub(crate) fn report_test_start(&mut self, test_id: c_int) {
-        Bun__TestReporterAgentReportTestStart(self, test_id);
-    }
-
-    pub(crate) fn report_test_end(
-        &mut self,
-        test_id: c_int,
-        bun_test_status: TestStatus,
-        elapsed: f64,
-    ) {
-        Bun__TestReporterAgentReportTestEnd(self, test_id, bun_test_status, elapsed);
-    }
 }
 
 // HOST_EXPORT(Bun__TestReporterAgentEnable, c)
-pub fn test_reporter_agent_enable(agent: *mut TestReporterHandle) {
+pub fn test_reporter_agent_enable(agent: EnabledAgent<TestReporterHandle>) {
     if let Some(dbg) = VirtualMachine::get().debugger.get() {
         bun_core::scoped_log!(TestReporterAgent, "enable");
-        dbg.test_reporter_agent.handle.set(agent);
+        dbg.test_reporter_agent.handle.set(Some(agent));
 
         // Retroactively report any tests that were already discovered before
         // the debugger connected.
@@ -820,11 +778,12 @@ pub fn test_reporter_agent_enable(agent: *mut TestReporterHandle) {
         // LAYERING: `retroactivelyReportDiscoveredTests` reaches into
         // the test runner (`bun_test.DescribeScope`), which lives in `bun_runtime::test_runner`
         // — a forward-dep cycle. Dispatched through [`RuntimeHooks`].
-        if let Some(hooks) = runtime_hooks() {
+        if let Some(hooks) = runtime_hooks()
+            && let Some(agent) = dbg.test_reporter_agent.handle.get()
+        {
             dbg.test_reporter_agent.next_test_id.set(
                 (hooks.retroactively_report_discovered_tests)(
-                    // SAFETY: `handle` is the live C++ agent just stored above.
-                    unsafe { &mut *dbg.test_reporter_agent.handle.get() },
+                    agent,
                     dbg.test_reporter_agent.next_test_id.get(),
                 ),
             );
@@ -836,27 +795,11 @@ pub fn test_reporter_agent_enable(agent: *mut TestReporterHandle) {
 pub fn test_reporter_agent_disable(_agent: *mut TestReporterHandle) {
     if let Some(dbg) = VirtualMachine::get().debugger.get() {
         bun_core::scoped_log!(TestReporterAgent, "disable");
-        dbg.test_reporter_agent.handle.set(core::ptr::null_mut());
+        dbg.test_reporter_agent.handle.set(None);
     }
 }
 
 impl TestReporterAgent {
-    /// Safe `&mut TestReporterHandle` accessor — `handle` is a live C++
-    /// `Inspector::TestReporterAgent*` once the agent is enabled. Caller must
-    /// ensure `is_enabled()` (handle != null).
-    #[inline]
-    fn handle_mut(&self) -> &mut TestReporterHandle {
-        debug_assert!(!self.handle.get().is_null());
-        // Caller contract — `is_enabled()` checked; handle is a live C++ heap
-        // allocation owned by the inspector backend. `TestReporterHandle` is an
-        // opaque ZST handle so the deref is the centralised `opaque_mut` proof.
-        TestReporterHandle::opaque_mut(self.handle.get())
-    }
-
-    /// Caller must ensure that it is enabled first.
-    ///
-    /// Since we may have to call .deinit on the name string.
-    ///
     /// The test's location is that of the caller of the host function that is running.
     pub fn report_test_found(
         &self,
@@ -866,25 +809,27 @@ impl TestReporterAgent {
         parent_id: i32,
     ) {
         bun_core::scoped_log!(TestReporterAgent, "reportTestFound");
-        self.handle_mut()
-            .report_test_found(test_id, name, item_type, parent_id);
+        if let Some(agent) = self.handle.get() {
+            Bun__TestReporterAgentReportTestFound(agent, test_id, name, item_type, parent_id);
+        }
     }
 
-    /// Caller must ensure that it is enabled first.
     pub fn report_test_start(&self, test_id: i32) {
         bun_core::scoped_log!(TestReporterAgent, "reportTestStart");
-        self.handle_mut().report_test_start(test_id);
+        if let Some(agent) = self.handle.get() {
+            Bun__TestReporterAgentReportTestStart(agent, test_id);
+        }
     }
 
-    /// Caller must ensure that it is enabled first.
     pub fn report_test_end(&self, test_id: i32, bun_test_status: TestStatus, elapsed: f64) {
         bun_core::scoped_log!(TestReporterAgent, "reportTestEnd");
-        self.handle_mut()
-            .report_test_end(test_id, bun_test_status, elapsed);
+        if let Some(agent) = self.handle.get() {
+            Bun__TestReporterAgentReportTestEnd(agent, test_id, bun_test_status, elapsed);
+        }
     }
 
     pub fn is_enabled(&self) -> bool {
-        !self.handle.get().is_null()
+        self.handle.is_enabled()
     }
 }
 
@@ -892,23 +837,23 @@ impl TestReporterAgent {
 
 #[derive(Default)]
 pub struct LifecycleAgent {
-    handle: Cell<*mut LifecycleHandle>,
+    handle: AgentSlot<LifecycleHandle>,
 }
 
-bun_opaque::opaque_ffi! { pub struct LifecycleHandle; }
+bun_opaque::sealed_handle! { pub struct LifecycleHandle; }
 
-// SAFETY (safe fn): `LifecycleHandle` is an `opaque_ffi!` ZST handle (`!Freeze`
+// SAFETY (safe fn): `LifecycleHandle` is a `sealed_handle!` ZST handle (`!Freeze`
 // via `UnsafeCell`); `ZigException` is a `#[repr(C)]` out-param the C++ side
 // reads/fills in-place.
 unsafe extern "C" {
     safe fn Bun__LifecycleAgentReportError(
-        agent: &mut LifecycleHandle,
+        agent: &LifecycleHandle,
         exception: &mut ZigException<'_>,
     );
 }
 
 impl LifecycleHandle {
-    pub(crate) fn report_error(&mut self, exception: &mut ZigException<'_>) {
+    fn report_error(&self, exception: &mut ZigException<'_>) {
         bun_removable_features::call_removable!(
             Inspector,
             ReturnDefault,
@@ -919,17 +864,17 @@ impl LifecycleHandle {
     }
 
     #[inline(never)]
-    fn report_error_to_agent(&mut self, exception: &mut ZigException<'_>) {
+    fn report_error_to_agent(&self, exception: &mut ZigException<'_>) {
         bun_core::scoped_log!(LifecycleAgent, "reportError");
         Bun__LifecycleAgentReportError(self, exception)
     }
 }
 
 // HOST_EXPORT(Bun__LifecycleAgentEnable, c)
-pub fn lifecycle_agent_enable(agent: *mut LifecycleHandle) {
+pub fn lifecycle_agent_enable(agent: EnabledAgent<LifecycleHandle>) {
     if let Some(dbg) = VirtualMachine::get().debugger.get() {
         bun_core::scoped_log!(LifecycleAgent, "enable");
-        dbg.lifecycle_reporter_agent.handle.set(agent);
+        dbg.lifecycle_reporter_agent.handle.set(Some(agent));
     }
 }
 
@@ -937,24 +882,13 @@ pub fn lifecycle_agent_enable(agent: *mut LifecycleHandle) {
 pub fn lifecycle_agent_disable(_agent: *mut LifecycleHandle) {
     if let Some(dbg) = VirtualMachine::get().debugger.get() {
         bun_core::scoped_log!(LifecycleAgent, "disable");
-        dbg.lifecycle_reporter_agent
-            .handle
-            .set(core::ptr::null_mut());
+        dbg.lifecycle_reporter_agent.handle.set(None);
     }
 }
 
 impl LifecycleAgent {
-    /// Safe optional accessor — wraps the null check + raw deref.
-    #[inline]
-    fn handle_mut(&self) -> Option<&mut LifecycleHandle> {
-        // `handle` is null or a live C++ heap allocation owned by the inspector
-        // backend. `LifecycleHandle` is an opaque ZST handle so the deref is
-        // the centralised `opaque_mut` proof.
-        core::ptr::NonNull::new(self.handle.get()).map(|p| LifecycleHandle::opaque_mut(p.as_ptr()))
-    }
-
     pub(crate) fn report_error(&self, exception: &mut ZigException<'_>) {
-        if let Some(h) = self.handle_mut() {
+        if let Some(h) = self.handle.get() {
             h.report_error(exception);
         }
     }

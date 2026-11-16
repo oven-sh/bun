@@ -28,7 +28,7 @@ unsafe extern "C" {
     safe fn EncodedSlice__toDOMExceptionInstance(
         this: &EncodedSlice,
         global: &JSGlobalObject,
-        code: u8,
+        code: DOMExceptionCode,
     ) -> JSValue;
     safe fn EncodedSlice__toValueGC(this: &EncodedSlice, global: &JSGlobalObject) -> JSValue;
     // EncodedSlice__toExternalValue: use the generated `cpp::` re-export (canonical signature).
@@ -92,7 +92,7 @@ impl EncodedSliceJsc for EncodedSlice<'_> {
         global: &JSGlobalObject,
         code: DOMExceptionCode,
     ) -> JSValue {
-        EncodedSlice__toDOMExceptionInstance(self, global, code as u8)
+        EncodedSlice__toDOMExceptionInstance(self, global, code)
     }
     fn to_js(&self, global: &JSGlobalObject) -> JSValue {
         EncodedSlice__toValueGC(self, global)
@@ -111,7 +111,7 @@ impl EncodedSliceJsc for EncodedSlice<'_> {
         ctx: *mut core::ffi::c_void,
         callback: unsafe extern "C" fn(*mut core::ffi::c_void, *mut core::ffi::c_void, usize),
     ) -> JsResult<JSValue> {
-        if self.len > bun_core::String::max_length() {
+        if self.len() > bun_core::String::max_length() {
             // SAFETY: invoking the caller-supplied finalizer on the buffer it owns.
             unsafe {
                 callback(
@@ -120,7 +120,7 @@ impl EncodedSliceJsc for EncodedSlice<'_> {
                         .as_ptr()
                         .cast_mut()
                         .cast::<core::ffi::c_void>(),
-                    self.len,
+                    self.len(),
                 )
             };
             return Err(global.throw_string_too_long());

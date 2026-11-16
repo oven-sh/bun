@@ -3089,14 +3089,22 @@ void WebCore__FetchHeaders__deref(WebCore::FetchHeaders* arg0)
     arg0->deref();
 }
 
-void WebCore__FetchHeaders__get_(WebCore::FetchHeaders* headers, const EncodedSlice* arg1, EncodedSlice* arg2, JSC::JSGlobalObject* global)
+static BunString toStringAdopt(WTF::String&& s)
+{
+    if (s.isEmpty())
+        return BunStringEmpty;
+    return { BunStringTag::WTFStringImpl, { .wtf = s.releaseImpl().leakRef() } };
+}
+
+BunString WebCore__FetchHeaders__get_(WebCore::FetchHeaders* headers, const EncodedSlice* arg1, JSC::JSGlobalObject* global)
 {
     auto throwScope = DECLARE_THROW_SCOPE(global->vm());
     auto result = headers->get(Zig::toString(*arg1));
-    if (result.hasException())
+    if (result.hasException()) {
         WebCore::propagateException(*global, throwScope, result.releaseException());
-    else
-        *arg2 = Zig::toEncodedSlice(result.releaseReturnValue());
+        return BunStringEmpty;
+    }
+    return toStringAdopt(result.releaseReturnValue());
 }
 extern "C" void WebCore__FetchHeaders__put(WebCore::FetchHeaders* headers, HTTPHeaderName name, const BunString* arg2, JSC::JSGlobalObject* global)
 {
@@ -3110,14 +3118,9 @@ void WebCore__FetchHeaders__fastRemove_(WebCore::FetchHeaders* headers, unsigned
     headers->fastRemove(static_cast<WebCore::HTTPHeaderName>(headerName));
 }
 
-void WebCore__FetchHeaders__fastGet_(WebCore::FetchHeaders* headers, unsigned char headerName, EncodedSlice* arg2)
+BunString WebCore__FetchHeaders__fastGet_(WebCore::FetchHeaders* headers, unsigned char headerName)
 {
-    auto str = headers->fastGet(static_cast<WebCore::HTTPHeaderName>(headerName));
-    if (!str) {
-        return;
-    }
-
-    *arg2 = Zig::toEncodedSlice(str);
+    return toStringAdopt(headers->fastGet(static_cast<WebCore::HTTPHeaderName>(headerName)));
 }
 
 WebCore::DOMURL* WebCore__DOMURL__cast_(JSC::EncodedJSValue JSValue0, JSC::VM* vm)
@@ -5411,13 +5414,6 @@ extern "C" JSC::EncodedJSValue JSC__Exception__asJSValue(JSC::Exception* excepti
 void JSC__VM__releaseWeakRefs(JSC::VM* arg0)
 {
     arg0->finalizeSynchronousJSExecution();
-}
-
-static BunString toStringAdopt(WTF::String&& s)
-{
-    if (s.isEmpty())
-        return BunStringEmpty;
-    return { BunStringTag::WTFStringImpl, { .wtf = s.releaseImpl().leakRef() } };
 }
 
 BunString JSC__JSValue__getClassName(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* arg1)

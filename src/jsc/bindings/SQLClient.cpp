@@ -316,6 +316,7 @@ static JSC::JSValue toJS(JSC::Structure* structure, DataCell* cells, uint32_t co
                 ASSERT(!cell.isIndexedColumn());
                 ASSERT(cell.isNamedColumn());
                 if (names.has_value()) {
+                    RELEASE_ASSERT_WITH_MESSAGE(i < namesCount && names.value()[i].isNamedColumn(), "SQL row column %u has no name", i);
                     object->putDirect(vm, names.value()[i].propertyName(vm), value);
                 } else {
                     // CachedStructure::build_from_columns guarantees one offset

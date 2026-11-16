@@ -435,8 +435,7 @@ impl<const SSL: bool> VHandler for BunSocket<SSL> {
     }
 }
 
-/// Listener accept path: the ext is uninitialised at on_open time (the C accept
-/// loop just calloc'd it), so we read the `*Listener` off `group->ext` and let
+/// Listener accept path: `us_internal_socket_clear_ext` left the ext empty, so we read the `*Listener` off `group->ext` and let
 /// `on_create` allocate the `NewSocket` and stash it in the ext. After that the
 /// socket is re-stamped as `.bun_socket_{tcp,tls}` and routes through
 /// `BunSocket` above.
@@ -500,7 +499,7 @@ impl<const SSL: bool> VHandler for BunListener<SSL> {
 /// `SocketHandler(ssl)` adapter) rather than as methods on the owner type
 /// itself. Ext stores `*Owner`; it is optional because a connect/accept can
 /// fail and dispatch `on_close` / `on_connect_error` BEFORE the caller has
-/// had a chance to stash `this` in the freshly-calloc'd ext slot.
+/// had a chance to stash `this` in the slot that `us_internal_socket_clear_ext` cleared.
 ///
 /// In Rust the "separate namespace" becomes a trait `NsSocketEvents` whose
 /// methods take `&Owner` as the first parameter; each driver's

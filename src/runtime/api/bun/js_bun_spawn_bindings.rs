@@ -516,15 +516,11 @@ fn spawn_maybe_sync(
             }
 
             if let Some(signal_val) = args.get_truthy(cx.global(), "signal")? {
-                if let Some(signal) = WebCore::AbortSignal::from_js(signal_val) {
-                    // `from_js` returns a live FFI handle owned by JS.
-                    // `AbortSignal` is an `opaque_ffi!` ZST handle; `opaque_ref`
-                    // is the centralised non-null deref proof.
-                    let sig = WebCore::AbortSignal::opaque_ref(signal);
-                    if let Some(abort_error) = sig.node_abort_error_if_aborted(cx.global()) {
+                if let Some(signal) = WebCore::AbortSignal::ref_from_js(signal_val) {
+                    if let Some(abort_error) = signal.node_abort_error_if_aborted(cx.global()) {
                         return Err(cx.global().throw_value(abort_error));
                     }
-                    abort_signal = Some(sig.ref_());
+                    abort_signal = Some(signal);
                 } else {
                     return Err(cx.global().throw_invalid_argument_type_value(
                         b"signal",
@@ -1601,24 +1597,13 @@ fn spawn_maybe_sync(
         // Support `AbortSignal.timeout`, but it's best-effort.
         // Specifying both `timeout: number` and `AbortSignal.timeout` chooses the soonest one.
         // This does mean if an AbortSignal times out it will throw
-        if let Some(signal) = subprocess.abort_signal_ref() {
-            if let Some(abort_signal_timeout) = signal.get_timeout() {
-                // A fake-heap deadline is on the mocked clock, which cannot
-                // advance while this call blocks; only a real-heap one is
-                // comparable with `now`.
-                if abort_signal_timeout.event_loop_timer.state.get()
-                    == crate::timer::EventLoopTimerState::ACTIVE
-                    && abort_signal_timeout.event_loop_timer.in_heap.get()
-                        == crate::timer::InHeap::Regular
-                {
-                    let next_ts = abort_signal_timeout.event_loop_timer.next.get();
-                    if user_timespec.eql(&Timespec::EPOCH)
-                        || next_ts.order(&user_timespec) == core::cmp::Ordering::Less
-                    {
-                        user_timespec = next_ts;
-                    }
-                }
-            }
+        if let Some(signal) = subprocess.abort_signal_ref()
+            // The clock of fake timers cannot advance while this call blocks.
+            && let Some(next_ts) = signal.timeout_deadline()
+            && (user_timespec.eql(&Timespec::EPOCH)
+                || next_ts.order(&user_timespec) == core::cmp::Ordering::Less)
+        {
+            user_timespec = next_ts;
         }
 
         let has_user_timespec = !user_timespec.eql(&Timespec::EPOCH);

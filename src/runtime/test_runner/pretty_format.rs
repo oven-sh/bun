@@ -802,13 +802,11 @@ impl<'a, 'f, W: bun_io::Write, const ENABLE_ANSI_COLORS: bool>
     MapIterator<'a, 'f, W, ENABLE_ANSI_COLORS>
 {
     pub(crate) extern "C" fn for_each(
-        _: *mut VM,
+        _: &VM,
         global_object: &JSGlobalObject,
-        ctx: *mut c_void,
+        ctx: &mut Self,
         next_value: JSValue,
     ) {
-        // SAFETY: ctx was passed as `&mut Self as *mut c_void` by the caller of for_each.
-        let Some(ctx) = (unsafe { ctx.cast::<Self>().as_mut() }) else { return };
         if ctx.formatter.failed {
             return;
         }
@@ -853,13 +851,11 @@ impl<'a, 'f, W: bun_io::Write, const ENABLE_ANSI_COLORS: bool>
     SetIterator<'a, 'f, W, ENABLE_ANSI_COLORS>
 {
     pub(crate) extern "C" fn for_each(
-        _: *mut VM,
+        _: &VM,
         global_object: &JSGlobalObject,
-        ctx: *mut c_void,
+        ctx: &mut Self,
         next_value: JSValue,
     ) {
-        // SAFETY: ctx was passed as `&mut Self as *mut c_void` by the caller of for_each.
-        let Some(ctx) = (unsafe { ctx.cast::<Self>().as_mut() }) else { return };
         if ctx.formatter.failed {
             return;
         }
@@ -936,7 +932,7 @@ impl<'a, 'f, W: bun_io::Write, const ENABLE_ANSI_COLORS: bool>
 
     extern "C" fn for_each(
         global_this: &JSGlobalObject,
-        ctx_ptr: *mut c_void,
+        ctx: &mut Self,
         key: &EncodedSlice,
         value: JSValue,
         is_symbol: bool,
@@ -950,8 +946,6 @@ impl<'a, 'f, W: bun_io::Write, const ENABLE_ANSI_COLORS: bool>
             return;
         }
 
-        // SAFETY: ctx_ptr was passed as `&mut Self as *mut c_void` by the caller of for_each.
-        let Some(ctx) = (unsafe { ctx_ptr.cast::<Self>().as_mut() }) else { return };
         if ctx.formatter.failed {
             return;
         }
@@ -996,7 +990,7 @@ impl<'a, 'f, W: bun_io::Write, const ENABLE_ANSI_COLORS: bool>
                 || (key.is_16bit()
                     && bun_ast::lexer_tables::is_latin1_identifier_u16(key.utf16_slice()))
             {
-                this.add_for_new_line(key.len + 2);
+                this.add_for_new_line(key.len() + 2);
 
                 writer.print(format_args!(
                     concat!("{}", "\"{}\"", "{}", ":", "{}", " "),
@@ -1022,7 +1016,7 @@ impl<'a, 'f, W: bun_io::Write, const ENABLE_ANSI_COLORS: bool>
                     pretty_fmt_const!(ENABLE_ANSI_COLORS, "<r>"),
                 ));
             } else {
-                this.add_for_new_line(key.len + 2);
+                this.add_for_new_line(key.len() + 2);
 
                 writer.print(format_args!(
                     "{}{}{}:{} ",
@@ -1033,7 +1027,7 @@ impl<'a, 'f, W: bun_io::Write, const ENABLE_ANSI_COLORS: bool>
                 ));
             }
         } else {
-            this.add_for_new_line(1 + b"[Symbol()]:".len() + key.len);
+            this.add_for_new_line(1 + b"[Symbol()]:".len() + key.len());
             writer.print(format_args!(
                 "{}[{}Symbol({}){}]:{} ",
                 pretty_fmt_const!(ENABLE_ANSI_COLORS, "<r><d>"),
@@ -1130,23 +1124,23 @@ impl<'a> Formatter<'a> {
                 Tag::String => {
                     let view = value.to_js_string_view(self.global_this)?;
                     let str = view.to_encoded_slice();
-                    self.add_for_new_line(str.len);
+                    self.add_for_new_line(str.len());
 
                     if value.js_type() == JSType::StringObject
                         || value.js_type() == JSType::DerivedStringObject
                     {
-                        if str.len == 0 {
+                        if str.is_empty() {
                             writer.write_all(b"String {}");
                             return Ok(());
                         }
-                        if self.indent == 0 && str.len > 0 {
+                        if self.indent == 0 && !str.is_empty() {
                             writer.write_all(b"\n");
                         }
                         writer.write_all(b"String {\n");
                         self.indent += 1;
                         self.reset_line();
                         self.write_indent(writer.ctx).expect("unreachable");
-                        let length = str.len;
+                        let length = str.len();
                         for i in 0..length {
                             let unit = [str.char_at(i)];
                             writer.print(format_args!(
@@ -1165,7 +1159,7 @@ impl<'a> Formatter<'a> {
                     }
 
                     if self.quote_strings && js_type != JSType::RegExpObject {
-                        if str.len == 0 {
+                        if str.is_empty() {
                             writer.write_all(b"\"\"");
                             return Ok(());
                         }
@@ -1198,7 +1192,7 @@ impl<'a> Formatter<'a> {
                                     remaining = remaining.substring(i + 1);
                                 }
                                 CR => {
-                                    if i + 1 < remaining.len
+                                    if i + 1 < remaining.len()
                                         && remaining.char_at(i + 1) == LF
                                     {
                                         writer.print(format_args!(
@@ -1245,10 +1239,10 @@ impl<'a> Formatter<'a> {
                     } else if strings::is_all_ascii(str.slice()) {
                         // fast path
                         writer.write_all(str.slice());
-                    } else if str.len > 0 {
+                    } else if !str.is_empty() {
                         // slow path
                         let buf = strings::allocate_latin1_into_utf8_with_list(
-                            Vec::with_capacity(str.len),
+                            Vec::with_capacity(str.len()),
                             0,
                             str.slice(),
                         );
@@ -1610,7 +1604,7 @@ impl<'a> Formatter<'a> {
                             return Err(JsError::Thrown);
                         }
                         return Ok(());
-                    } else if bun_jsc::DOMFormData::from_js(value).is_some() {
+                    } else if bun_jsc::DOMFormData::with_wrapped(value, |_| ()).is_some() {
                         if let Some(to_json_function) = value
                             .get(self.global_this, "toJSON")?
                             .filter(|f| f.is_callable())
@@ -1787,7 +1781,7 @@ impl<'a> Formatter<'a> {
                         };
                         let result = value.for_each(
                             global,
-                            (&raw mut iter).cast::<c_void>(),
+                            &mut iter,
                             MapIterator::<W, ENABLE_ANSI_COLORS>::for_each,
                         );
                         // `indent` / `quote_strings` must be restored on every exit,
@@ -1834,7 +1828,7 @@ impl<'a> Formatter<'a> {
                         };
                         let result = value.for_each(
                             global,
-                            (&raw mut iter).cast::<c_void>(),
+                            &mut iter,
                             SetIterator::<W, ENABLE_ANSI_COLORS>::for_each,
                         );
                         // `indent` / `quote_strings` must be restored on every exit,
@@ -2365,10 +2359,10 @@ impl<'a> Formatter<'a> {
                     let each = PropertyIterator::<W, ENABLE_ANSI_COLORS>::for_each;
                     let result = if iter.formatter.like_older_bun.is_some() {
                         value
-                            .for_each_property_ordered_with_non_enumerable(global, (&raw mut iter).cast::<c_void>(), each)
+                            .for_each_property_ordered_with_non_enumerable(global, &mut iter, each)
                             .map(|()| true)
                     } else {
-                        value.for_each_property_ordered_calling_getters(global, (&raw mut iter).cast::<c_void>(), each)
+                        value.for_each_property_ordered_calling_getters(global, &mut iter, each)
                     };
 
                     let iter_i = iter.i;

@@ -24,8 +24,8 @@ use crate::ssl_config::SharedPtr as SSLConfigSharedPtr;
 bun_core::declare_scope!(AsyncHTTP, visible);
 
 // Lifetime `'a` covers every borrowed input the caller hands in: `url`,
-// `http_proxy`, `request_header_buf`, the borrowed `HTTPRequestBody::Bytes`
-// payload, and `client.{header_buf,unix_socket_path,progress}`.
+// `http_proxy`, `request_header_buf`, what the `HTTPRequestBody` borrows,
+// and `client.{header_buf,unix_socket_path,progress,signals}`.
 pub struct AsyncHTTP<'a> {
     request_headers: headers::EntryList,
     pub request_body: HTTPRequestBody<'a>,
@@ -60,9 +60,8 @@ struct OriginalClientState<'a> {
 bun_core::intrusive_field!(AsyncHTTP<'static>, next: bun_threading::Link<AsyncHTTP<'static>>);
 
 // SAFETY: what belongs to the HTTP thread (sockets, HTTP/2 and HTTP/3 streams, contexts and their
-// reference counts) is not set before `on_start`, and is released before the last result. `signals`
-// points to atomics, and only the HTTP thread passes the callback its context. The buffer of a
-// streamed `request_body` has an atomic count and a lock.
+// reference counts) is not set before `on_start`, and is released before the last result. Only the
+// HTTP thread passes the callback its context.
 unsafe impl Send for AsyncHTTP<'static> {}
 
 pub(crate) static ACTIVE_REQUESTS_COUNT: AtomicUsize = AtomicUsize::new(0);
@@ -80,6 +79,7 @@ const fn noop_callback() -> HTTPClientResultCallback {
         ctx: core::ptr::null_mut(),
         function: noop_result_callback,
         release_at_shutdown: None,
+        on_drain: None,
     }
 }
 
@@ -132,15 +132,14 @@ fn make_client<'a>(
     url: URL<'a>,
     header_entries: headers::EntryList,
     header_buf: &'a [u8],
-    signals: Signals,
+    signals: Signals<'a>,
     async_http_id: u32,
     http_proxy: Option<URL<'a>>,
     proxy_headers: Option<Headers>,
     redirect_type: FetchRedirect,
-    result_callback: HTTPClientResultCallback,
 ) -> HTTPClient<'a> {
     HTTPClient {
-        result_callback,
+        result_callback: noop_callback(),
         method,
         header_entries,
         header_buf,
@@ -225,7 +224,7 @@ pub struct Options<'a> {
     /// Replaces `http_proxy` with the proxy for the URL of each hop.
     pub proxy_settings: Option<Box<crate::ProxySettings>>,
     pub proxy_headers: Option<Headers>,
-    pub signals: Option<Signals>,
+    pub signals: Option<Signals<'a>>,
     pub unix_socket_path: Option<&'a [u8]>,
     pub disable_timeout: Option<bool>,
     /// Per-request idle timeout override in seconds; see
@@ -300,7 +299,6 @@ impl<'a> AsyncHTTP<'a> {
         headers: headers::EntryList,
         headers_buf: &'a [u8],
         request_body: &'a [u8],
-        callback: HTTPClientResultCallback,
         redirect_type: FetchRedirect,
         options: Options<'a>,
     ) -> Box<AsyncHTTP<'a>> {
@@ -329,7 +327,6 @@ impl<'a> AsyncHTTP<'a> {
             options.http_proxy,
             options.proxy_headers,
             redirect_type,
-            callback,
         );
 
         let mut this = Box::new(AsyncHTTP {
@@ -409,13 +406,27 @@ impl<'a> AsyncHTTP<'a> {
             headers,
             headers_buf,
             request_body,
-            noop_callback(),
             redirect_type,
             Options {
                 proxy_settings,
                 ..Options::default()
             },
         )
+    }
+
+    /// Sends the request without waiting for it.
+    ///
+    /// # Safety
+    /// The functions of `callback` can be called with its context on the HTTP thread. What `this`
+    /// borrows stays valid until the one that gets the last result has dropped the
+    /// [`FinishedRequest`], or until the release function is called.
+    pub unsafe fn schedule(mut this: Box<Self>, callback: HTTPClientResultCallback) {
+        crate::http_thread::init(&Default::default());
+        this.client.result_callback = callback;
+        // SAFETY: fn contract.
+        let this =
+            unsafe { core::mem::transmute::<Box<AsyncHTTP<'a>>, Box<AsyncHTTP<'static>>>(this) };
+        crate::HTTPThread::schedule([this]);
     }
 }
 
@@ -445,7 +456,7 @@ impl OwnedRequest {
     ) -> Self {
         static RESPONSE_BODY_STREAMING: AtomicBool = AtomicBool::new(true);
         options.signals = response_body_streaming.then(|| Signals {
-            response_body_streaming: Some(NonNull::from(&RESPONSE_BODY_STREAMING)),
+            response_body_streaming: Some(&RESPONSE_BODY_STREAMING),
             ..Default::default()
         });
         // SAFETY: moving a `Cow` does not move its bytes. Both go into private fields
@@ -462,7 +473,6 @@ impl OwnedRequest {
             headers,
             borrowed_headers_buf,
             b"",
-            noop_callback(),
             FetchRedirect::Follow,
             options,
         );
@@ -492,7 +502,7 @@ impl OwnedRequest {
         T: HTTPClientResultHandler<P>,
         P: OwnedPtr<Target = T> + Send + 'static,
     {
-        fn on_result<T, P>(
+        unsafe fn on_result<T, P>(
             handler: *mut T,
             finished: Option<FinishedRequest>,
             result: HTTPClientResult<'_>,
@@ -544,7 +554,9 @@ impl SyncResultSlot {
         }
     }
 
-    fn on_result(
+    /// # Safety
+    /// A thread is in `wait` on `this`, or gets there.
+    unsafe fn on_result(
         this: *mut SyncResultSlot,
         finished: Option<FinishedRequest>,
         result: HTTPClientResult<'_>,
@@ -552,7 +564,7 @@ impl SyncResultSlot {
         // `init_sync` sets no streaming signal, so the last result is the only one.
         let request = finished.expect("one result");
         debug_assert!(result.body.is_empty());
-        // SAFETY: `send_and_wait` cannot return before the lock is released.
+        // SAFETY: fn contract; `wait` cannot return before the lock is released.
         let this = unsafe { &*this };
         let mut slot = this.slot.lock();
         *slot = Some((request, result.without_borrowed_body()));

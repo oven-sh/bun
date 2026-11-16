@@ -1,11 +1,11 @@
 use bun_http_types::ETag::StringPointer;
 use bun_http_types::parse_content_length_strict;
-use bun_ptr::RefPtr;
+use bun_io::StreamBuffer;
+use bun_threading::Guarded;
 
 use crate::Encoding;
 use crate::Headers;
 use crate::SendFile;
-use crate::ThreadSafeStreamBuffer;
 use crate::fold_transfer_encoding;
 
 /// Request body payload. Parameterized over `'a` so callers can hand in
@@ -15,11 +15,12 @@ pub enum HTTPRequestBody<'a> {
     /// Borrowed bytes — caller guarantees they outlive the request.
     Bytes(&'a [u8]),
     Sendfile(SendFile),
-    Stream(Stream),
+    Stream(Stream<'a>),
 }
 
-pub struct Stream {
-    pub buffer: Option<RefPtr<ThreadSafeStreamBuffer>>,
+pub struct Stream<'a> {
+    /// The producer appends from its own thread.
+    pub buffer: Option<&'a Guarded<StreamBuffer>>,
     pub ended: bool,
     pub framing: StreamFraming,
 }

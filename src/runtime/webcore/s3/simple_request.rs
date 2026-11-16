@@ -683,11 +683,6 @@ pub(crate) fn execute_simple_s3_request(
         task.headers.entries.clone().expect("OOM"),
         headers_buf,
         body,
-        HTTPClientResultCallback::new_with_release::<S3HttpSimpleTask>(
-            task_ptr,
-            S3HttpSimpleTask::http_callback,
-            S3HttpSimpleTask::release_at_shutdown,
-        ),
         FetchRedirect::Follow,
         HttpOptions {
             http_proxy,
@@ -699,14 +694,18 @@ pub(crate) fn execute_simple_s3_request(
         },
     );
     task.async_http_id = async_http.async_http_id;
-    // queue http request
-    bun_http::http_thread::init(&Default::default());
     // Out on the HTTP thread until its final callback: its context aborts it
     // when it stops, and the VM waits for it (the ticket).
     task.http_ticket = Some(VirtualMachine::get().ticket());
     task.context = context.id();
     // SAFETY: the task is heap-allocated and drops its handle with itself.
     unsafe { bun_jsc::AbortHandle::arm_owner(task_ptr, context) };
-    bun_http::HTTPThread::schedule([async_http]);
+    let callback = HTTPClientResultCallback::new_with_release(
+        task_ptr,
+        S3HttpSimpleTask::http_callback,
+        S3HttpSimpleTask::release_at_shutdown,
+    );
+    // SAFETY: the callbacks post the task that frees `*task_ptr` once the request is dropped.
+    unsafe { AsyncHTTP::schedule(async_http, callback) };
     Ok(())
 }

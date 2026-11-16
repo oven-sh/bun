@@ -2,7 +2,7 @@ use core::cell::Cell;
 
 use bun_jsc::JsCell;
 use bun_jsc::bindgen::{JsLocal, JsScope, JsStructure, JsWrapper};
-use bun_jsc::{AbortSignal, GlobalRef, HeadersRef};
+use bun_jsc::{AbortSignalRef, GlobalRef, HeadersRef};
 use bun_ptr::{CellExt as _, RefPtr};
 
 use crate::webcore::jsc::{
@@ -329,25 +329,22 @@ impl Response {
     }
 
     /// Install a [`BodyAbortListener`] so abort reaches this body after `FetchTasklet` has detached.
-    ///
-    /// SAFETY: `this` must be a live heap `Response` (stored as the listener's [`ParentRef`]).
-    pub(crate) unsafe fn attach_abort_signal(
-        this: *mut Response,
+    pub(crate) fn attach_abort_signal(
+        this: &RefPtr<Response>,
         global: &JSGlobalObject,
-        signal: &AbortSignal,
+        signal: AbortSignalRef,
         context: bun_jsc::ContextId,
     ) {
         let listener = bun_ptr::AliasableBox::new(BodyAbortListener {
             abort_handle: bun_jsc::AbortHandle::for_owner::<BodyAbortListener>(),
-            // SAFETY: caller contract; `this` is live and owns the box.
-            response: unsafe { bun_ptr::ParentRef::from_raw_mut(this) },
+            // SAFETY: `*this` is on the heap and owns the box.
+            response: unsafe { bun_ptr::ParentRef::from_raw_mut(this.as_ptr()) },
             global: GlobalRef::new(global),
             context,
         });
         // SAFETY: on the heap until it drops.
-        unsafe { bun_jsc::AbortHandle::follow_owner(listener.as_ptr(), signal.ref_()) };
-        // SAFETY: caller contract; `this` is live.
-        unsafe { (*this).abort_listener.set(Some(listener)) };
+        unsafe { bun_jsc::AbortHandle::follow_owner(listener.as_ptr(), signal) };
+        this.abort_listener.set(Some(listener));
     }
 }
 

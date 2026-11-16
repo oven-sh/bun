@@ -714,7 +714,7 @@ pub enum SourceHandle {
     /// The `'static` bound erases the `&JSGlobalObject` borrow carried in
     /// `Subprocess<'a>`; the pointed-at allocation outlives this handle.
     Subprocess(BackRef<crate::api::bun::subprocess::Subprocess<'static>>),
-    FetchResponseBody(BackRef<crate::webcore::fetch::fetch_tasklet::FetchTasklet, bun_ptr::Mut>),
+    FetchResponseBody(BackRef<crate::webcore::fetch::fetch_tasklet::FetchTasklet>),
     ServerRequestBody(crate::server::AnyRequestContext),
     S3DownloadBody(BackRef<crate::webcore::s3::client::S3DownloadStreamWrapper>),
     HTMLRewriter(BackRef<crate::api::html_rewriter::RewriterPipe>),
@@ -897,9 +897,9 @@ impl SourceHandle {
     /// A pending body is about to become a stream, which starts with the result.
     pub(crate) fn start_streaming(self) -> DrainResult {
         match self {
-            SourceHandle::FetchResponseBody(p) => removable_body_behind_value!(Fetch, {
-                crate::webcore::fetch::fetch_tasklet::FetchTasklet::on_start_streaming(p)
-            }),
+            SourceHandle::FetchResponseBody(p) => {
+                removable_body_behind_value!(Fetch, { p.on_start_streaming() })
+            }
             SourceHandle::ServerRequestBody(any) => {
                 removable_body_behind_value!(Serve, { any.on_start_streaming_request_body() })
             }

@@ -13,7 +13,7 @@ use crate::webcore::streams::{
 
 bun_core::declare_scope!(FetchRequestBodySinkLog, visible);
 
-/// JSSink streaming a fetch() request body into the HTTP thread's ThreadSafeStreamBuffer
+/// JSSink streaming a fetch() request body into the buffer that the HTTP thread sends
 /// with chunked framing; one write per drain-ack.
 #[derive(bun_ptr::RefCounted)]
 #[ref_count(destroy = Self::destroy)]
@@ -93,7 +93,7 @@ impl FetchRequestBodySink {
             self.source.get(),
             SourceHandle::ByteStream(_) | SourceHandle::FileReader(_)
         ) {
-            // Native sources are push-driven by a macrotask (on_body_received);
+            // Native sources are push-driven by a macrotask (deliver_body_chunk);
             // only park them when the cross-thread buffer is actually over HWM.
             return if backed_up {
                 Writable::Backpressure(len)
@@ -207,8 +207,7 @@ impl FetchRequestBodySink {
     pub(crate) fn memory_cost(&self) -> usize {
         self.task.with_taken(|task| {
             task.as_ref()
-                .and_then(|task| task.request_body_streaming_buffer.as_deref())
-                .map_or(0, |buf| buf.lock().buffer.size())
+                .map_or(0, |task| task.request_body_streaming_buffer.lock().size())
         })
     }
 }

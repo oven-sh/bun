@@ -1,6 +1,6 @@
 import { socketFaultInjection as fault } from "bun:internal-for-testing";
 import { afterEach, describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, tls as certs, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, bunRun, tls as certs, isWindows, tempDir } from "harness";
 import { mkfifo } from "mkfifo";
 import { join } from "node:path";
 
@@ -238,6 +238,45 @@ describe.skipIf(skip)("fetch() under injected syscall faults (http)", () => {
       stderr: "",
       exitCode: 0,
     });
+  });
+
+  test("send → 0 until an early response resolves: pull() of the request body can read response.body", async () => {
+    using server = Bun.listen<{ received: string }>({
+      port: 0,
+      hostname: "127.0.0.1",
+      socket: {
+        open(socket) {
+          socket.data = { received: "" };
+          socket.write("HTTP/1.1 200 OK\r\nContent-Length: 4\r\n\r\nab");
+        },
+        data(socket, chunk) {
+          socket.data.received += chunk;
+          if (socket.data.received.endsWith("\r\n0\r\n\r\n")) socket.write("cd");
+        },
+      },
+    });
+    const fixture = /* js */ `
+      const { socketFaultInjection: fault } = require("bun:internal-for-testing");
+      fault.set({ syscall: "send", action: "zero", repeat: -1 });
+      const { promise: body, resolve } = Promise.withResolvers();
+      const res = await fetch("http://127.0.0.1:${server.port}/", {
+        method: "POST",
+        body: new ReadableStream({
+          type: "direct",
+          pull(controller) {
+            resolve(res.body);
+            controller.write("request");
+            controller.close();
+          },
+        }),
+      });
+      // An unread response does not keep the process alive.
+      const keepAlive = setInterval(() => {}, 1000);
+      fault.clear();
+      console.log(await (await body).text());
+      clearInterval(keepAlive);
+    `;
+    expect(await bunRun(["-e", fixture])).toSpawn("abcd");
   });
 });
 

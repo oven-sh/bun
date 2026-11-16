@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, isASAN, isIPv6, isWindows, nodeExe, tempDir, tmpdirSync } from "harness";
+import { bunEnv, bunExe, bunRun, isASAN, isIPv6, isWindows, nodeExe, tempDir, tmpdirSync } from "harness";
 import { once } from "node:events";
 import { readFileSync } from "node:fs";
 import net from "node:net";
@@ -1092,6 +1092,24 @@ describe.concurrent("fetch-tls", () => {
     } finally {
       server.close();
     }
+  });
+
+  it("checkServerIdentity can call process.exit() with BUN_DESTRUCT_VM_ON_EXIT", async () => {
+    await createServer(CERT_LOCALHOST_IP, async port => {
+      const fixture = /* js */ `
+        await fetch("https://127.0.0.1:${port}", {
+          tls: {
+            ca: process.env.CA,
+            checkServerIdentity() {
+              console.log("exit");
+              process.exit(0);
+            },
+          },
+        });
+      `;
+      const env = { CA: validTls.cert, BUN_DESTRUCT_VM_ON_EXIT: "1" };
+      expect(await bunRun(["-e", fixture], env)).toSpawn("exit");
+    });
   });
 
   // A keep-alive HTTPS server that counts accepted TCP connections (not

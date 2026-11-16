@@ -1,15 +1,12 @@
-use core::ptr::NonNull;
 use core::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 
 #[derive(Default, Clone, Copy)]
-pub struct Signals {
-    // Non-owning pointers into a `Store` held by the caller (BACKREF per
-    // PORTING.md); the `Store` outlives every `Signals` derived from it.
-    pub header_progress: Option<NonNull<AtomicBool>>,
-    pub response_body_streaming: Option<NonNull<AtomicBool>>,
-    pub aborted: Option<NonNull<AtomicBool>>,
-    pub cert_errors: Option<NonNull<AtomicBool>>,
-    pub body_receive_mode: Option<NonNull<AtomicU8>>,
+pub struct Signals<'a> {
+    pub header_progress: Option<&'a AtomicBool>,
+    pub response_body_streaming: Option<&'a AtomicBool>,
+    pub aborted: Option<&'a AtomicBool>,
+    pub cert_errors: Option<&'a AtomicBool>,
+    pub body_receive_mode: Option<&'a AtomicU8>,
 }
 
 /// Receive backpressure high-water mark: bytes no consumer has taken, on either side of the
@@ -45,28 +42,15 @@ impl BodyReceiveMode {
     }
 }
 
-impl Signals {
-    /// Resolve `field` to a [`BackRef`] over its `AtomicBool` slot, if wired.
-    ///
-    /// Centralises the back-reference upgrade so [`get`]/[`store`] are
-    /// unsafe-free. Every non-None pointer here was created via
-    /// `NonNull::from(&store.<field>)` in `Store::to` (or an equivalent
-    /// caller-side `NonNull::from(&signal_store.<field>)`); the BACKREF
-    /// invariant — the `Store` outlives every `Signals` derived from it — is
-    /// exactly the [`bun_ptr::BackRef`] contract, so the safe `From<NonNull>`
-    /// + `Deref` path applies. `AtomicBool` is `Sync` interior-mutable, so a
-    /// shared `&` (via `BackRef::Deref`) suffices for both load and store.
-    ///
-    /// [`BackRef`]: bun_ptr::BackRef
+impl<'a> Signals<'a> {
     #[inline]
-    fn slot(&self, field: Field) -> Option<bun_ptr::BackRef<AtomicBool>> {
-        let ptr: NonNull<AtomicBool> = match field {
+    fn slot(self, field: Field) -> Option<&'a AtomicBool> {
+        match field {
             Field::HeaderProgress => self.header_progress,
             Field::ResponseBodyStreaming => self.response_body_streaming,
             Field::Aborted => self.aborted,
             Field::CertErrors => self.cert_errors,
-        }?;
-        Some(bun_ptr::BackRef::from(ptr))
+        }
     }
 
     pub(crate) fn get(self, field: Field) -> bool {
@@ -84,37 +68,32 @@ impl Signals {
     #[inline]
     pub(crate) fn is_receive_paused(self) -> bool {
         self.body_receive_mode
-            .map(bun_ptr::BackRef::from)
             .is_some_and(|a| a.load(Ordering::Acquire) == BodyReceiveMode::Paused as u8)
     }
 
     /// `Flowing`, `Paused` or `Unclaimed`: a consumer takes the body piece by piece.
     #[inline]
     pub(crate) fn is_demand_driven(self) -> bool {
-        self.body_receive_mode
-            .map(bun_ptr::BackRef::from)
-            .is_some_and(|a| {
-                matches!(
-                    BodyReceiveMode::from_u8(a.load(Ordering::Acquire)),
-                    BodyReceiveMode::Flowing | BodyReceiveMode::Paused | BodyReceiveMode::Unclaimed
-                )
-            })
+        self.body_receive_mode.is_some_and(|a| {
+            matches!(
+                BodyReceiveMode::from_u8(a.load(Ordering::Acquire)),
+                BodyReceiveMode::Flowing | BodyReceiveMode::Paused | BodyReceiveMode::Unclaimed
+            )
+        })
     }
 
     /// `Unclaimed -> Paused`: a whole body waits for the consumer, which resumes the transport.
     #[inline]
     pub(crate) fn hold_for_consumer(self) -> bool {
-        self.body_receive_mode
-            .map(bun_ptr::BackRef::from)
-            .is_some_and(|a| {
-                a.compare_exchange(
-                    BodyReceiveMode::Unclaimed as u8,
-                    BodyReceiveMode::Paused as u8,
-                    Ordering::AcqRel,
-                    Ordering::Relaxed,
-                )
-                .is_ok()
-            })
+        self.body_receive_mode.is_some_and(|a| {
+            a.compare_exchange(
+                BodyReceiveMode::Unclaimed as u8,
+                BodyReceiveMode::Paused as u8,
+                Ordering::AcqRel,
+                Ordering::Relaxed,
+            )
+            .is_ok()
+        })
     }
 }
 
@@ -147,19 +126,19 @@ impl Store {
         }
     }
 
-    pub fn to(&mut self) -> Signals {
+    pub fn to(&self) -> Signals<'_> {
         Signals {
-            header_progress: Some(NonNull::from(&self.header_progress)),
-            response_body_streaming: Some(NonNull::from(&self.response_body_streaming)),
-            aborted: Some(NonNull::from(&self.aborted)),
-            cert_errors: Some(NonNull::from(&self.cert_errors)),
+            header_progress: Some(&self.header_progress),
+            response_body_streaming: Some(&self.response_body_streaming),
+            aborted: Some(&self.aborted),
+            cert_errors: Some(&self.cert_errors),
             body_receive_mode: None,
         }
     }
 
-    pub fn to_with_backpressure(&mut self) -> Signals {
+    pub fn to_with_backpressure(&self) -> Signals<'_> {
         Signals {
-            body_receive_mode: Some(NonNull::from(&self.body_receive_mode)),
+            body_receive_mode: Some(&self.body_receive_mode),
             ..self.to()
         }
     }

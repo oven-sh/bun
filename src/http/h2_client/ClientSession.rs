@@ -648,7 +648,7 @@ impl ClientSession {
     }
 
     /// New request body bytes (or end-of-body) are available in the request's
-    /// ThreadSafeStreamBuffer.
+    /// stream buffer.
     fn stream_request_body(
         &mut self,
         thread: &mut HTTPThread,

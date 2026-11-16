@@ -255,6 +255,9 @@ pub(crate) use text_decoder::TextDecoder;
 #[path = "webcore/fetch.rs"]
 pub(crate) mod fetch;
 
+#[path = "webcore/http_result_inbox.rs"]
+pub(crate) mod http_result_inbox;
+
 #[path = "webcore/prompt.rs"]
 pub(crate) mod prompt;
 

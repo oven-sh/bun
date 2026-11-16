@@ -924,7 +924,7 @@ impl HttpThread {
     }
 
     /// Any thread. A request comes back through its last result callback.
-    pub fn schedule(requests: impl IntoIterator<Item = Box<AsyncHttp<'static>>>) {
+    pub(crate) fn schedule(requests: impl IntoIterator<Item = Box<AsyncHttp<'static>>>) {
         let mut any = false;
         for http in requests {
             INBOX.tasks.push(http);

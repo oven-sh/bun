@@ -48,7 +48,7 @@ const PATTERNS: [name: string, re: RegExp][] = [
   ["VmBound<", /\bVmBound<\s*(\w+)/g],
   ["WorkPool::schedule*", /\bWorkPool::(?:schedule|schedule_new|schedule_owned|go)\b/g],
   ["Batch::from*", /\bBatch::from\w*\s*\(/g],
-  ["HTTPThread::schedule", /\bHTTPThread::schedule\s*\(/g],
+  ["AsyncHTTP::schedule", /\b(?:AsyncHTTP|OwnedRequest)::schedule\s*\(/g],
   ["thread spawn", /\bthread::(?:Builder::new\s*\(|spawn\s*\()/g],
   ["uv_queue_work", /(?<!fn\s)\buv_queue_work\s*\(/g],
 ];

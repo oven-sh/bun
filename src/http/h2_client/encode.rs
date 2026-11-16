@@ -329,15 +329,13 @@ fn write_body(writer: &mut FrameWriter, client: &mut HTTPClient, stream: &mut St
         }
         HTTPRequestBody::Stream(body) => {
             let ended = body.ended;
-            let Some(sb) = body.buffer.as_deref() else {
+            let Some(sb) = body.buffer else {
                 return;
             };
-            let mut locked = sb.lock();
-            let buffer = &mut locked.buffer;
+            let mut buffer = sb.lock();
             let data = buffer.slice();
             let data_len = data.len();
             if data_len == 0 && !ended {
-                drop(locked);
                 return;
             }
             let sent = write_data_windowed(writer, stream, data, ended, cap);
@@ -346,13 +344,13 @@ fn write_body(writer: &mut FrameWriter, client: &mut HTTPClient, stream: &mut St
             if drained {
                 buffer.reset();
             }
+            drop(buffer);
             if drained && ended {
                 stream.sent_end_stream();
                 client.state.request_stage = HTTPStage::Done;
             } else if drained && data_len > 0 {
-                locked.report_drain();
+                client.result_callback.report_drain();
             }
-            drop(locked);
             if stream.local_closed() {
                 body.buffer = None;
             }

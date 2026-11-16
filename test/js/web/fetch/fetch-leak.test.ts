@@ -593,7 +593,7 @@ test.concurrent(
 // Regression for src/runtime/webcore/fetch/FetchTasklet.zig:601,614 —
 // Holder.resolve/reject use `self.promise.swap()` which *consumes* (clears)
 // the jsc.Strong handle on the fetch() promise before calling resolve()/reject().
-// A port that reads-without-consuming (e.g. value_or_empty()) and forgets to
+// A port that reads-without-consuming (e.g. value()) and forgets to
 // clear the slot would leave one protected Promise root per fetch() call alive
 // for the lifetime of the VM. This asserts the swap() consume semantics by
 // checking protectedObjectTypeCounts.Promise returns to baseline after both
@@ -1075,7 +1075,7 @@ test("aborting in-flight streaming fetch() responses does not retain the buffere
 });
 
 test("fetch().arrayBuffer() of a large Content-Length body peaks at ~1x the payload", async () => {
-  // The per-packet handoff in FetchTasklet::callback appended each socket read
+  // The per-packet handoff in store_result appended each socket read
   // into scheduled_response_buffer via extend_from_slice, so the Vec grew by
   // amortized doubling. For a body just past a doubling step that left the
   // allocation the ArrayBuffer adopts at ~2x the payload, and the intermediate

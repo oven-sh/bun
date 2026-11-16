@@ -134,10 +134,6 @@ impl Strong {
         self.strong.get().unwrap()
     }
 
-    pub fn value_or_empty(&self) -> JSValue {
-        self.strong.get().unwrap_or_default()
-    }
-
     pub fn has_value(&self) -> bool {
         self.strong.has()
     }

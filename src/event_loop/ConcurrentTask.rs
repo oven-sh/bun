@@ -76,7 +76,6 @@ pub mod task_tag {
         CppTask,
         DuplexUpgradeContext,
         FetchTasklet,
-        FetchTaskletDeinit,
         FetchTaskletPromiseSettle,
         FetchTaskletRequestDrain,
         FSWatchTask,

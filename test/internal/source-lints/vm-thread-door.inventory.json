@@ -196,13 +196,13 @@
       "WriteFile"
     ]
   },
-  "src/runtime/webcore/fetch/FetchTasklet.rs": {
-    "HTTPThread::schedule": 1
+  "src/runtime/webcore/http_result_inbox.rs": {
+    "AsyncHTTP::schedule": 1
   },
   "src/runtime/webcore/s3/client.rs": {
-    "HTTPThread::schedule": 2
+    "AsyncHTTP::schedule": 2
   },
   "src/runtime/webcore/s3/simple_request.rs": {
-    "HTTPThread::schedule": 1
+    "AsyncHTTP::schedule": 1
   }
 }

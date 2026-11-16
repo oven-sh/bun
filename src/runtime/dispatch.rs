@@ -360,9 +360,8 @@ pub(crate) fn run_task(
             feature_arm!(
                 [Fetch],
                 |drain: crate::webcore::fetch::FetchTaskletRequestDrain| {
-                    // SAFETY: §Dispatch — tag identifies pointee; the task owns a ref.
-                    let tasklet = unsafe { bun_ptr::RefPtr::from_raw(drain.cast()) };
-                    FetchTasklet::resume_request_data_stream(&tasklet);
+                    // SAFETY: §Dispatch — tag identifies pointee.
+                    unsafe { FetchTasklet::resume_request_data_stream(drain.cast()) };
                 }
             )
         }
@@ -503,15 +502,6 @@ pub(crate) fn run_task(
             // SAFETY: §Dispatch — tag identifies pointee.
             unsafe { FetchTasklet::on_progress_update(tasklet) }
         })?,
-        task_tag::FetchTaskletDeinit => {
-            feature_arm!(
-                [Fetch],
-                |hop: crate::webcore::fetch::FetchTaskletDeinitHop| {
-                    // SAFETY: posted by `HttpThreadRef` with the last ref.
-                    unsafe { crate::webcore::fetch::FetchTaskletDeinitHop::run(hop) };
-                }
-            )
-        }
         // `cast_ptr!` yields the heap-allocated S3 task; JS-thread dispatch
         // is the sole owner here.
         task_tag::S3HttpSimpleTask => {
@@ -794,7 +784,7 @@ fn run_task_cold(task: Task) {
 /// `release_task_unrun` track `bun_event_loop::task_tag::COUNT`. Bump when
 /// adding a variant — and give it an arm in both.
 const _: () = assert!(
-    task_tag::COUNT == 82,
+    task_tag::COUNT == 81,
     "dispatch::run_task / release_task_unrun arm count out of sync with bun_event_loop::task_tag",
 );
 
@@ -1510,9 +1500,6 @@ fn __bun_release_task_unrun(task: bun_event_loop::Task) {
             release_in!([Sockets], crate::socket::DuplexUpgradeContext)
         }
         task_tag::FetchTasklet => release_in!([Fetch], FetchTasklet),
-        task_tag::FetchTaskletDeinit => {
-            release_in!([Fetch], crate::webcore::fetch::FetchTaskletDeinitHop)
-        }
         task_tag::FetchTaskletPromiseSettle => {
             release_boxed_in!(
                 [Fetch],

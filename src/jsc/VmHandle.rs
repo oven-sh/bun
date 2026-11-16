@@ -627,9 +627,8 @@ impl<T> VmBound<T> {
 // the weak path (queued-and-released while draining, or refused once closed)
 // run with their real preconditions every time instead of only when they lose
 // the race. Each is named on stderr. The parked thread keeps whatever locks it
-// holds (the fetch tasklet's mutex, a streaming body's buffer lock), so a row
-// whose worker then blocks on that same lock never reaches teardown: a hang
-// under the gate, not in production.
+// holds, so a row whose worker then blocks on that same lock never reaches
+// teardown: a hang under the gate, not in production.
 #[cfg(debug_assertions)]
 mod test_gate {
     use super::{Ordering, Posted, Shared, State, Ticket, VmHandle};

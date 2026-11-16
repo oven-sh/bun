@@ -46,8 +46,6 @@ pub mod send_file;
 pub mod session_cache;
 #[path = "Signals.rs"]
 pub mod signals;
-#[path = "ThreadSafeStreamBuffer.rs"]
-pub mod thread_safe_stream_buffer;
 #[path = "websocket.rs"]
 pub mod websocket;
 
@@ -67,7 +65,6 @@ pub use internal_state::InternalState;
 pub use proxy_tunnel::ProxyTunnel;
 pub use send_file::SendFile;
 pub use signals::Signals;
-pub use thread_safe_stream_buffer::ThreadSafeStreamBuffer;
 #[path = "ssl_config.rs"]
 pub mod ssl_config;
 pub use ssl_config::SSLConfig;
@@ -326,7 +323,7 @@ pub(crate) const MAX_H2_RETRIES: u8 = 5;
 const PREALLOCATE_MAX: usize = 1024 * 1024 * 256;
 
 /// Per-chunk scratch buffers (`InternalState::decoded_body` on the HTTP thread
-/// and `FetchTasklet::scheduled_response_buffer` on the JS thread) whose
+/// and the `scheduled_response_buffer` of a `FetchTasklet` on the JS thread) whose
 /// capacity has grown past this are dropped after the chunk is consumed rather
 /// than `clear()`ed-and-reused, so the per-connection high-water mark stays
 /// bounded for long-lived streaming responses.
@@ -408,6 +405,15 @@ pub enum BodySize {
     ContentLength(usize),
     #[default]
     Unknown,
+}
+
+impl BodySize {
+    pub fn size_hint(self) -> usize {
+        match self {
+            BodySize::ContentLength(n) | BodySize::TotalReceived(n) => n,
+            BodySize::Unknown => 0,
+        }
+    }
 }
 
 #[derive(Default)]
@@ -543,7 +549,7 @@ impl<'a> HTTPClientResult<'a> {
 pub type FinishedRequest = Box<AsyncHTTP<'static>>;
 
 pub type HTTPClientResultCallbackFunction =
-    fn(*mut (), Option<FinishedRequest>, HTTPClientResult<'_>);
+    unsafe fn(*mut (), Option<FinishedRequest>, HTTPClientResult<'_>);
 
 #[derive(Copy, Clone)]
 pub struct HTTPClientResultCallback {
@@ -558,17 +564,27 @@ pub struct HTTPClientResultCallback {
     /// for the ack. `None` ⇒ no-op (the default for callers whose `ctx`
     /// is process-lifetime or whose code path never reaches `global_exit`).
     pub(crate) release_at_shutdown: Option<unsafe fn(*mut ())>,
+    /// Called when the buffer of an `HTTPRequestBody::Stream` has drained.
+    pub(crate) on_drain: Option<unsafe fn(*mut ())>,
 }
 
 impl HTTPClientResultCallback {
     pub(crate) fn run(self, finished: Option<FinishedRequest>, result: HTTPClientResult<'_>) {
-        (self.function)(self.ctx, finished, result);
+        // SAFETY: contract of `AsyncHTTP::schedule`; no result follows the one with `finished`.
+        unsafe { (self.function)(self.ctx, finished, result) };
+    }
+
+    pub(crate) fn report_drain(&self) {
+        if let Some(on_drain) = self.on_drain {
+            // SAFETY: contract of `AsyncHTTP::schedule`; the request is in flight.
+            unsafe { on_drain(self.ctx) };
+        }
     }
 
     // Type-erases a typed callback behind a raw context pointer.
     pub fn new<T>(
         this: *mut T,
-        callback: fn(*mut T, Option<FinishedRequest>, HTTPClientResult<'_>),
+        callback: unsafe fn(*mut T, Option<FinishedRequest>, HTTPClientResult<'_>),
     ) -> Self {
         Self {
             ctx: this.cast::<()>(),
@@ -576,22 +592,28 @@ impl HTTPClientResultCallback {
             // calling convention, the receiver casts `ctx` back before use.
             function: unsafe {
                 bun_ptr::cast_fn_ptr::<
-                    fn(*mut T, Option<FinishedRequest>, HTTPClientResult<'_>),
+                    unsafe fn(*mut T, Option<FinishedRequest>, HTTPClientResult<'_>),
                     HTTPClientResultCallbackFunction,
                 >(callback)
             },
             release_at_shutdown: None,
+            on_drain: None,
         }
     }
 
     pub fn new_with_release<T>(
         this: *mut T,
-        callback: fn(*mut T, Option<FinishedRequest>, HTTPClientResult<'_>),
+        callback: unsafe fn(*mut T, Option<FinishedRequest>, HTTPClientResult<'_>),
         release: unsafe fn(*mut ()),
     ) -> Self {
         let mut cb = Self::new(this, callback);
         cb.release_at_shutdown = Some(release);
         cb
+    }
+
+    pub fn with_drain(mut self, on_drain: unsafe fn(*mut ())) -> Self {
+        self.on_drain = Some(on_drain);
+        self
     }
 }
 
@@ -697,8 +719,8 @@ impl ProxySettings {
 // Many of these fields can be moved to a packed struct and use less space
 //
 // Lifetime `'a` ties every borrowed input — `url`, `http_proxy`, `header_buf`,
-// `unix_socket_path`, `progress`, and the borrowed
-// `HTTPRequestBody::Bytes` payload — to the caller's storage. The original port erased these to `'static`
+// `unix_socket_path`, `progress`, `signals`, and what the
+// `HTTPRequestBody` borrows — to the caller's storage. The original port erased these to `'static`
 // and lifetime-erased at every call site; threading the lifetime removes that hazard.
 pub struct HTTPClient<'a> {
     pub(crate) result_callback: HTTPClientResultCallback,
@@ -756,7 +778,7 @@ pub struct HTTPClient<'a> {
     /// h2-capable requests have coalesced onto. Resolved (and freed) once ALPN
     /// is known or the connect fails. Only compared.
     pub(crate) pending_h2: Option<NonNull<h2::PendingConnect>>,
-    pub(crate) signals: Signals,
+    pub(crate) signals: Signals<'a>,
     pub(crate) async_http_id: u32,
     pub(crate) unix_socket_path: &'a [u8],
     /// `fetch({ compress })` — when set, the body is compressed lazily at
@@ -2219,7 +2241,7 @@ impl<'a> HTTPClient<'a> {
             // stream body (RequestBodyNotReusable). Reaching here means the
             // redirect downgraded to GET with a null body; drop the streaming
             // flag so the follow-up request goes out without Transfer-Encoding,
-            // and let begin_attempt() release the ThreadSafeStreamBuffer ref.
+            // and let begin_attempt() let go of the stream buffer.
             self.flags.is_streaming_request_body = false;
         }
 
@@ -2758,11 +2780,11 @@ impl<'a> HTTPClient<'a> {
             return Continue(());
         }
         let ended = stream.ended;
-        let Some(stream_buffer) = stream.buffer.as_ref() else {
+        let Some(stream_buffer) = stream.buffer else {
             return Continue(());
         };
         let mut locked = stream_buffer.lock();
-        let was_empty = locked.buffer.is_empty() && data.is_empty();
+        let was_empty = locked.is_empty() && data.is_empty();
         if was_empty && ended {
             // nothing is buffered and the stream is done so we just release and detach
             //
@@ -2783,7 +2805,7 @@ impl<'a> HTTPClient<'a> {
 
         // to simplify things here the buffer contains the raw data we just need to flush to the socket it
         let sent_len = &mut self.state.request_sent_len;
-        let buffer = &mut locked.buffer;
+        let buffer = &mut *locked;
         let result = match &mut self.proxy_tunnel {
             None => Self::write_to_stream_using_buffer::<IS_SSL>(sent_len, socket, buffer, data),
             Some(_) if socket.is_closed() || socket.is_shutdown() => {
@@ -2825,11 +2847,12 @@ impl<'a> HTTPClient<'a> {
                 }
             } else {
                 // only report drain if we send everything and previous we had something to send
-                if !was_empty {
-                    locked.report_drain();
-                }
+                let drained = !was_empty && locked.is_empty();
                 // release the buffer so main thread can use it to send more data
                 drop(locked);
+                if drained {
+                    self.result_callback.report_drain();
+                }
             }
         }
         Continue(())

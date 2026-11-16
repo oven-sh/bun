@@ -80,9 +80,7 @@ use bun_url::URL as ZigURL;
 use std::sync::Arc;
 
 use self::fetch_tasklet::{FetchOptions, HTTPRequestBody};
-pub(crate) use self::fetch_tasklet::{
-    FetchTasklet, FetchTaskletDeinitHop, FetchTaskletRequestDrain,
-};
+pub(crate) use self::fetch_tasklet::{FetchTasklet, FetchTaskletRequestDrain};
 
 // ──────────────────────────────────────────────────────────────────────────
 // Local extension shims (upstream methods not yet ported / not in scope)
@@ -1711,33 +1709,9 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
 
     let promise_val = promise.value();
 
-    // `FetchOptions.{url,proxy}` are `ZigURL<'static>` borrowing the
-    // `url_proxy_buffer: Box<[u8]>` stored alongside them — a self-referential
-    // struct. `Vec::into_boxed_slice` may realloc when `cap > len` (the
-    // proxy-string path above triggers this), so the existing `url`/`proxy`
-    // slices may dangle after the conversion. Convert to `Box<[u8]>` first
-    // (stable heap address), then re-parse the URLs from the boxed buffer.
-    let url_len = url.href.len(); // fat-pointer len read; no deref
-    let url_proxy_boxed: Box<[u8]> = core::mem::take(&mut url_proxy_buffer).into_boxed_slice();
-    // SAFETY: `url_proxy_boxed` is moved into `FetchOptions` alongside the URLs
-    // that borrow it; `FetchTasklet` keeps the buffer alive for as long as the
-    // URLs are read. Erase the borrow to a raw slice so borrowck doesn't tie
-    // `url_static` to the local `url_proxy_boxed` binding.
-    let buf_ptr: *const [u8] = &raw const *url_proxy_boxed;
-    // SAFETY: `buf_ptr` points into `url_proxy_boxed` which the FetchTasklet
-    // keeps alive for the lifetime of the parsed URLs (see comment above).
-    // Explicit `&*` first to satisfy `dangerous_implicit_autorefs` — the
-    // `Index` call would otherwise create an implicit `&` to `*buf_ptr`.
-    let buf: &'static [u8] = unsafe { &*buf_ptr };
-    let url_static: ZigURL<'static> = ZigURL::parse(&buf[..url_len]);
-    let proxy_static: Option<&'static [u8]> = if has_proxy {
-        Some(&buf[url_len..])
-    } else {
-        None
-    };
+    let url_len = url.href.len();
     let fetch_options = FetchOptions {
         method,
-        url: url_static,
         headers: headers.take().unwrap_or_default(),
         body,
         stream_framing,
@@ -1749,16 +1723,18 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
         reject_unauthorized,
         redirect_type,
         verbose,
-        proxy: match proxy_static {
-            Some(href) => fetch_tasklet::ProxyPolicy::Explicit {
-                href,
+        proxy: if has_proxy {
+            fetch_tasklet::ProxyPolicy::Explicit {
                 respect_no_proxy: proxy_respects_no_proxy,
-            },
-            None if proxy_direct => fetch_tasklet::ProxyPolicy::Direct,
-            None => fetch_tasklet::ProxyPolicy::Env,
+            }
+        } else if proxy_direct {
+            fetch_tasklet::ProxyPolicy::Direct
+        } else {
+            fetch_tasklet::ProxyPolicy::Env
         },
         proxy_headers: proxy_headers.take(),
-        url_proxy_buffer: url_proxy_boxed,
+        url_proxy_buffer: url_proxy_buffer.into_boxed_slice(),
+        url_len,
         signal,
         ssl_config: ssl_config.take(),
         upgraded_connection,
@@ -1777,7 +1753,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
         session_check_server_identity,
     };
 
-    let _ = FetchTasklet::queue(
+    FetchTasklet::queue(
         &global_this.js_thread(context),
         fetch_options,
         // Pass the Strong value instead of creating a new one, or else we
@@ -1785,7 +1761,6 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
         // see https://github.com/oven-sh/bun/issues/2985
         promise,
     );
-    // `catch |err| bun.handleOom(err)` — FetchTasklet::queue aborts on OOM.
 
     // `body` has been *moved* into `FetchOptions`; the FetchTasklet now owns
     // the single live reference.

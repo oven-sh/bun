@@ -159,11 +159,10 @@ pub(crate) fn drain_send_body(stream: &mut Stream, qs: &mut quic::Stream) {
             unreachable!()
         };
         let ended = body.ended;
-        let Some(sb) = body.buffer.as_deref() else {
+        let Some(sb) = body.buffer else {
             return;
         };
-        let mut locked = sb.lock();
-        let buffer = &mut locked.buffer;
+        let mut buffer = sb.lock();
         let data_len = buffer.slice().len();
         let mut written: usize = 0;
         while written < data_len {
@@ -178,6 +177,7 @@ pub(crate) fn drain_send_body(stream: &mut Stream, qs: &mut quic::Stream) {
         if drained {
             buffer.reset();
         }
+        drop(buffer);
         if drained && ended {
             stream.request_body_done = true;
             qs.shutdown();
@@ -185,9 +185,8 @@ pub(crate) fn drain_send_body(stream: &mut Stream, qs: &mut quic::Stream) {
         } else if !drained {
             qs.want_write(true);
         } else if data_len > 0 {
-            locked.report_drain();
+            client.result_callback.report_drain();
         }
-        drop(locked);
         if stream.request_body_done {
             body.buffer = None;
         }

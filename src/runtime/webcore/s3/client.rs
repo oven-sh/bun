@@ -324,13 +324,6 @@ pub(crate) fn list_objects(
         task.headers.entries.clone().expect("OOM"),
         headers_buf,
         b"",
-        bun_http::HTTPClientResultCallback::new_with_release::<S3HttpSimpleTask>(
-            task_ptr,
-            // SAFETY: `task_ptr` is the heap-allocated task registered above; the
-            // HTTP thread invokes this with that exact pointer.
-            S3HttpSimpleTask::http_callback,
-            S3HttpSimpleTask::release_at_shutdown,
-        ),
         bun_http::FetchRedirect::Follow,
         bun_http::async_http::Options {
             http_proxy,
@@ -343,15 +336,19 @@ pub(crate) fn list_objects(
     );
     task.async_http_id = http.async_http_id;
 
-    // queue http request
-    bun_http::http_thread::init(&Default::default());
     // Out on the HTTP thread until its final callback: its context aborts it
     // when it stops, and the VM waits for it (the ticket).
     task.http_ticket = Some(VirtualMachine::get().ticket());
     task.context = context.id();
     // SAFETY: the task is heap-allocated and drops its handle with itself.
     unsafe { bun_jsc::AbortHandle::arm_owner(task_ptr, context) };
-    bun_http::HTTPThread::schedule([http]);
+    let callback = bun_http::HTTPClientResultCallback::new_with_release(
+        task_ptr,
+        S3HttpSimpleTask::http_callback,
+        S3HttpSimpleTask::release_at_shutdown,
+    );
+    // SAFETY: the callbacks post the task that frees `*task_ptr` once the request is dropped.
+    unsafe { bun_http::AsyncHTTP::schedule(http, callback) };
     Ok(())
 }
 
@@ -937,13 +934,6 @@ fn download_stream(
         task.headers.entries.clone().expect("OOM"),
         headers_buf,
         b"",
-        bun_http::HTTPClientResultCallback::new_with_release::<S3HttpDownloadStreamingTask>(
-            task_ptr,
-            // SAFETY: `task_ptr` is the heap-allocated task registered above; the
-            // HTTP thread invokes this with that exact pointer.
-            S3HttpDownloadStreamingTask::http_callback,
-            S3HttpDownloadStreamingTask::release_at_shutdown,
-        ),
         bun_http::FetchRedirect::Follow,
         bun_http::async_http::Options {
             http_proxy,
@@ -958,14 +948,18 @@ fn download_stream(
     task.wrapper.task.set(task_ptr);
     // enable streaming
     http.enable_response_body_streaming();
-    // queue http request
-    bun_http::http_thread::init(&Default::default());
     // Out on the HTTP thread until its final callback: its context aborts it
     // when it stops, and the VM waits for it (the ticket).
     task.http_ticket = Some(VirtualMachine::get().ticket());
     // SAFETY: the task is heap-allocated and drops its handle with itself.
     unsafe { bun_jsc::AbortHandle::arm_owner(task_ptr, context) };
-    bun_http::HTTPThread::schedule([http]);
+    let callback = bun_http::HTTPClientResultCallback::new_with_release(
+        task_ptr,
+        S3HttpDownloadStreamingTask::http_callback,
+        S3HttpDownloadStreamingTask::release_at_shutdown,
+    );
+    // SAFETY: the callbacks post the task that frees `*task_ptr` once the request is dropped.
+    unsafe { bun_http::AsyncHTTP::schedule(http, callback) };
 }
 
 pub struct S3DownloadStreamWrapper {

@@ -13,8 +13,9 @@ use core::ptr;
 
 use bun_ptr::CellExt as _;
 
+use crate::abort_signal::AbortReason;
 use crate::virtual_machine::SweepResult;
-use crate::{AbortSignal, AbortSignalRef, JSValue, JsCell};
+use crate::{AbortSignalRef, JSGlobalObject, JSValue, JsCell};
 
 pub use bun_event_loop::ContextId;
 
@@ -354,13 +355,18 @@ impl AbortHandle {
     }
 
     #[inline]
-    pub fn signal(&mut self) -> Option<&AbortSignal> {
-        self.signal.get_mut().as_deref()
+    pub fn signal(&self) -> Option<AbortSignalRef> {
+        self.signal.with_taken(|signal| signal.clone())
     }
 
     pub fn signal_aborted(&self) -> bool {
         self.signal
             .with_taken(|signal| signal.as_ref().is_some_and(|s| s.aborted()))
+    }
+
+    pub fn signal_reason_if_aborted(&self, global: &JSGlobalObject) -> Option<AbortReason> {
+        self.signal
+            .with_taken(|signal| signal.as_ref()?.reason_if_aborted(global))
     }
 
     pub fn signal_timeout_deadline(&self) -> Option<bun_core::Timespec> {

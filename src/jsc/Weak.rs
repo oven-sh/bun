@@ -24,8 +24,7 @@ bun_opaque::owned_handle! {
 // `WeakImpl` is an opaque `UnsafeCell`-backed ZST handle (`&WeakImpl` is
 // ABI-identical to non-null `*const WeakImpl`; C++ slot mutation is interior).
 // `new` is `safe fn`: `&JSGlobalObject` is the non-null handle proof, and `ctx`
-// is an opaque round-trip pointer C++ only stores and forwards to the finalizer
-// (never dereferenced as Rust data).
+// is an opaque round-trip pointer C++ only stores and forwards to the finalizer.
 // `delete` consumes the allocation and so stays `unsafe fn`.
 unsafe extern "C" {
     fn Bun__WeakRef__delete(this: *mut WeakImpl);
@@ -71,11 +70,13 @@ impl<T> Weak<T> {
         }
     }
 
-    pub fn create(
+    /// # Safety
+    /// `ctx` is what the finalizer of `ref_type` takes, and stays at its address until the result is cleared or dropped.
+    pub unsafe fn create(
         value: JSValue,
         global_this: &JSGlobalObject,
         ref_type: WeakRefType,
-        ctx: &mut T,
+        ctx: &T,
     ) -> Self {
         if !value.is_empty() {
             return Self {
@@ -83,7 +84,7 @@ impl<T> Weak<T> {
                     global_this,
                     value,
                     ref_type,
-                    core::ptr::from_mut(ctx).cast(),
+                    core::ptr::from_ref(ctx).cast_mut().cast(),
                 )),
                 _ctx: PhantomData,
             };

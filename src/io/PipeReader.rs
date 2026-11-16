@@ -247,6 +247,16 @@ impl PosixBufferedReader {
         unsafe { self.handle.set_owner(owner) };
     }
 
+    /// Like [`Self::set_owner`], for a reader that is not a field of `owner`.
+    ///
+    /// # Safety
+    /// `owner.ptr` points to a live value of the type `__bun_run_io` casts `owner.tag` to, until `self`
+    /// is dropped. `self` does not move, and is not borrowed mutably, until then.
+    pub unsafe fn set_external_owner(&self, owner: Owner) {
+        // SAFETY: caller contract.
+        unsafe { self.handle.set_owner(owner) };
+    }
+
     pub fn update_ref(&self, value: bool) {
         // For a poll that is created later.
         self.update_flags(|f| f.set(PosixFlags::KEEP_ALIVE, value));
@@ -808,6 +818,8 @@ impl Drop for PosixBufferedReader {
 pub struct WindowsBufferedReader {
     source: Cell<Option<Source>>,
     owner: Cell<Owner>,
+    /// Pointer to the allocation that contains `self`. Null without an owner.
+    allocation: Cell<*mut ()>,
     offset: Cell<usize>,
     limit: ReadLimit,
     /// The `File` has it while a read of the file is in flight.
@@ -881,6 +893,7 @@ impl WindowsBufferedReader {
         WindowsBufferedReader {
             source: Cell::new(None),
             owner: Cell::new(Owner::NULL),
+            allocation: Cell::new(core::ptr::null_mut()),
             offset: Cell::new(0),
             limit: ReadLimit::default(),
             buffer: Cell::default(),
@@ -906,7 +919,7 @@ impl WindowsBufferedReader {
         self.source.is_some()
     }
 
-    pub fn has_open_source(&self) -> bool {
+    fn has_open_source(&self) -> bool {
         self.with_source(|source| !source.is_closed()) == Some(true)
     }
 
@@ -938,14 +951,26 @@ impl WindowsBufferedReader {
     /// See `PosixBufferedReader::set_owner`.
     pub unsafe fn set_owner(&self, owner: Owner) {
         self.owner.set(owner);
+        self.allocation.set(owner.ptr());
         self.set_source_owner();
     }
 
-    /// The address of `self` with the provenance of the owner's pointer, which outlives this borrow.
+    /// # Safety
+    /// See `PosixBufferedReader::set_external_owner`.
+    pub unsafe fn set_external_owner(&self, owner: Owner) {
+        self.owner.set(owner);
+        self.allocation
+            .set(core::ptr::from_ref(self).cast_mut().cast());
+        self.set_source_owner();
+    }
+
+    /// The address of `self` with the provenance of `allocation`, which outlives this borrow.
     fn as_uv_data(&self) -> *mut c_void {
-        let owner = self.owner.get().ptr();
-        assert!(!owner.is_null(), "BufferedReader has no owner");
-        owner.with_addr(core::ptr::from_ref(self).addr()).cast()
+        let allocation = self.allocation.get();
+        assert!(!allocation.is_null(), "BufferedReader has no owner");
+        allocation
+            .with_addr(core::ptr::from_ref(self).addr())
+            .cast()
     }
 
     /// From now on a VM teardown stops the source through this reader, whether or not it ever reads.

@@ -1,14 +1,14 @@
 use crate::shell::ExitCode;
 use crate::shell::ast;
-use crate::shell::interpreter::{Interpreter, Node, NodeId, ShellExecEnv, log};
+use crate::shell::interpreter::{Interpreter, Node, NodeId, ShellExecEnvId, log};
 use crate::shell::io::IO;
 use crate::shell::states::base::Base;
 use crate::shell::yield_::Yield;
 
-pub(crate) struct Binary {
+pub(crate) struct Binary<'a> {
     pub(crate) base: Base,
-    shell: *mut ShellExecEnv,
-    pub node: bun_ptr::BackRef<ast::Binary>,
+    shell: ShellExecEnvId,
+    pub node: &'a ast::Binary<'a>,
     pub(crate) io: IO,
     /// Once `left` is done, this holds its exit code; `None` while running left.
     pub(crate) left: Option<ExitCode>,
@@ -16,18 +16,18 @@ pub(crate) struct Binary {
     pub(crate) currently_executing: Option<NodeId>,
 }
 
-impl Binary {
+impl<'a> Binary<'a> {
     pub(crate) fn init(
-        interp: &Interpreter,
-        shell: *mut ShellExecEnv,
-        node: &ast::Binary,
+        interp: &mut Interpreter<'a>,
+        shell: ShellExecEnvId,
+        node: &'a ast::Binary<'a>,
         parent: NodeId,
         io: IO,
     ) -> NodeId {
         interp.alloc_node(Node::Binary(Binary {
             base: Base::new(parent),
             shell,
-            node: bun_ptr::BackRef::new(node),
+            node,
             io,
             left: None,
             right: None,
@@ -35,17 +35,16 @@ impl Binary {
         }))
     }
 
-    pub(crate) fn start(_interp: &Interpreter, this: NodeId) -> Yield {
+    pub(crate) fn start(_interp: &mut Interpreter<'a>, this: NodeId) -> Yield {
         log!("Binary {} start", this);
         Yield::Next(this)
     }
 
-    pub(crate) fn next(interp: &Interpreter, this: NodeId) -> Yield {
-        let (left_exit, right_exit, parent, shell, node) = {
+    pub(crate) fn next(interp: &mut Interpreter<'a>, this: NodeId) -> Yield {
+        let (left_exit, right_exit, parent, shell, n) = {
             let me = interp.as_binary(this);
             (me.left, me.right, me.base.parent, me.shell, me.node)
         };
-        let n = node.get();
 
         if let Some(right) = right_exit {
             return interp.child_done(parent, this, right);
@@ -60,20 +59,20 @@ impl Binary {
             if short {
                 return interp.child_done(parent, this, left);
             }
-            let io = interp.as_binary(this).io.clone();
-            let (child, y) = interp.spawn_expr(shell, &n.right, this, io);
+            let io = interp.as_binary(this).io;
+            let (child, y) = interp.spawn_expr(shell, n.right, this, io);
             interp.as_binary_mut(this).currently_executing = child;
             return y;
         }
 
-        let io = interp.as_binary(this).io.clone();
-        let (child, y) = interp.spawn_expr(shell, &n.left, this, io);
+        let io = interp.as_binary(this).io;
+        let (child, y) = interp.spawn_expr(shell, n.left, this, io);
         interp.as_binary_mut(this).currently_executing = child;
         y
     }
 
     pub(crate) fn child_done(
-        interp: &Interpreter,
+        interp: &mut Interpreter<'a>,
         this: NodeId,
         child: NodeId,
         exit_code: ExitCode,
@@ -92,7 +91,7 @@ impl Binary {
         Yield::Next(this)
     }
 
-    pub(crate) fn deinit(interp: &Interpreter, this: NodeId) {
+    pub(crate) fn deinit(interp: &mut Interpreter<'a>, this: NodeId) {
         let exec = interp.as_binary_mut(this).currently_executing.take();
         if let Some(exec) = exec {
             interp.deinit_node(exec);

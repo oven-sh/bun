@@ -659,9 +659,10 @@ fn create_shared_memory() -> Option<File> {
 fn create_unnamed_file(first: ProgramFile) -> Maybe<(File, ProgramFile)> {
     #[cfg(any(target_os = "linux", target_os = "android"))]
     if first == ProgramFile::Memfd && bun_sys::can_use_memfd() {
-        if let Ok(descriptor) =
-            bun_sys::memfd_create(c"bun-compiled-program", bun_sys::MemfdFlags::Executable)
-        {
+        if let Ok(descriptor) = bun_sys::memfd_create(
+            c"bun-compiled-program".into(),
+            bun_sys::MemfdFlags::Executable,
+        ) {
             return Ok((File::from_fd(descriptor), ProgramFile::Memfd));
         }
     }

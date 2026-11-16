@@ -888,12 +888,9 @@ impl FSWatcher {
             s
         };
         let cwd = bun_resolver::fs::FileSystem::get().top_level_dir();
-        let joined_buf_len = joined_buf.len();
-        let Some(joined) = Path::join_abs_string_buf_checked::<platform::Auto>(
-            cwd,
-            &mut joined_buf[..joined_buf_len - 1],
-            &[slice],
-        ) else {
+        let Some(file_path) =
+            Path::join_abs_string_buf_z_checked::<platform::Auto>(cwd, &mut joined_buf, &[slice])
+        else {
             return Err(bun_sys::Error {
                 errno: SystemErrno::ENAMETOOLONG as _,
                 syscall: bun_sys::Tag::watch,
@@ -901,9 +898,6 @@ impl FSWatcher {
                 ..Default::default()
             });
         };
-        let joined_len = joined.len();
-        joined_buf[joined_len] = 0;
-        let file_path: &bun_core::ZStr = bun_core::ZStr::from_buf(&joined_buf[..], joined_len);
 
         let vm_ref = args.global_this.bun_vm();
         let is_aborted = args.signal.as_ref().is_some_and(|s| s.aborted());

@@ -2110,7 +2110,6 @@ impl Function {
 
         CompilerRT::define(&mut state);
 
-        // SAFETY: source_code was NUL-terminated above
         if state
             .compile_string(ZStr::from_slice_with_nul(&source_code[..]))
             .is_err()

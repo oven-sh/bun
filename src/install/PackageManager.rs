@@ -2346,7 +2346,6 @@ pub fn init(
         push_package_json(&mut original_package_json_path_buf);
 
         let new_path_len = original_package_json_path_buf.len() - 1;
-        // SAFETY: NUL written above
         original_package_json_path =
             ZStr::from_buf(&original_package_json_path_buf[..], new_path_len);
         let child_cwd = &original_package_json_path.as_bytes()[..this_cwd.len()];
@@ -2416,8 +2415,7 @@ pub fn init(
         let plen = tld_no_slash.len() + SEP_PACKAGE_JSON.len();
         root_buf[..tld_no_slash.len()].copy_from_slice(tld_no_slash);
         root_buf[tld_no_slash.len()..plen].copy_from_slice(SEP_PACKAGE_JSON);
-        root_buf[plen] = 0;
-        ZStr::from_raw(root_buf.as_ptr(), plen)
+        ZStr::nul_terminate(root_buf, plen)
     };
     // From here on, package.json is read by path, and written by path by the commands that write
     // it.

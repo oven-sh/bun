@@ -270,9 +270,8 @@ impl FileRoute {
             {
                 let mut path_buffer = bun_paths::path_buffer_pool::get();
                 path_buffer[..path.len()].copy_from_slice(path);
-                path_buffer[path.len()] = 0;
                 bun_sys::open(
-                    bun_core::ZStr::from_buf(&path_buffer[..], path.len()),
+                    bun_core::ZStr::nul_terminate(&mut path_buffer, path.len()),
                     open_flags,
                     0,
                 )

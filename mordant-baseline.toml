@@ -163,7 +163,6 @@
 "generic_body_not_generic:src/runtime/node/assert/myers_diff.rs" = 1
 "generic_body_not_generic:src/runtime/node/node_fs.rs" = 3
 "generic_body_not_generic:src/runtime/node/node_net_binding.rs" = 1
-"generic_body_not_generic:src/runtime/node/types.rs" = 1
 "generic_body_not_generic:src/runtime/server/NodeHTTPResponse.rs" = 1
 "generic_body_not_generic:src/runtime/server/RequestContext.rs" = 7
 "generic_body_not_generic:src/runtime/server/mod.rs" = 2

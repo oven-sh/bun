@@ -1023,7 +1023,7 @@ fn write_persist_job_locked(
 
     let mut dest_z = [0u8; 17];
     dest_z[..16].copy_from_slice(&basename);
-    let dest_zstr = ZStr::from_buf(&dest_z, 16);
+    let dest_zstr = ZStr::from_slice_with_nul(&dest_z);
     let final_display = if logging {
         format!(
             "{}{}{}",

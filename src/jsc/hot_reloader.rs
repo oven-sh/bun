@@ -494,9 +494,8 @@ impl bun_watcher::WatcherContext for HotReloader {
                                         let basename = bun_paths::basename(self.main.file);
                                         let exists = if basename.len() < name_buf.len() {
                                             name_buf[..basename.len()].copy_from_slice(basename);
-                                            name_buf[basename.len()] = 0;
-                                            // SAFETY: name_buf[..=basename.len()] is NUL-terminated.
-                                            let z = ZStr::from_buf(&name_buf[..], basename.len());
+                                            let z =
+                                                ZStr::nul_terminate(&mut name_buf, basename.len());
                                             files[event.index as usize].as_ref().is_some_and(
                                                 |dir| bun_sys::faccessat(dir.fd(), z).is_ok(),
                                             )
@@ -527,10 +526,8 @@ impl bun_watcher::WatcherContext for HotReloader {
                                                 } else {
                                                     zbuf[..affected_path.len()]
                                                         .copy_from_slice(affected_path);
-                                                    zbuf[affected_path.len()] = 0;
-                                                    // SAFETY: zbuf is NUL-terminated at len.
-                                                    let z = ZStr::from_buf(
-                                                        &zbuf[..],
+                                                    let z = ZStr::nul_terminate(
+                                                        &mut zbuf,
                                                         affected_path.len(),
                                                     );
                                                     bun_sys::access(z, libc::F_OK).is_err()
@@ -597,9 +594,8 @@ impl bun_watcher::WatcherContext for HotReloader {
                                     } else {
                                         zbuf[..self.main.file.len()]
                                             .copy_from_slice(self.main.file);
-                                        zbuf[self.main.file.len()] = 0;
-                                        // SAFETY: zbuf is NUL-terminated at len.
-                                        let z = ZStr::from_buf(&zbuf[..], self.main.file.len());
+                                        let z =
+                                            ZStr::nul_terminate(&mut zbuf, self.main.file.len());
                                         bun_sys::access(z, libc::F_OK).is_ok()
                                     }
                                 };

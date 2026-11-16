@@ -222,8 +222,7 @@ fn join_normalized_z<'b>(buf: &'b mut [u8], folder: &[u8], file_path: &[u8]) -> 
     }
     buf[len..len + file_path.len()].copy_from_slice(file_path);
     len += file_path.len();
-    buf[len] = 0;
-    ZStr::from_buf(buf, len)
+    ZStr::nul_terminate(buf, len)
 }
 
 impl NodeModulesFolder {
@@ -1909,7 +1908,7 @@ impl<'a> PackageInstaller<'a> {
 
                 // Handle when a package depends on itself: "mineflayer": "file:."
                 if !is_transitive && matches!(folder, b"" | b".") {
-                    installer.cache_dir_subpath = ZStr::from_static(b".\0");
+                    installer.cache_dir_subpath = bun_core::zstr!(".");
                 } else {
                     self.folder_path_buf[..folder.len()].copy_from_slice(folder);
                     self.folder_path_buf[folder.len()] = 0;
@@ -1920,7 +1919,7 @@ impl<'a> PackageInstaller<'a> {
                 installer.cache_dir = Fd::cwd();
             }
             resolution::Tag::Root => {
-                installer.cache_dir_subpath = ZStr::from_static(b".\0");
+                installer.cache_dir_subpath = bun_core::zstr!(".");
                 installer.cache_dir = Fd::cwd();
             }
             resolution::Tag::Symlink => {
@@ -1942,7 +1941,7 @@ impl<'a> PackageInstaller<'a> {
                 }
 
                 if matches!(folder, b"" | b".") {
-                    installer.cache_dir_subpath = ZStr::from_static(b".\0");
+                    installer.cache_dir_subpath = bun_core::zstr!(".");
                     installer.cache_dir = Fd::cwd();
                 } else {
                     // A path is relative to the project. A name is relative to the global link

@@ -47,7 +47,7 @@ describe.if(isPosix)("path length validation with multi-byte characters", () => 
   // PATH_MAX (Linux 4096, macOS 1024) includes the NUL terminator, so the
   // longest usable path string is PATH_MAX-1 bytes. A path of exactly
   // PATH_MAX bytes used to pass the `0..=MAX_PATH_BYTES` length guard, then
-  // `slice_z_with_force_copy` had no room for the NUL and returned "" — the
+  // `slice_z` had no room for the NUL and returned "" — the
   // syscall ran on the empty path and came back ENOENT instead of
   // ENAMETOOLONG. PATH_MAX-1 (kernel rejects) and PATH_MAX+1 (guard rejects)
   // were already correct; only this one length was wrong.

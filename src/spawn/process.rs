@@ -1063,9 +1063,7 @@ pub mod waiter_thread_posix {
         let thread = std::thread::Builder::new()
             .stack_size(STACK_SIZE)
             .spawn(move || {
-                Output::Source::configure_named_thread_no_js(bun_core::ZStr::from_static(
-                    b"Waitpid\0",
-                ));
+                Output::Source::configure_named_thread_no_js(bun_core::zstr!("Waitpid"));
                 let mut rusage = rusage_zeroed();
                 let result = posix_spawn::wait4(pid, 0, Some(&mut rusage));
                 post_wait_result(process.get(), result, &rusage);
@@ -1187,8 +1185,7 @@ pub mod waiter_thread_posix {
     }
 
     fn loop_() {
-        // SAFETY: NUL-terminated literal.
-        Output::Source::configure_named_thread(bun_core::ZStr::from_static(b"Waitpid\0"));
+        Output::Source::configure_named_thread(bun_core::zstr!("Waitpid"));
         WaiterThreadPosix::reload_handlers();
         let mut active = Vec::new();
 
@@ -1468,10 +1465,10 @@ mod spawn_process_body {
         }
     }
 
-    /// [`spawn_process`] for callers holding borrowed C strings: builds the `argv` pointer block.
-    pub fn spawn_process_cstr(
+    /// [`spawn_process`] for callers holding borrowed strings: builds the `argv` pointer block.
+    pub fn spawn_process_z(
         options: &SpawnOptions<'_>,
-        argv: &[&core::ffi::CStr],
+        argv: &[&bun_core::ZStr],
         envp: Option<CStrList<'_>>,
     ) -> Result<bun_sys::Result<SpawnProcessResult>, crate::Error> {
         let argv = argv.iter().map(|&arg| Some(arg.into()));
@@ -3220,8 +3217,8 @@ mod spawn_process_body {
 } // mod spawn_process_body
 
 pub use spawn_process_body::spawn_process;
-pub use spawn_process_body::spawn_process_cstr;
 #[cfg(unix)]
 pub use spawn_process_body::spawn_process_posix;
+pub use spawn_process_body::spawn_process_z;
 
 pub use spawn_process_body::sync;

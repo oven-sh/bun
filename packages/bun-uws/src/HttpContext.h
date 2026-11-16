@@ -218,7 +218,7 @@ private:
          * onEnd() below decides whether to close right away (idle, or a
          * response the application is still producing) or to keep writing
          * response bytes already handed to uWS. Without this flag the loop
-         * (and openssl.c us_internal_ssl_on_end for TLS) force-closes the
+         * (and openssl.cpp us_internal_ssl_on_end for TLS) force-closes the
          * socket right after dispatching onEnd, discarding those bytes.
          * onEnd's defer and onWritable's close gate use hasFullyDrained(),
          * which accounts for the TLS ciphertext spill, so they are accurate

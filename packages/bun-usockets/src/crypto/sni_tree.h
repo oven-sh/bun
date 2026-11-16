@@ -21,22 +21,13 @@
 #ifndef SNI_TREE_H
 #define SNI_TREE_H
 
-#ifndef LIBUS_NO_SSL
-
-#include "libusockets.h"
-#include "internal/internal.h"
 #include <map>
 #include <memory>
 #include <string>
 #include <string_view>
-#include <cstring>
-#include <cstdlib>
 #include <algorithm>
 #include <utility>
 #include <vector>
-
-/* This cannot be shared */
-thread_local void (*sni_free_cb)(void *);
 
 /* RFC 6066 section 3: host names compare ASCII case-insensitively */
 struct sni_label_less {
@@ -53,9 +44,10 @@ struct sni_label_less {
     }
 };
 
+template <typename T>
 struct sni_node {
     /* Empty nodes must always hold null */
-    void *user = nullptr;
+    T user{};
     std::map<std::string, std::unique_ptr<sni_node>, sni_label_less> children;
 
     ~sni_node() {
@@ -70,81 +62,62 @@ struct sni_node {
         }
     }
 
-    /* Frees what this node owns in its children and moves the child nodes out to `pending` */
+    /* Moves the child nodes out to `pending` */
     void releaseChildren(std::vector<std::unique_ptr<sni_node>> &pending) {
         for (auto &p : children) {
-            /* Call destructor passed to sni_free only if we hold data */
-            if (p.second.get()->user) {
-                sni_free_cb(p.second.get()->user);
-            }
-
             pending.push_back(std::move(p.second));
         }
         children.clear();
     }
-};
 
-/* Splits the first label off a hostname. `rest` is left holding whatever follows the dot.
- * sni_add and sni_find must split names the same way. */
-static std::string_view nextLabel(std::string_view &rest) {
-    std::string_view label = rest.substr(0, rest.find('.', 0));
-    rest.remove_prefix(std::min(rest.length(), label.length() + 1));
-    return label;
-}
-
-void *getUser(struct sni_node *root, std::string_view rest) {
-
-    /* Do we have labels to match? Otherwise, return where we stand */
-    if (rest.empty()) {
-        return root->user;
+    /* Splits the first label off a hostname. `rest` is left holding whatever follows the dot.
+     * add and find must split names the same way. */
+    static std::string_view nextLabel(std::string_view &rest) {
+        std::string_view label = rest.substr(0, rest.find('.', 0));
+        rest.remove_prefix(std::min(rest.length(), label.length() + 1));
+        return label;
     }
 
-    std::string_view label = nextLabel(rest);
+    const T *find(std::string_view rest) const {
 
-    /* Try and match by our label */
-    auto it = root->children.find(label);
-    if (it != root->children.end()) {
-        void *user = getUser(it->second.get(), rest);
-        if (user) {
-            return user;
+        /* Do we have labels to match? Otherwise, return where we stand */
+        if (rest.empty()) {
+            return user ? &user : nullptr;
         }
 
-        /* A literal "*" label already searched the wildcard child above */
-        if (label == "*") {
+        std::string_view label = nextLabel(rest);
+
+        /* Try and match by our label */
+        auto it = children.find(label);
+        if (it != children.end()) {
+            const T *found = it->second->find(rest);
+            if (found) {
+                return found;
+            }
+
+            /* A literal "*" label already searched the wildcard child above */
+            if (label == "*") {
+                return nullptr;
+            }
+        }
+
+        /* Try and match by wildcard */
+        it = children.find("*");
+        if (it == children.end()) {
+            /* Matching has failed for both label and wildcard */
             return nullptr;
         }
+
+        /* We matched by wildcard */
+        return it->second->find(rest);
     }
 
-    /* Try and match by wildcard */
-    it = root->children.find("*");
-    if (it == root->children.end()) {
-        /* Matching has failed for both label and wildcard */
-        return nullptr;
-    }
-
-    /* We matched by wildcard */
-    return getUser(it->second.get(), rest);
-}
-
-extern "C" {
-
-    void *sni_new() {
-        return new sni_node;
-    }
-
-    void sni_free(void *sni, void (*cb)(void *)) {
-        /* We want to run this callback for every remaining name */
-        sni_free_cb = cb;
-
-        delete (sni_node *) sni;
-    }
-
-    /* The last registration of a name wins. Returns the user it displaced, which the caller now owns */
-    void *sni_add(void *sni, const char *hostname, void *user) {
-        struct sni_node *root = (struct sni_node *) sni;
+    /* The last registration of a name wins */
+    void add(std::string_view rest, T value) {
+        sni_node *root = this;
 
         /* Traverse all labels in hostname */
-        for (std::string_view rest(hostname, strlen(hostname)); rest.length();) {
+        while (rest.length()) {
             std::string_view label = nextLabel(rest);
 
             auto it = root->children.find(label);
@@ -155,15 +128,8 @@ extern "C" {
             root = it->second.get();
         }
 
-        return std::exchange(root->user, user);
+        root->user = std::move(value);
     }
-
-    void *sni_find(void *sni, const char *hostname) {
-        return getUser((struct sni_node *) sni, std::string_view(hostname, strlen(hostname)));
-    }
-
-}
-
-#endif
+};
 
 #endif

@@ -200,7 +200,7 @@ public:
 
     /* Whether every byte handed to us_socket_write() has reached the kernel.
      * For TLS, us_socket_write() can report records as written while their
-     * ciphertext still sits in the connection's spill (openssl.c
+     * ciphertext still sits in the connection's spill (openssl.cpp
      * ssl_emit); the close-after-drain gates in HttpResponse /
      * HttpContext must wait for that too. Kept separate from
      * getBufferedAmount() so WebSocket's maxBackpressure policy and the

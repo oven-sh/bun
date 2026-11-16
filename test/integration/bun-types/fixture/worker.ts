@@ -51,6 +51,21 @@ if (globalThis instanceof WorkerGlobalScope) {
 }
 tsd.expectType<boolean>(globalThis instanceof DedicatedWorkerGlobalScope);
 tsd.expectType<DedicatedWorkerGlobalScope>(DedicatedWorkerGlobalScope.prototype);
+declare const workerSelf: DedicatedWorkerGlobalScope;
+workerSelf.postMessage({ a: 1 }, []);
+workerSelf.postMessage({ a: 1 });
+workerSelf.onmessage = e => {
+  tsd.expectType<MessageEvent>(e);
+};
+workerSelf.onerror = e => {
+  tsd.expectType<ErrorEvent>(e);
+};
+workerSelf.addEventListener("message", e => {
+  tsd.expectType<MessageEvent>(e);
+});
+tsd.expectType<WorkerLocation>(workerSelf.location);
+tsd.expectType<Navigator>(workerSelf.navigator);
+tsd.expectType<WorkerLocation>(workerSelf.self.location);
 
 // On the main thread
 nodeWorker.postMessage({ hello: "world" });

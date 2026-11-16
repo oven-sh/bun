@@ -1585,7 +1585,7 @@ interface WorkerLocation {
 }
 declare var WorkerLocation: {
   prototype: WorkerLocation;
-  new (): never;
+  new (): WorkerLocation;
 };
 
 /**
@@ -1596,12 +1596,39 @@ declare var WorkerLocation: {
  *
  * [MDN Reference](https://developer.mozilla.org/docs/Web/API/WorkerGlobalScope)
  */
+interface WorkerGlobalScopeEventMap {
+  error: ErrorEvent;
+}
+
 interface WorkerGlobalScope extends EventTarget {
   readonly location: WorkerLocation;
+  readonly navigator: Navigator;
+  readonly self: WorkerGlobalScope & typeof globalThis;
+  onerror: ((this: WorkerGlobalScope, ev: ErrorEvent) => any) | null;
+  addEventListener<K extends keyof WorkerGlobalScopeEventMap>(
+    type: K,
+    listener: (this: WorkerGlobalScope, ev: WorkerGlobalScopeEventMap[K]) => any,
+    options?: boolean | AddEventListenerOptions,
+  ): void;
+  addEventListener(
+    type: string,
+    listener: Bun.EventListenerOrEventListenerObject,
+    options?: boolean | AddEventListenerOptions,
+  ): void;
+  removeEventListener<K extends keyof WorkerGlobalScopeEventMap>(
+    type: K,
+    listener: (this: WorkerGlobalScope, ev: WorkerGlobalScopeEventMap[K]) => any,
+    options?: boolean | EventListenerOptions,
+  ): void;
+  removeEventListener(
+    type: string,
+    listener: Bun.EventListenerOrEventListenerObject,
+    options?: boolean | EventListenerOptions,
+  ): void;
 }
 declare var WorkerGlobalScope: {
   prototype: WorkerGlobalScope;
-  new (): never;
+  new (): WorkerGlobalScope;
 };
 
 /**
@@ -1611,10 +1638,42 @@ declare var WorkerGlobalScope: {
  *
  * [MDN Reference](https://developer.mozilla.org/docs/Web/API/DedicatedWorkerGlobalScope)
  */
-interface DedicatedWorkerGlobalScope extends WorkerGlobalScope {}
+interface DedicatedWorkerGlobalScopeEventMap extends WorkerGlobalScopeEventMap {
+  message: MessageEvent;
+  messageerror: MessageEvent;
+}
+
+interface DedicatedWorkerGlobalScope extends WorkerGlobalScope {
+  onmessage: ((this: DedicatedWorkerGlobalScope, ev: MessageEvent) => any) | null;
+  /**
+   * Post a message to the parent thread.
+   */
+  postMessage(message: any, transfer: Bun.Transferable[]): void;
+  postMessage(message: any, options?: Bun.StructuredSerializeOptions): void;
+  addEventListener<K extends keyof DedicatedWorkerGlobalScopeEventMap>(
+    type: K,
+    listener: (this: DedicatedWorkerGlobalScope, ev: DedicatedWorkerGlobalScopeEventMap[K]) => any,
+    options?: boolean | AddEventListenerOptions,
+  ): void;
+  addEventListener(
+    type: string,
+    listener: Bun.EventListenerOrEventListenerObject,
+    options?: boolean | AddEventListenerOptions,
+  ): void;
+  removeEventListener<K extends keyof DedicatedWorkerGlobalScopeEventMap>(
+    type: K,
+    listener: (this: DedicatedWorkerGlobalScope, ev: DedicatedWorkerGlobalScopeEventMap[K]) => any,
+    options?: boolean | EventListenerOptions,
+  ): void;
+  removeEventListener(
+    type: string,
+    listener: Bun.EventListenerOrEventListenerObject,
+    options?: boolean | EventListenerOptions,
+  ): void;
+}
 declare var DedicatedWorkerGlobalScope: {
   prototype: DedicatedWorkerGlobalScope;
-  new (): never;
+  new (): DedicatedWorkerGlobalScope;
 };
 
 /**

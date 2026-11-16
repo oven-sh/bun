@@ -76,6 +76,7 @@ const engineInOneWay: Record<string, string[]> = {
     "globalThis.DedicatedWorkerGlobalScope: is not in the table",
     "globalThis.WorkerGlobalScope: is not in the table",
     "globalThis.WorkerLocation: is not in the table",
+    "globalThis.location: is not in the table",
   ],
   // The bundler's `require` in place of a module's own.
   "an executable": [

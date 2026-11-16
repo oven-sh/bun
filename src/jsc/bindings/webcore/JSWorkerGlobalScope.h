@@ -30,7 +30,10 @@ public:
 using JSWorkerGlobalScopeConstructor = JSDOMConstructorNotConstructable<JSWorkerGlobalScope>;
 using JSDedicatedWorkerGlobalScopeConstructor = JSDOMConstructorNotConstructable<JSDedicatedWorkerGlobalScope>;
 
-// Puts the scope prototypes above the global object and the constructors on it. Before any script runs.
+// Puts the scope prototypes above the global object and the members on it. Before any script runs.
 void installWorkerGlobalScope(Zig::GlobalObject*);
+
+// The Web Worker global object that `value` is, through its JSGlobalProxy or not. Null for anything else.
+Zig::GlobalObject* workerGlobalScopeOf(JSC::JSValue);
 
 } // namespace WebCore

@@ -8,6 +8,7 @@
 #include "JSWorkerLocation.h"
 #include "ZigGlobalObject.h"
 #include <JavaScriptCore/AOTHost.h>
+#include <JavaScriptCore/CustomGetterSetter.h>
 #include <JavaScriptCore/FunctionPrototype.h>
 #include <JavaScriptCore/JSCInlines.h>
 #include <JavaScriptCore/JSGlobalProxy.h>
@@ -83,10 +84,9 @@ template<> void JSWorkerGlobalScopeConstructor::initializeProperties(VM& vm, JSD
     initializeBaseProperties(vm, 0, "WorkerGlobalScope"_s, JSWorkerGlobalScope::prototype(vm, globalObject));
 }
 
-// `location` is not a DOMAttribute: its receiver is the global object or its JSGlobalProxy.
+// The members of a [Global] interface are own properties of the global object (Web IDL), as postMessage and self are.
 static const HashTableValue JSWorkerGlobalScopePrototypeTableValues[] = {
     { "constructor"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::GetterSetterType, jsWorkerGlobalScopePrototypeGetter_constructor, 0 } },
-    { "location"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor), NoIntrinsic, { HashTableValue::GetterSetterType, jsWorkerGlobalScope_location, 0 } },
 };
 
 const ClassInfo JSWorkerGlobalScopePrototype::s_info = { "WorkerGlobalScope"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSWorkerGlobalScopePrototype) };
@@ -177,6 +177,9 @@ void installWorkerGlobalScope(Zig::GlobalObject* globalObject)
     expose("WorkerGlobalScope"_s, JSWorkerGlobalScope::getConstructor(vm, globalObject));
     expose("DedicatedWorkerGlobalScope"_s, JSDedicatedWorkerGlobalScope::getConstructor(vm, globalObject));
     expose("WorkerLocation"_s, JSWorkerLocation::getConstructor(vm, globalObject));
+
+    // readonly attribute WorkerLocation location
+    globalObject->putDirectCustomAccessor(vm, Identifier::fromString(vm, "location"_s), CustomGetterSetter::create(vm, jsWorkerGlobalScope_location, nullptr), static_cast<unsigned>(PropertyAttribute::ReadOnly | PropertyAttribute::CustomAccessor));
 }
 
 // ---- Getters
@@ -201,8 +204,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsDedicatedWorkerGlobalScopePrototypeGetter_constructor
     return JSValue::encode(JSDedicatedWorkerGlobalScope::getConstructor(vm, prototype->globalObject()));
 }
 
-// The WorkerGlobalScope that `thisValue` is: a Web Worker's global object, or its proxy. Null otherwise.
-static Zig::GlobalObject* workerGlobalScopeOf(JSValue thisValue)
+Zig::GlobalObject* workerGlobalScopeOf(JSValue thisValue)
 {
     JSObject* object = thisValue.getObject();
     if (!object)

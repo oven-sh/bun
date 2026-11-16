@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { once } from "events";
 import { bunEnv, bunExe, isDebug, tempDir } from "harness";
 import path from "path";
+import { types } from "util";
 import wt from "worker_threads";
 
 describe("web worker", () => {
@@ -751,6 +752,8 @@ describe("web worker", () => {
   describe.concurrent("WorkerGlobalScope", () => {
     // What the worker reports of its global scope and of `location`.
     const report = `
+      import { types } from "node:util";
+      import events from "node:events";
       const chain = [];
       for (let p = Object.getPrototypeOf(globalThis); p; p = Object.getPrototypeOf(p)) chain.push(p[Symbol.toStringTag] ?? p.constructor.name);
       const thrown = fn => { try { fn(); return "no throw"; } catch (e) { return e.name + ": " + e.message; } };
@@ -774,12 +777,23 @@ describe("web worker", () => {
           toString: String(location),
           tag: Object.prototype.toString.call(location),
         },
-        constructors: [thrown(() => new WorkerGlobalScope()), thrown(() => new DedicatedWorkerGlobalScope()), thrown(() => new WorkerLocation())],
+        constructors: [
+          thrown(() => new WorkerGlobalScope()), thrown(() => new DedicatedWorkerGlobalScope()), thrown(() => new WorkerLocation()),
+          thrown(() => WorkerGlobalScope()), thrown(() => DedicatedWorkerGlobalScope()), thrown(() => WorkerLocation()),
+        ],
+        constructorChain: Object.getPrototypeOf(DedicatedWorkerGlobalScope) === WorkerGlobalScope
+          && Object.getPrototypeOf(WorkerGlobalScope) === Function.prototype
+          && Object.getPrototypeOf(WorkerLocation) === Function.prototype,
+        exposed: ["WorkerGlobalScope", "DedicatedWorkerGlobalScope", "WorkerLocation", "location"].map(name => {
+          const d = Object.getOwnPropertyDescriptor(globalThis, name);
+          return [typeof d.get, "writable" in d ? d.writable : d.set, d.enumerable, d.configurable];
+        }),
         strictAssign: thrown(() => { "use strict"; self.location = 1; }),
         brandChecks: [
-          thrown(() => Object.getOwnPropertyDescriptor(WorkerGlobalScope.prototype, "location").get.call({})),
+          thrown(() => Object.getOwnPropertyDescriptor(globalThis, "location").get.call({})),
           thrown(() => Object.getOwnPropertyDescriptor(WorkerLocation.prototype, "href").get.call({})),
         ],
+        eventTarget: [types.isEventTarget(self), events.getMaxListeners(self), events.getEventListeners(self, "message").length],
       });
     `;
 
@@ -802,16 +816,22 @@ describe("web worker", () => {
         constructorName: "DedicatedWorkerGlobalScope",
         tag: "[object DedicatedWorkerGlobalScope]",
         sameLocation: true,
-        constructors: [
-          "TypeError: Illegal constructor",
-          "TypeError: Illegal constructor",
-          "TypeError: Illegal constructor",
+        constructors: new Array(6).fill("TypeError: Illegal constructor"),
+        constructorChain: true,
+        // The constructors are data properties and location is a getter, all own properties of the global.
+        exposed: [
+          ["undefined", true, false, true],
+          ["undefined", true, false, true],
+          ["undefined", true, false, true],
+          ["function", undefined, true, true],
         ],
         strictAssign: "TypeError: Attempted to assign to readonly property.",
         brandChecks: [
           "TypeError: Can only call WorkerGlobalScope.location on instances of WorkerGlobalScope",
           "TypeError: Can only call WorkerLocation.href on instances of WorkerLocation",
         ],
+        // node:events and util.types agree with `self instanceof EventTarget`.
+        eventTarget: [true, 10, 0],
       });
       expect(data.location.tag).toBe("[object WorkerLocation]");
       expect(data.location.origin).toBe("null");
@@ -859,12 +879,12 @@ describe("web worker", () => {
             new Blob([
               `class Custom {}
                Object.setPrototypeOf(globalThis, Custom.prototype);
-               postMessage([self instanceof Custom, self instanceof WorkerGlobalScope, typeof location]);`,
+               postMessage([self instanceof Custom, self instanceof WorkerGlobalScope, typeof location, delete globalThis.location, typeof location]);`,
             ]),
           ),
         ),
       );
-      expect(data).toEqual([true, false, "undefined"]);
+      expect(data).toEqual([true, false, "object", true, "undefined"]);
     });
 
     test("the main thread has none of them", () => {
@@ -875,6 +895,7 @@ describe("web worker", () => {
         typeof location,
       ]).toEqual(["undefined", "undefined", "undefined", "undefined"]);
       expect(Object.getPrototypeOf(globalThis)).toBe(Object.prototype);
+      expect(types.isEventTarget(globalThis)).toBe(false);
     });
 
     test("a node:worker_threads worker has none of them", async () => {

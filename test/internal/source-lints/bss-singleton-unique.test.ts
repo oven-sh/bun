@@ -4,21 +4,19 @@ import { realpathSync } from "fs";
 import path from "path";
 import { globAllSources } from "../../../scripts/glob-sources.ts";
 
-// `bun_alloc::bss_singleton!` (and its `bss_list!` / `bss_string_list!` /
-// `bss_map_inner!` wrappers) emits a private `static STORAGE` inside the
-// accessor fn at each declare site. Two declarations with the same name are
+// `bun_alloc::bss_singleton!` (and its `bss_map_inner!` wrapper) emits a private
+// `static STORAGE` inside the accessor fn at each declare site, and a `BSSList` or
+// `BSSStringList` is a `static` of its module. Two declarations with the same name are
 // two separate process-lifetime heaps, not two names for one store: a slice
-// interned through one reads as "not ours" to the other's `exists()` /
-// `as_interned()`, and the second store costs its own backing buffer (about
-// 532 KiB for a `BSSStringList<8192, 65>`).
+// interned through one reads as "not ours" to the other's `as_interned()`, and the
+// second store costs its own backing buffer (about 532 KiB for file names).
 //
-// The resolver once declared `filename_store_backing` in both
+// The resolver once declared the file name store in both
 // `src/resolver/fs.rs` (the readdir basename appender) and
 // `src/resolver/lib.rs` (`FilenameStore::instance()`), so resolved paths and
 // directory-entry names were interned into different stores. Rust cannot
-// reject that at compile time: the statics are fn-local and item names are
-// only unique per module. A declare site is the single owner of its storage;
-// every other user re-exports or imports the accessor.
+// reject that at compile time: item names are only unique per module. A declare
+// site is the single owner of its storage; every other user re-exports or imports the accessor.
 
 const root = path.resolve(import.meta.dir, "..", "..", "..");
 const rustSources = globAllSources().rust.filter(p => p.endsWith(".rs"));
@@ -36,9 +34,10 @@ const tracked: Set<string> | null = (() => {
 })();
 
 const VIS = String.raw`(?:pub(?:\([^)]*\))?\s+)?`;
-// `bss_list! { pub name : T, N }`, `bss_string_list! { name : N, M }`,
 // `bss_map_inner! { pub(crate) name : T, N, B }`.
-const TYPED = new RegExp(String.raw`\bbss_(?:list|string_list|map_inner)!\s*[{(]\s*${VIS}([A-Za-z_]\w*)\s*:`, "g");
+const TYPED = new RegExp(String.raw`\bbss_map_inner!\s*[{(]\s*${VIS}([A-Za-z_]\w*)\s*:`, "g");
+// `static NAME: Once<BSSStringList>`, `static NAME: Once<Guarded<BSSList<T, N>>>`.
+const STATIC = /(?<!')\bstatic\s+([A-Za-z_]\w*)\s*:.*\bBSS(?:String)?List\b/g;
 // `bss_singleton! { #[attr] pub fn name() -> T }`. The macro definitions in
 // bun_alloc spell the name as `$name`, which `\w` does not match.
 const RAW = new RegExp(String.raw`\bbss_singleton!\s*[{(](?:\s*#\[[^\]]*\])*\s*${VIS}fn\s+([A-Za-z_]\w*)\s*\(`, "g");
@@ -51,11 +50,11 @@ for (const abs of rustSources) {
   if (path.relative(root, realpathSync(abs)).replaceAll(path.sep, "/") !== source) continue;
   if (tracked !== null && !tracked.has(source)) continue;
   const content = await file(abs).text();
-  if (!content.includes("bss_")) continue;
+  if (!/bss/i.test(content)) continue;
   // Strip `//` comments so prose mentions of a declaration do not count.
   const lines = content.split("\n").map(line => line.replace(/\/\/.*/, ""));
   for (const [index, line] of lines.entries()) {
-    for (const re of [TYPED, RAW]) {
+    for (const re of [TYPED, STATIC, RAW]) {
       re.lastIndex = 0;
       for (let m = re.exec(line); m !== null; m = re.exec(line)) {
         const name = m[1];
@@ -71,12 +70,7 @@ test("scans the known bss singleton declare sites", () => {
   // Guards against the regexes or the tracked/realpath filters over-firing and
   // leaving nothing to scan, which would make the uniqueness check vacuous.
   expect([...declarations.keys()]).toEqual(
-    expect.arrayContaining([
-      "dirname_store_backing",
-      "filename_store_backing",
-      "entry_store_backing",
-      "entries_option_map",
-    ]),
+    expect.arrayContaining(["DIRNAME_STORE", "FILENAME_STORE", "ENTRY_STORE", "entries_option_map"]),
   );
 });
 

@@ -1,75 +1,26 @@
 use bun_core::strings;
 use bun_url::PercentEncoding;
 
-// TODO: lifetime — every `&'static [u8]` field below actually borrows from
-// either the `parse()` input slice or, when the input was percent-encoded, from
-// `_decoded_storage`. Add a
-// lifetime param to `URLPath` so the input-borrow case is checked.
-#[derive(Default)]
-pub struct URLPath {
-    pub path: &'static [u8],
-    pub pathname: &'static [u8],
-    pub query_string: &'static [u8],
-    /// Owned backing storage for the slice fields when `parse()` had to
-    /// percent-decode. Heap-stable: the slice fields above point into this
-    /// allocation, which is never resized and lives exactly as long as `self`.
-    /// Owning the decode buffer
-    /// per-URLPath removes the use-after-free that a shared growable buffer
-    /// would introduce on the next `parse()` call.
-    ///
-    /// `URLPath` must not be `Clone`: copying the slice fields without this
-    /// owner would re-introduce the dangling hazard.
-    _decoded_storage: Option<Box<[u8]>>,
+pub struct URLPath<'a> {
+    pub path: &'a [u8],
+    pub query_string: &'a [u8],
 }
 
-impl URLPath {
-    /// Take ownership of the percent-decode buffer, if `parse()` had to
-    /// allocate one. The slice fields of `self` keep pointing into the
-    /// returned allocation — the caller must keep it alive for as long as any
-    /// of those slices (or sub-slices of them) are read; dropping it while
-    /// they are still in use leaves them dangling.
-    #[must_use = "dropping the returned storage dangles the slice fields of this URLPath"]
-    pub fn take_decoded_storage(&mut self) -> Option<Box<[u8]>> {
-        self._decoded_storage.take()
+const MAX_ENCODED_LEN: usize = 16384;
+
+/// `None` if nothing is percent-encoded.
+pub fn decode(possibly_encoded_pathname: &[u8]) -> Result<Option<Vec<u8>>, bun_url::DecodeError> {
+    if !strings::contains_char(possibly_encoded_pathname, b'%') {
+        return Ok(None);
     }
+    let capped = &possibly_encoded_pathname[..possibly_encoded_pathname.len().min(MAX_ENCODED_LEN)];
+
+    let mut buf: Vec<u8> = Vec::with_capacity(capped.len());
+    PercentEncoding::decode_fault_tolerant::<_, true>(&mut buf, capped)?;
+    Ok(Some(buf))
 }
 
-// Design note: a growable shared (e.g. threadlocal) decode buffer cannot work
-// here — the next `parse()` may reallocate it and dangle every prior URLPath —
-// so instead each URLPath that needs decoding owns its decode buffer in
-// `_decoded_storage`. This costs one small allocation only on the
-// percent-encoded path, which is the rare case.
-
-pub fn parse(possibly_encoded_pathname_: &[u8]) -> Result<URLPath, bun_url::DecodeError> {
-    let mut decoded_pathname: &[u8] = possibly_encoded_pathname_;
-    let mut decoded_storage: Option<Box<[u8]>> = None;
-    if strings::index_of_char(decoded_pathname, b'%').is_some() {
-        // The in-place decode buffer is capped at 16384 bytes of input.
-        let capped = &possibly_encoded_pathname_[..possibly_encoded_pathname_.len().min(16384)];
-
-        let mut buf: Vec<u8> = Vec::with_capacity(capped.len());
-        let n = PercentEncoding::decode_fault_tolerant::<_, true>(&mut buf, capped)?;
-        debug_assert!(n as usize <= buf.len());
-        buf.truncate(n as usize);
-        // Freeze into a heap-stable Box and park it in `decoded_storage` before
-        // borrowing: the slice fields in the returned URLPath borrow from this
-        // allocation, and the Box is later moved into that same URLPath, so the
-        // borrow is valid for the struct's whole lifetime (Box heap address is
-        // stable across moves). NLL releases the local borrow after the last
-        // use of `decoded_pathname` in the struct-literal field initialisers,
-        // before `_decoded_storage` is moved.
-        decoded_storage = Some(buf.into_boxed_slice());
-        decoded_pathname = decoded_storage.as_deref().unwrap();
-    }
-
-    // The slicing below assumes a non-empty pathname with a leading byte to
-    // skip. An empty input (or an input like "%PUBLIC_URL%" that the fault-
-    // tolerant decoder consumes entirely) would otherwise index out of bounds.
-    if decoded_pathname.is_empty() {
-        decoded_pathname = b"/";
-        decoded_storage = None;
-    }
-
+pub fn parse(decoded_pathname: &[u8]) -> URLPath<'_> {
     let mut question_mark_i: i32 = -1;
     let mut period_i: i32 = -1;
 
@@ -141,30 +92,12 @@ pub fn parse(possibly_encoded_pathname_: &[u8]) -> Result<URLPath, bun_url::Deco
         }
     }
 
-    // TODO: lifetime — see struct-level note. `extend` launders the borrow
-    // to `'static` to match the field type; remove once URLPath gains a
-    // proper lifetime parameter for the input-borrow case.
-    #[inline(always)]
-    fn extend(s: &[u8]) -> &'static [u8] {
-        // SAFETY: local fn-item — every call below passes a slice that borrows
-        // either the parser's input or `decoded_storage`, both of which are
-        // moved into / outlive the returned `URLPath` (self-referential store).
-        unsafe { bun_collections::detach_lifetime(s) }
-    }
-
-    Ok(URLPath {
-        pathname: extend(decoded_pathname),
-        path: extend(if decoded_pathname.len() == 1 {
+    URLPath {
+        path: if decoded_pathname.len() == 1 {
             b"."
         } else {
             path
-        }),
-        query_string: extend(if question_mark_i > -1 {
-            &decoded_pathname
-                [usize::try_from(question_mark_i).expect("int cast")..decoded_pathname.len()]
-        } else {
-            b""
-        }),
-        _decoded_storage: decoded_storage,
-    })
+        },
+        query_string: &decoded_pathname[path_end..],
+    }
 }

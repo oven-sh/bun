@@ -6,11 +6,10 @@
 use std::io::Write as _;
 
 use ::bun_ast::import_record as ast;
-use bun_alloc as allocators;
 use bun_core::MutableString;
 use bun_sys::Fd as FD;
 
-use crate::dir_info::DirInfoRef;
+use crate::dir_info::DirInfo;
 use crate::options;
 use crate::package_json::PackageJSON;
 
@@ -216,30 +215,14 @@ impl<'r> Result<'r> {
     }
 }
 
+#[derive(Clone, Copy)]
 pub struct DirEntryResolveQueueItem {
-    pub(crate) result: allocators::Result,
+    pub(crate) hash: u64,
     /// A slice of the threadlocal `dir_info_uncached_path` buffer, so not `'static`.
     pub(crate) unsafe_path: bun_ptr::RawSlice<u8>,
     /// Empty, or a `DirEntry::dir` from the dirname store.
     pub(crate) safe_path: &'static [u8],
     pub(crate) fd: FD,
-}
-
-// `bun_alloc::Result` doesn't derive Clone (yet); all its fields are Copy, so
-// hand-roll Clone here for the queue-item move at `dir_info_cached`.
-impl Clone for DirEntryResolveQueueItem {
-    fn clone(&self) -> Self {
-        Self {
-            result: allocators::Result {
-                hash: self.result.hash,
-                index: self.result.index,
-                status: self.result.status,
-            },
-            unsafe_path: self.unsafe_path,
-            safe_path: self.safe_path,
-            fd: self.fd,
-        }
-    }
 }
 
 pub struct DebugLogs {
@@ -308,7 +291,7 @@ pub struct MatchResult {
     pub(crate) file_fd: FD,
     pub(crate) is_node_module: bool,
     pub(crate) package_json: Option<&'static PackageJSON>,
-    pub(crate) dir_info: Option<DirInfoRef>,
+    pub(crate) dir_info: Option<&'static DirInfo>,
     pub(crate) module_type: options::ModuleType,
     pub(crate) is_external: bool,
 }

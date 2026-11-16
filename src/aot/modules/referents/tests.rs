@@ -32,6 +32,7 @@ impl<'s> BoundProgram<'_, '_, 's> {
             platform: self.input.platform,
             library: None,
             known_helpers: None,
+            may_replace_evaluators: false,
         }
     }
 

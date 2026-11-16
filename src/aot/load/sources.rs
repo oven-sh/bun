@@ -9,6 +9,8 @@ use std::sync::{Arc, OnceLock};
 use bun_ast::{Loader, Location};
 use bun_builtin_sources::{Manifest, VIRTUAL_ROOT};
 use bun_paths::is_absolute;
+use bun_sema::atom::{Atom, known};
+use bun_sema::hir::{ExprId, ExprKind, File, UnOp};
 use bun_sema::program::{CodeView, FileId, Files};
 use bun_sema::resolve::HostPayload;
 
@@ -16,7 +18,8 @@ pub(crate) use self::freeze::{
     FreezeInput, FrozenSources, check_unique_paths_across_projects, count_levels_above_root,
     freeze_sources,
 };
-use crate::builtins::{ResolvedBuiltins, RuntimeFunction, RuntimeModule, table};
+use crate::builtins::id::BuiltinId;
+use crate::builtins::{Resolved, ResolvedBuiltins, RuntimeFunction, RuntimeModule, table};
 use crate::diagnostics::{FileDiagnostic, LoadMessages};
 use crate::load::contents::FileContents;
 use crate::load::contents::load_names::NamedModule;
@@ -146,6 +149,48 @@ pub(crate) fn may_evaluate_text(files: &Files<'_>) -> bool {
         || (sources().any(|(_, source)| source.builtins.mentions_evaluator())
             && sources().any(|(file, source)| {
                 source.builtins.may_call_unnamed_evaluator(files.hir(file))
+            }))
+}
+
+fn is_name_of_evaluator(name: Atom) -> bool {
+    matches!(name, known::eval | known::Function)
+}
+
+fn writes_evaluator(hir: &File<'_>, source: &ParsedSource) -> bool {
+    let is_global_object = |expression: ExprId| {
+        let found = source.builtins.of_expr(hir.skip_type_assertions(expression));
+        matches!(found, Some(Resolved::Builtin(path)) if path.id == BuiltinId::GlobalThis)
+    };
+    hir.exprs.iter().any(|expression| {
+        let target = match expression.kind {
+            ExprKind::Assign { target, .. } => target,
+            ExprKind::Unary {
+                op: UnOp::Delete,
+                operand,
+            } => operand,
+            _ => return false,
+        };
+        match hir[hir.skip_type_assertions(target)].kind {
+            ExprKind::Ident(name) => is_name_of_evaluator(name),
+            ExprKind::Dot { obj, name, .. } => is_name_of_evaluator(name) && is_global_object(obj),
+            ExprKind::Index { obj, index, .. } => {
+                let index = hir.skip_type_assertions(index);
+                matches!(hir[index].kind, ExprKind::String(name) if is_name_of_evaluator(name))
+                    && is_global_object(obj)
+            }
+            _ => false,
+        }
+    })
+}
+
+pub(crate) fn may_replace_evaluators(files: &Files<'_>, can_load_code_at_run_time: bool) -> bool {
+    let compiled = || files.compiled_files().iter().copied();
+    compiled().any(|file| !files.hir(file).replaced_evaluations.is_empty())
+        && (can_load_code_at_run_time
+            || may_evaluate_text(files)
+            || compiled().any(|file| {
+                parsed_source(files, file)
+                    .is_some_and(|source| writes_evaluator(files.hir(file), source))
             }))
 }
 

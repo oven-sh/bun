@@ -14,7 +14,7 @@ use crate::link::{KeyContext, LinkUnit};
 use crate::load::data_modules::parse_json;
 use crate::load::runtime_roots::{StartOfRun, builtins_used_at_start};
 use crate::load::runtime_types;
-use crate::load::sources::parsed_source;
+use crate::load::sources::{may_replace_evaluators, parsed_source};
 use crate::load::{PerProject, ProjectId, Sources};
 use crate::lower::{
     FileInputs, KnownHelpersLowered, LibraryFunctions, LoweredFile, LoweringInputs,
@@ -1043,6 +1043,8 @@ impl Build<'_> {
         library_functions.leave_out_declarations(bound_project.left_out.declarations.clone());
         let erases_types = self.options.aot.erases_types && project == ProjectId::Application;
         let lowering_roles = roles_for_lowering(&roles.roles, files, erases_types);
+        let may_replace_evaluators = project == ProjectId::Application
+            && may_replace_evaluators(files, loaded.can_load_code_at_run_time);
         let library = Library {
             project: LinkedProject {
                 files: loaded.project(ProjectId::Runtime).loaded.files(),
@@ -1051,6 +1053,7 @@ impl Build<'_> {
                 platform: self.platform,
                 library: None,
                 known_helpers: None,
+                may_replace_evaluators: false,
             },
             sources: &loaded.project(ProjectId::Runtime).sources,
         };
@@ -1064,6 +1067,7 @@ impl Build<'_> {
                 ProjectId::Runtime => None,
             },
             known_helpers: Some(&bound_project.known_helpers),
+            may_replace_evaluators,
         };
         let unreached_files: &[FileId] = match project {
             ProjectId::Application => &[],
@@ -1120,6 +1124,7 @@ impl Build<'_> {
             page_manifests: &page_manifests,
             reads_source_paths,
             may_have_plugins,
+            may_replace_evaluators,
             replaced_builtins: &loaded.contents.replaced_builtins,
             fixed_builtins: &loaded.contents.fixed_builtins,
             names_added_to_builtins: &loaded.contents.names_added_to_builtins,

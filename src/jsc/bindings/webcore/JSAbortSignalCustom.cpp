@@ -30,6 +30,18 @@
 
 namespace WebCore {
 
+// A source can be alive only because of what observes `signal`, and then nothing is left to abort it.
+static bool hasSourceThatCanAbort(const AbortSignal& signal, JSC::AbstractSlotVisitor& visitor)
+{
+    for (auto& source : signal.sourceSignals()) {
+        if (source.hasPendingActivity())
+            return true;
+        if (auto* wrapper = source.wrapper(); wrapper && visitor.isMarked(wrapper))
+            return true;
+    }
+    return false;
+}
+
 bool JSAbortSignalOwner::isReachableFromOpaqueRoots(JSC::Handle<JSC::Unknown> handle, void*, JSC::AbstractSlotVisitor& visitor, ASCIILiteral* reason)
 {
     auto& abortSignal = uncheckedDowncast<JSAbortSignal>(handle.slot()->asCell())->wrapped();
@@ -46,19 +58,17 @@ bool JSAbortSignalOwner::isReachableFromOpaqueRoots(JSC::Handle<JSC::Unknown> ha
             return true;
         }
 
-        if (abortSignal.isDependent() && abortSignal.hasAbortObserver() && abortSignal.hasAliveSourceSignals()) {
+        if (abortSignal.isDependent() && abortSignal.hasAbortObserver() && hasSourceThatCanAbort(abortSignal, visitor)) {
             if (reason) [[unlikely]]
                 *reason = "Has Source Signals And Abort Observer"_s;
             return true;
         }
 
-        if (abortSignal.hasAbortEventListener()) {
-            // https://github.com/oven-sh/bun/issues/4517
-            if (abortSignal.hasPendingActivity()) {
-                if (reason) [[unlikely]]
-                    *reason = "Has Pending Activity"_s;
-                return true;
-            }
+        // https://github.com/oven-sh/bun/issues/4517
+        if (abortSignal.hasObservedPendingActivity()) {
+            if (reason) [[unlikely]]
+                *reason = "Has Pending Activity"_s;
+            return true;
         }
     }
 

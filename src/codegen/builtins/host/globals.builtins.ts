@@ -1790,7 +1790,7 @@ export default b.declarations(
       capability: "heap",
       uses: { view: [...retainedByNativeCode, b.readsContents(), b.writesContents()], byteOffset: b.inspected },
       reads: viewHeaps,
-      writes: ["TypedArrayStorage", ...externalState],
+      writes: externalState,
       implementation: b.generic,
     },
     toArrayBuffer: viewAtPointer(b.instance("ArrayBuffer").fresh),

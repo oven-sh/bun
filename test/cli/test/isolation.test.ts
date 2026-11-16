@@ -395,18 +395,21 @@ describe.concurrent("bun test --isolate", () => {
   });
 
   test.each([
-    ["an ES module", `export default 42;`, `(await import("./x.txt", { with: { type: "js" } })).default`],
-    ["a CommonJS module", `module.exports = 42;`, `(await import("./x.txt", { with: { type: "js" } })).default`],
-  ])("with --isolate, %s loaded by its type attribute is not served to a plain import", async (_, text, load) => {
-    using dir = tempDir("isolate-type-attribute", {
-      "x.txt": text,
+    ["x.txt", `export default 42;`, `(await import("./x.txt", { with: { type: "js" } })).default`],
+    ["x.txt", `module.exports = 42;`, `(await import("./x.txt", { with: { type: "js" } })).default`],
+    ["x.txt", `module.exports = 42;`, `require("./x.txt", { type: "js" })`],
+    ["x.txt", `module.exports = 42;`, `(require.extensions[".txt"] = require.extensions[".js"], require("./x.txt"))`],
+    ["x.foo", `module.exports = 42;`, `require("./x.foo")`],
+  ])("with --isolate, %s (%s) loaded by %s is not served to a plain import", async (name, text, load) => {
+    using dir = tempDir("isolate-importer-chose-loader", {
+      [name]: text,
       "a.test.ts": `
         import { test, expect } from "bun:test";
         test("as js", async () => expect(${load}).toBe(42));
       `,
       "b.test.ts": `
         import { test, expect } from "bun:test";
-        test("as text", async () => expect((await import("./x.txt")).default).toBe(${JSON.stringify(text)}));
+        test("by its path", async () => expect((await import("./${name}")).default).toBeString());
       `,
     });
     const { stderr, exitCode } = await runTests(String(dir), ["--isolate"], ["./a.test.ts", "./b.test.ts"]);

@@ -138,7 +138,7 @@ typedef struct ResolvedSource {
     // An ES module of the executable's pre-resolved module graph: no module_info, its record comes from the graph
     // (Zig::SourceProvider still gets SourceProviderSourceType::BunTranspiledModule).
     bool is_prelinked_module;
-    // source_code depends on more than the file's text (macros, `import.meta.glob`), so IsolatedModuleCache must not cache it.
+    // source_code depends on more than the file's text (macros, `import.meta.glob`, the loader its importer chose), so IsolatedModuleCache must not cache it.
     bool depends_on_more_than_source;
     // JSC::SourceProvenance::Static: source_code comes from where the program is stored or from Bun itself, not from a JavaScript value.
     bool is_static;

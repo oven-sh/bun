@@ -124,13 +124,9 @@ public:
     void throwIfAborted(JSC::JSGlobalObject&);
 
     using AbortSignalSet = WeakListHashSet<AbortSignal, WeakPtrImplWithEventTargetData>;
+    // GC marker threads only iterate: isEmptyIgnoringNullReferences() prunes, which is for the owning thread.
     const AbortSignalSet& sourceSignals() const { return m_sourceSignals; }
     AbortSignalSet& sourceSignals() { return m_sourceSignals; }
-
-    // Read-only emptiness probe for GC marker threads (JSAbortSignalOwner::isReachableFromOpaqueRoots).
-    // WeakListHashSet::isEmptyIgnoringNullReferences() prunes dead entries, destroying WeakPtrs whose
-    // single-threaded impls (and the nodes holding them) may only be released on the owning thread.
-    bool hasAliveSourceSignals() const { return m_sourceSignals.begin() != m_sourceSignals.end(); }
 
     // Read-only interested-party probe for GC marker threads: true if anything
     // would observe this signal aborting. A single atomic so the
@@ -152,6 +148,7 @@ public:
         m_abortObserverCount.fetch_sub(1, std::memory_order_relaxed);
     }
     bool hasPendingActivity() const { return pendingActivityCount > 0; }
+    bool hasObservedPendingActivity() const { return hasPendingActivity() && m_abortObserverCount.load(std::memory_order_relaxed) > pendingActivityCount; }
     bool isDependent() const { return m_flags & static_cast<uint8_t>(AbortSignalFlags::Dependent); }
 
     size_t memoryCost() const;

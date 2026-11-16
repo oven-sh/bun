@@ -37,6 +37,22 @@ describe("ReadableStream.pipeTo with AbortSignal", () => {
     await expectMaxObjectTypeCount(expect, "AbortSignal", baseline + 20);
   });
 
+  test("a pipe that holds the controller behind its AbortSignal.any() signal is collected", async () => {
+    const baseline = heapStats().objectTypeCounts.AbortSignal || 0;
+
+    function iteration() {
+      const controller = new AbortController();
+      new ReadableStream()
+        .pipeTo(new WritableStream({ write: () => controller.abort() }), {
+          signal: AbortSignal.any([controller.signal]),
+        })
+        .catch(() => {});
+    }
+    for (let i = 0; i < 200; i++) iteration();
+
+    await expectMaxObjectTypeCount(expect, "AbortSignal", baseline + 20);
+  });
+
   test("aborting signal still works and cleans up after pipe completes via abort", async () => {
     const baseline = heapStats().objectTypeCounts.AbortSignal || 0;
     const iterations = 200;

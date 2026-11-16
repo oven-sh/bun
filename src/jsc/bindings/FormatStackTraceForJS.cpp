@@ -858,7 +858,7 @@ JSC_DEFINE_CUSTOM_SETTER(errorInstanceLazyStackCustomSetter, (JSGlobalObject * g
     auto* object = JSValue::decode(thisValue).getObject();
     if (!object)
         return true;
-    if (object->inherits<ErrorInstance>()) [[likely]]
+    if (object->inherits<ErrorInstance>() && object->isStructureExtensible()) [[likely]]
         return object->putDirect(vm, vm.propertyNames->stack, JSValue::decode(value), JSC::PropertyAttribute::DontEnum | 0);
 
     PropertyDescriptor descriptor(JSValue::decode(value), JSC::PropertyAttribute::DontEnum | 0);

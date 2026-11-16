@@ -175,6 +175,32 @@ describe("AbortController GC", () => {
     expect(aborted).toEqual(Array(50).fill("reason"));
   });
 
+  test.each([
+    ["request.signal", (signal: AbortSignal) => signal],
+    ["AbortSignal.any([request.signal])", (signal: AbortSignal) => AbortSignal.any([signal])],
+  ])("%s that only pipeTo() uses survives GC", async (_, signalOf) => {
+    const piping = Promise.withResolvers<void>();
+    const aborted = Promise.withResolvers<Error>();
+    await using server = Bun.serve({
+      port: 0,
+      fetch(request) {
+        new ReadableStream()
+          .pipeTo(new WritableStream({ abort: aborted.resolve }), { signal: signalOf(request.signal) })
+          .catch(() => {});
+        setImmediate(piping.resolve);
+        return new Response(new ReadableStream({ start: body => body.enqueue("x") }));
+      },
+    });
+    const client = new AbortController();
+    const response = await fetch(server.url, { signal: client.signal });
+    await piping.promise;
+    Bun.gc(true);
+
+    client.abort();
+    expect((await aborted.promise).name).toBe("AbortError");
+    await response.body!.cancel().catch(() => {});
+  });
+
   // collectContinuously is very slow on Windows CI; the code under test is
   // identical across platforms.
   test.skipIf(isWindows)(

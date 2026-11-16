@@ -967,6 +967,24 @@ impl JSGlobalObject {
         JSGlobalObject__clearExceptionExceptTermination(self)
     }
 
+    /// A termination stays pending until `f` returns, so that `f` cannot enter script after it.
+    pub fn as_if_beneath_script(&self, f: impl FnOnce()) {
+        #[allow(improper_ctypes)] // C++ only hands `ctx` back
+        unsafe extern "C" {
+            safe fn JSC__JSGlobalObject__runAsIfBeneathScript(
+                global: &JSGlobalObject,
+                ctx: &mut &mut dyn FnMut(),
+                callback: extern "C" fn(&mut &mut dyn FnMut()),
+            );
+        }
+        extern "C" fn call(f: &mut &mut dyn FnMut()) {
+            f();
+        }
+        let mut f = Some(f);
+        let mut once: &mut dyn FnMut() = &mut || f.take().expect("called once")();
+        JSC__JSGlobalObject__runAsIfBeneathScript(self, &mut once, call);
+    }
+
     /// Clears the current exception and returns that value. Requires compile-time
     /// proof of an exception via `JsError`.
     #[cold]

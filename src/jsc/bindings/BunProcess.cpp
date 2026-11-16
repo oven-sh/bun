@@ -1514,8 +1514,9 @@ extern "C" void Bun__promises__emitUnhandledRejectionWarning(JSC::JSGlobalObject
     if (is_errorlike) {
         JSValue stack = JSValue::decode(reason).get(globalObject, vm.propertyNames->stack);
         if (!scope.exception()) [[likely]] {
-            reasonStack = stack;
-            warning->putDirect(vm, vm.propertyNames->stack, reasonStack);
+            warning->putDirect(vm, vm.propertyNames->stack, stack);
+            if (stack.isString() || stack.inherits<ErrorInstance>())
+                reasonStack = stack;
         }
         CLEAR_IF_EXCEPTION(scope);
         if (vm.hasPendingTerminationException()) [[unlikely]]

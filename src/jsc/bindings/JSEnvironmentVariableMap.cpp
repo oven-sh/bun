@@ -327,22 +327,24 @@ bool JSEnvironmentVariableMap::defineOwnProperty(JSObject* object, JSGlobalObjec
 }
 
 // Script can call the three accessors on any object, whose private names are not theirs to touch.
-static JSObject* holderOfAccessor(VM& vm, JSC::EncodedJSValue thisValue, PropertyName propertyName)
+static bool holdsEnvironment(VM& vm, JSObject* object, PropertyName propertyName)
 {
-    for (JSValue value = JSValue::decode(thisValue); value.isObject(); value = asObject(value)->getPrototypeDirect()) {
-        if (JSValue own = asObject(value)->getDirect(vm, propertyName))
-            return own.isCustomGetterSetter() ? asObject(value) : nullptr;
-    }
-    return nullptr;
+    if (object->inherits<JSEnvironmentVariableMap>()) [[likely]]
+        return true;
+    JSValue own = object->getDirect(vm, propertyName);
+    return own && own.isCustomGetterSetter();
 }
 
 static JSC::EncodedJSValue getPrivateOrEnvValue(JSGlobalObject* globalObject, JSC::EncodedJSValue thisValue, PropertyName propertyName, const Identifier& privateName)
 {
     VM& vm = globalObject->vm();
 
-    if (auto* holder = holderOfAccessor(vm, thisValue, propertyName)) [[likely]] {
-        if (JSValue privateValue = holder->getDirect(vm, privateName))
+    for (JSValue value = JSValue::decode(thisValue); value.isObject(); value = asObject(value)->getPrototypeDirect()) {
+        if (!holdsEnvironment(vm, asObject(value), propertyName)) [[unlikely]]
+            continue;
+        if (JSValue privateValue = asObject(value)->getDirect(vm, privateName))
             return JSValue::encode(privateValue);
+        break;
     }
 
     EncodedSlice name = toEncodedSlice(propertyName.publicName());
@@ -373,9 +375,11 @@ static void putPrivateValue(VM& vm, JSObject* object, const Identifier& privateN
 JSC_DEFINE_CUSTOM_SETTER(jsTimeZoneEnvironmentVariableSetter, (JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::EncodedJSValue value, PropertyName propertyName))
 {
     VM& vm = globalObject->vm();
-    JSC::JSObject* object = holderOfAccessor(vm, thisValue, propertyName);
+    JSC::JSObject* object = JSValue::decode(thisValue).getObject();
     if (!object)
         return false;
+    if (!holdsEnvironment(vm, object, propertyName)) [[unlikely]]
+        return object->createDataProperty(globalObject, propertyName, JSValue::decode(value), false);
     auto* clientData = WebCore::clientData(vm);
     putPrivateValue(vm, object, clientData->builtinNames().dataPrivateName(), JSValue::decode(value));
     return true;
@@ -435,10 +439,12 @@ JSC_DEFINE_CUSTOM_GETTER(jsNodeTLSRejectUnauthorizedGetter, (JSGlobalObject * gl
 JSC_DEFINE_CUSTOM_SETTER(jsNodeTLSRejectUnauthorizedSetter, (JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::EncodedJSValue value, PropertyName propertyName))
 {
     VM& vm = globalObject->vm();
-    JSC::JSObject* object = holderOfAccessor(vm, thisValue, propertyName);
+    JSC::JSObject* object = JSValue::decode(thisValue).getObject();
     auto scope = DECLARE_THROW_SCOPE(vm);
     if (!object)
         return false;
+    if (!holdsEnvironment(vm, object, propertyName)) [[unlikely]]
+        RELEASE_AND_RETURN(scope, object->createDataProperty(globalObject, propertyName, JSValue::decode(value), false));
 
     JSValue decodedValue = JSValue::decode(value);
     WTF::String str = decodedValue.toWTFString(globalObject);
@@ -463,10 +469,12 @@ JSC_DEFINE_CUSTOM_GETTER(jsBunConfigVerboseFetchGetter, (JSGlobalObject * global
 JSC_DEFINE_CUSTOM_SETTER(jsBunConfigVerboseFetchSetter, (JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::EncodedJSValue value, PropertyName propertyName))
 {
     VM& vm = globalObject->vm();
-    JSC::JSObject* object = holderOfAccessor(vm, thisValue, propertyName);
+    JSC::JSObject* object = JSValue::decode(thisValue).getObject();
     auto scope = DECLARE_THROW_SCOPE(vm);
     if (!object)
         return false;
+    if (!holdsEnvironment(vm, object, propertyName)) [[unlikely]]
+        RELEASE_AND_RETURN(scope, object->createDataProperty(globalObject, propertyName, JSValue::decode(value), false));
 
     JSValue decodedValue = JSValue::decode(value);
     WTF::String str = decodedValue.toWTFString(globalObject);

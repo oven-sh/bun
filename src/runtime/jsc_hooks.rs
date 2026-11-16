@@ -2643,9 +2643,6 @@ fn transpile_source_code_of_any_provenance<const DATA_ONLY: bool>(
                 let printer: &mut bun_js_printer::BufferPrinter =
                     unsafe { &mut *extra.source_code_printer };
                 let written = printer.ctx.get_written();
-                if written.len() > bun_core::String::max_length() {
-                    return Err(global_object.throw_string_too_long().into());
-                }
                 // Node compile cache hook (sync transpile path). `fetch` copies
                 // `written`; the printer may be replaced below.
                 let node_compile_cache_blob = if bun_jsc::node_compile_cache::is_enabled()
@@ -2670,6 +2667,12 @@ fn transpile_source_code_of_any_provenance<const DATA_ONLY: bool>(
                 if written_len > 1024 * 1024 * 2 || jsc_vm.smol {
                     *printer =
                         bun_js_printer::BufferPrinter::init(bun_js_printer::BufferWriter::init());
+                }
+                if written_len > bun_core::String::max_length() {
+                    return Err(global_object.throw_string_too_long().into());
+                }
+                if source_code.is_dead() {
+                    bun_core::out_of_memory();
                 }
 
                 return Ok(ResolvedSource {
@@ -3890,7 +3893,7 @@ fn transpile_file<const DATA_ONLY: bool>(
     let _specifier = specifier.to_utf8();
     let referrer_slice = referrer.to_utf8();
     let type_attribute_str: Option<&[u8]> = type_attribute.and_then(|s| s.as_utf8());
-    let has_type_attribute = type_attribute.is_some_and(|s| !s.is_empty());
+    let mut importer_chose_loader = type_attribute.is_some_and(|s| !s.is_empty());
 
     let mut virtual_source_to_use: Option<bun_ast::Source> = None;
     let mut source_blob: Option<crate::webcore::Blob> = None;
@@ -3919,12 +3922,16 @@ fn transpile_file<const DATA_ONLY: bool>(
     if let Some(loader_type) = force_loader_type {
         // Note: `@branchHint(.unlikely)` dropped (no stable Rust equiv).
         debug_assert!(!is_commonjs_require);
+        importer_chose_loader |= lr.loader != Some(loader_type);
         lr.loader = Some(loader_type);
     } else if is_commonjs_require && jsc_vm.has_mutated_built_in_extensions.get() > 0 {
         use bun_jsc::node_module_module::{CustomLoader, find_longest_registered_extension};
         if let Some(entry) = find_longest_registered_extension(jsc_vm, _specifier.slice()) {
             match entry {
-                CustomLoader::Loader(loader) => lr.loader = Some(*loader),
+                CustomLoader::Loader(loader) => {
+                    importer_chose_loader |= lr.loader != Some(*loader);
+                    lr.loader = Some(*loader);
+                }
                 CustomLoader::Custom(strong) => {
                     *ret = ErrorableResolvedSource::ok(ResolvedSource {
                         cjs_custom_extension_index: strong.get(),
@@ -4005,7 +4012,7 @@ fn transpile_file<const DATA_ONLY: bool>(
                 &lr.path,
                 referrer.clone(),
                 concurrent_loader,
-                has_type_attribute,
+                importer_chose_loader,
                 lr.package_json,
                 aot_package_config,
                 module_loader,
@@ -4032,6 +4039,7 @@ fn transpile_file<const DATA_ONLY: bool>(
                 use bun_jsc::node_module_module::{
                     CustomLoader, find_longest_registered_extension,
                 };
+                importer_chose_loader = true;
                 if jsc_vm.commonjs_custom_extensions.get().len() > 0
                     && jsc_vm.has_mutated_built_in_extensions.get() == 0
                 {
@@ -4114,7 +4122,7 @@ fn transpile_file<const DATA_ONLY: bool>(
 
     match transpile_source_code_inner::<DATA_ONLY>(jsc_vm, &args) {
         Ok(mut resolved) => {
-            resolved.depends_on_more_than_source |= has_type_attribute;
+            resolved.depends_on_more_than_source |= importer_chose_loader;
             *ret = ErrorableResolvedSource::ok(resolved);
         }
         Err(err) => {
@@ -4200,7 +4208,9 @@ pub(crate) fn transpile_as_loaded(
         flags: FetchFlags::Transpile,
         extra: &extra,
     };
-    transpile_source_code_inner::<false>(jsc_vm, &args).ok()
+    transpile_source_code_inner::<false>(jsc_vm, &args)
+        .inspect_err(|_| global.clear_exception())
+        .ok()
 }
 
 /// BunCompiledModules.cpp. An error of the class that `bun run` throws at the import of a file of data that its parser refuses, with the place that the parser named at the build. Empty where the build kept nothing under the path.

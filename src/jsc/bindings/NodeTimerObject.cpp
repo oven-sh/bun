@@ -34,7 +34,8 @@ static bool call(JSGlobalObject* globalObject, JSValue timerObject, JSValue call
 
     if (auto* promise = dynamicDowncast<JSPromise>(callbackValue)) {
         // This was a Bun.sleep() call
-        promise->fulfill(vm, jsUndefined());
+        if (promise->status() == JSPromise::Status::Pending) [[likely]]
+            promise->fulfill(vm, jsUndefined());
     } else {
         auto callData = JSC::getCallData(callbackValue);
         if (callData.type == CallData::Type::None) {

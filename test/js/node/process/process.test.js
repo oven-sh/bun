@@ -249,8 +249,13 @@ it.concurrent.each(["TZ", "NODE_TLS_REJECT_UNAUTHORIZED", "BUN_CONFIG_VERBOSE_FE
       Bun.gc(true);
       const after = [...others, process.env].map(other => get.call(other));
       const inherited = [Object.create(process.env), new Proxy(process.env, {})].map(env => env.${name});
+      const copy = Object.defineProperties({}, Object.getOwnPropertyDescriptors(process.env));
+      const heir = Object.create(process.env);
+      copy.${name} = "copy";
+      set.call(heir, "heir");
+      const untouched = new Set([...before, ...after, ...inherited, process.env.${name}]);
       process.env.${name} = "UTC";
-      console.log([...new Set([...before, ...after, ...inherited])].join(), Object.create(process.env).${name});
+      console.log([...untouched].join(), copy.${name}, heir.${name}, Object.create(process.env).${name});
       `,
       ],
       env: { ...bunEnv, [name]: "GMT" },
@@ -259,7 +264,7 @@ it.concurrent.each(["TZ", "NODE_TLS_REJECT_UNAUTHORIZED", "BUN_CONFIG_VERBOSE_FE
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "GMT UTC\n", stderr: "", exitCode: 0 });
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "GMT copy heir UTC\n", stderr: "", exitCode: 0 });
   },
 );
 
@@ -2203,9 +2208,10 @@ console.log(load());
   });
 
   it.each([
-    ["native", "process.chdir"],
-    ["JavaScript", "() => { throw new Error() }"],
-  ])("--unhandled-rejections=warn warns twice of a reason whose %s stack getter throws", async (_, getter) => {
+    ["is a native getter that throws", "process.chdir"],
+    ["is a getter that throws", "() => { throw new Error() }"],
+    ["is not a string", "() => 42"],
+  ])("--unhandled-rejections=warn warns twice of a reason whose stack %s", async (_, getter) => {
     await using proc = Bun.spawn({
       cmd: [
         bunExe(),

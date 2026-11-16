@@ -1218,7 +1218,28 @@ it.each(["--hot", "--watch"])("%s tells apart two modules whose text has the sam
   expect({ stdout, stderr, exitCode }).toEqual({ stdout: "module 26773, module 157045\n", stderr: "", exitCode: 0 });
 });
 
-it("throws ERR_STRING_TOO_LONG for a module whose transpiled text exceeds the string limit", async () => {
+it.each(["--hot", "--watch"])("%s reads `type` of package.json for the imports of a required module", async flag => {
+  using dir = tempDir("hot-package-type", {
+    "package.json": `{ "type": "module" }`,
+    "x.cjs": `module.exports = { __esModule: true, default: 1 };`,
+    "y.mjs": `export { default as imported } from "./x.cjs";`,
+    "entry.cjs": `
+      console.log(require("./y.mjs").imported === require("./x.cjs"));
+      process.exit(0);
+    `,
+  });
+  await using proc = spawn({
+    cmd: [bunExe(), flag, "--no-clear-screen", "entry.cjs"],
+    cwd: String(dir),
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr, exitCode }).toEqual({ stdout: "true\n", stderr: "", exitCode: 0 });
+});
+
+it.each(["--hot", "run"])("%s throws ERR_STRING_TOO_LONG for a module whose text exceeds the limit", async flag => {
   using dir = tempDir("hot-string-limit", {
     "big.cjs": `const s = ${JSON.stringify(Buffer.alloc(200 * 1024, "x").toString())};\nmodule.exports = { len: s.length };\n`,
     "small.cjs": `module.exports = { ok: 2 };\n`,
@@ -1234,7 +1255,7 @@ it("throws ERR_STRING_TOO_LONG for a module whose transpiled text exceeds the st
     `,
   });
   await using proc = spawn({
-    cmd: [bunExe(), "--hot", "--no-clear-screen", "entry.cjs"],
+    cmd: [bunExe(), flag, "--no-clear-screen", "entry.cjs"],
     cwd: String(dir),
     env: { ...bunEnv, BUN_FEATURE_FLAG_SYNTHETIC_MEMORY_LIMIT: String(64 * 1024) },
     stdout: "pipe",

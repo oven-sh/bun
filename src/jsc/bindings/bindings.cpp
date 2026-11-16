@@ -103,6 +103,7 @@
 #include "JavaScriptCore/StackFrame.h"
 #include "JavaScriptCore/StackVisitor.h"
 #include "JavaScriptCore/VM.h"
+#include "JavaScriptCore/VMEntryScopeInlines.h"
 #include "JavaScriptCore/WasmFaultSignalHandler.h"
 #include "ZigGlobalObject.h"
 #include "helpers.h"
@@ -7421,6 +7422,15 @@ bool Bun::takeTerminationOutsideScript(JSC::VM& vm, JSC::TopExceptionScope& scop
         vm.clearHasTerminationRequest();
     vm.setExecutionForbidden();
     return true;
+}
+
+extern "C" void JSC__JSGlobalObject__runAsIfBeneathScript(JSC::JSGlobalObject* globalObject, void* ctx, void (*callback)(void*))
+{
+    {
+        JSC::VMEntryScope entryScope(JSC::getVM(globalObject), globalObject);
+        callback(ctx);
+    }
+    Bun__VM__takeTerminationOutsideScript(globalObject);
 }
 
 extern "C" bool Bun__VM__takeTerminationOutsideScript(JSC::JSGlobalObject* globalObject)

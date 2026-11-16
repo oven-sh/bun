@@ -1905,7 +1905,8 @@ impl VirtualMachine {
         // (low-tier unit tests), fail loudly: PORTING.md §Forbidden bans a
         // silent no-op here since the real path has observable logic.
         if let Some(hooks) = runtime_hooks() {
-            (hooks.print_exception)(self, result, exception_list);
+            self.global()
+                .as_if_beneath_script(|| (hooks.print_exception)(self, result, exception_list));
         } else {
             // Low-tier fallback (no `bun_runtime` installed — unit tests):
             // we cannot reach `ConsoleObject::Formatter`, so emit a degraded
@@ -6167,7 +6168,7 @@ impl VirtualMachine {
         ) {
             if err == crate::CrateError::JSError {
                 self.global().clear_exception();
-            } else if err != crate::CrateError::WorkerTerminated {
+            } else {
                 #[cfg(debug_assertions)]
                 {
                     bun_core::pretty_errorln!(
@@ -6663,10 +6664,6 @@ impl VirtualMachine {
         allow_ansi_color: bool,
         allow_side_effects: bool,
     ) -> crate::CrateResult<()> {
-        if self.global().vm().execution_forbidden() {
-            return Err(crate::CrateError::WorkerTerminated);
-        }
-
         // Note: stack-safety guard for the Error recursion path.
         // `print_error_instance_body` dispatches on runtime bools, so it
         // carries the union of all

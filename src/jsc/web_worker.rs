@@ -1369,24 +1369,26 @@ fn on_unhandled_rejection(
     // `&mut`) — see worker-thread `&self` note.
     let worker = vm.worker_ref().expect("Assertion failure: no worker");
 
-    let format_result = jsc::console_object::format2(
-        jsc::console_object::MessageLevel::Debug,
-        global_object,
-        &[error_instance],
-        &mut array,
-        jsc::console_object::FormatOptions {
-            enable_colors: false,
-            add_newline: false,
-            flush: false,
-            max_depth: 32,
-            ..Default::default()
-        },
-    );
-    if let Err(err) = format_result {
-        error_instance = global_object.take_exception(err);
-    }
+    global_object.as_if_beneath_script(|| {
+        let format_result = jsc::console_object::format2(
+            jsc::console_object::MessageLevel::Debug,
+            global_object,
+            &[error_instance],
+            &mut array,
+            jsc::console_object::FormatOptions {
+                enable_colors: false,
+                add_newline: false,
+                flush: false,
+                max_depth: 32,
+                ..Default::default()
+            },
+        );
+        if let Err(err) = format_result {
+            error_instance = global_object.take_exception(err);
+        }
+    });
     // Formatting ran script; if this worker was terminated meanwhile there is no error to dispatch.
-    if error_instance.is_termination_exception() || !vm.script_allowed() {
+    if !vm.script_allowed() {
         return;
     }
     jsc::mark_binding();

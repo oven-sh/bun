@@ -1971,11 +1971,6 @@ pub mod formatter {
                 });
             }
 
-            // The iteration callbacks drop `Terminated`, and what follows can run script.
-            if global_this.vm().execution_forbidden() {
-                return Err(jsc::JsError::Terminated);
-            }
-
             let js_type = value.js_type();
 
             if js_type.is_hidden() {

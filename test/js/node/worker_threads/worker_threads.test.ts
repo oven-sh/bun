@@ -774,6 +774,15 @@ test.concurrent.each([
     `worker.on("message", () => worker.terminate());`,
     ["exit 1"],
   ],
+  [
+    "terminate() while the errors of an uncaught AggregateError are printed",
+    `const spin = () => { ${spinUntilTerminated} };
+     const error = () => Object.assign(new Error(), { message: { toString: spin } });
+     const last = Object.defineProperty(new AggregateError([]), "errors", { get: spin });
+     setImmediate(() => { throw new AggregateError([error(), error(), last]); });`,
+    `worker.on("message", () => worker.terminate());`,
+    ["exit 1"],
+  ],
   // The GC formats the stack of an Error whose `stack` hasn't been read yet.
   [
     "process.exit() in a 'workerMessage' listener",

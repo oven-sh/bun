@@ -2179,7 +2179,8 @@ test.concurrent("the setter of a captured stack adds nothing to an object that t
       Error.captureStackTrace(error, function notOnTheStack() {});
       const { set } = Object.getOwnPropertyDescriptor(error, "stack");
       const heir = Object.create(error);
-      const receivers = [new WebAssembly.Instance(new WebAssembly.Module(bytes)).exports.mk(), Object.freeze({}), error];
+      const frozen = Object.freeze(Object.assign(new Error(), { stack: "frozen" }));
+      const receivers = [new WebAssembly.Instance(new WebAssembly.Module(bytes)).exports.mk(), Object.freeze({}), frozen, error];
       heir.stack = "heir";
       for (const receiver of receivers) set.call(receiver, "set");
       Bun.gc(true);
@@ -2191,7 +2192,11 @@ test.concurrent("the setter of a captured stack adds nothing to an object that t
     stderr: "pipe",
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect({ stdout, stderr, exitCode }).toEqual({ stdout: '["heir",null,null,"set"]\n', stderr: "", exitCode: 0 });
+  expect({ stdout, stderr, exitCode }).toEqual({
+    stdout: '["heir",null,null,"frozen","set"]\n',
+    stderr: "",
+    exitCode: 0,
+  });
 });
 
 // Error.prepareStackTrace is a data property to a script, and native code keeps the function it calls. Each store of

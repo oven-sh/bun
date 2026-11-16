@@ -1911,8 +1911,8 @@ impl<'l> Loader<'l> {
             return Err(Fatal([HAS_NO_LINT_FIELD, path].concat()));
         }
         // A file with any other name is classified by its content.
-        let flavor = known.map_or_else(
-            || match (&json, syntax) {
+        let flavor = known.map_or(
+            match (&json, syntax) {
                 (Json::Object(_), Syntax::Json) => Flavor::Oxlint,
                 _ => Flavor::Eslint,
             },

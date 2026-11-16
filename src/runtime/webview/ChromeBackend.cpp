@@ -1363,7 +1363,7 @@ void Transport::updateKeepAlive()
     if (want == m_sockRefd || !m_global) return;
     m_sockRefd = want;
     Bun__VmHandle__refKeepAlive(
-        WebCore::clientData(m_global->vm())->vmHandle, BunLoopKind::Regular, want ? 1 : -1);
+        WebCore::clientData(m_global->vm())->vmHandle.get(), BunLoopKind::Regular, want ? 1 : -1);
 
     // WebSocket mode: close the connection when the last view is gone.
     // We're connected to the USER'S Chrome — keeping the WS open after

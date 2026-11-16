@@ -1415,10 +1415,7 @@ impl<'a> EncodedSlice<'a> {
         if self.is_16bit() {
             return strings::eql_comptime_utf16(self.utf16_slice(), ascii);
         }
-        if self.len != ascii.len() {
-            return false;
-        }
-        strings::eql_comptime_ignore_len(self.slice(), ascii)
+        self.slice() == ascii
     }
 
     /// Encoding-aware ASCII prefix check.

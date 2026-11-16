@@ -3,7 +3,9 @@ use core::ffi::c_void;
 use core::ptr::NonNull;
 use core::sync::atomic::Ordering;
 
-use crate::{CommonAbortReason, JSGlobalObject, JSValue, VirtualMachineRef as VirtualMachine};
+use crate::{
+    CommonAbortReason, JSGlobalObject, JSValue, VirtualMachineRef as VirtualMachine, WrapperGuard,
+};
 use bun_event_loop::EventLoopTimer::{
     OwnedTimer, State as TimerState, Tag as TimerTag, TimerFlags,
 };
@@ -142,12 +144,9 @@ impl AbortSignal {
         unsafe { AbortSignalRef::adopt(WebCore__AbortSignal__ref(self)) }
     }
 
-    /// Lifetime: the returned pointer is borrowed from the JS wrapper and is
-    /// valid only while `value` remains reachable. Use [`AbortSignal::ref_from_js`]
-    /// to take refcounted ownership instead.
-    pub fn from_js(value: JSValue) -> Option<*mut AbortSignal> {
-        let ptr = WebCore__AbortSignal__fromJS(value);
-        if ptr.is_null() { None } else { Some(ptr) }
+    pub fn from_js(value: &JSValue) -> Option<WrapperGuard<'_, AbortSignal>> {
+        // SAFETY: a `JSAbortSignal` holds a ref on what it wraps.
+        unsafe { WrapperGuard::new(value, WebCore__AbortSignal__fromJS(*value)) }
     }
 
     pub fn to_js(&self, global: &JSGlobalObject) -> JSValue {
@@ -241,8 +240,7 @@ impl AbortSignal {
     /// moved here because inherent impls cannot be added to a type alias.)
     #[inline]
     pub fn ref_from_js(value: JSValue) -> Option<AbortSignalRef> {
-        // S008: `AbortSignal` is an `opaque_ffi!` ZST — safe deref.
-        AbortSignal::from_js(value).map(|p| bun_opaque::opaque_deref(p).ref_())
+        AbortSignal::from_js(&value).map(|signal| signal.ref_())
     }
 }
 
@@ -270,8 +268,7 @@ pub struct Timeout {
     pub event_loop_timer: OwnedTimer,
 
     /// Raw back-pointer to the owning `AbortSignal`; no refcount held. The
-    /// `Timeout` is owned by the signal (`m_timeout`, freed via
-    /// `~AbortSignal` → `cancelTimer` → [`AbortSignal__Timeout__deinit`]),
+    /// `Timeout` is owned by the signal (`m_timeout`),
     /// so while this box is live the signal is too.
     pub signal: *mut AbortSignal,
 

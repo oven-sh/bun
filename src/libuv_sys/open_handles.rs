@@ -178,7 +178,7 @@ pub fn stop_all_for_vm_teardown() {
                     owner
                 );
                 // A listed file always has its reader as owner: `set_source`
-                // lists and records it in one step, `set_parent` keeps it current.
+                // lists and records it in one step, `set_owner` keeps it current.
                 let close = close_via_owner.expect("file listed without its reader");
                 // SAFETY: the reader unlists the file before handing it off or
                 // dropping it, and re-records itself whenever it moves.

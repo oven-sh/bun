@@ -39,8 +39,7 @@ public:
     {
         if constexpr (mode == JSC::SubspaceAccess::Concurrently)
             return nullptr;
-        return WebCore::subspaceForImpl<HandleScopeImpl, WebCore::UseCustomHeapCellType::Yes>(vm, BUN_SUBSPACE_SLOTS(m_clientSubspaceForHandleScopeImpl, m_subspaceForHandleScopeImpl),
-            [](auto& server) -> JSC::HeapCellType& { return server.m_heapCellTypeForHandleScopeImpl; });
+        return WebCore::subspaceForImpl<HandleScopeImpl, WebCore::UseCustomHeapCellType::Yes>(vm, BUN_SUBSPACE_SLOTS(m_clientSubspaceForHandleScopeImpl, m_subspaceForHandleScopeImpl));
     }
 
     DECLARE_INFO;

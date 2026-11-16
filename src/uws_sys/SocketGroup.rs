@@ -5,7 +5,7 @@
 //!
 //! `#[repr(C)]` so field order/padding match the C definition exactly — this is
 //! read/written directly by C (loop.c walks `head_sockets`/`iterator`,
-//! context.c flips `linked`).
+//! context.cpp flips `linked`).
 
 use core::cell::Cell;
 use core::ffi::{c_char, c_int, c_void};
@@ -225,7 +225,7 @@ impl SocketGroup {
         options: c_int,
         socket_ext_size: c_int,
     ) -> ConnectResult {
-        // context.c writes 1 here on the synchronous path (DNS already resolved
+        // context.cpp writes 1 here on the synchronous path (DNS already resolved
         // → real `us_socket_t*` returned), 0 when it hands back a
         // `us_connecting_socket_t*` placeholder. Named to match the C side so
         // the branches read the right way round — see PR review #3161005603.

@@ -663,7 +663,7 @@ pub(crate) fn open_in_editor<'a>(
         let mut editor_choice: Option<Editor> = None;
 
         if let Some(name) = editor_name {
-            if !strings::eql_long(&edit.name, name, true) {
+            if !strings::eql_long(&edit.name, name) {
                 let prev = core::mem::take(edit);
                 edit.name = name.to_vec();
                 edit.detect_editor(env);
@@ -797,7 +797,7 @@ fn resolve_with_args<const IS_FILE_PATH: bool>(
         mode,
     )? {
         Ok(path) => path,
-        Err(err) if err.as_class_ref::<jsc::ResolveMessage>().is_some() => {
+        Err(err) if err.is::<jsc::ResolveMessage>() => {
             return Ok(Resolved::NotFound(err));
         }
         // e.g. an onResolve plugin returned an invalid result

@@ -26,8 +26,6 @@ use bun_resolver::compiled_program::{
 };
 use bun_sourcemap as SourceMap;
 use bun_sourcemap::SerializedSourceMap::SerializedSourceMap;
-#[cfg(windows)]
-use bun_sys::FdExt as _;
 use bun_sys::{self as Syscall, E, Fd, Stat};
 
 use crate::compiled_program::{self, CompiledProgramInput, ImagePlace, Payload};
@@ -2386,9 +2384,11 @@ struct UnfinishedCopy<'a> {
 }
 
 impl<'a> UnfinishedCopy<'a> {
-    fn new(fd: Fd, name: &'a ZStr) -> Self {
-        let file = Some(ExecutableFile(fd));
-        Self { file, name }
+    fn new(file: ExecutableFile, name: &'a ZStr) -> Self {
+        Self {
+            file: Some(file),
+            name,
+        }
     }
 }
 
@@ -2424,22 +2424,10 @@ impl<'a> Injected<'a> {
     }
 }
 
-pub(crate) struct ExecutableFile(Fd);
-
-impl ExecutableFile {
-    fn fd(&self) -> Fd {
-        self.0
-    }
-}
-
-impl Drop for ExecutableFile {
-    fn drop(&mut self) {
-        #[cfg(unix)]
-        bun_sys::close_on_fork::close(self.0);
-        #[cfg(windows)]
-        self.0.close();
-    }
-}
+#[cfg(unix)]
+type ExecutableFile = bun_sys::close_on_fork::File;
+#[cfg(windows)]
+type ExecutableFile = bun_sys::File;
 
 pub(crate) fn inject<'a>(
     payload: &mut PayloadParts<'_>,
@@ -2536,7 +2524,7 @@ pub(crate) fn inject<'a>(
                     ..Default::default()
                 },
             ) {
-                Ok(f) => f,
+                Ok(fd) => ExecutableFile::from_fd(fd),
                 Err(e) => {
                     bun_core::pretty_errorln!(
                         "<r><red>error<r><d>:<r> failed to open temporary file to copy bun into\n{}",
@@ -2546,7 +2534,7 @@ pub(crate) fn inject<'a>(
                 }
             };
 
-            break 'brk (file, UnfinishedCopy::new(file, zname));
+            break 'brk (file.fd(), UnfinishedCopy::new(file, zname));
         }
 
         #[cfg(target_os = "macos")]
@@ -2554,10 +2542,9 @@ pub(crate) fn inject<'a>(
             // if we're on a mac, use clonefile() if we can
             // failure is okay, clonefile is just a fast path.
             if let bun_sys::Result::Ok(()) = Syscall::clonefile(self_exe, zname) {
-                if let bun_sys::Result::Ok(res) =
-                    Syscall::open(zname, bun_sys::O::RDWR | bun_sys::O::CLOEXEC, 0)
-                {
-                    break 'brk (res, UnfinishedCopy::new(res, zname));
+                let flags = bun_sys::O::RDWR | bun_sys::O::CLOEXEC;
+                if let Ok(file) = ExecutableFile::openat(Fd::cwd(), zname, flags, 0) {
+                    break 'brk (file.fd(), UnfinishedCopy::new(file, zname));
                 }
             }
         }
@@ -2565,10 +2552,10 @@ pub(crate) fn inject<'a>(
         // otherwise, just copy the file
 
         #[cfg(not(windows))]
-        let fd: Fd = 'brk2: {
+        let file = 'brk2: {
             let mut tried_changing_abs_dir = false;
             for retry in 0..3 {
-                match bun_sys::close_on_fork::openat(
+                match ExecutableFile::openat(
                     Fd::cwd(),
                     zname,
                     bun_sys::O::CLOEXEC | bun_sys::O::RDWR | bun_sys::O::CREAT | bun_sys::O::EXCL,
@@ -2626,7 +2613,7 @@ pub(crate) fn inject<'a>(
             unreachable!()
         };
         #[cfg(not(windows))]
-        let copy = UnfinishedCopy::new(fd, zname);
+        let (fd, copy) = (file.fd(), UnfinishedCopy::new(file, zname));
         #[cfg(not(windows))]
         let template = 'brk2: {
             for retry in 0..3 {

@@ -54,8 +54,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
 
         if in_.assign_target != js_ast::AssignTarget::None && !self.is_valid_assignment_target(e) {
-            self.log()
-                .add_error(Some(self.source), e.loc, b"Invalid assignment target");
+            self.report_invalid_assignment_target(e);
         }
 
         // Explicit match over the tags that have a visitor defined below.

@@ -4558,7 +4558,10 @@ describe("bundler", () => {
     },
     format: "esm",
     bundleErrors: {
-      "/dep.cjs": ["Invalid assignment target", "Invalid assignment target"],
+      "/dep.cjs": [
+        'Assignments to "eval" cannot be used with the ESM output format due to strict mode',
+        'Assignments to "arguments" cannot be used with the ESM output format due to strict mode',
+      ],
     },
   });
   itBundled("edgecase/SloppyEvalAssignmentCJSOutput", {

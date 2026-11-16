@@ -1126,6 +1126,7 @@ pub struct ParsedPath<'a> {
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum StrictModeFeature {
+    AssignToEvalOrArguments,
     DeleteBareName,
     EvalOrArguments,
     ForInVarInit,

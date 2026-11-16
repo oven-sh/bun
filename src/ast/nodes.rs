@@ -1161,11 +1161,21 @@ pub struct NamedExport {
 #[strum(serialize_all = "snake_case")]
 pub enum StrictModeKind {
     SloppyMode,
+    /// `import.meta` and no other module syntax: Bun runs such a file as CommonJS when it uses `module`.
+    ImplicitStrictModeImportMeta,
     ExplicitStrictMode,
     ImplicitStrictModeImport,
     ImplicitStrictModeExport,
     ImplicitStrictModeTopLevelAwait,
     ImplicitStrictModeClass,
+}
+
+impl StrictModeKind {
+    /// Whether the parser reports the early errors of strict code here. The engine reports them for `import.meta` alone.
+    #[inline]
+    pub fn has_early_errors(self) -> bool {
+        !matches!(self, Self::SloppyMode | Self::ImplicitStrictModeImportMeta)
+    }
 }
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq, strum::IntoStaticStr)]

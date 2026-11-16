@@ -453,7 +453,6 @@ describe("strict mode early errors", () => {
       ["'\\00'; export {}", "Legacy octal escape sequences cannot be used in an ECMAScript module"],
       ["'\\09'; export {}", "Legacy octal escape sequences cannot be used in an ECMAScript module"],
       ["'\\009'; export {}", "Legacy octal escape sequences cannot be used in an ECMAScript module"],
-      ["import.meta; with (y) z", "With statements cannot be used in an ECMAScript module"],
       ["import 'x'; with (y) z", "With statements cannot be used in an ECMAScript module"],
       ["import * as x from 'x'; with (y) z", "With statements cannot be used in an ECMAScript module"],
       ["import x from 'x'; with (y) z", "With statements cannot be used in an ECMAScript module"],
@@ -468,6 +467,19 @@ describe("strict mode early errors", () => {
       ["with (y) z; for await (x of y);", "With statements cannot be used in an ECMAScript module"],
     ];
     test.each(cases)("%j", (code, message) => expectParseError(code, message));
+
+    // Bun runs a file that has `import.meta` and `module` as CommonJS, which is sloppy code.
+    test("import.meta alone does not make the file a module", () => {
+      expectNoParseError("import.meta; with (y) z");
+      expectNoParseError("module.exports = import.meta.dir; var n = 010, s = '\\1'; delete n; eval = 1");
+      expectNoParseError("import.meta; function f(a, a) {} function g() {} function g() {}");
+      expectParseError("import.meta; class A { m() { with (y) z } }", "With statements cannot be used in strict mode");
+      expectParseError(
+        "import.meta; function f() { 'use strict'; return 010 }",
+        "Legacy octal literals cannot be used in strict mode",
+      );
+      expectParseError("import.meta; with (y) z; export {}", "With statements cannot be used in an ECMAScript module");
+    });
 
     test("dynamic import does not make the file a module", () => {
       expectNoParseError("import(x); with (y) z");
@@ -696,6 +708,31 @@ describe("sloppy CommonJS runs as written", () => {
     expect(stdout).toBe(
       JSON.stringify([2, 0, "\u0001", "\u0001", "a\u0007", "\u00008", "\u00009", "8", 8, "foo", false, 1]) + "\n",
     );
+    expect(exitCode).toBe(0);
+  });
+
+  test.concurrent("a CommonJS file that reads import.meta", async () => {
+    using dir = tempDir("strict-mode-import-meta", {
+      "meta.cjs": `
+        module.exports.dir = import.meta.dir;
+        var n = 010, s = "\\1";
+        function init() { return 1; } function init() { return 2; }
+        var x = 1, o = { a: 5 }, w;
+        with (o) { w = a; }
+        function f(a, a) { return a; }
+        eval = 3;
+        console.log(JSON.stringify([n, s, init(), delete x, w, f(1, 2), eval, typeof module.exports.dir]));
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "meta.cjs"],
+      env: bunEnv,
+      cwd: String(dir),
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toBe(JSON.stringify([8, "\u0001", 2, false, 5, 2, 3, "string"]) + "\n");
     expect(exitCode).toBe(0);
   });
 

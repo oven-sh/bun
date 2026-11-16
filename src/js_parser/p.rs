@@ -3284,6 +3284,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         self.fn_or_arrow_data_visit.is_outside_fn_or_arrow = true;
         self.module_scope = self.current_scope;
         self.has_es_module_syntax = self.has_es_module_syntax
+            || self.has_import_meta
             || self.esm_import_keyword.len > 0
             || self.esm_export_keyword.len > 0
             || self.top_level_await_keyword.len > 0;
@@ -3370,6 +3371,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         } else if self.top_level_await_keyword.len > 0 {
             self.module_scope_mut()
                 .recursive_set_strict_mode(js_ast::StrictModeKind::ImplicitStrictModeTopLevelAwait);
+        } else if self.has_import_meta {
+            self.module_scope_mut()
+                .recursive_set_strict_mode(js_ast::StrictModeKind::ImplicitStrictModeImportMeta);
         }
 
         self.hoist_symbols(self.module_scope_ref());
@@ -3460,8 +3464,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     fn report_duplicate_function_declarations(&mut self) {
         for (scope, replaced) in core::mem::take(&mut self.replaced_functions) {
             let is_module_top_level = scope.parent.is_none() && self.is_file_considered_esm();
-            let is_strict_block = scope.strict_mode != js_ast::StrictModeKind::SloppyMode
-                && scope.kind == js_ast::scope::Kind::Block;
+            let is_strict_block =
+                scope.strict_mode.has_early_errors() && scope.kind == js_ast::scope::Kind::Block;
             if !is_module_top_level && !is_strict_block {
                 continue;
             }
@@ -4928,6 +4932,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             )
             .into_bump_str()
             .as_bytes(),
+            StrictModeFeature::AssignToEvalOrArguments => bun_alloc::arena_format!(
+                in self.arena,
+                "Assignments to \"{}\"",
+                bstr::BStr::new(detail)
+            )
+            .into_bump_str()
+            .as_bytes(),
             StrictModeFeature::ReservedWord => bun_alloc::arena_format!(
                 in self.arena,
                 "\"{}\" is a reserved word and",
@@ -4941,7 +4952,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             StrictModeFeature::LabelFunctionStmt => b"Function declarations inside labels",
         };
 
-        if scope.strict_mode != js_ast::StrictModeKind::SloppyMode {
+        if scope.strict_mode.has_early_errors() {
             let (where_, notes) = self.why_strict_mode(scope);
             self.log().add_range_error_fmt_with_notes(
                 Some(self.source),
@@ -4992,7 +5003,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             | js_ast::StrictModeKind::ImplicitStrictModeTopLevelAwait => {
                 (b"in an ECMAScript module", self.why_es_module())
             }
-            js_ast::StrictModeKind::SloppyMode => (b"in strict mode", Box::new([])),
+            js_ast::StrictModeKind::SloppyMode
+            | js_ast::StrictModeKind::ImplicitStrictModeImportMeta => {
+                (b"in strict mode", Box::new([]))
+            }
         }
     }
 
@@ -5018,9 +5032,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         )])
     }
 
+    /// Strict code whose early errors the parser reports: see `StrictModeKind::has_early_errors`.
     #[inline]
     pub(crate) fn is_strict_mode(&self) -> bool {
-        self.current_scope().strict_mode != js_ast::StrictModeKind::SloppyMode
+        self.current_scope().strict_mode.has_early_errors()
     }
 
     #[inline]
@@ -5300,7 +5315,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             // A scope that the parser discarded (the one of `("\1")`) is as strict as the scope around it.
             let mut strict_scope = Some(scope);
             while let Some(scope) = strict_scope {
-                if scope.strict_mode != js_ast::StrictModeKind::SloppyMode {
+                if scope.strict_mode.has_early_errors() {
                     self.mark_strict_mode_feature_in(scope, feature, range, b"");
                     break;
                 }
@@ -5363,7 +5378,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let mut reported: Vec<Ref> = Vec::new();
         let mut scopes = vec![self.module_scope_ref()];
         while let Some(scope) = scopes.pop() {
-            if scope.strict_mode != js_ast::StrictModeKind::SloppyMode {
+            if scope.strict_mode.has_early_errors() {
                 continue;
             }
             scopes.extend(
@@ -6243,6 +6258,26 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
 
         None
+    }
+
+    #[cold]
+    #[inline(never)]
+    pub(crate) fn report_invalid_assignment_target(&mut self, expr: &Expr) {
+        // Sloppy code can assign to `eval` and `arguments`: the cause is then the ESM output.
+        if let js_ast::ExprData::EIdentifier(ident) = &expr.data
+            && !self.is_strict_mode()
+        {
+            let name = self.load_name_from_ref(ident.ref_);
+            self.mark_strict_mode_feature(
+                StrictModeFeature::AssignToEvalOrArguments,
+                js_lexer::range_of_identifier(self.source, expr.loc),
+                name,
+            )
+            .expect("unreachable");
+            return;
+        }
+        self.log()
+            .add_error(Some(self.source), expr.loc, b"Invalid assignment target");
     }
 
     // PERF: takes `&Expr` — `Expr` inlines `ExprData`, so a by-value pass copies

@@ -1791,13 +1791,6 @@ fn plane_is_too_short() {
 fn images() {
     for t in texts(MIXED) {
         let pixels: &[[u8; 4]] = t.as_chunks().0;
-        let times = |a: u8, k: u8| ((u32::from(a) * u32::from(k) + 127) / 255) as u8;
-        let rgba = |&[c, m, y, k]: &[u8; 4]| [times(c, k), times(m, k), times(y, k), 255];
-        check(pixels.iter().map(rgba).collect(), || {
-            let mut out = pixels.to_vec();
-            kernels::cmyk_to_rgba(&mut out);
-            out
-        });
         let grey_doubled = |&[r, _, _, a]: &[u8; 4]| {
             let doubled = r.saturating_mul(2);
             ([r, r, r, a], [doubled, doubled, doubled, a])
@@ -1814,7 +1807,7 @@ fn images() {
         {
             check_against_portable(|| {
                 filled(19 * 3, |out| {
-                    kernels::resize(Filter::Lanczos3, &pixels[..7 * height], 7, out, 19)
+                    kernels::resize(Filter::Lanczos3, &pixels[..7 * height], 7, out, 19).unwrap()
                 })
             });
         }
@@ -1822,23 +1815,8 @@ fn images() {
     for filter in sample(Filter::ALL, 9) {
         check(vec![[77; 4]; 13 * 5], || {
             filled(13 * 5, |out| {
-                kernels::resize(filter, &[[77; 4]; 21 * 9], 21, out, 13)
+                kernels::resize(filter, &[[77; 4]; 21 * 9], 21, out, 13).unwrap()
             })
-        });
-    }
-}
-
-#[test]
-#[cfg_attr(miri, ignore = "slow")]
-fn each_amount_of_ink() {
-    let pixels: Vec<_> = (0..=u16::MAX).map(u16::to_le_bytes).collect();
-    let times = |a: u8, k: u8| (f64::from(a) * f64::from(k) / 255.0).round() as u8;
-    let rgba = |&[a, k]: &[u8; 2]| [times(a, k), times(!a, k), times(a ^ 0x55, k), 255];
-    for size in [3, 16, 1000] {
-        check(pixels.iter().map(rgba).collect(), || {
-            let mut out: Vec<_> = pixels.iter().map(|&[a, k]| [a, !a, a ^ 0x55, k]).collect();
-            out.chunks_mut(size).for_each(kernels::cmyk_to_rgba);
-            out
         });
     }
 }
@@ -1956,14 +1934,17 @@ fn resized_lines() {
         for filter in Filter::ALL {
             let want = resampled(filter, &line, to);
             for target in targets() {
-                let row = filled(to, |out| kernels::resize(filter, &line, from, out, to));
+                let row = filled(to, |out| {
+                    kernels::resize(filter, &line, from, out, to).unwrap()
+                });
                 assert_eq!(row.len(), to);
                 for (&got, want) in row.as_flattened().iter().zip(want.as_flattened()) {
                     let error = (f64::from(got) - want).abs();
                     assert!(error < 0.7, "{target:?} {filter:?} {from} {to} {error}");
                 }
                 assert_eq!(
-                    filled(7 * to, |out| kernels::resize(filter, &columns, 7, out, 7)),
+                    filled(7 * to, |out| kernels::resize(filter, &columns, 7, out, 7)
+                        .unwrap()),
                     row.iter().flat_map(|&pixel| [pixel; 7]).collect::<Vec<_>>(),
                 );
             }
@@ -1985,7 +1966,9 @@ fn resized_images() {
     check(want, || {
         Filter::ALL.map(|filter| {
             let resize = |[src_w, w, h]: [usize; 3]| {
-                filled(w * h, |out| kernels::resize(filter, &src, src_w, out, w))
+                filled(w * h, |out| {
+                    kernels::resize(filter, &src, src_w, out, w).unwrap()
+                })
             };
             let all = [
                 [37, 90, 70],

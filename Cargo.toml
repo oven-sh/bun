@@ -88,6 +88,7 @@ members = [
   "src/ast",
   "src/ast_jsc",
   "src/png",
+  "src/jpeg",
   "src/s3_signing",
   "src/sql_jsc",
   "src/zlib",
@@ -467,6 +468,7 @@ bun_libuv_sys = { path = "src/libuv_sys" }
 bun_ast = { path = "src/ast" }
 bun_ast_jsc = { path = "src/ast_jsc" }
 bun_png = { path = "src/png" }
+bun_jpeg = { path = "src/jpeg" }
 bun_s3_signing = { path = "src/s3_signing" }
 bun_sql_jsc = { path = "src/sql_jsc" }
 bun_zlib = { path = "src/zlib" }
@@ -525,6 +527,8 @@ bun_which = { path = "src/which" }
 # Loops over every byte of an image: unoptimized, a debug build takes seconds per megapixel. Assertions and overflow
 # checks stay on.
 [profile.dev.package.bun_png]
+opt-level = 3
+[profile.dev.package.bun_jpeg]
 opt-level = 3
 
 # Runs for every line of a response head and every chunk of a body.

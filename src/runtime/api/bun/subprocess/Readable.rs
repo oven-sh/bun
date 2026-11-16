@@ -1,7 +1,7 @@
 use core::mem;
 use core::ptr::NonNull;
 
-use bun_jsc::{JSGlobalObject, JSValue, JsResult, event_loop::EventLoop};
+use bun_jsc::{JSGlobalObject, JSValue, JsCell, JsResult, event_loop::EventLoop};
 use bun_sys::{self, Fd};
 
 use crate::node::types::FdJsc as _;
@@ -16,6 +16,7 @@ use super::{StdioResult, Subprocess};
 
 pub(crate) enum Readable {
     Fd(Fd),
+    /// Becomes `Buffer` or `Errored` when the read ends.
     Pipe(RefPtr<PipeReader>),
     Inherit,
     Ignore,
@@ -27,17 +28,12 @@ pub(crate) enum Readable {
 }
 
 impl Readable {
-    /// Mutable borrow of the `Pipe` payload's `PipeReader`.
-    ///
-    /// `RefPtr` deliberately has no `DerefMut`; what makes `&mut` sound here
-    /// is that `Readable::Pipe` holds the owning ref for the variant's
-    /// lifetime, the reader lives in its own heap allocation disjoint from
-    /// `Readable`/`Subprocess`, and access is single-JS-mutator-thread.
-    #[inline]
-    #[allow(clippy::mut_from_ref)]
-    pub(in crate::api) fn pipe_reader_mut(pipe: &RefPtr<PipeReader>) -> &mut PipeReader {
-        // SAFETY: see fn doc — owning RefPtr, heap-disjoint, single-thread.
-        unsafe { &mut *pipe.as_ptr() }
+    /// A ref of the caller's own, for a call that can end the read and so replace `self`.
+    pub(crate) fn pipe(&self) -> Option<RefPtr<PipeReader>> {
+        match self {
+            Readable::Pipe(pipe) => Some(pipe.clone()),
+            _ => None,
+        }
     }
 
     pub(crate) fn memory_cost(&self) -> usize {
@@ -49,27 +45,18 @@ impl Readable {
     }
 
     pub(crate) fn has_pending_activity(&self) -> bool {
-        match self {
-            Readable::Pipe(pipe) => pipe.has_pending_activity(),
-            _ => false,
+        matches!(self, Readable::Pipe(_))
+    }
+
+    pub(crate) fn ref_(&self) {
+        if let Readable::Pipe(pipe) = self {
+            pipe.update_ref(true);
         }
     }
 
-    pub(crate) fn ref_(&mut self) {
-        match self {
-            Readable::Pipe(pipe) => {
-                Self::pipe_reader_mut(pipe).update_ref(true);
-            }
-            _ => {}
-        }
-    }
-
-    pub(crate) fn unref(&mut self) {
-        match self {
-            Readable::Pipe(pipe) => {
-                Self::pipe_reader_mut(pipe).update_ref(false);
-            }
-            _ => {}
+    pub(crate) fn unref(&self) {
+        if let Readable::Pipe(pipe) = self {
+            pipe.update_ref(false);
         }
     }
 
@@ -125,14 +112,10 @@ impl Readable {
         }
     }
 
-    pub(crate) fn close(&mut self) {
-        match self {
-            Readable::Fd(_) => {
-                *self = Readable::Closed;
-            }
-            Readable::Pipe(pipe) => {
-                Self::pipe_reader_mut(pipe).close();
-            }
+    pub(crate) fn close(this: &JsCell<Self>) {
+        match this.get() {
+            Readable::Fd(_) => this.set(Readable::Closed),
+            Readable::Pipe(pipe) => PipeReader::close(&pipe.clone()),
             _ => {}
         }
     }
@@ -146,12 +129,7 @@ impl Readable {
                 let Readable::Pipe(pipe) = mem::replace(self, Readable::Closed) else {
                     unreachable!()
                 };
-                let reader = Self::pipe_reader_mut(&pipe);
-                reader.process = None;
-                #[cfg(unix)]
-                if let Some(_start_ref) = reader.start_ref.take() {
-                    reader.reader.deinit();
-                }
+                pipe.finalize();
             }
             Readable::Buffer(_) | Readable::Errored(..) => {
                 *self = Readable::Closed;
@@ -167,11 +145,7 @@ impl Readable {
                 let Readable::Pipe(pipe) = mem::replace(self, Readable::Closed) else {
                     unreachable!()
                 };
-                let reader = Self::pipe_reader_mut(&pipe);
-                let result = reader.to_js(cx);
-                reader.process = None;
-                drop(reader.start_ref.take());
-                result
+                pipe.to_js(cx)
             }
             Readable::Buffer(_) => {
                 let Readable::Buffer(buffer) = mem::replace(self, Readable::Closed) else {
@@ -201,9 +175,8 @@ impl Readable {
                 let Readable::Pipe(pipe) = mem::replace(self, Readable::Closed) else {
                     unreachable!()
                 };
-                let result = Self::pipe_reader_mut(&pipe).to_buffer(global);
-                Self::pipe_reader_mut(&pipe).process = None;
-                result
+                pipe.detach();
+                Ok(JSValue::UNDEFINED)
             }
             Readable::Buffer(_) => {
                 let Readable::Buffer(buffer) = mem::replace(self, Readable::Closed) else {

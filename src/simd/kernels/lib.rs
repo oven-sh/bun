@@ -36,7 +36,7 @@ pub use hex::simd::{
     decode_hex, decode_hex_to_shared, decode_hex16, decode_hex16_to_shared, encode_hex_lower,
     encode_hex_lower_shared,
 };
-pub use image::simd::{cmyk_to_rgba, flip_horizontally, modulate, nearest_in_palette};
+pub use image::simd::{flip_horizontally, modulate, nearest_in_palette};
 pub use image::{Filter, flip_vertically, resize, rotate_90, rotate_180, rotate_270};
 pub use json::class as json_class;
 pub use json::simd::index_chunk as json_structural_index_chunk;

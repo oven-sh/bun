@@ -1,6 +1,7 @@
 //! Ports of image_resize.cpp. They panic if a width is zero or if `dst` has no room for the result.
-use bun_simd::{Int, Isa, Out, Writer};
+use bun_simd::{Int, Out, Writer};
 use core::array::from_fn;
+use std::collections::TryReserveError;
 
 type Pixel = [u8; 4];
 
@@ -17,7 +18,7 @@ const ROUND: i32 = 1 << (SHIFT - 1);
 
 #[bun_simd::foreach_target]
 pub(crate) mod simd {
-    use isa::{F32, I32, U8, U16, U32, Vector, x128};
+    use isa::{F32, I32, U8, U32, Vector, x128};
 
     /// The rows share the weights and the bounds checks.
     #[inline(always)]
@@ -56,20 +57,35 @@ pub(crate) mod simd {
 
     /// Resamples each row of `src`.
     #[export(up_to = avx2, up_to = neon)]
-    pub fn horizontal(src: &[Pixel], src_w: usize, src_h: usize, axis: &Axis, dst: &mut [Pixel]) {
-        let (taps, dst_w) = (axis.taps(), axis.spans.len());
+    pub fn horizontal<'a>(
+        src: &[Pixel],
+        src_w: usize,
+        axis: &Axis,
+        dst: Out<'a, Pixel>,
+    ) -> &'a mut [Pixel] {
+        let (taps, dst_w, src_h) = (axis.taps(), axis.spans.len(), src.len() / src_w);
         let from = |y: usize| &src[y * src_w..][..src_w];
+        let mut dst = dst.into_writer();
         if src_h < 4 {
             for y in 0..src_h {
-                let to = &mut dst[y * dst_w..][..dst_w];
-                resample_rows([from(y)], taps.clone(), &mut [to]);
+                dst.append(|to| {
+                    let to = zeroed(to, dst_w);
+                    resample_rows([from(y)], taps.clone(), &mut [&mut *to]);
+                    to
+                });
             }
-            return;
+            return dst.finish();
         }
         for y in tiles(src_h) {
-            let to = &mut four_rows_mut(&mut dst[y * dst_w..], dst_w);
-            resample_rows(from_fn(|i| from(y + i)), taps.clone(), to);
+            dst.truncate(y * dst_w);
+            dst.append(|to| {
+                let to = zeroed(to, 4 * dst_w);
+                let from = from_fn(|i| from(y + i));
+                resample_rows(from, taps.clone(), &mut four_rows_mut(to, dst_w));
+                to
+            });
         }
+        dst.finish()
     }
 
     /// For rows of at least `PIXELS`, which have `K * N` bytes.
@@ -202,9 +218,7 @@ pub(crate) mod simd {
                 width - done - rows
             };
             dst.append(|band| {
-                let mut band = band.take(rows * height).into_writer();
-                band.extend_with(0..rows * height, |_| Some([[0; 4]]));
-                let band = band.finish();
+                let band = zeroed(band, rows * height);
                 for y in tiles(height) {
                     let (ab, cd) = src[y * width..][..4 * width].split_at(2 * width);
                     let ((a, b), (c, d)) = (ab.split_at(width), cd.split_at(width));
@@ -298,36 +312,6 @@ pub(crate) mod simd {
         }
     }
 
-    #[export(up_to = neon)]
-    pub fn cmyk_to_rgba(mut pixels: &mut [Pixel]) {
-        if isa::Isa::HAS_INTERLEAVED_MEMORY {
-            let blocks;
-            (blocks, pixels) = pixels.as_chunks_mut();
-            for block in blocks {
-                let [c, m, y, k] = U8::load_interleaved4(block);
-                let times_256_255ths = |t: U16| (t + 128 + ((t + 128) >> 8)).bitcast::<U8>();
-                let times_k = |v: U8| {
-                    let (low, high) = U16::widening_mul(v, k);
-                    times_256_255ths(low).deinterleave(times_256_255ths(high)).1
-                };
-                U8::store_interleaved4(
-                    [times_k(c), times_k(m), times_k(y), U8::splat(0xFF)],
-                    block,
-                );
-            }
-        }
-        U8::map_in_place(pixels.as_flattened_mut(), |v| {
-            let k = v.bitcast::<U32>() >> 24;
-            let k: U16 = (k | k << 16).bitcast();
-            let times_k = |v: U16| {
-                let t = v * k + 128;
-                (t + (t >> 8)) >> 8
-            };
-            let v: U16 = v.bitcast();
-            ((times_k(v & 0xFF) | times_k(v >> 8) << 8).bitcast::<U32>() | 0xFF00_0000).bitcast()
-        });
-    }
-
     #[export(long_running, up_to = neon)]
     pub fn modulate(pixels: &mut [Pixel], brightness: f32, saturation: f32) {
         U8::map_in_place(pixels.as_flattened_mut(), |v| {
@@ -349,6 +333,14 @@ pub(crate) mod simd {
             (modulated(r, 0) | modulated(g, 8) | (modulated(b, 16) | v & 0xFF00_0000)).bitcast()
         });
     }
+}
+
+/// For pixels that are not written in order. They are few enough to stay in the cache.
+#[inline(always)]
+fn zeroed(out: Out<'_, Pixel>, len: usize) -> &mut [Pixel] {
+    let mut out = out.into_writer();
+    out.extend_with(0..len, |_| Some([[0; 4]]));
+    out.finish()
 }
 
 #[inline(always)]
@@ -577,16 +569,20 @@ pub(crate) struct Axis {
 }
 
 impl Axis {
-    fn new(filter: Filter, src_len: usize, dst_len: usize) -> Self {
+    fn new(filter: Filter, src_len: usize, dst_len: usize) -> Result<Self, TryReserveError> {
         let support = filter.radius() / (dst_len as f64 / src_len as f64).min(1.0);
         let stride = (support.ceil() as usize * 2 + 2).min(MAX_TAPS);
-        let (mut spans, mut weights) = (vec![Span::default(); dst_len], vec![0; dst_len * stride]);
+        let (mut spans, mut weights) = (Vec::new(), Vec::new());
+        spans.try_reserve_exact(dst_len)?;
+        weights.try_reserve_exact(dst_len * stride)?;
+        spans.resize(dst_len, Span::default());
+        weights.resize(dst_len * stride, 0);
         build_weights(filter, src_len as i32, &mut spans, &mut weights, stride);
-        Self {
+        Ok(Self {
             spans,
             weights,
             stride,
-        }
+        })
     }
 
     #[inline(always)]
@@ -604,11 +600,12 @@ pub fn resize<'a>(
     src_w: usize,
     dst: Out<'a, Pixel>,
     dst_w: usize,
-) -> &'a mut [Pixel] {
+) -> Result<&'a mut [Pixel], TryReserveError> {
     let src_h = src.len() / src_w;
-    let x = Axis::new(filter, src_w, dst_w);
-    let y = Axis::new(filter, src_h, dst.len() / dst_w);
-    let mut between = vec![[0; 4]; dst_w * src_h];
-    simd::horizontal(src, src_w, src_h, &x, &mut between);
-    simd::vertical(&between, dst_w, &y, dst)
+    let x = Axis::new(filter, src_w, dst_w)?;
+    let y = Axis::new(filter, src_h, dst.len() / dst_w)?;
+    let mut between = Vec::new();
+    between.try_reserve_exact(dst_w * src_h)?;
+    let between = simd::horizontal(src, src_w, &x, between.spare_capacity_mut().into());
+    Ok(simd::vertical(between, dst_w, &y, dst))
 }

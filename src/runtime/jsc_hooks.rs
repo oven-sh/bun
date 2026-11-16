@@ -1584,6 +1584,10 @@ fn console_print_runtime_object_inner<const C: bool>(
         }
         Ok(true)
     }
+    fn timeout_id_and_kind(value: JSValue) -> Option<(u64, crate::timer::Kind)> {
+        let timer = value.as_class_ref::<crate::timer::TimeoutObject>()?;
+        Some((timer.internals.id, timer.internals.flags.get().kind()))
+    }
     let global = formatter.global_this;
 
     if let Some(response) = value.as_class_ref::<Response>() {
@@ -1640,12 +1644,10 @@ fn console_print_runtime_object_inner<const C: bool>(
         }
         // Spec falls through (no `return`) when `toJSON` is absent.
     }
-    if let Some(timer) = value.as_class_ref::<crate::timer::TimeoutObject>() {
-        let internals = &timer.internals;
-        let id = internals.id;
+    if let Some((id, kind)) = timeout_id_and_kind(value) {
         formatter.add_for_new_line("Timeout(# ) ".len() + bun_core::fmt::digit_count(id));
         let mut w = AsFmt::new(writer_);
-        if internals.flags.get().kind() == crate::timer::Kind::SetInterval {
+        if kind == crate::timer::Kind::SetInterval {
             formatter.add_for_new_line("repeats ".len() + bun_core::fmt::digit_count(id));
             let _ = write!(
                 w,
@@ -4660,27 +4662,13 @@ pub(crate) extern "C" fn Bun__resolveAndFetchBuiltinModule(
 
 // Note: the event-loop per-task bodies (`__bun_run_immediate_task` /
 // `__bun_run_wtf_timer`) live in [`crate::dispatch`] alongside the other
-// §Dispatch hot-path bodies (`__bun_tick_queue_with_count` / `__bun_run_file_poll`).
+// §Dispatch hot-path bodies (`__bun_tick_queue_with_count` / `__bun_run_io`).
 
-/// `bun_io::__bun_get_vm_ctx` body — recover the global event-loop context
-/// for the requested arm. Declared
+/// `bun_io::__bun_get_vm_ctx` body. Declared
 /// `extern "Rust"` in `bun_io::posix_event_loop`; link-time resolved.
 #[unsafe(no_mangle)]
-fn __bun_get_vm_ctx(kind: bun_io::AllocatorType) -> bun_io::EventLoopCtx {
-    match kind {
-        bun_io::AllocatorType::Js => VirtualMachine::get().loop_ctx(),
-        bun_io::AllocatorType::SpawnSync => VirtualMachine::get()
-            .rare_data()
-            .existing_spawn_sync_event_loop()
-            .expect("a FilePoll of the spawnSync loop outlived it")
-            .event_loop()
-            .event_loop_ctx(),
-        bun_io::AllocatorType::Mini => {
-            let mini = bun_event_loop::MiniEventLoop::GLOBAL.with(|g| g.get());
-            // SAFETY: set before anything on this thread polls on a mini loop.
-            unsafe { mini.unwrap_unchecked() }.as_event_loop_ctx()
-        }
-    }
+fn __bun_get_vm_ctx() -> bun_io::EventLoopCtx {
+    VirtualMachine::get().loop_ctx()
 }
 
 /// `dateForHeader`: wrap the header bytes in a

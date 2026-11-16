@@ -30,6 +30,7 @@ use bun_jsc::{
 use bun_ptr::{AliasableBox, CellExt as _, RefPtr};
 
 use crate::generated_bindgen::h2_frame_parser::js_H2FrameParser as js;
+use crate::generated_bindgen::socket_body::{js_TCPSocket, js_TLSSocket};
 
 bun_output::declare_scope!(H2FrameParser, visible);
 
@@ -50,11 +51,9 @@ enum BunSocket {
 
 impl BunSocket {
     fn from_js(value: JSValue) -> Option<Self> {
-        if let Some(socket) = value.as_class_this_ptr::<TLSSocket>() {
-            return Some(Self::Tls(RefPtr::from_this(socket)));
-        }
-        let socket = value.as_class_this_ptr::<TCPSocket>()?;
-        Some(Self::Tcp(RefPtr::from_this(socket)))
+        js_TLSSocket::ref_from_js(value)
+            .map(Self::Tls)
+            .or_else(|| js_TCPSocket::ref_from_js(value).map(Self::Tcp))
     }
 
     fn write_maybe_corked(&self, buf: &[u8]) -> i32 {

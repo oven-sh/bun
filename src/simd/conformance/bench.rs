@@ -792,7 +792,6 @@ fn images() {
     let image: &Vec<[u8; 4]> = &(0..WIDTH * 768).map(pixel).collect();
     for n in [3, 16, 25, 4096, image.len()] {
         let pixels = &mut image[..n].to_vec();
-        compare!("cmyk_to_rgba {n} px", |k| k::cmyk_to_rgba(opaque(pixels)));
         compare!("modulate {n} px", |k| k::modulate(opaque(pixels), 1.0, 1.0));
     }
     let [above, row] = [299, 300].map(|y| &image[y * WIDTH..][..WIDTH]);

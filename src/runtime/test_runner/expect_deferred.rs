@@ -622,10 +622,8 @@ impl ExpectDeferred {
         js::promise_set_cached(thrown, global, promise);
         js::call_site_set_cached(thrown, global, ExpectDeferred__captureCallSite(global));
         ExpectDeferred__callWhenSettled(global, awaited, when_settled, thrown);
-        if let Some(this) = Self::from_js(thrown) {
-            // SAFETY: `thrown` is on the stack and owns the payload.
-            unsafe { &*this }
-                .held
+        if let Some(this) = Self::from_js(&thrown) {
+            this.held
                 .set(RunningEntry::of(expect).map(|entry| entry.hold(global, thrown)));
         }
         Ok(promise)
@@ -633,14 +631,12 @@ impl ExpectDeferred {
 
     fn run_again(global: &JSGlobalObject, deferred: JSValue) -> JsResult<()> {
         let (Some(this), Some(call), Some(promise)) = (
-            Self::from_js(deferred),
+            Self::from_js(&deferred),
             js::call_get_cached(deferred),
             js::promise_get_cached(deferred),
         ) else {
             return Ok(());
         };
-        // SAFETY: `deferred` is an argument of the running call, and owns `this`.
-        let this = unsafe { &*this };
         if this.is_abandoned.get() {
             return Ok(());
         }
@@ -737,11 +733,10 @@ impl ExpectDeferred {
     ) {
         let mut index = 0;
         while let Some(deferred) = buntest.unclaimed.next_call(&mut index) {
-            let Some(this) = Self::from_js(deferred) else {
+            let Some(this) = Self::from_js(&deferred) else {
                 continue;
             };
-            // SAFETY: `unclaimed` keeps the wrapper, which owns the payload, alive.
-            let held_by = unsafe { &*this }.held.with_taken(|held| held.as_ref().map(|held| held.entry));
+            let held_by = this.held.with_taken(|held| held.as_ref().map(|held| held.entry));
             let is_held = match (held_by, group_index) {
                 (
                     Some(RefDataValue::Execution {
@@ -759,8 +754,7 @@ impl ExpectDeferred {
             }
             let is_handled = js::promise_get_cached(deferred)
                 .is_some_and(ExpectDeferred__isHandled);
-            // SAFETY: as above; `deferred` is on the stack.
-            crate::dispatch::fold(unsafe { &*this }.abandon(global, deferred, Some(buntest)));
+            crate::dispatch::fold(this.abandon(global, deferred, Some(buntest)));
             if is_handled {
                 continue;
             }
@@ -797,11 +791,9 @@ impl ExpectDeferred {
     pub(crate) fn settle_ended(buntest: &BunTest, global: &JSGlobalObject) -> JsResult<()> {
         let mut index = 0;
         while let Some(deferred) = buntest.unclaimed.next_call(&mut index) {
-            let Some(this) = Self::from_js(deferred) else {
+            let Some(this) = Self::from_js(&deferred) else {
                 continue;
             };
-            // SAFETY: `unclaimed` keeps the wrapper, which owns the payload, alive; then `deferred`, on the stack, does.
-            let this = unsafe { &*this };
             if this.held.with_taken(|held| held.as_ref().is_none_or(RunningEntry::is_running)) {
                 continue;
             }

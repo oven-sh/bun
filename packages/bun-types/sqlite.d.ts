@@ -294,8 +294,7 @@ declare module "bun:sqlite" {
      * garbage collected, and the underlying connection is released after the
      * last one (`sqlite3_close_v2`). With `throwOnError: true`, every
      * outstanding statement is finalized, the connection is released
-     * immediately (`sqlite3_close`), and an error is thrown if SQLite fails
-     * to close it.
+     * immediately, and an error is thrown if SQLite fails to close it.
      *
      * It is safe to call this method multiple times. If the database is
      * already closed, this is a no-op. Creating new statements after close

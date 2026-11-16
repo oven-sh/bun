@@ -185,6 +185,27 @@ describe("bundler", () => {
       },
     });
   }
+  // --bytecode selects cjs output. A wrapped CommonJS file that starts with "use strict"
+  // keeps the directive in its wrapper, so the embedded bytecode runs it as strict code.
+  itBundled("compile/BytecodeKeepsUseStrictOfWrappedCommonJS", {
+    compile: true,
+    bytecode: true,
+    files: {
+      "/entry.mjs": /* js */ `
+        import strict from "./strict.cjs";
+        import sloppy from "./sloppy.cjs";
+        console.log(strict, sloppy);
+      `,
+      "/strict.cjs": /* js */ `
+        "use strict";
+        module.exports = (function () { return this === undefined; })();
+      `,
+      "/sloppy.cjs": /* js */ `
+        module.exports = (function () { return this === undefined; })();
+      `,
+    },
+    run: { stdout: "true false" },
+  });
   // ESM bytecode test matrix: each scenario × {default, minified} = 2 tests per scenario.
   // With --compile, static imports are inlined into one chunk, but dynamic imports
   // create separate modules in the standalone graph — each with its own bytecode + ModuleInfo.
@@ -437,6 +458,21 @@ describe("bundler", () => {
     outfile: "dist/out",
     run: { stdout: "Hello, world!" },
   });
+  // Two modules with the same bytes. The executable reads each by its own type.
+  for (const order of ["file-first", "text-first"]) {
+    const imports = [`import path from "./t.txt" with { type: "file" };`, `import text from "./t.txt";`];
+    itBundled(`compile/FileAndTextOfOneFile/${order}`, {
+      compile: true,
+      files: {
+        "/entry.ts": /* js */ `
+          ${(order === "file-first" ? imports : imports.reverse()).join("\n")}
+          console.log(path.endsWith(".txt"), text, await Bun.file(path).text());
+        `,
+        "/t.txt": "hello world",
+      },
+      run: { stdout: "true hello world hello world" },
+    });
+  }
   // A file imported with { type: "file" } is embedded byte for byte, whatever it begins with and whatever its extension.
   itBundled("compile/EmbeddedFileKeepsItsBytes", {
     compile: true,

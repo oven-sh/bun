@@ -486,7 +486,6 @@ impl<'a> Lexer<'a> {
     pub(crate) fn text_of(&self, atom: Atom) -> &[u8] {
         match self.names.is_own() {
             true => self.names.bytes(atom, self.src),
-            false if atom.is_none() => b"",
             false => self.atoms.bytes(atom),
         }
     }

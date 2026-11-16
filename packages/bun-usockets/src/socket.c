@@ -364,7 +364,7 @@ static struct us_socket_t *us_internal_socket_close_and_notify(struct us_socket_
 /* Bypasses the SSL layer entirely — the public us_socket_close() routes through
  * us_internal_ssl_close() first so a client-initiated close sends close_notify and (with
  * code==0) waits for the peer's, instead of slamming the fd shut and racing the peer's
- * handshake/secureConnection event. openssl.c re-enters here once that graceful path is done. */
+ * handshake/secureConnection event. openssl.cpp re-enters here once that graceful path is done. */
 struct us_socket_t *us_internal_socket_close_raw(struct us_socket_t *s, int code, void *reason) {
     /* Not an error a connect can fail with, so the holder can tell the two apart. */
     return us_internal_socket_close_and_notify(s, code, reason, LIBUS_ECANCELED);
@@ -683,7 +683,7 @@ int us_socket_raw_writev(struct us_socket_t *s, const struct us_iovec_t *iov, in
 }
 
 int us_internal_socket_raw_write(struct us_socket_t *s, const char *data, int length, int *fatal_send_error) {
-    /* Bypass-TLS path: openssl.c uses this to flush close_notify *after*
+    /* Bypass-TLS path: openssl.cpp uses this to flush close_notify *after*
      * SSL_shutdown() has marked the SSL layer shut down, so checking
      * us_socket_is_shut_down() here would deadlock the alert in userspace.
      * Gate only on fd close and TCP-level FIN. */

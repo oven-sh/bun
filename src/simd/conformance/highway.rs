@@ -21,7 +21,6 @@ unsafe extern "C" {
         b: i32,
         a: i32,
     ) -> u32;
-    fn bun_image_cmyk_to_rgba8(bytes: *mut u8, len: usize);
     fn bun_image_modulate_rgba8(bytes: *mut u8, len: usize, brightness: f32, saturation: f32);
     safe fn bun_image_resize_scratch_size(
         src_w: i32,
@@ -221,12 +220,6 @@ pub(crate) fn bswap32(bytes: &mut [u8]) {
 pub(crate) fn bswap64(bytes: &mut [u8]) {
     // SAFETY: reads and writes `bytes`.
     unsafe { highway_bswap64(bytes.as_mut_ptr(), bytes.len() & !7) }
-}
-
-#[inline(always)]
-pub(crate) fn cmyk_to_rgba(pixels: &mut [[u8; 4]]) {
-    // SAFETY: reads and writes `pixels`.
-    unsafe { bun_image_cmyk_to_rgba8(pixels.as_mut_ptr().cast(), size_of_val(pixels)) }
 }
 
 #[inline(always)]

@@ -39,6 +39,7 @@
 //! call (an unknown name is a compile error from the generated macro; a
 //! missing one surfaces as a link error naming
 //! `__bun_dispatch__<Iface>__<Variant>__<method>`).
+//! A `#[cfg]` on a method of the interface also covers its body in each `link_impl_*!`.
 
 use proc_macro::TokenStream;
 use quote::{format_ident, quote};
@@ -46,8 +47,8 @@ use syn::fold::Fold;
 use syn::parse::{Parse, ParseStream};
 use syn::punctuated::Punctuated;
 use syn::{
-    Ident, Lifetime, ReturnType, Token, Type, TypeReference, Visibility, braced, bracketed,
-    parenthesized,
+    Attribute, Ident, Lifetime, ReturnType, Token, Type, TypeReference, Visibility, braced,
+    bracketed, parenthesized,
 };
 
 struct Interface {
@@ -58,6 +59,7 @@ struct Interface {
 }
 
 struct Method {
+    attrs: Vec<Attribute>,
     name: Ident,
     args: Vec<(Ident, Type)>,
     ret: ReturnType,
@@ -76,6 +78,7 @@ impl Parse for Interface {
         braced!(body in input);
         let mut methods = Vec::new();
         while !body.is_empty() {
+            let attrs = body.call(Attribute::parse_outer)?;
             body.parse::<Token![fn]>()?;
             let mname: Ident = body.parse()?;
             let argp;
@@ -93,6 +96,7 @@ impl Parse for Interface {
             let ret: ReturnType = body.parse()?;
             body.parse::<Token![;]>()?;
             methods.push(Method {
+                attrs,
                 name: mname,
                 args,
                 ret,
@@ -157,6 +161,7 @@ pub fn link_interface(input: TokenStream) -> TokenStream {
     // impl-macro spell it as `$crate::<alias>`, which always resolves back.
     let sig_aliases = methods.iter().map(|m| {
         let mn = &m.name;
+        let attrs = &m.attrs;
         let ret_alias = format_ident!("__{}__{}__ret", name, mn);
         let ret_ty = match &m.ret {
             ReturnType::Default => quote! { () },
@@ -165,10 +170,10 @@ pub fn link_interface(input: TokenStream) -> TokenStream {
         let arg_aliases = m.args.iter().map(|(an, at)| {
             let a = format_ident!("__{}__{}__arg_{}", name, mn, an);
             let at = aliasable(at);
-            quote! { #[doc(hidden)] #[allow(non_camel_case_types, unused_lifetimes, clippy::extra_unused_lifetimes)] pub type #a<'__a> = #at; }
+            quote! { #(#attrs)* #[doc(hidden)] #[allow(non_camel_case_types, unused_lifetimes, clippy::extra_unused_lifetimes)] pub type #a<'__a> = #at; }
         });
         quote! {
-            #[doc(hidden)] #[allow(non_camel_case_types)] pub type #ret_alias = #ret_ty;
+            #(#attrs)* #[doc(hidden)] #[allow(non_camel_case_types)] pub type #ret_alias = #ret_ty;
             #(#arg_aliases)*
         }
     });
@@ -184,7 +189,8 @@ pub fn link_interface(input: TokenStream) -> TokenStream {
             let an = m.args.iter().map(|(n, _)| n);
             let at = m.args.iter().map(|(_, t)| t);
             let ret = &m.ret;
-            quote! { pub(super) fn #s(owner: *mut () #(, #an: #at)*) #ret; }
+            let attrs = &m.attrs;
+            quote! { #(#attrs)* pub(super) fn #s(owner: *mut () #(, #an: #at)*) #ret; }
         })
     });
 
@@ -194,6 +200,7 @@ pub fn link_interface(input: TokenStream) -> TokenStream {
         let an: Vec<_> = m.args.iter().map(|(n, _)| n).collect();
         let at = m.args.iter().map(|(_, t)| t);
         let ret = &m.ret;
+        let attrs = &m.attrs;
         let arms = variants.iter().map(|v| {
             let s = sym(name, v, mn);
             quote! {
@@ -204,6 +211,7 @@ pub fn link_interface(input: TokenStream) -> TokenStream {
             }
         });
         quote! {
+            #(#attrs)*
             #[inline]
             #[allow(clippy::not_unsafe_ptr_arg_deref)]
             pub fn #mn(&self #(, #an: #at)*) #ret {
@@ -231,6 +239,7 @@ pub fn link_interface(input: TokenStream) -> TokenStream {
         // `macro_rules!` arm can splice them positionally.
         let mn: Vec<_> = methods.iter().map(|m| &m.name).collect();
         let s: Vec<_> = methods.iter().map(|m| sym(name, v, &m.name)).collect();
+        let attrs: Vec<_> = methods.iter().map(|m| &m.attrs).collect();
         let ret_alias: Vec<_> = methods
             .iter()
             .map(|m| format_ident!("__{}__{}__ret", name, m.name))
@@ -271,6 +280,7 @@ pub fn link_interface(input: TokenStream) -> TokenStream {
         let body = quote! {
                 const _: () = {
                     #(
+                        #(#attrs)*
                         #[unsafe(no_mangle)]
                         #[doc(hidden)]
                         #[allow(non_snake_case)]
@@ -317,8 +327,8 @@ pub fn link_interface(input: TokenStream) -> TokenStream {
 
         #[derive(Copy, Clone)]
         #vis struct #name {
-            pub kind: #kind,
-            pub owner: *mut (),
+            kind: #kind,
+            owner: *mut (),
         }
 
         /// Implemented by `link_impl_*!` for the type each variant dispatches
@@ -353,6 +363,8 @@ pub fn link_interface(input: TokenStream) -> TokenStream {
             }
             #[inline]
             pub fn is(&self, kind: #kind) -> bool { self.kind == kind }
+            #[inline]
+            pub fn owner(&self) -> *mut () { self.owner }
         }
 
         #(#sig_aliases)*

@@ -13,7 +13,7 @@ use bun_jsc::{ErrorCode, JSGlobalObject, JSValue, JsError, JsResult};
 
 use crate::webcore::blob::{self, Any as AnyBlob, BlobExt};
 use crate::webcore::body::{BodyMixin as _, Value as BodyValue};
-use crate::webcore::{ReadableStream, Response, response};
+use crate::webcore::{ReadableStream, Response};
 
 unsafe extern "C" {
     // `streaming_compiler` is the opaque C++ `StreamingCompiler*` handed in by
@@ -34,11 +34,8 @@ fn get_body_stream_or_bytes_for_wasm_streaming(
 ) -> JsResult<JSValue> {
     // `WebAssembly.compileStreaming` / `instantiateStreaming`, C++ host functions, call this.
     let context = this.bun_vm().context_of_caller();
-    let response: &mut Response = match response::from_js(response_value) {
-        // SAFETY: `from_js` returns a pointer to the GC-owned `Response` cell;
-        // the cell stays live for the duration of this host call (rooted on the
-        // C++ caller's stack).
-        Some(r) => unsafe { &mut *r },
+    let response = match response_value.as_class_ref::<Response>() {
+        Some(r) => r,
         None => {
             return Err(this.throw_invalid_argument_type_value2(
                 b"source",
@@ -97,7 +94,7 @@ fn get_body_stream_or_bytes_for_wasm_streaming(
 
     // Holding `body = response.get_body_value()` as a single live pointer
     // through `getBodyReadableStream` would overlap two `&mut` borrows
-    // of `response`, so we re-borrow per use and capture scalars.
+    // of the body, so we re-borrow per use and capture scalars.
     {
         let body = response.get_body_value();
         if let BodyValue::Error(err) = body {

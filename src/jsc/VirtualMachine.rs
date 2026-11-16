@@ -19,7 +19,7 @@ use crate::rare_data::RareData;
 use crate::saved_source_map::SavedSourceMap;
 use crate::{
     self as jsc, Exception, JSGlobalObject, JSInternalPromise, JSValue, JsCell, JsResult,
-    OpaqueCallback, PlatformEventLoop, ResolvedSource, VM, ZigException,
+    PlatformEventLoop, ResolvedSource, VM, ZigException,
 };
 
 pub use crate::process_auto_killer as ProcessAutoKiller;
@@ -306,8 +306,10 @@ pub struct VirtualMachine {
 
     pub transpiler_store: crate::runtime_transpiler_store::RuntimeTranspilerStore,
 
+    #[cfg(not(windows))]
     pub(crate) after_event_loop_callback_ctx: Cell<Option<*mut c_void>>,
-    pub(crate) after_event_loop_callback: Cell<Option<OpaqueCallback>>,
+    #[cfg(not(windows))]
+    pub(crate) after_event_loop_callback: Cell<Option<bun_io::OpaqueCallback>>,
 
     pub(crate) remap_stack_frames_mutex: bun_threading::Mutex,
 
@@ -1640,6 +1642,7 @@ impl VirtualMachine {
     }
 
     pub fn on_after_event_loop(&self) {
+        #[cfg(not(windows))]
         if let Some(cb) = self.after_event_loop_callback.take() {
             let ctx = self.after_event_loop_callback_ctx.take();
             // SAFETY: `cb` was registered with the matching `ctx`.
@@ -1715,7 +1718,7 @@ impl VirtualMachine {
         // e.g. `process.stdout` on a pipe with nothing left to write.
         let disarmed = rare
             .and_then(|rare| rare.file_polls.get())
-            .map_or(0, |polls| polls.get().disarmed_count());
+            .map_or(0, |polls| polls.disarmed_count());
         let fires_nothing = i32::from(timers_hold_loop_ref) + i32::from(has_coordinator) + disarmed;
         self.platform_loop_opt()
             .is_some_and(|h| h.num_polls.get() > fires_nothing)
@@ -2908,7 +2911,7 @@ pub struct RuntimeHooks {
 bun_io::link_impl_EventLoopCtx! {
     Js for VirtualMachine => |this| {
         loop_() => (*this).uws_loop(),
-        file_polls_ptr() => (*this).rare_data().file_polls_ptr(),
+        file_polls_ptr() => (*this).rare_data().file_polls(),
         // CROSS-THREAD: reached via `KeepAlive::unref_on_next_tick`.
         increment_pending_unref_counter() => {
             (*this)
@@ -3153,7 +3156,9 @@ impl VirtualMachine {
             preloads_kept_for_reload: Cell::new(false),
             has_patched_run_main: Cell::new(false),
             transpiler_store: crate::runtime_transpiler_store::RuntimeTranspilerStore::init(),
+            #[cfg(not(windows))]
             after_event_loop_callback_ctx: Cell::new(None),
+            #[cfg(not(windows))]
             after_event_loop_callback: Cell::new(None),
             remap_stack_frames_mutex: bun_threading::Mutex::new(),
             argv: opts.argv,
@@ -6148,8 +6153,6 @@ impl VirtualMachine {
         }
 
         if value.js_type() == jsc::JSType::DOMWrapper {
-            // `as_class_ref` is the audited `as_::<T>() → &T` backref-deref;
-            // R-2: shared borrow — `logged` is `Cell<bool>`.
             if let Some(build_error) = value.as_class_ref::<crate::BuildMessage>() {
                 if !build_error.logged.get() {
                     if self.had_errors.get() {

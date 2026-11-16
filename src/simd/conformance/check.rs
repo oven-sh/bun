@@ -461,12 +461,6 @@ impl Round<'_> {
                 &|bytes| rust(AtomicU8::from_mut_slice(bytes.as_flattened_mut())),
             );
         }
-        self.in_place(
-            "cmyk_to_rgba",
-            0,
-            &highway::cmyk_to_rgba,
-            &rust::cmyk_to_rgba,
-        );
         let [x, y] = [(); 2].map(|()| self.random.below(300) as f32 / 100.0);
         // One may fuse a multiplication and an addition that the other rounds separately.
         self.in_place(
@@ -717,7 +711,7 @@ impl Round<'_> {
         for filter in Filter::ALL {
             let into = b.uninit(want.len(), self.offset).into();
             highway::resize(filter, src, src_w, &mut want, dst_w);
-            let got = rust::resize(filter, fenced, src_w, into, dst_w);
+            let got = rust::resize(filter, fenced, src_w, into, dst_w).unwrap();
             // As in `modulate`, a weight may be rounded the other way.
             let tolerance = match filter {
                 _ if cfg!(target_arch = "x86_64") => 0,

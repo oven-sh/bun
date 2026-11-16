@@ -12,6 +12,7 @@ use bun_simd::Out;
 use bun_simd_kernels as kernels;
 use core::ffi::{c_int, c_void};
 use core::ptr::NonNull;
+use std::collections::TryReserveError;
 
 // Per-format implementations live in their own files; codecs.rs is the
 // dispatch surface only.
@@ -36,7 +37,7 @@ const HAS_SYSTEM_BACKEND: bool = cfg!(any(target_os = "macos", windows));
 /// Process-global selector exposed as `Bun.Image.backend`.
 ///
 /// `.system` (default on darwin/windows) is the perf-optimal hybrid:
-///   • jpeg/png/webp decode+encode → static codecs (turbo/bun_png/libwebp).
+///   • jpeg/png/webp decode+encode → static codecs (bun_jpeg/bun_png/libwebp).
 ///     Profiling on M-series found ImageIO no faster: Huffman/inflate
 ///     dominate and aren't AMX-amenable, and ImageIO bottoms out in stock
 ///     libz vs our zlib-ng. Keeping these static also makes output bytes
@@ -274,7 +275,7 @@ pub(crate) fn decode(bytes: &[u8], max_pixels: u64, hint: DecodeHint) -> Result<
         Format::Png => png::decode(bytes, max_pixels),
         Format::Webp => webp::decode(bytes, max_pixels),
         // Static codecs cover everything we ship; profiling on M-series showed
-        // ImageIO is no faster (AppleJPEG ≈ libjpeg-turbo since Huffman is the
+        // ImageIO is no faster (for JPEG, Huffman is the
         // bottleneck and isn't vectorisable; for PNG, zlib-ng beats ImageIO's
         // system libz). The OS backend is purely a *capability* fallback for
         // containers we don't link a decoder for — and `backend == .bun` opts
@@ -356,11 +357,7 @@ pub(crate) fn probe(bytes: &[u8], max_pixels: u64) -> Result<Probe, Error> {
             w = u32::from_be_bytes(bytes[16..20].try_into().expect("infallible: size matches"));
             h = u32::from_be_bytes(bytes[20..24].try_into().expect("infallible: size matches"));
         }
-        Format::Jpeg => {
-            // turbojpeg's header decode is already cheap (no scan data read).
-            let handle = jpeg::Handle::init(1).ok_or(Error::OutOfMemory)?;
-            (w, h) = handle.read_header(bytes)?;
-        }
+        Format::Jpeg => (w, h) = jpeg::dimensions(bytes)?,
         Format::Webp => {
             let mut cw: c_int = 0;
             let mut ch: c_int = 0;
@@ -468,7 +465,7 @@ impl Default for EncodeOptions {
 }
 
 /// Encoded output paired with the free function for its allocator. The C
-/// codecs each malloc internally (turbojpeg's allocator, libwebp's); rather
+/// codec (libwebp) mallocs internally; rather
 /// than dupe into the global allocator so JS can own it,
 /// we hand the original buffer to JS via `ArrayBuffer.toJSWithContext` with
 /// the matching free — one allocation, zero copies, for the final output.
@@ -502,7 +499,7 @@ impl Drop for Encoded {
     }
 }
 
-/// Adapt a 1-arg C free (`tj3Free`, `WebPFree`) to the
+/// Adapt a 1-arg C free (`WebPFree`) to the
 /// 2-arg JSC deallocator signature.
 // Rust cannot capture a runtime fn pointer in a non-capturing `extern "C" fn`,
 // so this is a macro that mints a static trampoline per call site.
@@ -580,7 +577,7 @@ pub(crate) fn encode(
         Format::Webp => webp::encode(rgba, width, height, opts.quality, opts.lossless, icc),
         // Same routing rationale as decode(): the OS encoder is a capability
         // fallback, not a fast path — ImageIO's quality scale doesn't match
-        // libjpeg-turbo's, and it can't honour compressionLevel/palette/
+        // libjpeg's, and it can't honour compressionLevel/palette/
         // lossless, so using it for jpeg/png/webp would make output bytes
         // diverge from Linux for no speed win.
         Format::Heic | Format::Avif => {
@@ -626,11 +623,6 @@ bun_core::comptime_string_map! {
     };
 }
 
-/// In-place inverted-CMYK (libjpeg-turbo `TJPF_CMYK` output) → opaque RGBA.
-pub(crate) fn cmyk_to_rgba(px: &mut [u8]) {
-    kernels::cmyk_to_rgba(px.as_chunks_mut().0);
-}
-
 /// In-place brightness/saturation. brightness multiplies V (so 1.0 is
 /// identity); saturation linearly interpolates each channel toward the pixel's
 /// luma (0 = greyscale, 1 = identity, >1 = boost).
@@ -649,11 +641,15 @@ fn pixels(rgba: &[u8], width: u32, height: u32) -> Result<&[[u8; 4]], Error> {
 fn new_image(
     width: u32,
     height: u32,
-    fill: impl FnOnce(Out<'_, [u8; 4]>) -> &mut [[u8; 4]],
-) -> Vec<u8> {
-    let mut pixels = Vec::new();
-    bun_simd::extend_vec(&mut pixels, width as usize * height as usize, fill);
-    pixels.into_flattened()
+    fill: impl FnOnce(Out<'_, [u8; 4]>) -> Result<&mut [[u8; 4]], TryReserveError>,
+) -> Result<Vec<u8>, Error> {
+    let (mut pixels, len) = (Vec::new(), width as usize * height as usize);
+    pixels
+        .try_reserve_exact(len)
+        .map_err(|_| Error::OutOfMemory)?;
+    let (room, rest) = bun_simd::spare_capacity(&mut pixels);
+    rest.append(fill(room.take(len)).map_err(|_| Error::OutOfMemory)?);
+    Ok(pixels.into_flattened())
 }
 
 pub(crate) fn resize(
@@ -678,9 +674,9 @@ pub(crate) fn resize(
     if dw == 0 || dh == 0 {
         return Err(Error::EncodeFailed);
     }
-    Ok(new_image(dw, dh, |out| {
+    new_image(dw, dh, |out| {
         kernels::resize(f, src, sw as usize, out, dw as usize)
-    }))
+    })
 }
 
 pub(crate) fn rotate(src: &[u8], w: u32, h: u32, degrees: u32) -> Result<Decoded, Error> {
@@ -706,11 +702,11 @@ pub(crate) fn rotate(src: &[u8], w: u32, h: u32, degrees: u32) -> Result<Decoded
     }
     let src = pixels(src, w, h)?;
     let out = new_image(dw, dh, |out| match degrees {
-        90 => kernels::rotate_90(src, w as usize, out),
-        180 => kernels::rotate_180(src, out),
-        270 => kernels::rotate_270(src, w as usize, out),
+        90 => Ok(kernels::rotate_90(src, w as usize, out)),
+        180 => Ok(kernels::rotate_180(src, out)),
+        270 => Ok(kernels::rotate_270(src, w as usize, out)),
         _ => unreachable!("rotate: {degrees} degrees"),
-    });
+    })?;
     Ok(Decoded {
         rgba: out,
         width: dw,
@@ -729,8 +725,8 @@ pub(crate) fn flip(src: &[u8], w: u32, h: u32, horizontal: bool) -> Result<Vec<u
         }
     }
     let src = pixels(src, w, h)?;
-    Ok(new_image(w, h, |out| match horizontal {
-        true => kernels::flip_horizontally(src, w as usize, out),
-        false => kernels::flip_vertically(src, w as usize, out),
-    }))
+    new_image(w, h, |out| match horizontal {
+        true => Ok(kernels::flip_horizontally(src, w as usize, out)),
+        false => Ok(kernels::flip_vertically(src, w as usize, out)),
+    })
 }

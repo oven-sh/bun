@@ -4,22 +4,25 @@ import { bunEnv, bunExe } from "harness";
 import { totalmem } from "node:os";
 import stripAnsi from "strip-ansi";
 
+// Strings that the call adds to the heap. A count that went down had a collection in it, so that pair is taken again.
+function stripAndCountNewStrings(input: string) {
+  const stripANSI = Bun.stripANSI;
+  for (;;) {
+    const before = heapStats().objectTypeCounts.string;
+    const result = stripANSI(input);
+    const added = heapStats().objectTypeCounts.string - before;
+    if (added >= 0) return { result, added };
+  }
+}
+
 describe("Bun.stripANSI", () => {
   test("returns same string object when no ANSI sequences present", () => {
     var input = "hello world";
-    const stripANSI = Bun.stripANSI;
-    // A collection between the two counts takes garbage strings away and lowers the second count. Such a
-    // pair of counts shows nothing about a copy, so count again.
-    let numStrings: number, result: string, after: number;
-    do {
-      numStrings = heapStats().objectTypeCounts.string;
-      result = stripANSI(input);
-      after = heapStats().objectTypeCounts.string;
-    } while (after < numStrings);
+    const { result, added } = stripAndCountNewStrings(input);
     // Make sure the string wasn't modified
     expect(result).toBe(input);
     // Verify it's the same object, not a copy
-    expect(after).toBe(numStrings);
+    expect(added).toBe(0);
   });
 
   test("returns new string when ANSI sequences are removed", () => {
@@ -528,15 +531,9 @@ describe("Bun.stripANSI", () => {
       Bun.stripANSI(input);
       heapStats();
 
-      // A collection between the two counts lowers the second one. Such a pair shows nothing: count again.
-      let before: number, result: string, after: number;
-      do {
-        before = heapStats().objectTypeCounts.string;
-        result = Bun.stripANSI(input);
-        after = heapStats().objectTypeCounts.string;
-      } while (after < before);
+      const { result, added } = stripAndCountNewStrings(input);
       expect(result).toBe(input);
-      expect(after).toBe(before); // no copy made
+      expect(added).toBe(0); // no copy made
     });
 
     // A standalone C1 ST (0x9C) stops the escape scan but introduces
@@ -555,14 +552,9 @@ describe("Bun.stripANSI", () => {
         Bun.stripANSI(input);
         Bun.gc(true);
 
-        const before = heapStats().objectTypeCounts.string;
-        const result = Bun.stripANSI(input);
-        const after = heapStats().objectTypeCounts.string;
+        const { result, added } = stripAndCountNewStrings(input);
         expect(result).toBe(input);
-        // A copy would hold `after` above `before` (the copy is rooted by
-        // `result`). The reverse — GC collecting something between the two
-        // heapStats() calls — is fine, so the check is one-sided.
-        expect(after).toBeLessThanOrEqual(before);
+        expect(added).toBe(0); // no copy made
       });
     }
 

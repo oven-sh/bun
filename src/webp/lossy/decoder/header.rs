@@ -86,6 +86,11 @@ impl<'a> Parameters<'a> {
             .rest
             .split_at_checked(header.first_partition_len)
             .ok_or(Error::UnexpectedEof)?;
+        let [columns, rows] = [header.width, header.height].map(|it| usize::from(it.div_ceil(16)));
+        // The modes of a macroblock take more than 3 bits.
+        if 8 * first_partition.len() < 3 * columns * rows {
+            return Err(Error::UnexpectedEof);
+        }
         let mut reader = BoolReader::new(first_partition);
         let _color_space = reader.read_flag();
         let _clamping_type = reader.read_flag();

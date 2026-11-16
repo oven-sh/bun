@@ -230,7 +230,7 @@ fn read_groups(
         DISTANCE_CODES,
     ];
     let mut lengths = CodeLengths::new(alphabet_lens[0])?;
-    let mut groups = Vec::new();
+    let mut groups = vec::with_room(kept_index.iter().flatten().count())?;
     let mut second_tables = Vec::new();
     for kept in kept_index {
         if kept.is_none() {
@@ -239,7 +239,6 @@ fn read_groups(
             }
             continue;
         }
-        groups.try_reserve(1)?;
         let group = groups.push_mut(Group::EMPTY);
         let first = second_tables.len();
         group.second_tables = first;

@@ -212,8 +212,10 @@ fn add_green<const N: usize>(pixels: &mut [Rgba; N]) {
 /// Adds to each pixel the one before it, channel by channel.
 fn add_up(pixels: &mut [Rgba], mut before: Rgba) {
     for pixel in pixels {
-        before = core::array::from_fn(|i| pixel.at(i).wrapping_add(*before.at(i)));
-        *pixel = before;
+        for (channel, before) in pixel.iter_mut().zip(&mut before) {
+            *channel = channel.wrapping_add(*before);
+            *before = *channel;
+        }
     }
 }
 

@@ -297,10 +297,14 @@ describe("memory is written to as the rows come, not when the header does", asyn
   const lossless = (side: number, ...stream: [number, number][]) =>
     riff(chunk("VP8L", [...bits([0x2f, 8], [side - 1, 14], [side - 1, 14], [0, 4], ...stream), ...someRows]));
   const small = await vp8(16, 16);
+  /** With enough modes for all macroblocks, and not enough coefficients. */
   const frame = (side: number) => {
-    const resized = Buffer.from(small);
-    resized.writeUInt32LE(side | (side << 16), 8 + 6);
-    return resized;
+    const [tag, more] = [small.readUIntLE(8, 3), 400_000];
+    const modesEnd = 8 + 10 + (tag >> 5);
+    const resized = Buffer.concat([small.subarray(8, modesEnd), Buffer.alloc(more), small.subarray(modesEnd)]);
+    resized.writeUIntLE(tag + (more << 5), 0, 3);
+    resized.writeUInt32LE(side | (side << 16), 6);
+    return chunk("VP8 ", resized);
   };
   const withAlpha = (side: number, ...stream: [number, number][]) =>
     riff(vp8x(ALPHA, side, side), chunk("ALPH", [1, ...bits(...stream), ...someRows]), frame(side));
@@ -315,7 +319,7 @@ describe("memory is written to as the rows come, not when the header does", asyn
     expect(await decodes(file(16))).toBe(true);
     // 1 GiB of RGBA, the most the default maxPixels allows.
     const fixture = `
-      const file = Buffer.from("${file(16383).toString("base64")}", "base64");
+      const file = Bun.gunzipSync(Buffer.from("${Bun.gzipSync(file(16383)).toBase64()}", "base64"));
       console.log(JSON.stringify(await new Bun.Image(file).png().bytes().then(() => "decoded", e => e.code)));
     `;
     const [fixtureMaxRSS, baselineMaxRSS] = await Promise.all([

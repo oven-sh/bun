@@ -1,7 +1,7 @@
 //! Bits, the lowest of a byte first.
 
 use crate::error::{Error, Result};
-use crate::slice::InBounds;
+use crate::slice::{InBounds, known};
 use crate::vec;
 
 #[derive(Default)]
@@ -41,12 +41,13 @@ impl BitWriter {
     #[inline(always)]
     pub(super) fn put(&mut self, bits: u64, len: u32) {
         debug_assert!(len <= Self::MAX_PUT && bits >> len == 0);
-        debug_assert!(self.is_out_of_memory || self.whole + size_of::<u64>() <= self.bytes.len());
         self.pending |= bits << self.pending_len;
         self.pending_len += len;
         let room = self.bytes.get_mut(self.whole..).unwrap_or_default();
         if let Some(to) = room.first_chunk_mut() {
             *to = self.pending.to_le_bytes();
+        } else {
+            known(self.is_out_of_memory.then_some(()));
         }
         self.whole += self.pending_len as usize / 8;
         self.pending >>= self.pending_len & !7;
@@ -91,6 +92,18 @@ impl BitWriter {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::slice::checked;
+
+    #[test]
+    fn nothing_is_put_without_room() {
+        let result = checked(|| {
+            let mut writer = BitWriter::default();
+            writer.put_flag(true);
+            writer.append_flag(true);
+            writer.finish()
+        });
+        assert_eq!(result, Err(Error::Internal));
+    }
 
     #[test]
     fn nothing_comes_of_a_writer_that_was_refused_room() {

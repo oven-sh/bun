@@ -220,12 +220,20 @@ fn a_file_starts_with_riff_and_webp() {
 }
 
 #[test]
-fn alpha_is_not_decoded_for_a_frame_whose_header_is_cut_off() {
-    // The first partition has one byte, and there is no such way to compress alpha.
-    let file = b"RIFF4\0\0\0WEBPVP8X\n\0\0\0\x10\0\0\0\0\0\0\0\0\0ALPH\x02\0\0\0\x03\0\
-        VP8 \x0c\0\0\0\x30\0\0\x9d\x01*\x01\0\x01\0\0\0";
-    let error = Decoder::new(file).and_then(Decoder::decode).err();
-    assert_eq!(error, Some(Error::UnexpectedEof));
+fn alpha_is_not_decoded_for_a_frame_that_is_cut_short() {
+    let error = |width: u8, height: u8, first_partition_len: u16| {
+        // There is no such way to compress alpha.
+        let mut file = *b"RIFF@\0\0\0WEBPVP8X\n\0\0\0\x10\0\0\0w\0\0h\0\0ALPH\x02\0\0\0\x03\0\
+            VP8 \x18\0\0\0ll\0\x9d\x01*w\0h\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0";
+        (file[24], file[27]) = (width - 1, height - 1);
+        [file[48], file[49]] = ((first_partition_len << 5) | 16).to_le_bytes();
+        (file[54], file[56]) = (width, height);
+        Decoder::new(&file).and_then(Decoder::decode).err()
+    };
+    assert_eq!(error(8 * 16, 4 * 16, 12), Some(Error::InvalidAlpha));
+    // Within the header, and within the modes of 33 macroblocks.
+    assert_eq!(error(1, 1, 1), Some(Error::UnexpectedEof));
+    assert_eq!(error(161, 33, 12), Some(Error::UnexpectedEof));
 }
 
 #[test]

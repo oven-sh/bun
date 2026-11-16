@@ -61,7 +61,7 @@ pub(crate) fn encode(
         if !can_cut_down || pass.modes_cost <= MAX_MODES_COST {
             let probabilities = pass.tokens.probabilities();
             match pass.write_modes(&mut segments, &probabilities, width, height) {
-                Err(Error::TooLarge) if can_cut_down => {}
+                Err(Error::TooLarge) if can_cut_down && pass.has_subblock_modes() => {}
                 out => {
                     drop(picture);
                     return pass.tokens.append_to(out?, &probabilities);
@@ -161,6 +161,11 @@ impl Pass {
             }
         }
         self.tokens.record(BlockType::Chroma, &chroma.residuals)
+    }
+
+    fn has_subblock_modes(&self) -> bool {
+        let mut modes = self.modes.iter();
+        modes.any(|it| matches!(it.luma, luma::Mode::Subblocks(_)))
     }
 
     /// The frame up to the end of the first partition.

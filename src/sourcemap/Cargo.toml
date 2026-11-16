@@ -18,7 +18,8 @@ bun_alloc.workspace = true
 bun_base64.workspace = true
 bun_core.workspace = true
 bun_collections.workspace = true
-bun_highway.workspace = true
+bun_simd.workspace = true
+bun_simd_kernels.workspace = true
 bun_parsers.workspace = true
 bun_io.workspace = true
 # bun_js_parser not needed: parse_json uses the T2 value-subset Expr from

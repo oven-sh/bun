@@ -1,5 +1,5 @@
 use super::generated::Body;
-use bun_core::strings;
+use bun_simd::Out;
 use core::mem::MaybeUninit;
 
 const PACKED: u32 = u32::MAX;
@@ -115,7 +115,9 @@ pub(super) fn pack_words(before: &[u32], words: &[u32], scratch: &mut Vec<u8>) -
     let scratch = &mut scratch[..];
     let (full, rest) = words.as_chunks::<WORDS_PER_CONTROL>();
     let (controls, data) = scratch.split_at_mut(control_bytes);
-    let mut at = control_bytes + strings::pack_words(full, &mut controls[..full.len()], data);
+    let (controls, data) = bun_simd_kernels::pack_words(full, controls.into(), data.into());
+    assert_eq!(controls.len(), full.len());
+    let mut at = control_bytes + data.len();
     if !rest.is_empty() {
         let mut last = [0; WORDS_PER_CONTROL];
         last[..rest.len()].copy_from_slice(rest);
@@ -131,42 +133,32 @@ pub(super) fn pack_words(before: &[u32], words: &[u32], scratch: &mut Vec<u8>) -
     packed
 }
 
-fn bytes_of(words: &[u32]) -> &[u8] {
-    const { assert!(cfg!(target_endian = "little")) };
-    // SAFETY: every byte of a `u32` is a byte, and the slice is that long.
-    unsafe { core::slice::from_raw_parts(words.as_ptr().cast::<u8>(), words.len() * 4) }
-}
-
 pub(super) fn unpacked_count(packed: &[u32]) -> usize {
     packed[0] as usize
 }
 
-pub(super) fn unpack_words<'a>(packed: &[u32], to: &'a mut [MaybeUninit<u32>]) -> &'a [u32] {
+pub(super) fn unpack_words<'a>(packed: &[u32], to: Out<'a, u32>) -> &'a mut [u32] {
+    const { assert!(cfg!(target_endian = "little")) };
     debug_assert_eq!(to.len(), unpacked_count(packed));
-    let bytes = bytes_of(&packed[1..]);
+    let bytes = bun_core::slice_as_bytes(&packed[1..]);
     let (controls, mut data) = bytes.split_at(to.len().div_ceil(WORDS_PER_CONTROL));
-    let (full, rest) = to.as_chunks_mut::<WORDS_PER_CONTROL>();
-    let (full_controls, rest_control) = controls.split_at(full.len());
-    let (unpacked, used) = strings::unpack_words(full_controls, data, full);
-    data = &data[used..];
-    for (&control, words) in full_controls[unpacked..].iter().zip(&mut full[unpacked..]) {
+    let (full_controls, rest_control) = controls.split_at(to.len() / WORDS_PER_CONTROL);
+    let mut to = to.into_writer();
+    to.append(|to| {
+        let (full, used) = bun_simd_kernels::unpack_words(full_controls, data, to.into_chunks());
+        data = &data[used..];
+        full.as_flattened_mut()
+    });
+    for &control in &full_controls[to.len() / WORDS_PER_CONTROL..] {
         let group = &GROUPS[usize::from(control)];
-        let unpacked = match data.first_chunk() {
-            Some(bytes) => unpack_group(group, bytes),
-            None => unpack_group(group, &padded(data)),
-        };
-        words[0].write(unpacked[0]);
-        words[1].write(unpacked[1]);
-        words[2].write(unpacked[2]);
-        words[3].write(unpacked[3]);
+        to.push(unpack_group(group, &padded(data)));
         data = &data[usize::from(group.bytes)..];
     }
     if let &[control] = rest_control {
         let unpacked = unpack_group(&GROUPS[usize::from(control)], &padded(data));
-        rest.write_copy_of_slice(&unpacked[..rest.len()]);
+        to.extend_from_slice(&unpacked[..to.remaining()]);
     }
-    // SAFETY: the full groups and the rest are all of `to`, and each word of them was written.
-    unsafe { to.assume_init_ref() }
+    to.finish()
 }
 
 fn packed_words(code: &[u32]) -> Option<&[u32]> {
@@ -193,21 +185,19 @@ impl Body {
     }
 
     pub fn unpack(&mut self) {
-        if packed_words(&self.code).is_none() {
+        let Some(packed) = packed_words(&self.code) else {
             return;
-        }
-        let count = self.word_count();
+        };
+        let count = unpacked_count(packed);
         let mut words = Vec::with_capacity(count);
-        self.unpack_into(&mut words.spare_capacity_mut()[..count]);
-        // SAFETY: `unpack_into` has written each of them.
-        unsafe { words.set_len(count) };
+        bun_simd::extend_vec(&mut words, count, |to| unpack_words(packed, to));
         self.code = words;
     }
 
     pub fn unpack_into<'a>(&self, to: &'a mut [MaybeUninit<u32>]) -> &'a [u32] {
         assert_eq!(to.len(), self.word_count());
         match packed_words(&self.code) {
-            Some(packed) => unpack_words(packed, to),
+            Some(packed) => unpack_words(packed, to.into()),
             None => to.write_copy_of_slice(&self.code),
         }
     }

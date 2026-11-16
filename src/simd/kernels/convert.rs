@@ -1,10 +1,10 @@
 //! Ports of highway_strings.cpp: from one buffer to another, or in place.
 use bun_simd::{Out, SharedU8, SharedWriter, Sink, Source};
-use core::sync::atomic::AtomicU8;
+use core::sync::atomic::{AtomicU8, Ordering::Relaxed};
 
 #[bun_simd::foreach_target]
 pub(crate) mod simd {
-    use isa::{I8, U8, U16, U32};
+    use isa::{I8, U8, U16, U32, Vector};
 
     #[export]
     pub fn lower_ascii<'a>(from: &[u8], to: Out<'a, u8>) -> &'a mut [u8] {
@@ -45,6 +45,47 @@ pub(crate) mod simd {
     #[export]
     pub fn copy_ascii_prefix_to_shared(from: &[u8], to: &[AtomicU8]) -> usize {
         U8::map_to_shared_until(from, to, |v| v, |v| v.bitcast::<I8>().simd_lt(0).cast())
+    }
+
+    #[inline(always)]
+    fn copy_ends_if_ascii<const N: usize>(from: &[u8], to: &[AtomicU8]) -> Option<bool> {
+        let (first, last) = (*from.first_chunk::<N>()?, *from.split_last_chunk::<N>()?.1);
+        let (start, end) = (to.first_chunk()?, to.split_last_chunk()?.1);
+        let (first, last) = (Vector::from_array(first), Vector::from_array(last));
+        let is_ascii = (first | last).to_array().is_ascii();
+        if is_ascii {
+            first.store_shared(start);
+            last.store_shared(end);
+        }
+        Some(is_ascii)
+    }
+
+    /// Copies all or nothing: all if it is ASCII, fits and has up to 16 bytes.
+    #[export(baseline)]
+    #[inline]
+    pub fn copy_few_ascii_to_shared(from: &[u8], to: &[AtomicU8]) -> bool {
+        let len = from.len();
+        if len > 16 || len > to.len() {
+            return false;
+        }
+        let to = &to[..len];
+        if let Some(is_copied) = copy_ends_if_ascii::<8>(from, to) {
+            return is_copied;
+        }
+        if let Some(is_copied) = copy_ends_if_ascii::<4>(from, to) {
+            return is_copied;
+        }
+        let Some(last) = len.checked_sub(1) else {
+            return true;
+        };
+        let all = [0, len / 2, last];
+        let is_ascii = all.iter().fold(0, |bits, &at| bits | from[at]).is_ascii();
+        if is_ascii {
+            for at in all {
+                to[at].store(from[at], Relaxed);
+            }
+        }
+        is_ascii
     }
 
     #[inline(always)]

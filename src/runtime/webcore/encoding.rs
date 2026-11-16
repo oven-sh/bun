@@ -5,8 +5,11 @@ use crate::node::types::Encoding;
 use crate::webcore::jsc::{JSGlobalObject, JSValue, JsResult, StringJsc as _};
 use bun_core::String as BunString;
 use bun_core::strings;
+use bun_simd::Out;
+use bun_simd_kernels as kernels;
 use bun_simdutf_sys::simdutf as bun_simdutf;
 use core::mem::MaybeUninit;
+use core::sync::atomic::Ordering;
 
 // `bun_core::String` exposes safe `Vec<u8>`/`Vec<u16>` → WTF::ExternalStringImpl
 // constructors; delegate so the FFI ownership-transfer invariant is enforced
@@ -111,16 +114,13 @@ unsafe extern "C" fn Bun__encoding__writeLatin1(
     encoding: u8,
 ) -> usize {
     // SAFETY: forwarded from this fn's contract.
-    let (input, to) = unsafe {
-        (
-            bun_core::ffi::slice(input, len),
-            bun_core::ffi::slice_mut(to, to_len),
-        )
+    let r = unsafe {
+        let input = bun_core::ffi::slice(input, len);
+        dispatch_encoding!(encoding_from_u8(encoding), {
+            Encoding::Ucs2 => write_u8::<{ enc::UTF16LE }, false>(input, to, to_len),
+            Encoding::Buffer => unreachable!(),
+        }, |E| write_u8::<E, false>(input, to, to_len))
     };
-    let r = dispatch_encoding!(encoding_from_u8(encoding), {
-        Encoding::Ucs2 => write_u8::<{ enc::UTF16LE }, false>(input, to),
-        Encoding::Buffer => unreachable!(),
-    }, |E| write_u8::<E, false>(input, to));
     r.unwrap_or(0)
 }
 
@@ -271,12 +271,29 @@ unsafe extern "C" fn Bun__encoding__toString(
     global_object: &JSGlobalObject,
     encoding: u8,
 ) -> JSValue {
-    // SAFETY: forwarded from this fn's contract.
-    let input = unsafe { bun_core::ffi::slice(input, len) };
-    match to_string(input, global_object, encoding_from_u8(encoding)) {
-        Ok(v) => v,
-        Err(_) => JSValue::ZERO,
+    let encoding = encoding_from_u8(encoding);
+    let string = if encoding == Encoding::Hex {
+        // SAFETY: forwarded from this fn's contract.
+        let input = unsafe { bun_core::ffi::shared_bytes(input, len) };
+        hex_string(len, |out| kernels::encode_hex_lower_shared(input, out)).into_js(global_object)
+    } else {
+        // SAFETY: forwarded from this fn's contract.
+        let input = unsafe { bun_core::ffi::slice(input, len) };
+        to_string(input, global_object, encoding)
+    };
+    bun_jsc::HostReturn::or_pending_exception(string)
+}
+
+/// The digits of `len` bytes.
+fn hex_string(len: usize, encode: impl FnOnce(Out<'_, u8>) -> &mut [u8]) -> BunString {
+    if len == 0 {
+        return BunString::EMPTY;
     }
+    let (str, chars) = BunString::create_uninitialized_latin1(len * 2);
+    if !str.is_dead() {
+        assert_eq!(encode(chars.into()).len(), len * 2);
+    }
+    str
 }
 
 pub(crate) fn to_string(
@@ -342,23 +359,7 @@ pub(crate) fn to_bun_string_from_owned_slice(input: Vec<u8>, encoding: Encoding)
             create_external_globally_allocated_utf16(as_u16)
         }
 
-        Encoding::Hex => {
-            // input dropped at end of scope
-            let (str, chars) = BunString::create_uninitialized_latin1(input.len() * 2);
-
-            if str.is_dead() {
-                return str;
-            }
-
-            let wrote = strings::encode_bytes_to_hex(chars, &input);
-
-            // Return an empty string in this case, just like node.
-            if wrote < chars.len() {
-                return BunString::EMPTY;
-            }
-
-            str
-        }
+        Encoding::Hex => hex_string(input.len(), |out| kernels::encode_hex_lower(&input, out)),
 
         // The output is strictly larger than the input, so the owned
         // allocation cannot be reused; drop it at end of scope.
@@ -428,16 +429,7 @@ fn to_bun_string_comptime<const ENCODING: u8>(input: &[u8]) -> BunString {
             str
         }
 
-        Encoding::Hex => {
-            let (str, chars) = BunString::create_uninitialized_latin1(input.len() * 2);
-            if str.is_dead() {
-                return str;
-            }
-
-            let wrote = strings::encode_bytes_to_hex(chars, input);
-            debug_assert!(wrote == chars.len());
-            str
-        }
+        Encoding::Hex => hex_string(input.len(), |out| kernels::encode_hex_lower(input, out)),
 
         Encoding::Base64url => encode_base64_to_bun_string(input, true),
 
@@ -504,13 +496,36 @@ fn encode_base64_to_bun_string(input: &[u8], url_safe: bool) -> BunString {
 /// `ALLOW_PARTIAL_WRITE` selects Node's `Buffer#fill` semantics: the encoding
 /// is truncated at the byte level, so a code unit / code point that only partly
 /// fits still gets its leading bytes. Without it (`buf.write`), stop at whole units.
-pub(crate) fn write_u8<const ENCODING: u8, const ALLOW_PARTIAL_WRITE: bool>(
+///
+/// # Safety
+/// `to` must be valid for writing `to_len` bytes that do not overlap `input`, or null if that is 0.
+pub(crate) unsafe fn write_u8<const ENCODING: u8, const ALLOW_PARTIAL_WRITE: bool>(
     input: &[u8],
-    to: &mut [u8],
+    to: *mut u8,
+    to_len: usize,
 ) -> Result<usize, crate::Error> {
-    if input.is_empty() || to.is_empty() {
+    if input.is_empty() || to_len == 0 {
         return Ok(0);
     }
+    if matches!(encoding_from_u8(ENCODING), Encoding::Hex | Encoding::Utf8) {
+        // SAFETY: forwarded from this fn's contract. Both only store.
+        let to = unsafe { bun_core::ffi::atomic_bytes(to, to_len) };
+        if matches!(encoding_from_u8(ENCODING), Encoding::Hex) {
+            return Ok(kernels::decode_hex_to_shared(input.as_chunks().0, to));
+        }
+        let r = strings::copy_latin1_into_shared_utf8(to, input);
+        let mut written = r.written;
+        // That stops at whole code points. Under byte-level truncation, a Latin-1 char >= 0x80
+        // whose 2-byte sequence straddles the end still gets its lead byte.
+        if ALLOW_PARTIAL_WRITE && written < to.len() && r.read < input.len() {
+            debug_assert!(input[r.read] >= 0x80);
+            to[written].store(0xC0 | (input[r.read] >> 6), Ordering::Relaxed);
+            written += 1;
+        }
+        return Ok(written);
+    }
+    // SAFETY: forwarded from this fn's contract.
+    let to = unsafe { bun_core::ffi::slice_mut(to, to_len) };
 
     // TODO: increase temporary buffer size for larger amounts of data
 
@@ -533,19 +548,6 @@ pub(crate) fn write_u8<const ENCODING: u8, const ALLOW_PARTIAL_WRITE: bool>(
                 strings::copy_latin1_into_ascii(to, remain);
             }
 
-            Ok(written)
-        }
-        Encoding::Utf8 => {
-            let r = strings::copy_latin1_into_utf8(to, input);
-            let mut written = r.written;
-            // `copy_latin1_into_utf8` stops at whole code points. Under
-            // byte-level truncation, a Latin-1 char >= 0x80 whose 2-byte
-            // sequence straddles the end still gets its lead byte.
-            if ALLOW_PARTIAL_WRITE && written < to.len() && r.read < input.len() {
-                debug_assert!(input[r.read] >= 0x80);
-                to[written] = 0xC0 | (input[r.read] >> 6);
-                written += 1;
-            }
             Ok(written)
         }
         // encode latin1 into UTF16
@@ -576,7 +578,7 @@ pub(crate) fn write_u8<const ENCODING: u8, const ALLOW_PARTIAL_WRITE: bool>(
             Ok(written)
         }
 
-        Encoding::Hex => Ok(strings::decode_hex_to_bytes_truncate(to, input)),
+        Encoding::Hex | Encoding::Utf8 => unreachable!(),
 
         Encoding::Base64 | Encoding::Base64url => {
             let is_urlsafe = matches!(encoding_from_u8(ENCODING), Encoding::Base64url);
@@ -630,11 +632,11 @@ pub(crate) unsafe fn write_u16<const ENCODING: u8, const ALLOW_PARTIAL_WRITE: bo
     match encoding_from_u8(ENCODING) {
         Encoding::Utf8 => {
             // SAFETY: caller guarantees `input[..len]` and `to[..to_len]` are valid and
-            // non-overlapping for this encoding.
+            // non-overlapping for this encoding. The transcoder only stores to `to`.
             let (input_slice, to_slice) = unsafe {
                 (
                     bun_core::ffi::slice(input, len),
-                    bun_core::ffi::slice_mut(to, to_len),
+                    bun_core::ffi::atomic_bytes(to, to_len),
                 )
             };
             Ok(
@@ -643,17 +645,15 @@ pub(crate) unsafe fn write_u16<const ENCODING: u8, const ALLOW_PARTIAL_WRITE: bo
             )
         }
         Encoding::Latin1 | Encoding::Ascii | Encoding::Buffer => {
-            let out = len.min(to_len);
             // SAFETY: caller guarantees `input[..len]` and `to[..to_len]` are valid and
-            // non-overlapping for this encoding.
+            // non-overlapping for this encoding. The kernel only stores to `to`.
             let (input_slice, to_slice) = unsafe {
                 (
-                    bun_core::ffi::slice(input, out),
-                    bun_core::ffi::slice_mut(to, to_len),
+                    bun_core::ffi::slice(input, len),
+                    bun_core::ffi::atomic_bytes(to, to_len),
                 )
             };
-            strings::copy_u16_into_u8(to_slice, input_slice);
-            Ok(out)
+            Ok(kernels::copy_u16_to_shared(input_slice, to_slice))
         }
         // string is already encoded, just need to copy the data
         Encoding::Ucs2 | Encoding::Utf16le => {
@@ -681,14 +681,15 @@ pub(crate) unsafe fn write_u16<const ENCODING: u8, const ALLOW_PARTIAL_WRITE: bo
 
         Encoding::Hex => {
             // SAFETY: caller guarantees `input[..len]` and `to[..to_len]` are valid and
-            // non-overlapping for this encoding.
+            // non-overlapping for this encoding. The kernel only stores to `to`.
             let (input_slice, to_slice) = unsafe {
                 (
                     bun_core::ffi::slice(input, len),
-                    bun_core::ffi::slice_mut(to, to_len),
+                    bun_core::ffi::atomic_bytes(to, to_len),
                 )
             };
-            Ok(strings::decode_hex_to_bytes_truncate(to_slice, input_slice))
+            let pairs = input_slice.as_chunks().0;
+            Ok(kernels::decode_hex16_to_shared(pairs, to_slice))
         }
 
         Encoding::Base64 | Encoding::Base64url => {
@@ -701,8 +702,7 @@ pub(crate) unsafe fn write_u16<const ENCODING: u8, const ALLOW_PARTIAL_WRITE: bo
             let narrowed = narrow_u16_to_u8(input_slice);
             // SAFETY: caller guarantees `to[..to_len]` is valid for writing; `input_slice`
             // is dead by now, so no other view of caller memory is live.
-            let to = unsafe { bun_core::ffi::slice_mut(to, to_len) };
-            write_u8::<ENCODING, ALLOW_PARTIAL_WRITE>(&narrowed, to)
+            unsafe { write_u8::<ENCODING, ALLOW_PARTIAL_WRITE>(&narrowed, to, to_len) }
         } // else => return &[_]u8{};
     }
 }
@@ -736,7 +736,7 @@ fn construct_from_u8<const ENCODING: u8>(input: &[u8]) -> Vec<u8> {
             to
         }
 
-        Encoding::Hex => construct_from_hex(input),
+        Encoding::Hex => construct_from_hex(input.as_chunks().0, kernels::decode_hex),
 
         Encoding::Base64 | Encoding::Base64url => {
             const TRIM_CHARS: &[u8] = b"\r\n\t \x0B"; // \x0B = vertical tab
@@ -783,7 +783,7 @@ fn construct_from_u16<const ENCODING: u8>(input: &[u16]) -> Vec<u8> {
             bun_core::slice_as_bytes(input).to_vec()
         }
 
-        Encoding::Hex => construct_from_hex(input),
+        Encoding::Hex => construct_from_hex(input.as_chunks().0, kernels::decode_hex16),
 
         Encoding::Base64 | Encoding::Base64url => {
             // Match Node.js: two-byte strings are decoded from the low byte of
@@ -798,33 +798,23 @@ fn construct_from_u16<const ENCODING: u8>(input: &[u16]) -> Vec<u8> {
 /// The low byte of every code unit, in a fresh exactly-sized `Vec<u8>`.
 fn narrow_u16_to_u8(input: &[u16]) -> Vec<u8> {
     let mut out: Vec<u8> = Vec::with_capacity(input.len());
-    // SAFETY: `copy_u16_into_u8` only writes `dst`, initializing exactly `input.len()` bytes.
-    unsafe {
-        bun_core::vec::fill_spare(&mut out, 0, |dst| {
-            strings::copy_u16_into_u8(&mut dst[..input.len()], input);
-            (input.len(), ())
-        })
-    };
+    bun_simd::extend_vec(&mut out, input.len(), |dst| {
+        kernels::copy_u16_to_u8(input, dst)
+    });
     out
 }
 
 /// Decodes hex pairs up to the first invalid one (`Buffer.from("..", "hex")` semantics).
-fn construct_from_hex<Char: strings::HexChar>(input: &[Char]) -> Vec<u8> {
-    let outlen = input.len() / 2;
-    if outlen == 0 {
-        return Vec::new();
-    }
-
+fn construct_from_hex<Char>(
+    pairs: &[[Char; 2]],
+    decode: impl for<'a> FnOnce(&[[Char; 2]], Out<'a, u8>) -> &'a mut [u8],
+) -> Vec<u8> {
     let mut to: Vec<u8> = Vec::new();
-    // SAFETY: the returned spare bytes are write-only until committed.
-    let dest = unsafe { bun_core::vec::reserve_spare_bytes(&mut to, outlen) };
-    let wrote = strings::decode_hex_to_bytes_truncate(&mut dest[..outlen], input);
+    bun_simd::extend_vec(&mut to, pairs.len(), |out| decode(pairs, out));
     // `create_buffer` frees nothing for an empty slice, so an empty result must not own memory.
-    if wrote == 0 {
+    if to.is_empty() {
         return Vec::new();
     }
-    // SAFETY: the decoder initialized the first `wrote` bytes (`wrote <= outlen <= capacity`).
-    unsafe { bun_core::vec::commit_spare(&mut to, wrote) };
     to
 }
 

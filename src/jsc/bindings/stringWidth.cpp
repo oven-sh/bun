@@ -13,10 +13,8 @@
 // strings) are recognized on all three encodings; on the UTF-8 path a C1
 // codepoint is the two-byte sequence 0xC2 0x9x, matched as that pair.
 //
-// The ASCII fast paths use explicit SIMD kernels from highway_strings.cpp
-// (highway_visible_latin1_width, highway_count_printable_ascii16,
-// highway_first_non_ascii*) so throughput does not depend on the compiler's
-// autovectorizer.
+// The ASCII fast paths use the kernels of SIMDKernels.h, so throughput does
+// not depend on the compiler's autovectorizer.
 //
 // Rust callers (console.table column sizing, the markdown ANSI renderer)
 // and sliceAnsi.cpp/wrapAnsi.cpp consume the `Bun__*` C exports at the bottom
@@ -27,6 +25,7 @@
 #include "ANSIHelpers.h"
 #include <unicode/uchar.h>
 #include "ObjectBindings.h"
+#include "SIMDKernels.h"
 #include "stringWidthTables.h"
 
 #include <algorithm>
@@ -35,14 +34,6 @@
 #include <span>
 #include <wtf/text/WTFString.h>
 #include <unicode/utf16.h>
-
-// SIMD kernels implemented in highway_strings.cpp.
-extern "C" size_t highway_visible_latin1_width(const uint8_t* input, size_t len);
-extern "C" size_t highway_visible_latin1_width_exclude_ansi(const uint8_t* input, size_t len);
-extern "C" size_t highway_visible_utf16_width(const uint16_t* input, size_t len, size_t* width);
-extern "C" size_t highway_count_printable_ascii16(const uint16_t* input, size_t len);
-extern "C" size_t highway_first_non_ascii16(const uint16_t* input, size_t len);
-extern "C" size_t highway_first_non_ascii8(const uint8_t* input, size_t len);
 
 namespace Bun {
 namespace StringWidth {
@@ -522,13 +513,13 @@ size_t visibleLatin1Width(std::span<const uint8_t> input)
             count += visibleLatin1WidthScalar(c);
         return count;
     }
-    return highway_visible_latin1_width(input.data(), input.size());
+    return Bun__simd__visibleLatin1Width(input.data(), input.size());
 }
 
 // Visible width treating ANSI escape sequences as zero-width (see the file
 // header for the grammar). Ref: https://cs.stanford.edu/people/miles/iso8859.html
 //
-// Implemented as a single-pass SIMD kernel (highway_strings.cpp): each chunk is
+// Implemented as a single-pass SIMD kernel (src/simd/kernels): each chunk is
 // classified once into printable/escape bitmasks, so dense SGR input does not
 // pay a separate scan per escape sequence. That kernel carries its own scalar
 // mirror of ANSI::consumeANSI(), which stringWidth.test.ts cross-checks
@@ -537,7 +528,7 @@ size_t visibleLatin1WidthExcludeANSI(std::span<const uint8_t> input)
 {
     if (input.empty())
         return 0;
-    return highway_visible_latin1_width_exclude_ansi(input.data(), input.size());
+    return Bun__simd__visibleLatin1WidthExcludeANSI(input.data(), input.size());
 }
 
 // Per-byte terminal width for Latin-1 with East Asian Ambiguous counted as
@@ -642,7 +633,7 @@ static size_t visibleUTF8Width(std::span<const uint8_t> input)
     while (true) {
         // Runs of non-ASCII codepoints are common (CJK text); peek before
         // paying for a SIMD scan that would return 0.
-        const size_t i = (!bytes.empty() && bytes[0] > 0x7F) ? 0 : highway_first_non_ascii8(bytes.data(), bytes.size());
+        const size_t i = (!bytes.empty() && bytes[0] > 0x7F) ? 0 : Bun__simd__indexOfNonASCII8(bytes.data(), bytes.size());
         if (i == bytes.size())
             break;
         len += visibleLatin1Width(bytes.first(i));
@@ -705,7 +696,7 @@ static std::optional<size_t> utf8WalkRun(std::span<const uint8_t> input, size_t 
     std::span<const uint8_t> bytes = input.subspan(start, len);
 
     while (true) {
-        const size_t i = highway_first_non_ascii8(bytes.data(), bytes.size());
+        const size_t i = Bun__simd__indexOfNonASCII8(bytes.data(), bytes.size());
         if (i == bytes.size())
             break;
 
@@ -782,7 +773,13 @@ static size_t countPrintableAscii16(std::span<const char16_t> input)
             count += (c >= 0x20 && c < 0x7F) ? 1 : 0;
         return count;
     }
-    return highway_count_printable_ascii16(reinterpret_cast<const uint16_t*>(input.data()), input.size());
+    return Bun__simd__countPrintableASCII16(input.data(), input.size());
+}
+
+// False for controls and in the two large gaps between the blocks that the bulk kernel counts. Surrogates are in the second.
+static bool mayStartBulkRun(char16_t c)
+{
+    return c >= 0x20 && (c < 0x530 || c > 0x3040) && (c < 0xD7A4 || c > 0xFF00);
 }
 
 struct UTF16Decoded {
@@ -879,22 +876,19 @@ struct UTF16WidthAccumulator {
             // grapheme cluster with a fixed width (ASCII, most Latin/Greek/
             // Cyrillic letters, the main CJK/kana/Hangul-syllable/fullwidth
             // blocks) are classified and counted in one SIMD pass
-            // (highway_visible_utf16_width). Skipped when ambiguous-width
+            // (Bun__simd__visibleUTF16Width). Skipped when ambiguous-width
             // characters count as wide (Greek/Cyrillic are East-Asian-
             // Ambiguous); the first-unit check skips the call when the next
-            // codepoint (surrogate pair, control) clearly needs the scalar
-            // path anyway.
-            if (!ambiguousAsWide && !input.empty() && input[0] >= 0x20 && !U16_IS_SURROGATE(input[0])) {
+            // codepoint clearly needs the scalar path anyway.
+            if (!ambiguousAsWide && !input.empty() && mayStartBulkRun(input[0])) {
                 size_t bulkWidth = 0;
-                const size_t consumed = highway_visible_utf16_width(
-                    reinterpret_cast<const uint16_t*>(input.data()), input.size(), &bulkWidth);
+                const size_t consumed = Bun__simd__visibleUTF16Width(input.data(), input.size(), bulkWidth);
                 if (consumed > 0) {
                     const char32_t lastCp = input[consumed - 1];
                     const uint8_t lastPacked = fusedClassify(lastCp);
                     seedFromBulkRun(lastCp, lastPacked);
                     len += bulkWidth - widthFromFused(lastPacked, ambiguousAsWide);
                     input = input.subspan(consumed);
-                    continue;
                 }
             }
 
@@ -920,7 +914,7 @@ struct UTF16WidthAccumulator {
                     ASSERT(nextEsc <= end);
                     bound = static_cast<size_t>(nextEsc - input.data());
                 }
-                idx = highway_first_non_ascii16(reinterpret_cast<const uint16_t*>(input.data()), bound);
+                idx = Bun__simd__indexOfNonASCII16(input.data(), bound);
             }
             if (idx > 0) {
                 const char32_t lastCp = input[idx - 1];

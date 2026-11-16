@@ -58,6 +58,7 @@
 #include "JSBufferEncodingType.h"
 #include "ErrorCode.h"
 #include "NodeValidator.h"
+#include "SIMDKernels.h"
 #include "wtf/Assertions.h"
 #include "wtf/Forward.h"
 #include <JavaScriptCore/JSBase.h>
@@ -84,18 +85,6 @@
 #include <JavaScriptCore/JSObjectInlines.h>
 
 extern "C" bool Bun__Node__ZeroFillBuffers;
-
-// SIMD-optimized search functions from highway_strings.cpp
-extern "C" void* highway_memmem(const uint8_t* haystack, size_t haystack_len, const uint8_t* needle, size_t needle_len);
-extern "C" size_t highway_memrmem(const uint8_t* haystack, size_t haystack_len, const uint8_t* needle, size_t needle_len);
-extern "C" size_t highway_memmem16(const uint16_t* haystack, size_t haystack_len, const uint16_t* needle, size_t needle_len);
-extern "C" size_t highway_memrmem16(const uint16_t* haystack, size_t haystack_len, const uint16_t* needle, size_t needle_len);
-extern "C" void highway_bswap16(uint8_t* data, size_t len);
-extern "C" void highway_bswap32(uint8_t* data, size_t len);
-extern "C" void highway_bswap64(uint8_t* data, size_t len);
-extern "C" size_t highway_index_of_char(const uint8_t* haystack, size_t haystack_len, uint8_t needle);
-extern "C" size_t highway_last_index_of_char(const uint8_t* haystack, size_t haystack_len, uint8_t needle);
-static constexpr size_t kHighwayNotFound = ~static_cast<size_t>(0);
 
 // export fn Bun__inspect_singleline(globalThis: *JSGlobalObject, value: JSValue) bun.String
 extern "C" BunString Bun__inspect_singleline(Zig::GlobalObject* globalObject, JSC::JSValue value);
@@ -1602,17 +1591,9 @@ static int64_t indexOf(const uint8_t* thisPtr, int64_t thisLength, const uint8_t
     const size_t haystackLen = static_cast<size_t>(thisLength - byteOffset);
     const uint8_t* haystackPtr = thisPtr + byteOffset;
 
-    if (valueLength == 1) {
-        // Use SIMD-optimized single-byte search
-        size_t result = highway_index_of_char(haystackPtr, haystackLen, valuePtr[0]);
-        if (result == haystackLen) return -1;
-        return byteOffset + static_cast<int64_t>(result);
-    }
-
-    // Use SIMD-optimized multi-byte search
-    void* result = highway_memmem(haystackPtr, haystackLen, valuePtr, static_cast<size_t>(valueLength));
-    if (result == nullptr) return -1;
-    return byteOffset + static_cast<int64_t>(static_cast<const uint8_t*>(result) - haystackPtr);
+    size_t result = Bun__simd__indexOfBytes(haystackPtr, haystackLen, valuePtr, static_cast<size_t>(valueLength));
+    if (result == WTF::notFound) return -1;
+    return byteOffset + static_cast<int64_t>(result);
 }
 
 // UCS2 searches operate on whole uint16_t units (Node's SearchString<uint16_t>),
@@ -1621,14 +1602,11 @@ static int64_t indexOf16(const uint8_t* thisPtr, int64_t thisLength, const uint8
 {
     if (thisLength == 1) return -1;
     if (valueLength == 1) return -1;
-    thisLength /= 2;
-    valueLength /= 2;
-    byteOffset /= 2;
-    const uint16_t* haystack = reinterpret_cast<const uint16_t*>(thisPtr);
-    size_t result = highway_memmem16(haystack + byteOffset, static_cast<size_t>(thisLength - byteOffset),
-        reinterpret_cast<const uint16_t*>(valuePtr), static_cast<size_t>(valueLength));
-    if (result == kHighwayNotFound) return -1;
-    return (byteOffset + static_cast<int64_t>(result)) * 2;
+    byteOffset &= ~1;
+    size_t result = Bun__simd__indexOfPairs(thisPtr + byteOffset, static_cast<size_t>(thisLength - byteOffset),
+        valuePtr, static_cast<size_t>(valueLength));
+    if (result == WTF::notFound) return -1;
+    return byteOffset + static_cast<int64_t>(result) * 2;
 }
 
 static int64_t lastIndexOf16(const uint8_t* thisPtr, int64_t thisLength, const uint8_t* valuePtr, int64_t valueLength, int64_t byteOffset)
@@ -1640,9 +1618,9 @@ static int64_t lastIndexOf16(const uint8_t* thisPtr, int64_t thisLength, const u
     byteOffset /= 2;
     int64_t haystackLen = std::min(thisLength, byteOffset + valueLength);
     if (haystackLen < valueLength) return -1;
-    size_t result = highway_memrmem16(reinterpret_cast<const uint16_t*>(thisPtr), static_cast<size_t>(haystackLen),
-        reinterpret_cast<const uint16_t*>(valuePtr), static_cast<size_t>(valueLength));
-    if (result == kHighwayNotFound) return -1;
+    size_t result = Bun__simd__lastIndexOfPairs(thisPtr, static_cast<size_t>(haystackLen) * 2,
+        valuePtr, static_cast<size_t>(valueLength) * 2);
+    if (result == WTF::notFound) return -1;
     return static_cast<int64_t>(result) * 2;
 }
 
@@ -1650,9 +1628,9 @@ static int64_t lastIndexOf(const uint8_t* thisPtr, int64_t thisLength, const uin
 {
     int64_t haystackLen = std::min(thisLength, byteOffset + valueLength);
     if (haystackLen < valueLength) return -1;
-    size_t result = highway_memrmem(thisPtr, static_cast<size_t>(haystackLen),
+    size_t result = Bun__simd__lastIndexOfBytes(thisPtr, static_cast<size_t>(haystackLen),
         valuePtr, static_cast<size_t>(valueLength));
-    if (result == kHighwayNotFound) return -1;
+    if (result == WTF::notFound) return -1;
     return static_cast<int64_t>(result);
 }
 
@@ -1706,13 +1684,11 @@ static int64_t indexOfNumber(JSC::JSGlobalObject* lexicalGlobalObject, bool last
         return immediateResult;
 
     if (last) {
-        size_t len = byteOffset + 1;
-        size_t result = highway_last_index_of_char(typedVector, len, byteValue);
-        return result == len ? -1 : static_cast<int64_t>(result);
+        size_t result = Bun__simd__lastIndexOfByte(typedVector, byteOffset + 1, byteValue);
+        return result == WTF::notFound ? -1 : static_cast<int64_t>(result);
     }
-    size_t len = searchEnd - byteOffset;
-    size_t result = highway_index_of_char(typedVector + byteOffset, len, byteValue);
-    if (result == len) return -1;
+    size_t result = Bun__simd__indexOfByte(typedVector + byteOffset, searchEnd - byteOffset, byteValue);
+    if (result == WTF::notFound) return -1;
     return static_cast<int64_t>(result + byteOffset);
 }
 
@@ -2007,7 +1983,7 @@ static JSC::EncodedJSValue jsBufferPrototypeFunction_swap16Body(JSC::JSGlobalObj
         return Bun::throwError(lexicalGlobalObject, scope, Bun::ErrorCode::ERR_INVALID_BUFFER_SIZE, "Buffer size must be a multiple of 16-bits"_s);
     }
 
-    highway_bswap16(castedThis->typedVector(), length);
+    Bun__simd__swap16(castedThis->typedVector(), length);
 
     return JSC::JSValue::encode(castedThis);
 }
@@ -2025,7 +2001,7 @@ static JSC::EncodedJSValue jsBufferPrototypeFunction_swap32Body(JSC::JSGlobalObj
         return Bun::throwError(lexicalGlobalObject, scope, Bun::ErrorCode::ERR_INVALID_BUFFER_SIZE, "Buffer size must be a multiple of 32-bits"_s);
     }
 
-    highway_bswap32(castedThis->typedVector(), length);
+    Bun__simd__swap32(castedThis->typedVector(), length);
 
     return JSC::JSValue::encode(castedThis);
 }
@@ -2043,7 +2019,7 @@ static JSC::EncodedJSValue jsBufferPrototypeFunction_swap64Body(JSC::JSGlobalObj
         return Bun::throwError(lexicalGlobalObject, scope, Bun::ErrorCode::ERR_INVALID_BUFFER_SIZE, "Buffer size must be a multiple of 64-bits"_s);
     }
 
-    highway_bswap64(castedThis->typedVector(), length);
+    Bun__simd__swap64(castedThis->typedVector(), length);
 
     return JSC::JSValue::encode(castedThis);
 }

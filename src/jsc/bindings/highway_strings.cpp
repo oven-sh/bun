@@ -3118,25 +3118,4 @@ size_t highway_decode_hex16(const uint16_t* HWY_RESTRICT input, uint8_t* HWY_RES
 
 } // namespace bun
 
-#if OS(DARWIN)
-// On macOS, override the libc memmem with our implementation
-// This uses inline assembly to ensure the symbol is exported with the correct name
-__asm__(".globl _memmem");
-__asm__(".set _memmem, _highway_memmem");
-#elif OS(LINUX)
-// On Linux, override the libc memmem with our implementation.
-// A definition rather than __attribute__((alias)): memmem's prototype (const
-// void*, and throw() in glibc) is not highway_memmem's, which clang 23's
-// -Wattribute-alias rejects. highway_memmem is in this file and inlines here.
-extern "C" {
-// Using both "default" visibility and "weak" ensures our implementation is used
-// throughout the entire program when linked, not just in this object file
-__attribute__((visibility("default"), weak, used)) void* memmem(const void* haystack, size_t haystacklen, const void* needle, size_t needlelen)
-{
-    return bun::highway_memmem(static_cast<const uint8_t*>(haystack), haystacklen, static_cast<const uint8_t*>(needle), needlelen);
-}
-}
-
-#endif
-
 #endif // HWY_ONCE

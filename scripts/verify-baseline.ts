@@ -281,11 +281,11 @@ if (values["simd-cpus"] && !values["skip-emulation"]) {
   }
   for (const [cpu, target] of Object.entries(bestTargets)) {
     const expected = ` ${target}\nrounds: 200`;
-    await runTest(`bun_simd on ${cpu}: kernels`, [...runner, "check", "avx512_icl", "1", "200"], { cpu, expected });
+    await runTest(`bun_simd on ${cpu}: kernels`, [...runner, "check", "1", "200"], { cpu, expected });
   }
   if (isAarch64) {
     const options = { cpu: "neoverse-n2", release: "6.1.0", expected: " neon\nrounds: 1" };
-    await runTest("bun_simd on Linux 6.1", [...runner, "check", "avx512_icl", "1", "1"], options);
+    await runTest("bun_simd on Linux 6.1", [...runner, "check", "1", "1"], options);
   }
 }
 

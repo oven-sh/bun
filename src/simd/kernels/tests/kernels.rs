@@ -699,6 +699,29 @@ fn conversions() {
 }
 
 #[test]
+fn few_ascii() {
+    let ones = [0xFF; 20];
+    for len in 0..=18 {
+        for not_ascii in 0..=len {
+            let mut from = b"abcdefghijklmnopqr"[..len].to_vec();
+            if let Some(byte) = from.get_mut(not_ascii) {
+                *byte = 0x80;
+            }
+            for room in [len.saturating_sub(1), len, 20] {
+                let is_copied = from.is_ascii() && len <= room.min(16);
+                let copied = if is_copied { len } else { 0 };
+                let all = [&from[..copied], &ones[copied..room]].concat();
+                check((is_copied, all), || {
+                    to_shared(&ones[..room], |out| {
+                        kernels::copy_few_ascii_to_shared(&from, out)
+                    })
+                });
+            }
+        }
+    }
+}
+
+#[test]
 #[cfg_attr(miri, ignore = "slow")]
 fn nothing_after_a_prefix() {
     use kernels::*;
@@ -950,6 +973,23 @@ fn json() {
             kernels::json_structural_index_chunk(text, 0, out, &mut [0], &mut [0; 3]).0
         })
     });
+}
+
+#[test]
+fn byte_classes() {
+    use kernels::{json_class as json, xml_class as xml};
+    for byte in 0..=u8::MAX {
+        let is_in = |set: &[u8]| set.iter().any(|&it| it == byte);
+        let has = |class| json::OF_BYTE[usize::from(byte)] & class != 0;
+        assert_eq!(has(json::STRUCTURAL), is_in(b"{}[]:,"), "{byte}");
+        assert_eq!(has(json::WHITESPACE), is_in(b" \t\n\r"), "{byte}");
+
+        let has = |class| xml::OF_BYTE[usize::from(byte)] & class != 0;
+        let is_control = byte < 0x20 && !is_in(b"\t\n");
+        assert_eq!(has(xml::ANYWHERE), is_control || byte == b'&', "{byte}");
+        assert_eq!(has(xml::IN_TAG), is_in(b"\t\n\"'="), "{byte}");
+        assert_eq!((has(xml::LT), has(xml::GT)), (byte == b'<', byte == b'>'));
+    }
 }
 
 #[test]

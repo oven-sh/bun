@@ -1,9 +1,9 @@
-// Drives the runtime-dispatched byte-search kernels in
-// src/jsc/bindings/highway_strings.cpp (the backend of `bun_core::strings`)
-// directly, sweeping haystack lengths across vector-width boundaries and
-// misaligned base pointers, and checks each against a scalar reference.
+// Drives the runtime-dispatched byte-search kernels in src/simd/kernels (the
+// backend of `bun_core::strings` and `Buffer`) directly, sweeping haystack
+// lengths across vector-width boundaries and misaligned base pointers, and
+// checks each against a scalar reference.
 
-import { highwayStringsForTesting as hw } from "bun:internal-for-testing";
+import { simdStringsForTesting as simd } from "bun:internal-for-testing";
 import { afterEach, describe, expect, it } from "bun:test";
 
 // Lengths that straddle 16/32/64-byte lanes and the scalar tails on either side.
@@ -27,17 +27,9 @@ function filler(len: number, offset: number, ctor: { new (n: number): Uint8Array
 
 const enc = (s: string) => new TextEncoder().encode(s);
 
-function refIndexOf(h: Uint8Array, b: number) {
-  const i = h.indexOf(b);
-  return i === -1 ? h.length : i;
-}
-function refLastIndexOf(h: Uint8Array, b: number) {
-  const i = h.lastIndexOf(b);
-  return i === -1 ? h.length : i;
-}
 function refIndexOfNot(h: Uint8Array, b: number) {
   for (let i = 0; i < h.length; i++) if (h[i] !== b) return i;
-  return h.length;
+  return -1;
 }
 function refCount(h: Uint8Array, b: number) {
   let n = 0;
@@ -45,12 +37,11 @@ function refCount(h: Uint8Array, b: number) {
   return n;
 }
 function refIndexOfAny(h: Uint8Array, set: Uint8Array) {
-  for (let i = 0; i < h.length; i++) if (set.includes(h[i])) return i;
-  return h.length;
+  const found = Array.from(set, b => h.indexOf(b)).filter(i => i !== -1);
+  return found.length ? Math.min(...found) : -1;
 }
 function refLastIndexOfAny(h: Uint8Array, set: Uint8Array) {
-  for (let i = h.length - 1; i >= 0; i--) if (set.includes(h[i])) return i;
-  return h.length;
+  return Math.max(...Array.from(set, b => h.lastIndexOf(b)));
 }
 // Naive references (Buffer.indexOf/lastIndexOf are themselves served by these
 // kernels, so they can't be the oracle).
@@ -98,15 +89,31 @@ afterEach(() => {
   expect(found.slice(0, 20)).toEqual([]);
 });
 
-describe("highway byte-search kernels", () => {
+type Kernel = Parameters<typeof simd.search>[0];
+type SharedKernel = Parameters<typeof simd.searchShared>[0];
+const alsoShared = new Set<string>(["indexOfChar", "lastIndexOfChar", "memmem", "memrmem", "memrmem16"]);
+const everyByte = Array.from({ length: 256 }, (_, byte) => Uint8Array.of(byte));
+
+/** No match is -1. */
+function search(kernel: Kernel, haystack: Uint8Array, needle: number | Uint8Array) {
+  if (typeof needle === "number") needle = everyByte[needle];
+  const found = simd.search(kernel, haystack, needle);
+  if (alsoShared.has(kernel)) {
+    const shared = simd.searchShared(kernel as SharedKernel, haystack, needle);
+    compare(kernel, shared, found, () => `for shared memory, len=${haystack.length}`);
+  }
+  return found;
+}
+
+describe("byte-search kernels", () => {
   it("indexOfChar / lastIndexOfChar / countChar: absent needle", () => {
     for (const len of LENGTHS) {
       for (const off of OFFSETS) {
         const h = filler(len, off);
         const at = `len=${len} off=${off}`;
-        compare("indexOfChar", hw("indexOfChar", h, 0x2c), len, at);
-        compare("lastIndexOfChar", hw("lastIndexOfChar", h, 0x2c), len, at);
-        compare("countChar", hw("countChar", h, 0x2c), 0, at);
+        compare("indexOfChar", search("indexOfChar", h, 0x2c), -1, at);
+        compare("lastIndexOfChar", search("lastIndexOfChar", h, 0x2c), -1, at);
+        compare("countChar", search("countChar", h, 0x2c), 0, at);
       }
     }
   });
@@ -118,9 +125,9 @@ describe("highway byte-search kernels", () => {
           const h = filler(len, off);
           h[pos] = 0x2c;
           const at = `len=${len} off=${off} pos=${pos}`;
-          compare("indexOfChar", hw("indexOfChar", h, 0x2c), pos, at);
-          compare("lastIndexOfChar", hw("lastIndexOfChar", h, 0x2c), pos, at);
-          compare("countChar", hw("countChar", h, 0x2c), 1, at);
+          compare("indexOfChar", search("indexOfChar", h, 0x2c), pos, at);
+          compare("lastIndexOfChar", search("lastIndexOfChar", h, 0x2c), pos, at);
+          compare("countChar", search("countChar", h, 0x2c), 1, at);
         }
       }
     }
@@ -134,9 +141,9 @@ describe("highway byte-search kernels", () => {
         h[ps[i]] = 0x0a;
         h[ps[ps.length - 1 - i]] = 0x0a;
         const at = `len=${len} pos=${ps[i]},${ps[ps.length - 1 - i]}`;
-        compare("indexOfChar", hw("indexOfChar", h, 0x0a), refIndexOf(h, 0x0a), at);
-        compare("lastIndexOfChar", hw("lastIndexOfChar", h, 0x0a), refLastIndexOf(h, 0x0a), at);
-        compare("countChar", hw("countChar", h, 0x0a), refCount(h, 0x0a), at);
+        compare("indexOfChar", search("indexOfChar", h, 0x0a), h.indexOf(0x0a), at);
+        compare("lastIndexOfChar", search("lastIndexOfChar", h, 0x0a), h.lastIndexOf(0x0a), at);
+        compare("countChar", search("countChar", h, 0x0a), refCount(h, 0x0a), at);
       }
     }
   });
@@ -145,10 +152,10 @@ describe("highway byte-search kernels", () => {
     for (const len of LENGTHS) {
       const h = new Uint8Array(len).fill(0x61);
       const at = `len=${len}`;
-      compare("countChar", hw("countChar", h, 0x61), len, at);
+      compare("countChar", search("countChar", h, 0x61), len, at);
       for (let i = 0; i < len; i += 3) h[i] = 0x62;
-      compare("countChar", hw("countChar", h, 0x61), refCount(h, 0x61), at);
-      compare("countChar", hw("countChar", h, 0x62), refCount(h, 0x62), at);
+      compare("countChar", search("countChar", h, 0x61), refCount(h, 0x61), at);
+      compare("countChar", search("countChar", h, 0x62), refCount(h, 0x62), at);
     }
   });
 
@@ -156,13 +163,13 @@ describe("highway byte-search kernels", () => {
     for (const len of LENGTHS) {
       for (const off of OFFSETS) {
         const all = new Uint8Array(len + off).subarray(off).fill(0x2f);
-        compare("indexOfNotChar", hw("indexOfNotChar", all, 0x2f), len, `len=${len} off=${off}`);
+        compare("indexOfNotChar", search("indexOfNotChar", all, 0x2f), -1, `len=${len} off=${off}`);
         for (const run of positions(len)) {
           const h = new Uint8Array(len + off).subarray(off).fill(0x2f);
           h[run] = 0x61;
           compare(
             "indexOfNotChar",
-            hw("indexOfNotChar", h, 0x2f),
+            search("indexOfNotChar", h, 0x2f),
             refIndexOfNot(h, 0x2f),
             `len=${len} off=${off} run=${run}`,
           );
@@ -178,19 +185,19 @@ describe("highway byte-search kernels", () => {
         for (const off of [0, 13]) {
           const none = filler(len, off);
           const at0 = `set=${set.length} len=${len} off=${off}`;
-          compare("indexOfAny", hw("indexOfAny", none, set), len, at0);
-          compare("lastIndexOfAny", hw("lastIndexOfAny", none, set), len, at0);
+          compare("indexOfAny", search("indexOfAny", none, set), -1, at0);
+          compare("lastIndexOfAny", search("lastIndexOfAny", none, set), -1, at0);
           for (const pos of positions(len)) {
             const h = filler(len, off);
             // Alternate which member of the set is planted so every lane compare matters.
             h[pos] = set[pos % set.length];
             const at = `${at0} pos=${pos}`;
-            compare("indexOfAny", hw("indexOfAny", h, set), pos, at);
-            compare("lastIndexOfAny", hw("lastIndexOfAny", h, set), pos, at);
+            compare("indexOfAny", search("indexOfAny", h, set), pos, at);
+            compare("lastIndexOfAny", search("lastIndexOfAny", h, set), pos, at);
             if (pos + 2 < len) {
               h[pos + 2] = set[(pos + 1) % set.length];
-              compare("indexOfAny", hw("indexOfAny", h, set), refIndexOfAny(h, set), at);
-              compare("lastIndexOfAny", hw("lastIndexOfAny", h, set), refLastIndexOfAny(h, set), at);
+              compare("indexOfAny", search("indexOfAny", h, set), refIndexOfAny(h, set), at);
+              compare("lastIndexOfAny", search("lastIndexOfAny", h, set), refLastIndexOfAny(h, set), at);
             }
           }
         }
@@ -204,21 +211,21 @@ describe("highway byte-search kernels", () => {
       for (const len of LENGTHS) {
         const none = filler(len, 3);
         const at0 = `needle=${n.length} len=${len}`;
-        compare("memmem", hw("memmem", none, n), refMemmem(none, n), at0);
-        compare("memrmem", hw("memrmem", none, n), refMemrmem(none, n), at0);
+        compare("memmem", search("memmem", none, n), refMemmem(none, n), at0);
+        compare("memrmem", search("memrmem", none, n), refMemrmem(none, n), at0);
         if (n.length === 0 || n.length > len) continue;
         for (const pos of positions(len - n.length + 1)) {
           const h = filler(len, 3);
           h.set(n, pos);
           const at = `${at0} pos=${pos}`;
-          compare("memmem", hw("memmem", h, n), pos, at);
-          compare("memrmem", hw("memrmem", h, n), pos, at);
+          compare("memmem", search("memmem", h, n), pos, at);
+          compare("memrmem", search("memrmem", h, n), pos, at);
           // A second copy later on: memmem keeps the first, memrmem takes the last.
           const later = len - n.length;
           if (later >= pos + n.length) {
             h.set(n, later);
-            compare("memmem", hw("memmem", h, n), refMemmem(h, n), at);
-            compare("memrmem", hw("memrmem", h, n), refMemrmem(h, n), at);
+            compare("memmem", search("memmem", h, n), refMemmem(h, n), at);
+            compare("memrmem", search("memrmem", h, n), refMemrmem(h, n), at);
           }
         }
       }
@@ -231,12 +238,12 @@ describe("highway byte-search kernels", () => {
       const h = filler(len, 0);
       // "abc" decoys everywhere, one real "abcd".
       for (let i = 0; i + 3 <= len; i += 5) h.set(enc("abc"), i);
-      compare("memmem", hw("memmem", h, n), refMemmem(h, n), `len=${len} decoys alone`);
-      compare("memrmem", hw("memrmem", h, n), refMemrmem(h, n), `len=${len} decoys alone`);
+      compare("memmem", search("memmem", h, n), refMemmem(h, n), `len=${len} decoys alone`);
+      compare("memrmem", search("memrmem", h, n), refMemrmem(h, n), `len=${len} decoys alone`);
       if (len >= 24) {
         h.set(n, 19);
-        compare("memmem", hw("memmem", h, n), refMemmem(h, n), `len=${len}`);
-        compare("memrmem", hw("memrmem", h, n), refMemrmem(h, n), `len=${len}`);
+        compare("memmem", search("memmem", h, n), refMemmem(h, n), `len=${len}`);
+        compare("memrmem", search("memrmem", h, n), refMemrmem(h, n), `len=${len}`);
       }
     }
   });
@@ -263,8 +270,8 @@ describe("highway byte-search kernels", () => {
         ]) {
           const none = filler(len, off, Uint16Array);
           const at0 = `needle=${n.length} len=${len} off=${off} byteOff=${byteOff}`;
-          compare("memmem16", hw("memmem16", view16(none, byteOff), nb), -1, at0);
-          compare("memrmem16", hw("memrmem16", view16(none, byteOff), nb), -1, at0);
+          compare("memmem16", simd.searchShared("memmem16", view16(none, byteOff), nb), -1, at0);
+          compare("memrmem16", search("memrmem16", view16(none, byteOff), nb), -1, at0);
           if (n.length > len) continue;
           const starts = len - n.length + 1;
           // Long haystacks: both ends, the middle, and a few lane edges are enough.
@@ -275,13 +282,13 @@ describe("highway byte-search kernels", () => {
             const h = filler(len, off, Uint16Array);
             h.set(n, pos);
             const at = `${at0} pos=${pos}`;
-            compare("memmem16", hw("memmem16", view16(h, byteOff), nb), pos, at);
-            compare("memrmem16", hw("memrmem16", view16(h, byteOff), nb), pos, at);
+            compare("memmem16", simd.searchShared("memmem16", view16(h, byteOff), nb), pos, at);
+            compare("memrmem16", search("memrmem16", view16(h, byteOff), nb), pos, at);
             const later = len - n.length;
             if (later >= pos + n.length) {
               h.set(n, later);
-              compare("memmem16", hw("memmem16", view16(h, byteOff), nb), pos, at);
-              compare("memrmem16", hw("memrmem16", view16(h, byteOff), nb), later, at);
+              compare("memmem16", simd.searchShared("memmem16", view16(h, byteOff), nb), pos, at);
+              compare("memrmem16", search("memrmem16", view16(h, byteOff), nb), later, at);
             }
           }
         }
@@ -314,14 +321,14 @@ describe("highway byte-search kernels", () => {
       for (const len of [n.length, 33, 65, 130, 1030]) {
         const h = make(len);
         const at = `needle=${n.length} len=${len}`;
-        compare("memmem16", hw("memmem16", view16(h, 0), nb), -1, at);
-        compare("memrmem16", hw("memrmem16", view16(h, 0), nb), -1, at);
+        compare("memmem16", simd.searchShared("memmem16", view16(h, 0), nb), -1, at);
+        compare("memrmem16", search("memrmem16", view16(h, 0), nb), -1, at);
         if (len >= 3 * n.length) {
           // Real copies near both ends, decoys between: first/last must be exact.
           h.set(n, 1);
           h.set(n, len - n.length - 1);
-          compare("memmem16", hw("memmem16", view16(h, 0), nb), 1, at);
-          compare("memrmem16", hw("memrmem16", view16(h, 0), nb), len - n.length - 1, at);
+          compare("memmem16", simd.searchShared("memmem16", view16(h, 0), nb), 1, at);
+          compare("memrmem16", search("memrmem16", view16(h, 0), nb), len - n.length - 1, at);
           compare("refMemmem", refMemmem(h, n), 1, at);
           compare("refMemrmem", refMemrmem(h, n), len - n.length - 1, at);
         }
@@ -355,6 +362,11 @@ describe("highway byte-search kernels", () => {
     compare("indexOf", Buffer.alloc(0).indexOf(1), -1, "empty");
     compare("lastIndexOf", Buffer.alloc(0).lastIndexOf(1), -1, "empty");
   });
+
+  it("memmem for C and C++, with which WebKit looks up the name of a month", () => {
+    const months = "Jan Feb Mar Apr May Jun Jul Aug Sep Oct Nov Dec".split(" ");
+    months.forEach((month, i) => compare("getUTCMonth", new Date(`${month} 15 2001`).getUTCMonth(), i, month));
+  });
 });
 
 // The kernels of node:path (src/node_path/tidy.rs).
@@ -370,13 +382,13 @@ describe("kernels for paths", () => {
         (p[at + 1] === DOT && (at + 2 === p.length || p[at + 2] === SLASH))));
   function refIndexOfUntidySlash(p: Uint8Array) {
     for (let i = 0; i + 1 < p.length; i++) if (p[i] === SLASH && isUntidyPartAt(p, i + 1)) return i;
-    return p.length;
+    return -1;
   }
   function refIndexOfUntidySlashOrNonAscii(p: Uint8Array) {
     for (let i = 0; i < p.length; i++) {
       if (p[i] >= 0x80 || (p[i] === SLASH && i + 1 < p.length && isUntidyPartAt(p, i + 1))) return i;
     }
-    return p.length;
+    return -1;
   }
   function refCommonPrefixLength(a: Uint8Array, b: Uint8Array) {
     let i = 0;
@@ -387,16 +399,16 @@ describe("kernels for paths", () => {
   const exact = (p: Uint8Array) => new Uint8Array(p);
   function check(p: Uint8Array, at: () => string) {
     p = exact(p);
-    compare("indexOfUntidySlash", hw("indexOfUntidySlash", p, 0), refIndexOfUntidySlash(p), at);
+    compare("indexOfUntidySlash", search("indexOfUntidySlash", p, 0), refIndexOfUntidySlash(p), at);
     compare(
       "indexOfUntidySlashOrNonAscii",
-      hw("indexOfUntidySlashOrNonAscii", p, 0),
+      search("indexOfUntidySlashOrNonAscii", p, 0),
       refIndexOfUntidySlashOrNonAscii(p),
       at,
     );
-    compare("lastIndexOfSlash", hw("lastIndexOfSlash", p, 0), refLastIndexOf(p, SLASH), at);
-    compare("lastIndexOfSlashOrDot", hw("lastIndexOfSlashOrDot", p, 0), refLastIndexOfAny(p, slashOrDot), at);
-    compare("countSlashes", hw("countSlashes", p, 0), refCount(p, SLASH), at);
+    compare("lastIndexOfSlash", search("lastIndexOfSlash", p, 0), p.lastIndexOf(SLASH), at);
+    compare("lastIndexOfSlashOrDot", search("lastIndexOfSlashOrDot", p, 0), refLastIndexOfAny(p, slashOrDot), at);
+    compare("countSlashes", search("countSlashes", p, 0), refCount(p, SLASH), at);
   }
 
   it("every text of up to 8 characters over '/', '.' and 'a'", () => {
@@ -418,7 +430,7 @@ describe("kernels for paths", () => {
       if (len % 7 === 2) tidy[len - 1] = 0x61;
       if (len % 7 === 1) tidy[len - 1] = 0x61;
       check(tidy, () => `len=${len}`);
-      compare("indexOfUntidySlash", hw("indexOfUntidySlash", exact(tidy), 0), len, () => `len=${len}`);
+      compare("indexOfUntidySlash", search("indexOfUntidySlash", exact(tidy), 0), -1, () => `len=${len}`);
       for (const part of ["//", "/./", "/../", "/.", "/.."]) {
         const planted = enc(part);
         for (let pos = 0; pos + planted.length <= len; pos++) {
@@ -475,7 +487,7 @@ describe("kernels for paths", () => {
   it("commonPrefixLength: the first difference at every position, and none", () => {
     for (let len = 0; len <= 70; len++) {
       const a = filler(len, 1);
-      const found = (b: Uint8Array) => hw("commonPrefixLength", exact(a), exact(b));
+      const found = (b: Uint8Array) => search("commonPrefixLength", exact(a), exact(b));
       compare("commonPrefixLength", found(a), len, () => `len=${len}`);
       compare("commonPrefixLength", found(a.subarray(0, len >> 1)), len >> 1, () => `len=${len} and its half`);
       for (let pos = 0; pos < len; pos++) {
@@ -507,9 +519,7 @@ describe("scannerRunStops", () => {
         if (i >= text.length || stops(text[i])) expected[plane * planeLen + (i >> 3)] |= 1 << (i & 7);
       }
     });
-    const out = new Uint8Array(planeLen * 3);
-    compare("scannerRunStops", hw("scannerRunStops", text, out), 0, at);
-    compare("scannerRunStops", out.toHex(), expected.toHex(), at);
+    compare("scannerRunStops", (simd.scannerRunStops(text) as Uint8Array).toHex(), expected.toHex(), at);
   }
 
   it("classifies every byte value in every lane", () => {
@@ -550,20 +560,13 @@ describe("scannerRunStops", () => {
       }
     }
   });
-
-  it("rejects a buffer that is too small", () => {
-    expect(() => hw("scannerRunStops", new Uint8Array(65), new Uint8Array(3 * 8))).toThrow(RangeError);
-  });
 });
 
 describe("lineStarts", () => {
   function compareLineStarts(text: Uint8Array, at: string) {
-    const expected: number[] = [];
+    const expected = [0];
     text.forEach((byte, i) => byte === 0x0a && expected.push(i + 1));
-    // One more than there are line feeds, to see that the kernel stops.
-    const out = new Uint32Array(expected.length + 1).fill(0xdeadbeef);
-    compare("lineStarts", hw("lineStarts", text, new Uint8Array(out.buffer)), expected.length, at);
-    compare("lineStarts", out.join(), [...expected, 0xdeadbeef].join(), at);
+    compare("lineStarts", simd.lineStarts(text).join(), expected.join(), at);
   }
 
   it("no line feed, and nothing but line feeds", () => {
@@ -594,10 +597,6 @@ describe("lineStarts", () => {
     compareLineStarts(enc(lines.join("")), "ascending");
     compareLineStarts(enc(lines.reverse().join("") + "no line feed at the end"), "descending");
   });
-
-  it("rejects a buffer that is too small", () => {
-    expect(() => hw("lineStarts", enc("a\nb\n"), new Uint8Array(4))).toThrow(RangeError);
-  });
 });
 
 describe("oddBlocks", () => {
@@ -606,16 +605,11 @@ describe("oddBlocks", () => {
   const LENGTHS = [0, 1, 63, 64, 65, 127, 128, 129, 4031, 4032, 4033, 4095, 4096, 4097, 4159, 4160, 4161, 8192, 9000];
 
   function compareOddBlocks(text: Uint8Array, at: string) {
-    const words = Math.ceil(text.length / 4096);
-    const expected = new BigUint64Array(words + 1);
-    text.forEach((byte, i) => {
-      if (!isPlain(byte)) expected[i >> 12] |= 1n << BigInt((i >> 6) & 63);
-    });
-    // One word more than the kernel may write, to see that it stops.
-    expected[words] = 0xaaaaaaaaaaaaaaaan;
-    const out = new BigUint64Array(words + 1).fill(0xaaaaaaaaaaaaaaaan);
-    compare("oddBlocks", hw("oddBlocks", text, new Uint8Array(out.buffer)), 0, at);
-    compare("oddBlocks", out.join(), expected.join(), at);
+    const expected = new Uint8Array(Math.ceil(text.length / 4096) * 8);
+    for (let i = 0; i < text.length; i++) {
+      if (!isPlain(text[i])) expected[i >> 9] |= 1 << ((i >> 6) & 7);
+    }
+    compare("oddBlocks", simd.oddBlocks(text).join(), expected.join(), at);
   }
 
   it("classifies every byte value", () => {
@@ -641,9 +635,5 @@ describe("oddBlocks", () => {
         }
       }
     }
-  });
-
-  it("rejects a buffer that is too small", () => {
-    expect(() => hw("oddBlocks", new Uint8Array(4097), new Uint8Array(8))).toThrow(RangeError);
   });
 });

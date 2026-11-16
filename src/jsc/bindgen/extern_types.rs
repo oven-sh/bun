@@ -121,6 +121,13 @@ impl ExternBytes {
         // SAFETY: forwarded.
         Some(unsafe { self.get(heap) })
     }
+    /// # Safety
+    /// As [`get`](Self::get).
+    #[inline(always)]
+    pub unsafe fn get_atomic<'a>(self, _: &JsHeap<'a>) -> &'a [bun_core::ffi::SharedU8] {
+        // SAFETY: as in `get`.
+        unsafe { bun_core::ffi::shared_bytes(self.data, self.length) }
+    }
 }
 
 /// Arguments in the caller's frame, which holds them until the host function returns.

@@ -509,8 +509,10 @@ fn header_value_bytes<'a>(value: &'a bun_jsc::JSStringView<'_>) -> Cow<'a, [u8]>
     if units.iter().any(|&unit| unit > 0xFF) {
         return Cow::Owned(value.to_owned_slice());
     }
-    let mut bytes = vec![0u8; units.len()];
-    strings::copy_u16_into_u8(&mut bytes, units);
+    let mut bytes = Vec::new();
+    bun_simd::extend_vec(&mut bytes, units.len(), |out| {
+        bun_simd_kernels::copy_u16_to_u8(units, out)
+    });
     Cow::Owned(bytes)
 }
 

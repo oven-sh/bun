@@ -316,16 +316,10 @@ export function emitCodegen(n: Ninja, cfg: CodegenFields, sources: Sources, engi
   o.all.push(buildOptionsRs);
   o.rustInputs.push(buildOptionsRs);
 
-  // Same shape: the JSON byte-classification tables, consumed by both the
-  // Highway kernel (.h) and the Rust scalar indexer (.rs).
-  const jsonByteClass = generateJsonByteClass(cfg);
-  o.all.push(jsonByteClass.h, jsonByteClass.rs);
-  o.rustInputs.push(jsonByteClass.rs);
-  o.cppHeaders.push(jsonByteClass.h);
-  const xmlByteClass = generateXmlByteClass(cfg);
-  o.all.push(xmlByteClass.h, xmlByteClass.rs);
-  o.rustInputs.push(xmlByteClass.rs);
-  o.cppHeaders.push(xmlByteClass.h);
+  // Same shape: the byte-classification tables of the Highway kernels.
+  const byteClasses = [generateJsonByteClass(cfg), generateXmlByteClass(cfg)];
+  o.all.push(...byteClasses);
+  o.cppHeaders.push(...byteClasses);
 
   emitAotCodegen(ctx);
   emitBunError(ctx);

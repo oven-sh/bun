@@ -1,4 +1,5 @@
 use core::ffi::c_void;
+use core::sync::atomic::AtomicU8;
 
 use bun_core::strings;
 use bun_jsc::HostReturn as _;
@@ -107,8 +108,8 @@ unsafe extern "C" fn TextEncoder__encode16(
         return JSValue::ZERO;
     };
     debug_assert!(array_buffer.len == need);
-    let result =
-        strings::copy_utf16_into_utf8_with_utf8_len(array_buffer.byte_slice_mut(), slice, need);
+    let bytes = AtomicU8::from_mut_slice(array_buffer.byte_slice_mut());
+    let result = strings::copy_utf16_into_utf8_with_utf8_len(bytes, slice, need);
     if result.written == need && result.read == slice.len() {
         return uint8array;
     }
@@ -161,15 +162,11 @@ impl<'a> RopeStringEncoder<'a> {
         let (it, this) = Self::resolve(it);
         // SAFETY: ptr[0..len] is provided by JSC rope iteration
         let src = unsafe { core::slice::from_raw_parts(ptr, len as usize) };
-        let result = strings::copy_latin1_into_utf8_stop_on_non_ascii::<true>(
-            &mut this.buf[this.tail..],
-            src,
-        );
-        if result.read == usize::MAX && result.written == usize::MAX {
+        let copied = strings::copy_ascii_prefix(&mut this.buf[this.tail..], src);
+        this.tail += copied;
+        if copied < src.len() {
             it.stop = 1;
             this.any_non_ascii = true;
-        } else {
-            this.tail += result.written;
         }
     }
 
@@ -183,11 +180,7 @@ impl<'a> RopeStringEncoder<'a> {
         let (it, this) = Self::resolve(it);
         // SAFETY: ptr[0..len] is provided by JSC rope iteration
         let src = unsafe { core::slice::from_raw_parts(ptr, len as usize) };
-        let result = strings::copy_latin1_into_utf8_stop_on_non_ascii::<true>(
-            &mut this.buf[offset as usize..],
-            src,
-        );
-        if result.read == usize::MAX && result.written == usize::MAX {
+        if strings::copy_ascii_prefix(&mut this.buf[offset as usize..], src) < src.len() {
             it.stop = 1;
             this.any_non_ascii = true;
         }
@@ -246,38 +239,18 @@ extern "C" fn TextEncoder__encodeRopeString(
     array
 }
 
-/// # Safety
-/// `input_ptr` must be valid for reading `input_len` UTF-16 code units and
-/// `buf_ptr` must be valid for writing `buf_len` bytes. A null `WTF::String` and a
-/// detached view are both `(null, 0)`.
-#[unsafe(no_mangle)]
-unsafe extern "C" fn TextEncoder__encodeInto16(
-    input_ptr: *const u16,
-    input_len: usize,
-    buf_ptr: *mut u8,
-    buf_len: usize,
-) -> strings::EncodeIntoResult {
-    // SAFETY: caller guarantees buf_ptr[0..buf_len] is a valid mutable buffer
-    let output = unsafe { bun_core::ffi::slice_mut(buf_ptr, buf_len) };
-    // SAFETY: caller guarantees input_ptr[0..input_len] is valid UTF-16 data
-    let input = unsafe { bun_core::ffi::slice(input_ptr, input_len) };
-    strings::copy_utf16_into_utf8(output, input)
+// HOST_EXPORT(TextEncoder__encodeInto16, c)
+pub(crate) fn encode_into16(
+    input: &[u16],
+    output: &[AtomicU8],
+) -> bun_core::strings::EncodeIntoResult {
+    strings::copy_utf16_into_shared_utf8(output, input)
 }
 
-/// # Safety
-/// `input_ptr` must be valid for reading `input_len` bytes of Latin-1 data and
-/// `buf_ptr` must be valid for writing `buf_len` bytes. A null `WTF::String` and a
-/// detached view are both `(null, 0)`.
-#[unsafe(no_mangle)]
-unsafe extern "C" fn TextEncoder__encodeInto8(
-    input_ptr: *const u8,
-    input_len: usize,
-    buf_ptr: *mut u8,
-    buf_len: usize,
-) -> strings::EncodeIntoResult {
-    // SAFETY: caller guarantees buf_ptr[0..buf_len] is a valid mutable buffer
-    let output = unsafe { bun_core::ffi::slice_mut(buf_ptr, buf_len) };
-    // SAFETY: caller guarantees input_ptr[0..input_len] is valid Latin-1 data
-    let input = unsafe { bun_core::ffi::slice(input_ptr, input_len) };
-    strings::copy_latin1_into_utf8(output, input)
+// HOST_EXPORT(TextEncoder__encodeInto8, c)
+pub(crate) fn encode_into8(
+    input: &[u8],
+    output: &[AtomicU8],
+) -> bun_core::strings::EncodeIntoResult {
+    strings::copy_latin1_into_shared_utf8(output, input)
 }

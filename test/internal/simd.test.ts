@@ -6,10 +6,10 @@ import { join } from "node:path";
 // The runner is `src/simd/conformance`. It is only compiled into debug and canary builds.
 const hasRunner = isDebug || Bun.spawnSync({ cmd: [bunExe(), "--revision"], env: bunEnv }).stdout.includes("canary");
 
-async function run(...args: (string | number)[]) {
+async function run(target: string | undefined, ...args: (string | number)[]) {
   await using proc = Bun.spawn({
     cmd: [bunExe(), "test", "--run-simd-tests", ...args.map(String)],
-    env: bunEnv,
+    env: { ...bunEnv, BUN_SIMD_TARGET: target },
     stdout: "pipe",
     stderr: "inherit",
   });
@@ -19,7 +19,7 @@ async function run(...args: (string | number)[]) {
   return { lines, values, exitCode };
 }
 
-const probe = hasRunner ? await run("probe") : undefined;
+const probe = hasRunner ? await run(undefined, "probe") : undefined;
 const baseline = isArm64 ? "neon" : "sse4";
 // A program that is compiled for a better target has no portable copies.
 const targets = probe?.values("target").filter(target => !target.startsWith("portable")) ?? [];
@@ -44,20 +44,20 @@ describe.skipIf(!hasRunner)("bun_simd", () => {
 
   test.concurrent.each(targets)("%s matches Highway", async target => {
     const rounds = isDebug || isASAN ? 60 : 10_000;
-    const { lines, exitCode } = await run("check", target, 1, rounds);
+    const { lines, exitCode } = await run(target, "check", 1, rounds);
     const byDefault = target === "avx512_skx" ? "avx2" : target;
     expect(lines).toEqual([`chosen: ${byDefault} ${target}`, `rounds: ${rounds}`]);
     expect(exitCode).toBe(0);
   });
 
   test("a limit above the CPU picks its best target", async () => {
-    const { values, exitCode } = await run("check", "avx512_icl", 2, 1);
+    const { values, exitCode } = await run("avx512_icl", "check", 2, 1);
     expect(values("chosen")).toEqual([`${targets.find(target => target !== "avx512_skx")} ${targets[0]}`]);
     expect(exitCode).toBe(0);
   });
 
   test("a limit below the build picks the baseline", async () => {
-    const { values, exitCode } = await run("check", "portable", 3, 1);
+    const { values, exitCode } = await run("portable", "check", 3, 1);
     expect(values("chosen")).toEqual([`${baseline} ${baseline}`]);
     expect(exitCode).toBe(0);
   });
@@ -65,8 +65,8 @@ describe.skipIf(!hasRunner)("bun_simd", () => {
 
 // Prints tables and asserts nothing about them. `getSimdBenchmarkStep()` in .buildkite/ci.ts runs it.
 describe.skipIf(!hasRunner || !process.env.BUN_SIMD_BENCHMARK)("benchmark", () => {
-  async function times(...args: string[]) {
-    const { lines, exitCode } = await run(...args);
+  async function times(target: string, ...args: string[]) {
+    const { lines, exitCode } = await run(target, ...args);
     expect(exitCode).toBe(0);
     return lines.slice(1).map(line => {
       const [name, first, second] = line.split("\t");
@@ -100,16 +100,16 @@ describe.skipIf(!hasRunner || !process.env.BUN_SIMD_BENCHMARK)("benchmark", () =
       print(
         `${target}, ns`,
         ["Highway", "Rust"],
-        await times("bench", target, js, json, join(String(dir), "mappings")),
+        await times(target, "bench", js, json, join(String(dir), "mappings")),
       );
-      print(`${target}, ns`, ["mid page", "end of page"], await times("edges", target));
+      print(`${target}, ns`, ["mid page", "end of page"], await times(target, "edges"));
     },
     60_000,
   );
 
   test.each(targets.filter(target => target !== "avx512_skx"))(
     "first search after a pause on %s",
-    async target => print(`${target}, ns with the clock`, ["Highway", "Rust"], await times("pauses", target)),
+    async target => print(`${target}, ns with the clock`, ["Highway", "Rust"], await times(target, "pauses")),
     60_000,
   );
 
@@ -117,7 +117,7 @@ describe.skipIf(!hasRunner || !process.env.BUN_SIMD_BENCHMARK)("benchmark", () =
     "scalar code next to %s",
     async target => {
       for (const busy of [1, availableParallelism()]) {
-        const [rows, ...others] = await Promise.all(Array.from({ length: busy }, () => times("clock", target)));
+        const [rows, ...others] = await Promise.all(Array.from({ length: busy }, () => times(target, "clock")));
         for (const other of others) {
           other.forEach(({ first, second }, i) => ((rows[i].first += first), (rows[i].second += second)));
         }

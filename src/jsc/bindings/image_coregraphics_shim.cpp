@@ -491,7 +491,7 @@ int32_t bun_coregraphics_encode(const uint8_t* rgba, uint32_t width, uint32_t he
 // These take packed RGBA8 (rowBytes = w*4) on both ends so the caller can
 // keep using its own allocator. The ARGB8888 kernels are
 // channel-order agnostic for 4×u8, so RGBA works without a permute. They run
-// on Apple's AMX units on M-series — typically 2-4× the Highway path — and we
+// on Apple's AMX units on M-series — typically 2-4× the SIMD kernels — and we
 // already have Accelerate dlopened for decode, so the only cost is four more
 // dlsyms. kvImageDoNotTile: this is already a WorkPool thread, and the
 // pipeline stages run back-to-back in one task, so vImage's internal

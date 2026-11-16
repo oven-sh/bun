@@ -5,6 +5,7 @@ use super::super::histogram::{Alphabet, BLOCK_LEN, BLOCKS};
 use super::tiles::{Entry, Part, Tile, cost};
 use crate::array::At;
 use crate::error::Result;
+use crate::slice::InBounds;
 use crate::vec;
 
 pub(super) struct Counts {
@@ -33,9 +34,7 @@ impl Counts {
             let (block, i) = (entry.symbol() / BLOCK_LEN, entry.symbol() % BLOCK_LEN);
             *self.non_zero.at_mut(block) |= 1 << i;
             *self.x_log2_sums.at_mut(block) += x_log2(entry.count());
-            if let Some(count) = self.by_symbol.get_mut(entry.symbol()) {
-                *count = entry.count();
-            }
+            self.by_symbol.set(entry.symbol(), entry.count());
         }
     }
 
@@ -43,9 +42,7 @@ impl Counts {
     pub(super) fn clear(&mut self, entries: &[Entry]) {
         (self.non_zero, self.x_log2_sums) = ([0; _], [0; _]);
         for entry in entries {
-            if let Some(count) = self.by_symbol.get_mut(entry.symbol()) {
-                *count = 0;
-            }
+            self.by_symbol.set(entry.symbol(), 0);
         }
     }
 

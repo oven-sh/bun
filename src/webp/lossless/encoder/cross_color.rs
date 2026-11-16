@@ -8,8 +8,9 @@ use super::residuals::{Bias, Counts, Totals};
 use super::sub;
 use super::tiles::Tiles;
 use crate::array::At;
-use crate::error::{Error, Result};
+use crate::error::Result;
 use crate::lossless::{Argb, color_cache_key, subsampled};
+use crate::slice::InBounds;
 use crate::vec;
 
 // https://github.com/webmproject/libwebp/blob/4fa21912338357f89e4fd51cf2368325b59e9bd9/src/enc/vp8l_enc.c#L282
@@ -263,7 +264,7 @@ pub(super) fn apply(pixels: &mut [Argb], width: usize, height: usize, bits: u32)
             let (x_end, y_end) = (width.min(x + (1 << bits)), height.min(y + (1 << bits)));
             let rows = || (y..y_end).map(|y| y * width + x..y * width + x_end);
             for row in rows() {
-                tile.add_row(pixels.get(row).ok_or(Error::Internal)?);
+                tile.add_row(pixels.part(row));
             }
             tile.finish();
             let above = tiles.above_next().map(Multipliers::from_pixel);
@@ -279,11 +280,11 @@ pub(super) fn apply(pixels: &mut [Argb], width: usize, height: usize, bits: u32)
 
             let (mut reds, mut blues): (Counts, Counts) = ([0; 256], [0; 256]);
             for row in rows() {
-                for pixel in pixels.get_mut(row.start..row.end).ok_or(Error::Internal)? {
+                for pixel in pixels.part_mut(row.start..row.end) {
                     *pixel = before.apply(*pixel);
                 }
                 let counted = not_repeated(pixels, row.start..row.end, width);
-                let row = pixels.get(row).ok_or(Error::Internal)?;
+                let row = pixels.part(row);
                 for pixel in set_bits(counted).map_while(|x| row.get(x)) {
                     let [blue, _, red, _] = pixel.to_le_bytes();
                     *reds.at_mut(red.into()) += 1;

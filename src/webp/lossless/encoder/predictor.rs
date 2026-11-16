@@ -5,8 +5,9 @@ use super::residuals::{Bias, Counts, Totals};
 use super::sub;
 use super::tiles::{self, Tiles};
 use crate::array::At;
-use crate::error::{Error, Result};
+use crate::error::Result;
 use crate::lossless::{Argb, BLACK};
+use crate::slice::{InBounds, known};
 use crate::vec;
 
 // https://github.com/webmproject/libwebp/blob/4fa21912338357f89e4fd51cf2368325b59e9bd9/src/enc/vp8l_enc.c#L39
@@ -95,11 +96,7 @@ fn predict_pixel<const MODE: usize>(left: Pixel, above: [Pixel; 3]) -> Argb {
 // In a loop, the compiler would put the same byte of different iterations into a vector.
 #[inline(never)]
 fn subtract_four<const MODE: usize>(above: &[Pixel; 6], row: &[Pixel; 5], to: &mut [Argb; 4]) {
-    let four = |pixels: &[Pixel], x: usize| {
-        let bytes = pixels.as_flattened().get(4 * x..);
-        let bytes = bytes.and_then(<[_]>::first_chunk).copied();
-        bytes.unwrap_or_default()
-    };
+    let four = |pixels: &[Pixel], x: usize| pixels.as_flattened().chunk(4 * x);
     let above = [four(above, 0), four(above, 1), four(above, 2)];
     let predicted = predict_four::<MODE>(four(row, 0), above);
     let bytes = lanewise(four(row, 1), predicted, u8::wrapping_sub);
@@ -118,22 +115,16 @@ fn subtract<const MODE: usize>(
     let has_hidden = || pixels.fold(false, |any, pixel| any | is_hidden(pixel));
     let mut done = 0;
     if hidden == HiddenColors::Kept || !has_hidden() {
-        for residuals in residuals.as_chunks_mut::<4>().0 {
-            let (Some(row), Some(above)) = (
-                row.get(done..).and_then(<[_]>::first_chunk),
-                above.get(done..).and_then(<[_]>::first_chunk),
-            ) else {
-                break;
-            };
+        let around = above.array_windows().step_by(4);
+        let around = around.zip(row.array_windows().step_by(4));
+        for ((above, row), residuals) in around.zip(residuals.as_chunks_mut().0) {
             subtract_four::<MODE>(above, row, residuals);
             done += 4;
         }
     }
-    let Some((&mut mut left, row)) = row.get_mut(done..).and_then(<[_]>::split_first_mut) else {
-        return;
-    };
+    let mut left = row.value(done);
     let others = above.array_windows().zip(residuals).skip(done);
-    for (pixel, (&above, residual)) in row.iter_mut().zip(others) {
+    for (pixel, (&above, residual)) in row.part_mut(done + 1..).iter_mut().zip(others) {
         *residual = hidden.residual(pixel, predict_pixel::<MODE>(left, above));
         left = *pixel;
     }
@@ -168,38 +159,30 @@ impl Rows {
     }
 
     /// Goes on to row `y`, of which what it takes to predict `start..end` is read.
-    fn advance(&mut self, pixels: &[Argb], y: usize, start: usize, end: usize) -> Result<()> {
+    fn advance(&mut self, pixels: &[Argb], y: usize, start: usize, end: usize) {
         core::mem::swap(&mut self.above, &mut self.current);
         let width = self.current.len() - 1;
         let start = start.saturating_sub(1);
-        let to = self.current.get_mut(start..=end).ok_or(Error::Internal)?;
-        let from = pixels.get(y * width + start..).ok_or(Error::Internal)?;
-        for (to, from) in to.iter_mut().zip(from) {
+        let to = self.current.part_mut(start..=end);
+        for (to, from) in to.iter_mut().zip(pixels.part(y * width + start..)) {
             *to = from.to_le_bytes();
         }
-        Ok(())
     }
 
     /// For the pixels from `x` on of the current row, which is row `y`.
-    fn subtract(&mut self, mode: u8, mut x: usize, y: usize, mut to: &mut [Argb]) -> Result<()> {
+    fn subtract(&mut self, mode: u8, mut x: usize, y: usize, mut to: &mut [Argb]) {
         if x == 0 {
-            let (Some(first), [above, .., behind_above], Some(residual)) = (
-                self.current.first_mut(),
-                self.above.as_mut_slice(),
-                to.split_off_first_mut(),
-            ) else {
-                return Err(Error::Internal);
-            };
             let predicted = match y {
                 0 => BLACK,
-                _ => Argb::from_le_bytes(*above),
+                _ => Argb::from_le_bytes(self.above.value(0)),
             };
-            *residual = self.hidden.residual(first, predicted);
-            *behind_above = *first;
-            x = 1;
+            let mut first = self.current.value(0);
+            to.set(0, self.hidden.residual(&mut first, predicted));
+            self.current.set(0, first);
+            self.above.set(self.current.len() - 1, first);
+            (x, to) = (1, to.part_mut(1..));
         }
-        let above = self.above.get(x - 1..).ok_or(Error::Internal)?;
-        let row = self.current.get_mut(x - 1..).ok_or(Error::Internal)?;
+        let (above, row) = (self.above.part(x - 1..), self.current.part_mut(x - 1..));
         let subtract = match if y == 0 { 1 } else { mode } {
             0 => subtract::<0>,
             1 => subtract::<1>,
@@ -217,7 +200,6 @@ impl Rows {
             _ => subtract::<13>,
         };
         subtract(above, row, self.hidden, to);
-        Ok(())
     }
 }
 
@@ -311,7 +293,7 @@ impl Plane {
     fn around(&self, tile: Tile, first_row: usize, margin: usize) -> impl Iterator<Item = &[u8]> {
         let rows = self.rows().take(1 + tile.height).skip(first_row);
         let columns = 1 + tile.x - margin..1 + tile.x + tile.width + margin;
-        rows.map(move |row| row.get(columns.start..columns.end).unwrap_or_default())
+        rows.map(move |row| row.part(columns.start..columns.end))
     }
 }
 
@@ -333,6 +315,17 @@ struct Channel {
     residuals: [Counts; MODES],
 }
 
+impl Default for Channel {
+    fn default() -> Self {
+        Self {
+            shift: 0,
+            plane: None,
+            totals: Totals::EMPTY,
+            residuals: [[0; _]; _],
+        }
+    }
+}
+
 impl Channel {
     const fn of(&self, pixel: Argb) -> u8 {
         (pixel >> self.shift) as u8
@@ -343,7 +336,7 @@ impl Channel {
         let Some(plane) = &self.plane else {
             return Some(self.of(first_pixel));
         };
-        let value = *plane.bytes.get(tile.x)?;
+        let value = plane.bytes.value(tile.x);
         let differ = |row: &[u8]| row.iter().fold(0, |bits, &other| bits | (other ^ value));
         let mut rows = plane.around(tile, 0, 1);
         rows.all(|row| differ(row) == 0).then_some(value)
@@ -369,70 +362,6 @@ impl Channel {
         costs
     }
 
-    fn count(&mut self, tile: Tile, prefers_left: &Plane) -> Result<()> {
-        let black = self.of(BLACK);
-        let plane = self.plane.as_ref().ok_or(Error::Internal)?;
-        let rows = plane.rows().zip(plane.rows().skip(1));
-        let rows = rows.zip(prefers_left.rows().skip(1)).take(tile.height);
-        let mut flat = 0;
-        for (y, ((above, row), prefers_left)) in (tile.y..).zip(rows) {
-            for x in (tile.x..tile.x + tile.width).step_by(LANES) {
-                let from = |row: &[u8], x| row.get(x..)?.first_chunk::<LANES>().copied();
-                let (Some(left), Some(here), Some(prefers_left)) =
-                    (from(row, x), from(row, x + 1), from(prefers_left, x + 1))
-                else {
-                    return Err(Error::Internal);
-                };
-                let [Some(top_left), Some(top), Some(top_right)] =
-                    [x, x + 1, x + 2].map(|x| from(above, x))
-                else {
-                    return Err(Error::Internal);
-                };
-                let top = [top_left, top, top_right];
-                let predicted = predict([black; LANES], left, top, prefers_left);
-                let mut residuals = predicted.map(|it| lanewise(here, it, u8::wrapping_sub));
-                if y == 0 {
-                    let [from_black, from_left, ..] = residuals;
-                    residuals = [from_left; MODES];
-                    if x == 0 {
-                        residuals = residuals.map(|it| with_first_of(from_black, it));
-                    }
-                } else if x == 0 {
-                    let [_, _, from_top, ..] = residuals;
-                    residuals = residuals.map(|it| with_first_of(from_top, it));
-                }
-
-                let [from_black, a, b, c, d, ..] = residuals;
-                let differ = lanewise(
-                    lanewise(a, b, |a, b| a | b),
-                    lanewise(c, d, |c, d| c | d),
-                    |a, b| a | b,
-                );
-                let mut busy = 0u16;
-                for (i, differ) in differ.into_iter().enumerate() {
-                    busy |= u16::from(differ != 0) << i;
-                }
-                let lanes = (tile.x + tile.width - x).min(LANES);
-                let in_tile = !(!0u64 << lanes);
-                let busy = u64::from(busy) & in_tile;
-                let [black_counts, ..] = &mut self.residuals;
-                for i in set_bits(in_tile & !busy) {
-                    *black_counts.at_mut(usize::from(*from_black.at(i))) += 1;
-                }
-                flat += (in_tile & !busy).count_ones() as u16;
-                for i in set_bits(busy) {
-                    for (counts, residuals) in self.residuals.iter_mut().zip(&residuals) {
-                        *counts.at_mut(usize::from(*residuals.at(i))) += 1;
-                    }
-                }
-            }
-        }
-        for [zeros, ..] in self.residuals.iter_mut().skip(1) {
-            *zeros += flat;
-        }
-        Ok(())
-    }
-
     fn cost(&self, residuals: &Counts) -> i64 {
         const BIAS: Bias = Bias::new(1, 94);
         BIAS.cost(residuals) + self.totals.entropy_with(residuals)
@@ -440,6 +369,58 @@ impl Channel {
 
     fn costs(&self) -> [i64; MODES] {
         self.residuals.each_ref().map(|it| self.cost(it))
+    }
+}
+
+/// What each mode leaves of a channel.
+fn count(counts: &mut [Counts; MODES], tile: Tile, black: u8, plane: &Plane, prefers_left: &Plane) {
+    let rows = plane.rows().zip(plane.rows().skip(1));
+    let rows = rows.zip(prefers_left.rows().skip(1)).take(tile.height);
+    let mut flat = 0;
+    for (y, ((above, row), prefers_left)) in (tile.y..).zip(rows) {
+        for x in (tile.x..tile.x + tile.width).step_by(LANES) {
+            let (left, here) = (row.chunk(x), row.chunk(x + 1));
+            let top = [x, x + 1, x + 2].map(|x| above.chunk(x));
+            let predicted = predict([black; LANES], left, top, prefers_left.chunk(x + 1));
+            let mut residuals = predicted.map(|it| lanewise(here, it, u8::wrapping_sub));
+            if y == 0 {
+                let [from_black, from_left, ..] = residuals;
+                residuals = [from_left; MODES];
+                if x == 0 {
+                    residuals = residuals.map(|it| with_first_of(from_black, it));
+                }
+            } else if x == 0 {
+                let [_, _, from_top, ..] = residuals;
+                residuals = residuals.map(|it| with_first_of(from_top, it));
+            }
+
+            let [from_black, a, b, c, d, ..] = residuals;
+            let differ = lanewise(
+                lanewise(a, b, |a, b| a | b),
+                lanewise(c, d, |c, d| c | d),
+                |a, b| a | b,
+            );
+            let mut busy = 0u16;
+            for (i, differ) in differ.into_iter().enumerate() {
+                busy |= u16::from(differ != 0) << i;
+            }
+            let lanes = (tile.x + tile.width - x).min(LANES);
+            let in_tile = !(!0u64 << lanes);
+            let busy = u64::from(busy) & in_tile;
+            let [black_counts, ..] = counts;
+            for i in set_bits(in_tile & !busy) {
+                *black_counts.at_mut(usize::from(*from_black.at(i))) += 1;
+            }
+            flat += (in_tile & !busy).count_ones() as u16;
+            for i in set_bits(busy) {
+                for (counts, residuals) in counts.iter_mut().zip(&residuals) {
+                    *counts.at_mut(usize::from(*residuals.at(i))) += 1;
+                }
+            }
+        }
+    }
+    for [zeros, ..] in counts.iter_mut().skip(1) {
+        *zeros += flat;
     }
 }
 
@@ -452,7 +433,7 @@ fn with_first_of([first, ..]: Lanes, mut lanes: Lanes) -> Lanes {
 struct Search<'a> {
     pixels: &'a [Argb],
     width: usize,
-    channels: Vec<Channel>,
+    channels: Box<[Channel; 4]>,
     /// All ones where mode 11 goes by the pixel to the left.
     prefers_left: Plane,
     rows: &'a mut Rows,
@@ -461,17 +442,13 @@ struct Search<'a> {
 
 impl<'a> Search<'a> {
     fn new(pixels: &'a [Argb], width: usize, bits: u32, rows: &'a mut Rows) -> Result<Self> {
-        let first = pixels.first().copied().unwrap_or(0);
+        let first = pixels.value(0);
         let differ = pixels.iter().fold(0, |bits, &pixel| bits | (pixel ^ first));
-        let mut channels = vec::with_room(4)?;
-        for shift in [0, 8, 16, 24] {
+        let mut channels = vec::default_array::<Channel, _>()?;
+        for (channel, shift) in channels.iter_mut().zip([0, 8, 16, 24]) {
             let varies = (differ >> shift) as u8 != 0;
-            channels.push(Channel {
-                shift,
-                plane: varies.then(|| Plane::new(width, 1 << bits)).transpose()?,
-                totals: Totals::EMPTY,
-                residuals: [[0; _]; _],
-            });
+            channel.shift = shift;
+            channel.plane = varies.then(|| Plane::new(width, 1 << bits)).transpose()?;
         }
         Ok(Self {
             pixels,
@@ -484,22 +461,19 @@ impl<'a> Search<'a> {
     }
 
     /// Reads the row of tiles that starts at `y`. What is not in the image repeats what is next to it.
-    fn read_rows(&mut self, y: usize, height: usize) -> Result<()> {
-        for channel in &mut self.channels {
+    fn read_rows(&mut self, y: usize, height: usize) {
+        for channel in self.channels.iter_mut() {
             let (Some(plane), shift) = (&mut channel.plane, channel.shift) else {
                 continue;
             };
             let ys = [y.saturating_sub(1)].into_iter().chain(y..y + height);
             for (y, row) in ys.zip(plane.rows_mut()) {
-                let from = self.pixels.get(y * self.width..).ok_or(Error::Internal)?;
+                let from = self.pixels.part(y * self.width..);
                 let from = from.get(..=self.width).unwrap_or(from);
-                let [before, row @ ..] = row else {
-                    return Err(Error::Internal);
-                };
-                for (to, &pixel) in row.iter_mut().zip(from) {
+                for (to, &pixel) in row.part_mut(1..).iter_mut().zip(from) {
                     *to = (pixel >> shift) as u8;
                 }
-                *before = row.first().copied().unwrap_or(0);
+                row.set(0, row.value(1));
             }
         }
 
@@ -511,18 +485,14 @@ impl<'a> Search<'a> {
             .skip(1)
             .take(height)
         {
-            let masks = masks.get_mut(1..).ok_or(Error::Internal)?;
-            for (index, masks) in masks.as_chunks_mut::<LANES>().0.iter_mut().enumerate() {
+            let masks = masks.part_mut(1..).as_chunks_mut::<LANES>().0;
+            for (index, masks) in masks.iter_mut().enumerate() {
                 let mut nearer_by = [0i16; LANES];
                 for plane in planes() {
                     let start = y * plane.stride + index * LANES;
-                    let from = |at| plane.bytes.get(at..)?.first_chunk::<LANES>().copied();
                     let above = start - plane.stride;
-                    let [Some(left), Some(top_left), Some(top)] =
-                        [start, above, above + 1].map(from)
-                    else {
-                        return Err(Error::Internal);
-                    };
+                    let [left, top_left, top] =
+                        [start, above, above + 1].map(|at| plane.bytes.chunk::<LANES>(at));
                     let [top, left] = [top, left].map(|it| lanewise(it, top_left, u8::abs_diff));
                     for ((sum, top), left) in nearer_by.iter_mut().zip(top).zip(left) {
                         *sum += i16::from(top) - i16::from(left);
@@ -531,33 +501,28 @@ impl<'a> Search<'a> {
                 *masks = nearer_by.map(|it| (it >> 15) as u8);
             }
         }
-        Ok(())
     }
 
     fn replaces_colors_in(&self, tile: Tile) -> bool {
         let has_zero = |row: &[u8]| row.iter().fold(u8::MAX, |min, &alpha| min.min(alpha)) == 0;
-        let alpha = self.channels.last().and_then(|it| it.plane.as_ref());
+        let [.., alpha] = &*self.channels;
+        let alpha = alpha.plane.as_ref();
         self.rows.hidden == HiddenColors::Replaced
             && alpha.is_some_and(|alpha| alpha.around(tile, 1, 0).any(has_zero))
     }
 
     /// One pixel at a time, as each may change what the next is predicted from.
-    fn count_replacing_colors(&mut self, tile: Tile) -> Result<()> {
-        let residuals = self.residuals.get_mut(..tile.width);
-        let residuals = residuals.ok_or(Error::Internal)?;
-        let [blue, green, red, alpha] = self.channels.as_mut_slice() else {
-            return Err(Error::Internal);
-        };
+    fn count_replacing_colors(&mut self, tile: Tile) {
+        let residuals = self.residuals.part_mut(..tile.width);
         for mode in 0..MODES {
-            let mut counts = [&mut *blue, &mut *green, &mut *red, &mut *alpha]
-                .map(|channel| channel.residuals.at_mut(mode));
+            let mut counts = self.channels.each_mut().map(|it| it.residuals.at_mut(mode));
             let end = tile.x + tile.width;
             if let Some(above) = tile.y.checked_sub(1) {
-                self.rows.advance(self.pixels, above, tile.x, end)?;
+                self.rows.advance(self.pixels, above, tile.x, end);
             }
             for y in tile.y..tile.y + tile.height {
-                self.rows.advance(self.pixels, y, tile.x, end)?;
-                self.rows.subtract(mode as u8, tile.x, y, residuals)?;
+                self.rows.advance(self.pixels, y, tile.x, end);
+                self.rows.subtract(mode as u8, tile.x, y, residuals);
                 for residual in &*residuals {
                     for (counts, value) in counts.iter_mut().zip(residual.to_le_bytes()) {
                         *counts.at_mut(value.into()) += 1;
@@ -565,49 +530,52 @@ impl<'a> Search<'a> {
                 }
             }
         }
-        Ok(())
     }
 
     // https://github.com/webmproject/libwebp/blob/4fa21912338357f89e4fd51cf2368325b59e9bd9/src/enc/predictor_enc.c#L334
-    fn best_mode(&mut self, tile: Tile, neighbors: [Option<u8>; 2]) -> Result<u8> {
+    fn best_mode(&mut self, tile: Tile, neighbors: [Option<u8>; 2]) -> u8 {
         const SAME_AS_NEIGHBOR: i64 = 15 * ONE_BIT as i64;
-        let first_pixel = self.pixels.first().copied().unwrap_or(0);
-        let mut flat_values = [None; 4];
-        for (value, channel) in flat_values.iter_mut().zip(&self.channels) {
-            *value = channel.flat_value(tile, first_pixel);
-        }
+        let flat_value = |channel: &Channel| channel.flat_value(tile, self.pixels.value(0));
+        let mut flat_values = self.channels.each_ref().map(flat_value);
         let is_replacing = flat_values.contains(&None) && self.replaces_colors_in(tile);
         if is_replacing {
             flat_values = [None; 4];
-            self.count_replacing_colors(tile)?;
+            self.count_replacing_colors(tile);
         }
         let mut costs = [0; MODES];
         for neighbor in neighbors.into_iter().flatten() {
             *costs.at_mut(neighbor.into()) -= SAME_AS_NEIGHBOR;
         }
         for (channel, flat_value) in self.channels.iter_mut().zip(flat_values) {
-            let channel_costs = match flat_value {
-                Some(value) => channel.count_flat(tile, value),
-                None if is_replacing => channel.costs(),
-                None => {
-                    channel.count(tile, &self.prefers_left)?;
+            let channel_costs = match (flat_value, &channel.plane) {
+                (Some(value), _) => channel.count_flat(tile, value),
+                (None, Some(plane)) if !is_replacing => {
+                    let black = channel.of(BLACK);
+                    count(
+                        &mut channel.residuals,
+                        tile,
+                        black,
+                        plane,
+                        &self.prefers_left,
+                    );
                     channel.costs()
                 }
+                (None, _) => channel.costs(),
             };
             for (cost, more) in costs.iter_mut().zip(channel_costs) {
                 *cost += more;
             }
         }
         let best = (0..).zip(costs).min_by_key(|&(_, cost)| cost);
-        let (mode, _) = best.ok_or(Error::Internal)?;
+        let (mode, _): (u8, _) = known(best).unwrap_or_default();
         for (channel, flat_value) in self.channels.iter_mut().zip(flat_values) {
             let used = if flat_value.is_some() { 2 } else { MODES };
             let chosen = usize::from(mode).min(used - 1);
             channel.totals.add(channel.residuals.at(chosen));
-            let used = channel.residuals.get_mut(..used).unwrap_or_default();
+            let used = channel.residuals.part_mut(..used);
             used.as_flattened_mut().fill(0);
         }
-        Ok(mode)
+        mode
     }
 }
 
@@ -622,7 +590,7 @@ fn choose_modes(
     let mut search = Search::new(pixels, width, bits, rows)?;
     for y in (0..height).step_by(1 << bits) {
         let height = (height - y).min(1 << bits);
-        search.read_rows(y, height)?;
+        search.read_rows(y, height);
         let mut left = None;
         for x in (0..width).step_by(1 << bits) {
             let tile = Tile {
@@ -631,7 +599,7 @@ fn choose_modes(
                 width: (width - x).min(1 << bits),
                 height,
             };
-            let mode = search.best_mode(tile, [left, modes.above_next().map(mode_of)])?;
+            let mode = search.best_mode(tile, [left, modes.above_next().map(mode_of)]);
             modes.pixels.push(BLACK | Argb::from(mode) << 8);
             left = Some(mode);
         }
@@ -652,11 +620,11 @@ pub(super) fn apply(
     let mut rows = Rows::new(width, hidden)?;
     let modes = choose_modes(pixels, width, height, bits, &mut rows)?;
     for y in 0..height {
-        rows.advance(pixels, y, 0, width)?;
-        let row = pixels.get_mut(y * width..(y + 1) * width);
-        let tiles = row.ok_or(Error::Internal)?.chunks_mut(1 << modes.bits);
-        for ((tile_x, residuals), &tile) in tiles.enumerate().zip(modes.row(y)?) {
-            rows.subtract(mode_of(tile), tile_x << modes.bits, y, residuals)?;
+        rows.advance(pixels, y, 0, width);
+        let row = pixels.part_mut(y * width..(y + 1) * width);
+        let tiles = row.chunks_mut(1 << modes.bits);
+        for ((tile_x, residuals), &tile) in tiles.enumerate().zip(modes.row(y)) {
+            rows.subtract(mode_of(tile), tile_x << modes.bits, y, residuals);
         }
     }
     Ok(modes)

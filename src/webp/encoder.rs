@@ -2,7 +2,7 @@
 
 use crate::error::{Error, Result};
 use crate::riff::{self, Bitstream};
-use crate::{alpha, lossless, lossy};
+use crate::{alpha, lossless, lossy, slice};
 
 // https://github.com/webmproject/libwebp/blob/4fa21912338357f89e4fd51cf2368325b59e9bd9/src/webp/encode.h#L298
 const MAX_DIMENSION: u32 = 16383;
@@ -35,7 +35,7 @@ pub fn encode(
         all.fold(u32::MAX, |all, it| all & it) >> 24 != 255
     });
     let icc_profile = icc_profile.filter(|profile| !profile.is_empty());
-    match compression {
+    slice::checked(|| match compression {
         Compression::Lossless => {
             let image = lossless::encoder::encode(pixels, width, height, has_alpha)?;
             let bitstream = Bitstream::Lossless { image: &image };
@@ -52,5 +52,5 @@ pub fn encode(
             };
             riff::write(width, height, has_alpha, bitstream, icc_profile)
         }
-    }
+    })
 }

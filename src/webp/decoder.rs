@@ -2,12 +2,24 @@
 
 use crate::error::{Error, Result};
 use crate::riff::{Bitstream, Container, ImageChunk};
-use crate::{lossless, lossy, vec};
+use crate::{lossless, lossy, slice, vec};
 
 pub struct Image {
     /// `width * height * 4` bytes, rows from the top, not premultiplied.
     pub rgba: Vec<u8>,
     pub icc_profile: Option<Vec<u8>>,
+}
+
+impl Image {
+    fn new(pixels: Vec<[u8; 4]>, len: usize, icc_profile: Option<Vec<u8>>) -> Result<Self> {
+        if pixels.len() != len {
+            return Err(Error::Internal);
+        }
+        Ok(Self {
+            rgba: pixels.into_flattened(),
+            icc_profile,
+        })
+    }
 }
 
 /// A file whose dimensions are known.
@@ -80,16 +92,25 @@ impl<'a> Decoder<'a> {
         if !self.container.is_complete() {
             return Err(Error::UnexpectedEof);
         }
-        let pixels = match self.frame? {
-            Frame::Lossless(header) => header.decode()?,
-            Frame::Lossy { header, alpha } => header.decode(alpha)?,
-        };
-        if pixels.len() != self.width as usize * self.height as usize {
-            return Err(Error::Internal);
-        }
-        Ok(Image {
-            rgba: pixels.into_flattened(),
-            icc_profile: self.container.icc_profile().map(vec::copied).transpose()?,
-        })
+        let pixels = slice::checked(|| match self.frame? {
+            Frame::Lossless(header) => header.decode(),
+            Frame::Lossy { header, alpha } => header.decode(alpha),
+        })?;
+        Image::new(
+            pixels,
+            self.width as usize * self.height as usize,
+            self.container.icc_profile().map(vec::copied).transpose()?,
+        )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn an_image_has_all_of_its_pixels() {
+        assert!(Image::new(Vec::new(), 0, None).is_ok());
+        assert_eq!(Image::new(Vec::new(), 1, None).err(), Some(Error::Internal));
     }
 }

@@ -13,6 +13,7 @@ use crate::lossy::{
     CoefficientProbabilities, FRAME_HEADER_LEN, MacroblockMode, SEGMENTS, SIGNATURE,
     SUBBLOCK_MODES, SubblockMode,
 };
+use crate::slice::InBounds;
 
 pub(super) const MAX_FIRST_PARTITION_LEN: usize = (1 << 19) - 1;
 
@@ -94,6 +95,7 @@ pub(super) fn write_modes(
     modes: &[Modes],
     width: usize,
 ) {
+    let width = width.max(1);
     let mut row_above: &[Modes] = &[];
     for (row, map) in modes.chunks(width).zip(segments.map.chunks(width)) {
         let mut left = [SubblockMode::Dc; 4];
@@ -181,10 +183,8 @@ fn write_subblock_modes(
             let code = CODES.at(mode as usize);
             let branches = BRANCHES.at(above as usize).at(left as usize);
             let branch = branches.at(code[3].into());
-            let room = symbols.get_mut(len % 128..);
-            if let Some(to) = room.and_then(<[_]>::first_chunk_mut::<8>) {
-                *to = core::array::from_fn(|i| branch.at(i) | code.at(i));
-            }
+            let eight = core::array::from_fn(|i| branch.at(i) | code.at(i));
+            symbols.set_chunk::<8>(len % 128, eight);
             len += usize::from(code[7]);
             left = mode;
         }

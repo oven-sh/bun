@@ -5,10 +5,11 @@ use core::ops::Range;
 use super::bit_writer::BitWriter;
 use super::matches::common_len;
 use crate::array::At;
-use crate::error::{Error, Result};
+use crate::error::Result;
 use crate::lossless::{
     CODE_LENGTH_CODE_ORDER, CODE_LENGTH_CODES, DEFAULT_CODE_LENGTH, LITERAL_CODES, MAX_CODE_LENGTH,
 };
+use crate::slice::{InBounds, known};
 use crate::vec;
 
 const MAX_CODE_LENGTH_CODE_LENGTH: usize = 7;
@@ -60,7 +61,7 @@ impl Token {
     }
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Default)]
 struct Node {
     count: u32,
     /// Its index, and once the tree stands its depth.
@@ -68,7 +69,7 @@ struct Node {
 }
 
 /// A symbol that gets a code.
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Default)]
 struct Leaf {
     symbol: u16,
     len: u8,
@@ -102,11 +103,11 @@ impl Builder {
         &mut self,
         counts_then_words: &mut [u32],
         writer: &mut BitWriter,
-    ) -> Result<u64> {
+    ) -> u64 {
         let alphabet_len = counts_then_words.len();
-        self.set_leaves(counts_then_words, MAX_CODE_LENGTH)?;
-        let bits = self.set_words(counts_then_words)?;
-        writer.make_room(1 + 4 + 3 * CODE_LENGTH_CODES + 1 + 3 + 16 + (7 + 7) * alphabet_len)?;
+        self.set_leaves(counts_then_words, MAX_CODE_LENGTH);
+        let bits = self.set_words(counts_then_words);
+        writer.make_room(1 + 4 + 3 * CODE_LENGTH_CODES + 1 + 3 + 16 + (7 + 7) * alphabet_len);
         let is_short = |leaf: Leaf| usize::from(leaf.symbol) < LITERAL_CODES;
         match *self.leaves {
             [] => write_simple_code(0, None, writer),
@@ -114,19 +115,19 @@ impl Builder {
             [first, second] if is_short(second) => {
                 write_simple_code(first.symbol, Some(second.symbol), writer);
             }
-            _ => self.write_normal_code(alphabet_len, writer)?,
+            _ => self.write_normal_code(alphabet_len, writer),
         }
-        Ok(bits)
+        bits
     }
 
     // https://github.com/webmproject/libwebp/blob/4fa21912338357f89e4fd51cf2368325b59e9bd9/src/enc/vp8l_enc.c#L575
-    fn write_normal_code(&mut self, alphabet_len: usize, writer: &mut BitWriter) -> Result<()> {
+    fn write_normal_code(&mut self, alphabet_len: usize, writer: &mut BitWriter) {
         self.set_tokens(alphabet_len);
         let mut counts_then_words = [0; CODE_LENGTH_CODES];
         for token in &self.tokens {
             *counts_then_words.at_mut(token.symbol.into()) += 1;
         }
-        self.set_leaves(&counts_then_words, MAX_CODE_LENGTH_CODE_LENGTH)?;
+        self.set_leaves(&counts_then_words, MAX_CODE_LENGTH_CODE_LENGTH);
         let mut lengths = [0; CODE_LENGTH_CODES];
         for leaf in &self.leaves {
             *lengths.at_mut(leaf.symbol.into()) = leaf.len;
@@ -141,7 +142,7 @@ impl Builder {
             writer.put(len.into(), 3);
         }
 
-        self.set_words(&mut counts_then_words)?;
+        self.set_words(&mut counts_then_words);
         let word = |token: &Token| Word(*counts_then_words.at(token.symbol.into()));
         let trailing = self.tokens.iter().rev().take_while(|it| it.is_for_zeros());
         let (trailing, trailing_bits) = trailing.fold((0, 0), |(count, bits), token| {
@@ -161,7 +162,6 @@ impl Builder {
         for token in &self.tokens {
             word(token).write(token.extra.into(), token.extra_len(), writer);
         }
-        Ok(())
     }
 
     // https://github.com/webmproject/libwebp/blob/4fa21912338357f89e4fd51cf2368325b59e9bd9/src/utils/huffman_encode_utils.c#L328
@@ -192,19 +192,18 @@ impl Builder {
         };
         let mut end = 0;
         let continues = |a: &Leaf, b: &Leaf| a.symbol + 1 == b.symbol && a.len == b.len;
-        for run in self.leaves.chunk_by(continues) {
-            if let Some(first) = run.first() {
-                let start = usize::from(first.symbol);
-                push_run(0, start - end);
-                push_run(first.len, run.len());
-                end = start + run.len();
-            }
+        let runs = self.leaves.chunk_by(continues);
+        for (first, others) in runs.filter_map(<[_]>::split_first) {
+            let (start, len) = (usize::from(first.symbol), 1 + others.len());
+            push_run(0, start - end);
+            push_run(first.len, len);
+            end = start + len;
         }
         push_run(0, alphabet_len - end);
     }
 
     // https://github.com/webmproject/libwebp/blob/4fa21912338357f89e4fd51cf2368325b59e9bd9/src/utils/huffman_encode_utils.c#L167
-    fn set_leaves(&mut self, counts: &[u32], max_len: usize) -> Result<()> {
+    fn set_leaves(&mut self, counts: &[u32], max_len: usize) {
         self.leaves.clear();
         self.by_count.clear();
         for_each_evened_out(counts, |symbol, count| {
@@ -219,7 +218,7 @@ impl Builder {
         let mut min_count = 1;
         loop {
             self.by_count.sort_unstable();
-            self.build_tree()?;
+            self.build_tree();
             let deepest = self.inner_nodes.first().map_or(0, |node| node.parent);
             if usize::from(deepest) < max_len {
                 break;
@@ -231,17 +230,17 @@ impl Builder {
         }
         for (&leaf, &parent) in self.by_count.iter().zip(&self.leaf_parents) {
             let depth = self.inner_nodes.get(usize::from(parent));
-            let leaf = self.leaves.get_mut(usize::from(!(leaf as u16)));
-            leaf.ok_or(Error::Internal)?.len = depth.map_or(0, |node| node.parent as u8) + 1;
+            let len = depth.map_or(0, |node| node.parent as u8) + 1;
+            self.leaves
+                .update((!(leaf as u16)).into(), |leaf| leaf.len = len);
         }
-        Ok(())
     }
 
     /// Returns how many bits the symbols take. One that is alone takes none at all.
-    fn set_words(&self, counts_then_words: &mut [u32]) -> Result<u64> {
+    fn set_words(&self, counts_then_words: &mut [u32]) -> u64 {
         if self.leaves.len() <= 1 {
             counts_then_words.fill(0);
-            return Ok(0);
+            return 0;
         }
         let mut next = [0u16; MAX_CODE_LENGTH];
         for leaf in &self.leaves {
@@ -256,16 +255,15 @@ impl Builder {
         for &Leaf { symbol, len } in &self.leaves {
             let next = next.at_mut(usize::from(len) - 1);
             let word = u32::from(len) << 16 | u32::from(next.reverse_bits() >> (16 - len));
-            let count = counts_then_words.get_mut(usize::from(symbol));
-            let count = core::mem::replace(count.ok_or(Error::Internal)?, word);
+            let count = counts_then_words.update(symbol.into(), |it| core::mem::replace(it, word));
             total += u64::from(count) * u64::from(len);
             *next += 1;
         }
-        Ok(total)
+        total
     }
 
     /// Joins the two rarest nodes over and over. Among equals leaves go first, then the older inner nodes.
-    fn build_tree(&mut self) -> Result<()> {
+    fn build_tree(&mut self) {
         self.inner_nodes.clear();
         self.leaf_parents.clear();
         let leaves = self.by_count.iter().map(|leaf| (leaf >> 16) as u32);
@@ -274,16 +272,15 @@ impl Builder {
         for parent in 0..self.leaves.len().saturating_sub(1) as u16 {
             let mut count = 0;
             for _ in 0..2 {
-                let orphan = self.inner_nodes.get_mut(first_orphan);
-                let limit = orphan.as_ref().map_or(u32::MAX, |node| node.count);
-                if let Some(leaf) = leaves.next_if(|&leaf| leaf <= limit) {
-                    count += leaf;
-                    self.leaf_parents.push(parent);
-                } else {
-                    let orphan = orphan.ok_or(Error::Internal)?;
+                if let Some(orphan) = self.inner_nodes.get_mut(first_orphan)
+                    && leaves.peek().is_none_or(|&leaf| leaf > orphan.count)
+                {
                     count += orphan.count;
                     orphan.parent = parent;
                     first_orphan += 1;
+                } else {
+                    count += known(leaves.next()).unwrap_or(0);
+                    self.leaf_parents.push(parent);
                 }
             }
             self.inner_nodes.push(Node { count, parent: 0 });
@@ -293,13 +290,10 @@ impl Builder {
 
         // The root is last, and has 0.
         for index in (0..first_orphan).rev() {
-            let parent = |index: usize| self.inner_nodes.get(index).map(|node| node.parent);
-            let depth = parent(index).and_then(|index| parent(index.into()));
-            let node = self.inner_nodes.get_mut(index);
-            let (node, depth) = node.zip(depth).ok_or(Error::Internal)?;
-            node.parent = depth + 1;
+            let parent = self.inner_nodes.value(index).parent;
+            let depth = self.inner_nodes.value(parent.into()).parent + 1;
+            self.inner_nodes.update(index, |node| node.parent = depth);
         }
-        Ok(())
     }
 }
 
@@ -308,9 +302,8 @@ impl Builder {
 // https://github.com/webmproject/libwebp/blob/4fa21912338357f89e4fd51cf2368325b59e9bd9/src/utils/huffman_encode_utils.c#L33
 fn for_each_evened_out(counts: &[u32], mut found: impl FnMut(usize, u32)) {
     let used = counts.iter().rposition(|&count| count != 0);
-    let counts = counts.get(..used.map_or(0, |last| last + 1));
-    let counts = counts.unwrap_or_default();
-    let average = |sum: u32, len: usize| (sum + len as u32 / 2) / len.max(1) as u32;
+    let counts = counts.part(..used.map_or(0, |last| last + 1));
+    let average = |sum: u32, len: usize| (sum + len as u32 / 2) / (len as u32).max(1);
     let mut finish = |symbols: Range<usize>, sum: u32| {
         if symbols.len() >= 4 && sum > 0 {
             let count = average(sum, symbols.len()).max(1);

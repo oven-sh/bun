@@ -83,3 +83,18 @@ impl Bias {
         -(div_round(bits, 10) as i64)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn each_step_from_zero_counts_for_six_tenths_of_the_one_before() {
+        let bias = Bias::new(3, 50);
+        assert_eq!(bias.zero, 3 * ONE_BIT);
+        for (steps, weight) in (0..).zip(bias.near_zero) {
+            let expected = 50.0 * ONE_BIT as f64 * 0.6f64.powi(steps);
+            assert!((weight as f64 - expected).abs() < 2.0);
+        }
+    }
+}

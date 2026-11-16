@@ -1,7 +1,8 @@
 //! Parameters that are the same within squares of an image.
 
-use crate::error::{Error, Result};
+use crate::error::Result;
 use crate::lossless::{Argb, MIN_TILE_BITS, TILE_BITS_BITS, subsampled};
+use crate::slice::InBounds;
 use crate::vec;
 
 const MAX_TILE_BITS: u32 = MIN_TILE_BITS + (1 << TILE_BITS_BITS) - 1;
@@ -37,10 +38,9 @@ impl Tiles {
     }
 
     /// The tiles that row `y` of the image goes through.
-    pub(super) fn row(&self, y: usize) -> Result<&[Argb]> {
+    pub(super) fn row(&self, y: usize) -> &[Argb] {
         let start = (y >> self.bits) * self.per_row;
-        let row = self.pixels.get(start..start + self.per_row);
-        row.ok_or(Error::Internal)
+        self.pixels.part(start..start + self.per_row)
     }
 
     /// The pixel above the next one that is added.

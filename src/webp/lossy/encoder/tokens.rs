@@ -8,12 +8,13 @@ use bun_highway::webp::MAX_SYMBOL;
 use super::bool_writer::{BoolWriter, Symbol};
 use super::cost::{LEVELS, bit_cost};
 use crate::array::At;
-use crate::error::{Error, Result};
+use crate::error::Result;
 use crate::lossy::tables::{
     BANDS, CATEGORY_3_TO_6, COEFFICIENT_UPDATE_PROBABILITIES, DEFAULT_COEFFICIENT_PROBABILITIES,
     ZIGZAG,
 };
 use crate::lossy::{BlockType, CoefficientProbabilities};
+use crate::slice::{InBounds, known};
 use crate::vec;
 
 /// The quantized coefficients of a block.
@@ -76,9 +77,21 @@ struct Ends {
     sign: u8,
 }
 
+const NO_TOKENS: (Runs, Ends) = (
+    Runs {
+        path: [0; 8],
+        extra_bits: [0; 8],
+    },
+    Ends {
+        path: 0,
+        extra_bits: 0,
+        sign: 0,
+    },
+);
+
 // https://github.com/webmproject/libwebp/blob/4fa21912338357f89e4fd51cf2368325b59e9bd9/src/enc/token_enc.c#L117
 #[expect(clippy::indexing_slicing, reason = "evaluated at compile time")]
-static SYMBOLS: ([Runs; 256], [Ends; 256]) = {
+const fn tokens_for(context: usize, level: usize) -> (Runs, Ends) {
     const fn branch(
         (runs, ends): &mut (Runs, Ends),
         context: usize,
@@ -93,54 +106,47 @@ static SYMBOLS: ([Runs; 256], [Ends; 256]) = {
         runs.extra_bits[ends.extra_bits as usize] = fixed(bit, probability);
         ends.extra_bits += 1;
     }
-    const EMPTY: (Runs, Ends) = (
-        Runs {
-            path: [0; 8],
-            extra_bits: [0; 8],
-        },
-        Ends {
-            path: 0,
-            extra_bits: 0,
-            sign: 0,
-        },
-    );
-    let mut symbols = ([EMPTY.0; 256], [EMPTY.1; 256]);
+    let it = &mut { NO_TOKENS };
+    if context != 0 {
+        branch(it, context, 0, true);
+    }
+    if !branch(it, context, 1, level != 0) || !branch(it, context, 2, level > 1) {
+    } else if !branch(it, context, 3, level > 4) {
+        if branch(it, context, 4, level != 2) {
+            branch(it, context, 5, level == 4);
+        }
+    } else if !branch(it, context, 6, level > 10) {
+        if !branch(it, context, 7, level > 6) {
+            extra(it, level == 6, 159);
+        } else {
+            extra(it, level >= 9, 165);
+            extra(it, level.is_multiple_of(2), 145);
+        }
+    } else {
+        let category = (level - 3).ilog2() as usize - 3;
+        let high = branch(it, context, 8, category >= 2);
+        branch(it, context, 9 + high as usize, category % 2 == 1);
+        let probabilities = CATEGORY_3_TO_6[category];
+        let mut i = 0;
+        while category < 3 && i < probabilities.len() {
+            let bit = ((level - 3) >> (probabilities.len() - 1 - i)) & 1;
+            extra(it, bit != 0, probabilities[i]);
+            i += 1;
+        }
+    }
+    it.1.extra_bits += it.1.path;
+    if level != LEVELS - 1 {
+        it.1.sign = it.1.extra_bits + (level != 0) as u8;
+    }
+    *it
+}
+
+#[expect(clippy::indexing_slicing, reason = "evaluated at compile time")]
+static SYMBOLS: ([Runs; 256], [Ends; 256]) = {
+    let mut symbols = ([NO_TOKENS.0; 256], [NO_TOKENS.1; 256]);
     let mut symbol = 0;
     while symbol < 3 * LEVELS {
-        let (context, level) = (symbol / LEVELS, symbol % LEVELS);
-        let it = &mut { EMPTY };
-        if context != 0 {
-            branch(it, context, 0, true);
-        }
-        if !branch(it, context, 1, level != 0) || !branch(it, context, 2, level > 1) {
-        } else if !branch(it, context, 3, level > 4) {
-            if branch(it, context, 4, level != 2) {
-                branch(it, context, 5, level == 4);
-            }
-        } else if !branch(it, context, 6, level > 10) {
-            if !branch(it, context, 7, level > 6) {
-                extra(it, level == 6, 159);
-            } else {
-                extra(it, level >= 9, 165);
-                extra(it, level % 2 == 0, 145);
-            }
-        } else {
-            let category = (level - 3).ilog2() as usize - 3;
-            let high = branch(it, context, 8, category >= 2);
-            branch(it, context, 9 + high as usize, category % 2 == 1);
-            let probabilities = CATEGORY_3_TO_6[category];
-            let mut i = 0;
-            while category < 3 && i < probabilities.len() {
-                let bit = ((level - 3) >> (probabilities.len() - 1 - i)) & 1;
-                extra(it, bit != 0, probabilities[i]);
-                i += 1;
-            }
-        }
-        it.1.extra_bits += it.1.path;
-        if level != LEVELS - 1 {
-            it.1.sign = it.1.extra_bits + (level != 0) as u8;
-        }
-        (symbols.0[symbol], symbols.1[symbol]) = *it;
+        (symbols.0[symbol], symbols.1[symbol]) = tokens_for(symbol / LEVELS, symbol % LEVELS);
         symbol += 1;
     }
     symbols
@@ -148,12 +154,54 @@ static SYMBOLS: ([Runs; 256], [Ends; 256]) = {
 
 #[inline(always)]
 fn put<const N: usize>(room: &mut [Token; ROOM], at: usize, tokens: [Token; N]) {
-    if let Some(to) = room
-        .get_mut(at % (ROOM - 8)..)
-        .and_then(<[_]>::first_chunk_mut)
-    {
-        *to = tokens;
+    room.set_chunk(at % (ROOM - 8), tokens);
+}
+
+/// Returns how many tokens there are.
+#[inline(always)]
+fn put_block(room: &mut [Token; ROOM], block_type: BlockType, residual: &Residual) -> usize {
+    let mut len = 0;
+    let roots = ROOTS.at(block_type as usize);
+    let end = usize::from(residual.end / 4);
+    if end != 0 {
+        let first = usize::from(matches!(block_type, BlockType::LumaWithoutDc));
+        // `SYMBOLS` has no "not the end" for the first context, which elsewhere comes behind a zero.
+        room[0] = roots[0][0] | 1;
+        len = usize::from(*residual.symbols.at(first) <= MAX_SYMBOL);
+        for position in first..end {
+            let symbol = usize::from(*residual.symbols.at(position));
+            let (runs, ends) = (SYMBOLS.0.at(symbol), SYMBOLS.1.at(symbol));
+            let (level, root) = (
+                *residual.levels.at((*ZIGZAG.at(position)).into()),
+                roots.at(position),
+            );
+            put::<8>(
+                room,
+                len,
+                core::array::from_fn(|i| runs.path.at(i) + root.at(i)),
+            );
+            put(room, len + usize::from(ends.path), runs.extra_bits);
+            put(
+                room,
+                len + usize::from(ends.extra_bits),
+                [fixed(level < 0, 128)],
+            );
+            len += usize::from(ends.sign);
+            if ends.sign == 0 {
+                len += usize::from(ends.path);
+                for token in last_category(level) {
+                    put(room, len, [token]);
+                    len += 1;
+                }
+            }
+        }
     }
+    put(
+        room,
+        len,
+        [roots.at(end % 16)[0] + 2 * 11 * u16::from(residual.end % 4)],
+    );
+    len + usize::from(end < 16)
 }
 
 pub(super) struct Tokens {
@@ -192,68 +240,19 @@ impl Tokens {
     }
 
     pub(super) fn record(&mut self, block_type: BlockType, residuals: &[Residual]) -> Result<()> {
-        residuals
-            .iter()
-            .try_for_each(|residual| self.record_block(block_type, residual))
-    }
-
-    #[inline(always)]
-    fn record_block(&mut self, block_type: BlockType, residual: &Residual) -> Result<()> {
-        if self.page.len() - self.len < ROOM {
-            self.turn_page()?;
-        }
-        let room = self
-            .page
-            .get_mut(self.len..)
-            .and_then(<[_]>::first_chunk_mut::<ROOM>);
-        let room = room.ok_or(Error::Internal)?;
-        let mut len = 0;
-        let roots = ROOTS.at(block_type as usize);
-        let end = usize::from(residual.end / 4);
-        if end != 0 {
-            let first = usize::from(matches!(block_type, BlockType::LumaWithoutDc));
-            // `SYMBOLS` has no "not the end" for the first context, which elsewhere comes behind a zero.
-            room[0] = roots[0][0] | 1;
-            len = usize::from(*residual.symbols.at(first) <= MAX_SYMBOL);
-            for position in first..end {
-                let symbol = usize::from(*residual.symbols.at(position));
-                let (runs, ends) = (SYMBOLS.0.at(symbol), SYMBOLS.1.at(symbol));
-                let (level, root) = (
-                    *residual.levels.at((*ZIGZAG.at(position)).into()),
-                    roots.at(position),
-                );
-                put::<8>(
-                    room,
-                    len,
-                    core::array::from_fn(|i| runs.path.at(i) + root.at(i)),
-                );
-                put(room, len + usize::from(ends.path), runs.extra_bits);
-                put(
-                    room,
-                    len + usize::from(ends.extra_bits),
-                    [fixed(level < 0, 128)],
-                );
-                len += usize::from(ends.sign);
-                if ends.sign == 0 {
-                    len += usize::from(ends.path);
-                    for token in last_category(level) {
-                        put(room, len, [token]);
-                        len += 1;
-                    }
-                }
+        for residual in residuals {
+            if self.page.len() - self.len < ROOM {
+                self.turn_page()?;
             }
+            let room = self.page.get_mut(self.len..);
+            let room = known(room.and_then(<[_]>::first_chunk_mut));
+            self.len += room.map_or(0, |room| put_block(room, block_type, residual));
         }
-        put(
-            room,
-            len,
-            [roots.at(end % 16)[0] + 2 * 11 * u16::from(residual.end % 4)],
-        );
-        self.len += len + usize::from(end < 16);
         Ok(())
     }
 
     fn count(&mut self) {
-        for &token in self.page.get(self.counted..self.len).unwrap_or_default() {
+        for &token in self.page.part(self.counted..self.len) {
             let counts = self.statistics.at_mut(usize::from(token >> 1));
             if *counts >= 0xfffe_0000 {
                 cold_path();
@@ -345,4 +344,39 @@ fn last_category(level: i16) -> [Token; 12] {
         );
     }
     tokens
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn tokens_lead_to_their_level() {
+        // RFC 6386 section 13.2. A leaf is minus the lowest level that it stands for.
+        const TREE: [[i8; 2]; 11] = [
+            [i8::MIN, 1],
+            [0, 2],
+            [-1, 3],
+            [4, 6],
+            [-2, 5],
+            [-3, -4],
+            [7, 8],
+            [-5, -7],
+            [9, 10],
+            [-11, -19],
+            [-35, -67],
+        ];
+        for symbol in 0..3 * LEVELS {
+            let (context, level) = (symbol / LEVELS, symbol % LEVELS);
+            let (runs, ends) = tokens_for(context, level);
+            let mut node = i8::from(context == 0);
+            for &token in runs.path.part(..ends.path.into()) {
+                assert_eq!(usize::from(token / 2), 11 * context + node as usize);
+                node = *TREE.at(node as usize).at((token % 2).into());
+            }
+            let extra_bits = runs.extra_bits.part(..(ends.extra_bits - ends.path).into());
+            let extra = extra_bits.iter().fold(0, |sum, it| 2 * sum + it % 2);
+            assert_eq!(-node as usize + usize::from(extra), level);
+        }
+    }
 }

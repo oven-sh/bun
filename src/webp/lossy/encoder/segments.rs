@@ -93,8 +93,8 @@ impl Coding {
 
 #[derive(Clone, Copy, Default)]
 pub(super) struct Segment {
-    quantizer_susceptibility: i32,
-    filter_susceptibility: i32,
+    quantizer_susceptibility: i8,
+    filter_susceptibility: u8,
     pub(super) quantizer_index: u8,
     pub(super) filter_level: u8,
 }
@@ -148,7 +148,8 @@ impl Segments {
         }
         for segment in &mut self.segments {
             let step = i32::from(AC_QUANTIZERS.at(segment.quantizer_index.into()) >> 2);
-            let level = step.min(MAX_FILTER_LEVEL) * 300 / (256 + segment.filter_susceptibility);
+            let susceptibility = i32::from(segment.filter_susceptibility);
+            let level = step.min(MAX_FILTER_LEVEL) * 300 / (256 + susceptibility);
             segment.filter_level = if level < 2 {
                 0
             } else {
@@ -159,14 +160,13 @@ impl Segments {
         self.count_map();
     }
 
-    /// For those that are different.
-    pub(super) fn codings(&self, max_subblock_modes_cost: i32) -> Result<Vec<Coding>> {
-        let mut codings = vec::with_room(self.count)?;
-        for segment in self.segments.iter().take(self.count) {
+    pub(super) fn codings(&self, max_subblock_modes_cost: i32) -> Result<Box<[Coding; SEGMENTS]>> {
+        let mut codings = vec::with_room(SEGMENTS)?;
+        for segment in &self.segments {
             let index = segment.quantizer_index;
             codings.push(Coding::new(index, self, max_subblock_modes_cost));
         }
-        Ok(codings)
+        vec::boxed(codings)
     }
 
     // https://github.com/webmproject/libwebp/blob/4fa21912338357f89e4fd51cf2368325b59e9bd9/src/enc/quant_enc.c#L366

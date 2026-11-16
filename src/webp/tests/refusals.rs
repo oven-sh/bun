@@ -178,6 +178,8 @@ fn refused_memory_is_an_error_when_lossless() {
     for (width, height, paint) in pictures {
         back(&there(width, height, Compression::Lossless, paint));
     }
+    // A palette that bundles, and green subtracted after that.
+    back(b"RIFF\x1a\0\0\0WEBPVP8L\x0d\0\0\0/\0\0\0\0\x0f\x10\x11\x11EDD\0\0");
 }
 
 #[test]

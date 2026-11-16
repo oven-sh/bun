@@ -6,8 +6,9 @@ use super::cache;
 use super::entropy::Cost;
 use super::histogram::{CACHE, Histogram};
 use super::matches::{MAX_LEN, MIN_LEN, Match, common_len};
-use crate::error::{Error, Result};
+use crate::error::Result;
 use crate::lossless::Argb;
+use crate::slice::known;
 use crate::vec;
 
 #[derive(Clone, Copy)]
@@ -112,31 +113,29 @@ pub(super) struct Pixels<'a> {
 }
 
 impl Pixels<'_> {
+    pub(super) fn left_by(&self, copies: &[PixelCopy]) -> impl Iterator<Item = Range<usize>> {
+        gaps(copies, self.argb.len()).filter(|gap| gap.start != gap.end)
+    }
+
     /// Each with the number of bits that it needs.
     #[inline(always)]
-    pub(super) fn get(&self, range: Range<usize>) -> Result<impl Iterator<Item = (Argb, u32)>> {
+    pub(super) fn get(&self, range: Range<usize>) -> impl Iterator<Item = (Argb, u32)> {
         let argb = self.argb.get(range.start..range.end);
-        let argb = argb.ok_or(Error::Internal)?;
-        let needed = self.cache_bits_needed.get(range).ok_or(Error::Internal)?;
+        let both = argb.zip(self.cache_bits_needed.get(range));
+        let (argb, needed) = known(both).unwrap_or_default();
         let pairs = argb.iter().zip(needed);
-        Ok(pairs.map(|(&argb, &needed)| (argb, needed.into())))
+        pairs.map(|(&argb, &needed)| (argb, needed.into()))
     }
 
     #[inline(always)]
-    pub(super) fn count(
-        &self,
-        range: Range<usize>,
-        cache_bits: u32,
-        histogram: &mut Histogram,
-    ) -> Result<()> {
-        for (argb, needed) in self.get(range)? {
+    pub(super) fn count(&self, range: Range<usize>, cache_bits: u32, histogram: &mut Histogram) {
+        for (argb, needed) in self.get(range) {
             if needed <= cache_bits {
                 histogram.add(CACHE + cache::key(argb, cache_bits));
             } else {
                 histogram.add_literal(argb);
             }
         }
-        Ok(())
     }
 }
 
@@ -154,17 +153,17 @@ impl Coding {
         copies: Vec<PixelCopy>,
         cache_bits: u32,
         histogram: &mut Histogram,
-    ) -> Result<Self> {
+    ) -> Self {
         histogram.counts.fill(0);
         add_copies(histogram, &copies);
-        for gap in gaps(&copies, pixels.argb.len()) {
-            pixels.count(gap, cache_bits, histogram)?;
+        for gap in pixels.left_by(&copies) {
+            pixels.count(gap, cache_bits, histogram);
         }
-        Ok(Self {
+        Self {
             copies,
             cache_bits,
             cost: histogram.cost(cache_bits),
-        })
+        }
     }
 
     // https://github.com/webmproject/libwebp/blob/4fa21912338357f89e4fd51cf2368325b59e9bd9/src/enc/backward_references_enc.c#L755
@@ -175,26 +174,25 @@ impl Coding {
         best_histogram: &mut Histogram,
     ) -> Result<Self> {
         if max_bits == 0 {
-            return Self::new(pixels, copies, 0, best_histogram);
+            return Ok(Self::new(pixels, copies, 0, best_histogram));
         }
         // By the number of bits needed, each pixel both as a literal and by its key in the largest cache.
-        let mut by_need = vec::filled(Histogram::EMPTY, max_bits as usize + 1)?;
-        for gap in gaps(&copies, pixels.argb.len()) {
-            for (argb, needed) in pixels.get(gap)? {
-                let histogram = by_need.get_mut(needed as usize - 1);
-                let histogram = histogram.ok_or(Error::Internal)?;
-                histogram.add_literal(argb);
-                histogram.add(CACHE + cache::key(argb, max_bits));
+        let mut by_need = vec::filled(Histogram::EMPTY, max_bits as usize)?;
+        // It starts with those that need too many.
+        let [histogram] = &mut *vec::array(Histogram::EMPTY)?;
+        for gap in pixels.left_by(&copies) {
+            for (argb, needed) in pixels.get(gap) {
+                let to = by_need.get_mut(needed as usize - 1);
+                let to = to.unwrap_or(&mut *histogram);
+                to.add_literal(argb);
+                to.add(CACHE + cache::key(argb, max_bits));
             }
         }
 
-        let [by_need @ .., histogram] = by_need.as_mut_slice() else {
-            return Err(Error::Internal);
-        };
         let keys = || CACHE..CACHE + (1 << max_bits);
         histogram.get_mut(keys()).fill(0);
         add_copies(histogram, &copies);
-        for literals in &*by_need {
+        for literals in &by_need {
             let counts = histogram.get_mut(0..CACHE).iter_mut().zip(&literals.counts);
             counts.for_each(|(count, literals)| *count += literals);
         }
@@ -205,7 +203,7 @@ impl Coding {
             cost: histogram.cost(0),
         };
         let mut hits: &[u32] = &[];
-        for (cache_bits, new_hits) in (1..).zip(by_need) {
+        for (cache_bits, new_hits) in (1..).zip(&mut by_need) {
             let counts = histogram.get_mut(0..CACHE).iter_mut().zip(&new_hits.counts);
             counts.for_each(|(count, new_hits)| *count -= new_hits);
             let new_hits = new_hits.get_mut(keys());

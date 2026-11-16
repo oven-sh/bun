@@ -4,6 +4,7 @@ use bun_highway::webp::{self, Block, GammaTable, LinearColors, Macroblock};
 
 use crate::array::At;
 use crate::error::{Error, Result};
+use crate::slice::{self, InBounds, known};
 use crate::vec;
 
 type Rgba = [u8; 4];
@@ -20,6 +21,7 @@ impl Picture {
     // https://github.com/webmproject/libwebp/blob/4fa21912338357f89e4fd51cf2368325b59e9bd9/src/enc/picture_csp_enc.c#L477
     #[inline(never)]
     pub(super) fn new(rgba: &[Rgba], width: usize, height: usize, has_alpha: bool) -> Result<Self> {
+        let width = width.max(1);
         let width_in_macroblocks = width.div_ceil(16);
         let mut macroblocks = vec::with_room(width_in_macroblocks * height.div_ceil(16))?;
         let mut padded = [[[0; 4]; 16]; 16];
@@ -31,14 +33,14 @@ impl Picture {
             for x in (0..width).step_by(16) {
                 let columns = (width - x).min(16);
                 let is_whole = (columns, rows) == (16, 16);
-                let (mut from, mut stride) = (band.get(x..).ok_or(Error::Internal)?, width);
+                let (mut from, mut stride) = (band.part(x..), width);
                 if !is_whole {
                     pad(from, width, columns, rows, &mut padded);
                     (from, stride) = (padded.as_flattened(), 16);
                 }
                 let mut pixels = [&[[0; 4]; 16]; 16];
                 for (to, row) in pixels.iter_mut().zip(from.chunks(stride)) {
-                    *to = row.first_chunk().ok_or(Error::Internal)?;
+                    *to = known(row.first_chunk()).unwrap_or(to);
                 }
                 let is_translucent = has_alpha && !is_opaque(&pixels);
                 if !repeats_left(band, width, x) {
@@ -70,6 +72,10 @@ impl Picture {
             macroblocks,
         })
     }
+
+    pub(super) fn rows(&self) -> impl Iterator<Item = &[Macroblock]> {
+        self.macroblocks.chunks(self.width.max(1))
+    }
 }
 
 /// Whether the 16 columns from `x` on are the same as those before them.
@@ -85,9 +91,7 @@ fn repeats_left(band: &[Rgba], width: usize, x: usize) -> bool {
 #[inline(never)]
 fn pad(from: &[Rgba], stride: usize, columns: usize, rows: usize, to: &mut [Row; 16]) {
     for (to, from) in to.iter_mut().zip(from.chunks(stride)) {
-        for (to, from) in to.iter_mut().zip(from) {
-            *to = *from;
-        }
+        slice::copy(from, to);
         let last = *to.at(columns - 1);
         to.iter_mut().skip(columns).for_each(|it| *it = last);
     }
@@ -256,5 +260,24 @@ fn flatten_transparent(
                 *samples.chroma.at_mut(v) = flat[2];
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn gamma_tables_are_those_of_floating_point() {
+        let expected = |from: f64, power: f64, scale: f64| (from.powf(power) * scale + 0.5) as u32;
+        for (i, linear) in (0..).zip(GAMMA_TO_LINEAR) {
+            assert_eq!(linear, expected(f64::from(i) / 255.0, 0.8, 4095.0));
+        }
+        let GammaTable { values, slopes } = LINEAR_TO_GAMMA;
+        for ((i, value), slope) in (0..).zip(values).zip(slopes) {
+            let [from, to] = [i, i + 1].map(|i| expected(f64::from(i * 128) / 4095.0, 1.25, 255.0));
+            assert_eq!([value, slope].map(u32::from), [from, to - from]);
+        }
+        assert_eq!(gamma_table(1, 1, 3, 2, 10), [0, 17, 24, 30]);
     }
 }

@@ -13,10 +13,8 @@ use crate::vec;
 pub(super) struct Analysis {
     /// The segment of each macroblock.
     pub(super) map: Vec<u8>,
-    /// For each segment, -127 to 127.
-    pub(super) quantizer_susceptibilities: [i32; SEGMENTS],
-    /// For each segment, 0 to 255.
-    pub(super) filter_susceptibilities: [i32; SEGMENTS],
+    pub(super) quantizer_susceptibilities: [i8; SEGMENTS],
+    pub(super) filter_susceptibilities: [u8; SEGMENTS],
     pub(super) chroma_susceptibility: i32,
 }
 
@@ -28,7 +26,7 @@ pub(super) fn analyze(picture: &Picture) -> Result<Analysis> {
     let mut chroma_sum = 0;
     let mut last = Memo::default();
     let mut row_above: &[Macroblock] = &[];
-    for row in picture.macroblocks.chunks(picture.width) {
+    for row in picture.rows() {
         let (mut left, mut above_left) = ([None; 2], [None; 2]);
         for (x, samples) in row.iter().enumerate() {
             let above = row_above.get(x).map_or([None; 2], bottom);
@@ -56,8 +54,8 @@ pub(super) fn analyze(picture: &Picture) -> Result<Analysis> {
         chroma_susceptibility: (chroma_sum / map.len().max(1) as u64) as i32,
         map,
         quantizer_susceptibilities: centers
-            .map(|it| (255 * (it - average) / range).clamp(-127, 127)),
-        filter_susceptibilities: centers.map(|it| 255 * (it - min) / range),
+            .map(|it| (255 * (it - average) / range).clamp(-127, 127) as i8),
+        filter_susceptibilities: centers.map(|it| (255 * (it - min) / range) as u8),
     })
 }
 

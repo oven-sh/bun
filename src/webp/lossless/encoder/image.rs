@@ -1,5 +1,6 @@
 //! Pixels to symbols to bits.
 
+use core::convert::Infallible;
 use core::ops::Range;
 
 use super::bit_writer::BitWriter;
@@ -14,6 +15,7 @@ use super::{Quality, cache, cheapest};
 use crate::array::At;
 use crate::error::{Error, Result};
 use crate::lossless::{Argb, MIN_TILE_BITS, TILE_BITS_BITS, subsampled};
+use crate::slice::InBounds;
 use crate::vec;
 
 /// `histogram` is that of `first_attempt`, and used up.
@@ -24,7 +26,7 @@ fn improved(
     matches: &[Match],
 ) -> Result<Coding> {
     let copies = cheapest::copies(pixels, matches, &first_attempt, histogram)?;
-    let second_attempt = Coding::new(pixels, copies, first_attempt.cache_bits, histogram)?;
+    let second_attempt = Coding::new(pixels, copies, first_attempt.cache_bits, histogram);
     Ok(if second_attempt.cost < first_attempt.cost {
         second_attempt
     } else {
@@ -65,12 +67,12 @@ enum Piece {
 
 /// Calls `visit` with the column and row of a tile and something that starts in it, in the order of the pixels.
 #[inline(always)]
-fn for_each_piece(
+fn for_each_piece<E>(
     pixels: Pixels,
     copies: &[PixelCopy],
     tile_bits: u32,
-    mut visit: impl FnMut(usize, usize, Piece) -> Result<()>,
-) -> Result<()> {
+    mut visit: impl FnMut(usize, usize, Piece) -> Result<(), E>,
+) -> Result<(), E> {
     let width = pixels.width.max(1);
     let (mut x, mut y) = (0, 0);
     let mut copies_left = copies.iter();
@@ -102,27 +104,20 @@ fn for_each_piece(
 
 impl Piece {
     #[inline(always)]
-    fn count(self, pixels: Pixels, cache_bits: u32, histogram: &mut Histogram) -> Result<()> {
+    fn count(self, pixels: Pixels, cache_bits: u32, histogram: &mut Histogram) {
         match self {
-            Self::Alone(range) => pixels.count(range, cache_bits, histogram)?,
+            Self::Alone(range) => pixels.count(range, cache_bits, histogram),
             Self::Copied { len, distance_code } => histogram.add_copy(len, distance_code),
         }
-        Ok(())
     }
 
     // https://github.com/webmproject/libwebp/blob/4fa21912338357f89e4fd51cf2368325b59e9bd9/src/enc/vp8l_enc.c#L701
     #[inline(always)]
-    fn write(
-        self,
-        pixels: Pixels,
-        cache_bits: u32,
-        words: &BySymbol<u32>,
-        writer: &mut BitWriter,
-    ) -> Result<()> {
+    fn write(self, pixels: Pixels, cache_bits: u32, words: &BySymbol<u32>, writer: &mut BitWriter) {
         let word = |symbol| Word(*words.at(symbol));
         match self {
             Self::Alone(range) => {
-                for (argb, needed) in pixels.get(range)? {
+                for (argb, needed) in pixels.get(range) {
                     if needed <= cache_bits {
                         word(CACHE + cache::key(argb, cache_bits)).write(0, 0, writer);
                     } else {
@@ -140,7 +135,6 @@ impl Piece {
                 }
             }
         }
-        Ok(())
     }
 }
 
@@ -157,9 +151,10 @@ fn write_codes(
     for histogram in histograms {
         bits += histogram.extra_bits();
         for alphabet in alphabets {
-            bits += builder.write_code(histogram.get_mut(alphabet.symbols()), writer)?;
+            bits += builder.write_code(histogram.get_mut(alphabet.symbols()), writer);
         }
     }
+    writer.check()?;
     Ok(bits as usize)
 }
 
@@ -181,21 +176,21 @@ pub(super) fn write_subimage(
     let [histogram] = &mut *vec::array(Histogram::EMPTY)?;
     let copies = best_coding(pixels, &matches, 0, quality, histogram)?.copies;
     histogram.counts.fill(0);
-    for_each_piece(pixels, &copies, ONE_TILE, |_, _, piece| {
-        piece.count(pixels, 0, histogram)
-    })?;
-    writer.make_room(1)?;
-    writer.put_flag(false);
+    let Ok(()) = for_each_piece::<Infallible>(pixels, &copies, ONE_TILE, |_, _, piece| {
+        piece.count(pixels, 0, histogram);
+        Ok(())
+    });
+    writer.append_flag(false);
     let bits = write_codes(core::slice::from_mut(histogram), 0, writer)?;
-    writer.make_room(bits)?;
+    writer.make_room(bits);
     for_each_piece(pixels, &copies, ONE_TILE, |_, _, piece| {
-        piece.write(pixels, 0, &histogram.counts, writer)
+        piece.write(pixels, 0, &histogram.counts, writer);
+        Ok(())
     })
 }
 
 pub(super) fn write_tiles(tiles: &Tiles, quality: Quality, writer: &mut BitWriter) -> Result<()> {
-    writer.make_room(TILE_BITS_BITS as usize)?;
-    writer.put((tiles.bits - MIN_TILE_BITS).into(), TILE_BITS_BITS);
+    writer.append((tiles.bits - MIN_TILE_BITS).into(), TILE_BITS_BITS);
     write_subimage(&tiles.pixels, tiles.per_row, quality, writer)
 }
 
@@ -214,10 +209,10 @@ fn tile_histograms(
         }
         Ok(())
     };
-    for_each_piece(pixels, &coding.copies, bits, |x, y, piece| {
+    for_each_piece::<Error>(pixels, &coding.copies, bits, |x, y, piece| {
         finish_rows_above(y, &mut row)?;
-        let histogram = row.get_mut(x).ok_or(Error::Internal)?;
-        piece.count(pixels, coding.cache_bits, histogram)
+        row.update(x, |tile| piece.count(pixels, coding.cache_bits, tile));
+        Ok(())
     })?;
     finish_rows_above(subsampled(height, bits), &mut row)?;
     Ok(histograms)
@@ -257,12 +252,11 @@ impl Unfinished {
         let mut groups = groups::find(&histograms, options.quality)?;
         drop(histograms);
 
-        writer.make_room(1 + 4 + 1)?;
-        writer.put_flag(cache_bits > 0);
+        writer.append_flag(cache_bits > 0);
         if cache_bits > 0 {
-            writer.put(cache_bits.into(), 4);
+            writer.append(cache_bits.into(), 4);
         }
-        writer.put_flag(groups.histograms.len() > 1);
+        writer.append_flag(groups.histograms.len() > 1);
         if groups.histograms.len() > 1 {
             let mut tiles = Tiles::new(pixels.width, height, options.tile_bits)?;
             let pixel = |&group| Argb::from(group) << 8;
@@ -284,13 +278,14 @@ impl Unfinished {
     }
 
     fn finish(mut self, pixels: Pixels, tile_bits: u32) -> Result<Vec<u8>> {
-        self.writer.make_room(self.missing_bits)?;
+        self.writer.make_room(self.missing_bits);
         let tiles_per_row = subsampled(pixels.width, tile_bits);
         for_each_piece(pixels, &self.copies, tile_bits, |x, y, piece| {
-            let group = self.groups.of_tiles.get(y * tiles_per_row + x);
-            let words = group.and_then(|&group| self.groups.histograms.get(usize::from(group)));
-            let words = &words.ok_or(Error::Internal)?.counts;
-            piece.write(pixels, self.cache_bits, words, &mut self.writer)
+            let group = self.groups.of_tiles.value(y * tiles_per_row + x);
+            let words = self.groups.histograms.get(usize::from(group));
+            words
+                .map(|words| piece.write(pixels, self.cache_bits, &words.counts, &mut self.writer))
+                .ok_or(Error::Internal)
         })?;
         self.writer.finish()
     }
@@ -332,4 +327,30 @@ pub(super) fn finish_with(
         first
     };
     smaller.finish(pixels, options.tile_bits)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn nothing_is_written_without_a_code() -> Result<()> {
+        let stream = Unfinished {
+            writer: BitWriter::default(),
+            missing_bits: 0,
+            copies: Vec::new(),
+            cache_bits: 0,
+            groups: Groups {
+                of_tiles: vec::filled(0, 1)?,
+                histograms: Vec::new(),
+            },
+        };
+        let pixels = Pixels {
+            argb: &[0],
+            cache_bits_needed: &[1],
+            width: 1,
+        };
+        assert_eq!(stream.finish(pixels, 2), Err(Error::Internal));
+        Ok(())
+    }
 }

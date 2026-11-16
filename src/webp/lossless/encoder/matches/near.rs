@@ -4,8 +4,9 @@ use core::hint::select_unpredictable;
 
 use super::super::prefix::distance_code;
 use super::{MAX_LEN, MIN_LEN, Match, common_len};
-use crate::error::{Error, Result};
+use crate::error::Result;
 use crate::lossless::{Argb, NEIGHBORS};
+use crate::slice::{InBounds, known};
 use crate::vec;
 
 const WINDOW: usize = u64::BITS as usize;
@@ -72,17 +73,18 @@ struct Window {
 
 impl Window {
     /// `greens` has `WINDOW` more bytes on either side.
-    fn new(first: usize, greens: &[u8], all: &mut [Near]) -> Result<Self> {
-        let from = |start: usize| greens.get(start..)?.first_chunk::<WINDOW>();
+    fn new(first: usize, greens: &[u8], all: &mut [Near]) -> Self {
+        let from = |start: usize| greens.part(start..).first_chunk::<WINDOW>();
         let start = WINDOW + first - 1;
-        let here = from(start).ok_or(Error::Internal)?;
+        let here = known(from(start));
         let mut window = Self {
             first,
             end: first + WINDOW - 1 - MIN_LEN,
             ..Self::default()
         };
         for near in all {
-            let Some(source) = start.checked_sub(near.distance).and_then(from) else {
+            let source = start.checked_sub(near.distance).and_then(from);
+            let Some((here, source)) = here.zip(source) else {
                 continue;
             };
             let before_image = (near.distance + 1).saturating_sub(first);
@@ -94,7 +96,7 @@ impl Window {
                 window.new_matches |= near.new_matches;
             }
         }
-        Ok(window)
+        window
     }
 }
 
@@ -120,7 +122,7 @@ pub(in super::super) fn keep_near(
             continue;
         }
         if at >= window.end {
-            window = Window::new(at, &greens, &mut all)?;
+            window = Window::new(at, &greens, &mut all);
         }
         let bit = 1 << (1 + at - window.first);
         let goes_on = !matches!(previous.len(), 0 | MAX_LEN);
@@ -141,12 +143,8 @@ pub(in super::super) fn keep_near(
                     continue;
                 }
                 let start = near.reach.max(at);
-                let (Some(source), Some(wanted)) =
-                    (pixels.get(start - near.distance..), pixels.get(start..end))
-                else {
-                    return Err(Error::Internal);
-                };
-                near.reach = start + common_len(source, wanted);
+                let source = pixels.part(start - near.distance..);
+                near.reach = start + common_len(source, pixels.part(start..end));
                 if near.reach - at > best.len() {
                     best = Match::new(near.distance, near.reach - at);
                     if best.len() == MAX_LEN {

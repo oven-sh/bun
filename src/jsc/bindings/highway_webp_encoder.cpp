@@ -855,7 +855,7 @@ static constexpr uint8_t kSubblockSources[10][4][4] = {
 };
 
 // No pair needs more than 16 of these. Each has a place of its own among those that the pair does need.
-static constexpr bool Needs(size_t pair, size_t source)
+static consteval bool Needs(size_t pair, size_t source)
 {
     for (size_t i = 0; i < 32; i++) {
         if (kSubblockSources[2 * pair + i / 16][i / 4 % 4][i % 4] == source) return true;
@@ -863,7 +863,7 @@ static constexpr bool Needs(size_t pair, size_t source)
     return false;
 }
 
-static constexpr size_t PlaceOf(size_t pair, size_t source)
+static consteval size_t PlaceOf(size_t pair, size_t source)
 {
     size_t place = 0;
     for (size_t other = 0; other < source; other++)
@@ -871,7 +871,7 @@ static constexpr size_t PlaceOf(size_t pair, size_t source)
     return place;
 }
 
-static constexpr uint8_t SourceAt(size_t pair, size_t place)
+static consteval uint8_t SourceAt(size_t pair, size_t place)
 {
     for (size_t source = 0; source < 32; source++) {
         if (Needs(pair, source) && PlaceOf(pair, source) == place) return source;

@@ -9,6 +9,7 @@ use crate::error::{Error, Result};
 use crate::lossless::{
     CODE_LENGTH_CODE_ORDER, CODE_LENGTH_CODES, DEFAULT_CODE_LENGTH, MAX_CODE_LENGTH,
 };
+use crate::slice::{InBounds, known};
 use crate::vec;
 
 pub(super) const ROOT_BITS: u32 = 8;
@@ -171,7 +172,7 @@ impl CodeLengths {
         }
         self.check()?;
         let mut code = Code::EMPTY;
-        self.build(&mut code, &mut Vec::new(), 0)?;
+        self.build_root(&mut code);
 
         let mut codes_left = alphabet_len;
         if reader.read_flag() {
@@ -222,9 +223,38 @@ impl CodeLengths {
         second_tables: &mut Vec<Entry>,
         first: usize,
     ) -> Result<()> {
+        let mut unplaced = self.counts;
+        let (mut key, long) = self.build_root(code);
+        let mut root_key = usize::MAX;
+        let mut table = first;
+        for &symbol in long {
+            let len = symbol.len();
+            if key % code.root.len() != root_key {
+                root_key = key % code.root.len();
+                table = second_tables.len();
+                let longest = longest_with_same_root(&unplaced, len);
+                *code.root.at_mut(root_key) = Entry::new(table - first, longest);
+                second_tables.try_reserve(1 << (longest - ROOT_BITS))?;
+                second_tables.resize(table + (1 << (longest - ROOT_BITS)), Entry::default());
+            }
+            second_tables
+                .iter_mut()
+                .skip(table + (key >> ROOT_BITS))
+                .step_by(1 << (len - ROOT_BITS))
+                .for_each(|it| *it = symbol);
+            key = next_key(key, len);
+            code.max_len = len;
+            *unplaced.at_mut(len as usize) -= 1;
+        }
+        Ok(())
+    }
+
+    /// Only for the codes of up to `ROOT_BITS`. Returns the bits of the next code in the order they are read, the first
+    /// one lowest, and the symbols that are left.
+    fn build_root(&mut self, code: &mut Code) -> (usize, &[Entry]) {
         if let [only] = *self.symbols {
             code.root.fill(Entry::new(only.value(), 0));
-            return Ok(());
+            return (0, &[]);
         }
 
         let mut start = 0;
@@ -235,60 +265,24 @@ impl CodeLengths {
         self.sorted.resize(self.symbols.len(), Entry::default());
         for &symbol in &self.symbols {
             let next = next.at_mut(symbol.len() as usize);
-            let place = self.sorted.get_mut(usize::from(*next));
-            *place.ok_or(Error::Internal)? = symbol;
+            self.sorted.set((*next).into(), symbol);
             *next += 1;
         }
-        let mut sorted = self.sorted.iter().copied();
-        let [_, mut counts @ ..] = self.counts;
 
-        // The bits of the next code in the order they are read, the first one lowest.
+        let mut sorted = self.sorted.iter();
         let mut key = 0;
-        let (short_counts, long_counts) = counts.split_at_mut(ROOT_BITS as usize);
-        for (len, &count) in (1..).zip(&*short_counts) {
+        for len in 1..=ROOT_BITS {
             // A table for codes one bit longer is the table so far twice over.
-            let half = 1 << (len - 1);
-            if let Some((low, high)) = code.root.split_at_mut_checked(half) {
-                high.iter_mut().zip(low).for_each(|(to, from)| *to = *from);
-            }
-            for symbol in sorted.by_ref().take(count.into()) {
+            let halves = code.root.split_at_mut_checked(1 << (len - 1));
+            let (low, high) = known(halves).unwrap_or_default();
+            high.iter_mut().zip(low).for_each(|(to, from)| *to = *from);
+            for &symbol in sorted.by_ref().take((*self.counts.at(len as usize)).into()) {
                 *code.root.at_mut(key) = symbol;
                 key = next_key(key, len);
                 code.max_len = len;
             }
         }
-
-        let mut root_key = usize::MAX;
-        let mut table = first;
-        let mut unplaced = long_counts;
-        let mut len = ROOT_BITS + 1;
-        while let [count, ..] = *unplaced {
-            if count == 0 {
-                unplaced = unplaced.get_mut(1..).unwrap_or_default();
-                len += 1;
-                continue;
-            }
-            if key % code.root.len() != root_key {
-                root_key = key % code.root.len();
-                table = second_tables.len();
-                let longest = longest_with_same_root(unplaced, len);
-                *code.root.at_mut(root_key) = Entry::new(table - first, longest);
-                second_tables.try_reserve(1 << (longest - ROOT_BITS))?;
-                second_tables.resize(table + (1 << (longest - ROOT_BITS)), Entry::default());
-            }
-            let entry = sorted.next().ok_or(Error::Internal)?;
-            second_tables
-                .iter_mut()
-                .skip(table + (key >> ROOT_BITS))
-                .step_by(1 << (len - ROOT_BITS))
-                .for_each(|it| *it = entry);
-            key = next_key(key, len);
-            code.max_len = len;
-            if let [count, ..] = unplaced {
-                *count -= 1;
-            }
-        }
-        Ok(())
+        (key, sorted.as_slice())
     }
 }
 
@@ -301,15 +295,16 @@ fn next_key(key: usize, len: u32) -> usize {
     }
 }
 
-/// The codes that are left have `counts` of `len` bits and more. The next of them is the first with its root.
-fn longest_with_same_root(counts: &[u16], len: u32) -> u32 {
+/// `counts` are of the codes that are left. The next of them has `len` bits, and is the first with its root.
+fn longest_with_same_root(counts: &[u16; MAX_CODE_LENGTH + 1], mut len: u32) -> u32 {
     let mut room = 1i32 << (len - ROOT_BITS);
-    for (len, &count) in (len..).zip(counts) {
-        room -= i32::from(count);
+    while len < MAX_CODE_LENGTH as u32 {
+        room -= i32::from(*counts.at(len as usize));
         if room <= 0 {
-            return len;
+            break;
         }
         room *= 2;
+        len += 1;
     }
-    MAX_CODE_LENGTH as u32
+    len
 }

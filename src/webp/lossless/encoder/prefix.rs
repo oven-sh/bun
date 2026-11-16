@@ -51,7 +51,7 @@ static NEIGHBOR_CODES: [[u8; MAX_RIGHT + 1 + MAX_LEFT]; MAX_UP + 1] = {
 #[inline]
 pub(super) fn distance_code(distance: usize, width: usize) -> u32 {
     if distance <= MAX_UP * width + MAX_LEFT {
-        let up = (distance as u32 / width.max(1) as u32) as usize;
+        let up = (distance as u32 / (width as u32).max(1)) as usize;
         let left = distance - up * width;
         let right = width - left;
         if left <= MAX_LEFT && up <= MAX_UP {

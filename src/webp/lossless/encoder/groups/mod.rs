@@ -10,7 +10,8 @@ use super::Quality;
 use super::entropy::{Cost, div_round};
 use super::histogram::{Alphabet, Histogram};
 use crate::array::At;
-use crate::error::{Error, Result};
+use crate::error::Result;
+use crate::slice::{InBounds, known};
 use crate::vec;
 
 /// Two clusters that cost less as one.
@@ -79,9 +80,7 @@ impl StayApart {
 
     fn set(&mut self, a: usize, b: usize, is_known: bool) {
         for index in [a * self.ids + b, b * self.ids + a] {
-            if let Some(to) = self.is_known.get_mut(index) {
-                *to = is_known;
-            }
+            self.is_known.set(index, is_known);
         }
     }
 }
@@ -161,8 +160,9 @@ impl Clusters {
             let shared_by_literals = tile.shared_by_literals;
             let bin = bins.at_mut(bin_of(tile));
             let mut is_merged = false;
-            if let Some(bin) = bin {
-                let cluster = self.clusters.get_mut(bin.cluster).ok_or(Error::Internal)?;
+            if let Some(bin) = bin
+                && let Some(cluster) = known(self.clusters.get_mut(bin.cluster))
+            {
                 let alone = cost(&tile.parts);
                 let to_save = div_round(alone as u64 * percent_to_save, 100) as i64;
                 let limit = cost(&cluster.counts.parts) + alone - to_save;
@@ -197,7 +197,12 @@ impl Clusters {
     /// If merging them changes the total by less than `limit`.
     fn pair(&self, a: usize, b: usize, limit: i64) -> Option<Pair> {
         let (low, high) = (a.min(b), a.max(b));
-        let (a, b) = (self.clusters.get(low)?, self.clusters.get(high)?);
+        let both = self.clusters.get(low).zip(self.clusters.get(high));
+        let change = both.and_then(|(a, b)| self.change_by_merging(a, b, limit))?;
+        Some(Pair { low, high, change })
+    }
+
+    fn change_by_merging(&self, a: &Cluster, b: &Cluster, limit: i64) -> Option<i64> {
         let (a, b) = if a.symbols() > b.symbols() {
             (a, b)
         } else {
@@ -205,20 +210,30 @@ impl Clusters {
         };
         let apart = cost(&a.counts.parts) + cost(&b.counts.parts);
         let are_many = self.clusters.len() > MANY;
-        let change = a.cost_with(&b.counts, &self.alphabets, apart + limit, are_many)? - apart;
-        Some(Pair { low, high, change })
+        Some(a.cost_with(&b.counts, &self.alphabets, apart + limit, are_many)? - apart)
     }
 
     /// Into the first of the two.
-    fn merge(&mut self, pair: Pair) -> Result<()> {
+    fn merge(&mut self, pair: Pair) {
         let clusters = self.clusters.get_disjoint_mut([pair.low, pair.high]);
-        let [low, high] = clusters.map_err(|_| Error::Internal)?;
-        low.add(&high.counts, &self.alphabets, i64::MAX);
-        self.merged.push((high.id, low.id));
+        let ids = clusters.map(|[low, high]| {
+            low.add(&high.counts, &self.alphabets, i64::MAX);
+            (high.id, low.id)
+        });
+        let (gone, into) = known(ids.ok()).unwrap_or_default();
+        self.merged.push((gone, into));
         for other in 0..self.stay_apart.ids {
-            self.stay_apart.set(low.id, other, false);
+            self.stay_apart.set(into, other, false);
         }
-        Ok(())
+    }
+
+    /// The last cluster takes its place.
+    fn remove(&mut self, index: usize) {
+        if let Some(last) = self.clusters.pop()
+            && let Some(gone) = self.clusters.get_mut(index)
+        {
+            *gone = last;
+        }
     }
 
     /// Until there are fewer than `goal`, or it seems to lead nowhere.
@@ -262,7 +277,7 @@ impl Clusters {
             let Some(&best) = queue.0.first() else {
                 continue;
             };
-            self.merge(best)?;
+            self.merge(best);
             queue.retain(|pair| {
                 if pair.has(best.low) && pair.has(best.high) {
                     return false;
@@ -277,7 +292,7 @@ impl Clusters {
                 pair.replace(len - 1, best.high);
                 true
             });
-            self.clusters.swap_remove(best.high);
+            self.remove(best.high);
             fruitless_rounds = 0;
         }
         Ok(())
@@ -292,8 +307,8 @@ impl Clusters {
             pairs.for_each(|pair| queue.push(pair));
         }
         while let Some(&best) = queue.0.first() {
-            self.merge(best)?;
-            self.clusters.swap_remove(best.high);
+            self.merge(best);
+            self.remove(best.high);
             let len = self.clusters.len();
             queue.retain(|pair| {
                 let is_current = !pair.has(best.low) && !pair.has(best.high);
@@ -311,11 +326,11 @@ impl Clusters {
     fn indices(&self) -> Result<Vec<usize>> {
         let mut indices = vec::filled(0, self.clusters.len() + self.merged.len())?;
         for (index, cluster) in self.clusters.iter().enumerate() {
-            *indices.get_mut(cluster.id).ok_or(Error::Internal)? = index;
+            indices.set(cluster.id, index);
         }
         for &(gone, into) in self.merged.iter().rev() {
-            let index = *indices.get(into).ok_or(Error::Internal)?;
-            *indices.get_mut(gone).ok_or(Error::Internal)? = index;
+            let index = indices.value(into);
+            indices.set(gone, index);
         }
         Ok(indices)
     }
@@ -355,10 +370,13 @@ impl Clusters {
         let batches = tiles.tiles.chunks(at_once);
         for (batch, ids_then_indices) in batches.zip(ids_then_indices.chunks_mut(at_once)) {
             let all = batch.iter().zip(&*ids_then_indices).zip(&mut searches);
-            for ((tile, &id), search) in all.filter(|((tile, _), _)| tile.is_used()) {
+            for ((tile, &id), search) in all {
                 // With a good guess, the others are out sooner.
-                let guess = *indices.get(usize::from(id)).ok_or(Error::Internal)?;
-                let cluster = self.clusters.get(guess).ok_or(Error::Internal)?;
+                let guess = indices.value(id.into());
+                let cluster = known(self.clusters.get(guess));
+                let Some(cluster) = cluster.filter(|_| tile.is_used()) else {
+                    continue;
+                };
                 search.counts.fill(tile, tiles.entries(tile));
                 search.least = i64::MAX / 2;
                 look_at(search, guess, cluster);
@@ -430,11 +448,11 @@ pub(super) fn find(tiles: &TileHistograms, quality: Quality) -> Result<Groups> {
     let len = of_tiles.iter().max().map_or(0, |&max| usize::from(max) + 1);
     let mut histograms = vec::filled(Histogram::EMPTY, len)?;
     for (tile, &group) in tiles.tiles.iter().zip(&of_tiles) {
-        let histogram = histograms.get_mut(usize::from(group));
-        let histogram = histogram.ok_or(Error::Internal)?;
-        for entry in tiles.entries(tile) {
-            *histogram.counts.at_mut(entry.symbol()) += entry.count();
-        }
+        histograms.update(group.into(), |histogram| {
+            for entry in tiles.entries(tile) {
+                *histogram.counts.at_mut(entry.symbol()) += entry.count();
+            }
+        });
     }
     Ok(Groups {
         of_tiles,

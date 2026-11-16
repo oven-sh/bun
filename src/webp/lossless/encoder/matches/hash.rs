@@ -4,6 +4,7 @@ use super::{MAX_LEN, Match, common_len};
 use crate::array::At;
 use crate::error::Result;
 use crate::lossless::Argb;
+use crate::slice::InBounds;
 use crate::vec;
 
 // https://github.com/webmproject/libwebp/blob/4fa21912338357f89e4fd51cf2368325b59e9bd9/src/enc/backward_references_enc.h#L110
@@ -52,9 +53,7 @@ pub(super) fn links(pixels: &[Argb]) -> Result<Vec<Match>> {
         let mut last = vec::array::<_, HASHES>(0)?;
         for_each(pixels, pixels.len(), |at, hash, _| {
             let link = core::mem::replace(last.at_mut(hash), at as u32 + 1);
-            if let Some(to) = links.get_mut(at) {
-                *to = Match(link);
-            }
+            links.set(at, Match(link));
         });
     }
     Ok(links)

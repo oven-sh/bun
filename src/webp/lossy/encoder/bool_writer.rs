@@ -4,6 +4,7 @@ use core::hint::select_unpredictable;
 
 use crate::array::At;
 use crate::error::{Error, Result};
+use crate::slice::InBounds;
 
 /// Twice a probability, plus the bit.
 #[derive(Clone, Copy)]
@@ -155,7 +156,7 @@ impl BoolWriter {
     pub(super) fn finish(mut self) -> Result<Vec<u8>> {
         let [carry, bytes @ ..] = (self.value << (48 - self.pending_bits)).to_be_bytes();
         let len = self.pending_bits.div_ceil(8).max(1) as usize + 2;
-        self.append(carry, bytes.get(..len).ok_or(Error::Internal)?);
+        self.append(carry, bytes.part(..len));
         if self.is_out_of_memory {
             return Err(Error::Alloc(bun_alloc::AllocError));
         }

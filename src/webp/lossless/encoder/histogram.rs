@@ -7,6 +7,7 @@ use super::entropy::{self, Cost, Estimate, ONE_BIT};
 use super::prefix::{self, Prefixed};
 use crate::array::At;
 use crate::lossless::{Argb, DISTANCE_CODES, LENGTH_CODES, LITERAL_CODES};
+use crate::slice::InBounds;
 
 /// Symbols for which a `u64` has a bit each.
 pub(super) const BLOCK_LEN: usize = 64;
@@ -95,15 +96,15 @@ impl Histogram {
     }
 
     pub(super) fn blocks(&self, blocks: Range<usize>) -> &[[u32; BLOCK_LEN]] {
-        self.counts.as_chunks().0.get(blocks).unwrap_or_default()
+        self.counts.as_chunks().0.part(blocks)
     }
 
     pub(super) fn get(&self, symbols: Range<usize>) -> &[u32] {
-        self.counts.get(symbols).unwrap_or_default()
+        self.counts.part(symbols)
     }
 
     pub(super) fn get_mut(&mut self, symbols: Range<usize>) -> &mut [u32] {
-        self.counts.get_mut(symbols).unwrap_or_default()
+        self.counts.part_mut(symbols)
     }
 
     fn alphabet_cost(&self, alphabet: Alphabet) -> Cost {

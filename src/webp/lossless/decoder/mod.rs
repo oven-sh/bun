@@ -12,6 +12,7 @@ pub(crate) use self::transform::MAX_BUNDLE_LEN;
 use self::transform::{Lookup, Transform};
 use super::{IMAGE_SIZE_BITS, SIGNATURE, TransformType, VERSION_BITS, subsampled};
 use crate::error::{Error, Result};
+use crate::slice::InBounds;
 use crate::vec;
 
 type Rgba = [u8; 4];
@@ -63,11 +64,10 @@ pub(crate) struct IndexedGreen {
 
 impl IndexedGreen {
     /// And fewer than `MAX_BUNDLE_LEN` more. `to` has room for them.
-    pub(crate) fn append_row(&self, y: usize, to: &mut Vec<u8>) -> Result<()> {
+    pub(crate) fn append_row(&self, y: usize, to: &mut Vec<u8>) {
         let start = y * self.bundles_per_row;
-        let bundles = self.bundles.get(start..start + self.bundles_per_row);
-        let bundles = bundles.ok_or(Error::Internal)?;
-        self.lookup.append(bundles, |&bundle| bundle, to)
+        let bundles = self.bundles.part(start..start + self.bundles_per_row);
+        self.lookup.append(bundles, |&bundle| bundle, to);
     }
 }
 
@@ -78,7 +78,7 @@ pub(crate) fn decode_green(bytes: &[u8], width: usize, height: usize) -> Result<
     {
         let lookup = palette.lookup(|[_, green, ..]| green)?;
         return Ok(Green::Indexed(IndexedGreen {
-            bundles: stream.read_pixels()?,
+            bundles: stream.read_greens()?,
             bundles_per_row: stream.coded_width,
             lookup,
         }));
@@ -131,7 +131,12 @@ impl<'a> Stream<'a> {
         })
     }
 
-    fn read_pixels<P: pixels::Pixel>(&mut self) -> Result<Vec<P>> {
+    fn read_greens(&mut self) -> Result<Vec<u8>> {
+        self.coding
+            .read_greens(&mut self.reader, self.coded_width, self.height)
+    }
+
+    fn read_pixels(&mut self) -> Result<Vec<Rgba>> {
         self.coding
             .read_pixels(&mut self.reader, self.coded_width, self.height)
     }
@@ -143,16 +148,16 @@ impl<'a> Stream<'a> {
         if let Some([earlier @ .., Transform::ColorIndexing(palette)]) = first {
             let lookup = palette.lookup(|color| color)?;
             let mut pixels = if later.is_empty() && self.coding.green_stands_alone() {
-                let bundles: Vec<u8> = self.read_pixels()?;
+                let bundles = self.read_greens()?;
                 self.look_up(&lookup, &bundles, |&bundle| bundle)?
             } else if palette.bundle_bits > 0 {
-                let mut bundles: Vec<Rgba> = self.read_pixels()?;
-                transform::undo(later, &mut bundles, self.coded_width)?;
+                let mut bundles = self.read_pixels()?;
+                transform::undo(later, &mut bundles, self.coded_width);
                 self.look_up(&lookup, &bundles, |&[_, bundle, ..]| bundle)?
             } else {
                 return self.decode_in_place(&transforms);
             };
-            transform::undo(earlier, &mut pixels, self.width)?;
+            transform::undo(earlier, &mut pixels, self.width);
             return Ok(pixels);
         }
         self.decode_in_place(&transforms)
@@ -160,7 +165,7 @@ impl<'a> Stream<'a> {
 
     fn decode_in_place(mut self, transforms: &[Transform]) -> Result<Vec<Rgba>> {
         let mut pixels = self.read_pixels()?;
-        transform::undo(transforms, &mut pixels, self.width)?;
+        transform::undo(transforms, &mut pixels, self.width);
         Ok(pixels)
     }
 
@@ -173,7 +178,7 @@ impl<'a> Stream<'a> {
         let mut pixels = vec::with_room(self.width * self.height + MAX_BUNDLE_LEN)?;
         for coded_row in coded.chunks_exact(self.coded_width.max(1)) {
             let end = pixels.len() + self.width;
-            lookup.append(coded_row, &bundle, &mut pixels)?;
+            lookup.append(coded_row, &bundle, &mut pixels);
             pixels.truncate(end);
         }
         Ok(pixels)

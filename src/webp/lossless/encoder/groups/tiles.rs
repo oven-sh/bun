@@ -4,6 +4,7 @@ use super::super::entropy::{self, Cost, Estimate, Population, set_bits};
 use super::super::histogram::{Alphabet, BLOCK_LEN, Histogram};
 use crate::array::At;
 use crate::error::Result;
+use crate::slice::InBounds;
 use crate::vec;
 
 const COUNT_BITS: u32 = 20;
@@ -118,6 +119,6 @@ impl TileHistograms {
     }
 
     pub(super) fn entries(&self, tile: &Tile) -> &[Entry] {
-        self.entries.get(tile.start..tile.end).unwrap_or_default()
+        self.entries.part(tile.start..tile.end)
     }
 }

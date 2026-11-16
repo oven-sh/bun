@@ -10,6 +10,7 @@ use crate::lossless::{
     DISTANCE_CODES, IMAGE_SIZE_BITS, LENGTH_CODES, LITERAL_CODES, MIN_TILE_BITS, TILE_BITS_BITS,
     subsampled,
 };
+use crate::slice::{InBounds, known};
 use crate::vec;
 
 /// Up to how many bits all of a pixel is looked up at once.
@@ -172,14 +173,14 @@ impl Groups {
     pub(super) fn at(&self, x: usize, y: usize, width: usize) -> Result<(&Group, &[Entry], usize)> {
         let (column, row) = (x >> self.tile_bits, y >> self.tile_bits);
         let index = self.tiles.get(row * self.tiles_per_row + column);
-        let group = self.groups.get(usize::from(*index.ok_or(Error::Internal)?));
+        let group = index.and_then(|&index| self.groups.get(usize::from(index)));
         let end = match self.tiles_per_row {
             1 => (((row + 1) << self.tile_bits) - y) * width,
             _ => width.min((column + 1) << self.tile_bits),
         };
         let group = group.ok_or(Error::Internal)?;
-        let tables = self.second_tables.get(group.second_tables..);
-        Ok((group, tables.ok_or(Error::Internal)?, end - x))
+        let tables = self.second_tables.part(group.second_tables..);
+        Ok((group, tables, end - x))
     }
 }
 
@@ -192,16 +193,13 @@ fn read_groups(
     let stored = tiles.iter().max().map_or(0, |&max| usize::from(max) + 1);
     let mut kept_index: Vec<Option<u16>> = vec::filled(None, stored)?;
     for &tile in &*tiles {
-        *kept_index
-            .get_mut(usize::from(tile))
-            .ok_or(Error::Internal)? = Some(0);
+        kept_index.set(tile.into(), Some(0));
     }
     for (index, kept) in (0..=u16::MAX).zip(kept_index.iter_mut().flatten()) {
         *kept = index;
     }
     for tile in tiles {
-        let index = kept_index.get(usize::from(*tile)).copied().flatten();
-        *tile = index.ok_or(Error::Internal)?;
+        *tile = known(kept_index.value((*tile).into())).unwrap_or_default();
     }
 
     let cache_len = if cache_bits > 0 { 1 << cache_bits } else { 0 };

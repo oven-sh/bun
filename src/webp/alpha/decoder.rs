@@ -77,7 +77,7 @@ impl<'a> Rows<'a> {
                 self.row.extend_from_slice(raw);
                 *unread = rest;
             }
-            Source::Indexed(green) => green.append_row(self.y, &mut self.row)?,
+            Source::Indexed(green) => green.append_row(self.y, &mut self.row),
             Source::InPlace => {
                 let pixels = pixels.get(..self.width).ok_or(Error::Internal)?;
                 self.row.extend(pixels.iter().map(|&[_, green, ..]| green));

@@ -12,6 +12,7 @@ use crate::error::{Error, Result};
 use crate::lossless::{
     LENGTH_CODES, LITERAL_CODES, MAX_CACHE_BITS, MAX_CODE_LENGTH, NEIGHBORS, color_cache_key,
 };
+use crate::slice::{self, InBounds};
 use crate::vec;
 
 const MAX_COPY_LEN: usize = 4096;
@@ -21,20 +22,14 @@ const COPY_STEP: usize = 8;
 const GROWTH: usize = 8192;
 
 /// What is kept of a pixel.
-pub(super) trait Pixel: Copy + Default + PartialEq {
+trait Pixel: Copy + Default {
     fn from_rgba(rgba: Rgba) -> Self;
-    fn to_rgba(self) -> Rgba;
 }
 
 impl Pixel for Rgba {
     #[inline(always)]
     fn from_rgba(rgba: Rgba) -> Self {
         rgba
-    }
-
-    #[inline(always)]
-    fn to_rgba(self) -> Rgba {
-        self
     }
 }
 
@@ -43,11 +38,6 @@ impl Pixel for u8 {
     #[inline(always)]
     fn from_rgba([_, green, ..]: Rgba) -> Self {
         green
-    }
-
-    #[inline(always)]
-    fn to_rgba(self) -> Rgba {
-        [0, self, 0, 0]
     }
 }
 
@@ -96,12 +86,22 @@ impl Coding {
         self.cache_bits == 0
     }
 
-    pub(super) fn read_pixels<P: Pixel>(
+    /// If `green_stands_alone()`.
+    pub(super) fn read_greens(
         &self,
         reader: &mut BitReader,
         width: usize,
         height: usize,
-    ) -> Result<Vec<P>> {
+    ) -> Result<Vec<u8>> {
+        read_pixels(&self.groups, reader, width, height, &mut NoCache)
+    }
+
+    pub(super) fn read_pixels(
+        &self,
+        reader: &mut BitReader,
+        width: usize,
+        height: usize,
+    ) -> Result<Vec<Rgba>> {
         match self.cache_bits {
             0 => read_pixels(&self.groups, reader, width, height, &mut NoCache),
             bits => {
@@ -114,22 +114,22 @@ impl Coding {
     }
 }
 
-trait Cache {
+trait Cache<P> {
     fn remember(&mut self, pixel: Rgba);
     /// The last `count` of `pixels`.
-    fn remember_last<P: Pixel>(&mut self, pixels: &[P], count: usize);
+    fn remember_last(&mut self, pixels: &[P], count: usize);
     /// Remembers it as well.
     fn recall(&mut self, key: usize) -> Rgba;
 }
 
 struct NoCache;
 
-impl Cache for NoCache {
+impl<P> Cache<P> for NoCache {
     #[inline(always)]
     fn remember(&mut self, _: Rgba) {}
 
     #[inline(always)]
-    fn remember_last<P: Pixel>(&mut self, _: &[P], _: usize) {}
+    fn remember_last(&mut self, _: &[P], _: usize) {}
 
     /// The alphabet has no keys.
     #[inline(always)]
@@ -144,7 +144,7 @@ struct ColorCache {
     spare_bits: u32,
 }
 
-impl Cache for ColorCache {
+impl Cache<Rgba> for ColorCache {
     #[inline(always)]
     fn remember(&mut self, pixel: Rgba) {
         let argb = u32::from_be_bytes(pixel).rotate_right(8);
@@ -153,21 +153,17 @@ impl Cache for ColorCache {
     }
 
     #[inline(always)]
-    fn remember_last<P: Pixel>(&mut self, pixels: &[P], count: usize) {
+    fn remember_last(&mut self, pixels: &[Rgba], count: usize) {
         if count < COPY_STEP {
-            let last = pixels.get(pixels.len() - count..).unwrap_or_default();
-            return last.iter().for_each(|it| self.remember(it.to_rgba()));
+            let last = pixels.part(pixels.len() - count..);
+            return last.iter().for_each(|&it| self.remember(it));
         }
-        // A few more in front of them change nothing. The first is only there to compare with.
-        let count = count.next_multiple_of(COPY_STEP) + 1;
-        let Some([first, rest @ ..]) = pixels.get(pixels.len().wrapping_sub(count)..) else {
-            cold_path();
-            return pixels.iter().for_each(|it| self.remember(it.to_rgba()));
-        };
-        let mut last = *first;
-        for step in rest.as_chunks().0 {
+        // A few more in front of them change nothing.
+        let start = pixels.len() - count.next_multiple_of(COPY_STEP);
+        let mut last = pixels.value(start - 1);
+        for step in pixels.part(start..).as_chunks().0 {
             if *step != [last; COPY_STEP] {
-                step.iter().for_each(|it| self.remember(it.to_rgba()));
+                step.iter().for_each(|&it| self.remember(it));
                 [.., last] = *step;
             }
         }
@@ -190,7 +186,7 @@ fn read_pixels<P: Pixel>(
     reader: &mut BitReader,
     width: usize,
     height: usize,
-    cache: &mut impl Cache,
+    cache: &mut impl Cache<P>,
 ) -> Result<Vec<P>> {
     let len = width * height;
     let mut pixels = vec::with_room(len + COPY_STEP)?;
@@ -203,8 +199,9 @@ fn read_pixels<P: Pixel>(
             let (group, tables, count) = groups.at(x, y, width)?;
             let (start, end) = (at, goal.min(at + count));
             if group.shortcut == Shortcut::Constant {
-                let run = pixels.get_mut(start..end).ok_or(Error::Internal)?;
-                run.fill(P::from_rgba(group.constant));
+                pixels
+                    .part_mut(start..end)
+                    .fill(P::from_rgba(group.constant));
                 cache.remember(group.constant);
                 at = end;
             } else {
@@ -235,7 +232,7 @@ fn read_run<P: Pixel>(
     pixels: &mut [P],
     width: usize,
     run: Range<usize>,
-    cache: &mut impl Cache,
+    cache: &mut impl Cache<P>,
 ) -> Result<usize> {
     let mut at = run.start;
     let reader = &mut { *shared_reader };
@@ -313,25 +310,23 @@ fn copy<P: Pixel>(
     at: usize,
     distance: usize,
     count: usize,
-    cache: &mut impl Cache,
+    cache: &mut impl Cache<P>,
 ) -> Option<()> {
     if distance > at || count + COPY_STEP > pixels.len() - at {
         return None;
     }
     if distance == 1 {
-        let room = count.next_multiple_of(COPY_STEP);
-        let (first, rest) = pixels.get_mut(at - 1..at + room)?.split_first_mut()?;
-        rest.as_chunks_mut().0.fill([*first; COPY_STEP]);
-        return Some(());
+        let reach = pixels.get_mut(at - 1..at + count.next_multiple_of(COPY_STEP));
+        let reach = reach.and_then(<[_]>::split_first_mut);
+        return reach.map(|(first, rest)| rest.as_chunks_mut().0.fill([*first; COPY_STEP]));
     }
-    if count <= 4 * COPY_STEP {
+    let copied = if count <= 4 * COPY_STEP {
         let (mut to, mut back) = (at, distance);
         loop {
-            let step = *pixels.get(to - back..)?.first_chunk::<COPY_STEP>()?;
-            *pixels.get_mut(to..)?.first_chunk_mut()? = step;
+            let copied = copy_step(pixels, to - back, to);
             to += back.min(COPY_STEP);
-            if to >= at + count {
-                break;
+            if copied.is_none() || to >= at + count {
+                break copied;
             }
             // What was there is there twice now.
             if back < COPY_STEP {
@@ -339,22 +334,70 @@ fn copy<P: Pixel>(
             }
         }
     } else {
-        repeat(pixels.get_mut(at - distance..at + count)?, distance)?;
-    }
+        let reach = pixels.get_mut(at - distance..at + count);
+        reach.map(|reach| repeat(reach, distance))
+    };
     // What repeats counts the last time.
-    cache.remember_last(pixels.get(..at + count)?, count.min(distance));
+    let done = copied.and_then(|()| pixels.get(..at + count));
+    done.map(|done| cache.remember_last(done, count.min(distance)))
+}
+
+#[inline(always)]
+fn copy_step<P: Pixel>(pixels: &mut [P], from: usize, to: usize) -> Option<()> {
+    let step = *pixels.get(from..)?.first_chunk::<COPY_STEP>()?;
+    *pixels.get_mut(to..)?.first_chunk_mut()? = step;
     Some(())
 }
 
 /// Fills `pixels` with repetitions of the first `period`.
 #[inline(never)]
-fn repeat<P: Pixel>(pixels: &mut [P], period: usize) -> Option<()> {
+fn repeat<P: Pixel>(pixels: &mut [P], period: usize) {
     let mut done = period;
-    while done < pixels.len() {
-        let (from, to) = pixels.split_at_mut_checked(done)?;
-        let count = from.len().min(to.len());
-        to.get_mut(..count)?.copy_from_slice(from.get(..count)?);
-        done += count;
+    while let Some((from, to @ [_, ..])) = pixels.split_at_mut_checked(done) {
+        slice::copy(from, to);
+        done *= 2;
     }
-    Some(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// No cache, tiles of 4x4, and one symbol in each code.
+    const ZEROS: [u8; 6] = [0x42, 0x44, 0x44, 0x44, 0x44, 0x04];
+
+    #[test]
+    fn nothing_is_read_without_a_code() -> Result<()> {
+        let mut reader = BitReader::new(&ZEROS);
+        let coding = Coding::read(&mut reader, 4, 4)?;
+        let mut read = |height| coding.read_greens(&mut reader, 4, height);
+        assert_eq!(read(4)?, [0; 16]);
+        assert_eq!(read(5), Err(Error::Internal));
+        Ok(())
+    }
+
+    #[test]
+    fn nothing_is_read_without_room() -> Result<()> {
+        let reader = &mut BitReader::new(&ZEROS);
+        let coding = Coding::read(reader, 4, 4)?;
+        let (group, tables, _) = coding.groups.at(0, 0, 4)?;
+        let mut read = |run| read_run(group, tables, reader, &mut [0u8], 4, run, &mut NoCache);
+        assert_eq!(read(0..1), Ok(1));
+        assert_eq!(read(0..2), Err(Error::Internal));
+        Ok(())
+    }
+
+    #[test]
+    fn nothing_is_copied_without_room() {
+        let copy = |from, to| copy_step(&mut [0u8; COPY_STEP], from, to);
+        assert_eq!(copy(0, 0), Some(()));
+        for outside in [1, COPY_STEP + 1] {
+            assert_eq!([copy(outside, 0), copy(0, outside)], [None; 2]);
+        }
+    }
+
+    #[test]
+    fn nothing_is_recalled_without_a_cache() {
+        assert_eq!(Cache::<u8>::recall(&mut NoCache, 0), [0; 4]);
+    }
 }

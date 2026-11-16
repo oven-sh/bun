@@ -19,6 +19,7 @@ mod error;
 mod lossless;
 mod lossy;
 mod riff;
+mod slice;
 mod vec;
 
 pub use decoder::{Decoder, Image};

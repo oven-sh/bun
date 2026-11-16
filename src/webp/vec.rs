@@ -20,7 +20,7 @@ pub(crate) fn default_array<T: Default, const N: usize>() -> Result<Box<[T; N]>>
     boxed(vec)
 }
 
-fn boxed<T, const N: usize>(vec: Vec<T>) -> Result<Box<[T; N]>> {
+pub(crate) fn boxed<T, const N: usize>(vec: Vec<T>) -> Result<Box<[T; N]>> {
     // Room to spare would be given back, which aborts if it is refused.
     debug_assert_eq!(vec.capacity(), N);
     vec.try_into().map_err(|_| Error::Internal)

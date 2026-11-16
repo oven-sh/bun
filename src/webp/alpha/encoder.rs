@@ -66,6 +66,8 @@ fn chunk(
 }
 
 // https://github.com/webmproject/libwebp/blob/4fa21912338357f89e4fd51cf2368325b59e9bd9/src/utils/filters_utils.c#L32
+// Once it is inlined, the four predictions may not be compared with vector instructions any more.
+#[inline(never)]
 fn likely_best_filter(alpha: &[u8], width: usize) -> Filter {
     // For each filter a bit for each sixteenth of the range that a prediction is off by.
     let mut seen = [0u16; 4];

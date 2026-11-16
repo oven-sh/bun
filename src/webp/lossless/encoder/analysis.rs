@@ -6,6 +6,7 @@ use super::sub;
 use crate::array::At;
 use crate::error::Result;
 use crate::lossless::Argb;
+use crate::slice::InBounds;
 use crate::vec;
 
 /// Those for an image without a palette.
@@ -81,7 +82,7 @@ fn for_each_change<P: Copy + Eq>(pixels: &[P], width: usize, mut visit: impl FnM
             visit(pixel, before);
         }
     }
-    let befores = pixels.get(width.saturating_sub(1)..).unwrap_or_default();
+    let befores = pixels.part(width - 1..);
     let (chunks, rest) = others.as_chunks::<CHUNK>();
     let neighbors = befores
         .as_chunks::<CHUNK>()

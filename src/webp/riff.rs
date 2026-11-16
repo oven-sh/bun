@@ -147,7 +147,7 @@ impl<'a> Container<'a> {
         if !self.has_flag(ICCP_FLAG) {
             return None;
         }
-        let mut unread = self.chunks.get(..self.declared_len)?;
+        let mut unread = self.chunks.get(..self.declared_len).unwrap_or_default();
         loop {
             let (tag, len, rest) = split_header(unread).ok()?;
             if tag == ICCP {
@@ -187,6 +187,21 @@ impl Canvas {
     }
 }
 
+/// With room for chunks whose payloads have these lengths.
+fn start_file(payload_lens: impl Iterator<Item = usize>) -> Result<Vec<u8>> {
+    let riff_len = payload_lens.fold(WEBP.len(), |sum, len| {
+        sum.saturating_add(HEADER_LEN + padded(len))
+    });
+    if riff_len > MAX_PAYLOAD_LEN {
+        return Err(Error::TooLarge);
+    }
+    let mut out = vec::with_room(HEADER_LEN + riff_len)?;
+    out.extend_from_slice(&RIFF);
+    out.extend_from_slice(&(riff_len as u32).to_le_bytes());
+    out.extend_from_slice(&WEBP);
+    Ok(out)
+}
+
 pub(crate) fn write(
     width: usize,
     height: usize,
@@ -210,20 +225,7 @@ pub(crate) fn write(
         alpha.map(|alpha| (ALPH, alpha)),
         Some(image),
     ];
-
-    let riff_len = chunks
-        .iter()
-        .flatten()
-        .fold(WEBP.len(), |len, (_, payload)| {
-            len.saturating_add(HEADER_LEN + padded(payload.len()))
-        });
-    if riff_len > MAX_PAYLOAD_LEN {
-        return Err(Error::TooLarge);
-    }
-    let mut out = vec::with_room(HEADER_LEN + riff_len)?;
-    out.extend_from_slice(&RIFF);
-    out.extend_from_slice(&(riff_len as u32).to_le_bytes());
-    out.extend_from_slice(&WEBP);
+    let mut out = start_file(chunks.iter().flatten().map(|(_, payload)| payload.len()))?;
     for (tag, payload) in chunks.into_iter().flatten() {
         out.extend_from_slice(&tag);
         out.extend_from_slice(&(payload.len() as u32).to_le_bytes());
@@ -231,4 +233,17 @@ pub(crate) fn write(
         out.resize(padded(out.len()), 0);
     }
     Ok(out)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_length_of_a_file_fits_its_header() {
+        let most = MAX_PAYLOAD_LEN - WEBP.len() - 2 * HEADER_LEN - 2;
+        let error = |len| start_file([1, len].into_iter()).err();
+        assert_ne!(error(most), Some(Error::TooLarge));
+        assert_eq!(error(most + 1), Some(Error::TooLarge));
+    }
 }

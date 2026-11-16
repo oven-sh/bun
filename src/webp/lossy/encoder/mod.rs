@@ -25,6 +25,7 @@ use self::tokens::Tokens;
 use super::{BlockType, CoefficientProbabilities, FRAME_HEADER_LEN, SEGMENTS};
 use crate::array::At;
 use crate::error::{Error, Result};
+use crate::slice::InBounds;
 use crate::vec;
 
 // https://github.com/webmproject/libwebp/blob/4fa21912338357f89e4fd51cf2368325b59e9bd9/src/enc/frame_enc.c#L37
@@ -85,7 +86,7 @@ impl Pass {
         &mut self,
         picture: &Picture,
         map: &[u8],
-        codings: &[Coding],
+        codings: &[Coding; SEGMENTS],
         costs: &mut Costs,
     ) -> Result<()> {
         let [scratch] = &mut *vec::default_array::<Scratch, 1>()?;
@@ -94,10 +95,12 @@ impl Pass {
         let mut row_above = vec::filled(outside, picture.width)?;
         let refresh_interval = (map.len() / 8).max(96);
         let mut until_refresh = refresh_interval;
-        let rows = picture.macroblocks.chunks(picture.width);
-        for (row, map) in rows.zip(map.chunks(picture.width)) {
+        for (row, map) in picture.rows().zip(map.chunks(picture.width.max(1))) {
             let (mut left, mut above_left) = (outside, (None, None));
-            for (x, (samples, &segment)) in row.iter().zip(map).enumerate() {
+            let (mut macroblocks, mut aboves) = (row.iter().zip(map), row_above.as_mut_slice());
+            while let Some(above) = aboves.split_off_first_mut()
+                && let Some((samples, &segment)) = macroblocks.next()
+            {
                 if until_refresh == 0 {
                     costs.update(&self.tokens.probabilities());
                     for (luma, chroma) in memos.iter_mut() {
@@ -108,9 +111,8 @@ impl Pass {
                 } else {
                     until_refresh -= 1;
                 }
-                let above_right = row_above.get(x + 1).and_then(|it| it.0.samples);
-                let above = row_above.get_mut(x).ok_or(Error::Internal)?;
-                let coding = codings.get(usize::from(segment)).ok_or(Error::Internal)?;
+                let above_right = aboves.first().and_then(|it| it.0.samples);
+                let coding = codings.at(segment.into());
                 let (luma, chroma) = memos.at_mut(segment.into());
                 let costs = &*costs.levels;
                 let around = luma::Around {
@@ -175,8 +177,8 @@ impl Pass {
         header::write_parameters(&mut writer, segments, filter_level, probabilities);
         header::write_modes(&mut writer, segments, &self.modes, width.div_ceil(16));
         let mut out = writer.finish()?;
-        let (frame_header, first_partition) = out.split_first_chunk_mut().ok_or(Error::Internal)?;
-        *frame_header = header::uncompressed(width, height, first_partition.len())?;
+        let frame_header = header::uncompressed(width, height, out.len() - FRAME_HEADER_LEN)?;
+        out.set_chunk(0, frame_header);
         Ok(out)
     }
 }

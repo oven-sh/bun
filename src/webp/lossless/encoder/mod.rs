@@ -62,12 +62,11 @@ pub(crate) fn encode(
     };
     let mut stream = Stream::new(width, height, Quality::Picture, hidden);
     let writer = &mut stream.writer;
-    writer.make_room(40)?;
-    writer.put(SIGNATURE.into(), 8);
-    writer.put(width as u64 - 1, IMAGE_SIZE_BITS);
-    writer.put(height as u64 - 1, IMAGE_SIZE_BITS);
-    writer.put_flag(has_alpha);
-    writer.put(0, VERSION_BITS);
+    writer.append(SIGNATURE.into(), 8);
+    writer.append(width as u64 - 1, IMAGE_SIZE_BITS);
+    writer.append(height as u64 - 1, IMAGE_SIZE_BITS);
+    writer.append_flag(has_alpha);
+    writer.append(0, VERSION_BITS);
 
     let to_argb = |[red, green, blue, alpha]: [u8; 4]| match alpha {
         0 => 0,
@@ -137,11 +136,9 @@ impl Stream {
         }
     }
 
-    fn start_transform(&mut self, transform_type: TransformType) -> Result<()> {
-        self.writer.make_room(1 + 2)?;
-        self.writer.put_flag(true);
-        self.writer.put(transform_type as u64, 2);
-        Ok(())
+    fn start_transform(&mut self, transform_type: TransformType) {
+        self.writer.append_flag(true);
+        self.writer.append(transform_type as u64, 2);
     }
 
     /// For an image that has a byte for each pixel, which stands for one of `colors`. Those that are `used` are sorted by it.
@@ -165,9 +162,8 @@ impl Stream {
 
         let palette = Palette::new(colors, used)?;
         let stored = palette.stored()?;
-        self.start_transform(TransformType::ColorIndexing)?;
-        self.writer.make_room(8)?;
-        self.writer.put(stored.len().saturating_sub(1) as u64, 8);
+        self.start_transform(TransformType::ColorIndexing);
+        self.writer.append(stored.len().saturating_sub(1) as u64, 8);
         image::write_subimage(&stored, stored.len(), Quality::Palette, &mut self.writer)?;
         let (pixels, width) = palette.apply(bytes, self.width)?;
         let options = image::Options {
@@ -188,7 +184,7 @@ impl Stream {
     ) -> Result<Vec<u8>> {
         let (width, height, quality) = (self.width, self.height, self.quality);
         if transforms.subtract_green {
-            self.start_transform(TransformType::SubtractGreen)?;
+            self.start_transform(TransformType::SubtractGreen);
             for pixel in &mut pixels {
                 let green = (*pixel >> 8) & 0xff;
                 *pixel = sub(*pixel, green << 16 | green);
@@ -197,12 +193,12 @@ impl Stream {
         if transforms.predictor {
             let (bits, hidden) = (bits.of_transforms, self.hidden);
             let modes = predictor::apply(&mut pixels, width, height, bits, hidden)?;
-            self.start_transform(TransformType::Predictor)?;
+            self.start_transform(TransformType::Predictor);
             image::write_tiles(&modes, quality, &mut self.writer)?;
         }
         if transforms.cross_color {
             let tiles = cross_color::apply(&mut pixels, width, height, bits.of_transforms)?;
-            self.start_transform(TransformType::CrossColor)?;
+            self.start_transform(TransformType::CrossColor);
             image::write_tiles(&tiles, quality, &mut self.writer)?;
         }
         let options = image::Options {
@@ -215,8 +211,7 @@ impl Stream {
     }
 
     fn finish(mut self, pixels: &[Argb], width: usize, options: image::Options) -> Result<Vec<u8>> {
-        self.writer.make_room(1)?;
-        self.writer.put_flag(false);
+        self.writer.append_flag(false);
         image::finish_with(self.writer, pixels, width, self.height, options)
     }
 }

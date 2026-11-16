@@ -363,3 +363,19 @@ impl Estimate {
         self.population.cost() + CODE_LENGTH_CODE + code_cost as Cost * (ONE_BIT / 1024)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn logarithms_are_those_of_floating_point() {
+        for x in 1..APPROXIMATE_FROM as u32 {
+            let expected =
+                |factor| (f64::from(factor) * f64::from(x).log2() * ONE_BIT as f64).round();
+            assert_eq!(scaled_log2(x, 1) as f64, expected(1));
+            assert_eq!(f64::from(log2(x)), expected(1));
+            assert_eq!(x_log2(x) as f64, expected(x));
+        }
+    }
+}

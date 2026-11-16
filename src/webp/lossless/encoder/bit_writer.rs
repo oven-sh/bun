@@ -1,6 +1,7 @@
 //! Bits, the lowest of a byte first.
 
 use crate::error::{Error, Result};
+use crate::slice::InBounds;
 use crate::vec;
 
 #[derive(Default)]
@@ -11,6 +12,7 @@ pub(super) struct BitWriter {
     /// Those that do not make a byte yet.
     pending: u64,
     pending_len: u32,
+    is_out_of_memory: bool,
 }
 
 impl BitWriter {
@@ -25,19 +27,21 @@ impl BitWriter {
     }
 
     /// For `put()`.
-    pub(super) fn make_room(&mut self, bits: usize) -> Result<()> {
+    pub(super) fn make_room(&mut self, bits: usize) {
         let missing =
             (self.whole + bits / 8 + 1 + size_of::<u64>()).saturating_sub(self.bytes.len());
-        self.bytes.try_reserve(missing)?;
-        self.bytes.resize(self.bytes.len() + missing, 0);
-        Ok(())
+        if self.bytes.try_reserve(missing).is_ok() {
+            self.bytes.resize(self.bytes.len() + missing, 0);
+        } else {
+            self.is_out_of_memory = true;
+        }
     }
 
     /// `bits` has nothing above the lowest `len`.
     #[inline(always)]
     pub(super) fn put(&mut self, bits: u64, len: u32) {
         debug_assert!(len <= Self::MAX_PUT && bits >> len == 0);
-        debug_assert!(self.whole + size_of::<u64>() <= self.bytes.len());
+        debug_assert!(self.is_out_of_memory || self.whole + size_of::<u64>() <= self.bytes.len());
         self.pending |= bits << self.pending_len;
         self.pending_len += len;
         let room = self.bytes.get_mut(self.whole..).unwrap_or_default();
@@ -53,16 +57,32 @@ impl BitWriter {
         self.put(is_set.into(), 1);
     }
 
+    /// `put()` that makes its own room.
+    pub(super) fn append(&mut self, bits: u64, len: u32) {
+        self.make_room(len as usize);
+        self.put(bits, len);
+    }
+
+    pub(super) fn append_flag(&mut self, is_set: bool) {
+        self.append(is_set.into(), 1);
+    }
+
     /// In bytes, if `more` bits were written.
     pub(super) fn len_with(&self, more: usize) -> usize {
         self.whole + (self.pending_len as usize + more).div_ceil(8)
     }
 
-    pub(super) fn finish(mut self) -> Result<Vec<u8>> {
-        let len = self.len_with(0);
-        if len > self.bytes.len() {
-            return Err(Error::Internal);
+    /// That no room was refused.
+    pub(super) fn check(&self) -> Result<()> {
+        if self.is_out_of_memory {
+            return Err(Error::Alloc(bun_alloc::AllocError));
         }
+        Ok(())
+    }
+
+    pub(super) fn finish(mut self) -> Result<Vec<u8>> {
+        self.check()?;
+        let len = self.bytes.part(..self.len_with(0)).len();
         self.bytes.truncate(len);
         Ok(self.bytes)
     }

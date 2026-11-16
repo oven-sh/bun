@@ -4,6 +4,7 @@ use super::sub;
 use crate::array::At;
 use crate::error::Result;
 use crate::lossless::{Argb, BLACK, MAX_PALETTE_LEN, bundle_bits, color_cache_key, subsampled};
+use crate::slice::InBounds;
 use crate::vec;
 
 /// Up to this many colors the transparent black stays in the palette, or the indices would be taken for bundled.
@@ -29,7 +30,7 @@ pub(super) fn index(
         if *color != pixel {
             *color = pixel;
             *index = match sorted.binary_search_by_key(&pixel, |&(color, _)| color) {
-                Ok(at) => sorted.get(at)?.1,
+                Ok(at) => sorted.value(at).1,
                 Err(at) => {
                     let index = u8::try_from(sorted.len()).ok()?;
                     sorted.insert(at, (pixel, index));
@@ -110,11 +111,11 @@ impl Palette {
         }
         let mut previous = 0;
         for next in 0..end {
-            let unordered = colors.get(next..end).unwrap_or_default().iter().zip(0..);
+            let unordered = colors.part(next..end).iter().zip(0..);
             let keys = unordered.map(|(&color, index)| distance(color, previous) << 8 | index);
             let nearest = keys.fold(u32::MAX, u32::min) as u8;
             swap(&mut colors, next, next + usize::from(nearest));
-            previous = colors.get(next).copied().unwrap_or(0);
+            previous = colors.value(next);
         }
         Ok(Self { colors, bytes })
     }

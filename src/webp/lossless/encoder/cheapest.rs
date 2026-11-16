@@ -1,5 +1,7 @@
 //! The copies that make for the fewest bits, going by what each symbol costs in a first attempt.
 
+use core::ops::Range;
+
 use super::cache;
 use super::copies::{self, Coding, PixelCopy, Pixels};
 use super::entropy::{Cost, ONE_BIT, div_round, log2};
@@ -9,8 +11,9 @@ use super::histogram::{
 use super::matches::{MAX_LEN, Match};
 use super::prefix::{Prefixed, distance_code};
 use crate::array::At;
-use crate::error::{Error, Result};
+use crate::error::Result;
 use crate::lossless::LENGTH_CODES;
+use crate::slice::{InBounds, known};
 use crate::vec;
 
 struct SymbolCosts<'a>(&'a BySymbol<u32>);
@@ -73,20 +76,25 @@ struct Paths {
 
 impl Paths {
     #[inline(always)]
-    fn cost_mut(&mut self, at: usize) -> Option<&mut Cost> {
-        let mask = self.costs.len().wrapping_sub(1);
-        self.costs.get_mut(at & mask)
+    fn in_ring(&self, at: usize) -> usize {
+        at & self.costs.len().wrapping_sub(1)
     }
 
     #[inline(always)]
     fn offer(&mut self, at: usize, origin: usize, cost: Cost) {
-        if let Some(best) = self.cost_mut(at)
+        let in_ring = self.in_ring(at);
+        if let Some(best) = known(self.costs.get_mut(in_ring))
             && cost < *best
         {
             *best = cost;
-            if let Some(len) = self.lens.get_mut(at) {
-                *len = (at - origin + 1) as u16;
-            }
+            self.lens.set(at, (at - origin + 1) as u16);
+        }
+    }
+
+    #[cold]
+    fn offer_all(&mut self, range: Range<u32>, origin: u32, cost: Cost) {
+        for at in range {
+            self.offer(at as usize, origin as usize, cost);
         }
     }
 }
@@ -141,10 +149,8 @@ impl Search {
         if self.pending.len() + self.passed.len() < MAX_INTERVALS {
             return (interval.start < interval.end).then_some(interval);
         }
-        for at in interval.start..interval.end {
-            let origin = interval.origin as usize;
-            self.paths.offer(at as usize, origin, interval.cost);
-        }
+        let range = interval.start..interval.end;
+        self.paths.offer_all(range, interval.origin, interval.cost);
         None
     }
 
@@ -219,7 +225,7 @@ impl Search {
     }
 
     /// With the offer that is pending for `at`.
-    fn cost_ahead(&mut self, at: usize) -> Result<Cost> {
+    fn cost_ahead(&mut self, at: usize) -> Cost {
         let mut pending = self.pending.iter().rev();
         if let Some(interval) = pending.find(|interval| interval.end as usize > at)
             && interval.start as usize <= at
@@ -227,7 +233,7 @@ impl Search {
             let origin = interval.origin as usize;
             self.paths.offer(at, origin, interval.cost);
         }
-        self.paths.cost_mut(at).copied().ok_or(Error::Internal)
+        self.paths.costs.value(self.paths.in_ring(at))
     }
 
     /// Leaves the positions from `at` on at which nothing beats the copy that has led to the one before at `cost`, given
@@ -243,9 +249,9 @@ impl Search {
         let Some(&interval) = self.pending.last().filter(goes_on) else {
             return 0;
         };
-        let in_ring = at & self.paths.costs.len().wrapping_sub(1);
-        let costs = self.paths.costs.iter_mut().skip(in_ring);
-        let paths = costs.zip(self.paths.lens.iter_mut().skip(at));
+        let in_ring = self.paths.in_ring(at);
+        let costs = self.paths.costs.part_mut(in_ring..).iter_mut();
+        let paths = costs.zip(self.paths.lens.part_mut(at..));
         let along = (at as u32..interval.end).zip(paths).zip(has_no_offer);
         let along = along.take_while(|&((_, (&mut best, _)), no_offer)| no_offer && best > cost);
         let left = along.map(|((at, (best, len)), _)| {
@@ -257,7 +263,7 @@ impl Search {
 
     /// Returns the cost of the path to `at`, for which there will be no more offers.
     #[inline(always)]
-    fn leave(&mut self, at: usize) -> Result<Cost> {
+    fn leave(&mut self, at: usize) -> Cost {
         while let Some(&interval) = self.pending.last()
             && interval.start as usize <= at
         {
@@ -268,8 +274,9 @@ impl Search {
             }
             self.pending.pop();
         }
-        let cost = self.paths.cost_mut(at).ok_or(Error::Internal)?;
-        Ok(core::mem::replace(cost, Cost::MAX))
+        let in_ring = self.paths.in_ring(at);
+        let take = |cost: &mut Cost| core::mem::replace(cost, Cost::MAX);
+        self.paths.costs.update(in_ring, take)
     }
 }
 
@@ -314,27 +321,27 @@ pub(super) fn copies(
                 reach = at + found.len();
             } else if at + found.len() > reach {
                 // The match goes on for longer than a copy can be. The next copy starts as late as it can.
-                let ahead = matches.get(at + 1..=reach).ok_or(Error::Internal)?.iter();
+                let ahead = matches.part(at + 1..=reach).iter();
                 let same = ahead.take_while(|next| next.distance() == found.distance());
                 let origin = at + same.count();
-                let len = matches.get(origin).ok_or(Error::Internal)?.len();
+                let len = matches.value(origin).len();
                 let cost_before = if origin > at {
-                    search.cost_ahead(origin - 1)?
+                    search.cost_ahead(origin - 1)
                 } else {
                     cost_before
                 };
-                search.cost_ahead(origin)?;
+                search.cost_ahead(origin);
                 search.offer_copy(origin, len, cost_before + distance_cost);
                 reach = origin + len;
             }
         }
-        cost_before = search.leave(at)?;
+        cost_before = search.leave(at);
         previous = found;
         at += 1;
 
         if found.len() > MIN_LEN_FOR_INTERVALS && nothing_is_free {
-            let has_no_offer = (at..)
-                .zip(matches.iter().skip(at))
+            let has_no_offer = (at..matches.len())
+                .zip(matches.part(at..))
                 .map(|(at, next)| next.distance() == found.distance() && at + next.len() <= reach);
             at += search.leave_along_copy(at, cost_before, has_no_offer);
         }
@@ -345,10 +352,10 @@ pub(super) fn copies(
     while let Some(&len) = lens.last() {
         let start = lens.len().saturating_sub(len.max(1).into());
         if len > 1 {
-            let distance = matches.get(start).ok_or(Error::Internal)?.distance();
+            let distance = matches.value(start).distance();
             copies::push(&mut copies, PixelCopy::new(start, distance, len.into()))?;
         }
-        lens = lens.get(..start).unwrap_or_default();
+        lens = lens.part(..start);
     }
     copies.reverse();
     Ok(copies)

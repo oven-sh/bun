@@ -598,11 +598,11 @@ mod simd {
 
     #[export]
     pub fn stop_that_goes_once_it_is_seen() {
-        for len in 1..U8::LEN {
+        for len in 1..=U8::LEN {
             let (from, mut to, is_seen) = (vec![1; len], vec![0; len], Cell::new(false));
             let stops = |v: U8| v.simd_eq(if is_seen.replace(true) { 2 } else { 1 });
             let got = U8::map_to_shared_until(&from, shared_out(&mut to), |v| v, stops);
-            assert_eq!((got, to), (len, from));
+            assert_eq!(to[..got], from[..len.min(U8::LEN - 1)]);
         }
     }
 

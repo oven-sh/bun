@@ -266,6 +266,50 @@ describe("HEAD request with a ReadableStream body", () => {
     });
   }
 });
+describe.each(["HEAD", "204", "304", "abort"])("cancel() of a response body that is discarded for %s", discard => {
+  async function inCancel<T>(use: (response: Response) => T) {
+    const entered = Promise.withResolvers<void>();
+    const cancelled = Promise.withResolvers<T>();
+    await using server = Bun.serve({
+      port: 0,
+      async fetch(req) {
+        entered.resolve();
+        if (discard === "abort") await once(req.signal, "abort");
+        const response = new Response(
+          new ReadableStream({ cancel: () => cancelled.resolve(Promise.try(use, response)) }),
+          { status: Number(discard) || 200 },
+        );
+        return response;
+      },
+    });
+    const controller = new AbortController();
+    const request = fetch(server.url, { method: discard === "HEAD" ? "HEAD" : "GET", signal: controller.signal });
+    await entered.promise;
+    if (discard === "abort") controller.abort();
+    expect(await Promise.allSettled([request])).toMatchObject([
+      discard === "abort" ? { reason: { name: "AbortError" } } : { value: { status: Number(discard) || 200 } },
+    ]);
+    return await cancelled.promise;
+  }
+
+  it("reads bodyUsed as false", async () => {
+    expect(await inCancel(response => response.bodyUsed)).toBe(false);
+  });
+
+  it("gets a Response from clone() and a stream from textStream()", async () => {
+    expect(await inCancel(response => [response.clone(), response.textStream()])).toEqual([
+      expect.any(Response),
+      expect.any(ReadableStream),
+    ]);
+  });
+
+  it("gets no rejection from Bun.write(), which leaves the file as it is", async () => {
+    using dir = tempDir("serve-cancel-writes-discarded-body", { out: "old" });
+    const out = join(String(dir), "out");
+    expect(await inCancel(response => Bun.peek.status(Bun.write(out, response)))).toBe("pending");
+    expect(readFileSync(out, "utf8")).toBe("old");
+  });
+});
 for (let withDelay of [true, false]) {
   for (let connectionHeader of ["keepalive", "not keepalive"] as const) {
     it(`should NOT call cancel() on ReadableStream that finished normally for ${connectionHeader} request and ${withDelay ? "with" : "without"} delay`, async () => {
@@ -3002,6 +3046,36 @@ it("should response with HTTP 413 when request body is larger than maxRequestBod
   }
 });
 
+it("error() reads why a piped request body failed", async () => {
+  const entered = Promise.withResolvers<Request>();
+  const inError = Promise.withResolvers<[boolean, string]>();
+  using server = Bun.serve({
+    port: 0,
+    maxRequestBodySize: 1024,
+    fetch(req) {
+      entered.resolve(req);
+      // A rewriter holds the status line back until it has output, so that error() is still called.
+      return new HTMLRewriter().transform(new Response(req.body));
+    },
+    error() {
+      const bodyUsed = request.bodyUsed;
+      Promise.try(() => request.clone().text()).then(inError.reject, e => inError.resolve([bodyUsed, e.message]));
+      return new Response("handled", { status: 500 });
+    },
+  });
+  const socket = connect(server.port!, "127.0.0.1");
+  socket.on("error", inError.reject);
+  socket.write("POST / HTTP/1.1\r\nHost: localhost\r\nTransfer-Encoding: chunked\r\n\r\n");
+  const request = await entered.promise;
+  socket.write(`800\r\n${Buffer.alloc(0x800, "x")}\r\n`);
+  try {
+    expect(await inError.promise).toEqual([false, "Request body exceeded maxRequestBodySize"]);
+    expect(request.bodyUsed).toBe(true);
+  } finally {
+    socket.destroy();
+  }
+});
+
 it("should support promise returned from error", async () => {
   const { promise, resolve } = Promise.withResolvers<string>();
 
@@ -4295,8 +4369,7 @@ describe("request body backpressure", () => {
   });
 
   it("resumes a paused request body when the handler calls Bun.write(file, req)", async () => {
-    // Bun.write on a Locked body installs on_receive_value without creating a
-    // ByteStream; the pre-stream pause must release via on_start_buffering.
+    // Bun.write streams a Locked body: the pre-stream pause must release when that stream drains.
     const TOTAL = 32 * 1024 * 1024;
     const gate = Promise.withResolvers<void>();
     const serverDone = Promise.withResolvers<number>();

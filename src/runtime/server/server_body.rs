@@ -17,9 +17,7 @@ use crate::server::ServerLike as _;
 use crate::webcore::BlobExt;
 use crate::webcore::body::Value as BodyValue;
 use crate::webcore::fetch as Fetch;
-use crate::webcore::{
-    self as WebCore, AbortSignal, AnyBlob, Blob, FetchHeaders, Request, Response, request,
-};
+use crate::webcore::{AbortSignal, AnyBlob, Blob, FetchHeaders, Request, Response, request};
 use ::bstr::BStr;
 use bun_collections::HashMap;
 use bun_core::{EncodedSlice, String as BunString, StringView, Utf8Bytes, strings};
@@ -128,28 +126,13 @@ trait RequestCtxOps: RequestCtx {
     fn to_async(&self, req: &mut Self::Req, request_object: &Request);
     fn ctx_method(&self) -> http::Method;
     fn set_request_body(&self, body: Option<crate::webcore::body::BodyHiveHandle>);
-    #[allow(
-        clippy::mut_from_ref,
-        reason = "the body slot is a separate pooled allocation, not a field of *self (R-2)"
-    )]
-    fn request_body_mut(&self) -> Option<&mut BodyValue>;
     fn set_signal(&self, signal: PendingAbortSignal);
     fn set_request_weakref(&self, req: &RefPtr<Request>);
     fn clear_req(&self);
     fn set_is_web_browser_navigation(&self, v: bool);
     fn set_request_body_content_len(&self, len: usize);
-    fn set_is_transfer_encoding(&self, v: bool);
     fn set_is_waiting_for_request_body(&self, v: bool);
     fn arm_on_data(&self, resp: uws::AnyResponse);
-    // body-streaming callback hooks (type-erased, stored on `Body::PendingValue`).
-    // `this` must be a live `*mut Self::RequestCtx` cast to `*mut c_void`.
-    fn on_start_buffering_callback(this: NonNull<c_void>);
-    fn on_start_streaming_request_body_callback(this: NonNull<c_void>) -> WebCore::DrainResult;
-    fn on_request_body_readable_stream_available(
-        this: NonNull<c_void>,
-        global_this: &JSGlobalObject,
-        readable: WebCore::ReadableStream,
-    );
 }
 
 impl<ThisServer, const SSL: bool, const DBG: bool, const MUX: bool> RequestCtxOps
@@ -199,15 +182,6 @@ where
         self.request_body.set(body)
     }
     #[inline]
-    fn request_body_mut(&self) -> Option<&mut BodyValue> {
-        // SAFETY: R-2 invariant — slot shared with `Request.body`, never
-        // `&mut`-borrowed concurrently (single-threaded event loop).
-        self.request_body
-            .get()
-            .as_ref()
-            .map(|h| unsafe { &mut (*h.as_ptr()).value })
-    }
-    #[inline]
     fn set_signal(&self, signal: PendingAbortSignal) {
         self.signal.set(Some(signal));
     }
@@ -228,10 +202,6 @@ where
         self.request_body_content_len.set(len)
     }
     #[inline]
-    fn set_is_transfer_encoding(&self, v: bool) {
-        self.flags.set_is_transfer_encoding(v)
-    }
-    #[inline]
     fn set_is_waiting_for_request_body(&self, v: bool) {
         self.flags.set_is_waiting_for_request_body(v)
     }
@@ -247,22 +217,6 @@ where
             NewRequestContext::<S, SSL_, DBG_, MUX_>::on_buffered_body_chunk(ctx, chunk, last);
         }
         resp.on_data(handler::<ThisServer, SSL, DBG, MUX>, self.as_ctx_ptr());
-    }
-    #[inline]
-    fn on_start_buffering_callback(this: NonNull<c_void>) {
-        Self::on_start_buffering_callback(this)
-    }
-    #[inline]
-    fn on_start_streaming_request_body_callback(this: NonNull<c_void>) -> WebCore::DrainResult {
-        Self::on_start_streaming_request_body_callback(this)
-    }
-    #[inline]
-    fn on_request_body_readable_stream_available(
-        this: NonNull<c_void>,
-        global_this: &JSGlobalObject,
-        readable: WebCore::ReadableStream,
-    ) {
-        Self::on_request_body_readable_stream_available(this, global_this, readable)
     }
 }
 
@@ -2570,27 +2524,18 @@ where
         if let Some(req_len) = request_body_length {
             ctx.set_request_body_content_len(req_len);
             let is_te = ReqLike::has_transfer_encoding(req);
-            ctx.set_is_transfer_encoding(is_te);
             // HTTP/2 and HTTP/3 frame the body by END_STREAM or QUIC FIN, not Content-Length.
             if req_len > 0 || is_te || (Ctx::IS_MUX && !RespLike::request_body_ended(resp)) {
                 // we defer pre-allocating the body until we receive the first chunk
                 // that way if the client is lying about how big the body is or the client aborts
                 // we don't waste memory
-                if let Some(body) = ctx.request_body_mut() {
-                    *body = BodyValue::Locked(crate::webcore::body::PendingValue {
-                        task: Some(NonNull::new(ctx_slot).unwrap().cast::<c_void>()),
-                        global: self.global_this,
-                        on_start_buffering: Some(Ctx::on_start_buffering_callback),
-                        on_start_streaming: Some(Ctx::on_start_streaming_request_body_callback),
-                        on_readable_stream_available: Some(
-                            Ctx::on_request_body_readable_stream_available,
-                        ),
-                        producer: crate::webcore::streams::SourceHandle::ServerRequestBody(
-                            AnyRequestContext::init(ctx_slot),
-                        ),
-                        ..Default::default()
-                    });
-                }
+                request_object.body().set(BodyValue::from_producer(
+                    crate::webcore::streams::SourceHandle::ServerRequestBody(
+                        AnyRequestContext::init(ctx_slot),
+                    ),
+                    0,
+                    &self.global(),
+                ));
                 ctx.set_is_waiting_for_request_body(true);
                 ctx.arm_on_data(any_resp);
             }

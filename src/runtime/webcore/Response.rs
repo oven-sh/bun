@@ -10,10 +10,12 @@ use crate::webcore::jsc::{
     StringJsc as _,
 };
 use bun_core::Output;
-use bun_core::{String as BunString, StringView, Utf8Bytes};
+use bun_core::{String as BunString, StringView};
 use bun_http_types::Method::Method;
 
-use super::body::{Body, BodyMixin, Value as BodyValue, ValueError as BodyValueError};
+use super::body::{
+    Body, BodyMixin, Tag as BodyTag, Value as BodyValue, ValueError as BodyValueError,
+};
 use super::{FetchHeaders, ReadableStream, Request};
 
 use super::blob::Blob;
@@ -50,19 +52,16 @@ impl BodyAbortListener {
         let (response, global) = (self.response, self.global);
         let _context = global.bun_vm().enter_context(self.context);
         if !matches!(
-            response.get_body_value(),
-            BodyValue::Used | BodyValue::Error(_) | BodyValue::Null | BodyValue::Empty
+            response.body().tag(),
+            BodyTag::Used | BodyTag::Error | BodyTag::Null | BodyTag::Empty
         ) {
             // `Locked.readable` is a real `JSC::Weak`: `None` exactly when the stream's source is gone.
-            if let BodyValue::Locked(locked) = response.get_body_value() {
-                if let Some(readable) = locked.readable.get() {
-                    readable.value.ensure_still_alive();
-                    crate::dispatch::fold(readable.error(&global, reason));
-                }
+            if let Some(readable) = response.body().readable() {
+                readable.value.ensure_still_alive();
+                crate::dispatch::fold(readable.error(&global, reason));
             }
             let err = BodyValueError::JSValue(bun_jsc::strong::Optional::create(reason, &global));
-            // R-2: re-derive after `error()` ran JS.
-            let _ = response.get_body_value().to_error_instance(err, &global);
+            let _ = response.body().to_error_instance(err, &global);
         }
     }
 }
@@ -97,13 +96,13 @@ impl bun_jsc::JsClass for Response {
 /// Every JS-facing member takes `&Response` (not
 /// `&mut Response`) so re-entrant JS calls cannot stack two `&mut` to the same
 /// instance. Fields the members mutate are therefore wrapped in `Cell` (Copy
-/// scalars) or `JsCell` (non-Copy `body`/`init`/`url`). Both are
+/// scalars) or `JsCell` (non-Copy `init`/`url`). Both are
 /// `#[repr(transparent)]`, so `#[repr(C)]` field layout is unchanged.
 #[repr(C)]
 #[derive(bun_ptr::RefCounted)]
 #[ref_count(destroy = bun_ptr::weak_ptr::destroy)]
 pub(crate) struct Response {
-    body: JsCell<Body>,
+    body: Body,
     init: JsCell<Init>,
     url: JsCell<BunString>,
     redirected: Cell<bool>,
@@ -127,7 +126,7 @@ pub(crate) struct Response {
 impl Default for Response {
     fn default() -> Self {
         Self {
-            body: JsCell::new(Body::default()),
+            body: Body::default(),
             init: JsCell::new(Init::default()),
             url: JsCell::new(BunString::EMPTY),
             redirected: Cell::new(false),
@@ -176,13 +175,13 @@ impl crate::webcore::body::BodyOwnerJs for Response {
 
 // BodyMixin is a trait with default methods providing getText/
 // getBody/getBytes/getBodyUsed/getJSON/getArrayBuffer/getBlob/getBlobWithoutCallFrame/
-// getFormData over any type exposing getBodyValue()/getFormDataEncoding()/etc.
+// getFormData over any type exposing body()/getFormDataEncoding()/etc.
 // Response implements it.
 
 impl BodyMixin for Response {
     #[inline]
-    fn get_body_value(&self) -> &mut BodyValue {
-        Response::get_body_value(self)
+    fn body(&self) -> &Body {
+        Response::body(self)
     }
     #[inline]
     fn get_content_type_header(&self) -> Option<BunString> {
@@ -205,7 +204,7 @@ impl Response {
     ) -> Response {
         Response {
             init: JsCell::new(response_init),
-            body: JsCell::new(body),
+            body,
             url: JsCell::new(url),
             redirected: Cell::new(redirected),
             ..Default::default()
@@ -290,15 +289,9 @@ impl Response {
         this.reported_estimated_size.get()
     }
 
-    /// R-2: returns `&mut BodyValue` from `&self` via the `JsCell` escape
-    /// hatch. Callers must keep the borrow short and not hold it across calls
-    /// that may re-enter a `Response` host-fn (which could project a second
-    /// `&mut` to the same `body`).
     #[inline]
-    pub(crate) fn get_body_value(&self) -> &mut BodyValue {
-        // R-2: both `Response.body` and `Body.value` are `JsCell` —
-        // single-JS-thread interior-mutability boundary. See `Body::value_mut`.
-        self.body.get().value_mut()
+    pub(crate) fn body(&self) -> &Body {
+        &self.body
     }
 }
 
@@ -307,19 +300,15 @@ impl Response {
     pub(crate) fn get_form_data_encoding(
         &self,
     ) -> JsResult<Option<Box<bun_core::form_data::AsyncFormData>>> {
-        let Some(content_type_slice) = self.get_content_type()? else {
-            return Ok(None);
-        };
-        // content_type_slice drops at scope exit
-        let Some(encoding) = bun_core::form_data::Encoding::get(content_type_slice.slice()) else {
-            return Ok(None);
-        };
-        Ok(Some(bun_core::form_data::AsyncFormData::init(encoding)))
+        let encoding = self.with_content_type(bun_core::form_data::Encoding::get);
+        Ok(encoding
+            .flatten()
+            .map(bun_core::form_data::AsyncFormData::init))
     }
 
     pub(crate) fn calculate_estimated_byte_size(&self) {
         self.reported_estimated_size.set(
-            self.body.get().value.get().estimated_size()
+            self.body.estimated_size()
                 + self.url.get().byte_slice().len()
                 + self.init.get().status_text.byte_slice().len(),
         );
@@ -372,20 +361,6 @@ impl Response {
         unsafe { bun_jsc::AbortHandle::follow_owner(listener.as_ptr(), signal.ref_()) };
         // SAFETY: caller contract; `this` is live.
         unsafe { (*this).abort_listener.set(Some(listener)) };
-    }
-
-    #[inline]
-    pub(crate) fn set_size_hint(&self, size_hint: super::blob::SizeType) {
-        if let BodyValue::Locked(locked) = self.body.get().value_mut() {
-            locked.size_hint = size_hint;
-            if let Some(readable) = locked.readable.get() {
-                // BACKREF: see `Source::bytes()` — back-pointer owned by the
-                // ReadableStream; `size_hint` is `Cell<_>` so shared deref + `.set()`.
-                if let Some(bytes) = readable.ptr.bytes() {
-                    bytes.size_hint.set(size_hint);
-                }
-            }
-        }
     }
 }
 
@@ -447,16 +422,15 @@ impl Response {
                 return f(headers);
             }
             let headers = headers.insert(HeadersRef::create_empty());
-            if let BodyValue::Blob(blob) = self.body.get().value.get() {
-                let content_type = blob.content_type_slice();
-                if !content_type.is_empty() {
+            self.body
+                .with_blob_content_type(|content_type| {
                     headers.put(
                         HTTPHeaderName::ContentType,
                         &StringView::ascii(content_type),
                         global_this,
-                    )?;
-                }
-            }
+                    )
+                })
+                .transpose()?;
             f(headers)
         })
     }
@@ -486,19 +460,12 @@ impl Response {
         self.headers_to_js(cx.global())
     }
 
-    pub(crate) fn get_content_type(&self) -> JsResult<Option<Utf8Bytes<'_>>> {
+    /// The header, else the type of a `Blob` body.
+    pub(crate) fn with_content_type<R>(&self, f: impl FnOnce(&[u8]) -> R) -> Option<R> {
         if let Some(value) = self.get_content_type_header() {
-            return Ok(Some(value.into_utf8()));
+            return Some(f(value.into_utf8().slice()));
         }
-
-        if let BodyValue::Blob(blob) = self.body.get().value.get() {
-            let content_type = blob.content_type_slice();
-            if !content_type.is_empty() {
-                return Ok(Some(Utf8Bytes::Borrowed(content_type)));
-            }
-        }
-
-        Ok(None)
+        self.body.with_blob_content_type(f)
     }
 }
 
@@ -518,7 +485,7 @@ impl Response {
         // `fmt::Error`.
         let js_err = |_: JsError| core::fmt::Error;
 
-        match self.body.get().known_len() {
+        match self.body.known_size() {
             Some(len) => writeln!(
                 writer,
                 "Response ({}) {{",
@@ -629,7 +596,6 @@ impl Response {
 
             formatter.reset_line();
             self.body
-                .get()
                 .write_format::<F, W, ENABLE_ANSI_COLORS>(&mut *formatter, writer)?;
         }
         writer.write_str("\n")?;
@@ -658,7 +624,7 @@ impl Response {
         let body = Body::new(self.clone_body_value_via_cached_stream(cx)?);
         let init = self.init.get().clone(cx.global())?;
         Ok(Response {
-            body: JsCell::new(body),
+            body,
             init: JsCell::new(init),
             url: JsCell::new(self.url.get().clone()),
             redirected: Cell::new(self.redirected.get()),
@@ -680,7 +646,7 @@ impl Response {
         // https://github.com/remix-run/remix/blob/db2c31f64affb2095e4286b91306b96435967969/packages/remix-server-runtime/responses.ts#L4
 
         let response = Response {
-            body: JsCell::new(Body::new(BodyValue::Empty)),
+            body: Body::new(BodyValue::Empty),
             init: JsCell::new(Init {
                 status_code: 200,
                 ..Default::default()
@@ -692,9 +658,8 @@ impl Response {
             let str = Self::json_text_of(global_this, json_value)?;
 
             if let Some(str) = str.into_wtf() {
-                let value = &response.body.get().value;
-                value.set(BodyValue::WTFStringImpl(str));
-                value.with_mut(|v| v.to_blob_if_possible());
+                response.body.set(BodyValue::WTFStringImpl(str));
+                response.body.to_blob_if_possible();
             }
         }
 
@@ -724,14 +689,13 @@ impl Response {
         parts: &InitParts,
     ) -> JsResult<JSValue> {
         let response = Response {
-            body: JsCell::new(Body::new(BodyValue::Empty)),
+            body: Body::new(BodyValue::Empty),
             ..Default::default()
         };
         let str = Self::json_text_of(global_this, json_value)?;
         if let Some(str) = str.into_wtf() {
-            let value = &response.body.get().value;
-            value.set(BodyValue::WTFStringImpl(str));
-            value.with_mut(|v| v.to_blob_if_possible());
+            response.body.set(BodyValue::WTFStringImpl(str));
+            response.body.to_blob_if_possible();
         }
         response.init.set(Init::from_parts(global_this, parts)?);
         response.put_default_content_type(global_this, &bun_http_types::MimeType::JSON)?;
@@ -793,7 +757,7 @@ impl Response {
                 status_code: 302,
                 ..Default::default()
             }),
-            body: JsCell::new(Body::new(BodyValue::Null)),
+            body: Body::new(BodyValue::Null),
             ..Default::default()
         };
 
@@ -833,7 +797,7 @@ impl Response {
                 status_code: 0,
                 ..Default::default()
             }),
-            body: JsCell::new(Body::new(BodyValue::Null)),
+            body: Body::new(BodyValue::Null),
             ..Default::default()
         });
 
@@ -875,7 +839,7 @@ impl Response {
                             status_code: 302,
                             ..Default::default()
                         }),
-                        body: JsCell::new(Body::new(BodyValue::Null)),
+                        body: Body::new(BodyValue::Null),
                         ..Default::default()
                     });
 
@@ -937,20 +901,18 @@ impl Response {
         body: JSValue,
         mut init: Init,
     ) -> JsResult<RefPtr<Response>> {
-        let body: Body = 'brk: {
-            if body.is_undefined_or_null() {
-                break 'brk Body::new(BodyValue::Null);
-            }
-            // `Body::extract` is a free fn re-exported as `body::extract`.
-            super::body::extract(global_this, body)?
+        let body = if body.is_undefined_or_null() {
+            BodyValue::Null
+        } else {
+            BodyValue::from_js(global_this, body)?
         };
 
-        // extract() throws without returning Err; see Blob::from_dom_form_data
+        // from_js() throws without returning Err; see Blob::from_dom_form_data
         if global_this.has_exception() {
             return Err(bun_jsc::JsError::Thrown);
         }
 
-        if let BodyValue::Blob(blob) = body.value.get() {
+        if let BodyValue::Blob(blob) = &body {
             if let Some(headers) = init.headers.get_mut() {
                 let content_type = blob.content_type_slice();
                 if !content_type.is_empty() && !headers.fast_has(HTTPHeaderName::ContentType) {
@@ -964,7 +926,7 @@ impl Response {
         }
 
         let response = RefPtr::new(Response {
-            body: JsCell::new(body),
+            body: Body::new(body),
             init: JsCell::new(init),
             ..Default::default()
         });

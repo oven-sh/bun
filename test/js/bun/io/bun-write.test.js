@@ -925,8 +925,7 @@ int posix_fadvise(int fd, off_t offset, off_t len, int advice) {
 
   // `resp.body` materialises the body as a native ByteStream; once the
   // transfer finishes the FetchTasklet is freed, but the body's PendingValue
-  // kept `task` / `on_start_buffering` pointing at the freed tasklet, and
-  // `Bun.write(path, resp)` then called `on_start_buffering(task)`.
+  // kept pointing at it as its producer, which `Bun.write(path, resp)` then called.
   it.skipIf(!isASAN).each([
     ["getReader().read() then releaseLock()", "const rd = resp.body.getReader(); await rd.read(); rd.releaseLock();"],
     ["resp.body getter", "resp.body;"],
@@ -950,13 +949,7 @@ int posix_fadvise(int fd, off_t offset, off_t len, int advice) {
       `;
       await using proc = Bun.spawn({
         cmd: [bunExe(), "-e", fixture],
-        // detect_leaks=0: the write promise never settles on a stream-backed
-        // body (#13237), so WriteFileWaitFromLockedValueTask is still live at
-        // process.exit; this test is about the heap-use-after-free only.
-        env: {
-          ...bunEnv,
-          ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "symbolize=0", "detect_leaks=0"].filter(Boolean).join(":"),
-        },
+        env: bunEnv,
         stderr: "pipe",
       });
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);

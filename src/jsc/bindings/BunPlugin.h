@@ -207,6 +207,7 @@ public:
 #if ENABLE(AOT)
             pendingCompiledMocks.clear();
             compiledMockFactories.clear();
+            patchesOfRequiredMocks.clear();
             latestCompiledFactoryCalls.clear();
             stashedFactoryCount = 0;
             waitingMockFetches.clear();
@@ -247,6 +248,12 @@ public:
             WTF::Vector<JSC::Strong<JSC::JSObject>, 1> waitingFactories;
         };
         WTF::Vector<CompiledMockFactory> compiledMockFactories;
+        struct PatchOfRequiredMock {
+            uint32_t module;
+            JSC::Strong<JSC::JSObject> mock;
+            JSC::Strong<JSC::JSPromise> patched;
+        };
+        WTF::Vector<PatchOfRequiredMock> patchesOfRequiredMocks;
         size_t stashedFactoryCount { 0 };
         // The fetches of compiled files (by key) that wait for the turn of a mock below them. rankWaitingModuleMocks() treats their loader entries as the mock.
         WTF::Vector<std::pair<String, JSC::Strong<JSC::JSObject>>> waitingMockFetches;

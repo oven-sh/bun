@@ -5520,10 +5520,24 @@ static bool isBelowOriginal(Zig::GlobalObject* globalObject, const auto& factory
     return fetched && fetched->index() != factory.module && JSC::AOT::importsStatically(globalObject, JSC::AOT::ModuleID(factory.module), *fetched);
 }
 
+static JSC::JSPromise* waitForPatch(Zig::GlobalObject* globalObject, JSC::JSPromise* patched)
+{
+    auto& vm = JSC::getVM(globalObject);
+    bool wasHandled = patched->isHandled();
+    auto* settled = JSC::JSPromise::create(vm, globalObject->promiseStructure());
+    patched->performPromiseThen(vm, globalObject, JSC::jsUndefined(), JSC::jsUndefined(), settled);
+    if (!wasHandled)
+        patched->setFlags(patched->flags() & ~JSC::JSPromise::isHandledFlag);
+    return settled;
+}
+
 JSC::JSPromise* nextPendingCompiledFactory(Zig::GlobalObject* globalObject, const WTF::ScopedLambda<bool(JSC::AOT::ModuleID)>& isInGraph, JSC::AOT::PendingFactoryRequester requester, JSC::JSValue& state)
 {
     auto& factories = globalObject->onLoadPlugins.compiledMockFactories;
-    if (factories.isEmpty() && !state) [[likely]]
+    auto& patches = globalObject->onLoadPlugins.patchesOfRequiredMocks;
+    if (!patches.isEmpty()) [[unlikely]]
+        patches.removeAllMatching([](const auto& patch) { return patch.patched->status() != JSC::JSPromise::Status::Pending; });
+    if (factories.isEmpty() && patches.isEmpty() && !state) [[likely]]
         return nullptr;
     auto scope = DECLARE_THROW_SCOPE(JSC::getVM(globalObject));
     if (requester != JSC::AOT::PendingFactoryRequester::Require && requester != JSC::AOT::PendingFactoryRequester::RejectedRequire && throwErrorOwedToImport(globalObject, scope)) [[unlikely]]
@@ -5658,6 +5672,26 @@ JSC::JSPromise* nextPendingCompiledFactory(Zig::GlobalObject* globalObject, cons
         list->putDirect(JSC::getVM(globalObject), JSC::getVM(globalObject).propertyNames->value, started);
         return uncheckedDowncast<JSC::JSPromise>(started);
     }
+    auto isPatchAwaited = [&](const auto& patch) {
+        auto* mock = uncheckedDowncast<JSModuleMock>(patch.mock.get());
+        return !mock->isDetached && registeredModuleMock(globalObject, mock->specifier->tryGetValue().data) == mock && !JSC::AOT::wasImportedUnderActiveMock(globalObject, JSC::AOT::ModuleID(patch.module));
+    };
+    if (requester == JSC::AOT::PendingFactoryRequester::ImportCallAfterSource) {
+        auto root = JSC::AOT::currentLoadTarget(globalObject);
+        auto isImportedByFactory = [&](JSModuleMock* mock) {
+            auto* running = findRunningModuleMock(globalObject, mock);
+            return running && (running->compiledImportChain.get(root->index()) || running->importChain.contains(JSC::AOT::moduleFilePath(*root)));
+        };
+        for (const auto& patch : patches) {
+            JSC::AOT::ModuleID file(patch.module);
+            auto* mock = uncheckedDowncast<JSModuleMock>(patch.mock.get());
+            if (!root || !isPatchAwaited(patch) || !isInGraph(file) || !JSC::AOT::isImportedByLoad(globalObject, *root, file) || isImportedByFactory(mock))
+                continue;
+            JSC::JSPromise* settled = waitForPatch(globalObject, patch.patched.get());
+            list->putDirect(JSC::getVM(globalObject), JSC::getVM(globalObject).propertyNames->value, settled);
+            return settled;
+        }
+    }
     // What the loader fetches may be in a graph that one of those factories waits for. The mocked module itself is not: a factory's own loads get the original's key.
     JSValue first = list->getIndexQuickly(0);
     if (requester != JSC::AOT::PendingFactoryRequester::ImportCall && (!first.isString() || JSC::getVM(globalObject).synchronousModuleQueue()))
@@ -5717,6 +5751,15 @@ JSC::JSPromise* nextPendingCompiledFactory(Zig::GlobalObject* globalObject, cons
             list->putDirect(JSC::getVM(globalObject), JSC::getVM(globalObject).propertyNames->value, factory.patched.get());
             return factory.patched.get();
         }
+    }
+    for (const auto& patch : patches) {
+        if (requester != JSC::AOT::PendingFactoryRequester::ImportCall || !isPatchAwaited(patch) || isCaller(patch.mock.get()))
+            continue;
+        if (!import || !import->importTarget || JSC::AOT::moduleFilePath(import->importTarget) != uncheckedDowncast<JSModuleMock>(patch.mock.get())->specifier->tryGetValue().data)
+            continue;
+        JSC::JSPromise* settled = waitForPatch(globalObject, patch.patched.get());
+        list->putDirect(JSC::getVM(globalObject), JSC::getVM(globalObject).propertyNames->value, settled);
+        return settled;
     }
     return nullptr;
 }
@@ -6558,11 +6601,17 @@ __attribute__((minsize)) static JSC::EncodedJSValue mockModule(JSC::JSGlobalObje
 #endif
 
     JSC::JSPromise* pendingFactory = nullptr;
+#if ENABLE(AOT)
+    std::optional<JSC::AOT::ModuleID> fileWithRequiredMock;
+#endif
     // False once the factory itself has re-mocked or unmocked the module, which wins.
     bool isCurrent = true;
     if (loaded.esmNamespace || loaded.compiledModule || loaded.commonJSModule) {
 #if ENABLE(AOT)
         mock->replacesRequiredDataFile = loaded.compiledModule && !endedMockModule && JSC::AOT::hasOnlyBeenRequired(globalObject, *loaded.compiledModule) && !JSC::AOT::hasActiveMock(globalObject, *loaded.compiledModule);
+        JSValue factoryOfProgram = mock->factory.get();
+        if (factoryOfProgram && factoryOfProgram.isCallable() && loaded.compiledModule && !endedMockModule && JSC::AOT::isESModule(*loaded.compiledModule) && JSC::AOT::hasActiveMock(globalObject, *loaded.compiledModule) && !JSC::AOT::wasImportedUnderActiveMock(globalObject, *loaded.compiledModule))
+            fileWithRequiredMock = loaded.compiledModule;
         pendingFactory = mock->run(globalObject, endedMockModule && !mock->factory.get());
 #else
         pendingFactory = mock->run(globalObject, false);
@@ -6777,8 +6826,14 @@ __attribute__((minsize)) static JSC::EncodedJSValue mockModule(JSC::JSGlobalObje
     }
 
     JSObject* returned = nullptr;
-    if (pendingFactory && isCurrent)
-        returned = patchWhenFactorySettles(globalObject, mock, pendingFactory);
+    if (pendingFactory && isCurrent) {
+        JSC::JSPromise* patched = patchWhenFactorySettles(globalObject, mock, pendingFactory);
+        returned = patched;
+#if ENABLE(AOT)
+        if (fileWithRequiredMock)
+            plugins.patchesOfRequiredMocks.append({ fileWithRequiredMock->index(), JSC::Strong<JSC::JSObject> { vm, mock }, JSC::Strong<JSC::JSPromise> { vm, patched } });
+#endif
+    }
 #if ENABLE(AOT)
     if (patchedFile)
         JSC::AOT::releasePatchedModuleOfCycle(globalObject, *patchedFile, pendingFactory && isCurrent);

@@ -327,18 +327,17 @@ impl JobContext for WalkTask {
     type OffThread = Self;
     type Js = WalkJs;
 
-    fn run(this: &mut Self, done: bun_jsc::Completion<Self>) -> Option<bun_jsc::Completion<Self>> {
+    fn run(this: &mut Self, _: &bun_jsc::Ticket) {
         let result = match this.walker.walk() {
             Ok(r) => r,
             Err(err) => {
                 this.err = Some(WalkTaskErr::Unknown(err.into()));
-                return Some(done);
+                return;
             }
         };
         if let bun_sys::Result::Err(err) = result {
             this.err = Some(WalkTaskErr::Syscall(err));
         }
-        Some(done)
     }
 
     fn then(this: Self, mut js: WalkJs, cx: &JsThread<'_>) -> JsResult<()> {

@@ -3,15 +3,14 @@ use core::marker::PhantomData;
 use core::ptr::{self, NonNull};
 use core::sync::atomic::{AtomicPtr, Ordering};
 
+use bun_core::IntrusiveField;
 use bun_ptr::OwnedPtr;
 
 use crate::Guarded;
 
 /// Intrusive next-pointer accessors for `UnboundedQueue<T>` nodes.
 ///
-/// Implement this trait for each node type and route to the appropriate
-/// intrusive link field — either a plain pointer field or a packed-pointer
-/// field with atomic accessors.
+/// Implemented for every type with a [`Link`] field.
 ///
 /// # Safety
 /// Implementors must guarantee that the four methods access the *same*
@@ -27,12 +26,16 @@ pub unsafe trait Node: Sized {
 
 /// Intrusive next-pointer field for [`UnboundedQueue<T>`] nodes.
 ///
-/// Embed this as a field in `T` and implement [`Linked`] (which only needs to
-/// project to that field) instead of open-coding all four [`Node`] accessors.
+/// Embed this as a field in `T` and name it with [`bun_core::intrusive_field!`], which makes `T` a [`Node`].
 /// Centralizes the `AtomicPtr` storage so node types no longer need
 /// `addr_of_mut!`/`AtomicPtr::from_ptr` casts over a plain `*mut T` field.
 ///
 /// `#[repr(transparent)]` so it has the same layout as the `?*T` it ports.
+///
+/// ```compile_fail,E0308
+/// struct Item { next: Box<bun_threading::Link<Item>> }
+/// bun_core::intrusive_field!(Item, next: bun_threading::Link<Item>);
+/// ```
 #[repr(transparent)]
 pub struct Link<T>(AtomicPtr<T>);
 
@@ -49,44 +52,30 @@ impl<T> Link<T> {
     }
 }
 
-/// Shorthand for the common [`Node`] case: `T` embeds a [`Link<Self>`] field.
-/// Implement this and the blanket `impl<T: Linked> Node for T` below supplies
-/// the four accessors. Node types with packed/custom link storage (e.g.
-/// `ConcurrentTask`'s `PackedNextPtr`) keep implementing [`Node`] directly.
-///
-/// # Safety
-/// `link()` must always project to the *same* embedded `Link<Self>` field of
-/// `*item`. `item` is guaranteed valid, non-null, and properly aligned by
-/// [`UnboundedQueue`].
-pub unsafe trait Linked: Sized {
-    unsafe fn link(item: *mut Self) -> *const Link<Self>;
-}
-
-// SAFETY: all four accessors route through `T::link(item)`, which by `Linked`'s
-// contract returns the same embedded `Link<Self>` field every time; `Link` is a
+// SAFETY: all four accessors route through the same embedded `Link<T>` field; `Link` is a
 // `#[repr(transparent)]` `AtomicPtr`, so atomic ops are truly atomic at the
 // requested ordering and the non-atomic get/set degrade to Relaxed (never
 // concurrent with the atomic path).
-unsafe impl<T: Linked> Node for T {
+unsafe impl<T: IntrusiveField<Link<T>>> Node for T {
     #[inline]
     unsafe fn get_next(item: *mut Self) -> *mut Self {
-        // SAFETY: `Linked::link` contract — points at a live `Link<Self>` in `*item`.
-        unsafe { (*T::link(item)).0.load(Ordering::Relaxed) }
+        // SAFETY: `item` is valid (`Node` contract).
+        unsafe { (*T::field_of(item)).0.load(Ordering::Relaxed) }
     }
     #[inline]
     unsafe fn set_next(item: *mut Self, p: *mut Self) {
-        // SAFETY: `Linked::link` contract — points at a live `Link<Self>` in `*item`.
-        unsafe { (*T::link(item)).0.store(p, Ordering::Relaxed) }
+        // SAFETY: `item` is valid (`Node` contract).
+        unsafe { (*T::field_of(item)).0.store(p, Ordering::Relaxed) }
     }
     #[inline]
     unsafe fn atomic_load_next(item: *mut Self, ordering: Ordering) -> *mut Self {
-        // SAFETY: `Linked::link` contract — points at a live `Link<Self>` in `*item`.
-        unsafe { (*T::link(item)).0.load(ordering) }
+        // SAFETY: `item` is valid (`Node` contract).
+        unsafe { (*T::field_of(item)).0.load(ordering) }
     }
     #[inline]
     unsafe fn atomic_store_next(item: *mut Self, p: *mut Self, ordering: Ordering) {
-        // SAFETY: `Linked::link` contract — points at a live `Link<Self>` in `*item`.
-        unsafe { (*T::link(item)).0.store(p, ordering) }
+        // SAFETY: `item` is valid (`Node` contract).
+        unsafe { (*T::field_of(item)).0.store(p, ordering) }
     }
 }
 
@@ -317,12 +306,16 @@ impl<P: OwnedPtr<Target: Node>> Drop for OwnedBatchIterator<'_, P> {
 mod tests {
     use super::*;
 
-    struct Item(u8, Link<Item>);
-    // SAFETY: always the same field.
-    unsafe impl Linked for Item {
-        unsafe fn link(item: *mut Self) -> *const Link<Self> {
-            // SAFETY: fn contract.
-            unsafe { &raw const (*item).1 }
+    struct Item {
+        value: u8,
+        next: Link<Item>,
+    }
+    bun_core::intrusive_field!(Item, next: Link<Item>);
+
+    impl Item {
+        fn new(value: u8) -> Box<Item> {
+            let next = Link::new();
+            Box::new(Item { value, next })
         }
     }
 
@@ -330,11 +323,11 @@ mod tests {
     fn owned_batch_iterator_drop_requeues_the_rest() {
         let queue = OwnedQueue::<Box<Item>>::new();
         for i in 0..3 {
-            queue.push(Box::new(Item(i, Link::new())));
+            queue.push(Item::new(i));
         }
-        assert_eq!(queue.pop_batch().next().map(|item| item.0), Some(0));
+        assert_eq!(queue.pop_batch().next().map(|item| item.value), Some(0));
         assert_eq!(
-            queue.pop_batch().map(|item| item.0).collect::<Vec<_>>(),
+            queue.pop_batch().map(|item| item.value).collect::<Vec<_>>(),
             [1, 2]
         );
         assert!(queue.pop_batch().next().is_none());
@@ -347,8 +340,8 @@ mod tests {
         let push_and_pop = |first: u8| {
             let mut taken = Vec::new();
             for value in first..first + ITEMS {
-                queue.push(Box::new(Item(value, Link::new())));
-                taken.extend(queue.pop_batch().map(|item| item.0));
+                queue.push(Item::new(value));
+                taken.extend(queue.pop_batch().map(|item| item.value));
             }
             taken
         };
@@ -356,7 +349,7 @@ mod tests {
             let other = scope.spawn(|| push_and_pop(ITEMS));
             [push_and_pop(0), other.join().unwrap()].concat()
         });
-        taken.extend(queue.pop_batch().map(|item| item.0));
+        taken.extend(queue.pop_batch().map(|item| item.value));
         taken.sort_unstable();
         assert!(taken.into_iter().eq(0..2 * ITEMS));
     }

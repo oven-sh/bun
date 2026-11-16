@@ -758,7 +758,7 @@ impl bun_jsc::JobContext for CompressionAsyncCtx {
     /// The `JSTransformStream` cell, whose `m_codecPromise` keeps the pending promise alive.
     type Js = Strong;
 
-    fn run(this: &mut Self, done: bun_jsc::Completion<Self>) -> Option<bun_jsc::Completion<Self>> {
+    fn run(this: &mut Self, _: &bun_jsc::Ticket) {
         match this
             .coder
             .step(this.input.slice(), this.finish, &mut this.out)
@@ -766,7 +766,6 @@ impl bun_jsc::JobContext for CompressionAsyncCtx {
             Ok(more) => this.more = more,
             Err(e) => this.error = Some(e),
         }
-        Some(done)
     }
 
     fn then(this: Self, stream: Strong, cx: &bun_jsc::JsThread<'_>) -> bun_jsc::JsResult<()> {

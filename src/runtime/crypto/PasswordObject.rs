@@ -479,9 +479,8 @@ struct PasswordJob<Op: PasswordOp> {
 impl<Op: PasswordOp> bun_jsc::JobContext for PasswordJob<Op> {
     type OffThread = Self;
     type Js = JSPromiseStrong;
-    fn run(this: &mut Self, done: bun_jsc::Completion<Self>) -> Option<bun_jsc::Completion<Self>> {
+    fn run(this: &mut Self, _: &bun_jsc::Ticket) {
         this.value = Some(this.op.compute(&this.password));
-        Some(done)
     }
     fn then(
         mut this: Self,

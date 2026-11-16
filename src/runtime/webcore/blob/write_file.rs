@@ -1,26 +1,25 @@
 #[cfg(not(windows))]
 use core::ops::Range;
-#[cfg(not(windows))]
-use core::sync::atomic::{AtomicU8, Ordering};
 
 #[cfg(not(windows))]
 use crate::Error;
 #[cfg(not(windows))]
-use bun_io::{self as io, IntrusiveIoRequest as _};
+use bun_io as io;
 use bun_jsc::node_path::PathOrFileDescriptor;
 use bun_jsc::{self as jsc, JSGlobalObject, JSPromise, JSValue, SystemError};
 #[cfg(not(windows))]
 use bun_ptr::RefPtr;
 use bun_sys::{self as sys, Fd};
 #[cfg(not(windows))]
-use bun_threading::{IntrusiveWorkTask as _, WorkPool, WorkPoolTask};
+use bun_threading::{Link, OwnedQueue, OwnedTaskIn, WorkPoolTask};
 
 #[cfg(not(windows))]
-use crate::webcore::blob::{
-    ClosingState, FileCloser, FileOpener, MkdirpTarget, Retry, mkdir_if_not_exists,
-};
+use crate::webcore::blob::io_parking::{IoParking, IoState, Parkable};
+#[cfg(not(windows))]
+use crate::webcore::blob::{ClosingState, FileOpener, MkdirpTarget, Retry, mkdir_if_not_exists};
 use crate::webcore::blob::{SizeType, Store};
 
+#[cfg(windows)]
 bun_output::declare_scope!(WriteFile, hidden);
 
 /// One `write()` attempt on the pool thread.
@@ -38,21 +37,21 @@ pub(crate) enum WriteFileResultType {
     Err(Box<SystemError>),
 }
 
-/// The completion token a `WriteFile` keeps across its async I/O.
+/// The owner of a `WriteFile` that has left the JS thread.
 #[cfg(not(windows))]
 pub(crate) type WriteFileTask = bun_jsc::Completion<WriteFile>;
 
 #[cfg(not(windows))]
-impl bun_jsc::JobContext for WriteFile {
+impl bun_jsc::OwnedJobContext for WriteFile {
     const CANCELLABLE: bool = true;
     type OffThread = Self;
     /// Whom the write is reported to, and the global it was made in. (Dropped with the job when
     /// that is released unrun: the promise then stays pending.)
     type Js = (jsc::JSPromiseStrong, bun_ptr::BackRef<JSGlobalObject>);
-    fn run(this: &mut Self, done: bun_jsc::Completion<Self>) -> Option<bun_jsc::Completion<Self>> {
-        // Starts the write; finishes from the io loop via the token.
-        this.run(done);
-        None
+    type Shared = IoParking;
+    fn run(mut this: WriteFileTask) {
+        let fd = this.get_fd();
+        Self::run_with_fd(this, fd);
     }
     fn then(
         this: Self,
@@ -63,13 +62,8 @@ impl bun_jsc::JobContext for WriteFile {
     }
     /// As `ReadFile`: a write parked on a full pipe nobody drains is the one
     /// state this job can be stuck in.
-    unsafe fn cancel(this: *mut Self) {
-        // SAFETY: fn contract; see `ReadFile::cancel`.
-        unsafe {
-            if (*this).io_parking.cancel() {
-                io::IoRequestLoop::schedule(&raw mut (*this).io_request);
-            }
-        }
+    fn cancel(parking: &IoParking) {
+        parking.cancel();
     }
 }
 
@@ -98,26 +92,22 @@ pub(crate) struct WriteFile {
     pub(crate) system_error: Option<SystemError>,
     pub(crate) errno: Option<Error>,
     pub task: WorkPoolTask,
-    pub(crate) io_task: Option<WriteFileTask>,
-    pub(crate) io_poll: io::Poll,
-    pub(crate) io_request: io::Request,
-    pub(crate) io_parking: super::IoParking,
-    pub(crate) state: AtomicU8, // ClosingState
+    next: Link<WriteFile>,
+    io: IoState,
 
     pub(crate) total_written: usize,
 
     pub(crate) could_block: bool,
-    pub(crate) close_after_io: bool,
     pub(crate) mkdirp_if_not_exists: bool,
 }
 
 #[cfg(not(windows))]
 bun_threading::intrusive_work_task!(WriteFile, task);
 #[cfg(not(windows))]
-bun_io::intrusive_io_request!(WriteFile, io_request);
+bun_core::intrusive_field!(WriteFile, next: Link<WriteFile>);
 
 // ──────────────────────────────────────────────────────────────────────────
-// FileOpener / FileCloser
+// FileOpener / Parkable
 // ──────────────────────────────────────────────────────────────────────────
 
 #[cfg(not(windows))]
@@ -165,106 +155,31 @@ impl MkdirpTarget for WriteFile {
 }
 
 #[cfg(not(windows))]
-crate::webcore::blob::impl_file_closer!(WriteFile);
+impl Parkable for WriteFile {
+    const IO_TAG: io::Tag = io::Tag::WriteFile;
+    const SYSCALL: sys::Tag = sys::Tag::write;
+
+    fn pending() -> &'static OwnedQueue<WriteFileTask> {
+        static PENDING: OwnedQueue<WriteFileTask> = OwnedQueue::new();
+        &PENDING
+    }
+    fn io_mut(&mut self) -> &mut IoState {
+        &mut self.io
+    }
+    fn is_allowed_to_close(&self) -> bool {
+        self.file_store.data.as_file().path().is_some()
+    }
+}
+
+#[cfg(not(windows))]
+impl OwnedTaskIn<WriteFileTask> for WriteFile {
+    fn run(this: WriteFileTask) {
+        Self::do_write_loop(this);
+    }
+}
 
 #[cfg(not(windows))]
 impl WriteFile {
-    pub(crate) const IO_TAG: io::Tag = io::Tag::WriteFile;
-
-    /// # Safety
-    /// As `ReadFile::on_ready`.
-    pub(crate) unsafe fn on_ready(this: *mut Self) {
-        bun_output::scoped_log!(WriteFile, "WriteFile.onReady()");
-        // SAFETY: fn contract.
-        unsafe {
-            if (*this).io_parking.fire() {
-                Self::schedule_write_loop(this);
-            }
-        }
-    }
-
-    pub(crate) fn on_io_error(this: *mut (), err: &sys::Error) {
-        bun_output::scoped_log!(WriteFile, "WriteFile.onIOError()");
-        let this = this.cast::<Self>();
-        // SAFETY: ctx was set to `self as *mut WriteFile` in `on_request_writable`. After `fire`
-        // no other thread uses these fields.
-        unsafe {
-            if (*this).io_parking.fire() {
-                (*this).errno = Some(bun_errno::from_errno(err.errno as i32).into());
-                (*this).system_error = Some(err.to_system_error().into());
-                Self::schedule_write_loop(this);
-            }
-        }
-    }
-
-    /// # Safety
-    /// `fire` gave `this` to this thread.
-    unsafe fn schedule_write_loop(this: *mut Self) {
-        // SAFETY: fn contract. The `Job` that holds `this` is freed after `io_task` finishes.
-        unsafe {
-            (*this).task = WorkPoolTask {
-                node: Default::default(),
-                callback: Self::do_write_loop_task,
-            };
-            WorkPool::schedule(&raw mut (*this).task);
-        }
-    }
-
-    pub(crate) fn on_request_writable(request: &mut io::Request) -> io::Action<'_> {
-        bun_output::scoped_log!(WriteFile, "WriteFile.onRequestWritable()");
-        request.scheduled = false;
-        // SAFETY: `request` points to WriteFile.io_request (intrusive); recover parent.
-        let this = unsafe { WriteFile::from_io_request(std::ptr::from_mut(request)) };
-        // SAFETY: `this` is the live parent (see above); io thread owns it while parked.
-        if !unsafe { (*this).io_parking.arm() } {
-            // SAFETY: as above.
-            unsafe { (*this).fail_cancelled() };
-            return <Self as crate::webcore::blob::FileCloser>::schedule_close(request);
-        }
-        // SAFETY: `request` points to WriteFile.io_request (intrusive), so `this` is the
-        // live parent; `fd` copy and the `io_poll` field borrow are the only borrows formed.
-        let (fd, poll) = unsafe { ((*this).opened_fd, &mut (*this).io_poll) };
-        io::Action::Writable(io::FileAction {
-            on_error: Self::on_io_error,
-            ctx: this.cast::<()>(),
-            fd,
-            poll,
-            tag: WriteFile::IO_TAG,
-        })
-    }
-
-    /// See `ReadFile::fail_cancelled`.
-    fn fail_cancelled(&mut self) {
-        self.fail_wait(&sys::Error::from_code(sys::E::ECANCELED, sys::Tag::write));
-    }
-
-    /// See `ReadFile::fail_wait`.
-    fn fail_wait(&mut self, err: &sys::Error) {
-        self.errno = Some(bun_errno::from_errno(err.errno as i32).into());
-        self.system_error = Some(err.to_system_error().into());
-        self.state
-            .store(ClosingState::Closing as u8, Ordering::SeqCst);
-    }
-
-    /// See `ReadFile::wait_for_readable`: the caller returns without touching
-    /// `self` again.
-    pub(crate) fn wait_for_writable(&mut self) {
-        if let Err(err) = io::IoRequestLoop::ensure_init() {
-            self.fail_wait(&err);
-            return self.on_finish();
-        }
-        if !self.io_parking.park() {
-            self.fail_cancelled();
-            return self.on_finish();
-        }
-        self.close_after_io = true;
-        self.io_request
-            .store_callback_seq_cst(Self::on_request_writable);
-        // SAFETY: the `Job` that holds `self` is freed after `io_task` finishes, and `park` gave the request to this thread.
-        // Not upheld: `self` is still borrowed when the io thread gets the request.
-        unsafe { io::IoRequestLoop::schedule(&raw mut self.io_request) };
-    }
-
     pub(crate) fn create(
         file_store: RefPtr<Store>,
         bytes_store: RefPtr<Store>,
@@ -278,18 +193,11 @@ impl WriteFile {
             opened_fd: Fd::INVALID,
             system_error: None,
             errno: None,
-            task: WorkPoolTask {
-                node: Default::default(),
-                callback: Self::do_write_loop_task,
-            },
-            io_task: None,
-            io_poll: io::Poll::default(),
-            io_request: io::Request::new(Self::on_request_writable),
-            io_parking: super::IoParking::new(),
-            state: AtomicU8::new(ClosingState::Running as u8),
+            task: WorkPoolTask::default(),
+            next: Link::new(),
+            io: IoState::default(),
             total_written: 0,
             could_block: false,
-            close_after_io: false,
             mkdirp_if_not_exists,
         };
         Ok(write_file)
@@ -356,51 +264,24 @@ impl WriteFile {
         )
     }
 
-    pub(crate) fn run(&mut self, task: WriteFileTask) {
-        self.io_task = Some(task);
-        self.run_async();
-    }
-
-    fn run_async(&mut self) {
-        self.get_fd(Self::run_with_fd);
-    }
-
-    pub(crate) fn is_allowed_to_close(&self) -> bool {
-        self.file_store.data.as_file().path().is_some()
-    }
-
-    fn on_finish(&mut self) {
-        bun_output::scoped_log!(WriteFile, "WriteFile.onFinish()");
-
-        let close_after_io = self.close_after_io;
-        if self.do_close(self.is_allowed_to_close()) {
-            return;
-        }
-        if !close_after_io {
-            if let Some(io_task) = self.io_task.take() {
-                io_task.finish();
-            }
-        }
-    }
-
-    fn run_with_fd(&mut self, fd_: Fd) {
-        if fd_ == Fd::INVALID || self.errno.is_some() {
-            self.on_finish();
+    fn run_with_fd(mut this: WriteFileTask, fd_: Fd) {
+        if fd_ == Fd::INVALID || this.errno.is_some() {
+            Self::on_finish(this);
             return;
         }
 
-        let fd = self.opened_fd;
+        let fd = this.opened_fd;
 
         // A path is opened with O_NONBLOCK. This is for pipes passed to the process, such as stdout, and costs no fstat().
-        let file = self.file_store.data.as_file();
-        self.could_block = file.fd().is_some() && file.seekable() == Some(false);
+        let file = this.file_store.data.as_file();
+        this.could_block = file.fd().is_some() && file.seekable() == Some(false);
 
         // We have never supported offset in Bun.write().
         // and properly adding support means we need to also support it
         // with splice, sendfile, and the other cases.
 
-        if self.could_block && bun_core::is_writable(fd) == bun_core::Pollable::NotReady {
-            self.wait_for_writable();
+        if this.could_block && bun_core::is_writable(fd) == bun_core::Pollable::NotReady {
+            Self::wait_for_io(this);
             return;
         }
 
@@ -412,58 +293,41 @@ impl WriteFile {
             // We only do this on Linux because the equivalent on macOS
             // seemed to have zero performance impact in
             // microbenchmarks.
-            if !self.could_block && self.window.len() > 1024 {
+            if !this.could_block && this.window.len() > 1024 {
                 let _ = sys::preallocate_file(
                     fd.native(),
                     0,
-                    i64::try_from(self.window.len()).expect("int cast"),
+                    i64::try_from(this.window.len()).expect("int cast"),
                 ); // we don't care if it fails.
             }
         }
 
-        self.do_write_loop();
+        Self::do_write_loop(this);
     }
 
-    fn do_write_loop_task(task: *mut WorkPoolTask) {
-        // SAFETY: only reached via `WorkPoolTask::callback` with `task` = `&mut self.task`
-        // (intrusive) registered in `on_writable`/`init`; recover parent.
-        let this = unsafe { WriteFile::from_task_ptr(task) };
-        // On kqueue platforms we use one-shot mode, so we don't need to unregister.
-        if bun_core::Environment::IS_KQUEUE {
-            // SAFETY: `this` is the live parent (see above); scoped access.
-            unsafe { (*this).close_after_io = false };
-        }
-        // SAFETY: `this` is the live parent (see above); exclusive borrow scoped to the call.
-        unsafe { (*this).do_write_loop() };
-    }
+    fn do_write_loop(mut this: WriteFileTask) {
+        while this.io.state == ClosingState::Running {
+            let off = this.total_written.min(this.window.len());
+            let remain_len = this.window.len() - off;
 
-    pub(crate) fn update(&mut self) {
-        self.do_write_loop();
-    }
-
-    fn do_write_loop(&mut self) {
-        while self.state.load(Ordering::Relaxed) == ClosingState::Running as u8 {
-            let off = self.total_written.min(self.window.len());
-            let remain_len = self.window.len() - off;
-
-            if remain_len > 0 && self.errno.is_none() {
-                let wrote = match self.do_write(off, remain_len) {
+            if remain_len > 0 && this.errno.is_none() {
+                let wrote = match this.do_write(off, remain_len) {
                     WriteStep::Wrote(n) => n,
-                    WriteStep::WouldBlock => return self.wait_for_writable(),
-                    WriteStep::Failed => return self.on_finish(),
+                    WriteStep::WouldBlock => return Self::wait_for_io(this),
+                    WriteStep::Failed => return Self::on_finish(this),
                 };
 
                 // Do not immediately attempt to write again if it's not a regular file.
-                if self.could_block
-                    && bun_core::is_writable(self.opened_fd) == bun_core::Pollable::NotReady
+                if this.could_block
+                    && bun_core::is_writable(this.opened_fd) == bun_core::Pollable::NotReady
                 {
-                    self.wait_for_writable();
+                    Self::wait_for_io(this);
                     return;
                 }
 
                 if wrote == 0 {
                     // we are done, we received EOF
-                    self.on_finish();
+                    Self::on_finish(this);
                     return;
                 }
 
@@ -473,7 +337,7 @@ impl WriteFile {
             break;
         }
 
-        self.on_finish();
+        Self::on_finish(this);
     }
 }
 

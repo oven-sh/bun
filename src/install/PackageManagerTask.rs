@@ -39,15 +39,7 @@ impl HasStaticHive for Task {
 
 bun_threading::intrusive_work_task!(Task, threadpool_task);
 
-// SAFETY: `next` is the sole intrusive link for `OwnedQueue<HiveBox<Task>>`;
-// `link()` always projects to it.
-unsafe impl bun_threading::Linked for Task {
-    #[inline]
-    unsafe fn link(item: *mut Self) -> *const bun_threading::Link<Self> {
-        // SAFETY: `item` is valid and properly aligned per `UnboundedQueue` contract.
-        unsafe { core::ptr::addr_of!((*item).next) }
-    }
-}
+bun_core::intrusive_field!(Task, next: bun_threading::Link<Task>);
 
 /// An ID that lets us register a callback without keeping the same pointer around
 #[repr(transparent)]

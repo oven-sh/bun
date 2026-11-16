@@ -111,19 +111,13 @@ macro_rules! extern_crypto_job {
                 type OffThread = Self;
                 type Js = Strong;
 
-                fn run(
-                    this: &mut Self,
-                    done: bun_jsc::Completion<Self>,
-                ) -> Option<bun_jsc::Completion<Self>> {
+                fn run(this: &mut Self, ticket: &bun_jsc::Ticket) {
                     // Jobs report what they find on the error queue of a thread they share.
                     boringssl::c::ERR_clear_error();
                     // SAFETY: the creating global, alive under the job's ticket; C++
                     // only threads it through to error reporting state.
-                    ctx_run_task(&this.ctx, unsafe {
-                        this.global.under_ticket(done.ticket())
-                    });
+                    ctx_run_task(&this.ctx, unsafe { this.global.under_ticket(ticket) });
                     boringssl::c::ERR_clear_error();
-                    Some(done)
                 }
 
                 fn then(this: Self, callback: Strong, cx: &JsThread<'_>) -> JsResult<()> {
@@ -226,7 +220,7 @@ impl JobContext for RandomFillJob {
     type OffThread = Self;
     type Js = RandomFillJs;
 
-    fn run(this: &mut Self, done: bun_jsc::Completion<Self>) -> Option<bun_jsc::Completion<Self>> {
+    fn run(this: &mut Self, ticket: &bun_jsc::Ticket) {
         match this {
             RandomFillJob::Scratch { scratch, size, .. } => {
                 let size = *size;
@@ -241,10 +235,9 @@ impl JobContext for RandomFillJob {
             RandomFillJob::InPlace { bytes } => {
                 // SAFETY: `bytes` is the ArrayBuffer `value` keeps alive;
                 // the ticket keeps the VM (and so that buffer) alive.
-                boringssl::rand_bytes(unsafe { bytes.under_ticket(done.ticket()) });
+                boringssl::rand_bytes(unsafe { bytes.under_ticket(ticket) });
             }
         }
-        Some(done)
     }
 
     fn then(this: Self, js: RandomFillJs, cx: &JsThread<'_>) -> JsResult<()> {
@@ -804,13 +797,12 @@ impl JobContext for ScryptJob {
     type OffThread = Self;
     type Js = ScryptJs;
 
-    fn run(this: &mut Self, done: bun_jsc::Completion<Self>) -> Option<bun_jsc::Completion<Self>> {
+    fn run(this: &mut Self, ticket: &bun_jsc::Ticket) {
         // SAFETY: `result` is `buf`'s backing store (kept by the Js side); VM alive under the ticket.
-        let key = unsafe { this.result.under_ticket(done.ticket()) };
+        let key = unsafe { this.result.under_ticket(ticket) };
         this.err = this
             .params
             .run_task_impl(this.password.slice(), this.salt.slice(), key);
-        Some(done)
     }
 
     fn then(this: Self, js: ScryptJs, cx: &JsThread<'_>) -> JsResult<()> {
@@ -1135,9 +1127,8 @@ impl JobContext for Argon2<Vec<u8>> {
     type OffThread = Self;
     type Js = Argon2Js;
 
-    fn run(this: &mut Self, done: bun_jsc::Completion<Self>) -> Option<bun_jsc::Completion<Self>> {
+    fn run(this: &mut Self, _: &bun_jsc::Ticket) {
         this.run();
-        Some(done)
     }
 
     fn then(mut this: Self, js: Argon2Js, cx: &JsThread<'_>) -> JsResult<()> {

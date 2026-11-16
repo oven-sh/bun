@@ -2,7 +2,8 @@
 // for timers and I/O: what its code opens belongs to it, and dispose() closes all of it.
 import { afterAll, describe, expect, test } from "bun:test";
 import fs, { rmSync, writeFileSync } from "fs";
-import { bunEnv, bunExe, tempDir, tls } from "harness";
+import { bunEnv, bunExe, isLinux, tempDir, tls } from "harness";
+import { mkfifo } from "mkfifo";
 import { AsyncLocalStorage } from "node:async_hooks";
 import net from "node:net";
 import nodeTls from "node:tls";
@@ -458,6 +459,66 @@ describe.concurrent("ModuleGraph: what a graph opens is the graph's", () => {
     await hostWork();
     await hostTimerTurns();
     expect(Bun.peek.status(work)).toBe("pending");
+  });
+
+  // EPOLL_CTL_DEL fails for a closed fd, and the registration stays while another descriptor holds the file open.
+  test.skipIf(!isLinux)("data for a Bun.file(fd) read whose fd was closed before dispose() wakes no read", async () => {
+    const dir = fixture({
+      "main.mjs": `
+        import fs from "node:fs";
+        const [closed, blocking, host] = ["closed", "blocking", "host"].map(name => fs.openSync(name, "r+"));
+        // Until epoll has the FIFO with EPOLLIN (1) or, once the one-shot event was delivered, without it (0).
+        async function epollin(fifo, expected) {
+          const line = new RegExp("events: +([0-9a-f]+) .* ino:" + fs.fstatSync(fifo).ino.toString(16) + " ");
+          for (let i = 0; i < 500; i++) {
+            for (const info of fs.readdirSync("/proc/self/fdinfo")) {
+              let text = "";
+              try { text = fs.readFileSync("/proc/self/fdinfo/" + info, "utf8"); } catch {}
+              const events = line.exec(text)?.[1];
+              if (events && (parseInt(events, 16) & 1) === expected) return;
+            }
+            await Bun.sleep(10);
+          }
+          throw new Error("EPOLLIN of " + fifo + " is not " + expected);
+        }
+        // The same work outside a graph, started afterwards.
+        async function hostRead() {
+          const text = Bun.file(host).slice(0, 1).text();
+          await epollin(host, 1);
+          fs.writeSync(host, "y");
+          console.log(await text);
+        }
+        const [first, second] = [new Bun.ModuleGraph(), new Bun.ModuleGraph()];
+
+        first.run(() => Bun.file(3).text());
+        await epollin(closed, 1);
+        fs.closeSync(3);
+        first.dispose();
+        await hostRead();
+
+        // If this read were woken, read() would block, and the process would not exit.
+        second.run(() => Bun.file(blocking).text());
+        await epollin(blocking, 1);
+        fs.writeSync(closed, "x");
+        await epollin(closed, 0);
+        await hostRead();
+        second.dispose();
+      `,
+    });
+    for (const name of ["closed", "blocking", "host"]) mkfifo(join(dir, name), 0o600);
+    const held = fs.openSync(join(dir, "closed"), fs.constants.O_RDONLY | fs.constants.O_NONBLOCK);
+    try {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "main.mjs"],
+        cwd: dir,
+        env: bunEnv,
+        stdio: ["ignore", "pipe", "pipe", held],
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout, stderr, exitCode }).toEqual({ stdout: "y\ny\n", stderr: "", exitCode: 0 });
+    } finally {
+      fs.closeSync(held);
+    }
   });
 
   test("a socket of the graph upgraded to TLS by the host stays the graph's", async () => {

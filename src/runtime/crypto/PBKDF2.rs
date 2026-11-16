@@ -86,13 +86,13 @@ impl JobContext for Pbkdf2Job {
     type OffThread = Self;
     type Js = Pbkdf2Js;
 
-    fn run(this: &mut Self, done: bun_jsc::Completion<Self>) -> Option<bun_jsc::Completion<Self>> {
+    fn run(this: &mut Self, _: &bun_jsc::Ticket) {
         let len = this.pbkdf2.length;
         // `Vec` allocation aborts on OOM; use try_reserve to surface an error instead.
         let mut buf = Vec::new();
         if buf.try_reserve_exact(len).is_err() {
             this.err = true;
-            return Some(done);
+            return;
         }
         buf.resize(len, 0);
         this.output = buf;
@@ -105,7 +105,6 @@ impl JobContext for Pbkdf2Job {
             boringssl::ERR_clear_error();
             this.output = Vec::new();
         }
-        Some(done)
     }
 
     fn then(mut this: Self, js: Pbkdf2Js, cx: &JsThread<'_>) -> JsResult<()> {

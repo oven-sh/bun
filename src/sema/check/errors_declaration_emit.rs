@@ -799,7 +799,7 @@ impl<'p, 's> Checker<'p, 's> {
         let files = self.files();
         let module = files.module(file);
         // `getDeclarationDiagnostics`: `getSourceFilesToEmit`, `isSourceFileNotJson`.
-        if module.hir.kind == FileKind::Json
+        if module.facts.kind == FileKind::Json
             || !source_file_may_be_emitted(files.options, module, files.is_case_sensitive)
         {
             return None;
@@ -2227,7 +2227,7 @@ impl<'p, 's> Checker<'p, 's> {
         // The file being checked is searched even if it's a leaf.
         if let Some(file) = self.task.file
             && files.module(file).is_leaf
-            && files.module(file).hir.has_module_syntax
+            && files.module(file).facts.has_module_syntax
         {
             let module = files.file_symbol(file);
             if self.alias_for_symbol_in_container(module, symbol).is_some() {
@@ -2242,9 +2242,8 @@ impl<'p, 's> Checker<'p, 's> {
     /// True if `exporting_modules` resolves the exports of `file`.
     pub(super) fn is_searched_for_exports(&self, file: FileId) -> bool {
         let module = self.files().module(file);
-        // A leaf file doesn't export aliases. The task that checks it frees its HIR (`Files::free_tree`). Test
-        // `is_leaf`, which is immutable after loading, before reading `hir`.
-        !module.is_leaf && module.hir.has_module_syntax
+        // A leaf file doesn't export aliases. The task that checks it frees its HIR (`Files::free_tree`).
+        !module.is_leaf && module.facts.has_module_syntax
     }
 
     /// The first call for the program builds the index.
@@ -3036,7 +3035,7 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
                     let Some(file) = files.source_file_from_reference(self.file(), &name) else {
                         continue;
                     };
-                    let decl_file_name = match files.hir(file).kind {
+                    let decl_file_name = match files.module(file).facts.kind {
                         FileKind::Declaration => files.module(file).file_name().to_vec(),
                         _ => files.declaration_file_path(file),
                     };
@@ -3075,9 +3074,6 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
 
     /// Empty for a declaration without a name: `export default class {}`.
     fn name(&self, name: Atom) -> &'p [u8] {
-        if name.is_none() {
-            return b"";
-        }
         self.c.atoms().bytes(name)
     }
 
@@ -6795,11 +6791,7 @@ impl<'p, 's> Checker<'p, 's> {
     /// `GetNearestAncestorDirectoryWithPackageJson` of the directory of `file`. Empty if there's none.
     fn package_json_directory(&self, file: FileId) -> &'p [u8] {
         let directory = self.files().module(file).package_json_directory;
-        if directory.is_some() {
-            self.atoms().bytes(directory)
-        } else {
-            b""
-        }
+        self.atoms().bytes(directory)
     }
 
     /// `GetNearestAncestorDirectoryWithPackageJson(GetDirectoryPath(path))` of a path that leads to `target`, for an

@@ -64,8 +64,8 @@ void us_internal_loop_update_pending_ready_polls(struct us_loop_t *loop,
 #endif
 
 #ifndef LIKELY
-#define LIKELY(cond) __builtin_expect((_Bool)(cond), 1)
-#define UNLIKELY(cond) __builtin_expect((_Bool)(cond), 0)
+#define LIKELY(cond) __builtin_expect(!!(cond), 1)
+#define UNLIKELY(cond) __builtin_expect(!!(cond), 0)
 #endif
 
 extern void __attribute__((__noreturn__)) Bun__panic(const char *message, size_t length);
@@ -318,7 +318,7 @@ struct us_bun_verify_error_t us_internal_ssl_verify_error(us_socket_r s);
 const char *us_internal_ssl_sni_servername(us_socket_r s);
 /* Drops the listen socket's references to ls->ssl_ctx and ls->server_names. Called from us_listen_socket_close. */
 void us_internal_listen_socket_ssl_free(struct us_listen_socket_t *ls);
-/* Opaque SSL_CTX_up_ref/SSL_CTX_free so context.c needn't include OpenSSL. */
+/* Opaque SSL_CTX_up_ref/SSL_CTX_free so context.cpp needn't include OpenSSL. */
 void us_internal_ssl_ctx_up_ref(struct ssl_ctx_st *ssl_ctx);
 void us_internal_ssl_ctx_unref(struct ssl_ctx_st *ssl_ctx);
 /* TCP-level FIN, bypassing the SSL layer (used by ssl_on_end). */
@@ -585,6 +585,32 @@ void us_internal_ssl_loop_state_save(void *ssl, void **out);
 void us_internal_ssl_loop_state_restore(void **saved);
 
 #ifdef __cplusplus
+}
+
+#include <memory>
+
+struct us_poll_deleter_t {
+    struct us_loop_t *loop;
+    void operator()(struct us_poll_t *p) const {
+        us_keep_last_error_t keep;
+        us_poll_free(p, loop);
+    }
+};
+
+/* NULL if the loop refuses `fd` (e.g. ENOSPC at fs.epoll.max_user_watches), with the reason in errno. */
+inline struct us_poll_t *us_internal_start_poll(struct us_loop_t *loop, LIBUS_SOCKET_DESCRIPTOR fd, int poll_type,
+                                                unsigned int ext_size, int events) {
+    std::unique_ptr<struct us_poll_t, us_poll_deleter_t> p{us_create_poll(loop, 0, ext_size), {loop}};
+    us_poll_init(p.get(), fd, poll_type);
+    return us_poll_start_rc(p.get(), loop, events) == 0 ? p.release() : NULL;
+}
+
+/* The poll closes `fd`. */
+inline struct us_poll_t *us_internal_start_poll(struct us_loop_t *loop, us_fd_t fd, int poll_type,
+                                                unsigned int ext_size, int events) {
+    struct us_poll_t *p = us_internal_start_poll(loop, fd.get(), poll_type, ext_size, events);
+    if (p) fd.release();
+    return p;
 }
 #endif
 

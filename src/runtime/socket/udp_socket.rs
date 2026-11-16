@@ -596,7 +596,7 @@ impl UDPSocket {
         let guard = scopeguard::guard(this, |this| {
             this.closed.set(true);
             // Hoist before `(*socket).close()`: that call SYNCHRONOUSLY re-enters
-            // `on_close` (udp.c `s->on_close(s)`), which re-derives `&UDPSocket`
+            // `on_close` (udp.cpp `s->on_close(s)`), which re-derives `&UDPSocket`
             // from the uws user pointer. `downgrade()` is idempotent (on_close
             // repeats it), so ordering is unobservable.
             this.this_value.with_mut(|r| r.downgrade());
@@ -1514,7 +1514,7 @@ impl UDPSocket {
             let Some(socket) = self.socket.take() else {
                 return;
             };
-            // `(*socket).close()` SYNCHRONOUSLY invokes `on_close` (udp.c:110
+            // `(*socket).close()` SYNCHRONOUSLY invokes `on_close` (udp.cpp
             // `s->on_close(s)`), which re-derives `&UDPSocket` from the uws
             // user pointer. R-2: with `&self` + `Cell`/`JsCell` the sibling
             // shared borrow is sound; the (idempotent) downgrade is hoisted
@@ -2011,7 +2011,7 @@ pub(crate) fn dgram_bind_fd(fd: i32, address: &[u8], port: i32, flags: i32) -> b
         let socklen = addr.socklen() as libc::socklen_t;
         let storage = addr.into_storage();
 
-        // IPV6_V6ONLY, SO_REUSEADDR/SO_REUSEPORT and bind(2) go through bsd.c
+        // IPV6_V6ONLY, SO_REUSEADDR/SO_REUSEPORT and bind(2) go through bsd.cpp
         // so this doesn't fork its platform gate.
         // SAFETY: storage was initialized above for socklen bytes.
         let rc = unsafe {

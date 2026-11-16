@@ -1655,7 +1655,7 @@ SSL_CTX *us_ssl_ctx_from_options(struct us_bun_socket_context_options_t options,
 
 /* SSL_CTX's own refcount IS the refcount; SSL_new() takes one more per socket
  * internally, so a socket outlives its SecureContext without help from us.
- * Exported so context.c / socket.c stay free of OpenSSL headers. */
+ * Exported so context.cpp / socket.c stay free of OpenSSL headers. */
 void us_internal_ssl_ctx_up_ref(SSL_CTX *p) {
   if (p) SSL_CTX_up_ref(p);
 }

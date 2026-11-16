@@ -178,6 +178,8 @@ const noUnifyDirs: readonly string[] = [
   // One WHATWG spec algorithm group per TU, each with file-local static
   // helpers written assuming TU isolation; a unified bundle collides them.
   "src/jsc/bindings/webcore/streams",
+  // Compiled without the PCH.
+  "packages/bun-usockets/src",
 ];
 
 /**

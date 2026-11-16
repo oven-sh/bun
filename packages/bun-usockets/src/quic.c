@@ -653,7 +653,7 @@ static lsquic_conn_ctx_t *us_quic_on_new_conn(void *if_ctx, lsquic_conn_t *conn)
 #endif
     ctx->conn_count++;
     /* Arm the sweep-timer refcount so DateHeaderTimer runs for h3-only
-     * servers; the TCP path does this per-socket in context.c. */
+     * servers; the TCP path does this per-socket in context.cpp. */
     us_internal_enable_sweep_timer(ctx->loop);
     qs->next = ctx->conns;
     ctx->conns = qs;

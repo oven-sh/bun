@@ -414,7 +414,7 @@ impl ExtractTarball {
                         // Create/truncate `.bun-tag`, then write the resolved tag.
                         if sys::File::openat(
                             extract_destination.fd(),
-                            ZStr::from_static(b".bun-tag\0"),
+                            bun_core::zstr!(".bun-tag"),
                             sys::O::WRONLY
                                 | sys::O::CREAT
                                 | sys::O::TRUNC
@@ -426,7 +426,7 @@ impl ExtractTarball {
                         {
                             let _ = sys::unlinkat(
                                 extract_destination.fd(),
-                                ZStr::from_static(b".bun-tag\0"),
+                                bun_core::zstr!(".bun-tag"),
                             );
                         }
                     }

@@ -356,6 +356,7 @@ export function loadModuleSync(id: Id, isUserDynamic: boolean, importer: HMRModu
       mod.cjs.exports = {};
       throw e;
     }
+    mod.exports = null; // the ES view of the `module.exports` of an earlier run
     mod.state = State.Loaded;
   } else {
     // ESM
@@ -433,6 +434,7 @@ export function loadModuleAsync<IsUserDynamic extends boolean>(
       mod.cjs.exports = {};
       throw e;
     }
+    mod.exports = null; // the ES view of the `module.exports` of an earlier run
     mod.state = State.Loaded;
     return mod;
   } else {
@@ -575,7 +577,7 @@ type HMREvent =
 interface HotUpdate {
   toReload: Set<HMRModule>;
   toAccept: { cb: HotAccept; key: Id }[];
-  toDispose: HMRModule[];
+  toDispose: Set<HMRModule>;
   /** Updated modules with a path to a root that nothing on it accepts. */
   failures: Set<Id> | null;
 }
@@ -585,7 +587,7 @@ function findBoundaries(modules: Record<Id, UnloadedModule>, sourceMapId: Source
   const toReload = new Set<HMRModule>();
   const toAccept: HotUpdate["toAccept"] = [];
   let failures: Set<Id> | null = null;
-  const toDispose: HMRModule[] = [];
+  const toDispose = new Set<HMRModule>();
 
   // Discover all HMR boundaries
   outer: for (const key of Object.keys(modules)) {
@@ -617,7 +619,7 @@ function findBoundaries(modules: Record<Id, UnloadedModule>, sourceMapId: Source
         visited.add(mod);
         hadSelfAccept = false;
         if (mod.onDispose) {
-          toDispose.push(mod);
+          toDispose.add(mod);
         }
       }
       // Modules that mutate data are implied to handle updates via reusing their `data` property
@@ -627,7 +629,7 @@ function findBoundaries(modules: Record<Id, UnloadedModule>, sourceMapId: Source
         visited.add(mod);
         hadSelfAccept = false;
         if (mod.onDispose) {
-          toDispose.push(mod);
+          toDispose.add(mod);
         }
       }
 
@@ -654,6 +656,26 @@ function findBoundaries(modules: Record<Id, UnloadedModule>, sourceMapId: Source
   return { toReload, toAccept, toDispose, failures };
 }
 
+/** `module` and the importers above it, up to one that nothing imports. Importers can form a circle. */
+function pathToRoot(module: HMRModule): Id[] {
+  const visited = new Set([module]);
+  const path = [module];
+  const toVisit = [module.importers.values()];
+  while (path.length > 0) {
+    if (path[path.length - 1].importers.size === 0) return path.map(mod => mod.id);
+    const { done, value: importer } = toVisit[toVisit.length - 1].next();
+    if (done) {
+      path.pop();
+      toVisit.pop();
+    } else if (!visited.has(importer) && !importer.selfAccept && !importer.depAccepts?.[module.id]) {
+      visited.add(importer);
+      path.push(importer);
+      toVisit.push(importer.importers.values());
+    }
+  }
+  return [module.id];
+}
+
 /** Says why an update was not accepted. In the browser it reloads the page, which then prints the message. */
 function reportFailures(failures: Set<Id>) {
   let message =
@@ -661,28 +683,15 @@ function reportFailures(failures: Set<Id>) {
 
   // For each failed boundary, re-compute the path to the root.
   for (const boundary of failures) {
-    const path: Id[] = [];
-    let current = registry.get(boundary)!;
     DEBUG.ASSERT(!boundary.endsWith(".html")); // caller should have already reloaded
-    DEBUG.ASSERT(current);
-    DEBUG.ASSERT(current.selfAccept === null);
-    if (current.importers.size === 0) {
+    const module = registry.get(boundary)!;
+    DEBUG.ASSERT(module);
+    DEBUG.ASSERT(module.selfAccept === null);
+    if (module.importers.size === 0) {
       message += `Module "${boundary}" is a root module that does not self-accept.\n`;
       continue;
     }
-    outer: while (current.importers.size > 0) {
-      path.push(current.id);
-      inner: for (const importer of current.importers) {
-        if (importer.selfAccept) continue inner;
-        if (importer.depAccepts?.[boundary]) continue inner;
-        current = importer;
-        continue outer;
-      }
-      DEBUG.ASSERT(false);
-      break;
-    }
-    path.push(current.id);
-    DEBUG.ASSERT(path.length > 0);
+    const path = pathToRoot(module);
     message += `Module "${boundary}" is not accepted by ${path[1]}${path.length > 1 ? "," : "."}\n`;
     for (let i = 2, len = path.length; i < len; i++) {
       const isLast = i === len - 1;
@@ -705,14 +714,19 @@ function reportFailures(failures: Set<Id>) {
 }
 
 /** Returns the promises that the dispose callbacks returned. */
-function disposeModules(toDispose: HMRModule[]): Promise<void>[] {
+function disposeModules(toDispose: Set<HMRModule>): Promise<void>[] {
   const disposePromises: Promise<void>[] = [];
   for (const mod of toDispose) {
     mod.state = State.Stale;
     for (const fn of mod.onDispose!) {
-      const p = fn(mod.data);
-      if (p && p instanceof Promise) {
-        disposePromises.push(p);
+      try {
+        const p = fn(mod.data);
+        if (p && p instanceof Promise) {
+          disposePromises.push(p);
+        }
+      } catch (e) {
+        if (side === "client") throw e;
+        disposePromises.push(Promise.reject(e));
       }
     }
     mod.onDispose = null;
@@ -769,7 +783,13 @@ export async function replaceModules(modules: Record<Id, UnloadedModule>, source
 
   const disposePromises = disposeModules(toDispose);
   if (disposePromises.length > 0) {
-    await Promise.all(disposePromises);
+    if (side === "client") {
+      await Promise.all(disposePromises); // the page reloads if one rejects
+    } else {
+      for (const result of await Promise.allSettled(disposePromises)) {
+        if (result.status === "rejected") console.error(result.reason);
+      }
+    }
   }
 
   const promises = reloadModules(toReload);

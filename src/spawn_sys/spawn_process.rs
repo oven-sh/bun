@@ -741,11 +741,13 @@ pub fn spawn_process_posix(
                             _ => c"spawn_stdio_generic",
                         };
 
-                        let fd =
-                            match bun_sys::memfd_create(label, bun_sys::MemfdFlags::CrossProcess) {
-                                Ok(fd) => fd,
-                                Err(_) => break 'use_memfd,
-                            };
+                        let fd = match bun_sys::memfd_create(
+                            label.into(),
+                            bun_sys::MemfdFlags::CrossProcess,
+                        ) {
+                            Ok(fd) => fd,
+                            Err(_) => break 'use_memfd,
+                        };
 
                         set_spawned_stdio(&mut spawned, i, fd);
                         cleanup.to_set_cloexec.push(fd);

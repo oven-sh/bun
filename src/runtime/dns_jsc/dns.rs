@@ -36,7 +36,7 @@ use bun_wyhash::hash as wyhash;
 
 use super::cares_jsc::error_to_deferred;
 use crate::generated_bindgen::dns::LookupOptions;
-use crate::generated_bindgen::dns_internals::ResolverOptions;
+use crate::generated_bindgen::dns_internals::{ResolverOptions, js_DNSResolver};
 use crate::socket::socket_address::inet::INET6_ADDRSTRLEN;
 use crate::timer::{EventLoopTimer, EventLoopTimerState, EventLoopTimerTag};
 use bun_cares_sys::c_ares_draft as c_ares;
@@ -160,9 +160,7 @@ pub(crate) mod lib_uv_backend {
         let hints = query.options.to_libc();
         let mut port_buf = [0u8; 128];
         let port_len = bun_fmt::print_int(&mut port_buf, query.port);
-        port_buf[port_len] = 0;
-        // SAFETY: port_buf[port_len] == 0 written above
-        let port_z = ZStr::from_buf(&port_buf[..], port_len);
+        let port_z = ZStr::nul_terminate(&mut port_buf, port_len);
 
         let mut hostname = bun_paths::path_buffer_pool::get();
         // Reserve the last byte for the NUL terminator so the index below can never
@@ -171,9 +169,7 @@ pub(crate) mod lib_uv_backend {
         // `strings::copy` returns a slice borrowing `hostname`; take only its length
         // so the mutable borrow ends immediately and `hostname` can be indexed again.
         let copied_len = strings::copy(&mut hostname[..cap], query.name.as_ref()).len();
-        hostname[copied_len] = 0;
-        // SAFETY: hostname[copied_len] == 0 written above
-        let host = ZStr::from_buf(&hostname[..], copied_len);
+        let host = ZStr::nul_terminate(&mut hostname, copied_len);
 
         let slot = pending.slot();
         let request = bun_core::heap::into_raw(Box::new(LibuvRequest {
@@ -366,11 +362,8 @@ mod lib_c {
             };
             let query_name = core::mem::take(&mut query.name); // freed at end of scope
             let hints = query.options.to_libc();
-            let mut port_buf = [0u8; 128];
-            let port_len = bun_fmt::print_int(&mut port_buf, query.port);
-            port_buf[port_len] = 0;
-            // SAFETY: NUL written at port_buf[port_len]
-            let port_z = ZStr::from_buf(&port_buf[..], port_len);
+            let mut port_buf = [0u8; 21];
+            let port_z = bun_fmt::itoa_z(&mut port_buf, query.port.into());
 
             let mut hostname = bun_paths::path_buffer_pool::get();
             // Reserve the last byte for the NUL terminator so the index below
@@ -378,12 +371,9 @@ mod lib_c {
             // `doLookup` is bypassed.
             let cap = hostname.len() - 1;
             let copied_len = strings::copy(&mut hostname[..cap], &query_name).len();
-            hostname[copied_len] = 0;
-            // SAFETY: hostname[copied_len] == 0
-            let host = ZStr::from_buf(&hostname[..], copied_len);
+            let host = ZStr::nul_terminate(&mut hostname, copied_len);
             let debug_timer = Output::DebugTimer::start();
-            let result =
-                AddrInfoList::lookup(Some(host), (port_len > 0).then_some(port_z), hints.as_ref());
+            let result = AddrInfoList::lookup(Some(host), Some(port_z), hints.as_ref());
             sys::syslog!(
                 "getaddrinfo({}, {}) = {} ({})",
                 bstr::BStr::new(&query_name),
@@ -1266,8 +1256,7 @@ pub(crate) mod internal {
         let mut service_buf = [0u8; 21];
         let key = &req.key;
         let host = key.host.as_deref();
-        let service = (key.port > 0)
-            .then(|| ZStr::from_cstr(bun_fmt::itoa_z(&mut service_buf, key.port as u64)));
+        let service = (key.port > 0).then(|| bun_fmt::itoa_z(&mut service_buf, key.port as u64));
 
         #[cfg(windows)]
         let result = {
@@ -2088,9 +2077,9 @@ impl Resolver {
         }
     }
 
-    pub(crate) fn init(vm: &VirtualMachine, made_in: Option<bun_jsc::ContextId>) -> Box<Self> {
+    pub(crate) fn init(vm: &VirtualMachine, made_in: Option<bun_jsc::ContextId>) -> RefPtr<Self> {
         bun_output::scoped_log!(DNSResolver, "init");
-        Box::new(Self::setup(vm, made_in))
+        RefPtr::new(Self::setup(vm, made_in))
     }
 
     // ─── R-2 interior-mutability helpers ────────────────────────────────────
@@ -3116,9 +3105,7 @@ impl Resolver {
         opts.tries = Some(options.tries);
         resolver.options.set(opts);
 
-        // SAFETY: `resolver` was boxed in `Resolver::init`; ownership
-        // transfers to the JS wrapper, which holds one ref.
-        unsafe { Resolver::to_js_ptr(bun_core::heap::into_raw(resolver), global_this) }
+        js_DNSResolver::to_js(resolver, global_this)
     }
 
     pub(crate) fn cancel(&self, cx: &mut JsScope<'_>) -> JsResult<()> {

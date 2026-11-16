@@ -315,8 +315,7 @@ impl ShellWork for ShellCondExprStatTask {
     const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::ShellCondExprStatTask;
 
     fn run_from_thread_pool(&mut self, _: &ShellTask) {
-        debug_assert!(self.path.last() == Some(&0));
-        let z = bun_core::ZStr::from_buf(&self.path, self.path.len() - 1);
+        let z = bun_core::ZStr::from_slice_with_nul(&self.path);
         self.stat = crate::shell::interpreter::shell_statat(self.cwd_fd, z);
     }
 

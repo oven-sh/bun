@@ -1006,6 +1006,7 @@ test("rows of a table and a helper of another name, two steps from the test file
   expect(plain.stdout).toContain("5 row row yes too\n2 a-b e undefined undefined");
   const compiled = await run([bunExe(), "test", "--timeout=60000", "--aot"], String(dir), bunEnv);
   expect(compiled.stdout).toContain("5 row row yes too\n2 a-b e undefined undefined");
+  expect(compiled.exitCode).toBe(0);
 });
 
 test("a Worker's file marks a list of objects under one key", async () => {

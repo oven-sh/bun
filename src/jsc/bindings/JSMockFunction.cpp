@@ -2994,6 +2994,31 @@ __attribute__((minsize)) static void throwExportTakesNoSpy(VM& vm, JSGlobalObjec
     throwTypeError(globalObject, scope, makeString("Cannot spy on the `"_s, propertyKeyForMessage(written, key), "` export because "_s, reason));
 }
 
+// True if `object` is a module namespace object. Its export is replaced in the module that declares it, or an exception says why it takes no spy.
+static bool replaceExportWithSpy(VM& vm, JSGlobalObject* globalObject, CallFrame* callframe, JSObject* object, JSValue written, const Identifier& key, JSValue spy)
+{
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    if (JSModuleNamespaceObject* moduleNamespaceObject = tryJSDynamicCast<JSModuleNamespaceObject*>(object)) {
+        bool isReplaced = moduleNamespaceObject->overrideExportValue(globalObject, key, spy);
+        RETURN_IF_EXCEPTION(scope, true);
+        if (!isReplaced)
+            throwExportTakesNoSpy(vm, globalObject, scope, moduleNamespaceObject, written, key);
+        return true;
+    }
+#if ENABLE(AOT)
+    if (JSC::AOT::isModuleNamespace(object)) {
+        bool isReplaced = JSC::AOT::tryReplaceExport(object, key.impl(), spy);
+        RETURN_IF_EXCEPTION(scope, true);
+        if (!isReplaced)
+            throwTypeError(globalObject, scope, JSC::AOT::spyOnExportErrorMessage(object, key.impl(), Bun::uncompiledCallerFile(vm, callframe)));
+        return true;
+    }
+#else
+    UNUSED_PARAM(callframe);
+#endif
+    return false;
+}
+
 // As isModuleNamespace(). It asks about a compiled module only if the realm runs a compiled program.
 static ALWAYS_INLINE bool isNamespaceObjectOfModule(Zig::GlobalObject* globalObject, JSObject* object)
 {
@@ -3178,27 +3203,6 @@ __attribute__((minsize)) static JSC::EncodedJSValue spyOn(JSC::JSGlobalObject* l
 
 #endif
 
-    // True if the object is a module namespace object. Its exports are replaced in the module that declares them.
-    auto replaceExport = [&](JSValue replacement) {
-        if (JSModuleNamespaceObject* moduleNamespaceObject = tryJSDynamicCast<JSModuleNamespaceObject*>(object)) {
-            bool isReplaced = moduleNamespaceObject->overrideExportValue(globalObject, propertyKey, replacement);
-            RETURN_IF_EXCEPTION(scope, true);
-            if (!isReplaced)
-                throwExportTakesNoSpy(vm, globalObject, scope, moduleNamespaceObject, propertyKeyValue, propertyKey);
-            return true;
-        }
-#if ENABLE(AOT)
-        if (JSC::AOT::isModuleNamespace(object)) {
-            bool isReplaced = JSC::AOT::tryReplaceExport(object, propertyKey.impl(), replacement);
-            RETURN_IF_EXCEPTION(scope, true);
-            if (!isReplaced)
-                throwTypeError(globalObject, scope, JSC::AOT::spyOnExportErrorMessage(object, propertyKey.impl(), Bun::uncompiledCallerFile(vm, callframe)));
-            return true;
-        }
-#endif
-        return false;
-    };
-
     // easymode: regular property or missing property
     if (isEasy) {
         JSValue value = jsUndefined();
@@ -3254,9 +3258,12 @@ __attribute__((minsize)) static JSC::EncodedJSValue spyOn(JSC::JSGlobalObject* l
             RETURN_IF_EXCEPTION(scope, {});
 
             ThroughLockOfBuiltins throughLock(vm, isOpaque);
-            if (!replaceExport(mock))
-                putOwnPropertyStorage(globalObject, object, propertyKey, mock, attributes, isOpaque);
+            bool isExport = replaceExportWithSpy(vm, globalObject, callframe, object, propertyKeyValue, propertyKey, mock);
             RETURN_IF_EXCEPTION(scope, {});
+            if (!isExport) {
+                putOwnPropertyStorage(globalObject, object, propertyKey, mock, attributes, isOpaque);
+                RETURN_IF_EXCEPTION(scope, {});
+            }
         } else {
             // JSFunction::getOwnPropertySlot serves `prototype` straight from property storage, ignoring
             // the Accessor attribute, so a GetterSetter installed here would escape to script as a raw cell.
@@ -3269,9 +3276,12 @@ __attribute__((minsize)) static JSC::EncodedJSValue spyOn(JSC::JSGlobalObject* l
             RETURN_IF_EXCEPTION(scope, {});
 
             ThroughLockOfBuiltins throughLock(vm, isOpaque);
-            if (!replaceExport(mock))
-                putOwnPropertyStorage(globalObject, object, propertyKey, JSC::GetterSetter::create(vm, globalObject, mock, mock), attributes | PropertyAttribute::Accessor, isOpaque);
+            bool isExport = replaceExportWithSpy(vm, globalObject, callframe, object, propertyKeyValue, propertyKey, mock);
             RETURN_IF_EXCEPTION(scope, {});
+            if (!isExport) {
+                putOwnPropertyStorage(globalObject, object, propertyKey, JSC::GetterSetter::create(vm, globalObject, mock, mock), attributes | PropertyAttribute::Accessor, isOpaque);
+                RETURN_IF_EXCEPTION(scope, {});
+            }
         }
 
         mock->didInstall(object, propertyKey, isOwn ? value : JSValue(), spyAttributes);

@@ -1,4 +1,4 @@
-#![feature(adt_const_params)]
+#![feature(adt_const_params, allocator_ext)]
 #![feature(core_io, core_io_borrowed_buf)]
 #![feature(thread_local)] // bare `__thread` slot for `thread_id::current()` cache
 #![feature(freeze)] // `impl_field_parent!`'s `shared` arm rejects `Freeze` children at compile time

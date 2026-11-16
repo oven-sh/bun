@@ -1,5 +1,5 @@
 //! Hash tables over the static dictionary, built at compile time.
-#![allow(clippy::large_stack_frames, clippy::large_const_arrays)] // None of them exist at run time.
+#![allow(clippy::large_unopt_stack_frames, clippy::large_const_arrays)] // None of them exist at run time.
 
 use super::matching::hash_of_four;
 use crate::dictionary::{

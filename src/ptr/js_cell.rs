@@ -1,39 +1,6 @@
-/// `JsCell<T>` is a `#[repr(transparent)]` wrapper over `UnsafeCell<T>` that
-/// hands out `&mut T` from `&self`. It is the load-bearing primitive that lets
-/// `VirtualMachine::get()` / `JSGlobalObject::bun_vm()` return a *safe*
-/// `&'static VirtualMachine` while still permitting field mutation.
-///
-/// ## Soundness model
-///
-/// Bun runs **one** `VirtualMachine` per JS thread. JavaScript is
-/// single-threaded and reentrant: a host function may call back into JS, which
-/// may call back into Rust, but always on the *same* OS thread. There is no
-/// true concurrent aliasing — only stacked, same-thread reentrancy. `JsCell`
-/// is the Rust spelling of that contract.
-///
-/// `get_mut()` is therefore *not* sound under arbitrary `Sync` semantics — the
-/// `unsafe impl Sync` below is a lie to the type system that we discharge by
-/// the thread-affinity invariant: a `JsCell` embedded in `VirtualMachine` (or
-/// any JS-heap-adjacent struct) is only ever touched from its owning JS
-/// thread. Cross-thread access goes through `ConcurrentTask` /
-/// `enqueueTaskConcurrent`, which never hands out a `&JsCell`.
-///
-/// This is morally `Cell<T>` with a `get_mut`-from-`&self` escape hatch and
-/// no `T: Copy` bound. [`Self::with_mut`] is the safe entry point (the
-/// `&mut T` is closure-scoped and cannot escape); [`Self::get_mut`] is
-/// `unsafe` and requires the caller to uphold the no-alias invariant
-/// explicitly.
+/// An `UnsafeCell<T>` whose safe `get` and `with_mut` leave it to the caller that no borrows overlap.
 #[repr(transparent)]
 pub struct JsCell<T>(core::cell::UnsafeCell<T>);
-
-// SAFETY: see type-level docs — `JsCell` is only dereferenced on the owning
-// JS thread; the `Sync` impl exists so `&'static VirtualMachine` (which
-// contains `JsCell` fields) satisfies `'static`-bound trait objects and
-// `thread_local!` accessors without `T: Sync` cascading everywhere. It is NOT
-// a license for cross-thread `get_mut()`.
-unsafe impl<T> Sync for JsCell<T> {}
-// SAFETY: same single-thread-owner invariant as `Sync` above.
-unsafe impl<T> Send for JsCell<T> {}
 
 impl<T> JsCell<T> {
     #[inline(always)]
@@ -41,12 +8,10 @@ impl<T> JsCell<T> {
         Self(core::cell::UnsafeCell::new(value))
     }
 
-    /// Shared-reference read. Caller must not hold a live `get_mut()` borrow
-    /// across this call (single-JS-thread reentrancy makes overlap rare but
-    /// possible — keep borrows short).
+    /// Nothing may write to the cell while the reference is live.
     #[inline(always)]
     pub fn get(&self) -> &T {
-        // SAFETY: single-JS-thread invariant — see type docs.
+        // SAFETY: left to the caller, see the type's docs.
         unsafe { &*self.0.get() }
     }
 
@@ -56,15 +21,13 @@ impl<T> JsCell<T> {
     ///
     /// Caller must guarantee that **no other reference** (`&T` or `&mut T`) to
     /// the contained value is live for the lifetime of the returned borrow.
-    /// The single-JS-thread invariant rules out *concurrent* aliasing, but
-    /// same-thread *reentrancy* (host fn → JS → host fn) can still produce
+    /// Same-thread *reentrancy* (host fn → JS → host fn) can produce
     /// stacked `&mut T` if a borrow is held across a call that re-enters.
     /// Keep the borrow short and do not hold it across any call that may
     /// reach back into code touching this cell.
     ///
-    /// Prefer [`Self::with_mut`] when the mutation fits in a closure — its
-    /// borrow cannot escape and the safety obligation is discharged at one
-    /// audited site.
+    /// Prefer [`Self::with_mut`] when the mutation fits in a closure: its
+    /// borrow cannot escape.
     #[inline(always)]
     #[allow(clippy::mut_from_ref)]
     pub unsafe fn get_mut(&self) -> &mut T {
@@ -78,16 +41,10 @@ impl<T> JsCell<T> {
         self.0.get_mut()
     }
 
-    /// Closure-scoped mutable access. The `&mut T` cannot escape `f`, so the
-    /// only way to violate the aliasing invariant is for `f` itself to
-    /// re-enter a path that touches this same cell — which the
-    /// single-JS-thread model already forbids for the duration of a field
-    /// mutation. This is the **safe** spelling of `get_mut`; use it whenever
-    /// the mutation does not need to outlive a single expression.
+    /// No reference from [`Self::get`] may be live, and `f` must not reach this cell again.
     #[inline(always)]
     pub fn with_mut<R>(&self, f: impl FnOnce(&mut T) -> R) -> R {
-        // SAFETY: single-JS-thread invariant (see type docs); the `&mut T`
-        // is confined to `f`'s frame and cannot be stored or returned.
+        // SAFETY: left to the caller, see the type's docs.
         f(unsafe { &mut *self.0.get() })
     }
 
@@ -102,8 +59,6 @@ impl<T> JsCell<T> {
     /// Replace the contained value, returning the old one.
     #[inline(always)]
     pub fn replace(&self, value: T) -> T {
-        // Route through the single audited `with_mut` site; the `&mut T` is
-        // closure-scoped so no aliasing obligation leaks to this fn.
         self.with_mut(|slot| core::mem::replace(slot, value))
     }
 

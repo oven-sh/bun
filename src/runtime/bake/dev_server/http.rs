@@ -177,9 +177,12 @@ pub(super) extern "C" fn dev_route_tramp<const SSL: bool, const ID: DevHandlerId
         DevHandlerId::UnrefSourceMap => on_unref_source_map_request(dev, req, resp),
         DevHandlerId::NotFound => on_not_found(dev, req, resp),
         DevHandlerId::Request => {
+            // A handler that calls `server.stop(true)` frees `dev`.
+            let server = dev.server.expect("infallible: server bound");
             // The catch-all route can reach a framework request handler; this
             // trampoline folds what bundling for it left pending.
             crate::dispatch::fold(on_request(dev, req, resp));
+            crate::dispatch::fold(server.load_queued_plugins());
         }
     }
 }

@@ -6,7 +6,6 @@ export default b.module({ rustPath: "crate::node::node_cluster_binding" });
 export const onInternalMessageChild = b.fn({
   args: { worker: b.any, callback: b.any },
   capability: "js",
-  throws: true,
 });
 export const setRef = b.fn({ args: { enabled: b.bool } });
 export const channelIgnoreOneDisconnectEventListener = b.fn({});

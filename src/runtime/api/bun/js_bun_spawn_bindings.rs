@@ -1,4 +1,4 @@
-use core::cell::Cell;
+use core::cell::{Cell, OnceCell};
 use core::ffi::c_char;
 use core::ptr::NonNull;
 use std::io::Write as _;
@@ -1184,7 +1184,7 @@ fn spawn_maybe_sync(
         stderr: JsCell::new(Readable::Ignore),
         ref_count: bun_ptr::RefCount::init(),
         stdio_pipes: JsCell::new(core::mem::take(&mut spawned_extra_pipes)),
-        ipc_data: JsCell::new(None),
+        ipc_data: OnceCell::new(),
         flags: Cell::new(if is_sync {
             Subprocess::Flags::IS_SYNC
         } else {
@@ -1235,11 +1235,10 @@ fn spawn_maybe_sync(
     #[cfg(windows)]
     if !is_sync {
         if let Some(ipc_mode) = maybe_ipc_mode {
-            subprocess.ipc_data.set(Some(IPC::SendQueue::new(
+            let _ = subprocess.ipc_data.set(IPC::SendQueue::new(
                 ipc_mode,
                 subprocess_ipc_owner(subprocess_ptr),
-                IPC::SocketUnion::Uninitialized,
-            )));
+            ));
         }
     }
 
@@ -1274,8 +1273,7 @@ fn spawn_maybe_sync(
             #[cfg(windows)]
             let _ = subprocess.try_kill(SignalCode::SIGKILL);
             subprocess.process().detach();
-            if let Some(ipc_data) = subprocess.ipc_data.take() {
-                // Nothing else holds it yet (no socket wired, no task scheduled).
+            if let Some(ipc_data) = subprocess.ipc() {
                 ipc_data.detach();
             }
             return Err(err);
@@ -1352,11 +1350,10 @@ fn spawn_maybe_sync(
             );
             if !raw_socket.is_null() {
                 let socket = raw_socket;
-                subprocess.ipc_data.set(Some(IPC::SendQueue::new(
+                let _ = subprocess.ipc_data.set(IPC::SendQueue::new(
                     mode,
                     subprocess_ipc_owner(subprocess_ptr),
-                    IPC::SocketUnion::Uninitialized,
-                )));
+                ));
                 posix_ipc_info = Some(IPC::Socket::from(socket));
             }
         }
@@ -1380,7 +1377,7 @@ fn spawn_maybe_sync(
                     // SAFETY: `ctx` is the live ext-slot pointer returned by uSockets;
                     // it stays valid for the socket's lifetime.
                     unsafe { *ctx = ipc_data.as_ctx_ptr() };
-                    ipc_data.socket.set(IPC::SocketUnion::Open(posix_ipc_info));
+                    ipc_data.socket.set(Some(posix_ipc_info));
                 }
             }
             // uws owns the fd now (owns_fd=1).

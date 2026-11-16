@@ -3,7 +3,7 @@ use bun_sys::Error as SysError;
 
 use crate::webcore::blob::SizeType as BlobSizeType;
 use crate::webcore::fetch::fetch_tasklet::FetchTasklet;
-use crate::webcore::jsc::{JSGlobalObject, JSPromise, JSValue};
+use crate::webcore::jsc::{JSPromise, JSValue};
 use crate::webcore::sink::AnyControlledSink;
 use crate::webcore::streams::{
     EncodedChunk, SourceHandle, Start, StreamError, StreamResult, Writable, WritablePending,
@@ -166,7 +166,10 @@ impl FetchRequestBodySink {
             // it is still on the stack (FileReader.on_reader_error ref-leak).
             self.source.clear();
             if let Some(task) = self.task.take() {
-                let err_js = err.map(|e| e.to_js(&task.global_this));
+                let err_js = err.map(|e| {
+                    let global_this = task.global_this.get();
+                    global_this.map_or(JSValue::UNDEFINED, |global| e.to_js(&global))
+                });
                 // SAFETY: `task` is a ref. Dropping it may free `*self`.
                 unsafe { (*task.as_ptr()).write_end_request(err_js) };
             }
@@ -186,7 +189,7 @@ impl FetchRequestBodySink {
     }
 
     /// HTTP-thread drain ack: resolves the pending write/flush promise and wakes source.ready().
-    pub fn on_drain(&mut self, _global_this: &JSGlobalObject) {
+    pub fn on_drain(&mut self) {
         bun_core::scoped_log!(FetchRequestBodySinkLog, "onDrain");
         self.pending_bytes = 0;
         self.pending.run();

@@ -211,8 +211,7 @@ unsafe extern "C" fn us_dispatch_ssl_raw_tap(
     type TLSSocket = super::NewSocket<true>;
     // The ext slot of an open `BunSocketTls` holds its `TLSSocket`.
     let tls = NativeRef::<true>::of(s).get().unwrap();
-    if let Some(raw) = tls.twin.get().as_ref() {
-        let raw = raw.this_ptr();
+    if let Some(raw) = tls.twin() {
         // A negative length from the C side means there is nothing to deliver;
         // never panic across the `extern "C"` boundary.
         let Ok(len) = usize::try_from(len) else {

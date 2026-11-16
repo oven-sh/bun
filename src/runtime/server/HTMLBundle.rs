@@ -181,16 +181,16 @@ impl Route {
         };
 
         if server.config().is_development() {
-            if let Some(dev) = server.dev_server_mut() {
+            let served_by_dev_server = server.with_dev_server(|dev| {
                 // DevServer's HMR path is *uws.Request-typed; H3 isn't routed
                 // there (no h3_app on plain-HTTP debug servers in practice),
                 // but stay defensive.
-                match req {
+                match &req {
                     AnyRequest::H1(h1) => {
                         // S008: `uws::Request` is an `opaque_ffi!` ZST — safe deref.
                         bun_core::handle_oom(dev.respond_for_html_bundle(
                             this,
-                            bun_opaque::opaque_deref_mut(h1),
+                            bun_opaque::opaque_deref_mut(*h1),
                             resp,
                         ));
                     }
@@ -199,6 +199,9 @@ impl Route {
                         resp.end(b"DevServer HMR is HTTP/1.1 only", true);
                     }
                 }
+            });
+            if served_by_dev_server.is_some() {
+                crate::dispatch::fold(server.load_queued_plugins());
                 return;
             }
 
@@ -208,6 +211,7 @@ impl Route {
             }
         }
 
+        let mut scheduled = false;
         // One re-dispatch
         // after `Pending` schedules the bundle.
         loop {
@@ -221,6 +225,7 @@ impl Route {
                         );
                     }
                     bun_core::handle_oom(Self::schedule_bundle(this, server));
+                    scheduled = true;
                     continue;
                 }
                 State::Building => {
@@ -236,7 +241,7 @@ impl Route {
                     let Some(method) = Method::which(req.method()) else {
                         resp.write_status(b"405 Method Not Allowed");
                         resp.end_without_body(true);
-                        return;
+                        break;
                     };
                     let pending = PendingResponse {
                         method,
@@ -276,6 +281,9 @@ impl Route {
             }
             break;
         }
+        if scheduled {
+            crate::dispatch::fold(server.load_queued_plugins());
+        }
     }
 
     /// Schedule a bundle to be built.
@@ -299,7 +307,7 @@ impl Route {
     /// what waits for the page is answered as for a failed build.
     pub(crate) fn on_build_abandoned(&self) {
         self.state.set(State::Err(Log::init()));
-        self.resume_pending_responses();
+        self.resume_pending_responses(false);
     }
 
     /// Production keeps the reason to itself, see `resume_pending_responses`.
@@ -429,14 +437,14 @@ impl Route {
         Ok(())
     }
 
-    pub(crate) fn on_plugins_rejected(&self) -> Result<(), crate::Error> {
+    pub(crate) fn on_plugins_rejected(&self, in_handler: bool) -> Result<(), crate::Error> {
         bun_output::scoped_log!(
             debug,
             "HTMLBundleRoute(0x{:x}) plugins rejected",
             std::ptr::from_ref(self) as usize
         );
         self.state.set(State::Err(Log::init()));
-        self.resume_pending_responses();
+        self.resume_pending_responses(in_handler);
         Ok(())
     }
 
@@ -593,10 +601,10 @@ impl Route {
             }
         }
 
-        self.resume_pending_responses();
+        self.resume_pending_responses(false);
     }
 
-    fn resume_pending_responses(&self) {
+    fn resume_pending_responses(&self, in_handler: bool) {
         // R-2: `JsCell::replace` moves the Vec out so the per-response loop
         // (which writes responses and may run uws callbacks) holds no borrow
         // into `self.pending_responses`.
@@ -619,6 +627,8 @@ impl Route {
                         StaticRoute::on(html.this_ptr(), resp);
                     }
                 }
+                // As for the requests that follow.
+                State::Err(_) if in_handler => resp.end_without_body(true),
                 State::Err(_log) => {
                     if self
                         .server

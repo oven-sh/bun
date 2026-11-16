@@ -164,7 +164,7 @@ impl JSMySQLConnection {
     #[inline]
     #[allow(clippy::mut_from_ref)]
     fn connection_mut(&self) -> &mut my_sql_connection::MySQLConnection {
-        // SAFETY: R-2 single-JS-thread invariant (see `JsCell` docs). The
+        // SAFETY: R-2 single-JS-thread invariant. The
         // `&mut` is fresh per call site; reentrancy through
         // `MySQLConnection::get_js_connection()` forms a shared
         // `&JSMySQLConnection` only.

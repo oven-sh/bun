@@ -70,7 +70,7 @@ pub(crate) fn new_detached_socket(cx: &mut JsScope<'_>, is_ssl: bool) -> JSValue
             buffered_data_for_node_net: Default::default(),
             bytes_written: Cell::new(0),
             native_callback: JsCell::new(NativeCallbacks::None),
-            twin: JsCell::new(None),
+            twin: Cell::new(None),
             verify_error: JsCell::new(None),
             latest_session: JsCell::new(None),
         });

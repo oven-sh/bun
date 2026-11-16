@@ -43,13 +43,17 @@ impl RequestEnsureRouteBundledCtx<'_> {
     }
 
     fn on_plugin_error(&mut self) -> JsResult<()> {
-        self.resp.end(b"Plugin Error", false);
+        send_plugin_error(self.resp);
         Ok(())
     }
 
     fn to_dev_response(&mut self) -> AnyResponse {
         self.resp
     }
+}
+
+pub(super) fn send_plugin_error(resp: AnyResponse) {
+    resp.end(b"Plugin Error", false);
 }
 
 #[derive(Copy, Clone)]

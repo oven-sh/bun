@@ -1,7 +1,7 @@
-import { expect, test } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import { spawn } from "child_process";
 import { once } from "events";
-import { bunEnv, bunExe, tls as certs } from "harness";
+import { bunEnv, bunExe, bunRun, tls as certs, isWindows } from "harness";
 import net from "net";
 import { Duplex } from "stream";
 import tls from "tls";
@@ -453,4 +453,150 @@ test("_parent is the wrapped net.Socket", async () => {
   } finally {
     closeAll(server, sockets);
   }
+});
+
+const run = (script: string) =>
+  bunRun(["-e", `const net = require("net"), tls = require("tls"), { Duplex } = require("stream"); ${script}`], {
+    CERTS: JSON.stringify(certs),
+  });
+
+describe.concurrent("tls.connect({ socket: duplex }): duplex.write()", () => {
+  // The handle buffers "x" until the handshake is done. onWrite() runs in the duplex.write() that sends it.
+  const withBufferedWrite = (script: string) => `
+    const server = tls.createServer(JSON.parse(process.env.CERTS), peer => {
+      let got = "";
+      peer.on("data", data => (got += data)).on("error", () => {});
+      peer.on("close", () => (console.log("server got", got), server.close()));
+    });
+    server.listen(0, "127.0.0.1", () => {
+      const raw = net.connect(server.address().port, "127.0.0.1");
+      const duplex = new Duplex({ read() {}, final: callback => raw.end(callback) });
+      let onWrite;
+      duplex.write = chunk => {
+        raw.write(chunk);
+        const callback = onWrite;
+        onWrite = undefined;
+        callback?.();
+        return true;
+      };
+      raw.on("data", data => duplex.push(data)).on("end", () => duplex.push(null));
+      const socket = tls.connect({ socket: duplex, rejectUnauthorized: false });
+      socket.write("x", () => socket.end());
+      ${script}
+    });`;
+
+  // The session is decoded after TLS has started and before it has sent the ClientHello.
+  const connectAndRunBeforeClientHello = (duplex: string, code: string) => `
+    const from = Buffer.from;
+    let socket;
+    Buffer.from = function (value) {
+      if (value !== "session" || !socket) return from.apply(this, arguments);
+      ${code};
+      return from("");
+    };
+    socket = tls.connect({ socket: ${duplex}, session: "session", rejectUnauthorized: false });`;
+
+  test("can terminate the handle while buffered data is written", async () => {
+    const result = await run(
+      withBufferedWrite(`socket.on("secureConnect", () => {
+        onWrite = () => socket._handle.terminate();
+        socket._write("y", "utf8", () => {});
+        raw.end();
+      });`),
+    );
+    expect(result).toSpawn("server got xy");
+  });
+
+  test("can destroy the socket, and bytesWritten counts the buffered data", async () => {
+    const result = await run(
+      withBufferedWrite(`socket.on("secureConnect", () => (onWrite = () => socket.destroy()));
+        socket.on("close", () => (console.log(socket.bytesWritten), raw.end()));`),
+    );
+    expect(result).toSpawn("1\nserver got x");
+  });
+
+  test("can complete the handshake synchronously during a _write() after buffered data", async () => {
+    const result = await run(`
+      const near = new Duplex({ read() {}, write: (chunk, encoding, callback) => callback(void far.push(chunk)) });
+      const far = new Duplex({ read() {}, write: (chunk, encoding, callback) => callback(void near.push(chunk)) });
+      const secureContext = tls.createSecureContext(JSON.parse(process.env.CERTS));
+      new tls.TLSSocket(far, { isServer: true, secureContext }).on("data", data => console.log("server got " + data));
+      setImmediate(() => {
+        ${connectAndRunBeforeClientHello("near", `socket._write("y", "utf8", () => {})`)}
+        socket.write("x");
+      });`);
+    expect(result).toSpawn("server got xy");
+  });
+});
+
+describe.concurrent("reconnecting after upgradeTLS()", () => {
+  test.each([
+    ["raw", "secure", "secure closed\nhello -1"],
+    ["secure", "raw", "hello -1\nraw closed"],
+  ])("connect() with the %s socket as _handle closes the %s socket and uses TLS", async (reused, other, stdout) => {
+    const result = await run(`
+      const server = tls.createServer(JSON.parse(process.env.CERTS), peer => peer.on("error", () => {}).pipe(peer));
+      await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
+      const { port } = server.address();
+      const handlers = name => ({ data() {}, handshake() {}, close: () => console.log(name, "closed") });
+      const plain = await Bun.connect({ hostname: "127.0.0.1", port, socket: handlers("raw") });
+      const [raw, secure] = plain.upgradeTLS({ tls: { rejectUnauthorized: false }, socket: handlers("secure") });
+
+      const socket = new tls.TLSSocket(undefined, { rejectUnauthorized: false });
+      socket._handle = ${reused};
+      socket.connect(port, "127.0.0.1");
+      socket.on("secureConnect", () => socket.write("hello"));
+      socket.on("data", data => {
+        console.log(String(data), ${other}.write("x"));
+        socket.destroy();
+        server.close();
+      });`);
+    expect(result).toSpawn(stdout);
+  });
+
+  test("connect() with the secure socket as _handle after its end() detaches the raw socket", async () => {
+    const result = await run(`
+      const server = tls.createServer(JSON.parse(process.env.CERTS), peer => peer.on("error", () => {}).pipe(peer));
+      await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
+      const { port } = server.address();
+      const [handshake, reply] = [Promise.withResolvers(), Promise.withResolvers()];
+      let onRawData;
+      const plain = await Bun.connect({ hostname: "127.0.0.1", port, socket: { data: () => onRawData?.() } });
+      const [raw, secure] = plain.upgradeTLS({
+        tls: { rejectUnauthorized: false },
+        socket: { data() {}, handshake: handshake.resolve },
+      });
+      await handshake.promise;
+
+      // The first connection stays open until the server replies to the close_notify.
+      secure.end();
+      onRawData = reply.resolve;
+      const socket = new tls.TLSSocket(undefined, { rejectUnauthorized: false });
+      socket._handle = secure;
+      socket.on("error", () => {}).connect(port, "127.0.0.1");
+      await reply.promise;
+      const deadline = performance.now() + 3_000;
+      while (raw.readyState !== -1 && performance.now() < deadline) await new Promise(setImmediate);
+      console.log(raw.readyState);
+      process.exit(0);`);
+    expect(result).toSpawn("-1");
+  });
+
+  test("connect({ socket }) in 'connectionAttempt' closes that socket when the attempt starts", async () => {
+    const result = await run(`
+      const server = tls.createServer(JSON.parse(process.env.CERTS), peer => peer.on("error", () => {}).resume());
+      server.listen(0, "127.0.0.1", () => {
+        const { port } = server.address();
+        const raw = net.connect(port, "127.0.0.1", () => {
+          const socket = tls.connect({ port, host: "127.0.0.1", rejectUnauthorized: false });
+          socket.once("connectionAttempt", () => socket.connect({ socket: raw }));
+          socket.once("secureConnect", () => {
+            raw.on("error", () => {}).write("x", error => console.log(error.code));
+            socket.destroy();
+            server.close();
+          });
+        });
+      });`);
+    expect(result).toSpawn(isWindows ? "EPIPE" : "EBADF");
+  });
 });

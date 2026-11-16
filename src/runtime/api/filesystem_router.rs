@@ -129,16 +129,7 @@ impl FileSystemRouter {
         };
 
         if let Some(dir_ref) = root_dir_info {
-            // Snapshot the cached `DirEntry`'s entries under `entries_mutex`
-            // (other threads rewrite the map in place under that lock), then drop
-            // the guard: `bust_dir_cache` / the recursion below re-acquire it.
-            let entries: Vec<&Fs::Entry> = {
-                let _entries_lock = Fs::FileSystem::get().fs.entries_mutex().lock_guard();
-                match dir_ref.get_entries_const() {
-                    Some(entries) => entries.data.values().copied().collect(),
-                    None => Vec::new(),
-                }
-            };
+            let entries = vm.fs().fs.snapshot_entries(dir_ref.entries);
             {
                 'outer: for entry in entries {
                     if entry.base().first() == Some(&b'.') {

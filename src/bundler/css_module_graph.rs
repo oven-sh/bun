@@ -2,7 +2,7 @@ use std::borrow::Cow;
 
 use bstr::BStr;
 use bun_alloc::Arena;
-use bun_ast::{ImportKind, ImportRecord, Index, Loader, Loc, Log, Source, Symbol};
+use bun_ast::{ImportKind, ImportRecord, Index, Loader, Loc, Log, Source};
 use bun_core::strings::BOM;
 
 use crate::bun_css::css_modules::{
@@ -68,7 +68,7 @@ struct CssModuleFile<'a> {
     source: Source<'a>,
     /// `None` when the file's loader is not CSS.
     sheet: Option<BundlerStyleSheet<'a>>,
-    symbols: Vec<Symbol<'a>>,
+    symbols: bun_ast::symbol::List<'a>,
     import_records: Vec<ImportRecord<'a>>,
 }
 
@@ -103,7 +103,7 @@ impl<'a> CssModuleFile<'a> {
                 ..Default::default()
             },
             sheet: None,
-            symbols: Vec::new(),
+            symbols: bun_ast::symbol::List::new_in(bump),
             import_records: Vec::new(),
         };
         let Some(contents) = contents else {

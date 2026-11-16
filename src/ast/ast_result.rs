@@ -11,7 +11,7 @@ use crate::{
 };
 
 use crate::part::List as PartList;
-use crate::symbol::List as SymbolList;
+use crate::symbol::{self, List as SymbolList};
 use crate::{AstArrayHashMap, AstBox, AstStringArrayHashMap, AstStringHashMap, AstVec, StoreRef};
 type ImportRecordList<'a> = crate::import_record::List<'a>;
 
@@ -145,6 +145,11 @@ impl<'a> Ast<'a> {
             import_meta_ref: Ref::NONE,
             depends_on_more_than_source: false,
         }
+    }
+
+    pub fn take_symbols(&mut self) -> symbol::Map<'a> {
+        let empty = SymbolList::new_in(self.symbols.allocator());
+        symbol::Map::init_with_one_list(core::mem::replace(&mut self.symbols, empty))
     }
 }
 

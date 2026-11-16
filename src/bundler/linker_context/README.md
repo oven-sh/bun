@@ -36,12 +36,11 @@ The LinkerContext operates in several main phases:
 
 **What it does**:
 
-1. Computes source map data if needed
-2. **Phase 1**: `scanImportsAndExports()` - Analyzes all imports/exports across modules
-3. **Phase 2**: `treeShakingAndCodeSplitting()` - Eliminates dead code and determines chunk boundaries
-4. **Phase 3**: `computeChunks()` - Creates the final chunk structure
-5. **Phase 4**: `computeCrossChunkDependencies()` - Resolves dependencies between chunks
-6. Follows symbol references to ensure consistency
+1. **Phase 1**: `scanImportsAndExports()` - Analyzes all imports/exports across modules
+2. **Phase 2**: `treeShakingAndCodeSplitting()` - Eliminates dead code and determines chunk boundaries
+3. **Phase 3**: `computeChunks()` - Creates the final chunk structure
+4. **Phase 4**: `computeCrossChunkDependencies()` - Resolves dependencies between chunks
+5. Follows symbol references to ensure consistency
 
 **Key responsibilities**:
 

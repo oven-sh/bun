@@ -3,8 +3,8 @@ use crate::css_parser::compat::Feature;
 use crate::css_parser::targets::Targets;
 use crate::css_parser::{PrintErr, Printer, StyleContext, VendorPrefix};
 use crate::{CSSStringFns, IdentFns};
-type SymbolList<'a> = Vec<bun_ast::Symbol<'a>>;
 
+use bun_ast::SymbolList;
 use bun_collections::ArrayHashMap;
 
 bun_core::declare_scope!(CSS_SELECTORS, visible);

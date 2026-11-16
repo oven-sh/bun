@@ -570,29 +570,7 @@ pub(crate) fn scan_imports_and_exports(
         // Step 5: Create namespace exports for every file. This is always necessary
         // for CommonJS files, and is also necessary for other files if they are
         // imported using an import star statement.
-        // Note: `do` will wait for all to finish before moving forward
-        //
-        // `do_step5` only touches distinct SoA rows per `source_index` (the
-        // columns are pre-sized and never reallocate during this step).
-        // The tasks share one `&LinkerContext`; the callee uses it
-        // for reads and writes per-row cells via raw `split_raw()` pointers.
-        {
-            let ctx: &LinkerContext<'_, '_> = this;
-            let worker_pool = this.worker_pool();
-            worker_pool.each(
-                ctx,
-                |ctx: &&LinkerContext<'_, '_>, source_index: Index, i: usize| {
-                    // SAFETY: `reachable` names each file once, so each call has its own rows.
-                    unsafe { ctx.do_step5(source_index, i) };
-                },
-                &reachable,
-            );
-        }
-
-        // No post-fan-out ownership transfer is needed: `do_step5` only grows
-        // global-allocator `Vec`s (`part.dependencies`, `declared_symbols`),
-        // which are thread-safe to grow per-row, and never pushes to the
-        // arena-backed `PartList`/import-record columns.
+        this.do_step5();
     }
 
     if FeatureFlags::HELP_CATCH_MEMORY_ISSUES {

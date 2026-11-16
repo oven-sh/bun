@@ -3,18 +3,20 @@ use bun_collections::MultiArrayList;
 use bun_core::string_joiner::{StringJoiner, Watcher};
 use bun_sourcemap::{LineColumnOffset, LineColumnOffsetOptional};
 
-use crate::chunk::IntermediateOutput;
+use crate::chunk::{ChunkOutput, IntermediateOutput};
 use crate::linker_context_mod::{GenerateChunkCtx, LinkerOptionsMode};
 use crate::thread_pool;
-use crate::{Chunk, CompileResultForSourceMap, Index, options};
+use crate::{CompileResultForSourceMap, Index, options};
 
 /// This runs after we've already populated the compile results
-pub(crate) fn post_process_css_chunk(
-    ctx: GenerateChunkCtx,
+pub(crate) fn post_process_css_chunk<'r>(
+    ctx: GenerateChunkCtx<'_, 'r, '_>,
     worker: &mut thread_pool::Worker,
-    chunk: &mut Chunk,
+    chunk_index: usize,
+    output: &mut ChunkOutput<'r, '_>,
 ) -> Result<(), crate::Error> {
     let c = ctx.c;
+    let chunk = &ctx.chunks[chunk_index];
     // Avoid FRU `..Default::default()` — StringJoiner impls Drop (E0509).
     let mut j = StringJoiner::default();
     j.watcher = Watcher {
@@ -47,7 +49,7 @@ pub(crate) fn post_process_css_chunk(
     // TODO: meta
 
     // Concatenate the generated CSS chunks together
-    let compile_results = &chunk.compile_results_for_chunk;
+    let compile_results = &ctx.compile_results[chunk_index];
 
     let mut compile_results_for_source_map: MultiArrayList<CompileResultForSourceMap> =
         MultiArrayList::default();
@@ -97,8 +99,6 @@ pub(crate) fn post_process_css_chunk(
         }
 
         // Save the offset to the start of the stored JavaScript
-        // code() borrows from
-        // compile_results which outlives the joiner; treat as static (no copy/free).
         j.push_static(compile_result.code());
 
         if let Some(source_map_chunk) = compile_result.source_map_chunk() {
@@ -127,28 +127,20 @@ pub(crate) fn post_process_css_chunk(
     // Make sure the file ends with a newline
     j.ensure_newline_at_end();
 
-    let alloc = worker.arena().heap();
-    // SAFETY: every borrowed node in `j` points into `chunk.compile_results_for_chunk`
-    // (filled in place before post-processing, never reassigned afterwards), graph
-    // source paths, or `'static` literals; `watcher.input` is
-    // `chunk.unique_key` (bundle arena). All of these outlive the joiner stored in
-    // `chunk.intermediate_output`, which is only read while the chunk and the linker
-    // graph are alive.
-    let mut j = unsafe { j.detach_lifetime() };
-    chunk.intermediate_output =
-        bun_core::handle_oom(c.break_output_into_pieces(alloc, &mut j, ctx.chunks.len() as u32));
+    output.intermediate_output =
+        bun_core::handle_oom(c.break_output_into_pieces(j, ctx.chunks.len() as u32));
     // TODO: meta contents
 
-    chunk.isolated_hash = c.generate_isolated_hash(chunk);
+    output.isolated_hash = c.generate_isolated_hash(chunk, &output.intermediate_output);
     // chunk.flags.is_executable = is_executable;
 
     if c.options.source_maps != options::SourceMapOption::None {
-        let can_have_shifts = matches!(chunk.intermediate_output, IntermediateOutput::Pieces(_));
-        chunk.output_source_map = c.generate_source_map_for_chunk(
-            chunk.isolated_hash,
+        let can_have_shifts = matches!(output.intermediate_output, IntermediateOutput::Pieces(_));
+        output.output_source_map = c.generate_source_map_for_chunk(
+            output.isolated_hash,
             worker,
             &compile_results_for_source_map,
-            &c.resolver.opts.output_dir,
+            c.options.output_dir,
             can_have_shifts,
         )?;
     }

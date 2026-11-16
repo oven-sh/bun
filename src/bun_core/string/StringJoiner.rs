@@ -96,40 +96,6 @@ impl<'a> StringJoiner<'a> {
         self.nodes.push(node);
     }
 
-    /// Re-tag every borrowed segment (and `watcher.input`) as `'static` so the
-    /// joiner can be stored in lifetime-free storage and read later (e.g. the
-    /// bundler's deferred `Chunk.intermediate_output`).
-    ///
-    /// # Safety
-    /// Every borrowed segment previously pushed (`push`/`push_static`) and
-    /// `watcher.input` must remain valid — not freed, moved, or reallocated —
-    /// for as long as the returned joiner (or anything it is moved into) is
-    /// alive.
-    pub unsafe fn detach_lifetime(self) -> StringJoiner<'static> {
-        StringJoiner {
-            len: self.len,
-            nodes: self
-                .nodes
-                .into_iter()
-                .map(|node| match node {
-                    Node::Borrowed(slice) => {
-                        // SAFETY: caller contract — the backing storage outlives
-                        // the returned joiner.
-                        Node::Borrowed(unsafe { &*core::ptr::from_ref::<[u8]>(slice) })
-                    }
-                    Node::Owned(boxed) => Node::Owned(boxed),
-                })
-                .collect(),
-            watcher: Watcher {
-                // SAFETY: caller contract — `watcher.input` outlives the
-                // returned joiner.
-                input: unsafe { &*core::ptr::from_ref::<[u8]>(self.watcher.input) },
-                estimated_count: self.watcher.estimated_count,
-                needs_newline: self.watcher.needs_newline,
-            },
-        }
-    }
-
     /// This deinits the string joiner on success, the new string is owned by the caller.
     pub fn done(&mut self) -> Result<Box<[u8]>, AllocError> {
         if self.nodes.is_empty() {
@@ -282,27 +248,5 @@ mod tests {
         j.push(b"no match");
         j.push_cloned(b"another KEY");
         assert_eq!(j.watcher.estimated_count, 2);
-    }
-
-    #[test]
-    fn detach_lifetime_round_trips_borrowed_data() {
-        let borrowed = b"KEY borrowed ".to_vec();
-        let input = b"KEY".to_vec();
-        let mut j = StringJoiner {
-            watcher: Watcher {
-                input: &input,
-                ..Default::default()
-            },
-            ..Default::default()
-        };
-        j.push(&borrowed);
-        j.push_cloned(b"cloned KEY");
-        // SAFETY: `borrowed` and `input` are declared before `detached`, so they outlive it.
-        let mut detached = unsafe { j.detach_lifetime() };
-        assert_eq!(detached.len, "KEY borrowed cloned KEY".len());
-        assert_eq!(detached.watcher.input, b"KEY");
-        assert_eq!(detached.watcher.estimated_count, 2);
-        assert!(detached.watcher.needs_newline);
-        assert_eq!(&*detached.done().unwrap(), b"KEY borrowed cloned KEY");
     }
 }

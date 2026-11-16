@@ -334,9 +334,9 @@ impl<'a, 'ast> ImportScanner<'a, 'ast> {
                             if !symbol.has_link() {
                                 continue;
                             }
-                            // Follow the chain of replacements to the live symbol.
-                            let link = js_ast::symbol::follow_symbols(&p.symbols, name_ref);
                             let name = symbol.original_name.slice();
+                            // Follow the chain of replacements to the live symbol.
+                            let link = js_ast::symbol::follow_symbols(&mut p.symbols, name_ref);
                             let member = p
                                 .module_scope()
                                 .get_member_with_hash(name, js_ast::Scope::get_member_hash(name));

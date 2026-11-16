@@ -35,6 +35,7 @@ pub struct Graph<'a> {
     pub input_files: MultiArrayList<InputFile<'a>>,
     /// Every source index has an associated Ast
     /// When a parse is in progress / queued, it is `Ast.empty`
+    /// Empty after `create_linker_graph`.
     // `JSAst<'a>` borrows from the arena behind `self.heap`; `'a` ties the AST
     // entries to that arena's lifetime (sibling-field relationship).
     pub ast: MultiArrayList<JSAst<'a>>,

@@ -111,7 +111,6 @@ pub mod mal_prelude {
     pub use crate::bundle_v2::CompileResultForSourceMapColumns as _;
     pub use crate::bundled_ast::BundledAstColumns as _;
     pub use crate::linker_graph::FileColumns as _;
-    pub use crate::linker_graph::entry_point::EntryPointColumns as _;
     pub use crate::linker_graph::js_meta::JSMetaColumns as _;
     pub use bun_ast::server_component_boundary::ServerComponentBoundaryColumns as _;
 }
@@ -250,11 +249,9 @@ pub use chunk::Chunk;
 pub use defines::{Define, DefineDataExt, DefineExt};
 /// See `linker_context_mod` module.
 pub(crate) use linker_context_mod::LinkerContext;
+pub use linker_graph::EntryPoint;
 /// See `linker_graph` module.
 pub use linker_graph::LinkerGraph;
-/// `EntryPoint::Kind` is an inherent associated type on the struct (not a
-/// sibling module — that would collide with this re-export).
-pub use linker_graph::entry_point::EntryPoint;
 /// See `options_impl`.
 pub use options_impl::BundleOptions;
 pub use output_file::OutputFile;

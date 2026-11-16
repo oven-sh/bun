@@ -701,50 +701,6 @@ pub mod parse_worker {
     }
 
     // ───────────────────────────────────────────────────────────────────────────
-    // CSS Symbol bridge — `bun_ast::Symbol` ↔ `bun_ast::Symbol`
-    //
-    // `StylesheetExtra.symbols` is `Vec<bun_ast::Symbol>`;
-    // `new_lazy_export_ast_impl` takes `Vec<bun_ast::Symbol>`. Convert
-    // field-by-field so CSS-module local refs (`ref.inner_index()`) index a
-    // populated symbol table.
-    // ───────────────────────────────────────────────────────────────────────────
-
-    fn css_symbols_to_parser_symbols(
-        src: &[bun_ast::Symbol<'static>],
-        bump: &'static Bump,
-    ) -> bun_ast::symbol::List<'static> {
-        use bun_ast::symbol::{Kind as PKind, Symbol as PSym};
-        let mut out = bun_ast::symbol::List::with_capacity_in(src.len(), bump);
-        for s in src {
-            // Post-dedup `bun_ast::Symbol` IS `bun_ast::symbol::Symbol`, so
-            // `s.kind`/`s.import_item_status` are already the target nominal types
-            // — the former `#[repr(u8)]` round-trip bridge is no longer needed.
-            let kind: PKind = s.kind;
-            let import_item_status: bun_ast::ImportItemStatus = s.import_item_status;
-            // `bun_ast::Ref` is a re-export of `bun_ast::Ref` (ast/base.rs:172)
-            // — same nominal type, no bridge needed.
-            let link: bun_ast::Ref = s.link.get();
-            out.push(PSym {
-                original_name: s.original_name,
-                // CSS-module locals are never ES6 namespace-aliased (the CSS parser
-                // never assigns `namespace_alias`); drop rather than bridge the
-                // distinct `NamespaceAlias` mirrors.
-                namespace_alias: None,
-                link: std::cell::Cell::new(link),
-                use_count_estimate: s.use_count_estimate,
-                chunk_index: core::sync::atomic::AtomicU32::new(
-                    s.chunk_index.load(core::sync::atomic::Ordering::Relaxed),
-                ),
-                nested_scope_slot: s.nested_scope_slot,
-                kind,
-                import_item_status,
-                flags: s.flags,
-            });
-        }
-        out
-    }
-
-    // ───────────────────────────────────────────────────────────────────────────
     // getAST
     // ───────────────────────────────────────────────────────────────────────────
 
@@ -1275,11 +1231,6 @@ pub mod parse_worker {
                 }
                 // If this is a css module, the final exports object wil be set in `generateCodeForLazyExport`.
                 let root = Expr::allocate(bump, E::Object::default(), Loc { start: 0 });
-                // `StylesheetExtra.symbols` is
-                // `Vec<bun_ast::Symbol>`; `new_lazy_export_ast_impl` takes
-                // `Vec<bun_ast::Symbol>`. Convert field-by-field so CSS-module local refs
-                // index a populated symbol table.
-                let symbols = css_symbols_to_parser_symbols(&extra.symbols, bump);
                 let lazy = js_parser::new_lazy_export_ast_impl(
                     bump,
                     &mut topts.define,
@@ -1288,7 +1239,7 @@ pub mod parse_worker {
                     root,
                     source,
                     b"",
-                    symbols,
+                    extra.symbols,
                 );
                 let mut ast = JSAst::init(lazy?.ok_or(AnyError::ParserError)?);
                 *stylesheet = Some(Box::new(css_ast));
@@ -2124,11 +2075,7 @@ pub mod parse_worker {
             .or_else(|| file_path.loader(unsafe { &(*transpiler).options.loaders }))
             .unwrap_or(Loader::File);
 
-        // SAFETY: `worker_raw` derived from the live `this: &mut Worker` above.
-        // Read the `BackRef` field via `worker_raw` (not `this`) so no
-        // parent-`&mut` access pops the `transpiler`/`resolver` tag chain derived
-        // above. `BackRef` is `Copy`; the deref to `&BundleV2` is safe.
-        let worker_ctx = unsafe { (*worker_raw).ctx };
+        let task_ctx = task.ctx.expect("ParseTask.ctx unset");
 
         *step = Step::Parse;
 
@@ -2148,8 +2095,8 @@ pub mod parse_worker {
 
         if (use_directive == UseDirective::Client
         && task.known_target != options::Target::ServerComponentsSsr
-        && worker_ctx.framework.is_some()
-        && worker_ctx
+        && task_ctx.framework.is_some()
+        && task_ctx
             .framework
             .as_ref()
             .unwrap()
@@ -2431,7 +2378,6 @@ pub mod parse_worker {
             content_hash: 0,
         };
         let mut stylesheet = None;
-        let task_ctx = task.ctx.expect("ParseTask.ctx unset");
         let module_type = opts.module_type;
         // `topts` (a `&BundleOptions`) is dead past this point; the callees take
         // raw `*mut Transpiler` and reborrow `(*transpiler).options` mutably.

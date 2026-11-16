@@ -754,7 +754,7 @@ pub(crate) fn merge_small_chunks(
 
     let entry_points_len = this.graph.entry_points.len();
     let sources = this.parse_graph().input_files.items_source();
-    let entry_source_indices = this.graph.entry_points.items_source_index();
+    let entry_source_indices = &this.graph.entry_points;
     let kinds = this.graph.files.items_entry_point_kind();
     let fold_pure = min_chunk_size > 0;
     if !fold_pure

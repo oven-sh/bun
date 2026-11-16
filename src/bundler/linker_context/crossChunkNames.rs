@@ -74,6 +74,7 @@ pub(crate) fn assign_unminified(
     if refs.is_empty() {
         return Ok(());
     }
+    let arena = c.arena();
     let mut used = reserved_names(c, chunks)?;
     let mut buf: Vec<u8> = Vec::new();
     c.cross_chunk_names.reserve(refs.len());
@@ -104,7 +105,7 @@ pub(crate) fn assign_unminified(
             name = &buf;
         }
         used.put(name, 1)?;
-        let name: &[u8] = c.arena().alloc_slice_copy(name);
+        let name: &[u8] = arena.alloc_slice_copy(name);
         c.cross_chunk_names.insert(ref_, name);
         // An importing chunk's renamer looks the binding up by the symbol its links lead to.
         let followed = c.graph.symbols.follow(ref_);
@@ -196,6 +197,7 @@ pub(crate) fn assign_minified(
 
     let mut name: Vec<u8> = Vec::with_capacity(16);
     let mut next: isize = 0;
+    let arena = c.arena();
     c.cross_chunk_names.reserve(refs.len());
     for &(_, _, ref_, capital) in &order {
         loop {
@@ -207,7 +209,7 @@ pub(crate) fn assign_minified(
             break;
         }
         c.cross_chunk_names
-            .insert(ref_, c.arena().alloc_slice_copy(&name));
+            .insert(ref_, arena.alloc_slice_copy(&name));
     }
 
     // Pin in every chunk that declares or imports the binding.

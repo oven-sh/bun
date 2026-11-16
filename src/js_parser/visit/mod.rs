@@ -1640,9 +1640,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
                                     p.hoisted_ref_for_sloppy_mode_block_fn.get(&name_ref)
                                 {
                                     // Merge the two identifiers back into a single one
-                                    p.symbols[hoisted_ref.inner_index() as usize]
-                                        .link
-                                        .set(name_ref);
+                                    p.symbols[hoisted_ref.inner_index() as usize].link = name_ref;
                                 }
                                 non_fn_stmts.push(stmt);
                                 continue;

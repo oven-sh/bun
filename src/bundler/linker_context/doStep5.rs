@@ -6,63 +6,136 @@ use bun_ast::Loc;
 use bun_collections::HashMap;
 use bun_core::strings;
 
-use crate::bundled_ast::{Flags as AstFlags, NamedImports};
-use bun_ast::symbol::Use as SymbolUse;
+use crate::bundled_ast::{Flags as AstFlags, NamedExports, NamedImports};
+use bun_ast::ast_result::{TopLevelSymbolToParts, TsEnumsMap};
+use bun_ast::symbol::{self, Use as SymbolUse};
 use bun_ast::{
     AstArena, AstVec, Binding, DeclaredSymbol, DeclaredSymbolList, Dependency, E, Expr, G, Part,
-    PartSymbolUseMap, Ref, S, Stmt, StoreStr,
+    PartList, PartSymbolUseMap, Ref, S, Stmt, StoreStr,
 };
 
+use crate::linker_graph::{entry_point, runtime_function, top_level_symbol_to_parts};
 use crate::options::Format;
 use crate::perf;
+use crate::thread_pool::Workers;
 use crate::{Index, LinkerContext, RefImportData, ResolvedExports, WrapKind, js_meta};
 
-pub use crate::ThreadPool;
+/// What every task reads.
+struct Step5Ctx<'c, 'a> {
+    workers: Workers<'c, 'a>,
+    output_format: Format,
+    export_runtime_function: &'static [u8],
+    unbound_module_ref: Ref,
+    symbols: &'c symbol::Map<'a>,
+    ts_enums: &'c TsEnumsMap<'a>,
+    entry_point_kind: &'c [entry_point::Kind],
+    exports_ref: &'c [Ref],
+    named_exports: &'c [NamedExports<'a>],
+    top_level_symbols_to_parts: &'c [TopLevelSymbolToParts<'a>],
+    top_level_symbol_to_parts_overlay: &'c [TopLevelSymbolToParts<'a>],
+    resolved_exports: &'c [ResolvedExports<'a>],
+    lifted_setter_param: &'c [Ref],
+    imports_to_bind: &'c [RefImportData<'a>],
+    probably_typescript_type: &'c [js_meta::ProbablyTypescriptType<'a>],
+    dynamic_import_referenced_aliases: &'c [js_meta::DynamicImportReferencedAliases<'a>],
+}
+
+/// What the task of a file writes.
+struct FileRows<'c, 'a> {
+    source_index: u32,
+    sorted_aliases: &'c mut js_meta::SortedAndFilteredExportAliases<'a>,
+    meta_flags: &'c mut js_meta::Flags,
+    ast_flags: &'c mut AstFlags,
+    parts: &'c mut [Part<'a>],
+    named_imports: &'c mut NamedImports<'a>,
+}
 
 impl LinkerContext<'_, '_> {
     /// Step 5: Create namespace exports for every file. This is always necessary
     /// for CommonJS files, and is also necessary for other files if they are
     /// imported using an import star statement.
-    ///
-    /// # Safety
-    ///
-    /// Until this returns, nothing else touches the rows that it takes from `split_raw()`.
-    pub(crate) unsafe fn do_step5(&self, source_index_: Index, _: usize) {
-        let source_index = source_index_.get();
+    pub(crate) fn do_step5(&mut self) {
+        let worker_pool = self.worker_pool();
+        let export_runtime_function = self.export_runtime_function();
+        let (ast, meta) = (self.graph.ast.split_mut(), self.graph.meta.split_mut());
+        let stable_source_indices = &self.graph.stable_source_indices;
+        let rows = (meta.sorted_and_filtered_export_aliases.iter_mut())
+            .zip(meta.flags)
+            .zip(ast.flags)
+            .zip(ast.parts.iter_mut().map(PartList::as_mut_slice))
+            .zip(ast.named_imports)
+            .enumerate()
+            // Only reachable files have a stable index.
+            .filter(|&(id, _)| stable_source_indices[id] != Index::INVALID.get());
+        worker_pool.each_iter(
+            Step5Ctx {
+                workers: self.workers,
+                output_format: self.options.output_format,
+                export_runtime_function,
+                unbound_module_ref: self.unbound_module_ref,
+                symbols: &self.graph.symbols,
+                ts_enums: &self.graph.ts_enums,
+                entry_point_kind: self.graph.files.items_entry_point_kind(),
+                exports_ref: ast.exports_ref,
+                named_exports: ast.named_exports,
+                top_level_symbols_to_parts: ast.top_level_symbols_to_parts,
+                top_level_symbol_to_parts_overlay: meta.top_level_symbol_to_parts_overlay,
+                resolved_exports: meta.resolved_exports,
+                lifted_setter_param: meta.lifted_setter_param,
+                imports_to_bind: meta.imports_to_bind,
+                probably_typescript_type: meta.probably_typescript_type,
+                dynamic_import_referenced_aliases: meta.dynamic_import_referenced_aliases,
+            },
+            Step5Ctx::run,
+            self.graph.reachable_files.len(),
+            rows.map(
+                |(id, ((((sorted_aliases, meta_flags), ast_flags), parts), named_imports))| {
+                    FileRows {
+                        source_index: id as u32,
+                        sorted_aliases,
+                        meta_flags,
+                        ast_flags,
+                        parts,
+                        named_imports,
+                    }
+                },
+            ),
+        );
+    }
+}
+
+impl<'a> Step5Ctx<'_, 'a> {
+    fn top_level_symbols_to_parts(&self, id: u32, ref_: Ref) -> &[u32] {
+        top_level_symbol_to_parts(
+            self.top_level_symbol_to_parts_overlay,
+            self.top_level_symbols_to_parts,
+            id,
+            ref_,
+        )
+    }
+
+    fn run(&self, rows: &mut FileRows<'_, 'a>) {
         let _trace = perf::trace("Bundler.CreateNamespaceExports");
 
-        let c: &LinkerContext<'_, '_> = self;
-
+        let FileRows {
+            source_index,
+            sorted_aliases,
+            meta_flags,
+            ast_flags,
+            parts,
+            named_imports,
+        } = rows;
+        let source_index = *source_index;
         let id = source_index;
-        if id as usize >= c.graph.meta.len() {
-            return;
-        }
 
-        let worker = ThreadPool::Worker::get(c.bundle);
+        let worker = self.workers.get();
 
         // we must use this arena here
         let arena: &AstArena = worker.arena();
 
-        let (ast, meta) = (c.graph.ast.split_raw(), c.graph.meta.split_raw());
-        // SAFETY: `id < meta.len() == ast.len()`, and these rows are this call's alone. These five
-        // columns are never borrowed whole, and step 5 writes no other.
-        let (sorted_aliases, meta_flags, ast_flags, parts, named_imports) = unsafe {
-            (
-                &mut *meta
-                    .sorted_and_filtered_export_aliases
-                    .cast::<js_meta::SortedAndFilteredExportAliases>()
-                    .add(id as usize),
-                &mut *meta.flags.cast::<js_meta::Flags>().add(id as usize),
-                &mut *ast.flags.cast::<AstFlags>().add(id as usize),
-                &mut *ast.parts.cast::<bun_ast::PartList>().add(id as usize),
-                &mut *ast.named_imports.cast::<NamedImports>().add(id as usize),
-            )
-        };
-
-        let resolved_exports = &c.graph.meta.items_resolved_exports()[id as usize];
-        let lifted_setter_param = c.graph.meta.items_lifted_setter_param()[id as usize];
-        let imports_to_bind = c.graph.meta.items_imports_to_bind();
-        let probably_typescript_type = c.graph.meta.items_probably_typescript_type();
+        let resolved_exports = &self.resolved_exports[id as usize];
+        let imports_to_bind = self.imports_to_bind;
+        let probably_typescript_type = self.probably_typescript_type;
 
         // Every importer's view of this file's exports was accounted for in
         // step 1 (named imports, tracked `import()` / `require()` accesses):
@@ -70,8 +143,8 @@ impl LinkerContext<'_, '_> {
         // (or the chunk's export clause when splitting) stops keeping them
         // alive. A user-specified entry point exports everything.
         let referenced_filter: Option<&js_meta::DynamicImportReferencedAliases> = {
-            let entry_point_kinds = c.graph.files.items_entry_point_kind();
-            let col = c.graph.meta.items_dynamic_import_referenced_aliases();
+            let entry_point_kinds = self.entry_point_kind;
+            let col = self.dynamic_import_referenced_aliases;
             match &col[id as usize] {
                 js_meta::DynamicImportReferencedAliases::Partial(_)
                     if entry_point_kinds[id as usize] != crate::EntryPoint::Kind::UserSpecified =>
@@ -99,7 +172,7 @@ impl LinkerContext<'_, '_> {
 
         if !is_wrapped_commonjs {
             'next_alias: for (alias, export_) in resolved_exports.iter() {
-                let alias: &[u8] = alias;
+                let alias: &'a [u8] = alias.slice();
                 let this_id = export_.data.source_index.get();
                 let mut inner_count: usize = 0;
                 // Re-exporting multiple symbols with the same name causes an ambiguous
@@ -156,21 +229,18 @@ impl LinkerContext<'_, '_> {
             strings::sort_asc(aliases.as_mut_slice());
         }
         let export_aliases = aliases.into_bump_slice();
-        *sorted_aliases = AstVec::from_iter_in(
+        **sorted_aliases = AstVec::from_iter_in(
             export_aliases.iter().map(|alias| StoreStr::new(alias)),
             arena,
         );
 
         // Export creation uses "sortedAndFilteredExportAliases" so this must
         // come second after we fill in that array
-        c.create_exports_for_file(
+        self.create_exports_for_file(
             arena,
             id,
-            resolved_exports,
-            imports_to_bind,
             export_aliases,
             re_exports_count,
-            lifted_setter_param,
             meta_flags,
             ast_flags,
             parts,
@@ -191,11 +261,11 @@ impl LinkerContext<'_, '_> {
         // hoist the per-file column pointer math out of the J×K inner loop
         // and (b) ensure the accelerator index is built on the large
         // `top_level_symbols_to_parts[id]` map before probing it J times.
-        let tlsp_overlay = &c.graph.meta.items_top_level_symbol_to_parts_overlay()[id as usize];
-        let tlsp_ast = &c.graph.ast.items_top_level_symbols_to_parts()[id as usize];
+        let tlsp_overlay = &self.top_level_symbol_to_parts_overlay[id as usize];
+        let tlsp_ast = &self.top_level_symbols_to_parts[id as usize];
 
         let our_imports_to_bind: &RefImportData = &imports_to_bind[id as usize];
-        for (part_index, part) in parts.as_mut_slice().iter_mut().enumerate() {
+        for (part_index, part) in parts.iter_mut().enumerate() {
             // Now that all files have been parsed, determine which property
             // accesses off of imported symbols are inlined enum values and
             // which ones aren't
@@ -225,9 +295,9 @@ impl LinkerContext<'_, '_> {
                 // Rare path: this import is a TypeScript enum
                 if let Some(import_data) = our_imports_to_bind.get(ref_) {
                     let import_ref = import_data.data.import_ref;
-                    if let Some(symbol) = c.graph.symbols.get_const(import_ref) {
+                    if let Some(symbol) = self.symbols.get_const(import_ref) {
                         if symbol.kind == bun_ast::symbol::Kind::TsEnum {
-                            if let Some(enum_data) = c.graph.ts_enums.get(&import_ref) {
+                            if let Some(enum_data) = self.ts_enums.get(&import_ref) {
                                 let mut found_non_inlined_enum = false;
 
                                 for (name, prop_use) in properties.iter() {
@@ -279,9 +349,7 @@ impl LinkerContext<'_, '_> {
                     part.symbol_uses.values()[j].count_estimate() > 0
                 });
 
-                // Inlined `c.top_level_symbols_to_parts(id, ref_)` against the
-                // hoisted per-file maps so the column pointer math (and the
-                // `&LinkerContext` deref) is out of the inner loop.
+                // `self.top_level_symbols_to_parts(id, ref_)`, with the row lookups hoisted out of the loop.
                 let other_parts: &[u32] = if let Some(overlay) = tlsp_overlay.get(&ref_) {
                     overlay.slice()
                 } else if let Some(list) = tlsp_ast.get(&ref_) {
@@ -316,26 +384,21 @@ impl LinkerContext<'_, '_> {
         }
     }
 
-    /// WARNING: This method is run in parallel over all files. Do not mutate data
-    /// for other files within this method or you will create a data race.
-    ///
-    /// Takes `&self` (read-only) plus the three SoA row cells it
-    /// mutates as explicit `&mut` params, so the parallel `do_step5` dispatch
-    /// never forms a concurrent `&mut LinkerContext` / whole-column `&mut [T]`.
     #[allow(clippy::too_many_arguments)]
-    pub(crate) fn create_exports_for_file<'a>(
+    fn create_exports_for_file(
         &self,
         arena: &'a AstArena,
         id: u32,
-        resolved_exports: &ResolvedExports,
-        imports_to_bind: &[RefImportData],
-        export_aliases: &[&[u8]],
+        export_aliases: &[&'a [u8]],
         re_exports_count: usize,
-        lifted_setter_param: Ref,
         meta_flags: &mut js_meta::Flags,
         ast_flags: &mut AstFlags,
-        ast_parts: &mut bun_ast::PartList<'a>,
+        ast_parts: &mut [Part<'a>],
     ) {
+        let resolved_exports = &self.resolved_exports[id as usize];
+        let lifted_setter_param = self.lifted_setter_param[id as usize];
+        let imports_to_bind = self.imports_to_bind;
+
         // 1 property per export
         let mut properties =
             bun_alloc::ArenaVec::<G::Property>::with_capacity_in(export_aliases.len(), arena);
@@ -356,7 +419,7 @@ impl LinkerContext<'_, '_> {
 
         let initial_flags = *meta_flags;
         let needs_exports_variable = initial_flags.needs_exports_variable;
-        let force_include_exports_for_entry_point = self.options.output_format == Format::Cjs
+        let force_include_exports_for_entry_point = self.output_format == Format::Cjs
             && initial_flags.force_include_exports_for_entry_point;
 
         let stmts_count =
@@ -409,7 +472,7 @@ impl LinkerContext<'_, '_> {
             // written to a property access later on
             // note: this is stack allocated
             let value: Expr = 'brk: {
-                if let Some(symbol) = self.graph.symbols.get_const(exp_data.import_ref) {
+                if let Some(symbol) = self.symbols.get_const(exp_data.import_ref) {
                     if symbol.namespace_alias.is_some() {
                         break 'brk Expr::init(
                             E::ImportIdentifier {
@@ -455,7 +518,6 @@ impl LinkerContext<'_, '_> {
             if lifted_setter_param.is_valid()
                 && exp_data.source_index.get() == id
                 && self
-                    .graph
                     .symbols
                     .get_const(exp_data.import_ref)
                     .is_some_and(|symbol| symbol.kind != bun_ast::symbol::Kind::Import)
@@ -517,7 +579,7 @@ impl LinkerContext<'_, '_> {
         }
 
         let mut declared_symbols = DeclaredSymbolList::default();
-        let exports_ref = self.graph.ast.items_exports_ref()[id as usize];
+        let exports_ref = self.exports_ref[id as usize];
         let all_export_stmts_len = needs_exports_variable as usize
             + (!properties.is_empty()) as usize
             + force_include_exports_for_entry_point as usize;
@@ -566,11 +628,14 @@ impl LinkerContext<'_, '_> {
         let mut export_ref = Ref::NONE;
         if !properties.is_empty() {
             let is_lifted = lifted_setter_param.is_valid();
-            export_ref = self.runtime_function(if is_lifted {
-                b"__exportCjs"
-            } else {
-                self.export_runtime_function()
-            });
+            export_ref = runtime_function(
+                self.named_exports,
+                if is_lifted {
+                    b"__exportCjs"
+                } else {
+                    self.export_runtime_function
+                },
+            );
             let mut args =
                 bun_ast::ExprNodeList::with_capacity_in(2 + usize::from(is_lifted), arena);
             args.push(arena, Expr::init_identifier(exports_ref, loc));
@@ -622,7 +687,7 @@ impl LinkerContext<'_, '_> {
                 loc,
             ));
             // Make sure this file depends on the "__export" symbol
-            let parts = self.top_level_symbols_to_parts_for_runtime(export_ref);
+            let parts = self.top_level_symbols_to_parts(Index::RUNTIME.get(), export_ref);
             ns_export_dependencies.extend(
                 arena,
                 parts.iter().map(|&part_index| Dependency {
@@ -643,7 +708,7 @@ impl LinkerContext<'_, '_> {
         // This stays the last statement of the part: `generate_code_for_file_in_chunk_js`
         // drops it when another entry point's chunk prints this file.
         if force_include_exports_for_entry_point {
-            let to_common_js_ref = self.runtime_function(b"__toCommonJS");
+            let to_common_js_ref = runtime_function(self.named_exports, b"__toCommonJS");
             emit_export_stmt!(Stmt::assign(
                 arena,
                 Expr::allocate(
@@ -680,8 +745,8 @@ impl LinkerContext<'_, '_> {
 
             // Initialize the part that was allocated for us earlier. The information
             // here will be used after this during tree shaking.
-            ast_parts.as_mut_slice()[bun_ast::NAMESPACE_EXPORT_PART_INDEX as usize] = Part {
-                stmts: if self.options.output_format != Format::InternalBakeDev {
+            ast_parts[bun_ast::NAMESPACE_EXPORT_PART_INDEX as usize] = Part {
+                stmts: if self.output_format != Format::InternalBakeDev {
                     let init = &mut stmts_slab[..stmts_head];
                     debug_assert_eq!(init.len(), all_export_stmts_len);
                     // SAFETY: the `[..stmts_head]` window of `stmts_slab` is fully

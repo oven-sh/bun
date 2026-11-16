@@ -19,8 +19,7 @@ use bun_core::{StackCheck, strings};
 /// `bun.ast.Index` — bundler source-file index. Hoisted into
 /// `bun_options_types` to keep css below the parser tier.
 use bun_ast::Index as SrcIndex;
-type SymbolList<'a> = Vec<bun_ast::Symbol<'a>>;
-use bun_ast::{ImportKind, ImportRecord};
+use bun_ast::{ImportKind, ImportRecord, SymbolList};
 
 pub use crate::compat::{self, Feature};
 pub use crate::css_modules::{self, Config as CssModuleConfig, CssModule};
@@ -2165,7 +2164,6 @@ pub type BundlerCssRuleList<'bump> = CssRuleList<'bump, BundlerAtRule>;
 pub type BundlerCssRule<'bump> = CssRule<'bump, BundlerAtRule>;
 
 /// Additional data we don't want stored on the stylesheet
-#[derive(Default)]
 pub struct StylesheetExtra<'a> {
     /// Used when css modules is enabled
     pub symbols: SymbolList<'a>,
@@ -2535,7 +2533,7 @@ mod stylesheet_impl {
             let mut composes = ComposesMap::default();
             let mut parser_extra = ParserExtra {
                 local_scope: LocalScope::default(),
-                symbols: SymbolList::default(),
+                symbols: SymbolList::new_in(arena),
                 source_index,
             };
             let mut local_properties = LocalPropertyUsage::default();
@@ -2635,7 +2633,7 @@ mod stylesheet_impl {
             check_input_len(code)?;
             let mut parser_extra = ParserExtra {
                 local_scope: LocalScope::default(),
-                symbols: SymbolList::default(),
+                symbols: SymbolList::new_in(arena),
                 source_index,
             };
             let mut input = ParserInput::new(code, arena);

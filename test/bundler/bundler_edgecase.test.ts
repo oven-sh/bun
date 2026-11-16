@@ -4627,6 +4627,23 @@ describe("bundler", () => {
     format: "cjs",
     run: { stdout: "2,5,false true" },
   });
+  // A legacy HTML comment in sloppy mode code is a comment, and the parser warns.
+  itBundled("edgecase/LegacyHTMLCommentInCommonJSDependency", {
+    files: {
+      "/entry.js": /* js */ `
+        console.log(require("./dep.cjs"));
+      `,
+      "/dep.cjs": `var a = 1, b = 0;\nmodule.exports = a <!--b\n;\n--> the end\n`,
+    },
+    format: "cjs",
+    bundleWarnings: {
+      "/dep.cjs": [
+        'Treating "<!--" as the start of a legacy HTML single-line comment',
+        'Treating "-->" as the start of a legacy HTML single-line comment',
+      ],
+    },
+    run: { stdout: "1" },
+  });
   // A class body is strict mode code, so a function in a block of a method is
   // local to that block and does not replace the outer function.
   for (const format of ["cjs", "esm"] as const) {

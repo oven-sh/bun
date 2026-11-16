@@ -2139,6 +2139,7 @@ dependencies = [
  "bun_boringssl",
  "bun_core",
  "bun_jsc_macros",
+ "bun_ptr",
  "bun_uws_sys",
  "strum",
 ]

@@ -26,22 +26,20 @@ use crate::{ArrayBinding, ExprNodeIndex, flags};
 ///     B.Object
 /// ```
 // The tag enum lives on `Binding::Tag`.
-// Arena values are referenced via `StoreRef<T>` (LIFETIMES.tsv: ARENA)
-// rather than a threaded `&'bump mut T`.
 #[derive(Copy, Clone, bun_core::EnumTag)]
 #[enum_tag(existing = super::binding::Tag)]
-pub enum B {
+pub enum B<'a> {
     // let x = ...
-    BIdentifier(StoreRef<Identifier>),
+    BIdentifier(StoreRef<'a, Identifier>),
     // let [a, b] = ...
-    BArray(StoreRef<Array>),
+    BArray(StoreRef<'a, Array<'a>>),
     // let { a, b: c } = ...
-    BObject(StoreRef<Object>),
+    BObject(StoreRef<'a, Object<'a>>),
     // this is used to represent array holes
     BMissing(Missing),
 }
 
-impl Default for B {
+impl Default for B<'_> {
     fn default() -> Self {
         B::BMissing(Missing {})
     }
@@ -63,25 +61,25 @@ pub struct Identifier {
     pub r#ref: Ref,
 }
 
-pub struct Property {
+pub struct Property<'a> {
     pub flags: flags::PropertySet,
-    pub key: ExprNodeIndex,
-    pub value: Binding,
-    pub default_value: Option<Expr>,
+    pub key: ExprNodeIndex<'a>,
+    pub value: Binding<'a>,
+    pub default_value: Option<Expr<'a>>,
 }
 // No `impl Default` on purpose: only `flags`/`default_value` have sensible
 // defaults; `key`/`value` do not, so every constructor must supply them.
 
-pub struct Object {
-    pub properties: crate::StoreSlice<Property>,
+pub struct Object<'a> {
+    pub properties: crate::StoreSlice<'a, Property<'a>>,
     pub is_single_line: bool,
     pub close_brace_loc: crate::Loc,
 }
 // No `impl Default` on purpose: only `is_single_line`/`close_brace_loc` have
 // sensible defaults; `properties` does not, so every constructor must supply it.
 
-pub struct Array {
-    pub items: crate::StoreSlice<ArrayBinding>,
+pub struct Array<'a> {
+    pub items: crate::StoreSlice<'a, ArrayBinding<'a>>,
     pub has_spread: bool,
     pub is_single_line: bool,
 }
@@ -94,31 +92,31 @@ pub struct Missing {}
 // Ergonomic slice accessors so P-helpers can `for item in arr.items()`.
 // `&mut self` establishes uniqueness for the `slice_mut()` SAFETY contract
 // (single-threaded parser; arena slice valid for `'a`).
-impl Array {
+impl<'a> Array<'a> {
     #[inline]
-    pub fn items(&self) -> &[ArrayBinding] {
+    pub fn items(&self) -> &[ArrayBinding<'a>] {
         self.items.slice()
     }
     #[inline]
-    pub fn items_mut(&mut self) -> &mut [ArrayBinding] {
+    pub fn items_mut(&mut self) -> &mut [ArrayBinding<'a>] {
         self.items.slice_mut()
     }
 }
-impl Object {
+impl<'a> Object<'a> {
     #[inline]
-    pub fn properties(&self) -> &[Property] {
+    pub fn properties(&self) -> &[Property<'a>] {
         self.properties.slice()
     }
     #[inline]
-    pub fn properties_mut(&mut self) -> &mut [Property] {
+    pub fn properties_mut(&mut self) -> &mut [Property<'a>] {
         self.properties.slice_mut()
     }
 }
 
-impl B {
+impl B<'_> {
     /// This hash function is currently only used for React Fast Refresh transform.
     /// This doesn't include the `is_single_line` properties, as they only affect whitespace.
-    pub fn write_to_hasher<H, S>(&self, hasher: &mut H, symbol_table: &mut S)
+    pub fn write_to_hasher<H, S>(&self, hasher: &mut H, symbol_table: &S)
     where
         H: bun_core::Hasher + ?Sized,
         S: crate::base::SymbolTable + ?Sized,
@@ -130,8 +128,6 @@ impl B {
         match self {
             B::BIdentifier(id) => {
                 let ref_ = id.r#ref;
-                // `original_name` is an arena-owned slice valid for the
-                // parser/AST arena that `symbol_table` borrows from.
                 let original_name = ref_.get_symbol(symbol_table).original_name.slice();
                 raw(hasher, self.tag() as u8);
                 raw(hasher, original_name.len());

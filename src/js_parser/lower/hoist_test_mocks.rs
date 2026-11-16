@@ -36,10 +36,10 @@ pub(crate) enum MockHoistOrder {
 }
 
 /// Rewrites a lowered import's callee to `(0, ns.fn)`, so the call doesn't pass `ns` as `this`.
-pub(crate) fn drop_namespace_of_lowered_callee(
-    arena: &js_ast::AstArena,
+pub(crate) fn drop_namespace_of_lowered_callee<'a>(
+    arena: &'a js_ast::AstArena,
     symbols: &[js_ast::Symbol],
-    callee: &mut Expr,
+    callee: &mut Expr<'a>,
 ) -> bool {
     let ExprData::EImportIdentifier(import) = callee.data else {
         return false;
@@ -50,11 +50,8 @@ pub(crate) fn drop_namespace_of_lowered_callee(
         && symbol.kind == js_ast::symbol::Kind::Import
         && symbol.namespace_alias.is_some();
     if is_lowered {
-        *callee = Expr {
-            data: crate::prefill::data::ZERO,
-            loc: callee.loc,
-        }
-        .join_with_comma(arena, *callee);
+        *callee =
+            Expr::init(crate::prefill::value::ZERO, callee.loc).join_with_comma(arena, *callee);
     }
     is_lowered
 }
@@ -142,7 +139,7 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, '_, TS, SCAN> {
 
     /// Returns (api, method). For a `jest.mock(...).unmock(...)` chain, that's the last method.
     #[optimize(size)]
-    fn unvisited_top_level_mock_call(&self, expr: Expr) -> Option<(MockApi, &'a [u8])> {
+    fn unvisited_top_level_mock_call(&self, expr: Expr<'a>) -> Option<(MockApi, &'a [u8])> {
         let mut callee = match expr.data {
             ExprData::EAwait(awaited) => awaited.value,
             _ => expr,
@@ -176,7 +173,7 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, '_, TS, SCAN> {
     }
 
     #[optimize(size)]
-    fn is_hoisted_mock_stmt(&self, stmt: &Stmt) -> bool {
+    fn is_hoisted_mock_stmt(&self, stmt: &Stmt<'a>) -> bool {
         match stmt.data {
             StmtData::SExpr(expr) => matches!(
                 self.unvisited_top_level_mock_call(expr.value),
@@ -235,7 +232,10 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, '_, TS, SCAN> {
 
     /// Must run before the visit pass.
     #[optimize(size)]
-    pub(crate) fn plan_mock_hoisting(&mut self, stmts: &[Stmt]) -> Option<&'a [MockHoistOrder]> {
+    pub(crate) fn plan_mock_hoisting(
+        &mut self,
+        stmts: &[Stmt<'a>],
+    ) -> Option<&'a [MockHoistOrder]> {
         self.has_hoisted_mock_stmt = stmts.iter().any(|stmt| self.is_hoisted_mock_stmt(stmt));
         if !self.options.features.inject_jest_globals
             || !(self.has_hoisted_mock_stmt || self.runs_imports_in_turn(stmts))
@@ -272,7 +272,11 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, '_, TS, SCAN> {
 
     /// Aliases a lowered import's names to its namespace, so `a` prints as `ns.a`.
     #[optimize(size)]
-    pub(crate) fn plan_import(&mut self, import: &S::Import, exported: &RefMap) -> MockHoistOrder {
+    pub(crate) fn plan_import(
+        &mut self,
+        import: &S::Import<'a>,
+        exported: &RefMap,
+    ) -> MockHoistOrder {
         let record = &self.import_records.items()[import.import_record_index as usize];
         // An import of "bun" prints as `var`s that read `globalThis.Bun`.
         if is_test_module(record.path.text) || record.path.text == b"bun" {
@@ -329,9 +333,9 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, '_, TS, SCAN> {
     #[optimize(size)]
     pub(crate) fn append_hoisted_mocks(
         &mut self,
-        before: &mut BumpVec<'a, js_ast::Part>,
-        hoisted: &mut BumpVec<'a, js_ast::Part>,
-        imports: &mut BumpVec<'a, js_ast::Part>,
+        before: &mut BumpVec<'a, js_ast::Part<'a>>,
+        hoisted: &mut BumpVec<'a, js_ast::Part<'a>>,
+        imports: &mut BumpVec<'a, js_ast::Part<'a>>,
         exports_kind: js_ast::ExportsKind,
     ) {
         if exports_kind != js_ast::ExportsKind::Cjs {
@@ -347,7 +351,11 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, '_, TS, SCAN> {
     }
 
     #[optimize(size)]
-    pub(crate) fn lower_import_to_dynamic(&mut self, import: &S::Import, loc: js_ast::Loc) -> Stmt {
+    pub(crate) fn lower_import_to_dynamic(
+        &mut self,
+        import: &S::Import,
+        loc: js_ast::Loc,
+    ) -> Stmt<'a> {
         let record = &self.import_records.items()[import.import_record_index as usize];
         let (path, path_loc) = (record.path.text, record.range.loc);
         let path = self.new_expr(E::String::init(path), path_loc);
@@ -459,7 +467,10 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, '_, TS, SCAN> {
     }
 
     /// Splits `return vi.importActual("./a")` into `const value = vi.importActual("./a"); return value`. Returns the first statement.
-    pub(crate) fn keep_frame_for_returned_call(&mut self, returned: &mut Expr) -> Option<Stmt> {
+    pub(crate) fn keep_frame_for_returned_call(
+        &mut self,
+        returned: &mut Expr<'a>,
+    ) -> Option<Stmt<'a>> {
         if self.is_control_flow_dead || !self.keeps_frame_for_call(returned) {
             return None;
         }
@@ -485,7 +496,7 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, '_, TS, SCAN> {
     }
 
     /// Rewrites `vi.mock(import("./a"))` to `vi.mock("./a")`. Returns true if it visited the first argument.
-    pub(crate) fn visit_import_in_mock_path(&mut self, call: &mut E::Call) -> bool {
+    pub(crate) fn visit_import_in_mock_path(&mut self, call: &mut E::Call<'a>) -> bool {
         if self.is_control_flow_dead {
             return false;
         }

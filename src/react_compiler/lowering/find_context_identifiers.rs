@@ -8,6 +8,7 @@ use crate::diagnostics::CompilerError;
 use crate::diagnostics::CompilerErrorDetail;
 use crate::diagnostics::ErrorCategory;
 use crate::diagnostics::SourceLocation;
+use crate::hir::Scope;
 use crate::hir::environment::Environment;
 use bun_ast::expr::Data;
 use bun_ast::stmt::Data as StmtData;
@@ -36,12 +37,12 @@ struct BindingInfo {
 }
 
 struct ContextIdentifierVisitor<'a> {
-    host: &'a dyn Host,
+    host: &'a dyn Host<'static>,
     env: &'a mut Environment,
     /// Lexical scope stack for resolving `RefTag::SourceContentsSlice`
     /// references to their declaring `Symbol` ref (this pass runs before the
     /// parser's visit pass that would normally rewrite them).
-    scope_stack: Vec<&'a ast::Scope>,
+    scope_stack: Vec<&'a Scope>,
     /// Stack of inner function scopes encountered during traversal.
     /// Empty when at the top level of the function being compiled.
     function_stack: Vec<()>,
@@ -86,7 +87,7 @@ impl<'a> ContextIdentifierVisitor<'a> {
         self.scope_stack.pop();
     }
 
-    fn current_scope(&self) -> &'a ast::Scope {
+    fn current_scope(&self) -> &'a Scope {
         *self.scope_stack.last().expect("scope_stack never empty")
     }
 
@@ -661,8 +662,8 @@ fn is_captured_by_function(decl_depth: Option<u32>, fn_depth: u32) -> bool {
 ///
 /// This is the Rust equivalent of the TypeScript `FindContextIdentifiers` pass.
 pub(crate) fn find_context_identifiers(
-    func: &FunctionNode<'_>,
-    host: &dyn Host,
+    func: &FunctionNode<'_, 'static>,
+    host: &dyn Host<'static>,
     env: &mut Environment,
 ) -> Result<RefSet, CompilerError> {
     let mut visitor = ContextIdentifierVisitor {

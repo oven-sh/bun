@@ -3,11 +3,15 @@ use crate::{AstArena, E, Expr, e};
 use bun_alloc::Arena; // bumpalo::Bump re-export
 
 /// Links both ropes into the result (see `EString::push`); sound because shared strings are never ropes.
-fn join_strings(bump: &AstArena, left: &E::EString, right: &E::EString) -> E::EString {
+fn join_strings<'a>(
+    bump: &'a AstArena,
+    left: &E::EString<'a>,
+    right: &E::EString<'a>,
+) -> E::EString<'a> {
     let mut new = left.shallow_clone();
-    let mut rhs = bump.alloc_node(right.shallow_clone());
+    let rhs = bump.alloc_node(right.shallow_clone());
 
-    new.push(&mut *rhs);
+    new.push(rhs);
     new.prefer_template = new.prefer_template || right.prefer_template;
 
     new
@@ -17,11 +21,11 @@ fn join_strings(bump: &AstArena, left: &E::EString, right: &E::EString) -> E::ES
 /// `TemplatePart` is POD-shaped (no Drop) but not `Copy` because
 /// `EString` opted out; mirror `Template::fold`'s field-wise copy via
 /// `shallow_clone` instead of raw `copy_nonoverlapping`.
-fn concat_parts(
-    bump: &Arena,
-    a: &[e::TemplatePart],
-    b: &[e::TemplatePart],
-) -> crate::StoreSlice<e::TemplatePart> {
+fn concat_parts<'a>(
+    bump: &'a Arena,
+    a: &[e::TemplatePart<'a>],
+    b: &[e::TemplatePart<'a>],
+) -> crate::StoreSlice<'a, e::TemplatePart<'a>> {
     let mut v = bun_alloc::ArenaVec::<e::TemplatePart>::with_capacity_in(a.len() + b.len(), bump);
     for p in a.iter().chain(b.iter()) {
         // Field-wise copy (all fields structurally `Copy`).
@@ -48,12 +52,12 @@ pub enum FoldStringAdditionKind {
 
 /// NOTE: unlike esbuild's js_ast_helpers.FoldStringAddition, this does mutate
 /// the input AST in the case of rope strings
-pub fn fold_string_addition(
-    l: Expr,
-    r: Expr,
-    bump: &AstArena,
+pub fn fold_string_addition<'a>(
+    l: Expr<'a>,
+    r: Expr<'a>,
+    bump: &'a AstArena,
     kind: FoldStringAdditionKind,
-) -> Option<Expr> {
+) -> Option<Expr<'a>> {
     // "See through" inline enum constants
     // TODO: implement foldAdditionPreProcess to fold some more things :)
     let mut lhs = l.unwrap_inlined();

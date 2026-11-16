@@ -737,8 +737,7 @@ impl TranspilerJob {
         if let Some(own) = &this.aot_package_config {
             parse_options.apply_aot_package_config(own);
         }
-        let parse_result = transpiler
-            .parse_maybe_return_file_only_allow_shared_buffer::<false, false>(parse_options, None);
+        let parse_result = transpiler.parse(parse_options, None);
 
         if let Some(watcher) = &transpiler.resolver.watcher
             && input_file.is_some()

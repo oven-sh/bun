@@ -17,10 +17,8 @@ use bun_ast::{
 };
 use bun_ast::{part, symbol};
 
-pub(crate) type CommonJSNamedExports = bun_ast::ast_result::CommonJSNamedExports;
-pub(crate) type NamedExports = bun_ast::ast_result::NamedExports;
-pub(crate) type NamedImports = bun_ast::ast_result::NamedImports;
-pub type TopLevelSymbolToParts = bun_ast::ast_result::TopLevelSymbolToParts;
+pub use bun_ast::ast_result::TopLevelSymbolToParts;
+pub(crate) use bun_ast::ast_result::{CommonJSNamedExports, NamedExports, NamedImports};
 
 // `multi_array_columns!` generates the `BundledAstField` enum +
 // `BundledAstColumns` (`items_named_imports()`,
@@ -41,14 +39,14 @@ pub struct BundledAst<'arena> {
     /// they can be manipulated efficiently without a full AST traversal
     pub(crate) import_records: import_record::List<'arena>,
 
-    pub(crate) hashbang: StoreStr,
+    pub(crate) hashbang: StoreStr<'arena>,
     /// See `Ast::export_default_alias_of_import`.
     pub(crate) export_default_alias_of_import: Ref,
     pub(crate) parts: part::List<'arena>,
     pub(crate) url_for_css: &'arena [u8],
     pub(crate) symbols: symbol::List<'arena>,
-    pub(crate) module_scope: Scope,
-    pub(crate) char_freq: Option<AstBox<CharFreq>>,
+    pub(crate) module_scope: Scope<'arena>,
+    pub(crate) char_freq: Option<AstBox<'arena, CharFreq>>,
     pub(crate) exports_ref: Ref,
     pub(crate) module_ref: Ref,
     pub(crate) wrapper_ref: Ref,
@@ -58,15 +56,15 @@ pub struct BundledAst<'arena> {
     // These are used when bundling. They are filled in during the parser pass
     // since we already have to traverse the AST then anyway and the parser pass
     // is conveniently fully parallelized.
-    pub(crate) named_imports: NamedImports,
-    pub(crate) named_exports: NamedExports,
-    pub(crate) export_star_import_records: AstVec<u32>,
-    pub(crate) dynamic_import_aliases: bun_ast::ast_result::DynamicImportAliases,
+    pub(crate) named_imports: NamedImports<'arena>,
+    pub(crate) named_exports: NamedExports<'arena>,
+    pub(crate) export_star_import_records: AstVec<'arena, u32>,
+    pub(crate) dynamic_import_aliases: bun_ast::ast_result::DynamicImportAliases<'arena>,
 
-    pub(crate) top_level_symbols_to_parts: TopLevelSymbolToParts,
-    pub(crate) scope_uses: bun_ast::ast_result::ScopeUseList,
+    pub(crate) top_level_symbols_to_parts: TopLevelSymbolToParts<'arena>,
+    pub(crate) scope_uses: bun_ast::ast_result::ScopeUseList<'arena>,
 
-    pub(crate) commonjs_named_exports: CommonJSNamedExports,
+    pub(crate) commonjs_named_exports: CommonJSNamedExports<'arena>,
 
     pub(crate) redirect_import_record_index: u32,
 
@@ -76,7 +74,7 @@ pub struct BundledAst<'arena> {
     pub(crate) target: bun_ast::Target,
 
     // const_values: ConstValuesMap,
-    pub(crate) ts_enums: bun_ast::ast_result::TsEnumsMap,
+    pub(crate) ts_enums: bun_ast::ast_result::TsEnumsMap<'arena>,
 
     pub(crate) flags: Flags,
 }
@@ -88,49 +86,49 @@ bun_collections::multi_array_columns! {
         exports_kind: ExportsKind,
         module_type: ModuleType,
         import_records: import_record::List<'arena>,
-        hashbang: StoreStr,
+        hashbang: StoreStr<'arena>,
         export_default_alias_of_import: Ref,
         parts: part::List<'arena>,
         url_for_css: &'arena [u8],
         symbols: symbol::List<'arena>,
-        module_scope: Scope,
-        char_freq: Option<AstBox<CharFreq>>,
+        module_scope: Scope<'arena>,
+        char_freq: Option<AstBox<'arena, CharFreq>>,
         exports_ref: Ref,
         module_ref: Ref,
         wrapper_ref: Ref,
         top_level_await_keyword: bun_ast::Range,
         tla_check: TlaCheck,
-        named_imports: NamedImports,
-        named_exports: NamedExports,
-        export_star_import_records: AstVec<u32>,
-        dynamic_import_aliases: bun_ast::ast_result::DynamicImportAliases,
-        top_level_symbols_to_parts: TopLevelSymbolToParts,
-        scope_uses: bun_ast::ast_result::ScopeUseList,
-        commonjs_named_exports: CommonJSNamedExports,
+        named_imports: NamedImports<'arena>,
+        named_exports: NamedExports<'arena>,
+        export_star_import_records: AstVec<'arena, u32>,
+        dynamic_import_aliases: bun_ast::ast_result::DynamicImportAliases<'arena>,
+        top_level_symbols_to_parts: TopLevelSymbolToParts<'arena>,
+        scope_uses: bun_ast::ast_result::ScopeUseList<'arena>,
+        commonjs_named_exports: CommonJSNamedExports<'arena>,
         redirect_import_record_index: u32,
         target: bun_ast::Target,
-        ts_enums: bun_ast::ast_result::TsEnumsMap,
+        ts_enums: bun_ast::ast_result::TsEnumsMap<'arena>,
         flags: Flags,
     }
 }
 
 /// The fields of one `BundledAst` in a `MultiArrayList` that printing a chunk reads.
-pub(crate) struct BundledAstRow<'a> {
+pub(crate) struct BundledAstRow<'a, 'ast> {
     pub(crate) exports_kind: ExportsKind,
     pub(crate) module_type: ModuleType,
-    pub(crate) import_records: &'a [ImportRecord<'a>],
+    pub(crate) import_records: &'a [ImportRecord<'ast>],
     pub(crate) exports_ref: Ref,
     pub(crate) module_ref: Ref,
     pub(crate) wrapper_ref: Ref,
-    pub(crate) dynamic_import_aliases: &'a bun_ast::ast_result::DynamicImportAliases,
-    pub(crate) commonjs_named_exports: &'a CommonJSNamedExports,
+    pub(crate) dynamic_import_aliases: &'a bun_ast::ast_result::DynamicImportAliases<'ast>,
+    pub(crate) commonjs_named_exports: &'a CommonJSNamedExports<'ast>,
     pub(crate) target: bun_ast::Target,
     pub(crate) flags: Flags,
     pub(crate) printer_view: bun_js_printer::BundledAstView<'a>,
 }
 
-impl<'a> BundledAstRow<'a> {
-    pub(crate) fn new(list: &'a MultiArrayList<BundledAst<'_>>, index: usize) -> Self {
+impl<'a, 'ast> BundledAstRow<'a, 'ast> {
+    pub(crate) fn new(list: &'a MultiArrayList<BundledAst<'ast>>, index: usize) -> Self {
         let exports_kind = list.items_exports_kind()[index];
         let flags = list.items_flags()[index];
         Self {

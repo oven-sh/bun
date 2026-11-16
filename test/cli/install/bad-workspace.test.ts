@@ -1,7 +1,7 @@
 import { spawn, spawnSync } from "bun";
 import { install_test_helpers } from "bun:internal-for-testing";
 import { beforeEach, describe, expect, setDefaultTimeout, test } from "bun:test";
-import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "fs";
+import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, symlinkSync, writeFileSync } from "fs";
 import { bunEnv, bunExe, isLinux, isRoot, isWindows, tempDir, tmpdirSync } from "harness";
 import { dirname, join } from "path";
 
@@ -307,6 +307,20 @@ async function expectOnlyPkg1Found(dir: string) {
   expect(exitCode).toBe(0);
   expect(Object.values(install_test_helpers.parseLockfile(dir).workspace_paths)).toEqual(["pkgs/pkg1"]);
 }
+
+// Like some FUSE files, /proc/<pid>/cmdline has a size of 0. The other arguments follow argv0, in the comment.
+test.concurrent.skipIf(!isLinux)("a workspace package.json whose stat() size is 0 is read to its end", async () => {
+  using dir = tempDir("workspace-stat-size-0", { "package.json": rootPackageJson(["pkgs/*"]), "pkgs/pkg1": {} });
+  await using holder = spawn({
+    cmd: [bunExe(), "-e", "process.stdin.resume()"],
+    argv0: JSON.stringify({ description: Buffer.alloc(20_000, "x").toString(), name: "pkg1" }) + "//",
+    env: bunEnv,
+    stdin: "pipe",
+  });
+  symlinkSync(`/proc/${holder.pid}/cmdline`, join(String(dir), "pkgs", "pkg1", "package.json"));
+
+  await expectOnlyPkg1Found(String(dir));
+});
 
 describe.concurrent("workspaces entries longer than the path buffer", () => {
   test("path entry fails with ENAMETOOLONG", async () => {

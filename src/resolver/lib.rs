@@ -1767,7 +1767,7 @@ pub mod cache {
         /// drops. Stored as `Vec<u8>` (not `Box<[u8]>`) so a sentinel NUL can
         /// sit in spare capacity past `len`.
         Owned(Vec<u8>),
-        /// Points into `Fs::shared_buffer` or the caller's arena; neither is reset before the last read.
+        /// Points into `Fs::shared_buffer`, which is not reset before the last read.
         Borrowed { ptr: *const u8, len: usize },
     }
 
@@ -1863,31 +1863,17 @@ pub mod cache {
             }
         }
 
-        /// `arena`: when
-        /// `!use_shared_buffer && arena.is_some()` the file body is read
-        /// directly into `arena`, so the bytes are
-        /// bulk-freed by `mi_heap_destroy` when the per-call `MimallocArena`
-        /// drops instead of landing in the worker thread's default mimalloc
-        /// heap (which is never destroyed). `None` keeps the global-heap
-        /// `Contents::Owned(Vec<u8>)` path.
         pub fn read_file_with_allocator(
             &mut self,
             path: &[u8],
             dirname_fd: Fd,
             use_shared_buffer: bool,
             file_handle: Option<Fd>,
-            arena: Option<&bun_alloc::Arena>,
         ) -> crate::CrateResult<Entry> {
             Self::read_file(path, dirname_fd, file_handle, |file| {
-                let contents = match (use_shared_buffer, arena) {
-                    (false, Some(arena)) => std::borrow::Cow::Borrowed(
-                        read_file_contents_in_arena(file, arena, ByteOrderMark::Converted)?,
-                    ),
-                    _ => {
-                        let stream = self.stream;
-                        read_file_contents(file, use_shared_buffer, self.shared_buffer(), stream)?
-                    }
-                };
+                let stream = self.stream;
+                let contents =
+                    read_file_contents(file, use_shared_buffer, self.shared_buffer(), stream)?;
                 Ok(Contents::from(contents))
             })
         }
@@ -1898,7 +1884,7 @@ pub mod cache {
             path: &[u8],
             dirname_fd: Fd,
         ) -> crate::CrateResult<Vec<u8>> {
-            let entry = self.read_file_with_allocator(path, dirname_fd, false, None, None)?;
+            let entry = self.read_file_with_allocator(path, dirname_fd, false, None)?;
             Ok(match entry.contents {
                 Contents::Owned(contents) => contents,
                 other => other.as_slice().to_vec(),

@@ -19,14 +19,14 @@ use crate::diagnostics::{
     CompilerDiagnostic, CompilerDiagnosticDetail, CompilerError, ErrorCategory,
 };
 use crate::hir::{
-    BlockKind, Effect, EvaluationOrder, HirAlloc, HirFunction, HirVec, IdentifierId,
+    Binding, BlockKind, Effect, EvaluationOrder, Expr, HirAlloc, HirFunction, HirVec, IdentifierId,
     InstructionKind, InstructionValue, ParamPattern, Place, PrimitiveValue, ReactFunctionType,
-    ReturnVariant, SourceLocation, SpreadPattern, StoreStr, Terminal, VariableBinding,
+    ReturnVariant, Scope, SourceLocation, SpreadPattern, Stmt, StoreStr, Terminal, VariableBinding,
     environment::Environment,
 };
 use bun_ast::expr::Data as ExprData;
 use bun_ast::stmt::Data as StmtData;
-use bun_ast::{self as ast, Expr, G, Loc, Ref, Stmt, StmtOrExpr, b};
+use bun_ast::{self as ast, G, Loc, Ref, StmtOrExpr, b};
 
 use super::find_context_identifiers::find_context_identifiers;
 use super::hir_builder::{
@@ -55,11 +55,11 @@ type RefSet = crate::collections::FxHashSet<Ref>;
 
 /// Port of upstream `lower()` (build_hir.rs:4257).
 pub(crate) fn lower(
-    func: &FunctionNode<'_>,
+    func: &FunctionNode<'_, 'static>,
     _id: Option<&str>,
-    host: &dyn Host,
+    host: &dyn Host<'static>,
     env: &mut Environment,
-    import_bindings: &IndexMap<Ref, VariableBinding>,
+    import_bindings: &IndexMap<Ref, VariableBinding<'static>>,
 ) -> Result<HirFunction, CompilerError> {
     // Extract params, body, generator, is_async, loc, scope_id, and the AST function's own id
     // Note: `id` param may include inferred names (e.g., from `const Foo = () => {}`),
@@ -114,17 +114,17 @@ pub(crate) fn lower(
 /// Port of upstream `lower_inner()` (build_hir.rs:5985).
 #[allow(clippy::too_many_arguments)]
 pub(super) fn lower_inner<'h>(
-    func: &FunctionNode<'_>,
+    func: &FunctionNode<'_, 'static>,
     id: Option<StoreStr>,
     loc: Option<SourceLocation>,
-    host: &'h dyn Host,
+    host: &'h dyn Host<'static>,
     env: &'h mut Environment,
     parent_bindings: Option<IndexMap<Ref, IdentifierId>>,
     context_map: IndexMap<Ref, Option<SourceLocation>>,
-    function_scope: &'h ast::Scope,
-    component_scope: &'h ast::Scope,
+    function_scope: &'h Scope,
+    component_scope: &'h Scope,
     context_identifiers: Rc<RefSet>,
-    import_bindings: &'h IndexMap<Ref, VariableBinding>,
+    import_bindings: &'h IndexMap<Ref, VariableBinding<'static>>,
     is_top_level: bool,
 ) -> Result<(HirFunction, IndexMap<Ref, IdentifierId>), CompilerError> {
     // `validate_ts_this_parameter`: Bun's parser strips `this` parameters
@@ -341,7 +341,7 @@ pub(super) fn lower_inner<'h>(
 /// as a single `SReturn` with `prefer_expr` set. Detect that shape so the
 /// upstream `FunctionBody::Expression` arm is preserved (emits `Implicit`
 /// return variant instead of `Explicit`).
-fn arrow_expression_body<'a>(func: &FunctionNode<'a>) -> Option<&'a Expr> {
+fn arrow_expression_body<'a>(func: &FunctionNode<'a, 'static>) -> Option<&'a Expr> {
     let FunctionNode::Arrow(a) = func else {
         return None;
     };
@@ -380,9 +380,9 @@ fn arrow_expression_body<'a>(func: &FunctionNode<'a>) -> Option<&'a Expr> {
 /// stack so `RefTag::SourceContentsSlice` references resolve to the same
 /// `Symbol` refs the outer builder sees.
 pub(super) fn gather_captured_context<'h>(
-    host: &'h dyn Host,
-    func: &FunctionNode<'_>,
-    enclosing_scope: &'h ast::Scope,
+    host: &'h dyn Host<'static>,
+    func: &FunctionNode<'_, 'static>,
+    enclosing_scope: &'h Scope,
     _component_scope: &ast::Scope,
 ) -> Result<IndexMap<Ref, Option<SourceLocation>>, CompilerDiagnostic> {
     let mut walker = CaptureWalker {
@@ -459,10 +459,10 @@ pub(super) fn gather_captured_context<'h>(
 }
 
 struct CaptureWalker<'h> {
-    host: &'h dyn Host,
+    host: &'h dyn Host<'static>,
     stack: bun_core::StackCheck,
     is_out_of_stack: bool,
-    scope_stack: Vec<&'h ast::Scope>,
+    scope_stack: Vec<&'h Scope>,
     declared: RefSet,
     referenced: Vec<(Ref, Loc)>,
 }
@@ -486,7 +486,7 @@ impl<'h> CaptureWalker<'h> {
         self.scope_stack.pop();
     }
 
-    fn current_scope(&self) -> &'h ast::Scope {
+    fn current_scope(&self) -> &'h Scope {
         *self.scope_stack.last().expect("scope_stack never empty")
     }
 
@@ -518,7 +518,7 @@ impl<'h> CaptureWalker<'h> {
         }
     }
 
-    fn walk_binding_decl(&mut self, binding: &ast::Binding) {
+    fn walk_binding_decl(&mut self, binding: &Binding) {
         if !self.has_stack() {
             return;
         }
@@ -547,7 +547,7 @@ impl<'h> CaptureWalker<'h> {
         }
     }
 
-    fn walk_args(&mut self, args: &[G::Arg]) {
+    fn walk_args(&mut self, args: &[G::Arg<'static>]) {
         for arg in args {
             self.walk_binding_decl(&arg.binding);
             if let Some(default) = &arg.default {
@@ -556,7 +556,7 @@ impl<'h> CaptureWalker<'h> {
         }
     }
 
-    fn walk_fn(&mut self, func: &G::Fn) {
+    fn walk_fn(&mut self, func: &G::Fn<'static>) {
         if let Some(name) = &func.name {
             self.record_decl(name.ref_);
         }

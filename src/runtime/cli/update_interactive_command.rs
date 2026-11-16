@@ -278,7 +278,7 @@ impl UpdateInteractiveCommand {
         manager: &'a mut PackageManager,
         package_json_path: &[u8],
         log: &bun_ast::Log,
-    ) -> Option<&'a mut WorkspacePackageJsonCacheEntry> {
+    ) -> Option<&'a mut WorkspacePackageJsonCacheEntry<'static>> {
         match manager.workspace_package_json_cache.get_with_path(
             log,
             package_json_path,
@@ -363,7 +363,7 @@ impl UpdateInteractiveCommand {
                     E::EString::init(cli_dupe(&version_with_prefix)),
                     version_query.expr.loc,
                 );
-                dep_obj.put(bump, &update.name, new_expr)?;
+                dep_obj.properties.slice_mut()[version_query.i as usize].value = Some(new_expr);
                 modified = true;
             }
 
@@ -400,7 +400,7 @@ impl UpdateInteractiveCommand {
                 package_name,
                 new_version,
                 *in_range,
-            )?;
+            );
         }
 
         Self::save_package_json(package_json, package_json_path, log)
@@ -1427,21 +1427,21 @@ fn update_catalog(
     package_name: &[u8],
     new_version: &[u8],
     in_range: bool,
-) -> crate::Result<()> {
+) {
     let Some(mut catalog) = catalog_object_of(package_json, catalog_name, package_name) else {
-        return Ok(());
+        return;
     };
-    let Some(literal) = (*catalog)
-        .get(package_name)
-        .and_then(|declared| declared.data.e_string())
+    let Some(query) = catalog.as_property(package_name) else {
+        return;
+    };
+    let Some(literal) = (query.expr.data.e_string())
         .and_then(|declared| chosen_version_literal(declared.data.slice(), new_version, in_range))
     else {
-        return Ok(());
+        return;
     };
     let bump = crate::cli::cli_arena();
     let literal = Expr::allocate(bump, E::EString::init(cli_dupe(&literal)), Loc::EMPTY);
-    catalog.put(bump, package_name, literal)?;
-    Ok(())
+    catalog.properties.slice_mut()[query.i as usize].value = Some(literal);
 }
 
 /// Returns what `bun update` would write in place of `declared`, or what `bun update --latest`

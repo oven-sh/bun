@@ -122,6 +122,21 @@ pub fn decode_alloc(input: &[u8]) -> Result<Vec<u8>, DecodeAllocError> {
     Ok(dest)
 }
 
+/// [`decode_alloc`] in `arena`.
+pub fn decode_alloc_in<'a>(
+    input: &[u8],
+    arena: &'a bun_alloc::Arena,
+) -> Result<&'a [u8], DecodeAllocError> {
+    let destination = arena.alloc_uninit_slice::<u8>(decode_len(input));
+    // SAFETY: both decoders behind `decode` only write the destination, never read it, and only what they wrote is returned.
+    let destination = unsafe { destination.assume_init_mut() };
+    let result = decode(destination, input);
+    if !result.is_successful() {
+        return Err(DecodeAllocError::DecodingFailed);
+    }
+    Ok(&destination[..result.count])
+}
+
 pub use bun_core::base64::encode;
 
 /// [`encode`] appended to `out` (reserving the room itself); returns the number of bytes appended.

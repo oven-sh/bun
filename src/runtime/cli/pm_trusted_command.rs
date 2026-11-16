@@ -640,7 +640,7 @@ impl TrustCommand {
         PackageJSONEditor::edit_trusted_dependencies(
             &bump,
             &mut package_json,
-            package_names_to_add.keys_mut(),
+            &mut package_names_to_add.keys().iter().map(|name| &**name),
         )?;
 
         if total_scripts_ran > 0 {
@@ -658,6 +658,7 @@ impl TrustCommand {
 
         if let Err(err) = bun_js_printer::print_json(
             &mut package_json_writer,
+            &bump,
             package_json,
             &package_json_source,
             bun_js_printer::PrintJsonOptions {

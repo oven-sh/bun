@@ -11,16 +11,16 @@
 // a build without the length check fails fast on line 1 (with a different
 // message) instead of scanning the remaining 2 GiB to report its error.
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, normalizeBunSnapshot, tempDir } from "harness";
-import { truncateSync, writeFileSync } from "node:fs";
+import { bunEnv, bunExe, isLinux, normalizeBunSnapshot, tempDir } from "harness";
+import { readFileSync, truncateSync, writeFileSync } from "node:fs";
 import { totalmem } from "node:os";
 import { join } from "node:path";
 
 const SIZE = 2 ** 31;
 const FIRST_LINE = "%\n";
 
-async function run(cmd: string[]) {
-  await using proc = Bun.spawn({ cmd, env: bunEnv, stdout: "pipe", stderr: "pipe" });
+async function run(cmd: string[], cwd?: string) {
+  await using proc = Bun.spawn({ cmd, cwd, env: bunEnv, stdout: "pipe", stderr: "pipe" });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   return { stdout: stdout.trim(), stderr, exitCode };
 }
@@ -108,4 +108,20 @@ describe.skipIf(totalmem() < 10 * 1024 ** 3)("a 2 GiB file", () => {
     expect(stdout).toBe("");
     expect(exitCode).toBe(1);
   }, 120_000);
+});
+
+describe.skipIf(!isLinux).concurrent("a 1 TiB file is a read error", () => {
+  test.each([
+    ["big.js", ["build", "big.js"], /error: ENOMEM reading file: ".*big\.js"$/m],
+    ["big.js", ["big.js"], /error: ENOMEM reading ".*big\.js"$/m],
+  ])("%s in bun %j", async (name, args, message) => {
+    using dir = tempDir("source-too-large-enomem", { [name]: FIRST_LINE });
+    truncateSync(join(String(dir), name), 2 ** 40);
+    // The most address space this process had: enough to start, also with ASAN's shadow memory, but not for the file.
+    const [, kib] = /^VmPeak:\s+(\d+) kB$/m.exec(readFileSync("/proc/self/status", "utf8"))!;
+    const limited = ["sh", "-c", `ulimit -c 0 && ulimit -v ${kib} && exec "$0" "$@"`];
+    const { stderr, exitCode } = await run([...limited, bunExe(), ...args], String(dir));
+    expect(stderr).toMatch(message);
+    expect(exitCode).toBe(1);
+  });
 });

@@ -260,7 +260,7 @@ pub enum LineOffsetTables<'a> {
     /// `LinkerGraph.files[i].line_offset_table`. The linker keeps ownership
     /// (one source prints into several chunks) and bulk-frees it with the
     /// worker's arena.
-    Borrowed(&'a line_offset_table::AstList),
+    Borrowed(&'a line_offset_table::AstList<'a>),
     /// Runtime/transpiler print path: the first `add_source_mapping` call
     /// generates the table from `contents` (`Source.contents`) and replaces
     /// this with `Owned`, so modules that emit no mappings (asset/JSON shims,

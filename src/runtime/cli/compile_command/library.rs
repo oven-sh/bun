@@ -90,14 +90,19 @@ impl Project {
         }
     }
 
-    // The result refers to `self` and to `arena`.
-    fn parse_package_json(&self, arena: &AstArena) -> Result<Option<Expr>, LibraryError> {
+    fn parse_package_json<'a>(
+        &'a self,
+        arena: &'a AstArena,
+    ) -> Result<Option<Expr<'a>>, LibraryError> {
         let Some(file) = &self.package_json else {
             return Ok(None);
         };
-        let source = bun_ast::Source::init_path_string(&file.path[..], &file.contents[..]);
+        let source = arena.alloc(bun_ast::Source::init_path_string(
+            &file.path[..],
+            &file.contents[..],
+        ));
         let log = bun_ast::Log::init();
-        match bun_parsers::json::parse_package_json_utf8(&source, &log, arena) {
+        match bun_parsers::json::parse_package_json_utf8(source, &log, arena) {
             Ok(root) => Ok(Some(root)),
             Err(_) => Err(LibraryError::UnparsablePackageJson {
                 path: file.path.clone(),

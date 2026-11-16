@@ -71,16 +71,16 @@ struct CrossChunkDependencies<'a, 'bump> {
     flags: &'a [js_meta::Flags],
     ast_flags: &'a [crate::bundled_ast::Flags],
     entry_point_chunk_indices: &'a [IndexInt],
-    imports_to_bind: &'a [RefImportData],
+    imports_to_bind: &'a [RefImportData<'a>],
     wrapper_refs: &'a [Ref],
     exports_refs: &'a [Ref],
-    sorted_and_filtered_export_aliases: &'a [js_meta::SortedAndFilteredExportAliases],
-    resolved_exports: &'a [ResolvedExports],
+    sorted_and_filtered_export_aliases: &'a [js_meta::SortedAndFilteredExportAliases<'a>],
+    resolved_exports: &'a [ResolvedExports<'a>],
     entry_point_kinds: &'a [crate::EntryPoint::Kind],
     parts_live: &'a [AutoBitSet],
     preload_entries: Option<&'a AutoBitSet>,
     chunks_runtime_ref: Ref,
-    symbols: &'a bun_ast::symbol::Map,
+    symbols: &'a bun_ast::symbol::Map<'a>,
 }
 
 impl<'a, 'bump> CrossChunkDependencies<'a, 'bump> {
@@ -205,7 +205,6 @@ impl<'a, 'bump> CrossChunkDependencies<'a, 'bump> {
                     };
 
                     if cfg!(debug_assertions) {
-                        // SAFETY: `original_name` is an arena slice valid for the link pass.
                         let name = symbols.get_const(ref_to_use).unwrap().original_name.slice();
                         debug!(
                             "Cross-chunk import: {} {:?}",
@@ -264,7 +263,6 @@ impl<'a, 'bump> CrossChunkDependencies<'a, 'bump> {
                         }
 
                         if cfg!(debug_assertions) {
-                            // SAFETY: arena slice valid for the link pass.
                             let name = symbols.get_const(target_ref).unwrap().original_name.slice();
                             debug!("Cross-chunk export: {}", bstr::BStr::new(name),);
                         }
@@ -384,9 +382,9 @@ fn inert_chunks(c: &LinkerContext, chunks: &[Chunk]) -> Result<AutoBitSet, bun_a
     }
 }
 
-fn compute_cross_chunk_dependencies_with_chunk_metas(
-    c: &mut LinkerContext,
-    chunks: &mut [Chunk],
+fn compute_cross_chunk_dependencies_with_chunk_metas<'a>(
+    c: &mut LinkerContext<'_, 'a>,
+    chunks: &mut [Chunk<'a>],
     chunk_metas: &mut [ChunkMeta],
 ) -> Result<(), bun_alloc::AllocError> {
     let mut inert: Option<AutoBitSet> = None;
@@ -411,7 +409,6 @@ fn compute_cross_chunk_dependencies_with_chunk_metas(
             if let Some(other_chunk_index) = symbol.chunk_index() {
                 if other_chunk_index as usize != chunk_index {
                     if cfg!(debug_assertions) {
-                        // SAFETY: arena slices valid for the link pass.
                         let name = symbol.original_name.slice();
                         let path = {
                             &c.parse_graph().input_files.items_source()
@@ -440,7 +437,6 @@ fn compute_cross_chunk_dependencies_with_chunk_metas(
                         .exports
                         .get_or_put(import_ref);
                 } else {
-                    // SAFETY: arena slice valid for the link pass.
                     let name = symbol.original_name.slice();
                     debug!(
                         "{} imports from itself (chunk {})",

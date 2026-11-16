@@ -900,7 +900,7 @@ pub(crate) mod default_user_defines {
     }
 }
 
-pub(crate) fn defines_from_transform_options(
+pub(crate) fn defines_from_transform_options<'a>(
     log: &bun_ast::Log,
     // PERF: borrowed, not owned — the caller (`load_defines`) holds
     // `transform_options` behind an `Arc`, so taking the `StringMap` by value
@@ -915,8 +915,8 @@ pub(crate) fn defines_from_transform_options(
     node_env: Option<&[u8]>,
     drop: &[&[u8]],
     omit_unused_global_calls: bool,
-    bump: &bun_ast::AstArena,
-) -> Result<Box<defines::Define>, crate::Error> {
+    bump: &'a bun_ast::AstArena,
+) -> Result<Box<defines::Define<'a>>, crate::Error> {
     let (input_keys, input_values): (&[Box<[u8]>], &[Box<[u8]>]) = match maybe_input_define {
         Some(m) => (&m.keys, &m.values),
         None => (&[], &[]),
@@ -1009,7 +1009,7 @@ pub(crate) fn defines_from_transform_options(
                 defines::DefineData::init(defines::DefineDataInit {
                     valueless: true,
                     original_name: Some(b"window".as_slice()),
-                    value: defines::DefineValue::EUndefined(Default::default()),
+                    value: bun_ast::ExprData::EUndefined(Default::default()),
                     ..Default::default()
                 }),
             )?;
@@ -1030,9 +1030,13 @@ pub(crate) fn defines_from_transform_options(
             .keys()
             .iter()
             .zip(environment_defines.values().iter())
-            .filter_map(|(k, v)| match &v.value {
-                defines::DefineValue::EString(s) if s.is_utf8() => Some((k.as_ref(), s.slice8())),
-                _ => None,
+            .filter_map(|(k, v)| {
+                v.value.with(|value| match value {
+                    defines::DefineExprKind::String(s) if s.is_utf8() => {
+                        Some((k.as_ref(), s.slice8()))
+                    }
+                    _ => None,
+                })
             }),
         drop.iter().copied(),
     );
@@ -1293,7 +1297,7 @@ pub type TypeCheck = fn(checked: TypeChecked<'_, '_>, log: &bun_ast::Log) -> boo
 pub struct BundleOptions<'a> {
     pub footer: Cow<'static, [u8]>,
     pub banner: Cow<'static, [u8]>,
-    pub define: Box<defines::Define>,
+    pub define: Box<defines::Define<'a>>,
     pub drop: Box<[Box<[u8]>]>,
     /// Set of enabled feature flags for dead-code elimination via `import { feature } from "bun:bundle"`.
     /// Initialized once from the CLI --feature flags.
@@ -1556,13 +1560,7 @@ impl<'a> BundleOptions<'a> {
         BundleOptions {
             footer: self.footer.clone(),
             banner: self.banner.clone(),
-            define: Box::new(defines::Define {
-                identifiers: self.define.identifiers.clone(),
-                dots: self.define.dots.clone(),
-                dots_filter: self.define.dots_filter.clone(),
-                drop_debugger: self.define.drop_debugger,
-                user_hash: self.define.user_hash,
-            }),
+            define: self.define.clone(),
             drop: self.drop.clone(),
             bundler_feature_flags: self
                 .bundler_feature_flags
@@ -1702,7 +1700,7 @@ impl<'a> BundleOptions<'a> {
     pub(crate) fn load_defines(
         &mut self,
         log: &bun_ast::Log,
-        arena: &bun_ast::AstArena,
+        arena: &'a bun_ast::AstArena,
         loader_: Option<&DotEnv::Loader>,
     ) -> Result<(), crate::Error> {
         // Forwarding the env as an `Option<&Env>` parameter forced the

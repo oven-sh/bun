@@ -345,12 +345,8 @@ fn package_name_in(tree: &Tree) -> Vec<u8> {
 fn package_json_name(bytes: &[u8]) -> Option<Vec<u8>> {
     let bump = AstArena::new();
     let src: &[u8] = bump.alloc_slice_copy(bytes);
-    let json = bun_parsers::json::parse_utf8(
-        &bun_ast::Source::init_path_string(b"package.json", src),
-        &bun_ast::Log::init(),
-        &bump,
-    )
-    .ok()?;
+    let source = bun_ast::Source::init_path_string(b"package.json", src);
+    let json = bun_parsers::json::parse_utf8(&source, &bun_ast::Log::init(), &bump).ok()?;
     let name = json.get_string_cloned(&bump, b"name").ok().flatten()?;
     is_npm_name(name).then(|| name.to_vec())
 }
@@ -927,7 +923,7 @@ fn fetch_registry_tree(
             if !parsed.valid || !parsed.version.min().eql(found.version) {
                 return None;
             }
-            Some(json_text(entry.value.as_ref()?, true))
+            Some(json_text(entry.value.as_ref()?, &bump, true))
         })
     });
 
@@ -2142,16 +2138,16 @@ const INSTALL_FIELDS: [&[u8]; 8] = [
 ];
 
 /// One side's package.json, with each field read from wherever `bun install` would read it.
-struct Manifest {
-    file: bun_ast::Expr,
+struct Manifest<'a> {
+    file: bun_ast::Expr<'a>,
     /// The registry manifest's entry for this version.
-    entry: Option<bun_ast::Expr>,
+    entry: Option<bun_ast::Expr<'a>>,
     /// The fields of `entry` whose values differ from those in `file`.
     overridden: Vec<&'static [u8]>,
 }
 
-impl Manifest {
-    fn get(&self, field: &[u8]) -> Option<bun_ast::Expr> {
+impl<'a> Manifest<'a> {
+    fn get(&self, field: &[u8]) -> Option<bun_ast::Expr<'a>> {
         match &self.entry {
             Some(entry) if self.overridden.contains(&field) => entry.get(field),
             _ => self.file.get(field),
@@ -2232,7 +2228,7 @@ fn package_json_notes(left: &Tree, right: &Tree, notes: &mut Vec<String>, colors
     let parse = |bytes: &[u8]| {
         let src: &[u8] = bump.alloc_slice_copy(bytes);
         bun_parsers::json::parse_utf8(
-            &bun_ast::Source::init_path_string(b"package.json", src),
+            bump.alloc(bun_ast::Source::init_path_string(b"package.json", src)),
             &bun_ast::Log::init(),
             &bump,
         )
@@ -2251,11 +2247,11 @@ fn package_json_notes(left: &Tree, right: &Tree, notes: &mut Vec<String>, colors
                 continue;
             }
             overridden.push(field);
-            let text = |json: &bun_ast::Expr| match json.get(field) {
+            let text = |value| match value {
                 Some(value) => expr_text(&value, &bump),
                 None => b"nothing".to_vec(),
             };
-            let (theirs, ours) = (text(entry), text(&file));
+            let (theirs, ours) = (text(entry.get(field)), text(file.get(field)));
             let at = first_difference(&theirs, &ours);
             notes.push(note!(
                 colors,
@@ -2411,8 +2407,8 @@ fn package_json_notes(left: &Tree, right: &Tree, notes: &mut Vec<String>, colors
         b"bundledDependencies",
     ] {
         // Compare the full values. Only the text shown in a note is truncated.
-        let differ = |(o, n): &(Option<bun_ast::Expr>, Option<bun_ast::Expr>)| {
-            o.map(|e| json_text(&e, true)) != n.map(|e| json_text(&e, true))
+        let differ = |&(o, n): &(Option<_>, Option<_>)| {
+            o.map(|e| json_text(&e, &bump, true)) != n.map(|e| json_text(&e, &bump, true))
         };
         // Compare the values `bun install` uses first, then the package.json files, which other
         // tools read.
@@ -2458,11 +2454,12 @@ fn package_json_notes(left: &Tree, right: &Tree, notes: &mut Vec<String>, colors
 
 /// Prints `e` as JSON. With `minify_whitespace`, the text does not depend on how the file that `e`
 /// was read from is formatted.
-fn json_text(e: &bun_ast::Expr, minify_whitespace: bool) -> Vec<u8> {
+fn json_text<'a>(e: &bun_ast::Expr<'a>, bump: &'a AstArena, minify_whitespace: bool) -> Vec<u8> {
     let mut printer = bun_js_printer::BufferPrinter::init(bun_js_printer::BufferWriter::init());
     let source = bun_ast::Source::init_path_string(b"package.json", b"".as_slice());
     let _ = bun_js_printer::print_json(
         &mut printer,
+        bump,
         *e,
         &source,
         bun_js_printer::PrintJsonOptions {
@@ -2475,14 +2472,14 @@ fn json_text(e: &bun_ast::Expr, minify_whitespace: bool) -> Vec<u8> {
 }
 
 /// Prints `e` on a single line, for use in a note.
-fn expr_text(e: &bun_ast::Expr, bump: &Bump) -> Vec<u8> {
+fn expr_text<'a>(e: &bun_ast::Expr<'a>, bump: &'a AstArena) -> Vec<u8> {
     if let Some(s) = e.as_string(bump) {
         return s.to_vec();
     }
     // Collapse the printer's indentation.
     let mut out: Vec<u8> = Vec::new();
     let mut last_space = false;
-    for b in json_text(e, false) {
+    for b in json_text(e, bump, false) {
         let ws = b == b'\n' || b == b' ' || b == b'\t';
         if ws {
             if !last_space {

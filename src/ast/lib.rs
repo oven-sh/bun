@@ -2268,13 +2268,6 @@ impl LineColumnTracker {
 pub struct SourceTooLarge;
 
 impl<'a> Source<'a> {
-    /// # Safety: what `self` borrows must outlive every read through the result.
-    #[inline]
-    pub unsafe fn into_static(self) -> Source<'static> {
-        // SAFETY: the types differ only in the lifetime, which is the caller's contract.
-        unsafe { core::mem::transmute::<Source<'a>, Source<'static>>(self) }
-    }
-
     /// Borrowed view of the source bytes. Provided as a method so callers that
     /// were written against a future owning-`contents` shape (`Vec<u8>`/`Cow`)
     /// don't need to change when the field type flips.
@@ -2561,7 +2554,7 @@ pub mod binding;
 pub mod char_freq;
 pub mod e;
 pub mod error;
-pub use error::{Error, Result};
+pub use error::Error;
 pub mod expr;
 pub mod fold_string_addition;
 pub mod g;

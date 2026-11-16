@@ -31,17 +31,17 @@ fn is_macro_path(str: &[u8]) -> bool {
     strings::has_prefix(str, NAMESPACE_WITH_COLON)
 }
 
-fn call_macro(
+fn call_macro<'a>(
     ctx: MacroContext<'_>,
-    bump: &bun_ast::AstArena,
+    bump: &'a bun_ast::AstArena,
     import_record_path: &[u8],
     source_dir: &[u8],
     log: &Log,
     source: &Source,
     import_range: Range,
-    caller: Expr,
+    caller: Expr<'a>,
     function_name: &[u8],
-) -> crate::Result<Expr> {
+) -> crate::Result<Expr<'a>> {
     if bun_jsc::compiled_program::compiled_program()
         .is_some_and(|program| !bun_jsc::compiled_program::admits_unknown_javascript(program))
     {
@@ -205,17 +205,17 @@ fn __bun_macro_collect_vm_garbage() {
 }
 
 #[unsafe(no_mangle)]
-fn __bun_macro_context_call(
+fn __bun_macro_context_call<'a>(
     ctx: MacroContext<'_>,
-    bump: &bun_ast::AstArena,
+    bump: &'a bun_ast::AstArena,
     import_record_path: &[u8],
     source_dir: &[u8],
     log: &Log,
     source: &Source,
     import_range: Range,
-    caller: Expr,
+    caller: Expr<'a>,
     function_name: &[u8],
-) -> Result<Expr, bun_js_parser::Error> {
+) -> Result<Expr<'a>, bun_js_parser::Error> {
     // ABI: the `extern "Rust"` declaration in bun_js_parser names
     // `bun_js_parser::Error`; keep both sides byte-identical.
     let caller_loc = caller.loc;
@@ -321,12 +321,12 @@ mod visit_map {
     use bun_collections::hash_map::GetOrPutResult;
 
     /// Keyed by cell address. `roots` keeps every key alive so the GC can't reuse an address.
-    pub(crate) struct VisitMap<'a> {
-        exprs: HashMap<JSValue, Expr>,
+    pub(crate) struct VisitMap<'a, 'ast> {
+        exprs: HashMap<JSValue, Expr<'ast>>,
         roots: &'a mut MarkedArgumentBuffer,
     }
 
-    impl<'a> VisitMap<'a> {
+    impl<'a, 'ast> VisitMap<'a, 'ast> {
         pub(crate) fn new(roots: &'a mut MarkedArgumentBuffer) -> Self {
             Self {
                 exprs: HashMap::default(),
@@ -334,14 +334,14 @@ mod visit_map {
             }
         }
 
-        pub(crate) fn get(&self, value: JSValue) -> Option<&Expr> {
+        pub(crate) fn get(&self, value: JSValue) -> Option<&Expr<'ast>> {
             self.exprs.get(&value)
         }
 
         pub(crate) fn get_or_put(
             &mut self,
             value: JSValue,
-        ) -> Result<GetOrPutResult<'_, Expr>, bun_alloc::AllocError> {
+        ) -> Result<GetOrPutResult<'_, Expr<'ast>>, bun_alloc::AllocError> {
             let entry = self.exprs.get_or_put(value)?;
             if !entry.found_existing {
                 self.roots.append(value);
@@ -349,7 +349,7 @@ mod visit_map {
             Ok(entry)
         }
 
-        pub(crate) fn insert(&mut self, value: JSValue, expr: Expr) {
+        pub(crate) fn insert(&mut self, value: JSValue, expr: Expr<'ast>) {
             if self.exprs.insert(value, expr).is_none() {
                 self.roots.append(value);
             }
@@ -397,29 +397,29 @@ impl From<MacroError> for Error {
     }
 }
 
-pub(crate) struct Run<'a> {
-    pub(crate) caller: Expr,
+pub(crate) struct Run<'a, 'ast> {
+    pub(crate) caller: Expr<'ast>,
     pub(crate) vm: &'a VirtualMachine,
     pub(crate) global: &'a JSGlobalObject,
     /// The parser's arena: the returned `Expr` joins its AST.
-    pub(crate) bump: &'a bun_ast::AstArena,
+    pub(crate) bump: &'ast bun_ast::AstArena,
     pub(crate) log: &'a Log,
     pub(crate) source: &'a Source<'a>,
-    pub(crate) visited: VisitMap<'a>,
+    pub(crate) visited: VisitMap<'a, 'ast>,
     pub(crate) is_top_level: bool,
     pub(crate) stack_check: bun_core::StackCheck,
 }
 
-impl<'a> Run<'a> {
+impl<'ast> Run<'_, 'ast> {
     pub(crate) fn run_async(
         vm: &VirtualMachine,
         log: &Log,
-        bump: &bun_ast::AstArena,
-        caller: Expr,
+        bump: &'ast bun_ast::AstArena,
+        caller: Expr<'ast>,
         args: &[JSValue],
         source: &Source,
         id: i32,
-    ) -> Result<Expr, MacroError> {
+    ) -> Result<Expr<'ast>, MacroError> {
         let Some(macro_callback) = vm.macros.get().get(&id).map(jsc::Strong::get) else {
             return Ok(caller);
         };
@@ -448,7 +448,7 @@ impl<'a> Run<'a> {
         })
     }
 
-    pub(crate) fn run(&mut self, value: JSValue) -> Result<Expr, MacroError> {
+    pub(crate) fn run(&mut self, value: JSValue) -> Result<Expr<'ast>, MacroError> {
         use ConsoleObject::formatter::Tag as T;
         if !self.stack_check.is_safe_to_recurse() {
             self.log.add_error(
@@ -496,7 +496,7 @@ impl<'a> Run<'a> {
         &mut self,
         tag: ConsoleObject::formatter::Tag,
         value: JSValue,
-    ) -> Result<Expr, MacroError> {
+    ) -> Result<Expr<'ast>, MacroError> {
         use ConsoleObject::formatter::Tag as T;
         match tag {
             T::Error => {
@@ -593,8 +593,7 @@ impl<'a> Run<'a> {
                     i += 1;
                 }
 
-                // reshaped for borrowck — `Expr.data.e_array` is a
-                // `StoreRef` (raw arena ptr) so re-borrow it after the `run`
+                // reshaped for borrowck — re-borrow `Expr.data.e_array` after the `run`
                 // recursion releases `self`.
                 if let ExprData::EArray(mut e_array) = expr.data {
                     e_array.items = array;
@@ -641,9 +640,6 @@ impl<'a> Run<'a> {
                 while let Some((prop, prop_value)) = object_iter.next()? {
                     let object_value = self.run(prop_value)?;
 
-                    // `EString::init` lifetime-erases its borrow
-                    // (arena-owned per the parser's `Str` convention). Copy the
-                    // key into the arena so it outlives the temporary `to_owned_slice()` Vec.
                     let key_bytes: &[u8] = self.bump.alloc_slice_copy(&prop.to_owned_slice());
                     let key =
                         Expr::allocate(self.bump, E::EString::init(key_bytes), self.caller.loc);
@@ -693,8 +689,6 @@ impl<'a> Run<'a> {
                         bytes.iter().map(|&b| b as u16).collect()
                     }
                 };
-                // `E::EString::init_utf16` lifetime-erases the slice
-                // (arena-owned per the parser's `Str` convention).
                 let arena_slice: &[u16] = self.bump.alloc_slice_copy(&utf16_bytes);
                 return Ok(Expr::allocate(
                     self.bump,
@@ -753,16 +747,16 @@ impl<'a> Run<'a> {
 }
 
 impl Runner {
-    fn run(
+    fn run<'a>(
         vm: &VirtualMachine,
         log: &Log,
-        bump: &bun_ast::AstArena,
+        bump: &'a bun_ast::AstArena,
         function_name: &[u8],
-        caller: Expr,
+        caller: Expr<'a>,
         source: &Source,
         id: i32,
         javascript_object: JSValue,
-    ) -> Result<Expr, MacroError> {
+    ) -> Result<Expr<'a>, MacroError> {
         if bun_core::env::IS_DEBUG {
             bun_core::prettyln!(
                 "<r><d>[macro]<r> call <d><b>{}<r>",
@@ -812,21 +806,21 @@ impl Runner {
             static CALL_STATE: Cell<*mut c_void> = const { Cell::new(core::ptr::null_mut()) };
         }
 
-        struct CallData<'c> {
+        struct CallData<'c, 'ast> {
             vm: &'c VirtualMachine,
             log: &'c Log,
-            bump: &'c bun_ast::AstArena,
-            caller: Expr,
+            bump: &'ast bun_ast::AstArena,
+            caller: Expr<'ast>,
             js_args: &'c [JSValue],
             source: &'c Source<'c>,
             id: i32,
-            result: Result<Expr, MacroError>,
+            result: Result<Expr<'ast>, MacroError>,
         }
 
         extern "C" fn call() {
             CALL_STATE.with(|s| {
                 // SAFETY: set immediately before Bun__startMacro below; cleared after.
-                let state = unsafe { &mut *s.get().cast::<CallData<'_>>() };
+                let state = unsafe { &mut *s.get().cast::<CallData<'_, '_>>() };
                 state.result = Run::run_async(
                     state.vm,
                     state.log,
@@ -871,13 +865,13 @@ unsafe extern "C" {
 /// Lives here, not on `bun_ast::Expr`, because it parses JSON via `bun_parsers`
 /// — `bun_ast` is a
 /// leaf below both. Only call site is the macro `Response`/`Blob` arm above.
-fn expr_from_blob(
+fn expr_from_blob<'a>(
     bytes: &[u8],
-    bump: &bun_ast::AstArena,
+    bump: &'a bun_ast::AstArena,
     content_type: &[u8],
     log: &Log,
     loc: bun_ast::Loc,
-) -> crate::Result<Expr> {
+) -> crate::Result<Expr<'a>> {
     use bun_ast::{E, ExprData, StoreStr as Str};
 
     // MIME essence: `type/subtype` with the parameters cut off.

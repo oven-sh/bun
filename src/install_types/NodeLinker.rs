@@ -174,15 +174,15 @@ bun_core::oom_from_alloc!(FromExprError);
 impl PnpmMatcher {
     // `bun_ast::ExprData` exposes the real value-shaped enum
     // (`EString`/`EArray` via `StoreRef<E::*>`). The arena-taking
-    // `E::String::slice` / `Expr::as_string_cloned` signatures get a local
+    // `E::String::string` / `Expr::as_string_cloned` signatures get a local
     // `bun_alloc::Arena` (PORTING.md §Allocators: AST=bumpalo) used only for
-    // transient UTF-16→UTF-8 transcoding inside `slice`/`string_cloned`.
+    // transient UTF-16→UTF-8 transcoding inside `string`/`string_cloned`.
     pub fn from_expr(
         expr: &ast::Expr,
         log: &bun_ast::Log,
         source: &bun_ast::Source,
     ) -> Result<PnpmMatcher, FromExprError> {
-        // Scratch arena for `E::String::slice` / `as_string_cloned`.
+        // Scratch arena for `E::String::string` / `as_string_cloned`.
         // Freed on return; `create_matcher` copies the patterns before then.
         let arena = Arena::new();
 
@@ -191,8 +191,8 @@ impl PnpmMatcher {
         let mut has_exclude = false;
 
         match expr.data {
-            ast::ExprData::EString(mut s) => {
-                let matcher = create_matcher(s.slice(&arena));
+            ast::ExprData::EString(s) => {
+                let matcher = create_matcher(s.string(&arena)?);
                 has_include = has_include || !matcher.is_exclude;
                 has_exclude = has_exclude || matcher.is_exclude;
                 matchers.push(matcher);

@@ -21,7 +21,11 @@ use super::{
 };
 
 /// [`MapEntry::save`] for a command that cannot go on without the new text.
-pub(crate) fn save_entry(entry: &mut MapEntry, root: bun_ast::Expr, log: &bun_ast::Log) {
+pub(crate) fn save_entry<'a>(
+    entry: &mut MapEntry<'a>,
+    root: bun_ast::Expr<'a>,
+    log: &bun_ast::Log,
+) {
     if let Err(err) = entry.save(root, log) {
         let verb = if matches!(err, Error::JsPrinter(_)) {
             "write"
@@ -53,7 +57,7 @@ pub(super) fn remove_dependencies_from_package_json(
 pub(super) fn package_json_entry_or_crash<'a>(
     manager: &'a mut PackageManager,
     path: &[u8],
-) -> &'a mut MapEntry {
+) -> &'a mut MapEntry<'static> {
     let log = manager.log();
     let (verb, err) = match manager.workspace_package_json_cache.get_with_path(
         log,

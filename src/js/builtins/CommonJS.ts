@@ -133,9 +133,12 @@ export function overridableRequire(this: JSCommonJSModule, originalId: string, o
     const namespace = out;
     // In a require cycle the namespace is live while the module body is still
     // running, so an export named `__esModule` / `module.exports` may be in TDZ.
+    // Each read has its own `try`: one export in TDZ does not hide the other.
     let esModule, moduleExports;
     try {
       esModule = namespace.__esModule;
+    } catch {}
+    try {
       moduleExports = namespace["module.exports"];
     } catch {}
     // In Bun, when __esModule is not defined, it's a CustomAccessor on the prototype.
@@ -228,6 +231,8 @@ export function requireESMFromHijackedExtension(this: JSCommonJSModule, id: stri
   let esModule, moduleExports;
   try {
     esModule = namespace.__esModule;
+  } catch {}
+  try {
     moduleExports = namespace["module.exports"];
   } catch {}
   // In Bun, when __esModule is not defined, it's a CustomAccessor on the prototype.

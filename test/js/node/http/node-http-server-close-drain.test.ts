@@ -464,6 +464,31 @@ test("closeIdleConnections() with emit('connection'): closes only the idle conne
 
 // res.end() sets `finished` right away, but the response stays assigned to the socket until 'finish'.
 // Node treats the connection as idle in between.
+test("closeIdleConnections() with emit('connection'): keeps a connection whose last request waits behind a response that ended", async () => {
+  const second = Promise.withResolvers<ServerResponse>();
+  const size = 1024 * 1024;
+  const server = createServer((req, res) => (req.url === "/1" ? res.end(Buffer.alloc(size)) : second.resolve(res)));
+  server.listen(0, "127.0.0.1");
+  await once(server, "listening");
+  const [client, connection] = duplexPair();
+  try {
+    server.emit("connection", connection);
+    client.write("GET /1 HTTP/1.1\r\nHost: x\r\n\r\nGET /2 HTTP/1.1\r\nHost: x\r\n\r\n");
+    const res = await second.promise;
+    await new Promise(resolve => setImmediate(resolve));
+    server.closeIdleConnections();
+    expect(connection.destroyed).toBe(false);
+    res.end("<2>");
+    let tail = "";
+    for await (const chunk of client) if ((tail = (tail + chunk).slice(-3)) === "<2>") break;
+    expect(tail).toBe("<2>");
+  } finally {
+    client.destroy();
+    connection.destroy();
+    server.close();
+  }
+});
+
 test("closeIdleConnections() with emit('connection'): closes a connection in the same tick as its res.end()", async () => {
   const heldResponse = Promise.withResolvers<ServerResponse>();
   const server = createServer((req, res) => heldResponse.resolve(res));

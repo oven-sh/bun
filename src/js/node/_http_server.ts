@@ -693,7 +693,10 @@ function closeIdleParsedConnections(server) {
   const connections = parsed.idle();
   for (let i = 0, l = connections.length; i < l; i++) {
     const socket = connections[i].socket;
-    if (socket._httpMessage && !socket._httpMessage.finished) continue;
+    const res = socket._httpMessage;
+    const { incoming } = connections[i];
+    // Nor one whose last request waits behind the response that ended.
+    if (res && (!res.finished || (incoming && incoming !== res.req))) continue;
     socket.destroy();
   }
 }

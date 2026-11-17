@@ -1,5 +1,5 @@
 // What the compiler reads in place of src/js/node/_http_server.ts, which `bun run` evaluates. The two do the same.
-// Written against that file with the SHA-256 ed7433a15c62b7a063e34f14b088f623fd8b87ff20fe58d9e1a61b3253c41f5a.
+// Written against that file with the SHA-256 a3f97203b9ab791008269c0c79bb49d3d074cc7bc255a59f306f675677ae592c.
 // When that file changes, bring the change here and write the new hash: test/internal/second-texts-of-modules.test.ts.
 
 // Hardcoded module "node:_http_server"
@@ -1123,7 +1123,10 @@ function closeIdleParsedConnections(server: $Node.HttpServer) {
   const connections = parsed.idle();
   for (let i = 0, l = connections.length; i < l; i++) {
     const socket = connections[i].socket!;
-    if (socket._httpMessage && !socket._httpMessage.finished) continue;
+    const res = socket._httpMessage;
+    const { incoming } = connections[i];
+    // Nor one whose last request waits behind the response that ended.
+    if (res && (!res.finished || (incoming && incoming !== (res as $Node.ServerResponse).req))) continue;
     socket.destroy();
   }
 }

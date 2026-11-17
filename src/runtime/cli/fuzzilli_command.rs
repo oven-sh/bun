@@ -120,7 +120,8 @@ mod reprl {
 
     /// Handshake, then one program per `exec` until the control pipe closes.
     fn serve(vm: &VirtualMachine) -> ! {
-        // No program runs on the global of the boot: dead stack under this frame, which never returns, still points at it.
+        // The first program of a child also runs on a global that `reset` made: Fuzzilli confirms a crash
+        // by running its program again, and that run is the first program of a new child.
         reset(vm);
 
         let control_in = File::borrow(&CONTROL_READ_FD);

@@ -1,4 +1,4 @@
-import { randomUUIDv7 } from "bun";
+import { randomUUIDv7, RedisClient } from "bun";
 import { beforeEach, describe, expect, test } from "bun:test";
 import { ConnectionType, createClient, ctx, isEnabled } from "../test-utils";
 
@@ -280,5 +280,134 @@ describe.skipIf(!isEnabled)("Valkey: Error Handling", () => {
       // Compare binary data
       expect(result).toBe(binaryString);
     });
+  });
+});
+
+describe("Valkey: Command Arguments", () => {
+  type Call = [method: string, ...args: unknown[]];
+  const title = ([method, ...args]: Call) => `${method}(${args.map(arg => Bun.inspect(arg)).join(", ")})`;
+  const run = (client: RedisClient, [method, ...args]: Call) => (client as any)[method](...args);
+
+  /** A client of a server that acknowledges SUBSCRIBE, answers GET with "v" and anything else with 1. */
+  async function connect() {
+    const received: string[] = [];
+    const replies: Record<string, string> = {
+      HELLO: "+OK\r\n",
+      SUBSCRIBE: ">3\r\n$9\r\nsubscribe\r\n$2\r\nch\r\n:1\r\n",
+      GET: "$1\r\nv\r\n",
+    };
+    const server = Bun.listen({
+      hostname: "127.0.0.1",
+      port: 0,
+      socket: {
+        data(socket, data) {
+          const words = data
+            .toString()
+            .split("\r\n")
+            .filter(line => line && !/^[*$]/.test(line));
+          received.push(words.join(" "));
+          socket.write(replies[words[0]] ?? ":1\r\n");
+        },
+      },
+    });
+    const client = new RedisClient(`redis://127.0.0.1:${server.port}`);
+    await client.connect();
+    return {
+      client,
+      lastReceived: () => received.at(-1),
+      [Symbol.dispose]() {
+        client.close();
+        server.stop(true);
+      },
+    };
+  }
+
+  const sent: { call: Call; sends: string; resolves: unknown }[] = [
+    { call: ["dbsize", "ignored"], sends: "DBSIZE", resolves: 1 },
+    { call: ["get", "k"], sends: "GET k", resolves: "v" },
+    { call: ["getBuffer", "k"], sends: "GET k", resolves: Buffer.from("v") },
+    { call: ["incr", "k"], sends: "INCR k", resolves: 1 },
+    { call: ["decr", "k"], sends: "DECR k", resolves: 1 },
+    { call: ["ttl", "k"], sends: "TTL k", resolves: 1 },
+    { call: ["smembers", "k"], sends: "SMEMBERS k", resolves: 1 },
+    { call: ["exists", "k"], sends: "EXISTS k", resolves: true },
+    { call: ["sismember", "k", "m"], sends: "SISMEMBER k m", resolves: true },
+    { call: ["hexists", "k", "f"], sends: "HEXISTS k f", resolves: true },
+    { call: ["hsetnx", "k", "f", 2], sends: "HSETNX k f 2", resolves: true },
+    { call: ["smove", "a", "b", "m"], sends: "SMOVE a b m", resolves: true },
+    { call: ["mset", "a", 1, "b", 2], sends: "MSET a 1 b 2", resolves: 1 },
+    { call: ["lpush", null, "a", undefined, "b"], sends: "LPUSH a b", resolves: 1 },
+    { call: ["del", "a", null, "b"], sends: "DEL a b", resolves: 1 },
+    { call: ["sadd", "k", "a", null, "b"], sends: "SADD k a", resolves: 1 },
+    { call: ["srem", "k", "a", "b"], sends: "SREM k a b", resolves: 1 },
+    { call: ["spop", "k"], sends: "SPOP k", resolves: 1 },
+    { call: ["srandmember", "k", 2, 3], sends: "SRANDMEMBER k 2", resolves: 1 },
+    { call: ["hincrby", "k", null, true], sends: "HINCRBY k null true", resolves: 1 },
+    { call: ["hincrbyfloat", "k", "f", 1.5], sends: "HINCRBYFLOAT k f 1.5", resolves: 1 },
+    { call: ["publish", new String("ch"), "m"], sends: "PUBLISH ch m", resolves: 1 },
+  ];
+  for (const { call, sends, resolves } of sent) {
+    test(`${title(call)} sends ${sends}`, async () => {
+      using server = await connect();
+      expect(await run(server.client, call)).toEqual(resolves);
+      expect(server.lastReceived()).toBe(sends);
+    });
+  }
+
+  const refused: { call: Call; throws: string }[] = [
+    { call: ["getBuffer"], throws: "Expected key to be a string or buffer for 'getBuffer'." },
+    { call: ["sismember", "k", {}], throws: "Expected value to be a string or buffer for 'sismember'." },
+    { call: ["hexists", "k", null], throws: "Expected field to be a string or buffer for 'hexists'." },
+    { call: ["hsetnx", "k", "f"], throws: "Expected value to be a string or buffer for 'hsetnx'." },
+    { call: ["smove", "a", {}, {}], throws: "Expected destination to be a string or buffer for 'smove'." },
+    { call: ["mset", "a", null], throws: "Expected additional arguments to be a string or buffer for 'mset'." },
+    { call: ["lpush", "k", {}], throws: "Expected additional arguments to be a string or buffer for 'lpush'." },
+    { call: ["del", null, "b"], throws: 'The "key" argument must be specified' },
+    { call: ["sadd", {}], throws: "SADD requires at least a key and one member" },
+    { call: ["srem", "k"], throws: "SREM requires at least a key and one member" },
+    { call: ["srem", "k", {}], throws: "Expected member to be a string or buffer for 'srem'." },
+    { call: ["spop"], throws: "Expected key to be a string or buffer for 'spop'." },
+    { call: ["srandmember", "k", {}], throws: "Expected count to be a number or string for 'srandmember'." },
+    { call: ["publish", 1, 2], throws: "Expected channel to be a string for 'publish'." },
+    { call: ["publish", "ch", Buffer.from("m")], throws: "Expected message to be a string for 'publish'." },
+  ];
+  for (const { call, throws } of refused) {
+    test(`${title(call)} throws`, async () => {
+      using server = await connect();
+      expect(() => run(server.client, call)).toThrow(throws);
+    });
+  }
+
+  // No arguments: the mode is checked before they are.
+  for (const method of ["dbsize", "getBuffer", "lrange", "mset", "lpush", "del", "sadd", "spop", "hincrby"]) {
+    test(`${method}() throws in subscriber mode`, async () => {
+      using server = await connect();
+      await server.client.subscribe("ch", () => {});
+      expect(() => run(server.client, [method])).toThrow(
+        `RedisClient.prototype.${method} cannot be called while in subscriber mode.`,
+      );
+    });
+  }
+
+  test("pubsub() is sent in subscriber mode", async () => {
+    using server = await connect();
+    await server.client.subscribe("ch", () => {});
+    expect(await run(server.client, ["pubsub", "NUMPAT"])).toBe(1);
+    expect(server.lastReceived()).toBe("PUBSUB NUMPAT");
+  });
+
+  test("arguments convert in order and stop at the first that is refused", async () => {
+    using server = await connect();
+    const converted: string[] = [];
+    const logged = (text: string) =>
+      Object.assign(new String(text), {
+        toString() {
+          converted.push(text);
+          return text;
+        },
+      });
+    await run(server.client, ["smove", logged("a"), logged("b"), logged("c")]);
+    expect(() => run(server.client, ["smove", logged("d"), {}, logged("e")])).toThrow("Expected destination");
+    expect(converted).toEqual(["a", "b", "c", "d"]);
   });
 });

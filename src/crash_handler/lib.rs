@@ -434,10 +434,7 @@ impl Write for StderrWriter {
         }
         #[cfg(not(windows))]
         {
-            // SAFETY: fd 2 is always open; libc::write is async-signal-safe.
-            unsafe {
-                libc::write(2, bytes.as_ptr().cast(), bytes.len() as _);
-            }
+            let _ = bun_sys::write(bun_sys::Fd::stderr(), bytes);
         }
         Ok(())
     }
@@ -3137,12 +3134,8 @@ mod draft {
             match result {
                 // child
                 0 => {
-                    for i in 0..2 {
-                        // SAFETY: closing stdin/stdout in child
-                        unsafe {
-                            libc::close(i);
-                        }
-                    }
+                    let _ = bun_sys::close(bun_sys::Fd::stdin());
+                    let _ = bun_sys::close(bun_sys::Fd::stdout());
                     // SAFETY: argv is NUL-terminated array of NUL-terminated strings; environ is the
                     // process environment block
                     unsafe {

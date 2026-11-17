@@ -334,7 +334,8 @@ impl Watcher {
             if writers.open.is_empty() {
                 return Ok(());
             }
-            if deadline.is_none() {
+            // A file can come onto the list while the batch waits.
+            if deadline.is_none() || !writers.open.iter().all(|wd| watched.contains(wd)) {
                 watched.clear();
                 watched.extend_from_slice(self.state.lock().watchlist.items_eventlist_index());
             }

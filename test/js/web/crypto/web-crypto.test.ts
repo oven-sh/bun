@@ -462,17 +462,58 @@ describe("dictionary conversion", () => {
     });
   });
 
-  it.each([
+  describe.each([
     ["ECDH", "EcdhKeyDeriveParams"],
     ["X25519", "X25519Params"],
-  ])("deriveBits %s reads public before it converts name again", async (name, dictionary) => {
-    const reads: string[] = [];
-    const algorithm = { name: { toString: () => (reads.push("toString"), name) }, public: null };
-    await expect(calls.deriveBits(logReads(algorithm, reads), await someKey())).rejects.toMatchObject({
-      code: "ERR_INVALID_ARG_TYPE",
-      message: `Member ${dictionary}.publicKey must be an instance of CryptoKey`,
+  ])("deriveBits %s", (name, dictionary) => {
+    it.each([
+      [null, "ERR_INVALID_ARG_TYPE", "must be"],
+      [undefined, "ERR_MISSING_OPTION", "is required and must be"],
+    ])("reads public: %p before it converts name again", async (publicKey, code, words) => {
+      const reads: string[] = [];
+      const algorithm = { name: { toString: () => (reads.push("toString"), name) }, public: publicKey };
+      await expect(calls.deriveBits(logReads(algorithm, reads), await someKey())).rejects.toMatchObject({
+        code,
+        message: `Member ${dictionary}.publicKey ${words} an instance of CryptoKey`,
+      });
+      expect(reads).toEqual(["name", "toString", "name", "public", "toString"]);
     });
-    expect(reads).toEqual(["name", "toString", "name", "public", "toString"]);
+  });
+
+  it.each([
+    ["deriveBits", "HKDF", "salt"],
+    ["deriveBits", "HKDF", "info"],
+    ["deriveBits", "PBKDF2", "salt"],
+    ["generateKey", "RSA-PSS", "publicExponent"],
+  ])("%s %s refuses a resizable %s", async (operation, name, member) => {
+    const valid = {
+      name,
+      hash: "SHA-256",
+      salt: data,
+      info: data,
+      iterations: 1,
+      modulusLength: 1,
+      publicExponent: data,
+    };
+    const buffer = new ArrayBuffer(8, { maxByteLength: 16 });
+    for (const value of [buffer, new Uint8Array(buffer)])
+      await expect(calls[operation]({ ...valid, [member]: value }, await someKey())).rejects.toBeInstanceOf(TypeError);
+  });
+
+  it.each([
+    [{ name: "Ed25519" }, "sign", ["name"]],
+    [{ name: "AES-GCM", length: 128 }, "encrypt", ["name", "length"]],
+    [{ name: "ECDSA", namedCurve: "P-256" }, "sign", ["name", "namedCurve"]],
+    [{ name: "HMAC", hash: "SHA-256" }, "sign", ["name", "hash", "length"]],
+    [
+      { name: "RSA-PSS", hash: "SHA-256", modulusLength: 1024, publicExponent: new Uint8Array([1, 0, 1]) },
+      "sign",
+      ["name", "modulusLength", "publicExponent", "hash"],
+    ],
+  ] as [any, KeyUsage, string[]][])("writes the algorithm of %j in order", async (algorithm, usage, members) => {
+    const result: any = await subtle.generateKey(algorithm, true, [usage]);
+    if (!(result instanceof CryptoKey)) expect(Object.keys(result)).toEqual(["privateKey", "publicKey"]);
+    expect(Object.keys((result.privateKey ?? result).algorithm)).toEqual(members);
   });
 
   it("reads and writes the members of a JWK in the same order", async () => {
@@ -505,6 +546,7 @@ describe("dictionary conversion", () => {
 });
 
 it("a worker can be terminated while a pending deriveKey holds the last reference to namedCurve", async () => {
+  // deriveKey reads name twice to import (ECDSA has a curve), then for the length. Object.keys makes the curve an atom.
   const worker = `
     const key = await crypto.subtle.importKey("raw", new Uint8Array(8), "PBKDF2", false, ["deriveKey"]);
     for (let i = 0; i < 16; i++) {
@@ -529,11 +571,10 @@ it("a worker can be terminated while a pending deriveKey holds the last referenc
        worker.addEventListener("close", () => console.log("closed"));`,
     ],
     env: bunEnv,
-    stderr: "inherit",
+    stderr: "pipe",
   });
-  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
-  expect(stdout).toBe("closed\n");
-  expect(exitCode).toBe(0);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr, exitCode }).toEqual({ stdout: "closed\n", stderr: "", exitCode: 0 });
 });
 
 describe("algorithm members are copied when the algorithm is normalized", () => {
@@ -544,6 +585,8 @@ describe("algorithm members are copied when the algorithm is normalized", () => 
     ["overwritten", buffer => void buffer.fill(0xee)],
     ["detached", buffer => void (buffer.byteLength && buffer.buffer.transfer())],
   ];
+
+  let rsaKeys: Promise<webcrypto.CryptoKeyPair> | undefined;
 
   describe.each(changes)("%s later in the same call", (_, change) => {
     it.each([
@@ -581,7 +624,6 @@ describe("algorithm members are copied when the algorithm is normalized", () => 
 
     const secretKey = (name: string, format = "raw", length = 16) =>
       subtle.importKey(format as "raw", bytes(length), name, false, ["wrapKey", "unwrapKey"]);
-    let rsaKeys: Promise<webcrypto.CryptoKeyPair> | undefined;
 
     describe.each([
       ["AES-GCM", "iv", () => ({ iv: bytes(12), additionalData: bytes(4) })],

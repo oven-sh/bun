@@ -149,7 +149,6 @@ impl Block {
     }
 
     /// In whichever way is shortest, and clears it. `source` is what the symbols stand for, if it is still there.
-    // https://github.com/zlib-ng/zlib-ng/blob/12731092979c6d07f42da27da673a9f6c7b13586/trees.c#L628
     pub(super) fn write(
         &mut self,
         pending: &mut Pending,
@@ -157,6 +156,7 @@ impl Block {
         only_fixed: bool,
         is_last: bool,
     ) {
+        // https://github.com/zlib-ng/zlib-ng/blob/12731092979c6d07f42da27da673a9f6c7b13586/trees.c#L628
         if self.is_empty() {
             pending.put(Bits::block_header(FIXED_BLOCK, is_last));
             pending.put(FIXED.end_of_block());

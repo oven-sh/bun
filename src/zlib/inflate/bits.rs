@@ -8,7 +8,6 @@ pub(super) struct HeldBits {
 /// So many bits are there after a refill, unless the input has run out.
 pub(super) const REFILLED_BITS: u32 = u64::BITS - 8;
 
-#[derive(Clone, Copy)]
 pub(super) struct BitReader<'a> {
     input: &'a [u8],
     /// The end of `input` that `count` does not cover.
@@ -99,8 +98,11 @@ impl<'a> BitReader<'a> {
 
     /// At most `max` bytes. The stream has to be at a byte boundary.
     pub(super) fn take_bytes(&mut self, max: usize) -> &'a [u8] {
-        self.unread();
+        if self.count != 0 {
+            self.unread();
+        }
         debug_assert_eq!(self.count, 0);
+        self.buffer = 0;
         let bytes;
         (bytes, self.rest) = self.rest.split_at(max.min(self.rest.len()));
         bytes

@@ -101,7 +101,7 @@ mod _impl {
                         ));
                     }
                 };
-                // zlib takes a `uInt` length; reject anything larger before `Context::init` copies it.
+                // As for zlib, which takes the length in 32 bits.
                 if dictionary_buf.byte_len > u32::MAX as usize {
                     return Err(global.throw_range_error(
                         dictionary_buf.byte_len as i64,

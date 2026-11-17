@@ -7,6 +7,8 @@ use crate::format::STORED_BLOCK;
 use crate::vec;
 
 const WORD: usize = size_of::<u64>();
+/// Not 0, or copies would be slow on AMD: https://sourceware.org/bugzilla/show_bug.cgi?id=30994
+const START: usize = 64;
 
 /// A number, and how many bits it takes: at most 63.
 #[derive(Clone, Copy)]
@@ -33,10 +35,12 @@ pub(super) struct Pending {
 
 impl Pending {
     pub(super) fn new(size: usize) -> Result<Self> {
+        let mut bytes = vec::with_room(START + size + 2 * WORD)?;
+        bytes.resize(START, 0);
         Ok(Self {
-            bytes: vec::with_room(size + 2 * WORD)?,
-            start: 0,
-            end: 0,
+            bytes,
+            start: START,
+            end: START,
             bits: 0,
             bit_count: 0,
             size,
@@ -45,7 +49,7 @@ impl Pending {
     }
 
     pub(super) fn clear(&mut self) {
-        (self.start, self.end, self.bits, self.bit_count) = (0, 0, 0, 0);
+        (self.start, self.end, self.bits, self.bit_count) = (START, START, 0, 0);
         self.has_overflowed = false;
     }
 
@@ -65,7 +69,7 @@ impl Pending {
 
     /// There is no room for another word and the end of the block.
     pub(super) fn is_almost_full(&self) -> bool {
-        self.end + WORD >= self.size
+        self.end + WORD >= START + self.size
     }
 
     /// How many bytes the bits so far and the header of a stored block take.
@@ -81,7 +85,7 @@ impl Pending {
         out.append(bytes);
         self.start += bytes.len();
         if self.has_no_bytes() {
-            (self.start, self.end) = (0, 0);
+            (self.start, self.end) = (START, START);
         }
     }
 
@@ -144,7 +148,7 @@ impl Pending {
     /// The writer has room until `is_almost_full()`.
     #[inline(always)]
     pub(super) fn write_some(&mut self, max_len: usize, write: impl FnOnce(&mut Writer<'_>)) {
-        self.write_up_to(max_len, self.size - WORD, write);
+        self.write_up_to(max_len, START + self.size - WORD, write);
     }
 
     /// Without a branch that is hard to predict. `bits_of` gives at most 56 bits each, and `max_len` bytes in all.

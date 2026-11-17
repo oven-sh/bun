@@ -120,8 +120,7 @@ impl PerMessageDeflate {
         out.try_reserve_exact(INFLATE_BUFFER_SIZE)
             .map_err(|_| InflateError::OutOfMemory)?;
 
-        // libdeflate only inflates a finished stream, so it needs a final block. It also can't see
-        // earlier messages, so it only works without context takeover.
+        // libdeflate needs a final block, and can't see earlier messages.
         if self.decompress_no_context_takeover
             && Self::can_use_libdeflate(in_buf.len())
             && let Some(decompressor) = decompressor

@@ -5,8 +5,8 @@ use crate::format::MAX_STORED_LEN;
 
 impl Deflater {
     /// Blocks go straight to the output if they can be large enough there, and through `pending` if not.
-    // https://github.com/zlib-ng/zlib-ng/blob/12731092979c6d07f42da27da673a9f6c7b13586/deflate_stored.c#L27
     pub(super) fn store(&mut self, io: &mut Io<'_, '_>, flush: Flush) -> Progress {
+        // https://github.com/zlib-ng/zlib-ng/blob/12731092979c6d07f42da27da673a9f6c7b13586/deflate_stored.c#L27
         let size = self.window.size as usize;
         let min_block = (self.pending.size() - 5).min(size);
         let input = io.input;

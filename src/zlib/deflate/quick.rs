@@ -23,7 +23,6 @@ impl Deflater {
         } else {
             QuickBlock::Open
         };
-        self.window.start_block();
     }
 
     /// Whether there is room left.

@@ -25,7 +25,7 @@ fn find(matcher: &mut Matcher<'_>, position: u32, lookahead: u32) -> Step {
         position,
         match_start: found.start,
         len: found.len,
-        first_unhashed: position,
+        first_unhashed: position + 1,
     }
 }
 
@@ -36,14 +36,13 @@ fn hash_match(index: &mut Index<'_>, step: Step, max_len: u32) {
     if step.len > max_len {
         return index.insert_at(end - 1);
     }
-    let start = step.first_unhashed.max(step.position + 1);
-    index.insert_all::<false>(start, end.saturating_sub(start));
+    index.insert_all::<false>(step.first_unhashed, end - step.first_unhashed);
 }
 
 /// Extends `next` to the left if that leaves at most a literal of `current`.
-// https://github.com/zlib-ng/zlib-ng/blob/12731092979c6d07f42da27da673a9f6c7b13586/deflate_medium.c#L97
 #[inline(always)]
-fn take_over(window: &[u8], current: &mut Step, next: &mut Step, max_distance: u32) {
+fn take_over(window: &[u8], current: &mut Step, next: &mut Step) {
+    // https://github.com/zlib-ng/zlib-ng/blob/12731092979c6d07f42da27da673a9f6c7b13586/deflate_medium.c#L97
     const MAX_LEN: u32 = 256;
     let needed = current.len - 1;
     if needed > next.match_start
@@ -51,9 +50,7 @@ fn take_over(window: &[u8], current: &mut Step, next: &mut Step, max_distance: u
     {
         return;
     }
-    let limit = next.position.saturating_sub(max_distance);
     let max = (current.len)
-        .min(next.position - limit)
         .min(MAX_LEN.saturating_sub(next.len))
         .min(next.match_start - 1);
     let moved = (1..=max)
@@ -66,7 +63,6 @@ fn take_over(window: &[u8], current: &mut Step, next: &mut Step, max_distance: u
         next.position -= moved;
         next.match_start -= moved;
         next.len += moved;
-        next.first_unhashed += 1;
     }
 }
 
@@ -114,7 +110,7 @@ impl Deflater {
                     if may_look_at(behind) {
                         next = find(&mut matcher, behind, lookahead);
                         if next.len >= HASHED_LEN {
-                            take_over(window, &mut current, &mut next, matcher.max_distance);
+                            take_over(window, &mut current, &mut next);
                         }
                     }
                     if current.len >= HASHED_LEN {

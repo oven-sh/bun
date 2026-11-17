@@ -39,9 +39,10 @@ impl Counts {
     }
 }
 
-/// Signs of a block that has enough symbols for better tables to pay off: the rarest symbol has a long code, or the
-/// block before was long and there is input for another.
+/// So long a code for the rarest symbol tells of a block for which better tables pay off.
 const LONG_BLOCK_END_BITS: usize = 10;
+/// A shorter one will do behind a long block, if there is input for another.
+const NEXT_LONG_BLOCK_END_BITS: usize = 7;
 const LONG_BLOCK_OUTPUT: usize = 8192;
 const LONG_BLOCK_INPUT: usize = 1024;
 
@@ -52,15 +53,11 @@ pub(super) struct DynamicCodes {
     coded: Vec<Coded>,
     read: u16,
     last: u8,
-    /// How many bytes the tables have been good for, or `None` at the start of the stream.
+    /// How many bytes the tables have been good for, if there are any.
     decoded: Option<usize>,
 }
 
 impl DynamicCodes {
-    pub(super) fn reset(&mut self) {
-        self.decoded = None;
-    }
-
     pub(super) fn tables(&self) -> Option<&Tables> {
         self.tables.as_deref()
     }
@@ -170,8 +167,12 @@ impl DynamicCodes {
             .decoded
             .replace(0)
             .is_none_or(|it| it >= LONG_BLOCK_OUTPUT);
-        let is_long = end_of_block.bits() >= LONG_BLOCK_END_BITS
-            || (was_long && input_len >= LONG_BLOCK_INPUT);
+        let long_end_bits = if was_long && input_len >= LONG_BLOCK_INPUT {
+            NEXT_LONG_BLOCK_END_BITS
+        } else {
+            LONG_BLOCK_END_BITS
+        };
+        let is_long = end_of_block.bits() >= long_end_bits;
         if !tables.build_literal_length(literal_lengths, is_long) {
             return Err(Damage::LiteralLengthsSet.into());
         }

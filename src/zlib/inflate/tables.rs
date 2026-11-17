@@ -11,13 +11,11 @@ use crate::format::{
 pub(super) const LITERAL_LENGTH_BITS: u32 = 11;
 pub(super) const DISTANCE_BITS: u32 = 8;
 
-/// From the lowest bit: how many bits of the stream it stands for (6 bits), `ONLY_LITERALS`, `MATCH`, a literal (8),
-/// another or the length of the match less 3 (8), `small()` (4), a `Special` (2), how many literals (2).
+/// The lowest 6 bits tell how many bits of the stream it stands for.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(super) struct Entry(pub(super) u32);
 
-/// A special `Entry`, or the lowest 8 bits of one, how many of the bits in the stream are the code (8), the shortest
-/// distance (16), and the mask for the other bits (32).
+/// A special `Entry`, or something that has its lowest byte.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(super) struct DistanceEntry(pub(super) u64);
 
@@ -32,22 +30,31 @@ pub(super) enum Special {
 impl Entry {
     const ONLY_LITERALS: u32 = 1 << 6;
     const MATCH: u32 = 1 << 7;
-    const ONE_LITERAL: u32 = 1 << 30;
+    /// Of the first literal, or of where the subtable starts.
+    const FIRST_SHIFT: u32 = 8;
+    /// Of the second literal, or of the length less 3.
+    const SECOND_SHIFT: u32 = 16;
+    const SMALL_SHIFT: u32 = 24;
+    const KIND_SHIFT: u32 = 28;
+    const LITERAL_COUNT_SHIFT: u32 = 30;
+    const ONE_LITERAL: u32 = 1 << Self::LITERAL_COUNT_SHIFT;
 
     const fn special(kind: Special, bits: u32) -> Self {
-        Self((kind as u32) << 28 | bits)
+        Self((kind as u32) << Self::KIND_SHIFT | bits)
     }
 
     const fn subtable(start: u32, index_bits: u32, root_bits: u32) -> Self {
-        Self(Self::special(Special::Subtable, root_bits).0 | index_bits << 24 | start << 8)
+        let special = Self::special(Special::Subtable, root_bits);
+        Self(special.0 | index_bits << Self::SMALL_SHIFT | start << Self::FIRST_SHIFT)
     }
 
     const fn length(length: u32, bits: u32) -> Self {
-        Self((length - MIN_MATCH as u32) << 16 | Self::MATCH | bits)
+        Self((length - MIN_MATCH as u32) << Self::SECOND_SHIFT | Self::MATCH | bits)
     }
 
     const fn literal(literal: u8, bits: u32) -> Self {
-        Self(Self::ONE_LITERAL | bits << 24 | (literal as u32) << 8 | Self::ONLY_LITERALS | bits)
+        let literal = Self::ONE_LITERAL | (literal as u32) << Self::FIRST_SHIFT;
+        Self(literal | bits << Self::SMALL_SHIFT | Self::ONLY_LITERALS | bits)
     }
 
     const fn new(symbol: usize, bits: u32) -> Self {
@@ -60,7 +67,8 @@ impl Entry {
                     return Self::length(range.base, bits);
                 }
                 let special = Self::special(Special::LengthWithExtraBits, bits);
-                Self(special.0 | range.extra_bits << 24 | (range.base - MIN_MATCH as u32) << 16)
+                let base = (range.base - MIN_MATCH as u32) << Self::SECOND_SHIFT;
+                Self(special.0 | range.extra_bits << Self::SMALL_SHIFT | base)
             }
             _ => Self::special(Special::Invalid, bits),
         }
@@ -71,7 +79,7 @@ impl Entry {
         if self.0 & Self::MATCH != 0 {
             return self.0 - Self::ONLY_LITERALS;
         }
-        Self::ONE_LITERAL | (self.first_literal() as u32) << 16 | self.bits()
+        Self::ONE_LITERAL | (self.first_literal() as u32) << Self::SECOND_SHIFT | self.bits()
     }
 
     const fn fits_with_extra_bits(self) -> bool {
@@ -104,7 +112,7 @@ impl Entry {
     /// Of a special one.
     #[inline(always)]
     pub(super) const fn kind(self) -> Special {
-        match (self.0 >> 28) % 4 {
+        match (self.0 >> Self::KIND_SHIFT) % 4 {
             0 => Special::Invalid,
             1 => Special::Subtable,
             2 => Special::LengthWithExtraBits,
@@ -114,29 +122,29 @@ impl Entry {
 
     #[inline(always)]
     pub(super) const fn literal_count(self) -> usize {
-        (self.0 >> 30) as usize
+        (self.0 >> Self::LITERAL_COUNT_SHIFT) as usize
     }
 
     /// The first `literal_count()` are.
     #[inline(always)]
     pub(super) const fn literals(self) -> [u8; 2] {
-        ((self.0 >> 8) as u16).to_le_bytes()
+        ((self.0 >> Self::FIRST_SHIFT) as u16).to_le_bytes()
     }
 
     #[inline(always)]
     pub(super) const fn first_literal(self) -> u8 {
-        (self.0 >> 8) as u8
+        (self.0 >> Self::FIRST_SHIFT) as u8
     }
 
     #[inline(always)]
     pub(super) const fn match_length(self) -> usize {
-        (self.0 >> 16) as u8 as usize + MIN_MATCH
+        (self.0 >> Self::SECOND_SHIFT) as u8 as usize + MIN_MATCH
     }
 
     /// How many bits there are in the first literal's code, behind a length's code, or in the index of the subtable.
     #[inline(always)]
     pub(super) const fn small(self) -> u32 {
-        (self.0 >> 24) % 16
+        (self.0 >> Self::SMALL_SHIFT) % 16
     }
 
     /// The first `small()` bits.
@@ -147,13 +155,18 @@ impl Entry {
 }
 
 impl DistanceEntry {
+    const CODE_BITS_SHIFT: u32 = 8;
+    const BASE_SHIFT: u32 = 16;
+    const EXTRA_MASK_SHIFT: u32 = 32;
+
     const fn new(symbol: usize, bits: u32) -> Self {
         if symbol >= DISTANCE_SYMBOLS {
             return Self(Entry::special(Special::Invalid, bits).0 as u64);
         }
         let range = distance_range(symbol as u32);
-        let lower = range.base << 16 | bits << 8 | Entry::MATCH | (bits + range.extra_bits);
-        Self(((1 << range.extra_bits) - 1) << 32 | lower as u64)
+        let lowest = Entry::MATCH | (bits + range.extra_bits);
+        let lower = range.base << Self::BASE_SHIFT | bits << Self::CODE_BITS_SHIFT | lowest;
+        Self(((1 << range.extra_bits) - 1) << Self::EXTRA_MASK_SHIFT | lower as u64)
     }
 
     /// Only `bits()` and `is_special()` make sense for one that is not special.
@@ -165,8 +178,9 @@ impl DistanceEntry {
     /// `stream` starts with the bits that the entry stands for.
     #[inline(always)]
     pub(super) const fn distance(self, stream: u64) -> usize {
-        let extra = stream.wrapping_shr(self.0 as u32 >> 8) as u32 & (self.0 >> 32) as u32;
-        ((self.0 as u32 >> 16) + extra) as usize
+        let behind_code = stream.wrapping_shr(self.0 as u32 >> Self::CODE_BITS_SHIFT) as u32;
+        let extra = behind_code & (self.0 >> Self::EXTRA_MASK_SHIFT) as u32;
+        ((self.0 as u32 >> Self::BASE_SHIFT) + extra) as usize
     }
 }
 
@@ -313,7 +327,7 @@ impl<T: Copy + From<Entry>, const ROOT: usize, const SUBTABLES: usize> Table<T, 
     /// `stream` starts behind the bits of `link`.
     #[inline(always)]
     pub(super) fn follow(&self, link: Entry, stream: u64) -> T {
-        let start = usize::from((link.0 >> 8) as u16);
+        let start = usize::from((link.0 >> Entry::FIRST_SHIFT) as u16);
         *self.subtables.at(start + link.small_number(stream))
     }
 
@@ -472,6 +486,7 @@ impl Tables {
             return false;
         };
         if !sorted.is_complete {
+            self.literal_length_mask = 1;
             return self.literal_length.fill_incomplete(&sorted, Entry::new);
         }
         let code = if combines {

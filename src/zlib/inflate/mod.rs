@@ -18,7 +18,7 @@ use crate::format::{
     STORED_BLOCK, ZLIB_HEADER_DIVISOR, ZLIB_PRESET_DICTIONARY, gzip_flag,
 };
 use bits::{BitReader, HeldBits};
-use codes::{FAST_ROOM, Reach, Step, Stop};
+use codes::{FAST_INPUT, FAST_ROOM, LongestMatch, Reach, Step, Stop};
 use dynamic::{Counts, DynamicCodes};
 use tables::Tables;
 use window::{MAX_DISTANCE, Window};
@@ -91,7 +91,18 @@ pub struct Inflater {
     /// Of the match that `window.pending()` is the rest of, or 0.
     pending_distance: usize,
     window: Window,
+    run: Option<Run>,
     dynamic: DynamicCodes,
+}
+
+/// More periods leave a window that has nothing else as it is, so they are handed out without being written there.
+#[derive(Clone, Copy)]
+struct Run {
+    repeated: LongestMatch,
+    /// What has been read and not handed out.
+    left: usize,
+    /// How far the output is into a period.
+    phase: usize,
 }
 
 /// The output of one call.
@@ -148,6 +159,7 @@ impl Inflater {
             history: 0,
             pending_distance: 0,
             window: Window::default(),
+            run: None,
             dynamic: DynamicCodes::default(),
         }
     }
@@ -196,7 +208,7 @@ impl Inflater {
         self.max_distance = MAX_DISTANCE;
         self.history = 0;
         self.pending_distance = 0;
-        self.dynamic.reset();
+        self.run = None;
         self.window.clear();
     }
 
@@ -281,13 +293,17 @@ impl Inflater {
         self.history = self.history.saturating_add(len).min(1 << self.window_bits);
     }
 
-    #[inline]
+    #[inline(always)]
     fn hand_out(&mut self, out: &mut Output<'_, '_>) {
-        let bytes = self.window.hand_out(out.room());
-        if !bytes.is_empty() {
-            self.checksum.update(bytes);
-            out.buf.unfilled().append(bytes);
+        if self.window.pending() != 0 {
+            self.hand_out_pending(out);
         }
+    }
+
+    fn hand_out_pending(&mut self, out: &mut Output<'_, '_>) {
+        let bytes = self.window.hand_out(out.room());
+        self.checksum.update(bytes);
+        out.buf.unfilled().append(bytes);
     }
 
     #[inline]
@@ -338,7 +354,7 @@ impl Inflater {
                 self.window.drop_pending();
                 return Err(Damage::DistanceTooFarBack.into());
             }
-            self.hand_out(out);
+            self.hand_out_pending(out);
             if self.window.pending() != 0 {
                 return Ok(Status::NeedsOutput);
             }
@@ -435,16 +451,18 @@ impl Inflater {
                 State::Stored(left) => {
                     self.hand_out(out);
                     let bytes = bits.take_bytes(out.room().min(left.into()));
-                    if bytes.is_empty() {
+                    self.checksum.copy(bytes, &mut out.buf.unfilled());
+                    out.unrecorded += bytes.len();
+                    let left = left - bytes.len() as u16;
+                    if left != 0 {
+                        self.state = State::Stored(left);
                         return Ok(if out.room() == 0 {
                             Status::NeedsOutput
                         } else {
                             Status::NeedsInput
                         });
                     }
-                    self.checksum.copy(bytes, &mut out.buf.unfilled());
-                    out.unrecorded += bytes.len();
-                    State::Stored(left - bytes.len() as u16)
+                    State::BlockBoundary
                 }
                 State::CodeLengthCode(counts, first) => {
                     let others = take!(counts.code_length_bits() - 3);
@@ -559,21 +577,56 @@ impl Inflater {
         Ok(Some(state))
     }
 
-    /// More periods leave a window that has nothing else as it is, so they need not be written there.
-    fn continue_period(&mut self, bits: &mut BitReader<'_>, out: &mut Output<'_, '_>, fixed: bool) {
-        if let Some(tables) = current_tables(&self.dynamic, fixed)
-            && let Some(next @ (distance, _)) = codes::peek_longest_match(tables, bits)
-            && distance <= self.max_distance.min(self.history + out.buf.len())
-            && let Some(periods) = self.window.periods(distance)
-        {
-            let mut left = codes::skip_same_matches(bits, next, out.room());
-            while left != 0 {
-                let piece = periods.get(..left).unwrap_or(periods);
-                self.checksum.update(piece);
-                out.buf.unfilled().append(piece);
-                left -= piece.len();
-            }
+    fn start_run(&self, bits: &mut BitReader<'_>, fixed: bool) -> Option<Run> {
+        let repeated = LongestMatch::peek(current_tables(&self.dynamic, fixed)?, bits)?;
+        // A lap is longer than any window, so this holds in later calls, too.
+        let is_in_reach = repeated.distance <= self.max_distance.min(1 << self.window_bits);
+        (is_in_reach && self.window.has_period(repeated.distance)).then_some(Run {
+            repeated,
+            left: 0,
+            phase: 0,
+        })
+    }
+
+    /// Whether it has ended.
+    fn continue_run(
+        &mut self,
+        run: &mut Run,
+        bits: &mut BitReader<'_>,
+        out: &mut Output<'_, '_>,
+    ) -> bool {
+        run.left = run.repeated.take_all(bits, run.left, out.room());
+        let periods = self.window.periods(run.repeated.distance);
+        while let len @ 1.. = run.left.min(out.room()) {
+            let piece = periods.get(run.phase..).unwrap_or_default();
+            let piece = piece.get(..len).unwrap_or(piece);
+            self.checksum.update(piece);
+            out.buf.unfilled().append(piece);
+            run.left -= piece.len();
+            run.phase = (run.phase + piece.len()) % run.repeated.distance;
         }
+        run.left == 0
+    }
+
+    /// `false` if there is no room for what comes first.
+    fn start_lap(
+        &mut self,
+        bits: &mut BitReader<'_>,
+        out: &mut Output<'_, '_>,
+        fixed: bool,
+    ) -> Result<bool> {
+        self.hand_out(out);
+        let Some(mut run) = self.run.take().or_else(|| self.start_run(bits, fixed)) else {
+            return self.window.start_lap().map(|()| true);
+        };
+        if !self.continue_run(&mut run, bits, out) {
+            self.run = Some(run);
+            return Ok(false);
+        }
+        self.window.start_lap()?;
+        self.window
+            .record_part_of_period(run.repeated.distance, run.phase)?;
+        Ok(true)
     }
 
     /// As in zlib, a full output does not keep it from reading up to the first symbol that there is no room for.
@@ -585,10 +638,8 @@ impl Inflater {
     ) -> Result<Status> {
         self.record(out)?;
         loop {
-            if self.window.is_lap_over() {
-                self.hand_out(out);
-                self.continue_period(bits, out, fixed);
-                self.window.start_lap()?;
+            if self.window.is_lap_over() && !self.start_lap(bits, out, fixed)? {
+                return Ok(Status::NeedsOutput);
             }
             let room = out.room() - self.window.pending();
             if self.window.end >= self.window.limit() {
@@ -604,28 +655,20 @@ impl Inflater {
             };
             let (full, limit) = (window.end.saturating_add(room), window.limit());
             let fast_limit = limit.min(full.saturating_sub(FAST_ROOM - 1));
-            let (bytes, end) = (window.bytes.as_mut_slice(), &mut window.end);
-            if *end < fast_limit {
-                let stop = codes::decode_fast(
-                    tables,
-                    bits,
-                    bytes,
-                    end,
-                    fast_limit,
-                    reach,
-                    Cell::from_mut(&mut self.pending_distance),
-                )?;
+            if window.end < fast_limit && bits.rest.len() >= FAST_INPUT {
+                let distance = Cell::from_mut(&mut self.pending_distance);
+                let stop = codes::decode_fast(tables, bits, window, fast_limit, reach, distance)?;
                 if let Stop::EndOfBlock = stop {
                     return Ok(Status::BlockEnd);
                 }
             }
-            while *end <= full && *end < limit {
-                self.pending_distance = match codes::decode_one(tables, bits, bytes, end, reach)? {
+            while window.end <= full && window.end < limit {
+                self.pending_distance = match codes::decode_one(tables, bits, window, reach)? {
                     Step::NeedsInput => return Ok(Status::NeedsInput),
                     Step::EndOfBlock => return Ok(Status::BlockEnd),
                     Step::Literal => 0,
                     Step::Match(distance) => distance,
-                    Step::OutOfReach if *end < full => {
+                    Step::OutOfReach if window.end < full => {
                         return Err(Damage::DistanceTooFarBack.into());
                     }
                     Step::OutOfReach => {
@@ -634,7 +677,7 @@ impl Inflater {
                     }
                 };
             }
-            if *end > full {
+            if window.end > full {
                 return Ok(Status::NeedsOutput);
             }
         }

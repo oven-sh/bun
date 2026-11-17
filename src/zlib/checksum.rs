@@ -24,7 +24,11 @@ impl Checksum {
     pub(crate) const GZIP: Self = Self::Crc32 { crc: 0, len: 0 };
 
     /// Goes by the copy, as a script may be writing to `bytes`.
+    #[inline]
     pub(crate) fn copy(&mut self, bytes: &[u8], out: &mut BorrowedCursor<'_, u8>) {
+        if let Self::None = self {
+            return out.append(bytes);
+        }
         out.with_unfilled_buf(|out| {
             out.unfilled().append(bytes);
             self.update(out.filled());

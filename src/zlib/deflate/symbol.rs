@@ -48,17 +48,18 @@ static DISTANCE_SYMBOL: [u8; 512] = {
     symbols
 };
 
-/// From the lowest bit: a literal or 256 plus the length less 3 (9 bits), the distance symbol (5), the distance less
-/// one.
+/// The lowest 9 bits are a literal, or 256 plus the length less 3.
 #[derive(Clone, Copy)]
 pub(super) struct Symbol(u32);
 
 impl Symbol {
+    const DISTANCE_SYMBOL_SHIFT: u32 = 9;
+    const DISTANCE_SHIFT: u32 = Self::DISTANCE_SYMBOL_SHIFT + 5;
     const NO_DISTANCE: u32 = 31;
 
     #[inline(always)]
     pub(super) fn for_literal(byte: u8) -> Self {
-        Self(Self::NO_DISTANCE << 9 | u32::from(byte))
+        Self(Self::NO_DISTANCE << Self::DISTANCE_SYMBOL_SHIFT | u32::from(byte))
     }
 
     #[inline(always)]
@@ -66,7 +67,11 @@ impl Symbol {
         debug_assert!((MIN_MATCH..=MAX_MATCH).contains(&(len as usize)));
         let distance = distance - 1;
         let symbol = *DISTANCE_SYMBOL.at(distance_symbol_index(distance));
-        Self(distance << 14 | u32::from(symbol) << 9 | (256 + len - MIN_MATCH as u32))
+        Self(
+            distance << Self::DISTANCE_SHIFT
+                | u32::from(symbol) << Self::DISTANCE_SYMBOL_SHIFT
+                | (256 + len - MIN_MATCH as u32),
+        )
     }
 
     #[inline(always)]
@@ -81,12 +86,12 @@ impl Symbol {
 
     #[inline(always)]
     pub(super) fn distance_symbol(self) -> usize {
-        (self.0 as usize >> 9) % 32
+        (self.0 as usize >> Self::DISTANCE_SYMBOL_SHIFT) % 32
     }
 
     #[inline(always)]
     pub(super) fn distance_less_one(self) -> u32 {
-        self.0 >> 14
+        self.0 >> Self::DISTANCE_SHIFT
     }
 
     /// Of a match. Counts from `FIRST_LENGTH_SYMBOL`, and is below 32.

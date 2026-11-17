@@ -88,8 +88,8 @@ pub(super) struct Code<const N: usize> {
 
 impl<const N: usize> Code<N> {
     /// `HEAP` is a power of two, at least `N`, and more than there are symbols with a frequency.
-    // https://github.com/zlib-ng/zlib-ng/blob/12731092979c6d07f42da27da673a9f6c7b13586/trees.c#L184
     pub(super) fn new<const HEAP: usize>(frequencies: &[u16; N], max_bits: u8) -> Self {
+        // https://github.com/zlib-ng/zlib-ng/blob/12731092979c6d07f42da27da673a9f6c7b13586/trees.c#L184
         let mut heap = Heap {
             nodes: [Node(0); HEAP],
             len: 0,
@@ -156,11 +156,10 @@ impl<const N: usize> Code<N> {
         code
     }
 
-    /// The counts have all that are too long at `max_bits`, where there is no room for so many. `order` has the nodes
-    /// from the least frequent on.
-    // https://github.com/zlib-ng/zlib-ng/blob/12731092979c6d07f42da27da673a9f6c7b13586/trees.c#L332
+    /// `too_long` nodes were cut to `max_bits`, where there is no room for them. `order` starts with the rarest.
     #[cold]
     fn shorten(&mut self, order: &[u16], too_long: usize, max_bits: usize) {
+        // https://github.com/zlib-ng/zlib-ng/blob/12731092979c6d07f42da27da673a9f6c7b13586/trees.c#L332
         for _ in 0..too_long / 2 {
             let shorter = (1..max_bits).rev().find(|&bits| *self.counts.at(bits) != 0);
             let bits = shorter.unwrap_or_default();

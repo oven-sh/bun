@@ -148,8 +148,7 @@ enum Method {
 #[derive(Clone, Copy)]
 struct Tuning {
     method: Method,
-    /// With `Method::Lazy`, a match that is so long is taken at once. With others it tells up to which length the
-    /// positions in a match are hashed.
+    /// So long a match is taken at once. Where all are, it limits those whose positions are hashed.
     max_lazy: u32,
     effort: Effort,
 }
@@ -345,8 +344,8 @@ impl Deflater {
     }
 
     /// `false`, and nothing changes, if a block would have to be flushed first.
-    // https://github.com/zlib-ng/zlib-ng/blob/12731092979c6d07f42da27da673a9f6c7b13586/deflate.c#L589
     pub fn set_params(&mut self, level: Level, strategy: Strategy) -> Result<bool> {
+        // https://github.com/zlib-ng/zlib-ng/blob/12731092979c6d07f42da27da673a9f6c7b13586/deflate.c#L589
         let changes_method =
             strategy != self.strategy || level.tuning().method != self.level.tuning().method;
         if changes_method && self.has_started {
@@ -422,7 +421,9 @@ impl Deflater {
         flush: Flush,
     ) -> Result<()> {
         const MAX_GROWTH: usize = 64 * 1024;
-        let growth = max_compressed_len(input.len()).min(MAX_GROWTH);
+        // A flush that fills the output is done again.
+        let marker_len = if flush == Flush::Finish { 0 } else { 6 };
+        let growth = expected_max_len(input.len(), self.container).min(MAX_GROWTH) + marker_len;
         loop {
             out.try_reserve(growth)?;
             let status = append_with(out, usize::MAX, |out| self.deflate(&mut input, out, flush))?;
@@ -437,8 +438,8 @@ impl Deflater {
     }
 
     /// Whether the stream has ended.
-    // https://github.com/zlib-ng/zlib-ng/blob/12731092979c6d07f42da27da673a9f6c7b13586/deflate.c#L753
     fn run(&mut self, io: &mut Io<'_, '_>, flush: Flush) -> Result<bool> {
+        // https://github.com/zlib-ng/zlib-ng/blob/12731092979c6d07f42da27da673a9f6c7b13586/deflate.c#L753
         let is_finishing = self.is_finishing();
         self.has_started = true;
         let last_flush = self.last_flush.replace(flush);
@@ -612,8 +613,8 @@ impl Deflater {
     }
 
     /// There is `MIN_LOOKAHEAD` afterwards, or no more input.
-    // https://github.com/zlib-ng/zlib-ng/blob/12731092979c6d07f42da27da673a9f6c7b13586/deflate.c#L1175
     fn fill_window(&mut self, io: &mut Io<'_, '_>) {
+        // https://github.com/zlib-ng/zlib-ng/blob/12731092979c6d07f42da27da673a9f6c7b13586/deflate.c#L1175
         if self.window.position >= self.window.slide_position() {
             self.window.slide(self.window.size);
             self.lazy.slide(self.window.size);
@@ -666,8 +667,7 @@ impl Deflater {
         Stretch::Until(with_lookahead.max(without))
     }
 
-    /// `fill` adds to the block until that is full or the position is at the one it is given. `false` if there is more
-    /// to do, for want of input or room.
+    /// `fill` stops at a full block or the position it is given. `false` if input or room is wanted.
     #[inline(always)]
     fn fill_blocks(
         &mut self,
@@ -718,9 +718,16 @@ impl Deflater {
     }
 }
 
-/// With the largest window: 9 bits for a byte, the start and end of a block, and gzip's header and trailer.
-fn max_compressed_len(len: usize) -> usize {
-    len.saturating_add(len / 8).saturating_add(6 + 18)
+/// Enough for nearly any input, with the largest window.
+fn expected_max_len(input_len: usize, container: Container) -> usize {
+    // https://github.com/zlib-ng/zlib-ng/blob/12731092979c6d07f42da27da673a9f6c7b13586/deflate.c#L725
+    let block = if input_len < 9 { 5 } else { 3 };
+    let container = match container {
+        Container::Raw => 0,
+        Container::Zlib => 6,
+        Container::Gzip => 18,
+    };
+    input_len.saturating_add(input_len.div_ceil(8) + block + container)
 }
 
 /// Appends a whole stream to `out`.
@@ -731,7 +738,7 @@ pub fn compress(
     options: Options,
 ) -> Result<()> {
     let mut deflater = Deflater::new(container, options)?;
-    out.try_reserve_exact(max_compressed_len(input.len()))?;
+    out.try_reserve_exact(expected_max_len(input.len(), container))?;
     deflater.deflate_to_vec(input, out, Flush::Finish)
 }
 

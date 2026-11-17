@@ -90,8 +90,6 @@ extern "C" fn Bun__Deflater__create(window_bits: u8, memory_level: u8) -> Option
 #[unsafe(no_mangle)]
 extern "C" fn Bun__Deflater__destroy(_: Box<Deflater>) {}
 
-/// Returns null if it fails.
-///
 /// # Safety
 /// `message` points to `*len` bytes, which are not in `buffer`.
 #[unsafe(no_mangle)]

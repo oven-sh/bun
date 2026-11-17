@@ -321,7 +321,7 @@ describe.concurrent("zlib native handle driven outside the zlib.ts lifecycle", (
        catch (e) { console.log("threw " + e.code + ": " + e.message); }`,
       "threw ERR_INVALID_STATE: Write already in progress",
     ],
-    // init() that fails partway (zlib: deflateInit2_ rejects the arguments;
+    // init() that fails partway (zlib: the arguments are rejected;
     // brotli/zstd: a bad parameter key after the state was created) tears the
     // Context down; the handle has to reject further use.
     [

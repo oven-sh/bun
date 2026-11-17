@@ -7,7 +7,7 @@ use bun_highway::zlib::{MATCH_SPAN, repeat};
 
 use super::bits::{BitReader, REFILLED_BITS};
 use super::tables::{DISTANCE_BITS, Entry, LITERAL_LENGTH_BITS, Special, Tables};
-use super::window::{LAP, SLACK};
+use super::window::{LAP, SLACK, Window};
 use crate::error::{Damage, Error, Result};
 use crate::format::MAX_MATCH;
 
@@ -36,6 +36,8 @@ pub(super) enum Stop {
 
 /// What one round of `decode_fast()` may write before the match it ends with, plus one byte of that.
 pub(super) const FAST_ROOM: usize = 4;
+/// With less it does not get to the first round.
+pub(super) const FAST_INPUT: usize = 16;
 
 const CHUNK: usize = 32;
 
@@ -79,21 +81,20 @@ fn copy_match(from: &Span, to: &Span, distance: usize, len: usize) {
     }
 }
 
-/// Goes on for as long as `position` is below `limit` and enough input is left for any symbol.
+/// Goes on for as long as the window ends below `limit` and enough input is left for any symbol.
 #[inline(always)]
 pub(super) fn decode_fast(
     tables: &Tables,
     bits: &mut BitReader<'_>,
-    window: &mut [u8],
-    position: &mut usize,
+    window: &mut Window,
     limit: usize,
     reach: Reach,
     last_distance: &Cell<usize>,
 ) -> Result<Stop> {
     if tables.literal_length_mask == u64::MAX {
-        decode_fast_with::<false>(tables, bits, window, position, limit, reach, last_distance)
+        decode_fast_with::<false>(tables, bits, window, limit, reach, last_distance)
     } else {
-        decode_fast_with::<true>(tables, bits, window, position, limit, reach, last_distance)
+        decode_fast_with::<true>(tables, bits, window, limit, reach, last_distance)
     }
 }
 
@@ -109,13 +110,13 @@ enum Exit {
 fn decode_fast_with<const MASK: bool>(
     tables: &Tables,
     bits: &mut BitReader<'_>,
-    window: &mut [u8],
-    position: &mut usize,
+    window: &mut Window,
     limit: usize,
     reach: Reach,
     last_distance: &Cell<usize>,
 ) -> Result<Stop> {
-    let window = Cell::from_mut(window).as_slice_of_cells();
+    let position = &mut window.end;
+    let window = Cell::from_mut(window.bytes.as_mut_slice()).as_slice_of_cells();
     let writable_end = limit + SLACK - 1;
     let mut writable = window.get(*position..writable_end).ok_or(Error::Internal)?;
     let (mut input, mut buffer) = (bits.rest, bits.buffer);
@@ -154,10 +155,7 @@ fn decode_fast_with<const MASK: bool>(
         };
     }
 
-    let Some(word) = input.first_chunk() else {
-        return Ok(Stop::Limit);
-    };
-    refill!(word);
+    refill!(input.first_chunk().ok_or(Error::Internal)?);
     let mut entry = tables.literal_length.look_up(buffer & mask);
     let exit = loop {
         macro_rules! stop {
@@ -343,8 +341,7 @@ pub(super) enum Step {
 pub(super) fn decode_one(
     tables: &Tables,
     bits: &mut BitReader<'_>,
-    window: &mut [u8],
-    position: &mut usize,
+    window: &mut Window,
     reach: Reach,
 ) -> Result<Step> {
     let Some((symbol, used)) = peek(tables, bits)? else {
@@ -353,61 +350,56 @@ pub(super) fn decode_one(
     bits.skip(used);
     match symbol {
         Symbol::Literal(literal) => {
-            *window.get_mut(*position).ok_or(Error::Internal)? = literal;
-            *position += 1;
+            *window.bytes.get_mut(window.end).ok_or(Error::Internal)? = literal;
+            window.end += 1;
             Ok(Step::Literal)
         }
         Symbol::EndOfBlock => Ok(Step::EndOfBlock),
         Symbol::Match { distance, .. } if distance > reach.max => {
             Err(Damage::DistanceTooFarBack.into())
         }
-        Symbol::Match { distance, .. } if distance > reach.available_at(*position) => {
+        Symbol::Match { distance, .. } if distance > reach.available_at(window.end) => {
             Ok(Step::OutOfReach)
         }
         Symbol::Match { len, distance } => {
-            let window = Cell::from_mut(window).as_slice_of_cells();
-            let from = match_source(window, *position, distance).ok_or(Error::Internal)?;
-            let to = part(window, *position).ok_or(Error::Internal)?;
+            let cells = Cell::from_mut(window.bytes.as_mut_slice()).as_slice_of_cells();
+            let from = match_source(cells, window.end, distance).ok_or(Error::Internal)?;
+            let to = part(cells, window.end).ok_or(Error::Internal)?;
             copy_match(from, to, distance, len);
-            *position += len;
+            window.end += len;
             Ok(Step::Match(distance))
         }
     }
 }
 
-/// If a match of the greatest length is next, its distance and how many bits it takes.
-pub(super) fn peek_longest_match(
-    tables: &Tables,
-    bits: &mut BitReader<'_>,
-) -> Option<(usize, u32)> {
-    match peek(tables, bits) {
-        Ok(Some((Symbol::Match { len, distance }, used))) if len == MAX_MATCH => {
-            Some((distance, used))
-        }
-        _ => None,
-    }
+/// A match of the greatest length.
+#[derive(Clone, Copy)]
+pub(super) struct LongestMatch {
+    pub(super) distance: usize,
+    code: u64,
+    code_bits: u32,
 }
 
-/// Takes that match and the same ones behind it. Returns how many bytes they stand for: a multiple of the distance, and
-/// no more than `max`.
-pub(super) fn skip_same_matches(
-    bits: &mut BitReader<'_>,
-    (distance, count): (usize, u32),
-    max: usize,
-) -> usize {
-    let (first, step) = (bits.peek(count), MAX_MATCH % distance);
-    let (mut ahead, mut len, mut phase, mut skipped) = (*bits, MAX_MATCH, 0, 0);
-    // It does not read far ahead for nothing.
-    while len <= max.min(skipped + 2 * LAP) && ahead.has(count) && ahead.peek(count) == first {
-        ahead.skip(count);
-        phase += step;
-        if phase >= distance {
-            phase -= distance;
+impl LongestMatch {
+    pub(super) fn peek(tables: &Tables, bits: &mut BitReader<'_>) -> Option<Self> {
+        match peek(tables, bits) {
+            Ok(Some((Symbol::Match { len, distance }, code_bits))) if len == MAX_MATCH => {
+                Some(Self {
+                    distance,
+                    code: bits.peek(code_bits),
+                    code_bits,
+                })
+            }
+            _ => None,
         }
-        if phase == 0 {
-            (*bits, skipped) = (ahead, len);
-        }
-        len += MAX_MATCH;
     }
-    skipped
+
+    /// Adds what it stands for to `len` for as long as it is next, and `len` is no more than `max`.
+    pub(super) fn take_all(self, bits: &mut BitReader<'_>, mut len: usize, max: usize) -> usize {
+        while len <= max && bits.has(self.code_bits) && bits.peek(self.code_bits) == self.code {
+            bits.skip(self.code_bits);
+            len += MAX_MATCH;
+        }
+        len
+    }
 }

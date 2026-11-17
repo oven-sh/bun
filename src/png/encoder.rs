@@ -127,7 +127,7 @@ fn write_palette(out: &mut Vec<u8>, palette: &Palette) -> Result<()> {
 
 /// One zlib stream cut into IDAT chunks of `IDAT_LEN` bytes.
 ///
-/// zlib gets each line in a call of its own and sees only the room left in the current chunk, as with libspng:
+/// The deflater gets each line in a call of its own and sees only the room left in the current chunk, as with libspng:
 /// at level 0 both decide where a stored block ends.
 struct Idat {
     deflater: Box<Deflater>,

@@ -57,13 +57,31 @@ impl Window {
         self.end >= LAP_END
     }
 
-    /// If all that is within reach repeats every `period` bytes, some periods of it. At the end of a lap.
-    pub(super) fn periods(&self, period: usize) -> Option<&[u8]> {
+    /// Whether all that is within reach repeats. At the end of a lap.
+    pub(super) fn has_period(&self, period: usize) -> bool {
+        let all = self.bytes.get(self.end - MAX_DISTANCE..self.end);
+        all.is_some_and(|all| all.get(period..).is_some_and(|rest| all.starts_with(rest)))
+    }
+
+    /// The last ones, if `has_period()`.
+    pub(super) fn periods(&self, period: usize) -> &[u8] {
         const CACHED_LEN: usize = 16 * 1024;
-        let all = self.bytes.get(self.end - MAX_DISTANCE..self.end)?;
         let len = period.max(CACHED_LEN - CACHED_LEN % period);
-        all.starts_with(all.get(period..)?)
-            .then(|| all.get(MAX_DISTANCE - len..))?
+        self.bytes.get(self.end - len..self.end).unwrap_or_default()
+    }
+
+    /// Adds the first `len` bytes of another period, which have been handed out. At the start of a lap.
+    pub(super) fn record_part_of_period(&mut self, period: usize, len: usize) -> Result<()> {
+        self.bytes.resize(FULL_LEN, 0);
+        let start = self.end + LAP - period;
+        let lap = self
+            .bytes
+            .get_mut(..self.end + LAP)
+            .ok_or(Error::Internal)?;
+        lap.copy_within(start..start + len, self.end);
+        self.end += len;
+        self.handed_out = self.end;
+        Ok(())
     }
 
     /// The last one is over, and nothing is pending.

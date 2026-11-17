@@ -12,7 +12,7 @@ use crate::header::{ColorType, Header, IHDR_LEN};
 /// What a JPEG file has room for, in 255 segments. A few KB of iCCP can inflate to a thousand times as much.
 const MAX_ICC_PROFILE_LEN: usize = 255 * 65_519;
 
-/// Bytes of lines inflated at a time: a call of zlib ends with a copy to its window, and repeating from there is slow.
+/// Bytes of lines inflated at a time, as a call for each short line takes longer.
 const AHEAD_LEN: usize = 128 * 1024;
 
 type Rgba = [u8; 4];
@@ -188,7 +188,7 @@ fn new_inflater() -> Inflater {
 /// The zlib stream that the consecutive IDAT chunks hold between them.
 struct Idat<'a> {
     reader: Reader<'a>,
-    /// What zlib has not taken yet of the chunk `reader` is behind.
+    /// What has not been inflated yet of the chunk `reader` is behind.
     input: &'a [u8],
     inflater: Inflater,
     /// How many bytes are still to be inflated of the lines that are read ahead.

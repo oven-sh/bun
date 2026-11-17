@@ -246,9 +246,7 @@ impl<'a> Matcher<'a> {
         best
     }
 
-    /// For the rolling hash. Of the chains of all the positions in the best match, it follows the one that goes back
-    /// the furthest.
-    // https://github.com/zlib-ng/zlib-ng/blob/12731092979c6d07f42da27da673a9f6c7b13586/match_tpl.h#L84
+    /// Follows the chain of that position in the best match that goes back the furthest. For the rolling hash.
     #[inline(never)]
     pub(super) fn longest_match_on_any_chain(
         &self,
@@ -257,6 +255,7 @@ impl<'a> Matcher<'a> {
         mut candidate: u32,
         mut best: Match,
     ) -> Match {
+        // https://github.com/zlib-ng/zlib-ng/blob/12731092979c6d07f42da27da673a9f6c7b13586/match_tpl.h#L84
         let Some(target) = self.target(position, lookahead) else {
             return best;
         };

@@ -1592,6 +1592,30 @@ describe("undici dispatcher connect.lookup", () => {
     expect(await body!.text()).toBe("upgraded");
   });
 
+  it("an explicit proxy rejects on a pinned http hop, since the proxy would resolve the hostname", async () => {
+    let hits = 0;
+    await using server = Bun.serve({
+      port: 0,
+      fetch: () => {
+        hits++;
+        return new Response("reached");
+      },
+    });
+    const { agent, seen } = pinningAgent();
+    const url = `http://proxied.invalid:${server.port}/`;
+    expect(
+      await undiciFetch(url, { dispatcher: agent, proxy: "http://127.0.0.1:1" } as any).then(
+        () => "resolved",
+        (err: Error & { code?: string }) => `${err.name}/${err.code}`,
+      ),
+    ).toBe("NotSupportedError/UND_ERR_NOT_SUPPORTED");
+    expect(seen).toEqual(["proxied.invalid"]);
+    // proxy: false is an explicit direct connection and still pins.
+    const res = await undiciFetch(url, { dispatcher: agent, proxy: false } as any);
+    expect(await res.text()).toBe("reached");
+    expect(hits).toBe(1);
+  });
+
   it("an Agent without connect options leaves requests untouched", async () => {
     await using server = Bun.serve({ port: 0, fetch: () => new Response("plain") });
     const res = await undiciFetch(`http://127.0.0.1:${server.port}/`, { dispatcher: new Agent() });

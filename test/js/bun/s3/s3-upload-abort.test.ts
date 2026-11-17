@@ -489,3 +489,30 @@ test.concurrent.each([
     exited: 0,
   });
 });
+
+// What the stream wrote before its script was terminated is not the whole object.
+test.concurrent.each([
+  ["a direct stream", `new ReadableStream({ type: "direct", pull(c) { c.write("hello"); for (;;); } })`],
+  ["a part of a direct stream", `new ReadableStream({ type: "direct", pull(c) { c.write(part); for (;;); } })`],
+  ["an async iterator", `new Response({ async *[Symbol.asyncIterator]() { for (;;); } })`],
+])("a node:vm timeout while %s is read stores nothing", async (_, source) => {
+  const body = `
+    const part = new Uint8Array(partSize + 1);
+    globalThis.upload = () => client.write("key", ${source});
+    try {
+      require("node:vm").runInThisContext("upload()", { timeout: 100 });
+    } catch (e) {
+      console.log(e.code);
+    }
+  `;
+  const { stdout, stderr, exited } = await run({ body, waitFor: `true` });
+  const [code, reqs] = stdout.trim().split("\n");
+  const { create, abort, ...stored } = JSON.parse(reqs);
+  expect({ code, stored, leftOpen: create - abort, stderr, exited }).toEqual({
+    code: "ERR_SCRIPT_EXECUTION_TIMEOUT",
+    stored: { part: 0, complete: 0, put: 0 },
+    leftOpen: 0,
+    stderr: "",
+    exited: 0,
+  });
+});

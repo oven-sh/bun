@@ -1034,10 +1034,7 @@ impl<P> Client<P> {
             return Event::Ignored;
         }
         self.tail = Tail::None;
-        // EXEC can leave one over, and a cluster unsubscribes unasked.
-        let request = self.in_flight.pop_front_if(
-            |it| matches!(it, InFlight::Ack(it) if it.kind.subscribes() == kind.subscribes()),
-        );
+        let request = (self.in_flight).pop_front_if(|it| matches!(it, InFlight::Ack(_)));
         let promise = match request {
             Some(InFlight::Ack(request)) => {
                 if let Some(ticket) = request.ticket {

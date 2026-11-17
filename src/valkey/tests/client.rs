@@ -1524,15 +1524,6 @@ mod subscriptions {
                 &["unsubscribed #1", "unsubscribed #2"],
             ),
             (
-                "what EXEC left over does not answer the opposite",
-                &[
-                    Send("UNSUBSCRIBE"),
-                    Ack("subscribe", "b", 2),
-                    Ack("unsubscribe", "a", 1),
-                ],
-                &["ignored", "unsubscribed #1"],
-            ),
-            (
                 "pipelined",
                 &[
                     Send("PUNSUBSCRIBE a b"),

@@ -12,24 +12,28 @@ Call `.writer()` on a `BunFile` to retrieve a `FileSink` instance. The `FileSink
 const file = Bun.file("/path/to/file.txt");
 const writer = file.writer();
 
-writer.write("lorem");
-writer.write("ipsum");
-writer.write("dolor");
+await writer.write("lorem");
+await writer.write("ipsum");
+await writer.write("dolor");
 
-writer.flush();
+await writer.flush();
 
 // continue writing & flushing
 ```
 
 ---
 
+`.write()`, `.flush()`, and `.end()` return a `number` when the write completes right away. They return a `Promise<number>` while a write is pending, for example under backpressure. `await` the result to handle both cases.
+
+---
+
 The `.write()` method accepts strings or binary data.
 
 ```ts
-writer.write("hello");
-writer.write(Buffer.from("there"));
-writer.write(new Uint8Array([0, 255, 128]));
-writer.flush();
+await writer.write("hello");
+await writer.write(Buffer.from("there"));
+await writer.write(new Uint8Array([0, 255, 128]));
+await writer.flush();
 ```
 
 ---
@@ -38,10 +42,10 @@ The `FileSink` also auto-flushes when its internal buffer is full.
 
 ---
 
-When you're done writing, call `.end()` to flush the buffer and close the file.
+When you're done writing, call `.end()` to flush the buffer and close the file. `await` it so the data lands before your code continues or the process exits.
 
 ```ts
-writer.end();
+await writer.end();
 ```
 
 ---

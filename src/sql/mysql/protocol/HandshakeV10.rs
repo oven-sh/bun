@@ -7,15 +7,15 @@ use crate::mysql::protocol::any_mysql_error::Error as AnyMySQLError;
 use crate::mysql::protocol::auth::{NONCE_LENGTH, Nonce};
 use crate::mysql::protocol::packet_reader::PacketReader;
 
-pub struct HandshakeV10<'a> {
+pub(crate) struct HandshakeV10<'a> {
     pub(crate) protocol_version: u8,
-    pub server_version: &'a [u8],
-    pub connection_id: u32,
-    pub auth_plugin_data: Nonce,
-    pub capability_flags: Capabilities,
-    pub mariadb_capability_flags: MariaDBCapabilities,
-    pub status_flags: StatusFlags,
-    pub auth_plugin_name: &'a [u8],
+    pub(crate) server_version: &'a [u8],
+    pub(crate) connection_id: u32,
+    pub(crate) auth_plugin_data: Nonce,
+    pub(crate) capability_flags: Capabilities,
+    pub(crate) mariadb_capability_flags: MariaDBCapabilities,
+    pub(crate) status_flags: StatusFlags,
+    pub(crate) auth_plugin_name: &'a [u8],
 }
 
 impl Default for HandshakeV10<'_> {
@@ -34,7 +34,10 @@ impl Default for HandshakeV10<'_> {
 }
 
 impl<'a> HandshakeV10<'a> {
-    pub fn decode_internal(&mut self, reader: PacketReader<'a>) -> Result<(), AnyMySQLError> {
+    pub(crate) fn decode_internal(
+        &mut self,
+        reader: PacketReader<'a>,
+    ) -> Result<(), AnyMySQLError> {
         // Protocol version
         self.protocol_version = reader.int::<u8>()?;
         if self.protocol_version != 10 {

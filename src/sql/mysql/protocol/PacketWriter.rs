@@ -3,6 +3,7 @@ use super::packet_header::PacketHeader;
 use crate::mysql::mysql_types::MySQLInt32;
 
 /// Appends one packet to a buffer. It has no header until `end`.
+#[must_use]
 pub struct PacketWriter<'a> {
     buffer: &'a mut Vec<u8>,
     start: usize,

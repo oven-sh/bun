@@ -19,7 +19,10 @@ import {
   mysqlOkPacket,
 } from "./wire-frames";
 
-test("MySQL TLS handshake rejects plaintext packets buffered behind the server greeting", async () => {
+test.each([
+  ["packets", Infinity],
+  ["bytes", 6],
+])("MySQL TLS handshake rejects plaintext %s buffered behind the server greeting", async (_, length) => {
   // A man-in-the-middle can append forged packets (e.g. an OK packet that marks
   // the connection as authenticated) to the same TCP segment as the server
   // greeting. Once the handshake negotiates TLS, everything after the greeting
@@ -33,7 +36,7 @@ test("MySQL TLS handshake rejects plaintext packets buffered behind the server g
   // A forged OK packet. If the client keeps consuming the plaintext buffer
   // after deciding to upgrade to TLS, this marks the connection as
   // authenticated without any certificate ever being validated.
-  const forgedOk = mysqlOkPacket(2);
+  const forgedOk = mysqlOkPacket(2).subarray(0, length);
 
   const { port, server } = await listeningServer(socket => {
     // Greeting and the injected packet arrive in a single segment, before the
@@ -66,43 +69,44 @@ test("MySQL TLS handshake rejects plaintext packets buffered behind the server g
   }
 });
 
-test.skipIf(!fault.available() || isWindows)(
-  "a plaintext packet that comes while the SSLRequest waits for the socket gets no answer",
-  async () => {
-    const blockWrites = () => fault.set({ syscall: "send", action: "errno", errno: "EAGAIN", repeat: -1 });
-    const accepted = Promise.withResolvers<net.Socket>();
-    const left = Promise.withResolvers<void>();
-    let received = Buffer.alloc(0);
-    const { port, server } = await listeningServer(socket => {
-      server.close();
-      socket.on("error", () => {});
-      socket.on("data", (chunk: Buffer) => {
-        received = Buffer.concat([received, chunk]);
-        socket.end();
-      });
-      socket.on("close", () => left.resolve());
-      socket.write(mysqlHandshakeV10({ capabilities: MYSQL_DEFAULT_CAPABILITIES | MYSQL_CLIENT_SSL }));
-      blockWrites();
-      accepted.resolve(socket);
+test.skipIf(!fault.available() || isWindows).each([
+  ["a plaintext packet", Infinity],
+  ["part of a plaintext packet", 6],
+])("%s that comes while the SSLRequest waits for the socket gets no answer", async (_, length) => {
+  const blockWrites = () => fault.set({ syscall: "send", action: "errno", errno: "EAGAIN", repeat: -1 });
+  const accepted = Promise.withResolvers<net.Socket>();
+  const left = Promise.withResolvers<void>();
+  let received = Buffer.alloc(0);
+  const { port, server } = await listeningServer(socket => {
+    socket.on("error", () => {});
+    socket.on("data", (chunk: Buffer) => {
+      received = Buffer.concat([received, chunk]);
+      socket.end();
     });
-    try {
-      await using sql = new SQL({ url: `mysql://root:pw@127.0.0.1:${port}/db?sslmode=verify-full`, max: 1 });
-      const connected = sql.connect().then(
-        () => "connected",
-        e => e.code,
-      );
-      const socket = await accepted.promise;
-      await loopbackFence();
-      fault.clear();
-      socket.write(mysqlAuthSwitchRequest(2, "mysql_native_password", Buffer.from("cccccccccccccccccccc\0")));
-      blockWrites();
-      await loopbackFence();
-      fault.clear();
-      await left.promise;
-      expect(received.toString("hex")).toBe("");
-      expect(await connected).toBe("ERR_MYSQL_UNEXPECTED_PACKET");
-    } finally {
-      fault.clear();
-    }
-  },
-);
+    socket.on("close", () => left.resolve());
+    socket.write(mysqlHandshakeV10({ capabilities: MYSQL_DEFAULT_CAPABILITIES | MYSQL_CLIENT_SSL }));
+    blockWrites();
+    accepted.resolve(socket);
+  });
+  try {
+    await using sql = new SQL({ url: `mysql://root:pw@127.0.0.1:${port}/db?sslmode=verify-full`, max: 1 });
+    const connected = sql.connect().then(
+      () => "connected",
+      e => e.code,
+    );
+    const socket = await accepted.promise;
+    await loopbackFence();
+    fault.clear();
+    const forged = mysqlAuthSwitchRequest(2, "mysql_native_password", Buffer.from("cccccccccccccccccccc\0"));
+    socket.write(forged.subarray(0, length));
+    blockWrites();
+    await loopbackFence();
+    fault.clear();
+    await left.promise;
+    expect(received.toString("hex")).toBe("");
+    expect(await connected).toBe("ERR_MYSQL_UNEXPECTED_PACKET");
+  } finally {
+    fault.clear();
+    server.close();
+  }
+});

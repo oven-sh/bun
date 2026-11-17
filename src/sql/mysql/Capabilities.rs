@@ -9,16 +9,16 @@ use core::fmt;
 macro_rules! capabilities {
     ($struct_name:ident { $($name:ident = $bit:literal),* $(,)? }) => {
         #[derive(Default, Clone, Copy, PartialEq, Eq)]
-        pub struct $struct_name {
-            $(pub $name: bool,)*
+        pub(crate) struct $struct_name {
+            $(pub(crate) $name: bool,)*
         }
 
         impl $struct_name {
-            pub fn to_int(self) -> u32 {
+            pub(crate) fn to_int(self) -> u32 {
                 0 $(| ((self.$name as u32) << $bit))*
             }
 
-            pub fn from_int(flags: u32) -> $struct_name {
+            pub(crate) fn from_int(flags: u32) -> $struct_name {
                 $struct_name {
                     $($name: (flags & (1u32 << $bit)) != 0,)*
                 }
@@ -27,7 +27,7 @@ macro_rules! capabilities {
             /// Returns the intersection of two capability sets (AND).
             /// Per MySQL protocol, the client should only request capabilities
             /// that the server also advertises.
-            pub fn intersect(self, other: $struct_name) -> $struct_name {
+            pub(crate) fn intersect(self, other: $struct_name) -> $struct_name {
                 Self::from_int(self.to_int() & other.to_int())
             }
         }
@@ -99,7 +99,7 @@ capabilities! { MariaDBCapabilities {
 } }
 
 impl MariaDBCapabilities {
-    pub fn get_default_capabilities() -> MariaDBCapabilities {
+    pub(crate) fn get_default_capabilities() -> MariaDBCapabilities {
         MariaDBCapabilities {
             // MariaDB serves JSON columns as plain LONGTEXT/BLOB; the extended
             // column metadata this negotiates carries their format=json marker.
@@ -110,7 +110,7 @@ impl MariaDBCapabilities {
 }
 
 impl Capabilities {
-    pub fn get_default_capabilities(
+    pub(crate) fn get_default_capabilities(
         ssl: bool,
         has_db_name: bool,
         found_rows: bool,

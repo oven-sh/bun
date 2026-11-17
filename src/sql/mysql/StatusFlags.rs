@@ -1,19 +1,19 @@
 // MySQL connection status flags
 #[repr(u16)]
 #[derive(Copy, Clone, Eq, PartialEq)]
-pub enum StatusFlag {
+pub(crate) enum StatusFlag {
     SERVER_STATUS_IN_TRANS = 1,
     /// Indicates there are more result sets from this query
     SERVER_MORE_RESULTS_EXISTS = 8,
 }
 
 #[derive(Copy, Clone, Default)]
-pub struct StatusFlags {
+pub(crate) struct StatusFlags {
     _value: u16,
 }
 
 impl StatusFlags {
-    pub fn has(self, flag: StatusFlag) -> bool {
+    pub(crate) fn has(self, flag: StatusFlag) -> bool {
         self._value & (flag as u16) != 0
     }
 

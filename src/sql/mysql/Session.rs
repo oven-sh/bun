@@ -263,12 +263,10 @@ impl Session {
         if matches!(self.state, State::TlsHandshake(_)) && !buffer.is_empty() {
             return Err(Error::UnexpectedPacket);
         }
-        let Some(header) = PacketHeader::decode(buffer) else {
+        let Some((header, rest)) = PacketHeader::decode(buffer) else {
             return Ok(None);
         };
-        let Some((payload, rest)) =
-            buffer[PacketHeader::SIZE..].split_at_checked(header.length as usize)
-        else {
+        let Some((payload, rest)) = rest.split_at_checked(header.length as usize) else {
             return Ok(None);
         };
         if payload.len() == PacketHeader::MAX_PAYLOAD_LENGTH {
@@ -295,8 +293,9 @@ impl Session {
         let mut next_sequence_id = sequence_id;
         let mut wire_length: usize = 0;
         let mut payload_length: usize = 0;
+        let mut rest = *buffer;
         loop {
-            let Some(header) = PacketHeader::decode(&buffer[wire_length..]) else {
+            let Some((header, body)) = PacketHeader::decode(rest) else {
                 return Ok(None);
             };
             if header.sequence_id != next_sequence_id {
@@ -306,23 +305,27 @@ impl Session {
             wire_length += PacketHeader::SIZE + header.length as usize;
             payload_length += header.length as usize;
             u32::try_from(wire_length).map_err(|_| Error::Overflow)?;
-            if buffer.len() < wire_length {
+            let Some((part, behind)) = body.split_at_checked(header.length as usize) else {
                 return Ok(None);
-            }
-            if (header.length as usize) < PacketHeader::MAX_PAYLOAD_LENGTH {
+            };
+            rest = behind;
+            if part.len() < PacketHeader::MAX_PAYLOAD_LENGTH {
                 break;
             }
         }
 
-        let (parts, rest) = buffer.split_at(wire_length);
         let mut payload: Vec<u8> = Vec::new();
         payload
             .try_reserve_exact(payload_length)
             .map_err(|_| Error::OutOfMemory)?;
-        for part in parts.chunks(PacketHeader::SIZE + PacketHeader::MAX_PAYLOAD_LENGTH) {
-            payload.extend_from_slice(&part[PacketHeader::SIZE..]);
+        let mut parts = core::mem::replace(buffer, rest);
+        while payload.len() < payload_length
+            && let Some((header, body)) = PacketHeader::decode(parts)
+            && let Some((part, behind)) = body.split_at_checked(header.length as usize)
+        {
+            payload.extend_from_slice(part);
+            parts = behind;
         }
-        *buffer = rest;
         Ok(Some(Packet {
             payload: Cow::Owned(payload),
             sequence_id,
@@ -361,9 +364,10 @@ impl Session {
             }
             (State::PublicKey(auth), Some(PacketType::MORE_DATA)) => {
                 self.state = State::Verdict(auth);
+                reader.skip(1);
                 caching_sha2_password::EncryptedPassword {
                     password: &self.login.password,
-                    public_key: &packet.payload[1..],
+                    public_key: reader.peek(),
                     nonce: auth.nonce,
                     sequence_id: self.sequence_id,
                 }
@@ -392,6 +396,7 @@ impl Session {
         let mut handshake = HandshakeV10::default();
         handshake.decode_internal(reader)?;
         self.capabilities = self.capabilities.intersect(handshake.capability_flags);
+        // Always sent, offered or not.
         self.capabilities.CLIENT_CONNECT_ATTRS = true;
         self.mariadb_capabilities = self
             .mariadb_capabilities
@@ -612,7 +617,7 @@ impl Session {
                     definition.decode(&mut reader, extended_type_info)?;
                     *columns -= 1;
                 }
-                if (*params, *columns) != (0, 0) || is_eof != has_eof_packets {
+                if *params > 0 || *columns > 0 || (has_eof_packets && !is_eof) {
                     return Ok(ReplyEvent::None);
                 }
                 *reply = Reply::First;

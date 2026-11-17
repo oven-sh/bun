@@ -239,7 +239,7 @@ impl ClientSession {
     }
 
     /// A request in `pending_attach` was aborted.
-    pub(crate) fn abort_parked(session: NonNull<ClientSession>, async_http_id: u32) {
+    pub(crate) fn abort_parked(session: NonNull<ClientSession>, async_http_id: u64) {
         Self::enter(Self::this_ptr(session), |s| {
             let i = (s.pending_attach.iter()).position(|c| c.async_http_id() == async_http_id);
             (s.pending_attach)

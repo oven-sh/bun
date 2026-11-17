@@ -104,7 +104,7 @@ pub(crate) enum S3PartResult<'a> {
 }
 
 pub(crate) struct S3HttpSimpleTask {
-    pub(crate) async_http_id: u32,
+    pub(crate) async_http_id: u64,
     /// Held while the request is out on the HTTP thread: how it delivers the
     /// response, and what makes the VM wait for it.
     pub(crate) http_ticket: Option<bun_jsc::Ticket>,

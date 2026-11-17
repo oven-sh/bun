@@ -176,7 +176,7 @@ pub use bun_http_types::{ETag, MimeType};
 use bun_http_types::FetchRedirect::CommonAbortReason;
 use bun_ptr::RefPtr;
 use core::ops::ControlFlow::{self, Break, Continue};
-use core::sync::atomic::{AtomicBool, AtomicU32, AtomicUsize, Ordering};
+use core::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicUsize, Ordering};
 
 #[repr(u8)]
 #[derive(Copy, Clone, PartialEq, Eq, Default)]
@@ -249,7 +249,7 @@ impl Default for Flags {
 
 // ───────────────────────────── globals ─────────────────────────────
 
-pub(crate) static ASYNC_HTTP_ID_MONOTONIC: AtomicU32 = AtomicU32::new(0);
+pub(crate) static ASYNC_HTTP_ID_MONOTONIC: AtomicU64 = AtomicU64::new(0);
 
 /// Set once at startup from `--experimental-http2-fetch` (before the HTTP
 /// thread spawns) and then only read on that thread.
@@ -1541,7 +1541,7 @@ impl<'a> HTTPClient<'a> {
 
 /// Messages from other threads for the request `async_http_id`, which this carrier owns.
 impl Carrier {
-    pub(crate) fn abort(self, async_http_id: u32) {
+    pub(crate) fn abort(self, async_http_id: u64) {
         match self {
             Self::Tcp(socket) => HTTPContext::enter_carried(socket, |c| c.close_and_abort(socket)),
             Self::Tls(socket) => HTTPContext::enter_carried(socket, |c| c.close_and_abort(socket)),
@@ -1571,7 +1571,7 @@ impl Carrier {
     }
 
     /// The consumer of the response body takes bytes again, or `body_unread` changed.
-    pub(crate) fn receive_resumed(self, async_http_id: u32) {
+    pub(crate) fn receive_resumed(self, async_http_id: u64) {
         match self {
             Self::Tcp(socket) => HTTPContext::enter_carried(socket, |c| c.resume_receive(socket)),
             Self::Tls(socket) => HTTPContext::enter_carried(socket, |c| c.resume_receive(socket)),

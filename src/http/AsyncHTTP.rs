@@ -37,7 +37,7 @@ pub struct AsyncHTTP<'a> {
     pub(crate) next: bun_threading::Link<AsyncHTTP<'static>>,
 
     pub client: HTTPClient<'a>,
-    pub async_http_id: u32,
+    pub async_http_id: u64,
 
     pub elapsed: u64,
 }
@@ -605,7 +605,7 @@ impl InFlightRequest {
         self.into_inner().into_non_null()
     }
 
-    pub(crate) fn async_http_id(&self) -> u32 {
+    pub(crate) fn async_http_id(&self) -> u64 {
         self.http.async_http_id
     }
 
@@ -615,7 +615,7 @@ impl InFlightRequest {
         bun_core::handle_oom(crate::http_thread().held.put(self.async_http_id(), self));
     }
 
-    pub(crate) fn take_held(async_http_id: u32) -> Self {
+    pub(crate) fn take_held(async_http_id: u64) -> Self {
         let held = &mut crate::http_thread().held;
         let this = held.fetch_swap_remove(&async_http_id);
         release_past_peak(held);
@@ -657,7 +657,7 @@ impl InFlightRequest {
     }
 }
 
-fn release_past_peak<V>(map: &mut bun_collections::ArrayHashMap<u32, V>) {
+fn release_past_peak<V>(map: &mut bun_collections::ArrayHashMap<u64, V>) {
     if map.capacity() > 10_000 && map.count() < 100 {
         map.shrink_and_free(map.count());
     }

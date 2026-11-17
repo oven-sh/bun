@@ -472,7 +472,7 @@ impl<const SSL: bool> HTTPContext<SSL> {
     }
 
     /// Takes a request off the in-flight TLS connect it was coalesced onto.
-    pub(crate) fn take_pending_h2_waiter(&mut self, async_http_id: u32) -> InFlightRequest {
+    pub(crate) fn take_pending_h2_waiter(&mut self, async_http_id: u64) -> InFlightRequest {
         self.pending_h2_connects
             .iter_mut()
             .find_map(|pc| {

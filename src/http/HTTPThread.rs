@@ -68,7 +68,7 @@ struct Inbox {
     tasks: Queue,
     shutdowns: Guarded<Vec<ShutdownMessage>>,
     writes: Guarded<Vec<WriteMessage>>,
-    receive_resumes: Guarded<Vec<u32>>,
+    receive_resumes: Guarded<Vec<u64>>,
     cert_check_resumes: Guarded<Vec<CertCheckResumeMessage>>,
     /// `PoolOptions::id`s whose idle connections to close.
     pool_closes: Guarded<Vec<u64>>,
@@ -126,9 +126,9 @@ pub struct HttpThread {
     pub(crate) lazy_libdeflater: Option<Box<LibdeflateState>>,
 
     /// What each `InFlightRequest` owns, by the `async_http_id` that other threads' messages name.
-    pub(crate) in_flight: ArrayHashMap<u32, NonNull<AsyncHttp<'static>>>,
+    pub(crate) in_flight: ArrayHashMap<u64, NonNull<AsyncHttp<'static>>>,
     /// See `Carrier::None`.
-    pub(crate) held: ArrayHashMap<u32, InFlightRequest>,
+    pub(crate) held: ArrayHashMap<u64, InFlightRequest>,
 }
 
 impl HttpThread {
@@ -180,7 +180,7 @@ pub(crate) fn request_body_send_buffer_capacity(estimated_size: usize) -> usize 
 }
 
 struct WriteMessage {
-    async_http_id: u32,
+    async_http_id: u64,
     kind: WriteMessageType,
 }
 
@@ -194,13 +194,13 @@ pub enum WriteMessageType {
 }
 
 struct ShutdownMessage {
-    async_http_id: u32,
+    async_http_id: u64,
 }
 
 /// The JS thread's `checkServerIdentity` callback approved the peer
 /// certificate; un-park the connection so the request is written.
 struct CertCheckResumeMessage {
-    async_http_id: u32,
+    async_http_id: u64,
 }
 
 pub(crate) const LIBDEFLATE_SHARED_BUFFER_LEN: usize = 512 * 1024;
@@ -520,7 +520,7 @@ impl HttpThread {
     }
 
     /// `None` unless the request has started and its last result hasn't gone out.
-    fn carrier_of(&self, async_http_id: u32) -> Option<Carrier> {
+    fn carrier_of(&self, async_http_id: u64) -> Option<Carrier> {
         let http = *self.in_flight.get(&async_http_id)?;
         // SAFETY: live until `finish` takes it out of `in_flight`, and not borrowed between two events.
         Some(unsafe { (*http.as_ptr()).client.carrier })
@@ -722,7 +722,7 @@ impl HttpThread {
         !INBOX.tasks.is_empty() || !self.deferred_tasks.is_empty()
     }
 
-    pub fn schedule_receive_resume(async_http_id: u32) {
+    pub fn schedule_receive_resume(async_http_id: u64) {
         {
             let mut queued = INBOX.receive_resumes.lock();
             if queued.last() == Some(&async_http_id) {
@@ -733,7 +733,7 @@ impl HttpThread {
         Self::wakeup();
     }
 
-    pub fn schedule_shutdown(async_http_id: u32) {
+    pub fn schedule_shutdown(async_http_id: u64) {
         bun_core::scoped_log!(HTTPThread, "scheduleShutdown {}", async_http_id);
         INBOX
             .shutdowns
@@ -742,7 +742,7 @@ impl HttpThread {
         Self::wakeup();
     }
 
-    pub fn schedule_cert_check_resume(async_http_id: u32) {
+    pub fn schedule_cert_check_resume(async_http_id: u64) {
         bun_core::scoped_log!(HTTPThread, "scheduleCertCheckResume {}", async_http_id);
         INBOX
             .cert_check_resumes
@@ -758,7 +758,7 @@ impl HttpThread {
         Self::wakeup();
     }
 
-    pub fn schedule_request_write(async_http_id: u32, kind: WriteMessageType) {
+    pub fn schedule_request_write(async_http_id: u64, kind: WriteMessageType) {
         INBOX.writes.lock().push(WriteMessage {
             async_http_id,
             kind,

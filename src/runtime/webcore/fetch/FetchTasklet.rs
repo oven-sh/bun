@@ -164,7 +164,7 @@ pub struct FetchTasklet {
     /// The JS controller holds a detachable back-pointer into it.
     sink: Option<AliasableBox<FetchRequestBodySink>>,
     /// `None` before the request is built and in `drop`.
-    async_http_id: Option<u32>,
+    async_http_id: Option<u64>,
     method: http::MethodRef,
     pub(crate) result: HTTPClientResult<'static>,
     pub(crate) metadata: Option<HTTPResponseMetadata>,

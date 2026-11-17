@@ -301,10 +301,14 @@ impl NetworkSink {
         settled
     }
 
+    /// The pump is over: from here the promise of `upload_stream` is the one that must be handled.
     pub(crate) fn on_pump_done(&self) {
         self.source.take().detach(&self.global);
-        drop((self.flush_promise.take(), self.end_promise.take()));
-        drop(self.pending.take());
+        for promise in [self.flush_promise.get(), self.end_promise.get()] {
+            if promise.has_value() {
+                promise.get().set_handled();
+            }
+        }
     }
 
     pub(crate) fn on_pump_rejected(this: &RefPtr<Self>, reason: JSValue) {

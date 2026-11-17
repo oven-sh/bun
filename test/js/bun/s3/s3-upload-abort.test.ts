@@ -357,3 +357,72 @@ test.concurrent("a stream upload whose graph is disposed during the commit lets 
     exited: 0,
   });
 });
+
+// `pull` keeps what its controller returns in `got`. All of it has settled by the time the upload has.
+const direct = (pull: string) => `
+  const got = {};
+  const show = p => Bun.peek.status(p) === "pending" ? "pending" : p.then(String, e => "rejected: " + (e.code ?? e.message));
+  const upload = client.file("key").write(new ReadableStream({ type: "direct", ${pull} }), { ...opts, queueSize: 1 });
+  got.upload = upload;
+  await upload.catch(() => {});
+  for (const key of Object.keys(got).sort()) console.log(key, await show(got[key]));
+`;
+test.concurrent.each([
+  {
+    name: "end(), one request",
+    pull: `async pull(c) { await 0; c.write("hello"); got.end = c.end(); }`,
+    stdout: `end 5\nupload 5\n{"create":0,"part":0,"complete":0,"abort":0,"put":1}\n`,
+  },
+  {
+    name: "end(), the request is refused",
+    pull: `pull(c) { c.write("hello"); got.end = c.end(); }`,
+    answer: { put: `error(403, "AccessDenied")` },
+    stdout: `end rejected: AccessDenied\nupload rejected: AccessDenied\n{"create":0,"part":0,"complete":0,"abort":0,"put":1}\n`,
+  },
+  {
+    name: "flush() and end(), in parts",
+    pull: `pull(c) { c.write(new Uint8Array(partSize + 1)); got.flush = c.flush(); got.end = c.end(); }`,
+    stdout: `end 5242881\nflush 0\nupload 5242881\n{"create":1,"part":2,"complete":1,"abort":0,"put":0}\n`,
+  },
+  {
+    name: "flush() and close()",
+    pull: `async pull(c) { await 0; c.write(new Uint8Array(partSize)); got.flush = c.flush(); c.close(); }`,
+    stdout: `flush 0\nupload 5242880\n{"create":1,"part":1,"complete":1,"abort":0,"put":0}\n`,
+  },
+  {
+    name: "write() and flush(), pull() throws",
+    pull: `pull(c) { got.write = c.write(new Uint8Array(partSize)); got.flush = c.flush(); throw new Error("thrown"); }`,
+    stdout: `flush rejected: thrown\nupload rejected: thrown\nwrite false\n{"create":1,"part":0,"complete":0,"abort":1,"put":0}\n`,
+  },
+])("a direct stream's promises settle: $name", async ({ pull, answer, stdout }) => {
+  expect(await run({ body: direct(pull), waitFor: `true`, answer })).toEqual({ stdout, stderr: "", exited: 0 });
+});
+
+test.concurrent("a direct stream's promises that nobody kept are not unhandled rejections", async () => {
+  const body = direct(`pull(c) { c.write(new Uint8Array(partSize)); c.flush(); c.end(); }`);
+  expect(await run({ body, waitFor: `true`, answer: { create: `error(403, "AccessDenied")` } })).toEqual({
+    stdout: `upload rejected: AccessDenied\n{"create":1,"part":0,"complete":0,"abort":0,"put":0}\n`,
+    stderr: "",
+    exited: 0,
+  });
+});
+
+test.concurrent.each([
+  ["succeeds", undefined],
+  ["fails", `error(403, "AccessDenied")`],
+])("an async iterator is closed after its upload %s", async (_, put) => {
+  const body = `
+    let returned = false;
+    const chunks = ["hello"];
+    const iterator = {
+      next: async () => ({ done: chunks.length === 0, value: chunks.pop() }),
+      return: async () => ((returned = true), {}),
+    };
+    await client.write("key", new Response({ [Symbol.asyncIterator]: () => iterator }), opts).catch(() => {});
+  `;
+  expect(await run({ body, waitFor: `returned`, answer: { put } })).toEqual({
+    stdout: `{"create":0,"part":0,"complete":0,"abort":0,"put":1}\n`,
+    stderr: "",
+    exited: 0,
+  });
+});

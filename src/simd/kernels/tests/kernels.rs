@@ -1493,6 +1493,31 @@ fn xxhash_of_each_length() {
     });
 }
 
+#[test]
+#[cfg_attr(miri, ignore = "slow")]
+fn xxhash_wraps_around() {
+    // Each adds up to all ones with a constant of the hashes.
+    let seeds = [0, 0x27D4_EB2F_1656_67C5, 0x1656_67B1, 0x6782_737B_EA42_39B9].map(|it| !it);
+    let sum = |hash: &dyn Fn(u64, &[u8]) -> u64| {
+        let of = |seed| (0..=40).map(move |len| hash(seed, &[0; 40][..len]));
+        seeds.into_iter().flat_map(of).fold(0, u64::wrapping_add)
+    };
+    check(0x50_79a4_a962, || {
+        sum(&|seed, t| kernels::xxhash32(seed as u32, t).into())
+    });
+    check(0x108b_1a1c_9eaf_c9d5, || sum(&kernels::xxhash64));
+    check(0x108b_1a1c_9eaf_c9d5, || {
+        sum(&|seed, t| {
+            let mut state = kernels::XxHash64State::new(seed);
+            state.update(t);
+            state.digest()
+        })
+    });
+    check(0x4483_2bee_5cad_6b4b, || {
+        sum(&|seed, t| from_shared(t, |t| kernels::xxhash3_64_shared(seed, t)))
+    });
+}
+
 /// What the filter subtracts from a byte with these to the left, above, and above to the left.
 fn png_prediction(filter_type: u8, [a, b, c]: [u8; 3]) -> u8 {
     let [wide_a, wide_b, wide_c] = [a, b, c].map(i32::from);
@@ -1727,7 +1752,7 @@ impl Mappings {
             &mut now.name_idx,
         ];
         for (field, &delta) in fields.into_iter().zip(deltas) {
-            *field += delta;
+            *field = field.wrapping_add(delta);
             push_vlq(&mut self.text, delta);
         }
         now.needs_sort |= deltas[0] < 0;
@@ -1868,7 +1893,10 @@ fn check_odd_mappings(start: i32, step: i32) {
 #[test]
 #[cfg_attr(miri, ignore = "slow")]
 fn mappings_at_the_limits() {
-    let mut mappings = Mappings::new(MappingsState::default());
+    let mut mappings = Mappings::new(MappingsState {
+        name_idx: i32::MAX,
+        ..Default::default()
+    });
     for _ in 0..9 {
         mappings.push_segment(&[i32::MAX, 2, 0, 0], 0);
         mappings.push_segment(&[-i32::MAX], 0);

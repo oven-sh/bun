@@ -356,15 +356,20 @@ fn blocks_that_do_not_fit() {
 
 #[test]
 fn rows_that_do_not_fit() {
-    let (full, half) = (&[0; 64][..], &[0; 36][..]);
-    for nth in sample(0..5, 5) {
+    for (groups, nth) in sample((0..5).flat_map(|nth| [(2, nth), (1, nth)]), 10) {
+        let (full, half) = (&[0; 64][..32 * groups], &[0; 36][..16 * groups + 4]);
+        let (len, few) = (full.len(), full.len() - 31);
         let rows = |row: &'static [u8]| [0, 1, 2, 3].map(|i| &row[usize::from(i == nth)..]);
         let ([cb, cr, ..], [a, b, c, d]) = (rows(full), rows(half));
         let (not_halved, half_width) = (Full { cb, cr }, HalfWidth { cb: a, cr: b });
         let (cb, cr) = ([a, b], [c, d]);
         for (chroma, count) in [(not_halved, 2), (half_width, 2), (HalfSize { cb, cr }, 4)] {
-            check(nth >= count, || converted(full, chroma, 33, 64).is_some());
-            for (y, width, room) in [(&full[1..], 33, 64), (full, 33, 63), (full, usize::MAX, 64)] {
+            check(nth >= count, || converted(full, chroma, few, len).is_some());
+            for (y, width, room) in [
+                (&full[1..], few, len),
+                (full, few, len - 1),
+                (full, !0, len),
+            ] {
                 check(None, || converted(y, chroma, width, room));
             }
         }
@@ -397,7 +402,7 @@ fn planes_that_do_not_fit() {
     for misfit in [
         [HUGE, 32, 1, 20],
         [0, 32, HUGE, 20],
-        [70, 32, 1, HUGE],
+        [70, 32, 1, HUGE + 20],
         [70, 32, 1, 15],
     ] {
         check(None, || fits(lens, misfit));

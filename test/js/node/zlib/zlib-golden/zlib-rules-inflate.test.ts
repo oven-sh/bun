@@ -781,6 +781,14 @@ describe("Bun.inflateSync() and Bun.gunzipSync() take the container from windowB
     expect(Buffer.from(Bun.inflateSync(compressed, { windowBits: windowBits as 25 }))).toEqual(data);
   });
 
+  test("also if their buffer grows in the middle of a stored block", () => {
+    const data = input("noise", 20000);
+    const zeros = [0, ...Array(116).fill({ length: 258, distance: 1 })];
+    const bits = stored(fixed(new Bits(), zeros, false), data, false);
+    const output = Bun.inflateSync(fixed(bits, [{ length: 9, distance: 15000 }], true).end(), { windowBits: -9 });
+    expect(Buffer.from(output.subarray(-9))).toEqual(data.subarray(5000, 5009));
+  });
+
   test("and pass on the message", () => {
     expect(() => Bun.inflateSync(Buffer.from([7]))).toThrow("invalid block type");
     expect(() => Bun.gunzipSync(streams.zlib)).toThrow("incorrect header check");

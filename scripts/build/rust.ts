@@ -365,7 +365,7 @@ export function cargoBuildInvocation(cfg: Config): CargoInvocation {
   // The one of `hardeningFlags` (flags.ts) rustc has and does not already do:
   // its stack probes are inline on this target with or without this.
   if (cfg.hardened) rustflags.push("-Zstack-protector=strong");
-  if (cfg.signReturnAddresses) rustflags.push("-Zbranch-protection=pac-ret");
+  if (cfg.signReturnAddresses) rustflags.push("-Zbranch-protection=pac-ret", "--cfg=bun_signs_return_addresses");
   if (cfg.hardened) rustflags.push("-Coverflow-checks=on");
   if (cfg.hardened) rustflags.push("-Zub-checks=yes");
   // Parallel frontend: rustc's default is single-threaded for parse / macro
@@ -436,6 +436,7 @@ export function cargoBuildInvocation(cfg: Config): CargoInvocation {
   // `debug_assertions` only because the two were coextensive until now.
   rustflags.push("--check-cfg=cfg(bun_debug)");
   rustflags.push("--check-cfg=cfg(bun_hardened)");
+  rustflags.push("--check-cfg=cfg(bun_signs_return_addresses)");
   rustflags.push("--check-cfg=cfg(bun_starts_without_mdwe)");
   rustflags.push("--check-cfg=cfg(bun_locked_environment)");
   rustflags.push("--check-cfg=cfg(bun_refuses_execute_only_start)");

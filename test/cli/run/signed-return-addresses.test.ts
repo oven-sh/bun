@@ -9,6 +9,7 @@ import { locksEnvironment } from "../../aot/hardened";
 import { cCompiler, without } from "../../aot/harness/capabilities";
 import { withoutCoreDump } from "../../aot/harness/commands";
 import { run } from "../../aot/harness/run";
+import { withoutDebugInformation } from "../../aot/harness/without-debug-information";
 import { describe, test } from "../../aot/supported";
 
 const signs =
@@ -171,5 +172,48 @@ describe.skipIf(!isLinux || !!without("a C compiler"))("the return address that 
       wordOfAnotherFrame: { stdout: "", end: "a signal" },
       signedAddress: { stdout: "landed\n", end: 0 },
     });
+  });
+});
+
+describe.skipIf(!isLinux)("--aot-symbols", () => {
+  async function buildWithSymbols(dir: string) {
+    const executable = join(dir, "program");
+    const flags = ["--compile", "--aot", "--aot-symbols", ...withoutDebugInformation];
+    const { stderr, exitCode } = await run([bunExe(), "build", ...flags, "program.ts", "--outfile", executable], dir);
+    expect({ stderr, exitCode }).toEqual({ stderr: expect.any(String), exitCode: 0 });
+    return executable;
+  }
+  const files = {
+    "program.ts": `function descend(left: number): number {
+  return left === 0 ? process.argv.length : descend(left - 1) + 1;
+}
+console.log(descend(process.argv.length * 64));
+`,
+  };
+
+  test("says whether return addresses are signed", async () => {
+    using dir = tempDir("aot-hardened-rules-of-frames", files);
+    const file = readFileSync(await buildWithSymbols(String(dir)));
+    const [framePointer, returnAddress] = process.arch === "arm64" ? [29, 30] : [6, 16];
+    const rules = Buffer.from([
+      ...[20, 0, 0, 0, 255, 255, 255, 255, 1, 0, 1, 0x78, returnAddress, 0x0c, framePointer, 16],
+      ...[0x80 | returnAddress, 1, 0x80 | framePointer, 2],
+    ]);
+    const DW_CFA_AARCH64_negate_ra_state = 0x2d;
+    expect(file.includes(rules)).toBe(true);
+    expect(file[file.lastIndexOf(rules) + rules.length]).toBe(signs ? DW_CFA_AARCH64_negate_ra_state : 0);
+  });
+
+  test.skipIf(!Bun.which("gdb"))("lets a debugger find the callers of a compiled function", async () => {
+    using dir = tempDir("aot-hardened-backtrace", files);
+    const commands = ["handle all nostop noprint pass", "starti", "hbreak *'descend program.ts:1'", "continue", "bt 3"];
+    const { stdout, stderr } = await run([
+      ...["gdb", "-nx", "-batch", ...commands.flatMap(command => ["-ex", command])],
+      await buildWithSymbols(String(dir)),
+    ]);
+    console.log(stdout, stderr);
+    const frames = [...stdout.matchAll(/^#\d+ +0x([0-9a-f]+) (?:\[PAC\] )?in (\S+)/gm)];
+    expect(frames.map(([, address]) => BigInt("0x" + address) >> 48n)).toEqual([0n, 0n, 0n]);
+    expect(frames.slice(0, 2).map(([, , name]) => name)).toEqual(["descend", expect.stringMatching(/^\w/)]);
   });
 });

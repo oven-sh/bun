@@ -42,6 +42,9 @@ for (let n = nextTurns(0); n > 0; n = nextTurns(answer))
 console.log(answer);
 `;
 
+const fibInWebAssembly =
+  "0061736d0100000001060160017f017f030201000707010366696200000a1e011c002000410248047f200005200041016b1000200041026b10006a0b0b";
+
 const wholePrograms = [
   {
     name: "whole/nothing-but-calls",
@@ -102,6 +105,12 @@ const turn = (i: number): number => fib(10 + (i & 1));`),
     name: "whole/evaluated-tail-calls",
     text: loop(`const down = new Function("'use strict'; return function down(n, sum) { return n ? down(n - 1, sum + n) : sum; } // " + process.pid)();
 const turn = (i: number): number => down(100 + (i & 1), 0);`),
+  },
+  {
+    name: "whole/webassembly-calls",
+    text: loop(`import path from "../fib.wasm";
+const { fib } = new WebAssembly.Instance(new WebAssembly.Module(new Uint8Array(await Bun.file(path).arrayBuffer()))).exports as { fib(n: number): number };
+const turn = (i: number) => fib(12 + (i & 1));`),
   },
   {
     name: "whole/serve-and-fetch",
@@ -170,6 +179,7 @@ async function time(name: string) {
 
 console.log(cpus()[0].model, availableParallelism());
 writeFileSync(join(folder, "host.ts"), host);
+writeFileSync(join(folder, "fib.wasm"), Buffer.from(fibInWebAssembly, "hex"));
 mkdirSync(join(folder, "node_modules"));
 symlinkSync(resolve(import.meta.dir, "../node_modules/typescript"), join(folder, "node_modules/typescript"));
 

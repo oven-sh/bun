@@ -421,7 +421,8 @@ fn write_pieces<'a>(
 
 fn append_elf_symbols(file: &bun_sys::File, size: u64, symbols: ImageSymbols<'_>) -> bool {
     let read_at = |offset: u64, out: &mut [u8]| matches!(file.pread_all(out, offset), Ok(count) if count == out.len());
-    let Some(tail) = symbols_tail(size, read_at, symbols.table, symbols.image_offset) else {
+    let signs = cfg!(bun_signs_return_addresses);
+    let Some(tail) = symbols_tail(size, read_at, symbols.table, symbols.image_offset, signs) else {
         return false;
     };
     tail.write(|offset, bytes| file.pwrite_all(bytes, offset as i64).is_ok())

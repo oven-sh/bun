@@ -483,7 +483,7 @@ impl<const SSL: bool> WebSocket<SSL> {
     /// Fires `message` events, so never call this from inside a JS call into the WebSocket.
     pub(crate) fn deliver_initial_data(this: ThisPtr<Self>) {
         let _guard = RefPtr::from_this(this);
-        if this.cpp_websocket().is_some_and(|ws| !ws.is_paused()) {
+        if !this.parsing.get() && this.cpp_websocket().is_some_and(|ws| !ws.is_paused()) {
             this.parse_initial_data();
         }
     }

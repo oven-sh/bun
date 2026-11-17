@@ -100,7 +100,7 @@ let $Bun_defer, $Bun_lazy;
   const membersOf = new Map();
   const { toString: sourceOf } = Function.prototype;
   const onlyReturns = /^[^(]*\(\)(?!.*(?:\+\+|--|\bnew\b))\s*(?:\{\s*return\s[^(.[=`;{}]+;?\s*\}|=>[^(.[=`;{}]+)$/s;
-  const convertsNothing = /(?:\breturn\s|=>)(?:[\w$\s]|\|\||&&|\?\?)+[;\s}]*$/;
+  const convertsNothing = /(?:\breturn\s|=>)(?:(?!\bin(?:stanceof)?\b)[\w$\s]|\|\||&&|\?\?)+[;\s}]*$/;
   function isThere(object, keys) {
     let left = keys.length;
     for (const key of keys) {

@@ -5870,6 +5870,26 @@ describe.concurrent("what a package requires is loaded when it's used", () => {
       1,
     ],
     [
+      "a member behind a getter with `in`",
+      {
+        "index.js": `const value = require("./a").nested.count; exports.f = () => (require("./b"), value);`,
+        "a.js": `const nested = { count: 0 }; const key = { toString: () => (nested.count++, "count") };
+          module.exports = { get nested() { return key in nested && nested; } };`,
+        "b.js": `require("./a");`,
+      },
+      1,
+    ],
+    [
+      "a member behind a getter with `instanceof`",
+      {
+        "index.js": `const value = require("./a").nested.count; exports.f = () => (require("./b"), value);`,
+        "a.js": `const nested = { count: 0 }; const Kind = { [Symbol.hasInstance]: () => ++nested.count };
+          module.exports = { get nested() { return nested instanceof Kind && nested; } };`,
+        "b.js": `require("./a");`,
+      },
+      1,
+    ],
+    [
       "a getter that breaks a cycle",
       {
         "index.js": `const { value } = require("./a"); exports.f = () => (require("./b"), value);`,

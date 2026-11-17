@@ -867,10 +867,12 @@ impl<P> Client<P> {
             unanswered += 1;
         }
         if unanswered > 0 {
+            // A peer that drops the connection on these uses up the retries.
             self.in_flight.push_back(InFlight::Restore(unanswered));
+        } else {
+            self.retries = 0;
         }
         self.state = State::Ready;
-        self.retries = 0;
         self.was_ready = true;
         Event::Connected(hello)
     }
@@ -909,6 +911,8 @@ impl<P> Client<P> {
             Some(InFlight::Restore(unanswered)) => {
                 if unanswered > 1 {
                     self.in_flight.push_front(InFlight::Restore(unanswered - 1));
+                } else {
+                    self.retries = 0;
                 }
                 return Event::Ignored;
             }

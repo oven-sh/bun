@@ -1766,7 +1766,12 @@ mod subscriptions {
             (
                 "dropped",
                 &[Redial, Send("PING"), A, Lost],
-                &[CONNECTED, WRITE, "write PING", "retry in 50 [2]"],
+                &[CONNECTED, WRITE, "write PING", "retry in 100 [2]"],
+            ),
+            (
+                "dropped after it is answered",
+                &[Redial, A, B, Lost],
+                &[CONNECTED, WRITE, "retry in 50 []"],
             ),
             (
                 "an unsubscribe is queued",

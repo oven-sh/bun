@@ -528,11 +528,8 @@ impl<'a> Coordinator<'a> {
                 self.workers[slot].waits_for_heavy_file_to_end = true;
                 return;
             } else if let Some(stolen) = self.workers[victim].range.steal_back_half() {
-                let w = &mut self.workers[slot];
-                w.range = stolen;
-                if let Some(idx) = w.range.pop_front() {
-                    return self.dispatch_to(slot, idx);
-                }
+                self.workers[slot].range = stolen;
+                return self.assign_work(slot);
             }
         }
         self.workers[slot].shutdown(&mut self.frame);

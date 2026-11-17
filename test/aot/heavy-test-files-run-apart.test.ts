@@ -27,7 +27,7 @@ const waitFor = (name = "") =>
 
 const startOf = (code: string) => `Bun.spawnSync([process.execPath, "-e", ${JSON.stringify(code)}]);`;
 
-type Measured = { milliseconds: number; megabytes?: number; waitsFor?: string };
+type Measured = { milliseconds: number; megabytes?: number; waitsFor?: string; isTimed?: false };
 
 async function trailOf(records: { [name: string]: Measured }, words: string, ...flags: string[]) {
   const names = Object.keys(records);
@@ -44,7 +44,7 @@ async function trailOf(records: { [name: string]: Measured }, words: string, ...
     ),
     "timings.json": JSON.stringify({
       version: 1,
-      files: table(it => it.milliseconds),
+      files: table(it => (it.isTimed === false ? undefined : it.milliseconds)),
       memory: table(it => it.megabytes),
     }),
   });
@@ -115,6 +115,23 @@ test("as long as a heavy file is left, the others get what fits beside it", asyn
     "start b",
     "start a",
   ]);
+});
+
+test("a heavy file that a worker takes from another waits for room too", async () => {
+  // Without recorded times each worker has half of the files, and the first to run out takes from the other.
+  // A worker that waits shows no sign of it, so b1 lasts long enough for a b2 that does not wait to start beside it.
+  const trail = await trailOf(
+    {
+      a1: { milliseconds: 0, isTimed: false, waitsFor: "b1" },
+      a2: { milliseconds: 0, isTimed: false },
+      b1: { milliseconds: 1500, isTimed: false, megabytes: 1500, waitsFor: "a2" },
+      b2: { milliseconds: 0, isTimed: false, megabytes: 1500 },
+    },
+    "TestRunLayers:0",
+    "--parallel=2",
+    "--timeout=60000",
+  );
+  expect(trail.filter(line => line.includes(" b"))).toEqual(["start b1", "end b1", "start b2", "end b2"]);
 });
 
 // `untilEveryThreadIs` reads /proc.

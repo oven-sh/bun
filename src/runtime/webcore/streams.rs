@@ -804,7 +804,7 @@ impl SourceHandle {
     pub(crate) fn has_all_input(&self) -> bool {
         match *self {
             SourceHandle::HTMLRewriter(p) => {
-                bun_removable_features::removable_body!(HtmlRewriter, Abort, { p.has_all_input() })
+                removable_body_behind_value!(HtmlRewriter, { p.has_all_input() })
             }
             _ => false,
         }

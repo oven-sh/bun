@@ -283,7 +283,7 @@ fn caller_of_compiled_frame(
     } else {
         fp
     };
-    let caller_pc = load(place_of_record.checked_add(WORD)?)?;
+    let caller_pc = strip_return_address_signature(load(place_of_record.checked_add(WORD)?)?);
     let caller_sp = place_of_record.checked_add(2 * WORD + frame.bytes_above_return_address)?;
     Some((caller_pc, caller_sp, caller_fp))
 }
@@ -435,7 +435,8 @@ fn lowest_compiled_frame(
 
 /// Code compiled with `-mbranch-protection=pac-ret` (an addon, a system
 /// library, Bun itself) saves its return addresses signed, in the bits above
-/// the address. An address without a signature stays as it is.
+/// the address. So does a compiled program where JavaScriptCore has
+/// `ENABLE(RETURN_ADDRESS_SIGNING)`. An address without a signature stays as it is.
 #[inline(always)]
 pub fn strip_return_address_signature(#[allow(unused_mut)] mut address: usize) -> usize {
     #[cfg(target_arch = "aarch64")]
@@ -815,7 +816,8 @@ pub fn capture_from_fault(
     if out.is_empty() {
         return 0;
     }
-    out[0] = pc;
+    // Without FEAT_FPAC a return address that fails to authenticate gets bits in that place, and the return to it faults.
+    out[0] = strip_return_address_signature(pc);
     let mut it = StackIterator::init(fp);
     if cfg!(target_arch = "x86_64") {
         it.returned_to = Some((behind_pc, sp));

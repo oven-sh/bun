@@ -8,7 +8,7 @@ type AsyncContext = import("../../node/async_hooks").Frame | undefined;
 const {
   SQLQueryFlags,
   onQuerySettled,
-  symbols: { _results },
+  symbols: { _results, _adapter },
 } = require("internal/sql/query");
 // The cast: the checker reports a class that extends a member of the generic `require` as its own base (TS2506).
 const { SQLDialect, SQLResultArray, isUnsafeTransactionStart } =
@@ -469,7 +469,17 @@ function addResult(query: QueryType<any, any>, result: SQLResultArray<unknown>) 
   }
 }
 
-function onRejectQuery(query: QueryType<any, any>, err: Error) {
+/// `neverRan`: the server never ran it. On a pool of one connection
+/// a transaction by hand is in order (see createQueryHandle()), which a query sent again would run outside of.
+function onRejectQuery(query: QueryType<any, any>, err: Error, neverRan?: boolean) {
+  // A ListenQuery has no adapter: nothing sends it again.
+  const adapter = query[_adapter] as BaseSQLAdapter<any, any> | undefined;
+  if (neverRan === true && adapter !== undefined) {
+    if (adapter.connectionInfo.max !== 1 && !adapter.closed && query.requeue()) {
+      return;
+    }
+    err = adapter.neverRanError(err);
+  }
   query.reject(err);
 }
 
@@ -574,6 +584,13 @@ abstract class BaseSQLAdapter<ConnectionHandle extends NativeConnection, QueryHa
 
   error(code: string, message: string) {
     return new this.ErrorClass(message, { code: this.codePrefix + code });
+  }
+
+  /// It can be sent again: the server never ran it.
+  neverRanError(cause: Error) {
+    const err = this.error("CONNECTION_CLOSED", "Connection closed before the query ran");
+    err.cause = cause;
+    return err;
   }
 
   createQueryHandle(sql: string, values: unknown[], flags: number) {

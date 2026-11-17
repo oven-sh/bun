@@ -401,7 +401,6 @@ fn a_nested_read_is_not_mixed_with_the_rest_of_the_outer_read() {
     let (one, two, six) = ((FIN | TEXT, "one"), (FIN | TEXT, "two"), (FIN | BINARY, "six"));
     let (a, b, c) = ((TEXT, "a"), (CONTINUE, "b"), (FIN | CONTINUE, "c"));
     let (ping, pong, close) = ((FIN | PING, "p"), (FIN | PONG, "q"), (FIN | CLOSE, ""));
-    let zip = (FIN | RSV1 | TEXT, "z");
     let unexpected = |opcode| (Error(UnexpectedOpcode(opcode)), "");
     for (stream, outer_ends, nested_ends, expected) in [
         (&[one, two, six][..],        After(2),        After(3),         &[(Text, "one"), (Binary, "six"), (Text, "two")][..]),
@@ -416,8 +415,8 @@ fn a_nested_read_is_not_mixed_with_the_rest_of_the_outer_read() {
         (&[a, ping, c],               After(3),        After(3),         &[(Ping, "p"), (Text, "ac")]),
         (&[a, ping, c],               After(2),        After(3),         &[(Ping, "p"), (Text, "ac")]),
         (&[a, ping, c, pong],         After(3),        After(4),         &[(Ping, "p"), (Pong, "q"), (Text, "ac")]),
-        (&[a, ping, c, six],          After(3),        After(4),         &[(Ping, "p"), (Binary, "six"), (Text, "ac")]),
-        (&[a, ping, c, six],          After(3),        OneByteBefore(4), &[(Ping, "p"), (Text, "ac"), (Binary, "six")]),
+        (&[a, ping, c, six],          After(3),        After(4),         &[(Ping, "p"), unexpected(BINARY)]),
+        (&[a, ping, c, six],          After(3),        OneByteAfter(3),  &[(Ping, "p"), (Text, "ac"), (Binary, "six")]),
         (&[a, ping, b, pong, c],      After(3),        After(4),         &[(Ping, "p"), (Pong, "q"), (Text, "abc")]),
         (&[a, ping, b, pong, c],      After(3),        OneByteBefore(4), &[(Ping, "p"), (Pong, "q"), (Text, "abc")]),
         (&[a, ping, pong, c],         After(3),        After(3),         &[(Ping, "p"), (Pong, "q"), (Text, "ac")]),
@@ -425,8 +424,6 @@ fn a_nested_read_is_not_mixed_with_the_rest_of_the_outer_read() {
         (&[a, ping, pong, b, c],      After(3),        HeaderAfter(3),   &[(Ping, "p"), (Pong, "q"), (Text, "abc")]),
         (&[a, ping, pong, c],         After(3),        After(4),         &[(Ping, "p"), (Text, "ac"), (Pong, "q")]),
         (&[a, ping, pong, pong, c],   After(4),        After(5),         &[(Ping, "p"), (Text, "ac"), (Pong, "q"), (Pong, "q")]),
-        (&[a, ping, c, zip],          After(3),        After(4),         &[(Ping, "p"), unexpected(TEXT)]),
-        (&[a, ping, c, zip],          After(3),        After(3),         &[(Ping, "p"), (Text, "ac"), (Compressed(Opcode::Text), "z")]),
         (&[a, ping, b, c],            After(3),        OneByteAfter(3),  &[(Ping, "p"), (Text, "abc")]),
         (&[a, ping, b, c],            After(3),        After(4),         &[(Ping, "p"), unexpected(CONTINUE)]),
         (&[one, a, c],                After(2),        After(3),         &[(Text, "one"), unexpected(CONTINUE)]),

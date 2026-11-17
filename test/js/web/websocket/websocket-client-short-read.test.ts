@@ -889,6 +889,17 @@ describe("data received while a frame's listener spins the event loop", () => {
       ]);
       expect(await client.connection.remainingFrames()).toEqual(["close 1002"]);
     });
+
+    test("fails on the end of a payload that looks like a frame, then a Close, in a Ping listener inside the message (pin)", async () => {
+      const [start, end] = split(lastFragment(Buffer.concat([Buffer.from("ab"), text("x")])), 4);
+      expect(end).toEqual(text("x"));
+      const close = encodeFrame(OP.close, Buffer.from([0x03, 0xe8]));
+      await using client = await connect([Buffer.concat([end, close])]);
+      client.connection.write(Buffer.concat([text(Buffer.alloc(4000, "a"), false), ping("p"), start]));
+      await client.returned;
+      expect(client.seen).toEqual(['ping "p"', "error Protocol error - unexpected opcode: 1", "returns"]);
+      expect(await client.connection.remainingFrames()).toEqual(['pong "p"', "close 1002"]);
+    });
   });
 
   test("part of a Ping whose rest looks like the header of a longer Ping", async () => {

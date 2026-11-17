@@ -362,12 +362,12 @@ impl Reader {
                     Some(Head::Invalid(error)) => return Some(Err(self.fail(error))),
                 },
             };
+            // Messages do not interleave (§5.4).
+            if self.parked_messages > 0 {
+                let error = ProtocolError::UnexpectedOpcode(body.message.opcode as u8);
+                return Some(Err(self.fail(error)));
+            }
             if let Some(payload) = self.read_body(body, &mut input.bytes) {
-                // Inflating depends on the messages before this one.
-                if body.message.compressed && self.parked_messages > 0 {
-                    let error = ProtocolError::UnexpectedOpcode(body.message.opcode as u8);
-                    return Some(Err(self.fail(error)));
-                }
                 if let Err(error) = self.make_way(input) {
                     return Some(Err(error));
                 }
@@ -393,9 +393,9 @@ impl Reader {
 
     #[inline(never)]
     fn make_way_inside_message(&mut self, input: &mut Input<'_>) -> Result<(), ProtocolError> {
-        let has_data_left = !input.bytes.is_empty()
+        let must_park = !input.bytes.is_empty()
             && (self.at.is_between_messages() || !self.only_control_frames_are_left(input));
-        if has_data_left {
+        if must_park {
             self.swap_position(input);
             self.parked_messages += u32::from(!input.parked.is_between_messages());
         } else if input.number != Some(self.reads) || !input.parked.is_between_messages() {

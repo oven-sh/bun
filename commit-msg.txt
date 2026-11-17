@@ -1,0 +1,32 @@
+bun:test: ask the matchers after the first mismatch when a failed toMatchObject builds its diff
+
+`Bun__deepMatch` stops at the first mismatch, so it never asked the
+matchers after it. The diff of a failed `toMatchObject` printed each of
+them as a difference. The same values printed a correct diff in another
+key order (#9089).
+
+The comparison still stops at the first mismatch. It records the
+matchers that pass up to there, and now also a matcher that said no.
+When a positive `toMatchObject` fails, `matchedRowsOfFailedMatch` runs
+a second walk of the same template (`DeepMatchWalk::Collects`). It goes
+over the two values as the comparison does, and goes on where the
+comparison returns false. It keeps each row of the comparison and asks
+each matcher of the pattern that the comparison did not ask. It adds a
+row for each that passes. A row comes only from a matcher that was
+asked and passed, and no matcher is asked two times.
+
+A scan of the pattern comes first. It reads plain objects and arrays as
+they are, with no getter and no trap, and notes which of them lead to a
+matcher. The walk goes only there, and there is no walk for a pattern
+that leads to none.
+
+The walk is for the message alone. It runs under a barrier, so no
+matcher makes the failed call wait. What a getter, a matcher or a
+tester throws at a key is cleared there: that key gets no row, and the
+call throws the failed match as before. If the stack runs out, the
+message gets the rows of the comparison.
+
+`.not.toMatchObject`, snapshot property matchers, `Bun.deepMatch` and
+`expect.objectContaining` do not run the second walk.
+
+Stacked on #48544.

@@ -1,0 +1,22 @@
+{
+ "fail_total": 38,
+ "fail_expect": 33,
+ "identical_line": "These functions have the same instructions as on #48544: `Bun__deepMatch<false>` (564), `matchAsymmetricMatcherAndGetFlags` (766), `matchedRowsFrom` (1,301), `Expect_readFlagsAndProcessPromise` (179), `Pass::once` (109), `execute_custom_matcher` (474) and the Rust body of `toMatchObject` (268). `Bun__deepMatch<true>` has 10 more (891 to 901): the check and the call for the record of a matcher that said no, and 2 around the call of the testers. `JSC__JSValue__jestDeepMatch` has 138 to 137. The Rust side of the deferral (`expect_deferred.rs`) has no change.",
+ "wall_rows": [
+  "| no matcher, 10 nested records | 0.056 ms | 0.056 ms |",
+  "| no matcher, 1,000 nested records | 5.25 ms | 5.31 ms |",
+  "| no matcher, 20,000 nested records | 19.8 ms | 23.2 ms |",
+  "| one matcher and 1,000 nested records | 5.26 ms | 5.24 ms |",
+  "| one matcher and 20,000 nested records | 19.5 ms | 23.1 ms |",
+  "| an array of 200,000 objects, the same array on both sides | 51.9 ms | 62.9 ms |",
+  "| a 1 MB `Uint8Array`, the same object on both sides | 46.5 ms | 47.0 ms |",
+  "| a 1 MB `Uint8Array`, two objects | 46.4 ms | 46.9 ms |",
+  "| 5 attempts of `expect.poll`, a 2 MB `Uint8Array` in the pattern | 410 ms | 413 ms |",
+  "",
+  "Five runs of each build, in turn. The runs of one build differ by up to 0.2 ms in the rows with 1,000 records, 1.2 ms in the rows with 20,000 records, 5.2 ms in the array row, 2.9 ms in the `Uint8Array` rows and 11 ms in the poll row. The scan reads each plain object of the pattern once, so a large pattern costs a failed call about 50 ns for each object."
+ ],
+ "size_lines": "`llvm-size`: text TEXT_BASE to TEXT_NEW bytes (TEXT_DELTA). The file grows by FILE_DELTA bytes. New code: the walk that collects (2,243 bytes), the scan (1,692), `matchedRowsOfFailedMatch` (1,134). `Bun__deepMatch<true>` has 3,704 to 3,740 bytes. No new host function. `DeepMatchState` keeps its size.",
+ "mutation_line": "A test build switched off 24 rules, one at a time: each rule of the scan and of the walk, and the record of the matcher that said no. 23 of them make a test fail. The barrier has none: without it the walk clears the signal that makes a call wait, and the same lines print. The barrier keeps the asks of the walk out of the journal that a call replays after a wait.",
+ "depth_line": "5,146 to 4,811 when a matcher follows the mismatch. #48544 has the limit of 4,807 when a matcher comes before the mismatch.",
+ "self_review_line": "Self-reviewed: (this review)."
+}

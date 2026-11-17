@@ -664,3 +664,136 @@ describe("short-lived typed arrays and ArrayBuffers", () => {
     expect(total).toBeGreaterThan(10);
   });
 });
+
+// The bytes a program may allocate between two collections grow from the size of the heap after the last full
+// collection. That size counts the extra memory that objects keep alive, such as the contents of an ArrayBuffer. One
+// large buffer that stayed alive raised the limit by its own size or more, and that many bytes of dead objects then
+// fit before the next collection: 1 GiB of them next to a buffer of 1 GiB that was never written to (#49204).
+// Objects have a second limit. It grows from the live objects plus the live extra memory, where the extra memory
+// counts for no more than the objects do.
+describe("objects allocated next to live extra memory", () => {
+  type Run = { setup?: string; loop: string; alive?: string; concurrent?: boolean; env?: Record<string, string> };
+
+  // Runs `setup`, a full collection and `loop`, and counts the collections that start during the loop. `alive` is read
+  // after the loop, which keeps what the setup made alive until then. The count ends at the line the script prints
+  // there: the teardown of the VM can add a collection (BUN_DESTRUCT_VM_ON_EXIT). With the concurrent collector off,
+  // a collection runs at the allocation that passes a limit, so the counts follow from the limits and nothing else.
+  async function run({ setup = "", loop, alive = "0", concurrent = false, env = {} }: Run) {
+    // fs.writeSync() writes at once, as the collector does when it logs. process.stderr.write() can write later.
+    const mark = (text: string) => `require("fs").writeSync(2, "\\n@@ " + ${text} + "\\n")`;
+    const script = `${setup}; Bun.gc(true); ${mark(`"loop starts"`)}; ${loop}; ${mark(`"loop ends " + (${alive})`)};`;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      env: {
+        ...bunEnv,
+        ...(concurrent ? {} : { BUN_GC_TIMER_DISABLE: "1", BUN_JSC_useConcurrentGC: "0" }),
+        BUN_JSC_logGC: "1",
+        ...env,
+      },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const log = stdout + stderr;
+    const starts = stderr.indexOf("@@ loop starts");
+    const ends = stderr.indexOf("@@ loop ends");
+    expect(starts, log).toBeGreaterThan(-1);
+    expect(ends, log).toBeGreaterThan(starts);
+    expect(exitCode, log).toBe(0);
+    const during = stderr.slice(starts, ends);
+    const eden = (during.match(/=> EdenCollection/g) ?? []).length;
+    const full = (during.match(/=> FullCollection/g) ?? []).length;
+    return { eden, full, total: eden + full, alive: /@@ loop ends (.*)/.exec(stderr)![1] };
+  }
+
+  // calloc() does not touch the pages, so the buffer costs address space and no memory.
+  const buffer = { setup: "const buffer = new ArrayBuffer(2 ** 30)", alive: "buffer.byteLength" };
+  const object = "{ a: i, b: [i, i + 1], c: { d: i } }";
+  // With 1024 slots an object dies soon after it is made. With 65536 slots the ring is larger than what one cycle
+  // allocates: an eden collection finds every object of it alive and promotes it, and the object dies when the ring
+  // comes round. Only a full collection frees those.
+  const ring = (size: number, count: number) =>
+    `const ring = new Array(${size}); for (let i = 0; i < ${count}; i++) ring[i % ${size}] = ${object}`;
+
+  test.concurrent.each([
+    ["with the concurrent collector off", false],
+    ["with the flags a program runs with", true],
+  ])("objects that die young are collected next to the buffer, %s", async (_, concurrent) => {
+    const loop = ring(1024, 1_000_000);
+    const [alone, nextToBuffer] = await Promise.all([run({ loop, concurrent }), run({ ...buffer, loop, concurrent })]);
+    expect(nextToBuffer.alive).toBe(String(2 ** 30));
+    expect(alone.total).toBeGreaterThan(5);
+    expect(nextToBuffer.total).toBeGreaterThanOrEqual(alone.total / 3);
+  });
+
+  test.concurrent("objects that die old get full collections next to the buffer", async () => {
+    const loop = ring(65536, 400_000);
+    const [alone, nextToBuffer] = await Promise.all([run({ loop }), run({ ...buffer, loop })]);
+    expect(nextToBuffer.alive).toBe(String(2 ** 30));
+    expect(alone.full).toBeGreaterThan(0);
+    expect(nextToBuffer.full).toBeGreaterThan(0);
+  });
+
+  // A heap with a few MB of objects has the minimum of 8 MB as its limit. The buffer must not leave it less room than
+  // that: the minimum is for the objects, and not for the objects counted twice.
+  test.concurrent("a small heap does not collect more often next to the buffer than without it", async () => {
+    const live = `const live = []; for (let i = 0; i < 25000; i++) live.push(${object})`;
+    const loop = ring(1024, 1_000_000);
+    const [alone, nextToBuffer] = await Promise.all([
+      run({ setup: live, alive: "live.length", loop }),
+      run({ setup: `${live}; ${buffer.setup}`, alive: "live.length + buffer.byteLength", loop }),
+    ]);
+    expect(nextToBuffer.alive).toBe(String(25000 + 2 ** 30));
+    expect(alone.total).toBeGreaterThan(5);
+    expect(nextToBuffer.total).toBeLessThanOrEqual(alone.total * 1.2);
+    expect(nextToBuffer.total).toBeGreaterThanOrEqual(alone.total / 3);
+  });
+
+  // 50000 strings of 1 KB are more extra memory than the objects that hold them. The strings count for as much as
+  // the objects, so the loop collects less often than with a limit that grows from the objects alone (ratio 0), and
+  // more often than with no limit for objects.
+  test.concurrent("extra memory raises the limit for objects by as much as the objects do", async () => {
+    const strings = {
+      setup: `const live = []; for (let i = 0; i < 50000; i++) live.push("k" + i + "x".repeat(1000))`,
+      alive: "live.length",
+      loop: ring(1024, 1_000_000),
+    };
+    const [byDefault, objectsAlone, noLimit] = await Promise.all([
+      run(strings),
+      run({ ...strings, env: { BUN_JSC_cellAllocationLimitMaxExtraMemoryRatio: "0" } }),
+      run({ ...strings, env: { BUN_JSC_useCellAllocationLimit: "0" } }),
+    ]);
+    expect(noLimit.total).toBeGreaterThan(0);
+    expect(byDefault.total).toBeGreaterThan(noLimit.total * 1.5);
+    expect(objectsAlone.total).toBeGreaterThan(byDefault.total * 1.25);
+  });
+
+  test.concurrent("BUN_JSC_useCellAllocationLimit=0 turns the limit for objects off", async () => {
+    const loop = ring(1024, 1_000_000);
+    const { total, alive } = await run({ ...buffer, loop, env: { BUN_JSC_useCellAllocationLimit: "0" } });
+    expect(alive).toBe(String(2 ** 30));
+    expect(total).toBeLessThanOrEqual(1);
+  });
+
+  // The next two pass without the limit for objects. They hold what it must not change.
+
+  // An array that grows is one large cell after the other. A cycle in which the last large cell is more than a third
+  // of the bytes does not end at the limit: the cell is alive, and a collection would free little. The limit for
+  // objects keeps that rule. Without it, 12 million pushes are 5 collections and not 1.
+  test.concurrent("an array that grows does not collect at every step", async () => {
+    const { total } = await run({ loop: "const array = []; for (let i = 0; i < 12_000_000; i++) array.push(i)" });
+    expect(total).toBeLessThanOrEqual(2);
+  });
+
+  // The limit for all bytes is as it was. A program that holds many buffers and allocates more of them does not
+  // collect after every 8 MB: 20000 buffers of 64 KB are about 155 collections when nothing else is alive, and about
+  // 10 next to 1 GiB of buffers. A single limit that grows from the objects alone makes that 289.
+  test.concurrent("buffers allocated next to live buffers keep the limit that grows from the buffers", async () => {
+    const live = "const live = []; for (let i = 0; i < 1024; i++) live.push(Buffer.allocUnsafe(2 ** 20))";
+    const loop = "for (let i = 0; i < 20000; i++) Buffer.allocUnsafe(65536)";
+    const [alone, nextToBuffers] = await Promise.all([run({ loop }), run({ setup: live, alive: "live.length", loop })]);
+    expect(nextToBuffers.alive).toBe("1024");
+    expect(alone.total).toBeGreaterThan(100);
+    expect(nextToBuffers.total).toBeLessThan(alone.total / 4);
+  });
+});

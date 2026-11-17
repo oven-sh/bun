@@ -46,7 +46,7 @@ In a module with `#[foreach_target]`:
 - `this_target` is the name of the copy: `use other::simd::this_target::helper;`
 - Trait methods, `const fn` and functions from a macro outside the module do not get the features of the target. They can use only the ops that need no intrinsic, and run baseline code unless they are inlined.
 - `#[inline(always)]` becomes `#[rustc_force_inline]`. Use it only on functions that no other crate calls. If rustc reports a recursion limit, raise `#![recursion_limit]`. A closure with the attribute loses the features until it is inlined, and cannot call such a function.
-- These do not compile: `async`, `unsafe` and `extern` functions, `#[inline(always)]` in a macro inside the module, and a fragment of several tokens from a macro around it.
+- These do not compile: `async`, `unsafe` and `extern` functions, and a fragment of several tokens from a macro around the module.
 - Name the module `simd`. The allowlists in `scripts/verify-baseline-static` match that name.
 
 An op has the name that `core::simd` gives it, where there is one.

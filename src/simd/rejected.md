@@ -872,6 +872,29 @@ mod simd {
 # fn main() {}
 ```
 
+With brackets of the macro at the end:
+
+```rust,compile_fail,E0658
+macro_rules! take {
+    (then $($meta:tt)*) => { #[cfg_attr(all(), $($meta)*)] struct S; };
+    (#$group:tt $(#$more:tt)* fn f $($start:tt)*) => { take! { then $($start)* $group } };
+    ($($group:tt)*) => { "" };
+}
+#[bun_simd::foreach_target]
+mod simd {
+    take! { fn f rustc_dummy = take! }
+}
+# fn main() {}
+```
+
+After the attribute that has the right:
+
+```rust,compile_fail,E0658
+#[bun_simd::force_inline]
+#[rustc_nounwind]
+fn f() {}
+```
+
 A macro in the place of the module, which would get all that is added:
 
 ```rust,compile_fail
@@ -922,6 +945,24 @@ A pointer to what has to be inlined:
 mod simd {
     #[inline(always)]
     fn kernel() {}
+    fn f() -> fn() {
+        kernel
+    }
+}
+```
+
+The same, from a macro in the module:
+
+```rust,compile_fail,E0308
+#[bun_simd::foreach_target]
+mod simd {
+    macro_rules! make {
+        ($vis:vis, $name:ident) => {
+            #[inline(always)]
+            $vis fn $name() {}
+        };
+    }
+    make!(pub(crate), kernel);
     fn f() -> fn() {
         kernel
     }

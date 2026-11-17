@@ -40,6 +40,8 @@ mod x86;
 
 pub use algo::blocks;
 pub use bit_indices::BitIndices;
+#[doc(hidden)]
+pub use bun_simd_macros::force_inline;
 pub use bun_simd_macros::{foreach_target, foreach_width};
 #[doc(hidden)]
 pub use bun_simd_trusted::AtomicFn;

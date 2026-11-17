@@ -4,7 +4,7 @@
 #![forbid(unsafe_code)]
 #![allow(clippy::disallowed_methods)] // proc-macro: compile-time input
 use bun_simd_trusted::Target;
-use proc_macro::{Delimiter, Group, Ident, Span, TokenStream, TokenTree};
+use proc_macro::{Delimiter, Group, Ident, TokenStream, TokenTree};
 
 const LONG_RUNNING_ONLY: Target = Target::Avx512Skx;
 const IS_FOR_TESTS: bool = cfg!(feature = "test_support");
@@ -81,7 +81,7 @@ fn replace_ident(
 }
 
 /// `before` has the tokens up to the `fn` of a function.
-fn add_attributes(before: &mut Vec<TokenTree>, features: &[&str], span_of_fn: Span) {
+fn add_attributes(before: &mut Vec<TokenTree>, features: &[&str]) {
     let start = match &before[..] {
         [.., a, b] if is(Some(a), "pub") && is_group(b, Delimiter::Parenthesis) => before.len() - 2,
         [.., a, _] if is(Some(a), "$") => before.len() - 2,
@@ -99,7 +99,7 @@ fn add_attributes(before: &mut Vec<TokenTree>, features: &[&str], span_of_fn: Sp
         // A portable copy is then compiled only if it is used.
         ("[inline(never)]" | "[inline(exported)]", []) => (Some("inline"), ""),
         // LLVM makes better code of what rustc has inlined already.
-        ("[inline(always)]", [_, ..]) => (Some("rustc_force_inline"), ""),
+        ("[inline(always)]", [_, ..]) => (Some("::bun_simd::force_inline"), ""),
         // A debug build optimizes the crate of the kernels, and not that of the caller.
         ("[inline(exported)]", _) => (
             Some("cfg_attr(not(debug_assertions), inline)"),
@@ -114,12 +114,7 @@ fn add_attributes(before: &mut Vec<TokenTree>, features: &[&str], span_of_fn: Sp
     for feature in features {
         attributes += &format!("#[target_feature(enable = {feature:?})]");
     }
-    let mut attributes: Vec<TokenTree> = parse(&attributes).into_iter().collect();
-    // With a `#` from here, a macro in the module could write any attribute of `rustc_attrs`.
-    for hash in attributes.iter_mut().step_by(2) {
-        hash.set_span(span_of_fn);
-    }
-    before.splice(start..start, attributes);
+    before.splice(start..start, parse(&attributes));
 }
 
 /// On every `fn` except `const fn` and trait methods, which cannot have them.
@@ -134,7 +129,7 @@ fn enable_features(stream: TokenStream, features: &[&str]) -> TokenStream {
         is_impl = !is_function && (is_impl || at("impl"));
         is_of_trait |= at("trait") || is_impl && at("for") && !is(rest.peek(), "<");
         if is_function && !is(out.last(), "const") {
-            add_attributes(&mut out, features, token.span());
+            add_attributes(&mut out, features);
         }
         let is_argument = is(rest.peek(), ">") || is(rest.peek(), ",");
         let ends_item = is_group(&token, Delimiter::Brace) && !is_argument || at(";");
@@ -262,9 +257,15 @@ fn take_exports(module: TokenStream) -> (TokenStream, TokenStream) {
     (body.into_iter().collect(), exports)
 }
 
-/// Compiles the module once per target, with the types of that target as `isa`. See the README.
+/// On its own, so that no other token of a macro may name an attribute of `rustc_attrs`.
 #[proc_macro_attribute]
 #[allow_internal_unstable(rustc_attrs)]
+pub fn force_inline(_: TokenStream, item: TokenStream) -> TokenStream {
+    TokenStream::from_iter([parse("#[rustc_force_inline]"), item])
+}
+
+/// Compiles the module once per target, with the types of that target as `isa`. See the README.
+#[proc_macro_attribute]
 pub fn foreach_target(_: TokenStream, item: TokenStream) -> TokenStream {
     map_module(item, &|module| {
         let (body, exports) = take_exports(module);

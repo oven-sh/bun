@@ -11,5 +11,5 @@ workspace = true
 
 [dependencies]
 strum.workspace = true
-bstr.workspace = true
+bun_collections.workspace = true
 bun_core.workspace = true

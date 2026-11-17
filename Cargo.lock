@@ -2170,7 +2170,7 @@ dependencies = [
 name = "bun_valkey"
 version = "0.0.0"
 dependencies = [
- "bstr",
+ "bun_collections",
  "bun_core",
  "strum",
 ]

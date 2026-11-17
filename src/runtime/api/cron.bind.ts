@@ -6,7 +6,7 @@ const chainable = { returns: b.self, passThis: true } as const;
 
 export const CronJob = b.class({
   rustPath: "crate::api::cron::CronJob",
-  internalFields: ["callback", "pendingPromise", "cron"],
+  internalFields: ["callback", "pendingTick", "cron"],
   proto: {
     cron: { internalField: "cron" },
     ref: chainable,
@@ -16,7 +16,10 @@ export const CronJob = b.class({
   },
 });
 
-const reaction = { args: { value: b.any, context: CronJob.withValue }, capability: "js" } as const;
+/** A tick whose promise is pending. `job` is emptied when the job stops. */
+export const CronTick = b.class({ rustPath: "crate::api::cron::CronTick", internalFields: ["job", "promise"] });
+
+const reaction = { args: { value: b.any, context: CronTick.withValue }, capability: "js" } as const;
 
 /** The reactions to the promise a job's callback returned. */
 export const onPromiseResolve = b.fn({ ...reaction, export: "Bun__CronJob__onPromiseResolve" });

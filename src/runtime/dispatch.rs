@@ -1490,8 +1490,10 @@ pub(crate) unsafe fn fire_timer(
         EventLoopTimerTag::CronJob => in_features!(
             [Cron],
             (c: *mut CronJob = owner!(CronJob, event_loop_timer)) -> JsResult<()> {
-                // SAFETY: an armed job roots its JS wrapper, which owns `c`.
-                unsafe { (*c).on_timer_fire(VirtualMachine::get()) };
+                // SAFETY: an armed job roots its JS wrapper, which owns `c`, and this call runs no script.
+                if let Some(root) = unsafe { (*c).timer_fired() } {
+                    CronJob::tick(&root, VirtualMachine::get());
+                }
                 Ok(())
             }
         ),

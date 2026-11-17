@@ -769,11 +769,11 @@ describe.concurrent.skipIf(!isLinux)("against a stub crontab (Linux)", () => {
     });
 
     test.each([
-      { env: { AFTER_LIST: "exit 2" }, message: "Process exited with code 2" },
-      { env: { AFTER_LIST: "kill -9 $$" }, message: "Process killed by signal 9" },
-      { env: { TMPDIR: "/dev/null" }, message: "Failed to create temp file" },
-      { env: { BEFORE_INSTALL: "exit 1" }, message: "Process exited with code 1" },
-    ])("rejects with $message", async ({ env, message }) => {
+      { step: "`crontab -l`", env: { AFTER_LIST: "exit 2" }, message: "Process exited with code 2" },
+      { step: "`crontab -l`", env: { AFTER_LIST: "kill -9 $$" }, message: "Process killed by signal 9" },
+      { step: "the temp file", env: { TMPDIR: "/dev/null" }, message: "Failed to create temp file" },
+      { step: "`crontab <file>`", env: { BEFORE_INSTALL: "exit 1" }, message: "Process exited with code 1" },
+    ])("rejects at $step with $message", async ({ env, message }) => {
       expect(await settle(env)).toEqual({
         stdout: message + "\n",
         stderr: "",

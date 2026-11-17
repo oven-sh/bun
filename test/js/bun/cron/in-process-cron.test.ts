@@ -496,7 +496,7 @@ describe.concurrent("Bun.cron (in-process) — firing", () => {
   }, 130_000);
 });
 
-describe.concurrent("Bun.cron (in-process): a job that stops while its tick is pending", () => {
+describe.concurrent("Bun.cron (in-process): what a stopped job lets go of", () => {
   async function run(cmd: string[], files: Record<string, string>, env: Record<string, string> = {}) {
     using dir = tempDir("cron-pending-tick", files);
     await using proc = Bun.spawn({
@@ -513,7 +513,7 @@ describe.concurrent("Bun.cron (in-process): a job that stops while its tick is p
   test.each([
     { inTick: "", afterTick: "job.stop();", when: "after the tick" },
     { inTick: "this.stop();", afterTick: "", when: "in the tick" },
-  ])("stop() $when lets go of it", async ({ inTick, afterTick }) => {
+  ])("stop() $when unroots a job whose tick is pending", async ({ inTick, afterTick }) => {
     const { stdout, exitCode } = await run(["main.js"], {
       "main.js": `
         const { jest } = Bun.jest();
@@ -531,7 +531,7 @@ describe.concurrent("Bun.cron (in-process): a job that stops while its tick is p
     expect({ stdout, exitCode }).toEqual({ stdout: "rooted\nreleased\n", exitCode: 0 });
   });
 
-  test("a --hot reload lets go of it", async () => {
+  test("a --hot reload unroots a job whose tick is pending", async () => {
     using dir = tempDir("cron-pending-tick-hot", {
       "main.js": `
         const { jest } = Bun.jest();
@@ -588,7 +588,7 @@ describe.concurrent("Bun.cron (in-process): a job that stops while its tick is p
     expect({ stdout, exitCode }).toEqual({ stdout: "true\n", exitCode: 0 });
   });
 
-  test("bun test does not wait for it", async () => {
+  test("bun test does not wait for the pending tick of a stopped job", async () => {
     const { stderr, exitCode } = await run(["test", "./never.test.js"], {
       "never.test.js": `
         import { jest, test } from "bun:test";
@@ -604,6 +604,57 @@ describe.concurrent("Bun.cron (in-process): a job that stops while its tick is p
     });
     expect(stderr).toContain("A test or hook with no timeout never settled");
     expect(exitCode).toBe(1);
+  });
+
+  test.each([
+    { inTick: "", afterTick: "graph.dispose();", when: "graph.dispose() after the tick" },
+    { inTick: "graph.dispose();", afterTick: "", when: "graph.dispose() in the tick" },
+    { inTick: "", afterTick: "job.stop();", when: "stop() after the tick" },
+    { inTick: "this.stop();", afterTick: "", when: "stop() in the tick" },
+  ])("a promise that the host holds does not keep the job after $when", async ({ inTick, afterTick }) => {
+    const { stdout, exitCode } = await run(["main.js"], {
+      "main.js": `
+        const { jest } = Bun.jest();
+        jest.useFakeTimers();
+        globalThis.held = new Promise(() => {});
+        let ticks = 0;
+        const jobs = Array.from({ length: 50 }, () => {
+          const graph = new Bun.ModuleGraph();
+          const job = graph.run(() =>
+            Bun.cron("* * * * *", function () {
+              ticks++;
+              ${inTick}
+              return held;
+            }),
+          );
+          jest.advanceTimersByTime(60_000);
+          ${afterTick}
+          return new WeakRef(job);
+        });
+        jest.useRealTimers();
+        setImmediate(() => {
+          Bun.gc(true);
+          console.log(ticks, jobs.filter(job => job.deref()).length < 10);
+        });
+      `,
+    });
+    expect({ stdout, exitCode }).toEqual({ stdout: "50 true\n", exitCode: 0 });
+  });
+
+  test("a tick that stops its job is rooted until it returns", async () => {
+    const { stdout, exitCode } = await run(["main.js"], {
+      "main.js": `
+        const { jest } = Bun.jest();
+        jest.useFakeTimers();
+        Bun.cron("* * * * *", function () {
+          this.stop();
+          console.log(${rooted});
+        });
+        jest.advanceTimersByTime(60_000);
+        console.log(${rooted});
+      `,
+    });
+    expect({ stdout, exitCode }).toEqual({ stdout: "rooted\nreleased\n", exitCode: 0 });
   });
 
   test("unhandledRejection gets the promise after its graph was disposed and the heap collected", async () => {
@@ -630,7 +681,7 @@ describe.concurrent("Bun.cron (in-process): a job that stops while its tick is p
   test.skipIf(!isASAN).each([
     { inTick: "", afterTick: "graph.dispose();", when: "after the tick" },
     { inTick: "graph.dispose();", afterTick: "", when: "in the tick" },
-  ])("is freed with the VM when its graph was disposed $when", async ({ inTick, afterTick }) => {
+  ])("a pending tick leaks nothing at VM end when its graph was disposed $when", async ({ inTick, afterTick }) => {
     const result = await run(
       ["main.js"],
       {

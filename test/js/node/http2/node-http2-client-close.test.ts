@@ -725,6 +725,158 @@ describe("closing a request before its invalid headers are rejected keeps rstCod
   }
 });
 
+describe("a stream that its transport writes to from inside end(chunk)", () => {
+  type Options = {
+    size: number;
+    corked?: boolean;
+    times?: number;
+    // The transport corks the stream, passes no callback, and uncorks after the last chunk has called back.
+    corks?: boolean;
+    peerEnded?: boolean;
+    waitForTrailers?: boolean;
+  };
+
+  // In Node the transport runs after end() has returned, and finds the stream ended.
+  async function send(side: "client" | "server", options: Options) {
+    const { size, corked = true, times = 1, corks, peerEnded, waitForTrailers } = options;
+    const failed = Promise.withResolvers<never>();
+    const written: Promise<unknown>[] = [];
+    const sent: Buffer[] = [];
+    let stream: http2.Http2Stream;
+    function wrap(socket: net.Socket) {
+      const transport = new Duplex({
+        read() {},
+        write(chunk, encoding, callback) {
+          socket.write(chunk);
+          sent.push(chunk);
+          while (chunk.length > 1000 && stream.writable && written.length < times) {
+            if (corks) {
+              stream.cork();
+              stream.write("late");
+              written.push(new Promise<void>(resolve => stream.on("finish", resolve)));
+              setImmediate(() => setImmediate(() => stream.uncork()));
+            } else {
+              written.push(new Promise(resolve => stream.write("late", resolve)));
+            }
+          }
+          callback();
+        },
+      });
+      socket.setNoDelay(true);
+      socket.on("data", chunk => transport.push(chunk)).on("close", () => transport.destroy());
+      return transport;
+    }
+    const origin = http2.createServer().on("sessionError", failed.reject);
+    const server = net.createServer(socket =>
+      origin.emit("connection", side === "server" ? wrap(socket.on("error", () => {})) : socket),
+    );
+    const socket = net.connect(await listen(server), "127.0.0.1").on("error", failed.reject);
+    const client = http2.connect("http://origin", {
+      createConnection: () => (side === "client" ? wrap(socket) : socket),
+    });
+    client.on("error", failed.reject).on("close", () => failed.reject(new Error("closed")));
+    async function start() {
+      const request = client.request({ ":method": "POST" }, { waitForTrailers: waitForTrailers && side === "client" });
+      const [response] = await once(origin, "stream");
+      response.respond({}, { waitForTrailers: waitForTrailers && side === "server" });
+      await once(request, "response");
+      const peer: http2.Http2Stream = side === "client" ? response : request;
+      stream = side === "client" ? request : response;
+      stream.resume().on("wantTrailers", () => setImmediate(() => stream.sendTrailers({ a: "b" })));
+      let received = 0;
+      peer.on("data", chunk => (received += chunk.length));
+      if (peerEnded) await Promise.all([once(peer.end(), "finish"), once(stream, "end")]);
+      // The PING is answered after any frame that was sent from the callback of the last one.
+      else peer.on("end", () => peer.session!.ping(() => peer.end()));
+      const closed = Promise.all([once(stream, "close"), once(peer, "close")]);
+      if (corked) {
+        stream.cork();
+        stream.write("a");
+      }
+      const ended = new Promise(resolve => stream.end(Buffer.alloc(size - Number(corked)), resolve));
+      await closed;
+      if (typeof Bun !== "undefined") {
+        assert.strictEqual(written.length, times);
+        for (const error of await Promise.all([...written, ended])) assert.ifError(error);
+      }
+      await new Promise(resolve => client.ping(resolve));
+      const wire = Buffer.concat(sent);
+      let data = 0;
+      for (let at = side === "client" ? 24 : 0; at < wire.length; at += 9 + wire.readUIntBE(at, 3)) {
+        if (wire[at + 3] === 0) data += wire.readUIntBE(at, 3);
+      }
+      assert.strictEqual(data, received);
+      return { received, rstCodes: [stream.rstCode, peer.rstCode] };
+    }
+    try {
+      return await Promise.race([start(), failed.promise]);
+    } finally {
+      client.destroy();
+      socket.destroy();
+      server.close();
+    }
+  }
+
+  for (const side of ["client", "server"] as const) {
+    // With 70000 bytes, the last frame waits for a WINDOW_UPDATE.
+    for (const options of [
+      { size: 20000 },
+      { size: 20000, peerEnded: true },
+      { size: 20000, peerEnded: true, corks: true },
+      { size: 20000, peerEnded: true, corks: true, times: 2 },
+      { size: 70000 },
+      { size: 70000, times: 2 },
+      { size: 70000, peerEnded: true },
+      { size: 70000, corked: false },
+      { size: 70000, corked: false, times: 2 },
+    ]) {
+      test(`${side} sends nothing more, and closes: ${JSON.stringify(options)}`, async () => {
+        assert.deepStrictEqual(await send(side, options), { received: options.size, rstCodes: [0, 0] });
+      });
+    }
+  }
+
+  for (const corked of [false, true]) {
+    test(`client sends nothing between the last chunk and the trailers, corked: ${corked}`, async () => {
+      assert.deepStrictEqual(await send("client", { size: 70000, corked, waitForTrailers: true }), {
+        received: 70000,
+        rstCodes: [0, 0],
+      });
+    });
+  }
+
+  test("server, which asks for the trailers later, sends what it took", async () => {
+    assert.deepStrictEqual(await send("server", { size: 70000, waitForTrailers: true }), {
+      received: 70000 + (typeof Bun !== "undefined" ? 4 : 0),
+      rstCodes: [0, 0],
+    });
+  });
+});
+
+for (const body of ["a chunk", "a batch"]) {
+  test(`session.destroy() does not cancel a request that wrote an empty chunk behind ${body} before it connected`, async () => {
+    const server = http2.createServer();
+    server.on("stream", stream => stream.resume().respond({}, { endStream: true }));
+    const client = http2.connect(`http://127.0.0.1:${await listen(server)}`);
+    try {
+      const request = client.request({ ":method": "POST" }).resume();
+      if (body === "a batch") request.write("a");
+      const written = new Promise(resolve => request.write(Buffer.alloc(70000), resolve));
+      // request() corks the stream for its turn.
+      request.uncork();
+      assert.strictEqual(request.pending, true);
+      const closed = once(request.end(""), "close");
+      assert.ifError(await written);
+      client.destroy();
+      await closed;
+      assert.strictEqual(request.rstCode, NGHTTP2_NO_ERROR);
+    } finally {
+      client.destroy();
+      server.close();
+    }
+  });
+}
+
 if (typeof Bun !== "undefined") {
   const node = Bun.which("node");
   // Alpine's node segfaults at a random point of this file (alpine 3.23 aarch64, on main too), and

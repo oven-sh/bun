@@ -1,5 +1,5 @@
 // What the compiler reads in place of src/js/internal/streams/writable.ts, which `bun run` evaluates. The two do the same.
-// Written against that file with the SHA-256 6c3926e32d7d788aae381cacf6c7fcc12f04c209c1fc3707dd29684f711d085e.
+// Written against that file with the SHA-256 6f78c76f838a1ba0421f4092fd4efb8a9014d972721edc7db6841ba004eb476d.
 // When that file changes, bring the change here and write the new hash: test/internal/second-texts-of-modules.test.ts.
 
 // A bit simpler than readable streams.
@@ -605,8 +605,9 @@ function writeBuffered(stream: $Node.Writable, state: WritableState): boolean {
 
     doWrite(stream, state, true, state.length, chunks, "", callback);
 
-    if (buffered.length > batchEnd) {
-      // Node resets the buffer over a write() made by _writev. An http2 session can make one on its transport.
+    if (buffered.length > batchEnd && state.length > state.writelen) {
+      // Node resets the buffer over a write() made by _writev, and loses what is not empty. An http2 session
+      // can make one on its transport.
       // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/streams/writable.js#L775-L777
       state[kBufferedValue] = ArrayPrototypeSlice.$call(buffered, batchEnd);
       state.bufferedIndex = 0;

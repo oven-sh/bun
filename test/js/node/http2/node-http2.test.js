@@ -6449,50 +6449,6 @@ it("packs END_STREAM onto the DATA frame produced by end(chunk)", async () => {
   }
 });
 
-it.each([
-  ["_write", 10, 1],
-  ["_write", 70000, 2],
-  ["_writev", 10, 2],
-  ["_writev", 70000, 1],
-])(
-  "write() from inside end(chunk) fails, but not the session (%s, %d bytes, %d times)",
-  async (method, size, times) => {
-    const server = http2.createServer();
-    server.on("stream", stream => {
-      stream.on("error", () => {}).resume();
-      if (stream.endAfterHeaders) stream.respond({}, { endStream: true });
-    });
-    await once(server.listen(0, "127.0.0.1"), "listening");
-    const client = http2.connect(`http://127.0.0.1:${server.address().port}`);
-    const channel = dc.channel("http2.client.stream.bodyChunkSent");
-    const written = Promise.withResolvers();
-    let req;
-    const subscriber = () => {
-      channel.unsubscribe(subscriber);
-      for (let i = 0; i < times; i++) req.write("late", written.resolve);
-    };
-    try {
-      await once(client, "localSettings");
-      client.on("error", written.reject);
-      req = client.request({ ":method": "POST" });
-      const failed = once(req, "error");
-      // request() corks the stream for its turn.
-      if (method === "_write") await new Promise(setImmediate);
-      else req.write("a");
-      channel.subscribe(subscriber);
-      req.end(Buffer.alloc(size));
-      expect((await written.promise)?.code).toBe("ERR_STREAM_WRITE_AFTER_END");
-      expect((await failed)[0].code).toBe("ERR_STREAM_WRITE_AFTER_END");
-      const [headers] = await once(client.request().resume(), "response");
-      expect(headers[":status"]).toBe(200);
-    } finally {
-      channel.unsubscribe(subscriber);
-      client.destroy();
-      server.close();
-    }
-  },
-);
-
 it("end(chunk) on a HALF_CLOSED_REMOTE stream still emits 'finish'", async () => {
   // _write carries END_STREAM on the final chunk; when the peer's END_STREAM has already
   // arrived that transitions the native stream to CLOSED and re-enters streamEnd(7) before

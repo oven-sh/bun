@@ -732,8 +732,9 @@ function writeBuffered(stream, state) {
 
     doWrite(stream, state, true, state.length, chunks, "", callback);
 
-    if (buffered.length > batchEnd) {
-      // Node resets the buffer over a write() made by _writev. An http2 session can make one on its transport.
+    if (buffered.length > batchEnd && state.length > state.writelen) {
+      // Node resets the buffer over a write() made by _writev, and loses what is not empty. An http2 session
+      // can make one on its transport.
       // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/streams/writable.js#L775-L777
       state[kBufferedValue] = ArrayPrototypeSlice.$call(buffered, batchEnd);
       state.bufferedIndex = 0;

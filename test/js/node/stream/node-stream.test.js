@@ -424,6 +424,25 @@ describe("Writable", () => {
       expect(log).toEqual(["writev a,b", "c done", "d done"]);
     });
 
+    it("is not followed by an empty write() that it made, as in Node", async () => {
+      const { stream, log, settle } = create(stream => stream.write(""));
+      writeCorked(stream, () => {});
+      settle();
+      stream.end();
+      await finishedP(stream);
+      expect(log).toEqual(["writev a,b", "final"]);
+    });
+
+    it("is followed by an empty write() that it made next to another", () => {
+      const { stream, log, settle } = create(stream => {
+        stream.write("");
+        stream.write("c");
+      });
+      writeCorked(stream);
+      settle();
+      expect({ log, length: stream.writableLength }).toEqual({ log: ["writev a,b", "writev ,c"], length: 0 });
+    });
+
     it("finds its chunks in writableBuffer, as in Node", () => {
       const { stream, log } = create(stream => log.push(stream.writableBuffer.map(({ chunk }) => chunk)));
       writeCorked(stream);

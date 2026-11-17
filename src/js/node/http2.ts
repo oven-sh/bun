@@ -2078,6 +2078,9 @@ enum StreamState {
   EndedBeforeHeaders = 1 << 11, // 100000000000 = 2048
   // The native side closed the stream (the peer's RST_STREAM, a protocol error), not destroy().
   ClosedByNative = 1 << 12, // 1000000000000 = 4096
+  // EndStreamSent from inside end(chunk). The writable is not ending yet, so it takes a write() from inside
+  // that call, which is too late for a frame.
+  EndedWithChunk = 1 << 13, // 10000000000000 = 8192
 }
 // native.writeStream() return-value flag (mirrors WRITE_FLUSHED_WITHOUT_CALLBACK in
 // h2_frame_parser.rs): the chunk was handed to the socket without queueing and the engine did
@@ -2901,9 +2904,8 @@ class Http2Stream extends (Duplex as Http2StreamBase) {
       this.once("ready", this._writev.bind(this, data, callback));
       return;
     }
-    if ((this[bunHTTP2StreamStatus] & StreamState.EndStreamSent) !== 0) {
-      // Written from inside end(chunk), which sends its chunk before the writable counts as ending.
-      callback($ERR_STREAM_WRITE_AFTER_END());
+    if ((this[bunHTTP2StreamStatus] & StreamState.EndedWithChunk) !== 0) {
+      process.nextTick(callback);
       return;
     }
     const writevPerf = this[kPerfState];
@@ -2955,6 +2957,7 @@ class Http2Stream extends (Duplex as Http2StreamBase) {
         if (status & kWriteFlushedWithoutCallback) session[kDeferWriteCallback](callback);
         if (endStream) {
           this[bunHTTP2StreamStatus] |= StreamState.EndStreamSent;
+          if (this[kEndingWithChunk] === true) this[bunHTTP2StreamStatus] |= StreamState.EndedWithChunk;
           // HALF_CLOSED_LOCAL settled synchronously; the dispatch was suppressed.
           if ((status & ~kWriteFlushedWithoutCallback) === 5) markWritableDone(this);
         }
@@ -2974,9 +2977,8 @@ class Http2Stream extends (Duplex as Http2StreamBase) {
       this.once("ready", this._write.bind(this, chunk, encoding, callback));
       return;
     }
-    if ((this[bunHTTP2StreamStatus] & StreamState.EndStreamSent) !== 0) {
-      // Written from inside end(chunk), which sends its chunk before the writable counts as ending.
-      callback($ERR_STREAM_WRITE_AFTER_END());
+    if ((this[bunHTTP2StreamStatus] & StreamState.EndedWithChunk) !== 0) {
+      process.nextTick(callback);
       return;
     }
     const writePerf = this[kPerfState];
@@ -3007,6 +3009,7 @@ class Http2Stream extends (Duplex as Http2StreamBase) {
         if (status & kWriteFlushedWithoutCallback) session[kDeferWriteCallback](callback);
         if (endStream) {
           this[bunHTTP2StreamStatus] |= StreamState.EndStreamSent;
+          if (this[kEndingWithChunk] === true) this[bunHTTP2StreamStatus] |= StreamState.EndedWithChunk;
           // HALF_CLOSED_LOCAL settled synchronously; the dispatch was suppressed.
           if ((status & ~kWriteFlushedWithoutCallback) === 5) markWritableDone(this);
         }

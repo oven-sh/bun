@@ -1,5 +1,5 @@
 // writev() writes to its own stream. What it writes goes out after the chunks that it was given, whether it calls back at once or later, and starts at any place in the list of waiting writes.
-// If writev() fails, what it wrote fails with it. If the stream had failed before, the callbacks of the chunks are its callbacks too.
+// An empty chunk alone does not. If writev() fails, what it wrote fails with it. If the stream had failed before, the callbacks of the chunks are its callbacks too.
 import { once } from "node:events";
 import { Writable } from "node:stream";
 for (const later of [false, true]) {
@@ -13,9 +13,14 @@ for (const later of [false, true]) {
         stream.write("b");
         setImmediate(done);
       },
+      final(done) {
+        done();
+      },
       writev(chunks, done) {
         if (++rounds === 1) stream.write("c", () => console.log("callback c"));
         if (rounds <= 2) stream.write("d", () => stream.end());
+        if (rounds === 2) stream.write("e");
+        if (rounds === 3) stream.write("");
         console.log("writev " + chunks.map(it => it.chunk).join() + " waiting " + stream.writableLength);
         if (later) setImmediate(done);
         else done();

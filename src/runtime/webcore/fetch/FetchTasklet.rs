@@ -152,6 +152,8 @@ pub struct FetchTasklet {
 
     /// buffer used to stream response to JS
     pub(crate) scheduled_response_buffer: MutableString,
+    /// `scheduled_response_buffer` could not grow. HTTP thread only.
+    is_out_of_memory: bool,
     /// response weak ref we need this to track the response JS lifetime
     pub(crate) response: jsc::Weak<FetchTasklet>,
     /// native response ref if we still need it when JS is discarted
@@ -817,11 +819,14 @@ impl FetchTasklet {
         }
 
         let result = self.deliver_progress(vm);
+        let left_transport = self.result.left_transport;
         drop(lock);
+        // The HTTP layer will not drain the request body again.
         if is_done {
-            // The HTTP layer will not drain the request body again.
             self.cancel_request_body_sink(JSValue::UNDEFINED);
             self.poll_ref.unref(bun_io::js_vm_ctx());
+        } else if left_transport {
+            self.close_request_body_sink();
         }
         result
     }
@@ -1519,7 +1524,7 @@ impl FetchTasklet {
         // After the take, not before: a chunk the HTTP thread appends (and pauses for) in
         // between would otherwise reach the stream with its task finding the buffer empty, and
         // nothing left to undo that pause. Unconditional: also flushes body bytes the client
-        // holds that arrived with no follow-up read (`drain_response_body`).
+        // holds that arrived with no follow-up read (`pump_held_body`).
         this.signal_store.receive_on_demand();
         this.schedule_receive_resume();
 
@@ -1771,6 +1776,7 @@ impl FetchTasklet {
             request_body: fetch_options.body,
             request_body_streaming_buffer: None,
             scheduled_response_buffer: MutableString::default(),
+            is_out_of_memory: false,
             response: jsc::Weak::default(),
             native_response: JsCell::new(None),
             response_stream: Default::default(),
@@ -2171,34 +2177,36 @@ impl FetchTasklet {
     }
 
     /// Cancel an in-flight request-body sink: stores the abort reason, aborts
-    /// the HTTP task, marks the sink ended/done, and fires the controller's
-    /// onClose (which cancels the upstream ReadableStream reader).
+    /// the HTTP task, and closes the sink.
     pub(crate) fn cancel_request_body_sink(&mut self, reason: JSValue) {
-        let Some(sink) = self.sink_mut() else {
-            return;
-        };
-        if sink.ended {
+        if self.sink_mut().is_none_or(|sink| sink.ended) {
             return;
         }
+        if !reason.is_empty_or_undefined_or_null() && !self.abort_reason.has() {
+            let global_this = self.global_this;
+            self.abort_reason.set(&global_this, reason);
+        }
+        self.abort_task();
+        self.close_request_body_sink();
+    }
+
+    /// Fires the controller's onClose, which cancels the upstream ReadableStream reader.
+    fn close_request_body_sink(&mut self) {
+        let Some(sink) = self.sink_mut().filter(|sink| !sink.ended) else {
+            return;
+        };
         sink.ended = true;
         sink.done = true;
         let is_native = matches!(
             sink.source,
             SourceHandle::ByteStream(_) | SourceHandle::FileReader(_)
         );
-        if !reason.is_empty_or_undefined_or_null() && !self.abort_reason.has() {
-            let global_this = self.global_this;
-            self.abort_reason.set(&global_this, reason);
-        }
-        self.abort_task();
-        if let Some(sink) = self.sink_mut() {
-            sink.pending.result = Writable::Done;
-            sink.pending.run();
-            sink.source.close(None);
-            if is_native {
-                // No pump promise will settle. This may be the last ref.
-                drop(sink.task.take());
-            }
+        sink.pending.result = Writable::Done;
+        sink.pending.run();
+        sink.source.close(None);
+        if is_native {
+            // No pump promise will settle. This may be the last ref.
+            drop(sink.task.take());
         }
     }
 
@@ -2325,7 +2333,7 @@ impl FetchTasklet {
             if success && task_ref.result.has_more {
                 return;
             }
-        } else if success {
+        } else if success && !task_ref.is_out_of_memory {
             let scheduled = &mut task_ref.scheduled_response_buffer;
             if body.is_empty() && !body_owned.is_empty() && scheduled.list.is_empty() {
                 scheduled.list = body_owned;
@@ -2348,8 +2356,12 @@ impl FetchTasklet {
                 } else {
                     body
                 };
-                if !chunk.is_empty() {
-                    bun_core::handle_oom(scheduled.write(chunk));
+                if scheduled.list.try_reserve(chunk.len()).is_ok() {
+                    scheduled.list.extend_from_slice(chunk);
+                } else {
+                    *scheduled = MutableString::default();
+                    task_ref.is_out_of_memory = true;
+                    task_ref.abort_transport();
                 }
             }
             if task_ref.result.has_more
@@ -2357,6 +2369,13 @@ impl FetchTasklet {
             {
                 task_ref.signal_store.pause_receive();
             }
+        }
+
+        if task_ref.is_out_of_memory {
+            if task_ref.result.has_more {
+                return;
+            }
+            task_ref.result.fail = Some(bun_alloc::AllocError.into());
         }
 
         if let Err(has_schedule_callback) = task_ref.has_schedule_callback.compare_exchange(

@@ -535,6 +535,33 @@ describe.skipIf(!isASAN)("a failed allocation is an error, not a crash", () => {
     });
   });
 
+  it.concurrent("response bodies without a length", async () => {
+    const results = await runCapped(
+      { zstd: zstdCompressSync(Buffer.alloc(11 * MiB)) },
+      /* js */ `
+        import { once } from "node:events";
+        import { createServer } from "node:net";
+        const plain = Buffer.alloc(11 * 1024 * 1024);
+        const server = createServer(socket =>
+          socket.on("error", () => {}).once("data", request => {
+            const isPlain = request.includes("/plain");
+            socket.write("HTTP/1.1 200 OK\\r\\n" + (isPlain ? "" : "Content-Encoding: zstd\\r\\n") + "\\r\\n");
+            if (isPlain) socket.write(plain);
+            else socket.end(inputs.zstd);
+          }),
+        );
+        await once(server.listen(0, "127.0.0.1"), "listening");
+        const endpoint = "http://127.0.0.1:" + server.address().port;
+        const s3 = new Bun.S3Client({ accessKeyId: "t", secretAccessKey: "t", endpoint, bucket: "b" });
+        results.plain = await (await fetch(endpoint + "/plain")).bytes().then(bytes => bytes.length, e => e.code);
+        results.zstd = await (await fetch(endpoint + "/zstd")).bytes().then(bytes => bytes.length, e => e.code);
+        results.s3 = await s3.file("zstd").bytes().then(bytes => bytes.length, e => e.code);
+        server.close();
+      `,
+    );
+    expect(results).toEqual({ plain: "OutOfMemory", zstd: "OutOfMemory", s3: "OutOfMemory" });
+  });
+
   it.concurrent("DecompressionStream", async () => {
     // A stream's own output is produced in small chunks, so only the codecs' window allocations can
     // fail here; the default-window brotli stream decompresses all 12 MiB to prove that.

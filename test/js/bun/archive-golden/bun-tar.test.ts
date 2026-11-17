@@ -7,6 +7,7 @@ import { join } from "node:path";
 import {
   contents,
   differences,
+  gzipFields,
   gzipStored,
   loadCases,
   namesToCompose,
@@ -155,6 +156,40 @@ describe("the tar reader", () => {
     expect([archive, gzipStored(archive)].flatMap(bytes => [readTar(bytes), readTar(bytes, { stream: true })])).toEqual(
       Array(4).fill(renamed),
     );
+  });
+
+  // libarchive passed over it.
+  describe.each([{}, { npm: true }])("checks the CRC-16 of a gzip header %j", dialect => {
+    const flags = 2 | 4 | 8 | 16;
+    const member = (data: Buffer) => gzipStored(data, { flags, fields: gzipFields(flags) });
+    const [first, second] = [member(file("a")), member(Buffer.concat([file("b"), end]))];
+    const read = (archive: Buffer) =>
+      [{}, ...[0, 1, 7].map(pieceSize => ({ stream: true, pieceSize }))].map(mode =>
+        readTar(archive, { ...dialect, ...mode })
+          .trimEnd()
+          .split("\n")
+          .at(-1),
+      );
+
+    test("of each member", () => {
+      expect(read(Buffer.concat([first, second]))).toEqual(Array(4).fill("end"));
+    });
+
+    test.each([
+      ["the time", 4],
+      ["the system", 9],
+      ["the extra field", 14],
+      ["the name", 15],
+      ["the comment", 26],
+      ["its low byte", 28],
+      ["its high byte", 29],
+    ])("against a change in %s", (_, at) => {
+      const changed = (bytes: Buffer) => Buffer.from(bytes).fill(bytes[at] ^ 1, at, at + 1);
+      const mismatch = (whole: string) =>
+        [whole, "error", "error", "error"].map(how => `${how}: gzip header mismatch: bad CRC16`);
+      expect(read(Buffer.concat([changed(first), second]))).toEqual(mismatch("refused"));
+      expect(read(Buffer.concat([first, changed(second)]))).toEqual(mismatch("refused"));
+    });
   });
 
   test("refuses what is not an archive, unless it is told that it is one", () => {

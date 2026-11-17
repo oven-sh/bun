@@ -3688,8 +3688,9 @@ pub(crate) fn write_file_with_source_destination(
             }
         };
         match &source_store.data {
-            store::Data::Bytes(bytes) => {
-                if bytes.len() as usize > S3::MultiPartUploadOptions::MAX_SINGLE_UPLOAD_SIZE {
+            store::Data::Bytes(_) => {
+                let bytes = source_blob.shared_view();
+                if bytes.len() > S3::MultiPartUploadOptions::MAX_SINGLE_UPLOAD_SIZE {
                     if let Some(stream) = ReadableStream::from_js(
                         ReadableStream::from_blob_copy_ref(
                             cx,
@@ -3730,12 +3731,13 @@ pub(crate) fn write_file_with_source_destination(
                     let mut promise = jsc::JSPromiseStrong::init(cx.global());
                     let promise_value = promise.value();
                     let store = source_store.clone();
+                    let written = bytes.len();
                     let global = jsc::GlobalRef::from(cx.global());
                     s3_client::upload(
                         &aws_options.credentials,
                         cx.context(),
                         s3.path(),
-                        bytes.slice(),
+                        bytes,
                         destination_blob.content_type_or_mime_type(),
                         aws_options.content_disposition.as_deref(),
                         aws_options.content_encoding.as_deref(),
@@ -3743,10 +3745,9 @@ pub(crate) fn write_file_with_source_destination(
                         aws_options.storage_class,
                         aws_options.request_payer,
                         Box::new(move |result| match result {
-                            S3UploadResult::Success => promise.resolve(
-                                &global,
-                                JSValue::js_number(store.data.as_bytes().len() as f64),
-                            ),
+                            S3UploadResult::Success => {
+                                promise.resolve(&global, JSValue::js_number(written as f64))
+                            }
                             S3UploadResult::Failure(err) => {
                                 let err_js = s3_client::error_jsc::s3_error_to_js_with_async_stack(
                                     &err,
@@ -4187,7 +4188,7 @@ pub(crate) fn write_file_internal(
 
         // Check for Archive - allows Bun.write() and S3 writes to accept Archive instances
         if let Some(archive) = data.as_class_ref::<Archive>() {
-            break 'brk Blob::init_with_store(archive.store_ref().clone(), cx.global());
+            break 'brk archive.data().dupe();
         }
 
         if let Some(readable) = ReadableStream::from_js_direct(data) {

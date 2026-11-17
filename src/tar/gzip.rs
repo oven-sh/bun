@@ -85,7 +85,7 @@ pub enum Progress {
     Done,
 }
 
-/// Decompresses a sequence of gzip members, checking the CRC-32 and the size of each.
+/// Decompresses a sequence of gzip members, checking the CRCs and the size of each.
 pub struct Decoder {
     state: State,
     inflate: InflateDecoder,
@@ -94,6 +94,8 @@ pub struct Decoder {
     small_len: usize,
     /// How much of the current header is behind us.
     header_len: usize,
+    /// Of the current header, up to its CRC-16.
+    header_crc: u32,
     /// The current header started in an earlier piece of input.
     header_spilled: bool,
     npm: bool,
@@ -113,6 +115,7 @@ impl Decoder {
             small: [0; FIXED_HEADER_SIZE],
             small_len: 0,
             header_len: 0,
+            header_crc: 0,
             header_spilled: false,
             npm: dialect == Dialect::Npm,
             left_data: false,
@@ -178,8 +181,16 @@ impl Decoder {
             let rest = input.get(pos..).unwrap_or_default();
             let mut used = 0usize;
             let in_header = !matches!(self.state, State::Body | State::Trailer);
+            let before_header_crc = matches!(
+                self.state,
+                State::Fixed | State::ExtraLength | State::Extra(_) | State::Name | State::Comment
+            );
             let step = self.step(rest, eof, out, limit, &mut used);
             pos = pos.saturating_add(used);
+            if before_header_crc {
+                let header = rest.get(..used).unwrap_or_default();
+                self.header_crc = crc32_bytes(self.header_crc, header);
+            }
             if in_header {
                 self.header_len = self.header_len.saturating_add(used);
                 if matches!(step, Ok(Some(Progress::NeedInput))) {
@@ -297,6 +308,9 @@ impl Decoder {
                 if !self.gather(SHORT_SIZE, input, used) {
                     return Ok(starved(self));
                 }
+                if self.small[..SHORT_SIZE] != self.header_crc.to_le_bytes()[..SHORT_SIZE] {
+                    return Err(Error::GzipHeaderMismatch);
+                }
                 self.next_header_field(Field::Body);
                 Ok(None)
             }
@@ -346,6 +360,7 @@ impl Decoder {
                 }
                 self.state = State::Fixed;
                 self.header_len = 0;
+                self.header_crc = 0;
                 self.header_spilled = false;
                 // What follows a member is not looked at for a block that is already full.
                 Ok((out.len() >= limit).then_some(Progress::OutputFull))

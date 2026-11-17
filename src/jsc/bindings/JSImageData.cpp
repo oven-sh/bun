@@ -17,7 +17,7 @@ void JSImageData::setData(JSValue data)
     putDirect(vm, WebCore::builtinNames(vm).dataPublicName(), data, static_cast<unsigned>(PropertyAttribute::ReadOnly));
 }
 
-void JSImageData::allocateData(JSGlobalObject* globalObject, bool isFloat16, size_t length)
+void JSImageData::allocateData(JSGlobalObject* globalObject, bool isFloat16, uint64_t length)
 {
     auto scope = DECLARE_THROW_SCOPE(vm());
     JSArrayBufferView* data;

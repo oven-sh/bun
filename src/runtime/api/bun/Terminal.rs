@@ -889,13 +889,7 @@ fn create_pty_posix(cols: u16, rows: u16) -> Result<PtyResult, CreatePtyError> {
             t.c_cc[libc::VTIME] = 0; // Timeout for non-canonical read
 
             // Set baud rate to 38400 (standard for PTYs)
-            // libc termios on Linux encodes speed in c_cflag; use
-            // cfsetispeed/cfsetospeed (the portable way to set both).
-            // SAFETY: `t` is a fully-initialized termios from tcgetattr.
-            unsafe {
-                libc::cfsetispeed(&raw mut t, libc::B38400);
-                libc::cfsetospeed(&raw mut t, libc::B38400);
-            }
+            sys::posix::cfsetspeed(&mut t, libc::B38400);
 
             let _ = sys::posix::tcsetattr(slave_fd, sys::posix::TCSA::Now, &t);
         }
@@ -1282,16 +1276,7 @@ impl Terminal {
                 ypixel: 0,
             };
 
-            // SAFETY: master_fd is open (closed flag checked above), TIOCSWINSZ
-            // takes a *const winsize.
-            let ioctl_result = unsafe {
-                libc::ioctl(
-                    self.master_fd().native(),
-                    libc::TIOCSWINSZ as _,
-                    &raw const winsize,
-                )
-            };
-            if ioctl_result != 0 {
+            if sys::posix::set_winsize(self.master_fd(), winsize).is_err() {
                 return Err(heap.error(format_args!("Failed to resize terminal")));
             }
         }

@@ -298,16 +298,7 @@ fn fill_behind_end<'a>(
     let first_page = position - position % MappedFile::page_size() as u64;
     let skipped = (position - first_page) as usize;
     // With its blocks reserved, a page that is touched cannot find the disk full.
-    // SAFETY: fallocate has no precondition but a valid file descriptor.
-    let reserved = unsafe {
-        libc::fallocate(
-            file.handle().native(),
-            0,
-            position as i64,
-            bytes.len() as i64,
-        )
-    };
-    if reserved != 0 {
+    if !bun_sys::linux::fallocate(file.handle().native(), position as i64, bytes.len() as i64) {
         return Err(bytes);
     }
     let (access, flags) = (libc::PROT_READ | libc::PROT_WRITE, libc::MAP_SHARED);

@@ -1314,6 +1314,8 @@ impl Tag {
     pub(crate) const getsockname: Tag = Tag(115);
     #[cfg(not(windows))]
     pub(crate) const getifaddrs: Tag = Tag(116);
+    #[cfg(not(windows))]
+    pub(crate) const socket: Tag = Tag(117);
     // `inotify_init1`/`inotify_add_watch` fold under the generic `.watch`
     // tag; `INotifyWatcher.rs` spells it `.inotify`. Alias to `.watch`
     // so the JS-facing `err.syscall == "watch"` string stays node-compatible.
@@ -1321,7 +1323,7 @@ impl Tag {
     /// The tag name — spelling is frozen (JS-facing
     /// `err.syscall` string; node-compat code matches on it).
     pub fn name(self) -> &'static str {
-        const NAMES: [&str; 117] = [
+        const NAMES: [&str; 118] = [
             "TODO",
             "dup",
             "access",
@@ -1440,6 +1442,7 @@ impl Tag {
             "_open_osfhandle",
             "getsockname",
             "getifaddrs",
+            "socket",
         ];
         NAMES.get(self.0 as usize).copied().unwrap_or("unknown")
     }
@@ -1478,6 +1481,8 @@ mod safe_libc {
         pub(crate) safe fn dup2(old: c_int, new: c_int) -> c_int;
         pub(crate) safe fn isatty(fd: c_int) -> c_int;
         pub(crate) safe fn fsync(fd: c_int) -> c_int;
+        // `libc` does not have it for Darwin.
+        pub(crate) safe fn fdatasync(fd: c_int) -> c_int;
         pub(crate) safe fn fchdir(fd: c_int) -> c_int;
         pub(crate) safe fn umask(mode: libc::mode_t) -> libc::mode_t;
         pub safe fn fchmod(fd: c_int, mode: libc::mode_t) -> c_int;
@@ -1515,6 +1520,8 @@ mod safe_libc {
         // `c_int` writes); kernel only writes the slot and reports failure via
         // the return value — no other preconditions.
         pub(crate) safe fn pipe(fds: &mut [c_int; 2]) -> c_int;
+        pub(crate) safe fn socket(domain: c_int, ty: c_int, proto: c_int) -> c_int;
+        pub(crate) safe fn listen(fd: c_int, backlog: c_int) -> c_int;
         pub(crate) safe fn socketpair(
             domain: c_int,
             ty: c_int,
@@ -2618,6 +2625,28 @@ mod posix_impl {
         check!(safe_libc::ftruncate(fd.native(), len), Tag::ftruncate);
         Ok(())
     }
+    pub fn truncate(path: &ZStr, len: i64) -> Maybe<()> {
+        check_p!(
+            // SAFETY: `path` is NUL-terminated.
+            unsafe { libc::truncate(path.as_ptr(), len) },
+            Tag::truncate,
+            path
+        );
+        Ok(())
+    }
+    /// `template` ends with `XXXXXX` and a NUL. Returns the name of the new directory.
+    pub fn mkdtemp(template: &mut [u8]) -> Maybe<&[u8]> {
+        let len = ZStr::from_slice_with_nul(template).len();
+        // SAFETY: it ends with a NUL, and libc only replaces bytes in front of the first one.
+        while unsafe { libc::mkdtemp(template.as_mut_ptr().cast()) }.is_null() {
+            match last_errno() {
+                // libc leaves the name that it tried.
+                libc::EINTR => template[len - 6..len].fill(b'X'),
+                e => return Err(Error::from_code_int(e, Tag::mkdtemp).with_path(&template[..len])),
+            }
+        }
+        Ok(&template[..len])
+    }
     /// `Ok(false)` when `nonblocking` and the lock is held elsewhere.
     pub fn flock(fd: Fd, mode: FileLockMode, nonblocking: bool) -> Maybe<bool> {
         let op = match mode {
@@ -2648,6 +2677,16 @@ mod posix_impl {
     }
 
     // ── link/perm/time/access group ──
+    /// Unlike [`linkat`], it follows a symlink at `src` on macOS and FreeBSD.
+    pub fn link(src: &ZStr, dest: &ZStr) -> Maybe<()> {
+        check_p!(
+            // SAFETY: both are NUL-terminated.
+            unsafe { libc::link(src.as_ptr(), dest.as_ptr()) },
+            Tag::link,
+            src
+        );
+        Ok(())
+    }
     pub fn linkat(src_dir: impl AsFd, src: &ZStr, dest_dir: impl AsFd, dest: &ZStr) -> Maybe<()> {
         let src_dir = src_dir.as_fd();
         let dest_dir = dest_dir.as_fd();
@@ -3105,6 +3144,24 @@ mod posix_impl {
         let rc = check!(safe_libc::dup2(old.native(), new.native()), Tag::dup2);
         Ok(Fd::from_native(rc))
     }
+    /// On Linux `new` has `FD_CLOEXEC` from the start.
+    pub fn dup2_close_on_exec(old: Fd, new: Fd) -> Maybe<()> {
+        #[cfg(any(target_os = "linux", target_os = "android"))]
+        {
+            let (old, new) = (old.native(), new.native());
+            check!(
+                // SAFETY: integers only. For Android, `libc` has the number of the call alone.
+                unsafe { libc::syscall(libc::SYS_dup3, old, new, libc::O_CLOEXEC) },
+                Tag::dup2
+            );
+            Ok(())
+        }
+        #[cfg(not(any(target_os = "linux", target_os = "android")))]
+        {
+            dup2(old, new)?;
+            set_close_on_exec(new)
+        }
+    }
     /// Plain `pipe(&fds)`, NO CLOEXEC. Callers that want CLOEXEC
     /// set it themselves.
     pub fn pipe() -> Maybe<[Fd; 2]> {
@@ -3118,6 +3175,10 @@ mod posix_impl {
     pub fn fsync(fd: Fd) -> Maybe<()> {
         check!(safe_libc::fsync(fd.native()), Tag::fsync);
         Ok(())
+    }
+    pub fn fdatasync(fd: Fd) -> Maybe<()> {
+        let call = || Ok(check!(safe_libc::fdatasync(fd.native()), Tag::fdatasync));
+        call().map(|_| ()).map_err(|err: Error| err.with_fd(fd))
     }
     pub fn lseek(fd: Fd, offset: i64, whence: i32) -> Maybe<i64> {
         let rc = check!(safe_libc::lseek(fd.native(), offset, whence), Tag::lseek);
@@ -5082,7 +5143,6 @@ pub mod c {
         sysctl,
         sysctlnametomib,
         // misc libc
-        truncate,
         vm_deallocate,
         vm_size_t,
         vm_statistics64,
@@ -5444,6 +5504,17 @@ pub mod linux {
     #[inline]
     pub fn read(fd: c_int, buf: &mut [u8]) -> isize {
         super::linux_syscall::read_raw(fd, buf)
+    }
+    /// Raw `splice(2)` at the position of each file; libc-convention return.
+    #[inline]
+    pub fn splice(in_fd: c_int, out_fd: c_int, len: usize) -> isize {
+        let no_offset = core::ptr::null_mut();
+        // SAFETY: both offsets may be null.
+        unsafe { libc::splice(in_fd, no_offset, out_fd, no_offset, len, 0) }
+    }
+    /// Whether the blocks are reserved. No retry: tmpfs starts again after each signal.
+    pub fn fallocate(fd: c_int, offset: i64, len: i64) -> bool {
+        crate::safe_libc::fallocate(fd, 0, offset, len) == 0
     }
     /// Raw `sendfile(out, in, *offset, count)`. With an `offset`, the kernel reads and updates it.
     #[inline]
@@ -7297,7 +7368,7 @@ pub fn preallocate_file(
     {
         // Result intentionally discarded
         // — preallocation is best-effort.
-        let _ = safe_libc::fallocate(fd, 0, offset, len);
+        let _ = linux::fallocate(fd, offset, len);
     }
     let _ = (fd, offset, len);
     Ok(())
@@ -7911,6 +7982,24 @@ pub mod posix {
         Ok(())
     }
 
+    /// For input and output.
+    #[cfg(unix)]
+    pub fn cfsetspeed(t: &mut Termios, speed: libc::speed_t) {
+        // SAFETY: both only change `t`.
+        unsafe {
+            libc::cfsetispeed(t, speed);
+            libc::cfsetospeed(t, speed);
+        }
+    }
+    #[cfg(unix)]
+    pub fn set_winsize(fd: super::Fd, size: bun_core::Winsize) -> super::Maybe<()> {
+        // SAFETY: TIOCSWINSZ reads one `winsize`, which `Winsize` mirrors.
+        if unsafe { libc::ioctl(fd.native(), libc::TIOCSWINSZ, &raw const size) } != 0 {
+            return Err(super::err_with(super::Tag::ioctl));
+        }
+        Ok(())
+    }
+
     // ── rlimit ──
     #[cfg(unix)]
     #[repr(C)]
@@ -8225,10 +8314,73 @@ pub mod net {
     #[cfg(unix)]
     mod posix_impl {
         use super::{Address, sockaddr_storage};
-        use crate::{Fd, Maybe, Tag, err_with};
+        use crate::{Fd, Maybe, Tag, err_with, safe_libc};
+        use bun_core::ZStr;
         use core::ffi::{c_int, c_uint};
         use core::mem::offset_of;
         use libc::{sockaddr, socklen_t};
+
+        pub fn socket(family: c_int, kind: c_int) -> Maybe<Fd> {
+            let fd = safe_libc::socket(family, kind, 0);
+            if fd < 0 {
+                return Err(err_with(Tag::socket));
+            }
+            Ok(Fd::from_native(fd))
+        }
+
+        /// `address` is the bytes of a `sockaddr_*`.
+        pub fn bind(fd: Fd, address: &[u8]) -> Maybe<()> {
+            let len = address.len() as socklen_t;
+            // SAFETY: bind(2) reads at most `len` bytes of `address`.
+            if unsafe { libc::bind(fd.native(), address.as_ptr().cast(), len) } != 0 {
+                return Err(err_with(Tag::bind2));
+            }
+            Ok(())
+        }
+
+        pub fn listen(fd: Fd, backlog: c_int) -> Maybe<()> {
+            if safe_libc::listen(fd.native(), backlog) != 0 {
+                return Err(err_with(Tag::listen));
+            }
+            Ok(())
+        }
+
+        /// `SOCK_STREAM`, `SOCK_DGRAM` and so on. Not for any option: `SO_GET_FILTER` counts its length in instructions.
+        pub fn socket_type(fd: Fd) -> Option<c_int> {
+            let mut kind: c_int = 0;
+            let mut len = size_of::<c_int>() as socklen_t;
+            let (level, name) = (libc::SOL_SOCKET, libc::SO_TYPE);
+            // SAFETY: SO_TYPE writes at most `len` bytes into `kind`.
+            let rc = unsafe {
+                libc::getsockopt(
+                    fd.native(),
+                    level,
+                    name,
+                    (&raw mut kind).cast(),
+                    &raw mut len,
+                )
+            };
+            (rc == 0).then_some(kind)
+        }
+
+        pub fn is_connected(fd: Fd) -> bool {
+            let mut peer: sockaddr_storage = bun_core::ffi::zeroed();
+            let mut len = size_of::<sockaddr_storage>() as socklen_t;
+            // SAFETY: getpeername(2) writes at most `len` bytes into `peer`.
+            unsafe { libc::getpeername(fd.native(), (&raw mut peer).cast(), &raw mut len) == 0 }
+        }
+
+        /// 0 if no interface has that name.
+        pub fn if_nametoindex(name: &ZStr) -> c_uint {
+            // SAFETY: `name` is NUL-terminated.
+            unsafe { libc::if_nametoindex(name.as_ptr()) }
+        }
+
+        pub fn if_indextoname(index: c_uint, buf: &mut [u8; libc::IF_NAMESIZE]) -> Option<&[u8]> {
+            // SAFETY: it writes at most `IF_NAMESIZE` bytes.
+            let name = unsafe { libc::if_indextoname(index, buf.as_mut_ptr().cast()) };
+            (!name.is_null()).then(|| bun_core::slice_to_nul(buf))
+        }
 
         pub fn getsockname(fd: Fd) -> Maybe<Address> {
             let mut any: sockaddr_storage = bun_core::ffi::zeroed();
@@ -8530,6 +8682,12 @@ pub mod freebsd {
         let off_out = off_out.map_or(core::ptr::null_mut(), core::ptr::from_mut);
         // SAFETY: each offset is null or points to a live `off_t`.
         unsafe { libc::copy_file_range(in_, off_in, out, off_out, len, flags) }
+    }
+    /// An empty object without a name.
+    pub fn create_shared_memory() -> Option<super::Fd> {
+        // SAFETY: `SHM_ANON` stands in for a name and is not read.
+        let fd = unsafe { libc::shm_open(libc::SHM_ANON, libc::O_RDWR | libc::O_CLOEXEC, 0o600) };
+        (fd >= 0).then(|| super::Fd::from_native(fd))
     }
 }
 #[cfg(not(target_os = "freebsd"))]

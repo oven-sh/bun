@@ -583,16 +583,15 @@ mod tests {
 
     #[test]
     fn the_fixed_tables_are_what_the_fixed_lengths_make() {
-        let bits = [(8, 144), (9, 112), (7, 24), (8, 8)].map(|(bits, count)| vec![bits; count]);
-        let coded = |bits: Vec<u8>| -> Vec<_> {
-            let coded = (0..)
-                .zip(bits)
-                .map(|(symbol, bits)| Coded::new(symbol, bits));
-            coded.collect()
-        };
+        let literal_lengths: [_; 288] = core::array::from_fn(|symbol| match symbol {
+            144..256 => Coded::new(symbol as u16, 9),
+            256..280 => Coded::new(symbol as u16, 7),
+            _ => Coded::new(symbol as u16, 8),
+        });
+        let distances: [_; 32] = core::array::from_fn(|symbol| Coded::new(symbol as u16, 5));
         let mut built = Tables::EMPTY;
-        assert!(built.build_literal_length(&coded(bits.concat()), false));
-        assert!(built.build_distance(&coded(vec![5; 32]), 0));
+        assert!(built.build_literal_length(&literal_lengths, false));
+        assert!(built.build_distance(&distances, 0));
         for (index, fixed) in (0..).zip(FIXED.literal_length.root) {
             let mut entry = built
                 .literal_length

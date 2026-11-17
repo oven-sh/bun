@@ -5,8 +5,8 @@ use crate::api::cron::CronJob;
 use crate::jsc::virtual_machine::VirtualMachine;
 use crate::jsc_hooks::timer_all;
 use crate::timer::{
-    AbortSignalTimeout, Clock, EventLoopTimer, EventLoopTimerState, EventLoopTimerTag,
-    InHeap, Popped, TimerHeap, TimerObjectInternals,
+    Clock, EventLoopTimer, EventLoopTimerState, EventLoopTimerTag, ImmediateObject, TimeoutObject,
+    TimerHeap, call_catching, discard_js_timer,
 };
 use crate::generated_bindgen::fake_timers as generated;
 use bun_core::{Timespec, TimespecMockMode};
@@ -729,30 +729,18 @@ impl FakeTimers {
 
     /// Pop every fake timer and tell its owner. Runs no JS.
     #[optimize(size)]
-    fn clear(&self, vm: &VirtualMachine) {
+    fn clear(&self) {
         self.ticks.with_taken(VecDeque::clear);
         while let Some(timer) = self.timers.delete_min() {
             // SAFETY: `delete_min` returned a live node, and `tag` names the owner it is a field
             // of. The owner may be freed by the call that releases it.
             unsafe {
-                (*timer).in_heap.set(InHeap::None);
-                (*timer).state.set(EventLoopTimerState::CANCELLED);
                 match (*timer).tag {
-                    EventLoopTimerTag::TimeoutObject | EventLoopTimerTag::ImmediateObject => {
-                        Popped::new(timer).cancel(vm);
-                    }
-                    EventLoopTimerTag::AbortSignalTimeout => {
-                        AbortSignalTimeout::discard(AbortSignalTimeout::from_timer_ptr(timer));
-                    }
                     EventLoopTimerTag::CronJob => {
                         let job = bun_ptr::ThisPtr::new(CronJob::from_timer_ptr(timer));
                         CronJob::stop_dropped_from_fake_heap(job);
                     }
-                    tag => debug_assert!(
-                        false,
-                        "{} timer in the fake heap has no release path",
-                        <&'static str>::from(tag),
-                    ),
+                    _ => discard_js_timer(timer),
                 }
             }
         }
@@ -774,7 +762,7 @@ impl FakeTimers {
     #[optimize(size)]
     fn uninstall(global: &JSGlobalObject, restore: Restore) -> Vec<AsyncDrive> {
         let this = &timer_all().fake_timers;
-        this.clear(global.bun_vm());
+        this.clear();
         this.forget_installation(global);
         let (mut uninstalled, drives) = (this.replaced.take(), this.drives.take());
         for replaced in &uninstalled {
@@ -947,9 +935,8 @@ impl FakeTimers {
         // SAFETY: `timer` was just popped from our heap.
         unsafe {
             match tag {
-                EventLoopTimerTag::TimeoutObject | EventLoopTimerTag::ImmediateObject => {
-                    TimerObjectInternals::fire_catching(Popped::new(timer), vm, &raw mut thrown)
-                }
+                EventLoopTimerTag::TimeoutObject => TimeoutObject::fire(timer, vm, Some(&mut thrown)),
+                EventLoopTimerTag::ImmediateObject => ImmediateObject::fire(timer, vm, &mut thrown),
                 // An abort listener or cron job that throws is reported as uncaught, same as in the real drain.
                 _ => {
                     if let Err(err) = crate::dispatch::fire_timer(timer, &at, vm) {
@@ -979,7 +966,7 @@ impl FakeTimers {
             ran += 1;
             let (callback, arguments) = (tick.callback.get(), tick.arguments.get());
             drop(tick);
-            let thrown = TimerObjectInternals::call_catching(global, callback, arguments);
+            let thrown = call_catching(global, callback, arguments);
             if global.has_exception() {
                 return Err(Stop::Vm(JsError::Thrown));
             }
@@ -1293,7 +1280,6 @@ impl FakeTimers {
 
     pub(crate) fn on_tick_timer(global: &JSGlobalObject) -> JsResult<()> {
         let this = &timer_all().fake_timers;
-        this.tick_timer.state.set(EventLoopTimerState::FIRED);
         let TickMode::Interval(delta) = this.tick_mode.get() else {
             return Ok(());
         };
@@ -1778,7 +1764,7 @@ pub(crate) fn clear_all_timers(cx: &mut JsScope<'_>, this_value: JsLocal<'_>) ->
     let global = cx.global();
     error_unless_fake_timers(global)?;
 
-    timer_all().fake_timers.clear(global.bun_vm());
+    timer_all().fake_timers.clear();
 
     Ok(chainable_this(global, this_value))
 }

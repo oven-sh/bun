@@ -929,6 +929,60 @@ describe("timer controls called from inside a timer callback", () => {
     expect(performance.now()).toBe(105);
     vi.useRealTimers();
   });
+
+  test("an interval that a nested run cleared is not armed again", () => {
+    vi.useFakeTimers();
+    const interval: any = setInterval(() => {
+      interval.refresh();
+      interval._onTimeout = null;
+      vi.advanceTimersByTime(10);
+    }, 10);
+    vi.advanceTimersByTime(10);
+    expect([vi.getTimerCount(), interval.hasRef(), interval._destroyed]).toEqual([0, false, true]);
+  });
+
+  test("an interval that a nested run ended and the outer run arms again survives a collection", () => {
+    vi.useFakeTimers();
+    let fires = 0;
+    setInterval(function (this: any) {
+      if (++fires === 2) this._repeat = null;
+      if (fires !== 1) return;
+      this.refresh();
+      vi.advanceTimersByTime(10);
+      this._repeat = 10;
+    }, 10);
+    const rooted = heapStats().protectedObjectTypeCounts.Timeout;
+    vi.advanceTimersByTime(10);
+    Bun.gc(true);
+    expect([vi.getTimerCount(), heapStats().protectedObjectTypeCounts.Timeout]).toEqual([1, rooted]);
+    vi.advanceTimersToNextTimer();
+    expect(fires).toBe(3);
+  });
+
+  test.concurrent("a timeout with _repeat fires again in its own callback", async () => {
+    const script = `
+      const { jest } = Bun.jest();
+      jest.useFakeTimers();
+      let fires = 0;
+      const t = setTimeout(() => { if (++fires === 1) { t.refresh(); jest.advanceTimersByTime(10); } }, 10);
+      t._repeat = 10;
+      jest.advanceTimersByTime(10);
+      console.log(fires, jest.getTimerCount(), t._destroyed);
+      jest.useRealTimers();`;
+    expect(await run(["-e", script])).toEqual({ stdout: "2 1 false\n", stderr: "", exitCode: 0, signalCode: null });
+  });
+
+  test.concurrent("useRealTimers() ends a timeout with _repeat", async () => {
+    const script = `
+      const { jest } = Bun.jest();
+      jest.useFakeTimers();
+      const t = setTimeout(() => jest.useRealTimers(), 10);
+      t._repeat = 10;
+      jest.advanceTimersByTime(10);
+      console.log(t._destroyed, t.hasRef());
+      if (t.hasRef()) process.exit(1);`;
+    expect(await run(["-e", script])).toEqual({ stdout: "true false\n", stderr: "", exitCode: 0, signalCode: null });
+  });
 });
 
 test("useRealTimers() called from a timer callback isn't undone when the advance completes", () => {
@@ -2528,6 +2582,14 @@ describe("a faked setImmediate", () => {
     await oneLoopTurn();
     await oneLoopTurn();
     expect(fired).not.toHaveBeenCalled();
+  });
+
+  test("ref() in its callback takes the ref", () => {
+    vi.useFakeTimers({ toFake: ["setImmediate"] });
+    const seen: boolean[] = [];
+    const immediate = setImmediate(() => seen.push(immediate.unref().hasRef(), immediate.ref().hasRef()));
+    vi.runAllTimers();
+    expect([...seen, immediate.hasRef()]).toEqual([false, true, false]);
   });
 
   test("useRealTimers() and clearAllTimers() drop it", () => {

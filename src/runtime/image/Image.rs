@@ -1135,11 +1135,7 @@ impl Image {
             result: TaskResult::Err(codecs::Error::DecodeFailed),
         };
         task.run();
-        let result = mem::replace(
-            &mut task.result,
-            TaskResult::Err(codecs::Error::DecodeFailed),
-        );
-        match result {
+        match task.result {
             TaskResult::Encoded { out, format, w, h } => {
                 self.last_width.set(i32::try_from(w).expect("int cast"));
                 self.last_height.set(i32::try_from(h).expect("int cast"));
@@ -1633,24 +1629,21 @@ impl PipelineTask {
     }
 
     /// Back on the JS thread: publish dims, release the input and the Image, deliver the result.
-    pub(crate) fn then(mut self, mut js: PipelineJs, cx: &jsc::JsThread<'_>) -> JsResult<()> {
+    pub(crate) fn then(self, mut js: PipelineJs, cx: &jsc::JsThread<'_>) -> JsResult<()> {
+        let Self { input, result, .. } = self;
         let global = cx.global();
         let promise = js.promise.swap();
         let image = js.image.image(cx);
         // Stash final dims here (JS thread) — `run()` is on a WorkPool thread
         // so writing `image.*` there would race the synchronous getters.
-        match &self.result {
+        match &result {
             TaskResult::Encoded { w, h, .. } | TaskResult::Meta { w, h, .. } => {
                 image.last_width.set(i32::try_from(*w).expect("int cast"));
                 image.last_height.set(i32::try_from(*h).expect("int cast"));
             }
             _ => {}
         }
-        drop((js._pin, js.image));
-        let result = mem::replace(
-            &mut self.result,
-            TaskResult::Err(codecs::Error::UnknownFormat),
-        );
+        drop((input, js._pin, js.image));
         match result {
             TaskResult::Encoded { out, format, .. } => {
                 match &mut js.deliver {

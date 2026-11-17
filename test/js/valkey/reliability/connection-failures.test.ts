@@ -2809,8 +2809,8 @@ describe.concurrent("Valkey: Handshake", () => {
     const program = `
       const client = new Bun.RedisClient("redis://${fake.host}", ${options});
       await client.connect();
-      client.get("key");
-      process.kill(process.pid, "SIGKILL");
+      client.get("key").catch(() => {});
+      client.close();
     `;
     await run(program, { BUN_FEATURE_FLAG_DISABLE_REDIS_AUTO_PIPELINING: flag });
     await closed;

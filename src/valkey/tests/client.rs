@@ -842,6 +842,14 @@ mod handshake {
             (&[("SELECT 5", "-ERR")], "write HELLO 3 SELECT 1"),
             (&[("ECHO 5", "+OK")], "write HELLO 3 SELECT 1"),
             (
+                &[("SELECT 5", "+OK"), ("SELECT 5", "+QUEUED")],
+                "write HELLO 3 SELECT 5",
+            ),
+            (
+                &[("SELECT 5", "+OK"), ("SELECT 5", "")],
+                "write HELLO 3 SELECT 5",
+            ),
+            (
                 &[("SELECT 5", "+OK"), ("SELECT 6", "+QUEUED")],
                 "write HELLO 3 SELECT 1",
             ),

@@ -351,6 +351,10 @@ describe("RedisClient tls.checkServerIdentity", () => {
   const agent1 = { key: serverKey, cert: serverCert };
   const refusal = () => Object.assign(new Error("refused"), { code: "PIN" });
 
+  // `localhost` is dialed on both families. Only one may answer, or the first connection can be the one that is dropped.
+  const withIPv4Server = <T>(fn: (port: number, server: tls.Server) => Promise<T>) =>
+    withServer(agent1, fn, "127.0.0.1");
+
   /** Resolves with the bytes the server read from its first connection, once that has closed. */
   function bytesOfFirstConnection(server: tls.Server): Promise<number> {
     let bytes = 0;
@@ -365,7 +369,7 @@ describe("RedisClient tls.checkServerIdentity", () => {
     ["returns an Error", refusal, "PIN"],
     ["is async", async () => undefined, "ERR_INVALID_RETURN_VALUE"],
   ])("replaces the name check when it %s", async (_, verdict, expected) => {
-    await withServer(agent1, async (port, server) => {
+    await withIPv4Server(async (port, server) => {
       const bytes = bytesOfFirstConnection(server);
       const calls: string[][] = [];
       const checkServerIdentity = (hostname: string, cert: tls.PeerCertificate) => {
@@ -439,7 +443,7 @@ describe("RedisClient tls.checkServerIdentity", () => {
   ])(
     "closes the client, connects again and %s: the verdict is not applied to the next connection",
     async (_, first) => {
-      await withServer(agent1, async (port, server) => {
+      await withIPv4Server(async (port, server) => {
         const bytes = bytesOfFirstConnection(server);
         let second: Promise<unknown> | undefined;
         const checkServerIdentity = mock(() => {

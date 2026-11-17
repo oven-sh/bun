@@ -458,7 +458,9 @@ impl<P> Client<P> {
     fn take_in_flight(&mut self) -> Vec<P> {
         let in_flight = core::mem::take(&mut self.in_flight);
         // Script was leaving the database that it selected before.
-        if (in_flight.iter()).any(|it| matches!(it.expect, Expect::Database(_))) {
+        if (in_flight.iter())
+            .any(|it| matches!(it.expect, Expect::Database(to) if to != self.database))
+        {
             self.database = self.config.database;
         }
         in_flight.into_iter().map(|it| it.promise).collect()
@@ -738,6 +740,7 @@ impl<P> Client<P> {
                 // QUEUED: whether EXEC runs it is not tracked.
                 self.database = match &*text {
                     b"OK" | b"RESET" => database,
+                    _ if database == self.database => database,
                     _ => self.config.database,
                 };
                 Event::Resolved {

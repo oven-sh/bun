@@ -497,7 +497,7 @@ index 0000000000000000000000000000000000000000..4932cd6395b5d79049adb4736a669e22
 
         // Run from the root, bun prints the folder relative to it. Run from a member, it prints an
         // absolute path.
-        const shownFolder = cwdRelative === "." ? folder : `${root}/${folder}`;
+        const shownFolder = cwdRelative === "." ? folder : `${root}/${folder}`.replaceAll(sep, "/");
         expect(await bunOk(cwd, env, "patch", arg)).toContain(patchMessage("@types/ws", shownFolder));
 
         // No matter which links lead to it, the folder that Bun prepared is the package's folder in the store.

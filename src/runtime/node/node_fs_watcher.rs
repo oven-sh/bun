@@ -863,7 +863,10 @@ impl FSWatcher {
         };
         let cwd = bun_resolver::fs::FileSystem::get().top_level_dir();
         let mut file_path = bun_paths::Path::resolve(&[cwd, slice]);
-        file_path.copy_trailing_sep_from(slice);
+        // After one, libuv reports `\a` for `a`.
+        if cfg!(not(windows)) {
+            file_path.copy_trailing_sep_from(slice);
+        }
         if file_path.len() >= bun_paths::MAX_PATH_BYTES {
             return Err(bun_sys::Error {
                 errno: SystemErrno::ENAMETOOLONG as _,

@@ -77,6 +77,19 @@ describe("fs.watch", () => {
       done(e);
     }
   });
+  test("a separator after the directory is not part of the reported name", async () => {
+    using dir = tempDir("watch-trailing-separator", { "a.txt": "" });
+    const { promise, resolve, reject } = Promise.withResolvers<string>();
+    const watcher = fs.watch(String(dir) + path.sep, (_, name) => name?.endsWith("a.txt") && resolve(name));
+    watcher.on("error", reject);
+    const interval = repeat(() => fs.writeFileSync(path.join(String(dir), "a.txt"), "x"));
+    try {
+      expect(await promise).toBe("a.txt");
+    } finally {
+      clearInterval(interval);
+      watcher.close();
+    }
+  });
   test("add file/folder to folder", done => {
     let count = 0;
     const root = path.join(testDir, "add-directory");

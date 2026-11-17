@@ -42,8 +42,12 @@ pub use bun_collections::StringSet;
 /// The deepest directory that holds all of `entry_points`.
 pub fn default_root_dir(entry_points: &[Box<[u8]>]) -> &[u8] {
     let dirs = entry_points.iter().map(|it| bun_paths::dirname_or_root(it));
-    let common = bun_paths::common_ancestor(dirs);
-    common.filter(|dir| !dir.is_empty()).unwrap_or(b".")
+    match bun_paths::common_ancestor(dirs) {
+        None | Some([]) => b".",
+        // No drive, so nothing to open. `/a.js` is what a plugin's entry point looks like.
+        Some([b'/' | b'\\']) if cfg!(windows) => b".",
+        Some(common) => common,
+    }
 }
 
 // `AllowUnresolved` is defined canonically in

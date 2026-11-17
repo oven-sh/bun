@@ -602,7 +602,6 @@ it.skipIf(isWindows)("advanced serialization advertises wire format version 2", 
 async function runPair(parent: string, child: string, env: Record<string, string> = {}) {
   const helpers = `
     const fs = require("node:fs");
-    const net = require("node:net");
     // So that a child does not outlive a test that timed out.
     const deadline = Date.now() + 120_000;
     function until(file) {
@@ -642,7 +641,7 @@ async function runPair(parent: string, child: string, env: Record<string, string
       });
     const listen = () =>
       new Promise((resolve, reject) => {
-        const server = net.createServer().once("error", reject);
+        const server = require("node:net").createServer().once("error", reject);
         server.listen(0, "127.0.0.1", () => resolve(server));
       });
     const turn = () => new Promise(resolve => setImmediate(resolve));
@@ -708,11 +707,11 @@ describe.concurrent("the send queue", () => {
         for (let i = 0; i < 10; i++) child.send(i, () => called.push(i));
         const before = roots();
         for (let i = 10; i < 1000; i++) child.send(i, () => called.push(i));
-        console.log(roots() - before);
+        console.log("new roots", roots() - before);
         Bun.gc(true);
         child.send("last");
         await child.exited;
-        console.log(called.length, called.every((it, i) => it === i));
+        console.log("called", called.length, "in order", called.every((it, i) => it === i));
         server.close();
       `,
       `
@@ -722,7 +721,7 @@ describe.concurrent("the send queue", () => {
         });
       `,
     );
-    expect(result).toEqual({ stdout: ["0", "1000 true"], stderr: "", exitCode: 0 });
+    expect(result).toEqual({ stdout: ["new roots 0", "called 1000 in order true"], stderr: "", exitCode: 0 });
   });
 
   // The child uses descriptor 3 directly. Windows frames what goes through its pipe.
@@ -738,17 +737,23 @@ describe.concurrent("the send queue", () => {
         const buffer = Buffer.alloc(1 << 20);
         let total = 0;
         for (let n = 1; n && total < ${count} * 27; total += n) n = retry(() => fs.readSync(3, buffer));
-        console.log(total / 27);
+        console.log("replies", total / 27);
       `,
     );
-    expect(result).toEqual({ stdout: [String(count)], stderr: "", exitCode: 0 });
+    expect(result).toEqual({ stdout: [`replies ${count}`], stderr: "", exitCode: 0 });
   });
 
   // Linux only: reads /proc/self/fd.
-  it.skipIf(!isLinux)("releases a handle if the channel closes while its message is serialized", async () => {
+  it.skipIf(!isLinux).each([
+    { handle: "server", keepOpen: false, descriptorsLeft: 1 },
+    { handle: "socket", keepOpen: true, descriptorsLeft: 1 },
+    { handle: "socket", keepOpen: false, descriptorsLeft: 0 },
+  ])("releases a $handle (keepOpen: $keepOpen) if the channel closes while its message is serialized", async row => {
     const result = await runPair(
       `
         const server = await listen();
+        const socket = require("node:net").connect(server.address().port, "127.0.0.1");
+        await require("node:events").once(socket, "connect");
         const { promise: disconnected, resolve: onDisconnect } = Promise.withResolvers();
         const child = spawnChild({ onDisconnect });
         const message = {
@@ -758,14 +763,16 @@ describe.concurrent("the send queue", () => {
             return "late";
           },
         };
-        child.send(message, server);
         const inode = fd => fs.statSync("/proc/self/fd/" + fd, { throwIfNoEntry: false })?.ino;
-        console.log(fs.readdirSync("/proc/self/fd").filter(fd => inode(fd) === inode(server._handle.fd)).length);
-        server.close();
+        const sentInode = inode(${row.handle}._handle.fd);
+        child.send(message, ${row.handle}, { keepOpen: ${row.keepOpen} });
+        await turn();
+        console.log("descriptors left", fs.readdirSync("/proc/self/fd").filter(fd => inode(fd) === sentInode).length);
+        process.exit(0);
       `,
       `process.on("message", () => {});`,
     );
-    expect(result).toEqual({ stdout: ["1"], stderr: "", exitCode: 0 });
+    expect(result).toEqual({ stdout: [`descriptors left ${row.descriptorsLeft}`], stderr: "", exitCode: 0 });
   });
 });
 
@@ -897,7 +904,7 @@ describe.concurrent.skipIf(!isLinux)("a message handler that runs the event loop
           serialization: "${serialization}",
           onDisconnect,
           ipc(message, child) {
-            console.log(message.length);
+            console.log(Array.isArray(message) ? message.length + " objects" : message);
             if (message !== "first") return;
             child.disconnect();
             runEventLoopUntil(Promise.all([disconnected, child.exited]));
@@ -913,6 +920,6 @@ describe.concurrent.skipIf(!isLinux)("a message handler that runs the event loop
       `,
       { BUN_JSC_gcMaxHeapSize: "196608", BUN_JSC_useGenerationalGC: "0", BUN_JSC_useConcurrentGC: "0" },
     );
-    expect(result).toEqual({ stdout: ["5", "5000", "4"], stderr: "", exitCode: 0 });
+    expect(result).toEqual({ stdout: ["first", "5000 objects", "last"], stderr: "", exitCode: 0 });
   });
 });

@@ -105,9 +105,12 @@ describe.concurrent("an early error that only JavaScriptCore reports stops the b
 
 // The early errors of strict mode code come from Bun's parser under bun run, and from the type checker in a build. Sloppy mode code
 // has syntax that neither may report. Each row starts under both or under neither. A row in gap() does not yet: the words say what
-// happens today.
+// happens today. A row is a title, where the file is (a folder with a package.json, then the extension) and its code.
 describe("strict mode code and sloppy mode code start under bun run and in a build alike", () => {
-  const buildMisses = "bun run reports it, and the build compiles it";
+  const startMark = "globalThis.started = true;";
+  // What bun build --format=cjs --target=bun writes around a file. Bun hands such a text to JavaScriptCore as it is.
+  const writtenAsCommonJS = (body: string) =>
+    `// @bun @bun-cjs\n(function(exports, require, module, __filename, __dirname) {${body}\n})`;
   const rows = [
     ["a legacy octal escape in sloppy code", "cjs", `value = "\\1".length;`],
     [
@@ -125,11 +128,7 @@ describe("strict mode code and sloppy mode code start under bun run and in a bui
     ],
     ["a with statement in sloppy code", "cjs", `with ({ v: 1 }) value = v;`],
     ["delete of a name in sloppy code", "cjs", `var x = 1; value = delete x;`],
-    gap("the build reports TS1127, and bun run reads a comment", [
-      "a legacy HTML comment in sloppy code",
-      "cjs",
-      `value = 1 <!-- c\n;`,
-    ] as const),
+    ["a legacy HTML comment in sloppy code", "cjs", `value = 1 <!-- c\n;`],
     ["a closing legacy HTML comment in sloppy code", "cjs", `value = 1;\n--> c\n`],
     gap("the build reports TS1487, and bun run writes the character", [
       "a legacy octal escape in an untagged template in sloppy code",
@@ -145,46 +144,22 @@ describe("strict mode code and sloppy mode code start under bun run and in a bui
       "mjs",
       "export const s = `\\033[1m`;",
     ] as const),
-    gap(buildMisses, [
-      "a function as the body of if in a module",
-      "mjs",
-      `if (true) function f() {}\nexport {};`,
-    ] as const),
-    gap(buildMisses, [
-      "a function as the body of if under a directive",
-      "cjs",
-      `"use strict"; if (true) function f() {}`,
-    ] as const),
-    gap(buildMisses, [
-      "a function as the body of a label in a module",
-      "mjs",
-      `x: function f() {}\nexport {};`,
-    ] as const),
-    gap(buildMisses, [
-      "an initializer in a for-in loop in a module",
-      "mjs",
-      `for (var i = 0 in {}) ;\nexport {};`,
-    ] as const),
-    gap(buildMisses, [
-      "an initializer in a for-in loop under a directive",
-      "cjs",
-      `"use strict"; for (var i = 0 in {}) ;`,
-    ] as const),
-    gap(buildMisses, [
-      "two functions of one name at the top of a module",
-      "mjs",
-      `function f() {} function f() {}\nexport {};`,
-    ] as const),
-    gap(buildMisses, [
+    ["a function as the body of if in a module", "mjs", `if (true) function f() {}\nexport {};`],
+    ["a function as the body of if under a directive", "cjs", `"use strict"; if (true) function f() {}`],
+    ["a function as the body of a label in a module", "mjs", `x: function f() {}\nexport {};`],
+    ["an initializer in a for-in loop in a module", "mjs", `for (var i = 0 in {}) ;\nexport {};`],
+    ["an initializer in a for-in loop under a directive", "cjs", `"use strict"; for (var i = 0 in {}) ;`],
+    ["two functions of one name at the top of a module", "mjs", `function f() {} function f() {}\nexport {};`],
+    [
       "two functions of one name in a block under a directive",
       "cjs",
       `"use strict"; { function f() {} function f() {} }`,
-    ] as const),
-    gap(buildMisses, [
+    ],
+    [
       "two functions of one name in a block in a class",
       "cjs",
       `class A { m() { { function f() {} function f() {} } } }`,
-    ] as const),
+    ],
     ["a with statement in a module", "mjs", `with ({ v: 1 }) v;\nexport {};`],
     ["a with statement under a directive", "cjs", `"use strict"; with ({ v: 1 }) v;`],
     ["delete of a name in a module", "mjs", `var x = 1; delete x;\nexport {};`],
@@ -200,22 +175,177 @@ describe("strict mode code and sloppy mode code start under bun run and in a bui
     ],
     ["a reserved word as a label in a module", "mjs", `static: for (;;) break static;\nexport {};`],
     ["a legacy HTML comment in a module", "mjs", `var a = 1 <!-- c\n;\nexport {};`],
-    gap("bun run reports it, and the build reads a comment", [
-      "a closing legacy HTML comment in a module",
+    ["a closing legacy HTML comment in a module", "mjs", `var a = 1;\n--> c\nexport {};`],
+
+    // What makes code strict for the parser of bun run: import, export or a top-level await, a directive, a class.
+    ["a function as the body of if after an import", "mjs", `import "node:fs";\nif (true) function f() {}`],
+    ["a function as the body of if after a top-level await", "mjs", `await 0;\nif (true) function f() {}`],
+    [
+      "a function as the body of if after a for await loop",
       "mjs",
-      `var a = 1;\n--> c\nexport {};`,
+      `for await (const x of []) ;\nif (true) function f() {}`,
+    ],
+    [
+      "a function as the body of if in a function with a directive",
+      "cjs",
+      `function g() { "use strict"; if (true) function f() {} }`,
+    ],
+    ["a function as the body of else in a class", "cjs", `class A { m() { if (true) ; else function f() {} } }`],
+    ["a function as the body of a label in a class", "cjs", `class A { m() { x: function f() {} } }`],
+    [
+      "a function as the body of if in what a class extends",
+      "cjs",
+      `class A extends (function () { if (true) function f() {} }) {}`,
+    ],
+    [
+      "an initializer in a for-in loop in a function with a directive",
+      "cjs",
+      `function g() { "use strict"; for (var i = 0 in {}) ; }`,
+    ],
+    ["an initializer in a for-in loop in a class", "cjs", `class A { m() { for (var i = 0 in {}) ; } }`],
+    ["an initializer in a for-in loop after an import", "mjs", `import "node:fs";\nfor (var i = 0 in {}) ;`],
+    ["two functions of one name after an import", "mjs", `import "node:fs";\nfunction f() {} function f() {}`],
+    ["two functions of one name after a top-level await", "mjs", `await 0;\nfunction f() {} function f() {}`],
+    [
+      "two functions of one name with a var between them in a module",
+      "mjs",
+      `function f() {} var f; function f() {}\nexport {};`,
+    ],
+    ["two exported functions of one name", "mjs", `export function f() {} export function f() {}`],
+    [
+      "two functions of one name in a case of a switch under a directive",
+      "cjs",
+      `"use strict"; switch (0) { case 0: function f() {} function f() {} }`,
+    ],
+    [
+      "two functions of one name in a block in a function with a directive",
+      "cjs",
+      `function g() { "use strict"; { function f() {} function f() {} } }`,
+    ],
+
+    // A file that only runs as a module is sloppy mode code to that parser, and what it prints is valid in a module.
+    ["a function as the body of if in a .mjs file with no import or export", "mjs", `if (true) function f() {}`],
+    ["a function as the body of a label in a .mjs file with no import or export", "mjs", `x: function f() {}`],
+    ["a function as the body of if beside import.meta", "mjs", `import.meta.url;\nif (true) function f() {}`],
+    [
+      "a function as the body of if in the key of a method with a directive",
+      "cjs",
+      `({ [(() => { if (true) function f() {} })()]() { "use strict"; } });`,
+    ],
+    ["an initializer in a for-in loop in a .mjs file with no import or export", "mjs", `for (var i = 0 in {}) ;`],
+    ["an initializer in a for-in loop in sloppy code", "cjs", `for (var i = 0 in {}) ;`],
+    ["two functions of one name in a .mjs file with no import or export", "mjs", `function f() {} function f() {}`],
+    [
+      "two functions of one name in a block in a .mjs file with no import or export",
+      "mjs",
+      `{ function f() {} function f() {} }`,
+    ],
+    [
+      "two functions of one name in the body of a function under a directive",
+      "cjs",
+      `"use strict"; function g() { function f() {} function f() {} }`,
+    ],
+    [
+      "two functions of one name in a static block of a class",
+      "cjs",
+      `class A { static { function f() {} function f() {} } }`,
+    ],
+    [
+      "two functions of one name at the top of a CommonJS file under a directive",
+      "cjs",
+      `"use strict"; function f() {} function f() {}`,
+    ],
+    ["two functions of one name in a block in sloppy code", "cjs", `{ function f() {} function f() {} }`],
+
+    // A legacy HTML comment is an error in a module. Which file is one: import, export or a top-level await says so, then CommonJS
+    // syntax says no, then the name of the file and its package.json decide. Strict mode code has nothing to do with it.
+    ["a legacy HTML comment in a .mjs file with no import or export", "mjs", `var a = 1 <!-- c\n;`],
+    ["a closing legacy HTML comment in a .mjs file with no import or export", "mjs", `var a = 1;\n--> c`],
+    ["a closing legacy HTML comment at the start of a .mjs file", "mjs", `--> c\n${startMark}`],
+    ["a legacy HTML comment in a .mjs file with module.exports", "mjs", `module.exports = 1 <!-- c\n;`],
+    ["a legacy HTML comment under a directive", "cjs", `"use strict"; var a = 1 <!-- c\n;`],
+    ["a legacy HTML comment in a class", "cjs", `class A { m() { return 1 <!-- c\n; } }`],
+    ["a closing legacy HTML comment in a .cjs file with export", "cjs", `var a = 1;\n--> c\nexport {};`],
+    ["a legacy HTML comment in a .cjs file with import", "cjs", `import "node:fs";\nvar a = 1 <!-- c\n;`],
+    ["a legacy HTML comment in a .js file", "js", `var a = 1 <!-- c\n;`],
+    ["a legacy HTML comment beside import.meta in a .js file", "js", `import.meta.url;\nvar a = 1 <!-- c\n;`],
+    [
+      "a legacy HTML comment beside import.meta and require in a .js file",
+      "js",
+      `import.meta.url; require("node:fs");\nvar a = 1 <!-- c\n;`,
+    ],
+    ["a closing legacy HTML comment in a .jsx file", "jsx", `var a = 1;\n--> c`],
+    ["a legacy HTML comment in a .js file of a module package", "module/js", `var a = 1 <!-- c\n;`],
+    ["a closing legacy HTML comment in a .js file of a module package", "module/js", `var a = 1;\n--> c`],
+    ["a legacy HTML comment in a .js file of a module package with exports", "module/js", `exports.a = 1 <!-- c\n;`],
+    ["a legacy HTML comment in a .cjs file of a module package", "module/cjs", `var a = 1 <!-- c\n;`],
+    ["a legacy HTML comment in a .js file of a CommonJS package", "commonjs/js", `var a = 1 <!-- c\n;`],
+    [
+      "a legacy HTML comment beside import.meta in a .js file of a CommonJS package",
+      "commonjs/js",
+      `import.meta.url;\nvar a = 1 <!-- c\n;`,
+    ],
+    [
+      "two minus signs and a greater-than sign in one line of a module",
+      "mjs",
+      `var a = 2, b = 1; a --> b;\nexport {};`,
+    ],
+
+    // No parser of Bun reads a file that bun build wrote: JavaScriptCore reads it, and to it a module is strict mode code.
+    ["a function as the body of if in a module that bun build wrote", "mjs", `// @bun\nif (true) function f() {}`],
+    ["an initializer in a for-in loop in a module that bun build wrote", "mjs", `// @bun\nfor (var i = 0 in {}) ;`],
+    ["two functions of one name in a module that bun build wrote", "mjs", `// @bun\nfunction f() {} function f() {}`],
+    [
+      "two functions of one name in a block of a module that bun build wrote",
+      "mjs",
+      `// @bun\n{ function f() {} function f() {} }`,
+    ],
+    ["a closing legacy HTML comment in a module that bun build wrote", "mjs", `// @bun\nvar a = 1;\n--> c`],
+    gap("the build reports TS1127, and JavaScriptCore reads a comparison with !--c", [
+      "a legacy HTML comment in a module that bun build wrote",
+      "mjs",
+      `// @bun\nvar c = 1; var a = 1 <!-- c\n;`,
     ] as const),
+    [
+      "a function as the body of if in a CommonJS file that bun build wrote",
+      "cjs",
+      writtenAsCommonJS(`${startMark}\nif (true) function f() {}`),
+    ],
+    [
+      "a function as the body of if under a directive in a CommonJS file that bun build wrote",
+      "cjs",
+      writtenAsCommonJS(`"use strict";${startMark}\nif (true) function f() {}`),
+    ],
+    [
+      "two functions of one name in a block under a directive in a CommonJS file that bun build wrote",
+      "cjs",
+      writtenAsCommonJS(`"use strict";${startMark}\n{ function f() {} function f() {} }`),
+    ],
+    [
+      "a legacy HTML comment in a CommonJS file that bun build wrote",
+      "cjs",
+      writtenAsCommonJS(`${startMark}\nvar a = 1 <!-- c\n;`),
+    ],
+
+    // The parser of bun run reads TypeScript by the same rules.
+    ["a function as the body of if in a TypeScript module", "ts", `if (true) function f() {}\nexport {};`],
+    ["a function as the body of if in a .mts file with no import or export", "mts", `if (true) function f() {}`],
   ] as const;
 
   // One process loads every file, and one reads them all for a build.
   const startsUnderBunRun = new Map<string, boolean>();
   const startsInABuild = new Map<string, boolean>();
   beforeAll(async () => {
-    const files: Record<string, string> = {};
-    const names = rows.map(([, extension, code], index) => {
-      const directive = code.startsWith('"use strict";') ? '"use strict";' : "";
-      files[`row${index}.${extension}`] = `${directive}globalThis.started = true;\n${code.slice(directive.length)}\n`;
-      return `row${index}.${extension}`;
+    const files: Record<string, string> = {
+      "module/package.json": JSON.stringify({ type: "module" }),
+      "commonjs/package.json": JSON.stringify({ type: "commonjs" }),
+    };
+    const names = rows.map(([, where, code], index) => {
+      const name = where.replace(/\w+$/, extension => `row${index}.${extension}`);
+      // A directive stays the first statement, and the mark of bun build stays the first line.
+      const first = code.match(/^(?:"use strict";|\/\/ @bun\n)/)?.[0] ?? "";
+      files[name] = code.includes(startMark) ? `${code}\n` : `${first}${startMark}\n${code.slice(first.length)}\n`;
+      return name;
     });
     files["load.cjs"] = `
       (async () => {
@@ -237,7 +367,7 @@ describe("strict mode code and sloppy mode code start under bun run and in a bui
     ]);
     const started: boolean[] = JSON.parse(loaded.stdout);
     expect(started).toHaveLength(rows.length);
-    const refused = new Set((checked.stdout + checked.stderr).match(/^row\d+\.[cm]js(?=\()/gm));
+    const refused = new Set((checked.stdout + checked.stderr).match(/^(?:\w+\/)?row\d+\.\w+(?=\()/gm));
     rows.forEach(([title], index) => {
       startsUnderBunRun.set(title, started[index]);
       startsInABuild.set(title, !refused.has(names[index]));
@@ -249,5 +379,72 @@ describe("strict mode code and sloppy mode code start under bun run and in a bui
       run: expect.any(Boolean),
       build: startsUnderBunRun.get(title),
     });
+  });
+});
+
+// The file that holds a legacy HTML comment is judged, by its own name, however it is loaded. Each program prints under bun run what
+// it prints compiled, or stops under both.
+describe.concurrent("a legacy HTML comment in a file that another file loads", () => {
+  test("is an error in a .mjs file that is only imported", async () => {
+    using dir = tempDir("aot-early-errors", {
+      "main.mjs": `import "./imported.mjs";\nconsole.log("never printed");\n`,
+      "imported.mjs": `var a = 1;\n--> c\n`,
+    });
+    const cwd = String(dir);
+    const plain = await run(cwd, "run", "./main.mjs");
+    expect({ stdout: plain.stdout, exitCode: plain.exitCode }).toEqual({ stdout: "", exitCode: 1 });
+    for (const args of [
+      ["run", "--debug-aot", "./main.mjs"],
+      ["build", "--compile", "--aot", "./main.mjs", "--outfile", "app"],
+    ]) {
+      const { stdout, stderr, exitCode } = await run(cwd, ...args);
+      expect({
+        args,
+        errors: stderr.match(/^error\b.*/gm),
+        locations: (stderr.match(/^\s+at .*$/gm) ?? []).map(printed => printed.replace(/^.*[\\/]/, "")),
+        stdout: args[0] === "run" ? stdout : "",
+        exitCode,
+      }).toEqual({
+        args,
+        errors: [expect.stringMatching(/^error: TS1127: \S/)],
+        locations: ["imported.mjs:2:1"],
+        stdout: "",
+        exitCode: 1,
+      });
+    }
+  });
+
+  test("is a comment in a script of a package", async () => {
+    using dir = tempDir("aot-early-errors", {
+      "main.cjs": `console.log(require("old-library"));\n`,
+      "node_modules/old-library/package.json": JSON.stringify({ name: "old-library", main: "index.js" }),
+      "node_modules/old-library/index.js": `<!-- for browsers that know no script\nvar answer = 42;\n--> the end\nmodule.exports = answer;\n`,
+    });
+    const cwd = String(dir);
+    const plain = await run(cwd, "run", "./main.cjs");
+    const compiled = await run(cwd, "run", "--debug-aot", "./main.cjs");
+    expect({ stdout: plain.stdout, exitCode: plain.exitCode }).toEqual({ stdout: "42\n", exitCode: 0 });
+    expect({ stdout: compiled.stdout, stderr: compiled.stderr, exitCode: compiled.exitCode }).toEqual({
+      stdout: "42\n",
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  // A file with no extension is read as TypeScript, where `<!--` is three operators: the program would print "false 4". The build
+  // reports that reading and compiles nothing.
+  test("stops the build in a file with no extension, where bun run reads a comment", async () => {
+    using dir = tempDir("aot-early-errors", {
+      "tool": `var c = 5; var value = 1 <!-- c\n;\nconsole.log(value, c);\n`,
+    });
+    const cwd = String(dir);
+    const plain = await run(cwd, "run", "./tool");
+    const compiled = await run(cwd, "run", "--debug-aot", "./tool");
+    expect({ stdout: plain.stdout, exitCode: plain.exitCode }).toEqual({ stdout: "1 5\n", exitCode: 0 });
+    expect({
+      errors: (compiled.stderr.match(/^error\b.*/gm) ?? []).length > 0,
+      stdout: compiled.stdout,
+      exitCode: compiled.exitCode,
+    }).toEqual({ errors: true, stdout: "", exitCode: 1 });
   });
 });

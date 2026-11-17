@@ -331,6 +331,8 @@ describe.concurrent("Immediate.ref() holds the event loop only while the immedia
 });
 
 describe.concurrent("_repeat", () => {
+  const falsy = ["null", "undefined", "0", "-0", "0n", "false", "''", "NaN"];
+
   it("does not arm a timeout again that its callback cleared", async () => {
     const clears = [
       "clearTimeout(t)",
@@ -344,6 +346,23 @@ describe.concurrent("_repeat", () => {
       "clearTimeout(t); t._onTimeout = callback; t._idleTimeout = 5",
     ];
     expect(await countFires("setTimeout", "t._repeat = 1;", [...clears, ""])).toEqual({ ...each(clears, 1), "": 2 });
+  });
+
+  it.each(["setTimeout", "setInterval"] as const)("%s() does not repeat when it is falsy", async set => {
+    const writes = falsy.map(value => `t._repeat = ${value}`);
+    const truthy = ["t._repeat = 1", "t._repeat = '1'", "t._repeat = Infinity"];
+    expect(await countFires(set, "", [...writes, ...truthy])).toEqual({ ...each(writes, 1), ...each(truthy, 2) });
+  });
+
+  it("refresh() does not read it", async () => {
+    const bodies = [
+      ...falsy.flatMap(value => [`t._repeat = ${value}; t.refresh()`, `t.refresh(); t._repeat = ${value}`]),
+      "t._repeat = null; t.refresh(); t._repeat = 0",
+      "t._repeat = null; setImmediate(() => t.refresh())",
+      // Node does not arm a timer whose _idleTimeout is undefined.
+      "t._idleTimeout = undefined; t.refresh(); t._repeat = null",
+    ];
+    expect(await countFires("setInterval", "", bodies)).toEqual(each(bodies, 2));
   });
 
   it.each(["t._repeat = null", "t._idleTimeout = -1"])(

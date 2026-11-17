@@ -985,6 +985,28 @@ describe("timer controls called from inside a timer callback", () => {
   });
 });
 
+test("advanceTimersByTime() ends with _repeat = NaN", () => {
+  vi.useFakeTimers();
+  let fires = 0;
+  const timeout: any = setTimeout(() => ++fires === 100 && clearTimeout(timeout), 10);
+  timeout._repeat = NaN;
+  vi.advanceTimersByTime(20);
+  expect(fires).toBe(1);
+});
+
+test("refresh() moves an interval with _repeat = null", () => {
+  vi.useFakeTimers();
+  const fired = vi.fn();
+  const interval: any = setInterval(fired, 60);
+  vi.advanceTimersByTime(40);
+  interval._repeat = null;
+  interval.refresh();
+  vi.advanceTimersByTime(59);
+  expect(fired).toHaveBeenCalledTimes(0);
+  vi.advanceTimersByTime(1);
+  expect(fired).toHaveBeenCalledTimes(1);
+});
+
 // 35 s in a debug build. The order itself is also a unit test in EventLoopTimer.rs.
 test.skipIf(isDebug || isASAN)("equal deadlines keep their order across 2 ** 23 timers armed in between", () => {
   vi.useFakeTimers();

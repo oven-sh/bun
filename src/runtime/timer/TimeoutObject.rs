@@ -205,7 +205,7 @@ impl TimeoutObject {
 
         // https://github.com/nodejs/node/blob/a7cbb904745591c9a9d047a364c2c188e5470047/lib/internal/timers.js#L612
         let repeat = js::repeat_get_cached(this).expect("Timeout repeat slot");
-        if !repeat.is_null() {
+        if repeat.to_boolean() {
             match (next_round, idle_timeout(this)) {
                 (_, Some(-1.0)) | (None, None) => {}
                 (Some(deadline), _) => timer.arm(this, vm, &deadline),
@@ -223,7 +223,7 @@ impl TimeoutObject {
 
     fn promote_to_interval(&self, this: JSValue, vm: &VirtualMachine, repeat: JSValue) {
         let ms = repeat.get_number();
-        let interval = ms.filter(|&ms| !(ms < 1.0 || ms > f64::from(i32::MAX)));
+        let interval = ms.filter(|ms| (1.0..=f64::from(i32::MAX)).contains(ms));
         js::idle_timeout_set_cached(this, vm.global(), repeat);
         self.kind.set(Kind::SetInterval);
         self.interval.set(interval.map_or(1, |ms| ms as u32));
@@ -240,7 +240,6 @@ impl TimeoutObject {
         if has_clock
             && !matches!(self.phase.get(), Phase::Cleared)
             && idle_timeout(this) != Some(-1.0)
-            && !(self.repeats() && js::repeat_get_cached(this).is_some_and(JSValue::is_null))
         {
             self.start(this, vm);
         }

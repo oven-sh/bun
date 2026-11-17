@@ -115,8 +115,7 @@ unsafe extern "C" fn TextEncoder__encode16(
     }
 
     let bytes = strings::to_utf8_alloc_with_type(slice);
-    ArrayBuffer::from_bytes(bytes.leak(), JSType::Uint8Array)
-        .to_js_unchecked(global_this)
+    ArrayBuffer::from_default_allocator(global_this, JSType::Uint8Array, bytes)
         .or_pending_exception()
 }
 

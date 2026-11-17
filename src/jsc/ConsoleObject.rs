@@ -3214,12 +3214,7 @@ pub mod formatter {
                     self.print_getter_setter::<ENABLE_ANSI_COLORS, true>(writer_, value)
                 }
                 Tag::Array => self.print_array::<ENABLE_ANSI_COLORS>(writer_, value, js_type),
-                Tag::Private => self.print_private::<ENABLE_ANSI_COLORS>(
-                    writer_,
-                    value,
-                    js_type,
-                    &mut remove_before_recurse,
-                ),
+                Tag::Private => self.print_private::<ENABLE_ANSI_COLORS>(writer_, value, js_type),
                 Tag::NativeCode => self.print_native_code(writer_, value),
                 Tag::Promise => self.print_promise::<ENABLE_ANSI_COLORS>(writer_, value),
                 Tag::Boolean => self.print_boolean::<ENABLE_ANSI_COLORS>(writer_, value),
@@ -4393,7 +4388,6 @@ pub mod formatter {
             writer_: &mut dyn bun_io::Write,
             value: JSValue,
             js_type: jsc::JSType,
-            remove_before_recurse: &mut bool,
         ) -> JsResult<()> {
             // LAYERING: this needs to downcast over
             // `Response`/`Request`/`Blob`/`S3Client`/`Archive`/`BuildArtifact`/
@@ -4430,25 +4424,12 @@ pub mod formatter {
                     jsc::JSType::Cell,
                 );
             } else if js_type != jsc::JSType::DOMWrapper {
-                if *remove_before_recurse {
-                    *remove_before_recurse = false;
-                    self.visited_remove(value);
-                }
-
                 if value.is_callable() {
-                    *remove_before_recurse = true;
                     return self.print_as::<C>(Tag::Function, writer_, value, js_type);
                 }
 
-                *remove_before_recurse = true;
                 return self.print_as::<C>(Tag::Object, writer_, value, js_type);
             }
-            if *remove_before_recurse {
-                *remove_before_recurse = false;
-                self.visited_remove(value);
-            }
-
-            *remove_before_recurse = true;
             self.print_as::<C>(Tag::Object, writer_, value, jsc::JSType::Event)
         }
 

@@ -424,12 +424,7 @@ impl RunCommand {
         }
 
         let image_path = win::exe_path_w().as_slice();
-        // SAFETY: GetTempPathW writes at most `nBufferLength` WCHARs (incl.
-        // trailing NUL) into `buf`.
-        let temp_len = unsafe { win::GetTempPathW(buf.len() as u32, buf.as_mut_ptr()) } as usize;
-
-        let (mut len, name) = if temp_len > 0
-            && temp_len < buf.len()
+        let (mut len, name) = if let Ok(temp_len) = win::GetTempPathW(buf)
             && drive(&buf[..temp_len]).is_some_and(|temp| Some(temp) == drive(image_path))
         {
             // Ends with a separator.
@@ -469,10 +464,7 @@ impl RunCommand {
     ) -> Option<&'a ZStr> {
         for shell in Self::SHELLS_TO_SEARCH {
             if let Some(found) = bun_which::which(buf, path, cwd, shell) {
-                // `which()` writes a NUL-terminated path into `buf` and
-                // returns a borrow of it; reborrow as `&ZStr`.
-                let len = found.len();
-                return Some(ZStr::from_buf(buf, len));
+                return Some(found);
             }
         }
 
@@ -490,8 +482,7 @@ impl RunCommand {
             if bun_sys::is_executable_file_path(shell) {
                 let body = shell.as_bytes();
                 buf[..body.len()].copy_from_slice(body);
-                buf[body.len()] = 0;
-                return Some(ZStr::from_buf(buf, body.len()));
+                return Some(ZStr::nul_terminate(buf, body.len()));
             }
         }
 

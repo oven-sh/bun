@@ -477,23 +477,15 @@ impl<const SSL: bool> NewSocket<SSL> {
     /// The wrapper takes over `this`.
     pub(crate) fn to_js(this: RefPtr<Self>, global: &JSGlobalObject) -> JSValue {
         jsc::mark_binding!();
-        // The codegen wrappers are monomorphic in `TCPSocket`/`TLSSocket`, hence the casts.
         let ptr = this.into_raw();
-        let value = if SSL {
-            js_TLSSocket::to_js(ptr.cast(), global)
-        } else {
-            js_TCPSocket::to_js(ptr.cast(), global)
-        };
-        debug_assert!(
-            Some(ptr.cast::<c_void>())
-                == if SSL {
-                    js_TLSSocket::from_js(&value).map(|p| p.as_ptr().cast())
-                } else {
-                    js_TCPSocket::from_js(&value).map(|p| p.as_ptr().cast())
-                },
-            "JS{{TCP,TLS}}Socket.toJS: C ABI round-trip mismatch",
-        );
-        value
+        // SAFETY: `SSL` tells which of the two types `Self` is, so this is the `RefPtr` given up above.
+        unsafe {
+            if SSL {
+                js_TLSSocket::to_js(RefPtr::from_raw(ptr.cast()), global)
+            } else {
+                js_TCPSocket::to_js(RefPtr::from_raw(ptr.cast()), global)
+            }
+        }
     }
     pub(crate) fn data_set_cached(this: JSValue, global: &JSGlobalObject, value: JSValue) {
         jsc::mark_binding!();
@@ -587,8 +579,6 @@ impl<const SSL: bool> NewSocket<SSL> {
                     bun_core::ZBox::from_bytes(bun_core::ip_address::strip_ipv6_brackets(host));
                 let port = *port;
                 // `host` borrow ends here; `this.connection` no longer borrowed.
-                // `ZBox` guarantees a trailing NUL; host bytes contain no interior NUL.
-                let host_c = hostz.as_zstr().as_cstr();
 
                 // Bind to the requested local address before connecting, if any.
                 let local = this.local_binding.get();
@@ -599,9 +589,9 @@ impl<const SSL: bool> NewSocket<SSL> {
                     match group.connect(
                         kind,
                         ssl_ctx,
-                        host_c,
+                        &hostz,
                         c_int::from(port),
-                        local_z.as_ref().map(|(z, p)| (z.as_zstr().as_cstr(), *p)),
+                        local_z.as_ref().map(|(z, p)| (z.as_zstr(), *p)),
                         flags,
                         core::mem::size_of::<*mut c_void>() as c_int,
                     ) {
@@ -2449,7 +2439,7 @@ impl<const SSL: bool> NewSocket<SSL> {
     /// Vectored raw write for plain-TCP sockets: all chunks reach the fd in one
     /// writev. Callers guarantee this socket has no TLS layer (raw writes bypass
     /// SSL framing). Updates bytes_written like the scalar path.
-    pub(crate) fn write_vectored_raw(&self, iov: &[bun_uws_sys::UsIoVec]) -> i32 {
+    pub(crate) fn write_vectored_raw(&self, iov: &[bun_uws_sys::UsIoVec<'_>]) -> i32 {
         let socket = self.socket.get();
         if socket.is_shutdown() || socket.is_closed() {
             return -1;
@@ -4494,19 +4484,10 @@ pub(crate) fn create_socket_pair(cx: &mut JsScope<'_>) -> JsResult<[c_int; 2]> {
 
     #[cfg(not(windows))]
     {
-        let mut fds_: [libc::c_int; 2] = [0, 0];
-        // SAFETY: libc FFI.
-        let rc =
-            unsafe { libc::socketpair(libc::AF_UNIX, libc::SOCK_STREAM, 0, fds_.as_mut_ptr()) };
-        if rc != 0 {
-            let err = sys::Error::from_code(sys::get_errno(rc), sys::Tag::socketpair);
-            return Err(global.throw_value(err.to_js(global)));
+        match sys::socketpair(libc::AF_UNIX, libc::SOCK_STREAM, 0, true) {
+            Ok(pair) => Ok(pair.map(sys::Fd::native)),
+            Err(err) => Err(global.throw_value(err.to_js(global))),
         }
-
-        let _ = sys::update_nonblocking(sys::Fd::from_native(fds_[0]), true);
-        let _ = sys::update_nonblocking(sys::Fd::from_native(fds_[1]), true);
-
-        Ok(fds_)
     }
 }
 

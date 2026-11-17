@@ -7,7 +7,7 @@
 import { $ } from "bun";
 import { beforeAll, describe, expect, setDefaultTimeout, test } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
-import { existsSync, mkdirSync, renameSync, symlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, renameSync, symlinkSync, writeFileSync } from "node:fs";
 import path from "path";
 import { createTestBuilder, sortedShellOutput } from "../util";
 const TestBuilder = createTestBuilder(import.meta.path);
@@ -145,9 +145,23 @@ foo/
     }
   });
 
-  // The DirTask parent/child hand-off had a lost-wakeup window between
-  // `subtask_count.load() > 1` and `need_to_wait.store(true)`: the last
-  // child could decrement and read `need_to_wait == false` in between,
+  test("-dv prints the directory it removed", async () => {
+    using dir = tempDir("rm-dv", { captured: {}, redirected: {} });
+    const captured = await $`rm -dv captured`.cwd(String(dir)).quiet();
+    const redirected = await $`rm -dv redirected > out`.cwd(String(dir)).quiet();
+    expect({
+      captured: { output: captured.stdout.toString(), exitCode: captured.exitCode },
+      redirected: { output: await Bun.file(path.join(String(dir), "out")).text(), exitCode: redirected.exitCode },
+      left: readdirSync(String(dir)),
+    }).toEqual({
+      captured: { output: "captured\n", exitCode: 0 },
+      redirected: { output: "redirected\n", exitCode: 0 },
+      left: ["out"],
+    });
+  });
+
+  // The DirTask parent/child hand-off had a lost-wakeup window: the last
+  // child could finish before the parent had said that it was waiting,
   // stranding the parent DirTask forever. A directory with exactly one
   // subdirectory is the minimal trigger; the window is a few instructions
   // so this is a stress probe rather than a deterministic repro.

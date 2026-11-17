@@ -842,6 +842,13 @@ pub fn copy<'a>(buf: &'a mut [u8], src: &[u8]) -> &'a [u8] {
     &buf[0..len]
 }
 
+/// Copies `src` into `buf` to NUL-terminate it. `None` if it does not fit.
+pub fn copy_z<'a>(buf: &'a mut [u8], src: &[u8]) -> Option<&'a crate::ZStr> {
+    *buf.get_mut(src.len())? = 0;
+    buf[..src.len()].copy_from_slice(src);
+    Some(crate::ZStr::from_buf(buf, src.len()))
+}
+
 /// startsWith except it checks for non-empty strings
 pub fn has_prefix(self_: &[u8], str: &[u8]) -> bool {
     !str.is_empty() && starts_with(self_, str)

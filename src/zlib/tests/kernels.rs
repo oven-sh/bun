@@ -7,7 +7,7 @@ use crate::plain;
 #[unsafe(no_mangle)]
 unsafe extern "C" fn highway_crc32(state: u32, bytes: *const u8, len: usize) -> u64 {
     assert!(len >= 4 || !cfg!(target_arch = "x86_64"));
-    if cfg!(target_arch = "x86_64") && len % 2 == 0 {
+    if cfg!(target_arch = "x86_64") && state % 2 == 0 {
         // As on a CPU that has no instruction for it.
         return u64::MAX;
     }
@@ -74,7 +74,8 @@ unsafe extern "C" fn highway_repeat(from: *const u8, to: *mut u8, period: usize,
             slice::from_raw_parts_mut(to, len + 31),
         )
     };
-    for (to, &from) in to.iter_mut().zip(from[..period].iter().cycle()) {
+    to[len..].fill(0xa5);
+    for (to, &from) in to[..len].iter_mut().zip(from[..period].iter().cycle()) {
         *to = from;
     }
 }

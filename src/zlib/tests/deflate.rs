@@ -145,7 +145,12 @@ fn session(level: i32, mut strategy: i32, seed: u64) -> u32 {
         }
         let mut piece = &input[read..];
         if random.below(4) == 0 {
-            step(&mut deflater, &mut piece, &mut out, 200_000, Flush::Block).unwrap();
+            let status = step(&mut deflater, &mut piece, &mut out, 200_000, Flush::Block);
+            // Behind the system in a gzip header.
+            note(format!(
+                "{status:?} {}",
+                crc32(0, out.get(10..).unwrap_or_default())
+            ));
         } else {
             for _ in 0..1_000_000 {
                 let room = random.up_to(max_room);
@@ -169,16 +174,16 @@ fn calls_in_any_order_give_what_zlib_ng_gives() {
     /// From zlib-ng 2.3.3, by the level and the strategy at the start.
     #[rustfmt::skip]
     const EXPECTED: [[u32; 5]; 10] = [
-        [0x158a_3599, 0x31ed_386b, 0x07a0_3ff8, 0x7f31_cb39, 0x7fc2_3f47],
-        [0xf820_4b6d, 0xd5b9_597f, 0x4827_ee6b, 0xa7cb_534a, 0x931c_8bdd],
-        [0xbfae_d565, 0x95e7_f74f, 0x144f_23a9, 0xefd2_59e4, 0x6fe6_7bb3],
-        [0x61ff_786a, 0x20d4_f44e, 0x7494_5ea2, 0x6602_b8a8, 0x62bd_ffa0],
-        [0x0bbb_ad22, 0x29ce_27f7, 0xc87c_ebe0, 0x9a15_5488, 0x38f9_f59c],
-        [0xbe6b_6f5d, 0xa47f_46fe, 0xc150_86f1, 0x5e3d_bea5, 0x4c1b_2c3d],
-        [0xcd26_7063, 0xefe9_d1da, 0x6ef9_dc62, 0x1c22_f737, 0x19c9_4d7a],
-        [0x7680_8aec, 0x62d2_d0e6, 0x93cb_dc79, 0xc9db_d83a, 0xb531_10cd],
-        [0x9af1_8c74, 0x2ba6_4091, 0x3647_86ec, 0xfb04_7891, 0x7837_2fdf],
-        [0xb4bc_a60a, 0x568e_f177, 0x03a6_fcb2, 0x2459_2fa7, 0x3b64_928d],
+        [0x7456_c348, 0xca2c_f35a, 0xb7a3_f7e0, 0x50b8_fec1, 0x4721_0046],
+        [0xb6d8_b25b, 0xa7d2_807a, 0x7a9a_3e41, 0x2bb7_0661, 0x19c3_0010],
+        [0xf04f_7c39, 0xad33_f143, 0x04fe_9f99, 0x0950_ca5f, 0x2ffd_c193],
+        [0x4be2_87ba, 0xd17a_875d, 0xdfa5_0dae, 0xfd0e_4369, 0xda68_da84],
+        [0x2bb1_09fb, 0xec3f_1cb7, 0xcfc5_afa2, 0xbe46_838f, 0x7867_1b97],
+        [0x55cc_c07e, 0x3203_5aa3, 0x90a4_f9a8, 0xb7fe_6797, 0x67cf_6dbe],
+        [0x4fa1_d2a0, 0xbdc6_1165, 0xca25_1029, 0x3e5d_3e03, 0x4aa9_9c4f],
+        [0x6219_9654, 0x02e4_9533, 0x047b_ed37, 0x4fd7_950e, 0x72e1_e0a0],
+        [0x0d8d_2b25, 0xfa24_0a61, 0xe252_515d, 0x3733_a274, 0x7bdb_3e1e],
+        [0x7c01_7d43, 0xbe1e_b051, 0x9623_575b, 0xe7c2_11fd, 0x5591_d790],
     ];
     let found: [[u32; 5]; 10] = std::array::from_fn(|level| {
         std::array::from_fn(|strategy| {
@@ -195,15 +200,15 @@ fn and_so_do_some_that_few_sequences_are_like() {
     /// The arguments of `session()`, and the result with zlib-ng 2.3.3.
     #[rustfmt::skip]
     const RARE: &[(i32, i32, u64, u32)] = &[
-        (0, 0, 1153, 0xfa28_4898), (0, 0, 2998, 0xfcee_8f7c), (1, 0, 130, 0x3a3c_eed9), (1, 0, 1811, 0xa279_8d4d),
-        (2, 0, 91, 0x06ff_1791), (2, 0, 141, 0xee08_6067), (2, 0, 220, 0xe328_6ecb), (2, 0, 387, 0xf632_0ead),
-        (5, 0, 248, 0x5331_8687), (5, 0, 296, 0xa03a_5b17), (6, 0, 1774, 0x8a8d_ca38), (6, 2, 205, 0xeca6_fca0),
-        (6, 2, 2224, 0x2954_e4ca), (6, 3, 339, 0xdda6_19ed), (7, 0, 75, 0x5054_ab81), (7, 0, 236, 0x6eb7_f4a7),
-        (7, 0, 1446, 0x11d1_bf7a), (8, 0, 116, 0x44b9_e4a8), (8, 0, 420, 0x6661_01d5), (8, 0, 576, 0x6558_2ae1),
-        (8, 0, 1220, 0x98ca_b372), (8, 1, 51, 0xaaed_8204), (8, 1, 140, 0x5513_7fed), (8, 1, 1076, 0x7deb_17c4),
-        (9, 0, 182, 0xea16_3040), (9, 0, 270, 0x7c59_c9e1), (9, 0, 279, 0xf497_c3e6), (9, 0, 290, 0x0dee_141e),
-        (9, 0, 1958, 0x074c_9550), (9, 4, 665, 0x38c1_ccee), (9, 4, 1340, 0xa0af_8b43), (9, 4, 1474, 0xd885_d9ad),
-        (9, 4, 1861, 0xae28_b538), (9, 4, 2217, 0x127c_d0c4),
+        (0, 0, 1153, 0xfa28_4898), (0, 0, 2998, 0xfcee_8f7c), (1, 0, 130, 0x3a3c_eed9), (1, 0, 1811, 0x996b_a1f0),
+        (2, 0, 91, 0x06ff_1791), (2, 0, 141, 0x49ab_3ea9), (2, 0, 220, 0x50f3_16d3), (2, 0, 387, 0xf632_0ead),
+        (5, 0, 248, 0x5331_8687), (5, 0, 296, 0xa03a_5b17), (5, 0, 21359, 0x1a0f_de83), (6, 0, 1774, 0xc12f_eeb3),
+        (6, 2, 205, 0x11f0_a577), (6, 2, 2224, 0x2954_e4ca), (6, 3, 339, 0xdda6_19ed), (7, 0, 75, 0xb795_0925),
+        (7, 0, 236, 0x6eb7_f4a7), (7, 0, 1446, 0x11d1_bf7a), (8, 0, 116, 0x44b9_e4a8), (8, 0, 420, 0x6661_01d5),
+        (8, 0, 576, 0x1e19_a825), (8, 0, 1220, 0x98ca_b372), (8, 1, 51, 0xaaed_8204), (8, 1, 140, 0x7753_210c),
+        (8, 1, 1076, 0x958a_7ff9), (9, 0, 182, 0xea16_3040), (9, 0, 270, 0x0cb9_ce59), (9, 0, 279, 0x3205_5af5),
+        (9, 0, 290, 0x0dee_141e), (9, 0, 1958, 0x074c_9550), (9, 4, 665, 0x38c1_ccee), (9, 4, 1340, 0x6ddc_d3f7),
+        (9, 4, 1474, 0xd885_d9ad), (9, 4, 1861, 0x475c_bdbd), (9, 4, 2217, 0x5434_d741),
     ];
     for &(level, strategy, seed, expected) in RARE {
         assert_eq!(
@@ -285,23 +290,75 @@ fn a_full_flush_does_away_with_the_dictionary() {
 
 #[test]
 fn the_window_may_slide_any_number_of_times_at_level_0() {
-    let input = Random::new(1).mixed(140_000, 512);
-    let (stored, compressed) = input.split_at(138_000);
-    let mut deflater = Deflater::new(Container::Zlib, options(0, 0, 9, 8)).unwrap();
-    let mut out = Vec::new();
-    for piece in stored.chunks(300) {
+    let input = Random::new(53).mixed(1600, 512);
+    let (first, last) = input.split_at(700);
+    // How much is stored in between, and in pieces of what size.
+    let stored = [
+        (90, 90),
+        (400, 90),
+        (900, 90),
+        (1500, 90),
+        (138_000, 300),
+        (511, 999),
+        (512, 999),
+        (700, 999),
+    ];
+    let found = [2, 6, 7, 9].map(|level| {
+        stored.iter().fold(0, |hash, &(len, piece)| {
+            let mut deflater = Deflater::new(Container::Zlib, options(level, 0, 9, 8)).unwrap();
+            let (mut out, stored) = (Vec::new(), Random::new(60).mixed(len, 512));
+            for (level, input, piece) in
+                [(level, first, 700), (0, &stored, piece), (level, last, 900)]
+            {
+                let is_set = deflater.set_params(level.try_into().unwrap(), Strategy::Default);
+                assert_eq!(is_set, Ok(true));
+                for mut piece in input.chunks(piece) {
+                    step(&mut deflater, &mut piece, &mut out, 9999, Flush::Block).unwrap();
+                }
+            }
+            deflater
+                .deflate_to_vec(b"", &mut out, Flush::Finish)
+                .unwrap();
+            check_stream(
+                Container::Zlib,
+                &mut out,
+                &[],
+                &[first, &stored, last].concat(),
+            );
+            crc32(hash, &out)
+        })
+    });
+    // From zlib-ng 2.3.3.
+    assert_eq!(found, [0x8663_2ef7, 0xd183_39fb, 0x4fe5_3af9, 0xf8e7_fd96]);
+}
+
+#[test]
+fn slides_at_level_0_do_not_count_after_reset() {
+    let input = Random::new(1).bytes(400);
+    let with_dictionary = |deflater: &mut Deflater| {
+        let mut out = Vec::new();
+        deflater.set_dictionary(&input).unwrap();
+        assert_eq!(
+            deflater.set_params(Level::DEFAULT, Strategy::Default),
+            Ok(true)
+        );
         deflater
-            .deflate_to_vec(piece, &mut out, Flush::Block)
+            .deflate_to_vec(&input[200..], &mut out, Flush::Finish)
             .unwrap();
+        out
+    };
+    let new = || Deflater::new(Container::Raw, options(0, 0, 9, 8)).unwrap();
+    for len in [1100, 5000] {
+        let mut deflater = new();
+        for piece in vec![7; len].chunks(100) {
+            deflater
+                .deflate_to_vec(piece, &mut Vec::new(), Flush::Sync)
+                .unwrap();
+        }
+        deflater.reset();
+        let out = with_dictionary(&mut deflater);
+        assert!(out.len() < 9 && out == with_dictionary(&mut new()));
     }
-    assert_eq!(
-        deflater.set_params(Level::DEFAULT, Strategy::Default),
-        Ok(true)
-    );
-    deflater
-        .deflate_to_vec(compressed, &mut out, Flush::Finish)
-        .unwrap();
-    check_stream(Container::Zlib, &mut out, &[], &input);
 }
 
 #[test]
@@ -469,7 +526,8 @@ fn matches_stay_within_the_window() {
                 options(level, 0, window_bits, 8),
             )
             .unwrap();
-            assert!(plain::inflate(&out, &[]).max_distance <= size - 262);
+            let inflated = plain::inflate(&out, &[]);
+            assert!(inflated.bytes == input && inflated.max_distance <= size - 262);
         }
     }
 }
@@ -592,15 +650,18 @@ fn a_vec_grows_as_needed() {
 }
 
 #[test]
-fn a_flush_into_a_vec_writes_one_marker() {
+fn a_vec_has_room_for_the_marker_behind_a_short_input() {
     let mut random = Random::new(1);
     for len in 1..40 {
         let input: Vec<_> = (0..len).map(|_| 144 + random.below(112) as u8).collect();
-        for level in [0, 1, 6] {
+        for (level, flush) in [0, 1, 6]
+            .into_iter()
+            .flat_map(|level| FLUSHES.map(|it| (level, it)))
+        {
             let new = || Deflater::new(Container::Raw, options(level, 4, 15, 8)).unwrap();
             let (mut expected, mut out) = (Vec::new(), Vec::new());
-            step(&mut new(), &mut &input[..], &mut expected, 99, Flush::Sync).unwrap();
-            new().deflate_to_vec(&input, &mut out, Flush::Sync).unwrap();
+            step(&mut new(), &mut &input[..], &mut expected, 99, flush).unwrap();
+            new().deflate_to_vec(&input, &mut out, flush).unwrap();
             assert_eq!(out, expected);
         }
     }

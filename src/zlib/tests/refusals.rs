@@ -41,27 +41,29 @@ unsafe impl GlobalAlloc for Refusing {
 #[global_allocator]
 static ALLOCATOR: Refusing = Refusing;
 
-/// Once for each allocation, from which on all are refused. One that cannot be refused ends the process.
+/// Each allocation alone, and with all that follow. One that cannot be refused ends the process.
 fn refuse_each_allocation<T: PartialEq + Debug>(run: impl Fn() -> Result<T>) {
     let expected = run().unwrap();
-    for grants in 0.. {
-        GRANTS.set(Some((grants, usize::MAX)));
-        let result = run();
-        let was_refused = matches!(GRANTS.take(), Some((0, ..usize::MAX)));
-        match result {
-            Err(error) => assert!(was_refused && matches!(error, Error::Alloc(_)), "{grants}"),
-            Ok(result) => assert_eq!(result, expected),
-        }
-        if !was_refused {
-            assert!(grants > 0);
-            return;
+    for refusals in [1, usize::MAX] {
+        for grants in 0.. {
+            GRANTS.set(Some((grants, refusals)));
+            let result = run();
+            let was_refused = GRANTS.take().is_none_or(|it| it.1 < refusals);
+            match result {
+                Err(error) => assert!(was_refused && matches!(error, Error::Alloc(_)), "{grants}"),
+                Ok(result) => assert!(result == expected, "{grants}"),
+            }
+            if !was_refused {
+                assert!(grants > 0);
+                break;
+            }
         }
     }
 }
 
 #[test]
 fn refused_memory_is_an_error_when_deflating() {
-    let input = Random::new(1).mixed(300_000, 1 << 15);
+    let input = Random::new(1).mixed(200_000, 1 << 15);
     for (level, strategy) in [(0, 0), (1, 0), (2, 0), (6, 0), (9, 0), (6, 2), (6, 3)] {
         for (window_bits, memory_level) in [(9, 1), (9, 9), (15, 1), (15, 9)] {
             let options = options(level, strategy, window_bits, memory_level);
@@ -76,7 +78,7 @@ fn refused_memory_is_an_error_when_deflating() {
                 Ok(out)
             });
             refuse_each_allocation(|| {
-                let (mut out, mut pieces) = (Vec::new(), input.chunks(100_000));
+                let (mut out, mut pieces) = (Vec::new(), input.chunks(70_000));
                 let mut deflater = Deflater::new(deflate::Container::Zlib, options)?;
                 deflater.set_dictionary(&input[..40_000])?;
                 deflater.deflate_limited(&mut &input[..9], &mut out, 99, Flush::Partial)?;
@@ -92,7 +94,10 @@ fn refused_memory_is_an_error_when_inflating() {
     let input = Random::new(1).mixed(100_000, 1 << 15);
     let stored = |is_last| {
         let mut stream = Writer::default();
-        stream.stored(is_last, &input[..999]).fixed(true).copy(9, 9);
+        stream
+            .stored(is_last, &input[..999])
+            .fixed(true)
+            .copy(9, 999);
         stream.end_block().finish()
     };
     let lengths = [

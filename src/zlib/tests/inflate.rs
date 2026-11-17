@@ -23,11 +23,7 @@ fn step(
     };
     let written = out.len();
     match status {
-        Ok(Status::NeedsInput) => {
-            let (mut more, status) = (Vec::with_capacity(1), Ok(Status::NeedsInput));
-            assert_eq!(inflater.inflate_to_vec(input, &mut more, 1), status);
-            assert!(input.is_empty() && more.is_empty());
-        }
+        Ok(Status::NeedsInput) => assert!(input.is_empty()),
         Ok(Status::NeedsOutput) => assert_eq!(written, room),
         Ok(Status::BlockEnd) => assert!(by_blocks),
         _ => {}
@@ -39,7 +35,7 @@ fn step(
 struct Run {
     bytes: Vec<u8>,
     end: End,
-    /// Of how much each call has read and written.
+    /// Of what each call has read, written and returned, to compare with zlib-ng 2.3.3.
     calls: u32,
 }
 
@@ -61,12 +57,11 @@ fn run(
             Err(Error::Damaged(damage)) => Some(End::Damaged(damage)),
             _ => {
                 read += len - piece.len();
-                calls = crc32(calls, format!("{read} {}", bytes.len()).as_bytes());
+                let call = format!("{read} {} {status:?}", bytes.len());
+                calls = crc32(calls, call.as_bytes());
                 match status.unwrap() {
                     Status::StreamEnd => Some(End::Stream(read)),
-                    Status::NeedsInput if read == input.len() && written.len() < room => {
-                        Some(End::CutShort)
-                    }
+                    Status::NeedsInput if read == input.len() => Some(End::CutShort),
                     _ => None,
                 }
             }
@@ -84,7 +79,7 @@ fn raw_with(dictionary: &[u8]) -> Inflater {
     inflater
 }
 
-/// At once and in pieces of many sizes. Returns a hash of how much the calls have read and written.
+/// At once and in pieces of many sizes. Returns a hash of the calls.
 fn check(stream: &[u8], dictionary: &[u8], random: &mut Random) -> u32 {
     let expected = plain::inflate(stream, dictionary);
     let room = expected.bytes.len();
@@ -182,7 +177,7 @@ fn any_code_is_read_as_by_a_plain_decoder() {
                 ]
             })
     });
-    assert_eq!(calls, 0x8956_a878, "zlib-ng 2.3.3 stops elsewhere");
+    assert_eq!(calls, 0xbd90_ceae, "zlib-ng 2.3.3 stops elsewhere");
 }
 
 #[test]
@@ -212,12 +207,14 @@ fn only_a_code_for_one_symbol_or_none_may_be_incomplete() {
                 let earlier = [(286, 286), (30, 30)].map(|it| any_code(&mut random, it.0, it.1));
                 stream.dynamic(false, &earlier[0], &earlier[1]).end_block();
                 stream.dynamic(false, &with(literals, first, 260), &with(distances, 3, 9));
-                let stream = [stream.finish(), random.bytes(noise)].concat();
-                calls ^= check(&stream, b"abcdefghijklmnopqrstuvwxyz", &mut random);
+                for byte in random.bytes(noise) {
+                    stream.put(byte.into(), 8);
+                }
+                calls ^= check(&stream.finish(), b"abcdefghijklmnopqrstuvwxyz", &mut random);
             }
         }
     }
-    assert_eq!(calls, 0x55b6_292c, "zlib-ng 2.3.3 stops elsewhere");
+    assert_eq!(calls, 0x03e1_4cf2, "zlib-ng 2.3.3 stops elsewhere");
 }
 
 #[test]
@@ -284,7 +281,7 @@ fn damage_is_found_where_a_plain_decoder_finds_it() {
         stream.truncate(stream.len() - random.pick(&[0, 0, 0, 1, 9]));
         calls ^ check(&stream, &input[..random.pick(&[0, 0, 100])], &mut random)
     });
-    assert_eq!(calls, 0xc794_5e29, "zlib-ng 2.3.3 stops elsewhere");
+    assert_eq!(calls, 0x6a9e_afc4, "zlib-ng 2.3.3 stops elsewhere");
 }
 
 #[test]
@@ -324,7 +321,7 @@ fn a_long_period_may_be_broken_anywhere() {
         stream.truncate(stream.len() - random.pick(&[0, 0, 0, 50]).min(stream.len()));
         calls ^ check(&stream, &[], &mut random)
     });
-    assert_eq!(calls, 0xd5e8_5c8d, "zlib-ng 2.3.3 stops elsewhere");
+    assert_eq!(calls, 0xed9a_0245, "zlib-ng 2.3.3 stops elsewhere");
 }
 
 #[test]
@@ -390,7 +387,7 @@ fn a_few_literals_may_follow_a_stored_block() {
             }
         }
     }
-    assert_eq!(calls, 0xfc67_22bf, "zlib-ng 2.3.3 stops elsewhere");
+    assert_eq!(calls, 0x3384_ae00, "zlib-ng 2.3.3 stops elsewhere");
 }
 
 #[test]
@@ -449,6 +446,28 @@ fn a_match_that_is_out_of_reach_fails_when_there_is_room_for_it() {
 }
 
 #[test]
+fn a_small_window_is_all_that_is_kept_while_waiting_for_input() {
+    for (distance, expected) in [
+        (256, Ok(Status::StreamEnd)),
+        (257, Err(Damage::DistanceTooFarBack.into())),
+    ] {
+        let mut stream = Writer::default();
+        stream
+            .stored(false, &[7; 300])
+            .fixed(true)
+            .copy(9, distance);
+        let stream = stream.end_block().finish();
+        let (mut first, mut rest) = stream.split_at(305);
+        let mut inflater = Inflater::with_window_bits(Container::Raw, 8).unwrap();
+        assert_eq!(
+            step(&mut inflater, &mut first, 999, false).1,
+            Ok(Status::NeedsInput)
+        );
+        assert_eq!(step(&mut inflater, &mut rest, 999, false).1, expected);
+    }
+}
+
+#[test]
 fn a_small_window_is_all_that_is_kept_in_a_long_period() {
     let mut stream = Writer::default();
     stream.stored(false, &Random::new(1).bytes(600)).fixed(true);
@@ -476,6 +495,25 @@ fn a_period_is_not_taken_for_longer_than_it_is() {
         let stream = stream.copy(258, WINDOW_SIZE).end_block().finish();
         let result = run(&mut raw_with(&[]), &stream, false, || (9999, 99_999));
         assert!(result.bytes == plain::inflate(&stream, &[]).bytes, "{odd}");
+    }
+}
+
+#[test]
+fn a_period_that_has_just_been_broken_is_over() {
+    for len in 700..1000 {
+        for odd in [&[8][..], &[7, 8], &[8, 7]] {
+            let mut stream = Writer::default();
+            stream.stored(false, &vec![7; len]).fixed(true);
+            (0..126).for_each(|_| _ = stream.copy(258, 2));
+            let stream = stream
+                .literals(odd)
+                .copy(258, 2)
+                .copy(258, 2)
+                .end_block()
+                .finish();
+            let result = run(&mut raw_with(&[]), &stream, false, || (9999, 99_999));
+            assert!(result.bytes == plain::inflate(&stream, &[]).bytes, "{len}");
+        }
     }
 }
 
@@ -532,10 +570,10 @@ fn nothing_is_left_after_reset() {
     let input = random.mixed(34_000, 512);
     let whole = crate::deflate::raw(&input, 6, 8);
     let mut inflater = Inflater::new(Container::Raw);
-    for cut in (0..200)
-        .chain((200..first.len()).step_by(499))
-        .chain([first.len()])
-    {
+    let cuts = (0..200).chain((200..first.len()).step_by(499));
+    let cuts = cuts.map(|cut| (cut, random.pick(&[0, 7, 30_000, 120_000])));
+    // In the middle of the long period, and at the end.
+    for (cut, room) in cuts.chain([(first.len(), 110_000), (first.len(), 120_000)]) {
         for (next, bytes, end) in [
             (
                 &reaching,
@@ -545,7 +583,6 @@ fn nothing_is_left_after_reset() {
             (&whole, &input, End::Stream(whole.len())),
         ] {
             inflater.reset();
-            let room = random.pick(&[0, 7, 30_000, 110_000, 120_000]);
             step(&mut inflater, &mut &first[..cut], room, false)
                 .1
                 .unwrap();
@@ -581,6 +618,7 @@ fn in_gzip(raw: &[u8], plain: &[u8]) -> Vec<u8> {
 fn containers_are_read_in_pieces_of_any_size() {
     let plain = Random::new(1).mixed(500, 512);
     let raw = crate::deflate::raw(&plain, 6, 1);
+    let mut calls = 0;
     for stream in [in_zlib(&raw, &plain, None), in_gzip(&raw, &plain)] {
         let followed = [&stream[..], &[0xff; 20]].concat();
         for len in 1..70 {
@@ -591,9 +629,11 @@ fn containers_are_read_in_pieces_of_any_size() {
                     (&result.bytes, result.end),
                     (&plain, End::Stream(stream.len()))
                 );
+                calls = result.calls ^ u32::rotate_left(calls, 1);
             }
         }
     }
+    assert_eq!(calls, 0x891b_6ea9, "zlib-ng 2.3.3 stops elsewhere");
 }
 
 #[test]
@@ -787,6 +827,10 @@ fn a_dictionary_is_taken_only_when_it_is_asked_for() {
         assert_eq!(inflater.set_dictionary(b"abd"), Err(Error::WrongDictionary));
     }
     assert_eq!(inflater.set_dictionary(b"abc"), Ok(()));
+    assert_eq!(
+        step(&mut inflater, &mut input, 9, true),
+        (vec![], Ok(Status::BlockEnd))
+    );
     assert_eq!(
         step(&mut inflater, &mut input, 1, false).1,
         Ok(Status::NeedsOutput)

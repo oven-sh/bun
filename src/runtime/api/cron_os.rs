@@ -286,7 +286,11 @@ impl OsJob {
         match read {
             ReadResult::Pending => None,
             ReadResult::Done => Some(Ok(self.output.take_buffer())),
-            ReadResult::Err(err) => Some(Err(err)),
+            ReadResult::Err(err) => {
+                // As EOF does, so that a child that is still writing gets EPIPE and exits.
+                self.output.deinit();
+                Some(Err(err))
+            }
         }
     }
 

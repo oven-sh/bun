@@ -34,8 +34,6 @@ pub mod http_thread;
 pub mod init_error;
 #[path = "InternalState.rs"]
 pub mod internal_state;
-#[path = "lshpack.rs"]
-pub mod lshpack;
 #[path = "ProxyTunnel.rs"]
 pub mod proxy_tunnel;
 mod registry;

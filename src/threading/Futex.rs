@@ -186,63 +186,15 @@ mod windows_impl {
 #[cfg(target_vendor = "apple")]
 mod darwin_impl {
     use super::*;
-    use bun_core::time::NS_PER_US;
     use bun_sys::darwin as c;
-    use core::ffi::c_void;
 
     pub(super) fn wait(
         ptr: &AtomicU32,
         expect: u32,
         timeout: Option<u64>,
     ) -> Result<(), TimeoutError> {
-        // Darwin XNU 7195.50.7.100.1 introduced __ulock_wait2 and migrated code paths (notably pthread_cond_t) towards it:
-        // https://github.com/apple/darwin-xnu/commit/d4061fb0260b3ed486147341b72468f836ed6c8f#diff-08f993cc40af475663274687b7c326cc6c3031e0db3ac8de7b24624610616be6
-        //
-        // This XNU version appears to correspond to 11.0.1:
-        // https://kernelshaman.blogspot.com/2021/01/building-xnu-for-macos-big-sur-1101.html
-        //
-        // ulock_wait() uses 32-bit micro-second timeouts where 0 = INFINITE or no-timeout
-        // ulock_wait2() uses 64-bit nano-second timeouts (with the same convention)
-        // Bun's deployment target is macOS 13+, so ulock_wait2 is always available.
-        let supports_ulock_wait2: bool = true;
-
-        let mut timeout_ns: u64 = 0;
-        if let Some(delay) = timeout {
-            debug_assert!(delay != 0); // handled by timedWait()
-            timeout_ns = delay;
-        }
-
-        // If we're using `__ulock_wait` and `timeout` is too big to fit inside a `u32` count of
-        // micro-seconds (around 70min), we'll request a shorter timeout. This is fine (users
-        // should handle spurious wakeups), but we need to remember that we did so, so that
-        // we don't return `Timeout` incorrectly. If that happens, we set this variable to
-        // true so that we we know to ignore the ETIMEDOUT result.
-        let mut timeout_overflowed = false;
-
-        let addr: *const c_void = ptr.as_ptr().cast();
-        let flags = c::UL {
-            op: c::ULOp::COMPARE_AND_WAIT,
-            no_errno: true,
-            ..Default::default()
-        };
-        // SAFETY: addr points at a live AtomicU32; flags/expect/timeout are plain values.
-        let status = unsafe {
-            'blk: {
-                if supports_ulock_wait2 {
-                    break 'blk c::__ulock_wait2(flags, addr, expect as u64, timeout_ns, 0);
-                }
-
-                let timeout_us = match u32::try_from(timeout_ns / NS_PER_US) {
-                    Ok(v) => v,
-                    Err(_) => {
-                        timeout_overflowed = true;
-                        u32::MAX
-                    }
-                };
-
-                c::__ulock_wait(flags, addr, expect as u64, timeout_us)
-            }
-        };
+        debug_assert!(timeout != Some(0)); // handled by `super::wait`
+        let status = c::ulock_wait(ptr, expect, timeout.unwrap_or(0));
 
         if status >= 0 {
             return Ok(());
@@ -256,30 +208,17 @@ mod darwin_impl {
             // pthread/libdispatch on darwin bother to handle it. In this case we'll return
             // without waiting, but the caller should retry anyway.
             c::E::EFAULT => Ok(()),
-            // Only report Timeout if we didn't have to cap the timeout
             c::E::ETIMEDOUT => {
                 debug_assert!(timeout.is_some());
-                if !timeout_overflowed {
-                    return Err(TimeoutError::Timeout);
-                }
-                Ok(())
+                Err(TimeoutError::Timeout)
             }
             _ => panic!("Unexpected __ulock_wait() return code"),
         }
     }
 
     pub(super) fn wake(ptr: *const AtomicU32, max_waiters: u32) {
-        let flags = c::UL {
-            op: c::ULOp::COMPARE_AND_WAIT,
-            no_errno: true,
-            wake_all: max_waiters > 1,
-            ..Default::default()
-        };
-
         loop {
-            let addr: *const c_void = ptr.cast();
-            // SAFETY: __ulock_wake only keys on `addr`; it need not be live (`super::wake_raw`).
-            let status = unsafe { c::__ulock_wake(flags, addr, 0) };
+            let status = c::ulock_wake(ptr, max_waiters > 1);
 
             if status >= 0 {
                 return;
@@ -307,29 +246,11 @@ mod linux_impl {
         timeout: Option<u64>,
     ) -> Result<(), TimeoutError> {
         use bun_sys::linux;
-        let mut ts = linux::timespec { sec: 0, nsec: 0 };
-        if let Some(timeout_ns) = timeout {
-            ts.sec = <_>::try_from(timeout_ns / NS_PER_S).unwrap();
-            ts.nsec = <_>::try_from(timeout_ns % NS_PER_S).unwrap();
-        }
-
-        // SAFETY: ptr.as_ptr() is a valid *const u32 for the duration of the call; the
-        // timespec pointer is either null or points at the stack local above.
-        let rc = unsafe {
-            linux::futex_4arg(
-                ptr.as_ptr().cast(),
-                linux::FutexOp {
-                    cmd: linux::FutexCmd::WAIT,
-                    private: true,
-                },
-                expect,
-                if timeout.is_some() {
-                    &raw const ts
-                } else {
-                    core::ptr::null()
-                },
-            )
-        };
+        let ts = timeout.map(|timeout_ns| linux::timespec {
+            sec: <_>::try_from(timeout_ns / NS_PER_S).unwrap(),
+            nsec: <_>::try_from(timeout_ns % NS_PER_S).unwrap(),
+        });
+        let rc = linux::futex_wait(ptr, expect, ts.as_ref());
 
         match linux::E::init(rc) {
             linux::E::SUCCESS => Ok(()), // notified by `wake()`
@@ -357,18 +278,7 @@ mod linux_impl {
             Ok(v) => v as u32,
             Err(_) => i32::MAX as u32,
         };
-        // SAFETY: a private FUTEX_WAKE only keys on the address (`get_futex_key`); it
-        // need not be live (see `super::wake_raw`).
-        let rc = unsafe {
-            linux::futex_3arg(
-                ptr.cast(),
-                linux::FutexOp {
-                    cmd: linux::FutexCmd::WAKE,
-                    private: true,
-                },
-                val,
-            )
-        };
+        let rc = linux::futex_wake(ptr, val);
 
         match linux::E::init(rc) {
             linux::E::SUCCESS => {} // successful wake up

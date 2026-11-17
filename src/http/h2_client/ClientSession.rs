@@ -17,7 +17,6 @@ use crate::http_context::{HTTPSocket, HttpContextId, PeerVerification};
 use crate::http_request_body::HTTPRequestBody;
 use crate::http_thread::WriteMessageType;
 use crate::internal_state::HTTPStage;
-use crate::lshpack;
 use crate::registry::Registry;
 use crate::signals;
 use crate::ssl_config::{self, SSLConfig};
@@ -45,7 +44,8 @@ type u24 = u32;
 
 /// Owned by `HTTPThread::active_h2_sessions` or by the keep-alive pool.
 pub struct ClientSession {
-    pub(crate) hpack: lshpack::HpackHandle, // RAII owner; Deref/DerefMut to lshpack::HPACK
+    pub(crate) encoder: bun_hpack::Encoder,
+    pub(crate) decoder: bun_hpack::Decoder,
     pub(crate) socket: Socket,
     context: HttpContextId,
     registry_index: u32,
@@ -116,11 +116,6 @@ pub struct ClientSession {
 
     pub(crate) remote_max_concurrent_streams: u32,
     pub(crate) remote_initial_window_size: u32,
-    /// SETTINGS_HEADER_TABLE_SIZE received from the peer that hasn't yet been
-    /// acknowledged with a Dynamic Table Size Update (RFC 7541 §6.3) at the
-    /// start of a header block. lshpack's encoder doesn't emit that opcode
-    /// itself, so writeRequest must prepend it before the first encode call.
-    pub(crate) pending_hpack_enc_capacity: Option<u32>,
 
     /// DATA bytes consumed since the last connection-level WINDOW_UPDATE.
     pub(crate) conn_unacked_bytes: u32,
@@ -356,7 +351,8 @@ impl ClientSession {
     /// Registers a session for a socket whose ALPN selected h2 and opens the first stream without waiting for SETTINGS.
     pub(crate) fn start(thread: &mut HTTPThread, socket: Socket, mut client: InFlightRequest) {
         let mut this = Box::new(ClientSession {
-            hpack: lshpack::HpackHandle::new(4096),
+            encoder: bun_hpack::Encoder::new(),
+            decoder: bun_hpack::Decoder::new(),
             socket,
             context: HttpContextId::of(&client),
             registry_index: 0,
@@ -392,7 +388,6 @@ impl ClientSession {
             encode_scratch: Vec::new(),
             remote_max_concurrent_streams: 100,
             remote_initial_window_size: wire::DEFAULT_WINDOW_SIZE,
-            pending_hpack_enc_capacity: None,
             conn_unacked_bytes: 0,
         });
         super::live_sessions.fetch_add(1, Ordering::Relaxed);

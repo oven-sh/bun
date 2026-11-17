@@ -1030,7 +1030,7 @@ impl Round<'_> {
 
     #[optimize(size)]
     fn mappings(&mut self) {
-        let byte = &[self.digests.round as u8][..];
+        let byte = &self.digests.round.to_le_bytes()[..1];
         for text in [
             self.some_mappings(),
             [b"AAAA", byte, b","].concat(),

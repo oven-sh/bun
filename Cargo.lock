@@ -1675,6 +1675,7 @@ dependencies = [
  "bun_sys",
  "bun_sys_jsc",
  "bun_tcc_sys",
+ "bun_test_schedule",
  "bun_text_diff",
  "bun_threading",
  "bun_trim",
@@ -2080,6 +2081,10 @@ dependencies = [
  "strum",
  "thiserror",
 ]
+
+[[package]]
+name = "bun_test_schedule"
+version = "0.0.0"
 
 [[package]]
 name = "bun_text_diff"

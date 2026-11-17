@@ -29,6 +29,14 @@
 # (Verified still failing on both Windows lanes, build 87834.)
 [ WINDOWS ] test/js/node/test/parallel/test-net-pingpong.js [ FAIL ] # named-pipe half-close: count 1000 !== 1001 at close
 
+# Windows-only gap: spawn() cannot take a named-pipe net.Socket as a stdio
+# entry. The handle of the pipe has no fd (conn._handle.fd is -1), so Bun.spawn
+# throws ERR_INVALID_ARG_TYPE "file descriptor must be a positive integer".
+# Node gives the pipe handle itself to uv_spawn (UV_INHERIT_STREAM) and passes.
+# Runs on POSIX, where common.PIPE is a unix socket that has an fd.
+# (Verified failing on Windows x64 with 1.4.3-canary.1+9cba9036a, outside CI.)
+[ WINDOWS ] test/js/node/test/parallel/test-child-process-server-close.js [ FAIL ] # spawn() rejects a named-pipe net.Socket as stdio
+
 # Cluster workers sharing a listen port behave differently on Linux, where
 # SO_REUSEPORT load-balances across the workers' own listeners instead of the
 # primary distributing accepted connections; the upstream test's expectations

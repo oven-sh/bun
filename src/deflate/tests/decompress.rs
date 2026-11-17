@@ -1,5 +1,6 @@
 use crate::support::{Random, copy, crc32, with_failing};
 use bun_deflate::{Decompressed, Error, Output, Result, gunzip, inflate, inflate_message};
+use core::mem::MaybeUninit;
 
 type Decode = fn(&[u8], Output<'_>) -> Result<Decompressed>;
 
@@ -742,6 +743,39 @@ fn each_room() {
 }
 
 #[test]
+fn capacity_far_ahead_is_left_alone() {
+    const UNUSED: u8 = 0xAA;
+    /// The longest step, a page, and the room that the fast loop leaves.
+    const AFTER_LONG: usize = 13 * 1024;
+    const AFTER_SHORT: usize = 1024;
+    let check = |stream: &Stream, ahead: usize| {
+        let prefix = [UNUSED; 30000];
+        let vec = &mut Vec::with_capacity(200_000);
+        vec.spare_capacity_mut().fill(MaybeUninit::new(UNUSED));
+        vec.extend(prefix);
+        let (allocation, limit) = ((vec.as_ptr(), vec.capacity()), usize::MAX);
+        assert!(inflate(&stream.bytes, Output::Vec { vec, limit }).is_ok());
+        assert!(*vec == [&prefix, &stream.data[..]].concat());
+        assert_eq!((vec.as_ptr(), vec.capacity()), allocation);
+        let mut far = vec.spare_capacity_mut()[ahead..].iter();
+        // SAFETY: all of this allocation was written to above.
+        assert!(far.all(|byte| unsafe { byte.assume_init() } == UNUSED));
+    };
+    check(Stream::default().stored(true, &[1; 20000]), 0);
+    check(Stream::default().fixed(true).end(), AFTER_SHORT);
+    check(
+        Stream::default().fixed(true).literals(&[1; 5000]).end(),
+        AFTER_LONG,
+    );
+    let mut stream = Stream::default();
+    stream.fixed(true).literals(&[1]);
+    for _ in 0..6 {
+        (0..50).for_each(|_| _ = stream.copy(258, 1));
+        check(stream.clone().end(), AFTER_LONG);
+    }
+}
+
+#[test]
 fn stored_block_that_neither_is_there_nor_fits() {
     refuses(inflate, &[1, 9, 0, !9, 0xFF, 1, 2, 3], 8);
 }
@@ -767,6 +801,7 @@ fn messages() {
     }
     gives(inflate_message, &[0], 1, b"");
     refuses(inflate_message, &[], 0);
+    refuses(inflate_message, &[3], 0);
     let stream = final_sample();
     accepts(inflate_message, &stream.bytes, &stream.data);
 }

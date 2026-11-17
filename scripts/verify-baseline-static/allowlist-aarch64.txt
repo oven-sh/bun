@@ -345,6 +345,13 @@ __arm_tpidr2_save  [SVE]
 
 
 # ----------------------------------------------------------------------------
+# Bun Adler-32 (src/jsc/bindings/highway_checksums.cpp).
+# Gate: BUN_HWY_DISPATCH (highway_dispatch.h) via hwy::SupportedTargets. (1 symbol)
+# ----------------------------------------------------------------------------
+_ZN3bun11N_NEON_BF16L7Adler32EjPKhm  [DotProd]
+
+
+# ----------------------------------------------------------------------------
 # Bun.Image highway kernels (image_resize.cpp). Gate: BUN_HWY_DISPATCH ->
 # hwy::SupportedTargets() via getauxval(AT_HWCAP). Same gate as the
 # highway_strings.cpp block above.

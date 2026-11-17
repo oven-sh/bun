@@ -485,7 +485,7 @@ describe("WebP codec: Highway runtime dispatch", () => {
 });
 
 describe("DEFLATE: Highway runtime dispatch", () => {
-  // src/jsc/bindings/highway_crc32.cpp has code for each width of vector, for what is left after it, and for the
+  // src/jsc/bindings/highway_checksums.cpp has code for each width of vector, for what is left after it, and for the
   // start of a long input. Parts of src/deflate/{decompressor,block}.rs are compiled with BMI2 and without.
   const library = "libdeflate";
   const bytes = Buffer.alloc(140_000);
@@ -494,15 +494,27 @@ describe("DEFLATE: Highway runtime dispatch", () => {
     bytes[i] = state >>> 24;
   }
 
+  const lengths = Array.from({ length: 150 }, (_, i) => i);
+  for (let power = 128; power <= 4096; power *= 2) {
+    for (const more of [-1, 0, 1, 15, 16, 17, 48, 100, 127]) lengths.push(power + more, 3 * power + more);
+  }
+  lengths.push(65_536, 65_537, 139_000);
+  const parts = (bytes: Buffer) => lengths.map((length, i) => bytes.subarray(i % 67, (i % 67) + length));
+
   test("CRC-32", () => {
-    const lengths = Array.from({ length: 150 }, (_, i) => i);
-    for (let power = 128; power <= 4096; power *= 2) {
-      for (const more of [-1, 0, 1, 15, 16, 17, 48, 100, 127]) lengths.push(power + more, 3 * power + more);
-    }
-    lengths.push(65_536, 65_537, 139_000);
-    const inputs = lengths.map((length, i) => bytes.subarray(i % 67, (i % 67) + length));
+    const inputs = parts(bytes);
     const trailers = inputs.map(input => Buffer.from(Bun.gzipSync(input, { library, level: 0 })).subarray(-8));
     expect(trailers.map(trailer => trailer.readUInt32LE())).toEqual(inputs.map(input => crc32(input)));
+  });
+
+  test("Adler-32", () => {
+    // What a buffer can still grow into is not readable.
+    const last = new Uint8Array(new ArrayBuffer(65_536, { maxByteLength: 131_072 }));
+    last.set(bytes.subarray(0, last.length));
+    const ends = [0, 5376, 5504].flatMap(chunk => Array.from({ length: 70 }, (_, i) => last.subarray(-chunk - i - 1)));
+    const inputs = [...parts(bytes), ...parts(Buffer.alloc(bytes.length, 255)), ...ends];
+    const trailers = inputs.map(input => deflateSync(input, { level: 0 }).subarray(-4));
+    expect(inputs.map(input => Bun.hash.adler32(input))).toEqual(trailers.map(trailer => trailer.readUInt32BE()));
   });
 
   test.each([0, 4])("round trip with strategy %i of zlib", strategy => {

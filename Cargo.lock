@@ -586,7 +586,6 @@ name = "bun_deflate"
 version = "0.0.0"
 dependencies = [
  "bun_alloc",
- "bun_hash",
  "bun_highway",
  "bun_pod",
  "bun_removable_features",

@@ -791,14 +791,16 @@ bun::N_AVX2::UnfilterUp                                              [AVX, AVX2]
 
 
 # ----------------------------------------------------------------------------
-# Bun CRC-32 (src/jsc/bindings/highway_crc32.cpp).
+# Bun CRC-32 and Adler-32 (src/jsc/bindings/highway_checksums.cpp).
 # Gate: BUN_HWY_DISPATCH (highway_dispatch.h) via hwy::SupportedTargets,
-# and CPUID in N_AVX2::Crc32 for Crc32Vpclmulqdq. (4 symbols)
+# and CPUID in N_AVX2::Crc32 for Crc32Vpclmulqdq. (6 symbols)
 # ----------------------------------------------------------------------------
 bun::N_SSE4::Crc32            [PCLMULQDQ]
-bun::N_AVX2::Crc32            [AVX, BMI2, PCLMULQDQ]
+bun::N_AVX2::Crc32            [AVX, AVX2, BMI2, PCLMULQDQ]
 bun::N_AVX2::Crc32Vpclmulqdq  [AVX, AVX2, BMI2, PCLMULQDQ, VPCLMULQDQ]
 bun::N_AVX3_DL::Crc32         [AVX, AVX2, AVX512BW, AVX512F, AVX512VL, BMI2, PCLMULQDQ, VPCLMULQDQ]
+bun::N_AVX2::Adler32          [AVX, AVX2]
+bun::N_AVX3_DL::Adler32       [AVX, AVX2, AVX512BW, AVX512F, AVX512VL, AVX512_VNNI, BMI2]
 
 
 # ----------------------------------------------------------------------------

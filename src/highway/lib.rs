@@ -273,6 +273,8 @@ unsafe extern "C" {
     );
 
     fn highway_crc32(crc: u32, bytes: *const u8, len: usize) -> u32;
+
+    fn highway_adler32(bytes: *const u8, len: usize) -> u32;
 }
 
 // NOTE: every public wrapper below is `#[inline(always)]`. They are thin
@@ -1728,6 +1730,23 @@ pub unsafe fn parse_mappings(
 pub fn crc32(crc: u32, bytes: &[u8]) -> u32 {
     // SAFETY: the kernel reads `bytes.len()` bytes.
     unsafe { highway_crc32(crc, bytes.as_ptr(), bytes.len()) }
+}
+
+/// zlib's Adler-32 of `bytes`.
+#[inline(always)]
+pub fn adler32(bytes: &[u8]) -> u32 {
+    if bytes.len() < SCALAR_CUTOFF {
+        // Neither sum reaches the modulus.
+        const { assert!(128 * SCALAR_CUTOFF * SCALAR_CUTOFF < 65521) };
+        let (mut low, mut high) = (1, 0);
+        for &byte in bytes {
+            low += u32::from(byte);
+            high += low;
+        }
+        return (high << 16) | low;
+    }
+    // SAFETY: the kernel reads `bytes.len()` bytes.
+    unsafe { highway_adler32(bytes.as_ptr(), bytes.len()) }
 }
 
 /// Compiles a function, and what is inlined into it, a second time for CPUs that have BMI2.

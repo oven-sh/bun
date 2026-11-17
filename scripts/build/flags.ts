@@ -2003,10 +2003,10 @@ export const fileOverrides: FileOverride[] = [
     desc: "Same as highway_json.cpp below: the kernel runs over every line of an HTTP response head.",
   },
   {
-    file: "src/jsc/bindings/highway_crc32.cpp",
+    file: "src/jsc/bindings/highway_checksums.cpp",
     extraFlags: ["-O2"],
     when: c => c.debug,
-    desc: "Same as highway_json.cpp below: the kernel runs over every byte of what is in a gzip file.",
+    desc: "Same as highway_json.cpp below: the kernels run over every byte of what is in a gzip or zlib stream.",
   },
   {
     file: "src/jsc/bindings/highway_jpeg.cpp",

@@ -2,7 +2,6 @@ import { xxHash3ForTesting } from "bun:internal-for-testing";
 import { describe, expect, it } from "bun:test";
 import { gcTick, tempDir } from "harness";
 import { join } from "node:path";
-import { deflateSync } from "node:zlib";
 
 it(`Bun.hash()`, () => {
   gcTick();
@@ -19,15 +18,40 @@ it(`Bun.hash.adler32()`, () => {
   gcTick();
   expect(Bun.hash.adler32(new TextEncoder().encode("hello world"))).toBe(0x1a0b045d);
 });
-it(`Bun.hash.adler32() is what zlib puts at the end of a stream`, () => {
-  const varied = Buffer.from(Uint8Array.from({ length: 140_000 }, (_, i) => (i * 7919) >> 5));
-  const lengths = [0, 1, 31, 32, 127, 128, 129, 511, 512, 513, 5552, 65_536, 131_071, 131_072, 131_073, 140_000];
-  const inputs = [varied, Buffer.alloc(140_000, 255)].flatMap(bytes =>
-    lengths.map(length => bytes.subarray(0, length)),
+it(`Bun.hash.adler32() of known inputs`, () => {
+  const ramp = Uint8Array.from({ length: 6000 }, (_, i) => i);
+  const inputs = ["", "a", "example", Buffer.alloc(1024, 1), Buffer.alloc(1025, 1), Buffer.alloc(5553, 1), ramp];
+  expect(inputs.map(input => Bun.hash.adler32(input))).toEqual([
+    1, 0x620062, 0xbc002ed, 0x06780401, 0x0a7a0402, 0x707f15b2, 0x5af38d6e,
+  ]);
+});
+// The kernel takes rows of 64, 128 or 256 bytes, reduces after 5376 or 5504, and aligns inputs of more than 65536.
+it.each([
+  ["varied", Buffer.from(Uint8Array.from({ length: 251 }, (_, i) => (i * 7919) >> 5))],
+  ["highest", Buffer.from([255])],
+  ...[32, 64, 128].map(half => [`${half} high, ${half} low`, Buffer.alloc(2 * half).fill(255, 0, half)]),
+])(`Bun.hash.adler32() of ranges of %s bytes`, (_, pattern) => {
+  // What a buffer can still grow into is not readable.
+  const bytes = new Uint8Array(new ArrayBuffer(131_072, { maxByteLength: 196_608 }));
+  bytes.set(Buffer.alloc(bytes.length, pattern));
+  // What the two halves add up to from the start, from which those of a range follow.
+  const [lows, highs] = [new Float64Array(bytes.length + 1), new Float64Array(bytes.length + 1)];
+  for (let i = 0; i < bytes.length; i++) {
+    lows[i + 1] = lows[i] + bytes[i];
+    highs[i + 1] = highs[i] + lows[i + 1];
+  }
+  const expected = ([start, end]) => {
+    const high = highs[end] - highs[start] + (end - start) * (1 - lows[start]);
+    return (high % 65521) * 65536 + ((1 + lows[end] - lows[start]) % 65521);
+  };
+  const lengths = Array.from({ length: 290 }, (_, i) => i);
+  for (const border of [512, 5376, 5504, 5552, 2 * 5376, 2 * 5504, 65_536, 130_000]) {
+    for (let more = -1; more <= 65; more++) lengths.push(border + more);
+  }
+  const ranges = lengths.flatMap((length, i) =>
+    [0, i % 67, bytes.length - length].map(start => [start, start + length]),
   );
-  expect(inputs.map(input => Bun.hash.adler32(input))).toEqual(
-    inputs.map(input => deflateSync(input, { level: 0 }).subarray(-4).readUInt32BE()),
-  );
+  expect(ranges.map(range => Bun.hash.adler32(bytes.subarray(...range)))).toEqual(ranges.map(expected));
 });
 it(`Bun.hash.crc32()`, () => {
   expect(Bun.hash.crc32("hello world")).toBe(0x0d4a1185);

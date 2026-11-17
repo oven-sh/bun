@@ -31,12 +31,18 @@ pub(crate) fn adler32(bytes: &[u8]) -> u32 {
     (high << 16) | low
 }
 
-// These two stand in for Highway kernels, which tests in test/js cover.
+// These stand in for Highway kernels, which tests in test/js cover.
 
 #[unsafe(no_mangle)]
 unsafe extern "C" fn highway_crc32(crc: u32, bytes: *const u8, len: usize) -> u32 {
     // SAFETY: the caller passes a slice, as a pointer and a length.
     crc32(crc, unsafe { core::slice::from_raw_parts(bytes, len) })
+}
+
+#[unsafe(no_mangle)]
+unsafe extern "C" fn highway_adler32(bytes: *const u8, len: usize) -> u32 {
+    // SAFETY: the caller passes a slice, as a pointer and a length.
+    adler32(unsafe { core::slice::from_raw_parts(bytes, len) })
 }
 
 #[unsafe(no_mangle)]

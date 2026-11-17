@@ -1,6 +1,6 @@
-// The CRC-32 of gzip for src/deflate, derived from libdeflate (src/deflate/LICENSE).
+// The CRC-32 of gzip and the Adler-32 of zlib, derived from libdeflate (src/deflate/LICENSE).
 
-// One target for each width of carry-less multiplication. On Arm, that only beats the CRC instructions in wide cores.
+// One target for each width of carry-less multiplication, which on Arm only beats the CRC instructions in wide cores. The best targets also have dot products.
 #undef HWY_DISABLED_TARGETS
 #ifdef __APPLE__
 #define HWY_DISABLED_TARGETS (HWY_ALL_SVE | HWY_NEON_BF16 | HWY_AVX3 | (HWY_AVX3_DL - 1))
@@ -12,11 +12,12 @@
 #endif
 
 #undef HWY_TARGET_INCLUDE
-#define HWY_TARGET_INCLUDE "highway_crc32.cpp"
+#define HWY_TARGET_INCLUDE "highway_checksums.cpp"
 #include <hwy/foreach_target.h>
 #include <hwy/highway.h>
 #include "highway_dispatch.h"
 
+#include <array>
 #include <stddef.h>
 #include <stdint.h>
 #if HWY_ARCH_ARM_A64
@@ -256,6 +257,162 @@ static uint32_t Crc32(uint32_t crc, const uint8_t* HWY_RESTRICT bytes, size_t le
 #endif
 #endif
 
+using Bytes = hn::ScalableTag<uint8_t>;
+// The signs that dot products take.
+using Weights = hn::Repartition<hwy::If<HWY_ARCH_ARM, uint8_t, int8_t>, Bytes>;
+using Sums = hn::Repartition<hwy::If<HWY_ARCH_ARM, uint32_t, int32_t>, Bytes>;
+static constexpr size_t kVector = Bytes().MaxBytes(), kColumns = 4, kRow = kColumns * kVector;
+static constexpr uint32_t kModulus = 65521;
+static constexpr size_t kChunk = 5552 / kRow * kRow;
+static_assert(255 * kChunk * (kChunk + 1) / 2 + (kChunk + 1) * (kModulus - 1) <= UINT32_MAX);
+
+// How often each byte of a row counts in the upper half of the checksum, less what makes that fit.
+static constexpr uint32_t kBias = HWY_ARCH_ARM ? 0 : kRow / 2 + 1;
+alignas(64) static constexpr auto kWeights = [] {
+    std::array<hn::TFromD<Weights>, kRow + kVector> weights {};
+    for (size_t i = 0; i < kRow; i++)
+        weights[i] = static_cast<hn::TFromD<Weights>>(kRow - i - kBias);
+    return weights;
+}();
+
+// For the vector that starts `left` bytes before the end of a row.
+static HWY_INLINE hn::Vec<Weights> WeightsBefore(size_t left)
+{
+    return hn::LoadU(Weights(), kWeights.data() + kRow - left);
+}
+
+// Lanes may wrap around, because what they add up to in the end fits.
+struct Totals {
+    hn::Vec<Sums> plain, weighted;
+    // The sum of what `plain` was before each row.
+    hn::Vec<Sums> earlier;
+};
+
+#if HWY_ARCH_X86 && HWY_TARGET > HWY_AVX3_DL
+
+using Pairs = hn::Repartition<int16_t, Bytes>;
+static_assert(255 * kRow <= INT16_MAX, "The sum of two products does not saturate.");
+
+static HWY_INLINE hn::Vec<Pairs> Products(hn::Vec<Bytes> bytes, size_t left)
+{
+    return hn::SatWidenMulPairwiseAdd(Pairs(), bytes, WeightsBefore(left));
+}
+
+static HWY_INLINE void AddProducts(Totals& totals, hn::Vec<Pairs> products)
+{
+    totals.weighted = hn::Add(totals.weighted, hn::WidenMulPairwiseAdd(Sums(), products, hn::Set(Pairs(), 1)));
+}
+
+static HWY_INLINE void AddVector(Totals& totals, hn::Vec<Bytes> bytes, size_t left)
+{
+    totals.plain = hn::Add(totals.plain, hn::BitCast(Sums(), hn::SumsOf8(bytes)));
+    AddProducts(totals, Products(bytes, left));
+}
+
+static HWY_INLINE void AddRows(Totals& totals, const uint8_t* HWY_RESTRICT bytes, const uint8_t* end)
+{
+    for (; bytes != end; bytes += kRow) {
+        const auto a = Load(Bytes(), bytes), b = Load(Bytes(), bytes + kVector);
+        const auto c = Load(Bytes(), bytes + 2 * kVector), d = Load(Bytes(), bytes + 3 * kVector);
+        const auto sum = hn::Add(hn::Add(hn::SumsOf8(a), hn::SumsOf8(b)), hn::Add(hn::SumsOf8(c), hn::SumsOf8(d)));
+        totals.earlier = hn::Add(totals.earlier, totals.plain);
+        totals.plain = hn::Add(totals.plain, hn::BitCast(Sums(), sum));
+        // Their weights have opposite signs, so these sums fit too.
+        AddProducts(totals, hn::Add(Products(a, 4 * kVector), Products(d, kVector)));
+        AddProducts(totals, hn::Add(Products(b, 3 * kVector), Products(c, 2 * kVector)));
+    }
+}
+
+#else
+
+static HWY_INLINE void AddVector(Totals& totals, hn::Vec<Bytes> bytes, size_t left)
+{
+    totals.plain = hn::SumOfMulQuadAccumulate(Sums(), bytes, hn::Set(Weights(), 1), totals.plain);
+    totals.weighted = hn::SumOfMulQuadAccumulate(Sums(), bytes, WeightsBefore(left), totals.weighted);
+}
+
+#if HWY_ARCH_X86 || HWY_TARGET == HWY_NEON_BF16 || defined(__ARM_FEATURE_DOTPROD)
+
+static HWY_INLINE void AddRows(Totals& totals, const uint8_t* HWY_RESTRICT bytes, const uint8_t* end)
+{
+    const auto zero = hn::Zero(Sums());
+    // Independent sums hide the latency of the instruction.
+    hn::Vec<Sums> weighted[kColumns] = { totals.weighted, zero, zero, zero };
+    for (; bytes != end; bytes += kRow) {
+        auto sum = zero;
+        HWY_UNROLL(4)
+        for (size_t i = 0; i < kColumns; i++) {
+            const auto v = Load(Bytes(), bytes + i * kVector);
+            sum = hn::SumOfMulQuadAccumulate(Sums(), v, hn::Set(Weights(), 1), sum);
+            weighted[i] = hn::SumOfMulQuadAccumulate(Sums(), v, WeightsBefore(kRow - i * kVector), weighted[i]);
+        }
+        totals.earlier = hn::Add(totals.earlier, totals.plain);
+        totals.plain = hn::Add(totals.plain, sum);
+    }
+    totals.weighted = hn::Add(hn::Add(weighted[0], weighted[1]), hn::Add(weighted[2], weighted[3]));
+}
+
+#else
+
+// Without dot products, it is faster to add the rows up and to multiply once.
+static HWY_INLINE void AddRows(Totals& totals, const uint8_t* HWY_RESTRICT bytes, const uint8_t* end)
+{
+    const hn::Repartition<uint16_t, Bytes> wide;
+    static_assert(255 * (kChunk / kRow) <= UINT16_MAX);
+    const auto zero = hn::Zero(wide);
+    hn::Vec<decltype(wide)> lower[kColumns] = { zero, zero, zero, zero }, upper[kColumns] = { zero, zero, zero, zero };
+    for (; bytes != end; bytes += kRow) {
+        auto pairs = zero;
+        HWY_UNROLL(4)
+        for (size_t i = 0; i < kColumns; i++) {
+            const auto v = Load(Bytes(), bytes + i * kVector);
+            lower[i] = hn::Add(lower[i], hn::PromoteLowerTo(wide, v));
+            upper[i] = hn::Add(upper[i], hn::PromoteUpperTo(wide, v));
+            pairs = hn::Add(pairs, hn::SumsOf2(v));
+        }
+        totals.earlier = hn::Add(totals.earlier, totals.plain);
+        totals.plain = hn::Add(totals.plain, hn::SumsOf2(pairs));
+    }
+    HWY_UNROLL(4)
+    for (size_t i = 0; i < kColumns; i++) {
+        const auto weights = WeightsBefore(kRow - i * kVector);
+        totals.weighted = hn::Add(totals.weighted,
+            hn::Add(hn::WidenMulPairwiseAdd(Sums(), lower[i], hn::PromoteLowerTo(wide, weights)),
+                hn::WidenMulPairwiseAdd(Sums(), upper[i], hn::PromoteUpperTo(wide, weights))));
+    }
+}
+
+#endif
+#endif
+
+static uint32_t Adler32(uint32_t adler, const uint8_t* HWY_RESTRICT bytes, size_t len)
+{
+    const Bytes d;
+    uint32_t low = adler & 0xFFFF, high = adler >> 16;
+    while (len) {
+        const size_t chunk = HWY_MIN(len, kChunk);
+        const uint8_t* const end = bytes + chunk;
+        len -= chunk;
+        Totals totals { hn::Zero(Sums()), hn::Zero(Sums()), hn::Zero(Sums()) };
+        // What is not a whole vector or row comes first, so that a load can reach past it.
+        if (size_t left = chunk % kRow) {
+            const size_t part = left % kVector;
+            AddVector(totals, chunk < kVector ? hn::LoadN(d, bytes, part) : hn::IfThenElseZero(hn::FirstN(d, part), Load(d, bytes)), left);
+            HWY_UNROLL(1)
+            for (bytes += part, left -= part; left; bytes += kVector, left -= kVector)
+                AddVector(totals, Load(d, bytes), left);
+        }
+        if (bytes != end)
+            AddRows(totals, bytes, end);
+        bytes = end;
+        const uint32_t plain = hn::ReduceSum(Sums(), totals.plain);
+        const uint32_t weighted = hn::ReduceSum(Sums(), hn::Add(totals.weighted, hn::ShiftLeft<hwy::FloorLog2(kRow)>(totals.earlier)));
+        high = (high + static_cast<uint32_t>(chunk) * low + weighted + kBias * plain) % kModulus;
+        low = (low + plain) % kModulus;
+    }
+    return high << 16 | low;
+}
+
 // NOLINTNEXTLINE(google-readability-namespace-comments)
 } // namespace HWY_NAMESPACE
 } // namespace bun
@@ -264,16 +421,26 @@ HWY_AFTER_NAMESPACE();
 #if HWY_ONCE
 namespace bun {
 HWY_EXPORT(Crc32);
+HWY_EXPORT(Adler32);
 
-extern "C" uint32_t highway_crc32(uint32_t crc, const uint8_t* bytes, size_t len)
+static HWY_INLINE uint32_t UpdateAligned(auto update, uint32_t state, const uint8_t* bytes, size_t len)
 {
-    const auto update = BUN_HWY_DISPATCH(Crc32);
     // In a long input it is worth a call to have no load cross a cache line.
     if (HWY_UNLIKELY(len > 65536)) {
         const size_t head = -reinterpret_cast<uintptr_t>(bytes) % 64;
-        return ~update(update(~crc, bytes, head), bytes + head, len - head);
+        return update(update(state, bytes, head), bytes + head, len - head);
     }
-    return ~update(~crc, bytes, len);
+    return update(state, bytes, len);
+}
+
+extern "C" uint32_t highway_crc32(uint32_t crc, const uint8_t* bytes, size_t len)
+{
+    return ~UpdateAligned(BUN_HWY_DISPATCH(Crc32), ~crc, bytes, len);
+}
+
+extern "C" uint32_t highway_adler32(const uint8_t* bytes, size_t len)
+{
+    return UpdateAligned(BUN_HWY_DISPATCH(Adler32), 1, bytes, len);
 }
 } // namespace bun
 #endif

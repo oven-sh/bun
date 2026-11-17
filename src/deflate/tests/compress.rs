@@ -157,13 +157,14 @@ fn headers_and_trailers() {
 #[test]
 fn formats_wrap_the_same_stream() {
     let data = generate(1, &[Part::Mixed(70000, 60, 8, [3, 30], [1, 300])]);
+    let adler = adler32(&data).to_be_bytes();
+    let [crc, len] = [crc32(0, &data), data.len() as u32].map(u32::to_le_bytes);
     for effort in 0..=Level::MAX {
         let [raw, zlib, gzip] =
             FORMATS.map(|format| compress_to_vec(&data, format, level(effort)).unwrap());
         inflates_to(&raw, &data);
-        let adler = adler32(&data).to_be_bytes();
         assert!(zlib[2..] == [&raw[..], &adler].concat());
-        assert!(gzip[10..gzip.len() - 8] == raw);
+        assert!(gzip[10..] == [&raw[..], &crc, &len].concat());
         let (vec, limit) = (&mut Vec::new(), usize::MAX);
         assert!(gunzip(&gzip, Output::Vec { vec, limit }).is_ok());
         assert!(*vec == data);
@@ -202,6 +203,16 @@ fn matches_end_with_the_input() {
                 inflates_to(stream, data);
             }
         }
+    }
+}
+
+#[test]
+fn many_codewords_of_one_length() {
+    let data: Vec<u8> = (1..=255).flat_map(|byte| [0, byte]).collect();
+    for level in (1..=Level::MAX).map(level) {
+        let stream = compress_to_vec(&data, Format::Raw, level).unwrap();
+        assert_eq!((stream.len(), crc32(0, &stream)), (346, 0xBCAC_51BE));
+        inflates_to(&stream, &data);
     }
 }
 

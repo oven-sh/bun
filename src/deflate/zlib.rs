@@ -15,5 +15,5 @@ pub(crate) fn header(level: u8) -> [u8; HEADER_LEN] {
 }
 
 pub(crate) fn trailer(data: &[u8]) -> [u8; 4] {
-    bun_hash::Adler32::hash(data).to_be_bytes()
+    bun_highway::adler32(data).to_be_bytes()
 }

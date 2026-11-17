@@ -1,4 +1,4 @@
-import { expect, test } from "bun:test";
+import { expect, test as base } from "bun:test";
 import { bunEnv, bunExe, isASAN, normalizeBunSnapshot, tempDir } from "harness";
 
 // https://github.com/oven-sh/bun/issues/26360
@@ -6,6 +6,11 @@ import { bunEnv, bunExe, isASAN, normalizeBunSnapshot, tempDir } from "harness";
 // Every Bun.build call runs on one singleton bundler thread. The outer build blocks that
 // thread while it waits for the macro, and the macro's inner Bun.build waits for the same
 // thread. The fix makes Bun.build throw when it is called in macro mode.
+
+// A test made by `extend()` receives the test context. Its `signal` aborts when the test
+// times out. The runner does not kill the children of a concurrent test that times out, so
+// `run()` gives the signal to its child.
+const test = base.extend({});
 
 // Shared by the two child-process tests. The macro catches the inner Bun.build error and
 // returns its message, so the bundled output shows exactly what the macro saw.
@@ -42,7 +47,7 @@ To bundle code at compile time in a macro, use Bun.spawnSync to invoke the CLI:
   const result = Bun.spawnSync(["bun", "build", entrypoint, "--format=esm"]);\`);`;
 
 // Runs bun in `cwd` and returns its output with how it ended, for one combined assertion.
-async function run(cwd: string, ...args: string[]) {
+async function run(signal: AbortSignal, cwd: string, ...args: string[]) {
   await using proc = Bun.spawn({
     cmd: [bunExe(), ...args],
     cwd,
@@ -53,8 +58,10 @@ async function run(cwd: string, ...args: string[]) {
       : bunEnv,
     stdout: "pipe",
     stderr: "pipe",
-    // Kill switch: a deadlock hangs the child forever. A signalCode of "SIGKILL" in the
-    // result means that the child hung.
+    // A deadlock hangs the child forever. `signal` kills the child when the test times out.
+    // Where the test timeout is longer than 60 s (CI), the spawn timeout kills it first and
+    // the result shows a signalCode of "SIGKILL".
+    signal,
     timeout: 60_000,
     killSignal: "SIGKILL",
   });
@@ -66,7 +73,7 @@ async function run(cwd: string, ...args: string[]) {
 
 // The outer Bun.build runs in a child process: before the fix it deadlocked the singleton
 // bundler thread, and an in-process test cannot recover from that.
-test.concurrent("Bun.build from macro during bundling throws instead of hanging", async () => {
+test.concurrent("Bun.build from macro during bundling throws instead of hanging", async ({ signal }) => {
   using dir = tempDir("issue-26360", {
     ...fixture,
     "build_script.ts": `const result = await Bun.build({
@@ -85,7 +92,7 @@ if (!result.success) {
 `,
   });
 
-  expect(await run(String(dir), "build_script.ts")).toEqual({
+  expect(await run(signal, String(dir), "build_script.ts")).toEqual({
     stdout: `BUILD_SUCCESS\n${bundle}`,
     stderr: "",
     exitCode: 0,
@@ -93,11 +100,11 @@ if (!result.success) {
   });
 });
 
-test.concurrent("CLI bun build with macro that calls Bun.build also throws", async () => {
+test.concurrent("CLI bun build with macro that calls Bun.build also throws", async ({ signal }) => {
   using dir = tempDir("issue-26360-cli", fixture);
 
   // With no --outdir the CLI writes the bundle to stdout and prints no summary.
-  expect(await run(String(dir), "build", "index.ts", "--target=node")).toEqual({
+  expect(await run(signal, String(dir), "build", "index.ts", "--target=node")).toEqual({
     stdout: bundle,
     stderr: "",
     exitCode: 0,

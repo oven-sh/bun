@@ -169,6 +169,7 @@ test.skipIf(!isLinux)("the process that replaces a worker that waited for room g
     stdout: "ignore",
     stderr: "pipe",
   });
+  const letLargestEnd = () => writeFileSync(join(String(dir), "go"), "");
   let stderr = "";
   let replaced: Promise<void> | undefined;
   for await (const chunk of proc.stderr.pipeThrough(new TextDecoderStream())) {
@@ -182,13 +183,14 @@ test.skipIf(!isLinux)("the process that replaces a worker that waited for room g
         await untilEveryThreadIs("T", coordinator);
         process.kill(worker, "SIGKILL");
         await untilEveryThreadIs("Z", worker);
-        writeFileSync(join(String(dir), "go"), "");
+        letLargestEnd();
         const deadline = performance.now() + 30_000;
         while (!existsSync(join(String(dir), "reported"))) {
           if (performance.now() > deadline) throw new Error("the largest file did not end");
           await Bun.sleep(1);
         }
       } finally {
+        letLargestEnd();
         process.kill(coordinator, "SIGCONT");
       }
     })(pids.slice(1).map(Number));

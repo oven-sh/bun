@@ -25,8 +25,9 @@ pub(crate) fn replay_test_records(coord: &mut Coordinator) {
 fn replay_into(junit: &mut JunitReporter, coord: &Coordinator, files: &[FileTestRecords]) {
     for (idx, file) in files.iter().enumerate() {
         let rel = junit_file_name(coord.schedule.path(idx));
-        junit.file_start_unix_ms =
-            (file.started_unix_ms).unwrap_or_else(bun_core::time::milli_timestamp);
+        junit.file_start_unix_ms = file
+            .started_unix_ms
+            .unwrap_or_else(bun_core::time::milli_timestamp);
         for payload in &file.tests {
             if let Some(test) = runner::decode_test_case(&mut Reader { p: payload }, rel) {
                 junit.record_test_case(&test).expect("oom");

@@ -243,7 +243,9 @@ impl<'a> Coordinator<'a> {
     /// Exits with 128 + `signal`, the status a shell reports for a signal death.
     fn abort_all(&mut self, signal: i32) {
         let now = bun_core::time::milli_timestamp();
-        let running: Vec<(usize, i64)> = (self.schedule.running())
+        let running: Vec<(usize, i64)> = self
+            .schedule
+            .running()
             .map(|(file, since_ms)| (file, now - since_ms))
             .collect();
         for &(file, ran_ms) in &running {

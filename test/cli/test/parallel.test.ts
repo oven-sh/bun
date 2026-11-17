@@ -1334,10 +1334,10 @@ describe.skipIf(!isLinux)("--parallel: a worker that has exited gets no file", (
   });
 });
 
-async function runOnOneWorker(dir: string, env: Record<string, string | undefined>, ...flags: string[]) {
+async function runOnOneWorker(dir: string, ...flags: string[]) {
   await using proc = Bun.spawn({
     cmd: [bunExe(), "test", "--parallel=2", "--parallel-delay=1000000", ...flags],
-    env,
+    env: bunEnv,
     cwd: dir,
     stderr: "pipe",
     stdout: "ignore",
@@ -1351,10 +1351,10 @@ describe.skipIf(isWindows)("--parallel: a frame that a test writes to fd 3", () 
   test.concurrent("Ready does not take the place of the file that runs", async () => {
     using dir = tempDir("parallel-forged-ready", {
       "a.test.js": `import {test} from "bun:test"; import {writeSync} from "fs";
-        test("a", () => { writeSync(3, Buffer.alloc(5)); });`,
+        test("a", () => { writeSync(3, Buffer.from([/* no payload */ 0, 0, 0, 0, /* Ready */ 0])); });`,
       "b.test.js": `import {test} from "bun:test"; test("b", () => {});`,
     });
-    expect(await runOnOneWorker(String(dir), bunEnv)).toEqual({
+    expect(await runOnOneWorker(String(dir))).toEqual({
       results: ["(pass) a", "(pass) b", " 2 pass", " 0 fail"],
       exitCode: 0,
     });
@@ -1370,7 +1370,7 @@ describe.skipIf(isWindows)("--parallel: a frame that a test writes to fd 3", () 
           writeSync(3, Buffer.concat([Buffer.from([payload.length, 0, 0, 0, /* FileDone */ 3]), payload]));
         });`,
     });
-    expect(await runOnOneWorker(String(dir), bunEnv, "--reporter=junit", "--reporter-outfile=out.xml")).toEqual({
+    expect(await runOnOneWorker(String(dir), "--reporter=junit", "--reporter-outfile=out.xml")).toEqual({
       results: ["(pass) a", "(pass) b", " 2 pass", " 0 fail"],
       exitCode: 0,
     });
@@ -1503,27 +1503,42 @@ test("--parallel forwards --use-openssl-ca to workers", async () => {
   expect(exitCode).toBe(0);
 });
 
+// Reads /proc.
 test.skipIf(!isLinux)("--parallel forwards the flags of the transpiler to workers, in order", async () => {
   using dir = tempDir("parallel-worker-argv", {
     "a.test.js": `import {test} from "bun:test"; import {readFileSync} from "fs";
-      test("a", () => process.stdout.write("ARGV " + readFileSync("/proc/self/cmdline", "utf8").replaceAll("\\0", " ") + "\\n"));`,
+      test("a", () => process.stdout.write(readFileSync("/proc/self/cmdline", "utf8").replaceAll("\\0", " ") + "\\n"));`,
     "b.test.js": `import {test} from "bun:test"; test("b", () => {});`,
+    "other.json": "{}",
   });
-  const values =
-    "--define A=1 --loader .a:text --loader .b:json5 --loader .c:base64 --conditions c --drop debugger --feature F";
-  const jsx =
-    "--no-macros --jsx-factory=h --jsx-fragment=F --jsx-import-source=p --jsx-runtime=classic --jsx-side-effects";
+  const flagsWithValues = [
+    ["--define", "A=1"],
+    ["--loader", ".a:text"],
+    ["--loader", ".b:json5"],
+    ["--loader", ".c:base64"],
+    ["--tsconfig-override", path.join(String(dir), "other.json")],
+    ["--conditions", "c"],
+    ["--drop", "debugger"],
+    ["--feature", "F"],
+  ].flat();
+  const laterFlags = [
+    "--no-macros",
+    "--jsx-factory=h",
+    "--jsx-fragment=F",
+    "--jsx-import-source=p",
+    "--jsx-runtime=classic",
+    "--jsx-side-effects",
+  ];
   await using proc = Bun.spawn({
-    cmd: [bunExe(), "test", "--parallel=2", ...jsx.split(" "), ...values.split(" ")],
+    cmd: [bunExe(), "test", "--parallel=2", ...laterFlags, ...flagsWithValues],
     env: bunEnv,
     cwd: String(dir),
     stderr: "pipe",
     stdout: "ignore",
   });
   const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
-  const argv = /^ARGV .*/m.exec(stderr)?.[0];
-  expect(argv).toContain(` ${values} `);
-  expect(argv).toContain(` ${jsx} `);
+  expect(stderr).toContain(` ${flagsWithValues.join(" ")} `);
+  expect(stderr).toContain(` ${laterFlags.join(" ")} `);
   expect(exitCode).toBe(0);
 });
 

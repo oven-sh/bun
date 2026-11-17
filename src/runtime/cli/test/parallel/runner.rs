@@ -62,8 +62,8 @@ pub(crate) fn run_as_coordinator(
 ) -> crate::Result<bool> {
     // SAFETY: env loader is initialized before the test runner runs.
     let env = unsafe { &mut *vm.transpiler.get().env };
-    let n = files.len();
-    let k: u32 = ctx.test_options.parallel.min(u32::try_from(n).unwrap());
+    let n: u32 = u32::try_from(files.len()).unwrap();
+    let k: u32 = ctx.test_options.parallel.min(n);
     if k <= 1 {
         // Jest sets JEST_WORKER_ID=1 even with --maxWorkers=1; match that so
         // tests can rely on the var whenever --parallel is passed.
@@ -232,12 +232,13 @@ fn make_schedule(
         .map(|file| file.as_bytes())
         .map(|path| TestFile {
             path,
-            cost: timed.map_or(1, |t| t.cost(path)),
             growth: measured
                 .and_then(|t| t.growth_of(path))
                 .map_or(0, u64::from),
         });
-    let steal = timed.map_or(Steal::BackHalf, |_| Steal::Slowest);
+    let steal = timed.map_or(Steal::BackHalf, |t| Steal::Slowest {
+        costs: t.costs(&sorted),
+    });
     Schedule::new(files.collect(), queues, steal)
 }
 
@@ -590,7 +591,10 @@ fn run_files(
         if vm.test_isolation_enabled.get() {
             crate::jsc_hooks::stop_active_handles_for_test_isolation(vm);
             vm.swap_global_for_test_isolation();
-            (reporter.jest.bun_test_root).reset_preload_for_test_isolation();
+            reporter
+                .jest
+                .bun_test_root
+                .reset_preload_for_test_isolation();
             crate::test_runner::Expect::reset_for_test_isolation(vm.global());
         } else {
             Global::mimalloc_cleanup(false);

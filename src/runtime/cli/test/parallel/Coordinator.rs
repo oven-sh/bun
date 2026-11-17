@@ -4,8 +4,6 @@
 //! the run loop entry live in `runner.rs`; this file is the per-run state
 //! and its methods.
 
-#[cfg(unix)]
-use core::ffi::c_void;
 use core::sync::atomic::{AtomicI32, Ordering};
 use std::io::Write as _;
 #[cfg(windows)]
@@ -1255,12 +1253,14 @@ fn describe_status<'b>(buf: &'b mut [u8; 32], status: &SpawnStatus) -> &'b [u8] 
 /// this (SIGKILL).
 pub(crate) mod abort_handler {
     use super::*;
+    #[cfg(unix)]
+    use bun_core::signal::Action;
 
     /// The signal that asked for the abort, or 0. Windows console events count as SIGINT.
     pub(crate) static ABORT_SIGNAL: AtomicI32 = AtomicI32::new(0);
 
     #[cfg(unix)]
-    extern "C" fn posix_handler(sig: i32, _: *const libc::siginfo_t, _: *const c_void) {
+    extern "C" fn posix_handler(sig: i32) {
         ABORT_SIGNAL.store(sig, Ordering::Release);
     }
 
@@ -1283,7 +1283,7 @@ pub(crate) mod abort_handler {
     #[must_use = "dropping the guard uninstalls the abort handler"]
     pub(crate) struct Guard {
         #[cfg(unix)]
-        previous: [(i32, libc::sigaction); 2],
+        previous: [(i32, Option<Action>); 2],
     }
 
     impl Drop for Guard {
@@ -1299,16 +1299,10 @@ pub(crate) mod abort_handler {
         Guard {
             #[cfg(unix)]
             previous: [libc::SIGINT, libc::SIGTERM].map(|signal| {
-                let mut act: libc::sigaction = bun_core::ffi::zeroed();
-                act.sa_sigaction = posix_handler as *const () as usize;
-                act.sa_flags = libc::SA_SIGINFO;
-                let mut previous = bun_core::ffi::zeroed();
-                // SAFETY: the handler has the signature that `SA_SIGINFO` asks for, and only stores to an atomic.
-                unsafe {
-                    libc::sigemptyset(&raw mut act.sa_mask);
-                    libc::sigaction(signal, &raw const act, &raw mut previous);
-                }
-                (signal, previous)
+                // SAFETY: the handler only stores to an atomic.
+                (signal, unsafe {
+                    Action::call(posix_handler, 0).install(signal)
+                })
             }),
         }
     }
@@ -1317,8 +1311,10 @@ pub(crate) mod abort_handler {
         pub(crate) fn uninstall(&self) {
             #[cfg(unix)]
             for (signal, previous) in &self.previous {
-                // SAFETY: `install` got `previous` from `sigaction` for this signal.
-                unsafe { libc::sigaction(*signal, previous, core::ptr::null_mut()) };
+                if let Some(previous) = previous {
+                    // SAFETY: `signal` had this action until `install`.
+                    unsafe { previous.install(*signal) };
+                }
             }
             #[cfg(windows)]
             let _ = bun_sys::c::SetConsoleCtrlHandler(

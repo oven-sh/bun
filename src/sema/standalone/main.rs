@@ -196,8 +196,8 @@ fn run(args: &[String]) {
                 if redirected.is_err() {
                     std::process::exit(127);
                 }
-                // SAFETY: no handler is installed, so the signal kills a program that hangs.
-                unsafe { libc::alarm(limit) };
+                // No handler is installed, so the signal kills a program that hangs.
+                bun_core::signal::alarm(limit);
                 let arguments: Vec<String> = fields.collect();
                 run(&arguments);
                 std::process::exit(0);

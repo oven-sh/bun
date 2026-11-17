@@ -129,6 +129,7 @@ pub enum JsxPreserveRestriction {
     #[default]
     None,
     Executable,
+    StandaloneHtml,
     Runtime,
 }
 
@@ -137,6 +138,7 @@ impl JsxPreserveRestriction {
         match self {
             Self::None => None,
             Self::Executable => Some(b"Cannot preserve JSX when compiling an executable"),
+            Self::StandaloneHtml => Some(b"Cannot preserve JSX when compiling standalone HTML"),
             Self::Runtime => Some(b"Cannot preserve JSX in a file that Bun runs"),
         }
     }
@@ -300,6 +302,12 @@ impl<'a> Options<'a> {
 
     pub fn hash_for_runtime_transpiler(&self, hasher: &mut Wyhash, did_use_jsx: bool) {
         debug_assert!(!self.bundle);
+
+        // Separating preserve restrictions even for `.js` dependencies that omit JSX settings from the cache key.
+        hasher.update(&[
+            u8::from(self.jsx.runtime == options::JSX::Runtime::Preserve),
+            self.jsx_preserve_restriction as u8,
+        ]);
 
         if did_use_jsx {
             if self.jsx.parse {
@@ -1043,14 +1051,6 @@ impl<'a> Parser<'a> {
 
         let mut visit_tracer = bun_core::perf::trace("JSParser::visit");
         p.prepare_for_visit_pass()?;
-
-        if p.options.jsx.parse && p.options.jsx.runtime == options::JSX::Runtime::Preserve {
-            if let Some(message) = p.options.jsx_preserve_restriction.error_message() {
-                p.log()
-                    .add_error(Some(p.source), bun_ast::Loc { start: 0 }, message);
-                return Err(crate::Error::SyntaxError);
-            }
-        }
 
         if p.options.features.react_compiler.is_enabled() {
             let rc_options = bun_react_compiler::ReactCompilerOptions {

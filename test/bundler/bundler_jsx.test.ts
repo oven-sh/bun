@@ -711,6 +711,33 @@ describe("bundler", () => {
       });
     });
 
+    for (const backend of ["cli", "api"] as const) {
+      itBundled(`jsx/PreserveCompilePlain-${backend}`, {
+        files: { "/in.jsx": 'console.log("<div/>");' },
+        backend,
+        target: "bun",
+        compile: true,
+        skipOnEsbuild: true,
+        jsx: { runtime: "preserve" },
+        run: { stdout: "<div/>" },
+      });
+    }
+
+    itBundled("jsx/PreserveStandaloneHtmlRejected", {
+      files: {
+        "/index.html": '<html><body><script src="./in.jsx"></script></body></html>',
+        "/in.jsx": "document.body.innerHTML = <div />;",
+      },
+      entryPoints: ["/index.html"],
+      outfile: "/out.html",
+      backend: "cli",
+      target: "browser",
+      compile: true,
+      skipOnEsbuild: true,
+      jsx: { runtime: "preserve" },
+      bundleErrors: { "/in.jsx": ["Cannot preserve JSX when compiling standalone HTML"] },
+    });
+
     itBundled("jsx/PreserveCliRuntimeFlag", {
       files: {
         "/in.tsx": `console.log(<span>Hello</span>);`,

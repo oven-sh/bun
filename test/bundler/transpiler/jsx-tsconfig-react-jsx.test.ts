@@ -89,6 +89,27 @@ describe("tsconfig compilerOptions.jsx", () => {
     expect(exitCode).toBe(1);
   });
 
+  test.concurrent.each(["bunfig", "pragma", "flag"])(
+    "bun run allows plain JavaScript with preserve from %s",
+    async source => {
+      using dir = tempDir("jsx-run-plain", {
+        "m.js": `${source === "pragma" ? "/** @jsxRuntime preserve */" : ""} console.log("<div/>");`,
+        ...(source === "bunfig" ? { "bunfig.toml": 'jsx = "preserve"' } : {}),
+      });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "run", ...(source === "flag" ? ["--jsx-runtime=preserve"] : []), "m.js"],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stdout).toBe("<div/>\n");
+      expect(stderr).toBe("");
+      expect(exitCode).toBe(0);
+    },
+  );
+
   // "preserve" is selected with --jsx-runtime, Bun.build or bunfig, never from
   // tsconfig: `bun run` executes the output, and tsconfigs written for other
   // toolchains (Next.js) ask for it.

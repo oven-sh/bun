@@ -2256,9 +2256,13 @@ pub mod parse_worker {
             loader,
         );
         opts.bundle = true;
-        if topts.compile_mode.is_executable() {
-            opts.jsx_preserve_restriction = bun_js_parser::JsxPreserveRestriction::Executable;
-        }
+        opts.jsx_preserve_restriction = match topts.compile_mode {
+            options::CompileMode::Executable => bun_js_parser::JsxPreserveRestriction::Executable,
+            options::CompileMode::StandaloneHtml => {
+                bun_js_parser::JsxPreserveRestriction::StandaloneHtml
+            }
+            options::CompileMode::None => bun_js_parser::JsxPreserveRestriction::None,
+        };
         opts.warn_about_unbundled_modules = false;
         // `AllowUnresolved` is the same nominal type on
         // both sides (re-export in options.rs). `'static` erasure: `topts` borrows

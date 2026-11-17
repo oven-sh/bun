@@ -3785,7 +3785,8 @@ extern "C" JSC::EncodedJSValue Bun__JSValue__call(JSC::JSGlobalObject* globalObj
     if (!jsThisObject)
         jsThisObject = globalObject->globalThis();
 
-    JSC::MarkedArgumentBuffer argList;
+    // `kOnHeadersComplete` of an HTTPParser has 9 parameters.
+    JSC::MarkedArgumentBufferWithSize<9> argList;
     argList.ensureCapacity(argumentCount);
     for (size_t i = 0; i < argumentCount; i++) {
 
@@ -5648,6 +5649,7 @@ enum class BuiltinNamesMap : uint8_t {
     signal,
     cmd,
     errors,
+    maxHeaderPairs,
     // Private names below: set by builtins via $putByIdDirectPrivate, unreachable from user code.
     internal,
     sharedFd,
@@ -5725,6 +5727,9 @@ static inline const JSC::Identifier& builtinNameMap(JSC::VM& vm, unsigned char n
     }
     case BuiltinNamesMap::errors: {
         return vm.propertyNames->errors;
+    }
+    case BuiltinNamesMap::maxHeaderPairs: {
+        return clientData->builtinNames().maxHeaderPairsPublicName();
     }
     case BuiltinNamesMap::internal: {
         return clientData->builtinNames().internalPrivateName();

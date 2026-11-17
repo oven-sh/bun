@@ -108,7 +108,7 @@ export default b.declarations(
   extendAll(["NodeFs", "FsStats"], "%StatWatcher%"),
   extendAll(["NodeFs"], "%FSWatcher%"),
 
-  extendAll(["HttpParser"], "node:_http_common", "node:_http_client", "node:_http_server"),
+  extendAll(["HttpParser"], "%HTTPParser%", "node:_http_common", "node:_http_client", "node:_http_server"),
 
   extendAll(["StringDecoder", "Buffer"], "node:string_decoder"),
 

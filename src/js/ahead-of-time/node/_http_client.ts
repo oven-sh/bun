@@ -1,10 +1,10 @@
 // What the compiler reads in place of src/js/node/_http_client.ts, which `bun run` evaluates. The two do the same.
-// Written against that file with the SHA-256 9c93b772a6d52739dc53cfae4e0a4b02039cbd05e91b2001dc9932bb210d4699.
+// Written against that file with the SHA-256 9724af366dc7a482ea6242cf63650b397af74552f4962baa6ac24b564886e19a.
 // When that file changes, bring the change here and write the new hash: test/internal/second-texts-of-modules.test.ts.
 
 // Hardcoded module "node:_http_client"
 // This is a port of Node.js's lib/_http_client.js built on top of node:net /
-// node:tls sockets and the llhttp HTTPParser binding, matching the upstream
+// node:tls sockets and the HTTPParser binding, matching the upstream
 // implementation as closely as possible.
 // https://github.com/nodejs/node/blob/v26.3.0/lib/_http_client.js
 const { kEmptyObject, once, ConnResetException, hasObserver, startPerf, stopPerf } = require("internal/shared");

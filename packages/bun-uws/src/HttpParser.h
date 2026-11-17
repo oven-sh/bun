@@ -210,6 +210,7 @@ struct HttpResponseData;
         uint64_t contentLength;
         /* Written once the head is complete. */
         bool connectionClose;
+        bool endsConnection;
         unsigned int querySeparator;
         BloomFilter bf;
         std::pair<int, std::string_view *> currentParameters;
@@ -254,6 +255,12 @@ struct HttpResponseData;
         bool getConnectionClose()
         {
             return connectionClose;
+        }
+
+        /* Its framing leaves no room for another request (RFC 9112 6.3). */
+        bool getEndsConnection()
+        {
+            return endsConnection;
         }
 
         /* Iteration over headers (key, value) */
@@ -729,7 +736,7 @@ struct HttpResponseData;
          * framing. Every byte until the peer's FIN is body (llhttp's
          * body_identity_eof); onEnd delivers the fin and clears this. */
         bool nodeHttpBodyUntilEof = false;
-        /* A request on this connection had Connection: close or was HTTP/1.0. */
+        /* A request on this connection was its last one. */
         bool sawConnectionClose = false;
         /* Bun.serve: a response is pending, so the parse loop stops at the next request boundary and parks
          * the rest of the read in parkedRequestBytes. HttpContext::onData derives it. */
@@ -1456,9 +1463,11 @@ struct HttpResponseData;
              * CONNECT or an upgrade with no chunked coding and no Content-Length ends at its
              * head, whether or not the server accepts it. The header is treated as absent.
              * https://github.com/nodejs/llhttp/blob/v9.4.1/src/native/http.c#L41-L50 */
+            req->endsConnection = false;
             if (deferredTransferEncodingError && (isConnectRequestLine || req->isUpgradeRequest())) [[unlikely]] {
                 transferEncoding = {};
                 deferredTransferEncodingError = false;
+                req->endsConnection = !isConnectRequestLine;
             }
 
             /* Bun.serve: no transfer coding other than chunked is implemented, so a
@@ -1530,6 +1539,8 @@ struct HttpResponseData;
                  * is the caller's, unless it is the body that this request declared. */
                 return HttpParserResult::success(hasBody ? HttpParserResult::WHOLE_READ : consumedTotal, returnedUser);
             }
+            /* After the handler: the response of an accepted upgrade does not close its tunnel. */
+            sawConnectionClose |= req->endsConnection;
 
             if (deferredTransferEncodingError) [[unlikely]] {
                 /* The request was dispatched (like Node) but its body framing is

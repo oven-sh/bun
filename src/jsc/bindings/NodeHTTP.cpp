@@ -98,7 +98,7 @@ static uint32_t assignHeadersFromUWebSocketsForCall(uWS::HttpRequest* request, J
 
     uint32_t bits = 0;
     // llhttp's F_CONNECTION_CLOSE / F_CONNECTION_UPGRADE: a whole list item.
-    if (request->getConnectionClose())
+    if (request->getConnectionClose() || request->getEndsConnection())
         bits |= kDispatchConnClose;
     if (request->hasConnectionToken("upgrade"))
         bits |= kDispatchConnUpgrade;

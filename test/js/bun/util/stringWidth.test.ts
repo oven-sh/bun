@@ -1264,6 +1264,7 @@ describe("stringWidth SIMD fast paths", () => {
 
     test("emoji embedded in long ASCII runs", () => {
       expect(Bun.stringWidth(repeat("a", 40) + "😀" + repeat("b", 40))).toBe(82);
+      expect(Bun.stringWidth("😀" + repeat("a\x1f  ~~~~\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f", 96) + "😀")).toBe(46);
       expect(Bun.stringWidth("👩‍👩‍👧‍👦".repeat(10))).toBe(20);
       expect(Bun.stringWidth("ok 👍🏽 done, 🇺🇸 flag")).toBe(19);
     });

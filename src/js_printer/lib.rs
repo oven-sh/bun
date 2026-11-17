@@ -2579,35 +2579,6 @@ pub(crate) mod __gated_printer {
             }
         }
 
-        fn print_jsx_property_key(&mut self, key: Expr) {
-            match &key.data {
-                ExprData::EString(str_) => {
-                    self.add_source_mapping(key.loc);
-                    self.print_jsx_name_string(str_);
-                }
-                ExprData::EIdentifier(id) => {
-                    self.add_source_mapping(key.loc);
-                    let ref_ = self.symbols().follow(id.ref_);
-                    if let Some(symbol) = self.symbols().get_const(ref_) {
-                        self.print(symbol.original_name.slice());
-                    } else {
-                        let name = self.name_for_symbol(id.ref_);
-                        self.print(name);
-                    }
-                }
-                _ => {
-                    self.print_expr(key, Level::Lowest, ExprFlag::none());
-                }
-            }
-        }
-
-        fn can_print_jsx_property_key(&self, key: Expr) -> bool {
-            let ExprData::EString(str_) = &key.data else {
-                return true;
-            };
-            str_.is_jsx_name(self.bump)
-        }
-
         pub(crate) fn print_clause_alias(&mut self, alias: &[u8]) {
             if !strings::contains_non_bmp_code_point_or_is_invalid_identifier(alias) {
                 self.print_space_before_identifier();
@@ -4746,7 +4717,11 @@ pub(crate) mod __gated_printer {
                             }
 
                             let key = prop.key.expect("infallible: prop has key");
-                            if !self.can_print_jsx_property_key(key) {
+                            let name = key
+                                .data
+                                .e_string()
+                                .expect("infallible: JSX attribute name is a string");
+                            if !name.is_jsx_name(self.bump) {
                                 self.print(b" {...{");
                                 self.print_expr(key, Level::Comma, ExprFlag::none());
                                 self.print(b": ");
@@ -4760,7 +4735,8 @@ pub(crate) mod __gated_printer {
                             }
 
                             self.print(b" ");
-                            self.print_jsx_property_key(key);
+                            self.add_source_mapping(key.loc);
+                            self.print_jsx_name_string(&name);
                             if prop.flags.contains(js_ast::flags::Property::WasShorthand) {
                                 continue;
                             }

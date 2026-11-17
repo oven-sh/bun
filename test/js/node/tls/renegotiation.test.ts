@@ -919,8 +919,9 @@ it.concurrent.each(["HELLO", "GET a"])(
 );
 
 // Scripted SQL servers. Each starts in plaintext and moves to TLS 1.2 after the client asked for it. REPLIES holds the
-// bytes to answer with, by what the client sent. The server renegotiates when it has read the query in RENEGOTIATE_AT
-// and answers that query when the renegotiation has finished. When the connection closes it prints what it received.
+// bytes to answer with, by what the client sent. The server renegotiates when it has read the message in
+// RENEGOTIATE_AT and answers that message when the renegotiation has finished. When the connection closes it prints
+// what it received.
 const sqlServerPrelude = /* js */ `
   const net = require("net");
   const replies = JSON.parse(process.env.REPLIES);
@@ -961,7 +962,8 @@ const sqlServerPrelude = /* js */ `
         inner.write(pending.subarray(requestLength(pending)));
         plain.pipe(inner).pipe(plain);
       });
-      inner.on("error", () => {});
+      // Without the TLS server the client would wait for nothing: close its connection, so that its query rejects.
+      inner.on("error", () => plain.destroy());
     });
   };
   const listen = onPlain => {
@@ -1010,14 +1012,11 @@ const hex = (replies: Record<string, Buffer>) =>
     Object.fromEntries(Object.entries(replies).map(([message, bytes]) => [message, bytes.toString("hex")])),
   );
 
-// The driver checks the server's identity and starts its session when the TLS handshake is reported. The report of a
-// renegotiation must do neither again: a server answers a second login too, and every later query then gets the reply
-// to the query before it.
-it.concurrent.each([
+const sqlDrivers = [
   {
     name: "MySQL",
     server: renegotiatingMySQLServer,
-    url: (port: number) => `mysql://user:secret@localhost:${port}/db`,
+    url: (port: number) => `mysql://user:secret@127.0.0.1:${port}/db`,
     query: (word: string) => `select '${word}'`,
     replies: {
       greeting: mysqlHandshakeV10({ capabilities: MYSQL_DEFAULT_CAPABILITIES | MYSQL_CLIENT_SSL }),
@@ -1034,7 +1033,7 @@ it.concurrent.each([
   {
     name: "Postgres",
     server: renegotiatingPostgresServer,
-    url: (port: number) => `postgres://user:secret@localhost:${port}/db`,
+    url: (port: number) => `postgres://user:secret@127.0.0.1:${port}/db`,
     query: (word: string) => `update ${word}`,
     replies: {
       startup: Buffer.concat([pgAuthenticationOk(), pgReadyForQuery()]),
@@ -1049,9 +1048,19 @@ it.concurrent.each([
     value: (result: any) => words[result.count - 1],
     session: ["startup"],
   },
-])(
-  "Bun.SQL starts its $name session once when the server renegotiates before it answers a query",
-  async ({ server: script, url, query, replies, value, session }) => {
+];
+
+// The driver checks the server's identity and starts its session when the TLS handshake is reported. The report of a
+// renegotiation must do neither again: a server answers a second login too, and every later query then gets the reply
+// to the query before it. The server renegotiates before it answers the first message of the session, when the driver
+// still waits for its login to be accepted, or before it answers a query.
+it.concurrent.each(
+  sqlDrivers.flatMap(driver =>
+    [driver.session[0], driver.query("second")].map(renegotiateAt => ({ ...driver, renegotiateAt })),
+  ),
+)(
+  "Bun.SQL starts its $name session once when the server renegotiates before it answers $renegotiateAt",
+  async ({ server: script, url, query, replies, value, session, renegotiateAt }) => {
     await using server = Bun.spawn({
       cmd: ["node", "-e", sqlServerPrelude + script],
       stdout: "pipe",
@@ -1062,7 +1071,7 @@ it.concurrent.each([
         SERVER_CERT: tls.cert,
         SERVER_KEY: tls.key,
         REPLIES: hex(replies),
-        RENEGOTIATE_AT: query("second"),
+        RENEGOTIATE_AT: renegotiateAt,
       },
     });
     const output = lines(server.stdout);

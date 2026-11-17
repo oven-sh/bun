@@ -1,20 +1,13 @@
 // Closes a client from the continuation of one of its own replies, drops the
 // last reference to it and collects, all before the socket read that delivered
-// the reply has returned. The read then finishes up on a client whose JS
-// wrapper is dead but not finalized yet.
+// the reply has returned. The read still uses the JS wrapper, so it has to hold
+// it until it returns, and let go of it then.
 //
 // The collector scans the native stack conservatively, so a stale copy of the
 // wrapper's address anywhere between the collector's frame and the stack base
 // keeps it alive. Every native call that receives the wrapper (constructor,
 // connect, get, close) can spill it into its frame. scrub() overwrites the
-// stack below the calling frame right after each of those calls. Without it,
-// release builds only reached the window on the first round.
-//
-// A round can still miss the window: a live frame above the scrub can hold the
-// address (one Linux aarch64 CI lane missed round 2 every time). So a round
-// that misses is reported and skipped. The run passes if at least one of the
-// ten rounds reached the window and came back from the read, and fails
-// otherwise. The last line prints how many rounds reached it.
+// stack below the calling frame right after each of those calls.
 import { RedisClient } from "bun";
 import { jscInternals } from "bun:internal-for-testing";
 
@@ -91,12 +84,7 @@ async function hop() {
   await null;
 }
 
-// The conservative stack scan can keep the wrapper alive by chance (a stale
-// slot in a live native frame), and which round that hits differs per build
-// and platform. A round that misses the window is reported and skipped; the
-// run fails only if no round reached it, so a pass always means the socket
-// read ran against a dead wrapper at least once.
-let reached = 0;
+let collected = 0;
 for (let round = 0; round < 10; round++) {
   const done = useAndCloseClient();
   scrub(256);
@@ -108,22 +96,19 @@ for (let round = 0; round < 10; round++) {
   await hop();
   scrub(256);
   const nextTick = new Promise<void>(resolve => setTimeout(resolve, 0));
-  // Synchronous collection without a sweep: the wrapper is dead and not
-  // finalized when this microtask drain returns into the socket read.
   jscInternals.collectSyncWithoutSweep();
-  const dead = !jscInternals.isLiveCellAtRawAddress(address!);
-  // Return into the socket read before anything else happens.
-  await nextTick;
-  if (dead) {
-    reached++;
-    console.log(`round ${round} survived`);
-  } else {
-    console.log(`round ${round} skipped: the wrapper survived the collection`);
+  if (!jscInternals.isLiveCellAtRawAddress(address!)) {
+    throw new Error(`round ${round}: the wrapper died under the socket read`);
   }
+  await nextTick;
+  scrub(256);
+  jscInternals.collectSyncWithoutSweep();
+  if (!jscInternals.isLiveCellAtRawAddress(address!)) collected++;
 }
-if (reached === 0) {
-  throw new Error("no round reached the dead-but-unswept window");
+// Not all ten: a stale slot in a live native frame can hold one by chance.
+if (collected === 0) {
+  throw new Error("no wrapper was collected after the read");
 }
-console.log(`${reached} rounds reached the window`);
+console.log(`${collected} collected after the read`);
 
 for (const client of lowerTier) client.close();

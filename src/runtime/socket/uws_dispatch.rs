@@ -293,12 +293,7 @@ pub(crate) extern "C" fn us_dispatch_server_identity(
             .ext::<ExtSlot<bun_sql_jsc::mysql::js_my_sql_connection::JSMySQLConnection>>()
             .owner_ref()
             .map_or(Unchecked, |connection| connection.server_identity(ssl)),
-        SocketKind::ValkeyTls => s_ref
-            .ext::<ExtSlot<crate::valkey_jsc::js_valkey::JSValkeyClient>>()
-            .owner_ref()
-            .map_or(Unchecked, |client| {
-                crate::valkey_jsc::js_valkey::SocketHandler::<true>::server_identity(client, ssl)
-            }),
+        SocketKind::ValkeyTls => handlers::Valkey::<true>::server_identity(s, ssl),
         _ => Unchecked,
     };
     verdict as c_int

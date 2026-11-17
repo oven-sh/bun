@@ -1,4 +1,4 @@
-use bun_valkey::client::{Acked, Client, Close, Config, Event, Lost, Sent};
+use bun_valkey::client::{Acked, Attempt, Client, Close, Config, Event, Lost, Refused, Sent};
 use bun_valkey::command::Reply;
 use bun_valkey::valkey_protocol::RESPValue;
 
@@ -34,6 +34,7 @@ fn push(kind: &str, name: &str) -> String {
 /// Does what the runtime does with each result, and writes it down.
 struct Driver {
     client: Client<u32>,
+    attempt: Option<Attempt>,
     sent: u32,
     /// How much the socket still takes.
     window: usize,
@@ -46,6 +47,7 @@ impl Driver {
     fn new(config: Config) -> Self {
         Driver {
             client: Client::new(config),
+            attempt: None,
             sent: 0,
             window: usize::MAX,
             batch_is_due: false,
@@ -60,8 +62,13 @@ impl Driver {
         this
     }
 
+    fn dial(&mut self) {
+        let attempt = self.client.first_dial().or_else(|| self.client.redial());
+        self.attempt = Some(attempt.unwrap());
+    }
+
     fn handshake(&mut self) {
-        self.client.dial();
+        self.dial();
         self.start();
         self.read(HELLO);
         assert!(self.client.is_connected());
@@ -105,16 +112,15 @@ impl Driver {
 
     fn send_as(&mut self, command: &str, reply: Reply) {
         self.sent += 1;
-        if let Some(reason) = self.client.rejection() {
-            self.log.push(format!("refuse #{}: {reason}", self.sent));
-            return;
-        }
         let words: Vec<&str> = command.split_ascii_whitespace().collect();
         let name = words[0].as_bytes();
         match self.client.send(name, &words[1..], reply, self.sent) {
-            Sent::Buffered => self.flush(),
-            Sent::Batched => self.batch_is_due = true,
-            Sent::Queued => {}
+            Ok(Sent::Buffered) => self.flush(),
+            Ok(Sent::Batched) => self.batch_is_due = true,
+            Ok(Sent::Queued) => {}
+            Err(Refused { promise, reason }) => {
+                self.log.push(format!("refuse #{promise}: {reason}"));
+            }
         }
     }
 
@@ -172,9 +178,14 @@ impl Driver {
         self.log.push(format!("fail {pending:?}"));
     }
 
+    fn lose(&mut self, owner_is_gone: bool) -> Lost<u32> {
+        let attempt = self.attempt.take().unwrap();
+        self.client.lost(attempt, owner_is_gone)
+    }
+
     fn lost(&mut self) {
         self.batch_is_due = false;
-        let line = match self.client.lost(false) {
+        let line = match self.lose(false) {
             Lost::ForGood { reason, pending } => format!("closed {pending:?} {reason}"),
             Lost::Retry {
                 delay_ms,
@@ -196,218 +207,240 @@ fn database(database: u32) -> Config {
 mod lifecycle {
     use super::*;
 
-    const STATES: [&str; 10] = [
-        "idle",
-        "dialing",
-        "hello",
-        "select",
-        "ready",
-        "ending policy",
-        "ending final",
-        "ending failed",
-        "backoff",
-        "closed",
+    #[derive(Copy, Clone, Debug, PartialEq)]
+    enum State {
+        Idle,
+        Dialing,
+        Hello,
+        Select,
+        Ready,
+        EndingPolicy,
+        EndingFinal,
+        EndingFailed,
+        Backoff,
+        Closed,
+    }
+    use State::*;
+
+    const STATES: [State; 10] = [
+        Idle,
+        Dialing,
+        Hello,
+        Select,
+        Ready,
+        EndingPolicy,
+        EndingFinal,
+        EndingFailed,
+        Backoff,
+        Closed,
     ];
 
-    /// With a command queued wherever one can be.
-    fn reach(state: &str) -> Driver {
+    /// With commands 1 and 2 waiting wherever they can.
+    fn reach(state: State) -> Driver {
         let mut it = Driver::new(database(1));
-        if state != "idle" {
-            it.client.dial();
+        if state != Idle {
+            it.dial();
             it.send("WATCH a");
             it.send("WATCH b");
         }
         match state {
-            "idle" | "dialing" => {}
-            "hello" | "select" | "ready" => {
+            Idle | Dialing => {}
+            Hello => it.start(),
+            Select => {
                 it.start();
-                if state != "hello" {
-                    it.read(HELLO);
-                }
-                if state == "ready" {
-                    it.read("+OK\r\n");
-                }
+                it.read(HELLO);
             }
-            "ending policy" => it.client.dial_failed(),
-            "ending final" => drop(it.client.close()),
-            "ending failed" => it.fail(),
-            "backoff" => it.lost(),
-            "closed" => {
+            Ready => {
+                it.start();
+                it.read(HELLO);
+                it.read("+OK\r\n");
+            }
+            EndingPolicy => it.client.dial_failed(),
+            EndingFinal => drop(it.client.close()),
+            EndingFailed => it.fail(),
+            Backoff => it.lost(),
+            Closed => {
                 it.fail();
                 it.lost();
             }
-            _ => unreachable!(),
         }
         it.log.clear();
         it
     }
 
-    /// Tells the states apart through what they do.
-    fn name(mut it: Driver) -> &'static str {
-        let client = &it.client;
-        if client.never_dialed() {
-            "idle"
-        } else if client.is_connected() {
-            it.log.clear();
+    /// The core keeps its state private, so this tells them apart through what they do.
+    fn state_of(mut it: Driver) -> State {
+        it.log.clear();
+        if it.client.first_dial().is_some() {
+            Idle
+        } else if it.client.redial().is_some() {
+            Backoff
+        } else if it.client.is_connected() {
             it.read(":1\r\n");
-            match it.log[0].as_bytes()[0] {
-                b'b' => "select",
-                _ => "ready",
+            if it.log[0].starts_with("broken") {
+                Select
+            } else {
+                Ready
             }
-        } else if client.awaits_retry() {
-            "backoff"
-        } else if !client.is_active() {
-            "closed"
-        } else if client.is_ending() && client.rejection().is_some() {
-            "ending failed"
-        } else if client.is_ending() {
-            match it.client.lost(false) {
-                Lost::ForGood { .. } => "ending final",
-                Lost::Retry { .. } => "ending policy",
+        } else if !it.client.is_active() {
+            Closed
+        } else if it.client.is_ending() && it.client.rejection().is_some() {
+            EndingFailed
+        } else if it.client.is_ending() {
+            match it.lose(false) {
+                Lost::ForGood { .. } => EndingFinal,
+                Lost::Retry { .. } => EndingPolicy,
             }
         } else {
-            it.log.clear();
             it.start();
-            if it.log.is_empty() {
-                "hello"
-            } else {
-                "dialing"
-            }
+            if it.log.is_empty() { Hello } else { Dialing }
         }
     }
 
-    fn row(event: impl Fn(&mut Driver)) -> [String; 10] {
-        STATES.map(|state| {
-            let mut it = reach(state);
+    /// Fires `event` in every state. A row is `(before, what happened, after)`; a state with no row ignores it.
+    #[track_caller]
+    fn check(event: impl Fn(&mut Driver), rows: &[(State, &str, State)]) {
+        let actual = STATES.map(|before| {
+            let mut it = reach(before);
             event(&mut it);
-            let did = it.take().join(", ");
-            let next = name(it);
-            format!("{did} -> {}", if next == state { "=" } else { next })
-        })
+            (before, it.take().join(", "), state_of(it))
+        });
+        let actual: Vec<_> = (actual.iter())
+            .map(|(before, did, after)| (*before, did.as_str(), *after))
+            .filter(|(before, did, after)| before != after || !did.is_empty())
+            .collect();
+        assert_eq!(actual, rows);
     }
 
     #[test]
     fn states_are_told_apart() {
-        assert_eq!(STATES.map(|state| name(reach(state))), STATES);
+        assert_eq!(STATES.map(|state| state_of(reach(state))), STATES);
+    }
+
+    #[test]
+    fn dial() {
+        check(
+            |it| it.attempt = it.client.first_dial().or(it.attempt.take()),
+            &[(Idle, "", Dialing)],
+        );
+        check(
+            |it| it.attempt = it.client.redial().or(it.attempt.take()),
+            &[(Backoff, "", Dialing)],
+        );
     }
 
     #[test]
     fn connect() {
-        assert_eq!(
-            row(|it| it.client.connect()),
-            [
-                " -> =",
-                " -> =",
-                " -> =",
-                " -> =",
-                " -> =",
-                " -> =",
-                " -> ending policy",
-                " -> ending final",
-                " -> =",
-                " -> backoff",
-            ]
+        check(
+            |it| it.client.connect(),
+            &[
+                (EndingFinal, "", EndingPolicy),
+                (EndingFailed, "", EndingFinal),
+                (Closed, "", Backoff),
+            ],
         );
     }
 
     #[test]
     fn close() {
-        let close = |it: &mut Driver| {
-            let close = match it.client.close() {
-                Close::Nothing => "nothing",
-                Close::Socket => "socket",
-                Close::Retry => "retry",
-            };
-            it.log.push(close.into());
+        let close = |it: &mut Driver| match it.client.close() {
+            Close::Nothing => {}
+            Close::Socket => it.log.push("close the socket".into()),
+            Close::Retry(attempt) => {
+                it.attempt = Some(attempt);
+                it.log.push("disarm the retry".into());
+            }
         };
-        assert_eq!(
-            row(close),
-            [
-                "nothing -> =",
-                "socket -> ending final",
-                "socket -> ending final",
-                "socket -> ending final",
-                "socket -> ending final",
-                "nothing -> ending final",
-                "nothing -> =",
-                "nothing -> =",
-                "retry -> ending final",
-                "nothing -> =",
-            ]
+        check(
+            close,
+            &[
+                (Dialing, "close the socket", EndingFinal),
+                (Hello, "close the socket", EndingFinal),
+                (Select, "close the socket", EndingFinal),
+                (Ready, "close the socket", EndingFinal),
+                (EndingPolicy, "", EndingFinal),
+                (Backoff, "disarm the retry", EndingFinal),
+            ],
         );
     }
 
     #[test]
     fn fail() {
-        assert_eq!(
-            row(Driver::fail),
-            [
-                "fail None -> =",
-                "fail Some([1, 2]) -> ending failed",
-                "fail Some([1, 2]) -> ending failed",
-                "fail Some([1, 2]) -> ending failed",
-                "fail Some([1, 2]) -> ending failed",
-                "fail Some([1, 2]) -> ending failed",
-                "fail Some([1, 2]) -> ending failed",
-                "fail None -> =",
-                "fail None -> =",
-                "fail None -> =",
-            ]
+        check(
+            Driver::fail,
+            &[
+                (Idle, "fail None", Idle),
+                (Dialing, "fail Some([1, 2])", EndingFailed),
+                (Hello, "fail Some([1, 2])", EndingFailed),
+                (Select, "fail Some([1, 2])", EndingFailed),
+                (Ready, "fail Some([1, 2])", EndingFailed),
+                (EndingPolicy, "fail Some([1, 2])", EndingFailed),
+                (EndingFinal, "fail Some([1, 2])", EndingFailed),
+                (EndingFailed, "fail None", EndingFailed),
+                (Backoff, "fail None", Backoff),
+                (Closed, "fail None", Closed),
+            ],
         );
     }
 
     #[test]
     fn lost() {
         let lost = |it: &mut Driver| {
-            if it.client.is_active() && !it.client.awaits_retry() {
+            if it.attempt.is_some() {
                 it.lost();
             }
         };
-        assert_eq!(
-            row(lost),
-            [
-                " -> =",
-                "retry in 50 [] -> backoff",
-                "retry in 50 [] -> backoff",
-                "retry in 50 [] -> backoff",
-                "retry in 50 [1] -> backoff",
-                "retry in 50 [] -> backoff",
-                "closed [1, 2] Connection closed -> closed",
-                "closed [] Connection closed -> closed",
-                " -> =",
-                " -> =",
-            ]
+        check(
+            lost,
+            &[
+                (Dialing, "retry in 50 []", Backoff),
+                (Hello, "retry in 50 []", Backoff),
+                (Select, "retry in 50 []", Backoff),
+                (Ready, "retry in 50 [1]", Backoff),
+                (EndingPolicy, "retry in 50 []", Backoff),
+                (EndingFinal, "closed [1, 2] Connection closed", Closed),
+                (EndingFailed, "closed [] Connection closed", Closed),
+            ],
         );
     }
 
     #[test]
     fn only_a_dial_says_hello() {
-        let mut expected = [" -> ="; 10];
-        expected[1] = "write HELLO 3 SELECT 1 -> hello";
-        assert_eq!(row(Driver::start), expected);
+        check(Driver::start, &[(Dialing, "write HELLO 3 SELECT 1", Hello)]);
     }
 
     #[test]
-    fn only_a_ready_client_writes_commands() {
+    fn a_command_waits_behind_the_queue_or_is_refused() {
         let send = |it: &mut Driver| {
             it.send("GET k");
             it.batch_is_due = true;
             it.advance();
             it.checkpoint();
         };
-        let mut expected = [" -> ="; 10];
-        expected[7] = "refuse #3: Connection has failed -> =";
-        expected[9] = "refuse #3: Connection has failed -> =";
-        assert_eq!(row(send), expected);
+        check(
+            send,
+            &[
+                (
+                    EndingFailed,
+                    "refuse #3: Connection has failed",
+                    EndingFailed,
+                ),
+                (Closed, "refuse #3: Connection has failed", Closed),
+            ],
+        );
     }
 
     #[test]
     fn a_broken_session_is_a_lost_connection_after_hello() {
-        let broke = STATES.map(|state| reach(state).client.session_broke());
-        let mut expected = [const { None }; 10];
-        expected[3] = Some(vec![]);
-        expected[4] = Some(vec![1]);
-        assert_eq!(broke, expected);
+        let broke = |it: &mut Driver| {
+            if let Some(in_flight) = it.client.session_broke() {
+                it.log.push(format!("reject {in_flight:?}"));
+            }
+        };
+        check(
+            broke,
+            &[(Select, "reject []", Select), (Ready, "reject [1]", Ready)],
+        );
 
         let mut it = Driver::connected(Config {
             enable_auto_reconnect: false,
@@ -419,8 +452,19 @@ mod lifecycle {
     #[test]
     fn timeouts() {
         assert_eq!(
-            STATES.map(|state| reach(state).client.timeout_ms()),
-            [10000, 10000, 10000, 7, 7, 10000, 10000, 0, 10000, 0]
+            STATES.map(|state| (state, reach(state).client.timeout_ms())),
+            [
+                (Idle, 10000),
+                (Dialing, 10000),
+                (Hello, 10000),
+                (Select, 7),
+                (Ready, 7),
+                (EndingPolicy, 10000),
+                (EndingFinal, 10000),
+                (EndingFailed, 0),
+                (Backoff, 10000),
+                (Closed, 0),
+            ]
         );
     }
 
@@ -431,7 +475,7 @@ mod lifecycle {
             ..Config::default()
         });
         for _ in 0..9 {
-            it.client.dial();
+            it.dial();
             it.lost();
         }
         let mut expected = [50, 100, 200, 400, 800, 1600, 2000, 2000]
@@ -441,7 +485,7 @@ mod lifecycle {
         assert_eq!(it.take(), expected);
 
         it.client.connect();
-        it.client.dial();
+        it.dial();
         it.lost();
         assert_eq!(it.take(), ["retry in 50 []"]);
     }
@@ -450,7 +494,7 @@ mod lifecycle {
     fn retries_start_over_when_hello_is_accepted() {
         let mut it = Driver::new(database(1));
         for replies in ["", "", HELLO] {
-            it.client.dial();
+            it.dial();
             it.start();
             it.read(replies);
             it.log.clear();
@@ -462,12 +506,12 @@ mod lifecycle {
     #[test]
     fn no_retry() {
         let mut it = Driver::connected(Config::default());
-        assert!(matches!(it.client.lost(true), Lost::ForGood { .. }));
+        assert!(matches!(it.lose(true), Lost::ForGood { .. }));
         let mut it = Driver::connected(Config {
             enable_auto_reconnect: false,
             ..Config::default()
         });
-        assert!(matches!(it.client.lost(false), Lost::ForGood { .. }));
+        assert!(matches!(it.lose(false), Lost::ForGood { .. }));
     }
 
     #[test]
@@ -476,7 +520,7 @@ mod lifecycle {
             enable_offline_queue: false,
             ..database(1)
         });
-        it.client.dial();
+        it.dial();
         it.start();
         it.send("GET k");
         it.read(HELLO);
@@ -497,7 +541,7 @@ mod lifecycle {
     #[test]
     fn a_batch_does_not_wait_for_select() {
         let mut it = Driver::new(database(1));
-        it.client.dial();
+        it.dial();
         it.start();
         it.read(HELLO);
         it.send("GET k");
@@ -522,7 +566,7 @@ mod handshake {
                 password: password.as_bytes().into(),
                 ..Config::default()
             });
-            it.client.dial();
+            it.dial();
             it.client.start();
             assert!(it.client.output().starts_with(count));
             it.flush();
@@ -568,7 +612,7 @@ mod handshake {
             ),
         ] {
             let mut it = Driver::new(database(db));
-            it.client.dial();
+            it.dial();
             it.start();
             it.read(replies);
             assert_eq!(it.log[1 + db as usize], expected);
@@ -584,7 +628,8 @@ mod pipeline {
         let mut it = Driver::connected(Config::default());
         let long = [b'x'; 10];
         let args: [&[u8]; 2] = [b"", &long];
-        assert!(it.client.send(b"INFO", &args, Reply::Value, 1) == Sent::Buffered);
+        let sent = it.client.send(b"INFO", &args, Reply::Value, 1);
+        assert!(matches!(sent, Ok(Sent::Buffered)));
         assert_eq!(
             it.client.output(),
             b"*3\r\n$4\r\nINFO\r\n$0\r\n\r\n$10\r\nxxxxxxxxxx\r\n"
@@ -733,7 +778,7 @@ mod pipeline {
         it.lost();
         assert_eq!(it.take(), ["write MULTI", "retry in 50 [1]"]);
         assert_eq!(it.client.buffered_amount(), 0);
-        it.client.dial();
+        it.dial();
         it.start();
         it.read(HELLO);
         assert_eq!(it.log.last().unwrap(), "write WATCH a");

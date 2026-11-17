@@ -1380,7 +1380,7 @@ fn get_valkey_default_client(global_this: &JSGlobalObject, _: &JSObject) -> JSVa
     // `Bun.redis` is the realm's: not owned (and closed at dispose()) by whichever
     // Bun.ModuleGraph reads the property first.
     let vm = global_this.bun_vm();
-    let valkey = match JSValkeyClient::create_no_js_no_pubsub(
+    let valkey = match JSValkeyClient::create(
         &global_this.js_thread(vm.root_context()),
         JSValue::UNDEFINED,
         JSValue::UNDEFINED,
@@ -1394,7 +1394,7 @@ fn get_valkey_default_client(global_this: &JSGlobalObject, _: &JSObject) -> JSVa
         }
     };
 
-    JSValkeyClient::wrap(valkey, global_this).to_js()
+    crate::valkey_jsc::js_valkey::js::to_js(valkey, global_this)
 }
 
 fn get_is_standalone_executable(global_this: &JSGlobalObject, _: &JSObject) -> JSValue {

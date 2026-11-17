@@ -151,6 +151,11 @@ impl<'a> ValkeyReader<'a> {
         bun_core::fmt::parse_int::<i64>(str, 10).map_err(|_| RedisError::InvalidInteger)
     }
 
+    /// `None` for a negative one.
+    fn read_len(&mut self) -> Result<Option<usize>, RedisError> {
+        Ok(usize::try_from(self.read_integer()?).ok())
+    }
+
     pub(crate) fn read_double(&mut self) -> Result<f64, RedisError> {
         let str = self.read_until_crlf()?;
 
@@ -183,11 +188,8 @@ impl<'a> ValkeyReader<'a> {
     }
 
     pub(crate) fn read_verbatim_string(&mut self) -> Result<Box<[u8]>, RedisError> {
-        let len = self.read_integer()?;
-        if !(0..=Self::MAX_BULK_LEN).contains(&len) {
-            return Err(RedisError::InvalidVerbatimString);
-        }
-        let len = usize::try_from(len).expect("int cast");
+        let len = self.read_len()?.filter(|&len| len <= Self::MAX_BULK_LEN);
+        let len = len.ok_or(RedisError::InvalidVerbatimString)?;
         if self.pos + len > self.buffer.len() {
             return Err(RedisError::InvalidResponse);
         }
@@ -219,12 +221,12 @@ impl<'a> ValkeyReader<'a> {
     /// Declared lengths above this fail the parse so the connection state
     /// machine stops buffering instead of growing the read buffer toward an
     /// attacker-chosen size.
-    const MAX_BULK_LEN: i64 = 512 * 1024 * 1024;
+    const MAX_BULK_LEN: usize = 512 * 1024 * 1024;
 
     /// Maximum accepted length for a CRLF-terminated RESP line (`+ - : _ , # (`).
     /// Mirrors `MAX_BULK_LEN` so line-terminated replies get the same
     /// buffer-growth bound as length-prefixed blobs; the spec places no limit.
-    const MAX_LINE_LEN: usize = Self::MAX_BULK_LEN as usize;
+    const MAX_LINE_LEN: usize = Self::MAX_BULK_LEN;
 
     /// Caps an aggregate's `Vec::with_capacity` so the total bytes reserved
     /// across the whole parse — every nesting level combined — never exceed
@@ -263,14 +265,12 @@ impl<'a> ValkeyReader<'a> {
                 Ok(RESPValue::Integer(int))
             }
             RESPType::BulkString => {
-                let len = self.read_integer()?;
-                if len < 0 {
+                let Some(len) = self.read_len()? else {
                     return Ok(RESPValue::BulkString(None));
-                }
+                };
                 if len > Self::MAX_BULK_LEN {
                     return Err(RedisError::InvalidBulkString);
                 }
-                let len = usize::try_from(len).expect("int cast");
                 if self.pos + len > self.buffer.len() {
                     return Err(RedisError::InvalidResponse);
                 }
@@ -287,12 +287,10 @@ impl<'a> ValkeyReader<'a> {
                 if depth >= Self::MAX_NESTING_DEPTH {
                     return Err(RedisError::NestingDepthExceeded);
                 }
-                let len = self.read_integer()?;
-                if len < 0 {
+                let Some(len) = self.read_len()? else {
                     // RESP2 null array.
                     return Ok(RESPValue::Null);
-                }
-                let len = usize::try_from(len).expect("int cast");
+                };
                 let mut array =
                     Vec::with_capacity(self.take_prealloc_budget(len, size_of::<RESPValue>()));
                 // errdefer cleanup handled by Vec Drop on `?`
@@ -320,11 +318,8 @@ impl<'a> ValkeyReader<'a> {
                 Ok(RESPValue::Boolean(b))
             }
             RESPType::BlobError => {
-                let len = self.read_integer()?;
-                if !(0..=Self::MAX_BULK_LEN).contains(&len) {
-                    return Err(RedisError::InvalidBlobError);
-                }
-                let len = usize::try_from(len).expect("int cast");
+                let len = self.read_len()?.filter(|&len| len <= Self::MAX_BULK_LEN);
+                let len = len.ok_or(RedisError::InvalidBlobError)?;
                 if self.pos + len > self.buffer.len() {
                     return Err(RedisError::InvalidResponse);
                 }
@@ -342,11 +337,7 @@ impl<'a> ValkeyReader<'a> {
                 if depth >= Self::MAX_NESTING_DEPTH {
                     return Err(RedisError::NestingDepthExceeded);
                 }
-                let len = self.read_integer()?;
-                if len < 0 {
-                    return Err(RedisError::InvalidMap);
-                }
-                let len = usize::try_from(len).expect("int cast");
+                let len = self.read_len()?.ok_or(RedisError::InvalidMap)?;
 
                 let mut entries =
                     Vec::with_capacity(self.take_prealloc_budget(len, size_of::<MapEntry>()));
@@ -365,11 +356,7 @@ impl<'a> ValkeyReader<'a> {
                 if depth >= Self::MAX_NESTING_DEPTH {
                     return Err(RedisError::NestingDepthExceeded);
                 }
-                let len = self.read_integer()?;
-                if len < 0 {
-                    return Err(RedisError::InvalidSet);
-                }
-                let len = usize::try_from(len).expect("int cast");
+                let len = self.read_len()?.ok_or(RedisError::InvalidSet)?;
 
                 let mut set =
                     Vec::with_capacity(self.take_prealloc_budget(len, size_of::<RESPValue>()));
@@ -385,10 +372,7 @@ impl<'a> ValkeyReader<'a> {
                 if depth >= Self::MAX_NESTING_DEPTH {
                     return Err(RedisError::NestingDepthExceeded);
                 }
-                let len = self.read_integer()?;
-                if len < 0 {
-                    return Err(RedisError::InvalidAttribute);
-                }
+                let len = self.read_len()?.ok_or(RedisError::InvalidAttribute)?;
                 // Nothing reads the pairs: the reply is the value behind them.
                 for _ in 0..len {
                     self.read_value_with_depth(depth + 1)?;
@@ -400,10 +384,8 @@ impl<'a> ValkeyReader<'a> {
                 if depth >= Self::MAX_NESTING_DEPTH {
                     return Err(RedisError::NestingDepthExceeded);
                 }
-                let len = self.read_integer()?;
-                if len <= 0 {
-                    return Err(RedisError::InvalidPush);
-                }
+                let data_len = self.read_len()?.and_then(|len| len.checked_sub(1));
+                let data_len = data_len.ok_or(RedisError::InvalidPush)?;
 
                 // First element is the push type
                 let push_type = self.read_value_with_depth(depth + 1)?;
@@ -424,7 +406,6 @@ impl<'a> ValkeyReader<'a> {
                 // errdefer free(push_type_dup) — drops automatically on `?`
 
                 // Read the rest of the data
-                let data_len = usize::try_from(len - 1).expect("int cast");
                 let mut data =
                     Vec::with_capacity(self.take_prealloc_budget(data_len, size_of::<RESPValue>()));
                 // errdefer cleanup handled by Vec Drop on `?`
@@ -475,7 +456,7 @@ pub(crate) struct ReplyScanner {
     pos: usize,
     /// Remaining child-value count for each in-progress aggregate, outermost
     /// first.
-    stack: Vec<u64>,
+    stack: Vec<usize>,
     crlf_skip: usize,
 }
 
@@ -539,7 +520,7 @@ impl ReplyScanner {
     /// aggregate expecting `n` further child values, or `None` for a
     /// fully-skipped scalar. `InvalidResponse` means the element is not yet
     /// fully buffered.
-    fn scan_one(reader: &mut ValkeyReader<'_>, depth: usize) -> Result<Option<u64>, RedisError> {
+    fn scan_one(reader: &mut ValkeyReader<'_>, depth: usize) -> Result<Option<usize>, RedisError> {
         let type_byte = reader.read_byte()?;
         let ty = RESPType::from_byte(type_byte).ok_or(RedisError::InvalidResponseType)?;
         match ty {
@@ -564,8 +545,7 @@ impl ReplyScanner {
                     RESPType::VerbatimString => RedisError::InvalidVerbatimString,
                     _ => RedisError::InvalidBulkString,
                 };
-                let len = reader.read_integer()?;
-                if len < 0 {
+                let Some(len) = reader.read_len()? else {
                     // Only `$-1` (RESP2 null bulk string) is legal; the tree
                     // parser rejects negative `!`/`=` lengths.
                     return if ty == RESPType::BulkString {
@@ -573,11 +553,10 @@ impl ReplyScanner {
                     } else {
                         Err(invalid)
                     };
-                }
+                };
                 if len > ValkeyReader::MAX_BULK_LEN {
                     return Err(invalid);
                 }
-                let len = usize::try_from(len).expect("int cast");
                 // The payload plus its trailing CRLF must be fully buffered.
                 if reader.buffer.len() - reader.pos < len + 2 {
                     return Err(RedisError::InvalidResponse);
@@ -594,42 +573,27 @@ impl ReplyScanner {
                 if depth >= ValkeyReader::MAX_NESTING_DEPTH {
                     return Err(RedisError::NestingDepthExceeded);
                 }
-                let len = reader.read_integer()?;
                 // Mirror the tree parser: only `*-1` (RESP2 null array) is a
-                // legal non-positive aggregate length here.
-                match ty {
-                    RESPType::Array if len < 0 => Ok(Some(0)),
-                    RESPType::Set if len < 0 => Err(RedisError::InvalidSet),
-                    RESPType::Push if len <= 0 => Err(RedisError::InvalidPush),
-                    _ => Ok(Some(u64::try_from(len).expect("int cast"))),
+                // legal negative aggregate length here.
+                match (ty, reader.read_len()?) {
+                    (RESPType::Push, None | Some(0)) => Err(RedisError::InvalidPush),
+                    (RESPType::Set, None) => Err(RedisError::InvalidSet),
+                    (_, len) => Ok(Some(len.unwrap_or(0))),
                 }
             }
             RESPType::Map => {
                 if depth >= ValkeyReader::MAX_NESTING_DEPTH {
                     return Err(RedisError::NestingDepthExceeded);
                 }
-                let len = reader.read_integer()?;
-                if len < 0 {
-                    return Err(RedisError::InvalidMap);
-                }
-                Ok(Some(
-                    u64::try_from(len).expect("int cast").saturating_mul(2),
-                ))
+                let len = reader.read_len()?.ok_or(RedisError::InvalidMap)?;
+                Ok(Some(len.saturating_mul(2)))
             }
             RESPType::Attribute => {
                 if depth >= ValkeyReader::MAX_NESTING_DEPTH {
                     return Err(RedisError::NestingDepthExceeded);
                 }
-                let len = reader.read_integer()?;
-                if len < 0 {
-                    return Err(RedisError::InvalidAttribute);
-                }
-                Ok(Some(
-                    u64::try_from(len)
-                        .expect("int cast")
-                        .saturating_mul(2)
-                        .saturating_add(1),
-                ))
+                let len = reader.read_len()?.ok_or(RedisError::InvalidAttribute)?;
+                Ok(Some(len.saturating_mul(2).saturating_add(1)))
             }
         }
     }

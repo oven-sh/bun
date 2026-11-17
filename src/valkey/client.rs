@@ -138,8 +138,17 @@ pub enum Acked<P> {
     Raw(P, RESPValue),
 }
 
+/// What [`Client::lost`] takes: a dial ends once, and the next one cannot start before it has.
 #[must_use]
-#[derive(Copy, Clone, PartialEq, Eq)]
+pub struct Attempt(());
+
+/// A command that can neither be sent nor wait.
+pub struct Refused<P> {
+    pub promise: P,
+    pub reason: &'static str,
+}
+
+#[must_use]
 pub enum Sent {
     /// In [`Client::output`].
     Buffered,
@@ -153,8 +162,8 @@ pub enum Close {
     Nothing,
     /// Its close event leads to [`Client::lost`].
     Socket,
-    /// There is no socket: disarm the retry and call [`Client::lost`].
-    Retry,
+    /// There is no socket, only a retry to disarm.
+    Retry(Attempt),
 }
 
 #[must_use]
@@ -195,10 +204,6 @@ impl<P> Client<P> {
         &self.config
     }
 
-    pub fn never_dialed(&self) -> bool {
-        matches!(self.state, State::Idle)
-    }
-
     pub fn is_connected(&self) -> bool {
         matches!(self.state, State::Select | State::Ready)
     }
@@ -209,10 +214,6 @@ impl<P> Client<P> {
 
     pub fn is_ending(&self) -> bool {
         matches!(self.state, State::Ending(_))
-    }
-
-    pub fn awaits_retry(&self) -> bool {
-        matches!(self.state, State::Backoff)
     }
 
     /// An event is still to come.
@@ -259,7 +260,7 @@ impl<P> Client<P> {
         }
     }
 
-    /// An explicit `connect()`; the caller dials if [`Self::never_dialed`] or [`Self::awaits_retry`].
+    /// An explicit `connect()`, ahead of [`Self::first_dial`] and [`Self::redial`].
     pub fn connect(&mut self) {
         match self.state {
             State::Backoff | State::Closed => {
@@ -283,18 +284,26 @@ impl<P> Client<P> {
             State::Idle | State::Closed | State::Ending(End::Failed) => return Close::Nothing,
             State::Ending(End::Policy | End::Final) => Close::Nothing,
             State::Dialing | State::Hello | State::Select | State::Ready => Close::Socket,
-            State::Backoff => Close::Retry,
+            State::Backoff => Close::Retry(Attempt(())),
         };
         self.state = State::Ending(End::Final);
         close
     }
 
-    pub fn dial(&mut self) {
-        debug_assert!(self.never_dialed() || self.awaits_retry());
-        self.state = State::Dialing;
+    pub fn first_dial(&mut self) -> Option<Attempt> {
+        matches!(self.state, State::Idle).then(|| self.dial())
     }
 
-    /// The dial gave no socket; the caller owes a [`Self::lost`].
+    pub fn redial(&mut self) -> Option<Attempt> {
+        matches!(self.state, State::Backoff).then(|| self.dial())
+    }
+
+    fn dial(&mut self) -> Attempt {
+        self.state = State::Dialing;
+        Attempt(())
+    }
+
+    /// The dial gave no socket.
     pub fn dial_failed(&mut self) {
         if let State::Dialing = self.state {
             self.state = State::Ending(End::Policy);
@@ -350,8 +359,7 @@ impl<P> Client<P> {
     }
 
     /// The socket closed, or there never was one.
-    pub fn lost(&mut self, owner_is_gone: bool) -> Lost<P> {
-        debug_assert!(self.is_active() && !self.awaits_retry());
+    pub fn lost(&mut self, Attempt(()): Attempt, owner_is_gone: bool) -> Lost<P> {
         self.output.clear_and_free();
         self.input.clear_and_free();
         self.scanner.reset();
@@ -400,14 +408,16 @@ impl<P> Client<P> {
         }
     }
 
-    /// For a client with no [`Self::rejection`].
     pub fn send<A: AsRef<[u8]>>(
         &mut self,
         name: &[u8],
         args: &[A],
         reply: Reply,
         promise: P,
-    ) -> Sent {
+    ) -> Result<Sent, Refused<P>> {
+        if let Some(reason) = self.rejection() {
+            return Err(Refused { promise, reason });
+        }
         let expect = match ACKS.get_ascii_case_insensitive(name) {
             Some(_) => Expect::Ack,
             None => Expect::Reply(reply),
@@ -429,18 +439,18 @@ impl<P> Client<P> {
         command::encode(name, args, out);
         if goes_now {
             self.in_flight.push_back(request);
-            return Sent::Buffered;
+            return Ok(Sent::Buffered);
         }
         self.queue.push_back(Queued {
             bytes: bytes.into_boxed_slice(),
             can_pipeline,
             request,
         });
-        if batches && connected {
+        Ok(if batches && connected {
             Sent::Batched
         } else {
             Sent::Queued
-        }
+        })
     }
 
     /// Moves the head of the queue to [`Self::output`] if it travels alone. Whether [`Self::batch`] is due.

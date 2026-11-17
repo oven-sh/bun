@@ -75,10 +75,7 @@ impl Address {
     /// Open a TCP/TLS/Unix socket via
     /// `uws::Socket{TLS,TCP}::connect_*_group`.
     ///
-    /// `Owner` is the userdata pointer stashed in the socket ext (the
-    /// `JSValkeyClient` parent in practice — that's what `SocketHandler<SSL>`
-    /// pulls back out on event dispatch). Generic so the caller controls the
-    /// stored type; this fn only forwards it opaquely to `connect_*_group`.
+    /// `owner` goes in the socket's ext slot.
     pub(crate) fn connect<Owner>(
         &self,
         owner: *mut Owner,

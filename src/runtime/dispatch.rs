@@ -339,8 +339,8 @@ pub(crate) fn run_task(
             boxed_arm!(
                 task,
                 [Valkey],
-                |close: crate::valkey_jsc::js_valkey::ValkeyDeferredClose| {
-                    close.run();
+                |dial: crate::valkey_jsc::js_valkey::Dial| {
+                    dial.run();
                 }
             )
         }
@@ -1815,7 +1815,7 @@ fn __bun_release_task_unrun(task: bun_event_loop::Task) {
             unreachable!("posix-only tag");
         }
         task_tag::ValkeyDeferredClose => {
-            release_boxed_in!([Valkey], crate::valkey_jsc::js_valkey::ValkeyDeferredClose)
+            release_boxed_in!([Valkey], crate::valkey_jsc::js_valkey::Dial)
         }
         // ── Windows-only producers ───────────────────────────────────────
         task_tag::GetAddrInfoLibuvComplete => {

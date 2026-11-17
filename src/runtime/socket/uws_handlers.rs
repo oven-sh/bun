@@ -294,7 +294,7 @@ impl LiftJsResult for JsResult<()> {
 
 /// Forwards `NsSocketEvents` to the inherent `on_*` methods on a driver's
 /// `SocketHandler<SSL>` namespace type; `lift()` lifts both return shapes (see
-/// [`LiftJsResult`]) so one expansion covers postgres, mysql and valkey, and the dispatcher
+/// [`LiftJsResult`]) so one expansion covers postgres and mysql, and the dispatcher
 /// (`NsHandler: VHandler`) folds the result at the entry.
 ///
 /// `on_long_timeout` is intentionally NOT forwarded — no driver defines it,
@@ -363,7 +363,6 @@ impl_ns_socket_events_forward!(
     mysql::js_my_sql_connection::JSMySQLConnection,
     mysql::js_my_sql_connection::SocketHandler<SSL>
 );
-impl_ns_socket_events_forward!(js_valkey::JSValkeyClient, js_valkey::SocketHandler<SSL>);
 
 // ── Bun.connect / Bun.listen ────────────────────────────────────────────────
 /// Does not borrow the ext slot across a handler, which can empty it (`connect()` again).
@@ -698,8 +697,7 @@ pub(crate) type MySQL<const SSL: bool> = NsHandler<
     mysql::js_my_sql_connection::SocketHandler<SSL>,
     SSL,
 >;
-pub(crate) type Valkey<const SSL: bool> =
-    NsHandler<js_valkey::JSValkeyClient, js_valkey::SocketHandler<SSL>, SSL>;
+pub(crate) type Valkey<const SSL: bool> = js_valkey::SocketHandler<SSL>;
 
 // ── Bun.spawn IPC / process.send() ──────────────────────────────────────────
 // Ext is `*IPC.SendQueue` for both child-side `process.send` and parent-side

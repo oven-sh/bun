@@ -727,9 +727,6 @@ dependencies = [
 [[package]]
 name = "bun_highway"
 version = "0.0.0"
-dependencies = [
- "bstr",
-]
 
 [[package]]
 name = "bun_histogram"

@@ -1,4 +1,4 @@
-//! Ports of highway_strings.cpp: words in as few bytes as they take.
+//! Words in as few bytes as they take.
 use bun_simd::{Out, Writer};
 
 /// LLVM knows its range even when it comes out of a table, so bounds checks on it go away.

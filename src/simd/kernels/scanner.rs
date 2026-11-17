@@ -1,4 +1,4 @@
-//! Ports of highway_strings.cpp: one pass over a source file, for the lexers.
+//! One pass over a source file, for the lexers.
 use crate::ByteSet;
 use bun_simd::{Out, blocks};
 

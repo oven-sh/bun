@@ -1,4 +1,4 @@
-//! Port of highway_sourcemap.cpp, after Muła's base64 decoder and Masked VByte.
+//! The mappings of a source map, after Muła's base64 decoder and Masked VByte.
 use crate::ByteSet;
 use bun_simd::{Out, Writer};
 

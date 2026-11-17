@@ -137,6 +137,63 @@ describe.concurrent("Bun.cron.parse — DST transitions", () => {
     expect(next).toBe("2025-10-04T15:45:00.000Z");
   });
 
+  test("Lord Howe: 30-minute spring-forward gap — wildcard hour fires at the first existing hour", async () => {
+    // 2025-10-05 02:00 LHST (+10:30) → 02:30 LHDT (+11); 2:00-2:29 don't exist.
+    // The gap-shifted instant for 02:00 is 02:30, which "0 * * * *" does not
+    // match. The hourly chain must walk 1:00 → 3:00 → 4:00, not fire at 2:30.
+    expect(await chainInTZ("Australia/Lord_Howe", "0 * * * *", "2025-10-04T13:59:00Z", 3)).toEqual([
+      "2025-10-04T14:30:00.000Z", // 1:00 LHST
+      "2025-10-04T16:00:00.000Z", // 3:00 LHDT
+      "2025-10-04T17:00:00.000Z", // 4:00 LHDT
+    ]);
+  });
+
+  test("Lord Howe: 30-minute spring-forward gap — minute list fires in real-time order", async () => {
+    // From 1:50 LHST, "10,35,40 * * * *": wall-clock 2:10 (in the gap) maps to
+    // 2:40 LHDT, but the existing minute 2:35 LHDT comes first.
+    expect(await chainInTZ("Australia/Lord_Howe", "10,35,40 * * * *", "2025-10-04T15:20:00Z", 3)).toEqual([
+      "2025-10-04T15:35:00.000Z", // 2:35 LHDT
+      "2025-10-04T15:40:00.000Z", // 2:40 LHDT
+      "2025-10-04T16:10:00.000Z", // 3:10 LHDT
+    ]);
+  });
+
+  test("Lord Howe: 30-minute spring-forward gap — fixed-time minute list does not skip an existing minute", async () => {
+    // "10,35,40 2 * * *" from 1:50 LHST: wall-clock 2:10 is in the gap and shifts
+    // to 2:40 LHDT. The existing 2:35 fires first, then 2:40, then the next day.
+    expect(await chainInTZ("Australia/Lord_Howe", "10,35,40 2 * * *", "2025-10-04T15:20:00Z", 3)).toEqual([
+      "2025-10-04T15:35:00.000Z", // 2:35 LHDT
+      "2025-10-04T15:40:00.000Z", // 2:40 LHDT
+      "2025-10-05T15:10:00.000Z", // next day 2:10 LHDT
+    ]);
+  });
+
+  test("Chatham: 60-minute gap at 02:45 — wildcard minute fires at the first existing minute of the hour", async () => {
+    // Pacific/Chatham 2025-09-28 02:45 CHAST (+12:45) → 03:45 CHADT (+13:45); 2:45-3:44 don't exist.
+    // "* 3 * * *" from 2:00: the first existing minute of hour 3 is 3:45, not the
+    // gap-shifted 4:00.
+    expect(await chainInTZ("Pacific/Chatham", "* 3 * * *", "2025-09-27T13:15:00Z", 2)).toEqual([
+      "2025-09-27T14:00:00.000Z", // 3:45 CHADT
+      "2025-09-27T14:01:00.000Z", // 3:46 CHADT
+    ]);
+  });
+
+  test("Chatham: 60-minute gap at 02:45 — fixed-time schedule fires at an existing minute before the shifted one", async () => {
+    // "0,50 3 * * *" from 2:00 CHAST: 3:00 is in the gap and shifts to 4:00 CHADT,
+    // but 3:50 CHADT exists and comes first. Then the next day.
+    expect(await chainInTZ("Pacific/Chatham", "0,50 3 * * *", "2025-09-27T13:15:00Z", 2)).toEqual([
+      "2025-09-27T14:05:00.000Z", // 3:50 CHADT
+      "2025-09-28T13:15:00.000Z", // next day 3:00 CHADT
+    ]);
+  });
+
+  test("spring-forward: every-minute schedule pinned to the missing hour skips the day", async () => {
+    // "* 2 * * *" runs on real time (wildcard minute). 2:xx EST does not exist
+    // on 2025-03-09, and 3:xx EDT is not hour 2, so the next run is the next day.
+    const next = await parseInTZ("America/New_York", "* 2 * * *", "2025-03-09T06:59:00Z"); // = 01:59 EST
+    expect(next).toBe("2025-03-10T06:00:00.000Z"); // 2025-03-10 02:00 EDT
+  });
+
   test("Lord Howe: 30-minute fall-back — wildcard fires through repeated half-hour", async () => {
     // 2025-04-06 02:00 LHDT (+11) → 01:30 LHST (+10:30); 1:30-1:59 repeats.
     // After first 1:59 (14:59Z), every-minute → second 1:30 (15:00Z).
@@ -245,6 +302,21 @@ describe.concurrent("Bun.cron.parse — { tz } option", () => {
       "2025-11-02T05:00:00.000Z", // 1st 1:00 EDT
       "2025-11-02T06:00:00.000Z", // 2nd 1:00 EST
       "2025-11-02T07:00:00.000Z", // 2:00 EST
+    ]);
+  });
+
+  test("DST via tz option (Lord Howe 30-minute spring-forward gap, wildcard hour)", async () => {
+    const out = await evalInTZ(
+      "UTC",
+      `let t = new Date("2025-10-04T13:59:00Z");
+       const seq = [];
+       for (let i = 0; i < 3; i++) { t = Bun.cron.parse("0 * * * *", t, {tz: "Australia/Lord_Howe"}); seq.push(t.toISOString()); }
+       process.stdout.write(JSON.stringify(seq))`,
+    );
+    expect(JSON.parse(out)).toEqual([
+      "2025-10-04T14:30:00.000Z", // 1:00 LHST
+      "2025-10-04T16:00:00.000Z", // 3:00 LHDT (2:00-2:29 don't exist)
+      "2025-10-04T17:00:00.000Z", // 4:00 LHDT
     ]);
   });
 

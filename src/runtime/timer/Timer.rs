@@ -511,10 +511,8 @@ pub(crate) fn read_hrtime_export(vm: &VirtualMachine) -> u64 {
 }
 
 // HOST_EXPORT(Bun__Timer__clearImmediate, c)
-pub(crate) fn clear_immediate_export(global: &JSGlobalObject, id: JSValue) -> JsResult<JSValue> {
-    if id.is_number() || id.is_string_literal() {
-        return All::clear_timeout(global, id);
-    }
+pub(crate) fn clear_immediate_export(_global: &JSGlobalObject, id: JSValue) -> JsResult<JSValue> {
+    bun_jsc::mark_binding!();
     if let Some(immediate) = id.as_class_ref::<ImmediateObject>() {
         immediate.cancel();
     }

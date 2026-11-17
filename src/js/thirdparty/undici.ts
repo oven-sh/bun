@@ -190,8 +190,7 @@ function connectInit(init, hop, connect) {
     }
     if (init?.proxy === undefined) out.proxy = false;
     else if (init.proxy && !hop.https) {
-      // An http: request through a forward proxy names the target in the request
-      // line, so the proxy would resolve and connect to the pinned IP itself.
+      // The absolute-form request line would carry the pinned IP to the proxy.
       throw new NotSupportedError(
         "a proxy cannot be combined with a connect.lookup hook over http; the proxy resolves the hostname itself",
       );

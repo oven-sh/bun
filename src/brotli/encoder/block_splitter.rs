@@ -2,7 +2,7 @@
 
 use core::array::from_fn;
 
-use bun_highway::brotli_find_switches;
+use bun_highway::brotli::find_switches;
 
 use super::cluster::{BATCH, Clusters, Combiner, renumber};
 use super::histogram::{DISTANCE_SYMBOLS, Indexed, count_symbols};
@@ -219,7 +219,7 @@ impl PathFinder {
     #[inline(never)]
     fn assign(&mut self, data: &[u16], switch_cost: f64, blocks: &mut Vec<Block>) -> Result<()> {
         let groups = self.costs.len();
-        brotli_find_switches(
+        find_switches(
             data,
             &self.symbol_costs,
             switch_cost,

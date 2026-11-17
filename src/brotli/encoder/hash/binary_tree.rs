@@ -1,6 +1,6 @@
 use core::hint::{Locality, prefetch_read, select_unpredictable};
 
-use bun_highway::BROTLI_LENGTH_SHIFT;
+use bun_highway::brotli::LENGTH_SHIFT;
 
 use super::slots::{Linked, Slots};
 use super::{Search, is_within};
@@ -29,7 +29,7 @@ impl Candidate {
 
     #[inline(always)]
     fn word(distance: usize, length: usize, word_length: usize) -> Self {
-        Self(((length << BROTLI_LENGTH_SHIFT) | (word_length << 32) | distance) as u64)
+        Self(((length << LENGTH_SHIFT) | (word_length << 32) | distance) as u64)
     }
 
     #[inline(always)]
@@ -39,12 +39,12 @@ impl Candidate {
 
     #[inline(always)]
     pub(in crate::encoder) fn length(self) -> usize {
-        (self.0 >> BROTLI_LENGTH_SHIFT) as usize
+        (self.0 >> LENGTH_SHIFT) as usize
     }
 
     #[inline(always)]
     pub(in crate::encoder) fn word_length(self) -> Option<usize> {
-        let without_length = self.0 % (1 << BROTLI_LENGTH_SHIFT);
+        let without_length = self.0 % (1 << LENGTH_SHIFT);
         Some((without_length >> 32) as usize).filter(|&length| length != 0)
     }
 }

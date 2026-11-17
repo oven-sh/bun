@@ -4,10 +4,7 @@ use core::array::from_fn;
 use core::hint::select_unpredictable;
 use core::ops::RangeInclusive;
 
-use bun_highway::{
-    BROTLI_SLOT_SHIFT, BrotliPlace, BrotliStart, BrotliWays, brotli_short_codes,
-    brotli_short_codes_of_five, brotli_try_lengths, brotli_try_lengths_at_cost, brotli_try_matches,
-};
+use bun_highway::brotli::{self, Place, SLOT_SHIFT, Ways};
 
 use super::command::{
     Command, Commands, DISTANCE_CODE_OFFSET, DistancePrefix, codes_of_short_lengths,
@@ -261,10 +258,10 @@ struct Starts {
 
 impl Starts {
     const SLOTS: usize = 8;
-    const OFFSET_SHIFT: u32 = BROTLI_SLOT_SHIFT + Self::SLOTS.ilog2();
+    const OFFSET_SHIFT: u32 = SLOT_SHIFT + Self::SLOTS.ilog2();
 
     fn new() -> Self {
-        let slot = |index: usize| (index << BROTLI_SLOT_SHIFT) as u64;
+        let slot = |index: usize| (index << SLOT_SHIFT) as u64;
         let unreached = u64::from(UNREACHED.to_bits()) << 32;
         Self {
             ranked: from_fn(|rank| unreached | slot(MAX_STARTS - 1 - rank)),
@@ -276,7 +273,7 @@ impl Starts {
 
     #[inline(always)]
     fn push(&mut self, offset: usize, saved: f32, cost: f32, last_distances: [i32; 4]) {
-        let slot = (self.free_slot >> BROTLI_SLOT_SHIFT) as usize % Self::SLOTS;
+        let slot = (self.free_slot >> SLOT_SHIFT) as usize % Self::SLOTS;
         (self.last_distances[slot], self.costs[slot]) = (last_distances, cost);
         let mut moved = (u64::from((-saved).to_bits()) << 32)
             | ((offset << Self::OFFSET_SHIFT) as u64 + self.free_slot);
@@ -288,12 +285,12 @@ impl Starts {
 
     /// A bit for each short distance code, for the best one and for the others. `count` is 1 or [`MAX_STARTS`].
     #[inline(always)]
-    fn promising(&self, count: usize, place: BrotliPlace<'_>, hopeless: f32) -> (u32, u64) {
+    fn promising(&self, count: usize, place: Place<'_>, hopeless: f32) -> (u32, u64) {
         if count == 1 {
             let last_distances = &self.last_distances[self.get(0).slot];
-            (brotli_short_codes(place, last_distances), 0)
+            (brotli::short_codes(place, last_distances), 0)
         } else {
-            brotli_short_codes_of_five(place, &self.last_distances, &self.ranked, hopeless)
+            brotli::short_codes_of_five(place, &self.last_distances, &self.ranked, hopeless)
         }
     }
 
@@ -303,7 +300,7 @@ impl Starts {
         Start {
             offset: (packed as u32 >> Self::OFFSET_SHIFT) as usize,
             relative_cost: f32::from_bits((packed >> 32) as u32),
-            slot: (packed >> BROTLI_SLOT_SHIFT) as usize % Self::SLOTS,
+            slot: (packed >> SLOT_SHIFT) as usize % Self::SLOTS,
         }
     }
 }
@@ -380,7 +377,7 @@ struct Paths<'a> {
     /// Fewer candidates can be tried at once.
     at_once_below: usize,
     starts: Starts,
-    /// See [`BrotliWays`]. Valid where `costs` is below [`UNREACHED`].
+    /// See [`Ways`]. Valid where `costs` is below [`UNREACHED`].
     nodes: Vec<u32>,
     /// With room for a [`CostByCopyLength`] from each offset on. See [`Link`].
     costs: Vec<f32>,
@@ -450,8 +447,8 @@ impl<'a> Paths<'a> {
     }
 
     #[inline(always)]
-    fn ways_from(&mut self, offset: usize) -> BrotliWays<'_> {
-        BrotliWays {
+    fn ways_from(&mut self, offset: usize) -> Ways<'_> {
+        Ways {
             costs: &mut self.costs,
             nodes: &mut self.nodes,
             offset: offset as u32,
@@ -543,7 +540,7 @@ impl<'a> Paths<'a> {
 
     /// Has the last two of `length` bytes.
     #[inline(always)]
-    fn place_for(&self, offset: usize, length: usize) -> BrotliPlace<'a> {
+    fn place_for(&self, offset: usize, length: usize) -> Place<'a> {
         let pair = bytes_at(self.padded, offset + length - 2);
         (self.block.window).place(self.block.position + offset, length - 2, pair)
     }
@@ -602,14 +599,14 @@ impl<'a> Paths<'a> {
             Some(costs) if node.insert >> Node::CODE_SHIFT == 1 => (without_distance, costs),
             _ => (with_distance, &self.symbols.with_distance[insert_code]),
         };
-        let start = BrotliStart {
+        let start = brotli::Start {
             cost,
             symbol_costs,
             insert: node.insert,
         };
         let (offset, short) = (attempt.offset, first..SHORT_COPY_END.min(last + 1));
         let ways = self.ways_from(offset);
-        brotli_try_lengths(ways, short, &COPY_EXTRA_BITS, start, node.distance);
+        brotli::try_lengths(ways, short, &COPY_EXTRA_BITS, start, node.distance);
         if last >= SHORT_COPY_END {
             let long = first.max(SHORT_COPY_END)..=last;
             let longest = self.try_long_lengths(offset, long, insert_code, with_distance, node);
@@ -637,7 +634,8 @@ impl<'a> Paths<'a> {
                 base + f32::from(range.extra_bits) + self.symbols.commands[usize::from(symbol)];
             let end = (last + 1).min(usize::from(range.base) + (1 << range.extra_bits));
             let (ways, lengths) = (self.ways_from(offset), length..end);
-            let taken = brotli_try_lengths_at_cost(ways, lengths, cost, node.distance, node.insert);
+            let taken =
+                brotli::try_lengths_at_cost(ways, lengths, cost, node.distance, node.insert);
             longest = longest.max(taken);
             length = end;
         }
@@ -700,7 +698,7 @@ impl<'a> Paths<'a> {
             return 0;
         }
         let last_distances = &self.starts.last_distances[self.starts.get(rank).slot];
-        brotli_short_codes(self.place_for(offset, length + 1), last_distances) as u16
+        brotli::short_codes(self.place_for(offset, length + 1), last_distances) as u16
     }
 
     #[inline(always)]
@@ -751,7 +749,7 @@ impl<'a> Paths<'a> {
         longest: usize,
     ) {
         let symbols = self.symbols;
-        let start = |insert: Insert| BrotliStart {
+        let start = |insert: Insert| brotli::Start {
             cost: insert.cost,
             symbol_costs: &symbols.with_distance[insert.code],
             insert: insert.length,
@@ -760,7 +758,7 @@ impl<'a> Paths<'a> {
         let other = start(self.insert_from(other_rank, attempt.offset));
         let after_short_codes = &symbols.distances[DISTANCE_SHORT_CODES as usize..];
         if let Some(distance_costs) = after_short_codes.first_chunk() {
-            brotli_try_matches(
+            brotli::try_matches(
                 self.ways_from(attempt.offset),
                 attempt.min_length..longest + 1,
                 &COPY_EXTRA_BITS,

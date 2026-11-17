@@ -18,7 +18,7 @@ pub(super) use small::{MAX_SMALL_INPUT_SIZE, Small};
 
 use core::hint::{Locality, prefetch_read};
 
-use bun_highway::brotli_short_codes;
+use bun_highway::brotli::short_codes;
 
 use super::input_block::InputBlock;
 use super::log2::log2_floor;
@@ -163,7 +163,7 @@ impl<'a> Search<'a> {
         let last = recent.first_chunk().unwrap_or(&[0; 4]);
         if count > last.len() {
             let place = window.place(self.position, 0, pair);
-            return brotli_short_codes(place, last) & ((1 << count) - 1);
+            return short_codes(place, last) & ((1 << count) - 1);
         }
         let may_match = |distance: i32| {
             let earlier = window.index(self.position.wrapping_sub(distance as usize));

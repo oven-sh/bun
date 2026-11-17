@@ -2,7 +2,7 @@
 
 use core::hint::select_unpredictable;
 
-use bun_highway::{BROTLI_LEAF_SLACK, brotli_sort_leaves};
+use bun_highway::brotli::{LEAF_SLACK, sort_leaves};
 
 use super::bit_writer::{BitWriter, Code};
 use super::matching::put_bytes;
@@ -202,7 +202,7 @@ pub(super) struct TreeBuilder {
 impl TreeBuilder {
     pub(super) fn new() -> Result<Self> {
         Ok(Self {
-            nodes: memory::empty(2 * (COMMAND_SYMBOLS + BROTLI_LEAF_SLACK))?,
+            nodes: memory::empty(2 * (COMMAND_SYMBOLS + LEAF_SLACK))?,
         })
     }
 
@@ -228,12 +228,8 @@ impl TreeBuilder {
     ) -> CountByLength {
         let leaf_count = used.len();
         self.nodes.clear();
-        memory::resize(
-            &mut self.nodes,
-            2 * (leaf_count + BROTLI_LEAF_SLACK),
-            u64::MAX,
-        );
-        let (leaves, parents) = self.nodes.split_at_mut(leaf_count + BROTLI_LEAF_SLACK);
+        memory::resize(&mut self.nodes, 2 * (leaf_count + LEAF_SLACK), u64::MAX);
+        let (leaves, parents) = self.nodes.split_at_mut(leaf_count + LEAF_SLACK);
         let set_leaves = |leaves: &mut [u64], scratch: &mut [u64], min_count| {
             for (leaf, symbol) in scratch[..leaf_count].iter_mut().rev().zip(used) {
                 let count = histogram[symbol].max(min_count);
@@ -381,9 +377,7 @@ fn sort(unsorted: &[u64], count: usize, ties: Ties, sorted: &mut [u64]) {
     /// Without gaps, the kernel compares each leaf with each.
     const MAX_FOR_KERNEL: usize = 128;
     let has_gaps = matches!(ties, Ties::Unordered) && count >= MIN_FOR_GAPS;
-    if (has_gaps || count <= MAX_FOR_KERNEL)
-        && brotli_sort_leaves(unsorted, count, has_gaps, sorted)
-    {
+    if (has_gaps || count <= MAX_FOR_KERNEL) && sort_leaves(unsorted, count, has_gaps, sorted) {
         return;
     }
     let sorted = &mut sorted[..count];

@@ -1,4 +1,4 @@
-use bun_highway::BrotliPlace;
+use bun_highway::brotli::Place;
 
 use super::matching::bytes_at;
 use crate::memory::{self, Result};
@@ -101,8 +101,8 @@ impl<'a> Window<'a> {
 
     /// `pair` is `offset` bytes after `position`.
     #[inline(always)]
-    pub(super) fn place(&self, position: usize, offset: usize, pair: [u8; 2]) -> BrotliPlace<'a> {
-        BrotliPlace {
+    pub(super) fn place(&self, position: usize, offset: usize, pair: [u8; 2]) -> Place<'a> {
+        Place {
             ring: &self.bytes[offset..],
             ring_mask: self.mask,
             position: position as u32,

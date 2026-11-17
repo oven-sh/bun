@@ -312,6 +312,7 @@ describe("Brotli encoder: Highway runtime dispatch", () => {
   test.each([
     { seed: 7, parts: 10, size: 300, masks: [0xff, 0x0f], step: 0, expected: 0xeef0b62d },
     { seed: 6, parts: 20, size: 300, masks: [0xff, 0x7f, 0x83, 0x87], step: 0, expected: 0xbebb1aef },
+    { seed: 15, parts: 30, size: 400, masks: [0x83, 0x87, 0x8f, 0x81], step: 0, expected: 0x79bd566c },
     { seed: 1, parts: 72, size: 540, masks: [0x3f], step: 16, expected: 0x7355a11b },
   ])("$parts parts with values of their own", ({ seed, parts, size, masks, step, expected }) => {
     state = seed;

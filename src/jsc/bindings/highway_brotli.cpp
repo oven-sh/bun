@@ -106,7 +106,7 @@ static void BrotliFindSwitches(const uint16_t* HWY_RESTRICT symbols, size_t leng
 // Four histograms at a time, one in each lane: the sum for each has to be in the order of the symbols.
 static constexpr size_t kFourParts = 4 / kLanes;
 static constexpr size_t kWord = 64;
-// `BROTLI_MAX_SYMBOLS` and `BROTLI_SPARE_LOGARITHMS` in src/highway/lib.rs.
+// `MAX_SYMBOLS` and `SPARE_LOGARITHMS` in src/highway/brotli.rs.
 static constexpr size_t kMaxSymbols = 704, kSpareEntries = 256;
 static_assert(4 * kWord <= kSpareEntries);
 
@@ -383,7 +383,7 @@ static constexpr Remainders kRemainders = [] {
     return all;
 }();
 
-// `BROTLI_PAIR_GROUP` in src/highway/lib.rs at a time, since getting bits out of a mask takes long.
+// `PAIR_GROUP` in src/highway/brotli.rs at a time, since getting bits out of a mask takes long.
 static size_t BrotliRemovePairs(double* HWY_RESTRICT costs, uint32_t* HWY_RESTRICT pairs, size_t count, uint32_t a, uint32_t b)
 {
     const DF64 d;
@@ -437,7 +437,7 @@ static size_t BrotliRemovePairs(double* HWY_RESTRICT costs, uint32_t* HWY_RESTRI
 
 #endif
 
-// `BROTLI_LEAF_SLACK` in src/highway/lib.rs.
+// `LEAF_SLACK` in src/highway/brotli.rs.
 static constexpr size_t kLeafGroup = 16;
 
 using D16 = hn::CappedTag<int16_t, kLeafGroup>;
@@ -611,7 +611,7 @@ using DU16 = hn::Full128<uint16_t>;
 using DU8 = hn::Full128<uint8_t>;
 using DU64 = hn::Full128<uint64_t>;
 
-// `BROTLI_SLOT_SHIFT` and `BROTLI_LENGTH_SHIFT` in src/highway/lib.rs.
+// `SLOT_SHIFT` and `LENGTH_SHIFT` in src/highway/brotli.rs.
 static constexpr int kSlotShift = 4, kLengthShift = 37;
 
 class ShortCodes {

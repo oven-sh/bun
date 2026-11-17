@@ -1,6 +1,6 @@
 //! Counts symbols, and estimates what they cost.
 
-use bun_highway::{BROTLI_SPARE_LOGARITHMS, brotli_estimate_costs};
+use bun_highway::brotli::{SPARE_LOGARITHMS, estimate_costs};
 
 use super::log2::{FRACTION_BITS, fast_log2, fixed_point_log2};
 use super::symbol_set::SymbolSet;
@@ -154,10 +154,10 @@ impl Estimator {
     /// For histograms of about `symbols` symbols altogether.
     pub(super) fn new(symbols: usize) -> Result<Self> {
         let known = (symbols / 32).next_power_of_two().clamp(256, 4096);
-        let mut logarithms = memory::empty(known + BROTLI_SPARE_LOGARITHMS)?;
+        let mut logarithms = memory::empty(known + SPARE_LOGARITHMS)?;
         logarithms.push([1e6, 0.0]);
         logarithms.extend((1..known).map(|count| [fast_log2(count), count as f64]));
-        memory::resize(&mut logarithms, known + BROTLI_SPARE_LOGARITHMS, [0.0; 2]);
+        memory::resize(&mut logarithms, known + SPARE_LOGARITHMS, [0.0; 2]);
         Ok(Self { logarithms })
     }
 
@@ -176,7 +176,7 @@ impl Estimator {
         }
         let (totals, gaps) = ([total as u32; 4], used.gaps().map(|gaps| [gaps; 4]));
         let logarithms = &mut self.logarithms;
-        brotli_estimate_costs(
+        estimate_costs(
             counts,
             [nothing; 4],
             used.words(),
@@ -195,8 +195,6 @@ impl Estimator {
         ids: &[u32],
         costs: &mut [f64],
     ) {
-        /// With more symbols, four estimates at a time are faster.
-        const MAX_ONE_BY_ONE: usize = 96;
         // https://github.com/google/brotli/blob/db24a98aed38a16de78cc05ca15cdd8dc2a0d92d/c/enc/bit_cost_inc.h#L13
         let (mut waiting, mut counts) = ([0; 4], [common.counts; 4]);
         let (mut totals, mut gaps) = ([0; 4], [[0; 4]; 2]);
@@ -206,7 +204,7 @@ impl Estimator {
             let (total, used) = (common.total + other.total, common.used.union(&other.used));
             if used.len() <= 4 {
                 costs[id as usize] = cost_of_few(&used, total, common.counts, other.counts);
-            } else if let (..=MAX_ONE_BY_ONE, Ok(total)) = (used.len(), total.try_into()) {
+            } else if let Ok(total) = total.try_into() {
                 costs[id as usize] = cost_of_little(&used, total, common.counts, other.counts);
             } else {
                 all_used = all_used.union(&used);
@@ -215,7 +213,7 @@ impl Estimator {
                 count += 1;
             }
             if count == 4 || (count != 0 && left == 0) {
-                let estimates = brotli_estimate_costs(
+                let estimates = estimate_costs(
                     common.counts,
                     counts,
                     all_used.words(),

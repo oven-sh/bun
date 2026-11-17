@@ -1,6 +1,6 @@
 use core::ops::Range;
 
-use bun_highway::BrotliPlace;
+use bun_highway::brotli::Place;
 
 use super::hash::{Candidate, Match, score, score_of_recent};
 use super::matching::{HASH_MULTIPLIER_64, load32, match_length};
@@ -119,8 +119,8 @@ impl PreparedDictionary {
         end_distance: usize,
         offset: usize,
         pair: [u8; 2],
-    ) -> Option<BrotliPlace<'_>> {
-        (offset + pair.len() <= self.bytes().len()).then(|| BrotliPlace {
+    ) -> Option<Place<'_>> {
+        (offset + pair.len() <= self.bytes().len()).then(|| Place {
             ring: &self.padded[offset..],
             ring_mask: u32::MAX,
             position: (self.bytes().len() + end_distance) as u32,

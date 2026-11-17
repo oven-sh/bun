@@ -1,6 +1,6 @@
 //! Merges histograms that are alike.
 
-use bun_highway::{BROTLI_PAIR_GROUP, brotli_remove_pairs};
+use bun_highway::brotli::{PAIR_GROUP, remove_pairs};
 
 use super::histogram::{Estimator, Histogram, Indexed, IndexedList};
 use super::log2::fast_log2;
@@ -87,7 +87,7 @@ impl Clusters {
 
 /// The best one comes first.
 #[derive(Default)]
-#[cfg_attr(mordant, allow(parallel_vecs))] // `brotli_remove_pairs` loads SIMD vectors of each.
+#[cfg_attr(mordant, allow(parallel_vecs))] // `remove_pairs` loads SIMD vectors of each.
 struct Pairs {
     cost_changes: Vec<f64>,
     /// In ascending order.
@@ -102,7 +102,7 @@ impl Pairs {
     fn start_over(&mut self, cluster_count: usize) -> Result<()> {
         self.count = 0;
         self.max_count = (BATCH * cluster_count).min((cluster_count / 2) * cluster_count);
-        let size = self.max_count + BROTLI_PAIR_GROUP;
+        let size = self.max_count + PAIR_GROUP;
         if size > self.clusters.len() {
             self.cost_changes = memory::zeroed(size)?;
             self.clusters = memory::zeroed(size)?;
@@ -144,11 +144,10 @@ impl Pairs {
     }
 
     fn remove_with(&mut self, merged: [u32; 2]) {
-        let padded = self.count.next_multiple_of(BROTLI_PAIR_GROUP);
+        let padded = self.count.next_multiple_of(PAIR_GROUP);
         self.clusters[self.count..padded].fill(merged);
         let (cost_changes, clusters) = (&mut self.cost_changes, &mut self.clusters);
-        self.count =
-            brotli_remove_pairs(&mut cost_changes[..padded], &mut clusters[..padded], merged);
+        self.count = remove_pairs(&mut cost_changes[..padded], &mut clusters[..padded], merged);
     }
 }
 

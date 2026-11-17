@@ -2128,6 +2128,31 @@ describe("push stream states (checklist §5.1, RFC 9113 §6.4/§8.4)", () => {
     expect(ids).toEqual(expected);
   });
 
+  test.each([
+    [0, [2, 4]],
+    [2, [4]],
+  ])("a server refuses its pushes above the last stream id %d of a GOAWAY", async (lastStreamId, expected) => {
+    const refused: string[] = [];
+    const pushed = Promise.withResolvers<void>();
+    using ctx = await rawRequest(stream => {
+      for (const path of ["/a", "/b"]) {
+        stream.pushStream({ ":path": path }, (_, push) => {
+          push.on("error", (err: NodeJS.ErrnoException) => refused.push(`${push.id} ${err.code} ${push.rstCode}`));
+          push.respond();
+          // More than its window.
+          push.end(Buffer.alloc(100_000));
+          if (push.id === 4) push.on("close", () => stream.respond({}, { endStream: true }));
+          if (push.id === 4) pushed.resolve();
+        });
+      }
+    });
+    await pushed.promise;
+    ctx.c.sendFrame(FrameType.GOAWAY, 0, 0, Buffer.from([0, 0, 0, lastStreamId, 0, 0, 0, 0]));
+    await ctx.c.waitFor(f => f.type === FrameType.HEADERS && f.streamId === 1);
+    expect(refused.sort()).toEqual(expected.map(id => `${id} ERR_HTTP2_STREAM_ERROR ${ErrorCode.REFUSED_STREAM}`));
+    expect(ctx.c.frames.filter(f => f.type === FrameType.RST_STREAM)).toEqual([]);
+  });
+
   test("session.close() completes when a PUSH_PROMISE arrives after it and no response follows", async () => {
     using ctx = await openRequest();
     const { raw, client } = ctx;

@@ -4384,6 +4384,7 @@ class ServerHttp2Session extends Http2Session {
       self.emit("goaway", errorCode, lastStreamId, opaqueData || Buffer.allocUnsafe(0));
       if (errorCode === constants.NGHTTP2_NO_ERROR) {
         // Graceful shutdown: no new streams, existing ones may finish.
+        self.#parser?.refusePushesAbove(lastStreamId);
         self.close();
       } else if (self.closed && self.#isClosedAndIdle()) {
         // Mutual teardown: this side already sent its own graceful GOAWAY

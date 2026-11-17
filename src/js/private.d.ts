@@ -1347,6 +1347,7 @@ declare namespace $Node {
     /** `unread`: the streams released as such that are still alive. Otherwise those whose close was not delivered yet. Only streams with a context. */
     forEachStream(callback: (stream: never, isClosed: boolean) => void, unread?: boolean): undefined;
     emitErrorToAllStreams(code: number): undefined;
+    refusePushesAbove(lastStreamId: number): undefined;
     /** -1: the ids have run out. 0: the peer's limit of concurrent streams is reached. */
     getNextStream(): number;
     /** The promised id, or -1. */

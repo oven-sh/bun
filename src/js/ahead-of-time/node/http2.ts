@@ -1,5 +1,5 @@
 // What the compiler reads in place of src/js/node/http2.ts, which `bun run` evaluates. The two do the same.
-// Written against that file with the SHA-256 b8af0229a7f956a12df1288d0d4ab09660d493c68804c8dff6118e1f6b6ed428.
+// Written against that file with the SHA-256 84edc859ccef92a32cc46528c80a63120b6efbcbd7d62c8471bb954b20631092.
 // When that file changes, bring the change here and write the new hash: test/internal/second-texts-of-modules.test.ts.
 
 // Hardcoded module "node:http2"
@@ -4507,6 +4507,7 @@ class ServerHttp2Session extends Http2Session {
       self.emit("goaway", errorCode, lastStreamId, opaqueData || Buffer.allocUnsafe(0));
       if (errorCode === constants.NGHTTP2_NO_ERROR) {
         // Graceful shutdown: no new streams, existing ones may finish.
+        self.#parser?.refusePushesAbove(lastStreamId);
         self.close();
       } else if (self.closed && self.#isClosedAndIdle()) {
         // Mutual teardown: this side already sent its own graceful GOAWAY

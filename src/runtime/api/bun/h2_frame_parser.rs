@@ -3815,6 +3815,15 @@ impl H2FrameParser {
         }
     }
 
+    /// The peer's GOAWAY says that it ignores them (RFC 9113 §6.8), so they get no RST_STREAM either.
+    pub(crate) fn refuse_pushes_above(&self, _: &mut JsScope<'_>, last_stream_id: u32) {
+        for stream in self.engine.streams.snapshot() {
+            if stream.is_local && stream.id > last_stream_id {
+                self.reset_stream(&stream, ErrorCode::REFUSED_STREAM, false);
+            }
+        }
+    }
+
     pub(crate) fn flush_from_js(&self, _: &mut JsScope<'_>) -> usize {
         self.flush()
     }

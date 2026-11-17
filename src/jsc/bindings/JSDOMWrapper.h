@@ -35,7 +35,6 @@ using namespace Zig;
 using JSDOMGlobalObject = Zig::GlobalObject;
 }
 #endif
-class ScriptExecutionContext;
 
 // JSC allows us to extend JSType. If the highest 3 bits are set, we can add any Object types and they are
 // recognized as OtherObj in JSC. And we encode Node type into JSType if the given JSType is subclass of Node.
@@ -64,7 +63,6 @@ public:
     static void subspaceFor(JSC::VM&) { RELEASE_ASSERT_NOT_REACHED(); }
 
     JSDOMGlobalObject* globalObject() const { return uncheckedDowncast<JSDOMGlobalObject>(JSC::JSNonFinalObject::globalObject()); }
-    ScriptExecutionContext* scriptExecutionContext() const { return globalObject()->scriptExecutionContext(); }
 
 protected:
     WEBCORE_EXPORT JSDOMObject(JSC::Structure*, JSC::JSGlobalObject&);

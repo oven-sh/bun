@@ -518,8 +518,6 @@ void JSPerformanceResourceTiming::analyzeHeap(JSCell* cell, HeapAnalyzer& analyz
 {
     auto* thisObject = uncheckedDowncast<JSPerformanceResourceTiming>(cell);
     analyzer.setWrappedObjectForCell(cell, &thisObject->wrapped());
-    if (thisObject->scriptExecutionContext())
-        analyzer.setLabelForCell(cell, makeString("url "_s, thisObject->scriptExecutionContext()->url().string()));
     Base::analyzeHeap(cell, analyzer);
 }
 

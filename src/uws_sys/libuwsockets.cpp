@@ -645,6 +645,14 @@ extern "C"
     return !success;
   }
 
+  void uws_app_capture_client_hello(int ssl, uws_app_t *app)
+  {
+    if (ssl)
+    {
+      ((uWS::SSLApp *)app)->captureClientHello();
+    }
+  }
+
   void uws_filter(int ssl, uws_app_t *app, uws_filter_handler handler,
                   void *user_data)
   {
@@ -1666,6 +1674,12 @@ __attribute__((callback (corker, ctx)))
       *is_ipv6 = true;
       return strlen(*dest);
     }
+  }
+
+  // For Bun.serve().clientHello(). Reads the us_socket_t behind the response, as above.
+  const unsigned char *uws_res_get_client_hello(uws_res_r res, unsigned int *length)
+  {
+    return us_socket_client_hello((us_socket_t *)res, length);
   }
 
   uint64_t uws_res_get_local_address_info(uws_res_r res, const char **dest, int *port, bool *is_ipv6)

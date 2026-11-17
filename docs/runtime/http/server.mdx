@@ -449,6 +449,26 @@ const server = Bun.serve({
 
 Returns `null` for closed requests or Unix domain sockets.
 
+### `server.clientHello(Request)`
+
+Get the TLS ClientHello that the client opened its connection with. The server keeps it only when `tls.clientHello` is `true`:
+
+```ts
+const server = Bun.serve({
+  tls: {
+    key: Bun.file("./key.pem"),
+    cert: Bun.file("./cert.pem"),
+    clientHello: true,
+  },
+  fetch(req, server) {
+    const hello = server.clientHello(req);
+    return new Response(hello ? `ClientHello: ${hello.raw.length} bytes` : "No ClientHello");
+  },
+});
+```
+
+Returns `null` for closed requests, for plain HTTP, and when `tls.clientHello` is not set. See [TLS](/runtime/http/tls#clienthello) for the format of `raw`.
+
 ---
 
 ## Server Metrics
@@ -656,6 +676,12 @@ interface Server extends Disposable {
    * @returns null for closed requests or Unix sockets
    */
   requestIP(request: Request): SocketAddress | null;
+
+  /**
+   * Get the TLS ClientHello of the connection. Needs `tls.clientHello: true`.
+   * @returns null for closed requests, plain HTTP, or without the option
+   */
+  clientHello(request: Request): { raw: Uint8Array } | null;
 
   /**
    * Set custom idle timeout for a request.

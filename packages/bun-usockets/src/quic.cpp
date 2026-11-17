@@ -91,6 +91,8 @@ struct us_quic_socket_context_s : us_allocated_t {
      * us_quic_engine_leave finishes it. */
     int shutdown_pending;
     int is_client;
+    /* Server only: us_quic_socket_context_capture_client_hello ran. */
+    int capture_client_hello;
     /* lsquic only advertises es_max_header_list_size. This is what us_quic_hsi_process enforces. */
     unsigned int max_header_set_size;
     unsigned int conn_count;
@@ -148,6 +150,8 @@ struct us_quic_socket_s : us_allocated_t {
     int reject_unauthorized;
     int going_away;
     us_unique_ptr<char, us_free> hostname;
+    /* Server only, for a context with capture_client_hello. */
+    us_unique_ptr<struct us_ssl_client_hello_t, us_free> client_hello;
     /* ext follows */
 };
 
@@ -644,6 +648,11 @@ static lsquic_conn_ctx_t *us_quic_on_new_conn(void *if_ctx, lsquic_conn_t *conn)
     if (!qs) return NULL;
     qs->conn = conn;
     qs->ctx = ctx;
+    if (ctx->capture_client_hello) {
+        /* lsquic frees this SSL, and the copy with it, right after this callback. */
+        SSL *ssl = lsquic_conn_get_ssl(conn);
+        if (ssl) qs->client_hello.reset(us_internal_ssl_take_client_hello(ssl));
+    }
     /* QUIC connections share one UDP fd, so they aren't real polls. Count
      * each as a virtual poll so the loop stays alive while conns are open —
      * the same invariant H1 gets from each TCP socket being a us_poll_t.
@@ -908,6 +917,20 @@ us_quic_socket_context_t *us_create_quic_socket_context(
     loop->data.quic_head = ctx.get();
 
     return ctx.release();
+}
+
+static enum ssl_select_cert_result_t us_quic_capture_client_hello_cb(const SSL_CLIENT_HELLO *hello) {
+    us_internal_ssl_capture_client_hello(hello);
+    return ssl_select_cert_success;
+}
+
+void us_quic_socket_context_capture_client_hello(us_quic_socket_context_t *ctx) {
+    if (ctx->is_client) return;
+    ctx->capture_client_hello = 1;
+    /* lsquic creates every server SSL from this context and switches to a
+     * serverName entry later (SSL_set_cert_cb), so BoringSSL runs this one's
+     * early callback for each connection. */
+    SSL_CTX_set_select_certificate_cb(ctx->ssl_ctx.get(), us_quic_capture_client_hello_cb);
 }
 
 int us_quic_socket_context_add_server_name(us_quic_socket_context_t *ctx,
@@ -1336,6 +1359,12 @@ void us_quic_socket_remote_address(us_quic_socket_t *s, char *buf, int *len, int
         *port = ntohs(a->sin_port);
         *len = 4; memcpy(buf, &a->sin_addr, 4);
     }
+}
+
+const unsigned char *us_quic_socket_client_hello(us_quic_socket_t *s, unsigned int *length) {
+    if (!s->client_hello) return NULL;
+    *length = s->client_hello->length;
+    return s->client_hello->data;
 }
 
 void us_quic_socket_close(us_quic_socket_t *s) { if (s->conn) lsquic_conn_close(s->conn); }

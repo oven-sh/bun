@@ -56,6 +56,7 @@ struct H3App {
         memcpy(&raw, &options, sizeof(raw));
         return http3Context->addServerName(hostname, raw);
     }
+    void captureClientHello() { http3Context->captureClientHello(); }
     void *getNativeHandle() { return http3Context.get(); }
 };
 

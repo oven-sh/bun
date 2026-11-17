@@ -50,6 +50,7 @@ uws_h3_app_t* uws_h3_create_app(struct us_bun_socket_context_options_t options, 
 void uws_h3_app_destroy(uws_h3_app_t* app) { delete (H3App*)app; }
 void uws_h3_app_close(uws_h3_app_t* app) { ((H3App*)app)->close(); }
 void uws_h3_app_clear_routes(uws_h3_app_t* app) { ((H3App*)app)->clearRoutes(); }
+void uws_h3_app_capture_client_hello(uws_h3_app_t* app) { ((H3App*)app)->captureClientHello(); }
 
 bool uws_h3_app_add_server_name(uws_h3_app_t* app, const char* hostname,
     struct us_bun_socket_context_options_t options)
@@ -211,6 +212,12 @@ void uws_h3_res_on_data(uws_h3_res_t* res, void (*h)(uws_h3_res_t*, const char*,
 void uws_h3_res_cork(uws_h3_res_t* res, void* ctx, void (*corker)(void*))
 {
     ((Http3Response*)res)->cork([ctx, corker]() { corker(ctx); });
+}
+
+const unsigned char* uws_h3_res_get_client_hello(uws_h3_res_t* res, unsigned int* length)
+{
+    us_quic_socket_t* qs = us_quic_stream_socket((us_quic_stream_t*)res);
+    return qs ? us_quic_socket_client_hello(qs, length) : nullptr;
 }
 
 uint64_t uws_h3_res_get_remote_address_info(uws_h3_res_t* res, const char** dest, int* port, bool* is_ipv6)

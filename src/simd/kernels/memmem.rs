@@ -33,6 +33,72 @@ struct Misses {
     in_haystack: usize,
 }
 
+/// Two pairs of places in the needle, which take turns.
+struct Pairs {
+    /// One has a unit that has differed. The usual one is the ends or the rarest units.
+    indices: [[usize; 2]; 2],
+    is_usual: bool,
+    patience: [usize; 2],
+    rates: [usize; 2],
+}
+
+impl Pairs {
+    fn now(&self) -> usize {
+        self.is_usual.into()
+    }
+
+    #[inline(never)]
+    fn end_turn(&mut self, missed: usize, covered: usize, differs: usize) {
+        let now = self.now();
+        self.rates[now] = SCANNED * missed / (covered + 1);
+        let wins = self.rates[now] <= self.rates[1 - now];
+        self.patience[now] = match wins {
+            true => MOST_PATIENCE.min(2 * self.patience[now]),
+            false => LEAST_PATIENCE,
+        };
+        if self.is_usual && wins {
+            (self.indices[0], self.patience[0]) = ([differs, self.indices[1][0]], LEAST_PATIENCE);
+        }
+        self.is_usual = !self.is_usual;
+    }
+}
+
+/// When `two_way` takes over, and for how many starts.
+struct Fallback {
+    /// About what it takes to prepare it.
+    setup: usize,
+    /// A rate that is not worth it.
+    calm: usize,
+    /// What misses may still cost.
+    left: usize,
+    far: usize,
+}
+
+impl Fallback {
+    fn new(len: usize) -> Self {
+        let [setup, left, far] = [2 * (len + 256); 3];
+        let calm = if len < 256 { RATE_OF_SIX } else { 1 };
+        Self {
+            setup,
+            calm,
+            left,
+            far,
+        }
+    }
+
+    fn charge(&mut self, missed: usize, covered: usize) {
+        let earned = covered * self.calm / SCANNED;
+        self.left = self.setup.min((self.left + earned).saturating_sub(missed));
+    }
+
+    fn end(&mut self, has_paid: bool) {
+        (self.left, self.far) = match has_paid {
+            true => (2 * LEAST_PATIENCE, 2 * self.far),
+            false => (self.setup, self.setup),
+        };
+    }
+}
+
 #[inline(always)]
 fn next<const FORWARD: bool>(matches: &mut Matches) -> Option<usize> {
     match FORWARD {
@@ -236,29 +302,30 @@ pub(crate) mod simd {
         let unit = |index: usize| Some(Vector::<_, N>::splat(needle.get(index)?.get()));
         let place = |index: usize| haystack.get(index..)?.get(..starts);
         let of = |[a, b]: [usize; 2]| Some(([place(a)?, place(b)?], [unit(a)?, unit(b)?]));
-        // One pair has a unit that has differed. The usual one is the ends or the rarest units.
         let ends = if FORWARD { [last, 0] } else { [0, last] };
-        let (mut pairs, mut is_usual) = ([[differs, ends[0]], ends], differs == 0);
-        let (mut patience, mut rates) = ([LEAST_PATIENCE; 2], [usize::MAX, 0]);
+        let mut pairs = Pairs {
+            indices: [[differs, ends[0]], ends],
+            is_usual: differs == 0,
+            patience: [LEAST_PATIENCE; 2],
+            rates: [usize::MAX, 0],
+        };
         let (mut halves, mut stretch, mut misses) = (None, 8 * N, Misses::default());
-        let spent = if is_usual { LEAST_PATIENCE } else { 0 };
+        let spent = if pairs.is_usual { LEAST_PATIENCE } else { 0 };
         let mut until_ranking = (len + len / 2).saturating_sub(spent);
-        // About what it takes to prepare `two_way`, and a rate that is not worth it.
-        let (setup, calm) = (2 * (len + 256), if len < 256 { RATE_OF_SIX } else { 1 });
-        let [mut until_fallback, mut far] = [setup; 2];
+        let mut fallback = Fallback::new(len);
         loop {
             if until_ranking == 0 {
-                is_usual = len > 16;
-                pairs[usize::from(is_usual)] = rarest_two(needle);
+                pairs.is_usual = len > 16;
+                pairs.indices[pairs.now()] = rarest_two(needle);
                 (until_ranking, stretch) = (usize::MAX, 8 * N);
             }
-            let (now, began) = (usize::from(is_usual), seen);
-            let both @ (places, [x, _]) = of(pairs[now])?;
+            let (now, began) = (pairs.now(), seen);
+            let both @ (places, [x, _]) = of(pairs.indices[now])?;
             let skipped = Vector::skip::<S, FORWARD>(places[0], seen, |v| [v.simd_eq(x); 2]);
             // The last block overlaps what has been seen: a turn could end before it began.
             let most = match starts - seen < Vector::<S::Lane, N>::BLOCK_LEN {
                 true => isize::MAX,
-                false => until_ranking.min(patience[now]).cast_signed(),
+                false => until_ranking.min(pairs.patience[now]).cast_signed(),
             };
             misses.left = most;
             let range = skipped.max(seen)..skipped + stretch;
@@ -270,38 +337,29 @@ pub(crate) mod simd {
             let missed = most.abs_diff(misses.left);
             until_ranking = until_ranking.saturating_sub(missed);
             if skipped < began + 32 * N && misses.left > 0 {
-                pairs[now].swap(0, 1);
+                pairs.indices[now].swap(0, 1);
                 // Close to the end, a ranking would not pay.
                 until_ranking = until_ranking.saturating_sub(stretch.min(starts - seen) / SCANNED);
                 stretch *= 4;
             }
-            let earned = (seen - began) * calm / SCANNED;
-            until_fallback = setup.min((until_fallback + earned).saturating_sub(missed));
-            if misses.left <= 0 || until_fallback == 0 {
-                rates[now] = SCANNED * missed / (seen - began + 1);
-                let wins = rates[now] <= rates[1 - now];
-                patience[now] = match wins {
-                    true => MOST_PATIENCE.min(2 * patience[now]),
-                    false => LEAST_PATIENCE,
-                };
-                if is_usual && wins {
-                    (pairs[0], patience[0]) = ([misses.in_needle, pairs[1][0]], LEAST_PATIENCE);
-                }
-                is_usual = !is_usual;
+            fallback.charge(missed, seen - began);
+            if misses.left <= 0 || fallback.left == 0 {
+                pairs.end_turn(missed, seen - began, misses.in_needle);
             }
-            if until_fallback == 0 {
+            if fallback.left == 0 {
                 let halves = *halves.get_or_insert_with(|| halves_and_bits::<S, FORWARD>(needle));
-                let range = [seen, seen + far, rates[0].min(rates[1])];
+                let range = [
+                    seen,
+                    seen + fallback.far,
+                    pairs.rates[0].min(pairs.rates[1]),
+                ];
                 let has_paid;
                 match cross::<S, N, M, FORWARD>(haystack, needle, halves, range) {
                     Break(found) => return found,
                     Continue((until, _)) if until >= starts => return None,
                     Continue(it) => (seen, has_paid) = it,
                 }
-                (until_fallback, far) = match has_paid {
-                    true => (2 * LEAST_PATIENCE, 2 * far),
-                    false => (setup, setup),
-                };
+                fallback.end(has_paid);
                 stretch = 8 * N;
             }
         }

@@ -429,6 +429,7 @@ const PUBLISHED_AS: Record<string, string | null> = {
   "node_fs_stat_watcher.bind.ts": null,
   "node_fs_watcher.bind.ts": null,
   "node_http_binding.bind.ts": null,
+  "node_http_parser.bind.ts": null,
   "node_net_binding.bind.ts": null,
   "node_os.bind.ts": null,
   "node_path.bind.ts": null,

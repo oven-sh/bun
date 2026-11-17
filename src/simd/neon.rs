@@ -136,6 +136,13 @@ impl<const S: bool> Lanes<u8, 16, S> {
 
     #[inline]
     #[target_feature(enable = "neon")]
+    pub fn lookup2(self, upper: Self, indices: Self) -> Self {
+        let both = uint8x16x2_t(self.0.into(), upper.0.into());
+        Self::new(vqtbl2q_u8(both, indices.0.into()))
+    }
+
+    #[inline]
+    #[target_feature(enable = "neon")]
     pub fn saturating_narrow(first: Lanes<i16, 8, S>, second: Lanes<i16, 8, S>) -> Self {
         Self::new(vqmovun_high_s16(
             vqmovun_s16(first.0.into()),
@@ -187,6 +194,12 @@ impl<const S: bool> Lanes<i16, 8, S> {
         Self::new(vqrdmulhq_s16(self.0.into(), other.0.into()))
     }
 
+    #[inline]
+    #[target_feature(enable = "neon")]
+    pub fn mul_high(self, other: Self) -> Self {
+        Self::new(vqdmulhq_s16(self.0.into(), other.0.into())) >> 1
+    }
+
     #[inline(always)]
     pub fn saturating_pairwise_dot(a: Lanes<u8, 16, S>, b: Lanes<i8, 16, S>) -> Self {
         let (a, b) = (
@@ -206,6 +219,14 @@ impl<const S: bool> Lanes<i32, 4, S> {
         let (a, b) = (a.0.into(), b.0.into());
         let low = vmull_s16(vget_low_s16(a), vget_low_s16(b));
         Self::new(vpaddq_s32(low, vmull_high_s16(a, b)))
+    }
+}
+
+impl<const S: bool> Lanes<u32, 4, S> {
+    #[inline]
+    #[target_feature(enable = "neon")]
+    pub fn distances(a: Lanes<u8, 16, S>, b: Lanes<u8, 16, S>) -> Self {
+        Self::new(vpaddlq_u16(vpaddlq_u8(a.abs_diff(b).0.into())))
     }
 }
 

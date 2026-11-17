@@ -33,6 +33,16 @@ impl<const N: usize, const B: usize> Lanes<u8, N, B> {
         }))
     }
 
+    /// The same for indices below 32. Those from 16 on go into `upper`.
+    #[inline]
+    pub fn lookup2(self, upper: Self, indices: Self) -> Self {
+        Self::from_array(array::from_fn(|i| {
+            let index = usize::from(indices[i]);
+            debug_assert!(index < 32);
+            [self, upper][index / 16 % 2][i / 16 * 16 + index % 16]
+        }))
+    }
+
     /// The lanes of `first`, then of `second`, clamped to `0..=255`.
     #[inline]
     pub fn saturating_narrow<const M: usize>(
@@ -112,6 +122,14 @@ impl<const N: usize, const B: usize> Lanes<i16, N, B> {
         debug_assert!(product.simd_ne(Simd::splat(1 << 30)).all());
         Self::new(((product + Simd::splat(1 << 14)) >> 15).cast())
     }
+
+    /// `(a * b) >> 16`. They must not both be `i16::MIN`.
+    #[inline]
+    pub fn mul_high(self, other: Self) -> Self {
+        let product = self.0.cast::<i32>() * other.0.cast();
+        debug_assert!(product.simd_ne(Simd::splat(1 << 30)).all());
+        Self::new((product >> 16).cast())
+    }
 }
 
 impl<const B: usize> Lanes<i16, 8, B> {
@@ -133,6 +151,16 @@ impl<const N: usize, const B: usize> Lanes<i32, N, B> {
         let products = a.0.cast::<i32>() * b.0.cast();
         let (even, odd) = products.deinterleave(products);
         Self::new((even + odd).extract::<0, N>())
+    }
+}
+
+impl<const B: usize> Lanes<u32, 4, B> {
+    /// The sum of the absolute differences of each 4 lanes. The second and the last must be zero.
+    #[inline]
+    pub fn distances(a: Lanes<u8, 16, B>, b: Lanes<u8, 16, B>) -> Self {
+        let pairs: Self = Lanes::<u16, 8, B>::sums_of_2(a.abs_diff(b)).bitcast();
+        debug_assert!(pairs[1] | pairs[3] == 0);
+        (pairs & 0xFFFF) + (pairs >> 16)
     }
 }
 

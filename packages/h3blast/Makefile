@@ -8,14 +8,14 @@ OBJ       := $(ROOT)/build/$(PROFILE)/obj/vendor
 VENDOR    := $(ROOT)/vendor
 
 CC        ?= clang
-# LSXPACK_MAX_STRLEN: as in scripts/build/deps/lshpack.ts, which built the objects.
+# LSXPACK_MAX_STRLEN: as in scripts/build/deps/lsqpack.ts, which built the objects.
 CFLAGS    := -std=c11 -O3 -g -Wall -Wextra -Wno-unused-parameter \
              -DLSXPACK_MAX_STRLEN=UINT32_MAX \
              -I$(VENDOR)/lsquic/include \
              -I$(VENDOR)/boringssl/include
 LDFLAGS   := -lstdc++ -lm -lpthread
 
-DEPS      := lsquic lsqpack lshpack boringssl zlib
+DEPS      := lsquic lsqpack boringssl zlib
 DEP_DIRS  := $(addprefix $(OBJ)/,$(DEPS))
 LIBDEPS   := build/libdeps.a
 

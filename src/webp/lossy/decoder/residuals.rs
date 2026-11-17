@@ -207,7 +207,7 @@ impl Residuals {
         }
         if to_transform != 0 {
             self.non_zero |= to_transform;
-            bun_highway::webp::inverse_dct(&mut self.rows, to_transform);
+            bun_simd_kernels::webp::inverse_dct(&mut self.rows, to_transform);
         }
     }
 }

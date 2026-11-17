@@ -7,7 +7,7 @@ mod planes;
 mod reconstruct;
 mod residuals;
 
-use bun_highway::webp::FilterStrength;
+use bun_simd_kernels::webp::FilterStrength;
 
 pub(crate) use self::header::Header;
 use self::header::Parameters;

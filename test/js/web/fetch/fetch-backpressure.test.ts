@@ -708,6 +708,37 @@ describe.concurrent("fetch() receive backpressure — the decompressor does not 
     expectBounded(await runClient(`https://127.0.0.1:${server.port}/`, opts, READ_A_LITTLE));
   });
 
+  test.skipIf(isWindows)("gzip over HTTP/3: a reader that takes a little does not move the origin on", async () => {
+    const bomb = bombFor("gzip");
+    const { add, block, api } = progress(Infinity);
+    await using server = Bun.serve({
+      port: 0,
+      tls,
+      http3: true,
+      http1: false,
+      fetch: () =>
+        new Response(
+          new ReadableStream({
+            pull(controller) {
+              add(bomb.length);
+              controller.enqueue(bomb);
+              block();
+            },
+          }),
+          { headers: { "content-encoding": "gzip" } },
+        ),
+    });
+    const res = await fetch(`https://127.0.0.1:${server.port}/`, { protocol: "http3", tls: { ca: tls.cert } });
+    // The origin has used up the 6 MiB window.
+    await api.wrote(6 * 1024 * 1024);
+    const stalled = await api.settled();
+    const reader = res.body!.getReader();
+    for (let total = 0; total < 8 * MARK;) total += (await reader.read()).value!.length;
+    expect((await api.settled()) - stalled).toBeLessThan(1024 * 1024);
+    await reader.cancel();
+    await server.stop(true);
+  });
+
   // Once a program has said that it won't read the rest of a body, the client drops what it holds of it.
   describe("a body that nobody will read is not decoded", () => {
     const LIMIT = (DECODED / 4) * (isASAN || isDebug ? 3 : 2);

@@ -3862,6 +3862,11 @@ impl<'a> HTTPClient<'a> {
         Ok(!self.state.decoded_body.list.is_empty() || ended)
     }
 
+    /// Whether an HTTP/2 or HTTP/3 stream gets no more window: what it already delivered isn't taken yet.
+    pub(crate) fn holds_stream_window(&self) -> bool {
+        self.signals.is_receive_paused() || self.state.has_pending_compressed()
+    }
+
     /// The consumer takes bytes again, or `body_unread` changed.
     pub(crate) fn send_held_body(&mut self) -> crate::Result<Progress> {
         self.hold_slot(self.needs_slot());

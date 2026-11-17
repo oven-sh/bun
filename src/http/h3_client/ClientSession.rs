@@ -185,13 +185,11 @@ impl ClientSession {
         let Some(client) = &mut stream.client else {
             return;
         };
-        // The consumer can be paused again by the time this runs.
-        let paused = client.signals.is_receive_paused();
-        if let Some(qs) = stream.qstream {
-            quic_stream_mut(qs.as_ptr()).hold_window(paused);
-        }
         if let Err(err) = client.send_held_body() {
-            stream.session_mut().fail(stream_ptr.as_ptr(), err);
+            return stream.session_mut().fail(stream_ptr.as_ptr(), err);
+        }
+        if let Some(qs) = stream.qstream {
+            quic_stream_mut(qs.as_ptr()).hold_window(client.holds_stream_window());
         }
     }
 

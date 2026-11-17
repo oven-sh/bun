@@ -393,6 +393,48 @@ test.concurrent(
   60_000,
 );
 
+function dataFrames(streamId: number, body: Buffer) {
+  const frames: Buffer[] = [];
+  for (let i = 0; i < body.length; i += 16384) frames.push(frame(FRAME_DATA, 0, streamId, body.subarray(i, i + 16384)));
+  return Buffer.concat(frames);
+}
+
+test.concurrent("h2: a stream gets no window while compressed bytes it delivered wait to be decoded", async () => {
+  const member = zlib.gzipSync(Buffer.alloc(1024 * 1024));
+  // More than half of the 16 MiB window, which is when a WINDOW_UPDATE is due.
+  const body = Buffer.alloc(member.length * Math.ceil((9 * 1024 * 1024) / member.length), member);
+  const opened = Promise.withResolvers<RawConn>();
+  await withRawH2Server(
+    (conn, id) => {
+      conn.headers(id, Buffer.concat([hpackStatus(200), hpackLit("content-encoding", "gzip")]));
+      conn.socket.write(dataFrames(id, body));
+      opened.resolve(conn);
+    },
+    async (url, state) => {
+      const response = await fetch(url, h2);
+      const conn = await opened.promise;
+      await conn.ping();
+      const reader = response.body!.getReader();
+      for (let total = 0; total < 2 * 1024 * 1024;) total += (await reader.read()).value!.length;
+      await conn.ping();
+      expect(state.frames.map(({ type }) => type)).toEqual([FRAME_HEADERS]);
+      await reader.cancel();
+    },
+  );
+});
+
+test.concurrent("h2: a compressed body larger than the window arrives whole", async () => {
+  const body = zlib.gzipSync(Buffer.alloc(20 * 1024 * 1024, "a"), { level: 0 });
+  await withH2Server(
+    (_req, res) => void res.writeHead(200, { "content-encoding": "gzip" }).end(body),
+    async url => {
+      let total = 0;
+      for await (const chunk of (await fetch(url, h2)).body!) total += chunk.length;
+      expect(total).toBe(20 * 1024 * 1024);
+    },
+  );
+});
+
 describe.concurrent("fetch() over HTTP/2 (BUN_FEATURE_FLAG_EXPERIMENTAL_HTTP2_CLIENT)", () => {
   test("GET: status, headers and body round-trip", async () => {
     await withH2Server(

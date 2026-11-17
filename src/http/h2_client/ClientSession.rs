@@ -259,19 +259,17 @@ impl ClientSession {
     /// The consumer of the stream's response body takes bytes again.
     pub(crate) fn resume_receive(stream: NonNull<Stream>) {
         Self::enter(Self::of_stream(stream), |s| {
-            s.replenish_window();
-            if s.write_buffer.is_not_empty() {
-                if let Err(err) = s.flush() {
-                    return s.fail_all(err);
-                }
-            }
             let Some(client) = &mut stream_mut(stream.as_ptr()).client else {
                 return;
             };
             if let Err(err) = client.send_held_body() {
                 s.detach_with_failure(stream.as_ptr(), err);
                 s.rearm_timeout();
-                s.maybe_release();
+                return s.maybe_release();
+            }
+            s.replenish_window();
+            if let Err(err) = s.flush() {
+                s.fail_all(err);
             }
         });
     }
@@ -661,10 +659,7 @@ impl ClientSession {
             if !s.recv_window.needs_update() || s.remote_closed() {
                 continue;
             }
-            if s.client
-                .as_ref()
-                .is_some_and(|c| c.signals.is_receive_paused())
-            {
+            if s.client.as_ref().is_some_and(|c| c.holds_stream_window()) {
                 continue;
             }
             updates.push((s.id, s.recv_window.take_update()));

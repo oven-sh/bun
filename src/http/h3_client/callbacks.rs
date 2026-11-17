@@ -295,7 +295,7 @@ extern "C" fn on_stream_data(s: *mut quic::Stream, data: *const u8, len: c_uint,
         return;
     }
     let Some(client) = &stream.client else { return };
-    s.hold_window(client.signals.is_receive_paused());
+    s.hold_window(client.holds_stream_window());
 }
 
 extern "C" fn on_stream_writable(s: *mut quic::Stream) {

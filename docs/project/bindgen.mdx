@@ -892,24 +892,23 @@ js_ReadableSinkController::set_pipe_done(this_value, done);
 With `refCounted: true` the struct is a separate, refcounted heap allocation and the object holds one ref:
 
 ```ts
-export const CronJob = b.class({
-  rustPath: "crate::api::cron::CronJob",
+export const FetchSession = b.class({
+  rustPath: "crate::webcore::fetch::FetchSession",
   refCounted: true,
+  finalize: true,
   thisValue: "this_value",
-  internalFields: ["callback", "pendingPromise", "cron"],
+  internalFields: ["checkServerIdentity"],
   proto: {
-    cron: { internalField: "cron" },
-    stop: { returns: b.self, passThis: true },
-    "@@dispose": { returns: b.self, passThis: true, rustName: "stop" },
+    close: {},
+    "@@dispose": { rustName: "close" },
   },
 });
 ```
 
 ```rust
-impl CronJob {
-    pub(crate) fn stop<'a>(&self, this_value: JsWrapper<'a, Self>) -> JsWrapper<'a, Self> {
-        Self::self_stop(self.self_ref.get().this_ptr(), self.global.bun_vm());
-        this_value
+impl FetchSession {
+    pub(crate) fn finalize(&self) {
+        self.close();
     }
 }
 ```
@@ -925,14 +924,14 @@ impl CronJob {
 
 Native callbacks have no capability. What they need to reach the JS object takes the global object:
 
-| Function                         | What it does                                       |
-| -------------------------------- | -------------------------------------------------- |
-| `js_CronJob::to_js(job, global)` | makes the object, which takes over the `RefPtr`    |
-| `js_CronJob::wrap(job, global)`  | the same, as a `WrapperGuard`, to go on using both |
-| `js_CronJob::from_js(&value)`    | the struct, if `value` is an instance              |
-| `js_CronJob::ref_from_js(value)` | the same, as a new `RefPtr`                        |
+| Function                                  | What it does                                       |
+| ----------------------------------------- | -------------------------------------------------- |
+| `js_FetchSession::to_js(session, global)` | makes the object, which takes over the `RefPtr`    |
+| `js_FetchSession::wrap(session, global)`  | the same, as a `WrapperGuard`, to go on using both |
+| `js_FetchSession::from_js(&value)`        | the struct, if `value` is an instance              |
+| `js_FetchSession::ref_from_js(value)`     | the same, as a new `RefPtr`                        |
 
-The struct also implements `bun_jsc::JsClass`, so `value.as_class_ref::<CronJob>()` works.
+The struct also implements `bun_jsc::JsClass`, so `value.as_class_ref::<FetchSession>()` works.
 
 ### `thisValue`
 

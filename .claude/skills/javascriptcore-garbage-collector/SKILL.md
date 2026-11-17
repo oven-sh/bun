@@ -238,7 +238,7 @@ self.this_value.downgrade();                      // Strong -> Weak, GC may now 
 let Some(js_this) = self.this_value.try_get() else { return };
 ```
 
-See `ServerWebSocket`, `UDPSocket`, `MySQLConnection`, `JSValkeyClient` for real examples.
+See `ServerWebSocket`, `UDPSocket`, `MySQLConnection` for real examples.
 
 **`JSRef` requires `thisValue`.** The `Weak` state is only sound because it is flipped to `Finalized` before the cell is reused. The class names the field with `thisValue` in its `.bind.ts` file, which generates that step and the only functions that can fill the field.
 

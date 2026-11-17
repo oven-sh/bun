@@ -270,6 +270,27 @@ test.concurrent.each(["http", "https"] as const)(
   },
 );
 
+test("https: httpAllowHalfOpen keeps the responses that are owed at the client's FIN", async () => {
+  const owed: ServerResponse[] = [];
+  await using server = https.createServer(tlsCert, (req, res) => {
+    if (owed.push(res) > 1) return;
+    req.socket.on("end", () =>
+      setImmediate(() => {
+        for (const response of owed) response.end(`<${response.req.url}>`);
+      }),
+    );
+  });
+  (server as any).httpAllowHalfOpen = true;
+  await once(server.listen(0, "127.0.0.1"), "listening");
+  const client = tls.connect({ port: (server.address() as net.AddressInfo).port, host: "127.0.0.1", ca: tlsCert.cert });
+  client.end("GET /1 HTTP/1.1\r\nHost: x\r\n\r\nGET /2 HTTP/1.1\r\nHost: x\r\n\r\n");
+  expect(
+    Buffer.concat(await client.toArray())
+      .toString()
+      .match(/<[^>]*>/g),
+  ).toEqual(["</1>", "</2>"]);
+});
+
 // An http.Server socket has allowHalfOpen: end() sends the FIN, and the request in flight still gets its body.
 describe.each(["http", "https"] as const)("%s: the request body behind the FIN of socket.end()", protocol => {
   const createServer = (onRequest: http.RequestListener) =>

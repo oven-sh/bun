@@ -2281,6 +2281,7 @@ function detachFromHttp(socket: $Node.HttpServerSocket, req: $Node.IncomingMessa
   delete (socket as any)._destroy;
   const server = socket.server as $Node.HttpServer;
   server[kTrackedConnections].delete(socket);
+  if (socket.encrypted) socket.allowHalfOpen = server.allowHalfOpen;
   // In Node each socket holds the process itself. Here unref() on the server has always let go of these sockets too.
   server[kHandedOffSockets].add(socket);
   if (server._unref) socket.unref();
@@ -3107,7 +3108,10 @@ function attachConnection(server: $Node.HttpServer, socket: $Node.HttpServerSock
 
 // A TLSSocket of the program's that was emitted as 'connection' finishes its handshake with this server as socket.server too.
 function attachSecureConnection(server: $Node.HttpServer, socket: $Node.HttpServerSocket) {
-  if (socket[kHandle] !== undefined) nativeConnectionListener(server, socket);
+  if (socket[kHandle] === undefined) return;
+  // What the peer's FIN ends is uWS's decision while it parses the connection, as on a plain one.
+  socket.allowHalfOpen = true;
+  nativeConnectionListener(server, socket);
 }
 
 // https://github.com/nodejs/node/blob/v26.5.0/lib/net.js#L826-L829

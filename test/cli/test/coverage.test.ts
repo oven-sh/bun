@@ -1559,7 +1559,7 @@ test("reports an error for a coverage directory longer than the path buffer", as
   expect(exitCode).toBe(1);
 });
 
-describe("the All files row", () => {
+describe.concurrent("the All files row", () => {
   // big.ts has about 100 executable lines that all ran. small.ts has a few
   // lines, and at least one of them did not run. The mean of the two per-file
   // percentages is well below the share of all lines that ran, which is the

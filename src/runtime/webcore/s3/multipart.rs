@@ -331,6 +331,16 @@ impl NetworkSink {
         })
     }
 
+    /// Script was terminated inside `upload_stream`: nobody gets its promise, and no error can be made.
+    pub(crate) fn on_pump_terminated(this: &RefPtr<Self>) {
+        this.on_pump_done();
+        if !this.is_ended() {
+            drop((this.owed.take(), this.flush_promise.take()));
+            this.end_pending_write();
+            let _ = Self::fail(this, b"", b"");
+        }
+    }
+
     /// The stream failed, so what it wrote is not the whole object.
     fn fail_from_source(this: &RefPtr<Self>, reason: JSValue) {
         this.owed.with_mut(|owed| {

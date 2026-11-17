@@ -530,9 +530,13 @@ pub(crate) fn upload_stream(
         return Ok(end_promise_value);
     }
     let Some(promise) = pump.as_any_promise() else {
-        // A direct stream closed inside `pull()`.
-        sink.finish_input();
-        sink.on_pump_done();
+        if pump.is_termination_exception() {
+            NetworkSink::on_pump_terminated(&sink);
+        } else {
+            // A direct stream closed inside `pull()`.
+            sink.finish_input();
+            sink.on_pump_done();
+        }
         return Ok(end_promise_value);
     };
     match promise.status() {

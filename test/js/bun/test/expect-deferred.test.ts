@@ -1743,6 +1743,8 @@ describe.concurrent("matchers that have to wait for a promise", () => {
         // These need no wait. this.equals() answers like a matcher that can wait: [this.equals(), await toEqual()].
         // Neither one waits for the last two promises, so both leave them to reject unhandled.
         const error = () => new Error("settled");
+        const notThenable = message => Object.assign(rejectsLater(message), { then: 1 });
+        const thenThrows = message => Object.defineProperty(rejectsLater(message), "then", { get() { throw error(); } });
         const answered = {};
         for (const [name, value, matcher] of [
           ["fulfilled", () => Promise.resolve(1), expect.resolvesTo.any(Number)],
@@ -1755,8 +1757,8 @@ describe.concurrent("matchers that have to wait for a promise", () => {
           ["object", () => ({}), expect.not.resolvesTo.anything()],
           ["then is not a function", () => ({ then: 1 }), expect.resolvesTo.anything()],
           ["then getter throws", () => ({ get then() { throw error(); } }), expect.rejectsTo.any(Error)],
-          ["pending promise, then is not a function", () => Object.assign(rejectsLater("then is not a function"), { then: 1 }), expect.resolvesTo.anything()],
-          ["pending promise, then getter throws", () => Object.defineProperty(rejectsLater("then getter throws"), "then", { get() { throw error(); } }), expect.rejectsTo.any(Error)],
+          ["pending promise, then is not a function", () => notThenable("then is not a function"), expect.resolvesTo.anything()],
+          ["pending promise, then getter throws", () => thenThrows("then getter throws"), expect.rejectsTo.any(Error)],
         ]) {
           answered[name] = [ask(value(), matcher), await awaited(value(), matcher)];
         }
@@ -1765,13 +1767,33 @@ describe.concurrent("matchers that have to wait for a promise", () => {
         delete String.prototype.then;
         answered["string, then() of String.prototype"] = [ofString[0], await ofString[1]];
 
+        // .resolves, .rejects and expect.poll() answer for those two kinds of promise at once too, and leave them alone.
+        const otherMatchers = {};
+        for (const [name, matcher] of [
+          [".resolves, then is not a function", name => expect(notThenable(name)).resolves.toBe(1)],
+          [".rejects, then is not a function", name => expect(notThenable(name)).rejects.toBe(1)],
+          [".resolves, then getter throws", name => expect(thenThrows(name)).resolves.toBe(1)],
+          [".rejects, then getter throws", name => expect(thenThrows(name)).rejects.toThrow("settled")],
+          ["expect.poll(), then is not a function", name => {
+            const promise = notThenable(name);
+            return expect.poll(() => promise).toBe(promise);
+          }],
+        ]) {
+          try {
+            await matcher(name);
+            otherMatchers[name] = "passes";
+          } catch (error) {
+            otherMatchers[name] = Bun.stripANSI(error.message).split("\\n")[2];
+          }
+        }
+
         const thenCallsWhileRefused = thenCalls;
         // Nothing called the thenable's then() yet, so a matcher that can wait calls it, once.
         await expect([thenable]).toEqual([expect.resolvesTo.any(Number)]);
         rejectsLater("control");
         for (const reject of toReject) reject();
         await controlReported.promise;
-        console.log(JSON.stringify({ refused, alreadyRejected, answered, thenReads, thenCallsWhileRefused, thenCalls, reported }));
+        console.log(JSON.stringify({ refused, alreadyRejected, answered, otherMatchers, thenReads, thenCallsWhileRefused, thenCalls, reported }));
       `,
     });
     // What the two toRejectNow() asks print.
@@ -1812,6 +1834,13 @@ describe.concurrent("matchers that have to wait for a promise", () => {
         "pending promise, then getter throws": [true, true],
         "string, then() of String.prototype": [false, false],
       },
+      otherMatchers: {
+        ".resolves, then is not a function": "Expected promise",
+        ".rejects, then is not a function": "Expected promise",
+        ".resolves, then getter throws": "Expected promise that resolves",
+        ".rejects, then getter throws": "passes",
+        "expect.poll(), then is not a function": "passes",
+      },
       // One read per ask of the thenable: five that throw, and the one that waits.
       thenReads: 6,
       thenCallsWhileRefused: 0,
@@ -1824,6 +1853,11 @@ describe.concurrent("matchers that have to wait for a promise", () => {
         "then is not a function",
         "then getter throws",
         "then getter throws",
+        ".resolves, then is not a function",
+        ".rejects, then is not a function",
+        ".resolves, then getter throws",
+        ".rejects, then getter throws",
+        "expect.poll(), then is not a function",
         "control",
       ],
     });

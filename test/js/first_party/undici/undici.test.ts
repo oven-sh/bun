@@ -1,8 +1,8 @@
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { bunEnv, bunExe, tempDir, tls as tlsCert } from "harness";
 import diagnosticsChannel from "node:diagnostics_channel";
-import { Readable } from "node:stream";
 import { join } from "node:path";
+import { Readable } from "node:stream";
 // @ts-ignore undici 5's types don't declare ping()
 import {
   Agent,

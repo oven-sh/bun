@@ -57,6 +57,8 @@ pub mod add_catalog;
 pub mod add_remove_with_filter;
 #[path = "PackageManager/CommandLineArguments.rs"]
 pub mod command_line_arguments;
+#[path = "PackageManager/fetch_table.rs"]
+pub(crate) mod fetch_table;
 #[path = "PackageManager/install_with_manager.rs"]
 pub mod install_with_manager;
 #[path = "PackageManager/PackageJSONEditor.rs"]
@@ -206,7 +208,7 @@ use crate::resolvers::folder_resolver::{
 use bun_install::lockfile::{self, Lockfile};
 use bun_install::{
     DependencyID, NetworkTask, PackageID, PackageManifestMap, PackageNameAndVersionHash,
-    PackageNameHash, PatchTask, PreinstallState, TaskCallbackContext, initialize_store,
+    PackageNameHash, PatchTask, PreinstallState, initialize_store,
 };
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -237,21 +239,17 @@ pub use directories::{
 };
 
 pub use self::package_manager_enqueue as enqueue;
-pub(crate) use enqueue::enqueue_install_task;
 pub use enqueue::{
     enqueue_dependency_list, enqueue_dependency_to_root, enqueue_dependency_with_main,
-    enqueue_extract_npm_package, enqueue_git_checkout, enqueue_network_task,
-    enqueue_parse_npm_package, enqueue_patch_task, enqueue_patch_task_pre,
+    enqueue_patch_task, enqueue_patch_task_pre,
 };
+pub(crate) use enqueue::{enqueue_install_task, enqueue_network_task};
 
 pub use self::progress_strings::ProgressStrings;
 
 pub use self::patch_package::PatchCommitResult;
 
-pub use self::run_tasks::{
-    flush_dependency_queue, flush_network_queue, generate_network_task_for_tarball,
-    get_network_task, schedule_tasks,
-};
+pub(crate) use self::run_tasks::generate_network_task_for_tarball;
 
 pub use self::update_package_json_and_install::{
     update_package_json_and_install_and_cli, update_package_json_and_install_with_manager,
@@ -263,10 +261,6 @@ pub use self::populate_manifest_cache::populate_manifest_cache;
 // Type aliases
 // ──────────────────────────────────────────────────────────────────────────
 
-pub(crate) type TaskCallbackList = Vec<TaskCallbackContext>;
-pub(crate) type TaskDependencyQueue =
-    HashMap<Task::Id, TaskCallbackList /* , IdentityContext<Task::Id>, 80 */>;
-
 type PreallocatedTaskStore = HiveArrayFallback<Task::Task, 64>;
 type PreallocatedNetworkTasks = HiveArrayFallback<NetworkTask, 128>;
 type ResolveTaskQueue = UnboundedQueue<Task::Task /* , .next */>;
@@ -274,13 +268,6 @@ type ResolveTaskQueue = UnboundedQueue<Task::Task /* , .next */>;
 type RepositoryMap = HashMap<Task::Id, Fd /* , IdentityContext<Task::Id>, 80 */>;
 /// Git-commit task id -> the SHA it resolved, for the waiters that re-enter.
 type GitCommitMap = HashMap<Task::Id, Vec<u8> /* , IdentityContext<Task::Id>, 80 */>;
-/// Resolve-task id (git checkout / tarball extract) -> the package that task
-/// appended during the resolve phase. A task's callback queue is drained
-/// exactly once, so a dependency enqueued after that drain must resolve
-/// through this map instead of queueing a callback that nothing will ever
-/// process.
-type AppendedTaskPackageMap =
-    HashMap<Task::Id, PackageID /* , IdentityContext<Task::Id>, 80 */>;
 pub(crate) type FolderResolutionMap = HashMap<FolderResolutionKey, FolderResolutionEntry>;
 pub(crate) type NpmAliasMap =
     HashMap<PackageNameHash, Box<[u8]> /* , IdentityContext<u64>, 80 */>;
@@ -290,16 +277,13 @@ type NetworkQueue = LinearFifo<*mut NetworkTask, StaticBuffer<*mut NetworkTask, 
 pub type PatchTaskQueue = UnboundedQueue<PatchTask /* , .next */>;
 pub type AsyncNetworkTaskQueue = UnboundedQueue<NetworkTask /* , .next */>;
 
-pub(crate) type SuccessFn = fn(&mut PackageManager, DependencyID, PackageID);
-
 /// What a message in `PackageManager::held_messages` is about. Only "the registry has no such
 /// package" and "no such version" are held. A request that failed is reported right away.
 #[derive(Clone, Copy)]
 pub(crate) enum HeldAbout {
     /// The manifest has no version that this dependency accepts.
     Row(DependencyID),
-    /// The registry has no such package. The dependencies that needed its manifest are in this
-    /// task's entry of `task_queue`.
+    /// The registry has no such package. `ManifestRequests::rows` has who needed its manifest.
     Task(Task::Id),
 }
 
@@ -322,7 +306,7 @@ pub(crate) enum HeldAbout {
 // - A request that fails is kept as a `ManifestFailure` until a row needs it, because a request
 //   made on a wrong guess must not fail the install.
 // - What a git, GitHub or tarball package depends on is only known after its download, so these
-//   packages are added one at a time once the queue is empty. See `RemotePackages`.
+//   packages are added one at a time once the queue is empty. See `ArrivedPackage`.
 
 /// A manifest request that ended without a manifest. The message is logged by the first dependency
 /// that needs the manifest when it is resolved, not when the answer arrives: `LookAhead` requests
@@ -330,8 +314,8 @@ pub(crate) enum HeldAbout {
 pub(crate) struct ManifestFailure {
     /// The messages to log, stored as errors.
     pub(crate) msgs: Vec<bun_ast::Msg>,
-    /// The registry answered 404, so it has no package of this name.
-    pub(crate) is_missing: bool,
+    /// The registry answered 404. A runtime lookup does not ask again before this time.
+    pub(crate) missing_until: Option<u32>,
     /// True if no attempt got a response about the package. `fail_update_requests` reads this.
     pub(crate) is_unanswered: bool,
     /// An optional dependency that needs the manifest only logs a warning.
@@ -354,7 +338,7 @@ impl Default for ManifestFailure {
     fn default() -> Self {
         ManifestFailure {
             msgs: Vec::new(),
-            is_missing: false,
+            missing_until: None,
             is_unanswered: false,
             spares_optional: true,
             reported: FailureReport::NotYet,
@@ -395,10 +379,8 @@ pub(crate) struct LookAhead {
     /// enough: its versions mostly depend on the same packages, and a second range mostly shares
     /// the version that the first one picked.
     pub(crate) seen: HashMap<PackageNameHash, (), bun_collections::IdentityContext<u64>>,
-    /// The dependency to follow once a manifest arrives, by the task that fetches it.
-    pub(crate) waiting: HashMap<Task::Id, Wanted, bun_collections::IdentityContext<Task::Id>>,
-    /// The manifest tasks that have finished since `request_ahead` last ran.
-    pub(crate) arrived: Vec<Task::Id>,
+    /// What to follow of the manifests that have arrived since `request_ahead` last ran.
+    pub(crate) arrived: Vec<Wanted>,
     /// The peer pass has started. The peers of a package that it adds wait in
     /// `PackageManager::peer_dependencies` for the queue to empty, but may ask for their manifests.
     pub(crate) in_peer_pass: bool,
@@ -406,24 +388,13 @@ pub(crate) struct LookAhead {
     pub(crate) deferred_peers_seen: usize,
 }
 
-/// A git, GitHub or tarball package that is downloaded and waits for its turn. See
-/// `RemotePackages`.
-pub(crate) struct ArrivedPackage {
-    pub(crate) resolution: crate::Resolution,
-    pub(crate) data: crate::ExtractData,
-}
-
-/// The git, GitHub and tarball packages. What such a package depends on is only known once it is
+/// A git, GitHub or tarball package. What such a package depends on is only known once it is
 /// downloaded. If it were added to the lockfile on arrival, the place of its dependencies in the
 /// queue would depend on how fast its server is. So each one is added when the queue is empty, in
 /// the order of the dependencies that ask for them: `append_next_remote_package`.
-#[derive(Default)]
-pub(crate) struct RemotePackages {
-    /// Every task that a dependency on such a package has waited for.
-    pub(crate) tasks: Vec<Task::Id>,
-    /// The downloaded packages whose turn has not come, by the task that fetched them.
-    pub(crate) arrived:
-        HashMap<Task::Id, ArrivedPackage, bun_collections::IdentityContext<Task::Id>>,
+pub(crate) struct ArrivedPackage {
+    pub(crate) resolution: crate::Resolution,
+    pub(crate) data: crate::ExtractData,
 }
 
 /// Which package `append_next_remote_package` may add.
@@ -541,7 +512,8 @@ pub struct PackageManager {
     pub(crate) workspace_root_version: Box<[u8]>,
 
     pub(crate) task_batch: thread_pool::Batch,
-    pub(crate) task_queue: TaskDependencyQueue,
+    pub(crate) manifest_requests: fetch_table::ManifestRequests,
+    pub(crate) fetches: fetch_table::Fetches,
 
     pub manifests: PackageManifestMap,
     pub(crate) folders: FolderResolutionMap,
@@ -553,9 +525,7 @@ pub struct PackageManager {
     pub(crate) running_git_tasks: AtomicU32,
     /// Set by the first git task.
     pub(crate) git_env: bun_ptr::JsCell<Option<crate::repository::GitEnv>>,
-    pub(crate) appended_task_packages: AppendedTaskPackageMap,
 
-    pub(crate) network_dedupe_map: crate::network_task::DedupeMap,
     // The HTTP thread takes the requests of both batches in their boxes.
     #[expect(clippy::vec_box)]
     pub(crate) network_tarball_batch: Vec<Box<http::AsyncHTTP<'static>>>,
@@ -657,10 +627,7 @@ pub struct PackageManager {
     // dependency that dedupe may still drop is kept here until `log_held` decides whether to log
     // it.
     pub(crate) held_messages: Option<Vec<(HeldAbout, Vec<bun_ast::Msg>)>>,
-    pub(crate) manifest_failures:
-        HashMap<Task::Id, ManifestFailure, bun_collections::IdentityContext<Task::Id>>,
     pub(crate) look_ahead: LookAhead,
-    pub(crate) remote_packages: RemotePackages,
 
     // bun dedupe: printed by dedupe::print_dedupe_summary in place of the install summary.
     pub(crate) dedupe_report: Option<crate::dedupe::Report>,
@@ -1499,7 +1466,8 @@ fn allocate_package_manager(
         wr!(workspace_root_name_hash, 0);
         wr!(workspace_root_version, Box::default());
         wr!(task_batch, thread_pool::Batch::default());
-        wr!(task_queue, TaskDependencyQueue::default());
+        wr!(manifest_requests, Default::default());
+        wr!(fetches, Default::default());
         wr!(manifests, PackageManifestMap::default());
         wr!(folders, Default::default());
         wr!(git_repositories, RepositoryMap::default());
@@ -1507,8 +1475,6 @@ fn allocate_package_manager(
         wr!(git_tasks, VecDeque::new());
         wr!(running_git_tasks, AtomicU32::new(0));
         wr!(git_env, bun_ptr::JsCell::new(None));
-        wr!(appended_task_packages, AppendedTaskPackageMap::default());
-        wr!(network_dedupe_map, Default::default());
         wr!(network_tarball_batch, Vec::new());
         wr!(network_resolve_batch, Vec::new());
         wr!(patch_batch, thread_pool::Batch::default());
@@ -1543,9 +1509,7 @@ fn allocate_package_manager(
         wr!(kept_patched, Vec::new());
         wr!(kept_patched_text, Vec::new());
         wr!(held_messages, None);
-        wr!(manifest_failures, HashMap::default());
         wr!(look_ahead, LookAhead::default());
-        wr!(remote_packages, RemotePackages::default());
         wr!(dedupe_report, None);
         wr!(filtered_link_targets, None);
         wr!(pending_filtered_write, None);

@@ -1386,22 +1386,17 @@ impl VirtualMachine {
         &self,
         graph: &'static dyn bun_resolver::StandaloneModuleGraph,
     ) {
+        unsafe extern "C" {
+            safe fn JSC__Heap__setInitialAllocationBudget(vm: &VM, bytes: usize);
+        }
         const MIN_BUDGET: usize = 8 * 1024 * 1024;
         const MAX_BUDGET: usize = 128 * 1024 * 1024;
         let budget = graph
             .module_graph_load_bytes()
             .clamp(MIN_BUDGET, MAX_BUDGET);
         if budget > MIN_BUDGET {
-            self.allocate_without_collecting(budget);
+            JSC__Heap__setInitialAllocationBudget(self.jsc_vm(), budget);
         }
-    }
-
-    /// Puts off the first collection.
-    pub fn allocate_without_collecting(&self, bytes: usize) {
-        unsafe extern "C" {
-            safe fn JSC__Heap__setInitialAllocationBudget(vm: &VM, bytes: usize);
-        }
-        JSC__Heap__setInitialAllocationBudget(self.jsc_vm(), bytes);
     }
 
     /// Hand the executable's shared bytecode string table (if any) to JSC as this VM's `DecoderStringTable`.

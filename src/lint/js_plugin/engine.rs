@@ -16,10 +16,10 @@ pub trait Vm {
 /// The work that [`Engine::work_off`] hands to the threads that have a realm. Each call handles one file, so a thread
 /// can serve [`Engine::with_vm`] calls from other threads in between.
 pub trait Work: Sync {
-    /// True if a heavy file hasn't been taken yet. See [`heavy_size`].
+    /// True if a [`HEAVY`] file hasn't been taken yet.
     fn has_heavy(&self) -> bool;
 
-    /// Lints one of the heavy files. Only the thread with the first realm calls it. Returns `false` once none are
+    /// Lints one of the [`HEAVY`] files. Only the thread with the first realm calls it. Returns `false` once none are
     /// left.
     fn heavy(&self) -> bool;
 
@@ -60,9 +60,6 @@ pub trait Engine: Sync {
     /// could be started, so only `meanwhile` ran.
     fn work_off(&self, work: &dyn Work, meanwhile: &mut dyn FnMut()) -> Result<(), Vec<u8>>;
 
-    /// [`heavy_size`]
-    fn heavy_size(&self) -> usize;
-
     /// How many threads are busy with [`Engine::work_off`].
     fn busy(&self) -> usize;
 
@@ -72,10 +69,6 @@ pub trait Engine: Sync {
 
     /// Announces the files that realms are going to import.
     fn expect_modules(&self, _paths: Vec<Vec<u8>>) {}
-
-    /// Announces that what the rules report doesn't depend on which files share a realm. Call it before
-    /// [`Engine::expect`].
-    fn expect_independent_files(&self) {}
 
     /// Announces that further files, `size` bytes in total, might need a realm. Whether each one does is only known
     /// when it's linted. Call it after [`Engine::expect`].
@@ -96,23 +89,15 @@ pub trait Engine: Sync {
     }
 }
 
-/// The tree, tokens and lines of a file take about this many bytes in a realm per byte of source.
-const REALM_BYTES_PER_BYTE: usize = 150;
+/// A file of at least this size is heavy. Its tree, tokens and lines take about 150 bytes in a realm per byte of
+/// source, and a realm never shrinks. So all heavy files go to one realm, one at a time. 0.24 % of the files in 391
+/// repositories are heavy.
+pub const HEAVY: usize = 256 << 10;
 
-/// A file of at least this size is heavy. A realm never shrinks, so all heavy files go to one realm, one at a time. It's
-/// the size at which a file in each of `realms` would take a quarter of the `memory` for all realms, and at least
-/// 256 KB, which 0.24 % of the files in 391 repositories have.
-pub fn heavy_size(memory: usize, realms: usize) -> usize {
-    (memory / 4 / REALM_BYTES_PER_BYTE / realms.max(1)).max(256 << 10)
-}
-
-/// The fraction of its own cost that another realm has to save. Realms start at the same time, on cores that have nothing
-/// else to do, and share the modules that have been compiled, so they mostly cost memory, which has its own limit. With
-/// 0.008, files share one realm up to 16 KB, 0.4 MB get 7 realms and 2 MB get 16.
-const MIN_SAVED_FRACTION: f64 = 0.008;
-
-/// Up to this size a rule that compares files, as it can in ESLint, finds all of them in one realm.
-const BYTES_KEPT_TOGETHER: f64 = 2e6;
+/// The fraction of its own cost that another realm has to save. This trades time against memory and work. With 0.5,
+/// openlayers (8 MB) and mermaid (7 MB) get 3 realms and vscode (180 MB) gets 16. With 1 they get 3, 2 and 13, and with
+/// 0.25 they get 4, 4 and 16.
+const MIN_SAVED_FRACTION: f64 = 0.5;
 
 /// How many bytes a realm lints in the time it takes to start another one, which has to load the plugins and is slow
 /// until its code is compiled. Measured with eight projects' configs, it ranges from under 0.1 to 6 MB, and from 0.4 to
@@ -136,8 +121,6 @@ struct Remaining {
     settled: (u64, u64),
     /// The maximum number of realms. 0 means it wasn't announced, and there's one realm.
     most: usize,
-    /// See [`Engine::expect_independent_files`]
-    are_files_independent: bool,
 }
 
 /// Decides how many realms a run has.
@@ -147,19 +130,12 @@ pub struct Demand(Guarded<Remaining>);
 impl Demand {
     /// [`Engine::expect`]
     pub fn expect(&self, size: u64, most: usize) {
-        let mut left = self.0.lock();
-        *left = Remaining {
+        *self.0.lock() = Remaining {
             bytes: size,
             announced: size,
             most,
-            are_files_independent: left.are_files_independent,
             ..Remaining::default()
         };
-    }
-
-    /// [`Engine::expect_independent_files`]
-    pub fn expect_independent_files(&self) {
-        self.0.lock().are_files_independent = true;
     }
 
     /// [`Engine::may_need_realm`]
@@ -197,7 +173,7 @@ impl Demand {
     /// Compares how much sooner the run would end with what the realm costs. It's based on all the files of the run,
     /// not on the remaining ones, because how many remain when a thread happens to ask depends on timing.
     ///
-    /// `busy_with_heavy` is how many of the `realms` are busy with heavy files, which aren't counted among these
+    /// `busy_with_heavy` is how many of the `realms` are busy with [`HEAVY`] files, which aren't counted among these
     /// files.
     pub fn is_worth_another(&self, realms: usize, busy_with_heavy: usize) -> bool {
         let left = self.0.lock();
@@ -208,11 +184,9 @@ impl Demand {
         if realms == 0 {
             return true;
         }
-        if !left.are_files_independent && left.all() < BYTES_KEPT_TOGETHER {
-            return false;
-        }
+        // The existing realms keep working until the new one is ready. After that there's one more.
         let (all, realms) = (left.all() / REALM_COST_IN_BYTES, realms as f64);
-        all / realms - all / (realms + 1.0) >= MIN_SAVED_FRACTION
+        (all / realms - 1.0) / (realms + 1.0) >= MIN_SAVED_FRACTION
     }
 }
 

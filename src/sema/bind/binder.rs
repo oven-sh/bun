@@ -232,7 +232,10 @@ fn fill<T: Clone + Send>(list: &mut Vec<T>, len: usize, value: T) {
 
 /// For an empty list, which is about to get `likely` items and hardly more than `most`.
 fn make_room<T: Send>(list: &mut Vec<T>, likely: usize, most: usize) {
+    debug_assert!(list.is_empty());
     if list.capacity() < most {
+        // To grow it would copy the whole block, which makes all of it resident.
+        *list = Vec::new();
         list.reserve(most);
         crate::util::prefault(&mut list.spare_capacity_mut()[..likely]);
     }

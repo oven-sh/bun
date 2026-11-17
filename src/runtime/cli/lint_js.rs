@@ -23,7 +23,7 @@ use core::ptr::NonNull;
 
 use bun_core::strings;
 use bun_jsc::{self as jsc, JSGlobalObject, JSValue, Strong, virtual_machine::VirtualMachine};
-use bun_lint_driver::js_plugin::{Demand, Engine, Serve, Vm, Work, heavy_size, program};
+use bun_lint_driver::js_plugin::{Demand, Engine, HEAVY, Serve, Vm, Work, program};
 use bun_threading::{Condition, Guarded};
 use std::collections::VecDeque;
 use std::sync::Arc;
@@ -175,7 +175,7 @@ extern "C" fn Bun__Lint__ask(
 /// Runs the program in this thread's new VM.
 fn start_program(vm: &VirtualMachine) -> Result<LintVm, Vec<u8>> {
     let global = vm.global();
-    crate::read_ahead::enable(vm, true);
+    crate::read_ahead::enable(vm, false);
     // Strict, so that a plugin's function can't reach the program's functions through `caller`.
     let mut source = b"(function (native) {\n\
         \"use strict\";\n\
@@ -239,7 +239,6 @@ fn start_vm(log: *mut bun_ast::Log) -> Result<(), Vec<u8>> {
     let vm = VirtualMachine::init(log, options).map_err(|error| failed(error.name()))?;
     // Transpile on this thread. It would only wait for the result anyway.
     vm.transpiler_store.enabled.set(false);
-    vm.allocate_without_collecting(32 << 20);
     vm.transpiler
         .with_mut(|t| {
             t.resolver.env_loader = NonNull::new(t.env);
@@ -339,34 +338,8 @@ fn parse_limit(text: &[u8]) -> Option<usize> {
 }
 
 /// The lowest memory limit among this process's control groups. That's how a container limits it.
-fn cgroup_memory_limit() -> Option<usize> {
-    least_in_cgroups(&|limit, _| limit)
-}
-
-/// The same, less what the processes in the group use. Nothing if that isn't known.
-fn cgroup_memory_left() -> Option<usize> {
-    least_in_cgroups(&|limit, directory| {
-        let read = |file: &[u8]| {
-            bun_sys::File::read_from(bun_sys::Fd::cwd(), &[directory, file].concat()).ok()
-        };
-        let used = read(b"memory.current").or_else(|| read(b"memory.usage_in_bytes"));
-        let Some(used) = used.and_then(|it| parse_limit(&it)) else {
-            return 0;
-        };
-        let cached = read(b"memory.stat").and_then(|it| parse_inactive_file(&it));
-        limit.saturating_sub(used.saturating_sub(cached.unwrap_or(0)))
-    })
-}
-
-/// From `memory.stat`: the cached files that the kernel drops first.
-fn parse_inactive_file(stat: &[u8]) -> Option<usize> {
-    let find = |name: &[u8]| strings::split(stat, b"\n").find_map(|it| it.strip_prefix(name));
-    parse_limit(find(b"total_inactive_file ").or_else(|| find(b"inactive_file "))?)
-}
-
-/// `of` gets the limit and the directory of each group that has a limit.
 #[cfg(target_os = "linux")]
-fn least_in_cgroups(of: &dyn Fn(usize, &[u8]) -> usize) -> Option<usize> {
+fn cgroup_memory_limit() -> Option<usize> {
     use bun_sys::{Fd, File};
     let groups = File::read_from(Fd::cwd(), b"/proc/self/cgroup").ok()?;
     let limits = strings::split(&groups, b"\n")
@@ -376,16 +349,14 @@ fn least_in_cgroups(of: &dyn Fn(usize, &[u8]) -> usize) -> Option<usize> {
                 Some(&it[..strings::last_index_of_char(it, b'/')?])
             });
             above.filter_map(move |it| {
-                let directory = [root, it, b"/"].concat();
-                let limit = File::read_from(Fd::cwd(), &[&directory, file].concat()).ok()?;
-                Some(of(parse_limit(&limit)?, &directory))
+                parse_limit(&File::read_from(Fd::cwd(), &[root, it, b"/", file].concat()).ok()?)
             })
         });
     limits.min()
 }
 
 #[cfg(not(target_os = "linux"))]
-fn least_in_cgroups(_: &dyn Fn(usize, &[u8]) -> usize) -> Option<usize> {
+fn cgroup_memory_limit() -> Option<usize> {
     None
 }
 
@@ -406,15 +377,6 @@ fn memory_for_engines() -> usize {
     } else {
         memory().min(free)
     }) / 2
-}
-
-/// What can be traded for time: no more than [`memory_for_engines`], or half of what the container has left.
-pub(super) fn memory_to_spare() -> usize {
-    let left = match memory_override_for_tests() {
-        Some(_) => None,
-        None => cgroup_memory_left(),
-    };
-    memory_for_engines().min(left.map_or(usize::MAX, |it| it / 2))
 }
 
 fn memory_override_for_tests() -> Option<usize> {
@@ -456,18 +418,12 @@ struct Start {
     /// The same if no VM has much to do
     is_short: AtomicBool,
     memory: std::sync::OnceLock<usize>,
-    heavy_size: std::sync::OnceLock<usize>,
 }
 
 impl Start {
     /// [`memory_for_engines`]
     fn memory(&self) -> usize {
         *self.memory.get_or_init(memory_for_engines)
-    }
-
-    fn heavy_size(&self) -> usize {
-        let threads = usize::from(bun_core::get_thread_count());
-        *(self.heavy_size).get_or_init(|| heavy_size(memory_to_spare(), threads))
     }
 
     /// As [`start_vm`].
@@ -780,11 +736,7 @@ impl Crew {
     fn start_more(crew: &Arc<Crew>, state: &mut CrewState) -> Result<(), Vec<u8>> {
         loop {
             let free = |it: &&Member| !it.is_freed && (it.is_idle || it.is_starting());
-            let light = state
-                .posted
-                .iter()
-                .filter(|it| it.size < crew.start.heavy_size())
-                .count();
+            let light = state.posted.iter().filter(|it| it.size < HEAVY).count();
             // SAFETY: read from `shared` under the lock.
             let has_files = (state.shared).is_some_and(|it| unsafe { it.work() }.needs_realms());
             let is_needed = match state.all.is_empty() {
@@ -844,11 +796,10 @@ impl Crew {
             }
             // Heavy jobs go to the first member. It leaves the other jobs alone as long as another member is free.
             let others_are_free = (state.all.iter().skip(1)).any(|it| it.is_idle && !it.is_freed);
-            let heavy = self.start.heavy_size();
             let found = match at {
-                0 => (state.posted.iter().position(|it| it.size >= heavy))
+                0 => (state.posted.iter().position(|it| it.size >= HEAVY))
                     .or_else(|| state.posted.front().filter(|_| !others_are_free).map(|_| 0)),
-                _ => state.posted.iter().position(|it| it.size < heavy),
+                _ => state.posted.iter().position(|it| it.size < HEAVY),
             };
             if let Some(posted) = found.and_then(|found| state.posted.remove(found)) {
                 return Next::Posted(posted);
@@ -960,7 +911,7 @@ impl Crew {
             state.all[at].is_freed = true;
         }
         // `Demand` doesn't count heavy files.
-        if size < crew.start.heavy_size() {
+        if size < HEAVY {
             crew.demand.note(size);
         }
         let _ = Crew::start_more(crew, &mut state);
@@ -1081,10 +1032,6 @@ impl Engine for Engines {
         Crew::work_off(&self.0, work, meanwhile)
     }
 
-    fn heavy_size(&self) -> usize {
-        self.0.start.heavy_size()
-    }
-
     fn busy(&self) -> usize {
         self.0.busy.load(Ordering::Relaxed)
     }
@@ -1109,10 +1056,6 @@ impl Engine for Engines {
         self.0.demand.report_realm_need(size, needed_realm);
     }
 
-    fn expect_independent_files(&self) {
-        self.0.demand.expect_independent_files();
-    }
-
     fn expect_modules(&self, paths: Vec<Vec<u8>>) {
         crate::read_ahead::expect(paths.iter().map(|it| &it[..]));
     }
@@ -1124,7 +1067,7 @@ impl Engine for Engines {
 
 #[cfg(test)]
 mod tests {
-    use super::{parse_cgroup_line, parse_inactive_file, parse_limit};
+    use super::{parse_cgroup_line, parse_limit};
 
     #[test]
     fn parses_cgroup_lines() {
@@ -1150,13 +1093,5 @@ mod tests {
         assert_eq!(parse_limit(b"629145600\n"), Some(629_145_600));
         assert_eq!(parse_limit(b"max\n"), None);
         assert_eq!(parse_limit(b""), None);
-    }
-
-    #[test]
-    fn parses_stat_file() {
-        assert_eq!(parse_inactive_file(b"anon 1\ninactive_file 2\n"), Some(2));
-        let with_total = b"inactive_file 2\ntotal_inactive_file 3\n";
-        assert_eq!(parse_inactive_file(with_total), Some(3));
-        assert_eq!(parse_inactive_file(b"anon 1\n"), None);
     }
 }

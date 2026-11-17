@@ -536,7 +536,6 @@ impl CheckCommand {
             compile_check::exec(options)
         }
         short_run::share_heaps_of_libc();
-        short_run::spend_spare_memory();
         let (cwd, command_line) = (working_directory(), &options.command_line);
         // The closure returns the report so that it's never dropped. The process exits instead.
         let (exit_code, _report) = run(

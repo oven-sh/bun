@@ -11304,6 +11304,8 @@ describe.concurrent("files that are formatted, or nearly", () => {
   };
   const cases: [name: string, text: string, options?: object][] = [
     ["a.ts", "export const shown = (\n  n: number,\n): number => (n > 0 ? Math.floor(n) : 0);\n", { printWidth: 44 }],
+    ["a.js", "h();\n", { useTabs: true }],
+    ["a.js", "h();\n", { tabWidth: 4 }],
     ["a.ts", "export const shown = (\n  n: number,\n): number => (n > 0 ? Math.floor(n) : 0);\n", { printWidth: 43 }],
     ["a.ts", "const inked = columns.flatMap(\n  (count, x) => (count > 0 ? [x] : []),\n);\n", { printWidth: 43 }],
     ["a.ts", "const inked = columns.flatMap(\n  (count, x) => (count > 0 ? [x] : []),\n);\n", { printWidth: 42 }],
@@ -11366,12 +11368,15 @@ describe.concurrent("files that are formatted, or nearly", () => {
   test.skipIf(isDebug || isASAN)("take a fraction of the time", async () => {
     const files = {
       "a.js": around("h();\n")
-        .repeat(2000)
+        .repeat(6000)
         .replace(/function \w+/g, "x = function ")
         .replace(/^}$/gm, "};"),
     };
+    // The first run of an executable takes longer.
+    await format({ "a.js": formatted }, ["-l"]);
+    const start = await format({ "a.js": formatted }, ["-l"]);
     const [settled, all] = [await format(files, ["-l"]), await format(files, ["-l"], { env: formatsAll })];
     expect([settled.stdout, all.stdout]).toEqual(["", ""]);
-    expect(slowdown(all, settled)).toBeGreaterThan(1.5);
+    expect(all.cpu - start.cpu).toBeGreaterThan(1.5 * (settled.cpu - start.cpu));
   });
 });

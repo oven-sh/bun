@@ -159,7 +159,12 @@ macro_rules! lists {
 
 fn room_up_to<T>(list: &mut Vec<T>, end: u32) -> &mut [MaybeUninit<T>] {
     let more = end as usize - list.len();
-    list.reserve(more);
+    if list.capacity() < end as usize {
+        // `reserve` would copy the whole block, which makes all of it resident.
+        let mut larger = Vec::with_capacity((end as usize).max(2 * list.capacity()));
+        larger.append(list);
+        *list = larger;
+    }
     &mut list.spare_capacity_mut()[..more]
 }
 

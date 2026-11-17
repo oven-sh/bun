@@ -429,6 +429,18 @@ pub(crate) struct FormatterBuffers {
     cleaned: FxHashMap<Interned, Interned>,
 }
 
+impl FormatterBuffers {
+    pub(crate) fn make_room_for_document_of(&mut self, source: &[u8]) {
+        // oxc's measurements on the VS Code sources: a median of 0.19 elements per byte, with 95% of files below 0.4.
+        let room = Storage::RESERVED as usize + source.len() * 2 / 5;
+        // `reserve` would copy the whole block, which makes all of it resident.
+        if self.storage.pool.capacity() < room {
+            self.storage.pool = Vec::new();
+            self.storage.pool.reserve(room);
+        }
+    }
+}
+
 /// Collects the elements of a document.
 // The fields are laid out as declared: small ones that most accesses touch first, where x86-64 reaches them with a
 // one-byte offset.
@@ -467,8 +479,6 @@ impl<'a> Formatter<'a> {
         tracker.clear();
         odd_blocks.mark(source);
         cleaned.clear();
-        // oxc's measurements on the VS Code sources: a median of 0.19 elements per byte, with 95% of files below 0.4.
-        storage.pool.reserve(source.len() * 2 / 5);
         Formatter {
             storage,
             tracker,

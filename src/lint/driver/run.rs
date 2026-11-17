@@ -16,7 +16,7 @@ use bun_collections::index_sort;
 use bun_core::strings;
 use bun_lint::context::Severity;
 use bun_lint::formats::Reason;
-use bun_lint::js_plugin::{Engine, Host, Loading, Route, Work};
+use bun_lint::js_plugin::{Engine, HEAVY, Host, Loading, Route, Work};
 use bun_lint::language::Parser;
 use bun_lint::linter::{
     FileConfig, LintMessage, Registry, ResolvedConfig, RuleId, formatting_rule, is_parse_error,
@@ -25,6 +25,7 @@ use bun_sema::resolve::ScriptKind;
 use bun_sema::util::FxHashSet;
 use bun_threading::Guarded;
 use std::io::Write;
+use std::num::NonZeroUsize;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::thread::ThreadId;
@@ -206,7 +207,7 @@ enum Needs {
     Engine,
     /// A rule or processor for which the engine has to run the config file and everything it imports.
     Configuration,
-    /// Something that makes an engine's memory grow: a file of at least [`Host::heavy_size`] bytes, or ESLint's own `Linter` with
+    /// Something that makes an engine's memory grow: a file of at least [`HEAVY`] bytes, or ESLint's own `Linter` with
     /// a parser that builds a TypeScript program, which takes gigabytes.
     Heavy,
 }
@@ -265,7 +266,7 @@ impl Work for Files<'_> {
     }
 }
 
-fn needs(target: &Target, host: &Host) -> Needs {
+fn needs(target: &Target) -> Needs {
     let Status::Matched(config) = &target.status else {
         return Needs::Nothing;
     };
@@ -287,9 +288,9 @@ fn needs(target: &Target, host: &Host) -> Needs {
             .clone()
             .any(|it| it.configured.rule.about().needs_config_file)
     {
-        Needs::Configuration.or_heavy(target, host)
+        Needs::Configuration.or_heavy(target)
     } else if on.next().is_some() || route != Route::Native {
-        Needs::Engine.or_heavy(target, host)
+        Needs::Engine.or_heavy(target)
     } else {
         Needs::Nothing
     }
@@ -301,8 +302,8 @@ fn may_be_handed_back(target: &Target) -> bool {
 }
 
 impl Needs {
-    fn or_heavy(self, target: &Target, host: &Host) -> Needs {
-        match target.size >= host.heavy_size() as u64 {
+    fn or_heavy(self, target: &Target) -> Needs {
+        match target.size >= HEAVY as u64 {
             true => Needs::Heavy,
             false => self,
         }
@@ -338,6 +339,13 @@ impl Pool {
     /// How many threads are worth starting for files of `size` bytes in all.
     pub(crate) fn threads_for(&self, size: u64) -> usize {
         usize::try_from(size / (32 << 10)).map_or(self.threads, |it| it.clamp(1, self.threads))
+    }
+
+    /// With files of `size` bytes in all, it can't be a short run. See `start_threads_gradually`.
+    pub(crate) fn expect_files(&self, size: u64) {
+        if let Some(threads) = NonZeroUsize::new(self.threads).filter(|_| size >= 32 << 20) {
+            bun_sema_driver::allow_threads(threads);
+        }
     }
 
     /// Like `for_each`, on at most `threads` threads.
@@ -938,14 +946,12 @@ impl Run<'_> {
             };
             loader.warn(&[b"Skipped ", &count, rules, remedy, them]);
         }
-        let needs = |target: &Target| needs(target, context.js_plugins);
         let with_engine = (supported.iter()).filter(|it| needs(it) != Needs::Nothing);
         let shared = with_engine.clone().filter(|it| needs(it) != Needs::Heavy);
         let size: u64 = shared.map(|it| it.size).sum();
         // Files that a rule may hand back to its package's JavaScript version.
-        let may_need_realm = (supported.iter()).filter(|it| {
-            may_be_handed_back(it) && it.size < context.js_plugins.heavy_size() as u64
-        });
+        let may_need_realm =
+            (supported.iter()).filter(|it| may_be_handed_back(it) && it.size < HEAVY as u64);
         let mut announced = FxHashSet::default();
         let configs = with_engine.clone().filter_map(|it| match &it.status {
             Status::Matched(config) => announced.insert(Arc::as_ptr(config)).then_some(config),
@@ -1093,6 +1099,9 @@ impl Run<'_> {
         let registry = registry.with_native_plugins(options.native_plugin_rules.clone());
         let linter = UntilExit::new(Linter::new(registry));
         bun_sema_driver::use_dedicated_pool("Bun Lint");
+        if options.threads == 0 {
+            bun_sema_driver::start_threads_gradually(false);
+        }
         let pool = UntilExit::new(Pool::new(options.threads));
         // Nothing starts unless a config has a JavaScript plugin.
         let js_plugins = Host::with_engine(

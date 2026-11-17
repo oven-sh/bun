@@ -100,14 +100,24 @@ let $Bun_defer, $Bun_lazy;
   const membersOf = new Map();
   const { toString: sourceOf } = Function.prototype;
   const onlyReturns = /^[^(]*\(\)(?!.*(?:\+\+|--|\bnew\b))\s*(?:\{\s*return\s[^(.[=`;{}]+;?\s*\}|=>[^(.[=`;{}]+)$/s;
+  const convertsNothing = /(?:\breturn\s|=>)(?:[\w$\s]|\|\||&&|\?\?)+[;\s}]*$/;
   function isThere(object, keys) {
+    let left = keys.length;
     for (const key of keys) {
+      left--;
       if (Object(object) !== object || isLazy(object, key)) return false;
       const found = getOwnPropertyDescriptor(object, key);
       if (found === undefined) return false;
-      if (hasOwn(found, "value")) object = found.value;
-      else if (found.get !== undefined && onlyReturns.test(sourceOf.call(found.get))) object = object[key];
-      else return false;
+      if (hasOwn(found, "value")) {
+        object = found.value;
+        continue;
+      }
+      const source = found.get === undefined ? "" : sourceOf.call(found.get);
+      if (!onlyReturns.test(source)) return false;
+      if (left === 0) return true;
+      // To make the member calls it again.
+      if (!convertsNothing.test(source)) return false;
+      object = object[key];
     }
     return true;
   }

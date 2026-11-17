@@ -68,16 +68,16 @@ extern "C" fn Bun__Lint__setWantsWhole(value: bool) {
 }
 
 /// Of a file up to this size all functions are compiled. Of a larger one few are ever called.
-const SMALL: usize = 64 << 10;
-/// The same where no rule runs
-const SMALL_FOR_CONFIGURATION: usize = 4 << 10;
+const SMALL: usize = 4 << 10;
+/// To compile a larger one takes more memory than it saves time.
+const LARGE: usize = 64 << 10;
 /// Per byte of code: what a VM takes to start a module without bytecode, and what it takes to make the bytecode
 const NANOSECONDS_TO_PARSE: u64 = 20;
 const NANOSECONDS_FOR_TOP_LEVEL: u64 = 16;
 const NANOSECONDS_FOR_ALL: u64 = 80;
 const MISSES_IN_A_ROW: usize = 2;
 const MAX_FILES_IN_DIRECTORY: usize = 512;
-const MAX_THREADS: usize = 8;
+const MAX_THREADS: usize = 3;
 
 struct Module {
     loader: Loader,
@@ -100,18 +100,14 @@ enum Slot {
     Refused,
 }
 
-/// See [`key_of`]
-const WHOLE: u8 = b'w';
-
 enum Job {
     Load {
         directory: Arc<[u8]>,
         specifier: Box<[u8]>,
-        /// See [`LOADS`], or [`WHOLE`]
+        /// See [`LOADS`]
         kind: u8,
         is_guess: bool,
     },
-    Compile(Box<[u8]>, Arc<Module>),
     /// Many plugins list the directory with their rules and require each file.
     LoadAllIn(Arc<[u8]>),
 }
@@ -162,7 +158,7 @@ struct ReadAhead {
     has_jobs: Condition,
     is_made: Condition,
     max_threads: usize,
-    has_several_vms: bool,
+    reads_configuration: bool,
 }
 
 static READ_AHEAD: OnceLock<ReadAhead> = OnceLock::new();
@@ -216,11 +212,11 @@ impl Version {
 }
 
 /// Call it with the lock of `vm`, whose options are final and those of every other VM that it is called for.
-pub(crate) fn enable(vm: &VirtualMachine, has_several_vms: bool) {
-    removable_body_behind_value!(RuntimeTranspiler, { start(vm, has_several_vms) })
+pub(crate) fn enable(vm: &VirtualMachine, reads_configuration: bool) {
+    removable_body_behind_value!(RuntimeTranspiler, { start(vm, reads_configuration) })
 }
 
-fn start(vm: &VirtualMachine, has_several_vms: bool) {
+fn start(vm: &VirtualMachine, reads_configuration: bool) {
     if vm.debugger.get().is_some()
         || bun_core::env_var::feature_flag::BUN_FEATURE_FLAG_DISABLE_DEFERRED_REQUIRE::get()
             == Some(true)
@@ -246,7 +242,7 @@ fn start(vm: &VirtualMachine, has_several_vms: bool) {
             has_jobs: Condition::default(),
             is_made: Condition::default(),
             max_threads: cores.saturating_sub(1).min(MAX_THREADS),
-            has_several_vms,
+            reads_configuration,
         });
     }
     expect(core::iter::empty());
@@ -345,17 +341,11 @@ impl Module {
         }
     }
 
-    /// Returns how deep the functions are that are to be compiled. `rules_run`: not only what a module does while it loads
-    /// is run.
-    fn announce_bytecode(&self, rules_run: bool) -> u32 {
+    /// Returns how deep the functions are that are to be compiled.
+    fn announce_bytecode(&self) -> u32 {
         let code = self.code.byte_slice();
-        let small = if rules_run {
-            SMALL
-        } else {
-            SMALL_FOR_CONFIGURATION
-        };
         let (depth, nanoseconds_per_byte) = match self.loads().first() {
-            Some(digit) if code.len() > small => (
+            Some(digit) if code.len() > SMALL => (
                 u32::from(digit.saturating_sub(b'0')),
                 NANOSECONDS_FOR_TOP_LEVEL,
             ),
@@ -366,8 +356,8 @@ impl Module {
         depth
     }
 
-    fn compile(&self, path: &[u8], rules_run: bool) {
-        let (code, depth) = (self.code.byte_slice(), self.announce_bytecode(rules_run));
+    fn compile(&self, path: &[u8]) {
+        let (code, depth) = (self.code.byte_slice(), self.announce_bytecode());
         let format = match self.printed.is_commonjs_module {
             true => Format::Cjs,
             false => Format::Esm,
@@ -386,6 +376,11 @@ impl ReadAhead {
                 printer: BufferPrinter::init(BufferWriter::init()),
             }))
         })
+    }
+
+    /// While rules run, bytecode would be memory on top of what they take.
+    fn compiles(&self, module: &Module) -> bool {
+        self.reads_configuration && module.code.length() <= LARGE
     }
 
     /// The caller has put [`Slot::InTheMaking`] at `key`.
@@ -407,22 +402,12 @@ impl ReadAhead {
             .and_then(|it| transpile(tools, path, it, front.as_ref(), loader, module_type))
             .map(Arc::new);
         let mut state = self.state.lock();
-        if front.is_some() && self.has_several_vms {
-            state.guesses.push_front(Job::Load {
-                directory: b"/"[..].into(),
-                specifier: key.into(),
-                kind: WHOLE,
-                is_guess: true,
-            });
-        }
         if let Some(module) = &module {
             let directory: Arc<[u8]> = path.name().dir_with_trailing_slash().into();
-            if by != By::Vm {
-                module.announce_bytecode(self.has_several_vms);
-            } else {
-                if self.has_several_vms {
-                    (state.guesses).push_back(Job::Compile(path.text.into(), Arc::clone(module)));
-                }
+            if by != By::Vm && self.compiles(module) {
+                module.announce_bytecode();
+            }
+            if by == By::Vm {
                 if state.missed.0 != directory {
                     state.missed = (Arc::clone(&directory), 0);
                 }
@@ -480,14 +465,22 @@ impl ReadAhead {
         loop {
             let Some(job) = state.jobs.pop().or_else(|| state.guesses.pop_front()) else {
                 state.idle += 1;
-                self.has_jobs.wait_guarded(&mut state);
+                let has_waited = self.has_jobs.timed_wait_guarded(&mut state, 3_000_000);
+                if has_waited.is_err() {
+                    drop(state);
+                    self.with_tools(|it| it.printer = BufferPrinter::init(BufferWriter::init()));
+                    bun_core::Global::mimalloc_cleanup(true);
+                    state = self.state.lock();
+                    if state.jobs.is_empty() && state.guesses.is_empty() {
+                        self.has_jobs.wait_guarded(&mut state);
+                    }
+                }
                 state.idle -= 1;
                 continue;
             };
             self.hand_out(&mut state);
             drop(state);
             match job {
-                Job::Compile(path, module) => module.compile(&path, true),
                 Job::LoadAllIn(directory) => {
                     expect(scripts_in(&directory).iter().map(|it| &it[..]))
                 }
@@ -537,24 +530,37 @@ impl ReadAhead {
         }
         let path = Path::init(shared().get().filter(|_| kind != b'f')?);
         let loader = crate::jsc_hooks::loader_for_path(&path, &tools.transpiler.options.loaders)?;
-        if !loader.is_java_script_like() {
+        if !loader.is_java_script_like() || self.reads_configuration && has_stand_in(path.text) {
             return None;
         }
-        let key = key_of(path.text, kind == WHOLE);
         let mut state = self.state.lock();
-        if state.slots.contains_key(&key[..]) {
+        if state.slots.contains_key(path.text) {
             return None;
         }
-        state.slots.insert(key[..].into(), Slot::InTheMaking);
+        state.slots.insert(path.text.into(), Slot::InTheMaking);
         drop(state);
         let directory = tools.transpiler.resolver.read_dir_info(path.name().dir);
         let package_json = (directory.ok().flatten())
             .and_then(|it| it.package_json().or(it.enclosing_package_json));
         let module_type = crate::jsc_hooks::module_type_of(&path, package_json);
-        let module = self.make(tools, &key, &path, loader, module_type, by)?;
-        module.compile(path.text, self.has_several_vms);
+        let module = self.make(tools, path.text, &path, loader, module_type, by)?;
+        if self.compiles(&module) {
+            module.compile(path.text);
+        }
         Some(())
     }
+}
+
+/// See `large` in evaluate-stand-ins.js
+fn has_stand_in(path: &[u8]) -> bool {
+    let ends_with = |end: &[u8]| {
+        let is_same = |(a, b): (&u8, &u8)| a == b || (*a, *b) == (bun_paths::SEP, b'/');
+        path.len() >= end.len() && path.iter().rev().zip(end.iter().rev()).all(is_same)
+    };
+    typescript_front::is_typescript(path)
+        || ends_with(b"/@typescript-eslint/typescript-estree/dist/index.js")
+        || ends_with(b"/@typescript-eslint/scope-manager/dist/index.js")
+        || ends_with(b"/@typescript-eslint/eslint-plugin/dist/rules/index.js")
 }
 
 fn scripts_in(directory: &[u8]) -> Vec<Vec<u8>> {

@@ -123,7 +123,8 @@ pub(crate) fn write_with<'a>(
     scratch: &mut Scratch,
     write: impl FnOnce(&mut Formatter<'a>),
 ) -> Result<Interned, FormatError> {
-    let buffers = std::mem::take(&mut scratch.formatter);
+    let mut buffers = std::mem::take(&mut scratch.formatter);
+    buffers.make_room_for_document_of(source);
     let mut formatter = Formatter::new(context, source, buffers);
     write(&mut formatter);
     finish(formatter, scratch)

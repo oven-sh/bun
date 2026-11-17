@@ -1052,7 +1052,7 @@ impl<S: RuleSet> Linter<S> {
                 back.iter().map(|it| &**it.0.configured).collect();
             let reports = match (options.js_plugins, config.js_settings_of(file)) {
                 (Some(host), Some(settings)) if !enabled.is_empty() => {
-                    if file.text().len() < host.heavy_size() {
+                    if file.text().len() < js_plugin::HEAVY {
                         host.needs_realm(file.text().len() as u64);
                     }
                     host.run_on_block(

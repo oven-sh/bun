@@ -998,12 +998,19 @@ JSC_DEFINE_HOST_FUNCTION(jsLintIsLoadingChanged, (JSGlobalObject * globalObject,
     return JSValue::encode(jsBoolean(defaultGlobalObject(globalObject)->hasOverriddenModuleWrapper || Bun__hasChangedRequireExtensions(globalObject)));
 }
 
+// What src/runtime/defer_require.js returns. Empty in a VM that has not run it. It has the same property once a plugin has called `import()`.
+static JSValue lintHooks(JSGlobalObject* globalObject)
+{
+    return defaultGlobalObject(globalObject)->getDirect(getVM(globalObject), WebCore::builtinNames(getVM(globalObject)).dataPrivateName());
+}
+
 // () => whether what is thrown now may be caught
 JSC_DEFINE_HOST_FUNCTION(jsLintIsCaught, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
     // What waits for the promise is not on the stack.
-    bool isCaught = defaultGlobalObject(globalObject)->hasLintPluginCalledImport;
-    StackVisitor::visit(callFrame, globalObject->vm(), [&](StackVisitor& visitor) {
+    auto& vm = getVM(globalObject);
+    bool isCaught = !!asObject(lintHooks(globalObject))->getDirect(vm, WebCore::builtinNames(vm).dataPrivateName());
+    StackVisitor::visit(callFrame, vm, [&](StackVisitor& visitor) {
         CodeBlock* codeBlock = visitor->codeBlock();
         // Bun's own code only catches to report.
         if (!isCaught && codeBlock && codeBlock->unlinkedCodeBlock()->handlerForBytecodeIndex(visitor->bytecodeIndex(), RequiredHandler::CatchHandler))
@@ -1067,11 +1074,9 @@ JSC_DEFINE_HOST_FUNCTION(jsLintTextsOfCallees, (JSGlobalObject * globalObject, C
     RELEASE_AND_RETURN(scope, JSValue::encode(constructArray(globalObject, static_cast<ArrayAllocationProfile*>(nullptr), texts)));
 }
 
-// One of the functions that src/runtime/defer_require.js returns. Empty in a VM that has not run it.
 static JSValue lintHook(JSGlobalObject* globalObject, unsigned index)
 {
-    auto& vm = getVM(globalObject);
-    JSValue hooks = defaultGlobalObject(globalObject)->getDirect(vm, WebCore::builtinNames(vm).dataPrivateName());
+    JSValue hooks = lintHooks(globalObject);
     return hooks ? asObject(hooks)->getDirectIndex(globalObject, index) : JSValue();
 }
 
@@ -1170,16 +1175,20 @@ void noteModuleLoadedForLint(JSGlobalObject* globalObject, JSValue file, JSObjec
 
 void noteImportCallForLint(Zig::GlobalObject* globalObject)
 {
-    if (!lintHook(globalObject, 0)) [[likely]]
+    JSValue hooks = lintHooks(globalObject);
+    if (!hooks) [[likely]]
         return;
     auto& vm = getVM(globalObject);
+    bool isOfPlugin = false;
     StackVisitor::visit(vm.topCallFrame, vm, [&](StackVisitor& visitor) {
         CodeBlock* codeBlock = visitor->codeBlock();
         if (!codeBlock || codeBlock->unlinkedCodeBlock()->isBuiltinFunction())
             return IterationStatus::Continue;
-        globalObject->hasLintPluginCalledImport |= !isOfBun(codeBlock->ownerExecutable()->sourceURL());
+        isOfPlugin = !isOfBun(codeBlock->ownerExecutable()->sourceURL());
         return IterationStatus::Done;
     });
+    if (isOfPlugin)
+        asObject(hooks)->putDirect(vm, WebCore::builtinNames(vm).dataPrivateName(), jsBoolean(true), PropertyAttribute::DontEnum | 0);
 }
 
 // What `slot` of `object` has. Empty: to read it would load a module.

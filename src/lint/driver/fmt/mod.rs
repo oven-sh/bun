@@ -30,7 +30,7 @@ use bun_format::tailwind::Tailwind;
 use bun_format::verify::Program;
 use bun_format::{FormatError, FormatOptions, Scratch};
 use bun_lint::ast::File;
-use bun_lint::js_plugin::Unformatted;
+use bun_lint::js_plugin::{HEAVY, Unformatted};
 use bun_lint::json::{Notation, parse_as};
 use bun_lint::language::{LanguageOptions, ParseOptions, Parser, SourceType};
 use bun_lint::linter::TypesInJavaScript;
@@ -1755,6 +1755,9 @@ impl Run<'_> {
         // Has to come before the first parallel region. The pool's threads have enough stack to walk a tree as deep as a parser
         // allows.
         bun_sema_driver::use_dedicated_pool("Bun Format");
+        if options.threads == 0 {
+            bun_sema_driver::start_threads_gradually(false);
+        }
         let pool = Pool::new(options.threads);
         let dot = [b".".to_vec()];
         let patterns = if options.patterns.is_empty() {
@@ -2155,7 +2158,7 @@ impl Run<'_> {
             }
         }
         if let Some(bridge) = &bridge {
-            let is_heavy = |at: usize| handed_over[at].1.size >= bridge.heavy_size() as u64;
+            let is_heavy = |at: usize| handed_over[at].1.size >= HEAVY as u64;
             bridge.for_each(handed_over.len(), &is_heavy, &|at| {
                 let (index, target) = handed_over[at];
                 let _link_lock = lock_for(target);

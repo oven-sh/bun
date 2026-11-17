@@ -1784,7 +1784,8 @@ describe.concurrent("bun lint with JavaScript plugins", () => {
         expect(exitCode).toBe(1);
         return { stdout, engines: Number(/JavaScript: (\d+) engines/.exec(stderr)?.[1]) };
       };
-      // 24 files of 250 KB add up to 6 MB, which is enough for an engine on each thread.
+      // 24 files of 250 KB, which is just under the large-file limit, add up to 6 MB, which is enough for three
+      // engines.
       const [smallWithTypes, small, oneWithTypes, one, largeWithTypes, large] = await Promise.all([
         run(24, "ts", 0, "8"),
         run(24, "js", 0, "8"),
@@ -1796,7 +1797,7 @@ describe.concurrent("bun lint with JavaScript plugins", () => {
       expect([smallWithTypes.engines, small.engines, oneWithTypes.engines, one.engines]).toEqual([1, 1, 1, 1]);
       for (const it of [largeWithTypes, large]) {
         expect(it.engines).toBeGreaterThan(1);
-        expect(it.engines).toBeLessThanOrEqual(8);
+        expect(it.engines).toBeLessThanOrEqual(3);
       }
       expect(largeWithTypes.stdout).toBe(oneWithTypes.stdout);
       expect(large.stdout).toBe(one.stdout);
@@ -2503,7 +2504,7 @@ export default {
         export default {
           rules: { helpers: { create: context => ({ Program: node => context.report({ node, message: "" + helpers() }) }) } },
         };`,
-        // 200 of them add up to 16 MB, which is enough for an engine on each thread.
+        // 200 of them add up to 16 MB, which is enough for five engines.
         ...Object.fromEntries(
           Array.from({ length: count }, (_, i) => [`f${i}.js`, `1;\n/*${Buffer.alloc(80_000, "x")}*/\n`]),
         ),
@@ -2529,7 +2530,7 @@ export default {
   );
 
   test(
-    "with little memory, files of 256 KB or more all go to one engine, with and without types, with any number of threads",
+    "files of 256 KB or more all go to one engine, with and without types, with any number of threads",
     async () => {
       const run = async (heavy: number, extension: string, threads: string) => {
         const files: Record<string, string> = {
@@ -2554,8 +2555,7 @@ export default {
         for (let i = 0; i < heavy; i++) files[`src/heavy${i}.${extension}`] = text(270_000);
         for (let i = 0; i < 24; i++) files[`src/light${i}.${extension}`] = text(250_000);
         // Not `-f json`, which includes each file's text.
-        const variables = { BUN_LINT_MEMORY: String(256 * 2 ** 20) };
-        const { raw, exitCode } = await lint(files, ["-f", "unix", "--threads", threads, "src"], [], variables);
+        const { raw, exitCode } = await lint(files, ["-f", "unix", "--threads", threads, "src"]);
         expect(exitCode).toBe(1);
         const realmsOf = (name: string) =>
           Array.from(raw.matchAll(/(heavy|light)\d+\.\w+:1:1: (\S+) \[Error\/own\/realm\]/g))
@@ -5852,6 +5852,24 @@ describe.concurrent("what a package requires is loaded when it's used", () => {
       1,
     ],
     [
+      "a getter that converts an object",
+      {
+        "index.js": `const value = require("./a").value; exports.f = () => (require("./b"), value);`,
+        "a.js": `let count = 0; const box = { valueOf: () => ++count }; module.exports = { get value() { return +box; } };`,
+        "b.js": `require("./a");`,
+      },
+      1,
+    ],
+    [
+      "a member behind a getter that converts an object",
+      {
+        "index.js": `const value = require("./a").text.length; exports.f = () => (require("./b"), value);`,
+        "a.js": `let text = ""; const box = { valueOf: () => (text += "x") }; module.exports = { get text() { return box + ""; } };`,
+        "b.js": `require("./a");`,
+      },
+      1,
+    ],
+    [
       "a getter that breaks a cycle",
       {
         "index.js": `const { value } = require("./a"); exports.f = () => (require("./b"), value);`,
@@ -6348,55 +6366,3 @@ function isA(it) { return it === 1; }
     timeout,
   );
 });
-
-test(
-  "what a known plugin warns about once is printed once, however many engines there are",
-  async () => {
-    const warning = "The option that this rule has been given is deprecated.";
-    const files: Record<string, string> = {
-      "node_modules/eslint-plugin-ava/package.json": `{ "name": "eslint-plugin-ava", "main": "index.mjs" }`,
-      "node_modules/eslint-plugin-ava/index.mjs": `import { readdirSync, writeFileSync } from "node:fs";
-        let hasWarned = false;
-        export default { rules: { warns: { create() {
-          if (!hasWarned) {
-            hasWarned = true;
-            console.warn("${warning}");
-            console.error("${warning}");
-            writeFileSync("engines/" + crypto.randomUUID(), "");
-            const end = Date.now() + 20_000;
-            while (readdirSync("engines").length < 3 && Date.now() < end) Bun.sleepSync(2);
-          }
-          return {};
-        } } } };`,
-      "eslint.config.mjs": `import own from "eslint-plugin-ava";
-        export default [{ files: ["src/*"], plugins: { own }, rules: { "own/warns": "error" } }];`,
-      "engines/first": "",
-    };
-    for (let i = 0; i < 4; i++) files[`src/${i}.js`] = `/*${Buffer.alloc(100_000, "x")}*/\n`;
-    const variables = { BUN_LINT_MEMORY: String(64 * 2 ** 30) };
-    const { stderr, exitCode } = await lint(files, ["--timing", "src"], [], variables);
-    expect(stderr).toContain("JavaScript: 2 engines");
-    expect(stderr.split(warning)).toHaveLength(3);
-    expect(exitCode).toBe(0);
-  },
-  timeout,
-);
-
-test(
-  "a rule of the project's own that compares files finds all of them in a project of medium size",
-  async () => {
-    const files: Record<string, string> = {
-      "plugin.mjs": `let count = 0;
-        export default { rules: { counts: { create: context => ({ Program(node) {
-          if (++count === 16) context.report({ node, message: "all" });
-        } }) } } };`,
-      "eslint.config.mjs": `import own from "./plugin.mjs";
-        export default [{ files: ["src/*"], plugins: { own }, rules: { "own/counts": "error" } }];`,
-    };
-    for (let i = 0; i < 16; i++) files[`src/${i}.js`] = `/*${Buffer.alloc(50_000, "x")}*/\n`;
-    const { stdout, exitCode } = await lint(files, ["-f", "unix", "--threads", "8", "src"]);
-    expect(stdout).toContain("all [Error/own/counts]");
-    expect(exitCode).toBe(1);
-  },
-  timeout,
-);

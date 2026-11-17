@@ -306,7 +306,6 @@ pub(crate) fn run_and_exit(
 ) -> ! {
     disallow_code_generation_before(command);
     super::short_run::share_heaps_of_libc();
-    super::short_run::spend_spare_memory();
     if let Some(cwd) = cwd_before(command) {
         change_directory(cwd);
     }

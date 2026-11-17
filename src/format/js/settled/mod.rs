@@ -105,6 +105,26 @@ fn is_text_supported(text: &[u8], is_ascii: bool) -> bool {
                 && !strings::contains(text, "\u{2029}".as_bytes())))
 }
 
+/// False if the first block is indented in another style, so that next to nothing is formatted.
+fn is_indented_alike(text: &[u8], options: &FormatOptions) -> bool {
+    let Some(at) = strings::index_of(text, b"{\n") else {
+        return true;
+    };
+    let indentation = |it: &[u8]| {
+        it.iter()
+            .take_while(|it| matches!(it, b' ' | b'\t'))
+            .count()
+    };
+    let line = strings::last_index_of_char(&text[..at], b'\n').map_or(0, |it| it + 1);
+    let inside = &text[at + 2..];
+    let added = &inside[indentation(&text[line..]).min(inside.len())..];
+    match (options.indent_style.is_tab(), indentation(added)) {
+        (_, 0) => true,
+        (true, count) => added[..count] == *b"\t",
+        (false, count) => count == options.indent_width.value() as usize && added[0] == b' ',
+    }
+}
+
 /// What [`check`] found.
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum Verdict {
@@ -183,7 +203,11 @@ fn check_with(
     };
     let is_renamed = (options.filepath.as_deref()).is_some_and(|it| !it.is_empty() && it != path);
     let is_ascii = strings::is_all_ascii(text);
-    if is_renamed || !are_options_supported(options) || !is_text_supported(text, is_ascii) {
+    if is_renamed
+        || !are_options_supported(options)
+        || !is_text_supported(text, is_ascii)
+        || !is_indented_alike(text, options)
+    {
         return Verdict::Unknown;
     }
     // The parser would ask for the order of classes that aren't sorted.

@@ -21,8 +21,8 @@ struct State<T, F> {
     waiting: usize,
     /// The highest, with its depth. Nothing below it is visited.
     failure: Option<(usize, Fatal)>,
-    /// By the number of bits in their size.
-    files: [Vec<F>; 64],
+    /// By the number of bits in their size, in short lists, none empty. A long one would be half unused, and stay that long.
+    files: [Vec<Vec<F>>; 64],
     /// One bit for each of `files` that isn't empty.
     sizes: u64,
     /// Of all files that were found.
@@ -34,7 +34,11 @@ struct State<T, F> {
 impl<T, F> State<T, F> {
     fn add_file(&mut self, file: F, size: u64) {
         let bit = size.max(1).ilog2();
-        self.files[bit as usize].push(file);
+        let lists = &mut self.files[bit as usize];
+        match lists.last_mut().filter(|it| it.len() < 256) {
+            Some(last) => last.push(file),
+            None => lists.push(vec![file]),
+        }
         self.sizes |= 1 << bit;
         self.total_size += size;
     }
@@ -42,9 +46,10 @@ impl<T, F> State<T, F> {
     /// One of the largest, so no thread starts a big file when the others are nearly done.
     fn take_file(&mut self) -> Option<F> {
         let bit = self.sizes.checked_ilog2()?;
-        let files = &mut self.files[bit as usize];
-        let file = files.pop();
-        if files.is_empty() {
+        let lists = &mut self.files[bit as usize];
+        let file = lists.last_mut()?.pop();
+        lists.pop_if(|it| it.is_empty());
+        if lists.is_empty() {
             self.sizes &= !(1 << bit);
         }
         file
@@ -164,6 +169,7 @@ impl<T, F> Walk<T, F> {
                         self.has_waiting.notify_many(count.saturating_sub(1));
                         state.add(depth + 1, directories);
                         (files.into_iter()).for_each(|(file, size)| state.add_file(file, size));
+                        pool.expect_files(state.total_size);
                     }
                     Err(_) if state.has_failed_above(depth + 1) => {}
                     Err(error) => state.failure = Some((depth, error)),
@@ -223,6 +229,11 @@ pub(crate) fn walk_and_work<'w, T: Send, F: Send>(
     let state = walk.state.get_mut();
     match state.failure.take() {
         Some((_, error)) => Err(error),
-        None => Ok(state.files.iter_mut().flat_map(std::mem::take).collect()),
+        None => Ok(state
+            .files
+            .iter_mut()
+            .flat_map(std::mem::take)
+            .flatten()
+            .collect()),
     }
 }

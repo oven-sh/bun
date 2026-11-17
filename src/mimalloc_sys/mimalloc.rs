@@ -26,8 +26,6 @@ pub type mi_output_fun = extern "C" fn(*const c_char, *mut c_void);
 unsafe extern "C" {
     /// No preconditions.
     pub safe fn mi_collect(force: bool);
-    /// No preconditions.
-    pub safe fn mi_arenas_purge();
     /// Call when a thread goes idle: collects this thread's pending frees, discards the
     /// free blocks inside its still-used pages, and hands the arena purge to the scavenger.
     /// Safe on any thread; a no-op on a thread that never allocated. No preconditions.
@@ -111,15 +109,6 @@ unsafe extern "C" {
     ) -> bool;
     /// No preconditions; looks the address up in the page map and never dereferences `p`.
     pub safe fn mi_is_in_heap_region(p: *const c_void) -> bool;
-    /// No preconditions; returns 0 or an `errno`.
-    pub safe fn mi_reserve_os_memory_ex(
-        size: usize,
-        commit: bool,
-        allow_large: bool,
-        exclusive: bool,
-        arena: &mut *mut c_void,
-    ) -> core::ffi::c_int;
-    pub fn mi_arena_area(arena: *mut c_void, size: &mut usize) -> *mut c_void;
 }
 
 // Named `Option` after mimalloc's `mi_option_t`; shadows `core::option::Option` in
@@ -171,7 +160,6 @@ pub enum Option {
     page_commit_on_demand = 40,
     page_max_reclaim = 41,
     page_cross_thread_max_reclaim = 42,
-    arena_purge_immediate_size = 53,
     purge_holes = 56,
 }
 

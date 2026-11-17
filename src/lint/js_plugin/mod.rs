@@ -34,7 +34,7 @@ mod scopes;
 mod tokens;
 pub(crate) mod wire;
 
-pub use engine::{Demand, Engine, Serve, Vm, Work, heavy_size};
+pub use engine::{Demand, Engine, HEAVY, Serve, Vm, Work};
 pub use eslint::{Configuration, EslintFailure, Linted, Text};
 pub use host::{Failure, Host, Loading, ParseAgain, Report, Suggested, ThrownAt};
 pub use prettier::Unformatted;

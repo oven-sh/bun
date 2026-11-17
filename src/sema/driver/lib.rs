@@ -448,13 +448,35 @@ pub fn use_pool_for_lowering(name: &'static str) {
     make_pool(&LOWERING_POOL, name, LOWERING_STACK_SIZE);
 }
 
-/// They are there when the configuration has been read.
-fn start_threads_meanwhile(threads: usize) {
-    let count = u16::try_from(threads).unwrap_or(u16::MAX);
-    let _ = std::thread::Builder::new()
+/// For a process that ends after one request, and whose number of threads nobody chose. Each thread that joins touches
+/// megabytes of its own, and a short run ends no sooner for it. So the pool gets the others while the first stay busy.
+/// `now`: the first are there when the configuration has been read.
+pub fn start_threads_gradually(now: bool) {
+    const AT_FIRST: usize = 10;
+    let pool = region_pool();
+    let mut allowed = AT_FIRST.min(pool.max_threads());
+    if !now && allowed == pool.max_threads() {
+        return;
+    }
+    pool.limit_threads(allowed);
+    let starter = std::thread::Builder::new()
         .name("Bun Starter".into())
         .stack_size(256 << 10)
-        .spawn(move || region_pool().warm(count));
+        .spawn(move || {
+            if now {
+                pool.warm(allowed as u16);
+            }
+            while allowed < pool.max_threads() {
+                std::thread::sleep(Duration::from_millis(5));
+                if pool.available_threads() == 0 {
+                    allowed += 1;
+                    pool.allow_threads(allowed);
+                }
+            }
+        });
+    if starter.is_err() {
+        pool.allow_threads(usize::MAX);
+    }
 }
 
 fn make_pool(place: &OnceLock<bun_threading::ThreadPool>, name: &'static str, stack_size: u32) {
@@ -1837,8 +1859,8 @@ pub fn check_provided_then<R>(
         0 => usize::from(bun_core::get_thread_count()),
         n => n,
     };
-    if provided.ends_the_process && threads > 1 {
-        start_threads_meanwhile(threads);
+    if provided.ends_the_process && request.threads == 0 && threads > 1 {
+        start_threads_gradually(true);
     }
     let cwd = host::from_native(request.cwd);
     let applies_to_every_file = !request.plan_options.project_is_fallback;

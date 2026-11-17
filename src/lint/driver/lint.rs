@@ -797,7 +797,7 @@ impl Context<'_, '_> {
     ) -> FileResult {
         let counts = Counts::of(&result.messages);
         let is_reported = !result.messages.is_empty() || !result.suppressed.is_empty();
-        if config.may_hand_back() && text.len() < self.js_plugins.heavy_size() {
+        if config.may_hand_back() && text.len() < bun_lint::js_plugin::HEAVY {
             (self.js_plugins).report_realm_need(text.len() as u64, result.handed_back.is_some());
         }
         if let Some(reason) = result.handed_back {

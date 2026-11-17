@@ -521,6 +521,15 @@ pub fn initialize(options: InitializeOptions) {
     };
 }
 
+/// The process evaluates a configuration for `bun lint` or `bun fmt`. After [`initialize`], and before the first VM.
+pub fn expect_configuration() {
+    // SAFETY: nothing changes the environment during the call, which is made before the first VM.
+    unsafe {
+        let env = bun_sys::environ();
+        JSC__useOptionsForConfiguration(env.as_ptr().cast(), env.len());
+    }
+}
+
 /// `bun lint` with plugins in JavaScript: there are going to be many VMs, each busy on a thread of its own. After [`initialize`], and before the
 /// first VM, which freezes JSC's options.
 pub fn expect_vm_per_thread(are_short_lived: bool) {
@@ -1515,6 +1524,7 @@ unsafe extern "C" {
         locks_builtins: bool,
         is_compiler: bool,
     );
+    fn JSC__useOptionsForConfiguration(env: *const *const c_char, count: usize);
     fn JSC__useOptionsForVMPerThread(
         env: *const *const c_char,
         count: usize,

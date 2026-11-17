@@ -123,10 +123,6 @@ struct Loaded {
 struct State {
     plugins: Vec<Loaded>,
     rules: u32,
-    /// See [`ask::PRINTED`]
-    printed: FxHashSet<Box<[u8]>>,
-    /// See [`Engine::expect_independent_files`]
-    are_files_independent: bool,
     /// The selectors that rules have listened for, indexed by number. `None` if it can't be parsed.
     selectors: Vec<Option<Arc<Selector>>>,
     /// Keyed by selector text.
@@ -247,12 +243,6 @@ impl<'e> Host<'e> {
                 schema::write_start(&self.cwd, self.measures, out);
             }
             ask::LAYOUTS => layouts::write(out),
-            ask::PRINTED => {
-                let mut state = self.state.lock();
-                if state.are_files_independent && !state.printed.insert(details.into()) {
-                    out.push(b'1');
-                }
-            }
             ask::LOADED => {
                 let parts = crate::json::parse(details);
                 if let Some(
@@ -281,9 +271,8 @@ impl<'e> Host<'e> {
 
     /// Announces rules that are going to run.
     pub fn expect_rules<'r>(&self, rules: impl Iterator<Item = &'r Rule>) {
-        let mut state = self.state.lock();
+        let state = self.state.lock();
         let (mut seen, mut paths) = (FxHashSet::default(), Vec::new());
-        let mut are_files_independent = true;
         for rule in rules {
             let of_plugin = || Some(&state.plugins.get(rule.plugin as usize)?.location[..]);
             let location = rule.location().or_else(of_plugin);
@@ -295,14 +284,9 @@ impl<'e> Host<'e> {
             let location = location.map(|it| it.as_array().and_then(<[_]>::first).unwrap_or(it));
             let path =
                 location.and_then(|it| it.get(b"module").or_else(|| it.get(b"config"))?.as_str());
-            are_files_independent &= path.is_some_and(looks_at_one_file);
             paths.extend(path.map(<[u8]>::to_vec));
         }
-        state.are_files_independent = are_files_independent;
         drop(state);
-        if are_files_independent {
-            self.engine.expect_independent_files();
-        }
         self.engine.expect_modules(paths);
     }
 
@@ -326,18 +310,13 @@ impl<'e> Host<'e> {
         self.engine.work_off(work, meanwhile)
     }
 
-    /// [`Engine::heavy_size`]
-    pub fn heavy_size(&self) -> usize {
-        self.engine.heavy_size()
-    }
-
     /// [`Engine::busy`]
     pub fn busy(&self) -> usize {
         self.engine.busy()
     }
 
     /// Calls `work` with every number below `count`, on threads that have a realm. `is_heavy` tells whether the file
-    /// with that number is heavy.
+    /// with that number is [`HEAVY`](super::HEAVY).
     pub fn for_each(
         &self,
         count: usize,
@@ -864,49 +843,6 @@ fn source_type_for_oxlint<'a>(file: &'a File<'a>) -> u32 {
         [.., b'.', b't', b's'] | [.., b'.', b'c' | b'm', b't', b's']
     );
     source_type | (u32::from(has_no_jsx) << 2)
-}
-
-/// True if the module at `path` is of a package whose rules don't compare a file with those that were linted before.
-fn looks_at_one_file(path: &[u8]) -> bool {
-    const PACKAGES: &[&[u8]] = &[
-        b"@eslint-community/eslint-plugin-eslint-comments",
-        b"@next/eslint-plugin-next",
-        b"@stylistic/eslint-plugin",
-        b"@tanstack/eslint-plugin-query",
-        b"@typescript-eslint/eslint-plugin",
-        b"@vitest/eslint-plugin",
-        b"eslint",
-        b"eslint-plugin-ava",
-        b"eslint-plugin-compat",
-        b"eslint-plugin-es-x",
-        b"eslint-plugin-flowtype",
-        b"eslint-plugin-i18next",
-        b"eslint-plugin-import",
-        b"eslint-plugin-import-x",
-        b"eslint-plugin-jest",
-        b"eslint-plugin-jsdoc",
-        b"eslint-plugin-jsx-a11y",
-        b"eslint-plugin-mdx",
-        b"eslint-plugin-n",
-        b"eslint-plugin-no-only-tests",
-        b"eslint-plugin-playwright",
-        b"eslint-plugin-prettier",
-        b"eslint-plugin-promise",
-        b"eslint-plugin-react",
-        b"eslint-plugin-react-hooks",
-        b"eslint-plugin-react-refresh",
-        b"eslint-plugin-regexp",
-        b"eslint-plugin-simple-import-sort",
-        b"eslint-plugin-sonarjs",
-        b"eslint-plugin-storybook",
-        b"eslint-plugin-svelte",
-        b"eslint-plugin-testing-library",
-        b"eslint-plugin-turbo",
-        b"eslint-plugin-unicorn",
-        b"eslint-plugin-unused-imports",
-        b"eslint-plugin-vue",
-    ];
-    bun_paths::package_of(path).is_some_and(|it| PACKAGES.contains(&&it[..]))
 }
 
 /// `it` is an entry of the `rules` of [`plugin_from_description`].

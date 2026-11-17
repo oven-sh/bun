@@ -1017,6 +1017,9 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
             locks_builtins: crate::cli::run_compiled::is_checked(),
             ..Default::default()
         });
+        if ctx.runtime_options.eval.reads_configuration {
+            bun_jsc::expect_configuration();
+        }
         bun_ast::initialize_store();
 
         let options = VmInitOptions {
@@ -1412,10 +1415,7 @@ impl Run<'_> {
 
         if ctx.runtime_options.eval.reads_configuration {
             bun_removable_features::removable_body_behind_value!(Tools, {
-                // Nearly all that it allocates is alive until it exits, which is soon.
-                let spare = super::lint_js::memory_to_spare() / 4;
-                vm.allocate_without_collecting(spare.min(256 << 20));
-                crate::read_ahead::enable(vm, false);
+                crate::read_ahead::enable(vm, true);
                 let script = ctx.runtime_options.eval.script;
                 let configuration = bun_lint_driver::configuration_read_by(script);
                 crate::read_ahead::expect(configuration.into_iter());

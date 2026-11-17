@@ -2123,7 +2123,9 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
 /// cwd, so symlinks the user walked through survive; else the physical path.
 pub(crate) fn publish_pwd_after_chdir(requested: &[u8]) {
     let mut buf = bun_paths::path_buffer_pool::get();
-    let Ok(physical) = bun_core::getcwd(&mut buf) else { return };
+    let Ok(physical) = bun_core::getcwd(&mut buf) else {
+        return;
+    };
     let physical = bun_core::ZBox::from_bytes(physical.as_bytes());
     let pwd = logical_pwd(requested, &physical).unwrap_or(physical);
     set_pwd_env(&pwd);
@@ -2141,7 +2143,8 @@ fn logical_pwd(requested: &[u8], physical: &bun_core::ZBox) -> Option<bun_core::
         return None;
     }
     let mut spill = Vec::new();
-    let joined = resolve_path::join_abs_string_spill::<platform::Loose>(base, &mut spill, &[requested]);
+    let joined =
+        resolve_path::join_abs_string_spill::<platform::Loose>(base, &mut spill, &[requested]);
     if joined == physical.as_bytes() {
         return None;
     }

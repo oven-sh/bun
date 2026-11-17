@@ -1128,7 +1128,14 @@ impl<const SSL: bool> NewSocket<SSL> {
     fn exit_scope(&self, scope: super::handlers::Scope) {
         let entered = Rc::clone(&scope.handlers);
         scope.exit_event_loop();
-        if scope.mark_inactive() && self.handlers_are(&entered) {
+        // A dial counts as active once it opens, and needs its handlers to report how it ended.
+        let is_dialing = || {
+            matches!(
+                self.socket.get().socket,
+                uws::InternalSocket::Connected(_) | uws::InternalSocket::Connecting(_)
+            )
+        };
+        if scope.mark_inactive() && self.handlers_are(&entered) && !is_dialing() {
             self.handlers.set(None);
         }
     }

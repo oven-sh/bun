@@ -5476,3 +5476,35 @@ describe("typeOfService", () => {
     }
   });
 });
+
+it.concurrent.each([
+  ["connects", ``, "connect\nclose\n"],
+  ["can be destroyed", `socket.destroy();`, "close\n"],
+])("a socket whose handle timed out while it was connecting %s", async (_, then, expected) => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+        const { sweepSocketTimers } = require("bun:internal-for-testing");
+        const net = require("node:net");
+        const server = net.createServer(peer => peer.end()).listen(0, "127.0.0.1", () => {
+          const socket = net.connect(server.address().port, "127.0.0.1").resume();
+          socket.on("connect", () => console.log("connect"));
+          socket.on("close", () => (console.log("close"), server.close()));
+          // Behind the tick that dials, ahead of the poll that sees the connection.
+          process.nextTick(() => {
+            socket._handle.timeout(1);
+            sweepSocketTimers(3);
+            ${then}
+          });
+        });
+      `,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr, exitCode }).toEqual({ stdout: expected, stderr: "", exitCode: 0 });
+});

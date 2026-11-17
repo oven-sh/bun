@@ -24,18 +24,6 @@ impl Matches {
         self.start
     }
 
-    /// Asks for each, from the first.
-    #[inline(always)]
-    pub fn retain(&mut self, mut keeps: impl FnMut(usize) -> bool) {
-        let (mut rest, start) = (core::mem::take(&mut self.bits), self.start);
-        while let Some(bit) = rest.lowest_one() {
-            if keeps(start + bit as usize) {
-                self.bits |= 1 << bit;
-            }
-            rest &= rest - 1;
-        }
-    }
-
     /// Keeps `index`, and what is above or else below it.
     #[inline(always)]
     pub fn cut_at(&mut self, index: usize, keeps_above: bool) {
@@ -58,11 +46,6 @@ impl Iterator for Matches {
         let bit = self.bits.lowest_one()?;
         self.bits &= self.bits - 1;
         Some(self.start + bit as usize)
-    }
-
-    #[inline(always)]
-    fn count(self) -> usize {
-        self.bits.count_ones() as usize
     }
 }
 

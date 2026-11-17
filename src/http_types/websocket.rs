@@ -198,7 +198,12 @@ pub enum Event<'a> {
 pub struct Input<'a> {
     bytes: &'a [u8],
     control: ControlPayload,
-    is_past_event: bool,
+    /// [`Reader::reads`] when this read began.
+    number: Option<u32>,
+    /// During an event: where this read stopped. Otherwise: where the reads made in its events stopped.
+    parked: Position,
+    /// What is left of `bytes` after a run of control frames.
+    after_control_frames: usize,
 }
 
 impl<'a> Input<'a> {
@@ -206,7 +211,9 @@ impl<'a> Input<'a> {
         Self {
             bytes,
             control: ControlPayload::new(),
-            is_past_event: false,
+            number: None,
+            parked: Position::between_messages(),
+            after_control_frames: usize::MAX,
         }
     }
 }
@@ -236,8 +243,6 @@ enum State {
     /// Holds the fragmented message that the next data frame continues.
     Head(Option<Message>),
     Body(Body),
-    /// In a Ping or Pong event inside this message. Only the rest of the same read continues it.
-    Suspended(Message),
     Stopped,
 }
 
@@ -250,52 +255,74 @@ enum Head {
     Invalid(ProtocolError),
 }
 
-pub struct Reader {
+struct Position {
     state: State,
     /// In `Head`: the start of a header or of a control frame that the last read cut off.
     held: BoundedArray<u8, MAX_CONTROL_FRAME_SIZE>,
     /// The message so far, unmasked. It is only appended to, so it never wraps.
     buffer: Buffer,
+}
+
+impl Position {
+    fn between_messages() -> Self {
+        Self {
+            state: State::Head(None),
+            held: BoundedArray::new(),
+            buffer: Buffer::init(),
+        }
+    }
+
+    #[inline(always)]
+    fn is_between_messages(&self) -> bool {
+        matches!(self.state, State::Head(None)) && self.held.is_empty()
+    }
+}
+
+pub struct Reader {
+    at: Position,
+    reads: u32,
+    /// Inputs that are parked inside a message.
+    parked_messages: u32,
     options: ReaderOptions,
 }
 
 impl Reader {
     pub fn new(options: ReaderOptions) -> Self {
         Self {
-            state: State::Head(None),
-            held: BoundedArray::new(),
-            buffer: Buffer::init(),
+            at: Position::between_messages(),
+            reads: 0,
+            parked_messages: 0,
             options,
         }
     }
 
     pub fn reserve(&mut self, capacity: usize) {
-        bun_core::handle_oom(self.buffer.ensure_total_capacity(capacity));
+        bun_core::handle_oom(self.at.buffer.ensure_total_capacity(capacity));
     }
 
     pub fn capacity(&self) -> usize {
-        self.buffer.capacity()
+        self.at.buffer.capacity()
     }
 
     pub fn is_stopped(&self) -> bool {
-        matches!(self.state, State::Stopped)
+        matches!(self.at.state, State::Stopped)
     }
 
     /// Ignores everything from now on.
     pub fn stop(&mut self) {
-        self.state = State::Stopped;
-        self.buffer = Buffer::init();
+        self.at.state = State::Stopped;
+        self.at.buffer = Buffer::init();
     }
 
     /// Takes back the allocation of a message, unless bytes of another message are buffered.
     pub fn recycle(&mut self, payload: Payload<'_>) {
         if let Payload::Buffered(mut buffer) = payload
-            && self.buffer.readable_length() == 0
+            && self.at.buffer.readable_length() == 0
             && !self.is_stopped()
         {
             buffer.discard(buffer.readable_length());
             buffer.reset_head_if_empty();
-            self.buffer = buffer;
+            self.at.buffer = buffer;
         }
     }
 
@@ -305,46 +332,107 @@ impl Reader {
         &mut self,
         input: &'a mut Input<'_>,
     ) -> Option<Result<Event<'a>, ProtocolError>> {
-        let out_of_order = ProtocolError::UnexpectedOpcode(input.bytes.first()? & OPCODE);
-        if mem::replace(&mut input.is_past_event, true) {
-            match self.state {
-                State::Suspended(message) => self.state = State::Head(Some(message)),
-                State::Head(None) if self.held.is_empty() => {}
-                State::Stopped => {}
-                // Left by a read made inside the event, whose bytes come after the rest of this one.
-                State::Head(_) | State::Body(_) => return Some(Err(self.fail(out_of_order))),
-            }
+        if input.bytes.is_empty() || self.is_stopped() {
+            return None;
+        }
+        if input.number.is_none() {
+            self.reads = self.reads.wrapping_add(1);
+            input.number = Some(self.reads);
+        } else if !self.both_are_between_messages(input) {
+            self.parked_messages -= u32::from(!input.parked.is_between_messages());
+            self.swap_position(input);
         }
         while !input.bytes.is_empty() {
-            let body = match self.state {
+            let body = match self.at.state {
                 State::Stopped => return None,
-                State::Suspended(_) => return Some(Err(self.fail(out_of_order))),
                 State::Body(body) => body,
-                State::Head(open) => match self.read_head(open, input)? {
-                    Head::Data(body) => body,
-                    Head::Control(opcode @ (Opcode::Ping | Opcode::Pong)) => {
-                        if let Some(message) = open
-                            && !input.bytes.is_empty()
-                        {
-                            self.state = State::Suspended(message);
-                        }
-                        return Some(Ok(match opcode {
+                State::Head(open) => match self.read_head(open, input) {
+                    None => break,
+                    Some(Head::Data(body)) => body,
+                    Some(Head::Control(opcode @ (Opcode::Ping | Opcode::Pong))) => {
+                        return Some(self.make_way(input).map(|()| match opcode {
                             Opcode::Ping => Event::Ping(&input.control),
                             _ => Event::Pong(&input.control),
                         }));
                     }
-                    Head::Control(_) => {
+                    Some(Head::Control(_)) => {
                         self.stop();
                         return Some(parse_close(&input.control));
                     }
-                    Head::Invalid(error) => return Some(Err(self.fail(error))),
+                    Some(Head::Invalid(error)) => return Some(Err(self.fail(error))),
                 },
             };
             if let Some(payload) = self.read_body(body, &mut input.bytes) {
+                // Inflating depends on the messages before this one.
+                if body.message.compressed && self.parked_messages > 0 {
+                    let error = ProtocolError::UnexpectedOpcode(body.message.opcode as u8);
+                    return Some(Err(self.fail(error)));
+                }
+                if let Err(error) = self.make_way(input) {
+                    return Some(Err(error));
+                }
                 return Some(Ok(Event::Message(body.message, payload)));
             }
         }
-        None
+        self.make_way(input).err().map(Err)
+    }
+
+    /// Goes to where the next read starts: a rest of `input` is taken to end between messages, and checked at its end.
+    #[inline(always)]
+    fn make_way(&mut self, input: &mut Input<'_>) -> Result<(), ProtocolError> {
+        if self.both_are_between_messages(input) {
+            return Ok(());
+        }
+        self.make_way_inside_message(input)
+    }
+
+    #[inline(always)]
+    fn both_are_between_messages(&self, input: &Input<'_>) -> bool {
+        self.at.is_between_messages() && input.parked.is_between_messages()
+    }
+
+    #[inline(never)]
+    fn make_way_inside_message(&mut self, input: &mut Input<'_>) -> Result<(), ProtocolError> {
+        let has_data_left = !input.bytes.is_empty()
+            && (self.at.is_between_messages() || !self.only_control_frames_are_left(input));
+        if has_data_left {
+            self.swap_position(input);
+            self.parked_messages += u32::from(!input.parked.is_between_messages());
+        } else if input.number != Some(self.reads) || !input.parked.is_between_messages() {
+            match (self.at.state, self.at.held.is_empty(), input.parked.state) {
+                (State::Head(None), true, _) => self.swap_position(input),
+                // Only control frames can have been read since.
+                (State::Head(Some(_)), true, State::Head(None)) => {
+                    mem::swap(&mut self.at.held, &mut input.parked.held);
+                }
+                _ => {
+                    return Err(self.fail(ProtocolError::UnexpectedOpcode(Opcode::Continue as u8)));
+                }
+            }
+        }
+        Ok(())
+    }
+
+    #[inline(never)]
+    fn swap_position(&mut self, input: &mut Input<'_>) {
+        let (at, parked) = (&mut self.at, &mut input.parked);
+        mem::swap(&mut at.state, &mut parked.state);
+        mem::swap(&mut at.buffer, &mut parked.buffer);
+        if !at.held.is_empty() || !parked.held.is_empty() {
+            mem::swap(&mut at.held, &mut parked.held);
+        }
+    }
+
+    /// Then the next read continues the open message. No byte is looked at twice.
+    fn only_control_frames_are_left(&self, input: &mut Input<'_>) -> bool {
+        if input.bytes.len() < input.after_control_frames {
+            let (mut rest, mut control) = (input.bytes, ControlPayload::new());
+            input.after_control_frames = rest.len();
+            while let Some(Head::Control(_)) = self.parse_head(None, &mut rest, &mut control) {
+                input.after_control_frames = rest.len();
+            }
+        }
+        input.after_control_frames == 0
     }
 
     fn fail(&mut self, error: ProtocolError) -> ProtocolError {
@@ -355,25 +443,25 @@ impl Reader {
     /// What is too short to parse fits in `held`.
     #[inline(always)]
     fn read_head(&mut self, open: Option<Message>, input: &mut Input<'_>) -> Option<Head> {
-        let held = self.held.len();
+        let held = self.at.held.len();
         let fits = &input.bytes[..input.bytes.len().min(MAX_CONTROL_FRAME_SIZE - held)];
         let mut bytes = input.bytes;
         if held > 0 {
-            self.held.append_slice_assume_capacity(fits);
-            bytes = &self.held;
+            self.at.held.append_slice_assume_capacity(fits);
+            bytes = &self.at.held;
         }
         let available = bytes.len();
         let Some(head) = self.parse_head(open, &mut bytes, &mut input.control) else {
             debug_assert_eq!(fits.len(), input.bytes.len());
             if held == 0 {
-                self.held.append_slice_assume_capacity(fits);
+                self.at.held.append_slice_assume_capacity(fits);
             }
             input.bytes = &[];
             return None;
         };
         let consumed = (available - bytes.len()).saturating_sub(held);
         input.bytes = input.bytes.get(consumed..).unwrap_or_default();
-        self.held.clear();
+        self.at.held.clear();
         Some(head)
     }
 
@@ -440,7 +528,7 @@ impl Reader {
             return Some(Head::Invalid(UnsupportedPayloadLength));
         }
         let remaining = len as usize;
-        if self.buffer.readable_length().saturating_add(remaining) > self.options.max_payload {
+        if self.at.buffer.readable_length().saturating_add(remaining) > self.options.max_payload {
             return Some(Head::Invalid(MessageTooBig));
         }
         let key = self.take_key(bytes)?;
@@ -467,23 +555,23 @@ impl Reader {
         *input = rest;
         body.remaining -= chunk.len();
         let ended = body.fin && body.remaining == 0;
-        if ended && body.key.is_none() && self.buffer.readable_length() == 0 {
-            self.state = State::Head(None);
+        if ended && body.key.is_none() && self.at.buffer.readable_length() == 0 {
+            self.at.state = State::Head(None);
             return Some(Payload::Borrowed(chunk));
         }
 
-        let output = bun_core::handle_oom(self.buffer.writable_with_size(chunk.len()));
+        let output = bun_core::handle_oom(self.at.buffer.writable_with_size(chunk.len()));
         copy_masked(body.key, output, chunk);
-        self.buffer.update(chunk.len());
+        self.at.buffer.update(chunk.len());
         if ended {
-            self.state = State::Head(None);
-            let buffer = mem::replace(&mut self.buffer, Buffer::init());
+            self.at.state = State::Head(None);
+            let buffer = mem::replace(&mut self.at.buffer, Buffer::init());
             return Some(Payload::Buffered(buffer));
         }
         if let Some(key) = &mut body.key {
             key.rotate_left(chunk.len() % 4);
         }
-        self.state = match body.remaining {
+        self.at.state = match body.remaining {
             0 => State::Head(Some(body.message)),
             _ => State::Body(body),
         };

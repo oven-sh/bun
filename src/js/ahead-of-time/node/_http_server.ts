@@ -1,5 +1,5 @@
 // What the compiler reads in place of src/js/node/_http_server.ts, which `bun run` evaluates. The two do the same.
-// Written against that file with the SHA-256 f0bb7d50c33cb0686c18452dccc272880a12b8064d411f82d9df463e97e0d554.
+// Written against that file with the SHA-256 7c6867773e320c327a45fe7446cb92918b849f00186400f42d640ac6e111a85f.
 // When that file changes, bring the change here and write the new hash: test/internal/second-texts-of-modules.test.ts.
 
 // Hardcoded module "node:_http_server"
@@ -3213,16 +3213,16 @@ function unconsume(socket: $Node.HttpServerSocket) {
   const parser = socket.parser;
   if (parser == null || !parser._consumed) return;
   parser._consumed = false;
-  socket.removeListener("pause", onSocketPause);
-  socket.removeListener("resume", nativeSocketOnResume);
   // Gone once uWS has closed the connection, which is before the socket's 'close'.
   socket[kHandle]?.setRawReads(true);
   if (tookReadsFromParser(socket)) stopParsing(socket);
-  // net.Socket has had a read pending since the accept, so no _read() would lift a pause from before. A full buffer stops the reads now.
-  socket._handle?.resume();
 }
 function stopParsing(socket: $Node.HttpServerSocket) {
   socket[kHandle]?.stopParsing();
+  socket.removeListener("pause", onSocketPause);
+  socket.removeListener("resume", nativeSocketOnResume);
+  // net.Socket has had a read pending since the accept, so no _read() would lift a pause from before. A full buffer stops the reads now.
+  socket._handle?.resume();
   if (socket.encrypted) socket.allowHalfOpen = (socket.server as $Node.HttpServer).allowHalfOpen;
 }
 // Node's parser gets the reads of an unconsumed socket through its 'data' listener. Before the first request, it may not have added that yet.
@@ -3245,7 +3245,8 @@ function nativeSocketOnResume(this: $Node.HttpServerSocket) {
     this.pause();
     return;
   }
-  this._handle?.resume();
+  // Behind a full buffer, _read() starts the reads.
+  if (this.readableLength <= this.readableHighWaterMark) this._handle?.resume();
 }
 function onSocketPause(this: $Node.HttpServerSocket) {
   this._handle?.pause();

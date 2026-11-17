@@ -10486,6 +10486,60 @@ describe("raw request bytes on a server's connection socket", () => {
     },
   );
 
+  describe.each(["data", "readable"])("a '%s' listener leaves a pause in place", event => {
+    const get = (path: string) => `GET ${path} HTTP/1.1\r\nHost: x\r\n\r\n`;
+    // Sends /held. Whatever the server reads of it, it has read when a second connection has been answered.
+    async function sendHeld(server: Server, client: import("node:net").Socket) {
+      await new Promise(resolve => client.write(get("/held"), resolve));
+      const other = connect((server.address() as AddressInfo).port, "127.0.0.1");
+      await other.end(get("/other")).toArray();
+    }
+
+    it("of the program, until resume()", async () => {
+      const seen: string[] = [];
+      const server = createServer((req, res) => {
+        seen.push(req.url!);
+        res.end(`<${req.url}>`);
+      });
+      const connection = once(server, "connection");
+      await withClient(server, async (client, until) => {
+        client.write(get("/1"));
+        await until("</1>");
+        const [socket] = await connection;
+        socket.pause();
+        socket.on(event, () => void socket.read());
+        await sendHeld(server, client);
+        seen.push("resume");
+        socket.resume();
+        await until("</held>");
+      });
+      expect(seen).toEqual(["/1", "/other", "resume", "/held"]);
+    });
+
+    it("of the server, until the responses that are backed up have left", async () => {
+      const seen: string[] = [];
+      const third = Promise.withResolvers<IncomingMessage>();
+      let first!: ServerResponse;
+      const server = createServer((req, res) => {
+        seen.push(req.url!);
+        if (req.url === "/1") return void (first = res);
+        if (req.url === "/2") res.write(Buffer.alloc(res.writableHighWaterMark));
+        if (req.url === "/3") third.resolve(req);
+        res.end(`<${req.url}>`);
+      });
+      await withClient(server, async (client, until) => {
+        client.write(get("/1") + get("/2") + get("/3"));
+        const { socket } = await third.promise;
+        socket.on(event, () => void socket.read());
+        await sendHeld(server, client);
+        seen.push("drain");
+        first.end();
+        await until("</held>");
+      });
+      expect(seen).toEqual(["/1", "/2", "/3", "/other", "drain", "/held"]);
+    });
+  });
+
   it("removeAllListeners() with no reader behind it leaves the reads to the parser", async () => {
     const server = createServer((req, res) => {
       req.socket.removeAllListeners();

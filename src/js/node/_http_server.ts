@@ -2398,16 +2398,16 @@ function unconsume(socket) {
   const parser = socket.parser;
   if (parser == null || !parser._consumed) return;
   parser._consumed = false;
-  socket.removeListener("pause", onSocketPause);
-  socket.removeListener("resume", nativeSocketOnResume);
   // Gone once uWS has closed the connection, which is before the socket's 'close'.
   socket[kHandle]?.setRawReads(true);
   if (tookReadsFromParser(socket)) stopParsing(socket);
-  // net.Socket has had a read pending since the accept, so no _read() would lift a pause from before. A full buffer stops the reads now.
-  socket._handle?.resume();
 }
 function stopParsing(socket) {
   socket[kHandle]?.stopParsing();
+  socket.removeListener("pause", onSocketPause);
+  socket.removeListener("resume", nativeSocketOnResume);
+  // net.Socket has had a read pending since the accept, so no _read() would lift a pause from before. A full buffer stops the reads now.
+  socket._handle?.resume();
   if (socket.encrypted) socket.allowHalfOpen = socket.server.allowHalfOpen;
 }
 // Node's parser gets the reads of an unconsumed socket through its 'data' listener. Before the first request, it may not have added that yet.
@@ -2430,7 +2430,8 @@ function nativeSocketOnResume(this: any) {
     this.pause();
     return;
   }
-  this._handle?.resume();
+  // Behind a full buffer, _read() starts the reads.
+  if (this.readableLength <= this.readableHighWaterMark) this._handle?.resume();
 }
 function onSocketPause(this: any) {
   this._handle?.pause();

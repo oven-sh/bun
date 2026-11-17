@@ -192,8 +192,7 @@ describe.concurrent("Valkey reply decoding", () => {
     const client = new RedisClient(`redis://127.0.0.1:${server.port}`, { autoReconnect: false });
     client.onconnect = client.onclose = () => {};
     try {
-      // Queued before the handshake finishes, so the rejection carries the
-      // HELLO error. connect() itself rejects with a generic "Connection closed".
+      // Queued before the handshake finishes, so the rejection carries the HELLO error.
       const queued = client.get("k").then(
         () => null,
         e => e,
@@ -241,6 +240,8 @@ describe.concurrent("Valkey reply decoding", () => {
     });
     await withClient(server, async client => {
       await client.subscribe("ch", () => {});
+      let closedWith: unknown;
+      client.onclose = e => (closedWith = e);
       // The first PING drew the reply, the second is in flight when the connection fails.
       let first: unknown = "pending";
       client.send("PING", []).catch(e => (first = e));
@@ -249,6 +250,7 @@ describe.concurrent("Valkey reply decoding", () => {
         e => e,
       );
       expect(first).toBe(err);
+      expect(closedWith).toBe(err);
       expect(err).toBeInstanceOf(Error);
       expect({ code: err.code, message: err.message }).toEqual({
         code: "ERR_REDIS_SERVER_ERROR",

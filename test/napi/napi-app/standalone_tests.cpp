@@ -3041,6 +3041,48 @@ static napi_value external_for_transfer_stats(const Napi::CallbackInfo &info) {
   return stats;
 }
 
+// Address space that is reserved and never touched, the size of the buffer
+// that oxlint keeps per thread for the ASTs it hands to JS plugins. The heap
+// counts the whole length as memory the ArrayBuffer keeps alive.
+static constexpr size_t reserved_external_buffer_size = 2147483576;
+
+static void reserved_external_buffer_finalize(napi_env, void *data, void *) {
+#ifdef _WIN32
+  VirtualFree(data, 0, MEM_RELEASE);
+#else
+  munmap(data, reserved_external_buffer_size);
+#endif
+}
+
+// create_reserved_external_buffer(as_buffer): ArrayBuffer | Buffer
+static napi_value
+create_reserved_external_buffer(const Napi::CallbackInfo &info) {
+  napi_env env = info.Env();
+  bool as_buffer = info[0].As<Napi::Boolean>().Value();
+#ifdef _WIN32
+  void *data = VirtualAlloc(nullptr, reserved_external_buffer_size, MEM_RESERVE,
+                            PAGE_NOACCESS);
+  NODE_API_ASSERT(env, data != nullptr);
+#else
+  void *data = mmap(nullptr, reserved_external_buffer_size, PROT_NONE,
+                    MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE, -1, 0);
+  NODE_API_ASSERT(env, data != MAP_FAILED);
+#endif
+  napi_value result;
+  if (as_buffer) {
+    NODE_API_CALL(env, napi_create_external_buffer(
+                           env, reserved_external_buffer_size, data,
+                           reserved_external_buffer_finalize, nullptr,
+                           &result));
+  } else {
+    NODE_API_CALL(env, napi_create_external_arraybuffer(
+                           env, data, reserved_external_buffer_size,
+                           reserved_external_buffer_finalize, nullptr,
+                           &result));
+  }
+  return result;
+}
+
 // With an exception pending (via napi_throw_error), every napi call that
 // Node.js gates with NAPI_PREAMBLE must return napi_pending_exception and
 // perform NO side effects. Before the fix, NAPI_PREAMBLE only consulted the
@@ -4889,6 +4931,7 @@ void register_standalone_tests(Napi::Env env, Napi::Object exports) {
   REGISTER_FUNCTION(env, exports, create_external_arraybuffer_for_transfer);
   REGISTER_FUNCTION(env, exports, create_external_buffer_for_transfer);
   REGISTER_FUNCTION(env, exports, external_for_transfer_stats);
+  REGISTER_FUNCTION(env, exports, create_reserved_external_buffer);
   REGISTER_FUNCTION(env, exports, test_pending_exception_gate);
   REGISTER_FUNCTION(env, exports, make_ungated_calls_spinner);
   REGISTER_FUNCTION(env, exports, gated_calls_until_terminated);

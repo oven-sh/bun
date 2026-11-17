@@ -2039,3 +2039,42 @@ test("a standalone executable does not run a synchronous full GC after loading i
   expect(stderr).not.toContain("FullCollection");
   expect(exitCode).toBe(0);
 });
+
+// The main heap of a standalone executable may allocate as many bytes as its module graph has before it collects
+// (Heap::setInitialAllocationBudget): what loads with the graph is alive, and a collection would only mark it again.
+// The heap has a second limit, for objects alone, which has to rise with the first. 16 MB of source raise both, and
+// the 10 MB of objects that the entry point keeps alive pass the 8 MB that a heap starts with.
+test("a standalone executable allocates as much as its module graph has before the first collection", async () => {
+  using dir = tempDir("compile-initial-allocation-budget", {
+    "app.js": `
+      globalThis.neverCalled = function () { return "${Buffer.alloc(16 * 1024 * 1024, "x").toString()}"; };
+      const live = new Array(100000);
+      for (let i = 0; i < live.length; i++) live[i] = { a: i, b: [i, i + 1], c: { d: i } };
+      require("fs").writeSync(2, "\\n@@ loaded " + live.length + "\\n");
+    `,
+  });
+  const cwd = String(dir);
+  await using build = Bun.spawn({
+    cmd: [bunExe(), "build", "--compile", "app.js", "--outfile", "app"],
+    env: bunEnv,
+    cwd,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [, buildStderr, buildExit] = await Promise.all([build.stdout.text(), build.stderr.text(), build.exited]);
+  expect(buildStderr).not.toContain("error");
+  expect(buildExit).toBe(0);
+  await using proc = Bun.spawn({
+    cmd: [join(cwd, isWindows ? "app.exe" : "app")],
+    env: { ...bunEnv, BUN_JSC_logGC: "1", BUN_JSC_useConcurrentGC: "0", BUN_GC_TIMER_DISABLE: "1" },
+    cwd,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toMatch(/\[GC<(0x)?[0-9a-fA-F]+>: starting /);
+  expect(stderr).toContain("@@ loaded 100000\n");
+  // The teardown of the VM can collect after this line (BUN_DESTRUCT_VM_ON_EXIT).
+  expect(stderr.slice(0, stderr.indexOf("@@ loaded"))).not.toMatch(/=> (Eden|Full)Collection/);
+  expect(exitCode).toBe(0);
+}, 60_000);

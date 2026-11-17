@@ -1739,6 +1739,19 @@ nativeTests.test_external_buffer_worker_exit = async () => {
   console.log("stats after exit:", JSON.stringify(nativeTests.external_for_transfer_stats()));
 };
 
+// Bun-only: the caller counts the collections in the log of the collector. The buffers stay alive while the loop
+// allocates objects that die at once, the way a JS plugin of oxlint walks one AST after the other.
+nativeTests.test_reserved_external_buffers_and_dead_objects = (_, count, asBuffer, objects) => {
+  const buffers = [];
+  for (let i = 0; i < count; i++) {
+    const buffer = nativeTests.create_reserved_external_buffer(asBuffer);
+    buffers.push(asBuffer ? buffer : new Uint8Array(buffer));
+  }
+  const ring = new Array(1024);
+  for (let i = 0; i < objects; i++) ring[i & 1023] = { a: i, b: [i, i + 1], c: { d: i } };
+  console.log(`alive=${buffers.length} byteLength=${buffers[0]?.byteLength ?? 0}`);
+};
+
 // Bun-only: an idle collection ends on the collector thread; every finalizer still runs on the JS thread.
 nativeTests.test_external_buffer_finalized_by_idle_collection = async () => {
   const deferred = require("./build/Debug/external_buffer_finalizer_thread.node");

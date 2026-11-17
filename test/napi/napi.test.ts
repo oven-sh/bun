@@ -513,6 +513,63 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
     );
   });
 
+  // oxlint hands each AST to its JS plugins in an external ArrayBuffer over 2 GiB of reserved address space, one per
+  // thread, and keeps it for the whole run. The heap counts the 2 GiB as memory that the buffer keeps alive, and the
+  // bytes a program could allocate between two collections grew by as much. The objects of every file that a plugin
+  // visited then stayed until the end of the run (#49204). Objects have a limit of their own. The buffers raise it by
+  // no more than the live objects do, so the loop collects at least half as often as it does with no buffer.
+  describe("reserved external buffers that stay alive do not hold back the collection of dead objects", () => {
+    // With the concurrent collector off, a collection runs at the allocation that passes a limit.
+    async function run(count: number, asBuffer: boolean, flags: readonly string[], objects: number) {
+      await using proc = spawn({
+        cmd: [
+          bunExe(),
+          ...flags,
+          join(__dirname, "napi-app/main.js"),
+          "test_reserved_external_buffers_and_dead_objects",
+          JSON.stringify([count, asBuffer, objects]),
+        ],
+        env: {
+          ...bunEnv,
+          BUN_GC_TIMER_DISABLE: "1",
+          BUN_JSC_useConcurrentGC: "0",
+          BUN_JSC_logGC: "1",
+        },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      const log = stdout + stderr;
+      expect(stdout, log).toContain(`alive=${count} byteLength=${count ? 2147483576 : 0}\n`);
+      expect(exitCode, log).toBe(0);
+      return (log.match(/=> (Eden|Full)Collection/g) ?? []).length;
+    }
+
+    const withoutBuffers = new Map<string, Promise<number>>();
+    function collectionsWithoutBuffers(flags: readonly string[], objects: number) {
+      const key = flags.join(" ");
+      let result = withoutBuffers.get(key);
+      if (!result) withoutBuffers.set(key, (result = run(0, false, flags, objects)));
+      return result;
+    }
+
+    // Twelve buffers are what oxlint holds on a machine with twelve threads: more address space than most machines
+    // have memory. A heap of --smol collects after every 1 MB, so it needs fewer objects for as many collections.
+    it.each([
+      ["one ArrayBuffer", 1, false, [], 2_000_000],
+      ["twelve ArrayBuffers", 12, false, [], 2_000_000],
+      ["one Buffer", 1, true, [], 2_000_000],
+      ["one ArrayBuffer with --smol", 1, false, ["--smol"], 200_000],
+    ] as const)("%s", async (_, count, asBuffer, flags, objects) => {
+      const [without, withBuffers] = await Promise.all([
+        collectionsWithoutBuffers(flags, objects),
+        run(count, asBuffer, flags, objects),
+      ]);
+      expect(without).toBeGreaterThan(10);
+      expect(withBuffers).toBeGreaterThanOrEqual(without / 3);
+    });
+  });
+
   // The finalizer of an external buffer belongs to the env that created it, and that env's
   // teardown frees the bytes, so the bytes must not be transferred to another thread.
   describe("external buffers are untransferable", () => {

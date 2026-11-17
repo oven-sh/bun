@@ -305,7 +305,9 @@ impl Error {
         };
 
         // both maps are total (`initFull("unknown error")`).
-        let looked_up = self.get_error_code_tag_name().map(|(code, system_errno)| {
+        let looked_up = (self.errno != 0).then(|| {
+            let system_errno = self.resolve_system_errno().unwrap_or(SystemErrno::EUNKNOWN);
+            let code = <&'static str>::from(system_errno);
             err.code = BunString::static_(code.as_bytes());
             (code, map[system_errno])
         });

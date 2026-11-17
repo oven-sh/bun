@@ -103,6 +103,28 @@ describe("jest-extended", () => {
 
   // toBeOneOf('toSatisfy()')
 
+  if (typeof Bun === "object") {
+    test("toBeOneOf() treats an iterable like the array of its items", () => {
+      const afterTheMatch = {
+        asymmetricMatch() {
+          throw new Error("compared after the match");
+        },
+      };
+      expect(1).toBeOneOf([1, afterTheMatch]);
+      expect(1).toBeOneOf(new Set([1, afterTheMatch]));
+
+      function* objects() {
+        for (let index = 0; index < 20; index++) {
+          yield { index };
+          if (index % 8 === 0) Bun.gc(true);
+        }
+      }
+      expect({ index: 0 }).toBeOneOf(objects());
+      expect({ index: 19 }).toBeOneOf(objects());
+      expect({ index: 20 }).not.toBeOneOf(objects());
+    });
+  }
+
   test("toBeOneOf()", () => {
     expect(1).toBeOneOf([1, 2, 3]);
     expect(2).toBeOneOf([1, 2, 3]);

@@ -87,6 +87,39 @@ describe.concurrent(".resolves and .rejects", () => {
     expect(exitCode).toBe(0);
   });
 
+  test.each([
+    ["bun:test", "resolves", "resolve"],
+    ["bun:test", "rejects", "reject"],
+    ["vitest", "resolves", "resolve"],
+  ])("%s: .%s waits when it is called while another matcher starts to wait", async (module, modifier, settle) => {
+    const { stdout, results, exitCode, signalCode } = await run(["test"], {
+      "a.test.js": `
+        import { expect, test } from "${module}";
+        test("nested", async () => {
+          expect.extend({ "": () => ({ pass: true }) });
+          const resolvers = Promise.withResolvers();
+          const kept = expect(resolvers.promise).${modifier};
+          const nested = [];
+          // A function without a name is named after its Symbol.toStringTag.
+          Object.defineProperty(kept[""], Symbol.toStringTag, {
+            get() {
+              if (nested.length === 0) nested.push(kept.toBe(1), kept.toBe(2));
+            },
+          });
+          const outer = kept[""]();
+          resolvers.${settle}(1);
+          console.log((await Promise.allSettled([outer, ...nested])).map(result => result.status).join());
+        });
+      `,
+    });
+    expect({ stdout, results, exitCode, signalCode }).toEqual({
+      stdout: ["fulfilled,fulfilled,rejected"],
+      results: ["(pass) nested"],
+      exitCode: 0,
+      signalCode: null,
+    });
+  });
+
   test("run nothing else before the matcher call returns", async () => {
     const { stdout, exitCode, signalCode } = await runTests(`
       test("the promise is settled by what follows the call", async () => {
@@ -1299,12 +1332,24 @@ describe.concurrent("matchers that have to wait for a promise", () => {
           expect({ a: 1, b: later("x") }).not.toMatchObject({ a: expect.any(Number), b: expect.resolvesTo.any(String) }),
         "toContainEqual, generator": () => expect(numbers()).toContainEqual(expect.toBeOdd()),
         "not.toContainEqual, generator": () => expect(numbers()).not.toContainEqual(expect.toBeOdd()),
+        "toBeOneOf, generator": () => expect(expect.toBeOdd()).toBeOneOf(numbers()),
+        "not.toBeOneOf, generator": () => expect(expect.toBeOdd()).not.toBeOneOf(numbers()),
         "toContainEqual, Set": () => expect(new Set([2, 1])).toContainEqual(expect.toBeOdd()),
         "toThrow, asymmetric": () =>
           expect(() => {
             count("function");
             throw new Error("x");
           }).toThrow(expect.toHaveMessage("x")),
+        "not.toThrow, asymmetric": () =>
+          expect(() => {
+            count("function");
+            throw new Error("x");
+          }).not.toThrow(expect.toHaveMessage("x")),
+        "not.toThrow, asymmetric that differs": () =>
+          expect(() => {
+            count("function");
+            throw new Error("x");
+          }).not.toThrow(expect.toHaveMessage("y")),
         "toThrow, objectContaining": () =>
           expect(() => {
             count("function");
@@ -1332,8 +1377,12 @@ describe.concurrent("matchers that have to wait for a promise", () => {
       "not.toMatchObject, resolvesTo: fails {}",
       'toContainEqual, generator: passes {"generator":1,"toBeOdd":2}',
       'not.toContainEqual, generator: fails {"generator":1,"toBeOdd":2}',
+      'toBeOneOf, generator: passes {"generator":1,"toBeOdd":2}',
+      'not.toBeOneOf, generator: fails {"generator":1,"toBeOdd":2}',
       'toContainEqual, Set: passes {"toBeOdd":2}',
       'toThrow, asymmetric: passes {"function":1,"toHaveMessage":1}',
+      'not.toThrow, asymmetric: fails {"function":1,"toHaveMessage":1}',
+      'not.toThrow, asymmetric that differs: passes {"function":1,"toHaveMessage":1}',
       'toThrow, objectContaining: passes {"function":1,"toBeOdd":1}',
       'toHaveProperty, getter: passes {"toBeOdd":1}',
       'a synchronous matcher before an asynchronous one: passes {"toBeCalledFirst":1,"toBeOdd":2}',

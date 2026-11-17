@@ -217,6 +217,11 @@ impl<'e> Host<'e> {
         }
     }
 
+    /// [`Engine::has_realms`]
+    pub fn has_realms(&self) -> bool {
+        self.engine.has_realms()
+    }
+
     /// Returns the same host, which tracks what's loaded if `measures` is set.
     pub fn measuring(self, measures: bool) -> Host<'e> {
         Host { measures, ..self }

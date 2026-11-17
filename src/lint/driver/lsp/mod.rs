@@ -26,6 +26,7 @@ use crate::results::FileResult;
 use crate::run::{Environment, Fatal, Linted, Script, Stream};
 use answers::{Directives, FIX_ALL, Places, QUICK_FIX, wants};
 use bun_core::strings;
+use bun_lint::context::Severity;
 use bun_lint::js_plugin::{Engine, Host, Vm, Work};
 use bun_lint::linter::{LintMessage, is_parse_error};
 use bun_lint::options::Json;
@@ -133,6 +134,10 @@ impl Engine for NoEngine {
 
     fn busy(&self) -> usize {
         0
+    }
+
+    fn has_realms(&self) -> bool {
+        false
     }
 }
 
@@ -853,15 +858,32 @@ impl Worker<'_, '_> {
     ) -> Option<Linted> {
         let linted = session.lint(&document.path, text, how);
         self.tell_notes(session.notes());
+        // Rules of plugins that are on for the document did not run.
+        let skips_rules = |it: &FileResult| {
+            let config = it.linted.as_ref().map(|it| &it.config);
+            config.is_some_and(|it| it.js_rules.iter().any(|it| it.severity != Severity::Off))
+        };
+        if let (Some(no_engine), Ok(linted)) = (self.no_engine, &linted)
+            && linted.results.iter().any(skips_rules)
+        {
+            no_engine.refused.store(true, Ordering::Relaxed);
+        }
         self.say_if_refused();
         self.outcome(linted)
     }
 
-    /// Logs what a lint left to tell, once each.
+    /// Shows the errors that a lint left to tell and logs the rest, once each.
     fn tell_notes(&mut self, notes: Vec<(Weight, Vec<u8>)>) {
         let server = self.server;
         for (weight, line) in notes {
-            let kind = if weight == Weight::Warning { 2 } else { 3 };
+            let kind = match weight {
+                Weight::Error => {
+                    self.show_error_once(Half::Lint, &line);
+                    continue;
+                }
+                Weight::Warning => 2,
+                Weight::Note => 3,
+            };
             self.tell_once(line, |line| server.tell("window/logMessage", kind, line));
         }
     }

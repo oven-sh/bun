@@ -221,7 +221,7 @@ impl Context<'_, '_> {
                 true => Some(&only_errors),
                 false => None,
             },
-            js_plugins: Some(self.js_plugins),
+            js_plugins: (self.js_plugins.has_realms()).then_some(self.js_plugins),
             respects_eslint_comments: self
                 .oxlint_config
                 .is_none_or(|it| it.respects_eslint_comments),

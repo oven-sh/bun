@@ -26,6 +26,8 @@ pub(crate) struct How {
 /// How much a line for the user matters.
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub(crate) enum Weight {
+    /// What `bun lint` ends with an error for.
+    Error,
     Warning,
     Note,
 }
@@ -119,9 +121,46 @@ impl Session<'_> {
         let warnings = take(&self.loader.warnings).into_iter();
         let warnings = warnings.chain(take(&self.loader.unsupported));
         let notes = take(&self.loader.advice).into_iter();
-        (warnings.map(|it| (Weight::Warning, it)))
+        (self.invalid_tsconfigs().into_iter())
+            .map(|it| (Weight::Error, it))
+            .chain(warnings.map(|it| (Weight::Warning, it)))
             .chain(notes.map(|it| (Weight::Note, it)))
             .collect()
+    }
+
+    /// The errors of the `tsconfig.json` files that the lints with types found since this was last asked, each file
+    /// once per session. `bun lint` reports them as problems of those files.
+    fn invalid_tsconfigs(&self) -> Vec<Vec<u8>> {
+        let results = std::mem::take(&mut self.sinks.invalid_tsconfigs.lock().results);
+        let mut errors = Vec::new();
+        for result in &results {
+            let path = paths::from_native(&result.path);
+            let path = paths::relative_escaped(&self.environment.cwd, &path);
+            for message in &result.messages {
+                let place = match message.line {
+                    0 => String::new(),
+                    line => format!(":{line}:{}", message.column),
+                };
+                // With oxlint's configuration the text is the help of the message.
+                let help = (message.details.as_ref()).map(|it| it.help.as_bytes());
+                let text = &message.message[..];
+                let why = help
+                    .unwrap_or_else(|| text.strip_prefix(b"Invalid tsconfig: ").unwrap_or(text));
+                let hint: &[u8] = b"\n  The rules that need types do not run for its files";
+                errors.push(
+                    [
+                        b"Cannot use ",
+                        &path[..],
+                        place.as_bytes(),
+                        b": ",
+                        why,
+                        hint,
+                    ]
+                    .concat(),
+                );
+            }
+        }
+        errors
     }
 
     /// Whether `result`, which is about the file at `path`, lacks what the rules that need types have to say.

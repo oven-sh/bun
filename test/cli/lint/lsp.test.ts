@@ -926,6 +926,120 @@ describe.concurrent("bun lint --lsp", () => {
     timeout,
   );
 
+  // `bun lint` reports what is wrong with a tsconfig.json as a problem of that file, and exits with 1.
+  test(
+    "shows the error of a tsconfig.json that cannot be used, once",
+    async () => {
+      using dir = tempDir("bun-lint-lsp", {
+        ".oxlintrc.json": oxlintrc({ rules: { "typescript/no-floating-promises": "error" } }),
+        "tsconfig.json": `{ "compilerOptions": { "strict": true, "types": [], "lib": ["es1"] } }`,
+        "a.ts": "",
+      });
+      await using client = new Client([...command, "--type-aware"], String(dir));
+      expect((await initialize(client, [String(dir)])).error).toBeUndefined();
+      client.notify("initialized");
+      const path = join(String(dir), "a.ts");
+      // Without types, then from the lint with types, which has no program to ask.
+      for (const text of ["Promise.resolve();\n", "Promise.resolve(1);\n"]) {
+        if (text.includes("1")) {
+          client.notify("textDocument/didChange", {
+            textDocument: { uri: uriOf(path), version: 2 },
+            contentChanges: [{ text }],
+          });
+        } else open(client, path, text);
+        expect((await client.diagnostics(path)).params.diagnostics).toEqual([]);
+        expect((await client.diagnostics(path)).params.diagnostics).toEqual([]);
+      }
+      expect((await client.request("shutdown")).result).toBeNull();
+      client.notify("exit");
+      const { exitCode, garbage, rest } = await client.end();
+      expect([garbage, rest]).toEqual([[], ""]);
+      expect(client.received.filter(it => it.method === "window/showMessage").map(it => it.params)).toEqual([
+        {
+          type: 1,
+          message: expect.stringMatching(
+            /^bun lint: Cannot use tsconfig\.json:1:\d+: .*\n  The rules that need types do not run for its files$/s,
+          ),
+        },
+      ]);
+      expect(exitCode).toBe(0);
+    },
+    timeout,
+  );
+
+  // Plugins run in no VM for a file that is in no workspace folder, and on Windows in none at all: the other rules of
+  // the configuration still report, and nothing is shown as an error.
+  test(
+    "lints with the rules that are built in where the plugins of the configuration cannot run",
+    async () => {
+      using dir = tempDir("bun-lint-lsp", {
+        "outside/.oxlintrc.json": oxlintrc({
+          jsPlugins: ["./plugin.mjs"],
+          rules: { "demo/hello": "error", "no-debugger": "error" },
+        }),
+        "outside/plugin.mjs": `export default { meta: { name: "demo" }, rules: { hello: { create: () => ({}) } } };`,
+        "outside/a.js": "",
+        "folder/b.js": "",
+      });
+      await using client = new Client(command, String(dir));
+      expect((await initialize(client, [join(String(dir), "folder")])).error).toBeUndefined();
+      client.notify("initialized");
+      const path = join(String(dir), "outside", "a.js");
+      open(client, path, "debugger;\n");
+      const published = await client.diagnostics(path);
+      expect(published.params.diagnostics.map((it: any) => it.code)).toEqual(["no-debugger"]);
+      expect((await client.request("shutdown")).result).toBeNull();
+      client.notify("exit");
+      const { exitCode, garbage, rest } = await client.end();
+      expect([garbage, rest]).toEqual([[], ""]);
+      expect(client.received.filter(it => it.method === "window/showMessage")).toEqual([]);
+      expect(exitCode).toBe(0);
+    },
+    timeout,
+  );
+
+  // An eslint.config.mjs is evaluated in a process of its own. Its plugin's rule runs in a VM, which the server has
+  // only on Unix: on Windows the other rules report, and a line in the log says why the plugin's does not.
+  test(
+    "lints with an ESLint configuration whose plugin cannot run on Windows",
+    async () => {
+      using dir = tempDir("bun-lint-lsp", {
+        "plugin.mjs": `export default {
+          meta: { name: "demo" },
+          rules: {
+            hello: {
+              create: context => ({ Program: node => context.report({ node, message: "hello from the plugin" }) }),
+            },
+          },
+        };`,
+        "eslint.config.mjs": `import demo from "./plugin.mjs";
+          export default [{ plugins: { demo }, rules: { "demo/hello": "error", "no-debugger": "error" } }];`,
+        "a.js": "",
+        "b.js": "",
+      });
+      await using client = new Client(command, String(dir));
+      expect((await initialize(client, [String(dir)])).error).toBeUndefined();
+      client.notify("initialized");
+      for (const name of ["a.js", "b.js"]) {
+        const path = join(String(dir), name);
+        open(client, path, "debugger;\n");
+        const published = await client.diagnostics(path);
+        expect(published.params.diagnostics.map((it: any) => it.code).sort()).toEqual(
+          isWindows ? ["no-debugger"] : ["demo/hello", "no-debugger"],
+        );
+      }
+      expect((await client.request("shutdown")).result).toBeNull();
+      client.notify("exit");
+      const { exitCode, garbage, rest } = await client.end();
+      expect([garbage, rest]).toEqual([[], ""]);
+      expect(client.received.filter(it => it.method === "window/showMessage")).toEqual([]);
+      const logged = client.received.filter(it => it.method === "window/logMessage").map(it => it.params.message);
+      expect(logged).toEqual(isWindows ? ["Plugins do not run in the editor on this platform"] : []);
+      expect(exitCode).toBe(0);
+    },
+    timeout,
+  );
+
   // A rule and the rule with types that replaces it both report: `bun lint` shows what the one with types says.
   test(
     "publishes one problem where a rule and its version with types report the same",

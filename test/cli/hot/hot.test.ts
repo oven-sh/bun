@@ -2,19 +2,23 @@ import { spawn } from "bun";
 import { dlopen } from "bun:ffi";
 import { beforeEach, expect, it } from "bun:test";
 import {
+  closeSync,
   copyFileSync,
   cpSync,
   mkdirSync,
+  openSync,
   readFileSync,
   realpathSync,
   renameSync,
   rmSync,
   unlinkSync,
   writeFileSync,
+  writeSync,
 } from "fs";
 import {
   bunEnv,
   bunExe,
+  forEachLine,
   isASAN,
   isDebug,
   isLinux,
@@ -1090,9 +1094,14 @@ function queueMoreEventsThanOneRead(folder: string) {
   }
 }
 
-it.skipIf(!isLinux).each(["--hot", "--watch"])(
-  "bun %s keeps watching after a burst of events that ends short of the end of the watcher's buffer",
-  async mode => {
+it.skipIf(!isLinux).each([
+  ["--hot", "no file"],
+  ["--watch", "no file"],
+  // The watcher then waits for the close of the file, and must not read again for that either.
+  ["--hot", "the entry point"],
+])(
+  "bun %s keeps watching after a burst of events that ends short of the end of the watcher's buffer, with %s open for writing",
+  async (mode, open) => {
     const program = (version: string) => `console.log("run of ${version}");\nsetInterval(() => {}, 1e6);\n`;
     using dir = tempDir("watch-burst", { "app/main.js": program("v0"), "staging/next.js": "" });
     const cwd = join(String(dir), "app");
@@ -1108,7 +1117,13 @@ it.skipIf(!isLinux).each(["--hot", "--watch"])(
     const stderr = follow(runner.stderr);
     expect(await stdout("run of v0")).toBe(true);
 
-    await whileStopped(runner.pid, () => queueMoreEventsThanOneRead(cwd));
+    await whileStopped(runner.pid, () => {
+      if (open === "no file") return queueMoreEventsThanOneRead(cwd);
+      const fd = openSync(join(cwd, "main.js"), "a");
+      writeSync(fd, "\n");
+      queueMoreEventsThanOneRead(cwd);
+      closeSync(fd);
+    });
 
     const next = join(String(dir), "staging", "next.js");
     writeFileSync(next, program("v1"));
@@ -1157,6 +1172,97 @@ it.skipIf(!isLinux)(
     expect(watcherStopped).toBe(false);
   },
 );
+
+/** The text of a program that counts its runs in this process and prints `run <n> of <version>`. */
+const runCounter = (version: string) =>
+  `globalThis.runs = (globalThis.runs ?? 0) + 1;\nconsole.log("run " + globalThis.runs + " of " + ${version});\nsetInterval(() => {}, 1e6);\n`;
+
+/** Starts `bun --hot main.js` on `files`, which are a `runCounter` program. Wait for its first line before a save. */
+function startRunCounter(files: Record<string, string>) {
+  const dir = tempDir("hot-save", {
+    ...Object.fromEntries(Object.entries(files).map(([name, text]) => [`app/${name}`, text])),
+    "staging/next.js": "",
+  });
+  const cwd = join(String(dir), "app");
+  const next = join(String(dir), "staging", "next.js");
+  const runner = spawn({
+    cmd: [bunExe(), "--hot", "--no-clear-screen", "main.js"],
+    env: bunEnv,
+    cwd,
+    stdout: "pipe",
+    stderr: "inherit",
+    stdin: "ignore",
+  });
+  const lines = forEachLine(runner.stdout);
+  /** Resolves to the next line that ends with `suffix`. */
+  const line = async (suffix: string) => {
+    for (;;) {
+      const { value, done } = await lines.next();
+      if (done) throw new Error(`bun --hot ended before a line that ends with ${JSON.stringify(suffix)}`);
+      if (value.endsWith(suffix)) return value;
+    }
+  };
+  return {
+    file: (name: string) => join(cwd, name),
+    line,
+    /** A save by rename is one batch of events. Returns the number of the run whose line ends with `suffix`. */
+    async saveByRename(name: string, text: string, suffix: string) {
+      writeFileSync(next, text);
+      renameSync(next, join(cwd, name));
+      return Number((await line(suffix)).split(" ")[1]);
+    },
+    async [Symbol.asyncDispose]() {
+      runner.kill();
+      await runner.exited;
+      dir[Symbol.dispose]();
+    },
+  };
+}
+
+// The watcher holds a batch for 50 ms at most. A save that a busy machine made longer than this can run twice.
+const longestSave = 40;
+
+// Only inotify reports that a writer closed a file, and the watcher waits for that after a write.
+it.skipIf(!isLinux)("reloads for each write of a writer that keeps the file open", async () => {
+  await using hot = startRunCounter({ "main.js": runCounter(`"v0"`) });
+  expect(await hot.line(" of v0")).toBe("run 1 of v0");
+  const fd = openSync(hot.file("main.js"), "a");
+  try {
+    writeSync(fd, `console.log("run of the first append");\n`);
+    await hot.line(" of the first append");
+    writeSync(fd, `console.log("run of the second append");\n`);
+    await hot.line(" of the second append");
+  } finally {
+    closeSync(fd);
+  }
+  expect(await hot.saveByRename("main.js", runCounter(`"fence"`), " of fence")).toBe(4);
+});
+
+it.skipIf(!isLinux)("runs once for a save in place of an import that a slow writer makes", async () => {
+  const dep = (version: string) => `globalThis.version = "${version}";\n`;
+  // The entry point prints the version that the import set, and a tag of its own.
+  const entry = (tag: string) => `import "./dep.js";\n` + runCounter(`globalThis.version + " ${tag}"`);
+  await using hot = startRunCounter({ "main.js": entry("tag0"), "dep.js": dep("v0") });
+  expect(await hot.line(" tag0")).toBe("run 1 of v0 tag0");
+  const runsPerSave: number[] = [];
+  let runs = 1;
+  for (let i = 1; runsPerSave.length < 4 && i <= 40; i++) {
+    const started = performance.now();
+    const fd = openSync(hot.file("dep.js"), "w");
+    // The import is empty for 10 ms. A run in that time prints the version of the save before.
+    while (performance.now() - started < 10) {}
+    writeSync(fd, dep("v" + i));
+    closeSync(fd);
+    const quick = performance.now() - started <= longestSave;
+    // The watcher sent a quick save as one batch, and the run for it has to end before the next save.
+    if (quick) await hot.line(` of v${i} tag${i - 1}`);
+    const before = runs;
+    // `--hot` reloads for a save of the entry point whatever the saves before it did.
+    runs = await hot.saveByRename("main.js", entry("tag" + i), " tag" + i);
+    if (quick) runsPerSave.push(runs - before - 1);
+  }
+  expect(runsPerSave).toEqual([1, 1, 1, 1]);
+});
 
 // Other platforms evict the deleted import and stop watching its path, so "second" is never printed.
 it.todoIf(!isWindows)("reloads when a deleted import is recreated", async () => {

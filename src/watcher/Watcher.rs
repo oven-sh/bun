@@ -71,7 +71,7 @@ pub struct Watcher {
     pub(crate) platform: Platform,
     #[cfg(windows)]
     pub(crate) port: Arc<std::os::windows::io::OwnedHandle>,
-    /// Locked while a `WatcherContext` method runs.
+    /// Locked while `on_file_update` or `on_error` of the `WatcherContext` runs.
     pub(crate) state: Guarded<State>,
     cwd: &'static [u8],
     /// Cleared when the `OwnedWatcher` drops, polled by `watch_loop`.
@@ -112,7 +112,7 @@ pub(crate) struct WatcherThread {
     ctx: Box<dyn WatcherContext>,
 }
 
-/// Called on the watcher thread, which owns it.
+/// The watcher thread owns it and calls `on_file_update` and `on_error`.
 pub trait WatcherContext: Send {
     fn on_file_update(
         &mut self,
@@ -122,6 +122,11 @@ pub trait WatcherContext: Send {
         evictions: &mut Evictions,
     );
     fn on_error(&mut self, err: sys::Error);
+    /// Hold a batch until the writer of a changed file closes it. `Watcher::init` asks once.
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    fn waits_for_close(&self) -> bool {
+        true
+    }
 }
 
 impl Watcher {
@@ -137,7 +142,10 @@ impl Watcher {
             ctx,
         });
         let this = Arc::new(Watcher {
-            #[cfg(not(windows))]
+            #[cfg(any(target_os = "linux", target_os = "android"))]
+            platform: Platform::new(top_level_dir)?
+                .with_wait_for_close(thread.ctx.waits_for_close()),
+            #[cfg(any(target_os = "macos", target_os = "freebsd"))]
             platform: Platform::new(top_level_dir)?,
             #[cfg(windows)]
             port: Arc::clone(&thread.platform.port),

@@ -1,6 +1,16 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
-import { existsSync, readFileSync } from "node:fs";
+import { bunEnv, bunExe, forEachLine, isLinux, tempDir, untilEveryThreadIs } from "harness";
+import {
+  closeSync,
+  existsSync,
+  ftruncateSync,
+  openSync,
+  readFileSync,
+  renameSync,
+  statSync,
+  writeFileSync,
+  writeSync,
+} from "node:fs";
 import { join } from "node:path";
 
 test("BUN_WATCHER_TRACE creates trace file with watch events", async () => {
@@ -261,3 +271,259 @@ test("BUN_WATCHER_TRACE appends across reloads", async () => {
     expect(event).toHaveProperty("files");
   }
 }, 10000);
+
+type Batch = { files: Record<string, { events: string[]; changed?: string[] }> };
+
+/**
+ * Starts `bun --hot` on `main.js`, which imports the files of `deps`. Each file prints its name and the version of
+ * its text, and the first line to wait for is `main.js v0`. A text is at least 4 lines, and its first lines alone are
+ * a program too.
+ */
+function hotWithTrace(deps = ["dep.js"]) {
+  const text = (name: string, version: string) =>
+    (name === "main.js" ? "//\n" + deps.map(dep => `import "./${dep}";\n`).join("") : "//\n//\n//\n") +
+    `console.log("${name} ${version}");\n` +
+    (name === "main.js" ? "setInterval(() => {}, 1e6);\n" : "");
+  const dir = tempDir("watcher-trace-hot", {
+    "app/main.js": text("main.js", "v0"),
+    ...Object.fromEntries(deps.map(dep => [`app/${dep}`, text(dep, "v0")])),
+    "staging/next.js": "",
+  });
+  const file = (name: string) => join(String(dir), "app", name);
+  const next = join(String(dir), "staging", "next.js");
+  // The trace file is outside the watched folder, so the watcher does not report its own writes.
+  const trace = join(String(dir), "trace.log");
+  const proc = Bun.spawn({
+    cmd: [bunExe(), "--hot", "--no-clear-screen", "main.js"],
+    env: { ...bunEnv, BUN_WATCHER_TRACE: trace },
+    cwd: join(String(dir), "app"),
+    stdout: "pipe",
+    stderr: "inherit",
+    stdin: "ignore",
+  });
+  const lines = forEachLine(proc.stdout);
+  const seen = new Set<string>();
+  /** Resolves when the program has printed `line`, now or before. */
+  const printed = async (line: string) => {
+    while (!seen.has(line)) {
+      const { value, done } = await lines.next();
+      if (done) throw new Error(`bun --hot ended before it printed ${JSON.stringify(line)}`);
+      seen.add(value);
+    }
+  };
+  let fences = 0;
+  return {
+    pid: proc.pid,
+    file,
+    text,
+    printed,
+    /** The batches that the watcher sent to `--hot`. It logs a batch before it sends it. */
+    batches: (): Batch[] =>
+      readFileSync(trace, "utf8")
+        .split("\n")
+        .filter(Boolean)
+        .map(line => JSON.parse(line)),
+    /** A writer that takes its time. A watcher that does not wait for the close sends a batch in these 5 ms. */
+    pause() {
+      const size = statSync(trace).size;
+      const started = performance.now();
+      while (statSync(trace).size === size && performance.now() - started < 5) {}
+    },
+    /**
+     * A save by rename of the entry point. The watcher sends it after every batch before it, and `--hot` reloads for
+     * it whatever the saves before it did. Its run loads each file as it is then.
+     */
+    async fence() {
+      const version = "fence" + ++fences;
+      writeFileSync(next, text("main.js", version));
+      renameSync(next, file("main.js"));
+      await printed("main.js " + version);
+    },
+    async [Symbol.asyncDispose]() {
+      proc.kill();
+      await proc.exited;
+      dir[Symbol.dispose]();
+    },
+  };
+}
+
+const writesTo = (batches: Batch[], name: string) =>
+  batches.filter(batch =>
+    Object.entries(batch.files).some(
+      ([path, { events, changed }]) =>
+        events.includes("write") && (path.endsWith("/" + name) || changed?.includes(name)),
+    ),
+  ).length;
+
+// The watcher holds a batch for 50 ms at most. A save that a busy machine made longer than this can be two batches.
+const longestSave = 40;
+
+// Only inotify reports that a writer closed a file, so only there can a batch wait for the end of a save.
+test.skipIf(!isLinux).each(["main.js", "dep.js"])("--hot gets a save in place of %s as one batch", async name => {
+  await using hot = hotWithTrace();
+  await hot.printed("main.js v0");
+  const saves = {
+    "truncate, write": (fd: number, text: string) => {
+      hot.pause();
+      writeSync(fd, text);
+    },
+    "truncate, 4 writes": (fd: number, text: string) => {
+      for (const line of text.split(/(?<=\n)/)) {
+        hot.pause();
+        writeSync(fd, line);
+      }
+    },
+    // The order of `fs.writeFileSync` and `Bun.write`.
+    "write, truncate": (fd: number, text: string) => {
+      writeSync(fd, text);
+      hot.pause();
+      ftruncateSync(fd, text.length);
+    },
+  };
+  const batchesPerSave: Record<string, number[]> = {};
+  let version = 0;
+  for (const [order, save] of Object.entries(saves)) {
+    const counts: number[] = (batchesPerSave[order] = []);
+    for (let attempt = 0; counts.length < 2 && attempt < 20; attempt++) {
+      const from = hot.batches().length;
+      const text = hot.text(name, "v" + ++version);
+      const started = performance.now();
+      const fd = openSync(hot.file(name), order.startsWith("truncate") ? "w" : "r+");
+      save(fd, text);
+      closeSync(fd);
+      const took = performance.now() - started;
+      // The fence replaces the entry point, so the run of this save has to come first.
+      if (name === "main.js") await hot.printed(`${name} v${version}`);
+      await hot.fence();
+      await hot.printed(`${name} v${version}`);
+      if (took <= longestSave) counts.push(writesTo(hot.batches().slice(from), name));
+    }
+  }
+  expect(batchesPerSave).toEqual({
+    "truncate, write": [1, 1],
+    "truncate, 4 writes": [1, 1],
+    "write, truncate": [1, 1],
+  });
+});
+
+test.skipIf(!isLinux)("--hot holds a batch until the last of many files is closed", async () => {
+  const deps = Array.from({ length: 32 }, (_, i) => `dep${i}.js`);
+  const last = deps.length - 1;
+  await using hot = hotWithTrace(deps);
+  await hot.printed("main.js v0");
+  const counts: number[] = [];
+  let version = 0;
+  for (let attempt = 0; counts.length < 2 && attempt < 20; attempt++) {
+    const from = hot.batches().length;
+    const texts = deps.map(dep => hot.text(dep, "v" + ++version));
+    const lastLine = texts[last].lastIndexOf("console.log");
+    // An open with no truncation is no event, so the save starts at the first write.
+    const fds = deps.map(dep => openSync(hot.file(dep), "r+"));
+    const started = performance.now();
+    for (let i = 0; i < last; i++) {
+      writeSync(fds[i], texts[i]);
+      closeSync(fds[i]);
+    }
+    writeSync(fds[last], texts[last].slice(0, lastLine));
+    hot.pause();
+    writeSync(fds[last], texts[last].slice(lastLine));
+    closeSync(fds[last]);
+    const took = performance.now() - started;
+    await hot.fence();
+    await hot.printed(`${deps[last]} v${version}`);
+    if (took <= longestSave) counts.push(writesTo(hot.batches().slice(from), deps[last]));
+  }
+  expect(counts).toEqual([1, 1]);
+});
+
+// 32 saves are 128 changes and 32 closes. A batch is 128 events at most, and a close must not count as one.
+test.skipIf(!isLinux)("--hot gets 32 queued saves in place as one batch", async () => {
+  const deps = Array.from({ length: 32 }, (_, i) => `dep${i}.js`);
+  await using hot = hotWithTrace(deps);
+  await hot.printed("main.js v0");
+  const from = hot.batches().length;
+  process.kill(hot.pid, "SIGSTOP");
+  try {
+    await untilEveryThreadIs("T", hot.pid);
+    for (const dep of deps) {
+      const fd = openSync(hot.file(dep), "w");
+      writeSync(fd, hot.text(dep, "v1"));
+      closeSync(fd);
+    }
+  } finally {
+    process.kill(hot.pid, "SIGCONT");
+  }
+  await hot.fence();
+  await hot.printed("dep31.js v1");
+  const saved = hot.batches().slice(from);
+  expect(saved.filter(batch => deps.some(dep => writesTo([batch], dep) > 0)).length).toBe(1);
+});
+
+test.skipIf(!isLinux)("--hot waits again for the close of a file whose writer closed it late", async () => {
+  await using hot = hotWithTrace();
+  await hot.printed("main.js v0");
+  const from = hot.batches().length;
+  const fd = openSync(hot.file("dep.js"), "a");
+  try {
+    writeSync(fd, `console.log("dep.js late");\n`);
+    // The watcher gives up on the close after 50 ms and sends the write.
+    await hot.printed("dep.js late");
+  } finally {
+    closeSync(fd);
+  }
+  const counts: number[] = [];
+  for (let attempt = 0; counts.length < 1 && attempt < 20; attempt++) {
+    const before = hot.batches().length;
+    const started = performance.now();
+    const again = openSync(hot.file("dep.js"), "w");
+    hot.pause();
+    writeSync(again, hot.text("dep.js", "v" + attempt));
+    closeSync(again);
+    const took = performance.now() - started;
+    await hot.fence();
+    await hot.printed("dep.js v" + attempt);
+    if (took <= longestSave) counts.push(writesTo(hot.batches().slice(before), "dep.js"));
+  }
+  expect(counts).toEqual([1]);
+  // The late close is not a batch of its own.
+  expect(
+    hot
+      .batches()
+      .slice(from)
+      .flatMap(batch => Object.values(batch.files))
+      .filter(file => file.events.length === 0),
+  ).toEqual([]);
+});
+
+test.skipIf(!isLinux)(
+  "--hot gets no batch for a file that is opened for writing and closed with no write",
+  async () => {
+    await using hot = hotWithTrace();
+    await hot.printed("main.js v0");
+    const from = hot.batches().length;
+    closeSync(openSync(hot.file("dep.js"), "r+"));
+    await hot.fence();
+    const files = hot
+      .batches()
+      .slice(from)
+      .flatMap(batch => Object.entries(batch.files));
+    expect(files.filter(([path, file]) => path.endsWith("/dep.js") || file.events.length === 0)).toEqual([]);
+  },
+);
+
+// A new file has no watch of its own, so the watcher gets no close for it. Its folder reports the create and the write.
+test.todo("--hot gets the first save of a new file as one batch", async () => {
+  await using hot = hotWithTrace();
+  await hot.printed("main.js v0");
+  const from = hot.batches().length;
+  const fd = openSync(hot.file("new.js"), "w");
+  hot.pause();
+  writeSync(fd, hot.text("new.js", "v1"));
+  closeSync(fd);
+  await hot.fence();
+  const named = hot
+    .batches()
+    .slice(from)
+    .filter(batch => Object.values(batch.files).some(file => file.changed?.includes("new.js")));
+  expect(named.length).toBe(1);
+});

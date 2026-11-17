@@ -448,6 +448,12 @@ impl WatcherContext for RestartOnChange {
         );
         Global::exit(1)
     }
+
+    // A restart takes about 20 ms, longer than most saves, and forgets which files report no close.
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    fn waits_for_close(&self) -> bool {
+        false
+    }
 }
 
 impl WatchedFiles {

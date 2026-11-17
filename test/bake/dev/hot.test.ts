@@ -1,6 +1,6 @@
 // Hot tests ensure that the `import.meta.hot` interface is functional
 import { expect } from "bun:test";
-import { renameSync, unlinkSync, writeFileSync } from "node:fs";
+import { closeSync, openSync, renameSync, unlinkSync, writeFileSync, writeSync } from "node:fs";
 import { devTest, emptyHtmlFile, minimalFramework } from "../bake-harness";
 
 devTest("import.meta.hot.accept basic", {
@@ -796,3 +796,79 @@ for (const [how, callback] of [
     },
   });
 }
+
+// Only inotify reports that a writer closed a file. There the watcher holds a batch until that close.
+devTest("a save in place by a slow writer is one build", {
+  skip: ["win32", "darwin"],
+  files: {
+    "index.html": emptyHtmlFile({
+      scripts: ["index.ts", "fence.ts"],
+    }),
+    "index.ts": `console.log("v0");\nimport.meta.hot.accept();\n`,
+    "fence.ts": `console.log("fence0");\nimport.meta.hot.accept();\n`,
+  },
+  async test(dev) {
+    const text = (version: string) => `console.log("${version}");\nimport.meta.hot.accept();\n`;
+    await using c = await dev.client("/");
+    await c.expectMessage("v0", "fence0");
+
+    let builds = 0;
+    // The server sends 3 or 4 when a build is finished.
+    dev.on("watch_synchronization", (kind: number) => {
+      if (kind === 3 || kind === 4) builds++;
+    });
+
+    const buildsPerSave: number[] = [];
+    for (let i = 1; buildsPerSave.length < 4 && i <= 40; i++) {
+      const before = builds;
+      const started = performance.now();
+      const fd = openSync(dev.join("index.ts"), "w");
+      // The file is empty for 5 ms. A build in that time sends an empty module to the page.
+      while (performance.now() - started < 5) {}
+      writeSync(fd, text("v" + i));
+      closeSync(fd);
+      const took = performance.now() - started;
+      await c.expectMessage("v" + i);
+      // `dev.write` is one build. The server starts it after every build of the save above.
+      await dev.write("fence.ts", text("fence" + i));
+      await c.expectMessage("fence" + i);
+      // The watcher holds a batch for 50 ms at most. A save that a busy machine made longer than this can be two builds.
+      if (took <= 40) buildsPerSave.push(builds - before - 1);
+    }
+    expect(buildsPerSave).toEqual([1, 1, 1, 1]);
+  },
+});
+
+// The watch of the dev server stays on the file that a save by rename replaced, so it gets no close of the new file.
+devTest("a save in place by a slow writer is one build after a save by rename", {
+  skip: ["win32", "darwin", "linux"],
+  files: {
+    "index.html": emptyHtmlFile({
+      scripts: ["index.ts", "fence.ts"],
+    }),
+    "index.ts": `console.log("v0");\nimport.meta.hot.accept();\n`,
+    "fence.ts": `console.log("fence0");\nimport.meta.hot.accept();\n`,
+  },
+  async test(dev) {
+    const text = (version: string) => `console.log("${version}");\nimport.meta.hot.accept();\n`;
+    await using c = await dev.client("/");
+    await c.expectMessage("v0", "fence0");
+    writeFileSync(dev.join("next.ts"), text("renamed"));
+    renameSync(dev.join("next.ts"), dev.join("index.ts"));
+    await c.expectMessage("renamed");
+
+    let builds = 0;
+    dev.on("watch_synchronization", (kind: number) => {
+      if (kind === 3 || kind === 4) builds++;
+    });
+    const started = performance.now();
+    const fd = openSync(dev.join("index.ts"), "w");
+    while (performance.now() - started < 5) {}
+    writeSync(fd, text("v1"));
+    closeSync(fd);
+    await c.expectMessage("v1");
+    await dev.write("fence.ts", text("fence1"));
+    await c.expectMessage("fence1");
+    expect(builds - 1).toBe(1);
+  },
+});

@@ -40,6 +40,7 @@ use bun_lint::rule::{Frameworks, Plugin, minor_of};
 use bun_sema::util::{FxHashMap, FxHashSet};
 use bun_threading::Guarded;
 use std::borrow::Cow;
+use std::cell::Cell;
 use std::sync::{Arc, OnceLock};
 
 /// The parsed `package.json` of the package that `specifier` names, found in `node_modules` from `directory` up. `None`
@@ -1503,6 +1504,7 @@ impl<'l> Loader<'l> {
             }
         }
         let mut sources = Vec::new();
+        let has_plugin_that_fails = Cell::new(false);
         let mut load_plugin = |directory: &[u8], specifier: &[u8], alias: Option<&[u8]>| {
             let is_same_plugin = |it: &&NamedPlugin| {
                 alias == Some(&it.0.name[..])
@@ -1511,9 +1513,11 @@ impl<'l> Loader<'l> {
             if let Some(known) = named.iter().find(is_same_plugin) {
                 return Ok(Arc::clone(&known.0));
             }
-            let loaded = self.js_plugins.load(directory, specifier, alias)?;
+            let loaded = (self.js_plugins.load(directory, specifier, alias))
+                .inspect_err(|_| has_plugin_that_fails.set(true))?;
             if (named.iter()).any(|it| it.0.name == loaded.name && it.0.location != loaded.location)
             {
+                has_plugin_that_fails.set(true);
                 let twice = b"\" is loaded twice: here, and by plugins in bunfig.toml or --plugin";
                 return Err([b"The plugin \"", &loaded.name[..], twice].concat());
             }
@@ -1534,6 +1538,8 @@ impl<'l> Loader<'l> {
         let mut config = match read(&json) {
             Ok(config) => config,
             Err(error) => {
+                // The file lists the plugin. Another read would load it again.
+                let added = added.filter(|_| !has_plugin_that_fails.get());
                 let mistake_in = |json: &Json| read(json).err().map(|it| it.message);
                 return Err(self.blame(file, json, added, &error.message, mistake_in));
             }

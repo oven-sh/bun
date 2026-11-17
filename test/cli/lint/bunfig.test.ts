@@ -1853,14 +1853,14 @@ describe.concurrent("a rule setting that an oxlint config refuses is reported ag
 
   test("the file is named for its own mistake, even if bunfig.toml has one too", async () => {
     const sometimes = { eqeqeq: ["error", "sometimes"] };
-    for (const file of [{ ".oxlintrc.json": JSON.stringify({ rules: sometimes }) }, ownOverride(sometimes)]) {
-      for (const bunfig of ["", inRules, override(setting)]) {
-        const { stdout, exitCode } = await lint({ ...project, ...file, "bunfig.toml": bunfig }, ["a.ts"]);
-        expect(stdout).toStartWith(`${ofFile}Invalid configuration for rule \`eqeqeq\`:\n`);
-        expect(stdout).not.toContain("no-constant-binary-expression");
-        expect(stdout).not.toContain("This run uses");
-        expect(exitCode).toBe(1);
-      }
+    const configs = [{ ".oxlintrc.json": JSON.stringify({ rules: sometimes }) }, ownOverride(sometimes)];
+    const cases = configs.flatMap(file => ["", inRules, override(setting)].map(bunfig => ({ file, bunfig })));
+    const runs = cases.map(({ file, bunfig }) => lint({ ...project, ...file, "bunfig.toml": bunfig }, ["a.ts"]));
+    for (const { stdout, exitCode } of await Promise.all(runs)) {
+      expect(stdout).toStartWith(`${ofFile}Invalid configuration for rule \`eqeqeq\`:\n`);
+      expect(stdout).not.toContain("no-constant-binary-expression");
+      expect(stdout).not.toContain("This run uses");
+      expect(exitCode).toBe(1);
     }
   });
 
@@ -1905,8 +1905,8 @@ describe.concurrent("a rule setting that an oxlint config refuses is reported ag
 
     // `-D` changes the file's own rules, and after `[[lint.overrides]]` it's repeated. It isn't `--rule`.
     test("a mistake in -D stays with the file", async () => {
-      for (const bunfig of [noVar, noVar + inRules]) {
-        const { stdout, exitCode } = await lint({ ...files, "bunfig.toml": bunfig }, ["-D", "okp/missing", "a.ts"]);
+      const run = (bunfig: string) => lint({ ...files, "bunfig.toml": bunfig }, ["-D", "okp/missing", "a.ts"]);
+      for (const { stdout, exitCode } of await Promise.all([run(noVar), run(noVar + inRules)])) {
         expect(stdout).toBe(ofFile + missing);
         expect(exitCode).toBe(1);
       }

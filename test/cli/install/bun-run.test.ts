@@ -590,7 +590,7 @@ describe.concurrent("bun run", () => {
   // bunx parses --cwd itself and must publish PWD through the same helper.
   it.skipIf(isWindows)("bunx --cwd updates PWD for the tool it runs", async () => {
     using dir = tempDir("bunx-cwd-pwd", {
-      "subdir/node_modules/.bin/showpwd": "#!/bin/sh\necho \"$PWD\"\n",
+      "subdir/node_modules/.bin/showpwd": '#!/bin/sh\necho "$PWD"\n',
     });
     chmodSync(join(String(dir), "subdir/node_modules/.bin/showpwd"), 0o755);
 

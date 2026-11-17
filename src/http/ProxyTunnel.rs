@@ -226,7 +226,7 @@ impl<const IS_SSL: bool> SSLWrapperHandler for ClientHandler<'_, '_, IS_SSL> {
         };
         let flow = match report_progress {
             Ok(true) => client.progress_update(self.socket),
-            Ok(false) => return,
+            Ok(false) => return client.maybe_pause_receive(self.socket),
             Err(err) => client.close_and_fail(err, self.socket),
         };
         self.stop_on_break(flow);

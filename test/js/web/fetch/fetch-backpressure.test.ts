@@ -575,8 +575,7 @@ describe.concurrent("fetch() receive backpressure — the decompressor does not 
     return { ...server, url: `${secure ? "https" : "http"}://127.0.0.1:${server.port}/` };
   }
 
-  // A CONNECT proxy that pipes both ways. bun does not pause a tunnelled socket, so the origin's
-  // bytes keep arriving while the reader is paused.
+  // A CONNECT proxy that pipes both ways.
   async function serveConnectProxy() {
     let connects = 0;
     const server = await listening(
@@ -673,7 +672,18 @@ describe.concurrent("fetch() receive backpressure — the decompressor does not 
     expectBounded(await runClient(server.url, opts, READ_A_LITTLE));
   });
 
-  // The end of the body reaches the client while the reader is paused, since a tunnelled socket keeps reading.
+  test("through a CONNECT proxy: the origin stops writing while the reader is stalled, then resumes", async () => {
+    await using server = await serve("h1-tls", BIG);
+    await using proxy = await serveConnectProxy();
+    const res = await fetch(server.url, { ...fetchOpts("h1-tls"), proxy: { url: proxy.url, respectNoProxy: false } });
+    const reader = res.body!.getReader();
+    await reader.read();
+    const stalled = await server.settled();
+    expect(stalled).toBeLessThan(BODY);
+    const { foreign, ended } = await readUntilResumed(reader, server, stalled);
+    expect({ foreign, ended, connects: proxy.connects() }).toEqual({ foreign: 0, ended: false, connects: 1 });
+  });
+
   test("gzip through a CONNECT proxy, and the origin closes: a reader that takes a little holds a little", async () => {
     await using server = await serveBomb("gzip", true, true);
     await using proxy = await serveConnectProxy();
@@ -1278,7 +1288,6 @@ describe.concurrent("fetch() receive backpressure — the decompressor does not 
       expect(await consume(res)).toBe(digest);
     });
 
-    // A tunnelled socket is never paused. The consumer's resume reaches the client all the same.
     test.each([
       ["res.bytes()", `[await (await fetch(url, opts)).bytes()]`],
       ["a streaming reader", `await Array.fromAsync((await fetch(url, opts)).body)`],

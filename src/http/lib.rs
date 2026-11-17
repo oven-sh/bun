@@ -3256,7 +3256,9 @@ impl<'a> HTTPClient<'a> {
             RequestStage::ProxyBody => {
                 bun_core::scoped_log!(fetch, "send proxy body");
                 if let Some(proxy) = &self.proxy_tunnel {
-                    if !self.state.original_request_body.is_stream() {
+                    if !self.state.original_request_body.is_stream()
+                        && !self.state.flags.receive_paused
+                    {
                         self.set_timeout(&socket);
                     }
                     match &mut self.state.original_request_body {
@@ -3604,11 +3606,11 @@ impl<'a> HTTPClient<'a> {
         if self.proxy_tunnel.is_some() {
             // Body phase only, mirroring the non-proxy dispatch below (header
             // phase is an absolute deadline; see [`IDLE_TIMEOUT_SECONDS`]).
-            debug_assert!(!self.state.flags.receive_paused); // maybe_pause_receive bails on proxy_tunnel
             if matches!(
                 self.state.response_stage,
                 ResponseStage::Body | ResponseStage::BodyChunk
-            ) {
+            ) && !self.state.flags.receive_paused
+            {
                 self.set_timeout(&socket);
             }
             return ProxyTunnel::receive(self, socket, incoming_data);
@@ -3788,7 +3790,7 @@ impl<'a> HTTPClient<'a> {
         }
         let mut max_output = self.decompress_output_cap();
         if max_output != usize::MAX && self.state.encoding.is_compressed() {
-            // Nothing is decoded for a paused consumer (a tunnelled socket keeps reading anyway).
+            // Nothing is decoded for a paused consumer.
             if self.signals.is_receive_paused() {
                 self.state.flags.decompress_output_pending = true;
                 return Ok(false);
@@ -3809,9 +3811,8 @@ impl<'a> HTTPClient<'a> {
             .process_body_buffer(buffer, is_final_chunk, max_output)
     }
 
-    fn maybe_pause_receive<const IS_SSL: bool>(&mut self, socket: HttpSocket<IS_SSL>) {
+    pub(crate) fn maybe_pause_receive<const IS_SSL: bool>(&mut self, socket: HttpSocket<IS_SSL>) {
         if self.state.flags.receive_paused
-            || self.proxy_tunnel.is_some()
             || self.flags.upgrade_state == HTTPUpgradeState::Upgraded
             || !self.signals.is_receive_paused()
             || socket.is_closed_or_has_error()

@@ -1,0 +1,62 @@
+// A method or a getter of a host class is taken from the prototype object and run on a receiver that is no instance. The program makes no instance of the class.
+//@ build --no-builtin-modules
+function attempt(work) {
+  try {
+    console.log("answers", typeof work());
+  } catch (error) {
+    console.log("throws", error.name, error.code, error.message);
+  }
+}
+//// call
+attempt(() => TextDecoder.prototype.decode.call({}));
+//// apply
+attempt(() => TextDecoder.prototype.decode.apply({}, []));
+//// Reflect-apply
+attempt(() => Reflect.apply(TextDecoder.prototype.decode, {}, []));
+//// through-a-variable
+const decode = TextDecoder.prototype.decode;
+attempt(() => decode.call({}));
+//// the-prototype-object-is-the-receiver
+attempt(() => TextDecoder.prototype.decode());
+//// no-receiver
+attempt(() => (0, TextDecoder.prototype.decode)());
+//// the-class-through-a-variable
+const Class = TextDecoder;
+attempt(() => Class.prototype.decode.call({}));
+//// bound
+attempt(() => TextDecoder.prototype.decode.bind({})());
+//// a-getter
+attempt(() => Reflect.get(TextDecoder.prototype, "encoding", {}));
+//// a-getter-out-of-its-descriptor
+attempt(() => Object.getOwnPropertyDescriptor(TextDecoder.prototype, "encoding").get.call({}));
+//// TextEncoder
+attempt(() => TextEncoder.prototype.encode.call({}, "a"));
+//// Headers
+attempt(() => Headers.prototype.get.call({}, "a"));
+//// Glob
+attempt(() => Bun.Glob.prototype.match.call({}, "a"));
+//// Transpiler
+attempt(() => Bun.Transpiler.prototype.scan.call({}, "a"));
+//// Crypto
+attempt(() => Crypto.prototype.randomUUID.call({}));
+//// CryptoHasher
+attempt(() => Bun.CryptoHasher.prototype.update.call({}, "a"));
+//// HTMLRewriter
+attempt(() => HTMLRewriter.prototype.on.call({}, "a", {}));
+//// URLPattern
+attempt(() => URLPattern.prototype.test.call({}, "a"));
+//// WebSocket
+attempt(() => WebSocket.prototype.close.call({}));
+//// Worker
+attempt(() => Worker.prototype.terminate.call({}));
+//// MessagePort
+attempt(() => MessagePort.prototype.ref.call({}));
+//// BroadcastChannel
+attempt(() => BroadcastChannel.prototype.postMessage.call({}, 1));
+//// SubtleCrypto
+//@ alone
+//@ exit 1
+attempt(() => SubtleCrypto.prototype.exportKey.call({}));
+//// File
+//@ alone
+attempt(() => File.prototype.image.call({}));

@@ -134,6 +134,19 @@ pub fn if_match(
     false
 }
 
+/// RFC 9110 §13.1.5 strong comparison: a weak tag on either side never matches.
+pub fn if_range(
+    // Stored `ETag` header, `None` when the representation has none.
+    etag: Option<&[u8]>,
+    // `If-Range` header
+    if_range: &[u8],
+) -> bool {
+    let Some(etag) = etag else { return false };
+    let ours = parse(etag);
+    let theirs = parse(if_range);
+    !ours.is_weak && !theirs.is_weak && ours.tag == theirs.tag
+}
+
 pub fn if_none_match(
     // "ETag" header
     etag: &[u8],
@@ -166,12 +179,7 @@ pub fn if_none_match(
 // ═══════════════════════════════════════════════════════════════════════
 // Headers — moved from bun_http.
 //
-// Core struct + tier-safe methods only. The following stay in `bun_http`
-// (T5) as they pull in higher-tier or sibling deps that http_types (T3)
-// must not name:
-//   - `Options` / `from()`       — FetchHeaders + Blob (T6, vtabled in bun_http)
-//   - `from_pico_http_headers()` — bun_picohttp (kept beside its only caller)
-//   - `to_fetch_headers`         — extension-trait in bun_http_jsc
+// Core struct + tier-safe methods only.
 // ═══════════════════════════════════════════════════════════════════════
 
 /// `bun.schema.api.StringPointer` — canonical definition lives in `bun_core`
@@ -179,6 +187,30 @@ pub fn if_none_match(
 /// `bun_http::headers::api::StringPointer` keep resolving.
 pub use bun_core::StringPointer;
 
+#[derive(Copy, Clone)]
+pub struct Header<'a> {
+    name: &'a [u8],
+    value: &'a [u8],
+}
+
+impl<'a> Header<'a> {
+    #[inline]
+    pub const fn new(name: &'a [u8], value: &'a [u8]) -> Self {
+        Self { name, value }
+    }
+
+    #[inline]
+    pub const fn name(&self) -> &'a [u8] {
+        self.name
+    }
+
+    #[inline]
+    pub const fn value(&self) -> &'a [u8] {
+        self.value
+    }
+}
+
+#[repr(C)]
 #[derive(Copy, Clone, Default)]
 pub struct HeaderEntry {
     pub name: StringPointer,
@@ -187,32 +219,12 @@ pub struct HeaderEntry {
 
 pub type HeaderEntryList = bun_collections::MultiArrayList<HeaderEntry>;
 
-/// Column accessors for `HeaderEntry` MultiArrayList storage.
-///
-/// Returns a normal `&self`-tied borrow; `StringPointer` is `Copy` so callers
-/// that need to mutate `header_entries` afterwards copy the index out first.
-pub trait HeaderEntryColumns {
-    fn items_name(&self) -> &[StringPointer];
-    fn items_value(&self) -> &[StringPointer];
-}
-impl HeaderEntryColumns for bun_collections::multi_array_list::Slice<HeaderEntry> {
-    #[inline]
-    fn items_name(&self) -> &[StringPointer] {
-        self.items::<"name", StringPointer>()
-    }
-    #[inline]
-    fn items_value(&self) -> &[StringPointer] {
-        self.items::<"value", StringPointer>()
-    }
-}
-impl HeaderEntryColumns for HeaderEntryList {
-    #[inline]
-    fn items_name(&self) -> &[StringPointer] {
-        self.items::<"name", StringPointer>()
-    }
-    #[inline]
-    fn items_value(&self) -> &[StringPointer] {
-        self.items::<"value", StringPointer>()
+bun_core::impl_zeroable!(HeaderEntry);
+
+bun_collections::multi_array_columns! {
+    pub trait HeaderEntryColumns for HeaderEntry {
+        name: StringPointer,
+        value: StringPointer,
     }
 }
 
@@ -237,17 +249,43 @@ impl Clone for Headers {
 }
 
 impl Headers {
+    /// Never regrows `buf`: S3 zeroes it, and would miss an earlier allocation.
+    pub fn copy_of<'a>(list: impl Iterator<Item = Header<'a>> + Clone) -> Headers {
+        let (count, len) = list.clone().fold((0, 0), |(count, len), header| {
+            (count + 1, len + header.name.len() + header.value.len())
+        });
+        let mut headers = Headers::default();
+        bun_core::handle_oom(headers.entries.ensure_total_capacity(count));
+        headers.buf.reserve_exact(len);
+        for header in list {
+            headers.append(header.name, header.value);
+        }
+        headers
+    }
+
     pub fn memory_cost(&self) -> usize {
         self.buf.len() + self.entries.memory_cost()
     }
 
+    pub fn iter(&self) -> impl Iterator<Item = Header<'_>> + Clone {
+        let names = self.entries.items_name().iter();
+        names
+            .zip(self.entries.items_value())
+            .map(|(&name, &value)| Header::new(self.as_str(name), self.as_str(value)))
+    }
+
     pub fn get(&self, name: &[u8]) -> Option<&[u8]> {
-        let entries = self.entries.slice();
+        self.get_pointer(name).map(|value| self.as_str(value))
+    }
+
+    /// [`get`](Self::get), as the value's position in `buf`.
+    pub fn get_pointer(&self, name: &[u8]) -> Option<StringPointer> {
+        let entries = &self.entries;
         let names: &[StringPointer] = entries.items_name();
         let values: &[StringPointer] = entries.items_value();
         for (i, name_ptr) in names.iter().enumerate() {
             if strings::eql_case_insensitive_ascii(self.as_str(*name_ptr), name, true) {
-                return Some(self.as_str(values[i]));
+                return Some(values[i]);
             }
         }
         None
@@ -288,11 +326,10 @@ impl Headers {
     }
 
     pub fn as_str(&self, ptr: StringPointer) -> &[u8] {
-        if (ptr.offset + ptr.length) as usize <= self.buf.len() {
-            &self.buf[ptr.offset as usize..][..ptr.length as usize]
-        } else {
-            b""
-        }
+        let start = ptr.offset as usize;
+        self.buf
+            .get(start..start + ptr.length as usize)
+            .unwrap_or_default()
     }
 }
 

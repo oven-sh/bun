@@ -367,6 +367,35 @@ describe("randomUUIDv5", () => {
     expect(result).toEqual(uuid.v5("test", uuid.v5.DNS));
   });
 
+  test("a buffer is read once every argument is converted", () => {
+    const detaching = (buffer: Uint8Array, text: string) =>
+      Object.assign(new String(), {
+        toString() {
+          buffer.buffer.transfer();
+          return text;
+        },
+      }) as unknown as string;
+
+    const name = new TextEncoder().encode("www.example.com");
+    expect(Bun.randomUUIDv5(name, detaching(name, "dns"))).toBe(Bun.randomUUIDv5("", "dns"));
+
+    const namespace = new Uint8Array(16);
+    expect(() => Bun.randomUUIDv5("a", namespace, detaching(namespace, "hex") as "hex")).toThrow(
+      "Namespace must be exactly 16 bytes",
+    );
+  });
+
+  test("an encoding that is not a string is not converted", () => {
+    const unconverted = {
+      toString() {
+        throw new Error("the encoding was converted");
+      },
+    };
+    for (const encoding of [undefined, null, 5, {}, unconverted]) {
+      expect(Bun.randomUUIDv5("test", "dns", encoding as any)).toBe(uuid.v5("test", uuid.v5.DNS));
+    }
+  });
+
   test("consistent across multiple calls", () => {
     const results: string[] = [];
     for (let i = 0; i < 100; i++) {

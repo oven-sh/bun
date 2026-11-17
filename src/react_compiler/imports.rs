@@ -6,13 +6,14 @@
  * LICENSE file in the root directory of this source tree.
  */
 
-use crate::collections::{IndexMap, IndexSet};
+use crate::collections::{IndexMap, IndexSet, sort_slice_by};
 
 use crate::diagnostics::{CompilerError, CompilerErrorDetail, ErrorCategory};
 use bun_alloc::{AstAlloc, AstVec};
 use bun_ast::{
     ClauseItem, ImportKind, ImportRecord, Loc, LocRef, S, Stmt, StoreSlice, StoreStr, Symbol,
 };
+use bun_core::strings::locale_compare;
 
 use crate::hir::environment::OutputMode;
 use crate::options::ReactCompilerOptions;
@@ -45,6 +46,10 @@ pub(crate) struct ProgramContext {
     // Variable renames from lowering, to be applied back to the Babel AST
     pub(crate) renames: Vec<crate::hir::environment::BindingRename>,
 
+    /// `OutputMode::Lint`: upstream's `env.logErrors()`. What a validation reports that does not
+    /// keep the function from being compiled.
+    pub(crate) logged: CompilerError,
+
     // Internal state
     known_referenced_names: IndexSet<String>,
     imports: IndexMap<&'static str, IndexMap<&'static str, NonLocalImportSpecifier>>,
@@ -69,6 +74,7 @@ impl ProgramContext {
             instrument_gating_name: None,
             hook_guard_name: None,
             renames: Vec::new(),
+            logged: CompilerError::new(),
             known_referenced_names: IndexSet::new(),
             imports: IndexMap::new(),
         }
@@ -238,16 +244,16 @@ pub(crate) fn add_imports_to_program(
 
     let mut new_stmts: Vec<Stmt> = Vec::new();
     let mut sorted_modules: Vec<_> = context.imports.iter().collect();
-    sorted_modules.sort_unstable_by(|(a, _), (b, _)| {
-        a.bytes()
-            .map(|c| c.to_ascii_lowercase())
-            .cmp(b.bytes().map(|c| c.to_ascii_lowercase()))
+    sort_slice_by(&mut sorted_modules, |(a, _), (b, _)| {
+        locale_compare(a.as_bytes(), b.as_bytes())
     });
 
     for (module_name, imports_map) in sorted_modules {
         let sorted_imports = {
             let mut sorted: Vec<_> = imports_map.values().collect();
-            sorted.sort_unstable_by_key(|s| s.imported);
+            sort_slice_by(&mut sorted, |a, b| {
+                locale_compare(a.imported.as_bytes(), b.imported.as_bytes())
+            });
             sorted
         };
 

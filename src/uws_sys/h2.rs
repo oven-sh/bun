@@ -269,19 +269,19 @@ impl Response {
         let mut f = core::mem::ManuallyDrop::new(f);
         c::uws_h2_res_cork(self, (&raw mut *f).cast::<c_void>(), handle::<F>);
     }
-    pub(crate) fn run_corked_with_type<UD>(&mut self, handler: fn(*mut UD), ud: *mut UD) {
+    pub(crate) fn run_corked_with_type<UD>(&mut self, handler: fn(&UD), ud: &UD) {
         // cork is synchronous, so we stack-allocate the (handler, ud) pair and
         // recover it inside the trampoline — same shape as H1's
         // `Response::run_corked_with_type` so `AnyResponse` can dispatch uniformly.
-        type Ctx<UD> = (fn(*mut UD), *mut UD);
+        type Ctx<'a, UD> = (fn(&UD), &'a UD);
         // Safe fn item: nested local thunk, only coerced to the C-ABI
         // fn-pointer type passed to C; body wraps its raw-ptr ops explicitly.
         extern "C" fn cb<UD>(p: *mut c_void) {
             // SAFETY: p points at a stack Ctx<UD> valid for this synchronous call.
-            let ctx = unsafe { &*p.cast::<Ctx<UD>>() };
+            let ctx = unsafe { &*p.cast::<Ctx<'_, UD>>() };
             (ctx.0)(ctx.1);
         }
-        let mut ctx: Ctx<UD> = (handler, ud);
+        let mut ctx: Ctx<'_, UD> = (handler, ud);
         c::uws_h2_res_cork(self, (&raw mut ctx).cast(), cb::<UD>)
     }
 }
@@ -332,24 +332,26 @@ macro_rules! h2_route_methods {
     ($($name:ident => $kind:ident),* $(,)?) => {$(
         pub fn $name<UD, H>(&mut self, p: &[u8], ud: *mut UD, h: H)
         where
-            H: Fn(&mut UD, &mut Request, &mut Response) + Copy + 'static,
+            H: Fn(&UD, &mut Request, &mut Response) + Copy + 'static,
         {
             Self::route(RouteKind::$kind, self, p, ud, h);
         }
     )*};
 }
 
-impl App {
+pub struct OwnedApp(core::ptr::NonNull<App>);
+
+impl OwnedApp {
     /// Attach an HTTP/2 context to `parent`: its connections that negotiate
     /// "h2" via ALPN (or, without TLS, open with the prior-knowledge preface)
     /// are served by this app's routes. With `allow_http1 == false` the
     /// parent stops serving HTTP/1.x.
-    pub fn create<const SSL: bool>(
+    pub fn new<const SSL: bool>(
         parent: &mut crate::app::App<SSL>,
         allow_http1: bool,
         idle_timeout_s: u32,
-    ) -> Option<*mut App> {
-        // SAFETY: parent is a live TemplatedApp<SSL>; uws owns the returned handle
+    ) -> Option<Self> {
+        // SAFETY: parent is a live TemplatedApp<SSL>
         let p = unsafe {
             c::uws_h2_create_app(
                 i32::from(SSL),
@@ -358,18 +360,22 @@ impl App {
                 idle_timeout_s,
             )
         };
-        if p.is_null() { None } else { Some(p) }
+        core::ptr::NonNull::new(p).map(Self)
     }
-    /// # Safety
-    /// `this` must be a live App handle previously returned by `App::create`;
-    /// it is freed by this call and must not be used afterwards.
-    pub unsafe fn destroy(this: *mut Self) {
-        // SAFETY: caller contract above
-        unsafe { c::uws_h2_app_destroy(this) }
+
+    pub fn as_ptr(&self) -> *mut App {
+        self.0.as_ptr()
     }
-    pub fn close(&mut self) {
-        c::uws_h2_app_close(self)
+}
+
+impl Drop for OwnedApp {
+    fn drop(&mut self) {
+        // SAFETY: created in `new`, destroyed once.
+        unsafe { c::uws_h2_app_destroy(self.as_ptr()) }
     }
+}
+
+impl App {
     /// Streams parked on backpressure need another drain pass outside the
     /// current call; `cb(user, ctx)` should arrange for [`drain`] to run soon.
     pub fn on_schedule_drain(
@@ -390,18 +396,18 @@ impl App {
 
     fn route<UD, H>(which: RouteKind, this: &mut App, pattern: &[u8], ud: *mut UD, _handler: H)
     where
-        H: Fn(&mut UD, &mut Request, &mut Response) + Copy + 'static,
+        H: Fn(&UD, &mut Request, &mut Response) + Copy + 'static,
     {
         // Safe fn item: nested local thunk, only coerced to the C-ABI
         // fn-pointer type passed to C; body wraps its raw-ptr ops explicitly.
         extern "C" fn cb<UD, H>(res: *mut Response, req: *mut Request, p: *mut c_void)
         where
-            H: Fn(&mut UD, &mut Request, &mut Response) + Copy + 'static,
+            H: Fn(&UD, &mut Request, &mut Response) + Copy + 'static,
         {
             // SAFETY: uWS callback contract — `res`/`req` live disjoint handles,
             // `p` is the registered `*mut UD` (non-null by route registration).
             unsafe {
-                let Some(ud) = thunk::user_mut::<UD>(p) else {
+                let Some(ud) = p.cast::<UD>().as_ref() else {
                     return;
                 };
                 thunk::zst::<H>()(ud, thunk::handle_mut(req), thunk::handle_mut(res));
@@ -463,7 +469,7 @@ impl App {
 
     pub fn method<UD, H>(&mut self, m: bun_http_types::Method::Method, p: &[u8], ud: *mut UD, h: H)
     where
-        H: Fn(&mut UD, &mut Request, &mut Response) + Copy + 'static,
+        H: Fn(&UD, &mut Request, &mut Response) + Copy + 'static,
     {
         if let Some(kind) = RouteKind::from_method(m) {
             Self::route(kind, self, p, ud, h);
@@ -524,7 +530,6 @@ mod c {
             user: *mut c_void,
         );
         pub(super) safe fn uws_h2_app_drain(app: &mut App) -> bool;
-        pub(super) safe fn uws_h2_app_close(app: &mut App);
         pub(super) safe fn uws_h2_app_clear_routes(app: &mut App);
         pub(super) safe fn uws_h2_res_write_continue(res: &mut Response);
         pub(super) fn uws_h2_app_get(

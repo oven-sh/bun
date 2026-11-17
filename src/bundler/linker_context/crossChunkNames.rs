@@ -63,12 +63,6 @@ fn reserved_names(
     Ok(reserved)
 }
 
-fn intern(c: &LinkerContext, name: &[u8]) -> &'static [u8] {
-    // SAFETY: the linker arena outlives every chunk, renamer and clause item
-    // that holds one of these names (all dropped with the link pass).
-    unsafe { bun_ptr::detach_lifetime_ref::<[u8]>(c.arena().alloc_slice_copy(name)) }
-}
-
 /// Without `--minify-identifiers`: each binding keeps its own name, numbered
 /// only against reserved names and the other cross-chunk bindings. Runs
 /// before the chunk renamers, which pin these and number the rest around them.
@@ -110,8 +104,13 @@ pub(crate) fn assign_unminified(
             name = &buf;
         }
         used.put(name, 1)?;
-        let name = intern(c, name);
+        let name: &[u8] = c.arena().alloc_slice_copy(name);
         c.cross_chunk_names.insert(ref_, name);
+        // An importing chunk's renamer looks the binding up by the symbol its links lead to.
+        let followed = c.graph.symbols.follow(ref_);
+        if !followed.eql(ref_) {
+            c.cross_chunk_names.insert(followed, name);
+        }
     }
     Ok(())
 }
@@ -171,7 +170,10 @@ pub(crate) fn assign_minified(
                 .flat_map(|items| items.iter().map(|item| item.r#ref)),
         );
         for ref_ in refs_here {
-            if let (Some(&i), Some(count)) = (index_of.get(&ref_), r.top_level_count(ref_)) {
+            if let (Some(&i), Some(count)) = (
+                index_of.get(&ref_),
+                r.top_level_count(&c.graph.symbols, ref_),
+            ) {
                 order[i as usize].0 = order[i as usize].0.saturating_add(count);
             }
         }
@@ -180,12 +182,12 @@ pub(crate) fn assign_minified(
 
     // One name sequence for the bundle, tuned to its overall character mix.
     let mut freq = bun_ast::CharFreq { freqs: [0i32; 64] };
-    let (flags, char_freqs) = (c.graph.ast.items_flags(), c.graph.ast.items_char_freq());
+    let char_freqs = c.graph.ast.items_char_freq();
     for chunk in chunks.iter() {
         if let Content::Javascript(js) = &chunk.content {
             for &source_index in js.files_in_chunk_order.iter() {
-                if flags[source_index as usize].contains(crate::bundled_ast::Flags::HAS_CHAR_FREQ) {
-                    freq.include(&char_freqs[source_index as usize]);
+                if let Some(char_freq) = &char_freqs[source_index as usize] {
+                    freq.include(char_freq);
                 }
             }
         }
@@ -204,8 +206,8 @@ pub(crate) fn assign_minified(
             }
             break;
         }
-        let interned = intern(c, &name);
-        c.cross_chunk_names.insert(ref_, interned);
+        c.cross_chunk_names
+            .insert(ref_, c.arena().alloc_slice_copy(&name));
     }
 
     // Pin in every chunk that declares or imports the binding.
@@ -217,11 +219,19 @@ pub(crate) fn assign_minified(
             continue;
         };
         for &ref_ in js.exports_to_other_chunks.keys() {
-            r.pin(ref_, *c.cross_chunk_names.get(&ref_).unwrap())?;
+            r.pin(
+                &c.graph.symbols,
+                ref_,
+                *c.cross_chunk_names.get(&ref_).unwrap(),
+            )?;
         }
         for items in js.imports_from_other_chunks.values() {
             for item in items.iter() {
-                r.pin(item.r#ref, *c.cross_chunk_names.get(&item.r#ref).unwrap())?;
+                r.pin(
+                    &c.graph.symbols,
+                    item.r#ref,
+                    *c.cross_chunk_names.get(&item.r#ref).unwrap(),
+                )?;
             }
         }
     }

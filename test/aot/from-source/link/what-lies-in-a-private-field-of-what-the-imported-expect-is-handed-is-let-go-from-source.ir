@@ -1,0 +1,29 @@
+# -- source: main.js
+# import { expect } from "bun:test";
+# class Inner { constructor(tag) { this.tag = tag; } }
+# class Apart { constructor(tag) { this.tag = tag; } }
+# class Other { constructor(tag) { this.tag = tag; } }
+# class Handed { #kept; constructor(kept) { this.#kept = kept; } }
+# class Alone { #kept; constructor(kept) { this.#kept = kept; } }
+# class Pattern { #kept; constructor(kept) { this.#kept = kept; } }
+# globalThis.held = new Alone(new Apart("apart"));
+# expect(new Handed(new Inner("inner"))).not.toMatchObject(new Pattern(new Other("other")));
+# -- end of source
+# L0 = Inner, L1 = Apart, L2 = Other, L3 = Handed, L4 = Alone, L5 = Pattern
+# A program imports expect(), so no proof says what it calls, and the call goes out of sight. The front end expects the built-in by the binding; the scan keeps that, for the callee and for a
+# method called on what such a call answered, and Link asks the rows of the expected built-in for one thing: whether private fields are compared (PrivateFieldsAreCompared). It only ever adds:
+# the call is still one that nobody follows. What lies in the private fields of what is handed to expect() and to its matcher is let go; what only reaches other unseen code is not: Alone, Apart.
+# THE RED CONTROL: `call.expectedBuiltin` left empty in ScanOfBody::readCallByValue(): no field is shown.
+# RUN(SCAN): summary f0
+# SCAN: Value {{*}}expected-to-call=Expect
+# SCAN: Name "toMatchObject" {{*}}on-what-is-expected-of=Expect
+# RUN(LINK): link fields layouts mechanisms=all
+# LINK-NOT: field L0.0 "tag" proven
+# LINK: field L1.0 "tag" proven=string writers-known
+# LINK-NOT: field L2.0 "tag" proven
+# LINK: field L3.1 #"#kept"@L3 {{*}}shown-to-comparisons
+# LINK-NOT: #"#kept"@L4 {{*}}shown-to-comparisons
+# LINK: field L5.1 #"#kept"@L5 {{*}}shown-to-comparisons
+# LINK: layout L1 changes=[] stays-with-compiled-code
+# RUN(COUNT): compile PrivateFieldsShownToComparisons mechanisms=all
+# COUNT: statistic PrivateFieldsShownToComparisons 2

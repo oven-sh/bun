@@ -1,0 +1,69 @@
+# -- source: this-under-a-name-that-one-edge-of-two-gives-it-is-still-being-made.ts
+# declare function report(value: unknown): void;
+# function Asks(this: any, seed: number) {
+#   this.first = seed;
+#   var never: any;
+#   let self: any = null;
+#   if (never !== 1) self = this;
+#   const had = "second" in self;
+#   this.second = seed + 1;
+#   this.had = had;
+# }
+# function Reads(this: any, seed: number) {
+#   this.first = seed;
+#   var never: any;
+#   let self: any = null;
+#   if (never !== 1) self = this;
+#   const kind = typeof self.second;
+#   this.second = seed + 1;
+#   this.kind = kind;
+# }
+# function Stores(this: any, seed: number) {
+#   this.first = seed;
+#   var never: any;
+#   let self: any = null;
+#   if (never !== 1) self = this;
+#   self.second = seed;
+#   this.second = seed + 1;
+#   this.third = seed;
+# }
+# function Falls(this: any, seed: number) {
+#   this.first = seed;
+#   var never: any;
+#   let self: any = null;
+#   let count = 0;
+#   switch (never) {
+#     case undefined: self = this;
+#     case 2: count = 1;
+#   }
+#   const had = "second" in self;
+#   this.second = seed + count;
+#   this.had = had;
+# }
+# report(new (Asks as any)(1).had);
+# report(new (Reads as any)(1).kind);
+# report(Object.keys(new (Stores as any)(1)).join());
+# report(new (Falls as any)(1).had);
+# -- end of source
+# f1 = Asks, f2 = Reads, f3 = Stores, f4 = Falls
+# `never` is undefined for all to see, so one of the two edges that are written into the block behind the `if` is taken, and both come out of blocks that are entered. The scan follows `this` under the name `self`:
+# the hand-over is no leaving, and `second` is filled for those outside the construction. Inside it, `self` is the object that is being made: `second` is not there yet.
+# The walk counted the written edges for itself and took `self` for an object from elsewhere: "second" in self was true, typeof self.second was "number", and self.second = seed overwrote and listed no key.
+# In the last, the case that is taken falls through into the next, which the switch names too.
+# RUN(ASKS): walk f1 mechanisms=all
+# ASKS: = IsSlotFilled {{*}}key="second" receivers=[L0]
+# RUN(READS): walk f2 mechanisms=all
+# READS: = GetSlotOrUndefined {{*}}key="second" receivers=[L1]
+# RUN(STORES): walk f3 mechanisms=all
+# STORES: = PutSlotOrAdd {{*}}key="second" receivers=[L2]
+# STORES: = PutSlot {{*}}key="second" receivers=[L2]
+# RUN(FALLS): walk f4 mechanisms=all
+# FALLS: = IsSlotFilled {{*}}key="second" receivers=[L3]
+# RUN(SCAN): summary f1 mechanisms=all
+# SCAN: still-being-made v7 = v0
+# What those outside are told stands.
+# RUN(LINK): link fields mechanisms=all
+# LINK: field L0.1 "second" {{*}}filled
+# LINK: field L1.1 "second" {{*}}filled
+# LINK: field L2.1 "second" {{*}}filled
+# LINK: field L3.1 "second" {{*}}filled

@@ -35,17 +35,8 @@ int Bun__linux_trace_init()
         return 1; // Already initialized
     }
 
-    trace_fd = open(TRACE_MARKER_PATH, O_WRONLY);
+    trace_fd = open(TRACE_MARKER_PATH, O_WRONLY | O_CLOEXEC);
     return (trace_fd != -1) ? 1 : 0;
-}
-
-// Close the trace file descriptor
-void Bun__linux_trace_close()
-{
-    if (trace_fd != -1) {
-        close(trace_fd);
-        trace_fd = -1;
-    }
 }
 
 // Write a trace event to the trace marker

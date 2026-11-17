@@ -842,6 +842,49 @@ describe.concurrent("Bun.serve http2 protocol", () => {
     raw.close();
   });
 
+  // A streamed body that ends before the sink's first flush goes out through tryEnd() from the
+  // sink's own buffer. onWritable resends what is left each time the window reopens.
+  test.each([
+    ["default", [10, 5, 1000]],
+    ["bytes", [10, 5, 1000]],
+    ["direct", [10, 5, 1000]],
+    ["generator", [10, 5, 1000]],
+    ["default", [1, 1, 1000]],
+    ["default", [20, 1, 1000]],
+    ["default", [10, 5, 7, 2, 1000]],
+    ["default", [10, 1000]], // one partial write only
+  ] as const)(
+    "streamed body (%s source) that ends at once, windows %j: every byte is sent once",
+    async (kind, windows) => {
+      const path = `/stream-once?kind=${kind}`;
+      const expected = Buffer.from(Array.from({ length: 100 }, (_, i) => i)).toString("hex");
+      const raw = await RawH2.connect(fx.port, secure, { settings: setting(4, windows[0]) });
+      try {
+        await raw.waitFor(f => f.type === T.SETTINGS && (f.flags & F.ACK) !== 0);
+        raw.headers(1, baseHeaders(path));
+        let granted: number = windows[0];
+        for (const inc of windows.slice(1)) {
+          // Each window but the last is smaller than what is left: the write was partial.
+          while (received(raw, 1) < granted)
+            await raw.waitFor(f => f.type === T.DATA && f.streamId === 1 && received(raw, 1) >= granted);
+          await barrier(raw, "g" + granted);
+          expect(received(raw, 1)).toBe(granted);
+          raw.write(frame(T.WINDOW_UPDATE, 0, 1, u32(inc)));
+          granted += inc;
+        }
+        expect((await raw.body(1)).toString("hex")).toBe(expected);
+      } finally {
+        raw.close();
+      }
+      // The same response over default windows: it is the content-length path that was exercised.
+      const res = await request(session, { ":path": path });
+      expect({ length: res.headers["content-length"], body: res.body.toString("hex") }).toEqual({
+        length: "100",
+        body: expected,
+      });
+    },
+  );
+
   test("raising SETTINGS_INITIAL_WINDOW_SIZE mid-stream releases exactly the delta", async () => {
     const raw = await RawH2.connect(fx.port, secure, { settings: setting(4, 0) });
     await raw.waitFor(f => f.type === T.SETTINGS && (f.flags & F.ACK) !== 0);
@@ -1208,6 +1251,85 @@ describe.concurrent("Bun.serve http2 protocol", () => {
     for (let i = 0; i < 3; i++)
       expect((await request(s0, { ":path": "/set-cookies" })).headers["x-multi"]).toBe("1, 2");
     s0.close();
+  });
+
+  test.each([4096, 65536])("peer SETTINGS_HEADER_TABLE_SIZE=%d: the encoder states the size it uses", async size => {
+    const raw = await RawH2.connect(fx.port, secure, { settings: setting(1, size) });
+    raw.headers(1, baseHeaders("/hello"));
+    const h = await raw.waitFor(f => f.type === T.HEADERS && f.streamId === 1);
+    expect(h.payload.subarray(0, 4).toString("hex")).toBe("3fe11f" + "88");
+    raw.close();
+  });
+
+  test("an interim response carries the size update when it is the next block", async () => {
+    const raw = await RawH2.connect(fx.port, secure, { settings: setting(1, 100) });
+    raw.headers(1, [...baseHeaders("/echo", "POST"), ["expect", "100-continue"]], F.END_HEADERS);
+    const interim = await raw.waitFor(f => f.type === T.HEADERS && f.streamId === 1);
+    expect(interim.payload.toString("hex")).toBe("3f45" + "08820801");
+    raw.close();
+  });
+
+  // A field counts for its name, its value and 4 bytes, like a line of an HTTP/1 head.
+  test.each([
+    [16384, 200],
+    [16385, 431],
+    [32768, 431],
+    [32769, "GOAWAY 11"],
+  ])("a header list of %d bytes → %p", async (size, expected) => {
+    const raw = await RawH2.connect(fx.port, secure);
+    const base = baseHeaders("/hello");
+    const entry = Buffer.from([0x40, 1, 0x78, 123, ...Buffer.alloc(123, "v")]);
+    const left = size - base.reduce((sum, [name, value]) => sum + name.length + value.length + 4, 0);
+    const entries = Math.floor(left / 128) - 1;
+    const last = hpackLiteral([["y", Buffer.alloc(left - entries * 128 - 5, "v").toString()]]);
+    const block = Buffer.concat([hpackLiteral(base), entry, Buffer.alloc(entries - 1, 0xbe), last]);
+    raw.write(frame(T.HEADERS, F.END_HEADERS | F.END_STREAM, 1, block));
+    const answer = await raw.waitFor(f => f.type === T.HEADERS || f.type === T.GOAWAY);
+    expect(answer.type === T.HEADERS ? decodeStatus(answer.payload) : `GOAWAY ${answer.payload.readUInt32BE(4)}`).toBe(
+      expected,
+    );
+    raw.close();
+  });
+
+  test.each([
+    [200, 200],
+    [201, 431],
+    [400, 431],
+    [401, "GOAWAY 11"],
+  ])("%d header fields → %p", async (count, expected) => {
+    const raw = await RawH2.connect(fx.port, secure);
+    const base = baseHeaders("/hello");
+    const accept = Buffer.alloc(count - base.length, 0x80 | 19);
+    raw.write(frame(T.HEADERS, F.END_HEADERS | F.END_STREAM, 1, Buffer.concat([hpackLiteral(base), accept])));
+    const answer = await raw.waitFor(f => f.type === T.HEADERS || f.type === T.GOAWAY);
+    expect(answer.type === T.HEADERS ? decodeStatus(answer.payload) : `GOAWAY ${answer.payload.readUInt32BE(4)}`).toBe(
+      expected,
+    );
+    raw.close();
+  });
+
+  test.each([
+    [28, "content-length", "1"],
+    [38, "host", "elsewhere"],
+    [57, "transfer-encoding", "chunked"],
+    [8, ":status", "200"],
+    [3, ":method", "GET"],
+    [5, ":path", "/hello"],
+    [6, ":scheme", "https"],
+    [1, ":authority", "localhost"],
+  ])("a name from the static table is validated like a literal one (%d, %s)", async (index, _name, value) => {
+    const raw = await RawH2.connect(fx.port, secure);
+    const field = Buffer.from([0x40 | index, value.length, ...Buffer.from(value)]);
+    for (const [id, last] of [
+      [1, field],
+      [3, Buffer.from([0xbe])],
+    ] as const) {
+      raw.write(
+        frame(T.HEADERS, F.END_HEADERS | F.END_STREAM, id, Buffer.concat([hpackLiteral(baseHeaders("/hello")), last])),
+      );
+      expect(await raw.rst(id)).toBe(1);
+    }
+    raw.close();
   });
 
   test("header list over the limit → 431 on that stream, connection survives", async () => {

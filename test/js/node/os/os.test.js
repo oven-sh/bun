@@ -1,8 +1,9 @@
 import { describe, expect, it } from "bun:test";
 import { realpathSync } from "fs";
-import { isWindows } from "harness";
+import { bunEnv, bunRun, compileFixture, isGlibc, isWindows, tempDir } from "harness";
 import { isIPv4, isIPv6 } from "node:net";
 import * as os from "node:os";
+import { join } from "node:path";
 
 it("arch", () => {
   expect(["x64", "x86", "arm64"].some(arch => os.arch() === arch)).toBe(true);
@@ -201,6 +202,49 @@ it("networkInterfaces IPv6 loopback", () => {
   });
 });
 
+// getifaddrs(3): `ifa_addr` and `ifa_netmask` "may contain a null pointer".
+// bun-musl is statically linked: LD_PRELOAD cannot load the shim.
+const cc = Bun.which("cc") || Bun.which("clang") || Bun.which("gcc");
+it.skipIf(!isGlibc || !cc)("networkInterfaces with an address that has no netmask", async () => {
+  using dir = tempDir("getifaddrs-no-netmask", {
+    "shim.c": `
+#include <ifaddrs.h>
+#include <net/if.h>
+#include <netinet/in.h>
+#include <netpacket/packet.h>
+
+static struct sockaddr_ll link = {.sll_family = AF_PACKET, .sll_halen = 6, .sll_addr = {1, 2, 3, 4, 5, 0xff}};
+static struct sockaddr_in v4 = {.sin_family = AF_INET};
+static struct sockaddr_in6 v6 = {.sin6_family = AF_INET6, .sin6_addr = {{{0xfe, 0x80, [15] = 1}}}, .sin6_scope_id = 7};
+
+#define ENTRY(next, addr) {.ifa_next = next, .ifa_name = "ppp0", .ifa_flags = IFF_UP | IFF_RUNNING, .ifa_addr = (void *)addr}
+static struct ifaddrs list[] = {ENTRY(&list[1], 0), ENTRY(&list[2], &link), ENTRY(&list[3], &v4), ENTRY(0, &v6)};
+
+int getifaddrs(struct ifaddrs **out) {
+  v4.sin_addr.s_addr = htonl(0x0a010203);
+  *out = list;
+  return 0;
+}
+
+void freeifaddrs(struct ifaddrs *list) {}
+`,
+  });
+  const shim = compileFixture(join(String(dir), "shim.c"));
+
+  const result = await bunRun(["-p", `JSON.stringify(require("os").networkInterfaces())`], {
+    LD_PRELOAD: bunEnv.LD_PRELOAD ? `${shim}:${bunEnv.LD_PRELOAD}` : shim,
+  });
+  expect(result).toSpawn();
+
+  const shared = { mac: "01:02:03:04:05:ff", internal: false };
+  expect(JSON.parse(result.stdout)).toEqual({
+    ppp0: [
+      { address: "10.1.2.3", cidr: "10.1.2.3/0", netmask: "0.0.0.0", family: "IPv4", ...shared },
+      { address: "fe80::1", cidr: "fe80::1/0", netmask: "::", family: "IPv6", scopeid: 7, ...shared },
+    ],
+  });
+});
+
 it("machine", () => {
   const possibleValues = [
     "arm",
@@ -231,6 +275,16 @@ it("devNull", () => {
 
 it("availableParallelism", () => {
   expect(os.availableParallelism()).toBeGreaterThan(0);
+});
+
+it("availableParallelism does not read navigator from globalThis", () => {
+  const { navigator } = globalThis;
+  globalThis.navigator = { hardwareConcurrency: navigator.hardwareConcurrency + 1 };
+  try {
+    expect(os.availableParallelism()).toBe(navigator.hardwareConcurrency);
+  } finally {
+    globalThis.navigator = navigator;
+  }
 });
 
 it("loadavg", () => {
@@ -308,4 +362,106 @@ it("setPriority throws ESRCH for a nonexistent pid", () => {
       info: { errno: isWindows ? -4040 : -3, code: "ESRCH", message: "no such process", syscall: "uv_os_setpriority" },
     }),
   );
+});
+
+it("functions have Node's length", () => {
+  const lengths = Object.fromEntries(
+    [
+      "cpus",
+      "freemem",
+      "getPriority",
+      "homedir",
+      "hostname",
+      "loadavg",
+      "networkInterfaces",
+      "release",
+      "setPriority",
+      "totalmem",
+      "uptime",
+      "userInfo",
+      "version",
+    ].map(name => [name, os[name].length]),
+  );
+  // node -p 'os.<name>.length', v26.7.0
+  expect(lengths).toEqual({
+    cpus: 0,
+    freemem: 0,
+    getPriority: 1,
+    homedir: 0,
+    hostname: 0,
+    loadavg: 0,
+    networkInterfaces: 0,
+    release: 0,
+    setPriority: 2,
+    totalmem: 0,
+    uptime: 0,
+    userInfo: 1,
+    version: 0,
+  });
+});
+
+it("userInfo ignores options that are not an object, like Node", () => {
+  const info = os.userInfo();
+  const encoding = {
+    get() {
+      throw new Error("encoding was read");
+    },
+  };
+  const callable = Object.defineProperty(() => {}, "encoding", encoding);
+  for (const options of [undefined, null, 5, "utf8", true, Symbol("s"), [], ["utf8"], callable]) {
+    expect(os.userInfo(options)).toEqual(info);
+  }
+  expect(() => os.userInfo(Object.defineProperty({}, "encoding", encoding))).toThrow("encoding was read");
+});
+
+it("setPriority with an undefined priority takes the first argument as the priority", () => {
+  expect(() => os.setPriority()).toThrow(
+    expect.objectContaining({
+      name: "TypeError",
+      code: "ERR_INVALID_ARG_TYPE",
+      message: 'The "priority" argument must be of type number. Received undefined',
+    }),
+  );
+  expect(() => os.setPriority(20, undefined)).toThrow(
+    expect.objectContaining({
+      name: "RangeError",
+      code: "ERR_OUT_OF_RANGE",
+      message: 'The value of "priority" is out of range. It must be >= -20 && <= 19. Received 20',
+    }),
+  );
+  const priority = os.getPriority();
+  os.setPriority(priority, undefined);
+  expect(os.getPriority()).toBe(priority);
+});
+
+it("an infinite pid or priority is not an integer", () => {
+  for (const value of [Infinity, -Infinity, NaN, 1.5]) {
+    expect(() => os.getPriority(value)).toThrow(
+      expect.objectContaining({
+        name: "RangeError",
+        code: "ERR_OUT_OF_RANGE",
+        message: `The value of "pid" is out of range. It must be an integer. Received ${value}`,
+      }),
+    );
+    expect(() => os.setPriority(value)).toThrow(
+      expect.objectContaining({
+        name: "RangeError",
+        code: "ERR_OUT_OF_RANGE",
+        message: `The value of "priority" is out of range. It must be an integer. Received ${value}`,
+      }),
+    );
+  }
+});
+
+it("with new, each function does what it does in Node", () => {
+  expect(new os.loadavg()).toBeArrayOfSize(3);
+  expect(new os.networkInterfaces()).toEqual(os.networkInterfaces());
+  expect(new os.userInfo()).toEqual(os.userInfo());
+  for (const name of ["getPriority", "homedir", "hostname", "uptime"]) {
+    expect(new os[name]()).toBeObject();
+  }
+  expect(() => new os.setPriority()).toThrow(expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" }));
+  for (const name of ["freemem", "totalmem", "release", "version"]) {
+    expect(() => new os[name]()).toThrow("is not a constructor");
+  }
 });

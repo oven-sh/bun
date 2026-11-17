@@ -1,0 +1,32 @@
+# function handle(request) { return request.method; }  Bun.serve({ fetch: handle }); handle({ method: 5 })
+# The program calls the handler with a record of its own: the body believes both, and the entry of native code lets both through.
+# LIBRARY: own
+# RUN: walk f1:Body mechanisms=all
+# CHECK: b0(v0: undefined|L1|Request
+# RUN(ENTRY): walk f1:GenericCallEntry mechanisms=all
+# ENTRY: TypeTest {{*}}testedType=undefined|L1|Request
+
+layout L0 fields=[{key="fetch" declared={type=anything}}]
+layout L1 fields=[{key="method" declared={type=anything}}]
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=Bun
+    v1 = PropGet v0 key="serve"
+    v2 = Convert v1 declared={type=builtin(BunServe) flags=[IsExpected]}
+    v3 = NewClosure function=f1
+    v4 = NewObject -, v3 layout=L0 fields=[0]
+    v5 = FinishObject v4
+    v6 = Call v2, v0, v5 calleeKey="serve" calleeName="Bun.serve"
+    v7 = Integer integer=5
+    v8 = NewObject -, v7 layout=L1 fields=[0]
+    v9 = FinishObject v8
+    v10 = Call v3, -, v9 calleeName="handle"
+    Return v10
+}
+function f1 name="handle" module=m0 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = PropGet v0 key="method"
+    Return v1
+}

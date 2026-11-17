@@ -1,0 +1,13 @@
+# -- source: main.mjs
+# import { one } from "./named.mjs";
+# print("one: " + one());
+# -- source: named.mjs
+# export function one() { return 1; }
+# -- end of source
+# The word for the value of an ES module holds its namespace object for the code that asks for it. Here the names are imported one by one and no code asks: neither module has the word, and the statics hold nothing that the collector visits.
+# Should the run time come to make the object, it keeps it itself. With every mechanism on: without them the variable of `one` has a word, which the collector visits.
+# RUN(TABLES): image ProgramTables mechanisms=all
+# TABLES-LABEL: ProgramTables:
+# TABLES-NOT: staticsRoots
+# RUN(SHELL): run-in-shell
+# SHELL: one: 1

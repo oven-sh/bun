@@ -1,0 +1,19 @@
+------------------
+{ printWidth: 80 }
+------------------
+let a
+/* c */ : number = 1, // prettier-ignore
+  b;
+let c  :  number /* prettier-ignore */ = 1;
+let d: number /* c */ = 1;
+
+-------------------
+{ printWidth: 100 }
+-------------------
+let a
+/* c */ : number = 1, // prettier-ignore
+  b;
+let c  :  number /* prettier-ignore */ = 1;
+let d: number /* c */ = 1;
+
+===================== End =====================

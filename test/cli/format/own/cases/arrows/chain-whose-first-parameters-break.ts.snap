@@ -1,0 +1,95 @@
+------------------
+{ printWidth: 80 }
+------------------
+const selectors = {
+  isVisible: [
+    (state) => [state.levelsOfEveryResource, state.entry],
+    (
+      levelsOfEveryResource: Record<ResourceName, AccessLevelOfTheForm>,
+      entry: import("./types").EntryOfTheSettings,
+    ) =>
+      (resource: ResourceName) => {
+        return levelsOfEveryResource[resource] !== entry.level;
+      },
+  ],
+};
+
+function makeSelector() {
+  return (
+    levelsOfEveryResource: Record<ResourceName, AccessLevelOfTheForm>,
+    entry: import("./types").EntryOfTheSettings,
+  ) =>
+    (resource: ResourceName) => {
+      return levelsOfEveryResource[resource] !== entry.level;
+    };
+}
+
+register(
+  "name",
+  (
+    levelsOfEveryResource: Record<ResourceName, AccessLevelOfTheForm>,
+    entry: import("./types").EntryOfTheSettings,
+  ) =>
+    (resource: ResourceName) =>
+      levelsOfEveryResource[resource] !== entry.level,
+  "other",
+);
+
+const object = {
+  key:
+    (
+      levelsOfEveryResource: Record<ResourceName, AccessLevelOfTheForm>,
+      entry: import("./types").EntryOfTheSettings,
+    ) =>
+    (resource: ResourceName) =>
+      levelsOfEveryResource[resource] !== entry.level,
+};
+
+-------------------
+{ printWidth: 100 }
+-------------------
+const selectors = {
+  isVisible: [
+    (state) => [state.levelsOfEveryResource, state.entry],
+    (
+      levelsOfEveryResource: Record<ResourceName, AccessLevelOfTheForm>,
+      entry: import("./types").EntryOfTheSettings,
+    ) =>
+      (resource: ResourceName) => {
+        return levelsOfEveryResource[resource] !== entry.level;
+      },
+  ],
+};
+
+function makeSelector() {
+  return (
+    levelsOfEveryResource: Record<ResourceName, AccessLevelOfTheForm>,
+    entry: import("./types").EntryOfTheSettings,
+  ) =>
+    (resource: ResourceName) => {
+      return levelsOfEveryResource[resource] !== entry.level;
+    };
+}
+
+register(
+  "name",
+  (
+    levelsOfEveryResource: Record<ResourceName, AccessLevelOfTheForm>,
+    entry: import("./types").EntryOfTheSettings,
+  ) =>
+    (resource: ResourceName) =>
+      levelsOfEveryResource[resource] !== entry.level,
+  "other",
+);
+
+const object = {
+  key:
+    (
+      levelsOfEveryResource: Record<ResourceName, AccessLevelOfTheForm>,
+      entry: import("./types").EntryOfTheSettings,
+    ) =>
+    (resource: ResourceName) =>
+      levelsOfEveryResource[resource] !== entry.level,
+};
+
+===================== End =====================

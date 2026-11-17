@@ -1,0 +1,17 @@
+# new Bun[hidden]()
+# Whoever reads Bun under a key that nobody knows comes to every constructor on it without an instance: each keeps its own features, though no statement names it.
+# RUN: features
+# CHECK: by BunArchive unnamed
+# CHECK: by BunFileSystemRouter unnamed
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="hidden" [isFreeName]
+    v2 = Builtin builtin=Bun
+    v3 = ElemGet v2, v1
+    v4 = Construct v3, -
+    Return v4
+}

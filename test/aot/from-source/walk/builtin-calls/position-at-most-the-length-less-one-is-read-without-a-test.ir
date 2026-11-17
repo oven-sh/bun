@@ -1,0 +1,14 @@
+# `pos <= text.length - 1` has passed, so the position lies inside the text: the code unit is read, and nothing asks the bounds again
+# f1 = codes
+# -- source: position-at-most-the-length-less-one-is-read-without-a-test.ts
+# function codes(text: string): number { let sum = 0; for (let pos = 0; pos <= text.length - 1; pos++) sum = (sum + text.charCodeAt(pos)) | 0; return sum; }
+# console.log(codes("abc"), codes(""));
+# -- end of source
+# RUN: walk f1 mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK: = LessEq
+# CHECK: : int[0, 65535] {{*}}= GetStringCodeUnit
+# RUN(NEVER): walk f1 mechanisms=all
+# NEVER-NOT: = Less v
+# NEVER-NOT: = CallInline
+# NEVER-NOT: |whole

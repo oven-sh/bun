@@ -39,6 +39,11 @@ impl<T: ExternalSharedDescriptor> ExternalShared<T> {
         self.ptr.as_ptr()
     }
 
+    /// Give up the handle without releasing its ref; the caller now owns that +1.
+    pub fn into_raw(self) -> *mut T {
+        core::mem::ManuallyDrop::new(self).ptr.as_ptr()
+    }
+
     /// # Safety
     /// `raw` must be a valid pointer managed by the external refcount.
     pub unsafe fn clone_from_raw(raw: *mut T) -> Self {

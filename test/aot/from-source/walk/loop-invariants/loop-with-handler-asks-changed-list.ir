@@ -1,0 +1,18 @@
+# f1 = keeps, f2 = shortens, f3 = fills, f4 = Box
+# -- source: loop-with-handler-asks-changed-list.ts
+# declare function sink(...values: unknown[]): void;
+# class Box { x: number; constructor(x: number) { this.x = x; } }
+# function keeps(list: number[], box: Box) { let s = 0; for (let i = 0; i < list.length; i++) { try { s += box.x; } catch { s -= list[i]; } s += list[i]; } return s; }
+# function shortens(list: number[], box: Box) { let s = 0; for (let i = 0; i < list.length; i++) { try { s += box.x; if (s > 5) throw s; } catch { list.length = 2; } s += list[i]; } return s; }
+# function fills(list: any[], box: Box) { let s = 0; for (let i = 0; i < list.length; i++) { try { s += box.x; if (s > 5) throw s; } catch { list[i] = "x"; } s += list[i]; } return s; }
+# sink(keeps, shortens, fills, new Box(1), [1, 2, 3]);
+# -- end of source
+# A typed version of a loop with a handler asks its list in front where nothing in the loop changes a list, and in every turn where the handler does.
+# RUN(KEEPS): walk f1 mechanisms=all
+# KEEPS: = HasArrayStorage
+# RUN(SHORT): walk f2 mechanisms=all
+# SHORT-LABEL: code f2:Body
+# SHORT: = GetArrayElement {{*}}level=Expected
+# RUN(FILLS): walk f3 mechanisms=all
+# FILLS-LABEL: code f3:Body
+# FILLS: = GetArrayElement {{*}}level=Expected

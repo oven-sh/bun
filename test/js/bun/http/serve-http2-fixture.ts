@@ -21,6 +21,7 @@ const bigFile = args["big-file"]!;
 
 const big = Buffer.alloc(5 * 1024 * 1024, "abcdefghijklmnop");
 let lateRead: PromiseWithResolvers<void> | undefined;
+const stopCalled = Promise.withResolvers<void>();
 
 const makeRoutes = () => ({
   "/api/:id": (req: Bun.BunRequest<"/api/:id">) =>
@@ -179,6 +180,37 @@ async function handler(req: Request, server: Bun.Server<undefined>): Promise<Res
       return Response.json({ ok: true });
     case "/fixed":
       return new Response(Buffer.alloc(Number(url.searchParams.get("n") ?? "264"), "a"));
+    // Bytes 0..99 from a source that produces them in one piece and ends. That is under the
+    // sink's 256-byte high-water mark, so end() still holds the whole body and sends it with
+    // content-length.
+    case "/stream-once": {
+      const body = new Uint8Array(100).map((_, i) => i);
+      const enqueueAndClose = (c: ReadableStreamDefaultController | ReadableByteStreamController) => {
+        c.enqueue(body);
+        c.close();
+      };
+      switch (url.searchParams.get("kind")) {
+        case "default":
+          return new Response(new ReadableStream({ pull: enqueueAndClose }));
+        case "bytes":
+          return new Response(new ReadableStream({ type: "bytes", pull: enqueueAndClose }));
+        case "direct":
+          return new Response(
+            new ReadableStream({
+              type: "direct",
+              pull(c) {
+                c.write(body);
+                c.close();
+              },
+            }),
+          );
+        case "generator":
+          return new Response(async function* () {
+            yield body;
+          });
+      }
+      break;
+    }
     case "/read-report": {
       try {
         await req.text();
@@ -243,8 +275,18 @@ async function handler(req: Request, server: Bun.Server<undefined>): Promise<Res
     case "/passthrough":
       return new Response(req.body, { headers: { "x-passthrough": "1" } });
     case "/stop":
-      setTimeout(() => server.stop(), 0);
+      setTimeout(() => {
+        server.stop();
+        stopCalled.resolve();
+      }, 0);
       return new Response("stopping");
+    // Starts its body at once and ends it after /stop: a client that has the response has a stream open across the stop.
+    case "/open-until-stop":
+      return new Response(async function* () {
+        yield "open,";
+        await stopCalled.promise;
+        yield "stopped";
+      });
     case "/reload":
       server.reload({
         routes: { ...makeRoutes(), "/reloaded-route": new Response("after-reload") },

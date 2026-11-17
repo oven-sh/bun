@@ -56,7 +56,7 @@ describe.skip("middleware", () => {
     });
     io.use((socket, next) => {
       clearTimeout(timeout);
-      fail(done, io, new Error("nope"), socket);
+      fail(done, io, new Error("nope"), socket as any);
     });
 
     socket = createClient(io);
@@ -188,7 +188,7 @@ describe.skip("middleware", () => {
 
     io.on("connection", socket => {
       clearTimeout(timeout);
-      fail(done, io, new Error("should not fire"), socket);
+      fail(done, io, new Error("should not fire"), socket as any);
     });
   });
 

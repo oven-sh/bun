@@ -4,7 +4,7 @@ import http from "node:http";
 import type { AddressInfo } from "node:net";
 const { expect } = createTest(import.meta.path);
 
-const { promise, resolve } = Promise.withResolvers();
+const { promise, resolve } = Promise.withResolvers<http.IncomingHttpHeaders>();
 await using server = http.createServer((req, res) => {
   resolve(req.headers);
   res.end();

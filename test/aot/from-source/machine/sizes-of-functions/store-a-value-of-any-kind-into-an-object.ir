@@ -1,0 +1,17 @@
+# f1 = link
+# -- source: store-a-value-of-any-kind-into-an-object.js
+# function link(entry, follower) {
+#   entry.follower = follower;
+# }
+# const first = { follower: null, weight: 0.5 };
+# const second = { follower: null, weight: 1.5 };
+# link(first, second);
+# link(second, input ? first : 7);
+# globalThis.answer = first.follower.follower;
+# -- end of source
+# The compiler before this one: 4 instructions, 0 of them patches.
+# When the bound was taken: steps: operations 9, patches 0, moves 1, unlikely or rare 5.
+# RUN(X64): steps most:10 f1 mechanisms=all-Inlining
+# REQUIRES(X64): x86_64 not-windows unsanitized-code faulting-loop-polls as-written
+# X64-LABEL: unit f1:Body
+# X64-NEXT: steps: at most 10

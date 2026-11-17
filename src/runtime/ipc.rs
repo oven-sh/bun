@@ -8,38 +8,38 @@ use bun_ptr::RefPtr;
 use crate::json_line_buffer::JSONLineBuffer;
 use bun_collections::{ByteVecExt, VecExt};
 use bun_core::{Output, handle_oom};
-use bun_core::{String as BunString, strings};
+use bun_core::{String as BunString, StringView, strings};
 use bun_io::KeepAlive;
 use bun_io::StreamBuffer;
 use bun_jsc as jsc;
+use bun_jsc::bindgen::{JsLocal, JsScope};
 use bun_jsc::js_value::Protected;
 #[cfg(windows)]
 use bun_jsc::virtual_machine::VirtualMachine;
-use bun_jsc::{JSGlobalObject, JSValue, JsError, JsResult, SerializedFlags, StringJsc as _, Task};
-use bun_sys::Fd;
-use bun_sys::FdExt;
+use bun_jsc::{
+    JSGlobalObject, JSObject, JSValue, JsError, JsResult, SerializedFlags, StringJsc as _, Task,
+};
 #[cfg(windows)]
 use bun_sys::ReturnCodeExt as _;
 #[cfg(windows)]
 use bun_sys::windows::libuv as uv;
 #[cfg(windows)]
 use bun_sys::windows::libuv::{UvHandle as _, UvStream as _};
-use bun_uws;
+use bun_sys::{CloseOnDrop, Fd};
 
 // `bun.cpp.*` — generated C++ dispatch shims for IPC handle (de)serialization
 // (`IPCSerialize` / `IPCParse`) are declared once in `bun_jsc::cpp` and called
 // through that module's safe wrappers; no local extern block needed.
 
 // `SendQueue.owner` is a [`SendQueueOwner`] enum over the two concrete owner
-// types (`Subprocess`, parent side; `ipc_host::IPCInstance`, child side) —
-// both nameable in this crate — stored as a BACKREF cleared before the owner
-// drops.
+// types (`Subprocess`, parent side, stored as a BACKREF; the thread's one
+// `ipc_host::IPCInstance`, child side), cleared before the owner drops.
 
 // TODO: rewrite this code.
 /// Queue for messages sent between parent and child processes in an IPC environment. node:cluster sends json serialized messages
 /// to describe different events it performs. It will send a message with an incrementing sequence number and then call a callback
 /// when a message is received with an 'ack' property of the same sequence number.
-pub struct InternalMsgHolder {
+pub(crate) struct InternalMsgHolder {
     pub seq: i32,
 
     // TODO: move this to an Array or a JS Object or something which doesn't
@@ -63,7 +63,7 @@ impl Default for InternalMsgHolder {
 }
 
 impl InternalMsgHolder {
-    pub fn is_ready(&self) -> bool {
+    pub(crate) fn is_ready(&self) -> bool {
         self.worker.has() && self.cb.has()
     }
 
@@ -72,7 +72,7 @@ impl InternalMsgHolder {
             .push(bun_jsc::StrongOptional::create(message, global));
     }
 
-    pub fn dispatch(
+    pub(crate) fn dispatch(
         &mut self,
         message: JSValue,
         handle: JSValue,
@@ -96,25 +96,30 @@ impl InternalMsgHolder {
         let cb = self.cb.get().unwrap();
         let worker = self.worker.get().unwrap();
 
-        let event_loop = global.bun_vm().event_loop_mut();
+        let event_loop = global.bun_vm().event_loop();
 
-        event_loop.run_callback(cb, global, worker, &[message, handle]);
+        event_loop.run_callback(
+            bun_event_loop::ContextId::NONE,
+            cb,
+            global,
+            worker,
+            &[message, handle],
+        );
         Ok(())
     }
 
-    pub fn flush(&mut self, global: &JSGlobalObject) -> JsResult<()> {
+    pub(crate) fn flush(&mut self, global: &JSGlobalObject) -> JsResult<()> {
         debug_assert!(self.is_ready());
-        // PORT_NOTES_PLAN R-2: `&mut self` carries LLVM `noalias`, but
+        let messages = core::mem::take(&mut self.messages);
+        // `&mut self` carries LLVM `noalias`, but
         // `dispatch_unsafe` → `event_loop.run_callback` runs the JS IPC
         // listener which can re-enter via a fresh `&mut Self` from the
-        // owner's `m_ctx` and write `self.cb` / `self.worker` /
+        // owner's JS wrapper and write `self.cb` / `self.worker` /
         // `self.callbacks`. With the loop body inlined, LLVM was hoisting the
         // `self.cb`/`self.worker` reads (at the top of `dispatch_unsafe`) out
         // of the loop — ASM-verified PROVEN_CACHED. Launder so each iteration
         // re-reads through an opaque pointer.
         let this: *mut Self = core::hint::black_box(core::ptr::from_mut(self));
-        // SAFETY: `this` aliases the live `&mut self`; single JS thread.
-        let messages = core::mem::take(unsafe { &mut (*this).messages });
         for strong in messages {
             if let Some(message) = strong.get() {
                 // SAFETY: `this` is still live across re-entry — the IPC
@@ -148,7 +153,7 @@ impl IncomingBuffer {
     fn init(mode: Mode) -> IncomingBuffer {
         match mode {
             Mode::Advanced => IncomingBuffer::Advanced(Vec::<u8>::default()),
-            Mode::Json => IncomingBuffer::Json(JSONLineBuffer::default()),
+            Mode::Json => IncomingBuffer::Json(JSONLineBuffer::new(json::max_line_len())),
         }
     }
 }
@@ -156,13 +161,13 @@ impl IncomingBuffer {
 // deinit: Vec<u8>/JSONLineBuffer own their storage and Drop frees it.
 
 #[derive(Copy, Clone, Eq, PartialEq)]
-pub enum IsInternal {
+pub(crate) enum IsInternal {
     Internal,
     External,
 }
 
 #[derive(Copy, Clone, Eq, PartialEq)]
-pub enum SerializeAndSendResult {
+pub(crate) enum SerializeAndSendResult {
     Success,
     Failure,
     Backoff,
@@ -198,7 +203,7 @@ impl Mode {
 }
 
 #[derive(Clone, Copy)]
-pub enum DecodedIPCMessage {
+pub(crate) enum DecodedIPCMessage {
     Version(u32),
     Data(JSValue),
     Internal(JSValue),
@@ -257,6 +262,11 @@ mod advanced {
     const HEADER_LENGTH: usize = size_of::<IPCMessageType>() + size_of::<u32>();
     // HEADER_LENGTH is a 5-byte compile-time constant; narrowing to u32 is provably safe.
     const HEADER_LENGTH_U32: u32 = HEADER_LENGTH as u32;
+
+    /// Returns the longest body the deserializer's `WTF::Vector<uint8_t>` can store without crashing.
+    fn max_message_len() -> usize {
+        BunString::max_length()
+    }
     // v2 added `SerializedMessageWithBuffers`. The peer's advertised version is
     // debug-logged, never consulted, so mixed-version pairs only break when a
     // Buffer-bearing message actually crosses to a v1 peer.
@@ -273,9 +283,7 @@ mod advanced {
         /// messages keep the version-1 wire format.
         SerializedMessageWithBuffers = 4,
     }
-    // SAFETY: `#[repr(u8)]` fieldless enum → size 1, align 1, no padding,
-    // `Copy + 'static`; the single byte is always an initialized discriminant.
-    unsafe impl bytemuck::NoUninit for IPCMessageType {}
+    bun_core::impl_no_uninit!(IPCMessageType);
 
     impl IPCMessageType {
         fn tag_name(raw: u8) -> &'static str {
@@ -329,7 +337,8 @@ mod advanced {
                 || x == IPCMessageType::SerializedInternalMessage as u8
                 || x == IPCMessageType::SerializedMessageWithBuffers as u8 =>
             {
-                if message_len > u32::MAX - HEADER_LENGTH_U32 {
+                // Reject based on the header, before buffering the body.
+                if message_len as usize > max_message_len() {
                     return Err(IPCDecodeError::InvalidFormat);
                 }
                 // `header_length + message_len` would be evaluated as u32; a peer-controlled
@@ -427,10 +436,8 @@ mod advanced {
 mod json {
     use super::*;
 
-    extern "C" fn json_ipc_data_string_free_cb(context: *mut bool, _: *mut c_void, _: usize) {
-        // SAFETY: context points to `was_ascii_string_freed` on the caller's stack,
-        // kept alive across the `drop(str)` in decode_ipc_message.
-        unsafe { *context = true };
+    extern "C" fn json_ipc_data_string_free_cb(context: &Cell<bool>, _: *mut c_void, _: usize) {
+        context.set(true);
     }
 
     pub(super) fn get_version_packet() -> &'static [u8] {
@@ -447,6 +454,12 @@ mod json {
     // to be able to distinguish whether it is a regular json message or an internal one for cluster ipc communication.
     // 2 is internal
     // ["[{\d\.] is regular
+
+    /// Returns the longest line, not counting the newline, that can become a string.
+    pub(super) fn max_line_len() -> usize {
+        // The longest string in UTF-8 (at most 3 bytes per code unit), plus an internal message's tag byte.
+        BunString::max_length().saturating_mul(3).saturating_add(1)
+    }
 
     pub(super) fn decode_ipc_message(
         data: &[u8],
@@ -470,10 +483,6 @@ mod json {
         };
 
         let mut json_data = &data[0..idx as usize];
-        // An empty payload (newline with no preceding data) is invalid JSON.
-        if json_data.is_empty() {
-            return Err(IPCDecodeError::InvalidFormat);
-        }
 
         #[derive(Copy, Clone, Eq, PartialEq)]
         enum Kind {
@@ -481,41 +490,44 @@ mod json {
             Internal,
         }
         let mut kind = Kind::Regular;
-        if json_data[0] == 2 {
+        if json_data.first() == Some(&2) {
             // internal message
             json_data = &json_data[1..];
             kind = Kind::Internal;
         }
+        // A bare newline or a lone tag byte is invalid JSON.
+        if json_data.is_empty() {
+            return Err(IPCDecodeError::InvalidFormat);
+        }
 
         let is_ascii = strings::is_all_ascii(json_data);
-        let mut was_ascii_string_freed = false;
+        let was_ascii_string_freed = Cell::new(false);
 
         // Use ExternalString to avoid copying data if possible.
         // This is only possible for ascii data, as that fits into latin1
         // otherwise we have to convert it utf-8 into utf16-le.
-        let str = if is_ascii {
+        let parsed = if is_ascii {
+            // SAFETY: `json_data` and the flag outlive `s`, and the check below panics if anything kept a ref past `s`.
             // .dead if `json_data` exceeds max length
-            let s = BunString::create_external::<*mut bool>(
-                json_data,
-                true,
-                &raw mut was_ascii_string_freed,
-                json_ipc_data_string_free_cb,
-            );
+            let s = unsafe {
+                BunString::create_external::<&Cell<bool>>(
+                    json_data,
+                    &was_ascii_string_freed,
+                    json_ipc_data_string_free_cb,
+                )
+            };
             if s.tag() == bun_core::Tag::Dead {
                 bun_core::hint::cold();
                 return Err(IPCDecodeError::Js(JsError::OutOfMemory));
             }
-            s
+            s.to_js_by_parse_json(global_this)
         } else {
-            BunString::borrow_utf8(json_data)
+            StringView::borrow_utf8(json_data).to_js_by_parse_json(global_this)
         };
-
         // The ASCII-path free callback (`json_ipc_data_string_free_cb`) only
         // fires when the WTFStringImpl refcount hits zero — i.e. *during* the
-        // drop — so the freed-flag check must follow it.
-        let parsed = str.to_js_by_parse_json(global_this);
-        drop(str);
-        if is_ascii && !was_ascii_string_freed {
+        // drop of `s` — so the freed-flag check must follow it.
+        if is_ascii && !was_ascii_string_freed.get() {
             panic!(
                 "Expected ascii string to be freed by ExternalString, but it wasn't. This is a bug in Bun."
             );
@@ -640,13 +652,15 @@ pub(crate) fn get_nack_packet(mode: Mode) -> &'static [u8] {
 
 // `bun_uws::SocketHandler<SSL>` is an alias for `NewSocketHandler<SSL>`
 // (uws_sys/socket.rs); `<false>` is the non-SSL handler.
-pub type Socket = bun_uws::SocketHandler<false>;
+pub(crate) type Socket = bun_uws::SocketHandler<false>;
 
-pub struct Handle {
+pub(crate) struct Handle {
+    #[cfg(windows)]
     pub fd: Fd,
+    #[cfg(not(windows))]
+    duplicate: CloseOnDrop,
     pub js: Protected,
     pub close_on_complete: bool,
-    pub owns_fd: bool,
     pub cluster_seq: Option<i32>,
     #[cfg(windows)]
     pub win_export_hex: Option<Box<[u8]>>,
@@ -655,60 +669,53 @@ pub struct Handle {
 }
 
 impl Handle {
-    pub fn init(fd: Fd, js: JSValue) -> Self {
+    #[cfg(windows)]
+    pub(crate) fn init(fd: Fd, js: JSValue) -> Self {
         Self {
             fd,
             js: js.protected(),
             close_on_complete: false,
-            owns_fd: false,
             cluster_seq: None,
-            #[cfg(windows)]
             win_export_hex: None,
-            #[cfg(windows)]
             peer_pid: 0,
         }
     }
 
-    pub fn init_close_on_complete(fd: Fd, js: JSValue) -> Self {
+    #[cfg(windows)]
+    pub(crate) fn init_close_on_complete(fd: Fd, js: JSValue) -> Self {
         Self {
             fd,
             js: js.protected(),
             close_on_complete: true,
-            owns_fd: false,
             cluster_seq: None,
-            #[cfg(windows)]
             win_export_hex: None,
-            #[cfg(windows)]
             peer_pid: 0,
         }
     }
 
-    pub fn init_dup(fd: Fd, js: JSValue, close_on_complete: bool) -> Result<Self, bun_sys::Error> {
-        let wire_fd = bun_sys::dup(fd)?;
+    #[cfg(not(windows))]
+    pub(crate) fn init_dup(
+        fd: Fd,
+        js: JSValue,
+        close_on_complete: bool,
+    ) -> Result<Self, bun_sys::Error> {
         Ok(Self {
-            fd: wire_fd,
+            duplicate: CloseOnDrop::new(bun_sys::dup(fd)?),
             js: js.protected(),
             close_on_complete,
-            owns_fd: true,
             cluster_seq: None,
-            #[cfg(windows)]
-            win_export_hex: None,
-            #[cfg(windows)]
-            peer_pid: 0,
         })
     }
-}
 
-impl Drop for Handle {
-    fn drop(&mut self) {
-        if self.owns_fd {
-            // Owned dup/received descriptors may legitimately be 0-2 (stdio closed); close them regardless.
-            let _ = self.fd.close_allowing_standard_io(None);
-        }
+    fn fd(&self) -> Fd {
+        #[cfg(windows)]
+        return self.fd;
+        #[cfg(not(windows))]
+        self.duplicate.fd()
     }
 }
 
-pub enum CallbackList {
+pub(crate) enum CallbackList {
     AckNack,
     None,
     /// js callable
@@ -772,7 +779,7 @@ impl CallbackList {
     }
 }
 
-pub struct SendHandle {
+pub(crate) struct SendHandle {
     // when a message has a handle, make sure it has a new SendHandle - so that if we retry sending it,
     // we only retry sending the message with the handle, not the original message.
     pub(crate) data: StreamBuffer,
@@ -800,7 +807,7 @@ impl SendHandle {
         // self drops here → data/callbacks/handle Drop.
     }
 
-    pub fn abort_unsent(self, global: &JSGlobalObject) {
+    pub(crate) fn abort_unsent(self, global: &JSGlobalObject) {
         if let Some(handle) = &self.handle {
             if handle.close_on_complete {
                 let js = handle.js.value();
@@ -812,24 +819,27 @@ impl SendHandle {
     }
 }
 
-#[bun_jsc::host_fn]
-fn close_sent_handle(global: &JSGlobalObject, callframe: &jsc::CallFrame) -> JsResult<JSValue> {
-    let [js] = callframe.arguments_as_array::<1>();
-    if js.is_object() {
+pub(crate) fn close_sent_handle<'a>(
+    cx: &mut JsScope<'a>,
+    handle: Option<JsLocal<'a, JSObject>>,
+) -> JsResult<()> {
+    let global = cx.global();
+    if let Some(handle) = handle {
+        let js = handle.to_js();
         if let Some(f) = js.get(global, "close")? {
             if f.is_callable() {
                 f.call(global, js, &[])?;
             }
         }
     }
-    Ok(JSValue::UNDEFINED)
+    Ok(())
 }
 
 fn close_sent_handle_fn(global: &JSGlobalObject) -> JSValue {
     jsc::JSFunction::create(
         global,
         "",
-        __jsc_host_close_sent_handle,
+        crate::generated_bindgen::ipc::Bun__IPC__closeSentHandle,
         1,
         Default::default(),
     )
@@ -838,7 +848,7 @@ fn close_sent_handle_fn(global: &JSGlobalObject) -> JSValue {
 // SendHandle.deinit: all fields Drop; no explicit impl needed.
 
 #[cfg(windows)]
-pub struct WindowsWrite {
+pub(crate) struct WindowsWrite {
     pub(crate) write_req: uv::uv_write_t,
     pub(crate) write_buffer: uv::uv_buf_t,
     pub(crate) write_slice: Box<[u8]>,
@@ -846,30 +856,12 @@ pub struct WindowsWrite {
 }
 
 #[cfg(windows)]
-impl WindowsWrite {
-    pub(crate) fn destroy(this: *mut WindowsWrite) {
-        // SAFETY: `this` was produced by heap::alloc in SendQueue::write;
-        // libuv guarantees the write callback fires exactly once.
-        let _ = unsafe { bun_core::heap::take(this) };
-        // write_slice freed by Box<[u8]> Drop.
-    }
-}
-
-#[cfg(windows)]
 #[derive(Default)]
-pub struct WindowsState {
-    pub(crate) is_server: bool,
-    /// Non-owning raw pointer. The allocation
-    /// is `heap::alloc`'d in `write` and freed exactly once by
-    /// `windows_on_write_complete` via `WindowsWrite::destroy`. Nulling this
-    /// field never frees.
+pub(crate) struct WindowsState {
+    /// libuv's until `windows_on_write_complete`.
     pub(crate) windows_write: Option<*mut WindowsWrite>,
     pub(crate) try_close_after_write: bool,
 }
-
-#[cfg(not(windows))]
-#[derive(Default)]
-pub struct WindowsState {}
 
 #[derive(Copy, Clone, Eq, PartialEq)]
 enum CloseReason {
@@ -884,7 +876,7 @@ enum CloseFrom {
 }
 
 #[derive(Copy, Clone, Eq, PartialEq)]
-pub enum AckNack {
+pub(crate) enum AckNack {
     Ack,
     Nack,
 }
@@ -895,48 +887,55 @@ enum ContinueSendReason {
     OnWritable,
 }
 
+/// The transport returns the number of bytes written as an `i32`.
+const MAX_WRITE_LEN: usize = i32::MAX as usize;
+
 #[derive(bun_ptr::CellRefCounted)]
-pub struct SendQueue {
+pub(crate) struct SendQueue {
     ref_count: Cell<u32>,
     root: Cell<Option<core::ptr::NonNull<SendQueue>>>,
     pub(crate) queue: JsCell<Vec<SendHandle>>,
     pub(crate) waiting_for_ack: JsCell<Option<SendHandle>>,
 
     pub(crate) retry_count: Cell<u32>,
-    pub(crate) keep_alive: JsCell<KeepAlive>,
+    pub(crate) keep_alive: KeepAlive,
     #[cfg(debug_assertions)]
     pub(crate) has_written_version: Cell<u8>,
     pub(crate) mode: Mode,
     pub internal_msg_queue: JsCell<InternalMsgHolder>,
     incoming: JsCell<IncomingBuffer>,
-    pub(crate) incoming_fd: Cell<Option<Fd>>,
+    #[cfg(not(windows))]
+    pub(crate) incoming_fd: Cell<Option<CloseOnDrop>>,
 
     pub socket: JsCell<SocketUnion>,
     pub(crate) owner: Cell<Option<SendQueueOwner>>,
 
     pub(crate) deferred_scheduled: Cell<bool>,
     pub(crate) pending_close: Cell<bool>,
+    #[cfg(not(windows))]
+    read_before_close: Cell<bool>,
     /// A user disconnect() waiting for the handle queue to flush; reported as disconnected meanwhile, cleared by any real close.
     pub(crate) close_after_flush: Cell<bool>,
     pub(crate) pending_after_close: Cell<bool>,
     pub(crate) write_in_progress: Cell<bool>,
     pub close_event_sent: Cell<bool>,
 
+    #[cfg(windows)]
     pub windows: JsCell<WindowsState>,
 }
 
 #[derive(Copy, Clone)]
-pub enum SendQueueOwner {
+pub(crate) enum SendQueueOwner {
     Subprocess(core::ptr::NonNull<crate::api::bun::subprocess::Subprocess<'static>>),
-    Instance(core::ptr::NonNull<crate::ipc_host::IPCInstance>),
+    Instance,
 }
 
 impl SendQueueOwner {
     #[inline]
-    pub fn kind(self) -> SendQueueOwnerKind {
+    pub(crate) fn kind(self) -> SendQueueOwnerKind {
         match self {
             SendQueueOwner::Subprocess(_) => SendQueueOwnerKind::Subprocess,
-            SendQueueOwner::Instance(_) => SendQueueOwnerKind::VirtualMachine,
+            SendQueueOwner::Instance => SendQueueOwnerKind::VirtualMachine,
         }
     }
 
@@ -945,11 +944,9 @@ impl SendQueueOwner {
         match self {
             // SAFETY: an attached owner is live (it holds a ref on the SendQueue).
             SendQueueOwner::Subprocess(p) => unsafe { p.as_ref() }.global_this.as_ptr(),
-            SendQueueOwner::Instance(_) => core::ptr::from_ref(
-                bun_jsc::virtual_machine::VirtualMachine::get()
-                    .as_mut()
-                    .global(),
-            ),
+            SendQueueOwner::Instance => {
+                core::ptr::from_ref(bun_jsc::virtual_machine::VirtualMachine::get().global())
+            }
         }
     }
 
@@ -957,8 +954,7 @@ impl SendQueueOwner {
         match self {
             // SAFETY: an attached owner is live (it holds a ref on the SendQueue).
             SendQueueOwner::Subprocess(p) => unsafe { p.as_ref() }.handle_ipc_close(),
-            // SAFETY: as above — an attached owner is live.
-            SendQueueOwner::Instance(i) => unsafe { i.as_ref() }.handle_ipc_close(),
+            SendQueueOwner::Instance => crate::ipc_host::IPCInstance::handle_ipc_close(),
         }
     }
 
@@ -966,8 +962,9 @@ impl SendQueueOwner {
         match self {
             // SAFETY: an attached owner is live (it holds a ref on the SendQueue).
             SendQueueOwner::Subprocess(p) => unsafe { p.as_ref() }.handle_ipc_message(msg, handle),
-            // SAFETY: as above — an attached owner is live.
-            SendQueueOwner::Instance(i) => unsafe { i.as_ref() }.handle_ipc_message(msg, handle),
+            SendQueueOwner::Instance => {
+                crate::ipc_host::IPCInstance::handle_ipc_message(msg, handle)
+            }
         }
     }
 
@@ -979,23 +976,23 @@ impl SendQueueOwner {
                 .get()
                 .try_get()
                 .unwrap_or_default(),
-            SendQueueOwner::Instance(_) => JSValue::ZERO,
+            SendQueueOwner::Instance => JSValue::ZERO,
         }
     }
 }
 
 #[derive(Copy, Clone, Eq, PartialEq)]
-pub enum SendQueueOwnerKind {
+pub(crate) enum SendQueueOwnerKind {
     Subprocess,
     VirtualMachine,
 }
 
 #[cfg(windows)]
-pub type SocketType = *mut uv::Pipe;
+pub(crate) type SocketType = uv::Owned<uv::Pipe>;
 #[cfg(not(windows))]
-pub type SocketType = Socket;
+pub(crate) type SocketType = Socket;
 
-pub enum SocketUnion {
+pub(crate) enum SocketUnion {
     Uninitialized,
     Open(SocketType),
     Closed,
@@ -1007,18 +1004,14 @@ impl SendQueue {
         self.owner.get()
     }
 
-    pub fn set_owner(&self, owner: SendQueueOwner) {
-        self.owner.set(Some(owner));
-    }
-
-    pub fn detach(&self) {
+    pub(crate) fn detach(&self) {
         log!("SendQueue#detach");
         self.close_event_sent.set(true);
         self.close_socket(CloseReason::Failure, CloseFrom::Deinit);
         self.owner.set(None);
     }
 
-    pub fn new(
+    pub(crate) fn new(
         mode: Mode,
         owner: Option<SendQueueOwner>,
         socket: SocketUnion,
@@ -1030,21 +1023,25 @@ impl SendQueue {
             queue: JsCell::new(Vec::new()),
             waiting_for_ack: JsCell::new(None),
             retry_count: Cell::new(0),
-            keep_alive: JsCell::new(KeepAlive::default()),
+            keep_alive: KeepAlive::default(),
             #[cfg(debug_assertions)]
             has_written_version: Cell::new(0),
             mode,
             internal_msg_queue: JsCell::new(InternalMsgHolder::default()),
             incoming: JsCell::new(IncomingBuffer::init(mode)),
+            #[cfg(not(windows))]
             incoming_fd: Cell::new(None),
             socket: JsCell::new(socket),
             owner: Cell::new(owner),
             deferred_scheduled: Cell::new(false),
             pending_close: Cell::new(false),
+            #[cfg(not(windows))]
+            read_before_close: Cell::new(false),
             close_after_flush: Cell::new(false),
             pending_after_close: Cell::new(false),
             write_in_progress: Cell::new(false),
             close_event_sent: Cell::new(false),
+            #[cfg(windows)]
             windows: JsCell::new(WindowsState::default()),
         });
         this.root.set(Some(this.as_non_null()));
@@ -1057,7 +1054,7 @@ impl SendQueue {
     }
 
     #[inline]
-    pub fn as_ctx_ptr(&self) -> *mut SendQueue {
+    pub(crate) fn as_ctx_ptr(&self) -> *mut SendQueue {
         self.root_ptr()
     }
 
@@ -1066,7 +1063,7 @@ impl SendQueue {
         matches!(*self.socket.get(), SocketUnion::Open(_))
     }
 
-    pub fn is_connected(&self) -> bool {
+    pub(crate) fn is_connected(&self) -> bool {
         #[cfg(windows)]
         if self.windows.get().try_close_after_write {
             return false;
@@ -1082,43 +1079,25 @@ impl SendQueue {
                 CloseFrom::Deinit => "deinit",
             }
         );
-        let open = match *self.socket.get() {
-            SocketUnion::Open(s) => Some(s),
-            _ => None,
-        };
-        match open {
-            Some(s) => {
-                #[cfg(windows)]
-                {
-                    let pipe: *mut uv::Pipe = s;
-                    // SAFETY: pipe is a live uv_pipe_t owned until _windowsOnClosed fires.
-                    let stream: *mut uv::uv_stream_t = unsafe { (*pipe).as_stream() };
-                    unsafe { (*stream).read_stop() };
-
-                    let write_pending = self.windows.get().windows_write.is_some();
-                    if write_pending && from != CloseFrom::Deinit {
-                        log!("SendQueue#closeSocket -> mark ready for close");
-                        // currently writing; wait for the write to complete
-                        self.windows.with_mut(|w| w.try_close_after_write = true);
-                    } else {
-                        log!("SendQueue#closeSocket -> close now");
-                        self.windows_close(from != CloseFrom::Deinit);
-                    }
-                }
-                #[cfg(not(windows))]
-                {
-                    s.close(match reason {
-                        CloseReason::Normal => bun_uws::CloseCode::Normal,
-                        CloseReason::Failure => bun_uws::CloseCode::Failure,
-                    });
-                    self.socket_closed_notify(from != CloseFrom::Deinit);
-                }
-            }
-            None => {
-                self.socket_closed_notify(from != CloseFrom::Deinit);
+        #[cfg(windows)]
+        {
+            let _ = reason;
+            let is_open = self.with_pipe(|pipe| pipe.read_stop()).is_some();
+            if is_open && self.windows.get().windows_write.is_some() && from != CloseFrom::Deinit {
+                log!("SendQueue#closeSocket -> mark ready for close");
+                // currently writing; wait for the write to complete
+                self.windows.with_mut(|w| w.try_close_after_write = true);
+                return;
             }
         }
-        let _ = reason; // suppress unused on windows
+        #[cfg(not(windows))]
+        if let Some(s) = self.get_socket() {
+            s.close(match reason {
+                CloseReason::Normal => bun_uws::CloseCode::Normal,
+                CloseReason::Failure => bun_uws::CloseCode::Failure,
+            });
+        }
+        self.socket_closed_notify(from != CloseFrom::Deinit);
     }
 
     fn socket_closed(&self) {
@@ -1131,15 +1110,14 @@ impl SendQueue {
         {
             let windows_write = self.windows.get().windows_write;
             if let Some(windows_write) = windows_write {
-                // SAFETY: `windows_write` was leaked via `heap::alloc` in
-                // `write`; libuv still holds it and will free it in
-                // `windows_on_write_complete`. We only clear the backref so
+                // SAFETY: libuv holds it until `windows_on_write_complete`,
+                // which frees it. We only clear the backref so
                 // the callback doesn't touch a dead `SendQueue`.
                 unsafe { (*windows_write).owner = None };
             }
             self.windows.with_mut(|w| w.windows_write = None);
         }
-        self.keep_alive.with_mut(|k| k.disable());
+        self.keep_alive.disable();
         let was_open = self.socket_is_open();
         self.socket.set(SocketUnion::Closed);
         // Only enqueue the close notification for the open→closed transition.
@@ -1157,57 +1135,45 @@ impl SendQueue {
         if self.deferred_scheduled.replace(true) {
             return;
         }
-        self.ref_();
+        // SAFETY: the root of the live allocation that holds `self`.
+        let queue = unsafe { RefPtr::init_ref(self.root_ptr()) };
         self.get_global_this()
             .bun_vm()
-            .event_loop_mut()
-            .enqueue_task(Task::init(self.root_ptr()));
+            .event_loop()
+            .enqueue_task(Task::from_ref::<Self>(queue));
     }
 
-    /// `task_tag::SendQueueDeferred` dispatch: drain the pending flags, then
-    /// release the task's ref as the tail (nothing touches `*this` after).
-    ///
-    /// # Safety
-    /// `this` is the queued root pointer, live via the ref taken at schedule.
-    pub unsafe fn run_deferred(this: *mut SendQueue) {
-        {
-            // SAFETY: caller contract — the queued task owns a ref on `this`.
-            let sq = unsafe { &*this };
-            sq.deferred_scheduled.set(false);
-            if sq.pending_close.replace(false) {
-                log!("SendQueue#closeSocketTask");
-                sq.close_socket(CloseReason::Normal, CloseFrom::User);
+    /// `task_tag::SendQueueDeferred` dispatch, under the task's ref: drain the pending flags.
+    pub(crate) fn run_deferred(&self) {
+        self.deferred_scheduled.set(false);
+        if self.pending_close.get() {
+            log!("SendQueue#closeSocketTask");
+            #[cfg(not(windows))]
+            if self.read_before_close.get()
+                && let SocketUnion::Open(socket) = *self.socket.get()
+            {
+                // `pending_close` is still set, so a callback finds the channel disconnected.
+                socket.read_now();
             }
-            if sq.pending_after_close.replace(false) {
-                log!("SendQueue#_onAfterIPCClosed");
-                if !sq.close_event_sent.replace(true) {
-                    let global = sq.get_global_this();
-                    if let Some(item) = sq.waiting_for_ack.with_mut(|w| w.take()) {
-                        item.complete(&global);
-                    }
-                    // on_write_complete already dequeued everything fully written; the rest was never delivered.
-                    for item in sq.queue.with_mut(std::mem::take) {
-                        item.abort_unsent(&global);
-                    }
-                    if let Some(owner) = sq.owner.get() {
-                        owner.handle_ipc_close();
-                    }
+            self.pending_close.set(false);
+            self.close_socket(CloseReason::Normal, CloseFrom::User);
+        }
+        if self.pending_after_close.replace(false) {
+            log!("SendQueue#_onAfterIPCClosed");
+            if !self.close_event_sent.replace(true) {
+                let global = self.get_global_this();
+                if let Some(item) = self.waiting_for_ack.with_mut(|w| w.take()) {
+                    item.complete(&global);
+                }
+                // on_write_complete already dequeued everything fully written; the rest was never delivered.
+                for item in self.queue.with_mut(std::mem::take) {
+                    item.abort_unsent(&global);
+                }
+                if let Some(owner) = self.owner.get() {
+                    owner.handle_ipc_close();
                 }
             }
         }
-        // Release the task's ref; the SendQueue may be freed here.
-        // SAFETY: `this` is live and owns the ref taken at schedule.
-        unsafe { <SendQueue as bun_ptr::CellRefCounted>::deref(this) };
-    }
-
-    /// `Taskable::release_unrun`: a scheduled deferred task that will never
-    /// run still owns a ref; drop it (skipping the JS callbacks).
-    ///
-    /// # Safety
-    /// `this` is the queued root pointer, live via the ref taken at schedule.
-    pub unsafe fn release_deferred_unrun(this: *mut SendQueue) {
-        // SAFETY: caller contract.
-        unsafe { <SendQueue as bun_ptr::CellRefCounted>::deref(this) };
     }
 
     /// `uv::open_handles` closes the channel's pipe through here at a thread
@@ -1216,33 +1182,11 @@ impl SendQueue {
     #[cfg(windows)]
     unsafe fn stop_for_vm_teardown(this: *mut c_void) {
         // SAFETY: recorded at configure time by this live SendQueue; the pipe
-        // leaves the list when `windows_close` issues its uv_close.
-        let this = unsafe { &*this.cast::<SendQueue>() };
-        this.windows_close(true);
+        // leaves the list when it drops.
+        unsafe { &*this.cast::<SendQueue>() }.socket_closed();
     }
 
-    #[cfg(windows)]
-    fn windows_close(&self, notify: bool) {
-        log!("SendQueue#_windowsClose");
-        let SocketUnion::Open(pipe) = *self.socket.get() else {
-            return;
-        };
-        // SAFETY: pipe is live until the close cb fires.
-        unsafe {
-            (*pipe).data = pipe.cast();
-            (*pipe).close(Self::windows_on_closed);
-        }
-        self.socket_closed_notify(notify);
-    }
-
-    #[cfg(windows)]
-    extern "C" fn windows_on_closed(windows: *mut uv::Pipe) {
-        log!("SendQueue#_windowsOnClosed");
-        // SAFETY: pipe was heap-allocated in windowsConfigureClient / created by caller.
-        let _ = unsafe { bun_core::heap::take(windows) };
-    }
-
-    pub fn close_socket_next_tick(&self, next_tick: bool) {
+    pub(crate) fn close_socket_next_tick(&self, next_tick: bool) {
         log!("SendQueue#closeSocketNextTick");
         if !self.socket_is_open() {
             self.socket.set(SocketUnion::Closed);
@@ -1261,8 +1205,17 @@ impl SendQueue {
         self.schedule_deferred();
     }
 
+    /// The peer's process has exited. Its last messages can still be in the socket.
+    pub(crate) fn close_after_exit(&self) {
+        #[cfg(not(windows))]
+        if !self.pending_close.get() {
+            self.read_before_close.set(true);
+        }
+        self.close_socket_next_tick(true);
+    }
+
     /// User disconnect(): reports disconnected now but, like node, closes only once a handle awaiting its ack and the queue behind it have gone out.
-    pub fn disconnect(&self) {
+    pub(crate) fn disconnect(&self) {
         if self.socket_is_open()
             && !self.pending_close.get()
             && self.waiting_for_ack.get().is_some()
@@ -1287,11 +1240,14 @@ impl SendQueue {
         let write_in_progress = self.write_in_progress.get();
         self.queue.with_mut(|queue| {
             // optimal case: appending a message without a handle to the end of the queue when the last message also doesn't have a handle and isn't ack/nack
-            // this is rare. it will only happen if messages stack up after sending a handle, or if a long message is sent that is waiting for writable
+            // this is rare. it will only happen if messages stack up after sending a handle.
             let use_last = if handle.is_none() && !queue.is_empty() {
                 let len = queue.len();
                 let last = &queue[len - 1];
-                last.handle.is_none() && !last.is_ack_nack() && !(len == 1 && write_in_progress)
+                last.handle.is_none()
+                    && !last.is_ack_nack()
+                    && last.data.cursor == 0
+                    && !(len == 1 && write_in_progress)
             } else {
                 false
             };
@@ -1440,16 +1396,14 @@ impl SendQueue {
         let _ = global;
         // Note: KeepAlive::{ref_,unref} take an `EventLoopCtx` (aio cycle-
         // break vtable), not `&VirtualMachine`; dispatch is
-        // routed through `bun_io::get_vm_ctx` which `bun_runtime` registers.
-        let ctx = bun_io::posix_event_loop::get_vm_ctx(bun_io::AllocatorType::Js);
+        // routed through `bun_io::js_vm_ctx` which `bun_runtime` registers.
+        let ctx = bun_io::js_vm_ctx();
         let should_ref = self.should_ref();
-        self.keep_alive.with_mut(|k| {
-            if should_ref {
-                k.ref_(ctx);
-            } else {
-                k.unref(ctx);
-            }
-        });
+        if should_ref {
+            self.keep_alive.ref_(ctx);
+        } else {
+            self.keep_alive.unref(ctx);
+        }
     }
 
     fn continue_send(&self, global: &JSGlobalObject, reason: ContinueSendReason) {
@@ -1492,7 +1446,7 @@ impl SendQueue {
                 return Next::EmptyItem(queue.remove(0));
             }
             Next::Send(if first.data.cursor == 0 {
-                first.handle.as_ref().map(|h| h.fd)
+                first.handle.as_ref().map(Handle::fd)
             } else {
                 None
             })
@@ -1532,6 +1486,7 @@ impl SendQueue {
         enum Done {
             AwaitAck,
             Completed(SendHandle),
+            Capped,
             Partial,
             NoProgress,
             Error,
@@ -1539,7 +1494,10 @@ impl SendQueue {
         let done = self.queue.with_mut(|queue| {
             let first = &mut queue[0];
             let to_send_len = first.data.list.len() - first.data.cursor;
-            if n as usize == to_send_len {
+            let Ok(written) = usize::try_from(n) else {
+                return Done::Error;
+            };
+            if written == to_send_len {
                 if first.handle.is_some() {
                     // the message was fully written, but it had a handle.
                     // we must wait for ACK or NACK before sending any more messages.
@@ -1557,12 +1515,16 @@ impl SendQueue {
                     // shift the queue and try to send the next item immediately.
                     Done::Completed(queue.remove(0))
                 }
-            } else if n > 0 && n < i32::try_from(first.data.list.len()).expect("int cast") {
+            } else if written > 0 && written < to_send_len {
                 // the item was partially sent; update the cursor and wait for writable to send the rest
                 // (if we tried to send a handle, a partial write means the handle wasn't sent yet.)
-                first.data.cursor += usize::try_from(n).expect("int cast");
-                Done::Partial
-            } else if n == 0 {
+                first.data.cursor += written;
+                if written == MAX_WRITE_LEN {
+                    Done::Capped
+                } else {
+                    Done::Partial
+                }
+            } else if written == 0 {
                 // no bytes written; wait for writable
                 Done::NoProgress
             } else {
@@ -1577,6 +1539,10 @@ impl SendQueue {
                 item.complete(&global_this); // call the callback & deinit
                 self.continue_send(&global_this, ContinueSendReason::OnWritable);
             }
+            Done::Capped => {
+                // The transport accepted all `MAX_WRITE_LEN` bytes, so it won't send a writable event.
+                self.continue_send(&global_this, ContinueSendReason::OnWritable);
+            }
             Done::Partial | Done::NoProgress => {}
             Done::Error => {
                 // error. close socket.
@@ -1586,7 +1552,7 @@ impl SendQueue {
         self.update_ref(&global_this);
     }
 
-    pub fn write_version_packet(&self, global: &JSGlobalObject) {
+    pub(crate) fn write_version_packet(&self, global: &JSGlobalObject) {
         log!("SendQueue#writeVersionPacket");
         #[cfg(debug_assertions)]
         debug_assert!(self.has_written_version.get() == 0);
@@ -1612,7 +1578,7 @@ impl SendQueue {
         }
     }
 
-    pub fn serialize_and_send(
+    pub(crate) fn serialize_and_send(
         &self,
         global: &JSGlobalObject,
         value: JSValue,
@@ -1667,6 +1633,7 @@ impl SendQueue {
         }
     }
 
+    #[cfg(not(windows))]
     fn get_socket(&self) -> Option<SocketType> {
         match *self.socket.get() {
             SocketUnion::Open(s) => Some(s),
@@ -1675,12 +1642,16 @@ impl SendQueue {
     }
 
     #[cfg(windows)]
-    pub fn ipc_peer_pid(&self) -> u32 {
-        match *self.socket.get() {
-            // SAFETY: `p` is a live uv_pipe_t owned until _windowsOnClosed.
-            SocketUnion::Open(p) => unsafe { (*p).ipc_remote_pid() as u32 },
-            _ => 0,
-        }
+    fn with_pipe<R>(&self, f: impl FnOnce(&mut uv::Pipe) -> R) -> Option<R> {
+        self.socket.with_mut(|socket| match socket {
+            SocketUnion::Open(pipe) => Some(f(pipe)),
+            _ => None,
+        })
+    }
+
+    #[cfg(windows)]
+    pub(crate) fn ipc_peer_pid(&self) -> u32 {
+        self.with_pipe(|pipe| pipe.ipc_remote_pid()).unwrap_or(0)
     }
 
     /// starts a write request. on posix, this always calls _onWriteComplete immediately. on windows, it may
@@ -1688,20 +1659,22 @@ impl SendQueue {
     ///
     /// The outbound bytes are read from `queue[0]` *inside* this method.
     fn write(&self, fd: Option<Fd>) {
-        let Some(socket) = self.get_socket() else {
-            self.on_write_complete(-1);
-            return;
-        };
         #[cfg(windows)]
         {
             let _ = fd;
-            let pipe: *mut uv::Pipe = socket;
+            let Some(stream) = self.with_pipe(|pipe| {
+                pipe.ref_(); // ref on write
+                pipe.as_stream()
+            }) else {
+                self.on_write_complete(-1);
+                return;
+            };
 
             let write_req_slice: Box<[u8]> = self.queue.with_mut(|queue| {
                 let first = &queue[0];
                 let data = &first.data.list[first.data.cursor..];
                 log!("SendQueue#write len {}", data.len());
-                let write_len = data.len().min(i32::MAX as usize);
+                let write_len = data.len().min(MAX_WRITE_LEN);
                 Box::from(&data[0..write_len])
             });
 
@@ -1713,35 +1686,22 @@ impl SendQueue {
                 write_buffer: uv::uv_buf_t::init(b""), // re-init below after slice address is stable
             });
             write_req.write_buffer = uv::uv_buf_t::init(&write_req.write_slice);
-            // Hand ownership to libuv; reclaimed exactly once by
-            // `windows_on_write_complete` via `WindowsWrite::destroy`.
-            let write_req: *mut WindowsWrite = bun_core::heap::into_raw(write_req);
+            let write_req = bun_ptr::AliasableBox::from(write_req);
+            let req = write_req.as_ptr();
             debug_assert!(self.windows.get().windows_write.is_none());
-            self.windows.with_mut(|w| w.windows_write = Some(write_req));
 
-            // SAFETY: pipe is live (socket == .open).
-            unsafe { (*pipe).ref_() }; // ref on write
-            // SAFETY: `write_req` is a freshly-leaked Box; libuv owns it until
-            // the write callback fires.
+            // SAFETY: `req` stays put until the write callback takes it.
             let result = unsafe {
-                (*write_req).write_req.write(
-                    (*pipe).as_stream(),
-                    &(*write_req).write_buffer,
-                    write_req,
-                    // `write()` stores a *Rust* fn pointer (`fn(*mut T, ReturnCode)`)
-                    // and thunks it through libuv. The callback receives the
-                    // raw `*mut WindowsWrite` (NOT `&mut`) because
-                    // `windows_on_write_complete` deallocates the request via
-                    // `WindowsWrite::destroy`.
-                    |req: *mut WindowsWrite, rc| SendQueue::windows_on_write_complete(req, rc),
+                (*req).write_req.write(
+                    stream,
+                    &(*req).write_buffer,
+                    req,
+                    SendQueue::windows_on_write_complete,
                 )
             };
-            if result.to_error(bun_sys::Tag::write).is_some() {
-                WindowsWrite::destroy(write_req);
-                self.windows.with_mut(|w| w.windows_write = None);
-                // SAFETY: pipe is live (socket == .open); pairs with the
-                // `(*pipe).ref_()` above.
-                unsafe { (*pipe).unref() };
+            if result.is_err() {
+                drop(write_req);
+                self.with_pipe(|pipe| pipe.unref());
                 self.on_write_complete(-1);
                 if self.windows.get().try_close_after_write {
                     self.close_socket(CloseReason::Normal, CloseFrom::User);
@@ -1749,13 +1709,19 @@ impl SendQueue {
                 return;
             }
             // write request is queued. it will call _onWriteComplete when it completes.
+            (self.windows).with_mut(|w| w.windows_write = Some(write_req.into_raw()));
         }
         #[cfg(not(windows))]
         {
+            let Some(socket) = self.get_socket() else {
+                self.on_write_complete(-1);
+                return;
+            };
             let n: i32 = self.queue.with_mut(|queue| {
                 let first = &queue[0];
                 let data = &first.data.list[first.data.cursor..];
                 log!("SendQueue#write len {}", data.len());
+                let data = &data[..data.len().min(MAX_WRITE_LEN)];
                 if let Some(fd_unwrapped) = fd {
                     socket.write_fd(data, fd_unwrapped.native())
                 } else {
@@ -1769,17 +1735,13 @@ impl SendQueue {
     #[cfg(windows)]
     fn windows_on_write_complete(write_req: *mut WindowsWrite, status: uv::ReturnCode) {
         log!("SendQueue#_windowsOnWriteComplete");
-        // SAFETY: write_req was passed to uv_write as the data ptr; libuv hands it back here.
-        // Explicit `&` so the slice `.len()` autoref doesn't trigger
-        // `dangerous_implicit_autorefs` on the raw-ptr place.
-        let write_len = unsafe { (&(*write_req).write_slice).len() };
-        let this: *mut SendQueue = 'blk: {
-            let owner = unsafe { (*write_req).owner };
-            WindowsWrite::destroy(write_req);
-            match owner {
-                Some(o) => break 'blk o,
-                None => return, // orelse case if disconnected before the write completes
-            }
+        let (this, write_len) = {
+            // SAFETY: the box `write` gave up, which libuv hands back once.
+            let write_req = unsafe { bun_core::heap::take(write_req) };
+            (write_req.owner, write_req.write_slice.len())
+        };
+        let Some(this) = this else {
+            return; // disconnected before the write completes
         };
         let vm = VirtualMachine::get();
         let _scope = vm.enter_event_loop_scope();
@@ -1788,11 +1750,7 @@ impl SendQueue {
         // socket_closed if not); every method takes `&self`.
         let this = unsafe { &*this };
         this.windows.with_mut(|w| w.windows_write = None);
-        if let Some(socket) = this.get_socket() {
-            // SAFETY: `socket` is the live `uv_pipe_t` place (matches the
-            // `(*pipe).ref_()` site in `write`).
-            unsafe { (*socket).unref() }; // write complete; unref
-        }
+        this.with_pipe(|pipe| pipe.unref()); // write complete; unref
         let n = if status.to_error(bun_sys::Tag::write).is_some() {
             -1
         } else {
@@ -1814,100 +1772,39 @@ impl SendQueue {
     /// `this` must point at a live `SendQueue` and must derive from the
     /// allocation's root raw pointer (SharedReadWrite provenance), NOT from a
     /// `&mut` reborrow: the pointer is stashed in `uv_handle_t.data` for the
-    /// pipe's lifetime. Mirrors [`windows_configure_client`].
+    /// pipe's lifetime.
     #[cfg(windows)]
-    pub unsafe fn windows_configure_server(
+    pub(crate) unsafe fn windows_configure_server(
         this: *mut Self,
-        ipc_pipe: *mut uv::Pipe,
+        mut ipc_pipe: uv::Owned<uv::Pipe>,
     ) -> bun_sys::Result<()> {
         log!("configureServer");
-        // SAFETY: ipc_pipe is a live uv_pipe_t handed in by the caller; `this`
-        // is the root-raw SendQueue pointer per the fn safety contract.
-        unsafe {
-            (*ipc_pipe).data = this.cast();
-            (*ipc_pipe).unref();
-        }
+        ipc_pipe.unref();
+        ipc_pipe.set_owner(this.cast(), Self::stop_for_vm_teardown);
+        // Routes through the `StreamReader for SendQueue` impl below.
+        let result = ipc_pipe.read_start_ctx::<SendQueue>(this);
         // SAFETY: caller contract — `this` is a live SendQueue.
         let self_ = unsafe { &*this };
         self_.socket.set(SocketUnion::Open(ipc_pipe));
-        uv::open_handles::set_owner(
-            ipc_pipe.cast(),
-            this.cast(),
-            Some(Self::stop_for_vm_teardown),
-        );
-        self_.windows.with_mut(|w| w.is_server = true);
-        // SAFETY: pipe is the live uv handle just stored in the socket cell.
-        unsafe { (*ipc_pipe).data = this.cast() };
-
-        // SAFETY: pipe is the live uv handle just stored in the socket cell.
-        let stream: *mut uv::uv_stream_t = unsafe { (*ipc_pipe).as_stream() };
-
-        // SAFETY: stream points to the live uv handle; `this` is the root-raw
-        // context pointer (see fn safety contract) so storing it in
-        // `handle.data` is sound for the handle's lifetime. Routes through the
-        // `StreamReader for SendQueue` impl below (wraps the
-        // `IPCHandlers::WindowsNamedPipe` callbacks).
-        let read_start_result =
-            unsafe { (*stream).read_start_ctx::<SendQueue>(this) }.to_error(bun_sys::Tag::listen);
-        if let Some(err) = read_start_result {
-            self_.close_socket(CloseReason::Failure, CloseFrom::User);
-            return Err(err);
-        }
-        bun_sys::Result::Ok(())
+        result
+            .to_result(bun_sys::Tag::listen)
+            .inspect_err(|_| self_.close_socket(CloseReason::Failure, CloseFrom::User))
     }
 
-    /// # Safety
-    /// `this` must point at a live `SendQueue` and must derive from the
-    /// allocation's root raw pointer (SharedReadWrite provenance), NOT from a
-    /// `&mut` reborrow: the pointer is stashed in `uv_handle_t.data` for the
-    /// pipe's lifetime.
+    /// SAFETY: as [`Self::windows_configure_server`].
     #[cfg(windows)]
     pub(crate) unsafe fn windows_configure_client(
         this: *mut Self,
         pipe_fd: Fd,
-    ) -> Result<(), bun_jsc::CrateError> {
+    ) -> bun_sys::Result<()> {
         log!("configureClient");
-        let ipc_pipe: *mut uv::Pipe =
-            bun_core::heap::into_raw(Box::new(bun_core::ffi::zeroed::<uv::Pipe>()));
-        // SAFETY: ipc_pipe just allocated above.
-        if let Some(err) =
-            unsafe { (*ipc_pipe).init(uv::Loop::get(), true) }.to_error(bun_sys::Tag::pipe)
-        {
-            // SAFETY: ipc_pipe was heap-allocated above and init failed before libuv took ownership.
-            let _ = unsafe { bun_core::heap::take(ipc_pipe) };
-            return Err(err.into());
-        }
-        // SAFETY: ipc_pipe is a live initialized uv_pipe_t.
-        if let Some(err) = unsafe { (*ipc_pipe).open(pipe_fd.uv()) }.to_error(bun_sys::Tag::open) {
-            // SAFETY: ipc_pipe is a live initialized uv_pipe_t; close_and_destroy frees the Box.
-            unsafe { uv::Pipe::close_and_destroy(ipc_pipe) };
-            return Err(err.into());
-        }
-        // SAFETY: ipc_pipe is a live initialized uv_pipe_t.
-        unsafe { (*ipc_pipe).unref() };
-        // SAFETY: caller contract — `this` is a live SendQueue.
-        let self_ = unsafe { &*this };
-        self_.socket.set(SocketUnion::Open(ipc_pipe));
-        uv::open_handles::set_owner(
-            ipc_pipe.cast(),
-            this.cast(),
-            Some(Self::stop_for_vm_teardown),
-        );
-        self_.windows.with_mut(|w| w.is_server = false);
-
-        // SAFETY: ipc_pipe is the live uv handle just stored in the socket cell.
-        let stream = unsafe { (*ipc_pipe).as_stream() };
-
-        // SAFETY: stream points to the live uv handle; `this` is the root-raw
-        // context pointer (see fn safety contract) so storing it in
-        // `handle.data` is sound for the handle's lifetime.
-        if let Some(err) =
-            unsafe { (*stream).read_start_ctx::<SendQueue>(this) }.to_error(bun_sys::Tag::listen)
-        {
-            self_.close_socket(CloseReason::Failure, CloseFrom::User);
-            return Err(err.into());
-        }
-        Ok(())
+        let mut ipc_pipe = uv::Owned::<uv::Pipe>::zeroed();
+        ipc_pipe
+            .init(uv::Loop::get(), true)
+            .to_result(bun_sys::Tag::pipe)?;
+        ipc_pipe.open(pipe_fd.uv()).to_result(bun_sys::Tag::open)?;
+        // SAFETY: fn contract.
+        unsafe { Self::windows_configure_server(this, ipc_pipe) }
     }
 }
 
@@ -1915,38 +1812,33 @@ impl SendQueue {
 /// callbacks. The three fns are baked
 /// into the trait impl so the `extern "C"` trampoline is monomorphised over
 /// `SendQueue` with zero per-handle storage.
+// SAFETY: nothing touches `incoming` between `on_read_alloc` and the report of the read.
 #[cfg(windows)]
-impl uv::StreamReader for SendQueue {
+unsafe impl uv::StreamReader for SendQueue {
     #[inline]
-    fn on_read_alloc(this: &mut Self, suggested_size: usize) -> &mut [u8] {
+    fn on_read_alloc(this: &Self, suggested_size: usize) -> *mut [u8] {
         IPCHandlers::WindowsNamedPipe::on_read_alloc(this, suggested_size)
     }
     #[inline]
-    fn on_read_error(this: &mut Self, err: core::ffi::c_int) {
+    fn on_read_error(this: &Self, err: core::ffi::c_int) {
         // Map the raw libuv errno
         // to `bun_sys::E`, defaulting to CANCELED for unmapped codes.
         let e = bun_sys::windows::translate_uv_error_to_e(err);
         IPCHandlers::WindowsNamedPipe::on_read_error(this, e);
     }
     #[inline]
-    unsafe fn on_read(this: *mut Self, data: &[u8]) {
-        // `data` points into `(*this).incoming` (it was returned from
-        // `on_read_alloc`); the callee re-derives the written tail from
-        // `incoming` itself, so only the length is forwarded and only a shared
-        // view of `*this` is formed.
-        let nread = data.len();
-        let _ = data;
-        // SAFETY: `this` is the live `SendQueue` stashed in `handle.data` by
-        // `read_start_ctx`; a shared reborrow only, and `data` is not used after.
-        IPCHandlers::WindowsNamedPipe::on_read(unsafe { &*this }, nread);
+    unsafe fn on_read(this: &Self, nread: usize) {
+        IPCHandlers::WindowsNamedPipe::on_read(this, nread);
     }
 }
 
-impl bun_event_loop::Taskable for SendQueue {
+impl bun_event_loop::RefTask for SendQueue {
     const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::SendQueueDeferred;
-    unsafe fn release_unrun(this: *mut Self) {
-        // SAFETY: fn contract — the SendQueue root queued with a held ref.
-        unsafe { SendQueue::release_deferred_unrun(this) }
+    type Ref = RefPtr<Self>;
+    fn release_unrun(_: Self::Ref) {}
+    /// The channel's own close hop.
+    fn context(_: &Self::Ref) -> bun_event_loop::ContextId {
+        bun_event_loop::ContextId::NONE
     }
 }
 
@@ -1955,21 +1847,13 @@ impl Drop for SendQueue {
         log!("SendQueue#deinit");
         self.close_event_sent.set(true);
         self.close_socket(CloseReason::Failure, CloseFrom::Deinit);
-
-        // queue items / internal_msg_queue / incoming / waiting_for_ack: Drop handles them.
-
-        // An SCM_RIGHTS fd can be stashed by `onFd` and not yet consumed by
-        // the `NODE_HANDLE` decoder when the socket closes.
-        if let Some(fd) = self.incoming_fd.take() {
-            let _ = fd.close_allowing_standard_io(None);
-        }
     }
 }
 
 const MAX_HANDLE_RETRANSMISSIONS: u32 = 3;
 
 #[cfg(windows)]
-pub fn windows_export_socket_hex(fd: Fd, peer_pid: u32) -> Option<Box<[u8]>> {
+pub(crate) fn windows_export_socket_hex(fd: Fd, peer_pid: u32) -> Option<Box<[u8]>> {
     let size = bun_uws::socket_transfer::bsd_socket_export_size() as usize;
     let mut info = vec![0u8; size];
     // SAFETY: `info` is `size` bytes as required; `fd.native()` is the SOCKET.
@@ -1990,13 +1874,14 @@ pub fn windows_export_socket_hex(fd: Fd, peer_pid: u32) -> Option<Box<[u8]>> {
     Some(hex.into_boxed_slice())
 }
 
-pub const WIN_SOCKET_INFO_KEY: &[u8] = b"$winSocketInfo";
+#[cfg(windows)]
+pub(crate) const WIN_SOCKET_INFO_KEY: &[u8] = b"$winSocketInfo";
 
 #[cfg(windows)]
 fn import_windows_socket_payload(
     global: &JSGlobalObject,
     msg_data: JSValue,
-) -> JsResult<Option<Fd>> {
+) -> JsResult<Option<CloseOnDrop>> {
     let Some(info_value) = msg_data
         .get(global, WIN_SOCKET_INFO_KEY)?
         .filter(|v| v.is_string())
@@ -2025,14 +1910,9 @@ fn import_windows_socket_payload(
         log!("importWindowsSocketPayload: WSASocketW failed: {}", err);
         return Ok(None);
     }
-    let fd = Fd::from_system(sock as *mut c_void);
-    if let Err(err) = msg_data.delete_property(global, WIN_SOCKET_INFO_KEY) {
-        // The imported socket is not owned by anything yet; do not leak it
-        // with the exception.
-        fd.close();
-        return Err(err);
-    }
-    Ok(Some(fd))
+    let socket = CloseOnDrop::new(Fd::from_system(sock as *mut c_void));
+    msg_data.delete_property(global, WIN_SOCKET_INFO_KEY)?;
+    Ok(Some(socket))
 }
 
 fn received_fd_to_js(fd: Fd) -> JSValue {
@@ -2112,13 +1992,11 @@ fn handle_ipc_message(
         match icmd {
             IPCCommand::Handle(msg_data) => {
                 #[cfg(windows)]
-                let imported = import_windows_socket_payload(global_this, msg_data)?;
-                #[cfg(windows)]
-                let ack = imported.is_some();
+                let received = import_windows_socket_payload(global_this, msg_data)?;
                 #[cfg(not(windows))]
-                let ack = send_queue.incoming_fd.get().is_some();
+                let received = send_queue.incoming_fd.take();
 
-                let packet = if ack {
+                let packet = if received.is_some() {
                     get_ack_packet(send_queue.mode)
                 } else {
                     get_nack_packet(send_queue.mode)
@@ -2137,18 +2015,10 @@ fn handle_ipc_message(
                 log!("IPC call continueSend() from handleIPCMessage");
                 send_queue.continue_send(global_this, ContinueSendReason::NewMessageAppended);
 
-                if !ack {
+                let Some(received) = received else {
                     return Ok(());
-                }
-
-                // Get file descriptor and clear it
-                #[cfg(windows)]
-                let fd: Fd = imported.unwrap();
-                #[cfg(not(windows))]
-                let fd: Fd = send_queue.incoming_fd.take().unwrap();
-
+                };
                 let Some(owner) = send_queue.owner_ref() else {
-                    let _ = fd.close_allowing_standard_io(None);
                     return Ok(());
                 };
                 let target: JSValue = match owner.kind() {
@@ -2159,12 +2029,10 @@ fn handle_ipc_message(
                 // RAII: `enter()` now, `exit()` on drop — covers both the
                 // early-error return and the fall-through.
                 let _scope = global_this.bun_vm().enter_event_loop_scope();
-                let fd_js = received_fd_to_js(fd);
-                if let Err(e) = ipc_parse(global_this, target, msg_data, fd_js) {
-                    // ack written already, that's okay.
-                    let _ = fd.close_allowing_standard_io(None);
-                    return Err(e);
-                }
+                let fd_js = received_fd_to_js(received.fd());
+                ipc_parse(global_this, target, msg_data, fd_js)?;
+                // The object that `ipc_parse` made closes it.
+                received.into_raw();
                 drop(_scope);
 
                 // ipc_parse will call the callback which calls handleIPCMessage()
@@ -2184,8 +2052,7 @@ fn handle_ipc_message(
         }
     } else {
         // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/cluster/utils.js#L33-L49
-        let mut handle_js = JSValue::UNDEFINED;
-        let mut received_fd: Option<Fd> = None;
+        let mut received = None;
         if let DecodedIPCMessage::Internal(msg_data) = &message {
             let msg_data = *msg_data;
             if msg_data.is_object() {
@@ -2193,12 +2060,14 @@ fn handle_ipc_message(
                     && marker.to_boolean()
                 {
                     #[cfg(windows)]
-                    let imported = import_windows_socket_payload(global_this, msg_data)?;
-                    #[cfg(windows)]
-                    let ack = imported.is_some();
+                    {
+                        received = import_windows_socket_payload(global_this, msg_data)?;
+                    }
                     #[cfg(not(windows))]
-                    let ack = send_queue.incoming_fd.get().is_some();
-                    let packet = if ack {
+                    {
+                        received = send_queue.incoming_fd.take();
+                    }
+                    let packet = if received.is_some() {
                         get_ack_packet(send_queue.mode)
                     } else {
                         get_nack_packet(send_queue.mode)
@@ -2212,26 +2081,16 @@ fn handle_ipc_message(
                     send_queue.insert_message(reply);
                     log!("IPC call continueSend() from internal $hasHandle ack");
                     send_queue.continue_send(global_this, ContinueSendReason::NewMessageAppended);
-                    if !ack {
+                    if received.is_none() {
                         return Ok(());
                     }
-                    #[cfg(windows)]
-                    let fd = imported.unwrap();
-                    #[cfg(not(windows))]
-                    let fd = send_queue.incoming_fd.take().unwrap();
-                    received_fd = Some(fd);
-                    handle_js = received_fd_to_js(fd);
                 }
             }
         }
-        match send_queue.owner.get() {
-            Some(owner) => owner.handle_ipc_message(&message, handle_js)?,
-            // Owner already torn down: nobody will adopt the descriptor we just acked.
-            None => {
-                if let Some(fd) = received_fd {
-                    let _ = fd.close_allowing_standard_io(None);
-                }
-            }
+        if let Some(owner) = send_queue.owner.get() {
+            let handle_js =
+                received.map_or(JSValue::UNDEFINED, |fd| received_fd_to_js(fd.into_raw()));
+            owner.handle_ipc_message(&message, handle_js)?;
         }
     }
     Ok(())
@@ -2273,6 +2132,10 @@ fn decode_next_json(incoming: &JsCell<IncomingBuffer>, global: &JSGlobalObject) 
             unreachable!()
         };
         let Some(msg) = json_buf.next() else {
+            if json_buf.is_too_long() {
+                // Fail the same way as a complete line that's too long to become a string.
+                return DecodeStep::Fail(IPCDecodeError::Js(JsError::OutOfMemory));
+            }
             return DecodeStep::Wait;
         };
         match decode_ipc_message(Mode::Json, msg.data, global, Some(msg.newline_pos)) {
@@ -2415,27 +2278,30 @@ fn on_data2(send_queue: &SendQueue, all_data: &[u8]) {
 
 /// Used on POSIX
 #[allow(non_snake_case)]
-pub mod IPCHandlers {
+pub(crate) mod IPCHandlers {
     use super::*;
 
-    pub mod PosixSocket {
+    pub(crate) mod PosixSocket {
         use super::*;
 
-        pub fn on_close(send_queue: &SendQueue, _: Socket, _: c_int, _: Option<*mut c_void>) {
+        pub(crate) fn on_close(
+            send_queue: &SendQueue,
+            _: Socket,
+            _: c_int,
+            _: Option<*mut c_void>,
+        ) {
             // uSockets has already freed the underlying socket
             log!("NewSocketIPCHandler#onClose\n");
             send_queue.socket_closed();
         }
 
-        pub fn on_data(send_queue: &SendQueue, _: Socket, all_data: &[u8]) {
+        pub(crate) fn on_data(send_queue: &SendQueue, _: Socket, all_data: &[u8]) {
             let global_this = send_queue.get_global_this();
-            // RAII: `enter()` now, `exit()` on drop. The guard holds the raw
-            // `*mut EventLoop` so `&mut EventLoop` isn't held across `on_data2`.
             let _scope = global_this.bun_vm().enter_event_loop_scope();
             on_data2(send_queue, all_data);
         }
 
-        pub fn on_fd(send_queue: &SendQueue, _: Socket, fd: c_int) {
+        pub(crate) fn on_fd(send_queue: &SendQueue, _: Socket, fd: c_int) {
             // SCM_RIGHTS is POSIX-only; on Windows this arm is unreachable but
             // still type-checked, and `FD.fromNative` takes `*anyopaque` there.
             #[cfg(windows)]
@@ -2446,30 +2312,26 @@ pub mod IPCHandlers {
             #[cfg(not(windows))]
             {
                 log!("onFd: {}", fd);
-                if let Some(existing_fd) = send_queue.incoming_fd.take() {
-                    log!("onFd: incoming_fd already set; overwriting");
-                    let _ = existing_fd.close_allowing_standard_io(None);
-                }
-                send_queue.incoming_fd.set(Some(Fd::from_native(fd)));
+                let received = CloseOnDrop::new(Fd::from_native(fd));
+                send_queue.incoming_fd.set(Some(received));
             }
         }
 
-        pub fn on_writable(send_queue: &SendQueue, _: Socket) {
+        pub(crate) fn on_writable(send_queue: &SendQueue, _: Socket) {
             log!("onWritable");
 
             let global_this = send_queue.get_global_this();
-            // RAII: see `on_data`.
             let _scope = global_this.bun_vm().enter_event_loop_scope();
             log!("IPC call continueSend() from onWritable");
             send_queue.continue_send(&global_this, ContinueSendReason::OnWritable);
         }
 
-        pub fn on_timeout(_: &SendQueue, _: Socket) {
+        pub(crate) fn on_timeout(_: &SendQueue, _: Socket) {
             log!("onTimeout");
             // unref if needed
         }
 
-        pub fn on_end(send_queue: &SendQueue, _: Socket) {
+        pub(crate) fn on_end(send_queue: &SendQueue, _: Socket) {
             log!("onEnd");
             send_queue.close_socket(CloseReason::Failure, CloseFrom::User);
         }
@@ -2479,24 +2341,12 @@ pub mod IPCHandlers {
     pub(crate) mod WindowsNamedPipe {
         use super::*;
 
-        pub(crate) fn on_read_alloc(send_queue: &SendQueue, suggested_size: usize) -> &mut [u8] {
+        pub(crate) fn on_read_alloc(send_queue: &SendQueue, suggested_size: usize) -> *mut [u8] {
             log!("NewNamedPipeIPCHandler#onReadAlloc {}", suggested_size);
-            // SAFETY: the returned region is the buffer's spare capacity,
-            // handed to libuv for the pending read; nothing else touches
-            // `incoming` until `on_read` commits the byte count.
-            let inc = unsafe { &mut *send_queue.incoming.as_ptr() };
-            match inc {
-                IncomingBuffer::Json(json_buf) => {
-                    // SAFETY: libuv writes into this region before notify_written reads.
-                    let spare = unsafe { json_buf.data.uv_alloc_spare_u8(suggested_size) };
-                    &mut spare[..suggested_size]
-                }
-                IncomingBuffer::Advanced(adv_buf) => {
-                    // SAFETY: libuv writes into this region before on_read commits.
-                    let spare = unsafe { adv_buf.uv_alloc_spare_u8(suggested_size) };
-                    &mut spare[..suggested_size]
-                }
-            }
+            send_queue.incoming.with_mut(|inc| match inc {
+                IncomingBuffer::Json(json_buf) => json_buf.data.uv_alloc_spare(suggested_size),
+                IncomingBuffer::Advanced(adv_buf) => adv_buf.uv_alloc_spare(suggested_size),
+            })
         }
 
         pub(crate) fn on_read_error(send_queue: &SendQueue, err: bun_sys::E) {
@@ -2572,7 +2422,7 @@ pub mod IPCHandlers {
 }
 
 #[track_caller]
-pub fn ipc_serialize(
+pub(crate) fn ipc_serialize(
     global_object: &JSGlobalObject,
     message: JSValue,
     handle: JSValue,

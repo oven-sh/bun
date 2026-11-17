@@ -1,0 +1,12 @@
+# `i < list.length` has passed, i is no less than 0, and nothing has run between the test and the read that could write a list: the read looks at no length. The turn calls unseen code behind the read, so nothing leaves the loop and the read tests the list for itself
+# f1 = findsTheFirstEmptyText
+# -- source: position-below-the-length-of-the-list-is-read-without-a-second-test.ts
+# declare function sink(...values: unknown[]): void;
+# function findsTheFirstEmptyText(list: string[]) { for (let i = 0; i < list.length; i++) { if (list[i] === "") return i; sink(i); } return -1; }
+# sink(findsTheFirstEmptyText, ["a", ""]);
+# -- end of source
+# RUN: walk f1 mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK: isInLoop=true isLoopHead=true
+# CHECK: = GetArrayLength
+# CHECK: = GetArrayElement {{*}}level=Expected {{*}}isInBounds

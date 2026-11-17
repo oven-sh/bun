@@ -1,12 +1,11 @@
 use core::cell::Cell;
-use core::ffi::c_char;
 use std::sync::OnceLock;
 use std::sync::atomic::{AtomicBool, AtomicPtr, Ordering};
 
 use bun_alloc::AllocError;
 use bun_collections::{ArrayHashMapExt, GetOrPutResult, StringSet};
 use bun_core::{self, Output};
-use bun_core::{ZStr, strings};
+use bun_core::{CStringList, ZStr, strings};
 use bun_paths::{self, MAX_PATH_BYTES, PathBuffer};
 use bun_sys;
 use bun_url::URL;
@@ -145,7 +144,11 @@ pub struct Loader {
     /// only populated with files specified explicitly (e.g. --env-file arg)
     pub(crate) custom_files_loaded: StringSet,
 
+    /// Hides the `[Nms] ".env"` line and the `error loading .env file` lines.
     pub quiet: bool,
+
+    /// Hides the `[Nms] ".env"` line only.
+    pub quiet_loaded_files: bool,
 
     pub(crate) did_load_process: bool,
     pub(crate) reject_unauthorized: Cell<Option<bool>>,
@@ -161,6 +164,18 @@ static NODE_PATH_TO_USE_SET_ONCE: bun_core::RwLock<Option<Box<[u8]>>> = bun_core
 
 // PORTING.md §Concurrency: OnceLock — set once from CLI flag, read many.
 pub static HAS_NO_CLEAR_SCREEN_CLI_FLAG: OnceLock<bool> = OnceLock::new();
+
+/// Compares like [`HashTable`] keys, which are ASCII case-insensitive on Windows.
+fn is_ipc_channel_key(key: &[u8]) -> bool {
+    const KEYS: [&[u8]; 2] = [b"NODE_CHANNEL_FD", b"NODE_CHANNEL_SERIALIZATION_MODE"];
+    KEYS.iter().any(|&k| {
+        if cfg!(windows) {
+            strings::eql_case_insensitive_ascii(key, k, true)
+        } else {
+            strings::eql(key, k)
+        }
+    })
+}
 
 impl Loader {
     /// Shared "empty-ish" predicate for proxy env vars: an unset/empty value,
@@ -217,20 +232,15 @@ impl Loader {
         buf: &'b mut PathBuffer,
     ) -> Option<&'b ZStr> {
         // Check NODE or npm_node_execpath env var, but only use it if the file actually exists.
-        // NLL workaround: compute the length in an inner scope so the borrow of `buf` for the
-        // executable check ends before we either return a fresh borrow or fall through to `which`.
-        let env_len = self
+        if let Some(node) = self
             .get(b"NODE")
             .or_else(|| self.get(b"npm_node_execpath"))
             .filter(|n| !n.is_empty() && n.len() < MAX_PATH_BYTES)
-            .map(|node| {
-                buf[..node.len()].copy_from_slice(node);
-                buf[node.len()] = 0;
-                node.len()
-            });
-        if let Some(len) = env_len {
-            if bun_sys::is_executable_file_path(ZStr::from_buf(&buf[..], len)) {
-                return Some(ZStr::from_buf(&buf[..], len));
+        {
+            buf[..node.len()].copy_from_slice(node);
+            let node = ZStr::nul_terminate(buf, node.len());
+            if bun_sys::is_executable_file_path(node) {
+                return Some(node);
             }
         }
 
@@ -323,7 +333,12 @@ impl Loader {
     }
 
     pub fn get_http_proxy_for(&self, url: &URL<'_>) -> Option<URL<'_>> {
-        self.get_http_proxy(url.is_http(), Some(url.hostname), Some(url.host))
+        // `http://DOMAIN\user:pass@proxy:8080` is a domain login, as curl reads it.
+        let proxy = URL::parse_single_reader(self.proxy_env_for_scheme(url.is_http())?);
+        if self.is_no_proxy(url.hostname, url.get_port_auto()) {
+            return None;
+        }
+        Some(proxy)
     }
 
     pub fn has_http_proxy(&self) -> bool {
@@ -331,118 +346,60 @@ impl Loader {
             || self.has(b"HTTP_PROXY")
             || self.has(b"https_proxy")
             || self.has(b"HTTPS_PROXY")
+            || self.all_proxy().is_some()
     }
 
-    /// Get proxy URL for HTTP/HTTPS requests, respecting NO_PROXY.
-    /// `hostname` is the host without port (e.g., "localhost")
-    /// `host` is the host with port if present (e.g., "localhost:3000")
-    pub fn get_http_proxy(
-        &self,
-        is_http: bool,
-        hostname: Option<&[u8]>,
-        host: Option<&[u8]>,
-    ) -> Option<URL<'_>> {
-        // TODO: When Web Worker support is added, make sure to intern these strings
-        let mut http_proxy: Option<URL<'_>> = None;
+    /// `http_proxy` / `HTTP_PROXY` (or the `https` pair), falling back to
+    /// `all_proxy` / `ALL_PROXY`.
+    pub fn proxy_env_for_scheme(&self, is_http: bool) -> Option<&[u8]> {
+        self.scheme_proxy(is_http).or_else(|| self.all_proxy())
+    }
 
-        let proxy = if is_http {
+    /// `[proxy_env_for_scheme(true), proxy_env_for_scheme(false)]`.
+    pub fn proxy_env_for_both_schemes(&self) -> [Option<&[u8]>; 2] {
+        let (http, https) = (self.scheme_proxy(true), self.scheme_proxy(false));
+        if http.is_some() && https.is_some() {
+            return [http, https];
+        }
+        let all = self.all_proxy();
+        [http.or(all), https.or(all)]
+    }
+
+    fn scheme_proxy(&self, is_http: bool) -> Option<&[u8]> {
+        let specific = if is_http {
             self.get_lower_then_upper(b"http_proxy", b"HTTP_PROXY")
         } else {
             self.get_lower_then_upper(b"https_proxy", b"HTTPS_PROXY")
         };
-        if let Some(p) = proxy {
-            if !Self::is_emptyish(p) {
-                http_proxy = Some(URL::parse(p));
-            }
-        }
-
-        if http_proxy.is_some() && hostname.is_some() {
-            if self.is_no_proxy(hostname, host) {
-                return None;
-            }
-        }
-        http_proxy
+        specific.filter(|p| !Self::is_emptyish(p))
     }
 
-    /// Returns true if the given hostname/host should bypass the proxy
-    /// according to the NO_PROXY / no_proxy environment variable.
-    pub fn is_no_proxy(&self, hostname: Option<&[u8]>, host: Option<&[u8]>) -> bool {
-        // NO_PROXY filter
-        // See the syntax at https://about.gitlab.com/blog/2021/01/27/we-need-to-talk-no-proxy/
-        let Some(hn) = hostname else { return false };
+    /// The proxy for every target scheme. It commonly names a SOCKS proxy,
+    /// which the HTTP client cannot speak, so a value with some other scheme
+    /// than `http:` / `https:` is left alone. A value with no scheme is an
+    /// HTTP proxy, as for curl and for `HTTP_PROXY`: going direct instead would
+    /// silently bypass the proxy, where a wrong guess fails loudly.
+    fn all_proxy(&self) -> Option<&[u8]> {
+        let value = self
+            .get_lower_then_upper(b"all_proxy", b"ALL_PROXY")
+            .filter(|p| !Self::is_emptyish(p))?;
+        let url = URL::parse_single_reader(value);
+        (url.protocol.is_empty() || url.has_http_like_protocol()).then_some(value)
+    }
 
-        let Some(no_proxy_text) = self.get_lower_then_upper(b"no_proxy", b"NO_PROXY") else {
-            return false;
-        };
-        if Self::is_emptyish(no_proxy_text) {
-            return false;
-        }
+    /// `no_proxy`, else `NO_PROXY`: one list, the lowercase name first, as curl,
+    /// node and undici read it.
+    pub fn no_proxy_list(&self) -> &[u8] {
+        let read = |name: &[u8]| self.get(name).filter(|v| !Self::is_emptyish(v));
+        read(b"no_proxy")
+            .or_else(|| read(b"NO_PROXY"))
+            .unwrap_or(b"")
+    }
 
-        for no_proxy_item in strings::split(no_proxy_text, b",") {
-            let mut no_proxy_entry = strings::trim(no_proxy_item, &strings::WHITESPACE_CHARS);
-            if no_proxy_entry.is_empty() {
-                continue;
-            }
-            if no_proxy_entry == b"*" {
-                return true;
-            }
-            // strips .
-            if strings::starts_with_char(no_proxy_entry, b'.') {
-                no_proxy_entry = &no_proxy_entry[1..];
-                if no_proxy_entry.is_empty() {
-                    continue;
-                }
-            }
-
-            // Determine if entry contains a port or is an IPv6 address
-            // IPv6 addresses contain multiple colons (e.g., "::1", "2001:db8::1")
-            // Bracketed IPv6 with port: "[::1]:8080"
-            // Host with port: "localhost:8080" (single colon)
-            let colon_count = strings::count_char(no_proxy_entry, b':');
-            let is_bracketed_ipv6 = strings::starts_with_char(no_proxy_entry, b'[');
-            let has_port = 'blk: {
-                if is_bracketed_ipv6 {
-                    // Bracketed IPv6: check for "]:port" pattern
-                    if strings::index_of(no_proxy_entry, b"]:").is_some() {
-                        break 'blk true;
-                    }
-                    break 'blk false;
-                } else if colon_count == 1 {
-                    // Single colon means host:port (not IPv6)
-                    break 'blk true;
-                }
-                // Multiple colons without brackets = bare IPv6 literal (no port)
-                break 'blk false;
-            };
-
-            if has_port {
-                // Entry has a port, do exact match against host:port
-                if let Some(h) = host {
-                    if strings::eql_case_insensitive_ascii(h, no_proxy_entry, true) {
-                        return true;
-                    }
-                }
-            } else {
-                // Entry is hostname/IPv6 only, match exact or dot-boundary suffix (case-insensitive)
-                let entry_len = no_proxy_entry.len();
-                if hn.len() == entry_len {
-                    if strings::eql_case_insensitive_ascii(hn, no_proxy_entry, true) {
-                        return true;
-                    }
-                } else if hn.len() > entry_len
-                    && hn[hn.len() - entry_len - 1] == b'.'
-                    && strings::eql_case_insensitive_ascii(
-                        &hn[hn.len() - entry_len..],
-                        no_proxy_entry,
-                        true,
-                    )
-                {
-                    return true;
-                }
-            }
-        }
-
-        false
+    /// Returns true if `hostname` on `port` should bypass the proxy according
+    /// to the no_proxy / NO_PROXY environment variable.
+    pub fn is_no_proxy(&self, hostname: &[u8], port: u16) -> bool {
+        crate::no_proxy::matches(self.no_proxy_list(), hostname, port)
     }
 
     pub fn load_ccache_path(&mut self, fs: &bun_paths::fs::FileSystem) {
@@ -456,7 +413,7 @@ impl Loader {
     fn load_ccache_path_impl(&mut self, fs: &bun_paths::fs::FileSystem) -> Result<(), AllocError> {
         // if they have ccache installed, put it in env variable `CMAKE_CXX_COMPILER_LAUNCHER` so
         // cmake can use it to hopefully speed things up
-        let mut buf = PathBuffer::uninit();
+        let mut buf = bun_paths::path_buffer_pool::get();
         let path = match self.get(b"PATH") {
             Some(p) => p,
             None => return Ok(()),
@@ -496,7 +453,7 @@ impl Loader {
         fs: &bun_paths::fs::FileSystem,
         override_node: &[u8],
     ) -> crate::Result<bool> {
-        let mut buf = PathBuffer::uninit();
+        let mut buf = bun_paths::path_buffer_pool::get();
 
         let node_path_to_use: Box<[u8]> = if !override_node.is_empty() {
             Box::from(override_node)
@@ -589,6 +546,7 @@ impl Loader {
             default_files_loaded: EnumSet::empty(),
             custom_files_loaded: StringSet::new(),
             quiet: false,
+            quiet_loaded_files: false,
             did_load_process: false,
             reject_unauthorized: Cell::new(None),
             aws_credentials: None,
@@ -602,7 +560,23 @@ impl Loader {
             default_files_loaded: EnumSet::empty(),
             custom_files_loaded: self.custom_files_loaded.clone()?,
             quiet: false,
+            quiet_loaded_files: false,
             did_load_process: false,
+            reject_unauthorized: Cell::new(None),
+            aws_credentials: None,
+        })
+    }
+
+    /// Clones the loader for a macro VM. The clone remembers which files `self` loaded, so it only
+    /// reads the ones `self` skipped.
+    pub fn clone_loaded(&self) -> Result<Loader, AllocError> {
+        Ok(Loader {
+            map: self.map.clone_with_allocator()?,
+            default_files_loaded: self.default_files_loaded,
+            custom_files_loaded: self.custom_files_loaded.clone()?,
+            quiet: self.quiet,
+            quiet_loaded_files: self.quiet_loaded_files,
+            did_load_process: self.did_load_process,
             reject_unauthorized: Cell::new(None),
             aws_credentials: None,
         })
@@ -613,15 +587,20 @@ impl Loader {
             return Ok(());
         }
 
-        let environ: &[*const c_char] = bun_sys::environ();
+        // SAFETY: copied below. Bun only calls `setenv` on the main thread, while it starts.
+        let environ = unsafe { bun_sys::environ() };
         self.map.map.ensure_total_capacity(environ.len())?;
-        for &_env in environ {
-            // SAFETY: environ entries are NUL-terminated C strings from the OS
-            let env = unsafe { bun_core::ffi::cstr(_env) }.to_bytes();
+        for entry in environ {
+            let env = entry.to_cstr().to_bytes();
             if let Some(i) = strings::index_of_char(env, b'=') {
                 let key = &env[..i as usize];
                 let value = &env[i as usize + 1..];
                 if !key.is_empty() {
+                    // Child processes don't inherit the IPC fd. `bun run` passes the fd on and
+                    // adds these variables back.
+                    if is_ipc_channel_key(key) {
+                        continue;
+                    }
                     self.map.put(key, value)?;
                 }
             } else {
@@ -672,7 +651,7 @@ impl Loader {
             }
         }
 
-        if !self.quiet && self.loaded_count() > loaded_before {
+        if !self.quiet && !self.quiet_loaded_files && self.loaded_count() > loaded_before {
             self.print_loaded(start);
         }
         Ok(())
@@ -1343,32 +1322,10 @@ pub struct Map {
 }
 
 impl Map {
-    /// Builds a NULL-terminated `K=V\0` envp array. Returns an owning struct so
-    /// dropping it frees the joined buffers (PORTING.md §Forbidden: no Box::leak).
-    pub fn create_null_delimited_env_map(&mut self) -> Result<NullDelimitedEnvMap, AllocError> {
-        let envp_count = self.map.count();
-        let mut storage: Vec<Box<[u8]>> = Vec::with_capacity(envp_count);
-        let mut envp_buf: Vec<*const c_char> = Vec::with_capacity(envp_count + 1);
-        {
-            let mut it = self.map.iterator();
-            while let Some(pair) = it.next() {
-                let klen = pair.key_ptr.len();
-                let vlen = pair.value_ptr.value.len();
-                let mut env_buf = vec![0u8; klen + vlen + 2].into_boxed_slice();
-                env_buf[..klen].copy_from_slice(pair.key_ptr);
-                env_buf[klen] = b'=';
-                env_buf[klen + 1..klen + 1 + vlen].copy_from_slice(&pair.value_ptr.value);
-                // env_buf[klen + 1 + vlen] = 0; (already zero-initialized)
-                envp_buf.push(env_buf.as_ptr().cast::<c_char>());
-                storage.push(env_buf);
-            }
-            debug_assert!(envp_buf.len() == envp_count);
-        }
-        envp_buf.push(core::ptr::null()); // sentinel
-        Ok(NullDelimitedEnvMap {
-            _storage: storage,
-            envp: envp_buf.into_boxed_slice(),
-        })
+    /// Builds a NULL-terminated `K=V\0` envp array.
+    pub fn to_envp(&self) -> CStringList {
+        let entries = (self.map.iter()).map(|(key, value)| [&**key, b"=", &value.value]);
+        CStringList::from_parts(entries)
     }
 
     /// Build a heap-allocated Windows environment block suitable for
@@ -1507,40 +1464,30 @@ impl Map {
             map: self.map.clone()?,
         })
     }
-}
 
-/// Owns the `K=V\0` strings backing a NULL-terminated envp array.
-/// Dropping this frees every entry (PORTING.md §Forbidden: no Box::leak).
-///
-/// LAYOUT NOTE: `envp` stores raw `*const c_char` (with a trailing
-/// `ptr::null()` sentinel), **not** `Option<*const c_char>`. Raw pointers are
-/// already nullable, so `Option<*const T>` is *not* niche-optimized — it is a
-/// 2-word `(tag, ptr)` pair. Casting `*const Option<*const c_char>` to
-/// `*const *const c_char` for `execve()` interleaves `Some`-discriminant
-/// `0x1` words between the real pointers and the kernel faults with `EFAULT`.
-/// The correct FFI representation is `*const c_char`, not
-/// `Option<*const c_char>`.
-pub struct NullDelimitedEnvMap {
-    _storage: Vec<Box<[u8]>>,
-    envp: Box<[*const c_char]>,
-}
-
-impl NullDelimitedEnvMap {
-    /// `[:null]?[*:0]const u8` — last element is `ptr::null()`.
-    #[inline]
-    pub fn as_slice(&self) -> &[*const c_char] {
-        &self.envp
-    }
-    /// Raw `*const ?[*:0]const u8` for FFI (`envp`-style).
-    #[inline]
-    pub fn as_ptr(&self) -> *const *const c_char {
-        self.envp.as_ptr()
-    }
-    /// The `KEY=VALUE` entries as C strings.
-    pub fn iter(&self) -> impl Iterator<Item = &core::ffi::CStr> {
-        self._storage.iter().map(|s| {
-            core::ffi::CStr::from_bytes_until_nul(s).expect("entries are built NUL-terminated")
-        })
+    /// The process's own (no `.env`), minus `git rev-parse --local-env-vars` except `GIT_CONFIG*`.
+    pub fn for_git_child() -> Result<Map, AllocError> {
+        const REPOSITORY_VARS: &[&[u8]] = &[
+            b"GIT_DIR",
+            b"GIT_WORK_TREE",
+            b"GIT_IMPLICIT_WORK_TREE",
+            b"GIT_INDEX_FILE",
+            b"GIT_NAMESPACE",
+            b"GIT_OBJECT_DIRECTORY",
+            b"GIT_ALTERNATE_OBJECT_DIRECTORIES",
+            b"GIT_COMMON_DIR",
+            b"GIT_PREFIX",
+            b"GIT_GRAFT_FILE",
+            b"GIT_SHALLOW_FILE",
+            b"GIT_NO_REPLACE_OBJECTS",
+            b"GIT_REPLACE_REF_BASE",
+        ];
+        let mut loader = Loader::init();
+        loader.load_process()?;
+        for key in REPOSITORY_VARS {
+            loader.map.remove(key);
+        }
+        Ok(loader.map)
     }
 }
 

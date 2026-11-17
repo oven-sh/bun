@@ -1,111 +1,165 @@
-use core::cell::Cell;
+use crate::jsc::{JSGlobalObject, JSValue, JsResult, Strong};
 
-use crate::jsc::{JSGlobalObject, JSValue, JsResult};
-
-use crate::postgres::error_jsc::postgres_error_to_js;
-use crate::postgres::signature::Signature;
-use crate::shared::cached_structure::CachedStructure as PostgresCachedStructure;
+use crate::shared::cached_structure::{CachedStructure, column_name_to_js, describe_statement};
 use crate::shared::sql_data_cell::{Flags as DataCellFlags, dedupe_columns};
 
-use bun_sql::postgres::any_postgres_error::AnyPostgresError;
+use bun_jsc::JsCell;
+use bun_ptr::{CellRefCounted as _, RefPtr};
+use bun_sql::postgres::pipeline::Statement;
 use bun_sql::postgres::postgres_protocol as protocol;
 use bun_sql::postgres::postgres_types::int4;
 
-bun_core::declare_scope!(Postgres, visible);
-
-#[derive(bun_ptr::CellRefCounted)]
-pub struct PostgresSQLStatement {
-    pub(crate) cached_structure: PostgresCachedStructure,
-    ref_count: Cell<u32>,
-    pub(crate) fields: Vec<protocol::FieldDescription>,
-    pub(crate) parameters: Box<[int4]>,
-    pub(crate) signature: Signature,
-    pub(crate) status: Status,
-    pub(crate) error_response: Option<Error>,
-    pub(crate) needs_duplicate_check: bool,
-    pub(crate) fields_flags: DataCellFlags,
-}
-
-impl Default for PostgresSQLStatement {
-    fn default() -> Self {
-        // Callers must set `signature`. This Default
-        // exists only to mirror the per-field `= ...` initializers.
-        Self {
-            cached_structure: PostgresCachedStructure::default(),
-            ref_count: Cell::new(1),
-            fields: Vec::new(),
-            parameters: Box::default(),
-            signature: Signature::default(),
-            status: Status::Pending,
-            error_response: None,
-            needs_duplicate_check: true,
-            fields_flags: DataCellFlags::default(),
-        }
-    }
-}
+pub type PostgresSQLStatement = Statement<Error, JsCell<Columns>>;
 
 pub enum Error {
     Protocol(protocol::ErrorResponse),
-    PostgresError(AnyPostgresError),
+    /// What the client's column transform threw at the RowDescription.
+    Thrown(Strong),
 }
 
 impl Error {
-    // Cleanup is handled by `Drop` on
-    // `protocol::ErrorResponse`, so no explicit `Drop` impl is needed here.
-
-    pub(crate) fn to_js(&self, global_object: &JSGlobalObject) -> JsResult<JSValue> {
+    pub(crate) fn to_js(&self, global_object: &JSGlobalObject) -> JSValue {
         match self {
-            Error::Protocol(err) => Ok(crate::postgres::protocol::error_response_jsc::to_js(
-                err,
-                global_object,
-            )),
-            Error::PostgresError(err) => Ok(postgres_error_to_js(global_object, None, *err)),
+            Error::Protocol(err) => super::protocol::error_response_jsc::to_js(err, global_object),
+            Error::Thrown(err) => err.get(),
         }
     }
 }
 
-pub use bun_sql::shared::statement_status::Status;
+/// A RowDescription, and what is made of it when it is first needed.
+#[derive(Default)]
+pub struct Columns {
+    pub(crate) fields: Vec<protocol::FieldDescription>,
+    pub(crate) structure: CachedStructure,
+    pub(crate) flags: DataCellFlags,
+}
 
-impl PostgresSQLStatement {
-    pub(crate) fn check_for_duplicate_fields(&mut self) {
-        if !self.needs_duplicate_check {
+impl Columns {
+    pub(crate) fn build_structure(&mut self, owner: JSValue, global_object: &JSGlobalObject) {
+        if self.structure.has() {
             return;
         }
-        self.needs_duplicate_check = false;
-
-        self.fields_flags =
-            dedupe_columns(self.fields.iter_mut().rev().map(|f| &mut f.name_or_index));
+        self.flags = dedupe_columns(self.fields.iter_mut().rev().map(|f| &mut f.name_or_index));
+        let names = self.fields.iter().map(|f| &f.name_or_index);
+        self.structure
+            .build_from_columns(global_object, owner, names);
     }
 
-    // Note: returning
-    // `&CachedStructure` here to avoid moving out of `self` (CachedStructure owns
-    // a `Box<[ExternColumnIdentifier]>` and a `StrongOptional`, neither `Copy`).
-    pub(crate) fn structure(
+    /// `result.statement` of the results of a named statement.
+    pub(crate) fn description(
         &mut self,
-        owner: JSValue,
         global_object: &JSGlobalObject,
-    ) -> &PostgresCachedStructure {
-        if self.cached_structure.has() {
-            return &self.cached_structure;
+        query: &bun_core::String,
+        parameters: &[int4],
+    ) -> JsResult<JSValue> {
+        if let Some(description) = self.structure.description() {
+            return Ok(description);
         }
-        self.check_for_duplicate_fields();
-        self.cached_structure.build_from_columns(
-            global_object,
-            owner,
-            self.fields.iter().map(|f| &f.name_or_index),
-        );
-        &self.cached_structure
+        let description = describe(global_object, query, parameters, &self.fields)?;
+        self.structure.set_description(global_object, description);
+        Ok(description)
     }
 }
 
-impl Drop for PostgresSQLStatement {
-    fn drop(&mut self) {
-        bun_core::scoped_log!(Postgres, "PostgresSQLStatement deinit");
+pub(crate) type ResultDescription = (Box<[int4]>, Vec<protocol::FieldDescription>);
 
-        debug_assert_eq!(self.ref_count.get(), 0, "ref_count.assertNoRefs()");
+/// `result.statement` in JS.
+pub(crate) fn describe(
+    global_object: &JSGlobalObject,
+    query: &bun_core::String,
+    parameters: &[int4],
+    fields: &[protocol::FieldDescription],
+) -> JsResult<JSValue> {
+    describe_statement(
+        global_object,
+        query,
+        parameters,
+        [c"name", c"type", c"table", c"number"],
+        |values| {
+            for field in fields {
+                values.append(column_name_to_js(global_object, &field.name_or_index)?);
+                values.append(JSValue::js_number_from_uint64(field.type_oid.into()));
+                values.append(JSValue::js_number_from_uint64(field.table_oid.into()));
+                values.append(JSValue::js_number_from_int32(field.attribute_number.into()));
+            }
+            Ok(())
+        },
+    )
+}
 
-        // `fields` (Vec<FieldDescription>): each element's Drop runs, then the buffer frees.
-        // `parameters` (Box<[int4]>): freed by Drop.
-        // `cached_structure`, `error_response`, `signature`: Drop.
+#[derive(Default)]
+pub(crate) struct StatementCache {
+    cache: crate::shared::StatementCache<PostgresSQLStatement>,
+    /// Out of `cache` for good, and the server still has them.
+    discarded: Vec<RefPtr<PostgresSQLStatement>>,
+    next_id: u64,
+}
+
+impl StatementCache {
+    /// A statement with a join and ten columns takes about 40 KB of the backend's memory.
+    const MAX_STATEMENTS: usize = 1024;
+
+    /// `None` in `types` is NULL, which fits every type.
+    pub(crate) fn get_or_add(
+        &mut self,
+        query: &[u8],
+        types: &[Option<int4>],
+    ) -> RefPtr<PostgresSQLStatement> {
+        self.cache
+            .find(query, |statement| statement.accepts(types))
+            .unwrap_or_else(|| self.add(query, declared(types)))
     }
+
+    fn add(&mut self, query: &[u8], declared: Box<[int4]>) -> RefPtr<PostgresSQLStatement> {
+        let statement = Statement::new(Some(self.next_id), declared, JsCell::default());
+        self.next_id += 1;
+        self.cache.add(query, statement.clone());
+        statement
+    }
+
+    pub(crate) fn remove(&mut self, statement: &PostgresSQLStatement) {
+        self.cache.remove(statement);
+    }
+
+    /// `remove` for a statement that the server has: `evict` hands it over to be closed there.
+    pub(crate) fn discard(&mut self, statement: &PostgresSQLStatement) {
+        self.discarded.extend(self.cache.remove(statement));
+    }
+
+    /// A statement that the request that found `stale` parses itself.
+    pub(crate) fn replace(
+        &mut self,
+        query: &[u8],
+        stale: &PostgresSQLStatement,
+    ) -> RefPtr<PostgresSQLStatement> {
+        self.discard(stale);
+        // One that only `accepts` can be as stale.
+        if let Some(variant) = self
+            .cache
+            .find(query, |variant| variant.declared == stale.declared)
+        {
+            if variant.is_unparsed() {
+                return variant;
+            }
+            // Prepared for an earlier request that found `stale`, and perhaps lost since.
+            self.discard(&variant);
+        }
+        self.add(query, stale.declared.clone())
+    }
+
+    /// Never one that a request holds.
+    pub(crate) fn evict(&mut self) -> Option<RefPtr<PostgresSQLStatement>> {
+        if let Some(i) = self
+            .discarded
+            .iter()
+            .position(|statement| statement.ref_count().get() == 1)
+        {
+            return Some(self.discarded.swap_remove(i));
+        }
+        self.cache.evict(Self::MAX_STATEMENTS)
+    }
+}
+
+pub(crate) fn declared(types: &[Option<int4>]) -> Box<[int4]> {
+    types.iter().map(|oid| oid.unwrap_or(0)).collect()
 }

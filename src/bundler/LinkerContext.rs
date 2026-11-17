@@ -1,5 +1,5 @@
 use crate::mal_prelude::*;
-use core::sync::atomic::{AtomicU32, Ordering};
+use core::sync::atomic::Ordering;
 
 use crate::Error as BunError;
 use bun_alloc::{AllocError, Arena as Bump};
@@ -27,24 +27,26 @@ use bun_ast::{
 use crate::Index;
 use bun_ast::{E, G, S};
 use bun_js_parser::lexer as lex;
+use bun_js_parser::parse::parse_entry::{ModuleSyntax, parse_only_text};
 use bun_js_printer::{self as js_printer, renamer};
 
 use crate::bun_node_fallbacks as NodeFallbackModules;
 use bun_ast::SideEffects;
 use bun_resolver::Resolver;
 
-use crate::Graph::Graph;
-use crate::options::{CompileMode, Format, Loader, SourceMapOption, Target};
+use crate::Graph::{CssAsts, Graph};
+use crate::linker_graph::{is_external_dynamic_import, top_level_symbol_to_parts};
+use crate::options::{BundleOptions, CompileMode, Format, Loader, SourceMapOption, Target};
 use crate::{
     AdditionalFile, BundleV2, Chunk, CompileResultForSourceMap, ContentHasher, ImportTracker,
-    LinkerGraph, MangledProps, PartRange, StableRef, WrapKind,
+    LinkerGraph, MangledProps, StableRef, WrapKind,
 };
 
 /// `bun_event_loop` is a
 /// lower-tier crate, so the bundler can name the real enum (the `Js` arm
 /// holds an erased `*mut jsc::EventLoop` driven through a vtable). Stored as
-/// a pointer because the linker borrows the loop owned by the
-/// `BundleThread` / runtime.
+/// a pointer because the bundle borrows the loop owned by the
+/// runtime.
 pub type EventLoop = Option<core::ptr::NonNull<bun_event_loop::AnyEventLoop>>;
 
 bun_core::declare_scope!(LinkerCtx, visible);
@@ -70,23 +72,10 @@ pub(crate) use crate::linker_context::post_process_html_chunk::post_process_html
 pub(crate) use crate::linker_context::post_process_js_chunk::post_process_js_chunk;
 pub(crate) use crate::linker_context::rename_symbols_in_chunk::rename_symbols_in_chunk;
 
-pub struct LinkerContext<'a> {
-    pub(crate) parse_graph: *mut Graph<'a>,
-    pub graph: LinkerGraph<'a>,
-    /// Backref into `Transpiler.log`, assigned in [`Self::load`]. Stored as a
-    /// raw pointer (like `parse_graph` / `resolver`) so `Default` can be
-    /// `null_mut()` instead of a dangling `&mut` (instant UB). Use
-    /// [`Self::log`] / [`Self::log_mut`]; deref the field directly only for
-    /// split-borrow patterns that hold other `self` borrows across the access.
-    pub(crate) log: *mut Log,
-
-    /// Backref into `BundleV2.transpiler.resolver` (LIFETIMES.tsv:
-    /// GRAPHBACKED). `ParentRef` (not `*mut`) so the accessor and the
-    /// split-borrow sites in `linker_context/*.rs` deref it via safe `Deref`
-    /// instead of open-coding a raw deref. `Option` because `Default` precedes
-    /// [`Self::load`]. Read-only — never `assume_mut`.
-    pub(crate) resolver: Option<bun_ptr::ParentRef<Resolver<'a>>>,
-    pub(crate) cycle_detector: Vec<ImportTracker>,
+pub(crate) struct LinkerContext<'l, 'a> {
+    pub(crate) bundle: &'l BundleV2<'a>,
+    pub(crate) graph: LinkerGraph<'a>,
+    pub(crate) resolver: &'l Resolver<'a>,
 
     /// We may need to refer to the "__esm" and/or "__commonJS" runtime symbols
     pub(crate) cjs_runtime_ref: Ref,
@@ -97,236 +86,79 @@ pub struct LinkerContext<'a> {
 
     /// We may need to refer to the "__promiseAll" runtime symbol
     pub(crate) promise_all_runtime_ref: Ref,
+    /// `__preload` / `__chunks`: modulepreload for split browser `import()`s.
+    pub(crate) preload_runtime_ref: Ref,
+    pub(crate) chunks_runtime_ref: Ref,
 
-    pub(crate) options: LinkerOptions,
-
-    pub(crate) r#loop: EventLoop,
-
-    /// string buffer containing pre-formatted unique keys
-    pub(crate) unique_key_buf: Box<[u8]>,
+    pub(crate) options: LinkerOptions<'l>,
 
     /// string buffer containing prefix for each unique keys
-    pub(crate) unique_key_prefix: Box<[u8]>,
+    pub(crate) unique_key_prefix: &'a [u8],
 
-    pub source_maps: SourceMapData,
-
-    /// This will eventually be used for reference-counting LinkerContext
-    /// to know whether or not we can free it safely.
-    pub(crate) pending_task_count: AtomicU32,
-
-    pub(crate) has_any_css_locals: AtomicU32,
+    pub(crate) source_maps: SourceMapData<'l, 'a>,
 
     /// Used by Bake to extract []CompileResult before it is joined.
     /// CYCLEBREAK GENUINE: erased bake::DevServer (see bundle_v2::dispatch).
-    pub dev_server: Option<crate::dispatch::DevServerHandle>,
-    pub(crate) framework: Option<bun_ptr::BackRef<bake::Framework>>,
+    pub(crate) dev_server: Option<crate::dispatch::DevServerHandle>,
+    pub(crate) framework: Option<&'l bake::Framework>,
 
     pub(crate) mangled_props: MangledProps,
 
     /// One name per binding that crosses a chunk boundary, shared by the
     /// chunk that exports it and every chunk that imports it
-    /// (`assign_cross_chunk_names`). Values live in the linker arena.
-    pub(crate) cross_chunk_names: bun_collections::HashMap<bun_ast::Ref, &'static [u8]>,
+    /// (`assign_cross_chunk_names`).
+    pub(crate) cross_chunk_names: bun_js_printer::renamer::CrossChunkNames<'a>,
+    /// `renamer_rows`, for every chunk's `NumberRenamer`. `None`: a file is in several chunks.
+    pub(crate) renamer_rows: Option<&'a [u32]>,
+
+    /// User entry points (by source index) that reach a split browser `import()`: their chunk registers the chunk graph.
+    pub(crate) preload_entries: AutoBitSet,
+    /// Files whose only top-level effect, `init_x()` / `require_x()` calls,
+    /// `merge_small_chunks` proved to be no-ops where it moved them: a chunk
+    /// their chunk imports makes the same calls first.
+    pub(crate) inits_already_done: Option<AutoBitSet>,
+    /// The part `scan_imports_and_exports` adds to each entry point file (`u32::MAX` elsewhere).
+    pub(crate) entry_point_part_indices: Vec<u32>,
 }
 
-// SAFETY: `LinkerContext` is shared across the worker pool via `each_ptr` /
-// `SourceMapDataTask`. The raw-pointer fields (`parse_graph`, `resolver`,
-// `r#loop`, `framework`) are backrefs into `BundleV2`/`Transpiler` whose
-// lifetimes strictly outlive every parallel section, and per-thread writes go
-// to disjoint SoA slots (see `compute_line_offsets`).
-unsafe impl<'a> Send for LinkerContext<'a> {}
-// SAFETY: see the `Send` impl above — same backref-lifetime / disjoint-write invariants.
-unsafe impl<'a> Sync for LinkerContext<'a> {}
+// SAFETY: workers share `&LinkerContext`. Of `bundle` they read the graph, the transpilers and the
+// framework, and get their `Worker` from the pool, which locks its map. What the rows of
+// `bundle.graph.ast` point to is shared with `graph.ast`; see `LinkerGraph` for what workers write.
+unsafe impl Sync for LinkerContext<'_, '_> {}
 
-impl<'a> Default for LinkerContext<'a> {
-    fn default() -> Self {
-        Self {
-            parse_graph: core::ptr::null_mut(),
-            graph: Default::default(),
-            log: core::ptr::null_mut(),
-            resolver: None,
-            cycle_detector: Vec::new(),
-            cjs_runtime_ref: Ref::NONE,
-            esm_runtime_ref: Ref::NONE,
-            unbound_module_ref: Ref::NONE,
-            promise_all_runtime_ref: Ref::NONE,
-            options: Default::default(),
-            r#loop: None,
-            unique_key_buf: Box::default(),
-            unique_key_prefix: Box::default(),
-            source_maps: Default::default(),
-            pending_task_count: AtomicU32::new(0),
-            has_any_css_locals: AtomicU32::new(0),
-            dev_server: None,
-            framework: None,
-            mangled_props: Default::default(),
-            cross_chunk_names: Default::default(),
+impl<'l, 'a> LinkerContext<'l, 'a> {
+    #[inline]
+    pub(crate) fn parse_graph(&self) -> &'l Graph<'a> {
+        &self.bundle.graph
+    }
+
+    /// The options of the transpiler that parsed the files of `chunk`.
+    pub(crate) fn options_for_chunk(&self, chunk: &Chunk) -> &'l BundleOptions<'a> {
+        if chunk
+            .flags
+            .contains(crate::chunk::Flags::IS_BROWSER_CHUNK_FROM_SERVER_BUILD)
+        {
+            let client = self.bundle.client_transpiler_ref();
+            &client
+                .expect("infallible: the client transpiler parsed this chunk")
+                .options
+        } else {
+            &self.bundle.transpiler.options
         }
     }
-}
 
-impl<'a> LinkerContext<'a> {
-    /// container_of: `*LinkerContext` → `*BundleV2` via the embedded `.linker`
-    /// field. Returns raw; caller
-    /// decides `&*` vs `&mut *` per local aliasing rules (several callers run
-    /// on worker-pool threads and MUST NOT materialize `&mut BundleV2`).
-    ///
-    /// SAFETY: `linker` must point to the `.linker` field of a live `BundleV2`
-    /// and carry provenance over the full `BundleV2` allocation.
-    #[inline(always)]
-    pub(crate) unsafe fn bundle_v2_ptr(linker: *mut Self) -> *mut BundleV2<'a> {
-        bun_core::from_field_ptr!(BundleV2, linker, linker)
-    }
-
-    /// Read-only container-of for callers holding a `*const Self`.
-    ///
-    /// # Safety
-    /// Same contract as [`Self::bundle_v2_ptr`].
     #[inline]
-    pub(crate) unsafe fn bundle_v2_const_ptr(linker: *const Self) -> *const BundleV2<'a> {
-        // SAFETY: address computation only; constness restored on return.
-        unsafe { Self::bundle_v2_ptr(linker.cast_mut()).cast_const() }
-    }
-
-    /// Shared-read accessor for the parse-side graph.
-    ///
-    /// `parse_graph` is a backref into `BundleV2.graph`, a sibling field of
-    /// `BundleV2.linker` (= `*self`), assigned in [`Self::load`]. It is
-    /// non-null and valid for the entire link step; the pointee is disjoint
-    /// from `*self` (LIFETIMES.tsv: GRAPHBACKED).
-    ///
-    /// The returned borrow is tied to `&self`. Callers that need to hold a
-    /// `&Graph` across a `&mut self` borrow (split-borrow patterns — e.g.
-    /// `process_html_import_files`, TLA-check column caching, or
-    /// `generate_isolated_hash`) must continue to deref the raw
-    /// `self.parse_graph` field directly.
-    #[inline]
-    pub(crate) fn parse_graph(&self) -> &Graph<'_> {
-        debug_assert!(
-            !self.parse_graph.is_null(),
-            "LinkerContext.parse_graph accessed before load()"
-        );
-        // SAFETY: non-null backref into `BundleV2.graph`, valid for the link
-        // step, disjoint from `*self` (= `BundleV2.linker`).
-        unsafe { &*self.parse_graph }
-    }
-
-    /// Exclusive accessor for the parse-side graph. See [`Self::parse_graph`]
-    /// for the lifetime invariant. Prefer the raw `self.parse_graph` field for
-    /// split-borrow patterns that interleave `&mut Graph` with other `self`
-    /// borrows.
-    #[inline]
-    pub(crate) fn parse_graph_mut(&mut self) -> &mut Graph<'a> {
-        debug_assert!(
-            !self.parse_graph.is_null(),
-            "LinkerContext.parse_graph accessed before load()"
-        );
-        // SAFETY: non-null backref into `BundleV2.graph`, disjoint from
-        // `*self`; `&mut self` excludes other safe borrows of the linker.
-        unsafe { &mut *self.parse_graph }
-    }
-
-    /// Shared-read accessor for the resolver.
-    ///
-    /// `resolver` is a backref into `BundleV2.transpiler.resolver`, assigned
-    /// in [`Self::load`] (LIFETIMES.tsv: GRAPHBACKED). Non-null and valid for
-    /// the link step; never mutated through this pointer.
-    #[inline]
-    pub(crate) fn resolver(&self) -> &Resolver<'a> {
-        self.resolver
-            .as_ref()
-            .expect("LinkerContext.resolver accessed before load()")
-            .get()
-    }
-
-    /// Mutable projection of the `r#loop` BACKREF for `AnyEventLoop` dispatch
-    /// (`enqueue_task_concurrent*`, `tick`). Centralises the raw `NonNull`
-    /// deref so the three callers (`BundleV2::any_loop_mut`, `ParseTask` /
-    /// `ServerComponentParseTask` completion) are safe.
-    ///
-    /// `&self` receiver (not `&mut self`): the loop storage is **disjoint**
-    /// from `LinkerContext` (it lives in the `BundleThread` / runtime arena —
-    /// see [`EventLoop`]), and worker-thread completions reach this through a
-    /// `BackRef<BundleV2>` (`&` only).
-    #[inline]
-    #[allow(clippy::mut_from_ref)]
-    pub(crate) fn any_loop_mut(&self) -> Option<&mut bun_event_loop::AnyEventLoop> {
-        // SAFETY: BACKREF — set once in `BundleV2::init` from a loop that
-        // outlives the bundle pass; the pointee is disjoint from `*self`.
-        // Exclusivity: `Js { owner }.enqueue_task_concurrent` is `&self`
-        // (MPSC), and `Mini.enqueue_task_concurrent_with_extra_ctx` only
-        // pushes to an MPSC queue + writes the caller-owned intrusive task
-        // node, so concurrent worker completions do not alias loop state.
-        self.r#loop.map(|p| unsafe { &mut *p.as_ptr() })
-    }
-
-    /// Shared-read accessor for the bundler log.
-    ///
-    /// `log` is a backref into `Transpiler.log`, assigned in [`Self::load`]
-    /// (LIFETIMES.tsv: GRAPHBACKED). Non-null and valid for the link step.
-    #[inline]
-    pub(crate) fn log(&self) -> &Log {
-        debug_assert!(
-            !self.log.is_null(),
-            "LinkerContext.log accessed before load()"
-        );
-        // SAFETY: non-null backref valid for the link step.
-        unsafe { &*self.log }
-    }
-
-    /// Exclusive accessor for the bundler log. See [`Self::log`] for the
-    /// lifetime invariant. Prefer [`Self::log_disjoint`] for split-borrow
-    /// patterns that interleave `&mut Log` with other `self` borrows.
-    #[inline]
-    pub(crate) fn log_mut(&mut self) -> &mut Log {
-        debug_assert!(
-            !self.log.is_null(),
-            "LinkerContext.log accessed before load()"
-        );
-        // SAFETY: non-null backref valid for the link step; `&mut self`
-        // excludes other safe borrows of the linker.
-        unsafe { &mut *self.log }
-    }
-
-    /// Detached mutable borrow of the bundler log for split-borrow contexts.
-    ///
-    /// `self.log` is a backref into `Transpiler.log`, a sibling allocation of
-    /// `BundleV2.linker` (= `*self`) — it is allocation-disjoint from every
-    /// `self.graph` / `self.parse_graph` / `self.mangled_props` borrow. This
-    /// accessor exists for the diagnostic paths (`match_import_with_export`,
-    /// `scan_imports_and_exports`, CSS validation) that hold SoA-column borrows
-    /// of `self.graph` while emitting an error; [`Self::log_mut`] would
-    /// needlessly conflict on `&mut self`.
-    ///
-    /// `#[allow(clippy::mut_from_ref)]` follows the same precedent as
-    /// [`GenerateChunkCtx::c`]: the pointee is a set-once GRAPHBACKED backref,
-    /// not interior storage of `*self`, so `&self` cannot alias the returned
-    /// `&mut Log`. Do not call this twice with overlapping live borrows.
-    #[inline]
-    #[allow(clippy::mut_from_ref)]
-    pub(crate) fn log_disjoint(&self) -> &mut Log {
-        debug_assert!(
-            !self.log.is_null(),
-            "LinkerContext.log accessed before load()"
-        );
-        // SAFETY: non-null backref into `Transpiler.log`, valid for the link
-        // step, allocation-disjoint from `*self` (= `BundleV2.linker`). All
-        // call sites previously open-coded the raw deref under the same
-        // invariant; centralised here so the proof obligation lives once.
-        unsafe { &mut *self.log }
-    }
-
-    /// Safe accessor for the underlying `bun_threading::ThreadPool` driving
-    /// link-phase parallel work. Chains [`Self::parse_graph`] →
-    /// [`Graph::pool`] → [`ThreadPool::worker_pool`](crate::ThreadPool::worker_pool),
-    /// keeping the `unsafe` deref centralized in those accessors.
-    #[inline]
-    pub(crate) fn worker_pool(&self) -> &bun_threading::ThreadPool {
+    pub(crate) fn worker_pool(&self) -> &'l bun_threading::ThreadPool {
         self.parse_graph().pool().worker_pool()
     }
 
-    pub(crate) fn mark_pending_task_done(&self) {
-        self.pending_task_count.fetch_sub(1, Ordering::Relaxed);
+    /// Split browser ESM builds preload each `import()`ed chunk's static imports.
+    pub(crate) fn module_preload(&self) -> bool {
+        self.options.module_preload
+            && self.graph.code_splitting
+            && self.options.target == Target::Browser
+            && self.options.output_format == Format::Esm
+            && self.chunks_runtime_ref.is_valid()
     }
 
     /// An `import()` — or a split `require()` — whose target is a
@@ -337,20 +169,75 @@ impl<'a> LinkerContext<'a> {
         record: &ImportRecord,
         source_index: u32,
     ) -> bool {
-        use crate::linker_graph::FileColumns as _;
-        if !self.graph.code_splitting || record.source_index.get() == source_index {
-            return false;
+        is_external_dynamic_import(
+            self.graph.code_splitting,
+            self.graph.files.items_entry_point_kind(),
+            record,
+            source_index,
+        )
+    }
+
+    /// The bundled file a live part's import record makes the importer's
+    /// chunk load, if any: not a split `import()` / `require()`, which loads
+    /// on demand, and not an `import` or `export ... from` of a side-effect-free
+    /// file, which prints nothing (the bindings used from it are part
+    /// dependencies). Chunk assignment follows these edges, so everything that
+    /// reasons about which chunks load together must too.
+    pub(crate) fn file_loaded_by_import(
+        &self,
+        record: &ImportRecord,
+        source_index: u32,
+    ) -> Option<u32> {
+        if !record.source_index.is_valid() || self.is_external_dynamic_import(record, source_index)
+        {
+            return None;
         }
-        let crosses_chunk = match record.kind {
-            ImportKind::Dynamic => true,
-            ImportKind::Require => record
-                .flags
-                .contains(bun_ast::ImportRecordFlags::CROSS_CHUNK_REQUIRE),
-            _ => false,
-        };
-        crosses_chunk
-            && self.graph.files.items_entry_point_kind()[record.source_index.get() as usize]
-                .is_entry_point()
+        let other = record.source_index.get();
+        if record.kind == ImportKind::Stmt && self.file_has_no_side_effects(other) {
+            return None;
+        }
+        Some(other)
+    }
+
+    /// Calls `each` with every other file that loading `source_index` loads first:
+    /// what the import records of its live parts load
+    /// (`file_loaded_by_import`) and the files declaring the bindings those
+    /// parts use. A CSS or HTML file has no parts; every record counts.
+    pub(crate) fn for_each_file_loaded_by(&self, source_index: u32, mut each: impl FnMut(u32)) {
+        let records = &self.graph.ast.items_import_records()[source_index as usize];
+        if self.parse_graph().css_asts[source_index as usize].is_some()
+            || self.parse_graph().input_files.items_loader()[source_index as usize] == Loader::Html
+        {
+            for record in records.iter() {
+                if record.source_index.is_valid() && record.source_index.get() != source_index {
+                    each(record.source_index.get());
+                }
+            }
+            return;
+        }
+        let parts_live = &self.graph.parts_live[source_index as usize];
+        for (part_index, part) in self.graph.ast.items_parts()[source_index as usize]
+            .as_slice()
+            .iter()
+            .enumerate()
+        {
+            if !parts_live.is_set(part_index) {
+                continue;
+            }
+            for &record_index in part.import_record_indices.iter() {
+                if let Some(other) =
+                    self.file_loaded_by_import(&records[record_index as usize], source_index)
+                    && other != source_index
+                {
+                    each(other);
+                }
+            }
+            for dependency in part.dependencies.iter() {
+                if dependency.source_index.get() != source_index {
+                    each(dependency.source_index.get());
+                }
+            }
+        }
     }
 
     /// `"sideEffects": false` (or the resolver's equivalent), unless
@@ -370,7 +257,7 @@ impl<'a> LinkerContext<'a> {
     pub(crate) fn check_for_memory_corruption(&self) {
         // For this to work, you need mimalloc's debug build enabled.
         //    make mimalloc-debug
-        // Becomes `unsafe { (*self.parse_graph).heap.help_catch_memory_issues() }`
+        // Becomes `self.parse_graph().heap.help_catch_memory_issues()`
         // if `Graph.heap` ever grows the `MimallocArena` debug hook (see the
         // doc comment above).
     }
@@ -384,28 +271,11 @@ pub mod EntryPoint {
     pub(crate) use crate::entry_point::Kind;
 }
 use crate::bundled_ast::Flags as AstFlags;
-use crate::generic_path_with_pretty_initialized;
 type DeclaredSymbolList = bun_ast::DeclaredSymbolList;
 
-impl<'a> LinkerContext<'a> {
-    pub(crate) fn arena(&self) -> &Bump {
-        // LinkerGraph owns (a backref to) the bundle arena; see `LinkerGraph::arena`.
+impl<'l, 'a> LinkerContext<'l, 'a> {
+    pub(crate) fn arena(&self) -> &'a Bump {
         self.graph.arena()
-    }
-
-    /// `arena` must be the arena owned by the thread making this call — on
-    /// worker threads (chunk post-processing) that is `worker.arena()`, NOT
-    /// `self.arena()` (the bundle-thread graph arena). `generic_path_with_pretty_initialized`
-    /// allocates the duped display path from it, and `MimallocArena` asserts
-    /// single-thread ownership, so passing the wrong arena is a cross-thread
-    /// allocation (debug panic / release heap corruption).
-    pub(crate) fn path_with_pretty_initialized(
-        &mut self,
-        path: &bun_paths::fs::Path<'static>,
-        arena: &Bump,
-    ) -> Result<bun_paths::fs::Path<'static>, BunError> {
-        let top_level_dir = bun_resolver::fs::FileSystem::get().top_level_dir;
-        generic_path_with_pretty_initialized(path, self.options.target, top_level_dir, arena)
     }
 
     pub(crate) fn should_include_part(&self, source_index: crate::IndexInt, part: &Part) -> bool {
@@ -429,104 +299,70 @@ impl<'a> LinkerContext<'a> {
         true
     }
 
-    /// `bundle` is taken as a raw `*mut` because the caller invokes this as
-    /// `self.linker.load(self, …)` — `self` *is*
-    /// `(*bundle).linker`, so a `&mut BundleV2` here would alias the receiver
-    /// under Stacked Borrows. This body only reaches into fields of `*bundle`
-    /// that are disjoint from `linker` (`graph`, `transpiler`,
-    /// `dynamic_import_entry_points`) via `addr_of_mut!`, never materializing a
-    /// full `&mut BundleV2`.
-    ///
-    /// # Safety
-    /// `bundle` must be valid for the call and `self` must be `(*bundle).linker`
-    /// (or otherwise not overlap the fields named above).
-    pub(crate) unsafe fn load(
-        &mut self,
-        bundle: *mut BundleV2<'a>,
-        entry_points: &[Index],
-        server_component_boundaries: &bun_ast::server_component_boundary::List,
+    pub(crate) fn load(
+        bundle: &'l BundleV2<'a>,
+        mut graph: LinkerGraph<'a>,
         reachable: &[Index],
-    ) -> Result<(), BunError> {
+    ) -> Result<Self, BunError> {
         let _trace = bun::perf::trace("Bundler.CloneLinkerGraph");
-        // SAFETY: field-disjoint with `self` (= `(*bundle).linker`); `parse_graph`
-        // is a `*mut Graph` backref so no `&mut` is materialized.
-        self.parse_graph = unsafe { core::ptr::addr_of_mut!((*bundle).graph) };
-        // SAFETY: field-disjoint scalar read; `transpiler` is itself a `*mut`.
-        let dyn_entry_points =
-            unsafe { &mut *core::ptr::addr_of_mut!((*bundle).dynamic_import_entry_points) };
+        let parse_graph = &bundle.graph;
+        let entry_points: &[Index] = &parse_graph.entry_points;
 
-        // SAFETY: `bundle.transpiler` is a `*mut Transpiler` backref valid for
-        // the bundle's lifetime; `resolver`/`log`/`options` are stable fields.
-        let transpiler = unsafe { &mut *(*bundle).transpiler };
-        self.graph.code_splitting = transpiler.options.code_splitting;
-        // `transpiler.log` is the canonical
-        // `*mut Log` (same value aliased into `linker.log` / `resolver.log`).
-        self.log = transpiler.log;
-
-        // Note: lifetime — `self.resolver` is `ParentRef<Resolver<'a>>`
-        // but `transpiler.resolver` is `Resolver<'_>` (anonymous `bundle`
-        // lifetime); erase via a pointer cast (LIFETIMES.tsv: GRAPHBACKED —
-        // resolver outlives the link step). Read-only — `from_raw` provenance
-        // is sufficient.
-        // SAFETY: `transpiler.resolver` is a stable field of the
-        // bundle-lifetime `Transpiler`, valid for the entire link step.
-        self.resolver = Some(unsafe {
-            bun_ptr::ParentRef::from_raw(core::ptr::from_ref(&transpiler.resolver).cast())
-        });
-        self.cycle_detector = Vec::new();
-
-        // Note: `reachable_files` is `Vec<Index>`; clone the
-        // caller-owned slice into the linker arena.
-        self.graph.reachable_files = reachable.to_vec();
-
-        // SAFETY: parse_graph is valid backref just assigned above
-        let sources: &[Source] = unsafe { (*self.parse_graph).input_files.items_source() };
-
-        self.graph.load(
+        graph.code_splitting = bundle.transpiler.options.code_splitting;
+        graph.reachable_files = reachable.to_vec();
+        graph.load(
             entry_points,
-            sources,
-            server_component_boundaries,
-            dyn_entry_points.keys(),
-            // SAFETY: parse_graph backref
-            unsafe { &(*self.parse_graph).entry_point_original_names },
+            parse_graph.input_files.items_source(),
+            &parse_graph.server_component_boundaries,
+            bundle.dynamic_import_entry_points.keys(),
+            &parse_graph.entry_point_original_names,
         )?;
-        dyn_entry_points.clear_retaining_capacity();
 
-        let runtime_named_exports =
-            &self.graph.ast.items_named_exports()[Index::RUNTIME.get() as usize];
+        let runtime_named_exports = &graph.ast.items_named_exports()[Index::RUNTIME.get() as usize];
+        let runtime_export =
+            |name: &[u8]| runtime_named_exports.get(name).map(|export| export.ref_);
 
-        self.esm_runtime_ref = runtime_named_exports
-            .get(b"__esm")
-            .expect("infallible: runtime export")
-            .ref_;
-        self.cjs_runtime_ref = runtime_named_exports
-            .get(b"__commonJS")
-            .expect("infallible: runtime export")
-            .ref_;
-        self.promise_all_runtime_ref = runtime_named_exports
-            .get(b"__promiseAll")
-            .expect("infallible: runtime export")
-            .ref_;
+        let mut this = Self {
+            bundle,
+            resolver: &bundle.transpiler.resolver,
+            cjs_runtime_ref: runtime_export(b"__commonJS").expect("infallible: runtime export"),
+            esm_runtime_ref: runtime_export(b"__esm").expect("infallible: runtime export"),
+            unbound_module_ref: Ref::NONE,
+            promise_all_runtime_ref: runtime_export(b"__promiseAll")
+                .expect("infallible: runtime export"),
+            // Browser runtime only (`RUNTIME_PRELOAD_BROWSER`).
+            preload_runtime_ref: runtime_export(b"__preload").unwrap_or(Ref::NONE),
+            chunks_runtime_ref: runtime_export(b"__chunks").unwrap_or(Ref::NONE),
+            graph,
+            options: LinkerOptions::new(&bundle.transpiler.options),
+            unique_key_prefix: b"",
+            source_maps: SourceMapData {
+                line_offsets: SourceMapTasks::new(&bundle.line_offset_wait_group),
+                quoted_contents: SourceMapTasks::new(&bundle.quoted_contents_wait_group),
+            },
+            dev_server: bundle.dev_server,
+            framework: bundle.framework.as_deref(),
+            mangled_props: Default::default(),
+            cross_chunk_names: Default::default(),
+            renamer_rows: None,
+            preload_entries: AutoBitSet::init_empty(0).expect("static AutoBitSet"),
+            inits_already_done: None,
+            entry_point_part_indices: Vec::new(),
+        };
 
-        if self.options.output_format == Format::Cjs {
-            self.unbound_module_ref = self.graph.generate_new_symbol(
+        if this.options.output_format == Format::Cjs {
+            this.unbound_module_ref = this.graph.generate_new_symbol(
                 Index::RUNTIME.get(),
                 bun_ast::symbol::Kind::Unbound,
                 b"module",
             );
         }
 
-        if self.options.output_format == Format::Cjs || self.options.output_format == Format::Iife {
-            // Note: reshaped for borrowck — `Slice<T>` is a value-type
-            // snapshot of column pointers (does not borrow `self.graph.ast`),
-            // so `split_mut()` on the local can coexist with the
-            // `self.graph.meta` borrow below. The slab does not reallocate for
-            // the duration of this loop.
-            let mut ast_slice = self.graph.ast.slice();
-            let ast_cols = ast_slice.split_mut();
+        if this.options.output_format == Format::Cjs || this.options.output_format == Format::Iife {
+            let ast_cols = this.graph.ast.split_mut();
             let exports_kind: &mut [ExportsKind] = ast_cols.exports_kind;
             let ast_flags_list: &mut [AstFlags] = ast_cols.flags;
-            let meta_flags_list = self.graph.meta.items_flags_mut();
+            let meta_flags_list = this.graph.meta.items_flags_mut();
 
             for entry_point in entry_points.iter() {
                 let ast_flags: AstFlags = ast_flags_list[entry_point.get() as usize];
@@ -550,123 +386,55 @@ impl<'a> LinkerContext<'a> {
             }
         }
 
-        Ok(())
+        Ok(this)
     }
 
-    pub(crate) fn compute_data_for_source_map(&mut self, reachable: &[Index]) {
+    pub(crate) fn compute_data_for_source_map(&mut self) {
         debug_assert!(self.options.source_maps != SourceMapOption::None);
-        self.source_maps.line_offset_wait_group = WaitGroup::init_with_count(reachable.len());
-        self.source_maps.quoted_contents_wait_group = WaitGroup::init_with_count(reachable.len());
-        // Note: `SourceMapDataTask` is not `Clone` (embeds an intrusive
-        // `ThreadPoolLib::Task` node); build via iterator instead of `vec![x;n]`.
-        self.source_maps.line_offset_tasks = (0..reachable.len())
-            .map(|_| SourceMapDataTask::default())
-            .collect::<Vec<_>>()
-            .into_boxed_slice();
-        self.source_maps.quoted_contents_tasks = (0..reachable.len())
-            .map(|_| SourceMapDataTask::default())
-            .collect::<Vec<_>>()
-            .into_boxed_slice();
-
-        // Note: erase `'a` → `'static` for the task backref. The tasks are
-        // joined before `self` is dropped (see `SourceMapData.*_wait_group`).
-        // Shared provenance: worker tasks only read the context (they never
-        // form `&mut LinkerContext`); peer tasks hold the same pointer.
-        // SAFETY: `self` outlives every task (joined before drop).
-        let ctx: Option<bun_ptr::ParentRef<LinkerContext<'static>>> = Some(unsafe {
-            bun_ptr::ParentRef::from_raw(
-                std::ptr::from_ref::<LinkerContext<'a>>(self)
-                    .cast::<LinkerContext<'static>>()
-                    .cast_mut(),
-            )
-        });
-        let mut batch = ThreadPoolLib::Batch::default();
-        let mut second_batch = ThreadPoolLib::Batch::default();
-        debug_assert_eq!(reachable.len(), self.source_maps.line_offset_tasks.len());
-        debug_assert_eq!(
-            reachable.len(),
-            self.source_maps.quoted_contents_tasks.len()
-        );
-        for ((source_index, line_offset), quoted) in reachable
-            .iter()
-            .zip(self.source_maps.line_offset_tasks.iter_mut())
-            .zip(self.source_maps.quoted_contents_tasks.iter_mut())
-        {
-            *line_offset = SourceMapDataTask {
-                ctx,
-                source_index: source_index.get(),
-                thread_task: ThreadPoolLib::Task {
-                    node: ThreadPoolLib::Node::default(),
-                    callback: SourceMapDataTask::run_line_offset,
-                },
-            };
-            *quoted = SourceMapDataTask {
-                ctx,
-                source_index: source_index.get(),
-                thread_task: ThreadPoolLib::Task {
-                    node: ThreadPoolLib::Node::default(),
-                    callback: SourceMapDataTask::run_quoted_source_contents,
-                },
-            };
-            batch.push(ThreadPoolLib::Batch::from(&raw mut line_offset.thread_task));
-            second_batch.push(ThreadPoolLib::Batch::from(&raw mut quoted.thread_task));
-        }
-
+        let reachable: &[Index] = &self.graph.reachable_files;
         // line offsets block sooner and are faster to compute, so we should schedule those first
-        batch.push(second_batch);
-
-        self.schedule_tasks(batch);
-    }
-
-    pub(crate) fn schedule_tasks(&self, batch: ThreadPoolLib::Batch) {
-        let _ = self.pending_task_count.fetch_add(
-            u32::try_from(batch.len).expect("int cast"),
-            Ordering::Relaxed,
+        let mut batch = self
+            .source_maps
+            .line_offsets
+            .create_batch(self.bundle, reachable);
+        batch.push(
+            self.source_maps
+                .quoted_contents
+                .create_batch(self.bundle, reachable),
         );
         self.worker_pool().schedule(batch);
     }
 
-    fn process_html_import_files(&mut self) {
-        // SAFETY: `parse_graph` is a backref to `BundleV2.graph`, a sibling
-        // field of `BundleV2.linker` (= `*self`). The two are disjoint, and no
-        // other `&`/`&mut` to `BundleV2.graph` is live for this scope —
-        // `self.graph` below is `LinkerGraph`, a distinct allocation.
-        // Note: go through raw pointers and reborrow per use to avoid holding
-        // overlapping `&`/`&mut` into `parse_graph.html_imports` and
-        // `parse_graph.input_files`.
-        let parse_graph: *mut Graph<'a> = self.parse_graph;
-        // SAFETY: see above; sole accessor of `html_imports` for this scope.
-        let server_len = unsafe { (*parse_graph).html_imports.server_source_indices.len() };
-        if server_len > 0 {
+    /// Ends the borrow of the bundle.
+    pub(crate) fn into_graph(self) -> LinkerGraph<'a> {
+        self.graph
+    }
+
+    fn process_html_import_files(&mut self, log: &mut Log) -> Result<(), LinkError> {
+        let parse_graph = self.parse_graph();
+        let server_source_indices = &parse_graph.html_imports;
+        let mut is_page_missing = false;
+        if !server_source_indices.is_empty() {
             let actual_ref = self.graph.runtime_function(b"__jsonParse");
+            let sources = parse_graph.input_files.items_source();
+            let browser_paths = &parse_graph.build_graphs[Target::Browser];
 
-            for i in 0..server_len as usize {
-                // SAFETY: `server_source_indices` is a stable Vec; index
-                // bounded by `server_len`.
-                let html_import: u32 =
-                    unsafe { (*parse_graph).html_imports.server_source_indices.slice()[i] };
-                // SAFETY: `input_files` SoA is append-only; read-only here.
-                let path_text = unsafe {
-                    &(*parse_graph).input_files.items_source()[html_import as usize]
-                        .path
-                        .text
+            for &html_import in server_source_indices.iter() {
+                let path = &sources[html_import as usize].path;
+                let Some(source_index) = browser_paths.get_path(path) else {
+                    log.add_error_fmt(
+                        Some(&sources[html_import as usize]),
+                        bun_ast::Loc::EMPTY,
+                        format_args!(
+                            "{} is imported as an HTML page, but the build has no page of it",
+                            bun_core::fmt::quote(path.pretty)
+                        ),
+                    );
+                    is_page_missing = true;
+                    continue;
                 };
-                // SAFETY: sole `&mut` into the per-target map for this lookup.
-                let source_index: u32 = unsafe {
-                    (*parse_graph).path_to_source_index_map(Target::Browser)
-                }
-                .get(path_text)
-                .unwrap_or_else(|| {
-                    panic!("Assertion failed: HTML import file not found in pathToSourceIndexMap");
-                });
 
-                // SAFETY: sole `&mut` into `html_source_indices` for this push.
-                unsafe {
-                    (*parse_graph)
-                        .html_imports
-                        .html_source_indices
-                        .push(source_index)
-                };
+                self.graph.html_source_indices.push(source_index);
 
                 // S.LazyExport is a call to __jsonParse. Each accessor returns
                 // `Option`; `.unwrap()` panics on shape mismatch.
@@ -684,11 +452,7 @@ impl<'a> LinkerContext<'a> {
                 .ref_;
 
                 // Make the __jsonParse in that file point to the __jsonParse in the runtime chunk.
-                // SAFETY: `original_ref`'s symbol slot is disjoint from any live borrow here
-                // (only `actual_ref` is held, a `Copy` value).
-                unsafe { self.graph.symbol_mut(original_ref) }
-                    .link
-                    .set(actual_ref);
+                self.graph.symbol(original_ref).link.set(actual_ref);
 
                 // When --splitting is enabled, we have to make sure we import the __jsonParse function.
                 self.graph
@@ -702,63 +466,73 @@ impl<'a> LinkerContext<'a> {
                     .expect("OOM");
             }
         }
+        match is_page_missing {
+            true => Err(LinkError::BuildFailed),
+            false => Ok(()),
+        }
     }
 
-    /// See [`Self::load`] for why `bundle` is a raw `*mut` (caller passes
-    /// `self` while the receiver is `self.linker`; field-disjoint access only).
-    ///
-    /// # Safety
-    /// `bundle` must be valid for the call and `self` must be `(*bundle).linker`.
-    #[inline(never)]
-    pub(crate) unsafe fn link(
-        &mut self,
-        bundle: *mut BundleV2<'a>,
-        entry_points: &[Index],
-        server_component_boundaries: &bun_ast::server_component_boundary::List,
-        reachable: &[Index],
-    ) -> Result<Box<[Chunk]>, LinkError> {
-        // SAFETY: forwarded; see fn-level contract.
-        unsafe { self.load(bundle, entry_points, server_component_boundaries, reachable)? };
+    /// The side of the output file of `chunk`.
+    pub(crate) fn chunk_side(&self, chunk: &Chunk) -> crate::options::Side {
+        use crate::options::Side;
+        if matches!(chunk.content, crate::chunk::Content::Css(_))
+            || chunk
+                .flags
+                .contains(crate::chunk::Flags::IS_BROWSER_CHUNK_FROM_SERVER_BUILD)
+        {
+            return Side::Client;
+        }
+        match self.graph.ast.items_target()[chunk.entry_point.source_index() as usize] {
+            Target::Browser => Side::Client,
+            _ => Side::Server,
+        }
+    }
 
+    /// The output kind of the output file of `chunk`.
+    pub(crate) fn chunk_output_kind(&self, chunk: &Chunk) -> crate::options::OutputKind {
+        use crate::options::OutputKind;
+        if matches!(chunk.content, crate::chunk::Content::Css(_)) {
+            OutputKind::Asset
+        } else if chunk.entry_point.is_entry_point() {
+            self.graph.files.items_entry_point_kind()[chunk.entry_point.source_index() as usize]
+                .output_kind()
+        } else {
+            OutputKind::Chunk
+        }
+    }
+
+    /// Whether `chunk` is one that bytecode (and, in an executable, module info) is made for. The output file list
+    /// counts those files with this before they are made (`OutputFileList::calculate_output_file_list_capacity`).
+    pub(crate) fn chunk_gets_bytecode(&self, chunk: &Chunk) -> bool {
+        // The CSS chunk of a JavaScript entry point has that entry point's loader.
+        let loader = if chunk.entry_point.is_entry_point() {
+            self.parse_graph().input_files.items_loader()[chunk.entry_point.source_index() as usize]
+        } else {
+            crate::options::Loader::Js
+        };
+        chunk.content.is_javascript() && loader.is_javascript_like()
+    }
+
+    #[inline(never)]
+    pub(crate) fn link(&mut self, log: &mut Log) -> Result<Box<[Chunk<'a>]>, LinkError> {
         if self.options.source_maps != SourceMapOption::None {
-            self.compute_data_for_source_map(reachable);
+            self.compute_data_for_source_map();
         }
 
-        self.process_html_import_files();
+        self.process_html_import_files(log)?;
 
         if FeatureFlags::HELP_CATCH_MEMORY_ISSUES {
             self.check_for_memory_corruption();
         }
 
         // Validate top-level await for all files first.
-        // SAFETY: scalar `bool` read of a field disjoint from `self` (= `(*bundle).linker`).
-        if unsafe { (*bundle).has_any_top_level_await_modules } {
-            // SAFETY: `parse_graph` is a backref to `BundleV2.graph`, disjoint
-            // from `*self` (= `BundleV2.linker`). The SoA column slices below
-            // are physically disjoint and the underlying slabs do not
-            // reallocate inside `validate_tla`; we cache raw column pointers
-            // and reborrow once for the loop to satisfy borrowck alongside
-            // `&mut self`.
-            let parse_graph: *mut Graph<'a> = self.parse_graph;
-            let import_records_list: *const [bun_ast::import_record::List<'a>] =
-                self.graph.ast.items_import_records();
-            let flags: *mut [crate::js_meta::Flags] = self.graph.meta.items_flags_mut();
-            let css_asts: *const [crate::bundled_ast::CssCol] = self.graph.ast.items_css();
+        if self.bundle.has_any_top_level_await_modules {
+            let input_files = self.parse_graph().input_files.items_source();
+            let css_asts = &self.parse_graph().css_asts;
+            let ast = self.graph.ast.split_mut();
+            let import_records_list = &*ast.import_records;
+            let flags = self.graph.meta.items_flags_mut();
             let files_len = self.graph.files.len();
-            // SAFETY: see block comment above — `parse_graph` backref disjoint
-            // from `*self`, stable SoA slabs; `validate_tla` neither
-            // reallocates the slabs nor forms a competing `&mut` to any
-            // read-only column. All seven derefs share that invariant.
-            let (tla_keywords, tla_checks, input_files, import_records_list, css_asts, flags) = unsafe {
-                (
-                    (*parse_graph).ast.items_top_level_await_keyword(),
-                    (*parse_graph).ast.items_tla_check_mut(),
-                    (*parse_graph).input_files.items_source(),
-                    &*import_records_list,
-                    &*css_asts,
-                    &mut *flags,
-                )
-            };
             let import_records_len = import_records_list.len();
 
             // Process all files in source index order, like esbuild does
@@ -782,10 +556,11 @@ impl<'a> LinkerContext<'a> {
                     continue;
                 }
 
-                self.validate_tla(
+                Self::validate_tla(
+                    log,
                     source_index,
-                    tla_keywords,
-                    tla_checks,
+                    ast.top_level_await_keyword,
+                    ast.tla_check,
                     input_files,
                     flags,
                     import_records_list,
@@ -798,10 +573,10 @@ impl<'a> LinkerContext<'a> {
             self.graph.propagate_async_dependencies()?;
         }
 
-        scan_imports_and_exports(self)?;
+        scan_imports_and_exports(self, log)?;
 
         // Stop now if there were errors
-        if self.log().has_errors() {
+        if log.has_errors() {
             return Err(LinkError::BuildFailed);
         }
 
@@ -815,10 +590,9 @@ impl<'a> LinkerContext<'a> {
             self.check_for_memory_corruption();
         }
 
-        // SAFETY: scalar `u64` read of a field disjoint from `self` (= `(*bundle).linker`).
-        let mut chunks = compute_chunks(self, unsafe { (*bundle).unique_key })?;
+        let mut chunks = compute_chunks(self, log)?;
 
-        if self.log().has_errors() {
+        if log.has_errors() {
             return Err(LinkError::BuildFailed);
         }
 
@@ -862,80 +636,37 @@ impl<'a> LinkerContext<'a> {
             self.graph.parts_live = parts_live;
         }
 
-        // Note: these slices alias into self.graph.
-        // The SoA columns are physically disjoint
-        // and the underlying slabs don't reallocate during tree-shaking, so we
-        // cache raw column base pointers and reborrow once for the
-        // worklist-driven passes below.
-        let parts: *mut [bun_ast::PartList<'a>] = self.graph.ast.items_parts_mut();
-        let parts_live: *mut [bun_collections::AutoBitSet] = self.graph.parts_live.as_mut_slice();
-        let import_records: *const [bun_ast::import_record::List<'a>] =
-            self.graph.ast.items_import_records();
-        let css_reprs: *const [crate::bundled_ast::CssCol] = self.graph.ast.items_css();
-        let entry_point_kinds: *const [EntryPoint::Kind] =
-            std::ptr::from_ref(self.graph.files.items_entry_point_kind());
-        let entry_points: *const [crate::IndexInt] = self.graph.entry_points.items_source_index();
-        let distances: *mut [u32] = self.graph.files.items_distance_from_entry_point_mut();
-        let file_entry_bits: *mut [AutoBitSet] = self.graph.files.items_entry_bits_mut();
-
-        // SAFETY: see block comment above — disjoint SoA columns, stable slabs
-        // (no reallocation during tree-shaking). All column derefs share that
-        // invariant; reborrowing once here is sound because the
-        // worklist-driven `mark_file_*` steps neither reallocate the slabs
-        // nor form a competing `&mut` to any read-only column.
-        let (
-            entry_points,
-            import_records,
-            entry_point_kinds,
-            css_reprs,
-            parts,
-            parts_live,
-            distances,
-            file_entry_bits,
-        ) = unsafe {
-            (
-                &*entry_points,
-                &*import_records,
-                &*entry_point_kinds,
-                &*css_reprs,
-                &mut *parts,
-                &mut *parts_live,
-                &mut *distances,
-                &mut *file_entry_bits,
-            )
-        };
-        let entry_points_len = entry_points.len();
+        let entry_points_len = self.graph.entry_points.len();
 
         {
             let _trace2 = bun::perf::trace("Bundler.markFileLiveForTreeShaking");
 
-            let mut ctx = TreeShakeCtx {
-                parts,
-                parts_live,
-                import_records,
-                entry_point_kinds,
-                css_reprs,
-                worklist: Vec::new(),
-            };
+            let mut worklist: Vec<TreeShakeWork> = Vec::new();
 
             // Tree shaking: Each entry point marks all files reachable from itself.
             // `import()` targets are marked live from the live part that holds
             // the `import()` instead (see `mark_part_live_step`).
             let root_dynamic_imports = !self.options.tree_shaking;
             for i in 0..entry_points_len {
-                let entry_point = entry_points[i];
+                let entry_point = self.graph.entry_points.items_source_index()[i];
                 if !root_dynamic_imports
-                    && entry_point_kinds[entry_point as usize] == EntryPoint::Kind::DynamicImport
+                    && self.graph.files.items_entry_point_kind()[entry_point as usize]
+                        == EntryPoint::Kind::DynamicImport
                 {
                     continue;
                 }
-                self.mark_file_live_for_tree_shaking(&mut ctx, entry_point);
+                self.mark_file_live_for_tree_shaking(&mut worklist, entry_point);
+            }
+
+            if self.module_preload() {
+                self.mark_preload_entries(&mut worklist)?;
             }
         }
 
         {
             let _trace2 = bun::perf::trace("Bundler.markFileReachableForCodeSplitting");
 
+            let file_entry_bits = self.graph.files.items_entry_bits_mut();
             // AutoBitSet needs to be initialized if it is dynamic
             if AutoBitSet::needs_dynamic(entry_points_len) {
                 for bits in file_entry_bits.iter_mut() {
@@ -946,22 +677,15 @@ impl<'a> LinkerContext<'a> {
                 debug_assert!(matches!(&file_entry_bits[0], AutoBitSet::Static(_)));
             }
 
-            let mut ctx = CodeSplitCtx {
-                distances,
-                parts,
-                import_records,
-                file_entry_bits,
-                css_reprs,
-                queue: std::collections::VecDeque::new(),
-            };
+            let mut queue = std::collections::VecDeque::new();
 
             // Code splitting: Determine which entry points can reach which files. This
             // has to happen after tree shaking because there is an implicit dependency
             // between live parts within the same file. All liveness has to be computed
             // first before determining which entry points can reach which files.
             for i in 0..entry_points_len {
-                let entry_point = entry_points[i];
-                self.mark_file_reachable_for_code_splitting(&mut ctx, entry_point, i, 0);
+                let entry_point = self.graph.entry_points.items_source_index()[i];
+                self.mark_file_reachable_for_code_splitting(&mut queue, entry_point, i);
             }
         }
 
@@ -970,28 +694,18 @@ impl<'a> LinkerContext<'a> {
 
     // CONCURRENCY: `each_ptr` callback — runs on worker threads, one task per
     // `chunk_index`. Writes: `chunk.intermediate_output`, `chunk.isolated_hash`,
-    // `chunk.output_source_map` (per-chunk, disjoint by `*mut Chunk`). Reads
-    // `ctx.c`/`ctx.chunks` shared. Never forms `&mut LinkerContext` — the
-    // `post_process_*` callees take `GenerateChunkCtx` by value and deref
-    // `ctx.c` to `&LinkerContext` for read-only graph access plus per-chunk
-    // raw-ptr writes (see `postProcessJSChunk.rs`).
-    pub(crate) fn generate_chunk(ctx: &GenerateChunkCtx, chunk: *mut Chunk, chunk_index: usize) {
-        // SAFETY: `each_ptr` hands us a unique `*mut Chunk` per task; deref for
-        // the duration of this body. ctx.c points into BundleV2.linker;
-        // container_of pattern. `Worker::get` only reads `bundle.graph.pool`
-        // (shared), so a `&` is sufficient and avoids aliasing.
-        let chunk: &mut Chunk = unsafe { &mut *chunk };
-        let worker = crate::thread_pool::Worker::get(ctx.bundle());
-        let mut worker = scopeguard::guard(worker, |w| w.unget());
-        let worker: &mut crate::thread_pool::Worker = &mut **worker;
+    // `chunk.output_source_map` (per-chunk, disjoint by `&mut Chunk`). Reads
+    // `ctx.chunks` shared.
+    pub(crate) fn generate_chunk(ctx: &GenerateChunkCtx, chunk: &mut Chunk, chunk_index: usize) {
+        let mut worker = crate::thread_pool::Worker::get(ctx.c.bundle);
         // Note: dispatch on a discriminant copy so `chunk` isn't borrowed
         // across the post-process call (which takes `&mut Chunk`).
         let result = match chunk.content {
             crate::chunk::Content::Javascript(_) => {
-                post_process_js_chunk(*ctx, worker, chunk, chunk_index)
+                post_process_js_chunk(*ctx, &mut worker, chunk, chunk_index)
             }
-            crate::chunk::Content::Css(_) => post_process_css_chunk(*ctx, worker, chunk),
-            crate::chunk::Content::Html => post_process_html_chunk(*ctx, worker, chunk),
+            crate::chunk::Content::Css(_) => post_process_css_chunk(*ctx, &mut worker, chunk),
+            crate::chunk::Content::Html => post_process_html_chunk(*ctx, &mut worker, chunk),
         };
         if let Err(err) = result {
             Output::panic(format_args!("TODO: handle error: {}", err.name()));
@@ -999,63 +713,30 @@ impl<'a> LinkerContext<'a> {
     }
 
     // CONCURRENCY: `each_ptr` callback — runs on worker threads, one task per
-    // `chunk_index`. Writes: `chunk.renamer` only (per-chunk, disjoint by
-    // `*mut Chunk`). Reads `ctx.c.graph.{ast,meta,symbols}` SoA columns and
-    // `ctx.c.options` shared. `rename_symbols_in_chunk` takes `*mut
-    // LinkerContext` raw and never materializes `&mut LinkerContext` while
-    // peer renamer tasks are live (see its CONCURRENCY note).
-    pub(crate) fn generate_js_renamer(
-        ctx: &GenerateChunkCtx,
-        chunk: *mut Chunk,
-        chunk_index: usize,
-    ) {
-        // SAFETY: `each_ptr` hands us a unique `*mut Chunk` per task; deref for
-        // the body. container_of pattern — see `generate_chunk` above.
-        let chunk: &mut Chunk = unsafe { &mut *chunk };
-        let worker = crate::thread_pool::Worker::get(ctx.bundle());
-        let mut worker = scopeguard::guard(worker, |w| w.unget());
+    // `chunk_index`. Writes only to `chunk`.
+    pub(crate) fn generate_js_renamer(&self, chunk: &mut Chunk<'a>) {
+        let _worker = crate::thread_pool::Worker::get(self.bundle);
         if let crate::chunk::Content::Javascript(_) = chunk.content {
-            Self::generate_js_renamer_(*ctx, &mut **worker, chunk, chunk_index);
+            chunk.renamer = rename_symbols_in_chunk(self, chunk).expect("TODO: handle error");
+        }
+    }
+
+    pub(crate) fn renamer_for_chunk<'r>(&'r self, chunk: &'r Chunk) -> renamer::Renamer<'r> {
+        use crate::bun_renamer::ChunkRenamer;
+        match &chunk.renamer {
+            ChunkRenamer::None => unreachable!("ChunkRenamer not initialized"),
+            ChunkRenamer::Number(r) => r.as_renamer(&self.graph.symbols, &self.cross_chunk_names),
+            ChunkRenamer::Minify(r) => r.as_renamer(&self.graph.symbols),
         }
     }
 
     /// Second half of the minifying renamer under code splitting: names every
     /// slot `assign_cross_chunk_names` did not pin. Writes `chunk.renamer` only.
-    pub(crate) fn finish_js_renamer(
-        _ctx: &GenerateChunkCtx,
-        chunk: *mut Chunk,
-        _chunk_index: usize,
-    ) {
-        // SAFETY: `each_ptr` hands us a unique `*mut Chunk` per task.
-        let chunk: &mut Chunk = unsafe { &mut *chunk };
+    pub(crate) fn finish_js_renamer(chunk: &mut Chunk) {
         if let crate::bun_renamer::ChunkRenamer::Minify(r) = &mut chunk.renamer {
             // Only allocation can fail here.
             bun_core::handle_oom(r.finish());
         }
-    }
-
-    fn generate_js_renamer_(
-        ctx: GenerateChunkCtx,
-        _worker: &mut crate::thread_pool::Worker,
-        chunk: &mut Chunk,
-        chunk_index: usize,
-    ) {
-        let _ = chunk_index;
-        // Note: reshaped for borrowck — `rename_symbols_in_chunk` needs
-        // `&mut Chunk` and a borrow of `chunk.content.javascript.files_in_chunk_order`
-        // simultaneously; cache the files slice via raw pointer (it lives in
-        // the chunk arena, address-stable for the renamer pass).
-        let files: *const [u32] = match &chunk.content {
-            crate::chunk::Content::Javascript(js) => &raw const *js.files_in_chunk_order,
-            _ => unreachable!(),
-        };
-        // SAFETY: `files` points into `chunk.content.javascript`; `rename_symbols_in_chunk`
-        // does not touch `chunk.content` (it writes `chunk.renamer` only). `ctx.c` is the
-        // shared `*mut LinkerContext` — pass it raw so `rename_symbols_in_chunk` can deref
-        // to `&LinkerContext` (shared) without asserting whole-context exclusivity while
-        // peer renamer tasks run concurrently.
-        chunk.renamer = unsafe { rename_symbols_in_chunk(ctx.c.as_mut_ptr(), chunk, &*files) }
-            .expect("TODO: handle error");
     }
 
     /// The relative path from the chunk directory to a file source, as written
@@ -1071,10 +752,10 @@ impl<'a> LinkerContext<'a> {
     }
 
     pub(crate) fn generate_source_map_for_chunk(
-        &mut self,
+        &self,
         isolated_hash: u64,
         _worker: &mut crate::thread_pool::Worker,
-        results: &MultiArrayList<CompileResultForSourceMap>,
+        results: &MultiArrayList<CompileResultForSourceMap<'_>>,
         chunk_abs_dir: &[u8],
         can_have_shifts: bool,
     ) -> Result<SourceMapPieces, BunError> {
@@ -1178,7 +859,7 @@ impl<'a> LinkerContext<'a> {
         let offsets = results.items_generated_offset();
         debug_assert_eq!(source_map_chunks.len(), offsets.len());
         debug_assert_eq!(source_map_chunks.len(), source_indices.len());
-        for ((chunk, offset), &current_source_index) in source_map_chunks
+        for ((&chunk, offset), &current_source_index) in source_map_chunks
             .iter()
             .zip(offsets.iter())
             .zip(source_indices.iter())
@@ -1282,12 +963,13 @@ impl From<BunError> for LinkError {
     }
 }
 
-pub struct LinkerOptions {
+pub(crate) struct LinkerOptions<'l> {
     pub(crate) generate_bytecode_cache: bool,
     pub(crate) generate_internal_module_bytecode: bool,
     /// See `CompileTargetBuiltins::Target`.
-    pub(crate) target_builtins: Option<std::sync::Arc<[u8]>>,
+    pub(crate) target_builtins: Option<&'l [u8]>,
     pub(crate) bytecode_depth: u32,
+    pub(crate) optimize_bytecode: bool,
     pub(crate) output_format: Format,
     pub(crate) ignore_dce_annotations: bool,
     pub(crate) emit_dce_annotations: bool,
@@ -1296,28 +978,68 @@ pub struct LinkerOptions {
     pub(crate) minify_whitespace: bool,
     pub(crate) minify_syntax: bool,
     pub(crate) minify_identifiers: bool,
-    pub(crate) banner: &'static [u8],
-    pub(crate) footer: &'static [u8],
+    pub(crate) banner: &'l [u8],
+    pub(crate) footer: &'l [u8],
     pub(crate) css_chunking: bool,
     /// Code splitting: side-effect-free chunks whose summed source size is
     /// below this also fold into a chunk more entry points load (0 = off).
     /// See `merge_small_chunks`.
     pub(crate) min_chunk_size: u64,
+    pub(crate) fold_chunks: bool,
+    pub(crate) entry_naming_has_hash: bool,
+    pub(crate) module_preload: bool,
     pub(crate) source_maps: SourceMapOption,
     pub(crate) target: Target,
     pub(crate) compile_mode: CompileMode,
     pub(crate) metafile: bool,
-    /// Path to write JSON metafile (for Bun.build API)
-    pub(crate) metafile_json_path: &'static [u8],
-    /// Path to write markdown metafile (for Bun.build API)
-    pub(crate) metafile_markdown_path: &'static [u8],
 
     pub(crate) mode: LinkerOptionsMode,
 
-    pub(crate) public_path: &'static [u8],
+    pub(crate) public_path: &'l [u8],
 }
 
-impl LinkerOptions {
+impl<'l> LinkerOptions<'l> {
+    fn new(options: &'l BundleOptions<'_>) -> Self {
+        use crate::options::CompileTargetBuiltins;
+        Self {
+            generate_bytecode_cache: options.bytecode,
+            generate_internal_module_bytecode: options.bytecode
+                && !matches!(options.compile_target_builtins, CompileTargetBuiltins::None),
+            target_builtins: match &options.compile_target_builtins {
+                CompileTargetBuiltins::Target(section) => Some(section),
+                _ => None,
+            },
+            bytecode_depth: options.bytecode_depth,
+            optimize_bytecode: options.optimize_bytecode,
+            output_format: options.output_format,
+            ignore_dce_annotations: options.ignore_dce_annotations,
+            emit_dce_annotations: options.emit_dce_annotations,
+            deprecated_namespace_object_setters: options.deprecated_namespace_object_setters,
+            tree_shaking: options.tree_shaking,
+            minify_whitespace: options.minify_whitespace,
+            minify_syntax: options.minify_syntax,
+            minify_identifiers: options.minify_identifiers,
+            banner: &options.banner,
+            footer: &options.footer,
+            css_chunking: options.css_chunking,
+            min_chunk_size: options
+                .min_chunk_size
+                .unwrap_or_else(|| crate::options::default_min_chunk_size(options.target)),
+            fold_chunks: options.fold_chunks,
+            entry_naming_has_hash: crate::options::path_template_needs(
+                &options.entry_naming,
+                crate::options::PlaceholderField::Hash,
+            ),
+            module_preload: options.module_preload,
+            source_maps: options.source_map,
+            target: options.target,
+            compile_mode: options.compile_mode,
+            metafile: options.metafile,
+            mode: LinkerOptionsMode::Bundle,
+            public_path: &options.public_path,
+        }
+    }
+
     /// ESM bytecode in a `--compile` build: JSC does not parse the chunk, so
     /// its `JSModuleRecord` is built from a `ModuleInfo` the linker records
     /// while printing (see `post_process_js_chunk`).
@@ -1326,36 +1048,21 @@ impl LinkerOptions {
             && self.output_format == Format::Esm
             && self.compile_mode.is_executable()
     }
-}
 
-impl Default for LinkerOptions {
-    fn default() -> Self {
-        Self {
-            generate_bytecode_cache: false,
-            generate_internal_module_bytecode: false,
-            target_builtins: None,
-            bytecode_depth: u32::MAX,
-            output_format: Format::Esm,
-            ignore_dce_annotations: false,
-            emit_dce_annotations: true,
-            deprecated_namespace_object_setters: true,
-            tree_shaking: true,
-            minify_whitespace: false,
-            minify_syntax: false,
-            minify_identifiers: false,
-            banner: b"",
-            footer: b"",
-            css_chunking: false,
-            min_chunk_size: 0,
-            source_maps: SourceMapOption::None,
-            target: Target::Browser,
-            compile_mode: CompileMode::None,
-            metafile: false,
-            metafile_json_path: b"",
-            metafile_markdown_path: b"",
-            mode: LinkerOptionsMode::Bundle,
-            public_path: b"",
+    /// Returns the module-record flags for `--banner` and `--footer`, which the printer never sees.
+    pub(crate) fn raw_text_module_syntax(&self) -> ModuleSyntax {
+        let mut syntax = ModuleSyntax::default();
+        for text in [self.banner, self.footer] {
+            if text.is_empty() {
+                continue;
+            }
+            if let Some(piece) = parse_only_text(text, true, false, |parsed| parsed.module_syntax())
+            {
+                syntax.import_meta |= piece.import_meta;
+                syntax.top_level_await |= piece.top_level_await;
+            }
         }
+        syntax
     }
 }
 
@@ -1365,224 +1072,119 @@ pub enum LinkerOptionsMode {
     Bundle,
 }
 
-#[derive(Default)]
-pub struct SourceMapData {
-    pub line_offset_wait_group: WaitGroup,
-    pub(crate) line_offset_tasks: Box<[SourceMapDataTask]>,
-
-    pub quoted_contents_wait_group: WaitGroup,
-    pub(crate) quoted_contents_tasks: Box<[SourceMapDataTask]>,
+pub(crate) struct SourceMapData<'l, 'a> {
+    pub(crate) line_offsets: SourceMapTasks<'l, 'a, LineOffsets>,
+    pub(crate) quoted_contents: SourceMapTasks<'l, 'a, QuotedContents>,
 }
 
-pub struct SourceMapDataTask {
-    /// `None` only in `Default` (the per-index slot is overwritten before
-    /// scheduling).
-    pub(crate) ctx: Option<bun_ptr::ParentRef<LinkerContext<'static>>>,
-    pub(crate) source_index: crate::IndexInt,
-    pub(crate) thread_task: ThreadPoolLib::Task,
+type LineOffsets = SourceMap::line_offset_table::List<bun_alloc::AstAlloc>;
+type QuotedContents = Option<bun_alloc::AstVec<u8>>;
+
+/// One task per file. They run while the link goes on, so each keeps its result to itself.
+pub(crate) struct SourceMapTasks<'l, 'a, T> {
+    wait_group: &'l WaitGroup,
+    tasks: Vec<SourceMapTask<'l, 'a, T>>,
 }
 
-// SAFETY: scheduled on the worker pool via raw `*mut Task` (bypassing the
-// `OwnedTask: Send` route). `ctx` is a backref into `BundleV2.linker`
-// (`LinkerContext: Send`); `source_index`/`thread_task` are POD. The callback
-// only writes the per-`source_index` SoA cell (see `run_line_offset`
-// CONCURRENCY note), so moving the task to a worker thread is sound.
-unsafe impl Send for SourceMapDataTask {}
+struct SourceMapTask<'l, 'a, T> {
+    task: ThreadPoolLib::CountedTask,
+    bundle: &'l BundleV2<'a>,
+    source_index: crate::IndexInt,
+    result: T,
+}
 
-impl Default for SourceMapDataTask {
-    fn default() -> Self {
+impl<T> Drop for SourceMapTasks<'_, '_, T> {
+    fn drop(&mut self) {
+        self.wait_group.wait();
+    }
+}
+
+impl<'l, 'a, T: SourceMapColumn> SourceMapTasks<'l, 'a, T> {
+    fn new(wait_group: &'l WaitGroup) -> Self {
         Self {
-            ctx: None,
-            source_index: 0,
-            thread_task: ThreadPoolLib::Task {
-                node: ThreadPoolLib::Node::default(),
-                callback: Self::run_line_offset,
-            },
+            wait_group,
+            tasks: Vec::new(),
+        }
+    }
+
+    fn create_batch(
+        &mut self,
+        bundle: &'l BundleV2<'a>,
+        reachable: &[Index],
+    ) -> ThreadPoolLib::Batch {
+        assert!(self.tasks.is_empty());
+        self.wait_group.add(reachable.len());
+        self.tasks = reachable
+            .iter()
+            .map(|source_index| SourceMapTask {
+                task: ThreadPoolLib::CountedTask::new(Self::run, self.wait_group),
+                bundle,
+                source_index: source_index.get(),
+                result: T::default(),
+            })
+            .collect();
+        let mut batch = ThreadPoolLib::Batch::default();
+        for task in &mut self.tasks {
+            batch.push(ThreadPoolLib::Batch::from(&raw mut task.task.task));
+        }
+        batch
+    }
+
+    unsafe fn run(task: *mut ThreadPoolLib::Task) {
+        // SAFETY: `task` is the field of an element of `tasks`, and nothing else touches an element
+        // before the wait group is done.
+        let task = unsafe { &mut *bun_core::from_field_ptr!(SourceMapTask<'l, 'a, T>, task, task) };
+        // What `compute` allocates with `AstAlloc` lands in this worker's heap, which dropping the pool frees.
+        let _worker = crate::thread_pool::Worker::get(task.bundle);
+        task.result = T::compute(&task.bundle.graph, task.source_index);
+    }
+
+    pub(crate) fn is_empty(&self) -> bool {
+        self.tasks.is_empty()
+    }
+
+    /// Waits for the tasks and moves their results to `column`, which is indexed by source index.
+    pub(crate) fn finish(&mut self, column: &mut [T]) {
+        self.wait_group.wait();
+        for task in core::mem::take(&mut self.tasks) {
+            column[task.source_index as usize] = task.result;
         }
     }
 }
 
-impl SourceMapDataTask {
-    // CONCURRENCY: thread-pool callback — runs on worker threads, one task per
-    // `source_index`. Writes: `ctx.graph.files[source_index].line_offset_table`
-    // (per-row disjoint), `ctx.pending_task_count` (atomic),
-    // `ctx.source_maps.line_offset_wait_group` (atomic). Reads
-    // `ctx.parse_graph.input_files[source_index].source` shared. Never forms
-    // `&mut LinkerContext` — `compute_line_offsets` takes a `ParentRef` (yields
-    // `&LinkerContext` only) and writes the single SoA cell via raw per-row
-    // pointer.
-    fn run_line_offset(thread_task: *mut ThreadPoolLib::Task) {
-        // SAFETY: thread_task points to SourceMapDataTask.thread_task
-        let task: &mut SourceMapDataTask = unsafe {
-            &mut *(bun_core::from_field_ptr!(SourceMapDataTask, thread_task, thread_task))
-        };
-        // `ParentRef<LinkerContext>` — Deref yields `&LinkerContext`; the
-        // pointee outlives every task (joined via `line_offset_wait_group`).
-        let ctx = task.ctx.expect("SourceMapDataTask.ctx");
-        scopeguard::defer! {
-            ctx.mark_pending_task_done();
-            // SAFETY: live until this lets the linker's `wait()` return; the linker then frees
-            // the tasks at once (`generate_chunks_in_parallel`), and nothing below touches `ctx`.
-            unsafe {
-                WaitGroup::finish_raw(
-                    &raw const (*ctx.as_const_ptr()).source_maps.line_offset_wait_group,
-                )
-            };
-        }
-
-        // SAFETY: ctx is BundleV2.linker; container_of recovers the parent. We
-        // deliberately do NOT materialize `&mut BundleV2` here — these tasks
-        // run concurrently across the worker pool (one per source_index), so
-        // any `&mut` to the shared `BundleV2`/`LinkerContext` would be aliased
-        // UB. `Worker::get` only needs `&BundleV2` (reads `graph.pool`), and
-        // that shared borrow ends before any per-slot write below.
-        let bundle: *const BundleV2 =
-            unsafe { LinkerContext::bundle_v2_const_ptr(ctx.as_const_ptr()) };
-        // SAFETY: `bundle` is a valid backref into the owning `BundleV2` (see above);
-        // only a shared borrow is formed and it ends before any per-slot write.
-        let worker = crate::thread_pool::Worker::get(unsafe { &*bundle });
-        // SAFETY: `worker.arena` points at `worker.heap` (init by `Worker::create`).
-        SourceMapData::compute_line_offsets(ctx, worker.arena(), task.source_index);
-        worker.unget();
-    }
-
-    // CONCURRENCY: thread-pool callback — runs on worker threads, one task per
-    // `source_index`. Writes: `ctx.graph.files[source_index].quoted_source_contents`
-    // (per-row disjoint), `ctx.pending_task_count` (atomic),
-    // `ctx.source_maps.quoted_contents_wait_group` (atomic). Never forms
-    // `&mut LinkerContext` — `compute_quoted_source_contents` takes a
-    // `ParentRef` (yields `&LinkerContext` only) and writes the single SoA cell
-    // via raw per-row pointer.
-    fn run_quoted_source_contents(thread_task: *mut ThreadPoolLib::Task) {
-        // SAFETY: thread_task points to SourceMapDataTask.thread_task
-        let task: &mut SourceMapDataTask = unsafe {
-            &mut *(bun_core::from_field_ptr!(SourceMapDataTask, thread_task, thread_task))
-        };
-        // `ParentRef<LinkerContext>` — Deref yields `&LinkerContext`; the
-        // pointee outlives every task (joined via `quoted_contents_wait_group`).
-        let ctx = task.ctx.expect("SourceMapDataTask.ctx");
-        scopeguard::defer! {
-            ctx.mark_pending_task_done();
-            // SAFETY: as in `run_line_offset`, for `quoted_contents_wait_group`.
-            unsafe {
-                WaitGroup::finish_raw(
-                    &raw const (*ctx.as_const_ptr()).source_maps.quoted_contents_wait_group,
-                )
-            };
-        }
-
-        // SAFETY: see `run_line_offset` — raw-ptr container_of, no `&mut`
-        // materialized over the shared `BundleV2` while peer tasks are live.
-        let bundle: *const BundleV2 =
-            unsafe { LinkerContext::bundle_v2_const_ptr(ctx.as_const_ptr()) };
-        // SAFETY: `bundle` is a valid backref (see `run_line_offset`); only a shared
-        // borrow is formed for `Worker::get`, which reads `graph.pool` under a mutex.
-        let worker = crate::thread_pool::Worker::get(unsafe { &*bundle });
-
-        // Use the default arena when using DevServer and the file
-        // was generated. This will be preserved so that remapping
-        // stack traces can show the source code, even after incremental
-        // rebuilds occur.
-        //
-        // Note: `compute_quoted_source_contents` ignores which arena it is
-        // handed (it allocates via the default allocator internally), so we
-        // pass the worker arena unconditionally; `DevServerHandle` does not
-        // expose an arena accessor (§Dispatch).
-        SourceMapData::compute_quoted_source_contents(ctx, worker.arena(), task.source_index);
-        worker.unget();
-    }
+pub(crate) trait SourceMapColumn: Default {
+    fn compute(parse_graph: &Graph<'_>, source_index: crate::IndexInt) -> Self;
 }
 
-impl SourceMapData {
-    /// Runs concurrently across the worker pool (one task per `source_index`).
-    /// Takes [`ParentRef<LinkerContext>`](bun_ptr::ParentRef) (not `&mut`)
-    /// because peer tasks on other threads hold the same pointer —
-    /// materializing `&mut LinkerContext` here would be aliased-mut UB. `ParentRef::Deref` yields
-    /// `&LinkerContext` (SharedReadOnly) for all SoA-header reads; each task
-    /// writes only `graph.files[source_index].line_offset_table` (disjoint by
-    /// `source_index`) via a raw column pointer.
-    pub(crate) fn compute_line_offsets(
-        this: bun_ptr::ParentRef<LinkerContext<'_>>,
-        alloc: &Bump,
-        source_index: crate::IndexInt,
-    ) {
+impl SourceMapColumn for LineOffsets {
+    fn compute(parse_graph: &Graph<'_>, source_index: crate::IndexInt) -> Self {
         debug!("Computing LineOffsetTable: {}", source_index);
-        // `ParentRef::Deref` → `&LinkerContext` (backref to `BundleV2.linker`,
-        // valid for the link step). We only take transient `&` to read SoA
-        // column base pointers via `Slice::items_raw`; the underlying
-        // `MultiArrayList` header is not mutated for the duration of these
-        // tasks. The write target is the per-source_index slot, addressed by
-        // raw pointer — disjoint across concurrent tasks.
-        // SAFETY: `add` offset is in-bounds (`source_index < files.len()`).
-        let line_offset_table: *mut SourceMap::line_offset_table::List<bun_alloc::AstAlloc> = unsafe {
-            this.graph
-                .files
-                .slice()
-                .items_raw::<"line_offset_table", SourceMap::line_offset_table::List<bun_alloc::AstAlloc>>()
-                .add(source_index as usize)
-        };
-
-        // `parse_graph` backref accessor — read-only across all tasks.
-        let parse_graph = this.parse_graph();
         let source: &Source = &parse_graph.input_files.items_source()[source_index as usize];
         let loader: Loader = parse_graph.input_files.items_loader()[source_index as usize];
 
         if !loader.can_have_source_map() {
             // This is not a file which we support generating source maps for
-            // SAFETY: sole writer to this slot (disjoint by source_index).
-            unsafe {
-                *line_offset_table = SourceMap::line_offset_table::List::new_in(bun_alloc::AstAlloc)
-            };
-            return;
+            return Self::default();
         }
 
-        // `graph.ast` is read-only for the duration of these tasks.
         let approximate_line_count =
-            this.graph.ast.items_approximate_newline_count()[source_index as usize];
+            parse_graph.ast.items_approximate_newline_count()[source_index as usize];
 
-        let _ = alloc;
-        // SAFETY: sole writer to this slot (disjoint by source_index).
-        // `Worker::get` (the caller) brackets this in `ast_memory_store.push()/
-        // pop()`, so the active `AstAlloc` state is this worker's and the
-        // `AstAlloc` route lands the SoA slab + every `columns_for_non_ascii`
-        // payload there for bulk-free on `pool.deinit()`.
-        unsafe {
-            *line_offset_table = LineOffsetTable::generate_in::<bun_alloc::AstAlloc>(
-                &source.contents,
-                // We don't support sourcemaps for source files with more than 2^31 lines
-                (approximate_line_count as u32 & 0x7FFF_FFFF) as i32,
-            )
-            .expect("OOM");
-        }
+        LineOffsetTable::generate_in::<bun_alloc::AstAlloc>(
+            &source.contents,
+            // We don't support sourcemaps for source files with more than 2^31 lines
+            (approximate_line_count as u32 & 0x7FFF_FFFF) as i32,
+        )
+        .expect("OOM")
     }
+}
 
-    /// Runs concurrently across the worker pool — see `compute_line_offsets`
-    /// for the `ParentRef` aliasing contract.
-    pub(crate) fn compute_quoted_source_contents(
-        this: bun_ptr::ParentRef<LinkerContext<'_>>,
-        _alloc: &Bump,
-        source_index: crate::IndexInt,
-    ) {
+impl SourceMapColumn for QuotedContents {
+    fn compute(parse_graph: &Graph<'_>, source_index: crate::IndexInt) -> Self {
         debug!("Computing Quoted Source Contents: {}", source_index);
-        // SAFETY: see `compute_line_offsets` — transient `&` (via
-        // `ParentRef::Deref`) to read the SoA column base, then raw-ptr offset
-        // to the per-source_index slot. Sole writer to this slot (disjoint
-        // across concurrent tasks); `add` offset is in-bounds.
-        let quoted_source_contents = unsafe {
-            &mut *this
-                .graph
-                .files
-                .slice()
-                .items_raw::<"quoted_source_contents", Option<bun_alloc::AstVec<u8>>>()
-                .add(source_index as usize)
-        };
-        *quoted_source_contents = None;
-
-        // `parse_graph` backref accessor — read-only across all tasks.
-        let parse_graph = this.parse_graph();
         let loader: Loader = parse_graph.input_files.items_loader()[source_index as usize];
         if !loader.can_have_source_map() {
-            return;
+            return None;
         }
 
         let source: &Source = &parse_graph.input_files.items_source()[source_index as usize];
@@ -1601,7 +1203,7 @@ impl SourceMapData {
         )
         .expect("OOM");
         buf.push(b'"');
-        *quoted_source_contents = Some(buf);
+        Some(buf)
     }
 }
 
@@ -1650,7 +1252,7 @@ pub(crate) enum MatchImportKind {
     Ambiguous,
 }
 
-pub struct ChunkMeta {
+pub(crate) struct ChunkMeta {
     pub(crate) imports: ChunkMetaMap,
     pub(crate) exports: ChunkMetaMap,
     pub(crate) dynamic_imports: ArrayHashMap<crate::IndexInt, ()>,
@@ -1661,118 +1263,21 @@ pub struct ChunkMeta {
 
 pub(crate) type ChunkMetaMap = ArrayHashMap<Ref, ()>;
 
-/// Note: raw-pointer fields (was `&'a mut`) because `each_ptr` requires
-/// `Ctx: Sync + Copy` and the same context is observed from every worker
-/// thread. Each task only writes to its own `*mut Chunk` slot; reads of
-/// `c`/`chunks` are disjoint or read-only.
+/// The same context is observed from every worker thread. Each task only writes to its own `Chunk`.
 #[derive(Clone, Copy)]
-pub struct GenerateChunkCtx<'a> {
-    pub(crate) c: bun_ptr::ParentRef<LinkerContext<'a>, bun_ptr::Mut>,
+pub(crate) struct GenerateChunkCtx<'c, 'a> {
+    pub(crate) c: &'c LinkerContext<'c, 'a>,
     /// Backref to the full `chunks: &mut [Chunk]` slice owned by
     /// `generate_chunks_in_parallel`. The slice outlives every
-    /// `GenerateChunkCtx` (joined via the batch's `group.wait()`), so [`bun_ptr::BackRef`]'s
+    /// `GenerateChunkCtx` (`each_ptr` joins the tasks), so [`bun_ptr::BackRef`]'s
     /// owner-outlives-holder invariant holds and per-task reads go through
     /// safe `Deref`. Read-only: each task writes only through its own
-    /// `*mut Chunk`.
-    pub(crate) chunks: bun_ptr::BackRef<[Chunk]>,
-    /// Backref to this task's `Chunk` (an element of `chunks`). Constructed
-    /// via [`bun_ptr::BackRef::new_mut`] so the stored `NonNull` carries write
-    /// provenance; per-task slot writes recover the raw `*mut Chunk` via
-    /// [`bun_ptr::BackRef::as_ptr`], shared reads go through safe `Deref`.
-    pub(crate) chunk: bun_ptr::BackRef<Chunk, bun_ptr::Mut>,
-}
-// SAFETY: see note above — each task writes only its own `*mut Chunk` slot;
-// shared reads are read-only.
-unsafe impl<'a> Send for GenerateChunkCtx<'a> {}
-// SAFETY: see the `Send` impl above — same backref-lifetime / disjoint-write invariants.
-unsafe impl<'a> Sync for GenerateChunkCtx<'a> {}
-
-impl<'a> GenerateChunkCtx<'a> {
-    /// Recover a shared borrow of the owning `BundleV2` via container_of from
-    /// the embedded `LinkerContext` pointer (`BundleV2.linker == *self.c`).
-    /// Used solely to call `Worker::get`, which only reads `bundle.graph.pool`
-    /// (shared) and serializes via mutex — so a `&BundleV2` is sufficient and
-    /// no `&mut` is ever materialized over the shared bundle while peer
-    /// per-chunk tasks run concurrently.
-    #[inline]
-    pub(crate) fn bundle(&self) -> &BundleV2<'a> {
-        // SAFETY: `self.c` is `&raw mut bundle.linker` set in
-        // `generate_chunks_in_parallel`; container_of recovers the parent.
-        // The bundle is valid for the link step.
-        unsafe { &*LinkerContext::bundle_v2_ptr(self.c.as_mut_ptr()) }
-    }
-
-    /// Mutable view of the owning `LinkerContext`. Centralizes the `unsafe`
-    /// deref of the `c: *mut LinkerContext` backref (set in
-    /// `generate_chunks_in_parallel`); callers previously open-coded
-    /// `unsafe { &mut *ctx.c }`. The per-chunk tasks each touch a disjoint
-    /// chunk, so the linker fields they write don't alias across tasks.
-    #[inline]
-    #[allow(clippy::mut_from_ref)]
-    pub(crate) fn c(&self) -> &mut LinkerContext<'a> {
-        // SAFETY: ParentRef into `BundleV2.linker`, valid for the
-        // chunk-generation pass; this task's chunk row is disjoint from peers'.
-        // Constructed via `from_raw_mut` (write provenance) in
-        // `generate_chunks_in_parallel`.
-        unsafe { self.c.assume_mut() }
-    }
+    /// `&mut Chunk`.
+    pub(crate) chunks: bun_ptr::BackRef<[Chunk<'a>]>,
 }
 
-pub struct PendingPartRange<'a> {
-    pub(crate) part_range: PartRange,
-    pub(crate) task: ThreadPoolLib::CountedTask,
-    pub(crate) ctx: &'a GenerateChunkCtx<'a>,
-    pub(crate) i: u32,
-}
-
-/// Shared prologue for `generate_compile_result_for_{js,css}_chunk` thread-pool
-/// callbacks: recover the intrusive [`PendingPartRange`] from `task`, extract
-/// the raw `*mut LinkerContext` / `*mut Chunk` from its [`GenerateChunkCtx`],
-/// and acquire the per-thread [`Worker`](crate::thread_pool::Worker) (returned
-/// as a scopeguard that calls `unget()` on drop).
-///
-/// `GenerateChunkCtx.{c, chunk}` are raw `*mut T` (Copy), so reading them
-/// through `&GenerateChunkCtx` preserves the mutable provenance they were
-/// constructed with in `generate_chunks_in_parallel` — many `PendingPartRange`
-/// tasks share one `chunk_ctx` across worker threads.
-///
-/// # Safety
-/// `task` must point to the `task` field of a live `PendingPartRange` scheduled
-/// by `generate_chunks_in_parallel`. The returned `&PendingPartRange` borrows
-/// the task allocation for the callback's duration; the returned raw pointers
-/// carry the mutable provenance the `GenerateChunkCtx` was constructed with.
-/// Callers uphold the disjoint-write contract:
-///   - `chunk.compile_results_for_chunk[i]` is written at a per-task unique `i`
-///     via [`Chunk::write_compile_result_slot`] (raw `addr_of_mut!` +
-///     `UnsafeCell` slot write — never `&mut Chunk`),
-///   - `chunk.files_with_parts_in_chunk` entries are updated via atomic RMW only,
-///   - all other access through `c` / `chunk` during codegen is read-only.
-#[inline]
-#[allow(clippy::type_complexity)]
-pub(crate) unsafe fn pending_part_range_prologue<'a>(
-    task: *mut ThreadPoolLib::Task,
-) -> (
-    &'a PendingPartRange<'a>,
-    *mut LinkerContext<'a>,
-    *mut Chunk,
-    scopeguard::ScopeGuard<
-        &'static mut crate::thread_pool::Worker,
-        impl FnOnce(&'static mut crate::thread_pool::Worker),
-    >,
-) {
-    // SAFETY: per fn contract — `task` is the intrusive `task` field.
-    let part_range: &PendingPartRange =
-        unsafe { &*bun_core::from_field_ptr!(PendingPartRange, task, task) };
-    let ctx = part_range.ctx;
-    let c_ptr: *mut LinkerContext = ctx.c.as_mut_ptr().cast();
-    let chunk_ptr: *mut Chunk = ctx.chunk.as_ptr();
-    let worker = crate::thread_pool::Worker::get(ctx.bundle());
-    let worker = scopeguard::guard(worker, |w| w.unget());
-    (part_range, c_ptr, chunk_ptr, worker)
-}
-
-impl<'a> LinkerContext<'a> {
-    pub(crate) fn generate_isolated_hash(&mut self, chunk: &Chunk, arena: &Bump) -> u64 {
+impl<'a> LinkerContext<'_, 'a> {
+    pub(crate) fn generate_isolated_hash(&self, chunk: &Chunk) -> u64 {
         let _trace = bun::perf::trace("Bundler.generateIsolatedHash");
 
         let mut hasher = ContentHasher::default();
@@ -1782,33 +1287,15 @@ impl<'a> LinkerContext<'a> {
         // that live in separate parts in the same file must not be merged. This only
         // needs to be done for JavaScript files, not CSS files.
         if let crate::chunk::Content::Javascript(js) = &chunk.content {
-            // SAFETY: parse_graph backref; exclusive access via &mut *.
-            let sources = unsafe { (*self.parse_graph).input_files.items_source_mut() };
+            let sources = self.parse_graph().input_files.items_source();
             for part_range in js.parts_in_chunk_in_order.iter() {
-                let source: &mut Source = &mut sources[part_range.source_index.get() as usize];
+                let source: &Source = &sources[part_range.source_index.get() as usize];
 
-                let file_path: &[u8] = 'brk: {
-                    if source.path.is_file() {
-                        // Use the pretty path as the file name since it should be platform-
-                        // independent (relative paths and the "/" path separator)
-                        if source.path.text.as_ptr() == source.path.pretty.as_ptr() {
-                            source.path = self
-                                .path_with_pretty_initialized(&source.path, arena)
-                                .expect("OOM");
-                        }
-                        // Note: `Path::assert_pretty_is_valid` lives on the
-                        // resolver-side `Path<'a>`; the logger `Path` has no
-                        // such debug hook yet.
-                        debug_assert!(source.path.text.as_ptr() != source.path.pretty.as_ptr());
-
-                        break 'brk source.path.pretty;
-                    } else {
-                        // If this isn't in the "file" namespace, just use the full path text
-                        // verbatim. This could be a source of cross-platform differences if
-                        // plugins are storing platform-specific information in here, but then
-                        // that problem isn't caused by esbuild itself.
-                        break 'brk source.path.text;
-                    }
+                let file_path: &[u8] = if source.path.is_file() {
+                    // Relative with "/" separators, or the key of an in-memory file.
+                    source.path.pretty
+                } else {
+                    source.path.text
                 };
 
                 // Include the path namespace in the hash
@@ -1826,22 +1313,7 @@ impl<'a> LinkerContext<'a> {
         // any import to be considered different if the import's output path has changed.
         hasher.write(&chunk.template.data);
 
-        let public_path: &[u8] = if chunk
-            .flags
-            .contains(crate::chunk::Flags::IS_BROWSER_CHUNK_FROM_SERVER_BUILD)
-        {
-            // SAFETY: self is BundleV2.linker; container_of recovers the parent.
-            // `transpiler_for_target` only reads `bundle.client_transpiler`.
-            let bundle = unsafe {
-                &mut *LinkerContext::bundle_v2_ptr(std::ptr::from_mut::<LinkerContext>(self))
-            };
-            &bundle
-                .transpiler_for_target(Target::Browser)
-                .options
-                .public_path
-        } else {
-            self.options.public_path
-        };
+        let public_path: &[u8] = &self.options_for_chunk(chunk).public_path;
 
         // Also hash the public path. If provided, this is used whenever files
         // reference each other such as cross-chunk imports, asset file references,
@@ -1892,8 +1364,8 @@ impl<'a> LinkerContext<'a> {
         hasher.digest()
     }
 
-    pub(crate) fn validate_tla(
-        &mut self,
+    fn validate_tla(
+        log: &mut Log,
         source_index: crate::IndexInt,
         tla_keywords: &[Range],
         tla_checks: &mut [TlaCheck],
@@ -2070,9 +1542,7 @@ impl<'a> LinkerContext<'a> {
                             write!(&mut text, "This require call is not allowed because the transitive dependency \"{}\" contains a top-level await", bstr::BStr::new(tla_pretty_path)).expect("infallible: in-memory write");
                         }
 
-                        // Split-borrow with `source`/`record` (parse_graph backref
-                        // slices) — `log_disjoint` returns the disjoint backref.
-                        self.log_disjoint().add_range_error_with_notes(
+                        log.add_range_error_with_notes(
                             Some(source),
                             record.range,
                             text,
@@ -2085,7 +1555,7 @@ impl<'a> LinkerContext<'a> {
     }
 
     pub(crate) fn should_remove_import_export_stmt(
-        &mut self,
+        &self,
         stmts: &mut StmtList,
         loc: Loc,
         namespace_ref: Ref,
@@ -2219,7 +1689,7 @@ impl<'a> LinkerContext<'a> {
     }
 
     pub(crate) fn print_code_for_file_in_chunk_js(
-        &mut self,
+        &self,
         r: renamer::Renamer,
         alloc: &Bump,
         writer: &mut js_printer::BufferWriter,
@@ -2238,34 +1708,6 @@ impl<'a> LinkerContext<'a> {
             ..Default::default()
         }];
 
-        // SAFETY: parse_graph backref; raw deref because `parse_graph` is held
-        // across `RequireOrImportMetaCallback::init(self)` (`&mut self`) below.
-        let parse_graph = unsafe { &*self.parse_graph };
-
-        // Note: reshaped for borrowck — `Options` borrows `ts_enums` /
-        // `line_offset_tables` / `mangled_props` from `self.graph`, but the
-        // `require_or_import_meta_for_source_callback` field below needs
-        // `&mut self`. Detach the read-only borrows via raw-pointer round-trip
-        // (graph SoA storage is never reallocated during the print step).
-        // SAFETY: `self.graph` columns are stable heap allocations valid for
-        // the duration of this call; the printer only reads from them.
-        let ts_enums: &bun_ast::ast_result::TsEnumsMap =
-            unsafe { bun_ptr::detach_lifetime_ref(&self.graph.ts_enums) };
-        // SAFETY: as for `ts_enums`.
-        let import_member_bindings: &bun_ast::ast_result::ImportMemberBindings =
-            unsafe { bun_ptr::detach_lifetime_ref(&self.graph.import_member_bindings) };
-        // SAFETY: `graph.files` SoA columns are stable heap allocations valid for this
-        // call (see above); the printer only reads from this slot.
-        let line_offset_table: &bun_sourcemap::line_offset_table::List<bun_alloc::AstAlloc> = unsafe {
-            bun_ptr::detach_lifetime_ref(
-                &self.graph.files.items_line_offset_table()[source_index.get() as usize],
-            )
-        };
-        let mangled_props: &MangledProps =
-            // SAFETY: `self.mangled_props` is not mutated during printing; detached borrow
-            // outlives only this call (see above).
-            unsafe { bun_ptr::detach_lifetime_ref(&self.mangled_props) };
-
         let print_options = js_printer::Options {
             bundling: true,
             // TODO: IIFE
@@ -2282,25 +1724,36 @@ impl<'a> LinkerContext<'a> {
                 .flags
                 .contains(AstFlags::COMMONJS_MODULE_EXPORTS_ASSIGNED_DEOPTIMIZED),
             // .const_values = c.graph.const_values,
-            ts_enums: Some(ts_enums),
-            import_member_bindings: Some(import_member_bindings),
+            ts_enums: Some(&self.graph.ts_enums),
+            import_member_bindings: Some(&self.graph.import_member_bindings),
+            has_dynamic_import_items: ast
+                .dynamic_import_aliases
+                .values()
+                .iter()
+                .any(|dynamic_use| !dynamic_use.items.is_empty()),
 
             minify_whitespace: self.options.minify_whitespace,
             minify_syntax: self.options.minify_syntax,
-            input_module_type: ast.exports_kind.into(),
+            input_module_type: ast.module_type,
             module_type: self.options.output_format,
             print_dce_annotations: self.options.emit_dce_annotations,
             has_run_symbol_renamer: true,
 
             to_esm_ref,
             to_commonjs_ref,
+            module_preload_ref: if self.module_preload() {
+                self.preload_runtime_ref
+            } else {
+                Ref::NONE
+            },
             require_ref: match self.options.output_format {
                 Format::Cjs => None, // use unbounded global
                 _ => runtime_require_ref,
             },
-            require_or_import_meta_for_source_callback:
-                js_printer::RequireOrImportMetaCallback::init(self),
-            line_offset_tables: Some(line_offset_table),
+            require_or_import_meta_source: Some(self),
+            line_offset_tables: Some(
+                &self.graph.files.items_line_offset_table()[source_index.get() as usize],
+            ),
             target: self.options.target,
 
             hmr_ref: if self.options.output_format == Format::InternalBakeDev {
@@ -2310,11 +1763,11 @@ impl<'a> LinkerContext<'a> {
             },
 
             input_files_for_dev_server: if self.options.output_format == Format::InternalBakeDev {
-                Some(parse_graph.input_files.items_source())
+                Some(self.parse_graph().input_files.items_source())
             } else {
                 None
             },
-            mangled_props: Some(mangled_props),
+            mangled_props: Some(&self.mangled_props),
             module_info,
             ..Default::default()
         };
@@ -2327,24 +1780,7 @@ impl<'a> LinkerContext<'a> {
             js_printer::BufferWriter::init(),
         ));
 
-        // Note: shallow bitwise copy via `ptr::read` + `ManuallyDrop` — the
-        // resulting `Ast` aliases `ast`'s storage; dropping it would
-        // double-free.
-        // SAFETY: `ast` is a valid `&BundledAst` for the duration of this call;
-        // the read is a bitwise copy whose result is never dropped.
-        let printer_ast = core::mem::ManuallyDrop::new(unsafe { core::ptr::read(ast) }.to_ast());
-
-        // Note: `print_with_writer<'a>` requires `Renamer<'a,'a>` (the
-        // printer struct stores it with a single lifetime), but `Renamer`'s
-        // `'src` is invariant behind `&mut`, so the caller's `Renamer<'r,'src>`
-        // cannot unify with the local `'a` picked from `alloc`/`mangled_props`.
-        // Rebind via a
-        // lifetime-only cast — sound because the renamer's borrowed data
-        // (symbol map, source) strictly outlives this call.
-        // SAFETY: lifetime-only erase; layout identical across instantiations.
-        let r: renamer::Renamer<'_, '_> = unsafe {
-            core::mem::transmute::<renamer::Renamer<'_, '_>, renamer::Renamer<'_, '_>>(r)
-        };
+        let printer_ast = ast.as_printer_view();
 
         let enable_source_maps =
             self.options.source_maps != SourceMapOption::None && !source_index.is_runtime();
@@ -2379,41 +1815,14 @@ impl<'a> LinkerContext<'a> {
         result
     }
 
-    pub(crate) fn require_or_import_meta_for_source(
-        &mut self,
-        source_index: crate::IndexInt,
-        was_unwrapped_require: bool,
-    ) -> js_printer::RequireOrImportMeta {
-        let flags = self.graph.meta.items_flags()[source_index as usize];
-        js_printer::RequireOrImportMeta {
-            exports_ref: if flags.wrap == WrapKind::Esm
-                || (was_unwrapped_require
-                    && self.graph.ast.items_flags()[source_index as usize]
-                        .contains(AstFlags::FORCE_CJS_TO_ESM))
-            {
-                self.graph.ast.items_exports_ref()[source_index as usize]
-            } else {
-                Ref::NONE
-            },
-            is_wrapper_async: flags.is_async_or_has_async_dependency,
-            wrapper_ref: self.graph.ast.items_wrapper_ref()[source_index as usize],
-
-            was_unwrapped_require: was_unwrapped_require
-                && self.graph.ast.items_flags()[source_index as usize]
-                    .contains(AstFlags::FORCE_CJS_TO_ESM),
-        }
-    }
-
     pub(crate) fn mangle_local_css(&mut self) {
-        if self.has_any_css_locals.load(Ordering::Relaxed) == 0 {
+        if self.bundle.has_any_css_locals.load(Ordering::Relaxed) == 0 {
             return;
         }
 
-        let all_css_asts = self.graph.ast.items_css();
+        let all_css_asts = &self.parse_graph().css_asts;
         let all_symbols: &[bun_ast::symbol::List<'a>] = self.graph.ast.items_symbols();
-        // SAFETY: parse_graph backref; raw deref because `all_sources` is held
-        // across `&mut self.mangled_props` below (split borrow).
-        let all_sources: &[Source] = unsafe { (*self.parse_graph).input_files.items_source() };
+        let all_sources: &[Source] = self.parse_graph().input_files.items_source();
 
         // Collect all local css names
         let mut local_css_names: HashMap<Ref, ()> = HashMap::new();
@@ -2453,25 +1862,14 @@ impl<'a> LinkerContext<'a> {
                         let original_name: &[u8] = symbol.original_name.slice();
                         // The hash itself is short-lived; use a scratch bump.
                         let scratch = ::bun_alloc::Arena::new();
-                        let path_hash = ::bun_base64::wyhash_url_safe(
+                        let final_generated_name = crate::bun_css::css_modules::scoped_name(
                             &scratch,
-                            // use path relative to cwd for determinism
-                            format_args!("{}", bstr::BStr::new(&source.path.pretty)),
-                            false,
+                            source.path.pretty,
+                            original_name,
                         );
-
-                        let mut final_generated_name = Vec::<u8>::new();
-                        use std::io::Write;
-                        write!(
-                            &mut final_generated_name,
-                            "{}_{}",
-                            bstr::BStr::new(original_name),
-                            bstr::BStr::new(path_hash)
-                        )
-                        .expect("infallible: in-memory write");
                         // The map owns its boxed values (freed with `mangled_props`).
                         self.mangled_props
-                            .put(r#ref, final_generated_name.into_boxed_slice())
+                            .put(r#ref, final_generated_name)
                             .expect("OOM");
                     }
                 }
@@ -2486,7 +1884,16 @@ impl<'a> LinkerContext<'a> {
     /// is a fixpoint over bitsets, and each chunk digests its own hash first,
     /// then the rest of its closure in chunk order (so two chunks that reach
     /// each other still differ).
-    pub(crate) fn final_chunk_hashes(&self, chunks: &[Chunk]) -> Result<Vec<u64>, AllocError> {
+    ///
+    /// The width is the template's (`[hash]` = 8, `[hashN]` = N) unless two
+    /// chunks with different hashes would print the same characters; those
+    /// widen until they differ, and every chunk that reaches a widened chunk
+    /// (its output embeds that chunk's path or id) has the widths folded into
+    /// its own hash so that its name changes with its bytes.
+    pub(crate) fn final_chunk_hashes(
+        &self,
+        chunks: &[Chunk],
+    ) -> Result<Vec<bun_core::fmt::ContentHash>, AllocError> {
         let n = chunks.len();
         let mut own: Vec<u64> = Vec::with_capacity(n);
         let mut edges: Vec<Vec<u32>> = Vec::with_capacity(n);
@@ -2517,7 +1924,7 @@ impl<'a> LinkerContext<'a> {
                             debug_assert!(!additional_files.is_empty());
                             if let AdditionalFile::OutputFile(output_file_id) = &additional_files[0]
                             {
-                                let path = &parse_graph.additional_output_files
+                                let path = &self.graph.additional_output_files
                                     [*output_file_id as usize]
                                     .dest_path;
                                 hash.write(bun_paths::resolve_path::relative_platform::<
@@ -2526,13 +1933,14 @@ impl<'a> LinkerContext<'a> {
                                 >(from_chunk_dir, path));
                             }
                         }
-                        crate::chunk::QueryKind::Chunk => out.push(piece.query.index()),
+                        crate::chunk::QueryKind::Chunk | crate::chunk::QueryKind::ChunkId => {
+                            out.push(piece.query.index())
+                        }
                         crate::chunk::QueryKind::Scb => {
-                            let chunk_index = self.graph.files.items_entry_point_chunk_index()
-                                [piece.query.index() as usize];
-                            if chunk_index != u32::MAX {
-                                out.push(chunk_index);
-                            }
+                            out.push(
+                                self.graph.files.items_entry_point_chunk_index()
+                                    [piece.query.index() as usize],
+                            );
                         }
                         crate::chunk::QueryKind::None | crate::chunk::QueryKind::HtmlImport => {}
                     }
@@ -2549,9 +1957,30 @@ impl<'a> LinkerContext<'a> {
             bits.set(i);
             reach.push(bits);
         }
+        // Visit imports before their importers, so that without cycles the first round already reaches the fixpoint.
+        let mut order: Vec<usize> = Vec::with_capacity(n);
+        let mut seen = vec![false; n];
+        let mut stack: Vec<(usize, usize)> = Vec::new();
+        for root in 0..n {
+            if core::mem::replace(&mut seen[root], true) {
+                continue;
+            }
+            stack.push((root, 0));
+            while let Some((node, next)) = stack.last_mut() {
+                let Some(&import) = edges[*node].get(*next) else {
+                    order.push(*node);
+                    stack.pop();
+                    continue;
+                };
+                *next += 1;
+                if !core::mem::replace(&mut seen[import as usize], true) {
+                    stack.push((import as usize, 0));
+                }
+            }
+        }
         loop {
             let mut changed = false;
-            for i in 0..n {
+            for &i in &order {
                 for &j in &edges[i] {
                     let j = j as usize;
                     if j == i || reach[j].subset_of(&reach[i]) {
@@ -2567,7 +1996,7 @@ impl<'a> LinkerContext<'a> {
             }
         }
 
-        Ok(reach
+        let closure: Vec<u64> = reach
             .iter()
             .enumerate()
             .map(|(i, bits)| {
@@ -2581,7 +2010,37 @@ impl<'a> LinkerContext<'a> {
                 }
                 hash.digest()
             })
-            .collect())
+            .collect();
+
+        use bun_core::fmt::ContentHash;
+        let min_len: Vec<usize> = chunks
+            .iter()
+            .map(|chunk| chunk.template.hash_len())
+            .collect();
+        let mut names: Vec<ContentHash> = (0..n)
+            .map(|i| ContentHash::new(closure[i], min_len[i]))
+            .collect();
+        for _ in 0..ContentHash::MAX_LEN {
+            if !ContentHash::widen_to_distinguish(&mut names) {
+                break;
+            }
+            for i in 0..n {
+                let mut hash = ContentHasher::default();
+                let mut any = false;
+                let mut iter = reach[i].iterator::<true, true>();
+                while let Some(j) = iter.next() {
+                    if j != i && names[j].len() != min_len[j] {
+                        hash.write_ints(&[j as u32, names[j].len() as u32]);
+                        any = true;
+                    }
+                }
+                if any {
+                    hash.write(&closure[i].to_ne_bytes());
+                    names[i] = ContentHash::new(hash.digest(), names[i].len());
+                }
+            }
+        }
+        Ok(names)
     }
 
     // Sort cross-chunk exports by chunk name for determinism
@@ -2595,7 +2054,6 @@ impl<'a> LinkerContext<'a> {
         for &export_ref in export_refs.keys() {
             #[cfg(debug_assertions)]
             {
-                // `parse_graph` is a backref into BundleV2 (LIFETIMES.tsv).
                 let sym = self.graph.symbol(export_ref);
                 debug_tree_shake!(
                     "Export name: {} (in {})",
@@ -2626,16 +2084,31 @@ impl<'a> LinkerContext<'a> {
     }
 } // end — split: tree-shaking trio below
 
-/// `js_printer::RequireOrImportMetaSource` — manual-vtable shim so the printer
-/// can call back into `LinkerContext::require_or_import_meta_for_source`.
-impl<'a> js_printer::RequireOrImportMetaSource for LinkerContext<'a> {
-    #[inline]
+impl js_printer::RequireOrImportMetaSource for LinkerContext<'_, '_> {
     fn require_or_import_meta_for_source(
-        &mut self,
-        id: u32,
+        &self,
+        source_index: crate::IndexInt,
         was_unwrapped_require: bool,
     ) -> js_printer::RequireOrImportMeta {
-        LinkerContext::require_or_import_meta_for_source(self, id, was_unwrapped_require)
+        let flags = self.graph.meta.items_flags()[source_index as usize];
+        let wrapper_ref = self.graph.ast.items_wrapper_ref()[source_index as usize];
+        js_printer::RequireOrImportMeta {
+            exports_ref: if flags.wrap == WrapKind::Esm
+                || (was_unwrapped_require
+                    && self.graph.ast.items_flags()[source_index as usize]
+                        .contains(AstFlags::FORCE_CJS_TO_ESM))
+            {
+                self.graph.ast.items_exports_ref()[source_index as usize]
+            } else {
+                Ref::NONE
+            },
+            is_wrapper_async: flags.is_async_or_has_async_dependency && wrapper_ref.is_valid(),
+            wrapper_ref,
+
+            was_unwrapped_require: was_unwrapped_require
+                && self.graph.ast.items_flags()[source_index as usize]
+                    .contains(AstFlags::FORCE_CJS_TO_ESM),
+        }
     }
 }
 
@@ -2648,17 +2121,7 @@ impl<'a> js_printer::RequireOrImportMetaSource for LinkerContext<'a> {
 // The liveness pass visits every (file, part) at most once. Processing order is
 // irrelevant to the final bitset state, so the former mutual recursion is
 // driven off an explicit worklist (LIFO, so traversal order matches the old
-// DFS). Packing the slices into a borrowed context struct keeps each step at
-// 3-4 register-sized arguments.
-pub(crate) struct TreeShakeCtx<'a, 'r> {
-    pub(crate) parts: &'r [bun_ast::PartList<'a>],
-    pub(crate) parts_live: &'r mut [bun_collections::AutoBitSet],
-    pub(crate) import_records: &'r [bun_ast::import_record::List<'a>],
-    pub(crate) entry_point_kinds: &'r [EntryPoint::Kind],
-    pub(crate) css_reprs: &'r [crate::bundled_ast::CssCol],
-    pub(crate) worklist: Vec<TreeShakeWork>,
-}
-
+// DFS).
 #[derive(Clone, Copy)]
 pub enum TreeShakeWork {
     File(crate::IndexInt),
@@ -2668,41 +2131,23 @@ pub enum TreeShakeWork {
     },
 }
 
-pub(crate) struct CodeSplitCtx<'a, 'r> {
-    pub(crate) distances: &'r mut [u32],
-    pub(crate) parts: &'r [bun_ast::PartList<'a>],
-    pub(crate) import_records: &'r [bun_ast::import_record::List<'a>],
-    pub(crate) file_entry_bits: &'r mut [AutoBitSet],
-    pub(crate) css_reprs: &'r [crate::bundled_ast::CssCol],
-    pub(crate) queue: std::collections::VecDeque<(crate::IndexInt, u32)>,
-}
-
-impl<'a> LinkerContext<'a> {
+impl LinkerContext<'_, '_> {
     pub(crate) fn mark_file_reachable_for_code_splitting(
         &mut self,
-        ctx: &mut CodeSplitCtx<'a, '_>,
+        queue: &mut std::collections::VecDeque<crate::IndexInt>,
         source_index: crate::IndexInt,
         entry_points_count: usize,
-        distance: u32,
     ) {
-        // BFS over the import graph from one entry point. Every edge has unit
-        // weight, so FIFO order makes the first dequeue of a file carry its
-        // shortest distance from this entry point, and re-enqueued already-
-        // visited files can be skipped on their entry bit alone. That keeps
-        // the work at O(V+E). esbuild (and the earlier recursive port here)
-        // runs the same fixpoint as LIFO DFS with a `traverseAgain`
-        // relaxation, which reaches the same `distances` / entry bits but
-        // does O(V*E) work when shorter paths are discovered late on
-        // diamond-shaped DAGs.
-        debug_assert!(ctx.queue.is_empty());
-        ctx.queue.push_back((source_index, distance));
+        // Every file that loading the entry point loads gets its bit. The order of visits does not matter.
+        debug_assert!(queue.is_empty());
+        queue.push_back(source_index);
 
-        while let Some((source_index, distance)) = ctx.queue.pop_front() {
+        while let Some(source_index) = queue.pop_front() {
             if !self.graph.files_live.is_set(source_index as usize) {
                 continue;
             }
 
-            let bits = &mut ctx.file_entry_bits[source_index as usize];
+            let bits = &mut self.graph.files.items_entry_bits_mut()[source_index as usize];
 
             // Don't mark this file more than once
             if bits.is_set(entry_points_count) {
@@ -2710,61 +2155,124 @@ impl<'a> LinkerContext<'a> {
             }
             bits.set(entry_points_count);
 
-            // Track the minimum distance to an entry point
-            if distance < ctx.distances[source_index as usize] {
-                ctx.distances[source_index as usize] = distance;
-            }
-            let out_dist = distance + 1;
-
-            for record in ctx.import_records[source_index as usize].iter() {
-                if record.source_index.is_valid()
-                    && !self.is_external_dynamic_import(record, source_index)
-                    && !ctx.file_entry_bits[record.source_index.get() as usize]
-                        .is_set(entry_points_count)
-                {
-                    ctx.queue.push_back((record.source_index.get(), out_dist));
+            let file_entry_bits = self.graph.files.items_entry_bits();
+            self.for_each_file_loaded_by(source_index, |other| {
+                if !file_entry_bits[other as usize].is_set(entry_points_count) {
+                    queue.push_back(other);
                 }
-            }
+            });
+        }
+    }
 
-            // CSS files only follow their import records.
-            if ctx.css_reprs[source_index as usize].is_some() {
-                continue;
-            }
-
-            for part in ctx.parts[source_index as usize].as_slice() {
-                for dependency in part.dependencies.iter() {
-                    let dep = dependency.source_index.get();
-                    if dep != source_index
-                        && !ctx.file_entry_bits[dep as usize].is_set(entry_points_count)
-                    {
-                        ctx.queue.push_back((dep, out_dist));
+    /// Once liveness is known: each user entry point whose live code reaches a split
+    /// `import()` uses `__chunks` from its entry point part (see `module_preload_registration`).
+    fn mark_preload_entries(
+        &mut self,
+        worklist: &mut Vec<TreeShakeWork>,
+    ) -> Result<(), AllocError> {
+        let files_len = self.graph.ast.len();
+        let mut reaches = AutoBitSet::init_empty(files_len)?;
+        loop {
+            let mut changed = false;
+            for source_index in 0..files_len {
+                if reaches.is_set(source_index) || !self.graph.files_live.is_set(source_index) {
+                    continue;
+                }
+                let records = self.graph.ast.items_import_records()[source_index].as_slice();
+                'parts: for (part_index, part) in self.graph.ast.items_parts()[source_index]
+                    .as_slice()
+                    .iter()
+                    .enumerate()
+                {
+                    if !self.graph.parts_live[source_index].is_set(part_index) {
+                        continue;
+                    }
+                    for &record_index in part.import_record_indices.iter() {
+                        let record = &records[record_index as usize];
+                        if !record.source_index.is_valid() {
+                            continue;
+                        }
+                        if reaches.is_set(record.source_index.get() as usize)
+                            || (record.kind == ImportKind::Dynamic
+                                && self.is_external_dynamic_import(record, source_index as u32))
+                        {
+                            reaches.set(source_index);
+                            changed = true;
+                            break 'parts;
+                        }
                     }
                 }
             }
+            if !changed {
+                break;
+            }
         }
+
+        let mut preload_entries = AutoBitSet::init_empty(files_len)?;
+        for i in 0..self.graph.entry_points.len() {
+            let entry = self.graph.entry_points.items_source_index()[i];
+            let id = entry as usize;
+            if self.graph.files.items_entry_point_kind()[id] != EntryPoint::Kind::UserSpecified
+                || !reaches.is_set(id)
+            {
+                continue;
+            }
+            preload_entries.set(id);
+            let part_index = self.entry_point_part_indices[id];
+            self.graph.generate_symbol_import_and_use(
+                entry,
+                part_index,
+                self.chunks_runtime_ref,
+                1,
+                Index::RUNTIME,
+            )?;
+            if self.graph.parts_live[id].is_set(part_index as usize) {
+                for dependency in self.graph.ast.items_parts()[id].as_slice()[part_index as usize]
+                    .dependencies
+                    .iter()
+                {
+                    worklist.push(TreeShakeWork::Part {
+                        part_index: dependency.part_index,
+                        source_index: dependency.source_index.get(),
+                    });
+                }
+            } else {
+                worklist.push(TreeShakeWork::Part {
+                    part_index,
+                    source_index: entry,
+                });
+            }
+            self.drain_tree_shake_worklist(worklist);
+        }
+        self.preload_entries = preload_entries;
+        Ok(())
     }
 
     pub(crate) fn mark_file_live_for_tree_shaking(
         &mut self,
-        ctx: &mut TreeShakeCtx<'a, '_>,
+        worklist: &mut Vec<TreeShakeWork>,
         source_index: crate::IndexInt,
     ) {
-        debug_assert!(ctx.worklist.is_empty());
-        ctx.worklist.push(TreeShakeWork::File(source_index));
-        while let Some(work) = ctx.worklist.pop() {
+        debug_assert!(worklist.is_empty());
+        worklist.push(TreeShakeWork::File(source_index));
+        self.drain_tree_shake_worklist(worklist);
+    }
+
+    fn drain_tree_shake_worklist(&mut self, worklist: &mut Vec<TreeShakeWork>) {
+        while let Some(work) = worklist.pop() {
             match work {
-                TreeShakeWork::File(src) => self.mark_file_live_step(ctx, src),
+                TreeShakeWork::File(src) => self.mark_file_live_step(worklist, src),
                 TreeShakeWork::Part {
                     part_index,
                     source_index,
-                } => self.mark_part_live_step(ctx, part_index, source_index),
+                } => self.mark_part_live_step(worklist, part_index, source_index),
             }
         }
     }
 
     fn mark_file_live_step(
         &mut self,
-        ctx: &mut TreeShakeCtx<'a, '_>,
+        worklist: &mut Vec<TreeShakeWork>,
         source_index: crate::IndexInt,
     ) {
         #[cfg(debug_assertions)]
@@ -2803,12 +2311,12 @@ impl<'a> LinkerContext<'a> {
             return;
         }
 
-        if ctx.css_reprs[source_index as usize].is_some() {
-            for record in ctx.import_records[source_index as usize].iter() {
+        if self.parse_graph().css_asts[source_index as usize].is_some() {
+            for record in self.graph.ast.items_import_records()[source_index as usize].iter() {
                 if record.source_index.is_valid() {
                     let other = record.source_index.get();
                     if !self.graph.files_live.is_set(other as usize) {
-                        ctx.worklist.push(TreeShakeWork::File(other));
+                        worklist.push(TreeShakeWork::File(other));
                     }
                 }
             }
@@ -2819,18 +2327,18 @@ impl<'a> LinkerContext<'a> {
         // via .url kind import records. Follow all import records for HTML files
         // so these assets are marked live and included in the manifest.
         if self.parse_graph().input_files.items_loader()[source_index as usize] == Loader::Html {
-            for record in ctx.import_records[source_index as usize].iter() {
+            for record in self.graph.ast.items_import_records()[source_index as usize].iter() {
                 if record.source_index.is_valid() {
                     let other = record.source_index.get();
                     if !self.graph.files_live.is_set(other as usize) {
-                        ctx.worklist.push(TreeShakeWork::File(other));
+                        worklist.push(TreeShakeWork::File(other));
                     }
                 }
             }
             return;
         }
 
-        let parts = ctx.parts[source_index as usize].as_slice();
+        let parts = self.graph.ast.items_parts()[source_index as usize].as_slice();
         for (part_index, part) in parts.iter().enumerate() {
             let mut can_be_removed_if_unused = part.can_be_removed_if_unused;
 
@@ -2838,6 +2346,15 @@ impl<'a> LinkerContext<'a> {
                 if self.graph.meta.items_flags()[source_index as usize].wrap == WrapKind::Cjs {
                     can_be_removed_if_unused = false;
                 }
+            }
+
+            // A destructuring of an import namespace reads like a member
+            // access, which is side-effect free. The parser cannot see that
+            // the initializer is a namespace, so refine its verdict here.
+            if !can_be_removed_if_unused
+                && self.part_is_removable_namespace_destructuring(source_index, part)
+            {
+                can_be_removed_if_unused = true;
             }
 
             // The automatic JSX runtime import is synthesized by the parser; it
@@ -2853,11 +2370,12 @@ impl<'a> LinkerContext<'a> {
                 if !can_be_removed_if_unused
                     || (!part.force_tree_shaking
                         && !self.options.tree_shaking
-                        && ctx.entry_point_kinds[source_index as usize].is_entry_point())
+                        && self.graph.files.items_entry_point_kind()[source_index as usize]
+                            .is_entry_point())
                 {
                     let part_index = u32::try_from(part_index).expect("int cast");
-                    if !ctx.parts_live[source_index as usize].is_set(part_index as usize) {
-                        ctx.worklist.push(TreeShakeWork::Part {
+                    if !self.graph.parts_live[source_index as usize].is_set(part_index as usize) {
+                        worklist.push(TreeShakeWork::Part {
                             part_index,
                             source_index,
                         });
@@ -2868,7 +2386,8 @@ impl<'a> LinkerContext<'a> {
 
             // Also include any statement-level imports
             for &import_index in part.import_record_indices.iter() {
-                let record = &ctx.import_records[source_index as usize][import_index as usize];
+                let record = &self.graph.ast.items_import_records()[source_index as usize]
+                    [import_index as usize];
                 if record.kind != ImportKind::Stmt {
                     continue;
                 }
@@ -2888,7 +2407,7 @@ impl<'a> LinkerContext<'a> {
 
                     // Otherwise, include this module for its side effects
                     if !self.graph.files_live.is_set(other_source_index as usize) {
-                        ctx.worklist.push(TreeShakeWork::File(other_source_index));
+                        worklist.push(TreeShakeWork::File(other_source_index));
                     }
                 } else if is_external_without_side_effects {
                     // This can be removed if it's unused
@@ -2906,11 +2425,12 @@ impl<'a> LinkerContext<'a> {
             if !can_be_removed_if_unused
                 || (!part.force_tree_shaking
                     && !self.options.tree_shaking
-                    && ctx.entry_point_kinds[source_index as usize].is_entry_point())
+                    && self.graph.files.items_entry_point_kind()[source_index as usize]
+                        .is_entry_point())
             {
                 let part_index = u32::try_from(part_index).expect("int cast");
-                if !ctx.parts_live[source_index as usize].is_set(part_index as usize) {
-                    ctx.worklist.push(TreeShakeWork::Part {
+                if !self.graph.parts_live[source_index as usize].is_set(part_index as usize) {
+                    worklist.push(TreeShakeWork::Part {
                         part_index,
                         source_index,
                     });
@@ -2921,14 +2441,14 @@ impl<'a> LinkerContext<'a> {
 
     fn mark_part_live_step(
         &mut self,
-        ctx: &mut TreeShakeCtx<'a, '_>,
+        worklist: &mut Vec<TreeShakeWork>,
         part_index: crate::IndexInt,
         source_index: crate::IndexInt,
     ) {
         // only once — check the sidecar bitset first so the fast-path early
         // return does not have to load the 272-byte `Part`.
         {
-            let bits = &mut ctx.parts_live[source_index as usize];
+            let bits = &mut self.graph.parts_live[source_index as usize];
             if bits.is_set(part_index as usize) {
                 return;
             }
@@ -2937,7 +2457,8 @@ impl<'a> LinkerContext<'a> {
 
         #[cfg(debug_assertions)]
         {
-            let part: &Part = &ctx.parts[source_index as usize].as_slice()[part_index as usize];
+            let part: &Part = &self.graph.ast.items_parts()[source_index as usize].as_slice()
+                [part_index as usize];
             let parse_graph = self.parse_graph();
             let stmts: &[Stmt] = part.stmts.slice();
             debug_tree_shake!(
@@ -2967,16 +2488,17 @@ impl<'a> LinkerContext<'a> {
 
         // Include the file containing this part
         if !self.graph.files_live.is_set(source_index as usize) {
-            ctx.worklist.push(TreeShakeWork::File(source_index));
+            worklist.push(TreeShakeWork::File(source_index));
         }
 
-        let part = &ctx.parts[source_index as usize].as_slice()[part_index as usize];
+        let part =
+            &self.graph.ast.items_parts()[source_index as usize].as_slice()[part_index as usize];
 
         for dependency in part.dependencies.iter() {
             let dep_source = dependency.source_index.get();
             let dep_part = dependency.part_index;
-            if !ctx.parts_live[dep_source as usize].is_set(dep_part as usize) {
-                ctx.worklist.push(TreeShakeWork::Part {
+            if !self.graph.parts_live[dep_source as usize].is_set(dep_part as usize) {
+                worklist.push(TreeShakeWork::Part {
                     part_index: dep_part,
                     source_index: dep_source,
                 });
@@ -2985,7 +2507,7 @@ impl<'a> LinkerContext<'a> {
 
         // `scan_imports_and_exports` adds no wrapper dependency for external `import()`.
         if self.graph.code_splitting {
-            let records = &ctx.import_records[source_index as usize];
+            let records = &self.graph.ast.items_import_records()[source_index as usize];
             for &import_index in part.import_record_indices.iter() {
                 let record = &records[import_index as usize];
                 if record.source_index.is_valid()
@@ -2993,7 +2515,7 @@ impl<'a> LinkerContext<'a> {
                 {
                     let other = record.source_index.get();
                     if !self.graph.files_live.is_set(other as usize) {
-                        ctx.worklist.push(TreeShakeWork::File(other));
+                        worklist.push(TreeShakeWork::File(other));
                     }
                 }
             }
@@ -3027,7 +2549,7 @@ fn import_tracker_eq(a: &ImportTracker, b: &ImportTracker) -> bool {
         && a.name_loc.start == b.name_loc.start
 }
 
-impl<'a> LinkerContext<'a> {
+impl<'l, 'a> LinkerContext<'l, 'a> {
     /// Looks up the symbol `Ref` for a named export of the runtime module.
     #[inline]
     pub(crate) fn runtime_function(&self, name: &[u8]) -> Ref {
@@ -3048,11 +2570,8 @@ impl<'a> LinkerContext<'a> {
         self.top_level_symbols_to_parts(Index::RUNTIME.get(), r#ref)
     }
 
-    /// Note: returns `'static` so callers can hold the source across a
-    /// `&mut self.log` borrow; the underlying `parse_graph.input_files` slab
-    /// is append-only and outlives the link step (LIFETIMES.tsv: GRAPHBACKED).
     #[inline]
-    pub(crate) fn get_source<I: TryInto<usize>>(&self, index: I) -> &'static Source {
+    pub(crate) fn get_source<I: TryInto<usize>>(&self, index: I) -> &'l Source<'a> {
         // Note: callers pass both `u32` and
         // `usize`. Route through `TryInto<usize>` so the SoA index works for
         // either width without forcing `as`-casts at every call site.
@@ -3060,27 +2579,17 @@ impl<'a> LinkerContext<'a> {
             Ok(i) => i,
             Err(_) => unreachable!(),
         };
-        // SAFETY: parse_graph backref into BundleV2.graph; the input_files SoA
-        // is monotonically grown and never freed for the link step's lifetime,
-        // so the element address is stable. `'static` is a white lie matching
-        // the `*mut Graph` erasure on `self.parse_graph`.
-        unsafe { &*core::ptr::from_ref(&(*self.parse_graph).input_files.items_source()[index]) }
+        &self.parse_graph().input_files.items_source()[index]
     }
 
-    /// `log` is an explicit parameter (not `self.log`) because the dev-server
-    /// caller (`finish_from_bake_dev_server`) runs this *before* `load()` has
-    /// initialized `self.log`, passing a stack-local `Log` instead.
     pub(crate) fn scan_css_imports(
         file_source_index: u32,
         file_import_records: &[ImportRecord],
-        css_asts: *const [crate::bundled_ast::CssCol],
+        css_asts: &CssAsts,
         sources: &[Source],
         loaders: &[Loader],
         log: &mut Log,
     ) -> ScanCssImportsResult {
-        // SAFETY: `css_asts` points at the `graph.ast.items_css()` column for
-        // the duration of `scan_imports_and_exports`; we only test `is_none()`.
-        let css_asts = unsafe { &*css_asts };
         for record in file_import_records.iter() {
             if record.source_index.is_valid() {
                 // Other file is not CSS
@@ -3132,15 +2641,11 @@ impl<'a> LinkerContext<'a> {
     }
 
     /// Creates the synthetic wrapper part (CommonJS or ESM) for a wrapped
-    /// file and records its part index in `wrapper_part_index`.
+    /// file and records its part index.
     pub(crate) fn create_wrapper_for_file(
         &mut self,
         wrap: WrapKind,
         wrapper_ref: Ref,
-        // Note: `crate::Index` (`bun_ast::Index`),
-        // not `bun_ast::Index` — the SoA `wrapper_part_index` column is
-        // typed via the crate-root re-export.
-        wrapper_part_index: &mut crate::Index,
         source_index: crate::IndexInt,
     ) {
         match wrap {
@@ -3192,7 +2697,7 @@ impl<'a> LinkerContext<'a> {
                     };
                 let mut symbol_uses = PartSymbolUseMap::default();
                 symbol_uses
-                    .put(wrapper_ref, SymbolUse { count_estimate: 1 })
+                    .put(wrapper_ref, SymbolUse::unscoped(1))
                     .expect("OOM");
                 let exports_ref = self.graph.ast.items_exports_ref()[source_index as usize];
                 let module_ref = self.graph.ast.items_module_ref()[source_index as usize];
@@ -3224,7 +2729,8 @@ impl<'a> LinkerContext<'a> {
                     )
                     .expect("unreachable");
                 debug_assert!(part_index != bun_ast::NAMESPACE_EXPORT_PART_INDEX);
-                *wrapper_part_index = crate::Index::part(part_index);
+                self.graph.meta.items_wrapper_part_index_mut()[source_index as usize] =
+                    crate::Index::part(part_index);
 
                 // Bake uses a wrapping approach that does not use __commonJS
                 if self.options.output_format != Format::InternalBakeDev {
@@ -3310,7 +2816,7 @@ impl<'a> LinkerContext<'a> {
 
                 let mut symbol_uses = PartSymbolUseMap::default();
                 symbol_uses
-                    .put(wrapper_ref, SymbolUse { count_estimate: 1 })
+                    .put(wrapper_ref, SymbolUse::unscoped(1))
                     .expect("OOM");
                 let part_index = self
                     .graph
@@ -3329,7 +2835,8 @@ impl<'a> LinkerContext<'a> {
                     )
                     .expect("unreachable");
                 debug_assert!(part_index != bun_ast::NAMESPACE_EXPORT_PART_INDEX);
-                *wrapper_part_index = crate::Index::part(part_index);
+                self.graph.meta.items_wrapper_part_index_mut()[source_index as usize] =
+                    crate::Index::part(part_index);
                 if wrapper_ref.is_valid() && self.options.output_format != Format::InternalBakeDev {
                     self.graph
                         .generate_symbol_import_and_use(
@@ -3359,40 +2866,87 @@ impl<'a> LinkerContext<'a> {
         }
     }
 
+    pub(crate) fn export_runtime_function(&self) -> &'static [u8] {
+        if self.options.deprecated_namespace_object_setters {
+            b"__export"
+        } else {
+            b"__exportGetters"
+        }
+    }
+}
+
+/// One `X.name` read that can bind to an export.
+struct PropertyAccess {
+    part_index: usize,
+    base: Ref,
+    target_source: crate::IndexInt,
+    name: bun_ast::StoreStr,
+    count: u32,
+    is_call_target: bool,
+}
+
+/// What following an import to its export needs.
+struct ImportMatcher<'m, 'a> {
+    bundle: &'m BundleV2<'a>,
+    ast: &'m MultiArrayList<JSAst<'a>>,
+    meta_flags: &'m [crate::js_meta::Flags],
+    resolved_exports: &'m [crate::ResolvedExports],
+    resolved_export_star: &'m [crate::ExportData],
+    top_level_symbol_to_parts_overlay: &'m [crate::linker_graph::TopLevelSymbolToParts],
+    entry_point_kinds: &'m [EntryPoint::Kind],
+    code_splitting: bool,
+    output_format: Format,
+    symbols: &'m mut bun_ast::symbol::Map,
+    cycle_detector: &'m mut Vec<ImportTracker>,
+    log: &'m mut Log,
+}
+
+impl<'m, 'a> ImportMatcher<'m, 'a> {
+    fn get_source(&self, index: crate::IndexInt) -> &'m Source<'a> {
+        &self.bundle.graph.input_files.items_source()[index as usize]
+    }
+
+    fn symbol_mut(&mut self, ref_: Ref) -> &mut bun_ast::Symbol {
+        let symbol = self.symbols.get_mut(ref_);
+        symbol.expect("infallible: ref in symbol table")
+    }
+
+    fn is_esm_namespace_ref(&self, source_index: crate::IndexInt, ref_: Ref) -> bool {
+        is_esm_namespace_ref(self.ast, self.meta_flags, source_index, ref_)
+    }
+
     /// Follows one step of an import chain: resolves what `tracker`'s import
     /// points to in the target file and reports the match status.
     /// `first_hop`: resolve export `alias` of file `source` directly instead of
     /// reading `tracker`'s `NamedImport` and following its import record (used
-    /// by `bind_import_property_accesses`, which starts from a namespace it
+    /// by `resolve_import_property_accesses`, which starts from a namespace it
     /// already resolved rather than from an import statement).
-    pub(crate) fn advance_import_tracker(
-        &mut self,
+    fn advance_import_tracker(
+        &self,
         tracker: &ImportTracker,
         first_hop: Option<(crate::IndexInt, bun_ast::StoreStr)>,
-    ) -> ImportTrackerIterator {
+    ) -> ImportTrackerIterator<'m> {
         let id = tracker.source_index.get();
-        let exports_kind: &[ExportsKind] = self.graph.ast.items_exports_kind();
-        let ast_flags = self.graph.ast.items_flags();
+        let exports_kind: &[ExportsKind] = self.ast.items_exports_kind();
+        let ast_flags = self.ast.items_flags();
+        let is_import_stmt = first_hop.is_none();
 
         let (other_source_index, alias, alias_is_star, is_exported) = match first_hop {
             Some((source, alias)) => (source, Some(alias), false, false),
             None => {
-                let named_import: &NamedImport = match self.graph.ast.items_named_imports()
-                    [id as usize]
-                    .get(&tracker.import_ref)
-                {
-                    Some(ni) => ni,
-                    None => {
-                        // TODO: investigate if this is a bug
-                        // It implies there are imports being added without being resolved
-                        return ImportTrackerIterator {
-                            value: Default::default(),
-                            status: ImportTrackerStatus::External,
-                            ..Default::default()
-                        };
-                    }
-                };
-                let import_records = &self.graph.ast.items_import_records()[id as usize];
+                let named_import: &NamedImport =
+                    match self.ast.items_named_imports()[id as usize].get(&tracker.import_ref) {
+                        Some(ni) => ni,
+                        None => {
+                            // TODO: investigate if this is a bug: an import was added without being resolved
+                            return ImportTrackerIterator {
+                                value: Default::default(),
+                                status: ImportTrackerStatus::External,
+                                ..Default::default()
+                            };
+                        }
+                    };
+                let import_records = &self.ast.items_import_records()[id as usize];
                 // Is this an external file?
                 let record: &ImportRecord =
                     &import_records[named_import.import_record_index as usize];
@@ -3424,8 +2978,8 @@ impl<'a> LinkerContext<'a> {
         // Is this a disabled file?
         let other_id = other_source_index;
 
-        if other_id as usize > self.graph.ast.len()
-            || self.parse_graph().input_files.items_source()[other_source_index as usize]
+        if other_id as usize > self.ast.len()
+            || self.bundle.graph.input_files.items_source()[other_source_index as usize]
                 .path
                 .is_disabled
         {
@@ -3477,32 +3031,61 @@ impl<'a> LinkerContext<'a> {
             };
         }
 
+        // The default import of a lifted CommonJS module is `module.exports`,
+        // which is its namespace: bind it like `import * as X`. `ns.default` on
+        // `import * as ns` (a generated item) reads the namespace object's own
+        // `default` key when the module exports one.
+        if is_import_stmt
+            && !alias_is_star
+            && flags.contains(AstFlags::COMMONJS_LIFTED_TO_ESM)
+            && alias.is_some_and(|a| a.slice() == b"default")
+            && !LinkerContext::lifted_default_import_needs_wrapper(
+                self.ast.items_module_type()[id as usize],
+                &self.ast.items_named_exports()[other_id as usize],
+            )
+            && !(self
+                .symbols
+                .get_const(tracker.import_ref)
+                .is_some_and(|s| s.import_item_status == ImportItemStatus::Generated)
+                && self.resolved_exports[other_id as usize]
+                    .get(b"default")
+                    .is_some())
+        {
+            let matching_export = &self.resolved_export_star[other_id as usize];
+            return ImportTrackerIterator {
+                value: matching_export.data,
+                status: ImportTrackerStatus::Found,
+                import_data: matching_export
+                    .potentially_ambiguous_export_star_refs
+                    .slice(),
+                ..Default::default()
+            };
+        }
+
         // Match this import star with an export star from the imported file
         if alias_is_star {
-            let matching_export = &self.graph.meta.items_resolved_export_star()[other_id as usize];
+            let matching_export = &self.resolved_export_star[other_id as usize];
             if matching_export.data.import_ref.is_valid() {
                 // Check to see if this is a re-export of another import
                 return ImportTrackerIterator {
                     value: matching_export.data,
                     status: ImportTrackerStatus::Found,
-                    import_data: bun_ptr::BackRef::new(
-                        matching_export
-                            .potentially_ambiguous_export_star_refs
-                            .slice(),
-                    ),
+                    import_data: matching_export
+                        .potentially_ambiguous_export_star_refs
+                        .slice(),
                     ..Default::default()
                 };
             }
         }
 
         // Match this import up with an export from the imported file
-        if let Some(matching_export) = self.graph.meta.items_resolved_exports()[other_id as usize]
+        if let Some(matching_export) = self.resolved_exports[other_id as usize]
             .get(alias.expect("infallible: alias present").slice())
         {
             let default_alias_of = if alias.unwrap().slice() == b"default"
                 && matching_export.data.source_index.get() == other_id
             {
-                self.graph.ast.items_export_default_alias_of_import()[other_id as usize]
+                self.ast.items_export_default_alias_of_import()[other_id as usize]
             } else {
                 Ref::NONE
             };
@@ -3514,11 +3097,9 @@ impl<'a> LinkerContext<'a> {
                     name_loc: matching_export.data.name_loc,
                 },
                 status: ImportTrackerStatus::Found,
-                import_data: bun_ptr::BackRef::new(
-                    matching_export
-                        .potentially_ambiguous_export_star_refs
-                        .slice(),
-                ),
+                import_data: matching_export
+                    .potentially_ambiguous_export_star_refs
+                    .slice(),
                 default_alias_of,
             };
         }
@@ -3529,7 +3110,7 @@ impl<'a> LinkerContext<'a> {
             return ImportTrackerIterator {
                 value: ImportTracker {
                     source_index: crate::Index::init(other_source_index),
-                    import_ref: self.graph.ast.items_exports_ref()[other_id as usize],
+                    import_ref: self.ast.items_exports_ref()[other_id as usize],
                     ..Default::default()
                 },
                 status: if is_commonjs_to_esm {
@@ -3542,7 +3123,7 @@ impl<'a> LinkerContext<'a> {
         }
 
         // Missing re-exports in TypeScript files are indistinguishable from types
-        let other_loader = self.parse_graph().input_files.items_loader()[other_id as usize];
+        let other_loader = self.bundle.graph.input_files.items_loader()[other_id as usize];
         if is_exported && other_loader.is_typescript() {
             return ImportTrackerIterator {
                 value: Default::default(),
@@ -3564,7 +3145,7 @@ impl<'a> LinkerContext<'a> {
     /// Walks an import chain (through re-exports) to its final target and
     /// returns how the import should be bound, collecting any re-export
     /// dependencies along the way.
-    pub(crate) fn match_import_with_export(
+    fn match_import_with_export(
         &mut self,
         init_tracker: ImportTracker,
         re_exports: &mut bun_alloc::AstVec<Dependency>,
@@ -3583,9 +3164,7 @@ impl<'a> LinkerContext<'a> {
         // Note: `cycle_detector` is restored by an explicit
         // `truncate` after the `'loop_` below — the only
         // exits are the three `return`s that follow it, so a single post-loop
-        // truncate covers every path. A scopeguard holding a raw `*mut` into
-        // `self.cycle_detector` would be invalidated by the `&mut self`
-        // reborrows inside the loop (Stacked Borrows), so we don't use one.
+        // truncate covers every path.
 
         let mut tracker = init_tracker;
         let mut ambiguous_results: Vec<MatchImport> = Vec::new();
@@ -3606,7 +3185,11 @@ impl<'a> LinkerContext<'a> {
             //
             // This uses a O(n^2) array scan instead of a O(n) map because the vast
             // majority of cases have one or two elements
-            for prev_tracker in &self.cycle_detector[cycle_detector_top..] {
+            //
+            // Scan the whole stack, not just this call's entries. The entries below
+            // `cycle_detector_top` are from callers tracing this chain as an
+            // "export * from" alternative.
+            for prev_tracker in self.cycle_detector.iter() {
                 if import_tracker_eq(&tracker, prev_tracker) {
                     result = MatchImport {
                         kind: MatchImportKind::Cycle,
@@ -3641,12 +3224,7 @@ impl<'a> LinkerContext<'a> {
             if default_alias_checkpoint.is_some() && status != ImportTrackerStatus::Found {
                 break 'loop_;
             }
-            // `advanced.import_data` borrows
-            // `graph.meta[..].resolved_exports[..].potentially_ambiguous_export_star_refs`;
-            // that storage is never reallocated while this loop runs (only
-            // `cycle_detector`, `log`, and `graph.symbols` are mutated below).
-            let potentially_ambiguous_export_star_refs: &[crate::ImportData] =
-                advanced.import_data.get();
+            let potentially_ambiguous_export_star_refs = advanced.import_data;
 
             match status {
                 ImportTrackerStatus::Cjs
@@ -3654,7 +3232,7 @@ impl<'a> LinkerContext<'a> {
                 | ImportTrackerStatus::Disabled
                 | ImportTrackerStatus::External => {
                     if status == ImportTrackerStatus::External
-                        && self.options.output_format.keep_es6_import_export_syntax()
+                        && self.output_format.keep_es6_import_export_syntax()
                     {
                         // Imports from external modules should not be converted to CommonJS
                         // if the output format preserves the original ES6 import statements
@@ -3665,7 +3243,7 @@ impl<'a> LinkerContext<'a> {
                     // property access. Don't do this if the namespace reference is invalid
                     // though. This is the case for star imports, where the import is the
                     // namespace.
-                    let named_import: &NamedImport = self.graph.ast.items_named_imports()
+                    let named_import: &NamedImport = self.ast.items_named_imports()
                         [prev_source_index as usize]
                         .get(&tracker.import_ref)
                         .unwrap();
@@ -3686,16 +3264,16 @@ impl<'a> LinkerContext<'a> {
                     }
 
                     // Warn about importing from a file that is known to not have any exports
-                    if status == ImportTrackerStatus::CjsWithoutExports {
+                    if status == ImportTrackerStatus::CjsWithoutExports
+                        && !self.is_call_record(prev_source_index, named_import.import_record_index)
+                    {
                         let source = self.get_source(tracker.source_index.get());
                         // SAFETY: `alias` is an arena `*const [u8]` valid for the link pass.
                         let alias = named_import
                             .alias
                             .expect("infallible: alias present")
                             .slice();
-                        // Split-borrow with `named_import` (`&self.graph`) —
-                        // `log_disjoint` returns the disjoint `Transpiler.log` backref.
-                        self.log_disjoint().add_range_warning_fmt(
+                        self.log.add_range_warning_fmt(
                             Some(source),
                             source.range_of_identifier(named_import.alias_loc),
                             format_args!(
@@ -3711,16 +3289,14 @@ impl<'a> LinkerContext<'a> {
                     // if the file was rewritten from CommonJS into ESM
                     // and the developer imported an export that doesn't exist
                     // We don't do a runtime error since that CJS would have returned undefined.
-                    let named_import: &NamedImport = self.graph.ast.items_named_imports()
+                    let named_import: &NamedImport = self.ast.items_named_imports()
                         [prev_source_index as usize]
                         .get(&tracker.import_ref)
                         .unwrap();
 
                     if named_import.namespace_ref.is_valid() {
-                        // SAFETY: `named_import` borrows `graph.ast`; the symbol slot is a
-                        // disjoint allocation, so no aliasing with this `&mut`.
-                        let symbol = unsafe { self.graph.symbol_mut(tracker.import_ref) };
-                        symbol.import_item_status = ImportItemStatus::Missing;
+                        self.symbol_mut(tracker.import_ref).import_item_status =
+                            ImportItemStatus::Missing;
                         result.kind = MatchImportKind::NormalAndNamespace;
                         result.namespace_ref = tracker.import_ref;
                         result.alias = named_import.alias.expect("infallible: alias present");
@@ -3730,7 +3306,7 @@ impl<'a> LinkerContext<'a> {
 
                 ImportTrackerStatus::DynamicFallback => {
                     // If it's a file with dynamic export fallback, rewrite the import to a property access
-                    let named_import: &NamedImport = self.graph.ast.items_named_imports()
+                    let named_import: &NamedImport = self.ast.items_named_imports()
                         [prev_source_index as usize]
                         .get(&tracker.import_ref)
                         .unwrap();
@@ -3751,11 +3327,7 @@ impl<'a> LinkerContext<'a> {
                 }
                 ImportTrackerStatus::NoMatch => {
                     // Report mismatched imports and exports
-                    // SAFETY: the mutated symbol slot is disjoint from the later borrows
-                    // (`named_import` from graph.ast, `get_source` from parse_graph,
-                    // `log_disjoint`) — all separate allocations.
-                    let symbol = unsafe { self.graph.symbol_mut(tracker.import_ref) };
-                    let named_import: &NamedImport = self.graph.ast.items_named_imports()
+                    let named_import: &NamedImport = self.ast.items_named_imports()
                         [prev_source_index as usize]
                         .get(&tracker.import_ref)
                         .unwrap();
@@ -3770,6 +3342,7 @@ impl<'a> LinkerContext<'a> {
                         .slice();
 
                     // Report mismatched imports and exports
+                    let symbol = self.symbol_mut(tracker.import_ref);
                     if symbol.import_item_status == ImportItemStatus::Generated {
                         // This is a debug message instead of an error because although it
                         // appears to be a named import, it's actually an automatically-
@@ -3780,14 +3353,18 @@ impl<'a> LinkerContext<'a> {
                         // "undefined" instead of emitting an error.
                         symbol.import_item_status = ImportItemStatus::Missing;
 
-                        if self.resolver().opts.target == Target::Browser
+                        // A name read off `import()` / `require()` is `undefined`
+                        // at run time too, so there is nothing to say.
+                        if self.is_call_record(prev_source_index, named_import.import_record_index)
+                        {
+                        } else if self.bundle.transpiler.resolver.opts.target == Target::Browser
                             && bun_resolve_builtins::Alias::has(
                                 next_source.path.pretty,
                                 Target::Bun,
                                 bun_resolve_builtins::Cfg::default(),
                             )
                         {
-                            self.log_disjoint().add_range_warning_fmt_with_note(
+                            self.log.add_range_warning_fmt_with_note(
                                 Some(source), r,
                                 format_args!(
                                     "Browser polyfill for module \"{}\" doesn't have a matching export named \"{}\"",
@@ -3798,7 +3375,7 @@ impl<'a> LinkerContext<'a> {
                                 r,
                             );
                         } else {
-                            self.log_disjoint().add_range_warning_fmt(
+                            self.log.add_range_warning_fmt(
                                 Some(source), r,
                                 format_args!(
                                     "Import \"{}\" will always be undefined because there is no matching export in \"{}\"",
@@ -3807,13 +3384,13 @@ impl<'a> LinkerContext<'a> {
                                 ),
                             );
                         }
-                    } else if self.resolver().opts.target == Target::Browser
+                    } else if self.bundle.transpiler.resolver.opts.target == Target::Browser
                         && next_source
                             .path
                             .text
                             .starts_with(NodeFallbackModules::IMPORT_PATH)
                     {
-                        self.log_disjoint().add_range_error_fmt_with_note(
+                        self.log.add_range_error_fmt_with_note(
                             Some(source), r,
                             format_args!(
                                 "Browser polyfill for module \"{}\" doesn't have a matching export named \"{}\"",
@@ -3824,7 +3401,7 @@ impl<'a> LinkerContext<'a> {
                             r,
                         );
                     } else {
-                        self.log_disjoint().add_range_error_fmt(
+                        self.log.add_range_error_fmt(
                             Some(source),
                             r,
                             format_args!(
@@ -3848,7 +3425,7 @@ impl<'a> LinkerContext<'a> {
                     // statements, trace them all to see if they point to different things.
                     for ambiguous_tracker in potentially_ambiguous_export_star_refs.iter() {
                         // If this is a re-export of another import, follow the import
-                        if self.graph.ast.items_named_imports()
+                        if self.ast.items_named_imports()
                             [ambiguous_tracker.data.source_index.get() as usize]
                             .contains(&ambiguous_tracker.data.import_ref)
                         {
@@ -3882,8 +3459,12 @@ impl<'a> LinkerContext<'a> {
                     // Depend on the statement(s) that declared this import symbol in the
                     // original file
                     {
-                        let deps =
-                            self.top_level_symbols_to_parts(prev_source_index, tracker.import_ref);
+                        let deps = top_level_symbol_to_parts(
+                            self.top_level_symbol_to_parts_overlay,
+                            self.ast.items_top_level_symbols_to_parts(),
+                            prev_source_index,
+                            tracker.import_ref,
+                        );
                         re_exports.reserve(deps.len());
                         for &dep in deps {
                             re_exports.push(Dependency {
@@ -3896,7 +3477,7 @@ impl<'a> LinkerContext<'a> {
                     // If this is a re-export of another import, continue for another
                     // iteration of the loop to resolve that import as well
                     let next_id = next_tracker.source_index.get();
-                    if self.graph.ast.items_named_imports()[next_id as usize]
+                    if self.ast.items_named_imports()[next_id as usize]
                         .contains(&next_tracker.import_ref)
                     {
                         tracker = next_tracker;
@@ -3962,315 +3543,97 @@ impl<'a> LinkerContext<'a> {
         result
     }
 
-    pub(crate) fn export_runtime_function(&self) -> &'static [u8] {
-        if self.options.deprecated_namespace_object_setters {
-            b"__export"
-        } else {
-            b"__exportGetters"
-        }
+    /// The record of a named import in `source_index` is an `import()` or a
+    /// `require()`, so the name is read off the call's result.
+    fn is_call_record(&self, source_index: crate::IndexInt, record_index: u32) -> bool {
+        self.ast.items_import_records()[source_index as usize]
+            .as_slice()
+            .get(record_index as usize)
+            .is_some_and(|record| matches!(record.kind, ImportKind::Dynamic | ImportKind::Require))
     }
 
-    /// Is `ref_` the `exports` object of ES module `source_index` (i.e. an
-    /// import that resolved here is that module's namespace)?
-    fn is_esm_namespace_ref(&self, source_index: crate::IndexInt, ref_: Ref) -> bool {
-        let id = source_index as usize;
-        id < self.graph.ast.len()
-            && ref_ == self.graph.ast.items_exports_ref()[id]
-            && matches!(
-                self.graph.ast.items_exports_kind()[id],
-                ExportsKind::Esm | ExportsKind::EsmWithDynamicFallback
-            )
-            && self.graph.meta.items_flags()[id].wrap != WrapKind::Cjs
+    /// An item read off an `import()` / `require()` result is bound only to an
+    /// export the importer may read directly. Otherwise it reads as written:
+    /// `ns.a` off the namespace object, or the local a pattern binds.
+    fn call_record_binds(&self, source_index: crate::IndexInt, record_index: u32) -> bool {
+        let record = &self.ast.items_import_records()[source_index as usize].as_slice()
+            [record_index as usize];
+        // Its own chunk: the name is a binding of the loaded module.
+        record.source_index.is_valid()
+            && !is_external_dynamic_import(self.code_splitting, self.entry_point_kinds, record, source_index)
+            // `require()` returns this export, not the namespace.
+            && !(record.kind == ImportKind::Require
+                && self.resolved_exports[record.source_index.get() as usize]
+                    .contains(b"module.exports"))
     }
 
-    /// Resolves every named import in one file to its matching export,
-    /// recording the bindings in `imports_to_bind`.
-    pub(crate) fn match_imports_with_exports_for_file(
-        &mut self,
-        named_imports_ptr: *const crate::bundled_ast::NamedImports,
-        imports_to_bind: &mut crate::RefImportData,
+    /// Whether the export an item of such a record matched can stand in for it.
+    fn binds_call_item(
+        &self,
         source_index: crate::IndexInt,
-        member_resolutions: &mut ImportMemberResolutions,
-    ) {
-        // Note: `ArrayHashMap` has no in-place key sort and `NamedImport` is
-        // non-Clone (owns a `Vec`), so we sort an index vector over the live
-        // keys/values instead — same observable iteration order (ascending
-        // `inner_index`). We never mutate the map.
-        //
-        // This parameter aliases
-        // `self.graph.ast.named_imports[source_index]`, which
-        // `match_import_with_export` re-reads via the SoA column. Taking the
-        // parameter as a raw `*const` (no uniqueness assertion) and reading
-        // through it preserves that alias-safety: no live
-        // `&`/`&mut` to the column element spans the `&mut self` call below.
-        //
-        // SAFETY: `named_imports_ptr` points into the `graph.ast.named_imports`
-        // SoA column, which is never reallocated during linking; the loop body
-        // never mutates that column (only `imports_to_bind`/`log`/`symbols`/
-        // `meta.probably_typescript_type`), so the backing `keys`/`values`
-        // slices stay valid for the whole loop.
-        let keys: *const [Ref] = unsafe { (*named_imports_ptr).keys() };
-        // SAFETY: same column-validity invariant as `keys` above.
-        let values: *const [NamedImport] = unsafe { (*named_imports_ptr).values() };
-        // SAFETY: `keys` points into stable SoA storage (see above); read-only deref.
-        let mut order = index_sort::identity(unsafe { (&*keys).len() });
-        // SAFETY: `keys` points into stable SoA storage (see above); read-only deref.
-        index_sort::sort_indices(&mut order, &mut |a, b| unsafe {
-            (&*keys)[a as usize]
-                .inner_index()
-                .cmp(&(&*keys)[b as usize].inner_index())
-        });
-
-        for &i in &order {
-            let i = i as usize;
-            // SAFETY: `keys`/`values` point into stable SoA storage (see above); read-only deref.
-            let (import_ref, named_import) = unsafe { ((*keys)[i], &(*values)[i]) };
-
-            // Re-use memory for the cycle detector
-            self.cycle_detector.clear();
-
-            let mut re_exports: bun_alloc::AstVec<Dependency> = bun_alloc::AstAlloc::vec();
-            let result = self.match_import_with_export(
-                ImportTracker {
-                    source_index: crate::Index::init(source_index),
-                    import_ref,
-                    ..Default::default()
-                },
-                &mut re_exports,
-            );
-
-            match result.kind {
-                MatchImportKind::Normal | MatchImportKind::NormalAndNamespace => {
-                    self.bind_matched_import(imports_to_bind, import_ref, &result, re_exports);
-                }
-                MatchImportKind::Namespace => {
-                    // SAFETY: the mutated symbol slot is disjoint from `named_import`
-                    // (graph.ast SoA) and `result` (stack local).
-                    unsafe { self.graph.symbol_mut(import_ref) }.namespace_alias =
-                        Some(bun_alloc::ast_box(G::NamespaceAlias {
-                            namespace_ref: result.namespace_ref,
-                            alias: result.alias,
-                            ..Default::default()
-                        }));
-                }
-                MatchImportKind::Cycle => {
-                    let source = self.get_source(source_index);
-                    let r = lex::range_of_identifier(source, named_import.alias_loc);
-                    // SAFETY: arena `*const [u8]` valid for the link pass.
-                    let alias = named_import
-                        .alias
-                        .expect("infallible: alias present")
-                        .slice();
-                    // Split-borrow with `named_import` — `log_disjoint` returns
-                    // the disjoint `Transpiler.log` backref.
-                    self.log_disjoint().add_range_error_fmt(
-                        Some(source),
-                        r,
-                        format_args!(
-                            "Detected cycle while resolving import \"{}\"",
-                            bstr::BStr::new(alias),
-                        ),
-                    );
-                }
-                MatchImportKind::ProbablyTypescriptType => {
-                    self.graph.meta.items_probably_typescript_type_mut()[source_index as usize]
-                        .put(import_ref, ())
-                        .expect("unreachable");
-                }
-                MatchImportKind::Ambiguous => {
-                    let source = self.get_source(source_index);
-                    let r = lex::range_of_identifier(source, named_import.alias_loc);
-
-                    // TODO: log locations of the ambiguous exports
-
-                    // SAFETY: the mutated symbol slot is disjoint from `source`/`r`
-                    // (parse_graph), `named_import`/`alias` (arena slices), and
-                    // `log_disjoint` — all separate allocations.
-                    let symbol = unsafe { self.graph.symbol_mut(import_ref) };
-                    // SAFETY: arena `*const [u8]` valid for the link pass.
-                    let alias = named_import
-                        .alias
-                        .expect("infallible: alias present")
-                        .slice();
-                    if symbol.import_item_status == ImportItemStatus::Generated {
-                        symbol.import_item_status = ImportItemStatus::Missing;
-                        self.log_disjoint().add_range_warning_fmt(
-                            Some(source), r,
-                            format_args!(
-                                "Import \"{}\" will always be undefined because there are multiple matching exports",
-                                bstr::BStr::new(alias),
-                            ),
-                        );
-                    } else {
-                        self.log_disjoint().add_range_error_fmt(
-                            Some(source),
-                            r,
-                            format_args!(
-                                "Ambiguous import \"{}\" has multiple matching exports",
-                                bstr::BStr::new(alias),
-                            ),
-                        );
-                    }
-                }
-                MatchImportKind::Ignore => {}
-            }
+        import_ref: Ref,
+        named_import: &NamedImport,
+        result: &MatchImport,
+    ) -> bool {
+        // A lifted CommonJS export changes through `exports.x = …`, which the
+        // parser does not record as an assignment.
+        if !matches!(result.kind, MatchImportKind::Normal)
+            || self.ast.items_flags()[result.source_index as usize]
+                .contains(AstFlags::COMMONJS_LIFTED_TO_ESM)
+        {
+            return false;
         }
-
-        self.bind_import_property_accesses(source_index, imports_to_bind, member_resolutions);
+        // `ns.a` is a live read, but a pattern copies the value: a local it
+        // binds stays a copy of an export that can change.
+        let is_pattern_local = self
+            .symbols
+            .get_const(import_ref)
+            .is_some_and(|symbol| symbol.namespace_alias.is_none());
+        if !is_pattern_local {
+            return true;
+        }
+        let Some(export) = self.symbols.get_const(result.r#ref) else {
+            return true;
+        };
+        // Assigned by code, by a direct `eval`, or by an external module.
+        if export.has_been_assigned_to()
+            || export.must_not_be_renamed()
+            || export.kind == bun_ast::symbol::Kind::Import
+        {
+            return false;
+        }
+        // A `require()` can run while the importee initializes. Only a function
+        // declaration and a namespace object have their value before that.
+        let record = &self.ast.items_import_records()[source_index as usize].as_slice()
+            [named_import.import_record_index as usize];
+        record.kind != ImportKind::Require
+            || export.kind.is_function()
+            || self.is_esm_namespace_ref(result.source_index, result.r#ref)
     }
 
-    /// `import X from './a'; X.foo` where `X` resolved to the namespace of an
-    /// ES module (`export * as X`, `import * as X; export { X }`,
-    /// `export default X`, `export * as default from '.'`): bind `X.foo` to
-    /// that module's export `foo` as if it had been a named import, so the
-    /// namespace object need not be materialized and unused exports still
-    /// tree-shake. The parser recorded these accesses per part in
-    /// `import_symbol_property_uses`; `do_step5` moves their use counts from
-    /// `X` to the new symbol and the printer substitutes it at the `E::Dot`.
-    fn bind_import_property_accesses(
-        &mut self,
-        source_index: crate::IndexInt,
-        imports_to_bind: &mut crate::RefImportData,
-        member_resolutions: &mut ImportMemberResolutions,
-    ) {
-        if self.options.output_format == Format::InternalBakeDev {
-            return;
-        }
-        let id = source_index as usize;
-        let parts_len = self.graph.ast.items_parts()[id].len();
-        let mut accesses: Vec<(Ref, crate::IndexInt, bun_ast::StoreStr, u32)> = Vec::new();
-        let mut dependencies: Vec<Dependency> = Vec::new();
-        let mut bound_bases: Vec<Ref> = Vec::new();
-        for part_index in 0..parts_len {
-            accesses.clear();
-            dependencies.clear();
-            bound_bases.clear();
-            {
-                let part = &self.graph.ast.items_parts()[id].as_slice()[part_index];
-                let Some(uses) = part.import_symbol_property_uses.as_ref() else {
-                    continue;
-                };
-                for (base, properties) in uses.keys().iter().zip(uses.values()) {
-                    let Some(import_data) = imports_to_bind.get(base) else {
-                        continue;
-                    };
-                    let target = import_data.data;
-                    let target_source = target.source_index.get();
-                    if !self.is_esm_namespace_ref(target_source, target.import_ref) {
-                        continue;
-                    }
-                    let resolved_exports =
-                        &self.graph.meta.items_resolved_exports()[target_source as usize];
-                    for (name, prop_use) in properties.iter() {
-                        // Not a static export of the target (missing, or only reachable
-                        // through `export *` from CommonJS): keep the property access.
-                        if let Some(index) = resolved_exports.get_index(name) {
-                            let name = bun_ast::StoreStr::new(&resolved_exports.keys()[index]);
-                            accesses.push((*base, target_source, name, prop_use.count_estimate));
-                        }
-                    }
-                }
-            }
+    /// Must `X.name()` keep `X` as `this`, where `X.name` is export `ref_`?
+    fn method_call_needs_this(&self, source_index: crate::IndexInt, ref_: Ref) -> bool {
+        self.ast.items_flags()[source_index as usize].contains(AstFlags::COMMONJS_LIFTED_TO_ESM)
+            && !self
+                .symbols
+                .get_const(ref_)
+                .is_some_and(|symbol| symbol.call_ignores_this())
+    }
 
-            for &(base, target_source, name, count) in &accesses {
-                if !member_resolutions.contains_key(&(target_source, name)) {
-                    self.cycle_detector.clear();
-                    let mut re_exports: bun_alloc::AstVec<Dependency> = bun_alloc::AstAlloc::vec();
-                    let result = self.match_import_with_export_inner(
-                        ImportTracker {
-                            source_index: crate::Index::init(target_source),
-                            ..Default::default()
-                        },
-                        Some((target_source, name)),
-                        &mut re_exports,
-                    );
-                    let resolved = match result.kind {
-                        MatchImportKind::Normal | MatchImportKind::NormalAndNamespace => {
-                            Some(ImportMemberResolution {
-                                source_index: result.source_index,
-                                r#ref: result.r#ref,
-                                re_exports: re_exports.to_vec(),
-                            })
-                        }
-                        _ => None,
-                    };
-                    member_resolutions.insert((target_source, name), resolved);
-                }
-                let Some(resolved) = member_resolutions.get(&(target_source, name)).unwrap() else {
-                    continue;
-                };
-
-                if !bound_bases.contains(&base) {
-                    // First bound member of `base` in this part: depend on this
-                    // file's import statement for `base` and on the re-exports
-                    // walked to resolve `base` itself, once.
-                    bound_bases.push(base);
-                    dependencies
-                        .extend_from_slice(imports_to_bind.get(&base).unwrap().re_exports.slice());
-                    for &part in self.top_level_symbols_to_parts(source_index, base) {
-                        dependencies.push(Dependency {
-                            source_index: bun_ast::Index::source(id),
-                            part_index: part,
-                        });
-                    }
-                }
-                // `name` points into `resolved_exports` keys, which outlive printing.
-                self.graph
-                    .import_member_bindings
-                    .get_or_put_value(base, Default::default())
-                    .expect("OOM")
-                    .value_ptr
-                    .put_static_key(name.slice(), resolved.r#ref)
-                    .expect("OOM");
-
-                // From here on this is an ordinary use of the target's symbol by this
-                // part: move the use count over, record it as an import of this file
-                // so code splitting sees it, and depend on what a named import would
-                // — the parts declaring it, the re-exports walked to reach it, and
-                // this file's own import statement for `base`.
-                {
-                    let part = &mut self.graph.ast.items_parts_mut()[id].as_mut_slice()[part_index];
-                    let uses = part.import_symbol_property_uses.as_mut().unwrap();
-                    let _ = uses.get_ptr_mut(&base).unwrap().remove(name.slice());
-                    part.symbol_uses
-                        .get_or_put_value(resolved.r#ref, Default::default())
-                        .expect("OOM")
-                        .value_ptr
-                        .count_estimate += count;
-                }
-                if resolved.source_index != source_index
-                    && !imports_to_bind.contains(&resolved.r#ref)
-                {
-                    imports_to_bind
-                        .put(
-                            resolved.r#ref,
-                            crate::ImportData {
-                                data: ImportTracker {
-                                    source_index: crate::Index::init(resolved.source_index),
-                                    import_ref: resolved.r#ref,
-                                    ..Default::default()
-                                },
-                                ..Default::default()
-                            },
-                        )
-                        .expect("OOM");
-                }
-                for &part in self.top_level_symbols_to_parts(resolved.source_index, resolved.r#ref)
-                {
-                    dependencies.push(Dependency {
-                        source_index: bun_ast::Index::source(resolved.source_index as usize),
-                        part_index: part,
-                    });
-                }
-                dependencies.extend_from_slice(&resolved.re_exports);
-            }
-            if !dependencies.is_empty() {
-                let part = &mut self.graph.ast.items_parts_mut()[id].as_mut_slice()[part_index];
-                for &dependency in &dependencies {
-                    part.dependencies.push(dependency);
-                }
-            }
-        }
+    /// `ns.name()` for `import * as ns`. An unbound item prints as `ns.name`.
+    fn method_call_item_needs_this(
+        &self,
+        import_ref: Ref,
+        named_import: &NamedImport,
+        result: &MatchImport,
+    ) -> bool {
+        self.output_format != Format::InternalBakeDev
+            && named_import.namespace_ref.is_valid()
+            && self
+                .symbols
+                .get_const(import_ref)
+                .is_some_and(|symbol| symbol.called_as_method() && symbol.namespace_alias.is_some())
+            && self.method_call_needs_this(result.source_index, result.r#ref)
     }
 
     /// Records a `Normal`/`NormalAndNamespace` match for `import_ref`.
@@ -4295,15 +3658,575 @@ impl<'a> LinkerContext<'a> {
             )
             .expect("unreachable");
         if result.kind == MatchImportKind::NormalAndNamespace {
-            self.graph
-                .symbols
-                .get_mut(import_ref)
-                .unwrap()
-                .namespace_alias = Some(bun_alloc::ast_box(G::NamespaceAlias {
-                namespace_ref: result.namespace_ref,
-                alias: result.alias,
-                ..Default::default()
-            }));
+            self.symbol_mut(import_ref).namespace_alias =
+                Some(bun_alloc::ast_box(G::NamespaceAlias {
+                    namespace_ref: result.namespace_ref,
+                    alias: result.alias,
+                    ..Default::default()
+                }));
+        }
+    }
+
+    /// The accesses for `bind_import_property_accesses`, and which of them have to stay as written.
+    fn resolve_import_property_accesses(
+        &mut self,
+        source_index: crate::IndexInt,
+        imports_to_bind: &crate::RefImportData,
+        member_resolutions: &mut ImportMemberResolutions,
+    ) -> (Vec<PropertyAccess>, Vec<(Ref, bun_ast::StoreStr)>) {
+        if self.output_format == Format::InternalBakeDev {
+            return Default::default();
+        }
+
+        let id = source_index as usize;
+        let mut accesses: Vec<PropertyAccess> = Vec::new();
+        for (part_index, part) in self.ast.items_parts()[id].as_slice().iter().enumerate() {
+            let Some(uses) = part.import_symbol_property_uses.as_ref() else {
+                continue;
+            };
+            for (base, properties) in uses.keys().iter().zip(uses.values()) {
+                let Some(import_data) = imports_to_bind.get(base) else {
+                    continue;
+                };
+                let target = import_data.data;
+                let target_source = target.source_index.get();
+                if !self.is_esm_namespace_ref(target_source, target.import_ref) {
+                    continue;
+                }
+                let resolved_exports = &self.resolved_exports[target_source as usize];
+                for (name, prop_use) in properties.iter() {
+                    // Missing, or only reachable through `export *` from CommonJS: stays an access.
+                    let name = if let Some(index) = resolved_exports.get_index(name) {
+                        bun_ast::StoreStr::new(&resolved_exports.keys()[index])
+                    } else if &**name == b"default"
+                        && self.ast.items_flags()[target_source as usize]
+                            .contains(AstFlags::COMMONJS_LIFTED_TO_ESM)
+                        && !LinkerContext::lifted_default_import_needs_wrapper(
+                            self.ast.items_module_type()[id],
+                            &self.ast.items_named_exports()[target_source as usize],
+                        )
+                    {
+                        // `default` of a lifted CommonJS module is the namespace itself.
+                        let name = bun_ast::StoreStr::new(b"default");
+                        member_resolutions
+                            .entry((target_source, name))
+                            .or_insert_with(|| {
+                                Some(ImportMemberResolution {
+                                    source_index: target_source,
+                                    r#ref: target.import_ref,
+                                    re_exports: Vec::new(),
+                                })
+                            });
+                        name
+                    } else {
+                        continue;
+                    };
+                    accesses.push(PropertyAccess {
+                        part_index,
+                        base: *base,
+                        target_source,
+                        name,
+                        count: prop_use.count_estimate,
+                        is_call_target: prop_use.is_call_target,
+                    });
+                }
+            }
+        }
+
+        for access in &accesses {
+            let key = (access.target_source, access.name);
+            if member_resolutions.contains_key(&key) {
+                continue;
+            }
+            self.cycle_detector.clear();
+            let mut re_exports: bun_alloc::AstVec<Dependency> = bun_alloc::AstAlloc::vec();
+            let result = self.match_import_with_export_inner(
+                ImportTracker {
+                    source_index: crate::Index::init(access.target_source),
+                    ..Default::default()
+                },
+                Some(key),
+                &mut re_exports,
+            );
+            let resolved = match result.kind {
+                MatchImportKind::Normal | MatchImportKind::NormalAndNamespace => {
+                    Some(ImportMemberResolution {
+                        source_index: result.source_index,
+                        r#ref: result.r#ref,
+                        re_exports: re_exports.to_vec(),
+                    })
+                }
+                _ => None,
+            };
+            member_resolutions.insert(key, resolved);
+        }
+
+        // The printer substitutes every `X.name` of the file, so one call that needs `X` as `this` keeps them all.
+        let mut keeps_this: Vec<(Ref, bun_ast::StoreStr)> = Vec::new();
+        for access in &accesses {
+            if access.is_call_target
+                && let Some(resolved) = member_resolutions
+                    .get(&(access.target_source, access.name))
+                    .unwrap()
+                && self.method_call_needs_this(resolved.source_index, resolved.r#ref)
+            {
+                keeps_this.push((access.base, access.name));
+            }
+        }
+
+        (accesses, keeps_this)
+    }
+}
+
+/// Is `ref_` the `exports` object, so the namespace, of ES module `source_index`?
+fn is_esm_namespace_ref(
+    ast: &MultiArrayList<JSAst<'_>>,
+    meta_flags: &[crate::js_meta::Flags],
+    source_index: crate::IndexInt,
+    ref_: Ref,
+) -> bool {
+    let id = source_index as usize;
+    id < ast.len()
+        && ref_ == ast.items_exports_ref()[id]
+        && matches!(
+            ast.items_exports_kind()[id],
+            ExportsKind::Esm
+                | ExportsKind::EsmWithDynamicFallback
+                | ExportsKind::EsmWithDynamicFallbackFromCjs
+        )
+        && meta_flags[id].wrap != WrapKind::Cjs
+}
+
+impl<'l, 'a> LinkerContext<'l, 'a> {
+    /// The default import of a lifted module that sets `__esModule` and exports
+    /// `default` depends on the flag's run-time value, unless the importer is an
+    /// ES module by type (Node ignores the flag).
+    pub(crate) fn lifted_default_import_needs_wrapper(
+        importer_module_type: crate::options::ModuleType,
+        exports: &crate::bundled_ast::NamedExports,
+    ) -> bool {
+        importer_module_type != crate::options::ModuleType::Esm
+            && exports.contains(b"__esModule")
+            && exports.contains(b"default")
+    }
+
+    /// `const { a } = ns` where `ns` is an import namespace. The parser
+    /// keeps such a part because a pattern over an arbitrary object can run
+    /// getters, but the linker knows `ns` is a module namespace, so every
+    /// key reads like `ns.a` and is side-effect free. True when each
+    /// declaration destructures plain string keys into identifiers (no
+    /// computed key, no rest, no default, no nested pattern) out of an
+    /// import namespace.
+    fn part_is_removable_namespace_destructuring(
+        &self,
+        source_index: crate::IndexInt,
+        part: &Part,
+    ) -> bool {
+        // With a direct eval() in the file, the parser pins every
+        // symbol-declaring part: eval'd code can reference the bindings.
+        if self.graph.ast.items_module_scope()[source_index as usize].contains_direct_eval {
+            return false;
+        }
+        let stmts = part.stmts.slice();
+        if stmts.is_empty() {
+            return false;
+        }
+        stmts.iter().all(|stmt| {
+            let bun_ast::StmtData::SLocal(local) = &stmt.data else {
+                return false;
+            };
+            if matches!(
+                local.kind,
+                bun_ast::s::Kind::KUsing | bun_ast::s::Kind::KAwaitUsing
+            ) {
+                return false;
+            }
+            local.decls.slice().iter().all(|decl| {
+                let bun_ast::b::B::BObject(pattern) = decl.binding.data else {
+                    return false;
+                };
+                let Some(value) = &decl.value else {
+                    return false;
+                };
+                if !self.value_is_import_namespace(source_index, value) {
+                    return false;
+                }
+                pattern.properties().iter().all(|property| {
+                    !property.flags.contains(bun_ast::flags::Property::IsSpread)
+                        && !property
+                            .flags
+                            .contains(bun_ast::flags::Property::IsComputed)
+                        && property.default_value.is_none()
+                        && matches!(property.key.data, bun_ast::ExprData::EString(_))
+                        && matches!(property.value.data, bun_ast::b::B::BIdentifier(_))
+                })
+            })
+        })
+    }
+
+    /// Does `value` evaluate to a module namespace: a star import's binding,
+    /// an import that resolved to another module's namespace (`export * as`),
+    /// or a `require()` that `unwrap_commonjs_to_esm` turned into an import?
+    fn value_is_import_namespace(&self, source_index: crate::IndexInt, value: &Expr) -> bool {
+        let id = source_index as usize;
+        let ref_ = match &value.data {
+            bun_ast::ExprData::EIdentifier(identifier) => identifier.ref_,
+            // A named import that holds a namespace (`export * as`) prints as
+            // an import identifier.
+            bun_ast::ExprData::EImportIdentifier(identifier) => identifier.ref_,
+            bun_ast::ExprData::ERequireString(require) => {
+                return require.unwrapped_id.get().is_some();
+            }
+            _ => return false,
+        };
+        // A require() lifted into an import binds an ordinary local, so user
+        // code can rebind it to an object with getters. Only a binding that
+        // is never assigned still holds the namespace. A `var` can also be
+        // re-initialized by a duplicate declaration or a `for (var ns of ..)`
+        // head, which the parser does not record as an assignment, so a
+        // hoisted symbol is never trusted.
+        match self.graph.symbols.get_const(ref_) {
+            Some(symbol)
+                if !symbol.has_been_assigned_to()
+                    && !matches!(
+                        symbol.kind,
+                        bun_ast::symbol::Kind::Hoisted | bun_ast::symbol::Kind::HoistedFunction
+                    ) => {}
+            _ => return false,
+        }
+        if let Some(named_import) = self.graph.ast.items_named_imports()[id].get(&ref_) {
+            if named_import.alias_is_star {
+                return true;
+            }
+        }
+        if let Some(import_data) = self.graph.meta.items_imports_to_bind()[id].get(&ref_) {
+            let target = import_data.data;
+            return is_esm_namespace_ref(
+                &self.graph.ast,
+                self.graph.meta.items_flags(),
+                target.source_index.get(),
+                target.import_ref,
+            );
+        }
+        false
+    }
+
+    /// The chunk of a lifted CommonJS module exports its namespace object as `default`.
+    pub(crate) fn chunk_default_export_is_namespace(
+        meta_flags: crate::js_meta::Flags,
+        ast_flags: AstFlags,
+    ) -> bool {
+        meta_flags.needs_synthetic_default_export
+            && meta_flags.wrap != WrapKind::Cjs
+            && ast_flags.contains(AstFlags::COMMONJS_LIFTED_TO_ESM)
+    }
+
+    /// Resolves every named import in one file to its matching export,
+    /// recording the bindings in its `imports_to_bind`.
+    pub(crate) fn match_imports_with_exports_for_file(
+        &mut self,
+        log: &mut Log,
+        cycle_detector: &mut Vec<ImportTracker>,
+        source_index: crate::IndexInt,
+        member_resolutions: &mut ImportMemberResolutions,
+    ) {
+        let meta = self.graph.meta.split_mut();
+        let imports_to_bind = &mut meta.imports_to_bind[source_index as usize];
+        let mut matcher = ImportMatcher {
+            bundle: self.bundle,
+            ast: &self.graph.ast,
+            meta_flags: meta.flags,
+            resolved_exports: meta.resolved_exports,
+            resolved_export_star: meta.resolved_export_star,
+            top_level_symbol_to_parts_overlay: meta.top_level_symbol_to_parts_overlay,
+            entry_point_kinds: self.graph.files.items_entry_point_kind(),
+            code_splitting: self.graph.code_splitting,
+            output_format: self.options.output_format,
+            symbols: &mut self.graph.symbols,
+            cycle_detector,
+            log,
+        };
+
+        // Note: `ArrayHashMap` has no in-place key sort and `NamedImport` is
+        // non-Clone (owns a `Vec`), so we sort an index vector over the live
+        // keys/values instead — same observable iteration order (ascending
+        // `inner_index`). We never mutate the map.
+        let named_imports = &matcher.ast.items_named_imports()[source_index as usize];
+        let (keys, values) = (named_imports.keys(), named_imports.values());
+        let mut order = index_sort::identity(keys.len());
+        index_sort::sort_indices(&mut order, &mut |a, b| {
+            keys[a as usize]
+                .inner_index()
+                .cmp(&keys[b as usize].inner_index())
+        });
+
+        // Items of `ns.name()` left unbound, each with its `ns`.
+        let mut method_call_items: HashMap<Ref, Ref> = HashMap::default();
+        for &i in &order {
+            let i = i as usize;
+            let (import_ref, named_import) = (keys[i], &values[i]);
+
+            // Not matched at all: matching marks a name it can't find `Missing`,
+            // which prints `undefined` where the read should stay `ns.a`.
+            let is_call_item =
+                matcher.is_call_record(source_index, named_import.import_record_index);
+            if is_call_item
+                && !matcher.call_record_binds(source_index, named_import.import_record_index)
+            {
+                continue;
+            }
+
+            // Re-use memory for the cycle detector
+            matcher.cycle_detector.clear();
+
+            let mut re_exports: bun_alloc::AstVec<Dependency> = bun_alloc::AstAlloc::vec();
+            let result = matcher.match_import_with_export(
+                ImportTracker {
+                    source_index: crate::Index::init(source_index),
+                    import_ref,
+                    ..Default::default()
+                },
+                &mut re_exports,
+            );
+
+            if is_call_item
+                && !matcher.binds_call_item(source_index, import_ref, named_import, &result)
+            {
+                continue;
+            }
+
+            match result.kind {
+                MatchImportKind::Normal
+                    if matcher.method_call_item_needs_this(import_ref, named_import, &result) =>
+                {
+                    method_call_items.insert(import_ref, named_import.namespace_ref);
+                }
+                MatchImportKind::Normal | MatchImportKind::NormalAndNamespace => {
+                    matcher.bind_matched_import(imports_to_bind, import_ref, &result, re_exports);
+                }
+                MatchImportKind::Namespace => {
+                    matcher.symbol_mut(import_ref).namespace_alias =
+                        Some(bun_alloc::ast_box(G::NamespaceAlias {
+                            namespace_ref: result.namespace_ref,
+                            alias: result.alias,
+                            ..Default::default()
+                        }));
+                }
+                MatchImportKind::Cycle => {
+                    let source = matcher.get_source(source_index);
+                    let r = lex::range_of_identifier(source, named_import.alias_loc);
+                    // SAFETY: arena `*const [u8]` valid for the link pass.
+                    let alias = named_import
+                        .alias
+                        .expect("infallible: alias present")
+                        .slice();
+                    matcher.log.add_range_error_fmt(
+                        Some(source),
+                        r,
+                        format_args!(
+                            "Detected cycle while resolving import \"{}\"",
+                            bstr::BStr::new(alias),
+                        ),
+                    );
+                }
+                MatchImportKind::ProbablyTypescriptType => {
+                    meta.probably_typescript_type[source_index as usize]
+                        .put(import_ref, ())
+                        .expect("unreachable");
+                }
+                MatchImportKind::Ambiguous => {
+                    let source = matcher.get_source(source_index);
+                    let r = lex::range_of_identifier(source, named_import.alias_loc);
+
+                    // TODO: log locations of the ambiguous exports
+
+                    let symbol = matcher.symbol_mut(import_ref);
+                    // SAFETY: arena `*const [u8]` valid for the link pass.
+                    let alias = named_import
+                        .alias
+                        .expect("infallible: alias present")
+                        .slice();
+                    if symbol.import_item_status == ImportItemStatus::Generated {
+                        symbol.import_item_status = ImportItemStatus::Missing;
+                        matcher.log.add_range_warning_fmt(
+                            Some(source), r,
+                            format_args!(
+                                "Import \"{}\" will always be undefined because there are multiple matching exports",
+                                bstr::BStr::new(alias),
+                            ),
+                        );
+                    } else {
+                        matcher.log.add_range_error_fmt(
+                            Some(source),
+                            r,
+                            format_args!(
+                                "Ambiguous import \"{}\" has multiple matching exports",
+                                bstr::BStr::new(alias),
+                            ),
+                        );
+                    }
+                }
+                MatchImportKind::Ignore => {}
+            }
+        }
+
+        let (accesses, keeps_this) = matcher.resolve_import_property_accesses(
+            source_index,
+            imports_to_bind,
+            member_resolutions,
+        );
+
+        // A part that calls such an item reads its namespace.
+        if !method_call_items.is_empty() {
+            let mut namespace_uses: Vec<(Ref, u32)> = Vec::new();
+            for part in self.graph.ast.items_parts_mut()[source_index as usize].as_mut_slice() {
+                namespace_uses.clear();
+                for (item, item_use) in part
+                    .symbol_uses
+                    .keys()
+                    .iter()
+                    .zip(part.symbol_uses.values())
+                {
+                    if item_use.count_estimate() == 0 {
+                        continue;
+                    }
+                    if let Some(&namespace_ref) = method_call_items.get(item) {
+                        namespace_uses.push((namespace_ref, item_use.count_estimate()));
+                    }
+                }
+                for &(namespace_ref, count) in &namespace_uses {
+                    part.symbol_uses
+                        .get_or_put_value(namespace_ref, Default::default())
+                        .expect("OOM")
+                        .value_ptr
+                        .merge(SymbolUse::unscoped(count));
+                }
+            }
+        }
+
+        self.bind_import_property_accesses(
+            source_index,
+            &accesses,
+            &keeps_this,
+            member_resolutions,
+        );
+    }
+
+    /// `import X from './a'; X.foo` where `X` resolved to the namespace of an
+    /// ES module (`export * as X`, `import * as X; export { X }`,
+    /// `export default X`, `export * as default from '.'`): bind `X.foo` to
+    /// that module's export `foo` as if it had been a named import, so the
+    /// namespace object need not be materialized and unused exports still
+    /// tree-shake. The parser recorded these accesses per part in
+    /// `import_symbol_property_uses`; `do_step5` moves their use counts from
+    /// `X` to the new symbol and the printer substitutes it at the `E::Dot`.
+    fn bind_import_property_accesses(
+        &mut self,
+        source_index: crate::IndexInt,
+        accesses: &[PropertyAccess],
+        keeps_this: &[(Ref, bun_ast::StoreStr)],
+        member_resolutions: &ImportMemberResolutions,
+    ) {
+        let id = source_index as usize;
+        let ast = self.graph.ast.split_mut();
+        let meta = self.graph.meta.split_mut();
+        let imports_to_bind = &mut meta.imports_to_bind[id];
+        let parts_declaring = |source_index, ref_| {
+            top_level_symbol_to_parts(
+                meta.top_level_symbol_to_parts_overlay,
+                ast.top_level_symbols_to_parts,
+                source_index,
+                ref_,
+            )
+        };
+
+        let mut dependencies: Vec<Dependency> = Vec::new();
+        let mut bound_bases: Vec<Ref> = Vec::new();
+        for part_accesses in accesses.chunk_by(|a, b| a.part_index == b.part_index) {
+            let part_index = part_accesses[0].part_index;
+            dependencies.clear();
+            bound_bases.clear();
+            for access in part_accesses {
+                let (base, name, count) = (access.base, access.name, access.count);
+                if keeps_this.contains(&(base, name)) {
+                    continue;
+                }
+                let Some(resolved) = member_resolutions
+                    .get(&(access.target_source, name))
+                    .unwrap()
+                else {
+                    continue;
+                };
+
+                if !bound_bases.contains(&base) {
+                    // First bound member of `base` in this part: depend on this
+                    // file's import statement for `base` and on the re-exports
+                    // walked to resolve `base` itself, once.
+                    bound_bases.push(base);
+                    dependencies
+                        .extend_from_slice(imports_to_bind.get(&base).unwrap().re_exports.slice());
+                    for &part in parts_declaring(source_index, base) {
+                        dependencies.push(Dependency {
+                            source_index: bun_ast::Index::source(id),
+                            part_index: part,
+                        });
+                    }
+                }
+                // `name` points into `resolved_exports` keys, which outlive printing.
+                self.graph
+                    .import_member_bindings
+                    .get_or_put_value(base, Default::default())
+                    .expect("OOM")
+                    .value_ptr
+                    .put_static_key(name.slice(), resolved.r#ref)
+                    .expect("OOM");
+
+                // From here on this is an ordinary use of the target's symbol by this
+                // part: move the use count over, record it as an import of this file
+                // so code splitting sees it, and depend on what a named import would
+                // — the parts declaring it, the re-exports walked to reach it, and
+                // this file's own import statement for `base`.
+                {
+                    let part = &mut ast.parts[id].as_mut_slice()[part_index];
+                    let uses = part.import_symbol_property_uses.as_mut().unwrap();
+                    let _ = uses.get_ptr_mut(&base).unwrap().remove(name.slice());
+                    part.symbol_uses
+                        .get_or_put_value(resolved.r#ref, Default::default())
+                        .expect("OOM")
+                        .value_ptr
+                        .merge(SymbolUse::unscoped(count));
+                }
+                if resolved.source_index != source_index
+                    && !imports_to_bind.contains(&resolved.r#ref)
+                {
+                    imports_to_bind
+                        .put(
+                            resolved.r#ref,
+                            crate::ImportData {
+                                data: ImportTracker {
+                                    source_index: crate::Index::init(resolved.source_index),
+                                    import_ref: resolved.r#ref,
+                                    ..Default::default()
+                                },
+                                ..Default::default()
+                            },
+                        )
+                        .expect("OOM");
+                }
+                for &part in parts_declaring(resolved.source_index, resolved.r#ref) {
+                    dependencies.push(Dependency {
+                        source_index: bun_ast::Index::source(resolved.source_index as usize),
+                        part_index: part,
+                    });
+                }
+                dependencies.extend_from_slice(&resolved.re_exports);
+            }
+            if !dependencies.is_empty() {
+                let part = &mut ast.parts[id].as_mut_slice()[part_index];
+                for &dependency in &dependencies {
+                    part.dependencies.push(dependency);
+                }
+            }
         }
     }
 
@@ -4314,10 +4237,12 @@ impl<'a> LinkerContext<'a> {
     #[inline]
     pub(crate) fn generate_code_for_lazy_export(
         &mut self,
+        log: &mut Log,
         source_index: crate::IndexInt,
     ) -> Result<(), AllocError> {
         crate::linker_context::generate_code_for_lazy_export::generate_code_for_lazy_export(
             self,
+            log,
             source_index,
         )
     }
@@ -4385,7 +4310,7 @@ impl<'a> LinkerContext<'a> {
 
         type OutputPiece = crate::chunk::OutputPiece;
 
-        if !j.contains(&self.unique_key_prefix) {
+        if !j.contains(self.unique_key_prefix) {
             // There are like several cases that prohibit this from being checked more trivially, example:
             // 1. dynamic imports
             // 2. require()
@@ -4394,7 +4319,7 @@ impl<'a> LinkerContext<'a> {
             return Ok(crate::chunk::IntermediateOutput::Joiner(core::mem::take(j)));
         }
 
-        let mut pieces: Vec<OutputPiece> = Vec::with_capacity(count as usize);
+        let mut pieces: Vec<OutputPiece> = Vec::new();
         // Note: `StringJoiner::done()`
         // returns a `Box<[u8]>`; we must keep it alive alongside the pieces
         // (each `OutputPiece` stores a raw `*const u8` into it). It is moved
@@ -4402,7 +4327,7 @@ impl<'a> LinkerContext<'a> {
         let complete_output: Box<[u8]> = j.done()?;
         let mut output: &[u8] = &complete_output;
 
-        let prefix = &self.unique_key_prefix;
+        let prefix = self.unique_key_prefix;
 
         'outer: loop {
             // Scan for the next piece boundary
@@ -4450,7 +4375,7 @@ impl<'a> LinkerContext<'a> {
                         break;
                     }
                 }
-                crate::chunk::QueryKind::Chunk => {
+                crate::chunk::QueryKind::Chunk | crate::chunk::QueryKind::ChunkId => {
                     if index >= count as usize {
                         if cfg!(debug_assertions) {
                             bun_core::debug_warn!("Invalid output piece boundary");
@@ -4459,8 +4384,7 @@ impl<'a> LinkerContext<'a> {
                     }
                 }
                 crate::chunk::QueryKind::HtmlImport => {
-                    if index >= self.parse_graph().html_imports.server_source_indices.len() as usize
-                    {
+                    if index >= self.parse_graph().html_imports.len() as usize {
                         if cfg!(debug_assertions) {
                             bun_core::debug_warn!("Invalid output piece boundary");
                         }
@@ -4542,6 +4466,13 @@ impl InsideWrapperPrefix {
 }
 
 impl InsideWrapperPrefix {
+    /// A directive stays ahead of the dependency calls inserted at `sync_dependencies_end`.
+    pub(crate) fn append_directive(&mut self, stmt: Stmt) {
+        debug_assert!(self.stmts.len() == self.sync_dependencies_end && !self.has_async_dependency);
+        self.stmts.push(stmt);
+        self.sync_dependencies_end += 1;
+    }
+
     pub(crate) fn append_non_dependency(&mut self, stmt: Stmt) -> Result<(), AllocError> {
         self.stmts.push(stmt);
         Ok(())

@@ -22,7 +22,7 @@ test("Brotli reset() should not leak memory", { timeout: 30_000 }, async () => {
 
   // Reset many times - before the fix, each reset leaks ~400KB (brotli encoder state)
   for (let i = 0; i < iterations; i++) {
-    compressor.reset();
+    (compressor as any).reset();
   }
 
   compressor.close();
@@ -52,7 +52,7 @@ test("BrotliDecompress reset() should not leak memory", { timeout: 30_000 }, asy
   const decompressor = createBrotliDecompress();
 
   for (let i = 0; i < iterations; i++) {
-    decompressor.reset();
+    (decompressor as any).reset();
   }
 
   decompressor.close();

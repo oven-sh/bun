@@ -31,6 +31,10 @@
 
 #if ENABLE(WEB_CRYPTO)
 
+namespace ncrypto {
+class EVPKeyPointer;
+}
+
 namespace WebCore {
 
 struct JsonWebKey;
@@ -61,7 +65,6 @@ public:
 
     NamedCurve namedCurve() const { return m_curve; }
 
-    static bool isValidOKPAlgorithm(CryptoAlgorithmIdentifier);
     static KeyMaterial ed25519PublicFromPrivate(const KeyMaterial& privateKey);
     static KeyMaterial x25519PublicFromPrivate(const KeyMaterial& privateKey);
     static KeyMaterial ed25519PrivateFromSeed(KeyMaterial&& seed);
@@ -72,6 +75,8 @@ public:
 
     size_t exportKeySizeInBytes() const { return exportKey().size(); }
     const KeyMaterial& exportKey() const { return !m_exportKey ? m_data : *m_exportKey; };
+
+    ncrypto::EVPKeyPointer toEVPKey() const;
 
 private:
     CryptoKeyOKP(CryptoAlgorithmIdentifier, NamedCurve, CryptoKeyType, Vector<uint8_t>&&, bool extractable, CryptoKeyUsageBitmap);

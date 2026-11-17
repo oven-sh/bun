@@ -83,7 +83,7 @@ describe("bundler", () => {
         process.exitCode = 1;
         process.versions.bun = "bun!";
         if (process.versions.bun === "bun!") throw new Error("fail");
-        if (require("./${process.platform}-${process.arch}.js") === "${Bun.version.replaceAll("-debug", "")}") {
+        if (require("./${process.platform}-${process.arch}.js").replaceAll("-debug", "") === "${Bun.version.replaceAll("-debug", "")}") {
           process.exitCode = 0;
         }
       `,
@@ -185,6 +185,27 @@ describe("bundler", () => {
       },
     });
   }
+  // --bytecode selects cjs output. A wrapped CommonJS file that starts with "use strict"
+  // keeps the directive in its wrapper, so the embedded bytecode runs it as strict code.
+  itBundled("compile/BytecodeKeepsUseStrictOfWrappedCommonJS", {
+    compile: true,
+    bytecode: true,
+    files: {
+      "/entry.mjs": /* js */ `
+        import strict from "./strict.cjs";
+        import sloppy from "./sloppy.cjs";
+        console.log(strict, sloppy);
+      `,
+      "/strict.cjs": /* js */ `
+        "use strict";
+        module.exports = (function () { return this === undefined; })();
+      `,
+      "/sloppy.cjs": /* js */ `
+        module.exports = (function () { return this === undefined; })();
+      `,
+    },
+    run: { stdout: "true false" },
+  });
   // ESM bytecode test matrix: each scenario × {default, minified} = 2 tests per scenario.
   // With --compile, static imports are inlined into one chunk, but dynamic imports
   // create separate modules in the standalone graph — each with its own bytecode + ModuleInfo.
@@ -401,6 +422,26 @@ describe("bundler", () => {
       },
     });
   }
+  // Two entry points that import() each other: the executable runs the first one.
+  itBundled("compile/EntryPointsImportEachOther", {
+    compile: true,
+    files: {
+      "/main.ts": /* js */ `
+        import("./plugin.ts").then(plugin => console.log("main loaded", plugin.name));
+      `,
+      "/plugin.ts": /* js */ `
+        export const name = "plugin";
+        export const loadMain = () => import("./main.ts");
+      `,
+    },
+    entryPointsRaw: ["./main.ts", "./plugin.ts"],
+    outfile: "dist/out",
+    run: {
+      stdout: "main loaded plugin",
+      file: "dist/out",
+      setCwd: true,
+    },
+  });
   // https://github.com/oven-sh/bun/issues/8697
   itBundled("compile/EmbeddedFileOutfile", {
     compile: true,
@@ -416,6 +457,51 @@ describe("bundler", () => {
     },
     outfile: "dist/out",
     run: { stdout: "Hello, world!" },
+  });
+  // Two modules with the same bytes. The executable reads each by its own type.
+  for (const order of ["file-first", "text-first"]) {
+    const imports = [`import path from "./t.txt" with { type: "file" };`, `import text from "./t.txt";`];
+    itBundled(`compile/FileAndTextOfOneFile/${order}`, {
+      compile: true,
+      files: {
+        "/entry.ts": /* js */ `
+          ${(order === "file-first" ? imports : imports.reverse()).join("\n")}
+          console.log(path.endsWith(".txt"), text, await Bun.file(path).text());
+        `,
+        "/t.txt": "hello world",
+      },
+      run: { stdout: "true hello world hello world" },
+    });
+  }
+  // A file imported with { type: "file" } is embedded byte for byte, whatever it begins with and whatever its extension.
+  itBundled("compile/EmbeddedFileKeepsItsBytes", {
+    compile: true,
+    files: {
+      "/entry.ts": /* js */ `
+        import { readFileSync } from "fs";
+        import utf8Bin from "./utf8.bin" with { type: "file" };
+        import utf8Txt from "./utf8.txt" with { type: "file" };
+        import utf8Js from "./utf8.js" with { type: "file" };
+        import utf16Bin from "./utf16.bin" with { type: "file" };
+        import utf16Json from "./utf16.json" with { type: "file" };
+        import bytesBin from "./bytes.bin" with { type: "file" };
+        import bytesTs from "./bytes.ts" with { type: "file" };
+        for (const path of [utf8Bin, utf8Txt, utf8Js, utf16Bin, utf16Json, bytesBin, bytesTs]) {
+          console.log(readFileSync(path).toString("hex"));
+        }
+      `,
+      "/utf8.bin": Buffer.from("efbbbf61620a", "hex"),
+      "/utf8.txt": Buffer.from("efbbbf61620a", "hex"),
+      "/utf8.js": Buffer.from("efbbbf61620a", "hex"),
+      "/utf16.bin": Buffer.from("fffe61006200", "hex"),
+      "/utf16.json": Buffer.from("fffe61006200", "hex"),
+      "/bytes.bin": Buffer.from("fffe000180810a", "hex"),
+      "/bytes.ts": Buffer.from("fffe000180810a", "hex"),
+    },
+    outfile: "dist/out",
+    run: {
+      stdout: "efbbbf61620a\nefbbbf61620a\nefbbbf61620a\nfffe61006200\nfffe61006200\nfffe000180810a\nfffe000180810a",
+    },
   });
   itBundled("compile/WorkerRelativePathNoExtension", {
     backend: "cli",
@@ -1545,71 +1631,98 @@ const server = serve({
   }, 30_000);
 });
 
+const MH_MAGIC_64 = 0xfeedfacf;
+const CPU_TYPE_X86_64 = 0x01000007;
+const MH_EXECUTE = 2;
+const LC_SEGMENT_64 = 0x19;
+const LC_SYMTAB = 0x2;
+
+// Minimal Mach-O "base executable" for --compile-executable-path: a __BUN segment with one
+// __bun section followed by a 0x100-byte __LINKEDIT segment, plus an optional LC_SYMTAB whose
+// symbol table starts at __LINKEDIT and whose string table sits 0x80 bytes in.
+// `bunFileOff`/`bunFileSize` are where the load commands claim the __BUN data lives;
+// `fileSize` is how many bytes the template actually contains.
+function machoTemplate({
+  bunFileOff = 0x4000,
+  bunFileSize = 0x4000,
+  fileSize = 0x8100,
+  linkeditFileOff = bunFileOff + bunFileSize,
+  symtab = false,
+}: {
+  bunFileOff?: number;
+  bunFileSize?: number;
+  fileSize?: number;
+  linkeditFileOff?: number;
+  symtab?: boolean;
+} = {}): Buffer {
+  const segCmdSize = 72; // sizeof(segment_command_64)
+  const sectSize = 80; // sizeof(section_64)
+  const symtabCmdSize = 24; // sizeof(symtab_command)
+  const sizeofcmds = segCmdSize + sectSize + segCmdSize + (symtab ? symtabCmdSize : 0);
+  const buf = Buffer.alloc(fileSize);
+  const writeName = (off: number, name: string) => buf.write(name, off, 16, "latin1");
+
+  // mach_header_64
+  buf.writeUInt32LE(MH_MAGIC_64, 0);
+  buf.writeInt32LE(CPU_TYPE_X86_64, 4);
+  buf.writeInt32LE(3, 8); // cpusubtype
+  buf.writeUInt32LE(MH_EXECUTE, 12);
+  buf.writeUInt32LE(symtab ? 3 : 2, 16); // ncmds
+  buf.writeUInt32LE(sizeofcmds, 20);
+
+  // LC_SEGMENT_64 __BUN with one section
+  let o = 32;
+  buf.writeUInt32LE(LC_SEGMENT_64, o);
+  buf.writeUInt32LE(segCmdSize + sectSize, o + 4); // cmdsize
+  writeName(o + 8, "__BUN");
+  buf.writeBigUInt64LE(0x1_0000_4000n, o + 24); // vmaddr
+  buf.writeBigUInt64LE(BigInt(bunFileSize), o + 32); // vmsize
+  buf.writeBigUInt64LE(BigInt(bunFileOff), o + 40); // fileoff
+  buf.writeBigUInt64LE(BigInt(bunFileSize), o + 48); // filesize
+  buf.writeInt32LE(7, o + 56); // maxprot
+  buf.writeInt32LE(3, o + 60); // initprot
+  buf.writeUInt32LE(1, o + 64); // nsects
+
+  // section_64 __bun
+  o += segCmdSize;
+  writeName(o, "__bun");
+  writeName(o + 16, "__BUN");
+  buf.writeBigUInt64LE(0x1_0000_4000n, o + 32); // addr
+  buf.writeBigUInt64LE(BigInt(bunFileSize), o + 40); // size
+  buf.writeUInt32LE(bunFileOff, o + 48); // offset
+  buf.writeUInt32LE(14, o + 52); // align = 2^14
+
+  // LC_SEGMENT_64 __LINKEDIT
+  o += sectSize;
+  buf.writeUInt32LE(LC_SEGMENT_64, o);
+  buf.writeUInt32LE(segCmdSize, o + 4);
+  writeName(o + 8, "__LINKEDIT");
+  buf.writeBigUInt64LE(0x1_0001_0000n, o + 24); // vmaddr
+  buf.writeBigUInt64LE(0x1000n, o + 32); // vmsize
+  buf.writeBigUInt64LE(BigInt(linkeditFileOff), o + 40); // fileoff
+  buf.writeBigUInt64LE(0x100n, o + 48); // filesize
+  buf.writeInt32LE(1, o + 56); // maxprot
+  buf.writeInt32LE(1, o + 60); // initprot
+
+  if (symtab) {
+    // LC_SYMTAB
+    o += segCmdSize;
+    buf.writeUInt32LE(LC_SYMTAB, o);
+    buf.writeUInt32LE(symtabCmdSize, o + 4);
+    buf.writeUInt32LE(linkeditFileOff, o + 8); // symoff
+    buf.writeUInt32LE(0, o + 12); // nsyms
+    buf.writeUInt32LE(linkeditFileOff + 0x80, o + 16); // stroff
+    buf.writeUInt32LE(0x80, o + 20); // strsize
+  }
+
+  return buf;
+}
+
 test("compile --compile-executable-path rejects a Mach-O template whose __BUN segment offsets exceed the file bounds", async () => {
   // `bun build --compile --target=bun-darwin-*` patches the application bundle into the
   // __BUN,__bun section of the base executable named by --compile-executable-path. The
   // segment/section offsets in that file's load commands must be validated against the
   // actual file size before they are used as memmove destinations.
-  const MH_MAGIC_64 = 0xfeedfacf;
-  const CPU_TYPE_X86_64 = 0x01000007;
-  const MH_EXECUTE = 2;
-  const LC_SEGMENT_64 = 0x19;
-
-  // Minimal Mach-O "base executable": a __BUN segment with one __bun section followed by a
-  // __LINKEDIT segment. `bunFileOff`/`bunFileSize` are where the load commands claim the
-  // __BUN data lives; `fileSize` is how many bytes the template actually contains.
-  function machoTemplate(bunFileOff: number, bunFileSize = 0x4000, fileSize = 0x8100): Buffer {
-    const segCmdSize = 72; // sizeof(segment_command_64)
-    const sectSize = 80; // sizeof(section_64)
-    const sizeofcmds = segCmdSize + sectSize + segCmdSize;
-    const buf = Buffer.alloc(fileSize);
-    const writeName = (off: number, name: string) => buf.write(name, off, 16, "latin1");
-
-    // mach_header_64
-    buf.writeUInt32LE(MH_MAGIC_64, 0);
-    buf.writeInt32LE(CPU_TYPE_X86_64, 4);
-    buf.writeInt32LE(3, 8); // cpusubtype
-    buf.writeUInt32LE(MH_EXECUTE, 12);
-    buf.writeUInt32LE(2, 16); // ncmds
-    buf.writeUInt32LE(sizeofcmds, 20);
-
-    // LC_SEGMENT_64 __BUN with one section
-    let o = 32;
-    buf.writeUInt32LE(LC_SEGMENT_64, o);
-    buf.writeUInt32LE(segCmdSize + sectSize, o + 4); // cmdsize
-    writeName(o + 8, "__BUN");
-    buf.writeBigUInt64LE(0x1_0000_4000n, o + 24); // vmaddr
-    buf.writeBigUInt64LE(BigInt(bunFileSize), o + 32); // vmsize
-    buf.writeBigUInt64LE(BigInt(bunFileOff), o + 40); // fileoff
-    buf.writeBigUInt64LE(BigInt(bunFileSize), o + 48); // filesize
-    buf.writeInt32LE(7, o + 56); // maxprot
-    buf.writeInt32LE(3, o + 60); // initprot
-    buf.writeUInt32LE(1, o + 64); // nsects
-
-    // section_64 __bun
-    o += segCmdSize;
-    writeName(o, "__bun");
-    writeName(o + 16, "__BUN");
-    buf.writeBigUInt64LE(0x1_0000_4000n, o + 32); // addr
-    buf.writeBigUInt64LE(BigInt(bunFileSize), o + 40); // size
-    buf.writeUInt32LE(bunFileOff, o + 48); // offset
-    buf.writeUInt32LE(14, o + 52); // align = 2^14
-
-    // LC_SEGMENT_64 __LINKEDIT
-    o += sectSize;
-    buf.writeUInt32LE(LC_SEGMENT_64, o);
-    buf.writeUInt32LE(segCmdSize, o + 4);
-    writeName(o + 8, "__LINKEDIT");
-    buf.writeBigUInt64LE(0x1_0001_0000n, o + 24); // vmaddr
-    buf.writeBigUInt64LE(0x1000n, o + 32); // vmsize
-    buf.writeBigUInt64LE(BigInt(bunFileOff + bunFileSize), o + 40); // fileoff (right after __BUN)
-    buf.writeBigUInt64LE(0x100n, o + 48); // filesize
-    buf.writeInt32LE(1, o + 56); // maxprot
-    buf.writeInt32LE(1, o + 60); // initprot
-
-    return buf;
-  }
-
   using dir = tempDir("compile-macho-template-bounds", {
     "entry.js": `console.log("compiled-from-template");`,
   });
@@ -1617,13 +1730,10 @@ test("compile --compile-executable-path rejects a Mach-O template whose __BUN se
 
   for (const [name, bytes, wantErr] of [
     // __BUN fileoff points 1 GiB past the end of the 33 KB file.
-    ["fileoff-past-eof", machoTemplate(0x40000000), "OffsetOutOfRange"],
+    ["fileoff-past-eof", machoTemplate({ bunFileOff: 0x40000000 }), "OffsetOutOfRange"],
     // __BUN filesize (32 KB) exceeds the 256-byte file: the bounds check must reject this
     // before the growth `reserve()` (which would otherwise see a negative size_diff).
-    ["filesize-past-eof", machoTemplate(0, 0x8000, 256), "OffsetOutOfRange"],
-    // __BUN filesize (32 KB) is in-bounds but larger than the 16 KB aligned bundle slot;
-    // write_section only grows, so a template that would require shrinking is rejected.
-    ["filesize-needs-shrink", machoTemplate(0x4000, 0x8000, 0xc100), "InvalidObject"],
+    ["filesize-past-eof", machoTemplate({ bunFileOff: 0, bunFileSize: 0x8000, fileSize: 256 }), "OffsetOutOfRange"],
   ] as const) {
     const badTemplate = join(cwd, `template-${name}`);
     await Bun.write(badTemplate, bytes);
@@ -1656,7 +1766,7 @@ test("compile --compile-executable-path rejects a Mach-O template whose __BUN se
 
   // The same template with in-bounds offsets is still accepted.
   const goodTemplate = join(cwd, "template-good");
-  await Bun.write(goodTemplate, machoTemplate(0x4000));
+  await Bun.write(goodTemplate, machoTemplate());
   const outGood = join(cwd, "out-good");
   {
     await using proc = Bun.spawn({
@@ -1683,7 +1793,144 @@ test("compile --compile-executable-path rejects a Mach-O template whose __BUN se
     expect(outBytes.includes("compiled-from-template")).toBe(true);
     expect(exitCode).toBe(0);
   }
+
+  // __BUN filesize (32 KB) is in-bounds but larger than the 16 KB aligned bundle slot, as in a
+  // template that is itself a compiled executable. write_section only grows, so the segment
+  // keeps its size, nothing behind it moves, and what the bundle leaves of the slot is zeroed.
+  const largerTemplate = join(cwd, "template-larger-slot");
+  const largerBytes = machoTemplate({ bunFileSize: 0x8000, fileSize: 0xc100 });
+  largerBytes.fill(0xaa, 0x4000, 0xc000);
+  await Bun.write(largerTemplate, largerBytes);
+  const outLarger = join(cwd, "out-larger-slot");
+  {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "build",
+        "--compile",
+        "--target=bun-darwin-x64",
+        "--compile-executable-path",
+        largerTemplate,
+        join(cwd, "entry.js"),
+        "--outfile",
+        outLarger,
+      ],
+      env: bunEnv,
+      cwd,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).not.toContain("error:");
+    expect(stderr).not.toContain("InvalidObject");
+    const outBytes = Buffer.from(await Bun.file(outLarger).arrayBuffer());
+    const bundleSize = Number(outBytes.readBigUInt64LE(0x4000));
+    const segment = 32; // LC_SEGMENT_64 __BUN
+    const section = segment + 72;
+    const linkedit = section + 80;
+    expect({
+      vmsize: Number(outBytes.readBigUInt64LE(segment + 32)),
+      fileoff: Number(outBytes.readBigUInt64LE(segment + 40)),
+      filesize: Number(outBytes.readBigUInt64LE(segment + 48)),
+      sectionSize: Number(outBytes.readBigUInt64LE(section + 40)),
+      linkeditFileOff: Number(outBytes.readBigUInt64LE(linkedit + 40)),
+    }).toEqual({
+      vmsize: 0x8000,
+      fileoff: 0x4000,
+      filesize: 0x8000,
+      sectionSize: 8 + bundleSize,
+      linkeditFileOff: 0xc000,
+    });
+    expect(bundleSize).toBeLessThan(0x4000);
+    expect(outBytes.subarray(0x4008, 0x4008 + bundleSize).includes("compiled-from-template")).toBe(true);
+    expect(outBytes.subarray(0x4008 + bundleSize, 0xc000).every(byte => byte === 0)).toBe(true);
+    expect(exitCode).toBe(0);
+  }
 }, 60_000);
+
+test("compile --compile-executable-path rejects a Mach-O template whose __LINKEDIT offsets would pass 4 GiB once the bundle is embedded", async () => {
+  // Mach-O load commands (LC_SYMTAB, LC_CODE_SIGNATURE, ...) store file offsets as u32.
+  // Embedding the bundle grows __BUN and moves every __LINKEDIT offset forward by the same
+  // amount, so a bundle of about 4 GiB pushes them past u32::MAX. Building such a bundle
+  // is too slow for a test, so this template places __LINKEDIT and the LC_SYMTAB offsets
+  // just below 4 GiB: a 32 KB bundle is then enough to move them over the edge.
+
+  // Returns the __LINKEDIT fileoff and the LC_SYMTAB offsets of a Mach-O file.
+  function readLinkeditOffsets(buf: Buffer) {
+    const ncmds = buf.readUInt32LE(16);
+    let linkeditFileOff = -1;
+    let symoff = -1;
+    let stroff = -1;
+    let o = 32;
+    for (let i = 0; i < ncmds; i++) {
+      const cmd = buf.readUInt32LE(o);
+      const cmdsize = buf.readUInt32LE(o + 4);
+      if (cmd === LC_SEGMENT_64 && buf.toString("latin1", o + 8, o + 18) === "__LINKEDIT") {
+        linkeditFileOff = Number(buf.readBigUInt64LE(o + 40));
+      } else if (cmd === LC_SYMTAB) {
+        symoff = buf.readUInt32LE(o + 8);
+        stroff = buf.readUInt32LE(o + 16);
+      }
+      o += cmdsize;
+    }
+    return { linkeditFileOff, symoff, stroff };
+  }
+
+  // 32 KB of source does not fit the template's 16 KB __BUN slot, so __LINKEDIT has to move.
+  using dir = tempDir("compile-macho-template-4gib", {
+    "entry.js": `console.log("${Buffer.alloc(32 * 1024, "a").toString()}");`,
+  });
+  const cwd = String(dir);
+
+  const build = async (name: string, template: Buffer) => {
+    const templatePath = join(cwd, `template-${name}`);
+    await Bun.write(templatePath, template);
+    const outfile = join(cwd, `out-${name}`);
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "build",
+        "--compile",
+        "--target=bun-darwin-x64",
+        "--compile-executable-path",
+        templatePath,
+        join(cwd, "entry.js"),
+        "--outfile",
+        outfile,
+      ],
+      env: bunEnv,
+      cwd,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stderr, exitCode, outfile };
+  };
+
+  // __LINKEDIT starts 4 KiB below 4 GiB, so any growth of __BUN (16 KiB steps) overflows its offsets.
+  {
+    const { stderr, exitCode, outfile } = await build(
+      "too-large",
+      machoTemplate({ linkeditFileOff: 0xffff_f000, symtab: true }),
+    );
+    expect(stderr).toContain("executable would exceed 4 GiB");
+    expect(stderr).toContain("failed to write compiled executable");
+    expect(await Bun.file(outfile).exists()).toBe(false);
+    expect(exitCode).toBe(1);
+  }
+
+  // The same template with __LINKEDIT right after __BUN builds, and its offsets move together.
+  {
+    const { stderr, exitCode, outfile } = await build("in-range", machoTemplate({ symtab: true }));
+    expect(stderr).not.toContain("error:");
+    expect(exitCode).toBe(0);
+
+    const out = Buffer.from(await Bun.file(outfile).arrayBuffer());
+    const { linkeditFileOff, symoff, stroff } = readLinkeditOffsets(out);
+    expect(linkeditFileOff).toBeGreaterThan(0x8000);
+    expect({ symoff, stroff }).toEqual({ symoff: linkeditFileOff, stroff: linkeditFileOff + 0x80 });
+  }
+});
 
 test("compile --compile-executable-path rejects a template shorter than the executable-format header", async () => {
   // `--compile-executable-path` accepts an arbitrary file. A file shorter than the target

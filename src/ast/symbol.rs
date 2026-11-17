@@ -116,12 +116,21 @@ bitflags::bitflags! {
         /// Renaming can also break any identifier used inside a "with" statement.
         const MUST_NOT_BE_RENAMED = 1 << 2;
 
+        /// An import some use holds as a value or deletes from, not only `X.a`, `X[a]`, `const { a } = X`.
+        const IMPORT_USED_AS_VALUE = 1 << 3;
+
         const REMOVE_OVERWRITTEN_FUNCTION_DECLARATION = 1 << 4;
 
         /// The file assigns this variable after its declaration (or a mapped
         /// `arguments` object can). Set on the root of the symbol's link
         /// chain. Read by HMR live bindings and the printer's same-target fold.
         const HAS_BEEN_ASSIGNED_TO = 1 << 5;
+
+        /// An import item (`ns.name`) or a lifted export that a use calls as a method.
+        const CALLED_AS_METHOD = 1 << 6;
+
+        /// A call of this function declaration or lifted export ignores `this`.
+        const CALL_IGNORES_THIS = 1 << 7;
     }
 }
 
@@ -145,8 +154,11 @@ macro_rules! symbol_flag_accessors {
 symbol_flag_accessors! {
     must_start_with_capital_letter_for_jsx, set_must_start_with_capital_letter_for_jsx => MUST_START_WITH_CAPITAL_LETTER_FOR_JSX;
     must_not_be_renamed, set_must_not_be_renamed => MUST_NOT_BE_RENAMED;
+    import_used_as_value, set_import_used_as_value => IMPORT_USED_AS_VALUE;
     remove_overwritten_function_declaration, set_remove_overwritten_function_declaration => REMOVE_OVERWRITTEN_FUNCTION_DECLARATION;
     has_been_assigned_to, set_has_been_assigned_to => HAS_BEEN_ASSIGNED_TO;
+    called_as_method, set_called_as_method => CALLED_AS_METHOD;
+    call_ignores_this, set_call_ignores_this => CALL_IGNORES_THIS;
 }
 
 const _: () = assert!(core::mem::size_of::<Option<bun_alloc::AstBox<G::NamespaceAlias>>>() == 8);
@@ -226,6 +238,13 @@ impl Symbol {
     #[inline]
     pub fn has_link(&self) -> bool {
         self.link.get().is_valid()
+    }
+
+    /// An import item the linker merged into the export it names. A local
+    /// that a hoisting merge links has no import item status.
+    #[inline]
+    pub fn is_bound_import_item(&self) -> bool {
+        self.import_item_status != ImportItemStatus::None && self.has_link()
     }
 }
 
@@ -343,9 +362,52 @@ impl Kind {
     }
 }
 
+/// A part's uses of one symbol: an estimated count, plus whether any of them
+/// was added without its scope being recorded in `Ast::scope_uses` (by the
+/// linker or a transform), in which case the renamer must assume the symbol
+/// may be printed in any scope of the part. Packed into one word because
+/// every part holds one per referenced symbol.
 #[derive(Default, Clone, Copy)]
-pub struct Use {
-    pub count_estimate: u32,
+pub struct Use(u32);
+
+impl Use {
+    const UNSCOPED: u32 = 1 << 31;
+
+    /// `count` uses whose scope is not on record.
+    pub const fn unscoped(count: u32) -> Use {
+        Use(if count >= Self::UNSCOPED {
+            u32::MAX
+        } else {
+            count | Self::UNSCOPED
+        })
+    }
+
+    #[inline]
+    pub const fn count_estimate(self) -> u32 {
+        self.0 & !Self::UNSCOPED
+    }
+
+    #[inline]
+    pub const fn has_unscoped(self) -> bool {
+        self.0 & Self::UNSCOPED != 0
+    }
+
+    /// The parser's `record_usage`: the use's scope is on record.
+    #[inline]
+    pub fn add_scoped(&mut self, count: u32) {
+        debug_assert!(self.count_estimate() + count < Self::UNSCOPED);
+        self.0 += count;
+    }
+
+    #[inline]
+    pub fn subtract(&mut self, count: u32) {
+        self.0 = self.count_estimate().saturating_sub(count) | (self.0 & Self::UNSCOPED);
+    }
+
+    pub fn merge(&mut self, other: Use) {
+        let count = self.count_estimate().saturating_add(other.count_estimate());
+        self.0 = count.min(Self::UNSCOPED - 1) | ((self.0 | other.0) & Self::UNSCOPED);
+    }
 }
 
 pub type List<'a> = bun_alloc::ArenaVec<'a, Symbol>;
@@ -355,16 +417,21 @@ pub type List<'a> = bun_alloc::ArenaVec<'a, Symbol>;
 /// clones are owned for the link lifetime — global allocator, no arena tag.
 pub type NestedList = Vec<Vec<Symbol>>;
 
-impl Symbol {
-    pub(crate) fn merge_contents_with(&mut self, old: &mut Symbol) {
-        self.use_count_estimate += old.use_count_estimate;
-        if old.must_not_be_renamed() {
-            self.original_name = old.original_name;
-            self.set_must_not_be_renamed(true);
+/// Like [`Map::follow`], including path compression, but for the parser's flat per-file symbol table.
+pub fn follow_symbols(symbols: &[Symbol], ref_: Ref) -> Ref {
+    let mut root = ref_;
+    loop {
+        let link = symbols[root.inner_index() as usize].link.get();
+        if !link.is_valid() {
+            break;
         }
-
-        // TODO: MustStartWithCapitalLetterForJSX
+        root = link;
     }
+    let mut current = ref_;
+    while current != root {
+        current = symbols[current.inner_index() as usize].link.replace(root);
+    }
+    root
 }
 
 #[derive(Default)]
@@ -479,45 +546,21 @@ impl Map {
             return merged;
         }
 
-        self.get_const(old).unwrap().link.set(new);
-        // `merge_contents_with` mutates non-Cell fields (use_count_estimate,
-        // must_not_be_renamed, original_name) on `new` while reading `old`.
-        let old_symbol = self.get(old).unwrap();
-        let new_symbol = self.get(new).unwrap();
-        // SAFETY: `old != new` (checked above) so the two slots are disjoint
-        // elements of the NestedList; `get()` derives `*mut` from Vec's raw
-        // `NonNull` (write provenance preserved). Neither `&mut` outlives this
-        // block (cf. split_at_mut).
-        unsafe {
-            (&mut *new_symbol).merge_contents_with(&mut *old_symbol);
-        }
-        new
-    }
+        let old_symbol = self.get_const(old).unwrap();
+        old_symbol.link.set(new);
+        let use_count_estimate = old_symbol.use_count_estimate;
+        let pinned_name = old_symbol
+            .must_not_be_renamed()
+            .then_some(old_symbol.original_name);
 
-    // Returns a raw *mut Symbol because callers (merge/follow/assign_chunk_index/
-    // get_with_link) hold aliasing pointers into the NestedList and/or recurse through
-    // &mut self while holding the pointer.
-    //
-    // SOUNDNESS: the *mut is derived directly from `Vec.ptr: NonNull<T>` — a raw
-    // pointer field whose provenance is independent of the `&self` borrow used to read
-    // it. We deliberately do NOT go through `.slice()`/`.at()` (which produce `&[T]`/`&T`
-    // and would yield read-only provenance, making any later write UB). Callers may write
-    // through the result as long as the backing storage is not reallocated and they do
-    // not materialize overlapping `&mut`.
-    pub fn get(&self, ref_: Ref) -> Option<*mut Symbol> {
-        if Ref::is_source_index_null(ref_.source_index()) || ref_.is_source_contents_slice() {
-            return None;
+        let new_symbol = self.get_mut(new).unwrap();
+        new_symbol.use_count_estimate += use_count_estimate;
+        if let Some(original_name) = pinned_name {
+            new_symbol.original_name = original_name;
+            new_symbol.set_must_not_be_renamed(true);
         }
-        let src = ref_.source_index() as usize;
-        let idx = ref_.inner_index() as usize;
-        debug_assert!(src < self.symbols_for_source.len());
-        // SAFETY: src in-bounds (parser-produced ref); raw-ptr field read — no `&` to the
-        // element is created. idx in-bounds of the inner list.
-        unsafe {
-            let inner: *mut Vec<Symbol> = self.symbols_for_source.as_ptr().cast_mut().add(src);
-            debug_assert!(idx < (*inner).len());
-            Some((*inner).as_mut_ptr().add(idx))
-        }
+        // TODO: MustStartWithCapitalLetterForJSX
+        new
     }
 
     pub fn get_const(&self, ref_: Ref) -> Option<&Symbol> {
@@ -550,8 +593,6 @@ impl Map {
     // Takes ownership of `list` and boxes it into a one-element NestedList.
     // PERF: one extra allocation — profile if needed (single caller is the
     // printer one-shot, cold).
-    // OWNERSHIP: returned `Map` is *owned*; the `Vec<List>` allocated here leaks if a
-    // consumer parks it in `ManuallyDrop` (e.g. renamer.rs `MinifyRenamer.symbols`).
     pub fn init_with_one_list(list: Vec<Symbol>) -> Map {
         Self::init_list(vec![list])
     }
@@ -562,10 +603,6 @@ impl Map {
         }
     }
 
-    /// Safe `&mut` lookup via the `Vec`/`Vec<Symbol>` backing storage. Mirrors
-    /// [`get_const`] but returns a unique borrow tied to `&mut self`, so callers
-    /// that only need to flip a flag (e.g. `must_not_be_renamed`) don't need the
-    /// raw `*mut Symbol` from [`get`] + an open-coded `(*ptr).field = ...`.
     pub fn get_mut(&mut self, ref_: Ref) -> Option<&mut Symbol> {
         if Ref::is_source_index_null(ref_.source_index()) || ref_.is_source_contents_slice() {
             return None;
@@ -590,6 +627,21 @@ impl Map {
                 symbol.link.set(resolved);
             }
         }
+    }
+
+    /// The symbol whose name the printer writes for a reference to `ref_`:
+    /// `follow`, then through `namespace_alias` (an import that prints as a
+    /// property of its namespace object prints that object's symbol).
+    pub fn follow_printed(&self, ref_: Ref) -> Ref {
+        let mut ref_ = self.follow(ref_);
+        while let Some(alias) = &self.get_const(ref_).unwrap().namespace_alias {
+            let next = self.follow(alias.namespace_ref);
+            if next == ref_ {
+                break;
+            }
+            ref_ = next;
+        }
+        ref_
     }
 
     /// Equivalent to followSymbols in esbuild.

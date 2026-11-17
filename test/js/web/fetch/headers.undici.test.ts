@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { once } from "node:events";
 import { createServer } from "node:http";
+import type { AddressInfo } from "node:net";
 
 describe("Headers initialization", () => {
   test("allows undefined", () => {
@@ -10,7 +11,9 @@ describe("Headers initialization", () => {
   describe("with array of header entries", () => {
     test("fails on invalid array-based init", () => {
       expect(() => new Headers([["undici", "fetch"], ["fetch"]])).toThrow(TypeError);
+      // @ts-expect-error
       expect(() => new Headers(["undici", "fetch", "fetch"])).toThrow(TypeError);
+      // @ts-expect-error
       expect(() => new Headers([0, 1, 2])).toThrow(TypeError);
     });
 
@@ -24,6 +27,7 @@ describe("Headers initialization", () => {
 
     test("fails for event flattened init", () => {
       const init = ["undici", "fetch", "fetch", "undici"];
+      // @ts-expect-error
       expect(() => new Headers(init)).toThrow(TypeError);
     });
   });
@@ -38,24 +42,31 @@ describe("Headers initialization", () => {
 
   test("fails silently if a boxed primitive object is passed", () => {
     /* eslint-disable no-new-wrappers */
+    // @ts-expect-error
     expect(() => new Headers(new Number())).not.toThrow();
+    // @ts-expect-error
     expect(() => new Headers(new Boolean())).not.toThrow();
+    // @ts-expect-error
     expect(() => new Headers(new String())).not.toThrow();
     /* eslint-enable no-new-wrappers */
   });
 
   test("fails if primitive is passed", () => {
     const expectedTypeError = TypeError;
+    // @ts-expect-error
     expect(() => new Headers(1)).toThrow(expectedTypeError);
+    // @ts-expect-error
     expect(() => new Headers("1")).toThrow(expectedTypeError);
   });
 
   test("allows some weird stuff (because of webidl)", () => {
     expect(() => {
+      // @ts-expect-error
       new Headers(function () {}); // eslint-disable-line no-new
     }).not.toThrow();
 
     expect(() => {
+      // @ts-expect-error
       new Headers(Function); // eslint-disable-line no-new
     }).not.toThrow();
   });
@@ -65,10 +76,11 @@ describe("Headers initialization", () => {
 
     expect(() => {
       new Headers([
-        ["a", ["b", "c"]],
-        ["d", ["e", "f"]],
+        ["a", ["b", "c"] as any],
+        ["d", ["e", "f"] as any],
       ]);
     }).not.toThrow();
+    // @ts-expect-error
     expect(() => new Headers([["key", null]])).not.toThrow(); // allow null values
     expect(() => new Headers([["key"]])).toThrow();
     expect(() => new Headers([["key", "value", "value2"]])).toThrow();
@@ -116,7 +128,9 @@ describe("Headers append", () => {
   test("throws on invalid entry", () => {
     const headers = new Headers();
 
+    // @ts-expect-error
     expect(() => headers.append()).toThrow();
+    // @ts-expect-error
     expect(() => headers.append("undici")).toThrow();
     expect(() => headers.append("invalid @ header ? name", "valid value")).toThrow();
   });
@@ -147,6 +161,7 @@ describe("Headers delete", () => {
   test("throws on invalid entry", () => {
     const headers = new Headers();
 
+    // @ts-expect-error
     expect(() => headers.delete()).toThrow();
     expect(() => headers.delete("invalid @ header ? name")).toThrow();
   });
@@ -183,6 +198,7 @@ describe("Headers get", () => {
   test("throws on invalid entry", () => {
     const headers = new Headers();
 
+    // @ts-expect-error
     expect(() => headers.get()).toThrow();
     expect(() => headers.get("invalid @ header ? name")).toThrow();
   });
@@ -202,6 +218,7 @@ describe("Headers has", () => {
   test("throws on invalid entry", () => {
     const headers = new Headers();
 
+    // @ts-expect-error
     expect(() => headers.has()).toThrow();
     expect(() => headers.has("invalid @ header ? name")).toThrow();
   });
@@ -233,16 +250,22 @@ describe("Headers set", async () => {
   test("allows setting a myriad of values", () => {
     const headers = new Headers();
 
+    // @ts-expect-error
     expect(() => headers.set("a", ["b", "c"])).not.toThrow();
+    // @ts-expect-error
     expect(() => headers.set("b", null)).not.toThrow();
+    // @ts-expect-error
     expect(() => headers.set("c")).toThrow();
+    // @ts-expect-error
     expect(() => headers.set("c", "d", "e")).not.toThrow();
   });
 
   test("throws on invalid entry", () => {
     const headers = new Headers();
 
+    // @ts-expect-error
     expect(() => headers.set()).toThrow();
+    // @ts-expect-error
     expect(() => headers.set("undici")).toThrow();
     expect(() => headers.set("invalid @ header ? name", "valid value")).toThrow();
   });
@@ -253,7 +276,7 @@ describe("Headers set", async () => {
 
     expect(headers.set("a", "b")).toBeUndefined();
 
-    expect(headers.set("c", "d") instanceof Map).toBe(false);
+    expect((headers.set("c", "d") as any) instanceof Map).toBe(false);
   });
 });
 
@@ -269,7 +292,7 @@ describe("Headers forEach", async () => {
     headers.forEach((value, key, headerInstance) => {
       expect(value === "b" || value === "d").toBeTrue();
       expect(key === "a" || key === "c").toBeTrue();
-      expect(headers).toBe(headerInstance);
+      expect(headers).toBe(headerInstance as Headers);
     });
   });
 
@@ -287,7 +310,7 @@ describe("Headers as Iterable", () => {
       ["foo", "123"],
       ["bar", "456"],
     ];
-    const expected = [
+    const expected: [string, string][] = [
       ["foo", "123"],
       ["x-x-bar", "456"],
     ];
@@ -330,7 +353,7 @@ describe("Headers as Iterable", () => {
       ["abc", "4"],
       ["b", "5"],
     ];
-    const expected = [
+    const expected: [string, string][] = [
       ["a", "1"],
       ["abc", "4"],
       ["b", "2, 5"],
@@ -382,9 +405,9 @@ describe("Headers as Iterable", () => {
       ["c", "3"],
       ["abc", "4"],
       ["b", "5"],
-      ["d", ["6", "7"]],
+      ["d", ["6", "7"] as any],
     ];
-    const expected = [
+    const expected: [string, string][] = [
       ["a", "1"],
       ["abc", "4"],
       ["b", "2, 5"],
@@ -446,7 +469,7 @@ test("arg validation", () => {
   // constructor
   expect(() => {
     // eslint-disable-next-line
-    new Headers(0);
+    new Headers(0 as any);
   }).toThrow(TypeError);
 
   // get [Symbol.toStringTag]
@@ -461,52 +484,65 @@ test("arg validation", () => {
 
   // append
   expect(() => {
+    // @ts-expect-error
     Headers.prototype.append.call(null);
   }).toThrow(TypeError);
   expect(() => {
+    // @ts-expect-error
     headers.append();
   }).toThrow(TypeError);
 
   // delete
   expect(() => {
+    // @ts-expect-error
     Headers.prototype.delete.call(null);
   }).toThrow(TypeError);
   expect(() => {
+    // @ts-expect-error
     headers.delete();
   }).toThrow(TypeError);
 
   // get
   expect(() => {
+    // @ts-expect-error
     Headers.prototype.get.call(null);
   }).toThrow(TypeError);
   expect(() => {
+    // @ts-expect-error
     headers.get();
   }).toThrow(TypeError);
 
   // has
   expect(() => {
+    // @ts-expect-error
     Headers.prototype.has.call(null);
   }).toThrow(TypeError);
   expect(() => {
+    // @ts-expect-error
     headers.has();
   }).toThrow(TypeError);
 
   // set
   expect(() => {
+    // @ts-expect-error
     Headers.prototype.set.call(null);
   }).toThrow(TypeError);
   expect(() => {
+    // @ts-expect-error
     headers.set();
   }).toThrow(TypeError);
 
   // forEach
   expect(() => {
+    // @ts-expect-error
     Headers.prototype.forEach.call(null);
   }).toThrow(TypeError);
   expect(() => {
+    // @ts-expect-error
     headers.forEach();
   }).toThrow(TypeError);
   expect(() => {
+    // @ts-expect-error
     headers.forEach(1);
   }).toThrow(TypeError);
 
@@ -518,23 +554,23 @@ test("arg validation", () => {
 
 describe("function signature verification", async () => {
   test("function length", () => {
-    expect(Headers.prototype.append.length, 2);
-    expect(Headers.prototype.constructor.length, 0);
-    expect(Headers.prototype.delete.length, 1);
-    expect(Headers.prototype.entries.length, 0);
-    expect(Headers.prototype.forEach.length, 1);
-    expect(Headers.prototype.get.length, 1);
-    expect(Headers.prototype.has.length, 1);
-    expect(Headers.prototype.keys.length, 0);
-    expect(Headers.prototype.set.length, 2);
-    expect(Headers.prototype.values.length, 0);
-    expect(Headers.prototype[Symbol.iterator].length, 0);
-    expect(Headers.prototype.toString.length, 0);
+    expect(Headers.prototype.append.length).toBe(2);
+    expect(Headers.prototype.constructor.length).toBe(0);
+    expect(Headers.prototype.delete.length).toBe(1);
+    expect(Headers.prototype.entries.length).toBe(0);
+    expect(Headers.prototype.forEach.length).toBe(1);
+    expect(Headers.prototype.get.length).toBe(1);
+    expect(Headers.prototype.has.length).toBe(1);
+    expect(Headers.prototype.keys.length).toBe(0);
+    expect(Headers.prototype.set.length).toBe(2);
+    expect(Headers.prototype.values.length).toBe(0);
+    expect(Headers.prototype[Symbol.iterator].length).toBe(0);
+    expect(Headers.prototype.toString.length).toBe(0);
   });
 
   test("function equality", () => {
-    expect(Headers.prototype.entries, Headers.prototype[Symbol.iterator]);
-    expect(Headers.prototype.toString, Object.prototype.toString);
+    expect(Headers.prototype.entries).toBe(Headers.prototype[Symbol.iterator]);
+    expect(Headers.prototype.toString).toBe(Object.prototype.toString);
   });
 
   test("toString and Symbol.toStringTag", () => {
@@ -582,6 +618,7 @@ test("invalid headers", () => {
     new Headers().set("a", "\n");
   }).not.toThrow(TypeError);
   expect(() => {
+    // @ts-expect-error
     new Headers().set("a", Symbol("symbol"));
   }).toThrow(TypeError);
 });
@@ -618,7 +655,7 @@ describe("Headers.prototype.getSetCookie", () => {
 
     await once(server, "listening");
 
-    const res = await fetch(`http://localhost:${server.address().port}`);
+    const res = await fetch(`http://localhost:${(server.address() as AddressInfo).port}`);
     const entries = Object.fromEntries(res.headers.entries());
 
     expect(res.headers.getSetCookie()).toEqual(["test=onetwo"]);
@@ -633,7 +670,7 @@ describe("Headers.prototype.getSetCookie", () => {
 
     await once(server, "listening");
 
-    const res = await fetch(`http://localhost:${server.address().port}`);
+    const res = await fetch(`http://localhost:${(server.address() as AddressInfo).port}`);
     const entries = Object.fromEntries(res.headers.entries());
 
     expect(res.headers.getSetCookie()).toEqual(["test=onetwo", "test=onetwothree"]);
@@ -651,7 +688,7 @@ describe("Headers.prototype.getSetCookie", () => {
 });
 
 test("When the value is updated, update the cache", () => {
-  const expected = [
+  const expected: [string, string][] = [
     ["a", "a"],
     ["b", "b"],
     ["c", "c"],
@@ -680,6 +717,7 @@ test("Symbol.iterator is only accessed once", () => {
 });
 
 test("Invalid Symbol.iterators", () => {
+  // @ts-expect-error
   expect(() => new Headers({ [Symbol.iterator]: null })).toThrow(TypeError);
   expect(() => new Headers({ [Symbol.iterator]: undefined })).toThrow(TypeError);
 });

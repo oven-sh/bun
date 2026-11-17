@@ -12,7 +12,7 @@ pub struct AlphaValue {
 }
 
 impl AlphaValue {
-    pub(crate) fn parse(input: &mut Parser) -> Result<AlphaValue> {
+    pub(crate) fn parse<'bump>(input: &mut Parser<'_, 'bump>) -> Result<'bump, AlphaValue> {
         let val: NumberOrPercentage = NumberOrPercentage::parse(input)?;
         let final_ = match val {
             NumberOrPercentage::Percentage(percent) => AlphaValue { v: percent.v },
@@ -23,13 +23,5 @@ impl AlphaValue {
 
     pub(crate) fn to_css(self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
         CSSNumberFns::to_css(self.v, dest)
-    }
-}
-
-impl crate::generics::CssHash for AlphaValue {
-    /// Field-wise: hash the single `f32` payload.
-    #[inline]
-    fn hash(&self, hasher: &mut crate::generics::Wyhash) {
-        crate::generics::CssHash::hash(&self.v, hasher);
     }
 }

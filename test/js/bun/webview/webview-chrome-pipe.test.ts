@@ -159,6 +159,17 @@ test.concurrent("the browser exiting rejects what it owed, and the next WebView 
   expect(result).toEqual({ death: transportLost, second: "alive again" });
 });
 
+test.concurrent("closeAll() in a Worker kills the main thread's browser", async () => {
+  const result = await runScenario(`
+    const view = newView();
+    await view.navigate("http://fake/");
+    const pending = outcome(view.evaluate("__fake_no_reply()"));
+    new Worker(URL.createObjectURL(new Blob(["Bun.WebView.closeAll();"])));
+    print(await pending);
+  `);
+  expect(result).toEqual(transportLost);
+});
+
 // close() is a user-initiated teardown, so the rejection of an in-flight
 // operation must not surface as an unhandled rejection. The constructor's
 // `url:` navigation is the worst case: its promise is internal, so nothing in
@@ -255,6 +266,27 @@ test.concurrent("a navigation that Chrome fails with errorText rejects and fires
   });
 });
 
+test.concurrent("navigate() rejects with a generic message when errorText isn't valid UTF-8", async () => {
+  const result = await runScenario(`
+    const view = new Bun.WebView({
+      backend: { ...backend, argv: [...backend.argv, "--malformed=navigate-bad-utf8"] },
+      width: 100,
+      height: 100,
+    });
+    let failedMessage;
+    view.onNavigationFailed = e => { failedMessage = e.message; };
+    const held = await outcome(view.navigate("http://fake/"));
+    const loadingAfterFail = view.loading;
+    view.close();
+    print({ held, failedMessage, loadingAfterFail });
+  `);
+  expect(result).toEqual({
+    held: { rejected: "navigation failed" },
+    failedMessage: "navigation failed",
+    loadingAfterFail: false,
+  });
+});
+
 // A CDP protocol error ({"error":{"code":-32000}}) can fail a navigation at
 // any stage: the attach chain, or Page.navigate itself (real Chrome answers
 // "Cannot navigate to invalid URL" this way). The constructor url has no
@@ -335,6 +367,71 @@ test.concurrent("onNavigationFailed can retry navigate() immediately", async () 
   `);
   expect(result).toBe("retry was accepted and failed too");
 });
+
+// Commands are routed to a page by the sessionId that Target.attachToTarget returns. CDP session ids are ASCII.
+for (const kind of ["attach-no-session-id", "attach-bad-utf8", "attach-non-ascii"]) {
+  test.concurrent(`an attach reply without a usable sessionId fails the navigation (${kind})`, async () => {
+    const result = await runScenario(`
+      const view = new Bun.WebView({
+        backend: { ...backend, argv: [...backend.argv, "--malformed=${kind}"] },
+        width: 100,
+        height: 100,
+      });
+      const held = await outcome(view.navigate("http://fake/"));
+      const loadingAfterFail = view.loading;
+      view.close();
+      print({ held, loadingAfterFail });
+    `);
+    expect(result).toEqual({ held: { rejected: "malformed attach response" }, loadingAfterFail: false });
+  });
+}
+
+for (const kind of ["detach-no-session-id", "event-bad-utf8"]) {
+  test.concurrent(`ignores an event without a usable sessionId (${kind})`, async () => {
+    const result = await runScenario(`
+      const view = new Bun.WebView({
+        backend: { ...backend, argv: [...backend.argv, "--malformed=${kind}"] },
+        width: 100,
+        height: 100,
+      });
+      await view.navigate("http://fake/");
+      print({ url: view.url, value: await view.evaluate("6 * 7") });
+      view.close();
+    `);
+    expect(result).toEqual({ url: "http://fake/", value: 42 });
+  });
+}
+
+// click(selector) waits for the element in the page, which returns the element's center as [cx, cy].
+test.concurrent("click(selector) clicks at the position the page reported", async () => {
+  const result = await runScenario(`
+    const view = newView();
+    await view.navigate("http://fake/");
+    await view.click("#target", { timeout: 100 });
+    print(await view.evaluate("__fake_mouse_events()"));
+    view.close();
+  `);
+  expect(result).toEqual([
+    { type: "mousePressed", x: 12, y: 34 },
+    { type: "mouseReleased", x: 12, y: 34 },
+  ]);
+});
+
+for (const kind of ["click-no-value", "click-huge-value"]) {
+  test.concurrent(`click() rejects when the reply has no usable position (${kind})`, async () => {
+    const result = await runScenario(`
+      const view = new Bun.WebView({
+        backend: { ...backend, argv: [...backend.argv, "--malformed=${kind}"] },
+        width: 100,
+        height: 100,
+      });
+      await view.navigate("http://fake/");
+      print(await outcome(view.click("#target", { timeout: 100 })));
+      view.close();
+    `);
+    expect(result).toEqual({ rejected: "malformed click response" });
+  });
+}
 
 // `bun test --isolate` replaces the global object between files. The transport
 // is bound to the global that spawned the browser, so it has to go with that

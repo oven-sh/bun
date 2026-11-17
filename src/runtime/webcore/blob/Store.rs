@@ -5,7 +5,6 @@
 //! this module re-exports them and layers the `bun_runtime`-tier behaviour
 //! (S3 I/O, async file ops, structured-clone serialize) via extension traits.
 
-use core::ffi::c_void;
 use core::ptr::NonNull;
 
 use crate::node::fs as node_fs;
@@ -15,23 +14,18 @@ use crate::webcore::node_types::{PathLike, PathOrFileDescriptor};
 use crate::webcore::s3::client as s3_client;
 use crate::webcore::s3::client::S3ErrorJsc as _;
 use crate::webcore::s3::client::{
-    S3Credentials, S3CredentialsWithOptions, S3DeleteResult, S3ListObjectsOptions,
-    S3ListObjectsResult,
+    S3Credentials, S3CredentialsWithOptions, S3DeleteResult, S3ListObjectsResult,
 };
 use bun_core::strings;
 use bun_http_types::MimeType::MimeType;
 use bun_ptr::RefPtr;
-use bun_url::URL;
-
-#[cfg(unix)]
-use super::SizeType;
 
 // ──────────────────────────────────────────────────────────────────────────
 // Re-export the canonical data types from `bun_jsc`.
 // ──────────────────────────────────────────────────────────────────────────
 
-pub use bun_jsc::webcore_types::store::{
-    Bytes, Data, DataTag, File, IsAllAscii, S3, SerializeTag, Store,
+pub(crate) use bun_jsc::webcore_types::store::{
+    Bytes, Data, DataTag, File, S3, SerializeTag, Store,
 };
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -40,7 +34,7 @@ pub use bun_jsc::webcore_types::store::{
 // `init`/…) live on the `bun_jsc` types directly.
 // ──────────────────────────────────────────────────────────────────────────
 
-pub trait StoreExt {
+pub(crate) trait StoreExt {
     fn to_any_blob(&mut self) -> Option<super::Any>;
     fn init_s3(
         pathlike: PathLike<'static>,
@@ -55,46 +49,35 @@ pub trait StoreExt {
     ) -> Result<RefPtr<Store>, crate::Error>
     where
         Self: Sized;
-    #[cfg(unix)]
-    fn init_mmap(slice: &'static mut [u8]) -> RefPtr<Store>
-    where
-        Self: Sized;
     fn serialize(&self, writer: &mut impl bun_io::Write) -> Result<(), crate::Error>;
 }
 
-pub trait S3Ext {
+pub(crate) trait S3Ext {
     fn get_credentials_with_options(
         &self,
         options: Option<JSValue>,
         global_object: &JSGlobalObject,
     ) -> JsResult<S3CredentialsWithOptions>;
     /// `store` is the heap `Store` that owns `self` (`self == &store.data.S3`).
+    /// It's an owned ref because reading the options runs user JS, which can detach the store from its Blob.
     fn unlink(
         &self,
-        store: &RefPtr<Store>,
-        global_this: &JSGlobalObject,
+        store: RefPtr<Store>,
+        cx: &bun_jsc::JsThread<'_>,
         extra_options: Option<JSValue>,
     ) -> JsResult<JSValue>;
     /// See `unlink`.
     fn list_objects(
         &self,
-        store: &RefPtr<Store>,
-        global_this: &JSGlobalObject,
+        store: RefPtr<Store>,
+        cx: &bun_jsc::JsThread<'_>,
         list_options: JSValue,
         extra_options: Option<JSValue>,
     ) -> JsResult<JSValue>;
 }
 
-pub trait FileExt {
-    fn unlink(&self, global_this: &JSGlobalObject) -> JsResult<JSValue>;
-}
-
-pub trait BytesExt {
-    #[cfg(unix)]
-    fn init_mmap(slice: &'static mut [u8]) -> Bytes
-    where
-        Self: Sized;
-    fn to_internal_blob(&mut self) -> super::Internal;
+pub(crate) trait FileExt {
+    fn unlink(&self, cx: &bun_jsc::JsThread<'_>) -> JsResult<JSValue>;
 }
 
 /// Shared mime-sniffing fallback for the `init_*` constructors below: derive a
@@ -114,7 +97,7 @@ impl StoreExt for Store {
     fn to_any_blob(&mut self) -> Option<super::Any> {
         if self.has_one_ref() {
             if let Data::Bytes(bytes) = &mut self.data {
-                return Some(super::Any::InternalBlob(bytes.to_internal_blob()));
+                return Some(super::Any::from_owned_slice(bytes.take_vec()));
             }
         }
 
@@ -132,12 +115,10 @@ impl StoreExt for Store {
         // Store so we don't need to clone the owned PathLike.
         let mime_type = mime_type.or_else(|| mime_from_path_ext(path.slice()));
 
-        Ok(RefPtr::new(Store {
-            data: Data::S3(S3::init(path, mime_type, credentials)),
-            mime_type: bun_http_types::MimeType::NONE,
-            ref_count: bun_ptr::ThreadSafeRefCount::init(),
-            is_all_ascii: IsAllAscii::default(),
-        }))
+        Ok(RefPtr::new(Store::new(
+            Data::S3(S3::init(path, mime_type, credentials)),
+            bun_http_types::MimeType::NONE,
+        )))
     }
 
     fn init_file(
@@ -151,24 +132,10 @@ impl StoreExt for Store {
             PathOrFileDescriptor::Fd(_) => None,
         });
 
-        Ok(RefPtr::new(Store {
-            data: Data::File(File::init(pathlike, mime_type)),
-            mime_type: bun_http_types::MimeType::NONE,
-            ref_count: bun_ptr::ThreadSafeRefCount::init(),
-            is_all_ascii: IsAllAscii::default(),
-        }))
-    }
-
-    /// Adopt an mmap'd region — no copy. The store's `Bytes` payload owns the
-    /// mapping; when the refcount drops to zero, `Bytes::drop` calls `munmap`.
-    #[cfg(unix)]
-    fn init_mmap(slice: &'static mut [u8]) -> RefPtr<Store> {
-        RefPtr::new(Store {
-            data: Data::Bytes(Bytes::init_mmap(slice)),
-            mime_type: bun_http_types::MimeType::NONE,
-            ref_count: bun_ptr::ThreadSafeRefCount::init(),
-            is_all_ascii: IsAllAscii::default(),
-        })
+        Ok(RefPtr::new(Store::new(
+            Data::File(File::init(pathlike, mime_type)),
+            bun_http_types::MimeType::NONE,
+        )))
     }
 
     fn serialize(&self, writer: &mut impl bun_io::Write) -> Result<(), crate::Error> {
@@ -219,26 +186,20 @@ impl StoreExt for Store {
 }
 
 impl FileExt for File {
-    fn unlink(&self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
+    fn unlink(&self, cx: &bun_jsc::JsThread<'_>) -> JsResult<JSValue> {
         match &self.pathlike {
-            PathOrFileDescriptor::Path(path_like) => {
-                // The `*Binding` arg is unused in `AsyncFSTask::create`.
-                let binding = node_fs::Binding::default();
-                // SAFETY: `bun_vm()` returns the live per-global VM pointer; the
-                // task is created on the JS thread that owns it.
-                Ok(node_fs::async_::Unlink::create(
-                    global_this,
-                    &binding,
-                    node_fs::args::Unlink::owned(path_like.slice().to_vec()),
-                    global_this.bun_vm().as_mut(),
-                ))
-            }
+            PathOrFileDescriptor::Path(path_like) => Ok(node_fs::async_::Unlink::schedule(
+                cx,
+                node_fs::args::Unlink::owned(path_like.slice().to_vec()),
+                cx.vm(),
+                None,
+            )),
             PathOrFileDescriptor::Fd(_) => Ok(JSPromise::resolved_promise_value(
-                global_this,
+                cx.global(),
                 // `JSGlobalObject::create_invalid_args` lives in the still-gated
                 // `JSGlobalObject.rs`; `ERR_INVALID_ARG_TYPE` (lib.rs) is the
                 // same `ErrorCode::INVALID_ARG_TYPE.fmt(...)` body.
-                global_this.ERR_INVALID_ARG_TYPE(format_args!(
+                cx.global().ERR_INVALID_ARG_TYPE(format_args!(
                     "Is not possible to unlink a file descriptor"
                 )),
             )),
@@ -270,73 +231,27 @@ impl S3Ext for S3 {
 
     fn unlink(
         &self,
-        store: &RefPtr<Store>,
-        global_this: &JSGlobalObject,
+        store: RefPtr<Store>,
+        cx: &bun_jsc::JsThread<'_>,
         extra_options: Option<JSValue>,
     ) -> JsResult<JSValue> {
-        struct Wrapper {
-            promise: bun_jsc::JSPromiseStrong,
-            store: RefPtr<Store>,
-            // LIFETIMES.tsv: JSC_BORROW → &JSGlobalObject. `BackRef` so the heap
-            // wrapper can outlive the constructing frame while reads stay safe.
-            global: bun_ptr::BackRef<JSGlobalObject>,
-        }
-
-        impl Wrapper {
-            #[inline]
-            fn new(init: Wrapper) -> Box<Wrapper> {
-                Box::new(init)
-            }
-
-            fn resolve(result: S3DeleteResult<'_>, opaque_self: *mut c_void) -> JsResult<()> {
-                // SAFETY: opaque_self was created via heap::alloc(Wrapper::new(..)) below.
-                let mut self_ = unsafe { bun_core::heap::take(opaque_self.cast::<Wrapper>()) };
-                // `defer self.deinit()` → Box drops at scope exit.
-                let global_object = self_.global.get();
-                match result {
-                    S3DeleteResult::Success => {
-                        self_.promise.resolve(global_object, JSValue::TRUE)?;
-                    }
-                    S3DeleteResult::NotFound(err) | S3DeleteResult::Failure(err) => {
-                        // Split borrows: `reject` takes `&mut promise`, so
-                        // compute the error (which reads `promise.get()`) first.
-                        let err_val = err.to_js_with_async_stack(
-                            global_object,
-                            self_.store.get_path(),
-                            self_.promise.get(),
-                        );
-                        self_.promise.reject(global_object, err_val)?;
-                    }
-                }
-                Ok(())
-            }
-        }
-
-        let promise = bun_jsc::JSPromiseStrong::init(global_this);
+        let mut promise = bun_jsc::JSPromiseStrong::init(cx.global());
         let value = promise.value();
-        // `Transpiler::env_mut` is the safe accessor for the process-singleton
-        // dotenv loader (never null once the VM is initialised).
-        let proxy_url: Option<URL<'_>> = global_this
-            .bun_vm()
-            .as_mut()
-            .transpiler
-            .env_mut()
-            .get_http_proxy(true, None, None);
-        let proxy = proxy_url.as_ref().map(|url| url.href);
-        let aws_options = self.get_credentials_with_options(extra_options, global_this)?;
+        let global = bun_jsc::GlobalRef::from(cx.global());
+        let aws_options = self.get_credentials_with_options(extra_options, cx.global())?;
         // `defer aws_options.deinit()` → Drop handles it.
 
         s3_client::delete(
             &aws_options.credentials,
+            cx.context(),
             self.path(),
-            Wrapper::resolve,
-            bun_core::heap::into_raw(Wrapper::new(Wrapper {
-                promise,
-                store: store.clone(),
-                global: bun_ptr::BackRef::new(global_this),
-            }))
-            .cast::<c_void>(),
-            proxy,
+            Box::new(move |result| match result {
+                S3DeleteResult::Success => promise.resolve(&global, JSValue::TRUE),
+                S3DeleteResult::NotFound(err) | S3DeleteResult::Failure(err) => {
+                    let err = err.to_js_with_async_stack(&global, store.get_path(), promise.get());
+                    promise.reject(&global, err)
+                }
+            }),
             aws_options.request_payer,
         )?;
 
@@ -345,164 +260,47 @@ impl S3Ext for S3 {
 
     fn list_objects(
         &self,
-        store: &RefPtr<Store>,
-        global_this: &JSGlobalObject,
+        store: RefPtr<Store>,
+        cx: &bun_jsc::JsThread<'_>,
         list_options: JSValue,
         extra_options: Option<JSValue>,
     ) -> JsResult<JSValue> {
         if !list_options.is_empty_or_undefined_or_null() && !list_options.is_object() {
-            return Err(global_this.throw_invalid_arguments(format_args!(
+            return Err(cx.global().throw_invalid_arguments(format_args!(
                 "S3Client.listObjects() needs a S3ListObjectsOption as it's first argument"
             )));
         }
 
-        struct Wrapper {
-            promise: bun_jsc::JSPromiseStrong,
-            store: RefPtr<Store>,
-            resolved_list_options: S3ListObjectsOptions,
-            // LIFETIMES.tsv: JSC_BORROW. `BackRef` for safe deref across the async callback.
-            global: bun_ptr::BackRef<JSGlobalObject>,
+        // (`list_objects` puts its request on the HTTP thread itself: asked here, before there is
+        // a completion to release, as `execute_simple_s3_request` asks for the others.)
+        if crate::webcore::s3::simple_request::nothing_new_leaves(cx.context()) {
+            return Ok(bun_jsc::JSPromise::create(cx.global()).to_js());
         }
-
-        impl Wrapper {
-            fn resolve(result: S3ListObjectsResult<'_>, opaque_self: *mut c_void) -> JsResult<()> {
-                // SAFETY: opaque_self was created via heap::alloc below.
-                let mut self_ = unsafe { bun_core::heap::take(opaque_self.cast::<Wrapper>()) };
-                // `defer self.deinit()` → Box drops at scope exit.
-                let global_object = self_.global.get();
-
-                match result {
-                    S3ListObjectsResult::Success(list_result) => {
-                        // `defer list_result.deinit()` → Drop handles it.
-                        let list_result_js = match list_result.to_js(global_object) {
-                            Ok(v) => v,
-                            Err(e) => {
-                                return self_.promise.reject(global_object, Err(e));
-                            }
-                        };
-                        self_.promise.resolve(global_object, list_result_js)?;
-                    }
-
-                    S3ListObjectsResult::NotFound(err) | S3ListObjectsResult::Failure(err) => {
-                        // Split borrows: `reject` takes `&mut promise`, so
-                        // compute the error (which reads `promise.get()`) first.
-                        let err_val = err.to_js_with_async_stack(
-                            global_object,
-                            self_.store.get_path(),
-                            self_.promise.get(),
-                        );
-                        self_.promise.reject(global_object, err_val)?;
-                    }
-                }
-                Ok(())
-            }
-        }
-
-        let promise = bun_jsc::JSPromiseStrong::init(global_this);
+        let mut promise = bun_jsc::JSPromiseStrong::init(cx.global());
         let value = promise.value();
-        // `Transpiler::env_mut` is the safe accessor for the process-singleton
-        // dotenv loader (never null once the VM is initialised).
-        let proxy_url: Option<URL<'_>> = global_this
-            .bun_vm()
-            .as_mut()
-            .transpiler
-            .env_mut()
-            .get_http_proxy(true, None, None);
-        let proxy = proxy_url.as_ref().map(|url| url.href);
-        let aws_options = self.get_credentials_with_options(extra_options, global_this)?;
+        let global = bun_jsc::GlobalRef::from(cx.global());
+        let aws_options = self.get_credentials_with_options(extra_options, cx.global())?;
         // `defer aws_options.deinit()` → Drop handles it.
 
-        let options = s3_client::get_list_objects_options_from_js(global_this, list_options)?;
-
-        // Box the wrapper first so the options live on the heap, then hand a
-        // borrow to `list_objects` (which only reads them synchronously to
-        // build the search-params string). The wrapper retains ownership for
-        // `Drop` after the async callback.
-        let wrapper = bun_core::heap::into_raw(Box::new(Wrapper {
-            promise,
-            store: store.clone(),
-            resolved_list_options: options,
-            global: bun_ptr::BackRef::new(global_this),
-        }));
+        let options = s3_client::get_list_objects_options_from_js(cx.global(), list_options)?;
 
         s3_client::list_objects(
             &aws_options.credentials,
-            // SAFETY: `wrapper` is freshly leaked and untouched until the
-            // callback; this borrow ends before any other access.
-            unsafe { &(*wrapper).resolved_list_options },
-            Wrapper::resolve,
-            wrapper.cast::<c_void>(),
-            proxy,
+            cx.context(),
+            &options,
+            Box::new(move |result| match result {
+                S3ListObjectsResult::Success(list_result) => match list_result.to_js(&global) {
+                    Ok(list_result) => promise.resolve(&global, list_result),
+                    Err(err) => promise.reject(&global, Err(err)),
+                },
+                S3ListObjectsResult::NotFound(err) | S3ListObjectsResult::Failure(err) => {
+                    let err = err.to_js_with_async_stack(&global, store.get_path(), promise.get());
+                    promise.reject(&global, err)
+                }
+            }),
         )?;
 
         Ok(value)
-    }
-}
-
-impl BytesExt for Bytes {
-    /// Adopt an mmap'd region. `Drop` (`allocator.free`) will `munmap` it.
-    #[cfg(unix)]
-    fn init_mmap(slice: &'static mut [u8]) -> Bytes {
-        // Stateless allocator vtable whose `free` munmap's. Same pattern as
-        // `LinuxMemFdAllocator` but without the stateful fd. Body is fully
-        // safe (`bun_sys::munmap` is a safe wrapper); the safe fn item coerces
-        // into `AllocatorVTable::free_only`'s raw fn-pointer slot.
-        fn free(_: *mut core::ffi::c_void, buf: &mut [u8], _: bun_alloc::Alignment, _: usize) {
-            if let bun_sys::Result::Err(err) = bun_sys::munmap(buf.as_mut_ptr(), buf.len()) {
-                bun_core::debug_warn!("Blob mmap-store munmap failed: {:?}", err);
-            }
-        }
-        static MMAP_FREE_VTABLE: bun_alloc::AllocatorVTable =
-            bun_alloc::AllocatorVTable::free_only(free);
-        // SAFETY: caller (C++ WebKit screenshot path) guarantees `slice` is a
-        // page-aligned mmap'd region we now own. `len == cap` so `free` munmaps
-        // exactly the same range.
-        unsafe {
-            Bytes::from_raw_parts(
-                slice.as_mut_ptr(),
-                slice.len() as SizeType,
-                slice.len() as SizeType,
-                bun_alloc::StdAllocator {
-                    ptr: core::ptr::null_mut(),
-                    vtable: &MMAP_FREE_VTABLE,
-                },
-            )
-        }
-    }
-
-    fn to_internal_blob(&mut self) -> super::Internal {
-        // `Internal.bytes` is `Vec<u8>` (global allocator), so
-        // round-trip only when the storage *is* the global allocator; otherwise
-        // copy + free through the original allocator (e.g. memfd → munmap).
-        let bytes = if self.ptr.is_none() {
-            Vec::new()
-        } else if core::ptr::eq(
-            std::ptr::from_ref(self.allocator.vtable),
-            std::ptr::from_ref(bun_alloc::basic::C_ALLOCATOR.vtable),
-        ) {
-            let len = self.len as usize;
-            let cap = self.cap as usize;
-            let ptr = self.ptr.take().unwrap();
-            // SAFETY: `init(Vec<u8>)` is the only path that stores
-            // `C_ALLOCATOR`, and it recorded the exact `(ptr, len, cap)`
-            // from `Vec::into_raw_parts`-equivalent decomposition.
-            unsafe { Vec::from_raw_parts(ptr.as_ptr(), len, cap) }
-        } else {
-            // Non-global allocator (e.g. memfd → munmap): copy through the
-            // safe `Bytes::slice()` accessor, then free via the owning vtable
-            // — same path `Bytes::drop` takes (`allocator.free(allocated_slice())`).
-            let copy = self.slice().to_vec();
-            self.allocator.free(self.allocated_slice());
-            self.ptr = None;
-            copy
-        };
-        self.len = 0;
-        self.cap = 0;
-        self.allocator = bun_alloc::basic::C_ALLOCATOR;
-        super::Internal {
-            bytes,
-            was_string: false,
-        }
     }
 }
 

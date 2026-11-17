@@ -1,55 +1,53 @@
-use bun_jsc::{CallFrame, JSFunction, JSGlobalObject, JSValue, JsClass as _, JsResult};
+use bun_jsc::{JSFunction, JSGlobalObject, JSValue, JsClass as _, JsResult};
 use bun_core::String as BunString;
 use bun_ptr::RefPtr;
+use core::cell::Cell;
 
-use crate::test_runner::bun_test::{group_begin, BunTest, RefData};
+use crate::generated_bindgen::bun_test::Bun__BunTest__bunTestDoneCallback;
+use crate::test_runner::bun_test::{group_begin, BunTest, RefData, RefDataValue};
+use crate::test_runner::execution::ExecutionSequence;
 
-#[bun_jsc::JsClass(no_construct, no_constructor)] // codegen wires to_js / from_js
-pub struct DoneCallback {
+pub(crate) struct DoneCallback {
     /// Some = not called yet. None = done already called, no-op.
-    pub(crate) r#ref: Option<RefPtr<RefData>>,
-    pub(crate) called: bool, // = false
+    pub(crate) r#ref: Cell<Option<RefPtr<RefData>>>,
+    pub(crate) called: Cell<bool>, // = false
+    pub(crate) entry: RefDataValue,
+    /// `BunTest::generation` of the file that `entry` is in.
+    generation: u32,
 }
 
 impl DoneCallback {
-    pub(crate) fn create_unbound(global: &JSGlobalObject) -> JSValue {
+    pub(crate) fn create_unbound(global: &JSGlobalObject, entry: RefDataValue, generation: u32) -> JSValue {
         let _g = group_begin!();
 
         let done_callback = DoneCallback {
-            r#ref: None,
-            called: false,
+            r#ref: Cell::new(None),
+            called: Cell::new(false),
+            entry,
+            generation,
         };
 
-        // `JsClass::to_js` boxes `self` and hands the raw pointer to the JS
-        // wrapper (m_ctx); freed in `finalize`.
         let value = done_callback.to_js(global);
         value.ensure_still_alive();
         value
+    }
+
+    /// The sequence that still waits for this callback.
+    pub(crate) fn running_sequence<'a>(&self, buntest: &'a BunTest) -> Option<&'a ExecutionSequence> {
+        if self.generation != buntest.generation {
+            return None;
+        }
+        Some(buntest.execution.get_current_and_valid_execution_sequence(&self.entry)?.0)
     }
 
     pub(crate) fn bind(value: JSValue, global: &JSGlobalObject) -> JsResult<JSValue> {
         let call_fn = JSFunction::create(
             global,
             "done",
-            __jsc_host_bun_test_done_callback,
+            Bun__BunTest__bunTestDoneCallback,
             1,
             Default::default(),
         );
         call_fn.bind(global, value, &BunString::static_("done"), 1.0, &[])
-    }
-}
-
-// Raw C-ABI shim for [`BunTest::bun_test_done_callback`] so it can be passed
-// as a `JSHostFn` pointer to `JSFunction::create` (the thunk routes the result through
-// `to_js_host_fn_result` for `JsResult` → `JSValue` mapping + debug exception
-// assertions).
-bun_jsc::jsc_host_abi! {
-    unsafe fn __jsc_host_bun_test_done_callback(
-        g: *mut JSGlobalObject,
-        f: *mut CallFrame,
-    ) -> JSValue {
-        // SAFETY: JSC guarantees both pointers are live for the duration of the host call.
-        let (global, callframe) = unsafe { (&*g, &*f) };
-        bun_jsc::to_js_host_fn_result(global, BunTest::bun_test_done_callback(global, callframe))
     }
 }

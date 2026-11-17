@@ -1,0 +1,45 @@
+------------------
+{ printWidth: 80 }
+------------------
+import { d, c } from /** @type {T} */
+"z";
+import { e, f /** @type {T} */ } from "z";
+import { g, h /** @type {T} */ } from "z";
+import { i, /** @type {T} */ j } from "z";
+import { k /** @type {T} */, l } from "z";
+export { m, n /** @type {T} */ } from "z";
+export { o, p /** @type {T} */ };
+import { q /* c */ } from "z";
+import {
+  r, // c
+} from "z";
+import {
+  s,
+  /** @type {T} */
+} from "z";
+import t, { u /** @type {T} */ } from "z";
+import { v /** @type {T} */ } from "z" with { type: "json" };
+
+-------------------
+{ printWidth: 100 }
+-------------------
+import { d, c } from /** @type {T} */
+"z";
+import { e, f /** @type {T} */ } from "z";
+import { g, h /** @type {T} */ } from "z";
+import { i, /** @type {T} */ j } from "z";
+import { k /** @type {T} */, l } from "z";
+export { m, n /** @type {T} */ } from "z";
+export { o, p /** @type {T} */ };
+import { q /* c */ } from "z";
+import {
+  r, // c
+} from "z";
+import {
+  s,
+  /** @type {T} */
+} from "z";
+import t, { u /** @type {T} */ } from "z";
+import { v /** @type {T} */ } from "z" with { type: "json" };
+
+===================== End =====================

@@ -21,7 +21,7 @@ const from = require("internal/streams/from");
 const PromiseWithResolvers = Promise.withResolvers.bind(Promise);
 
 class Duplexify extends Duplex {
-  constructor(options) {
+  constructor(options?: $Node.DuplexOptions) {
     super(options);
 
     // https://github.com/nodejs/node/pull/34385
@@ -41,7 +41,9 @@ class Duplexify extends Duplex {
   }
 }
 
-function duplexify(body, name?) {
+type Then = ((onFulfilled: (value: unknown) => unknown, onRejected: (error: Error) => unknown) => unknown) | undefined;
+
+function duplexify(body, name?: string): $Node.Duplex {
   if (isDuplexNodeStream(body)) {
     return body;
   }
@@ -84,9 +86,9 @@ function duplexify(body, name?) {
       });
     }
 
-    const then = value?.then;
+    const then = (value as { then?: Then } | null | undefined)?.then;
     if (typeof then === "function") {
-      let d;
+      let d: Duplexify;
 
       const promise = then.$call(
         value,
@@ -119,11 +121,11 @@ function duplexify(body, name?) {
       }));
     }
 
-    throw $ERR_INVALID_RETURN_VALUE("Iterable, AsyncIterable or AsyncFunction", name, value);
+    throw $ERR_INVALID_RETURN_VALUE("Iterable, AsyncIterable or AsyncFunction", name!, value);
   }
 
   if ($inheritsBlob(body)) {
-    return duplexify(body.arrayBuffer());
+    return duplexify((body as Blob).arrayBuffer());
   }
 
   if (isIterable(body)) {
@@ -154,9 +156,9 @@ function duplexify(body, name?) {
     return _duplexify({ readable, writable });
   }
 
-  const then = body?.then;
+  const then: Then = body?.then;
   if (typeof then === "function") {
-    let d;
+    let d: Duplexify;
 
     then.$call(
       body,
@@ -179,7 +181,7 @@ function duplexify(body, name?) {
   }
 
   throw $ERR_INVALID_ARG_TYPE(
-    name,
+    name!,
     [
       "Blob",
       "ReadableStream",
@@ -195,8 +197,23 @@ function duplexify(body, name?) {
   );
 }
 
-function fromAsyncGen(fn) {
-  let { promise, resolve } = PromiseWithResolvers();
+interface AsyncGenWrite {
+  __proto__?: null;
+  chunk?: unknown;
+  done: boolean;
+  cb: (err?: Error | null) => void;
+}
+
+function fromAsyncGen(
+  fn: (source: AsyncGenerator<unknown, void, unknown>, options: { signal: AbortSignal }) => unknown,
+) {
+  let {
+    promise,
+    resolve,
+  }: {
+    promise: Promise<AsyncGenWrite> | null;
+    resolve: ((value: AsyncGenWrite) => void) | null;
+  } = PromiseWithResolvers<AsyncGenWrite>();
   const ac = new AbortController();
   const signal = ac.signal;
   const value = fn(
@@ -208,7 +225,7 @@ function fromAsyncGen(fn) {
         process.nextTick(cb);
         if (done) return;
         if (signal.aborted) throw $makeAbortError(undefined, { cause: signal.reason });
-        ({ promise, resolve } = PromiseWithResolvers());
+        ({ promise, resolve } = PromiseWithResolvers<AsyncGenWrite>());
         yield chunk;
       }
     })(),
@@ -217,17 +234,17 @@ function fromAsyncGen(fn) {
 
   return {
     value,
-    write(chunk, encoding, cb) {
+    write(chunk: unknown, encoding: string, cb: $Node.ErrorCallback) {
       const _resolve = resolve;
       resolve = null;
-      _resolve({ chunk, done: false, cb });
+      _resolve!({ chunk, done: false, cb });
     },
-    final(cb) {
+    final(cb: $Node.ErrorCallback) {
       const _resolve = resolve;
       resolve = null;
-      _resolve({ done: true, cb });
+      _resolve!({ done: true, cb });
     },
-    destroy(err, cb) {
+    destroy(err: Error | null, cb: $Node.ErrorCallback) {
       ac.abort(err);
 
       // If the source async iterator is waiting for the next write/final
@@ -244,20 +261,23 @@ function fromAsyncGen(fn) {
   };
 }
 
-function _duplexify(pair) {
-  const r = pair.readable && typeof pair.readable.read !== "function" ? Readable.wrap(pair.readable) : pair.readable;
-  const w = pair.writable;
+// `false` for a side that is missing is only ever tested for truth, like `undefined`.
+function _duplexify(pair: { readable?: $Node.Readable | false; writable?: $Node.Writable | false }) {
+  const r = (
+    pair.readable && typeof pair.readable.read !== "function" ? Readable.wrap(pair.readable) : pair.readable
+  ) as $Node.Readable | undefined;
+  const w = pair.writable as $Node.Writable | undefined;
 
   let readable = !!isReadable(r);
   let writable = !!isWritable(w);
 
-  let ondrain;
-  let onfinish;
-  let onreadable;
-  let onclose;
-  let d;
+  let ondrain: $Node.ErrorCallback | null | undefined;
+  let onfinish: $Node.ErrorCallback | null | undefined;
+  let onreadable: (() => void) | null | undefined;
+  let onclose: $Node.ErrorCallback | null | undefined;
+  let d: Duplexify;
 
-  function onfinished(err) {
+  function onfinished(err?: Error | null) {
     const cb = onclose;
     onclose = null;
 
@@ -280,7 +300,7 @@ function _duplexify(pair) {
   });
 
   if (writable) {
-    eos(w, err => {
+    eos(w!, err => {
       writable = false;
       if (err) {
         destroyer(r, err);
@@ -289,7 +309,7 @@ function _duplexify(pair) {
     });
 
     d._write = function (chunk, encoding, callback) {
-      if (w.write(chunk, encoding)) {
+      if (w!.write(chunk, encoding)) {
         callback();
       } else {
         ondrain = callback;
@@ -297,11 +317,11 @@ function _duplexify(pair) {
     };
 
     d._final = function (callback) {
-      w.end();
+      w!.end();
       onfinish = callback;
     };
 
-    w.on("drain", function () {
+    w!.on("drain", function () {
       if (ondrain) {
         const cb = ondrain;
         ondrain = null;
@@ -309,7 +329,7 @@ function _duplexify(pair) {
       }
     });
 
-    w.on("finish", function () {
+    w!.on("finish", function () {
       if (onfinish) {
         const cb = onfinish;
         onfinish = null;
@@ -319,7 +339,7 @@ function _duplexify(pair) {
   }
 
   if (readable) {
-    eos(r, err => {
+    eos(r!, err => {
       readable = false;
       if (err) {
         destroyer(w, err);
@@ -327,7 +347,7 @@ function _duplexify(pair) {
       onfinished(err);
     });
 
-    r.on("readable", function () {
+    r!.on("readable", function () {
       if (onreadable) {
         const cb = onreadable;
         onreadable = null;
@@ -335,16 +355,16 @@ function _duplexify(pair) {
       }
     });
 
-    r.on("end", function () {
+    r!.on("end", function () {
       d.push(null);
     });
 
     d._read = function () {
       while (true) {
-        const buf = r.read();
+        const buf = r!.read();
 
         if (buf === null) {
-          onreadable = d._read;
+          onreadable = d._read as () => void;
           return;
         }
 

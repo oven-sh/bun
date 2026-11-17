@@ -46,6 +46,12 @@ namespace Zig {
 class GlobalObject;
 }
 
+// The native thread object (src/jsc/web_worker.rs). Deleting it joins the thread.
+struct WebWorker;
+template<> struct std::default_delete<WebWorker> {
+    void operator()(WebWorker*) const;
+};
+
 namespace WebCore {
 
 class Event;
@@ -54,7 +60,7 @@ class Worker;
 // The only object shared between a Worker (parent thread, script-visible) and the thread that runs
 // its global scope. Created with the Worker; outlives both the Worker object and the thread.
 //
-// Refs: the Worker object's Ref member, the worker thread (taken before it is spawned, dropped on the
+// Refs: the Worker object's Ref member, the worker thread (m_refForWorkerThread, dropped on the
 // parent thread by workerGlobalScopeDestroyedInternal() or by the parent's own exit path once it has
 // joined the thread), and transient Refs captured by posted tasks. The last deref is therefore always
 // on the parent thread. If the parent context is already gone when the thread finishes, nothing runs
@@ -98,9 +104,16 @@ public:
     JSC::Strong<JSC::JSPromise> takeCrossVMRequest(uint64_t id);
 
     // -- WorkerObjectProxy / WorkerReportingProxy (worker thread) ---------------------------------
+    // Before the entry point loads: posts 'online' to the parent, as node does before user code.
+    void workerThreadStarted();
+    // The entry point has evaluated: Pending -> Running, queued tasks and messages are delivered.
     void workerGlobalScopeStarted(Zig::GlobalObject&);
     void postMessageToWorkerObject(MessageWithMessagePorts&&);
     void postErrorToWorkerObject(Zig::GlobalObject&, const String& message, JSC::JSValue error);
+    // The worker's heap is full, so the parent makes the error. Touches no heap of the worker: safe inside an allocation.
+    void postOutOfMemoryErrorToWorkerObject();
+    // Parent thread: the thread was to start after the constructor had returned, and could not. What the constructor throws otherwise.
+    void postFailedToStartErrorToWorkerObject();
     // The thread's global scope, VM and per-thread state are gone; only the OS thread remains.
     // stoppedByParent: it stopped because it was asked to and never called process.exit() itself.
     void workerGlobalScopeDestroyed(int32_t exitCode, bool stoppedByParent);
@@ -124,13 +137,12 @@ private:
     void drainMessagesToWorkerObject(ScriptExecutionContext&, DrainBudget);
     void rejectAllCrossVMRequests();
     void postMessageErrorToWorkerObject(String&& message);
-    bool postSerializedErrorToWorkerObject(Zig::GlobalObject&, JSC::JSValue error);
+    bool postSerializedErrorToWorkerObject(Zig::GlobalObject&, const String& message, JSC::JSValue error);
 
     // Parent thread only.
     RefPtr<ScriptExecutionContext> m_scriptExecutionContext;
     Worker* m_workerObject;
     bool m_askedToTerminate { false };
-    bool m_keepAliveReleased { false };
 
     const ScriptExecutionContextIdentifier m_loaderContextIdentifier;
     // The parent loop that was current at `new Worker()`: a macro that creates a worker and awaits
@@ -139,9 +151,9 @@ private:
     const ScriptExecutionContextIdentifier m_workerContextIdentifier;
     WorkerOptions m_options;
 
-    // The native thread object (src/jsc/web_worker.rs). Holds one ref on it from
-    // startWorkerGlobalScope() until releaseWorkerThread().
-    void* m_workerThread { nullptr };
+    // Both from startWorkerGlobalScope() until releaseWorkerThread().
+    std::unique_ptr<WebWorker> m_workerThread;
+    RefPtr<WorkerMessagingProxy> m_refForWorkerThread;
 
     std::atomic<State> m_state { State::Pending };
 

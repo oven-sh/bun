@@ -27,7 +27,6 @@
 #include "BroadcastChannel.h"
 
 #include "BunBroadcastChannelRegistry.h"
-#include "BunClientData.h"
 #include "EventNames.h"
 #include "MessageEvent.h"
 #include "SerializedScriptValue.h"
@@ -44,16 +43,23 @@ BroadcastChannel::BroadcastChannel(ScriptExecutionContext& context, const String
 {
     EventTarget::initializeWeakPtrFactory();
     BunBroadcastChannelRegistry::singleton().subscribe(m_name, context, *this);
-    jsRef(context.jsGlobalObject());
+    jsRef();
 }
 
 BroadcastChannel::~BroadcastChannel()
 {
+    // As in Node, an open channel keeps the process alive whether or not script can reach it, until its context goes.
+    if (m_keepAlive.isActive())
+        scriptExecutionContext()->keepEventLoopAliveUntilStopped();
     close();
 }
 
 ExceptionOr<void> BroadcastChannel::postMessage(JSC::JSGlobalObject& globalObject, JSC::JSValue messageValue)
 {
+    // Made or kept by the script of a disposed Bun.ModuleGraph: like a MessagePort of one it says nothing,
+    // to the script (the stop closes it a turn later) or to anyone listening on the name.
+    if (auto* context = scriptExecutionContext(); context && context->isForModuleGraph() && context->isStopped())
+        return {};
     if (isClosed())
         return Exception { InvalidStateError, "This BroadcastChannel is closed"_s };
 
@@ -101,6 +107,7 @@ void BroadcastChannel::close()
     if (prev & Closed)
         return;
     BunBroadcastChannelRegistry::singleton().unsubscribe(m_name, *this);
+    jsUnref();
 }
 
 void BroadcastChannel::contextDestroyed()
@@ -128,22 +135,6 @@ bool BroadcastChannel::virtualHasPendingActivity() const
     // with no listener is a no-op anyway.
     uint64_t s = m_state.load(std::memory_order_acquire);
     return !(s & Closed) && (s & HasMessageListener);
-}
-
-void BroadcastChannel::jsRef(JSGlobalObject* lexicalGlobalObject)
-{
-    if (!m_hasRef) {
-        m_hasRef = true;
-        Bun__eventLoop__refKeepAlive(WebCore::clientData(lexicalGlobalObject->vm())->bunVM, 1);
-    }
-}
-
-void BroadcastChannel::jsUnref(JSGlobalObject* lexicalGlobalObject)
-{
-    if (m_hasRef) {
-        m_hasRef = false;
-        Bun__eventLoop__refKeepAlive(WebCore::clientData(lexicalGlobalObject->vm())->bunVM, -1);
-    }
 }
 
 } // namespace WebCore

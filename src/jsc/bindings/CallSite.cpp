@@ -20,6 +20,22 @@ namespace Zig {
 
 const JSC::ClassInfo CallSite::s_info = { "CallSite"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(CallSite) };
 
+static JSC::JSFunction* calleeFunction(JSC::JSCell* callee)
+{
+    return callee ? dynamicDowncast<JSC::JSFunction>(callee) : nullptr;
+}
+
+static bool isUserFunction(JSC::JSCell* callee)
+{
+    auto* function = calleeFunction(callee);
+    if (!function || function->isHostFunction() || function->isBuiltinFunction()) {
+        return false;
+    }
+
+    // A generator or async body function takes JSC-internal arguments: a call from JS corrupts memory.
+    return !JSC::isGeneratorOrAsyncFunctionBodyParseMode(function->jsExecutable()->parseMode());
+}
+
 void CallSite::finishCreation(VM& vm, JSCStackFrame& stackFrame, bool encounteredStrictFrame)
 {
     Base::finishCreation(vm);
@@ -32,6 +48,7 @@ void CallSite::finishCreation(VM& vm, JSCStackFrame& stackFrame, bool encountere
      * Thus, if we've already encountered a strict frame, we'll treat our frame as strict too. */
 
     bool isStrictFrame = encounteredStrictFrame;
+    JSC::JSCell* callee = stackFrame.callee();
     JSC::CodeBlock* codeBlock = stackFrame.codeBlock();
     if (!isStrictFrame) {
         if (codeBlock) {
@@ -39,18 +56,41 @@ void CallSite::finishCreation(VM& vm, JSCStackFrame& stackFrame, bool encountere
         }
     }
 
+    const JSC::StackFrame& frame = stackFrame.stackFrame();
+    bool isCompiled = frame.isCompiledFrame();
+    bool isCompiledHostFunction = isCompiled && frame.representsHostFunction();
+    bool isCompiledHiddenBuiltin = isCompiled && !isCompiledHostFunction && frame.isBuiltinFunction();
+#if ENABLE(AOT)
+    if (isCompiled && !isStrictFrame && !isCompiledHiddenBuiltin && !isCompiledHostFunction) {
+        isStrictFrame = JSC::AOT::FunctionDescription(frame.compiledFrame().function).isStrict();
+    }
+#endif
+
     // JSC::StackFrame has no receiver, so getThis() is always undefined.
     m_thisValue.set(vm, this, JSC::jsUndefined());
     if (isStrictFrame) {
-        m_function.set(vm, this, JSC::jsUndefined());
         m_flags |= static_cast<unsigned int>(Flags::IsStrict);
+    }
+    // Hiding a callee must not set IsStrict: that cascades to the callers, and JSC shows host frames that V8 omits.
+    if (isStrictFrame || !isUserFunction(callee)) {
+        m_function.set(vm, this, JSC::jsUndefined());
     } else {
-        m_function.set(vm, this, stackFrame.callee());
+        m_function.set(vm, this, callee);
+    }
+    // isToplevel() needs the real callee: m_function is undefined when the callee is hidden.
+    if (!isStrictFrame) {
+        auto* function = calleeFunction(callee);
+        if (isCompiled ? !isCompiledHostFunction && frame.codeType() == JSC::FunctionCode : function && !function->isHostFunction()) {
+            m_flags |= static_cast<unsigned int>(Flags::IsSloppyFunctionCall);
+        }
     }
 
     m_functionName.set(vm, this, stackFrame.functionName());
     m_sourceURL.set(vm, this, stackFrame.sourceURL());
     m_sourceID = stackFrame.sourceID();
+#if ENABLE(AOT)
+    m_compiledModule = stackFrame.compiledModule();
+#endif
 
     const auto* sourcePositions = stackFrame.getSourcePositions();
     if (sourcePositions) {
@@ -66,7 +106,7 @@ void CallSite::finishCreation(VM& vm, JSCStackFrame& stackFrame, bool encountere
     if (stackFrame.isConstructor()) {
         m_flags |= static_cast<unsigned int>(Flags::IsConstructor);
     }
-    if (!stackFrame.codeBlock()) {
+    if (isCompiled ? isCompiledHiddenBuiltin || !frame.hasLineAndColumnInfo() : !stackFrame.codeBlock()) {
         m_flags |= static_cast<unsigned int>(Flags::IsNative);
     }
     if (stackFrame.isAsync()) {
@@ -158,8 +198,15 @@ void CallSite::formatAsString(JSC::VM& vm, JSC::JSGlobalObject* globalObject, WT
         if (!mySourceURL || mySourceURL->length() == 0) {
             sb.append("unknown"_s);
         } else {
-            sb.append(mySourceURL->getString(globalObject));
+            String url = mySourceURL->getString(globalObject);
             RETURN_IF_EXCEPTION(scope, );
+#if ENABLE(AOT)
+            if (m_compiledModule)
+                url = JSC::AOT::displayPathOf(m_compiledModule);
+            else if (Zig::hasExternalSourceMap() && url == Zig::externalSourceMapFileURL())
+                url = Zig::externalSourceMapDisplayPath();
+#endif
+            sb.append(url);
         }
 
         if (line && column) {

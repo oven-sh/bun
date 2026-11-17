@@ -1,0 +1,6 @@
+// The object of one turn is read at the top of the next: when the arm with the store is looked at nobody needs the object yet. The store comes back, and the branch in front of it with it.
+function turns(n: number) { let last: any = null, sum = 0; for (let i = 0; i < n; i++) { if (last !== null) sum += last.a + (last.p === undefined ? 100 : last.p); const o: any = { a: i }; if (i & 1) o.p = i * 2; last = o; } return sum; }
+function bothArms(n: number) { let last: any = null, text = ""; for (let i = 0; i < n; i++) { if (last !== null) text += last.kind + last.a; const o: any = { a: i, kind: "" }; if (i % 3) o.kind = "x"; else o.kind = "y"; last = o; } return text; }
+function spread(n: number) { let last: any = null, text = ""; for (let i = 0; i < n; i++) { if (last !== null) text += Object.keys(last).join("") + " "; last = { a: i, ...(i & 1 ? { p: i } : undefined) }; } return text; }
+function twoTurnsLater(n: number) { let last: any = null, older: any = null, sum = 0; for (let i = 0; i < n; i++) { if (older !== null) sum += older.p ?? 1000; older = last; const o: any = { a: i }; if (i & 1) o.p = i; last = o; } return sum; }
+console.log(turns(8), bothArms(8), spread(6), twoTurnsLater(9));

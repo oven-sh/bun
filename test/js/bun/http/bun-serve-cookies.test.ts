@@ -2,7 +2,7 @@ import type { Server } from "bun";
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 
 describe("request cookies", () => {
-  let server: Server;
+  let server: Server<undefined>;
 
   beforeAll(() => {
     server = Bun.serve({
@@ -96,7 +96,7 @@ describe("request cookies", () => {
 });
 
 describe("instanceof and type checks", () => {
-  let server: Server;
+  let server: Server<undefined>;
 
   beforeAll(() => {
     server = Bun.serve({
@@ -149,7 +149,7 @@ describe("instanceof and type checks", () => {
 });
 
 describe("complex cookie parsing", () => {
-  let server: Server;
+  let server: Server<undefined>;
 
   beforeAll(() => {
     server = Bun.serve({
@@ -246,7 +246,7 @@ describe("complex cookie parsing", () => {
 });
 
 describe("CookieMap iterator", () => {
-  let server: Server;
+  let server: Server<undefined>;
 
   beforeAll(() => {
     server = Bun.serve({

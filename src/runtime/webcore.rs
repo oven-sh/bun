@@ -6,58 +6,49 @@ use core::ptr::NonNull;
 // `#[path]` is relative to the dir containing this file (`src/runtime/`).
 
 #[path = "webcore/ArrayBufferSink.rs"]
-pub mod array_buffer_sink;
-#[path = "webcore/BakeResponse.rs"]
-pub mod bake_response;
+pub(crate) mod array_buffer_sink;
 #[path = "webcore/ByteBlobLoader.rs"]
-pub mod byte_blob_loader;
+pub(crate) mod byte_blob_loader;
 #[path = "webcore/ByteStream.rs"]
-pub mod byte_stream;
+pub(crate) mod byte_stream;
 #[path = "webcore/CompressionStreamCoder.rs"]
-pub mod compression_stream_coder;
+pub(crate) mod compression_stream_coder;
 #[path = "webcore/CookieMap.rs"]
-pub mod cookie_map;
+pub(crate) mod cookie_map;
 #[path = "webcore/Crypto.rs"]
-pub mod crypto;
+pub(crate) mod crypto;
 #[path = "webcore/S3Client.rs"]
-pub mod s3_client;
+pub(crate) mod s3_client;
 #[path = "webcore/S3File.rs"]
-pub mod s3_file;
+pub(crate) mod s3_file;
 #[path = "webcore/S3Stat.rs"]
-pub mod s3_stat;
+pub(crate) mod s3_stat;
 #[path = "webcore/TextEncoder.rs"]
-pub mod text_encoder;
+pub(crate) mod text_encoder;
 #[path = "webcore/TextEncoderStreamEncoder.rs"]
-pub mod text_encoder_stream_encoder;
+pub(crate) mod text_encoder_stream_encoder;
 
 // ─── flat re-exports ─────────────────────────────────────────────────────────
-pub use cookie_map::{CookieMap, CookieMapRef};
-pub use s3_client::S3Client;
-pub use s3_stat::S3Stat;
+pub(crate) use cookie_map::{CookieMap, CookieMapRef};
+pub(crate) use s3_client::S3Client;
 
 #[path = "webcore/ObjectURLRegistry.rs"]
-pub mod object_url_registry;
+pub(crate) mod object_url_registry;
 pub(crate) use object_url_registry::ObjectURLRegistry;
 
 // ─── webcore-local jsc re-export ─────────────────────────────────────────────
-// `bun_jsc` is now a dep of `bun_runtime`; forward to it. The per-class
-// submodules (`JSBlob`, `JSResponse`, …) live in `bun_jsc::generated`
-// (`js_class_module!`); the previous local stub macro (`js_class_mod`) that
-// returned `JSValue::default()` from `to_js_unchecked` has been removed —
-// every webcore caller now imports the real bindings directly
-// (`bun_jsc::generated::JS{Blob,Request,Response,…}`).
-pub mod jsc {
-    pub use crate::jsc::*;
-    pub use bun_jsc::virtual_machine::VirtualMachine;
+pub(crate) mod jsc {
+    pub(crate) use crate::jsc::*;
+    pub(crate) use bun_jsc::virtual_machine::VirtualMachine;
 }
 
 // Forward the real enums so `webcore::node_types::X` and
 // `crate::node::types::X` are the same type.
-pub mod node_types {
-    pub use crate::node::types::{PathLike, PathOrBlob, PathOrFileDescriptor};
+pub(crate) mod node_types {
+    pub(crate) use crate::node::types::{PathLike, PathOrBlob, PathOrFileDescriptor};
 }
 
-pub use crate::jsc::AbortSignal;
+pub(crate) use crate::jsc::AbortSignal;
 
 // ─── AutoFlusher (webcore tier) ──────────────────────────────────────────────
 // Takes a `&VirtualMachine` and reaches the queue via
@@ -65,14 +56,13 @@ pub use crate::jsc::AbortSignal;
 use bun_event_loop::deferred_task_queue::DeferredRepeatingTask;
 
 #[derive(Debug, Default)]
-pub struct AutoFlusher {
-    /// `Cell` so register/unregister can be called from `&self` callbacks
-    /// (R-2 §provenance — see `FileSink::on_write`).
+pub(crate) struct AutoFlusher {
+    /// `Cell` so register/unregister can be called from `&self` callbacks.
     pub(crate) registered: core::cell::Cell<bool>,
 }
 
 /// Implemented below for `FileSink` and `HTTPServerWritable<_, _>`.
-pub trait HasAutoFlusher: Sized {
+pub(crate) trait HasAutoFlusher: Sized {
     fn auto_flusher(&self) -> &AutoFlusher;
     /// `Type.onAutoFlush` — `DeferredRepeatingTask` ABI after `@ptrCast`
     /// erasure: `fn(*anyopaque) bool`.
@@ -140,7 +130,7 @@ impl AutoFlusher {
         // Do not wrap the side-effecting call in `debug_assert!`;
         // only the *check* is debug-gated.
         let removed = vm
-            .event_loop_ref()
+            .event_loop()
             .deferred_tasks
             .unregister_task(Self::erased_ctx(this));
         debug_assert!(removed);
@@ -155,7 +145,7 @@ impl AutoFlusher {
         debug_assert!(!this.auto_flusher().registered.get());
         this.auto_flusher().registered.set(true);
         let found_existing = vm
-            .event_loop_ref()
+            .event_loop()
             .deferred_tasks
             .post_task(Self::erased_ctx(this), Self::erased_cb::<T>());
         debug_assert!(!found_existing);
@@ -163,26 +153,17 @@ impl AutoFlusher {
 }
 
 // ─── HasAutoFlusher impls ────────────────────────────────────────────────────
-// `HTTPServerWritable` exposes an inherent `pub fn on_auto_flush(&mut self) ->
-// bool`; the trait impl is just a thunk. `FileSink::on_auto_flush` instead
-// takes the canonical `*mut FileSink` directly (no `&mut self` — see its doc
-// comment / the `borrow = ptr` note on `impl_streaming_writer_parent!`).
 
 impl HasAutoFlusher for file_sink::FileSink {
     #[inline]
     fn auto_flusher(&self) -> &AutoFlusher {
-        // R-2: `auto_flusher` is `JsCell`; `JsCell::get` yields `&T`.
-        self.auto_flusher.get()
+        &self.auto_flusher
     }
     /// # Safety
     /// See [`HasAutoFlusher::on_auto_flush`].
     unsafe fn on_auto_flush(this: *mut Self) -> bool {
-        // SAFETY: `this` was registered as the canonical `*mut FileSink` cast to
-        // `*mut c_void` (`AutoFlusher::erased_ctx`); `DeferredTaskQueue::run` is
-        // single-threaded (drained on the JS thread after microtasks), so no
-        // aliasing across the call. `FileSink::on_auto_flush` takes the raw ptr
-        // directly (no `&mut self`).
-        unsafe { file_sink::FileSink::on_auto_flush(this) }
+        // SAFETY: fn contract.
+        unsafe { !(*this).end_unneeded_auto_flush() && (*this).ref_guard().on_auto_flush() }
     }
 }
 
@@ -194,7 +175,7 @@ impl<const SSL: bool> HasAutoFlusher for streams::HTTPServerWritable<SSL> {
     /// # Safety
     /// See [`HasAutoFlusher::on_auto_flush`].
     unsafe fn on_auto_flush(this: *mut Self) -> bool {
-        // SAFETY: see FileSink impl above.
+        // SAFETY: fn contract.
         unsafe { (*this).on_auto_flush() }
     }
 }
@@ -203,42 +184,42 @@ impl<const SSL: bool> HasAutoFlusher for streams::HTTPServerWritable<SSL> {
 pub(crate) mod headers_ref;
 
 #[path = "webcore/Blob.rs"]
-pub mod blob;
-pub use blob::Any as AnyBlob;
-pub use blob::Internal as InternalBlob;
-pub use blob::{Blob, BlobExt, SizeType as BlobSizeType};
+pub(crate) mod blob;
+pub(crate) use blob::Any as AnyBlob;
+pub(crate) use blob::Internal as InternalBlob;
+pub(crate) use blob::{Blob, BlobExt, SizeType as BlobSizeType};
 
 #[path = "webcore/Body.rs"]
-pub mod body;
-pub use body::{Body, Value as BodyValue};
+pub(crate) mod body;
+pub(crate) use body::Body;
 
 #[path = "webcore/Response.rs"]
-pub mod response;
-pub use response::Response;
+pub(crate) mod response;
+pub(crate) use response::Response;
 
 #[path = "webcore/Request.rs"]
-pub mod request;
-pub use request::Request;
+pub(crate) mod request;
+pub(crate) use request::Request;
 
 #[path = "webcore/ReadableStream.rs"]
-pub mod readable_stream;
-pub use readable_stream::ReadableStream;
+pub(crate) mod readable_stream;
+pub(crate) use readable_stream::ReadableStream;
 
 #[path = "webcore/FileReader.rs"]
-pub mod file_reader;
-pub use file_reader::FileReader;
+pub(crate) mod file_reader;
+pub(crate) use file_reader::FileReader;
 
 #[path = "webcore/Sink.rs"]
-pub mod sink;
+pub(crate) mod sink;
 
 #[path = "webcore/FileSink.rs"]
-pub mod file_sink;
-pub use file_sink::FileSink;
+pub(crate) mod file_sink;
+pub(crate) use file_sink::FileSink;
 
 // ByteStream/ByteBlobLoader: real bodies now live in webcore/ByteStream.rs and
 // webcore/ByteBlobLoader.rs (declared above). Re-export the struct types here.
-pub use byte_blob_loader::ByteBlobLoader;
-pub use byte_stream::ByteStream;
+pub(crate) use byte_blob_loader::ByteBlobLoader;
+pub(crate) use byte_stream::ByteStream;
 
 // TODO: make this pool per-JSGlobalObject so recycled buffers are not shared
 // across realms (the pool is process-global).
@@ -252,83 +233,77 @@ bun_collections::object_pool!(pub ByteListPool: Vec<u8>, threadsafe, 8);
 // Re-export the crate-local jsc shim's opaque type until `bun_jsc::fetch_headers`
 // is green; the shim's `#[repr(transparent)] struct FetchHeaders(usize)` matches the
 // opaque-handle ABI used by the `WebCore__FetchHeaders__*` extern fns.
-pub use crate::jsc::FetchHeaders;
+pub(crate) use crate::jsc::FetchHeaders;
 
 #[path = "webcore/EncodingLabel.rs"]
-pub mod encoding_label;
-pub use encoding_label::EncodingLabel;
+pub(crate) mod encoding_label;
+pub(crate) use encoding_label::EncodingLabel;
 
 #[path = "webcore/encoding.rs"]
-pub mod encoding;
+pub(crate) mod encoding;
 
 #[path = "webcore/wasm_streaming.rs"]
-pub mod wasm_streaming;
+pub(crate) mod wasm_streaming;
 
 #[path = "webcore/TextDecoder.rs"]
-pub mod text_decoder;
-pub use text_decoder::TextDecoder;
+pub(crate) mod text_decoder;
+pub(crate) use text_decoder::TextDecoder;
 
 #[path = "webcore/fetch.rs"]
-pub mod fetch;
+pub(crate) mod fetch;
 
 #[path = "webcore/prompt.rs"]
-pub mod prompt;
+pub(crate) mod prompt;
 
 #[path = "webcore/FormData.rs"]
-pub mod form_data;
+pub(crate) mod form_data;
 
 #[path = "webcore/ScriptExecutionContext.rs"]
-pub mod script_execution_context;
+pub(crate) mod script_execution_context;
 
-#[doc(hidden)]
-pub mod multipart_options_impl {
-    pub use bun_s3_signing::MultiPartUploadOptions;
-}
 // Note: inner `#[path]` inside an inline `mod s3 { }` resolves relative to
 // `<this-file's-dir>/s3/`, which would point at `src/runtime/s3/...` (does not
 // exist). Declare the file mods at this level (where `#[path]` is relative to
 // `src/runtime/`) and re-export them under `s3`.
 #[doc(hidden)]
 #[path = "webcore/s3/client.rs"]
-pub mod __s3_client;
+pub(crate) mod __s3_client;
 #[doc(hidden)]
 #[path = "webcore/s3/credentials_jsc.rs"]
-pub mod __s3_credentials_jsc;
+pub(crate) mod __s3_credentials_jsc;
 #[doc(hidden)]
 #[path = "webcore/s3/download_stream.rs"]
-pub mod __s3_download_stream;
+pub(crate) mod __s3_download_stream;
 #[doc(hidden)]
 #[path = "webcore/s3/list_objects.rs"]
-pub mod __s3_list_objects;
+pub(crate) mod __s3_list_objects;
 #[doc(hidden)]
 #[path = "webcore/s3/multipart.rs"]
-pub mod __s3_multipart;
+pub(crate) mod __s3_multipart;
 #[doc(hidden)]
 #[path = "webcore/s3/simple_request.rs"]
-pub mod __s3_simple_request;
+pub(crate) mod __s3_simple_request;
 #[doc(hidden)]
 #[path = "webcore/s3/xml_response.rs"]
-pub mod __s3_xml_response;
-pub mod s3 {
-    pub use super::multipart_options_impl as multipart_options;
-    pub use super::multipart_options_impl::MultiPartUploadOptions;
+pub(crate) mod __s3_xml_response;
+pub(crate) mod s3 {
+    pub(crate) use bun_s3_signing::MultiPartUploadOptions;
 
     // Note: `client` is the umbrella re-export hub. It pulls in `simple_request`
     // / `download_stream` / `list_objects` / `multipart` transitively.
-    pub use super::__s3_client as client;
-    pub use super::__s3_credentials_jsc as credentials_jsc;
-    pub use super::__s3_download_stream as download_stream;
-    pub use super::__s3_list_objects as list_objects;
-    pub use super::__s3_multipart as multipart;
-    pub use super::__s3_simple_request as simple_request;
+    pub(crate) use super::__s3_client as client;
+    pub(crate) use super::__s3_credentials_jsc as credentials_jsc;
+    pub(crate) use super::__s3_download_stream as download_stream;
+    pub(crate) use super::__s3_list_objects as list_objects;
+    pub(crate) use super::__s3_multipart as multipart;
+    pub(crate) use super::__s3_simple_request as simple_request;
     pub(crate) use super::__s3_xml_response as xml_response;
-    pub use multipart::MultiPartUpload;
 }
 
 #[path = "webcore/streams.rs"]
-pub mod streams;
+pub(crate) mod streams;
 
-pub enum PathOrFileDescriptor {
+pub(crate) enum PathOrFileDescriptor {
     Path(bun_core::Utf8Bytes<'static>),
     Fd(bun_sys::Fd),
 }
@@ -342,13 +317,14 @@ pub enum SinkHandle {
     None,
     ServerResponse(crate::server::AnyRequestContext),
     FetchRequestBody(bun_ptr::BackRef<fetch::FetchRequestBodySink, bun_ptr::Mut>),
-    S3Upload(bun_ptr::BackRef<streams::NetworkSink, bun_ptr::Mut>),
+    S3Upload(bun_ptr::BackRef<s3::multipart::NetworkSink>),
     FileSink(bun_ptr::BackRef<file_sink::FileSink>),
     HTMLRewriter(bun_ptr::BackRef<crate::api::html_rewriter::RewriterPipe>),
     HttpResponse(bun_ptr::BackRef<streams::HTTPResponseSink, bun_ptr::Mut>),
     HttpsResponse(bun_ptr::BackRef<streams::HTTPSResponseSink, bun_ptr::Mut>),
-    ArrayBuffer(bun_ptr::BackRef<sink::ArrayBufferSink, bun_ptr::Mut>),
 }
+
+use bun_removable_features::{removable_body, removable_body_of_either};
 
 impl SinkHandle {
     #[inline]
@@ -361,24 +337,28 @@ impl SinkHandle {
         !self.is_none()
     }
 
-    /// SAFETY: every non-None variant's pointee is kept alive by the hook-in site for as long
-    /// as this handle is installed.
-    pub fn write(&self, data: &streams::Result) -> streams::Writable {
+    /// SAFETY: every non-None variant's pointee is alive for as long as this handle is installed.
+    pub fn write(&self, data: &streams::Result<'_>) -> streams::Writable {
         match *self {
             SinkHandle::None => streams::Writable::Done,
-            SinkHandle::ServerResponse(any) => any.write_chunk(data),
-            // SAFETY: live backref; ByteStream clears sink before free.
-            SinkHandle::FetchRequestBody(mut p) => unsafe { p.get_mut() }.write(data),
-            // SAFETY: live backref; ByteStream clears sink before free.
-            SinkHandle::S3Upload(mut p) => unsafe { p.get_mut() }.write(data),
-            SinkHandle::FileSink(p) => p.write(data),
-            SinkHandle::HTMLRewriter(p) => p.write(data),
-            // SAFETY: live backref; transform detaches before the JSSink is finalized.
-            SinkHandle::HttpResponse(mut p) => unsafe { p.get_mut() }.write(data),
-            // SAFETY: live backref; transform detaches before the JSSink is finalized.
-            SinkHandle::HttpsResponse(mut p) => unsafe { p.get_mut() }.write(data),
-            // SAFETY: live backref; transform detaches before the JSSink is finalized.
-            SinkHandle::ArrayBuffer(mut p) => unsafe { p.get_mut() }.write(data),
+            SinkHandle::ServerResponse(any) => {
+                removable_body!(Serve, Abort, { any.write_chunk(data) })
+            }
+            SinkHandle::FetchRequestBody(mut p) => removable_body!(Fetch, Abort, {
+                // SAFETY: live backref; ByteStream clears sink before free.
+                unsafe { p.get_mut() }.write(data)
+            }),
+            SinkHandle::S3Upload(p) => removable_body!(S3Client, Abort, { p.write(data) }),
+            SinkHandle::FileSink(p) => p.ref_guard().write(data),
+            SinkHandle::HTMLRewriter(p) => removable_body!(HtmlRewriter, Abort, { p.write(data) }),
+            SinkHandle::HttpResponse(mut p) => removable_body_of_either!(Serve, WebStreams, {
+                // SAFETY: live backref; transform detaches before the JSSink is finalized.
+                unsafe { p.get_mut() }.write(data)
+            }),
+            SinkHandle::HttpsResponse(mut p) => removable_body_of_either!(Serve, WebStreams, {
+                // SAFETY: live backref; transform detaches before the JSSink is finalized.
+                unsafe { p.get_mut() }.write(data)
+            }),
         }
     }
 
@@ -388,31 +368,36 @@ impl SinkHandle {
     pub fn end(&self, err: Option<streams::StreamError>) {
         match *self {
             SinkHandle::None => {}
-            SinkHandle::ServerResponse(any) => any.end_chunk(err.as_ref()),
-            // SAFETY: live backref; ByteStream clears sink before free.
-            SinkHandle::FetchRequestBody(mut p) => unsafe { p.get_mut() }.end_from_stream(err),
-            // Raw-ptr dispatch: may re-borrow and free the sink (see its doc).
-            SinkHandle::S3Upload(p) => streams::NetworkSink::end_from_stream(p.as_ptr(), err),
-            SinkHandle::FileSink(p) => p.end_from_stream(err),
-            SinkHandle::HTMLRewriter(p) => p.end_from_stream(err),
+            SinkHandle::ServerResponse(any) => {
+                removable_body!(Serve, Abort, { any.end_chunk(err.as_ref()) })
+            }
+            SinkHandle::FetchRequestBody(mut p) => removable_body!(Fetch, Abort, {
+                // SAFETY: live backref; ByteStream clears sink before free.
+                unsafe { p.get_mut() }.end_from_stream(err)
+            }),
+            SinkHandle::S3Upload(p) => removable_body!(S3Client, Abort, {
+                if let Some(sink) = p.ref_guard() {
+                    s3::multipart::NetworkSink::end_from_stream(&sink, err)
+                }
+            }),
+            SinkHandle::FileSink(p) => p.ref_guard().end_from_stream(err),
+            SinkHandle::HTMLRewriter(p) => {
+                removable_body!(HtmlRewriter, Abort, { p.end_from_stream(err) })
+            }
             SinkHandle::HttpResponse(_) => {}
             SinkHandle::HttpsResponse(_) => {}
-            SinkHandle::ArrayBuffer(_) => {}
         }
     }
 }
 
-pub enum DrainResult {
+pub(crate) enum DrainResult {
     Owned { list: Vec<u8>, size_hint: usize },
     EstimatedSize(usize),
     Aborted,
 }
 
 #[derive(Copy, Clone, Eq, PartialEq, core::marker::ConstParamTy)]
-pub enum Lifetime {
+pub(crate) enum Lifetime {
     Clone,
     Transfer,
-    Share,
-    /// When reading from a fifo like STDIN/STDERR
-    Temporary,
 }

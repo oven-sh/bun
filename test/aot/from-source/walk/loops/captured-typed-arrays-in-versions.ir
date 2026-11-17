@@ -1,0 +1,12 @@
+# -- source: captured-typed-arrays-in-versions.js
+# function counts(d) { const found = new Uint16Array(256), hash = i => (d[i] ^ (d[i + 1] << 2)) & 1023; let h = 0; for (let i = 0; i + 1 < d.length; i++) { h = (h + hash(i)) | 0; ++found[d[i]]; } return h + found[1] + d.subarray(1).length; }
+# const table = { counts }, names = JSON.parse('["counts"]');
+# for (const held of JSON.parse('[[1, 2, 3, 250], [1, 2.5, 1], [-7, 2147483648]]'))
+#   for (const kind of [Uint8Array, Float64Array, Int32Array]) print(table[names[0]](new kind(held)));
+# -- end of source
+# An element that is a key says nothing of its array, and the operators stand in a closure: the name `subarray` says alone that the parameter is a typed array. In a version of the loop the closure that is inlined reads the typed array that the preheader has found, not the captured value that nobody knows.
+# f1 = counts
+# RUN(COUNTS): walk f1:Body mechanisms=all
+# COUNTS: = GetTypedArrayElement {{*}} typedArrayType=2 {{*}}:1 #
+# RUN(ANSWERS): run-in-shell mechanisms=all
+# ANSWERS: exited with 0

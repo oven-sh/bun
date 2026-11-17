@@ -1,132 +1,86 @@
 use core::mem;
 use core::ptr::NonNull;
 
-use bun_jsc::{JSGlobalObject, JSValue, JsResult, event_loop::EventLoop};
-use bun_sys::{self, Fd, FdExt as _};
+use bun_jsc::{JSGlobalObject, JSValue, JsCell, JsResult, event_loop::EventLoop};
+use bun_sys::{self, Fd};
 
 use crate::node::types::FdJsc as _;
 
 use crate::api::bun_spawn::stdio::Stdio;
 use crate::webcore::ReadableStream;
-use bun_io::max_buf::MaxBuf;
+use bun_io::max_buf;
 use bun_ptr::RefPtr;
-use bun_ptr::cow_slice::CowSlice;
 
 use super::subprocess_pipe_reader::PipeReader;
 use super::{StdioResult, Subprocess};
 
-// `bun.ptr.CowString` — owned/borrowed byte slice (has
-// `init_owned` / `length` / `take_slice`).
-pub type CowString = CowSlice<u8>;
-
-pub enum Readable {
+pub(crate) enum Readable {
     Fd(Fd),
-    Memfd(Fd),
+    /// Becomes `Buffer` or `Errored` when the read ends.
     Pipe(RefPtr<PipeReader>),
     Inherit,
     Ignore,
     Closed,
-    /// Eventually we will implement Readables created from blobs and array buffers.
-    /// When we do that, `buffer` will be borrowed from those objects.
-    ///
-    /// When a buffered `pipe` finishes reading from its file descriptor,
-    /// the owning `Readable` will be converted into this variant and the pipe's
-    /// buffer will be taken as an owned `CowString`.
-    Buffer(CowString),
+    /// What a buffered `pipe` read, once it has finished reading.
+    Buffer(Box<[u8]>),
+    /// A buffered `pipe` whose read failed: the bytes read before the error, then the error.
+    Errored(Box<[u8]>, bun_sys::Error),
 }
 
 impl Readable {
-    /// Mutable borrow of the `Pipe` payload's `PipeReader`.
-    ///
-    /// `RefPtr` deliberately has no `DerefMut`; what makes `&mut` sound here
-    /// is that `Readable::Pipe` holds the owning ref for the variant's
-    /// lifetime, the reader lives in its own heap allocation disjoint from
-    /// `Readable`/`Subprocess`, and access is single-JS-mutator-thread.
-    #[inline]
-    #[allow(clippy::mut_from_ref)]
-    pub(in crate::api) fn pipe_reader_mut(pipe: &RefPtr<PipeReader>) -> &mut PipeReader {
-        // SAFETY: see fn doc — owning RefPtr, heap-disjoint, single-thread.
-        unsafe { &mut *pipe.as_ptr() }
+    /// A ref of the caller's own, for a call that can end the read and so replace `self`.
+    pub(crate) fn pipe(&self) -> Option<RefPtr<PipeReader>> {
+        match self {
+            Readable::Pipe(pipe) => Some(pipe.clone()),
+            _ => None,
+        }
     }
 
     pub(crate) fn memory_cost(&self) -> usize {
         match self {
             Readable::Pipe(pipe) => mem::size_of::<PipeReader>() + pipe.memory_cost(),
-            Readable::Buffer(buffer) => buffer.length(),
+            Readable::Buffer(buffer) | Readable::Errored(buffer, _) => buffer.len(),
             _ => 0,
         }
     }
 
     pub(crate) fn has_pending_activity(&self) -> bool {
-        match self {
-            Readable::Pipe(pipe) => pipe.has_pending_activity(),
-            _ => false,
+        matches!(self, Readable::Pipe(_))
+    }
+
+    pub(crate) fn ref_(&self) {
+        if let Readable::Pipe(pipe) = self {
+            pipe.update_ref(true);
         }
     }
 
-    pub fn ref_(&mut self) {
-        match self {
-            Readable::Pipe(pipe) => {
-                Self::pipe_reader_mut(pipe).update_ref(true);
-            }
-            _ => {}
-        }
-    }
-
-    pub(crate) fn unref(&mut self) {
-        match self {
-            Readable::Pipe(pipe) => {
-                Self::pipe_reader_mut(pipe).update_ref(false);
-            }
-            _ => {}
+    pub(crate) fn unref(&self) {
+        if let Readable::Pipe(pipe) = self {
+            pipe.update_ref(false);
         }
     }
 
     pub(crate) fn init(
-        stdio: Stdio,
-        event_loop: NonNull<EventLoop>,
+        stdio: &Stdio,
+        event_loop: &EventLoop,
         process: NonNull<Subprocess<'static>>,
         result: StdioResult,
-        max_size: Option<NonNull<MaxBuf>>,
+        max_size: Option<&max_buf::OwnerRef>,
         _is_sync: bool,
     ) -> Readable {
-        super::assert_stdio_result!(result);
-
-        let mut stdio = stdio;
         #[cfg(unix)]
         {
             if matches!(stdio, Stdio::Pipe) {
-                let _ = bun_sys::set_nonblocking(result.unwrap());
+                let _ = bun_sys::set_nonblocking(result.as_ref().unwrap().fd());
             }
         }
 
-        match &stdio {
+        match stdio {
             Stdio::Inherit => Readable::Inherit,
             Stdio::Ignore | Stdio::Ipc | Stdio::Path(..) => Readable::Ignore,
-            Stdio::Fd(fd) => {
-                #[cfg(unix)]
-                {
-                    let _ = fd;
-                    Readable::Fd(result.unwrap())
-                }
-                #[cfg(not(unix))]
-                {
-                    Readable::Fd(*fd)
-                }
-            }
-            Stdio::Memfd(_) => {
-                // Ownership of the fd moves into the Readable; `Stdio`'s Drop would close it.
-                let memfd = stdio.take_memfd().unwrap();
-                #[cfg(unix)]
-                {
-                    Readable::Memfd(memfd)
-                }
-                #[cfg(not(unix))]
-                {
-                    let _ = memfd;
-                    Readable::Ignore
-                }
-            }
+            Stdio::Fd(fd) => Readable::Fd(*fd),
+            #[cfg(any(target_os = "linux", target_os = "android"))]
+            Stdio::Memfd(_) => unreachable!("Memfd at stdout/stderr"),
             Stdio::Dup2(dup2) => {
                 #[cfg(unix)]
                 {
@@ -142,38 +96,32 @@ impl Readable {
                 Readable::Pipe(PipeReader::create(event_loop, process, result, max_size))
             }
             Stdio::Blob(..) => panic!("TODO: implement Blob support in Stdio readable"),
-            Stdio::Capture(..) => panic!("TODO: implement capture support in Stdio readable"),
-            // ReadableStream is handled separately
-            Stdio::ReadableStream(..) => Readable::Ignore,
+            Stdio::Capture => panic!("TODO: implement capture support in Stdio readable"),
+            Stdio::ReadableStream(..) => {
+                // Nothing reads it, but closing it would fail the child's writes.
+                #[cfg(unix)]
+                let _ = result.map(bun_sys::File::into_raw);
+                #[cfg(windows)]
+                if let StdioResult::Buffer(pipe) = result {
+                    let _ = pipe.into_raw();
+                }
+                Readable::Ignore
+            }
             // Rejected at i < 3 in Stdio::extract(); stdout/stderr never see this.
             Stdio::SocketFd => unreachable!("SocketFd at stdout/stderr"),
         }
     }
 
-    pub fn close(&mut self) {
-        match self {
-            Readable::Memfd(fd) => {
-                let fd = *fd;
-                *self = Readable::Closed;
-                fd.close();
-            }
-            Readable::Fd(_) => {
-                *self = Readable::Closed;
-            }
-            Readable::Pipe(pipe) => {
-                Self::pipe_reader_mut(pipe).close();
-            }
+    pub(crate) fn close(this: &JsCell<Self>) {
+        match this.get() {
+            Readable::Fd(_) => this.set(Readable::Closed),
+            Readable::Pipe(pipe) => PipeReader::close(&pipe.clone()),
             _ => {}
         }
     }
 
-    pub fn finalize(&mut self) {
+    pub(crate) fn finalize(&mut self) {
         match self {
-            Readable::Memfd(fd) => {
-                let fd = *fd;
-                *self = Readable::Closed;
-                fd.close();
-            }
             Readable::Fd(_) => {
                 *self = Readable::Closed;
             }
@@ -181,61 +129,40 @@ impl Readable {
                 let Readable::Pipe(pipe) = mem::replace(self, Readable::Closed) else {
                     unreachable!()
                 };
-                #[cfg(unix)]
-                {
-                    let release_start_ref = {
-                        let reader = Self::pipe_reader_mut(&pipe);
-                        if reader.process.is_some()
-                            && matches!(reader.state, super::subprocess_pipe_reader::State::Pending)
-                            && reader.ref_count.get() > 1
-                        {
-                            reader.reader.deinit();
-                            true
-                        } else {
-                            false
-                        }
-                    };
-                    if release_start_ref {
-                        // SAFETY: guard above proved a second ref exists; this deref cannot reach zero.
-                        unsafe { PipeReader::deref(pipe.as_ptr()) };
-                    }
-                }
-                Self::pipe_reader_mut(&pipe).process = None;
+                pipe.finalize();
             }
-            Readable::Buffer(_) => {
-                // Dropping the CowString (via the overwrite) frees the buffer;
-                // finalize is terminal.
+            Readable::Buffer(_) | Readable::Errored(..) => {
                 *self = Readable::Closed;
             }
             _ => {}
         }
     }
 
-    pub fn to_js(&mut self, global: &JSGlobalObject, _exited: bool) -> JsResult<JSValue> {
+    pub(crate) fn to_js(&mut self, cx: &bun_jsc::JsThread<'_>, _exited: bool) -> JsResult<JSValue> {
         match self {
-            // should only be reachable when the entire output is buffered.
-            Readable::Memfd(_) => self.to_buffered_value(global),
-
-            Readable::Fd(fd) => Ok(fd.to_js(global)),
+            Readable::Fd(fd) => Ok(fd.to_js(cx.global())),
             Readable::Pipe(_) => {
                 let Readable::Pipe(pipe) = mem::replace(self, Readable::Closed) else {
                     unreachable!()
                 };
-                let result = Self::pipe_reader_mut(&pipe).to_js(global);
-                Self::pipe_reader_mut(&pipe).process = None;
-                result
+                pipe.to_js(cx)
             }
             Readable::Buffer(_) => {
-                let Readable::Buffer(mut buffer) = mem::replace(self, Readable::Closed) else {
+                let Readable::Buffer(buffer) = mem::replace(self, Readable::Closed) else {
                     unreachable!()
                 };
 
-                if buffer.length() == 0 {
-                    return ReadableStream::empty(global);
+                if buffer.is_empty() {
+                    return ReadableStream::empty(cx.global());
                 }
 
-                let own = buffer.take_slice()?;
-                ReadableStream::from_owned_slice(global, own.into_vec(), 0)
+                ReadableStream::from_owned_slice(cx, buffer.into_vec(), 0)
+            }
+            Readable::Errored(..) => {
+                let Readable::Errored(buffer, err) = mem::replace(self, Readable::Closed) else {
+                    unreachable!()
+                };
+                ReadableStream::from_bytes_then_error(cx, buffer.into_vec(), err)
             }
             _ => Ok(JSValue::UNDEFINED),
         }
@@ -244,39 +171,32 @@ impl Readable {
     pub(crate) fn to_buffered_value(&mut self, global: &JSGlobalObject) -> JsResult<JSValue> {
         match self {
             Readable::Fd(fd) => Ok(fd.to_js(global)),
-            Readable::Memfd(fd) => {
-                #[cfg(not(unix))]
-                {
-                    let _ = fd;
-                    panic!("memfd is only supported on Linux");
-                }
-                #[cfg(unix)]
-                {
-                    let fd = *fd;
-                    *self = Readable::Closed;
-                    bun_jsc::ArrayBuffer::to_js_buffer_from_memfd(fd, global)
-                }
-            }
             Readable::Pipe(_) => {
                 let Readable::Pipe(pipe) = mem::replace(self, Readable::Closed) else {
                     unreachable!()
                 };
-                let result = Self::pipe_reader_mut(&pipe).to_buffer(global);
-                Self::pipe_reader_mut(&pipe).process = None;
-                result
+                pipe.detach();
+                Ok(JSValue::UNDEFINED)
             }
             Readable::Buffer(_) => {
-                let Readable::Buffer(mut buf) = mem::replace(self, Readable::Closed) else {
+                let Readable::Buffer(buffer) = mem::replace(self, Readable::Closed) else {
                     unreachable!()
                 };
-                let own = match buf.take_slice() {
-                    Ok(own) => own,
-                    Err(_) => return Err(global.throw_out_of_memory()),
-                };
-
-                JSValue::create_buffer_from_box(global, own)
+                JSValue::create_buffer_from_box(global, buffer)
             }
             _ => Ok(JSValue::UNDEFINED),
+        }
+    }
+
+    /// The error reading this output ended with, taken out of it. `spawnSync` asks before
+    /// `to_buffered_value` and throws it: the output that was lost cannot be returned.
+    pub(crate) fn take_read_error(&mut self) -> Option<bun_sys::Error> {
+        match mem::replace(self, Readable::Closed) {
+            Readable::Errored(_, err) => Some(err),
+            other => {
+                *self = other;
+                None
+            }
         }
     }
 }

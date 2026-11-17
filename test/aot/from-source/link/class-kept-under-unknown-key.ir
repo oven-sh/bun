@@ -1,0 +1,17 @@
+# -- source: class-kept-under-unknown-key.ts
+# declare function print(value: unknown): void;
+# declare const process: { readonly argv: readonly string[] };
+# class Row {
+#   id: number; age: number;
+#   constructor(id: number) { this.id = id; this.age = id * 2; }
+#   total(): number { return this.id + this.age; }
+# }
+# const rows: Row[] = [];
+# for (let i = 0; i < 9; i++) rows.push(new Row(i));
+# function sumBy(key: string): number { let sum = 0; for (const row of rows) sum += (row as unknown as Record<string, number>)[key]!; return sum; }
+# function largest(key: string): number { let most = 0; for (const row of rows) most = Math.max(most, (row as unknown as Record<string, number>)[key]!); return most; }
+# print(sumBy(process.argv[2]!) + largest(process.argv[2]!));
+# -- end of source
+# A value read under an unknown key may be the class, its prototype object or a method: converting it to a primitive calls what stands there and keeps the class in sight.
+# RUN: link layouts mechanisms=all
+# CHECK: layout L0 changes=[] stays-with-compiled-code

@@ -109,7 +109,7 @@ var __toESM = (mod, isNodeMode, target) => {
       return cached;
   }
   target = mod != null ? __create(__getProtoOf(mod)) : {};
-  const to = isNodeMode || !mod || !mod.__esModule ? __defProp(target, "default", { value: mod, enumerable: true }) : target;
+  const to = isNodeMode || !mod || !mod.__esModule || !__hasOwnProp.call(mod, "default") ? __defProp(target, "default", { value: mod, enumerable: true }) : target;
   if (mod && typeof mod === "object" || typeof mod === "function") {
     for (let key of __getOwnPropNames(mod))
       if (!__hasOwnProp.call(to, key))
@@ -134,7 +134,7 @@ var require_react = __commonJS(function(exports) {
 });
 
 // entry.tsx
-var import_react = __toESM(require_react(), 1);
+var import_react = __toESM(require_react());
 
 // node_modules/react/jsx-dev-runtime.js
 var $jsxDEV = () => null;

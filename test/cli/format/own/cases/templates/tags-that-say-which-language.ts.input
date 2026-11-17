@@ -1,0 +1,16 @@
+const a = css.inline`color:red;`;
+const b = css.global`a{color:red}`;
+const c = styled.a.b()`color:red;`;
+const d = styled(A).b.c`color:red;`;
+const e = css()`color:red;`;
+const f = css[x]`color:red;`;
+const g = A.extend`color:red;`;
+const h = (css as any)`color:red;`;
+const i = css!`color:red;`;
+const j = x.css`color:red;`;
+const k = gql.a`query{a}`;
+const l = graphql.experimental`query{a}`;
+const m = graphql(x)`query{a}`;
+const n = keyframes`from{a:b}`;
+const p = styled.div.attrs({})`color:red;`;
+const q = this.css`color:red;`;

@@ -1,6 +1,6 @@
 import { spawnSync } from "bun";
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, normalizeBunSnapshot, withoutAsanQuarantine } from "harness";
 import { join } from "path";
 
 test("reportError", () => {
@@ -120,5 +120,82 @@ test("native error printer handles lone surrogates in message and stack frame na
 
   // Printer must not have crashed: normal uncaught-error exit (1), no signal.
   expect(proc.signalCode).toBeNull();
+  expect(exitCode).toBe(1);
+});
+
+test.concurrent.each([
+  ["Proxy chain", "let a = {}; for (let i = 0; i < 150_000; i++) a = new Proxy(a, {}); throw a;"],
+  [
+    "chain of errors in an own property",
+    "let e = new Error('root'); for (let i = 0; i < 20_000; i++) { const next = new Error('wrap'); next.extra = e; e = next; } throw e;",
+  ],
+])("native error printer stops at the stack limit for an uncaught %s", async (_, src) => {
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", src],
+    env: bunEnv,
+    stdout: "ignore",
+    stderr: "ignore",
+  });
+  await proc.exited;
+  expect(proc.signalCode).toBeNull();
+  expect(proc.exitCode).toBe(1);
+});
+
+const throwsWhenPrinted = `Object.assign(new String("q"), { toString() { throw 1; }, [Symbol.toPrimitive]() { throw 1; } })`;
+
+test.concurrent.each([
+  {
+    name: "reportError(value)",
+    script: `reportError(${throwsWhenPrinted}); console.log("after");`,
+    expected: { stdout: "after\n", stderr: "error\n[threw while printing]\n\nBun v<bun-version>", exitCode: 1 },
+  },
+  {
+    name: "unhandled rejection",
+    script: `Promise.reject(${throwsWhenPrinted});`,
+    expected: { stdout: "", stderr: "error\n[threw while printing]\n\nBun v<bun-version>", exitCode: 1 },
+  },
+  {
+    name: "AggregateError member",
+    script: `console.log(Bun.inspect(new AggregateError([${throwsWhenPrinted}, new Error("second member")], "agg")).includes("second member"));`,
+    expected: { stdout: "true\n", stderr: "", exitCode: 0 },
+  },
+])("error printer doesn't leave an exception pending when the value throws: $name", async ({ script, expected }) => {
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", script],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr: normalizeBunSnapshot(stderr), exitCode }).toEqual(expected);
+});
+
+test("printing an uncaught error from code without a source map does not leak its message", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+      const thrower = new Function("message", "return () => { throw new Error(message); }");
+      const target = new EventTarget();
+      function report(count) {
+        for (let i = 0; i < count; i++) {
+          target.addEventListener("x", thrower(Buffer.alloc(1024 * 1024, "x").toString("latin1")), { once: true });
+          target.dispatchEvent(new Event("x"));
+        }
+        Bun.gc(true);
+        return process.memoryUsage.rss();
+      }
+      const before = report(4);
+      console.log((report(64) - before) / 1024 / 1024);
+      `,
+    ],
+    env: withoutAsanQuarantine(bunEnv),
+    stdout: "pipe",
+    stderr: "ignore",
+  });
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  // The leak is 64 MiB.
+  expect(parseFloat(stdout)).toBeLessThan(isASAN || isDebug ? 40 : 24);
   expect(exitCode).toBe(1);
 });

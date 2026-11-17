@@ -35,7 +35,9 @@ test("buffer.resolveObjectURL empty blob", async () => {
 });
 
 test("buffer.resolveObjectURL args", async () => {
+  // @ts-expect-error
   expect(resolveObjectURL()).toBeUndefined();
+  // @ts-expect-error
   expect(resolveObjectURL(1)).toBeUndefined();
   expect(resolveObjectURL("foo")).toBeUndefined();
   const blob = new Blob(["hello"]);
@@ -46,4 +48,8 @@ test("buffer.resolveObjectURL args", async () => {
     ),
   ).toBeUndefined();
   URL.revokeObjectURL(id);
+});
+
+test("buffer.resolveObjectURL is not a constructor", () => {
+  expect(() => Reflect.construct(resolveObjectURL, ["foo"])).toThrow(TypeError);
 });

@@ -1,0 +1,6 @@
+@import 'tailwindcss/utilities' source('./src');
+@import 'a' layer(b) source('c');
+@import './bar.css' supports(display:grid);
+@import url('a.css') layer(x);
+@import 'a' foo('b', 'c');
+@import 'a' supports(font-format('x'));

@@ -1,6 +1,8 @@
 import { S3Client } from "bun";
+import { estimateShallowMemoryUsageOf } from "bun:jsc";
 import { afterAll, describe, expect, test } from "bun:test";
 import { isMacOS, isWindows, tempDir } from "harness";
+import { closeSync, openSync, truncateSync } from "node:fs";
 import zlib from "node:zlib";
 import { join } from "path";
 
@@ -85,6 +87,20 @@ const gradientPng = makePng(16, 16, (x, y) => {
   return [v, v, v, 255];
 });
 
+// 64×64 4-component JPEGs (q95 4:4:4, Adobe-inverted CMYK): quadrants TL cyan, TR magenta, BL C128/M64/K64, BR black.
+const cmykJpeg = Buffer.from(
+  "/9j/7gAOQWRvYmUAZAAAAAAA/9sAQwACAQEBAQECAQEBAgICAgIEAwICAgIFBAQDBAYFBgYGBQYGBgcJCAYHCQcGBggLCAkKCgoKCgYICwwLCgwJCgoK/8AAFAgAQABABEMRAE0RAFkRAEsRAP/EAB8AAAEFAQEBAQEBAAAAAAAAAAABAgMEBQYHCAkKC//EALUQAAIBAwMCBAMFBQQEAAABfQECAwAEEQUSITFBBhNRYQcicRQygZGhCCNCscEVUtHwJDNicoIJChYXGBkaJSYnKCkqNDU2Nzg5OkNERUZHSElKU1RVVldYWVpjZGVmZ2hpanN0dXZ3eHl6g4SFhoeIiYqSk5SVlpeYmZqio6Slpqeoqaqys7S1tre4ubrCw8TFxsfIycrS09TV1tfY2drh4uPk5ebn6Onq8fLz9PX29/j5+v/aAA4EQwBNAFkASwAAPwD+f+v38r9/K/fyiiiiiiiiiiiiv7/K/gDoooooooooooooor+AOv7/ACiiiiiiiiiiiiiiv7/K/gDoooooooooooooor+AOv7/ACiiiiiiiiiiiiiiv7/K/gDoooooooooooooor+AOv7/ACiiiiiiiiiiiiiiv7/K/gDoooooooooooooor+f+v6/KK/P+iiiiiiiiiiiiv6AK/QCiv5A6KKKKKKKKKKKK/n/AK/P+iv6/KKKKKKKKKKKKK/oAr9AKK/kDoooooooooooor+f+vz/AKK/r8oooooooooooor+gCv0Aor+QOiiiiiiiiiiiiv5/wCvz/or+vyiiiiiiiiiiiiv6AK/QCiv5A6KKKKKKKKKKKK//9k=",
+  "base64",
+);
+const ycckJpeg = Buffer.from(
+  "/9j/7gAOQWRvYmUAZAAAAAAC/9sAQwACAQEBAQECAQEBAgICAgIEAwICAgIFBAQDBAYFBgYGBQYGBgcJCAYHCQcGBggLCAkKCgoKCgYICwwLCgwJCgoK/9sAQwECAgICAgIFAwMFCgcGBwoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoK/8AAFAgAQABABAERAAIRAQMRAQQRAP/EAB8AAAEFAQEBAQEBAAAAAAAAAAABAgMEBQYHCAkKC//EALUQAAIBAwMCBAMFBQQEAAABfQECAwAEEQUSITFBBhNRYQcicRQygZGhCCNCscEVUtHwJDNicoIJChYXGBkaJSYnKCkqNDU2Nzg5OkNERUZHSElKU1RVVldYWVpjZGVmZ2hpanN0dXZ3eHl6g4SFhoeIiYqSk5SVlpeYmZqio6Slpqeoqaqys7S1tre4ubrCw8TFxsfIycrS09TV1tfY2drh4uPk5ebn6Onq8fLz9PX29/j5+v/EAB8BAAMBAQEBAQEBAQEAAAAAAAABAgMEBQYHCAkKC//EALURAAIBAgQEAwQHBQQEAAECdwABAgMRBAUhMQYSQVEHYXETIjKBCBRCkaGxwQkjM1LwFWJy0QoWJDThJfEXGBkaJicoKSo1Njc4OTpDREVGR0hJSlNUVVZXWFlaY2RlZmdoaWpzdHV2d3h5eoKDhIWGh4iJipKTlJWWl5iZmqKjpKWmp6ipqrKztLW2t7i5usLDxMXGx8jJytLT1NXW19jZ2uLj5OXm5+jp6vLz9PX29/j5+v/aAA4EAQACEQMRBAAAPwD4vr+Uz/fw/fyigAooAKKACv0or+Wz/hXCigAooAKKACvzXr+pD/uoCigAooAKKACv0or+Wz/hXCigAooAKKACvzXr+pD/ALqAooAKKACigAr9KK/ls/4VwooAKKACigAr816/qQ/7qAooAKKACigAr9KK/ls/4VwooAKKACigAr816/qQ/wCkA/P+igAooAKKACvzPr+rD+az+QOigAooAKKACv0wr+Uz+lD+vyigAooAKKACvzPr+rD+az+QOigAooAKKACv0wr+Uz+lD+vyigAooAKKACvzPr+rD+az+QOigAooAKKACv0wr+Uz+lD+vyigAooAKKACvzPr+rD+az+QOigAooAKKACv/9k=",
+  "base64",
+);
+const cmykIccJpeg = Buffer.from(
+  "/9j/7gAOQWRvYmUAZAAAAAAA/+IANklDQ19QUk9GSUxFAAEBRkFLRS1DTVlLLUlDQy1QUk9GSUxFLVBBWUxPQUQtRk9SLVRFU1T/2wBDAAIBAQEBAQIBAQECAgICAgQDAgICAgUEBAMEBgUGBgYFBgYGBwkIBgcJBwYGCAsICQoKCgoKBggLDAsKDAkKCgr/wAAUCABAAEAEQxEATREAWREASxEA/8QAHwAAAQUBAQEBAQEAAAAAAAAAAAECAwQFBgcICQoL/8QAtRAAAgEDAwIEAwUFBAQAAAF9AQIDAAQRBRIhMUEGE1FhByJxFDKBkaEII0KxwRVS0fAkM2JyggkKFhcYGRolJicoKSo0NTY3ODk6Q0RFRkdISUpTVFVWV1hZWmNkZWZnaGlqc3R1dnd4eXqDhIWGh4iJipKTlJWWl5iZmqKjpKWmp6ipqrKztLW2t7i5usLDxMXGx8jJytLT1NXW19jZ2uHi4+Tl5ufo6erx8vP09fb3+Pn6/9oADgRDAE0AWQBLAAA/AP5/6/fyv38r9/KKKKKKKKKKKKK/v8r+AOiiiiiiiiiiiiiiv4A6/v8AKKKKKKKKKKKKKKK/v8r+AOiiiiiiiiiiiiiiv4A6/v8AKKKKKKKKKKKKKKK/v8r+AOiiiiiiiiiiiiiiv4A6/v8AKKKKKKKKKKKKKKK/v8r+AOiiiiiiiiiiiiiiv5/6/r8or8/6KKKKKKKKKKKK/oAr9AKK/kDoooooooooooor+f8Ar8/6K/r8oooooooooooor+gCv0Aor+QOiiiiiiiiiiiiv5/6/P8Aor+vyiiiiiiiiiiiiv6AK/QCiv5A6KKKKKKKKKKKK/n/AK/P+iv6/KKKKKKKKKKKKK/oAr9AKK/kDoooooooooooor//2Q==",
+  "base64",
+);
+
 function rgbaAt(buf: Uint8Array, w: number, x: number, y: number): [number, number, number, number] {
   const i = (y * w + x) * 4;
   return [buf[i], buf[i + 1], buf[i + 2], buf[i + 3]];
@@ -110,7 +126,7 @@ function decodePngRaw(png: Uint8Array): { w: number; h: number; data: Uint8Array
     off += 12 + len;
   }
   const raw = zlib.inflateSync(Buffer.concat(idats));
-  // Undo per-row filter. libspng may pick filter ≠ 0; handle 0–4.
+  // Undo per-row filter. The encoder may pick filter ≠ 0; handle 0–4.
   const stride = w * 4;
   const out = new Uint8Array(w * h * 4);
   let p = 0;
@@ -145,6 +161,7 @@ function decodePngRaw(png: Uint8Array): { w: number; h: number; data: Uint8Array
 describe("Bun.Image", () => {
   test("constructor exists and is exposed on Bun", () => {
     expect(typeof Bun.Image).toBe("function");
+    // @ts-expect-error
     expect(() => new Bun.Image()).toThrow();
   });
 
@@ -178,15 +195,47 @@ describe("Bun.Image", () => {
     expect((await res.bytes()).subarray(8, 12)).toEqual(Buffer.from("WEBP"));
   });
 
+  test("Bun.file() input can have up to 256 MiB, like a path", async () => {
+    using dir = tempDir("image-file-size", { "src.png": cornersPng });
+    const path = join(String(dir), "src.png");
+    const outcome = (image: Bun.Image) =>
+      image.metadata().then(
+        ({ format }) => format,
+        error => error.code,
+      );
+    const limit = 256 * 1024 * 1024;
+
+    truncateSync(path, limit);
+    const file = Bun.file(path);
+    expect(await outcome(file.image())).toBe("png");
+
+    truncateSync(path, limit + 1);
+    expect(await outcome(new Bun.Image(path))).toBe("ERR_IMAGE_TOO_MANY_PIXELS");
+    expect(await outcome(file.image())).toBe("ERR_IMAGE_TOO_MANY_PIXELS");
+    expect(await outcome(file.slice(0, cornersPng.length).image())).toBe("png");
+    const fd = openSync(path, "r");
+    try {
+      expect(await outcome(Bun.file(fd).image())).toBe("ERR_IMAGE_TOO_MANY_PIXELS");
+    } finally {
+      closeSync(fd);
+    }
+
+    truncateSync(path, cornersPng.length);
+    expect(await outcome(file.image())).toBe("png");
+    expect(file.size).toBe(cornersPng.length);
+  });
+
   // Store-backed Blob sources are read at terminal time through the Blob's
   // own store dispatch. The Bun.file() test above covers the file store; this
   // covers the S3 download callback (bytes and error arm) and the synchronous
   // in-memory delivery.
   test("S3 and zero-length in-memory Blob sources are read through the same chain", async () => {
+    const ranges: (string | null)[] = [];
     using server = Bun.serve({
       port: 0,
       fetch(req) {
         const { pathname } = new URL(req.url);
+        ranges.push(req.headers.get("range"));
         if (req.method === "GET" && pathname.endsWith("/src.png")) {
           return new Response(cornersPng, { headers: { "Content-Type": "image/png" } });
         }
@@ -214,6 +263,7 @@ describe("Bun.Image", () => {
       // Second terminal reuses the downloaded bytes.
       expect((await fromS3.png().bytes())[0]).toBe(0x89);
       expect(await client.file("src.png").image().metadata()).toEqual({ width: 4, height: 3, format: "png" });
+      expect(ranges).toEqual([null, null]);
 
       // Download failure rejects the terminal with the S3 error.
       expect(
@@ -519,7 +569,7 @@ describe("Bun.Image", () => {
     }
 
     // Walk a JPEG byte-stream and concatenate every APP2 `ICC_PROFILE\0`
-    // segment's payload. libjpeg-turbo splits profiles above 65 519 bytes
+    // segment's payload. The encoder splits profiles above 65 519 bytes
     // into multiple APP2 markers with sequence + total-count header; this
     // helper reassembles them regardless of whether the source needed
     // splitting. Returns null when no ICC_PROFILE APP2 is found.
@@ -546,9 +596,8 @@ describe("Bun.Image", () => {
     // Walk a WebP RIFF container and return the ICCP chunk payload.
     // Layout: "RIFF" · u32le(riff_size) · "WEBP" · { fourcc(4) ·
     // u32le(chunk_size) · payload · pad-to-even }…  A non-VP8X WebP
-    // (plain `WebPEncodeRGBA` output) only has a single VP8/VP8L chunk
-    // and returns null here. libwebpmux wraps the bitstream in VP8X +
-    // ICCP when a profile is attached.
+    // only has a single VP8/VP8L chunk and returns null here. The encoder
+    // wraps the bitstream in VP8X + ICCP when a profile is attached.
     function extractWebpIccp(webp: Uint8Array): Uint8Array | null {
       if (webp.length < 12) return null;
       const dv = new DataView(webp.buffer, webp.byteOffset, webp.byteLength);
@@ -562,9 +611,9 @@ describe("Bun.Image", () => {
       return null;
     }
 
-    // Distinctive binary payload that round-trips through libspng's
-    // deflate/inflate and libjpeg-turbo's APP2 chunking without
-    // modification. Neither library validates ICC internals. The wide byte
+    // Distinctive binary payload that round-trips through the PNG codec's
+    // deflate/inflate and the JPEG codec's APP2 chunking without
+    // modification. Neither codec validates ICC internals. The wide byte
     // range (0-255, prime-step LCG) exercises binary-safe transport so a
     // stray text-mode decode would corrupt and fail the round-trip. 384
     // bytes fits comfortably in a single APP2 segment; the multi-segment
@@ -572,7 +621,7 @@ describe("Bun.Image", () => {
     const fakeProfile = new Uint8Array(384);
     for (let i = 0; i < fakeProfile.length; i++) fakeProfile[i] = (i * 37 + 11) & 0xff;
 
-    // Above libjpeg-turbo's 65 519-byte per-APP2 split threshold so the
+    // Above the 65 519 bytes that fit in an APP2 segment, so the
     // PNG → JPEG path emits two APP2 segments and exercises the
     // reassembly loop in `extractJpegIcc`. Built once for the multi-
     // segment test only — most tests use the small profile to keep the
@@ -650,11 +699,8 @@ describe("Bun.Image", () => {
     });
 
     test("> 64 KiB profile splits across multiple APP2 segments and reassembles", async () => {
-      // libjpeg-turbo splits at 65 519 bytes per APP2; 70 000 forces two
-      // segments and exercises the seq/total header ordering the extractor
-      // loop walks across. If this breaks because libjpeg-turbo's cap
-      // changes, shift the threshold — the goal is "> one segment", not
-      // the exact number.
+      // An APP2 segment has room for 65 519 bytes; 70 000 forces two and
+      // exercises the seq/total header ordering the extractor loop walks across.
       const src = pngWithIccp(cornersPng, bigProfile);
       const jpg = await new Bun.Image(src).jpeg({ quality: 90 }).bytes();
       // Count the APP2 ICC_PROFILE segments to confirm the split happened
@@ -703,8 +749,8 @@ describe("Bun.Image", () => {
       expect(Array.from(got!)).toEqual(Array.from(fakeProfile));
     });
 
-    // ── WebP ICCP carry-through — libwebpmux/libwebpdemux wrap the raw
-    // VP8/VP8L bitstream in a VP8X container so the ICCP chunk can travel
+    // ── WebP ICCP carry-through — the raw VP8/VP8L bitstream is
+    // wrapped in a VP8X container so the ICCP chunk can travel
     // alongside. Covers decode-side (WebP→PNG), encode-side (PNG→WebP,
     // both lossy and lossless), WebP→WebP round-trip, geometry ops
     // preserving the profile through a WebP encode, and the no-profile
@@ -713,7 +759,7 @@ describe("Bun.Image", () => {
     test("PNG iCCP transfers to WebP encode — ICCP chunk in output", async () => {
       const src = pngWithIccp(cornersPng, fakeProfile);
       const webp = await new Bun.Image(src).webp({ quality: 90 }).bytes();
-      // libwebpmux wraps the bitstream in VP8X when any extended chunk is
+      // The bitstream is wrapped in VP8X when any extended chunk is
       // attached. First chunk after the RIFF header must be VP8X with the
       // ICCP flag (bit 5 of byte 0 of the VP8X body) set.
       expect(String.fromCharCode(...webp.subarray(12, 16))).toBe("VP8X");
@@ -725,9 +771,8 @@ describe("Bun.Image", () => {
 
     test("PNG iCCP transfers to lossless WebP encode", async () => {
       // VP8L has a different bitstream chunk from VP8; the VP8X + ICCP
-      // wrapping must still work. Lossless path is separate from lossy
-      // (`WebPEncodeLosslessRGBA` vs `WebPEncodeRGBA`), so both need
-      // coverage.
+      // wrapping must still work. Lossless path is separate from lossy,
+      // so both need coverage.
       const src = pngWithIccp(cornersPng, fakeProfile);
       const webp = await new Bun.Image(src).webp({ lossless: true }).bytes();
       const got = extractWebpIccp(webp);
@@ -738,8 +783,8 @@ describe("Bun.Image", () => {
     test("WebP ICCP transfers to PNG encode — demux extracts the profile", async () => {
       // Build the WebP via Bun.Image (PNG-with-iCCP → WebP) so the test
       // doesn't hand-assemble a VP8X container, then decode THAT WebP
-      // and re-encode to PNG. This exercises `WebPDemuxGetChunk` on the
-      // decode side.
+      // and re-encode to PNG. This exercises the search for the
+      // chunk on the decode side.
       const srcPng = pngWithIccp(cornersPng, fakeProfile);
       const webp = await new Bun.Image(srcPng).webp({ lossless: true }).bytes();
       const outPng = await new Bun.Image(webp).png().bytes();
@@ -778,6 +823,71 @@ describe("Bun.Image", () => {
       expect(String.fromCharCode(...lossless.subarray(12, 16))).toBe("VP8L");
       expect(extractWebpIccp(lossless)).toBeNull();
     });
+
+    test("CMYK JPEG's ink-channel ICC profile is dropped on re-encode", async () => {
+      expect(extractJpegIcc(cmykIccJpeg)).not.toBeNull();
+      const jpg = await new Bun.Image(cmykIccJpeg).jpeg({ quality: 90 }).bytes();
+      expect(extractJpegIcc(jpg)).toBeNull();
+      const png = await new Bun.Image(cmykIccJpeg).png().bytes();
+      expect(extractPngIccp(png)).toBeNull();
+    });
+  });
+
+  describe("CMYK / YCCK JPEG decode", () => {
+    // Expected RGB = CMY·K/255 on the stored bytes; the mixed and black quadrants only match if the conversion ran.
+    const quadrants: [string, number, number, [number, number, number]][] = [
+      ["top-left cyan", 16, 16, [0, 255, 255]],
+      ["top-right magenta", 48, 16, [255, 0, 255]],
+      ["bottom-left mixed ink", 16, 48, [95, 143, 191]],
+      ["bottom-right black", 48, 48, [0, 0, 0]],
+    ];
+    function expectQuadrants(data: Uint8Array, w: number, scale = 1) {
+      const got = quadrants.map(([name, x, y, [r, g, b]]) => {
+        const px = rgbaAt(data, w, x * scale, y * scale);
+        const err = Math.max(Math.abs(px[0] - r), Math.abs(px[1] - g), Math.abs(px[2] - b));
+        return { name, alpha: px[3], rgb: err <= 8 ? "within tolerance" : `got [${px}], off by ${err}` };
+      });
+      expect(got).toStrictEqual(quadrants.map(([name]) => ({ name, alpha: 255, rgb: "within tolerance" })));
+    }
+
+    test.each([
+      ["CMYK (Adobe transform=0)", cmykJpeg],
+      ["YCCK (Adobe transform=2)", ycckJpeg],
+    ])("%s decodes to sRGB", async (_name, fixture) => {
+      expect(await new Bun.Image(fixture).metadata()).toEqual({ width: 64, height: 64, format: "jpeg" });
+      const { w, h, data } = decodePngRaw(await new Bun.Image(fixture).png().bytes());
+      expect([w, h]).toEqual([64, 64]);
+      expectQuadrants(data, w);
+    });
+
+    test("4-component JPEG without an Adobe APP14 marker decodes as CMYK", async () => {
+      expect([cmykJpeg[2], cmykJpeg[3]]).toEqual([0xff, 0xee]);
+      const seglen = (cmykJpeg[4] << 8) | cmykJpeg[5];
+      const bare = Buffer.concat([cmykJpeg.subarray(0, 2), cmykJpeg.subarray(2 + 2 + seglen)]);
+      const { w, data } = decodePngRaw(await new Bun.Image(bare).png().bytes());
+      expectQuadrants(data, w);
+    });
+
+    test("resize + JPEG re-encode runs the conversion on the DCT-scaled buffer", async () => {
+      const out = await new Bun.Image(cmykJpeg).resize(32, 32).jpeg().bytes();
+      expect([out[0], out[1]]).toEqual([0xff, 0xd8]);
+      const { w, h, data } = decodePngRaw(await new Bun.Image(out).png().bytes());
+      expect([w, h]).toEqual([32, 32]);
+      expectQuadrants(data, w, 0.5);
+    });
+
+    // djpeg warns "extraneous bytes before marker 0xd9" and finishes the decode.
+    test.each([
+      ["CMYK", cmykJpeg],
+      ["YCCK", ycckJpeg],
+    ])("%s with junk before EOI decodes to the clean file's pixels", async (_name, fixture) => {
+      expect([...fixture.subarray(-2)]).toEqual([0xff, 0xd9]);
+      const padded = Buffer.concat([fixture.subarray(0, -2), Buffer.alloc(16), fixture.subarray(-2)]);
+      const clean = decodePngRaw(await new Bun.Image(fixture).png().bytes());
+      const { w, data } = decodePngRaw(await new Bun.Image(padded).png().bytes());
+      expectQuadrants(data, w);
+      expect(Buffer.compare(data, clean.data)).toBe(0);
+    });
   });
 
   // EXIF: build a minimal JPEG via Bun.Image, then splice in an APP1 segment
@@ -805,6 +915,37 @@ describe("Bun.Image", () => {
     // And opting out leaves it landscape.
     const raw = await new Bun.Image(withExif, { autoOrient: false }).metadata();
     expect(raw).toEqual({ width: 4, height: 2, format: "jpeg" });
+  });
+
+  // The decoder skips stray bytes before a marker, so it accepts this file.
+  // The orientation reader has to skip them too, or the picture comes out sideways with no error.
+  test("EXIF Orientation=6 survives junk bytes before the APP1 segment", async () => {
+    const jpg = await new Bun.Image(makePng(4, 2, (x, y) => [x * 60, y * 200, 128, 255])).jpeg({ quality: 90 }).bytes();
+    // prettier-ignore
+    const tiff = new Uint8Array([
+      0x4d, 0x4d, 0x00, 0x2a, 0x00, 0x00, 0x00, 0x08, // header
+      0x00, 0x01,                                     // 1 entry
+      0x01, 0x12, 0x00, 0x03, 0x00, 0x00, 0x00, 0x01, 0x00, 0x06, 0x00, 0x00,
+      0x00, 0x00, 0x00, 0x00,                         // next IFD = 0
+    ]);
+    const exif = Buffer.concat([Buffer.from("Exif\0\0"), tiff]);
+    const app1 = Buffer.concat([Buffer.from([0xff, 0xe1, (exif.length + 2) >> 8, (exif.length + 2) & 255]), exif]);
+    // After APP0: the format sniffer wants a marker straight after SOI.
+    expect([jpg[2], jpg[3]]).toEqual([0xff, 0xe0]);
+    const app0End = 4 + ((jpg[4] << 8) | jpg[5]);
+    const withExif = Buffer.concat([jpg.subarray(0, app0End), app1, jpg.subarray(app0End)]);
+    // Zero bytes, then 0xFF00: the decoder discards both kinds.
+    const junk = Buffer.from([...new Array<number>(14).fill(0), 0xff, 0x00]);
+    const withJunk = Buffer.concat([jpg.subarray(0, app0End), junk, app1, jpg.subarray(app0End)]);
+
+    expect(await new Bun.Image(withJunk).metadata()).toEqual({ width: 2, height: 4, format: "jpeg" });
+    const rotated = await new Bun.Image(withJunk).png().bytes();
+    expect(Buffer.compare(rotated, await new Bun.Image(withExif).png().bytes())).toBe(0);
+    expect(await new Bun.Image(withJunk, { autoOrient: false }).metadata()).toEqual({
+      width: 4,
+      height: 2,
+      format: "jpeg",
+    });
   });
 
   test("rejects on unrecognised input", async () => {
@@ -957,7 +1098,7 @@ describe("Bun.Image", () => {
     expect(
       () =>
         new Bun.Image(cornersPng, {
-          get maxPixels() {
+          get maxPixels(): number {
             throw new Error("boom");
           },
         }),
@@ -1006,6 +1147,15 @@ describe("Bun.Image", () => {
       expect(blob.type).toBe("image/png");
       const back = decodePngRaw(new Uint8Array(await blob.arrayBuffer()));
       expect(back.w).toBe(16);
+    });
+
+    test(".blob() tells the GC the size of its bytes", async () => {
+      // Noise, so that the PNG is far larger than the estimate for an empty Blob.
+      let seed = 1;
+      const noise = () => (seed = (Math.imul(seed, 1103515245) + 12345) >>> 0) >>> 24;
+      const blob = await new Bun.Image(makePng(64, 64, () => [noise(), noise(), noise(), 255])).png().blob();
+      expect(blob.size).toBeGreaterThan(4096);
+      expect(estimateShallowMemoryUsageOf(blob)).toBeGreaterThan(blob.size);
     });
 
     test(".buffer() returns a Node Buffer", async () => {
@@ -1218,6 +1368,11 @@ describe("Bun.Image", () => {
   });
 });
 
+test("a subclass inherits Bun.Image.backend", () => {
+  class Subclass extends Bun.Image {}
+  expect(Subclass.backend).toBe(Bun.Image.backend);
+});
+
 describe("decode-only formats (BMP / TIFF / GIF)", () => {
   // Several tests here flip the process-global backend; restore after the
   // describe so leaks can't reach the suites below regardless of throw paths.
@@ -1311,7 +1466,7 @@ describe("decode-only formats (BMP / TIFF / GIF)", () => {
       Buffer.from(new Uint32Array([0, 8, 0, 0, 0, 0]).buffer),     // BI_RGB, biSizeImage, ppm×2, clrUsed, clrImportant
       Buffer.from([0, 0, 255, 0,  0, 255, 0, 0]),                  // BGRX × 2
     ]);
-    const png = await new Bun.Image(bmp, { backend: "bun" }).png().bytes();
+    const png = await new Bun.Image(bmp, { backend: "bun" } as any).png().bytes();
     const { data } = decodePngRaw(png);
     expect([...data.subarray(0, 4)]).toEqual([255, 0, 0, 255]);
     expect([...data.subarray(4, 8)]).toEqual([0, 255, 0, 255]);
@@ -1613,7 +1768,7 @@ describe("Bun.Image.backend", () => {
 
   // Same input → both backends → both must round-trip pixels exactly. The
   // system path goes through ImageIO/WIC + vImage; the bun path is
-  // spng/libwebp + Highway. Reflect/rotate are pure permutations so byte
+  // bun_png/bun_webp + Highway. Reflect/rotate are pure permutations so byte
   // equality holds; resize uses lanczos3 (the only filter the system path
   // accepts) so we just check dimensions and that it's not all-black.
   test.each(["bun", "system"] as const)("backend=%s pipeline parity", async backend => {

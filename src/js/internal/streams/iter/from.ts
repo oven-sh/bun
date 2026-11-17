@@ -8,6 +8,15 @@
 const { isAnyArrayBuffer, isPromise, isTypedArray, isUint8Array } = require("node:util/types");
 
 const { kValidatedSource, toStreamable, toAsyncStreamable } = require("internal/streams/iter/types");
+// A symbol that a pattern takes out of `require(..)` is a plain `symbol` for the type checker: `x[key as Keys["key"]]` says which.
+type Keys = typeof import("internal/streams/iter/types").default;
+type Streamable = import("internal/streams/iter/types").Streamable;
+
+interface Source {
+  __proto__?: null;
+  [Symbol.asyncIterator](): AsyncIterableIterator<Uint8Array[]>;
+}
+type SyncSource = Iterable<Uint8Array[]> & { __proto__?: null };
 
 const { hasProtocol, toUint8Array } = require("internal/streams/iter/utils");
 
@@ -32,7 +41,7 @@ function isPrimitiveChunk(value) {
  * Check if value is a sync iterable (has Symbol.iterator).
  * @returns {boolean}
  */
-function isSyncIterable(value) {
+function isSyncIterable(value): value is Iterable<unknown> {
   // We do not consider regular strings to be sync iterables in this context.
   // We don't care about boxed strings (String objects) since they are uncommon.
   return typeof value !== "string" && typeof value?.[Symbol.iterator] === "function";
@@ -42,7 +51,7 @@ function isSyncIterable(value) {
  * Check if value is an async iterable (has Symbol.asyncIterator).
  * @returns {boolean}
  */
-function isAsyncIterable(value) {
+function isAsyncIterable(value): value is AsyncIterable<unknown> {
   return typeof value?.[Symbol.asyncIterator] === "function";
 }
 
@@ -88,7 +97,7 @@ function arrayBufferViewToUint8Array(chunk) {
  * Recursively flattens arrays, iterables, and protocol conversions.
  * @yields {Uint8Array}
  */
-function* normalizeSyncValue(value) {
+function* normalizeSyncValue(value): Generator<Uint8Array, void, unknown> {
   // Handle primitives
   if (isPrimitiveChunk(value)) {
     yield primitiveToUint8Array(value);
@@ -126,7 +135,7 @@ function* normalizeSyncValue(value) {
  * Check if value is already a Uint8Array[] batch (fast path).
  * @returns {boolean}
  */
-function isUint8ArrayBatch(value) {
+function isUint8ArrayBatch(value): value is Uint8Array[] {
   if (!Array.isArray(value)) return false;
   const len = value.length;
   if (len === 0) return true;
@@ -141,7 +150,7 @@ function isUint8ArrayBatch(value) {
   return true;
 }
 
-function* yieldBoundedBatch(batch) {
+function* yieldBoundedBatch(batch: Uint8Array[]) {
   if (batch.length === 0) {
     return;
   }
@@ -160,7 +169,7 @@ function* yieldBoundedBatch(batch) {
  * @yields {Uint8Array[]}
  */
 function* normalizeSyncSource(source) {
-  let batch = [];
+  let batch: Uint8Array[] = [];
 
   for (const value of source) {
     // Fast path 1: value is already a Uint8Array[] batch
@@ -186,7 +195,7 @@ function* normalizeSyncSource(source) {
       yield batch;
       batch = [];
     }
-    let valueBatch = [];
+    let valueBatch: Uint8Array[] = [];
     for (const chunk of normalizeSyncValue(value)) {
       valueBatch.push(chunk);
       if (valueBatch.length === FROM_BATCH_SIZE) {
@@ -214,7 +223,7 @@ function* normalizeSyncSource(source) {
  * and protocol conversions.
  * @yields {Uint8Array}
  */
-async function* normalizeAsyncValue(value) {
+async function* normalizeAsyncValue(value): AsyncGenerator<Uint8Array, void, unknown> {
   // Handle promises first
   if (isPromise(value)) {
     const resolved = await value;
@@ -301,7 +310,7 @@ async function* normalizeAsyncSource(source) {
         continue;
       }
       // Slow path: normalize the value
-      const batch = [];
+      const batch: Uint8Array[] = [];
       for await (const chunk of normalizeAsyncValue(value)) {
         batch.push(chunk);
       }
@@ -314,7 +323,7 @@ async function* normalizeAsyncSource(source) {
 
   // Fall back to sync iteration - batch sync values together with a bound.
   if (isSyncIterable(source)) {
-    let batch = [];
+    let batch: Uint8Array[] = [];
 
     for (const value of source) {
       // Fast path 1: value is already a Uint8Array[] batch
@@ -341,7 +350,7 @@ async function* normalizeAsyncSource(source) {
         yield batch;
         batch = [];
       }
-      let asyncBatch = [];
+      let asyncBatch: Uint8Array[] = [];
       for await (const chunk of normalizeAsyncValue(value)) {
         asyncBatch.push(chunk);
         if (asyncBatch.length === FROM_BATCH_SIZE) {
@@ -373,7 +382,7 @@ async function* normalizeAsyncSource(source) {
  * @param {string|ArrayBuffer|ArrayBufferView|Iterable} input
  * @returns {Iterable<Uint8Array[]>}
  */
-function fromSync(input) {
+function fromSync(input): SyncSource {
   if (input == null) {
     throw $ERR_INVALID_ARG_TYPE("input", "a non-null value", input);
   }
@@ -427,7 +436,7 @@ function fromSync(input) {
   // Check toStreamable protocol (takes precedence over iteration protocols).
   // toAsyncStreamable is ignored entirely in fromSync.
   if (typeof input[toStreamable] === "function") {
-    return fromSync(input[toStreamable]());
+    return fromSync((input as Streamable)[toStreamable as Keys["toStreamable"]]!());
   }
 
   // Reject explicit async inputs
@@ -460,7 +469,7 @@ function fromSync(input) {
  * @param {string|ArrayBuffer|ArrayBufferView|Iterable|AsyncIterable} input
  * @returns {AsyncIterable<Uint8Array[]>}
  */
-function from(input) {
+function from(input): Source {
   if (input == null) {
     throw $ERR_INVALID_ARG_TYPE("input", "a non-null value", input);
   }
@@ -518,7 +527,7 @@ function from(input) {
   // Check toAsyncStreamable protocol (takes precedence over toStreamable and
   // iteration protocols)
   if (typeof input[toAsyncStreamable] === "function") {
-    const result = input[toAsyncStreamable]();
+    const result = (input as Streamable)[toAsyncStreamable as Keys["toAsyncStreamable"]]!() as Source | undefined;
     // Synchronous validated source (e.g. Readable batched iterator)
     if (result?.[kValidatedSource]) {
       return result;
@@ -540,7 +549,7 @@ function from(input) {
 
   // Check toStreamable protocol (takes precedence over iteration protocols)
   if (typeof input[toStreamable] === "function") {
-    return from(input[toStreamable]());
+    return from((input as Streamable)[toStreamable as Keys["toStreamable"]]!());
   }
 
   // Must be a Streamable (sync or async iterable)

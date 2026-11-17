@@ -27,8 +27,7 @@
 //!    then we don't need to do any allocations or extra work to get the output
 //!    file for a chunk.
 
-use crate::mal_prelude::*;
-use crate::options::{self, Loader, OutputFile};
+use crate::options::{self, OutputFile};
 use crate::{Chunk, LinkerContext};
 pub(crate) struct OutputFileList {
     pub(crate) output_files: Vec<options::OutputFile>,
@@ -46,11 +45,7 @@ pub enum OutputFileListError {
 }
 
 impl OutputFileList {
-    pub(crate) fn init(
-        c: &LinkerContext,
-        chunks: &[Chunk],
-        _unused: usize,
-    ) -> Result<Self, crate::Error> {
+    pub(crate) fn init(c: &LinkerContext, chunks: &[Chunk]) -> Result<Self, crate::Error> {
         let (length, supplementary_file_count) =
             OutputFileList::calculate_output_file_list_capacity(c, chunks);
         let mut output_files: Vec<options::OutputFile> = Vec::with_capacity(length as usize);
@@ -71,6 +66,17 @@ impl OutputFileList {
     }
 
     pub(crate) fn take(&mut self) -> Vec<options::OutputFile> {
+        // A source map, bytecode or module info file is counted before it is made, and one that is not made after all
+        // (a chunk JSC cannot generate bytecode for) leaves its slot unclaimed. Slots are handed out in order, so the
+        // unclaimed ones are the end of their region: they go, and every file keeps the index it was given except the
+        // additional files after them, which nothing refers to by index.
+        if let Some(claimed_end) = self.index_for_sourcemaps_and_bytecode
+            && claimed_end < self.additional_output_files_start
+        {
+            self.output_files
+                .drain(claimed_end as usize..self.additional_output_files_start as usize);
+            self.additional_output_files_start = claimed_end;
+        }
         // TODO: should this return an error
         debug_assert!(
             self.total_insertions as usize == self.output_files.len(),
@@ -87,7 +93,6 @@ impl OutputFileList {
         c: &LinkerContext,
         chunks: &[Chunk],
     ) -> (u32, u32) {
-        let parse_graph = c.parse_graph();
         let source_map_count: usize = if c.options.source_maps.has_external_files() {
             'brk: {
                 let mut count: usize = 0;
@@ -106,22 +111,10 @@ impl OutputFileList {
             0
         };
         let bytecode_count: usize = if c.options.generate_bytecode_cache {
-            'bytecode_count: {
-                let mut bytecode_count: usize = 0;
-                let loaders = parse_graph.input_files.items_loader();
-                for chunk in chunks {
-                    let loader: Loader = if chunk.entry_point.is_entry_point() {
-                        loaders[chunk.entry_point.source_index() as usize]
-                    } else {
-                        Loader::Js
-                    };
-
-                    if chunk.content.is_javascript() && loader.is_javascript_like() {
-                        bytecode_count += 1;
-                    }
-                }
-                break 'bytecode_count bytecode_count;
-            }
+            chunks
+                .iter()
+                .filter(|chunk| c.chunk_gets_bytecode(chunk))
+                .count()
         } else {
             0
         };
@@ -135,7 +128,7 @@ impl OutputFileList {
         let additional_output_files_count: usize = if c.options.compile_mode.is_standalone_html() {
             0
         } else {
-            parse_graph.additional_output_files.len()
+            c.graph.additional_output_files.len()
         };
         (
             u32::try_from(

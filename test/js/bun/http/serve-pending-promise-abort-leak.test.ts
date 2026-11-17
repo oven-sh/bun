@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, bunRun } from "harness";
 import { connect } from "node:net";
 import { join } from "node:path";
 
@@ -11,6 +11,10 @@ async function stopAndAssertDrained(server: ReturnType<typeof Bun.serve>) {
   await server.stop();
   expect(server.pendingRequests).toBe(0);
 }
+
+// symbolize=0 so an unfixed build's ASAN abort exits promptly instead of
+// spending seconds in llvm-symbolizer.
+const asanOptionsWithoutSymbolizer = [bunEnv.ASAN_OPTIONS, "symbolize=0"].filter(Boolean).join(":");
 
 test.each([false, true])(
   "RequestContext is freed when client aborts before Promise<Response> settles (http2: %p)",
@@ -489,10 +493,12 @@ test.each(["sync", "async"])(
     // the body's ref must be gone.
     await stopAndAssertDrained(server);
 
+    // A WeakRef target survives the job that dereferenced it, so every pass gets a fresh turn
+    // before collecting.
     let alive = iterations;
     for (let i = 0; i < 20 && alive > 0; i++) {
-      Bun.gc(true);
       await Bun.sleep(1);
+      Bun.gc(true);
       alive = streams.filter(ref => ref.deref() !== undefined).length;
     }
     expect(alive).toBe(0);
@@ -680,6 +686,35 @@ test("413 on a chunked upload frees the context while the handler promise stays 
   }
 });
 
+test.each([
+  ["a fetched Response", (url: URL) => fetch(url)],
+  ["the body of a fetched Response", async (url: URL) => new Response((await fetch(url)).body)],
+  ["a rewritten Response", async (url: URL) => new HTMLRewriter().transform(await fetch(url))],
+])("413 on a chunked upload frees the context while %s is piped to the client", async (_, respond) => {
+  const { promise: upstreamClosed, resolve: signalUpstreamClosed } = Promise.withResolvers<void>();
+  using upstream = Bun.serve({
+    port: 0,
+    idleTimeout: 0,
+    // One chunk, then nothing: no later write tells the pipe that the response is gone.
+    fetch: () => new Response(new ReadableStream({ start: c => c.enqueue("a"), cancel: () => signalUpstreamClosed() })),
+  });
+  using server = Bun.serve({ port: 0, idleTimeout: 0, maxRequestBodySize: 1024, fetch: () => respond(upstream.url) });
+
+  const { promise: closed, resolve: signalClosed } = Promise.withResolvers<void>();
+  const socket = connect(Number(server.port), "127.0.0.1");
+  socket.on("error", () => {}).on("close", () => signalClosed());
+  socket.once("data", () => socket.write(`800\r\n${Buffer.alloc(0x800, "a")}\r\n`));
+  socket.write("POST / HTTP/1.1\r\nHost: a\r\nTransfer-Encoding: chunked\r\n\r\n");
+
+  try {
+    await closed;
+    expect(server.pendingRequests).toBe(0);
+    await upstreamClosed;
+  } finally {
+    socket.destroy();
+  }
+});
+
 // A request subscribes to its connection's close only once its dispatch is
 // over (to_async), so a close that lands before that was lost. server.stop(true)
 // inside the handler closes the connection right there. A request with its body
@@ -733,6 +768,40 @@ test.each(stoppedRequests)("server.stop(true) inside the handler of %s aborts it
   expect(events).toEqual(expected);
   expect(server.pendingRequests).toBe(0);
   await stopped!;
+});
+
+// A request head that arrives split over two reads is parsed out of the HTTP
+// parser's per-socket fallback buffer, and the uWS request the dispatch holds
+// views into that buffer. server.stop(true) inside the handler closes the
+// request's own socket right there, and the close destructed the parser with
+// its buffer. Everything that materialises the headers after that read freed
+// memory: `req.headers` inside the handler, and the snapshot the server takes
+// itself when an async handler ends the dispatch. Under a sanitizer it is a
+// heap-use-after-free; without one the headers come back as the bytes of
+// whatever allocation took the block over.
+test.concurrent.each(["lazy", "async"])(
+  "a request head split over two reads survives server.stop(true) in the handler (%s headers)",
+  async mode => {
+    expect(
+      await bunRun(join(import.meta.dir, "serve-split-head-stop-fixture.ts"), {
+        SPLIT_HEAD_MODE: mode,
+        ASAN_OPTIONS: asanOptionsWithoutSymbolizer,
+      }),
+    ).toSpawn(`${Buffer.alloc(40, 0x4d).toString()}|300|host,x-mark,x-pad`);
+  },
+);
+
+// The same buffer, reached by the client alone: no server API call and no
+// nested event loop. The head is split, the request declares a body it never
+// sends, and `Connection: close` makes the completed response close the socket
+// inside the dispatch. The pending `req.text()` then rejects, and its handler
+// reads a url and headers that the close already freed.
+test.concurrent("a split request head survives a Connection: close response on an unfinished body", async () => {
+  expect(
+    await bunRun(join(import.meta.dir, "serve-split-head-close-fixture.ts"), {
+      ASAN_OPTIONS: asanOptionsWithoutSymbolizer,
+    }),
+  ).toSpawn(`AbortError|"http://x/a"|300|connection,content-length,host,x-pad`);
 });
 
 // A Response the server will never render still owns a body stream that
@@ -961,4 +1030,50 @@ test.each([204, 304])("a %d Response with a ReadableStream body cancels the stre
   expect(await res.text()).toBe("");
   expect(cancelReasons).toStrictEqual([undefined]);
   await stopAndAssertDrained(server);
+});
+
+// Script that runs while the response is rendered aborts the request, and the render then found no response. The
+// callback that delivered the request body is still on the stack when the microtask runs, so the request is pending.
+test.concurrent.each([
+  [
+    "cancel() of a 204 Response's body",
+    false,
+    `return new Response(new ReadableStream({ cancel: stop }), { status: 204 })`,
+  ],
+  [
+    "cancel() of a 304 Response's body",
+    false,
+    `return new Response(new ReadableStream({ cancel: stop }), { status: 304 })`,
+  ],
+  ["a getter of the error to print", true, `throw Object.defineProperty(new Error(), "message", { get: stop })`],
+])("server.stop(true) in %s releases the request once", async (_, development, answer) => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+        let during;
+        function stop() {
+          server.stop(true);
+          queueMicrotask(() => (during ??= server.pendingRequests));
+        }
+        const server = Bun.serve({
+          port: 0,
+          development: ${development},
+          async fetch(req) {
+            await req.text();
+            ${answer};
+          },
+        });
+        const result = await fetch(server.url, { method: "POST", body: "a" }).then(r => r.status, () => "closed");
+        console.log(JSON.stringify({ result, during, after: server.pendingRequests }));
+      `,
+    ],
+    env: bunEnv,
+    stderr: "inherit",
+  });
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  expect(stdout).toBe(JSON.stringify({ result: "closed", during: 1, after: 0 }) + "\n");
+  // An error that was printed sets the exit code.
+  expect(exitCode).toBe(development ? 1 : 0);
 });

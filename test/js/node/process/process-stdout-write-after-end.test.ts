@@ -61,7 +61,7 @@ test.concurrent.each(["stdout", "stderr"] as const)(
         env: bunEnv,
       });
 
-      const reportStream = which === "stderr" ? proc.stdout : proc.stderr;
+      const reportStream = (which === "stderr" ? proc.stdout : proc.stderr) as ReadableStream<Uint8Array>;
       const [reportText, exitCode] = await Promise.all([reportStream.text(), proc.exited]);
       const lines = reportText.trim().split("\n");
       const report = JSON.parse(lines[lines.length - 1]);

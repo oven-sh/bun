@@ -1,0 +1,7 @@
+/** @type {T} */ (a   ??   b /* prettier-ignore */ ).p();
+
+/** @type {T} */ ({k:   1} /* prettier-ignore */ );
+
+/** @type {T} */ (function   (){} /* prettier-ignore */ )`t`;
+
+x = a   +b && /* prettier-ignore */ /** @type {T} */ (c   +d);

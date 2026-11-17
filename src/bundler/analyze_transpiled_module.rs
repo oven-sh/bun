@@ -1,7 +1,3 @@
-use core::ptr::NonNull;
-
-use bun_core;
-
 // ──────────────────────────────────────────────────────────────────────────
 // Re-exports from the printer crate
 //
@@ -33,14 +29,6 @@ pub type RequestedModuleValue = FetchParameters;
 #[repr(transparent)]
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub struct RecordKind(pub u8);
-// SAFETY: `#[repr(transparent)]` over `u8` — no padding, every bit pattern is
-// a valid `u8`. `Pod` lets
-// `bytemuck::{cast_slice,try_cast_slice}` reinterpret byte buffers and the
-// printer-crate `#[repr(u8)]` enum into `&[RecordKind]` without `unsafe`.
-unsafe impl bytemuck::Zeroable for RecordKind {}
-// SAFETY: see above — `#[repr(transparent)]` over `u8`, so no padding and every
-// bit pattern is valid; `RecordKind` is `Copy + 'static` with no interior refs.
-unsafe impl bytemuck::Pod for RecordKind {}
 
 impl RecordKind {
     /// module_name, import_name, local_name, fetch_parameters
@@ -275,15 +263,6 @@ impl ModuleInfoDeserialized {
         self.table.get(id)
     }
 
-    /// Consumes the heap allocation containing `self`.
-    ///
-    /// # Safety
-    /// `this` must have been produced by one of the constructors below.
-    pub(crate) unsafe fn deinit(this: *mut ModuleInfoDeserialized) {
-        // SAFETY: caller contract — see fn doc above.
-        drop(unsafe { bun_core::heap::take(this) });
-    }
-
     /// The self-contained form (a module's own string table followed by its
     /// body, as the runtime transpiler cache stores it). The bytes are copied
     /// once; the record views the copy.
@@ -503,6 +482,16 @@ impl ModuleInfoSlotTableBuilder {
         }
         ids
     }
+    /// Interns one string (a module key the pre-resolved graph names); returns its table id.
+    pub fn intern(&mut self, s: &[u8], slot_for: impl Fn(&[u8]) -> u32) -> u32 {
+        if let Some(&id) = self.ids.get(s) {
+            return id;
+        }
+        let id = u32::try_from(self.slots.len()).expect("int cast");
+        self.slots.push(slot_for(s));
+        self.ids.insert(s.into(), id);
+        id
+    }
     pub fn count(&self) -> u32 {
         self.slots.len() as u32
     }
@@ -519,19 +508,6 @@ impl ModuleInfoSlotTableBuilder {
 // ──────────────────────────────────────────────────────────────────────────
 // Extension shims over the printer-crate types
 // ──────────────────────────────────────────────────────────────────────────
-
-/// Extension constructor: `StringID::from_raw(u32)` — used by
-/// `linker_context::generateChunksInParallel` when rewriting cross-chunk
-/// specifier IDs.
-pub(crate) trait StringIDExt {
-    fn from_raw(raw: u32) -> StringID;
-}
-impl StringIDExt for StringID {
-    #[inline]
-    fn from_raw(raw: u32) -> StringID {
-        StringID(raw)
-    }
-}
 
 /// Bridges the printer-crate `ModuleInfo` builder to the serialized view
 /// JSC consumes.
@@ -552,11 +528,8 @@ impl ModuleInfoExt for ModuleInfo {
 // zig__renderDiff, zig__ModuleInfoDeserialized__toJSModuleRecord, and the
 // JSModuleRecord/IdentifierArray opaques: see bun_bundler_jsc::analyze_jsc
 
+/// C++ gives back the `Box` it took from `ResolvedSource.module_info`, never null.
 #[unsafe(no_mangle)]
-extern "C" fn zig__ModuleInfoDeserialized__deinit(info: *mut ModuleInfoDeserialized) {
-    // SAFETY: C++ caller passes a non-null pointer obtained from `create` or
-    // `ModuleInfoExt::into_deserialized`.
-    let info = unsafe { NonNull::new(info).unwrap_unchecked() };
-    // SAFETY: `info` is a valid, exclusively-owned pointer; `deinit` is its only destructor.
-    unsafe { ModuleInfoDeserialized::deinit(info.as_ptr()) }
+extern "C" fn zig__ModuleInfoDeserialized__deinit(info: Box<ModuleInfoDeserialized>) {
+    drop(info);
 }

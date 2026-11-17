@@ -30,7 +30,6 @@ namespace WebCore {
 class JSWorker : public JSEventTarget {
 public:
     using Base = JSEventTarget;
-    using DOMWrapped = Worker;
     static JSWorker* create(JSC::Structure* structure, JSDOMGlobalObject* globalObject, Ref<Worker>&& impl)
     {
         JSWorker* ptr = new (NotNull, JSC::allocateCell<JSWorker>(globalObject->vm())) JSWorker(structure, *globalObject, WTF::move(impl));
@@ -72,7 +71,7 @@ protected:
 class JSWorkerOwner final : public JSC::WeakHandleOwner {
 public:
     bool isReachableFromOpaqueRoots(JSC::Handle<JSC::Unknown>, void* context, JSC::AbstractSlotVisitor&, ASCIILiteral*) final;
-    void finalize(JSC::Handle<JSC::Unknown>, void* context) final;
+    FinalizeResult finalize(JSC::Handle<JSC::Unknown>, void* context) final;
 };
 
 inline JSC::WeakHandleOwner* wrapperOwner(DOMWrapperWorld&, Worker*)

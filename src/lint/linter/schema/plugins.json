@@ -1,0 +1,269 @@
+{
+  "import/extensions": {
+    "schema": {
+      "anyOf": [
+        {
+          "type": "array",
+          "items": [
+            {
+              "enum": ["always", "ignorePackages", "never"]
+            }
+          ],
+          "additionalItems": false
+        },
+        {
+          "type": "array",
+          "items": [
+            {
+              "enum": ["always", "ignorePackages", "never"]
+            },
+            {
+              "type": "object",
+              "properties": {
+                "pattern": {
+                  "type": "object",
+                  "patternProperties": {
+                    ".*": {
+                      "enum": ["always", "ignorePackages", "never"]
+                    }
+                  }
+                },
+                "checkTypeImports": {
+                  "type": "boolean"
+                },
+                "ignorePackages": {
+                  "type": "boolean"
+                },
+                "pathGroupOverrides": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "pattern": {
+                        "type": "string"
+                      },
+                      "patternOptions": {
+                        "type": "object"
+                      },
+                      "action": {
+                        "type": "string",
+                        "enum": ["enforce", "ignore"]
+                      }
+                    },
+                    "additionalProperties": false,
+                    "required": ["pattern", "action"]
+                  }
+                }
+              }
+            }
+          ],
+          "additionalItems": false
+        },
+        {
+          "type": "array",
+          "items": [
+            {
+              "type": "object",
+              "properties": {
+                "pattern": {
+                  "type": "object",
+                  "patternProperties": {
+                    ".*": {
+                      "enum": ["always", "ignorePackages", "never"]
+                    }
+                  }
+                },
+                "checkTypeImports": {
+                  "type": "boolean"
+                },
+                "ignorePackages": {
+                  "type": "boolean"
+                },
+                "pathGroupOverrides": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "pattern": {
+                        "type": "string"
+                      },
+                      "patternOptions": {
+                        "type": "object"
+                      },
+                      "action": {
+                        "type": "string",
+                        "enum": ["enforce", "ignore"]
+                      }
+                    },
+                    "additionalProperties": false,
+                    "required": ["pattern", "action"]
+                  }
+                }
+              }
+            }
+          ],
+          "additionalItems": false
+        },
+        {
+          "type": "array",
+          "items": [
+            {
+              "type": "object",
+              "patternProperties": {
+                ".*": {
+                  "enum": ["always", "ignorePackages", "never"]
+                }
+              }
+            }
+          ],
+          "additionalItems": false
+        },
+        {
+          "type": "array",
+          "items": [
+            {
+              "enum": ["always", "ignorePackages", "never"]
+            },
+            {
+              "type": "object",
+              "patternProperties": {
+                ".*": {
+                  "enum": ["always", "ignorePackages", "never"]
+                }
+              }
+            }
+          ],
+          "additionalItems": false
+        }
+      ]
+    }
+  },
+  "import/imports-first": {
+    "schema": [
+      {
+        "type": "string",
+        "enum": ["absolute-first", "disable-absolute-first"]
+      }
+    ]
+  },
+  "import/no-extraneous-dependencies": {
+    "schema": [
+      {
+        "type": "object",
+        "properties": {
+          "devDependencies": {
+            "type": ["boolean", "array"]
+          },
+          "optionalDependencies": {
+            "type": ["boolean", "array"]
+          },
+          "peerDependencies": {
+            "type": ["boolean", "array"]
+          },
+          "bundledDependencies": {
+            "type": ["boolean", "array"]
+          },
+          "packageDir": {
+            "type": ["string", "array"]
+          },
+          "includeInternal": {
+            "type": ["boolean"]
+          },
+          "includeTypes": {
+            "type": ["boolean"]
+          }
+        },
+        "additionalProperties": false
+      }
+    ]
+  },
+  "import/no-internal-modules": {
+    "schema": [
+      {
+        "anyOf": [
+          {
+            "type": "object",
+            "properties": {
+              "allow": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            },
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "forbid": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            },
+            "additionalProperties": false
+          }
+        ]
+      }
+    ]
+  },
+  "import/no-unused-modules": {
+    "schema": [
+      {
+        "properties": {
+          "src": {
+            "type": "array",
+            "uniqueItems": true,
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "ignoreExports": {
+            "type": "array",
+            "uniqueItems": true,
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "missingExports": {
+            "type": "boolean"
+          },
+          "unusedExports": {
+            "type": "boolean"
+          },
+          "ignoreUnusedTypeExports": {
+            "type": "boolean"
+          }
+        },
+        "anyOf": [
+          {
+            "properties": {
+              "unusedExports": {
+                "enum": [true]
+              },
+              "src": {
+                "minItems": 1
+              }
+            },
+            "required": ["unusedExports"]
+          },
+          {
+            "properties": {
+              "missingExports": {
+                "enum": [true]
+              }
+            },
+            "required": ["missingExports"]
+          }
+        ]
+      }
+    ]
+  },
+  "react/jsx-no-constructed-context-values": {
+    "schema": {}
+  }
+}

@@ -17,8 +17,8 @@ function renderTable(...args: any[]): string {
     return (typeof data === "string" ? data : Bun.inspect(data)) + "\n";
   }
   return properties === undefined
-    ? Bun.inspect.table(data, { depth: 0 })
-    : Bun.inspect.table(data, properties, { depth: 0 });
+    ? Bun.inspect.table(data, { depth: 0 } as Bun.BunInspectOptions)
+    : Bun.inspect.table(data, properties, { depth: 0 } as Bun.BunInspectOptions);
 }
 
 describe("console.table", () => {

@@ -1,0 +1,11 @@
+# -- source: main.ts
+# const server = Bun.serve({ port: 0, fetch(request) { return new Response("x"); } });
+# console.log("listening on", server.port, server.hostname); server.stop();
+# -- end of source
+# Bun.serve answers one of four classes. The read is looked up on each; the members of their prototypes are locked, so the table speaks: a number, a text or undefined. The server itself has gone to native code, which lays no name on it: what could lie under "port" on the object is unknown by that escape alone, and nobody in sight has laid anything there. So the formatter is handed no object, and walks no server, whose `url` would make a URL.
+# RUN: link lookups mechanisms=all
+# CHECK-NOT: lookup name-read "port"
+# CHECK-NOT: lookup name-read "hostname"
+# CHECK: lookup read HTTPServerPrototypePort
+# RUN(FEATURES): features
+# FEATURES-NOT: by URL

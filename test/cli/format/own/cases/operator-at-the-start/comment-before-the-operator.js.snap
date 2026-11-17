@@ -1,0 +1,61 @@
+---------------------------------------------------------
+{ experimentalOperatorPosition: "start", printWidth: 50 }
+---------------------------------------------------------
+x =
+  aaaa(1)
+  // c
+  || compare(itemA.source.kind, itemB.source.kind)
+  // d
+  || bbbb;
+
+---------------------------------------------------------
+{ experimentalOperatorPosition: "start", printWidth: 80 }
+---------------------------------------------------------
+x =
+  aaaa(1)
+  // c
+  || compare(itemA.source.kind, itemB.source.kind)
+  // d
+  || bbbb;
+
+----------------------------------------------------------
+{ experimentalOperatorPosition: "start", printWidth: 100 }
+----------------------------------------------------------
+x =
+  aaaa(1)
+  // c
+  || compare(itemA.source.kind, itemB.source.kind)
+  // d
+  || bbbb;
+
+---------------------------------------------------------
+{ experimentalOperatorPosition: "start", printWidth: 51 }
+---------------------------------------------------------
+x =
+  aaaa(1)
+  // c
+  || compare(itemA.source.kind, itemB.source.kind)
+  // d
+  || bbbb;
+
+---------------------------------------------------------
+{ experimentalOperatorPosition: "start", printWidth: 80 }
+---------------------------------------------------------
+x =
+  aaaa(1)
+  // c
+  || compare(itemA.source.kind, itemB.source.kind)
+  // d
+  || bbbb;
+
+----------------------------------------------------------
+{ experimentalOperatorPosition: "start", printWidth: 100 }
+----------------------------------------------------------
+x =
+  aaaa(1)
+  // c
+  || compare(itemA.source.kind, itemB.source.kind)
+  // d
+  || bbbb;
+
+===================== End =====================

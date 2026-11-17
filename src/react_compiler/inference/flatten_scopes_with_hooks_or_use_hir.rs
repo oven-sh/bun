@@ -28,7 +28,28 @@
 
 use crate::diagnostics::{CompilerDiagnostic, cold_invariant};
 use crate::hir::environment::Environment;
-use crate::hir::{BlockId, HirFunction, InstructionValue, Terminal, Type};
+use crate::hir::type_config::ValueKind;
+use crate::hir::{BlockId, Effect, HirFunction, InstructionValue, Place, Terminal, Type};
+
+/// oxc's `is_known_pure_tagged_template`, for a template without substitutions: the tag gets the template alone.
+fn is_known_to_be_pure(env: &Environment, tag: &Place) -> bool {
+    let tag_type = &env.types[env.identifiers[tag.identifier.0 as usize].type_.0 as usize];
+    let Ok(Some(signature)) = env.get_function_signature(tag_type) else {
+        return false;
+    };
+    let returns_a_value_of_its_own = matches!(
+        signature.return_value_kind,
+        ValueKind::Primitive | ValueKind::Frozen | ValueKind::Mutable
+    );
+    let template = (signature.positional_params.first().copied()).or(signature.rest_param);
+    signature.hook_kind.is_none()
+        && !signature.impure
+        && signature.known_incompatible.is_none()
+        && signature.aliasing.is_none()
+        && signature.callee_effect == Effect::Read
+        && returns_a_value_of_its_own
+        && template == Some(Effect::Read)
+}
 
 /// Flattens reactive scopes that contain hook calls or `use()` calls.
 ///
@@ -62,6 +83,13 @@ pub(crate) fn flatten_scopes_with_hooks_or_use_hir(
                         prune.extend(active_scopes.iter().map(|s| s.block));
                         active_scopes.clear();
                     }
+                }
+                InstructionValue::TaggedTemplateExpression { tag, .. }
+                    if env.config.tagged_templates_are_always_called
+                        && !is_known_to_be_pure(env, tag) =>
+                {
+                    prune.extend(active_scopes.iter().map(|s| s.block));
+                    active_scopes.clear();
                 }
                 InstructionValue::MethodCall { property, .. } => {
                     let property_ty = &env.types

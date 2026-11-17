@@ -6,17 +6,10 @@ const { inspect } = require("node:util");
 const JSONStringify = JSON.stringify;
 const TypedArrayPrototypeSubarray = uncurryThis(Uint8Array.prototype.subarray);
 
-const { kFinishClose, kInspect, kPrivateConstructor } = require("internal/quic/symbols");
-
-function ERR_ILLEGAL_CONSTRUCTOR() {
-  return $ERR_ILLEGAL_CONSTRUCTOR();
-}
-function ERR_INVALID_THIS(type) {
-  return $ERR_INVALID_THIS(type);
-}
-function ERR_INVALID_ARG_TYPE(name, expected, actual) {
-  return $ERR_INVALID_ARG_TYPE(name, expected, actual);
-}
+const symbols = require("internal/quic/symbols");
+const kFinishClose: typeof symbols.kFinishClose = symbols.kFinishClose;
+const kInspect: typeof symbols.kInspect = symbols.kInspect;
+const kPrivateConstructor: typeof symbols.kPrivateConstructor = symbols.kPrivateConstructor;
 
 const {
   IDX_STATS_ENDPOINT_CREATED_AT,
@@ -91,16 +84,16 @@ const {
 
 const kCreateDisconnected = Symbol("kCreateDisconnected");
 
-let assertIsQuicEndpointStats;
-let assertIsQuicSessionStats;
-let assertIsQuicStreamStats;
-let isQuicEndpointStats;
-let isQuicSessionStats;
-let isQuicStreamStats;
+let assertIsQuicEndpointStats: (val: unknown) => asserts val is QuicEndpointStats;
+let assertIsQuicSessionStats: (val: unknown) => asserts val is QuicSessionStats;
+let assertIsQuicStreamStats: (val: unknown) => asserts val is QuicStreamStats;
+let isQuicEndpointStats: (val: unknown) => val is QuicEndpointStats;
+let isQuicSessionStats: (val: unknown) => val is QuicSessionStats;
+let isQuicStreamStats: (val: unknown) => val is QuicStreamStats;
 
 function assertIsPrivateConstructor(privateSymbol) {
   if (privateSymbol !== kPrivateConstructor) {
-    throw new ERR_ILLEGAL_CONSTRUCTOR();
+    throw $ERR_ILLEGAL_CONSTRUCTOR();
   }
 }
 
@@ -111,13 +104,13 @@ class QuicEndpointStats {
   #disconnected = false;
 
   static {
-    isQuicEndpointStats = function (val) {
+    isQuicEndpointStats = function (val): val is QuicEndpointStats {
       return val != null && typeof val === "object" && #handle in val;
     };
 
-    assertIsQuicEndpointStats = function (val) {
+    assertIsQuicEndpointStats = function (val): asserts val is QuicEndpointStats {
       if (!isQuicEndpointStats(val)) {
-        throw new ERR_INVALID_THIS("QuicEndpointStats");
+        throw $ERR_INVALID_THIS("QuicEndpointStats");
       }
     };
   }
@@ -129,7 +122,7 @@ class QuicEndpointStats {
   constructor(privateSymbol, buffer) {
     assertIsPrivateConstructor(privateSymbol);
     if (!isArrayBuffer(buffer)) {
-      throw new ERR_INVALID_ARG_TYPE("buffer", ["ArrayBuffer"], buffer);
+      throw $ERR_INVALID_ARG_TYPE("buffer", ["ArrayBuffer"], buffer);
     }
     this.#handle = new BigUint64Array(buffer);
   }
@@ -380,13 +373,13 @@ class QuicSessionStats {
   #offset = 0;
 
   static {
-    isQuicSessionStats = function (val) {
+    isQuicSessionStats = function (val): val is QuicSessionStats {
       return val != null && typeof val === "object" && #handle in val;
     };
 
-    assertIsQuicSessionStats = function (val) {
+    assertIsQuicSessionStats = function (val): asserts val is QuicSessionStats {
       if (!isQuicSessionStats(val)) {
-        throw new ERR_INVALID_THIS("QuicSessionStats");
+        throw $ERR_INVALID_THIS("QuicSessionStats");
       }
     };
   }
@@ -770,13 +763,13 @@ class QuicStreamStats {
   #disconnected = false;
 
   static {
-    isQuicStreamStats = function (val) {
+    isQuicStreamStats = function (val): val is QuicStreamStats {
       return val != null && typeof val === "object" && #handle in val;
     };
 
-    assertIsQuicStreamStats = function (val) {
+    assertIsQuicStreamStats = function (val): asserts val is QuicStreamStats {
       if (!isQuicStreamStats(val)) {
-        throw new ERR_INVALID_THIS("QuicStreamStats");
+        throw $ERR_INVALID_THIS("QuicStreamStats");
       }
     };
   }

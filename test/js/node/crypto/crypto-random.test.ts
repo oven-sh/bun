@@ -1,7 +1,38 @@
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
-import { checkPrime, checkPrimeSync, randomBytes, randomFill, randomFillSync, randomInt } from "crypto";
+import { checkPrime, checkPrimeSync, randomBytes, randomFill, randomFillSync, randomInt, randomUUID } from "crypto";
+import { statSync } from "fs";
 import { bunEnv, bunExe, isLinux, isMacOS, isMusl, tempDir } from "harness";
 import { join } from "path";
+
+describe("arguments are validated as in Node", () => {
+  it("a proxy of a function is a callback", async () => {
+    const called = (call: (callback: (err: Error | null) => void) => void) =>
+      new Promise<void>((resolve, reject) => call(new Proxy(err => (err ? reject(err) : resolve()), {})));
+    await called(callback => randomBytes(4, callback));
+    await called(callback => randomInt(5, callback));
+    await called(callback => randomInt(1, 5, callback));
+    await called(callback => randomFill(new Uint8Array(4), callback));
+    await called(callback => randomFill(new Uint8Array(4), 0, callback));
+    await called(callback => randomFill(new Uint8Array(4), 0, 1, callback));
+  });
+
+  it("randomUUID refuses a proxy of an array", () => {
+    expect(() => randomUUID(new Proxy([], {}))).toThrow(expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" }));
+  });
+
+  it("randomUUID and randomFill report their arguments", () => {
+    // @ts-expect-error
+    expect(() => randomUUID(5)).toThrow('The "options" argument must be of type object. Received type number (5)');
+    // @ts-expect-error
+    expect(() => randomUUID({ disableEntropyCache: 1 })).toThrow(
+      'The "options.disableEntropyCache" property must be of type boolean. Received type number (1)',
+    );
+    // @ts-expect-error
+    expect(() => randomFillSync(5)).toThrow(
+      'The "buf" argument must be an instance of ArrayBuffer or ArrayBufferView. Received type number (5)',
+    );
+  });
+});
 
 describe("randomInt args validation", () => {
   it("default min is 0 so max should be greater than 0", () => {
@@ -220,6 +251,43 @@ describe("randomFill default size with multi-byte typed arrays", () => {
   });
 });
 
+it("randomFill never reports success for bytes it didn't write", async () => {
+  const fill = (view: Uint8Array, change: () => void, offset = 0) => {
+    const { promise, resolve } = Promise.withResolvers<NodeJS.ErrnoException | null>();
+    randomFill(view, offset, err => resolve(err));
+    change();
+    return promise;
+  };
+  const zeros = Buffer.alloc(32);
+
+  const memory = new WebAssembly.Memory({ initial: 1, maximum: 2 });
+  expect(await fill(new Uint8Array(memory.buffer, 64, 32), () => memory.grow(1))).toBeNull();
+  expect(Buffer.from(memory.buffer, 64, 32)).not.toEqual(zeros);
+  expect(Buffer.from(memory.buffer, 32, 32)).toEqual(zeros);
+  expect(Buffer.from(memory.buffer, 96, 32)).toEqual(zeros);
+
+  const resizable = new ArrayBuffer(64, { maxByteLength: 64 });
+  expect(await fill(new Uint8Array(resizable), () => resizable.resize(32))).toBeNull();
+  expect(Buffer.from(resizable)).not.toEqual(zeros);
+
+  for (const offset of [32, 48]) {
+    const trimmed = new ArrayBuffer(64, { maxByteLength: 64 });
+    expect((await fill(new Uint8Array(trimmed), () => trimmed.resize(32), offset))?.code).toBe(
+      "ERR_CRYPTO_OPERATION_FAILED",
+    );
+  }
+
+  const outOfBounds = new ArrayBuffer(64, { maxByteLength: 64 });
+  expect((await fill(new Uint8Array(outOfBounds, 0, 64), () => outOfBounds.resize(32)))?.code).toBe(
+    "ERR_CRYPTO_OPERATION_FAILED",
+  );
+
+  const transferred = new ArrayBuffer(32);
+  expect((await fill(new Uint8Array(transferred), () => transferred.transfer()))?.code).toBe(
+    "ERR_CRYPTO_OPERATION_FAILED",
+  );
+});
+
 describe("checkPrime candidate handling", () => {
   it("checkPrimeSync uses the candidate bytes provided at call time", () => {
     expect(checkPrimeSync(Buffer.from([7]), { checks: 1 })).toBe(true);
@@ -279,40 +347,52 @@ describe.concurrent.skipIf(!isLinux || isMusl || !cc)(
     // threads, etc.; the regression produced >= N calls.
     const MAX_GETRANDOM_CALLS = 200;
     // On Linux release builds Bun terminates via quick_exit(3), which skips
-    // __attribute__((destructor)) and atexit handlers, so the count is
-    // persisted to a file on every getrandom call rather than reported from a
-    // destructor. The constructor writes "0" so the file exists even when no
-    // getrandom calls occur.
+    // __attribute__((destructor)) and atexit handlers, so every call is
+    // recorded in a file as it happens: one appended byte per call, so the
+    // file size is the count. An append is atomic and async-signal-safe.
+    //
+    // BoringSSL seeds its DRBG with syscall(SYS_getrandom, ...), not the libc
+    // wrapper. Those calls go to GETRANDOM_SYSCALL_COUNT_FILE.
     const interposerSrc = `
       #define _GNU_SOURCE
-      #include <stdio.h>
+      #include <stdarg.h>
       #include <stdlib.h>
       #include <dlfcn.h>
       #include <fcntl.h>
       #include <unistd.h>
+      #include <sys/syscall.h>
       #include <sys/types.h>
-      static long count = 0;
       static int out_fd = -1;
+      static int syscall_out_fd = -1;
       static ssize_t (*real_getrandom)(void *, size_t, unsigned int) = 0;
-      static void persist(long n) {
-        if (out_fd < 0) return;
-        char buf[32];
-        int len = snprintf(buf, sizeof(buf), "%ld\\n", n);
-        pwrite(out_fd, buf, len, 0);
+      static long (*real_syscall)(long, ...) = 0;
+      static int open_count_file(const char *env_name) {
+        const char *path = getenv(env_name);
+        return path ? open(path, O_WRONLY | O_CREAT | O_TRUNC | O_APPEND, 0644) : -1;
+      }
+      static void count_call(int fd) {
+        if (fd >= 0 && write(fd, "x", 1) != 1) abort();
       }
       __attribute__((constructor)) static void init(void) {
-        const char *path = getenv("GETRANDOM_COUNT_FILE");
-        if (path) {
-          out_fd = open(path, O_WRONLY | O_CREAT | O_TRUNC, 0644);
-          persist(0);
-        }
+        out_fd = open_count_file("GETRANDOM_COUNT_FILE");
+        syscall_out_fd = open_count_file("GETRANDOM_SYSCALL_COUNT_FILE");
       }
       ssize_t getrandom(void *buf, size_t buflen, unsigned int flags) {
         if (!real_getrandom)
           real_getrandom = (ssize_t (*)(void *, size_t, unsigned int))dlsym(RTLD_NEXT, "getrandom");
-        long n = __atomic_add_fetch(&count, 1, __ATOMIC_RELAXED);
-        persist(n);
+        count_call(out_fd);
         return real_getrandom(buf, buflen, flags);
+      }
+      long syscall(long number, ...) {
+        va_list ap;
+        va_start(ap, number);
+        long a[6];
+        for (int i = 0; i < 6; i++) a[i] = va_arg(ap, long);
+        va_end(ap);
+        if (!real_syscall)
+          real_syscall = (long (*)(long, ...))dlsym(RTLD_NEXT, "syscall");
+        if (number == SYS_getrandom) count_call(syscall_out_fd);
+        return real_syscall(number, a[0], a[1], a[2], a[3], a[4], a[5]);
       }
     `;
 
@@ -345,10 +425,7 @@ describe.concurrent.skipIf(!isLinux || isMusl || !cc)(
       });
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
       expect({ stdout: stdout.trim(), exitCode, stderr }).toMatchObject({ stdout: "ok", exitCode: 0 });
-      const text = await Bun.file(countFile).text();
-      const m = text.match(/^(\d+)/);
-      if (!m) throw new Error("interposer did not write a count; file=" + JSON.stringify(text));
-      return Number(m[1]);
+      return statSync(countFile).size;
     }
 
     it.each([
@@ -369,6 +446,51 @@ describe.concurrent.skipIf(!isLinux || isMusl || !cc)(
     ])("%s does not call getrandom(2) per iteration", async (name, script) => {
       const calls = await countGetrandom(name, script);
       expect(calls).toBeLessThan(MAX_GETRANDOM_CALLS);
+    });
+
+    // randomInt() must take its samples from the VM's entropy cache, not make a
+    // RAND_bytes call (about 0.5 µs) per sample. BoringSSL reseeds its DRBG with
+    // syscall(SYS_getrandom) every 4096 RAND_bytes calls (kReseedInterval), so
+    // the reseeds during a loop count those calls.
+    it("randomInt does not call RAND_bytes per iteration", async () => {
+      const RESEED_INTERVAL = 4096;
+      const script = `
+        const { statSync } = require("fs");
+        const c = require("crypto");
+        const reseeds = () => statSync(process.env.GETRANDOM_SYSCALL_COUNT_FILE).size;
+        const reseedsDuring = (n, fn) => {
+          const before = reseeds();
+          for (let i = 0; i < n; i++) fn();
+          return reseeds() - before;
+        };
+        console.log(
+          reseedsDuring(${4 * RESEED_INTERVAL}, () => c.randomUUID({ disableEntropyCache: true })),
+          reseedsDuring(${32 * RESEED_INTERVAL}, () => c.randomInt(1000)),
+        );
+      `;
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", script],
+        env: {
+          ...bunEnv,
+          LD_PRELOAD: so,
+          GETRANDOM_SYSCALL_COUNT_FILE: join(dirPath, "syscall-count-randomInt.txt"),
+        },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout: stdout.trim(), exitCode, stderr }).toMatchObject({
+        stdout: expect.stringMatching(/^\d+ \d+$/),
+        exitCode: 0,
+      });
+      const [control, reseeds] = stdout.trim().split(" ").map(Number);
+      // randomUUID({ disableEntropyCache: true }) makes one RAND_bytes call
+      // per iteration, so it must reseed 4 times. Fewer means the interposer
+      // does not see the reseeds, and the check below proves nothing.
+      expect(control).toBeGreaterThanOrEqual(4);
+      // One RAND_bytes call per iteration reseeds 32 times. A thread that
+      // starts during the loop seeds its own DRBG, so allow a few.
+      expect(reseeds).toBeLessThan(8);
     });
   },
 );

@@ -449,6 +449,15 @@ describe.concurrent("Bun REPL", () => {
       expect(exitCode).toBe(0);
     });
 
+    // Windows path buffers are large enough for this name.
+    test.skipIf(isWindows)(".load with a filename longer than PATH_MAX shows ENAMETOOLONG", async () => {
+      const long = "./" + Array(21).fill(Buffer.alloc(200, "a").toString()).join("/") + ".js";
+      const { outputs, stderr, exitCode } = await runRepl([`.load ${long}`, "1 + 1", ".exit"]);
+      expect(outputs).toEqual([expect.stringMatching(/^ENAMETOOLONG: /), "2"]);
+      expect(stderr).toBe("");
+      expect(exitCode).toBe(0);
+    });
+
     test(".load and .save without a filename show their usage", async () => {
       const { outputs, stderr, exitCode } = await runRepl([".load", ".save", ".exit"]);
       expect(outputs).toEqual(["Usage: .load <filename>", "Usage: .save <filename>"]);
@@ -794,6 +803,43 @@ describe.concurrent("Bun REPL", () => {
         ".exit",
       ]);
       expect(outputs).toEqual(["undefined", '"hi world"', "{\n  x: 1,\n  y: 2,\n}"]);
+      expect(stderr).toBe("");
+      expect(exitCode).toBe(0);
+    });
+
+    test('"use strict" still applies when another directive comes first', async () => {
+      // The second line is the sloppy control: `this` is the global object.
+      const { outputs, stderr, exitCode } = await runRepl([
+        `"use client"; "use strict"; (function () { return this === undefined; })()`,
+        `"use client"; (function () { return this === undefined; })()`,
+        ".exit",
+      ]);
+      expect(outputs).toEqual(["true", "false"]);
+      expect(stderr).toBe("");
+      expect(exitCode).toBe(0);
+    });
+
+    test('an escaped "use strict" is a directive without a meaning', async () => {
+      const { outputs, stderr, exitCode } = await runRepl([
+        // It does not end the prologue: the "use strict" after it applies.
+        `"use\\x20strict"; "use strict"; (function () { return typeof this; })()`,
+        // Alone, it does not make the line strict.
+        `"use\\x20strict"; (function () { return typeof this; })()`,
+        // As the last statement, its value is the result of the line.
+        `"use\\x20strict"`,
+        ".exit",
+      ]);
+      expect(outputs).toEqual(['"undefined"', '"object"', '"use strict"']);
+      expect(stderr).toBe("");
+      expect(exitCode).toBe(0);
+    });
+
+    test("a directive with both kinds of quotes does not end the prologue", async () => {
+      const { outputs, stderr, exitCode } = await runRepl([
+        `"it's \\"quoted\\""; "use strict"; (function () { return typeof this; })()`,
+        ".exit",
+      ]);
+      expect(outputs).toEqual(['"undefined"']);
       expect(stderr).toBe("");
       expect(exitCode).toBe(0);
     });
@@ -1862,6 +1908,14 @@ describe.skipIf(isWindows).concurrent("REPL history file permissions", () => {
     expect(await Bun.file(historyPath).text()).toBe(`1 + 1\n${secret}\n`);
     expect(statSync(historyPath).mode & 0o777).toBe(0o600);
   });
+});
+
+test("skips the history file when $HOME is longer than PATH_MAX", async () => {
+  const home = "/" + Array(21).fill(Buffer.alloc(200, "a").toString()).join("/");
+  const { outputs, stderr, exitCode } = await runRepl(["1 + 1", ".exit"], { home });
+  expect(outputs).toEqual(["2"]);
+  expect(stderr).toBe("");
+  expect(exitCode).toBe(0);
 });
 
 // `bun --interactive` boots the full node:repl + readline + acorn stack; on a

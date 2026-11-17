@@ -1,6 +1,6 @@
 use bun_core::{Global, Output};
 use bun_install::package_manager_real::{
-    CommandLineArguments, PackageManager, ROOT_PACKAGE_JSON_PATH, Subcommand, install_with_manager,
+    CommandLineArguments, PackageManager, Subcommand, install_with_manager,
 };
 
 use crate::Command;
@@ -22,8 +22,7 @@ impl DedupeCommand {
             Global::exit(1);
         }
 
-        let (manager, original_cwd) = match PackageManager::init(&mut *ctx, cli, Subcommand::Dedupe)
-        {
+        let (manager, original_cwd) = match PackageManager::init(ctx, &cli, Subcommand::Dedupe) {
             Ok(v) => v,
             Err(bun_install::Error::MissingPackageJSON) => {
                 Output::err_generic("missing package.json, nothing to dedupe", ());
@@ -40,8 +39,7 @@ impl DedupeCommand {
             Output::flush();
         }
 
-        // SAFETY: `ROOT_PACKAGE_JSON_PATH` is written exactly once inside `PackageManager::init` above; only read thereafter.
-        let root_package_json_path = unsafe { ROOT_PACKAGE_JSON_PATH.read() };
+        let root_package_json_path = manager.root_package_json_path;
         if let Err(e) =
             install_with_manager(manager, &mut *ctx, root_package_json_path, &original_cwd)
         {

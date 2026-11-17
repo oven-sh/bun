@@ -12,7 +12,7 @@ void NapiFinalizer::call(WTF::RefPtr<NapiEnv> env, void* data, bool immediate)
         if (immediate) {
             m_callback(env.get(), data, m_hint);
         } else {
-            napi_internal_enqueue_finalizer(env.get(), m_callback, data, m_hint);
+            Bun__napi_enqueue_finalizer(env.get(), m_callback, data, m_hint);
         }
     }
 }

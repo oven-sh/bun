@@ -1,0 +1,22 @@
+------------------
+{ printWidth: 40 }
+------------------
+<script lang="tsx">
+const f = <T,>() => 1;
+</script>
+
+------------------
+{ printWidth: 80 }
+------------------
+<script lang="tsx">
+const f = <T,>() => 1;
+</script>
+
+-------------------
+{ printWidth: 100 }
+-------------------
+<script lang="tsx">
+const f = <T,>() => 1;
+</script>
+
+===================== End =====================

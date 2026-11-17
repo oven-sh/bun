@@ -2,11 +2,10 @@ use crate::mal_prelude::*;
 use std::io::Write as _;
 
 use crate::Error;
-use bun_alloc::MaxHeapAllocator;
 use bun_ast::Loc;
 use bun_core::fmt::quote;
 use bun_core::{String as BunString, strings};
-use bun_paths::{self as paths, PathBuffer};
+use bun_paths as paths;
 use bun_wyhash::hash;
 
 use crate::LinkerContext;
@@ -18,18 +17,18 @@ use crate::output_file::{
     BakeExtra, Index as OutputFileIndex, IndexOptional, Options as OutputFileInit,
     OptionsData as OutputFileData, SavedFile, Value as OutputFileValue,
 };
-use crate::{BundleV2, Chunk, cheap_prefix_normalizer};
+use crate::{Chunk, cheap_prefix_normalizer};
 
 use bun_sys::{
     FdDirExt, PathOrFileDescriptor, WriteFileArgs, WriteFileData, WriteFileEncoding,
     write_file_with_path_buffer,
 };
 
-/// Bytecode output file extension (also defined in `generateChunksInParallel.rs`).
-const BYTECODE_EXTENSION: &str = ".jsc";
+use crate::bytecode_sidecar::EXTENSION as BYTECODE_EXTENSION;
 
 pub(crate) fn write_output_files_to_disk(
     c: &mut LinkerContext,
+    log: &mut bun_ast::Log,
     root_path: &[u8],
     chunks: &mut [Chunk],
     output_files: &mut OutputFileList,
@@ -42,7 +41,7 @@ pub(crate) fn write_output_files_to_disk(
         Ok(dir) => dir,
         Err(e) => {
             if bun_errno::SystemErrno::from(e.clone()) == bun_errno::SystemErrno::ENOTDIR {
-                c.log_mut()
+                log
                     .add_error_fmt(
                         None,
                         Loc::EMPTY,
@@ -53,7 +52,7 @@ pub(crate) fn write_output_files_to_disk(
                         ),
                     );
             } else {
-                c.log_mut().add_error_fmt(
+                log.add_error_fmt(
                     None,
                     Loc::EMPTY,
                     format_args!(
@@ -66,18 +65,8 @@ pub(crate) fn write_output_files_to_disk(
             return Err(e.into());
         }
     };
-    // Optimization: when writing to disk, we can re-use the memory
-    // between iterations: MaxHeapAllocator retains the largest allocation.
-    // DynAlloc is currently `()` so the arena
-    // handles below are placeholders; allocation routes through global mimalloc.
-    let mut max_heap_allocator = MaxHeapAllocator::init();
-    let mut _max_heap_allocator_source_map = MaxHeapAllocator::init();
-    let mut _max_heap_allocator_inline_source_map = MaxHeapAllocator::init();
 
-    let mut pathbuf = PathBuffer::uninit();
-    // SAFETY: c points to LinkerContext which is the `linker` field of BundleV2.
-    let bv2: &mut BundleV2 =
-        unsafe { &mut *LinkerContext::bundle_v2_ptr(std::ptr::from_mut::<LinkerContext>(c)) };
+    let mut pathbuf = bun_paths::path_buffer_pool::get();
 
     // `code()`/`code_standalone()` take both `chunk` (an element of `chunks`)
     // and `chunks` as
@@ -105,7 +94,7 @@ pub(crate) fn write_output_files_to_disk(
                 );
                 if !rel_parent.is_empty() {
                     if let Err(e) = root_dir.make_path(rel_parent) {
-                        c.log_mut().add_error_fmt(
+                        log.add_error_fmt(
                             None,
                             Loc::EMPTY,
                             format_args!(
@@ -124,7 +113,7 @@ pub(crate) fn write_output_files_to_disk(
                     paths::resolve_path::z(&source_map_final_rel_path, &mut pathbuf),
                     &output_source_map,
                 ) {
-                    c.log_mut().add_sys_error(
+                    log.add_sys_error(
                         &e,
                         format_args!(
                             "writing sourcemap for chunk {}",
@@ -195,17 +184,12 @@ pub(crate) fn write_output_files_to_disk(
         }
 
         let _trace2 = bun_core::perf::trace("Bundler.writeChunkToDisk");
-        // Reset the reusable
-        // buffer after each chunk. `MaxHeapAllocator::scope()` returns an RAII
-        // guard that resets on drop and derefs to the arena, so when
-        // `code_allocator` is wired up it can borrow through `_code_allocator`.
-        let _code_allocator = max_heap_allocator.scope();
 
         let rel_parent =
             paths::resolve_path::dirname::<paths::platform::Posix>(&chunk.final_rel_path);
         if !rel_parent.is_empty() {
             if let Err(e) = root_dir.make_path(rel_parent) {
-                c.log_mut().add_error_fmt(
+                log.add_error_fmt(
                     None,
                     Loc::EMPTY,
                     format_args!(
@@ -219,17 +203,8 @@ pub(crate) fn write_output_files_to_disk(
             }
         }
         let mut display_size: usize = 0;
-        let resolver_opts = &c.resolver().opts;
-        let public_path: &[u8] = if chunk
-            .flags
-            .contains(ChunkFlags::IS_BROWSER_CHUNK_FROM_SERVER_BUILD)
-        {
-            &bv2.transpiler_for_target(options::Target::Browser)
-                .options
-                .public_path
-        } else {
-            &resolver_opts.public_path
-        };
+        let resolver_opts = &c.resolver.opts;
+        let public_path: &[u8] = &c.options_for_chunk(chunk).public_path;
 
         // Take `intermediate_output` by value so its `&mut self` is
         // disjoint from the `&chunks[i]` / `&[Chunk]` reads below.
@@ -241,7 +216,7 @@ pub(crate) fn write_output_files_to_disk(
         let mut code_result = if let Some(scc) = standalone_chunk_contents {
             match intermediate_output.code_standalone(
                 None,
-                parse_graph,
+                c.bundle,
                 &c.graph,
                 public_path,
                 chunk,
@@ -259,7 +234,7 @@ pub(crate) fn write_output_files_to_disk(
         } else {
             match intermediate_output.code(
                 None,
-                parse_graph,
+                c.bundle,
                 &c.graph,
                 public_path,
                 chunk,
@@ -329,7 +304,7 @@ pub(crate) fn write_output_files_to_disk(
                     &output_source_map,
                 ) {
                     Err(e) => {
-                        c.log_mut().add_sys_error(
+                        log.add_sys_error(
                             &e,
                             format_args!(
                                 "writing sourcemap for chunk {}",
@@ -386,15 +361,8 @@ pub(crate) fn write_output_files_to_disk(
 
         let bytecode_output_file: Option<OutputFile> = 'brk: {
             if c.options.generate_bytecode_cache {
-                let loader: Loader = if chunk.entry_point.is_entry_point() {
-                    parse_graph.input_files.items_loader()
-                        [chunk.entry_point.source_index() as usize]
-                } else {
-                    Loader::Js
-                };
-
-                if loader.is_javascript_like() {
-                    let mut fdpath = PathBuffer::uninit();
+                if c.chunk_gets_bytecode(chunk) {
+                    let mut fdpath = bun_paths::path_buffer_pool::get();
                     let source_provider_url = BunString::create_format(format_args!(
                         "{}{}",
                         bstr::BStr::new(&chunk.final_rel_path),
@@ -406,8 +374,10 @@ pub(crate) fn write_output_files_to_disk(
                         &code_result.buffer,
                         &source_provider_url,
                         c.options.bytecode_depth,
+                        c.options.optimize_bytecode,
                         None,
                     ) {
+                        let bytecode = crate::bytecode_sidecar::frame(bytecode);
                         let source_provider_url_str = source_provider_url.to_utf8();
                         debug!(
                             "Bytecode cache generated {}: {}",
@@ -441,7 +411,7 @@ pub(crate) fn write_output_files_to_disk(
                         ) {
                             Ok(_) => {}
                             Err(e) => {
-                                c.log_mut().add_error_fmt(
+                                log.add_error_fmt(
                                     None,
                                     Loc::EMPTY,
                                     format_args!(
@@ -467,11 +437,11 @@ pub(crate) fn write_output_files_to_disk(
                             output_path: Box::<[u8]>::from(source_provider_url_str.slice()),
                             input_path: input_path_buf.into_boxed_slice(),
                             input_loader: Loader::File,
-                            hash: if chunk.template.placeholder.hash.is_some() {
-                                Some(hash(&bytecode))
-                            } else {
-                                None
-                            },
+                            hash: chunk
+                                .template
+                                .placeholder
+                                .hash
+                                .map(|_| chunk.template.content_hash(hash(&bytecode))),
                             output_kind: options::OutputKind::Bytecode,
                             loader: Loader::File,
                             size: Some(bytecode.len()),
@@ -511,7 +481,7 @@ pub(crate) fn write_output_files_to_disk(
             },
         ) {
             Err(e) => {
-                c.log_mut().add_sys_error(
+                log.add_sys_error(
                     &e,
                     format_args!("writing chunk {}", quote(&chunk.final_rel_path)),
                 );
@@ -532,15 +502,9 @@ pub(crate) fn write_output_files_to_disk(
             None
         };
 
-        let output_kind = if matches!(chunk.content, Content::Css(_)) {
-            options::OutputKind::Asset
-        } else if chunk.entry_point.is_entry_point() {
-            c.graph.files.items_entry_point_kind()[chunk.entry_point.source_index() as usize]
-                .output_kind()
-        } else {
-            options::OutputKind::Chunk
-        };
+        let output_kind = c.chunk_output_kind(chunk);
 
+        chunk.final_output_size = code_result.buffer.len();
         let chunk_index = output_files.insert_for_chunk(OutputFile::init(OutputFileInit {
             output_path: chunk.final_rel_path.clone(),
             input_path,
@@ -559,14 +523,7 @@ pub(crate) fn write_output_files_to_disk(
             display_size: display_size as u32,
             is_executable: chunk.flags.contains(ChunkFlags::IS_EXECUTABLE),
             data: OutputFileData::Saved(0),
-            side: Some(if matches!(chunk.content, Content::Css(_)) {
-                options::Side::Client
-            } else {
-                match c.graph.ast.items_target()[chunk.entry_point.source_index() as usize] {
-                    options::Target::Browser => options::Side::Client,
-                    _ => options::Side::Server,
-                }
-            }),
+            side: Some(c.chunk_side(chunk)),
             entry_point_index: if output_kind == options::OutputKind::EntryPoint {
                 // Server-components builds insert 2 extra synthetic sources
                 // before user entry points, so the source-index offset is 3.
@@ -618,14 +575,12 @@ pub(crate) fn write_output_files_to_disk(
         let additional_len = output_files.output_files.len() - additional_start;
         output_files.total_insertions += u32::try_from(additional_len).expect("int cast");
         let additional_output_files = &mut output_files.output_files[additional_start..];
-        // SAFETY: parse_graph backref; raw deref because `parse_graph` is held
-        // across `c.log_mut()` below (split borrow).
-        let parse_graph = unsafe { &mut *c.parse_graph };
         debug_assert_eq!(
-            parse_graph.additional_output_files.len(),
+            c.graph.additional_output_files.len(),
             additional_output_files.len()
         );
-        for (src, dest) in parse_graph
+        for (src, dest) in c
+            .graph
             .additional_output_files
             .iter_mut()
             .zip(additional_output_files.iter_mut())
@@ -641,7 +596,7 @@ pub(crate) fn write_output_files_to_disk(
             let rel_parent = paths::resolve_path::dirname::<paths::platform::Auto>(&src.dest_path);
             if !rel_parent.is_empty() {
                 if let Err(e) = root_dir.make_path(rel_parent) {
-                    c.log_mut().add_error_fmt(
+                    log.add_error_fmt(
                         None,
                         Loc::EMPTY,
                         format_args!(
@@ -661,10 +616,7 @@ pub(crate) fn write_output_files_to_disk(
                 &bytes,
             ) {
                 Err(e) => {
-                    c.log_mut().add_sys_error(
-                        &e,
-                        format_args!("writing file {}", quote(src.src_path.text)),
-                    );
+                    log.add_sys_error(&e, format_args!("writing file {}", quote(&src.src_path)));
                     return Err(crate::Error::WriteFailed);
                 }
                 Ok(_) => {}

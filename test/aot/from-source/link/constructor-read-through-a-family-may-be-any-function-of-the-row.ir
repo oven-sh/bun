@@ -1,0 +1,25 @@
+# `Sub.prototype = Object.create(Base.prototype)` leaves the new object without `constructor`, so an object of Sub or of Sub2 finds Base there. Read off one layout every constructor of the row arrives: giveConstructorsOfRowAbove().
+# Read through a family the aggregate answered with the nearest constructor alone: `C.mark = "text"` landed on Sub and Sub2, and `Base.mark` was proven undefined.
+# f1 = Base, f2 = Sub, f3 = Sub2, f4 = maker, f5 = markIt, f6 = markOf
+# -- source: constructor-read-through-a-family-may-be-any-function-of-the-row.js
+# function Base(v) { let work = 0; for (let i = 0; i < 2; i++) work = (work + i) | 0; this.v = v; }
+# function Sub(v) { let work = 0; for (let i = 0; i < 2; i++) work = (work + i) | 0; this.v = v; this.s = work; }
+# function Sub2(v) { let work = 0; for (let i = 0; i < 2; i++) work = (work + i) | 0; this.v = v; this.t = work; }
+# Sub.prototype = Object.create(Base.prototype);
+# Sub2.prototype = Object.create(Sub.prototype);
+# function maker(o) { let work = 0; for (let i = 0; i < 2; i++) work = (work + i) | 0; return o.constructor; }
+# function markIt(C) { let work = 0; for (let i = 0; i < 2; i++) work = (work + i) | 0; C.mark = "text"; }
+# function markOf(f) { let work = 0; for (let i = 0; i < 2; i++) work = (work + i) | 0; return f.mark; }
+# const first = new Base(1);
+# let out = "";
+# for (let i = 0; i < 300; i++) markIt(maker(i & 1 ? new Sub(i) : new Sub2(i)));
+# for (let i = 0; i < 300; i++) out = typeof markOf(Base);
+# print(out, String(first.v));
+# -- end of source
+# Now the closure of Base arrives with the two others. The three meet and are lost, so nobody knows the callers of Base any more, and what is laid under a name through lost closures is found on it.
+# RUN: link functions mechanisms=all
+# CHECK: function f6 {{*}}result=undefined|string
+# RUN(NEVER): link functions mechanisms=all
+# NEVER-NOT: function f1 callers-known
+# RUN(ANSWERS): run-in-shell
+# ANSWERS: string 1

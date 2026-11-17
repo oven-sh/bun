@@ -1,0 +1,21 @@
+# `{ ...first, ...second }` in a loop: the second copy meets an object that is no literal in sight, and a name that its layout does not list. Where the own keys of the source are known
+# (its layout, the order of its keys, nothing beside them: asked of the object) the copy is their definitions one by one; on the other way the copy stands as written.
+# -- source: main.ts
+# declare function print(value: any): void;
+# type More = { request: number; user: string };
+# function born(request: number, user: string): More { return { request, user }; }
+# const sources: More[] = [born(1, "a"), { user: "t", request: 2 }, born(3, "c")];
+# function two(first: any, second: More) { return { ...first, ...second }; }
+# const said: string[] = [];
+# const rounds: number = JSON.parse("1");
+# for (let round = 0; round < rounds; round++) for (let i = 0; i < sources.length; i++) said.push(Object.keys(two({ z: 0 }, sources[i])).join());
+# print(said.join(" "));
+# -- end of source
+# RUN(WALK): walk f0:Body mechanisms=all
+# WALK: HasKeyOrder
+# WALK: HasNoExtraProperties
+# WALK: PropDefine {{*}} key="request"
+# WALK: PropDefine {{*}} key="user"
+# RUN(ANSWERS): run-in-shell
+# ANSWERS: z,request,user z,user,request z,request,user
+# ANSWERS-NEXT: exited with 0

@@ -1,0 +1,14 @@
+# both operands of the sum are proven numbers that lie boxed, and its one user is a product whose other operand is at hand where the sum is built
+# as it is written, in its closed form, the product takes any value boxed. Walked, it takes doubles. So only what stores, hands over or joins counts as a taker of boxes, and this sum is one of doubles
+# in `(a + b) * 0.5` the constant is written behind the sum, so the product lacks an operand where the sum asks, and that refusal answers first. Here nothing is lacking
+# f1 = product
+# -- source: sum-that-a-product-takes-is-a-sum-of-doubles.ts
+# declare function sink(...values: unknown[]): void;
+# function product(a: unknown, b: unknown) { if (a === b) return "same"; const x = Number(a); return (x + Number(b)) * x; }
+# sink(product);
+# -- end of source
+# RUN: walk f1 mechanisms=none+TypedOperations+UnboxedNumbers+DirectCalls
+# CHECK-LABEL: code f1:Body
+# CHECK: @Double = Add {{*}}form=Numbers
+# RUN(NEVER): walk f1 mechanisms=none+TypedOperations+UnboxedNumbers+DirectCalls
+# NEVER-NOT: @JSValue = Add

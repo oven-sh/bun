@@ -1,0 +1,29 @@
+# console.log(new WeakSet([Array.prototype, Error.prototype]))
+# LIBRARY: own
+# RUN: link functions mechanisms=all
+# CHECK-NOT: function f1 unreached
+
+module m0 path="main.js" displayPath="main.js" body=f0
+module m1 path="/$bun/js/engine/ArrayPrototype.ts" displayPath="/$bun/js/engine/ArrayPrototype.ts" flags=[IsLibrary]
+entry module=m0
+runtimefunction id=ArrayPrototypeFilter function=f1
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=WeakSet
+    v1 = Builtin builtin=ArrayPrototype
+    v2 = Builtin builtin=ErrorPrototype
+    v3 = NewArray v1, v2 contents=anything
+    v4 = Construct v0, -, v3 calleeName="WeakSet"
+    v5 = Builtin builtin=GlobalThis
+    v6 = PropGet v5 key="console" [isFreeName]
+    v7 = Convert v6 declared={type=builtin(Console) flags=[IsExpected]}
+    v8 = PropGet v7 key="log"
+    v9 = Convert v8 declared={type=builtin(ConsoleLog) flags=[IsExpected]}
+    v10 = Call v9, v7, v4 calleeKey="log" calleeName="console.log"
+    v11 = Undefined
+    Return v11
+}
+function f1 name="filter" module=m1 kind=Method role=Library flags=[HasThis, HasExplicitName] length=1 enclosingRuntimeFunction=ArrayPrototypeFilter thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    Return v1
+}

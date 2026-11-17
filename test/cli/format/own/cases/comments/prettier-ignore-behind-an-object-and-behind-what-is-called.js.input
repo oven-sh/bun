@@ -1,0 +1,17 @@
+const x0 = (a   +   b) // prettier-ignore
+  .foo;
+
+const x1 = (a   +   b) // prettier-ignore
+  [ 0 ];
+
+const x2 = (a   +   b) // prettier-ignore
+  ( 1 );
+
+const x3 = new (a   +   b) // prettier-ignore
+  ( 1 );
+
+const x4 = (()   => {}) // prettier-ignore
+  ();
+
+const x5 = (function   () {}) // prettier-ignore
+  ();

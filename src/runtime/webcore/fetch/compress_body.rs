@@ -5,7 +5,7 @@
 use crate::webcore::jsc::{JSGlobalObject, JSValue, JsResult};
 use bun_jsc::ComptimeStringMapExt as _;
 
-pub use bun_http::compress_body::{
+pub(crate) use bun_http::compress_body::{
     CompressEncoding, CompressOption, DEFAULT_BROTLI_QUALITY, DEFAULT_DEFLATE_LEVEL,
     DEFAULT_ZSTD_LEVEL,
 };
@@ -21,7 +21,7 @@ bun_core::comptime_string_map! {
 
 /// Parses `compress?: boolean | "gzip" | "deflate" | "br" | "zstd" | { encoding, level? }`.
 /// Returns `Ok(None)` for `false` / `undefined` / `null`.
-pub fn from_js(global: &JSGlobalObject, value: JSValue) -> JsResult<Option<CompressOption>> {
+pub(crate) fn from_js(global: &JSGlobalObject, value: JSValue) -> JsResult<Option<CompressOption>> {
     if value.is_undefined_or_null() {
         return Ok(None);
     }
@@ -68,7 +68,7 @@ pub fn from_js(global: &JSGlobalObject, value: JSValue) -> JsResult<Option<Compr
             Some(lvl) if !lvl.is_undefined_or_null() => {
                 let (min, max, default) = match encoding {
                     CompressEncoding::Gzip | CompressEncoding::Deflate => {
-                        (0, 12, DEFAULT_DEFLATE_LEVEL)
+                        (0, bun_deflate::Level::MAX.into(), DEFAULT_DEFLATE_LEVEL)
                     }
                     CompressEncoding::Brotli => (
                         bun_brotli::c::BROTLI_MIN_QUALITY,
@@ -84,7 +84,6 @@ pub fn from_js(global: &JSGlobalObject, value: JSValue) -> JsResult<Option<Compr
                         min: i128::from(min),
                         max: i128::from(max),
                         field_name: b"compress.level",
-                        always_allow_zero: false,
                     },
                 )?)
             }

@@ -313,6 +313,7 @@ impl InitCommand {
 
         let mut template: Template = Template::Blank;
         let mut prev_flag_was_react = false;
+        let mut ca_store_flags: Vec<&[u8]> = Vec::new();
         for arg_ in init_args {
             let arg = arg_.as_bytes();
             if parse_flags && !arg.is_empty() && arg[0] == b'-' {
@@ -351,6 +352,9 @@ impl InitCommand {
                     prev_flag_was_react = false;
                     auto_yes = true;
                 } else {
+                    if Global::is_ca_store_flag(arg) {
+                        ca_store_flags.push(arg);
+                    }
                     prev_flag_was_react = false;
                 }
             } else {
@@ -361,6 +365,8 @@ impl InitCommand {
                 }
             }
         }
+
+        Global::set_ca_store_from_flags(|flag| ca_store_flags.contains(&flag));
 
         // The template picker reads single keystrokes from raw-mode stdin; on a
         // pipe (CI, `spawn(...,{stdio:'pipe'})`, `foo | bun init`) that blocks
@@ -380,7 +386,6 @@ impl InitCommand {
             }
             let mut ifdir_z = ifdir.to_vec();
             ifdir_z.push(0);
-            // SAFETY: ifdir_z[len-1] == 0 written above.
             let ifdir_zstr = ZStr::from_slice_with_nul(&ifdir_z[..]);
             if let Err(err) = bun_sys::chdir(ifdir_zstr) {
                 bun_core::pretty_errorln!(
@@ -534,13 +539,10 @@ impl InitCommand {
                 }
 
                 // Find any source file
-                let Ok(dir) = bun_sys::open_dir_at(Fd::cwd(), b".") else {
+                let Ok(dir) = bun_sys::Dir::open(b".") else {
                     break 'infer;
                 };
-                let _close = scopeguard::guard(dir, |d| {
-                    let _ = bun_sys::close(d);
-                });
-                let mut it = bun_sys::iterate_dir(dir);
+                let mut it = bun_sys::iterate_dir(dir.fd());
                 while let Some(file) = it.next().map_err(crate::Error::from)? {
                     if file.kind != bun_sys::FileKind::File {
                         continue;
@@ -649,10 +651,8 @@ impl InitCommand {
             true
         };
 
-        // SAFETY: `fields.object` was set above either from the parsed JSON
-        // (arena-owned, lives for the duration of `exec`) or from a freshly
-        // allocated `Expr.init` from the AST store (also lives until process exit).
-        let object = unsafe { &mut *fields.object.unwrap().as_ptr() };
+        let mut object = fields.object.unwrap();
+        let object = &mut *object;
 
         if !minimal {
             if !fields.name.is_empty() {
@@ -741,46 +741,55 @@ impl InitCommand {
             need_run_bun_install =
                 needs_dependencies || needs_dev_dependencies || needs_typescript_dependency;
 
+            // `bun check` needs no script. A script is where people and tools look for how a project is type checked.
+            if !minimal && is_type_script_entry_point(&fields.entry_point) {
+                let mut scripts = dependency_map(object, b"scripts");
+                if scripts.get(b"typecheck").is_none() {
+                    // `bun check` runs a `check` script, if there is one.
+                    let command: &[u8] = match scripts.get(b"check") {
+                        Some(_) => b"bun --check",
+                        None => b"bun check",
+                    };
+                    scripts
+                        .data
+                        .as_e_object_mut()
+                        .put_string(&bump, b"typecheck", command)?;
+                    object.put(&bump, b"scripts", scripts)?;
+                }
+            }
+
             if needs_dependencies {
-                let mut dependencies_object = object.get(b"dependencies").unwrap_or_else(|| {
-                    bun_ast::Expr::init(bun_ast::E::Object::default(), bun_ast::Loc::EMPTY)
-                });
+                let mut dependencies_object = dependency_map(object, b"dependencies");
                 let mut iter = needed_dependencies.iter_set();
                 while let Some(index) = iter.next() {
                     let dep = &dependencies[index];
-                    dependencies_object
-                        .data
-                        .e_object_mut()
-                        .unwrap()
-                        .put_string(&bump, dep.name, dep.version)?;
+                    dependencies_object.data.as_e_object_mut().put_string(
+                        &bump,
+                        dep.name,
+                        dep.version,
+                    )?;
                 }
                 object.put(&bump, b"dependencies", dependencies_object)?;
             }
 
             if needs_dev_dependencies {
-                let mut obj = object.get(b"devDependencies").unwrap_or_else(|| {
-                    bun_ast::Expr::init(bun_ast::E::Object::default(), bun_ast::Loc::EMPTY)
-                });
+                let mut obj = dependency_map(object, b"devDependencies");
                 let mut iter = needed_dev_dependencies.iter_set();
                 while let Some(index) = iter.next() {
                     let dep = &dev_dependencies[index];
                     obj.data
-                        .e_object_mut()
-                        .unwrap()
+                        .as_e_object_mut()
                         .put_string(&bump, dep.name, dep.version)?;
                 }
                 object.put(&bump, b"devDependencies", obj)?;
             }
 
             if needs_typescript_dependency {
-                let mut peer_dependencies = object.get(b"peerDependencies").unwrap_or_else(|| {
-                    bun_ast::Expr::init(bun_ast::E::Object::default(), bun_ast::Loc::EMPTY)
-                });
-                peer_dependencies.data.e_object_mut().unwrap().put_string(
-                    &bump,
-                    b"typescript",
-                    b"^7",
-                )?;
+                let mut peer_dependencies = dependency_map(object, b"peerDependencies");
+                peer_dependencies
+                    .data
+                    .as_e_object_mut()
+                    .put_string(&bump, b"typescript", b"^7")?;
                 object.put(&bump, b"peerDependencies", peer_dependencies)?;
             }
         }
@@ -790,16 +799,14 @@ impl InitCommand {
         }
 
         'write_package_json: {
-            let (fd, created_close): (Fd, Option<bun_sys::CloseOnDrop>) = match package_json_file
-                .as_ref()
-            {
-                Some(f) => (f.handle(), None),
+            let created;
+            let file: &bun_sys::File = match &package_json_file {
+                Some(file) => file,
                 None => {
-                    let fd = bun_sys::File::create(Fd::cwd(), b"package.json", true)?.into_raw();
-                    (fd, Some(bun_sys::CloseOnDrop::new(fd)))
+                    created = bun_sys::File::create(Fd::cwd(), b"package.json", true)?;
+                    &created
                 }
             };
-            let _close = created_close;
             let mut buffer_writer = js_printer::BufferWriter::init();
             buffer_writer.append_newline = true;
             let mut package_json_writer = js_printer::BufferPrinter::init(buffer_writer);
@@ -826,7 +833,7 @@ impl InitCommand {
                 break 'write_package_json;
             }
             let written = package_json_writer.ctx.get_written();
-            if let Err(err) = bun_sys::File::borrow(&fd).write_all(written) {
+            if let Err(err) = file.write_all(written) {
                 bun_core::pretty_errorln!(
                     "package.json failed to write due to error {}",
                     bstr::BStr::new(err.name()),
@@ -835,7 +842,7 @@ impl InitCommand {
                 break 'write_package_json;
             }
             if let Err(err) =
-                bun_sys::ftruncate(fd, i64::try_from(written.len()).expect("int cast"))
+                bun_sys::ftruncate(file.fd(), i64::try_from(written.len()).expect("int cast"))
             {
                 bun_core::pretty_errorln!(
                     "package.json failed to write due to error {}",
@@ -876,29 +883,20 @@ impl InitCommand {
                     ep_z.push(0);
                     let ep_zstr = ZStr::from_slice_with_nul(&ep_z[..]);
                     // SAFETY: ep_z[len-1] == 0 written above
-                    let _ = Assets::create_new(ep_zstr, b"console.log(\"Hello via Bun!\");");
+                    let _ = Assets::create_new(ep_zstr, b"console.log(\"Hello via Bun!\");\n");
                     // suppress
                 }
 
                 if steps.write_tsconfig {
                     'brk: {
-                        let extname = bun_paths::extension(&fields.entry_point);
-                        let loader = options::DEFAULT_LOADERS
-                            .get(extname)
-                            .copied()
-                            .unwrap_or(bun_ast::Loader::Ts);
-                        let filename: &[u8] = if loader.is_type_script() {
-                            b"tsconfig.json"
-                        } else {
-                            b"jsconfig.json"
-                        };
-                        if Assets::create_full(
-                            Assets::TSCONFIG_JSON,
-                            filename,
-                            " (for editor autocomplete)",
-                            &[],
-                        )
-                        .is_err()
+                        let (filename, what_for): (&[u8], _) =
+                            if is_type_script_entry_point(&fields.entry_point) {
+                                (b"tsconfig.json", " (for bun check and editor autocomplete)")
+                            } else {
+                                (b"jsconfig.json", " (for editor autocomplete)")
+                            };
+                        if Assets::create_full(Assets::TSCONFIG_JSON, filename, what_for, &[])
+                            .is_err()
                         {
                             break 'brk;
                         }
@@ -932,14 +930,17 @@ impl InitCommand {
                             bstr::BStr::new(&fields.entry_point),
                         );
                     }
+
+                    if is_type_script_entry_point(&fields.entry_point) {
+                        bun_core::pretty!("To type check, run:\n\n    <cyan>bun check<r>\n\n");
+                    }
                 }
 
                 Output::flush();
 
                 if exists_z(b"package.json") && need_run_bun_install {
                     bun_core::prettyln!("");
-                    let self_exe = bun::self_exe_path()?;
-                    let _ = bun::spawn_sync_inherit(&[self_exe.as_bytes(), b"install"])?;
+                    let _ = bun::spawn_sync_inherit(&bun_install_argv()?)?;
                 }
             }
             _ => {}
@@ -947,6 +948,12 @@ impl InitCommand {
 
         Ok(())
     }
+}
+
+fn bun_install_argv() -> Result<Vec<&'static [u8]>, Error> {
+    let mut argv: Vec<&[u8]> = vec![bun::self_exe_path()?.as_bytes(), b"install"];
+    argv.extend(Global::ca_store_flag().map(ZStr::as_bytes));
+    Ok(argv)
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -1087,7 +1094,7 @@ impl Assets {
 // PackageJSONFields
 // ──────────────────────────────────────────────────────────────────────────
 
-pub struct PackageJSONFields {
+pub(crate) struct PackageJSONFields {
     pub name: Vec<u8>,
     /// ARENA: allocated from `bun_ast::Expr` Store via `initialize_store()`; no deinit.
     pub object: Option<StoreRef<bun_ast::E::Object>>,
@@ -1338,7 +1345,7 @@ impl DependencyGroup {
 
 #[derive(Copy, Clone, Eq, PartialEq)]
 #[repr(u8)]
-pub enum Template {
+pub(crate) enum Template {
     Blank,
     ReactBlank,
     ReactTailwind,
@@ -1346,7 +1353,7 @@ pub enum Template {
     TypescriptLibrary,
 }
 
-pub struct TemplateFile {
+pub(crate) struct TemplateFile {
     pub path: &'static [u8],
     pub(crate) contents: &'static [u8],
 }
@@ -1370,15 +1377,14 @@ impl Template {
         fields: &mut PackageJSONFields,
         bump: &bun_alloc::Arena,
     ) -> Result<(), Error> {
-        type Rope = bun_ast::E::Rope;
+        use bun_ast::E::Rope;
         fields.name = self.name().to_vec();
         // Allocate in the process-lifetime CLI arena.
-        let key: &mut Rope = crate::cli::cli_arena().alloc(Rope {
+        let key: &mut Rope<'_> = crate::cli::cli_arena().alloc(Rope {
             head: bun_ast::Expr::init(bun_ast::E::String::init(b"scripts"), bun_ast::Loc::EMPTY),
-            next: core::ptr::null_mut(),
+            next: None,
         });
-        // SAFETY: object is arena-allocated and live for the command duration.
-        let object = unsafe { &mut *fields.object.unwrap().as_ptr() };
+        let mut object = fields.object.unwrap();
         let mut scripts_json = object.get_or_put_object(key, bump).map_err(|e| match e {
             bun_ast::E::SetError::OutOfMemory => Error::Alloc(bun_alloc::AllocError),
             bun_ast::E::SetError::Clobber => Error::Unexpected,
@@ -1465,8 +1471,7 @@ impl Template {
         let Some(path) = env_var::PATH.get() else {
             return false;
         };
-        // SAFETY: FileSystem::instance() returns the process-global singleton.
-        let top_level_dir = Fs::FileSystem::get().top_level_dir;
+        let top_level_dir = Fs::FileSystem::get().top_level_dir();
         bun_which::which(&mut *pathbuffer, path, top_level_dir, b"claude").is_some()
     }
 
@@ -1523,9 +1528,7 @@ impl Template {
                         target_z.push(0);
                         let mut dest_z = template_file.path.to_vec();
                         dest_z.push(0);
-                        // SAFETY: NUL-terminated above.
                         let target_zstr = ZStr::from_slice_with_nul(&target_z[..]);
-                        // SAFETY: NUL-terminated above.
                         let dest_zstr = ZStr::from_slice_with_nul(&dest_z[..]);
                         if bun_sys::symlinkat(target_zstr, Fd::cwd(), dest_zstr).is_err() {
                             break 'symlink_cursor_rule;
@@ -1550,9 +1553,8 @@ impl Template {
             };
 
             let _ = Assets::create_new(
-                ZStr::from_static(b"CLAUDE.md\0"),
-                // SAFETY: literal is NUL-terminated
-                &Self::AGENT_RULE[end_of_frontmatter..],
+                bun_core::zstr!("CLAUDE.md"),
+                Self::AGENT_RULE[end_of_frontmatter..].trim_ascii_start(),
             );
         }
     }
@@ -1599,9 +1601,7 @@ impl Template {
                     if written >= total {
                         return false;
                     }
-                    pathbuf[written] = 0;
-                    // SAFETY: NUL written at pathbuf[written].
-                    ZStr::from_buf(&pathbuf[..], written)
+                    ZStr::nul_terminate(&mut pathbuf, written)
                 };
 
                 if bun_sys::exists(path.as_bytes()) {
@@ -1675,8 +1675,7 @@ impl Template {
         bun_core::pretty!("\n");
         Output::flush();
 
-        let self_exe = bun::self_exe_path()?;
-        let _ = bun::spawn_sync_inherit_no_stdin(&[self_exe.as_bytes(), b"install"])?;
+        let _ = bun::spawn_sync_inherit_no_stdin(&bun_install_argv()?)?;
 
         bun_core::prettyln!(
             "\n\
@@ -1913,6 +1912,25 @@ static REACT_SHADCN_FILES: &[TemplateFile] = &[
 #[inline]
 fn exists(path: &[u8]) -> bool {
     bun_sys::exists(path)
+}
+
+/// The object under `key` in `package_json`, or a new empty object when the
+/// key is absent or holds a value that is not an object (a string, an array,
+/// `null`). The caller `put`s the result back under `key`, which replaces a
+/// non-object value.
+fn dependency_map(package_json: &bun_ast::E::Object, key: &[u8]) -> bun_ast::Expr {
+    package_json
+        .get(key)
+        .filter(|value| value.data.is_e_object())
+        .unwrap_or_else(|| bun_ast::Expr::init(bun_ast::E::Object::default(), bun_ast::Loc::EMPTY))
+}
+
+fn is_type_script_entry_point(entry_point: &[u8]) -> bool {
+    options::DEFAULT_LOADERS
+        .get(bun_paths::extension(entry_point))
+        .copied()
+        .unwrap_or(bun_ast::Loader::Ts)
+        .is_type_script()
 }
 
 /// Refuse entry-point paths that would escape the project directory

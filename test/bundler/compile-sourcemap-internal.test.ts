@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
-import { dirname, join } from "path";
+import { bunEnv, tempDir } from "harness";
+import { join } from "path";
 
 // Asserts that `bun build --compile --sourcemap` embeds an InternalSourceMap
 // blob and that stack frames in the compiled executable remap to the correct
@@ -43,13 +43,7 @@ test("compile --sourcemap remaps stack frames to original line:col", async () =>
 
   await using proc = Bun.spawn({
     cmd: [exe],
-    env: {
-      ...bunEnv,
-      // Debug ASAN builds embed an @executable_path rpath for asan-dyld-shim.dylib;
-      // the copied standalone exe lives elsewhere, so point dyld back at the
-      // original build dir so the shim resolves on macOS debug builds.
-      DYLD_FALLBACK_LIBRARY_PATH: dirname(bunExe()),
-    },
+    env: bunEnv,
     cwd: String(dir),
     stdout: "pipe",
     stderr: "pipe",

@@ -2,12 +2,15 @@
 //! SIMD-accelerated immutable string utilities operating on `&[u8]` (NOT `&str`).
 
 use core::cmp::Ordering;
+use core::mem::MaybeUninit;
+use core::num::NonZeroU8;
 
 use crate::BoundedArray;
 use crate::CrateError as Error;
+use crate::vec::{BorrowedBuf, BorrowedCursor};
 use bun_alloc::AllocError;
 use bun_highway as highway;
-use bun_simdutf_sys::simdutf;
+use bun_simdutf_sys::simdutf::{self, WithUtf16Len};
 
 pub use self::unicode::{
     CodepointIterator, Cursor, NewCodePointIterator, UnsignedCodepointIterator,
@@ -22,10 +25,44 @@ pub mod escape_html;
 #[path = "immutable/exact_size_matcher.rs"]
 pub mod exact_size_matcher;
 pub use escape_html::{html_escape_entity, xml_escape_entity};
+#[path = "immutable/whitespace.rs"]
+mod whitespace;
+pub use whitespace::{
+    JsLines, contains_js_line_break, crlf_as_lf, find_js_line_break, is_all_js_whitespace,
+    is_all_unicode_whitespace, is_js_line_terminator, is_js_whitespace, js_line_break_len,
+    js_line_break_len_back, js_lines, js_whitespace_len, js_whitespace_len_back, push_crlf_as_lf,
+    split_crlf_lines, split_unicode_whitespace, trim_js_whitespace, trim_js_whitespace_end,
+    trim_js_whitespace_start, trim_unicode_whitespace, trim_unicode_whitespace_end,
+    trim_unicode_whitespace_start, without_js_whitespace,
+};
+#[path = "immutable/icu_collation.rs"]
+mod icu_collation;
+#[path = "immutable/icu_normalize.rs"]
+mod icu_normalize;
 #[path = "immutable/unicode.rs"]
 mod unicode_draft;
+pub use icu_collation::{locale_compare, locale_compare_numeric_base};
+pub use icu_normalize::{NormalizationForm, normalize};
+#[path = "immutable/utf16_offsets.rs"]
+mod utf16_offsets;
+pub use utf16_offsets::Utf16OffsetTable;
 #[path = "immutable/visible.rs"]
 mod visible_impl;
+
+/// `\w` of a regular expression without flags.
+#[inline]
+pub const fn is_regexp_word_byte(byte: u8) -> bool {
+    byte.is_ascii_alphanumeric() || byte == b'_'
+}
+#[path = "immutable/wtf8_text.rs"]
+mod wtf8_text;
+use wtf8_text::wtf8_decoded_units;
+pub use wtf8_text::{
+    Wtf8Codepoints, codepoint_len_utf16, push_codepoint_wtf8_joined, push_wtf8,
+    push_wtf8_well_formed, utf8_decoded_len_utf16, utf8_lossy_len_utf16, wtf8_codepoint_at,
+    wtf8_codepoint_count, wtf8_codepoints, wtf8_first_codepoint, wtf8_has_surrogate,
+    wtf8_len_utf16, wtf8_offset_of_utf16_index, wtf8_slice_by_utf16, wtf8_to_utf16, wtf16_to_wtf8,
+};
 
 // UTF-16 surrogate primitives. The single implementation lives in the
 // tier-0 `crate::strings_impl`; re-exported here as part of `bun.strings`.
@@ -39,9 +76,9 @@ pub use unicode_draft::{
     BOM, UTF16Replacement, allocate_latin1_into_utf8, copy_cp1252_into_utf16,
     copy_latin1_into_ascii, copy_latin1_into_utf8_stop_on_non_ascii, copy_latin1_into_utf16,
     copy_u8_into_u16, copy_u16_into_u8, copy_utf16_into_utf8_impl,
-    element_length_cp1252_into_utf16, element_length_utf8_into_utf16, to_utf8_list_with_type_bun,
-    to_utf16_alloc_maybe_buffered, u16_is_lead, u16_is_trail, utf16_codepoint,
-    utf16_codepoint_with_fffd, wtf8_sequence,
+    element_length_cp1252_into_utf16, element_length_utf8_into_utf16, push_codepoint_wtf8,
+    to_utf8_list_with_type_bun, to_utf16_alloc_maybe_buffered, u16_is_lead, u16_is_trail,
+    utf8_codepoint_with_fffd, utf16_codepoint, utf16_codepoint_with_fffd, wtf8_sequence,
 };
 
 /// `bun.strings.visible` — terminal-visible-width helpers. The implementation
@@ -277,31 +314,6 @@ pub fn memmem(haystack: &[u8], needle: &[u8]) -> Option<usize> {
     highway::memmem(haystack, needle)
 }
 
-/// How the width-generic (`_t`) scanners below hand a `&[T]` to highway: as
-/// the 8- or 16-bit lanes the kernels take, or `Wide` for element types they
-/// don't, which keep a scalar arm. Safe via [`crate::cast_slice`]: `NoUninit` proves every byte of `T` is
-/// initialized; the `u16` view additionally requires `T`'s own alignment.
-enum Lanes<'a> {
-    U8(&'a [u8]),
-    U16(&'a [u16]),
-    Wide,
-}
-
-#[inline(always)]
-fn lanes<T: crate::NoUninit>(s: &[T]) -> Lanes<'_> {
-    match (core::mem::size_of::<T>(), core::mem::align_of::<T>()) {
-        (1, _) => Lanes::U8(crate::cast_slice::<T, u8>(s)),
-        (2, 2) => Lanes::U16(crate::cast_slice::<T, u16>(s)),
-        _ => Lanes::Wide,
-    }
-}
-
-/// `bun.reinterpretSlice` — `&[T]` → `&[u8]` byte view (any width).
-#[inline]
-fn reinterpret_to_u8<T: crate::NoUninit>(s: &[T]) -> &[u8] {
-    crate::cast_slice::<T, u8>(s)
-}
-
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum Encoding {
     Ascii,
@@ -342,11 +354,10 @@ pub fn contains_char(self_: &[u8], char: u8) -> bool {
 
 /// `char` is an ASCII byte compared against each (possibly wider) element.
 #[inline]
-pub fn contains_char_t<T: crate::NoUninit + Eq + Into<u32>>(self_: &[T], char: u8) -> bool {
-    match lanes(self_) {
-        Lanes::U8(s) => contains_char(s, char),
-        Lanes::U16(s) => highway::memmem16(s, &[u16::from(char)]).is_some(),
-        Lanes::Wide => self_.iter().any(|c| (*c).into() == u32::from(char)),
+pub fn contains_char_t<T: PathByte>(self_: &[T], char: u8) -> bool {
+    match T::units(self_) {
+        CodeUnits::U8(s) => contains_char(s, char),
+        CodeUnits::U16(s) => highway::memmem16(s, &[u16::from(char)]).is_some(),
     }
 }
 
@@ -407,8 +418,8 @@ pub fn index_of_any16(self_: &[u16], chars: &[u16]) -> Option<usize> {
     index_of_any_t(self_, chars)
 }
 
-pub fn index_of_any_t<T: crate::NoUninit + Eq>(str: &[T], chars: &[T]) -> Option<usize> {
-    if let (Lanes::U8(s), Lanes::U8(c)) = (lanes(str), lanes(chars)) {
+pub fn index_of_any_t<T: PathByte>(str: &[T], chars: &[T]) -> Option<usize> {
+    if let (CodeUnits::U8(s), CodeUnits::U8(c)) = (T::units(str), T::units(chars)) {
         return index_of_any(s, c);
     }
     // No multi-needle highway kernel for u16; `chars` is a short constant set.
@@ -488,12 +499,13 @@ pub fn is_npm_package_name_ignore_length(target: &[u8]) -> bool {
 // Secret-redaction scanners are canonical in crate::strings_impl (only callers
 // live in bun_core/fmt.rs). Re-exported here to preserve the bun.strings.* path.
 pub(crate) use crate::strings_impl::{
-    find_url_password, is_uuid, starts_with_npm_secret, starts_with_secret, starts_with_uuid,
+    find_authority_userinfo, find_url_userinfo, is_uuid, next_url_userinfo, starts_with_npm_secret,
+    starts_with_secret, starts_with_uuid,
 };
 
 pub fn index_equal_any(in_: &[&[u8]], target: &[u8]) -> Option<usize> {
     for (i, str) in in_.iter().enumerate() {
-        if eql_long(str, target, true) {
+        if eql_long(str, target) {
             return Some(i);
         }
     }
@@ -525,12 +537,8 @@ pub fn last_index_of_char(self_: &[u8], char: u8) -> Option<usize> {
 
 /// Width-generic [`last_index_of_char`].
 #[inline]
-pub fn last_index_of_char_t<T: crate::NoUninit + Eq>(self_: &[T], char: T) -> Option<usize> {
-    match (lanes(self_), lanes(core::slice::from_ref(&char))) {
-        (Lanes::U8(s), Lanes::U8(c)) => last_index_of_char(s, c[0]),
-        (Lanes::U16(s), Lanes::U16(c)) => highway::memrmem16(s, c),
-        _ => self_.iter().rposition(|c| *c == char),
-    }
+pub fn last_index_of_char_t<T: PathByte>(self_: &[T], char: T) -> Option<usize> {
+    T::last_index_of_unit(self_, char)
 }
 
 /// Start index of the last occurrence of `str`. Empty needle → `Some(len)`.
@@ -539,21 +547,10 @@ pub fn last_index_of(self_: &[u8], str: &[u8]) -> Option<usize> {
     highway::memrmem(self_, str)
 }
 
-/// Width-generic reverse substring search (last occurrence of `needle`).
-/// Empty needle → `Some(len)`.
-pub fn last_index_of_t<T: crate::NoUninit + Eq>(haystack: &[T], needle: &[T]) -> Option<usize> {
-    match (lanes(haystack), lanes(needle)) {
-        (Lanes::U8(h), Lanes::U8(n)) => last_index_of(h, n),
-        (Lanes::U16(h), Lanes::U16(n)) => highway::memrmem16(h, n),
-        _ => {
-            if needle.len() > haystack.len() {
-                return None;
-            }
-            (0..=haystack.len() - needle.len())
-                .rev()
-                .find(|&i| haystack[i..i + needle.len()] == *needle)
-        }
-    }
+/// [`last_index_of`] over UTF-16 code units.
+#[inline]
+pub fn last_index_of_utf16(haystack: &[u16], needle: &[u16]) -> Option<usize> {
+    highway::memrmem16(haystack, needle)
 }
 
 pub fn index_of(self_: &[u8], str: &[u8]) -> Option<usize> {
@@ -617,6 +614,7 @@ pub fn rsplit_once<'a>(self_: &'a [u8], delimiter: &[u8]) -> Option<(&'a [u8], &
     Some((&self_[..i], &self_[i + delimiter.len()..]))
 }
 
+#[derive(Clone)]
 pub struct SplitIterator<'a> {
     pub(crate) buffer: &'a [u8],
     pub(crate) index: Option<usize>,
@@ -746,137 +744,59 @@ pub fn cat(first: &[u8], second: &[u8]) -> Result<Box<[u8]>, AllocError> {
 
 // 31 character string or a slice
 //
-// PERF NOTE: `remainder_buf` is `MaybeUninit` because `init`/`init_lower_case`
-// only write `[0..len]` (or `[0..16]` for the slice case) and `slice()` only
-// reads `[0..remainder_len]`. Zeroing `[0; 31]` on every call showed up as
+// PERF NOTE: `buf` is `MaybeUninit`. Zeroing `[0; 31]` on every call showed up as
 // ~0.45% of cycles in the next-lint profile (~6M calls × ~24B avg waste).
 // Tail bytes have no validity requirement, so we leave them uninit.
-#[repr(C)]
 #[derive(Copy, Clone)]
-pub struct StringOrTinyString {
-    remainder_buf: core::mem::MaybeUninit<[u8; StringOrTinyString::MAX]>,
-    meta: StringOrTinyStringMeta,
-}
+pub struct StringOrTinyString(StringOrTinyStringRepr);
 
-#[repr(transparent)]
-#[derive(Copy, Clone, Default)]
-struct StringOrTinyStringMeta(u8);
-
-impl StringOrTinyStringMeta {
-    #[inline]
-    fn remainder_len(self) -> u8 {
-        self.0 & 0x7f
-    }
-    #[inline]
-    fn is_tiny_string(self) -> u8 {
-        self.0 >> 7
-    }
-    #[inline]
-    fn new(remainder_len: u8, is_tiny_string: u8) -> Self {
-        Self((remainder_len & 0x7f) | (is_tiny_string << 7))
-    }
+#[derive(Copy, Clone)]
+enum StringOrTinyStringRepr {
+    Tiny {
+        buf: [MaybeUninit<u8>; StringOrTinyString::MAX],
+        /// The length, with the top bit set so that zero is free to be the tag of `Static`.
+        tagged_len: NonZeroU8,
+    },
+    Static(&'static [u8]),
 }
 
 const _: () = assert!(core::mem::size_of::<StringOrTinyString>() == 32);
 
 impl StringOrTinyString {
-    pub(crate) const MAX: usize = 31;
+    const MAX: usize = 31;
+    const TINY_TAG: NonZeroU8 = NonZeroU8::new(0x80).unwrap();
 
     #[inline]
     pub fn slice(&self) -> &[u8] {
-        let buf = self.remainder_buf.as_ptr().cast::<u8>();
-        // This is a switch expression instead of a statement to make sure it uses the faster assembly
-        match self.meta.is_tiny_string() {
-            1 => {
-                // SAFETY: init()/init_lower_case() wrote exactly remainder_len bytes
-                // into the start of remainder_buf; tail bytes are uninit but unread.
-                unsafe { core::slice::from_raw_parts(buf, self.meta.remainder_len() as usize) }
+        match &self.0 {
+            StringOrTinyStringRepr::Tiny { buf, tagged_len } => {
+                let len = tagged_len.get() as usize & Self::MAX;
+                // SAFETY: `init_append_if_needed` wrote `buf[..len]`.
+                unsafe { buf[..len].assume_init_ref() }
             }
-            0 => {
-                const USZ: usize = core::mem::size_of::<usize>();
-                let mut ptr_bytes = [0u8; USZ];
-                let mut len_bytes = [0u8; USZ];
-                // SAFETY: init() wrote ptr.to_le_bytes() at [0..USZ] and len at [USZ..USZ*2].
-                unsafe {
-                    core::ptr::copy_nonoverlapping(buf, ptr_bytes.as_mut_ptr(), USZ);
-                    core::ptr::copy_nonoverlapping(buf.add(USZ), len_bytes.as_mut_ptr(), USZ);
-                }
-                let ptr = usize::from_le_bytes(ptr_bytes) as *const u8;
-                let len = usize::from_le_bytes(len_bytes);
-                // SAFETY: ptr/len were stored from a live &[u8] in init(); caller keeps it alive.
-                unsafe { core::slice::from_raw_parts(ptr, len) }
-            }
-            _ => unreachable!(),
+            StringOrTinyStringRepr::Static(slice) => slice,
         }
     }
 
-    // plain `#[inline]` (not `#[inline(always)]`). These are tiny
-    // generic delegators: a length check plus a tail call into the non-generic
-    // `init`/`init_lower_case` or the `Appender` method. `#[inline]` lets the
-    // small fast path fold into callers (and lets duplicate `A` instantiations
-    // be ICF'd at link time / clustered by the symbol-ordering file) without
-    // forcing the cold `append*` arm into every call site.
     #[inline]
     pub fn init_append_if_needed<A: Appender>(
         stringy: &[u8],
         appendy: &mut A,
     ) -> Result<StringOrTinyString, AllocError> {
-        if stringy.len() <= StringOrTinyString::MAX {
-            return Ok(StringOrTinyString::init(stringy));
+        if stringy.len() > Self::MAX {
+            let appended = appendy.append(stringy)?;
+            return Ok(Self(StringOrTinyStringRepr::Static(appended)));
         }
-        Ok(StringOrTinyString::init(appendy.append(stringy)?))
-    }
-
-    pub fn init(stringy: &[u8]) -> StringOrTinyString {
-        let mut buf = core::mem::MaybeUninit::<[u8; Self::MAX]>::uninit();
-        match stringy.len() {
-            0 => StringOrTinyString {
-                remainder_buf: buf,
-                meta: StringOrTinyStringMeta::new(0, 1),
-            },
-            1..=Self::MAX => {
-                // SAFETY: stringy.len() ∈ 1..=31, fits in buf; src/dst can't overlap (dst is local).
-                unsafe {
-                    core::ptr::copy_nonoverlapping(
-                        stringy.as_ptr(),
-                        buf.as_mut_ptr().cast::<u8>(),
-                        stringy.len(),
-                    );
-                }
-                StringOrTinyString {
-                    remainder_buf: buf,
-                    meta: StringOrTinyStringMeta::new(stringy.len() as u8, 1),
-                }
-            }
-            _ => {
-                const USZ: usize = core::mem::size_of::<usize>();
-                let dst = buf.as_mut_ptr().cast::<u8>();
-                // SAFETY: 2*USZ <= 16 <= 31 == MAX; src/dst don't overlap.
-                unsafe {
-                    core::ptr::copy_nonoverlapping(
-                        (stringy.as_ptr() as usize).to_le_bytes().as_ptr(),
-                        dst,
-                        USZ,
-                    );
-                    core::ptr::copy_nonoverlapping(
-                        stringy.len().to_le_bytes().as_ptr(),
-                        dst.add(USZ),
-                        USZ,
-                    );
-                }
-                StringOrTinyString {
-                    remainder_buf: buf,
-                    meta: StringOrTinyStringMeta::new(0, 0),
-                }
-            }
-        }
+        let mut buf = [MaybeUninit::uninit(); Self::MAX];
+        buf[..stringy.len()].write_copy_of_slice(stringy);
+        let tagged_len = Self::TINY_TAG | stringy.len() as u8;
+        Ok(Self(StringOrTinyStringRepr::Tiny { buf, tagged_len }))
     }
 }
 
-/// Trait for the `Appender` parameter on `StringOrTinyString::init*_append_if_needed`.
+/// Trait for the `Appender` parameter on `StringOrTinyString::init_append_if_needed`.
 pub trait Appender {
-    fn append(&mut self, s: &[u8]) -> Result<&[u8], AllocError>;
-    fn append_lower_case(&mut self, s: &[u8]) -> Result<&[u8], AllocError>;
+    fn append(&mut self, s: &[u8]) -> Result<&'static [u8], AllocError>;
 }
 
 pub use crate::strings_impl::{ascii_lowercase_buf, copy_lowercase};
@@ -922,6 +842,13 @@ pub fn copy<'a>(buf: &'a mut [u8], src: &[u8]) -> &'a [u8] {
     &buf[0..len]
 }
 
+/// Copies `src` into `buf` to NUL-terminate it. `None` if it does not fit.
+pub fn copy_z<'a>(buf: &'a mut [u8], src: &[u8]) -> Option<&'a crate::ZStr> {
+    *buf.get_mut(src.len())? = 0;
+    buf[..src.len()].copy_from_slice(src);
+    Some(crate::ZStr::from_buf(buf, src.len()))
+}
+
 /// startsWith except it checks for non-empty strings
 pub fn has_prefix(self_: &[u8], str: &[u8]) -> bool {
     !str.is_empty() && starts_with(self_, str)
@@ -931,7 +858,7 @@ pub fn starts_with(self_: &[u8], str: &[u8]) -> bool {
     if str.len() > self_.len() {
         return false;
     }
-    eql_long(&self_[0..str.len()], str, false)
+    eql_long(&self_[0..str.len()], str)
 }
 
 /// Transliterated from:
@@ -964,6 +891,18 @@ pub fn is_on_char_boundary(self_: &[u8], idx: usize) -> bool {
 pub fn is_utf8_char_boundary(c: u8) -> bool {
     // This is bit magic equivalent to: b < 128 || b >= 192
     (c as i8) >= -0x40
+}
+
+/// Longest prefix of `self_` within `max_len` bytes that does not split a UTF-8 sequence.
+pub fn truncate_to_char_boundary(self_: &[u8], max_len: usize) -> &[u8] {
+    if self_.len() <= max_len {
+        return self_;
+    }
+    let mut end = max_len;
+    while !is_on_char_boundary(self_, end) {
+        end -= 1;
+    }
+    &self_[..end]
 }
 
 pub fn starts_with_case_insensitive_ascii(self_: &[u8], prefix: &[u8]) -> bool {
@@ -1007,12 +946,7 @@ pub fn ends_with_any(self_: &[u8], str: &[u8]) -> bool {
 }
 
 pub fn eql_any_comptime(self_: &[u8], list: &'static [&'static [u8]]) -> bool {
-    for item in list {
-        if eql_comptime_check_len_with_type::<u8, true>(self_, item) {
-            return true;
-        }
-    }
-    false
+    list.contains(&self_)
 }
 
 /// Count the occurrences of a character in an ASCII byte array
@@ -1041,14 +975,11 @@ pub fn count(self_: &[u8], needle: &[u8]) -> usize {
 }
 
 pub fn eql(self_: &[u8], other: &[u8]) -> bool {
-    if self_.len() != other.len() {
-        return false;
-    }
-    eql_long(self_, other, false)
+    eql_long(self_, other)
 }
 
 pub fn eql_comptime(self_: &[u8], alt: &'static [u8]) -> bool {
-    eql_comptime_check_len_with_type::<u8, true>(self_, alt)
+    self_ == alt
 }
 
 pub fn eql_comptime_utf16(self_: &[u16], alt: &[u8]) -> bool {
@@ -1063,17 +994,12 @@ pub fn eql_comptime_utf16(self_: &[u16], alt: &[u8]) -> bool {
             .all(|(&u, &b)| u == u16::from(b))
 }
 
-pub fn eql_comptime_ignore_len(self_: &[u8], alt: &[u8]) -> bool {
-    eql_comptime_check_len_with_type::<u8, false>(self_, alt)
-}
-
 // `const fn` equality for const-context callers (clap param-name lookup,
 // MultiArrayList field-name reflection). Runtime callers should prefer `eql`.
 pub use crate::strings_impl::{const_bytes_eq, const_str_eq};
 
 pub fn has_prefix_comptime(self_: &[u8], alt: &'static [u8]) -> bool {
-    self_.len() >= alt.len()
-        && eql_comptime_check_len_with_type::<u8, false>(&self_[0..alt.len()], alt)
+    self_.starts_with(alt)
 }
 
 pub fn has_prefix_comptime_utf16(self_: &[u16], alt: &'static [u8]) -> bool {
@@ -1085,53 +1011,8 @@ pub fn has_prefix_comptime_utf16(self_: &[u16], alt: &'static [u8]) -> bool {
             .all(|(&u, &b)| u == u16::from(b))
 }
 
-pub fn has_prefix_comptime_type<T: crate::NoUninit + Eq>(self_: &[T], alt: &'static [T]) -> bool {
-    // Callers must pass the correctly-typed literal (use `crate::string::w!` for u16).
-    self_.len() >= alt.len()
-        && eql_comptime_check_len_with_type::<T, false>(&self_[0..alt.len()], alt)
-}
-
 pub fn has_suffix_comptime(self_: &[u8], alt: &'static [u8]) -> bool {
-    self_.len() >= alt.len()
-        && eql_comptime_check_len_with_type::<u8, false>(&self_[self_.len() - alt.len()..], alt)
-}
-
-fn eql_comptime_check_len_u8(a: &[u8], b: &[u8], check_len: bool) -> bool {
-    // Slice equality compiles to memcmp; for short literals LLVM emits
-    // unrolled fixed-size compares.
-    if check_len {
-        return a == b;
-    }
-    debug_assert!(a.len() >= b.len());
-    // SAFETY: when `check_len`, the early-return above gives `a.len()==b.len()`.
-    // When `!check_len`, callers guarantee `a.len() >= b.len()` (debug-asserted
-    // above). LLVM cannot prove the latter, so
-    // a checked slice would emit a real bounds check on this hot path
-    // (lexer keyword/prefix matching) — keep the unchecked index.
-    unsafe { a.get_unchecked(..b.len()) == b }
-}
-
-fn eql_comptime_check_len_with_known_type<T: crate::NoUninit + Eq, const CHECK_LEN: bool>(
-    a: &[T],
-    b: &[T],
-) -> bool {
-    if core::mem::size_of::<T>() != 1 {
-        return eql_comptime_check_len_u8(reinterpret_to_u8(a), reinterpret_to_u8(b), CHECK_LEN);
-    }
-    // T is u8-sized.
-    eql_comptime_check_len_u8(reinterpret_to_u8(a), reinterpret_to_u8(b), CHECK_LEN)
-}
-
-/// Check if two strings are equal with one of the strings being a compile-time-known value
-///
-///   strings.eql_comptime(input, b"hello world");
-///   strings.eql_comptime(input, b"hai");
-pub(crate) fn eql_comptime_check_len_with_type<T: crate::NoUninit + Eq, const CHECK_LEN: bool>(
-    a: &[T],
-    b: &[T],
-) -> bool {
-    // Accepts any slice; callers are still expected to pass literals.
-    eql_comptime_check_len_with_known_type::<T, CHECK_LEN>(a, b)
+    self_.ends_with(alt)
 }
 
 pub fn eql_case_insensitive_ascii_ignore_length(a: &[u8], b: &[u8]) -> bool {
@@ -1162,7 +1043,7 @@ pub fn eql_case_insensitive_t<T: crate::NoUninit + Into<u32>>(a: &[T], b: &[u8])
         return false;
     }
     if core::mem::size_of::<T>() == 1 {
-        return eql_case_insensitive_ascii_ignore_length(reinterpret_to_u8(a), b);
+        return eql_case_insensitive_ascii_ignore_length(crate::slice_as_bytes(a), b);
     }
 
     debug_assert_eq!(a.len(), b.len());
@@ -1199,80 +1080,22 @@ pub fn has_prefix_case_insensitive(str: &[u8], prefix: &[u8]) -> bool {
     has_prefix_case_insensitive_t(str, prefix)
 }
 
-// same rationale as `eql_case_insensitive_ascii` — `check_len` is a runtime
-// 3rd arg to match the dominant call shape (`eql_long(a, b, true)`).
+/// [`eql`], expanded at the call site.
 #[inline]
-pub fn eql_long(a_str: &[u8], b_str: &[u8], check_len: bool) -> bool {
-    let len = b_str.len();
-
-    if check_len {
-        if len == 0 {
-            return a_str.is_empty();
-        }
-        if a_str.len() != len {
-            return false;
-        }
-    } else if cfg!(debug_assertions) {
-        debug_assert!(b_str.len() <= a_str.len());
+pub fn eql_long(a: &[u8], b: &[u8]) -> bool {
+    if a.len() != b.len() {
+        return false;
     }
-
-    // SAFETY: a_str.len() >= b_str.len() by contract above (checked when
-    // `check_len`, debug-asserted otherwise), so the word-chunked raw-pointer
-    // walk below never reads past either slice.
-    unsafe {
-        let end = b_str.as_ptr().add(len);
-        let mut a = a_str.as_ptr();
-        let mut b = b_str.as_ptr();
-
-        if a == b {
-            return true;
-        }
-
-        {
-            let mut dword_length = len >> 3;
-            while dword_length > 0 {
-                if a.cast::<usize>().read_unaligned() != b.cast::<usize>().read_unaligned() {
-                    return false;
-                }
-                b = b.add(core::mem::size_of::<usize>());
-                if b == end {
-                    return true;
-                }
-                a = a.add(core::mem::size_of::<usize>());
-                dword_length -= 1;
-            }
-        }
-
-        if core::mem::size_of::<usize>() == 8 {
-            if (len & 4) != 0 {
-                if a.cast::<u32>().read_unaligned() != b.cast::<u32>().read_unaligned() {
-                    return false;
-                }
-                b = b.add(core::mem::size_of::<u32>());
-                if b == end {
-                    return true;
-                }
-                a = a.add(core::mem::size_of::<u32>());
-            }
-        }
-
-        if (len & 2) != 0 {
-            if a.cast::<u16>().read_unaligned() != b.cast::<u16>().read_unaligned() {
-                return false;
-            }
-            b = b.add(core::mem::size_of::<u16>());
-            if b == end {
-                return true;
-            }
-            a = a.add(core::mem::size_of::<u16>());
-        }
-
-        if (len & 1) != 0 && *a != *b {
-            return false;
-        }
-
-        true
+    if a.as_ptr() == b.as_ptr() {
+        return true;
     }
+    let ((a8, a), (b8, b)) = (a.as_chunks::<8>(), b.as_chunks::<8>());
+    if !a8.iter().zip(b8).all(|(a, b)| a == b) {
+        return false;
+    }
+    let ((a4, a), (b4, b)) = (a.as_chunks::<4>(), b.as_chunks::<4>());
+    let ((a2, a), (b2, b)) = (a.as_chunks::<2>(), b.as_chunks::<2>());
+    a4.first() == b4.first() && a2.first() == b2.first() && a.first() == b.first()
 }
 
 #[inline]
@@ -1348,9 +1171,7 @@ pub fn is_valid_utf8(slice: &[u8]) -> bool {
 ///
 /// This is the codebase-wide replacement for `core::str::from_utf8` — every
 /// runtime UTF-8 validation goes through simdutf (~3-10× faster than std's
-/// scalar DFA on AVX2/NEON). NOT `const`: the one allowed exception is
-/// `crate::env::const_str_slice` (compile-time git-SHA slicing), which is
-/// the only place `core::str::from_utf8` may appear.
+/// scalar DFA on AVX2/NEON). NOT `const`: const evaluation (`crate::__runtime_embed_load`) uses `core::str::from_utf8`.
 #[inline]
 pub fn str_utf8(bytes: &[u8]) -> Option<&str> {
     if simdutf::validate::utf8(bytes) {
@@ -1419,7 +1240,11 @@ pub fn index_of_newline_or_non_ascii_check_start<const CHECK_START: bool>(
     Some(i as u32 + offset)
 }
 
+pub use highway::ByteSet;
 pub use highway::contains_newline_or_non_ascii_or_quote;
+pub use highway::line_starts;
+pub use highway::{ScannerStops, ScannerStopsBuffer};
+pub use highway::{pack_words, unpack_words};
 
 /// Supports:
 /// - `"`
@@ -1457,7 +1282,7 @@ pub(crate) fn index_of_needs_url_encode(slice: &[u8]) -> Option<u32> {
         return Some(0);
     }
 
-    // PERF: scalar loop; consider portable_simd or a highway entry point if hot.
+    // PERF: scalar loop; consider a highway entry point if hot.
     for (i, &char) in slice.iter().enumerate() {
         if char > 127
             || char < 0x20
@@ -1681,32 +1506,9 @@ pub fn trim_leading_char(slice: &[u8], char: u8) -> &[u8] {
     b""
 }
 
-/// Trim leading pattern of 2 bytes
-///
-/// e.g.
-/// `trim_leading_pattern2("abcdef", 'a', 'b') == "cdef"`
-pub fn trim_leading_pattern2(slice_: &[u8], byte1: u8, byte2: u8) -> &[u8] {
-    let mut slice = slice_;
-    while slice.len() >= 2 {
-        if slice[0] == byte1 && slice[1] == byte2 {
-            slice = &slice[2..];
-        } else {
-            break;
-        }
-    }
-    slice
-}
-
 /// prefix is of type &[u8] or &[u16]
-pub fn trim_prefix_comptime<'a, T: crate::NoUninit + Eq>(
-    buffer: &'a [T],
-    prefix: &'static [T],
-) -> &'a [T] {
-    if has_prefix_comptime_type(buffer, prefix) {
-        &buffer[prefix.len()..]
-    } else {
-        buffer
-    }
+pub fn trim_prefix_comptime<'a, T: Eq>(buffer: &'a [T], prefix: &'static [T]) -> &'a [T] {
+    buffer.strip_prefix(prefix).unwrap_or(buffer)
 }
 
 /// Runtime variants — prefix/suffix may borrow from a non-static
@@ -1859,6 +1661,13 @@ pub(crate) fn index_of_line_ranges<const LINE_RANGE_COUNT: usize>(
         let _ = new_ranges.extend_from_slice(&ranges.as_slice()[1..]); // OOM/capacity: fire-and-forget
         ranges = new_ranges;
     }
+    if current_line <= target_line {
+        let _ = ranges.push(LineRange {
+            start: prev_end,
+            // Wrapping cast.
+            end: text.len() as u32,
+        }); // OOM/capacity: fire-and-forget
+    }
 
     ranges
 }
@@ -1881,7 +1690,7 @@ pub fn get_lines_in_text<const LINE_RANGE_COUNT: usize>(
 }
 
 pub fn first_non_ascii16(slice: &[u16]) -> Option<u32> {
-    // PERF: scalar loop; consider portable_simd or a simdutf utf16 validator if hot.
+    // PERF: scalar loop; consider a highway kernel or a simdutf utf16 validator if hot.
     for (i, &char) in slice.iter().enumerate() {
         if char > 127 {
             // Wrapping cast.
@@ -1942,6 +1751,25 @@ pub fn order_t<T: Ord>(a: &[T], b: &[T]) -> Ordering {
     a.cmp(b)
 }
 
+/// `a < b`, `a === b` or `a > b` of JavaScript, for UTF-8 and WTF-8: the order of the UTF-16 code
+/// units, which is not [`order`] where a character outside the BMP meets one from U+D800. Other
+/// bytes are what `TextDecoder` makes of them, so it is a total order of all texts.
+pub fn order_utf16(a: &[u8], b: &[u8]) -> Ordering {
+    let common = a.iter().zip(b).take_while(|(x, y)| x == y).count();
+    let (x, y) = (a.get(common), b.get(common));
+    let is_ascii = |byte: Option<&u8>| byte.is_none_or(u8::is_ascii);
+    if is_ascii(x) && is_ascii(y) && is_ascii(a[..common].last()) {
+        return x.cmp(&y);
+    }
+    // From the start of the sequence that the first difference may be part of: a lead byte starts one in every text.
+    let before = &a[common.saturating_sub(3)..common];
+    let start = match before.iter().rposition(|byte| !(0x80..0xC0).contains(byte)) {
+        Some(at) if before[at] >= 0xC0 => common - (before.len() - at),
+        _ => common,
+    };
+    wtf8_decoded_units(&a[start..]).cmp(wtf8_decoded_units(&b[start..]))
+}
+
 pub fn cmp_strings_asc(_: (), a: &[u8], b: &[u8]) -> bool {
     order(a, b) == Ordering::Less
 }
@@ -1971,17 +1799,6 @@ pub fn to_ascii_hex_value(character: u8) -> u8 {
 pub use exact_size_matcher::ExactSizeMatcher;
 
 pub const UNICODE_REPLACEMENT: u32 = 0xFFFD;
-
-pub fn left_has_any_in_right(to_check: &[&[u8]], against: &[&[u8]]) -> bool {
-    for check in to_check {
-        for item in against {
-            if eql_long(check, item, true) {
-                return true;
-            }
-        }
-    }
-    false
-}
 
 /// Returns true if the input has the prefix and the next character is not an identifier character
 /// Also returns true if the input ends with the prefix (i.e. EOF)
@@ -2103,12 +1920,8 @@ impl core::fmt::Display for QuoteEscapeFormat<'_> {
 
 /// Width-generic [`index_of_char_usize`].
 #[inline]
-pub fn index_of_scalar<T: crate::NoUninit + Eq>(input: &[T], scalar: T) -> Option<usize> {
-    match (lanes(input), lanes(core::slice::from_ref(&scalar))) {
-        (Lanes::U8(s), Lanes::U8(c)) => index_of_char_usize(s, c[0]),
-        (Lanes::U16(s), Lanes::U16(c)) => highway::memmem16(s, c),
-        _ => input.iter().position(|c| *c == scalar),
-    }
+pub fn index_of_scalar<T: PathByte>(input: &[T], scalar: T) -> Option<usize> {
+    T::index_of_unit(input, scalar)
 }
 
 pub fn without_suffix_comptime<'a>(input: &'a [u8], suffix: &'static [u8]) -> &'a [u8] {
@@ -2121,22 +1934,6 @@ pub fn without_suffix_comptime<'a>(input: &'a [u8], suffix: &'static [u8]) -> &'
 pub fn without_prefix_comptime<'a>(input: &'a [u8], prefix: &'static [u8]) -> &'a [u8] {
     if has_prefix_comptime(input, prefix) {
         return &input[prefix.len()..];
-    }
-    input
-}
-
-pub fn without_prefix_comptime_z<'a>(
-    input: &'a crate::string::ZStr,
-    prefix: &'static [u8],
-) -> &'a crate::string::ZStr {
-    if has_prefix_comptime(input.as_bytes(), prefix) {
-        // `as_bytes_with_nul()[prefix.len()..]` keeps the trailing NUL at
-        // index `input.len() - prefix.len()` of the sub-slice; `from_buf`
-        // debug-asserts it.
-        return crate::string::ZStr::from_buf(
-            &input.as_bytes_with_nul()[prefix.len()..],
-            input.len() - prefix.len(),
-        );
     }
     input
 }
@@ -2200,6 +1997,38 @@ pub fn percent_encode_write(
     // Write the rest of the string
     writer.extend_from_slice(remaining);
     Ok(())
+}
+
+/// JavaScript's `encodeURIComponent` on bytes: every byte but `A-Z a-z 0-9 - _ . ! ~ * ' ( )` becomes `%XX`.
+pub fn percent_encode_uri_component(input: &[u8], writer: &mut Vec<u8>) {
+    for &byte in input {
+        if byte.is_ascii_alphanumeric()
+            || matches!(
+                byte,
+                b'-' | b'_' | b'.' | b'!' | b'~' | b'*' | b'\'' | b'(' | b')'
+            )
+        {
+            writer.push(byte);
+        } else {
+            let h = crate::fmt::hex2_upper(byte);
+            writer.extend_from_slice(&[b'%', h[0], h[1]]);
+        }
+    }
+}
+
+/// Levenshtein's distance: how many elements have to be replaced, added or removed to make `b` of `a`.
+pub fn edit_distance<T: PartialEq>(a: impl Iterator<Item = T>, b: &[T]) -> usize {
+    let mut row: Vec<usize> = (0..=b.len()).collect();
+    for (i, x) in a.enumerate() {
+        let mut diagonal = row[0];
+        row[0] = i + 1;
+        for (j, y) in b.iter().enumerate() {
+            let substituted = diagonal + usize::from(x != *y);
+            diagonal = row[j + 1];
+            row[j + 1] = substituted.min(row[j] + 1).min(diagonal + 1);
+        }
+    }
+    row[b.len()]
 }
 
 // ───────────── re-exports from sibling modules ─────────────
@@ -2292,9 +2121,9 @@ unsafe extern "C" {
 // reach them without a same-tier cycle. Re-export here for callers that go
 // through `bun_core::strings`.
 pub use crate::strings_impl::{
-    allocate_latin1_into_utf8_with_list, convert_utf16_to_utf8, convert_utf16_to_utf8_append,
-    encode_wtf8_rune, is_all_ascii, latin1_to_codepoint_bytes_assume_not_ascii, narrow_ascii_u16,
-    to_utf8_alloc, to_utf8_alloc_from_le_bytes, to_utf8_append_to_list, to_utf8_from_latin1,
+    allocate_latin1_into_utf8_with_list, convert_utf16_to_utf8_append, encode_wtf8_rune,
+    is_all_ascii, latin1_to_codepoint_bytes_assume_not_ascii, narrow_ascii_u16, to_utf8_alloc,
+    to_utf8_alloc_from_le_bytes, to_utf8_append_to_list, to_utf8_from_latin1,
 };
 
 #[inline]
@@ -2388,7 +2217,7 @@ pub fn without_prefix<'a>(input: &'a [u8], prefix: &[u8]) -> &'a [u8] {
 // primitives that must live at tier-0 (`crate::strings_impl`) so `bun_paths`
 // itself can build on them.
 pub use crate::strings_impl::{
-    PathByte, basename, basename_posix, basename_windows,
+    CodeUnits, CodeUnitsMut, PathByte, basename, basename_posix, basename_windows,
     is_windows_absolute_path_missing_drive_letter, remove_leading_dot_slash,
     without_trailing_slash,
 };
@@ -2399,17 +2228,6 @@ pub use crate::strings_impl::convert_utf16_to_utf8_in_buffer;
 // `strings::convert_utf8_to_utf16_in_buffer_z` (used by the Windows profilers
 // to widen output paths for `File::write_file_os_path`).
 pub use unicode_draft::convert_utf8_to_utf16_in_buffer_z;
-
-/// `strings.startsWithWindowsDriveLetterT` — true for `[A-Za-z]:` prefix
-/// followed by at least one more byte (`s.len() > 2`).
-#[inline]
-pub fn starts_with_windows_drive_letter_t<T: Copy + Into<u32>>(s: &[T]) -> bool {
-    s.len() > 2 && s[1].into() == u32::from(b':') && {
-        let c = s[0].into();
-        (c >= u32::from(b'a') && c <= u32::from(b'z'))
-            || (c >= u32::from(b'A') && c <= u32::from(b'Z'))
-    }
-}
 
 /// `strings.convertUTF8toUTF16InBuffer` — UTF-8 → UTF-16LE into a caller-supplied
 /// buffer (capacity ≥ `input.len()` u16). SIMD fast path via simdutf; on invalid
@@ -2432,65 +2250,45 @@ pub fn convert_utf8_to_utf16_in_buffer<'a>(buf: &'a mut [u16], input: &[u8]) -> 
 }
 
 /// Checked variant of [`convert_utf8_to_utf16_in_buffer`]: returns `None` when
-/// the converted output does not fit in `buf`, and never writes past `buf`.
-///
-/// simdutf's convert API takes only an output *pointer* and writes however
-/// many units the input needs, so it must not be entered unless the output
-/// provably fits: either `input.len() <= buf.len()` (a UTF-16 unit always
-/// consumes at least one UTF-8 byte, and surrogate pairs produce 2 units from
-/// 4 bytes), or the exact converted length fits. On invalid input simdutf
-/// stops at the first error having written only the valid prefix's units,
-/// which is ≤ that same exact-length estimate; the WTF-8 fallback can exceed
-/// the estimate (stray continuation bytes become one U+FFFD each), so it
-/// re-checks capacity on every write.
+/// the converted output does not fit in `buf`.
 pub fn try_convert_utf8_to_utf16_in_buffer<'a>(
     buf: &'a mut [u16],
     input: &[u8],
 ) -> Option<&'a mut [u16]> {
+    let mut buf = BorrowedBuf::from(buf);
+    try_write_wtf8_as_utf16(input, buf.unfilled()).then(|| buf.into_filled_mut())
+}
+
+/// Returns false if `out` is too short (invalid byte → U+FFFD; lone surrogates pass through).
+fn try_write_wtf8_as_utf16(input: &[u8], mut out: BorrowedCursor<'_, u16>) -> bool {
     if input.is_empty() {
-        return Some(&mut buf[..0]);
+        return true;
     }
-    if input.len() > buf.len() && element_length_utf8_into_utf16(input) > buf.len() {
-        return None;
+    let bounded = WithUtf16Len::utf8_worst_case(input, out.capacity())
+        .unwrap_or_else(|| WithUtf16Len::utf8(input));
+    if bounded.utf16_len() > out.capacity() {
+        return false;
     }
-    let r = simdutf::convert::utf8::to::utf16::with_errors::le(input, buf);
-    if r.is_successful() {
-        debug_assert!(r.count <= buf.len());
-        return Some(&mut buf[..r.count]);
+    if simdutf::convert::utf8::to::utf16::with_errors::le(bounded, out.reborrow()).is_successful() {
+        return true;
     }
-    // WTF-8 fallback (invalid byte → U+FFFD; lone surrogates pass through).
-    let mut written = 0usize;
-    let mut i = 0usize;
-    while i < input.len() {
-        let b = input[i];
-        if b < 0x80 {
-            if written >= buf.len() {
-                return None;
-            }
-            buf[written] = b as u16;
-            written += 1;
-            i += 1;
-        } else {
-            let (cp, adv) = decode_wtf8_one(&input[i..]);
-            if cp <= 0xFFFF {
-                if written >= buf.len() {
-                    return None;
-                }
-                buf[written] = cp as u16;
-                written += 1;
-            } else {
-                if written + 2 > buf.len() {
-                    return None;
-                }
-                let [hi, lo] = encode_surrogate_pair(cp);
-                buf[written] = hi;
-                buf[written + 1] = lo;
-                written += 2;
-            }
-            i += adv;
+    // A stray continuation byte adds nothing to `utf16_len` but becomes one U+FFFD.
+    let mut rest = input;
+    while let [byte, after @ ..] = rest {
+        if byte.is_ascii() && out.capacity() >= 1 {
+            out.append(&[u16::from(*byte)]);
+            rest = after;
+            continue;
         }
+        let (cp, adv) = decode_wtf8_one(rest);
+        match u16::try_from(cp) {
+            Ok(unit) if out.capacity() >= 1 => out.append(&[unit]),
+            Err(_) if out.capacity() >= 2 => out.append(&encode_surrogate_pair(cp)),
+            _ => return false,
+        }
+        rest = &rest[adv..];
     }
-    Some(&mut buf[..written])
+    true
 }
 
 /// Decode one WTF-8 sequence at the head of `s`; invalid lead/truncated → (U+FFFD, 1).
@@ -2521,16 +2319,11 @@ pub fn to_utf8_list_with_type(mut list: Vec<u8>, utf16: &[u16]) -> Result<Vec<u8
     if utf16.is_empty() {
         return Ok(list);
     }
-    // `convert_utf16_to_utf8_append` writes directly into `spare_capacity_mut()` and
-    // requires the caller to pre-reserve (its doc says so explicitly); without this
-    // reserve a fresh `Vec::new()` has a dangling `0x1` spare pointer and simdutf
-    // segfaults writing to it. The +16 padding gives SIMD over-read slack.
-    let length = simdutf::length::utf8::from::utf16::le(utf16);
-    list.try_reserve(length + 16).map_err(|_| AllocError)?;
-    // Route through
-    // `crate::strings_impl::convert_utf16_to_utf8_append`, which replaces
-    // unpaired surrogates with U+FFFD.
-    crate::strings_impl::convert_utf16_to_utf8_append(&mut list, utf16);
+    let input = simdutf::WithUtf8Len::utf16(utf16);
+    list.try_reserve(input.utf8_len() + 16)
+        .map_err(|_| AllocError)?;
+    // Replaces unpaired surrogates with U+FFFD.
+    crate::strings_impl::append_utf16_as_utf8(&mut list, input);
     Ok(list)
 }
 
@@ -2565,7 +2358,8 @@ pub fn to_utf16_alloc(
         return Ok(None);
     };
 
-    let out_length = simdutf::length::utf16::from::utf8(bytes);
+    let input = WithUtf16Len::utf8(bytes);
+    let out_length = input.utf16_len();
     let cap = out_length + if sentinel { 1 } else { 0 };
     // Hot path: allocate uninitialised and let simdutf write directly into the
     // spare capacity — avoids the redundant zero-fill of `vec![0u16; cap]`,
@@ -2575,21 +2369,10 @@ pub fn to_utf16_alloc(
     let mut out: Vec<u16> = Vec::new();
     out.try_reserve_exact(cap.max(1))
         .map_err(|_| ToUTF16Error::OutOfMemory)?;
-    // SAFETY: `out` has ≥ `out_length` u16 of capacity (just reserved). simdutf
-    // never reads from the output buffer and writes at most `out_length` code
-    // units (the upper bound returned by `simdutf__utf16_length_from_utf8`), so passing
-    // uninitialised storage is sound. We only commit the length after success.
-    let res = unsafe {
-        simdutf::simdutf__convert_utf8_to_utf16le_with_errors(
-            bytes.as_ptr(),
-            bytes.len(),
-            out.as_mut_ptr(),
-        )
-    };
-    if res.is_successful() && out_length > 0 {
-        // SAFETY: on success simdutf has initialised exactly `out_length` u16s
-        // at the start of `out`'s allocation, and `out_length <= capacity`.
-        unsafe { out.set_len(out_length) };
+    let res = crate::vec::append_with(&mut out, usize::MAX, |out| {
+        simdutf::convert::utf8::to::utf16::with_errors::le(input, out)
+    });
+    if res.is_successful() {
         if sentinel {
             out.push(0);
         }
@@ -2624,94 +2407,26 @@ pub fn to_utf16_alloc(
 
 /// WTF-8 → UTF-16LE iff `bytes` contains any non-ASCII byte; pure-ASCII inputs return `None`.
 pub fn wtf8_to_utf16_alloc(bytes: &[u8]) -> Option<Vec<u16>> {
-    let first_non_ascii = first_non_ascii_usize(bytes)?;
+    let (ascii, rest) = bytes.split_at(first_non_ascii_usize(bytes)?);
     let mut out: Vec<u16> = Vec::with_capacity(bytes.len());
-    // SAFETY: `bytes.len()` u16 of capacity is the bound `write_wtf8_as_utf16le` requires.
-    unsafe {
-        let n = write_wtf8_as_utf16le(bytes, first_non_ascii, out.as_mut_ptr().cast::<u8>());
-        out.set_len(n / 2);
-    }
+    out.extend(ascii.iter().map(|&b| u16::from(b)));
+    let fits = crate::vec::append_with(&mut out, usize::MAX, |out| {
+        try_write_wtf8_as_utf16(rest, out)
+    });
+    debug_assert!(fits);
     Some(out)
 }
 
-/// Writes `bytes` (WTF-8) as little-endian UTF-16 code units starting at `dst` and returns the
-/// number of bytes written. `first_non_ascii` is the caller's `strings::first_non_ascii(bytes)`:
-/// that prefix is widened directly and only the rest goes through simdutf; a lone surrogate or an
-/// invalid byte there falls to a scalar loop (invalid byte → U+FFFD, lone surrogate kept).
-///
-/// # Safety
-/// `dst` must be 2-byte aligned and valid for `2 * bytes.len()` bytes of writes (every input byte yields at
-/// most one unit); `first_non_ascii <= bytes.len()` and `bytes[..first_non_ascii]` is ASCII.
-pub unsafe fn write_wtf8_as_utf16le(bytes: &[u8], first_non_ascii: usize, dst: *mut u8) -> usize {
-    debug_assert!(dst.addr().is_multiple_of(2) && is_all_ascii(&bytes[..first_non_ascii]));
-    for (i, &b) in bytes[..first_non_ascii].iter().enumerate() {
-        // SAFETY: `2 * i + 1 < 2 * bytes.len()`.
-        unsafe {
-            dst.add(2 * i)
-                .cast::<[u8; 2]>()
-                .write_unaligned(u16::from(b).to_le_bytes())
-        };
+/// Panics if `out` is not 2-byte aligned or is too short.
+pub fn write_wtf8_as_utf16le(wtf8: &[u8], mut out: BorrowedCursor<'_, u8>) {
+    // SAFETY: any two bytes are a valid `MaybeUninit<u16>`, and `units.len()` units were initialized.
+    unsafe {
+        let (unaligned, units, _) = out.as_mut().align_to_mut::<MaybeUninit<u16>>();
+        let mut units = BorrowedBuf::from(units);
+        assert!(unaligned.is_empty() && try_write_wtf8_as_utf16(wtf8, units.unfilled()));
+        let written = 2 * units.len();
+        out.advance(written);
     }
-    let mut written = 2 * first_non_ascii;
-    let bytes = &bytes[first_non_ascii..];
-    #[expect(
-        clippy::cast_ptr_alignment,
-        reason = "caller contract: dst is 2-byte aligned"
-    )]
-    // SAFETY: caller contract; simdutf writes at most `utf16_length_from_utf8(bytes) <= bytes.len()` units.
-    let res = unsafe {
-        simdutf::simdutf__convert_utf8_to_utf16le_with_errors(
-            bytes.as_ptr(),
-            bytes.len(),
-            dst.add(written).cast::<u16>(),
-        )
-    };
-    if res.is_successful() {
-        return written + res.count * 2;
-    }
-    let mut put = |unit: u16| {
-        // SAFETY: at most one unit per input byte consumed, within the caller's `2 * bytes.len()`.
-        unsafe {
-            dst.add(written)
-                .cast::<[u8; 2]>()
-                .write_unaligned(unit.to_le_bytes())
-        };
-        written += 2;
-    };
-    let mut i = 0usize;
-    while i < bytes.len() {
-        let b = bytes[i];
-        if b < 0x80 {
-            put(u16::from(b));
-            i += 1;
-            continue;
-        }
-        let width = wtf8_byte_sequence_length_with_invalid(b);
-        if width == 1 {
-            put(UNICODE_REPLACEMENT as u16);
-            i += 1;
-            continue;
-        }
-        let take = (width as usize).min(bytes.len() - i);
-        let mut buf = [0u8; 4];
-        buf[..take].copy_from_slice(&bytes[i..i + take]);
-        let cp = decode_wtf8_rune_t::<i32>(buf, width, -1);
-        if cp < 0 {
-            put(UNICODE_REPLACEMENT as u16);
-            i += 1;
-            continue;
-        }
-        let cp = cp as u32;
-        if cp < 0x10000 {
-            put(cp as u16);
-        } else {
-            let c = cp - 0x10000;
-            put(0xD800 + (c >> 10) as u16);
-            put(0xDC00 + (c & 0x3FF) as u16);
-        }
-        i += take;
-    }
-    written
 }
 
 /// `PATTERN_KEY_COMPARE` from the Node.js ESM resolution spec — the comparator
@@ -2760,6 +2475,64 @@ mod tests {
     }
 
     #[test]
+    fn truncate_to_char_boundary_never_splits_a_sequence() {
+        assert_eq!(super::truncate_to_char_boundary(b"abc", 3), b"abc");
+        assert_eq!(super::truncate_to_char_boundary(b"abc", 4), b"abc");
+        assert_eq!(super::truncate_to_char_boundary(b"abcd", 3), b"abc");
+        assert_eq!(super::truncate_to_char_boundary(b"abc", 0), b"");
+        // "aé" is `61 C3 A9`: a cut at byte 2 would land inside `é`.
+        assert_eq!(super::truncate_to_char_boundary("aéz".as_bytes(), 2), b"a");
+        assert_eq!(
+            super::truncate_to_char_boundary("aéz".as_bytes(), 3),
+            "aé".as_bytes()
+        );
+        // A 4-byte sequence that does not fit at all yields the empty prefix.
+        assert_eq!(super::truncate_to_char_boundary("😀".as_bytes(), 3), b"");
+    }
+
+    #[test]
+    fn order_utf16_is_the_order_of_the_code_units() {
+        // Each with the units that it is: lone surrogates, and what is around them in both orders.
+        let texts: &[(&[u8], &[u16])] = &[
+            (b"", &[]),
+            (b"a", &[0x61]),
+            (b"\xED\x9F\xBF", &[0xD7FF]),
+            (b"\xED\xA0\x80", &[0xD800]),
+            (b"\xED\xA0\x80a", &[0xD800, 0x61]),
+            (b"\xED\xA0\x80\xEE\x80\x80", &[0xD800, 0xE000]),
+            (b"\xF0\x90\x80\x80", &[0xD800, 0xDC00]),
+            (b"\xED\xAF\xBF", &[0xDBFF]),
+            (b"\xF4\x8F\xBF\xBF", &[0xDBFF, 0xDFFF]),
+            (b"\xED\xB0\x80", &[0xDC00]),
+            (b"\xED\xBF\xBF", &[0xDFFF]),
+            (b"\xEE\x80\x80", &[0xE000]),
+            (b"\xEF\xBF\xBF", &[0xFFFF]),
+            // Not valid UTF-8.
+            (b"\xF0A", &[0xFFFD, 0x41]),
+            (b"\xF1\x80\x80\x80", &[0xD8C0, 0xDC00]),
+            (b"\xF0\x9F\x98", &[0xFFFD]),
+            (b"\xF0\x9F\x98\x80", &[0xD83D, 0xDE00]),
+            (b"\xF0\x9F\x98b", &[0xFFFD, 0x62]),
+            (b"\xF0\x9FA", &[0xFFFD, 0x41]),
+            (b"\xEF\xBF\xBDc", &[0xFFFD, 0x63]),
+            (b"\x80", &[0xFFFD]),
+            (b"\x80\x80", &[0xFFFD, 0xFFFD]),
+            (b"\xC3\xA9", &[0xE9]),
+            (b"\xC3", &[0xFFFD]),
+            (b"\xFF", &[0xFFFD]),
+        ];
+        for (a, a_units) in texts {
+            for (b, b_units) in texts {
+                assert_eq!(
+                    super::order_utf16(a, b),
+                    a_units.cmp(b_units),
+                    "{a:x?} {b:x?}"
+                );
+            }
+        }
+    }
+
+    #[test]
     fn convert_utf8_to_utf16_in_buffer_fallback_rejects_malformed_sequences() {
         let mut buf = [0u16; 16];
         let out =
@@ -2773,5 +2546,43 @@ mod tests {
         assert_eq!(out, &[0xD800][..]);
         let out = super::convert_utf8_to_utf16_in_buffer(&mut buf, b"\xC3\xA9\xF0\x9F\x98\x80");
         assert_eq!(out, &[0x00E9, 0xD83D, 0xDE00][..]);
+    }
+
+    #[test]
+    fn utf8_codepoint_with_fffd_steps_by_maximal_subpart() {
+        // (input, code_point, len, fail)
+        let cases: &[(&[u8], u32, u8, bool)] = &[
+            (b"a\x80", 0x61, 1, false),
+            (b"\xC3\xA9x", 0xE9, 2, false),
+            (b"\xE4\xB8\xAD", 0x4E2D, 3, false),
+            (b"\xF0\x9F\x98\x80js", 0x1F600, 4, false),
+            (b"\xEF\xBF\xBD", 0xFFFD, 3, false),
+            // stray continuation byte, invalid leads
+            (b"\x80x", 0xFFFD, 1, true),
+            (b"\xC0\xB8", 0xFFFD, 1, true),
+            (b"\xF5\x80\x80\x80", 0xFFFD, 1, true),
+            // lead followed by a non-continuation byte: the lead alone
+            (b"\xC3x", 0xFFFD, 1, true),
+            // second byte outside the narrowed range for E0 / ED / F0 / F4
+            (b"\xE0\x80\x80", 0xFFFD, 1, true),
+            (b"\xED\xA0\x80", 0xFFFD, 1, true),
+            (b"\xF0\x80\x80\x80", 0xFFFD, 1, true),
+            (b"\xF4\x90\x80\x80", 0xFFFD, 1, true),
+            // truncated sequences: the whole valid prefix is one replacement
+            (b"\xE4\xB8.js", 0xFFFD, 2, true),
+            (b"\xE4\xB8", 0xFFFD, 2, true),
+            (b"\xF0\x9F\x98js", 0xFFFD, 3, true),
+            (b"\xF0\x9F", 0xFFFD, 2, true),
+            (b"\xC3", 0xFFFD, 1, true),
+        ];
+        for &(input, code_point, len, fail) in cases {
+            let r = super::utf8_codepoint_with_fffd(input);
+            assert_eq!(
+                (r.code_point, r.len, r.fail),
+                (code_point, len, fail),
+                "input {:x?}",
+                input
+            );
+        }
     }
 }

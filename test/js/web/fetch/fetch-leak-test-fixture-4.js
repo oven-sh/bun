@@ -1,9 +1,6 @@
 import { heapStats } from "bun:jsc";
 import { expect } from "bun:test";
-const rss =
-  process.platform === "darwin" && typeof Bun.unsafe.memoryFootprint === "function"
-    ? Bun.unsafe.memoryFootprint
-    : process.memoryUsage.rss;
+const rss = process.memoryUsage.rss;
 function getHeapStats() {
   return heapStats().objectTypeCounts;
 }

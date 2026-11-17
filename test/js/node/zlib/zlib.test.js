@@ -1,12 +1,13 @@
 import { deflateSync, gunzipSync, gzipSync, inflateSync } from "bun";
 import { describe, expect, it } from "bun:test";
-import { tmpdirSync } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, tempDir, tmpdirSync } from "harness";
 import * as buffer from "node:buffer";
 import { randomFillSync } from "node:crypto";
 import * as fs from "node:fs";
 import { resolve } from "node:path";
 import * as stream from "node:stream";
 import * as util from "node:util";
+import * as vm from "node:vm";
 import * as zlib from "node:zlib";
 
 describe("prototype and name and constructor", () => {
@@ -106,10 +107,192 @@ describe("zlib", () => {
     expect(() => gunzipSync(data, { library: "zlib" })).toThrow(new Error("incorrect header check"));
   });
 
+  it("flush() takes a numeric string or a BigInt, and any kind after end()", async () => {
+    for (const kind of ["2", 2n]) {
+      const gzip = zlib.createGzip();
+      expect(Object.keys(gzip)).not.toContain("_flushBoundIdx");
+      const chunks = [];
+      gzip.on("data", chunk => chunks.push(chunk));
+      gzip.write("hello");
+      await new Promise(done => gzip.flush(kind, done));
+      const flushed = zlib.gunzipSync(Buffer.concat(chunks), { finishFlush: zlib.constants.Z_SYNC_FLUSH });
+      expect(flushed.toString()).toBe("hello");
+      gzip.end();
+      await new Promise(done => gzip.flush("none", done));
+    }
+  });
+
+  describe('library: "libdeflate"', () => {
+    const library = "libdeflate";
+
+    function random(state) {
+      return below => ((state = (Math.imul(state, 1664525) + 1013904223) >>> 0) >>> 8) % below;
+    }
+    function noise(length, values = 256) {
+      const next = random(length);
+      const bytes = new Uint8Array(length);
+      for (let i = 0; i < length; i++) bytes[i] = next(values);
+      return Buffer.from(bytes.buffer);
+    }
+    const words = Array.from({ length: 900 }, (_, i) => ((i + 1) * (7919 + i)).toString(36) + " ,.\n"[(i % 7) & 3]);
+    /** Short words are frequent. */
+    function text(length) {
+      const next = random(length);
+      let text = "";
+      while (text.length < length) text += words[next(1 + next(words.length))];
+      return Buffer.from(text.slice(0, length));
+    }
+    /** Up to `longestUnit` new bytes, again and again, and then the next. */
+    function repeats(length, longestUnit, longestRun) {
+      const next = random(length);
+      const bytes = new Uint8Array(length);
+      for (let i = 0; i < length;) {
+        const unit = 1 + next(longestUnit);
+        for (const end = i + unit; i < end; i++) bytes[i] = next(256);
+        for (const end = i + next(longestRun); i < end; i++) bytes[i] = bytes[i - unit];
+      }
+      return Buffer.from(bytes.buffer);
+    }
+
+    const inputs = {
+      "every length up to 70": Array.from({ length: 71 }, (_, length) => text(70).subarray(0, length)),
+      "short text": [text(300), text(511), text(512), text(4999), text(10_000)],
+      "text": [text(150_000)],
+      "noise": [noise(300), noise(70_000)],
+      "few literals": [noise(20_000, 2), noise(20_000, 9), noise(20_000, 40), noise(20_000, 70)],
+      "zeros": [Buffer.alloc(259), Buffer.alloc(400_000)],
+      "runs": [repeats(90_000, 1, 40), repeats(90_000, 1, 900)],
+      "repeats": [repeats(90_000, 9, 80), repeats(90_000, 140, 3000)],
+      "as far back as it gets": [32_766, 32_767, 32_768, 32_769].map(period => Buffer.alloc(110_000, noise(period))),
+      "one kind after the other": [
+        Buffer.concat([
+          text(40_000),
+          noise(15_000),
+          repeats(30_000, 1, 300),
+          text(20_000),
+          Buffer.alloc(70_000, "0123456789a"),
+          noise(9_000, 5),
+          text(40_000),
+          repeats(40_000, 70, 700),
+        ]),
+      ],
+    };
+
+    // Length and CRC-32 of what libdeflate 1.26 makes of them at the levels from 0 to 12.
+    const outputs = {
+      "every length up to 70":
+        "2840 fbed1731, 2783 bfbc85d6, 2771 994affc5, 2759 72ab9c3a, 2747 7e3a2c93, 2735 ece7741b, 2723 89528bf1, 2711 e9583147, 2699 58bfee6e, 2687 f4d2b609, 2675 db3d7399, 2663 2d4af09f, 2651 81d48b08",
+      "short text":
+        "16347 61afba6e, 8348 efc624f2, 8323 c11a04af, 8327 7d974324, 8327 7d974324, 8332 ea3538b9, 8332 ea3538b9, 8332 ea3538b9, 8330 947f263, 8330 947f263, 8256 df1a08d8, 8250 bc06e83a, 8250 c674a7c1",
+      "text":
+        "150015 1bf9da53, 56423 d3acd2a4, 58152 4fa51948, 58629 55b72437, 58681 f43c36fe, 58719 f1743f42, 58759 240b57c, 58748 d24c1a92, 58890 266ad694, 58890 266ad694, 53537 b44b5026, 53510 fb025766, 53510 fb025766",
+      "noise":
+        "70315 51f6763b, 70315 51f6763b, 70315 51f6763b, 70315 51f6763b, 70315 51f6763b, 70315 51f6763b, 70315 51f6763b, 70315 51f6763b, 70315 51f6763b, 70315 51f6763b, 70315 51f6763b, 70315 51f6763b, 70315 51f6763b",
+      "few literals":
+        "80020 4283f9ef, 41732 2334d2fa, 40989 3e411d4f, 40617 837292b2, 40451 b862455e, 40437 1dfa72db, 37546 ae88b1bc, 37525 a1a3c7ef, 37525 88276a10, 37525 88276a10, 37497 d8315164, 37478 a951a11b, 37465 f7e37463",
+      "zeros":
+        "400299 e534ed11, 483 4854ebc5, 421 2a48b742, 421 2a48b742, 421 2a48b742, 421 2a48b742, 421 2a48b742, 421 2a48b742, 421 2a48b742, 421 2a48b742, 421 2a48b742, 421 2a48b742, 421 2a48b742",
+      "runs":
+        "180020 96ade632, 13817 69b9becf, 13281 6208a9ae, 13402 43e83a99, 13423 9b7f9f13, 10438 88d33ee2, 11054 f727375a, 11403 6060be7, 11467 dfa412cd, 11467 2a3bb84f, 9640 2f185b9a, 9628 7807567, 9646 2ae1a590",
+      "repeats":
+        "180020 43dcb3cb, 18469 c0636993, 18313 fc44cfbe, 18311 8b10654f, 18305 b9feb4e0, 18217 519798fe, 18221 360226f5, 18229 defd7ddb, 18229 defd7ddb, 18229 defd7ddb, 18176 64affd45, 18176 64affd45, 18176 64affd45",
+      "as far back as it gets":
+        "440040 2c93c3cf, 287894 2ec9174f, 287344 153774c6, 287344 153774c6, 287344 153774c6, 287344 153774c6, 287344 153774c6, 287344 153774c6, 287344 153774c6, 287344 153774c6, 287344 153774c6, 287344 153774c6, 287344 153774c6",
+      "one kind after the other":
+        "264025 af96f3cd, 69011 a752f662, 65858 9a887ff9, 65799 2399ad39, 65798 1ece87c4, 65679 cdb64dd5, 65727 a81187e6, 65569 8914fb56, 65559 ad0ba262, 65559 ad0ba262, 62332 15fd70e7, 62317 53789c0a, 62318 c97b697b",
+    };
+
+    it.each(Object.keys(inputs))("compresses %s to the same bytes as ever", name => {
+      const sums = [];
+      for (let level = 0; level <= 12; level++) {
+        const streams = inputs[name].map(input => deflateSync(input, { library, level }));
+        for (const library of ["zlib", "libdeflate"]) {
+          expect(inputs[name].findIndex((input, i) => !input.equals(inflateSync(streams[i], { library })))).toBe(-1);
+        }
+        const all = Buffer.concat(streams);
+        sums.push(`${all.length} ${zlib.crc32(all).toString(16)}`);
+      }
+      expect(sums.join(", ")).toBe(outputs[name]);
+    });
+
+    it("says in the gzip header how hard it tried", () => {
+      const headers = Array.from({ length: 13 }, (_, level) =>
+        gzipSync("", { library, level }).subarray(0, 10).toHex(),
+      );
+      expect(headers).toEqual([..."4400000022222"].map(effort => `1f8b0800000000000${effort}ff`));
+    });
+
+    it.each([
+      { level: 1 },
+      { level: 9 },
+      { level: 0, memLevel: 1 },
+      { memLevel: 1 },
+      { strategy: zlib.constants.Z_FIXED },
+      { strategy: zlib.constants.Z_HUFFMAN_ONLY },
+      { strategy: zlib.constants.Z_RLE },
+    ])("decompresses what zlib makes with %j", options => {
+      const all = Object.values(inputs).flat();
+      expect(all.findIndex(input => !input.equals(inflateSync(deflateSync(input, options), { library })))).toBe(-1);
+      expect(all.findIndex(input => !input.equals(gunzipSync(gzipSync(input, options), { library })))).toBe(-1);
+    });
+
+    it("copies a match of any length from any offset that it overlaps", () => {
+      const parts = [];
+      for (let offset = 1; offset <= 260; offset += offset < 70 ? 1 : 19) {
+        const unit = noise(offset + 1000).subarray(1000);
+        for (let length = 3; length <= 258; length += length < 70 ? 1 : 9)
+          parts.push(Buffer.alloc(offset + length, unit.reverse()));
+      }
+      const input = Buffer.concat(parts);
+      for (const strategy of [zlib.constants.Z_DEFAULT_STRATEGY, zlib.constants.Z_FIXED]) {
+        expect(input.equals(gunzipSync(gzipSync(input, { strategy }), { library }))).toBe(true);
+      }
+    });
+
+    it("skips the optional fields of a gzip header", () => {
+      const member = zlib.gzipSync("hello");
+      for (let flags = 0; flags < 32; flags++) {
+        const header = Buffer.concat([
+          Buffer.from([0x1f, 0x8b, 8, flags, 1, 2, 3, 4, 0, 3]),
+          Buffer.from(flags & 4 ? "\x03\0a\0c" : "", "latin1"),
+          Buffer.from(flags & 8 ? "name\0" : "", "latin1"),
+          Buffer.from(flags & 16 ? "comment\0" : "", "latin1"),
+        ]);
+        const crc = zlib.crc32(header);
+        const file = Buffer.concat([header, Buffer.from(flags & 2 ? [crc, crc >> 8] : []), member.subarray(10)]);
+        expect(Buffer.from(gunzipSync(file, { library })).toString()).toBe("hello");
+        for (let length = 0; length < file.length; length++) {
+          expect(() => gunzipSync(file.subarray(0, length), { library })).toThrow("bad data");
+        }
+      }
+    });
+
+    it.each([
+      ["stored", { level: 0 }],
+      ["static", { strategy: zlib.constants.Z_FIXED }],
+      ["dynamic", {}],
+    ])("agrees with zlib on a %s block that is cut off or has a bit flipped", (_, options) => {
+      const outcome = (decompress, file) => {
+        try {
+          return Buffer.from(decompress(file)).toString("hex");
+        } catch {
+          return "refused";
+        }
+      };
+      const file = Buffer.from(gzipSync(text(200), options));
+      const damaged = Array.from(file, (_, length) => file.subarray(0, length));
+      for (let bit = 0; bit < file.length * 8; bit += bit < 600 ? 1 : 11) {
+        damaged.push(Buffer.from(file));
+        damaged.at(-1)[bit >> 3] ^= 1 << (bit & 7);
+      }
+      expect(damaged.map(file => outcome(file => gunzipSync(file, { library }), file))).toEqual(
+        damaged.map(file => outcome(gunzipSync, file)),
+      );
+    });
+  });
+
   describe("libdeflate level validation", () => {
     const data = Buffer.alloc(64, "a");
-    // libdeflate_alloc_compressor returns NULL for level outside [0, 12]; that NULL must
-    // surface as an invalid-argument error, not "Out of memory".
     for (const fn of [gzipSync, deflateSync]) {
       it(`${fn.name}: out-of-range level throws an argument error, not OOM`, () => {
         for (const level of [-2, -1, 13, 100]) {
@@ -135,6 +318,164 @@ describe("zlib", () => {
       });
     }
   });
+
+  // libdeflate never emits a block bigger than a stored one, so output longer than the input plus
+  // its overhead (5 bytes, plus 18 for gzip) means it wrote past the allocation.
+  it.concurrent.each(["gzip", "deflate"])(
+    "libdeflate %s doesn't write past its output buffer while another thread writes to the shared input",
+    async kind => {
+      const fixture = `
+        import { isMainThread, parentPort, Worker, workerData } from "node:worker_threads";
+
+        const size = 4096;
+        if (isMainThread) {
+          const input = new SharedArrayBuffer(size);
+          const worker = new Worker(new URL(import.meta.url), { workerData: input });
+          const ready = Promise.withResolvers();
+          worker.on("message", ready.resolve);
+          await ready.promise;
+          worker.unref();
+
+          const raw = process.argv[2] === "deflate";
+          const reserved = size + (raw ? 5 : 23);
+          const compress = raw ? Bun.deflateSync : Bun.gzipSync;
+          const decompress = raw ? Bun.inflateSync : Bun.gunzipSync;
+          const view = new Uint8Array(input);
+          for (let i = 0; i < 500; i++) {
+            const out = compress(view, { library: "libdeflate", level: 1 + (i % 12) });
+            if (out.length > reserved) throw new Error("wrote " + out.length + " bytes into " + reserved);
+            const back = decompress(out, { library: "libdeflate" });
+            if (back.length !== size) throw new Error("round trip returned " + back.length + " bytes");
+          }
+          console.log("ok");
+          process.exit(0);
+        } else {
+          // Alternate between bytes that encode in a few bits and bytes that need more.
+          const view = new Uint8Array(workerData);
+          let seed = 88172645;
+          const next = () => ((seed ^= seed << 13), (seed ^= seed >>> 17), (seed ^= seed << 5), seed >>> 0);
+          const cheap = new Uint8Array(size);
+          const costly = new Uint8Array(size);
+          for (let i = 0; i < size; i++) {
+            cheap[i] = next() & 127;
+            costly[i] = 0xf0 + (next() & 15);
+          }
+          for (let i = 0; i < 16; i++) cheap[next() % size] = 0xf0 + i;
+          parentPort.postMessage("ready");
+          for (;;) {
+            view.set(cheap);
+            for (let i = next() % 50000; i > 0; i--);
+            view.set(costly);
+            for (let i = next() % 5000; i > 0; i--);
+          }
+        }
+      `;
+      using dir = tempDir("libdeflate-shared", { "fixture.mjs": fixture });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "fixture.mjs", kind],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout, stderr }).toEqual({ stdout: "ok\n", stderr: "" });
+      expect(exitCode).toBe(0);
+    },
+  );
+
+  describe("memLevel and strategy", () => {
+    const data = Buffer.from(Array.from({ length: 4000 }, (_, i) => Math.imul(i, 2654435761).toString(36)).join(" "));
+    for (const [compress, decompress, nodeCompress] of [
+      [gzipSync, gunzipSync, zlib.gzipSync],
+      [deflateSync, inflateSync, zlib.deflateRawSync],
+    ]) {
+      it.each([
+        { strategy: zlib.constants.Z_FILTERED, level: 9 },
+        { strategy: zlib.constants.Z_HUFFMAN_ONLY },
+        { strategy: zlib.constants.Z_RLE },
+        { strategy: zlib.constants.Z_FIXED },
+        { memLevel: 1 },
+        { memLevel: 9 },
+        { memLevel: 1, strategy: zlib.constants.Z_RLE, level: 9 },
+      ])(`${compress.name}: %j gives the bytes node:zlib gives, which are not the default's`, options => {
+        const compressed = Buffer.from(compress(data, options));
+        expect(compressed).toEqual(nodeCompress(data, options));
+        expect(compressed).not.toEqual(Buffer.from(compress(data, { level: options.level })));
+        expect(Buffer.from(decompress(compressed))).toEqual(data);
+      });
+
+      for (const [options, code] of [
+        [{ memLevel: 0 }, "ERR_OUT_OF_RANGE"],
+        [{ memLevel: 10 }, "ERR_OUT_OF_RANGE"],
+        [{ memLevel: 1.5 }, "ERR_OUT_OF_RANGE"],
+        [{ memLevel: "9" }, "ERR_INVALID_ARG_TYPE"],
+        [{ memLevel: null }, "ERR_INVALID_ARG_TYPE"],
+        [{ strategy: -1 }, "ERR_OUT_OF_RANGE"],
+        [{ strategy: 5 }, "ERR_OUT_OF_RANGE"],
+        [{ strategy: NaN }, "ERR_OUT_OF_RANGE"],
+        [{ strategy: "Z_RLE" }, "ERR_INVALID_ARG_TYPE"],
+      ]) {
+        it(`${compress.name}: ${util.inspect(options)} is refused`, () => {
+          expect(() => compress(data, options)).toThrow(expect.objectContaining({ code }));
+        });
+      }
+
+      it(`${compress.name}: the defaults are memLevel 8 and Z_DEFAULT_STRATEGY`, () => {
+        expect(compress(data, { memLevel: 8, strategy: zlib.constants.Z_DEFAULT_STRATEGY })).toEqual(compress(data));
+      });
+
+      it(`${compress.name}: libdeflate has neither`, () => {
+        const library = "libdeflate";
+        expect(compress(data, { library, memLevel: 1, strategy: 2 })).toEqual(compress(data, { library }));
+      });
+
+      // A low memLevel makes many short blocks.
+      it(`${compress.name}: what does not compress fits`, () => {
+        let state = 1;
+        const next = () => (state = (Math.imul(state, 1103515245) + 12345) >>> 0) >>> 16;
+        for (const length of [16, 127 * 32 + 1, 65537]) {
+          const noise = Buffer.from(Array.from({ length }, () => next() & 255));
+          for (const options of [
+            { memLevel: 1 },
+            { memLevel: 1, level: 0 },
+            { memLevel: 1, level: 1 },
+            { memLevel: 1, strategy: 4 },
+          ]) {
+            const compressed = Buffer.from(compress(noise, options));
+            expect(compressed.length).toBeGreaterThan(length);
+            // Stored blocks are as long as the room for output allows, so node:zlib gets as much of it.
+            expect(compressed).toEqual(nodeCompress(noise, { ...options, chunkSize: 2 * length + 64 }));
+            expect(Buffer.from(decompress(compressed))).toEqual(noise);
+          }
+        }
+      });
+    }
+
+    // Z_FIXED has no tree of its own, and a block of memLevel 9 that the window slid past is not stored:
+    // 9 bits for each byte from 144 up and 10 for each block, where deflateBound() allows 9 bits and 3 bytes in all.
+    // The first block is stored, which spares 4092 bytes, and each other uses up less than one: 5120 are the fewest.
+    it(
+      "an output longer than deflateBound() is whole",
+      () => {
+        const period = Buffer.alloc(37 * 37 * 38 * 3);
+        for (let i = 0; i < period.length; i += 3) {
+          const triple = i / 3;
+          period[i] = 144 + Math.floor(triple / (37 * 38));
+          period[i + 1] = 181 + (Math.floor(triple / 38) % 37);
+          period[i + 2] = 218 + (triple % 38);
+        }
+        const input = Buffer.alloc(5130 * 32768, period);
+        // One match in three blocks of 32767 symbols keeps each block starting just before a multiple of the window.
+        for (let i = 5 * 32767 + 16000; i + 4 < input.length; i += 3 * 32768) input.copyWithin(i, i - 30000, i - 29996);
+
+        const compressed = deflateSync(input, { memLevel: 9, strategy: zlib.constants.Z_FIXED, level: 2 });
+        expect(compressed.length).toBeGreaterThan(input.length + input.length / 8 + 3);
+        expect(Buffer.compare(inflateSync(compressed), input)).toBe(0);
+      },
+      isDebug ? 60_000 : undefined,
+    );
+  });
 });
 
 function* window(buffer, size, advance = size) {
@@ -158,6 +499,108 @@ describe("zlib.gunzip", () => {
         expect(buffer.Buffer.isBuffer(data)).toBe(true);
         resolve(true);
       });
+    });
+  });
+});
+
+describe.each(["ArrayBuffer", "SharedArrayBuffer"])("%s of another realm", name => {
+  function fromOtherRealm(text) {
+    return vm.runInNewContext(
+      `const array = new Uint8Array(new ${name}(bytes.length)); array.set(bytes); array.buffer`,
+      { bytes: Buffer.from(text) },
+    );
+  }
+
+  it("is input", async () => {
+    expect(zlib.gunzipSync(zlib.gzipSync(fromOtherRealm("abc"))).toString()).toBe("abc");
+    expect(zlib.gunzipSync(await util.promisify(zlib.gzip)(fromOtherRealm("abc"))).toString()).toBe("abc");
+  });
+
+  it("is a dictionary", () => {
+    const deflated = zlib.deflateSync("abcabc", { dictionary: fromOtherRealm("abc") });
+    expect(zlib.inflateSync(deflated, { dictionary: fromOtherRealm("abc") }).toString()).toBe("abcabc");
+  });
+});
+
+describe("one-shot results", () => {
+  const input = Buffer.alloc(1024, "a");
+  const pairs = [
+    ["gzip", "gunzip"],
+    ["deflate", "inflate"],
+    ["deflateRaw", "inflateRaw"],
+    ["gzip", "unzip"],
+    ["brotliCompress", "brotliDecompress"],
+    ["zstdCompress", "zstdDecompress"],
+  ];
+  const backingStores = (compressed, decompressed) => ({
+    compressed: compressed.buffer.byteLength,
+    decompressed: decompressed.buffer.byteLength,
+  });
+
+  it.each(pairs)("%sSync and %sSync do not keep the 16 KB output chunk alive", (compress, decompress) => {
+    const compressed = zlib[`${compress}Sync`](input);
+    const decompressed = zlib[`${decompress}Sync`](compressed);
+    expect(decompressed).toEqual(input);
+    expect(backingStores(compressed, decompressed)).toEqual({
+      compressed: compressed.byteLength,
+      decompressed: decompressed.byteLength,
+    });
+  });
+
+  it.each(pairs)("%s and %s do not keep the 16 KB output chunk alive", async (compress, decompress) => {
+    const compressed = await util.promisify(zlib[compress])(input);
+    const decompressed = await util.promisify(zlib[decompress])(compressed);
+    expect(decompressed).toEqual(input);
+    expect(backingStores(compressed, decompressed)).toEqual({
+      compressed: compressed.byteLength,
+      decompressed: decompressed.byteLength,
+    });
+  });
+
+  // Random bytes do not compress, so both directions produce the same number of chunks.
+  // A fractional chunkSize is valid. It makes the offsets into the chunk fractional.
+  describe.each([
+    ["exactly one chunk", 16 * 1024, undefined],
+    ["full chunks and a small rest", 3 * 16 * 1024 + 5, undefined],
+    ["a large part of one large chunk", 40_000, 64 * 1024],
+    ["many small chunks", 10_000, 64],
+    ["a fractional chunkSize", 1000, 100.5],
+    ["a fractional chunkSize above the input size", 1000, 16 * 1024 + 0.5],
+  ])("%s", (_, size, chunkSize) => {
+    const data = randomFillSync(Buffer.alloc(size));
+    const options = { chunkSize };
+
+    it("round-trips with the sync functions", () => {
+      expect(zlib.inflateRawSync(zlib.deflateRawSync(data, options), options)).toEqual(data);
+      expect(zlib.zstdDecompressSync(zlib.zstdCompressSync(data, options), options)).toEqual(data);
+    });
+
+    it("round-trips with the callback functions", async () => {
+      const deflated = await util.promisify(zlib.deflateRaw)(data, options);
+      expect(await util.promisify(zlib.inflateRaw)(deflated, options)).toEqual(data);
+      const compressed = await util.promisify(zlib.zstdCompress)(data, options);
+      expect(await util.promisify(zlib.zstdDecompress)(compressed, options)).toEqual(data);
+    });
+
+    it("round-trips with _processChunk on one engine", () => {
+      const deflated = zlib.deflateRawSync(data);
+      const engine = new zlib.InflateRaw(options);
+      const half = deflated.length >> 1;
+      // The sync _processChunk closes the handle when it is done. minizlib keeps it open like this.
+      const handle = engine._handle;
+      const close = handle.close;
+      handle.close = () => {};
+      const parts = [];
+      try {
+        parts.push(Buffer.from(engine._processChunk(deflated.subarray(0, half), zlib.constants.Z_SYNC_FLUSH)));
+        engine._handle = handle;
+        parts.push(Buffer.from(engine._processChunk(deflated.subarray(half), zlib.constants.Z_SYNC_FLUSH)));
+      } finally {
+        handle.close = close;
+        engine._handle = handle;
+        engine.close();
+      }
+      expect(Buffer.concat(parts)).toEqual(data);
     });
   });
 });
@@ -297,6 +740,19 @@ describe("zlib.brotli", () => {
     await promise;
     expect(all.length).toBeGreaterThanOrEqual(7);
   }, 15_000);
+
+  it.each(["createBrotliCompress", "createBrotliDecompress"])(
+    "%s().flush() rejects a zlib-only flush value",
+    factory => {
+      const stream = zlib[factory]();
+      stream.write(Buffer.alloc(128, 0x61));
+      expect(() => stream.flush(zlib.constants.Z_FINISH)).toThrow(
+        expect.objectContaining({ code: "ERR_OUT_OF_RANGE" }),
+      );
+      expect(() => stream.flush(zlib.constants.Z_BLOCK)).toThrow(expect.objectContaining({ code: "ERR_OUT_OF_RANGE" }));
+      stream.destroy();
+    },
+  );
 
   it("should accept params", async () => {
     const ZLIB = zlib.constants;
@@ -725,6 +1181,39 @@ describe("async write buffer lifetime", () => {
   });
 });
 
+it.each([
+  ["createGzip", "Z_FINISH", "gunzipSync"],
+  ["createBrotliCompress", "BROTLI_OPERATION_FINISH", "brotliDecompressSync"],
+  ["createZstdCompress", "ZSTD_e_end", "zstdDecompressSync"],
+])("%s treats a chunk that was detached while it was queued as empty", async (create, finish, inverse) => {
+  const chunks = [];
+  const compressor = zlib[create]().on("data", chunk => chunks.push(chunk));
+  const queued = Buffer.from(new ArrayBuffer(16));
+  const { promise, resolve, reject } = Promise.withResolvers();
+  compressor.on("error", reject);
+  compressor.write("first");
+  compressor.write(queued);
+  queued.buffer.transfer();
+  compressor.flush(zlib.constants[finish], resolve);
+  await promise;
+  compressor.close();
+  expect(zlib[inverse](Buffer.concat(chunks)).toString()).toBe("first");
+});
+
+it("a stream of a ShadowRealm keeps its async context across a write", async () => {
+  const { promise, resolve, reject } = Promise.withResolvers();
+  new ShadowRealm().evaluate(
+    `(report, reject) => {
+       const fail = error => reject(String(error));
+       Promise.all([import("node:zlib"), import("node:async_hooks")]).then(([zlib, hooks]) => {
+         const storage = new hooks.AsyncLocalStorage();
+         storage.run("kept", () => zlib.createGzip().on("error", fail).once("data", () => report(storage.getStore())).end("x"));
+       }).catch(fail);
+     }`,
+  )(resolve, reject);
+  expect(await promise).toBe("kept");
+});
+
 describe("async write pins are released", () => {
   it("transfer() detaches once several async writes through the same buffers have completed", async () => {
     const deflate = zlib.createDeflate();
@@ -801,6 +1290,93 @@ describe("dictionary buffer lifetime", () => {
   });
 });
 
+it.concurrent("native streams take a write state and params at an odd address", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+        import { ptr, toArrayBuffer } from "bun:ffi";
+        import zlib from "node:zlib";
+        const { constants } = zlib;
+        const memory = new Uint8Array(256);
+        // Moves the bytes of a small typed array, so it comes before ptr().
+        memory.buffer;
+        const odd = (offset, length) => new Uint32Array(toArrayBuffer(ptr(memory) + 1 + offset, 0, length * 4));
+        const input = Buffer.from("hello hello hello");
+        const run = (handle, state, flush) => {
+          const out = Buffer.alloc(64);
+          handle.writeSync(flush, input, 0, input.length, out, 0, out.length);
+          return [out.subarray(0, out.length - state[0]), state[1]];
+        };
+        {
+          const state = odd(0, 2);
+          const handle = new (zlib.createDeflate()._handle.constructor)(constants.DEFLATE);
+          handle.init(15, 6, 8, 0, state, () => {}, undefined);
+          const [out, availIn] = run(handle, state, constants.Z_FINISH);
+          console.log(zlib.inflateSync(out).toString(), availIn);
+        }
+        {
+          const state = odd(8, 2);
+          const params = odd(16, 10).fill(-1);
+          params[constants.BROTLI_PARAM_QUALITY] = 3;
+          const handle = new (zlib.createBrotliCompress()._handle.constructor)(constants.BROTLI_ENCODE);
+          handle.init(params, state, () => {});
+          const [out, availIn] = run(handle, state, constants.BROTLI_OPERATION_FINISH);
+          console.log(zlib.brotliDecompressSync(out).toString(), availIn);
+        }
+        {
+          const state = odd(64, 2);
+          const handle = new (zlib.createZstdCompress()._handle.constructor)(constants.ZSTD_COMPRESS);
+          handle.init(odd(72, 10).fill(-1), undefined, state, () => {});
+          const [out, availIn] = run(handle, state, constants.ZSTD_e_end);
+          console.log(zlib.zstdDecompressSync(out).toString(), availIn);
+        }
+        console.log((ptr(memory) + 1) % 2);
+      `,
+    ],
+    env: bunEnv,
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(stdout.trim().split("\n")).toEqual(["hello hello hello 0", "hello hello hello 0", "hello hello hello 0", "1"]);
+  expect(exitCode).toBe(0);
+});
+
+it("params() between two writes changes the level for the second write", async () => {
+  const a = Buffer.alloc(32 * 1024, "a");
+  const b = Buffer.alloc(32 * 1024, "b");
+  const deflate = zlib.createDeflate({ level: 9 });
+  const order = [];
+  deflate.write(a, () => order.push("a"));
+  deflate.params(0, zlib.constants.Z_FILTERED, () => order.push("params"));
+  deflate.write(b, () => order.push("b"));
+  deflate.end();
+  const compressed = Buffer.concat(await deflate.toArray());
+  expect(order).toEqual(["a", "params", "b"]);
+  expect(deflate._level).toBe(0);
+  expect(zlib.inflateSync(compressed)).toEqual(Buffer.concat([a, b]));
+  // Level 0 stores "b".
+  expect(compressed.length).toBeGreaterThan(b.length);
+  expect(compressed.length).toBeLessThan(b.length + 200);
+});
+
+// With the small sizes, the last chunk waits for a reader before it is done.
+it.each([{}, { chunkSize: 64, highWaterMark: 64 }])(
+  "params() after 'finish' calls back while the output is unread (%j)",
+  async options => {
+    const input = Buffer.from(Array.from({ length: 1000 }, (_, i) => (i * 2654435761) >>> 24));
+    const gzip = zlib.createGzip({ level: 9, ...options });
+    gzip.write(input, () => gzip.end());
+    await new Promise(resolve => gzip.once("finish", resolve));
+    await new Promise(resolve => gzip.params(0, zlib.constants.Z_FILTERED, resolve));
+    await new Promise(resolve => gzip.params(1, zlib.constants.Z_FILTERED, resolve));
+    expect(gzip._level).toBe(1);
+    expect(zlib.gunzipSync(Buffer.concat(await gzip.toArray()))).toEqual(input);
+  },
+);
+
 describe("crc32", () => {
   it("rejects String objects", () => {
     expect(() => zlib.crc32(new String("abc"))).toThrow(TypeError);
@@ -815,5 +1391,90 @@ describe("crc32", () => {
     expect(() => zlib.crc32(undefined)).toThrow(expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" }));
     // Omitted second arg defaults to value=0.
     expect(zlib.crc32("hello")).toBe(zlib.crc32("hello", 0));
+    // So does an explicit undefined, as a default parameter does in Node.
+    expect(zlib.crc32("hello", undefined)).toBe(zlib.crc32("hello", 0));
   });
+
+  it.each([
+    [undefined, "undefined"],
+    [null, "null"],
+    [1, "type number (1)"],
+    [{}, "an instance of Object"],
+    [new String("a"), "an instance of String"],
+  ])("says what Node says of %p as the data", (data, received) => {
+    expect(() => zlib.crc32(data)).toThrow(
+      expect.objectContaining({
+        name: "TypeError",
+        code: "ERR_INVALID_ARG_TYPE",
+        message: `The "data" argument must be of type string or an instance of Buffer, TypedArray, or DataView. Received ${received}`,
+      }),
+    );
+  });
+});
+
+// Only ASAN can detect the out-of-bounds write.
+it.skipIf(!isASAN)(
+  "libdeflate doesn't write past its output buffer when another thread rewrites a mapped input",
+  async () => {
+    using dir = tempDir("libdeflate-race", { "bytes.bin": Buffer.alloc(4096) });
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        resolve(import.meta.dir, "libdeflate-racing-input-fixture.ts"),
+        resolve(String(dir), "bytes.bin"),
+      ],
+      env: { ...bunEnv, ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "symbolize=0"].filter(Boolean).join(":") },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({ stdout: "done", stderr: "", exitCode: 0 });
+  },
+  20_000,
+);
+
+// `grow()` detaches a `WebAssembly.Memory`'s buffer and frees the old block even if the buffer is pinned.
+it("zstdCompress compresses the bytes the caller passed when a WebAssembly.Memory grows after the call", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      /* js */ `
+      import { zstdCompress, zstdDecompressSync, constants } from "node:zlib";
+      import { randomFillSync } from "node:crypto";
+      const PAGES = 16; // 1 MB
+      const newMemory = () => new WebAssembly.Memory({ initial: PAGES, maximum: PAGES + 4 });
+
+      const mem = newMemory();
+      const input = new Uint8Array(mem.buffer);
+      // Incompressible input at a high level keeps the job reading until after the block is freed.
+      randomFillSync(input);
+      const original = Buffer.from(input);
+
+      const { promise, resolve } = Promise.withResolvers();
+      const options = { chunkSize: 12 << 20, params: { [constants.ZSTD_c_compressionLevel]: 12 } };
+      zstdCompress(input, options, (err, out) =>
+        resolve(err ? String(err) : Buffer.compare(zstdDecompressSync(out), original) === 0),
+      );
+      mem.grow(2);
+      // Reuse the freed block so a stale read can't see the caller's bytes.
+      const claim = Array.from({ length: 4 }, () => {
+        const memory = newMemory();
+        new Uint8Array(memory.buffer).fill(0xee);
+        return memory;
+      });
+
+      console.log(JSON.stringify({ detachedAfterGrow: input.byteLength === 0, roundTripMatches: await promise }));
+    `,
+    ],
+    // Without fast memory, `grow()` moves the block on every platform. With system malloc, the freed block is unmapped.
+    env: { ...bunEnv, BUN_JSC_useWasmFastMemory: "0", Malloc: "1" },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stdout.trim()).toBe(JSON.stringify({ detachedAfterGrow: true, roundTripMatches: true }));
+  expect(stderr).toBe("");
+  expect(exitCode).toBe(0);
 });

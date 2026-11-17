@@ -1,0 +1,21 @@
+{
+  "_id": "@types/uuencode",
+  "name": "@types/uuencode",
+  "dist-tags": {
+    "latest": "0.0.3"
+  },
+  "versions": {
+    "0.0.3": {
+      "name": "@types/uuencode",
+      "version": "0.0.3",
+      "main": "",
+      "types": "index.d.ts",
+      "_id": "@types/uuencode@0.0.3",
+      "dist": {
+        "integrity": "sha512-HqBWDi97rxyF7NoyUCVeuBSh7Z7/iXWJr/1biArwPJNEMdXUVhfWR27kJ6sgz4GcwVEnmNK1PDky3Xa1Y209qw==",
+        "shasum": "ffc8fc479d1025b0884f424377e5808eb374d2ea",
+        "tarball": "http://localhost:4873/@types/uuencode/-/@types/uuencode-0.0.3.tgz"
+      }
+    }
+  }
+}

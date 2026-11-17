@@ -1,0 +1,25 @@
+# The words of a hash are read out of a Uint32Array, go round the loop of rounds, and come round out of `| 0`. In front of the typed build each was asked for an int32: a word of 32 bits is over the greatest int32 half of the time,
+# so with eight words the typed build was entered once in 256 times and the rounds ran on boxes: SHA-256 took 3.4 times the cycles of the old compiler.
+# Every number that may enter is an integer: bit operators take its low 32 bits, sums are exact: it is asked for a number alone, and the head holds integers of 33 bits.
+# narrow: out of an Int32Array the question stays the one for an int32.
+# -- source: what-enters-a-loop-as-an-integer-and-comes-round-as-an-int32-is-asked-for-a-number-alone.ts
+# declare function hidden(): number;
+# declare function say(x: number): void;
+# function mix(seed: number, to: number): number { const sums = new Uint32Array(seed === 1.5 ? [] : [seed, seed ^ 0x09abcdef, 0xffffffff]), words = new Uint32Array([0x80000000, 1, 0xdeadbeef, 7]); let a = sums[0], b = sums[1], c = sums[2];
+#   for (let t = 0; t < to; t++) { const next = (((a << 5) | (a >>> 27)) + (b ^ c) + words[t]) | 0; c = (b << 30) | (b >>> 2); b = a; a = next; } return (a ^ b ^ c) >>> 0; }
+# function narrow(seed: number, to: number): number { const sums = new Int32Array(seed === 1.5 ? [] : [seed, seed ^ 0x09abcdef, 0xffffffff]), words = new Int32Array([0x80000000, 1, 0xdeadbeef, 7]); let a = sums[0], b = sums[1], c = sums[2];
+#   for (let t = 0; t < to; t++) { const next = (((a << 5) | (a >>> 27)) + (b ^ c) + words[t]) | 0; c = (b << 30) | (b >>> 2); b = a; a = next; } return (a ^ b ^ c) >>> 0; }
+# say(mix(hidden(), hidden())); say(mix(hidden(), hidden())); say(mix(hidden(), hidden())); say(narrow(hidden(), hidden()));
+# -- end of source
+# RUN: walk f1 f2 mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK-COUNT-3: = TypeTest {{*}}testedType=number
+# CHECK: : int[-2147483648, 4294967295] @Int64, {{*}}: int[-2147483648, 4294967295] @Int64, {{*}}: int[-2147483648, 4294967295] @Int64, {{*}}isInLoop=true isLoopHead=true
+# CHECK-LABEL: code f2:Body
+# CHECK-COUNT-3: = TypeTest {{*}}testedType=i32
+# CHECK: : i32 @Int32, {{*}}: i32 @Int32, {{*}}: i32 @Int32, {{*}}isInLoop=true isLoopHead=true
+# RUN(SHELL): run-in-shell const all = [0xfedcba98, 4, 0xffffffff, 0, 5, 6, 0xfedcba98, 3]; let at = 0; globalThis.hidden = () => all[at++]; globalThis.say = (x) => print(String(x));
+# SHELL: 638549929
+# SHELL-NEXT: 4132712976
+# SHELL-NEXT: 498257160
+# SHELL-NEXT: 1174999195

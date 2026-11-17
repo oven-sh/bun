@@ -1,13 +1,14 @@
 //! Automatic request-body compression for `fetch({ compress })`.
 //!
-//! Runs on the HTTP thread inside `HTTPClient::start()` so it can reuse
-//! [`LibdeflateState`]'s 512 KiB scratch buffer and cached libdeflate handle
+//! Runs on the HTTP thread inside `HTTPClient::compress_body_for_send()` so it can reuse
+//! [`LibdeflateState`]'s 512 KiB scratch buffer and cached compressor
 //! (the same struct that backs the response-decompression fast path).
-//! gzip/deflate go through libdeflate; brotli/zstd use their one-shot
+//! gzip/deflate go through `bun_deflate`; brotli/zstd use their one-shot
 //! encoders. Only buffered bodies reach this — streams and sendfile are
 //! filtered out on the JS thread.
 
 use crate::http_thread::LibdeflateState;
+use bun_deflate::{Compressor, Format, Level, Output};
 
 #[derive(Copy, Clone, Eq, PartialEq, Debug)]
 pub enum CompressEncoding {
@@ -34,8 +35,7 @@ pub struct CompressOption {
     pub level: Option<i32>,
 }
 
-/// libdeflate's default level. Reused for the cached compressor so the common
-/// `compress: true` / `compress: "gzip"` path never allocates a fresh handle.
+/// The level of the cached compressor, so the common `compress: true` / `compress: "gzip"` path reuses its memory.
 pub const DEFAULT_DEFLATE_LEVEL: i32 = 6;
 pub const DEFAULT_BROTLI_QUALITY: i32 = 6;
 pub const DEFAULT_ZSTD_LEVEL: i32 = 3;
@@ -63,14 +63,9 @@ pub(crate) fn compress_into(
     match opt.encoding {
         CompressEncoding::Gzip | CompressEncoding::Deflate => {
             let gzip = opt.encoding == CompressEncoding::Gzip;
-            let enc = if gzip {
-                bun_libdeflate_sys::libdeflate::Encoding::Gzip
-            } else {
-                // HTTP "deflate" is the zlib-wrapped DEFLATE stream (RFC 9110
-                // §8.4.1.2); libdeflate's `Deflate` is the raw stream.
-                bun_libdeflate_sys::libdeflate::Encoding::Zlib
-            };
-            match compress_libdeflate_fast(state, input, enc, opt.level) {
+            // HTTP "deflate" is the zlib-wrapped DEFLATE stream (RFC 9110 §8.4.1.2).
+            let format = if gzip { Format::Gzip } else { Format::Zlib };
+            match compress_libdeflate_fast(state, input, format, opt.level) {
                 Some(n) => Ok(CompressOutput::Shared(n)),
                 None => {
                     compress_zlib_streaming(input, gzip, opt.level, spill)?;
@@ -78,52 +73,45 @@ pub(crate) fn compress_into(
                 }
             }
         }
+        CompressEncoding::Brotli
+            if bun_removable_features::is_removed(
+                bun_removable_features::Feature::BrotliEncoder,
+            ) =>
+        {
+            Err(crate::Error::CompressionFailed)
+        }
         CompressEncoding::Brotli => compress_brotli(state, input, opt.level, spill),
         CompressEncoding::Zstd => compress_zstd(state, input, opt.level, spill),
     }
 }
 
-/// libdeflate one-shot fast path into `state.shared_buffer`. Returns `None`
-/// when the bound exceeds the shared buffer or no compressor can be allocated — caller falls back to
+/// One-shot fast path into `state.shared_buffer`. Returns `None`
+/// when the bound exceeds the shared buffer, the compressor can't be allocated,
+/// or the output doesn't fit. The caller falls back to
 /// [`compress_zlib_streaming`].
 fn compress_libdeflate_fast(
     state: &mut LibdeflateState,
     input: &[u8],
-    enc: bun_libdeflate_sys::libdeflate::Encoding,
+    format: Format,
     level: Option<i32>,
 ) -> Option<usize> {
-    use bun_libdeflate_sys::libdeflate::{Compressor, OwnedCompressor};
-
-    // Split-borrow so the compressor handle and `shared_buffer` can be used
-    // together.
-    let LibdeflateState {
-        compressor,
-        shared_buffer,
-        ..
-    } = state;
-    if compressor.is_none() {
-        *compressor = Some(OwnedCompressor::new(DEFAULT_DEFLATE_LEVEL)?);
-    }
-    let cached = compressor.as_mut()?;
-
-    // Bound is level-independent — use the cached handle so the slow-path
-    // bail-out doesn't pay for a temp compressor it never uses.
-    if cached.max_bytes_needed(input, enc) > shared_buffer.len() {
+    if bun_deflate::compress_bound(input.len(), format) > state.shared_buffer.len() {
         return None;
     }
 
-    // Custom level → allocate a temporary compressor; the cached handle is
-    // pinned to DEFAULT_DEFLATE_LEVEL.
-    let mut tmp: Option<OwnedCompressor> = None;
-    let compressor: &mut Compressor = match level {
-        Some(l) if l != DEFAULT_DEFLATE_LEVEL => tmp.insert(OwnedCompressor::new(l)?),
-        _ => cached,
+    // Other levels can take megabytes, which the thread should not hold on to.
+    let level = level.unwrap_or(DEFAULT_DEFLATE_LEVEL);
+    let compressor = match level {
+        DEFAULT_DEFLATE_LEVEL => &mut state.compressor,
+        _ => &mut Compressor::default(),
     };
-
-    Some(compressor.compress(input, shared_buffer, enc).written)
+    let output = Output::Slice(&mut state.shared_buffer[..]);
+    compressor
+        .compress(input, format, Level::new(level)?, output)
+        .ok()
 }
 
-/// Slow path for gzip/deflate when the libdeflate one-shot bound exceeds the
+/// Slow path for gzip/deflate when the one-shot bound exceeds the
 /// shared buffer: streaming zlib `deflate(Z_FINISH)` into a Vec that grows in
 /// 64 KiB steps so the allocation tracks the actual compressed size, not the
 /// worst-case bound.
@@ -138,7 +126,7 @@ fn compress_zlib_streaming(
     // gzip wrapper: +16; HTTP "deflate" is the zlib-wrapped stream
     // (RFC 9110 §8.4.1.2): plain 15.
     let window_bits = if gzip { 15 + 16 } else { 15 };
-    // libdeflate accepts 0..=12; zlib only 0..=9.
+    // `bun_deflate` accepts 0..=12; zlib only 0..=9.
     let level = level.unwrap_or(DEFAULT_DEFLATE_LEVEL).min(9);
     let mut encoder = DeflateEncoder::new(level, window_bits, 8, 0).map_err(|err| match err {
         bun_zlib::ZlibError::OutOfMemory => crate::Error::Alloc(bun_alloc::AllocError),
@@ -187,21 +175,16 @@ fn compress_brotli(
     let window = c::BROTLI_DEFAULT_WINDOW;
     let mode = c::BrotliEncoderMode::generic;
 
-    let bound = c::BrotliEncoderMaxCompressedSize(input.len());
-    // BrotliEncoderMaxCompressedSize returns 0 when the bound would overflow
-    // size_t — fall back to a heap buffer in that case.
-    if bound != 0 && bound <= state.shared_buffer.len() {
-        if let Some(n) = bun_brotli::encode(quality, window, mode, input, &mut state.shared_buffer)
+    let bound = bun_brotli::encode_bound(input.len());
+    if bound.is_some_and(|bound| bound <= state.shared_buffer.len()) {
+        if let Some(n) =
+            bun_brotli::encode(quality, window, mode, input, &mut state.shared_buffer[..])
         {
             return Ok(CompressOutput::Shared(n));
         }
     }
 
-    let cap = if bound != 0 {
-        bound
-    } else {
-        input.len() + 1024
-    };
+    let cap = bound.unwrap_or(input.len() + 1024);
     spill
         .try_reserve_exact(cap)
         .map_err(|_| bun_alloc::AllocError)?;
@@ -222,7 +205,7 @@ fn compress_zstd(
         return Err(crate::Error::CompressionFailed);
     }
     if bound <= state.shared_buffer.len() {
-        return match bun_zstd::compress(&mut state.shared_buffer, input, level) {
+        return match bun_zstd::compress(&mut state.shared_buffer[..], input, level) {
             bun_zstd::Result::Success(n) => Ok(CompressOutput::Shared(n)),
             bun_zstd::Result::Err(_) => Err(crate::Error::CompressionFailed),
         };

@@ -1,21 +1,32 @@
-import type { S3Options } from "bun";
+import type { S3File, S3Options } from "bun";
 import { S3Client, s3 as defaultS3, file, randomUUIDv7 } from "bun";
-import { describe, expect, it } from "bun:test";
-import child_process from "child_process";
+import { afterAll, describe, expect, it } from "bun:test";
 import { createHash, createHmac, randomUUID } from "crypto";
-import { bunEnv, bunExe, dockerExe, getSecret, isCI, isDockerEnabled, tempDir, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, getSecret, isCI, tempDir, tempDirWithFiles } from "harness";
 import path from "path";
-const s3 = (...args) => defaultS3.file(...args);
+import { spawnServer } from "s3-server";
+const s3 = (...args: Parameters<typeof defaultS3.file>) => defaultS3.file(...args);
 const S3 = (...args) => new S3Client(...args);
 
-// Import docker-compose helper
-import * as dockerCompose from "../../../docker/index.ts";
-
-const dockerCLI = dockerExe() as string;
 type S3Credentials = S3Options & {
   service: string;
 };
-let minioCredentials: S3Credentials | undefined;
+
+// The S3 server of test/packages/s3-server, in a process of its own. It needs
+// no container, so these tests run on each platform. It has a region, so it
+// refuses a signature for another region, as Amazon S3 does.
+const localServer = await spawnServer({
+  bunExe: bunExe(),
+  env: bunEnv,
+  region: "us-east-1",
+  buckets: ["buntest", { name: "buntest-us-west-1", region: "us-west-1" }],
+});
+afterAll(() => localServer.stop());
+const localCredentials: S3Credentials = {
+  ...localServer.clientOptions("buntest"),
+  service: "s3-server" as string,
+};
+
 const allCredentials: S3Credentials[] = [
   {
     accessKeyId: getSecret("S3_R2_ACCESS_KEY"),
@@ -24,36 +35,8 @@ const allCredentials: S3Credentials[] = [
     bucket: getSecret("S3_R2_BUCKET"),
     service: "R2" as string,
   },
+  localCredentials,
 ];
-
-if (isDockerEnabled()) {
-  // Use docker-compose to start MinIO
-  const minioInfo = await dockerCompose.ensure("minio");
-
-  // Get container name for docker exec
-  const containerName = child_process
-    .execSync(
-      `docker ps --filter "ancestor=minio/minio:latest" --filter "status=running" --format "{{.Names}}" | head -1`,
-      { encoding: "utf-8" },
-    )
-    .trim();
-
-  if (containerName) {
-    // Create a bucket using mc inside the container
-    child_process.spawnSync(dockerCLI, [`exec`, containerName, `mc`, `mb`, `data/buntest`], {
-      stdio: "ignore",
-    });
-  }
-
-  minioCredentials = {
-    endpoint: `http://${minioInfo.host}:${minioInfo.ports[9000]}`, // MinIO endpoint from docker-compose
-    accessKeyId: "minioadmin",
-    secretAccessKey: "minioadmin",
-    bucket: "buntest",
-    service: "MinIO" as string,
-  };
-  allCredentials.push(minioCredentials);
-}
 const r2Credentials = allCredentials[0];
 describe.concurrent.skipIf(!r2Credentials.endpoint && !isCI)("Virtual Hosted-Style", () => {
   if (!r2Credentials.endpoint) {
@@ -182,6 +165,7 @@ for (let credentials of allCredentials) {
       accessKeyId: credentials.accessKeyId,
       secretAccessKey: credentials.secretAccessKey,
       endpoint: credentials.endpoint,
+      region: credentials.region,
     };
 
     const S3Bucket = credentials.bucket;
@@ -332,7 +316,7 @@ for (let credentials of allCredentials) {
                   try {
                     const file = bucket.file(tmp_filename, options!);
                     await file.unlink();
-                  } catch (e) {
+                  } catch (e: any) {
                     // if error with NoSuchKey, it means the file does not exist and its fine
                     expect(e?.code || e).toBe("NoSuchKey");
                   }
@@ -533,7 +517,7 @@ for (let credentials of allCredentials) {
                   // the larger payload causes OOM in CI.
                   for (let payload of [bigishPayload]) {
                     // lets skip tests with more than 10 parts on cloud providers
-                    it.skipIf(credentials.service !== "MinIO")(
+                    it.skipIf(credentials.service !== "s3-server")(
                       `should be able to upload large files using writer() in multiple parts with partSize=${partSize} queueSize=${queueSize} payloadQuantity=${payloadQuantity} payloadSize=${payload.length * payloadQuantity}`,
                       async () => {
                         {
@@ -617,20 +601,20 @@ for (let credentials of allCredentials) {
             it("should be able to set content-type", async () => {
               await using tmpfile = await tmp();
               {
-                const s3file = file(tmpfile.name, { ...options, type: "text/css" });
+                const s3file = file(tmpfile.name, { ...options, type: "text/css" }) as unknown as S3File;
                 await s3file.write("Hello Bun!");
                 const response = await fetch(s3file.presign());
                 expect(response.headers.get("content-type")).toStartWith("text/css");
               }
               {
-                const s3file = file(tmpfile.name, options);
+                const s3file = file(tmpfile.name, options) as unknown as S3File;
                 await s3file.write("Hello Bun!", { type: "text/plain" });
                 const response = await fetch(s3file.presign());
                 expect(response.headers.get("content-type")).toStartWith("text/plain");
               }
 
               {
-                const s3file = file(tmpfile.name, options);
+                const s3file = file(tmpfile.name, options) as unknown as S3File;
                 const writer = s3file.writer({ type: "application/json" });
                 writer.write("Hello Bun!");
                 await writer.end();
@@ -1092,6 +1076,7 @@ for (let credentials of allCredentials) {
               });
 
               try {
+                // @ts-expect-error
                 await s3file.presign({ method: "OPTIONS" });
                 expect.unreachable();
               } catch (e: any) {
@@ -1175,10 +1160,14 @@ for (let credentials of allCredentials) {
           await Promise.all(
             [s3, (path, ...args) => S3(...args).file(path), file].map(async fn => {
               try {
-                const s3file = fn("s3://bucket/credentials-test", {
-                  ...s3Options, // credentials and endpoint dont match
-                  endpoint: "s3.us-west-1.amazonaws.com",
-                });
+                const s3file =
+                  credentials.service === "s3-server"
+                    ? // The bucket is in another region than the endpoint.
+                      fn("s3://buntest-us-west-1/credentials-test", s3Options)
+                    : fn("s3://bucket/credentials-test", {
+                        ...s3Options, // credentials and endpoint dont match
+                        endpoint: "s3.us-west-1.amazonaws.com",
+                      });
                 await s3file.write("Hello Bun!");
                 expect.unreachable();
               } catch (e: any) {
@@ -1456,8 +1445,8 @@ for (let credentials of allCredentials) {
     });
   });
 }
-describe.skipIf(!minioCredentials)("minio", () => {
-  const testDir = tempDirWithFiles("minio-credential-test", {
+describe("s3-server", () => {
+  const testDir = tempDirWithFiles("s3-credential-test", {
     "index.mjs": `
       import { s3, randomUUIDv7 } from "bun";
       import { expect } from "bun:test";
@@ -1481,10 +1470,11 @@ describe.skipIf(!minioCredentials)("minio", () => {
           env: {
             ...bunEnv,
             // @ts-ignore
-            [endpoint]: minioCredentials!.endpoint as string,
-            "S3_BUCKET": minioCredentials!.bucket as string,
-            "S3_ACCESS_KEY_ID": minioCredentials!.accessKeyId as string,
-            "S3_SECRET_ACCESS_KEY": minioCredentials!.secretAccessKey as string,
+            [endpoint]: localCredentials.endpoint as string,
+            "S3_BUCKET": localCredentials.bucket as string,
+            "S3_REGION": localCredentials.region as string,
+            "S3_ACCESS_KEY_ID": localCredentials.accessKeyId as string,
+            "S3_SECRET_ACCESS_KEY": localCredentials.secretAccessKey as string,
           },
           stdout: "pipe",
           stderr: "pipe",
@@ -1509,7 +1499,7 @@ describe.skipIf(!minioCredentials)("minio", () => {
         }
         it(`should work with ${start}${bucket}${end}`, async () => {
           const s3 = S3({
-            ...minioCredentials,
+            ...localCredentials,
             bucket,
           });
           const file = s3.file(`${bucketPrefixI++} test.txt`);
@@ -1522,6 +1512,38 @@ describe.skipIf(!minioCredentials)("minio", () => {
         });
       }
     }
+  });
+
+  // The ETag of a multipart object is a hash of the hashes of its parts, so it shows where they were cut.
+  describe.concurrent("writer() cuts the UTF-8 bytes at partSize", () => {
+    const partSize = 5 * 1024 * 1024;
+    const md5 = (bytes: Uint8Array) => createHash("md5").update(bytes).digest();
+    const pattern = (size: number) => Buffer.alloc(size, "0123456789abcdefghijklmnopqrstuvwxyz!");
+    it.each<[string, () => (string | Uint8Array)[]]>([
+      ["exactly one part", () => [pattern(partSize)]],
+      ["odd sizes", () => [1, 4093, 3 << 20, 65537, (1 << 20) + 7, 3 << 20, 333, 4 << 20].map(pattern)],
+      ["Latin-1 across a part", () => [pattern(partSize - 1), "é", "éa"]],
+      ["UTF-16 across a part", () => [pattern(partSize - 2), "€", "€a"]],
+      ["a surrogate pair across a part", () => [pattern(partSize - 3), "😀", "😀a"]],
+      ["a lone surrogate across a part", () => [pattern(partSize - 1), "\ud83d", "\ude00a"]],
+      ["long Latin-1 text", () => ["ab", Buffer.alloc(3 << 20, 0xe9).toString("latin1")]],
+      ["long UTF-16 text", () => ["€" + Buffer.alloc(6 << 20, "😀").toString()]],
+    ])("%s", async (name, makeChunks) => {
+      const chunks = makeChunks();
+      const file = S3(localCredentials).file(`cut ${name}`);
+      const writer = file.writer({ partSize, queueSize: 2 });
+      for (const chunk of chunks) writer.write(chunk);
+      const written = await writer.end();
+
+      const bytes = Buffer.concat(chunks.map(chunk => Buffer.from(chunk)));
+      const parts: Buffer[] = [];
+      for (let at = 0; at < bytes.length; at += partSize) parts.push(md5(bytes.subarray(at, at + partSize)));
+      expect({ written, etag: (await file.stat()).etag }).toEqual({
+        written: bytes.length,
+        etag: `"${md5(Buffer.concat(parts)).toString("hex")}-${parts.length}"`,
+      });
+      await file.unlink();
+    });
   });
 });
 
@@ -1590,8 +1612,8 @@ describe.concurrent("s3 missing credentials", () => {
 });
 
 // Archive + S3 integration tests
-describe.skipIf(!minioCredentials)("Archive with S3", () => {
-  const credentials = minioCredentials!;
+describe("Archive with S3", () => {
+  const credentials = localCredentials;
 
   it("writes archive to S3 via S3Client.write()", async () => {
     const client = new Bun.S3Client(credentials);
@@ -1627,7 +1649,7 @@ describe.skipIf(!minioCredentials)("Archive with S3", () => {
 
     await Bun.write(s3Url, archive, {
       ...credentials,
-    });
+    } as any);
 
     // Verify by downloading
     const s3File = Bun.file(s3Url, credentials);
@@ -1805,7 +1827,7 @@ describe("s3 multipart upload id validation", () => {
 describe("s3 upload stream body error", () => {
   // The readStreamIntoSink abrupt path dispatches a single-file PUT before
   // the pump promise rejects; the PUT's response callback must not read a
-  // freed MultiPartUpload when fail() runs from the reject handler.
+  // freed upload when fail() runs from the reject handler.
   it("does not UAF when a ReadableStream body errors after enqueue", async () => {
     const fixture = `
       const server = Bun.serve({

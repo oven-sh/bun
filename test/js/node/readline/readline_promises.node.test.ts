@@ -48,7 +48,7 @@ describe("readline/promises.createInterface()", () => {
   });
 
   it("should support Symbol.dispose for using statements", () => {
-    const fi = new FakeInput();
+    const fi: any = new FakeInput();
     let closed = false;
 
     {
@@ -71,7 +71,7 @@ describe("readline/promises.createInterface()", () => {
   });
 
   it("should support Symbol.dispose as alias for close()", () => {
-    const fi = new FakeInput();
+    const fi: any = new FakeInput();
     let closed = false;
 
     const rl = readlinePromises.createInterface({
@@ -90,6 +90,6 @@ describe("readline/promises.createInterface()", () => {
     rl[Symbol.dispose]();
 
     assert.strictEqual(closed, true);
-    assert.strictEqual(rl.closed, true);
+    assert.strictEqual((rl as any).closed, true);
   });
 });

@@ -1,6 +1,5 @@
 use crate::css_parser as css;
 use bun_alloc::Arena as Bump;
-use bun_alloc::ArenaVecExt as _;
 use css::{CssResult as Result, PrintErr, Printer};
 
 use crate::css_properties::align::AlignHandler;
@@ -20,7 +19,7 @@ use crate::css_properties::transform::TransformHandler;
 use crate::css_properties::transition::TransitionHandler;
 use crate::css_properties::ui::ColorSchemeHandler;
 
-pub type DeclarationList<'bump> = bun_alloc::ArenaVec<'bump, css::Property>;
+pub type DeclarationList<'bump> = bun_alloc::ArenaVec<'bump, css::Property<'bump>>;
 
 /// A CSS declaration block.
 ///
@@ -46,6 +45,12 @@ impl<'bump> DeclarationBlock<'bump> {
         self.declarations.len() + self.important_declarations.len()
     }
 
+    pub(crate) fn append(&mut self, other: &mut Self) {
+        self.declarations.append(&mut other.declarations);
+        self.important_declarations
+            .append(&mut other.important_declarations);
+    }
+
     pub(crate) fn new_in(bump: &'bump Bump) -> Self {
         Self {
             important_declarations: DeclarationList::new_in(bump),
@@ -57,18 +62,16 @@ impl<'bump> DeclarationBlock<'bump> {
         &mut self,
         handler: &mut DeclarationHandler<'bump>,
         important_handler: &mut DeclarationHandler<'bump>,
-        context: &mut css::PropertyHandlerContext,
+        context: &mut css::PropertyHandlerContext<'_, 'bump>,
     ) {
-        // `PropertyHandlerContext` carries no arena field, so we recover the
-        // arena from the handler's own bump-backed accumulator instead.
-        let bump: &'bump Bump = handler.decls.bump();
+        let bump = context.arena;
 
         // Two calls over a shared inner fn; iterate via &mut, move prop out
         // and overwrite the slot.
         #[inline]
         fn handle<'bump>(
             decls: &mut DeclarationList<'bump>,
-            ctx: &mut css::PropertyHandlerContext,
+            ctx: &mut css::PropertyHandlerContext<'_, 'bump>,
             hndlr: &mut DeclarationHandler<'bump>,
             important: bool,
         ) {
@@ -97,6 +100,8 @@ impl<'bump> DeclarationBlock<'bump> {
         handle(&mut self.declarations, context, handler, false);
 
         handler.finalize(context);
+        // A flush stages rules too.
+        context.is_important = true;
         important_handler.finalize(context);
         // The old bumpalo Vecs drop implicitly on overwrite (arena reclaims
         // on reset).
@@ -108,7 +113,7 @@ impl<'bump> DeclarationBlock<'bump> {
 
 /// Non-allocating placeholder used by `minify()` to overwrite moved-out slots.
 #[inline(always)]
-fn placeholder_property() -> css::Property {
+fn placeholder_property<'bump>() -> css::Property<'bump> {
     css::Property::All(crate::css_properties::CSSWideKeyword::RevertLayer)
 }
 
@@ -141,24 +146,13 @@ impl<'bump> DeclarationBlock<'bump> {
 }
 
 // ─── parse ────────────────────────────────────────────────────────────────
-//
-// Every consumer (`StyleRule`, `Keyframe`, `PageRule`,
-// `StyleAttribute`, `NestedRuleParser`) stores `DeclarationBlock<'static>` —
-// the crate-wide `'bump`-erasure placeholder until `'bump` threads through
-// `CssRule`. `parse()` therefore lives on the `'static` instantiation and
-// erases the parser arena's lifetime at the boundary; this collapses together
-// with the lifetime cast in `rules/style.rs::minify` when `CssRule<'bump, R>`
-// lands.
 
-impl DeclarationBlock<'static> {
+impl<'bump> DeclarationBlock<'bump> {
     pub fn parse(
-        input: &mut css::Parser,
+        input: &mut css::Parser<'_, 'bump>,
         options: &css::ParserOptions,
-    ) -> Result<DeclarationBlock<'static>> {
-        // SAFETY: `Tokenizer<'a>` owns `arena: &'a Bump`; the arena outlives
-        // every `DeclarationBlock` produced from this parser. `'static` here is
-        // the crate-wide erasure (see note above), not a real static borrow.
-        let bump: &'static Bump = unsafe { bun_ptr::detach_lifetime_ref(input.arena()) };
+    ) -> Result<'bump, DeclarationBlock<'bump>> {
+        let bump = input.arena();
         let mut important_declarations = DeclarationList::new_in(bump);
         let mut declarations = DeclarationList::new_in(bump);
         let mut decl_parser = PropertyDeclarationParser {
@@ -216,62 +210,24 @@ pub(crate) struct PropertyDeclarationParser<'a, 'bump> {
     pub options: &'a css::ParserOptions<'a>,
 }
 
-impl<'a, 'bump> css::AtRuleParser for PropertyDeclarationParser<'a, 'bump> {
+impl<'a, 'bump> css::AtRuleParser<'bump> for PropertyDeclarationParser<'a, 'bump> {
     type Prelude = ();
     type AtRule = ();
-
-    fn parse_prelude(
-        _this: &mut Self,
-        name: &[u8],
-        input: &mut css::Parser,
-    ) -> Result<Self::Prelude> {
-        Err(input.new_error(css::BasicParseErrorKind::at_rule_invalid(name)))
-    }
-
-    fn parse_block(
-        _this: &mut Self,
-        _: Self::Prelude,
-        _: &css::ParserState,
-        input: &mut css::Parser,
-    ) -> Result<Self::AtRule> {
-        Err(input.new_error(css::BasicParseErrorKind::at_rule_body_invalid))
-    }
-
-    fn rule_without_block(
-        _this: &mut Self,
-        _: Self::Prelude,
-        _: &css::ParserState,
-    ) -> css::Maybe<Self::AtRule, ()> {
-        Err(())
-    }
 }
 
-impl<'a, 'bump> css::QualifiedRuleParser for PropertyDeclarationParser<'a, 'bump> {
+impl<'a, 'bump> css::QualifiedRuleParser<'bump> for PropertyDeclarationParser<'a, 'bump> {
     type Prelude = ();
     type QualifiedRule = ();
-
-    fn parse_prelude(_this: &mut Self, input: &mut css::Parser) -> Result<Self::Prelude> {
-        Err(input.new_error(css::BasicParseErrorKind::qualified_rule_invalid))
-    }
-
-    fn parse_block(
-        _this: &mut Self,
-        _prelude: Self::Prelude,
-        _start: &css::ParserState,
-        input: &mut css::Parser,
-    ) -> Result<Self::QualifiedRule> {
-        Err(input.new_error(css::BasicParseErrorKind::qualified_rule_invalid))
-    }
 }
 
-impl<'a, 'bump> css::DeclarationParser for PropertyDeclarationParser<'a, 'bump> {
+impl<'a, 'bump> css::DeclarationParser<'bump> for PropertyDeclarationParser<'a, 'bump> {
     type Declaration = ();
 
     fn parse_value(
         this: &mut Self,
-        name: &[u8],
-        input: &mut css::Parser,
-    ) -> Result<Self::Declaration> {
+        name: &'bump [u8],
+        input: &mut css::Parser<'_, 'bump>,
+    ) -> Result<'bump, Self::Declaration> {
         parse_declaration(
             name,
             input,
@@ -282,7 +238,7 @@ impl<'a, 'bump> css::DeclarationParser for PropertyDeclarationParser<'a, 'bump> 
     }
 }
 
-impl<'a, 'bump> css::RuleBodyItemParser for PropertyDeclarationParser<'a, 'bump> {
+impl<'a, 'bump> css::RuleBodyItemParser<'bump> for PropertyDeclarationParser<'a, 'bump> {
     fn parse_qualified(_this: &Self) -> bool {
         false
     }
@@ -295,12 +251,12 @@ impl<'a, 'bump> css::RuleBodyItemParser for PropertyDeclarationParser<'a, 'bump>
 // ─── parse_declaration ────────────────────────────────────────────────────
 
 pub(crate) fn parse_declaration<'bump>(
-    name: &[u8],
-    input: &mut css::Parser,
+    name: &'bump [u8],
+    input: &mut css::Parser<'_, 'bump>,
     declarations: &mut DeclarationList<'bump>,
     important_declarations: &mut DeclarationList<'bump>,
     options: &css::ParserOptions,
-) -> Result<()> {
+) -> Result<'bump, ()> {
     parse_declaration_impl(
         name,
         input,
@@ -311,20 +267,49 @@ pub(crate) fn parse_declaration<'bump>(
     )
 }
 
-// Composes handling dispatches through the `ComposesCtx`
-// trait (defined in `css_parser.rs`); `NoComposesCtx` returns
-// `DisallowEntirely` so the no-tracking fast-path collapses into the match's
-// no-op arm.
+/// The class a `composes` declaration composes into. Warns and returns `None` where it is not allowed.
+fn composing_class_or_warn(
+    state: css::ComposesState,
+    source_location: css::SourceLocation,
+    options: &css::ParserOptions,
+) -> Option<bun_ast::Ref> {
+    match state {
+        css::ComposesState::Allow { class, .. } => return Some(class),
+        css::ComposesState::DisallowEntirely => options.warn_fmt(
+            format_args!("\"composes\" is not valid here"),
+            source_location.line,
+            source_location.column,
+        ),
+        css::ComposesState::DisallowNested(info) => options.warn_fmt(
+            format_args!("\"composes\" is not allowed inside nested selectors"),
+            info.line,
+            info.column,
+        ),
+        css::ComposesState::DisallowNotSingleClass(info) => options.warn_fmt_with_notes(
+            format_args!("\"composes\" only works inside single class selectors"),
+            source_location.line,
+            source_location.column,
+            Box::new([bun_ast::Data {
+                text: b"The parent selector is not a single class selector because of the syntax here:"
+                    .as_slice()
+                    .into(),
+                location: Some(info.to_logger_location(options.filename)),
+            }]),
+        ),
+    }
+    None
+}
+
 pub(crate) fn parse_declaration_impl<'bump, C>(
-    name: &[u8],
-    input: &mut css::Parser,
+    name: &'bump [u8],
+    input: &mut css::Parser<'_, 'bump>,
     declarations: &mut DeclarationList<'bump>,
     important_declarations: &mut DeclarationList<'bump>,
     options: &css::ParserOptions,
     composes_ctx: &mut C,
-) -> Result<()>
+) -> Result<'bump, ()>
 where
-    C: css::ComposesCtx + ?Sized,
+    C: css::ComposesCtx<'bump> + ?Sized,
 {
     let property_id = css::PropertyId::from_string(name);
     let mut delimiters = css::Delimiters::BANG;
@@ -335,8 +320,20 @@ where
     ) {
         delimiters |= css::Delimiters::CURLY_BRACKET;
     }
-    let source_location = input.current_source_location();
-    let mut property = input.parse_until_before(delimiters, |input2: &mut css::Parser| {
+    let mut composing_class = None;
+    if input.flags.css_modules() && matches!(property_id, css::PropertyId::Composes) {
+        composing_class = composing_class_or_warn(
+            composes_ctx.composes_state(),
+            input.current_source_location(),
+            options,
+        );
+        if composing_class.is_none() {
+            // Dropped unread: its `from "<file>"` must not import the file.
+            while input.next().is_ok() {}
+            return Ok(());
+        }
+    }
+    let property = input.parse_until_before(delimiters, |input2: &mut css::Parser| {
         css::Property::parse(property_id, input2, options)
     })?;
     let important = input
@@ -347,35 +344,8 @@ where
         .is_ok();
     input.expect_exhausted()?;
 
-    if input.flags.css_modules() {
-        if let css::Property::Composes(composes) = &mut property {
-            match composes_ctx.composes_state() {
-                css::ComposesState::DisallowEntirely => {}
-                css::ComposesState::Allow(_) => {
-                    composes_ctx.record_composes(composes);
-                }
-                css::ComposesState::DisallowNested(info) => {
-                    options.warn_fmt(
-                        format_args!("\"composes\" is not allowed inside nested selectors"),
-                        info.line,
-                        info.column,
-                    );
-                }
-                css::ComposesState::DisallowNotSingleClass(info) => {
-                    options.warn_fmt_with_notes(
-                        format_args!("\"composes\" only works inside single class selectors"),
-                        source_location.line,
-                        source_location.column,
-                        Box::new([bun_ast::Data {
-                            text: b"The parent selector is not a single class selector because of the syntax here:"
-                                .as_slice()
-                                .into(),
-                            location: Some(info.to_logger_location(options.filename)),
-                        }]),
-                    );
-                }
-            }
-        }
+    if let (Some(class), css::Property::Composes(composes)) = (composing_class, &property) {
+        composes_ctx.record_composes(class, composes);
     }
     if important {
         important_declarations.push(property);
@@ -388,17 +358,17 @@ where
 
 /// Per-shorthand-group handler state used by `DeclarationBlock::minify`.
 pub struct DeclarationHandler<'bump> {
-    pub(crate) background: BackgroundHandler,
-    pub(crate) border: BorderHandler,
+    pub(crate) background: BackgroundHandler<'bump>,
+    pub(crate) border: BorderHandler<'bump>,
     pub(crate) flex: FlexHandler,
     pub(crate) align: AlignHandler,
     pub(crate) size: SizeHandler,
-    pub(crate) margin: MarginHandler,
-    pub(crate) padding: PaddingHandler,
-    pub(crate) scroll_margin: ScrollMarginHandler,
-    pub(crate) transition: TransitionHandler,
-    pub(crate) font: FontHandler,
-    pub(crate) inset: InsetHandler,
+    pub(crate) margin: MarginHandler<'bump>,
+    pub(crate) padding: PaddingHandler<'bump>,
+    pub(crate) scroll_margin: ScrollMarginHandler<'bump>,
+    pub(crate) transition: TransitionHandler<'bump>,
+    pub(crate) font: FontHandler<'bump>,
+    pub(crate) inset: InsetHandler<'bump>,
     pub(crate) transform: TransformHandler,
     pub(crate) box_shadow: BoxShadowHandler,
     pub(crate) color_scheme: ColorSchemeHandler,
@@ -408,7 +378,7 @@ pub struct DeclarationHandler<'bump> {
 }
 
 impl<'bump> DeclarationHandler<'bump> {
-    pub(crate) fn finalize(&mut self, context: &mut css::PropertyHandlerContext) {
+    pub(crate) fn finalize(&mut self, context: &mut css::PropertyHandlerContext<'_, 'bump>) {
         if let Some(direction) = self.direction.take() {
             self.decls.push(css::Property::Direction(direction));
         }
@@ -432,8 +402,8 @@ impl<'bump> DeclarationHandler<'bump> {
 
     pub(crate) fn handle_property(
         &mut self,
-        property: &css::Property,
-        context: &mut css::PropertyHandlerContext,
+        property: &css::Property<'bump>,
+        context: &mut css::PropertyHandlerContext<'_, 'bump>,
     ) -> bool {
         // return this.background.handleProperty(property, &this.decls, context);
         self.background

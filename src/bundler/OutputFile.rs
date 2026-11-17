@@ -1,25 +1,20 @@
-use core::ffi::c_void;
-
 use crate::options::Loader;
 // `bake::Side` / `jsc.api.BuildArtifact.OutputKind` are TYPE_ONLY move-ins;
 // the `options` module already defines them locally.
 use crate::Error;
 use crate::options::{OutputKind, Side};
-use bun_core::String as BunString;
-use bun_paths::PathBuffer;
-use bun_paths::fs;
 use bun_paths::resolve_path::{self, platform};
 use bun_sys::Fd;
+use std::borrow::Cow;
 
 pub struct OutputFile {
     pub loader: Loader,
     pub input_loader: Loader,
-    pub src_path: fs::Path<'static>,
-    pub owned_src_path_text: Box<[u8]>,
+    pub src_path: Cow<'static, [u8]>,
     pub value: Value,
     pub size: usize,
     pub size_without_sourcemap: usize,
-    pub hash: u64,
+    pub hash: bun_core::fmt::ContentHash,
     pub is_executable: bool,
     pub source_map_index: u32,
     pub bytecode_index: u32,
@@ -40,20 +35,25 @@ pub struct OutputFile {
     /// The chunk is in the entry point's static import closure, i.e. it loads
     /// before the first `import()`.
     pub loads_at_startup: bool,
+    /// This chunk's module index in the `OutputKind::PrelinkedModuleGraph` blob (see
+    /// `prelinked_module_graph::build`); `u32::MAX` when it is not an ES module of that graph.
+    pub prelinked_module_index: u32,
+    /// Of a `Bytecode` or `BuiltinBytecode` file of a link with an order file, which has no bytes of its own: where its
+    /// cache entry starts in the `BytecodePayload`.
+    pub bytecode_entry_offset: u32,
 }
 
 impl OutputFile {
-    // Not a `const` because `Box`/`fs::Path` aren't const-constructible.
+    // Not a `const` because `Box` isn't const-constructible.
     pub fn zero_value() -> OutputFile {
         OutputFile {
             loader: Loader::File,
             input_loader: Loader::Js,
-            src_path: fs::Path::init(b""),
-            owned_src_path_text: Box::default(),
+            src_path: Cow::default(),
             value: Value::Noop,
             size: 0,
             size_without_sourcemap: 0,
-            hash: 0,
+            hash: bun_core::fmt::ContentHash::short(0),
             is_executable: false,
             source_map_index: u32::MAX,
             bytecode_index: u32::MAX,
@@ -67,6 +67,8 @@ impl OutputFile {
             bake_extra: BakeExtra::default(),
             load_order: u32::MAX,
             loads_at_startup: false,
+            prelinked_module_index: u32::MAX,
+            bytecode_entry_offset: 0,
         }
     }
 }
@@ -117,36 +119,6 @@ impl Value {
             _ => b"",
         }
     }
-
-    /// Borrowing variant of [`Self::to_bun_string`]: wraps the buffer in a
-    /// `WTF::ExternalStringImpl` that aliases `bytes` with a **no-op** free
-    /// callback (zero-copy). Caller guarantees `self` outlives every use of the
-    /// returned string.
-    ///
-    /// `PerThread.bundled_outputs` owns the bytes for the entire prerender
-    /// phase. The consuming [`Self::to_bun_string`] cannot be used there
-    /// because the `Vec<OutputFile>` is only borrowed.
-    pub fn to_bun_string_ref(&self) -> BunString {
-        match self {
-            Value::Noop => BunString::EMPTY,
-            Value::Buffer { bytes } => {
-                if bytes.is_empty() {
-                    return BunString::EMPTY;
-                }
-                extern "C" fn noop(_: *mut c_void, _: *mut c_void, _: usize) {}
-                // latin1 = true.
-                BunString::create_external::<*mut c_void>(
-                    bytes,
-                    true,
-                    core::ptr::null_mut::<c_void>(),
-                    noop,
-                )
-            }
-            Value::Copy(_) | Value::Saved(_) => {
-                bun_core::todo_panic!("to_bun_string_ref: Copy/Saved")
-            }
-        }
-    }
 }
 
 #[derive(Default, Clone, Copy)]
@@ -163,7 +135,7 @@ pub enum OptionsData {
 pub struct Options {
     pub(crate) loader: Loader,
     pub(crate) input_loader: Loader,
-    pub(crate) hash: Option<u64>,
+    pub(crate) hash: Option<bun_core::fmt::ContentHash>,
     pub(crate) source_map_index: Option<u32>,
     pub(crate) bytecode_index: Option<u32>,
     pub(crate) module_info_index: Option<u32>,
@@ -187,20 +159,15 @@ impl OutputFile {
             OptionsData::Buffer { data } => data.len(),
             OptionsData::Saved(_) => 0,
         });
-        let owned_src_path_text: Box<[u8]> = options.input_path;
-        // SAFETY: `owned_src_path_text` is a sibling field that outlives `src_path`; the boxed buffer never moves.
-        let input_path: &'static [u8] =
-            unsafe { core::mem::transmute::<&[u8], &'static [u8]>(&owned_src_path_text) };
         OutputFile {
             loader: options.loader,
             input_loader: options.input_loader,
-            src_path: fs::Path::init(input_path),
-            owned_src_path_text,
+            src_path: Cow::Owned(options.input_path.into_vec()),
             dest_path: options.output_path,
             source_index: options.source_index,
             size,
             size_without_sourcemap: options.display_size as usize,
-            hash: options.hash.unwrap_or(0),
+            hash: options.hash.unwrap_or(bun_core::fmt::ContentHash::short(0)),
             output_kind: options.output_kind,
             bytecode_index: options.bytecode_index.unwrap_or(u32::MAX),
             module_info_index: options.module_info_index.unwrap_or(u32::MAX),
@@ -216,6 +183,8 @@ impl OutputFile {
             bake_extra: options.bake_extra,
             load_order: u32::MAX,
             loads_at_startup: false,
+            prelinked_module_index: u32::MAX,
+            bytecode_entry_offset: 0,
         }
     }
 
@@ -232,7 +201,7 @@ impl OutputFile {
                     bun_sys::Dir::borrow(&root_dir).make_path(parent)?;
                 }
 
-                let mut path_buf = PathBuffer::uninit();
+                let mut path_buf = bun_paths::path_buffer_pool::get();
                 let _ = bun_sys::write_file_with_path_buffer(
                     &mut path_buf,
                     &bun_sys::WriteFileArgs {
@@ -252,17 +221,17 @@ impl OutputFile {
     }
 
     pub(crate) fn copy_to(&self, rel_path: &[u8], dir: Fd) -> Result<(), Error> {
-        let mut out_buf = PathBuffer::uninit();
+        let mut out_buf = bun_paths::path_buffer_pool::get();
         let fd_out = bun_sys::openat(
             dir,
             resolve_path::z(rel_path, &mut out_buf),
             bun_sys::O::WRONLY | bun_sys::O::CREAT | bun_sys::O::TRUNC,
             0o644,
         )?;
-        let mut in_buf = PathBuffer::uninit();
+        let mut in_buf = bun_paths::path_buffer_pool::get();
         let fd_in = bun_sys::openat(
             Fd::cwd(),
-            resolve_path::z(self.src_path.text, &mut in_buf),
+            resolve_path::z(&self.src_path, &mut in_buf),
             bun_sys::O::RDONLY,
             0,
         )?;

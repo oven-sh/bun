@@ -1,0 +1,22 @@
+export type A = [B<C>]
+
+;({ d: [] }) satisfies E
+
+const f = 1
+
+;[f].forEach(g)
+type H = 1
+
+;(f as any).i()
+export declare const j: number
+
+;(f as any).i()
+export import k = l.m
+
+;(f as any).i()
+declare function n(): void
+
+;(f as any).i()
+export default interface O {}
+
+;(f as any).i()

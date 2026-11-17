@@ -29,7 +29,11 @@ declare namespace Internal {
   ): { message: string; skipped: boolean };
 }
 
-const native = $rust("node_assert_binding.rs", "generate") as typeof Internal;
+const native = {
+  myersDiff: $bindgen("node_assert_binding.bind.ts", "myersDiff"),
+  printSimpleMyersDiff: $bindgen("node_assert_binding.bind.ts", "printSimpleMyersDiff"),
+  printMyersDiff: $bindgen("node_assert_binding.bind.ts", "printMyersDiff"),
+} as typeof Internal;
 
 function printSimpleMyersDiff(actual: string, expected: string) {
   return native.printSimpleMyersDiff(actual, expected, colors);

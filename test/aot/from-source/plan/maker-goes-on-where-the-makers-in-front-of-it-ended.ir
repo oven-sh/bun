@@ -1,0 +1,32 @@
+# -- source: maker-goes-on-where-the-makers-in-front-of-it-ended.ts
+# declare function report(value: unknown): void;
+# interface Type { flags: number; checker?: object; id: number; symbol?: object; }
+# interface ObjectType extends Type { objectFlags: number; members?: object; }
+# interface TypeReference extends ObjectType { target: Type; }
+# interface LiteralType extends Type { value: unknown; }
+# const tracing: boolean = (globalThis as any).tracing;
+# function Type(this: Type, flags: number, checker?: object) { this.flags = flags; if (tracing) this.checker = checker; }
+# let count = 0;
+# function createType(flags: number): Type { const result = new (Type as any)(flags) as Type; count++; result.id = count; return result; }
+# function createTypeWithSymbol(flags: number, symbol: object): Type { const result = createType(flags); result.symbol = symbol; return result; }
+# function createObjectType(objectFlags: number, symbol: object): ObjectType { const type = createTypeWithSymbol(1, symbol) as ObjectType; type.objectFlags = objectFlags; type.members = undefined; return type; }
+# function createTypeReference(target: Type): TypeReference { const type = createObjectType(4, {}) as TypeReference; type.target = target; return type; }
+# function createLiteralType(value: unknown): LiteralType { const type = createTypeWithSymbol(2, {}) as LiteralType; type.value = value; return type; }
+# const made = createTypeReference(createObjectType(2, {}));
+# report(Object.keys(made).join() + Object.keys(createLiteralType(1)).join());
+# -- end of source
+# `createTypeReference()` stores behind `createObjectType()`, which stores behind `createTypeWithSymbol()`, which stores behind `createType()`, which constructs: an object has the names of all its makers, the innermost first.
+# So an order of the image goes through the whole row of makers. It begins with what the layout lists, and also with what the constructor function creates ON EVERY WAY: `if (tracing) this.checker = checker` creates nothing in nearly every run.
+# What a maker stores on which other makers build lies in the cell, like what the constructor of a base class stores. What the last maker of a row stores only its own kind of object gets: it lies there too, since 24 + 8 x 8 bytes fit within one size class more, and narrow references make the cell 80 again.
+# RUN: plan orders mechanisms=all
+# CHECK: orders L0
+# CHECK: order {{*}}: "flags" "checker" | "id" "symbol" "value"
+# CHECK: order {{*}}: "flags" | "id" "symbol" "objectFlags" "members" "target"
+# CHECK: order {{*}}: "flags" | "id" "symbol" "value"
+# RUN(CELL): plan layouts mechanisms=all
+# CELL: layout L0 CompiledObject
+# CELL: slot 3 "symbol" appended {{*}} Inline
+# CELL: slot 4 "objectFlags" appended {{*}} Inline
+# CELL: slot 5 "members" appended JSValue Inline
+# CELL: slot 6 "target" appended {{*}} Inline
+# CELL: slot 7 "value" appended {{*}} Inline

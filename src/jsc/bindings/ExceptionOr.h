@@ -30,7 +30,7 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #include "Exception.h"
 #include <wtf/CrossThreadCopier.h>
-#include <wtf/Expected.h>
+#include <expected>
 #include <wtf/StdLibExtras.h>
 
 namespace WebCore {
@@ -50,7 +50,7 @@ public:
     ReturnType releaseReturnValue();
 
 private:
-    Expected<ReturnType, Exception> m_value;
+    std::expected<ReturnType, Exception> m_value;
 #if ASSERT_ENABLED
     bool m_wasReleased { false };
 #endif
@@ -86,7 +86,7 @@ public:
     Exception releaseException();
 
 private:
-    Expected<void, Exception> m_value;
+    std::expected<void, Exception> m_value;
 };
 
 ExceptionOr<void> isolatedCopy(ExceptionOr<void>&&);

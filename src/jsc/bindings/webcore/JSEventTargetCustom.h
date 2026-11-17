@@ -60,6 +60,8 @@ private:
 };
 
 JSEventTargetWrapper jsEventTargetCast(JSC::VM&, JSC::JSValue thisValue);
+// For an executable built with --aot: what the global object leads to may have been left out of it.
+void noteGlobalObjectStoodInForReceiverOfEvents(JSC::JSGlobalObject&);
 
 template<> class IDLOperation<JSEventTarget> {
 public:
@@ -80,6 +82,15 @@ public:
         // Note: WebKit Ref-protects thisObject.wrapped() here, but Bun's req.signal lifecycle
         // depends on exact ref-counting; the JS cell already keeps wrapped alive via JSDOMWrapper.
         RELEASE_AND_RETURN(throwScope, (operation(&lexicalGlobalObject, &callFrame, &thisObject)));
+    }
+
+    // addEventListener and dispatchEvent: an event exposes their receiver to the program as its `target`.
+    template<Operation operation>
+    static JSC::EncodedJSValue callExposingReceiver(JSC::JSGlobalObject& lexicalGlobalObject, JSC::CallFrame& callFrame, ASCIILiteral operationName)
+    {
+        if (callFrame.thisValue().isUndefinedOrNull() && JSC::getVM(&lexicalGlobalObject).hasCompiledCode()) [[unlikely]]
+            noteGlobalObjectStoodInForReceiverOfEvents(lexicalGlobalObject);
+        return call<operation>(lexicalGlobalObject, callFrame, operationName);
     }
 };
 

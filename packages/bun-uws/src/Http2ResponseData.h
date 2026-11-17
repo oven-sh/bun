@@ -2,6 +2,7 @@
 #define UWS_H2RESPONSEDATA_H
 
 #include "AsyncSocketData.h"
+#include "Hpack.h"
 
 #include <wtf/Vector.h>
 #include <cstdint>
@@ -34,15 +35,11 @@ struct Http2ResponseData {
     /* See Http3ResponseData: the body writer (sink) and the RequestContext arm
      * onWritable and onAborted/onData concurrently with different owners. */
     void *writableUserData = nullptr;
-    void *socketData = nullptr;
     OnWritableCallback onWritable = nullptr;
     OnAbortedCallback onAborted = nullptr;
     OnDataCallback inStream = nullptr;
     OnTimeoutCallback onTimeout = nullptr;
 
-    struct HeaderRef {
-        uint32_t nameOff, nameLen, valueOff, valueLen;
-    };
     /* Outgoing headers buffered until the first body write/end so they go
      * out as one HEADERS frame. Names are lowercased on append (RFC 9113
      * §8.2.1). */
@@ -54,7 +51,6 @@ struct Http2ResponseData {
     bool endAfterDrain = false;
 
     uint64_t offset = 0;
-    uint64_t totalSize = 0;
     uint8_t state = HTTP_RESPONSE_PENDING;
 
     void appendHeader(const char *name, unsigned nlen, const char *value, unsigned vlen) {

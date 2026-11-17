@@ -1,6 +1,8 @@
 // Direct `extern "C"` re-exports of the Google Highway SIMD C++ helpers.
 // Per crate map: `bun.highway.*` → `bun_highway::*` (same C++ backing).
 
+pub mod webp;
+
 unsafe extern "C" {
     fn highway_index_of_char(haystack: *const u8, haystack_len: usize, needle: u8) -> usize;
 
@@ -9,6 +11,24 @@ unsafe extern "C" {
     fn highway_index_of_not_char(haystack: *const u8, haystack_len: usize, value: u8) -> usize;
 
     fn highway_count_char(haystack: *const u8, haystack_len: usize, needle: u8) -> usize;
+
+    fn highway_line_starts(text: *const u8, text_len: usize, out: *mut u32) -> usize;
+
+    fn highway_pack_words(
+        words: *const u32,
+        groups: usize,
+        controls: *mut u8,
+        data: *mut u8,
+    ) -> usize;
+
+    fn highway_unpack_words(
+        controls: *const u8,
+        groups: usize,
+        data: *const u8,
+        data_len: usize,
+        words: *mut u32,
+        used: *mut usize,
+    ) -> usize;
 
     #[cfg(not(miri))]
     fn highway_memmem(
@@ -55,6 +75,10 @@ unsafe extern "C" {
         text_len: usize,
     ) -> usize;
 
+    fn highway_scanner_run_stops(text: *const u8, text_len: usize, out: *mut u8, plane_len: usize);
+
+    fn highway_odd_blocks(text: *const u8, text_len: usize, out: *mut u64);
+
     fn highway_index_of_newline_or_non_ascii(haystack: *const u8, haystack_len: usize) -> usize;
 
     fn highway_index_of_newline_or_non_ascii_or_hash_or_at(
@@ -88,6 +112,18 @@ unsafe extern "C" {
         chars: *const u8,
         chars_len: usize,
     ) -> usize;
+
+    fn highway_index_of_untidy_slash(path: *const u8, len: usize) -> usize;
+
+    fn highway_index_of_untidy_slash_or_non_ascii(path: *const u8, len: usize) -> usize;
+
+    fn highway_last_index_of_slash(path: *const u8, len: usize) -> usize;
+
+    fn highway_last_index_of_slash_or_dot(path: *const u8, len: usize) -> usize;
+
+    fn highway_common_prefix_length(a: *const u8, b: *const u8, len: usize) -> usize;
+
+    fn highway_count_slashes(path: *const u8, len: usize) -> usize;
 
     fn highway_fill_with_skip_mask(
         mask: *const u8,
@@ -158,6 +194,87 @@ unsafe extern "C" {
         out_indices: *mut u32,
         inout_state: *mut u64,
     ) -> usize;
+
+    fn highway_byte_set_prefix_length(text: *const u8, len: usize, set: &ByteSet) -> usize;
+
+    fn highway_png_unfilter(
+        filter_type: u8,
+        bpp: usize,
+        row: *mut u8,
+        above: *const u8,
+        len: usize,
+    );
+
+    fn highway_png_filter_rgba(
+        row: *const u8,
+        above: *const u8,
+        len: usize,
+        sub: *mut u8,
+        up: *mut u8,
+        average: *mut u8,
+        paeth: *mut u8,
+        sums: *mut u64,
+    );
+
+    fn highway_jpeg_inverse_transform(
+        blocks: *const JpegBlock,
+        count: usize,
+        quant: *const JpegBlock,
+        size: usize,
+        out: *mut u8,
+        stride: usize,
+    );
+
+    fn highway_jpeg_ycc_to_rgba(
+        y: *const u8,
+        cb: *const u8,
+        cr: *const u8,
+        width: usize,
+        out: *mut u8,
+    );
+
+    fn highway_jpeg_ycc422_to_rgba(
+        y: *const u8,
+        cb: *const u8,
+        cr: *const u8,
+        width: usize,
+        out: *mut u8,
+    );
+
+    fn highway_jpeg_ycc420_to_rgba(
+        y: *const u8,
+        cb_near: *const u8,
+        cb_far: *const u8,
+        cr_near: *const u8,
+        cr_far: *const u8,
+        width: usize,
+        out: *mut u8,
+    );
+
+    fn highway_jpeg_rgba_to_ycc420(
+        rgba: *const u8,
+        rgba_stride: usize,
+        width: usize,
+        row_pairs: usize,
+        y: *mut u8,
+        cb: *mut u8,
+        cr: *mut u8,
+        chroma_stride: usize,
+    );
+
+    fn highway_jpeg_forward_transform(
+        samples: *const u8,
+        stride: usize,
+        count: usize,
+        divisors: *const JpegBlock,
+        blocks: *mut JpegBlock,
+        masks: *mut u64,
+        bit_planes: bool,
+    );
+
+    fn highway_crc32(crc: u32, bytes: *const u8, len: usize) -> u32;
+
+    fn highway_adler32(bytes: *const u8, len: usize) -> u32;
 }
 
 // NOTE: every public wrapper below is `#[inline(always)]`. They are thin
@@ -165,7 +282,7 @@ unsafe extern "C" {
 // single-byte scans, a <16-byte scalar prologue — see `SCALAR_CUTOFF`); inlining
 // them puts the FFI call directly at the hot lexer/printer call site so that
 // (a) the Rust-side frame disappears unconditionally, and (b) cross-language
-// LTO (`--profile=btg`, crossLangLto=true) can fold the C dispatch shim
+// LTO (release builds with `lto`) can fold the C dispatch shim
 // straight into the caller. Without this the profile shows the C shim as a
 // distinct hot leaf (e.g. `highway_index_of_newline_or_non_ascii` self-samples
 // in lint/create-vue benches).
@@ -235,6 +352,16 @@ pub fn index_of_char(haystack: &[u8], needle: u8) -> Option<usize> {
     found
 }
 
+/// [`index_of_char`] of bytes that another thread may be writing. The byte found can have changed by the time this returns.
+///
+/// # Safety
+/// `len` bytes at `haystack` are readable.
+#[inline(always)]
+pub unsafe fn index_of_char_raw(haystack: *const u8, len: usize, needle: u8) -> Option<usize> {
+    // SAFETY: the caller's.
+    found_at(unsafe { highway_index_of_char(haystack, len, needle) }, len)
+}
+
 #[inline(always)]
 pub fn last_index_of_char(haystack: &[u8], needle: u8) -> Option<usize> {
     if scalar_only(haystack.len()) {
@@ -270,6 +397,68 @@ pub fn count_char(haystack: &[u8], needle: u8) -> usize {
     unsafe { highway_count_char(haystack.as_ptr(), haystack.len(), needle) }
 }
 
+/// Where the lines of `text` start when only `\n` ends a line: 0, then the offset of the byte after
+/// each `\n`.
+pub fn line_starts(text: &[u8]) -> Vec<u32> {
+    assert!(u32::try_from(text.len()).is_ok());
+    let count = count_char(text, b'\n');
+    let mut starts = Vec::with_capacity(1 + count);
+    starts.push(0);
+    if scalar_only(text.len()) {
+        let newlines = text.iter().enumerate().filter(|it| *it.1 == b'\n');
+        starts.extend(newlines.map(|it| it.0 as u32 + 1));
+        return starts;
+    }
+    let spare = starts.spare_capacity_mut();
+    // SAFETY: `text` is readable, and the kernel writes one offset per `\n`: `spare` has room for `count`.
+    let written =
+        unsafe { highway_line_starts(text.as_ptr(), text.len(), spare.as_mut_ptr().cast::<u32>()) };
+    assert_eq!(written, count);
+    // SAFETY: the kernel has written that many after the first.
+    unsafe { starts.set_len(1 + written) };
+    starts
+}
+
+/// Packs groups of four words. The sign of each is folded into its lowest bit, then it's written in 0, 1, 2 or 4 bytes
+/// to `data`. The control byte of a group has two bits for each of its words. Returns the number of bytes used in `data`.
+#[inline(always)]
+pub fn pack_words(words: &[[u32; 4]], controls: &mut [u8], data: &mut [u8]) -> usize {
+    assert!(controls.len() == words.len() && data.len() >= 16 * words.len());
+    // SAFETY: the kernel writes a control byte and at most 16 bytes for each group.
+    unsafe {
+        highway_pack_words(
+            words.as_ptr().cast(),
+            words.len(),
+            controls.as_mut_ptr(),
+            data.as_mut_ptr(),
+        )
+    }
+}
+
+/// Unpacks groups that `pack_words` packed, from the first on, as long as `data` has 16 more bytes. Returns how many it
+/// wrote to `words`, and the number of their bytes.
+#[inline(always)]
+pub fn unpack_words(
+    controls: &[u8],
+    data: &[u8],
+    words: &mut [[core::mem::MaybeUninit<u32>; 4]],
+) -> (usize, usize) {
+    assert!(words.len() == controls.len());
+    let mut used = 0;
+    // SAFETY: the kernel reads no byte past the end of `data`, and writes at most one group for each control byte.
+    let groups = unsafe {
+        highway_unpack_words(
+            controls.as_ptr(),
+            controls.len(),
+            data.as_ptr(),
+            data.len(),
+            words.as_mut_ptr().cast(),
+            &raw mut used,
+        )
+    };
+    (groups, used)
+}
+
 #[inline(always)]
 pub fn memmem(haystack: &[u8], needle: &[u8]) -> Option<usize> {
     if needle.is_empty() {
@@ -296,8 +485,8 @@ pub fn memmem(haystack: &[u8], needle: &[u8]) -> Option<usize> {
         if p.is_null() {
             None
         } else {
-            // SAFETY: highway_memmem returns a pointer within `haystack` on success.
-            Some(unsafe { p.offset_from(haystack.as_ptr()) } as usize)
+            // highway_memmem returns a pointer within `haystack` on success.
+            Some(p.addr() - haystack.as_ptr().addr())
         }
     }
 }
@@ -453,6 +642,212 @@ pub fn index_of_interesting_character_in_multiline_comment(slice: &[u8]) -> Opti
     Some(result)
 }
 
+/// A set of bytes, to be built at compile time.
+#[repr(C)]
+pub struct ByteSet {
+    /// For the kernel: byte `b` is a member if `rows[b >> 4] & columns[b & 15]` isn't zero.
+    rows: [u8; 16],
+    columns: [u8; 16],
+    /// For texts that are too short for the kernel: one load instead of two.
+    is_member: [bool; 256],
+}
+
+impl ByteSet {
+    /// Panics if the 16 rows of 16 bytes have more than 8 patterns of members.
+    pub const fn new(ranges: &[core::ops::RangeInclusive<u8>]) -> Self {
+        let (mut members, mut is_member) = ([0u16; 16], [false; 256]);
+        let mut rest = ranges;
+        while let [range, tail @ ..] = rest {
+            let mut byte = *range.start() as usize;
+            while byte <= *range.end() as usize {
+                members[byte >> 4] |= 1 << (byte & 15);
+                is_member[byte] = true;
+                byte += 1;
+            }
+            rest = tail;
+        }
+
+        let (mut rows, mut columns) = ([0; 16], [0; 16]);
+        let (mut row, mut bits) = (0, 0);
+        while row < 16 {
+            let mut same = 0;
+            while members[same] != members[row] {
+                same += 1;
+            }
+            if same < row {
+                rows[row] = rows[same];
+            } else if members[row] != 0 {
+                assert!(bits < 8);
+                rows[row] = 1 << bits;
+                let mut column = 0;
+                while column < 16 {
+                    columns[column] |= (((members[row] >> column) & 1) as u8) << bits;
+                    column += 1;
+                }
+                bits += 1;
+            }
+            row += 1;
+        }
+        Self {
+            rows,
+            columns,
+            is_member,
+        }
+    }
+
+    #[inline(always)]
+    pub fn contains(&self, byte: u8) -> bool {
+        self.is_member[usize::from(byte)]
+    }
+
+    /// How many members `text` starts with.
+    #[inline(always)]
+    pub fn prefix_len(&self, text: &[u8]) -> usize {
+        let scalar = || text.iter().take_while(|&&byte| self.contains(byte)).count();
+        if scalar_only(text.len()) {
+            return scalar();
+        }
+        const { assert!(SCALAR_CUTOFF >= 16) };
+        // SAFETY: text.ptr/len are a valid readable range of at least 16 bytes.
+        let len = unsafe { highway_byte_set_prefix_length(text.as_ptr(), text.len(), self) };
+        debug_assert_eq!(len, scalar());
+        len
+    }
+}
+
+/// Buffer for [`ScannerStops`]. Keep one per thread so the allocation is reused from file to file.
+#[derive(Default)]
+pub struct ScannerStopsBuffer {
+    /// As long as the longest text so far needs: the kernel writes all that is read, so nothing
+    /// is cleared from one text to the next.
+    planes: Vec<u8>,
+    /// The address and the length of the text that `planes` is filled for.
+    filled_for: Option<(usize, usize)>,
+}
+
+/// Where runs of bytes end in a JavaScript or TypeScript source. One kernel call finds them for the
+/// whole text, so a scanner gets the length of a name or a string from a load and a bit scan
+/// instead of a call per token.
+#[derive(Copy, Clone)]
+pub struct ScannerStops<'a> {
+    /// Everything but ASCII letters, digits, `_` and `$`.
+    pub after_name: Stops<'a>,
+    /// Everything but tabs and spaces.
+    pub after_blanks: Stops<'a>,
+    /// `"`, `'`, `` ` ``, `$`, `\`, control characters, and everything that isn't ASCII.
+    pub in_string: Stops<'a>,
+}
+
+impl ScannerStopsBuffer {
+    /// 8 bytes more than the kernel writes, so that `Stops::window` can load a whole word at any
+    /// position. They are set, like all bits past the end: a run ends with the text.
+    fn plane_len(text: &[u8]) -> usize {
+        text.len().div_ceil(64) * 8 + 8
+    }
+
+    /// The stops of `text`.
+    pub fn find(&mut self, text: &[u8]) -> ScannerStops<'_> {
+        self.fill(text);
+        self.filled(text)
+    }
+
+    /// The stops of `text`, which may be the text of the last call. The caller has held on to that
+    /// text since, or has called [`ScannerStopsBuffer::forget`]: another text can get the same address.
+    pub fn find_again(&mut self, text: &[u8]) -> ScannerStops<'_> {
+        if self.filled_for != Some((text.as_ptr().addr(), text.len())) {
+            self.fill(text);
+        }
+        #[cfg(debug_assertions)]
+        {
+            let found = self.planes.clone();
+            self.fill(text);
+            assert!(found == self.planes, "the text has changed");
+        }
+        self.filled(text)
+    }
+
+    /// The text of the last call is no longer held on to.
+    pub fn forget(&mut self) {
+        self.filled_for = None;
+    }
+
+    fn fill(&mut self, text: &[u8]) {
+        let plane_len = Self::plane_len(text);
+        if self.planes.len() < 3 * plane_len {
+            self.planes.resize(3 * plane_len, 0);
+        }
+        for plane in self.planes[..3 * plane_len].chunks_exact_mut(plane_len) {
+            plane[plane_len - 8..].fill(0xFF);
+        }
+        // SAFETY: `text` is readable, and the kernel writes `plane_len - 8` bytes to each of the three planes.
+        unsafe {
+            highway_scanner_run_stops(
+                text.as_ptr(),
+                text.len(),
+                self.planes.as_mut_ptr(),
+                plane_len,
+            );
+        }
+        self.filled_for = Some((text.as_ptr().addr(), text.len()));
+    }
+
+    fn filled(&self, text: &[u8]) -> ScannerStops<'_> {
+        let plane_len = Self::plane_len(text);
+        let (after_name, rest) = self.planes.split_at(plane_len);
+        let (after_blanks, rest) = rest.split_at(plane_len);
+        ScannerStops {
+            after_name: Stops(after_name),
+            after_blanks: Stops(after_blanks),
+            in_string: Stops(&rest[..plane_len]),
+        }
+    }
+}
+
+/// One bit per byte of a text, lowest bit first. A set bit is a byte that ends a run.
+#[derive(Copy, Clone)]
+pub struct Stops<'a>(&'a [u8]);
+
+impl Stops<'_> {
+    /// The bits from `pos` on. The upper 7 may be zeros that were shifted in.
+    #[inline(always)]
+    fn window(self, pos: usize) -> u64 {
+        let at = pos >> 3;
+        match self.0.get(at..at + 8) {
+            Some(bits) => u64::from_le_bytes(bits.try_into().unwrap_or_default()) >> (pos & 7),
+            None => 1,
+        }
+    }
+
+    /// How many bytes there are from `pos` to the next stop. Exact below 57; anything higher only
+    /// says that there are at least 57.
+    #[inline(always)]
+    pub fn run(self, pos: usize) -> u32 {
+        self.window(pos).trailing_zeros()
+    }
+
+    /// The first stop at or after `pos`. The end of the text is one.
+    #[inline(always)]
+    pub fn next(self, mut pos: usize) -> usize {
+        loop {
+            let window = self.window(pos);
+            if window != 0 {
+                return pos + window.trailing_zeros() as usize;
+            }
+            pos += 56;
+        }
+    }
+}
+
+/// Fills `out` with one bit for every 64 bytes of `text`, the lowest bit of the first word first:
+/// whether one of them is anything but a printable character of ASCII other than the backslash, a
+/// tab, a line feed or a carriage return. The bits past the end of the text are clear.
+pub fn odd_blocks(text: &[u8], out: &mut Vec<u64>) {
+    out.clear();
+    out.resize(text.len().div_ceil(64 * 64), 0);
+    // SAFETY: `text` is readable, and the kernel writes a word for every 64 blocks of 64 bytes, whole or not.
+    unsafe { highway_odd_blocks(text.as_ptr(), text.len(), out.as_mut_ptr()) };
+}
+
 #[inline(always)]
 pub fn index_of_newline_or_non_ascii(haystack: &[u8]) -> Option<usize> {
     debug_assert!(!haystack.is_empty());
@@ -576,12 +971,13 @@ pub fn last_index_of_any_char(haystack: &[u8], chars: &[u8]) -> Option<usize> {
     if chars.is_empty() {
         return None;
     }
-    debug_assert!(chars.len() >= 2 && chars.len() <= 16);
+    assert!(chars.len() >= 2 && chars.len() <= 16);
     if scalar_only(haystack.len()) {
         return haystack.iter().rposition(|b| chars.contains(b));
     }
 
-    // SAFETY: haystack and chars ptr/len are valid readable ranges.
+    // SAFETY: haystack and chars ptr/len are valid readable ranges, and `chars` has the two bytes
+    // that the kernel always reads.
     let result = unsafe {
         highway_last_index_of_any_char(
             haystack.as_ptr(),
@@ -596,12 +992,108 @@ pub fn last_index_of_any_char(haystack: &[u8], chars: &[u8]) -> Option<usize> {
     found
 }
 
+/// Index of the first `/` of `path` in front of a part that is empty, `.` or `..`. A part ends in front of a `/` or
+/// where `path` ends.
+#[inline(always)]
+pub fn index_of_untidy_slash(path: &[u8]) -> Option<usize> {
+    if cfg!(miri) {
+        return (1..path.len())
+            .find(|&at| {
+                path[at - 1] == b'/'
+                    && matches!(
+                        &path[at..],
+                        [b'/', ..]
+                            | [b'.']
+                            | [b'.', b'/', ..]
+                            | [b'.', b'.']
+                            | [b'.', b'.', b'/', ..]
+                    )
+            })
+            .map(|at| at - 1);
+    }
+    // SAFETY: path.ptr/len are a valid readable range.
+    let result = unsafe { highway_index_of_untidy_slash(path.as_ptr(), path.len()) };
+    let found = found_at(result, path.len());
+    debug_assert!(found.is_none_or(|i| path[i] == b'/' && matches!(path[i + 1], b'/' | b'.')));
+    found
+}
+
+/// Index of the first byte of `path` that is not ASCII or is what [`index_of_untidy_slash`] looks for.
+#[inline(always)]
+pub fn index_of_untidy_slash_or_non_ascii(path: &[u8]) -> Option<usize> {
+    if cfg!(miri) {
+        return (0..path.len())
+            .find(|&at| !path[at].is_ascii() || index_of_untidy_slash(&path[at..]) == Some(0));
+    }
+    // SAFETY: path.ptr/len are a valid readable range.
+    let result = unsafe { highway_index_of_untidy_slash_or_non_ascii(path.as_ptr(), path.len()) };
+    let found = found_at(result, path.len());
+    debug_assert!(found.is_none_or(|i| {
+        !path[i].is_ascii() || (path[i] == b'/' && matches!(path[i + 1], b'/' | b'.'))
+    }));
+    found
+}
+
+/// Index of the last `/` of a path, which is expected within a few dozen bytes of the end. [`last_index_of_char`] is for
+/// a byte that can be anywhere in a long text.
+#[inline(always)]
+pub fn last_index_of_slash(path: &[u8]) -> Option<usize> {
+    if cfg!(miri) {
+        return (0..path.len()).rev().find(|&at| path[at] == b'/');
+    }
+    // SAFETY: path.ptr/len are a valid readable range.
+    let result = unsafe { highway_last_index_of_slash(path.as_ptr(), path.len()) };
+    let found = found_at(result, path.len());
+    debug_assert!(found.is_none_or(|i| path[i] == b'/'));
+    found
+}
+
+/// [`last_index_of_slash`] for a `/` or a `.`, whichever is last.
+#[inline(always)]
+pub fn last_index_of_slash_or_dot(path: &[u8]) -> Option<usize> {
+    if cfg!(miri) {
+        return (0..path.len())
+            .rev()
+            .find(|&at| matches!(path[at], b'/' | b'.'));
+    }
+    // SAFETY: path.ptr/len are a valid readable range.
+    let result = unsafe { highway_last_index_of_slash_or_dot(path.as_ptr(), path.len()) };
+    let found = found_at(result, path.len());
+    debug_assert!(found.is_none_or(|i| matches!(path[i], b'/' | b'.')));
+    found
+}
+
+/// How many bytes `a` and `b` start with in common.
+#[inline(always)]
+pub fn common_prefix_length(a: &[u8], b: &[u8]) -> usize {
+    let shorter = a.len().min(b.len());
+    if cfg!(miri) {
+        return (0..shorter).find(|&at| a[at] != b[at]).unwrap_or(shorter);
+    }
+    // SAFETY: both have `shorter` readable bytes.
+    let result = unsafe { highway_common_prefix_length(a.as_ptr(), b.as_ptr(), shorter) };
+    debug_assert!(result <= shorter && a[..result] == b[..result]);
+    result
+}
+
+/// [`count_char`] of `/` for a path of a few dozen bytes.
+#[inline(always)]
+pub fn count_slashes(path: &[u8]) -> usize {
+    if cfg!(miri) {
+        return (0..path.len())
+            .map(|at| usize::from(path[at] == b'/'))
+            .sum();
+    }
+    // SAFETY: path.ptr/len are a valid readable range.
+    unsafe { highway_count_slashes(path.as_ptr(), path.len()) }
+}
+
 // `&[u16]` requires
 // 2-byte alignment. Callers with unaligned data must go through the raw extern.
 #[inline(always)]
 pub fn copy_u16_to_u8(input: &[u16], output: &mut [u8]) {
-    // SAFETY: input.ptr/len readable, output.ptr writable for at least input.len() bytes
-    // (caller contract: output.len() >= input.len()).
+    let output = &mut output[..input.len()];
+    // SAFETY: input.ptr/len readable, output.ptr writable for input.len() bytes.
     unsafe { highway_copy_u16_to_u8(input.as_ptr(), input.len(), output.as_mut_ptr()) }
 }
 
@@ -687,6 +1179,7 @@ pub fn fill_with_skip_mask(mask: [u8; 4], output: &mut [u8], input: &[u8], skip_
     if input.is_empty() {
         return;
     }
+    let output = &mut output[..input.len()];
 
     // SAFETY: mask is 4 bytes; input.ptr/len readable; output.ptr writable for input.len() bytes.
     unsafe {
@@ -953,6 +1446,221 @@ pub fn xml_structural_index16_chunk(
     }
 }
 
+/// Undoes PNG's filter type 1 (Sub), 2 (Up), 3 (Average) or 4 (Paeth) on `row`, whose pixels have 1, 2, 4, 6 or 8 bytes.
+/// `above` is the row before it, with its filter undone, or zeros. Another filter type or pixel size leaves `row` as it is.
+#[inline(always)]
+pub fn png_unfilter(filter_type: u8, bytes_per_pixel: usize, row: &mut [u8], above: &[u8]) {
+    assert_eq!(row.len(), above.len());
+    // SAFETY: the kernel reads and writes `row.len()` bytes of `row` and reads as many of `above` (asserted above).
+    unsafe {
+        highway_png_unfilter(
+            filter_type,
+            bytes_per_pixel,
+            row.as_mut_ptr(),
+            above.as_ptr(),
+            row.len(),
+        );
+    }
+}
+
+/// Applies PNG's filter types 1 to 4 to `row`, whose pixels have 4 bytes: `filtered[t - 1]` is for type `t`.
+/// `above` is the row before it, or zeros. Returns, for types 0 to 4, how far the filtered bytes are from zero, taken
+/// as signed and added up.
+#[inline(always)]
+pub fn png_filter_rgba(row: &[u8], above: &[u8], filtered: [&mut [u8]; 4]) -> [u64; 5] {
+    assert_eq!(row.len(), above.len());
+    assert!(filtered.iter().all(|line| line.len() == row.len()));
+    let [sub, up, average, paeth] = filtered;
+    let mut sums = [0; 5];
+    // SAFETY: the kernel reads `row.len()` bytes of `row` and `above`, writes as many to each of the four (asserted
+    // above), and writes 5 sums.
+    unsafe {
+        highway_png_filter_rgba(
+            row.as_ptr(),
+            above.as_ptr(),
+            row.len(),
+            sub.as_mut_ptr(),
+            up.as_mut_ptr(),
+            average.as_mut_ptr(),
+            paeth.as_mut_ptr(),
+            sums.as_mut_ptr(),
+        );
+    }
+    sums
+}
+
+/// 8 by 8 coefficients: rows 0 and 4 interleaved, then 2 and 6, 1 and 3, 5 and 7. Columns go 0 2 4 6 1 3 5 7.
+#[derive(Clone, Copy)]
+#[repr(C, align(64))]
+pub struct JpegBlock(pub [i16; 64]);
+
+/// The color kernels read and write whole groups of this many pixels: `kPixelGroup` in highway_jpeg.cpp.
+pub const JPEG_PIXEL_GROUP: usize = 32;
+/// The bytes that a kernel may touch past what it needs of a row.
+pub const JPEG_ROW_SLACK: usize = 16;
+
+/// What a JPEG wrapper returns, having done nothing, if its slices do not cover what the kernel touches.
+#[derive(Debug)]
+pub struct JpegMisfit;
+
+#[inline(always)]
+fn jpeg_require(condition: bool) -> Result<(), JpegMisfit> {
+    if condition { Ok(()) } else { Err(JpegMisfit) }
+}
+
+/// Whether `rows` rows of `row_len`, `stride` apart, are within `len`.
+#[inline(always)]
+fn rows_fit(len: usize, rows: usize, stride: usize, row_len: usize) -> bool {
+    rows.saturating_sub(1)
+        .checked_mul(stride)
+        .and_then(|last| last.checked_add(row_len))
+        .is_some_and(|end| end <= len)
+}
+
+/// Writes `size` by `size` samples for each of `blocks`, side by side. `size` is 2 to 8, 10, 12 or 14.
+#[inline(always)]
+pub fn jpeg_inverse_transform(
+    blocks: &[JpegBlock],
+    quant: &JpegBlock,
+    size: usize,
+    out: &mut [u8],
+    stride: usize,
+) -> Result<(), JpegMisfit> {
+    jpeg_require(matches!(size, 2..=8 | 10 | 12 | 14))?;
+    let row_len = blocks.len() * size + JPEG_ROW_SLACK;
+    jpeg_require(rows_fit(out.len(), size, stride, row_len))?;
+    // SAFETY: the kernel reads the blocks, and writes less than `row_len` bytes to each row (checked above).
+    unsafe {
+        highway_jpeg_inverse_transform(
+            blocks.as_ptr(),
+            blocks.len(),
+            quant,
+            size,
+            out.as_mut_ptr(),
+            stride,
+        );
+    }
+    Ok(())
+}
+
+/// The Cb and Cr of a row of pixels.
+#[derive(Clone, Copy)]
+pub enum JpegChroma<'a> {
+    Full {
+        cb: &'a [u8],
+        cr: &'a [u8],
+    },
+    /// One sample for two pixels. The rows start one sample early, with the left neighbor of the first.
+    HalfWidth {
+        cb: &'a [u8],
+        cr: &'a [u8],
+    },
+    /// One sample for 2 by 2 pixels: the nearest row of samples, then the next nearest. They start early too.
+    HalfSize {
+        cb: [&'a [u8]; 2],
+        cr: [&'a [u8]; 2],
+    },
+}
+
+/// Appends `width` pixels to `out`. Its spare capacity and all rows have to cover whole groups.
+#[inline(always)]
+pub fn jpeg_ycc_to_rgba(
+    y: &[u8],
+    chroma: JpegChroma<'_>,
+    width: usize,
+    out: &mut Vec<[u8; 4]>,
+) -> Result<(), JpegMisfit> {
+    jpeg_require(width <= y.len())?;
+    let padded = width.next_multiple_of(JPEG_PIXEL_GROUP);
+    let half = padded / 2 + JPEG_ROW_SLACK;
+    let spare = out.spare_capacity_mut();
+    jpeg_require(padded <= y.len() && padded <= spare.len())?;
+    let (y, to) = (y.as_ptr(), spare.as_mut_ptr().cast::<u8>());
+    match chroma {
+        JpegChroma::Full { cb, cr } => {
+            jpeg_require(padded <= cb.len().min(cr.len()))?;
+            // SAFETY: the kernel reads `padded` bytes of each row and writes as many pixels (checked above).
+            unsafe { highway_jpeg_ycc_to_rgba(y, cb.as_ptr(), cr.as_ptr(), padded, to) };
+        }
+        JpegChroma::HalfWidth { cb, cr } => {
+            jpeg_require(half <= cb.len().min(cr.len()))?;
+            // SAFETY: as above, but it reads less than `half` bytes of `cb` and `cr`.
+            unsafe { highway_jpeg_ycc422_to_rgba(y, cb.as_ptr(), cr.as_ptr(), padded, to) };
+        }
+        JpegChroma::HalfSize { cb, cr } => {
+            jpeg_require(cb.iter().chain(&cr).all(|row| half <= row.len()))?;
+            let ([cb_near, cb_far], [cr_near, cr_far]) =
+                (cb.map(<[u8]>::as_ptr), cr.map(<[u8]>::as_ptr));
+            // SAFETY: as above, for all four.
+            unsafe { highway_jpeg_ycc420_to_rgba(y, cb_near, cb_far, cr_near, cr_far, padded, to) };
+        }
+    }
+    // SAFETY: the kernel has written `padded` pixels.
+    unsafe { out.set_len(out.len() + width) };
+    Ok(())
+}
+
+/// A sample of `cb` and `cr` is the average of 2 by 2 pixels. The rows of `y` are twice `chroma_stride` apart.
+#[inline(always)]
+pub fn jpeg_rgba_to_ycc420(
+    rgba: &[[u8; 4]],
+    rgba_stride: usize,
+    width: usize,
+    row_pairs: usize,
+    [y, cb, cr]: [&mut [u8]; 3],
+    chroma_stride: usize,
+) -> Result<(), JpegMisfit> {
+    jpeg_require(width.is_multiple_of(JPEG_PIXEL_GROUP))?;
+    jpeg_require(row_pairs.max(chroma_stride).max(rgba_stride) <= usize::MAX / 4)?;
+    jpeg_require(rows_fit(rgba.len(), 2 * row_pairs, rgba_stride, width))?;
+    jpeg_require(rows_fit(y.len(), 2 * row_pairs, 2 * chroma_stride, width))?;
+    let chroma_len = cb.len().min(cr.len());
+    jpeg_require(rows_fit(chroma_len, row_pairs, chroma_stride, width / 2))?;
+    // SAFETY: the kernel touches the rows checked above.
+    unsafe {
+        highway_jpeg_rgba_to_ycc420(
+            rgba.as_ptr().cast(),
+            4 * rgba_stride,
+            width,
+            row_pairs,
+            y.as_mut_ptr(),
+            cb.as_mut_ptr(),
+            cr.as_mut_ptr(),
+            chroma_stride,
+        );
+    }
+    Ok(())
+}
+
+/// Fills `blocks` from 8 rows of samples, `stride` bytes apart.
+#[inline(always)]
+pub fn jpeg_forward_transform<const MASKS: usize>(
+    samples: &[u8],
+    stride: usize,
+    // A coefficient `c` becomes `(2 * c - (c < 0)) * divisors[0] / 2^15 * divisors[1] / 2^15`, rounded after each division.
+    divisors: &[JpegBlock; 2],
+    blocks: &mut [JpegBlock],
+    // A bit for each coefficient, in zigzag order: nonzero or, in four masks, magnitude bit 0, bit 1, higher bits, and `c < 0`.
+    masks: &mut [[u64; MASKS]],
+) -> Result<(), JpegMisfit> {
+    const { assert!(MASKS == 1 || MASKS == 4) };
+    jpeg_require(blocks.len() == masks.len())?;
+    jpeg_require(rows_fit(samples.len(), 8, stride, 8 * blocks.len()))?;
+    // SAFETY: the kernel reads 8 bytes of each row for each block, and writes the block and its masks (checked above).
+    unsafe {
+        highway_jpeg_forward_transform(
+            samples.as_ptr(),
+            stride,
+            blocks.len(),
+            divisors.as_ptr(),
+            blocks.as_mut_ptr(),
+            masks.as_mut_ptr().cast(),
+            MASKS == 4,
+        );
+    }
+    Ok(())
+}
+
 /// Raw output column pointers for [`parse_mappings`]. Each points to `cap`
 /// writable rows: `generated`/`original` as `[line, column]` i32 pairs
 /// (byte-compatible with `bun_sourcemap::LineColumnOffset`, which is
@@ -1014,5 +1722,181 @@ pub unsafe fn parse_mappings(
             core::ptr::from_mut::<ParseMappingsState>(state).cast::<i32>(),
             err_at,
         )
+    }
+}
+
+/// Continues gzip's CRC-32 over `bytes`. It starts as 0.
+#[inline(always)]
+pub fn crc32(crc: u32, bytes: &[u8]) -> u32 {
+    // SAFETY: the kernel reads `bytes.len()` bytes.
+    unsafe { highway_crc32(crc, bytes.as_ptr(), bytes.len()) }
+}
+
+/// zlib's Adler-32 of `bytes`.
+#[inline(always)]
+pub fn adler32(bytes: &[u8]) -> u32 {
+    if bytes.len() < SCALAR_CUTOFF {
+        // Neither sum reaches the modulus.
+        const { assert!(128 * SCALAR_CUTOFF * SCALAR_CUTOFF < 65521) };
+        let (mut low, mut high) = (1, 0);
+        for &byte in bytes {
+            low += u32::from(byte);
+            high += low;
+        }
+        return (high << 16) | low;
+    }
+    // SAFETY: the kernel reads `bytes.len()` bytes.
+    unsafe { highway_adler32(bytes.as_ptr(), bytes.len()) }
+}
+
+/// Compiles a function, and what is inlined into it, a second time for CPUs that have BMI2.
+#[macro_export]
+macro_rules! with_bmi2 {
+    ($(#[$meta:meta])* fn $name:ident($($arg:ident: $type:ty),* $(,)?) -> $result:ty $body:block) => {
+        $(#[$meta])*
+        #[inline(always)]
+        fn $name($($arg: $type),*) -> $result {
+            #[inline(always)]
+            fn body($($arg: $type),*) -> $result $body
+
+            #[inline(never)]
+            fn baseline($($arg: $type),*) -> $result {
+                body($($arg),*)
+            }
+
+            #[cfg(all(target_arch = "x86_64", not(miri)))]
+            if ::std::is_x86_feature_detected!("bmi2") {
+                #[target_feature(enable = "bmi2")]
+                #[inline(never)]
+                fn bmi2($($arg: $type),*) -> $result {
+                    body($($arg),*)
+                }
+                // SAFETY: the CPU has BMI2.
+                return unsafe { bmi2($($arg),*) };
+            }
+            baseline($($arg),*)
+        }
+    };
+}
+
+#[cfg(test)]
+mod jpeg_tests {
+    use super::*;
+
+    /// The kernels are only linked into the full binary.
+    macro_rules! stubs {
+        ($($kernel:ident($($parameter:ty),*);)*) => {$(
+            #[unsafe(no_mangle)]
+            extern "C" fn $kernel($(_: $parameter),*) {}
+        )*};
+    }
+    type In = *const u8;
+    type Out = *mut u8;
+    stubs! {
+        highway_jpeg_inverse_transform(In, usize, In, usize, Out, usize);
+        highway_jpeg_ycc_to_rgba(In, In, In, usize, Out);
+        highway_jpeg_ycc422_to_rgba(In, In, In, usize, Out);
+        highway_jpeg_ycc420_to_rgba(In, In, In, In, In, usize, Out);
+        highway_jpeg_rgba_to_ycc420(In, usize, usize, usize, Out, Out, Out, usize);
+        highway_jpeg_forward_transform(In, usize, usize, In, Out, Out, bool);
+    }
+
+    const ZERO: JpegBlock = JpegBlock([0; 64]);
+    const GROUP: usize = JPEG_PIXEL_GROUP;
+    /// Twice this is 0.
+    const HUGE: usize = 1 << (usize::BITS - 1);
+
+    #[test]
+    fn inverse_transform() {
+        let fits = |size, len, stride| {
+            jpeg_inverse_transform(&[ZERO; 2], &ZERO, size, &mut vec![0; len], stride).is_ok()
+        };
+        for size in [0, 1, 9, 11, 13, 15, 16] {
+            assert!(!fits(size, 4096, 64));
+        }
+        for size in [2, 3, 4, 5, 6, 7, 8, 10, 12, 14] {
+            let len = (size - 1) * 64 + 2 * size + JPEG_ROW_SLACK;
+            assert!(fits(size, len, 64));
+            assert!(!fits(size, len - 1, 64));
+        }
+        assert!(!fits(3, 4096, HUGE));
+        assert!(!fits(2, 4096, usize::MAX));
+    }
+
+    #[test]
+    fn ycc_to_rgba() {
+        let fits = |y, chroma, width, room| {
+            // The stubs write nothing, so the spare capacity has to be initialized.
+            let mut out = vec![[0; 4]; 1 + room];
+            out.truncate(1);
+            let fits = jpeg_ycc_to_rgba(y, chroma, width, &mut out).is_ok();
+            assert_eq!(out, vec![[0; 4]; if fits { 1 + width } else { 1 }]);
+            fits
+        };
+        let (width, padded) = (GROUP + 1, 2 * GROUP);
+        let full = &[0; 2 * GROUP][..];
+        let half = &full[..GROUP + JPEG_ROW_SLACK];
+        let with_short_row = |nth| {
+            let rows = |row: &'static [u8]| [0, 1, 2, 3].map(|i| &row[usize::from(i == nth)..]);
+            let ([cb, cr, ..], [a, b, c, d]) = (rows(full), rows(half));
+            [
+                JpegChroma::HalfSize {
+                    cb: [a, b],
+                    cr: [c, d],
+                },
+                JpegChroma::HalfWidth { cb: a, cr: b },
+                JpegChroma::Full { cb, cr },
+            ]
+        };
+        for chroma in with_short_row(usize::MAX) {
+            assert!(fits(full, chroma, width, padded));
+            assert!(fits(&full[..GROUP], chroma, GROUP, GROUP));
+            assert!(!fits(&full[1..], chroma, width, padded));
+            assert!(!fits(full, chroma, width, padded - 1));
+            assert!(!fits(full, chroma, usize::MAX, padded));
+        }
+        for (nth, kinds) in [(0, 3), (1, 3), (2, 1), (3, 1)] {
+            for chroma in with_short_row(nth).into_iter().take(kinds) {
+                assert!(!fits(full, chroma, width, padded));
+            }
+        }
+    }
+
+    #[test]
+    fn rgba_to_ycc420() {
+        let fits = |lens: [usize; 4], rgba_stride, width, row_pairs, chroma_stride| {
+            let rgba = vec![[0; 4]; lens[0]];
+            let [_, mut y, mut cb, mut cr] = lens.map(|len| vec![0; len]);
+            let ycc = [&mut *y, &mut *cb, &mut *cr];
+            jpeg_rgba_to_ycc420(&rgba, rgba_stride, width, row_pairs, ycc, chroma_stride).is_ok()
+        };
+        let chroma = 2 * 20 + GROUP / 2;
+        let lens = [5 * 50 + GROUP, 5 * 40 + GROUP, chroma, chroma];
+        assert!(fits(lens, 50, GROUP, 3, 20));
+        for nth in 0..4 {
+            let mut lens = lens;
+            lens[nth] -= 1;
+            assert!(!fits(lens, 50, GROUP, 3, 20));
+        }
+        assert!(fits(lens, 0, 2 * GROUP, 1, 0));
+        for width in [GROUP / 2, GROUP - 2, GROUP + GROUP / 2] {
+            assert!(!fits(lens, 0, width, 1, 0));
+        }
+        assert!(!fits(lens, usize::MAX / 4 + 1, GROUP, 0, 20));
+        assert!(!fits(lens, 0, GROUP, HUGE, 0));
+        assert!(!fits(lens, 50, GROUP, 1, HUGE));
+    }
+
+    #[test]
+    fn forward_transform() {
+        let fits = |len, stride, masks| {
+            let (samples, mut masks) = (vec![0; len], vec![[0; 4]; masks]);
+            jpeg_forward_transform(&samples, stride, &[ZERO; 2], &mut [ZERO; 2], &mut masks).is_ok()
+        };
+        assert!(fits(7 * 20 + 16, 20, 2));
+        assert!(!fits(7 * 20 + 15, 20, 2));
+        assert!(!fits(7 * 20 + 16, 20, 1));
+        assert!(!fits(7 * 20 + 16, 20, 3));
+        assert!(!fits(4096, usize::MAX / 7 + 1, 2));
     }
 }

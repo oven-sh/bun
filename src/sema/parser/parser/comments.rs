@@ -19,7 +19,6 @@
 //! without it.
 
 use super::{Checkpoint, Parser};
-use bun_sema::atom::Atom;
 use bun_sema::hir::*;
 
 /// A finished node that could be the preceding or the following node of a comment.
@@ -311,9 +310,7 @@ list_elements! {
     TupleElem => |elem, index, _file| {
         Some((NodeData::TupleElem(TupleElemId(index)), elem.start, elem.end))
     },
-    u32 => |_element, _index, _file| None,
     Modifier => |_element, _index, _file| None,
-    (Atom, u32) => |_element, _index, _file| None,
 }
 
 /// Calls [`Parser::finish_node`] for the `len` elements that `take_span!` just moved into the list `$field`, starting

@@ -709,8 +709,6 @@ impl MachoSigner {
         let header = read_macho_header(obj)?;
 
         let mut sig_off: usize = 0;
-        let mut sig_sz: usize = 0;
-        let mut cs_cmd_off: usize = 0;
         let mut linkedit_off: usize = 0;
 
         let mut text_seg: macho::segment_command_64 = bun_core::ffi::zeroed();
@@ -748,8 +746,6 @@ impl MachoSigner {
                         .cast::<macho::linkedit_data_command>()
                         .ok_or(MachoError::InvalidObject)?;
                     sig_off = cs.dataoff as usize;
-                    sig_sz = cs.datasize as usize;
-                    cs_cmd_off = header_size + cmd.offset;
                 }
                 _ => {}
             }
@@ -759,7 +755,6 @@ impl MachoSigner {
             return Err(MachoError::MissingRequiredSegment);
         }
 
-        let _ = (sig_sz, cs_cmd_off);
         Ok(Box::new(MachoSigner {
             data,
             sig_off,

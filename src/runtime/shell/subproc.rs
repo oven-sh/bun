@@ -98,8 +98,6 @@ pub(crate) struct ShellIO {
 
 pub(crate) type Subprocess = ShellSubprocess;
 
-pub(crate) const DEFAULT_MAX_BUFFER_SIZE: u32 = 1024 * 1024 * 4;
-
 /// Backref from a heap-allocated [`ShellSubprocess`] to its owning `Cmd`.
 /// Spec stores `cmd_parent: *ShellCmd` directly. In the NodeId-arena port the
 /// `Cmd` lives **inline** in `Interpreter::nodes: Vec<Node>`, so a raw `*mut
@@ -547,8 +545,6 @@ impl ShellSubprocess {
             subprocess,
             spawn_stdout,
             interp,
-            DEFAULT_MAX_BUFFER_SIZE,
-            true,
         );
         let stderr = Readable::init(
             OutKind::Stderr,
@@ -559,8 +555,6 @@ impl ShellSubprocess {
             subprocess,
             spawn_stderr,
             interp,
-            DEFAULT_MAX_BUFFER_SIZE,
-            true,
         );
 
         // SAFETY: `subprocess` points to uninitialised memory of the right
@@ -879,8 +873,6 @@ impl Readable {
         process: *mut ShellSubprocess,
         result: StdioResult,
         interp: bun_ptr::ParentRef<Interpreter>,
-        _max_size: u32,
-        _is_sync: bool,
     ) -> Readable {
         debug_assert!(redirect_buf.is_none() || matches!(stdio, Stdio::Pipe | Stdio::Capture));
         let buffered_output = match redirect_buf {

@@ -1247,10 +1247,9 @@ impl Modules for Graph<'_> {
     fn resolve(&self, from: &[u8], specifier: &[u8], is_require: bool) -> Option<Resolved> {
         // Resolve from the file's own name, even if that's a link.
         let from = from_native(from);
-        let (path, is_external) = self.resolve_path(&from, specifier, is_require)?;
+        let (path, _) = self.resolve_path(&from, specifier, is_require)?;
         Some(Resolved {
             module: *self.complete.get()?.ids.get(&path[..])?,
-            is_external,
         })
     }
 

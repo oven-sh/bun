@@ -1708,26 +1708,10 @@ pub mod dir_entry_accessor {
 
         /// Like statat but does not follow symlinks.
         fn lstatat(handle: &DirEntryHandle, path_: &ZStr) -> Maybe<Stat> {
-            let mut buf = bun_paths::path_buffer_pool::get();
             if let Some(entry) = handle.value {
                 return Syscall::lstatat(entry.fd, path_);
             }
-
-            let path: &ZStr = if !Platform::AUTO.is_absolute(path_.as_bytes()) {
-                if let Some(entry) = handle.value {
-                    let slice = resolve_path::join_string_buf::<bun_paths::platform::Auto>(
-                        &mut buf,
-                        &[entry.dir, path_.as_bytes()],
-                    );
-                    let len = slice.len();
-                    ZStr::nul_terminate(&mut buf, len)
-                } else {
-                    path_
-                }
-            } else {
-                path_
-            };
-            Syscall::lstat(path)
+            Syscall::lstat(path_)
         }
 
         fn open(path: &ZStr) -> Result<Maybe<DirEntryHandle>, bun_core::Error> {

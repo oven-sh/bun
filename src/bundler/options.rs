@@ -2176,12 +2176,10 @@ pub use crate::output_file::OutputFile;
 pub struct TransformResult {
     pub errors: Box<[bun_ast::Msg]>,
     pub output_files: Box<[OutputFile]>,
-    pub(crate) outbase: Box<[u8]>,
 }
 
 impl TransformResult {
     pub(crate) fn init(
-        outbase: Box<[u8]>,
         output_files: Box<[OutputFile]>,
         log: &mut bun_ast::Log,
     ) -> Result<TransformResult, crate::Error> {
@@ -2193,7 +2191,6 @@ impl TransformResult {
         }
 
         Ok(TransformResult {
-            outbase,
             output_files,
             errors: errors.into_boxed_slice(),
         })

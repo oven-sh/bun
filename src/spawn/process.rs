@@ -51,8 +51,6 @@ pub mod spawn_sys {
     pub use bun_sys::{MemfdFlags, MemfdFlags as MemfdFlag, can_use_memfd, memfd_create};
 }
 
-bun_core::declare_scope!(PROCESS, visible);
-
 // ─── Re-exports from `bun_spawn_sys` ─────────────────────────────────────────
 // The raw OS spawn layer (option/result structs, `Rusage`, `spawn_process_posix`)
 // moved into the leaf `bun_spawn_sys` crate so it has no event-loop dependency.

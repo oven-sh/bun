@@ -97,8 +97,6 @@ pub struct Import {
 #[derive(Copy, Clone, Debug)]
 pub struct Resolved {
     pub module: ModuleId,
-    /// True if it was found in a `node_modules`, even if that entry is a symbolic link to somewhere else.
-    pub is_external: bool,
 }
 
 /// The parts of another file's module record that oxlint's rules read: its top-level imports and exports, without

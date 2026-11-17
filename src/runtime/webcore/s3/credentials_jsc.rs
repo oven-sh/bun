@@ -32,9 +32,6 @@ pub(crate) fn get_truthy_string_utf8(
     let Some(js_value) = opts.get_truthy(global, key)? else {
         return Ok(None);
     };
-    if js_value.is_empty_or_undefined_or_null() {
-        return Ok(None);
-    }
     if !js_value.is_string() {
         if strict {
             return Err(global.throw_invalid_argument_type_value(key, b"string", js_value));

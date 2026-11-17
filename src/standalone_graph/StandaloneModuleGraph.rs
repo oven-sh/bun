@@ -51,20 +51,14 @@ bun_opaque::opaque_ffi! {
 }
 
 pub struct StandaloneModuleGraph {
-    /// Raw view over the serialized graph (`[0, offsets.byte_count)`). Stored as a
-    /// raw fat pointer — NOT `&'static [u8]` — because `byte_count` covers the
-    /// bytecode/module_info subranges that JSC mutates in place via
-    /// `File.bytecode`. Holding a `&'static [u8]` over those bytes would freeze
-    /// them under Stacked/Tree Borrows and make the later foreign write UB.
-    pub bytes: *const [u8],
     pub files: StringArrayHashMap<File>,
     /// Directory prefixes derived from `files` keys (no trailing `/`, always posix-separated).
     pub dirs: StringArrayHashMap<()>,
     pub entry_point_id: u32,
     pub compile_exec_argv: &'static [u8],
     pub flags: Flags,
-    /// InternalModuleRegistry id → its bytecode inside `bytes` (JSC reads it in place; see `File::bytecode`).
-    /// The `u32`: where the module's cache entry starts in those bytes (a linked payload, see `linked_bytecode_payload`).
+    /// InternalModuleRegistry id → its bytecode inside the serialized graph (JSC reads it in place; see `File::bytecode`).
+    /// The `u32`: where the module's cache entry starts in its bytecode (a linked payload, see `linked_bytecode_payload`).
     pub builtin_bytecode: Vec<(u32, *mut [u8], u32)>,
     /// The one shared bytecode string table (`JSC::EncoderStringTable::serialize`) every chunk's payload references by ordinal; installed on the VM's `DecoderStringTable` at startup.
     pub bytecode_string_table: &'static [u8],
@@ -1212,7 +1206,6 @@ impl StandaloneModuleGraph {
     ) -> crate::Result<StandaloneModuleGraph> {
         if raw_len == 0 {
             return Ok(StandaloneModuleGraph {
-                bytes: core::ptr::slice_from_raw_parts(NonNull::<u8>::dangling().as_ptr(), 0),
                 files: StringArrayHashMap::new(),
                 dirs: StringArrayHashMap::new(),
                 entry_point_id: 0,
@@ -1572,9 +1565,6 @@ impl StandaloneModuleGraph {
         dirs.lock_pointers();
 
         Ok(StandaloneModuleGraph {
-            // Stored as a raw fat pointer — `byte_count` covers the writable
-            // bytecode/module_info regions, so a `&'static [u8]` here would alias them.
-            bytes: core::ptr::slice_from_raw_parts(raw_const, offsets.byte_count),
             files: modules,
             dirs,
             entry_point_id,

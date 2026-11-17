@@ -402,14 +402,16 @@ static void us_internal_dispatch_ready_polls(struct us_loop_t *loop) {
 #endif
 }
 
-/* If the kernel filled our entire buffer, more events are likely already queued.
- * Re-poll non-blocking and dispatch again before running pre/post callbacks, so a
- * single tick covers all pending I/O instead of one 1024-event slice per roundtrip.
- * Conditioned on saturation and capped at 48 iterations — matches libuv's uv__io_poll
- * (vendor/libuv/src/unix/linux.c:1387,1590 and kqueue.c:253,451). */
-static void us_internal_drain_ready_polls(struct us_loop_t *loop) {
+/* Drain full ready-event batches like libuv, but never delay a scheduled timer
+ * across 48 * 1024 potentially expensive callbacks. The first 1024-event batch
+ * is indivisible; every extra batch is optional once the earliest timer is due.
+ * Without a timer deadline keep the original 48-batch limit and zero clock reads.
+ * The deadline is absolute CLOCK_MONOTONIC; 0 means no known deadline. */
+static void us_internal_drain_ready_polls(struct us_loop_t *loop, uint64_t deadline_ns) {
     int drain_count = 48;
     while (UNLIKELY(loop->num_ready_polls == LIBUS_MAX_READY_POLLS) && --drain_count != 0 && loop->num_polls > 0) {
+        if (deadline_ns && us_internal_monotonic_ns() >= deadline_ns)
+            break;
 #ifdef LIBUS_USE_EPOLL
         static const struct timespec zero = {0, 0};
         loop->num_ready_polls = bun_epoll_pwait2(loop->fd, loop->ready_polls, LIBUS_MAX_READY_POLLS, &zero);
@@ -460,8 +462,12 @@ void us_loop_run(struct us_loop_t *loop) {
         loop->num_ready_polls = bun_kevent64_wait(loop->fd, loop->ready_polls, LIBUS_MAX_READY_POLLS, 0, timeout);
 #endif
 
+        /* Classic uSockets has no JS timer heap, but the socket sweep is due
+         * at this absolute monotonic time; do not postpone it under I/O load. */
+        const uint64_t drain_deadline_ns = timeout && loop->num_ready_polls == LIBUS_MAX_READY_POLLS
+            ? (uint64_t) loop->data.sweep_next_tick_ns : 0;
         us_internal_dispatch_ready_polls(loop);
-        us_internal_drain_ready_polls(loop);
+        us_internal_drain_ready_polls(loop, drain_deadline_ns);
         us_internal_sweep_if_due(loop);
 
         /* Emit post callback */
@@ -502,9 +508,10 @@ void us_loop_run_bun_tick(struct us_loop_t *loop, const struct timespec* timeout
 
     const unsigned int had_wakeups = __atomic_exchange_n(&loop->pending_wakeups, 0, __ATOMIC_ACQUIRE);
     const int will_idle_inside_event_loop = had_wakeups == 0 && (!timeout || (timeout->tv_nsec != 0 || timeout->tv_sec != 0));
-    /* `now_ns` is the reading the JS side took to pick `timeout`
-     * (timer::All::get_timeout), reused here to rate-limit the idle sweep; 0
-     * if it had none to share. Nothing measures a deadline against it. */
+    /* now_ns is the CLOCK_MONOTONIC reading the JS side used to compute
+     * the relative timer timeout. Preserve it for the absolute drain deadline
+     * so time spent in the initial poll and event handlers counts against it.
+     * Non-JS callers pass 0 and need one reading if they supplied a timeout. */
     int released_heap_access = 0;
     if (will_idle_inside_event_loop && loop->data.jsc_vm)
         (void) Bun__JSC_onBeforeWait(loop->data.jsc_vm, now_ns, &released_heap_access);
@@ -525,6 +532,9 @@ void us_loop_run_bun_tick(struct us_loop_t *loop, const struct timespec* timeout
             mi_on_thread_idle();
         }
     }
+
+    const uint64_t poll_start_ns = timeout
+        ? (now_ns ? now_ns : us_internal_monotonic_ns()) : 0;
 
     /* Fetch ready polls */
 #ifdef LIBUS_USE_EPOLL
@@ -553,8 +563,13 @@ void us_loop_run_bun_tick(struct us_loop_t *loop, const struct timespec* timeout
     if (released_heap_access)
         Bun__JSC_acquireHeapAccessAfterWait(loop->data.jsc_vm);
 
+    /* Polling may already have consumed the entire timer interval. Do not
+     * restart a fresh fixed budget after epoll/kqueue returns: a due timer wins
+     * the next loop turn after at most one full event batch. */
+    const uint64_t drain_deadline_ns = poll_start_ns && loop->num_ready_polls == LIBUS_MAX_READY_POLLS
+        ? poll_start_ns + (uint64_t) timeout->tv_sec * 1000000000ULL + (uint64_t) timeout->tv_nsec : 0;
     us_internal_dispatch_ready_polls(loop);
-    us_internal_drain_ready_polls(loop);
+    us_internal_drain_ready_polls(loop, drain_deadline_ns);
     us_internal_sweep_if_due(loop);
 
     /* Emit post callback */

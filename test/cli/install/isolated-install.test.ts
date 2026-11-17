@@ -31,6 +31,7 @@ import {
   pack,
   readdirSorted,
   runBunInstall,
+  runBunUpdate,
   tempDir,
   toBeValidBin,
   toHaveBins,
@@ -827,6 +828,23 @@ describe.concurrent.skipIf(isWindows).each(["hoisted", "isolated"] as const)("%s
       await runBunInstall(installEnv(project), project, { frozenLockfile: true });
       expect(await installed()).toHaveProperty("version", version);
       expect(readFileSync(join(project, "bun.lock"), "utf8")).toBe(lockfile);
+
+      // Both resolve the dependency again.
+      await write(
+        join(project, folder, "package.json"),
+        JSON.stringify({ name: "dep", version: "3.0.0", bin: "b.js" }),
+      );
+      for (const again of [
+        () => runBunInstall(installEnv(project), project, { savesLockfile: false }),
+        () => runBunUpdate(installEnv(project), project),
+      ]) {
+        await again();
+        expect(Bun.JSONC.parse(await file(join(project, "bun.lock")).text())).toHaveProperty(
+          "packages.dep.0",
+          prefix + folder,
+        );
+        expect(await installed()).toHaveProperty("version", "3.0.0");
+      }
     }
   });
 });
@@ -924,7 +942,7 @@ test.concurrent.each(
 
   const parent = linker === "isolated" ? "node_modules/.bun/folder@file+folder" : "node_modules/folder";
   const stat = lstatSync(join(project, parent, "node_modules"), { throwIfNoEntry: false });
-  expect(stat?.isSymbolicLink() ?? false).toBeFalse();
+  expect(stat?.isDirectory()).toBe(linker === "isolated" ? true : undefined);
   expect(await file(join(project, "node_modules/folder/package.json")).json()).toHaveProperty("name", "folder");
 });
 

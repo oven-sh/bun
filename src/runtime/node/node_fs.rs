@@ -6520,13 +6520,12 @@ impl NodeFS {
     fn readdir_with_entries<T: ReaddirEntry>(
         args: &args::Readdir,
         fd: FD,
-        basename: &ZStr,
         entries: &mut Vec<T>,
     ) -> Maybe<()> {
         // On Windows, String and Dirent results are made from the UTF-16 names.
         #[cfg(windows)]
         if T::IS_U16 {
-            return Self::readdir_with_entries_u16::<T>(args, fd, basename, entries);
+            return Self::readdir_with_entries_u16::<T>(args, fd, entries);
         }
 
         let mut dirent_path = BunString::DEAD;
@@ -6540,12 +6539,8 @@ impl NodeFS {
             };
 
             if T::IS_DIRENT && dirent_path.is_empty() {
-                let shown = path_to_show(basename);
                 dirent_path = webcore::encoding::to_bun_string(
-                    match &args.path {
-                        PathLike::Joined(path) => &path.written,
-                        _ => &shown,
-                    },
+                    args.path.as_written(),
                     encoding_to_node(args.encoding),
                 );
             }
@@ -6573,7 +6568,6 @@ impl NodeFS {
     fn readdir_with_entries_u16<T: ReaddirEntry>(
         args: &args::Readdir,
         fd: FD,
-        basename: &ZStr,
         entries: &mut Vec<T>,
     ) -> Maybe<()> {
         let mut dirent_path = BunString::DEAD;
@@ -6589,7 +6583,7 @@ impl NodeFS {
 
             if T::IS_DIRENT && dirent_path.is_empty() {
                 dirent_path = webcore::encoding::to_bun_string(
-                    &path_to_show(basename),
+                    args.path.as_written(),
                     encoding_to_node(args.encoding),
                 );
             }
@@ -6926,7 +6920,7 @@ impl NodeFS {
         };
 
         let mut entries: Vec<T> = Vec::new();
-        Self::readdir_with_entries::<T>(args, dir.fd(), path, &mut entries)?;
+        Self::readdir_with_entries::<T>(args, dir.fd(), &mut entries)?;
         Ok(T::into_readdir(entries))
     }
 

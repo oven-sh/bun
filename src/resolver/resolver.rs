@@ -4019,7 +4019,7 @@ impl<'a> Resolver<'a> {
                                     continue;
                                 };
                                 let index_query =
-                                    dir_info_ref.get_entry(self.generation, &file_name[..]);
+                                    dir_info_ref.get_entry(self.generation, file_name);
                                 if let Some(iq) = index_query {
                                     if iq.entry().kind(self.rfs_ref(), self.store_fd)
                                         == Fs::file_system::EntryKind::File
@@ -4027,7 +4027,7 @@ impl<'a> Resolver<'a> {
                                         if let Some(debug) = self.debug_logs.as_mut() {
                                             let mut ms = Vec::with_capacity(1 + file_name.len());
                                             ms.push(b'/');
-                                            ms.extend_from_slice(&file_name[..]);
+                                            ms.extend_from_slice(file_name);
                                             let parts =
                                                 [package_json.name.as_ref(), package_subpath];
                                             debug.add_note_fmt(format_args!(
@@ -5489,7 +5489,7 @@ impl<'a> Resolver<'a> {
             debug.add_note_fmt(format_args!(
                 "Failed to find file: \"{}/{}\"",
                 bstr::BStr::new(dir_info.abs_path),
-                bstr::BStr::new(&base[..])
+                bstr::BStr::new(base)
             ));
         }
 

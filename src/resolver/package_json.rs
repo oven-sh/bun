@@ -1958,15 +1958,17 @@ impl<'a> ESModule<'a> {
                         ));
                     }
 
+                    let package: &[u8] = &slashes_to_posix(str);
                     if internal
-                        && !strings::has_prefix(str, b"../")
-                        && !strings::has_prefix(str, b"/")
+                        && !strings::has_prefix(package, b"./")
+                        && !strings::has_prefix(package, b"../")
+                        && !strings::has_prefix(package, b"/")
                     {
                         if PATTERN {
                             // Return the URL resolution of resolvedTarget with every instance of "*" replaced with subpath.
-                            let len = replacement_size(str, b"*", subpath);
+                            let len = replacement_size(package, b"*", subpath);
                             invalid_specifier_if_too_long!(len);
-                            let _ = replace(str, b"*", subpath, &mut resolve_target_buf.0);
+                            let _ = replace(package, b"*", subpath, &mut resolve_target_buf.0);
                             let result = &resolve_target_buf.0[0..len];
                             if let Some(log) = self.debug_logs.as_deref_mut() {
                                 log.add_note_fmt(format_args!(
@@ -1989,7 +1991,7 @@ impl<'a> ESModule<'a> {
                             // are URL-like specifiers and must keep forward slashes;
                             // `Auto` normalizes them to `\` on Windows and the
                             // scoped-name match fails, falling through to `main`.
-                            let result: &[u8] = &PosixPath::join(&[str, subpath]);
+                            let result: &[u8] = &PosixPath::join(&[package, subpath]);
                             if let Some(log) = self.debug_logs.as_deref_mut() {
                                 log.add_note_fmt(format_args!(
                                     "Resolved \".{}\" to \".{}\"",

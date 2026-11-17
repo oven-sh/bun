@@ -1164,6 +1164,23 @@ it("Dirent has the expected fields", () => {
   expect(dirs[0].name).toBe("file.txt");
   expect((dirs[0] as any).path).toBe(dir);
   expect(dirs[0].parentPath).toBe(dir);
+  for (const written of [dir + path.sep, dir.replaceAll(path.sep, "/")]) {
+    expect(readdirSync(written, { withFileTypes: true })[0].parentPath).toBe(written);
+  }
+});
+
+it.if(isWindows).each(["\\", "/"])("a trailing %s after a file's name is ignored on Windows, as in Node", sep => {
+  using dir = tempDir("fs-trailing-separator", { "a.txt": "a" });
+  const [file, copy] = [join(String(dir), "a.txt"), join(String(dir), "b.txt")];
+  expect(existsSync(file + sep)).toBe(true);
+  fs.accessSync(file + sep);
+  expect(statSync(file + sep).isFile()).toBe(true);
+  expect(realpathSync(file + sep)).toBe(realpathSync(file));
+  fs.chmodSync(file + sep, 0o666);
+  copyFileSync(file + sep, copy + sep);
+  expect(readFileSync(copy + sep, "utf8")).toBe("a");
+  unlinkSync(copy + sep);
+  expect(readdirSync(String(dir))).toEqual(["a.txt"]);
 });
 
 it("promises.readdir on a large folder", async () => {

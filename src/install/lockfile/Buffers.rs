@@ -1,6 +1,5 @@
 use core::mem::size_of;
 
-#[cfg(debug_assertions)]
 use super::bun_lockb::StreamType;
 use super::{
     DependencyIDList, DependencyList, ExternalStringBuffer, Lockfile, PackageIDList, Stream,

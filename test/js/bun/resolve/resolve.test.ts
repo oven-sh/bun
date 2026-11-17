@@ -2725,6 +2725,43 @@ test.concurrent.skipIf(isWindows).each(["require", "import"])(
   },
 );
 
+test.concurrent.each(["require", "import"])('%s() of a package that "imports" names with backslashes', async load => {
+  using dir = tempDir("resolve-backslash-imports", {
+    "package.json": ({ root }) =>
+      JSON.stringify({
+        imports: {
+          "#file": "plain/a\\b.js",
+          "#pattern/*": "plain\\a\\*.js",
+          "#scoped": "@scope\\pk",
+          "#secret": "@scope\\pk\\secret.js",
+          "#here": ".\\plain\\a\\b.js",
+          "#up": "..\\up.js",
+          "#rooted": join(root, "up.js").replace(/^\w:/, "").replaceAll("/", "\\"),
+        },
+      }),
+    "up.js": `module.exports = "up";`,
+    "node_modules/plain/a/b.js": `module.exports = "plain";`,
+    "node_modules/@scope/pk/package.json": JSON.stringify({ name: "@scope/pk", main: "secret.js", exports: "./e.js" }),
+    "node_modules/@scope/pk/e.js": `module.exports = "exported";`,
+    "node_modules/@scope/pk/secret.js": `module.exports = "secret";`,
+    "entry.cjs": `
+      (async () => {
+        for (const specifier of ["#file", "#pattern/b", "#scoped", "#secret", "#here", "#up", "#rooted"]) {
+          try {
+            const loaded = await ${load}(specifier);
+            console.log(loaded.default ?? loaded);
+          } catch {
+            console.log("refused");
+          }
+        }
+      })();
+    `,
+  });
+  expect(await bunRun(join(String(dir), "entry.cjs"))).toSpawn(
+    "plain\nplain\nexported\nrefused\nrefused\nrefused\nrefused",
+  );
+});
+
 test.concurrent.skipIf(isWindows).each([
   ["bun a\\b.js", ["a\\b.js"]],
   ["bun run ./a\\b.js", ["run", "./a\\b.js"]],

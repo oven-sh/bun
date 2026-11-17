@@ -151,7 +151,7 @@ pub fn add_written_names(
             continue;
         };
         names.push(PackageName {
-            public_path: platform_to_posix(&name.public_path).into_owned(),
+            public_path: platform_to_posix(name.public_path).into_owned(),
             required: Some(position as u32),
             imported: Some(position as u32),
             hides_other_paths: false,

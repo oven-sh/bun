@@ -1345,15 +1345,12 @@ fn look_ahead_from_project_folder(this: &mut PackageManager, id: DependencyID, a
     {
         return;
     }
-    let declared = |path| declared_path(&this.lockfile, id, path, asked.version_was_replaced);
-    let path = match &asked.version.value {
-        dependency::Value::Workspace(workspace) => (this.lockfile.workspace_paths)
-            .get(&asked.name_hash)
-            .map_or_else(
-                || declared(*workspace),
-                |path| Path::from(this.lockfile.str(path)),
-            ),
-        dependency::Value::Folder(folder) => declared(*folder),
+    let (lockfile, was_replaced) = (&this.lockfile, asked.version_was_replaced);
+    let path = match asked.version.value {
+        dependency::Value::Workspace(path) => {
+            workspace_folder(lockfile, id, asked.name_hash, path, was_replaced)
+        }
+        dependency::Value::Folder(path) => declared_path(lockfile, id, path, was_replaced),
         _ => return,
     };
     if let Some(listed) = FolderResolution::listed_dependencies(asked.version.tag(), &path, this) {
@@ -3816,16 +3813,14 @@ fn get_or_put_resolved_package(
                     return bind_existing(this, dependency_id, workspace_id, success_fn);
                 }
             }
-            let workspace_path = match this.lockfile.workspace_paths.get(&name_hash) {
-                Some(path) => Path::from(this.lockfile.str(path)),
-                None => declared_path(
-                    &this.lockfile,
-                    dependency_id,
-                    *workspace,
-                    version_was_replaced,
-                ),
-            };
-            let res = resolve_project_folder(this, version, &workspace_path);
+            let folder = workspace_folder(
+                &this.lockfile,
+                dependency_id,
+                name_hash,
+                *workspace,
+                version_was_replaced,
+            );
+            let res = resolve_project_folder(this, version, &folder);
             resolved_folder_package(this, res, dependency_id, success_fn)
         }
         dependency::Value::Symlink(symlink) => {
@@ -3885,6 +3880,19 @@ fn resolve_project_folder(
         path,
         this,
     )
+}
+
+fn workspace_folder(
+    lockfile: &Lockfile::Lockfile,
+    dependency_id: DependencyID,
+    name_hash: PackageNameHash,
+    path: SemverString,
+    version_was_replaced: bool,
+) -> Path {
+    match lockfile.workspace_paths.get(&name_hash) {
+        Some(member) => Path::from(lockfile.str(member)),
+        None => declared_path(lockfile, dependency_id, path, version_was_replaced),
+    }
 }
 
 /// Only what a local package declares was made relative to the project. The rest is as package.json spells it.

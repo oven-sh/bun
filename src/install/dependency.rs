@@ -169,8 +169,10 @@ impl DependencyExt for Dependency {
     ) {
         builder.count(self.name.slice(name_buf));
         builder.count(self.version.literal.slice(version_buf));
-        if let Value::Workspace(workspace) = &self.version.value {
-            builder.count(workspace.slice(version_buf));
+        if let Value::Workspace(path) | Value::Folder(path) | Value::Symlink(path) =
+            &self.version.value
+        {
+            builder.count(path.slice(version_buf));
         }
     }
 
@@ -202,12 +204,18 @@ impl DependencyExt for Dependency {
         let new_literal = builder.append_string(self.version.literal.slice(version_buf));
         let new_name = builder.append_string(self.name.slice(name_buf));
 
-        // A workspace edge's path is not always its literal: `Package::parse` links an npm range
-        // (`^1`, `*`, `npm:pkg@1`) to a workspace and keeps the range as the literal.
-        let version = if let Value::Workspace(workspace) = &self.version.value {
+        // `Package::parse` links a range to a workspace and rebases a path, and keeps the literal.
+        let mut append = |path: &String| builder.append_string(path.slice(version_buf));
+        let path = match &self.version.value {
+            Value::Workspace(path) => Some(Value::Workspace(append(path))),
+            Value::Folder(path) => Some(Value::Folder(append(path))),
+            Value::Symlink(path) => Some(Value::Symlink(append(path))),
+            _ => None,
+        };
+        let version = if let Some(value) = path {
             Version {
                 literal: new_literal,
-                value: Value::Workspace(builder.append_string(workspace.slice(version_buf))),
+                value,
             }
         } else {
             let out_slice = builder.string_bytes();

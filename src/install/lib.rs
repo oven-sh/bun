@@ -463,13 +463,8 @@ impl RunCommand {
             bun_core::zstr!("/usr/local/bin/zsh"),
             bun_core::zstr!("/system/bin/sh"), // Android
         ];
-        for &shell in HARDCODED_POPULAR_ONES {
-            if bun_sys::is_executable_file_path(shell) {
-                return Some(shell);
-            }
-        }
-
-        None
+        let mut shells = HARDCODED_POPULAR_ONES.iter().copied();
+        shells.find(|&shell| bun_sys::is_executable_file_path(shell))
     }
 
     /// Find the "best" shell to use. Cached to only run once.

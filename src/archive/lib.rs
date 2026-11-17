@@ -5,10 +5,8 @@ use bun_alloc::AllocError;
 use bun_collections::StringArrayHashMap;
 use bun_core::{MutableString, strings};
 use bun_core::{Output, slice_as_bytes};
-#[cfg(windows)]
-use bun_paths::PathStyle as _;
 use bun_paths::platform::Posix;
-use bun_paths::{GenericPath, OSPathChar, OSPathSliceZ, PathUnit, SEP, SliceBackend};
+use bun_paths::{GenericPath, OSPathChar, OSPathSliceZ, PathStyle, PathUnit, SEP, SliceBackend};
 #[cfg(unix)]
 use bun_sys::beneath::{self, Symlinks};
 use bun_sys::{self, Fd, FdExt, File};
@@ -220,6 +218,15 @@ pub fn first_path_component(path: &[OSPathChar]) -> &[OSPathChar] {
     &rest[..strings::index_of_scalar(rest, sep).unwrap_or(rest.len())]
 }
 
+/// What is made before an entry is: everything up to the last separator, so `a/b` for `a/b/`.
+#[cfg(unix)]
+fn folder_of_entry(path: &[u8]) -> &[u8] {
+    match Posix::has_trailing_sep(path) {
+        true => Posix::without_trailing_sep(path),
+        false => Posix::dirname_or_root(path),
+    }
+}
+
 /// Validates that a symlink target doesn't escape the extraction directory.
 /// Returns true if the symlink is safe (target stays within extraction dir),
 /// false if it would escape (e.g., via ../ traversal or absolute path).
@@ -248,7 +255,7 @@ pub fn is_symlink_target_safe(symlink_path: &[u8], link_target_bytes: &[u8]) -> 
     }
 
     // Relative, because `..` stops at the root of an absolute path.
-    let symlink_dir = bun_paths::dirname_or_root(symlink_path);
+    let symlink_dir = folder_of_entry(symlink_path);
     let Ok(resolved) = bun_paths::PoolPath::join(&[symlink_dir, link_target_bytes]) else {
         return false;
     };
@@ -277,11 +284,7 @@ impl DeferredSymlink {
 #[cfg(unix)]
 pub fn create_deferred_symlinks(dir_fd: Fd, symlinks: &[DeferredSymlink], log: bool) -> u32 {
     for symlink in symlinks {
-        let path = symlink.path.as_bytes();
-        let dirname = match path.ends_with(b"/") {
-            true => path,
-            false => bun_paths::dirname_or_root(path),
-        };
+        let dirname = folder_of_entry(symlink.path.as_bytes());
         if !dirname.is_empty() {
             let _ = beneath::make_path(dir_fd, dirname, Symlinks::FollowInside);
         }
@@ -657,7 +660,7 @@ impl Archiver {
                                     bun_sys::E::EEXIST | bun_sys::E::ENOTDIR => continue,
                                     _ => {}
                                 }
-                                let dirname = bun_paths::dirname_or_root(path_slice);
+                                let dirname = folder_of_entry(path_slice);
                                 if dirname.is_empty() {
                                     return Err(err.into());
                                 }
@@ -731,7 +734,7 @@ impl Archiver {
                             Ok(fd) => fd,
                             Err(err) => match err.get_errno() {
                                 bun_sys::E::EACCES | bun_sys::E::EPERM | bun_sys::E::ENOENT => {
-                                    let dirname = bun_paths::dirname_or_root(path_slice);
+                                    let dirname = folder_of_entry(path_slice);
                                     if dirname.is_empty() {
                                         return Err(err.into());
                                     }

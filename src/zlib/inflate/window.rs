@@ -185,11 +185,23 @@ impl Window {
     }
 
     /// Adds what has been handed out some other way, or its last `max` bytes. Nothing may be pending.
+    #[inline]
     pub(super) fn record(&mut self, bytes: &[u8], max: usize) -> Result<()> {
+        let end = self.end + bytes.len();
+        match self.bytes.get_mut(self.end..end) {
+            Some(room) if end <= LAP_END && bytes.len() < max => room.copy_from_slice(bytes),
+            _ => return self.make_room_and_record(bytes, max),
+        }
+        (self.end, self.handed_out) = (end, end);
+        Ok(())
+    }
+
+    fn make_room_and_record(&mut self, bytes: &[u8], max: usize) -> Result<()> {
         let mut bytes = bytes.split_at(bytes.len().saturating_sub(max)).1;
         if bytes.len() == max {
             self.clear();
-        } else if self.end + bytes.len() > self.usual_capacity.max(max)
+        } else if self.end + bytes.len() > self.usual_capacity
+            && max < MAX_DISTANCE
             && self.bytes.len() < FULL_LEN
         {
             self.slide_by_lines(self.end + bytes.len() - max)?;
@@ -244,5 +256,14 @@ mod tests {
             assert!(window.bytes.capacity() < 5000);
             assert_eq!(bytes.get(len - 1024..len), window.bytes.get(..window.end));
         }
+    }
+
+    #[test]
+    fn the_largest_window_goes_in_laps() {
+        let mut window = Window::new(MAX_DISTANCE);
+        for _ in 0..17 {
+            assert_eq!(window.record(&[7; 2000], MAX_DISTANCE), Ok(()));
+        }
+        assert_eq!(window.end, 17 * 2000 - LAP);
     }
 }

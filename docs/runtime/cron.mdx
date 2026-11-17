@@ -145,7 +145,7 @@ When you specify **both** day-of-month and day-of-week (neither is `*`), the exp
 Bun.cron.parse("0 0 15 * FRI");
 ```
 
-When you specify only one (the other is `*`), Bun uses only that field for matching.
+When you specify only one (the other is `*`), Bun uses only that field for matching. Only a lone `*` counts: `0 0 15 * 0-6` and `0 0 */1 * MON` match every day. Vixie cron and cronie read `*/1` as `*`. Bun does not.
 
 ---
 

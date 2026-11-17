@@ -732,6 +732,19 @@ describe.concurrent.skipIf(!isLinux)("against a stub crontab (Linux)", () => {
     return { stdout, stderr, table, tempFiles: readdirSync(`${dir}/tmp`).length - 1, exitCode };
   }
 
+  test.each([
+    { schedule: "0 0 15 * 5", written: "0 0 15 * 5" },
+    { schedule: "0 0 15 * 0-6", written: "0 0 * * *" },
+  ])("$schedule is written as $written", async ({ schedule, written }) => {
+    expect(await run(`await Bun.cron("./job.ts", "${schedule}", "t");`)).toEqual({
+      stdout: "",
+      stderr: "",
+      table: `${kept}# bun-cron: t\n${written} 'bun' run --cron-title=t --cron-period='${written}' '/job.ts'\n`,
+      tempFiles: 0,
+      exitCode: 0,
+    });
+  });
+
   const hasPidfd = (() => {
     if (!isLinux) return false;
     // Not reaped before the event loop runs again.

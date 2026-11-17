@@ -637,6 +637,7 @@ async function runPair(parent: string, child: string, env: Record<string, string
         stdio: ["ignore", "inherit", "inherit"],
         serialization: "json",
         ipc() {},
+        onExit: (_, code, signal) => void (code === 0 || console.log("child failed", code, signal)),
         ...options,
       });
     const listen = () =>

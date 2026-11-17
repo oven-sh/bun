@@ -72,6 +72,9 @@ pub(crate) fn on_internal_message_child<'a>(
     let ready = ChildInbox::Ready(Listener::new(global, worker, callback));
     if let ChildInbox::Queued(messages) = CHILD_INBOX.replace(ready) {
         for message in messages {
+            if matches!(CHILD_INBOX.get(), ChildInbox::Queued(_)) {
+                break;
+            }
             handle_internal_message_child(global, message.get(), JSValue::NULL);
         }
     }

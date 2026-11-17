@@ -5,7 +5,6 @@ use core::cell::UnsafeCell;
 use core::ffi::c_void;
 use core::mem;
 
-use bun_collections::ByteVecExt;
 use bun_core::OOM;
 #[cfg(windows)]
 use bun_ptr::OptionCellExt as _;
@@ -1208,10 +1207,6 @@ impl StreamBuffer {
         }
     }
 
-    pub fn memory_cost(&self) -> usize {
-        self.list.capacity()
-    }
-
     pub fn size(&self) -> usize {
         self.list.len() - self.cursor
     }
@@ -1250,24 +1245,6 @@ impl StreamBuffer {
     pub fn ensure_unused_capacity(&mut self, capacity: usize) -> Result<(), OOM> {
         self.compact();
         self.list.reserve(capacity);
-        Ok(())
-    }
-
-    pub fn write_latin1(&mut self, buffer: &[u8]) -> Result<(), OOM> {
-        if bun_core::strings::is_all_ascii(buffer) {
-            return self.write(buffer);
-        }
-
-        self.compact();
-        let len = self.list.len();
-        let list = mem::take(&mut self.list);
-        self.list = bun_core::strings::allocate_latin1_into_utf8_with_list(list, len, buffer);
-        Ok(())
-    }
-
-    pub fn write_utf16(&mut self, buffer: &[u16]) -> Result<(), OOM> {
-        self.compact();
-        ByteVecExt::write_utf16(&mut self.list, buffer)?;
         Ok(())
     }
 

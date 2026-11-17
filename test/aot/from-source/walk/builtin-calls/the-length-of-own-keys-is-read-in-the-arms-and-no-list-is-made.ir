@@ -1,0 +1,23 @@
+# -- source: the-length-of-own-keys-is-read-in-the-arms-and-no-list-is-made.ts
+# declare function print(...values: unknown[]): void;
+# type Parcel = { weight: number; fragile?: number; insured?: number };
+# const parcels: Parcel[] = [{ weight: 1, fragile: 2 }, { weight: 3, insured: 4 }];
+# function marks(parcel: Parcel) { return Object.keys(parcel).length; }
+# function sum(turns: number) { let total = 0; for (let at = 0; at < turns; at++) total += marks(parcels[at & 1]); return total; }
+# print(sum(5));
+# -- end of source
+# The program makes a Parcel in two ways: { weight, fragile } and { weight, insured }. The arms of the walk over own keys ask for the orders at which the makers stop.
+# They asked for the whole declared order and for the required fields alone: { weight, fragile, insured } and { weight }: both tests failed in every turn.
+# Nothing but `length` reads the list, so the read stands in the arms: behind the tests it is a constant, and the list is made on the closed arm alone.
+# What is read out of the list of parcels may be undefined, so the layout is not proven: the test of the shape stands in front.
+# RUN: walk f2 mechanisms=all
+# CHECK-LABEL: code f2:Body
+# CHECK: isLoopHead=true
+# CHECK: ShapeTest
+# CHECK: HasKeyOrder {{*}}fields=[2, 0]
+# CHECK: HasKeyOrder {{*}}fields=[2, 1]
+# RUN(LISTS): walk f2 mechanisms=all
+# LISTS-LABEL: code f2:Body
+# LISTS-NOT: = NewArray [[weight]], [[other]] contents="
+# RUN(ANSWERS): run-in-shell mechanisms=all
+# ANSWERS: 10

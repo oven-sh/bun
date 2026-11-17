@@ -1,0 +1,8 @@
+# `constructor` off an async arrow function is the constructor of async functions: the cause stands at the call
+# -- source: the-constructor-of-an-async-function-is-its-own-evaluator.ts
+# declare const input: any;
+# (async () => {}).constructor(input);
+# -- end of source
+# OPTIONS: report=Uses
+# RUN: causes
+# CHECK: cause EvaluatesText AsyncFunction at f0 v

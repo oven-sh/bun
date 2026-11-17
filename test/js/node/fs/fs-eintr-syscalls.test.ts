@@ -102,12 +102,6 @@ static size_t most(int fd, size_t count) {
 
 #define NEXT(fn) ({ static __typeof__(&fn) next; if (!next) next = dlsym(RTLD_NEXT, #fn); next; })
 
-int unlink(const char *path) { return fault("unlink", path) ? -1 : NEXT(unlink)(path); }
-int rmdir(const char *path) { return fault("rmdir", path) ? -1 : NEXT(rmdir)(path); }
-int link(const char *from, const char *to) { return fault("link", from) ? -1 : NEXT(link)(from, to); }
-int truncate(const char *path, off_t size) { return fault("truncate", path) ? -1 : NEXT(truncate)(path, size); }
-int fsync(int fd) { return fault_fd("fsync", fd) ? -1 : NEXT(fsync)(fd); }
-int fdatasync(int fd) { return fault_fd("fdatasync", fd) ? -1 : NEXT(fdatasync)(fd); }
 int access(const char *path, int mode) { return fault("access", path) ? -1 : NEXT(access)(path, mode); }
 char *realpath(const char *path, char *resolved) { return fault("realpath", path) ? NULL : NEXT(realpath)(path, resolved); }
 // No <sys/stat.h> here: an old glibc defines stat() inline in it.
@@ -119,7 +113,6 @@ ssize_t sendfile(int out, int in, off_t *offset, size_t count) {
 #ifdef __GLIBC__
 typedef off64_t splice_offset;
 // The names that glibc gives the same calls in a program built with 64-bit offsets, or against a glibc before 2.33.
-int truncate64(const char *path, off64_t size) { return fault("truncate", path) ? -1 : NEXT(truncate64)(path, size); }
 int stat64(const char *path, void *buf) { return fault("stat", path) ? -1 : NEXT(stat64)(path, buf); }
 int __xstat(int version, const char *path, void *buf) { return fault("stat", path) ? -1 : NEXT(__xstat)(version, path, buf); }
 int __xstat64(int version, const char *path, void *buf) { return fault("stat", path) ? -1 : NEXT(__xstat64)(version, path, buf); }
@@ -132,13 +125,6 @@ typedef off_t splice_offset;
 
 ssize_t splice(int in, splice_offset *in_offset, int out, splice_offset *out_offset, size_t count, unsigned flags) {
   return fault_fd("splice", in) ? -1 : NEXT(splice)(in, in_offset, out, out_offset, count, flags);
-}
-
-char *mkdtemp(char *template) {
-  if (!fault("mkdtemp", template)) return NEXT(mkdtemp)(template);
-  // glibc leaves the name it tried in the template when the mkdir(2) of it fails.
-  memcpy(template + strlen(template) - 6, "tried1", 6);
-  return NULL;
 }
 
 long syscall(long nr, ...) {
@@ -269,15 +255,6 @@ describe.skipIf(!supported)("under a shim that fails a libc call once", () => {
   test.skipIf(!isLinux)("a call that fails with EINTR runs again", async () => {
     const { rows, exitCode } = await run("interrupted");
     expect(rows).toEqual({
-      unlinkSync: { result: [], shim: ["unlink"] },
-      unlink: { result: [], shim: ["unlink"] },
-      rmdirSync: { result: [], shim: ["rmdir"] },
-      rmdir: { result: [], shim: ["rmdir"] },
-      linkSync: { result: 2, shim: ["link"] },
-      truncateSync: { result: "0123", shim: ["truncate"] },
-      fsyncSync: { result: "synced", shim: ["fsync"] },
-      fdatasyncSync: { result: "synced", shim: ["fdatasync"] },
-      mkdtempSync: { result: 10, shim: ["mkdtemp"] },
       // existsSync asks the kernel without libc here, where the shim cannot fail it.
       // accessSync shows that a call of access() on this path does fail.
       existsSync: { result: true, shim: [] },
@@ -313,7 +290,7 @@ describe.skipIf(!supported)("under a shim that fails a libc call once", () => {
     expect(exitCode).toBe(0);
   });
 
-  test.skipIf(!isLinux)("a call that fails with another errno reports it", async () => {
+  test.skipIf(!isLinux)("a copy that fails with another errno reports it", async () => {
     const { rows, exitCode } = await run("failed", noClone);
     expect(rows).toEqual({
       // Node names this syscall "copyfile" too, with both paths.
@@ -329,9 +306,6 @@ describe.skipIf(!supported)("under a shim that fails a libc call once", () => {
         result: { code: "ENOSPC", errno: -28, syscall: "copy_file_range", path: "file.txt" },
         shim: ["copy_file_range"],
       },
-      // 524 is the errno of the kernel. EUNKNOWN is the name for a number that bun has no name for.
-      unlinkSync: { result: { code: "EUNKNOWN", errno: -524, syscall: "unlink", path: "file.txt" }, shim: ["unlink"] },
-      accessSync: { result: { code: "EUNKNOWN", errno: -524, syscall: "access", path: "file.txt" }, shim: ["access"] },
       fetchFile: { result: "EIO", shim: ["sendfile"] },
     });
     expect(exitCode).toBe(0);

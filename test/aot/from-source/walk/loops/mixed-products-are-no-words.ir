@@ -1,0 +1,10 @@
+# A product of mixed bits leaves the int32s at once. A version that held it as one was left in the first iteration: 84 instructions an iteration became 9.
+# -- source: mixed-products-are-no-words.ts
+# declare function say(x: number): void;
+# function grows(h: number, bytes: Uint8Array): number { for (let i = 0; i < bytes.length; i++) h = (h ^ bytes[i]!) * 16777619; return h; }
+# for (const seed of [2166136261, 0, 0.5]) say(grows(seed, new Uint8Array([1, 2, 3, 250])));
+# -- end of source
+# RUN: walk f1 mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK-NOT: testedType=i32
+# CHECK: = Mul

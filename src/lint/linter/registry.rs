@@ -268,6 +268,23 @@ pub fn oxlint_rule_key(id: &[u8]) -> Vec<u8> {
     }
 }
 
+/// The plugin and the rule that an `.oxlintrc.json` writes as `id`, like oxlint's `parse_rule_key`. oxlint merges a file
+/// with the files it extends by this name, so two aliases of one rule stay two entries there.
+pub fn oxlint_written_name(id: &[u8]) -> (Vec<u8>, &[u8]) {
+    let ((prefix, name), key) = (parse_rule_id(id), oxlint_rule_key(id));
+    let plugin = match (prefix, parse_rule_id(&key).0) {
+        (b"", b"") => Cow::Borrowed(&b"eslint"[..]),
+        (b"", key_prefix) => Cow::Borrowed(key_prefix),
+        (prefix, _) => canonical_oxlint_plugin(prefix),
+    };
+    let plugin = match &*plugin {
+        b"jsx-a11y" => &b"jsx_a11y"[..],
+        b"react-perf" => b"react_perf",
+        plugin => plugin,
+    };
+    (plugin.to_vec(), name)
+}
+
 /// The [`oxlint_rule_key`]s that oxlint's `-A`, `-W` and `-D` select for `name`. Without a plugin prefix, that's every
 /// rule with that name. With a prefix, it's only the rule oxlint has in that plugin. Aliases don't work here, so
 /// `typescript/no-unused-vars` and `eslint/no-explicit-any` select nothing.

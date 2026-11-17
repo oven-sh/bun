@@ -57,9 +57,22 @@ const noUnify: readonly string[] = [
   "src/jsc/bindings/JSBuffer.cpp",
   "src/jsc/bindings/napi.cpp",
   "src/jsc/bindings/webcore/SerializedScriptValue.cpp",
+  "packages/bun-usockets/src/crypto/openssl.cpp",
+
+  // Defines malloc and operator new; nothing else belongs in that translation unit.
+  "src/jsc/bindings/MimallocOverrideDarwin.cpp",
 
   // No longer heavy; kept standalone so webcore bundle composition stays put.
   "src/jsc/bindings/webcore/HTTPParsers.cpp",
+
+  // The ahead-of-time compiler's files: standalone, so that they move no other file into another bundle.
+  "src/jsc/bindings/BunAOTCompile.cpp",
+  "src/jsc/bindings/BunAOTRuntime.cpp",
+  "src/jsc/bindings/BunCompiledEntryPoint.cpp",
+  "src/jsc/bindings/BunCompiledModules.cpp",
+  "src/jsc/bindings/BunCompilers.cpp",
+  "src/jsc/bindings/BunSignalActions.cpp",
+  "src/jsc/bindings/RemovedFeature.cpp",
 
   // Duplicates static MIME-parsing helpers from JSMIMEParams.cpp verbatim;
   // both end up in the same bundle. TODO: extract helpers to a shared header.
@@ -141,6 +154,17 @@ const noUnify: readonly string[] = [
   "src/jsc/bindings/highway_json.cpp",
   // Sixth highway TU (XML structural indexer) — same reason.
   "src/jsc/bindings/highway_xml.cpp",
+  // Seventh highway TU (PNG scanline filters) — same reason.
+  "src/jsc/bindings/highway_png.cpp",
+  // Eighth highway TU (byte sets) — same reason.
+  "src/jsc/bindings/highway_byte_set.cpp",
+  // Ninth highway TU (JPEG transforms and color conversion) — same reason.
+  "src/jsc/bindings/highway_jpeg.cpp",
+  // The highway TUs of the WebP codec — same reason.
+  "src/jsc/bindings/highway_webp_decoder.cpp",
+  "src/jsc/bindings/highway_webp_encoder.cpp",
+  // The highway TU for the checksums of gzip and zlib — same reason.
+  "src/jsc/bindings/highway_checksums.cpp",
   // Declares its own minimal CGRect/kCFStringEncodingUTF8/kCFNumberDoubleType
   // so it doesn't pull a CoreGraphics load command; bundled with files that
   // include the real CF headers those names become ambiguous.
@@ -161,6 +185,8 @@ const noUnifyDirs: readonly string[] = [
   // One WHATWG spec algorithm group per TU, each with file-local static
   // helpers written assuming TU isolation; a unified bundle collides them.
   "src/jsc/bindings/webcore/streams",
+  // Compiled without the PCH.
+  "packages/bun-usockets/src",
 ];
 
 /**
@@ -200,8 +226,7 @@ export interface UnifiedSplit {
  *
  * `cxxSources` must be absolute paths (the glob output). Generated codegen
  * .cpp files should NOT be passed here — those are already large single TUs
- * (ZigGeneratedClasses.cpp etc.) and are added to the compile list separately
- * in bun.ts.
+ * and are added to the compile list separately in bun.ts.
  */
 export function generateUnifiedSources(cfg: Config, cxxSources: readonly string[]): UnifiedSplit {
   const outDir = resolve(cfg.buildDir, "unified");

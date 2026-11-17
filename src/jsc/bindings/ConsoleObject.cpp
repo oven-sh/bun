@@ -3,6 +3,7 @@
 #include "JavaScriptCore/ArgList.h"
 #include "headers.h"
 #include "ConsoleObject.h"
+#include "ZigGlobalObject.h"
 
 #include <JavaScriptCore/ConsoleClient.h>
 #include <JavaScriptCore/ConsoleMessage.h>
@@ -56,28 +57,57 @@ void ConsoleObject::messageWithTypeAndLevel(MessageType type, MessageLevel level
         return;
     }
 
-    RELEASE_AND_RETURN(scope, Bun__ConsoleObject__messageWithTypeAndLevel(this->m_client, static_cast<uint32_t>(type), static_cast<uint32_t>(level), globalObject, jsArgs, count));
+    RELEASE_AND_RETURN(scope, Bun__ConsoleObject__messageWithTypeAndLevel(static_cast<uint32_t>(type), static_cast<uint32_t>(level), globalObject, jsArgs, count));
 }
+
+extern "C" SYSV_ABI void Bun__ConsoleObject__printOneText(uint32_t level, JSC::JSGlobalObject*, JSC::EncodedJSValue);
+
+static JSC::EncodedJSValue printValues(JSC::JSGlobalObject* globalObject, const JSC::EncodedJSValue* values, size_t count, MessageLevel level)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto client = globalObject->consoleClient();
+    if (!client)
+        return JSValue::encode(jsUndefined());
+    if (count != 1 || !JSValue::decode(values[0]).isString() || globalObject->inspectable() || !globalObject->inherits<Zig::GlobalObject>()) {
+        Vector<JSC::Strong<JSC::Unknown>> arguments;
+        arguments.reserveInitialCapacity(count);
+        for (size_t index = 0; index < count; ++index)
+            arguments.append({ vm, JSValue::decode(values[index]) });
+        client->logWithLevel(globalObject, ScriptArguments::create(globalObject, WTF::move(arguments)), level);
+    } else
+        Bun__ConsoleObject__printOneText(static_cast<uint32_t>(level), globalObject, values[0]);
+    RETURN_IF_EXCEPTION(scope, {});
+    return JSValue::encode(jsUndefined());
+}
+
+// AOT-compiled code calls these directly for `console.log(..)` and its kin (`directEntry` in the table of built-ins).
+extern "C" SYSV_ABI JSC::EncodedJSValue Bun__ConsoleObject__logValues(JSC::JSGlobalObject* globalObject, const JSC::EncodedJSValue* values, size_t count) { return printValues(globalObject, values, count, MessageLevel::Log); }
+extern "C" SYSV_ABI JSC::EncodedJSValue Bun__ConsoleObject__infoValues(JSC::JSGlobalObject* globalObject, const JSC::EncodedJSValue* values, size_t count) { return printValues(globalObject, values, count, MessageLevel::Info); }
+extern "C" SYSV_ABI JSC::EncodedJSValue Bun__ConsoleObject__debugValues(JSC::JSGlobalObject* globalObject, const JSC::EncodedJSValue* values, size_t count) { return printValues(globalObject, values, count, MessageLevel::Debug); }
+extern "C" SYSV_ABI JSC::EncodedJSValue Bun__ConsoleObject__warnValues(JSC::JSGlobalObject* globalObject, const JSC::EncodedJSValue* values, size_t count) { return printValues(globalObject, values, count, MessageLevel::Warning); }
+extern "C" SYSV_ABI JSC::EncodedJSValue Bun__ConsoleObject__errorValues(JSC::JSGlobalObject* globalObject, const JSC::EncodedJSValue* values, size_t count) { return printValues(globalObject, values, count, MessageLevel::Error); }
+
 void ConsoleObject::count(JSGlobalObject* globalObject, const String& label)
 {
     auto input = Bun::toString(label);
-    Bun__ConsoleObject__count(this->m_client, globalObject, &input);
+    Bun__ConsoleObject__count(globalObject, &input);
 }
 
 void ConsoleObject::countReset(JSGlobalObject* globalObject, const String& label)
 {
     auto input = Bun::toString(label);
-    Bun__ConsoleObject__countReset(this->m_client, globalObject, &input);
+    Bun__ConsoleObject__countReset(globalObject, &input);
 }
 
 void ConsoleObject::takeHeapSnapshot(JSC::JSGlobalObject* globalObject, const String&)
 {
-    Bun__ConsoleObject__takeHeapSnapshot(this->m_client, globalObject);
+    Bun__ConsoleObject__takeHeapSnapshot(globalObject);
 }
-void ConsoleObject::time(JSGlobalObject* globalObject, const String& label)
+void ConsoleObject::time(JSGlobalObject*, const String& label)
 {
     auto input = Bun::toString(label);
-    Bun__ConsoleObject__time(this->m_client, globalObject, &input);
+    Bun__ConsoleObject__time(&input);
 }
 void ConsoleObject::timeLog(JSGlobalObject* globalObject, const String& label,
     Ref<ScriptArguments>&& arguments)
@@ -92,17 +122,14 @@ void ConsoleObject::timeLog(JSGlobalObject* globalObject, const String& label,
         jsArgs[i] = JSC::JSValue::encode(val);
     }
 
-    Bun__ConsoleObject__timeLog(this->m_client, globalObject, &input, jsArgs, count);
+    Bun__ConsoleObject__timeLog(globalObject, &input, jsArgs, count);
 }
-void ConsoleObject::timeEnd(JSGlobalObject* globalObject, const String& label)
+void ConsoleObject::timeEnd(JSGlobalObject*, const String& label)
 {
     auto input = Bun::toString(label);
-    Bun__ConsoleObject__timeEnd(this->m_client, globalObject, &input);
+    Bun__ConsoleObject__timeEnd(&input);
 }
-void ConsoleObject::timeStamp(JSGlobalObject* globalObject, Ref<ScriptArguments>&& args)
-{
-    Bun__ConsoleObject__timeStamp(this->m_client, globalObject, args.ptr());
-}
+void ConsoleObject::timeStamp(JSGlobalObject*, Ref<ScriptArguments>&&) {}
 void ConsoleObject::record(JSGlobalObject*, Ref<ScriptArguments>&&) {}
 void ConsoleObject::recordEnd(JSGlobalObject*, Ref<ScriptArguments>&&) {}
 void ConsoleObject::screenshot(JSGlobalObject*, Ref<ScriptArguments>&&)

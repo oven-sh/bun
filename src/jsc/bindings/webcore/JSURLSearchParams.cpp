@@ -237,7 +237,7 @@ JSC_DEFINE_HOST_FUNCTION(jsURLSearchParamsPrototypeFunction_inspectCustom, (JSGl
         if (!depthValue.isUndefinedOrNull())
             childDepth = jsNumber(depth - 1);
     }
-    opts->putDirect(vm, Identifier::fromString(vm, "depth"_s), childDepth, 0);
+    Bun::putDirectNamed(vm, opts, "depth"_s, childDepth);
 
     auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
     JSFunction* utilInspect = globalObject->utilInspectFunction();
@@ -709,6 +709,11 @@ const JSC::ClassInfo URLSearchParamsIterator::s_info = { "URLSearchParams Iterat
 
 template<>
 const JSC::ClassInfo URLSearchParamsIteratorPrototype::s_info = { "URLSearchParams Iterator"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(URLSearchParamsIteratorPrototype) };
+
+JSC::JSObject* urlSearchParamsIteratorPrototype(JSDOMGlobalObject& globalObject)
+{
+    return getDOMPrototype<URLSearchParamsIterator>(globalObject.vm(), globalObject);
+}
 
 static inline JSC::EncodedJSValue jsURLSearchParamsPrototypeFunction_entriesCaller(JSGlobalObject*, CallFrame*, JSURLSearchParams* thisObject)
 {

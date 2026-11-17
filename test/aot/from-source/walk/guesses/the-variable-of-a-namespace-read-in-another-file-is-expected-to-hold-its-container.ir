@@ -1,0 +1,19 @@
+# -- source: main.ts
+# import { Checks, Level } from "./checks.ts";
+# declare function print(...values: unknown[]): void;
+# function use(value: number): number { return Checks.atLeast(value, 1) + Checks.base; }
+# function nameOf(level: number): string { return Level[level]; }
+# (globalThis as any).kept = [use, nameOf];
+# print(use(3), use(0), nameOf(1));
+# -- source: checks.ts
+# export namespace Checks { export function atLeast(value: number, least: number): number { return value >= least ? value : least; } export const base = 10; }
+# export enum Level { Low, High }
+# -- end of source
+# The front end itself makes the object of a namespace and of an enum, in the file where they are written, and knows its layout. It wrote `anything` on the variable that holds the object, so a reader, in that
+# file or in another, read every member by name off a value of which nothing was expected. The variable is expected to hold undefined or that object: by the text of the variable's own file alone.
+# RUN(WIRE): print
+# WIRE: variable g{{*}} name="Checks" {{*}}declared={type=undefined|L{{*}} flags=[IsExpected]}
+# WIRE: variable g{{*}} name="Level" {{*}}declared={type=undefined|L{{*}} flags=[IsExpected]}
+# RUN(ANSWERS): run-in-shell
+# ANSWERS: 13 11 High
+# ANSWERS-NEXT: exited with 0

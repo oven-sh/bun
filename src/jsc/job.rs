@@ -22,7 +22,8 @@ use core::marker::PhantomData;
 use core::mem::ManuallyDrop;
 use core::ptr::NonNull;
 
-use bun_io::KeepAlive;
+use bun_event_loop::ConcurrentTask::ConcurrentTask;
+use bun_io::{JsKeepAlive, KeepAlive};
 use bun_threading::work_pool::{Task as WorkPoolTask, WorkPool};
 
 use crate::debugger::AsyncTaskTracker;
@@ -72,17 +73,11 @@ impl JSGlobalObject {
         }
     }
 
-    /// What a host function starts with: this global, and the context of the script that called it.
+    /// This global, and the context of the script that is calling (see
+    /// [`VirtualMachine::context_of_caller`]).
     #[inline]
-    pub fn js_thread_of_caller<'a>(&'a self, frame: &crate::CallFrame) -> JsThread<'a> {
-        self.js_thread(self.bun_vm().context_of_caller(frame))
-    }
-
-    /// As [`js_thread_of_caller`](Self::js_thread_of_caller) where no `CallFrame` reaches Rust
-    /// (see [`VirtualMachine::context_of_caller_no_frame`]).
-    #[inline]
-    pub fn js_thread_of_caller_no_frame(&self) -> JsThread<'_> {
-        self.js_thread(self.bun_vm().context_of_caller_no_frame())
+    pub fn js_thread_of_caller(&self) -> JsThread<'_> {
+        self.js_thread(self.bun_vm().context_of_caller())
     }
 }
 
@@ -137,26 +132,7 @@ unsafe impl<A: JsAffine, B: JsAffine, C: JsAffine> JsAffine for (A, B, C) {}
 // SAFETY: see the group note above.
 unsafe impl<T: ?Sized> JsAffine for JsPtr<T> {}
 // SAFETY: see the group note above.
-unsafe impl JsAffine for Protected {}
-
-/// A GC-protected value a job's completion needs (Node: a `Global<Value>` on
-/// the req_wrap). Unprotected on drop.
-pub struct Protected(crate::JSValue);
-impl Protected {
-    pub fn new(value: crate::JSValue) -> Self {
-        value.protect();
-        Self(value)
-    }
-    #[inline]
-    pub fn value(&self) -> crate::JSValue {
-        self.0
-    }
-}
-impl Drop for Protected {
-    fn drop(&mut self) {
-        self.0.unprotect();
-    }
-}
+unsafe impl JsAffine for crate::ProtectedJSValue {}
 
 /// A pointer into JS-owned memory (an ArrayBuffer's bytes, a pinned cell, the
 /// creating global) that a job carries off-thread. It can be *passed around*
@@ -185,6 +161,10 @@ impl<T: ?Sized> JsPtr<T> {
     pub fn as_ptr(self) -> *mut T {
         self.0.as_ptr()
     }
+    #[inline]
+    pub fn as_non_null(self) -> NonNull<T> {
+        self.0
+    }
     /// # Safety
     /// No other live reference aliases the pointee for `'b`.
     #[inline]
@@ -205,6 +185,9 @@ pub trait JobContext: Sized + 'static {
     /// Whether [`cancel`](Self::cancel) does anything, i.e. whether the job
     /// can wait on something external. Only such jobs are tracked by the VM.
     const CANCELLABLE: bool = false;
+
+    /// Whether the job is queued under `ContextId::NONE`: [`then`](Self::then) also runs after the scheduling context stops or `bun test --isolate` moves on.
+    const OUTLIVES_SCRIPT: bool = false;
 
     /// Pool thread, VM not yet in its final wait when the pool reached the job
     /// (a job reached later is handed back unrun, as Node's environment
@@ -245,14 +228,15 @@ pub struct JobHeader {
     prev: *mut JobHeader,
     next: *mut JobHeader,
     /// The context whose script scheduled the job: once it stops, the
-    /// completion is released without running.
+    /// completion is released without running. `NONE` with `OUTLIVES_SCRIPT`.
     context: crate::ContextId,
     /// `VirtualMachine::test_isolation_generation` when scheduled.
     generation: u32,
 }
 
 /// A VM's live [cancellable](JobContext::CANCELLABLE) jobs (JS thread only;
-/// zero-valid), so its stop phase can [`cancel`](JobContext::cancel) them.
+/// empty by default), so its stop phase can [`cancel`](JobContext::cancel) them.
+#[derive(Default)]
 pub struct JobList {
     head: *mut JobHeader,
 }
@@ -323,7 +307,9 @@ pub struct Job<C: JobContext> {
     /// from then on (never touched on the JS side).
     ticket: Option<Ticket>,
     task: WorkPoolTask,
-    keep_alive: KeepAlive,
+    /// What [`Completion::finish`] queues on the JS thread.
+    concurrent_task: ConcurrentTask,
+    _keep_alive: JsKeepAlive,
     off: C::OffThread,
     js: C::Js,
 }
@@ -335,7 +321,7 @@ impl<C: JobContext> bun_event_loop::Taskable for Job<C> {
         // SAFETY: fn contract; JS thread with the heap alive.
         drop(unsafe { Self::take(this, VirtualMachine::get()) })
     }
-    /// The context whose script scheduled the job.
+    /// `JobHeader::context`.
     unsafe fn context(this: *const Self) -> bun_event_loop::ContextId {
         // SAFETY: fn contract.
         unsafe { (*this).header.context }
@@ -346,8 +332,6 @@ impl<C: JobContext> Job<C> {
     /// JS thread: build the job, keep the loop alive for it, hand it to the pool.
     #[track_caller]
     pub fn schedule(cx: &JsThread<'_>, off: C::OffThread, js: C::Js) {
-        let mut keep_alive = KeepAlive::default();
-        keep_alive.ref_(bun_io::js_vm_ctx());
         let job = bun_core::heap::into_raw(Box::new(Self {
             header: JobHeader {
                 // SAFETY: (this and the entry below) the erased dispatchers are
@@ -361,15 +345,20 @@ impl<C: JobContext> Job<C> {
                 cancel: |p| unsafe { C::cancel(&raw mut (*p.cast::<Self>()).off) },
                 prev: core::ptr::null_mut(),
                 next: core::ptr::null_mut(),
-                context: cx.context().id(),
-                generation: cx.vm().test_isolation_generation,
+                context: if C::OUTLIVES_SCRIPT {
+                    crate::ContextId::NONE
+                } else {
+                    cx.context().id()
+                },
+                generation: cx.vm().test_isolation_generation.get(),
             },
             ticket: Some(cx.vm().ticket()),
             task: WorkPoolTask {
                 node: Default::default(),
                 callback: Self::run_on_pool,
             },
-            keep_alive,
+            concurrent_task: ConcurrentTask::default(),
+            _keep_alive: JsKeepAlive::active(),
             off,
             js,
         }));
@@ -407,20 +396,12 @@ impl<C: JobContext> Job<C> {
     /// # Safety
     /// `this` is the job its `Completion` posted; called once, on `vm`'s thread.
     unsafe fn take(this: *mut Self, vm: &VirtualMachine) -> (C::OffThread, C::Js) {
-        if C::CANCELLABLE {
-            // SAFETY: fn contract.
-            vm.jobs
-                .with_mut(|j| j.unlink(unsafe { &raw mut (*this).header }));
-        }
         // SAFETY: fn contract.
-        let Job {
-            mut keep_alive,
-            off,
-            js,
-            ..
-        } = unsafe { *Box::from_raw(this) };
-        keep_alive.unref(bun_io::js_vm_ctx());
-        (off, js)
+        let mut job = unsafe { Box::from_raw(this) };
+        if C::CANCELLABLE {
+            vm.jobs.with_mut(|j| j.unlink(&raw mut job.header));
+        }
+        (job.off, job.js)
     }
 
     /// JS thread dispatch: run the completion and free the job.
@@ -451,11 +432,16 @@ impl<C: JobContext> Completion<C> {
     pub fn finish(self) {
         // Consumed: the obligation is met here, so its Drop check must not run.
         let me = ManuallyDrop::new(self);
-        // SAFETY: moving the field out of a value that is never dropped.
-        let ticket = unsafe { core::ptr::read(&raw const me.ticket) };
-        ticket.post(bun_event_loop::ConcurrentTask::ConcurrentTask::create_from(
-            me.job.as_ptr(),
-        ));
+        let job = me.job.as_ptr();
+        // SAFETY: the ticket moves out of a value that is never dropped. Nothing else touches the
+        // node of a job that is not finished, and the job is freed after its task left the queue.
+        let (ticket, node) = unsafe {
+            (
+                core::ptr::read(&raw const me.ticket),
+                (*job).concurrent_task.from(job),
+            )
+        };
+        ticket.post_intrusive(NonNull::from(node));
     }
     /// The job's ticket: its VM is alive while this is held.
     #[inline]
@@ -480,14 +466,17 @@ pub unsafe fn complete_erased(ptr: *mut (), global: &JSGlobalObject) -> JsResult
     // exit, and a `then` that calls back directly (node:crypto's callback forms) would run its
     // script under the next file.
     // SAFETY: `Job<C>` is `#[repr(C)]` with the header first.
-    if unsafe { (*header).generation } != vm.test_isolation_generation {
+    let (generation, context) = unsafe { ((*header).generation, (*header).context) };
+    if generation != vm.test_isolation_generation.get() && context != crate::ContextId::NONE {
         // SAFETY: as below; released exactly once, here.
         unsafe { ((*header).release_unrun)(header) };
         return Ok(());
     }
-    // The completion continues the script that scheduled the job.
-    // SAFETY: as above.
-    let context = vm.context_of(unsafe { (*header).context });
+    // The completion continues the script that scheduled the job, except with `OUTLIVES_SCRIPT`.
+    let context = match context {
+        crate::ContextId::NONE => vm.root_context(),
+        context => vm.context_of(context),
+    };
     // SAFETY: as above.
     unsafe { ((*header).complete)(header, &global.js_thread(context)) }
 }

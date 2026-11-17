@@ -1,0 +1,31 @@
+# -- source: kinds.ts
+# declare function id<T>(value: T): T;
+# declare function report(value: number): void;
+# function isListed(kind: number): boolean {
+#   switch (kind | 0) { case 81: case 84: case 85: case 90: case 97: case 103: case 143: return true; default: return false; }
+# }
+# function weightOf(kind: number): number {
+#   switch (kind | 0) { case 5: case 8: case 11: case 14: return 1; case 6: case 9: case 12: case 15: return 2; case 7: case 10: case 13: case 16: return 3; default: return 0; }
+# }
+# function isInRun(kind: number): boolean {
+#   switch (kind | 0) { case 100: case 101: case 102: case 103: case 104: case 105: return true; default: return false; }
+# }
+# let listed = 0, weight = 0, inRun = 0;
+# for (let kind = -70; kind < 300; kind++) {
+#   if (isListed(id(kind))) listed += kind;
+#   if (isListed(id(kind + 4294967296))) listed += 100000;
+#   weight += weightOf(id(kind));
+#   if (isInRun(id(kind))) inRun += kind;
+# }
+# report(listed); report(weight); report(inRun);
+# -- end of source
+# The cases of isListed() lead to one place and lie within 64 values: one test of the range and one test of a bit of a written mask stand in the place of a jump through a table.
+# weightOf(): three places, three masks, and the last of them is not asked: the twelve values have no gap. isInRun(): a run without a gap to one place is the test of the range alone.
+# f1 = isListed, f2 = weightOf, f3 = isInRun
+# RUN: compile SwitchBitTestsEmitted mechanisms=none+TypedOperations+UnboxedNumbers+Folding
+# CHECK: statistic SwitchBitTestsEmitted 3
+# RUN(RUNS): run-in-shell mechanisms=all globalThis.id = value => value; globalThis.report = value => print(String(value));
+# RUNS: 700683
+# RUNS: 24
+# RUNS: 615
+# RUNS: exited with 0

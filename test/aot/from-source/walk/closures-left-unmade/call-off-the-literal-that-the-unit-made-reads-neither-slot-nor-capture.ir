@@ -1,0 +1,32 @@
+# a closure that a literal leaves unmade is called off the literal that this unit made: the state holds what the allocation listed for the slot, so the call takes the function and the scope off that record. Nothing is left that reads the literal: the sweep takes the read, its neighbour, the record of the closure and the literal.
+# `make` is copied into `run`. The call stands in a loop and the maker in front of it: a read that is there for its call alone makes no closure, so the look at the loop counts no store into the slot, and what is known of it comes through the head as it does for a closure that is made.
+# what is still allocated is the scope: no record of a layout of objects is left.
+# f1 = make, f2 = run, f3 = next
+# -- source: call-off-the-literal-that-the-unit-made-reads-neither-slot-nor-capture.js
+# function make() { var state = 0, i = 0; return { next: function () { while (true) switch (state) { case 0: i = 0; state = 1; break; case 1: if (!(i < 8)) { state = 3; break; } state = 2; return { value: i, done: false }; case 2: i++; state = 1; break; case 3: return { value: undefined, done: true }; } } }; }
+# function run(count) { var total = 0; for (var k = 0; k < count; k += 8) { var it = make(), r; while (!(r = it.next()).done) total += r.value; } return total; }
+# print(run(1000));
+# -- end of source
+# RUN(PLAN): plan layouts mechanisms=all
+# PLAN: "next" DeferredClosure
+# RUN: walk f2 mechanisms=all
+# CHECK-LABEL: code f2:Body
+# CHECK: [[scope]]: env {{*}} = NewObject
+# CHECK: = CallDirect [[scope]]{{*}}function=f3
+# RUN(NOTHING): walk f2 mechanisms=all
+# NOTHING-LABEL: code f2:Body
+# NOTHING-NOT: GetDeferredClosureSlot
+# NOTHING-NOT: GetCapture
+# NOTHING-NOT: NewClosure
+# NOTHING-NOT: : L{{*}} = NewObject
+# with nobody who notes what an allocation fills in, the slot is read off the literal in every turn, as a load of the scope beside it
+# RUN(WITHHELD): walk f2 mechanisms=all-EscapeAnalysis
+# WITHHELD-LABEL: code f2:Body
+# WITHHELD: [[scope]]: env {{*}} = NewObject
+# WITHHELD: [[unmade]]: {{*}} = NewClosure [[scope]] {{*}}closureForm=Deferred
+# WITHHELD: [[literal]]: {{*}} = NewObject -, [[unmade]], [[scope]]
+# WITHHELD: [[closure]]: {{*}} = GetDeferredClosureSlot {{*}}key="next"
+# WITHHELD: [[read]]: {{*}} = GetCapture [[closure]]
+# WITHHELD: = CallDirect [[read]]{{*}}function=f3
+# RUN(ANSWERS): run-in-shell
+# ANSWERS: the source prints the same

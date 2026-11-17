@@ -3,6 +3,7 @@ use core::ptr::NonNull;
 
 use crate::exception_list;
 use bun_core::String as BunString;
+use bun_core::StringOrView;
 use bun_core::Utf8Bytes;
 use bun_url::URL as ZigURL;
 
@@ -11,13 +12,14 @@ use crate::ZigStackFrame;
 
 /// Represents a JavaScript stack trace
 #[repr(C)]
-pub struct ZigStackTrace {
-    pub(crate) source_lines_ptr: *mut BunString,
+pub struct ZigStackTrace<'a> {
+    /// A line borrows `'a` source text or `referenced_source_provider`'s, or owns a ref (an error's `lineText`).
+    pub(crate) source_lines_ptr: *mut StringOrView<'a>,
     pub(crate) source_lines_numbers: *mut i32,
     pub(crate) source_lines_len: u8,
     pub(crate) source_lines_to_collect: u8,
 
-    pub(crate) frames_ptr: *mut ZigStackFrame,
+    pub(crate) frames_ptr: *mut ZigStackFrame<'a>,
     pub frames_len: u8,
     pub(crate) frames_cap: u8,
 
@@ -29,7 +31,7 @@ pub struct ZigStackTrace {
     pub(crate) referenced_source_provider: Option<NonNull<SourceProvider>>,
 }
 
-impl Drop for ZigStackTrace {
+impl Drop for ZigStackTrace<'_> {
     fn drop(&mut self) {
         if let Some(source) = self.referenced_source_provider.take() {
             SourceProvider::opaque_mut(source.as_ptr()).deref();
@@ -37,8 +39,8 @@ impl Drop for ZigStackTrace {
     }
 }
 
-impl ZigStackTrace {
-    pub fn from_frames(frames_slice: &mut [ZigStackFrame]) -> ZigStackTrace {
+impl<'a> ZigStackTrace<'a> {
+    pub fn from_frames(frames_slice: &'a mut [ZigStackFrame<'a>]) -> ZigStackTrace<'a> {
         ZigStackTrace {
             source_lines_ptr: ptr::dangling_mut(),
             source_lines_numbers: ptr::dangling_mut(),
@@ -81,7 +83,7 @@ impl ZigStackTrace {
         }
     }
 
-    pub fn frames(&self) -> &[ZigStackFrame] {
+    pub fn frames(&self) -> &[ZigStackFrame<'a>] {
         // SAFETY: frames_ptr points to a caller-owned buffer of at least frames_len elements
         // (populated by C++ via FFI).
         unsafe { bun_core::ffi::slice(self.frames_ptr, self.frames_len as usize) }
@@ -95,7 +97,7 @@ impl ZigStackTrace {
         unsafe { bun_core::ffi::slice(self.source_lines_numbers, self.source_lines_len as usize) }
     }
 
-    pub(crate) fn source_line_iterator(&self) -> SourceLineIterator<'_> {
+    pub(crate) fn source_line_iterator(&self) -> SourceLineIterator<'_, 'a> {
         let mut i: i32 = -1;
         let nums = self.source_line_numbers();
         for (j, &num) in nums.iter().enumerate() {
@@ -107,8 +109,8 @@ impl ZigStackTrace {
     }
 }
 
-pub(crate) struct SourceLineIterator<'a> {
-    pub(crate) trace: &'a ZigStackTrace,
+pub(crate) struct SourceLineIterator<'t, 'a> {
+    pub(crate) trace: &'t ZigStackTrace<'a>,
     pub(crate) i: i32,
 }
 
@@ -126,7 +128,7 @@ impl SourceLine<'_> {
     }
 }
 
-impl<'a> SourceLineIterator<'a> {
+impl<'t> SourceLineIterator<'t, '_> {
     fn get_length(&mut self) -> usize {
         let mut count: usize = 0;
         let n = usize::try_from(self.i + 1).expect("int cast");
@@ -140,14 +142,14 @@ impl<'a> SourceLineIterator<'a> {
         count
     }
 
-    pub(crate) fn until_last(&mut self) -> Option<SourceLine<'a>> {
+    pub(crate) fn until_last(&mut self) -> Option<SourceLine<'t>> {
         if self.i < 1 {
             return None;
         }
         self.next()
     }
 
-    pub(crate) fn next(&mut self) -> Option<SourceLine<'a>> {
+    pub(crate) fn next(&mut self) -> Option<SourceLine<'t>> {
         if self.i < 0 {
             return None;
         }
@@ -155,7 +157,7 @@ impl<'a> SourceLineIterator<'a> {
         let idx = usize::try_from(self.i).expect("int cast");
         // SAFETY: idx < source_lines_len by construction in source_line_iterator();
         // both buffers have at least source_lines_len valid elements.
-        let (source_line, line_number) = unsafe {
+        let (source_line, line_number): (&'t BunString, i32) = unsafe {
             (
                 &*self.trace.source_lines_ptr.add(idx),
                 *self.trace.source_lines_numbers.add(idx),

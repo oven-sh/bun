@@ -13,7 +13,7 @@ pub struct SortComp {
     methods_order: Option<MethodsOrder>,
 }
 
-const UNSORTED_PROPS: Message = Message::new("unsortedProps", "{{propA}} should be placed {{position}} {{propB}}");
+const UNSORTED_PROPS: &Message = &Message::new("unsortedProps", "{{propA}} should be placed {{position}} {{propB}}");
 
 const DEFAULT_ORDER: [&str; 4] = ["static-methods", "lifecycle", "everything-else", "render"];
 const LIFECYCLE: [&str; 25] = [

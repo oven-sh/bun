@@ -2,9 +2,8 @@ use bun_core::feature_flags;
 use bun_sys::{self, Fd};
 use bun_url::URL;
 
-#[derive(Copy, Clone)]
 pub struct SendFile {
-    pub fd: Fd,
+    pub file: bun_sys::File,
     pub remain: usize,
     pub offset: usize,
     pub content_size: usize,
@@ -26,11 +25,11 @@ impl SendFile {
         {
             let mut signed_offset: i64 = i64::try_from(self.offset).expect("int cast");
             let begin = self.offset;
+            let file = self.file.fd();
             #[cfg(any(target_os = "linux", target_os = "android"))]
-            let result =
-                bun_sys::sendfile(self.fd, socket_fd, Some(&mut signed_offset), self.remain);
+            let result = bun_sys::sendfile(file, socket_fd, Some(&mut signed_offset), self.remain);
             #[cfg(not(any(target_os = "linux", target_os = "android")))]
-            let result = bun_sys::sendfile(self.fd, socket_fd, &mut signed_offset, self.remain);
+            let result = bun_sys::sendfile(file, socket_fd, &mut signed_offset, self.remain);
             let (val, errcode) = match result {
                 Ok(sent) => (sent, bun_sys::E::SUCCESS),
                 Err(err) => (0, err.get_errno()),

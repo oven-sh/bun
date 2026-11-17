@@ -24,7 +24,7 @@ interface Promisify {
   custom: typeof kCustomPromisifiedSymbol;
 }
 
-var promisify = function promisify(original) {
+var promisify = function promisify(original: (...args: any[]) => unknown) {
   validateFunction(original, "original");
   const custom = original[kCustomPromisifiedSymbol];
   if (custom) {
@@ -34,12 +34,12 @@ var promisify = function promisify(original) {
   }
 
   const callbackArgs = original[kCustomPromisifyArgsSymbol];
-  function fn(...originalArgs) {
+  function fn(this: unknown, ...originalArgs: unknown[]) {
     const { promise, resolve, reject } = Promise.withResolvers();
     try {
       const maybePromise = original.$apply(this, [
         ...originalArgs,
-        function (err, ...values) {
+        function (err: unknown, ...values: unknown[]) {
           if (err) {
             return reject(err);
           }

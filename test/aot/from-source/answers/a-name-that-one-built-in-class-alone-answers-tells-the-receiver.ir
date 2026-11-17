@@ -1,0 +1,43 @@
+# -- source: main.cjs
+# "use strict";
+# function sum(view, t) { let s = 0; for (let i = 0; i < t + 8; i += 4) s = (s + view.getUint32(i, true)) % 65521; return s; }
+# function attempt(view, t) { try { return sum(view, t); } catch (error) { return error.constructor.name; } }
+# print(outside(attempt));
+# -- end of source
+# f1 = sum, f2 = attempt
+# `view.getUint32(i, true)` in a loop, and nobody in sight calls sum(): nothing is seen to arrive at `view`, nothing is written of it: the read and the call went by name through stubs and into the host.
+# Layouts of the program are expected by the names that the text asks of a value, texts and lists too. A name that ONE built-in class alone answers, and that no layout of the program has, tells as much:
+# objects of that class are expected, where the class or what stands above it answers every name that is asked. It is a guess: the receiver is tested in front of the loop; whatever else arrives runs as written.
+# RUN(SUM): walk f1 mechanisms=all
+# SUM: = TypeTest {{*}}testedType=DataView
+# The shell itself calls, out of sight of Link: a view . one that is too short . an object with a method of that name . 5 . undefined . an heir that overrides the method . a view with a property of its own under the name . bytes.
+# RUN(VIEW): run-in-shell make = function () { const view = new DataView(new ArrayBuffer(16)); for (let i = 0; i < 16; i++) view.setUint8(i, i + 1); return view; }; outside = function (run) { return run(make(), 1) + " " + run(make(), 5); };
+# VIEW: 31577 31318
+# VIEW-NEXT: exited with 0
+# RUN(SHORT): run-in-shell make = function () { return new DataView(new ArrayBuffer(10)); }; outside = function (run) { return run(make(), 1) + " " + run(make(), 5); };
+# SHORT: RangeError RangeError
+# SHORT-NEXT: exited with 0
+# RUN(OBJECT): run-in-shell make = function () { return { getUint32(at, little) { return at * 10 + (little ? 1 : 0); } }; }; outside = function (run) { return run(make(), 1) + " " + run(make(), 5); };
+# OBJECT: 123 244
+# OBJECT-NEXT: exited with 0
+# RUN(NUMBER): run-in-shell make = function () { return 5; }; outside = function (run) { return run(make(), 1) + " " + run(make(), 5); };
+# NUMBER: TypeError TypeError
+# NUMBER-NEXT: exited with 0
+# RUN(NOTHING): run-in-shell make = function () { return undefined; }; outside = function (run) { return run(make(), 1) + " " + run(make(), 5); };
+# NOTHING: TypeError TypeError
+# NOTHING-NEXT: exited with 0
+# RUN(HEIR): run-in-shell make = function () { return new (class extends DataView { getUint32(at) { return at + 1000; } })(new ArrayBuffer(16)); }; outside = function (run) { return run(make(), 1) + " " + run(make(), 5); };
+# HEIR: 3012 4024
+# HEIR-NEXT: exited with 0
+# RUN(OWN): run-in-shell make = function () { const view = new DataView(new ArrayBuffer(16)); view.getUint32 = function (at) { return at + 7; }; return view; }; outside = function (run) { return run(make(), 1) + " " + run(make(), 5); };
+# OWN: 33 52
+# OWN-NEXT: exited with 0
+# RUN(BYTES): run-in-shell make = function () { return new Uint8Array(16); }; outside = function (run) { return run(make(), 1) + " " + run(make(), 5); };
+# BYTES: TypeError TypeError
+# BYTES-NEXT: exited with 0
+# RUN(CHECKED): run-in-shell testing=CheckProofsAtRunTime,CheckWalkAtRunTime make = function () { return new (class extends DataView { getUint32(at) { return at + 1000; } })(new ArrayBuffer(16)); }; outside = function (run) { return run(make(), 1) + " " + run(make(), 5); };
+# CHECKED: 3012 4024
+# CHECKED-NEXT: exited with 0
+# RUN(CHECKEDTOO): run-in-shell testing=CheckProofsAtRunTime,CheckWalkAtRunTime make = function () { const view = new DataView(new ArrayBuffer(16)); view.getUint32 = function (at) { return at + 7; }; return view; }; outside = function (run) { return run(make(), 1) + " " + run(make(), 5); };
+# CHECKEDTOO: 33 52
+# CHECKEDTOO-NEXT: exited with 0

@@ -4,7 +4,7 @@ use core::ffi::c_int;
 use core::fmt;
 
 use crate::SystemError;
-use bun_core::String as BunString;
+use bun_core::{String as BunString, StringView};
 
 use crate::{E, Fd, SystemErrno, Tag, coreutils_error_map, libuv_error_map};
 
@@ -259,12 +259,10 @@ impl Error {
         self.resolve_system_errno().unwrap_or(SystemErrno::EIO)
     }
 
-    /// The errno and its name for printing. A number outside the table is `EUNKNOWN`, as in `get_errno`.
+    /// 1. Convert libuv errno values into libc ones.
+    /// 2. Get the tag name as a string for printing.
     pub fn get_error_code_tag_name(&self) -> Option<(&'static str, SystemErrno)> {
-        if self.errno == 0 {
-            return None;
-        }
-        let e = SystemErrno::from_repr(self.errno).unwrap_or(SystemErrno::EUNKNOWN);
+        let e = self.resolve_system_errno()?;
         // strum::IntoStaticStr — variant name (e.g., "ENOENT").
         Some((<&'static str>::from(e), e))
     }
@@ -307,7 +305,9 @@ impl Error {
         };
 
         // both maps are total (`initFull("unknown error")`).
-        let looked_up = self.get_error_code_tag_name().map(|(code, system_errno)| {
+        let looked_up = (self.errno != 0).then(|| {
+            let system_errno = self.resolve_system_errno().unwrap_or(SystemErrno::EUNKNOWN);
+            let code = <&'static str>::from(system_errno);
             err.code = BunString::static_(code.as_bytes());
             (code, map[system_errno])
         });
@@ -425,22 +425,15 @@ impl Error {
 impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         // We want to reuse the code from SystemError for formatting.
-        // But, we do not want to call String.createUTF8 on the path/dest strings
-        // because we're intending to pass them to writer.print()
-        // which will convert them back into UTF*.
-        let mut that = self.without_path().to_shell_system_error();
-        debug_assert!(that.path.tag() != bun_core::Tag::WTFStringImpl);
-        debug_assert!(that.dest.tag() != bun_core::Tag::WTFStringImpl);
-        that.path = BunString::borrow_utf8(&self.path);
-        that.dest = BunString::borrow_utf8(&self.dest);
-        debug_assert!(that.path.tag() != bun_core::Tag::WTFStringImpl);
-        debug_assert!(that.dest.tag() != bun_core::Tag::WTFStringImpl);
-
-        fmt::Display::fmt(&that, f)
+        // But, we do not want to call String.createUTF8 on the path
+        // because we're intending to pass it to writer.print()
+        // which will convert it back into UTF*.
+        let that = self.without_path().to_shell_system_error();
+        that.fmt_with_path(&StringView::borrow_utf8(&self.path), f)
     }
 }
 
-// `toJS` / `toJSWithAsyncStack` / `TestingAPIs` live as extension-trait
+// `toJS` / `toJSWithAsyncStack` live as extension-trait
 // methods in the `bun_sys_jsc` crate per PORTING.md.
 
 // ──────────────────────────────────────────────────────────────────────────

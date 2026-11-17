@@ -1,6 +1,7 @@
 // Tests createWebSocketStream() against a raw TCP peer. See ws-raw-peer.ts.
 import { describe, expect, test } from "bun:test";
 import { isWindows } from "harness";
+import { AsyncLocalStorage } from "node:async_hooks";
 import { Duplex, pipeline, Readable } from "node:stream";
 import {
   closedPort,
@@ -126,6 +127,26 @@ describe.each(implementations)("createWebSocketStream ($name)", ({ ws: implement
       duplex.write(Buffer.from([1, 2]));
       expect(await client.conn.nextFrames(2)).toEqual(['binary "text"', "binary 0x0102"]);
     });
+
+    // Both come from the callback of the ws.send() that write() makes. With npm ws on Bun that depends on node:net.
+    test.skipIf(!builtin).each([
+      { transport: "native", options: {} },
+      { transport: "stream", options: { family: 4 } },
+    ])(
+      "the write() callback and 'drain' run in the AsyncLocalStorage store of the write() call, on the $transport transport",
+      async ({ options }) => {
+        const storage = new AsyncLocalStorage<string>();
+        await using client = await storage.run("the socket's", () => openClient(implementation, options));
+        // A chunk that is larger than the highWaterMark makes write() ask for a 'drain'.
+        const duplex = createWebSocketStream(client.ws, { highWaterMark: 16 });
+        const store = () => storage.getStore() ?? "no store";
+        const drained = new Promise<string>(resolve => duplex.once("drain", () => resolve(`drain: ${store()}`)));
+        const written = new Promise<string>(resolve =>
+          duplex.write(Buffer.alloc(64), () => resolve(`write: ${store()}`)),
+        );
+        expect(await Promise.all([written, drained])).toEqual(["write: no store", "drain: no store"]);
+      },
+    );
 
     test("write() and end() while CONNECTING are deferred until 'open'", async () => {
       await using client = await connectClient(implementation, { perMessageDeflate: false });

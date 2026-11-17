@@ -1,5 +1,5 @@
 // `bun build --compile --compile-jit-policy <n>` / `compile: { jitPolicy: n }` bakes a JSC tier-up threshold scale into
-// the executable; `Bun.unsafe.setJITPolicy(scale)` changes it at run time (docs/bundler/executables.mdx "JIT policy").
+// the executable; `Bun.unsafe.setJITPolicy(scale)` changes it at run time (docs/compiler/executables.mdx "JIT policy").
 // Under BUN_JSC_verboseOSR=1 JSC logs "Startup JIT deferral scale set to <n>" when a scale > 1 takes effect and
 // "Ending startup JIT deferral window: embedder (scale was <n>)" when it returns to 1.
 import { describe, expect, test } from "bun:test";

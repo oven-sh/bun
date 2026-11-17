@@ -17,8 +17,6 @@
 
 #[path = "shell_body.rs"]
 pub(crate) mod shell_body;
-// Codegen (`generated_js2native.rs`) addresses this as `crate::shell::shell::*`.
-pub(crate) use shell_body as shell;
 
 // ─── submodules ──────────────────────────────────────────────────────────────
 #[path = "EnvMap.rs"]
@@ -77,6 +75,8 @@ pub(crate) mod states {
 pub(crate) mod builtins {
     #[path = "basename.rs"]
     pub(crate) mod basename;
+    #[path = "batch.rs"]
+    pub(crate) mod batch;
     #[path = "cat.rs"]
     pub(crate) mod cat;
     #[path = "cd.rs"]
@@ -91,8 +91,6 @@ pub(crate) mod builtins {
     pub(crate) mod exit;
     #[path = "export.rs"]
     pub(crate) mod export;
-    #[path = "false_.rs"]
-    pub(crate) mod false_;
     #[path = "ls.rs"]
     pub(crate) mod ls;
     #[path = "mkdir.rs"]
@@ -107,8 +105,6 @@ pub(crate) mod builtins {
     pub(crate) mod seq;
     #[path = "touch.rs"]
     pub(crate) mod touch;
-    #[path = "true_.rs"]
-    pub(crate) mod true_;
     #[path = "which.rs"]
     pub(crate) mod which;
     #[path = "yes.rs"]
@@ -124,9 +120,7 @@ pub(crate) use yield_::Yield;
 /// owning modules are still gated. See `dispatch_tasks.rs` header.
 pub(crate) mod dispatch_tasks;
 
-/// `bun.shell.subproc` — `ShellSubprocess` + its `StaticPipeWriter`. Exposed so
-/// `runtime::dispatch::run_file_poll` can name `StaticPipeWriter<ShellSubprocess>`
-/// for the `SHELL_STATIC_PIPE_WRITER` poll arm.
+/// `bun.shell.subproc`. Exposed so `runtime::dispatch::__bun_run_io` can name `ShellSubprocess`.
 #[path = "subproc.rs"]
 pub(crate) mod subproc;
 
@@ -144,10 +138,10 @@ pub(crate) use bun_shell_parser::{escape_8bit, needs_escape_utf8_ascii_latin1};
 // lifetime-widening slice cast (`Script<'a>` → `Script<'static>`, identical
 // layout) at the arena/state-machine boundary.
 pub(crate) mod ast {
-    pub(crate) use bun_shell_parser::parse::SmolList;
     use bun_shell_parser::parse::ast as p;
     pub(crate) use p::{BinaryOp, CondExprOp, IoKind, RedirectFlags};
 
+    pub(crate) type SmolList<T> = bun_shell_parser::parse::SmolList<'static, T>;
     pub(crate) type Script = p::Script<'static>;
     pub(crate) type Stmt = p::Stmt<'static>;
     pub(crate) type Expr = p::Expr<'static>;
@@ -171,13 +165,3 @@ pub(crate) use shell_body::ShellErr;
 pub(crate) type Result<T, E = ShellErr> = core::result::Result<T, E>;
 
 pub(crate) use parsed_shell_script::ParsedShellScript;
-
-/// Re-export of the JS-exposed `Bun.spawn` Subprocess class. The
-/// `generate-classes.ts` resolver walks `lib.rs` in declaration order and
-/// `mod shell` precedes `mod api`, so `generated_classes.rs` currently routes
-/// the `Subprocess` codegen thunks through `crate::shell::Subprocess`. Point
-/// it at the real implementation (lifetime erased to `'static` for the C-ABI
-/// `*mut Subprocess` thunk signatures — the JS wrapper outlives any borrow).
-/// Distinct from [`ShellSubprocess`](subproc::ShellSubprocess), the shell
-/// interpreter's internal process node.
-pub(crate) type Subprocess = crate::api::bun::subprocess::Subprocess<'static>;

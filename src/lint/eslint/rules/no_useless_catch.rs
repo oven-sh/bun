@@ -3,10 +3,10 @@ use bun_lint::prelude::*;
 /// Disallow unnecessary `catch` clauses.
 pub struct NoUselessCatch;
 
-const UNNECESSARY_CATCH_CLAUSE: Message =
-    Message::new("unnecessaryCatchClause", "Unnecessary catch clause.");
-const UNNECESSARY_CATCH: Message =
-    Message::new("unnecessaryCatch", "Unnecessary try/catch wrapper.");
+const UNNECESSARY_CATCH_CLAUSE: &Message =
+    &Message::new("unnecessaryCatchClause", "Unnecessary catch clause.");
+const UNNECESSARY_CATCH: &Message =
+    &Message::new("unnecessaryCatch", "Unnecessary try/catch wrapper.");
 
 impl Rule for NoUselessCatch {
     const META: Meta = Meta::eslint("no-useless-catch", Kind::Suggestion).recommended().hints();
@@ -50,11 +50,11 @@ impl Rule for NoUselessCatch {
         match stmt.catch_clause_span() {
             Some(clause) if finalizer.is_some() => {
                 cx.report(clause, UNNECESSARY_CATCH_CLAUSE)
-                    .hint("It only throws the error again. Without it, try and finally do the same.");
+                    .hint("It only rethrows. Remove the catch.");
             }
             _ => {
                 cx.report(stmt, UNNECESSARY_CATCH)
-                    .hint("It only throws the error again. Without try and catch, the code does the same.");
+                    .hint("It only rethrows. Remove the try and catch.");
             }
         }
     }

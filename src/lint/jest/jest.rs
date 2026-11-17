@@ -32,7 +32,7 @@ use std::cell::OnceCell;
 pub(crate) struct Ctx<'a, 'r> {
     pub(crate) file: &'a File<'a>,
     pub(crate) runner: Runner,
-    pub(crate) report: &'r dyn Fn(Span, Message) -> Report<'a>,
+    pub(crate) report: &'r dyn Fn(Span, &'static Message) -> Report<'a>,
 }
 
 /// Call this before reporting from a rule that oxlint runs on Jest calls. See [`File::jest_calls_in_oxlint_order`].
@@ -44,13 +44,19 @@ pub(crate) fn note_turns<'a>(file: &'a File<'a>, runner: Runner) {
 }
 
 impl<'a> Ctx<'a, '_> {
-    pub(crate) fn report(&self, at: impl Spanned, message: Message) -> Report<'a> {
+    pub(crate) fn report(&self, at: impl Spanned, message: &'static Message) -> Report<'a> {
         note_turns(self.file, self.runner);
         (self.report)(at.span(), message)
     }
 
     /// Adds the fix of a rule with [`meta_with_risky_fix`]. `message` is the suggestion's message.
-    pub(crate) fn risky_fix(&self, report: Report<'a>, message: Message, at: Span, text: String) {
+    pub(crate) fn risky_fix(
+        &self,
+        report: Report<'a>,
+        message: &'static Message,
+        at: Span,
+        text: String,
+    ) {
         match self.runner {
             Runner::Jest | Runner::Vitest => report.fix(|fixer| fixer.replace(at, text)),
             Runner::Bun => {
@@ -66,7 +72,7 @@ impl<'a> Ctx<'a, '_> {
     pub(crate) fn risky_fix_with(
         &self,
         report: Report<'a>,
-        message: Message,
+        message: &'static Message,
         fix: impl FnOnce(Fixer<'a>) -> Fix,
     ) {
         match self.runner {

@@ -136,7 +136,7 @@ describe("S3 header injection prevention", () => {
     // Valid content-disposition values should not throw synchronously.
     // The write may eventually fail because the mock server doesn't speak S3 protocol,
     // but the option parsing should succeed and a request should be initiated.
-    expect(() =>
+    await expect(() =>
       client.write("test-file.txt", "Hello", {
         contentDisposition: 'attachment; filename="report.pdf"',
       }),

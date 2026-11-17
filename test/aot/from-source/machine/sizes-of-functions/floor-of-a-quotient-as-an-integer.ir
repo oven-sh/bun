@@ -1,0 +1,12 @@
+# f1 = cell
+# -- source: floor-of-a-quotient-as-an-integer.ts
+# function cell(position: number, width: number): number { return Math.floor(position / width) | 0; }
+# declare const input: any;
+# (globalThis as any).answer = cell(+input, +input);
+# -- end of source
+# The compiler before this one: 4 instructions, 1 of them patches.
+# When the bound was taken: steps: operations 9, patches 1, moves 0, unlikely or rare 3.
+# RUN(X64): steps most:9 f1 mechanisms=all-Inlining
+# REQUIRES(X64): x86_64 not-windows unsanitized-code faulting-loop-polls as-written
+# X64-LABEL: unit f1:Body
+# X64-NEXT: steps: at most 9

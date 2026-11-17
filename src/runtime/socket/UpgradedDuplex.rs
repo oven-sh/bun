@@ -15,20 +15,22 @@
 use core::cell::Cell;
 use core::ffi::{CStr, c_uint, c_void};
 
+use bun_jsc::bindgen::{JsLocal, JsScope};
 use bun_jsc::virtual_machine::VirtualMachine;
-use bun_jsc::{CallFrame, GlobalRef, JSGlobalObject, JSValue, JsCell, JsResult, host_fn};
+use bun_jsc::{GlobalRef, JSGlobalObject, JSValue, JsCell, JsResult, host_fn};
 use bun_uws::{us_bun_verify_error_t, uws_callback};
 
 use super::DuplexUpgradeContext;
-use super::ssl_wrapper::SSLWrapper;
-use crate::generated_classes::js_TLSSocket;
-use crate::timer::{ElTimespec, EventLoopTimer, EventLoopTimerState, EventLoopTimerTag};
+use super::ssl_wrapper::{self, SSLWrapper};
+use crate::generated_bindgen::socket_body::js_TLSSocket;
+use crate::generated_bindgen::upgraded_duplex::{self as listeners, DuplexChunk};
+use crate::timer::{EventLoopTimer, EventLoopTimerState, EventLoopTimerTag};
 
 bun_output::declare_scope!(UpgradedDuplex, visible);
 
 pub(crate) struct UpgradedDuplex {
-    pub wrapper: JsCell<Option<WrapperType>>,
-    /// The owning `JSTLSSocket` wrapper. Its `values:` slots root `origin` and
+    pub wrapper: JsCell<Option<SSLWrapper>>,
+    /// The owning `JSTLSSocket` wrapper. Its `internalFields` root `origin` and
     /// the four listener thunks; the `JSValue` fields below are read-side
     /// shadows of those slots.
     pub js_wrapper: JSValue,
@@ -45,11 +47,11 @@ pub(crate) struct UpgradedDuplex {
     pub on_end_callback: Cell<JSValue>,
     pub on_writable_callback: Cell<JSValue>,
     pub on_close_callback: Cell<JSValue>,
-    pub event_loop_timer: JsCell<EventLoopTimer>,
+    pub event_loop_timer: EventLoopTimer,
     pub current_timeout: Cell<u32>,
     /// Transport bytes that arrived before the TLS engine existed.
     ///
-    /// `js_upgrade_duplex_to_tls` defers `start_tls` to an event-loop task (so
+    /// `upgrade_duplex_to_tls` defers `start_tls` to an event-loop task (so
     /// `on_open` cannot re-enter JS before the caller holds the handle), but the
     /// JS caller attaches its `data` listener as soon as that function returns.
     /// When both ends of a `duplexPair()` are wrapped in-process, the peer's
@@ -78,10 +80,8 @@ pub(crate) struct CertError {
 }
 // `Box<CStr>` drops automatically — no explicit Drop needed.
 
-type WrapperType = SSLWrapper<*mut UpgradedDuplex>;
-
 /// Server-side peer-certificate policy for a duplex TLS upgrade, resolved in
-/// `js_upgrade_duplex_to_tls` and applied via `SSLWrapper::set_server_verify`.
+/// `upgrade_duplex_to_tls` and applied via `SSLWrapper::set_server_verify`.
 /// Ignored for client upgrades.
 #[derive(Clone, Copy)]
 pub(crate) struct ServerVerify {
@@ -111,10 +111,10 @@ pub(crate) struct Handlers {
         fn(*mut (), &mut bun_boringssl_sys::SSL) -> bun_boringssl::ServerIdentity,
 }
 
-use crate::jsc_hooks::timer_all_mut as timer_all;
+use crate::jsc_hooks::timer_all;
 
 /// Lazily create-and-cache a JS host-function callback in `shadow`, mirrored
-/// into the owning `JSTLSSocket` wrapper's visited `values:` slot (the GC
+/// into the owning `JSTLSSocket` wrapper's internal field (the GC
 /// root). All four `get_js_handlers` slots follow the identical
 /// `NewFunctionWithData(global, null, 0, fn, self)` → `ensureStillAlive` →
 /// `setFunctionData(self)` → store pattern.
@@ -124,7 +124,7 @@ fn lazy_js_handler(
     js_wrapper: JSValue,
     set_slot: fn(JSValue, &JSGlobalObject, JSValue),
     global: &JSGlobalObject,
-    func: host_fn::JsHostFn,
+    func: host_fn::JSHostFn,
     this_ptr: *mut c_void,
 ) -> JSValue {
     if !shadow.get().is_empty() {
@@ -139,11 +139,8 @@ fn lazy_js_handler(
 }
 
 impl UpgradedDuplex {
-    // SAFETY (all handlers): the SSLWrapper handlers ctx is `self as *mut
-    // Self`, live for the wrapper's lifetime.
-
     #[inline]
-    fn wrapper_ref(&self) -> Option<&WrapperType> {
+    fn wrapper_ref(&self) -> Option<&SSLWrapper> {
         self.wrapper.get().as_ref()
     }
 
@@ -169,49 +166,39 @@ impl UpgradedDuplex {
         // SAFETY: as in `keep_alive`.
         unsafe { &*self.handlers.ctx.cast::<DuplexUpgradeContext>() }.debug_assert_kept_alive();
     }
+}
 
-    fn on_open(this: *mut Self) {
+impl ssl_wrapper::Handler for &UpgradedDuplex {
+    fn on_open(&mut self) {
         bun_output::scoped_log!(UpgradedDuplex, "onOpen");
-        // SAFETY: see handler note above.
-        let this = unsafe { &*this };
-        (this.handlers.on_open)(this.handlers.ctx);
+        (self.handlers.on_open)(self.handlers.ctx);
     }
 
-    fn on_data(this: *mut Self, decoded_data: &[u8]) {
+    fn on_data(&mut self, decoded_data: &[u8]) {
         bun_output::scoped_log!(UpgradedDuplex, "onData ({})", decoded_data.len());
-        // SAFETY: see handler note above.
-        let this = unsafe { &*this };
-        (this.handlers.on_data)(this.handlers.ctx, decoded_data);
+        (self.handlers.on_data)(self.handlers.ctx, decoded_data);
     }
 
-    fn on_session(this: *mut Self, session: &[u8]) {
+    fn on_session(&mut self, session: &[u8]) {
         bun_output::scoped_log!(UpgradedDuplex, "onSession ({})", session.len());
-        // SAFETY: see handler note above.
-        let this = unsafe { &*this };
-        (this.handlers.on_session)(this.handlers.ctx, session);
+        (self.handlers.on_session)(self.handlers.ctx, session);
     }
 
-    fn on_keylog(this: *mut Self, line: &[u8]) {
+    fn on_keylog(&mut self, line: &[u8]) {
         bun_output::scoped_log!(UpgradedDuplex, "onKeylog ({})", line.len());
-        // SAFETY: see handler note above.
-        let this = unsafe { &*this };
-        (this.handlers.on_keylog)(this.handlers.ctx, line);
+        (self.handlers.on_keylog)(self.handlers.ctx, line);
     }
 
     fn server_identity(
-        this: *mut Self,
+        &mut self,
         ssl: &mut bun_boringssl_sys::SSL,
     ) -> bun_boringssl::ServerIdentity {
-        // SAFETY: see handler note above.
-        let this = unsafe { &*this };
-        (this.handlers.server_identity)(this.handlers.ctx, ssl)
+        (self.handlers.server_identity)(self.handlers.ctx, ssl)
     }
 
-    fn on_handshake(this: *mut Self, handshake_success: bool, ssl_error: us_bun_verify_error_t) {
+    fn on_handshake(&mut self, handshake_success: bool, ssl_error: us_bun_verify_error_t) {
         bun_output::scoped_log!(UpgradedDuplex, "onHandshake");
-        // SAFETY: see handler note above.
-        let this = unsafe { &*this };
-        this.ssl_error.set(CertError {
+        self.ssl_error.set(CertError {
             error_no: ssl_error.error_no,
             code: ssl_error
                 .code()
@@ -222,19 +209,24 @@ impl UpgradedDuplex {
                 .filter(|_| ssl_error.error_no != 0)
                 .map(Into::into),
         });
-        (this.handlers.on_handshake)(this.handlers.ctx, handshake_success, ssl_error);
-        // Retry writes parked during the handshake, like openssl.c's `ssl_write_wants_read`.
-        if handshake_success && !this.is_shutdown() {
-            (this.handlers.on_writable)(this.handlers.ctx);
+        (self.handlers.on_handshake)(self.handlers.ctx, handshake_success, ssl_error);
+        // Retry writes parked during the handshake, like openssl.cpp's `ssl_write_wants_read`.
+        if handshake_success && !self.is_shutdown() {
+            (self.handlers.on_writable)(self.handlers.ctx);
         }
     }
 
-    fn on_close(this: *mut Self) {
+    fn on_close(&mut self) {
         bun_output::scoped_log!(UpgradedDuplex, "onClose");
-        // SAFETY: see handler note above.
-        unsafe { &*this }.finish_close();
+        self.finish_close();
     }
 
+    fn write(&mut self, encoded_data: &[u8]) {
+        self.write_encrypted(encoded_data);
+    }
+}
+
+impl UpgradedDuplex {
     pub(super) fn finish_close(&self) {
         let _keep_alive = self.keep_alive();
         // Keep the wrapper (and so its visited `duplex*` slots) reachable
@@ -380,11 +372,6 @@ impl UpgradedDuplex {
         Ok(ended.is_some_and(|ended| ended.to_boolean()))
     }
 
-    fn internal_write(this: *mut Self, encoded_data: &[u8]) {
-        // SAFETY: see handler note above.
-        unsafe { &*this }.write_encrypted(encoded_data);
-    }
-
     fn write_encrypted(&self, encoded_data: &[u8]) {
         self.reset_timeout();
 
@@ -400,14 +387,14 @@ impl UpgradedDuplex {
     pub(crate) fn flush(&self) {
         let _keep_alive = self.keep_alive();
         if let Some(w) = self.wrapper_ref() {
-            let _ = w.flush();
+            w.flush(&mut &*self);
         }
     }
 
     fn on_internal_receive_data(&self, data: &[u8]) {
         if let Some(w) = self.wrapper_ref() {
             self.reset_timeout();
-            w.receive_data(data);
+            w.receive_data(&mut &*self, data);
             return;
         }
         // Engine not up yet - `start_tls` is still queued. Stage the bytes;
@@ -435,7 +422,7 @@ impl UpgradedDuplex {
         let staged = self.pending_data.replace(Vec::new());
         self.reset_timeout();
         if let Some(w) = self.wrapper_ref() {
-            w.receive_data(&staged);
+            w.receive_data(&mut &*self, &staged);
         }
         self.drain_pending_shutdown();
     }
@@ -450,15 +437,12 @@ impl UpgradedDuplex {
     pub(crate) fn on_timeout(&self) {
         bun_output::scoped_log!(UpgradedDuplex, "onTimeout");
 
-        let has_been_cleared = self.event_loop_timer.get().state == EventLoopTimerState::CANCELLED
+        let has_been_cleared = self.event_loop_timer.state.get() == EventLoopTimerState::CANCELLED
             || self.vm.is_none_or(|vm| {
                 vm.script_execution_status() != bun_jsc::ScriptExecutionStatus::Running
             });
 
-        self.event_loop_timer.with_mut(|t| {
-            t.state = EventLoopTimerState::FIRED;
-            t.heap = Default::default();
-        });
+        self.event_loop_timer.state.set(EventLoopTimerState::FIRED);
 
         if has_been_cleared {
             return;
@@ -487,9 +471,7 @@ impl UpgradedDuplex {
             on_end_callback: Cell::new(JSValue::ZERO),
             on_writable_callback: Cell::new(JSValue::ZERO),
             on_close_callback: Cell::new(JSValue::ZERO),
-            event_loop_timer: JsCell::new(EventLoopTimer::init_paused(
-                EventLoopTimerTag::UpgradedDuplex,
-            )),
+            event_loop_timer: EventLoopTimer::init_paused(EventLoopTimerTag::UpgradedDuplex),
             current_timeout: Cell::new(0),
             pending_data: JsCell::new(Vec::new()),
             pending_close: Cell::new(false),
@@ -512,7 +494,7 @@ impl UpgradedDuplex {
                 js_wrapper,
                 js_TLSSocket::duplex_on_data_set_cached,
                 global,
-                __jsc_host_on_received_data,
+                listeners::Bun__UpgradedDuplex__onReceivedData,
                 this_ptr,
             ),
         )?;
@@ -524,7 +506,7 @@ impl UpgradedDuplex {
                 js_wrapper,
                 js_TLSSocket::duplex_on_end_set_cached,
                 global,
-                __jsc_host_on_end,
+                listeners::Bun__UpgradedDuplex__onEnd,
                 this_ptr,
             ),
         )?;
@@ -536,7 +518,7 @@ impl UpgradedDuplex {
                 js_wrapper,
                 js_TLSSocket::duplex_on_writable_set_cached,
                 global,
-                __jsc_host_on_writable,
+                listeners::Bun__UpgradedDuplex__onWritable,
                 this_ptr,
             ),
         )?;
@@ -548,7 +530,7 @@ impl UpgradedDuplex {
                 js_wrapper,
                 js_TLSSocket::duplex_on_close_set_cached,
                 global,
-                __jsc_host_on_close_js,
+                listeners::Bun__UpgradedDuplex__onCloseJS,
                 this_ptr,
             ),
         )?;
@@ -556,25 +538,12 @@ impl UpgradedDuplex {
         Ok(array)
     }
 
-    fn wrapper_handlers(&self) -> super::ssl_wrapper::Handlers<*mut UpgradedDuplex> {
-        super::ssl_wrapper::Handlers {
-            ctx: std::ptr::from_ref(self).cast_mut(),
-            on_open: Self::on_open,
-            on_handshake: Self::on_handshake,
-            on_data: Self::on_data,
-            on_close: Self::on_close,
-            write: Self::internal_write,
-            on_session: Some(Self::on_session),
-            on_keylog: Some(Self::on_keylog),
-            server_identity: Some(Self::server_identity),
-        }
-    }
-
-    fn install_and_start(&self, wrapper: WrapperType, verify: ServerVerify) {
+    fn install_and_start(&self, wrapper: SSLWrapper, verify: ServerVerify) {
         self.wrapper.set(Some(wrapper));
         let w = self.wrapper_ref().unwrap();
         w.set_server_verify(verify.request_cert, verify.reject_unauthorized);
-        w.start();
+        w.enable_session_and_keylog();
+        w.start(&mut &*self);
     }
 
     pub(crate) fn start_tls(
@@ -583,7 +552,7 @@ impl UpgradedDuplex {
         is_client: bool,
         verify: ServerVerify,
     ) -> Result<(), crate::Error> {
-        let wrapper = super::ssl_wrapper::init(ssl_options, is_client, self.wrapper_handlers())?;
+        let wrapper = ssl_wrapper::init(ssl_options, is_client)?;
         self.install_and_start(wrapper, verify);
         Ok(())
     }
@@ -597,7 +566,7 @@ impl UpgradedDuplex {
         is_client: bool,
         verify: ServerVerify,
     ) -> Result<(), crate::Error> {
-        let wrapper = WrapperType::init_with_ctx(ctx, is_client, self.wrapper_handlers())?;
+        let wrapper = SSLWrapper::init_with_ctx(ctx, is_client)?;
         self.install_and_start(wrapper, verify);
         Ok(())
     }
@@ -607,7 +576,7 @@ impl UpgradedDuplex {
         bun_output::scoped_log!(UpgradedDuplex, "encodeAndWrite (len: {})", data.len());
         let _keep_alive = self.keep_alive();
         if let Some(w) = self.wrapper_ref() {
-            let written = w.write_data(data).unwrap_or(0);
+            let written = w.write_data(&mut &*self, data).unwrap_or(0);
             return i32::try_from(written).expect("int cast");
         }
         0
@@ -637,7 +606,7 @@ impl UpgradedDuplex {
             self.pending_close.set(true);
             return;
         };
-        let _ = w.shutdown(true);
+        let _ = w.shutdown(&mut &*self, true);
     }
 
     /// Half-close like `us_internal_ssl_shutdown`: close_notify (none mid-handshake), then end().
@@ -648,7 +617,7 @@ impl UpgradedDuplex {
             self.pending_shutdown.set(true);
             return;
         };
-        let _ = w.shutdown(false);
+        let _ = w.shutdown(&mut &*self, false);
         self.call_write_or_end(None, false);
     }
 
@@ -699,9 +668,7 @@ impl UpgradedDuplex {
     }
 
     fn set_timeout_in_milliseconds(&self, ms: c_uint) {
-        if self.event_loop_timer.get().state == EventLoopTimerState::ACTIVE {
-            timer_all().remove(self.event_loop_timer.as_ptr());
-        }
+        self.event_loop_timer.disarm();
         self.current_timeout.set(ms);
 
         // if the interval is 0 means that we stop the timer
@@ -710,21 +677,10 @@ impl UpgradedDuplex {
         }
 
         // reschedule the timer
-        // Note: `EventLoopTimer.next` is the lower-tier `ElTimespec` stub;
-        // bridge from `bun_core::Timespec` until the lower tier switches.
         let next =
             bun_core::Timespec::ms_from_now(bun_core::TimespecMockMode::ForceRealTime, ms as i64);
-        self.event_loop_timer.with_mut(|t| {
-            t.next = ElTimespec {
-                sec: next.sec,
-                nsec: next.nsec,
-            };
-        });
-        timer_all().insert(
-            core::ptr::addr_of!(self.event_loop_timer)
-                .cast::<bun_event_loop::EventLoopTimer::EventLoopTimer>()
-                .cast_mut(),
-        );
+        self.event_loop_timer.next.set(next);
+        timer_all().insert(&raw const self.event_loop_timer);
     }
 
     #[uws_callback(export = "UpgradedDuplex__set_timeout")]
@@ -787,33 +743,32 @@ impl Drop for UpgradedDuplex {
     }
 }
 
-// SAFETY (all four host fns): the function data is the `*mut UpgradedDuplex`
+// SAFETY (all four listeners): the function data is the `*mut UpgradedDuplex`
 // installed by `get_js_handlers`; `teardown` clears it before the storage is
 // freed, so a non-null data pointer is live for the call.
 
-#[bun_jsc::host_fn]
-fn on_received_data(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+pub(crate) fn on_received_data<'a>(
+    cx: &mut JsScope<'a>,
+    callee: JsLocal<'a>,
+    data: DuplexChunk<'a>,
+) {
     bun_output::scoped_log!(UpgradedDuplex, "onReceivedData");
 
-    let function = frame.callee();
-    let [data_arg] = frame.arguments_as_array::<1>();
-
-    if let Some(self_ptr) = host_fn::get_function_data(function) {
-        // SAFETY: see host-fn note above.
+    if let Some(self_ptr) = host_fn::get_function_data(callee.to_js()) {
+        // SAFETY: see the note above.
         let this = unsafe { &*self_ptr.cast::<UpgradedDuplex>() };
         let _keep_alive = this.keep_alive();
-        if frame.arguments_count() >= 1 {
-            if !this.origin.get().is_empty() {
-                if data_arg.is_empty_or_undefined_or_null() {
-                    return Ok(JSValue::UNDEFINED);
-                }
-                if let Some(array_buffer) = data_arg.as_array_buffer(global) {
-                    // yay we can read the data
-                    let payload = array_buffer.slice();
+        if !this.origin.get().is_empty() {
+            match data {
+                DuplexChunk::None => {}
+                // The bytes are copied before a handler of the socket runs.
+                DuplexChunk::Bytes(buffer) => buffer.with_bytes(&cx.heap, |payload| {
                     this.on_internal_receive_data(payload);
-                } else {
+                }),
+                DuplexChunk::Other(_) => {
                     // node.js errors in this case with the same error, lets keep it consistent
-                    let error_value = global
+                    let error_value = cx
+                        .global()
                         .err(
                             bun_jsc::ErrorCode::STREAM_WRAP,
                             format_args!("Stream has StringDecoder set or is in objectMode"),
@@ -825,60 +780,46 @@ fn on_received_data(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSVa
             }
         }
     }
-    Ok(JSValue::UNDEFINED)
 }
 
-#[bun_jsc::host_fn]
-fn on_end(_global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+pub(crate) fn on_end(_: &mut JsScope<'_>, callee: JsLocal<'_>) {
     bun_output::scoped_log!(UpgradedDuplex, "onEnd");
-    let function = frame.callee();
 
-    if let Some(self_ptr) = host_fn::get_function_data(function) {
-        // SAFETY: see host-fn note above.
+    if let Some(self_ptr) = host_fn::get_function_data(callee.to_js()) {
+        // SAFETY: see the note above.
         let this = unsafe { &*self_ptr.cast::<UpgradedDuplex>() };
         let _keep_alive = this.keep_alive();
 
         // Like node's JSStreamSocket. Ahead of staged bytes too: no handshake can complete after it.
         (this.handlers.on_end)(this.handlers.ctx);
     }
-    Ok(JSValue::UNDEFINED)
 }
 
-#[bun_jsc::host_fn]
-fn on_writable(_global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+pub(crate) fn on_writable(_: &mut JsScope<'_>, callee: JsLocal<'_>) {
     bun_output::scoped_log!(UpgradedDuplex, "onWritable");
 
-    let function = frame.callee();
-
-    if let Some(self_ptr) = host_fn::get_function_data(function) {
-        // SAFETY: see host-fn note above.
+    if let Some(self_ptr) = host_fn::get_function_data(callee.to_js()) {
+        // SAFETY: see the note above.
         let this = unsafe { &*self_ptr.cast::<UpgradedDuplex>() };
         let _keep_alive = this.keep_alive();
         // flush pending data
         if let Some(w) = this.wrapper_ref() {
-            let _ = w.flush();
+            w.flush(&mut &*this);
         }
         // call onWritable (will flush on demand)
         (this.handlers.on_writable)(this.handlers.ctx);
     }
-
-    Ok(JSValue::UNDEFINED)
 }
 
-#[bun_jsc::host_fn]
-fn on_close_js(_global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+pub(crate) fn on_close_js(_: &mut JsScope<'_>, callee: JsLocal<'_>) {
     bun_output::scoped_log!(UpgradedDuplex, "onCloseJS");
 
-    let function = frame.callee();
-
-    if let Some(self_ptr) = host_fn::get_function_data(function) {
-        // SAFETY: see host-fn note above.
+    if let Some(self_ptr) = host_fn::get_function_data(callee.to_js()) {
+        // SAFETY: see the note above.
         let this = unsafe { &*self_ptr.cast::<UpgradedDuplex>() };
         // flush pending data
         this.close();
     }
-
-    Ok(JSValue::UNDEFINED)
 }
 
 // ──────────────────────────────────────────────────────────────────────────

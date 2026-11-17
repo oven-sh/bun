@@ -10,8 +10,8 @@ use bun_lint_oxlint::module_record::{
 /// Forbid a module from importing itself.
 pub struct NoSelfImport;
 
-const IMPORTS_ITSELF: Message = Message::new("", "Module imports itself.");
-const OXLINT: Message = Message::new("", "A module importing itself is not allowed");
+const IMPORTS_ITSELF: &Message = &Message::new("", "Module imports itself.");
+const OXLINT: &Message = &Message::new("", "A module importing itself is not allowed");
 
 /// oxlint doesn't check `require`.
 fn visitor(is_oxlint: bool) -> Visitor {

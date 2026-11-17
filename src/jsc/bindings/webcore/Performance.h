@@ -73,7 +73,7 @@ class Performance final : public RefCounted<Performance>, public ContextDestruct
     WTF_MAKE_TZONE_ALLOCATED(Performance);
 
 public:
-    static Ref<Performance> create(ScriptExecutionContext* context, MonotonicTime timeOrigin) { return adoptRef(*new Performance(context, timeOrigin)); }
+    static Ref<Performance> create(ScriptExecutionContext* context) { return adoptRef(*new Performance(context)); }
     ~Performance();
 
     DOMHighResTimeStamp now() const;
@@ -108,8 +108,6 @@ public:
 
     static Seconds reduceTimeResolution(Seconds);
 
-    MonotonicTime monotonicTimeFromRelativeTime(DOMHighResTimeStamp) const;
-
     ScriptExecutionContext* scriptExecutionContext() const final { return ContextDestructionObserver::scriptExecutionContext(); }
 
     // ContextDestructionObserver.
@@ -118,7 +116,7 @@ public:
     USING_CAN_MAKE_WEAKPTR(EventTarget);
 
 private:
-    Performance(ScriptExecutionContext*, MonotonicTime timeOrigin);
+    Performance(ScriptExecutionContext*);
 
     void contextDestroyed() override;
 
@@ -136,8 +134,6 @@ private:
     Vector<RefPtr<PerformanceEntry>> m_resourceTimingBuffer;
 
     bool m_hasScheduledTimingBufferDeliveryTask { false };
-
-    MonotonicTime m_timeOrigin;
 
     std::unique_ptr<PerformanceUserTiming> m_userTiming;
 

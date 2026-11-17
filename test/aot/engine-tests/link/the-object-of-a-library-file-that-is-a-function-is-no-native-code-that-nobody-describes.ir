@@ -1,0 +1,42 @@
+# import EventEmitter from "node:events";  class A extends EventEmitter {}
+# The object of node:events is a function of a file that the program holds compiled. The table has one row for it, and the row says nothing.
+# The facts skip such a row for the exports of a compiled file: the code behind them is compiled code, which Link sees. They took it for the file's own object:
+# "native code that nobody describes may run", so OBJECTS OF ANY CLASS MAY EXIST, and every class of the host and all that hangs on it came into reach.
+# LIBRARY: own
+# OPTIONS: exclude=CodeOutsideImage
+# RUN: features mechanisms=all
+# CHECK-NOT: unnamed
+# CHECK: by NodeEvents named at f0 v0
+# CHECK-NOT: unnamed
+
+layout L0 kind=Instance name="EventEmitter" module=m1 constructor=f2 flags=[IsConstructorFunction]
+layout L1 kind=Instance name="A" module=m0 base=L0 constructor=f3 supertypes=[L0] flags=[HasHeritage]
+module m0 path="main.js" displayPath="main.js" body=f0 requests=[{target=m1 completes=true}]
+module m1 path="node:events" displayPath="node:events" kind=RuntimeSource exportRule=RuntimeModule requireResult=DefaultExport runtimeModule=NodeEvents body=f1
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=NodeEvents
+    v1 = ResolveHeritage v0
+    v2 = NewClosure function=f3
+    v3 = NewClass v2, v0, v1 layout=L1
+    v4 = FinishClass v3 layout=L1
+    v5 = Undefined
+    Return v5
+}
+function f1 module=m1 kind=Module role=Library thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f2
+    Return v0
+}
+function f2 name="EventEmitter" module=m1 role=Library flags=[HasThis, HasExplicitName] thisType={type=L0 flags=[IsExpected]} results=[{type=anything}] constructedClass=L0 {
+  b0(v0: L0):
+    v1 = Undefined
+    Return v1
+}
+function f3 name="A" module=m0 kind=DerivedConstructor flags=[HasRestParameter, HasNewTarget, TakesCallee, HasExplicitName] thisType={type=anything} parameters=[{type=Array}] results=[{type=object flags=[IsFromCompiler]}] constructedClass=L1 {
+  b0(v0: function, v1: anything, v2: Array):
+    v3 = GetSuperBase v0
+    v4 = SuperConstructList v3, v1, v2 layout=L1
+    Return v4
+}

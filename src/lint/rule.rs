@@ -4,7 +4,7 @@
 //! /// Disallow the use of `debugger`.
 //! pub struct NoDebugger;
 //!
-//! const UNEXPECTED: Message = Message::new("unexpected", "Unexpected 'debugger' statement.");
+//! const UNEXPECTED: &Message = &Message::new("unexpected", "Unexpected 'debugger' statement.");
 //!
 //! impl Rule for NoDebugger {
 //!     const META: Meta = Meta::eslint("no-debugger", Kind::Problem).recommended();

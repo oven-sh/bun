@@ -6,7 +6,7 @@ use bun_lint::rule::Plugin;
 /// Prevent usage of styled-jsx in `pages/_document.js`.
 pub struct NoStyledJsxInDocument;
 
-const NO_STYLED_JSX_IN_DOCUMENT: Message = Message::new("", "`styled-jsx` should not be used in `pages/_document.js`");
+const NO_STYLED_JSX_IN_DOCUMENT: &Message = &Message::new("", "`styled-jsx` should not be used in `pages/_document.js`");
 
 impl Rule for NoStyledJsxInDocument {
     const META: Meta = Meta::oxlint(Plugin::Nextjs, "no-styled-jsx-in-document", Kind::Problem);

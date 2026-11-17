@@ -1,0 +1,82 @@
+# f3 = pick
+# -- source: the-front-of-a-guess-at-a-parameter-asks-the-parameters-written-as-numbers-too.ts
+# // `position` is written as a number and arrives as anything: the function is handed out. `position < count` may then run other code, and behind it nothing that was found of `shelf` in front holds any more.
+# declare function print(...values: unknown[]): void;
+# const unseen = (x: any): any => (globalThis as any).nothingOfThisName ?? x;
+# class Shelf {
+#   items: string[];
+#   flags: number;
+#   constructor(items: string[], flags: number) { this.items = items; this.flags = flags; }
+# }
+# class Loose {
+#   items: string[];
+#   flags: number;
+#   constructor(items: string[], flags: number) { this.items = items; this.flags = flags; }
+# }
+# function keepsOneBack(shelf: Shelf): boolean { return !!(shelf.flags & 1); }
+# function label(text: string | undefined): string { return "<" + text + ">"; }
+# function pick(shelf: Shelf, position: number): string | undefined {
+#   const count = shelf.items.length - (keepsOneBack(shelf) ? 1 : 0);
+#   if (position < count) return label(shelf.items[position]);
+#   if (keepsOneBack(shelf)) return label(shelf.items[count]) + " spare " + (position - count);
+#   return undefined;
+# }
+# const handedOut: (shelf: unknown, position: unknown) => unknown = unseen(pick);
+# const said: string[] = [];
+# function attempt(name: string, run: () => unknown): void {
+#   let answer: string;
+#   try { answer = String(run()); } catch (error) { answer = (error as Error).constructor.name; }
+#   said.push(name + " " + answer);
+# }
+# for (let round = 0; round < 3; round++) {
+#   const plain = new Shelf(["a", "b", "c", "d"], 0);
+#   const spare = new Shelf(["a", "b", "c", "d"], 1);
+#   for (const position of [0, 3, 4, -1, 1.5, NaN, -0, 4294967296, Infinity]) {
+#     attempt("plain " + position, () => handedOut(plain, position));
+#     attempt("spare " + position, () => handedOut(spare, position));
+#   }
+#   for (const position of ["1", "", "x", true, null, undefined, 2n, [2], {}]) {
+#     attempt("plain " + typeof position + " " + String(position), () => handedOut(plain, position));
+#     attempt("spare " + typeof position + " " + String(position), () => handedOut(spare, position));
+#   }
+#   attempt("another list behind the relation", () => {
+#     const shelf = new Shelf(["a", "b", "c"], 0);
+#     return handedOut(shelf, { valueOf() { shelf.items = ["other", "list"]; return 1; }, toString() { return "0"; } });
+#   });
+#   attempt("no list behind the relation", () => {
+#     const shelf = new Loose(["a", "b", "c"], 0);
+#     return handedOut(shelf, { valueOf() { delete (shelf as any).items; return 1; }, toString() { return "0"; } });
+#   });
+#   attempt("an accessor behind the relation", () => {
+#     const shelf = new Loose(["a", "b", "c"], 1);
+#     return handedOut(shelf, { valueOf() { Object.defineProperty(shelf, "items", { get() { return ["from", "a", "getter"]; } }); return 0; }, toString() { return "2"; } });
+#   });
+#   attempt("a shorter list behind the relation", () => {
+#     const shelf = new Shelf(["a", "b", "c"], 0);
+#     return handedOut(shelf, { valueOf() { shelf.items.length = 1; return 2; }, toString() { return "2"; } });
+#   });
+#   attempt("a symbol", () => handedOut(plain, Symbol.iterator));
+#   attempt("no shelf", () => handedOut(null, 0));
+#   attempt("no shelf and no number", () => handedOut(undefined, "0"));
+#   attempt("a record", () => handedOut(JSON.parse('{"items":["r","s"],"flags":0}'), 1));
+#   attempt("a record and a text", () => handedOut(JSON.parse('{"items":["r","s"],"flags":1}'), "0"));
+#   attempt("a text for the list", () => handedOut(JSON.parse('{"items":"text","flags":0}'), 2));
+# }
+# function digest(text: string): number { let hash = 2166136261; for (let at = 0; at < text.length; at++) { hash ^= text.charCodeAt(at); hash = Math.imul(hash, 16777619); } return hash >>> 0; }
+# const say: (...values: unknown[]) => void = (globalThis as any).print ?? console.log;
+# say(said.length + " lines " + digest(said.join("\n")));
+# -- end of source
+# The guess at `shelf` is open and its arms go apart past the branch. `position` is written as a number and arrives as anything, so `position < count` was built in the form that calls where the value is no number: it may run other code,
+# and behind it the shape of `shelf` and the list read in front were gone: `shelf.items` was read again by a read that tests for itself, and `[position]` asked a stub what it reads off, with a frame set up for that call alone.
+# The front of the guess asks `position` for a number too: what fails goes the closed way that stands there already.
+# RUN(FRONT): walk f3 mechanisms=all
+# FRONT: = ShapeTest v0
+# FRONT: = TypeTest v1 testedType=number
+# FRONT: = Less {{*}} form=Numbers
+# One relation in the calling form, one read of the slot that tests for itself and one read off anything are left: those of the closed way.
+# RUN(CLOSED): walk f3 mechanisms=all
+# CLOSED-COUNT-1: = Less {{*}} form=NumberAndValue
+# CLOSED-NOT: = Less {{*}} form=NumberAndValue
+# Texts, nothing, a truth value, a big integer, a list and objects whose valueOf lays another list, shortens the list, deletes the field or makes it an accessor, in the place of the number; no shelf, records out of a parse.
+# RUN(ANSWERS): run-in-shell
+# ANSWERS: 138 lines 2511558704

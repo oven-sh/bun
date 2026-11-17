@@ -78,7 +78,12 @@ export function overridableRequire(this: JSCommonJSModule, originalId: string, o
   }
 
   if (id === "bun:test") {
-    return Bun.jest(parentFilename);
+    const requireTestModule: (filename: string) => object = $newCppFunction(
+      "JSCommonJSModule.cpp",
+      "jsFunctionRequireTestModule",
+      1,
+    );
+    return requireTestModule(parentFilename);
   }
 
   // To handle import/export cycles, we need to create a module object and put

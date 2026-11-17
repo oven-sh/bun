@@ -1,0 +1,26 @@
+# -- source: the-stub-of-a-closed-read-beside-three-classes-that-hold-its-name-as-an-object.ts
+# declare function print(...values: unknown[]): void;
+# function levelOf(x: any) { return x.level; }
+# (globalThis as any).levelOf = levelOf;
+# print(levelOf(JSON.parse("{\"level\": 3}")));
+# class Mark { at: number; constructor(at: number) { this.at = at; } }
+# let sum = 0;
+# class Held1 { level: Mark; mark1: number; constructor(level: Mark) { this.level = level; this.mark1 = 1; } }
+# const held1 = new Held1(new Mark(1)); sum += held1.level.at + held1.mark1;
+# class Held2 { level: Mark; mark2: number; constructor(level: Mark) { this.level = level; this.mark2 = 2; } }
+# const held2 = new Held2(new Mark(2)); sum += held2.level.at + held2.mark2;
+# class Held3 { level: Mark; mark3: number; constructor(level: Mark) { this.level = level; this.mark3 = 3; } }
+# const held3 = new Held3(new Mark(3)); sum += held3.level.at + held3.mark3;
+# class Count1 { level: number; sign1: number; constructor(level: number) { this.level = level | 0; this.sign1 = 1; } }
+# const count1 = new Count1(1); sum += count1.level + count1.sign1;
+# print(sum);
+# -- end of source
+# f1 = levelOf
+# One of two twins (the other: ..as-an-integer.ir): `levelOf` is the same text in both and is handed to unseen code, so it reads by name, at a place. Beside it stand four classes that hold a field `level`, and their objects stay in sight, so the slots are narrow:
+# three hold an object and one an integer, or one and three. The read calls the same stub in both. It went by the form that MOST layouts of the program hold the name in: two classes in another file changed which stub a function ran
+# (that makes testing impossible: the behavior of an application would change with the size of its code).
+# RUN(CODE): bytes f1:Body mechanisms=all
+# CODE: Call Stub ReadAtSite.OfAnyValue
+# RUN: run-in-shell
+# CHECK: 3
+# CHECK-NEXT: 14

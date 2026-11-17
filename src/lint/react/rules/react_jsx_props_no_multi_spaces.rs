@@ -7,9 +7,9 @@ use std::borrow::Cow;
 /// Disallow multiple spaces between inline JSX props
 pub struct JsxPropsNoMultiSpaces;
 
-const NO_LINE_GAP: Message = Message::new("noLineGap", "Expected no line gap between “{{prop1}}” and “{{prop2}}”");
-const ONLY_ONE_SPACE: Message =
-    Message::new("onlyOneSpace", "Expected only one space between “{{prop1}}” and “{{prop2}}”");
+const NO_LINE_GAP: &Message = &Message::new("noLineGap", "Expected no line gap between “{{prop1}}” and “{{prop2}}”");
+const ONLY_ONE_SPACE: &Message =
+    &Message::new("onlyOneSpace", "Expected only one space between “{{prop1}}” and “{{prop2}}”");
 
 impl Rule for JsxPropsNoMultiSpaces {
     const META: Meta = Meta::plugin(Plugin::React, "jsx-props-no-multi-spaces", Kind::None).fixable(Fixable::Code);

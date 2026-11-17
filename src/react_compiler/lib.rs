@@ -5,8 +5,6 @@
 //! `react_compiler::entrypoint`) to read and write `bun_ast` directly, and
 //! depends on the vendored HIR-level crates unmodified.
 
-#![feature(allocator_api)]
-
 pub mod collections;
 pub mod diagnostics;
 pub mod hir;
@@ -24,6 +22,7 @@ pub use hir::environment_config::EnvironmentConfig;
 mod compile_result;
 mod imports;
 mod lint;
+mod observer;
 mod options;
 
 pub mod codegen;
@@ -33,6 +32,9 @@ pub mod program;
 
 pub use compile_result::{CompileDiagnostic, CompileOutput};
 pub use lint::{Categories, Linted, lint_function};
+pub use observer::{
+    AddedImport, CompiledFunction, ObservedSymbol, Observer, SymbolOrigin, observe,
+};
 pub use options::ReactCompilerOptions;
 pub use program::{
     CompileResult, Host, JsxImportKind, PendingCompile, ReactCompilerState,

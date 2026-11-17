@@ -8,8 +8,6 @@ import os from "node:os";
 import path from "node:path";
 
 const { EAGAIN, EINTR, EIO, ENOSPC, ENOTSUP } = os.constants.errno;
-// ENOTSUPP. The kernel has it, the table of errno names in bun does not.
-const ENOTSUPP = 524;
 
 const log = process.env.FS_FAULT_LOG!;
 const text = Buffer.alloc(10000, "0123456789").toString();
@@ -46,16 +44,6 @@ async function row(name: string, faults: Record<string, number>, fn: (dir: strin
     result = { code: e.code, errno: e.errno, syscall: e.syscall, path: inDir(e.path), dest: inDir(e.dest) };
   }
   out[name] = { result, shim: shimLog(path.basename(dir)) };
-}
-
-function sync(dir: string, method: "fsyncSync" | "fdatasyncSync") {
-  const fd = fs.openSync(fileIn(dir), "r+");
-  try {
-    fs[method](fd);
-  } finally {
-    fs.closeSync(fd);
-  }
-  return "synced";
 }
 
 /** Copies a file in `dir` with `copy`. True if the copy has the content. */
@@ -112,37 +100,6 @@ const uploadedSlice = (dir: string) => uploaded(Bun.file(fileIn(dir, large)).sli
 
 const modes = {
   async interrupted() {
-    await row("unlinkSync", { unlink: EINTR }, dir => {
-      fs.unlinkSync(fileIn(dir));
-      return fs.readdirSync(dir);
-    });
-    await row("unlink", { unlink: EINTR }, async dir => {
-      await fs.promises.unlink(fileIn(dir));
-      return fs.readdirSync(dir);
-    });
-    await row("rmdirSync", { rmdir: EINTR }, dir => {
-      fs.mkdirSync(path.join(dir, "sub"));
-      fs.rmdirSync(path.join(dir, "sub"));
-      return fs.readdirSync(dir);
-    });
-    await row("rmdir", { rmdir: EINTR }, async dir => {
-      fs.mkdirSync(path.join(dir, "sub"));
-      await fs.promises.rmdir(path.join(dir, "sub"));
-      return fs.readdirSync(dir);
-    });
-    await row("linkSync", { link: EINTR }, dir => {
-      const file = fileIn(dir);
-      fs.linkSync(file, path.join(dir, "link.txt"));
-      return fs.statSync(file).nlink;
-    });
-    await row("truncateSync", { truncate: EINTR }, dir => {
-      const file = fileIn(dir);
-      fs.truncateSync(file, 4);
-      return fs.readFileSync(file, "utf8");
-    });
-    await row("fsyncSync", { fsync: EINTR }, dir => sync(dir, "fsyncSync"));
-    await row("fdatasyncSync", { fdatasync: EINTR }, dir => sync(dir, "fdatasyncSync"));
-    await row("mkdtempSync", { mkdtemp: EINTR }, dir => path.basename(fs.mkdtempSync(path.join(dir, "tmp-"))).length);
     await row("existsSync", { access: EINTR }, dir => fs.existsSync(fileIn(dir)));
     await row("accessSync", { access: EINTR }, dir => fs.accessSync(fileIn(dir)) ?? "accessible");
     await row("which", { stat: EINTR }, dir => {
@@ -237,8 +194,6 @@ const modes = {
     await row("bunWrite", { copy_file_range: ENOSPC }, dir =>
       Bun.write(Bun.file(path.join(dir, "copy.txt")), Bun.file(fileIn(dir))),
     );
-    await row("unlinkSync", { unlink: ENOTSUPP }, dir => fs.unlinkSync(fileIn(dir)));
-    await row("accessSync", { access: ENOTSUPP }, dir => fs.accessSync(fileIn(dir)));
     await row("fetchFile", { sendfile: EIO }, dir => uploadedFile(dir).catch(error => error.code));
   },
 

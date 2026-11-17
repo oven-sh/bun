@@ -4,7 +4,6 @@ use core::cmp::Ordering;
 
 use bun_core::strings;
 use bun_jsc::bindgen::{self, JsHeap};
-use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
 use bun_semver::{SlicedString, Version, query};
 
 pub(crate) fn order<'a>(
@@ -56,16 +55,8 @@ pub(crate) fn satisfies<'a>(version: &'a [u8], range: &'a [u8]) -> bindgen::Resu
 }
 
 /// `bun:internal-for-testing`: `Group::intersects` on two range strings.
-#[bun_jsc::host_fn]
-pub fn intersects_for_testing(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-    let left = frame.argument(0).to_utf8(global)?;
-    let right = frame.argument(1).to_utf8(global)?;
-    let (Ok(left_group), Ok(right_group)) = (
-        query::parse(&left, SlicedString::init(&left, &left)),
-        query::parse(&right, SlicedString::init(&right, &right)),
-    ) else {
-        return Err(global.throw_out_of_memory());
-    };
-    let intersects = left_group.intersects(&left, &right_group, &right);
-    Ok(JSValue::js_boolean(intersects))
+pub(crate) fn intersects<'a>(left: &'a [u8], right: &'a [u8]) -> bindgen::Result<'a, bool> {
+    let left_group = query::parse(left, SlicedString::init(left, left))?;
+    let right_group = query::parse(right, SlicedString::init(right, right))?;
+    Ok(left_group.intersects(left, &right_group, right))
 }

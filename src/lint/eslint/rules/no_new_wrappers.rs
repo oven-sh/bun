@@ -4,10 +4,10 @@ use bun_lint_oxlint::ast_util::get_inner_expression;
 /// Disallow `new` operators with the `String`, `Number`, and `Boolean` objects.
 pub struct NoNewWrappers;
 
-const NO_CONSTRUCTOR: Message =
-    Message::new("noConstructor", "Do not use {{fn}} as a constructor.");
+const NO_CONSTRUCTOR: &Message =
+    &Message::new("noConstructor", "Do not use {{fn}} as a constructor.");
 /// oxlint's message for `new Symbol()`.
-const NOT_A_CONSTRUCTOR: Message = Message::new("notAConstructor", "`{{fn}}` is not a constructor");
+const NOT_A_CONSTRUCTOR: &Message = &Message::new("notAConstructor", "`{{fn}}` is not a constructor");
 
 impl Rule for NoNewWrappers {
     const META: Meta = Meta::eslint("no-new-wrappers", Kind::Suggestion);

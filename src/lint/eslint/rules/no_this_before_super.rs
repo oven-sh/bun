@@ -9,8 +9,8 @@ use smallvec::SmallVec;
 /// Disallow `this`/`super` before calling `super()` in constructors.
 pub struct NoThisBeforeSuper;
 
-const NO_BEFORE_SUPER: Message =
-    Message::new("noBeforeSuper", "'{{kind}}' is not allowed before 'super()'.");
+const NO_BEFORE_SUPER: &Message =
+    &Message::new("noBeforeSuper", "'{{kind}}' is not allowed before 'super()'.");
 
 #[derive(Default)]
 struct SegmentInfo<'a> {

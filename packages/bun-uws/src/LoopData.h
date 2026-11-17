@@ -22,6 +22,7 @@
 #include <ctime>
 #include <functional>
 #include <map>
+#include <memory>
 #include <mutex>
 #include <thread>
 #include <vector>
@@ -51,7 +52,7 @@ private:
      * the outer socket down the uncorked slow path. cork() grabs whichever
      * slot is free; uncork() releases the slot you're in. No ordering. */
     struct CorkSlot {
-        char *buffer = nullptr;
+        std::unique_ptr<char[]> buffer;
         void *socket = nullptr;
         unsigned int offset = 0;
         unsigned int ssl : 1 = 0;
@@ -68,20 +69,9 @@ public:
     static constexpr int INVALID_CORK_SLOT = -1;
 
     LoopData() {
-        corkSlots[0].buffer = new char[CORK_BUFFER_SIZE];
-        corkSlots[1].buffer = new char[CORK_BUFFER_SIZE];
+        corkSlots[0].buffer = std::make_unique_for_overwrite<char[]>(CORK_BUFFER_SIZE);
+        corkSlots[1].buffer = std::make_unique_for_overwrite<char[]>(CORK_BUFFER_SIZE);
         updateDate();
-    }
-
-    ~LoopData() {
-        /* If we have had App.ws called with compression we need to clear this */
-        if (zlibContext) {
-            delete zlibContext;
-            delete inflationStream;
-            delete deflationStream;
-        }
-        delete [] corkSlots[0].buffer;
-        delete [] corkSlots[1].buffer;
     }
 
     /* Returns the slot index this socket is corked in, or INVALID_CORK_SLOT. */
@@ -199,9 +189,9 @@ public:
     static constexpr unsigned int CORK_COPY_MAX = 16 * 1024;
 
     /* Per message deflate data */
-    ZlibContext *zlibContext = nullptr;
-    InflationStream *inflationStream = nullptr;
-    DeflationStream *deflationStream = nullptr;
+    std::unique_ptr<ZlibContext> zlibContext;
+    std::unique_ptr<InflationStream> inflationStream;
+    std::unique_ptr<DeflationStream> deflationStream;
 };
 
 }

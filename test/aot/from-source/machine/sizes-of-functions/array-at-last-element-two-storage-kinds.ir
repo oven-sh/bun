@@ -1,0 +1,18 @@
+# f1 = last
+# -- source: array-at-last-element-two-storage-kinds.ts
+# function last(list: number[]): number {
+#   return list.at(-1) ?? 0;
+# }
+# declare const input: any;
+# const whole: number[] = [];
+# whole.push(input | 0);
+# const fractions: number[] = [];
+# fractions.push(input / 2);
+# for (let turn = 0; turn < input; turn++) (globalThis as any).answer = last(turn & 1 ? whole : fractions);
+# -- end of source
+# The compiler before this one: 14 instructions, 0 of them patches.
+# When the bound was taken: steps: operations 16, patches 2, moves 4, unlikely or rare 2.
+# RUN(X64): steps most:20 f1 mechanisms=all-Inlining
+# REQUIRES(X64): x86_64 not-windows unsanitized-code faulting-loop-polls as-written
+# X64-LABEL: unit f1:Body
+# X64-NEXT: steps: at most 20

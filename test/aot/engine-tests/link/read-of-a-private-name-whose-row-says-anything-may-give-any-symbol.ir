@@ -1,0 +1,25 @@
+# print({}); $overridableRequire
+# Its row says "anything": a program may replace it.
+# LIBRARY: own
+# RUN: link functions mechanisms=all
+# CHECK-NOT: function f1 unreached
+
+module m0 path="main.js" displayPath="main.js" body=f0
+module m1 path="/$bun/js/builtins/UtilInspect.ts" displayPath="/$bun/js/builtins/UtilInspect.ts" flags=[IsLibrary]
+entry module=m0
+layout L0 module=m0
+runtimefunction id=UtilInspectStylizeWithNoColor function=f1
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key=@"overridableRequire" [isFreeName]
+    v2 = NewObject layout=L0
+    v3 = FinishObject v2
+    v4 = PropGet v0 key="print" [isFreeName]
+    v5 = Call v4, -, v3 calleeName="print"
+    Return v1
+}
+function f1 module=m1 kind=Method role=Library length=1 enclosingRuntimeFunction=UtilInspectStylizeWithNoColor thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}

@@ -1,0 +1,14 @@
+# -- source: main.cjs
+# "use strict";
+# function cut(kept, at) { const key = at | 0; if (key >= 0 && key < kept.length) { kept.length = 2; return kept[key]; } return -1; }
+# function fresh() { const made = []; for (let i = 0; i < 6; i++) made.push(i + 0.5); return made; }
+# print(cut(fresh(), 1), cut(fresh(), 4), cut(fresh(), 9));
+# -- end of source
+# f1 = cut. The key is held below the length, the length is stored over, and the element is read. The store ends what the walk knows of the length: the read asks for itself.
+# Fault injection, testing=IgnoreLengthStores: the walk assumes that the read is in bounds because of the test before the store.
+# The code verifier walks back from an access to each piece of its bounds evidence that was read from the array.
+# It rejects the code where the storage or the length of the same array is written on the path.
+# OPTIONS: testing=IgnoreLengthStores
+# DIAGNOSTIC: OpcodeNotInForm f1
+# RUN: walk f1:Body mechanisms=all
+# CHECK-NOT: code f1:Body

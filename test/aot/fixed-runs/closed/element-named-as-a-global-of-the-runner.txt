@@ -1,0 +1,42 @@
+An element in small letters that is named as a global of the test runner is not the global: <test />, <it></it>, <expect />.
+#### a.test.tsx
+
+      /** @jsxImportSource ./jsx */
+      it("renders", () => {
+        console.log("| CASE", <test />, <it></it>, <describe />, <expect />, <jest />, <vi />, <beforeAll />);
+        console.log("| CASE", typeof test, typeof it, typeof describe, typeof expect);
+      });
+#### jsx/jsx-dev-runtime.ts
+
+  function show(tag: unknown): string {
+    return typeof tag === "function" ? "function " + tag.name : JSON.stringify(tag);
+  }
+  export function jsx(tag: unknown, props: { children?: unknown }) {
+    return show(tag) + "(" + [props.children ?? []].flat().join(" ") + ")";
+  }
+  export const jsxs = jsx;
+  export const jsxDEV = jsx;
+  export declare namespace JSX {
+    type Element = string;
+    interface IntrinsicElements {
+      [name: string]: any;
+    }
+  }
+#### jsx/jsx-runtime.ts
+
+  function show(tag: unknown): string {
+    return typeof tag === "function" ? "function " + tag.name : JSON.stringify(tag);
+  }
+  export function jsx(tag: unknown, props: { children?: unknown }) {
+    return show(tag) + "(" + [props.children ?? []].flat().join(" ") + ")";
+  }
+  export const jsxs = jsx;
+  export const jsxDEV = jsx;
+  export declare namespace JSX {
+    type Element = string;
+    interface IntrinsicElements {
+      [name: string]: any;
+    }
+  }
+#### tsconfig.json
+{ "compilerOptions": { "jsx": "react-jsx", "jsxImportSource": "./jsx", "strict": true } }

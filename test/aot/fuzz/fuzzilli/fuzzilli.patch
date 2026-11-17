@@ -1,0 +1,272 @@
+diff --git a/Sources/Fuzzilli/Base/ProgramBuilder.swift b/Sources/Fuzzilli/Base/ProgramBuilder.swift
+index 0eb33e1a..28973437 100644
+--- a/Sources/Fuzzilli/Base/ProgramBuilder.swift
++++ b/Sources/Fuzzilli/Base/ProgramBuilder.swift
+@@ -928,6 +928,9 @@ public class ProgramBuilder {
+                 // 5. Fallback: creating an object and adding properties directly
+                 {
+                     func useMethodToProduce(_ method: (group: String, method: String)) -> Variable {
++                        // The call at the end makes a variable. Counting it now ends a chain of groups that only each other's members make.
++                        self.argumentGenerationVariableBudget.top -= 1
++                        defer { self.argumentGenerationVariableBudget.top += 1 }
+                         let group = self.fuzzer.environment.type(ofGroup: method.group)
+                         let obj = self.generateTypeInternal(group)
+                         let sig = chooseUniform(
+@@ -961,6 +964,9 @@ public class ProgramBuilder {
+                                 return self.construct(prop, withArgs: args)
+                             }
+                         }
++                        // The call at the end makes a variable. Counting it now ends a chain of groups that only each other's members make.
++                        self.argumentGenerationVariableBudget.top -= 1
++                        defer { self.argumentGenerationVariableBudget.top += 1 }
+                         let group = self.fuzzer.environment.type(ofGroup: property.group)
+                         let obj = self.generateTypeInternal(group)
+                         let prop = self.getProperty(property.property, of: obj)
+diff --git a/Sources/Fuzzilli/Fuzzer.swift b/Sources/Fuzzilli/Fuzzer.swift
+index e1f7924b..f3b8a6ba 100644
+--- a/Sources/Fuzzilli/Fuzzer.swift
++++ b/Sources/Fuzzilli/Fuzzer.swift
+@@ -1235,8 +1235,10 @@ public class Fuzzer {
+             b.throwException(exception)
+         }
+         execution = execute(b.finalize(), purpose: .startup)
+-        guard case .failed = execution.outcome else {
+-            logger.fatal(
++        if case .failed = execution.outcome {
++        } else {
++            // A target that only compiles programs accepts one that throws.
++            logger.warning(
+                 "Cannot detect failed executions (exit code must be nonzero when an uncaught exception was thrown, but execution outcome was \(execution.outcome))"
+             )
+         }
+diff --git a/Sources/Fuzzilli/Profiles/Profile.swift b/Sources/Fuzzilli/Profiles/Profile.swift
+index 4b5b8e9e..b8f52ed2 100644
+--- a/Sources/Fuzzilli/Profiles/Profile.swift
++++ b/Sources/Fuzzilli/Profiles/Profile.swift
+@@ -50,6 +50,7 @@ public let profiles = [
+     "qtjs": qtjsProfile,
+     "qjs": qjsProfile,
+     "jsc": jscProfile,
++    "bunCompiler": bunCompilerProfile,
+     "spidermonkey": spidermonkeyProfile,
+     "v8": v8Profile,
+     "v8Sandbox": v8SandboxProfile,
+diff --git a/Sources/Fuzzilli/Lifting/JavaScriptLifter.swift b/Sources/Fuzzilli/Lifting/JavaScriptLifter.swift
+--- a/Sources/Fuzzilli/Lifting/JavaScriptLifter.swift
++++ b/Sources/Fuzzilli/Lifting/JavaScriptLifter.swift
+@@ -97,6 +97,10 @@
+ 
+     // Mapping from the Variable which holds the module (output of EndBundleModule) to the module name.
+     private var moduleNames: [Variable: String] = [:]
++
++    // What makes the program TypeScript, and the instruction that is being lifted.
++    private var typeScript: TypeScriptPlan? = nil
++    private var indexOfCurrentInstruction = 0
+ 
+     public init(
+         prefix: String = "",
+@@ -186,6 +190,8 @@
+             includeLineNumbers: options.contains(.includeLineNumbers),
+             alwaysEmitVariables: alwaysEmitVariables,
+             reservedNames: reservedNames)
++        typeScript = TypeScriptPlan.make(for: program, in: environment)
++        w.typeScript = typeScript
+ 
+         var wasmCodeStarts: Int? = nil
+         var wasmTypeGroupStarts: Int? = nil
+@@ -239,6 +245,7 @@
+ 
+             // Collect type information that we might pass to the WasmLifter.
+             typer?.analyze(instr)
++            indexOfCurrentInstruction = instr.index
+ 
+             // Singular operation handling:
+             // All but the first singular operation in the same block are removed.
+@@ -302,7 +309,9 @@
+                     "Inner outputs are not currently supported in guarded operations")
+                 let neededOutputs = instr.allOutputs.filter({ analyzer.numUses(of: $0) > 0 })
+                 if !neededOutputs.isEmpty {
+-                    let VARS = w.declareAll(neededOutputs).joined(separator: ", ")
++                    let VARS = zip(w.declareAll(neededOutputs), neededOutputs).map({
++                        $0 + (typeScript?.annotation(for: $1, hasInitializer: false) ?? "")
++                    }).joined(separator: ", ")
+                     let LET = w.varKeyword
+                     w.emit("\(LET) \(VARS);")
+                 }
+@@ -320,11 +329,16 @@
+             // This does not guarantee that they will also _evaluate_ in that order at runtime, but it's probably a decent approximation.
+             let inputsToRetrieve: ArraySlice<Variable> =
+                 instr.op is EndWasmModule ? [] : instr.inputs
+-            guard let inputs = w.retrieve(expressionsFor: inputsToRetrieve) else {
++            guard var inputs = w.retrieve(expressionsFor: inputsToRetrieve) else {
+                 fatalError(
+                     "Missing one or more expressions for inputs \(instr.inputs) of \(instr).\n"
+                         + "Program is \(FuzzILLifter().lift(program, withOptions: .includeComments))\n"
+                         + "Dying now.")
++            }
++            if let typeScript {
++                for i in inputs.indices {
++                    inputs[i] = typeScript.convert(inputs[i], input: i, of: instr)
++                }
+             }
+             var nextExpressionToFetch = 0
+             func input(_ i: Int) -> Expression {
+@@ -514,12 +528,14 @@
+             case .beginObjectLiteralGetter(let op):
+                 assert(instr.numInnerOutputs == 1)
+                 let PROPERTY = quoteIdentifierIfNeeded(op.propertyName)
+-                currentObjectLiteral.beginMethod("get \(PROPERTY)() {", &w)
++                currentObjectLiteral.beginMethod(
++                    "get \(PROPERTY)(\(typeScript?.returnMarker(at: instr.index) ?? "")) {", &w)
+                 bindVariableToThis(instr.innerOutput(0))
+ 
+             case .beginObjectLiteralComputedGetter:
+                 let PROPERTY = input(0)
+-                currentObjectLiteral.beginMethod("get [\(PROPERTY)]() {", &w)
++                currentObjectLiteral.beginMethod(
++                    "get [\(PROPERTY)](\(typeScript?.returnMarker(at: instr.index) ?? "")) {", &w)
+                 bindVariableToThis(instr.innerOutput(0))
+ 
+             case .beginObjectLiteralSetter(let op):
+@@ -561,14 +577,14 @@
+                     w.assign(ObjectLiteral.new(code), to: instr.output)
+                 } else {
+                     let LET = w.declarationKeyword(for: instr.output)
+-                    let V = w.declare(instr.output)
+-                    w.emit("\(LET) \(V) = {")
++                    let V = w.declare(instr.output) + (typeScript?.annotation(for: instr.output) ?? "")
++                    w.emit("\(LET) \(V) = \(typeScript?.prefix(producing: instr.output) ?? ""){")
+                     w.enterNewBlock()
+                     for field in literal.fields {
+                         w.emitBlock("\(field),")
+                     }
+                     w.leaveCurrentBlock()
+-                    w.emit("};")
++                    w.emit("}\(typeScript?.suffix(producing: instr.output) ?? "");")
+                 }
+ 
+             case .beginClassDefinition(let op):
+@@ -581,7 +597,9 @@
+                 } else {
+                     // The name of the class is set to the uppercased variable name. This ensures that the heuristics used by the JavaScriptExploreLifting code to detect constructors works correctly (see shouldTreatAsConstructor).
+                     let NAME = w.declare(instr.output, as: "C\(instr.output.number)")
+-                    w.emit("class \(NAME)\(EXTENDS) {")
++                    let TYPES = typeScript?.typeParameters(ofClass: instr.output) ?? ""
++                    let IMPLEMENTS = typeScript?.implementsClause(ofClass: instr.output) ?? ""
++                    w.emit("class \(NAME)\(TYPES)\(EXTENDS)\(IMPLEMENTS) {")
+                 }
+                 w.enterNewBlock()
+ 
+@@ -601,8 +619,11 @@
+                 w.emit("}")
+ 
+             case .classAddProperty(let op):
+-                let PROPERTY = quoteIdentifierIfNeeded(op.propertyName)
+-                let staticStr = op.isStatic ? "static " : ""
++                let PROPERTY =
++                    quoteIdentifierIfNeeded(op.propertyName)
++                    + (typeScript?.fieldAnnotation(at: instr.index) ?? "")
++                let staticStr =
++                    (typeScript?.fieldModifiers(at: instr.index) ?? "") + (op.isStatic ? "static " : "")
+                 if op.hasValue {
+                     let VALUE = input(0)
+                     w.emit("\(staticStr)\(PROPERTY) = \(VALUE);")
+@@ -672,14 +693,16 @@
+             case .beginClassGetter(let op):
+                 let PROPERTY = quoteIdentifierIfNeeded(op.propertyName)
+                 let staticStr = op.isStatic ? "static " : ""
+-                w.emit("\(staticStr)get \(PROPERTY)() {")
++                w.emit(
++                    "\(staticStr)get \(PROPERTY)(\(typeScript?.returnMarker(at: instr.index) ?? "")) {")
+                 w.enterNewBlock()
+                 bindVariableToThis(instr.innerOutput(0))
+ 
+             case .beginClassComputedGetter(let op):
+                 let PROPERTY = input(0)
+                 let staticStr = op.isStatic ? "static " : ""
+-                w.emit("\(staticStr)get [\(PROPERTY)]() {")
++                w.emit(
++                    "\(staticStr)get [\(PROPERTY)](\(typeScript?.returnMarker(at: instr.index) ?? "")) {")
+                 w.enterNewBlock()
+                 bindVariableToThis(instr.innerOutput(0))
+ 
+@@ -1289,7 +1312,9 @@
+                 break
+ 
+             case .callSuperConstructor:
+-                let EXPR = CallExpression.new() + "super(" + liftCallArguments(inputs) + ")"
++                let MARKER = typeScript?.returnMarker(at: instr.index) ?? ""
++                let EXPR =
++                    CallExpression.new() + "super(" + liftCallArguments(inputs) + MARKER + ")"
+                 w.emit("\(EXPR);")
+ 
+             case .callSuperMethod(let op):
+@@ -2182,7 +2207,7 @@
+                 } else {
+                     assert(lines.count > 1)
+                     w.emit("try {")
+-                    lines.forEach({ w.emit(String($0)) })
++                    lines.forEach({ w.emit("    " + String($0)) })
+                     w.emit("} catch (e) {}")
+                 }
+             }
+@@ -2200,7 +2225,7 @@
+             w.emitComment(footer)
+         }
+ 
+-        return w.code
++        return typeScript?.finish(w.code) ?? w.code
+     }
+ 
+     // Signal that the following code needs to be lifted into a single expression.
+@@ -2303,11 +2328,14 @@
+         let iter = Ref(variables.makeIterator())
+         var paramList = [String]()
+         for (i, defaultValue) in actualDefaultValues.enumerated() {
+-            let p: String
++            var p: String
+             if let dp = parameters.destructuringParameters[i] {
+                 p = liftParameterDestructuringPattern(dp, iterator: iter)
+             } else {
+                 p = iter.val.next()!
++                p =
++                    (typeScript?.parameterModifiers(for: p) ?? "") + p
++                    + (typeScript?.parameterAnnotation(for: p, hasDefaultValue: defaultValue != nil) ?? "")
+             }
+ 
+             if parameters.hasRestParameter && i == parameters.count - 1 {
+@@ -2324,6 +2352,7 @@
+             "Mismatch between mapped inner outputs and destructuring pattern bindings"
+         )
+         return paramList.joined(separator: ", ")
++            + (typeScript?.returnMarker(at: indexOfCurrentInstruction) ?? "")
+     }
+ 
+     private func liftFunctionDefinitionBegin(
+@@ -2590,6 +2619,8 @@
+         // Forces the writer to also emit variables for unused expressions.
+         let alwaysEmitVariables: Bool
+ 
++        var typeScript: TypeScriptPlan? = nil
++
+         /// Code can be emitted into a temporary buffer instead of into the final script. This is mainly useful for inlining entire blocks.
+         /// The typical way to use this would be to call pushTemporaryOutputBuffer() when handling a BeginXYZBlock, then calling
+         /// popTemporaryOutputBuffer() when handling the corresponding EndXYZBlock and then either inlining the block's body
+@@ -2647,6 +2678,8 @@
+         /// If the expression can be inlined, it will be associated with the variable and returned at its use. If the expression cannot be inlined,
+         /// the expression will be emitted either as part of a variable definition or as an expression statement (if the value isn't subsequently used).
+         mutating func assign(_ expr: Expression, to v: Variable, allowInlining: Bool = true) {
++            let expr = typeScript?.convert(expr, producing: v) ?? expr
++            let allowInlining = allowInlining && !(typeScript?.isPinned(v) ?? false)
+             if let V = expressions[v] {
+                 // In some situations, for example in the case of guarded operations that require a try-catch around them,
+                 // the output variable is declared up-front and so we lift to a variable assignment.
+@@ -2669,7 +2702,7 @@
+                     emit("\(expr);")
+                 } else {
+                     let LET = declarationKeyword(for: v)
+-                    let V = declare(v)
++                    let V = declare(v) + (typeScript?.annotation(for: v) ?? "")
+                     emit("\(LET) \(V) = \(expr);")
+                 }
+             }

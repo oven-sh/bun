@@ -1,0 +1,16 @@
+# f2 = repeat
+# -- source: main.ts
+# function make(): () => number { let c = 0; return () => (c = (c + 1) & 255); } const f = make();
+# function repeat(turns: number): number { let n = 0; for (let k = 0; k < turns; k++) n += f(); return n; }
+# print(repeat(1000), repeat(0), repeat(3));
+# -- end of source
+# The copy of the callee stores the captured variable in every turn, and the next turn read it out of memory again. It comes round in a parameter of the head: it is read once, in front of the loop.
+# RUN: walk f2:Body mechanisms=all
+# CHECK-LABEL: code f2:Body
+# CHECK: = GetEnvironmentField
+# CHECK: isInLoop=true isLoopHead=true
+# CHECK-NOT: = GetEnvironmentField
+# CHECK: PutEnvironmentField
+# CHECK-NOT: = GetEnvironmentField
+# RUN(ANSWERS): run-in-shell mechanisms=all
+# ANSWERS: 124948 0 702

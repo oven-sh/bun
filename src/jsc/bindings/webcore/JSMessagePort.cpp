@@ -202,9 +202,9 @@ static inline bool setJSMessagePort_onmessageSetter(JSGlobalObject& lexicalGloba
     // node: a callable handler starts the port and keeps the loop alive; assigning anything else
     // clears the handler and lets the loop exit again.
     if (value.isCallable())
-        thisObject.wrapped().jsRef(&lexicalGlobalObject);
+        thisObject.wrapped().jsRef();
     else
-        thisObject.wrapped().jsUnref(&lexicalGlobalObject);
+        thisObject.wrapped().jsUnref();
 
     return true;
 }
@@ -325,6 +325,7 @@ static inline JSC::EncodedJSValue jsMessagePortPrototypeFunction_postMessageOver
 
 JSC_DEFINE_HOST_FUNCTION(jsMessagePortPrototypeFunction_postMessage, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
+    BUN_REMOVABLE_HOST_FUNCTION_DEFINITION(MessageChannel, jsMessagePortPrototypeFunction_postMessage);
     return IDLOperation<JSMessagePort>::call<jsMessagePortPrototypeFunction_postMessageOverloadDispatcher>(*lexicalGlobalObject, *callFrame, "postMessage");
 }
 
@@ -340,6 +341,7 @@ static inline JSC::EncodedJSValue jsMessagePortPrototypeFunction_startBody(JSC::
 
 JSC_DEFINE_HOST_FUNCTION(jsMessagePortPrototypeFunction_start, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
+    BUN_REMOVABLE_HOST_FUNCTION_DEFINITION(MessageChannel, jsMessagePortPrototypeFunction_start);
     return IDLOperation<JSMessagePort>::call<jsMessagePortPrototypeFunction_startBody>(*lexicalGlobalObject, *callFrame, "start");
 }
 
@@ -350,12 +352,13 @@ static inline JSC::EncodedJSValue jsMessagePortPrototypeFunction_closeBody(JSC::
     UNUSED_PARAM(throwScope);
     UNUSED_PARAM(callFrame);
     auto& impl = castedThis->wrapped();
-    impl.jsUnref(lexicalGlobalObject);
+    impl.jsUnref();
     RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLUndefined>(*lexicalGlobalObject, throwScope, [&]() -> decltype(auto) { return impl.close(); })));
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsMessagePortPrototypeFunction_close, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
+    BUN_REMOVABLE_HOST_FUNCTION_DEFINITION(MessageChannel, jsMessagePortPrototypeFunction_close);
     return IDLOperation<JSMessagePort>::call<jsMessagePortPrototypeFunction_closeBody>(*lexicalGlobalObject, *callFrame, "close");
 }
 
@@ -366,11 +369,12 @@ static inline JSC::EncodedJSValue jsMessagePortPrototypeFunction_refBody(JSC::JS
     UNUSED_PARAM(throwScope);
     UNUSED_PARAM(callFrame);
     auto& impl = castedThis->wrapped();
-    RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLUndefined>(*lexicalGlobalObject, throwScope, [&]() -> decltype(auto) { return impl.jsRef(lexicalGlobalObject); })));
+    RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLUndefined>(*lexicalGlobalObject, throwScope, [&]() -> decltype(auto) { return impl.jsRef(); })));
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsMessagePortPrototypeFunction_ref, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
+    BUN_REMOVABLE_HOST_FUNCTION_DEFINITION(MessageChannel, jsMessagePortPrototypeFunction_ref);
     return IDLOperation<JSMessagePort>::call<jsMessagePortPrototypeFunction_refBody>(*lexicalGlobalObject, *callFrame, "ref");
 }
 
@@ -381,11 +385,12 @@ static inline JSC::EncodedJSValue jsMessagePortPrototypeFunction_unrefBody(JSC::
     UNUSED_PARAM(throwScope);
     UNUSED_PARAM(callFrame);
     auto& impl = castedThis->wrapped();
-    RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLUndefined>(*lexicalGlobalObject, throwScope, [&]() -> decltype(auto) { return impl.jsUnref(lexicalGlobalObject); })));
+    RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLUndefined>(*lexicalGlobalObject, throwScope, [&]() -> decltype(auto) { return impl.jsUnref(); })));
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsMessagePortPrototypeFunction_unref, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
+    BUN_REMOVABLE_HOST_FUNCTION_DEFINITION(MessageChannel, jsMessagePortPrototypeFunction_unref);
     return IDLOperation<JSMessagePort>::call<jsMessagePortPrototypeFunction_unrefBody>(*lexicalGlobalObject, *callFrame, "unref");
 }
 
@@ -401,6 +406,7 @@ static inline JSC::EncodedJSValue jsMessagePortPrototypeFunction_hasRefBody(JSC:
 
 JSC_DEFINE_HOST_FUNCTION(jsMessagePortPrototypeFunction_hasRef, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
+    BUN_REMOVABLE_HOST_FUNCTION_DEFINITION(MessageChannel, jsMessagePortPrototypeFunction_hasRef);
     return IDLOperation<JSMessagePort>::call<jsMessagePortPrototypeFunction_hasRefBody>(*lexicalGlobalObject, *callFrame, "hasRef");
 }
 
@@ -456,11 +462,12 @@ bool JSMessagePortOwner::isReachableFromOpaqueRoots(JSC::Handle<JSC::Unknown> ha
     return visitor.containsOpaqueRoot(owner);
 }
 
-void JSMessagePortOwner::finalize(JSC::Handle<JSC::Unknown> handle, void* context)
+JSC::WeakHandleOwner::FinalizeResult JSMessagePortOwner::finalize(JSC::Handle<JSC::Unknown> handle, void* context)
 {
     auto* jsMessagePort = static_cast<JSMessagePort*>(handle.slot()->asCell());
     auto& world = *static_cast<DOMWrapperWorld*>(context);
     uncacheWrapper(world, &jsMessagePort->wrapped(), jsMessagePort);
+    return FinalizeResult::KeepImpl;
 }
 
 #if ENABLE(BINDING_INTEGRITY)
@@ -498,8 +505,9 @@ JSC::JSValue toJSNewlyCreated(JSC::JSGlobalObject*, JSDOMGlobalObject* globalObj
     return createWrapper<MessagePort>(globalObject, WTF::move(impl));
 }
 
-JSC::JSValue toJS(JSC::JSGlobalObject* lexicalGlobalObject, JSDOMGlobalObject* globalObject, MessagePort& impl)
+NEVER_INLINE JSC::JSValue toJS(JSC::JSGlobalObject* lexicalGlobalObject, JSDOMGlobalObject* globalObject, MessagePort& impl)
 {
+    BUN_REMOVABLE_DEFINITION(MessageChannel, static_cast<JSC::JSValue (*)(JSC::JSGlobalObject*, JSDOMGlobalObject*, MessagePort&)>(toJS));
     return wrap(lexicalGlobalObject, globalObject, impl);
 }
 

@@ -17,5 +17,5 @@ export const counted = (dir: string, counter: string) =>
 
 /** The graph of an import() that is held behind an earlier call and never let go is an import() that never settles. */
 export function expectHeldGraphsLetGo(dir: string) {
-  expect(counted(dir, "GraphsLetGoBehindEarlierCalls")).toBe(counted(dir, "GraphsHeldBehindEarlierCalls"));
+  expect(counted(dir, "DeferredGraphsResumed")).toBe(counted(dir, "GraphsDeferredForImports"));
 }

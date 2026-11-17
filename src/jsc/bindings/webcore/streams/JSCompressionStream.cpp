@@ -156,22 +156,16 @@ template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSCompressionStreamConst
     if (*format == CompressionFormat::Brotli && JSC::isFeatureRemoved(Bun::Feature::BrotliEncoder)) [[unlikely]]
         RELEASE_AND_RETURN(scope, Bun__throwForRemovedFeature(lexicalGlobalObject, static_cast<uint16_t>(Bun::Feature::BrotliEncoder)));
 
-    void* coder = CompressionStreamCoder__create(static_cast<uint8_t>(*format), false, options.highWaterMark, options.level.has_value(), options.level.value_or(0));
+    std::unique_ptr<CompressionStreamCoder> coder { CompressionStreamCoder__create(static_cast<uint8_t>(*format), false, options.highWaterMark, options.level.has_value(), options.level.value_or(0)) };
     if (!coder) [[unlikely]] {
         throwTypeError(lexicalGlobalObject, scope, "failed to initialize compressor"_s);
         return {};
     }
 
     auto* structure = structureForNewTarget(vm, constructor, lexicalGlobalObject, asObject(callFrame->newTarget()));
-    if (scope.exception()) [[unlikely]] {
-        CompressionStreamCoder__destroy(coder);
-        return {};
-    }
+    RETURN_IF_EXCEPTION(scope, {});
     auto* stream = JSCompressionStream::create(vm, structure);
-    stream->m_coder = coder;
-    vm.heap.addFinalizer(stream, static_cast<JSC::Heap::CFinalizer>([](JSCell* cell) {
-        CompressionStreamCoder__destroy(std::exchange(static_cast<JSCompressionStream*>(cell)->m_coder, nullptr));
-    }));
+    stream->m_coder = WTF::move(coder);
 
     setUpNativeTransformStream(lexicalGlobalObject, stream, TransformerKind::Compression);
     RETURN_IF_EXCEPTION(scope, {});
@@ -220,7 +214,7 @@ JSValue JSCompressionStream::getConstructor(VM& vm, const JSGlobalObject* global
 
 GCClient::IsoSubspace* JSCompressionStream::subspaceForImpl(VM& vm)
 {
-    return WebCore::subspaceForImpl<JSCompressionStream, UseCustomHeapCellType::No>(vm, BUN_SUBSPACE_SLOTS(m_clientSubspaceForCompressionStream, m_subspaceForCompressionStream));
+    return WebCore::subspaceForImpl<JSCompressionStream, UseCustomHeapCellType::Yes>(vm, BUN_SUBSPACE_SLOTS(m_clientSubspaceForCompressionStream, m_subspaceForCompressionStream));
 }
 
 JSC_DEFINE_CUSTOM_GETTER(jsCompressionStreamPrototypeGetter_constructor, (JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, PropertyName))

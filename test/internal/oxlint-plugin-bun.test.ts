@@ -378,7 +378,12 @@ describeOxlint("src/js lint", () => {
       .map(({ files, rules }) => [files, rules!["bun/no-unused-expressions"]]);
     expect(levels).toEqual([
       [["src/js/**"], expect.stringMatching(/^(error|deny)$/)],
-      [["src/js/builtins/**"], expect.stringMatching(/^(off|allow)$/)],
+      [["src/js/builtins/**", "src/js/ahead-of-time/builtins/**"], expect.stringMatching(/^(off|allow)$/)],
+      // Two texts that read `error.stack` for what the read does, and say so to the rule of the other name.
+      [
+        ["src/js/internal/streams/destroy.ts", "src/js/internal/streams/writable.ts"],
+        expect.stringMatching(/^(off|allow)$/),
+      ],
     ]);
     expect(exitCode).toBe(0);
   });

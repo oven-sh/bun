@@ -33,10 +33,14 @@ export default b.declarations(
   // `app` names an application on disk, which the dev server bundles and runs as scripts of this realm: BakeLoadInitialServerCode() and BakeLoadServerHmrPatch() in src/runtime/bake/BakeSourceProvider.cpp.
   // It gets past no lock. It is the program and no guest of it, and a program replaces what it likes: where the build sees the option it lays no lock of its own.
   marked("RunsCodeThatLocksDoNotBind", ["Bun.serve"]),
+  // ServerConfig.rs get_routes_object(): a list under `routes` or `static` is no record of routes, and the option is passed over.
+  marked("PassesOverListWhereItTakesRecordOfHandlers", ["Bun.serve"]),
+  // ServerConfig.rs from_js(): the options are asked for one name after another, nothing walks their own keys, and BunObject.rs serve() keeps what it read and not the options.
+  marked("AsksOptionsForListedNamesAlone", ["Bun.serve"]),
   // The loader asks what is registered with it first, under every name that the build has not followed, and answers with the module that the plugin makes.
   marked("RunsCodeWithLoader", ["Bun.plugin"]),
   // functionGetProtectedObjects() in src/jsc/modules/BunJSCModule.h: every protected cell and every strong root that is an object.
-  marked("HandsOutWhatNativeCodeHolds", ["bun:jsc.getProtectedObjects"]),
+  marked("ExposesNativeRoots", ["bun:jsc.getProtectedObjects"]),
   marked("HoldsLoader", [
     "%ModuleRequire%.cache",
     "%ModuleRequirePrototype%.cache",
@@ -106,7 +110,7 @@ export default b.declarations(
   // expect() answers an Expect. A matcher answers undefined, a promise of it, or an object of one of the runner's classes: expect.bind.ts.
   // spyOn() and mock() answer a mock function: JSMockFunction in JSMockFunction.cpp. What lies below mock is not marked: mock.module() goes to the loader.
   // The mark on a class stands for all that lies below it.
-  marked("HandsOutNoOtherHostObject", [
+  marked("ExposesOnlyDescribedObjects", [
     "bun:test.test",
     "bun:test.xtest",
     "bun:test.describe",
@@ -141,6 +145,12 @@ export default b.declarations(
     "Bun.serve",
     ...["HTTPServer", "HTTPSServer", "DebugHTTPServer", "DebugHTTPSServer"].map(name => `%${name}%.prototype.reload`),
   ]),
+  // RequestContext.rs: an answer that is a Response is sent, and nobody prints it.
+  marked("InstancesAreAnswersThatHostTakes", ["Response"]),
+  // ConsoleObject.rs print_proxy(): whoever prints a Proxy prints its target, and calls the target's own method even where the printer of errors calls none.
+  marked("ResultShowsOperandsToFormatters", ["Proxy", "Proxy.revocable"]),
+  // ConsoleObject.rs print_to_json(): whoever prints one prints what its toJSON() answers, and calls that answer's own method even where the printer of errors calls none.
+  marked("InstancesShowWhatTheirMethodAnswersToFormatters", ["URLSearchParams", "Bun.Cookie", "Bun.CookieMap"]),
   // These reject napi_env and napi_value in a signature (reject_napi_types_error in ffi_body.rs). Only cc() accepts them.
   marked("LoadsCodeWithoutJSAccess", [
     "%NativeFunctions%.FfiBindTsLinkLibrary",
@@ -157,6 +167,14 @@ export default b.declarations(
     "process.exit",
     "process.kill",
     "process.reallyExit",
+  ]),
+  marked("MayLayListenerForUncaughtExceptions", [
+    "%EventEmitter%.prototype.addListener",
+    "%EventEmitter%.prototype.on",
+    "%EventEmitter%.prototype.once",
+    "%EventEmitter%.prototype.prependListener",
+    "%EventEmitter%.prototype.prependOnceListener",
+    "process.setUncaughtExceptionCaptureCallback",
   ]),
   marked("RunsWaitingJobs", [
     "%Expect%",

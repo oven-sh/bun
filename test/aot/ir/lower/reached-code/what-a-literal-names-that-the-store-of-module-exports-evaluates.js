@@ -1,11 +1,11 @@
 // RUN: link
 // CHECK-LABEL: function {{*}}name="sum"
-// CHECK-NOT: LeftOutOfExecutable
+// CHECK-NOT: OmittedFromExecutable
 // CHECK: Return
 
 // RUN(CLASS): link
 // CLASS-LABEL: function {{*}}name="add"
-// CLASS-NOT: LeftOutOfExecutable
+// CLASS-NOT: OmittedFromExecutable
 // CLASS: Return
 
 // `const held = { sum }; module.exports = held;`: the module graph erases the declaration, and the store evaluates its literal. So what the literal names runs with the file,

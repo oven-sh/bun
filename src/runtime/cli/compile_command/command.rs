@@ -28,12 +28,15 @@ impl CompileCommand {
     #[cold]
     #[inline(never)]
     pub(crate) fn exec_command(ctx: Context<'_>) -> Result<(), crate::Error> {
+        configuration::use_installed_executable(ctx);
         if ctx.bundler_options.aot.is_none() || ctx.args.target == Some(api::Target::Browser) {
             configuration::use_default_entry_point(ctx);
             if ctx.bundler_options.aot.is_none()
                 || has_only_html_entry_points(&ctx.args.entry_points)
             {
                 ctx.bundler_options.aot = None;
+                ctx.bundler_options.keeps_entry_points = true;
+                configuration::load_script_as_code(ctx);
                 return BuildCommand::exec(ctx, None);
             }
         }
@@ -75,18 +78,18 @@ fn run(ctx: Context<'_>, origin: RequestOrigin) -> Result<(), crate::Error> {
     );
     let metafile_path = ctx.bundler_options.metafile.clone();
     let metafile_markdown_path = ctx.bundler_options.metafile_md.clone();
-    let mut event_loop = AnyEventLoop::init();
+    let event_loop = AnyEventLoop::init();
     let mut request = request_from_context(
         ctx,
         configuration,
-        &mut event_loop,
+        &event_loop,
         CompileProduct::Executable {
             outfile: &location.outfile,
         },
         location.root_dir.fd,
         origin,
     );
-    let result = compile_to_executable(&mut request).and_then(|outcome| {
+    let result = compile_to_executable(&mut request).and_then(move |outcome| {
         write_metafiles(&outcome, &metafile_path, &metafile_markdown_path)?;
         Ok(outcome)
     });
@@ -124,11 +127,11 @@ pub(crate) fn compile_from_context(
         (preload.on_loaded)();
     }
     let configuration = configuration::configure(&mut *ctx)?;
-    let mut event_loop = AnyEventLoop::init();
+    let event_loop = AnyEventLoop::init();
     let mut request = request_from_context(
         ctx,
         configuration,
-        &mut event_loop,
+        &event_loop,
         product,
         Fd::cwd(),
         RequestOrigin::BuildFlag,

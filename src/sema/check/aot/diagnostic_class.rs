@@ -22,9 +22,9 @@ const MODULE_SYNTAX_CODES: [u32; 27] = [
     1293, 1294, 1295, 1448, 1484, 1485, 2748, 2865, 2866, 18055, 18056,
 ];
 
-const EMITTED_OUTPUT_CODES: [u32; 27] = [
+const EMITTED_OUTPUT_CODES: [u32; 28] = [
     1202, 1203, 1218, 1309, 1323, 1324, 1343, 1378, 1432, 1470, 1471, 1479, 1541, 1542, 1543, 1544,
-    2343, 2354, 2725, 2807, 2823, 2854, 2856, 6142, 6307, 17004, 18057,
+    2343, 2354, 2725, 2807, 2823, 2854, 2856, 6059, 6142, 6307, 17004, 18057,
 ];
 
 const STYLE_CODES: [u32; 67] = [
@@ -136,6 +136,10 @@ mod tests {
     #[test]
     fn class_follows_code() {
         assert_eq!(DiagnosticClass::of_code(2322), DiagnosticClass::Semantic);
+        assert_eq!(
+            DiagnosticClass::of_code(6059),
+            DiagnosticClass::EmittedOutput
+        );
         assert_eq!(DiagnosticClass::of_code(7006), DiagnosticClass::Style);
         assert_eq!(DiagnosticClass::of_code(6133), DiagnosticClass::Style);
         for code in [1313, 2774, 2869, 2872, 4112, 4113] {

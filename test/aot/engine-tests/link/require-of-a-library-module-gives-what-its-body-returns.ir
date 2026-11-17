@@ -1,0 +1,49 @@
+# The modules of the library hand each other their symbols in the record that the body returns. If the record escaped because the host calls every body, as it did, `http.kHeaders` would be anything and no access under it would have a name.
+# internal/http:  const kHeaders = Symbol("kHeaders");  return { kHeaders };        node:http:  var http = require("internal/http");  var kHeaders = http.kHeaders;  function headersOf(o) { return o[kHeaders] }
+# Nobody but compiled code asks for a module that is not public, where the library runs compiled alone.
+# LIBRARY: own
+# OPTIONS: exclude=CodeOutsideImage
+# RUN: link accesses functions variables mechanisms=all
+# CHECK: access f3 v2 under symbol("kHeaders")@m2:0
+# CHECK: function f2 {{*}}result=L1
+# CHECK: variable g0 proven=symbol("kHeaders")@m2:0 writers-known written-at-construction-alone filled
+
+layout L0 module=m1 fields=[{key=symbol("kHeaders")@m2:0 declared={type=anything}}]
+layout L1 module=m2 fields=[{key="kHeaders" declared={type=anything} flags=[IsRequired]}]
+variable g0 name="kHeaders" module=m1 declared={type=anything} initialization=Undefined flags=[IsImmutable]
+module m0 path="main.js" displayPath="main.js" body=f0
+module m1 path="node:http" displayPath="node:http" kind=RuntimeSource exportRule=RuntimeModule requireResult=DefaultExport runtimeModule=NodeHttp body=f1
+module m2 path="internal:http" displayPath="internal:http" kind=RuntimeSource exportRule=RuntimeModule requireResult=DefaultExport runtimeModule=InternalHttp body=f2
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = RequireModule module=m1 referrer=m0 specifier="node:http"
+    v1 = Undefined
+    Return v1
+}
+function f1 module=m1 kind=Module role=Library thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = RequireModule module=m2 referrer=m1 specifier="internal/http"
+    v1 = PropGet v0 key="kHeaders"
+    PutModuleVariable v1 variable=g0
+    v3 = NewObject layout=L0 fields=[]
+    v4 = FinishObject v3
+    v5 = NewClosure function=f3
+    v6 = Call v5, -, v4 calleeName="headersOf"
+    Return v5
+}
+function f2 module=m2 kind=Module role=Library thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=Symbol
+    v1 = String string="kHeaders"
+    v2 = Call v0, -, v1 calleeName="Symbol" callNumber=0
+    v3 = NewObject -, v2 layout=L1 fields=[0]
+    v4 = FinishObject v3
+    Return v4
+}
+function f3 name="headersOf" module=m1 role=Library length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = GetModuleVariable variable=g0
+    v2 = ElemGet v0, v1
+    Return v2
+}

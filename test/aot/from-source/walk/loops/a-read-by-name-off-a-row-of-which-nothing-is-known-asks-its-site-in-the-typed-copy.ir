@@ -1,0 +1,26 @@
+# -- source: a-read-by-name-off-a-row-of-which-nothing-is-known-asks-its-site-in-the-typed-copy.ts
+# declare function print(value: unknown): void;
+# declare function id(value: any): any;
+# const rows = id([{ name: "a", price: 0.5 }, { name: "b", price: 1.5 }, { name: "c", price: 2.5 }]);
+# function total(): number { let sum = 0; for (const row of rows) sum += row.price; return sum; }
+# print(id(total)());
+# print(id(total)());
+# -- end of source
+# LIBRARY: own
+# f1 = total. Nobody knows what `rows` holds, so nobody knows what `row.price` may run: a getter, a Proxy. The loop was never built twice for that.
+# In the typed copy the read asks its site alone: an own value found by shape or by Structure is handed over and no code has run; for all else the empty value comes back and the turn begins again
+# in the closed copy, where the general read stands. What the read hands over is only added to a number, so the one test behind it asks for a number, which the empty value is not; the list is asked for boxed values in front of the loop.
+# RUN(TWICE): walk f1 mechanisms=all
+# TWICE-LABEL: code f1:Body
+# TWICE: = HasArrayStorage {{*}}arrayStorage=Contiguous
+# TWICE: isLoopHead=true
+# TWICE: = PropGet {{*}}key="price"
+# TWICE: isLoopHead=true
+# TWICE: = GetArrayElement {{*}}arrayStorage=Contiguous level=Proven
+# TWICE: [[found]]: absent|anything @JSValue = GetValueAtSiteOrAbsent {{*}}key="price"
+# TWICE-NEXT: = TypeTest [[found]] testedType=number
+# TWICE: = Add {{*}}form=Numbers
+# RUN: run-in-shell mechanisms=all
+# CHECK: 4.5
+# CHECK-NEXT: 4.5
+# CHECK-NEXT: exited with 0

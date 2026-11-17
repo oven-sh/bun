@@ -316,6 +316,7 @@ fn variable_without_a_value_that_is_stored_once() {
         "var g; g = function f() {}; g;",
         "var g; (function () { g = function f() {}; })(); g;",
         "let g; function fill() { g = function f() {}; } g;",
+        "var g; g = function f() {}; eval(t); g;",
     ];
     for &text in FOUND {
         with_program(&[("a.cjs", text)], |program| {
@@ -331,7 +332,6 @@ fn variable_without_a_value_that_is_stored_once() {
         "var g; g = function f() {}; g = 1; g;",
         "var g; g ||= function f() {}; g;",
         "var g; [g] = [function f() {}]; g;",
-        r#"var g; g = function f() {}; eval(""); g;"#,
     ];
     for &text in UNKNOWN {
         with_program(&[("a.cjs", text)], |program| {
@@ -773,6 +773,7 @@ fn properties_of_exports_of_required_commonjs_files() {
         "function f() {} module.exports = f; module.exports.A = class A {};",
         "function f() {} exports = module.exports = f; exports.A = class A {};",
         "{ const exports = {}; exports.A = 1; } exports.A = class A {};",
+        r#"Object.defineProperty(exports, "A", { value: class A {} });"#,
     ];
     for &importer in IMPORTERS {
         for &exporter in EXPORTERS {
@@ -848,11 +849,6 @@ fn exports_that_commonjs_files_do_not_name() {
         property,
         "{ const exports = {}; exports.A = class A {}; }",
         MissingMember,
-    );
-    assert_required_unknown(
-        property,
-        r#"Object.defineProperty(exports, "A", { value: class A {} });"#,
-        OpaqueInitializer,
     );
     assert_required_unknown(
         r#"require("./b.cjs")["export="];"#,
@@ -1176,7 +1172,7 @@ fn unknown_referents() {
     assert_unknown("a.cjs", "class A {} with (o) { A; }", DynamicScope);
     assert_unknown(
         "a.cjs",
-        r#"class A {} function f() { eval(""); A; }"#,
+        r#"class A {} function f() { eval(t); A; }"#,
         DynamicScope,
     );
     assert_unknown(
@@ -1189,9 +1185,10 @@ fn unknown_referents() {
         "var B = 1; var B = 2; B;",
         UnstableBinding(NotInitializedOnce),
     );
+    assert_unknown("a.cjs", r#"let B = 1; eval(t); B;"#, NotAReference);
     assert_unknown(
         "a.cjs",
-        r#"let B = 1; eval(""); B;"#,
+        r#"class A {} let B = A; B = 1; eval(t); B;"#,
         UnstableBinding(VisibleToEval),
     );
     assert_unknown(

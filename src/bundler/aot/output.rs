@@ -82,7 +82,7 @@ impl AotEntryPoint {
         let is_same = |(&left, &right): (&u8, &u8)| {
             left == right || (is_windows && is_sep_any(left) && is_sep_any(right))
         };
-        let (entry, copy) = (&self.source_path[..], embedded.src_path.text);
+        let (entry, copy) = (&self.source_path[..], &*embedded.src_path);
         entry.len() == copy.len() && entry.iter().zip(copy).all(is_same)
     }
 }
@@ -126,6 +126,10 @@ pub(crate) fn finish_build(
         names_plugin,
         names_added_to_builtins,
         further_package_names: Vec::new(),
+        refused_data: Vec::new(),
+        files_for_file_system: Default::default(),
+        is_source_replaced: false,
+        loaders_given_to_build: Vec::new(),
         package_names: Vec::new(),
         path_aliases: Vec::new(),
         texts,

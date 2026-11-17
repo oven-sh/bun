@@ -26,6 +26,7 @@ fn ask<T: Send + Default>(
             checked_elsewhere: &[],
             builtin_types: &BuiltinTypeSymbols::compute(all, &[], Box::new(|| &[])),
             named_values: &NoNamedValues,
+            alias_mentions: None,
             max_inference_nodes: 4096,
             limits: Default::default(),
         };

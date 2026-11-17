@@ -655,7 +655,7 @@ describe("bun", () => {
 
     if (process.platform === "win32") {
       // Windows spawnSync pipes stdout, so `windowsIsTerminal()` returns false,
-      // `state.pretty_output` is false, and `redraw()` short-circuits before
+      // `pretty_output` is false, and `redraw()` short-circuits before
       // ever emitting elision output. `target_pattern` is intentionally NOT
       // iterated here: every caller bundles TTY-only regexes such as
       // `/\[N lines elided\]/` that would never appear in piped Windows output

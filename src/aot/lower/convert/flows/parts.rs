@@ -1,5 +1,5 @@
 use bun_sema::check::aot::{
-    FunctionRef, MemberName, ObjectMemberKind, ShapeKind, TupleElementKind,
+    FunctionRef, FunctionSignatures, MemberName, ObjectMemberKind, ShapeKind, TupleElementKind,
 };
 use smallvec::SmallVec;
 
@@ -45,7 +45,9 @@ fn find_function_declaration(
     ty: CheckerTypeId,
 ) -> Option<FunctionRef> {
     match file.queries.type_shape(ty).ok()?.kind {
-        ShapeKind::Function(signatures) => file.queries.declaration_of_signatures(signatures),
+        ShapeKind::Function(signatures) => {
+            file.queries.declaration_of_signatures(signatures.declared)
+        }
         _ => None,
     }
 }
@@ -128,7 +130,7 @@ pub(super) fn record_flows_of_parts(
             | ShapeKind::Array { .. }
             | ShapeKind::Tuple { .. }
             | ShapeKind::Builtin { .. }
-            | ShapeKind::Function(&[_])
+            | ShapeKind::Function(FunctionSignatures { declared: [_], .. })
     );
     if !has_parts {
         return;
@@ -184,10 +186,15 @@ pub(super) fn record_flows_of_parts(
                 }
             }
         }
-        (ShapeKind::Function(&[returning]), ShapeKind::Function(&[expecting])) => {
+        (ShapeKind::Function(returning), ShapeKind::Function(expecting)) => {
             if is_one_function(file, source, target) {
                 return;
             }
+            let returning = file.queries.only_signature(returning);
+            let expecting = file.queries.only_signature(expecting);
+            let (Some(returning), Some(expecting)) = (returning, expecting) else {
+                return;
+            };
             let results = (
                 file.queries.signature_result(returning),
                 file.queries.signature_result(expecting),

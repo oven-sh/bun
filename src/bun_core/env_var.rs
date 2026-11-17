@@ -78,6 +78,8 @@ new!(pub BUN_CONFIG_WS_CLOSE_TIMEOUT: unsigned, "BUN_CONFIG_WS_CLOSE_TIMEOUT", {
 new!(pub BUN_CRASH_REPORT_URL: string, "BUN_CRASH_REPORT_URL", {});
 #[cfg(not(bun_locked_environment))]
 new!(pub BUN_AOT_VERBOSE: boolean, "BUN_AOT_VERBOSE", { default: false });
+#[cfg(not(bun_locked_environment))]
+new!(pub BUN_AOT_ORDER_OUT: string, "BUN_AOT_ORDER_OUT", {});
 // Bun's own tests, behind BUN_FEATURE_FLAG_INTERNAL_FOR_TESTING: `bun build --compile --aot` writes the program alone where it would write an
 // executable.
 #[cfg(not(bun_locked_environment))]
@@ -139,7 +141,7 @@ new!(pub BUN_INSTALL_GLOBAL_DIR: string, "BUN_INSTALL_GLOBAL_DIR", {});
 // whole body first. Smaller tarballs stay on the buffered path where
 // the fixed overhead of the resumable state machine isn't worth it.
 new!(pub BUN_INSTALL_STREAMING_MIN_SIZE: unsigned, "BUN_INSTALL_STREAMING_MIN_SIZE", { default: 2 * 1024 * 1024 });
-// Compressed bytes to buffer in `TarballStream.pending` before the HTTP
+// Compressed bytes to buffer in `TarballStream.incoming` before the HTTP
 // thread schedules a drain; collapses the per-chunk thread-pool futex wake
 // into roughly one per `threshold` bytes.
 new!(pub BUN_INSTALL_STREAMING_DRAIN_THRESHOLD: unsigned, "BUN_INSTALL_STREAMING_DRAIN_THRESHOLD", { default: 256 * 1024 });

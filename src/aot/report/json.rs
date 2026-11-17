@@ -61,11 +61,6 @@ impl JsonWriter {
         self.bytes.push(b']');
     }
 
-    pub(super) fn null(&mut self, key: &str) {
-        self.write_key(key);
-        self.bytes.extend_from_slice(b"null");
-    }
-
     pub(super) fn begin_array(&mut self, key: &str) {
         self.write_key(key);
         self.bytes.push(b'[');
@@ -270,14 +265,6 @@ mod tests {
         });
         let expected = r#"{"a":1,"b":{"c":{},"d":true,"e":{"f":"g"}},"h":2}"#;
         assert_eq!(object, expected);
-    }
-
-    #[test]
-    fn absent_values_are_null() {
-        let object = object_with(|json| {
-            json.null("a");
-        });
-        assert_eq!(object, r#"{"a":null}"#);
     }
 
     #[test]

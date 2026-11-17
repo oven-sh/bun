@@ -1,8 +1,8 @@
 // Constructors and objects of the global object and of native modules of which the table says no more than what they are: whoever reads one gets that object.
 import * as b from "bun-builtins-table";
 import { cppClassBehindGlobal, prototypeBehindGlobalListsAllMembers } from "../collect-webcore-tables.ts";
-import { builtinModulesCell, targetsOfEventsCell } from "./native-cells.ts";
-import { answering, constructing, handedOver, promiseOf } from "./native-code.ts";
+import { builtinModulesCell, detailsOfEventsCell, errorsOfEventsCell, targetsOfEventsCell } from "./native-cells.ts";
+import { answering, constructing, promiseOf, retainedByNativeCode } from "./native-code.ts";
 
 const constructorsBelowFunctionPrototype = [
   "ByteLengthQueuingStrategy",
@@ -171,11 +171,39 @@ const constructionOfObserver = {
     { ...refused, args: { callback: b.any.optional }, uses: { callback: b.inspected } },
   ],
 } satisfies b.ClassOptions;
+// JSTextDecoderStream.cpp :122-172: options that are no object, null or undefined are refused, and what is described there is a primitive. `fatal` and `ignoreBOM` are read and made booleans of; the label is made a text of.
+const constructionOfDecoderStream = {
+  types: [b.viewType("TextDecoderStream")],
+  call: refused,
+  construct: [
+    {
+      args: { label: b.string.optional, options: b.null.optional },
+      returns: b.instance("TextDecoderStream").fresh,
+      capability: "heap",
+      throws: true,
+      uses: { label: b.inspected },
+      implementation: b.hostCall,
+    },
+    {
+      args: { label: b.string.loose.optional, options: b.any.optional },
+      returns: b.instance("TextDecoderStream").fresh,
+      capability: "js",
+      runsOnlyOperandCode: true,
+      // The options are tested and read before the label is made a text of.
+      readsStateBeforeConversions: true,
+      throws: true,
+      uses: { label: b.inspected, options: [b.runs(b.named("fatal", "ignoreBOM")), b.membersOnlyInspected] },
+      implementation: b.hostCall,
+    },
+  ],
+} satisfies b.ClassOptions;
 const rowsOfConstructor = (path: string): b.ClassOptions => ({
   instanceCppClass: cppClassBehindGlobal(path),
   prototypeListsAllMembers: prototypeBehindGlobalListsAllMembers(path),
   ...(constructorsThatMakeNothing.includes(path) ? { call: refused, construct: refused } : {}),
   ...(path === "PerformanceObserver" ? constructionOfObserver : {}),
+  ...(constructionsOfClasses[path] ?? {}),
+  ...(path === "TextDecoderStream" ? constructionOfDecoderStream : {}),
   ...(path in membersOfPrototypes ? { proto: membersOfPrototypes[path] } : {}),
 });
 
@@ -230,6 +258,7 @@ const streamClass = (name: string, operands: readonly string[], proto: Readonly<
   b.class(name, {
     // The C++ classes of TextEncoderStream, TextDecoderStream, CompressionStream and DecompressionStream inherit from the one of TransformStream, and their instances are no instances of TransformStream: a test by that C++ class would take them for some.
     ...(name === "TransformStream" ? {} : { instanceCppClass: b.cppClass(`JS${name}`, `streams/JS${name}.h`) }),
+    prototypeListsAllMembers: prototypeBehindGlobalListsAllMembers(name),
     types: [b.viewType(name)],
     call: { returns: b.never, capability: "heap", throws: true, implementation: b.hostCall },
     construct: [
@@ -252,8 +281,8 @@ const streamClass = (name: string, operands: readonly string[], proto: Readonly<
                 operands.map((operand, index) => [
                   operand,
                   index
-                    ? handedOver
-                    : [...handedOver, b.createdIn(b.instance(`${name}DefaultController`), b.nativeMemory)],
+                    ? retainedByNativeCode
+                    : [...retainedByNativeCode, b.createdIn(b.instance(`${name}DefaultController`), b.nativeMemory)],
                 ]),
               ),
               implementation: b.hostCall,
@@ -289,6 +318,127 @@ const readsStream = (getter: b.TableType) =>
     reads: ["ExternalState"],
     implementation: b.generic,
   }) satisfies b.GetterField;
+// JSCloseEvent.cpp: as JSEvent.cpp: the type is required and made a string of; options that are no object, null or undefined are refused with a message that names no value; each member is read, through the
+// prototype chain, and converted as its kind asks.
+const constructionOfEventBelowEvent = (name: string, options: readonly b.UseSpec[]): b.ClassOptions => ({
+  types: [b.viewType(name)],
+  call: refused,
+  construct: [
+    { args: { type: b.notPassed }, returns: b.never, capability: "heap", throws: true, implementation: b.hostCall },
+    {
+      args: {
+        type: b.union(b.undefined, b.null, b.bool, b.f64, b.string, b.bigint),
+        eventInitDict: b.union(b.undefined, b.null).optional,
+      },
+      returns: b.instance(name).fresh,
+      capability: "heap",
+      throws: true,
+      implementation: b.hostCall,
+    },
+    {
+      args: { type: b.any, eventInitDict: b.any.optional },
+      returns: b.instance(name).fresh,
+      capability: "js",
+      throws: true,
+      runsOnlyOperandCode: true,
+      uses: { type: [b.runs("ToPrimitive")], eventInitDict: options },
+      implementation: b.hostCall,
+    },
+  ],
+});
+const membersOfOptionsOfEvent = (...names: readonly string[]) => [
+  b.runs("PrototypeChain"),
+  b.runsTransitively(b.named("bubbles", "cancelable", "composed", ...names), "ToPrimitive"),
+];
+const constructionsOfClasses: Readonly<Record<string, b.ClassOptions>> = {
+  CloseEvent: {
+    ...constructionOfEventBelowEvent("CloseEvent", membersOfOptionsOfEvent("code", "reason", "wasClean")),
+    proto: { wasClean: readsStream(b.bool), code: readsStream(b.int(0, 65535)), reason: readsStream(b.string) },
+  },
+  // JSCustomEvent.cpp :58-116 :160-190 :268-290, CustomEventCustom.cpp :37, CustomEvent.cpp :60: `detail` is read, kept as it is and answered as it is; an event that was handed none answers null. No native code makes a CustomEvent.
+  CustomEvent: {
+    ...constructionOfEventBelowEvent("CustomEvent", [
+      ...membersOfOptionsOfEvent("detail"),
+      b.memberStoredIn(["detail"], b.nativeCell(detailsOfEventsCell)),
+    ]),
+    proto: {
+      detail: { ...readsStream(b.any), uses: { this: [b.handedBackFrom(detailsOfEventsCell)] } },
+      initCustomEvent: {
+        args: { type: b.any.optional, bubbles: b.any.optional, cancelable: b.any.optional, detail: b.any.optional },
+        returns: b.undefined,
+        capability: "js",
+        throws: true,
+        runsOnlyOperandCode: true,
+        uses: {
+          this: b.inspected,
+          type: [b.runs("ToPrimitive")],
+          bubbles: b.inspected,
+          cancelable: b.inspected,
+          detail: [b.storedIn(b.nativeCell(detailsOfEventsCell))],
+        },
+        writes: ["ExternalState"],
+        implementation: b.generic,
+      },
+    },
+  },
+  // JSDOMException.cpp :122-167: the message and a name that is no object are made strings of; of options that are an object `name` is read and made a string of, and `cause` is laid on the new object as it is.
+  DOMException: {
+    call: refused,
+    construct: [
+      {
+        args: { message: b.union(b.undefined, b.string).optional, options: b.union(b.undefined, b.string).optional },
+        returns: b.instance("DOMException").fresh,
+        capability: "heap",
+        throws: true,
+        implementation: b.hostCall,
+      },
+      {
+        args: { message: b.any.optional, options: b.any.optional },
+        returns: b.instance("DOMException").fresh,
+        capability: "js",
+        throws: true,
+        runsOnlyOperandCode: true,
+        uses: {
+          message: [b.runs("ToPrimitive")],
+          options: [
+            b.runs("ToPrimitive", "PrototypeChain"),
+            b.runsTransitively(b.named("name", "cause"), "ToPrimitive"),
+            b.contentsStoredIn(b.nativeMemory),
+          ],
+        },
+        implementation: b.hostCall,
+      },
+    ],
+    proto: { code: readsStream(b.int(0, 65535)), name: readsStream(b.string), message: readsStream(b.string) },
+  },
+  // JSErrorEvent.cpp :50-162 :206-236 :305-364, ErrorEvent.cpp :73: `colno` and `lineno` are made numbers of, `filename` and `message` strings; `error` is kept as it is. An event that has none answers null.
+  // WorkerMessagingProxy.cpp, Worker.cpp and WebSocket.cpp make ErrorEvents of their own, with an error of their own making: the getter answers more than the program handed in.
+  ErrorEvent: {
+    ...constructionOfEventBelowEvent("ErrorEvent", [
+      ...membersOfOptionsOfEvent("colno", "error", "filename", "lineno", "message"),
+      b.memberStoredIn(["error"], b.nativeCell(errorsOfEventsCell)),
+    ]),
+    proto: {
+      message: readsStream(b.string),
+      filename: readsStream(b.string),
+      lineno: readsStream(b.f64),
+      colno: readsStream(b.f64),
+      error: { ...readsStream(b.any), uses: { this: [b.returnedFrom(errorsOfEventsCell)] } },
+    },
+  },
+  // JSDOMFormData.cpp :158-178: it looks at none of its operands.
+  FormData: {
+    call: refused,
+    construct: {
+      args: { operands: b.any.rest },
+      returns: b.instance("FormData").fresh,
+      capability: "heap",
+      throws: true,
+      uses: { operands: b.inspected },
+      implementation: b.hostCall,
+    },
+  },
+};
 // An event that nobody dispatched has none.
 const targetOfEvent = {
   ...readsStream(b.null),
@@ -307,15 +457,80 @@ const flagOfEvent = {
   },
 } satisfies b.GetterField;
 const partOfByteStream = (name: string, proto: Readonly<Record<string, b.Field>>) =>
-  b.class(name, { instanceCppClass: b.cppClass(`JS${name}`, `streams/JS${name}.h`), proto });
+  b.class(name, {
+    instanceCppClass: b.cppClass(`JS${name}`, `streams/JS${name}.h`),
+    prototypeListsAllMembers: prototypeBehindGlobalListsAllMembers(name),
+    proto,
+  });
+// A stream that the program has made runs the functions that it was made with. Every refusal has a message that is written in the C++.
+// write() and enqueue() describe nothing themselves. A chunk that a native transformer refuses in a later job (JSTextDecoderStream.cpp :350, JSCompressionStreamShared.cpp :128 :140 :151) is described there, by
+// determineSpecificType() in ErrorCode.cpp, which reads `constructor`, its `name`, makes a text of a name that is an object, and reads the symbol of inspection. What has a truthy constructor is called by that name.
+// What has none is described natively only if it is a plain object whose method of inspection is not callable, and is printed whole otherwise: an object that may have none brings the printer wherever it is refused
+// (noteInstancesLoseTheirConstructor() in AOTFactsOfProgram.cpp).
+const onStream = {
+  capability: "js",
+  throws: true,
+  refusalsPrintNoValue: true,
+  implementation: b.generic,
+} as const;
+const keepsStream = { this: [b.retained] };
+const optionsOfPipe = [b.retained, b.runs(b.named("preventAbort", "preventCancel", "preventClose", "signal"))];
+// The source of the stream is handed the reason.
+const cancelsStream = {
+  ...onStream,
+  this: b.any,
+  args: { reason: b.any.optional },
+  returns: promiseOf(b.undefined),
+  uses: { ...keepsStream, reason: retainedByNativeCode },
+} satisfies b.FunctionField;
+const closesStream = {
+  ...onStream,
+  this: b.any,
+  returns: promiseOf(b.undefined),
+  uses: keepsStream,
+} satisfies b.FunctionField;
+const readsChunk = {
+  ...onStream,
+  this: b.any,
+  returns: promiseOf(b.anyMadeOf("Object", "Uint8Array")),
+  uses: keepsStream,
+} satisfies b.FunctionField;
+const consumesStream = (settledValue: b.TableType) =>
+  ({ ...onStream, returns: promiseOf(settledValue), uses: keepsStream }) satisfies b.FunctionField;
+const viewsOfBytes = [
+  "Int8Array",
+  "Uint8Array",
+  "Uint8ClampedArray",
+  "Int16Array",
+  "Uint16Array",
+  "Int32Array",
+  "Uint32Array",
+  "Float16Array",
+  "Float32Array",
+  "Float64Array",
+  "BigInt64Array",
+  "BigUint64Array",
+  "DataView",
+] as const;
+const methodsOf = (holder: b.BuiltinPath, fields: Readonly<Record<string, b.Field>>) =>
+  Object.entries(fields).flatMap(([name, field]) => b.method(`${holder}.${name}`, field));
 const takesBytesOf = (operand: string, returns: b.TableType) =>
   ({
     args: { [operand]: b.any.optional, others: b.any.rest },
     returns,
     capability: "js",
     throws: true,
-    uses: { this: [b.retained], [operand]: [...handedOver, b.writesContents()], others: handedOver },
+    uses: {
+      this: [b.retained],
+      [operand]: [...retainedByNativeCode, b.writesContents()],
+      others: retainedByNativeCode,
+    },
     implementation: b.generic,
+  }) satisfies b.FunctionField;
+const takesViewOfBytes = (operand: string) =>
+  ({
+    ...takesBytesOf(operand, b.undefined),
+    args: { [operand]: b.instance("DataView").or(...viewsOfBytes.map(name => b.instance(name))), others: b.any.rest },
   }) satisfies b.FunctionField;
 const signalsOfControllersCell = "AbortController.signal";
 const reasonsOfSignalsCell = "AbortSignal.reason";
@@ -490,37 +705,189 @@ export default b.declarations(
       ),
     },
   }),
+  // JSReadRequest.cpp, JSReadableStreamAsyncIterator.cpp, JSReadableStreamDefaultReader.cpp: createIteratorResultObject(). A chunk is what the program's own source or transformer
+  // enqueued, or what native code makes of bytes: a string, or a Uint8Array (streams.rs to_js(), BunStreamSource.cpp, JSDirectStreamController.cpp, JSReadableByteStreamController.cpp,
+  // JSCompressionStreamShared.cpp, WebStreamsMisc.cpp).
+  // JSReadableStream.cpp.
+  methodsOf("ReadableStream.prototype", {
+    locked: readsStream(b.bool),
+    cancel: cancelsStream,
+    getReader: [
+      {
+        ...onStream,
+        args: { options: b.union(b.undefined, b.null).optional },
+        returns: b.instance("ReadableStreamDefaultReader").fresh,
+        uses: keepsStream,
+      },
+      // ERR_INVALID_ARG_VALUE prints a `mode` that is not "byob".
+      {
+        ...onStream,
+        refusalsPrintNoValue: false,
+        args: { options: b.any },
+        returns: b.union(b.instance("ReadableStreamDefaultReader"), b.instance("ReadableStreamBYOBReader")).fresh,
+        uses: { ...keepsStream, options: [b.printedByFormatter("constructor", "mode")] },
+      },
+    ],
+    // What it answers is what `readable` of the operand holds.
+    pipeThrough: {
+      ...onStream,
+      args: { transform: b.any.optional, options: b.any.optional },
+      returns: b.instance("ReadableStream"),
+      uses: {
+        ...keepsStream,
+        transform: [b.retained, b.runs(b.named("readable", "writable"))],
+        options: optionsOfPipe,
+      },
+    },
+    pipeTo: {
+      ...onStream,
+      this: b.any,
+      args: { destination: b.any.optional, options: b.any.optional },
+      returns: promiseOf(b.undefined),
+      uses: { ...keepsStream, destination: retainedByNativeCode, options: optionsOfPipe },
+    },
+    tee: {
+      ...onStream,
+      returns: b.instance("Array").holding({ element: b.instance("ReadableStream") }).fresh,
+      uses: keepsStream,
+    },
+    values: {
+      ...onStream,
+      args: { options: b.any.optional },
+      returns: b.instance("ReadableStreamAsyncIterator").fresh,
+      uses: { ...keepsStream, options: [b.runs(b.named("preventCancel")), b.membersOnlyInspected] },
+    },
+    // BunStreamConsumers.cpp: what Bun.readableStreamToBlob() and the three beside it call.
+    blob: consumesStream(b.anyMadeOf("Blob")),
+    bytes: consumesStream(b.anyMadeOf("Uint8Array", "ArrayBuffer")),
+    json: consumesStream(b.union(b.plainData, b.strictNull, b.bool, b.f64, b.string)),
+    text: consumesStream(b.string),
+  }),
+  // JSReadableStreamAsyncIterator.cpp: nothing on the global object leads to it: values() makes the instances. For a receiver that is no such iterator both answer a new rejected promise.
+  b.class("%ReadableStreamAsyncIterator%", {
+    extends: "AsyncIterator",
+    instanceCppClass: b.cppClass("JSReadableStreamAsyncIterator", "streams/JSReadableStreamAsyncIterator.h"),
+    prototypeCppExpression: "WebCore::JSReadableStreamAsyncIterator::prototype(globalObject->vm(), *globalObject)",
+    hasConstructor: false,
+    prototypeListsAllMembers: true,
+    usesFeature: "WebStreams",
+    proto: {
+      next: readsChunk,
+      return: { ...readsChunk, args: { value: b.any.optional }, uses: { ...keepsStream, value: retainedByNativeCode } },
+    },
+  }),
+  // JSReadableStreamDefaultReader.cpp. For a receiver that is no reader `closed`, `cancel` and `read` answer a new rejected promise.
+  methodsOf("ReadableStreamDefaultReader.prototype", {
+    closed: { ...readsStream(promiseOf(b.undefined)), this: b.any, mutability: "ChangesOnItsOwn" },
+    cancel: cancelsStream,
+    read: readsChunk,
+    // { value, size, done } with a list of chunks, or a promise of one.
+    readMany: { ...onStream, returns: b.anyMadeOf("Object", "Array", "Promise", "Uint8Array"), uses: keepsStream },
+    releaseLock: { ...onStream, returns: b.undefined, uses: keepsStream },
+  }),
+  // JSReadableStreamDefaultController.cpp: INVALID_THIS and ERR_INVALID_STATE, with messages that are written there. enqueue() calls `size` of the strategy and may call `pull` of the source.
+  methodsOf("ReadableStreamDefaultController.prototype", {
+    desiredSize: readsStream(b.union(b.f64, b.null)),
+    close: { ...onStream, returns: b.undefined, uses: keepsStream },
+    enqueue: {
+      ...onStream,
+      args: { chunk: b.any.optional },
+      returns: b.undefined,
+      uses: { ...keepsStream, chunk: retainedByNativeCode },
+    },
+    error: {
+      ...onStream,
+      args: { reason: b.any.optional },
+      returns: b.undefined,
+      uses: { ...keepsStream, reason: retainedByNativeCode },
+    },
+  }),
   streamClass("WritableStream", ["underlyingSink", "strategy"], {
     locked: readsStream(b.bool),
-    abort: answering(promiseOf(b.undefined)),
-    close: answering(promiseOf(b.undefined)),
-    getWriter: answering(b.instance("WritableStreamDefaultWriter")),
+    abort: cancelsStream,
+    close: closesStream,
+    getWriter: { ...onStream, returns: b.instance("WritableStreamDefaultWriter").fresh, uses: keepsStream },
+  }),
+  // JSWritableStreamDefaultWriter.cpp. For a receiver that is no writer closed, ready, abort, close and write answer a new rejected promise. write() calls `size` of the strategy and, now or later, `write` of the sink.
+  methodsOf("WritableStreamDefaultWriter.prototype", {
+    closed: { ...readsStream(promiseOf(b.undefined)), this: b.any, mutability: "ChangesOnItsOwn" },
+    desiredSize: readsStream(b.union(b.f64, b.null)),
+    ready: { ...readsStream(promiseOf(b.undefined)), this: b.any, mutability: "ChangesOnItsOwn" },
+    abort: cancelsStream,
+    close: closesStream,
+    releaseLock: { ...onStream, returns: b.undefined, uses: keepsStream },
+    write: {
+      ...onStream,
+      this: b.any,
+      args: { chunk: b.any.optional },
+      returns: promiseOf(b.undefined),
+      uses: { ...keepsStream, chunk: retainedByNativeCode },
+    },
+  }),
+  // JSWritableStreamDefaultController.cpp, JSTransformStreamDefaultController.cpp: INVALID_THIS and ERR_INVALID_STATE, with messages that are written there.
+  methodsOf("WritableStreamDefaultController.prototype", {
+    signal: readsStream(b.instance("AbortSignal")),
+    error: {
+      ...onStream,
+      args: { reason: b.any.optional },
+      returns: b.undefined,
+      uses: { ...keepsStream, reason: retainedByNativeCode },
+    },
+  }),
+  methodsOf("TransformStreamDefaultController.prototype", {
+    desiredSize: readsStream(b.union(b.f64, b.null)),
+    enqueue: {
+      ...onStream,
+      args: { chunk: b.any.optional },
+      returns: b.undefined,
+      uses: { ...keepsStream, chunk: retainedByNativeCode },
+    },
+    error: {
+      ...onStream,
+      args: { reason: b.any.optional },
+      returns: b.undefined,
+      uses: { ...keepsStream, reason: retainedByNativeCode },
+    },
+    terminate: { ...onStream, returns: b.undefined, uses: keepsStream },
   }),
   // The three classes of a byte stream. A byte stream takes the bytes of the view that it is handed: the buffer behind the view is empty afterwards.
   partOfByteStream("ReadableByteStreamController", {
     byobRequest: readsStream(b.union(b.instance("ReadableStreamBYOBRequest"), b.null)),
     desiredSize: readsStream(b.union(b.f64, b.null)),
-    close: answering(b.undefined),
-    enqueue: takesBytesOf("chunk", b.undefined),
-    error: answering(b.undefined),
+    close: { ...onStream, returns: b.undefined, uses: keepsStream },
+    enqueue: takesViewOfBytes("chunk"),
+    error: {
+      ...onStream,
+      args: { reason: b.any.optional },
+      returns: b.undefined,
+      uses: { ...keepsStream, reason: retainedByNativeCode },
+    },
   }),
   // For a receiver that is no reader both answer a new rejected promise.
   partOfByteStream("ReadableStreamBYOBReader", {
-    closed: { ...readsStream(b.any), this: b.any, mutability: "ChangesOnItsOwn" },
-    cancel: answering(promiseOf(b.undefined)),
-    read: { ...takesBytesOf("view", b.any), this: b.any },
-    releaseLock: answering(b.undefined),
+    closed: { ...readsStream(promiseOf(b.undefined)), this: b.any, mutability: "ChangesOnItsOwn" },
+    cancel: cancelsStream,
+    read: { ...takesBytesOf("view", promiseOf(b.anyMadeOf("Object", ...viewsOfBytes))), this: b.any },
+    releaseLock: { ...onStream, returns: b.undefined, uses: keepsStream },
   }),
   partOfByteStream("ReadableStreamBYOBRequest", {
     view: readsStream(b.any),
     respond: answering(b.undefined),
-    respondWithNewView: takesBytesOf("view", b.undefined),
+    respondWithNewView: takesViewOfBytes("view"),
   }),
   streamClass(
     "TransformStream",
     ["transformer", "writableStrategy", "readableStrategy"],
     endsOfTransformStream("TransformStream"),
   ),
+  methodsOf("TextDecoderStream.prototype", {
+    encoding: readsStream(b.string),
+    fatal: readsStream(b.bool),
+    ignoreBOM: readsStream(b.bool),
+    ...endsOfTransformStream("TextDecoderStream"),
+  }),
+  methodsOf("CompressionStream.prototype", endsOfTransformStream("CompressionStream")),
+  methodsOf("DecompressionStream.prototype", endsOfTransformStream("DecompressionStream")),
   streamClass("TextEncoderStream", [], {
     encoding: readsStream(b.string),
     ...endsOfTransformStream("TextEncoderStream"),
@@ -593,9 +960,6 @@ export default b.declarations(
   Object.entries({
     ByteLengthQueuingStrategy: "ByteLengthQueuingStrategy",
     CountQueuingStrategy: "CountQueuingStrategy",
-    CustomEvent: "CustomEvent",
-    DOMException: "DOMException",
-    ErrorEvent: "ErrorEvent",
     File: "Blob",
     MessageEvent: "MessageEvent",
   }).flatMap(([name, made]) => [
@@ -603,8 +967,10 @@ export default b.declarations(
     ...b.callOfConstructor(name, answering(b.never, b.hostCall)),
   ]),
   // AbortSignal.cpp: what abort() of a controller or AbortSignal.abort() was handed, on this signal or on one that it follows, or the DOMException that toJS() makes of a CommonAbortReason.
+  // A signal that nobody has aborted answers undefined. What abort() was handed may be any value: the type is what native code makes, and no proof.
   b.method("AbortSignal.prototype.reason", {
-    getter: b.any,
+    getter: b.union(b.undefined, b.instance("DOMException")),
+    resultIsDeclaredOnly: true,
     capability: "heap",
     throws: true,
     uses: {

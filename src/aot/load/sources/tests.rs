@@ -1,6 +1,7 @@
 use std::borrow::Cow;
 use std::num::NonZeroUsize;
 
+use bstr::BString;
 use bun_ast::Log;
 use bun_builtin_sources::Archive;
 use bun_options_types::aot_options::AotOptions;
@@ -198,6 +199,7 @@ fn with_freeze_input<R>(
         progress: None,
         left_out_bodies: None,
         discards_first_visits: false,
+        order: 1,
     };
     let loaded = load_program(&session, host, &request).expect("every entry point is found");
     then(&FreezeInput {
@@ -386,10 +388,44 @@ fn entry_point_uses_configured_name() {
         let paths = sources.module_paths(main);
         assert_eq!(paths.public_path, b"/$bunfs/root/app.js");
         assert_eq!(paths.display_path, b"main.ts");
+        assert_eq!(&*sources.path_in_stack_traces(main), b"main.ts");
         assert_eq!(sources.diagnostic_path(main), b"/project/main.ts");
         assert_eq!(sources.kind(main), SourceKind::Program);
         let expected = vec![(Loader::Jsx, b"/$bunfs/root/app.js?jsx".to_vec())];
         assert_eq!(public_paths_at(input.files, &sources, "app.js"), expected);
+    });
+}
+
+#[test]
+fn in_place_stack_traces_have_disk_paths() {
+    let files = [
+        ("main.ts", "import './src/deep.ts';"),
+        ("src/deep.ts", "export {};"),
+    ];
+    with_freeze_input(&files, &LoadSetup::default(), |input| {
+        let paths_with = |runs_in_place| {
+            let aot = AotOptions {
+                runs_in_place,
+                ..AotOptions::default()
+            };
+            let options = create_options(&aot, &[], &["main.ts"]);
+            let input = FreezeInput {
+                options: &options,
+                ..*input
+            };
+            let sources = freeze_sources(&input, &run_serially).unwrap().sources;
+            ["main.ts", "src/deep.ts"].map(|name| {
+                let file = file_at(input.files, name);
+                BString::from(&*sources.path_in_stack_traces(file))
+            })
+        };
+        assert_eq!(paths_with(false), ["main.ts", "src/deep.ts"]);
+        if !cfg!(windows) {
+            assert_eq!(
+                paths_with(true),
+                ["/project/main.ts", "/project/src/deep.ts"]
+            );
+        }
     });
 }
 
@@ -452,6 +488,7 @@ fn found_entry_point_follows_the_written_ones_under_its_own_name() {
             because: FoundBecause::NamedByData,
             started_at: None,
             starts: Vec::new(),
+            is_guess: false,
         }];
         let input = FreezeInput {
             options: &options,

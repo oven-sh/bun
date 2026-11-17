@@ -2,7 +2,7 @@
 // whose text only the run knows: the pattern that the program makes has no record, nobody asks for the one in the image, and the run time's own matcher gives the answers of plain Bun.
 // A wrong guess costs a miss, never a wrong match.
 // COUNTER: RegExpsCreatedWithoutRecord = 1
-// COUNTER: RegExpPredictedTextsCreated = 0
+// COUNTER: PredictedRegExpsCreated = 0
 const routes = ["/a", "/b/[0-9]+"];
 let matcher = null;
 function match(path) {

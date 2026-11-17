@@ -2,9 +2,9 @@
 // import from it, and a link looks for them once such a mock is there. The importer of a file that nobody mocks lists nothing.
 // RUN: link
 // OPTIONS: builtin-modules
-// CHECK: module {{*}}displayPath="reads-mocked.mjs" {{*}}requiredNames=[{module=[[face]] name="other" mayBeAbsent=true}]
+// CHECK: module {{*}}displayPath="reads-mocked.mjs" {{*}}requiredNames=[{module=[[facade]] name="other" mayBeAbsent=true}]
 // CHECK-NOT: module {{*}}displayPath="reads-real.mjs" {{*}}requiredNames
-// CHECK: module {{*}}displayPath="hands-on.mjs" {{*}}requiredNames=[{module=[[face]] name="other" mayBeAbsent=true exportName="other" specifier="./mocked.cjs"}]
+// CHECK: module {{*}}displayPath="hands-on.mjs" {{*}}requiredNames=[{module=[[facade]] name="other" mayBeAbsent=true exportName="other" specifier="./mocked.cjs"}]
 
 // FILE: main.mjs
 import { mock } from "bun:test";

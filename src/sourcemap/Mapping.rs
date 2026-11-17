@@ -174,15 +174,11 @@ impl List {
     }
 
     pub(crate) fn sort(&mut self) {
-        // `MultiArrayList::sort(&mut self, ctx)` swaps the `generated` column
-        // in place, so the comparator cannot hold a `&[LineColumnOffset]` over
-        // it (that aliased the swap before this rewrite). Instead capture the
-        // raw column base + len; the column is never reallocated during sort.
         both_lists!(&mut self.r#impl, |list| {
-            let generated: *const LineColumnOffset =
-                list.items_raw::<"generated", LineColumnOffset>();
-            let len = list.len();
-            list.sort(&SortContext { generated, len });
+            list.sort_by_column::<"generated", LineColumnOffset>(|a, b| {
+                (a.lines.zero_based(), a.columns.zero_based())
+                    .cmp(&(b.lines.zero_based(), b.columns.zero_based()))
+            });
         })
     }
 
@@ -271,29 +267,6 @@ impl List {
         count: usize,
     ) -> Result<(), bun_alloc::AllocError> {
         self.r#impl.ensure_total_capacity(count)
-    }
-}
-
-struct SortContext {
-    generated: *const LineColumnOffset,
-    len: usize,
-}
-
-impl bun_collections::multi_array_list::SortContext for SortContext {
-    fn less_than(&self, a_index: usize, b_index: usize) -> bool {
-        debug_assert!(a_index < self.len && b_index < self.len);
-        // SAFETY: indices are `< len`; `generated` is the column base pointer
-        // captured before sort, which swaps elements in place but never
-        // reallocates, so it remains valid for `len` reads throughout.
-        let (a, b) = unsafe { (*self.generated.add(a_index), *self.generated.add(b_index)) };
-
-        if a.lines.zero_based() != b.lines.zero_based() {
-            return a.lines.zero_based() < b.lines.zero_based();
-        }
-        if a.columns.zero_based() != b.columns.zero_based() {
-            return a.columns.zero_based() < b.columns.zero_based();
-        }
-        a_index < b_index
     }
 }
 

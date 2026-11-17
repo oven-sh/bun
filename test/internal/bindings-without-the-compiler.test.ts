@@ -15,7 +15,7 @@ test("a Bun built without the compiler defines every function that BunCompiledMo
   const declaration = /^(?!inline |\/\/)[\w:<>*&, ]+?[ *&](\w+)\([^{}\n]*\);$/gm;
   const declared = Array.from(header.matchAll(declaration), match => match[1]!);
   expect(declared.length).toBeGreaterThan(30);
-  expect(declared).toContain("compiledModulesRunInPlaceOfFiles");
+  expect(declared).toContain("runsCompiledModules");
 
   expect(declared.filter(name => !new RegExp(`[ *&]${name}\\(`).test(withoutTheCompiler))).toEqual([]);
 });

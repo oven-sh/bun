@@ -1,0 +1,39 @@
+# -- source: a-guess-that-only-one-way-through-a-turn-leans-on-is-not-asked-in-front-of-the-loop.ts
+# declare function sink(value: unknown): void;
+# type Holder = { step: number };
+# function keep<T>(value: T): T { (globalThis as any).kept = value; return (globalThis as any).kept; }
+# function inOneArm(n: number, holder: Holder | undefined, mask: number): number {
+#   let a = 0;
+#   for (let i = 0; i < n; i++) { if (i & mask) a = (a + holder!.step) | 0; a = (a + i) | 0; }
+#   return a;
+# }
+# function behindContinue(n: number, holder: Holder | undefined, mask: number): number {
+#   let a = 0;
+#   for (let i = 0; i < n; i++) { if (i & mask) continue; a = (a + holder!.step) | 0; }
+#   return a;
+# }
+# function inEveryTurn(n: number, holder: Holder | undefined, mask: number): number {
+#   let a = 0;
+#   for (let i = 0; i < n; i++) { a = (a + holder!.step) | 0; if (i & mask) a = (a + i) | 0; }
+#   return a;
+# }
+# const limits: number[] = JSON.parse("[9, 0, 1, 15]");
+# const none = keep<Holder | undefined>(undefined), some = keep<Holder | undefined>({ step: 3 });
+# sink([inOneArm(limits[0]! | 0, none, limits[1]! | 0), inOneArm(limits[0]! | 0, some, limits[2]! | 0), behindContinue(limits[0]! | 0, some, limits[2]! | 0), inEveryTurn(limits[0]! | 0, some, limits[2]! | 0)].join(" "));
+# -- end of source
+# A test that stands in front of a loop sends the WHOLE loop to its other copy where it fails, and with a guess in front that copy is closed. So a guess stands there only where every turn that comes round
+# passes the operation that leans on it. `holder` is undefined in the first call and no turn of it reads `holder.step`: asked in front, the test failed and all nine turns ran closed. In a great loop
+# (the one that walks up the parents in TypeScript's resolveNameHelper()) some such test fails at most entries.
+# f2 = inOneArm, f3 = behindContinue, f4 = inEveryTurn
+# OPTIONS: check=Validate
+# RUN: walk f2 f3 f4 mechanisms=all
+# CHECK-LABEL: code f2:Body
+# CHECK-NOT: frequency=Rare isLoopHead=true
+# CHECK-LABEL: code f3:Body
+# CHECK-NOT: frequency=Rare isLoopHead=true
+# CHECK-LABEL: code f4:Body
+# CHECK: ShapeTest
+# CHECK: frequency=Rare isLoopHead=true
+# RUN(SHELL): run-in-shell globalThis.sink = print;
+# SHELL: 36 48 15 43
+# SHELL: exited with 0

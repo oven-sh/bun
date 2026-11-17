@@ -5,7 +5,7 @@
 // application data, the relay puts a bad record in front of the peer's next, valid, message ("later"). The relay never
 // closes the owner's connection itself, so `closedByOwner` only resolves when the owner's side sends a FIN or a RST.
 //
-// Two engines: openssl.c drives a socket, SSLWrapper drives TLS over a Duplex, a CONNECT tunnel or a named pipe.
+// Two engines: openssl.cpp drives a socket, SSLWrapper drives TLS over a Duplex, a CONNECT tunnel or a named pipe.
 import { RedisClient, SQL } from "bun";
 import { afterAll, describe, expect, test } from "bun:test";
 import { tls as cert } from "harness";

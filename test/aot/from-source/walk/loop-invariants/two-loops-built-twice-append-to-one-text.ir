@@ -1,4 +1,4 @@
-# two loops in a row append what they read out of a list to one text, and the list is only expected to be one: the guess at its type has each loop built twice (Walker::buildLoopTwice()), and the text, which lies in its builder round the first loop, enters the second
+# two loops in a row append what they read out of a list to one text, and the list is only expected to be one: the guess at its type has each loop built twice (Walker::tryVersionLoop()), and the text, which lies in its builder round the first loop, enters the second
 # It was "an edge hands a text in its builder to a parameter that holds no builder".
 # f1 = joinsTwice
 # -- source: two-loops-built-twice-append-to-one-text.ts

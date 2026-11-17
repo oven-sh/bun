@@ -1,0 +1,16 @@
+# f1 = Holder, f2 = move, f3 = scatter, f4 = pick
+# -- source: main.ts
+# class Holder { list: number[] = []; from: number[] = []; out: number[] = []; constructor(n: number) { for (let k = 0; k < n; k++) { this.list.push(k & 3); this.from.push(k & 7); this.out.push(0); } }
+#   move(n: number): void { for (let k = 0; k < n; k++) this.out[k & 7] = this.list[k]!; }
+#   scatter(n: number): void { for (let k = 0; k < n; k++) this.list[this.from[k]!] = k; }
+#   pick(n: number): number { let sum = 0; for (let k = 0; k < n; k++) sum += this.list[this.from[k]!]!; return sum; } }
+# const holder = new Holder(16); holder.move(16); holder.scatter(16);
+# print(holder.pick(16), holder.out.join(), holder.list.join());
+# -- end of source
+# A list in a field is read in front of the loop also where the key is reckoned in the turn or read out of another list.
+# RUN: walk f2 mechanisms=all
+# CHECK: = GetArrayElement {{*}} arrayStorage=Int32 level=Proven
+# RUN(SCATTER): walk f3 mechanisms=all
+# SCATTER: = GetArrayElement {{*}} arrayStorage=Int32 level=Proven
+# RUN(ANSWERS): run-in-shell mechanisms=all
+# ANSWERS: 184 0,1,2,3,0,1,2,3,0,0,0,0,0,0,0,0 8,9,10,11,12,13,14,15,0,1,2,3,0,1,2,3

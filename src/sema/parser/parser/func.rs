@@ -249,6 +249,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
             && let Some(close) =
                 super::skipped_blocks::find_end_of_block(self.lx.src, open as usize)
         {
+            self.f.rare_syntax |= rare::LEFT_OUT;
             self.lx.start_at(close as u32);
         }
         // `None` only for a block that recovery parses without its `{`.

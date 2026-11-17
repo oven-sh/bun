@@ -1,0 +1,33 @@
+# -- source: main.ts
+# declare function print(...values: unknown[]): void;
+# interface Kind { id: number; }
+# const tables: Map<string, Kind>[] = [];
+# const lists: string[][] = [["x", "7"], ["70000@7"]];
+# let count = 0;
+# function mark(other: Kind | undefined): string { return other ? "@" + other.id : ""; }
+# function tableBehindTheSum(kind: Kind, other: Kind | undefined, index: number): Kind | undefined { const key = kind.id + mark(other); const table = tables[index !== -1 ? index : count - 1]; const found = table.get(key); if (found) return found; table.set(key, kind); return undefined; }
+# function listBehindTheSum(kind: Kind, other: Kind | undefined): number { const key = kind.id + mark(other); const list = lists[count - 2]; return list.indexOf(key); }
+# function grow(): void { tables[count] ??= new Map(); count++; }
+# grow(); grow();
+# const kinds: Kind[] = [{ id: 7 }, { id: 70000 }, { id: 7 }];
+# for (const kind of kinds) print(tableBehindTheSum(kind, undefined, -1) === undefined, tableBehindTheSum(kind, kinds[1], 0) === undefined, tableBehindTheSum(kind, undefined, -1) === kind);
+# print([...tables[0].keys()].join(), [...tables[1].keys()].join());
+# print(listBehindTheSum(kinds[0], undefined), listBehindTheSum(kinds[1], kinds[0]));
+# -- end of source
+# f2 = tableBehindTheSum, f3 = listBehindTheSum
+# `number + text` whose first reader is `table.get(sum)` is made as a key: found in the table of keys by the number and the text, without a text of the number and without a joining.
+# Whether the reader's receiver is a Map or a Set is asked where the sum is walked. Here the receiver is read by key out of a list BEHIND the sum: nothing is built of it yet and nothing is declared of the read:
+# what Link says that the read finds answers. The word picks the form in which the text is made and nothing else. A list read the same way is no table: its sum stays a sum.
+# RUN: walk f2 mechanisms=all
+# CHECK: = Strcat {{*}}[isLikelyKey]
+# CHECK: = GetArrayElement
+# CHECK: inlineBuiltin=MapGet
+# RUN(NEVER): walk f3 mechanisms=all
+# NEVER-NOT: isLikelyKey
+# RUN(ANSWER): run-in-shell void 0;
+# ANSWER: true true true
+# ANSWER-NEXT: true true true
+# ANSWER-NEXT: false false false
+# ANSWER-NEXT: 7@70000,70000@70000 7,70000
+# ANSWER-NEXT: 1 -1
+# ANSWER-NEXT: exited with 0

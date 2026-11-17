@@ -2,9 +2,8 @@ use bun_core::feature_flags;
 use bun_sys::{self, Fd};
 use bun_url::URL;
 
-#[derive(Copy, Clone)]
 pub struct SendFile {
-    pub fd: Fd,
+    pub file: bun_sys::File,
     pub remain: usize,
     pub offset: usize,
     pub content_size: usize,
@@ -36,7 +35,7 @@ impl SendFile {
             // this does the syscall directly, without libc
             let val = bun_sys::linux::sendfile(
                 socket_fd.native(),
-                self.fd.native(),
+                self.file.fd().native(),
                 Some(&mut signed_offset),
                 self.remain,
             );
@@ -64,7 +63,7 @@ impl SendFile {
             let signed_offset: i64 = self.offset as u64 as i64;
             // FreeBSD: sendfile(fd, s, offset, nbytes, *sbytes, flags)
             let errcode = bun_sys::get_errno(bun_sys::c::sendfile(
-                self.fd.native(),
+                self.file.fd().native(),
                 socket_fd.native(),
                 signed_offset,
                 adjusted_count as usize,
@@ -92,7 +91,7 @@ impl SendFile {
             // Same-width signedness flip; `as` is a bit-reinterpret here.
             let signed_offset: i64 = self.offset as u64 as i64;
             let errcode = bun_sys::get_errno(bun_sys::c::sendfile(
-                self.fd.native(),
+                self.file.fd().native(),
                 socket_fd.native(),
                 signed_offset,
                 &mut sbytes,

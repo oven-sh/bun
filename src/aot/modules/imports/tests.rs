@@ -1323,6 +1323,45 @@ fn holder_used_as_a_value_holds_the_exports_object() {
     });
 }
 
+const FILLED_BY_AN_EXPORT_HELPER: &str = r#"var __defProp = Object.defineProperty;
+var __export = (target, all) => {
+  for (var name in all)
+    __defProp(target, name, { get: all[name], enumerable: true });
+};
+var unread = () => lib_exports.early;
+var lib_exports = {};
+__export(lib_exports, { add: () => add, early: () => add, odd: () => add + 1, twice: () => add, twice: () => other });
+function add(a) { return a; }
+var other = 2;
+console.log(unread, lib_exports.add(1), lib_exports.odd, lib_exports.twice, lib_exports.none);
+"#;
+
+#[test]
+fn member_of_what_an_export_helper_fills_is_the_binding_behind_its_getter() {
+    with_program(&[("main.cjs", FILLED_BY_AN_EXPORT_HELPER)], |program| {
+        let file = program.file("main.cjs");
+        let id = symbol_named(program.input, file, "add");
+        let add = Member::Binding(Sym { file, id });
+        assert_eq!(program.member("main.cjs", "add"), Some(add));
+        for name in ["early", "odd", "twice", "none"] {
+            assert_eq!(program.member("main.cjs", name), None, "{name}");
+        }
+    });
+}
+
+#[test]
+fn member_of_what_an_export_helper_fills_stays_a_getter_beside_an_enum() {
+    let with_enum = format!("enum Color {{ Red }}\n{FILLED_BY_AN_EXPORT_HELPER}");
+    for (text, is_bound) in [
+        (FILLED_BY_AN_EXPORT_HELPER, true),
+        (with_enum.as_str(), false),
+    ] {
+        with_program(&[("main.ts", text)], |program| {
+            assert_eq!(program.member("main.ts", "add").is_some(), is_bound);
+        });
+    }
+}
+
 const TYPESCRIPT_IMPORT_HELPERS: &str = r#"var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
     if (k2 === undefined) k2 = k;
     var desc = Object.getOwnPropertyDescriptor(m, k);

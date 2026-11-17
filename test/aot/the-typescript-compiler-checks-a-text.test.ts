@@ -21,7 +21,14 @@ async function run(cmd: string[], cwd: string, seconds: number) {
     killSignal: "SIGKILL",
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  return { stdout, stderr: stderr.split("\n").slice(-30).join("\n"), exitCode, signal: proc.signalCode };
+  const purchasesOfLoopsThatFailed = /^LoopVersioningAttemptsFailed (\d+)$/m.exec(stderr)?.[1];
+  return {
+    stdout,
+    stderr: stderr.split("\n").slice(-30).join("\n"),
+    exitCode,
+    signal: proc.signalCode,
+    ...(purchasesOfLoopsThatFailed && { purchasesOfLoopsThatFailed: Number(purchasesOfLoopsThatFailed) }),
+  };
 }
 
 // A debug build or one with ASAN takes an hour. AOT_PROGRAMS=all runs it there too.
@@ -39,15 +46,31 @@ describe.skipIf(wanted === "quick")("compile/aot/the TypeScript compiler", () =>
   test("checks a text", async () => {
     const executable = join(folder, "check");
     const build = await run(
-      [bunExe(), ...compileCommand, ...withoutDebugInformation(), "./typescript-check.ts", "--outfile", executable],
+      [
+        bunExe(),
+        ...compileCommand,
+        ...withoutDebugInformation(),
+        "--explain=statistics",
+        "./typescript-check.ts",
+        "--outfile",
+        executable,
+      ],
       folder,
       1500,
     );
-    expect({ step: "build", stderr: build.stderr, exitCode: build.exitCode, signal: build.signal }).toEqual({
+    // A loop whose typed copy could not be finished keeps its plain copy and answers rightly: nothing but this count says that the copy is lost.
+    expect({
+      step: "build",
+      stderr: build.stderr,
+      exitCode: build.exitCode,
+      signal: build.signal,
+      purchasesOfLoopsThatFailed: build.purchasesOfLoopsThatFailed,
+    }).toEqual({
       step: "build",
       stderr: expect.not.stringMatching(/^error\b/m),
       exitCode: 0,
       signal: null,
+      purchasesOfLoopsThatFailed: 0,
     });
     expect({ step: "run", ...(await run([executable, "2"], folder, 600)) }).toEqual({
       step: "run",

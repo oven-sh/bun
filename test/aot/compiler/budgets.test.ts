@@ -92,8 +92,8 @@ else if (whyNotCounted) console.error(`SKIPPED: test/aot/compiler/budgets.test.t
 // Goals of the design that are not yet met, with what one run measured. Each of them runs every time, and no limit is raised for it.
 // Once one is met its test fails: take its entry out.
 const measuredWhereNotYetMet: Record<Dress, Partial<Record<StageName | Touch, string>>> = {
-  typed: { lowering: "1.81", scan: "1.57", walk: "1.77", compile: "1.20", ValuesWalked: "1.210" },
-  erased: { lowering: "2.06", scan: "1.62", walk: "1.92", compile: "1.24", ValuesWalked: "1.214" },
+  typed: { lowering: "1.81", scan: "1.57", walk: "1.77", compile: "1.20" },
+  erased: { lowering: "2.06", scan: "1.62", walk: "1.92", compile: "1.24" },
 };
 const nameOfCheck = (name: string, measured: string | undefined, bound: string) =>
   measured ? `${name}: ${measured} ${bound}` : name;

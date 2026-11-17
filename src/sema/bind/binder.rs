@@ -280,6 +280,7 @@ pub(super) struct Binder<'f, 's> {
     label_edges: Vec<Label>,
     /// An index in `label_edges` and an antecedent of that label. See `Label::indexed_edges`.
     edges_of_long_labels: crate::util::FxHashSet<(usize, FlowId)>,
+    private_names_of_classes: crate::util::FxHashSet<(ClassId, Atom)>,
     /// `FlowFlagsReferenced`, one bit per flow node.
     referenced: Vec<u64>,
     /// The start flow node for functions without a body, where no outer narrowing applies.
@@ -399,6 +400,7 @@ impl<'f, 's> Binder<'f, 's> {
             is_unchecked: false,
             label_edges: std::mem::take(&mut buffers.label_edges),
             edges_of_long_labels: Default::default(),
+            private_names_of_classes: Default::default(),
             referenced: Vec::new(),
 
             start_of_signatures: FlowId::NONE,
@@ -1576,16 +1578,7 @@ impl<'f, 's> Binder<'f, 's> {
     fn file(&mut self) {
         // `setCommonJSModuleIndicator`: not in a file that imports or exports.
         if self.f.is_js && (!self.f.has_module_syntax || self.f.is_forced_module) {
-            self.b.commonjs_indicator = (0..self.f.exprs.len() as u32).map(ExprId).find(|&e| {
-                matches!(self.f[e].kind, ExprKind::Call(_) | ExprKind::Assign { .. })
-                    && (require_argument(self.f, e).is_some()
-                        || matches!(
-                            assignment_declaration_kind(self.f, e),
-                            JsDeclarationKind::ModuleExports
-                                | JsDeclarationKind::ExportsProperty(_)
-                                | JsDeclarationKind::ObjectDefinePropertyExports
-                        ))
-            });
+            self.b.commonjs_indicator = find_commonjs_indicator(self.f);
         }
         let is_module = self.f.has_module_syntax || self.b.commonjs_indicator.is_some();
         // `bindSourceFileAsExternalModule`
@@ -2004,7 +1997,7 @@ impl<'f, 's> Binder<'f, 's> {
             self.b.expando_declarations.push(e);
         }
         self.expando_assignments = assignments;
-        self.b.expando_declarations.as_mut_slice().sort_unstable();
+        self.b.expando_declarations.sort_unstable();
     }
 
     fn list_nested_names(&mut self) {
@@ -2366,16 +2359,16 @@ impl<'f, 's> Binder<'f, 's> {
         }
         self.assigned = assigned;
         self.b.assignments.sort_unstable_by_key(|a| (a.0.0, a.1.0));
-        self.b.type_query_operands.as_mut_slice().sort_unstable();
+        self.b.type_query_operands.sort_unstable();
         // A pattern with a default is gone through for its own assignment and for the pattern around it.
-        self.b.assignment_patterns.as_mut_slice().sort_unstable();
+        self.b.assignment_patterns.sort_unstable();
         self.b.assignment_patterns.dedup();
         self.b.lists_assignment_patterns = true;
-        self.b.unchecked_exprs.as_mut_slice().sort_unstable();
-        self.b.unchecked_types.as_mut_slice().sort_unstable();
+        self.b.unchecked_exprs.sort_unstable();
+        self.b.unchecked_types.sort_unstable();
         self.b.free_idents.sort_unstable_by_key(|f| f.0);
         self.b.alias_idents.sort_unstable_by_key(|a| a.0);
-        self.b.arguments_objects.as_mut_slice().sort_unstable();
+        self.b.arguments_objects.sort_unstable();
         // `checkUnmatchedJSDocParameters`: a function that refers to `arguments` is checked less
         // strictly.
         let f = self.f;
@@ -4101,6 +4094,11 @@ impl<'f, 's> Binder<'f, 's> {
         let c = &self.f[id];
         self.b.class_owner[id.idx()] = owner;
         self.containing_classes.push(id);
+        for member in c.members.iter() {
+            if let PropKey::Private(name) = self.f[member].key {
+                self.private_names_of_classes.insert((id, name));
+            }
+        }
         let in_class_decorator = std::mem::replace(&mut self.is_in_class_decorator, false);
         // `Resolve`, `KindDecorator`: the search only skips the class if it starts in a class
         // declaration's decorator. A class expression's decorator sees its name and type
@@ -4919,10 +4917,7 @@ impl<'f, 's> Binder<'f, 's> {
     /// starts in a class's decorator skips that class.
     fn private_name(&mut self, id: ExprId, name: Atom) {
         let searched = self.containing_classes.len() - usize::from(self.is_in_class_decorator);
-        let declares = |class: &&ClassId| {
-            let mut members = self.f[**class].members.iter();
-            members.any(|m| self.f[m].key == PropKey::Private(name))
-        };
+        let declares = |class: &&ClassId| self.private_names_of_classes.contains(&(**class, name));
         if let Some(&class) = self.containing_classes[..searched]
             .iter()
             .rev()

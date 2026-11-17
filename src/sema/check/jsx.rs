@@ -9,6 +9,7 @@
 
 use super::*;
 use crate::resolve::JsxEmit;
+use std::collections::hash_map::Entry;
 
 /// The single property of `JSX.ElementAttributesProperty` or `JSX.ElementChildrenAttribute`.
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
@@ -648,10 +649,12 @@ impl<'p, 's> Checker<'p, 's> {
                 segment
             });
         };
+        let mut places = crate::util::FxHashMap::<Atom, usize>::default();
         for p in jsx.attrs.iter() {
             let prop = &hir[p];
             if prop.kind == PropKind::Spread {
                 flush(self, &mut spread, &mut pending);
+                places.clear();
                 let ty = self.type_of_expr(file, prop.value);
                 let ty = self.reduced(ty);
                 if self.is_any(ty) {
@@ -686,9 +689,12 @@ impl<'p, 's> Checker<'p, 's> {
             };
             // Attributes with the same name are declarations of one symbol, and `compareSymbols`
             // orders by the first declaration.
-            match pending.props.iter_mut().find(|x| x.name == name) {
-                Some(earlier) => *earlier = attribute,
-                None => pending.props.push(attribute),
+            match places.entry(name) {
+                Entry::Occupied(place) => pending.props[*place.get()] = attribute,
+                Entry::Vacant(place) => {
+                    place.insert(pending.props.len());
+                    pending.props.push(attribute);
+                }
             }
         }
         let children = self.jsx_child_types(file, e);

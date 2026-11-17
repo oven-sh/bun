@@ -1,0 +1,15 @@
+# `m.get(...["a"])`, `m.set(...["b", 2])`, `new URL(...[text])`: a call that takes a list whose elements are in sight goes by one row of the built-in, as the same call written out does;
+# it has a list and no written arguments. The forms that look at the written arguments (a piece of a text as a key of a map; a URL that is never made) asked it for them: the compiler aborted.
+# -- source: main.ts
+# declare function print(value: any): void;
+# const m = new Map<string, number>([["a", 1]]);
+# function miss(key: string) { return m.get(...([key] as [string])); }
+# m.set(...(["b", 2] as [string, number]));
+# const text = "x=a;y=b";
+# print(m.get(...(["a"] as [string])) + " " + miss("zz") + " " + m.get(...([text.slice(2, 3)] as [string])) + " " + m.has(...(["b"] as [string])) + " " + m.size);
+# -- end of source
+# RUN(BUILDS): compile DirectCalls mechanisms=all
+# BUILDS: statistic DirectCalls
+# RUN(ANSWERS): run-in-shell
+# ANSWERS: 1 undefined 1 true 2
+# ANSWERS-NEXT: exited with 0

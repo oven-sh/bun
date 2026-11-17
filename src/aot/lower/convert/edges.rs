@@ -177,7 +177,7 @@ impl FileLowering<'_, '_, '_, '_> {
         true
     }
 
-    fn reads_field_that_may_be_absent(&mut self, access: ExprId) -> bool {
+    pub(super) fn reads_field_that_may_be_absent(&mut self, access: ExprId) -> bool {
         let Some((object, MemberKey::Name(name))) = self.hir.member_key(access) else {
             return false;
         };

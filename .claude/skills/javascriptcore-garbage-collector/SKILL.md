@@ -241,7 +241,7 @@ let Some(js_this) = self.this_value.try_get() else { return };
 self.this_value.finalize();
 ```
 
-See `ServerWebSocket`, `UDPSocket`, `MySQLConnection`, `ValkeyClient` for real examples.
+See `ServerWebSocket`, `UDPSocket`, `MySQLConnection` for real examples.
 
 **`JSRef` requires a finalizer.** The `Weak` state is only sound because `finalize()` flips it to `Finalized` before the cell is reused. A `refCounted` class of a `.bind.ts` file declares `finalize: true` and calls `JsRef::finalize` from its `fn finalize(&self)`; a struct stored inside its object is dropped with it.
 

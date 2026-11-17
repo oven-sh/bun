@@ -1,0 +1,26 @@
+# `adj[queue.shift()!]`, `nodes[ids.get(name)!]`, `a[b[i]!]`: the key is a number or `undefined`. Under "undefined", "null", "true" and "false" nothing can lie above a list or a view: they are closed keys of every
+# locked prototype, as the names of numbers are. Such a key names an element, what the program laid on the list itself, or nothing, so nobody gets the list as `this`. The read let the list out, and every object in it.
+# L0 .. L6 = the seven classes, each held by a list of its own that is read under one form of such a key.
+# RUN: link layouts mechanisms=all
+# CHECK: layout L0 changes=[] stays-with-compiled-code
+# CHECK: layout L1 changes=[] stays-with-compiled-code
+# CHECK: layout L2 changes=[] stays-with-compiled-code
+# CHECK: layout L3 changes=[] stays-with-compiled-code
+# CHECK: layout L4 changes=[] stays-with-compiled-code
+# CHECK: layout L5 changes=[] stays-with-compiled-code
+# CHECK: layout L6 changes=[] stays-with-compiled-code
+# -- source: a-list-read-under-a-key-that-may-be-undefined-stays-in-sight.ts
+# class ByShift { n = 1; }
+# class ByPop { n = 2; }
+# class ByGet { n = 3; }
+# class ByView { n = 4; }
+# class ByList { n = 5; }
+# class ByTruth { n = 6; }
+# class ByNull { n = 7; }
+# const queue: number[] = [0], stack: number[] = [0], order: number[] = [0], view = new Uint8Array(1), ids = new Map<string, number>();
+# ids.set("a", 0);
+# const parent: (number | null)[] = [0];
+# const a = [new ByShift()], b = [new ByPop()], c = [new ByGet()], d = [new ByView()], e = [new ByList()], f = [new ByTruth()], g = [new ByNull()];
+# const truth = (queue.length > 5) as unknown as number;
+# console.log(a[queue.shift()!]!.n + b[stack.pop()!]!.n + c[ids.get("a")!]!.n + d[view[0]!]!.n + e[order[0]!]!.n + (f[truth]?.n ?? 0) + g[parent[0]!]!.n);
+# -- end of source

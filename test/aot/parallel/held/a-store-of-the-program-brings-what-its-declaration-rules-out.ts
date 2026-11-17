@@ -1,4 +1,4 @@
-// COUNTER: FieldsLeftSlotByStoreOfOtherType >= 50
+// COUNTER: FieldsEvictedByTypeMismatch >= 50
 // The stores of the program itself lie: what a parameter, a variable or a result is declared as is not what arrives. Each store, each literal and each constructor is entered with what is declared
 // many times, and then with every other kind of value. What is read back, by name, by key and by a list of the keys, is what was stored.
 

@@ -185,6 +185,27 @@ describe("bundler", () => {
       },
     });
   }
+  // --bytecode selects cjs output. A wrapped CommonJS file that starts with "use strict"
+  // keeps the directive in its wrapper, so the embedded bytecode runs it as strict code.
+  itBundled("compile/BytecodeKeepsUseStrictOfWrappedCommonJS", {
+    compile: true,
+    bytecode: true,
+    files: {
+      "/entry.mjs": /* js */ `
+        import strict from "./strict.cjs";
+        import sloppy from "./sloppy.cjs";
+        console.log(strict, sloppy);
+      `,
+      "/strict.cjs": /* js */ `
+        "use strict";
+        module.exports = (function () { return this === undefined; })();
+      `,
+      "/sloppy.cjs": /* js */ `
+        module.exports = (function () { return this === undefined; })();
+      `,
+    },
+    run: { stdout: "true false" },
+  });
   // ESM bytecode test matrix: each scenario × {default, minified} = 2 tests per scenario.
   // With --compile, static imports are inlined into one chunk, but dynamic imports
   // create separate modules in the standalone graph — each with its own bytecode + ModuleInfo.
@@ -436,6 +457,51 @@ describe("bundler", () => {
     },
     outfile: "dist/out",
     run: { stdout: "Hello, world!" },
+  });
+  // Two modules with the same bytes. The executable reads each by its own type.
+  for (const order of ["file-first", "text-first"]) {
+    const imports = [`import path from "./t.txt" with { type: "file" };`, `import text from "./t.txt";`];
+    itBundled(`compile/FileAndTextOfOneFile/${order}`, {
+      compile: true,
+      files: {
+        "/entry.ts": /* js */ `
+          ${(order === "file-first" ? imports : imports.reverse()).join("\n")}
+          console.log(path.endsWith(".txt"), text, await Bun.file(path).text());
+        `,
+        "/t.txt": "hello world",
+      },
+      run: { stdout: "true hello world hello world" },
+    });
+  }
+  // A file imported with { type: "file" } is embedded byte for byte, whatever it begins with and whatever its extension.
+  itBundled("compile/EmbeddedFileKeepsItsBytes", {
+    compile: true,
+    files: {
+      "/entry.ts": /* js */ `
+        import { readFileSync } from "fs";
+        import utf8Bin from "./utf8.bin" with { type: "file" };
+        import utf8Txt from "./utf8.txt" with { type: "file" };
+        import utf8Js from "./utf8.js" with { type: "file" };
+        import utf16Bin from "./utf16.bin" with { type: "file" };
+        import utf16Json from "./utf16.json" with { type: "file" };
+        import bytesBin from "./bytes.bin" with { type: "file" };
+        import bytesTs from "./bytes.ts" with { type: "file" };
+        for (const path of [utf8Bin, utf8Txt, utf8Js, utf16Bin, utf16Json, bytesBin, bytesTs]) {
+          console.log(readFileSync(path).toString("hex"));
+        }
+      `,
+      "/utf8.bin": Buffer.from("efbbbf61620a", "hex"),
+      "/utf8.txt": Buffer.from("efbbbf61620a", "hex"),
+      "/utf8.js": Buffer.from("efbbbf61620a", "hex"),
+      "/utf16.bin": Buffer.from("fffe61006200", "hex"),
+      "/utf16.json": Buffer.from("fffe61006200", "hex"),
+      "/bytes.bin": Buffer.from("fffe000180810a", "hex"),
+      "/bytes.ts": Buffer.from("fffe000180810a", "hex"),
+    },
+    outfile: "dist/out",
+    run: {
+      stdout: "efbbbf61620a\nefbbbf61620a\nefbbbf61620a\nfffe61006200\nfffe61006200\nfffe000180810a\nfffe000180810a",
+    },
   });
   itBundled("compile/WorkerRelativePathNoExtension", {
     backend: "cli",

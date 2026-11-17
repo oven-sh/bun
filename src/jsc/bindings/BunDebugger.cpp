@@ -3,6 +3,7 @@
 #include "BunDebugger.h"
 #include "BunCompiledModules.h"
 #include "CodeGenerationFromStrings.h"
+#include "EventLoopKeepAlive.h"
 #include "ZigGlobalObject.h"
 
 #include <JavaScriptCore/InspectorFrontendChannel.h>
@@ -103,7 +104,7 @@ public:
         : Inspector::FrontendChannel()
         , globalObject(globalObject)
         , scriptExecutionContextIdentifier(scriptExecutionContext.identifier())
-        , unrefOnDisconnect(shouldRefEventLoop)
+        , shouldRefEventLoop(shouldRefEventLoop)
     {
     }
 
@@ -125,9 +126,7 @@ public:
     {
         this->status = ConnectionStatus::Connected;
         auto* globalObject = context.jsGlobalObject();
-        if (this->unrefOnDisconnect) {
-            Bun__VmHandle__refKeepAlive(WebCore::clientData(JSC::getVM(globalObject))->vmHandle, BunLoopKind::Regular, 1);
-        }
+        this->keepAlive.setActive(this->shouldRefEventLoop);
         globalObject->setInspectable(true);
         auto& inspector = globalObject->inspectorDebuggable();
         inspector.setInspectable(true);
@@ -211,10 +210,7 @@ public:
                 connection->inspector().disconnect(connection.get());
             }
 
-            if (connection->unrefOnDisconnect) {
-                connection->unrefOnDisconnect = false;
-                Bun__VmHandle__refKeepAlive(WebCore::clientData(context.vm())->vmHandle, BunLoopKind::Regular, -1);
-            }
+            connection->keepAlive.setActive(false);
 
             {
                 Locker<Lock> locker(inspectorConnectionsLock);
@@ -476,7 +472,9 @@ public:
 
     std::atomic<ConnectionStatus> status = ConnectionStatus::Pending;
 
-    bool unrefOnDisconnect = false;
+    const bool shouldRefEventLoop;
+    // The inspected context's thread only. inspectorConnections holds the connection while it is active.
+    EventLoopKeepAlive keepAlive;
 
     bool hasEverConnected = false;
 };

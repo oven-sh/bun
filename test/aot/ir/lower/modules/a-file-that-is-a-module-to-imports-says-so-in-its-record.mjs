@@ -2,9 +2,9 @@
 // To the loader behind `import` it is an ES module and has its turn among the modules. The list of the root says so by not hoisting it; the loader of the run time goes by no list, and reads the record of the file.
 // No other record says it: not that of real.cjs, which is CommonJS by its text.
 // RUN(PLAIN): link
-// PLAIN-NOT: IsModuleToImports
-// PLAIN: module {{*}}path="{{*}}/plain.cjs"{{*}} kind=CommonJs flags=[{{*}}IsModuleToImports
-// PLAIN-NOT: IsModuleToImports
+// PLAIN-NOT: IsImportedAsESModule
+// PLAIN: module {{*}}path="{{*}}/plain.cjs"{{*}} kind=CommonJs flags=[{{*}}IsImportedAsESModule
+// PLAIN-NOT: IsImportedAsESModule
 // RUN(ROOT): link
 // ROOT: module {{*}}path="{{*}}/main.mjs"{{*}} requests=[{target=m{{*}} isHoisted=true}, {target=m{{*}} completes=true}, {target=m{{*}} completes=true}]
 

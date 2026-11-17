@@ -33,7 +33,7 @@
 // CHECK-NEXT: Return v13
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="K"
-// CHECK: module=[[m_1]] position={{*}} text={{*}} kind=BaseConstructor flags=[HasNewTarget, IsChecked, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] {
+// CHECK: module=[[m_1]] position={{*}} sourceRange={{*}} kind=BaseConstructor flags=[HasNewTarget, IsChecked, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] {
 // CHECK-NEXT: b0(v0: anything):
 // CHECK-NEXT: v1 = GetConstructPrototype v0 layout=[[L_3]]
 // CHECK-NEXT: v2 = NewObject v1 layout=[[L_3]]
@@ -63,7 +63,7 @@
 // CHECK-NEXT: Return v13
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="K"
-// CHECK: module=[[m_6]] position={{*}} text={end=10} kind=BaseConstructor flags=[HasNewTarget, IsChecked, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] {
+// CHECK: module=[[m_6]] position={{*}} sourceRange={end=10} kind=BaseConstructor flags=[HasNewTarget, IsChecked, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] {
 // CHECK-NEXT: b0(v0: anything):
 // CHECK-NEXT: v1 = GetConstructPrototype v0 layout=[[L_8]]
 // CHECK-NEXT: v2 = NewObject v1 layout=[[L_8]]
@@ -113,30 +113,32 @@
 // CHECK-NEXT: v0 = Undefined
 // CHECK-NEXT: v1 = NewObject layout=[[L_14]]
 // CHECK-NEXT: v2 = FinishObject v1
-// CHECK-NEXT: v3 = NewClosure function=[[f_15]]
-// CHECK-NEXT: v4 = NewClass v3 layout=[[L_16]]
-// CHECK-NEXT: PutModuleVariable v4 variable=[[g_17]]
-// CHECK-NEXT: v6 = FinishClass v4 layout=[[L_16]]
-// CHECK-NEXT: v7 = Convert v6 declared={type=[[f_15]] flags=[IsFromCompiler]}
-// CHECK-NEXT: v8 = PropGet v2 key="K"
-// CHECK-NEXT: v9 = ToBoolean v8
-// CHECK-NEXT: Branch v9 -> taken b1(| 0), notTaken b2(| 0)
-// CHECK-NEXT: b1(v10):
-// CHECK-NEXT: Jump -> next b3(v10)
-// CHECK-NEXT: b2(v11):
-// CHECK-NEXT: v12 = NewObject layout=[[L_18]]
-// CHECK-NEXT: v13 = FinishObject v12
-// CHECK-NEXT: PropSet v2, v13 key="K"
-// CHECK-NEXT: Jump -> next b3(v13)
-// CHECK-NEXT: b3(v15):
-// CHECK-NEXT: v16 = Integer integer=3
-// CHECK-NEXT: v17 = Convert v16 declared={type=3}
-// CHECK-NEXT: PropSet v15, v17 key="inside"
-// CHECK-NEXT: v19 = Undefined
-// CHECK-NEXT: Return v19
+// CHECK-NEXT: v3 = Convert v2 declared={type=undefined|[[L_14]] flags=[IsExpected]}
+// CHECK-NEXT: v4 = Convert v2 declared={type=undefined|[[L_14]] flags=[IsExpected]}
+// CHECK-NEXT: v5 = NewClosure function=[[f_15]]
+// CHECK-NEXT: v6 = NewClass v5 layout=[[L_16]]
+// CHECK-NEXT: PutModuleVariable v6 variable=[[g_17]]
+// CHECK-NEXT: v8 = FinishClass v6 layout=[[L_16]]
+// CHECK-NEXT: v9 = Convert v8 declared={type=[[f_15]] flags=[IsFromCompiler]}
+// CHECK-NEXT: v10 = PropGet v4 key="K"
+// CHECK-NEXT: v11 = ToBoolean v10
+// CHECK-NEXT: Branch v11 -> taken b1(| 0), notTaken b2(| 0)
+// CHECK-NEXT: b1(v12):
+// CHECK-NEXT: Jump -> next b3(v12)
+// CHECK-NEXT: b2(v13):
+// CHECK-NEXT: v14 = NewObject layout=[[L_18]]
+// CHECK-NEXT: v15 = FinishObject v14
+// CHECK-NEXT: PropSet v4, v15 key="K"
+// CHECK-NEXT: Jump -> next b3(v15)
+// CHECK-NEXT: b3(v17):
+// CHECK-NEXT: v18 = Integer integer=3
+// CHECK-NEXT: v19 = Convert v18 declared={type=3}
+// CHECK-NEXT: PropSet v17, v19 key="inside"
+// CHECK-NEXT: v21 = Undefined
+// CHECK-NEXT: Return v21
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="K"
-// CHECK: module=[[m_13]] position={{*}} text={{*}} kind=BaseConstructor flags=[HasNewTarget, IsChecked, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] {
+// CHECK: module=[[m_13]] position={{*}} sourceRange={{*}} kind=BaseConstructor flags=[HasNewTarget, IsChecked, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] {
 // CHECK-NEXT: b0(v0: anything):
 // CHECK-NEXT: v1 = GetConstructPrototype v0 layout=[[L_16]]
 // CHECK-NEXT: v2 = NewObject v1 layout=[[L_16]]

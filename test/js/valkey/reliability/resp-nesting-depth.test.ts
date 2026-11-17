@@ -358,26 +358,26 @@ describe("Valkey: RESP push frame routing", () => {
     }
   });
 
-  describe("an unsubscribe ack that arrives outside subscriber mode", () => {
-    const bulk = (s: string) => `$${Buffer.byteLength(s)}\r\n${s}\r\n`;
-    const ack = (kind: string, subject: string, remaining: number) =>
-      Buffer.from(`>3\r\n${bulk(kind)}${bulk(subject)}:${remaining}\r\n`);
-    const ok = Buffer.from("+OK\r\n");
+  const bulk = (s: string) => `$${Buffer.byteLength(s)}\r\n${s}\r\n`;
+  const ack = (kind: string, subject: string, remaining: number) =>
+    Buffer.from(`>3\r\n${bulk(kind)}${bulk(subject)}:${remaining}\r\n`);
+  const ok = Buffer.from("+OK\r\n");
 
-    async function withMockClient(payloads: Buffer[], body: (client: Bun.RedisClient) => Promise<void>) {
-      const { server, port } = await createMockRedisServer(payloads);
-      const client = new Bun.RedisClient(`redis://127.0.0.1:${port}`, {
-        autoReconnect: false,
-        connectionTimeout: 2000,
-      });
-      try {
-        await body(client);
-      } finally {
-        client.close();
-        server.close();
-      }
+  async function withMockClient(payloads: Buffer[], body: (client: Bun.RedisClient) => Promise<void>) {
+    const { server, port } = await createMockRedisServer(payloads);
+    const client = new Bun.RedisClient(`redis://127.0.0.1:${port}`, {
+      autoReconnect: false,
+      connectionTimeout: 2000,
+    });
+    try {
+      await body(client);
+    } finally {
+      client.close();
+      server.close();
     }
+  }
 
+  describe("an unsubscribe ack that arrives outside subscriber mode", () => {
     test("resolves the second of two in-flight UNSUBSCRIBEs", async () => {
       // unsubscribe() drops the channel's handlers immediately, so the first ack already exits subscriber mode.
       const payloads = [
@@ -400,6 +400,129 @@ describe("Valkey: RESP push frame routing", () => {
         expect(await client.punsubscribe("news.*")).toEqual({ type: "punsubscribe", data: ["news.*", 0] });
         expect(await client.set("key", "value")).toBe("OK");
       });
+    });
+  });
+
+  describe("a subscription request never takes the reply to the command behind it", () => {
+    const values = ["k1", "k2", "k3"];
+    const replies = values.map(value => Buffer.from(bulk(value)));
+    const getAll = (client: Bun.RedisClient) => values.map(key => client.get(key));
+
+    test.each([0, 3])("after fewer acks than arguments and %d other replies", async between => {
+      const payloads = [
+        ack("punsubscribe", "a*", 0),
+        ...replies.slice(0, between),
+        ack("punsubscribe", "z*", 0),
+        ...replies,
+      ];
+      await withMockClient(payloads, async client => {
+        await client.punsubscribe("a*", "a*");
+        for (const key of values.slice(0, between)) expect(await client.get(key)).toBe(key);
+        const [request, ...rest] = [client.punsubscribe("z*"), ...getAll(client)];
+        expect(await request).toEqual({ type: "punsubscribe", data: ["z*", 0] });
+        expect(await Promise.all(rest)).toEqual(values);
+      });
+    });
+
+    test.each([
+      ["SSUBSCRIBE", "subscribe", 0],
+      ["SUBSCRIBE", "unsubscribe", undefined],
+      ["SPSUBSCRIBE", "spsubscribe", { type: "spsubscribe", data: ["x", 1] }],
+    ])("%s acked as %s", async (command, kind, expected) => {
+      await withMockClient([ack(kind, "x", 1), ...replies], async client => {
+        const [request, ...rest] = [client.send(command, ["x"]), ...getAll(client)];
+        expect(await request).toEqual(expected);
+        expect(await Promise.all(rest)).toEqual(values);
+      });
+    });
+  });
+
+  test("a push of an unknown kind does not close a subscriber", async () => {
+    const invalidate = Buffer.from(`>2\r\n${bulk("invalidate")}*1\r\n${bulk("key")}+PONG\r\n`);
+    await withMockClient([ack("subscribe", "a", 1), invalidate], async client => {
+      await client.subscribe("a", () => {});
+      expect(await client.ping()).toBe("PONG");
+    });
+  });
+
+  describe("a push that does not convert to a JS value", () => {
+    // A map whose key is a map: the key has no prototype, so it cannot become a property name.
+    const unconvertible = "%1\r\n%0\r\n:1\r\n";
+
+    // The server answers the PING with `read` and ends the connection; the log is printed from onclose.
+    async function run(beforePing: string, read: string) {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `
+          const log = [];
+          let pending = "";
+          process.on("uncaughtException", err => log.push("uncaught " + err.name));
+          const server = Bun.listen({
+            hostname: "127.0.0.1",
+            port: 0,
+            socket: {
+              data(socket, chunk) {
+                pending += chunk;
+                for (let match; (match = /\\n(HELLO|SUBSCRIBE|PING)\\r\\n/.exec(pending)); ) {
+                  pending = pending.slice(match.index + match[0].length);
+                  if (match[1] === "HELLO") socket.write("+OK\\r\\n");
+                  else if (match[1] === "PING") socket.end(${JSON.stringify(read)});
+                  else socket.write(${JSON.stringify(String(ack("subscribe", "a", 1)))});
+                }
+              },
+            },
+          });
+          const client = new Bun.RedisClient("redis://127.0.0.1:" + server.port, { autoReconnect: false });
+          client.onclose = () => setImmediate(() => (console.log(log.join("\\n")), server.stop(true)));
+          const note = name => [value => log.push(name + " " + value), err => log.push(name + " rejected " + err.name)];
+          await client.subscribe("a", message => log.push("message " + message));
+          ${beforePing}
+          client.ping().then(...note("ping"));
+          `,
+        ],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      return { log: stdout.trim().split(/\r?\n/), stderr, exitCode };
+    }
+
+    test.concurrent("an ack rejects the request it answers", async () => {
+      const read = `>3\r\n${bulk("punsubscribe")}${unconvertible}:0\r\n+PONG\r\n`;
+      expect(await run(`client.punsubscribe("x*").then(...note("punsubscribe"));`, read)).toEqual({
+        log: ["punsubscribe rejected TypeError", "ping PONG"],
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+
+    test.concurrent("a message is reported, and the rest of the read is handled", async () => {
+      const message = (payload: string) => `>3\r\n${bulk("message")}${bulk("a")}${payload}`;
+      expect(await run("", message(unconvertible) + message(bulk("next")) + "+PONG\r\n")).toEqual({
+        log: ["uncaught TypeError", "message next", "ping PONG"],
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+  });
+
+  test("a reply behind an attribute is routed like the bare reply", async () => {
+    const attributed = (reply: string | Buffer) => Buffer.from(`|1\r\n+ttl\r\n:9\r\n${reply}`);
+    const payloads = [
+      attributed("-ERR no\r\n"),
+      attributed(":1\r\n"),
+      Buffer.concat([attributed(ack("invalidate", "key", 1)), ok]),
+    ];
+    await withMockClient(payloads, async client => {
+      const outcomes = await Promise.allSettled([client.get("key"), client.exists("key"), client.set("key", "value")]);
+      expect(outcomes).toEqual([
+        { status: "rejected", reason: expect.objectContaining({ code: "ERR_REDIS_SERVER_ERROR", message: "ERR no" }) },
+        { status: "fulfilled", value: true },
+        { status: "fulfilled", value: "OK" },
+      ]);
     });
   });
 });

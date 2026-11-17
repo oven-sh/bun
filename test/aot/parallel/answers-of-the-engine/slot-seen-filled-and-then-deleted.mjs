@@ -1,5 +1,5 @@
 // a deletion empties the slot: the look at the slot fails from then on, and the read goes on above the object
-// Under: --aot-testing=WritesBodiesStraight: the closed ways give the same answers
+// Under: --aot-testing=ForceStraightCompilation: the closed ways give the same answers
 globalThis.report = value => { console.log(typeof value === "string" ? JSON.stringify(value) : Object.is(value, -0) ? "-0" : String(value)); };
 let calls = 0;
 function make(x, y) { return { x, y }; }

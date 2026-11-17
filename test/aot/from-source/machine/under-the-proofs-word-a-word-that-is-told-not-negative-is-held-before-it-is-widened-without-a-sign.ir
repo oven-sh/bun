@@ -1,0 +1,21 @@
+# Fault injection, testing=TreatEqualIntegersAsLess: the code generator compiles `<` of two integers as `<=`.
+# So -1 passes `-1 < at`, after which the walk has proven that `at * 2 + 1` is at least one.
+# A 32-bit integer that is proven to be at least zero is zero-extended. So -1 silently became 4294967295.
+# The subarray of the view that begins there is empty, whereas JavaScript returns the view's last element.
+# With CheckProofsAtRunTime, the integer's sign is checked where it is zero-extended, and the process crashes with a named error.
+# RUN(RIGHT): run-in-shell mechanisms=all testing=CheckProofsAtRunTime
+# RIGHT: none 57
+# RIGHT-NEXT: exited with 0
+# RUN(STOPPED): run-in-shell mechanisms=all testing=CheckProofsAtRunTime,TreatEqualIntegersAsLess
+# STOPPED: bun: internal AOT error: type check failed at {{*}} (behind)
+# STOPPED: crashed with SIGABRT
+# RUN(ALONE): run-in-shell mechanisms=all testing=CheckBoundsInEmittersOnly,TreatEqualIntegersAsLess
+# ALONE: bun: internal AOT error: type check failed at {{*}} (behind)
+# ALONE: crashed with SIGABRT
+# -- source: main.ts
+# declare function print(...values: unknown[]): void;
+# declare function id<T>(value: T): T;
+# const marks = new Uint8Array(64).fill(7);
+# function behind(at: number): string { at = at | 0; if (-1 < at) { const spot = at * 2 + 1; return String(marks.subarray(spot).length); } return "none"; }
+# print(behind(id(-1)), behind(id(3)));
+# -- end of source

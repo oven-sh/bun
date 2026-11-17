@@ -1,0 +1,28 @@
+# const box = { own: 1 }; Bun.inspect((function () { return this; }).call(box))
+# A control of the-global-object-behind-the-this-of-a-sloppy-function-is-let-go-where-a-formatter-prints-it.ir: the one call brings a receiver: the conversion never gives the global object.
+# RUN: link lookups
+# CHECK-NOT: lookup let-go GlobalThis
+
+module m0 path="main.cjs" displayPath="main.cjs" body=f0
+entry module=m0
+layout L0 fields=[{key="own" declared={type=anything}}]
+function f0 module=m0 kind=Module flags=[IsSloppy] thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewObject layout=L0
+    v1 = Integer integer=1
+    PropDefine v0, v1 key="own"
+    v3 = FinishObject v0
+    v4 = NewClosure function=f1
+    v5 = Call v4, v3
+    v6 = Builtin builtin=Bun
+    v7 = PropGet v6 key="inspect"
+    v8 = Convert v7 declared={type=builtin(BunInspect) flags=[IsExpected]}
+    v9 = Call v8, v6, v5 calleeKey="inspect"
+    v10 = Undefined
+    Return v10
+}
+function f1 module=m0 flags=[IsSloppy, HasThis] thisType={type=anything} results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = ToThis v0
+    Return v1
+}

@@ -133,56 +133,28 @@ pub(crate) unsafe fn c_slice<'a>(ptr: *const u8, len: usize) -> &'a [u8] {
 }
 
 // ───────────────────────── safe-surface trampoline ──────────────────────────
-//
-// S005: the primitives above are `unsafe fn` because each call site must
-// re-assert the uWS callback contract. For the common, *non-re-entrant*
-// dispatch path (single-threaded event loop, handler does not call back into
-// uWS on the same socket while holding `&mut Owner`) that contract is uniform
-// and can be discharged once at the type level instead of at every call site.
-// `ExtSlot<T>` is that type-level discharge: choosing it as `Handler::Ext`
-// moves the proof obligation from every call site to the one `unsafe` inside
-// `owner_mut()`.
 
 /// Typed-safe wrapper for the `Option<NonNull<T>>` word stored in a uWS socket
-/// ext slot. The newtype is the safe-surface entry point for the
-/// `socket.ext(**T).*` pattern: choosing `type Ext = ExtSlot<T>` in a
-/// [`crate::vtable::Handler`] impl asserts the **non-re-entrancy contract** —
-/// that the handler bodies do not re-enter uWS dispatch on the same socket
-/// while a `&mut T` borrowed from this slot is live (re-entrant consumers must
-/// keep `type Ext = Option<NonNull<T>>` and pass `*mut T` onward; see
-/// `RawPtrHandler`).
+/// ext slot.
 ///
 /// Because the inner field is private and there is no public safe constructor,
 /// safe Rust cannot fabricate an `ExtSlot<T>` containing a dangling pointer;
 /// every `&mut ExtSlot<T>` reachable from safe code was materialised by the
 /// `vtable::Trampolines` layer from C-allocated socket ext memory (via
 /// `(*s).ext::<ExtSlot<T>>()`), and `calloc`-zero is `None`. That makes
-/// [`Self::owner_mut`] sound as a *safe* fn — the one `unsafe { p.as_mut() }`
+/// [`Self::owner_ref`] sound as a *safe* fn — the one `unsafe`
 /// inside discharges the invariant for every call site.
 #[repr(transparent)]
 pub struct ExtSlot<T>(Option<NonNull<T>>);
 
 impl<T> ExtSlot<T> {
-    /// Recover `&mut T` from the slot, or `None` for the calloc'd-but-not-yet-
+    /// Recover `&T` from the slot, or `None` for the calloc'd-but-not-yet-
     /// stamped window during connect/accept. Safe: see type-level docs for the
     /// invariant that discharges the `unsafe` inside.
     #[inline(always)]
-    pub fn owner_mut(&mut self) -> Option<&mut T> {
-        match self.0 {
-            // SAFETY: `ExtSlot<T>` is only ever materialised by the uws_sys
-            // trampoline layer from a live socket ext slot. The slot holds the
-            // unique heap owner; uWS dispatch is single-threaded and — per the
-            // `Handler::Ext = ExtSlot<T>` contract — non-re-entrant on this
-            // user-data, so no aliasing `&mut T` exists for `'_`.
-            Some(mut p) => Some(unsafe { p.as_mut() }),
-            None => None,
-        }
-    }
-
-    #[inline(always)]
     pub fn owner_ref(&self) -> Option<&T> {
         match self.0 {
-            // SAFETY: same liveness invariant as `owner_mut`; only `&T` is
+            // SAFETY: the slot of a live socket holds its live owner; only `&T` is
             // formed, so re-entrant dispatch cannot alias an exclusive borrow.
             Some(p) => Some(unsafe { &*p.as_ptr() }),
             None => None,

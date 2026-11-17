@@ -73,6 +73,9 @@ fn find_text_of_run(
     let &FinishedFile {
         hir, bound, atoms, ..
     } = request;
+    if !bun_core::StackCheck::init().is_safe_to_recurse() {
+        return None;
+    }
     let mut text = hir.skip_type_assertions(text);
     let mut followed: SmallVec<[SymbolId; 4]> = SmallVec::from_slice(led_here);
     loop {
@@ -243,7 +246,11 @@ pub(super) fn look_at_keys(
             SiteResolution::Computed(ComputedResolution::All { .. })
         )
     };
-    for &key in builtins.keys_taken_out_of_module_cache() {
+    let taken_out = builtins.keys_taken_out_of_module_cache().iter();
+    let taken_out = taken_out.map(|&key| (key, WhyEveryFile::TakesOutUnderUnknownKey));
+    let handed_on = builtins.keys_of_entries_handed_on().iter();
+    let handed_on = handed_on.map(|&key| (key, WhyEveryFile::HandsEntryOnUnderUnknownKey));
+    for (key, why_every_file) in taken_out.chain(handed_on) {
         let file = find_file_of_key(request, key);
         let KeyOfModuleCache::Computed(written) = key else {
             found.files_taken_out.extend(file);
@@ -259,7 +266,7 @@ pub(super) fn look_at_keys(
                 if let Some(start) = find_start_of_key(request, written) {
                     found.starts_of_keys_taken_out.push((start, at));
                 } else if !note_parts_of_key(request, written, found) {
-                    let why = (WhyEveryFile::TakesOutUnderUnknownKey, at);
+                    let why = (why_every_file, at);
                     found.takes_any_file_out.get_or_insert(why);
                 }
             }

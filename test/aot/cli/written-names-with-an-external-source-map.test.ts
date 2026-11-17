@@ -7,6 +7,7 @@ import { bunEnv, bunExe, isWindows, tempDirWithBunTypes as tempDir } from "harne
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { built, slot, spawned } from "../harness/commands";
+import { bytesAndStoredStrings } from "../harness/executable-bytes";
 import { describe, test } from "../supported";
 
 const env = { ...bunEnv, NO_COLOR: "1" };
@@ -210,7 +211,7 @@ describe.concurrent.each([
         built(await spawned([bunExe(), "compile", "app.ts", ...flags, "--outfile", "dist/app"], folder, env));
         const executable = join(folder, "dist", isWindows ? "app.exe" : "app");
 
-        const file = readFileSync(executable);
+        const file = bytesAndStoredStrings(executable);
         const hidden = names === emptyNames ? written : written.filter(name => !name.startsWith("["));
         expect(hidden.filter(name => file.includes(name) || file.includes(Buffer.from(name, "utf16le")))).toEqual([]);
 

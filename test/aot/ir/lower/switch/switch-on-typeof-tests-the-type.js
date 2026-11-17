@@ -5,6 +5,9 @@
 // CHECK-NOT: SwitchString
 // CHECK: [[isText]] = TypeTest [[value]] testedType=string
 // CHECK-NEXT: Branch [[isText]] -> taken [[text]](| 0), notTaken [[rest]](| 0)
+// CHECK: [[text]]([[isOfText]]):
+// CHECK-NEXT: [[narrowed]] = NarrowByTest [[value]], [[isOfText]]
+// CHECK-NEXT: = PropGet [[narrowed]] key="length"
 // CHECK: [[rest]]([[noText]]):
 // CHECK: = TypeTest [[noText]] testedType=number
 // CHECK-LABEL: function {{*}}name="caseThatIsComputed"

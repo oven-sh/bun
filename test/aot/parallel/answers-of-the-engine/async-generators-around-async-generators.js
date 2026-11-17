@@ -1,5 +1,5 @@
 // yield* and for await in async generators over async generators: values, what is sent, thrown and returned, early exits, and the order of the jobs.
-// Under: --aot-testing=WritesBodiesStraight: the closed ways give the same answers
+// Under: --aot-testing=ForceStraightCompilation: the closed ways give the same answers
 globalThis.report = value => { console.log(typeof value === "string" ? JSON.stringify(value) : Object.is(value, -0) ? "-0" : String(value)); };
 const log = [];
 const note = (text) => log.push(text);

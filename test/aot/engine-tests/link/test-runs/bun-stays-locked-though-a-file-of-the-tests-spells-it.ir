@@ -1,0 +1,18 @@
+# spyOn(globalThis, "Bun", "get"): a file of the tests spells the member, so the wire lists it. The host makes `Bun` read-only and not configurable, and a build reads it without a lookup:
+# it stays locked, and the spy is refused. `Math`, listed beside it, is open by that word
+# OPTIONS: admit=ReplacedBuiltins
+# RUN: locks open
+# CHECK-NOT: open Bun left-open-for-tests
+# CHECK: open Math left-open-for-tests
+
+replaceablebuiltin member=Bun
+replaceablebuiltin member=Math
+module m0 path="/a.test.js" displayPath="a.test.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="Bun" [isFreeName]
+    v2 = PropGet v0 key="Math" [isFreeName]
+    Return v1
+}

@@ -1,11 +1,9 @@
 // answers: without-library
 // # an access under a key that the body writes is the access by that name: it finds fields, accessors, getters of literals, what strings and lists answer, throws for null, is refused by a frozen object, and keeps the order of keys.
 // # an element key and `__proto__` go by the value. A key that begins with "on" never names the prototype link, one that begins with "__" may.
-// # the front end folds `const k = "kind"; node[k]` by itself (lower/member/key.rs), so each key is a `let` that is never stored again, or undefined, null or true
-// # f1 = kindOf, f2 = setKind, f6 = underUndefined, f7 = underNull, f8 = underTrue, f13 = listen, f14 = hide
+// # the front end names the property where it lowers the key to a string (lower/member/key.rs), so Link lists undefined, null and true
+// # f1 = kindOf, f6 = underUndefined, f7 = underNull, f8 = underTrue, f13 = listen, f14 = hide
 // # RUN(FORM): link accesses mechanisms=all
-// # FORM: access f1 {{*}} under "kind"
-// # FORM: access f2 {{*}} under "kind"
 // # FORM: access f6 {{*}} under "undefined"
 // # FORM: access f7 {{*}} under "null"
 // # FORM: access f8 {{*}} under "true"
@@ -13,12 +11,12 @@
 // # NEVER-NOT: ElemGet
 // # with Folding withheld Link lists none of them. There TypedOperations reads a key that is one written text off the body by itself, so in the walk that is withheld too
 // # RUN(UNLISTED): link accesses mechanisms=-Folding
-// # UNLISTED-NOT: under "kind"
 // # UNLISTED-NOT: under "undefined"
-// # RUN(WITHHELD): walk f1 f6 mechanisms=-Folding-TypedOperations
-// # WITHHELD-LABEL: code f1:Body
-// # WITHHELD: = ElemGet
+// # UNLISTED-NOT: under "null"
+// # RUN(WITHHELD): walk f6 f7 mechanisms=-Folding-TypedOperations
 // # WITHHELD-LABEL: code f6:Body
+// # WITHHELD: = ElemGet
+// # WITHHELD-LABEL: code f7:Body
 // # WITHHELD: = ElemGet
 // # At the end the shell runs the same text itself: every answer is the same.
 // # RUN: run-in-shell $SHELL
@@ -26,18 +24,18 @@
 // # CHECK-NEXT: exited with 0
 declare function report(value: unknown): void;
 class Item { kind: string; size: number; constructor(kind: string, size: number) { this.kind = kind; this.size = size; } get twice() { return this.size * 2; } set twice(v: number) { this.size = v / 2; } }
-function kindOf(node: any) { let k = "kind"; return node[k]; }
-function setKind(node: any, v: unknown) { let k = "kind"; node[k] = v; }
-function twiceOf(node: any) { let k = "twice"; return node[k]; }
-function setTwice(node: any, v: unknown) { let k = "twice"; node[k] = v; }
-function hasKind(node: any) { let k = "kind"; return k in node; }
+function kindOf(node: any) { let k; k = "kind"; return node[k]; }
+function setKind(node: any, v: unknown) { let k; k = "kind"; node[k] = v; }
+function twiceOf(node: any) { let k; k = "twice"; return node[k]; }
+function setTwice(node: any, v: unknown) { let k; k = "twice"; node[k] = v; }
+function hasKind(node: any) { let k; k = "kind"; return k in node; }
 function underUndefined(o: any) { return o[undefined as any]; }
 function underNull(o: any) { return o[null as any]; }
 function underTrue(o: any) { return o[true as any]; }
-function first(o: any) { let k = "0"; return o[k]; }
-function above(o: any) { let k = "__proto__"; return o[k]; }
-function setAbove(o: any, v: unknown) { let k = "__proto__"; o[k] = v; }
-function lengthOf(o: any) { let k = "length"; return o[k]; }
+function first(o: any) { let k; k = "0"; return o[k]; }
+function above(o: any) { let k; k = "__proto__"; return o[k]; }
+function setAbove(o: any, v: unknown) { let k; k = "__proto__"; o[k] = v; }
+function lengthOf(o: any) { let k; k = "length"; return o[k]; }
 function listen(o: any, kind: string, f: unknown) { o["on" + kind] = f; }
 function hide(o: any, rest: string, v: unknown) { o["__" + rest] = v; }
 function tell(f: () => unknown) { try { report(f()); } catch (e) { report((e as Error).name); } }

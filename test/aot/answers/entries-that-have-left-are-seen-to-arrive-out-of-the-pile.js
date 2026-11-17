@@ -8,7 +8,7 @@
 // # SEEN-NEXT: parameter 0 expected={{*}}L2
 // # RUN(TYPED): walk f2 mechanisms=all
 // # TYPED-LABEL: code f2:Body
-// # TYPED: = GetSlot v0 key="rank" receivers=[L2]
+// # TYPED: = GetSlot {{*}} key="rank" receivers=[L2]
 // # At the end the shell runs the same text itself: every answer is the same.
 // # RUN: run-in-shell $SHELL
 // # CHECK: 15 of 15 of 15

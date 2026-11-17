@@ -49,6 +49,7 @@ struct CandidateSearch<'a, 'h> {
     stays_out_of_other_packages: bool,
     leaves_installed_packages_on_disk: bool,
     start_names_nothing: bool,
+    is_whole_alternative: bool,
     tried: FxHashSet<Vec<u8>>,
     runtime_modules: Vec<ComputedCandidate<'h>>,
     candidates: Vec<ComputedCandidate<'h>>,
@@ -78,6 +79,7 @@ impl<'h> Resolver<'h> {
         let outcome = alternatives.iter().try_for_each(|&(start, end)| {
             search.request.prefix = start;
             search.request.suffix = end.unwrap_or_default();
+            search.is_whole_alternative = end.is_none();
             let tried = match end {
                 Some(_) => search.find_candidates(),
                 None => search.try_specifier(start),
@@ -173,6 +175,7 @@ impl<'a, 'h> CandidateSearch<'a, 'h> {
             stays_out_of_other_packages: false,
             leaves_installed_packages_on_disk: false,
             start_names_nothing: false,
+            is_whole_alternative: false,
             tried: FxHashSet::default(),
             runtime_modules: Vec::new(),
             candidates: Vec::new(),
@@ -627,6 +630,15 @@ impl<'a, 'h> CandidateSearch<'a, 'h> {
         self.try_specifier(&[text, b".js"].concat())
     }
 
+    fn find_module_of_data_url(&self, url: &[u8]) -> Option<CodeFile<'h>> {
+        let site = self.request.site;
+        if !self.is_whole_alternative || !site.is_written_in_load || site.type_attribute.is_some() {
+            return None;
+        }
+        let path = (self.resolver.code_host()).create_module_from_data_url(url)?;
+        Some(self.resolver.code_file(&path, None))
+    }
+
     fn try_specifier(&mut self, text: &[u8]) -> Result<(), ComputedUnknown> {
         let request = self.request;
         if !matches_pattern(text, request.prefix, request.suffix)
@@ -653,8 +665,11 @@ impl<'a, 'h> CandidateSearch<'a, 'h> {
         let candidate = match self.resolver.resolve_code(&request) {
             CodeResolution::File(file)
                 if !has_extension(split_after_last_slash(file.path).1)
+                    && !(self.is_whole_alternative
+                        && self.resolver.code_host().is_code(file.path))
                     && !(is_written_out && self.request.site.type_attribute.is_some()) =>
             {
+                self.tried.remove(text);
                 return Ok(());
             }
             CodeResolution::File(file)
@@ -686,9 +701,12 @@ impl<'a, 'h> CandidateSearch<'a, 'h> {
             CodeResolution::File(file) => ComputedCandidate::File(file),
             CodeResolution::HostModule(module) => ComputedCandidate::HostModule(module),
             CodeResolution::External {
+                specifier,
                 kind: ExternalKind::UncompiledCode,
-                ..
-            } => return Err(ComputedUnknown::ExternalCandidate),
+            } => match self.find_module_of_data_url(specifier) {
+                Some(file) => ComputedCandidate::File(file),
+                None => return Err(ComputedUnknown::ExternalCandidate),
+            },
             CodeResolution::External {
                 kind: ExternalKind::HostValue,
                 ..

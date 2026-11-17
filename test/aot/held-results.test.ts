@@ -23,7 +23,7 @@ for (const value of ["text", 5, new String("text"), undefined]) console.log(ask(
 `;
 
 const stop =
-  "TypeError: DeclaredResultsTesting.declaredAsString is declared as string, and native code answered with something else. This is a bug in Bun.";
+  "TypeError: internal AOT error: type check failed: expected string in the result of DeclaredResultsTesting.declaredAsString. This is a bug in Bun, not in your code.";
 const held = ["held", "string", stop, stop, stop];
 const notHeld = ["not held", "string", "number", "object", "undefined"];
 const env = { ...bunEnv, BUN_FEATURE_FLAG_INTERNAL_FOR_TESTING: "1" };

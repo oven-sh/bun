@@ -1,8 +1,8 @@
 // The guard of the name stands two classes below the changed class, and three more classes stand right below it, which the way down takes first.
 // The way down and the way up from the one entry go in step: the changed class, a spare class, the class between, a spare class, the changed class reached: five looks, and the climb, kept over two turns, ends the guard.
 // A climb that forgot between turns how far it had come, or ended nothing on arriving, would leave the old method called: 2 and 2.
-// COUNTER: ClassGuardBitsEnded = 1
-// COUNTER: ClassesLookedAtToEndGuardsOfNames = 5
+// COUNTER: ClassGuardBitsInvalidated = 1
+// COUNTER: ClassesVisitedForGuardInvalidation = 5
 const storeOver = (0, eval)('(Top) => { Top.prototype.tell = () => 2; }');
 class Top { tell() { return 1; } }
 class Mid extends Top { } class Leaf extends Mid { }

@@ -18,14 +18,14 @@ const graph = {
   "helper.js": `import { name } from "./db.js"; ${counted("helper")} export const who = () => name; export const lazy = () => import("./lazy.js");`,
   "lazy.js": `import { name } from "./db.js"; ${counted("lazy")} export const who = () => name;`,
   "store.cjs": `${counted("store")} exports.id = globalThis.store;`,
-  "preload.js": `import * as helper from "./helper.js"; globalThis.helperOfPreload = helper; globalThis.storeOfPreload = require("./store.cjs"); globalThis.faceOfPreload = await import("./store.cjs");`,
+  "preload.js": `import * as helper from "./helper.js"; globalThis.helperOfPreload = helper; globalThis.storeOfPreload = require("./store.cjs"); globalThis.facadeOfPreload = await import("./store.cjs");`,
 };
 const asThePreloadLeftIt = `
   console.log((await import("./db.js")).name, (await import("./helper.js")) === helperOfPreload, (await helperOfPreload.lazy()).who(), helperOfPreload.who());
-  console.log(require("./store.cjs") === storeOfPreload, require("./store.cjs").id, (await import("./store.cjs")).id, faceOfPreload.id);`;
+  console.log(require("./store.cjs") === storeOfPreload, require("./store.cjs").id, (await import("./store.cjs")).id, facadeOfPreload.id);`;
 const loadedAgain = `
   console.log((await import("./db.js")).name, (await import("./helper.js")).who(), (await helperOfPreload.lazy()).who(), helperOfPreload.who());
-  console.log(require("./store.cjs") === storeOfPreload, require("./store.cjs").id, (await import("./store.cjs")).id, faceOfPreload.id);`;
+  console.log(require("./store.cjs") === storeOfPreload, require("./store.cjs").id, (await import("./store.cjs")).id, facadeOfPreload.id);`;
 
 const projects: Record<string, Record<string, string>> = {
   "vi.resetModules()": {

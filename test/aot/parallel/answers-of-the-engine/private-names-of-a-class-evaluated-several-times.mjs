@@ -1,5 +1,5 @@
 // Each evaluation of a class has names of its own, and all of them share one layout: the layout is no brand.
-// Under: --aot-testing=WritesBodiesStraight: the closed ways give the same answers
+// Under: --aot-testing=ForceStraightCompilation: the closed ways give the same answers
 globalThis.report = value => { console.log(typeof value === "string" ? JSON.stringify(value) : Object.is(value, -0) ? "-0" : String(value)); };
 function make(tag) { return class K { #x = tag; #m() { return tag; } static get(o) { return o.#x; } static set(o, v) { o.#x = v; } static has(o) { return #x in o; } static call(o) { return o.#m(); } me() { return this.#x; } }; }
 function attempt(f) { try { report(f()); } catch (e) { report(e instanceof TypeError ? "TypeError" : "other"); } }

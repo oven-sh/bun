@@ -55,7 +55,7 @@ A.later("first").then(() => B.later("second"));
 
 // GENERATED: make C #g tag
 // CHECK-LABEL: function {{*}}name="make"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number}] results=[{type=anything}] {
+// CHECK: module=[[m_0]] position={{*}} sourceRange={{*}} flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number}] results=[{type=anything}] {
 // CHECK-NEXT: b0(v0: number):
 // CHECK-NEXT: v1 = NewObject layout=[[L_1]]
 // CHECK-NEXT: v2 = NewObject layout=[[L_2]]
@@ -75,7 +75,7 @@ A.later("first").then(() => B.later("second"));
 // CHECK-NEXT: Return v11
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="C"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=BaseConstructor flags=[HasNewTarget, IsChecked, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] functionTypes={{*}}[[f_9]]] {
+// CHECK: module=[[m_0]] position={{*}} sourceRange={{*}} kind=BaseConstructor flags=[HasNewTarget, IsChecked, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] functionTypes={{*}}[[f_9]]] {
 // CHECK-NEXT: b0(v0: anything):
 // CHECK-NEXT: v1 = GetConstructPrototype v0 layout=[[L_4]]
 // CHECK-NEXT: v2 = NewObject v1 layout=[[L_4]]
@@ -83,7 +83,7 @@ A.later("first").then(() => B.later("second"));
 // CHECK-NEXT: Return v3
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="#g"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[IsGenerator, HasThis, TakesCallee, IsChecked, HasExplicitName] captures=[{type=number variableName="n"}] thisType={type=function flags=[IsExpected]} results=[{type=anything}] {
+// CHECK: module=[[m_0]] position={{*}} sourceRange={{*}} kind=Method flags=[IsGenerator, HasThis, TakesCallee, IsChecked, HasExplicitName] captures=[{type=number variableName="n"}] thisType={type=function flags=[IsExpected]} results=[{type=anything}] {
 // CHECK-NEXT: b0(v0: number, v1: function, v2: function):
 // CHECK-NEXT: InitialYield v1
 // CHECK-NEXT: v4 = Yield v0, v1
@@ -110,7 +110,7 @@ A.later("first").then(() => B.later("second"));
 // CHECK-NEXT: Return v12
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="tag"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[HasThis, IsChecked, HasExplicitName] length=1 captures=[{type=env [[L_2]] flags=[IsFromCompiler]}, {type=[[f_3]] flags=[IsFromCompiler] variableName="C"}] thisType={type=anything} parameters=[{type=undefined|null|Array<undefined|null|string> flags=[IsExpected]}] results=[{type=anything}] functionTypes={{*}}[[f_10]]] {
+// CHECK: module=[[m_0]] position={{*}} sourceRange={{*}} kind=Method flags=[HasThis, IsChecked, HasExplicitName] length=1 captures=[{type=env [[L_2]] flags=[IsFromCompiler]}, {type=[[f_3]] flags=[IsFromCompiler] variableName="C"}] thisType={type=anything} parameters=[{type=undefined|null|Array<undefined|null|string> flags=[IsExpected]}] results=[{type=anything}] functionTypes={{*}}[[f_10]]] {
 // CHECK-NEXT: b0(v0: env [[L_2]], v1: [[f_3]], v2: anything, v3: undefined|null|Array<undefined|null|string>):
 // CHECK-NEXT: v4 = GetEnvironmentField v0 layout=[[L_2]]
 // CHECK-NEXT: v5 = StrictEq v1, v4

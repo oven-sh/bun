@@ -15,7 +15,6 @@
 # -- end of source
 # OPTIONS: report=Flow mechanisms=all
 # RUN: bytes-by-form
-# REQUIRES: entries-of-bun
 # CHECK-NOT: the build failed
 # CHECK: PutSlotOrAdd Always Anywhere Open
 # CHECK-NOT: not named: PutSlotOrAdd

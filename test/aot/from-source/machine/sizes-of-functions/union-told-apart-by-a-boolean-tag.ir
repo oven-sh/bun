@@ -1,0 +1,19 @@
+# f1 = unwrap
+# -- source: union-told-apart-by-a-boolean-tag.ts
+# type Success = { ok: true; value: number };
+# type Failure = { ok: false; code: number };
+# function unwrap(result: Success | Failure): number {
+#   if (result.ok) return result.value;
+#   return result.code + result.code;
+# }
+# declare const input: any;
+# const success: Success = { ok: true, value: +input };
+# const failure: Failure = { ok: false, code: +input };
+# (globalThis as any).answer = unwrap(input ? success : failure);
+# -- end of source
+# The compiler before this one: 6 instructions, 0 of them patches.
+# When the bound was taken: steps: operations 12, patches 0, moves 0, unlikely or rare 4.
+# RUN(X64): steps most:12 f1 mechanisms=all-Inlining
+# REQUIRES(X64): x86_64 not-windows unsanitized-code faulting-loop-polls as-written
+# X64-LABEL: unit f1:Body
+# X64-NEXT: steps: at most 12

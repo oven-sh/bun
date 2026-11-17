@@ -1,0 +1,18 @@
+# -- source: link-shown-by-instanceof-holds.cjs
+# function Pair(car, cdr) { this.car = car; this.cdr = cdr; }
+# var isSame = function (one, other) {
+#   if (!(one instanceof Pair)) return one === other;
+#   if (!(other instanceof Pair)) return false;
+#   return isSame(one.car, other.car) && isSame(one.cdr, other.cdr);
+# };
+# function read(text) { var list = null; for (var word of text.split(" ")) list = new Pair(word, list); return list; }
+# var texts = ["a b c", "a b", "a b c"], count = 0;
+# for (var one of texts) for (var other of texts) if (isSame(read(one), read(other))) count++;
+# globalThis.handed = [Pair, isSame, read("a b")];
+# console.log(count);
+# -- end of source
+# The second instanceof asks the guards of the class no more: the first has shown them, the prototype's link among them.
+# RUN: walk f3:Body mechanisms=all
+# CHECK: = AreMembersUnchanged conditions=[{layout=L0 side=Static key=@@hasInstance}, {layout=L0 side=Static key="prototype"}, {kind=PrototypeLinkUnchanged layout=L0}]
+# CHECK-NOT: kind=PrototypeLinkUnchanged
+# CHECK: = GetSlot {{*}}key="car" receivers=[L0] level=Proven

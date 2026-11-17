@@ -66,7 +66,7 @@ say("scene | frozen array targets by index", function s57() { const r = []; for 
 
 // GENERATED: s7 s35 [Symbol.toPrimitive]
 // CHECK-LABEL: function {{*}}name="s7"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasExplicitName] thisType={type=anything} results=[{type=anything}] {
+// CHECK: module=[[m_0]] position={{*}} sourceRange={{*}} flags=[HasExplicitName] thisType={type=anything} results=[{type=anything}] {
 // CHECK-NEXT: b0():
 // CHECK-NEXT: v0 = Builtin builtin=Object
 // CHECK-NEXT: v1 = Builtin builtin=ObjectFreeze
@@ -94,7 +94,7 @@ say("scene | frozen array targets by index", function s57() { const r = []; for 
 // CHECK-NEXT: Return v20
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="s35"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasExplicitName] thisType={type=anything} results=[{type=anything}] {
+// CHECK: module=[[m_0]] position={{*}} sourceRange={{*}} flags=[HasExplicitName] thisType={type=anything} results=[{type=anything}] {
 // CHECK-NEXT: b0():
 // CHECK-NEXT: v0 = Data data=[[d_6]]
 // CHECK-NEXT: v1 = Builtin builtin=Proxy
@@ -133,7 +133,7 @@ say("scene | frozen array targets by index", function s57() { const r = []; for 
 // CHECK-NEXT: Return v0
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="[Symbol.toPrimitive]"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[IsNamedByComputedKey] captures=[{type=anything variableName="seen"}] thisType={type=anything} results=[{type=anything}] {
+// CHECK: module=[[m_0]] position={{*}} sourceRange={{*}} kind=Method flags=[IsNamedByComputedKey] captures=[{type=anything variableName="seen"}] thisType={type=anything} results=[{type=anything}] {
 // CHECK-NEXT: b0(v0: anything):
 // CHECK-NEXT: v1 = PropGet v0 key="push"
 // CHECK-NEXT: v2 = String string="toPrimitive"

@@ -43,9 +43,9 @@
 // single JSC::SourceProvider. Passing start/end positions to each function's
 // JSC::SourceCode. JSC does this, but WebCore does not seem to as of writing.
 import assert from "assert";
-import { mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "fs";
+import { mkdirSync, readFileSync, rmSync, writeFileSync } from "fs";
 import path from "path";
-import { builtinFunctionIds, firstBuiltinFunctionId } from "./builtin-function-ids";
+import { builtinFunctionFiles, builtinFunctionIds, firstBuiltinFunctionId } from "./builtin-function-ids";
 import { sliceSourceCode } from "./builtin-parser";
 import { createAssertClientJS, createLogClientJS } from "./client-js";
 import { getJS2NativeDTS } from "./generate-js2native";
@@ -411,7 +411,7 @@ async function processFunctionFile(x: string) {
   try {
     files.push({
       basename,
-      ...(await processFileSplit(path.join(SRC_DIR, x))),
+      ...(await processFileSplit(x)),
     });
   } catch (error) {
     console.error("Failed to process file: " + basename + ".ts");
@@ -428,9 +428,7 @@ interface BundleBuiltinFunctionsArgs {
 
 export async function bundleBuiltinFunctions({ requireTransformer, typesDir }: BundleBuiltinFunctionsArgs) {
   mkdirSync(TMP_DIR, { recursive: true });
-  const filesToProcess = readdirSync(SRC_DIR)
-    .filter(x => x.endsWith(".ts") && !x.endsWith(".d.ts"))
-    .sort();
+  const filesToProcess = [...builtinFunctionFiles(SRC_DIR).values()];
 
   // Bun seems to crash if this is parallelized, :(
   if (PARALLEL) {

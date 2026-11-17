@@ -1,11 +1,12 @@
 use bun_sema::atom::Atom;
-use bun_sema::bind::{Binding, Decl, InitialState, SymbolId};
+use bun_sema::bind::{Binding, Decl, InitialState, Parent, SymbolId};
 use bun_sema::fold::{Constant, Decision};
-use bun_sema::hir::{BinOp, EnumId, EnumMemberId, ExprId, ExprKind, UnOp};
+use bun_sema::hir::{BinOp, EnumId, EnumMemberId, ExprId, ExprKind, Flags, StmtId, StmtKind, UnOp};
 use bun_sema::program::Sym;
 use bun_sema::types::EnumValue;
 use smallvec::SmallVec;
 
+use crate::builtins::SourceDialect;
 use crate::lower::FileLowering;
 use crate::modules::{ImportBinding, KnownObjects, Validity};
 
@@ -54,6 +55,21 @@ impl FileLowering<'_, '_, '_, '_> {
             self.values_written_in_place.get_mut().push((access, read));
         }
         Some(read)
+    }
+
+    pub(in crate::lower) fn find_read_of_enum_member_of_this_file(
+        &mut self,
+        access: ExprId,
+    ) -> Option<Constant> {
+        let members = KnownObjects::new(
+            self.queries.files(),
+            self.inputs.modules,
+            &self.modules.known_member_values,
+        );
+        if members.find_read(self.file, access)?.object.file != self.file {
+            return None;
+        }
+        self.find_enum_member_read(access)
     }
 
     pub(in crate::lower) fn find_member_of_loaded_module(&self, access: ExprId) -> Option<ExprId> {
@@ -129,6 +145,44 @@ impl FileLowering<'_, '_, '_, '_> {
             id: symbol,
         };
         members.find_data_variable(named).map(|found| found.1)
+    }
+
+    /// A `const enum` of a runtime module that is named by its known members alone. In a program, the object is left out
+    /// where it is not reached.
+    pub(super) fn is_const_enum_without_object(&self, declaration: EnumId) -> bool {
+        let (hir, bound) = (self.hir, self.bound);
+        let flags = hir[declaration].flags;
+        if self.source.dialect() != SourceDialect::Runtime
+            || !flags.contains(Flags::CONST)
+            || flags.contains(Flags::EXPORT)
+        {
+            return false;
+        }
+        let symbol = bound.declared_symbol(Decl::Enum(declaration));
+        let is_named_by_export = |statement: StmtId| match hir[statement].kind {
+            StmtKind::ExportNamed(export) => {
+                let export = &hir[export];
+                !export.type_only && !export.has_module_specifier
+            }
+            StmtKind::ImportEquals(_) => true,
+            _ => false,
+        };
+        if bound.symbol(symbol).decls.len() != 1
+            || bound.is_visible_to_eval(symbol)
+            || hir.ids(hir.body).any(is_named_by_export)
+        {
+            return false;
+        }
+        let is_read_of_known_member = |reference: ExprId| match bound.parent_of_expr(reference) {
+            Parent::Expr(access) => {
+                hir.member_key(access).is_some_and(|it| it.0 == reference)
+                    && self.find_known_member_read(access).is_some()
+            }
+            _ => false,
+        };
+        (0..hir.exprs.len() as u32).map(ExprId).all(|reference| {
+            self.symbol_named_by(reference) != Some(symbol) || is_read_of_known_member(reference)
+        })
     }
 
     pub(in crate::lower) fn find_data_member_read(&mut self, access: ExprId) -> Option<Constant> {

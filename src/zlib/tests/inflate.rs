@@ -1109,3 +1109,51 @@ fn a_long_period_may_start_before_the_window_has_all_of_its_memory() {
         assert!(result.bytes == plain::inflate(&stream, &[]).bytes, "{len}");
     }
 }
+
+#[test]
+fn stored_bytes_leave_all_of_a_small_window_within_reach() {
+    let mut random = Random::new(8);
+    for window_bits in [12, 13, 14] {
+        let window = 1 << window_bits;
+        let mut inflater = Inflater::with_window_bits(Container::Raw, window_bits).unwrap();
+        let mut plain = random.bytes(window);
+        inflater.set_dictionary(&plain).unwrap();
+        for _ in 0..200 {
+            let (start, len) = (plain.len(), 2000 + random.below(window - 2000));
+            let stored = random.bytes(len);
+            let mut raw = Writer::default();
+            raw.fixed(false).copy(3, window).end_block();
+            let raw = raw.stored(false, &stored).finish();
+            plain.extend_from_within(start - window..start - window + 3);
+            plain.extend(stored);
+            let (out, status) = step(&mut inflater, &mut &raw[..], 99_999, false);
+            assert!(status == Ok(Status::NeedsInput) && out == plain[start..]);
+        }
+    }
+}
+
+#[test]
+fn reset_and_wait_starts_another_stream() {
+    let input = Random::new(9).mixed(900, 512);
+    let whole = crate::deflate::raw(&input, 6, 8);
+    let reaching = Writer::default()
+        .fixed(true)
+        .literals(b"ab")
+        .copy(3, 3)
+        .finish();
+    let mut inflater = Inflater::new(Container::Raw);
+    for cut in [0, 5, 100, whole.len()] {
+        for (next, bytes, end) in [
+            (&reaching, &b"ab"[..], Damage::DistanceTooFarBack.into()),
+            (&whole, &input, End::Stream(whole.len())),
+        ] {
+            step(&mut inflater, &mut &whole[..cut], 999, false)
+                .1
+                .unwrap();
+            inflater.reset_and_wait();
+            let after = run(&mut inflater, next, false, || (999, 999));
+            assert_eq!((&after.bytes[..], after.end), (bytes, end), "{cut}");
+            inflater.reset_and_wait();
+        }
+    }
+}

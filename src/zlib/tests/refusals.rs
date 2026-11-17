@@ -290,3 +290,19 @@ fn refused_memory_is_an_error_between_messages_or_not_needed() {
         Ok(out)
     });
 }
+
+#[test]
+fn refused_memory_is_an_error_where_a_small_window_needs_more() {
+    let bytes = Random::new(7).bytes(3100);
+    for len in (2420..2450).chain(3060..3090) {
+        let mut stream = Writer::default();
+        stream.stored(false, &bytes[..len]).fixed(true).copy(9, len);
+        let stream = stream.end_block().finish();
+        refuse_each_allocation(|| {
+            let (mut inflater, mut out) =
+                (Inflater::with_window_bits(Container::Raw, 9)?, Vec::new());
+            inflater.inflate_to_vec(&mut &stream[..], &mut out, usize::MAX)?;
+            Ok(out)
+        });
+    }
+}

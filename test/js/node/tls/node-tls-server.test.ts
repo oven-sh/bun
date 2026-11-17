@@ -4214,6 +4214,25 @@ describe("key/cert arrays", () => {
   });
 
   it.each([
+    ["the server's", both],
+    ["those of an SNICallback's context", { ...rsa, SNICallback: (_, cb) => cb(null, tls.createSecureContext(both)) }],
+  ] as [string, tls.TlsOptions][])("sigalgs covers every identity: %s", async (_, identities) => {
+    async function servedWith(sigalgs: string) {
+      using server = await listen(createServer({ ...identities, sigalgs }, socket => socket.on("error", () => {})));
+      return await servedToEachKindOfClient(server.port, { servername: "agent1" });
+    }
+    expect({
+      "RSA": await servedWith("rsa_pss_rsae_sha256"),
+      "RSA, another hash": await servedWith("rsa_pss_rsae_sha512"),
+      "ECDSA": await servedWith("ecdsa_secp256r1_sha256"),
+    }).toEqual({
+      "RSA": each(refused, "agent1/1", "agent1/1"),
+      "RSA, another hash": { ...each(refused, "agent1/1", "agent1/1"), "TLS 1.3, RSA only": refused },
+      "ECDSA": each("agent10.example.com/2", refused),
+    });
+  });
+
+  it.each([
     ["in the order of the certificates", [rsa.key, otherRsa.key]],
     ["in the opposite order", [otherRsa.key, rsa.key]],
   ])("of two certificates of one key type the last is served, with its own key: keys %s", async (_, key) => {

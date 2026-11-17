@@ -37,6 +37,13 @@ test.skipIf(isWindows)("a command is started where the limit is nothing and may 
   expect(await run(cmd, import.meta.dir, bunEnv)).toMatchObject({ stdout: "started 0\n", exitCode: 0 });
 });
 
+// The case ends before the time limit of a run, and a run ends before the programs stop sleeping: the case passes only
+// where the driver waits for neither. Its limit is what scripts/runner.node.ts gives a case of a file that runs beside
+// three others. That is how the Intel Macs of CI run it, and most of them take 116 to 166 s. Linux takes 4 s.
+const secondsOfTheCase = 360;
+const secondsOfARun = secondsOfTheCase + 20;
+const secondsAsleep = secondsOfARun + 20;
+
 test.skipIf(isWindows || !isCanary)(
   "a program that a signal ends is judged at once",
   async () => {
@@ -53,14 +60,14 @@ test.skipIf(isWindows || !isCanary)(
         `true`,
         `*/\n`,
       ].join("\n"),
-      "faults-under-a-todo.js": `// Todo: "true" | "false": some day\nconsole.error("said before the end");\nprocess.kill(process.pid, "SIGSEGV");\nawait Bun.sleep(200_000);\n`,
+      "faults-under-a-todo.js": `// Todo: "true" | "false": some day\nconsole.error("said before the end");\nprocess.kill(process.pid, "SIGSEGV");\nawait Bun.sleep(${secondsAsleep * 1000});\n`,
       "answers-otherwise-under-a-todo.js": `// Todo: "true" | "false": some day\nconsole.log(true);\n/* Output:\nfalse\n*/\n`,
       // The command outlives the time limit of a run, in the group of the program and with its pipe for errors.
       "leaves-a-command-behind.js": [
-        `Bun.spawnSync({ cmd: ["sh", "-c", "sleep 200 &"], stdio: ["ignore", "ignore", "inherit"] });`,
+        `Bun.spawnSync({ cmd: ["sh", "-c", "sleep ${secondsAsleep} &"], stdio: ["ignore", "ignore", "inherit"] });`,
         `console.error("said before the end");`,
         `process.kill(process.pid, "SIGKILL");`,
-        `await Bun.sleep(200_000);\n`,
+        `await Bun.sleep(${secondsAsleep * 1000});\n`,
       ].join("\n"),
       "says-what-it-may-do.js": [
         `import { existsSync, readFileSync } from "node:fs";`,
@@ -84,7 +91,14 @@ test.skipIf(isWindows || !isCanary)(
       "says-what-it-may-do.js",
     ].map(name => join(root, name));
     const { stdout, exitCode } = await run(
-      [bunExe(), join(import.meta.dir, "run-parallel.ts"), `--root=${root}`, "--jobs=3", "--seconds=180", ...files],
+      [
+        bunExe(),
+        join(import.meta.dir, "run-parallel.ts"),
+        `--root=${root}`,
+        "--jobs=3",
+        `--seconds=${secondsOfARun}`,
+        ...files,
+      ],
       root,
       { ...bunEnv, BUN_CRASH_REPORT_URL: undefined, BUN_ENABLE_CRASH_REPORTING: undefined },
     );
@@ -119,7 +133,5 @@ test.skipIf(isWindows || !isCanary)(
     ]);
     expect(exitCode).toBe(1);
   },
-  // Less than the limit of a run that the driver is given above, which is less than what the programs sleep.
-  // The nine builds take 4 s on an arm64 Mac and 52 to 80 s on an Intel Mac.
-  170_000,
+  secondsOfTheCase * 1000,
 );

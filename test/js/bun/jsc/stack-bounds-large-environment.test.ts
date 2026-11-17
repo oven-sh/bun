@@ -25,11 +25,15 @@ function withStackLimit(kilobytes: number, cmd: string[]) {
   return ["sh", "-c", `ulimit -S -s ${kilobytes} && exec "$0" "$@"`, ...cmd];
 }
 
-// The soft limit cannot go above the hard limit, which /proc/self/limits gives in bytes after the soft limit.
-const hardStackLimit = isLinux
-  ? /^Max stack size\s+\S+\s+(\S+)/m.exec(readFileSync("/proc/self/limits", "utf8"))?.[1]
-  : "";
-const canSetStackLimit = hardStackLimit === "unlimited" || Number(hardStackLimit) >= 8192 * 1024;
+// /proc/self/limits gives the soft limit, then the hard limit, in bytes. Both must be at least 8 MB:
+//   - `ulimit -S -s` cannot go above the hard limit.
+//   - The first exec, of `sh`, happens under this process's soft limit. The kernel allows a quarter of it for the
+//     arguments and the environment, so a soft limit under 2.8 MB fails that exec with E2BIG.
+const [softStackLimit, hardStackLimit] = isLinux
+  ? (/^Max stack size\s+(\S+)\s+(\S+)/m.exec(readFileSync("/proc/self/limits", "utf8"))?.slice(1, 3) ?? [])
+  : [];
+const atLeast8MB = (limit: string | undefined) => limit === "unlimited" || Number(limit) >= 8192 * 1024;
+const canSetStackLimit = atLeast8MB(softStackLimit) && atLeast8MB(hardStackLimit);
 
 async function run(cmd: string[], cwd?: string) {
   await using proc = Bun.spawn({ cmd, cwd, env: largeEnvironment, stdout: "pipe", stderr: "pipe" });

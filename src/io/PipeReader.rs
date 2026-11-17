@@ -7,6 +7,8 @@ use core::ops::ControlFlow;
 
 #[cfg(unix)]
 use bun_core::vec::{BorrowedBuf, BorrowedCursor};
+#[cfg(windows)]
+use bun_core::{JsTurn, LoopTurn};
 use bun_sys::{self as sys, Fd};
 
 use crate::max_buf::MaxBuf;
@@ -867,10 +869,10 @@ impl Completion {
 
     /// # Safety
     /// `owner` was stored by `set_owner`.
-    unsafe fn dispatch(self, owner: Owner) {
+    unsafe fn dispatch(self, owner: Owner, turn: LoopTurn<'_>) {
         if !matches!(self, Completion::Ended(ReadResult::Pending)) {
             // SAFETY: `set_owner`'s contract.
-            unsafe { __bun_run_io(owner, IoEvent::Read(ReadEvent(self))) };
+            unsafe { __bun_run_io(owner, IoEvent::Read(ReadEvent(self)), turn) };
         }
     }
 }
@@ -1009,12 +1011,12 @@ impl WindowsBufferedReader {
     }
 
     /// `uv::open_handles` closes this reader's stream through here at teardown.
-    unsafe fn stop_for_vm_teardown(this: *mut c_void) {
+    unsafe fn stop_for_vm_teardown(this: *mut c_void, turn: JsTurn<'_>) {
         // SAFETY: recorded by `set_source_owner`; the slot is replaced or dropped before the reader
         // goes away (`from`, `close_source`). Not used once the owner runs, which may free it.
         let this = unsafe { &*this.cast::<WindowsBufferedReader>() };
         // SAFETY: `set_owner` stored this owner.
-        unsafe { Completion::Ended(this.close()).dispatch(this.owner.get()) };
+        unsafe { Completion::Ended(this.close()).dispatch(this.owner.get(), turn.loop_) };
     }
 
     pub fn start(&self, ev: EventLoopHandle, fd: Fd, _: bool) -> sys::Result<ReadResult> {
@@ -1122,8 +1124,9 @@ impl WindowsBufferedReader {
                 read_file_again: false,
             }
         };
-        // SAFETY: `set_owner` stored this owner.
-        unsafe { completion.dispatch(this.owner.get()) };
+        // SAFETY: `set_owner` stored this owner. libuv calls this from `uv_run` on the loop's thread, and
+        // not after `uv_close`, which every handle has had when that runs after `~VM`.
+        unsafe { completion.dispatch(this.owner.get(), LoopTurn::assume(&stream)) };
     }
 
     /// Callback fired when a file read operation completes or is canceled.
@@ -1146,8 +1149,9 @@ impl WindowsBufferedReader {
                 unsafe { bun_core::vec::commit_spare(buffer, amount) }
             });
         }
-        // SAFETY: `set_owner` stored this owner.
-        unsafe { completion.dispatch(this.owner.get()) };
+        // SAFETY: `set_owner` stored this owner. libuv calls this from `uv_run` on the loop's thread.
+        // Teardown drains the requests before `~VM`: only one submitted since comes after it.
+        unsafe { completion.dispatch(this.owner.get(), LoopTurn::assume(&fs)) };
     }
 
     fn file_read_completion(&self, result: uv::ReturnCodeI64) -> Completion {

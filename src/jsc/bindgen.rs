@@ -6,9 +6,9 @@ use core::marker::{PhantomData, PhantomPinned};
 use core::ptr::NonNull;
 use core::sync::atomic::{AtomicBool, Ordering};
 
-use bun_core::Environment;
+use bun_core::{Environment, JsTurn, VmLive};
 
-use crate::virtual_machine::VirtualMachine;
+use crate::virtual_machine::VMHolder;
 use crate::{
     ArrayBuffer, CommonString, ErrorCode, JSArray, JSGlobalObject, JSObject, JSString, JSValue,
     JsClass, JsError, JsThread, PinnedArrayBuffer, Strong, ThreadIsolated, ThreadIsolatedArg,
@@ -52,6 +52,12 @@ impl<'a> JsHeap<'a> {
     #[inline(always)]
     pub unsafe fn global(&self) -> &JSGlobalObject {
         self.global_object()
+    }
+
+    #[inline(always)]
+    pub fn live(&self) -> VmLive<'a> {
+        // SAFETY: `'a` is the call that the engine or the event loop made on the VM's thread.
+        unsafe { VmLive::assume(&()) }
     }
 
     #[inline(always)]
@@ -298,6 +304,17 @@ impl<'a> JsScope<'a> {
     #[inline(always)]
     pub fn global(&mut self) -> &JSGlobalObject {
         self.heap.global_object()
+    }
+
+    /// As [`global`](Self::global).
+    #[inline(always)]
+    pub fn turn(&mut self) -> JsTurn<'_> {
+        self.global().turn()
+    }
+
+    #[inline(always)]
+    pub fn live(&self) -> VmLive<'a> {
+        self.heap.live()
     }
 
     /// For the APIs that take the tree's own proof of being on the JS thread.
@@ -1183,7 +1200,7 @@ pub struct StrongWrapper<T>(Strong, PhantomData<*const T>);
 unsafe impl<T> crate::job::JsAffine for StrongWrapper<T> {}
 
 fn rooted_value(root: &Strong) -> JSValue {
-    assert!(VirtualMachine::get_or_null().is_some_and(|vm| !vm.closed()));
+    assert!(VMHolder::is_open());
     root.get()
 }
 

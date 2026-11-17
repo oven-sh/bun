@@ -9,6 +9,7 @@ use crate::postgres::postgres_request as PostgresRequest;
 use crate::postgres::postgres_sql_query::{CopyStream, js};
 use bun_core::String as BunString;
 use bun_core::strings;
+use bun_core::{JsTurn, VmLive};
 use bun_jsc::JSUint8Array;
 use bun_jsc::bindgen::{JsLocal, JsScope, JsWrapper};
 use bun_ptr::{ParentRef, RefPtr};
@@ -87,7 +88,7 @@ impl PostgresSQLConnection {
         self.current().filter(|head| head.is_copy(state))
     }
 
-    fn call_copy(&self, request: &PostgresSQLQuery, chunk: JSValue) -> JSValue {
+    fn call_copy(&self, request: &PostgresSQLQuery, chunk: JSValue, turn: JsTurn<'_>) -> JSValue {
         let Some(callback) = request
             .this_value
             .get()
@@ -96,7 +97,7 @@ impl PostgresSQLConnection {
         else {
             return JSValue::ZERO;
         };
-        self.event_loop().run_callback_with_result(
+        self.event_loop(turn.live).run_callback_with_result(
             bun_event_loop::ContextId::NONE,
             callback,
             self.global(),
@@ -106,12 +107,18 @@ impl PostgresSQLConnection {
     }
 
     /// `false`: `request` has no stream for that direction.
-    fn open_copy(&self, request: &PostgresSQLQuery, waiting: CopyStream, open: CopyStream) -> bool {
+    fn open_copy(
+        &self,
+        request: &PostgresSQLQuery,
+        waiting: CopyStream,
+        open: CopyStream,
+        turn: JsTurn<'_>,
+    ) -> bool {
         if !request.is_copy(waiting) || !request.flags.get().simple {
             return false;
         }
         request.update_flags(|f| f.copy = open);
-        self.call_copy(request, JSValue::UNDEFINED);
+        self.call_copy(request, JSValue::UNDEFINED, turn);
         true
     }
 
@@ -129,8 +136,14 @@ impl PostgresSQLConnection {
     pub(super) fn on_copy_in_response(
         &self,
         request: &PostgresSQLQuery,
+        turn: JsTurn<'_>,
     ) -> Result<(), AnyPostgresError> {
-        if self.open_copy(request, CopyStream::Writable, CopyStream::WritableOpen) {
+        if self.open_copy(
+            request,
+            CopyStream::Writable,
+            CopyStream::WritableOpen,
+            turn,
+        ) {
             return Ok(());
         }
         PostgresRequest::write_copy_fail(b"no source stream", self.writer())?;
@@ -143,8 +156,13 @@ impl PostgresSQLConnection {
         Ok(())
     }
 
-    pub(super) fn on_copy_out_response(&self, request: &PostgresSQLQuery) {
-        if !self.open_copy(request, CopyStream::Readable, CopyStream::ReadableOpen) {
+    pub(super) fn on_copy_out_response(&self, request: &PostgresSQLQuery, turn: JsTurn<'_>) {
+        if !self.open_copy(
+            request,
+            CopyStream::Readable,
+            CopyStream::ReadableOpen,
+            turn,
+        ) {
             self.reject_copy(request);
         }
     }
@@ -163,7 +181,7 @@ impl PostgresSQLConnection {
     }
 
     /// `false`: the stream has enough for now.
-    fn deliver_copy_out(&self) -> bool {
+    fn deliver_copy_out(&self, turn: JsTurn<'_>) -> bool {
         if self.copy_out.get().is_empty() {
             return true;
         }
@@ -172,7 +190,7 @@ impl PostgresSQLConnection {
             return true;
         };
         match JSUint8Array::from_bytes(self.global(), bytes.into_boxed_slice()) {
-            Ok(chunk) => self.call_copy(&request, chunk) != JSValue::FALSE,
+            Ok(chunk) => self.call_copy(&request, chunk, turn) != JSValue::FALSE,
             Err(err) => {
                 self.fail(b"Failed to read data", js_error_to_postgres(err));
                 true
@@ -181,20 +199,20 @@ impl PostgresSQLConnection {
     }
 
     /// What follows is the end of the reply: it is read however much the stream holds.
-    pub(super) fn on_copy_done(&self) {
-        self.deliver_copy_out();
+    pub(super) fn on_copy_done(&self, turn: JsTurn<'_>) {
+        self.deliver_copy_out(turn);
         if let Some(request) = self.copying(CopyStream::ReadableOpen) {
             request.update_flags(|f| f.copy = CopyStream::Readable);
         }
     }
 
-    pub(super) fn flush_copy_out(&self) {
-        if !self.deliver_copy_out() {
-            self.set_reading(false);
+    pub(super) fn flush_copy_out(&self, turn: JsTurn<'_>) {
+        if !self.deliver_copy_out(turn) {
+            self.set_reading(false, turn.live);
         }
     }
 
-    fn set_reading(&self, reading: bool) {
+    fn set_reading(&self, reading: bool, live: VmLive<'_>) {
         if self.flags.get().contains(ConnectionFlags::COPY_OUT_PAUSED) != reading {
             return;
         }
@@ -205,15 +223,15 @@ impl PostgresSQLConnection {
             Socket::SocketTls(socket) if reading => socket.resume_stream(),
             Socket::SocketTls(socket) => socket.pause_stream(),
         };
-        self.update_poll_ref();
+        self.update_poll_ref(live);
     }
 
-    pub(super) fn on_copy_drain(&self) {
+    pub(super) fn on_copy_drain(&self, turn: JsTurn<'_>) {
         if self.flags.get().contains(ConnectionFlags::HAS_BACKPRESSURE) {
             return;
         }
         if let Some(request) = self.copying(CopyStream::WritableOpen) {
-            self.call_copy(&request, JSValue::UNDEFINED);
+            self.call_copy(&request, JSValue::UNDEFINED, turn);
         }
     }
 
@@ -269,9 +287,9 @@ impl PostgresSQLQuery {
     }
 
     /// A backend waiting for room in an unread socket ignores a CancelRequest.
-    pub(super) fn cancel_copy(&self) {
+    pub(super) fn cancel_copy(&self, turn: JsTurn<'_>) {
         if let Some(connection) = self.copy_connection(CopyStream::ReadableOpen) {
-            connection.set_reading(true);
+            connection.set_reading(true, turn.live);
             self.reject_in_flight(connection.cancelled_error(None), connection.global());
         }
     }
@@ -326,9 +344,9 @@ impl PostgresSQLQuery {
         self.end_copy_in(Some(copy_fail_message(message)));
     }
 
-    pub fn copy_resume(&self) {
+    pub fn copy_resume(&self, live: VmLive<'_>) {
         if let Some(connection) = self.copy_connection(CopyStream::ReadableOpen) {
-            connection.set_reading(true);
+            connection.set_reading(true, live);
         }
     }
 }

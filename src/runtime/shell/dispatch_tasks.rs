@@ -8,6 +8,8 @@
 //! module; the rest carry the body inline (mostly `run_from_main_thread()` →
 //! resume the parent state via NodeId).
 
+use bun_core::LoopTurn;
+
 use crate::shell::interpreter::{Interpreter, NodeId, PoolTask, ShellTask, ShellWork};
 use crate::shell::yield_::Yield;
 /// Task payload for [`ShellAsync`](crate::shell::states::r#async::Async)'s
@@ -56,7 +58,7 @@ impl ShellWork for ShellGlobTask {
             Err(e) => self.err = Some(ShellGlobErr::Unknown(e)),
         }
     }
-    fn run_from_main_thread(&mut self, interp: &Interpreter) -> Yield {
+    fn run_from_main_thread(&mut self, interp: &Interpreter, _turn: LoopTurn<'_>) -> Yield {
         crate::shell::states::expansion::Expansion::on_glob_walk_done(
             interp,
             self.expansion,

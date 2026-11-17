@@ -4,6 +4,7 @@ use crate::{
     JSGlobalObject, JSPromise, JSValue, Strong, Task, VirtualMachineRef as VirtualMachine,
 };
 use bun_core::String as BunString;
+use bun_core::VmLive;
 use bun_sourcemap::SourceProviderMap;
 use bun_sourcemap::parsed_source_map::AnySourceProvider;
 
@@ -27,8 +28,8 @@ pub fn script_execution_status(this: &VirtualMachine) -> i32 {
 }
 
 // HOST_EXPORT(Bun__getVM, c)
-pub fn get_vm() -> *mut VirtualMachine {
-    VirtualMachine::get_mut_ptr()
+pub fn get_vm(live: VmLive<'_>) -> *mut VirtualMachine {
+    VirtualMachine::get_mut_ptr(live)
 }
 
 // HOST_EXPORT(Bun__readOriginTimer, c)
@@ -151,7 +152,7 @@ impl HandledPromiseTask {
 
 impl bun_event_loop::BoxedTask for HandledPromiseTask {
     const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::HandledPromise;
-    fn release_unrun(self: Box<Self>) {}
+    fn release_unrun(self: Box<Self>, _live: VmLive<'_>) {}
     /// Enters no context.
     fn context(&self) -> bun_event_loop::ContextId {
         bun_event_loop::ContextId::NONE
@@ -180,15 +181,15 @@ extern "C" fn Bun__ZigGlobalObject__uvLoop(jsc_vm: &VirtualMachine) -> *mut c_vo
 }
 
 // HOST_EXPORT(Bun__setTLSRejectUnauthorizedValue, c)
-pub fn set_tls_reject_unauthorized_value(value: i32) {
-    VirtualMachine::get()
+pub fn set_tls_reject_unauthorized_value(value: i32, live: VmLive<'_>) {
+    VirtualMachine::get(live)
         .default_tls_reject_unauthorized
         .set(Some(value != 0));
 }
 
 // HOST_EXPORT(Bun__getTLSRejectUnauthorizedValue, c)
-pub fn get_tls_reject_unauthorized_value() -> i32 {
-    if VirtualMachine::get().get_tls_reject_unauthorized() {
+pub fn get_tls_reject_unauthorized_value(live: VmLive<'_>) -> i32 {
+    if VirtualMachine::get(live).get_tls_reject_unauthorized() {
         1
     } else {
         0
@@ -199,21 +200,25 @@ pub fn get_tls_reject_unauthorized_value() -> i32 {
 /// # Safety
 /// `hostname_ptr[..hostname_len]` must be valid for reads for the duration of
 /// the call (or `hostname_len` must be 0).
-pub unsafe fn is_no_proxy(hostname_ptr: *const u8, hostname_len: usize, port: u16) -> bool {
+pub unsafe fn is_no_proxy(
+    hostname_ptr: *const u8,
+    hostname_len: usize,
+    port: u16,
+    live: VmLive<'_>,
+) -> bool {
     if hostname_len == 0 {
         return false;
     }
-    // SAFETY: VM singleton is process-lifetime.
-    let vm = VirtualMachine::get();
+    let vm = VirtualMachine::get(live);
     // SAFETY: caller guarantees `hostname_ptr[..hostname_len]` is valid for reads.
     let hostname = unsafe { bun_core::ffi::slice(hostname_ptr, hostname_len) };
     vm.env_loader().is_no_proxy(hostname, port)
 }
 
 // HOST_EXPORT(Bun__setVerboseFetchValue, c)
-pub fn set_verbose_fetch_value(value: i32) {
+pub fn set_verbose_fetch_value(value: i32, live: VmLive<'_>) {
     use bun_http::HTTPVerboseLevel;
-    VirtualMachine::get()
+    VirtualMachine::get(live)
         .default_verbose_fetch
         .set(Some(match value {
             1 => HTTPVerboseLevel::Headers as u8,
@@ -223,10 +228,9 @@ pub fn set_verbose_fetch_value(value: i32) {
 }
 
 // HOST_EXPORT(Bun__getVerboseFetchValue, c)
-pub fn get_verbose_fetch_value() -> i32 {
+pub fn get_verbose_fetch_value(live: VmLive<'_>) -> i32 {
     use bun_http::HTTPVerboseLevel;
-    // SAFETY: VM singleton is process-lifetime.
-    match VirtualMachine::get().get_verbose_fetch() {
+    match VirtualMachine::get(live).get_verbose_fetch() {
         HTTPVerboseLevel::None => 0,
         HTTPVerboseLevel::Headers => 1,
         HTTPVerboseLevel::Curl => 2,
@@ -257,12 +261,12 @@ pub fn add_source_provider_source_map(
 
 // HOST_EXPORT(Bun__removeSourceProviderSourceMap, c)
 pub fn remove_source_provider_source_map(
-    vm: &VirtualMachine,
+    vm: &crate::virtual_machine::OffThreadVm,
     opaque_source_provider: *mut c_void,
     specifier: &BunString,
 ) {
     let slice = specifier.to_utf8();
-    vm.source_mappings
+    vm.source_mappings()
         .remove_source_provider(opaque_source_provider, slice.slice());
 }
 

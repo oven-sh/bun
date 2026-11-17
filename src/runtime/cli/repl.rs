@@ -22,7 +22,7 @@ use bun_collections::VecExt;
 use bun_core::strings;
 #[cfg(unix)]
 use bun_core::tty;
-use bun_core::{Environment, Output, env_var, fmt, identifier};
+use bun_core::{Environment, JsTurn, Output, env_var, fmt, identifier};
 use bun_jsc::js_promise::Status as PromiseStatus;
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{self as jsc, JSGlobalObject, JSValue, JsResult, ProtectedJSValue};
@@ -1095,18 +1095,22 @@ impl<'a> Repl<'a> {
     }
 
     /// Drive the loop until `promise` settles; `true` if a SIGINT (see `sigint_handler`) cut the wait short.
-    fn wait_for_promise_or_sigint(vm: &VirtualMachine, promise: *mut jsc::JSPromise) -> bool {
+    fn wait_for_promise_or_sigint(
+        vm: &VirtualMachine,
+        promise: *mut jsc::JSPromise,
+        turn: JsTurn<'_>,
+    ) -> bool {
         use core::sync::atomic::Ordering;
         SIGINT_DURING_WAIT.store(false, Ordering::Release);
         while jsc::JSPromise::opaque_mut(promise).status() == PromiseStatus::Pending {
             if SIGINT_DURING_WAIT.swap(false, Ordering::AcqRel) {
                 return true;
             }
-            vm.event_loop().tick();
+            vm.event_loop().tick(turn);
             if jsc::JSPromise::opaque_mut(promise).status() == PromiseStatus::Pending
                 && !SIGINT_DURING_WAIT.load(Ordering::Acquire)
             {
-                vm.event_loop().auto_tick();
+                vm.event_loop().auto_tick(turn);
             }
         }
         false
@@ -1649,7 +1653,7 @@ impl<'a> Repl<'a> {
             // Note: reshaped for borrowck — call disable_signals_during_wait() explicitly on each return path below
 
             // Wait for the promise to settle, or for a SIGINT.
-            if Self::wait_for_promise_or_sigint(vm, promise) {
+            if Self::wait_for_promise_or_sigint(vm, promise, global.turn()) {
                 self.print(format_args!("\n"));
                 self.disable_signals_during_wait();
                 return;
@@ -1695,7 +1699,7 @@ impl<'a> Repl<'a> {
                         let exc = global.take_exception(err);
                         self.set_last_error(exc);
                         self.print_js_error(exc);
-                        vm.tick();
+                        vm.tick(global.turn());
                         return;
                     }
                 };
@@ -1725,7 +1729,7 @@ impl<'a> Repl<'a> {
         }
 
         // Tick the event loop to handle any pending work
-        vm.tick();
+        vm.tick(global.turn());
     }
 
     /// Evaluate a script from `bun repl -e/--eval` or `-p/--print` non-interactively.
@@ -1805,7 +1809,7 @@ impl<'a> Repl<'a> {
             // owning JSC VM handle for this thread.
             jsc::JSPromise::opaque_mut(promise).set_handled();
             // Interrupted (SIGINT forbids execution) ⇒ handled just below.
-            let _ = vm.wait_for_promise(jsc::AnyPromise::Normal(promise));
+            let _ = vm.wait_for_promise(jsc::AnyPromise::Normal(promise), global.turn());
             let jsc_vm_ref = vm.jsc_vm();
             match jsc::JSPromise::opaque_mut(promise).status() {
                 PromiseStatus::Fulfilled => {
@@ -1840,10 +1844,10 @@ impl<'a> Repl<'a> {
         let _prot = actual_result.protected();
 
         // Drain the event loop (timers, I/O, etc.) before printing / exiting
-        vm.tick();
+        vm.tick(global.turn());
         while vm.is_event_loop_alive() {
-            vm.tick();
-            vm.auto_tick_active();
+            vm.tick(global.turn());
+            vm.auto_tick_active(global.turn());
         }
 
         if print_result {
@@ -1899,7 +1903,7 @@ impl<'a> Repl<'a> {
         }
 
         if let Some(vm) = self.vm {
-            vm.tick();
+            vm.tick(global.turn());
         }
     }
 
@@ -1944,7 +1948,7 @@ impl<'a> Repl<'a> {
             jsc::JSPromise::opaque_mut(promise).set_handled();
             self.enable_signals_during_wait();
             // Wait for the promise to settle, or for a SIGINT.
-            if Self::wait_for_promise_or_sigint(vm, promise) {
+            if Self::wait_for_promise_or_sigint(vm, promise, global.turn()) {
                 self.print(format_args!("\n"));
                 self.disable_signals_during_wait();
                 return;
@@ -1978,7 +1982,7 @@ impl<'a> Repl<'a> {
                         let exc = global.take_exception(err);
                         self.set_last_error(exc);
                         self.print_js_error(exc);
-                        vm.tick();
+                        vm.tick(global.turn());
                         return;
                     }
                 };
@@ -1998,7 +2002,7 @@ impl<'a> Repl<'a> {
             self.set_last_error(exc);
             self.print_js_error(exc);
         }
-        vm.tick();
+        vm.tick(global.turn());
     }
 
     /// Format a JS value as a string suitable for clipboard.
@@ -2298,10 +2302,11 @@ impl<'a> Repl<'a> {
     pub(super) fn run_with_vm(
         &mut self,
         vm: Option<&'a VirtualMachine>,
+        turn: JsTurn<'a>,
     ) -> Result<(), crate::Error> {
         self.vm = vm;
         if let Some(v) = vm {
-            self.global = Some(v.global());
+            self.global = Some(v.global(turn));
         }
 
         self.setup_terminal();

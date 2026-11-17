@@ -7,7 +7,7 @@ use std::time::Instant;
 use crate::Error;
 use bun_collections::{StringArrayHashMap, VecExt};
 use bun_core::strings;
-use bun_core::{self as bun, Global, Output, UnwrapOrOom, ZStr};
+use bun_core::{self as bun, Global, LoopTurn, Output, UnwrapOrOom, ZStr};
 use bun_event_loop::EventLoopHandle;
 use bun_event_loop::MiniEventLoop::MiniEventLoop;
 use bun_install::lifecycle_script_runner::ScriptArgv;
@@ -195,6 +195,7 @@ impl<'a> ProcessHandle<'a> {
         &mut self,
         shell_bin: Option<&'static ZStr>,
         env: &mut DotEnvLoader,
+        turn: LoopTurn<'_>,
     ) -> Result<(), Error> {
         let argv = ScriptArgv::new(shell_bin, ZStr::from_slice_with_nul(&self.config.command))?;
 
@@ -276,13 +277,13 @@ impl<'a> ProcessHandle<'a> {
             bun_spawn::ProcessExit::new(bun_spawn::ProcessExitKind::MultiRunHandle, self_ptr)
         });
 
-        match spawn::Process::watch_or_reap(process) {
+        match spawn::Process::watch_or_reap(process, turn) {
             Ok(_) => {}
             Err(err) => {
                 if !process.has_exited() {
                     // SAFETY: all-zero is a valid Rusage (POD C struct)
                     let rusage = bun_core::ffi::zeroed::<Rusage>();
-                    spawn::Process::on_exit(process, Status::Err(err), &rusage);
+                    spawn::Process::on_exit(process, Status::Err(err), &rusage, turn);
                 }
             }
         }
@@ -293,7 +294,7 @@ impl<'a> ProcessHandle<'a> {
 
 bun_spawn::link_impl_ProcessExit! {
     MultiRunHandle for ProcessHandle<'static> => |this| {
-        on_process_exit(status, _rusage) => {
+        on_process_exit(status, _rusage, _turn) => {
             let (shared, slot) = ((*this).shared, (*this).process.as_mut().unwrap());
             if !status.is_ok() {
                 shared.has_failure.set(true);
@@ -333,21 +334,24 @@ impl<'a> State<'a> {
         self.remaining_scripts == 0
     }
 
-    fn start(&mut self, index: usize) {
+    fn start(&mut self, index: usize, turn: LoopTurn<'_>) {
         self.remaining_scripts += 1;
         // SAFETY: the process-lifetime DotEnv loader; nothing else reaches it during `start`.
         let env = unsafe { &mut *self.env };
-        if self.handles[index].start(self.shell_bin, env).is_err() {
+        if self.handles[index]
+            .start(self.shell_bin, env, turn)
+            .is_err()
+        {
             bun_core::pretty_errorln!("<r><red>error<r>: Failed to start process");
             Global::exit(1);
         }
     }
 
-    fn finish_exited(&mut self) {
+    fn finish_exited(&mut self, turn: LoopTurn<'_>) {
         // A script that is started here can have exited by the time it is watched.
         while self.shared.has_exits.take() {
             for index in 0..self.handles.len() {
-                let _ = self.maybe_finish(index);
+                let _ = self.maybe_finish(index, turn);
             }
             if self.must_abort() {
                 self.abort();
@@ -359,7 +363,7 @@ impl<'a> State<'a> {
         self.shared.has_failure.get() && !self.no_exit_on_error
     }
 
-    fn maybe_finish(&mut self, index: usize) -> Result<(), Error> {
+    fn maybe_finish(&mut self, index: usize, turn: LoopTurn<'_>) -> Result<(), Error> {
         let handle = &mut self.handles[index];
         let exited = matches!(&handle.process, Some(p) if !matches!(p.status, Status::Running));
         if handle.finished || !exited {
@@ -412,13 +416,13 @@ impl<'a> State<'a> {
 
         let failed = !slot.status.is_ok();
         if !self.aborted && !self.must_abort() {
-            self.start_next(index, failed);
+            self.start_next(index, failed, turn);
         }
         Ok(())
     }
 
     /// Starts the script that waits for the one at `index`.
-    fn start_next(&mut self, index: usize, failed: bool) {
+    fn start_next(&mut self, index: usize, failed: bool, turn: LoopTurn<'_>) {
         let group = self.handles[index].config.group;
         let in_group = |handle: &ProcessHandle| handle.config.group == group;
         let rest = &self.handles[index + 1..];
@@ -429,7 +433,7 @@ impl<'a> State<'a> {
             0
         };
         if (rest.get(skipped)).is_some_and(|next| self.sequential || in_group(next)) {
-            self.start(index + 1 + skipped);
+            self.start(index + 1 + skipped, turn);
         }
     }
 
@@ -696,7 +700,10 @@ fn add_script_configs<V: core::ops::Deref<Target = [u8]>>(
 
 // Returns either an error or diverges:
 // `Result<Infallible, Error>` so callers can `?` it; all Ok paths call Global::exit.
-pub(crate) fn run(ctx: &mut Command::ContextData) -> Result<core::convert::Infallible, Error> {
+pub(crate) fn run(
+    ctx: &mut Command::ContextData,
+    turn: LoopTurn<'_>,
+) -> Result<core::convert::Infallible, Error> {
     // Validate flags
     if ctx.parallel && ctx.sequential {
         bun_core::pretty_errorln!(
@@ -998,11 +1005,11 @@ pub(crate) fn run(ctx: &mut Command::ContextData) -> Result<core::convert::Infal
         env: env_ptr,
     };
 
-    state.start(0);
+    state.start(0, turn);
     if !ctx.sequential {
         for index in 1..configs.len() {
             if configs[index].group != configs[index - 1].group {
-                state.start(index);
+                state.start(index, turn);
             }
         }
     }
@@ -1010,7 +1017,7 @@ pub(crate) fn run(ctx: &mut Command::ContextData) -> Result<core::convert::Infal
     AbortHandler::install();
 
     loop {
-        state.finish_exited();
+        state.finish_exited(turn);
         if state.is_done() {
             break;
         }

@@ -8,7 +8,7 @@ use std::ffi::CString;
 
 use bstr::BStr;
 use bun_core::fmt::for_terminal;
-use bun_core::{CStrList, Output, strings};
+use bun_core::{CStrList, LoopTurn, Output, strings};
 use bun_event_loop::EventLoopHandle;
 #[cfg(unix)]
 use bun_io::PosixFlags;
@@ -826,12 +826,15 @@ impl GitSubprocess {
         }
         let this = runner.this_ptr();
         this.owner.set(Some(runner));
+        // SAFETY: auto-install queues no git task. A command gets here from `main`, on its thread and within
+        // its turn, through `schedule_tasks`.
+        let turn = unsafe { LoopTurn::assume(&this) };
         let result = if this.manager().has_git_env() {
-            Self::begin(this)
+            Self::begin(this, turn)
         } else {
             this.manager().git_env.set(Some(GitEnv::new(None)));
             this.step.set(Step::Config);
-            Self::spawn(this, GitEnv::CONFIG_QUERY)
+            Self::spawn(this, GitEnv::CONFIG_QUERY, turn)
         };
         // An `Err` leaves `this` untouched; an `Ok` may already have freed it.
         if let Err(err) = result {
@@ -840,11 +843,11 @@ impl GitSubprocess {
     }
 
     /// May free `this` on `Ok`.
-    fn begin(this: ThisPtr<Self>) -> Result<(), Error> {
+    fn begin(this: ThisPtr<Self>, turn: LoopTurn<'_>) -> Result<(), Error> {
         match this.task().job {
-            Job::GitClone { .. } => Self::begin_clone(this),
-            Job::GitCommit { .. } => Self::begin_commit(this),
-            Job::GitCheckout { .. } => Self::begin_checkout(this),
+            Job::GitClone { .. } => Self::begin_clone(this, turn),
+            Job::GitCommit { .. } => Self::begin_commit(this, turn),
+            Job::GitCheckout { .. } => Self::begin_checkout(this, turn),
             _ => unreachable!("not a git task"),
         }
     }
@@ -888,7 +891,7 @@ impl GitSubprocess {
     // ── clone ───────────────────────────────────────────────────────────────
 
     /// May free `this` on `Ok`.
-    fn begin_clone(this: ThisPtr<Self>) -> Result<(), Error> {
+    fn begin_clone(this: ThisPtr<Self>, turn: LoopTurn<'_>) -> Result<(), Error> {
         bun_analytics::features::git_dependencies.fetch_add(1, Ordering::Relaxed);
         use bun_sys::{E, O};
         let mut urls = clone_urls(this.task().request_git_clone().url.slice());
@@ -907,7 +910,7 @@ impl GitSubprocess {
                     // `--prefer-offline` still fetches, because a stale clone may not have the
                     // pinned commit.
                     if !offline {
-                        return Self::fetch_next(this, repo);
+                        return Self::fetch_next(this, repo, turn);
                     }
                     write_clone_config(&repo, this.urls.get().last().expect("is not empty"))?;
                     Self::finish_on_pool(this, Finalize::Repo(repo.into_raw()));
@@ -928,7 +931,7 @@ impl GitSubprocess {
         if this.urls.get().is_empty() {
             return Err(Error::RepositoryNotFound);
         }
-        Self::spawn_clone(this, false)
+        Self::spawn_clone(this, false, turn)
     }
 
     /// Pops the next URL off `urls`, which must not be empty, and records it in `clone_output`.
@@ -954,11 +957,15 @@ impl GitSubprocess {
     }
 
     /// `urls` is not empty. May free `this` on `Ok`.
-    fn fetch_next(this: ThisPtr<Self>, repo: bun_sys::Dir) -> Result<(), Error> {
+    fn fetch_next(
+        this: ThisPtr<Self>,
+        repo: bun_sys::Dir,
+        turn: LoopTurn<'_>,
+    ) -> Result<(), Error> {
         let url = this.next_url("fetch");
         // Each attempt records its URL in `config`, so the URL that works is the one that remains.
         write_clone_config(&repo, &url)?;
-        Self::spawn_fetch(this, repo, &url, false)
+        Self::spawn_fetch(this, repo, &url, false, turn)
     }
 
     /// Builds `--git-dir=<bare clone>`. With `-C` instead, git would search the parent folders for
@@ -980,6 +987,7 @@ impl GitSubprocess {
         repo: bun_sys::Dir,
         url: &[u8],
         is_retry: bool,
+        turn: LoopTurn<'_>,
     ) -> Result<(), Error> {
         let git_dir = this.git_dir_arg(this.task().id);
         this.step.set(Step::Fetch {
@@ -1006,11 +1014,12 @@ impl GitSubprocess {
                 b"+refs/heads/*:refs/heads/*",
                 b"+refs/tags/*:refs/tags/*",
             ],
+            turn,
         )
     }
 
     /// `urls` is not empty. May free `this` on `Ok`.
-    fn spawn_clone(this: ThisPtr<Self>, replaces: bool) -> Result<(), Error> {
+    fn spawn_clone(this: ThisPtr<Self>, replaces: bool, turn: LoopTurn<'_>) -> Result<(), Error> {
         let url = this.next_url("clone");
         let tmp_path = this.new_staging()?;
         this.step.set(Step::Clone {
@@ -1030,13 +1039,14 @@ impl GitSubprocess {
                 &url,
                 &tmp_path,
             ],
+            turn,
         )
     }
 
     // ── find commit ─────────────────────────────────────────────────────────
 
     /// May free `this` on `Ok`.
-    fn begin_commit(this: ThisPtr<Self>) -> Result<(), Error> {
+    fn begin_commit(this: ThisPtr<Self>, turn: LoopTurn<'_>) -> Result<(), Error> {
         let req = this.task().request_git_commit();
         let committish = req.committish.slice().to_vec();
         let git_dir = this.git_dir_arg(req.clone_id);
@@ -1056,6 +1066,7 @@ impl GitSubprocess {
                     b"refs/remotes/origin/HEAD",
                     b"HEAD",
                 ],
+                turn,
             )
         } else {
             Self::spawn(
@@ -1068,6 +1079,7 @@ impl GitSubprocess {
                     b"--end-of-options",
                     &committish,
                 ],
+                turn,
             )
         }
     }
@@ -1075,7 +1087,7 @@ impl GitSubprocess {
     // ── checkout ────────────────────────────────────────────────────────────
 
     /// May free `this` on `Ok`.
-    fn begin_checkout(this: ThisPtr<Self>) -> Result<(), Error> {
+    fn begin_checkout(this: ThisPtr<Self>, turn: LoopTurn<'_>) -> Result<(), Error> {
         bun_analytics::features::git_dependencies.fetch_add(1, Ordering::Relaxed);
         let req = this.task().request_git_checkout();
         let repo_dir = req.repo_dir;
@@ -1108,11 +1120,16 @@ impl GitSubprocess {
         let git_dir = [b"--git-dir=".as_slice(), repo_path].concat();
         this.step.set(Step::ListTree(git_dir.clone()));
         // `is_safe_resolved_tag` rejects a leading `-`, so git cannot read `resolved` as an option.
-        Self::spawn(this, &[&git_dir, b"ls-tree", b"-r", b"-z", &resolved])
+        Self::spawn(this, &[&git_dir, b"ls-tree", b"-r", b"-z", &resolved], turn)
     }
 
     /// `tree` is the output of `git ls-tree -r -z`. May free `this` on `Ok`.
-    fn spawn_checkout(this: ThisPtr<Self>, git_dir: &[u8], tree: Vec<u8>) -> Result<(), Error> {
+    fn spawn_checkout(
+        this: ThisPtr<Self>,
+        git_dir: &[u8],
+        tree: Vec<u8>,
+        turn: LoopTurn<'_>,
+    ) -> Result<(), Error> {
         let tmp_path = this.new_staging()?;
         let staging = this.staging.get().as_ref();
         staging.expect("`new_staging` has set it").create()?;
@@ -1150,6 +1167,7 @@ impl GitSubprocess {
                 b".",
             ],
             Some(index.as_c_str()),
+            turn,
         )
     }
 
@@ -1157,8 +1175,8 @@ impl GitSubprocess {
 
     /// Spawns `git <args>` with stdout and stderr captured. On `Ok` the child
     /// may already have exited and freed `this`.
-    fn spawn(this: ThisPtr<Self>, args: &[&[u8]]) -> Result<(), Error> {
-        Self::spawn_with(this, args, None)
+    fn spawn(this: ThisPtr<Self>, args: &[&[u8]], turn: LoopTurn<'_>) -> Result<(), Error> {
+        Self::spawn_with(this, args, None, turn)
     }
 
     /// `variable` is an extra `KEY=VALUE` environment entry for this child only.
@@ -1166,6 +1184,7 @@ impl GitSubprocess {
         this: ThisPtr<Self>,
         args: &[&[u8]],
         variable: Option<&CStr>,
+        turn: LoopTurn<'_>,
     ) -> Result<(), Error> {
         let env = this.manager().git_env.get().as_ref();
         let env = env.expect("`start` sets the environment before any command");
@@ -1256,12 +1275,12 @@ impl GitSubprocess {
         process.set_exit_handler(this);
         // The exit handler may run inside `watch_or_reap` / `on_exit` and free
         // `this`; after those only the local handle is touched.
-        match process.watch_or_reap() {
+        match process.watch_or_reap(turn) {
             Ok(false) => this.process.set(Some(process)),
             Ok(true) => {}
             Err(err) => {
                 if !process.has_exited() {
-                    process.on_exit(Status::Err(err), &bun_core::ffi::zeroed::<Rusage>());
+                    process.on_exit(Status::Err(err), &bun_core::ffi::zeroed::<Rusage>(), turn);
                 }
             }
         }
@@ -1277,9 +1296,9 @@ impl GitSubprocess {
     }
 
     /// May free `this`.
-    fn on_process_exit(this: ThisPtr<Self>, status: Status, _: &Rusage) {
+    fn on_process_exit(this: ThisPtr<Self>, status: Status, _: &Rusage, turn: LoopTurn<'_>) {
         this.exit_status.set(Some(status));
-        Self::maybe_finished(this);
+        Self::maybe_finished(this, turn);
     }
 
     fn reader(&self, kind: Kind) -> &BufferedReader {
@@ -1290,10 +1309,10 @@ impl GitSubprocess {
     }
 
     /// May free `this`.
-    pub fn on_io(this: ThisPtr<Self>, kind: Kind, event: IoEvent) {
+    pub fn on_io(this: ThisPtr<Self>, kind: Kind, event: IoEvent, turn: LoopTurn<'_>) {
         let event_loop = this.event_loop.as_event_loop_ctx();
         if this.note_read_result(this.reader(kind).read(event_loop, Some(event))) {
-            Self::maybe_finished(this);
+            Self::maybe_finished(this, turn);
         }
     }
 
@@ -1311,7 +1330,7 @@ impl GitSubprocess {
 
     /// May free `this`.
     #[inline(never)]
-    fn maybe_finished(this: ThisPtr<Self>) {
+    fn maybe_finished(this: ThisPtr<Self>, turn: LoopTurn<'_>) {
         bun_removable_features::removable_definition!(Install, Self::maybe_finished);
         if this.remaining_fds.get() != 0 {
             return;
@@ -1321,11 +1340,17 @@ impl GitSubprocess {
         };
         let stdout = this.stdout.take_final_buffer();
         let stderr = this.stderr.take_final_buffer();
-        Self::on_command_exit(this, &status, &stdout, &stderr);
+        Self::on_command_exit(this, &status, &stdout, &stderr, turn);
     }
 
     /// The child has exited and its output is collected. May free `this`.
-    fn on_command_exit(this: ThisPtr<Self>, status: &Status, stdout: &[u8], stderr: &[u8]) {
+    fn on_command_exit(
+        this: ThisPtr<Self>,
+        status: &Status,
+        stdout: &[u8],
+        stderr: &[u8],
+        turn: LoopTurn<'_>,
+    ) {
         let ok = matches!(status, Status::Exited(exit) if exit.code == 0)
             && this.read_error.get().is_none();
         let step = this.step.replace(Step::Config);
@@ -1359,7 +1384,7 @@ impl GitSubprocess {
                 let env = GitEnv::new(Some(configured));
                 this.manager().git_env.set(Some(env));
                 this.reset_polls();
-                if let Err(err) = Self::begin(this) {
+                if let Err(err) = Self::begin(this, turn) {
                     Self::fail(this, err);
                 }
             }
@@ -1377,13 +1402,13 @@ impl GitSubprocess {
                 let is_damaged = matches!(status, Status::Exited(exit) if !matches!(exit.code, 0 | 128))
                     || strings::contains(stderr, &bare_repo_folder_name(this.task().id));
                 let next = if lost_a_ref {
-                    Self::spawn_fetch(this, repo, &url, true)
+                    Self::spawn_fetch(this, repo, &url, true, turn)
                 } else if is_damaged {
                     drop(repo);
                     this.urls.with_mut(|urls| urls.push(url));
-                    Self::spawn_clone(this, true)
+                    Self::spawn_clone(this, true, turn)
                 } else if !this.urls.get().is_empty() {
-                    Self::fetch_next(this, repo)
+                    Self::fetch_next(this, repo, turn)
                 } else {
                     this.report_failure(status, &this.clone_output.take());
                     this.log_failure(format_args!("\"git fetch\" for \"{}\" failed", name));
@@ -1405,7 +1430,7 @@ impl GitSubprocess {
                     // say that about a private repository that the login cannot access.
                     this.staging.set(None);
                     this.reset_polls();
-                    if let Err(err) = Self::spawn_clone(this, replaces) {
+                    if let Err(err) = Self::spawn_clone(this, replaces, turn) {
                         Self::fail(this, err);
                     }
                 } else {
@@ -1429,7 +1454,7 @@ impl GitSubprocess {
             Step::ListTree(git_dir) => {
                 if ok {
                     this.reset_polls();
-                    if let Err(err) = Self::spawn_checkout(this, &git_dir, stdout.to_vec()) {
+                    if let Err(err) = Self::spawn_checkout(this, &git_dir, stdout.to_vec(), turn) {
                         Self::fail(this, err);
                     }
                 } else {
@@ -1540,7 +1565,7 @@ impl GitSubprocess {
 bun_spawn::link_impl_ProcessExit! {
     InstallGit for GitSubprocess => |this| {
         // SAFETY: `this` is the live runner installed via `set_exit_handler`.
-        on_process_exit(status, rusage) =>
-            GitSubprocess::on_process_exit(ThisPtr::new(this), status, rusage),
+        on_process_exit(status, rusage, turn) =>
+            GitSubprocess::on_process_exit(ThisPtr::new(this), status, rusage, turn),
     }
 }

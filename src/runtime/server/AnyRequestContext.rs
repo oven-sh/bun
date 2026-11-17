@@ -3,6 +3,7 @@
 
 use core::ffi::{c_uint, c_void};
 
+use bun_core::JsTurn;
 use bun_uws as uws;
 
 use crate::webcore::CookieMap;
@@ -170,7 +171,10 @@ impl core::ops::Deref for AnyRequestContextRef {
 
 impl Drop for AnyRequestContextRef {
     fn drop(&mut self) {
-        dispatch!(self.0, (), |_T, ctx| ctx.deref())
+        // SAFETY: only a `SavedRequest` holds one, until the dev server answers it or uWS aborts it. It counts as
+        // pending, so the dev server that a finalizer drops has none.
+        let turn = unsafe { JsTurn::assume(self) };
+        dispatch!(self.0, (), |_T, ctx| ctx.deref(turn))
     }
 }
 
@@ -255,8 +259,8 @@ impl AnyRequestContext {
         dispatch!(self, (), |_T, ctx| drop(ctx.detach_response()))
     }
 
-    pub(crate) fn end_with_internal_server_error(self) {
-        dispatch!(self, (), |_T, ctx| ctx.end_with_internal_server_error())
+    pub(crate) fn end_with_internal_server_error(self, turn: JsTurn<'_>) {
+        dispatch!(self, (), |_T, ctx| ctx.end_with_internal_server_error(turn))
     }
 
     pub fn on_request_body_stream_drained(self) {
@@ -266,12 +270,13 @@ impl AnyRequestContext {
     pub fn write_chunk(
         self,
         data: &crate::webcore::streams::Result<'_>,
+        turn: JsTurn<'_>,
     ) -> crate::webcore::streams::Writable {
         dispatch!(self, crate::webcore::streams::Writable::Done, |_T, ctx| ctx
-            .write_chunk(data))
+            .write_chunk(data, turn))
     }
 
-    pub fn end_chunk(self, err: Option<&crate::webcore::streams::StreamError>) {
-        dispatch!(self, (), ptr | T, ptr | T::end_chunk(ptr, err))
+    pub fn end_chunk(self, err: Option<&crate::webcore::streams::StreamError>, turn: JsTurn<'_>) {
+        dispatch!(self, (), ptr | T, ptr | T::end_chunk(ptr, err, turn))
     }
 }

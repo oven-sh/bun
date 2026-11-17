@@ -3,7 +3,7 @@ use core::ffi::c_int;
 
 #[cfg(unix)]
 use bun_core::zstr;
-use bun_core::{Environment, Global};
+use bun_core::{Environment, Global, LoopTurn};
 #[cfg(unix)]
 use bun_sys::{self as sys, Fd, File, O};
 
@@ -15,7 +15,9 @@ pub(crate) struct FuzzilliCommand;
 
 impl FuzzilliCommand {
     #[cold]
-    pub(crate) fn exec(_ctx: Command::Context) -> Result<(), crate::Error> {
+    pub(crate) fn exec(_ctx: Command::Context, turn: LoopTurn<'_>) -> Result<(), crate::Error> {
+        #[cfg(windows)]
+        let _ = turn;
         // The dispatch site (`cli/mod.rs`) already gates on `ENABLE_FUZZILLI`, so
         // this body is unreachable when the flag is off; bail loudly if a caller
         // ever invokes it anyway.
@@ -92,7 +94,7 @@ impl FuzzilliCommand {
             let temp_path: &[u8] = b"/tmp/bun-fuzzilli-reprl.js";
             // The `Run.boot` entry point is hosted on `RunCommand` to avoid the
             // higher-tier crate cycle (see run_command.rs §`Run`).
-            RunCommand::boot(_ctx, temp_path.to_vec().into_boxed_slice(), None)
+            RunCommand::boot(_ctx, temp_path.to_vec().into_boxed_slice(), None, turn)
         }
     }
 

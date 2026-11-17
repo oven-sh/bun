@@ -68,9 +68,9 @@ export const ELDHistogram = b.class({
   extends: Histogram,
   proto: {
     /** Whether it was disabled. */
-    enable: { returns: b.bool },
+    enable: { passVm: true, returns: b.bool },
     /** Whether it was enabled. */
-    disable: { returns: b.bool },
+    disable: { passVm: true, returns: b.bool },
     "@@dispose": { builtin: true, length: 0 },
   },
 });

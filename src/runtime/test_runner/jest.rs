@@ -3,7 +3,7 @@ use std::io::Write as _;
 
 use crate::cli::test_command::ReportersConfig;
 use bun_collections::ArrayHashMap;
-use bun_core::Output;
+use bun_core::{Output, VmLive};
 use bun_jsc::bindgen::{JsLocal, JsScope};
 use bun_jsc::bun_string_jsc;
 use bun_lint::utils::eslint_utils::js_number::{parse_float, parse_int};
@@ -150,6 +150,10 @@ impl TestRunner {
         f(&mut self.snapshots.borrow_mut())
     }
 
+    pub(crate) fn write_inline_snapshots(&self, live: VmLive<'_>) -> crate::Result<bool> {
+        self.with_snapshots(move |snapshots| snapshots.write_inline_snapshots(live))
+    }
+
     pub(crate) fn get_active_timeout(&self) -> bun_core::Timespec {
         let Some(active_file) = self.bun_test_root.clone_active_file() else {
             return bun_core::Timespec::EPOCH;
@@ -263,7 +267,7 @@ pub(crate) mod Jest {
 
     /// `None` outside `bun test` and on other threads: the runner belongs to the VM that runs the test files.
     pub(crate) fn runner() -> Option<&'static TestRunner> {
-        crate::jsc_hooks::try_runtime_state()?.test_runner.get()
+        crate::jsc_hooks::test_runner()
     }
 
     /// Computes `RuntimeFeatures::own_test_globals`. Call before the test file is loaded.
@@ -540,8 +544,8 @@ pub(crate) fn jest(cx: &mut JsScope<'_>, path: Option<&[u8]>) -> JsResult<JSValu
     })
 }
 
-pub(crate) fn asked_by_compiled_test_file(own_globals: bool) -> u32 {
-    let vm = VirtualMachine::get();
+pub(crate) fn asked_by_compiled_test_file(own_globals: bool, live: VmLive<'_>) -> u32 {
+    let vm = VirtualMachine::get(live);
     match own_globals {
         true => vm.transpiler.get().options.own_test_globals,
         false => u32::from(is_loading_under_vitest(vm)),

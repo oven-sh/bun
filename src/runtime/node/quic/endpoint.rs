@@ -6,6 +6,7 @@ use core::ffi::{c_char, c_int, c_uint, c_void};
 use core::ptr::{null, null_mut};
 
 use bun_collections::smallvec::SmallVec;
+use bun_core::{JsTurn, VmLive};
 use bun_io::KeepAlive;
 use bun_jsc::bindgen::{JsLocal, JsScope, JsStructure, JsWrapper};
 use bun_jsc::{
@@ -377,8 +378,8 @@ extern "C" fn on_drain(socket: *mut uws::udp::Socket) {
     if user.is_null() {
         return;
     }
-    // SAFETY: `user` is the QuicEndpoint, live until close.
-    let this = unsafe { &*user.cast::<QuicEndpoint>() };
+    // SAFETY: `user` is the QuicEndpoint, live until close. The loop of its thread dispatches this from a tick.
+    let (this, turn) = unsafe { (&*user.cast::<QuicEndpoint>(), JsTurn::assume(&socket)) };
     if this.closed.get() {
         return;
     }
@@ -388,7 +389,7 @@ extern "C" fn on_drain(socket: *mut uws::udp::Socket) {
             unsafe { lsquic::lsquic_engine_send_unsent_packets(engine) };
         }
     }
-    this.schedule_process();
+    this.schedule_process(turn);
 }
 extern "C" fn on_close(_socket: *mut uws::udp::Socket) {}
 extern "C" fn on_recv_error(_socket: *mut uws::udp::Socket, _errno: c_int, _is_errqueue: c_int) {}
@@ -597,7 +598,7 @@ extern "C" fn on_data(
         if payload.len() > LONG_HEADER_MIN_LEN
             && payload[0] & HEADER_FORM_LONG != 0
             && payload[1..5] == VERSION_NEGOTIATION_VERSION
-            && this.handle_version_negotiation(payload)
+            && this.handle_version_negotiation(payload, global.turn())
         {
             continue;
         }
@@ -606,7 +607,7 @@ extern "C" fn on_data(
         if let Err(err) =
             this.maybe_announce_provisional(global, payload, core::ptr::from_ref(peer).cast())
         {
-            crate::dispatch::fold(Err(err));
+            crate::dispatch::fold(Err(err), global.turn());
         }
         let engines = match owner_engine {
             // Already matched above: the other engine would only miss it.
@@ -639,7 +640,7 @@ extern "C" fn on_data(
 }
 
 lsquic_callback! {
-    fn on_mini_conn_failed(this: &QuicEndpoint, peer_sa: *const c_void, error_code: u64) {
+    fn on_mini_conn_failed(this: &QuicEndpoint, peer_sa: *const c_void, error_code: u64; turn) {
         /// CRYPTO_ERROR base (RFC 9001 §4.8) + TLS no_application_protocol(120).
         const CRYPTO_ERROR_NO_APPLICATION_PROTOCOL: u64 = 0x0100 + 120;
         if peer_sa.is_null() {
@@ -668,7 +669,7 @@ lsquic_callback! {
                         reason: Vec::new(),
                     });
                     session.push_event(session::SessionEvent::Closed);
-                    session.schedule_process();
+                    session.schedule_process(turn);
                     return;
                 }
                 if error_code == 0 {
@@ -681,7 +682,7 @@ lsquic_callback! {
                         reason: Vec::new(),
                     });
                     session.push_event(session::SessionEvent::Closed);
-                    session.schedule_process();
+                    session.schedule_process(turn);
                     return;
                 }
                 let code = error_code;
@@ -696,7 +697,7 @@ lsquic_callback! {
                     reason: reason.to_vec(),
                 });
                 session.push_event(session::SessionEvent::Closed);
-                session.schedule_process();
+                session.schedule_process(turn);
             }
         }
     }
@@ -1356,7 +1357,7 @@ impl QuicEndpoint {
         if socket.is_null() {
             self.this_value
                 .with_mut(|r| r.set_strong(this_value, global));
-            self.finish_close();
+            self.finish_close(global.turn());
             self.pending_endpoint_close.set(false);
             self.deliver_endpoint_close(global, CLOSECONTEXT_BIND_FAILURE, err);
             return Ok(false);
@@ -1381,7 +1382,7 @@ impl QuicEndpoint {
         });
         self.this_value
             .with_mut(|r| r.set_strong(this_value, global));
-        self.update_keepalive();
+        self.update_keepalive(global.live());
         let me = core::ptr::from_ref(self).cast_mut();
         ENDPOINT_REGISTRY.with_borrow_mut(|v| {
             if !v.contains(&me) {
@@ -1391,13 +1392,13 @@ impl QuicEndpoint {
         Ok(true)
     }
 
-    fn update_keepalive(&self) {
+    fn update_keepalive(&self, live: VmLive<'_>) {
         if self.closed.get() || self.socket.get().is_none() {
             return;
         }
         let listening = self.with_state(|s| s.listening) != 0;
         let busy = listening || !self.sessions.get().is_empty();
-        let ctx = bun_io::js_vm_ctx();
+        let ctx = bun_io::js_vm_ctx(live);
         if busy {
             self.poll_ref.ref_(ctx);
         } else {
@@ -1496,17 +1497,17 @@ impl QuicEndpoint {
                 continue;
             };
             session.process_events(global);
-            session.maybe_finish_deferred_close();
+            session.maybe_finish_deferred_close(global.turn());
         }
         self.sweep_provisional();
-        self.rearm_timer();
-        self.update_keepalive();
+        self.rearm_timer(global.live());
+        self.update_keepalive(global.live());
         if self.closing.get()
             && self.sessions.get().is_empty()
             && self.engine_conn_count() == 0
             && !self.closed.get()
         {
-            self.finish_close();
+            self.finish_close(global.turn());
         }
         drop(send_scope);
         // Writes made by the dispatch above could not flush inline (the scope
@@ -1537,7 +1538,7 @@ impl QuicEndpoint {
         self.send_scope_depth.get() != 0
     }
 
-    pub(super) fn schedule_process(&self) {
+    pub(super) fn schedule_process(&self, turn: JsTurn<'_>) {
         if self.closed.get() {
             return;
         }
@@ -1553,10 +1554,10 @@ impl QuicEndpoint {
         // time-driven state (RTO, ACK delay, idle) and the deferred close.
         self.mark_driver_pending();
         let next = bun_core::Timespec::ms_from_now(bun_core::TimespecMockMode::ForceRealTime, 1);
-        timer_all().update(OwnedTimer::node(&raw const self.event_loop_timer), &next);
+        timer_all(turn.live).update(OwnedTimer::node(&raw const self.event_loop_timer), &next);
     }
 
-    fn rearm_timer(&self) {
+    fn rearm_timer(&self, live: VmLive<'_>) {
         if self.closed.get() {
             return;
         }
@@ -1591,7 +1592,7 @@ impl QuicEndpoint {
                 bun_core::TimespecMockMode::ForceRealTime,
                 ms as i64,
             );
-            timer_all().update(OwnedTimer::node(&raw const self.event_loop_timer), &next);
+            timer_all(live).update(OwnedTimer::node(&raw const self.event_loop_timer), &next);
         }
     }
 
@@ -1834,7 +1835,7 @@ impl QuicEndpoint {
         ) {
             Ok((session, _handle)) => {
                 if let Err(err) = self.apply_server_session_options(global, session) {
-                    crate::dispatch::fold(Err(err));
+                    crate::dispatch::fold(Err(err), global.turn());
                 }
                 let session_ptr = core::ptr::from_ref(session).cast_mut();
                 self.sessions.with_mut(|v| v.push(session_ptr));
@@ -1846,7 +1847,7 @@ impl QuicEndpoint {
             Err(e) => {
                 // Abort like the sibling null-return branches, or the conn
                 // lingers with no session behind it.
-                crate::dispatch::fold(Err(e));
+                crate::dispatch::fold(Err(e), global.turn());
                 handshaken.abort_silent();
                 null_mut()
             }
@@ -2073,15 +2074,15 @@ impl QuicEndpoint {
         true
     }
 
-    fn finish_close(&self) {
+    fn finish_close(&self, turn: JsTurn<'_>) {
         if !self.teardown() {
             return;
         }
         // Defer onEndpointClose to the next turn (Node closes asynchronously).
-        self.poll_ref.ref_(bun_io::js_vm_ctx());
+        self.poll_ref.ref_(bun_io::js_vm_ctx(turn.live));
         self.pending_endpoint_close.set(true);
         let next = bun_core::Timespec::ms_from_now(bun_core::TimespecMockMode::ForceRealTime, 1);
-        timer_all().update(OwnedTimer::node(&raw const self.event_loop_timer), &next);
+        timer_all(turn.live).update(OwnedTimer::node(&raw const self.event_loop_timer), &next);
     }
 
     fn apply_server_session_options(
@@ -2127,7 +2128,7 @@ impl QuicEndpoint {
     }
 
     fn deliver_endpoint_close(&self, global: &JSGlobalObject, context: u8, status: c_int) {
-        self.poll_ref.disable();
+        self.poll_ref.disable(global.live());
         if let Some(callback) = callbacks::get(global, "onEndpointClose") {
             let vm = global.bun_vm();
             vm.event_loop().run_callback(
@@ -2151,6 +2152,7 @@ impl QuicEndpoint {
         cx: &mut JsScope<'_>,
         options: JsLocal<'_>,
     ) -> JsResult<()> {
+        let live = cx.live();
         let global = cx.global();
         if self.closed.get() || self.closing.get() {
             return Err(global
@@ -2209,7 +2211,7 @@ impl QuicEndpoint {
         }
         // SAFETY: state buffer is live.
         self.with_state(|s| s.listening = 1);
-        self.update_keepalive();
+        self.update_keepalive(live);
         Ok(())
     }
 
@@ -2394,7 +2396,7 @@ impl QuicEndpoint {
         }
         self.sessions.with_mut(|v| v.push(session_ptr));
         self.add_stat(IDX_STATS_CLIENT_SESSIONS, 1);
-        self.schedule_process();
+        self.schedule_process(global.turn());
         Ok(handle)
     }
 
@@ -2439,7 +2441,7 @@ impl QuicEndpoint {
             .with_mut(|v| v.push((session, scid, now_ns())));
         // A probe has no engine, so nothing else would ever arm the timer that
         // runs the sweep expiring it.
-        self.schedule_process();
+        self.schedule_process(global.turn());
         self.sessions.with_mut(|v| v.push(session));
         self.add_stat(IDX_STATS_CLIENT_SESSIONS, 1);
         if let Some(socket) = self.socket.get() {
@@ -2455,7 +2457,7 @@ impl QuicEndpoint {
     }
 
     /// The VN packet's DCID echoes the probe's SCID — RFC 8999 sec 6.
-    fn handle_version_negotiation(&self, payload: &[u8]) -> bool {
+    fn handle_version_negotiation(&self, payload: &[u8], turn: JsTurn<'_>) -> bool {
         if self.pending_verneg.get().is_empty() {
             return false;
         }
@@ -2494,7 +2496,7 @@ impl QuicEndpoint {
         unsafe {
             (*session).push_event(session::SessionEvent::VersionNegotiation { server_versions })
         };
-        self.schedule_process();
+        self.schedule_process(turn);
         true
     }
 
@@ -2512,16 +2514,16 @@ impl QuicEndpoint {
                 .with_mut(|r| r.set_strong(this_value.to_js(), cx.global()));
         }
         if self.sessions.get().is_empty() && self.engine_conn_count() == 0 {
-            self.finish_close();
+            self.finish_close(cx.turn());
         } else {
-            self.schedule_process();
+            self.schedule_process(cx.turn());
         }
     }
 
-    pub(crate) fn release_socket(&self, _: &mut JsScope<'_>) {
+    pub(crate) fn release_socket(&self, cx: &mut JsScope<'_>) {
         self.pending_endpoint_close.set(false);
         self.teardown();
-        self.poll_ref.disable();
+        self.poll_ref.disable(cx.live());
     }
 
     pub(crate) fn address(&self, cx: &mut JsScope<'_>) -> JSValue {

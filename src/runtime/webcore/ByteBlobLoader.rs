@@ -1,6 +1,7 @@
 use core::cell::Cell;
 
 use bun_collections::VecExt;
+use bun_core::{JsTurn, LoopTurn};
 use bun_jsc::{JSGlobalObject, JSValue, JsCell, JsResult};
 use bun_ptr::RefPtr;
 
@@ -41,12 +42,12 @@ pub(crate) type Source = readable_stream::NewSource<ByteBlobLoader>;
 impl readable_stream::SourceContext for ByteBlobLoader {
     crate::source_context_codegen!(js_BlobInternalReadableStreamSource);
 
-    fn on_start(&self) -> streams::Start {
+    fn on_start(&self, _turn: JsTurn<'_>) -> streams::Start {
         // `streams::BlobSizeType` and `blob::SizeType` are both u64 in the Rust port.
         streams::Start::ChunkSize(self.chunk_size)
     }
 
-    fn on_pull(&self, buffer: &mut [u8], array: JSValue) -> streams::Result<'_> {
+    fn on_pull(&self, buffer: &mut [u8], array: JSValue, _turn: JsTurn<'_>) -> streams::Result<'_> {
         array.ensure_still_alive();
         let _keep = bun_jsc::EnsureStillAlive(array);
         if self.store.get().is_none() || self.done.get() {
@@ -79,11 +80,11 @@ impl readable_stream::SourceContext for ByteBlobLoader {
         })
     }
 
-    fn on_cancel(&self) {
+    fn on_cancel(&self, _turn: JsTurn<'_>) {
         self.clear_data();
     }
 
-    fn drain_internal_buffer(&self) -> Vec<u8> {
+    fn drain_internal_buffer(&self, _turn: LoopTurn<'_>) -> Vec<u8> {
         let rest = self.remaining();
 
         // A single owning copy (avoids a `ManuallyDrop` borrow dance).

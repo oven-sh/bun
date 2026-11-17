@@ -140,7 +140,7 @@ pub(crate) fn parse_proxy(global: &JSGlobalObject, proxy_arg: JSValue) -> JsResu
     let mut headers = None;
     if let Some(headers_value) = proxy_arg.get(global, "headers")? {
         if !headers_value.is_undefined_or_null() {
-            if let Some(fetch_headers) = FetchHeaders::cast(headers_value) {
+            if let Some(fetch_headers) = FetchHeaders::cast(headers_value, global.turn()) {
                 let fetch_headers = bun_ptr::BackRef::from(fetch_headers);
                 headers = Some(from_fetch_headers(global, Some(&*fetch_headers), None)?);
             } else if let Some(fetch_headers) = HeadersRef::create_from_js(global, headers_value)? {
@@ -180,7 +180,7 @@ pub(crate) struct FetchSession {
     abort_handle: bun_jsc::AbortHandle,
 }
 
-bun_jsc::impl_abort_handle_owner!(FetchSession, abort_handle, |this, _cause| {
+bun_jsc::impl_abort_handle_owner!(FetchSession, abort_handle, |this, _cause, _turn| {
     // SAFETY: trait contract: `this` is live (dropping it drops the handle).
     unsafe { &*this }.close()
 });
@@ -267,10 +267,11 @@ impl FetchSession {
             ref_count: Cell::new(1),
             abort_handle: bun_jsc::AbortHandle::for_owner::<FetchSession>(),
         });
+        let live = cx.live();
         // SAFETY: a heap allocation at its final address; its `Drop` (with the last ref, or when
         // this constructor fails) disarms the handle.
         unsafe {
-            bun_jsc::AbortHandle::arm_owner(&raw mut *this, cx.js_thread().context());
+            bun_jsc::AbortHandle::arm_owner(&raw mut *this, cx.js_thread().context(), live);
         }
         let check_server_identity = Self::parse_options(&mut this, cx.global(), init.to_js())?;
 

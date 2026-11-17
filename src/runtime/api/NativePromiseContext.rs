@@ -20,6 +20,7 @@
 use core::ffi::c_void;
 use core::ptr::NonNull;
 
+use bun_core::{JsTurn, VmLive};
 use bun_event_loop::{Task, TaskTag, Taskable, task_tag};
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{JSGlobalObject, JSValue};
@@ -179,15 +180,19 @@ pub(crate) fn take_held(cell: JSValue) -> JSValue {
 /// deinit() which aborts signals, unrefs bodies, and calls back into
 /// the server — all of which may unprotect JS values or allocate. We must
 /// defer that work to the event loop.
+///
+/// # Safety
+/// Called on the thread of the cell's VM. `ctx` and `tag` are the cell's unreleased claim.
 #[inline(never)]
 #[unsafe(no_mangle)]
-extern "C" fn Bun__NativePromiseContext__destroy(ctx: *mut c_void, tag: u8) {
+unsafe extern "C" fn Bun__NativePromiseContext__destroy(ctx: *mut c_void, tag: u8) {
     bun_removable_features::removable_definition!(Serve, Bun__NativePromiseContext__destroy);
     bun_removable_features::removable_definition!(HtmlRewriter, Bun__NativePromiseContext__destroy);
     bun_removable_features::removable_definition!(S3Client, Bun__NativePromiseContext__destroy);
     let tag = Tag::from_raw(tag);
     clear_remembered_cell(ctx, tag);
-    DeferredDerefTask::schedule(ctx, tag);
+    // SAFETY: fn contract. `~VM` has swept every cell before the VM is freed.
+    DeferredDerefTask::schedule(ctx, tag, unsafe { VmLive::assume(&ctx) });
 }
 
 /// The cell dies with its claim intact, so the context's `promise_cell` field
@@ -253,8 +258,10 @@ impl Taskable for DeferredDerefTask {
     const TAG: TaskTag = task_tag::NativePromiseContextDeferredDerefTask;
     /// `this` packs a context pointer and tag; the deref it defers is
     /// script-free, so do it.
-    unsafe fn release_unrun(this: *mut Self) {
-        Self::run_from_js_thread(this as usize);
+    unsafe fn release_unrun(this: *mut Self, live: VmLive<'_>) {
+        // SAFETY: `schedule` posts nothing to a closed queue and the task has no context, so this is teardown
+        // releasing the queue: outside a collection, ahead of `~VM`.
+        Self::run_from_js_thread(this as usize, unsafe { JsTurn::assume(&live) });
     }
     /// A deferred deref; calls no script.
     unsafe fn context(_: *const Self) -> bun_event_loop::ContextId {
@@ -265,19 +272,19 @@ impl Taskable for DeferredDerefTask {
 impl DeferredDerefTask {
     const TAG_MASK: usize = 0b1111;
 
-    pub(crate) fn schedule(ctx: *mut c_void, tag: Tag) {
-        // SAFETY: called from the JS thread (GC sweep → C++ destructor); the
-        // thread-local VM is alive for the duration of this call.
-        let vm = VirtualMachine::get();
+    pub(crate) fn schedule(ctx: *mut c_void, tag: Tag, live: VmLive<'_>) {
+        let vm = VirtualMachine::get(live);
         if vm.event_loop().is_closed_for_tasks() {
             // Teardown has forbidden script and released the queue; from here on only GC destructors
             // (possibly mid-sweep in `~VM`) reach this, and theirs is the last use of `ctx` in that
             // frame. A worker's HTMLRewriter pipe would outlive it, so those refs are released now,
             // sweep-safe; a RequestContext's deref is not sweep-safe and dies with the VM instead.
             match tag {
-                // SAFETY: the destroyed context held the suspension's ref on this live pipe.
+                // SAFETY: the destroyed context held the suspension's ref on this live pipe. The queue closes
+                // after `script_allowed()` has turned false, which keeps the turn from `fail`.
                 Tag::HTMLRewriterSuspension => unsafe {
-                    RefPtr::from_raw(ctx.cast::<html_rewriter::RewriterPipe>()).abandon_suspension()
+                    RefPtr::from_raw(ctx.cast::<html_rewriter::RewriterPipe>())
+                        .abandon_suspension(JsTurn::assume(&live))
                 },
                 // SAFETY: the detached controller handed over the pipe's last ref (its destructor's
                 // trailing `controller_finalize` is a no-op for this sink).
@@ -300,7 +307,7 @@ impl DeferredDerefTask {
         vm.event_loop().enqueue_task(task);
     }
 
-    pub(crate) fn run_from_js_thread(packed_ptr: usize) {
+    pub(crate) fn run_from_js_thread(packed_ptr: usize, turn: JsTurn<'_>) {
         let tag = Tag::from_raw((packed_ptr & Self::TAG_MASK) as u8);
         let ctx = (packed_ptr & !Self::TAG_MASK) as *mut c_void;
         // SAFETY: ctx was packed in `schedule` from a live, non-null pointer
@@ -334,7 +341,7 @@ impl DeferredDerefTask {
                 )),
                 Tag::HTMLRewriterSuspension => {
                     RefPtr::from_raw(ctx.cast::<html_rewriter::RewriterPipe>())
-                        .abandon_suspension();
+                        .abandon_suspension(turn);
                 }
                 Tag::HTMLRewriterPipeFree => {
                     drop(RefPtr::from_raw(ctx.cast::<html_rewriter::RewriterPipe>()));
@@ -343,7 +350,7 @@ impl DeferredDerefTask {
                     // The pump's promise was collected unsettled (the script running it is gone):
                     // as a rejection with no reason.
                     let sink = RefPtr::from_raw(ctx.cast::<NetworkSink>());
-                    NetworkSink::on_pump_rejected(&sink, JSValue::ZERO);
+                    NetworkSink::on_pump_rejected(&sink, JSValue::ZERO, turn);
                 }
             }
         }

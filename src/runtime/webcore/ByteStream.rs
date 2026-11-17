@@ -1,6 +1,7 @@
 use core::cell::Cell;
 
 use bun_collections::VecExt;
+use bun_core::{JsTurn, LoopTurn, ThreadLive, VmLive};
 use bun_jsc::bindgen::{JsLocal, JsScope};
 use bun_jsc::strong::Optional as StrongOptional;
 use bun_jsc::{self as jsc, JSValue, JsCell};
@@ -257,7 +258,7 @@ impl core::ops::Deref for PinnedBytes {
 impl readable_stream::SourceContext for ByteStream {
     crate::source_context_codegen!(js_BytesInternalReadableStreamSource);
 
-    fn on_start(&self) -> streams::Start {
+    fn on_start(&self, _turn: JsTurn<'_>) -> streams::Start {
         if self.has_received_last_chunk.get() {
             // `Empty` would close the stream without the pull that returns the stored error.
             if self.has_pending_error() {
@@ -282,7 +283,7 @@ impl readable_stream::SourceContext for ByteStream {
         streams::Start::ChunkSize((512 * 1024 + page_size).min(self.high_water_mark.max(page_size)))
     }
 
-    fn on_pull(&self, buffer: &mut [u8], view: JSValue) -> streams::Result<'_> {
+    fn on_pull(&self, buffer: &mut [u8], view: JSValue, turn: JsTurn<'_>) -> streams::Result<'_> {
         bun_jsc::mark_binding!();
         debug_assert!(!buffer.is_empty());
         debug_assert!(self.buffer_action.get().is_none());
@@ -294,7 +295,7 @@ impl readable_stream::SourceContext for ByteStream {
             debug_assert!(to_write > 0);
 
             if self.buffered.is_empty() {
-                self.signal_drained();
+                self.signal_drained(turn.loop_);
             }
 
             return streams::Result::IntoArray(IntoArray {
@@ -315,25 +316,25 @@ impl readable_stream::SourceContext for ByteStream {
         streams::Result::Pending(&self.pending)
     }
 
-    fn on_cancel(&self) {
-        Self::on_cancel(self)
+    fn on_cancel(&self, turn: JsTurn<'_>) {
+        Self::on_cancel(self, turn)
     }
 
-    fn deinit_fn(&self) {
+    fn deinit_fn(&self, live: VmLive<'_>) {
         bun_jsc::mark_binding!();
         if !self.done.get() {
             self.done.set(true);
             // We must never run JavaScript inside of a GC finalizer.
-            self.pending.close_on_next_tick();
+            self.pending.close_on_next_tick(live);
         }
     }
 
-    fn wrapper_finalized(&self) {
-        self.parent_const().producer.get().consumer_collected();
+    fn wrapper_finalized(&self, live: VmLive<'_>) {
+        self.parent_const().producer.get().consumer_collected(live);
     }
 
-    fn drain_internal_buffer(&self) -> Vec<u8> {
-        Self::drain(self)
+    fn drain_internal_buffer(&self, turn: LoopTurn<'_>) -> Vec<u8> {
+        Self::drain(self, turn)
     }
 
     fn memory_cost_fn(&self) -> usize {
@@ -367,7 +368,7 @@ impl readable_stream::SourceContext for ByteStream {
         let promise = self.buffer_action.get().as_ref().unwrap().value();
         // Signal after the action is installed so a backpressure-gated
         // producer observes it; a synchronous producer may fulfil it inline.
-        self.signal_drained();
+        self.signal_drained(cx.turn().loop_);
         Ok(promise)
     }
 }
@@ -418,11 +419,11 @@ impl ByteStream {
 
     /// The sink is gone before the stream ended (its peer went away). The stream stays
     /// locked to it, so nobody else can read the rest: close the producer too.
-    pub(crate) fn detach_finished_sink(&self) {
+    pub(crate) fn detach_finished_sink(&self, turn: JsTurn<'_>) {
         if self.has_received_last_chunk.get() {
             self.unpipe_without_deref();
         } else {
-            self.cancel_from_sink(None);
+            self.cancel_from_sink(None, turn);
         }
     }
 
@@ -433,7 +434,7 @@ impl ByteStream {
     }
 
     /// Sink's drain ack: unpause, push buffered bytes, end if last chunk already arrived.
-    pub fn resume(&self) {
+    pub fn resume(&self, turn: JsTurn<'_>) {
         if !self.sink_paused.get() {
             return;
         }
@@ -451,26 +452,26 @@ impl ByteStream {
             } else {
                 streams::Result::Owned(buffered)
             };
-            match sink.write(&result) {
+            match sink.write(&result, turn) {
                 streams::Writable::Backpressure(_) => {
                     self.sink_paused.set(true);
                     return;
                 }
                 streams::Writable::Err(e) => {
                     self.detach_sink(None);
-                    sink.end(Some(streams::StreamError::Error(e)));
+                    sink.end(Some(streams::StreamError::Error(e)), turn);
                     return;
                 }
                 streams::Writable::Done => {
                     self.detach_sink(None);
-                    sink.end(None);
+                    sink.end(None, turn);
                     return;
                 }
                 _ => {}
             }
         }
 
-        self.signal_drained();
+        self.signal_drained(turn.loop_);
 
         // A synchronous producer (RewriterPipe) may have pushed its remaining
         // output through `on_data` just now. If one of those writes hit
@@ -483,26 +484,26 @@ impl ByteStream {
 
         if self.has_received_last_chunk.get() && self.sink.get().is_some() {
             self.detach_sink(None);
-            sink.end(None);
+            sink.end(None, turn);
         }
     }
 
     /// Sink closed early: detach and drive the NewSource cancel path.
-    pub fn cancel_from_sink(&self, _err: Option<SysError>) {
+    pub fn cancel_from_sink(&self, _err: Option<SysError>, turn: JsTurn<'_>) {
         self.detach_sink(None);
         if self.done.get() {
             return;
         }
         self.has_received_last_chunk.set(true);
-        self.on_cancel();
+        self.on_cancel(turn);
         let source = self.parent_const();
         let mut p = source.producer.replace(streams::SourceHandle::None);
-        p.close(None);
+        p.close(None, turn.loop_);
     }
 
     #[inline]
-    pub(crate) fn signal_drained(&self) {
-        self.parent_const().producer.get().ready(None, None);
+    pub(crate) fn signal_drained(&self, turn: LoopTurn<'_>) {
+        self.parent_const().producer.get().ready(None, None, turn);
     }
 
     /// Take the untaken bytes. The caller calls [`Self::signal_drained`] after it writes them.
@@ -512,11 +513,11 @@ impl ByteStream {
 
     /// Called by native fast-paths after wiring `self.sink`: a consumer now
     /// waits for bytes, so a parked producer resumes.
-    pub fn signal_consumer_attached(&self) {
-        self.parent_const().producer.get().start();
+    pub fn signal_consumer_attached(&self, live: ThreadLive<'_>) {
+        self.parent_const().producer.get().start(live);
     }
 
-    pub(crate) fn on_data(&self, mut stream: streams::Result<'_>) {
+    pub(crate) fn on_data(&self, mut stream: streams::Result<'_>, turn: JsTurn<'_>) {
         bun_jsc::mark_binding!();
         if self.done.get() {
             // The owned `Vec<u8>`/`Vec`
@@ -539,7 +540,7 @@ impl ByteStream {
             // Upstream error must reach the sink even while back-pressured.
             if let streams::Result::Err(err) = stream {
                 self.detach_sink(Some(&err));
-                sink.end(Some(err));
+                sink.end(Some(err), turn);
                 return;
             }
 
@@ -551,28 +552,28 @@ impl ByteStream {
             }
 
             let is_done = stream.is_done();
-            match sink.write(&stream) {
+            match sink.write(&stream, turn) {
                 streams::Writable::Backpressure(_) => {
                     self.sink_paused.set(true);
                 }
                 streams::Writable::Err(e) => {
                     self.detach_sink(None);
-                    sink.end(Some(streams::StreamError::Error(e)));
+                    sink.end(Some(streams::StreamError::Error(e)), turn);
                     return;
                 }
                 streams::Writable::Done => {
                     self.detach_sink(None);
-                    sink.end(None);
+                    sink.end(None, turn);
                     return;
                 }
                 _ => {
-                    self.signal_drained();
+                    self.signal_drained(turn.loop_);
                 }
             }
 
             if is_done && !self.sink_paused.get() && self.sink.get().is_some() {
                 self.detach_sink(None);
-                sink.end(None);
+                sink.end(None, turn);
             }
             return;
         }
@@ -587,7 +588,7 @@ impl ByteStream {
                 // R-2: move the action out of the cell *before* `signal_drained`
                 // and `reject`; both can re-enter and consume the slot.
                 let mut action = self.buffer_action.replace(None).unwrap();
-                self.signal_drained();
+                self.signal_drained(turn.loop_);
                 action.reject(global, err);
 
                 self.buffered.clear();
@@ -599,7 +600,7 @@ impl ByteStream {
 
             // R-2: the drain signal can re-enter and consume `buffer_action`,
             // so the paths below re-take it with `let`-`else`.
-            self.signal_drained();
+            self.signal_drained(turn.loop_);
 
             if self.has_received_last_chunk.get() {
                 // `defer { this.buffer_action = null; }` — handled by `replace(None)` below.
@@ -703,7 +704,7 @@ impl ByteStream {
                 // producer chunk land with no reader to take it (it would go
                 // straight to `append` below), inflating `buffer` and the
                 // producer's own staging buffer by an extra recv each cycle.
-                self.signal_drained();
+                self.signal_drained(turn.loop_);
             }
 
             bun_output::scoped_log!(ByteStream, "ByteStream.onData pending.run()");
@@ -772,20 +773,23 @@ impl ByteStream {
     }
 
     /// The JS stream was errored with `reason`. A native reader that waits now fails with it.
-    pub(crate) fn error_native_consumer(&self, reason: JSValue) {
+    pub(crate) fn error_native_consumer(&self, reason: JSValue, turn: JsTurn<'_>) {
         let waiting = self.sink.get().is_some()
             || self.buffer_action.get().is_some()
             || self.pending.is_pending();
-        self.on_data(streams::Result::Err(if waiting {
-            let global = self.parent_const().global_this();
-            streams::StreamError::JSValue(StrongOptional::create(reason, global))
-        } else {
-            // Kept for a reader that already holds this source and pulls later. A stored `reason` would be a GC root.
-            streams::StreamError::AbortReason(jsc::CommonAbortReason::UserAbort)
-        }));
+        self.on_data(
+            streams::Result::Err(if waiting {
+                let global = self.parent_const().global_this();
+                streams::StreamError::JSValue(StrongOptional::create(reason, global))
+            } else {
+                // Kept for a reader that already holds this source and pulls later. A stored `reason` would be a GC root.
+                streams::StreamError::AbortReason(jsc::CommonAbortReason::UserAbort)
+            }),
+            turn,
+        );
     }
 
-    pub(crate) fn on_cancel(&self) {
+    pub(crate) fn on_cancel(&self, turn: JsTurn<'_>) {
         bun_jsc::mark_binding!();
         let view = self.value();
         self.buffered.clear();
@@ -796,9 +800,12 @@ impl ByteStream {
         let sink = *self.sink.get();
         if sink.is_some() {
             self.detach_sink(None);
-            sink.end(Some(streams::StreamError::AbortReason(
-                jsc::CommonAbortReason::UserAbort,
-            )));
+            sink.end(
+                Some(streams::StreamError::AbortReason(
+                    jsc::CommonAbortReason::UserAbort,
+                )),
+                turn,
+            );
         }
 
         if !view.is_empty() {
@@ -816,13 +823,13 @@ impl ByteStream {
         }
     }
 
-    pub(crate) fn drain(&self) -> Vec<u8> {
+    pub(crate) fn drain(&self, turn: LoopTurn<'_>) -> Vec<u8> {
         let drained = self.take_buffer();
         if !drained.is_empty() {
             // After taking, as in `on_pull`: the producer decides whether to
             // resume from `buffer.len()`, and anything it emits inline queues
             // behind these bytes for the next pull.
-            self.signal_drained();
+            self.signal_drained(turn);
         }
         drained
     }
@@ -838,14 +845,14 @@ impl ByteStream {
     }
 
     /// End the attached sink with the stored producer error. Returns false if none is stored.
-    pub(crate) fn end_sink_with_pending_error(&self) -> bool {
+    pub(crate) fn end_sink_with_pending_error(&self, turn: JsTurn<'_>) -> bool {
         let sink = *self.sink.get();
         debug_assert!(sink.is_some());
         let Some(err) = self.take_pending_error() else {
             return false;
         };
         self.detach_sink(Some(&err));
-        sink.end(Some(err));
+        sink.end(Some(err), turn);
         true
     }
 

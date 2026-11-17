@@ -3,6 +3,7 @@
 use super::*;
 use crate::timer::OwnedTimer;
 use bun_collections::index_sort;
+use bun_core::{LoopTurn, ThreadLive, VmLive};
 use bun_ptr::AliasableBox;
 use core::ops::DerefMut;
 use core::ptr::NonNull;
@@ -328,16 +329,19 @@ struct Inflight {
 }
 
 impl Inflight {
-    fn complete(mut self) {
+    fn complete(mut self, turn: LoopTurn<'_>) {
         let mut results = self.query.take_results();
         match self.request {
             Request::Jsc(pending) => {
                 bun_output::scoped_log!(DNSLookup, "completeDnsSd: {}", results.len());
-                pending.complete_native(if results.is_empty() {
-                    Err(EMPTY_STATUS)
-                } else {
-                    Ok(results)
-                });
+                pending.complete_native(
+                    if results.is_empty() {
+                        Err(EMPTY_STATUS)
+                    } else {
+                        Ok(results)
+                    },
+                    turn,
+                );
             }
             Request::Internal(request) => internal::dns_sd_complete(request, &mut results),
         }
@@ -555,12 +559,12 @@ impl SharedConnection {
     }
 
     /// Socket readable: drain every buffered reply (callbacks fire inline), then finish complete queries.
-    pub(crate) fn on_readable() {
+    pub(crate) fn on_readable(turn: LoopTurn<'_>) {
         let Some(main_ref) = Self::current().map(|this| this.main_ref.0.as_ptr()) else {
             return;
         };
         // One scope across `finish()` so the microtask drain runs after the last one.
-        let _exit = event_loop_scope();
+        let _exit = event_loop_scope(turn);
 
         // SAFETY: FFI; the only callback is `on_reply`, which leaves the connection open.
         let rc = unsafe { DNSServiceProcessResult(main_ref) };
@@ -571,7 +575,7 @@ impl SharedConnection {
                 return;
             };
             for inf in core::mem::take(&mut detached.inflight) {
-                Self::fail(inf);
+                Self::fail(inf, turn);
             }
             return;
         }
@@ -579,10 +583,10 @@ impl SharedConnection {
             return;
         };
         let ready = this.take_ready(|q| q.is_ready());
-        this.arm_early_out();
+        this.arm_early_out(turn.live);
         drop(this);
         for inf in ready {
-            Self::finish(inf);
+            Self::finish(inf, turn);
         }
     }
 
@@ -604,10 +608,10 @@ impl SharedConnection {
     }
 
     /// Arm the timer for the nearest early-out deadline (JS thread only; daemon timeout otherwise).
-    fn arm_early_out(&mut self) {
-        if !VirtualMachine::is_loaded() {
+    fn arm_early_out(&mut self, live: ThreadLive<'_>) {
+        let Some(vm) = VirtualMachine::get_or_null(live) else {
             return;
-        }
+        };
         let mut min_deadline: Option<i64> = None;
         for inf in self.inflight.iter() {
             if let Some(d) = inf.query.early_out_deadline_ms() {
@@ -623,14 +627,14 @@ impl SharedConnection {
         }
         let now = bun::timespec::now(bun::TimespecMockMode::ForceRealTime);
         let next = now.add_ms((deadline - now.ms()).max(1));
-        crate::jsc_hooks::timer_all()
+        crate::jsc_hooks::timer_all(vm.live())
             .update(OwnedTimer::node(&raw const self.early_out_timer), &next);
         self.early_out_armed_for.set(deadline);
     }
 
     /// Timer fire (via dispatch.rs): complete overdue queries. SAFETY: the heap has just popped `early_out_timer`.
-    pub(crate) unsafe fn on_early_out() {
-        let _exit = event_loop_scope();
+    pub(crate) unsafe fn on_early_out(turn: LoopTurn<'_>) {
+        let _exit = event_loop_scope(turn);
         let Some(mut this) = Self::current() else {
             return;
         };
@@ -645,14 +649,14 @@ impl SharedConnection {
             }
             due
         });
-        this.arm_early_out();
+        this.arm_early_out(turn.live);
         drop(this);
         for inf in ready {
-            Self::finish(inf);
+            Self::finish(inf, turn);
         }
     }
 
-    fn finish(mut inf: Inflight) {
+    fn finish(mut inf: Inflight, turn: LoopTurn<'_>) {
         inf.query.sd_refs = FamilyRefs::default();
         if inf.query.should_retry_unsuppressed()
             && let Some(mut this) = Self::current()
@@ -660,14 +664,14 @@ impl SharedConnection {
         {
             return this.track(inf.query, inf.request);
         }
-        inf.complete();
+        inf.complete(turn);
     }
 
     /// The connection is going away: drops partial results so the request rejects instead of resolving.
-    fn fail(mut inf: Inflight) {
+    fn fail(mut inf: Inflight, turn: LoopTurn<'_>) {
         inf.query.sd_refs = FamilyRefs::default();
         inf.query.results.clear();
-        inf.complete();
+        inf.complete(turn);
     }
 
     /// Reissue `q` without SuppressUnusable; `false` if it couldn't be reissued.
@@ -687,7 +691,7 @@ impl SharedConnection {
     }
 
     /// VM teardown: fail in-flight requests (like c-ares' EDESTRUCTION) and release the fd/FilePoll.
-    pub(crate) fn close_for_terminate() {
+    pub(crate) fn close_for_terminate(turn: LoopTurn<'_>) {
         let Some(mut conn) = Self::take() else {
             return;
         };
@@ -702,18 +706,22 @@ impl SharedConnection {
                     internal::run_on_work_pool(req);
                 }
                 // A dns.lookup() from this thread's script: only this VM waits on it.
-                Request::Jsc(_) => Self::fail(inf),
+                Request::Jsc(_) => Self::fail(inf, turn),
             }
         }
     }
 }
 
-fn event_loop_scope() -> Option<bun_jsc::event_loop::EventLoopEnterGuard<'static>> {
-    VirtualMachine::get_or_null().map(VirtualMachine::enter_event_loop_scope)
+fn event_loop_scope(turn: LoopTurn<'_>) -> Option<bun_jsc::event_loop::EventLoopEnterGuard<'_>> {
+    VirtualMachine::get_or_null(turn.live).map(move |vm| vm.enter_event_loop_scope(vm.turn(turn)))
 }
 
 /// Gives `pending` back if mDNSResponder cannot answer it.
-pub(crate) fn start(query: &GetAddrInfo, pending: PendingQuery) -> Result<(), PendingQuery> {
+pub(crate) fn start(
+    query: &GetAddrInfo,
+    pending: PendingQuery,
+    live: VmLive<'_>,
+) -> Result<(), PendingQuery> {
     bun_core::Environment::only_mac();
 
     // mDNSResponder answers names; numeric hosts are a parse and AI_V4MAPPED/AI_ALL need getaddrinfo's semantics.
@@ -723,7 +731,7 @@ pub(crate) fn start(query: &GetAddrInfo, pending: PendingQuery) -> Result<(), Pe
         return Err(pending);
     }
 
-    let Some(mut shared) = SharedConnection::get(bun_io::js_vm_ctx()) else {
+    let Some(mut shared) = SharedConnection::get(bun_io::js_vm_ctx(live)) else {
         return Err(pending);
     };
 

@@ -1,7 +1,7 @@
 use bstr::BStr;
 
 use bun_bundler::Transpiler;
-use bun_core::{Global, Output};
+use bun_core::{Global, LoopTurn, Output};
 use bun_options_types::schema::api;
 
 use crate::shell::Interpreter;
@@ -11,7 +11,7 @@ use crate::command::Context;
 pub(crate) struct ExecCommand;
 
 impl ExecCommand {
-    pub(crate) fn exec(ctx: Context) -> Result<(), crate::Error> {
+    pub(crate) fn exec(ctx: Context, turn: LoopTurn<'_>) -> Result<(), crate::Error> {
         // Clone the positional so `ctx` can be reborrowed `&mut` for
         // `init_and_run_from_source` below.
         let script: Box<[u8]> = ctx.positionals[1].clone();
@@ -47,18 +47,24 @@ impl ExecCommand {
         let parts: [&[u8]; 2] = [cwd, b"[eval]"];
         let script_path = bun_paths::resolve_path::join::<bun_paths::platform::Auto>(&parts);
 
-        let code =
-            match Interpreter::init_and_run_from_source(ctx, mini, script_path, &script, None) {
-                Ok(c) => c,
-                Err(err) => {
-                    Output::err(
-                        err,
-                        "failed to run script <b>{}<r>",
-                        (BStr::new(script_path),),
-                    );
-                    Global::exit(1);
-                }
-            };
+        let code = match Interpreter::init_and_run_from_source(
+            ctx,
+            mini,
+            script_path,
+            &script,
+            None,
+            turn,
+        ) {
+            Ok(c) => c,
+            Err(err) => {
+                Output::err(
+                    err,
+                    "failed to run script <b>{}<r>",
+                    (BStr::new(script_path),),
+                );
+                Global::exit(1);
+            }
+        };
 
         Global::exit(u32::from(code));
     }

@@ -19,6 +19,8 @@
 //! All functions are `unsafe fn` (callers uphold the uWS callback contract)
 //! and `#[inline(always)]` so codegen is identical to the hand-rolled thunks.
 
+use bun_core::JsTurn;
+
 use core::ffi::c_void;
 use core::ptr::NonNull;
 
@@ -75,15 +77,30 @@ pub unsafe trait OpaqueHandle: Sized {
 
 /// Conjure a value of a zero-sized handler type.
 ///
-/// Replaces `// SAFETY: H is a ZST → core::mem::zeroed()` repeated at every
-/// trampoline site. The ZST invariant is enforced at compile time via the
-/// inline `const { assert!() }`, so a non-ZST `H` is a *compile* error at the
-/// monomorphisation site — which is what lets this be a *safe* fn (S016).
-/// Thin re-export of [`bun_core::ffi::conjure_zst`] kept for the shorter
-/// `thunk::zst::<H>()` spelling at the ~20 uWS trampoline call sites.
+/// # Safety
+/// A value of `H` was handed over on this thread when the callback was registered.
 #[inline(always)]
-pub(crate) fn zst<H>() -> H {
-    bun_core::ffi::conjure_zst::<H>()
+pub(crate) unsafe fn zst<H: Copy + 'static>() -> H {
+    const {
+        assert!(
+            core::mem::size_of::<H>() == 0,
+            "zst: H must be a ZST (fn item or capture-less closure)"
+        )
+    };
+    // SAFETY: a copy of that value, which has no bytes.
+    unsafe { bun_core::ffi::zeroed_unchecked() }
+}
+
+/// The turn of a handler of an `App`, of one of its responses or of one of its WebSockets.
+///
+/// # Safety
+/// uWS called the function that `scope` is a parameter of.
+#[inline(always)]
+pub unsafe fn app_turn<T>(scope: &T) -> JsTurn<'_> {
+    // SAFETY: making an `App` takes a `HasVm`, only the loop of that thread polls its sockets, and no handle to them
+    // is `Send`. By the time the global object is destroyed they are closed, or (idle HTTP/3) polled no more. A server
+    // is finalized once it is drained: only the dev server's WebSockets close then, and leave the turn unused.
+    unsafe { JsTurn::assume(scope) }
 }
 
 /// Recover `&mut U` from a uWS user-data word, returning `None` for null.

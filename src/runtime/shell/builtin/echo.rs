@@ -1,8 +1,10 @@
+use bun_core::LoopTurn;
+
 use crate::shell::builtin::{Builtin, IoKind};
 use crate::shell::interpreter::{Interpreter, NodeId};
 use crate::shell::yield_::Yield;
 
-pub(crate) fn start(interp: &Interpreter, cmd: NodeId) -> Yield {
+pub(crate) fn start(interp: &Interpreter, cmd: NodeId, turn: LoopTurn<'_>) -> Yield {
     let mut args = Builtin::of(interp, cmd).args();
     let mut newline = true;
     let mut escape_sequences = false;
@@ -42,7 +44,7 @@ pub(crate) fn start(interp: &Interpreter, cmd: NodeId) -> Yield {
     if newline {
         out.push(b'\n');
     }
-    Builtin::finish(interp, cmd, IoKind::Stdout, &out, 0)
+    Builtin::finish(interp, cmd, IoKind::Stdout, &out, 0, turn)
 }
 
 /// Appends `input` to `output`, interpreting backslash escape sequences.

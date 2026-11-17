@@ -13,7 +13,7 @@
 //!
 //! Every public entry that drives the `SslWrapper` (`start`, `receive`, `on_writable`,
 //! `write`, `shutdown`) forms a `&SslWrapper` over the `wrapper` field and then
-//! synchronously re-enters this struct through its `ssl_wrapper::Handler` impl.
+//! synchronously re-enters this struct through [`TlsHandler`].
 //!
 //! All state mutated after construction lives in `Cell`/`JsCell` fields, and
 //! `wrapper` is a write-once `OnceCell` set in `start()` before it is first
@@ -24,6 +24,7 @@
 
 use core::cell::{Cell, OnceCell};
 
+use bun_core::JsTurn;
 use bun_io::StreamBuffer;
 use bun_ptr::{BackRef, JsCell, RefPtr, Root, ThisPtr};
 use bun_uws::ssl_wrapper::{self, SslWrapper};
@@ -75,31 +76,31 @@ impl UpgradeClientRef {
         }
     }
 
-    fn handle_decrypted_data(self, data: &[u8]) {
+    fn handle_decrypted_data(self, data: &[u8], turn: JsTurn<'_>) {
         self.dispatch(
-            |c| HttpUpgradeClient::handle_decrypted_data(c, data),
-            |c| HttpsUpgradeClient::handle_decrypted_data(c, data),
+            |c| HttpUpgradeClient::handle_decrypted_data(c, data, turn),
+            |c| HttpsUpgradeClient::handle_decrypted_data(c, data, turn),
         );
     }
 
-    fn terminate(self, code: ErrorCode) {
+    fn terminate(self, code: ErrorCode, turn: JsTurn<'_>) {
         self.dispatch(
-            |c| HttpUpgradeClient::terminate(c, code),
-            |c| HttpsUpgradeClient::terminate(c, code),
+            |c| HttpUpgradeClient::terminate(c, code, turn),
+            |c| HttpsUpgradeClient::terminate(c, code, turn),
         );
     }
 
-    fn fail_tls(self, ssl_error: us_bun_verify_error_t, completed: bool) {
+    fn fail_tls(self, ssl_error: us_bun_verify_error_t, completed: bool, turn: JsTurn<'_>) {
         self.dispatch(
-            |c| HttpUpgradeClient::fail_tls(c, ssl_error, completed),
-            |c| HttpsUpgradeClient::fail_tls(c, ssl_error, completed),
+            |c| HttpUpgradeClient::fail_tls(c, ssl_error, completed, turn),
+            |c| HttpsUpgradeClient::fail_tls(c, ssl_error, completed, turn),
         );
     }
 
-    fn on_proxy_tls_handshake_complete(self) {
+    fn on_proxy_tls_handshake_complete(self, turn: JsTurn<'_>) {
         self.dispatch(
-            HttpUpgradeClient::on_proxy_tls_handshake_complete,
-            HttpsUpgradeClient::on_proxy_tls_handshake_complete,
+            |c| HttpUpgradeClient::on_proxy_tls_handshake_complete(c, turn),
+            |c| HttpsUpgradeClient::on_proxy_tls_handshake_complete(c, turn),
         );
     }
 
@@ -123,6 +124,7 @@ impl UpgradeClientRef {
         ssl: Option<&mut bun_boringssl::c::SSL>,
         chain_verified: bool,
         hostname: &[u8],
+        turn: JsTurn<'_>,
     ) -> bool {
         match self {
             UpgradeClientRef::Http(client) => HttpUpgradeClient::accepts_tunnel_peer(
@@ -130,12 +132,14 @@ impl UpgradeClientRef {
                 ssl,
                 chain_verified,
                 hostname,
+                turn,
             ),
             UpgradeClientRef::Https(client) => HttpsUpgradeClient::accepts_tunnel_peer(
                 client.this_ptr(),
                 ssl,
                 chain_verified,
                 hostname,
+                turn,
             ),
         }
     }
@@ -202,6 +206,7 @@ impl WebSocketProxyTunnel {
         ssl_options: &SslConfig,
         reject_unauthorized: bool,
         initial_data: &[u8],
+        turn: JsTurn<'_>,
     ) -> crate::Result<()> {
         // Allow handshake to complete so we can access peer certificate for manual
         // hostname verification in onHandshake(). The actual reject_unauthorized
@@ -252,21 +257,34 @@ impl WebSocketProxyTunnel {
         }
 
         if !initial_data.is_empty() {
-            wrapper.start_with_payload(&mut &**this, initial_data);
+            wrapper.start_with_payload(&mut this.tls_handler(turn), initial_data);
         } else {
-            wrapper.start(&mut &**this);
+            wrapper.start(&mut this.tls_handler(turn));
         }
         Ok(())
     }
+
+    fn tls_handler<'a>(&'a self, turn: JsTurn<'a>) -> TlsHandler<'a> {
+        TlsHandler { tunnel: self, turn }
+    }
 }
 
-impl ssl_wrapper::Handler for &WebSocketProxyTunnel {
+/// The tunnel, for one call that drives its `SslWrapper`.
+struct TlsHandler<'a> {
+    tunnel: &'a WebSocketProxyTunnel,
+    turn: JsTurn<'a>,
+}
+
+impl ssl_wrapper::Handler for TlsHandler<'_> {
     /// SSLWrapper callback: the name check inside the handshake. The WebSocket decides.
     fn server_identity(
         &mut self,
         ssl: &mut bun_boringssl::c::SSL,
     ) -> bun_boringssl::ServerIdentity {
-        match (self.upgrade_client.get(), self.sni_hostname.as_deref()) {
+        match (
+            self.tunnel.upgrade_client.get(),
+            self.tunnel.sni_hostname.as_deref(),
+        ) {
             (Some(upgrade_client), Some(hostname)) => {
                 upgrade_client.tunnel_server_identity(ssl, hostname)
             }
@@ -291,18 +309,20 @@ impl ssl_wrapper::Handler for &WebSocketProxyTunnel {
             return;
         }
 
-        let (connected_websocket, upgrade_client) =
-            (self.connected_websocket.get(), self.upgrade_client.get());
+        let (connected_websocket, upgrade_client) = (
+            self.tunnel.connected_websocket.get(),
+            self.tunnel.upgrade_client.get(),
+        );
 
         // If we have a connected WebSocket client, forward data to it
         if let Some(ws) = connected_websocket {
-            WebSocketClient::handle_tunnel_data(ws.this_ptr(), decrypted_data);
+            WebSocketClient::handle_tunnel_data(ws.this_ptr(), decrypted_data, self.turn);
             return;
         }
 
         // Otherwise, forward to the upgrade client for WebSocket response processing
         if let Some(client) = upgrade_client {
-            client.handle_decrypted_data(decrypted_data);
+            client.handle_decrypted_data(decrypted_data, self.turn);
         }
     }
 
@@ -310,17 +330,18 @@ impl ssl_wrapper::Handler for &WebSocketProxyTunnel {
     fn on_handshake(&mut self, success: bool, ssl_error: us_bun_verify_error_t) {
         bun_core::scoped_log!(WebSocketProxyTunnel, "onHandshake: success={}", success);
 
-        let Some(upgrade_client) = self.upgrade_client.get() else {
-            self.renegotiation_ended.set(success);
+        let Some(upgrade_client) = self.tunnel.upgrade_client.get() else {
+            self.tunnel.renegotiation_ended.set(success);
             return;
         };
 
         if !success {
-            upgrade_client.fail_tls(ssl_error, false);
+            upgrade_client.fail_tls(ssl_error, false, self.turn);
             return;
         }
 
         let ssl = self
+            .tunnel
             .wrapper
             .get()
             .and_then(|w| w.ssl.get())
@@ -328,31 +349,34 @@ impl ssl_wrapper::Handler for &WebSocketProxyTunnel {
         let accepted = upgrade_client.accepts_tunnel_peer(
             ssl,
             ssl_error.error_no == 0,
-            self.sni_hostname.as_deref().unwrap_or_default(),
+            self.tunnel.sni_hostname.as_deref().unwrap_or_default(),
+            self.turn,
         );
         // `tls.checkServerIdentity` may have closed the WebSocket, which detaches the client.
-        let Some(upgrade_client) = self.upgrade_client.get() else {
+        let Some(upgrade_client) = self.tunnel.upgrade_client.get() else {
             return;
         };
         if !accepted {
-            upgrade_client.fail_tls(ssl_error, true);
+            upgrade_client.fail_tls(ssl_error, true, self.turn);
             return;
         }
 
         // TLS handshake successful - notify client to send WebSocket upgrade
-        upgrade_client.on_proxy_tls_handshake_complete();
+        upgrade_client.on_proxy_tls_handshake_complete(self.turn);
     }
 
     /// SSLWrapper callback: Called when connection is closing
     fn on_close(&mut self) {
         bun_core::scoped_log!(WebSocketProxyTunnel, "onClose");
 
-        let (connected_websocket, upgrade_client) =
-            (self.connected_websocket.get(), self.upgrade_client.get());
+        let (connected_websocket, upgrade_client) = (
+            self.tunnel.connected_websocket.get(),
+            self.tunnel.upgrade_client.get(),
+        );
 
         // If we have a connected WebSocket client, notify it of the close
         if let Some(ws) = connected_websocket {
-            WebSocketClient::handle_tunnel_close(ws.this_ptr());
+            WebSocketClient::handle_tunnel_close(ws.this_ptr(), self.turn);
             return;
         }
 
@@ -362,7 +386,7 @@ impl ssl_wrapper::Handler for &WebSocketProxyTunnel {
         };
 
         // Otherwise notify the upgrade client
-        upgrade_client.terminate(ErrorCode::Ended);
+        upgrade_client.terminate(ErrorCode::Ended, self.turn);
     }
 
     /// SSLWrapper callback: Called with encrypted data to send to network
@@ -374,16 +398,24 @@ impl ssl_wrapper::Handler for &WebSocketProxyTunnel {
         );
 
         // If data is already buffered, queue this to maintain TLS record ordering
-        if self.write_buffer.get().is_not_empty() {
-            bun_core::handle_oom(self.write_buffer.with_mut(|b| b.write(encrypted_data)));
+        if self.tunnel.write_buffer.get().is_not_empty() {
+            bun_core::handle_oom(
+                self.tunnel
+                    .write_buffer
+                    .with_mut(|b| b.write(encrypted_data)),
+            );
             return;
         }
 
         // Try direct write to socket
-        let written = self.socket.get().write(encrypted_data);
+        let written = self.tunnel.socket.get().write(encrypted_data);
         if written < 0 {
             // Write failed - buffer data for retry when socket becomes writable
-            bun_core::handle_oom(self.write_buffer.with_mut(|b| b.write(encrypted_data)));
+            bun_core::handle_oom(
+                self.tunnel
+                    .write_buffer
+                    .with_mut(|b| b.write(encrypted_data)),
+            );
             return;
         }
 
@@ -391,7 +423,8 @@ impl ssl_wrapper::Handler for &WebSocketProxyTunnel {
         let written_usize = usize::try_from(written).expect("int cast");
         if written_usize < encrypted_data.len() {
             bun_core::handle_oom(
-                self.write_buffer
+                self.tunnel
+                    .write_buffer
                     .with_mut(|b| b.write(&encrypted_data[written_usize..])),
             );
         }
@@ -420,12 +453,12 @@ impl WebSocketProxyTunnel {
     ///
     /// Takes `ThisPtr<Self>` because `flush()` and `handle_tunnel_writable()`
     /// can reach a close path that drops a ref on the tunnel.
-    pub(crate) fn on_writable(this: ThisPtr<Self>) {
+    pub(crate) fn on_writable(this: ThisPtr<Self>, turn: JsTurn<'_>) {
         let this = RefPtr::from_this(this);
 
         // Flush the SSL state machine
         if let Some(w) = this.wrapper.get() {
-            w.flush(&mut &*this);
+            w.flush(&mut this.tls_handler(turn));
         }
 
         // Send buffered encrypted data (`flush` above may have
@@ -458,7 +491,7 @@ impl WebSocketProxyTunnel {
 
         // Tunnel drained - let the connected WebSocket flush its send_buffer.
         if let Some(ws) = this.connected_websocket.get() {
-            WebSocketClient::handle_tunnel_writable(ws.this_ptr());
+            WebSocketClient::handle_tunnel_writable(ws.this_ptr(), turn);
         }
     }
 
@@ -467,17 +500,17 @@ impl WebSocketProxyTunnel {
     /// Takes `ThisPtr<Self>` because `receive_data()` synchronously dispatches
     /// `on_data`/`on_handshake`/`on_close`, which can reach a
     /// close path that drops a ref on the tunnel.
-    pub(crate) fn receive(this: ThisPtr<Self>, data: &[u8]) {
+    pub(crate) fn receive(this: ThisPtr<Self>, data: &[u8], turn: JsTurn<'_>) {
         let this = RefPtr::from_this(this);
 
         if let Some(w) = this.wrapper.get() {
-            w.receive_data(&mut &*this, data);
+            w.receive_data(&mut this.tls_handler(turn), data);
         }
         // Only now, so that what this read decrypted is delivered first, like openssl.cpp's `ssl_write_wants_read`.
         if this.renegotiation_ended.take()
             && let Some(ws) = this.connected_websocket.get()
         {
-            WebSocketClient::handle_tunnel_writable(ws.this_ptr());
+            WebSocketClient::handle_tunnel_writable(ws.this_ptr(), turn);
         }
     }
 
@@ -485,22 +518,26 @@ impl WebSocketProxyTunnel {
     ///
     /// Takes `ThisPtr<Self>` because `write_data()` may fire `on_handshake`/`on_close`.
     #[cold]
-    pub(crate) fn write(this: ThisPtr<Self>, data: &[u8]) -> crate::Result<usize> {
+    pub(crate) fn write(
+        this: ThisPtr<Self>,
+        data: &[u8],
+        turn: JsTurn<'_>,
+    ) -> crate::Result<usize> {
         // The caller's ref (the client's `proxy`/`proxy_tunnel` field) can be
         // released from inside `write_data` via `on_close`; keep `w` alive.
         let this = RefPtr::from_this(this);
         if let Some(w) = this.wrapper.get() {
             return w
-                .write_data(&mut &*this, data)
+                .write_data(&mut this.tls_handler(turn), data)
                 .map_err(|_| crate::Error::ConnectionClosed);
         }
         Err(crate::Error::ConnectionClosed)
     }
 
     /// Gracefully shutdown the TLS connection
-    pub(crate) fn shutdown(this: &RefPtr<Self>) {
+    pub(crate) fn shutdown(this: &RefPtr<Self>, turn: JsTurn<'_>) {
         if let Some(w) = this.wrapper.get() {
-            let _ = w.shutdown(&mut &**this, true); // Fast shutdown
+            let _ = w.shutdown(&mut this.tls_handler(turn), true); // Fast shutdown
         }
     }
 
@@ -508,10 +545,10 @@ impl WebSocketProxyTunnel {
     /// until the peer's arrives, which fires `on_close`. The proxy connection stays open.
     ///
     /// Takes `ThisPtr<Self>` because `shutdown()` may fire `on_close`.
-    pub(crate) fn end(this: ThisPtr<Self>) {
+    pub(crate) fn end(this: ThisPtr<Self>, turn: JsTurn<'_>) {
         let this = RefPtr::from_this(this);
         if let Some(w) = this.wrapper.get() {
-            let _ = w.shutdown(&mut &*this, false);
+            let _ = w.shutdown(&mut this.tls_handler(turn), false);
         }
     }
 

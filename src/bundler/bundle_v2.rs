@@ -397,7 +397,7 @@ pub mod bv2_impl {
     use bun_ast::{ExportsKind, ImportKind, ImportRecord};
     use bun_collections::{ArrayHashMap, DynamicBitSet, VecExt};
     use bun_core::strings;
-    use bun_core::{FeatureFlags, Output};
+    use bun_core::{FeatureFlags, LoopTurn, Output};
     use bun_resolver::DataURL;
     use bun_resolver::cache::SourceFd;
     use bun_resolver::fs::PathResolverExt as _;
@@ -787,6 +787,7 @@ pub mod bv2_impl {
             use crate::parse_task::ParseTask;
             use bun_ast::ImportKind;
             use bun_core::String as BunString;
+            use bun_core::{LoopTurn, VmLive};
             use bun_resolver::fs::PathResolverExt as _;
             use core::mem::transmute;
 
@@ -1180,7 +1181,7 @@ pub mod bv2_impl {
                 /// The hop to the plugins' VM was released unrun by that VM's teardown (its thread): the
                 /// plugins will never see the request, so it is answered here — as cancelled — and handed
                 /// back to the bundle thread, which is waiting for it.
-                fn release_unrun(self: Box<Self>) {
+                fn release_unrun(self: Box<Self>, _live: VmLive<'_>) {
                     self.answer_cancelled();
                 }
                 /// The plugins' callbacks continue the script that started the build.
@@ -1198,17 +1199,17 @@ pub mod bv2_impl {
                 const TAG: bun_event_loop::TaskTag =
                     bun_event_loop::task_tag::BundleV2PluginResolveAnswered;
                 /// The VM that runs the bundle is going: the answer goes to nobody.
-                fn release_unrun(self: Box<Self>) {}
+                fn release_unrun(self: Box<Self>, _live: VmLive<'_>) {}
                 /// A step of the bundle.
                 fn context(&self) -> bun_event_loop::ContextId {
                     bun_event_loop::ContextId::NONE
                 }
             }
             impl ResolveAnswered {
-                pub fn run(self) {
+                pub fn run(self, turn: LoopTurn<'_>) {
                     // SAFETY: `bv2` is a live backref set in `Resolve::init`.
                     let bv2 = unsafe { &mut *self.0.bv2 };
-                    BundleV2::on_resolve(self.0, bv2);
+                    BundleV2::on_resolve(self.0, bv2, turn);
                 }
             }
             impl<'a> Resolve<'a> {
@@ -1345,7 +1346,7 @@ pub mod bv2_impl {
             impl bun_event_loop::BoxedTask for Load<'static> {
                 const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::BundleV2PluginLoad;
                 /// As `Resolve::release_unrun`.
-                fn release_unrun(self: Box<Self>) {
+                fn release_unrun(self: Box<Self>, _live: VmLive<'_>) {
                     self.answer_cancelled();
                 }
                 /// As `Resolve::context`.
@@ -1361,17 +1362,17 @@ pub mod bv2_impl {
                 const TAG: bun_event_loop::TaskTag =
                     bun_event_loop::task_tag::BundleV2PluginLoadAnswered;
                 /// As `ResolveAnswered::release_unrun`.
-                fn release_unrun(self: Box<Self>) {}
+                fn release_unrun(self: Box<Self>, _live: VmLive<'_>) {}
                 /// A step of the bundle.
                 fn context(&self) -> bun_event_loop::ContextId {
                     bun_event_loop::ContextId::NONE
                 }
             }
             impl LoadAnswered {
-                pub fn run(self) {
+                pub fn run(self, turn: LoopTurn<'_>) {
                     // SAFETY: `bv2` is a live backref set in `Load::init`.
                     let bv2 = unsafe { &mut *self.0.bv2 };
-                    BundleV2::on_load(self.0, bv2);
+                    BundleV2::on_load(self.0, bv2, turn);
                 }
             }
             /// A plugin `.defer()`red a [`Load`]: the notice to the loop that runs the bundle, when
@@ -1382,7 +1383,7 @@ pub mod bv2_impl {
                 const TAG: bun_event_loop::TaskTag =
                     bun_event_loop::task_tag::BundleV2PluginLoadDeferred;
                 /// Nothing is owned.
-                unsafe fn release_unrun(_: *mut Self) {}
+                unsafe fn release_unrun(_: *mut Self, _live: VmLive<'_>) {}
                 /// A step of the bundle.
                 unsafe fn context(_: *const Self) -> bun_event_loop::ContextId {
                     bun_event_loop::ContextId::NONE
@@ -1390,11 +1391,11 @@ pub mod bv2_impl {
             }
             impl LoadDeferred {
                 #[inline(never)]
-                pub fn run(&mut self) {
+                pub fn run(&mut self, turn: LoopTurn<'_>) {
                     bun_removable_features::removable_definition!(Bundler, Self::run);
                     // SAFETY: `bv2` is a live backref set in `Load::init`.
                     let bv2 = unsafe { &mut *self.0.bv2 };
-                    BundleV2::on_notify_defer(&mut self.0, bv2);
+                    BundleV2::on_notify_defer(&mut self.0, bv2, turn);
                 }
             }
         }
@@ -2848,7 +2849,7 @@ pub mod bv2_impl {
             );
         }
 
-        pub(crate) fn decrement_scan_counter(&mut self) {
+        pub(crate) fn decrement_scan_counter(&mut self, turn: LoopTurn<'_>) {
             self.thread_lock.assert_locked();
             debug_assert!(self.graph.pending_items > 0);
             self.graph.pending_items -= 1;
@@ -2857,11 +2858,11 @@ pub mod bv2_impl {
                 ".pending_items - 1 = {}",
                 self.graph.pending_items
             );
-            self.on_after_decrement_scan_counter();
+            self.on_after_decrement_scan_counter(turn);
         }
 
         #[inline(never)]
-        pub(crate) fn on_after_decrement_scan_counter(&mut self) {
+        pub(crate) fn on_after_decrement_scan_counter(&mut self, turn: LoopTurn<'_>) {
             bun_removable_features::removable_definition!(
                 Bundler,
                 Self::on_after_decrement_scan_counter
@@ -2870,7 +2871,7 @@ pub mod bv2_impl {
                 let dev = self
                     .dev_server
                     .unwrap_or_else(|| panic!("No dev server attached in asynchronous bundle job"));
-                self.finish_from_bake_dev_server(&dev).expect("oom");
+                self.finish_from_bake_dev_server(&dev, turn).expect("oom");
             }
         }
 
@@ -4233,23 +4234,35 @@ pub mod bv2_impl {
         }
     }
 
-    fn on_load_mini(load: *mut jsc_api::JSBundler::Load, this: *mut BundleV2<'static>) {
+    fn on_load_mini(
+        load: *mut jsc_api::JSBundler::Load,
+        this: *mut BundleV2<'static>,
+        turn: LoopTurn<'_>,
+    ) {
         // SAFETY: callback contract — `load` is the box passed to
         // `enqueue_task_concurrent_with_extra_ctx`; `this` is the BundleV2 the
         // mini loop's `tick` supplies as ParentContext.
         let (load, this) = unsafe { (bun_core::heap::take(load), &mut *this) };
-        BundleV2::on_load(*load, this);
+        BundleV2::on_load(*load, this, turn);
     }
 
-    fn on_resolve_mini(resolve: *mut jsc_api::JSBundler::Resolve, this: *mut BundleV2<'static>) {
+    fn on_resolve_mini(
+        resolve: *mut jsc_api::JSBundler::Resolve,
+        this: *mut BundleV2<'static>,
+        turn: LoopTurn<'_>,
+    ) {
         // SAFETY: see `on_load_mini`.
         let (resolve, this) = unsafe { (bun_core::heap::take(resolve), &mut *this) };
-        BundleV2::on_resolve(*resolve, this);
+        BundleV2::on_resolve(*resolve, this, turn);
     }
 
     impl<'a> BundleV2<'a> {
         #[inline(never)]
-        pub(crate) fn on_load(load: jsc_api::JSBundler::Load, this: &mut BundleV2) {
+        pub(crate) fn on_load(
+            load: jsc_api::JSBundler::Load,
+            this: &mut BundleV2,
+            turn: LoopTurn<'_>,
+        ) {
             bun_removable_features::removable_definition!(Bundler, Self::on_load);
             let jsc_api::JSBundler::LoadOwner::Bundle(mut parse_task) = load.owner else {
                 unreachable!("`on_load_async` answers a waiter");
@@ -4287,7 +4300,7 @@ pub mod bv2_impl {
                         if parse_task.on_load_decides_html_import
                             && !this.html_import_after_on_load(&mut parse_task)
                         {
-                            this.decrement_scan_counter();
+                            this.decrement_scan_counter(turn);
                             return;
                         }
                         // The enqueue site left the asset bookkeeping to the plugin's answer.
@@ -4314,7 +4327,7 @@ pub mod bv2_impl {
                     );
 
                     // An error occurred, prevent spinning the event loop forever
-                    this.decrement_scan_counter();
+                    this.decrement_scan_counter(turn);
                 }
                 jsc_api::JSBundler::LoadValue::Success(code) => {
                     // `code`: LoadSuccess { source_code, loader }
@@ -4322,7 +4335,7 @@ pub mod bv2_impl {
                         && parse_task.on_load_decides_html_import
                         && !this.html_import_after_on_load(&mut parse_task)
                     {
-                        this.decrement_scan_counter();
+                        this.decrement_scan_counter(turn);
                         return;
                     }
                     let source_index = parse_task.source_index;
@@ -4429,7 +4442,7 @@ pub mod bv2_impl {
                     }
 
                     // An error occurred, prevent spinning the event loop forever
-                    this.decrement_scan_counter();
+                    this.decrement_scan_counter(turn);
                 }
                 jsc_api::JSBundler::LoadValue::Pending => unreachable!(),
             }
@@ -4484,7 +4497,11 @@ pub mod bv2_impl {
         }
 
         #[inline(never)]
-        pub(crate) fn on_resolve(resolve: jsc_api::JSBundler::Resolve, this: &mut BundleV2) {
+        pub(crate) fn on_resolve(
+            resolve: jsc_api::JSBundler::Resolve,
+            this: &mut BundleV2,
+            turn: LoopTurn<'_>,
+        ) {
             bun_removable_features::removable_definition!(Bundler, Self::on_resolve);
             debug_assert!(matches!(
                 resolve.owner,
@@ -4495,7 +4512,7 @@ pub mod bv2_impl {
             let mut this = scopeguard::guard(this, |this| {
                 // Before the decrement: the barrel pass can schedule parse tasks.
                 this.plugin_answer_done(importer_source_index);
-                this.decrement_scan_counter();
+                this.decrement_scan_counter(turn);
             });
             let this: &mut BundleV2 = &mut **this;
             bun_core::scoped_log!(
@@ -4959,6 +4976,7 @@ pub mod bv2_impl {
         pub(crate) fn finish_from_bake_dev_server(
             &mut self,
             dev_server: &dispatch::DevServerHandle,
+            turn: LoopTurn<'_>,
         ) -> Result<(), AllocError> {
             // SAFETY: DevServer guarantees `current_bundle` is Some during finish.
             // The vtable slot returns `*mut ()` derived from the current bundle's `start_data`;
@@ -5254,6 +5272,7 @@ pub mod bv2_impl {
                         linker_graph,
                         css_file_list: core::mem::take(&mut start.css_entry_points),
                     },
+                    turn,
                 )
                 .map_err(|_| AllocError)
         }
@@ -6947,7 +6966,11 @@ pub mod bv2_impl {
     impl<'a> BundleV2<'a> {
         /// A load handed to the plugins called `.defer()`: its scan-counter unit is parked in
         /// `deferred_pending` until the deferred batch runs or its answer arrives. Bundle thread.
-        pub fn on_notify_defer(load: &mut jsc_api::JSBundler::Load, this: &mut BundleV2) {
+        pub fn on_notify_defer(
+            load: &mut jsc_api::JSBundler::Load,
+            this: &mut BundleV2,
+            turn: LoopTurn<'_>,
+        ) {
             debug_assert!(matches!(
                 load.owner,
                 jsc_api::JSBundler::LoadOwner::Bundle(_)
@@ -6955,13 +6978,14 @@ pub mod bv2_impl {
             this.thread_lock.assert_locked();
             load.deferred_in = Some(this.graph.defer_epoch);
             this.graph.deferred_pending += 1;
-            this.decrement_scan_counter();
+            this.decrement_scan_counter(turn);
         }
 
         #[inline(never)]
         pub(crate) fn on_parse_task_complete(
             mut parse_result: Box<parse_task::Result<'a>>,
             this: &mut BundleV2<'a>,
+            turn: LoopTurn<'_>,
         ) {
             bun_removable_features::removable_definition!(Bundler, Self::on_parse_task_complete);
             let _trace = crate::perf::trace("Bundler.onParseTaskComplete");
@@ -7392,7 +7416,7 @@ pub mod bv2_impl {
                 u32::try_from(i32::try_from(this.graph.pending_items).expect("int cast") + diff)
                     .expect("int cast");
             if diff < 0 {
-                this.on_after_decrement_scan_counter();
+                this.on_after_decrement_scan_counter(turn);
             }
         }
     }

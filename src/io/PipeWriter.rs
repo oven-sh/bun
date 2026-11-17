@@ -5,6 +5,7 @@ use core::cell::UnsafeCell;
 use core::ffi::c_void;
 use core::mem;
 
+use bun_core::LoopTurn;
 use bun_core::OOM;
 #[cfg(windows)]
 use bun_ptr::OptionCellExt as _;
@@ -49,13 +50,13 @@ pub enum WriteStatus {
 
 /// What a writer reports to, from inside the call that it is passed to. It may call the writer again.
 pub trait WriteHandler {
-    fn on_write(&self, amount: usize, status: WriteStatus);
+    fn on_write(&self, amount: usize, status: WriteStatus, turn: LoopTurn<'_>);
     /// The writer also closes: `on_close` runs after this or, on Windows, may run before.
-    fn on_error(&self, err: sys::Error);
-    fn on_close(&self);
+    fn on_error(&self, err: sys::Error, turn: LoopTurn<'_>);
+    fn on_close(&self, turn: LoopTurn<'_>);
     /// Only from a `StreamingWriter`.
     #[cfg(windows)]
-    fn on_writable(&self) {}
+    fn on_writable(&self, _turn: LoopTurn<'_>) {}
     /// `true` when a write is submitted, `false` when it ends. Dropping the writer in between panics.
     #[cfg(windows)]
     fn set_has_inflight_write(&self, value: bool);
@@ -331,40 +332,45 @@ impl PosixBufferedWriter {
         self.base.handle.set_poll_flag(flag);
     }
 
-    pub fn on_io(&self, handler: &impl BufferedWriteHandler, event: IoEvent) {
+    pub fn on_io(&self, handler: &impl BufferedWriteHandler, event: IoEvent, turn: LoopTurn<'_>) {
         match handler.with_buffer(|buf| self.base.try_write_on_poll(event, false, buf)) {
             None => {}
             Some(WriteResult::Pending(wrote)) => {
                 if wrote > 0 {
-                    handler.on_write(wrote, WriteStatus::Pending);
+                    handler.on_write(wrote, WriteStatus::Pending, turn);
                 }
-                self.register_poll(handler);
+                self.register_poll(handler, turn);
             }
-            Some(WriteResult::Wrote(amt)) => handler.on_write(amt, WriteStatus::Drained),
-            Some(WriteResult::Err(err)) => self.report_error_and_close(handler, err),
+            Some(WriteResult::Wrote(amt)) => handler.on_write(amt, WriteStatus::Drained, turn),
+            Some(WriteResult::Err(err)) => self.report_error_and_close(handler, err, turn),
             Some(WriteResult::Done(amt)) => {
                 self.base.close_without_reporting();
-                handler.on_write(amt, WriteStatus::EndOfFile);
-                self.close(handler);
+                handler.on_write(amt, WriteStatus::EndOfFile, turn);
+                self.close(handler, turn);
             }
         }
     }
 
-    fn report_error_and_close(&self, handler: &impl WriteHandler, err: sys::Error) {
+    fn report_error_and_close(
+        &self,
+        handler: &impl WriteHandler,
+        err: sys::Error,
+        turn: LoopTurn<'_>,
+    ) {
         debug_assert!(!err.is_retry());
-        handler.on_error(err);
-        self.close(handler);
+        handler.on_error(err, turn);
+        self.close(handler, turn);
     }
 
-    pub fn register_poll(&self, handler: &impl WriteHandler) {
+    pub fn register_poll(&self, handler: &impl WriteHandler, turn: LoopTurn<'_>) {
         if let sys::Result::Err(err) = self.base.register_poll() {
-            self.report_error_and_close(handler, err);
+            self.report_error_and_close(handler, err, turn);
         }
     }
 
-    pub fn close(&self, handler: &impl WriteHandler) {
+    pub fn close(&self, handler: &impl WriteHandler, turn: LoopTurn<'_>) {
         if self.base.close() {
-            handler.on_close();
+            handler.on_close(turn);
         }
     }
 
@@ -379,6 +385,7 @@ impl PosixBufferedWriter {
         ev: EventLoopHandle,
         fd: Fd,
         pollable: bool,
+        _turn: LoopTurn<'_>,
     ) -> sys::Result<()> {
         if !pollable {
             debug_assert!(!self.has_poll());
@@ -470,37 +477,52 @@ impl PosixStreamingWriter {
         self.is_done.get() || self.base.closed_without_reporting.get()
     }
 
-    fn report_write(&self, handler: &impl WriteHandler, amount: usize, status: WriteStatus) {
+    fn report_write(
+        &self,
+        handler: &impl WriteHandler,
+        amount: usize,
+        status: WriteStatus,
+        turn: LoopTurn<'_>,
+    ) {
         // on_write may re-enter write(); record first so re-entry leaves the newer value.
         self.backed_up.set(status == WriteStatus::Pending);
-        handler.on_write(amount, status);
+        handler.on_write(amount, status, turn);
     }
 
     #[cold]
-    fn report_error_and_close(&self, handler: &impl WriteHandler, err: sys::Error) {
-        handler.on_error(err);
-        self.close(handler);
+    fn report_error_and_close(
+        &self,
+        handler: &impl WriteHandler,
+        err: sys::Error,
+        turn: LoopTurn<'_>,
+    ) {
+        handler.on_error(err, turn);
+        self.close(handler, turn);
     }
 
-    fn register_poll(&self, handler: &impl WriteHandler) {
+    fn register_poll(&self, handler: &impl WriteHandler, turn: LoopTurn<'_>) {
         if let sys::Result::Err(err) = self.base.register_poll() {
-            self.report_error_and_close(handler, err);
+            self.report_error_and_close(handler, err, turn);
         }
     }
 
-    pub fn on_io(&self, handler: &impl WriteHandler, event: IoEvent) {
+    pub fn on_io(&self, handler: &impl WriteHandler, event: IoEvent, turn: LoopTurn<'_>) {
         match self.drain_on_poll(event) {
             None => {}
             Some(WriteResult::Pending(wrote)) => {
                 if wrote > 0 {
-                    self.report_write(handler, wrote, WriteStatus::Pending);
+                    self.report_write(handler, wrote, WriteStatus::Pending, turn);
                 }
-                self.register_poll(handler);
+                self.register_poll(handler, turn);
             }
             // If the handler buffers more data, `write()` registers the poll.
-            Some(WriteResult::Wrote(amt)) => self.report_write(handler, amt, WriteStatus::Drained),
-            Some(WriteResult::Err(err)) => self.report_error_and_close(handler, err),
-            Some(WriteResult::Done(amt)) => self.report_write(handler, amt, WriteStatus::EndOfFile),
+            Some(WriteResult::Wrote(amt)) => {
+                self.report_write(handler, amt, WriteStatus::Drained, turn)
+            }
+            Some(WriteResult::Err(err)) => self.report_error_and_close(handler, err, turn),
+            Some(WriteResult::Done(amt)) => {
+                self.report_write(handler, amt, WriteStatus::EndOfFile, turn)
+            }
         }
     }
 
@@ -534,39 +556,50 @@ impl PosixStreamingWriter {
         Some(rc)
     }
 
-    pub fn write_utf16(&self, handler: &impl WriteHandler, buf: &[u16]) -> WriteResult {
+    pub fn write_utf16(
+        &self,
+        handler: &impl WriteHandler,
+        buf: &[u16],
+        turn: LoopTurn<'_>,
+    ) -> WriteResult {
         if self.is_done() {
             return WriteResult::Done(0);
         }
 
-        self.maybe_write_newly_buffered_data(handler, self.outgoing.write_utf16(buf))
+        self.maybe_write_newly_buffered_data(handler, self.outgoing.write_utf16(buf), turn)
     }
 
-    pub fn write_latin1(&self, handler: &impl WriteHandler, buf: &[u8]) -> WriteResult {
+    pub fn write_latin1(
+        &self,
+        handler: &impl WriteHandler,
+        buf: &[u8],
+        turn: LoopTurn<'_>,
+    ) -> WriteResult {
         if bun_core::strings::is_all_ascii(buf) {
-            return self.write(handler, buf);
+            return self.write(handler, buf, turn);
         }
 
         if self.is_done() {
             return WriteResult::Done(0);
         }
 
-        self.maybe_write_newly_buffered_data(handler, self.outgoing.write_latin1(buf))
+        self.maybe_write_newly_buffered_data(handler, self.outgoing.write_latin1(buf), turn)
     }
 
     fn maybe_write_newly_buffered_data(
         &self,
         handler: &impl WriteHandler,
         buf_len: usize,
+        turn: LoopTurn<'_>,
     ) -> WriteResult {
         if self.should_buffer(0) {
-            self.report_write(handler, buf_len, WriteStatus::Drained);
-            self.register_poll(handler);
+            self.report_write(handler, buf_len, WriteStatus::Drained, turn);
+            self.register_poll(handler, turn);
 
             return WriteResult::Wrote(buf_len);
         }
 
-        self.try_write_newly_buffered_data(handler)
+        self.try_write_newly_buffered_data(handler, turn)
     }
 
     fn try_write_outgoing(&self) -> WriteResult {
@@ -574,22 +607,26 @@ impl PosixStreamingWriter {
             .with_taken(|outgoing| self.base.try_write(self.force_sync.get(), outgoing.slice()))
     }
 
-    fn try_write_newly_buffered_data(&self, handler: &impl WriteHandler) -> WriteResult {
+    fn try_write_newly_buffered_data(
+        &self,
+        handler: &impl WriteHandler,
+        turn: LoopTurn<'_>,
+    ) -> WriteResult {
         let rc = self.try_write_outgoing();
 
         match rc {
             WriteResult::Wrote(amt) => {
                 self.outgoing.reset();
-                self.report_write(handler, amt, WriteStatus::Drained);
+                self.report_write(handler, amt, WriteStatus::Drained, turn);
             }
             WriteResult::Done(amt) => {
                 self.outgoing.reset();
-                self.report_write(handler, amt, WriteStatus::EndOfFile);
+                self.report_write(handler, amt, WriteStatus::EndOfFile, turn);
             }
             WriteResult::Pending(amt) => {
                 self.outgoing.wrote(amt);
-                self.report_write(handler, amt, WriteStatus::Pending);
-                self.register_poll(handler);
+                self.report_write(handler, amt, WriteStatus::Pending, turn);
+                self.register_poll(handler, turn);
             }
             WriteResult::Err(_) => {}
         }
@@ -597,7 +634,12 @@ impl PosixStreamingWriter {
         rc
     }
 
-    pub fn write(&self, handler: &impl WriteHandler, buf: &[u8]) -> WriteResult {
+    pub fn write(
+        &self,
+        handler: &impl WriteHandler,
+        buf: &[u8],
+        turn: LoopTurn<'_>,
+    ) -> WriteResult {
         if self.is_done() {
             return WriteResult::Done(0);
         }
@@ -609,8 +651,8 @@ impl PosixStreamingWriter {
 
             // noop, but need this to have a chance
             // to register deferred tasks (onAutoFlush)
-            self.report_write(handler, buf.len(), WriteStatus::Drained);
-            self.register_poll(handler);
+            self.report_write(handler, buf.len(), WriteStatus::Drained, turn);
+            self.register_poll(handler, turn);
 
             // it's buffered, but should be reported as written to
             // callers
@@ -621,7 +663,7 @@ impl PosixStreamingWriter {
             // make sure write is in-order
             self.outgoing.write(buf);
 
-            return self.try_write_newly_buffered_data(handler);
+            return self.try_write_newly_buffered_data(handler, turn);
         }
 
         let rc = self.base.try_write(self.force_sync.get(), buf);
@@ -629,16 +671,16 @@ impl PosixStreamingWriter {
         match rc {
             WriteResult::Pending(amt) => {
                 self.outgoing.write(&buf[amt..]);
-                self.report_write(handler, amt, WriteStatus::Pending);
-                self.register_poll(handler);
+                self.report_write(handler, amt, WriteStatus::Pending, turn);
+                self.register_poll(handler, turn);
             }
             WriteResult::Wrote(amt) => {
                 self.outgoing.reset();
-                self.report_write(handler, amt, WriteStatus::Drained);
+                self.report_write(handler, amt, WriteStatus::Drained, turn);
             }
             WriteResult::Done(amt) => {
                 self.outgoing.reset();
-                self.report_write(handler, amt, WriteStatus::EndOfFile);
+                self.report_write(handler, amt, WriteStatus::EndOfFile, turn);
             }
             WriteResult::Err(_) => {}
         }
@@ -647,7 +689,7 @@ impl PosixStreamingWriter {
     }
 
     /// Takes the handler to match `WindowsStreamingWriter::flush`.
-    pub fn flush(&self, _: &impl WriteHandler) -> WriteResult {
+    pub fn flush(&self, _: &impl WriteHandler, _turn: LoopTurn<'_>) -> WriteResult {
         self.drain()
     }
 
@@ -677,15 +719,15 @@ impl PosixStreamingWriter {
         self.base.update_ref(value);
     }
 
-    pub fn end(&self, handler: &impl WriteHandler) {
+    pub fn end(&self, handler: &impl WriteHandler, turn: LoopTurn<'_>) {
         if !self.is_done.replace(true) {
-            self.close(handler);
+            self.close(handler, turn);
         }
     }
 
-    pub fn close(&self, handler: &impl WriteHandler) {
+    pub fn close(&self, handler: &impl WriteHandler, turn: LoopTurn<'_>) {
         if self.base.close() {
-            handler.on_close();
+            handler.on_close(turn);
         }
     }
 
@@ -696,9 +738,10 @@ impl PosixStreamingWriter {
         ev: EventLoopHandle,
         fd: Fd,
         is_pollable: bool,
+        turn: LoopTurn<'_>,
     ) -> sys::Result<()> {
         if !is_pollable {
-            self.close(handler);
+            self.close(handler, turn);
             self.base.handle.set_fd(fd);
             return sys::Result::Ok(());
         }
@@ -828,22 +871,22 @@ impl WindowsPipeWriter {
     ///
     /// # Safety
     /// `this` is `as_uv_data` of a live writer.
-    unsafe fn dispatch(this: *mut Self, completion: Completion) {
+    unsafe fn dispatch(this: *mut Self, completion: Completion, turn: LoopTurn<'_>) {
         let event = IoEvent::Write(WriteEvent(completion));
         // SAFETY: fn contract, and `set_owner`'s.
-        unsafe { __bun_run_io((*this).owner.get(), event) };
+        unsafe { __bun_run_io((*this).owner.get(), event, turn) };
     }
 
     /// `uv::open_handles` closes this writer's stream through here at teardown.
     ///
     /// # Safety
     /// `this` is the pointer that `set_source` recorded.
-    unsafe fn stop_for_vm_teardown(this: *mut c_void) {
+    unsafe fn stop_for_vm_teardown(this: *mut c_void, turn: bun_core::JsTurn<'_>) {
         // SAFETY: fn contract. Closing the source takes it off the list.
-        unsafe { Self::dispatch(this.cast(), Completion::VmTeardown) };
+        unsafe { Self::dispatch(this.cast(), Completion::VmTeardown, turn.loop_) };
     }
 
-    fn on_stream_write(this: *mut Self, status: uv::ReturnCode) {
+    fn on_stream_write(this: *mut Self, status: uv::ReturnCode, turn: LoopTurn<'_>) {
         let completion = match status.to_error(sys::Tag::write) {
             Some(err) => Completion::StreamFailed(err),
             None => Completion::Wrote,
@@ -853,7 +896,7 @@ impl WindowsPipeWriter {
             (*this).has_inflight_write.set(false);
             match (*this).detached.get() {
                 Some(Detached { ptr, free }) => free(ptr),
-                None => Self::dispatch(this, completion),
+                None => Self::dispatch(this, completion, turn),
             }
         }
     }
@@ -870,10 +913,11 @@ impl WindowsPipeWriter {
             None => Completion::Wrote,
         };
         let this = this.cast::<Self>();
-        // SAFETY: set by `set_source`, and cleared by dropping the file.
+        // SAFETY: set by `set_source`, and cleared by dropping the file. libuv calls this from `uv_run` on
+        // the loop's thread. Teardown drains the requests before `~VM`: only one submitted since comes after it.
         unsafe {
             (*this).has_inflight_write.set(false);
-            Self::dispatch(this, completion);
+            Self::dispatch(this, completion, LoopTurn::assume(&fs));
         }
     }
 
@@ -944,7 +988,7 @@ impl WindowsPipeWriter {
         true
     }
 
-    fn close(&self, handler: &impl WriteHandler, cancel_inflight_write: bool) {
+    fn close(&self, handler: &impl WriteHandler, cancel_inflight_write: bool, turn: LoopTurn<'_>) {
         let had_inflight_write = self.has_inflight_write.get();
         if !self.close_source(cancel_inflight_write) {
             return;
@@ -953,12 +997,16 @@ impl WindowsPipeWriter {
             handler.set_has_inflight_write(false);
         }
         if !self.closed_without_reporting.get() {
-            handler.on_close();
+            handler.on_close(turn);
         }
     }
 
     /// Closes the old source before a restart, like the POSIX writer.
-    fn close_current_source(&self, handler: &impl WriteHandler) -> sys::Result<()> {
+    fn close_current_source(
+        &self,
+        handler: &impl WriteHandler,
+        turn: LoopTurn<'_>,
+    ) -> sys::Result<()> {
         // The callback of a cancelled `uv_write` would close the new source.
         if self.has_inflight_write.get()
             && self.with_source(|source| source.file().is_some()) != Some(true)
@@ -966,7 +1014,7 @@ impl WindowsPipeWriter {
             return sys::Result::Err(sys::Error::from_code(sys::E::BUSY, sys::Tag::write));
         }
         // Canceling an in-flight write would drop its bytes, so let it finish writing to the old file.
-        self.close(handler, false);
+        self.close(handler, false, turn);
         // `on_close` started the writer again.
         if self.has_source() || self.has_inflight_write.get() {
             return sys::Result::Err(sys::Error::from_code(sys::E::BUSY, sys::Tag::write));
@@ -1044,10 +1092,10 @@ impl WindowsBufferedWriter {
         self.base.set_source(Source::Pipe(pipe));
     }
 
-    pub fn start_with_current_pipe(&self, handler: &impl BufferedWriteHandler) {
+    pub fn start_with_current_pipe(&self, handler: &impl BufferedWriteHandler, turn: LoopTurn<'_>) {
         debug_assert!(self.base.has_source());
         self.base.is_done.set(false);
-        self.write(handler);
+        self.write(handler, turn);
     }
 
     pub fn start_with_file(
@@ -1055,10 +1103,11 @@ impl WindowsBufferedWriter {
         handler: &impl BufferedWriteHandler,
         ev: EventLoopHandle,
         fd: Fd,
+        turn: LoopTurn<'_>,
     ) {
         self.base
             .set_source(Source::File(Source::open_file(ev.loop_(), fd)));
-        self.start_with_current_pipe(handler);
+        self.start_with_current_pipe(handler, turn);
     }
 
     /// A pipe or a tty owns `fd` on `Ok`.
@@ -1068,14 +1117,15 @@ impl WindowsBufferedWriter {
         ev: EventLoopHandle,
         fd: Fd,
         _pollable: bool,
+        turn: LoopTurn<'_>,
     ) -> sys::Result<()> {
-        self.base.close_current_source(handler)?;
+        self.base.close_current_source(handler, turn)?;
         self.base.set_source(Source::open(ev.loop_(), fd)?);
-        self.start_with_current_pipe(handler);
+        self.start_with_current_pipe(handler, turn);
         sys::Result::Ok(())
     }
 
-    pub fn on_io(&self, handler: &impl BufferedWriteHandler, event: IoEvent) {
+    pub fn on_io(&self, handler: &impl BufferedWriteHandler, event: IoEvent, turn: LoopTurn<'_>) {
         match completion_of(handler, event) {
             Completion::Wrote => {
                 let written = self.pending_payload_size.get();
@@ -1086,18 +1136,23 @@ impl WindowsBufferedWriter {
                 } else {
                     WriteStatus::Pending
                 };
-                handler.on_write(written, status);
+                handler.on_write(written, status, turn);
             }
             Completion::StreamFailed(err) | Completion::FileFailed(err) => {
-                self.close_and_report_error(handler, err);
+                self.close_and_report_error(handler, err, turn);
             }
-            Completion::VmTeardown => self.close(handler),
+            Completion::VmTeardown => self.close(handler, turn),
         }
     }
 
-    fn close_and_report_error(&self, handler: &impl WriteHandler, err: sys::Error) {
-        self.close(handler);
-        handler.on_error(err);
+    fn close_and_report_error(
+        &self,
+        handler: &impl WriteHandler,
+        err: sys::Error,
+        turn: LoopTurn<'_>,
+    ) {
+        self.close(handler, turn);
+        handler.on_error(err, turn);
     }
 
     /// `false` if there is nothing to write, or not now.
@@ -1136,31 +1191,36 @@ impl WindowsBufferedWriter {
         })
     }
 
-    fn report_submitted(&self, handler: &impl WriteHandler, submitted: Option<sys::Result<()>>) {
+    fn report_submitted(
+        &self,
+        handler: &impl WriteHandler,
+        submitted: Option<sys::Result<()>>,
+        turn: LoopTurn<'_>,
+    ) {
         match submitted {
             None => {}
             Some(sys::Result::Ok(())) => handler.set_has_inflight_write(true),
-            Some(sys::Result::Err(err)) => self.close_and_report_error(handler, err),
+            Some(sys::Result::Err(err)) => self.close_and_report_error(handler, err, turn),
         }
     }
 
-    pub fn write(&self, handler: &impl BufferedWriteHandler) {
+    pub fn write(&self, handler: &impl BufferedWriteHandler, turn: LoopTurn<'_>) {
         let submitted = handler.with_buffer(|buffer| self.submit_copy(buffer));
-        self.report_submitted(handler, submitted);
+        self.report_submitted(handler, submitted, turn);
     }
 
     /// `write` to a stream, without a copy.
     ///
     /// # Safety
     /// The bytes that `handler` lends stay as they are while the write is in flight.
-    pub unsafe fn write_no_copy(&self, handler: &impl BufferedWriteHandler) {
+    pub unsafe fn write_no_copy(&self, handler: &impl BufferedWriteHandler, turn: LoopTurn<'_>) {
         // SAFETY: fn contract.
         let submitted = handler.with_buffer(|buffer| unsafe { self.submit_no_copy(buffer) });
-        self.report_submitted(handler, submitted);
+        self.report_submitted(handler, submitted, turn);
     }
 
-    pub fn close(&self, handler: &impl WriteHandler) {
-        self.base.close(handler, true);
+    pub fn close(&self, handler: &impl WriteHandler, turn: LoopTurn<'_>) {
+        self.base.close(handler, true, turn);
     }
 
     /// Closes without reporting. `true` if a write is still in flight, whose callback calls `free(ptr)`.
@@ -1457,17 +1517,22 @@ impl WindowsStreamingWriter {
         self.base.set_source(Source::Pipe(pipe));
     }
 
-    pub fn start_with_pipe(&self, handler: &impl WriteHandler, pipe: uv::Owned<uv::Pipe>) {
+    pub fn start_with_pipe(
+        &self,
+        handler: &impl WriteHandler,
+        pipe: uv::Owned<uv::Pipe>,
+        turn: LoopTurn<'_>,
+    ) {
         self.set_pipe(pipe);
-        self.start_with_current_pipe(handler);
+        self.start_with_current_pipe(handler, turn);
     }
 
-    fn start_with_current_pipe(&self, handler: &impl WriteHandler) {
+    fn start_with_current_pipe(&self, handler: &impl WriteHandler, turn: LoopTurn<'_>) {
         debug_assert!(self.base.has_source());
         self.base.is_done.set(false);
         // The old source's write never reports completion, so send the queued chunks here.
         if self.queued_len() > 0 && self.sync_fd().is_none() {
-            self.process_send(handler);
+            self.process_send(handler, turn);
         }
     }
 
@@ -1476,12 +1541,13 @@ impl WindowsStreamingWriter {
         handler: &impl WriteHandler,
         ev: EventLoopHandle,
         fd: Fd,
+        turn: LoopTurn<'_>,
     ) -> sys::Result<()> {
         // A `SyncFile` writes each chunk synchronously and can't drain a queue.
         if self.queued_len() > 0 {
             return sys::Result::Err(sys::Error::from_code(sys::E::BUSY, sys::Tag::write));
         }
-        self.base.close_current_source(handler)?;
+        self.base.close_current_source(handler, turn)?;
         self.base
             .set_source(Source::SyncFile(Source::open_file(ev.loop_(), fd)));
         sys::Result::Ok(())
@@ -1494,52 +1560,58 @@ impl WindowsStreamingWriter {
         ev: EventLoopHandle,
         fd: Fd,
         _pollable: bool,
+        turn: LoopTurn<'_>,
     ) -> sys::Result<()> {
-        self.base.close_current_source(handler)?;
+        self.base.close_current_source(handler, turn)?;
         self.base.set_source(Source::open(ev.loop_(), fd)?);
-        self.start_with_current_pipe(handler);
+        self.start_with_current_pipe(handler, turn);
         sys::Result::Ok(())
     }
 
-    pub fn on_io(&self, handler: &impl WriteHandler, event: IoEvent) {
+    pub fn on_io(&self, handler: &impl WriteHandler, event: IoEvent, turn: LoopTurn<'_>) {
         match completion_of(handler, event) {
-            Completion::Wrote => self.on_write_complete(handler, self.base.reset_payload()),
-            Completion::StreamFailed(err) => self.report_error_and_close(handler, err),
+            Completion::Wrote => self.on_write_complete(handler, self.base.reset_payload(), turn),
+            Completion::StreamFailed(err) => self.report_error_and_close(handler, err, turn),
             Completion::FileFailed(err) => {
-                self.close(handler);
-                handler.on_error(err);
+                self.close(handler, turn);
+                handler.on_error(err, turn);
             }
-            Completion::VmTeardown => self.close(handler),
+            Completion::VmTeardown => self.close(handler, turn),
         }
     }
 
-    fn report_error_and_close(&self, handler: &impl WriteHandler, err: sys::Error) {
+    fn report_error_and_close(
+        &self,
+        handler: &impl WriteHandler,
+        err: sys::Error,
+        turn: LoopTurn<'_>,
+    ) {
         log!("onWrite() = {}", bstr::BStr::new(err.name()));
-        handler.on_error(err);
-        self.close(handler);
+        handler.on_error(err, turn);
+        self.close(handler, turn);
     }
 
-    fn on_write_complete(&self, handler: &impl WriteHandler, written: usize) {
+    fn on_write_complete(&self, handler: &impl WriteHandler, written: usize, turn: LoopTurn<'_>) {
         log!("onWrite({}) ({} left)", written, self.queued_len());
 
         if self.queued_len() > 0 {
-            handler.on_write(written, WriteStatus::Pending);
+            handler.on_write(written, WriteStatus::Pending, turn);
         } else if self.is_done() {
             // we already call .end lets close the connection
-            return handler.on_write(written, WriteStatus::EndOfFile);
+            return handler.on_write(written, WriteStatus::EndOfFile, turn);
         } else {
-            handler.on_write(written, WriteStatus::Drained);
+            handler.on_write(written, WriteStatus::Drained, turn);
         }
 
         // process pending outgoing data if any
-        self.process_send(handler);
+        self.process_send(handler, turn);
 
         // TODO: should we report writable?
-        handler.on_writable();
+        handler.on_writable(turn);
     }
 
     /// this tries to send more data returning if we are writable or not after this
-    fn process_send(&self, handler: &impl WriteHandler) -> WriteResult {
+    fn process_send(&self, handler: &impl WriteHandler, turn: LoopTurn<'_>) -> WriteResult {
         log!("processSend");
         if self.base.payload_len() > 0 {
             // we have some pending async request, the next outgoing data will be processed after this finish
@@ -1555,7 +1627,7 @@ impl WindowsStreamingWriter {
                 WriteResult::Pending(0)
             }
             sys::Result::Err(err) => {
-                self.report_error_and_close(handler, err.clone());
+                self.report_error_and_close(handler, err.clone(), turn);
                 WriteResult::Err(err)
             }
         }
@@ -1597,48 +1669,68 @@ impl WindowsStreamingWriter {
         had_buffered_data.then_some(WriteResult::Pending(0))
     }
 
-    fn write_chunk(&self, handler: &impl WriteHandler, chunk: WriteChunk<'_>) -> WriteResult {
+    fn write_chunk(
+        &self,
+        handler: &impl WriteHandler,
+        chunk: WriteChunk<'_>,
+        turn: LoopTurn<'_>,
+    ) -> WriteResult {
         self.write_without_reporting(chunk)
-            .unwrap_or_else(|| self.process_send(handler))
+            .unwrap_or_else(|| self.process_send(handler, turn))
     }
 
-    pub fn write_utf16(&self, handler: &impl WriteHandler, buf: &[u16]) -> WriteResult {
-        self.write_chunk(handler, WriteChunk::Utf16(buf))
+    pub fn write_utf16(
+        &self,
+        handler: &impl WriteHandler,
+        buf: &[u16],
+        turn: LoopTurn<'_>,
+    ) -> WriteResult {
+        self.write_chunk(handler, WriteChunk::Utf16(buf), turn)
     }
 
-    pub fn write_latin1(&self, handler: &impl WriteHandler, buf: &[u8]) -> WriteResult {
-        self.write_chunk(handler, WriteChunk::Latin1(buf))
+    pub fn write_latin1(
+        &self,
+        handler: &impl WriteHandler,
+        buf: &[u8],
+        turn: LoopTurn<'_>,
+    ) -> WriteResult {
+        self.write_chunk(handler, WriteChunk::Latin1(buf), turn)
     }
 
-    pub fn write(&self, handler: &impl WriteHandler, buf: &[u8]) -> WriteResult {
-        self.write_chunk(handler, WriteChunk::Bytes(buf))
+    pub fn write(
+        &self,
+        handler: &impl WriteHandler,
+        buf: &[u8],
+        turn: LoopTurn<'_>,
+    ) -> WriteResult {
+        self.write_chunk(handler, WriteChunk::Bytes(buf), turn)
     }
 
-    pub fn flush(&self, handler: &impl WriteHandler) -> WriteResult {
+    pub fn flush(&self, handler: &impl WriteHandler, turn: LoopTurn<'_>) -> WriteResult {
         if self.is_done() {
             return WriteResult::Done(0);
         }
-        self.process_send(handler)
+        self.process_send(handler, turn)
     }
 
-    pub fn end(&self, handler: &impl WriteHandler) {
+    pub fn end(&self, handler: &impl WriteHandler, turn: LoopTurn<'_>) {
         if self.base.is_done.replace(true) {
             return;
         }
         self.base.closed_without_reporting.set(false);
         if !self.has_pending_data() && self.owns_fd() {
-            self.close(handler);
+            self.close(handler, turn);
         }
     }
 
-    pub fn close(&self, handler: &impl WriteHandler) {
-        self.base.close(handler, true);
+    pub fn close(&self, handler: &impl WriteHandler, turn: LoopTurn<'_>) {
+        self.base.close(handler, true, turn);
     }
 
-    pub fn close_without_reporting(&self, handler: &impl WriteHandler) {
+    pub fn close_without_reporting(&self, handler: &impl WriteHandler, turn: LoopTurn<'_>) {
         if self.base.has_source() {
             self.base.closed_without_reporting.set(true);
-            self.close(handler);
+            self.close(handler, turn);
         }
     }
 }

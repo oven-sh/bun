@@ -78,7 +78,7 @@ fn read_from_blob(
     };
     let maybe = fs.read_file_with_options(
         &read_args,
-        node_fs::Flavor::Sync,
+        node_fs::JsFlavor::Sync(global.turn()),
         node_fs::ReadFileStringType::NullTerminated,
     );
     let result = match maybe {
@@ -432,8 +432,6 @@ extern "C" fn Bun__WebSocket__parseSSLConfig(
     global_this: &JSGlobalObject,
     tls_value: JSValue,
 ) -> Option<Box<bun_http::ssl_config::SSLConfig>> {
-    // SAFETY: `bun_vm()` returns the live VM for this global; the WebSocket
-    // constructor only runs on the JS thread with an initialized VM.
     let vm = global_this.bun_vm();
     // Use SSLConfig::from_js for clean and safe parsing
     let config_opt = match SSLConfig::from_js(vm, global_this, tls_value, false) {

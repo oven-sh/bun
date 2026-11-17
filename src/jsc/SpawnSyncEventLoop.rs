@@ -19,7 +19,7 @@
 use core::cell::Cell;
 use core::ptr::NonNull;
 
-use bun_core::{Timespec, TimespecMockMode};
+use bun_core::{JsTurn, Timespec, TimespecMockMode};
 #[cfg(windows)]
 use bun_sys::windows::libuv;
 #[cfg(windows)]
@@ -168,7 +168,7 @@ impl SpawnSyncEventLoop {
     /// Configure the event loop for one call, for as long as the result lives.
     pub fn prepare(&self) -> PreparedSpawnSyncEventLoop<'_> {
         let vm = self.event_loop.vm_ref();
-        self.event_loop.global.set(NonNull::new(vm.global.get()));
+        self.event_loop.global.set(NonNull::new(vm.global_ptr()));
         self.did_timeout.set(false);
 
         #[cfg(windows)]
@@ -269,7 +269,7 @@ impl PreparedSpawnSyncEventLoop<'_> {
     /// This is similar to the main event loop's tick but completely isolated
     ///
     /// `timeout` is an absolute deadline on the real (never mocked) clock.
-    pub fn tick_with_timeout(&self, timeout: Option<&Timespec>) -> TickState {
+    pub fn tick_with_timeout(&self, timeout: Option<&Timespec>, turn: JsTurn<'_>) -> TickState {
         let duration_storage: Option<Timespec>;
         let duration: Option<&Timespec> = match timeout {
             Some(ts) => {
@@ -320,7 +320,7 @@ impl PreparedSpawnSyncEventLoop<'_> {
             }
         }
 
-        self.event_loop.tick_tasks_only();
+        self.event_loop.tick_tasks_only(turn);
 
         let did_timeout = self.did_timeout.replace(false);
 

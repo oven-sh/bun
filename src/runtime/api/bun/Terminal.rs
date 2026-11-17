@@ -18,6 +18,7 @@ use core::sync::atomic::{AtomicU32, Ordering};
 use crate::node::StringOrBuffer;
 use bun_core::EncodedSlice;
 use bun_core::SignalCode;
+use bun_core::{LoopTurn, VmLive};
 #[cfg(unix)]
 use bun_io::pipe_reader::PosixFlags;
 use bun_io::{
@@ -109,9 +110,9 @@ pub(crate) struct Terminal {
     abort_handle: jsc::AbortHandle,
 }
 
-jsc::impl_abort_handle_owner!(Terminal, abort_handle, |this, _cause| {
+jsc::impl_abort_handle_owner!(Terminal, abort_handle, |this, _cause, turn| {
     // SAFETY: trait contract — `this` is live; the wrapper's ref outlasts the close.
-    unsafe { (*this).close_without_callbacks() }
+    unsafe { (*this).close_without_callbacks(turn.loop_) }
 });
 
 bitflags::bitflags! {
@@ -350,14 +351,20 @@ impl Terminal {
         // Start writer with the write fd - adds a ref. On `Err` the unused closure drops the file.
         match terminal
             .writer
-            .start(&*terminal, event_loop, pty_result.write.fd(), true)
+            .start(
+                &*terminal,
+                event_loop,
+                pty_result.write.fd(),
+                true,
+                global_object.turn().loop_,
+            )
             .map(|()| pty_result.write.into_raw())
         {
             sys::Result::Ok(_) => terminal.writer_ref.set(Some(terminal.clone())),
             sys::Result::Err(_) => {
                 // The writer took neither its ref nor the fd, and the reader never started.
                 drop(pty_result.read);
-                terminal.close_internal();
+                terminal.close_internal(global_object.turn().loop_);
                 return Err(InitError::WriterStartFailed);
             }
         }
@@ -369,13 +376,13 @@ impl Terminal {
         else {
             // The reader did not take the fd.
             drop(pty_result.read);
-            return Err(terminal.fail_reader_start());
+            return Err(terminal.fail_reader_start(global_object.turn().loop_));
         };
         pty_result.read.into_raw();
         terminal.reader_ref.set(Some(terminal.clone()));
-        terminal.on_read_result(result);
+        terminal.on_read_result(result, global_object.turn().loop_);
         if terminal.is_reader_done() {
-            return Err(terminal.fail_reader_start());
+            return Err(terminal.fail_reader_start(global_object.turn().loop_));
         }
         // PTY behaves like a pipe, not a socket
         #[cfg(unix)]
@@ -385,10 +392,10 @@ impl Terminal {
         terminal.update_flags(|f| f.insert(Flags::READER_STARTED));
 
         // Start reading data
-        terminal.read(None);
+        terminal.read(None, global_object.turn().loop_);
         // The first read can end the reader too: EOF, a read error, or a failed re-arm.
         if terminal.is_reader_done() {
-            return Err(terminal.fail_reader_start());
+            return Err(terminal.fail_reader_start(global_object.turn().loop_));
         }
 
         Ok(terminal)
@@ -421,7 +428,9 @@ impl Terminal {
 
         if let Some(context) = global_object.bun_vm().as_graph_context(context) {
             // SAFETY: heap-allocated in `open`; leaves its context in `close_internal`.
-            unsafe { jsc::AbortHandle::arm_owner(self.as_ctx_ptr(), context) };
+            unsafe {
+                jsc::AbortHandle::arm_owner(self.as_ctx_ptr(), context, global_object.live())
+            };
         }
     }
 
@@ -430,8 +439,8 @@ impl Terminal {
     /// `close_internal` closes what is still open (a writer that is still
     /// open releases its ref through `on_close`); `open` then drops
     /// the initial ref.
-    fn fail_reader_start(&self) -> InitError {
-        self.close_internal();
+    fn fail_reader_start(&self, turn: LoopTurn<'_>) -> InitError {
+        self.close_internal(turn);
         InitError::ReaderStartFailed
     }
 
@@ -512,15 +521,15 @@ impl Terminal {
 
     /// Spawn-side error-path teardown for a terminal created via
     /// `create_from_spawn` whose subprocess never started.
-    pub(crate) fn abandon_from_spawn(&self) {
-        self.close_without_callbacks();
+    pub(crate) fn abandon_from_spawn(&self, turn: LoopTurn<'_>) {
+        self.close_without_callbacks(turn);
     }
 
     /// No callback follows (on Windows the reader drains on after `close_internal`), and the wrapper may be collected.
-    fn close_without_callbacks(&self) {
+    fn close_without_callbacks(&self, turn: LoopTurn<'_>) {
         self.this_value.with_mut(|v| v.downgrade());
         self.update_flags(|f| f.insert(Flags::FINALIZED));
-        self.close_internal();
+        self.close_internal(turn);
     }
 
     /// Windows: get the ConPTY handle to pass to uv_spawn via
@@ -553,7 +562,7 @@ impl Terminal {
     /// the output queue on last slave close; holding ours until
     /// Subprocess::on_process_exit keeps a fast child's writes.
     #[cfg(unix)]
-    pub(crate) fn drain_and_close_slave_fd(&self) {
+    pub(crate) fn drain_and_close_slave_fd(&self, turn: LoopTurn<'_>) {
         let flags = self.flags.get();
         if flags.contains(Flags::CLOSED) {
             return;
@@ -562,7 +571,7 @@ impl Terminal {
         // +1 so `self` stays live for the trailing field accesses.
         let guard = self.ref_guard();
         if flags.contains(Flags::READER_STARTED) && !self.is_reader_done() {
-            self.read(None);
+            self.read(None, turn);
             if self.flags.get().contains(Flags::CLOSED) {
                 return;
             }
@@ -573,7 +582,7 @@ impl Terminal {
         // A grandchild holding the slave keeps this at EAGAIN and re-arms.
         let flags = self.flags.get();
         if flags.contains(Flags::READER_STARTED) && !self.is_reader_done() {
-            self.read(None);
+            self.read(None, turn);
         }
         // An inline terminal whose child has exited no longer keeps the event
         // loop alive; the polls stay registered so grandchild output still
@@ -616,7 +625,7 @@ impl Terminal {
     /// hpcon is passed to the thread by value so the Terminal struct may be freed
     /// before the thread completes.
     #[cfg(windows)]
-    fn close_pseudoconsole_off_thread(&self, hpcon: windows::PseudoConsole) {
+    fn close_pseudoconsole_off_thread(&self, hpcon: windows::PseudoConsole, turn: LoopTurn<'_>) {
         // PORTING.md bans std::process but not std::thread; a raw detached OS
         // thread is intentional here (no event-loop integration needed).
         match std::thread::Builder::new().spawn(move || hpcon.close()) {
@@ -632,7 +641,7 @@ impl Terminal {
                 // broken-pipe once libuv's deferred close runs.
                 let flags = self.flags.get();
                 if flags.contains(Flags::READER_STARTED) && !self.is_reader_done() {
-                    self.on_read_result(self.reader.close());
+                    self.on_read_result(self.reader.close(), turn);
                 }
             }
         }
@@ -1145,7 +1154,7 @@ impl Terminal {
 
         // No drain fires from inside `write()`: the flag is restored below.
         let had_buffered = self.writer_has_buffered.replace(false);
-        let write_result = self.writer.write(self, bytes);
+        let write_result = self.writer.write(self, bytes, global_object.turn().loop_);
         // The writer can close inside `write()` and keep the bytes; no drain follows them.
         let writer_done = self.is_writer_done();
         let has_pending = self.writer.has_pending_data() && !writer_done;
@@ -1329,17 +1338,17 @@ impl Terminal {
     }
 
     /// Close the terminal
-    pub(crate) fn close(&self, _: &mut JsScope<'_>) {
-        self.close_internal();
+    pub(crate) fn close(&self, cx: &mut JsScope<'_>) {
+        self.close_internal(cx.turn().loop_);
     }
 
     /// Async dispose for "using" syntax
     pub(crate) fn async_dispose(&self, cx: &mut JsScope<'_>) -> JSValue {
-        self.close_without_callbacks();
+        self.close_without_callbacks(cx.turn().loop_);
         jsc::JSPromise::resolved_promise_value(cx.global(), JSValue::UNDEFINED)
     }
 
-    fn close_internal(&self) {
+    fn close_internal(&self, turn: LoopTurn<'_>) {
         if self.flags.get().contains(Flags::CLOSED) {
             return;
         }
@@ -1347,7 +1356,7 @@ impl Terminal {
         self.abort_handle.leave();
 
         // Close writer (closes its fd)
-        self.writer.close(self);
+        self.writer.close(self, turn);
 
         #[cfg(windows)]
         {
@@ -1356,7 +1365,7 @@ impl Terminal {
             // the event loop can keep draining; conhost flushes the final frame,
             // closes its pipe end, and the reader observes EOF → `on_read_result`.
             if let Some(hpcon) = self.hpcon.take() {
-                self.close_pseudoconsole_off_thread(hpcon);
+                self.close_pseudoconsole_off_thread(hpcon, turn);
             }
             // Leave the reader open; `on_read_result` closes it on EOF.
             let flags = self.flags.get();
@@ -1367,7 +1376,7 @@ impl Terminal {
 
         // Close reader (closes its fd)
         if self.flags.get().contains(Flags::READER_STARTED) {
-            self.on_read_result(self.reader.close());
+            self.on_read_result(self.reader.close(), turn);
         }
 
         #[cfg(unix)]
@@ -1377,8 +1386,8 @@ impl Terminal {
         }
     }
 
-    pub(crate) fn on_writer_io(&self, event: IoEvent) {
-        self.writer.on_io(self, event);
+    pub(crate) fn on_writer_io(&self, event: IoEvent, turn: LoopTurn<'_>) {
+        self.writer.on_io(self, event, turn);
     }
 
     fn on_writer_ready(&self) {
@@ -1399,18 +1408,18 @@ impl Terminal {
         self.maybe_downgrade_after_eof();
     }
 
-    pub(crate) fn read(&self, event: Option<IoEvent>) {
+    pub(crate) fn read(&self, event: Option<IoEvent>, turn: LoopTurn<'_>) {
         let event_loop = self.event_loop_handle.as_event_loop_ctx();
         let result = self.reader.read_chunks(event_loop, event, |chunk, _| {
             self.on_read_chunk(&chunk);
             true
         });
-        self.on_read_result(result);
+        self.on_read_result(result, turn);
     }
 
     /// Takes `reader_ref` before the exit callback so re-entry (`terminal.close()` from the
     /// callback) finds it gone and no-ops.
-    fn on_read_result(&self, result: ReadResult) {
+    fn on_read_result(&self, result: ReadResult, turn: LoopTurn<'_>) {
         // 0 = EOF, 1 = PTY read error; not the subprocess's exit code.
         let exit_code = match result {
             ReadResult::Pending => return,
@@ -1424,7 +1433,9 @@ impl Terminal {
             return;
         };
         #[cfg(unix)]
-        self.finish_io_after_eof();
+        self.finish_io_after_eof(turn);
+        #[cfg(not(unix))]
+        let _ = turn;
         // Skip JS interactions if already finalized (happens when close() is called during finalize)
         if !self.flags.get().contains(Flags::FINALIZED) {
             self.call_exit_callback(exit_code, None);
@@ -1441,14 +1452,14 @@ impl Terminal {
     /// read with EIO instead of EOF. Left alone, the writer waits for a drain
     /// that cannot come and the reader delivers echo after `exit`.
     #[cfg(unix)]
-    fn finish_io_after_eof(&self) {
+    fn finish_io_after_eof(&self, turn: LoopTurn<'_>) {
         // EOF closes the reader itself, a read error does not.
         if !self.reader.is_done() {
-            self.on_read_result(self.reader.close());
+            self.on_read_result(self.reader.close(), turn);
         }
         // `end()` dispatches `on_close`.
         if !self.is_writer_done() {
-            self.writer.end(self);
+            self.writer.end(self, turn);
         }
     }
 
@@ -1537,7 +1548,7 @@ impl Terminal {
         {
             Ok(data) => data,
             Err(err) => {
-                crate::dispatch::fold(Err(err));
+                crate::dispatch::fold(Err(err), global_this.turn());
                 return;
             }
         };
@@ -1553,12 +1564,13 @@ impl Terminal {
         );
     }
 
-    pub(crate) fn finalize(&self) {
+    pub(crate) fn finalize(&self, live: VmLive<'_>) {
         bun_output::scoped_log!(Terminal, "finalize");
         jsc::mark_binding();
         self.this_value.with_mut(|v| v.finalize());
         self.update_flags(|f| f.insert(Flags::FINALIZED));
-        self.close_internal();
+        // SAFETY: it reaches `on_close` and `on_read_result`, which leave the heap alone once `FINALIZED` is set.
+        self.close_internal(unsafe { LoopTurn::assume(&live) });
     }
 }
 
@@ -1568,27 +1580,29 @@ impl Drop for Terminal {
         // Close all FDs if not already closed (handles constructor error paths)
         // closeInternal() checks flags.closed and returns early on subsequent calls,
         // so this is safe even if finalize() already called it
-        self.close_internal();
+        // SAFETY: `!Send`, and teardown closes a worker's reader and writer by the VM's last sweep. With no ref left
+        // `writer_ref` and `reader_ref` are empty, so `on_close` and `on_read_result` return at once.
+        self.close_internal(unsafe { LoopTurn::assume(self) });
     }
 }
 
 impl WriteHandler for Terminal {
-    fn on_close(&self) {
+    fn on_close(&self, _turn: LoopTurn<'_>) {
         bun_output::scoped_log!(Terminal, "onWriterClose");
         if let Some(_writer_ref) = self.writer_ref.replace(None) {
             self.maybe_downgrade_after_eof();
         }
     }
 
-    fn on_error(&self, err: sys::Error) {
+    fn on_error(&self, err: sys::Error, turn: LoopTurn<'_>) {
         bun_output::scoped_log!(Terminal, "onWriterError: {:?}", err);
         // e.g. a broken pipe when the child process exits
         if !self.flags.get().contains(Flags::CLOSED) {
-            self.close_internal();
+            self.close_internal(turn);
         }
     }
 
-    fn on_write(&self, amount: usize, status: WriteStatus) {
+    fn on_write(&self, amount: usize, status: WriteStatus, _turn: LoopTurn<'_>) {
         bun_output::scoped_log!(Terminal, "onWrite: {} bytes", amount);
         match status {
             WriteStatus::Pending => {}
@@ -1611,7 +1625,7 @@ impl WriteHandler for Terminal {
     }
 
     #[cfg(windows)]
-    fn on_writable(&self) {
+    fn on_writable(&self, _turn: LoopTurn<'_>) {
         self.on_writer_ready();
     }
 

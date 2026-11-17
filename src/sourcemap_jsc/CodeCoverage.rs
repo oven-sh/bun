@@ -5,7 +5,7 @@ use std::borrow::Cow;
 
 use bun_collections::VecExt;
 use bun_collections::bit_set::DynamicBitSet;
-use bun_core::{self, Utf8Bytes};
+use bun_core::{self, Utf8Bytes, VmLive};
 use bun_jsc::{JSGlobalObject, JSValue, VM, bun_string_jsc};
 use bun_sourcemap::{InternalSourceMap, Ordinal, ParsedSourceMap};
 
@@ -126,6 +126,7 @@ impl<'a> Report<'a> {
                 &generator.blocks,
                 &generator.function_blocks,
                 ignore_sourcemap_,
+                global_this.live(),
             ),
         ))
     }
@@ -890,10 +891,11 @@ impl ByteRangeMapping {
         blocks: &[BasicBlockRange],
         function_blocks: &[BasicBlockRange],
         ignore_sourcemap: bool,
+        live: VmLive<'_>,
     ) -> Result<Report<'_>, bun_alloc::AllocError> {
         let source_url = self.source_url.slice();
-        let saved_source_map = || {
-            bun_jsc::VirtualMachine::VirtualMachine::get()
+        let saved_source_map = move || {
+            bun_jsc::VirtualMachine::VirtualMachine::get(live)
                 .source_mappings
                 .get(source_url)
         };
@@ -1143,6 +1145,7 @@ impl ByteRangeMapping {
         already_bundled: bool,
         ranges: &[u8],
         counts: &[u64],
+        live: VmLive<'_>,
     ) {
         let Some(compiled) = CompiledCounts::parse(ranges, counts, text) else {
             return;
@@ -1152,12 +1155,18 @@ impl ByteRangeMapping {
             transpiled,
             None,
             already_bundled,
+            live,
         );
         this.compiled = Some(compiled);
     }
 
     /// `scan` sets no brace. Those of an object literal are code, and the printer marks them.
-    fn set_object_braces_executable(&mut self, text: &[u8], already_bundled: bool) {
+    fn set_object_braces_executable(
+        &mut self,
+        text: &[u8],
+        already_bundled: bool,
+        live: VmLive<'_>,
+    ) {
         if already_bundled {
             // JSC compiles a `// @bun` file as written, so the original positions are in `text`.
             if let Some(blob) = print_for_coverage(self.source_url.slice(), text)
@@ -1165,7 +1174,7 @@ impl ByteRangeMapping {
             {
                 map.for_each_object_brace(|brace| self.set_executable(brace.original));
             }
-        } else if let Some(source_map) = bun_jsc::VirtualMachine::VirtualMachine::get()
+        } else if let Some(source_map) = bun_jsc::VirtualMachine::VirtualMachine::get(live)
             .source_mappings
             .get(self.source_url.slice())
         {
@@ -1350,23 +1359,34 @@ impl LineCounts {
     }
 }
 
+/// # Safety
+/// The JS thread.
 #[unsafe(no_mangle)]
-extern "C" fn ByteRangeMapping__generate(
+unsafe extern "C" fn ByteRangeMapping__generate(
     str_: &bun_core::String,
     source_contents_str: &bun_core::String,
     source_id: i32,
     already_bundled: bool,
 ) {
-    find_or_insert(str_, source_contents_str, Some(source_id), already_bundled);
+    // SAFETY: fn contract.
+    let live = unsafe { VmLive::assume(str_) };
+    find_or_insert(
+        str_,
+        source_contents_str,
+        Some(source_id),
+        already_bundled,
+        live,
+    );
 }
 
 /// The entry of the file with that text, which JSC knows under `source_id` too.
-fn find_or_insert(
+fn find_or_insert<'a>(
     str_: &bun_core::String,
     source_contents_str: &bun_core::String,
     source_id: Option<i32>,
     already_bundled: bool,
-) -> &'static mut ByteRangeMapping {
+    live: VmLive<'a>,
+) -> &'a mut ByteRangeMapping {
     // SAFETY: thread_map() returns a pointer into this thread's owned Box<HashMap>;
     // valid for the lifetime of the thread, and we are the only mutable accessor on
     // this thread for the duration of this call.
@@ -1391,13 +1411,13 @@ fn find_or_insert(
     new_value.source_ids.clear();
     new_value.source_ids.extend(source_id);
     // `node:inspector` turns the profiler on too. Nothing is marked for it.
-    if bun_jsc::VirtualMachine::VirtualMachine::get()
+    if bun_jsc::VirtualMachine::VirtualMachine::get(live)
         .transpiler
         .get()
         .options
         .code_coverage
     {
-        new_value.set_object_braces_executable(source_contents.slice(), already_bundled);
+        new_value.set_object_braces_executable(source_contents.slice(), already_bundled, live);
     }
     map.insert(hash, new_value);
     map.get_mut(&hash).unwrap()

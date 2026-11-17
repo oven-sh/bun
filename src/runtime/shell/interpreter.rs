@@ -26,6 +26,7 @@
 //! own data up via `interp.as_<state>(this)` / `interp.as_<state>_mut(this)`.
 
 use bun_collections::VecExt;
+use bun_core::{HasVm, LoopTurn, ThreadLive, VmLive};
 use bun_jsc::bindgen::{JsLocal, JsPayload as _, JsScope, JsWrapper};
 use bun_jsc::{JsCell, JsCellRefExt as _, JsRef};
 use bun_ptr::AliasableBox;
@@ -279,7 +280,7 @@ pub(crate) struct Interpreter {
     pub(crate) keep_alive: bun_io::JsKeepAlive,
     /// The `Bun.ModuleGraph` context whose script started this (`run_from_js`), if any. Every
     /// child the script spawns belongs to it, and once it stops the script runs no further.
-    pub(crate) context: Cell<Option<bun_jsc::ContextId>>,
+    pub(crate) context: Cell<Option<(bun_jsc::ContextId, HasVm)>>,
 
     pub(crate) async_commands_executing: Cell<u32>,
 
@@ -568,8 +569,9 @@ impl Interpreter {
         mini: &'static bun_event_loop::MiniEventLoop::MiniEventLoop,
         path: &[u8],
         src: &[u8],
+        turn: LoopTurn<'_>,
     ) -> crate::Result<ExitCode> {
-        Self::init_and_run_impl(ctx, mini, bun_paths::basename(path), src, None, false)
+        Self::init_and_run_impl(ctx, mini, bun_paths::basename(path), src, None, false, turn)
     }
 
     /// Standalone-shell entrypoint for `bun run <script>` / `bun exec` when
@@ -586,8 +588,9 @@ impl Interpreter {
         path_for_errors: &[u8],
         src: &[u8],
         cwd: Option<&[u8]>,
+        turn: LoopTurn<'_>,
     ) -> crate::Result<ExitCode> {
-        Self::init_and_run_impl(ctx, mini, path_for_errors, src, cwd, true)
+        Self::init_and_run_impl(ctx, mini, path_for_errors, src, cwd, true, turn)
     }
 
     /// Shared body for `init_and_run_from_file` / `init_and_run_from_source`.
@@ -601,6 +604,7 @@ impl Interpreter {
         src: &[u8],
         cwd: Option<&[u8]>,
         from_source: bool,
+        turn: LoopTurn<'_>,
     ) -> crate::Result<ExitCode> {
         if from_source {
             bun_analytics::features::standalone_shell.fetch_add(1, Ordering::Relaxed);
@@ -654,7 +658,7 @@ impl Interpreter {
 
         // ── run ────────────────────────────────────────────────────────────
         interp.exit_code.set(Some(1));
-        if let Err(e) = interp.run() {
+        if let Err(e) = interp.run(turn) {
             let name = e.name();
             drop(interp);
             bun_core::output::err(
@@ -698,31 +702,31 @@ macro_rules! shell_state_dispatch {
     (@norm [ $( ($v:ident, $h:ident) )+ ]) => {
         /// Signal to `parent` that `child` finished with `exit_code`. This is the
         /// single hoisted `match` dispatching on the parent's state tag.
-        pub(crate) fn child_done(&self, parent: NodeId, child: NodeId, exit_code: ExitCode) -> Yield {
+        pub(crate) fn child_done(&self, parent: NodeId, child: NodeId, exit_code: ExitCode, turn: LoopTurn<'_>) -> Yield {
             self.propagate_interrupt(parent, child);
             if parent == NodeId::INTERPRETER {
                 return self.on_root_child_done(child, exit_code);
             }
             match self.nodes.get()[parent.idx()].kind() {
-                $( StateKind::$v => $h::child_done(self, parent, child, exit_code), )+
+                $( StateKind::$v => $h::child_done(self, parent, child, exit_code, turn), )+
                 StateKind::Free => unreachable!("child_done on freed {}", parent),
             }
         }
 
         /// Advance node `id` by one step. The trampoline (`Yield::run`) calls
         /// this; replaces the per-variant `&mut State` dispatch in Yield.
-        pub(crate) fn next_node(&self, id: NodeId) -> Yield {
+        pub(crate) fn next_node(&self, id: NodeId, turn: LoopTurn<'_>) -> Yield {
             match self.nodes.get()[id.idx()].kind() {
-                $( StateKind::$v => $h::next(self, id), )+
+                $( StateKind::$v => $h::next(self, id, turn), )+
                 StateKind::Free => unreachable!("next on freed {}", id),
             }
         }
 
         /// Start node `id`. Most states return `Yield::<Kind>(id)` immediately;
         /// the trampoline then calls `next_node`.
-        pub(crate) fn start_node(&self, id: NodeId) -> Yield {
+        pub(crate) fn start_node(&self, id: NodeId, turn: LoopTurn<'_>) -> Yield {
             match self.nodes.get()[id.idx()].kind() {
-                $( StateKind::$v => $h::start(self, id), )+
+                $( StateKind::$v => $h::start(self, id, turn), )+
                 StateKind::Free => unreachable!("start on freed {}", id),
             }
         }
@@ -834,8 +838,8 @@ impl Interpreter {
     }
 
     /// A sequencing state stops early: Ctrl+C cut the member short, or the script failed.
-    pub(crate) fn interrupted(&self, id: NodeId) -> bool {
-        self.context_stopped()
+    pub(crate) fn interrupted(&self, id: NodeId, live: ThreadLive<'_>) -> bool {
+        self.context_stopped(live)
             || self.failed()
             || self.node(id).base().is_some_and(|b| b.interrupted)
     }
@@ -844,16 +848,16 @@ impl Interpreter {
     /// if it has one.
     fn task_context(&self) -> bun_jsc::ContextId {
         match self.context.get() {
-            Some(context) => context,
+            Some((context, _)) => context,
             None => bun_jsc::ContextId::NONE,
         }
     }
 
     /// The `Bun.ModuleGraph` whose script started this was disposed (or its realm is going).
-    pub(crate) fn context_stopped(&self) -> bool {
-        self.context
-            .get()
-            .is_some_and(|id| !bun_jsc::virtual_machine::VirtualMachine::get().is_context_live(id))
+    pub(crate) fn context_stopped(&self, live: ThreadLive<'_>) -> bool {
+        self.context.get().is_some_and(|(id, has_vm)| {
+            !bun_jsc::virtual_machine::VirtualMachine::get(has_vm.live(live)).is_context_live(id)
+        })
     }
 
     /// Some ancestor is a member of a multi-command pipeline.
@@ -928,6 +932,7 @@ impl Interpreter {
         expr: &ast::Expr,
         parent: NodeId,
         io: IO,
+        turn: LoopTurn<'_>,
     ) -> (Option<NodeId>, Yield) {
         let child = match expr {
             ast::Expr::Cmd(c) => Cmd::init(self, Env::inherited(shell), *c, parent, io),
@@ -957,7 +962,7 @@ impl Interpreter {
             }
             ast::Expr::Async(e) => Async::init(self, shell, *e, parent, io),
         };
-        let y = self.start_node(child);
+        let y = self.start_node(child, turn);
         (Some(child), y)
     }
 
@@ -1001,13 +1006,13 @@ impl Interpreter {
         Yield::suspended()
     }
 
-    pub(crate) fn async_cmd_done(&self, async_id: NodeId) {
+    pub(crate) fn async_cmd_done(&self, async_id: NodeId, turn: LoopTurn<'_>) {
         self.free_node(async_id);
         self.async_commands_executing
             .set(self.async_commands_executing.get() - 1);
         if self.async_commands_executing.get() == 0 {
             if let Some(exit) = self.exit_code.get() {
-                self.finish(exit).run(self);
+                self.finish(exit).run(self, turn);
             }
         }
     }
@@ -1155,7 +1160,7 @@ impl Interpreter {
         Ok(())
     }
 
-    pub(crate) fn run(&self) -> bun_sys::Result<()> {
+    pub(crate) fn run(&self, turn: LoopTurn<'_>) -> bun_sys::Result<()> {
         log!("Interpreter(0x{:x}) run", std::ptr::from_ref(self) as usize);
         self.setup_io_before_run()?;
 
@@ -1163,7 +1168,7 @@ impl Interpreter {
         let ast = &self.args.get().script_ast;
         let io = self.root_io.get().clone();
         let root = Script::init(self, Env::inherited(shell), ast, NodeId::INTERPRETER, io);
-        Script::start(self, root).run(self);
+        Script::start(self, root, turn).run(self, turn);
         Ok(())
     }
 
@@ -1251,7 +1256,12 @@ impl Interpreter {
 
     /// Node `id` threw and holds nothing in flight: kill the subprocesses and wind the tree down.
     /// The first failure fills `rejection`, which the trampoline passes to `reject` once it holds no node.
-    pub(crate) fn fail(&self, id: NodeId, rejection: &mut Option<Rejection>) -> Yield {
+    pub(crate) fn fail(
+        &self,
+        id: NodeId,
+        rejection: &mut Option<Rejection>,
+        turn: LoopTurn<'_>,
+    ) -> Yield {
         if let Some(first) = self.take_failure() {
             *rejection = Some(first);
         }
@@ -1268,7 +1278,7 @@ impl Interpreter {
             .node(id)
             .base()
             .map_or(NodeId::INTERPRETER, |b| b.parent);
-        self.child_done(parent, id, 1)
+        self.child_done(parent, id, 1, turn)
     }
 
     /// Runs JS, which can turn the event loop and free any node of the script.
@@ -1346,14 +1356,15 @@ impl Interpreter {
         let vm = global_this.bun_vm();
         self.context.set(
             vm.as_graph_context(vm.context_of_caller())
-                .map(bun_jsc::ScriptExecutionContext::id),
+                .map(|context| (context.id(), vm.live().has_vm)),
         );
 
         let shell = self.root_shell.as_ptr();
         let ast = &self.args.get().script_ast;
         let io = self.root_io.get().clone();
         let root = Script::init(self, Env::inherited(shell), ast, NodeId::INTERPRETER, io);
-        Script::start(self, root).run(self);
+        let turn = global_this.turn().loop_;
+        Script::start(self, root, turn).run(self, turn);
         if global_this.has_exception() {
             return Err(crate::jsc::JsError::Thrown);
         }
@@ -2211,7 +2222,7 @@ pub(crate) trait ShellTaskCtx: Sized + bun_event_loop::Taskable {
     /// borrow once; no impl re-enters or frees `self` here (that happens in
     /// `run_from_main_thread`).
     fn run_from_thread_pool(this: &mut Self);
-    fn run_from_main_thread(this: *mut Self, interp: &Interpreter);
+    fn run_from_main_thread(this: *mut Self, interp: &Interpreter, turn: LoopTurn<'_>);
 
     /// Recover `*mut Self` from the intrusive `*mut WorkPoolTask` that the
     /// thread pool hands the callback. `WorkPoolTask` is the first
@@ -2400,13 +2411,13 @@ impl ShellTask {
     /// `ctx` must be a live heap allocation that embeds a `ShellTask` at
     /// `C::TASK_OFFSET` whose `interp` back-ref is valid; called on the main
     /// thread after the worker bounce-back.
-    pub(crate) unsafe fn run_from_main_thread<C: ShellTaskCtx>(ctx: *mut C) {
+    pub(crate) unsafe fn run_from_main_thread<C: ShellTaskCtx>(ctx: *mut C, turn: LoopTurn<'_>) {
         log!("ShellTask runFromJS");
         // SAFETY: caller contract — `ctx` embeds `ShellTask` at `TASK_OFFSET`.
         unsafe {
             let this = ctx.byte_add(C::TASK_OFFSET).cast::<ShellTask>();
             let interp = &*(*this).interp;
-            C::run_from_main_thread(ctx, interp);
+            C::run_from_main_thread(ctx, interp, turn);
         }
     }
 }
@@ -2415,7 +2426,7 @@ impl ShellTask {
 pub(crate) trait ShellWork: Send {
     const TAG: bun_event_loop::TaskTag;
     fn run_from_thread_pool(&mut self, task: &ShellTask);
-    fn run_from_main_thread(&mut self, interp: &Interpreter) -> Yield;
+    fn run_from_main_thread(&mut self, interp: &Interpreter, turn: LoopTurn<'_>) -> Yield;
 }
 
 /// Owned by the pool, then by the queue of the interpreter's loop.
@@ -2448,7 +2459,7 @@ impl<W: ShellWork> PoolTask<W> {
 
 impl<W: ShellWork> bun_event_loop::Taskable for PoolTask<W> {
     const TAG: bun_event_loop::TaskTag = W::TAG;
-    unsafe fn release_unrun(this: *mut Self) {
+    unsafe fn release_unrun(this: *mut Self, _live: VmLive<'_>) {
         // SAFETY: fn contract.
         unsafe { bun_core::heap::destroy(this) };
     }
@@ -2463,12 +2474,12 @@ impl<W: ShellWork> ShellTaskCtx for PoolTask<W> {
     fn run_from_thread_pool(this: &mut Self) {
         this.work.run_from_thread_pool(&this.task);
     }
-    fn run_from_main_thread(this: *mut Self, interp: &Interpreter) {
+    fn run_from_main_thread(this: *mut Self, interp: &Interpreter, turn: LoopTurn<'_>) {
         // SAFETY: the box that was scheduled, which the queue has let go of.
         let mut this = unsafe { bun_core::heap::take(this) };
-        let next = this.work.run_from_main_thread(interp);
+        let next = this.work.run_from_main_thread(interp, turn);
         drop(this);
-        next.run(interp);
+        next.run(interp, turn);
     }
 }
 
@@ -2488,11 +2499,18 @@ unsafe fn shell_task_trampoline<C: ShellTaskCtx>(task: *mut WorkPoolTask) {
 }
 
 /// Mini-loop `AnyTaskWithExtraContext` callback shape (`fn(*mut T, *mut ())`).
-fn shell_task_run_from_main_thread_mini<C: ShellTaskCtx>(this: *mut ShellTask, _: *mut ()) {
+fn shell_task_run_from_main_thread_mini<C: ShellTaskCtx>(
+    this: *mut ShellTask,
+    _: *mut (),
+    turn: LoopTurn<'_>,
+) {
     // SAFETY: `this` is the `ShellTask` embedded in a live `C` at `TASK_OFFSET`;
     // mini-loop dispatch runs on the main thread.
     unsafe {
-        ShellTask::run_from_main_thread::<C>(bun_core::container_of::<C, _>(this, C::TASK_OFFSET))
+        ShellTask::run_from_main_thread::<C>(
+            bun_core::container_of::<C, _>(this, C::TASK_OFFSET),
+            turn,
+        )
     };
 }
 
@@ -2573,7 +2591,7 @@ pub(crate) fn create_shell_interpreter<'a>(
     // SAFETY: the payload of `this_value`.
     let interp = unsafe { this_value.payload_ptr().as_ref() };
     interp.this_value.set(JsRef::init_weak(js_value));
-    interp.keep_alive.ref_(global.bun_vm().loop_ctx());
+    interp.keep_alive.ref_(global.live());
     bun_analytics::features::shell.fetch_add(1, Ordering::Relaxed);
     Ok(this_value)
 }

@@ -1,4 +1,5 @@
 use bun_core::String as BunString;
+use bun_core::VmLive;
 use bun_jsc::bindgen::{self, JsHeap, JsLocal, JsScope, StringOrJsBytes};
 use bun_jsc::uuid::{self, UUID, UUID5, UUID7};
 use bun_jsc::virtual_machine::VirtualMachine;
@@ -58,10 +59,10 @@ impl Crypto {
         Ok(array)
     }
 
-    pub(crate) fn random_uuid(&self) -> BunString {
+    pub(crate) fn random_uuid(&self, live: VmLive<'_>) -> BunString {
         let (str, bytes) = BunString::create_uninitialized_latin1(36);
 
-        let uuid = VirtualMachine::get().rare_data().next_uuid();
+        let uuid = VirtualMachine::get(live).rare_data().next_uuid();
 
         uuid.print(
             (&mut bytes[0..36])
@@ -157,7 +158,7 @@ pub(crate) fn random_uuid_v7<'a>(
         ),
     };
 
-    let entropy = VirtualMachine::get().rare_data().entropy();
+    let entropy = VirtualMachine::get(heap.live()).rare_data().entropy();
 
     let uuid = UUID7::init(timestamp, entropy, timestamp_source);
 

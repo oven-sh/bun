@@ -3,7 +3,7 @@ import { Blob, BlobOrBuildArtifact } from "./Blob.bind.ts";
 
 export default b.module({ rustPath: "crate::webcore::object_url_registry" });
 
-export const createObjectURL = b.fn({ args: { object: BlobOrBuildArtifact }, returns: b.string });
+export const createObjectURL = b.fn({ passVm: true, args: { object: BlobOrBuildArtifact }, returns: b.string });
 
 export const revokeObjectURL = b.fn({
   args: { url: b.string.allowStringObject },

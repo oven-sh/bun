@@ -18,10 +18,10 @@
 //! Node's equivalent is `ThreadPoolWork` + `req_wrap`; WebCore's is
 //! `WorkerRunLoop::postTask` with `ActiveDOMObject`-owned completions.
 
-use core::marker::PhantomData;
 use core::mem::ManuallyDrop;
 use core::ptr::NonNull;
 
+use bun_core::{JsTurn, VmLive};
 use bun_event_loop::ConcurrentTask::ConcurrentTask;
 use bun_io::{JsKeepAlive, KeepAlive};
 use bun_threading::work_pool::{Task as WorkPoolTask, WorkPool};
@@ -39,10 +39,18 @@ use crate::{JSGlobalObject, JsResult};
 pub struct JsThread<'a> {
     global: &'a JSGlobalObject,
     context: &'a crate::ScriptExecutionContext,
-    _not_send: PhantomData<*mut ()>,
+    turn: JsTurn<'a>,
 }
 
 impl<'a> JsThread<'a> {
+    #[inline(always)]
+    pub fn turn(&self) -> JsTurn<'a> {
+        self.turn
+    }
+    #[inline(always)]
+    pub fn live(&self) -> VmLive<'a> {
+        self.turn.live
+    }
     #[inline]
     pub fn global(&self) -> &'a JSGlobalObject {
         self.global
@@ -69,7 +77,7 @@ impl JSGlobalObject {
         JsThread {
             global: self,
             context,
-            _not_send: PhantomData,
+            turn: self.turn(),
         }
     }
 
@@ -223,7 +231,7 @@ pub trait JobContext: Sized + 'static {
 #[repr(C)]
 pub struct JobHeader {
     complete: unsafe fn(*mut JobHeader, &JsThread<'_>) -> JsResult<()>,
-    release_unrun: unsafe fn(*mut JobHeader),
+    release_unrun: unsafe fn(*mut JobHeader, VmLive<'_>),
     cancel: unsafe fn(*mut JobHeader),
     prev: *mut JobHeader,
     next: *mut JobHeader,
@@ -317,9 +325,9 @@ pub struct Job<C: JobContext> {
 impl<C: JobContext> bun_event_loop::Taskable for Job<C> {
     const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::AnyTaskJob;
     /// Reached through the header (`release_unrun_erased`): the tag is shared.
-    unsafe fn release_unrun(this: *mut Self) {
+    unsafe fn release_unrun(this: *mut Self, live: VmLive<'_>) {
         // SAFETY: fn contract; JS thread with the heap alive.
-        drop(unsafe { Self::take(this, VirtualMachine::get()) })
+        drop(unsafe { Self::take(this, VirtualMachine::get(live)) })
     }
     /// `JobHeader::context`.
     unsafe fn context(this: *const Self) -> bun_event_loop::ContextId {
@@ -338,8 +346,8 @@ impl<C: JobContext> Job<C> {
                 // only reached through this header, so `p` is this `Job<C>`.
                 complete: |p, cx| unsafe { Self::complete(p.cast::<Self>(), cx) },
                 // SAFETY: as above.
-                release_unrun: |p| unsafe {
-                    <Self as bun_event_loop::Taskable>::release_unrun(p.cast::<Self>())
+                release_unrun: |p, live| unsafe {
+                    <Self as bun_event_loop::Taskable>::release_unrun(p.cast::<Self>(), live)
                 },
                 // SAFETY: linked ⇒ live; see `JobContext::cancel`.
                 cancel: |p| unsafe { C::cancel(&raw mut (*p.cast::<Self>()).off) },
@@ -358,7 +366,7 @@ impl<C: JobContext> Job<C> {
                 callback: Self::run_on_pool,
             },
             concurrent_task: ConcurrentTask::default(),
-            _keep_alive: JsKeepAlive::active(),
+            _keep_alive: JsKeepAlive::active(cx.live()),
             off,
             js,
         }));
@@ -469,7 +477,7 @@ pub unsafe fn complete_erased(ptr: *mut (), global: &JSGlobalObject) -> JsResult
     let (generation, context) = unsafe { ((*header).generation, (*header).context) };
     if generation != vm.test_isolation_generation.get() && context != crate::ContextId::NONE {
         // SAFETY: as below; released exactly once, here.
-        unsafe { ((*header).release_unrun)(header) };
+        unsafe { ((*header).release_unrun)(header, vm.live()) };
         return Ok(());
     }
     // The completion continues the script that scheduled the job, except with `OUTLIVES_SCRIPT`.
@@ -486,10 +494,10 @@ pub unsafe fn complete_erased(ptr: *mut (), global: &JSGlobalObject) -> JsResult
 ///
 /// # Safety
 /// As [`complete_erased`].
-pub unsafe fn release_unrun_erased(ptr: *mut ()) {
+pub unsafe fn release_unrun_erased(ptr: *mut (), live: VmLive<'_>) {
     let header = ptr.cast::<JobHeader>();
     // SAFETY: as above.
-    unsafe { ((*header).release_unrun)(header) }
+    unsafe { ((*header).release_unrun)(header, live) }
 }
 
 // The erased dispatchers above cast `*mut Job<C>` to `*mut JobHeader`.

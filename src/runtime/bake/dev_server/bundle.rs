@@ -1,6 +1,7 @@
 //! Starting bundles: choosing entry points, the bundle queue, and plugin loading.
 
 use super::*;
+use bun_core::JsTurn;
 use bun_ptr::detach_lifetime_mut;
 
 impl DevServer {
@@ -277,12 +278,12 @@ impl DevServer {
         Ok(())
     }
 
-    pub(crate) fn on_plugins_rejected(&mut self) -> crate::Result<()> {
+    pub(crate) fn on_plugins_rejected(&mut self, turn: JsTurn<'_>) -> crate::Result<()> {
         self.plugin_state = PluginState::Err;
         // Completing the last request on a stopped server frees `self`, so count as a pending request until the end.
         let _pending = self.server.map(PendingRequest::new);
         while let Some(item) = self.next_bundle.requests.pop_first() {
-            item.take_handler().fail();
+            item.take_handler().fail(turn);
         }
         // Reset these routes so their next request gets the plugin error.
         for &route_bundle_index in self.next_bundle.route_queue.keys() {

@@ -1,7 +1,7 @@
 use core::cell::Cell;
 use core::ffi::{c_int, c_void};
 
-use bun_core::{String as BunString, Utf8Bytes};
+use bun_core::{String as BunString, Utf8Bytes, VmLive};
 use bun_io::JsKeepAlive;
 use bun_jsc::JsCell;
 use bun_jsc::array_buffer::BinaryType;
@@ -132,7 +132,8 @@ extern "C" fn on_drain(socket: *mut uws::udp::Socket) {
     if global_this.has_exception() {
         return;
     }
-    let _entered = VirtualMachine::get().enter_event_loop_scope();
+    let _entered =
+        VirtualMachine::get(global_this.live()).enter_event_loop_scope(global_this.turn());
     let result = callback.call(global_this, this_value, &[this_value]);
     if let Err(err) = result {
         this.call_error_handler(JSValue::ZERO, global_this.take_exception(err));
@@ -229,7 +230,8 @@ extern "C" fn on_data(
             BunString::clone_utf8(span)
         };
 
-        let _entered = VirtualMachine::get().enter_event_loop_scope();
+        let _entered =
+            VirtualMachine::get(global_this.live()).enter_event_loop_scope(global_this.turn());
 
         let flags = JSValue::create_empty_object(global_this, 2);
         flags.put(global_this, b"truncated", JSValue::from(truncated));
@@ -496,7 +498,7 @@ pub(crate) struct UDPSocket {
     abort_handle: bun_jsc::AbortHandle,
 }
 
-bun_jsc::impl_abort_handle_owner!(UDPSocket, abort_handle, |this, _cause| {
+bun_jsc::impl_abort_handle_owner!(UDPSocket, abort_handle, |this, _cause, _turn| {
     // SAFETY: trait contract — `this` is live (armed ⇒ `on_close` has not run).
     UDPSocket::close(unsafe { &*this })
 });
@@ -658,7 +660,7 @@ impl UDPSocket {
         } else {
             // Open: its context closes it when it stops if script never does.
             // SAFETY: its address does not change; leaves its context in `on_close`.
-            unsafe { bun_jsc::AbortHandle::arm_owner(this_ptr, cx.context()) };
+            unsafe { bun_jsc::AbortHandle::arm_owner(this_ptr, cx.context(), cx.live()) };
             Some(created)
         });
 
@@ -745,7 +747,7 @@ impl UDPSocket {
         // Disarm the error-path guard.
         scopeguard::ScopeGuard::into_inner(guard);
 
-        this.poll_ref.ref_(bun_io::js_vm_ctx());
+        this.poll_ref.ref_(cx.live());
         Ok(bun_jsc::JSPromise::resolved_promise_value(
             cx.global(),
             js_value,
@@ -1462,14 +1464,14 @@ impl UDPSocket {
         Ok(true)
     }
 
-    pub(crate) fn r#ref(&self) {
+    pub(crate) fn r#ref(&self, live: VmLive<'_>) {
         if !self.closed.get() {
-            self.poll_ref.ref_(bun_io::js_vm_ctx());
+            self.poll_ref.ref_(live);
         }
     }
 
     pub(crate) fn unref(&self) {
-        self.poll_ref.unref(bun_io::js_vm_ctx());
+        self.poll_ref.unref();
     }
 
     pub(crate) fn close(&self) {
@@ -1624,7 +1626,11 @@ impl Drop for UDPSocket {
         let this = &*self;
         bun_output::scoped_log!(UdpSocket, "Finalize {:p}", &raw const *this);
         this.this_value.with_mut(|r| r.finalize());
-        debug_assert!(this.closed.get() || VirtualMachine::get().is_shutting_down());
+        debug_assert!(
+            this.closed.get()
+                // SAFETY: the wrapper owns this, and is finalized on the VM's thread, by `~VM` at the latest.
+                || VirtualMachine::get(unsafe { VmLive::assume(this) }).is_shutting_down()
+        );
         // At VM shutdown the wrapper can die with the socket open: close it so that `drain_closed_sockets()` frees it.
         if let Some(socket) = this.socket.take() {
             this.closed.set(true);

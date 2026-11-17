@@ -10,7 +10,7 @@ use core::sync::atomic::{AtomicUsize, Ordering};
 use bun_collections::{ArrayHashMap, BoundedArray, IntegerBitSet};
 #[cfg(not(windows))]
 use bun_core::Output;
-use bun_core::{self as bun, env_var, fmt as bun_fmt};
+use bun_core::{self as bun, JsTurn, LoopTurn, VmLive, env_var, fmt as bun_fmt};
 use bun_core::{ZStr, strings};
 #[cfg(any(windows, target_os = "macos"))]
 use bun_dns::GetAddrInfoResult;
@@ -69,9 +69,9 @@ type AddrInfo = netc::addrinfo;
 type Sockaddr = netc::sockaddr;
 
 #[inline]
-fn global_resolver(global_this: &JSGlobalObject) -> &'static Resolver {
-    &crate::jsc_hooks::global_dns_data()
-        .get_or_init(|| GlobalData::init(global_this.bun_vm()))
+fn global_resolver(live: VmLive<'_>) -> &Resolver {
+    &crate::jsc_hooks::global_dns_data(live)
+        .get_or_init(move || GlobalData::init(VirtualMachine::get(live)))
         .resolver
 }
 
@@ -110,11 +110,11 @@ pub(crate) mod lib_uv_backend {
     }
 
     impl LibuvRequest {
-        pub(crate) fn run(self: Box<Self>) {
+        pub(crate) fn run(self: Box<Self>, turn: JsTurn<'_>) {
             let (retcode, addrinfo) = (self.uv.retcode.int(), self.uv.addrinfo);
             bun_output::scoped_log!(DNSLookup, "onLibUVComplete: status={}", retcode);
             if addrinfo.is_null() {
-                return self.query.complete_native(Err(retcode));
+                return self.query.complete_native(Err(retcode), turn.loop_);
             }
             // SAFETY: libuv left a list from `uv__malloc`, which only `uv_freeaddrinfo` may free.
             let list = unsafe {
@@ -122,7 +122,7 @@ pub(crate) mod lib_uv_backend {
                 libuv::uv_freeaddrinfo(addrinfo.cast());
                 list
             };
-            self.query.complete_native(Ok(list));
+            self.query.complete_native(Ok(list), turn.loop_);
         }
     }
     impl bun_event_loop::BoxedTask for LibuvRequest {
@@ -130,8 +130,9 @@ pub(crate) mod lib_uv_backend {
         /// A uv_getaddrinfo the stop phase cancelled and drained into the queue:
         /// its completion is what frees the request and its cache slot, and it
         /// only settles promises (no callback runs; script is forbidden), so run it.
-        fn release_unrun(self: Box<Self>) {
-            self.run();
+        fn release_unrun(self: Box<Self>, live: VmLive<'_>) {
+            // SAFETY: released from libuv's completion or by teardown's wait: in no collection, before the global object goes.
+            self.run(unsafe { JsTurn::assume(&live) });
         }
         /// A lookup is shared by the realm; each promise waiting on it is settled for its own context.
         fn context(&self) -> bun_event_loop::ContextId {
@@ -146,11 +147,22 @@ pub(crate) mod lib_uv_backend {
     ) {
         // TODO: We schedule a task to run because otherwise the promise will not be solved, we need to investigate this
         // SAFETY: `uv_info` is the first field of the box that `start` left to libuv. The task keeps it in place for `pending_uv_requests`.
-        let request = unsafe { bun_core::heap::take(uv_info.cast::<LibuvRequest>()) };
-        VirtualMachine::get().enqueue_task(jsc::Task::from_boxed(request));
+        // It ran on the loop of the resolver's VM, whose stop phase drains the requests of a loop that it will close.
+        let (request, live) = unsafe {
+            (
+                bun_core::heap::take(uv_info.cast::<LibuvRequest>()),
+                VmLive::assume(&uv_info),
+            )
+        };
+        VirtualMachine::get(live).enqueue_task(jsc::Task::from_boxed(request));
     }
 
-    pub(crate) fn start(this: &Resolver, query: &GetAddrInfo, pending: PendingQuery) {
+    pub(crate) fn start(
+        this: &Resolver,
+        query: &GetAddrInfo,
+        pending: PendingQuery,
+        turn: JsTurn<'_>,
+    ) {
         let hints = query.options.to_libc();
         let mut port_buf = [0u8; 128];
         let port_len = bun_fmt::print_int(&mut port_buf, query.port);
@@ -189,7 +201,7 @@ pub(crate) mod lib_uv_backend {
         if rc.int() < 0 {
             // SAFETY: libuv refused it before it queued any work (UV_EINVAL for a long name, UV_ENOMEM).
             let request = unsafe { bun_core::heap::take(request) };
-            request.query.complete_native(Err(rc.int()));
+            request.query.complete_native(Err(rc.int()), turn.loop_);
         }
     }
 }
@@ -269,15 +281,18 @@ mod lib_c {
         fn then(
             this: Self,
             mut request: LibcRequest,
-            _: &bun_jsc::JsThread<'_>,
+            cx: &bun_jsc::JsThread<'_>,
         ) -> bun_jsc::JsResult<()> {
             bun_output::scoped_log!(DNSLookup, "then");
             let query = request.0.take().expect("query");
-            query.complete_native(match this.backend {
-                LibcBackend::Success(list) => Ok(list),
-                LibcBackend::Err(status) => Err(status),
-                LibcBackend::Query(_) => unreachable!(),
-            });
+            query.complete_native(
+                match this.backend {
+                    LibcBackend::Success(list) => Ok(list),
+                    LibcBackend::Err(status) => Err(status),
+                    LibcBackend::Query(_) => unreachable!(),
+                },
+                cx.turn().loop_,
+            );
             Ok(())
         }
     }
@@ -341,7 +356,7 @@ impl DNSLookup {
 
         Self {
             global_this: bun_ptr::BackRef::new(global_this),
-            _keep_alive: JsKeepAlive::active(),
+            _keep_alive: JsKeepAlive::active(global_this.live()),
             promise: JSPromiseStrong::init(global_this),
             context,
         }
@@ -571,14 +586,19 @@ impl PendingQuery {
     }
 
     /// The addresses or the status that the system's resolver answered with.
-    pub(crate) fn complete_native(self, result: Result<GetAddrInfoResultList, i32>) {
+    pub(crate) fn complete_native(
+        self,
+        result: Result<GetAddrInfoResultList, i32>,
+        turn: LoopTurn<'_>,
+    ) {
         let list = match result.map_err(c_ares::Error::init_eai) {
             Ok(list) => list,
             Err(Some(err)) => return self.reject(err),
             // No list and no error is an empty answer.
             Err(None) => Vec::new(),
         };
-        self.resolver.update_timer();
+        let turn = self.resolver.vm().turn(turn);
+        self.resolver.update_timer(turn.live);
         self.resolve(|global| super::options_jsc::results_to_js(&list, global));
     }
 }
@@ -630,11 +650,14 @@ impl Outcome {
     ) {
         // The lookup continues the script that asked for it.
         let _context = global.bun_vm().enter_context(context);
-        crate::dispatch::fold(match self {
-            Outcome::Value(v) => promise.resolve(global, v),
-            Outcome::Error(e) => promise.reject(global, Ok(e)),
-            Outcome::Stopped => return,
-        });
+        crate::dispatch::fold(
+            match self {
+                Outcome::Value(v) => promise.resolve(global, v),
+                Outcome::Error(e) => promise.reject(global, Ok(e)),
+                Outcome::Stopped => return,
+            },
+            global.turn(),
+        );
     }
 }
 
@@ -676,6 +699,7 @@ impl Resolver {
     /// `this` is a live resolver. It may be freed by the time this returns.
     pub(crate) unsafe fn close_channel_for_terminate(
         this: *mut Self,
+        live: VmLive<'_>,
     ) -> bun_jsc::virtual_machine::SweepResult {
         use bun_jsc::virtual_machine::SweepResult;
         // SAFETY: fn contract.
@@ -686,7 +710,7 @@ impl Resolver {
             SweepResult::Idle
         };
         guard.abort_handle.leave();
-        guard.request_completed(guard.channel.close());
+        guard.request_completed(guard.channel.close(), live);
         guard.polls.with_mut(PollsMap::clear_retaining_capacity);
         result
     }
@@ -1503,8 +1527,8 @@ pub(crate) mod internal {
         let _ = bun_threading::work_pool::WorkPool::go(req, work_pool_callback);
     }
 
-    pub(crate) fn prefetch_from_js(hostname: &[u8], port: u16) {
-        let loop_: &Loop = VirtualMachine::get().uws_loop();
+    pub(crate) fn prefetch_from_js(hostname: &[u8], port: u16, live: VmLive<'_>) {
+        let loop_: &Loop = VirtualMachine::get(live).uws_loop();
         prefetch(loop_, Some(hostname), port);
     }
 
@@ -1650,9 +1674,9 @@ pub(crate) struct Resolver {
 
 bun_event_loop::impl_timer_owner!(Resolver; from_timer_ptr => event_loop_timer);
 
-bun_jsc::impl_abort_handle_owner!(Resolver, abort_handle, |this, _cause| {
+bun_jsc::impl_abort_handle_owner!(Resolver, abort_handle, |this, _cause, turn| {
     // SAFETY: trait contract.
-    let _ = unsafe { Resolver::close_channel_for_terminate(this) };
+    let _ = unsafe { Resolver::close_channel_for_terminate(this, turn.live) };
 });
 
 #[cfg(windows)]
@@ -1739,7 +1763,7 @@ impl Drop for OpenUvDnsPoll {
 #[cfg(windows)]
 impl bun_event_loop::Taskable for UvDnsPoll {
     const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::UvDnsPollFree;
-    unsafe fn release_unrun(this: *mut Self) {
+    unsafe fn release_unrun(this: *mut Self, _live: VmLive<'_>) {
         Self::destroy(this);
     }
     /// The task doesn't run JS.
@@ -1847,18 +1871,23 @@ impl Resolver {
 
     // ───────────── timer / pending bookkeeping ─────────────
 
-    pub(crate) fn check_timeouts(&self, now: &bun::timespec, vm: &VirtualMachine) {
+    pub(crate) fn check_timeouts(
+        &self,
+        now: &bun::timespec,
+        vm: &VirtualMachine,
+        turn: JsTurn<'_>,
+    ) {
         let _timer_ref = self.timer_ref.take();
         self.event_loop_timer
             .state
             .set(EventLoopTimerState::PENDING);
-        crate::jsc_hooks::timer_all().increment_timer_ref(-1, vm.uws_loop());
+        crate::jsc_hooks::timer_all(turn.live).increment_timer_ref(-1, vm.uws_loop());
 
         if self.channel.has_active_queries() {
-            let _exit = vm.enter_event_loop_scope();
+            let _exit = vm.enter_event_loop_scope(turn);
             let answers = self.channel.process_timeouts();
             if self.channel.has_active_queries() {
-                self.add_timer(Some(now), CARES_TIMEOUT_CHECK_INTERVAL_MS);
+                self.add_timer(Some(now), CARES_TIMEOUT_CHECK_INTERVAL_MS, turn.live);
             }
             answers.for_each(PendingQuery::complete_cares);
         }
@@ -1881,30 +1910,30 @@ impl Resolver {
         };
         let answers = send(query);
         if self.channel.has_active_queries() {
-            self.add_timer(None, CARES_TIMEOUT_CHECK_INTERVAL_MS);
+            self.add_timer(None, CARES_TIMEOUT_CHECK_INTERVAL_MS, global_this.live());
         } else {
             // c-ares answered inside the call (cache, hosts file, error). As in Node, that takes a turn of the loop.
-            self.remove_timer();
-            self.add_timer(None, 0);
+            self.remove_timer(global_this.live());
+            self.add_timer(None, 0, global_this.live());
         }
         answers.for_each(PendingQuery::complete_cares);
         promise
     }
 
-    fn request_completed(&self, answers: c_ares::Answers<PendingQuery>) {
-        self.update_timer();
+    fn request_completed(&self, answers: c_ares::Answers<PendingQuery>, live: VmLive<'_>) {
+        self.update_timer(live);
         answers.for_each(PendingQuery::complete_cares);
     }
 
-    fn update_timer(&self) {
+    fn update_timer(&self, live: VmLive<'_>) {
         if self.channel.has_active_queries() {
-            self.add_timer(None, CARES_TIMEOUT_CHECK_INTERVAL_MS);
+            self.add_timer(None, CARES_TIMEOUT_CHECK_INTERVAL_MS, live);
         } else {
-            self.remove_timer();
+            self.remove_timer(live);
         }
     }
 
-    fn add_timer(&self, now: Option<&bun::timespec>, delay_ms: i64) {
+    fn add_timer(&self, now: Option<&bun::timespec>, delay_ms: i64, live: VmLive<'_>) {
         if self.event_loop_timer.state.get() == EventLoopTimerState::ACTIVE {
             return;
         }
@@ -1916,17 +1945,17 @@ impl Resolver {
         let next = now_ts.add_ms(delay_ms);
         self.event_loop_timer.next.set(next);
         let uws_loop = self.vm().uws_loop();
-        let timers = crate::jsc_hooks::timer_all();
+        let timers = crate::jsc_hooks::timer_all(live);
         timers.increment_timer_ref(1, uws_loop);
         timers.insert(&raw const self.event_loop_timer);
     }
 
-    fn remove_timer(&self) {
+    fn remove_timer(&self, live: VmLive<'_>) {
         if self.event_loop_timer.state.get() != EventLoopTimerState::ACTIVE {
             return;
         }
 
-        let timers = crate::jsc_hooks::timer_all();
+        let timers = crate::jsc_hooks::timer_all(live);
         timers.remove(&self.event_loop_timer);
         // Normally checkTimeouts does this, so we have to be sure to do it ourself if we cancel the timer
         timers.increment_timer_ref(-1, self.vm().uws_loop());
@@ -1934,7 +1963,10 @@ impl Resolver {
     }
 
     /// Opens it if it is closed. Script can close it again.
-    fn get_channel(&self) -> Result<&c_ares::Channel<PendingQuery>, c_ares::Error> {
+    fn get_channel(
+        &self,
+        turn: JsTurn<'_>,
+    ) -> Result<&c_ares::Channel<PendingQuery>, c_ares::Error> {
         if !self.channel.is_open() {
             let context = match self.made_in {
                 Some(made_in) => self.vm.context_of(made_in),
@@ -1943,7 +1975,7 @@ impl Resolver {
             // SAFETY: it stays in its box until `destroy`, or teardown for the global one, closes the channel. The callback only touches `polls`.
             unsafe {
                 self.channel.open(self, self.options)?;
-                bun_jsc::AbortHandle::arm_owner(self.as_ctx_ptr(), context);
+                bun_jsc::AbortHandle::arm_owner(self.as_ctx_ptr(), context, turn.live);
             }
         }
         Ok(&self.channel)
@@ -1953,20 +1985,17 @@ impl Resolver {
         &self,
         global_this: &JSGlobalObject,
     ) -> JsResult<&c_ares::Channel<PendingQuery>> {
-        self.get_channel()
+        self.get_channel(global_this.turn())
             .map_err(|err| throw_channel_error(global_this, err, bun::String::EMPTY))
     }
 
     // ───────────── poll callbacks ─────────────
 
     #[cfg(windows)]
-    pub(crate) extern "C" fn on_dns_poll_uv(
-        watcher: *mut libuv::uv_poll_t,
-        status: c_int,
-        events: c_int,
-    ) {
+    extern "C" fn on_dns_poll_uv(watcher: *mut libuv::uv_poll_t, status: c_int, events: c_int) {
         let poll = UvDnsPoll::from_poll(watcher);
         // SAFETY: `on_close_uv` doesn't free `poll` while `poll_cb_depth` is non-zero, and an open poll's resolver is live.
+        // libuv dispatches it from `uv_run`, and the stop phase closes the handle with its channel.
         unsafe {
             (*poll).poll_cb_depth += 1;
             let parent: *mut Resolver = (*poll).parent;
@@ -1976,6 +2005,7 @@ impl Resolver {
                 (*poll).socket,
                 status < 0 || events & libuv::UV_READABLE != 0,
                 status < 0 || events & libuv::UV_WRITABLE != 0,
+                LoopTurn::assume(&watcher),
             );
             (*poll).poll_cb_depth -= 1;
             if (*poll).poll_cb_depth == 0 && (*poll).closed {
@@ -2001,10 +2031,18 @@ impl Resolver {
         UvDnsPoll::destroy(poll);
     }
 
-    pub(crate) fn on_dns_poll(&self, fd: c_ares::ares_socket_t, readable: bool, writable: bool) {
-        let _exit = self.vm().enter_event_loop_scope();
+    pub(crate) fn on_dns_poll(
+        &self,
+        fd: c_ares::ares_socket_t,
+        readable: bool,
+        writable: bool,
+        turn: LoopTurn<'_>,
+    ) {
+        let vm = self.vm();
+        let turn = vm.turn(turn);
+        let _exit = vm.enter_event_loop_scope(turn);
         let _guard = self.ref_guard();
-        self.request_completed(self.channel.process(fd, readable, writable));
+        self.request_completed(self.channel.process(fd, readable, writable), turn.live);
     }
 }
 
@@ -2039,7 +2077,13 @@ impl c_ares::ChannelContainer for Resolver {
                 let owner =
                     bun_io::Owner::new(bun_io::PollTag::DnsResolver, self.as_ctx_ptr().cast());
                 // SAFETY: `polls` is a field of the owner.
-                unsafe { PollType::new(bun_io::js_vm_ctx(), sys::Fd::from_native(fd), owner) }
+                unsafe {
+                    PollType::new(
+                        bun_io::js_vm_ctx(self.vm.live()),
+                        sys::Fd::from_native(fd),
+                        owner,
+                    )
+                }
             });
 
             // c-ares reports the full desired (readable, writable) set for this
@@ -2083,7 +2127,7 @@ impl c_ares::ChannelContainer for Resolver {
 macro_rules! resolve_record_fns {
     ($($global:ident, $method:ident, $js_name:literal => $record:ident;)+) => {$(
         pub(crate) fn $global(cx: &mut JsScope<'_>, name: &[u8]) -> JsResult<JSValue> {
-            global_resolver(cx.global()).$method(cx, name)
+            global_resolver(cx.live()).$method(cx, name)
         }
 
         pub(crate) fn $method(&self, cx: &mut JsScope<'_>, name: &[u8]) -> JsResult<JSValue> {
@@ -2132,7 +2176,7 @@ impl Resolver {
     ) -> JsResult<JSValue> {
         let context = global_this.bun_vm().context_of_caller().id();
         let kind = QueryKind::Record(record);
-        let channel = match self.get_channel() {
+        let channel = match self.get_channel(global_this.turn()) {
             Ok(channel) => channel,
             Err(err) => {
                 let error = cares_jsc::error_to_js_with_syscall(err, global_this, kind.syscall())?;
@@ -2149,7 +2193,7 @@ impl Resolver {
         name: &[u8],
         record: Option<&[u8]>,
     ) -> JsResult<JSValue> {
-        global_resolver(cx.global()).resolve(cx, name, record)
+        global_resolver(cx.live()).resolve(cx, name, record)
     }
 
     pub(crate) fn resolve(
@@ -2185,7 +2229,7 @@ impl Resolver {
     }
 
     pub(crate) fn global_reverse(cx: &mut JsScope<'_>, ip: &[u8]) -> JsResult<JSValue> {
-        global_resolver(cx.global()).reverse(cx, ip)
+        global_resolver(cx.live()).reverse(cx, ip)
     }
 
     pub(crate) fn reverse(&self, cx: &mut JsScope<'_>, ip: &[u8]) -> JsResult<JSValue> {
@@ -2200,7 +2244,7 @@ impl Resolver {
         }
 
         let kind = QueryKind::Addr;
-        let channel = match self.get_channel() {
+        let channel = match self.get_channel(global_this.turn()) {
             Ok(channel) => channel,
             Err(err) => {
                 return Err(global_this.throw_value(
@@ -2259,7 +2303,7 @@ impl Resolver {
             }
         };
 
-        let resolver = global_resolver(global_this);
+        let resolver = global_resolver(global_this.live());
 
         resolver.do_lookup(name, port, options, global_this, context)
     }
@@ -2307,13 +2351,15 @@ impl Resolver {
             return Ok(promise);
         };
         #[cfg(windows)]
-        lib_uv_backend::start(self, &query, pending);
+        lib_uv_backend::start(self, &query, pending, global_this.turn());
         #[cfg(target_os = "macos")]
         let pending = match opts.backend {
-            GetAddrInfoBackend::System => match dns_sd::start(&query, pending) {
-                Ok(()) => return Ok(promise),
-                Err(refused) => refused,
-            },
+            GetAddrInfoBackend::System => {
+                match dns_sd::start(&query, pending, global_this.live()) {
+                    Ok(()) => return Ok(promise),
+                    Err(refused) => refused,
+                }
+            }
             _ => pending,
         };
         #[cfg(not(windows))]
@@ -2327,7 +2373,7 @@ impl Resolver {
         global_this: &JSGlobalObject,
         context: bun_jsc::ContextId,
     ) -> JsResult<JSValue> {
-        let channel = self.get_channel().map_err(|err| {
+        let channel = self.get_channel(global_this.turn()).map_err(|err| {
             throw_channel_error(global_this, err, bun::String::create_atom(&query.name))
         })?;
 
@@ -2340,7 +2386,7 @@ impl Resolver {
     // ───────── servers / local address ─────────
 
     pub(crate) fn get_global_servers(cx: &mut JsScope<'_>) -> JsResult<JSValue> {
-        global_resolver(cx.global()).get_servers(cx)
+        global_resolver(cx.live()).get_servers(cx)
     }
 
     pub(crate) fn get_servers(&self, cx: &mut JsScope<'_>) -> JsResult<JSValue> {
@@ -2481,10 +2527,11 @@ impl Resolver {
     }
 
     pub(crate) fn set_global_servers(cx: &mut JsScope<'_>, servers: JsLocal<'_>) -> JsResult<()> {
-        global_resolver(cx.global()).set_servers(cx, servers)
+        global_resolver(cx.live()).set_servers(cx, servers)
     }
 
     pub(crate) fn set_servers(&self, cx: &mut JsScope<'_>, servers: JsLocal<'_>) -> JsResult<()> {
+        let live = cx.live();
         let global_this = cx.global();
         let busy = self.get_channel_or_error(global_this)?.has_active_queries();
         // It's okay to call dns.setServers with active queries, but not dns.Resolver.setServers
@@ -2498,7 +2545,7 @@ impl Resolver {
         }
 
         let entries = Self::servers_from_js(global_this, servers.to_js());
-        let mut entries = entries.inspect_err(|_| self.update_timer())?;
+        let mut entries = entries.inspect_err(|_| self.update_timer(live))?;
         let mut head = None;
         for entry in entries.iter_mut().rev() {
             entry.next = head;
@@ -2506,7 +2553,7 @@ impl Resolver {
         }
 
         let (result, answers) = self.get_channel_or_error(global_this)?.set_servers(head);
-        self.request_completed(answers);
+        self.request_completed(answers, live);
         result.map_err(|err| {
             global_this.throw_value(global_this.create_error_instance(format_args!(
                 "ares_set_servers_ports error: {}",
@@ -2528,7 +2575,7 @@ impl Resolver {
     }
 
     pub(crate) fn cancel(&self, cx: &mut JsScope<'_>) -> JsResult<()> {
-        self.request_completed(self.get_channel_or_error(cx.global())?.cancel());
+        self.request_completed(self.get_channel_or_error(cx.global())?.cancel(), cx.live());
         Ok(())
     }
 
@@ -2562,7 +2609,7 @@ impl Resolver {
         // `ares_getnameinfo` would send an ip6.arpa query, which never resolves, for an IPv4-mapped address.
         let sa = bun_dns::Address::from_ip(ip.to_canonical(), port).into_storage();
 
-        let resolver = global_resolver(global_this);
+        let resolver = global_resolver(global_this.live());
         let channel = resolver.get_channel_or_error(global_this)?;
 
         // For one address, the hashes are equal only if the ports are.
@@ -2571,10 +2618,10 @@ impl Resolver {
         Ok(resolver.ask(kind, hash, addr_s, global_this, context, send))
     }
 
-    pub(crate) fn get_runtime_default_result_order_option() -> bun::String {
+    pub(crate) fn get_runtime_default_result_order_option(live: VmLive<'_>) -> bun::String {
         // `VirtualMachine.dns_result_order` is stored as a raw `u8` (the jsc
         // crate cannot depend on this crate's `Order`); cast through Order's repr(u8).
-        let raw = VirtualMachine::get().dns_result_order.get();
+        let raw = VirtualMachine::get(live).dns_result_order.get();
         let order = match raw {
             4 => Order::Ipv4first,
             6 => Order::Ipv6first,

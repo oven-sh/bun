@@ -2838,6 +2838,8 @@ export interface SignatureOptions extends SignatureColumns, EntryColumns {
   args?: Record<string, Type>;
   returns?: Type;
   capability?: Capability;
+  /** Without a `capability`: also pass `live: VmLive<'a>`, after the arguments. */
+  passVm?: boolean;
   /** The body returns `Result<T, E>` for any `E: bindgen::IntoError`. */
   throws?: boolean;
   /** The function returns a promise: what the body or the conversion of an argument throws rejects one, and nothing is thrown. */
@@ -2894,6 +2896,7 @@ export class Signature {
   readonly replacesBoundFunction: boolean;
   readonly returns: Type;
   readonly capability: Capability;
+  readonly passVm: boolean;
   readonly throws: boolean;
   readonly rejects: boolean;
   readonly requiredArguments: number;
@@ -2908,6 +2911,7 @@ export class Signature {
       "args",
       "returns",
       "capability",
+      "passVm",
       "throws",
       "rejects",
       "requiredArguments",
@@ -2970,6 +2974,8 @@ export class Signature {
     );
     this.returns = options.returns ?? new UnitType("undefined");
     this.capability = options.capability ?? "none";
+    this.passVm = options.passVm ?? false;
+    assert(!this.passVm || this.capability === "none", "passVm: a capability has live()");
     this.throws = options.throws ?? false;
     this.rustPath = options.rustPath;
     this.cppSymbol = options.cppSymbol;
@@ -3253,6 +3259,8 @@ export interface GetterField extends SignatureColumns, EntryColumns {
   throws?: boolean;
   /** As a function's. */
   passThis?: boolean;
+  /** As a function's. It is for whichever of the getter and the setter has no `capability`. */
+  passVm?: boolean;
   /** The getter is `get_` and this name, the setter `set_` and this name. Defaults to the property's name in snake_case. */
   rustName?: string;
   /** Defaults to the class's. */
@@ -3308,8 +3316,8 @@ export interface ClassOptions extends ClassTableColumns {
   extends?: ClassType;
   /** The struct is intrusively refcounted and the JS object holds one ref, so it can outlive the object. Every member takes `&self`. */
   refCounted?: boolean;
-  /** With `refCounted`: call `fn finalize(&self)` when the object is collected, before its ref is dropped. */
-  finalize?: boolean;
+  /** With `refCounted`: call `fn finalize(&self)` when the object is collected, before its ref is dropped. `passVm` is as a function's. */
+  finalize?: boolean | { passVm: true };
   /** `false`: a class with `extends` or hand-written C++ can subclass `JSName`, and an instance of the subclass is an instance of this class. The subclass adds no fields. */
   final?: boolean;
   /** `impl bun_jsc::JsClass` is not generated: write it by hand, calling `js_Name::to_js` and `js_Name::from_js`. With `refCounted`. */
@@ -3482,6 +3490,7 @@ export class Getter {
   readonly receiver: Receiver;
   readonly setterReceiver: Receiver;
   readonly passThis: boolean;
+  readonly passVm: boolean;
   readonly setterCapability: Capability;
   readonly configurable: boolean | undefined;
   readonly isPure: boolean;
@@ -3496,6 +3505,7 @@ export class Getter {
       "capability",
       "throws",
       "passThis",
+      "passVm",
       "rustName",
       "configurable",
       "enumerable",
@@ -3516,6 +3526,11 @@ export class Getter {
     this.setterReceiver = memberReceiver(isStatic, sharedThis, true);
     this.passThis = !!options.passThis;
     assert(!(this.passThis && isStatic), `${name}: a static getter has no passThis`);
+    this.passVm = !!options.passVm;
+    assert(
+      !this.passVm || this.capability === "none" || this.setterCapability === "none",
+      `${name}: passVm: a capability has live()`,
+    );
     this.throws = options.throws ?? false;
     this.hasSetter = !!options.setter;
     this.writable = !!options.writable;
@@ -3621,6 +3636,7 @@ export class ClassType extends NamedType {
   /** No member has `mutates`, so every member takes `&self`. */
   readonly sharedThis: boolean;
   readonly finalize: boolean;
+  readonly finalizePassesVm: boolean;
   readonly construct: Signature | null;
   readonly passStructure: boolean;
   readonly call: FunctionDefinition | null;
@@ -3712,7 +3728,8 @@ export class ClassType extends NamedType {
     assert(this.base || options.rustPath !== undefined, "a class has a rustPath");
     this.rustPath = this.base?.rustPath ?? options.rustPath!;
     this.refCounted = options.refCounted ?? false;
-    this.finalize = options.finalize ?? false;
+    this.finalize = !!options.finalize;
+    this.finalizePassesVm = typeof options.finalize === "object";
     assert(this.refCounted || !this.finalize, "finalize is only for a refCounted class: otherwise implement Drop");
     this.sharedThis = !Object.values(options.proto ?? {})
       .flat()

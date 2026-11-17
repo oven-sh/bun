@@ -5,6 +5,7 @@
 // - We should not be creating JSFunction's in process.nextTick.
 
 use crate::ipc::{IsInternal, SerializeAndSendResult};
+use bun_core::VmLive;
 use bun_jsc::bindgen::{Callable, JsLocal, JsScope};
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{JSGlobalObject, JSObject, JSValue, JsResult, StrongOptional};
@@ -266,8 +267,8 @@ pub(crate) fn handle_internal_message_primary(
 //
 //
 
-pub(crate) fn set_ref(enabled: bool) {
-    let vm = VirtualMachine::get();
+pub(crate) fn set_ref(enabled: bool, live: VmLive<'_>) {
+    let vm = VirtualMachine::get(live);
     vm.channel_ref_overridden.set(true);
     if enabled {
         vm.channel_ref.ref_(vm.loop_ctx());
@@ -292,8 +293,8 @@ pub(crate) fn unref_channel_unless_overridden(global: &JSGlobalObject) {
     }
 }
 
-pub(crate) fn channel_ignore_one_disconnect_event_listener() {
-    let vm = VirtualMachine::get();
+pub(crate) fn channel_ignore_one_disconnect_event_listener(live: VmLive<'_>) {
+    let vm = VirtualMachine::get(live);
     vm.channel_ref_should_ignore_one_disconnect_event_listener
         .set(true);
 }

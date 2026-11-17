@@ -19,6 +19,7 @@
 use core::ffi::{c_int, c_void};
 
 use bun_core::EncodedSlice;
+use bun_core::VmLive;
 use bun_core::vec::{BorrowedCursor, append_with};
 use bun_jsc::EncodedSliceJsc as _;
 use bun_jsc::{
@@ -153,6 +154,7 @@ impl CompressionStreamCoder {
         decompress: bool,
         high_water_mark: usize,
         level: Option<i32>,
+        live: VmLive<'_>,
     ) -> Result<Box<Self>, CodecError> {
         let backend = match (format, decompress) {
             (Format::Deflate | Format::DeflateRaw | Format::Gzip, false) => {
@@ -222,7 +224,7 @@ impl CompressionStreamCoder {
             zstd_head_len: 0,
             high_water_mark,
             pending: None,
-            context: bun_jsc::virtual_machine::VirtualMachine::get()
+            context: bun_jsc::virtual_machine::VirtualMachine::get(live)
                 .context_of_caller()
                 .id(),
         }))
@@ -578,9 +580,12 @@ impl AsyncInput {
 // ─── extern "C" surface (called from JSCompressionStream.cpp) ──────────────
 
 /// `level` (present when `has_level`) is range-checked by the caller; ignored for decompression.
+///
+/// # Safety
+/// Called from a host function.
 #[inline(never)]
 #[unsafe(no_mangle)]
-pub(crate) extern "C" fn CompressionStreamCoder__create(
+pub(crate) unsafe extern "C" fn CompressionStreamCoder__create(
     format: u8,
     decompress: bool,
     high_water_mark: usize,
@@ -593,7 +598,9 @@ pub(crate) extern "C" fn CompressionStreamCoder__create(
     );
     let format = Format::from_u8(format)?;
     let level = (has_level && !decompress).then_some(level);
-    CompressionStreamCoder::new(format, decompress, high_water_mark.max(1), level).ok()
+    // SAFETY: fn contract.
+    let live = unsafe { VmLive::assume(&format) };
+    CompressionStreamCoder::new(format, decompress, high_water_mark.max(1), level, live).ok()
 }
 
 #[inline(never)]
@@ -714,7 +721,10 @@ pub(crate) unsafe extern "C" fn CompressionStreamCoder__transformInto(
                     break 'write JSValue::UNDEFINED;
                 }
                 handle
-                    .write(&crate::webcore::streams::Result::Temporary(&out))
+                    .write(
+                        &crate::webcore::streams::Result::Temporary(&out),
+                        global.turn(),
+                    )
                     .to_js(&global.js_thread_of_caller())
             }
         }

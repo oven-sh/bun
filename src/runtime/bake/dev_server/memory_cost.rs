@@ -6,6 +6,7 @@ use crate::bake::dev_server::{
     DevServer, HmrSocket, IncrementalResult, TestingBatchEvents, deferred_request, packed_map,
 };
 use bun_collections::ArrayHashMap;
+use bun_core::JsTurn;
 
 #[derive(Clone, Copy, Default)]
 pub(crate) struct MemoryCost {
@@ -301,7 +302,10 @@ impl DevServer {
 }
 
 impl DevServer {
-    pub(crate) fn emit_memory_visualizer_message_timer(timer: *mut EventLoopTimer) {
+    pub(crate) fn emit_memory_visualizer_message_timer(
+        timer: *mut EventLoopTimer,
+        turn: JsTurn<'_>,
+    ) {
         // SAFETY: `timer` points to the `memory_visualizer_timer` field of a DevServer.
         let dev: &mut DevServer = unsafe { &mut *DevServer::from_timer_ptr(timer) };
         debug_assert!(dev.magic == Magic::Valid);
@@ -310,7 +314,7 @@ impl DevServer {
             .set(EventLoopTimerState::FIRED);
         dev.emit_memory_visualizer_message();
         let next = bun_core::Timespec::ms_from_now(bun_core::TimespecMockMode::ForceRealTime, 1000);
-        crate::jsc_hooks::timer_all().update(timer, &next);
+        crate::jsc_hooks::timer_all(turn.live).update(timer, &next);
     }
 
     pub(crate) fn emit_memory_visualizer_message(&mut self) {

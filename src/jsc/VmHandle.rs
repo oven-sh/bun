@@ -39,8 +39,8 @@ use std::sync::Arc;
 
 use bun_threading::{Condvar, Guarded};
 
-use crate::event_loop::EventLoop;
-use crate::virtual_machine::VirtualMachine;
+use crate::event_loop::{EventLoop, OffThreadEventLoop};
+use crate::virtual_machine::{OffThreadVm, VirtualMachine};
 use bun_event_loop::ConcurrentTask::ConcurrentTask as ConcurrentTaskItem;
 use bun_event_loop::{BoxedTask, IntoTask, Task, TaskTag};
 
@@ -158,15 +158,14 @@ impl Shared {
     }
 
     #[inline]
-    fn loop_of(&self, kind: LoopKind) -> &EventLoop {
+    fn loop_of(&self, kind: LoopKind) -> &OffThreadEventLoop {
         // SAFETY: caller holds a ticket or is inside the weak gate before
         // `Closed`; the VM and both embedded loops are alive.
-        // Callers keep to what `EventLoop` allows other threads.
         unsafe {
-            match kind {
-                LoopKind::Regular => &(*self.hot.vm).regular_event_loop,
-                LoopKind::Macro => &(*self.hot.vm).macro_event_loop,
-            }
+            OffThreadEventLoop::from_ptr(match kind {
+                LoopKind::Regular => &raw const (*self.hot.vm).regular_event_loop,
+                LoopKind::Macro => &raw const (*self.hot.vm).macro_event_loop,
+            })
         }
     }
 
@@ -191,7 +190,7 @@ impl Shared {
 
     fn add_keep_alive(&self, kind: LoopKind, delta: i32) {
         let el = self.loop_of(kind);
-        let _ = el.concurrent_ref.fetch_add(delta, Ordering::SeqCst);
+        let _ = el.concurrent_ref().fetch_add(delta, Ordering::SeqCst);
         el.wakeup();
     }
 }
@@ -430,9 +429,10 @@ impl VmHandle {
         self.stop();
         if let Some(_a) = self.enter() {
             // SAFETY: inside the gate before `Closed` ⇒ the VM is alive;
-            // `notify_need_termination` is thread-safe (VMTraps). Raw field
-            // read, no `&VirtualMachine` formed off-thread.
-            unsafe { (*(*self.0.hot.vm).jsc_vm.get().cast_const()).notify_need_termination() };
+            // `notify_need_termination` is thread-safe (VMTraps).
+            unsafe {
+                (*OffThreadVm::from_ptr(self.0.hot.vm).jsc_vm_ptr()).notify_need_termination()
+            };
             self.0.loop_of(LoopKind::Regular).wakeup();
         }
     }
@@ -493,8 +493,8 @@ impl VmHandle {
         loop {
             service();
             let mut g = s.drained.0.lock();
-            if !s.loop_of(LoopKind::Regular).concurrent_tasks.is_empty()
-                || !s.loop_of(LoopKind::Macro).concurrent_tasks.is_empty()
+            if !s.loop_of(LoopKind::Regular).concurrent_tasks().is_empty()
+                || !s.loop_of(LoopKind::Macro).concurrent_tasks().is_empty()
             {
                 continue;
             }
@@ -572,10 +572,10 @@ impl VirtualMachine {
     }
 }
 
-/// JS thread: [`VirtualMachine::current_loop_kind`] for C++ (`BunLoopKind`),
+/// The JS thread, or the collector's: [`VirtualMachine::current_loop_kind`] for C++ (`BunLoopKind`),
 /// captured by the initiator of work whose completion is posted weakly.
 #[unsafe(no_mangle)]
-pub extern "C" fn Bun__VM__currentLoopKind(vm: &VirtualMachine) -> LoopKind {
+pub extern "C" fn Bun__VM__currentLoopKind(vm: &OffThreadVm) -> LoopKind {
     vm.current_loop_kind()
 }
 
@@ -807,16 +807,23 @@ pub unsafe extern "C" fn Bun__VmHandle__post(
     matches!(handle.post(kind, task), Posted::Queued)
 }
 
+/// # Safety
 /// The JS thread, or the collector's while the JS thread is stopped.
 #[unsafe(no_mangle)]
-pub extern "C" fn Bun__eventLoop__refKeepAlive(vm: &VirtualMachine) {
-    vm.event_loop().ref_keep_alive();
+pub unsafe extern "C" fn Bun__eventLoop__refKeepAlive(vm: &OffThreadVm) {
+    // SAFETY: fn contract.
+    unsafe { vm.event_loop().ref_keep_alive() };
 }
 
 /// `Bun::EventLoopKeepAlive`.
+///
+/// # Safety
+/// The JS thread, until its `JSC::VM` is destroyed.
 #[unsafe(no_mangle)]
-pub extern "C" fn Bun__eventLoop__setKeptAlive(kept_alive: bool) {
-    let event_loop = VirtualMachine::get().event_loop();
+pub unsafe extern "C" fn Bun__eventLoop__setKeptAlive(kept_alive: bool) {
+    // SAFETY: fn contract.
+    let live = unsafe { bun_core::VmLive::assume(&kept_alive) };
+    let event_loop = VirtualMachine::get(live).event_loop();
     if kept_alive {
         event_loop.ref_keep_alive();
     } else {
@@ -1011,7 +1018,7 @@ impl bun_event_loop::PostToJs for IsolatedPoster {
         self.active.fetch_add(1, Ordering::SeqCst);
         let posted = if self.open.load(Ordering::SeqCst) {
             // SAFETY: gate held and open ⇒ the isolated loop is alive.
-            let el = unsafe { &*self.event_loop };
+            let el = unsafe { OffThreadEventLoop::from_ptr(self.event_loop) };
             el.post(bun_core::heap::into_raw_nn(task));
             el.wakeup();
             Posted::Queued

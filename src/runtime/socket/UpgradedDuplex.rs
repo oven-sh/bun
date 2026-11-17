@@ -15,8 +15,9 @@
 use core::cell::Cell;
 use core::ffi::{CStr, c_uint, c_void};
 
+use bun_core::{JsTurn, VmLive};
 use bun_jsc::bindgen::{JsLocal, JsScope};
-use bun_jsc::virtual_machine::VirtualMachine;
+use bun_jsc::virtual_machine::VmRef;
 use bun_jsc::{GlobalRef, JSGlobalObject, JSValue, JsCell, JsResult, host_fn};
 use bun_uws::{us_bun_verify_error_t, uws_callback};
 
@@ -41,7 +42,7 @@ pub(crate) struct UpgradedDuplex {
     // JSC_BORROW per LIFETIMES.tsv. `Option` so the struct is zero-initializable
     // (socket_body.rs `DuplexUpgradeContext` two-phase init builds this field as
     // `zeroed()` before overwriting via `from()`).
-    pub vm: Option<&'static VirtualMachine>,
+    pub vm: Option<VmRef>,
     pub handlers: Handlers,
     pub on_data_callback: Cell<JSValue>,
     pub on_end_callback: Cell<JSValue>,
@@ -94,19 +95,19 @@ pub(crate) struct ServerVerify {
 pub(crate) struct Handlers {
     // BACKREF per LIFETIMES.tsv — container holding self as `.upgrade`.
     pub ctx: *mut (),
-    pub(crate) on_open: fn(*mut ()),
-    pub(crate) on_handshake: fn(*mut (), bool, us_bun_verify_error_t),
-    pub(crate) on_data: fn(*mut (), &[u8]),
-    pub on_close: fn(*mut ()),
-    pub(crate) on_end: fn(*mut ()),
-    pub(crate) on_writable: fn(*mut ()),
-    pub(crate) on_error: fn(*mut (), JSValue),
-    pub(crate) on_timeout: fn(*mut ()),
+    pub(crate) on_open: fn(*mut (), JsTurn<'_>),
+    pub(crate) on_handshake: fn(*mut (), bool, us_bun_verify_error_t, JsTurn<'_>),
+    pub(crate) on_data: fn(*mut (), &[u8], JsTurn<'_>),
+    pub on_close: fn(*mut (), JsTurn<'_>),
+    pub(crate) on_end: fn(*mut (), JsTurn<'_>),
+    pub(crate) on_writable: fn(*mut (), JsTurn<'_>),
+    pub(crate) on_error: fn(*mut (), JSValue, JsTurn<'_>),
+    pub(crate) on_timeout: fn(*mut (), JsTurn<'_>),
     /// A new resumable TLS session (serialized SSL_SESSION) - node's
     /// `'session'` event on the wrapping TLSSocket.
-    pub(crate) on_session: fn(*mut (), &[u8]),
+    pub(crate) on_session: fn(*mut (), &[u8], JsTurn<'_>),
     /// An NSS key-log line - node's `'keylog'` event.
-    pub(crate) on_keylog: fn(*mut (), &[u8]),
+    pub(crate) on_keylog: fn(*mut (), &[u8], JsTurn<'_>),
     pub(crate) server_identity:
         fn(*mut (), &mut bun_boringssl_sys::SSL) -> bun_boringssl::ServerIdentity,
 }
@@ -168,37 +169,40 @@ impl UpgradedDuplex {
     }
 }
 
-impl ssl_wrapper::Handler for &UpgradedDuplex {
+/// For one call that drives the `SSLWrapper`.
+struct TlsHandler<'a>(&'a UpgradedDuplex, JsTurn<'a>);
+
+impl ssl_wrapper::Handler for TlsHandler<'_> {
     fn on_open(&mut self) {
         bun_output::scoped_log!(UpgradedDuplex, "onOpen");
-        (self.handlers.on_open)(self.handlers.ctx);
+        (self.0.handlers.on_open)(self.0.handlers.ctx, self.1);
     }
 
     fn on_data(&mut self, decoded_data: &[u8]) {
         bun_output::scoped_log!(UpgradedDuplex, "onData ({})", decoded_data.len());
-        (self.handlers.on_data)(self.handlers.ctx, decoded_data);
+        (self.0.handlers.on_data)(self.0.handlers.ctx, decoded_data, self.1);
     }
 
     fn on_session(&mut self, session: &[u8]) {
         bun_output::scoped_log!(UpgradedDuplex, "onSession ({})", session.len());
-        (self.handlers.on_session)(self.handlers.ctx, session);
+        (self.0.handlers.on_session)(self.0.handlers.ctx, session, self.1);
     }
 
     fn on_keylog(&mut self, line: &[u8]) {
         bun_output::scoped_log!(UpgradedDuplex, "onKeylog ({})", line.len());
-        (self.handlers.on_keylog)(self.handlers.ctx, line);
+        (self.0.handlers.on_keylog)(self.0.handlers.ctx, line, self.1);
     }
 
     fn server_identity(
         &mut self,
         ssl: &mut bun_boringssl_sys::SSL,
     ) -> bun_boringssl::ServerIdentity {
-        (self.handlers.server_identity)(self.handlers.ctx, ssl)
+        (self.0.handlers.server_identity)(self.0.handlers.ctx, ssl)
     }
 
     fn on_handshake(&mut self, handshake_success: bool, ssl_error: us_bun_verify_error_t) {
         bun_output::scoped_log!(UpgradedDuplex, "onHandshake");
-        self.ssl_error.set(CertError {
+        self.0.ssl_error.set(CertError {
             error_no: ssl_error.error_no,
             code: ssl_error
                 .code()
@@ -209,25 +213,25 @@ impl ssl_wrapper::Handler for &UpgradedDuplex {
                 .filter(|_| ssl_error.error_no != 0)
                 .map(Into::into),
         });
-        (self.handlers.on_handshake)(self.handlers.ctx, handshake_success, ssl_error);
+        (self.0.handlers.on_handshake)(self.0.handlers.ctx, handshake_success, ssl_error, self.1);
         // Retry writes parked during the handshake, like openssl.cpp's `ssl_write_wants_read`.
-        if handshake_success && !self.is_shutdown() {
-            (self.handlers.on_writable)(self.handlers.ctx);
+        if handshake_success && !self.0.is_shutdown() {
+            (self.0.handlers.on_writable)(self.0.handlers.ctx, self.1);
         }
     }
 
     fn on_close(&mut self) {
         bun_output::scoped_log!(UpgradedDuplex, "onClose");
-        self.finish_close();
+        self.0.finish_close(self.1);
     }
 
     fn write(&mut self, encoded_data: &[u8]) {
-        self.write_encrypted(encoded_data);
+        self.0.write_encrypted(encoded_data, self.1);
     }
 }
 
 impl UpgradedDuplex {
-    pub(super) fn finish_close(&self) {
+    pub(super) fn finish_close(&self, turn: JsTurn<'_>) {
         let _keep_alive = self.keep_alive();
         // Keep the wrapper (and so its visited `duplex*` slots) reachable
         // across `handlers.on_close`, which downgrades the socket's own strong
@@ -235,12 +239,12 @@ impl UpgradedDuplex {
         let js_wrapper = self.js_wrapper;
         js_wrapper.ensure_still_alive();
 
-        (self.handlers.on_close)(self.handlers.ctx);
+        (self.handlers.on_close)(self.handlers.ctx, turn);
         // closes the underlying duplex
-        self.call_write_or_end(None, false);
+        self.call_write_or_end(None, false, turn);
         // Left paused, a net.Socket transport never reads its peer's FIN and stays open.
         if self.paused_origin.get() {
-            self.resume_stream();
+            self.resume_stream(turn);
         }
 
         // Early teardown (struct itself is dropped later by parent).
@@ -250,23 +254,23 @@ impl UpgradedDuplex {
 
     /// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/js_stream_socket.js#L117-L125
     #[uws_callback(export = "UpgradedDuplex__pause_stream")]
-    pub(crate) fn pause_stream(&self) -> bool {
+    pub(crate) fn pause_stream(&self, turn: JsTurn<'_>) -> bool {
         let _keep_alive = self.keep_alive();
         // Like a connecting fd: `on_open` forgets the owner's pause, so nothing would resume this one.
-        let paused = self.wrapper_ref().is_some() && self.call_origin("pause");
+        let paused = self.wrapper_ref().is_some() && self.call_origin("pause", turn);
         self.paused_origin.set(self.paused_origin.get() || paused);
         paused
     }
 
     #[uws_callback(export = "UpgradedDuplex__resume_stream")]
-    pub(crate) fn resume_stream(&self) -> bool {
+    pub(crate) fn resume_stream(&self, turn: JsTurn<'_>) -> bool {
         let _keep_alive = self.keep_alive();
         self.paused_origin.set(false);
-        self.call_origin("resume")
+        self.call_origin("resume", turn)
     }
 
     /// `origin[name]()`. A throw goes to `on_error`. False when the call did not complete.
-    fn call_origin(&self, name: &str) -> bool {
+    fn call_origin(&self, name: &str, turn: JsTurn<'_>) -> bool {
         self.debug_assert_kept_alive();
         let duplex = self.origin.get();
         if duplex.is_empty() {
@@ -283,13 +287,13 @@ impl UpgradedDuplex {
         match result {
             Ok(_) => true,
             Err(err) => {
-                (self.handlers.on_error)(self.handlers.ctx, global.take_error(err));
+                (self.handlers.on_error)(self.handlers.ctx, global.take_error(err), turn);
                 false
             }
         }
     }
 
-    fn call_write_or_end(&self, data: Option<&[u8]>, msg_more: bool) {
+    fn call_write_or_end(&self, data: Option<&[u8]>, msg_more: bool, turn: JsTurn<'_>) {
         self.debug_assert_kept_alive();
         // No JS duplex to talk to: the zeroed placeholder, or the owning
         // socket's finalizer abandoned it (`abandon_js_side`).
@@ -317,7 +321,7 @@ impl UpgradedDuplex {
                     Ok(false) => {}
                     Ok(true) => return,
                     Err(err) => {
-                        (self.handlers.on_error)(self.handlers.ctx, global.take_error(err));
+                        (self.handlers.on_error)(self.handlers.ctx, global.take_error(err), turn);
                         return;
                     }
                 }
@@ -338,7 +342,7 @@ impl UpgradedDuplex {
             Ok(Some(f)) if f.is_callable() => f,
             Ok(_) => return,
             Err(err) => {
-                (self.handlers.on_error)(self.handlers.ctx, global.take_error(err));
+                (self.handlers.on_error)(self.handlers.ctx, global.take_error(err), turn);
                 return;
             }
         };
@@ -347,18 +351,18 @@ impl UpgradedDuplex {
             let buffer = match bun_jsc::array_buffer::BinaryType::Buffer.to_js(data, &global) {
                 Ok(b) => b,
                 Err(err) => {
-                    (self.handlers.on_error)(self.handlers.ctx, global.take_error(err));
+                    (self.handlers.on_error)(self.handlers.ctx, global.take_error(err), turn);
                     return;
                 }
             };
             buffer.ensure_still_alive();
 
             if let Err(err) = write_or_end.call(&global, duplex, &[buffer]) {
-                (self.handlers.on_error)(self.handlers.ctx, global.take_error(err));
+                (self.handlers.on_error)(self.handlers.ctx, global.take_error(err), turn);
             }
         } else {
             if let Err(err) = write_or_end.call(&global, duplex, &[JSValue::NULL]) {
-                (self.handlers.on_error)(self.handlers.ctx, global.take_error(err));
+                (self.handlers.on_error)(self.handlers.ctx, global.take_error(err), turn);
             }
         }
     }
@@ -372,29 +376,29 @@ impl UpgradedDuplex {
         Ok(ended.is_some_and(|ended| ended.to_boolean()))
     }
 
-    fn write_encrypted(&self, encoded_data: &[u8]) {
-        self.reset_timeout();
+    fn write_encrypted(&self, encoded_data: &[u8], turn: JsTurn<'_>) {
+        self.reset_timeout(turn.live);
 
         // Possible scenarios:
         // Scenario 1: will not write if vm is shutting down (we cannot do anything about it)
         // Scenario 2: will not write if a exception is thrown (will be handled by onError)
         // Scenario 3: will be queued in memory and will be flushed later
         // Scenario 4: no write/end function exists (will be handled by onError)
-        self.call_write_or_end(Some(encoded_data), true);
+        self.call_write_or_end(Some(encoded_data), true, turn);
     }
 
     #[uws_callback(export = "UpgradedDuplex__flush")]
-    pub(crate) fn flush(&self) {
+    pub(crate) fn flush(&self, turn: JsTurn<'_>) {
         let _keep_alive = self.keep_alive();
         if let Some(w) = self.wrapper_ref() {
-            w.flush(&mut &*self);
+            w.flush(&mut TlsHandler(self, turn));
         }
     }
 
-    fn on_internal_receive_data(&self, data: &[u8]) {
+    fn on_internal_receive_data(&self, data: &[u8], turn: JsTurn<'_>) {
         if let Some(w) = self.wrapper_ref() {
-            self.reset_timeout();
-            w.receive_data(&mut &*self, data);
+            self.reset_timeout(turn.live);
+            w.receive_data(&mut TlsHandler(self, turn), data);
             return;
         }
         // Engine not up yet - `start_tls` is still queued. Stage the bytes;
@@ -406,7 +410,7 @@ impl UpgradedDuplex {
     /// `DuplexUpgradeContext::run_event` once the `StartTLS` branch has
     /// finished its bookkeeping, so the replay is indistinguishable from an
     /// ordinary post-start delivery.
-    pub(super) fn drain_pending(&self) {
+    pub(super) fn drain_pending(&self, turn: JsTurn<'_>) {
         let _keep_alive = self.keep_alive();
         // Nothing to replay, or the engine never came up (the socket died
         // before `StartTLS`). Bail before taking so the bytes are not
@@ -415,31 +419,32 @@ impl UpgradedDuplex {
             return;
         }
         if self.pending_data.get().is_empty() {
-            self.drain_pending_shutdown();
+            self.drain_pending_shutdown(turn);
             return;
         }
         // Taking ownership is load-bearing: a re-entrant `teardown()` clears `pending_data`.
         let staged = self.pending_data.replace(Vec::new());
-        self.reset_timeout();
+        self.reset_timeout(turn.live);
         if let Some(w) = self.wrapper_ref() {
-            w.receive_data(&mut &*self, &staged);
+            w.receive_data(&mut TlsHandler(self, turn), &staged);
         }
-        self.drain_pending_shutdown();
+        self.drain_pending_shutdown(turn);
     }
 
     /// After the staged input: a server answers a staged ClientHello before the end().
-    fn drain_pending_shutdown(&self) {
+    fn drain_pending_shutdown(&self, turn: JsTurn<'_>) {
         if self.pending_shutdown.replace(false) {
-            self.shutdown();
+            self.shutdown(turn);
         }
     }
 
-    pub(crate) fn on_timeout(&self) {
+    pub(crate) fn on_timeout(&self, turn: JsTurn<'_>) {
         bun_output::scoped_log!(UpgradedDuplex, "onTimeout");
 
         let has_been_cleared = self.event_loop_timer.state.get() == EventLoopTimerState::CANCELLED
             || self.vm.is_none_or(|vm| {
-                vm.script_execution_status() != bun_jsc::ScriptExecutionStatus::Running
+                vm.get(turn.live.thread).script_execution_status()
+                    != bun_jsc::ScriptExecutionStatus::Running
             });
 
         self.event_loop_timer.state.set(EventLoopTimerState::FIRED);
@@ -449,7 +454,7 @@ impl UpgradedDuplex {
         }
 
         let _keep_alive = self.keep_alive();
-        (self.handlers.on_timeout)(self.handlers.ctx);
+        (self.handlers.on_timeout)(self.handlers.ctx, turn);
     }
 
     pub(crate) fn from(
@@ -460,7 +465,7 @@ impl UpgradedDuplex {
     ) -> UpgradedDuplex {
         js_TLSSocket::duplex_origin_set_cached(js_wrapper, global, origin);
         UpgradedDuplex {
-            vm: Some(global.bun_vm()),
+            vm: Some(VmRef::new(global.bun_vm())),
             js_wrapper,
             origin: Cell::new(origin),
             global: Some(GlobalRef::from(global)),
@@ -538,12 +543,12 @@ impl UpgradedDuplex {
         Ok(array)
     }
 
-    fn install_and_start(&self, wrapper: SSLWrapper, verify: ServerVerify) {
+    fn install_and_start(&self, wrapper: SSLWrapper, verify: ServerVerify, turn: JsTurn<'_>) {
         self.wrapper.set(Some(wrapper));
         let w = self.wrapper_ref().unwrap();
         w.set_server_verify(verify.request_cert, verify.reject_unauthorized);
         w.enable_session_and_keylog();
-        w.start(&mut &*self);
+        w.start(&mut TlsHandler(self, turn));
     }
 
     pub(crate) fn start_tls(
@@ -551,9 +556,10 @@ impl UpgradedDuplex {
         ssl_options: &crate::server::server_config::SSLConfig,
         is_client: bool,
         verify: ServerVerify,
+        turn: JsTurn<'_>,
     ) -> Result<(), crate::Error> {
         let wrapper = ssl_wrapper::init(ssl_options, is_client)?;
-        self.install_and_start(wrapper, verify);
+        self.install_and_start(wrapper, verify, turn);
         Ok(())
     }
 
@@ -565,27 +571,28 @@ impl UpgradedDuplex {
         ctx: bun_boringssl_sys::OwnedSslCtx,
         is_client: bool,
         verify: ServerVerify,
+        turn: JsTurn<'_>,
     ) -> Result<(), crate::Error> {
         let wrapper = SSLWrapper::init_with_ctx(ctx, is_client)?;
-        self.install_and_start(wrapper, verify);
+        self.install_and_start(wrapper, verify, turn);
         Ok(())
     }
 
     #[uws_callback(export = "UpgradedDuplex__encode_and_write")]
-    pub(crate) fn encode_and_write(&self, data: &[u8]) -> i32 {
+    pub(crate) fn encode_and_write(&self, data: &[u8], turn: JsTurn<'_>) -> i32 {
         bun_output::scoped_log!(UpgradedDuplex, "encodeAndWrite (len: {})", data.len());
         let _keep_alive = self.keep_alive();
         if let Some(w) = self.wrapper_ref() {
-            let written = w.write_data(&mut &*self, data).unwrap_or(0);
+            let written = w.write_data(&mut TlsHandler(self, turn), data).unwrap_or(0);
             return i32::try_from(written).expect("int cast");
         }
         0
     }
 
     #[uws_callback(export = "UpgradedDuplex__raw_write")]
-    pub(crate) fn raw_write(&self, encoded_data: &[u8]) -> i32 {
+    pub(crate) fn raw_write(&self, encoded_data: &[u8], turn: JsTurn<'_>) -> i32 {
         let _keep_alive = self.keep_alive();
-        self.write_encrypted(encoded_data);
+        self.write_encrypted(encoded_data, turn);
         i32::try_from(encoded_data.len()).expect("int cast")
     }
 
@@ -599,26 +606,26 @@ impl UpgradedDuplex {
     }
 
     #[uws_callback(export = "UpgradedDuplex__close")]
-    pub(crate) fn close(&self) {
+    pub(crate) fn close(&self, turn: JsTurn<'_>) {
         let _keep_alive = self.keep_alive();
         let Some(w) = self.wrapper_ref() else {
             // `start_tls` is still queued: no SSL, and no close callback yet.
             self.pending_close.set(true);
             return;
         };
-        let _ = w.shutdown(&mut &*self, true);
+        let _ = w.shutdown(&mut TlsHandler(self, turn), true);
     }
 
     /// Half-close like `us_internal_ssl_shutdown`: close_notify (none mid-handshake), then end().
     #[uws_callback(export = "UpgradedDuplex__shutdown")]
-    pub(crate) fn shutdown(&self) {
+    pub(crate) fn shutdown(&self, turn: JsTurn<'_>) {
         let _keep_alive = self.keep_alive();
         let Some(w) = self.wrapper_ref() else {
             self.pending_shutdown.set(true);
             return;
         };
-        let _ = w.shutdown(&mut &*self, false);
-        self.call_write_or_end(None, false);
+        let _ = w.shutdown(&mut TlsHandler(self, turn), false);
+        self.call_write_or_end(None, false, turn);
     }
 
     #[uws_callback(export = "UpgradedDuplex__shutdown_read")]
@@ -663,11 +670,11 @@ impl UpgradedDuplex {
         }
     }
 
-    fn reset_timeout(&self) {
-        self.set_timeout_in_milliseconds(self.current_timeout.get());
+    fn reset_timeout(&self, live: VmLive<'_>) {
+        self.set_timeout_in_milliseconds(self.current_timeout.get(), live);
     }
 
-    fn set_timeout_in_milliseconds(&self, ms: c_uint) {
+    fn set_timeout_in_milliseconds(&self, ms: c_uint, live: VmLive<'_>) {
         self.event_loop_timer.disarm();
         self.current_timeout.set(ms);
 
@@ -680,13 +687,13 @@ impl UpgradedDuplex {
         let next =
             bun_core::Timespec::ms_from_now(bun_core::TimespecMockMode::ForceRealTime, ms as i64);
         self.event_loop_timer.next.set(next);
-        timer_all().insert(&raw const self.event_loop_timer);
+        timer_all(live).insert(&raw const self.event_loop_timer);
     }
 
     #[uws_callback(export = "UpgradedDuplex__set_timeout")]
-    pub(crate) fn set_timeout(&self, seconds: c_uint) {
+    pub(crate) fn set_timeout(&self, seconds: c_uint, live: VmLive<'_>) {
         bun_output::scoped_log!(UpgradedDuplex, "setTimeout({})", seconds);
-        self.set_timeout_in_milliseconds(seconds * 1000);
+        self.set_timeout_in_milliseconds(seconds * 1000, live);
     }
 
     /// Side-effecting teardown shared by `on_close` (early) and `Drop` (final).
@@ -696,7 +703,8 @@ impl UpgradedDuplex {
     pub(super) fn teardown(&self) {
         bun_output::scoped_log!(UpgradedDuplex, "deinit");
         // clear the timer
-        self.set_timeout(0);
+        self.event_loop_timer.disarm();
+        self.current_timeout.set(0);
 
         // Neuter in place rather than `self.wrapper.set(None)`: `teardown()`
         // can run re-entrantly from `on_close` while a
@@ -755,15 +763,20 @@ pub(crate) fn on_received_data<'a>(
     bun_output::scoped_log!(UpgradedDuplex, "onReceivedData");
 
     if let Some(self_ptr) = host_fn::get_function_data(callee.to_js()) {
-        // SAFETY: see the note above.
-        let this = unsafe { &*self_ptr.cast::<UpgradedDuplex>() };
+        // SAFETY: see the note above. `cx` has the turn, and cannot lend it beside its `heap`.
+        let (this, turn) = unsafe {
+            (
+                &*self_ptr.cast::<UpgradedDuplex>(),
+                JsTurn::assume(&self_ptr),
+            )
+        };
         let _keep_alive = this.keep_alive();
         if !this.origin.get().is_empty() {
             match data {
                 DuplexChunk::None => {}
                 // The bytes are copied before a handler of the socket runs.
-                DuplexChunk::Bytes(buffer) => buffer.with_bytes(&cx.heap, |payload| {
-                    this.on_internal_receive_data(payload);
+                DuplexChunk::Bytes(buffer) => buffer.with_bytes(&cx.heap, move |payload| {
+                    this.on_internal_receive_data(payload, turn);
                 }),
                 DuplexChunk::Other(_) => {
                     // node.js errors in this case with the same error, lets keep it consistent
@@ -775,14 +788,14 @@ pub(crate) fn on_received_data<'a>(
                         )
                         .to_js();
                     error_value.ensure_still_alive();
-                    (this.handlers.on_error)(this.handlers.ctx, error_value);
+                    (this.handlers.on_error)(this.handlers.ctx, error_value, cx.turn());
                 }
             }
         }
     }
 }
 
-pub(crate) fn on_end(_: &mut JsScope<'_>, callee: JsLocal<'_>) {
+pub(crate) fn on_end(cx: &mut JsScope<'_>, callee: JsLocal<'_>) {
     bun_output::scoped_log!(UpgradedDuplex, "onEnd");
 
     if let Some(self_ptr) = host_fn::get_function_data(callee.to_js()) {
@@ -791,11 +804,11 @@ pub(crate) fn on_end(_: &mut JsScope<'_>, callee: JsLocal<'_>) {
         let _keep_alive = this.keep_alive();
 
         // Like node's JSStreamSocket. Ahead of staged bytes too: no handshake can complete after it.
-        (this.handlers.on_end)(this.handlers.ctx);
+        (this.handlers.on_end)(this.handlers.ctx, cx.turn());
     }
 }
 
-pub(crate) fn on_writable(_: &mut JsScope<'_>, callee: JsLocal<'_>) {
+pub(crate) fn on_writable(cx: &mut JsScope<'_>, callee: JsLocal<'_>) {
     bun_output::scoped_log!(UpgradedDuplex, "onWritable");
 
     if let Some(self_ptr) = host_fn::get_function_data(callee.to_js()) {
@@ -804,21 +817,21 @@ pub(crate) fn on_writable(_: &mut JsScope<'_>, callee: JsLocal<'_>) {
         let _keep_alive = this.keep_alive();
         // flush pending data
         if let Some(w) = this.wrapper_ref() {
-            w.flush(&mut &*this);
+            w.flush(&mut TlsHandler(this, cx.turn()));
         }
         // call onWritable (will flush on demand)
-        (this.handlers.on_writable)(this.handlers.ctx);
+        (this.handlers.on_writable)(this.handlers.ctx, cx.turn());
     }
 }
 
-pub(crate) fn on_close_js(_: &mut JsScope<'_>, callee: JsLocal<'_>) {
+pub(crate) fn on_close_js(cx: &mut JsScope<'_>, callee: JsLocal<'_>) {
     bun_output::scoped_log!(UpgradedDuplex, "onCloseJS");
 
     if let Some(self_ptr) = host_fn::get_function_data(callee.to_js()) {
         // SAFETY: see the note above.
         let this = unsafe { &*self_ptr.cast::<UpgradedDuplex>() };
         // flush pending data
-        this.close();
+        this.close(cx.turn());
     }
 }
 
@@ -834,6 +847,10 @@ pub(crate) fn on_close_js(_: &mut JsScope<'_>, callee: JsLocal<'_>) {
 // inherent methods above; `ssl` keeps a hand-written shim because the safe
 // method returns `Option<*mut SSL>` while the C ABI flattens to a nullable
 // raw pointer.
+//
+// SAFETY (the tokens that these make): only a `TLSSocket` has the handle, and neither leaves the VM's thread.
+// The one finalizer that dispatches through it is the `close` of `NewSocket::finalize`, after `abandon_js_side` has
+// emptied `origin` and with `FINALIZING` set, which `on_handshake` and `on_close` test before they run script.
 // ──────────────────────────────────────────────────────────────────────────
 
 #[unsafe(no_mangle)]

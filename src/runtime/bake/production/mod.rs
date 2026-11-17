@@ -20,7 +20,7 @@ use bun_bundler::options::{self as bundler_options, OutputFile};
 use bun_bundler::output_file::Index as OutputFileIndex;
 
 use bun_collections::{AutoBitSet, StringArrayHashMap};
-use bun_core::{Global, Output};
+use bun_core::{Global, JsTurn, LoopTurn, Output};
 use bun_core::{String as BunString, StringView};
 use bun_dotenv as dotenv;
 use bun_jsc::bun_string_jsc;
@@ -78,7 +78,7 @@ struct DotenvSingleton {
 unsafe impl Sync for DotenvSingleton {}
 static DOTENV_SINGLETON: OnceLock<DotenvSingleton> = OnceLock::new();
 
-pub(crate) fn build_command(ctx: Context) -> crate::Result<()> {
+pub(crate) fn build_command(ctx: Context, turn: LoopTurn<'_>) -> crate::Result<()> {
     bake::print_warning();
 
     if ctx.args.entry_points.len() > 1 {
@@ -114,7 +114,9 @@ pub(crate) fn build_command(ctx: Context) -> crate::Result<()> {
         smol: ctx.runtime_options.smol,
         ..Default::default()
     };
-    let vm = VirtualMachine::init_bake(ctx.log, vm_options)?;
+    // SAFETY: the main thread runs one command, whose one VM this is. `ctx.log` is never freed.
+    let vm = unsafe { VirtualMachine::init_bake(ctx.log, vm_options, turn.live) }?;
+    let turn = vm.turn(turn);
 
     vm.event_loop().ensure_waker();
     vm.preload.set(ctx.preloads.clone());
@@ -188,15 +190,15 @@ pub(crate) fn build_command(ctx: Context) -> crate::Result<()> {
     // LIFO order — under the API lock.
     let mut pt = PerThread::placeholder(vm);
 
-    match build_with_vm(ctx, &cwd, &mut pt) {
+    match build_with_vm(ctx, &cwd, &mut pt, turn) {
         Err(crate::Error::JSError) => {
-            let err_value = vm.global().take_exception(jsc::JsError::Thrown);
-            vm.print_error_like_object_to_console(err_value.to_error().unwrap_or(err_value));
+            let err_value = vm.global(turn).take_exception(jsc::JsError::Thrown);
+            vm.print_error_like_object_to_console(err_value.to_error().unwrap_or(err_value), turn);
             if vm.exit_handler.exit_code.get() == 0 {
                 vm.exit_handler.exit_code.set(1);
             }
-            vm.on_exit();
-            vm.global_exit();
+            vm.on_exit(turn);
+            vm.global_exit(turn);
         }
         result => result,
     }
@@ -242,9 +244,14 @@ fn write_sourcemap_to_disk(
     Ok(())
 }
 
-fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<()> {
-    let vm = pt.vm;
-    let global = vm.global();
+fn build_with_vm(
+    ctx: Context,
+    cwd: &[u8],
+    pt: &mut PerThread,
+    turn: JsTurn<'_>,
+) -> crate::Result<()> {
+    let vm = pt.vm.get(turn.live.thread);
+    let global = vm.global(turn);
     // allocator = bun.default_allocator — dropped per §Allocators
 
     bun_core::pretty_errorln!("Loading configuration");
@@ -309,8 +316,8 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
     // `opaque_mut` is the const-asserted safe `*mut → &mut` accessor
     // (`load_and_evaluate_module_ptr` returned a live JSC-heap cell).
     jsc::JSInternalPromise::opaque_mut(config_promise_ptr).set_handled();
-    vm.wait_for_promise(AnyPromise::Internal(config_promise_ptr))
-        .map_err(|stopped| js_err(stopped.throw(vm.global())))?;
+    vm.wait_for_promise(AnyPromise::Internal(config_promise_ptr), turn)
+        .map_err(|stopped| js_err(stopped.throw(vm.global(turn))))?;
     let jsc_vm = vm.jsc_vm();
     // Promise cell is still live (rooted via the module loader).
     let mut options = match jsc::JSInternalPromise::opaque_mut(config_promise_ptr)
@@ -739,14 +746,15 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
     }
 
     *pt = PerThread::init(
-        pt.vm,
+        pt.vm.get(turn.live.thread),
         entry_points,
         bundled_outputs_list,
         module_keys,
         &output_module_map,
         source_maps,
+        turn,
     )?;
-    pt.attach();
+    pt.attach(turn);
 
     // Static site generator
     let server_render_funcs =
@@ -775,7 +783,7 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
         }
 
         let server_file = router_type.server_file;
-        let server_entry_point = pt.load_bundled_module(server_file)?;
+        let server_entry_point = pt.load_bundled_module(server_file, turn)?;
         let server_render_func =
             bake_get_on_module_namespace(global, server_entry_point, b"prerender")
                 .map_err(js_err)?;
@@ -932,7 +940,7 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
             .put_index(
                 global,
                 0,
-                pt.preload_bundled_module(main_file_route_index)
+                pt.preload_bundled_module(main_file_route_index, turn)
                     .map_err(js_err)?,
             )
             .map_err(js_err)?;
@@ -955,7 +963,7 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
                 .put_index(
                     global,
                     file_count,
-                    pt.preload_bundled_module(file).map_err(js_err)?,
+                    pt.preload_bundled_module(file, turn).map_err(js_err)?,
                 )
                 .map_err(js_err)?;
             for r#ref in pt.output_file(file).referenced_css_chunks.iter() {
@@ -978,7 +986,7 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
                     .put_index(
                         global,
                         file_count,
-                        pt.preload_bundled_module(file).map_err(js_err)?,
+                        pt.preload_bundled_module(file, turn).map_err(js_err)?,
                     )
                     .map_err(js_err)?;
                 for r#ref in pt.output_file(file).referenced_css_chunks.iter() {
@@ -1090,8 +1098,8 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
         )
     };
     render_promise.set_handled();
-    vm.wait_for_promise(AnyPromise::Normal(render_promise))
-        .map_err(|stopped| js_err(stopped.throw(vm.global())))?;
+    vm.wait_for_promise(AnyPromise::Normal(render_promise), turn)
+        .map_err(|stopped| js_err(stopped.throw(vm.global(turn))))?;
     let jsc_vm = vm.jsc_vm();
     match render_promise.unwrap(jsc_vm, UnwrapMode::MarkHandled) {
         Unwrapped::Pending => unreachable!(),
@@ -1103,6 +1111,6 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
             return Err(js_err(global.throw_value(err)));
         }
     }
-    vm.wait_for_tasks();
+    vm.wait_for_tasks(turn);
     Ok(())
 }

@@ -3,6 +3,7 @@
 use core::cell::Cell;
 use std::rc::Rc;
 
+use bun_core::JsTurn;
 use bun_core::String as BunString;
 use bun_jsc::bindgen::{JsLocal, JsScope, JsWrapper};
 use bun_jsc::{
@@ -139,10 +140,10 @@ impl TestContext {
     }
 
     /// Returns false if the test has finished.
-    pub(crate) fn defer_fixture(&self, this_value: JSValue, tear_down: JSValue, timeout: u32) -> bool {
+    pub(crate) fn defer_fixture(&self, this_value: JSValue, tear_down: JSValue, timeout: u32, turn: JsTurn<'_>) -> bool {
         self.with_running(this_value, |buntest, sequence| {
             let when = if sequence.is_before_run_test(buntest) { Deferred::AroundFixture } else { Deferred::Fixture };
-            sequence.defer(buntest, when, tear_down, timeout);
+            sequence.defer(buntest, when, tear_down, timeout, turn);
         })
         .is_some()
     }
@@ -334,7 +335,7 @@ impl TestContext {
         let this = Self::of_call(global, this_value)?;
         this.with_running(this_value.to_js(), |buntest, sequence| {
             if let Some(callback) = args.callback {
-                sequence.defer(buntest, when, callback, args.options.timeout);
+                sequence.defer(buntest, when, callback, args.options.timeout, global.turn());
             }
         })
         .ok_or_else(|| Self::throw_finished(global, name))

@@ -6,7 +6,7 @@ use std::io::Write as _;
 use crate::ipc as IPC;
 #[cfg(not(windows))]
 use bun_core::StackCheck;
-use bun_core::{CStrList, CStrRef, String as BunString, ZStr, strings};
+use bun_core::{CStrList, CStrRef, LoopTurn, String as BunString, VmLive, ZStr, strings};
 use bun_core::{Output, Timespec, TimespecMockMode, ZBox, fmt as bun_fmt};
 use bun_io::max_buf;
 use bun_jsc::bindgen::{JsLocal, JsScope};
@@ -287,6 +287,7 @@ pub(crate) fn spawn_sync(
             &active_file,
             &deadline,
             cx.vm(),
+            cx.turn(),
         );
         if cx.global().has_exception() {
             return Ok(JSValue::ZERO);
@@ -297,42 +298,46 @@ pub(crate) fn spawn_sync(
 
 /// The terminal a spawn made for its child, closed unless the spawn gets far enough to `take` it: the user never
 /// received it then.
-#[derive(Default)]
-struct SpawnedTerminal<'a>(Option<jsc::WrapperGuard<'a, Terminal>>);
+struct SpawnedTerminal<'a>(Option<jsc::WrapperGuard<'a, Terminal>>, LoopTurn<'a>);
 
 impl Drop for SpawnedTerminal<'_> {
     fn drop(&mut self) {
         if let Some(terminal) = &self.0 {
-            terminal.abandon_from_spawn();
+            terminal.abandon_from_spawn(self.1);
         }
     }
 }
 
 /// Reports the exit of a child that could not be watched, once the rest of its `Subprocess` is set up. That runs
 /// `onExit`, so not with an exception pending.
-struct ReportUnwatchedExit(bun_ptr::BackRef<SubprocessT<'static>>);
+struct ReportUnwatchedExit<'a>(bun_ptr::BackRef<SubprocessT<'static>>, LoopTurn<'a>);
 
-impl Drop for ReportUnwatchedExit {
+impl Drop for ReportUnwatchedExit<'_> {
     fn drop(&mut self) {
         let process = self.0.process.this_ptr();
         if let Some(status) = process.status() {
             // process has already exited, we called wait4(), but we did not call onProcessExit()
-            Process::on_exit(process, status.clone(), &bun_core::ffi::zeroed::<Rusage>());
+            Process::on_exit(
+                process,
+                status.clone(),
+                &bun_core::ffi::zeroed::<Rusage>(),
+                self.1,
+            );
         } else {
             // It has exited and only wait4() is left to call, or it is running: then it is tried once more to watch
             // it, and failing that it is ended and reaped.
             // https://cs.github.com/libuv/libuv/blob/b00d1bd225b602570baee82a6152eaa823a84fa6/src/unix/process.c#L1007
-            Process::wait(process, false);
+            Process::wait(process, false, self.1);
         }
     }
 }
 
 /// Stands in for the JS wrapper, which a sync `Subprocess` does not get.
-struct SyncWrapper(bun_ptr::RefPtr<SubprocessT<'static>>);
+struct SyncWrapper<'a>(bun_ptr::RefPtr<SubprocessT<'static>>, VmLive<'a>);
 
-impl Drop for SyncWrapper {
+impl Drop for SyncWrapper<'_> {
     fn drop(&mut self) {
-        self.0.finalize();
+        self.0.finalize(self.1);
     }
 }
 
@@ -396,7 +401,7 @@ fn spawn_maybe_sync(
     #[cfg(windows)]
     let mut windows_verbatim_arguments: bool = false;
     let mut abort_signal: Option<bun_jsc::AbortSignalRef> = None;
-    let mut terminal_info = SpawnedTerminal::default();
+    let mut terminal_info = SpawnedTerminal(None, cx.turn().loop_);
     let terminal_slot;
     let mut existing_terminal = None; // Existing terminal passed by user
     let mut terminal_js_value: JSValue = JSValue::ZERO;
@@ -1220,6 +1225,7 @@ fn spawn_maybe_sync(
                 ipc_mode,
                 subprocess_ipc_owner(subprocess_ptr),
                 IPC::SocketUnion::Uninitialized,
+                cx.live(),
             )));
         }
     }
@@ -1239,6 +1245,7 @@ fn spawn_maybe_sync(
             &subprocess_ref,
             spawned_stdin,
             &mut promise_for_stream,
+            cx.turn(),
         )
     } {
         Ok(v) => subprocess.stdin.set(v),
@@ -1249,7 +1256,7 @@ fn spawn_maybe_sync(
             // pidfd; stdin/stdout/stderr are `.ignore` so their `closeIO` is a
             // no-op.
             drop((spawned_stdout, spawned_stderr));
-            subprocess.finalize_streams();
+            subprocess.finalize_streams(cx.turn());
             #[cfg(unix)]
             let _ = Process::kill_and_reap(
                 subprocess.process.this_ptr(),
@@ -1260,7 +1267,7 @@ fn spawn_maybe_sync(
             subprocess.process().detach();
             if let Some(ipc_data) = subprocess.ipc_data.take() {
                 // Nothing else holds it yet (no socket wired, no task scheduled).
-                ipc_data.detach();
+                ipc_data.detach(cx.live());
             }
             return Err(err);
         }
@@ -1340,6 +1347,7 @@ fn spawn_maybe_sync(
                     mode,
                     subprocess_ipc_owner(subprocess_ptr),
                     IPC::SocketUnion::Uninitialized,
+                    cx.live(),
                 )));
                 posix_ipc_info = Some(IPC::Socket::from(socket));
             }
@@ -1347,7 +1355,7 @@ fn spawn_maybe_sync(
     }
 
     let (out, _sync_wrapper) = if is_sync {
-        (JSValue::ZERO, Some(SyncWrapper(subprocess_ref)))
+        (JSValue::ZERO, Some(SyncWrapper(subprocess_ref, cx.live())))
     } else {
         let out = Subprocess::js::to_js(subprocess_ref, cx.global());
         subprocess.this_value.with_mut(|v| v.set_weak(out));
@@ -1385,9 +1393,9 @@ fn spawn_maybe_sync(
             // for the pipe's lifetime, so it must be the allocation root
             // (write provenance), never one re-derived from `&SendQueue`.
             // SAFETY: `ipc_data` is the live SendQueue owned by `subprocess`.
-            if let Err(err) =
-                unsafe { IPC::SendQueue::windows_configure_server(ipc_data.as_ctx_ptr(), ipc_pipe) }
-            {
+            if let Err(err) = unsafe {
+                IPC::SendQueue::windows_configure_server(ipc_data.as_ctx_ptr(), ipc_pipe, cx.turn())
+            } {
                 return Err(cx.global().throw_value(err.to_js(cx.global())));
             }
         }
@@ -1423,7 +1431,7 @@ fn spawn_maybe_sync(
             // owned by the boxed `Subprocess` and stays at a stable address
             // until `Subprocess::finalize` removes it from the heap.
             unsafe { jsc_vm.timer_insert(&raw const subprocess.event_loop_timer) };
-            subprocess.set_event_loop_timer_refd(true);
+            subprocess.set_event_loop_timer_refd(true, jsc_vm.live());
         }
 
         debug_assert!(out != JSValue::ZERO);
@@ -1460,8 +1468,8 @@ fn spawn_maybe_sync(
         }
     }
 
-    let report_exit =
-        send_exit_notification.then(|| ReportUnwatchedExit(bun_ptr::BackRef::from(subprocess_nn)));
+    let report_exit = send_exit_notification
+        .then(|| ReportUnwatchedExit(bun_ptr::BackRef::from(subprocess_nn), cx.turn().loop_));
 
     // Start the readers before the Writable::Buffer stdin writer so that if
     // the writer's start() throws below, on_process_exit drains started readers.
@@ -1475,7 +1483,7 @@ fn spawn_maybe_sync(
 
     let mut setup_err = match subprocess.stdin.get() {
         Writable::Buffer(buffer) => {
-            let started = buffer.start(loop_handle);
+            let started = buffer.start(loop_handle, cx.turn().loop_);
             started.map(|state| subprocess.on_stdin_state(state)).err()
         }
         _ => None,
@@ -1525,7 +1533,7 @@ fn spawn_maybe_sync(
             jsc_vm.on_subprocess_spawn(&subprocess.process);
             if let Some(context) = jsc_vm.as_graph_context(cx.context()) {
                 // SAFETY: `subprocess_ptr` is live and heap-pinned.
-                unsafe { bun_jsc::AbortHandle::arm_owner(subprocess_ptr, context) };
+                unsafe { bun_jsc::AbortHandle::arm_owner(subprocess_ptr, context, jsc_vm.live()) };
             }
         }
         return Ok(out);
@@ -1537,17 +1545,18 @@ fn spawn_maybe_sync(
             .counters
             .mark(jsc::counters::Field::SpawnSyncBlocking);
         let debug_timer = Output::DebugTimer::start();
-        Process::wait(process, true);
+        Process::wait(process, true, cx.turn().loop_);
         bun_output::scoped_log!(Subprocess, "spawnSync fast path took {}", debug_timer);
 
         // watchOrReap will handle the already exited case for us.
     }
 
-    if let Err(err) = Process::watch_or_reap(process) {
+    if let Err(err) = Process::watch_or_reap(process, cx.turn().loop_) {
         Process::on_exit(
             process,
             bun_spawn::Status::Err(err.clone()),
             &bun_core::ffi::zeroed::<Rusage>(),
+            cx.turn().loop_,
         );
         setup_err.get_or_insert(err);
     }
@@ -1560,6 +1569,7 @@ fn spawn_maybe_sync(
                 process,
                 bun_spawn::Status::Err(err.clone()),
                 &bun_core::ffi::zeroed::<Rusage>(),
+                cx.turn().loop_,
             );
         }
         subprocess.close_readable_pipes();
@@ -1633,18 +1643,21 @@ fn spawn_maybe_sync(
             let has_timespec = !absolute_timespec.eql(&Timespec::EPOCH);
 
             if let Writable::Buffer(buffer) = subprocess.stdin.get() {
-                subprocess.on_stdin_state(buffer.watch());
+                subprocess.on_stdin_state(buffer.watch(cx.turn().loop_));
             }
 
             pipes.iter().rev().flatten().for_each(PipeReader::watch);
 
             // Tick the isolated event loop without passing timeout to avoid blocking
             // The timeout check is done at the top of the loop
-            match sync_loop.tick_with_timeout(if has_timespec && !did_timeout {
-                Some(&absolute_timespec)
-            } else {
-                None
-            }) {
+            match sync_loop.tick_with_timeout(
+                if has_timespec && !did_timeout {
+                    Some(&absolute_timespec)
+                } else {
+                    None
+                },
+                cx.turn(),
+            ) {
                 TickState::Completed => {}
                 TickState::Timeout => {
                     now = Timespec::now(TimespecMockMode::ForceRealTime);

@@ -181,7 +181,7 @@ impl Expect {
         }
 
         let (path, hint) = (path.to_utf8(), utf8(&hint));
-        match runner.with_snapshots(|snapshots| snapshots.match_or_write_file(self, &path, &received, hint.as_deref().unwrap_or_default())) {
+        match runner.with_snapshots(|snapshots| snapshots.match_or_write_file(self, &path, &received, hint.as_deref().unwrap_or_default(), global.live())) {
             FileOutcome::Passed | FileOutcome::Written => m.pass_with(JSPromise::resolved_promise_value(global, JSValue::UNDEFINED)),
             FileOutcome::Mismatch { saved } => {
                 let diff = DiffFormatter::from_strings(&received, &saved, false);

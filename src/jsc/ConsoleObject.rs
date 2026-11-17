@@ -1045,16 +1045,23 @@ impl<'a> TablePrinter<'a> {
 pub fn write_trace(writer: &mut dyn bun_io::Write, global: &JSGlobalObject) {
     let mut source_code = bun_core::Utf8Bytes::EMPTY;
     let mut holder = crate::zig_exception::Holder::init();
-    let vm = VirtualMachine::get();
+    let vm = VirtualMachine::get(global.live());
 
     let err = global.create_error_instance(format_args!("trace output"));
-    let _arena_reset =
-        vm.remap_zig_exception(holder.zig_exception(), err, None, &mut source_code, false);
+    let _arena_reset = vm.remap_zig_exception(
+        holder.zig_exception(),
+        err,
+        None,
+        &mut source_code,
+        false,
+        global.turn(),
+    );
 
     let _ = VirtualMachine::print_stack_trace(
         writer,
         &holder.zig_exception().stack,
         Output::enable_ansi_colors_stderr(),
+        vm.live(),
     );
 }
 
@@ -3745,8 +3752,17 @@ pub mod formatter {
                 return Ok(());
             }
 
-            let vm = VirtualMachine::get();
-            vm.print_errorlike_object(value, None, None, self, writer_, C, false);
+            let vm = VirtualMachine::get(self.global_this.live());
+            vm.print_errorlike_object(
+                value,
+                None,
+                None,
+                self,
+                writer_,
+                C,
+                false,
+                self.global_this.turn(),
+            );
             Ok(())
         }
 

@@ -13,7 +13,7 @@ use bun_ast::ImportRecord;
 use bun_ast::{Loc, Location, Log, Msg, Source};
 use bun_collections::VecExt;
 use bun_core::strings;
-use bun_core::{self, FeatureFlags, declare_scope, scoped_log};
+use bun_core::{self, FeatureFlags, LoopTurn, VmLive, declare_scope, scoped_log};
 use bun_event_loop::AnyTaskWithExtraContext::AnyTaskWithExtraContext;
 use bun_event_loop::BoxedTask;
 use bun_sys::Fd;
@@ -129,7 +129,7 @@ pub struct Result<'a> {
 impl BoxedTask for Result<'static> {
     const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::BundleV2ParseTaskResult;
     /// The VM that runs the bundle is going: the result goes to nobody.
-    fn release_unrun(self: Box<Self>) {}
+    fn release_unrun(self: Box<Self>, _live: VmLive<'_>) {}
     /// A step of the bundle.
     fn context(&self) -> bun_event_loop::ContextId {
         bun_event_loop::ContextId::NONE
@@ -2679,19 +2679,23 @@ pub mod parse_worker {
         }
     }
 
-    fn on_complete_mini(result: *mut Result<'static>, ctx: *mut BundleV2<'static>) {
+    fn on_complete_mini(
+        result: *mut Result<'static>,
+        ctx: *mut BundleV2<'static>,
+        turn: LoopTurn<'_>,
+    ) {
         // SAFETY: the box that `post_result` queued, and the bundle that is running the loop.
         let (bundle, result) = unsafe { (&mut *ctx, bun_core::heap::take(result)) };
-        BundleV2::on_parse_task_complete(result, bundle);
+        BundleV2::on_parse_task_complete(result, bundle, turn);
     }
 
     /// # Safety
     /// On the bundle's thread, which uses no other borrow of the bundle during the call.
-    pub unsafe fn on_complete(result: Box<Result<'static>>) {
+    pub unsafe fn on_complete(result: Box<Result<'static>>, turn: LoopTurn<'_>) {
         let ctx = result.ctx;
         // SAFETY: `ctx` has write provenance (`from_ref_mut` in `ParseTask::init`) and outlives
         // the pass. Exclusive by the fn contract.
-        BundleV2::on_parse_task_complete(result, unsafe { ctx.assume_mut() });
+        BundleV2::on_parse_task_complete(result, unsafe { ctx.assume_mut() }, turn);
     }
 } // end mod parse_worker
 

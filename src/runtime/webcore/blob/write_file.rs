@@ -5,6 +5,8 @@ use core::sync::atomic::{AtomicU8, Ordering};
 
 #[cfg(not(windows))]
 use crate::Error;
+#[cfg(windows)]
+use bun_core::{JsTurn, VmLive};
 #[cfg(not(windows))]
 use bun_io::{self as io, IntrusiveIoRequest as _};
 use bun_jsc::node_path::PathOrFileDescriptor;
@@ -508,7 +510,7 @@ mod windows_impl {
     use bun_io::{self as aio, IntrusiveUvFs as _, JsKeepAlive};
     // `bun_jsc::EventLoop` is a *module* (namespace re-export); the struct
     // lives one level deeper.
-    use bun_jsc::event_loop::EventLoop;
+    use bun_jsc::event_loop::EventLoopRef;
     use bun_sys::ReturnCodeExt as _;
     use bun_sys::windows::libuv as uv;
 
@@ -527,7 +529,7 @@ mod windows_impl {
         pub(crate) fd: uv::uv_file,
         pub(crate) err: Option<sys::Error>,
         pub(crate) total_written: usize,
-        pub(crate) event_loop: &'static EventLoop,
+        pub(crate) event_loop: EventLoopRef,
         _keep_alive: JsKeepAlive,
 
         pub(crate) owned_fd: bool,
@@ -548,7 +550,7 @@ mod windows_impl {
     /// `mkdirp` finished on the work pool: the hop back to the JS thread.
     impl bun_event_loop::BoxedTask for WriteFileWindows {
         const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::WriteFileWindowsMkdirp;
-        fn release_unrun(self: Box<Self>) {}
+        fn release_unrun(self: Box<Self>, _live: VmLive<'_>) {}
         /// Enters no context.
         fn context(&self) -> bun_event_loop::ContextId {
             bun_event_loop::ContextId::NONE
@@ -557,7 +559,7 @@ mod windows_impl {
 
     impl WriteFileWindows {
         pub(crate) fn start(
-            event_loop: &'static EventLoop,
+            event_loop: EventLoopRef,
             script_context: &bun_jsc::ScriptExecutionContext,
             file_blob: Blob,
             bytes_blob: Blob,
@@ -587,18 +589,18 @@ mod windows_impl {
                 fd: -1,
                 err: None,
                 total_written: 0,
-                _keep_alive: JsKeepAlive::active(),
+                _keep_alive: JsKeepAlive::active(global_this.live()),
                 owned_fd: false,
             });
-            write_file.io_request.loop_ = event_loop.uv_loop();
+            write_file.io_request.loop_ = event_loop.get(global_this.live().thread).uv_loop();
 
             let store = write_file.file_blob.store.get().as_ref().unwrap();
             let PathOrFileDescriptor::Fd(fd) = &store.data.as_file().pathlike else {
-                return write_file.open();
+                return write_file.open(global_this.turn());
             };
             write_file.fd = fd.uv();
 
-            write_file.do_write_loop()
+            write_file.do_write_loop(global_this.turn())
         }
 
         fn path(&self) -> &[u8] {
@@ -606,16 +608,19 @@ mod windows_impl {
             store.data.as_file().pathlike.path().slice()
         }
 
-        fn open(mut self: Box<Self>) -> jsc::JsResult<()> {
+        fn open(mut self: Box<Self>, turn: JsTurn<'_>) -> jsc::JsResult<()> {
             let Ok(posix_path) = sys::to_posix_path(self.path()) else {
-                return self.throw(sys::Error {
-                    errno: sys::E::NAMETOOLONG as _,
-                    syscall: sys::Tag::open,
-                    ..Default::default()
-                });
+                return self.throw(
+                    sys::Error {
+                        errno: sys::E::NAMETOOLONG as _,
+                        syscall: sys::Tag::open,
+                        ..Default::default()
+                    },
+                    turn,
+                );
             };
             self.owned_fd = true;
-            let loop_ = self.event_loop.uv_loop();
+            let loop_ = self.event_loop.get(turn.live.thread).uv_loop();
             let this = bun_core::heap::into_raw(self);
             // SAFETY: the VM's loop outlives the request, libuv copies the NUL-terminated path
             // before it returns, and it has `this` until `on_open`.
@@ -638,14 +643,16 @@ mod windows_impl {
             if let Some(err) = rc.to_error(sys::Tag::open) {
                 debug_assert!(err.get_errno() != sys::E::NOENT);
                 // SAFETY: libuv keeps nothing of a request that it refuses.
-                return unsafe { bun_core::heap::take(this) }.throw(err);
+                return unsafe { bun_core::heap::take(this) }.throw(err, turn);
             }
             Ok(())
         }
 
         extern "C" fn on_open(req: *mut uv::fs_t) {
-            // SAFETY: `req` is the `io_request` of the box that `open` left to libuv.
-            let mut this = unsafe { WriteFileWindows::take_from_uv_fs(req) };
+            // SAFETY: `req` is the `io_request` of the box that `open` left to libuv,
+            // which calls back from the VM's loop: a worker drains it before its VM goes.
+            let (mut this, turn) =
+                unsafe { (WriteFileWindows::take_from_uv_fs(req), JsTurn::assume(&req)) };
             let rc = this.io_request.result;
             #[cfg(debug_assertions)]
             bun_output::scoped_log!(
@@ -661,51 +668,59 @@ mod windows_impl {
                     this.io_request.deinit();
 
                     // attempt to create the directory on another thread
-                    this.mkdirp();
+                    this.mkdirp(turn.live);
                     return;
                 }
 
-                fold(this.throw(sys::Error::from_code(err, sys::Tag::open)));
+                fold(
+                    this.throw(sys::Error::from_code(err, sys::Tag::open), turn),
+                    turn,
+                );
                 return;
             }
 
             this.fd = i32::try_from(rc.int()).expect("int cast");
 
-            fold(this.do_write_loop());
+            fold(this.do_write_loop(turn), turn);
         }
 
-        fn mkdirp(mut self: Box<Self>) {
+        fn mkdirp(mut self: Box<Self>, live: VmLive<'_>) {
             bun_output::scoped_log!(WriteFile, "mkdirp");
             self.mkdirp_if_not_exists = false;
-            crate::node::fs::async_::AsyncMkdirp::schedule(self);
+            crate::node::fs::async_::AsyncMkdirp::schedule(self, live);
         }
 
-        pub(crate) fn on_mkdirp_complete(mut self: Box<Self>) {
-            fold(match self.err.take() {
-                Some(err) => self.throw(err),
-                None => self.open(),
-            });
+        pub(crate) fn on_mkdirp_complete(mut self: Box<Self>, turn: JsTurn<'_>) {
+            fold(
+                match self.err.take() {
+                    Some(err) => self.throw(err, turn),
+                    None => self.open(turn),
+                },
+                turn,
+            );
         }
 
         extern "C" fn on_write_complete(req: *mut uv::fs_t) {
-            // SAFETY: `req` is the `io_request` of the box that `do_write_loop` left to libuv.
-            let mut this = unsafe { WriteFileWindows::take_from_uv_fs(req) };
+            // SAFETY: `req` is the `io_request` of the box that `do_write_loop` left to libuv,
+            // which calls back from the VM's loop: a worker drains it before its VM goes.
+            let (mut this, turn) =
+                unsafe { (WriteFileWindows::take_from_uv_fs(req), JsTurn::assume(&req)) };
             let rc = this.io_request.result;
             if let Some(err) = rc.to_error(sys::Tag::write) {
-                fold(this.throw(err));
+                fold(this.throw(err, turn), turn);
                 return;
             }
 
             this.total_written += usize::try_from(rc.int()).expect("int cast");
-            fold(this.do_write_loop());
+            fold(this.do_write_loop(turn), turn);
         }
 
-        fn on_finish(mut self: Box<Self>) -> jsc::JsResult<()> {
-            let _exit = self.event_loop.enter_scope();
+        fn on_finish(mut self: Box<Self>, turn: JsTurn<'_>) -> jsc::JsResult<()> {
+            let _exit = self.event_loop.get(turn.live.thread).enter_scope(turn);
 
             let (mut promise, global_this) = (self.promise.take(), self.global_this);
-            let _context =
-                bun_jsc::virtual_machine::VirtualMachine::get().enter_context(self.context);
+            let _context = bun_jsc::virtual_machine::VirtualMachine::get(turn.live)
+                .enter_context(self.context);
 
             let result = if let Some(err) = self.to_system_error() {
                 WriteFileResultType::Err(Box::new(err))
@@ -718,10 +733,10 @@ mod windows_impl {
             settle(promise.swap(), &global_this, result)
         }
 
-        fn throw(mut self: Box<Self>, err: sys::Error) -> jsc::JsResult<()> {
+        fn throw(mut self: Box<Self>, err: sys::Error, turn: JsTurn<'_>) -> jsc::JsResult<()> {
             debug_assert!(self.err.is_none());
             self.err = Some(err);
-            self.on_finish()
+            self.on_finish(turn)
         }
 
         pub(crate) fn to_system_error(&self) -> Option<SystemError> {
@@ -746,13 +761,13 @@ mod windows_impl {
             None
         }
 
-        fn do_write_loop(mut self: Box<Self>) -> jsc::JsResult<()> {
+        fn do_write_loop(mut self: Box<Self>, turn: JsTurn<'_>) -> jsc::JsResult<()> {
             let remain_full = self.bytes_blob.shared_view();
             let off = self.total_written.min(remain_full.len());
             let remain = &remain_full[off..];
 
             if remain.is_empty() {
-                return self.on_finish();
+                return self.on_finish(turn);
             }
 
             let buf = uv::uv_buf_t {
@@ -761,7 +776,7 @@ mod windows_impl {
             };
             self.io_request.deinit();
 
-            let (loop_, fd) = (self.event_loop.uv_loop(), self.fd);
+            let (loop_, fd) = (self.event_loop.get(turn.live.thread).uv_loop(), self.fd);
             let this = bun_core::heap::into_raw(self);
             // SAFETY: the VM's loop outlives the request, libuv copies `buf` before it returns, and
             // it has `this`, whose blob keeps the bytes, until `on_write_complete`.
@@ -788,7 +803,7 @@ mod windows_impl {
                 ));
             };
             // SAFETY: libuv keeps nothing of a request that it refuses.
-            unsafe { bun_core::heap::take(this) }.throw(err)
+            unsafe { bun_core::heap::take(this) }.throw(err, turn)
         }
     }
 
@@ -847,7 +862,11 @@ pub(crate) struct WriteFileWaitFromLockedValueTask {
 }
 
 impl WriteFileWaitFromLockedValueTask {
-    pub(crate) fn then_wrap(this: NonNull<c_void>, value: &mut body::Value) {
+    pub(crate) fn then_wrap(
+        this: NonNull<c_void>,
+        value: &mut body::Value,
+        _turn: bun_core::JsTurn<'_>,
+    ) {
         // SAFETY: `this` is the Box-allocated task registered as `locked.task` below;
         // ownership is reclaimed here (the `Locked` arm re-leaks it).
         let this = unsafe {
@@ -867,13 +886,13 @@ impl WriteFileWaitFromLockedValueTask {
         match value {
             body::Value::Error(err_ref) => {
                 let err = err_ref.to_js(global_this);
-                let _ = value.use_();
+                let _ = value.use_(global_ref.turn());
                 this.promise
                     .get()
                     .reject_with_async_stack(global_this, Ok(err))?;
             }
             body::Value::Used => {
-                let _ = value.use_();
+                let _ = value.use_(global_ref.turn());
                 this.promise.get().reject(
                     global_this,
                     Ok(global_this.create_error_instance(format_args!(
@@ -886,7 +905,7 @@ impl WriteFileWaitFromLockedValueTask {
             | body::Value::Null
             | body::Value::Empty
             | body::Value::Blob(_) => {
-                let mut blob = value.use_();
+                let mut blob = value.use_(global_ref.turn());
                 // TODO: this should be one promise not two!
                 let new_promise = match blob::write_file_with_source_destination(
                     &global_this.js_thread(context),

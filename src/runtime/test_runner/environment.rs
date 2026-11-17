@@ -2,7 +2,7 @@
 
 use super::jest::Jest;
 use bun_core::lexer::end_of_run;
-use bun_core::{Output, Timespec, TimespecMockMode};
+use bun_core::{JsTurn, Output, Timespec, TimespecMockMode, VmLive};
 use bun_core::strings;
 use bun_jsc::event_loop::TopLevelWaitError;
 use bun_jsc::virtual_machine::{VirtualMachine, runtime_hooks};
@@ -124,28 +124,29 @@ impl Environment {
         &mut self,
         vm: &VirtualMachine,
         path: &[u8],
+        turn: JsTurn<'_>,
     ) -> crate::Result<*mut JSInternalPromise> {
         if !core::mem::replace(&mut self.is_entered, true) {
-            if let Some(rejected) = self.enter(vm, path)? {
+            if let Some(rejected) = self.enter(vm, path, turn)? {
                 return Ok(rejected);
             }
         } else if let Some(function) = &self.teardown {
             // --rerun-each loads the file again. It only needs a new environment if the window was closed.
             let is_closed = match function
                 .get()
-                .call(vm.global(), JSValue::UNDEFINED, &[JSValue::TRUE])
+                .call(vm.global(turn), JSValue::UNDEFINED, &[JSValue::TRUE])
             {
                 Ok(is_closed) => is_closed.to_boolean(),
-                Err(err) => return rejected(vm, err),
+                Err(err) => return rejected(vm, err, turn),
             };
             if is_closed {
-                self.teardown(vm);
-                if let Some(rejected) = self.enter(vm, path)? {
+                self.teardown(vm, turn);
+                if let Some(rejected) = self.enter(vm, path, turn)? {
                     return Ok(rejected);
                 }
             }
         }
-        Ok(vm.load_entry_point_for_test_runner(path)?)
+        Ok(vm.load_entry_point_for_test_runner(path, turn)?)
     }
 
     /// An unsupported pragma only warns, so files with pragmas that older `bun test` versions ignored keep running.
@@ -154,6 +155,7 @@ impl Environment {
         &mut self,
         vm: &VirtualMachine,
         path: &[u8],
+        turn: JsTurn<'_>,
     ) -> crate::Result<Option<*mut JSInternalPromise>> {
         let kind = match &self.comment {
             None => self.project,
@@ -178,16 +180,16 @@ impl Environment {
             && !vm.preload.get().is_empty()
             && (kind != self.project || self.options.is_some())
         {
-            let project = match setup(vm, self.project, None, path, false) {
+            let project = match setup(vm, self.project, None, path, false, turn) {
                 Ok(project) => project,
-                Err(err) => return rejected(vm, err).map(Some),
+                Err(err) => return rejected(vm, err, turn).map(Some),
             };
             vm.set_main(Some(path));
-            let _ = vm.ensure_debugger(true);
+            let _ = vm.ensure_debugger(true, turn);
             let hooks = runtime_hooks().expect("RuntimeHooks not installed");
-            let rejected_preload = (hooks.load_preloads)(vm)?;
+            let rejected_preload = (hooks.load_preloads)(vm, turn)?;
             if let Some(project) = project {
-                teardown(vm, &project);
+                teardown(vm, &project, turn);
             }
             if !rejected_preload.is_null() {
                 return Ok(Some(rejected_preload));
@@ -195,27 +197,27 @@ impl Environment {
         }
 
         let options = self.options.as_deref();
-        self.teardown = match setup(vm, kind, options, path, self.comment.is_some()) {
+        self.teardown = match setup(vm, kind, options, path, self.comment.is_some(), turn) {
             Ok(teardown) => teardown,
-            Err(err) => return rejected(vm, err).map(Some),
+            Err(err) => return rejected(vm, err, turn).map(Some),
         };
         Ok(None)
     }
 
     #[optimize(size)]
-    pub(crate) fn teardown(&mut self, vm: &VirtualMachine) {
+    pub(crate) fn teardown(&mut self, vm: &VirtualMachine, turn: JsTurn<'_>) {
         if let Some(function) = self.teardown.take() {
-            teardown(vm, &function);
+            teardown(vm, &function, turn);
         }
     }
 }
 
-pub(crate) fn is_in_preload() -> bool {
-    VirtualMachine::get().is_in_preload.get()
+pub(crate) fn is_in_preload(live: VmLive<'_>) -> bool {
+    VirtualMachine::get(live).is_in_preload.get()
 }
 
-fn rejected(vm: &VirtualMachine, err: JsError) -> crate::Result<*mut JSInternalPromise> {
-    let promise = JSPromise::rejected_promise_with_caught_exception(vm.global(), err)?;
+fn rejected(vm: &VirtualMachine, err: JsError, turn: JsTurn<'_>) -> crate::Result<*mut JSInternalPromise> {
+    let promise = JSPromise::rejected_promise_with_caught_exception(vm.global(turn), err)?;
     promise.set_handled();
     Ok(std::ptr::from_mut(promise))
 }
@@ -234,12 +236,13 @@ fn setup(
     options: Option<&[u8]>,
     path: &[u8],
     is_from_comment: bool,
+    turn: JsTurn<'_>,
 ) -> JsResult<Option<Strong>> {
     let is_left = Jest::runner().is_some_and(|runner| runner.environment_is_left.take());
     if kind == TestEnvironment::Node && !is_left && !vm.test_isolation_state.shares_global.get() {
         return Ok(None);
     }
-    let global = vm.global();
+    let global = vm.global(turn);
     let teardown = bun_jsc::cpp::Bun__TestEnvironment__setupFunction(global)?.call(
         global,
         JSValue::UNDEFINED,
@@ -267,8 +270,8 @@ fn setup(
 }
 
 #[optimize(size)]
-fn teardown(vm: &VirtualMachine, function: &Strong) {
-    let global = vm.global();
+fn teardown(vm: &VirtualMachine, function: &Strong, turn: JsTurn<'_>) {
+    let global = vm.global(turn);
     let error = match function
         .get()
         .call(global, JSValue::UNDEFINED, &[JSValue::FALSE])
@@ -289,7 +292,7 @@ fn teardown(vm: &VirtualMachine, function: &Strong) {
                 promise.status() != js_promise::Status::Pending
                     || (timeout != 0
                         && Timespec::now(TimespecMockMode::ForceRealTime).greater(&deadline))
-            });
+            }, turn);
             if let Err(nothing_left @ TopLevelWaitError::NothingLeft) = waited {
                 global.create_error_instance(format_args!(
                     "The test environment never finished closing\nnote: {nothing_left}"

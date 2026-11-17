@@ -1,3 +1,4 @@
+use bun_core::VmLive;
 use bun_dotenv::Loader as DotEnvLoader;
 use bun_uws::Loop as UwsLoop;
 
@@ -20,10 +21,9 @@ use crate::{JsEventLoop, JsEventLoopKind};
 // handle construction (`JsEventLoop::new`); all dispatch sites are safe method
 // calls.
 unsafe extern "Rust" {
-    /// `jsc::VirtualMachine::get().event_loop()` — erased `*mut jsc::EventLoop`
-    /// for the current thread. Kept as a bare extern (no owner). No caller-side
-    /// preconditions: panics (not UB) if no VM is bound on this thread.
-    pub(crate) safe fn __bun_js_event_loop_current() -> *mut ();
+    /// `jsc::VirtualMachine::get(live).event_loop()` — erased `*mut jsc::EventLoop`
+    /// for the current thread. Kept as a bare extern (no owner).
+    pub(crate) safe fn __bun_js_event_loop_current(live: VmLive<'_>) -> *mut ();
 }
 
 /// Wrap an erased `*mut jsc::EventLoop` in a
@@ -163,9 +163,9 @@ impl EventLoopHandle {
     }
 
     /// The current thread's JS event loop, for callers that cannot name `VirtualMachine`.
-    pub fn js_current() -> EventLoopHandle {
+    pub fn js_current(live: VmLive<'_>) -> EventLoopHandle {
         EventLoopHandle::Js {
-            owner: JsEventLoop::current(),
+            owner: JsEventLoop::current(live),
         }
     }
 

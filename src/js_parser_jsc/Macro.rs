@@ -10,6 +10,7 @@ use bun_bundler::{Transpiler, entry_points::MacroEntryPoint};
 use bun_collections::HashMap;
 use bun_core::Output;
 use bun_core::strings;
+use bun_core::{JsTurn, LoopTurn, ThreadLive};
 use bun_dotenv::Loader as DotEnvLoader;
 
 use crate::Error;
@@ -43,6 +44,7 @@ fn call_macro(
     import_range: Range,
     caller: Expr,
     function_name: &[u8],
+    turn: LoopTurn<'_>,
 ) -> crate::Result<Expr> {
     if bun_jsc::compiled_program::compiled_program()
         .is_some_and(|program| !bun_jsc::compiled_program::admits_unknown_javascript(program))
@@ -132,12 +134,13 @@ fn call_macro(
     );
 
     let vm = match ctx.macro_load_states.get(hash) {
-        Some(MacroLoadState::Loaded) => VirtualMachine::get(),
+        Some(MacroLoadState::Loaded(has_vm)) => VirtualMachine::get(has_vm.live(turn.live)),
         Some(MacroLoadState::Disabled) => return Ok(caller),
         None => {
             ctx.macro_load_states.set(hash, MacroLoadState::Disabled);
-            let is_new_vm = !VirtualMachine::is_loaded();
-            let vm = if is_new_vm {
+            let (vm, is_new_vm) = if let Some(vm) = VirtualMachine::get_or_null(turn.live) {
+                (vm, false)
+            } else {
                 // SAFETY: the contract of `MacroContext::new`. `env` is the build's loader: it
                 // outlives the build and nothing writes to it while parse tasks run.
                 let (options, env) = unsafe {
@@ -146,9 +149,7 @@ fn call_macro(
                         (*transpiler).env.as_ref(),
                     )
                 };
-                init_macro_vm(log, env, options)?
-            } else {
-                VirtualMachine::get()
+                (init_macro_vm(log, env, options, turn.live)?, true)
             };
             load_macro(
                 vm,
@@ -157,8 +158,9 @@ fn call_macro(
                 function_name,
                 &specifier_buf[0..specifier_buf_len as usize],
                 hash,
+                vm.turn(turn),
             )?;
-            ctx.macro_load_states.set(hash, MacroLoadState::Loaded);
+            (ctx.macro_load_states).set(hash, MacroLoadState::Loaded(vm.live().has_vm));
             Output::flush();
             vm
         }
@@ -179,6 +181,7 @@ fn call_macro(
             source,
             hash,
             JSValue::from_encoded(ctx.javascript_object.0 as usize),
+            vm.turn(turn),
         )
     });
     Ok(ret?)
@@ -192,7 +195,10 @@ fn call_macro(
 /// [`collect_macro_vm_garbage`]: bun_jsc::virtual_machine::collect_macro_vm_garbage
 #[unsafe(no_mangle)]
 fn __bun_macro_collect_vm_garbage() {
-    bun_jsc::virtual_machine::collect_macro_vm_garbage();
+    let scope = ();
+    // SAFETY: a worker of the bundler ends on its own thread, whose macro VM is never freed.
+    let live = unsafe { ThreadLive::assume(&scope) };
+    bun_jsc::virtual_machine::collect_macro_vm_garbage(live);
 }
 
 #[unsafe(no_mangle)]
@@ -207,6 +213,8 @@ fn __bun_macro_context_call(
     caller: Expr,
     function_name: &[u8],
 ) -> Result<Expr, bun_js_parser::Error> {
+    // SAFETY: the parser runs a macro from whatever called it, on any thread. No finalizer parses.
+    let turn = unsafe { LoopTurn::assume(&bump) };
     // ABI: the `extern "Rust"` declaration in bun_js_parser names
     // `bun_js_parser::Error`; keep both sides byte-identical.
     let caller_loc = caller.loc;
@@ -220,6 +228,7 @@ fn __bun_macro_context_call(
         import_range,
         caller,
         function_name,
+        turn,
     )
     .map_err(|e| {
         // visit_expr only prints a fallback "macro threw exception" when
@@ -237,11 +246,12 @@ fn __bun_macro_context_call(
     })
 }
 
-fn init_macro_vm(
+fn init_macro_vm<'a>(
     log: &mut Log,
     env: Option<&DotEnvLoader>,
     transform_options: &TransformOptions,
-) -> crate::Result<&'static VirtualMachine> {
+    live: ThreadLive<'a>,
+) -> crate::Result<&'a VirtualMachine> {
     let mut transform_options = transform_options.clone();
     // Build-only flags about the output bundle. The macro module's own
     // imports must still resolve.
@@ -264,7 +274,9 @@ fn init_macro_vm(
         is_main_thread: false,
         ..Default::default()
     };
-    let vm = VirtualMachine::init(log, options)?;
+    // SAFETY: the one caller has seen that none is loaded, and a thread whose VM has ended parses
+    // nothing. `log` lasts for this parse only: the VM keeps the pointer after it.
+    let vm = unsafe { VirtualMachine::init(log, options, live) }?;
     // This VM stays until the process exits.
     let _ = env_loader.map(AliasableBox::into_raw);
     Ok(vm)
@@ -277,6 +289,7 @@ fn load_macro(
     function_name: &[u8],
     specifier: &[u8],
     hash: i32,
+    turn: JsTurn<'_>,
 ) -> crate::Result<()> {
     // Covers `configure_defines` and the macro module's top-level code.
     let _mode_guard = MacroModeGuard::new(vm);
@@ -286,7 +299,7 @@ fn load_macro(
     }
 
     let loaded_result =
-        vm.load_macro_entry_point(input_specifier, function_name, specifier, hash)?;
+        vm.load_macro_entry_point(input_specifier, function_name, specifier, hash, turn)?;
 
     // SAFETY: `loaded_result` is a live heap-allocated `JSInternalPromise`
     // returned by `loadAndEvaluateModule`.
@@ -296,7 +309,7 @@ fn load_macro(
         vm.run_with_api_lock(|| {
             // SAFETY: `vm.global` is the live per-thread global; `loaded_result`
             // is a live promise cell.
-            let (global, promise) = unsafe { (&*vm.global.get(), (*loaded_result).to_js()) };
+            let (global, promise) = unsafe { (&*vm.global_ptr(), (*loaded_result).to_js()) };
             vm.unhandled_rejection(global, result, promise);
         });
         return Err(crate::Error::MacroLoadError);
@@ -414,12 +427,13 @@ impl<'a> Run<'a> {
         args: &[JSValue],
         source: &Source,
         id: i32,
+        turn: JsTurn<'_>,
     ) -> Result<Expr, MacroError> {
         let Some(macro_callback) = vm.macros.get().get(&id).map(jsc::Strong::get) else {
             return Ok(caller);
         };
 
-        let global = vm.global();
+        let global = vm.global(turn);
         let result = vm.run_with_api_lock(|| {
             macro_callback
                 .call(global, JSValue::ZERO, args)
@@ -692,7 +706,7 @@ impl<'a> Run<'a> {
 
                 let vm = self.vm;
                 // The VM stopped before the macro's promise settled: throw its termination and unwind.
-                vm.wait_for_promise(promise)
+                vm.wait_for_promise(promise, self.global.turn())
                     .map_err(|stopped| MacroError::Js(stopped.throw(self.global)))?;
 
                 let promise_result = promise.result(vm.jsc_vm());
@@ -747,6 +761,7 @@ impl Runner {
         source: &Source,
         id: i32,
         javascript_object: JSValue,
+        turn: JsTurn<'_>,
     ) -> Result<Expr, MacroError> {
         if bun_core::env::IS_DEBUG {
             bun_core::prettyln!(
@@ -786,7 +801,7 @@ impl Runner {
             has_js_object: javascript_object != JSValue::ZERO,
         };
 
-        let global_object = vm.global();
+        let global_object = vm.global(turn);
 
         match &caller.data {
             ExprData::ECall(call) => {
@@ -849,6 +864,7 @@ impl Runner {
             source: &'c Source<'c>,
             id: i32,
             result: Result<Expr, MacroError>,
+            turn: JsTurn<'c>,
         }
 
         extern "C" fn call() {
@@ -863,6 +879,7 @@ impl Runner {
                     state.js_args,
                     state.source,
                     state.id,
+                    state.turn,
                 );
             });
         }
@@ -876,16 +893,14 @@ impl Runner {
             source,
             id,
             result: Err(MacroError::MacroFailed),
+            turn,
         };
 
         jsc::mark_binding();
         CALL_STATE.with(|s| s.set((&raw mut data).cast::<c_void>()));
-        // SAFETY: `call` only reads CALL_STATE which we just set. The raw
-        // `vm.global: *JSGlobalObject` field is read via raw-ptr field access
-        // (NOT the `&`-returning `.global()` accessor) so the `*mut` provenance
-        // is preserved across FFI.
+        // SAFETY: `call` only reads CALL_STATE which we just set.
         unsafe {
-            Bun__startMacro(call as *const c_void, vm.global.get().cast::<c_void>());
+            Bun__startMacro(call as *const c_void, vm.global_ptr().cast::<c_void>());
         }
         CALL_STATE.with(|s| s.set(core::ptr::null_mut()));
         data.result

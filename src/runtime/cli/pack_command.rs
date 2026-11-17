@@ -11,7 +11,7 @@ use bun_archive::tar;
 use bun_ast::{E, Expr, ExprData};
 use bun_collections::StringHashMap;
 use bun_core::ZBox;
-use bun_core::{Global, Output, Progress, fmt as bun_fmt};
+use bun_core::{Global, LoopTurn, Output, Progress, fmt as bun_fmt};
 use bun_core::{ZStr, strings};
 use bun_glob as glob;
 use bun_install::PackageManager;
@@ -114,6 +114,7 @@ impl PackCommand {
         ctx: Command::Context<'_>,
         manager: &mut PackageManager,
         original_cwd: &[u8],
+        turn: LoopTurn<'_>,
     ) -> crate::Result<()> {
         if manager.options.log_level != LogLevel::Silent
             && manager.options.log_level != LogLevel::Quiet
@@ -174,7 +175,7 @@ impl PackCommand {
         };
 
         // just pack the current workspace
-        if let Err(err) = pack(pack_ctx, &abs_pkg_json, false) {
+        if let Err(err) = pack(pack_ctx, &abs_pkg_json, false, turn) {
             match err {
                 PackError::OutOfMemory => bun_core::out_of_memory(),
                 PackError::MissingPackageName | PackError::MissingPackageVersion => {
@@ -1645,6 +1646,7 @@ pub(crate) fn pack(
     mut ctx: Context<'_>,
     abs_package_json_path: &ZStr,
     for_publish: bool,
+    turn: LoopTurn<'_>,
 ) -> Result<Option<Publish::Context>, PackError> {
     let log_level = ctx.manager.options.log_level;
     let bump = cli_arena();
@@ -1703,7 +1705,7 @@ pub(crate) fn pack(
         for &name in before_pack {
             if let Some(script) = script(name) {
                 ran_scripts = true;
-                run_lifecycle_script(&mut ctx, script, name, abs_workspace_path)?;
+                run_lifecycle_script(&mut ctx, script, name, abs_workspace_path, turn)?;
             }
         }
         postpack_script = script(b"postpack").map(Box::from);
@@ -1831,6 +1833,7 @@ pub(crate) fn pack(
                 postpack_script_str,
                 b"postpack",
                 abs_workspace_path,
+                turn,
             )?;
         }
 
@@ -2051,6 +2054,7 @@ pub(crate) fn pack(
             postpack_script_str,
             b"postpack",
             abs_workspace_path,
+            turn,
         )?;
     }
 
@@ -2069,6 +2073,7 @@ fn run_lifecycle_script(
     script: &[u8],
     name: &[u8],
     abs_workspace_path: &[u8],
+    turn: LoopTurn<'_>,
 ) -> Result<(), PackError> {
     match RunCommand::run_lifecycle_script_foreground(
         ctx.command_ctx,
@@ -2077,6 +2082,7 @@ fn run_lifecycle_script(
         abs_workspace_path,
         ctx.manager.env_mut(),
         ctx.manager.options.log_level == LogLevel::Silent,
+        turn,
     ) {
         Ok(()) => Ok(()),
         Err(crate::Error::MissingShell) => {

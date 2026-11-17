@@ -3,6 +3,7 @@
 use crate::Error;
 use bun_bundler::bundle_v2::{DependenciesScanner, DependenciesScannerResult};
 use bun_core::Global;
+use bun_core::LoopTurn;
 use bun_install::package_manager_real::command_line_arguments::CommandLineArguments;
 use bun_install::package_manager_real::{Subcommand, update_package_json_and_install_and_cli};
 
@@ -13,17 +14,28 @@ use crate::command::{Context, ContextData};
 pub(crate) fn update_package_json_and_install_catch_error(
     ctx: Context,
     subcommand: Subcommand,
+    turn: LoopTurn<'_>,
 ) -> Result<(), Error> {
-    update_package_json_and_install(ctx, subcommand).or_else(InstallCommand::handle_error)
+    update_package_json_and_install(ctx, subcommand, turn).or_else(InstallCommand::handle_error)
 }
 
-fn update_package_json_and_install(ctx: Context, subcommand: Subcommand) -> Result<(), Error> {
+fn update_package_json_and_install(
+    ctx: Context,
+    subcommand: Subcommand,
+    turn: LoopTurn<'_>,
+) -> Result<(), Error> {
     let mut cli = CommandLineArguments::parse(subcommand)?;
 
     if cli.analyze {
-        return analyze_dependencies_and_install(ctx, &mut cli, b"add", &mut |ctx, cli| {
-            update_package_json_and_install_and_cli(ctx, subcommand, cli).map_err(Into::into)
-        });
+        return analyze_dependencies_and_install(
+            ctx,
+            &mut cli,
+            b"add",
+            &mut |ctx, cli| {
+                update_package_json_and_install_and_cli(ctx, subcommand, cli).map_err(Into::into)
+            },
+            turn,
+        );
     }
 
     update_package_json_and_install_and_cli(ctx, subcommand, &cli).map_err(Into::into)
@@ -36,6 +48,7 @@ pub(crate) fn analyze_dependencies_and_install(
     cli: &mut CommandLineArguments,
     verb: &'static [u8],
     install: &mut dyn FnMut(&mut ContextData, &CommandLineArguments) -> Result<(), Error>,
+    turn: LoopTurn<'_>,
 ) -> Result<(), Error> {
     // Raw pointers, because `BuildCommand::exec` holds the same `ContextData` across the callback.
     struct Analyzer<'a> {
@@ -98,5 +111,5 @@ pub(crate) fn analyze_dependencies_and_install(
     };
 
     // SAFETY: `ctx_ptr` comes from the `ctx` parameter, which is not used again.
-    BuildCommand::exec(unsafe { &mut *ctx_ptr }, Some(&mut fetcher))
+    BuildCommand::exec(unsafe { &mut *ctx_ptr }, Some(&mut fetcher), turn)
 }

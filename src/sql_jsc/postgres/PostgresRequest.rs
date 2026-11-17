@@ -2,6 +2,7 @@ use crate::jsc::{
     JSArrayIterator, JSGlobalObject, JSType, JSValue, JsError, JsResult, StringJsc as _,
     VirtualMachineSqlExt as _,
 };
+use bun_core::JsTurn;
 use bun_core::String as BunString;
 use bun_core::fmt as bun_fmt;
 
@@ -381,12 +382,13 @@ fn on_ssl_request_reply(
     connection: &PostgresSQLConnection,
     c: u8,
     sent: u8,
+    turn: JsTurn<'_>,
 ) -> Result<(), AnyPostgresError> {
     match c {
         b'S' => {
             debug_assert!(sent == 8);
             connection.tls_status.set(TLSStatus::SslOk);
-            connection.setup_tls();
+            connection.setup_tls(turn);
             Ok(())
         }
         b'N' => {
@@ -403,7 +405,7 @@ fn on_ssl_request_reply(
                 return Ok(());
             }
             // Nothing the server sent before our StartupMessage is a reply to it.
-            connection.start();
+            connection.start(turn);
             Ok(())
         }
         _ => Err(AnyPostgresError::UnexpectedMessage),
@@ -414,6 +416,7 @@ fn on_ssl_request_reply(
 pub(crate) fn on_data(
     connection: &PostgresSQLConnection,
     reader: &protocol::NewReader<'_>,
+    turn: JsTurn<'_>,
 ) -> Result<Option<PendingNotification>, AnyPostgresError> {
     use MessageType as M;
     loop {
@@ -429,7 +432,7 @@ pub(crate) fn on_data(
         // it is the only unframed backend byte and must be handled before the
         // frame peek below.
         if let TLSStatus::MessageSent(n) = connection.tls_status.get() {
-            return on_ssl_request_reply(connection, c, n).map(|()| None);
+            return on_ssl_request_reply(connection, c, n, turn).map(|()| None);
         }
 
         // Every other backend message is Byte1(type) Int32(length) body[length-4].
@@ -445,27 +448,27 @@ pub(crate) fn on_data(
         connection.defer_reads.set(after != 0 || c == b'T');
 
         match c {
-            b'D' => connection.on(M::DataRow, reader)?,
-            b'd' => connection.on(M::CopyData, reader)?,
-            b'S' => connection.on(M::ParameterStatus, reader)?,
-            b'Z' => connection.on(M::ReadyForQuery, reader)?,
-            b'C' => connection.on(M::CommandComplete, reader)?,
-            b'2' => connection.on(M::BindComplete, reader)?,
-            b'1' => connection.on(M::ParseComplete, reader)?,
-            b't' => connection.on(M::ParameterDescription, reader)?,
-            b'T' => connection.on(M::RowDescription, reader)?,
-            b'R' => connection.on(M::Authentication, reader)?,
-            b'n' => connection.on(M::NoData, reader)?,
-            b'K' => connection.on(M::BackendKeyData, reader)?,
-            b'E' => connection.on(M::ErrorResponse, reader)?,
-            b's' => connection.on(M::PortalSuspended, reader)?,
-            b'3' => connection.on(M::CloseComplete, reader)?,
-            b'G' => connection.on(M::CopyInResponse, reader)?,
-            b'N' => connection.on(M::NoticeResponse, reader)?,
-            b'I' => connection.on(M::EmptyQueryResponse, reader)?,
-            b'H' => connection.on(M::CopyOutResponse, reader)?,
-            b'c' => connection.on(M::CopyDone, reader)?,
-            b'W' => connection.on(M::CopyBothResponse, reader)?,
+            b'D' => connection.on(M::DataRow, reader, turn)?,
+            b'd' => connection.on(M::CopyData, reader, turn)?,
+            b'S' => connection.on(M::ParameterStatus, reader, turn)?,
+            b'Z' => connection.on(M::ReadyForQuery, reader, turn)?,
+            b'C' => connection.on(M::CommandComplete, reader, turn)?,
+            b'2' => connection.on(M::BindComplete, reader, turn)?,
+            b'1' => connection.on(M::ParseComplete, reader, turn)?,
+            b't' => connection.on(M::ParameterDescription, reader, turn)?,
+            b'T' => connection.on(M::RowDescription, reader, turn)?,
+            b'R' => connection.on(M::Authentication, reader, turn)?,
+            b'n' => connection.on(M::NoData, reader, turn)?,
+            b'K' => connection.on(M::BackendKeyData, reader, turn)?,
+            b'E' => connection.on(M::ErrorResponse, reader, turn)?,
+            b's' => connection.on(M::PortalSuspended, reader, turn)?,
+            b'3' => connection.on(M::CloseComplete, reader, turn)?,
+            b'G' => connection.on(M::CopyInResponse, reader, turn)?,
+            b'N' => connection.on(M::NoticeResponse, reader, turn)?,
+            b'I' => connection.on(M::EmptyQueryResponse, reader, turn)?,
+            b'H' => connection.on(M::CopyOutResponse, reader, turn)?,
+            b'c' => connection.on(M::CopyDone, reader, turn)?,
+            b'W' => connection.on(M::CopyBothResponse, reader, turn)?,
             b'A' => {
                 let notification = protocol::NotificationResponse::decode_internal(reader)?;
                 if reader.peek().len() == after

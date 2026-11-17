@@ -65,7 +65,7 @@ bun_dispatch::link_interface! {
         HostProcess,
         SyncWindows,
     ] {
-        fn on_process_exit(status: Status, rusage: &Rusage);
+        fn on_process_exit(status: Status, rusage: &Rusage, turn: bun_core::LoopTurn<'_>);
     }
 }
 
@@ -80,14 +80,14 @@ pub type ProcessExitHandler = Option<ProcessExit>;
 #[cfg(windows)]
 link_impl_ProcessExit! {
     SyncWindows for process::sync::SyncWindowsProcess => |this| {
-        on_process_exit(status, _rusage) =>
+        on_process_exit(status, _rusage, _turn) =>
             process::sync::SyncWindowsProcess::on_process_exit(this, status),
     }
 }
 #[cfg(not(windows))]
 link_impl_ProcessExit! {
     SyncWindows for process::SyncProcessPosix => |_this| {
-        on_process_exit(_status, _rusage) =>
+        on_process_exit(_status, _rusage, _turn) =>
             unreachable!("SyncWindows exit handler is Windows-only"),
     }
 }

@@ -25,7 +25,7 @@ const extraPipes = table.instance("Array").holding({ element: table.union(table.
 export const Subprocess = b.class({
   rustPath: "crate::api::bun::subprocess::Subprocess<'static>",
   refCounted: true,
-  finalize: true,
+  finalize: { passVm: true },
   memoryCost: true,
   internalFields: ["exitedPromise", "ipcCallback", "onDisconnectCallback", "onExitCallback", "terminal"],
   proto: {

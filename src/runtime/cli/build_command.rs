@@ -7,7 +7,7 @@ use bun_bundler::options;
 use bun_bundler::transpiler;
 use bun_core::env::OperatingSystem;
 use bun_core::strings;
-use bun_core::{Global, Output, fmt as bun_fmt};
+use bun_core::{Global, LoopTurn, Output, fmt as bun_fmt};
 use bun_js_parser::parser::Runtime;
 use bun_options_types::context::MacroOptions;
 use bun_options_types::schema::api;
@@ -43,6 +43,7 @@ impl BuildCommand {
     pub(crate) fn exec(
         ctx: Context,
         fetcher: Option<&mut bundle_v2::DependenciesScanner<'_>>,
+        turn: LoopTurn<'_>,
     ) -> Result<(), crate::Error> {
         Global::configure_allocator(Global::AllocatorConfiguration {
             long_running: true,
@@ -60,7 +61,7 @@ impl BuildCommand {
         }
 
         if ctx.bundler_options.bake {
-            return crate::bake::production::build_command(ctx);
+            return crate::bake::production::build_command(ctx, turn);
         }
 
         if fetcher.is_some() {

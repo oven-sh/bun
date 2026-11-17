@@ -13,7 +13,7 @@ use crate::api::bun::process::SpawnResultExt as _;
 #[cfg(not(unix))]
 use crate::api::bun::process::WindowsStdio as Stdio;
 use crate::api::bun::process::{self as spawn, Process, Rusage, SpawnOptions, Status};
-use bun_core::{self, Output};
+use bun_core::{self, LoopTurn, Output};
 use bun_io::max_buf::Kind;
 use bun_io::{BufferedReader, IoEvent, Owner, PollTag};
 #[cfg(windows)]
@@ -123,7 +123,11 @@ impl Worker {
     }
 
     /// The caller counts the worker in `live_workers` on `Ok`.
-    pub(crate) fn start(&mut self, coord: &SpawnContext<'_>) -> crate::Result<()> {
+    pub(crate) fn start(
+        &mut self,
+        coord: &SpawnContext<'_>,
+        turn: LoopTurn<'_>,
+    ) -> crate::Result<()> {
         debug_assert!(!self.alive);
 
         let ptr = (&raw mut *self).cast();
@@ -266,7 +270,7 @@ impl Worker {
                 &raw mut **this,
             )
         });
-        match Process::watch_or_reap(process) {
+        match Process::watch_or_reap(process, turn) {
             Ok(_) => {}
             Err(e) => {
                 // Resource cleanup is handled by the function-scope errdefer.
@@ -333,6 +337,6 @@ impl Worker {
 
 bun_spawn::link_impl_ProcessExit! {
     TestParallelWorker for Worker => |this| {
-        on_process_exit(status, rusage) => (*this).on_process_exit(status, rusage),
+        on_process_exit(status, rusage, _turn) => (*this).on_process_exit(status, rusage),
     }
 }

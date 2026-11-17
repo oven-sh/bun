@@ -221,9 +221,9 @@ impl Impl {
         // `is_shutting_down` is set before either path reaches the final
         // collection, and the handle carries no allocation, so skipping the
         // slot release is the whole of teardown. The Rust VM TLS outlives ~VM.
-        match crate::virtual_machine::VirtualMachine::get_or_null() {
-            Some(vm) => {
-                if vm.is_shutting_down() {
+        match crate::virtual_machine::VMHolder::is_shutting_down() {
+            Some(is_shutting_down) => {
+                if is_shutting_down {
                     return;
                 }
             }

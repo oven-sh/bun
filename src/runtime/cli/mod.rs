@@ -5,7 +5,7 @@
 //! per-command exec bodies live in the sibling `*_command.rs` modules.
 
 use bun_core::strings;
-use bun_core::{self as bun, Global, Output};
+use bun_core::{self as bun, Global, LoopTurn, Output};
 use bun_core::{pretty, pretty_error, pretty_errorln};
 
 // ─── compiling submodules ────────────────────────────────────────────────────
@@ -363,7 +363,7 @@ pub(crate) mod cli {
     /// crate-alphabetical order, scattering the cold-start path across pages
     /// shared with bundler/install/css/panic-format bodies.
     #[inline(never)]
-    pub(crate) fn start() {
+    pub(crate) fn start(turn: LoopTurn<'_>) {
         // `bun_crash_handler::cli_state::is_main_thread()` (used to print the
         // `panic(main thread): …` header) compares against a stored OS tid.
         bun_crash_handler::cli_state::set_main_thread_id(bun_threading::current_thread_id());
@@ -378,7 +378,7 @@ pub(crate) mod cli {
         unsafe { (*super::CLI_ARENA.get()).write(bun_alloc::Arena::new()) };
 
         // (The panic hook is installed by `bun_crash_handler::init()` in `bin_entry::main`.)
-        if let Err(err) = Command::start(log) {
+        if let Err(err) = Command::start(log, turn) {
             // Print accumulated diagnostics BEFORE the
             // generic `handle_root_error` "An internal error occurred (..)"
             // message. The bake production path returns `error.BuildFailed`
@@ -1003,7 +1003,7 @@ pub(crate) mod command {
     /// / `exec_auto_or_run` adjacent), instead of fat-LTO inlining it into
     /// `Cli::start` and re-scattering the per-tag tail calls.
     #[inline(never)]
-    pub(crate) fn start(log: &mut bun_ast::Log) -> crate::Result<()> {
+    pub(crate) fn start(log: &mut bun_ast::Log, turn: LoopTurn<'_>) -> crate::Result<()> {
         use bun_removable_features::call_removable;
 
         crate::cli::startup_options::refuse_code_without_interpreter();
@@ -1037,7 +1037,7 @@ pub(crate) mod command {
             if let Some(graph) = bun_standalone_graph::Graph::from_executable()? {
                 // Never taken for a plain `bun` binary; ~2 KB of argv-splice
                 // and ctx-setup code lives behind this cold call.
-                return boot_standalone(graph, log);
+                return boot_standalone(graph, log, turn);
             }
             // Only `bun build --compile` removes the command line, so this file had a program.
             if bun_removable_features::is_removed(bun_removable_features::Feature::Tools) {
@@ -1052,7 +1052,7 @@ pub(crate) mod command {
                 .starts_with(run_compiled::PROGRAM_FILE_FLAG)
             && let Some(graph) = run_compiled::load_program_file()?
         {
-            return boot_standalone(graph, log);
+            return boot_standalone(graph, log, turn);
         }
 
         // Fast path: `bun -v` / `bun --version` / `bun --revision`, the
@@ -1126,7 +1126,14 @@ pub(crate) mod command {
                     .map(bun_core::ZStr::as_bytes)
                     .is_some_and(looks_like_run_entrypoint)
                 {
-                    return call_removable!(Tools, Abort, exec_auto_or_run, Tag::AutoCommand, log);
+                    return call_removable!(
+                        Tools,
+                        Abort,
+                        exec_auto_or_run,
+                        Tag::AutoCommand,
+                        log,
+                        turn
+                    );
                 }
             }
         }
@@ -1142,7 +1149,7 @@ pub(crate) mod command {
 
         match tag {
             Tag::AutoCommand | Tag::RunCommand => {
-                call_removable!(Tools, Abort, exec_auto_or_run, tag, log)
+                call_removable!(Tools, Abort, exec_auto_or_run, tag, log, turn)
             }
             Tag::HelpCommand => HelpCommand::exec(),
             Tag::ReservedCommand => ReservedCommand::exec(),
@@ -1153,21 +1160,23 @@ pub(crate) mod command {
             Tag::InstallCompletionsCommand => {
                 call_removable!(Tools, Abort, exec_install_completions)
             }
-            Tag::PackageManagerCommand => call_removable!(Install, Abort, exec_pm, log),
-            Tag::RunAsNodeCommand => call_removable!(Tools, Abort, exec_run_as_node, log),
+            Tag::PackageManagerCommand => call_removable!(Install, Abort, exec_pm, log, turn),
+            Tag::RunAsNodeCommand => call_removable!(Tools, Abort, exec_run_as_node, log, turn),
             Tag::InfoCommand => call_removable!(Install, Abort, bun_info, log),
-            Tag::BuildCommand => call_removable!(BuildCommand, Abort, exec_build, log),
-            Tag::CompileCommand => call_removable!(AotCompiler, Abort, exec_compile, log),
-            Tag::InstallCommand => call_removable!(Install, Abort, exec_install, log),
-            Tag::AddCommand => call_removable!(Install, Abort, exec_add, log),
-            Tag::UpdateCommand => call_removable!(Install, Abort, exec_update, log),
-            Tag::PatchCommand => call_removable!(Install, Abort, exec_patch, log),
-            Tag::PatchCommitCommand => call_removable!(Install, Abort, exec_patch_commit, log),
+            Tag::BuildCommand => call_removable!(BuildCommand, Abort, exec_build, log, turn),
+            Tag::CompileCommand => call_removable!(AotCompiler, Abort, exec_compile, log, turn),
+            Tag::InstallCommand => call_removable!(Install, Abort, exec_install, log, turn),
+            Tag::AddCommand => call_removable!(Install, Abort, exec_add, log, turn),
+            Tag::UpdateCommand => call_removable!(Install, Abort, exec_update, log, turn),
+            Tag::PatchCommand => call_removable!(Install, Abort, exec_patch, log, turn),
+            Tag::PatchCommitCommand => {
+                call_removable!(Install, Abort, exec_patch_commit, log, turn)
+            }
             Tag::OutdatedCommand => call_removable!(Install, Abort, exec_outdated, log),
             Tag::UpdateInteractiveCommand => {
                 call_removable!(Install, Abort, exec_update_interactive, log)
             }
-            Tag::PublishCommand => call_removable!(Install, Abort, exec_publish, log),
+            Tag::PublishCommand => call_removable!(Install, Abort, exec_publish, log, turn),
             Tag::AuditCommand => call_removable!(Install, Abort, exec_audit, log),
             Tag::CheckCommand => call_removable!(Check, Abort, exec_check, log),
             Tag::LintCommand => call_removable!(Lint, Abort, exec_lint, log),
@@ -1175,17 +1184,17 @@ pub(crate) mod command {
             Tag::DedupeCommand => call_removable!(Install, Abort, exec_dedupe, log),
             Tag::PruneCommand => call_removable!(Install, Abort, exec_prune, log),
             Tag::WhyCommand => call_removable!(Install, Abort, exec_why, log),
-            Tag::BunxCommand => call_removable!(Install, Abort, exec_bunx, log),
-            Tag::ReplCommand => call_removable!(Repl, Abort, exec_repl, log),
-            Tag::RemoveCommand => call_removable!(Install, Abort, exec_remove, log),
+            Tag::BunxCommand => call_removable!(Install, Abort, exec_bunx, log, turn),
+            Tag::ReplCommand => call_removable!(Repl, Abort, exec_repl, log, turn),
+            Tag::RemoveCommand => call_removable!(Install, Abort, exec_remove, log, turn),
             Tag::LinkCommand => call_removable!(Install, Abort, exec_link, log),
             Tag::UnlinkCommand => call_removable!(Install, Abort, exec_unlink, log),
-            Tag::TestCommand => call_removable!(TestCommand, Abort, exec_test, log),
+            Tag::TestCommand => call_removable!(TestCommand, Abort, exec_test, log, turn),
             Tag::GetCompletionsCommand => call_removable!(Tools, Abort, bun_getcompletes, log),
-            Tag::CreateCommand => call_removable!(Create, Abort, bun_create, log),
+            Tag::CreateCommand => call_removable!(Create, Abort, bun_create, log, turn),
             Tag::UpgradeCommand => call_removable!(Upgrade, Abort, exec_upgrade, log),
-            Tag::ExecCommand => call_removable!(Tools, Abort, exec_exec, log),
-            Tag::FuzzilliCommand => call_removable!(Tools, Abort, exec_fuzzilli, log),
+            Tag::ExecCommand => call_removable!(Tools, Abort, exec_exec, log, turn),
+            Tag::FuzzilliCommand => call_removable!(Tools, Abort, exec_fuzzilli, log, turn),
         }
     }
 
@@ -1205,6 +1214,7 @@ pub(crate) mod command {
     fn boot_standalone(
         graph: *mut bun_standalone_graph::Graph,
         log: &mut bun_ast::Log,
+        turn: LoopTurn<'_>,
     ) -> CmdResult {
         // SAFETY: `from_executable` returns a non-null `*mut Graph` whose
         // backing storage is process-static (owned by the executable image).
@@ -1284,14 +1294,14 @@ pub(crate) mod command {
             .collect();
 
         let entry_name = graph.main_module_path().to_vec().into_boxed_slice();
-        super::run_command::RunCommand::boot_standalone(ctx, entry_name, graph)?;
+        super::run_command::RunCommand::boot_standalone(ctx, entry_name, graph, turn)?;
         Ok(())
     }
 
     /// `bun [run] <script>` / `bun --version` / bare `bun`. The dominant tag
     /// pair — kept out-of-line so `start` is a jump table, but *not* `#[cold]`.
     #[inline(never)]
-    fn exec_auto_or_run(tag: Tag, log: &mut bun_ast::Log) -> CmdResult {
+    fn exec_auto_or_run(tag: Tag, log: &mut bun_ast::Log, turn: LoopTurn<'_>) -> CmdResult {
         // Bare `bun` help is served by the empty-positionals fallthrough.
         let ctx = init(tag, log)?;
         ctx.args.target = Some(bun_options_types::schema::api::Target::Bun);
@@ -1311,14 +1321,14 @@ pub(crate) mod command {
 
         if ctx.parallel || ctx.sequential {
             // Result<Infallible, _>: if this returns at all, it's Err.
-            let Err(err) = super::multi_run::run(ctx);
+            let Err(err) = super::multi_run::run(ctx, turn);
             pretty_errorln!("<r><red>error<r>: {}", err.name());
             Global::exit(1);
         }
 
         if !ctx.filters.is_empty() || ctx.workspaces {
             // Result<Infallible, _>: if this returns at all, it's Err.
-            let Err(err) = super::filter_run::run_scripts_with_filter(ctx);
+            let Err(err) = super::filter_run::run_scripts_with_filter(ctx, turn);
             pretty_errorln!("<r><red>error<r>: {}", err.name());
             Global::exit(1);
         }
@@ -1338,12 +1348,12 @@ pub(crate) mod command {
         };
         if ctx.runtime_options.interactive && !ctx.runtime_options.eval.eval_and_print && no_target
         {
-            return run_command::RunCommand::exec_node_repl(ctx);
+            return run_command::RunCommand::exec_node_repl(ctx, turn);
         }
 
         if tag == Tag::AutoCommand && !ctx.runtime_options.eval.script.is_empty() {
             lint_command::read_program_from_stdin(ctx);
-            return run_command::RunCommand::exec_eval(ctx);
+            return run_command::RunCommand::exec_eval(ctx, turn);
         }
 
         if tag == Tag::AutoCommand && ctx.args.entry_points.len() == 1 {
@@ -1364,7 +1374,7 @@ pub(crate) mod command {
                 log_errors: tag != Tag::AutoCommand || !ctx.runtime_options.if_present,
                 allow_fast_run_for_extensions: tag == Tag::AutoCommand,
             };
-            if run_command::RunCommand::exec_with_cfg(ctx, cfg)? {
+            if run_command::RunCommand::exec_with_cfg(ctx, cfg, turn)? {
                 return Ok(());
             }
             if tag == Tag::RunCommand {
@@ -1407,14 +1417,14 @@ pub(crate) mod command {
 
     #[cold]
     #[inline(never)]
-    fn exec_run_as_node(log: &mut bun_ast::Log) -> CmdResult {
+    fn exec_run_as_node(log: &mut bun_ast::Log, turn: LoopTurn<'_>) -> CmdResult {
         let ctx = init(Tag::RunAsNodeCommand, log)?;
-        run_command::RunCommand::exec_as_if_node(ctx)
+        run_command::RunCommand::exec_as_if_node(ctx, turn)
     }
 
     #[cold]
     #[inline(never)]
-    fn exec_bunx(log: &mut bun_ast::Log) -> CmdResult {
+    fn exec_bunx(log: &mut bun_ast::Log, turn: LoopTurn<'_>) -> CmdResult {
         let ctx = init(Tag::BunxCommand, log)?;
         let start_idx = if IS_BUNX_EXE.load(core::sync::atomic::Ordering::Relaxed) {
             0
@@ -1422,30 +1432,30 @@ pub(crate) mod command {
             1
         };
         let argv = argv_zslice();
-        super::bunx_command::BunxCommand::exec(ctx, &argv[start_idx..])
+        super::bunx_command::BunxCommand::exec(ctx, &argv[start_idx..], turn)
     }
 
     #[cold]
     #[inline(never)]
-    fn exec_repl(log: &mut bun_ast::Log) -> CmdResult {
+    fn exec_repl(log: &mut bun_ast::Log, turn: LoopTurn<'_>) -> CmdResult {
         // Inits with RunCommand (repl reuses run params).
         let ctx = init(Tag::RunCommand, log)?;
-        super::repl_command::ReplCommand::exec(ctx)
+        super::repl_command::ReplCommand::exec(ctx, turn)
     }
 
     #[cold]
     #[inline(never)]
-    fn exec_build(log: &mut bun_ast::Log) -> CmdResult {
+    fn exec_build(log: &mut bun_ast::Log, turn: LoopTurn<'_>) -> CmdResult {
         let ctx = init(Tag::BuildCommand, log)?;
-        super::build_command::BuildCommand::exec(ctx, None)?;
+        super::build_command::BuildCommand::exec(ctx, None, turn)?;
         Ok(())
     }
 
     #[cold]
     #[inline(never)]
-    fn exec_compile(log: &mut bun_ast::Log) -> CmdResult {
+    fn exec_compile(log: &mut bun_ast::Log, turn: LoopTurn<'_>) -> CmdResult {
         let ctx = init(Tag::CompileCommand, log)?;
-        super::compile_command::CompileCommand::exec_command(ctx)?;
+        super::compile_command::CompileCommand::exec_command(ctx, turn)?;
         Ok(())
     }
 
@@ -1533,10 +1543,10 @@ pub(crate) mod command {
 
     #[cold]
     #[inline(never)]
-    fn exec_exec(log: &mut bun_ast::Log) -> CmdResult {
+    fn exec_exec(log: &mut bun_ast::Log, turn: LoopTurn<'_>) -> CmdResult {
         let ctx = init(Tag::ExecCommand, log)?;
         if ctx.positionals.len() > 1 {
-            super::exec_command::ExecCommand::exec(ctx)?;
+            super::exec_command::ExecCommand::exec(ctx, turn)?;
         } else {
             tag_print_help(Tag::ExecCommand, true);
         }
@@ -1545,10 +1555,10 @@ pub(crate) mod command {
 
     #[cold]
     #[inline(never)]
-    fn exec_fuzzilli(log: &mut bun_ast::Log) -> CmdResult {
+    fn exec_fuzzilli(log: &mut bun_ast::Log, turn: LoopTurn<'_>) -> CmdResult {
         if bun_core::Environment::ENABLE_FUZZILLI {
             let ctx = init(Tag::FuzzilliCommand, log)?;
-            return super::fuzzilli_command::FuzzilliCommand::exec(ctx);
+            return super::fuzzilli_command::FuzzilliCommand::exec(ctx, turn);
         }
         Err(crate::Error::UnrecognizedCommand)
     }
@@ -1556,34 +1566,34 @@ pub(crate) mod command {
     /// Stamps out `#[cold] #[inline(never)] fn $name(log) { init($tag)?; $exec(ctx) }`
     /// for the trivial `init + exec` arms.
     macro_rules! cold_exec {
-        ($( $name:ident => ($tag:ident, $($path:tt)+) ),* $(,)?) => {
+        ($( $name:ident => ($tag:ident, $path:path $(, $turn:ident)?) ),* $(,)?) => {
             $(
                 #[cold]
                 #[inline(never)]
-                fn $name(log: &mut bun_ast::Log) -> CmdResult {
+                fn $name(log: &mut bun_ast::Log $(, $turn: bun_core::LoopTurn<'_>)?) -> CmdResult {
                     let ctx = init(Tag::$tag, log)?;
-                    $($path)+(ctx)
+                    $path(ctx $(, $turn)?)
                 }
             )*
         };
     }
     cold_exec! {
-        exec_pm                 => (PackageManagerCommand, super::package_manager_command::PackageManagerCommand::exec),
-        exec_install            => (InstallCommand,        super::install_command::InstallCommand::exec),
-        exec_add                => (AddCommand,            super::add_command::AddCommand::exec),
-        exec_update             => (UpdateCommand,         super::update_command::UpdateCommand::exec),
-        exec_patch              => (PatchCommand,          super::patch_command::PatchCommand::exec),
-        exec_patch_commit       => (PatchCommitCommand,    super::patch_commit_command::PatchCommitCommand::exec),
+        exec_pm                 => (PackageManagerCommand, super::package_manager_command::PackageManagerCommand::exec, turn),
+        exec_install            => (InstallCommand,        super::install_command::InstallCommand::exec, turn),
+        exec_add                => (AddCommand,            super::add_command::AddCommand::exec, turn),
+        exec_update             => (UpdateCommand,         super::update_command::UpdateCommand::exec, turn),
+        exec_patch              => (PatchCommand,          super::patch_command::PatchCommand::exec, turn),
+        exec_patch_commit       => (PatchCommitCommand,    super::patch_commit_command::PatchCommitCommand::exec, turn),
         exec_outdated           => (OutdatedCommand,       super::outdated_command::OutdatedCommand::exec),
         exec_update_interactive => (UpdateInteractiveCommand, super::update_interactive_command::UpdateInteractiveCommand::exec),
-        exec_publish            => (PublishCommand,        super::publish_command::PublishCommand::exec),
+        exec_publish            => (PublishCommand,        super::publish_command::PublishCommand::exec, turn),
         exec_why                => (WhyCommand,            super::why_command::WhyCommand::exec),
         exec_dedupe             => (DedupeCommand,         super::dedupe_command::DedupeCommand::exec),
         exec_prune              => (PruneCommand,          super::prune_command::PruneCommand::exec),
-        exec_remove             => (RemoveCommand,         super::remove_command::RemoveCommand::exec),
+        exec_remove             => (RemoveCommand,         super::remove_command::RemoveCommand::exec, turn),
         exec_link               => (LinkCommand,           super::link_command::LinkCommand::exec),
         exec_unlink             => (UnlinkCommand,         super::unlink_command::UnlinkCommand::exec),
-        exec_test               => (TestCommand,           super::test_command::TestCommand::exec),
+        exec_test               => (TestCommand,           super::test_command::TestCommand::exec, turn),
         exec_upgrade            => (UpgradeCommand,        super::upgrade_command::UpgradeCommand::exec),
     }
 
@@ -1735,7 +1745,7 @@ pub(crate) mod command {
 
     #[cold]
     #[inline(never)]
-    fn bun_create(log: &mut bun_ast::Log) -> crate::Result<()> {
+    fn bun_create(log: &mut bun_ast::Log, turn: LoopTurn<'_>) -> crate::Result<()> {
         use super::bunx_command::BunxCommand;
         use super::create_command::{CreateCommand, ExampleTag};
         use bun_core::ZStr;
@@ -1859,10 +1869,10 @@ To create a project with the official Next.js scaffolding tool, run
             for src in &args[template_name_start..] {
                 bunx_args.push(*src);
             }
-            return BunxCommand::exec(ctx, &bunx_args);
+            return BunxCommand::exec(ctx, &bunx_args, turn);
         }
 
-        CreateCommand::exec(ctx, example_tag, template)
+        CreateCommand::exec(ctx, example_tag, template, turn)
     }
 
     /// `bun ./bun.lockb` — print lockfile as yarn.lock (or its hash with `--hash`).

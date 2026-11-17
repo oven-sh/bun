@@ -15,11 +15,12 @@ bun_bundler::link_impl_DevServerHandle! {
                 Err(_) => bun_alloc::out_of_memory(),
             }
         },
-        finalize_bundle(bv2, result) => {
+        finalize_bundle(bv2, result, turn) => {
+            let turn = (*this).vm().live().has_vm.turn(turn);
             // `bv2` borrows the `Transpiler`s stored inline in `DevServer`
             // (stable heap address); the `'static` is a stand-in for the
             // DevServer-self lifetime — see the comment on `CurrentBundle.bv2`.
-            super::finalize::finalize_bundle(&mut *this, &mut *bv2.cast(), result)
+            super::finalize::finalize_bundle(&mut *this, &mut *bv2.cast(), result, turn)
                 .map_err(|e| bun_bundler::Error::from(crate::Error::from(e)))
         },
         handle_parse_task_failure(err, graph, abs_path, log, bv2) => {

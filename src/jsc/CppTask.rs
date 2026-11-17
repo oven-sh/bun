@@ -1,4 +1,5 @@
 use crate::{JSGlobalObject, JsResult};
+use bun_core::VmLive;
 use bun_event_loop::{TaskTag, Taskable, task_tag};
 use bun_threading::work_pool::{Task as WorkPoolTask, WorkPool};
 
@@ -15,7 +16,7 @@ impl Taskable for CppTask {
     const TAG: TaskTag = task_tag::CppTask;
     /// Delete the `WebCore::EventLoopTask` — its captured `Ref`s drop against
     /// the still-live heap.
-    unsafe fn release_unrun(this: *mut Self) {
+    unsafe fn release_unrun(this: *mut Self, _live: VmLive<'_>) {
         unsafe extern "C" {
             fn Bun__deleteEventLoopTask(task: *mut CppTask);
         }

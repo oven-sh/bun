@@ -7,7 +7,7 @@ use core::cell::Cell;
 use core::ffi::CStr;
 use std::io::Write as _;
 
-use bun_core::{CStrRef, Global, Output};
+use bun_core::{CStrRef, Global, JsTurn, Output};
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_options_types::context::MacroOptions;
 use bun_ptr::{CellExt as _, Interned};
@@ -58,6 +58,7 @@ pub(crate) fn run_as_coordinator(
     files: &[Interned],
     ctx: Command::Context,
     coverage_opts: &mut CodeCoverageOptions,
+    turn: JsTurn<'_>,
 ) -> crate::Result<bool> {
     // SAFETY: env loader is initialized before the test runner runs.
     let env = unsafe { &mut *vm.transpiler.get().env };
@@ -226,7 +227,8 @@ pub(crate) fn run_as_coordinator(
 
     vm.event_loop().ensure_waker();
     crate::cli::run_compiled::log_step_of_test_run(format_args!("the coordinator is set up"));
-    vm.run_with_api_lock(|| coord.drive(&abort_guard));
+    let (driven, abort_guard) = (&mut coord, &abort_guard);
+    vm.run_with_api_lock(move || driven.drive(abort_guard, turn));
     reporter.timings.set(coord.timings.take());
     coord.end_group();
     crate::cli::run_compiled::log_largest_worker(
@@ -620,7 +622,12 @@ impl WorkerCommands {
     }
 
     /// Says what the file that runs has counted.
-    fn emit_file_done(&mut self, reporter: &CommandLineReporter, vm: &VirtualMachine) {
+    fn emit_file_done(
+        &mut self,
+        reporter: &CommandLineReporter,
+        vm: &VirtualMachine,
+        turn: JsTurn<'_>,
+    ) {
         let Some(file) = self.running.take() else {
             return;
         };
@@ -638,7 +645,7 @@ impl WorkerCommands {
             self.link
                 .emit(frame::Kind::RefusedChange, |wf| wf.str(&refusal));
         }
-        let first_loads = first_loads(vm);
+        let first_loads = first_loads(vm, turn);
         self.link.emit(frame::Kind::FileDone, |wf| {
             for v in [
                 file.idx,
@@ -672,7 +679,7 @@ struct WorkerLoop {
 }
 
 impl WorkerLoop {
-    fn begin(&mut self, vm: &VirtualMachine) {
+    fn begin(&mut self, vm: &VirtualMachine, turn: JsTurn<'_>) {
         let end = bun_sys::File::from_fd(Fd::from_uv(3));
         if !self.cmds.link.channel.adopt(vm, end) {
             bun_core::pretty_errorln!("<red>error<r>: test worker failed to adopt IPC fd");
@@ -702,20 +709,20 @@ impl WorkerLoop {
 
         loop {
             // The channel holds no reference on the loop, and a loop that nothing holds polls without sleeping.
-            let waits_for_command = bun_io::JsKeepAlive::active();
+            let waits_for_command = bun_io::JsKeepAlive::active(turn.live);
             while !self.cmds.read_commands() {
-                vm.event_loop().tick();
+                vm.event_loop().tick(turn);
                 if self.cmds.read_commands() {
                     break;
                 }
-                vm.event_loop().auto_tick();
+                vm.event_loop().auto_tick(turn);
             }
             drop(waits_for_command);
             let Some(idx) = self.cmds.pending_idx.take() else {
                 break;
             };
             if self.files_run == 0 {
-                note_first_loads_of_earlier_process(vm, &self.cmds.pending_first_loads);
+                note_first_loads_of_earlier_process(vm, &self.cmds.pending_first_loads, turn);
             }
             self.files_run += 1;
 
@@ -739,38 +746,43 @@ impl WorkerLoop {
                     first: true,
                     last: true,
                 },
+                turn,
             ) {
                 test_command::handle_top_level_test_error_before_javascript_start(&err);
             }
             if vm.test_isolation_enabled.get() {
-                crate::jsc_hooks::stop_active_handles_for_test_isolation(vm);
-                vm.swap_global_for_test_isolation();
+                crate::jsc_hooks::stop_active_handles_for_test_isolation(vm, turn);
+                // SAFETY: between two files; what follows asks the VM for its global object again.
+                unsafe { vm.swap_global_for_test_isolation(turn) };
                 self.reporter
                     .jest
                     .bun_test_root
                     .reset_preload_for_test_isolation();
-                crate::test_runner::Expect::reset_for_test_isolation(vm.global());
+                crate::test_runner::Expect::reset_for_test_isolation(vm.global(turn));
             } else {
                 Global::mimalloc_cleanup(false);
             }
             self.reporter.jest.default_timeout_override.set(u32::MAX);
-            self.cmds.emit_file_done(self.reporter, vm);
+            self.cmds.emit_file_done(self.reporter, vm, turn);
         }
     }
 }
 
 /// For each file of `compiled_program::for_each_first_load`: u32, 1 where the load was synchronous, and str path.
-fn first_loads(vm: &VirtualMachine) -> Vec<u8> {
+fn first_loads(vm: &VirtualMachine, turn: JsTurn<'_>) -> Vec<u8> {
     let mut list = Vec::new();
-    bun_jsc::compiled_program::for_each_first_load(vm.global(), &mut |path, was_synchronous| {
-        list.extend_from_slice(&u32::from(was_synchronous).to_le_bytes());
-        list.extend_from_slice(&(path.len() as u32).to_le_bytes());
-        list.extend_from_slice(path);
-    });
+    bun_jsc::compiled_program::for_each_first_load(
+        vm.global(turn),
+        &mut |path, was_synchronous| {
+            list.extend_from_slice(&u32::from(was_synchronous).to_le_bytes());
+            list.extend_from_slice(&(path.len() as u32).to_le_bytes());
+            list.extend_from_slice(path);
+        },
+    );
     list
 }
 
-fn note_first_loads_of_earlier_process(vm: &VirtualMachine, list: &[u8]) {
+fn note_first_loads_of_earlier_process(vm: &VirtualMachine, list: &[u8], turn: JsTurn<'_>) {
     let mut rd = frame::Reader { p: list };
     while !rd.p.is_empty() {
         let was_synchronous = rd.u32() != 0;
@@ -779,7 +791,7 @@ fn note_first_loads_of_earlier_process(vm: &VirtualMachine, list: &[u8]) {
             break;
         }
         bun_jsc::compiled_program::note_first_load_in_earlier_process(
-            vm.global(),
+            vm.global(turn),
             path,
             was_synchronous,
         );
@@ -877,6 +889,7 @@ pub(crate) fn run_as_worker(
     reporter: &'static CommandLineReporter,
     vm: &VirtualMachine,
     ctx: Command::Context,
+    turn: JsTurn<'_>,
 ) -> ! {
     vm.test_isolation_enabled.set(ctx.test_options.isolate);
     vm.test_isolation_state
@@ -900,7 +913,8 @@ pub(crate) fn run_as_worker(
         },
         files_run: 0,
     };
-    vm.run_with_api_lock(|| wloop.begin(vm));
+    let begun = &mut wloop;
+    vm.run_with_api_lock(move || begun.begin(vm, turn));
     crate::cli::run_compiled::log_account_of_process(format_args!(
         "worker | files {}",
         wloop.files_run
@@ -916,16 +930,16 @@ pub(crate) fn run_as_worker(
         std::process::abort();
     }
 
-    worker_flush_aggregates(reporter, vm, &ctx.test_options.coverage, link);
+    worker_flush_aggregates(reporter, vm, &ctx.test_options.coverage, link, turn);
     // Drain backpressure-buffered frames so the coordinator sees repeat_bufs / coverage_file.
     let channel = &link.channel;
-    vm.run_with_api_lock(|| {
+    vm.run_with_api_lock(move || {
         while channel.has_pending_writes() && !channel.done.get() {
-            vm.event_loop().tick();
+            vm.event_loop().tick(turn);
             if !channel.has_pending_writes() || channel.done.get() {
                 break;
             }
-            vm.event_loop().auto_tick();
+            vm.event_loop().auto_tick(turn);
         }
     });
     // Mirror TestCommand::exec's exit path so BUN_DESTRUCT_VM_ON_EXIT teardown
@@ -937,9 +951,9 @@ pub(crate) fn run_as_worker(
     vm.exit_handler
         .requested
         .set(test_command::exit_is_requested());
-    vm.run_with_api_lock(|| {
-        vm.on_exit();
-        vm.global_exit()
+    vm.run_with_api_lock(move || {
+        vm.on_exit(turn);
+        vm.global_exit(turn)
     });
     {
         Global::exit(0);
@@ -952,11 +966,12 @@ fn worker_flush_aggregates(
     vm: &VirtualMachine,
     coverage: &CodeCoverageOptions,
     link: &CoordinatorLink,
+    turn: JsTurn<'_>,
 ) {
     // Snapshots flush lazily when the next file opens its snapshot file; the
     // last file each worker ran has no successor to trigger that.
     let runner = &reporter.jest;
-    let _ = runner.with_snapshots(Snapshots::write_inline_snapshots);
+    let _ = runner.write_inline_snapshots(turn.live);
     let _ = runner.with_snapshots(Snapshots::write_snapshot_file);
 
     link.emit(frame::Kind::RepeatBufs, |wf| {
@@ -967,12 +982,17 @@ fn worker_flush_aggregates(
 
     if coverage.enabled {
         let mut encoded: Vec<u8> = Vec::new();
-        CommandLineReporter::add_compiled_files_to_coverage(vm);
-        CommandLineReporter::for_each_coverage_report(vm, coverage, |report| {
-            encoded.clear();
-            code_coverage::wire::encode(&report, &mut encoded);
-            link.emit(frame::Kind::CoverageFile, |wf| wf.str(&encoded));
-        });
+        CommandLineReporter::add_compiled_files_to_coverage(vm, turn);
+        CommandLineReporter::for_each_coverage_report(
+            vm,
+            coverage,
+            |report| {
+                encoded.clear();
+                code_coverage::wire::encode(&report, &mut encoded);
+                link.emit(frame::Kind::CoverageFile, |wf| wf.str(&encoded));
+            },
+            turn,
+        );
     }
 }
 

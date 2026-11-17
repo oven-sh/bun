@@ -10,7 +10,7 @@ use crate::run_command::{ConfigureEnvOptions, RunCommand as Run};
 use bun_alloc::AllocError;
 use bun_ast::ExprData;
 use bun_bundler::Transpiler;
-use bun_core::{self, Global, Output};
+use bun_core::{self, Global, LoopTurn, Output};
 use bun_core::{ZBox, ZStr, strings};
 use bun_install::CommandLineArguments;
 use bun_install::dependency::{self, VersionTag};
@@ -884,7 +884,11 @@ impl BunxCommand {
         Global::exit(1);
     }
 
-    pub(crate) fn exec(ctx: &mut ContextData, argv: &[&'static ZStr]) -> crate::Result<()> {
+    pub(crate) fn exec(
+        ctx: &mut ContextData,
+        argv: &[&'static ZStr],
+        turn: LoopTurn<'_>,
+    ) -> crate::Result<()> {
         // Don't log stuff
         ctx.debug.silent = true;
 
@@ -1113,6 +1117,7 @@ impl BunxCommand {
                     env_loader,
                     passthrough,
                     None,
+                    turn,
                 )?;
             }
             // The project has this command, but it is not executable. Report that instead of
@@ -1162,6 +1167,7 @@ impl BunxCommand {
                         env_loader,
                         passthrough,
                         None,
+                        turn,
                     )?;
                 }
                 InProject::NotExecutable(file) => {
@@ -1227,6 +1233,7 @@ impl BunxCommand {
                     env_loader,
                     passthrough,
                     None,
+                    turn,
                 )?;
             }
         }
@@ -1286,6 +1293,7 @@ impl BunxCommand {
                 env_loader,
                 passthrough,
                 None,
+                turn,
             )?;
         }
 
@@ -1499,6 +1507,7 @@ impl BunxCommand {
                 env_loader,
                 passthrough,
                 None,
+                turn,
             )?;
         }
 

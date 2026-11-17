@@ -8,6 +8,7 @@
 //! old `NewSocketHandler.configure`/`unsafeConfigure` machinery, which built
 //! the same trampolines at runtime per `us_socket_context_t`.
 
+use bun_core::JsTurn;
 use bun_jsc::JsResult;
 use bun_ptr::{RefPtr, ThisPtr};
 use core::ffi::{c_int, c_void};
@@ -49,13 +50,22 @@ fn wrap<const SSL: bool>(s: *mut us_socket_t) -> NewSocketHandler<SSL> {
 pub(crate) trait RawSocketEvents<const SSL: bool>: Sized {
     const HAS_ON_OPEN: bool = false;
 
-    fn on_open(_this: ThisPtr<Self>, _s: NewSocketHandler<SSL>) -> JsResult<()> {
+    fn on_open(_this: ThisPtr<Self>, _s: NewSocketHandler<SSL>, _turn: JsTurn<'_>) -> JsResult<()> {
         Ok(())
     }
-    fn on_data(_this: ThisPtr<Self>, _s: NewSocketHandler<SSL>, _data: &[u8]) -> JsResult<()> {
+    fn on_data(
+        _this: ThisPtr<Self>,
+        _s: NewSocketHandler<SSL>,
+        _data: &[u8],
+        _turn: JsTurn<'_>,
+    ) -> JsResult<()> {
         Ok(())
     }
-    fn on_writable(_this: ThisPtr<Self>, _s: NewSocketHandler<SSL>) -> JsResult<()> {
+    fn on_writable(
+        _this: ThisPtr<Self>,
+        _s: NewSocketHandler<SSL>,
+        _turn: JsTurn<'_>,
+    ) -> JsResult<()> {
         Ok(())
     }
     fn on_close(
@@ -63,22 +73,32 @@ pub(crate) trait RawSocketEvents<const SSL: bool>: Sized {
         _s: NewSocketHandler<SSL>,
         _code: i32,
         _reason: *mut c_void,
+        _turn: JsTurn<'_>,
     ) -> JsResult<()> {
         Ok(())
     }
-    fn on_timeout(_this: ThisPtr<Self>, _s: NewSocketHandler<SSL>) -> JsResult<()> {
+    fn on_timeout(
+        _this: ThisPtr<Self>,
+        _s: NewSocketHandler<SSL>,
+        _turn: JsTurn<'_>,
+    ) -> JsResult<()> {
         Ok(())
     }
-    fn on_long_timeout(_this: ThisPtr<Self>, _s: NewSocketHandler<SSL>) -> JsResult<()> {
+    fn on_long_timeout(
+        _this: ThisPtr<Self>,
+        _s: NewSocketHandler<SSL>,
+        _turn: JsTurn<'_>,
+    ) -> JsResult<()> {
         Ok(())
     }
-    fn on_end(_this: ThisPtr<Self>, _s: NewSocketHandler<SSL>) -> JsResult<()> {
+    fn on_end(_this: ThisPtr<Self>, _s: NewSocketHandler<SSL>, _turn: JsTurn<'_>) -> JsResult<()> {
         Ok(())
     }
     fn on_connect_error(
         _this: ThisPtr<Self>,
         _s: NewSocketHandler<SSL>,
         _code: i32,
+        _turn: JsTurn<'_>,
     ) -> JsResult<()> {
         Ok(())
     }
@@ -87,6 +107,7 @@ pub(crate) trait RawSocketEvents<const SSL: bool>: Sized {
         _s: NewSocketHandler<SSL>,
         _ok: i32,
         _err: bun_uws::us_bun_verify_error_t,
+        _turn: JsTurn<'_>,
     ) -> JsResult<()> {
         Ok(())
     }
@@ -94,10 +115,13 @@ pub(crate) trait RawSocketEvents<const SSL: bool>: Sized {
 
 pub(crate) struct RawPtrHandler<T, const SSL: bool>(core::marker::PhantomData<T>);
 
-impl<T, const SSL: bool> VHandler for RawPtrHandler<T, SSL>
+// SAFETY: the socket groups of these kinds belong to a VM. `finalize` and `cancel` let go of the C++ `WebSocket`,
+// their way to script, before they close.
+unsafe impl<T, const SSL: bool> VHandler for RawPtrHandler<T, SSL>
 where
     T: RawSocketEvents<SSL> + 'static,
 {
+    type Turn<'a> = JsTurn<'a>;
     type Ext = Option<ThisPtr<T>>;
 
     const HAS_ON_OPEN: bool = T::HAS_ON_OPEN;
@@ -111,61 +135,85 @@ where
     const HAS_ON_CONNECTING_ERROR: bool = true;
     const HAS_ON_HANDSHAKE: bool = true;
 
-    fn on_open(ext: &mut Self::Ext, s: *mut us_socket_t, _is_client: bool, _ip: &[u8]) {
+    fn on_open(
+        ext: &mut Self::Ext,
+        s: *mut us_socket_t,
+        _is_client: bool,
+        _ip: &[u8],
+        turn: JsTurn<'_>,
+    ) {
         let Some(this) = *ext else { return };
-        fold(T::on_open(this, wrap::<SSL>(s)));
+        fold(T::on_open(this, wrap::<SSL>(s), turn), turn);
     }
-    fn on_data(ext: &mut Self::Ext, s: *mut us_socket_t, data: &[u8]) {
+    fn on_data(ext: &mut Self::Ext, s: *mut us_socket_t, data: &[u8], turn: JsTurn<'_>) {
         let Some(this) = *ext else { return };
-        fold(T::on_data(this, wrap::<SSL>(s), data));
+        fold(T::on_data(this, wrap::<SSL>(s), data, turn), turn);
     }
-    fn on_writable(ext: &mut Self::Ext, s: *mut us_socket_t) {
+    fn on_writable(ext: &mut Self::Ext, s: *mut us_socket_t, turn: JsTurn<'_>) {
         let Some(this) = *ext else { return };
-        fold(T::on_writable(this, wrap::<SSL>(s)));
+        fold(T::on_writable(this, wrap::<SSL>(s), turn), turn);
     }
-    fn on_close(ext: &mut Self::Ext, s: *mut us_socket_t, code: i32, reason: Option<*mut c_void>) {
+    fn on_close(
+        ext: &mut Self::Ext,
+        s: *mut us_socket_t,
+        code: i32,
+        reason: Option<*mut c_void>,
+        turn: JsTurn<'_>,
+    ) {
         let Some(this) = *ext else { return };
-        fold(T::on_close(
-            this,
-            wrap::<SSL>(s),
-            code,
-            reason.unwrap_or(core::ptr::null_mut()),
-        ));
+        fold(
+            T::on_close(
+                this,
+                wrap::<SSL>(s),
+                code,
+                reason.unwrap_or(core::ptr::null_mut()),
+                turn,
+            ),
+            turn,
+        );
     }
-    fn on_timeout(ext: &mut Self::Ext, s: *mut us_socket_t) {
+    fn on_timeout(ext: &mut Self::Ext, s: *mut us_socket_t, turn: JsTurn<'_>) {
         let Some(this) = *ext else { return };
-        fold(T::on_timeout(this, wrap::<SSL>(s)));
+        fold(T::on_timeout(this, wrap::<SSL>(s), turn), turn);
     }
-    fn on_long_timeout(ext: &mut Self::Ext, s: *mut us_socket_t) {
+    fn on_long_timeout(ext: &mut Self::Ext, s: *mut us_socket_t, turn: JsTurn<'_>) {
         let Some(this) = *ext else { return };
-        fold(T::on_long_timeout(this, wrap::<SSL>(s)));
+        fold(T::on_long_timeout(this, wrap::<SSL>(s), turn), turn);
     }
-    fn on_end(ext: &mut Self::Ext, s: *mut us_socket_t) {
+    fn on_end(ext: &mut Self::Ext, s: *mut us_socket_t, turn: JsTurn<'_>) {
         let Some(this) = *ext else { return };
-        fold(T::on_end(this, wrap::<SSL>(s)));
+        fold(T::on_end(this, wrap::<SSL>(s), turn), turn);
     }
-    fn on_connect_error(ext: &mut Self::Ext, s: *mut us_socket_t, code: i32) {
+    fn on_connect_error(ext: &mut Self::Ext, s: *mut us_socket_t, code: i32, turn: JsTurn<'_>) {
         let Some(this) = *ext else { return };
-        fold(T::on_connect_error(this, wrap::<SSL>(s), code));
+        fold(T::on_connect_error(this, wrap::<SSL>(s), code, turn), turn);
     }
-    fn on_connecting_error(c: *mut ConnectingSocket, code: i32) {
+    fn on_connecting_error(c: *mut ConnectingSocket, code: i32, turn: JsTurn<'_>) {
         let Some(this) = *ConnectingSocket::opaque_mut(c).ext::<Option<ThisPtr<T>>>() else {
             return;
         };
-        fold(T::on_connect_error(
-            this,
-            NewSocketHandler::<SSL>::from_connecting(c),
-            code,
-        ));
+        fold(
+            T::on_connect_error(
+                this,
+                NewSocketHandler::<SSL>::from_connecting(c),
+                code,
+                turn,
+            ),
+            turn,
+        );
     }
     fn on_handshake(
         ext: &mut Self::Ext,
         s: *mut us_socket_t,
         ok: bool,
         err: us_bun_verify_error_t,
+        turn: JsTurn<'_>,
     ) {
         let Some(this) = *ext else { return };
-        fold(T::on_handshake(this, wrap::<SSL>(s), ok as i32, err));
+        fold(
+            T::on_handshake(this, wrap::<SSL>(s), ok as i32, err, turn),
+            turn,
+        );
     }
 }
 
@@ -175,16 +223,25 @@ where
 {
     const HAS_ON_OPEN: bool = true;
 
-    fn on_open(this: ThisPtr<Self>, s: NewSocketHandler<SSL>) -> JsResult<()> {
-        Self::handle_open(this, s);
+    fn on_open(this: ThisPtr<Self>, s: NewSocketHandler<SSL>, turn: JsTurn<'_>) -> JsResult<()> {
+        Self::handle_open(this, s, turn);
         Ok(())
     }
-    fn on_data(this: ThisPtr<Self>, s: NewSocketHandler<SSL>, data: &[u8]) -> JsResult<()> {
-        Self::handle_data(this, s, data);
+    fn on_data(
+        this: ThisPtr<Self>,
+        s: NewSocketHandler<SSL>,
+        data: &[u8],
+        turn: JsTurn<'_>,
+    ) -> JsResult<()> {
+        Self::handle_data(this, s, data, turn);
         Ok(())
     }
-    fn on_writable(this: ThisPtr<Self>, s: NewSocketHandler<SSL>) -> JsResult<()> {
-        Self::handle_writable(this, s);
+    fn on_writable(
+        this: ThisPtr<Self>,
+        s: NewSocketHandler<SSL>,
+        turn: JsTurn<'_>,
+    ) -> JsResult<()> {
+        Self::handle_writable(this, s, turn);
         Ok(())
     }
     fn on_close(
@@ -192,24 +249,34 @@ where
         s: NewSocketHandler<SSL>,
         code: i32,
         reason: *mut c_void,
+        turn: JsTurn<'_>,
     ) -> JsResult<()> {
-        Self::handle_close(this, s, code, reason);
+        Self::handle_close(this, s, code, reason, turn);
         Ok(())
     }
-    fn on_timeout(this: ThisPtr<Self>, s: NewSocketHandler<SSL>) -> JsResult<()> {
-        Self::handle_timeout(this, s);
+    fn on_timeout(this: ThisPtr<Self>, s: NewSocketHandler<SSL>, turn: JsTurn<'_>) -> JsResult<()> {
+        Self::handle_timeout(this, s, turn);
         Ok(())
     }
-    fn on_long_timeout(this: ThisPtr<Self>, s: NewSocketHandler<SSL>) -> JsResult<()> {
-        Self::handle_timeout(this, s);
+    fn on_long_timeout(
+        this: ThisPtr<Self>,
+        s: NewSocketHandler<SSL>,
+        turn: JsTurn<'_>,
+    ) -> JsResult<()> {
+        Self::handle_timeout(this, s, turn);
         Ok(())
     }
-    fn on_end(this: ThisPtr<Self>, s: NewSocketHandler<SSL>) -> JsResult<()> {
-        Self::handle_end(this, s);
+    fn on_end(this: ThisPtr<Self>, s: NewSocketHandler<SSL>, turn: JsTurn<'_>) -> JsResult<()> {
+        Self::handle_end(this, s, turn);
         Ok(())
     }
-    fn on_connect_error(this: ThisPtr<Self>, s: NewSocketHandler<SSL>, code: i32) -> JsResult<()> {
-        Self::handle_connect_error(this, s, code);
+    fn on_connect_error(
+        this: ThisPtr<Self>,
+        s: NewSocketHandler<SSL>,
+        code: i32,
+        turn: JsTurn<'_>,
+    ) -> JsResult<()> {
+        Self::handle_connect_error(this, s, code, turn);
         Ok(())
     }
     fn on_handshake(
@@ -217,8 +284,9 @@ where
         s: NewSocketHandler<SSL>,
         ok: i32,
         err: bun_uws::us_bun_verify_error_t,
+        turn: JsTurn<'_>,
     ) -> JsResult<()> {
-        Self::handle_handshake(this, s, ok, err);
+        Self::handle_handshake(this, s, ok, err, turn);
         Ok(())
     }
 }
@@ -227,13 +295,22 @@ impl<const SSL: bool> RawSocketEvents<SSL> for websocket_client::WebSocket<SSL> 
     // No `on_open` / `on_connect_error` override — adoption of an already-connected socket.
     // No `on_end` override — the socket doesn't allow half-open, so uSockets closes it right after.
 
-    fn on_data(this: ThisPtr<Self>, _s: NewSocketHandler<SSL>, data: &[u8]) -> JsResult<()> {
-        Self::handle_data(this, data);
+    fn on_data(
+        this: ThisPtr<Self>,
+        _s: NewSocketHandler<SSL>,
+        data: &[u8],
+        turn: JsTurn<'_>,
+    ) -> JsResult<()> {
+        Self::handle_data(this, data, turn);
         Ok(())
     }
-    fn on_writable(this: ThisPtr<Self>, s: NewSocketHandler<SSL>) -> JsResult<()> {
+    fn on_writable(
+        this: ThisPtr<Self>,
+        s: NewSocketHandler<SSL>,
+        turn: JsTurn<'_>,
+    ) -> JsResult<()> {
         let _guard = RefPtr::from_this(this);
-        this.handle_writable(s);
+        this.handle_writable(s, turn);
         Ok(())
     }
     fn on_close(
@@ -241,19 +318,24 @@ impl<const SSL: bool> RawSocketEvents<SSL> for websocket_client::WebSocket<SSL> 
         s: NewSocketHandler<SSL>,
         code: i32,
         reason: *mut c_void,
+        turn: JsTurn<'_>,
     ) -> JsResult<()> {
         let _guard = RefPtr::from_this(this);
-        this.handle_close(s, code, reason);
+        this.handle_close(s, code, reason, turn);
         Ok(())
     }
-    fn on_timeout(this: ThisPtr<Self>, s: NewSocketHandler<SSL>) -> JsResult<()> {
+    fn on_timeout(this: ThisPtr<Self>, s: NewSocketHandler<SSL>, turn: JsTurn<'_>) -> JsResult<()> {
         let _guard = RefPtr::from_this(this);
-        this.handle_timeout(s);
+        this.handle_timeout(s, turn);
         Ok(())
     }
-    fn on_long_timeout(this: ThisPtr<Self>, s: NewSocketHandler<SSL>) -> JsResult<()> {
+    fn on_long_timeout(
+        this: ThisPtr<Self>,
+        s: NewSocketHandler<SSL>,
+        turn: JsTurn<'_>,
+    ) -> JsResult<()> {
         let _guard = RefPtr::from_this(this);
-        this.handle_timeout(s);
+        this.handle_timeout(s, turn);
         Ok(())
     }
     fn on_handshake(
@@ -261,9 +343,10 @@ impl<const SSL: bool> RawSocketEvents<SSL> for websocket_client::WebSocket<SSL> 
         s: NewSocketHandler<SSL>,
         ok: i32,
         err: bun_uws::us_bun_verify_error_t,
+        turn: JsTurn<'_>,
     ) -> JsResult<()> {
         let _guard = RefPtr::from_this(this);
-        this.handle_handshake(s, ok, err);
+        this.handle_handshake(s, ok, err, turn);
         Ok(())
     }
 }
@@ -306,48 +389,64 @@ impl LiftJsResult for JsResult<()> {
 macro_rules! impl_ns_socket_events_forward {
     ($Owner:ty, $Handler:ty) => {
         impl<const SSL: bool> NsSocketEvents<$Owner, SSL> for $Handler {
-            fn on_open(this: &$Owner, s: NewSocketHandler<SSL>) -> bun_jsc::JsResult<()> {
-                Self::on_open(this, s).lift()
+            fn on_open(
+                this: &$Owner,
+                s: NewSocketHandler<SSL>,
+                turn: JsTurn<'_>,
+            ) -> bun_jsc::JsResult<()> {
+                Self::on_open(this, s, turn).lift()
             }
             fn on_data(
                 this: &$Owner,
                 s: NewSocketHandler<SSL>,
                 data: &[u8],
+                turn: JsTurn<'_>,
             ) -> bun_jsc::JsResult<()> {
-                Self::on_data(this, s, data).lift()
+                Self::on_data(this, s, data, turn).lift()
             }
-            fn on_writable(this: &$Owner, s: NewSocketHandler<SSL>) -> bun_jsc::JsResult<()> {
-                Self::on_writable(this, s).lift()
+            fn on_writable(
+                this: &$Owner,
+                s: NewSocketHandler<SSL>,
+                turn: JsTurn<'_>,
+            ) -> bun_jsc::JsResult<()> {
+                Self::on_writable(this, s, turn).lift()
             }
             fn on_close(
                 this: &$Owner,
                 s: NewSocketHandler<SSL>,
                 code: i32,
                 reason: Option<*mut c_void>,
+                turn: JsTurn<'_>,
             ) -> bun_jsc::JsResult<()> {
-                Self::on_close(this, s, code, reason).lift()
+                Self::on_close(this, s, code, reason, turn).lift()
             }
             fn on_timeout(this: &$Owner, s: NewSocketHandler<SSL>) -> bun_jsc::JsResult<()> {
                 Self::on_timeout(this, s).lift()
             }
-            fn on_end(this: &$Owner, s: NewSocketHandler<SSL>) -> bun_jsc::JsResult<()> {
-                Self::on_end(this, s).lift()
+            fn on_end(
+                this: &$Owner,
+                s: NewSocketHandler<SSL>,
+                turn: JsTurn<'_>,
+            ) -> bun_jsc::JsResult<()> {
+                Self::on_end(this, s, turn).lift()
             }
             fn on_connect_error(
                 this: &$Owner,
                 s: NewSocketHandler<SSL>,
                 code: i32,
+                turn: JsTurn<'_>,
             ) -> bun_jsc::JsResult<()> {
-                Self::on_connect_error(this, s, code).lift()
+                Self::on_connect_error(this, s, code, turn).lift()
             }
             fn on_handshake(
                 this: &$Owner,
                 s: NewSocketHandler<SSL>,
                 ok: i32,
                 err: us_bun_verify_error_t,
+                turn: JsTurn<'_>,
             ) -> bun_jsc::JsResult<()> {
                 match Self::ON_HANDSHAKE {
-                    Some(f) => f(this, s, ok, err).lift(),
+                    Some(f) => f(this, s, ok, err, turn).lift(),
                     None => Ok(()),
                 }
             }
@@ -369,7 +468,10 @@ impl_ns_socket_events_forward!(js_valkey::JSValkeyClient, js_valkey::SocketHandl
 /// Does not borrow the ext slot across a handler, which can empty it (`connect()` again).
 pub(crate) struct BunSocket<const SSL: bool>;
 
-impl<const SSL: bool> VHandler for BunSocket<SSL> {
+// SAFETY: the socket groups of these kinds belong to a VM. An open socket keeps its wrapper and its listener's
+// strong, and teardown closes it before `~VM`, so their finalizers find nothing to close.
+unsafe impl<const SSL: bool> VHandler for BunSocket<SSL> {
+    type Turn<'a> = JsTurn<'a>;
     type Ext = ();
     const HAS_EXT: bool = false;
 
@@ -383,53 +485,75 @@ impl<const SSL: bool> VHandler for BunSocket<SSL> {
     const HAS_ON_CONNECTING_ERROR: bool = true;
     const HAS_ON_HANDSHAKE: bool = true;
 
-    fn on_open_no_ext(s: *mut us_socket_t, _is_client: bool, _ip: &[u8]) {
+    fn on_open_no_ext(s: *mut us_socket_t, _is_client: bool, _ip: &[u8], turn: JsTurn<'_>) {
         if let Some(ns) = NativeRef::<SSL>::of(s).get() {
-            fold(api::NewSocket::on_open(ns, wrap(s)));
+            fold(api::NewSocket::on_open(ns, wrap(s), turn), turn);
         }
     }
-    fn on_data_no_ext(s: *mut us_socket_t, data: &[u8]) {
+    fn on_data_no_ext(s: *mut us_socket_t, data: &[u8], turn: JsTurn<'_>) {
         if let Some(ns) = NativeRef::<SSL>::of(s).get() {
-            fold(api::NewSocket::on_data(ns, wrap(s), data));
+            fold(api::NewSocket::on_data(ns, wrap(s), data, turn), turn);
         }
     }
-    fn on_writable_no_ext(s: *mut us_socket_t) {
+    fn on_writable_no_ext(s: *mut us_socket_t, turn: JsTurn<'_>) {
         if let Some(ns) = NativeRef::<SSL>::of(s).get() {
-            fold(api::NewSocket::on_writable(ns, wrap(s)));
+            fold(api::NewSocket::on_writable(ns, wrap(s), turn), turn);
         }
     }
-    fn on_close_no_ext(s: *mut us_socket_t, code: i32, reason: Option<*mut c_void>) {
+    fn on_close_no_ext(
+        s: *mut us_socket_t,
+        code: i32,
+        reason: Option<*mut c_void>,
+        turn: JsTurn<'_>,
+    ) {
         // SAFETY: a losing candidate is closed without a dispatch.
         if let Some(ns) = unsafe { NativeRef::<SSL>::of(s).take() } {
-            fold(api::NewSocket::on_close(ns, wrap(s), code, reason));
+            fold(
+                api::NewSocket::on_close(ns, wrap(s), code, reason, turn),
+                turn,
+            );
         }
     }
-    fn on_timeout_no_ext(s: *mut us_socket_t) {
+    fn on_timeout_no_ext(s: *mut us_socket_t, turn: JsTurn<'_>) {
         if let Some(ns) = NativeRef::<SSL>::of(s).get() {
-            fold(api::NewSocket::on_timeout(ns, wrap(s)));
+            fold(api::NewSocket::on_timeout(ns, wrap(s), turn), turn);
         }
     }
-    fn on_end_no_ext(s: *mut us_socket_t) {
+    fn on_end_no_ext(s: *mut us_socket_t, turn: JsTurn<'_>) {
         if let Some(ns) = NativeRef::<SSL>::of(s).get() {
-            fold(api::NewSocket::on_end(ns, wrap(s)));
+            fold(api::NewSocket::on_end(ns, wrap(s), turn), turn);
         }
     }
-    fn on_connect_error_no_ext(s: *mut us_socket_t, code: i32) {
+    fn on_connect_error_no_ext(s: *mut us_socket_t, code: i32, turn: JsTurn<'_>) {
         // SAFETY: as in `on_close_no_ext`.
         if let Some(ns) = unsafe { NativeRef::<SSL>::of(s).take() } {
-            fold(api::NewSocket::on_connect_error(ns, wrap(s), code));
+            fold(
+                api::NewSocket::on_connect_error(ns, wrap(s), code, turn),
+                turn,
+            );
         }
     }
-    fn on_connecting_error(c: *mut ConnectingSocket, code: i32) {
+    fn on_connecting_error(c: *mut ConnectingSocket, code: i32, turn: JsTurn<'_>) {
         // SAFETY: no candidate won.
         if let Some(ns) = unsafe { NativeRef::<SSL>::of_connecting(c).take() } {
             let socket = NewSocketHandler::from_connecting(c);
-            fold(api::NewSocket::on_connect_error(ns, socket, code));
+            fold(
+                api::NewSocket::on_connect_error(ns, socket, code, turn),
+                turn,
+            );
         }
     }
-    fn on_handshake_no_ext(s: *mut us_socket_t, ok: bool, err: us_bun_verify_error_t) {
+    fn on_handshake_no_ext(
+        s: *mut us_socket_t,
+        ok: bool,
+        err: us_bun_verify_error_t,
+        turn: JsTurn<'_>,
+    ) {
         if let Some(ns) = NativeRef::<SSL>::of(s).get() {
-            fold(api::NewSocket::on_handshake(ns, wrap(s), ok as i32, err));
+            fold(
+                api::NewSocket::on_handshake(ns, wrap(s), ok as i32, err, turn),
+                turn,
+            );
         }
     }
 }
@@ -441,8 +565,10 @@ impl<const SSL: bool> VHandler for BunSocket<SSL> {
 /// `BunSocket` above.
 pub(crate) struct BunListener<const SSL: bool>;
 
-impl<const SSL: bool> VHandler for BunListener<SSL> {
+// SAFETY: as for `BunSocket`.
+unsafe impl<const SSL: bool> VHandler for BunListener<SSL> {
     // No `Ext` decl — owner comes from `s.group().owner(Listener)`.
+    type Turn<'a> = JsTurn<'a>;
     type Ext = ();
     const HAS_EXT: bool = false;
 
@@ -454,7 +580,7 @@ impl<const SSL: bool> VHandler for BunListener<SSL> {
     const HAS_ON_END: bool = true;
     const HAS_ON_HANDSHAKE: bool = true;
 
-    fn on_open_no_ext(s: *mut us_socket_t, _is_client: bool, _ip: &[u8]) {
+    fn on_open_no_ext(s: *mut us_socket_t, _is_client: bool, _ip: &[u8], turn: JsTurn<'_>) {
         // `us_socket_t` is an `opaque_ffi!` ZST — `opaque_mut` is the safe
         // deref; `group()` is non-null for accepted sockets and `owner` was
         // stashed at listen time.
@@ -469,29 +595,39 @@ impl<const SSL: bool> VHandler for BunListener<SSL> {
         // SAFETY: `owner::<Listener>()` returns the back-pointer stashed by
         // `Listener::listen`; the listener strictly outlives every accepted
         // socket and is read-only here.
-        let ns = api::Listener::on_create::<SSL>(unsafe { &*listener }, s);
-        fold(api::NewSocket::on_open(ns, wrap::<SSL>(s)));
+        let ns = api::Listener::on_create::<SSL>(unsafe { &*listener }, s, turn.live);
+        fold(api::NewSocket::on_open(ns, wrap::<SSL>(s), turn), turn);
     }
     // Accepted sockets reach the remaining events as `.bun_socket_*` once
     // on_create has restamped them; if anything fires before that, route to
     // the freshly stashed NewSocket.
-    fn on_close_no_ext(s: *mut us_socket_t, code: i32, reason: Option<*mut c_void>) {
-        BunSocket::<SSL>::on_close_no_ext(s, code, reason);
+    fn on_close_no_ext(
+        s: *mut us_socket_t,
+        code: i32,
+        reason: Option<*mut c_void>,
+        turn: JsTurn<'_>,
+    ) {
+        BunSocket::<SSL>::on_close_no_ext(s, code, reason, turn);
     }
-    fn on_data_no_ext(s: *mut us_socket_t, data: &[u8]) {
-        BunSocket::<SSL>::on_data_no_ext(s, data);
+    fn on_data_no_ext(s: *mut us_socket_t, data: &[u8], turn: JsTurn<'_>) {
+        BunSocket::<SSL>::on_data_no_ext(s, data, turn);
     }
-    fn on_writable_no_ext(s: *mut us_socket_t) {
-        BunSocket::<SSL>::on_writable_no_ext(s);
+    fn on_writable_no_ext(s: *mut us_socket_t, turn: JsTurn<'_>) {
+        BunSocket::<SSL>::on_writable_no_ext(s, turn);
     }
-    fn on_end_no_ext(s: *mut us_socket_t) {
-        BunSocket::<SSL>::on_end_no_ext(s);
+    fn on_end_no_ext(s: *mut us_socket_t, turn: JsTurn<'_>) {
+        BunSocket::<SSL>::on_end_no_ext(s, turn);
     }
-    fn on_timeout_no_ext(s: *mut us_socket_t) {
-        BunSocket::<SSL>::on_timeout_no_ext(s);
+    fn on_timeout_no_ext(s: *mut us_socket_t, turn: JsTurn<'_>) {
+        BunSocket::<SSL>::on_timeout_no_ext(s, turn);
     }
-    fn on_handshake_no_ext(s: *mut us_socket_t, ok: bool, err: us_bun_verify_error_t) {
-        BunSocket::<SSL>::on_handshake_no_ext(s, ok, err);
+    fn on_handshake_no_ext(
+        s: *mut us_socket_t,
+        ok: bool,
+        err: us_bun_verify_error_t,
+        turn: JsTurn<'_>,
+    ) {
+        BunSocket::<SSL>::on_handshake_no_ext(s, ok, err, turn);
     }
 }
 
@@ -505,13 +641,26 @@ impl<const SSL: bool> VHandler for BunListener<SSL> {
 /// methods take `&Owner` as the first parameter; each driver's
 /// `SocketHandler<SSL>` zero-sized type implements it.
 trait NsSocketEvents<Owner, const SSL: bool> {
-    fn on_open(_this: &Owner, _s: NewSocketHandler<SSL>) -> bun_jsc::JsResult<()> {
+    fn on_open(
+        _this: &Owner,
+        _s: NewSocketHandler<SSL>,
+        _turn: JsTurn<'_>,
+    ) -> bun_jsc::JsResult<()> {
         Ok(())
     }
-    fn on_data(_this: &Owner, _s: NewSocketHandler<SSL>, _data: &[u8]) -> bun_jsc::JsResult<()> {
+    fn on_data(
+        _this: &Owner,
+        _s: NewSocketHandler<SSL>,
+        _data: &[u8],
+        _turn: JsTurn<'_>,
+    ) -> bun_jsc::JsResult<()> {
         Ok(())
     }
-    fn on_writable(_this: &Owner, _s: NewSocketHandler<SSL>) -> bun_jsc::JsResult<()> {
+    fn on_writable(
+        _this: &Owner,
+        _s: NewSocketHandler<SSL>,
+        _turn: JsTurn<'_>,
+    ) -> bun_jsc::JsResult<()> {
         Ok(())
     }
     fn on_close(
@@ -519,6 +668,7 @@ trait NsSocketEvents<Owner, const SSL: bool> {
         _s: NewSocketHandler<SSL>,
         _code: i32,
         _reason: Option<*mut c_void>,
+        _turn: JsTurn<'_>,
     ) -> bun_jsc::JsResult<()> {
         Ok(())
     }
@@ -528,13 +678,18 @@ trait NsSocketEvents<Owner, const SSL: bool> {
     fn on_long_timeout(_this: &Owner, _s: NewSocketHandler<SSL>) -> bun_jsc::JsResult<()> {
         Ok(())
     }
-    fn on_end(_this: &Owner, _s: NewSocketHandler<SSL>) -> bun_jsc::JsResult<()> {
+    fn on_end(
+        _this: &Owner,
+        _s: NewSocketHandler<SSL>,
+        _turn: JsTurn<'_>,
+    ) -> bun_jsc::JsResult<()> {
         Ok(())
     }
     fn on_connect_error(
         _this: &Owner,
         _s: NewSocketHandler<SSL>,
         _code: i32,
+        _turn: JsTurn<'_>,
     ) -> bun_jsc::JsResult<()> {
         Ok(())
     }
@@ -544,6 +699,7 @@ trait NsSocketEvents<Owner, const SSL: bool> {
         _s: NewSocketHandler<SSL>,
         _ok: i32,
         _err: us_bun_verify_error_t,
+        _turn: JsTurn<'_>,
     ) -> bun_jsc::JsResult<()> {
         Ok(())
     }
@@ -551,11 +707,13 @@ trait NsSocketEvents<Owner, const SSL: bool> {
 
 pub(crate) struct NsHandler<Owner, H, const SSL: bool>(core::marker::PhantomData<(Owner, H)>);
 
-impl<Owner, H, const SSL: bool> VHandler for NsHandler<Owner, H, SSL>
+// SAFETY: as for `BunSocket`.
+unsafe impl<Owner, H, const SSL: bool> VHandler for NsHandler<Owner, H, SSL>
 where
     Owner: 'static,
     H: NsSocketEvents<Owner, SSL> + 'static,
 {
+    type Turn<'a> = JsTurn<'a>;
     type Ext = ExtSlot<Owner>;
 
     const HAS_ON_OPEN: bool = true;
@@ -569,59 +727,79 @@ where
     const HAS_ON_CONNECTING_ERROR: bool = true;
     const HAS_ON_HANDSHAKE: bool = true;
 
-    fn on_open(ext: &mut Self::Ext, s: *mut us_socket_t, _is_client: bool, _ip: &[u8]) {
+    fn on_open(
+        ext: &mut Self::Ext,
+        s: *mut us_socket_t,
+        _is_client: bool,
+        _ip: &[u8],
+        turn: JsTurn<'_>,
+    ) {
         let Some(this) = ext.owner_ref() else { return };
-        fold(H::on_open(this, wrap::<SSL>(s)));
+        fold(H::on_open(this, wrap::<SSL>(s), turn), turn);
     }
-    fn on_data(ext: &mut Self::Ext, s: *mut us_socket_t, data: &[u8]) {
+    fn on_data(ext: &mut Self::Ext, s: *mut us_socket_t, data: &[u8], turn: JsTurn<'_>) {
         let Some(this) = ext.owner_ref() else { return };
-        fold(H::on_data(this, wrap::<SSL>(s), data));
+        fold(H::on_data(this, wrap::<SSL>(s), data, turn), turn);
     }
-    fn on_writable(ext: &mut Self::Ext, s: *mut us_socket_t) {
+    fn on_writable(ext: &mut Self::Ext, s: *mut us_socket_t, turn: JsTurn<'_>) {
         let Some(this) = ext.owner_ref() else { return };
-        fold(H::on_writable(this, wrap::<SSL>(s)));
+        fold(H::on_writable(this, wrap::<SSL>(s), turn), turn);
     }
-    fn on_close(ext: &mut Self::Ext, s: *mut us_socket_t, code: i32, reason: Option<*mut c_void>) {
+    fn on_close(
+        ext: &mut Self::Ext,
+        s: *mut us_socket_t,
+        code: i32,
+        reason: Option<*mut c_void>,
+        turn: JsTurn<'_>,
+    ) {
         let Some(this) = ext.owner_ref() else { return };
-        fold(H::on_close(this, wrap::<SSL>(s), code, reason));
+        fold(H::on_close(this, wrap::<SSL>(s), code, reason, turn), turn);
     }
-    fn on_timeout(ext: &mut Self::Ext, s: *mut us_socket_t) {
+    fn on_timeout(ext: &mut Self::Ext, s: *mut us_socket_t, turn: JsTurn<'_>) {
         let Some(this) = ext.owner_ref() else { return };
-        fold(H::on_timeout(this, wrap::<SSL>(s)));
+        fold(H::on_timeout(this, wrap::<SSL>(s)), turn);
     }
-    fn on_long_timeout(ext: &mut Self::Ext, s: *mut us_socket_t) {
+    fn on_long_timeout(ext: &mut Self::Ext, s: *mut us_socket_t, turn: JsTurn<'_>) {
         let Some(this) = ext.owner_ref() else { return };
-        fold(H::on_long_timeout(this, wrap::<SSL>(s)));
+        fold(H::on_long_timeout(this, wrap::<SSL>(s)), turn);
     }
-    fn on_end(ext: &mut Self::Ext, s: *mut us_socket_t) {
+    fn on_end(ext: &mut Self::Ext, s: *mut us_socket_t, turn: JsTurn<'_>) {
         let Some(this) = ext.owner_ref() else { return };
-        fold(H::on_end(this, wrap::<SSL>(s)));
+        fold(H::on_end(this, wrap::<SSL>(s), turn), turn);
     }
-    fn on_connect_error(ext: &mut Self::Ext, s: *mut us_socket_t, code: i32) {
+    fn on_connect_error(ext: &mut Self::Ext, s: *mut us_socket_t, code: i32, turn: JsTurn<'_>) {
         let Some(this) = ext.owner_ref() else { return };
-        fold(H::on_connect_error(this, wrap::<SSL>(s), code));
+        fold(H::on_connect_error(this, wrap::<SSL>(s), code, turn), turn);
     }
-    fn on_connecting_error(c: *mut ConnectingSocket, code: i32) {
+    fn on_connecting_error(c: *mut ConnectingSocket, code: i32, turn: JsTurn<'_>) {
         let Some(this) = ConnectingSocket::opaque_mut(c)
             .ext::<ExtSlot<Owner>>()
             .owner_ref()
         else {
             return;
         };
-        fold(H::on_connect_error(
-            this,
-            NewSocketHandler::<SSL>::from_connecting(c),
-            code,
-        ));
+        fold(
+            H::on_connect_error(
+                this,
+                NewSocketHandler::<SSL>::from_connecting(c),
+                code,
+                turn,
+            ),
+            turn,
+        );
     }
     fn on_handshake(
         ext: &mut Self::Ext,
         s: *mut us_socket_t,
         ok: bool,
         err: us_bun_verify_error_t,
+        turn: JsTurn<'_>,
     ) {
         let Some(this) = ext.owner_ref() else { return };
-        fold(H::on_handshake(this, wrap::<SSL>(s), ok as i32, err));
+        fold(
+            H::on_handshake(this, wrap::<SSL>(s), ok as i32, err, turn),
+            turn,
+        );
     }
 }
 
@@ -633,7 +811,9 @@ pub(crate) struct HTTPClient<const SSL: bool>;
 // for events the upstream `Handler<SSL>` doesn't define.
 type HttpH<const SSL: bool> = bun_http::http_context::Handler<SSL>;
 
-impl<const SSL: bool> VHandler for HTTPClient<SSL> {
+// SAFETY: it asks for nothing.
+unsafe impl<const SSL: bool> VHandler for HTTPClient<SSL> {
+    type Turn<'a> = ();
     type Ext = ();
     const HAS_EXT: bool = false;
 
@@ -648,34 +828,34 @@ impl<const SSL: bool> VHandler for HTTPClient<SSL> {
     const HAS_ON_CONNECTING_ERROR: bool = true;
     const HAS_ON_HANDSHAKE: bool = true;
 
-    fn on_open_no_ext(s: *mut us_socket_t, _is_client: bool, _ip: &[u8]) {
+    fn on_open_no_ext(s: *mut us_socket_t, _is_client: bool, _ip: &[u8], _turn: ()) {
         HttpH::<SSL>::on_open(wrap::<SSL>(s));
     }
-    fn on_data_no_ext(s: *mut us_socket_t, data: &[u8]) {
+    fn on_data_no_ext(s: *mut us_socket_t, data: &[u8], _turn: ()) {
         HttpH::<SSL>::on_data(wrap::<SSL>(s), data);
     }
-    fn on_writable_no_ext(s: *mut us_socket_t) {
+    fn on_writable_no_ext(s: *mut us_socket_t, _turn: ()) {
         HttpH::<SSL>::on_writable(wrap::<SSL>(s));
     }
-    fn on_close_no_ext(s: *mut us_socket_t, code: i32, reason: Option<*mut c_void>) {
+    fn on_close_no_ext(s: *mut us_socket_t, code: i32, reason: Option<*mut c_void>, _turn: ()) {
         HttpH::<SSL>::on_close(wrap::<SSL>(s), code, reason);
     }
-    fn on_timeout_no_ext(s: *mut us_socket_t) {
+    fn on_timeout_no_ext(s: *mut us_socket_t, _turn: ()) {
         HttpH::<SSL>::on_timeout(wrap::<SSL>(s));
     }
     fn on_long_timeout_no_ext(s: *mut us_socket_t) {
         HttpH::<SSL>::on_long_timeout(wrap::<SSL>(s));
     }
-    fn on_end_no_ext(s: *mut us_socket_t) {
+    fn on_end_no_ext(s: *mut us_socket_t, _turn: ()) {
         HttpH::<SSL>::on_end(wrap::<SSL>(s));
     }
-    fn on_connect_error_no_ext(s: *mut us_socket_t, code: i32) {
+    fn on_connect_error_no_ext(s: *mut us_socket_t, code: i32, _turn: ()) {
         HttpH::<SSL>::on_connect_error(wrap::<SSL>(s), code);
     }
-    fn on_connecting_error(cs: *mut ConnectingSocket, code: i32) {
+    fn on_connecting_error(cs: *mut ConnectingSocket, code: i32, _turn: ()) {
         HttpH::<SSL>::on_connect_error(NewSocketHandler::<SSL>::from_connecting(cs), code);
     }
-    fn on_handshake_no_ext(s: *mut us_socket_t, ok: bool, err: us_bun_verify_error_t) {
+    fn on_handshake_no_ext(s: *mut us_socket_t, ok: bool, err: us_bun_verify_error_t, _turn: ()) {
         HttpH::<SSL>::on_handshake(wrap::<SSL>(s), ok as i32, err);
     }
 }
@@ -710,7 +890,10 @@ pub(crate) struct SpawnIPC;
 use IPC::IPCHandlers::PosixSocket as IpcH;
 type IpcS = NewSocketHandler<false>;
 
-impl VHandler for SpawnIPC {
+// SAFETY: the socket group belongs to a VM. `detach` and `drop` set `close_event_sent` before they close, so
+// `on_close` schedules nothing.
+unsafe impl VHandler for SpawnIPC {
+    type Turn<'a> = JsTurn<'a>;
     type Ext = ExtSlot<IPC::SendQueue>;
 
     const HAS_ON_OPEN: bool = true;
@@ -721,29 +904,42 @@ impl VHandler for SpawnIPC {
     const HAS_ON_TIMEOUT: bool = true;
     const HAS_ON_END: bool = true;
 
-    fn on_open(_ext: &mut Self::Ext, _s: *mut us_socket_t, _is_client: bool, _ip: &[u8]) {}
-    fn on_data(ext: &mut Self::Ext, s: *mut us_socket_t, data: &[u8]) {
+    fn on_open(
+        _ext: &mut Self::Ext,
+        _s: *mut us_socket_t,
+        _is_client: bool,
+        _ip: &[u8],
+        _turn: JsTurn<'_>,
+    ) {
+    }
+    fn on_data(ext: &mut Self::Ext, s: *mut us_socket_t, data: &[u8], turn: JsTurn<'_>) {
         let Some(this) = ext.owner_ref() else { return };
-        IpcH::on_data(this, IpcS::from(s), data);
+        IpcH::on_data(this, IpcS::from(s), data, turn);
     }
     fn on_fd(ext: &mut Self::Ext, s: *mut us_socket_t, fd: c_int) {
         let Some(this) = ext.owner_ref() else { return };
         IpcH::on_fd(this, IpcS::from(s), fd);
     }
-    fn on_writable(ext: &mut Self::Ext, s: *mut us_socket_t) {
+    fn on_writable(ext: &mut Self::Ext, s: *mut us_socket_t, turn: JsTurn<'_>) {
         let Some(this) = ext.owner_ref() else { return };
-        IpcH::on_writable(this, IpcS::from(s));
+        IpcH::on_writable(this, IpcS::from(s), turn);
     }
-    fn on_close(ext: &mut Self::Ext, s: *mut us_socket_t, code: i32, reason: Option<*mut c_void>) {
+    fn on_close(
+        ext: &mut Self::Ext,
+        s: *mut us_socket_t,
+        code: i32,
+        reason: Option<*mut c_void>,
+        turn: JsTurn<'_>,
+    ) {
         let Some(this) = ext.owner_ref() else { return };
-        IpcH::on_close(this, IpcS::from(s), code, reason);
+        IpcH::on_close(this, IpcS::from(s), code, reason, turn);
     }
-    fn on_timeout(ext: &mut Self::Ext, s: *mut us_socket_t) {
+    fn on_timeout(ext: &mut Self::Ext, s: *mut us_socket_t, _turn: JsTurn<'_>) {
         let Some(this) = ext.owner_ref() else { return };
         IpcH::on_timeout(this, IpcS::from(s));
     }
-    fn on_end(ext: &mut Self::Ext, s: *mut us_socket_t) {
+    fn on_end(ext: &mut Self::Ext, s: *mut us_socket_t, turn: JsTurn<'_>) {
         let Some(this) = ext.owner_ref() else { return };
-        IpcH::on_end(this, IpcS::from(s));
+        IpcH::on_end(this, IpcS::from(s), turn);
     }
 }

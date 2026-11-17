@@ -1,6 +1,7 @@
 use std::sync::OnceLock;
 
 use bun_collections::HashMap;
+use bun_core::VmLive;
 use bun_core::strings;
 use bun_jsc::bindgen::JsScope;
 use bun_jsc::virtual_machine::VirtualMachine;
@@ -107,9 +108,12 @@ fn uuid_from_pathname(pathname: &[u8]) -> Option<UUID> {
     UUID::parse(pathname).ok()
 }
 
-pub(crate) fn create_object_url(object: BlobOrBuildArtifact<'_>) -> bun_core::String {
+pub(crate) fn create_object_url(
+    object: BlobOrBuildArtifact<'_>,
+    live: VmLive<'_>,
+) -> bun_core::String {
     let registry = ObjectURLRegistry::singleton();
-    let uuid = registry.register(VirtualMachine::get(), object.blob());
+    let uuid = registry.register(VirtualMachine::get(live), object.blob());
     bun_core::String::create_format(format_args!("blob:{}", uuid))
 }
 

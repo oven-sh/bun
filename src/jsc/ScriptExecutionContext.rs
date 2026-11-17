@@ -10,6 +10,8 @@
 
 use core::ptr;
 
+use bun_core::{JsTurn, VmLive};
+
 use crate::virtual_machine::SweepResult;
 use crate::{AbortSignal, AbortSignalRef, JSValue, JsCell};
 
@@ -38,7 +40,7 @@ pub enum AbortCause {
 
 /// `handle` is already unlinked from its context when the cause is
 /// [`AbortCause::ContextStopped`].
-type AbortFn = unsafe fn(handle: *mut AbortHandle, cause: AbortCause);
+type AbortFn = unsafe fn(handle: *mut AbortHandle, cause: AbortCause, turn: JsTurn<'_>);
 
 pub struct ScriptExecutionContext {
     id: JsCell<ContextId>,
@@ -150,10 +152,10 @@ impl ScriptExecutionContext {
 
     /// A graph's context stops for good (JS thread): one stop-phase sweep over
     /// its handles and its client sockets.
-    pub(crate) fn stop(&self, reason: StopReason) -> SweepResult {
+    pub(crate) fn stop(&self, reason: StopReason, turn: JsTurn<'_>) -> SweepResult {
         self.stopped.set(true);
         self.stop_again_queued.set(false);
-        let result = self.stop_handles(reason);
+        let result = self.stop_handles(reason, turn);
         self.close_sockets();
         result
     }
@@ -171,11 +173,11 @@ impl ScriptExecutionContext {
     }
 
     /// A timer script of this (graph's) context set exists from here.
-    pub fn track_timer(&self, timer: *mut core::ffi::c_void, kind: ContextTimer) {
+    pub fn track_timer(&self, timer: *mut core::ffi::c_void, kind: ContextTimer, live: VmLive<'_>) {
         self.timers
             .with_mut(|timers| bun_core::handle_oom(timers.put(timer, kind)));
         if self.is_stopped() {
-            crate::VirtualMachineRef::get().stop_graph_context_again(self.id());
+            crate::VirtualMachineRef::get(live).stop_graph_context_again(self.id());
         }
     }
 
@@ -263,7 +265,7 @@ impl ScriptExecutionContext {
     /// One stop-phase sweep (JS thread): until none is armed, the newest
     /// handle is unlinked and its owner told to stop, including what a close
     /// handler it runs opens meanwhile.
-    pub fn stop_handles(&self, reason: StopReason) -> SweepResult {
+    pub fn stop_handles(&self, reason: StopReason, turn: JsTurn<'_>) -> SweepResult {
         let mut result = SweepResult::Idle;
         loop {
             let newest = *self.tail.get();
@@ -276,7 +278,7 @@ impl ScriptExecutionContext {
             unsafe {
                 self.unlink(&*newest);
                 (*newest).context_stopped.set(true);
-                ((*newest).on_abort)(newest, AbortCause::ContextStopped(reason));
+                ((*newest).on_abort)(newest, AbortCause::ContextStopped(reason), turn);
             }
         }
     }
@@ -353,7 +355,7 @@ impl AbortHandle {
     /// # Safety
     /// `this` is live, carries its owner's provenance, and does not move or
     /// drop while armed other than through `disarm` / `Drop`.
-    unsafe fn arm(this: *mut Self, context: &ScriptExecutionContext) {
+    unsafe fn arm(this: *mut Self, context: &ScriptExecutionContext, live: VmLive<'_>) {
         // SAFETY: fn contract.
         unsafe {
             if (*this).is_armed() {
@@ -365,7 +367,7 @@ impl AbortHandle {
             if context.is_stopped() {
                 // Script of a disposed graph is still opening things: they go on
                 // the next turn of the loop, not under the caller that is arming.
-                crate::VirtualMachineRef::get().stop_graph_context_again(context.id());
+                crate::VirtualMachineRef::get(live).stop_graph_context_again(context.id());
             }
         }
     }
@@ -387,7 +389,8 @@ impl AbortHandle {
         let this = this.cast::<AbortHandle>();
         // SAFETY: registered in `follow` with the handle's address; the
         // listener is removed (`unfollow`) before the handle moves or drops.
-        unsafe { ((*this).on_abort)(this, AbortCause::Signal(reason)) }
+        // A signal fires where it can dispatch its `abort` event.
+        unsafe { ((*this).on_abort)(this, AbortCause::Signal(reason), JsTurn::assume(&this)) }
     }
 
     /// Stop following the signal and release it.
@@ -442,16 +445,20 @@ pub trait AbortHandleOwner: Sized {
     ///
     /// # Safety
     /// `this` is live.
-    unsafe fn on_abort(this: *mut Self, cause: AbortCause);
+    unsafe fn on_abort(this: *mut Self, cause: AbortCause, turn: JsTurn<'_>);
 }
 
 impl AbortHandle {
-    unsafe fn owner_aborted<O: AbortHandleOwner>(handle: *mut AbortHandle, cause: AbortCause) {
+    unsafe fn owner_aborted<O: AbortHandleOwner>(
+        handle: *mut AbortHandle,
+        cause: AbortCause,
+        turn: JsTurn<'_>,
+    ) {
         // SAFETY: armed/followed through `*_owner::<O>`, so `handle` is `O`'s field.
         unsafe {
             let owner = O::from_abort_handle(handle);
             let _keep_alive = O::keep_alive(owner);
-            O::on_abort(owner, cause)
+            O::on_abort(owner, cause, turn)
         }
     }
 
@@ -460,9 +467,13 @@ impl AbortHandle {
     ///
     /// # Safety
     /// `owner` is live and heap-pinned until its handle is disarmed or dropped.
-    pub unsafe fn arm_owner<O: AbortHandleOwner>(owner: *mut O, context: &ScriptExecutionContext) {
+    pub unsafe fn arm_owner<O: AbortHandleOwner>(
+        owner: *mut O,
+        context: &ScriptExecutionContext,
+        live: VmLive<'_>,
+    ) {
         // SAFETY: fn contract.
-        unsafe { Self::arm(O::abort_handle(owner), context) }
+        unsafe { Self::arm(O::abort_handle(owner), context, live) }
     }
 
     /// `O::on_abort(owner, ..)` also runs when `signal` fires; before this
@@ -476,12 +487,12 @@ impl AbortHandle {
     }
 }
 
-/// `impl_abort_handle_owner!(Owner, field, |this, cause| body)`: `Owner` embeds
+/// `impl_abort_handle_owner!(Owner, field, |this, cause, turn| body)`: `Owner` embeds
 /// an [`AbortHandle`] at `field`; `body` is [`AbortHandleOwner::on_abort`].
 /// Generic owners: `impl_abort_handle_owner!([const N: bool] Owner<N>, field, ..)`.
 #[macro_export]
 macro_rules! impl_abort_handle_owner {
-    ([$($generics:tt)*] $Owner:ty, $field:ident, keep_alive = |$pinned:ident| -> $KeepAlive:ty $pin:block, |$this:ident, $cause:ident| $body:expr) => {
+    ([$($generics:tt)*] $Owner:ty, $field:ident, keep_alive = |$pinned:ident| -> $KeepAlive:ty $pin:block, |$this:ident, $cause:ident, $turn:ident| $body:expr) => {
         impl<$($generics)*> $crate::script_execution_context::AbortHandleOwner for $Owner {
             type KeepAlive = $KeepAlive;
             #[inline]
@@ -503,19 +514,20 @@ macro_rules! impl_abort_handle_owner {
             unsafe fn on_abort(
                 $this: *mut Self,
                 $cause: $crate::script_execution_context::AbortCause,
+                $turn: ::bun_core::JsTurn<'_>,
             ) {
                 $body
             }
         }
     };
-    ([$($generics:tt)*] $Owner:ty, $field:ident, |$this:ident, $cause:ident| $body:expr) => {
-        $crate::impl_abort_handle_owner!([$($generics)*] $Owner, $field, keep_alive = |_this| -> () {}, |$this, $cause| $body);
+    ([$($generics:tt)*] $Owner:ty, $field:ident, |$this:ident, $cause:ident, $turn:ident| $body:expr) => {
+        $crate::impl_abort_handle_owner!([$($generics)*] $Owner, $field, keep_alive = |_this| -> () {}, |$this, $cause, $turn| $body);
     };
-    ($Owner:ty, $field:ident, keep_alive = |$pinned:ident| -> $KeepAlive:ty $pin:block, |$this:ident, $cause:ident| $body:expr) => {
-        $crate::impl_abort_handle_owner!([] $Owner, $field, keep_alive = |$pinned| -> $KeepAlive $pin, |$this, $cause| $body);
+    ($Owner:ty, $field:ident, keep_alive = |$pinned:ident| -> $KeepAlive:ty $pin:block, |$this:ident, $cause:ident, $turn:ident| $body:expr) => {
+        $crate::impl_abort_handle_owner!([] $Owner, $field, keep_alive = |$pinned| -> $KeepAlive $pin, |$this, $cause, $turn| $body);
     };
-    ($Owner:ty, $field:ident, |$this:ident, $cause:ident| $body:expr) => {
-        $crate::impl_abort_handle_owner!([] $Owner, $field, |$this, $cause| $body);
+    ($Owner:ty, $field:ident, |$this:ident, $cause:ident, $turn:ident| $body:expr) => {
+        $crate::impl_abort_handle_owner!([] $Owner, $field, |$this, $cause, $turn| $body);
     };
 }
 
@@ -552,7 +564,7 @@ extern "C" fn Bun__ScriptExecutionContext__create(
 }
 
 /// # Safety
-/// `vm` is this thread's live VM and `context` one it created and has not destroyed.
+/// `vm` is this thread's live VM and `context` one it created and has not destroyed. Not from a finalizer.
 #[unsafe(no_mangle)]
 unsafe extern "C" fn Bun__ScriptExecutionContext__stop(
     vm: *mut crate::VirtualMachineRef,
@@ -560,12 +572,16 @@ unsafe extern "C" fn Bun__ScriptExecutionContext__stop(
 ) {
     // SAFETY: fn contract.
     let _ = unsafe {
-        (*vm).stop_graph_context(ptr::NonNull::new_unchecked(context), StopReason::Disposed)
+        (*vm).stop_graph_context(
+            ptr::NonNull::new_unchecked(context),
+            StopReason::Disposed,
+            JsTurn::assume(&vm),
+        )
     };
 }
 
 /// # Safety
-/// As [`Bun__ScriptExecutionContext__stop`]; `context` is not used again.
+/// `vm` and `context` as for [`Bun__ScriptExecutionContext__stop`]; `context` is not used again.
 #[unsafe(no_mangle)]
 unsafe extern "C" fn Bun__ScriptExecutionContext__release(
     vm: *mut crate::VirtualMachineRef,

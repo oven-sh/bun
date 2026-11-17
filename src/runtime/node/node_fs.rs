@@ -12,12 +12,12 @@ use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
 use crate::webcore;
 use bun_core::vec::{BorrowedBuf, BorrowedCursor, append_with};
-use bun_core::{String as BunString, Utf8WithString, ZBox, ZStr};
+use bun_core::{LoopTurn, String as BunString, Utf8WithString, VmLive, ZBox, ZStr};
 use bun_event_loop::AnyTaskWithExtraContext::AnyTaskWithExtraContext;
 use bun_io::JsKeepAlive;
 use bun_jsc::AbortSignal;
 use bun_jsc::debugger::AsyncTaskTracker;
-use bun_jsc::virtual_machine::VirtualMachine;
+use bun_jsc::virtual_machine::{VirtualMachine, VmRef};
 use bun_jsc::{
     ArrayBuffer, EventLoopHandle, JSGlobalObject, JSValue, JsResult, PinnedArrayBuffer,
     StringJsc as _,
@@ -104,8 +104,24 @@ use super::types::{
 };
 // Re-exported publicly: `crate::node::fs::PathOrFileDescriptor` is the
 // canonical path used by `cli/build_command.rs` et al., and `node_fs::Flavor`
-// by every caller that runs an operation directly (`read_file(.., Flavor::Sync)`).
+// by every caller that runs an operation directly (`cp(.., Flavor::Sync)`).
 pub(crate) use super::types::{Flavor, PathOrFileDescriptor};
+
+/// [`Flavor`], for an operation that uses the VM of its [`NodeFS`] when it is synchronous.
+#[derive(Clone, Copy)]
+pub(crate) enum JsFlavor<'a> {
+    Sync(bun_core::JsTurn<'a>),
+    Async,
+}
+
+impl From<JsFlavor<'_>> for Flavor {
+    fn from(flavor: JsFlavor<'_>) -> Self {
+        match flavor {
+            JsFlavor::Sync(_) => Flavor::Sync,
+            JsFlavor::Async => Flavor::Async,
+        }
+    }
+}
 
 /// Local alias for the many `node::foo` call sites below, routing to `super::*`.
 mod node {
@@ -1218,10 +1234,10 @@ mod _async_tasks {
 
         #[cfg(windows)]
         impl<T: AsyncMkdirpTarget> AsyncMkdirp<T> {
-            pub(crate) fn schedule(target: Box<T>) {
+            pub(crate) fn schedule(target: Box<T>, live: VmLive<'_>) {
                 WorkPool::schedule_new(Self {
                     target,
-                    ticket: VirtualMachine::get().ticket(),
+                    ticket: VirtualMachine::get(live).ticket(),
                     task: Default::default(),
                 });
             }
@@ -1300,7 +1316,7 @@ mod _async_tasks {
                 result: Err(sys::Error::default()),
                 global_object: bun_ptr::BackRef::new(cx.global()),
                 req: bun_core::ffi::zeroed(),
-                _keep_alive: JsKeepAlive::active(),
+                _keep_alive: JsKeepAlive::active(vm.live()),
                 tracker: AsyncTaskTracker::init(vm),
                 context: cx.context().id(),
             });
@@ -1878,7 +1894,7 @@ mod _async_tasks {
         const TAG: bun_event_loop::TaskTag = F.task_tag();
         /// A libuv fs request that completed into the queue after the last
         /// tick: the drop releases its promise handle and keep-alive.
-        unsafe fn release_unrun(this: *mut Self) {
+        unsafe fn release_unrun(this: *mut Self, _live: VmLive<'_>) {
             // SAFETY: fn contract — `Box::leak`'d in `UVFSRequest::create`.
             unsafe { bun_core::heap::destroy(this) }
         }
@@ -2030,7 +2046,7 @@ mod _async_tasks {
             done: bun_jsc::Completion<Self>,
         ) -> Option<bun_jsc::Completion<Self>> {
             let mut node_fs = NodeFS::default();
-            this.result = NodeFS::dispatch::<R, A, F>(&mut node_fs, &this.args, Flavor::Async);
+            this.result = NodeFS::dispatch::<R, A, F>(&mut node_fs, &this.args, JsFlavor::Async);
             Some(done)
         }
 
@@ -2288,7 +2304,7 @@ mod _async_tasks {
         };
         /// A finished fs.cp whose completion will not run: the drop releases
         /// its promise handle, protected arguments and keep-alive.
-        fn release_unrun(self: Box<Self>) {}
+        fn release_unrun(self: Box<Self>, _live: VmLive<'_>) {}
         fn context(&self) -> bun_event_loop::ContextId {
             self.context
         }
@@ -2355,6 +2371,7 @@ mod _async_tasks {
                 tracker,
                 cx.context().id(),
                 None,
+                JsKeepAlive::active(vm.live()),
             );
             value
         }
@@ -2376,6 +2393,7 @@ mod _async_tasks {
                 // As `ShellCpTask`, which is waiting for this.
                 bun_event_loop::ContextId::NONE,
                 Some(shelltask),
+                JsKeepAlive::default(),
             )
         }
 
@@ -2387,6 +2405,7 @@ mod _async_tasks {
             tracker: AsyncTaskTracker,
             context: bun_event_loop::ContextId,
             shelltask: Option<Box<ShellCpTask>>,
+            keep_alive: JsKeepAlive,
         ) {
             let task = Box::new(Self {
                 promise,
@@ -2400,11 +2419,7 @@ mod _async_tasks {
                 evtloop,
                 poster: core::cell::Cell::new(Some(poster)),
                 task: work_pool_task(Self::work_pool_callback),
-                _keep_alive: if IS_SHELL {
-                    JsKeepAlive::default()
-                } else {
-                    JsKeepAlive::active()
-                },
+                _keep_alive: keep_alive,
                 tracker,
                 subtask_count: AtomicUsize::new(1),
                 shelltask,
@@ -2476,15 +2491,16 @@ mod _async_tasks {
             if poster.is_js() {
                 poster.post_js(ConcurrentTask::ConcurrentTask::create_boxed(this));
             } else {
-                let at = AnyTaskWithExtraContext::from_callback_auto_deinit(this, |task, _| {
-                    let _ = task.run_from_js_thread(); // TODO: properly propagate exception upwards
-                });
+                let at =
+                    AnyTaskWithExtraContext::from_callback_auto_deinit(this, |task, _, turn| {
+                        let _ = task.run_from_js_thread(turn); // TODO: properly propagate exception upwards
+                    });
                 // `from_callback_auto_deinit` heap-allocates; never null.
                 poster.post_mini(core::ptr::NonNull::new(at).expect("heap task"));
             }
         }
 
-        pub(crate) fn run_from_js_thread(mut self: Box<Self>) -> JsResult<()> {
+        pub(crate) fn run_from_js_thread(mut self: Box<Self>, turn: LoopTurn<'_>) -> JsResult<()> {
             for path in self.written.get_mut().drain(..) {
                 note_opened_for_write(&path, true);
             }
@@ -2495,7 +2511,7 @@ mod _async_tasks {
                 let src = core::mem::take(&mut self.args.src);
                 let dest = core::mem::take(&mut self.args.dest);
                 let shelltask = self.shelltask.take().expect("IS_SHELL ⇒ shelltask");
-                shelltask.cp_on_finish(src, dest, result);
+                shelltask.cp_on_finish(src, dest, result, turn);
                 return Ok(());
             }
             let go_ptr = self.evtloop.global_object();
@@ -5133,7 +5149,7 @@ pub(crate) mod ret {
 pub(crate) struct NodeFS {
     /// Scratch for a temporary file path that might appear in a returned error message.
     pub(crate) sync_error_buf: bun_paths::path_buffer_pool::Guard,
-    pub(crate) vm: Option<&'static VirtualMachine>,
+    pub(crate) vm: Option<VmRef>,
 }
 
 impl Default for NodeFS {
@@ -7356,7 +7372,7 @@ impl NodeFS {
     pub(crate) fn read_file(
         &mut self,
         args: &args::ReadFile,
-        flavor: Flavor,
+        flavor: JsFlavor<'_>,
     ) -> Maybe<ret::ReadFile> {
         let result = self.read_file_with_options(args, flavor, ReadFileStringType::Default);
         match result {
@@ -7397,7 +7413,7 @@ impl NodeFS {
     pub(crate) fn read_file_with_options(
         &mut self,
         args: &args::ReadFile,
-        flavor: Flavor,
+        flavor: JsFlavor<'_>,
         string_type: ReadFileStringType,
     ) -> Maybe<ret::ReadFileWithOptions> {
         let (lent, opened);
@@ -7460,8 +7476,11 @@ impl NodeFS {
         // The sync case claims the per-VM pipe-read scratch when it is free;
         // otherwise (async, no VM, or a read further up the stack holds it)
         // a heap buffer stands in.
-        let mut scratch = match self.vm {
-            Some(vm) if flavor == Flavor::Sync => vm.rare_data().pipe_read_scratch.claim(),
+        let mut scratch = match (self.vm, flavor) {
+            (Some(vm), JsFlavor::Sync(turn)) => {
+                let vm = vm.get(turn.live.thread);
+                vm.rare_data().pipe_read_scratch.claim()
+            }
             _ => None,
         };
         let mut heap_buffer: Vec<u8> = Vec::new();
@@ -7490,11 +7509,13 @@ impl NodeFS {
         if did_succeed {
             return match args.encoding {
                 Encoding::Buffer => {
-                    if flavor == Flavor::Sync && string_type == ReadFileStringType::Default {
+                    if let JsFlavor::Sync(turn) = flavor
+                        && string_type == ReadFileStringType::Default
+                    {
                         if let Some(vm) = self.vm {
                             // Attempt to create the buffer in JSC's heap.
                             // This avoids creating a WastefulTypedArray.
-                            let global = vm.global();
+                            let global = vm.get(turn.live.thread).global(turn);
                             let Ok(array_buffer) = bun_jsc::ArrayBuffer::create_buffer(
                                 global,
                                 temporary_read_buffer_before_stat_call,
@@ -9415,7 +9436,7 @@ impl NodeFS {
     pub(crate) fn dispatch<R, A: FsArgument, const F: NodeFSFunctionEnum>(
         &mut self,
         args: &A,
-        flavor: Flavor,
+        flavor: JsFlavor<'_>,
     ) -> Maybe<R>
     where
         Op<{ F }>: NodeFSDispatch<R, A>,
@@ -9467,7 +9488,7 @@ pub(crate) struct Op<const F: NodeFSFunctionEnum>;
 /// `async_::*` has exactly one impl, so the `where Op<{F}>: NodeFSDispatch<R, A>`
 /// bound is always satisfied at every monomorphised call site.
 pub(crate) trait NodeFSDispatch<R, A> {
-    fn run(fs: &mut NodeFS, args: &A, flavor: Flavor) -> Maybe<R>;
+    fn run(fs: &mut NodeFS, args: &A, flavor: JsFlavor<'_>) -> Maybe<R>;
     #[cfg(windows)]
     fn run_uv(_fs: &mut NodeFS, _args: &A, _rc: uv::ReturnCodeI64) -> Maybe<R> {
         unreachable!("uv_dispatch: not a UVFSRequest variant")
@@ -9492,8 +9513,8 @@ macro_rules! node_fs_ops {
         $(
             impl NodeFSDispatch<$Ret, $Args> for Op<{ NodeFSFunctionEnum::$Variant }> {
                 #[inline]
-                fn run(fs: &mut NodeFS, args: &$Args, flavor: Flavor) -> Maybe<$Ret> {
-                    fs.$method(args, flavor)
+                fn run(fs: &mut NodeFS, args: &$Args, flavor: JsFlavor<'_>) -> Maybe<$Ret> {
+                    fs.$method(args, flavor.into())
                 }
                 $(
                     #[cfg(windows)]

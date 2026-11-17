@@ -1,6 +1,7 @@
 use core::sync::atomic::{AtomicUsize, Ordering};
 use std::io::Write as _;
 
+use bun_core::LoopTurn;
 use bun_core::ZBox;
 use bun_ptr::BackRef;
 use bun_sys::{E, O, S, dir_iterator};
@@ -12,11 +13,11 @@ use crate::shell::interpreter::{
 };
 use crate::shell::yield_::Yield;
 
-pub(crate) fn start(interp: &Interpreter, cmd: NodeId) -> Yield {
+pub(crate) fn start(interp: &Interpreter, cmd: NodeId, turn: LoopTurn<'_>) -> Yield {
     let (flags, paths) = Builtin::of(interp, cmd).split_flags();
     let mut opts = Opts::default();
     if let Err(flag) = flags.iter().try_for_each(|flag| opts.parse(flag)) {
-        return Builtin::fail_flag(interp, cmd, flag);
+        return Builtin::fail_flag(interp, cmd, flag, turn);
     }
     Batch::start(interp, cmd, paths.len().max(1));
     let running = BackRef::new(&Builtin::of(interp, cmd).running);
@@ -350,9 +351,15 @@ impl ShellWork for ShellLsTask {
     fn run_from_thread_pool(&mut self, task: &ShellTask) {
         Self::list(self, task)
     }
-    fn run_from_main_thread(&mut self, interp: &Interpreter) -> Yield {
+    fn run_from_main_thread(&mut self, interp: &Interpreter, turn: LoopTurn<'_>) -> Yield {
         let err = self.err.as_ref().map(|e| Kind::Ls.task_error(e));
-        Batch::report(interp, self.cmd, err, core::mem::take(&mut self.output))
+        Batch::report(
+            interp,
+            self.cmd,
+            err,
+            core::mem::take(&mut self.output),
+            turn,
+        )
     }
 }
 

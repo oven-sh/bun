@@ -1,7 +1,7 @@
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use bstr::BStr;
-use bun_core::{ZBox, ZStr, strings};
+use bun_core::{LoopTurn, ZBox, ZStr, strings};
 use bun_paths::{PathBuffer, resolve_path};
 use bun_ptr::BackRef;
 
@@ -25,7 +25,7 @@ pub(crate) struct Mv {
     err: Option<bun_sys::Error>,
 }
 
-pub(crate) fn start(interp: &Interpreter, cmd: NodeId) -> Yield {
+pub(crate) fn start(interp: &Interpreter, cmd: NodeId, turn: LoopTurn<'_>) -> Yield {
     let (flags, operands) = Builtin::of(interp, cmd).split_flags();
     let mut no_clobber = false;
     for ch in flags.iter().flat_map(|flag| flag.iter().skip(1)) {
@@ -34,11 +34,11 @@ pub(crate) fn start(interp: &Interpreter, cmd: NodeId) -> Yield {
             b'n' => no_clobber = true,
             b'f' => no_clobber = false,
             b'h' | b'i' | b'v' => {}
-            _ => return Builtin::fail_flag(interp, cmd, BadFlag::Illegal(b"-")),
+            _ => return Builtin::fail_flag(interp, cmd, BadFlag::Illegal(b"-"), turn),
         }
     }
     let [_, .., target] = operands else {
-        return Builtin::fail_usage(interp, cmd, USAGE);
+        return Builtin::fail_usage(interp, cmd, USAGE, turn);
     };
     let task = ShellMvCheckTargetTask {
         cmd,
@@ -74,24 +74,29 @@ impl ShellWork for ShellMvCheckTargetTask {
             Err(e) => Err(e),
         };
     }
-    fn run_from_main_thread(&mut self, interp: &Interpreter) -> Yield {
+    fn run_from_main_thread(&mut self, interp: &Interpreter, turn: LoopTurn<'_>) -> Yield {
         let cmd = self.cmd;
         let [sources @ .., _] = Builtin::of(interp, cmd).split_flags().1 else {
-            return Builtin::fail_usage(interp, cmd, USAGE);
+            return Builtin::fail_usage(interp, cmd, USAGE, turn);
         };
         let target = BStr::new(self.target.as_bytes());
         let target_fd = match core::mem::replace(&mut self.result, Ok(None)) {
             Ok(None) if sources.len() > 1 => {
-                return Builtin::fail(interp, cmd, format_args!("{target} is not a directory\n"));
+                return Builtin::fail(
+                    interp,
+                    cmd,
+                    format_args!("{target} is not a directory\n"),
+                    turn,
+                );
             }
             Ok(fd) => fd,
             Err(e) if e.get_errno() != bun_sys::E::ENOENT => {
                 let words = BStr::new(e.msg().unwrap_or(b"unknown error"));
-                return Builtin::fail(interp, cmd, format_args!("{target}: {words}\n"));
+                return Builtin::fail(interp, cmd, format_args!("{target}: {words}\n"), turn);
             }
             Err(_) if sources.len() > 1 => {
                 let words = "No such file or directory";
-                return Builtin::fail(interp, cmd, format_args!("{target}: {words}\n"));
+                return Builtin::fail(interp, cmd, format_args!("{target}: {words}\n"), turn);
             }
             Err(_) => None,
         };
@@ -181,7 +186,7 @@ impl ShellWork for ShellMvBatchedTask {
         }
     }
 
-    fn run_from_main_thread(&mut self, interp: &Interpreter) -> Yield {
+    fn run_from_main_thread(&mut self, interp: &Interpreter, turn: LoopTurn<'_>) -> Yield {
         let cmd = self.cmd;
         let bltn = Builtin::of_mut(interp, cmd);
         let State::Mv(mv) = &mut bltn.state else {
@@ -200,7 +205,14 @@ impl ShellWork for ShellMvBatchedTask {
             return Builtin::done(interp, cmd, 0);
         };
         let message = Kind::Mv.task_error(&e);
-        Builtin::finish(interp, cmd, IoKind::Stderr, &message, e.errno as ExitCode)
+        Builtin::finish(
+            interp,
+            cmd,
+            IoKind::Stderr,
+            &message,
+            e.errno as ExitCode,
+            turn,
+        )
     }
 }
 

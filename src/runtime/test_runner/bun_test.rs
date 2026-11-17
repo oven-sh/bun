@@ -4,7 +4,7 @@ use core::num::NonZeroU32;
 use std::collections::VecDeque;
 use std::rc::{Rc, Weak};
 
-use bun_core::{Output, Timespec};
+use bun_core::{JsTurn, Output, Timespec, VmLive};
 use bun_jsc::bindgen::{JsLocal, JsScope};
 use bun_jsc::{self as jsc, GlobalRef, JSGlobalObject, JSValue, JsResult, Strong, StrongCell};
 use bun_jsc::virtual_machine::VirtualMachine;
@@ -37,8 +37,8 @@ pub(crate) use group_begin;
 /// per-thread VM so `ExecutionEntry::create` (which has no global in scope)
 /// can box callbacks.
 #[inline]
-fn strong_create(value: JSValue) -> Strong {
-    let global = VirtualMachine::get().global();
+fn strong_create(value: JSValue, turn: JsTurn<'_>) -> Strong {
+    let global = VirtualMachine::get(turn.live).global(turn);
     Strong::create(value, global)
 }
 
@@ -69,10 +69,10 @@ pub(crate) mod js_fns {
 
     /// Only requires the runner: hooks are legal in preload scripts (they attach
     /// to the root), so the preload check lives in `clone_active_strong`.
-    fn get_test_root(
-        global_this: &JSGlobalObject,
+    fn get_test_root<'a>(
+        global_this: &'a JSGlobalObject,
         signature: Signature<'_>,
-    ) -> JsResult<&'static BunTestRoot> {
+    ) -> JsResult<&'a BunTestRoot> {
         let Some(runner) = Jest::runner() else {
             if jsc::virtual_machine::isBunTest.load(core::sync::atomic::Ordering::Relaxed) {
                 let place = if global_this.bun_vm().worker_ref().is_some() { "Worker" } else { "macro" };
@@ -246,6 +246,7 @@ pub(crate) mod js_fns {
                     cfg,
                     BaseScopeCfg::default(),
                     AddedInPhase::Preload,
+                    global_this.turn(),
                 );
                 return Ok(());
             };
@@ -259,7 +260,7 @@ pub(crate) mod js_fns {
                         )));
                     }
                     if fixtures.is_some() {
-                        bun_test.expect_file_scoped_fixtures();
+                        bun_test.expect_file_scoped_fixtures(global_this.turn());
                     }
                     bun_test.active_scope().append_hook(
                         &bun_test.entries,
@@ -268,6 +269,7 @@ pub(crate) mod js_fns {
                         cfg,
                         BaseScopeCfg::default(),
                         AddedInPhase::Collection,
+                        global_this.turn(),
                     );
                     Ok(())
                 }
@@ -307,7 +309,7 @@ pub(crate) mod js_fns {
                             )));
                         }
                         sequence_ref.context(global_this, bun_test, group_index, entry_data.sequence_index);
-                        sequence_ref.defer(bun_test, when, callback, cfg.timeout);
+                        sequence_ref.defer(bun_test, when, callback, cfg.timeout, global_this.turn());
                         return Ok(());
                     }
                     let append_point: SequenceEntryId = match tag {
@@ -340,7 +342,7 @@ pub(crate) mod js_fns {
                         }
                     };
 
-                    let new_item = bun_test.create_sequence_entry(args.callback, cfg, AddedInPhase::Execution);
+                    let new_item = bun_test.create_sequence_entry(args.callback, cfg, AddedInPhase::Execution, global_this.turn());
                     bun_test.link_after(append_point, new_item);
 
                     Ok(())
@@ -744,8 +746,9 @@ impl BunTest {
         callback: Option<JSValue>,
         cfg: ExecutionEntryCfg,
         phase: AddedInPhase,
+        turn: JsTurn<'_>,
     ) -> SequenceEntryId {
-        let entry = ExecutionEntry::create(None, callback, cfg, None, None, BaseScopeCfg::default(), phase);
+        let entry = ExecutionEntry::create(None, callback, cfg, None, None, BaseScopeCfg::default(), phase, turn);
         self.push_sequence_entry(entry.push_to(&self.entries))
     }
 
@@ -795,10 +798,11 @@ impl BunTest {
         cfg: ExecutionEntryCfg,
         parameter: Option<SharedContextParameter>,
         base: BaseScopeCfg,
+        turn: JsTurn<'_>,
     ) {
         let parent = self.active_scope();
         let entry =
-            ExecutionEntry::create(name_not_owned, callback, cfg, parameter, Some(parent), base, AddedInPhase::Collection);
+            ExecutionEntry::create(name_not_owned, callback, cfg, parameter, Some(parent), base, AddedInPhase::Collection, turn);
         entry.base.has_callback.set(entry.callback.is_some());
         self.propagate(&entry.base);
         let id = entry.push_to(&self.entries);
@@ -806,14 +810,14 @@ impl BunTest {
     }
 
     /// Must be called before the order is generated, or `file_end` never runs.
-    pub(crate) fn expect_file_scoped_fixtures(&self) {
-        self.file_end.get_or_init(|| {
+    pub(crate) fn expect_file_scoped_fixtures(&self, turn: JsTurn<'_>) {
+        self.file_end.get_or_init(move || {
             let cfg = ExecutionEntryCfg { calling: Calling::Vitest { context: false }, ..Default::default() };
-            self.create_sequence_entry(None, cfg, AddedInPhase::Collection)
+            self.create_sequence_entry(None, cfg, AddedInPhase::Collection, turn)
         });
     }
 
-    pub(crate) fn defer_to_file_end(&self, callback: JSValue, timeout: u32) -> bool {
+    pub(crate) fn defer_to_file_end(&self, callback: JSValue, timeout: u32, turn: JsTurn<'_>) -> bool {
         let Some(&file_end) = self.file_end.get() else {
             return false;
         };
@@ -821,15 +825,15 @@ impl BunTest {
         if self.phase.get() != Phase::Execution || self.execution.group_index.get() + 1 >= self.execution.groups().len() {
             return false;
         }
-        let entry = self.create_vitest_entry(callback, timeout);
+        let entry = self.create_vitest_entry(callback, timeout, turn);
         self.sequence_entry(entry).failure_skip_past.set(Some(entry));
         self.link_after(file_end, entry);
         true
     }
 
-    pub(crate) fn create_vitest_entry(&self, callback: JSValue, timeout: u32) -> SequenceEntryId {
+    pub(crate) fn create_vitest_entry(&self, callback: JSValue, timeout: u32, turn: JsTurn<'_>) -> SequenceEntryId {
         let cfg = ExecutionEntryCfg { timeout, calling: Calling::Vitest { context: false }, ..Default::default() };
-        self.create_sequence_entry(Some(callback), cfg, AddedInPhase::Execution)
+        self.create_sequence_entry(Some(callback), cfg, AddedInPhase::Execution, turn)
     }
 
     pub(crate) fn get_current_state_data(&self) -> RefDataValue {
@@ -910,7 +914,7 @@ impl BunTest {
             return Ok(());
         }
         if !is_catch {
-            this.adopt_teardown(&refdata.phase, result);
+            this.adopt_teardown(&refdata.phase, result, global_this.turn());
         }
 
         this.add_result(refdata.phase);
@@ -1012,9 +1016,10 @@ impl BunTest {
         this: &BunTestPtr,
         _ts: &Timespec,
         vm: &VirtualMachine,
+        turn: JsTurn<'_>,
     ) {
         let _g = group_begin!();
-        let global = vm.global();
+        let global = vm.global(turn);
         this.timer.next.set(Timespec::EPOCH);
         this.timer.state.set(EventLoopTimerState::PENDING);
 
@@ -1101,11 +1106,11 @@ impl BunTest {
             }
         }
 
-        Self::update_min_timeout(this, &min_timeout);
+        Self::update_min_timeout(this, &min_timeout, global_this.live());
         Ok(())
     }
 
-    fn update_min_timeout(this: &BunTestPtr, min_timeout: &Timespec) {
+    fn update_min_timeout(this: &BunTestPtr, min_timeout: &Timespec, live: VmLive<'_>) {
         let _g = group_begin!();
         let timer: &EventLoopTimer = &this.timer;
         // only set the timer if the new timeout is sooner than the current timeout. this unfortunately means that we can't unset an unnecessary timer.
@@ -1121,12 +1126,12 @@ impl BunTest {
             bun_core::scoped_log!(bun_test_group, "-> setting timer to {:?}", min_timeout);
             if timer.next.get() != Timespec::EPOCH {
                 bun_core::scoped_log!(bun_test_group, "-> removing existing timer");
-                timer_all().remove(timer);
+                timer_all(live).remove(timer);
             }
             timer.next.set(*min_timeout);
             if timer.next.get() != Timespec::EPOCH {
                 bun_core::scoped_log!(bun_test_group, "-> inserting timer");
-                timer_all().insert(timer);
+                timer_all(live).insert(timer);
                 if debug::group::get_log_enabled() {
                     let duration = min_timeout.since_now_force_real_time();
                     bun_core::scoped_log!(bun_test_group, "-> timer duration: {}", duration);
@@ -1136,15 +1141,15 @@ impl BunTest {
         }
     }
 
-    fn advance(&self, _global_this: &JSGlobalObject) -> JsResult<Advance> {
+    fn advance(&self, global_this: &JSGlobalObject) -> JsResult<Advance> {
         let _g = group_begin!();
         bun_core::scoped_log!(bun_test_group, "advance from {}", <&'static str>::from(self.phase.get()));
-        let result = self.advance_inner();
+        let result = self.advance_inner(global_this.turn());
         bun_core::scoped_log!(bun_test_group, "advance -> {}", <&'static str>::from(self.phase.get()));
         result
     }
 
-    fn advance_inner(&self) -> JsResult<Advance> {
+    fn advance_inner(&self, turn: JsTurn<'_>) -> JsResult<Advance> {
         match self.phase.get() {
             Phase::Collection => {
                 self.phase.set(Phase::Execution);
@@ -1167,7 +1172,7 @@ impl BunTest {
 
                 let preload = self.preload.scope.hooks.take();
                 if preload.before_all.iter().chain(&preload.after_all).chain(&preload.around_all).any(|&hook| self.entry(hook).fixtures.is_some()) {
-                    self.expect_file_scoped_fixtures();
+                    self.expect_file_scoped_fixtures(turn);
                 }
                 let aroundall_order: Order::AllOrderResult = if self.first_last.first {
                     order.generate_all_order(&preload.around_all, true)
@@ -1248,7 +1253,7 @@ impl BunTest {
             this.on_uncaught_exception(global_this, global_this.try_take_exception(), false, &RefDataValue::Start);
         }
 
-        Self::update_min_timeout(this, timeout);
+        Self::update_min_timeout(this, timeout, vm.live());
         let args_slice: &[JSValue] = if !done_arg.is_empty() { core::slice::from_ref(&done_arg) } else { cfg_args };
         let on_stack = OnStack::enter(&this.execution.on_stack, &cfg_data);
         let result: JSValue = match vm
@@ -1338,7 +1343,7 @@ impl BunTest {
                     PromiseStatus::Fulfilled => {
                         // Do not register a then callback when it's already fulfilled.
                         let value = bun_jsc::JSPromise::opaque_mut(promise).result(global_this.vm());
-                        this.adopt_teardown(&cfg_data, value);
+                        this.adopt_teardown(&cfg_data, value, global_this.turn());
                         return Some(cfg_data);
                     }
                     PromiseStatus::Rejected => {
@@ -1361,7 +1366,7 @@ impl BunTest {
 
         bun_core::scoped_log!(bun_test_group, "callTestCallback -> sync");
         if !result.is_empty() {
-            this.adopt_teardown(&cfg_data, result);
+            this.adopt_teardown(&cfg_data, result, global_this.turn());
         }
         Some(cfg_data)
     }
@@ -1378,7 +1383,7 @@ impl BunTest {
     }
 
     /// Vitest runs a function returned by `beforeEach` / `beforeAll` after the matching after-hooks.
-    fn adopt_teardown(&self, data: &RefDataValue, returned: JSValue) {
+    fn adopt_teardown(&self, data: &RefDataValue, returned: JSValue, turn: JsTurn<'_>) {
         if !returned.is_callable() {
             return;
         }
@@ -1394,18 +1399,18 @@ impl BunTest {
         }
         if sequence.test_entry.is_none() {
             if let (Some(slot), None) = (hook.teardown, hook.around) {
-                self.entry(slot).callback.set(strong_create(returned));
+                self.entry(slot).callback.set(strong_create(returned, turn));
             }
         } else if sequence.test_follows(self, active_entry) {
-            sequence.defer(self, Deferred::Teardown, returned, hook.timeout);
+            sequence.defer(self, Deferred::Teardown, returned, hook.timeout, turn);
         }
     }
 
     /// The `aroundAll` hook `hook` called `runSuite()`.
-    pub(crate) fn enter_around_all(&self, hook: &ExecutionEntry, tear_down: JSValue, async_context: JSValue) {
+    pub(crate) fn enter_around_all(&self, hook: &ExecutionEntry, tear_down: JSValue, async_context: JSValue, turn: JsTurn<'_>) {
         if let (Some(slot), Some(scope)) = (hook.teardown, hook.base.parent) {
-            self.entry(slot).callback.set(strong_create(tear_down));
-            self.scope(scope).async_context.set(strong_create(async_context));
+            self.entry(slot).callback.set(strong_create(tear_down, turn));
+            self.scope(scope).async_context.set(strong_create(async_context, turn));
         }
     }
 
@@ -1440,7 +1445,7 @@ impl BunTest {
         if let (Phase::Execution, Some(thrown)) = (self.phase.get(), exception)
             && let Err(err) = Execution::Execution::record_error(self, global_this, user_data, thrown)
         {
-            global_this.bun_vm().run_error_handler(global_this.take_exception(err), None);
+            global_this.bun_vm().run_error_handler(global_this.take_exception(err), None, global_this.turn());
         }
 
         if handle_status == HandleUncaughtExceptionResult::HideError {
@@ -1547,7 +1552,7 @@ pub(crate) fn print_error(
     error: JSValue,
     exception_list: Option<&mut bun_jsc::virtual_machine::ExceptionList>,
 ) {
-    vm.run_error_handler(error, exception_list);
+    vm.run_error_handler(error, exception_list, global_this.turn());
     // `BunTest::run` and `run_test_callback` clear termination exceptions.
     if global_this.has_pending_termination_exception() {
         return;
@@ -1555,7 +1560,7 @@ pub(crate) fn print_error(
     let Some(left) = global_this.try_take_exception() else {
         return;
     };
-    vm.run_error_handler(left, None);
+    vm.run_error_handler(left, None, global_this.turn());
     // Printing this one could throw again, so just print a note.
     if !global_this.has_pending_termination_exception() && global_this.try_take_exception().is_some() {
         bun_core::pretty_errorln!("<blue>note<r><d>:<r> printing the error above threw another error");
@@ -1684,7 +1689,7 @@ impl RunTestsTask {
 
 impl bun_event_loop::BoxedTask for RunTestsTask {
     const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::RunTestsTask;
-    fn release_unrun(self: Box<Self>) {}
+    fn release_unrun(self: Box<Self>, _live: VmLive<'_>) {}
     /// Enters no context.
     fn context(&self) -> bun_event_loop::ContextId {
         bun_event_loop::ContextId::NONE
@@ -1958,8 +1963,9 @@ impl DescribeScope {
         cfg: ExecutionEntryCfg,
         base: BaseScopeCfg,
         phase: AddedInPhase,
+        turn: JsTurn<'_>,
     ) {
-        let mut entry = ExecutionEntry::create(None, callback, cfg, None, Some(self), base, phase);
+        let mut entry = ExecutionEntry::create(None, callback, cfg, None, Some(self), base, phase, turn);
         // `create` drops the callback in a skipped scope, and a hook entry without one would be reported as a test.
         if !entry.callback.is_some() {
             return;
@@ -1972,7 +1978,7 @@ impl DescribeScope {
                 around,
                 ..Default::default()
             };
-            ExecutionEntry::create(None, None, slot_cfg, None, Some(self), base, phase).push_to(entries)
+            ExecutionEntry::create(None, None, slot_cfg, None, Some(self), base, phase, turn).push_to(entries)
         };
         let mut hooks = self.hooks.take();
         let first_teardown_slot = hooks.after_all.len() - hooks.teardown_slots_in_after_all;
@@ -2059,6 +2065,7 @@ impl ExecutionEntry {
         parent: Option<&DescribeScope>,
         base: BaseScopeCfg,
         phase: AddedInPhase,
+        turn: JsTurn<'_>,
     ) -> ExecutionEntry {
         let base = BaseScope::init(base, name_not_owned, parent, cb.is_some());
         let callback = cb.filter(|_| match base.mode {
@@ -2068,11 +2075,11 @@ impl ExecutionEntry {
         });
         ExecutionEntry {
             base,
-            callback: callback.map(strong_create).into(),
+            callback: callback.map(move |it| strong_create(it, turn)).into(),
             timeout: cfg.timeout,
             calling: cfg.calling,
             around: cfg.around,
-            fixtures: callback.and(cfg.fixtures).map(strong_create),
+            fixtures: callback.and(cfg.fixtures).map(move |it| strong_create(it, turn)),
             parameter: parameter
                 .or_else(|| (cfg.calling.is_vitest() && phase != AddedInPhase::Execution).then(Default::default)),
             added_in_phase: phase,

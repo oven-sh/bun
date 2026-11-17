@@ -330,12 +330,12 @@ pub(crate) fn run(cx: &mut JsScope<'_>, this_value: JsLocal<'_>) -> JsResult<JSV
                 js::context_set_cached(this_value, global, context);
                 js::outer_async_context_set_cached(this_value, global, outer);
                 test_context::js::async_context_set_cached(context, global, async_context);
-                sequence.defer(buntest, Deferred::Around, tear_down, this.timeout);
+                sequence.defer(buntest, Deferred::Around, tear_down, this.timeout, global.turn());
             }
         }
         Around::All => {
             if let Some(entry) = sequence.active_entry.get() {
-                buntest.enter_around_all(buntest.entry_of(entry), tear_down, async_context);
+                buntest.enter_around_all(buntest.entry_of(entry), tear_down, async_context, global.turn());
             }
         }
     }

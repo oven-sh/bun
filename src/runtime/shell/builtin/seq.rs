@@ -1,13 +1,15 @@
 use std::io::Write as _;
 
+use bun_core::LoopTurn;
+
 use crate::shell::builtin::{Arg, Builtin, IoKind};
 use crate::shell::interpreter::{Interpreter, NodeId};
 use crate::shell::yield_::Yield;
 
 const USAGE: &[u8] = b"usage: seq [-w] [-f format] [-s string] [-t string] [first [incr]] last\n";
 
-pub(crate) fn start(interp: &Interpreter, cmd: NodeId) -> Yield {
-    let fail = |message: &str| Builtin::fail(interp, cmd, format_args!("{message}\n"));
+pub(crate) fn start(interp: &Interpreter, cmd: NodeId, turn: LoopTurn<'_>) -> Yield {
+    let fail = |message: &str| Builtin::fail(interp, cmd, format_args!("{message}\n"), turn);
     let mut args = Builtin::of(interp, cmd).args();
     let mut separator: &[u8] = b"\n";
     let mut terminator: &[u8] = b"";
@@ -37,7 +39,7 @@ pub(crate) fn start(interp: &Interpreter, cmd: NodeId) -> Yield {
     }
 
     if args.is_empty() {
-        return Builtin::fail_usage(interp, cmd, USAGE);
+        return Builtin::fail_usage(interp, cmd, USAGE, turn);
     }
     let parse = |arg: &Arg| bun_core::fmt::parse_f32(arg).filter(|n| n.is_finite());
     let mut numbers = [0.0; 3];
@@ -81,5 +83,5 @@ pub(crate) fn start(interp: &Interpreter, cmd: NodeId) -> Yield {
         current = next;
     }
     out.extend_from_slice(terminator);
-    Builtin::finish(interp, cmd, IoKind::Stdout, &out, 0)
+    Builtin::finish(interp, cmd, IoKind::Stdout, &out, 0, turn)
 }

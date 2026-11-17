@@ -1,3 +1,5 @@
+use bun_core::LoopTurn;
+
 use crate::shell::ExitCode;
 use crate::shell::ast;
 use crate::shell::interpreter::{Interpreter, Node, NodeId, ShellExecEnv, StateKind, log};
@@ -36,7 +38,7 @@ impl Stmt {
         id
     }
 
-    pub(crate) fn start(interp: &Interpreter, this: NodeId) -> Yield {
+    pub(crate) fn start(interp: &Interpreter, this: NodeId, _turn: LoopTurn<'_>) -> Yield {
         let me = interp.as_stmt(this);
         debug_assert!(me.idx == 0);
         debug_assert!(me.last_exit_code.is_none());
@@ -44,7 +46,7 @@ impl Stmt {
         Yield::Next(this)
     }
 
-    pub(crate) fn next(interp: &Interpreter, this: NodeId) -> Yield {
+    pub(crate) fn next(interp: &Interpreter, this: NodeId, turn: LoopTurn<'_>) -> Yield {
         let (idx, len, parent, last, shell) = {
             let me = interp.as_stmt(this);
             (
@@ -56,11 +58,11 @@ impl Stmt {
             )
         };
         if idx >= len {
-            return interp.child_done(parent, this, last.unwrap_or(0));
+            return interp.child_done(parent, this, last.unwrap_or(0), turn);
         }
         let expr: ast::Expr = interp.as_stmt(this).node.exprs[idx];
         let io = interp.as_stmt(this).io.clone();
-        let (child, y) = interp.spawn_expr(shell, &expr, this, io);
+        let (child, y) = interp.spawn_expr(shell, &expr, this, io, turn);
         interp.as_stmt_mut(this).currently_executing = child;
         y
     }
@@ -70,6 +72,7 @@ impl Stmt {
         this: NodeId,
         child: NodeId,
         exit_code: ExitCode,
+        turn: LoopTurn<'_>,
     ) -> Yield {
         log!("Stmt {} childDone exit={}", this, exit_code);
         {
@@ -83,7 +86,7 @@ impl Stmt {
         if !matches!(interp.node(child).kind(), StateKind::Async) {
             interp.deinit_node(child);
         }
-        if interp.interrupted(this) {
+        if interp.interrupted(this, turn.live) {
             let me = interp.as_stmt_mut(this);
             me.idx = Self::expr_count(me);
         }

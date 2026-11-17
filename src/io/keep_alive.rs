@@ -6,6 +6,9 @@
 //! identical-signature methods).
 
 use core::cell::Cell;
+use core::marker::PhantomData;
+
+use bun_core::VmLive;
 
 use crate::EventLoopCtx;
 use crate::posix_event_loop::js_vm_ctx;
@@ -32,8 +35,8 @@ impl KeepAlive {
     }
 
     /// Make calling ref() on this poll into a no-op.
-    pub fn disable(&self) {
-        self.unref(js_vm_ctx());
+    pub fn disable(&self, live: VmLive<'_>) {
+        self.unref(js_vm_ctx(live));
         self.status.set(Status::Done);
     }
 
@@ -87,28 +90,51 @@ impl KeepAlive {
 
 /// A [`KeepAlive`] on the JS thread's loop, released when it drops.
 #[derive(Default)]
-pub struct JsKeepAlive(KeepAlive);
+pub struct JsKeepAlive(KeepAlive, PhantomData<*mut ()>);
 
 impl JsKeepAlive {
-    pub fn active() -> Self {
+    pub fn active(live: VmLive<'_>) -> Self {
         let this = Self::default();
-        this.ref_(js_vm_ctx());
+        this.ref_(live);
         this
     }
-}
 
-impl core::ops::Deref for JsKeepAlive {
-    type Target = KeepAlive;
-    fn deref(&self) -> &KeepAlive {
-        &self.0
+    pub fn is_active(&self) -> bool {
+        self.0.is_active()
+    }
+
+    pub fn ref_(&self, live: VmLive<'_>) {
+        self.0.ref_(js_vm_ctx(live));
+    }
+
+    pub fn unref(&self) {
+        if let Some(armed_on) = self.armed_on() {
+            self.0.unref(armed_on);
+        }
+    }
+
+    pub fn unref_on_next_tick(&self) {
+        if let Some(armed_on) = self.armed_on() {
+            self.0.unref_on_next_tick(armed_on);
+        }
+    }
+
+    pub fn disable(&self) {
+        self.unref();
+        self.0.status.set(Status::Done);
+    }
+
+    fn armed_on(&self) -> Option<EventLoopCtx> {
+        // SAFETY: arming took a `VmLive` on this thread, which `self` cannot leave. The VM is freed after what
+        // holds an armed one: JS wrappers, queued work and its own fields.
+        self.is_active()
+            .then(|| js_vm_ctx(unsafe { VmLive::assume(self) }))
     }
 }
 
 impl Drop for JsKeepAlive {
     fn drop(&mut self) {
         // An inactive one can drop on any thread.
-        if self.is_active() {
-            self.unref(js_vm_ctx());
-        }
+        self.unref();
     }
 }

@@ -6,6 +6,7 @@
 use crate::ipc::{
     self as IPC, DecodedIPCMessage, Handle, IsInternal, SendQueue, SerializeAndSendResult,
 };
+use bun_core::JsTurn;
 use bun_jsc::bindgen::{JsLocal, JsScope};
 #[cfg(windows)]
 use bun_jsc::bun_string_jsc;
@@ -231,7 +232,10 @@ pub(crate) fn do_send(
             if target.is_object() {
                 if let Some(f) = target.get(global_object, name)? {
                     if f.is_callable() {
-                        crate::dispatch::fold(f.call(global_object, target, &[]).map(drop));
+                        crate::dispatch::fold(
+                            f.call(global_object, target, &[]).map(drop),
+                            global_object.turn(),
+                        );
                     }
                 }
             }
@@ -328,12 +332,16 @@ pub(crate) fn emit_handle_ipc_message<'a>(
                 }
             }
             let vm = global_this.bun_vm();
-            if get_ipc_instance(vm).is_none() {
+            if get_ipc_instance(vm, global_this.turn()).is_none() {
                 // Channel already gone: a handle that finished adopting after EOF is still delivered, as in node.
                 Process__emitMessageEvent(global_this, message, handle);
                 return Ok(());
             }
-            IPCInstance::handle_ipc_message(&DecodedIPCMessage::Data(message), handle)?;
+            IPCInstance::handle_ipc_message(
+                &DecodedIPCMessage::Data(message),
+                handle,
+                global_this.turn(),
+            )?;
         }
     }
     Ok(())
@@ -349,7 +357,7 @@ pub(crate) fn send<'a>(
     bun_jsc::mark_binding!();
     let global = cx.global();
     let vm = global.bun_vm();
-    let ipc = get_ipc_instance(vm).map(IPCInstance::data);
+    let ipc = get_ipc_instance(vm, global.turn()).map(IPCInstance::data);
     #[cfg(windows)]
     let peer_pid = {
         let from_pipe = ipc.as_ref().map(|i| i.ipc_peer_pid()).unwrap_or(0);
@@ -400,9 +408,13 @@ impl IPCInstance {
     }
 
     /// Dispatches a decoded IPC message (and optional handle) to the JS `process` listeners.
-    pub(crate) fn handle_ipc_message(message: &DecodedIPCMessage, handle: JSValue) -> JsResult<()> {
-        let vm = bun_jsc::virtual_machine::VirtualMachine::get();
-        let global_this = vm.global();
+    pub(crate) fn handle_ipc_message(
+        message: &DecodedIPCMessage,
+        handle: JSValue,
+        turn: JsTurn<'_>,
+    ) -> JsResult<()> {
+        let vm = bun_jsc::virtual_machine::VirtualMachine::get(turn.live);
+        let global_this = vm.global(turn);
 
         match *message {
             DecodedIPCMessage::Version(v) => {
@@ -410,12 +422,12 @@ impl IPCInstance {
             }
             DecodedIPCMessage::Data(data) => {
                 bun_core::scoped_log!(IPC, "Received IPC message from parent");
-                let _entered = vm.enter_event_loop_scope();
+                let _entered = vm.enter_event_loop_scope(turn);
                 Process__emitMessageEvent(global_this, data, handle);
             }
             DecodedIPCMessage::Internal(data) => {
                 bun_core::scoped_log!(IPC, "Received IPC internal message from parent");
-                let _entered = vm.enter_event_loop_scope();
+                let _entered = vm.enter_event_loop_scope(turn);
                 crate::node::node_cluster_binding::handle_internal_message_child(
                     global_this,
                     data,
@@ -427,25 +439,26 @@ impl IPCInstance {
     }
 
     /// Tears down the IPC channel and emits the disconnect events on `process`.
-    pub(crate) fn handle_ipc_close() {
+    pub(crate) fn handle_ipc_close(turn: JsTurn<'_>) {
         bun_core::scoped_log!(IPC, "IPCInstance#handleIPCClose");
-        let vm = bun_jsc::virtual_machine::VirtualMachine::get();
+        let vm = bun_jsc::virtual_machine::VirtualMachine::get(turn.live);
         crate::jsc_hooks::ipc_child_singleton_deinit();
         {
-            let _entered = vm.enter_event_loop_scope();
-            Process__emitDisconnectEvent(vm.global());
+            let _entered = vm.enter_event_loop_scope(turn);
+            Process__emitDisconnectEvent(vm.global(turn));
         }
         // Group is embedded in RareData and shared with subprocess IPC; nothing
         // to free here.
-        vm.channel_ref.disable();
+        vm.channel_ref.disable(turn.live);
     }
 }
 
 /// Returns the initialized IPC instance, lazily creating it from the VM's
 /// recorded `PendingIpc`.
-pub(crate) fn get_ipc_instance(
+pub(crate) fn get_ipc_instance<'a>(
     vm: &bun_jsc::virtual_machine::VirtualMachine,
-) -> Option<&'static IPCInstance> {
+    turn: JsTurn<'a>,
+) -> Option<&'a IPCInstance> {
     if let Some(inst) = CHANNEL.get() {
         return Some(inst);
     }
@@ -474,6 +487,7 @@ pub(crate) fn get_ipc_instance(
             mode,
             Some(IPC::SendQueueOwner::Instance),
             IPC::SocketUnion::Uninitialized,
+            turn.live,
         );
 
         let Some(socket) = IPC::Socket::from_fd::<SendQueue>(
@@ -483,7 +497,7 @@ pub(crate) fn get_ipc_instance(
             data.as_ptr(),
             true,
         ) else {
-            data.detach();
+            data.detach(turn.live);
             bun_core::warn!("Unable to start IPC socket");
             return None;
         };
@@ -500,6 +514,7 @@ pub(crate) fn get_ipc_instance(
             mode,
             Some(IPC::SendQueueOwner::Instance),
             IPC::SocketUnion::Uninitialized,
+            turn.live,
         );
         let send_queue: *mut SendQueue = data.as_ptr();
 
@@ -507,8 +522,8 @@ pub(crate) fn get_ipc_instance(
         // `uv_handle_t.data` for the pipe's lifetime; `send_queue` is the
         // allocation's root raw pointer.
         // SAFETY: `send_queue` is the live SendQueue owned by `data`.
-        if let Err(_) = unsafe { SendQueue::windows_configure_client(send_queue, fd) } {
-            data.detach();
+        if let Err(_) = unsafe { SendQueue::windows_configure_client(send_queue, fd, turn) } {
+            data.detach(turn.live);
             bun_core::output::warn(&format_args!("Unable to start IPC pipe '{:?}'", fd));
             return None;
         }
@@ -519,7 +534,7 @@ pub(crate) fn get_ipc_instance(
     let instance: &'static IPCInstance = Box::leak(Box::new(IPCInstance { data }));
     CHANNEL.set(Some(instance));
 
-    instance.data().write_version_packet(vm.global());
+    instance.data().write_version_packet(vm.global(turn));
 
     Some(instance)
 }
@@ -543,5 +558,5 @@ pub(crate) fn global_object_has_ipc(global: &JSGlobalObject) -> bool {
 /// we open the socket. This is to avoid missing messages at the start of the program.
 // HOST_EXPORT(Bun__ensureProcessIPCInitialized, c)
 pub(crate) fn ensure_process_ipc_initialized(global: &JSGlobalObject) {
-    let _ = get_ipc_instance(global.bun_vm());
+    let _ = get_ipc_instance(global.bun_vm(), global.turn());
 }

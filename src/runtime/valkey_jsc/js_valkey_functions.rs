@@ -1304,7 +1304,7 @@ impl JSValkeyClient {
         // the state check, as in `send()`, so a fresh client with the offline
         // queue off is rejected the way get() is: connecting, not never
         // connected.
-        self.ensure_dialing(this.into());
+        self.ensure_dialing(this.into(), global.live());
         if let Some(error) = self.rejection(global) {
             return Ok(JSPromise::rejected_promise(global, error).to_js());
         }

@@ -7,6 +7,7 @@ use crate::jsc::{
 };
 use crate::shared::cached_structure::Undescribed;
 use crate::shared::query_ctor_args;
+use bun_core::JsTurn;
 use bun_core::strings;
 use bun_jsc::bindgen::{JsLocal, JsScope, JsWrapper};
 use bun_jsc::{JSArray, JsCell};
@@ -182,16 +183,17 @@ impl JSMySQLQuery {
         js::target_set_cached(this_value.to_js(), global_object, query);
         // Until it ends: the wrapper holds the target, the parameters and the rows.
         self.this_value.with_mut(|v| v.upgrade(global_object));
-        connection.enqueue_request(self.ref_guard());
+        connection.enqueue_request(self.ref_guard(), global_object.turn());
         Ok(())
     }
 
-    pub fn cancel(&self, _: &mut JsScope<'_>) {
-        let _entered = VirtualMachine::get().enter_event_loop_scope_without_checkpoint();
+    pub fn cancel(&self, cx: &mut JsScope<'_>) {
+        let _entered = VirtualMachine::get(cx.live()).enter_event_loop_scope_without_checkpoint();
         // The queue drops a request that ended when it gets to it.
         self.reject_when(
             State::cancel,
             self.error_to_js(AnyMySQLError::Error::QueryCancelled),
+            cx.turn(),
         );
     }
 
@@ -263,7 +265,7 @@ impl JSMySQLQuery {
         }
     }
 
-    pub(crate) fn resolve(&self, result: &MySQLQueryResult) {
+    pub(crate) fn resolve(&self, result: &MySQLQueryResult, turn: JsTurn<'_>) {
         let _guard = self.ref_guard();
         let is_last_result = result.is_last_result;
         let _downgrade = is_last_result.then(|| DowngradeOnDrop(self));
@@ -272,6 +274,7 @@ impl JSMySQLQuery {
             self.reject_when(
                 State::discard_response,
                 self.global_object().take_exception(err),
+                turn,
             );
             JSValue::UNDEFINED
         };
@@ -292,7 +295,7 @@ impl JSMySQLQuery {
         let Some(target_value) = js::target_get_cached(this_value) else {
             return;
         };
-        let vm = VirtualMachine::get();
+        let vm = VirtualMachine::get(turn.live);
         let Some(function) = vm.sql_state().mysql_context.get().on_query_resolve_fn.get() else {
             return;
         };
@@ -329,16 +332,16 @@ impl JSMySQLQuery {
         self.state.set(State::Done);
     }
 
-    pub(crate) fn reject(&self, err: AnyMySQLError::Error) {
-        self.reject_with_js_value(self.error_to_js(err));
+    pub(crate) fn reject(&self, err: AnyMySQLError::Error, turn: JsTurn<'_>) {
+        self.reject_with_js_value(self.error_to_js(err), turn);
     }
 
-    pub(crate) fn reject_undecodable_row(&self, err: AnyMySQLError::Error) {
-        self.reject_when(State::discard_response, self.error_to_js(err));
+    pub(crate) fn reject_undecodable_row(&self, err: AnyMySQLError::Error, turn: JsTurn<'_>) {
+        self.reject_when(State::discard_response, self.error_to_js(err), turn);
     }
 
-    pub(crate) fn reject_with_js_value(&self, err: JSValue) {
-        self.reject_when(State::fail, err);
+    pub(crate) fn reject_with_js_value(&self, err: JSValue, turn: JsTurn<'_>) {
+        self.reject_when(State::fail, err, turn);
     }
 
     fn error_to_js(&self, err: AnyMySQLError::Error) -> JSValue {
@@ -352,7 +355,7 @@ impl JSMySQLQuery {
 
     /// `transition` moves the query to its rejected state, and returns whether
     /// a rejection is still to be delivered to JS.
-    fn reject_when(&self, transition: fn(&mut State) -> bool, err: JSValue) {
+    fn reject_when(&self, transition: fn(&mut State) -> bool, err: JSValue, turn: JsTurn<'_>) {
         let _guard = self.ref_guard();
 
         if !self.state.with_mut(transition) {
@@ -377,7 +380,7 @@ impl JSMySQLQuery {
         }
         debug_assert!(!js_error.is_empty(), "js_error is zero");
         js_error.ensure_still_alive();
-        let vm = VirtualMachine::get();
+        let vm = VirtualMachine::get(turn.live);
         let Some(function) = vm.sql_state().mysql_context.get().on_query_reject_fn.get() else {
             return;
         };

@@ -1,6 +1,6 @@
 use bun_collections::HashMap;
 use bun_core::strings;
-use bun_core::{Output, feature_flags};
+use bun_core::{JsTurn, Output, feature_flags};
 use bun_uws::AnyWebSocket;
 use bun_uws_sys::{Opcode, SendStatus};
 
@@ -53,6 +53,7 @@ impl HmrSocket {
         dev: &mut DevServer,
         ws: AnyWebSocket,
         msg: &[u8],
+        turn: JsTurn<'_>,
     ) -> Result<(), InvalidMessage> {
         if msg.is_empty() {
             return Err(InvalidMessage);
@@ -113,7 +114,7 @@ impl HmrSocket {
                                             bun_core::TimespecMockMode::ForceRealTime,
                                             1000,
                                         );
-                                        crate::jsc_hooks::timer_all().update(
+                                        crate::jsc_hooks::timer_all(turn.live).update(
                                             OwnedTimer::node(
                                                 &raw const dev.memory_visualizer_timer,
                                             ),
@@ -319,7 +320,7 @@ impl bun_uws_sys::web_socket::WebSocketHandler for HmrSocket {
     const HAS_ON_PONG: bool = false;
 
     #[inline]
-    unsafe fn on_open(this: *mut Self, ws: bun_uws_sys::AnyWebSocket) {
+    unsafe fn on_open(this: *mut Self, ws: bun_uws_sys::AnyWebSocket, _turn: JsTurn<'_>) {
         // SAFETY: `this` is the live user-data pointer (per trait contract). The dev server closes
         // its sockets before it goes, and `on_websocket_upgrade` keeps it without borrowing it.
         unsafe { (*this).on_open(&*(*this).dev, ws) }
@@ -330,15 +331,22 @@ impl bun_uws_sys::web_socket::WebSocketHandler for HmrSocket {
         ws: bun_uws_sys::AnyWebSocket,
         message: &[u8],
         _opcode: bun_uws_sys::Opcode,
+        turn: JsTurn<'_>,
     ) {
         // SAFETY: both are live, see `on_open`. The borrows end with the call, and ask for no more
         // exclusivity than the HTTP handlers do (see `dev_route_tramp`).
-        if unsafe { (*this).on_message(&mut *(*this).dev, ws, message) }.is_err() {
+        if unsafe { (*this).on_message(&mut *(*this).dev, ws, message, turn) }.is_err() {
             ws.close();
         }
     }
     #[inline]
-    unsafe fn on_close(this: *mut Self, _: bun_uws_sys::AnyWebSocket, _: i32, _: &[u8]) {
+    unsafe fn on_close(
+        this: *mut Self,
+        _: bun_uws_sys::AnyWebSocket,
+        _: i32,
+        _: &[u8],
+        _turn: JsTurn<'_>,
+    ) {
         // SAFETY: `on_websocket_upgrade` gave up this `Box`, and uWS is done with it. `dev` is live
         // or null. For its exclusivity, see `on_message`.
         let (dev, socket) = unsafe { ((*this).dev.as_mut(), bun_core::heap::take(this)) };
@@ -348,9 +356,21 @@ impl bun_uws_sys::web_socket::WebSocketHandler for HmrSocket {
             socket.release(dev);
         }
     }
-    unsafe fn on_drain(_this: *mut Self, _ws: bun_uws_sys::AnyWebSocket) {}
-    unsafe fn on_ping(_this: *mut Self, _ws: bun_uws_sys::AnyWebSocket, _message: &[u8]) {}
-    unsafe fn on_pong(_this: *mut Self, _ws: bun_uws_sys::AnyWebSocket, _message: &[u8]) {}
+    unsafe fn on_drain(_this: *mut Self, _ws: bun_uws_sys::AnyWebSocket, _turn: JsTurn<'_>) {}
+    unsafe fn on_ping(
+        _this: *mut Self,
+        _ws: bun_uws_sys::AnyWebSocket,
+        _message: &[u8],
+        _turn: JsTurn<'_>,
+    ) {
+    }
+    unsafe fn on_pong(
+        _this: *mut Self,
+        _ws: bun_uws_sys::AnyWebSocket,
+        _message: &[u8],
+        _turn: JsTurn<'_>,
+    ) {
+    }
 }
 
 impl<const SSL: bool> bun_uws_sys::web_socket::WebSocketUpgradeServer<SSL> for DevServer {
@@ -360,6 +380,7 @@ impl<const SSL: bool> bun_uws_sys::web_socket::WebSocketUpgradeServer<SSL> for D
         req: &mut Request,
         upgrade_ctx: &mut WebSocketUpgradeContext,
         id: usize,
+        _turn: JsTurn<'_>,
     ) {
         debug_assert_eq!(id, 0);
         // Note: DevServer always registers `*mut Self` with `id == 0`

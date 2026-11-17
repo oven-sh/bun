@@ -1,5 +1,7 @@
 //! https://www.gnu.org/software/bash/manual/bash.html#Bash-Conditional-Expressions
 
+use bun_core::LoopTurn;
+
 use crate::node::fs::stat_embedded_shell_operand;
 use crate::shell::ExitCode;
 use crate::shell::ast;
@@ -48,11 +50,11 @@ impl CondExpr {
         }))
     }
 
-    pub(crate) fn start(_interp: &Interpreter, this: NodeId) -> Yield {
+    pub(crate) fn start(_interp: &Interpreter, this: NodeId, _turn: LoopTurn<'_>) -> Yield {
         Yield::Next(this)
     }
 
-    pub(crate) fn next(interp: &Interpreter, this: NodeId) -> Yield {
+    pub(crate) fn next(interp: &Interpreter, this: NodeId, turn: LoopTurn<'_>) -> Yield {
         // Expand each arg via Expansion, then evaluate the operator.
         loop {
             let (shell, node) = {
@@ -67,10 +69,10 @@ impl CondExpr {
                 }
                 CondExprState::ExpandingArgs { idx } => {
                     let Some(atom) = n.args.slice().get(idx as usize) else {
-                        return Self::command_impl_start(interp, this, n.op);
+                        return Self::command_impl_start(interp, this, n.op, turn);
                     };
                     let child = Expansion::init(interp, shell, atom, this, false);
-                    return Expansion::start(interp, child);
+                    return Expansion::start(interp, child, turn);
                 }
                 CondExprState::WaitingStat => return Yield::suspended(),
                 CondExprState::WaitingWriteErr => return Yield::suspended(),
@@ -80,7 +82,12 @@ impl CondExpr {
 
     /// Evaluates the operator against
     /// the expanded `args` and returns the resulting exit code.
-    fn command_impl_start(interp: &Interpreter, this: NodeId, op: ast::CondExprOp) -> Yield {
+    fn command_impl_start(
+        interp: &Interpreter,
+        this: NodeId,
+        op: ast::CondExprOp,
+        turn: LoopTurn<'_>,
+    ) -> Yield {
         use ast::CondExprOp as Op;
         let parent = interp.as_condexpr(this).base.parent;
         match op {
@@ -93,7 +100,7 @@ impl CondExpr {
                     me.args.is_empty() || me.args[0].is_empty()
                 };
                 if path_empty {
-                    return interp.child_done(parent, this, 1);
+                    return interp.child_done(parent, this, 1, turn);
                 }
                 // Post a
                 // `ShellCondExprStatTask` to the thread pool; the result comes
@@ -118,7 +125,7 @@ impl CondExpr {
                         1
                     }
                 };
-                interp.child_done(parent, this, exit)
+                interp.child_done(parent, this, exit, turn)
             }
             Op::DashN => {
                 let exit = {
@@ -129,7 +136,7 @@ impl CondExpr {
                         1
                     }
                 };
-                interp.child_done(parent, this, exit)
+                interp.child_done(parent, this, exit, turn)
             }
             Op::EqEq => {
                 let exit = {
@@ -138,7 +145,7 @@ impl CondExpr {
                         me.args.is_empty() || (me.args.len() >= 2 && me.args[0] == me.args[1]);
                     if is_eq { 0 } else { 1 }
                 };
-                interp.child_done(parent, this, exit)
+                interp.child_done(parent, this, exit, turn)
             }
             Op::NotEq => {
                 let exit = {
@@ -146,7 +153,7 @@ impl CondExpr {
                     let is_neq = me.args.len() >= 2 && me.args[0] != me.args[1];
                     if is_neq { 0 } else { 1 }
                 };
-                interp.child_done(parent, this, exit)
+                interp.child_done(parent, this, exit, turn)
             }
             _ => {
                 debug_assert!(
@@ -154,7 +161,7 @@ impl CondExpr {
                     "supported CondExprOp not handled in command_impl_start"
                 );
                 // Unsupported op is unreachable (parser rejects it).
-                interp.child_done(parent, this, 1)
+                interp.child_done(parent, this, 1, turn)
             }
         }
     }
@@ -167,18 +174,19 @@ impl CondExpr {
         this: NodeId,
         _written: usize,
         err: Option<bun_sys::SystemError>,
+        turn: LoopTurn<'_>,
     ) -> Yield {
         let parent = interp.as_condexpr(this).base.parent;
         if let Some(e) = err {
             // Recover the positive errno (`to_shell_system_error` negated it).
             let exit_code: ExitCode = e.errno.unsigned_abs() as ExitCode;
-            return interp.child_done(parent, this, exit_code);
+            return interp.child_done(parent, this, exit_code, turn);
         }
         if matches!(
             interp.as_condexpr(this).state,
             CondExprState::WaitingWriteErr
         ) {
-            return interp.child_done(parent, this, 1);
+            return interp.child_done(parent, this, 1, turn);
         }
         crate::shell::interpreter::unreachable_state(
             "CondExpr.onIOWriterChunk",
@@ -193,6 +201,7 @@ impl CondExpr {
         this: NodeId,
         stat: &bun_sys::Result<bun_sys::Stat>,
         path: &[u8],
+        turn: LoopTurn<'_>,
     ) -> Yield {
         // Evaluate `op` against the stat result.
         debug_assert!(matches!(
@@ -222,7 +231,7 @@ impl CondExpr {
             }
         };
         let parent = interp.as_condexpr(this).base.parent;
-        interp.child_done(parent, this, exit)
+        interp.child_done(parent, this, exit, turn)
     }
 
     pub(crate) fn child_done(
@@ -230,6 +239,7 @@ impl CondExpr {
         this: NodeId,
         child: NodeId,
         exit_code: ExitCode,
+        turn: LoopTurn<'_>,
     ) -> Yield {
         // Child is always an Expansion that produced one arg.
         // On nonzero exit, write the failing error and finish; otherwise
@@ -240,12 +250,12 @@ impl CondExpr {
             let err = Expansion::take_err(interp, child);
             interp.deinit_node(child);
             if let Some(err) = err {
-                return Self::write_failing_error(interp, this, format_args!("{}\n", err));
+                return Self::write_failing_error(interp, this, format_args!("{}\n", err), turn);
             }
             // Defensive fallback — finish via `writeFailingError` with exit 1.
             debug_assert!(interp.failed(), "Expansion child failed without an error");
             let parent = interp.as_condexpr(this).base.parent;
-            return interp.child_done(parent, this, 1);
+            return interp.child_done(parent, this, 1, turn);
         }
         let out = Expansion::take_out(interp, child);
         interp.deinit_node(child);
@@ -282,6 +292,7 @@ impl CondExpr {
         interp: &Interpreter,
         this: NodeId,
         args: core::fmt::Arguments<'_>,
+        turn: LoopTurn<'_>,
     ) -> Yield {
         use crate::shell::io::OutKind;
         use crate::shell::io_writer;
@@ -292,7 +303,7 @@ impl CondExpr {
         if let OutKind::Fd(fd) = &me.io.stderr {
             me.state = CondExprState::WaitingWriteErr;
             let child = io_writer::ChildPtr::new(this, io_writer::WriterTag::CondExpr);
-            return fd.writer.enqueue(child, fd.captured, &buf);
+            return fd.writer.enqueue(child, fd.captured, &buf, turn);
         }
         // No-IO path: append to the shell env's captured stderr and finish
         // synchronously with exit 1 (matches `on_io_writer_chunk`).
@@ -303,7 +314,7 @@ impl CondExpr {
             stderr.extend_from_slice(&buf);
         }
         let parent = interp.as_condexpr(this).base.parent;
-        interp.child_done(parent, this, 1)
+        interp.child_done(parent, this, 1, turn)
     }
 }
 
@@ -315,7 +326,7 @@ impl ShellWork for ShellCondExprStatTask {
         self.stat = crate::shell::interpreter::shell_statat(self.cwd_fd, z);
     }
 
-    fn run_from_main_thread(&mut self, interp: &Interpreter) -> Yield {
-        CondExpr::on_stat_task_done(interp, self.cond, &self.stat, &self.path)
+    fn run_from_main_thread(&mut self, interp: &Interpreter, turn: LoopTurn<'_>) -> Yield {
+        CondExpr::on_stat_task_done(interp, self.cond, &self.stat, &self.path, turn)
     }
 }

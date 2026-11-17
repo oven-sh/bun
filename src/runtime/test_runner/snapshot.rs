@@ -4,7 +4,7 @@ use crate::Error;
 use bun_collections::{StringArrayHashMap, StringHashMap};
 use bun_core::output as bun_output;
 use bun_core::printer as js_printer;
-use bun_core::{ZStr, strings};
+use bun_core::{VmLive, ZStr, strings};
 use bun_js_parser::{self as js_parser, lexer as js_lexer};
 use bun_lint::utils::text::natural_compare;
 use bun_jsc::virtual_machine::VirtualMachine;
@@ -325,7 +325,7 @@ impl Snapshots {
 
     /// Loads the running test's snapshot file if it isn't the current one. Never creates it.
     #[optimize(size)]
-    pub(crate) fn format_of(&mut self, expect: &Expect) -> Result<Format, Error> {
+    pub(crate) fn format_of(&mut self, expect: &Expect, live: VmLive<'_>) -> Result<Format, Error> {
         let buntest = expect.bun_test().ok_or(Error::SnapshotFailed)?;
         let test_file = buntest.file;
         if let Some(file) = self._current_file.as_ref().filter(|file| file.test_file.id == test_file.id) {
@@ -354,7 +354,7 @@ impl Snapshots {
             self.file_buf.extend_from_slice(format.header());
         } else {
             self.file_buf = contents;
-            if self.parse_file(path).is_err() {
+            if self.parse_file(path, live).is_err() {
                 self.file_buf = Vec::new();
                 self.values.clear();
                 return Err(Error::ParseError);
@@ -381,8 +381,9 @@ impl Snapshots {
         expect: &Expect,
         received: &[u8],
         hint: &[u8],
+        live: VmLive<'_>,
     ) -> Result<Outcome, Error> {
-        let format = self.format_of(expect)?;
+        let format = self.format_of(expect, live)?;
         if format == Format::Bun {
             self.open_to_append()?;
         }
@@ -452,8 +453,8 @@ impl Snapshots {
         Ok(Outcome::Written)
     }
 
-    fn parse_file(&mut self, snapshot_file_path: &[u8]) -> Result<(), Error> {
-        let vm = VirtualMachine::get();
+    fn parse_file(&mut self, snapshot_file_path: &[u8], live: VmLive<'_>) -> Result<(), Error> {
+        let vm = VirtualMachine::get(live);
         let mut opts =
             js_parser::ParserOptions::init(vm.transpiler.get().options.jsx.clone(), bun_ast::Loader::Js);
         opts.features.no_macros = true;
@@ -606,8 +607,9 @@ impl Snapshots {
         path: &[u8],
         received: &[u8],
         hint: &[u8],
+        live: VmLive<'_>,
     ) -> FileOutcome {
-        let format = match self.format_of(expect) {
+        let format = match self.format_of(expect, live) {
             Ok(format) => format,
             Err(err) => return FileOutcome::NoTest(err),
         };
@@ -738,9 +740,9 @@ impl Snapshots {
     }
 
     #[optimize(size)]
-    pub(crate) fn write_inline_snapshots(&mut self) -> Result<bool, Error> {
+    pub(crate) fn write_inline_snapshots(&mut self, live: VmLive<'_>) -> Result<bool, Error> {
         let success = core::cell::Cell::new(true);
-        let vm = VirtualMachine::get();
+        let vm = VirtualMachine::get(live);
 
         // The arena is reset() inside the loop, bulk-freeing per-iteration scratch.
         let mut arena = bun_alloc::Arena::new();

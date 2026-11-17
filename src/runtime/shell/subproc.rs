@@ -15,7 +15,7 @@ use crate::shell::{self as sh, Yield};
 use crate::webcore::{self, FileSink};
 use bun_alloc::Arena;
 use bun_collections::VecExt;
-use bun_core::{CStrList, CStrRef};
+use bun_core::{CStrList, CStrRef, LoopTurn};
 use bun_io::{BufferedReader, IoEvent, Owner, PollTag, ReadResult, ReadState};
 use bun_jsc::{self as jsc, EventLoopHandle};
 use bun_ptr::RefPtr;
@@ -116,11 +116,11 @@ pub(crate) struct CmdHandle {
 
 impl CmdHandle {
     /// The `< ${buffer}` stdin writer closed. May free the subprocess.
-    pub(crate) fn on_stdin_writer_close(self) {
+    pub(crate) fn on_stdin_writer_close(self, turn: LoopTurn<'_>) {
         log!("onStdinWriterClose(cmd={})", self.id);
         // The `&mut Cmd` ends before the Yield runs.
         let y = self.interp.as_cmd_mut(self.id).buffered_input_close();
-        y.run(&self.interp);
+        y.run(&self.interp, turn);
     }
 }
 
@@ -142,7 +142,7 @@ pub(crate) struct ShellSubprocess {
     abort_handle: jsc::AbortHandle,
 }
 
-jsc::impl_abort_handle_owner!(ShellSubprocess, abort_handle, |this, cause| {
+jsc::impl_abort_handle_owner!(ShellSubprocess, abort_handle, |this, cause, _turn| {
     // A child outlives the VM that spawned it, as one `Bun.spawn` started does.
     if !matches!(
         cause,
@@ -177,8 +177,8 @@ impl Drop for ShellSubprocess {
 bun_spawn::link_impl_ProcessExit! {
     Shell for ShellSubprocess => |this| {
         // Forwarded raw, not autoref'd: the callee may free `*this`.
-        on_process_exit(status, _rusage) =>
-            ShellSubprocess::on_process_exit(this, &status),
+        on_process_exit(status, _rusage, turn) =>
+            ShellSubprocess::on_process_exit(this, &status, turn),
     }
 }
 
@@ -192,11 +192,11 @@ impl ShellSubprocess {
 
     /// Returns the `Cmd` to call `on_stdin_writer_close` on.
     #[must_use]
-    pub(crate) fn on_stdin_io(&mut self, event: IoEvent) -> Option<CmdHandle> {
+    pub(crate) fn on_stdin_io(&mut self, event: IoEvent, turn: LoopTurn<'_>) -> Option<CmdHandle> {
         let Writable::Buffer(buffer) = &self.stdin else {
             return None;
         };
-        self.on_stdin_state(buffer.on_io(event))
+        self.on_stdin_state(buffer.on_io(event, turn))
     }
 
     #[must_use]
@@ -429,6 +429,7 @@ impl ShellSubprocess {
         // across this re-entrant call.
         out: *mut *mut Self,
         notify_caller_process_already_exited: &mut bool,
+        turn: LoopTurn<'_>,
     ) -> sh::Result<()> {
         let mut spawn_args = spawn_args_;
 
@@ -439,6 +440,7 @@ impl ShellSubprocess {
             cmd_parent,
             out,
             notify_caller_process_already_exited,
+            turn,
         ) {
             Ok(()) => Ok(()),
             Err(err) => Err(err),
@@ -458,6 +460,7 @@ impl ShellSubprocess {
         // to initialize the object.
         out_subproc: *mut *mut Self,
         notify_caller_process_already_exited: &mut bool,
+        turn: LoopTurn<'_>,
     ) -> sh::Result<()> {
         #[cfg(unix)]
         let no_sigpipe = if let Some(iowriter) = &shellio.stdout {
@@ -588,11 +591,13 @@ impl ShellSubprocess {
                 bun_spawn::ProcessExit::new(bun_spawn::ProcessExitKind::Shell, subprocess),
             );
         }
-        if let Some(id) = cmd_parent.interp.context.get() {
+        if let Some((id, has_vm)) = cmd_parent.interp.context.get() {
+            let live = has_vm.live(turn.live);
             // Freed already (the graph was collected): `interrupted()` ends the script.
-            if let Some(context) = jsc::virtual_machine::VirtualMachine::get().graph_context(id) {
+            if let Some(context) = jsc::virtual_machine::VirtualMachine::get(live).graph_context(id)
+            {
                 // SAFETY: `subprocess` is the live heap allocation; its handle is disarmed on drop.
-                unsafe { jsc::AbortHandle::arm_owner(subprocess, context) };
+                unsafe { jsc::AbortHandle::arm_owner(subprocess, context, live) };
             }
         }
 
@@ -638,14 +643,14 @@ impl ShellSubprocess {
 
         // SAFETY: borrow of the stdin slot scoped to this match; single-threaded.
         let stdin_started = match unsafe { &(*subprocess).stdin } {
-            Writable::Buffer(buffer) => buffer.start(event_loop),
+            Writable::Buffer(buffer) => buffer.start(event_loop, turn),
             _ => Ok(PipeState::Open),
         };
         match stdin_started {
             Ok(state) => {
                 // SAFETY: `subprocess` is live, and the borrow ends with the call.
                 if let Some(cmd) = unsafe { (*subprocess).on_stdin_state(state) } {
-                    cmd.on_stdin_writer_close();
+                    cmd.on_stdin_writer_close(turn);
                 }
             }
             Err(err) => {
@@ -658,12 +663,12 @@ impl ShellSubprocess {
         // SAFETY: `subprocess` is live; the slot is passed raw because the
         // reader can complete synchronously and overwrite it via `on_close_io`.
         unsafe {
-            Readable::start_pipe_reader(&raw mut (*subprocess).stdout, !spawn_args.lazy);
+            Readable::start_pipe_reader(&raw mut (*subprocess).stdout, !spawn_args.lazy, turn);
         }
 
         // SAFETY: as for stdout above.
         unsafe {
-            Readable::start_pipe_reader(&raw mut (*subprocess).stderr, !spawn_args.lazy);
+            Readable::start_pipe_reader(&raw mut (*subprocess).stderr, !spawn_args.lazy, turn);
         }
 
         log!("returning");
@@ -673,7 +678,7 @@ impl ShellSubprocess {
 
     /// # Safety
     /// `this` must be live and unborrowed; the Yield run here may free it.
-    unsafe fn on_process_exit(this: *mut Self, status: &Status) {
+    unsafe fn on_process_exit(this: *mut Self, status: &Status, turn: LoopTurn<'_>) {
         log!("onProcessExit({:x})", this as usize);
         // SAFETY: caller contract; the borrow ends at the `;`.
         let interrupted = unsafe { (*this).ctrl_c_child.take() }.is_some()
@@ -707,7 +712,7 @@ impl ShellSubprocess {
         cmd.base.interrupted |= interrupted;
         let y = cmd.on_exit(code.into());
         // May free `*this`.
-        y.run(&handle.interp);
+        y.run(&handle.interp, turn);
     }
 }
 
@@ -844,14 +849,14 @@ impl Readable {
     /// can complete the reader synchronously, which runs `close_io` →
     /// `Readable::finalize` and overwrites the slot — no reference to it may
     /// span that call.
-    unsafe fn start_pipe_reader(slot: *mut Readable, eager: bool) {
+    unsafe fn start_pipe_reader(slot: *mut Readable, eager: bool, turn: LoopTurn<'_>) {
         // The call below may drop this slot's `Rc`.
         // SAFETY: caller contract; borrow scoped to the clone.
         let keepalive = match unsafe { &*slot } {
             Readable::Pipe(pipe) => Rc::clone(pipe),
             _ => return,
         };
-        keepalive.start(eager);
+        keepalive.start(eager, turn);
     }
 
     pub(crate) fn r#ref(&mut self) {
@@ -1188,7 +1193,7 @@ impl Default for CapturedWriter {
 bun_core::impl_field_parent! { CapturedWriter => PipeReader.captured_writer; fn parent; fn mut parent_mut; }
 
 impl CapturedWriter {
-    pub(crate) fn do_write(&mut self, chunk: &[u8]) {
+    pub(crate) fn do_write(&mut self, chunk: &[u8], turn: LoopTurn<'_>) {
         if self.dead || self.err.is_some() {
             return;
         }
@@ -1211,8 +1216,8 @@ impl CapturedWriter {
         // heap-allocated PipeReader), so dispatch is by raw pointer — see
         // `io_writer::ChildPtr::subproc_capture` / `WriterTag::Subproc`.
         let child = io_writer::ChildPtr::subproc_capture(std::ptr::from_mut(self).cast::<c_void>());
-        let y = writer.enqueue(child, None, chunk);
-        self.parent().run_yield(y);
+        let y = writer.enqueue(child, None, chunk, turn);
+        self.parent().run_yield(y, turn);
     }
 
     pub(crate) fn on_iowriter_chunk(&mut self, amount: usize, err: Option<SystemError>) -> Yield {
@@ -1312,15 +1317,15 @@ impl PipeReader {
     /// Drive a `Yield` from inside an async I/O callback. Mirrors
     /// `IOWriter::run_yield` / `IOReader::run_yield`. `interp` is wired at
     /// `create` time from the spawning `Cmd`.
-    fn run_yield(&self, y: Yield) {
-        Self::run_yield_with(self.interp, y);
+    fn run_yield(&self, y: Yield, turn: LoopTurn<'_>) {
+        Self::run_yield_with(self.interp, y, turn);
     }
 
     /// Free-function form of [`run_yield`] for callers that must not hold any
     /// `&PipeReader` borrow across the interpreter trampoline (which can
     /// re-derive `&PipeReader` via the `Readable::Pipe` `Rc`).
-    fn run_yield_with(interp: bun_ptr::ParentRef<Interpreter>, y: Yield) {
-        y.run(&interp);
+    fn run_yield_with(interp: bun_ptr::ParentRef<Interpreter>, y: Yield, turn: LoopTurn<'_>) {
+        y.run(&interp, turn);
     }
 
     pub(crate) fn create(
@@ -1372,7 +1377,7 @@ impl PipeReader {
         rc
     }
 
-    fn start(self: &Rc<Self>, eager: bool) {
+    fn start(self: &Rc<Self>, eager: bool, turn: LoopTurn<'_>) {
         #[cfg(windows)]
         let started = self
             .reader
@@ -1387,11 +1392,11 @@ impl PipeReader {
         );
         match started {
             Ok(ReadResult::Pending) => {}
-            Ok(result) => return self.on_read_result(result),
+            Ok(result) => return self.on_read_result(result, turn),
             // Windows only. A read error, so that the `Cmd` is still alive when the child exits.
             Err(err) => {
                 self.reader.deinit();
-                return self.on_reader_error(&err);
+                return self.on_reader_error(&err, turn);
             }
         }
         // TODO: are these flags correct
@@ -1399,28 +1404,35 @@ impl PipeReader {
         self.reader
             .update_flags(|f| f.insert(bun_io::PosixFlags::SOCKET));
         if eager {
-            self.read(None);
+            self.read(None, turn);
         }
     }
 
     /// The `Cmd` may drop every other `Rc`.
-    pub(crate) fn read(self: &Rc<Self>, event: Option<IoEvent>) {
+    pub(crate) fn read(self: &Rc<Self>, event: Option<IoEvent>, turn: LoopTurn<'_>) {
         let event_loop = self.event_loop.as_event_loop_ctx();
-        let result = self.reader.read_chunks(event_loop, event, |chunk, state| {
-            self.on_read_chunk(&chunk, state)
-        });
-        self.on_read_result(result);
+        let result = self
+            .reader
+            .read_chunks(event_loop, event, move |chunk, state| {
+                self.on_read_chunk(&chunk, state, turn)
+            });
+        self.on_read_result(result, turn);
     }
 
-    fn on_read_result(self: &Rc<Self>, result: ReadResult) {
+    fn on_read_result(self: &Rc<Self>, result: ReadResult, turn: LoopTurn<'_>) {
         match result {
             ReadResult::Pending => {}
-            ReadResult::Done => self.on_reader_done(),
-            ReadResult::Err(err) => self.on_reader_error(&err),
+            ReadResult::Done => self.on_reader_done(turn),
+            ReadResult::Err(err) => self.on_reader_error(&err, turn),
         }
     }
 
-    fn on_read_chunk(self: &Rc<Self>, chunk: &[u8], has_more: ReadState) -> bool {
+    fn on_read_chunk(
+        self: &Rc<Self>,
+        chunk: &[u8],
+        has_more: ReadState,
+        turn: LoopTurn<'_>,
+    ) -> bool {
         let me = rc_as_mut_ptr(self);
         // SAFETY: see `rc_as_mut_ptr`; one field, for this call.
         unsafe { (*me).buffered_output.append(chunk) };
@@ -1433,7 +1445,7 @@ impl PipeReader {
         );
 
         // SAFETY: as above.
-        unsafe { (*me).captured_writer.do_write(chunk) };
+        unsafe { (*me).captured_writer.do_write(chunk, turn) };
 
         // The read loop re-registers the poll itself based on the bool we return.
         has_more != ReadState::Eof
@@ -1447,7 +1459,7 @@ impl PipeReader {
     /// into this same allocation via the `Readable::Pipe` `Rc` clone.
     /// Callers gate on `is_done()` first so the captured-writer tee has
     /// drained before `on_close_io` drops the `Readable::Pipe` Rc.
-    fn finish_after_state_set(guard: &Rc<Self>) {
+    fn finish_after_state_set(guard: &Rc<Self>, turn: LoopTurn<'_>) {
         let me = rc_as_mut_ptr(guard);
         // Snapshot `interp` *before* the Cmd call: `try_signal_done_to_cmd`
         // → `Cmd::buffered_output_close` → `close_io` may overwrite the
@@ -1468,7 +1480,7 @@ impl PipeReader {
                 (*me).buffered_output = BufferedOutput::default();
             }
         }
-        Self::run_yield_with(interp, y);
+        Self::run_yield_with(interp, y, turn);
         if let Some(process) = guard.process {
             // SAFETY: `process` is the heap-allocated `ShellSubprocess` (stable
             // address), freed only by `Cmd::deinit` after every PipeReader has
@@ -1481,7 +1493,7 @@ impl PipeReader {
         }
     }
 
-    fn on_reader_done(self: &Rc<Self>) {
+    fn on_reader_done(self: &Rc<Self>, turn: LoopTurn<'_>) {
         let me = rc_as_mut_ptr(self);
         log!(
             "onReaderDone(0x{:x}, {})",
@@ -1495,7 +1507,7 @@ impl PipeReader {
             (*me).state = PipeReaderState::Done(owned);
         }
         if self.is_done() {
-            Self::finish_after_state_set(self);
+            Self::finish_after_state_set(self, turn);
         }
     }
 
@@ -1608,14 +1620,14 @@ impl PipeReader {
         // PERF: into_boxed_slice may realloc to shrink. Profile if hot.
     }
 
-    fn on_reader_error(self: &Rc<Self>, err: &bun_sys::Error) {
+    fn on_reader_error(self: &Rc<Self>, err: &bun_sys::Error, turn: LoopTurn<'_>) {
         let me = rc_as_mut_ptr(self);
         log!("PipeReader(0x{:x}) onReaderError {:?}", me as usize, err);
         // SAFETY: see `rc_as_mut_ptr`; scoped to the `state`
         // write, ending before `finish_after_state_set` re-enters.
         unsafe { (*me).state = PipeReaderState::Err(Some(Box::new(err.to_system_error()))) };
         if self.is_done() {
-            Self::finish_after_state_set(self);
+            Self::finish_after_state_set(self, turn);
         }
     }
 

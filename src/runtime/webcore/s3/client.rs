@@ -3,6 +3,7 @@ use std::io::Write as _;
 
 use bun_collections::{ByteVecExt, VecExt};
 use bun_core::MutableString;
+use bun_core::{JsTurn, VmLive};
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{GlobalRef, JSValue, JsResult};
 use bun_ptr::{AliasableBox, RefPtr};
@@ -59,6 +60,7 @@ pub(crate) fn stat(
     path: &[u8],
     callback: s3_simple_request::OnStat,
     request_payer: bool,
+    turn: JsTurn<'_>,
 ) -> JsResult<()> {
     bun_removable_features::removable_definition!(S3Client, stat);
     s3_simple_request::execute_simple_s3_request(
@@ -72,6 +74,7 @@ pub(crate) fn stat(
             ..Default::default()
         },
         s3_simple_request::Callback::Stat(callback),
+        turn,
     )
 }
 
@@ -82,6 +85,7 @@ pub(crate) fn download(
     path: &[u8],
     callback: s3_simple_request::OnDownload,
     request_payer: bool,
+    turn: JsTurn<'_>,
 ) -> JsResult<()> {
     bun_removable_features::removable_definition!(S3Client, download);
     s3_simple_request::execute_simple_s3_request(
@@ -95,6 +99,7 @@ pub(crate) fn download(
             ..Default::default()
         },
         s3_simple_request::Callback::Download(callback),
+        turn,
     )
 }
 
@@ -107,6 +112,7 @@ pub(crate) fn download_slice(
     size: Option<usize>,
     callback: s3_simple_request::OnDownload,
     request_payer: bool,
+    turn: JsTurn<'_>,
 ) -> JsResult<()> {
     bun_removable_features::removable_definition!(S3Client, download_slice);
     let range: Option<Vec<u8>> = 'brk: {
@@ -139,6 +145,7 @@ pub(crate) fn download_slice(
             ..Default::default()
         },
         s3_simple_request::Callback::Download(callback),
+        turn,
     )
 }
 
@@ -149,6 +156,7 @@ pub(crate) fn delete(
     path: &[u8],
     callback: s3_simple_request::OnDelete,
     request_payer: bool,
+    turn: JsTurn<'_>,
 ) -> JsResult<()> {
     bun_removable_features::removable_definition!(S3Client, delete);
     s3_simple_request::execute_simple_s3_request(
@@ -162,6 +170,7 @@ pub(crate) fn delete(
             ..Default::default()
         },
         s3_simple_request::Callback::Delete(callback),
+        turn,
     )
 }
 
@@ -171,6 +180,7 @@ pub(crate) fn list_objects(
     context: &bun_jsc::ScriptExecutionContext,
     list_options: &S3ListObjectsOptions,
     callback: s3_simple_request::OnListObjects,
+    live: VmLive<'_>,
 ) -> JsResult<()> {
     bun_removable_features::removable_definition!(S3Client, list_objects);
     let mut search_params: Vec<u8> = Vec::<u8>::default();
@@ -277,7 +287,7 @@ pub(crate) fn list_objects(
     drop(search_params);
 
     let headers = result.headers(None, None);
-    let proxy_url = s3_simple_request::resolve_proxy(None, &result.url);
+    let proxy_url = s3_simple_request::resolve_proxy(None, &result.url, live);
 
     let task_ptr = bun_core::heap::into_raw(Box::new(S3HttpSimpleTask {
         async_http_id: 0,
@@ -290,7 +300,7 @@ pub(crate) fn list_objects(
         concurrent_task: Default::default(),
         proxy_url,
         body: Box::default(),
-        _keep_alive: JsKeepAlive::active(),
+        _keep_alive: JsKeepAlive::active(live),
         signal_store: Default::default(),
         abort_handle: bun_jsc::AbortHandle::for_owner::<S3HttpSimpleTask>(),
         context: Default::default(),
@@ -309,7 +319,7 @@ pub(crate) fn list_objects(
         None
     };
     // JS thread (request setup): read options from the current VM.
-    let vm = VirtualMachine::get();
+    let vm = VirtualMachine::get(live);
 
     let http = bun_http::AsyncHTTP::init(
         bun_http::Method::GET,
@@ -340,10 +350,10 @@ pub(crate) fn list_objects(
     bun_http::http_thread::init(&Default::default());
     // Out on the HTTP thread until its final callback: its context aborts it
     // when it stops, and the VM waits for it (the ticket).
-    task.http_ticket = Some(VirtualMachine::get().ticket());
+    task.http_ticket = Some(VirtualMachine::get(live).ticket());
     task.context = context.id();
     // SAFETY: the task is heap-allocated and drops its handle with itself.
-    unsafe { bun_jsc::AbortHandle::arm_owner(task_ptr, context) };
+    unsafe { bun_jsc::AbortHandle::arm_owner(task_ptr, context, live) };
     bun_http::HTTPThread::schedule([http]);
     Ok(())
 }
@@ -361,6 +371,7 @@ pub(crate) fn upload(
     storage_class: Option<StorageClass>,
     request_payer: bool,
     callback: s3_simple_request::OnUpload,
+    turn: JsTurn<'_>,
 ) -> JsResult<()> {
     bun_removable_features::removable_definition!(S3Client, upload);
     s3_simple_request::execute_simple_s3_request(
@@ -379,6 +390,7 @@ pub(crate) fn upload(
             ..Default::default()
         },
         s3_simple_request::Callback::Upload(callback),
+        turn,
     )
 }
 
@@ -426,12 +438,12 @@ pub(crate) fn on_resolve_upload_stream(
 }
 
 pub(crate) fn on_reject_upload_stream(
-    _: &mut JsScope<'_>,
+    cx: &mut JsScope<'_>,
     err: JsLocal<'_>,
     context: Option<RefPtr<NetworkSink>>,
 ) {
     if let Some(sink) = context {
-        NetworkSink::on_pump_rejected(&sink, err.to_js());
+        NetworkSink::on_pump_rejected(&sink, err.to_js(), cx.turn());
     }
 }
 
@@ -507,27 +519,27 @@ pub(crate) fn upload_stream(
             byte_stream.sink.set(sink_handle);
             byte_stream.sink_paused.set(false);
             readable_stream.lock_native(cx.global());
-            byte_stream.signal_consumer_attached();
+            byte_stream.signal_consumer_attached(cx.live().thread);
 
             if let Some(err) = byte_stream.take_pending_error() {
                 byte_stream.detach_sink(Some(&err));
-                NetworkSink::on_pump_rejected(&sink, err.to_js(cx.global()));
+                NetworkSink::on_pump_rejected(&sink, err.to_js(cx.global()), cx.turn());
                 return Ok(end_promise_value);
             }
 
             let buffered = StreamResult::Owned(byte_stream.take_buffer());
             let had_last = byte_stream.has_received_last_chunk.get();
             if !buffered.slice().is_empty()
-                && let Writable::Backpressure(_) = sink.write(&buffered)
+                && let Writable::Backpressure(_) = sink.write(&buffered, cx.turn())
             {
                 byte_stream.sink_paused.set(true);
             }
             if had_last || sink.is_ended() {
                 sink.on_pump_done();
-                sink.finish_input();
+                sink.finish_input(cx.turn());
             } else if !byte_stream.sink_paused.get() {
                 // Wake the producer after the older bytes are in the sink.
-                byte_stream.signal_drained();
+                byte_stream.signal_drained(cx.turn().loop_);
             }
             return Ok(end_promise_value);
         }
@@ -541,15 +553,15 @@ pub(crate) fn upload_stream(
         sink.as_non_null(),
     );
     if let Some(err) = pump.to_error() {
-        NetworkSink::on_pump_rejected(&sink, err);
+        NetworkSink::on_pump_rejected(&sink, err, cx.turn());
         return Ok(end_promise_value);
     }
     let Some(promise) = pump.as_any_promise() else {
         if pump.is_termination_exception() {
-            NetworkSink::on_pump_terminated(&sink);
+            NetworkSink::on_pump_terminated(&sink, cx.turn());
         } else {
             // A direct stream closed inside `pull()`.
-            sink.finish_input();
+            sink.finish_input(cx.turn());
             sink.on_pump_done();
         }
         return Ok(end_promise_value);
@@ -565,7 +577,7 @@ pub(crate) fn upload_stream(
         bun_jsc::js_promise::Status::Fulfilled => sink.on_pump_done(),
         bun_jsc::js_promise::Status::Rejected => {
             promise.set_handled(cx.global().vm());
-            NetworkSink::on_pump_rejected(&sink, promise.result(cx.global().vm()));
+            NetworkSink::on_pump_rejected(&sink, promise.result(cx.global().vm()), cx.turn());
         }
     }
     Ok(end_promise_value)
@@ -580,10 +592,11 @@ fn download_stream(
     size: Option<usize>,
     request_payer: bool,
     wrapper: AliasableBox<S3DownloadStreamWrapper>,
+    turn: JsTurn<'_>,
 ) {
     bun_removable_features::removable_definition!(S3Client, download_stream);
-    if s3_simple_request::nothing_new_leaves(context) {
-        return wrapper.on_error(&s3_simple_request::NOTHING_NEW_LEAVES);
+    if s3_simple_request::nothing_new_leaves(context, turn.live) {
+        return wrapper.on_error(&s3_simple_request::NOTHING_NEW_LEAVES, turn);
     }
     let range: Option<Vec<u8>> = 'brk: {
         if let Some(size_) = size {
@@ -623,15 +636,18 @@ fn download_stream(
         Err(sign_err) => {
             drop(range);
             let error_code_and_message = Error::get_sign_error_code_and_message(sign_err.into());
-            return wrapper.on_error(&Error::S3Error {
-                code: error_code_and_message.code,
-                message: error_code_and_message.message,
-            });
+            return wrapper.on_error(
+                &Error::S3Error {
+                    code: error_code_and_message.code,
+                    message: error_code_and_message.message,
+                },
+                turn,
+            );
         }
     };
 
     let headers = result.headers(range.as_deref(), None);
-    let owned_proxy = s3_simple_request::resolve_proxy(None, &result.url);
+    let owned_proxy = s3_simple_request::resolve_proxy(None, &result.url, turn.live);
     let task_ptr = bun_core::heap::into_raw(S3HttpDownloadStreamingTask::new(
         S3HttpDownloadStreamingTask {
             sign_result: result,
@@ -641,7 +657,7 @@ fn download_stream(
             http_ticket: None,
             has_schedule_callback: core::sync::atomic::AtomicBool::new(false),
             signal_store: Default::default(),
-            poll_ref: JsKeepAlive::active(),
+            poll_ref: JsKeepAlive::active(turn.live),
             mutex: Default::default(),
             request_error: None,
             reported_response_buffer: MutableString::default(),
@@ -670,7 +686,7 @@ fn download_stream(
         None
     };
 
-    let vm = VirtualMachine::get();
+    let vm = VirtualMachine::get(turn.live);
     let verbose = vm.get_verbose_fetch();
     let reject_unauthorized = vm.get_tls_reject_unauthorized();
 
@@ -705,9 +721,9 @@ fn download_stream(
     bun_http::http_thread::init(&Default::default());
     // Out on the HTTP thread until its final callback: its context aborts it
     // when it stops, and the VM waits for it (the ticket).
-    task.http_ticket = Some(VirtualMachine::get().ticket());
+    task.http_ticket = Some(VirtualMachine::get(turn.live).ticket());
     // SAFETY: the task is heap-allocated and drops its handle with itself.
-    unsafe { bun_jsc::AbortHandle::arm_owner(task_ptr, context) };
+    unsafe { bun_jsc::AbortHandle::arm_owner(task_ptr, context, turn.live) };
     bun_http::HTTPThread::schedule([http]);
 }
 
@@ -720,26 +736,30 @@ pub struct S3DownloadStreamWrapper {
 }
 
 impl S3DownloadStreamWrapper {
-    pub(crate) fn on_error(&self, err: &Error::S3Error) {
+    pub(crate) fn on_error(&self, err: &Error::S3Error, turn: JsTurn<'_>) {
         let Some(bytes) = self.stream.take() else {
             return;
         };
-        bytes.on_data(crate::webcore::streams::StreamResult::Err(
-            crate::webcore::streams::StreamError::JSValue(bun_jsc::strong::Optional::create(
-                s3_error_to_js(err, &self.global, Some(&self.path)),
-                &self.global,
-            )),
-        ));
+        bytes.on_data(
+            crate::webcore::streams::StreamResult::Err(
+                crate::webcore::streams::StreamError::JSValue(bun_jsc::strong::Optional::create(
+                    s3_error_to_js(err, &self.global, Some(&self.path)),
+                    &self.global,
+                )),
+            ),
+            turn,
+        );
     }
 
-    pub(crate) fn on_chunk(&self, chunk: &MutableString, has_more: bool) {
+    pub(crate) fn on_chunk(&self, chunk: &MutableString, has_more: bool, turn: JsTurn<'_>) {
         if has_more {
             let Some(bytes) = self.stream.bytes() else {
                 return;
             };
-            bytes.on_data(crate::webcore::streams::StreamResult::Temporary(
-                chunk.list.as_slice(),
-            ));
+            bytes.on_data(
+                crate::webcore::streams::StreamResult::Temporary(chunk.list.as_slice()),
+                turn,
+            );
             // `on_data` can cancel us, which releases the hold.
             if self.stream.is_held() {
                 self.after_chunk_delivered(&bytes);
@@ -749,9 +769,10 @@ impl S3DownloadStreamWrapper {
         let Some(bytes) = self.stream.take() else {
             return;
         };
-        bytes.on_data(crate::webcore::streams::StreamResult::TemporaryAndDone(
-            chunk.list.as_slice(),
-        ));
+        bytes.on_data(
+            crate::webcore::streams::StreamResult::TemporaryAndDone(chunk.list.as_slice()),
+            turn,
+        );
     }
 
     /// The other half of this rule is in `S3HttpDownloadStreamingTask::process_http_callback`
@@ -772,22 +793,22 @@ impl S3DownloadStreamWrapper {
                 unsafe { (*task).signal_store.pause_receive() };
                 if self.stream.park() {
                     // SAFETY: see `task`.
-                    unsafe { (*task).poll_ref.unref(bun_io::js_vm_ctx()) };
+                    unsafe { (*task).poll_ref.unref() };
                 }
             }
         }
     }
 
-    fn unpark(&self) {
+    fn unpark(&self, live: VmLive<'_>) {
         let task = self.task.get();
         if self.stream.unpark() && !task.is_null() {
             // SAFETY: see `task`; reached from a consumer, so the task is still live.
-            unsafe { (*task).poll_ref.ref_(bun_io::js_vm_ctx()) };
+            unsafe { (*task).poll_ref.ref_(live) };
         }
     }
 
-    pub(crate) fn on_stream_drained(&self) {
-        self.unpark();
+    pub(crate) fn on_stream_drained(&self, live: VmLive<'_>) {
+        self.unpark(live);
         let task = self.task.get();
         if !task.is_null() {
             // SAFETY: see `task`.
@@ -795,8 +816,8 @@ impl S3DownloadStreamWrapper {
         }
     }
 
-    pub(crate) fn on_consumer_attached(&self) {
-        self.unpark();
+    pub(crate) fn on_consumer_attached(&self, live: VmLive<'_>) {
+        self.unpark(live);
     }
 
     /// The stream's wrapper was collected: nothing can read the rest. Inside a GC sweep;
@@ -820,7 +841,7 @@ impl S3DownloadStreamWrapper {
                     .signal_store
                     .aborted
                     .store(true, core::sync::atomic::Ordering::Relaxed);
-                (*task).poll_ref.unref(bun_io::js_vm_ctx());
+                (*task).poll_ref.unref();
                 // Wake the HTTP thread so it observes the abort even when the
                 // socket is idle; otherwise the final `has_more == false`
                 // callback never fires and both the task and wrapper leak.
@@ -848,7 +869,7 @@ pub(crate) fn readable_stream(
 
     let reader = RefPtr::new(crate::webcore::byte_stream::Source {
         global_this: Cell::new(Some(bun_ptr::BackRef::new(cx.global()))),
-        ..Default::default()
+        ..crate::webcore::byte_stream::Source::new(cx.live().has_vm)
     });
     let reader = crate::webcore::byte_stream::Source::wrap(reader, cx);
     let readable_value = ReadableStream::from_native(cx.global(), reader.to_js())?;
@@ -869,6 +890,14 @@ pub(crate) fn readable_stream(
             bun_ptr::BackRef::from(wrapper.as_non_null()),
         ));
 
-    download_stream(this, cx.context(), offset, size, request_payer, wrapper);
+    download_stream(
+        this,
+        cx.context(),
+        offset,
+        size,
+        request_payer,
+        wrapper,
+        cx.turn(),
+    );
     Ok(readable_value)
 }

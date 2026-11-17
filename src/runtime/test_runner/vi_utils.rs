@@ -44,7 +44,7 @@ pub(crate) struct Config {
 fn run(global: &JSGlobalObject, reset: Reset) {
     crate::dispatch::fold(bun_jsc::from_js_host_call_generic(global, || {
         reset(global)
-    }));
+    }), global.turn());
 }
 
 pub(crate) fn before_each_attempt(global: &JSGlobalObject, is_vitest: bool) {

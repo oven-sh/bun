@@ -92,7 +92,7 @@ impl SplitBundlerOptions {
                 // be resolved before the first bundle task can begin.
                 global
                     .bun_vm()
-                    .wait_for_promise(promise)
+                    .wait_for_promise(promise, global.turn())
                     .map_err(|stopped| stopped.throw(global))?;
                 match promise.unwrap(global.vm(), bun_jsc::PromiseUnwrapMode::MarkHandled) {
                     bun_jsc::PromiseResult::Pending => unreachable!("wait_for_promise returned Ok"),

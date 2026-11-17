@@ -20,12 +20,19 @@ const chainable = {
   invalidThis: "undefined",
   uses: answersTimer,
 } as const;
-const ref = { ...chainable, rustName: "do_ref" } as const;
-const unref = { ...chainable, rustName: "do_unref" } as const;
+const ref = { ...chainable, rustName: "do_ref", passVm: true } as const;
+const unref = { ...chainable, rustName: "do_unref", passVm: true } as const;
 const destroyed = { getter: b.bool, pure: true } as const;
 const hasRef = { returns: b.bool, invalidThis: "undefined", uses: inspectsTimer } as const;
 const dispose = { capability: "js", invalidThis: "undefined", name: "", uses: inspectsTimer } as const;
-const toPrimitive = { returns: b.u64, throws: true, invalidThis: "undefined", name: "", uses: inspectsTimer } as const;
+const toPrimitive = {
+  passVm: true,
+  returns: b.u64,
+  throws: true,
+  invalidThis: "undefined",
+  name: "",
+  uses: inspectsTimer,
+} as const;
 
 export const Timeout = b.class({
   rustPath: "crate::timer::TimeoutObject",

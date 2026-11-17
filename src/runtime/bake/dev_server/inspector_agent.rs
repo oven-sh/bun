@@ -10,6 +10,7 @@
 
 use super::*;
 use bun_core::String as BunString;
+use bun_core::VmLive;
 use bun_jsc::debugger::{DebuggerId, ErasedAgentSlot};
 use bun_jsc::virtual_machine::VirtualMachine;
 
@@ -170,10 +171,9 @@ impl<'a> BunFrontendDevServerAgent<'a> {
 // HOST_EXPORT(Bun__InspectorBunFrontendDevServerAgent__setEnabled, c)
 pub(crate) fn frontend_dev_server_agent_set_enabled(
     agent: *mut InspectorBunFrontendDevServerAgentHandle,
+    live: VmLive<'_>,
 ) {
-    // `VirtualMachine::get()` is valid here: the C++ inspector agent invokes
-    // this on the JS thread, after the VM is initialized.
-    if let Some(dbg) = VirtualMachine::get().debugger.get() {
+    if let Some(dbg) = VirtualMachine::get(live).debugger.get() {
         dbg.extension_agent.set_agent_ptr(agent.cast());
     }
 }

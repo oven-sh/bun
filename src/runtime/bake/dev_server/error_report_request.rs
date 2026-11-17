@@ -19,7 +19,7 @@ use bun_alloc::ArenaVecExt as _;
 
 use bun_alloc::Arena; // bumpalo::Bump re-export
 use bun_collections::ArrayHashMap;
-use bun_core::{Ordinal, Output};
+use bun_core::{JsTurn, Ordinal, Output};
 use bun_core::{String as BunString, StringOrView, strings};
 use bun_io::Write as _;
 use bun_jsc::{
@@ -41,8 +41,8 @@ pub(crate) struct ErrorReportRequest {
 }
 
 impl BodyReaderHandler for ErrorReportRequest {
-    fn on_body(&self, body: &[u8], resp: AnyResponse) -> bun_uws_sys::Result<()> {
-        self.run_with_body(body, resp).map_err(Into::into)
+    fn on_body(&self, body: &[u8], resp: AnyResponse, turn: JsTurn<'_>) -> bun_uws_sys::Result<()> {
+        self.run_with_body(body, resp, turn).map_err(Into::into)
     }
 }
 
@@ -52,7 +52,7 @@ impl ErrorReportRequest {
         uws::BodyReaderMixin::read_body(ErrorReportRequest { dev }, resp);
     }
 
-    fn run_with_body(&self, body: &[u8], r: AnyResponse) -> crate::Result<()> {
+    fn run_with_body(&self, body: &[u8], r: AnyResponse, turn: JsTurn<'_>) -> crate::Result<()> {
         let mut reader = bun_io::FixedBufferStream::new(body);
 
         let arena = Arena::new();
@@ -268,6 +268,7 @@ impl ErrorReportRequest {
                 stderr,
                 true,
                 ansi_colors,
+                turn,
             );
         }
 

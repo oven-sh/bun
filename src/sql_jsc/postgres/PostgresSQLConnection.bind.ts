@@ -8,10 +8,10 @@ export const PostgresSQLConnection = b.class({
   proto: {
     close: { capability: "js", rustName: "do_close" },
     flush: {},
-    hold: {},
+    hold: { passVm: true },
     inTransaction: { getter: b.bool },
     onnotification: { setter: true, internalField: "onnotification" },
-    ref: {},
+    ref: { passVm: true },
     sasl: { getter: b.bool },
     unhold: { capability: "js" },
   },

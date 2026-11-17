@@ -11,6 +11,7 @@
 use core::cell::Cell;
 use core::ffi::c_void;
 
+use bun_core::{HasVm, JsTurn, LoopTurn};
 use bun_io::Closer;
 use bun_io::pipe_reader::ReaderFlags;
 use bun_io::{BufferedReader, FileType, IoEvent, Owner, PollTag, ReadResult, ReadState};
@@ -46,6 +47,7 @@ pub(crate) struct FileResponseStream {
     /// A uv read in flight outlives `finish()`.
     #[cfg(windows)]
     read_ref: JsCell<Option<RefPtr<Self>>>,
+    has_vm: HasVm,
 }
 
 #[derive(Copy, Clone, Eq, PartialEq, strum::IntoStaticStr)]
@@ -146,11 +148,11 @@ pub(crate) enum StreamOwner {
     DirectoryRoute(PendingRequest<RefPtr<DirectoryRoute>>),
     Ctx {
         ctx: *mut c_void,
-        on_complete: fn(*mut c_void, AnyResponse),
+        on_complete: fn(*mut c_void, AnyResponse, JsTurn<'_>),
         /// Fires instead of `on_complete` when the client disconnects
         /// mid-stream. If `None`, abort is reported via `on_complete`.
-        on_abort: Option<fn(*mut c_void, AnyResponse)>,
-        on_error: fn(*mut c_void, AnyResponse, sys::Error),
+        on_abort: Option<fn(*mut c_void, AnyResponse, JsTurn<'_>)>,
+        on_error: fn(*mut c_void, AnyResponse, sys::Error, JsTurn<'_>),
     },
 }
 
@@ -161,7 +163,7 @@ enum StreamEnd {
 }
 
 impl StreamOwner {
-    fn deliver(self, resp: AnyResponse, end: StreamEnd) {
+    fn deliver(self, resp: AnyResponse, end: StreamEnd, turn: JsTurn<'_>) {
         match self {
             StreamOwner::FileRoute(route) => drop(route),
             StreamOwner::DirectoryRoute(route) => drop(route),
@@ -171,16 +173,16 @@ impl StreamOwner {
                 on_abort,
                 on_error,
             } => match end {
-                StreamEnd::Complete => on_complete(ctx, resp),
-                StreamEnd::Abort => on_abort.unwrap_or(on_complete)(ctx, resp),
-                StreamEnd::Error(err) => on_error(ctx, resp, err),
+                StreamEnd::Complete => on_complete(ctx, resp, turn),
+                StreamEnd::Abort => on_abort.unwrap_or(on_complete)(ctx, resp, turn),
+                StreamEnd::Error(err) => on_error(ctx, resp, err, turn),
             },
         }
     }
 }
 
 impl FileResponseStream {
-    pub(crate) fn start(opts: StartOptions) {
+    pub(crate) fn start(opts: StartOptions, turn: JsTurn<'_>) {
         let use_sendfile = can_sendfile(opts.resp, opts.file_type, opts.length);
 
         let owned = RefPtr::new(FileResponseStream {
@@ -201,6 +203,7 @@ impl FileResponseStream {
             self_ref: JsCell::new(None),
             #[cfg(windows)]
             read_ref: JsCell::new(None),
+            has_vm: turn.live.has_vm,
         });
         owned.self_ref.set(Some(owned.clone()));
         let this = owned.as_ptr();
@@ -209,12 +212,12 @@ impl FileResponseStream {
         let resp = this_ref.resp.get();
         resp.timeout(opts.idle_timeout);
         resp.on_aborted(
-            |p: *mut FileResponseStream, r| {
+            |p: *mut FileResponseStream, r, turn| {
                 // SAFETY: uWS hands back the userdata pointer set below; the
                 // guard keeps `*p` alive across the handler.
                 unsafe {
                     let _guard = RefPtr::init_ref(p);
-                    (*p).on_aborted(r);
+                    (*p).on_aborted(r, turn);
                 }
             },
             this,
@@ -237,7 +240,7 @@ impl FileResponseStream {
                 has_set_on_writable: false,
             });
             resp.prepare_for_sendfile();
-            let _ = this_ref.on_sendfile();
+            let _ = this_ref.on_sendfile(turn);
             return;
         }
 
@@ -263,15 +266,15 @@ impl FileResponseStream {
             reader.start(event_loop, fd, opts.pollable)
         };
         match start_result {
-            Ok(result) => this_ref.on_read_result(result),
-            Err(err) => return this_ref.fail_with(err),
+            Ok(result) => this_ref.on_read_result(result, turn),
+            Err(err) => return this_ref.fail_with(err, turn),
         }
 
         reader.update_ref(true);
 
         #[cfg(windows)]
         this_ref.hold_read_ref();
-        this_ref.read(None);
+        this_ref.read(None, turn.loop_);
     }
 
     fn arm_on_writable(&self) {
@@ -280,12 +283,12 @@ impl FileResponseStream {
             return;
         };
         self.resp.get().on_writable(
-            |p: *mut FileResponseStream, off, r| {
+            |p: *mut FileResponseStream, off, r, turn| {
                 // SAFETY: uWS hands back the userdata pointer set below; the
                 // guard keeps `*p` alive across the handler.
                 unsafe {
                     let _guard = RefPtr::init_ref(p);
-                    (*p).on_writable(off, r)
+                    (*p).on_writable(off, r, turn)
                 }
             },
             this.as_ptr(),
@@ -297,24 +300,25 @@ impl FileResponseStream {
         self.state.set(self.state.get() | flags);
     }
 
-    fn deliver(&self, resp: AnyResponse, end: StreamEnd) {
+    fn deliver(&self, resp: AnyResponse, end: StreamEnd, turn: JsTurn<'_>) {
         if let Some(owner) = self.owner.take() {
-            owner.deliver(resp, end);
+            owner.deliver(resp, end, turn);
         }
     }
 
     // ───────────────────────── reader backend ─────────────────────────
 
-    pub(crate) fn read(&self, event: Option<IoEvent>) {
+    pub(crate) fn read(&self, event: Option<IoEvent>, turn: LoopTurn<'_>) {
+        let turn = self.has_vm.turn(turn);
         let result = self
             .reader
-            .read_chunks(self.event_loop, event, |chunk, state| {
-                self.on_read_chunk(&chunk, state)
+            .read_chunks(self.event_loop, event, move |chunk, state| {
+                self.on_read_chunk(&chunk, state, turn)
             });
-        self.on_read_result(result);
+        self.on_read_result(result, turn);
     }
 
-    fn on_read_chunk(&self, chunk: &[u8], state: ReadState) -> bool {
+    fn on_read_chunk(&self, chunk: &[u8], state: ReadState, turn: JsTurn<'_>) -> bool {
         if self.state.get().contains(State::RESPONSE_DONE) {
             return false;
         }
@@ -326,7 +330,7 @@ impl FileResponseStream {
             self.insert_state(State::RESPONSE_DONE);
             self.detach_resp();
             resp.end(chunk, resp.should_close_connection());
-            self.deliver(resp, StreamEnd::Complete);
+            self.deliver(resp, StreamEnd::Complete, turn);
             return false;
         }
 
@@ -343,11 +347,11 @@ impl FileResponseStream {
         }
     }
 
-    fn on_read_result(&self, result: ReadResult) {
+    fn on_read_result(&self, result: ReadResult, turn: JsTurn<'_>) {
         match result {
             ReadResult::Pending => return,
-            ReadResult::Done => self.finish(),
-            ReadResult::Err(err) => self.fail_with(err),
+            ReadResult::Done => self.finish(turn),
+            ReadResult::Err(err) => self.fail_with(err, turn),
         }
         #[cfg(windows)]
         self.read_ref.set(None);
@@ -360,29 +364,29 @@ impl FileResponseStream {
         }
     }
 
-    fn on_writable(&self, _: u64, _: AnyResponse) -> bool {
+    fn on_writable(&self, _: u64, _: AnyResponse, turn: JsTurn<'_>) -> bool {
         bun_output::scoped_log!(FileResponseStream, "onWritable");
 
         if self.mode.get() == Mode::Sendfile {
-            return self.on_sendfile();
+            return self.on_sendfile(turn);
         }
 
         if self.reader.is_done() {
-            self.finish();
+            self.finish(turn);
             return true;
         }
         self.resp.get().timeout(self.idle_timeout.get());
         #[cfg(windows)]
         self.hold_read_ref();
         // A paused POSIX reader ignores `read()`.
-        self.on_read_result(self.reader.unpause());
-        self.read(None);
+        self.on_read_result(self.reader.unpause(), turn);
+        self.read(None, turn.loop_);
         true
     }
 
     // ───────────────────────── sendfile backend ─────────────────────────
 
-    fn on_sendfile(&self) -> bool {
+    fn on_sendfile(&self, turn: JsTurn<'_>) -> bool {
         bun_output::scoped_log!(
             FileResponseStream,
             "onSendfile remain={} offset={}",
@@ -390,7 +394,7 @@ impl FileResponseStream {
             self.sendfile.get().offset
         );
         if self.state.get().contains(State::RESPONSE_DONE) {
-            self.finish();
+            self.finish(turn);
             return false;
         }
 
@@ -433,7 +437,7 @@ impl FileResponseStream {
             match errno {
                 sys::E::SUCCESS => {
                     if remain == 0 || sent == 0 {
-                        self.end_sendfile();
+                        self.end_sendfile(turn);
                         return false;
                     }
                     return self.arm_sendfile_writable();
@@ -443,6 +447,7 @@ impl FileResponseStream {
                 _ => {
                     self.fail_with(
                         sys::Error::from_code(errno, sys::Tag::sendfile).with_fd(self.fd.get()),
+                        turn,
                     );
                     return false;
                 }
@@ -466,7 +471,7 @@ impl FileResponseStream {
     }
 
     #[cfg(any(target_os = "linux", target_os = "android"))]
-    fn end_sendfile(&self) {
+    fn end_sendfile(&self, turn: JsTurn<'_>) {
         bun_output::scoped_log!(FileResponseStream, "endSendfile");
         if self.state.get().contains(State::RESPONSE_DONE) {
             return;
@@ -475,7 +480,7 @@ impl FileResponseStream {
         self.detach_resp();
         let resp = self.resp.get();
         resp.end_send_file(self.sendfile.get().offset, resp.should_close_connection());
-        self.deliver(resp, StreamEnd::Complete);
+        self.deliver(resp, StreamEnd::Complete, turn);
         // `end_send_file` bypasses every shouldCloseConnection() gate: it does
         // not go through internalEnd, and the onWritable gate is skipped
         // because this frame returns `false` to it. Run the gate here — after
@@ -494,12 +499,12 @@ impl FileResponseStream {
         // us_socket_is_closed check returns before touching the destructed
         // ext. Only `finish()` runs after this, and it never touches `resp`.
         resp.close_if_done_and_marked();
-        self.finish();
+        self.finish(turn);
     }
 
     // ───────────────────────── lifecycle ─────────────────────────
 
-    fn on_aborted(&self, _: AnyResponse) {
+    fn on_aborted(&self, _: AnyResponse, turn: JsTurn<'_>) {
         bun_output::scoped_log!(FileResponseStream, "onAborted");
         if !self.state.get().contains(State::RESPONSE_DONE) {
             self.insert_state(State::RESPONSE_DONE);
@@ -507,20 +512,20 @@ impl FileResponseStream {
             // An `abort` listener may close the fd, and epoll cannot remove a closed fd.
             #[cfg(unix)]
             self.reader.release_handle();
-            self.deliver(self.resp.get(), StreamEnd::Abort);
+            self.deliver(self.resp.get(), StreamEnd::Abort, turn);
         }
-        self.finish();
+        self.finish(turn);
     }
 
-    fn fail_with(&self, err: sys::Error) {
+    fn fail_with(&self, err: sys::Error, turn: JsTurn<'_>) {
         if !self.state.get().contains(State::RESPONSE_DONE) {
             self.insert_state(State::RESPONSE_DONE | State::ERRORED);
             self.detach_resp();
             let resp = self.resp.get();
             resp.force_close();
-            self.deliver(resp, StreamEnd::Error(err));
+            self.deliver(resp, StreamEnd::Error(err), turn);
         }
-        self.finish();
+        self.finish(turn);
     }
 
     /// Clears the uWS callbacks pointing at us; runs before `resp.end()` / `end_send_file()` / `force_close()` hand the socket back to uWS, after which nothing here touches `resp`.
@@ -535,7 +540,7 @@ impl FileResponseStream {
         resp.clear_timeout();
     }
 
-    fn finish(&self) {
+    fn finish(&self, turn: JsTurn<'_>) {
         bun_output::scoped_log!(
             FileResponseStream,
             "finish (already={})",
@@ -553,7 +558,7 @@ impl FileResponseStream {
             // `end` writes a chunked body's final chunk, or `Content-Length: 0` if no
             // length was declared, and runs the uWS close check.
             resp.end(b"", resp.should_close_connection());
-            self.deliver(resp, StreamEnd::Complete);
+            self.deliver(resp, StreamEnd::Complete, turn);
         }
     }
 }

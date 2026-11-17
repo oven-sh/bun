@@ -58,6 +58,8 @@ pub fn host_call(_attr: TokenStream, item: TokenStream) -> TokenStream {
 //     reconstructs the slice via `slice::from_raw_parts{,_mut}`. A `&mut [T]`
 //     argument **must not alias any memory reachable through `*self`** — the
 //     macro cannot check this and the thunk holds both borrows live;
+//   - makes a token of `bun_core::thread_token` itself, so that it is not in
+//     the C signature; the attribute vouches for every caller of the thunk;
 //   - passes every other parameter through verbatim (so FFI-safe scalars,
 //     raw pointers, and `#[repr(C)]` structs are forwarded unchanged).
 //     `&T` / `Option<&T>` are intentionally passed straight across the ABI
@@ -210,6 +212,13 @@ fn expand_uws_callback(args: &UwsCallbackArgs, func: &ItemFn) -> syn::Result<Tok
                 });
                 call_args.push(quote! { #name });
             }
+            UwsArg::Token(token) => {
+                prelude.push(quote! {
+                    // SAFETY: the caller calls this only where it holds.
+                    let #name = unsafe { ::bun_core::#token::assume(&__ctx) };
+                });
+                call_args.push(quote! { #name });
+            }
             UwsArg::PassThrough(ty) => {
                 thunk_params.push(quote! { #name: #ty });
                 call_args.push(quote! { #name });
@@ -265,6 +274,7 @@ fn expand_uws_callback(args: &UwsCallbackArgs, func: &ItemFn) -> syn::Result<Tok
 
 enum UwsArg {
     Slice { elem: syn::Type, mutable: bool },
+    Token(Ident),
     PassThrough(syn::Type),
 }
 
@@ -276,6 +286,14 @@ fn classify_uws_arg(ty: &syn::Type) -> UwsArg {
                 mutable: r.mutability.is_some(),
             };
         }
+    }
+    if let syn::Type::Path(p) = ty
+        && let Some(last) = p.path.segments.last()
+        && ["ThreadLive", "VmLive", "LoopTurn", "JsTurn"]
+            .iter()
+            .any(|token| last.ident == token)
+    {
+        return UwsArg::Token(last.ident.clone());
     }
     UwsArg::PassThrough(ty.clone())
 }

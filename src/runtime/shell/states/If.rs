@@ -1,3 +1,5 @@
+use bun_core::LoopTurn;
+
 use crate::shell::ExitCode;
 use crate::shell::ast;
 use crate::shell::interpreter::{Interpreter, Node, NodeId};
@@ -72,11 +74,11 @@ impl If {
         }))
     }
 
-    pub(crate) fn start(_interp: &Interpreter, this: NodeId) -> Yield {
+    pub(crate) fn start(_interp: &Interpreter, this: NodeId, _turn: LoopTurn<'_>) -> Yield {
         Yield::Next(this)
     }
 
-    pub(crate) fn next(interp: &Interpreter, this: NodeId) -> Yield {
+    pub(crate) fn next(interp: &Interpreter, this: NodeId, turn: LoopTurn<'_>) -> Yield {
         let parent = interp.as_if(this).base.parent;
         loop {
             // Read/mutate `state` via a short-lived borrow, decide an action,
@@ -166,14 +168,14 @@ impl If {
                 }
             };
             return match action {
-                Action::Done(exit) => interp.child_done(parent, this, exit),
+                Action::Done(exit) => interp.child_done(parent, this, exit, turn),
                 Action::SpawnStmt(stmt_node) => {
                     let (shell, io) = {
                         let me = interp.as_if(this);
                         (me.shell.as_ptr(), me.io.clone())
                     };
                     let new_stmt = Stmt::init(interp, shell, stmt_node, this, io);
-                    Stmt::start(interp, new_stmt)
+                    Stmt::start(interp, new_stmt, turn)
                 }
             };
         }
@@ -184,11 +186,12 @@ impl If {
         this: NodeId,
         child: NodeId,
         exit_code: ExitCode,
+        turn: LoopTurn<'_>,
     ) -> Yield {
         interp.deinit_node(child);
-        if interp.interrupted(this) {
+        if interp.interrupted(this, turn.live) {
             let parent = interp.as_if(this).base.parent;
-            return interp.child_done(parent, this, exit_code);
+            return interp.child_done(parent, this, exit_code, turn);
         }
         let me = interp.as_if_mut(this);
         let IfState::Exec(exec) = &mut me.state else {

@@ -312,7 +312,8 @@ impl Channel {
         let this = core::ptr::from_ref(self).cast_mut();
         // SAFETY: `p` is the `this` handed to `write` below — the live Channel
         // stashed for the callback; every Channel method is `&self`.
-        let on_write: fn(*mut Self, uv::ReturnCode) = |p, s| unsafe { &*p }.on_write(s);
+        let on_write: fn(*mut Self, uv::ReturnCode, bun_core::LoopTurn<'_>) =
+            |p, s, _| unsafe { &*p }.on_write(s);
         // SAFETY: `write_req`/`write_buf`/`inflight` live in `self`, which is
         // address-stable and outlives the write, so libuv may hold them until
         // `on_write` fires.
@@ -433,25 +434,33 @@ impl Drop for Channel {
 
 // -- platform callbacks ------------------------------------------------------
 
+// SAFETY: it asks for nothing.
 #[cfg(not(windows))]
-impl uws::vtable::Handler for Channel {
+unsafe impl uws::vtable::Handler for Channel {
+    type Turn<'a> = ();
     type Ext = ExtSlot<Self>;
 
     const HAS_ON_DATA: bool = true;
     const HAS_ON_WRITABLE: bool = true;
     const HAS_ON_CLOSE: bool = true;
 
-    fn on_data(ext: &mut Self::Ext, _: *mut uws::us_socket_t, data: &[u8]) {
+    fn on_data(ext: &mut Self::Ext, _: *mut uws::us_socket_t, data: &[u8], _turn: ()) {
         let Some(this) = ext.owner_ref() else { return };
         this.ingest(data);
     }
 
-    fn on_writable(ext: &mut Self::Ext, _: *mut uws::us_socket_t) {
+    fn on_writable(ext: &mut Self::Ext, _: *mut uws::us_socket_t, _turn: ()) {
         let Some(this) = ext.owner_ref() else { return };
         this.flush();
     }
 
-    fn on_close(ext: &mut Self::Ext, _: *mut uws::us_socket_t, _: i32, _: Option<*mut c_void>) {
+    fn on_close(
+        ext: &mut Self::Ext,
+        _: *mut uws::us_socket_t,
+        _: i32,
+        _: Option<*mut c_void>,
+        _turn: (),
+    ) {
         let Some(this) = ext.owner_ref() else { return };
         this.backend.socket.set(Socket::DETACHED);
         this.done.set(true);
@@ -491,11 +500,11 @@ unsafe impl uv::StreamReader for Channel {
         this.backend.read_chunk.as_ptr()
     }
     #[inline]
-    fn on_read_error(this: &Self, err: core::ffi::c_int) {
+    fn on_read_error(this: &Self, err: core::ffi::c_int, _turn: bun_core::LoopTurn<'_>) {
         this.on_error(bun_sys::windows::translate_uv_error_to_e(err));
     }
     #[inline]
-    unsafe fn on_read(this: &Self, nread: usize) {
+    unsafe fn on_read(this: &Self, nread: usize, _turn: bun_core::LoopTurn<'_>) {
         this.ingest(&this.backend.read_chunk.get()[..nread]);
     }
 }

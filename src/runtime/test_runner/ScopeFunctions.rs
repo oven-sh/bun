@@ -645,7 +645,7 @@ impl ScopeFunctions {
                         None => parameter_of_callback = Some(Rc::clone(parameter)),
                     }
                     if TestFixtures::has_scope_beyond_test(self.fixtures) {
-                        bun_test.expect_file_scoped_fixtures();
+                        bun_test.expect_file_scoped_fixtures(global.turn());
                     }
                 }
 
@@ -662,6 +662,7 @@ impl ScopeFunctions {
                     },
                     parameter_of_callback,
                     base,
+                    global.turn(),
                 );
             }
         }

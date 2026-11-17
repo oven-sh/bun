@@ -9,8 +9,9 @@ use crate::socket::windows_named_pipe::{Handlers as NamedPipeHandlers, WindowsNa
 use crate::socket::{TCPSocket, TLSSocket};
 use bun_boringssl_sys as boringssl;
 use bun_core::ZStr;
+use bun_core::{JsTurn, ThreadLive, VmLive};
 use bun_event_loop::Task;
-use bun_jsc::virtual_machine::VirtualMachine;
+use bun_jsc::virtual_machine::{VirtualMachine, VmRef};
 use bun_jsc::{GlobalRef, SysErrorJsc};
 use bun_ptr::{RefPtr, ThisPtr};
 use bun_sys::{self, Error as SysError, Fd, SystemErrno};
@@ -38,7 +39,7 @@ pub(crate) struct WindowsNamedPipeContext {
     /// client.
     pub(super) named_pipe: WindowsNamedPipe,
 
-    vm: &'static VirtualMachine,
+    vm: VmRef,
     global_this: GlobalRef,
     task_event: EventState,
     is_open: bool,
@@ -47,22 +48,30 @@ pub(crate) struct WindowsNamedPipeContext {
     abort_handle: bun_jsc::AbortHandle,
 }
 
-bun_jsc::impl_abort_handle_owner!(WindowsNamedPipeContext, abort_handle, |this, _cause| {
-    // SAFETY: trait contract — `this` is live; `close` re-enters `on_close`,
-    // which may free `this`.
-    unsafe { (*ptr::addr_of_mut!((*this).named_pipe)).close_or_cancel_connect() }
-});
+bun_jsc::impl_abort_handle_owner!(
+    WindowsNamedPipeContext,
+    abort_handle,
+    |this, _cause, turn| {
+        // SAFETY: trait contract — `this` is live; `close` re-enters `on_close`,
+        // which may free `this`.
+        unsafe { (*ptr::addr_of_mut!((*this).named_pipe)).close_or_cancel_connect(turn) }
+    }
+);
 
 /// Reached from `on_close` while `WindowsNamedPipe::on_close`
 /// still holds a live `&mut (*this).named_pipe` and uses it after we return, so
 /// project raw fields only — same constraint as the `on_*` handlers below.
 fn schedule_deinit(this: *mut WindowsNamedPipeContext) {
     // SAFETY: called from `deref()` at count zero; `this` is live until the task fires.
-    // `task_event`/`vm` are disjoint from the caller's `&mut named_pipe`.
+    // `task_event`/`vm` are disjoint from the caller's `&mut named_pipe`. The last that can
+    // release a ref is the socket's finalizer: a worker has drained libuv's requests by then.
     unsafe {
         debug_assert!((*this).task_event != EventState::Deinit);
         (*this).task_event = EventState::Deinit;
-        (*this).vm.enqueue_task(Task::init(this));
+        (*this)
+            .vm
+            .get(ThreadLive::assume(&this))
+            .enqueue_task(Task::init(this));
     }
 }
 
@@ -122,19 +131,19 @@ fn socket_from_named_pipe<const SSL: bool>(
 ///
 /// Takes the `SocketType` by *value*: see the Stacked-Borrows note on the `on_*` block below.
 macro_rules! match_socket {
-    ($scrutinee:expr, |$s:ident: NewSocket<$ssl:ident>| $body:expr) => {
+    ($scrutinee:expr, |$s:ident: NewSocket<$ssl:ident>| $body:expr, $turn:expr) => {
         // This context is the named-pipe sockets' trampoline: what a handler
         // left pending is folded here.
         match $scrutinee {
             SocketType::Tls($s) => {
                 const $ssl: bool = true;
                 let _ = $ssl;
-                crate::dispatch::fold($body)
+                crate::dispatch::fold($body, $turn)
             }
             SocketType::Tcp($s) => {
                 const $ssl: bool = false;
                 let _ = $ssl;
-                crate::dispatch::fold($body)
+                crate::dispatch::fold($body, $turn)
             }
             SocketType::None => {}
         }
@@ -157,7 +166,7 @@ macro_rules! match_socket {
 // `is_open`, `global_this`) via raw-pointer place expressions, and passes
 // `addr_of_mut!((*this).named_pipe)` as a raw pointer without retagging.
 impl WindowsNamedPipeContext {
-    fn on_open(this: *mut Self) {
+    fn on_open(this: *mut Self, turn: JsTurn<'_>) {
         // SAFETY: `this` is the live ctx ptr registered in `create()`; `is_open`,
         // `socket` and the `named_pipe` field *address* are all reachable without
         // forming a reference that overlaps the caller's `&mut named_pipe`.
@@ -165,28 +174,34 @@ impl WindowsNamedPipeContext {
             (*this).is_open = true;
             (SocketType::of(&(*this).socket), &raw mut (*this).named_pipe)
         };
-        match_socket!(socket, |s: NewSocket<SSL>| NewSocket::on_open(
-            s,
-            socket_from_named_pipe::<SSL>(pipe)
-        ));
+        match_socket!(
+            socket,
+            |s: NewSocket<SSL>| NewSocket::on_open(s, socket_from_named_pipe::<SSL>(pipe), turn),
+            turn
+        );
     }
 
-    fn on_data(this: *mut Self, decoded_data: &[u8]) {
+    fn on_data(this: *mut Self, decoded_data: &[u8], turn: JsTurn<'_>) {
         // SAFETY: see `on_open`.
         let (socket, pipe) =
             unsafe { (SocketType::of(&(*this).socket), &raw mut (*this).named_pipe) };
-        match_socket!(socket, |s: NewSocket<SSL>| NewSocket::on_data(
-            s,
-            socket_from_named_pipe::<SSL>(pipe),
-            decoded_data
-        ));
+        match_socket!(
+            socket,
+            |s: NewSocket<SSL>| NewSocket::on_data(
+                s,
+                socket_from_named_pipe::<SSL>(pipe),
+                decoded_data,
+                turn
+            ),
+            turn
+        );
     }
 
-    fn on_session(this: *mut Self, session: &[u8]) {
+    fn on_session(this: *mut Self, session: &[u8], turn: JsTurn<'_>) {
         // Only the TLS wrapper parks sessions; the TCP arm can never get here.
         // SAFETY: see `on_open`.
         if let SocketType::Tls(s) = SocketType::of(unsafe { &(*this).socket }) {
-            crate::dispatch::fold(TLSSocket::on_session(s, session));
+            crate::dispatch::fold(TLSSocket::on_session(s, session, turn), turn);
         }
     }
 
@@ -201,96 +216,123 @@ impl WindowsNamedPipeContext {
         }
     }
 
-    fn on_keylog(this: *mut Self, line: &[u8]) {
+    fn on_keylog(this: *mut Self, line: &[u8], turn: JsTurn<'_>) {
         // SAFETY: see `on_open`.
         if let SocketType::Tls(s) = SocketType::of(unsafe { &(*this).socket }) {
-            crate::dispatch::fold(TLSSocket::on_keylog(s, line));
+            crate::dispatch::fold(TLSSocket::on_keylog(s, line, turn), turn);
         }
     }
 
-    fn on_handshake(this: *mut Self, success: bool, ssl_error: us_bun_verify_error_t) {
+    fn on_handshake(
+        this: *mut Self,
+        success: bool,
+        ssl_error: us_bun_verify_error_t,
+        turn: JsTurn<'_>,
+    ) {
         // SAFETY: see `on_open`.
         let (socket, pipe) =
             unsafe { (SocketType::of(&(*this).socket), &raw mut (*this).named_pipe) };
-        match_socket!(socket, |s: NewSocket<SSL>| NewSocket::on_handshake(
-            s,
-            socket_from_named_pipe::<SSL>(pipe),
-            success as i32,
-            ssl_error
-        ));
+        match_socket!(
+            socket,
+            |s: NewSocket<SSL>| NewSocket::on_handshake(
+                s,
+                socket_from_named_pipe::<SSL>(pipe),
+                success as i32,
+                ssl_error,
+                turn
+            ),
+            turn
+        );
     }
 
-    fn on_end(this: *mut Self) {
+    fn on_end(this: *mut Self, turn: JsTurn<'_>) {
         // SAFETY: see `on_open`.
         let (socket, pipe) =
             unsafe { (SocketType::of(&(*this).socket), &raw mut (*this).named_pipe) };
-        match_socket!(socket, |s: NewSocket<SSL>| NewSocket::on_end(
-            s,
-            socket_from_named_pipe::<SSL>(pipe)
-        ));
+        match_socket!(
+            socket,
+            |s: NewSocket<SSL>| NewSocket::on_end(s, socket_from_named_pipe::<SSL>(pipe), turn),
+            turn
+        );
     }
 
-    fn on_writable(this: *mut Self) {
+    fn on_writable(this: *mut Self, turn: JsTurn<'_>) {
         // SAFETY: see `on_open`.
         let (socket, pipe) =
             unsafe { (SocketType::of(&(*this).socket), &raw mut (*this).named_pipe) };
-        match_socket!(socket, |s: NewSocket<SSL>| NewSocket::on_writable(
-            s,
-            socket_from_named_pipe::<SSL>(pipe)
-        ));
+        match_socket!(
+            socket,
+            |s: NewSocket<SSL>| NewSocket::on_writable(
+                s,
+                socket_from_named_pipe::<SSL>(pipe),
+                turn
+            ),
+            turn
+        );
     }
 
-    fn on_error(this: *mut Self, err: &SysError) {
+    fn on_error(this: *mut Self, err: &SysError, turn: JsTurn<'_>) {
         // SAFETY: see `on_open`.
         let (is_open, socket) = unsafe { ((*this).is_open, SocketType::of(&(*this).socket)) };
         if is_open {
-            match_socket!(socket, |s: NewSocket<SSL>| {
-                // SAFETY: `this` is live; `global_this` is disjoint from the caller's
-                // `&mut named_pipe` and the borrow ends before `handle_error` runs JS.
-                let js_err = err.to_js(unsafe { &(*this).global_this });
-                s.handle_error(js_err)
-            });
+            match_socket!(
+                socket,
+                |s: NewSocket<SSL>| {
+                    // SAFETY: `this` is live; `global_this` is disjoint from the caller's
+                    // `&mut named_pipe` and the borrow ends before `handle_error` runs JS.
+                    let js_err = err.to_js(unsafe { &(*this).global_this });
+                    s.handle_error(js_err, turn)
+                },
+                turn
+            );
         } else {
-            Self::fail_connect(this, err.errno as i32);
+            Self::fail_connect(this, err.errno as i32, turn);
         }
     }
 
     /// `connectError` is the socket's last event: a later `on_close` of the pipe finds no socket.
-    fn fail_connect(this: *mut Self, errno: i32) {
-        // SAFETY: see `on_open`. Taken before `connectError` runs JS, which may
-        // connect the same socket again through a new context.
-        crate::dispatch::fold(match unsafe { (*this).socket.take() } {
-            Some(OwnedSocket::Tls(s)) => NewSocket::handle_connect_error(s, errno, 0),
-            Some(OwnedSocket::Tcp(s)) => NewSocket::handle_connect_error(s, errno, 0),
-            None => Ok(()),
-        });
+    fn fail_connect(this: *mut Self, errno: i32, turn: JsTurn<'_>) {
+        crate::dispatch::fold(
+            // SAFETY: see `on_open`. Taken before `connectError` runs JS, which may
+            // connect the same socket again through a new context.
+            match unsafe { (*this).socket.take() } {
+                Some(OwnedSocket::Tls(s)) => NewSocket::handle_connect_error(s, errno, 0, turn),
+                Some(OwnedSocket::Tcp(s)) => NewSocket::handle_connect_error(s, errno, 0, turn),
+                None => Ok(()),
+            },
+            turn,
+        );
     }
 
-    fn on_timeout(this: *mut Self) {
+    fn on_timeout(this: *mut Self, turn: JsTurn<'_>) {
         // SAFETY: see `on_open`.
         let (socket, pipe) =
             unsafe { (SocketType::of(&(*this).socket), &raw mut (*this).named_pipe) };
-        match_socket!(socket, |s: NewSocket<SSL>| NewSocket::on_timeout(
-            s,
-            socket_from_named_pipe::<SSL>(pipe)
-        ));
+        match_socket!(
+            socket,
+            |s: NewSocket<SSL>| NewSocket::on_timeout(s, socket_from_named_pipe::<SSL>(pipe), turn),
+            turn
+        );
     }
 
-    fn on_close(this: *mut Self) {
+    fn on_close(this: *mut Self, turn: JsTurn<'_>) {
         // SAFETY: see `on_open`.
         let (_self_ref, socket, pipe) = unsafe {
             let pipe = &raw mut (*this).named_pipe;
             ((*this).self_ref.take(), (*this).socket.take(), pipe)
         };
-        crate::dispatch::fold(match socket {
-            Some(OwnedSocket::Tls(s)) => {
-                NewSocket::on_close(s, socket_from_named_pipe(pipe), 0, None)
-            }
-            Some(OwnedSocket::Tcp(s)) => {
-                NewSocket::on_close(s, socket_from_named_pipe(pipe), 0, None)
-            }
-            None => Ok(()),
-        });
+        crate::dispatch::fold(
+            match socket {
+                Some(OwnedSocket::Tls(s)) => {
+                    NewSocket::on_close(s, socket_from_named_pipe(pipe), 0, None, turn)
+                }
+                Some(OwnedSocket::Tcp(s)) => {
+                    NewSocket::on_close(s, socket_from_named_pipe(pipe), 0, None, turn)
+                }
+                None => Ok(()),
+            },
+            turn,
+        );
     }
 
     /// # Safety
@@ -308,14 +350,14 @@ impl WindowsNamedPipeContext {
         }
     }
 
-    fn fail_open(this: ThisPtr<Self>) {
+    fn fail_open(this: ThisPtr<Self>, turn: JsTurn<'_>) {
         let _self_ref = this.self_ref.take();
-        Self::fail_connect(this.as_ptr(), SystemErrno::ENOENT as i32);
+        Self::fail_connect(this.as_ptr(), SystemErrno::ENOENT as i32, turn);
     }
 
     pub(crate) fn create(cx: &bun_jsc::JsThread<'_>, socket: OwnedSocket) -> ThisPtr<Self> {
         let global_this = GlobalRef::from(cx.global());
-        let vm: &'static VirtualMachine = global_this.bun_vm();
+        let vm: &VirtualMachine = global_this.bun_vm();
         let this: *mut WindowsNamedPipeContext = bun_core::heap::into_raw(Box::<
             core::mem::MaybeUninit<WindowsNamedPipeContext>,
         >::new_uninit())
@@ -329,16 +371,16 @@ impl WindowsNamedPipeContext {
         // `&mut WindowsNamedPipe`).
         let handlers = NamedPipeHandlers {
             ctx: this.cast::<c_void>(),
-            on_open: |p| Self::on_open(p.cast::<Self>()),
-            on_data: |p, d| Self::on_data(p.cast::<Self>(), d),
-            on_handshake: |p, ok, err| Self::on_handshake(p.cast::<Self>(), ok, err),
-            on_end: |p| Self::on_end(p.cast::<Self>()),
-            on_writable: |p| Self::on_writable(p.cast::<Self>()),
-            on_error: |p, e| Self::on_error(p.cast::<Self>(), &e),
-            on_timeout: |p| Self::on_timeout(p.cast::<Self>()),
-            on_close: |p| Self::on_close(p.cast::<Self>()),
-            on_session: |p, d| Self::on_session(p.cast::<Self>(), d),
-            on_keylog: |p, d| Self::on_keylog(p.cast::<Self>(), d),
+            on_open: |p, turn| Self::on_open(p.cast::<Self>(), turn),
+            on_data: |p, d, turn| Self::on_data(p.cast::<Self>(), d, turn),
+            on_handshake: |p, ok, err, turn| Self::on_handshake(p.cast::<Self>(), ok, err, turn),
+            on_end: |p, turn| Self::on_end(p.cast::<Self>(), turn),
+            on_writable: |p, turn| Self::on_writable(p.cast::<Self>(), turn),
+            on_error: |p, e, turn| Self::on_error(p.cast::<Self>(), &e, turn),
+            on_timeout: |p, turn| Self::on_timeout(p.cast::<Self>(), turn),
+            on_close: |p, turn| Self::on_close(p.cast::<Self>(), turn),
+            on_session: |p, d, turn| Self::on_session(p.cast::<Self>(), d, turn),
+            on_keylog: |p, d, turn| Self::on_keylog(p.cast::<Self>(), d, turn),
             server_identity: |p, ssl| Self::server_identity(p.cast::<Self>(), ssl),
         };
         let named_pipe = WindowsNamedPipe::new(handlers, vm);
@@ -352,7 +394,7 @@ impl WindowsNamedPipeContext {
                     self_ref: Cell::new(None),
                     socket: Some(socket),
                     named_pipe,
-                    vm,
+                    vm: VmRef::new(vm),
                     global_this,
                     task_event: EventState::None,
                     is_open: false,
@@ -367,7 +409,7 @@ impl WindowsNamedPipeContext {
 
         // SAFETY: initialised above with a count of 1, heap-pinned; disarmed when freed.
         let self_ref = unsafe {
-            bun_jsc::AbortHandle::arm_owner(this, cx.context());
+            bun_jsc::AbortHandle::arm_owner(this, cx.context(), vm.live());
             RefPtr::from_raw(this)
         };
         let this = self_ref.this_ptr();
@@ -390,8 +432,12 @@ impl WindowsNamedPipeContext {
 
         let this = WindowsNamedPipeContext::create(cx, socket);
         // On `Ok`, `socket` has had its `on_open`, which hands it the pipe, or its connect error.
-        if this.named_pipe.open(fd, ssl_config, owned_ctx).is_err() {
-            Self::fail_open(this);
+        if this
+            .named_pipe
+            .open(fd, ssl_config, owned_ctx, cx.turn())
+            .is_err()
+        {
+            Self::fail_open(this, cx.turn());
         }
     }
 
@@ -411,7 +457,7 @@ impl WindowsNamedPipeContext {
         if path[path.len() - 1] == 0 {
             // is already null terminated
             let slice_z = ZStr::from_slice_with_nul(path);
-            named_pipe.connect(slice_z, ssl_config, owned_ctx)
+            named_pipe.connect(slice_z, ssl_config, owned_ctx, cx.live().thread)
         } else {
             let mut path_buf = bun_paths::path_buffer_pool::get();
             // we need to null terminate the path
@@ -419,9 +465,9 @@ impl WindowsNamedPipeContext {
 
             path_buf[..len].copy_from_slice(&path[..len]);
             let slice_z = ZStr::nul_terminate(&mut path_buf, len);
-            named_pipe.connect(slice_z, ssl_config, owned_ctx)
+            named_pipe.connect(slice_z, ssl_config, owned_ctx, cx.live().thread)
         }
-        .inspect_err(|_| Self::fail_open(this))?;
+        .inspect_err(|_| Self::fail_open(this, cx.turn()))?;
 
         Ok(this.named_pipe.root.get())
     }
@@ -438,7 +484,7 @@ impl bun_event_loop::Taskable for WindowsNamedPipeContext {
     const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::WindowsNamedPipeContext;
     /// A `Deinit` hop (refcount already zero) that will not run: `this` is the
     /// heap context, freed by nobody else — do what the hop does, script-free.
-    unsafe fn release_unrun(this: *mut Self) {
+    unsafe fn release_unrun(this: *mut Self, _live: VmLive<'_>) {
         // SAFETY: fn contract.
         unsafe { Self::run_event(this) }
     }

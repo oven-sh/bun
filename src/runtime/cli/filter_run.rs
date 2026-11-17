@@ -12,7 +12,7 @@ use crate::cli::Command;
 use crate::cli::filter_arg as FilterArg;
 use crate::cli::run_command::{ConfigureEnvOptions, RunCommand};
 use bun_collections::StringHashMap;
-use bun_core::{Global, Output};
+use bun_core::{Global, LoopTurn, Output};
 use bun_core::{ZStr, strings};
 use bun_event_loop::EventLoopHandle;
 use bun_event_loop::MiniEventLoop::{self as MiniEventLoopMod, MiniEventLoop};
@@ -146,6 +146,7 @@ impl<'a> ProcessHandle<'a> {
         &mut self,
         shell_bin: Option<&'static ZStr>,
         env: &mut bun_dotenv::Loader,
+        turn: LoopTurn<'_>,
     ) -> crate::Result<()> {
         let handle = self;
 
@@ -230,13 +231,13 @@ impl<'a> ProcessHandle<'a> {
             bun_spawn::ProcessExit::new(bun_spawn::ProcessExitKind::FilterRunHandle, handle_ptr)
         });
 
-        match spawn::Process::watch_or_reap(process) {
+        match spawn::Process::watch_or_reap(process, turn) {
             Ok(_) => {}
             Err(err) => {
                 if !process.has_exited() {
                     // SAFETY: all-zero is a valid Rusage (POD C struct)
                     let rusage = bun_core::ffi::zeroed::<Rusage>();
-                    spawn::Process::on_exit(process, Status::Err(err), &rusage);
+                    spawn::Process::on_exit(process, Status::Err(err), &rusage, turn);
                 }
             }
         }
@@ -281,7 +282,7 @@ impl<'a> ProcessHandle<'a> {
 bun_spawn::link_impl_ProcessExit! {
     FilterRunHandle for ProcessHandle<'static> => |this| {
         // The Process is never freed; the program exits when all scripts finish.
-        on_process_exit(status, _rusage) => {
+        on_process_exit(status, _rusage, _turn) => {
             let info = (*this).process.as_mut().unwrap();
             info.status = status;
             info.end_time = Some(Instant::now());
@@ -324,11 +325,14 @@ impl<'a> State<'a> {
         self.remaining_scripts == 0
     }
 
-    fn start(&mut self, index: usize) {
+    fn start(&mut self, index: usize, turn: LoopTurn<'_>) {
         self.remaining_scripts += 1;
         // SAFETY: the process-lifetime DotEnv loader; nothing else reaches it during `start`.
         let env = unsafe { &mut *self.env };
-        if self.handles[index].start(self.shell_bin, env).is_err() {
+        if self.handles[index]
+            .start(self.shell_bin, env, turn)
+            .is_err()
+        {
             if self.shared.needs_redraw.get() {
                 let _ = self.redraw(false);
             }
@@ -340,7 +344,7 @@ impl<'a> State<'a> {
     /// Marks a script as finished and starts the scripts that were waiting only on it. If it failed
     /// or was skipped, the next script in its `pre`/main/`post` chain is skipped too, like
     /// `bun run` without `--filter`. Scripts in other packages that were waiting on it still run.
-    fn finish(&mut self, index: usize) {
+    fn finish(&mut self, index: usize, turn: LoopTurn<'_>) {
         let handle = &mut self.handles[index];
         handle.finished = true;
         if self.aborted {
@@ -369,23 +373,23 @@ impl<'a> State<'a> {
                     );
                     self.shared.print(buf);
                 }
-                self.finish(dependent_index);
+                self.finish(dependent_index, turn);
             } else {
-                self.start(dependent_index);
+                self.start(dependent_index, turn);
             }
         }
     }
 
-    fn finish_exited(&mut self) {
+    fn finish_exited(&mut self, turn: LoopTurn<'_>) {
         // A script that is started here can have exited by the time it is watched.
         while self.shared.has_exits.take() {
             for index in 0..self.handles.len() {
-                let _ = self.maybe_finish(index);
+                let _ = self.maybe_finish(index, turn);
             }
         }
     }
 
-    fn maybe_finish(&mut self, index: usize) -> crate::Result<()> {
+    fn maybe_finish(&mut self, index: usize, turn: LoopTurn<'_>) -> crate::Result<()> {
         let handle = &mut self.handles[index];
         let exited = matches!(&handle.process, Some(p) if !matches!(p.status, Status::Running));
         if handle.finished || !exited {
@@ -433,7 +437,7 @@ impl<'a> State<'a> {
         }
         // `start` incremented this. Skipped scripts never start, so `finish` doesn't decrement it.
         self.remaining_scripts -= 1;
-        self.finish(index);
+        self.finish(index, turn);
         // On abort, `finalize` draws the last frame. Drawing it here too would print everything
         // twice once it no longer fits on the screen.
         if self.shared.pretty_output && !self.aborted {
@@ -749,6 +753,7 @@ fn windows_is_terminal() -> bool {
 
 pub(crate) fn run_scripts_with_filter(
     ctx: Command::Context,
+    turn: LoopTurn<'_>,
 ) -> crate::Result<core::convert::Infallible> {
     // Never returns normally; Result<Infallible, _> keeps `?` support.
     // Own the slice — `ctx` is reborrowed `&mut` for
@@ -1000,7 +1005,7 @@ pub(crate) fn run_scripts_with_filter(
 
     for i in 0..state.handles.len() {
         if state.handles[i].remaining_dependencies == 0 {
-            state.start(i);
+            state.start(i, turn);
         }
     }
 
@@ -1010,7 +1015,7 @@ pub(crate) fn run_scripts_with_filter(
         if shared.needs_redraw.get() {
             let _ = state.redraw(false);
         }
-        state.finish_exited();
+        state.finish_exited(turn);
         if state.is_done() {
             break;
         }

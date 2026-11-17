@@ -1,5 +1,5 @@
 use crate::Error;
-use bun_core::{Global, Output};
+use bun_core::{Global, LoopTurn, Output};
 use bun_install::package_manager_real::{
     CommandLineArguments, PackageManager, Subcommand, install_with_manager,
     update_package_json_and_install_with_manager,
@@ -12,8 +12,8 @@ use crate::command::ContextData;
 pub(crate) struct InstallCommand;
 
 impl InstallCommand {
-    pub(crate) fn exec(ctx: &mut ContextData) -> Result<(), Error> {
-        install(ctx).or_else(Self::handle_error)
+    pub(crate) fn exec(ctx: &mut ContextData, turn: LoopTurn<'_>) -> Result<(), Error> {
+        install(ctx, turn).or_else(Self::handle_error)
     }
 
     /// Out of line, so that the hot `bun install` dispatch in `exec` stays small in `.text`.
@@ -37,11 +37,17 @@ impl InstallCommand {
 
 // A symbol of its own, which the link's symbol-ordering file puts next to the rest of the startup path.
 #[inline(never)]
-fn install(ctx: &mut ContextData) -> Result<(), Error> {
+fn install(ctx: &mut ContextData, turn: LoopTurn<'_>) -> Result<(), Error> {
     let mut cli = CommandLineArguments::parse(Subcommand::Install)?;
 
     if cli.analyze {
-        return analyze_dependencies_and_install(ctx, &mut cli, b"install", &mut install_with_cli);
+        return analyze_dependencies_and_install(
+            ctx,
+            &mut cli,
+            b"install",
+            &mut install_with_cli,
+            turn,
+        );
     }
 
     install_with_cli(ctx, &cli)

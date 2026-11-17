@@ -1,3 +1,5 @@
+use bun_core::LoopTurn;
+
 use crate::shell::builtin::{BadFlag, Builtin, Kind};
 use crate::shell::builtins::batch::Batch;
 use crate::shell::interpreter::{Interpreter, NodeId, PoolTask, ShellTask, ShellWork};
@@ -5,13 +7,13 @@ use crate::shell::yield_::Yield;
 
 const USAGE: &[u8] = b"usage: touch [-A [-][[hh]mm]SS] [-achm] [-r file] [-t [[CC]YY]MMDDhhmm[.SS]]\n       [-d YYYY-MM-DDThh:mm:SS[.frac][tz]] file ...\n";
 
-pub(crate) fn start(interp: &Interpreter, cmd: NodeId) -> Yield {
+pub(crate) fn start(interp: &Interpreter, cmd: NodeId, turn: LoopTurn<'_>) -> Yield {
     let (flags, files) = Builtin::of(interp, cmd).split_flags();
     if let [flag, ..] = flags {
-        return Builtin::fail_flag(interp, cmd, reject(flag));
+        return Builtin::fail_flag(interp, cmd, reject(flag), turn);
     }
     if files.is_empty() {
-        return Builtin::fail_usage(interp, cmd, USAGE);
+        return Builtin::fail_usage(interp, cmd, USAGE, turn);
     }
     Batch::start(interp, cmd, files.len());
     for file in files {
@@ -98,8 +100,8 @@ impl ShellWork for ShellTouchTask {
         }
     }
 
-    fn run_from_main_thread(&mut self, interp: &Interpreter) -> Yield {
+    fn run_from_main_thread(&mut self, interp: &Interpreter, turn: LoopTurn<'_>) -> Yield {
         let err = self.err.as_ref().map(|e| Kind::Touch.task_error(e));
-        Batch::report(interp, self.cmd, err, Vec::new())
+        Batch::report(interp, self.cmd, err, Vec::new(), turn)
     }
 }

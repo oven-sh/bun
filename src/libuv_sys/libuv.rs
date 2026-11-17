@@ -15,6 +15,7 @@
     clippy::missing_safety_doc
 )]
 
+use bun_core::LoopTurn;
 use core::cell::Cell;
 use core::ffi::{c_char, c_int, c_long, c_uint, c_ulong, c_ushort, c_void};
 use core::mem::MaybeUninit;
@@ -927,15 +928,16 @@ pub unsafe trait UvStream: UvHandle {
             if n == 0 {
                 return; // EAGAIN / EWOULDBLOCK
             }
-            // SAFETY: `req.data` was set to `context` above.
-            let ctx = unsafe { &*(*req).data.cast::<T>() };
+            // SAFETY: `req.data` was set to `context` above. libuv reports a read from `uv_run` on the loop's
+            // thread, and none after `uv_close`, which `close_thread_loop` calls before it turns the loop.
+            let (ctx, turn) = unsafe { (&*(*req).data.cast::<T>(), LoopTurn::assume(&req)) };
             if n < 0 {
                 // SAFETY: stream prefix invariant.
                 let _ = unsafe { uv_read_stop(req) };
-                T::on_read_error(ctx, n as c_int);
+                T::on_read_error(ctx, n as c_int, turn);
             } else {
                 // SAFETY: libuv has read `n` bytes to the buffer of `uv_allocb`.
-                unsafe { T::on_read(ctx, n as usize) };
+                unsafe { T::on_read(ctx, n as usize, turn) };
             }
         }
         // SAFETY: stream prefix invariant.
@@ -954,9 +956,9 @@ pub unsafe trait StreamReader: Sized {
     fn on_read_alloc(this: &Self, suggested_size: usize) -> *mut [u8];
     /// `err` is the raw negative libuv errno (e.g. `UV_EOF`). Map via
     /// `bun_sys::windows::translate_uv_error_to_e` if `bun_sys::E` is needed.
-    fn on_read_error(this: &Self, err: c_int);
+    fn on_read_error(this: &Self, err: c_int, turn: LoopTurn<'_>);
     /// SAFETY: `nread` bytes have been written to what `on_read_alloc` returned.
-    unsafe fn on_read(this: &Self, nread: usize);
+    unsafe fn on_read(this: &Self, nread: usize, turn: LoopTurn<'_>);
 }
 // SAFETY: all of these are `#[repr(C)]` with `UV_STREAM_FIELDS` prefix.
 unsafe impl UvStream for uv_stream_t {}
@@ -1065,7 +1067,7 @@ impl uv_write_t {
         stream: *mut uv_stream_t,
         input: &uv_buf_t,
         context: *mut T,
-        on_write: fn(*mut T, ReturnCode),
+        on_write: fn(*mut T, ReturnCode, LoopTurn<'_>),
     ) -> ReturnCode {
         // Stash the Rust fn-pointer in `reserved[0]` (libuv never touches the
         // 6-slot `reserved` array on `uv_req_t`) as a `usize`, recovered in the
@@ -1081,10 +1083,13 @@ impl uv_write_t {
             // — callers commonly free the `T` allocation inside the callback,
             // so materialising `&mut T` here would leave that reference
             // dangling across the dealloc (UB).
+            // libuv calls this from `uv_run` on the loop's thread. Teardown drains
+            // the requests before `~VM`: only one submitted since comes after it.
             unsafe {
-                let cb: fn(*mut T, ReturnCode) =
-                    mem::transmute::<usize, fn(*mut T, ReturnCode)>((*req).reserved[0] as usize);
-                cb((*req).data.cast::<T>(), status);
+                let cb = mem::transmute::<usize, fn(*mut T, ReturnCode, LoopTurn<'_>)>(
+                    (*req).reserved[0] as usize,
+                );
+                cb((*req).data.cast::<T>(), status, LoopTurn::assume(&req));
             }
         }
         // SAFETY: caller guarantees `self` lives until the cb fires and

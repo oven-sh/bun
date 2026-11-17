@@ -4,7 +4,10 @@ use crate::JSGlobalObject;
 #[cfg(unix)]
 use crate::VirtualMachineRef as VirtualMachine;
 #[cfg(unix)]
+use crate::virtual_machine::OffThreadVm;
+#[cfg(unix)]
 use crate::{Task, event_loop::EventLoop};
+use bun_core::VmLive;
 use bun_event_loop::{Taskable, task_tag};
 #[cfg(unix)]
 use bun_threading::SignalRing;
@@ -69,9 +72,9 @@ extern "C" fn Bun__onPosixSignal(number: i32) {
         let Some(vm) = VirtualMachine::get_main_thread_vm() else {
             return;
         };
-        // SAFETY: `vm` and its event loop are process-lifetime. This is any thread: it reads only
-        // the `signal_handler` slot, which is written once.
-        let handler = unsafe { (*vm).event_loop().signal_handler.get() };
+        // SAFETY: `vm` and its event loop are process-lifetime.
+        let vm = unsafe { OffThreadVm::from_ptr(vm) };
+        let handler = vm.event_loop().signal_handler().get();
         if let Some(handler) = handler {
             // `BackRef::deref` is the centralised set-once-NonNull proof; the
             // pointee is all-atomic (`Sync`), so a `&PosixSignalHandle` from
@@ -81,9 +84,8 @@ extern "C" fn Bun__onPosixSignal(number: i32) {
                 return;
             };
             if handler.enqueue(signal) {
-                // SAFETY: same process-lifetime event loop as above; `wakeup`
-                // is one async-signal-safe write to the loop's wakeup fd.
-                unsafe { (*vm).event_loop().wakeup() };
+                // One async-signal-safe write to the loop's wakeup fd.
+                vm.event_loop().wakeup();
             }
         }
     }
@@ -96,7 +98,7 @@ pub struct PosixSignalTask;
 impl Taskable for PosixSignalTask {
     const TAG: bun_event_loop::TaskTag = task_tag::PosixSignalTask;
     /// `this` packs the signal number; nothing is owned.
-    unsafe fn release_unrun(_: *mut Self) {}
+    unsafe fn release_unrun(_: *mut Self, _live: VmLive<'_>) {}
     /// A signal is the process's: `process.on(<signal>)` listeners of the realm.
     unsafe fn context(_: *const Self) -> bun_event_loop::ContextId {
         bun_event_loop::ContextId::NONE
@@ -276,9 +278,9 @@ extern "C" fn Bun__ensureSignalHandler() {
     #[cfg(unix)]
     {
         if let Some(vm) = VirtualMachine::get_main_thread_vm() {
-            // SAFETY: `vm` and its event loop are process-lifetime. A Worker can be the caller:
-            // only this slot is reached.
-            let handler = &unsafe { &*vm }.event_loop().signal_handler;
+            // SAFETY: `vm` and its event loop are process-lifetime. A Worker can be the caller.
+            let vm = unsafe { OffThreadVm::from_ptr(vm) };
+            let handler = vm.event_loop().signal_handler();
             if handler.get().is_none() {
                 let boxed = PosixSignalHandle::new(PosixSignalHandle::default());
                 handler.set(Some(bun_ptr::BackRef::from(bun_core::heap::into_raw_nn(

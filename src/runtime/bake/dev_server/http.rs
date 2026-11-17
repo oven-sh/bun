@@ -1,5 +1,7 @@
 //! HTTP request handling: routing `/_bun/*` paths, host and origin checks, and static responses.
 
+use bun_core::JsTurn;
+
 use super::*;
 
 /// Handler dispatch for `dev_route_tramp`. A fn pointer cannot be a const
@@ -146,7 +148,10 @@ pub(super) fn origin_forbidden(resp: AnyResponse) {
 
 /// `extern "C"` trampoline: recovers `&mut DevServer` from user-data and wraps
 /// the raw `uws_res` as `AnyResponse`, then calls the handler for `ID`.
-pub(super) extern "C" fn dev_route_tramp<const SSL: bool, const ID: DevHandlerId>(
+///
+/// # Safety
+/// uWS calls it for a route that `set_routes` registered.
+pub(super) unsafe extern "C" fn dev_route_tramp<const SSL: bool, const ID: DevHandlerId>(
     res: *mut bun_uws_sys::uws_res,
     req: *mut bun_uws_sys::Request,
     ud: *mut c_void,
@@ -155,7 +160,13 @@ pub(super) extern "C" fn dev_route_tramp<const SSL: bool, const ID: DevHandlerId
     // the routes before it drops it. uWS passes a non-null `Request*` that is valid
     // for the callback and that nothing else uses meanwhile. Every handler below takes
     // `&mut DevServer`, so this asks for no more exclusivity than they do.
-    let (dev, req) = unsafe { (&mut *ud.cast::<DevServer>(), &mut *req) };
+    let (dev, req, turn) = unsafe {
+        (
+            &mut *ud.cast::<DevServer>(),
+            &mut *req,
+            bun_uws_sys::thunk::app_turn(&ud),
+        )
+    };
     let resp = if SSL {
         AnyResponse::SSL(res.cast::<bun_uws_sys::response::TLSResponse>())
     } else {
@@ -170,7 +181,7 @@ pub(super) extern "C" fn dev_route_tramp<const SSL: bool, const ID: DevHandlerId
         return origin_forbidden(resp);
     }
     match ID {
-        DevHandlerId::JsRequest => on_js_request(dev, req, resp),
+        DevHandlerId::JsRequest => on_js_request(dev, req, resp, turn),
         DevHandlerId::AssetRequest => on_asset_request(dev, req, resp),
         DevHandlerId::SrcRequest => on_src_request(dev, req, resp),
         DevHandlerId::ReportError => on_report_error_request(dev, req, resp),
@@ -179,7 +190,7 @@ pub(super) extern "C" fn dev_route_tramp<const SSL: bool, const ID: DevHandlerId
         DevHandlerId::Request => {
             // The catch-all route can reach a framework request handler; this
             // trampoline folds what bundling for it left pending.
-            crate::dispatch::fold(on_request(dev, req, resp));
+            crate::dispatch::fold(on_request(dev, req, resp, turn), turn);
         }
     }
 }
@@ -253,7 +264,7 @@ pub(super) fn on_outdated_js_corked(resp: AnyResponse) {
     );
 }
 
-fn on_js_request(dev: &mut DevServer, req: &mut Request, resp: AnyResponse) {
+fn on_js_request(dev: &mut DevServer, req: &mut Request, resp: AnyResponse, turn: JsTurn<'_>) {
     let route_id = req.parameter(0);
     let is_map = strings::has_suffix_comptime(route_id, b".js.map");
     if !is_map && !strings::has_suffix_comptime(route_id, b".js") {
@@ -287,7 +298,12 @@ fn on_js_request(dev: &mut DevServer, req: &mut Request, resp: AnyResponse) {
                 ..Default::default()
             },
         );
-        StaticRoute::on_request(response.this_ptr(), bun_uws::AnyRequest::H1(req), resp);
+        StaticRoute::on_request(
+            response.this_ptr(),
+            bun_uws::AnyRequest::H1(req),
+            resp,
+            turn,
+        );
         return;
     }
 
@@ -305,6 +321,7 @@ fn on_js_request(dev: &mut DevServer, req: &mut Request, resp: AnyResponse) {
         generation,
         resp,
         Method::which(req.method()).unwrap_or(Method::POST),
+        turn,
     );
 }
 
@@ -342,7 +359,12 @@ fn on_src_request(_dev: &mut DevServer, req: &mut Request, resp: AnyResponse) {
     resp.end(b"TODO", false);
 }
 
-fn on_request(dev: &mut DevServer, req: &mut Request, mut resp: AnyResponse) -> JsResult<()> {
+fn on_request(
+    dev: &mut DevServer,
+    req: &mut Request,
+    mut resp: AnyResponse,
+    turn: JsTurn<'_>,
+) -> JsResult<()> {
     let mut params: router::MatchedParams = Default::default();
     let pathname = extract_pathname_from_url(req.url());
     if let Some(route_index) = dev.router.match_slow(pathname, &mut params) {
@@ -356,7 +378,7 @@ fn on_request(dev: &mut DevServer, req: &mut Request, mut resp: AnyResponse) -> 
             route_bundle_index,
         };
         let rbi = ctx.route_bundle_index;
-        return match ensure_route_is_bundled(dev, rbi, &mut ctx) {
+        return match ensure_route_is_bundled(dev, rbi, &mut ctx, turn) {
             Err(jsc::JsError::OutOfMemory) => bun_core::out_of_memory(),
             bundled => bundled,
         };
@@ -373,7 +395,7 @@ fn on_request(dev: &mut DevServer, req: &mut Request, mut resp: AnyResponse) -> 
         dev.server
             .as_mut()
             .expect("infallible: server bound")
-            .on_request(req, resp);
+            .on_request(req, resp, turn);
         return Ok(());
     }
 
@@ -394,7 +416,12 @@ struct UnrefSourceMapRequest {
 }
 
 impl bun_uws_sys::body_reader_mixin::BodyReaderHandler for UnrefSourceMapRequest {
-    fn on_body(&self, body: &[u8], resp: AnyResponse) -> bun_uws_sys::Result<()> {
+    fn on_body(
+        &self,
+        body: &[u8],
+        resp: AnyResponse,
+        _turn: JsTurn<'_>,
+    ) -> bun_uws_sys::Result<()> {
         self.run_with_body(body, resp).map_err(Into::into)
     }
 }

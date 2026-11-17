@@ -1,6 +1,8 @@
 use core::ffi::{c_uint, c_ushort, c_void};
 use core::marker::PhantomData;
 
+use bun_core::JsTurn;
+
 use crate as uws;
 use crate::app::uws_app_t;
 use crate::thunk;
@@ -325,22 +327,34 @@ pub trait WebSocketHandler: Sized + 'static {
     /// # Safety
     /// `this` is the live `*mut Self` from the socket's user-data slot;
     /// JS-thread only.
-    unsafe fn on_open(this: *mut Self, ws: AnyWebSocket);
+    unsafe fn on_open(this: *mut Self, ws: AnyWebSocket, turn: JsTurn<'_>);
     /// # Safety
     /// See `on_open`.
-    unsafe fn on_message(this: *mut Self, ws: AnyWebSocket, message: &[u8], opcode: Opcode);
+    unsafe fn on_message(
+        this: *mut Self,
+        ws: AnyWebSocket,
+        message: &[u8],
+        opcode: Opcode,
+        turn: JsTurn<'_>,
+    );
     /// # Safety
     /// See `on_open`.
-    unsafe fn on_drain(this: *mut Self, ws: AnyWebSocket);
+    unsafe fn on_drain(this: *mut Self, ws: AnyWebSocket, turn: JsTurn<'_>);
     /// # Safety
     /// See `on_open`.
-    unsafe fn on_ping(this: *mut Self, ws: AnyWebSocket, message: &[u8]);
+    unsafe fn on_ping(this: *mut Self, ws: AnyWebSocket, message: &[u8], turn: JsTurn<'_>);
     /// # Safety
     /// See `on_open`.
-    unsafe fn on_pong(this: *mut Self, ws: AnyWebSocket, message: &[u8]);
+    unsafe fn on_pong(this: *mut Self, ws: AnyWebSocket, message: &[u8], turn: JsTurn<'_>);
     /// # Safety
     /// See `on_open`.
-    unsafe fn on_close(this: *mut Self, ws: AnyWebSocket, code: i32, message: &[u8]);
+    unsafe fn on_close(
+        this: *mut Self,
+        ws: AnyWebSocket,
+        code: i32,
+        message: &[u8],
+        turn: JsTurn<'_>,
+    );
 }
 
 /// Server type that handles the HTTP→WS upgrade.
@@ -360,6 +374,7 @@ pub trait WebSocketUpgradeServer<const SSL: bool>: Sized + 'static {
         req: &mut Request,
         context: &mut WebSocketUpgradeContext,
         id: usize,
+        turn: JsTurn<'_>,
     );
 }
 
@@ -381,7 +396,7 @@ where
     }
 
     // The `on_*` trampolines below are stored as fn-pointer values in
-    // `WebSocketBehavior`; a safe `extern "C" fn` item coerces to the
+    // `WebSocketBehavior`, which only uWS calls; a safe `extern "C" fn` item coerces to the
     // `Option<unsafe extern "C" fn(..)>` field type. Each body already scopes
     // its own proof block around the `T::on_*` dispatch / `thunk::c_slice`.
     extern "C" fn on_open(raw_ws: *mut RawWebSocket) {
@@ -393,7 +408,7 @@ where
             return;
         }
         // SAFETY: user data was set to *mut T at upgrade time.
-        unsafe { T::on_open(this, ws) };
+        unsafe { T::on_open(this, ws, thunk::app_turn(&raw_ws)) };
     }
 
     extern "C" fn on_message(
@@ -408,7 +423,15 @@ where
             return;
         }
         // SAFETY: user data was set to *mut T at upgrade time; `message[..length]` valid.
-        unsafe { T::on_message(this, ws, thunk::c_slice(message, length), opcode) };
+        unsafe {
+            T::on_message(
+                this,
+                ws,
+                thunk::c_slice(message, length),
+                opcode,
+                thunk::app_turn(&raw_ws),
+            )
+        };
     }
 
     extern "C" fn on_drain(raw_ws: *mut RawWebSocket) {
@@ -418,7 +441,7 @@ where
             return;
         }
         // SAFETY: see `on_open`.
-        unsafe { T::on_drain(this, ws) };
+        unsafe { T::on_drain(this, ws, thunk::app_turn(&raw_ws)) };
     }
 
     extern "C" fn on_ping(raw_ws: *mut RawWebSocket, message: *const u8, length: usize) {
@@ -428,7 +451,14 @@ where
             return;
         }
         // SAFETY: user data was set to *mut T at upgrade time; `message[..length]` valid.
-        unsafe { T::on_ping(this, ws, thunk::c_slice(message, length)) };
+        unsafe {
+            T::on_ping(
+                this,
+                ws,
+                thunk::c_slice(message, length),
+                thunk::app_turn(&raw_ws),
+            )
+        };
     }
 
     extern "C" fn on_pong(raw_ws: *mut RawWebSocket, message: *const u8, length: usize) {
@@ -438,7 +468,14 @@ where
             return;
         }
         // SAFETY: user data was set to *mut T at upgrade time; `message[..length]` valid.
-        unsafe { T::on_pong(this, ws, thunk::c_slice(message, length)) };
+        unsafe {
+            T::on_pong(
+                this,
+                ws,
+                thunk::c_slice(message, length),
+                thunk::app_turn(&raw_ws),
+            )
+        };
     }
 
     extern "C" fn on_close(
@@ -453,7 +490,15 @@ where
             return;
         }
         // SAFETY: user data was set to *mut T at upgrade time; `message[..length]` valid when non-null.
-        unsafe { T::on_close(this, ws, code, thunk::c_slice(message, length)) };
+        unsafe {
+            T::on_close(
+                this,
+                ws,
+                code,
+                thunk::c_slice(message, length),
+                thunk::app_turn(&raw_ws),
+            )
+        };
     }
 
     /// Settings for a `ws` package socket context. uWS's `wsPackageContext()` overrides the fields
@@ -520,6 +565,7 @@ where
                 thunk::handle_mut(req),
                 thunk::handle_mut(context),
                 id,
+                thunk::app_turn(&ptr),
             );
         }
     }

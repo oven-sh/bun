@@ -72,6 +72,8 @@ fn deregistration_already_gone(errno: sys::E) -> bool {
 
 #[cfg(not(windows))]
 use crate::OpaqueCallback;
+use bun_core::{LoopTurn, VmLive};
+
 use crate::max_buf::Kind;
 pub use crate::{EventLoopCtx, EventLoopCtxKind};
 
@@ -80,7 +82,7 @@ unsafe extern "Rust" {
     // safe: the `#[no_mangle] pub fn` body in
     // `bun_runtime::jsc_hooks` is itself a safe fn (reads process globals) —
     // no memory-safety preconditions.
-    safe fn __bun_get_vm_ctx() -> EventLoopCtx;
+    safe fn __bun_get_vm_ctx(live: VmLive<'_>) -> EventLoopCtx;
 }
 
 /// Kind of fd a `FilePoll` (or pipe reader/writer) is wrapping. Lives here so
@@ -105,8 +107,8 @@ impl FileType {
 
 /// JS-thread [`EventLoopCtx`] for `KeepAlive::{ref_,unref}` / `FilePoll`.
 #[inline]
-pub fn js_vm_ctx() -> EventLoopCtx {
-    __bun_get_vm_ctx()
+pub fn js_vm_ctx(live: VmLive<'_>) -> EventLoopCtx {
+    __bun_get_vm_ctx(live)
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -260,8 +262,9 @@ impl IoEvent {
 
 unsafe extern "Rust" {
     /// # Safety
-    /// `owner.ptr` points to a live value of the type `__bun_run_io` casts `owner.tag` to.
-    pub(crate) fn __bun_run_io(owner: Owner, event: IoEvent);
+    /// `owner.ptr` points to a live value of the type `__bun_run_io` casts `owner.tag` to. With
+    /// `MemoryPressure`, which has none, the thread has a VM.
+    pub(crate) fn __bun_run_io(owner: Owner, event: IoEvent, turn: LoopTurn<'_>);
 }
 
 /// Shared borrows only: the kernel holds its address.
@@ -1232,7 +1235,7 @@ pub struct OwnedFilePoll<const FORCE_UNREGISTER: bool = false>(ptr::NonNull<File
 impl<const FORCE_UNREGISTER: bool> OwnedFilePoll<FORCE_UNREGISTER> {
     /// # Safety
     /// `owner.ptr` points to a live value of the type `__bun_run_io` casts `owner.tag` to, until the poll
-    /// is dropped or has another owner.
+    /// is dropped or has another owner. With `MemoryPressure`, which has none, `event_loop` is that of a VM.
     pub unsafe fn new(event_loop: EventLoopCtx, fd: Fd, owner: Owner) -> Self {
         let poll = FilePoll {
             fd,
@@ -1368,8 +1371,9 @@ unsafe extern "C" fn Bun__internal_dispatch_ready_poll(loop_: &Loop, tagged_poin
     #[cfg(any(target_os = "linux", target_os = "android"))]
     let event = file_poll.on_epoll_event(&ev);
 
-    // SAFETY: the contract of `OwnedFilePoll::new` and `FilePoll::set_owner`.
-    unsafe { __bun_run_io(file_poll.owner.get(), event) };
+    // SAFETY: the contract of `OwnedFilePoll::new` and `FilePoll::set_owner`. Only a tick of `loop_`
+    // calls this, on its thread. No finalizer ticks, nor does teardown after `~VM`.
+    unsafe { __bun_run_io(file_poll.owner.get(), event, LoopTurn::assume(loop_)) };
 }
 
 #[cfg(target_os = "macos")]

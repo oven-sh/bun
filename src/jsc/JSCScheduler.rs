@@ -1,3 +1,4 @@
+use bun_core::VmLive;
 use bun_event_loop::{TaskTag, Taskable, task_tag};
 
 use crate::virtual_machine::VirtualMachine;
@@ -12,7 +13,7 @@ impl Taskable for JSCDeferredWorkTask {
     const TAG: TaskTag = task_tag::JSCDeferredWorkTask;
     /// A cross-thread Atomics.notify / Wasm / FinalizationRegistry completion:
     /// delete the C++ job (its `Ref<Ticket>` drops before ~VM).
-    unsafe fn release_unrun(this: *mut Self) {
+    unsafe fn release_unrun(this: *mut Self, _live: VmLive<'_>) {
         // SAFETY: fn contract; heap-allocated by JSCTaskScheduler::onScheduleWorkSoon.
         unsafe { Bun__deleteDeferredWorkTask(this) }
     }
@@ -55,14 +56,15 @@ unsafe extern "C" fn Bun__queueJSCDeferredWorkTaskConcurrently(
 
 /// # Safety
 /// `paused` must point to a live `bool`; C++ writes `true` through it from a
-/// callback inside `tick()`.
+/// callback inside `tick()`. The thread of a VM whose script is paused.
 #[unsafe(no_mangle)]
 unsafe extern "C" fn Bun__tickWhilePaused(paused: *mut bool) {
     crate::mark_binding!();
     // SAFETY: see fn contract.
     unsafe {
-        VirtualMachine::get()
+        let turn = bun_core::JsTurn::assume(&paused);
+        VirtualMachine::get(turn.live)
             .event_loop()
-            .tick_while_paused(paused.cast_const());
+            .tick_while_paused(paused.cast_const(), turn);
     }
 }

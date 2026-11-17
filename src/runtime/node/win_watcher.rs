@@ -7,7 +7,7 @@ use core::ffi::{c_char, c_int, c_void};
 use core::ptr;
 
 use bun_collections::{ArrayHashMap, StringArrayHashMap};
-use bun_core::{String as BunString, ZStr};
+use bun_core::{String as BunString, VmLive, ZStr};
 use bun_jsc as jsc;
 use bun_jsc::JsCell;
 use bun_sys as sys;
@@ -98,6 +98,8 @@ impl PathWatcher {
         events: c_int,
         status: uv::ReturnCode,
     ) {
+        // SAFETY: `init` started the handle on the loop of its VM, whose stop phase closes it.
+        let live = unsafe { VmLive::assume(&event) };
         // SAFETY: libuv guarantees `event` is the handle we registered.
         if unsafe { (*event).data }.is_null() {
             bun_core::debug_warn!("uvEventCallback called with null data");
@@ -138,7 +140,7 @@ impl PathWatcher {
             }
 
             me.emit_in_progress.set(false);
-            Self::maybe_deinit(this);
+            Self::maybe_deinit(this, live);
             return;
         }
 
@@ -162,7 +164,7 @@ impl PathWatcher {
                 on_update_end_fn(Some(ctx));
             }
             me.emit_in_progress.set(false);
-            Self::maybe_deinit(this);
+            Self::maybe_deinit(this, live);
             return;
         }
         // SAFETY: libuv passes a valid NUL-terminated string when non-null.
@@ -171,7 +173,15 @@ impl PathWatcher {
         // Intentional wrap to bun_watcher::HashType
         let hash = me.handle.hash(path.as_bytes(), events, status) as bun_watcher::HashType;
         let is_file = !me.handle.is_dir();
-        Self::emit(this, path.as_bytes(), hash, timestamp, is_file, event_type);
+        Self::emit(
+            this,
+            path.as_bytes(),
+            hash,
+            timestamp,
+            is_file,
+            event_type,
+            live,
+        );
     }
 
     fn emit(
@@ -181,6 +191,7 @@ impl PathWatcher {
         timestamp: u64,
         is_file: bool,
         event_type: WatchEventKind,
+        live: VmLive<'_>,
     ) {
         {
             // SAFETY: `this` is the live heap pointer from `init`; the borrow ends
@@ -231,7 +242,7 @@ impl PathWatcher {
 
             me.emit_in_progress.set(false);
         }
-        Self::maybe_deinit(this);
+        Self::maybe_deinit(this, live);
     }
 
     fn init(
@@ -258,7 +269,7 @@ impl PathWatcher {
             sys::Result::Ok(len) => ZStr::from_buf(outbuf.as_slice(), len),
         };
 
-        let watchers = &path_watchers()[usize::from(recursive)];
+        let watchers = &path_watchers(vm.live())[usize::from(recursive)];
         if let Some(existing) = watchers.get().get(event_path.as_bytes()) {
             return sys::Result::Ok(existing.as_ptr());
         }
@@ -307,25 +318,25 @@ impl PathWatcher {
     }
 
     /// JS-thread entry point from `FSWatcher.detach()`.
-    pub(crate) fn detach(this: Handle, handler: *mut c_void) {
+    pub(crate) fn detach(this: Handle, handler: *mut c_void, live: VmLive<'_>) {
         // SAFETY: `this` is the live `heap::alloc`'d pointer returned from `watch()`;
         // it stays valid until `maybe_deinit` self-destroys on the last handler.
         let removed = unsafe { &*this }
             .handlers
             .with_mut(|h| h.swap_remove(&handler));
         if removed {
-            Self::maybe_deinit(this);
+            Self::maybe_deinit(this, live);
         }
     }
 
-    fn maybe_deinit(this: *mut PathWatcher) {
+    fn maybe_deinit(this: *mut PathWatcher, live: VmLive<'_>) {
         // SAFETY: `this` is the live heap pointer from `init`, not used once it is dropped.
         let me = unsafe { &*this };
         if me.handlers.get().len() != 0 || me.emit_in_progress.get() {
             return;
         }
         bun_output::scoped_log!(fs_watch, "deinit");
-        path_watchers()[usize::from(me.recursive)].with_mut(|watchers| {
+        path_watchers(live)[usize::from(me.recursive)].with_mut(|watchers| {
             if let Some(index) = watchers.values().iter().position(|w| w.as_ptr() == this) {
                 watchers.swap_remove_at(index);
             }

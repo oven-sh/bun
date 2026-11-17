@@ -1,6 +1,7 @@
 use core::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
 use bun_core::MutableString;
+use bun_core::{JsTurn, VmLive};
 use bun_event_loop::ConcurrentTask::ConcurrentTask;
 use bun_event_loop::{TaskTag, Taskable, task_tag};
 use bun_http::{HTTPClientResult, Headers};
@@ -39,20 +40,27 @@ pub struct S3HttpDownloadStreamingTask {
     pub(crate) abort_handle: bun_jsc::AbortHandle,
 }
 
-bun_jsc::impl_abort_handle_owner!(S3HttpDownloadStreamingTask, abort_handle, |this, _cause| {
-    // SAFETY: trait contract — `this` is live (armed ⇒ not yet freed by `on_response`).
-    unsafe {
-        (*this).signal_store.aborted.store(true, Ordering::Relaxed);
-        bun_http::HTTPThread::schedule_shutdown((*this).async_http_id);
+bun_jsc::impl_abort_handle_owner!(
+    S3HttpDownloadStreamingTask,
+    abort_handle,
+    |this, _cause, _turn| {
+        // SAFETY: trait contract — `this` is live (armed ⇒ not yet freed by `on_response`).
+        unsafe {
+            (*this).signal_store.aborted.store(true, Ordering::Relaxed);
+            bun_http::HTTPThread::schedule_shutdown((*this).async_http_id);
+        }
     }
-});
+);
 
 // Hot-dispatch tag for `ConcurrentTask::from`.
 impl Taskable for S3HttpDownloadStreamingTask {
     const TAG: TaskTag = task_tag::S3HttpDownloadStreamingTask;
     /// The completion frees the task; run it.
-    unsafe fn release_unrun(this: *mut Self) {
-        S3HttpDownloadStreamingTask::on_response(this);
+    unsafe fn release_unrun(this: *mut Self, _live: VmLive<'_>) {
+        // SAFETY: only posted under a ticket, so teardown's wait releases it: on the JS thread,
+        // outside a collection, before the global object goes.
+        let turn = unsafe { JsTurn::assume(&this) };
+        S3HttpDownloadStreamingTask::on_response(this, turn);
     }
     /// The completion frees the request; the stream it feeds was aborted with its context
     /// (`abort_handle`).
@@ -83,7 +91,7 @@ impl S3HttpDownloadStreamingTask {
     /// # Safety
     /// `this` is live and exclusively accessed by this thread for the duration of the call
     /// (`on_response`).
-    unsafe fn report_progress(this: *mut Self, state: State) {
+    unsafe fn report_progress(this: *mut Self, state: State, turn: JsTurn<'_>) {
         let has_more = state.has_more();
         let failed = match state.status_code() {
             200 | 204 | 206 => state.request_error() != 0,
@@ -123,7 +131,7 @@ impl S3HttpDownloadStreamingTask {
                     message = error.message.as_deref().unwrap_or(message);
                 }
             }
-            return wrapper.on_error(&S3Error { code, message });
+            return wrapper.on_error(&S3Error { code, message }, turn);
         }
 
         // dont report empty chunks if we have more data to read
@@ -133,7 +141,7 @@ impl S3HttpDownloadStreamingTask {
             // empty MutableString behind.
             // SAFETY: fn contract; the borrow ends with the statement.
             let chunk = unsafe { core::mem::take(&mut (*this).reported_response_buffer) };
-            wrapper.on_chunk(&chunk, has_more);
+            wrapper.on_chunk(&chunk, has_more, turn);
             // SAFETY: fn contract; `on_chunk` does not free the task, `on_response` does,
             // after this returns.
             unsafe { (*this).reported_response_buffer.reset() };
@@ -146,7 +154,7 @@ impl S3HttpDownloadStreamingTask {
     /// `this` must be a live heap pointer produced by `Self::new`; the event loop guarantees
     /// exclusive main-thread access for the duration of this call. When the loaded state's
     /// `has_more` is false this call reclaims and drops the allocation exactly once.
-    pub(crate) fn on_response(this: *mut Self) {
+    pub(crate) fn on_response(this: *mut Self, turn: JsTurn<'_>) {
         // SAFETY: `this` is a live heap allocation created via `Self::new`; the event loop
         // guarantees exclusive access on the main thread for the duration of this callback.
         // Each access below is scoped so no borrow spans `report_progress` (which invokes
@@ -167,7 +175,7 @@ impl S3HttpDownloadStreamingTask {
             };
         }
         // SAFETY: as above.
-        unsafe { Self::report_progress(this, state) };
+        unsafe { Self::report_progress(this, state, turn) };
         drop(guard);
         if !has_more {
             // SAFETY: the HTTP thread does not call back again.

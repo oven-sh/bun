@@ -7,7 +7,7 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 use bun_core::fmt::{NodeNumber, OutOfRangeOptions, double, out_of_range};
-use bun_core::{Timespec, TimespecMockMode};
+use bun_core::{Timespec, TimespecMockMode, VmLive};
 use bun_jsc::bindgen::{self, JsHeap, JsLocal, JsPayload as _, JsScope, JsWrapper, to_js};
 use bun_jsc::{ErrorCode, JSBigInt, JSGlobalObject, JSMap, JSValue, JsResult, MAX_SAFE_INTEGER};
 use bun_threading::Guarded;
@@ -374,7 +374,7 @@ impl Histogram {
 /// `ELDHistogram`
 impl Histogram {
     /// Returns whether that changes it.
-    fn set_enabled(&self, enable: bool) -> bool {
+    fn set_enabled(&self, enable: bool, live: VmLive<'_>) -> bool {
         let Some((interval, enabled)) = &self.interval else {
             return false;
         };
@@ -384,19 +384,19 @@ impl Histogram {
         if enable {
             // The time it was disabled for is not a delay of the event loop.
             self.with(|state| state.previous_ns = 0);
-            timer_all().event_loop_delay.enable(interval);
+            timer_all(live).event_loop_delay.enable(interval, live);
         } else {
-            timer_all().event_loop_delay.disable(interval);
+            timer_all(live).event_loop_delay.disable(interval, live);
         }
         true
     }
 
-    pub(crate) fn enable(&self) -> bool {
-        self.set_enabled(true)
+    pub(crate) fn enable(&self, live: VmLive<'_>) -> bool {
+        self.set_enabled(true, live)
     }
 
-    pub(crate) fn disable(&self) -> bool {
-        self.set_enabled(false)
+    pub(crate) fn disable(&self, live: VmLive<'_>) -> bool {
+        self.set_enabled(false, live)
     }
 }
 

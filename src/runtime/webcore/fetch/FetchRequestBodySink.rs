@@ -1,5 +1,6 @@
 use core::cell::Cell;
 
+use bun_core::{JsTurn, LoopTurn};
 use bun_ptr::RefPtr;
 use bun_sys::Error as SysError;
 
@@ -53,7 +54,7 @@ impl FetchRequestBodySink {
         self.task.as_ref().map(|p| unsafe { &mut *p.as_ptr() })
     }
 
-    pub fn start(&mut self, stream_start: &Start) -> bun_sys::Result<()> {
+    pub fn start(&mut self, stream_start: &Start, turn: LoopTurn<'_>) -> bun_sys::Result<()> {
         if self.ended {
             return bun_sys::Result::Ok(());
         }
@@ -62,7 +63,7 @@ impl FetchRequestBodySink {
                 self.high_water_mark = chunk_size;
             }
         }
-        self.source.start();
+        self.source.start(turn.live);
         bun_sys::Result::Ok(())
     }
 
@@ -102,12 +103,12 @@ impl FetchRequestBodySink {
         Writable::Pending(core::ptr::from_mut(&mut self.pending))
     }
 
-    pub fn write(&mut self, data: &StreamResult<'_>) -> Writable {
+    pub fn write(&mut self, data: &StreamResult<'_>, _turn: JsTurn<'_>) -> Writable {
         bun_core::scoped_log!(FetchRequestBodySinkLog, "write({})", data.slice().len());
         self.write_chunk(EncodedChunk::Bytes(data.slice()))
     }
 
-    pub fn write_latin1(&mut self, data: &StreamResult<'_>) -> Writable {
+    pub fn write_latin1(&mut self, data: &StreamResult<'_>, _turn: JsTurn<'_>) -> Writable {
         let bytes = data.slice();
         if bun_core::strings::is_all_ascii(bytes) {
             return self.write_chunk(EncodedChunk::Bytes(bytes));
@@ -115,7 +116,7 @@ impl FetchRequestBodySink {
         self.write_chunk(EncodedChunk::Latin1(bytes))
     }
 
-    pub fn write_utf16(&mut self, text: &[u16]) -> Writable {
+    pub fn write_utf16(&mut self, text: &[u16], _turn: JsTurn<'_>) -> Writable {
         self.write_chunk(EncodedChunk::Utf16(text))
     }
 
@@ -146,15 +147,15 @@ impl FetchRequestBodySink {
         ))
     }
 
-    pub fn end(&mut self, err: Option<SysError>) -> bun_sys::Result<()> {
-        self.end_from_stream(err.map(StreamError::Error));
+    pub fn end(&mut self, err: Option<SysError>, turn: JsTurn<'_>) -> bun_sys::Result<()> {
+        self.end_from_stream(err.map(StreamError::Error), turn.loop_);
         bun_sys::Result::Ok(())
     }
 
     /// Native-path terminator called from `SinkHandle::end`. Carries the full
     /// `StreamError` so a JS-valued upstream error (e.g. fetch reset) reaches
     /// `write_end_request(Some(js))` instead of being silently dropped to EOF.
-    pub fn end_from_stream(&mut self, err: Option<StreamError>) {
+    pub fn end_from_stream(&mut self, err: Option<StreamError>, turn: LoopTurn<'_>) {
         if self.ended {
             return;
         }
@@ -179,20 +180,20 @@ impl FetchRequestBodySink {
             Some(StreamError::Error(e)) => Some(e),
             _ => None,
         };
-        self.source.close(sys_err);
+        self.source.close(sys_err, turn);
     }
 
-    pub fn end_from_js(&mut self, _cx: &bun_jsc::JsThread<'_>) -> bun_sys::Result<JSValue> {
-        let _ = self.end(None);
+    pub fn end_from_js(&mut self, cx: &bun_jsc::JsThread<'_>) -> bun_sys::Result<JSValue> {
+        let _ = self.end(None, cx.turn());
         bun_sys::Result::Ok(JSValue::js_number(0.0))
     }
 
     /// HTTP-thread drain ack: resolves the pending write/flush promise and wakes source.ready().
-    pub fn on_drain(&mut self, _global_this: &JSGlobalObject) {
+    pub fn on_drain(&mut self, global_this: &JSGlobalObject) {
         bun_core::scoped_log!(FetchRequestBodySinkLog, "onDrain");
         self.pending_bytes = 0;
         self.pending.run();
-        self.source.ready(None, None);
+        self.source.ready(None, None, global_this.turn().loop_);
     }
 
     pub fn memory_cost(&self) -> usize {

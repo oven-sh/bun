@@ -1938,6 +1938,7 @@ function rustTakeArguments(args: readonly { name: string; type: Type }[], scope:
 }
 
 const capabilityArgument = { none: [], heap: ["&cx.heap"], js: ["cx"] };
+const vmArgument = (passVm: boolean, capability: Capability) => (passVm && capability === "none" ? ["cx.live()"] : []);
 
 const unit = new UnitType("undefined");
 const infallible = (call: string, throws: boolean, returns: Type | null = null) =>
@@ -2197,6 +2198,7 @@ function rustForClass(type: ClassType, scope: RustScope): string {
       ...capabilityArgument[signature.capability],
       ...(type.passStructure ? ["bindgen::JsStructure::from_extern(structure, &cx.heap)"] : []),
       ...rustArguments(signature),
+      ...vmArgument(signature.passVm, signature.capability),
     ].join(", ")})`;
     thunks += rustThunk(
       classSymbolName(type, "construct"),
@@ -2227,6 +2229,7 @@ ${
               : `all_arguments.${i === 0 ? "first()" : `get(${i})`}.copied().unwrap_or(bindgen::JsLocal::UNDEFINED)`,
           )
         : rustArguments(method)),
+      ...vmArgument(method.passVm, method.capability),
     ].join(", ")})`;
     const args = throughCaller ? protoCallerArguments : method.args;
     thunks += rustThunk(
@@ -2254,7 +2257,7 @@ ${rustReturnKeepingStringsAlive(method, rustHoldResult(method.answersThis ? unit
   }
 
   for (const getter of [...type.getters, ...type.staticGetters]) {
-    const get = `<${rustPath}>::${getter.rustName}(${leading(getter.receiver, getter.passThis, getter.capability).join(", ")})`;
+    const get = `<${rustPath}>::${getter.rustName}(${[...leading(getter.receiver, getter.passThis, getter.capability), ...vmArgument(getter.passVm, getter.capability)].join(", ")})`;
     thunks += rustThunk(
       getterSymbolName(type, getter),
       // The table of a constructor points at the thunk itself: a custom getter's receiver and property name follow.
@@ -2265,7 +2268,7 @@ ${rustHoldResult(getter.type, { member: `${type.name}.${getter.name}` }, `bindge
       getter.isStatic,
     );
     if (!getter.hasSetter) continue;
-    const set = `<${rustPath}>::${getter.setterRustName}(${[...leading(getter.setterReceiver, getter.passThis, getter.setterCapability), "value"].join(", ")})`;
+    const set = `<${rustPath}>::${getter.setterRustName}(${[...leading(getter.setterReceiver, getter.passThis, getter.setterCapability), "value", ...vmArgument(getter.passVm, getter.setterCapability)].join(", ")})`;
     thunks += rustThunk(
       setterSymbolName(type, getter),
       [...(getter.isStatic ? [] : ["this: *mut core::ffi::c_void"]), `value: ${getter.type.rustExternType(scope)}`],
@@ -2362,8 +2365,15 @@ unsafe extern "C" {
     }
 }
 #[unsafe(no_mangle)]
-pub extern "C" fn ${classSymbolName(type, "finalize")}(wrapped: bun_ptr::RefPtr<${rustPath}>) {
-    ${type.finalize ? `<${rustPath}>::finalize(&wrapped);\n    ` : ""}drop(wrapped);
+pub ${type.finalizePassesVm ? "unsafe " : ""}extern "C" fn ${classSymbolName(type, "finalize")}(wrapped: bun_ptr::RefPtr<${rustPath}>) {
+    ${
+      type.finalizePassesVm
+        ? `// SAFETY: the sweeper calls this on the VM's thread, at the latest while the engine's VM is destroyed.
+    <${rustPath}>::finalize(&wrapped, unsafe { bun_core::VmLive::assume(&wrapped) });\n    `
+        : type.finalize
+          ? `<${rustPath}>::finalize(&wrapped);\n    `
+          : ""
+    }drop(wrapped);
 }
 ${type.overridesToJS ? "" : rustImplJsClass(type, `js_${name}::to_js(bun_ptr::RefPtr::new(self), global)`)}
 `;
@@ -2542,7 +2552,7 @@ bun_jsc::jsc_abi_extern! {
           );
           path = `${file.moduleDefinition.rustPath}::${rustIdent(snakeCase(fn.name.replace(/^_+/, "")))}`;
         }
-        const call = `${path}(${[...capabilityArgument[signature.capability], ...leading, ...rustArguments(signature)].join(", ")})`;
+        const call = `${path}(${[...capabilityArgument[signature.capability], ...leading, ...rustArguments(signature), ...vmArgument(signature.passVm, signature.capability)].join(", ")})`;
         return rustThunk(
           thunkSymbol(fn, signature),
           [...leading.map(name => `${name}: JSValue`), ...rustExternParameters(signature, scope)],

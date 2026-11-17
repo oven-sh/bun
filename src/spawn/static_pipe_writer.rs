@@ -3,6 +3,7 @@ use core::cell::Cell;
 use core::mem::ManuallyDrop;
 use core::mem::size_of;
 
+use bun_core::LoopTurn;
 use bun_event_loop::EventLoopHandle;
 use bun_io::{BufferedWriteHandler, BufferedWriter, IoEvent, Owner, WriteHandler, WriteStatus};
 use bun_ptr::AliasableBox;
@@ -88,21 +89,25 @@ impl<S: Source> StaticPipeWriter<S> {
         }
     }
 
-    pub fn start(&self, event_loop: EventLoopHandle) -> bun_sys::Result<PipeState> {
+    pub fn start(
+        &self,
+        event_loop: EventLoopHandle,
+        turn: LoopTurn<'_>,
+    ) -> bun_sys::Result<PipeState> {
         let state: &State<S> = &self.state;
         bun_output::scoped_log!(StaticPipeWriter, "StaticPipeWriter({:p}) start()", state);
         #[cfg(windows)]
         {
             let _ = event_loop;
             // SAFETY: `source` is never borrowed mutably, and `Drop` leaves it to a write in flight.
-            unsafe { state.writer.write_no_copy(state) };
+            unsafe { state.writer.write_no_copy(state, turn) };
         }
         #[cfg(not(windows))]
         {
             let file = state.file.take().unwrap();
             state
                 .writer
-                .start(state, event_loop.as_event_loop_ctx(), file.fd(), true)?;
+                .start(state, event_loop.as_event_loop_ctx(), file.fd(), true, turn)?;
             // The writer closes it from now on.
             file.into_raw();
             state.writer.set_poll_flag(bun_io::FilePollFlag::Socket);
@@ -110,16 +115,18 @@ impl<S: Source> StaticPipeWriter<S> {
         Ok(self.pipe_state())
     }
 
-    pub fn on_io(&self, event: IoEvent) -> PipeState {
+    pub fn on_io(&self, event: IoEvent, turn: LoopTurn<'_>) -> PipeState {
         let state: &State<S> = &self.state;
-        state.writer.on_io(state, event);
+        state.writer.on_io(state, event, turn);
         self.pipe_state()
     }
 
-    pub fn watch(&self) -> PipeState {
+    pub fn watch(&self, turn: LoopTurn<'_>) -> PipeState {
+        #[cfg(windows)]
+        let _ = turn;
         #[cfg(not(windows))]
         if !self.state.remaining().is_empty() {
-            self.state.writer.register_poll(&*self.state);
+            self.state.writer.register_poll(&*self.state, turn);
         }
         self.pipe_state()
     }
@@ -166,7 +173,7 @@ impl<S: Source> BufferedWriteHandler for State<S> {
 }
 
 impl<S: Source> WriteHandler for State<S> {
-    fn on_write(&self, amount: usize, status: WriteStatus) {
+    fn on_write(&self, amount: usize, status: WriteStatus, turn: LoopTurn<'_>) {
         bun_output::scoped_log!(
             StaticPipeWriter,
             "StaticPipeWriter({:p}) onWrite(amount={} {})",
@@ -182,11 +189,11 @@ impl<S: Source> WriteHandler for State<S> {
         self.written.update(|written| written + amount);
         // After `EndOfFile` the writer closes itself.
         if status != WriteStatus::EndOfFile && self.remaining().is_empty() {
-            self.writer.close(self);
+            self.writer.close(self, turn);
         }
     }
 
-    fn on_error(&self, err: bun_sys::Error) {
+    fn on_error(&self, err: bun_sys::Error, _turn: LoopTurn<'_>) {
         bun_output::scoped_log!(
             StaticPipeWriter,
             "StaticPipeWriter({:p}) onError(err={})",
@@ -195,7 +202,7 @@ impl<S: Source> WriteHandler for State<S> {
         );
     }
 
-    fn on_close(&self) {
+    fn on_close(&self, _turn: LoopTurn<'_>) {
         bun_output::scoped_log!(StaticPipeWriter, "StaticPipeWriter({:p}) onClose()", self);
     }
 

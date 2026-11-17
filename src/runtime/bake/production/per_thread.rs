@@ -2,6 +2,8 @@
 
 use super::*;
 use bun_bundler::output_file::Value as OutputFileValue;
+use bun_core::JsTurn;
+use bun_jsc::virtual_machine::VmRef;
 
 /// Data used on each rendering thread. Contains all information in the bundle needed to render.
 /// This is referred to as `pt` in variable/field naming, and Bake::ProductionPerThread in C++
@@ -21,7 +23,7 @@ pub(crate) struct PerThread {
     pub(crate) source_maps: StringArrayHashMap<OutputFileIndex>,
 
     // Thread-local
-    pub(crate) vm: &'static VirtualMachine,
+    pub(crate) vm: VmRef,
     /// Indexed by entry point index (OpaqueFileId)
     pub(crate) loaded_files: AutoBitSet,
     /// JSArray of JSString, indexed by entry point index (OpaqueFileId)
@@ -44,21 +46,20 @@ unsafe extern "C" {
 }
 
 impl PerThread {
-    /// Safe `&'static JSGlobalObject` accessor — `self.vm.global()`.
     #[inline]
-    pub(crate) fn global(&self) -> &'static JSGlobalObject {
-        self.vm.global()
+    pub(crate) fn global<'a>(&self, turn: JsTurn<'a>) -> &'a JSGlobalObject {
+        self.vm.get(turn.live.thread).global(turn)
     }
 
     /// Empty placeholder used in `build_command` before `build_with_vm` fills it.
-    pub(super) fn placeholder(vm: &'static VirtualMachine) -> PerThread {
+    pub(super) fn placeholder(vm: &VirtualMachine) -> PerThread {
         PerThread {
             entry_points: EntryPointMap::default(),
             bundled_outputs: Vec::new(),
             module_keys: Vec::new(),
             module_map: StringArrayHashMap::default(),
             source_maps: StringArrayHashMap::default(),
-            vm,
+            vm: VmRef::new(vm),
             loaded_files: AutoBitSet::init_empty(0).expect("unreachable"),
             all_server_files: None,
             attached: false,
@@ -67,18 +68,19 @@ impl PerThread {
 
     /// After initializing, call `attach`
     pub(crate) fn init(
-        vm: &'static VirtualMachine,
+        vm: &VirtualMachine,
         entry_points: EntryPointMap,
         mut bundled_outputs: Vec<OutputFile>,
         module_keys: Vec<BunString>,
         module_indexes: &StringArrayHashMap<OutputFileIndex>,
         source_maps: StringArrayHashMap<OutputFileIndex>,
+        turn: JsTurn<'_>,
     ) -> crate::Result<PerThread> {
         let n = entry_points.files.count();
         let loaded_files = AutoBitSet::init_empty(n)?;
         // errdefer loaded_files.deinit() — handled by Drop on error path
 
-        let global = vm.global();
+        let global = vm.global(turn);
         let all_server_files = Some(bun_jsc::Strong::create(
             JSValue::create_empty_array(global, n).map_err(js_err)?,
             global,
@@ -102,19 +104,19 @@ impl PerThread {
             module_keys,
             module_map,
             source_maps,
-            vm,
+            vm: VmRef::new(vm),
             loaded_files,
             all_server_files,
             attached: false,
         })
     }
 
-    pub(crate) fn attach(&mut self) {
+    pub(crate) fn attach(&mut self, turn: JsTurn<'_>) {
         // `self.global()` derefs the JSC_BORROW `vm` back-pointer (live for the
         // VM lifetime); C++ stores `pt` opaquely and hands it back via
         // `BakeProdResolve`, so passing `from_mut(self)` is just identity —
         // detached in Drop.
-        let global = self.global();
+        let global = self.global(turn);
         BakeGlobalObject__attachPerThreadData(global, std::ptr::from_mut::<PerThread>(self));
         self.attached = true;
     }
@@ -132,10 +134,14 @@ impl PerThread {
     }
 
     // Must be run at the top of the event loop
-    pub(crate) fn load_bundled_module(&self, id: OpaqueFileId) -> crate::Result<JSValue> {
-        let global = self.global();
+    pub(crate) fn load_bundled_module(
+        &self,
+        id: OpaqueFileId,
+        turn: JsTurn<'_>,
+    ) -> crate::Result<JSValue> {
+        let global = self.global(turn);
         load_module(
-            self.vm,
+            self.vm.get(turn.live.thread),
             global,
             self.module_keys[id.get() as usize]
                 .to_js(global)
@@ -150,8 +156,12 @@ impl PerThread {
     // What could be done here is generating a new index type, which is
     // specifically for referenced files. This would remove the holes, but make
     // it harder to pre-allocate. It's probably worth it.
-    pub(crate) fn preload_bundled_module(&mut self, id: OpaqueFileId) -> JsResult<JSValue> {
-        let global = self.global();
+    pub(crate) fn preload_bundled_module(
+        &mut self,
+        id: OpaqueFileId,
+        turn: JsTurn<'_>,
+    ) -> JsResult<JSValue> {
+        let global = self.global(turn);
         if !self.loaded_files.is_set(id.get() as usize) {
             self.loaded_files.set(id.get() as usize);
             self.all_server_files.as_ref().unwrap().get().put_index(
@@ -170,9 +180,10 @@ impl PerThread {
 impl Drop for PerThread {
     fn drop(&mut self) {
         if self.attached {
-            // Passing null detaches the previously-attached pointer; `global()`
-            // goes through the safe `vm()` accessor (VM outlives PerThread).
-            BakeGlobalObject__attachPerThreadData(self.global(), core::ptr::null_mut());
+            // SAFETY: a local of `build_command`, whose VM is only torn down by calls that do not return.
+            let turn = unsafe { JsTurn::assume(self) };
+            // Passing null detaches the previously-attached pointer.
+            BakeGlobalObject__attachPerThreadData(self.global(turn), core::ptr::null_mut());
         }
         // `all_server_files: Strong` is dropped automatically, releasing the GC root.
     }

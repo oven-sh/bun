@@ -5,9 +5,11 @@ use core::ffi::c_void;
 use core::marker::PhantomData;
 use core::ptr::NonNull;
 
+use bun_core::LoopTurn;
+
 pub struct AnyTaskWithExtraContext {
     pub(crate) ctx: Option<NonNull<()>>,
-    pub(crate) callback: fn(*mut (), *mut ()),
+    pub(crate) callback: fn(*mut (), *mut (), LoopTurn<'_>),
     /// Intrusive link for `UnboundedQueue(AnyTaskWithExtraContext, .next)` (MiniEventLoop).
     pub(crate) next: bun_threading::Link<AnyTaskWithExtraContext>,
 }
@@ -16,7 +18,7 @@ impl Default for AnyTaskWithExtraContext {
     fn default() -> Self {
         Self {
             ctx: None,
-            callback: |_, _| unreachable!("callback was undefined"),
+            callback: |_, _, _| unreachable!("callback was undefined"),
             next: bun_threading::Link::new(),
         }
     }
@@ -26,7 +28,7 @@ impl AnyTaskWithExtraContext {
     /// Boxes `wrapped` with the returned task. Running it calls `callback(wrapped, extra)` and frees the box.
     pub fn from_callback_auto_deinit<T: 'static>(
         wrapped: T,
-        callback: fn(T, *mut c_void),
+        callback: fn(T, *mut c_void, LoopTurn<'_>),
     ) -> *mut AnyTaskWithExtraContext {
         #[repr(C)]
         struct Wrapper<T> {
@@ -34,15 +36,15 @@ impl AnyTaskWithExtraContext {
             wrapped: T,
             // Stable Rust has no const fn-pointer generics,
             // so the callback is stored here instead.
-            callback: fn(T, *mut c_void),
+            callback: fn(T, *mut c_void, LoopTurn<'_>),
         }
 
-        fn function<T>(this: *mut (), extra: *mut ()) {
+        fn function<T>(this: *mut (), extra: *mut (), turn: LoopTurn<'_>) {
             // SAFETY: `this` is the `ctx` we set below, which is the Box'd `Wrapper<T>`
             // pointer. `any_task` is the first field of a `#[repr(C)]` struct, so the
             // address is also valid as `*mut Wrapper<T>`.
             let that: Box<Wrapper<T>> = unsafe { bun_core::heap::take(this.cast::<Wrapper<T>>()) };
-            (that.callback)(that.wrapped, extra.cast::<c_void>());
+            (that.callback)(that.wrapped, extra.cast::<c_void>(), turn);
         }
 
         let task = bun_core::heap::into_raw(Box::new(Wrapper::<T> {
@@ -65,7 +67,11 @@ impl AnyTaskWithExtraContext {
     // The unit context means the callee is effectively `fn(*T)` only; mapped
     // to `*mut ()` to keep the two-arg stored ABI uniform.
     // Named `from` for historical reasons; not the `From` trait.
-    pub fn from<T>(&mut self, of: *mut T, callback: fn(*mut T, *mut ())) -> *mut Self {
+    pub fn from<T>(
+        &mut self,
+        of: *mut T,
+        callback: fn(*mut T, *mut (), LoopTurn<'_>),
+    ) -> *mut Self {
         *self = New::<T, ()>::init(of, callback);
         std::ptr::from_mut::<Self>(self)
     }
@@ -77,12 +83,18 @@ impl AnyTaskWithExtraContext {
 pub struct New<T, C>(PhantomData<(*mut T, *mut C)>);
 
 impl<T, C> New<T, C> {
-    pub fn init(ctx: *mut T, callback: fn(*mut T, *mut C)) -> AnyTaskWithExtraContext {
+    pub fn init(
+        ctx: *mut T,
+        callback: fn(*mut T, *mut C, LoopTurn<'_>),
+    ) -> AnyTaskWithExtraContext {
         AnyTaskWithExtraContext {
             // SAFETY: `fn(*mut T, *mut C)` and `fn(*mut (), *mut ())` have identical
             // ABI (single code pointer, two pointer-sized args).
             callback: unsafe {
-                bun_ptr::cast_fn_ptr::<fn(*mut T, *mut C), fn(*mut (), *mut ())>(callback)
+                bun_ptr::cast_fn_ptr::<
+                    fn(*mut T, *mut C, LoopTurn<'_>),
+                    fn(*mut (), *mut (), LoopTurn<'_>),
+                >(callback)
             },
             ctx: NonNull::new(ctx.cast::<()>()),
             next: bun_threading::Link::new(),

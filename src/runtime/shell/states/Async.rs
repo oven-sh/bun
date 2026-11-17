@@ -1,3 +1,5 @@
+use bun_core::{LoopTurn, VmLive};
+
 use crate::shell::ExitCode;
 use crate::shell::ast;
 use crate::shell::interpreter::{EventLoopHandle, Interpreter, Node, NodeId, ShellExecEnv, log};
@@ -60,16 +62,16 @@ impl Async {
         id
     }
 
-    pub(crate) fn start(interp: &Interpreter, this: NodeId) -> Yield {
+    pub(crate) fn start(interp: &Interpreter, this: NodeId, turn: LoopTurn<'_>) -> Yield {
         log!("Async {} start", this);
         Self::enqueue_self(interp, this);
         let parent = interp.as_async(this).base.parent;
         // Appear "done" immediately to the parent so it moves on; the async
         // body runs in the background via `enqueue_self`.
-        interp.child_done(parent, this, 0)
+        interp.child_done(parent, this, 0, turn)
     }
 
-    pub(crate) fn next(interp: &Interpreter, this: NodeId) -> Yield {
+    pub(crate) fn next(interp: &Interpreter, this: NodeId, turn: LoopTurn<'_>) -> Yield {
         log!(
             "Async {} next {}",
             this,
@@ -97,7 +99,7 @@ impl Async {
                 Self::enqueue_self(interp, this);
                 Yield::suspended()
             }
-            NextAction::StartChild(c) => interp.start_node(c),
+            NextAction::StartChild(c) => interp.start_node(c, turn),
             NextAction::SpawnChild => {
                 let (shell, io, node) = {
                     let me = interp.as_async(this);
@@ -128,7 +130,7 @@ impl Async {
                 Yield::suspended()
             }
             NextAction::Finish => {
-                interp.async_cmd_done(this);
+                interp.async_cmd_done(this, turn);
                 Yield::done()
             }
         }
@@ -139,6 +141,7 @@ impl Async {
         this: NodeId,
         child: NodeId,
         exit_code: ExitCode,
+        _turn: LoopTurn<'_>,
     ) -> Yield {
         log!("Async {} childDone", this);
         interp.deinit_node(child);
@@ -169,8 +172,8 @@ impl Async {
         }
     }
 
-    pub(crate) fn run_from_main_thread(interp: &Interpreter, this: NodeId) {
-        Self::next(interp, this).run(interp);
+    pub(crate) fn run_from_main_thread(interp: &Interpreter, this: NodeId, turn: LoopTurn<'_>) {
+        Self::next(interp, this, turn).run(interp, turn);
     }
 }
 
@@ -186,7 +189,7 @@ enum NextAction {
 impl bun_event_loop::Taskable for crate::shell::dispatch_tasks::ShellAsyncTask {
     const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::ShellAsync;
     /// The `Async` node's, which drops with the interpreter.
-    unsafe fn release_unrun(_: *mut Self) {}
+    unsafe fn release_unrun(_: *mut Self, _live: VmLive<'_>) {}
     /// See [`ShellTaskCtx`](crate::shell::interpreter::ShellTaskCtx): a step of a shell script always runs.
     unsafe fn context(_: *const Self) -> bun_event_loop::ContextId {
         bun_event_loop::ContextId::NONE
@@ -197,12 +200,13 @@ impl bun_event_loop::Taskable for crate::shell::dispatch_tasks::ShellAsyncTask {
 fn run_from_main_thread_mini(
     task: *mut crate::shell::dispatch_tasks::ShellAsyncTask,
     _: *mut core::ffi::c_void,
+    turn: LoopTurn<'_>,
 ) {
     // SAFETY: `task` is owned by the Async node, which is freed at the tail of
     // this bounce chain, and `interp` outlives every node.
     unsafe {
         let interp = &*(*task).interp;
         let node = (*task).node.get();
-        Async::run_from_main_thread(interp, node);
+        Async::run_from_main_thread(interp, node, turn);
     }
 }

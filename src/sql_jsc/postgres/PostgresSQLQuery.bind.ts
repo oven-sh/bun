@@ -13,7 +13,7 @@ export const PostgresSQLQuery = b.class({
     cancel: { capability: "js" },
     copyDone: { capability: "js" },
     copyFail: { args: { message: b.string.loose.utf8 }, capability: "js" },
-    copyResume: {},
+    copyResume: { passVm: true },
     copyWrite: { ...js, args: { chunk: b.any }, returns: b.bool },
     describeResult: { ...js, args: { number: b.any }, returns: b.any.returning("object", "null") },
     run: { ...js, args: { connection: PostgresSQLConnection, query: b.any }, passThis: true },

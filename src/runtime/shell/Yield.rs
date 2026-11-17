@@ -7,6 +7,8 @@
 
 use core::cell::Cell;
 
+use bun_core::LoopTurn;
+
 use crate::shell::interpreter::{Interpreter, NodeId, StateKind, log};
 use crate::shell::states::pipeline::Pipeline;
 
@@ -90,7 +92,7 @@ impl Drop for DbgDepthGuard {
 
 impl Yield {
     /// Trampoline: drive the interpreter until it suspends/finishes.
-    pub(crate) fn run(self, interp: &Interpreter) {
+    pub(crate) fn run(self, interp: &Interpreter, turn: LoopTurn<'_>) {
         let tag: &'static str = (&self).into();
         let _depth = DbgDepthGuard::enter(tag);
 
@@ -120,16 +122,16 @@ impl Yield {
                             pipeline_stack.push(id);
                         }
                     }
-                    interp.next_node(id)
+                    interp.next_node(id, turn)
                 }
                 Yield::OnIoWriterChunk {
                     child,
                     written,
                     err,
-                } => crate::shell::io_writer::on_io_writer_chunk(interp, child, written, err),
-                Yield::Failed(id) => interp.fail(id, &mut rejection),
+                } => crate::shell::io_writer::on_io_writer_chunk(interp, child, written, err, turn),
+                Yield::Failed(id) => interp.fail(id, &mut rejection, turn),
                 Yield::Suspended | Yield::Done => {
-                    if let Some(y) = Self::drain_pipelines(interp, &mut pipeline_stack) {
+                    if let Some(y) = Self::drain_pipelines(interp, &mut pipeline_stack, turn) {
                         y
                     } else {
                         if let Some(rejection) = rejection {
@@ -142,14 +144,18 @@ impl Yield {
         }
     }
 
-    fn drain_pipelines(interp: &Interpreter, pipeline_stack: &mut Vec<NodeId>) -> Option<Yield> {
+    fn drain_pipelines(
+        interp: &Interpreter,
+        pipeline_stack: &mut Vec<NodeId>,
+        turn: LoopTurn<'_>,
+    ) -> Option<Yield> {
         while let Some(&id) = pipeline_stack.last() {
             if Pipeline::is_starting_cmds(interp, id) {
-                return Some(interp.next_node(id));
+                return Some(interp.next_node(id, turn));
             }
             pipeline_stack.pop();
             if Pipeline::is_done(interp, id) {
-                return Some(interp.next_node(id));
+                return Some(interp.next_node(id, turn));
             }
         }
         None

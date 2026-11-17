@@ -23,10 +23,12 @@ pub mod error;
 pub mod hint;
 pub mod result;
 pub mod thread_id;
+pub mod thread_token;
 pub mod tty;
 pub mod util;
 pub use atomic_cell::{Atom, AtomicCell, ThreadCell};
 pub use c_str_list::{CStrList, CStrRef, CStringList};
+pub use thread_token::{HasVm, JsTurn, LoopTurn, ThreadLive, VmLive};
 
 /// Shared state-machine tag for the streaming (de)compressors in
 /// `bun_brotli` / `bun_zlib` / `bun_zstd`.
@@ -2508,33 +2510,6 @@ pub mod ffi {
     #[inline(always)]
     pub const unsafe fn zeroed_unchecked<T>() -> T {
         // SAFETY: caller guarantees T is valid at the all-zero bit pattern.
-        unsafe { core::mem::zeroed() }
-    }
-
-    /// Conjure a value of a zero-sized type without `unsafe` at the call site.
-    ///
-    /// This is the monomorphised-ZST-handler trick: a fn item or capture-less
-    /// closure has `size_of == 0`, so the empty bit-pattern is its only
-    /// (trivially valid) value. The size constraint is a `const { assert! }`,
-    /// so passing a non-ZST `H` is a *compile* error at the monomorphisation
-    /// site rather than runtime UB — which is what makes this fn safe (S016).
-    ///
-    /// Replaces the `// SAFETY: H is a ZST → mem::zeroed()` comment repeated
-    /// at every callback trampoline that smuggles a generic `H: Fn*` through C
-    /// (`uws_sys::thunk`, `server_body::route_thunk`).
-    #[inline(always)]
-    pub fn conjure_zst<H>() -> H {
-        const {
-            assert!(
-                core::mem::size_of::<H>() == 0,
-                "conjure_zst: H must be a ZST (fn item or capture-less closure)"
-            )
-        };
-        // SAFETY: `size_of::<H>() == 0` (compile-time asserted above), so the
-        // value occupies no bytes and `zeroed()` writes nothing. Every call
-        // site bounds `H: Fn*` (fn items / capture-less closures), and those
-        // are always inhabited — uninhabited ZSTs (`!`, `Infallible`) do not
-        // implement the `Fn` traits and so cannot reach a real instantiation.
         unsafe { core::mem::zeroed() }
     }
 

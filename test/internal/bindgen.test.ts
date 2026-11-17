@@ -543,6 +543,19 @@ itAlways("mistakes in a schema are errors when it loads", () => {
   b.fn({ args: { encoding: b.string.nullable, callback: b.any, length: b.f64 } });
 });
 
+itAlways("passVm is for what has no capability", () => {
+  for (const capability of ["heap", "js"] as const) {
+    expect(() => b.fn({ capability, passVm: true })).toThrow("passVm: a capability has live()");
+    expect(() =>
+      b.class({ rustPath: "T", sharedThis: true, proto: { x: { getter: b.u32, capability, passVm: true } } }),
+    ).toThrow("x: passVm: a capability has live()");
+  }
+  expect(b.fn({ passVm: true }).signatures[0].passVm).toBe(true);
+  expect(() => b.class({ rustPath: "T", finalize: { passVm: true } })).toThrow(
+    "finalize is only for a refCounted class",
+  );
+});
+
 it("custom enforceRange boundaries", () => {
   expect(bindgen.requiredAndOptionalArg(false, 0, 5)).toBe(5);
   expect(() => bindgen.requiredAndOptionalArg(false, 0, -1)).toThrow("Value -1 is outside the range [0, 100]");

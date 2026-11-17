@@ -1,3 +1,5 @@
+use bun_core::JsTurn;
+
 use crate::AnyResponse;
 use crate::response::Response;
 
@@ -9,10 +11,10 @@ use crate::response::Response;
 pub trait BodyResponse: Sized + 'static {
     fn on_data<U, H>(&mut self, handler: H, ctx: *mut U)
     where
-        H: Fn(*mut U, &mut Self, &[u8], bool) + Copy + 'static;
+        H: Fn(*mut U, &mut Self, &[u8], bool, JsTurn<'_>) + Copy + 'static;
     fn on_aborted<U, H>(&mut self, handler: H, ctx: *mut U)
     where
-        H: Fn(*mut U, &mut Self) + Copy + 'static;
+        H: Fn(*mut U, &mut Self, JsTurn<'_>) + Copy + 'static;
     fn to_any(&mut self) -> AnyResponse;
 }
 
@@ -20,14 +22,14 @@ impl<const SSL: bool> BodyResponse for Response<SSL> {
     #[inline]
     fn on_data<U, H>(&mut self, handler: H, ctx: *mut U)
     where
-        H: Fn(*mut U, &mut Self, &[u8], bool) + Copy + 'static,
+        H: Fn(*mut U, &mut Self, &[u8], bool, JsTurn<'_>) + Copy + 'static,
     {
         Response::<SSL>::on_data(self, handler, ctx)
     }
     #[inline]
     fn on_aborted<U, H>(&mut self, handler: H, ctx: *mut U)
     where
-        H: Fn(*mut U, &mut Self) + Copy + 'static,
+        H: Fn(*mut U, &mut Self, JsTurn<'_>) + Copy + 'static,
     {
         Response::<SSL>::on_aborted(self, handler, ctx)
     }
@@ -39,7 +41,7 @@ impl<const SSL: bool> BodyResponse for Response<SSL> {
 
 /// Dropped once the request is answered or aborted.
 pub trait BodyReaderHandler: 'static {
-    fn on_body(&self, body: &[u8], resp: AnyResponse) -> crate::Result<()>;
+    fn on_body(&self, body: &[u8], resp: AnyResponse, turn: JsTurn<'_>) -> crate::Result<()>;
 }
 
 /// Reads an entire request body into memory and runs a callback.
@@ -60,10 +62,16 @@ impl<H: BodyReaderHandler> BodyReaderMixin<H> {
         resp.on_aborted(Self::on_aborted::<R>, this);
     }
 
-    fn on_data<R: BodyResponse>(this: *mut Self, r: &mut R, chunk: &[u8], last: bool) {
+    fn on_data<R: BodyResponse>(
+        this: *mut Self,
+        r: &mut R,
+        chunk: &[u8],
+        last: bool,
+        turn: JsTurn<'_>,
+    ) {
         let resp = r.to_any();
         // SAFETY: the box from `read_body`. `read` disarms both callbacks before it answers.
-        let result = unsafe { (*this).read(resp, chunk, last) };
+        let result = unsafe { (*this).read(resp, chunk, last, turn) };
         if let Err(err) = &result {
             resp.clear_aborted();
             resp.clear_on_data();
@@ -80,12 +88,18 @@ impl<H: BodyReaderHandler> BodyReaderMixin<H> {
         }
     }
 
-    fn on_aborted<R>(this: *mut Self, _r: &mut R) {
+    fn on_aborted<R>(this: *mut Self, _r: &mut R, _turn: JsTurn<'_>) {
         // SAFETY: the box from `read_body`; no callback follows an abort.
         unsafe { bun_core::heap::destroy(this) };
     }
 
-    fn read(&mut self, resp: AnyResponse, chunk: &[u8], last: bool) -> crate::Result<()> {
+    fn read(
+        &mut self,
+        resp: AnyResponse,
+        chunk: &[u8],
+        last: bool,
+        turn: JsTurn<'_>,
+    ) -> crate::Result<()> {
         if last {
             // Clears the user data, which `on_aborted` shares.
             resp.clear_on_data();
@@ -94,7 +108,7 @@ impl<H: BodyReaderHandler> BodyReaderMixin<H> {
             return Err(crate::Error::RequestBodyTooLarge);
         }
         if last && self.body.is_empty() {
-            return self.handler.on_body(chunk, resp);
+            return self.handler.on_body(chunk, resp, turn);
         }
         // Answered with a 500 instead of aborting the process.
         self.body
@@ -102,7 +116,7 @@ impl<H: BodyReaderHandler> BodyReaderMixin<H> {
             .map_err(|_| crate::Error::Alloc(bun_alloc::AllocError))?;
         self.body.extend_from_slice(chunk);
         if last {
-            return self.handler.on_body(&self.body, resp);
+            return self.handler.on_body(&self.body, resp, turn);
         }
         Ok(())
     }

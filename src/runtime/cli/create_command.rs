@@ -6,7 +6,7 @@ use crate::api::bun_process::sync as spawn_sync;
 use bun_archive::{Archiver, archiver};
 use bun_clap as clap;
 use bun_core::Progress::{NodeId, Progress};
-use bun_core::{Global, Output, pretty_error, pretty_errorln};
+use bun_core::{Global, LoopTurn, Output, pretty_error, pretty_errorln};
 use bun_core::{MutableString, strings};
 use bun_dotenv as DotEnv;
 use bun_http as HTTP;
@@ -56,6 +56,7 @@ fn exec_task(
     name: &[u8],
     cwd: &[u8],
     env_loader: &mut DotEnv::Loader,
+    turn: LoopTurn<'_>,
 ) -> crate::Result<()> {
     let task = strings::trim(task, b" \n\r\t");
     if task.is_empty() {
@@ -74,6 +75,7 @@ fn exec_task(
         &[],
         false,
         use_system_shell,
+        turn,
     )
 }
 
@@ -298,6 +300,7 @@ impl CreateCommand {
         ctx: Command::Context<'_>,
         example_tag: ExampleTag,
         template: &[u8],
+        turn: LoopTurn<'_>,
     ) -> crate::Result<()> {
         Global::configure_allocator(Global::AllocatorConfiguration {
             long_running: false,
@@ -372,7 +375,13 @@ impl CreateCommand {
 
         match example_tag {
             ExampleTag::JslikeFile => {
-                return run_on_entry_point(ctx, create_options.overwrite, template, &progress);
+                return run_on_entry_point(
+                    ctx,
+                    create_options.overwrite,
+                    template,
+                    &progress,
+                    turn,
+                );
             }
             ExampleTag::GithubRepository | ExampleTag::Official => {
                 let tarball_bytes: MutableString = match example_tag {
@@ -1027,7 +1036,7 @@ impl CreateCommand {
                 .put(b"npm_package_name", bun_paths::basename(destination))?;
 
             for task in &preinstall_tasks {
-                exec_task(ctx, task, b"preinstall", destination, env_loader)?;
+                exec_task(ctx, task, b"preinstall", destination, env_loader, turn)?;
             }
         }
 
@@ -1089,7 +1098,7 @@ impl CreateCommand {
 
         if run_tasks {
             for task in &postinstall_tasks {
-                exec_task(ctx, task, b"postinstall", destination, env_loader)?;
+                exec_task(ctx, task, b"postinstall", destination, env_loader, turn)?;
             }
         }
 
@@ -1438,6 +1447,7 @@ fn run_on_entry_point(
     overwrite: bool,
     entry_point: &[u8],
     progress: &Progress,
+    turn: LoopTurn<'_>,
 ) -> crate::Result<()> {
     let mut analyzer = Analyzer {
         overwrite,
@@ -1449,7 +1459,7 @@ fn run_on_entry_point(
         analyzer: &mut analyzer,
         entry_points: vec![Box::<[u8]>::from(entry_point)].into_boxed_slice(),
     };
-    crate::cli::build_command::BuildCommand::exec(ctx, Some(&mut fetcher))
+    crate::cli::build_command::BuildCommand::exec(ctx, Some(&mut fetcher), turn)
 }
 
 pub(crate) struct Example {

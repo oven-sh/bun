@@ -10,6 +10,7 @@ use bun_ast::Loader;
 use bun_ast::Log;
 use bun_bundler::bundle_v2::BuildResult;
 use bun_bundler::options::{self as bundler_options, LoaderExt as _};
+use bun_core::JsTurn;
 use bun_core::strings;
 use bun_http::Headers;
 use bun_http_types::Method::Method;
@@ -160,16 +161,32 @@ impl Route {
         })
     }
 
-    pub(crate) fn on_request(this: ThisPtr<Self>, req: AnyRequest, resp: AnyResponse) {
-        Self::on_any_request(this, req, resp, false);
+    pub(crate) fn on_request(
+        this: ThisPtr<Self>,
+        req: AnyRequest,
+        resp: AnyResponse,
+        turn: JsTurn<'_>,
+    ) {
+        Self::on_any_request(this, req, resp, false, turn);
     }
 
-    pub(crate) fn on_head_request(this: ThisPtr<Self>, req: AnyRequest, resp: AnyResponse) {
-        Self::on_any_request(this, req, resp, true);
+    pub(crate) fn on_head_request(
+        this: ThisPtr<Self>,
+        req: AnyRequest,
+        resp: AnyResponse,
+        turn: JsTurn<'_>,
+    ) {
+        Self::on_any_request(this, req, resp, true, turn);
     }
 
     #[inline(never)]
-    fn on_any_request(this: ThisPtr<Self>, mut req: AnyRequest, resp: AnyResponse, is_head: bool) {
+    fn on_any_request(
+        this: ThisPtr<Self>,
+        mut req: AnyRequest,
+        resp: AnyResponse,
+        is_head: bool,
+        turn: JsTurn<'_>,
+    ) {
         bun_removable_features::removable_definition!(Bundler, Self::on_any_request);
         let _guard = RefPtr::from_this(this);
         let route: &Route = &this;
@@ -191,6 +208,7 @@ impl Route {
                             this,
                             bun_opaque::opaque_deref_mut(h1),
                             resp,
+                            turn,
                         ));
                     }
                     AnyRequest::H3(_) => {
@@ -267,9 +285,9 @@ impl Route {
                         );
                     }
                     if is_head {
-                        StaticRoute::on_head_request(html.this_ptr(), req, resp);
+                        StaticRoute::on_head_request(html.this_ptr(), req, resp, turn);
                     } else {
-                        StaticRoute::on_request(html.this_ptr(), req, resp);
+                        StaticRoute::on_request(html.this_ptr(), req, resp, turn);
                     }
                 }
             }
@@ -585,7 +603,7 @@ impl Route {
                 ));
                 self.state.set(State::Html(html_route_clone));
 
-                if !bun_core::handle_oom(server.reload_static_routes()) {
+                if !bun_core::handle_oom(server.reload_static_routes(global_this.live())) {
                     // Server has shutdown, so it won't receive any new requests
                     // TODO: handle this case
                 }
@@ -675,7 +693,7 @@ impl Drop for PendingResponse {
 
 impl Route {
     /// uws onAborted for a response waiting in `pending_responses`.
-    fn on_pending_response_aborted(this: ThisPtr<Self>, resp: AnyResponse) {
+    fn on_pending_response_aborted(this: ThisPtr<Self>, resp: AnyResponse, _turn: JsTurn<'_>) {
         // Technically, this could be the final ref count, but we don't want to risk it
         let _guard = RefPtr::from_this(this);
 

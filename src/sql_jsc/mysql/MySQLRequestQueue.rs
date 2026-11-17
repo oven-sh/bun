@@ -1,6 +1,7 @@
 use core::cell::Cell;
 
 use crate::jsc::JSValue;
+use bun_core::JsTurn;
 use bun_jsc::JsCell;
 use bun_ptr::RefPtr;
 use std::collections::VecDeque;
@@ -25,7 +26,7 @@ impl MySQLRequestQueue {
             .unwrap_or(false)
     }
 
-    pub(crate) fn advance(&self, connection: &MySQLConnection) {
+    pub(crate) fn advance(&self, connection: &MySQLConnection, turn: JsTurn<'_>) {
         loop {
             let written = self.written.get();
             if written > 0 && self.requests.get()[0].is_completed() {
@@ -48,7 +49,7 @@ impl MySQLRequestQueue {
                 return;
             }
             if let Err(err) = request.run(connection) {
-                request.reject(err);
+                request.reject(err, turn);
             }
         }
     }
@@ -90,11 +91,11 @@ impl MySQLRequestQueue {
         self.requests.get().front().cloned()
     }
 
-    pub(crate) fn clean(&self, reason: JSValue) {
+    pub(crate) fn clean(&self, reason: JSValue, turn: JsTurn<'_>) {
         // Rejecting runs JS, which can fail the connection again: that call finds an empty queue.
         self.written.set(0);
         for request in self.requests.replace(Queue::new()) {
-            request.reject_with_js_value(reason);
+            request.reject_with_js_value(reason, turn);
         }
     }
 }

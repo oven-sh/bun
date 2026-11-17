@@ -12,7 +12,7 @@ use std::io::Write as _;
 use std::os::windows::io::OwnedHandle;
 
 use bun_core::strings;
-use bun_core::{Global, Output};
+use bun_core::{Global, JsTurn, LoopTurn, Output};
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_ptr::{CellExt as _, Interned};
 
@@ -236,9 +236,9 @@ impl<'a> Coordinator<'a> {
         victim
     }
 
-    pub(crate) fn drive(&mut self, abort_guard: &abort_handler::Guard) {
-        let _ = self.spawn_worker();
-        self.handle_worker_events();
+    pub(crate) fn drive(&mut self, abort_guard: &abort_handler::Guard, turn: JsTurn<'_>) {
+        let _ = self.spawn_worker(turn.loop_);
+        self.handle_worker_events(turn.loop_);
         while !self.is_done() {
             let signal = abort_handler::ABORT_SIGNAL.load(Ordering::Acquire);
             if signal != 0 {
@@ -246,14 +246,14 @@ impl<'a> Coordinator<'a> {
                 self.abort_all(signal);
                 return;
             }
-            self.vm.event_loop().tick();
-            self.handle_worker_events();
+            self.vm.event_loop().tick(turn);
+            self.handle_worker_events(turn.loop_);
             self.assign_work_to_waiting_workers();
             if let Some(children) = &mut self.children_of_workers {
                 children.look();
             }
-            self.maybe_scale_up();
-            self.handle_worker_events();
+            self.maybe_scale_up(turn.loop_);
+            self.handle_worker_events(turn.loop_);
             if self.is_done() {
                 break;
             }
@@ -274,9 +274,9 @@ impl<'a> Coordinator<'a> {
                 let loop_ = self.vm.event_loop().usockets_loop();
                 loop_.tick_with_timeout(Some(&ts), bun_uws::NOW_NS_UNKNOWN);
             } else {
-                self.vm.event_loop().auto_tick();
+                self.vm.event_loop().auto_tick(turn);
             }
-            self.handle_worker_events();
+            self.handle_worker_events(turn.loop_);
         }
     }
 
@@ -349,18 +349,21 @@ impl<'a> Coordinator<'a> {
         self.aborted = Some(u32::from(bun_sys::SignalCode(signal as u8).to_exit_code()));
     }
 
-    fn spawn_worker(&mut self) -> bool {
+    fn spawn_worker(&mut self, turn: LoopTurn<'_>) -> bool {
         debug_assert!(self.spawned_count < self.parallel_limit);
         let w = &mut self.workers[self.spawned_count as usize];
-        match w.start(&SpawnContext {
-            vm: self.vm,
-            cwd: self.cwd,
-            argv: bun_core::CStrList::new(&self.argv),
-            envps: &self.envps,
-            compiled_program: crate::cli::run_compiled::graph_descriptor(),
-            #[cfg(windows)]
-            windows_job: self.windows_job,
-        }) {
+        match w.start(
+            &SpawnContext {
+                vm: self.vm,
+                cwd: self.cwd,
+                argv: bun_core::CStrList::new(&self.argv),
+                envps: &self.envps,
+                compiled_program: crate::cli::run_compiled::graph_descriptor(),
+                #[cfg(windows)]
+                windows_job: self.windows_job,
+            },
+            turn,
+        ) {
             Ok(()) => self.live_workers += 1,
             Err(e) => {
                 Output::err(e, "failed to spawn test worker", ());
@@ -378,7 +381,7 @@ impl<'a> Coordinator<'a> {
     /// spawn the remaining workers. A suite of trivially fast files therefore
     /// runs on one worker with zero spawn overhead; the first slow file
     /// triggers full scale-up so longer suites aren't staircased.
-    fn maybe_scale_up(&mut self) {
+    fn maybe_scale_up(&mut self, turn: LoopTurn<'_>) {
         if self.spawned_count >= self.parallel_limit {
             return;
         }
@@ -403,7 +406,7 @@ impl<'a> Coordinator<'a> {
         while self.spawned_count < want {
             // On failure, leave the slot unconsumed so the next drive() tick
             // can retry; don't loop here or a hard spawn error would spin.
-            if !self.spawn_worker() {
+            if !self.spawn_worker(turn) {
                 break;
             }
         }
@@ -786,7 +789,7 @@ impl<'a> Coordinator<'a> {
 
     /// Acts on what the event loop has left in the workers.
     #[optimize(size)]
-    fn handle_worker_events(&mut self) {
+    fn handle_worker_events(&mut self, turn: LoopTurn<'_>) {
         for slot in 0..self.spawned_count as usize {
             let w = &mut self.workers[slot];
             if let Some(mut incoming) = w.ipc.take_incoming() {
@@ -810,13 +813,13 @@ impl<'a> Coordinator<'a> {
             if w.ipc.done.get()
                 && let Some(status) = w.exit_status.take()
             {
-                self.reap_worker(slot, &status);
+                self.reap_worker(slot, &status, turn);
             }
         }
     }
 
     #[optimize(size)]
-    fn reap_worker(&mut self, slot: usize, status: &SpawnStatus) {
+    fn reap_worker(&mut self, slot: usize, status: &SpawnStatus, turn: LoopTurn<'_>) {
         let w = &mut self.workers[slot];
         if let (Some(children), Some(process)) = (&mut self.children_of_workers, &w.process) {
             children.forget(process.pid as i64);
@@ -935,15 +938,18 @@ impl<'a> Coordinator<'a> {
             let w = &mut self.workers[slot];
             w.reset_pipes();
             w.reached_ready = false;
-            match w.start(&SpawnContext {
-                vm: self.vm,
-                cwd: self.cwd,
-                argv: bun_core::CStrList::new(&self.argv),
-                envps: &self.envps,
-                compiled_program: crate::cli::run_compiled::graph_descriptor(),
-                #[cfg(windows)]
-                windows_job: self.windows_job,
-            }) {
+            match w.start(
+                &SpawnContext {
+                    vm: self.vm,
+                    cwd: self.cwd,
+                    argv: bun_core::CStrList::new(&self.argv),
+                    envps: &self.envps,
+                    compiled_program: crate::cli::run_compiled::graph_descriptor(),
+                    #[cfg(windows)]
+                    windows_job: self.windows_job,
+                },
+                turn,
+            ) {
                 Ok(()) => {
                     self.live_workers += 1;
                     respawned = true;

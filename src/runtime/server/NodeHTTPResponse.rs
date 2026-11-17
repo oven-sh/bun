@@ -7,6 +7,7 @@ use bstr::BStr;
 
 use bun_collections::VecExt;
 use bun_core::scoped_log;
+use bun_core::{JsTurn, VmLive};
 use bun_http::Method as HttpMethod;
 use bun_jsc::JsCell;
 use bun_jsc::bindgen::{Callable, JsLocal, JsScope, JsWrapper, StringOrJsBytes};
@@ -312,21 +313,26 @@ fn any_response_is_ssl(r: &uws::AnyResponse) -> bool {
 
 // uSockets callback adapters: AnyResponse::on_data/on_timeout/on_writable expect
 // `Fn(*mut U, ...)` (capture-less); adapt to `&self` method bodies.
-fn on_timeout_shim(this: *mut NodeHTTPResponse, resp: uws::AnyResponse) {
+fn on_timeout_shim(this: *mut NodeHTTPResponse, resp: uws::AnyResponse, turn: JsTurn<'_>) {
     // SAFETY: registered with `self`'s address; live while callback is armed.
     // R-2: deref as shared (`&*const`) — bodies take `&self`.
-    unsafe { (*this.cast_const()).on_timeout(resp) }
+    unsafe { (*this.cast_const()).on_timeout(resp, turn) }
 }
-fn on_data_shim(this: *mut NodeHTTPResponse, chunk: &[u8], last: bool) {
+fn on_data_shim(this: *mut NodeHTTPResponse, chunk: &[u8], last: bool, turn: JsTurn<'_>) {
     // SAFETY: see on_timeout_shim.
-    unsafe { (*this.cast_const()).on_data(chunk, last) }
+    unsafe { (*this.cast_const()).on_data(chunk, last, turn) }
 }
-fn on_drain_shim(this: *mut NodeHTTPResponse, off: u64, resp: uws::AnyResponse) -> bool {
+fn on_drain_shim(
+    this: *mut NodeHTTPResponse,
+    off: u64,
+    resp: uws::AnyResponse,
+    turn: JsTurn<'_>,
+) -> bool {
     // SAFETY: see on_timeout_shim.
-    unsafe { (*this.cast_const()).on_drain(off, resp) }
+    unsafe { (*this.cast_const()).on_drain(off, resp, turn) }
 }
 
-extern "C" fn on_auto_flush_trampoline(ctx: *mut c_void) -> bool {
+fn on_auto_flush_trampoline(ctx: *mut c_void, _turn: JsTurn<'_>) -> bool {
     // SAFETY: `ctx` is the `*const NodeHTTPResponse` registered by
     // `register_auto_flush`; `DeferredTaskQueue::run` feeds it back unchanged
     // on the JS thread. `on_auto_flush` takes `&self`.
@@ -591,7 +597,7 @@ impl NodeHTTPResponse {
             return Ok(None);
         };
         self.update_flags(|f| f.insert(Flags::UPGRADED));
-        let ended_unfinished_body = self.leave_pending(BodyReadState::Upgraded);
+        let ended_unfinished_body = self.leave_pending(BodyReadState::Upgraded, global.live());
         // Unref the poll_ref since the socket is now upgraded to WebSocket
         // and will have its own lifecycle management
         let vm = self.server.global_this().bun_vm();
@@ -619,13 +625,13 @@ impl NodeHTTPResponse {
         // Last step: a reader that waits for the body gets its 'end', like Node 25 and older.
         if ended_unfinished_body && !armed_reader.is_empty() {
             let _guard = self.ref_guard();
-            self.on_data_or_aborted(b"", true, AbortEvent::None, armed_reader);
+            self.on_data_or_aborted(b"", true, AbortEvent::None, armed_reader, global.turn());
         }
 
         Ok(if upgraded { ws_ref.js_value() } else { None })
     }
 
-    pub(crate) fn maybe_stop_reading_body(&self, this_value: JSValue) {
+    pub(crate) fn maybe_stop_reading_body(&self, this_value: JSValue, turn: JsTurn<'_>) {
         let flags = self.flags.get();
         // An ended response keeps a body that a reader is armed for: it completes at its last chunk.
         let stopped = if flags.contains(Flags::SOCKET_CLOSED) {
@@ -640,14 +646,14 @@ impl NodeHTTPResponse {
             None
         };
         if let Some(to) = stopped {
-            if self.leave_pending(to) {
-                self.mark_request_as_done_if_necessary();
+            if self.leave_pending(to, turn.live) {
+                self.mark_request_as_done_if_necessary(turn);
             }
         }
     }
 
     /// The only way out of `Pending` besides the last chunk. Returns whether it left `Pending`.
-    fn leave_pending(&self, to: BodyReadState) -> bool {
+    fn leave_pending(&self, to: BodyReadState, live: VmLive<'_>) -> bool {
         if self.body_read_state.get() != BodyReadState::Pending {
             return false;
         }
@@ -656,15 +662,15 @@ impl NodeHTTPResponse {
             self.release_body_slot();
         }
         self.body_read_state.set(to);
-        if self.body_read_ref.has.get() {
-            self.body_read_ref.unref(VirtualMachine::get());
+        if self.body_read_ref.has() {
+            self.body_read_ref.unref(VirtualMachine::get(live));
         }
         true
     }
 
-    fn mark_socket_closed(&self) {
+    fn mark_socket_closed(&self, live: VmLive<'_>) {
         self.update_flags(|f| f.insert(Flags::SOCKET_CLOSED));
-        self.leave_pending(BodyReadState::Aborted);
+        self.leave_pending(BodyReadState::Aborted, live);
     }
 
     /// uws's per-connection body handler slot is still this request's.
@@ -711,18 +717,18 @@ impl NodeHTTPResponse {
         true
     }
 
-    fn mark_request_as_done(&self) {
+    fn mark_request_as_done(&self, turn: JsTurn<'_>) {
         scoped_log!(NodeHTTPResponse, "markRequestAsDone()");
         let _pending_ref = self.pending_ref.take();
         // After an abort the promise may never settle.
         let _dispatch_ref = self.take_dispatch_ref();
 
-        let vm = VirtualMachine::get();
-        self.clear_on_data_callback(self.get_this_value(), vm.global());
-        self.clear_pending_pinned_write(vm.global(), JSValue::ZERO);
+        let vm = VirtualMachine::get(turn.live);
+        self.clear_on_data_callback(self.get_this_value(), vm.global(turn));
+        self.clear_pending_pinned_write(vm.global(turn), JSValue::ZERO);
 
         self.poll_ref.unref(vm);
-        self.unregister_auto_flush();
+        self.unregister_auto_flush(turn.live);
     }
 
     /// Unroots `promise`.
@@ -734,9 +740,9 @@ impl NodeHTTPResponse {
         self.pending_ref.get().is_some()
     }
 
-    pub(crate) fn mark_request_as_done_if_necessary(&self) {
+    pub(crate) fn mark_request_as_done_if_necessary(&self, turn: JsTurn<'_>) {
         if self.is_request_pending() && !self.should_request_be_pending() {
-            self.mark_request_as_done();
+            self.mark_request_as_done(turn);
         }
     }
 
@@ -819,15 +825,15 @@ impl NodeHTTPResponse {
         0
     }
 
-    pub(crate) fn js_ref(&self) {
+    pub(crate) fn js_ref(&self, live: VmLive<'_>) {
         if !self.is_done() {
-            self.poll_ref.r#ref(VirtualMachine::get());
+            self.poll_ref.r#ref(VirtualMachine::get(live));
         }
     }
 
-    pub(crate) fn js_unref(&self) {
+    pub(crate) fn js_unref(&self, live: VmLive<'_>) {
         if !self.is_done() {
-            self.poll_ref.unref(VirtualMachine::get());
+            self.poll_ref.unref(VirtualMachine::get(live));
         }
     }
 }
@@ -1285,7 +1291,7 @@ impl NodeHTTPResponse {
                 return Some(JSValue::js_number(-(bytes.len() as f64) - 1.0));
             }
         }
-        self.on_request_complete();
+        self.on_request_complete(global_object.turn());
         Some(JSValue::js_number_from_uint64(bytes.len() as u64))
     }
 }
@@ -1387,7 +1393,11 @@ pub(crate) enum AbortEvent {
 }
 
 impl NodeHTTPResponse {
-    fn handle_abort_or_timeout<const EVENT: AbortEvent>(&self, js_value: JSValue) {
+    fn handle_abort_or_timeout<const EVENT: AbortEvent>(
+        &self,
+        js_value: JSValue,
+        turn: JsTurn<'_>,
+    ) {
         if self.flags.get().contains(Flags::REQUEST_HAS_COMPLETED) {
             if EVENT == AbortEvent::Abort {
                 // The socket is gone — no further uws callback will arrive to
@@ -1404,13 +1414,13 @@ impl NodeHTTPResponse {
                 // `clear_on_data_callback` reached from `mark_request_as_done`
                 // can't touch the dead socket.
                 self.connection.release();
-                self.mark_request_as_done_if_necessary();
+                self.mark_request_as_done_if_necessary(turn);
             }
             return;
         }
 
         if EVENT == AbortEvent::Abort {
-            self.mark_socket_closed();
+            self.mark_socket_closed(turn.live);
         }
 
         let _guard = self.ref_guard();
@@ -1422,8 +1432,8 @@ impl NodeHTTPResponse {
         };
         if let Some(on_aborted) = js::on_aborted_get_cached(js_this) {
             if on_aborted.is_cell() {
-                let vm = VirtualMachine::get();
-                let global_this = vm.global();
+                let vm = VirtualMachine::get(turn.live);
+                let global_this = vm.global(turn);
                 let event_loop = vm.event_loop();
 
                 event_loop.run_callback(
@@ -1444,8 +1454,8 @@ impl NodeHTTPResponse {
             // Release the pin + owner + GC root atomically before any user JS
             // (on_data_or_aborted runs the ondata callback). Clearing the slot
             // alone would un-root `pinned_value` while it is still read later.
-            self.clear_pending_pinned_write(VirtualMachine::get().global(), js_this);
-            self.on_data_or_aborted(b"", true, AbortEvent::Abort, js_this);
+            self.clear_pending_pinned_write(VirtualMachine::get(turn.live).global(turn), js_this);
+            self.on_data_or_aborted(b"", true, AbortEvent::Abort, js_this, turn);
         }
 
         // The connection is released before the guard's release because
@@ -1455,22 +1465,22 @@ impl NodeHTTPResponse {
         if EVENT == AbortEvent::Abort {
             if self.flags.get().contains(Flags::ENDED) {
                 // An ended response that was still draining is over now: `finished` reads true, as after a drain.
-                self.on_request_complete();
+                self.on_request_complete(turn);
             } else {
-                self.mark_request_as_done_if_necessary();
+                self.mark_request_as_done_if_necessary(turn);
             }
             self.connection.release();
         }
     }
 
     #[uws::uws_callback(export = "Bun__NodeHTTPResponse_onClose")]
-    pub(crate) fn on_abort(&self, js_value: JSValue) {
+    pub(crate) fn on_abort(&self, js_value: JSValue, turn: JsTurn<'_>) {
         scoped_log!(NodeHTTPResponse, "onAbort");
-        self.handle_abort_or_timeout::<{ AbortEvent::Abort }>(js_value);
+        self.handle_abort_or_timeout::<{ AbortEvent::Abort }>(js_value, turn);
     }
 
     #[uws::uws_callback(export = "Bun__NodeHTTPResponse_onReadParsed", no_catch)]
-    pub(crate) fn on_read_parsed(&self) {
+    pub(crate) fn on_read_parsed(&self, turn: JsTurn<'_>) {
         // Same test as notify_when_read_parsed: a TLS close that waits for spilled bytes leaves the socket open.
         let flags = self.flags.get();
         if flags.contains(Flags::SOCKET_CLOSED) || flags.contains(Flags::UPGRADED) {
@@ -1482,7 +1492,7 @@ impl NodeHTTPResponse {
         } else {
             armed
         };
-        self.on_data_or_aborted(&[], false, AbortEvent::ReadParsed, this_value);
+        self.on_data_or_aborted(&[], false, AbortEvent::ReadParsed, this_value, turn);
     }
 
     pub(crate) fn notify_when_read_parsed(&self) -> bool {
@@ -1500,8 +1510,8 @@ impl NodeHTTPResponse {
     }
 
     #[uws::uws_callback(export = "Bun__NodeHTTPResponse_setClosed", no_catch)]
-    pub(crate) fn set_closed(&self) {
-        self.mark_socket_closed();
+    pub(crate) fn set_closed(&self, live: VmLive<'_>) {
+        self.mark_socket_closed(live);
     }
 
     /// The server socket makes this queued response the connection's current response.
@@ -1555,11 +1565,11 @@ impl NodeHTTPResponse {
             f.remove(Flags::CURRENT);
             f.insert(Flags::SOCKET_CLOSED);
         });
-        self.leave_pending(BodyReadState::Aborted);
+        self.leave_pending(BodyReadState::Aborted, global_object.live());
         if flags.contains(Flags::ENDED) {
-            self.on_request_complete();
+            self.on_request_complete(global_object.turn());
         } else {
-            self.mark_request_as_done_if_necessary();
+            self.mark_request_as_done_if_necessary(global_object.turn());
         }
     }
 
@@ -1577,9 +1587,9 @@ impl NodeHTTPResponse {
         self.spill_pending_pinned_write(self.server.global_this());
     }
 
-    fn on_timeout(&self, _resp: uws::AnyResponse) {
+    fn on_timeout(&self, _resp: uws::AnyResponse, turn: JsTurn<'_>) {
         scoped_log!(NodeHTTPResponse, "onTimeout");
-        self.handle_abort_or_timeout::<{ AbortEvent::Timeout }>(JSValue::ZERO);
+        self.handle_abort_or_timeout::<{ AbortEvent::Timeout }>(JSValue::ZERO, turn);
     }
 
     pub(crate) fn pause(&self) -> bool {
@@ -1609,15 +1619,15 @@ impl NodeHTTPResponse {
             && !flags.contains(Flags::UPGRADED)
     }
 
-    pub(crate) fn on_request_complete(&self) {
+    pub(crate) fn on_request_complete(&self, turn: JsTurn<'_>) {
         if self.flags.get().contains(Flags::REQUEST_HAS_COMPLETED) {
             return;
         }
         scoped_log!(NodeHTTPResponse, "onRequestComplete");
         self.update_flags(|f| f.insert(Flags::REQUEST_HAS_COMPLETED));
-        self.poll_ref.unref(VirtualMachine::get());
+        self.poll_ref.unref(VirtualMachine::get(turn.live));
 
-        self.mark_request_as_done_if_necessary();
+        self.mark_request_as_done_if_necessary(turn);
     }
 }
 
@@ -1629,7 +1639,7 @@ pub(crate) fn on_resolve(
     scoped_log!(NodeHTTPResponse, "onResolve");
     let global_object = cx.global();
     let _dispatch_ref = this.take_dispatch_ref();
-    this.maybe_stop_reading_body(wrapper.to_js());
+    this.maybe_stop_reading_body(wrapper.to_js(), global_object.turn());
 
     let flags = this.flags.get();
     if !flags.contains(Flags::REQUEST_HAS_COMPLETED) && !this.is_socket_closed_or_closing() {
@@ -1640,7 +1650,7 @@ pub(crate) fn on_resolve(
         // Put any held zero-copy tail on the wire before terminating so the
         // chunked stream stays well-formed.
         this.spill_pending_pinned_write(global_object);
-        this.leave_pending(BodyReadState::Detached);
+        this.leave_pending(BodyReadState::Detached, global_object.live());
         if let Some(raw_response) = this.writer() {
             raw_response.clear_on_writable();
             raw_response.clear_timeout();
@@ -1648,7 +1658,7 @@ pub(crate) fn on_resolve(
                 raw_response.end_without_body(raw_response.state().is_http_connection_close());
             }
         }
-        this.on_request_complete();
+        this.on_request_complete(global_object.turn());
     }
 }
 
@@ -1659,7 +1669,7 @@ pub(crate) fn on_reject(
 ) {
     let global_object = cx.global();
     let _dispatch_ref = this.take_dispatch_ref();
-    this.maybe_stop_reading_body(wrapper.to_js());
+    this.maybe_stop_reading_body(wrapper.to_js(), global_object.turn());
 
     let flags = this.flags.get();
     if !flags.contains(Flags::REQUEST_HAS_COMPLETED)
@@ -1673,7 +1683,7 @@ pub(crate) fn on_reject(
         // Put any held zero-copy tail on the wire before the terminating chunk
         // so the client's chunked decoder stays in sync.
         this.spill_pending_pinned_write(global_object);
-        this.leave_pending(BodyReadState::Detached);
+        this.leave_pending(BodyReadState::Detached, global_object.live());
         if let Some(raw_response) = this.writer() {
             raw_response.clear_on_writable();
             raw_response.clear_timeout();
@@ -1683,10 +1693,14 @@ pub(crate) fn on_reject(
             raw_response.end_stream(raw_response.state().is_http_connection_close());
         }
 
-        this.on_request_complete();
+        this.on_request_complete(global_object.turn());
     }
 
-    let _ = VirtualMachine::get().uncaught_exception(global_object, err.to_js(), true);
+    let _ = VirtualMachine::get(global_object.live()).uncaught_exception(
+        global_object,
+        err.to_js(),
+        true,
+    );
 }
 
 impl NodeHTTPResponse {
@@ -1719,7 +1733,7 @@ impl NodeHTTPResponse {
         // SOCKET_CLOSED is set).
         self.clear_pending_pinned_write(global_object, JSValue::ZERO);
         self.release_body_slot();
-        self.mark_socket_closed();
+        self.mark_socket_closed(global_object.live());
         if let Some(raw_response) = self.writer() {
             let state = raw_response.state();
             if state.is_http_end_called() {
@@ -1731,7 +1745,7 @@ impl NodeHTTPResponse {
             raw_response.clear_timeout();
             raw_response.end_without_body(true);
         }
-        self.on_request_complete();
+        self.on_request_complete(global_object.turn());
     }
 
     fn get_bytes(&self, global_this: &JSGlobalObject, chunk: &[u8]) -> JSValue {
@@ -1743,13 +1757,24 @@ impl NodeHTTPResponse {
             Ok(b) => b,
             Err(err) => {
                 let exc = global_this.take_exception(err);
-                let _ = VirtualMachine::get().uncaught_exception(global_this, exc, false);
+                let _ = VirtualMachine::get(global_this.live()).uncaught_exception(
+                    global_this,
+                    exc,
+                    false,
+                );
                 JSValue::UNDEFINED
             }
         }
     }
 
-    fn on_data_or_aborted(&self, chunk: &[u8], last: bool, event: AbortEvent, this_value: JSValue) {
+    fn on_data_or_aborted(
+        &self,
+        chunk: &[u8],
+        last: bool,
+        event: AbortEvent,
+        this_value: JSValue,
+        turn: JsTurn<'_>,
+    ) {
         scoped_log!(
             NodeHTTPResponse,
             "onDataOrAborted({}, {})",
@@ -1765,8 +1790,8 @@ impl NodeHTTPResponse {
 
         if let Some(callback) = js::on_data_get_cached(this_value) {
             if callback.is_cell() {
-                let vm = VirtualMachine::get();
-                let global_this = vm.global();
+                let vm = VirtualMachine::get(turn.live);
+                let global_this = vm.global(turn);
                 let event_loop = vm.event_loop();
 
                 let bytes = self.get_bytes(global_this, chunk);
@@ -1787,14 +1812,14 @@ impl NodeHTTPResponse {
 
         // The callback can run 'end' -> autoDestroy -> `ondata = undefined`, which drops the ref first.
         if last {
-            if self.body_read_ref.has.get() {
-                self.body_read_ref.unref(VirtualMachine::get());
+            if self.body_read_ref.has() {
+                self.body_read_ref.unref(VirtualMachine::get(turn.live));
             }
-            self.mark_request_as_done_if_necessary();
+            self.mark_request_as_done_if_necessary(turn);
         }
     }
 
-    fn on_data(&self, chunk: &[u8], last: bool) {
+    fn on_data(&self, chunk: &[u8], last: bool, turn: JsTurn<'_>) {
         scoped_log!(
             NodeHTTPResponse,
             "onData({} bytes, is_last = {})",
@@ -1816,7 +1841,7 @@ impl NodeHTTPResponse {
                 armed
             }
         };
-        self.on_data_or_aborted(chunk, last, AbortEvent::None, this_value);
+        self.on_data_or_aborted(chunk, last, AbortEvent::None, this_value, turn);
     }
 
     /// Release the pin + GC root + byte owner taken by a zero-copy write.
@@ -1890,7 +1915,7 @@ impl NodeHTTPResponse {
         false
     }
 
-    fn on_drain_corked(&self, offset: u64) {
+    fn on_drain_corked(&self, offset: u64, turn: JsTurn<'_>) {
         scoped_log!(NodeHTTPResponse, "onDrainCorked({})", offset);
         let _guard = self.ref_guard();
 
@@ -1904,8 +1929,8 @@ impl NodeHTTPResponse {
         if !on_writable.is_cell() {
             return;
         }
-        let vm = VirtualMachine::get();
-        let global_this = vm.global();
+        let vm = VirtualMachine::get(turn.live);
+        let global_this = vm.global(turn);
         js::on_writable_set_cached(this_value, global_this, JSValue::ZERO);
 
         vm.event_loop().run_callback(
@@ -1917,7 +1942,7 @@ impl NodeHTTPResponse {
         );
     }
 
-    fn on_drain(&self, offset: u64, response: uws::AnyResponse) -> bool {
+    fn on_drain(&self, offset: u64, response: uws::AnyResponse, turn: JsTurn<'_>) -> bool {
         scoped_log!(NodeHTTPResponse, "onDrain({})", offset);
 
         let flags = self.flags.get();
@@ -1939,8 +1964,8 @@ impl NodeHTTPResponse {
             // Armed by end(): the bytes it left buffered are out, so the response has finished.
             let _guard = self.ref_guard();
             response.clear_on_writable();
-            self.on_request_complete();
-            self.on_drain_corked(offset);
+            self.on_request_complete(turn);
+            self.on_drain_corked(offset, turn);
             return true;
         }
 
@@ -1963,7 +1988,8 @@ impl NodeHTTPResponse {
         // Drained: disarm so onEnd's `onWritable != nullptr` probe does not see
         // a stale shim (callOnWritable would restore it); writes re-arm.
         response.clear_on_writable();
-        response.corked(|| self.on_drain_corked(offset));
+        let offset = &offset;
+        response.corked(move || self.on_drain_corked(*offset, turn));
         // return true means we may have something to drain
         true
     }
@@ -2156,7 +2182,7 @@ impl NodeHTTPResponse {
                     return Ok(JSValue::js_number(-(bytes.len() as f64) - 1.0));
                 }
             }
-            self.on_request_complete();
+            self.on_request_complete(global_object.turn());
 
             Ok(JSValue::js_number_from_uint64(bytes.len() as u64))
         } else {
@@ -2338,13 +2364,16 @@ impl NodeHTTPResponse {
                 js::on_data_set_cached(this_value, global_object, JSValue::UNDEFINED);
             }
             let flags = self.flags.get();
-            self.leave_pending(if flags.contains(Flags::SOCKET_CLOSED) {
-                BodyReadState::Aborted
-            } else if flags.contains(Flags::UPGRADED) {
-                BodyReadState::Upgraded
-            } else {
-                BodyReadState::Detached
-            });
+            self.leave_pending(
+                if flags.contains(Flags::SOCKET_CLOSED) {
+                    BodyReadState::Aborted
+                } else if flags.contains(Flags::UPGRADED) {
+                    BodyReadState::Upgraded
+                } else {
+                    BodyReadState::Detached
+                },
+                global_object.live(),
+            );
         }
     }
 
@@ -2366,8 +2395,8 @@ impl NodeHTTPResponse {
         {
             js::on_data_set_cached(this_value, global_object, JSValue::UNDEFINED);
             self.armed_this_value.set(JSValue::ZERO);
-            if self.leave_pending(BodyReadState::Detached) {
-                self.mark_request_as_done_if_necessary();
+            if self.leave_pending(BodyReadState::Detached, global_object.live()) {
+                self.mark_request_as_done_if_necessary(global_object.turn());
             }
             return;
         }
@@ -2383,7 +2412,7 @@ impl NodeHTTPResponse {
         }
 
         // `body_read_ref` is still held from create(): every unref also leaves `.pending`.
-        debug_assert!(self.body_read_ref.has.get());
+        debug_assert!(self.body_read_ref.has());
     }
 
     pub(crate) fn write(
@@ -2415,39 +2444,39 @@ impl NodeHTTPResponse {
         false
     }
 
-    fn register_auto_flush(&self) {
+    fn register_auto_flush(&self, live: VmLive<'_>) {
         if self.auto_flush_ref.get().is_some() {
             return;
         }
         self.auto_flush_ref.set(Some(self.ref_guard()));
         let ctx = ptr::NonNull::new(self.as_ctx_ptr().cast::<c_void>());
-        let found_existing = VirtualMachine::get()
+        let found_existing = VirtualMachine::get(live)
             .event_loop()
             .deferred_tasks
             .post_task(ctx, on_auto_flush_trampoline);
         debug_assert!(!found_existing);
     }
 
-    fn unregister_auto_flush(&self) {
+    fn unregister_auto_flush(&self, live: VmLive<'_>) {
         let Some(_auto_flush_ref) = self.auto_flush_ref.take() else {
             return;
         };
         let ctx = ptr::NonNull::new(self.as_ctx_ptr().cast::<c_void>());
-        let removed = VirtualMachine::get()
+        let removed = VirtualMachine::get(live)
             .event_loop()
             .deferred_tasks
             .unregister_task(ctx);
         debug_assert!(removed);
     }
 
-    pub(crate) fn flush_headers(&self) {
+    pub(crate) fn flush_headers(&self, live: VmLive<'_>) {
         let flags = self.flags.get();
         if !flags.contains(Flags::UPGRADED) && !self.is_socket_closed_or_closing() {
             if let Some(raw_response) = self.writer() {
                 // Don't flush immediately; queue a microtask to uncork the socket.
                 raw_response.flush_headers(false);
                 if raw_response.is_corked() {
-                    self.register_auto_flush();
+                    self.register_auto_flush(live);
                 }
             }
         }
@@ -2625,8 +2654,8 @@ impl Served for RefPtr<NodeHTTPResponse> {
 
 impl Drop for NodeHTTPResponse {
     fn drop(&mut self) {
-        debug_assert!(!self.body_read_ref.has.get());
-        debug_assert!(!self.poll_ref.has.get());
+        debug_assert!(!self.body_read_ref.has());
+        debug_assert!(!self.poll_ref.has());
         debug_assert!(!self.pending_pinned_write.get().is_some());
         let flags = self.flags.get();
         debug_assert!(
@@ -2674,7 +2703,7 @@ pub(crate) unsafe extern "C" fn NodeHTTPResponse__createForJS(
     // S008: `uws::Request` is an `opaque_ffi!` ZST — safe deref.
     let request_ref = bun_opaque::opaque_deref(request.cast_const());
 
-    let vm = VirtualMachine::get();
+    let vm = VirtualMachine::get(global_object.live());
     let method = HttpMethod::which(request_ref.method()).unwrap_or(HttpMethod::OPTIONS);
     // Like llhttp, the framing decides, not the method. CONNECT has no body: the parser tunnels every byte after its head.
     if method != HttpMethod::CONNECT {
@@ -2713,8 +2742,8 @@ pub(crate) unsafe extern "C" fn NodeHTTPResponse__createForJS(
         } else {
             Flags::empty()
         }),
-        poll_ref: jsc::Ref::default(),
-        body_read_ref: jsc::Ref::default(),
+        poll_ref: jsc::Ref::new(vm.live().has_vm),
+        body_read_ref: jsc::Ref::new(vm.live().has_vm),
         pending_ref: JsCell::new(None),
         promise: JsCell::new(None),
         request_trailers: JsCell::new(Vec::new()),

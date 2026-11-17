@@ -4,6 +4,7 @@
 use core::cell::Cell;
 use core::mem::size_of;
 
+use bun_core::JsTurn;
 use bun_http::headers::api::StringPointer;
 use bun_http::headers::append_etag;
 use bun_http::{Headers, Method};
@@ -202,7 +203,7 @@ impl StaticRoute {
                                     .throw_todo(b"TODO: support Bun.file(path) in static routes"));
                             }
                         }
-                        let blob = body_value.use_();
+                        let blob = body_value.use_(global_this.turn());
                         blob.global_this
                             .set(std::ptr::from_ref::<JSGlobalObject>(global_this));
                         debug_assert!(
@@ -251,10 +252,15 @@ impl StaticRoute {
     }
 
     // HEAD requests have no body.
-    pub(crate) fn on_head_request(this: ThisPtr<Self>, mut req: AnyRequest, resp: AnyResponse) {
+    pub(crate) fn on_head_request(
+        this: ThisPtr<Self>,
+        mut req: AnyRequest,
+        resp: AnyResponse,
+        turn: JsTurn<'_>,
+    ) {
         // Evaluate conditional request preconditions for HEAD with 200 status
         if this.status_code == 200 {
-            if Self::render_precondition(this, &mut req, resp) {
+            if Self::render_precondition(this, &mut req, resp, turn) {
                 return;
             }
         }
@@ -288,12 +294,17 @@ impl StaticRoute {
         resp.end_without_body(resp.should_close_connection());
     }
 
-    pub(crate) fn on_request(this: ThisPtr<Self>, req: AnyRequest, resp: AnyResponse) {
+    pub(crate) fn on_request(
+        this: ThisPtr<Self>,
+        req: AnyRequest,
+        resp: AnyResponse,
+        turn: JsTurn<'_>,
+    ) {
         let method = Method::find(req.method()).unwrap_or(Method::GET);
         if method == Method::GET {
-            Self::on_get(this, req, resp);
+            Self::on_get(this, req, resp, turn);
         } else if method == Method::HEAD {
-            Self::on_head_request(this, req, resp);
+            Self::on_head_request(this, req, resp, turn);
         } else {
             // For other methods, use the original behavior
             let mut req = req;
@@ -302,10 +313,15 @@ impl StaticRoute {
         }
     }
 
-    pub(crate) fn on_get(this: ThisPtr<Self>, mut req: AnyRequest, resp: AnyResponse) {
+    pub(crate) fn on_get(
+        this: ThisPtr<Self>,
+        mut req: AnyRequest,
+        resp: AnyResponse,
+        turn: JsTurn<'_>,
+    ) {
         // Evaluate conditional request preconditions for GET with 200 status
         if this.status_code == 200 {
-            if Self::render_precondition(this, &mut req, resp) {
+            if Self::render_precondition(this, &mut req, resp, turn) {
                 return;
             }
         }
@@ -333,7 +349,7 @@ impl StaticRoute {
         resp.on_writable_this(Self::on_writable, this);
     }
 
-    fn on_aborted(this: ThisPtr<Self>, resp: AnyResponse) {
+    fn on_aborted(this: ThisPtr<Self>, resp: AnyResponse, _turn: JsTurn<'_>) {
         Self::on_response_complete(this, resp);
     }
 
@@ -399,7 +415,12 @@ impl StaticRoute {
         self.render_bytes(resp, did_finish);
     }
 
-    fn on_writable(this: ThisPtr<Self>, write_offset: u64, resp: AnyResponse) -> bool {
+    fn on_writable(
+        this: ThisPtr<Self>,
+        write_offset: u64,
+        resp: AnyResponse,
+        _turn: JsTurn<'_>,
+    ) -> bool {
         if let Some(server) = this.server.get() {
             resp.timeout(server.config().idle_timeout);
         }
@@ -485,14 +506,19 @@ impl StaticRoute {
 
     /// RFC 9110 §13.2.2 precondition evaluation. Writes a 412 or 304 response
     /// and returns `true` when a precondition short-circuits the request.
-    fn render_precondition(this: ThisPtr<Self>, req: &mut AnyRequest, resp: AnyResponse) -> bool {
+    fn render_precondition(
+        this: ThisPtr<Self>,
+        req: &mut AnyRequest,
+        resp: AnyResponse,
+        turn: JsTurn<'_>,
+    ) -> bool {
         let etag = this.headers.get(b"etag").filter(|v| !v.is_empty());
         // Deferred: `parse_http_date` allocates + calls into WTF; only run it
         // when the client actually sent a date-based conditional header.
-        let last_modified = || {
+        let last_modified = |turn: JsTurn<'_>| {
             this.headers
                 .get(b"last-modified")
-                .and_then(crate::jsc_hooks::parse_http_date)
+                .and_then(move |it| crate::jsc_hooks::parse_http_date(it, turn))
         };
 
         // Step 1: If-Match (strong comparison); step 2: If-Unmodified-Since
@@ -502,9 +528,9 @@ impl StaticRoute {
                 !ETag::if_match(etag, im)
             } else if let Some(ius) = req
                 .header(b"if-unmodified-since")
-                .and_then(crate::jsc_hooks::parse_http_date)
+                .and_then(move |it| crate::jsc_hooks::parse_http_date(it, turn))
             {
-                matches!(last_modified(), Some(lm) if lm / 1000 > ius / 1000)
+                matches!(last_modified(turn), Some(lm) if lm / 1000 > ius / 1000)
             } else {
                 false
             };
@@ -521,11 +547,11 @@ impl StaticRoute {
         // Step 4: If-Modified-Since (only when If-None-Match is absent).
         } else if let Some(ims) = req
             .header(b"if-modified-since")
-            .and_then(crate::jsc_hooks::parse_http_date)
+            .and_then(move |it| crate::jsc_hooks::parse_http_date(it, turn))
         {
             // §13.1.3: 304 when Last-Modified <= If-Modified-Since. HTTP-date
             // is second-granular, so compare at second precision.
-            match last_modified() {
+            match last_modified(turn) {
                 Some(lm) => lm / 1000 <= ims / 1000,
                 None => false,
             }

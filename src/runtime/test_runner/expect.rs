@@ -591,7 +591,7 @@ impl Expect {
         let mut reported = FirstReport { value: JSValue::ZERO, is_calling: true, outer: vm.unhandled_rejection_scope() };
         let question = Question { asked: Asked::Call, who: JSValue::UNDEFINED, what: value };
         let return_value_from_function = Pass::once(global_this, question, &mut || {
-            let _earlier = EarlierRejections::hold(vm.global());
+            let _earlier = EarlierRejections::hold(vm.global(global_this.turn()));
 
             reported.outer = vm.unhandled_rejection_scope();
             vm.on_unhandled_rejection_ctx.set(Some((&raw mut reported).cast()));
@@ -602,7 +602,7 @@ impl Expect {
             };
 
             reported.is_calling = false;
-            let _ = vm.global().handle_rejected_promises();
+            let _ = vm.global(global_this.turn()).handle_rejected_promises();
             reported.outer.apply(vm);
             Ok(returned)
         })?;
@@ -793,7 +793,7 @@ impl Expect {
         let value = Self::value_to_snapshot(global_this, received, format)?;
         let (shown, same_as_older_bun) = Self::match_and_fmt_snapshot(m, value, property_matchers, &mut pretty_value, format)?;
         if this.bun_test().is_some() {
-            match runner.with_snapshots(|snapshots| snapshots.format_of(this).and_then(|format| snapshots.add_count(this, format, b""))) {
+            match runner.with_snapshots(|snapshots| snapshots.format_of(this, global_this.live()).and_then(|format| snapshots.add_count(this, format, b""))) {
                 Ok(_) => {}
                 Err(crate::Error::NoTest | crate::Error::SnapshotInConcurrentGroup | crate::Error::TestNotActive) => {}
                 // Inline snapshots don't need the snapshot file, so leave these errors to a matcher that does.
@@ -945,14 +945,14 @@ impl Expect {
         let (this, global_this) = (m.call.expect, m.global);
         let Some(runner) = Jest::runner() else { return fail_outside_of_a_test(m, true) };
         let mut pretty_value: Vec<u8> = Vec::new();
-        let format = match runner.with_snapshots(|snapshots| snapshots.format_of(this)) {
+        let format = match runner.with_snapshots(|snapshots| snapshots.format_of(this, global_this.live())) {
             Ok(format) => format,
             Err(err) => return Err(this.throw_snapshot_error(global_this, &err, &pretty_value)),
         };
         let value = Self::value_to_snapshot(global_this, received, format)?;
         let (shown, same_as_older_bun) = Self::match_and_fmt_snapshot(m, value, property_matchers, &mut pretty_value, format)?;
 
-        match runner.with_snapshots(|snapshots| snapshots.match_or_write(this, &pretty_value, hint)) {
+        match runner.with_snapshots(|snapshots| snapshots.match_or_write(this, &pretty_value, hint, global_this.live())) {
             Ok(SnapshotOutcome::Passed | SnapshotOutcome::Written) => m.pass(),
             Ok(SnapshotOutcome::Mismatch { saved }) => {
                 if runner.with_snapshots(|snapshots| snapshots.may_hold_entries_of_bun())
@@ -1276,7 +1276,7 @@ impl Expect {
                 js_promise::Status::Pending => unreachable!(),
                 js_promise::Status::Fulfilled => {}
                 js_promise::Status::Rejected => {
-                    bun_test::print_error(VirtualMachine::get(), global_this, result, None);
+                    bun_test::print_error(VirtualMachine::get(global_this.live()), global_this, result, None);
                     return Err(global_this.throw(format_args!(
                         "Matcher `{}` returned a promise that rejected",
                         matcher_name,
@@ -1340,7 +1340,7 @@ impl Expect {
         callee: JsLocal<'_>,
         args: &[JsLocal<'_>],
     ) -> JsResult<JSValue> {
-        let _gc = cx.global().bun_vm().auto_gc_on_drop();
+        let _gc = VirtualMachine::get(cx.live()).auto_gc_on_drop();
         let (this, callee, arguments) = (this_value.to_js(), callee.to_js(), JsLocal::to_js_slice(args));
 
         // try to retrieve the Expect instance
@@ -1883,7 +1883,7 @@ impl ExpectCustomAsymmetricMatcher {
         received: JsLocal<'_>,
     ) -> JsResult<bool> {
         let pass = Pass::barrier();
-        let _entered = pass.enter();
+        let _entered = pass.enter(cx.live());
         self.execute_impl(this_value.to_js(), cx.global(), received.to_js())
     }
 
@@ -2019,7 +2019,7 @@ impl ExpectMatcherContext {
         };
         let _testers = add_equality_testers::EqualityTestersScope::enter(global_this, custom_testers)?;
         let pass = Pass::barrier();
-        let _entered = pass.enter();
+        let _entered = pass.enter(global_this.live());
         if strict_check {
             a.jest_strict_deep_equals(b, global_this)
         } else {

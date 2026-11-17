@@ -3,11 +3,12 @@ use crate::shell::builtin::{Builtin, IoKind};
 use crate::shell::interpreter::{Interpreter, NodeId};
 use crate::shell::yield_::Yield;
 use bun_collections::index_sort;
+use bun_core::LoopTurn;
 
-pub(crate) fn start(interp: &Interpreter, cmd: NodeId) -> Yield {
+pub(crate) fn start(interp: &Interpreter, cmd: NodeId, turn: LoopTurn<'_>) -> Yield {
     let args = Builtin::of(interp, cmd).args();
     if args.is_empty() {
-        return print_all(interp, cmd);
+        return print_all(interp, cmd, turn);
     }
     for s in args {
         if s.is_empty() {
@@ -25,7 +26,7 @@ pub(crate) fn start(interp: &Interpreter, cmd: NodeId) -> Yield {
     Builtin::done(interp, cmd, 0)
 }
 
-fn print_all(interp: &Interpreter, cmd: NodeId) -> Yield {
+fn print_all(interp: &Interpreter, cmd: NodeId, turn: LoopTurn<'_>) -> Yield {
     let mut entries: Vec<(&EnvStr, &EnvStr)> =
         Builtin::shell(interp, cmd).export_env.iter().collect();
     index_sort::sort_slice_by(&mut entries, |a, b| a.0.slice().cmp(b.0.slice()));
@@ -37,5 +38,5 @@ fn print_all(interp: &Interpreter, cmd: NodeId) -> Yield {
         buf.extend_from_slice(v.slice());
         buf.push(b'\n');
     }
-    Builtin::finish(interp, cmd, IoKind::Stdout, &buf, 0)
+    Builtin::finish(interp, cmd, IoKind::Stdout, &buf, 0, turn)
 }

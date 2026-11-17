@@ -27,8 +27,8 @@ export const MatchedRoute = b.class({
     pathname: text,
     query: queryObject,
     /** `src`, for old versions of bun-framework-next. */
-    scriptSrc: text,
-    src: { ...text, cache: "scriptSrc" },
+    scriptSrc: { ...text, passVm: true },
+    src: { ...text, cache: "scriptSrc", passVm: true },
   },
 });
 

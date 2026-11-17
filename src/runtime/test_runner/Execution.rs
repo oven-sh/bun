@@ -37,7 +37,7 @@
 
 use core::cell::{Cell, OnceCell};
 
-use bun_core::{Timespec, TimespecMockMode};
+use bun_core::{JsTurn, Timespec, TimespecMockMode};
 use bun_jsc::{JSGlobalObject, JSValue, JsResult, Strong, StrongCell};
 // `bun_jsc::VirtualMachine` is the *module* re-export; the struct lives one level deeper.
 use bun_jsc::virtual_machine::VirtualMachine;
@@ -283,14 +283,14 @@ impl ExecutionSequence {
         }
     }
 
-    pub(crate) fn defer(&self, buntest: &BunTest, when: Deferred, callback: JSValue, timeout: u32) {
+    pub(crate) fn defer(&self, buntest: &BunTest, when: Deferred, callback: JSValue, timeout: u32, turn: JsTurn<'_>) {
         let cfg = ExecutionEntryCfg {
             timeout,
             calling: Calling::Vitest { context: matches!(when, Deferred::OnTestFinished | Deferred::OnTestFailed) },
             around: (when == Deferred::Around).then_some((Around::Each, AroundPhase::TearDown)),
             ..Default::default()
         };
-        let entry = buntest.create_sequence_entry(Some(callback), cfg, AddedInPhase::Execution);
+        let entry = buntest.create_sequence_entry(Some(callback), cfg, AddedInPhase::Execution, turn);
         self.deferred.with_taken(|deferred| deferred.push((when, entry)));
     }
 
@@ -529,7 +529,7 @@ impl Execution {
                 if sequence.waits_for_matchers() {
                     return Ok(StepResult::Waiting { timeout: Timespec::EPOCH });
                 }
-                Execution::advance_sequence(buntest, sequence, group);
+                Execution::advance_sequence(buntest, sequence, group, global_this.turn());
 
                 let sequence_result =
                     step_sequence(buntest, global_this, group, sequence_index, &mut now)?;
@@ -609,7 +609,7 @@ impl Execution {
     }
 
     #[optimize(size)]
-    fn advance_sequence(buntest: &BunTest, sequence: &ExecutionSequence, group: &ConcurrentGroup) {
+    fn advance_sequence(buntest: &BunTest, sequence: &ExecutionSequence, group: &ConcurrentGroup, turn: JsTurn<'_>) {
         let _g = group_begin!();
 
         debug_assert!(sequence.executing.get());
@@ -621,7 +621,7 @@ impl Execution {
             let sequence_entry = buntest.sequence_entry(active_entry);
             let entry = buntest.entry(sequence_entry.entry);
             if entry.added_in_phase == AddedInPhase::Preload {
-                bun_jsc::compiled_program::did_run_preloads(VirtualMachine::get().global());
+                bun_jsc::compiled_program::did_run_preloads(VirtualMachine::get(turn.live).global(turn));
             }
 
             sequence.executing.set(false);
@@ -674,7 +674,7 @@ impl Execution {
             }
 
             // Only report the final result after all retries/repeats are done
-            Execution::on_sequence_completed(buntest, sequence);
+            Execution::on_sequence_completed(buntest, sequence, turn);
             sequence.context.clear();
 
             // No more retries or repeats; mark sequence as complete
@@ -716,7 +716,7 @@ impl Execution {
             super::vi_utils::before_each_attempt(global_this, entry.calling.is_vitest());
 
             if entry.base.test_id_for_debugger.get() != 0 {
-                if let Some(debugger) = VirtualMachine::get().debugger.get() {
+                if let Some(debugger) = VirtualMachine::get(global_this.live()).debugger.get() {
                     if debugger.test_reporter_agent.is_enabled() {
                         debugger
                             .test_reporter_agent
@@ -742,7 +742,7 @@ impl Execution {
         }
     }
 
-    fn on_sequence_completed(buntest: &BunTest, sequence: &ExecutionSequence) {
+    fn on_sequence_completed(buntest: &BunTest, sequence: &ExecutionSequence, turn: JsTurn<'_>) {
         let elapsed_ns: u64 = if sequence.started_at.get().eql(&Timespec::EPOCH) {
             0
         } else {
@@ -761,13 +761,14 @@ impl Execution {
                     sequence,
                     buntest.entry_of(sequence.test_entry.unwrap_or(first_entry)),
                     elapsed_ns,
+                    turn,
                 );
             }
         }
 
         if let Some(entry) = sequence.test(buntest) {
             if entry.base.test_id_for_debugger.get() != 0 {
-                if let Some(debugger) = VirtualMachine::get().debugger.get() {
+                if let Some(debugger) = VirtualMachine::get(turn.live).debugger.get() {
                     if debugger.test_reporter_agent.is_enabled() {
                         use bun_jsc::Debugger::TestStatus as S;
                         debugger.test_reporter_agent.report_test_end(
@@ -1109,7 +1110,7 @@ fn step_sequence_one(
                 buntest.entry_of(active_entry),
                 &RefDataValue::Execution { group_index, entry_data: Some(entry_data) },
             )?;
-            Execution::advance_sequence(buntest, sequence, group);
+            Execution::advance_sequence(buntest, sequence, group, global_this.turn());
             return Ok(None); // run again
         }
         group_log::log(format_args!("runOne: can't advance; already executing"));
@@ -1192,7 +1193,7 @@ fn step_sequence_one(
             match TestFixtures::next(fixtures, global_this, into, buntest.scopes_from(fixtures_scope), parameter, next_item.timeout) {
                 Ok(NextFixture::Ready) => {}
                 Ok(NextFixture::SetUp(set_up)) => {
-                    let set_up = buntest.create_vitest_entry(set_up, next_item.timeout);
+                    let set_up = buntest.create_vitest_entry(set_up, next_item.timeout, global_this.turn());
                     buntest.sequence_entry(set_up).next.set(Some(next_id));
                     buntest.sequence_entry(set_up).failure_skip_past.set(next_entry.failure_skip_past.get());
                     sequence.active_entry.set(Some(set_up));
@@ -1202,7 +1203,7 @@ fn step_sequence_one(
                 Err(err) => {
                     let thrown = global_this.take_exception(err);
                     buntest.on_uncaught_exception(global_this, Some(thrown), false, &callback_data);
-                    Execution::advance_sequence(buntest, sequence, group);
+                    Execution::advance_sequence(buntest, sequence, group, global_this.turn());
                     return Ok(None); // run again
                 }
             }
@@ -1256,7 +1257,7 @@ fn step_sequence_one(
             }
 
             // the result is available immediately; advance the sequence and run again.
-            Execution::advance_sequence(buntest, sequence, group);
+            Execution::advance_sequence(buntest, sequence, group, global_this.turn());
             return Ok(None); // run again
         }
         return Ok(Some(AdvanceSequenceStatus::Execute {
@@ -1273,7 +1274,7 @@ fn step_sequence_one(
                 debug_assert!(sequence.test_entry.is_none());
             }
         }
-        Execution::advance_sequence(buntest, sequence, group);
+        Execution::advance_sequence(buntest, sequence, group, global_this.turn());
         return Ok(None); // run again
     }
 }

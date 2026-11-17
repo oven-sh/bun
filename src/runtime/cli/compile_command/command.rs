@@ -2,6 +2,7 @@ use core::sync::atomic::Ordering;
 
 use bun_aot::engine::has_compiler;
 use bun_core::Global;
+use bun_core::LoopTurn;
 use bun_event_loop::AnyEventLoop;
 use bun_options_types::aot_options::Preload;
 use bun_options_types::bundle_enums::Format;
@@ -27,7 +28,7 @@ impl CompileCommand {
 
     #[cold]
     #[inline(never)]
-    pub(crate) fn exec_command(ctx: Context<'_>) -> Result<(), crate::Error> {
+    pub(crate) fn exec_command(ctx: Context<'_>, turn: LoopTurn<'_>) -> Result<(), crate::Error> {
         configuration::use_installed_executable(ctx);
         if ctx.bundler_options.aot.is_none() || ctx.args.target == Some(api::Target::Browser) {
             configuration::use_default_entry_point(ctx);
@@ -37,7 +38,7 @@ impl CompileCommand {
                 ctx.bundler_options.aot = None;
                 ctx.bundler_options.keeps_entry_points = true;
                 configuration::load_script_as_code(ctx);
-                return BuildCommand::exec(ctx, None);
+                return BuildCommand::exec(ctx, None, turn);
             }
         }
         run(ctx, RequestOrigin::CompileCommand)

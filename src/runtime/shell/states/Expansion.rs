@@ -4,6 +4,8 @@
 //! needs to be evaluated at runtime — this state node walks the atom and
 //! produces zero or more output strings.
 
+use bun_core::LoopTurn;
+
 use crate::shell::ast;
 use crate::shell::interpreter::{
     EventLoopHandle, Interpreter, Node, NodeId, ShellExecEnv, ShellExecEnvKind, StateKind, log,
@@ -110,7 +112,7 @@ impl Expansion {
         }))
     }
 
-    pub(crate) fn start(_interp: &Interpreter, this: NodeId) -> Yield {
+    pub(crate) fn start(_interp: &Interpreter, this: NodeId, _turn: LoopTurn<'_>) -> Yield {
         Yield::Next(this)
     }
 
@@ -118,7 +120,7 @@ impl Expansion {
     /// atom, appending no-IO expansions to `current_out` and yielding to a
     /// child `Script` whenever a `$(...)` is encountered. Re-entered after
     /// `child_done` advances `word_idx`.
-    pub(crate) fn next(interp: &Interpreter, this: NodeId) -> Yield {
+    pub(crate) fn next(interp: &Interpreter, this: NodeId, turn: LoopTurn<'_>) -> Yield {
         loop {
             let event_loop = interp.event_loop;
             let command_ctx = interp.command_ctx;
@@ -206,7 +208,7 @@ impl Expansion {
                 };
                 let script = Script::init(interp, Env::Owned(duped), &sub.script, this, io);
                 interp.as_expansion_mut(this).child_script = Some(script);
-                return Script::start(interp, script);
+                return Script::start(interp, script, turn);
             }
 
             // All sub-atoms expanded — post-process leading tilde then finish.
@@ -255,7 +257,7 @@ impl Expansion {
         } else {
             0
         };
-        interp.child_done(parent, this, exit)
+        interp.child_done(parent, this, exit, turn)
     }
 
     /// Re-tokenize `current_out` (the
@@ -579,6 +581,7 @@ impl Expansion {
         this: NodeId,
         child: NodeId,
         exit_code: ExitCode,
+        turn: LoopTurn<'_>,
     ) -> Yield {
         // Child is a Script (command substitution). Its captured stdout lives
         // in the duped `ShellExecEnv` it owns; read it before deinit.
@@ -592,7 +595,7 @@ impl Expansion {
             }
             interp.deinit_node(child);
             let parent = interp.as_expansion(this).base.parent;
-            return interp.child_done(parent, this, 1);
+            return interp.child_done(parent, this, 1, turn);
         }
         // SAFETY: single trampoline frame; the child script's env (and its
         // parent buffer in the `Borrowed` case) has no other live borrow.

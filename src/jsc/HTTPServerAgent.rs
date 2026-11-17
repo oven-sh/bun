@@ -158,9 +158,13 @@ impl InspectorHTTPServerAgent {
 
 // #region C++ entry points
 
+/// # Safety
+/// The thread of the inspected VM, until its `JSC::VM` is destroyed.
 #[unsafe(no_mangle)]
-pub(crate) extern "C" fn Bun__HTTPServerAgent__setEnabled(agent: *mut InspectorHTTPServerAgent) {
-    if let Some(debugger) = VirtualMachine::get().debugger.get() {
+unsafe extern "C" fn Bun__HTTPServerAgent__setEnabled(agent: *mut InspectorHTTPServerAgent) {
+    // SAFETY: fn contract.
+    let live = unsafe { bun_core::VmLive::assume(&agent) };
+    if let Some(debugger) = VirtualMachine::get(live).debugger.get() {
         debugger.http_server_agent.agent.set(NonNull::new(agent));
     }
 }

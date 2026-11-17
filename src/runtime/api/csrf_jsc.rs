@@ -1,6 +1,7 @@
 //! `Bun.CSRF`: `csrf_jsc.bind.ts`. The pure `generate()`/`verify()` halves stay in `src/csrf/`.
 
 use bun_boringssl_sys as boring;
+use bun_core::VmLive;
 use bun_csrf as csrf;
 use bun_jsc::JSValue;
 use bun_jsc::bindgen::{self, JsHeap, JsScope};
@@ -57,8 +58,8 @@ fn algorithm<'a>(heap: &JsHeap<'a>, name: Option<&[u8]>) -> bindgen::Result<'a, 
     }
 }
 
-fn default_secret<'a>() -> &'a [u8] {
-    VirtualMachine::get().rare_data().default_csrf_secret()
+fn default_secret(live: VmLive<'_>) -> &[u8] {
+    VirtualMachine::get(live).rare_data().default_csrf_secret()
 }
 
 pub(crate) fn generate<'a>(
@@ -81,7 +82,7 @@ pub(crate) fn generate<'a>(
     let mut token_buffer: [u8; 512] = [0u8; 512];
     let token_bytes = match csrf::generate(
         &csrf::GenerateOptions {
-            secret: secret.unwrap_or_else(default_secret),
+            secret: secret.unwrap_or_else(|| default_secret(heap.live())),
             session_id: session_id.unwrap_or_default(),
             expires_in_ms: options.expires_in,
             algorithm,
@@ -127,7 +128,7 @@ pub(crate) fn verify<'a>(
 
     Ok(csrf::verify(&csrf::VerifyOptions {
         token,
-        secret: secret.unwrap_or_else(default_secret),
+        secret: secret.unwrap_or_else(|| default_secret(heap.live())),
         session_id: session_id.unwrap_or_default(),
         max_age_ms: options.max_age,
         encoding: token_format(heap, options.encoding)?,

@@ -5,9 +5,10 @@ use std::rc::Rc;
 use crate::generated_bindgen::socket_config::{
     SocketHandler, SocketHandlerBinaryType, SocketOptions, SocketOptionsTLS,
 };
+use bun_core::JsTurn;
 use bun_core::Utf8Bytes;
 use bun_jsc::array_buffer::BinaryType;
-use bun_jsc::virtual_machine::VirtualMachine;
+use bun_jsc::virtual_machine::{VirtualMachine, VmRef};
 use bun_jsc::{GlobalRef, JSGlobalObject, JSValue, JsResult, Strong};
 use bun_sys::Fd;
 use bun_uws as uws;
@@ -46,7 +47,7 @@ pub(crate) struct Handlers {
 
     pub(crate) binary_type: Cell<BinaryType>,
 
-    pub(crate) vm: &'static VirtualMachine,
+    pub(crate) vm: VmRef,
     pub(crate) global_object: GlobalRef,
     /// The context of the script that gave these handlers: a socket event is dispatched inside it.
     context: bun_jsc::ContextId,
@@ -197,13 +198,14 @@ impl Handlers {
     /// a socket that closes and drops its reference mid-callback cannot free
     /// the `Handlers` the callback is still reading from.
     #[inline]
-    pub(crate) fn enter(self: &Rc<Self>) -> Scope {
+    pub(crate) fn enter<'a>(self: &Rc<Self>, turn: JsTurn<'a>) -> Scope<'a> {
         self.mark_active();
-        let context = self.vm.enter_context(self.context);
-        self.vm.event_loop().enter();
+        let context = self.vm.get(turn.live.thread).enter_context(self.context);
+        self.vm.get(turn.live.thread).event_loop().enter();
         Scope {
             handlers: Rc::clone(self),
             _context: context,
+            turn,
         }
     }
 
@@ -250,7 +252,7 @@ impl Handlers {
         if let Some(listener) = self.listener() {
             if matches!(listener.listener.get(), ListenerType::None) {
                 listener.abort_handle.leave();
-                listener.poll_ref.unref(bun_io::js_vm_ctx());
+                listener.poll_ref.unref();
                 listener.this_value.with_mut(|r| r.downgrade());
                 listener
                     .strong_data
@@ -317,9 +319,7 @@ impl Handlers {
         Ok(Rc::new(Handlers {
             cell: JSSocketHandlers::create(global_object, &wrapped),
             binary_type: Cell::new(binary_type_from_generated(generated.binary_type)),
-            // SAFETY: `bun_vm()` never returns null for a Bun-owned global; the
-            // VM outlives every `Handlers` (process-lifetime singleton).
-            vm: global_object.bun_vm(),
+            vm: VmRef::new(global_object.bun_vm()),
             global_object: GlobalRef::from(global_object),
             context: global_object.bun_vm().context_of_caller().id(),
             active_connections: Cell::new(0),
@@ -416,19 +416,24 @@ impl Handlers {
 
 /// One in-flight dispatch into JS. Holds an `Rc` so the callbacks it is about
 /// to invoke outlive a `close()` from inside them.
-pub(crate) struct Scope {
+pub(crate) struct Scope<'a> {
     pub(crate) handlers: Rc<Handlers>,
-    _context: bun_jsc::virtual_machine::ContextScope<'static>,
+    _context: bun_jsc::virtual_machine::ContextScope<'a>,
+    turn: JsTurn<'a>,
 }
 
-impl Scope {
+impl Scope<'_> {
     /// The event-loop `exit()` half, balancing the `enter()` in
     /// [`Handlers::enter`]. Split from the `active_connections` bookkeeping
     /// because draining microtasks here can synchronously reconnect or
     /// `upgradeTLS` the socket, so the caller must observe the resulting
     /// `handlers` state before deciding whether to decrement.
     pub(crate) fn exit_event_loop(&self) {
-        self.handlers.vm.event_loop().exit();
+        self.handlers
+            .vm
+            .get(self.turn.live.thread)
+            .event_loop()
+            .exit(self.turn);
     }
 
     /// The `active_connections` half: decrements and, on reaching zero,
@@ -482,7 +487,7 @@ impl SocketConfig {
     }
 
     pub(crate) fn from_generated(
-        vm: &'static VirtualMachine,
+        vm: &VirtualMachine,
         global: &JSGlobalObject,
         generated: SocketOptions<'_>,
         mode: SocketMode,
@@ -585,7 +590,7 @@ impl SocketConfig {
     }
 
     pub(crate) fn from_js(
-        vm: &'static VirtualMachine,
+        vm: &VirtualMachine,
         opts: JSValue,
         global_object: &JSGlobalObject,
         mode: SocketMode,

@@ -248,7 +248,7 @@ impl PostgresSQLQuery {
             return;
         };
 
-        let vm = crate::jsc::VirtualMachine::get();
+        let vm = crate::jsc::VirtualMachine::get(global_object.live());
         let Some(function) = vm
             .sql_state()
             .postgresql_context
@@ -335,7 +335,7 @@ impl PostgresSQLQuery {
             return;
         };
 
-        let vm = crate::jsc::VirtualMachine::get();
+        let vm = crate::jsc::VirtualMachine::get(global_object.live());
         let Some(function) = vm
             .sql_state()
             .postgresql_context
@@ -449,6 +449,7 @@ impl PostgresSQLQuery {
         connection: &PostgresSQLConnection,
         query: JsLocal<'_>,
     ) -> JsResult<()> {
+        let live = cx.live();
         let global_object = cx.global();
         let query = query.to_js();
 
@@ -525,20 +526,20 @@ impl PostgresSQLQuery {
         connection.count(self, RequestCounter::Pending);
         self.connection.set(Some(connection.ref_guard()));
         // Request is enqueued: keep the event loop alive until the server responds.
-        connection.poll_ref.ref_(bun_io::js_vm_ctx());
+        connection.poll_ref.ref_(bun_io::js_vm_ctx(live));
         self.this_value.with_mut(|r| r.upgrade(global_object));
         js::target_set_cached(this_value, global_object, query);
 
         connection.advance();
-        connection.flush_data_and_reset_timeout();
+        connection.flush_data_and_reset_timeout(live);
         // advance() can reject this request with nothing sent: no reply releases the ref then.
-        connection.update_poll_ref();
+        connection.update_poll_ref(live);
         Ok(())
     }
 
-    pub fn cancel(&self, _: &mut JsScope<'_>) {
+    pub fn cancel(&self, cx: &mut JsScope<'_>) {
         match self.connection() {
-            Some(connection) => connection.cancel(self),
+            Some(connection) => connection.cancel(self, cx.turn()),
             // `run` has not queued it: it refuses a query that is not `Pending`.
             None if self.status.get() == Status::Pending => self.status.set(Status::Fail),
             None => {}

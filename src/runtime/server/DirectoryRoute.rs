@@ -3,6 +3,7 @@
 use core::cell::Cell;
 use core::mem::size_of;
 
+use bun_core::JsTurn;
 use bun_core::strings;
 use bun_http::Method;
 use bun_io::FileType;
@@ -102,16 +103,28 @@ impl DirectoryRoute {
         this: ThisPtr<DirectoryRoute>,
         req: AnyRequest,
         resp: AnyResponse,
+        turn: JsTurn<'_>,
     ) {
-        Self::on(this, req, resp, Method::HEAD);
+        Self::on(this, req, resp, Method::HEAD, turn);
     }
 
-    pub(crate) fn on_request(this: ThisPtr<DirectoryRoute>, req: AnyRequest, resp: AnyResponse) {
+    pub(crate) fn on_request(
+        this: ThisPtr<DirectoryRoute>,
+        req: AnyRequest,
+        resp: AnyResponse,
+        turn: JsTurn<'_>,
+    ) {
         let method = Method::find(req.method()).unwrap_or(Method::GET);
-        Self::on(this, req, resp, method);
+        Self::on(this, req, resp, method, turn);
     }
 
-    fn on(this: ThisPtr<DirectoryRoute>, mut req: AnyRequest, resp: AnyResponse, method: Method) {
+    fn on(
+        this: ThisPtr<DirectoryRoute>,
+        mut req: AnyRequest,
+        resp: AnyResponse,
+        method: Method,
+        turn: JsTurn<'_>,
+    ) {
         debug_assert!(this.server.get().is_some());
         let route = PendingRequest::new(RefPtr::from_this(this));
         if let Some(server) = this.server.get() {
@@ -161,13 +174,13 @@ impl DirectoryRoute {
         let last_modified_ms = (last_modified_ms > 0).then_some(last_modified_ms);
 
         let range = if method == Method::GET || method == Method::HEAD {
-            RangeRequest::from_request(&req, size, Some(etag), last_modified_ms)
+            RangeRequest::from_request(&req, size, Some(etag), last_modified_ms, turn)
         } else {
             RangeRequest::Result::None
         };
 
         let status_code =
-            status_for_preconditions(&req, method, 200, Some(etag), last_modified_ms, range);
+            status_for_preconditions(&req, method, 200, Some(etag), last_modified_ms, range, turn);
 
         req.set_yield(false);
         write_any_status(resp, status_code);
@@ -236,17 +249,20 @@ impl DirectoryRoute {
         );
 
         let server = this.server.get().unwrap();
-        FileResponseStream::start(FileResponseStreamOptions {
-            fd: file.into(),
-            resp,
-            vm: bun_ptr::BackRef::new(server.vm()),
-            file_type: FileType::File,
-            pollable: false,
-            offset: body_offset,
-            length: Some(body_len),
-            idle_timeout: server.config().idle_timeout,
-            owner: StreamOwner::DirectoryRoute(route),
-        });
+        FileResponseStream::start(
+            FileResponseStreamOptions {
+                fd: file.into(),
+                resp,
+                vm: bun_ptr::BackRef::new(server.vm()),
+                file_type: FileType::File,
+                pollable: false,
+                offset: body_offset,
+                length: Some(body_len),
+                idle_timeout: server.config().idle_timeout,
+                owner: StreamOwner::DirectoryRoute(route),
+            },
+            turn,
+        );
     }
 
     /// Open `rel` under the root. For directories: serve `index.html` when the

@@ -1,5 +1,6 @@
 use std::io::Write as _;
 
+use bun_core::JsTurn;
 use bun_core::ZBox;
 
 use bun_collections::StringHashMap;
@@ -372,10 +373,10 @@ fn serves_head(method: &http_method::Optional) -> bool {
 pub(crate) trait MuxApp {
     fn method_this<U: 'static, H>(&mut self, m: Method, p: &[u8], h: H, this: ThisPtr<U>)
     where
-        H: Fn(ThisPtr<U>, uws::AnyRequest, uws::AnyResponse) + Copy + 'static;
+        H: Fn(ThisPtr<U>, uws::AnyRequest, uws::AnyResponse, JsTurn<'_>) + Copy + 'static;
     fn any_this<U: 'static, H>(&mut self, p: &[u8], h: H, this: ThisPtr<U>)
     where
-        H: Fn(ThisPtr<U>, uws::AnyRequest, uws::AnyResponse) + Copy + 'static;
+        H: Fn(ThisPtr<U>, uws::AnyRequest, uws::AnyResponse, JsTurn<'_>) + Copy + 'static;
 }
 
 macro_rules! impl_mux_app {
@@ -384,14 +385,14 @@ macro_rules! impl_mux_app {
             #[inline]
             fn method_this<U: 'static, H>(&mut self, m: Method, p: &[u8], h: H, this: ThisPtr<U>)
             where
-                H: Fn(ThisPtr<U>, uws::AnyRequest, uws::AnyResponse) + Copy + 'static,
+                H: Fn(ThisPtr<U>, uws::AnyRequest, uws::AnyResponse, JsTurn<'_>) + Copy + 'static,
             {
                 <$app>::method_this(self, m, p, h, this)
             }
             #[inline]
             fn any_this<U: 'static, H>(&mut self, p: &[u8], h: H, this: ThisPtr<U>)
             where
-                H: Fn(ThisPtr<U>, uws::AnyRequest, uws::AnyResponse) + Copy + 'static,
+                H: Fn(ThisPtr<U>, uws::AnyRequest, uws::AnyResponse, JsTurn<'_>) + Copy + 'static,
             {
                 <$app>::any_this(self, p, h, this)
             }
@@ -431,19 +432,39 @@ pub(crate) fn apply_static_route_mux<T: StaticRouteLike, A: MuxApp>(
 /// it is registered.
 pub(crate) trait StaticRouteLike: Sized + 'static {
     fn set_server(&self, server: AnyServer);
-    fn on_request(this: ThisPtr<Self>, req: uws::AnyRequest, resp: uws::AnyResponse);
-    fn on_head_request(this: ThisPtr<Self>, req: uws::AnyRequest, resp: uws::AnyResponse);
+    fn on_request(
+        this: ThisPtr<Self>,
+        req: uws::AnyRequest,
+        resp: uws::AnyResponse,
+        turn: JsTurn<'_>,
+    );
+    fn on_head_request(
+        this: ThisPtr<Self>,
+        req: uws::AnyRequest,
+        resp: uws::AnyResponse,
+        turn: JsTurn<'_>,
+    );
 }
 
 impl StaticRouteLike for super::StaticRoute {
     fn set_server(&self, server: AnyServer) {
         self.server.set(Some(server));
     }
-    fn on_request(this: ThisPtr<Self>, req: uws::AnyRequest, resp: uws::AnyResponse) {
-        Self::on_request(this, req, resp)
+    fn on_request(
+        this: ThisPtr<Self>,
+        req: uws::AnyRequest,
+        resp: uws::AnyResponse,
+        turn: JsTurn<'_>,
+    ) {
+        Self::on_request(this, req, resp, turn)
     }
-    fn on_head_request(this: ThisPtr<Self>, req: uws::AnyRequest, resp: uws::AnyResponse) {
-        Self::on_head_request(this, req, resp)
+    fn on_head_request(
+        this: ThisPtr<Self>,
+        req: uws::AnyRequest,
+        resp: uws::AnyResponse,
+        turn: JsTurn<'_>,
+    ) {
+        Self::on_head_request(this, req, resp, turn)
     }
 }
 
@@ -451,11 +472,21 @@ impl StaticRouteLike for super::FileRoute {
     fn set_server(&self, server: AnyServer) {
         self.set_server(Some(server));
     }
-    fn on_request(this: ThisPtr<Self>, req: uws::AnyRequest, resp: uws::AnyResponse) {
-        Self::on_request(this, req, resp)
+    fn on_request(
+        this: ThisPtr<Self>,
+        req: uws::AnyRequest,
+        resp: uws::AnyResponse,
+        turn: JsTurn<'_>,
+    ) {
+        Self::on_request(this, req, resp, turn)
     }
-    fn on_head_request(this: ThisPtr<Self>, req: uws::AnyRequest, resp: uws::AnyResponse) {
-        Self::on_head_request(this, req, resp)
+    fn on_head_request(
+        this: ThisPtr<Self>,
+        req: uws::AnyRequest,
+        resp: uws::AnyResponse,
+        turn: JsTurn<'_>,
+    ) {
+        Self::on_head_request(this, req, resp, turn)
     }
 }
 
@@ -463,11 +494,21 @@ impl StaticRouteLike for super::DirectoryRoute {
     fn set_server(&self, server: AnyServer) {
         self.set_server(Some(server));
     }
-    fn on_request(this: ThisPtr<Self>, req: uws::AnyRequest, resp: uws::AnyResponse) {
-        Self::on_request(this, req, resp)
+    fn on_request(
+        this: ThisPtr<Self>,
+        req: uws::AnyRequest,
+        resp: uws::AnyResponse,
+        turn: JsTurn<'_>,
+    ) {
+        Self::on_request(this, req, resp, turn)
     }
-    fn on_head_request(this: ThisPtr<Self>, req: uws::AnyRequest, resp: uws::AnyResponse) {
-        Self::on_head_request(this, req, resp)
+    fn on_head_request(
+        this: ThisPtr<Self>,
+        req: uws::AnyRequest,
+        resp: uws::AnyResponse,
+        turn: JsTurn<'_>,
+    ) {
+        Self::on_head_request(this, req, resp, turn)
     }
 }
 
@@ -475,11 +516,21 @@ impl StaticRouteLike for super::html_bundle::Route {
     fn set_server(&self, server: AnyServer) {
         self.server.set(Some(server));
     }
-    fn on_request(this: ThisPtr<Self>, req: uws::AnyRequest, resp: uws::AnyResponse) {
-        Self::on_request(this, req, resp)
+    fn on_request(
+        this: ThisPtr<Self>,
+        req: uws::AnyRequest,
+        resp: uws::AnyResponse,
+        turn: JsTurn<'_>,
+    ) {
+        Self::on_request(this, req, resp, turn)
     }
-    fn on_head_request(this: ThisPtr<Self>, req: uws::AnyRequest, resp: uws::AnyResponse) {
-        Self::on_head_request(this, req, resp)
+    fn on_head_request(
+        this: ThisPtr<Self>,
+        req: uws::AnyRequest,
+        resp: uws::AnyResponse,
+        turn: JsTurn<'_>,
+    ) {
+        Self::on_head_request(this, req, resp, turn)
     }
 }
 

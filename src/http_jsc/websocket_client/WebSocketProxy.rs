@@ -1,3 +1,4 @@
+use bun_core::JsTurn;
 use bun_ptr::{RefPtr, ThisPtr};
 
 use super::WebSocketProxyTunnel;
@@ -67,7 +68,8 @@ impl Drop for WebSocketProxy {
     fn drop(&mut self) {
         // target_host / websocket_request_buf: Box<[u8]> drops automatically.
         if let Some(tunnel) = self.tunnel.take() {
-            WebSocketProxyTunnel::shutdown(&tunnel);
+            // SAFETY: only `HTTPClient::clear_data`, which holds a turn, drops a proxy that has a tunnel.
+            WebSocketProxyTunnel::shutdown(&tunnel, unsafe { JsTurn::assume(self) });
         }
     }
 }

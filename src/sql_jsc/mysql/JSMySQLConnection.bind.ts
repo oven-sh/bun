@@ -11,7 +11,7 @@ export const MySQLConnection = b.class({
   proto: {
     close: { capability: "js" },
     flush: {},
-    hold: {},
+    hold: { passVm: true },
     inTransaction: { getter: b.bool },
     unhold: { capability: "js" },
   },

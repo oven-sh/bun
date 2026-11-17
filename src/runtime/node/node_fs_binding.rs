@@ -1,6 +1,7 @@
+use bun_core::JsTurn;
 use bun_jsc::bindgen::{JsLocal, JsPayload as _, JsScope, JsWrapper};
 use bun_jsc::call_frame::ArgumentsSlice;
-use bun_jsc::virtual_machine::VirtualMachine;
+use bun_jsc::virtual_machine::{VirtualMachine, VmRef};
 use bun_jsc::{JSGlobalObject, JSPromise, JSValue, JsCell, JsResult, SysErrorJsc as _};
 use bun_sys::Maybe;
 use bun_sys_jsc::SystemErrorJsc as _;
@@ -8,7 +9,7 @@ use bun_sys_jsc::SystemErrorJsc as _;
 use crate::generated_bindgen::node_fs_binding::RmOptions;
 use crate::node::ThreadIsolated;
 use crate::node::fs::{
-    self, AsyncCpTask, AsyncReaddirRecursiveTask, Flavor, FsArgument, FsReturn, NodeFS,
+    self, AsyncCpTask, AsyncReaddirRecursiveTask, Flavor, FsArgument, FsReturn, JsFlavor, NodeFS,
     NodeFSDispatch, NodeFSFunctionEnum, Op, args, async_, move_waiting_descriptors, ret,
 };
 
@@ -23,14 +24,14 @@ use crate::node::fs::{
 fn run_sync_with<R: FsReturn, A: FsArgument>(
     cx: &mut JsScope<'_>,
     args: &[JsLocal<'_>],
-    dispatch: impl FnOnce(&A) -> Maybe<R>,
+    dispatch: impl FnOnce(&A, JsTurn<'_>) -> Maybe<R>,
 ) -> JsResult<JSValue> {
     let global = cx.global();
     let vm: &VirtualMachine = global.bun_vm();
     let mut slice = ArgumentsSlice::init(vm, JsLocal::to_js_slice(args));
     let args = <A as FsArgument>::from_js(global, &mut slice)?;
     move_waiting_descriptors();
-    match dispatch(&args) {
+    match dispatch(&args, global.turn()) {
         Err(err) => Err(global.throw_value(err.to_js(global))),
         Ok(res) => res.fs_to_js(global),
     }
@@ -48,9 +49,9 @@ where
     // R-2: `JsCell::with_mut` scopes the `&mut NodeFS` to the blocking
     // syscall; `dispatch` never re-enters JS, and `Maybe<R>` is fully owned
     // (`sys::Error.path` is `Box<[u8]>`, not a borrow into `sync_error_buf`).
-    run_sync_with::<R, A>(cx, args, |args| {
+    run_sync_with::<R, A>(cx, args, |args, turn| {
         this.node_fs
-            .with_mut(|nfs| NodeFS::dispatch::<R, A, F>(nfs, args, Flavor::Sync))
+            .with_mut(move |nfs| NodeFS::dispatch::<R, A, F>(nfs, args, JsFlavor::Sync(turn)))
     })
 }
 
@@ -62,11 +63,11 @@ fn run_sync_function<R: FsReturn, A: FsArgument, const F: NodeFSFunctionEnum>(
 where
     Op<{ F }>: NodeFSDispatch<R, A>,
 {
-    let vm = cx.global().bun_vm();
-    run_sync_with::<R, A>(cx, args, |args| {
-        crate::jsc_hooks::with_node_fs(vm, |node_fs| {
-            node_fs.vm = Some(vm);
-            NodeFS::dispatch::<R, A, F>(node_fs, args, Flavor::Sync)
+    let vm = VirtualMachine::get(cx.live());
+    run_sync_with::<R, A>(cx, args, move |args, turn| {
+        crate::jsc_hooks::with_node_fs(vm, move |node_fs| {
+            node_fs.vm = Some(VmRef::new(vm));
+            NodeFS::dispatch::<R, A, F>(node_fs, args, JsFlavor::Sync(turn))
         })
     })
 }
@@ -420,7 +421,7 @@ impl Binding {
 pub(crate) fn binding<'a>(cx: &mut JsScope<'a>) -> JsWrapper<'a, Binding> {
     Binding {
         node_fs: JsCell::new(NodeFS {
-            vm: Some(cx.global().bun_vm()),
+            vm: Some(VmRef::new(cx.global().bun_vm())),
             ..Default::default()
         }),
     }

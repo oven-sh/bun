@@ -18,9 +18,12 @@ use bun_uws::Loop;
 
 use crate::jsc_hooks::timer_all;
 
+/// # Safety
+/// uSockets is adding a socket to `loop_`, on its thread, which may have no VM.
 #[unsafe(no_mangle)]
-extern "C" fn Bun__internal_ensureDateHeaderTimerIsEnabled(loop_: &Loop) {
-    if let Some(vm) = VirtualMachine::get_or_null() {
-        timer_all().update_date_header_timer_if_necessary(loop_, vm);
+unsafe extern "C" fn Bun__internal_ensureDateHeaderTimerIsEnabled(loop_: &Loop) {
+    // SAFETY: fn contract. Neither `init` nor teardown after `~VM` opens a socket.
+    if let Some(vm) = unsafe { VirtualMachine::get_if_loaded(loop_) } {
+        timer_all(vm.live()).update_date_header_timer_if_necessary(loop_, vm);
     }
 }

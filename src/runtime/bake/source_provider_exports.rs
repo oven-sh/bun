@@ -13,7 +13,7 @@ use core::ffi::c_void;
 
 use bun_core::String as BunString;
 use bun_jsc::JSGlobalObject;
-use bun_jsc::virtual_machine::VirtualMachine;
+use bun_jsc::virtual_machine::{OffThreadVm, VirtualMachine};
 use bun_sourcemap::parsed_source_map::AnySourceProvider;
 use bun_sourcemap::{SourceContentPtr, SourceProvider};
 
@@ -44,8 +44,8 @@ unsafe extern "C" {
     safe fn DevServerSourceProvider__getSourceMapJSON(
         this: &DevServerSourceProvider,
     ) -> DevServerSourceMapData;
-    safe fn BakeGlobalObject__isBakeGlobalObject(global: &JSGlobalObject) -> bool;
-    fn BakeGlobalObject__getPerThreadData(global: &JSGlobalObject) -> *mut c_void;
+    fn BakeGlobalObject__isBakeGlobalObject(global: *mut JSGlobalObject) -> bool;
+    fn BakeGlobalObject__getPerThreadData(global: *mut JSGlobalObject) -> *mut c_void;
 }
 
 impl SourceProvider for BakeSourceProvider {
@@ -65,13 +65,11 @@ impl SourceProvider for BakeSourceProvider {
     fn get_external_data(&self, source_filename: &[u8]) -> Option<&[u8]> {
         // The VM the provider was created in, not the calling thread's: a stack trace may be remapped from the collector
         // thread, which has no VM of its own (its end phase runs with the JS thread parked, so nothing here races it).
-        // SAFETY: the provider does not outlive its VM, and the VM's `global` is live as long as the VM is.
-        let global = unsafe {
-            &*(*BakeSourceProvider__getBunVM(self).cast::<VirtualMachine>())
-                .global
-                .get()
-        };
-        if !BakeGlobalObject__isBakeGlobalObject(global) {
+        // SAFETY: the provider does not outlive its VM.
+        let vm = unsafe { OffThreadVm::from_ptr(BakeSourceProvider__getBunVM(self).cast()) };
+        let global = vm.global_ptr();
+        // SAFETY: live as long as the VM is.
+        if !unsafe { BakeGlobalObject__isBakeGlobalObject(global) } {
             return None;
         }
         // SAFETY: `global` is a `Bake::GlobalObject` (checked above).
@@ -81,16 +79,18 @@ impl SourceProvider for BakeSourceProvider {
             // no bundled outputs exist yet, so fall back to disk.
             return None;
         }
+        let pt = pt.cast::<super::production::PerThread>();
         // SAFETY: `pt` is the live non-null `*mut PerThread` attached above;
-        // called on the JS thread.
-        let pt = unsafe { &*pt.cast::<super::production::PerThread>() };
-        let Some(idx) = pt.source_maps.get(source_filename) else {
+        // the JS thread calls, or is parked.
+        let (source_maps, bundled_outputs) =
+            unsafe { (&(*pt).source_maps, &(*pt).bundled_outputs) };
+        let Some(idx) = source_maps.get(source_filename) else {
             // Under a bake global the output table is authoritative: an empty
             // slice (which fails to parse as a map) rather than a disk fallback.
             return Some(b"");
         };
         // Borrows `PerThread.bundled_outputs`; `pt` is null once `PerThread` has dropped.
-        Some(pt.bundled_outputs[idx.get() as usize].value.as_slice())
+        Some(bundled_outputs[idx.get() as usize].value.as_slice())
     }
 }
 
@@ -142,12 +142,12 @@ pub(crate) fn add_bake_source_provider_source_map(
 
 // HOST_EXPORT(Bun__removeBakeSourceProviderSourceMap, c)
 pub(crate) fn remove_bake_source_provider_source_map(
-    vm: &VirtualMachine,
+    vm: &bun_jsc::virtual_machine::OffThreadVm,
     opaque_source_provider: *mut c_void,
     specifier: &BunString,
 ) {
     let slice = specifier.to_utf8();
-    vm.source_mappings
+    vm.source_mappings()
         .remove_source_provider(opaque_source_provider, slice.slice());
 }
 
@@ -170,11 +170,11 @@ pub(crate) fn add_dev_server_source_provider(
 
 // HOST_EXPORT(Bun__removeDevServerSourceProvider, c)
 pub(crate) fn remove_dev_server_source_provider(
-    vm: &VirtualMachine,
+    vm: &bun_jsc::virtual_machine::OffThreadVm,
     opaque_source_provider: *mut c_void,
     specifier: &BunString,
 ) {
     let slice = specifier.to_utf8();
-    vm.source_mappings
+    vm.source_mappings()
         .remove_source_provider(opaque_source_provider, slice.slice());
 }

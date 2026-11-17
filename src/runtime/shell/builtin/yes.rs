@@ -2,6 +2,7 @@ use crate::shell::builtin::{Builtin, IoKind, Sink, State};
 use crate::shell::interpreter::{EventLoopHandle, Interpreter, NodeId};
 use crate::shell::yield_::Yield;
 
+use bun_core::{LoopTurn, VmLive};
 use bun_event_loop::{EventLoopTask, TaskTag, Taskable, task_tag};
 
 pub(crate) struct Yes {
@@ -10,7 +11,7 @@ pub(crate) struct Yes {
     task: YesTask,
 }
 
-pub(crate) fn start(interp: &Interpreter, cmd: NodeId) -> Yield {
+pub(crate) fn start(interp: &Interpreter, cmd: NodeId, turn: LoopTurn<'_>) -> Yield {
     let mut line = Vec::new();
     for arg in Builtin::of(interp, cmd).args() {
         line.extend_from_slice(arg);
@@ -32,23 +33,23 @@ pub(crate) fn start(interp: &Interpreter, cmd: NodeId) -> Yield {
             concurrent_task: EventLoopTask::from_event_loop(evtloop),
         },
     }));
-    Yes::write(interp, cmd)
+    Yes::write(interp, cmd, turn)
 }
 
 impl Yes {
     /// Four chunks to memory, then the event loop gets a turn.
-    pub(crate) fn write(interp: &Interpreter, cmd: NodeId) -> Yield {
+    pub(crate) fn write(interp: &Interpreter, cmd: NodeId, turn: LoopTurn<'_>) -> Yield {
         let State::Yes(yes) = &mut Builtin::of_mut(interp, cmd).state else {
             return Yield::suspended();
         };
         let (chunk, task) = (yes.chunk.as_slice(), &raw mut yes.task);
         for _ in 0..4 {
             match Builtin::sink(interp, cmd, IoKind::Stdout) {
-                Sink::Fd(fd) => return fd.enqueue(chunk),
+                Sink::Fd(fd) => return fd.enqueue(chunk, turn),
                 Sink::Memory(memory) => {
                     if let Err(e) = memory.write(chunk) {
                         let name = bstr::BStr::new(e.name());
-                        return Builtin::fail(interp, cmd, format_args!("{name}\n"));
+                        return Builtin::fail(interp, cmd, format_args!("{name}\n"), turn);
                     }
                 }
             }
@@ -72,7 +73,7 @@ pub(crate) struct YesTask {
 impl Taskable for YesTask {
     const TAG: TaskTag = task_tag::ShellYesTask;
     /// Lives inside the builtin's `Box<Yes>` and took nothing for the bounce.
-    unsafe fn release_unrun(_: *mut Self) {}
+    unsafe fn release_unrun(_: *mut Self, _live: VmLive<'_>) {}
     /// See [`ShellTaskCtx`](crate::shell::interpreter::ShellTaskCtx): a step of a shell script always runs.
     unsafe fn context(_: *const Self) -> bun_event_loop::ContextId {
         bun_event_loop::ContextId::NONE
@@ -112,14 +113,14 @@ impl YesTask {
 
     /// # Safety
     /// `this` was passed to [`enqueue`](Self::enqueue). The call can free it.
-    pub(crate) unsafe fn run_from_main_thread(this: *mut Self) {
+    pub(crate) unsafe fn run_from_main_thread(this: *mut Self, turn: LoopTurn<'_>) {
         // SAFETY: caller contract; `interp` was set in `start` and outlives the task.
         let (interp, cmd) = unsafe { (&*(*this).interp, (*this).cmd) };
-        Yes::write(interp, cmd).run(interp);
+        Yes::write(interp, cmd, turn).run(interp, turn);
     }
 
-    fn run_from_main_thread_mini(this: *mut Self, _: *mut ()) {
+    fn run_from_main_thread_mini(this: *mut Self, _: *mut (), turn: LoopTurn<'_>) {
         // SAFETY: the callback `enqueue` installed.
-        unsafe { Self::run_from_main_thread(this) }
+        unsafe { Self::run_from_main_thread(this, turn) }
     }
 }

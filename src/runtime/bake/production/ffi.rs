@@ -18,12 +18,12 @@ pub(super) fn load_module(
     // S012: `JSInternalPromise` (= `JSPromise`) is an `opaque_ffi!` ZST —
     // safe `*mut → &mut` deref via the const-asserted accessor.
     jsc::JSInternalPromise::opaque_mut(promise).set_handled();
-    vm.wait_for_promise(AnyPromise::Internal(promise))
-        .map_err(|stopped| js_err(stopped.throw(vm.global())))?;
+    vm.wait_for_promise(AnyPromise::Internal(promise), global.turn())
+        .map_err(|stopped| js_err(stopped.throw(vm.global(global.turn()))))?;
     // TODO: Specially draining microtasks here because `waitForPromise` has a
     //       bug which forgets to do it, but I don't want to fix it right now as it
     //       could affect a lot of the codebase. This should be removed.
-    if vm.event_loop().drain_microtasks().is_err() {
+    if vm.event_loop().drain_microtasks(global.turn()).is_err() {
         Global::crash();
     }
     let jsc_vm = vm.jsc_vm();
@@ -32,7 +32,7 @@ pub(super) fn load_module(
         Unwrapped::Fulfilled(_) => {
             jsc::from_js_host_call(global, || BakeGetModuleNamespace(global, key)).map_err(js_err)
         }
-        Unwrapped::Rejected(err) => Err(js_err(vm.global().throw_value(err))),
+        Unwrapped::Rejected(err) => Err(js_err(vm.global(global.turn()).throw_value(err))),
     }
 }
 

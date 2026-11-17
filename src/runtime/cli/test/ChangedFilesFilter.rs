@@ -20,7 +20,7 @@ use bun_bundler::{BundleV2, Transpiler};
 use bun_collections::{DynamicBitSet, StringHashMap, StringSet};
 use bun_core::PathBuffer as CorePathBuffer;
 use bun_core::strings;
-use bun_core::{self, Global, Output, ZBox, env_var, fmt as bun_fmt};
+use bun_core::{self, Global, Output, VmLive, ZBox, env_var, fmt as bun_fmt};
 #[cfg(not(windows))]
 use bun_core::{ZStr, getenv_z};
 #[cfg(windows)]
@@ -79,7 +79,7 @@ pub(crate) fn filter<'a>(
     let changed_files = if let Some(trigger_set) = consume_watch_trigger() {
         trigger_set
     } else {
-        match get_changed_files(top_level_dir, changed_since) {
+        match get_changed_files(top_level_dir, changed_since, vm.live()) {
             Ok(set) => set,
             Err(GitError::GitNotFound) => {
                 Output::err_generic(
@@ -422,6 +422,7 @@ pub(crate) enum GitError {
 fn get_changed_files(
     top_level_dir: &[u8],
     since: &[u8],
+    live: VmLive<'_>,
 ) -> core::result::Result<StringSet, GitError> {
     let mut which_buf = CorePathBuffer([0u8; bun_core::MAX_PATH_BYTES]);
     let Some(git_path) = which(
@@ -436,22 +437,26 @@ fn get_changed_files(
     // Find the git repository root so we can make the paths git prints
     // absolute (git prints paths relative to the repo toplevel with these
     // commands).
-    let git_root: Box<[u8]> =
-        match run_git(git_path, top_level_dir, &[b"rev-parse", b"--show-toplevel"]) {
-            GitResult::SpawnFailed => return Err(GitError::GitFailed),
-            GitResult::ExitError { stderr } => {
-                if !stderr.is_empty() {
-                    Output::err_generic(
-                        "--changed: {s}",
-                        (BStr::new(strings::trim(&stderr, b" \r\n\t")),),
-                    );
-                } else {
-                    Output::err_generic("--changed requires running inside a git repository", ());
-                }
-                return Err(GitError::GitFailed);
+    let git_root: Box<[u8]> = match run_git(
+        git_path,
+        top_level_dir,
+        &[b"rev-parse", b"--show-toplevel"],
+        live,
+    ) {
+        GitResult::SpawnFailed => return Err(GitError::GitFailed),
+        GitResult::ExitError { stderr } => {
+            if !stderr.is_empty() {
+                Output::err_generic(
+                    "--changed: {s}",
+                    (BStr::new(strings::trim(&stderr, b" \r\n\t")),),
+                );
+            } else {
+                Output::err_generic("--changed requires running inside a git repository", ());
             }
-            GitResult::Ok { stdout } => Box::<[u8]>::from(strings::trim(&stdout, b" \r\n\t")),
-        };
+            return Err(GitError::GitFailed);
+        }
+        GitResult::Ok { stdout } => Box::<[u8]>::from(strings::trim(&stdout, b" \r\n\t")),
+    };
 
     let mut set = StringSet::new();
 
@@ -463,11 +468,17 @@ fn get_changed_files(
             git_path,
             top_level_dir,
             &[b"diff", b"--name-only", b"HEAD", b"--"],
+            live,
         ) {
             GitResult::SpawnFailed => return Err(GitError::GitFailed),
             GitResult::Ok { stdout } => append_paths(&mut set, &git_root, &stdout),
             GitResult::ExitError { .. } => {
-                match run_git(git_path, top_level_dir, &[b"diff", b"--name-only", b"--"]) {
+                match run_git(
+                    git_path,
+                    top_level_dir,
+                    &[b"diff", b"--name-only", b"--"],
+                    live,
+                ) {
                     GitResult::SpawnFailed => return Err(GitError::GitFailed),
                     GitResult::Ok { stdout } => append_paths(&mut set, &git_root, &stdout),
                     GitResult::ExitError { .. } => {}
@@ -477,6 +488,7 @@ fn get_changed_files(
                     git_path,
                     top_level_dir,
                     &[b"diff", b"--name-only", b"--cached", b"--"],
+                    live,
                 ) {
                     GitResult::SpawnFailed => return Err(GitError::GitFailed),
                     GitResult::Ok { stdout } => append_paths(&mut set, &git_root, &stdout),
@@ -489,6 +501,7 @@ fn get_changed_files(
             git_path,
             top_level_dir,
             &[b"diff", b"--name-only", since, b"--"],
+            live,
         ) {
             GitResult::SpawnFailed => return Err(GitError::GitFailed),
             GitResult::ExitError { stderr } => {
@@ -524,6 +537,7 @@ fn get_changed_files(
             b"--exclude-standard",
             b"--full-name",
         ],
+        live,
     ) {
         GitResult::SpawnFailed => return Err(GitError::GitFailed),
         GitResult::Ok { stdout } => append_paths(&mut set, &git_root, &stdout),
@@ -545,7 +559,9 @@ pub(crate) enum GitResult {
 }
 
 #[optimize(size)]
-fn run_git(git_path: &[u8], cwd: &[u8], args: &[&[u8]]) -> GitResult {
+fn run_git(git_path: &[u8], cwd: &[u8], args: &[&[u8]], live: VmLive<'_>) -> GitResult {
+    #[cfg(not(windows))]
+    let _ = live;
     let mut argv: Vec<&[u8]> = Vec::with_capacity(args.len() + 3);
     argv.push(git_path);
     // `core.quotePath` (on by default) wraps non-ASCII filenames in quotes
@@ -568,7 +584,7 @@ fn run_git(git_path: &[u8], cwd: &[u8], args: &[&[u8]]) -> GitResult {
         windows: spawn_sync::WindowsOptions {
             // `init` takes the erased `*mut ()` event-loop pointer
             // directly, so unwrap it here.
-            loop_: EventLoopHandle::init(VirtualMachine::get().event_loop_ptr()),
+            loop_: EventLoopHandle::init(VirtualMachine::get(live).event_loop_ptr()),
             ..Default::default()
         },
         ..Default::default()

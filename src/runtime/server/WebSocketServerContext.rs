@@ -66,8 +66,7 @@ impl Handler {
         self.global_object.get()
     }
 
-    /// `vm` is a `BackRef`; the VM is `'static` per LIFETIMES.tsv (set in
-    /// `from_js`).
+    /// The VM of the thread that ran `from_js`.
     #[inline]
     pub(crate) fn vm(&self) -> &VirtualMachine {
         self.vm.get()
@@ -109,7 +108,11 @@ impl Handler {
             return Ok(());
         }
 
-        let _ = VirtualMachine::get().uncaught_exception(global_object, error_value, false);
+        let _ = VirtualMachine::get(global_object.live()).uncaught_exception(
+            global_object,
+            error_value,
+            false,
+        );
         Ok(())
     }
 
@@ -124,7 +127,7 @@ impl Handler {
             on_pong: JSValue::ZERO,
             app: None,
             server: None,
-            vm: bun_ptr::BackRef::new(VirtualMachine::get()),
+            vm: bun_ptr::BackRef::new(VirtualMachine::get(global_object.live())),
             global_object: bun_ptr::BackRef::new(global_object),
             context: global_object.bun_vm().context_of_caller().id(),
             flags: HandlerFlags::empty(),

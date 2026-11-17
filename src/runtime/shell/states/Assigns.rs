@@ -1,6 +1,8 @@
 //! In pipeline expressions, assigns (e.g. `FOO=bar BAR=baz | echo hi`) have
 //! no effect on the environment of the shell, so we can skip them.
 
+use bun_core::LoopTurn;
+
 use crate::shell::ast;
 use crate::shell::interpreter::{Interpreter, Node, NodeId, ShellExecEnv};
 use crate::shell::states::base::{Base, InheritedEnv};
@@ -52,11 +54,11 @@ impl Assigns {
         }))
     }
 
-    pub(crate) fn start(_interp: &Interpreter, this: NodeId) -> Yield {
+    pub(crate) fn start(_interp: &Interpreter, this: NodeId, _turn: LoopTurn<'_>) -> Yield {
         Yield::Next(this)
     }
 
-    pub(crate) fn next(interp: &Interpreter, this: NodeId) -> Yield {
+    pub(crate) fn next(interp: &Interpreter, this: NodeId, turn: LoopTurn<'_>) -> Yield {
         loop {
             let (shell, node) = {
                 let me = interp.as_assigns(this);
@@ -75,11 +77,11 @@ impl Assigns {
                     }
                     let atom = &assigns[idx as usize].value;
                     let child = Expansion::init(interp, shell, atom, this, true);
-                    return Expansion::start(interp, child);
+                    return Expansion::start(interp, child, turn);
                 }
                 AssignsState::Done => {
                     let parent = interp.as_assigns(this).base.parent;
-                    return interp.child_done(parent, this, 0);
+                    return interp.child_done(parent, this, 0, turn);
                 }
             }
         }
@@ -90,13 +92,14 @@ impl Assigns {
         this: NodeId,
         child: NodeId,
         exit_code: ExitCode,
+        turn: LoopTurn<'_>,
     ) -> Yield {
         // Child is always an Expansion.
         if exit_code != 0 {
             interp.deinit_node(child);
             interp.as_assigns_mut(this).state = AssignsState::Done;
             let parent = interp.as_assigns(this).base.parent;
-            return interp.child_done(parent, this, 1);
+            return interp.child_done(parent, this, 1, turn);
         }
 
         let out = Expansion::take_out(interp, child);

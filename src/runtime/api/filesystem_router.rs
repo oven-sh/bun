@@ -3,7 +3,7 @@
 use bun_paths::strings;
 
 use bun_ast as Log;
-use bun_core::{Utf8Bytes, WTFString};
+use bun_core::{Utf8Bytes, VmLive, WTFString};
 use bun_jsc::bindgen::{self, JsHeap, JsLocal, JsPayload as _, JsScope, JsWrapper, to_js};
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{JSGlobalObject, JSValue, JsCell, JsResult, LogJsc};
@@ -65,7 +65,7 @@ fn load_router(
     config: RouteConfig,
     load: Load,
 ) -> JsResult<Option<(Router::Router, bun_resolver::DirInfoRef)>> {
-    let transpiler = &VirtualMachine::get().transpiler;
+    let transpiler = &VirtualMachine::get(global.live()).transpiler;
     let mut log = Log::Log::new();
     // SAFETY: the VM and its resolver outlive this call, and this is dropped before `log`.
     let _restore_log = unsafe {
@@ -77,6 +77,7 @@ fn load_router(
     if load == Load::FromDisk {
         FileSystemRouter::bust_dir_cache_recursive(
             strings::paths::without_trailing_slash_windows_path(&config.dir),
+            global.live(),
         );
     }
 
@@ -107,8 +108,8 @@ fn load_router(
 }
 
 impl FileSystemRouter {
-    fn bust_dir_cache_recursive(input_path: &[u8]) {
-        let vm = VirtualMachine::get();
+    fn bust_dir_cache_recursive(input_path: &[u8], live: VmLive<'_>) {
+        let vm = VirtualMachine::get(live);
         #[cfg(not(windows))]
         let path = input_path;
         #[cfg(windows)]
@@ -166,7 +167,7 @@ impl FileSystemRouter {
                                 strings::paths::without_trailing_slash_windows_path(&full_path),
                             )
                         });
-                        Self::bust_dir_cache_recursive(&full_path);
+                        Self::bust_dir_cache_recursive(&full_path, live);
                     }
                 }
             }
@@ -496,11 +497,11 @@ impl MatchedRoute {
         Self::create_query_object(heap, map.as_ref())
     }
 
-    pub(crate) fn get_script_src(&self) -> impl AsRef<[u8]> {
-        self.get_src()
+    pub(crate) fn get_script_src(&self, live: VmLive<'_>) -> impl AsRef<[u8]> {
+        self.get_src(live)
     }
 
-    pub(crate) fn get_src(&self) -> impl AsRef<[u8]> {
+    pub(crate) fn get_src(&self, live: VmLive<'_>) -> impl AsRef<[u8]> {
         let mut src: Vec<u8> = Vec::new();
         let origin_url = self
             .origin
@@ -515,6 +516,7 @@ impl MatchedRoute {
                 .map_or(b"", |prefix| prefix.latin1_slice()),
             &mut src,
             path::Platform::Posix,
+            live,
         );
         src
     }

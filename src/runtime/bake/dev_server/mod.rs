@@ -19,10 +19,10 @@ use bun_alloc::{AllocError, Arena};
 use bun_ast::Log;
 use bun_bundler::options_impl::TargetExt as _;
 use bun_collections::{ArrayHashMap, DynamicBitSet, HashMap, HiveArrayFallback, StringHashMap};
-use bun_core::{self as str, String as BunString, ZStr, strings};
+use bun_core::{self as str, JsTurn, String as BunString, ZStr, strings};
 use bun_core::{Environment, Output};
 use bun_jsc::bun_string_jsc;
-use bun_jsc::virtual_machine::VirtualMachine;
+use bun_jsc::virtual_machine::{VirtualMachine, VmRef};
 use bun_jsc::{self as jsc, JSGlobalObject, JSValue, JsResult};
 use bun_jsc::{LogJsc as _, StringJsc as _};
 use bun_paths::{self as paths, PathBuffer};
@@ -304,12 +304,10 @@ impl DevServer {
         self.vm.get()
     }
 
-    /// Safe `&'static JSGlobalObject` accessor — `self.vm().global()`.
-    /// `'static` so the borrow is decoupled from `&self` and may be held
-    /// across `&mut self` reborrows.
+    /// Does not borrow `self`, so it may be held across `&mut self` reborrows.
     #[inline]
-    fn global(&self) -> &'static JSGlobalObject {
-        self.vm().global()
+    fn global<'a>(&self, turn: JsTurn<'a>) -> &'a JSGlobalObject {
+        VmRef::new(self.vm()).get(turn.live.thread).global(turn)
     }
 }
 pub(super) use crate::bake::dev_server::route_bundle::RouteBundle;

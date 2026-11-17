@@ -10,6 +10,7 @@
 
 use std::sync::Arc;
 
+use bun_core::VmLive;
 use bun_ptr::{AnyRefCounted, RefPtr};
 use bun_threading::UnboundedQueue;
 use bun_threading::unbounded_queue::{Link, Linked};
@@ -209,7 +210,7 @@ pub trait Taskable {
     ///
     /// # Safety
     /// `this` came off the queue under `Self::TAG` and is not used afterwards.
-    unsafe fn release_unrun(this: *mut Self);
+    unsafe fn release_unrun(this: *mut Self, live: VmLive<'_>);
 
     /// Whose script the task continues: the context that was current when the work was started.
     /// Required, so that no type can be queued without having decided it: [`Task::init`] asks
@@ -229,7 +230,7 @@ pub trait Taskable {
 pub trait BoxedTask: 'static {
     const TAG: TaskTag;
     /// As [`Taskable::release_unrun`]. An empty body drops the box.
-    fn release_unrun(self: Box<Self>);
+    fn release_unrun(self: Box<Self>, live: VmLive<'_>);
     fn context(&self) -> ContextId;
 }
 

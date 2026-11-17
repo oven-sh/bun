@@ -10,6 +10,7 @@ use crate::SocketAddress;
 use crate::response::{State, WriteResult};
 use crate::thunk;
 use crate::{AnyRequest, AnyResponse};
+use bun_core::JsTurn;
 use bun_ptr::ThisPtr;
 
 pub use crate::h3::Request;
@@ -157,20 +158,20 @@ impl Response {
 
     pub(crate) fn on_writable<UD, H>(&mut self, _handler: H, ud: *mut UD)
     where
-        H: Fn(&mut UD, u64, &mut Response) -> bool + Copy + 'static,
+        H: Fn(&mut UD, u64, &mut Response, JsTurn<'_>) -> bool + Copy + 'static,
     {
         // Safe fn item: nested local thunk, only coerced to the C-ABI
         // fn-pointer type passed to C; body wraps its raw-ptr ops explicitly.
         extern "C" fn cb<UD, H>(r: *mut Response, off: u64, p: *mut c_void) -> bool
         where
-            H: Fn(&mut UD, u64, &mut Response) -> bool + Copy + 'static,
+            H: Fn(&mut UD, u64, &mut Response, JsTurn<'_>) -> bool + Copy + 'static,
         {
             // SAFETY: uWS callback contract — `r` live, `p` is the registered `*mut UD`.
             unsafe {
                 let Some(ud) = thunk::user_mut::<UD>(p) else {
                     return true;
                 };
-                thunk::zst::<H>()(ud, off, thunk::handle_mut(r))
+                thunk::zst::<H>()(ud, off, thunk::handle_mut(r), thunk::app_turn(&p))
             }
         }
         c::uws_h2_res_on_writable(self, Some(cb::<UD, H>), ud.cast())
@@ -180,20 +181,20 @@ impl Response {
     }
     pub(crate) fn on_aborted<UD, H>(&mut self, _handler: H, ud: *mut UD)
     where
-        H: Fn(&mut UD, &mut Response) + Copy + 'static,
+        H: Fn(&mut UD, &mut Response, JsTurn<'_>) + Copy + 'static,
     {
         // Safe fn item: nested local thunk, only coerced to the C-ABI
         // fn-pointer type passed to C; body wraps its raw-ptr ops explicitly.
         extern "C" fn cb<UD, H>(r: *mut Response, p: *mut c_void)
         where
-            H: Fn(&mut UD, &mut Response) + Copy + 'static,
+            H: Fn(&mut UD, &mut Response, JsTurn<'_>) + Copy + 'static,
         {
             // SAFETY: uWS callback contract — `r` live, `p` is the registered `*mut UD`.
             unsafe {
                 let Some(ud) = thunk::user_mut::<UD>(p) else {
                     return;
                 };
-                thunk::zst::<H>()(ud, thunk::handle_mut(r));
+                thunk::zst::<H>()(ud, thunk::handle_mut(r), thunk::app_turn(&p));
             }
         }
         c::uws_h2_res_on_aborted(self, Some(cb::<UD, H>), ud.cast())
@@ -203,20 +204,20 @@ impl Response {
     }
     pub fn on_timeout<UD, H>(&mut self, _handler: H, ud: *mut UD)
     where
-        H: Fn(&mut UD, &mut Response) + Copy + 'static,
+        H: Fn(&mut UD, &mut Response, JsTurn<'_>) + Copy + 'static,
     {
         // Safe fn item: nested local thunk, only coerced to the C-ABI
         // fn-pointer type passed to C; body wraps its raw-ptr ops explicitly.
         extern "C" fn cb<UD, H>(r: *mut Response, p: *mut c_void)
         where
-            H: Fn(&mut UD, &mut Response) + Copy + 'static,
+            H: Fn(&mut UD, &mut Response, JsTurn<'_>) + Copy + 'static,
         {
             // SAFETY: uWS callback contract — `r` live, `p` is the registered `*mut UD`.
             unsafe {
                 let Some(ud) = thunk::user_mut::<UD>(p) else {
                     return;
                 };
-                thunk::zst::<H>()(ud, thunk::handle_mut(r));
+                thunk::zst::<H>()(ud, thunk::handle_mut(r), thunk::app_turn(&p));
             }
         }
         c::uws_h2_res_on_timeout(self, Some(cb::<UD, H>), ud.cast())
@@ -226,7 +227,7 @@ impl Response {
     }
     pub(crate) fn on_data<UD, H>(&mut self, _handler: H, ud: *mut UD)
     where
-        H: Fn(&mut UD, &mut Response, &[u8], bool) + Copy + 'static,
+        H: Fn(&mut UD, &mut Response, &[u8], bool, JsTurn<'_>) + Copy + 'static,
     {
         // Safe fn item: nested local thunk, only coerced to the C-ABI
         // fn-pointer type passed to C; body wraps its raw-ptr ops explicitly.
@@ -237,7 +238,7 @@ impl Response {
             last: bool,
             p: *mut c_void,
         ) where
-            H: Fn(&mut UD, &mut Response, &[u8], bool) + Copy + 'static,
+            H: Fn(&mut UD, &mut Response, &[u8], bool, JsTurn<'_>) + Copy + 'static,
         {
             // SAFETY: uWS callback contract — `r` live, `chunk_ptr[..len]` valid,
             // `p` is the registered `*mut UD`.
@@ -250,6 +251,7 @@ impl Response {
                     thunk::handle_mut(r),
                     thunk::c_slice(chunk_ptr, len),
                     last,
+                    thunk::app_turn(&p),
                 );
             }
         }
@@ -269,19 +271,24 @@ impl Response {
         let mut f = core::mem::ManuallyDrop::new(f);
         c::uws_h2_res_cork(self, (&raw mut *f).cast::<c_void>(), handle::<F>);
     }
-    pub(crate) fn run_corked_with_type<UD>(&mut self, handler: fn(&UD), ud: &UD) {
+    pub(crate) fn run_corked_with_type<UD>(
+        &mut self,
+        handler: fn(&UD, JsTurn<'_>),
+        ud: &UD,
+        turn: JsTurn<'_>,
+    ) {
         // cork is synchronous, so we stack-allocate the (handler, ud) pair and
         // recover it inside the trampoline — same shape as H1's
         // `Response::run_corked_with_type` so `AnyResponse` can dispatch uniformly.
-        type Ctx<'a, UD> = (fn(&UD), &'a UD);
+        type Ctx<'a, UD> = (fn(&UD, JsTurn<'_>), &'a UD, JsTurn<'a>);
         // Safe fn item: nested local thunk, only coerced to the C-ABI
         // fn-pointer type passed to C; body wraps its raw-ptr ops explicitly.
         extern "C" fn cb<UD>(p: *mut c_void) {
             // SAFETY: p points at a stack Ctx<UD> valid for this synchronous call.
             let ctx = unsafe { &*p.cast::<Ctx<'_, UD>>() };
-            (ctx.0)(ctx.1);
+            (ctx.0)(ctx.1, ctx.2);
         }
-        let mut ctx: Ctx<'_, UD> = (handler, ud);
+        let mut ctx: Ctx<'_, UD> = (handler, ud, turn);
         c::uws_h2_res_cork(self, (&raw mut ctx).cast(), cb::<UD>)
     }
 }
@@ -332,7 +339,7 @@ macro_rules! h2_route_methods {
     ($($name:ident => $kind:ident),* $(,)?) => {$(
         pub fn $name<UD, H>(&mut self, p: &[u8], ud: *mut UD, h: H)
         where
-            H: Fn(&UD, &mut Request, &mut Response) + Copy + 'static,
+            H: Fn(&UD, &mut Request, &mut Response, JsTurn<'_>) + Copy + 'static,
         {
             Self::route(RouteKind::$kind, self, p, ud, h);
         }
@@ -396,13 +403,13 @@ impl App {
 
     fn route<UD, H>(which: RouteKind, this: &mut App, pattern: &[u8], ud: *mut UD, _handler: H)
     where
-        H: Fn(&UD, &mut Request, &mut Response) + Copy + 'static,
+        H: Fn(&UD, &mut Request, &mut Response, JsTurn<'_>) + Copy + 'static,
     {
         // Safe fn item: nested local thunk, only coerced to the C-ABI
         // fn-pointer type passed to C; body wraps its raw-ptr ops explicitly.
         extern "C" fn cb<UD, H>(res: *mut Response, req: *mut Request, p: *mut c_void)
         where
-            H: Fn(&UD, &mut Request, &mut Response) + Copy + 'static,
+            H: Fn(&UD, &mut Request, &mut Response, JsTurn<'_>) + Copy + 'static,
         {
             // SAFETY: uWS callback contract — `res`/`req` live disjoint handles,
             // `p` is the registered `*mut UD` (non-null by route registration).
@@ -410,7 +417,12 @@ impl App {
                 let Some(ud) = p.cast::<UD>().as_ref() else {
                     return;
                 };
-                thunk::zst::<H>()(ud, thunk::handle_mut(req), thunk::handle_mut(res));
+                thunk::zst::<H>()(
+                    ud,
+                    thunk::handle_mut(req),
+                    thunk::handle_mut(res),
+                    thunk::app_turn(&p),
+                );
             }
         }
         Self::route_raw(which, this, pattern, Some(cb::<UD, H>), ud.cast());
@@ -420,15 +432,21 @@ impl App {
     /// [`method_this`](Self::method_this).
     fn route_this<U: 'static, H>(which: RouteKind, this: &mut App, pattern: &[u8], ud: ThisPtr<U>)
     where
-        H: Fn(ThisPtr<U>, AnyRequest, AnyResponse) + Copy + 'static,
+        H: Fn(ThisPtr<U>, AnyRequest, AnyResponse, JsTurn<'_>) + Copy + 'static,
     {
         extern "C" fn cb<U: 'static, H>(res: *mut Response, req: *mut Request, p: *mut c_void)
         where
-            H: Fn(ThisPtr<U>, AnyRequest, AnyResponse) + Copy + 'static,
+            H: Fn(ThisPtr<U>, AnyRequest, AnyResponse, JsTurn<'_>) + Copy + 'static,
         {
-            // SAFETY: `p` is the `ThisPtr` registered with this thunk; the registrant holds a ref on it while the route is registered.
-            let this = unsafe { ThisPtr::new(p.cast::<U>()) };
-            thunk::zst::<H>()(this, AnyRequest::H3(req), AnyResponse::H2(res));
+            // SAFETY: `p` is the `ThisPtr` registered with this thunk; the registrant holds a ref on it while the route is registered, and passed an `H`.
+            let (handler, this, turn) = unsafe {
+                (
+                    thunk::zst::<H>(),
+                    ThisPtr::new(p.cast::<U>()),
+                    thunk::app_turn(&p),
+                )
+            };
+            handler(this, AnyRequest::H3(req), AnyResponse::H2(res), turn);
         }
         Self::route_raw(which, this, pattern, Some(cb::<U, H>), ud.as_ptr().cast());
     }
@@ -469,7 +487,7 @@ impl App {
 
     pub fn method<UD, H>(&mut self, m: bun_http_types::Method::Method, p: &[u8], ud: *mut UD, h: H)
     where
-        H: Fn(&UD, &mut Request, &mut Response) + Copy + 'static,
+        H: Fn(&UD, &mut Request, &mut Response, JsTurn<'_>) + Copy + 'static,
     {
         if let Some(kind) = RouteKind::from_method(m) {
             Self::route(kind, self, p, ud, h);
@@ -486,7 +504,7 @@ impl App {
         _h: H,
         this: ThisPtr<U>,
     ) where
-        H: Fn(ThisPtr<U>, AnyRequest, AnyResponse) + Copy + 'static,
+        H: Fn(ThisPtr<U>, AnyRequest, AnyResponse, JsTurn<'_>) + Copy + 'static,
     {
         if let Some(kind) = RouteKind::from_method(m) {
             Self::route_this::<U, H>(kind, self, p, this);
@@ -496,7 +514,7 @@ impl App {
     /// [`any`](Self::any) counterpart of [`method_this`](Self::method_this).
     pub fn any_this<U: 'static, H>(&mut self, p: &[u8], _h: H, this: ThisPtr<U>)
     where
-        H: Fn(ThisPtr<U>, AnyRequest, AnyResponse) + Copy + 'static,
+        H: Fn(ThisPtr<U>, AnyRequest, AnyResponse, JsTurn<'_>) + Copy + 'static,
     {
         Self::route_this::<U, H>(RouteKind::Any, self, p, this);
     }

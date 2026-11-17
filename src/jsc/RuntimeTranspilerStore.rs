@@ -13,7 +13,7 @@ use bun_bundler::analyze_transpiled_module;
 use bun_bundler::options::ModuleType;
 use bun_bundler::transpiler::{self as transpiler, AlreadyBundled, ParseOptions, Transpiler};
 use bun_collections::HiveArrayFallback;
-use bun_core::{MutableString, String, strings};
+use bun_core::{MutableString, String, VmLive, strings};
 use bun_event_loop::{TaskTag, Taskable, task_tag};
 use bun_io::JsKeepAlive;
 use bun_js_printer::{self as js_printer, BufferPrinter, BufferWriter};
@@ -35,7 +35,9 @@ use crate::resolved_source_tag::ResolvedSourceTag;
 use crate::runtime_transpiler_cache::{ModuleType as CacheModuleType, RuntimeTranspilerCache};
 use crate::saved_source_map::SavedSourceMap;
 use crate::strong::Optional as StrongOptional;
-use crate::virtual_machine::{RuntimeSourceMapHandler, VirtualMachine, process_fetch_log};
+use crate::virtual_machine::{
+    OffThreadVm, RuntimeSourceMapHandler, VirtualMachine, process_fetch_log,
+};
 use crate::{
     ErrorableResolvedSource, JSGlobalObject, JSInternalPromise, JSValue, JsError, JsResult,
     ResolvedSource,
@@ -209,7 +211,7 @@ impl Taskable for RuntimeTranspilerStore {
     const TAG: TaskTag = task_tag::RuntimeTranspilerStore;
     /// The "drain my finished jobs" ping owns nothing (`this` is the VM's
     /// store); the jobs themselves are released by `release_queued_jobs_for_teardown`.
-    unsafe fn release_unrun(_: *mut Self) {}
+    unsafe fn release_unrun(_: *mut Self, _live: VmLive<'_>) {}
     /// A ping to the VM's own store.
     unsafe fn context(_: *const Self) -> bun_event_loop::ContextId {
         bun_event_loop::ContextId::NONE
@@ -349,7 +351,7 @@ impl RuntimeTranspilerStore {
                 } else {
                     StrongOptional::create(module_loader, global_object)
                 },
-                _keep_alive: JsKeepAlive::active(),
+                _keep_alive: JsKeepAlive::active(vm.live()),
                 resolved_source,
                 generation_number: self.generation_number.load(Ordering::SeqCst),
                 has_plugins: global_object.has_plugins(),
@@ -716,7 +718,8 @@ impl TranspilerJob {
         let mut input_file = None;
 
         // SAFETY: leaf scalar field reads on `*vm`; see `vm` note above.
-        let (vm_main, vm_main_hash) = unsafe { ((*vm).main(), (*vm).main_hash.get()) };
+        let (vm_main, vm_main_hash) =
+            unsafe { (OffThreadVm::from_ptr(vm).main(), (*vm).main_hash.get()) };
         let is_main = vm_main
             .is_some_and(|vm_main| vm_main_hash == hash && strings::eql_long(vm_main, path.text));
 

@@ -19,6 +19,7 @@ export const prefetch = b.fn({
     port: b.u16.validateInteger().nullable.default(443),
   },
   rustPath: "crate::dns_jsc::internal::prefetch_from_js",
+  passVm: true,
 });
 
 /** A name, or the number `getaddrinfo` has for it. */

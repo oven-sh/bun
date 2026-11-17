@@ -9,6 +9,7 @@
 
 use core::ffi::{c_int, c_void};
 
+use bun_core::JsTurn;
 use bun_uws::NewSocketHandler;
 // `SocketKind` / `us_bun_verify_error_t` must come from `bun_uws_sys` — that's
 // what `us_socket_t::kind()` and the `VTable` callback signatures use. The
@@ -219,13 +220,13 @@ unsafe extern "C" fn us_dispatch_ssl_raw_tap(
             return s;
         };
         // SAFETY: `data` points to `len` readable bytes from the TLS BIO; loop.c
-        // guarantees the buffer outlives this call.
-        let slice = unsafe { core::slice::from_raw_parts(data, len) };
-        crate::dispatch::fold(TLSSocket::on_data(
-            raw,
-            NewSocketHandler::<true>::from(s),
-            slice,
-        ));
+        // guarantees the buffer outlives this call. A VM owns the sockets of this kind,
+        // and only a read gets here.
+        let (slice, turn) = unsafe { (core::slice::from_raw_parts(data, len), JsTurn::assume(&s)) };
+        crate::dispatch::fold(
+            TLSSocket::on_data(raw, NewSocketHandler::<true>::from(s), slice, turn),
+            turn,
+        );
     }
     s
 }
@@ -259,9 +260,9 @@ pub(crate) unsafe extern "C" fn us_dispatch_session(
         return;
     };
     // SAFETY: `data` points to `len` readable bytes owned by the caller for the
-    // duration of this call.
-    let slice = unsafe { core::slice::from_raw_parts(data, len) };
-    crate::dispatch::fold(TLSSocket::on_session(tls, slice));
+    // duration of this call. The turn: as in `us_dispatch_ssl_raw_tap`.
+    let (slice, turn) = unsafe { (core::slice::from_raw_parts(data, len), JsTurn::assume(&s)) };
+    crate::dispatch::fold(TLSSocket::on_session(tls, slice, turn), turn);
 }
 
 /// The name check of the verify step, routed to the owner of the socket in the handshake: a `US_IDENTITY_*` verdict.
@@ -356,7 +357,7 @@ pub(crate) unsafe extern "C" fn us_dispatch_keylog(
         return;
     };
     // SAFETY: `data` points to `len` readable bytes owned by the caller for the
-    // duration of this call.
-    let slice = unsafe { core::slice::from_raw_parts(data, len) };
-    crate::dispatch::fold(TLSSocket::on_keylog(tls, slice));
+    // duration of this call. The turn: as in `us_dispatch_ssl_raw_tap`.
+    let (slice, turn) = unsafe { (core::slice::from_raw_parts(data, len), JsTurn::assume(&s)) };
+    crate::dispatch::fold(TLSSocket::on_keylog(tls, slice, turn), turn);
 }

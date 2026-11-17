@@ -6,7 +6,7 @@ use crate::isolated_install::store::{EntryColumns, entry};
 use crate::lockfile_real::Scripts as LockfileScripts;
 use crate::lockfile_real::package::scripts::List as ScriptsList;
 use crate::package_manager_real::ProgressStrings;
-use bun_core::{Global, Output};
+use bun_core::{Global, LoopTurn, Output};
 #[cfg(unix)]
 use bun_io::PosixFlags;
 use bun_io::heap as io_heap;
@@ -531,11 +531,11 @@ impl<'a> LifecycleScriptSubprocess<'a> {
 
     /// # Safety
     /// `this` is what [`Self::watch`] handed out. It may be freed.
-    pub unsafe fn on_io(this: *mut Self, kind: Kind, event: IoEvent) {
+    pub unsafe fn on_io(this: *mut Self, kind: Kind, event: IoEvent, turn: LoopTurn<'_>) {
         // SAFETY: fn contract. Nothing else runs until `maybe_finished`.
         unsafe {
             if (*this).read(kind, event) {
-                Self::maybe_finished(this);
+                Self::maybe_finished(this, turn);
             }
         }
     }
@@ -543,7 +543,7 @@ impl<'a> LifecycleScriptSubprocess<'a> {
     /// # Safety
     /// `this` is what [`Self::watch`] handed out. It may be freed.
     #[inline(never)]
-    unsafe fn maybe_finished(this: *mut Self) {
+    unsafe fn maybe_finished(this: *mut Self, turn: LoopTurn<'_>) {
         bun_removable_features::removable_definition!(Install, Self::maybe_finished);
         // SAFETY: fn contract. `watch` put it in the heap. The process and the readers each report
         // once, so nothing calls back after the last of them.
@@ -558,7 +558,7 @@ impl<'a> LifecycleScriptSubprocess<'a> {
             active.remove(this.cast());
             (bun_core::heap::take(this), status)
         };
-        this.handle_exit(status);
+        this.handle_exit(status, turn);
     }
 
     /// Posix-only: re-prime a recycled `PosixBufferedReader` for a fresh socket fd.
@@ -586,14 +586,14 @@ impl<'a> LifecycleScriptSubprocess<'a> {
 
     /// Used to be called from multiple threads during isolated installs; now single-threaded
     /// TODO: re-evaluate whether some variables still need to be atomic
-    fn spawn_next_script(mut self: Box<Self>, next_script_index: u8) {
+    fn spawn_next_script(mut self: Box<Self>, next_script_index: u8, turn: LoopTurn<'_>) {
         bun_core::analytics::Features::LIFECYCLE_SCRIPTS.fetch_add(1, Ordering::Relaxed);
         // Relaxed is enough, because it's only read and written on the main thread.
         let _ = ALIVE_COUNT.fetch_add(1, Ordering::Relaxed);
 
         self.current_script_index = next_script_index;
         match self.spawn() {
-            Ok(spawned) => self.watch(spawned),
+            Ok(spawned) => self.watch(spawned, turn),
             Err(err) => self.exit_with_error(err),
         }
     }
@@ -730,7 +730,7 @@ impl<'a> LifecycleScriptSubprocess<'a> {
     }
 
     /// Leaves `self` to the process and the readers until [`Self::maybe_finished`].
-    fn watch(self: Box<Self>, mut spawned: SpawnProcessResult) {
+    fn watch(self: Box<Self>, mut spawned: SpawnProcessResult, turn: LoopTurn<'_>) {
         debug_assert!(self.process.is_none(), "forgot to call `reset_polls`");
         let this = bun_core::heap::into_raw(self);
         // SAFETY: `this` is live until the process has reported, which only the last statement can
@@ -751,13 +751,14 @@ impl<'a> LifecycleScriptSubprocess<'a> {
                 .this_ptr();
             process.set_exit_handler(ProcessExit::new(ProcessExitKind::LifecycleScript, this));
 
-            if let Err(err) = Process::watch_or_reap(process) {
+            if let Err(err) = Process::watch_or_reap(process, turn) {
                 if !process.has_exited() {
                     // SAFETY: all-zero is a valid Rusage (#[repr(C)] POD).
                     Process::on_exit(
                         process,
                         Status::Err(err),
                         &bun_core::ffi::zeroed::<Rusage>(),
+                        turn,
                     );
                 }
             }
@@ -811,7 +812,7 @@ impl<'a> LifecycleScriptSubprocess<'a> {
         }
     }
 
-    fn handle_exit(mut self: Box<Self>, status: Status) {
+    fn handle_exit(mut self: Box<Self>, status: Status, turn: LoopTurn<'_>) {
         bun_output::scoped_log!(
             Script,
             "{} - {} finished {}",
@@ -883,7 +884,10 @@ impl<'a> LifecycleScriptSubprocess<'a> {
                 {
                     if self.scripts.items[new_script_index].is_some() {
                         self.reset_polls();
-                        self.spawn_next_script(u8::try_from(new_script_index).expect("int cast"));
+                        self.spawn_next_script(
+                            u8::try_from(new_script_index).expect("int cast"),
+                            turn,
+                        );
                         return;
                     }
                 }
@@ -1059,7 +1063,10 @@ impl<'a> LifecycleScriptSubprocess<'a> {
         lss.increment_pending_script_tasks();
 
         let first_index = lss.scripts.first_index;
-        lss.spawn_next_script(first_index);
+        // SAFETY: auto-install has no install phase. A command gets here from `main`, on its thread and within
+        // its turn.
+        let turn = unsafe { LoopTurn::assume(&first_index) };
+        lss.spawn_next_script(first_index, turn);
     }
 
     fn increment_pending_script_tasks(&self) {
@@ -1086,6 +1093,7 @@ impl Drop for LifecycleScriptSubprocess<'_> {
 
 bun_spawn::link_impl_ProcessExit! {
     LifecycleScript for LifecycleScriptSubprocess<'static> => |this| {
-        on_process_exit(_status, _rusage) => LifecycleScriptSubprocess::maybe_finished(this),
+        on_process_exit(_status, _rusage, turn) =>
+            LifecycleScriptSubprocess::maybe_finished(this, turn),
     }
 }

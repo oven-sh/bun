@@ -1,5 +1,6 @@
 //! `JSBundleCompletionTask` — owns one in-flight `Bun.build()`.
 
+use bun_core::VmLive;
 use bun_options_types::TargetExt as _;
 use core::cell::Cell;
 use core::ptr::NonNull;
@@ -119,15 +120,15 @@ impl CallerOfTheBuild {
     }
 }
 
-jsc::impl_abort_handle_owner!(CallerOfTheBuild, handle, |this, _cause| {
+jsc::impl_abort_handle_owner!(CallerOfTheBuild, handle, |this, _cause, _turn| {
     // SAFETY: trait contract — `this` is live (armed ⇒ its completion has not run).
     unsafe { &*this }.tombstone_plugins()
 });
 
-jsc::impl_abort_handle_owner!(BundleJs, abort_handle, |this, _cause| {
+jsc::impl_abort_handle_owner!(BundleJs, abort_handle, |this, _cause, turn| {
     // The VM does not wait behind other VMs' builds.
     if let Some(queued) = bundle_thread::take_unstarted(this) {
-        return queued.task.release_unrun();
+        return queued.task.release_unrun(turn.live);
     }
     // SAFETY: trait contract — `this` is live (armed ⇒ its completion has not run).
     unsafe { &*this }.cancel_started()
@@ -161,7 +162,7 @@ impl JSBundleCompletionTask {
         let js = bun_core::heap::alloc_nn(BundleJs {
             global_this: BackRef::new(global_this),
             owner,
-            _keep_alive: JsKeepAlive::active(),
+            _keep_alive: JsKeepAlive::active(vm.live()),
             cancelled: Cell::new(false),
             abort_handle: jsc::AbortHandle::for_owner::<BundleJs>(),
             caller: CallerOfTheBuild {
@@ -174,9 +175,9 @@ impl JSBundleCompletionTask {
         // SAFETY: `js` stays where it is until `finish` takes the task and frees it. Until then it
         // keeps the plugins, or the route in it keeps the server that does.
         let (js, plugins) = unsafe {
-            jsc::AbortHandle::arm_owner(js.as_ptr(), vm.root_context());
+            jsc::AbortHandle::arm_owner(js.as_ptr(), vm.root_context(), vm.live());
             if let Some(caller) = vm.as_graph_context(vm.context_of(context)) {
-                jsc::AbortHandle::arm_owner(&raw mut (*js.as_ptr()).caller, caller);
+                jsc::AbortHandle::arm_owner(&raw mut (*js.as_ptr()).caller, caller, vm.live());
             }
             (JsPtr::new(js), plugins.map(|plugins| JsPtr::new(plugins)))
         };
@@ -1253,7 +1254,7 @@ impl JSBundleCompletionTask {
 
 impl BoxedTask for JSBundleCompletionTask {
     const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::JSBundleCompletionTask;
-    fn release_unrun(self: Box<Self>) {
+    fn release_unrun(self: Box<Self>, _live: VmLive<'_>) {
         let _ = self.finish(Delivery::Abandon);
     }
     /// The context whose script called `Bun.build`.

@@ -1,4 +1,5 @@
 use bstr::BStr;
+use bun_core::{LoopTurn, VmLive};
 use bun_jsc::ThreadIsolated;
 use bun_paths::resolve_path;
 
@@ -14,14 +15,14 @@ use crate::shell::yield_::Yield;
 
 const USAGE: &[u8] = b"usage: cp [-R [-H | -L | -P]] [-fi | -n] [-aclpsvXx] source_file target_file\n       cp [-R [-H | -L | -P]] [-fi | -n] [-aclpsvXx] source_file ... target_directory\n";
 
-pub(crate) fn start(interp: &Interpreter, cmd: NodeId) -> Yield {
+pub(crate) fn start(interp: &Interpreter, cmd: NodeId, turn: LoopTurn<'_>) -> Yield {
     let (flags, operands) = Builtin::of(interp, cmd).split_flags();
     let mut opts = Opts::default();
     if let Err(flag) = flags.iter().try_for_each(|flag| opts.parse(flag)) {
-        return Builtin::fail_flag(interp, cmd, flag);
+        return Builtin::fail_flag(interp, cmd, flag, turn);
     }
     let Some((tgt, sources @ [_, ..])) = operands.split_last() else {
-        return Builtin::fail_usage(interp, cmd, USAGE);
+        return Builtin::fail_usage(interp, cmd, USAGE, turn);
     };
     Batch::start(interp, cmd, sources.len());
     for src in sources {
@@ -185,6 +186,7 @@ impl ShellCpTask {
         src: PathLike<'static>,
         dest: PathLike<'static>,
         result: bun_sys::Maybe<()>,
+        turn: LoopTurn<'_>,
     ) {
         self.src_absolute = Some(src.into_vec());
         self.tgt_absolute = Some(dest.into_vec());
@@ -192,7 +194,7 @@ impl ShellCpTask {
             self.err = Some(ShellErr::new_sys(&e));
         }
         // SAFETY: the box `schedule` made, which `run_from_main_thread` takes back.
-        unsafe { ShellTask::run_from_main_thread(bun_core::heap::into_raw(self)) };
+        unsafe { ShellTask::run_from_main_thread(bun_core::heap::into_raw(self), turn) };
     }
 
     /// Unlike most shell builtins this does NOT use the generic
@@ -459,7 +461,7 @@ impl ShellCpTask {
 
 impl bun_event_loop::Taskable for ShellCpTask {
     const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::ShellCpTask;
-    unsafe fn release_unrun(this: *mut Self) {
+    unsafe fn release_unrun(this: *mut Self, _live: VmLive<'_>) {
         // SAFETY: fn contract — the box the builtin scheduled.
         unsafe { bun_core::heap::destroy(this) };
     }
@@ -481,7 +483,7 @@ impl ShellTaskCtx for ShellCpTask {
             "ShellCpTask scheduled via ShellTask::schedule; use ShellCpTask::schedule"
         );
     }
-    fn run_from_main_thread(this: *mut Self, interp: &Interpreter) {
+    fn run_from_main_thread(this: *mut Self, interp: &Interpreter, turn: LoopTurn<'_>) {
         // SAFETY: `ShellTask::run_from_main_thread` dispatch contract — `this`
         // is the live heap-allocated task posted via `ShellTask::schedule`.
         let task = unsafe { bun_core::heap::take(this) };
@@ -494,11 +496,11 @@ impl ShellTaskCtx for ShellCpTask {
         let Some(task) = batch.ebusy.get_or_insert_default().admit(task) else {
             let running = &Builtin::of(interp, cmd).running;
             running.fetch_sub(1, core::sync::atomic::Ordering::SeqCst);
-            return Batch::settle(interp, cmd).run(interp);
+            return Batch::settle(interp, cmd, turn).run(interp, turn);
         };
         let (err, out) = task.take_report();
         drop(task);
-        Batch::report(interp, cmd, err, out).run(interp);
+        Batch::report(interp, cmd, err, out, turn).run(interp, turn);
     }
 }
 

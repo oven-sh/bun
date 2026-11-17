@@ -291,7 +291,7 @@ pub(crate) extern "C" fn TextEncoderStreamEncoder__encodeIntoSink(
         return JSValue::UNDEFINED;
     }
     let wrote = handle
-        .write(&streams::Result::Temporary(&buf))
+        .write(&streams::Result::Temporary(&buf), global.turn())
         .to_js(&global.js_thread_of_caller());
     if buf.capacity() <= SCRATCH_CAP {
         this.scratch.replace(buf);
@@ -315,6 +315,6 @@ pub(crate) extern "C" fn TextEncoderStreamEncoder__flushIntoSink(
         return JSValue::UNDEFINED;
     }
     handle
-        .write(&streams::Result::Temporary(&REPLACEMENT))
+        .write(&streams::Result::Temporary(&REPLACEMENT), global.turn())
         .to_js(&global.js_thread_of_caller())
 }

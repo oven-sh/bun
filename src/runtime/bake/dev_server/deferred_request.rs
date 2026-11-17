@@ -13,6 +13,8 @@ bun_output::define_scoped_log!(debug_log_dr, DlogeferredRequest, hidden);
 
 use core::cell::Cell;
 
+use bun_core::JsTurn;
+
 use super::*;
 
 /// A small maximum is set because development servers are unlikely to
@@ -122,9 +124,9 @@ impl Handler {
     }
 
     /// Ends the response, which removes the abort callback that points to the request.
-    pub(super) fn fail(self) {
+    pub(super) fn fail(self, turn: JsTurn<'_>) {
         if let Handler::ServerHandler(saved) = self {
-            saved.ctx.end_with_internal_server_error();
+            saved.ctx.end_with_internal_server_error(turn);
         } else {
             self.abort();
         }

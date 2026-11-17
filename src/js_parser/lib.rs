@@ -69,7 +69,7 @@ pub mod Macro {
     pub enum MacroLoadState {
         /// The load failed or has not finished.
         Disabled,
-        Loaded,
+        Loaded(bun_core::HasVm),
     }
 
     /// Keyed by `MacroEntryPoint::generate_id`. A macro can start a nested parse that uses the same table.

@@ -253,6 +253,7 @@ impl S3Ext for S3 {
                 }
             }),
             aws_options.request_payer,
+            global.turn(),
         )?;
 
         Ok(value)
@@ -273,7 +274,7 @@ impl S3Ext for S3 {
 
         // (`list_objects` puts its request on the HTTP thread itself: asked here, before there is
         // a completion to release, as `execute_simple_s3_request` asks for the others.)
-        if crate::webcore::s3::simple_request::nothing_new_leaves(cx.context()) {
+        if crate::webcore::s3::simple_request::nothing_new_leaves(cx.context(), cx.live()) {
             return Ok(bun_jsc::JSPromise::create(cx.global()).to_js());
         }
         let mut promise = bun_jsc::JSPromiseStrong::init(cx.global());
@@ -298,6 +299,7 @@ impl S3Ext for S3 {
                     promise.reject(&global, err)
                 }
             }),
+            cx.live(),
         )?;
 
         Ok(value)

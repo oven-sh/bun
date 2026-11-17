@@ -1,6 +1,8 @@
 //! State node for a shell script. Used for the top-level script as well as
 //! command-substitution and subshell bodies.
 
+use bun_core::LoopTurn;
+
 use crate::shell::ExitCode;
 use crate::shell::ast;
 use crate::shell::interpreter::{Interpreter, Node, NodeId, log};
@@ -50,14 +52,14 @@ impl Script {
         id
     }
 
-    pub(crate) fn start(interp: &Interpreter, this: NodeId) -> Yield {
+    pub(crate) fn start(interp: &Interpreter, this: NodeId, turn: LoopTurn<'_>) -> Yield {
         if Self::stmt_count(interp, this) == 0 {
-            return Self::finish(interp, this, 0);
+            return Self::finish(interp, this, 0, turn);
         }
         Yield::Next(this)
     }
 
-    pub(crate) fn next(interp: &Interpreter, this: NodeId) -> Yield {
+    pub(crate) fn next(interp: &Interpreter, this: NodeId, turn: LoopTurn<'_>) -> Yield {
         let (idx, shell) = {
             let me = interp.as_script_mut(this);
             let len = Self::stmt_count_of(me);
@@ -72,12 +74,17 @@ impl Script {
         let stmt_node = Self::stmt_at(interp, this, idx);
         let io = interp.as_script(this).io.clone();
         let stmt = Stmt::init(interp, shell, stmt_node, this, io);
-        Stmt::start(interp, stmt)
+        Stmt::start(interp, stmt, turn)
     }
 
-    fn finish(interp: &Interpreter, this: NodeId, exit_code: ExitCode) -> Yield {
+    fn finish(
+        interp: &Interpreter,
+        this: NodeId,
+        exit_code: ExitCode,
+        turn: LoopTurn<'_>,
+    ) -> Yield {
         let parent = interp.as_script(this).base.parent;
-        interp.child_done(parent, this, exit_code)
+        interp.child_done(parent, this, exit_code, turn)
     }
 
     pub(crate) fn child_done(
@@ -85,6 +92,7 @@ impl Script {
         this: NodeId,
         child: NodeId,
         exit_code: ExitCode,
+        turn: LoopTurn<'_>,
     ) -> Yield {
         interp.deinit_node(child);
         let (idx, len) = {
@@ -92,10 +100,10 @@ impl Script {
             let ScriptState::Normal { idx } = me.state;
             (idx, Self::stmt_count_of(me))
         };
-        if idx >= len || interp.interrupted(this) {
-            return Self::finish(interp, this, exit_code);
+        if idx >= len || interp.interrupted(this, turn.live) {
+            return Self::finish(interp, this, exit_code, turn);
         }
-        Self::next(interp, this)
+        Self::next(interp, this, turn)
     }
 
     // ── AST helpers ────────────────────────────────────────────────────────

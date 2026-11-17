@@ -16,7 +16,7 @@ use bun_collections::OffsetByteList;
 use bun_collections::smallvec::SmallVec;
 use bun_core::fmt::ConnTimeoutKind;
 use bun_core::strings;
-use bun_core::{self};
+use bun_core::{self, JsTurn, VmLive};
 use bun_io::KeepAlive;
 use bun_jsc::rare_data::SocketGroups;
 use bun_ptr::{AsCtxPtr, BackRef, ParentRef, RefPtr};
@@ -156,7 +156,9 @@ bun_event_loop::impl_timer_owner!(PostgresSQLConnection;
 
 impl Drop for PostgresSQLConnection {
     fn drop(&mut self) {
-        self.disconnect();
+        // SAFETY: only a `Connected` one uses the turn. That status roots the wrapper, which holds a ref, and the
+        // stop phase closes the socket, which ends it before `~VM` finalizes the wrapper.
+        self.disconnect(unsafe { JsTurn::assume(self) });
     }
 }
 
@@ -175,13 +177,13 @@ impl PostgresSQLConnection {
     }
 
     #[inline]
-    fn event_loop(&self) -> &'static crate::jsc::EventLoop {
-        VirtualMachine::get().event_loop()
+    fn event_loop<'a>(&self, live: VmLive<'a>) -> &'a crate::jsc::EventLoop {
+        VirtualMachine::get(live).event_loop()
     }
 
     #[inline]
-    fn vm_ctx(&self) -> bun_io::EventLoopCtx {
-        bun_io::js_vm_ctx()
+    fn vm_ctx(&self, live: VmLive<'_>) -> bun_io::EventLoopCtx {
+        bun_io::js_vm_ctx(live)
     }
 
     /// `&mut SASL` if `authentication_state` is the `Sasl` variant.
@@ -201,8 +203,8 @@ impl PostgresSQLConnection {
         }
     }
 
-    fn refuse_authentication(&self, refusal: Refusal) {
-        self.fail_fmt(refusal.code, format_args!("{}", refusal.message));
+    fn refuse_authentication(&self, refusal: Refusal, turn: JsTurn<'_>) {
+        self.fail_fmt(refusal.code, format_args!("{}", refusal.message), turn);
     }
 }
 
@@ -232,13 +234,18 @@ impl TimedConnection for PostgresSQLConnection {
             .contains(ConnectionFlags::IS_PROCESSING_DATA)
     }
 
-    fn fail_timeout(&self, kind: ConnTimeoutKind, message: core::fmt::Arguments<'_>) {
+    fn fail_timeout(
+        &self,
+        kind: ConnTimeoutKind,
+        message: core::fmt::Arguments<'_>,
+        turn: JsTurn<'_>,
+    ) {
         let code: &[u8] = match kind {
             ConnTimeoutKind::Idle => b"ERR_POSTGRES_IDLE_TIMEOUT",
             ConnTimeoutKind::Connection => b"ERR_POSTGRES_CONNECTION_TIMEOUT",
             ConnTimeoutKind::MaxLifetime => b"ERR_POSTGRES_LIFETIME_TIMEOUT",
         };
-        self.fail_fmt(code, message);
+        self.fail_fmt(code, message, turn);
     }
 
     fn notify_retiring(&self) {
@@ -267,11 +274,11 @@ impl AutoFlush for PostgresSQLConnection {
             && self.write_buffer.get().len() > 0
     }
 
-    fn on_auto_flush(&self) -> bool {
+    fn on_auto_flush(&self, turn: JsTurn<'_>) -> bool {
         let _guard = self.ref_guard();
         // With backpressure, onWritable drains.
         if !self.flags.get().contains(ConnectionFlags::HAS_BACKPRESSURE) {
-            self.drain_internal();
+            self.drain_internal(turn);
         }
         let again = self.can_flush();
         self.auto_flush_registered.set(again);
@@ -281,7 +288,7 @@ impl AutoFlush for PostgresSQLConnection {
 
 impl PostgresSQLConnection {
     /// `on_handshake` sends the StartupMessage.
-    pub(crate) fn setup_tls(&self) {
+    pub(crate) fn setup_tls(&self, turn: JsTurn<'_>) {
         let started = start_tls(
             self.as_ctx_ptr(),
             *self.socket.get(),
@@ -293,6 +300,7 @@ impl PostgresSQLConnection {
             &self.tls_config,
             self.ssl_mode,
             |socket| self.socket.set(socket),
+            turn,
         );
         if started.is_err() {
             self.fail(
@@ -302,15 +310,15 @@ impl PostgresSQLConnection {
         }
     }
 
-    pub(crate) fn start(&self) {
-        self.start_max_lifetime_timer();
+    pub(crate) fn start(&self, turn: JsTurn<'_>) {
+        self.start_max_lifetime_timer(turn.live);
         // A CancelRequest has one time budget, from dial to hang-up.
         if self.cancel_target.get().is_none() {
-            self.reset_connection_timeout();
+            self.reset_connection_timeout(turn.live);
         }
         self.send_startup_message();
 
-        self.drain_internal();
+        self.drain_internal(turn);
     }
 
     fn has_pending_activity(&self) -> bool {
@@ -336,7 +344,7 @@ impl PostgresSQLConnection {
         }
     }
 
-    pub(crate) fn set_status(&self, status: Status) {
+    pub(crate) fn set_status(&self, status: Status, live: VmLive<'_>) {
         let current = self.status.get();
         if current == status {
             return;
@@ -347,10 +355,10 @@ impl PostgresSQLConnection {
             return;
         }
         self.status.set(status);
-        self.reset_connection_timeout();
+        self.reset_connection_timeout(live);
         if status == Status::Connected {
             self.update_flags(|f| f.insert(ConnectionFlags::ON_CONNECT_PENDING));
-            self.poll_ref.unref(self.vm_ctx());
+            self.poll_ref.unref(self.vm_ctx(live));
         }
         self.update_has_pending_activity();
     }
@@ -383,7 +391,7 @@ impl PostgresSQLConnection {
     }
 
     /// Keep the process alive only while a connected connection has something in flight.
-    pub(crate) fn update_poll_ref(&self) {
+    pub(crate) fn update_poll_ref(&self, live: VmLive<'_>) {
         if self.status.get() != Status::Connected {
             return;
         }
@@ -393,14 +401,14 @@ impl PostgresSQLConnection {
             && (flags.contains(ConnectionFlags::COPY_OUT_PAUSED)
                 || (!self.has_query_running() && self.write_buffer.get().remaining().is_empty()));
         if idle {
-            self.poll_ref.unref(self.vm_ctx());
+            self.poll_ref.unref(self.vm_ctx(live));
         } else {
-            self.poll_ref.r#ref(self.vm_ctx());
+            self.poll_ref.r#ref(self.vm_ctx(live));
         }
     }
 
-    pub(crate) fn flush_data_and_reset_timeout(&self) {
-        self.reset_connection_timeout();
+    pub(crate) fn flush_data_and_reset_timeout(&self, live: VmLive<'_>) {
+        self.reset_connection_timeout(live);
         // defer flushing, so if many queries are running in parallel in the same connection, we don't flush more than once
         self.register_auto_flusher();
     }
@@ -433,7 +441,7 @@ impl PostgresSQLConnection {
         }
     }
 
-    pub(crate) fn fail_with_js_value(&self, value: JSValue) {
+    pub(crate) fn fail_with_js_value(&self, value: JSValue, turn: JsTurn<'_>) {
         self.timers.stop();
         if self.status.get() == Status::Failed {
             self.update_has_pending_activity();
@@ -448,7 +456,7 @@ impl PostgresSQLConnection {
         // Read first: without a socket nothing native keeps the wrapper of a failed connection.
         let on_close_opt = self.consume_on_close_callback(self.global());
         // The socket closes before `onclose`, which may dial again. Requests are rejected after it.
-        self.close_socket();
+        self.close_socket(turn);
         if let Some(on_close) = on_close_opt {
             let mut js_error = value.to_error().unwrap_or(value);
             if js_error.is_empty() {
@@ -468,11 +476,11 @@ impl PostgresSQLConnection {
         if let Some(target) = self.cancel_target.take() {
             target
                 .session
-                .on_cancel_connection_closed(&target.request, sent_first_message);
+                .on_cancel_connection_closed(&target.request, sent_first_message, turn);
         }
     }
 
-    pub(crate) fn fail_fmt(&self, code: &[u8], args: core::fmt::Arguments<'_>) {
+    pub(crate) fn fail_fmt(&self, code: &[u8], args: core::fmt::Arguments<'_>, turn: JsTurn<'_>) {
         let mut message: Vec<u8> = Vec::new();
         use std::io::Write as _;
         let _ = write!(&mut message, "{}", args);
@@ -489,7 +497,7 @@ impl PostgresSQLConnection {
             Err(e) => self.global().take_error(e),
         };
 
-        self.fail_with_js_value(err);
+        self.fail_with_js_value(err, turn);
     }
 
     pub(crate) fn fail(&self, message: &[u8], err: AnyPostgresError) {
@@ -501,35 +509,44 @@ impl PostgresSQLConnection {
 
         let global_object = self.global();
 
-        self.fail_with_js_value(postgres_error_to_js(global_object, Some(message), err));
+        self.fail_with_js_value(
+            postgres_error_to_js(global_object, Some(message), err),
+            global_object.turn(),
+        );
     }
 
-    pub(crate) fn on_close(&self) {
+    pub(crate) fn on_close(&self, turn: JsTurn<'_>) {
         // A close before the handshake finished means the server (or an
         // intermediary like a container port proxy) accepted the TCP
         // connection but went away before completing startup — e.g. the
         // database is still initializing. Report it as a connect failure
         // (the connection was never established) rather than a closed
         // connection so the error is actionable.
-        self.handle_socket_failure(|this| match this.status.get() {
-            Status::Connecting | Status::SentStartupMessage => this.fail(
-                b"Connection closed before the connection was established",
-                AnyPostgresError::ConnectionFailed,
-            ),
-            _ => this.fail(b"Connection closed", AnyPostgresError::ConnectionClosed),
-        });
+        self.handle_socket_failure(
+            |this| match this.status.get() {
+                Status::Connecting | Status::SentStartupMessage => this.fail(
+                    b"Connection closed before the connection was established",
+                    AnyPostgresError::ConnectionFailed,
+                ),
+                _ => this.fail(b"Connection closed", AnyPostgresError::ConnectionClosed),
+            },
+            turn,
+        );
     }
 
-    pub(crate) fn on_connect_error(&self) {
-        self.handle_socket_failure(|this| {
-            this.fail(b"Failed to connect", AnyPostgresError::ConnectionRefused);
-        });
+    pub(crate) fn on_connect_error(&self, turn: JsTurn<'_>) {
+        self.handle_socket_failure(
+            |this| {
+                this.fail(b"Failed to connect", AnyPostgresError::ConnectionRefused);
+            },
+            turn,
+        );
     }
 
-    fn handle_socket_failure(&self, fail: impl FnOnce(&Self)) {
+    fn handle_socket_failure(&self, fail: impl FnOnce(&Self), turn: JsTurn<'_>) {
         self.unregister_auto_flusher();
-        let _entered = self.event_loop().enter_scope();
-        self.poll_ref.unref(self.vm_ctx());
+        let _entered = self.event_loop(turn.live).enter_scope(turn);
+        self.poll_ref.unref(self.vm_ctx(turn.live));
         fail(self);
     }
 
@@ -586,7 +603,7 @@ impl PostgresSQLConnection {
         }
     }
 
-    pub(crate) fn on_open(&self, socket: uws::AnySocket) {
+    pub(crate) fn on_open(&self, socket: uws::AnySocket, turn: JsTurn<'_>) {
         self.socket.set(socket);
         // What ends a query whose peer is gone without a FIN. Not a unix socket's option.
         if self.strings.path().is_empty() {
@@ -596,7 +613,7 @@ impl PostgresSQLConnection {
             };
         }
 
-        self.poll_ref.r#ref(self.vm_ctx());
+        self.poll_ref.r#ref(self.vm_ctx(turn.live));
         self.update_has_pending_activity();
 
         if matches!(
@@ -607,7 +624,7 @@ impl PostgresSQLConnection {
             return;
         }
 
-        self.start();
+        self.start(turn);
     }
 
     /// verify-full's name check, asked inside the handshake.
@@ -631,14 +648,19 @@ impl PostgresSQLConnection {
             .and_then(js::check_server_identity_get_cached)
     }
 
-    pub(crate) fn on_handshake(&self, success: i32, ssl_error: uws::us_bun_verify_error_t) {
+    pub(crate) fn on_handshake(
+        &self,
+        success: i32,
+        ssl_error: uws::us_bun_verify_error_t,
+        turn: JsTurn<'_>,
+    ) {
         debug!("onHandshake: {} {}", success, ssl_error.error_no);
         // The server rejected us, whatever `rejectUnauthorized` says, or its chain does not verify.
         if success != 1
             || (ssl_error.error_no != 0 && verifies_certificate(&self.tls_config, self.ssl_mode))
         {
             let v = verify_error_to_js(&ssl_error, self.global());
-            self.fail_with_js_value(v);
+            self.fail_with_js_value(v, turn);
             return;
         }
         // A TLS 1.2 server can renegotiate. BoringSSL refuses another certificate then.
@@ -653,7 +675,7 @@ impl PostgresSQLConnection {
             let hostname = self.tls_config.server_name_bytes();
             if let Err(reason) = server_identity::check(self.global(), callback, &socket, hostname)
             {
-                self.fail_with_js_value(reason);
+                self.fail_with_js_value(reason, turn);
                 return;
             }
             if self.status.get() != Status::Connecting {
@@ -668,15 +690,15 @@ impl PostgresSQLConnection {
                 || !ssl.is_some_and(|ssl| uws::check_server_identity(ssl, hostname))
             {
                 let v = verify_error_to_js(&ssl_error, self.global());
-                self.fail_with_js_value(v);
+                self.fail_with_js_value(v, turn);
                 return;
             }
         }
 
-        self.start();
+        self.start(turn);
     }
 
-    pub(crate) fn on_drain(&self) {
+    pub(crate) fn on_drain(&self, turn: JsTurn<'_>) {
         debug!("onDrain");
         let _guard = self.ref_guard();
         self.update_flags(|f| f.remove(ConnectionFlags::HAS_BACKPRESSURE));
@@ -688,13 +710,13 @@ impl PostgresSQLConnection {
             return;
         }
 
-        self.drain_internal();
-        self.on_copy_drain();
+        self.drain_internal(turn);
+        self.on_copy_drain(turn);
     }
 
-    fn drain_internal(&self) {
+    fn drain_internal(&self, turn: JsTurn<'_>) {
         debug!("drainInternal");
-        let _entered = self.event_loop().enter_scope();
+        let _entered = self.event_loop(turn.live).enter_scope(turn);
 
         self.flush_data();
 
@@ -705,7 +727,7 @@ impl PostgresSQLConnection {
         }
     }
 
-    pub(crate) fn on_data(&self, data: &[u8]) {
+    pub(crate) fn on_data(&self, data: &[u8], turn: JsTurn<'_>) {
         let _guard = self.ref_guard();
         // A server answers a CancelRequest by hanging up. This one is not to be talked to.
         if self.cancel_target.get().is_some() && self.status.get() == Status::SentStartupMessage {
@@ -719,12 +741,12 @@ impl PostgresSQLConnection {
         }
         self.update_flags(|f| f.insert(ConnectionFlags::IS_PROCESSING_DATA));
 
-        let entered = self.event_loop().enter_scope();
+        let entered = self.event_loop(turn.live).enter_scope(turn);
 
-        let mut result = self.parse(data);
+        let mut result = self.parse(data, turn);
         while let Ok(Some(pending)) = result {
             run_callback(self.global(), pending.callback, &pending.arguments);
-            result = self.parse(b"");
+            result = self.parse(b"", turn);
         }
         if let Err(err) = result
             && err != AnyPostgresError::ShortRead
@@ -734,19 +756,23 @@ impl PostgresSQLConnection {
         }
 
         self.stop_cancelled_head();
-        self.flush_copy_out();
+        self.flush_copy_out(turn);
         self.notify_connected();
         drop(entered);
-        self.update_poll_ref();
+        self.update_poll_ref(turn.live);
         self.update_flags(|f| f.remove(ConnectionFlags::IS_PROCESSING_DATA));
 
         if self.status.get() == Status::Connected {
-            self.reset_connection_timeout();
+            self.reset_connection_timeout(turn.live);
         }
     }
 
     /// Handles what is buffered, then `data`, up to a notification. The rest is in `read_buffer`.
-    fn parse(&self, mut data: &[u8]) -> Result<Option<PendingNotification>, AnyPostgresError> {
+    fn parse(
+        &self,
+        mut data: &[u8],
+        turn: JsTurn<'_>,
+    ) -> Result<Option<PendingNotification>, AnyPostgresError> {
         let mut buffer = self.read_buffer.take();
         let result = loop {
             let cursor = Cell::new(0usize);
@@ -754,14 +780,14 @@ impl PostgresSQLConnection {
             let result;
             if buffer.remaining().is_empty() {
                 let reader = protocol::NewReader::new(data, &cursor, &message_start);
-                result = PostgresRequest::on_data(self, &reader);
+                result = PostgresRequest::on_data(self, &reader, turn);
                 if let Ok(Some(_)) | Err(AnyPostgresError::ShortRead) = result {
                     bun_core::handle_oom(buffer.write(&data[message_start.get()..]));
                 }
             } else {
                 bun_core::handle_oom(buffer.write(data));
                 let reader = protocol::NewReader::new(buffer.remaining(), &cursor, &message_start);
-                result = PostgresRequest::on_data(self, &reader);
+                result = PostgresRequest::on_data(self, &reader, turn);
                 buffer.consume(message_start.get());
             }
             let read_meanwhile = self.read_buffer.take();
@@ -1013,7 +1039,7 @@ fn open(
         advancing: Cell::new(false),
         poll_ref: KeepAlive::default(),
         global_object: BackRef::new(global_object),
-        vm: BackRef::new(VirtualMachine::get()),
+        vm: BackRef::new(VirtualMachine::get(global_object.live())),
         statements: JsCell::new(StatementCache::default()),
         prepared_statement_id: Cell::new(0),
         transaction_status: Cell::new(b'I'),
@@ -1079,8 +1105,8 @@ fn open(
     }
 
     // only call toJS if connectUnixAnon does not fail immediately
-    this.reset_connection_timeout();
-    this.poll_ref.ref_(this.vm_ctx());
+    this.reset_connection_timeout(global_object.live());
+    this.poll_ref.ref_(this.vm_ctx(global_object.live()));
     let this = js::wrap(this, global_object);
     let js_value = this.to_js();
     this.js_value
@@ -1115,8 +1141,8 @@ impl<const SSL: bool> SocketHandler<SSL> {
         }
     }
 
-    pub fn on_open(this: &PostgresSQLConnection, socket: SocketType<SSL>) {
-        this.on_open(Self::socket(socket));
+    pub fn on_open(this: &PostgresSQLConnection, socket: SocketType<SSL>, turn: JsTurn<'_>) {
+        this.on_open(Self::socket(socket), turn);
     }
 
     fn on_handshake(
@@ -1124,12 +1150,13 @@ impl<const SSL: bool> SocketHandler<SSL> {
         _: SocketType<SSL>,
         success: i32,
         ssl_error: uws::us_bun_verify_error_t,
+        turn: JsTurn<'_>,
     ) {
-        this.on_handshake(success, ssl_error);
+        this.on_handshake(success, ssl_error, turn);
     }
 
     pub const ON_HANDSHAKE: Option<
-        fn(&PostgresSQLConnection, SocketType<SSL>, i32, uws::us_bun_verify_error_t),
+        fn(&PostgresSQLConnection, SocketType<SSL>, i32, uws::us_bun_verify_error_t, JsTurn<'_>),
     > = if SSL { Some(Self::on_handshake) } else { None };
 
     pub fn on_close(
@@ -1137,41 +1164,52 @@ impl<const SSL: bool> SocketHandler<SSL> {
         _socket: SocketType<SSL>,
         _: i32,
         _: Option<*mut c_void>,
+        turn: JsTurn<'_>,
     ) {
         // usockets frees this socket at end-of-tick; drop the stored pointer
         // now so nothing (timer callbacks, ref()) dereferences it
         // after the free.
         this.socket
             .set(Socket::SocketTcp(uws::SocketTCP::detached()));
-        this.on_close();
+        this.on_close(turn);
     }
 
-    pub fn on_end(this: &PostgresSQLConnection, _socket: SocketType<SSL>) {
-        this.on_close();
+    pub fn on_end(this: &PostgresSQLConnection, _socket: SocketType<SSL>, turn: JsTurn<'_>) {
+        this.on_close(turn);
     }
 
-    pub fn on_connect_error(this: &PostgresSQLConnection, _socket: SocketType<SSL>, _: i32) {
+    pub fn on_connect_error(
+        this: &PostgresSQLConnection,
+        _socket: SocketType<SSL>,
+        _: i32,
+        turn: JsTurn<'_>,
+    ) {
         // As in `on_close`.
         this.socket
             .set(Socket::SocketTcp(uws::SocketTCP::detached()));
-        this.on_connect_error();
+        this.on_connect_error(turn);
     }
 
     pub fn on_timeout(_: &PostgresSQLConnection, _: SocketType<SSL>) {}
 
-    pub fn on_data(this: &PostgresSQLConnection, _socket: SocketType<SSL>, data: &[u8]) {
-        this.on_data(data);
+    pub fn on_data(
+        this: &PostgresSQLConnection,
+        _socket: SocketType<SSL>,
+        data: &[u8],
+        turn: JsTurn<'_>,
+    ) {
+        this.on_data(data, turn);
     }
 
-    pub fn on_writable(this: &PostgresSQLConnection, _socket: SocketType<SSL>) {
-        this.on_drain();
+    pub fn on_writable(this: &PostgresSQLConnection, _socket: SocketType<SSL>, turn: JsTurn<'_>) {
+        this.on_drain(turn);
     }
 }
 
 impl PostgresSQLConnection {
-    pub fn r#ref(&self) {
+    pub fn r#ref(&self, live: VmLive<'_>) {
         self.update_flags(|f| f.insert(ConnectionFlags::KEEP_ALIVE_REQUESTED));
-        self.poll_ref.ref_(self.vm_ctx());
+        self.poll_ref.ref_(self.vm_ctx(live));
         self.update_has_pending_activity();
     }
 
@@ -1179,19 +1217,19 @@ impl PostgresSQLConnection {
         self.register_auto_flusher();
     }
 
-    pub fn hold(&self) {
+    pub fn hold(&self, live: VmLive<'_>) {
         self.timers.set_checked_out(true);
         if self.status.get() == Status::Connected {
-            self.reset_connection_timeout();
+            self.reset_connection_timeout(live);
         }
     }
 
-    pub fn unhold(&self, _: &mut JsScope<'_>) {
+    pub fn unhold(&self, cx: &mut JsScope<'_>) {
         self.timers.set_checked_out(false);
         if self.status.get() == Status::Connected {
-            self.reset_connection_timeout();
+            self.reset_connection_timeout(cx.live());
         }
-        self.retire_if_idle();
+        self.retire_if_idle(cx.turn());
     }
 
     fn is_in_transaction(&self) -> bool {
@@ -1214,7 +1252,7 @@ impl PostgresSQLConnection {
         )
     }
 
-    fn close(&self) {
+    fn close(&self, turn: JsTurn<'_>) {
         // `disconnect()` only tears down connected sockets.
         if matches!(
             self.status.get(),
@@ -1222,14 +1260,14 @@ impl PostgresSQLConnection {
         ) {
             self.fail(b"Connection closed", AnyPostgresError::ConnectionClosed);
         } else {
-            self.disconnect();
+            self.disconnect(turn);
         }
         self.unregister_auto_flusher();
         self.write_buffer.with_mut(|b| b.clear_and_free());
     }
 
-    pub fn do_close(&self, _: &mut JsScope<'_>) {
-        self.close();
+    pub fn do_close(&self, cx: &mut JsScope<'_>) {
+        self.close(cx.turn());
     }
 
     fn clean_up_requests(&self, js_reason: Option<JSValue>) {
@@ -1256,22 +1294,22 @@ impl PostgresSQLConnection {
         unsafe { RefPtr::init_ref(self.as_ctx_ptr()) }
     }
 
-    fn close_socket(&self) {
+    fn close_socket(&self, turn: JsTurn<'_>) {
         let socket = *self.socket.get();
         if !socket.is_closed() {
             // event loop need to be alive to close the socket
-            self.poll_ref.ref_(self.vm_ctx());
+            self.poll_ref.ref_(self.vm_ctx(turn.live));
             // will unref on socket close
             socket.close_now();
         }
     }
 
-    pub(crate) fn disconnect(&self) {
+    pub(crate) fn disconnect(&self, turn: JsTurn<'_>) {
         self.timers.stop();
         self.unregister_auto_flusher();
         if self.status.get() == Status::Connected {
             self.status.set(Status::Disconnected);
-            self.close_socket();
+            self.close_socket(turn);
             self.clean_up_requests(None);
         }
     }
@@ -1338,11 +1376,11 @@ impl PostgresSQLConnection {
         .unwrap_or_else(|err| self.global().take_error(err))
     }
 
-    pub(crate) fn cancel(&self, request: &PostgresSQLQuery) {
+    pub(crate) fn cancel(&self, request: &PostgresSQLQuery, turn: JsTurn<'_>) {
         if request.is_rejected() {
             return;
         }
-        request.cancel_copy();
+        request.cancel_copy(turn);
         let status = request.status.get();
         match status {
             QueryStatus::Success | QueryStatus::Fail => {}
@@ -1350,9 +1388,9 @@ impl PostgresSQLConnection {
                 self.reject_unwritten(request, self.cancelled_error(None));
                 // What waited behind it may not have to wait any more.
                 self.advance();
-                self.flush_data_and_reset_timeout();
-                self.update_poll_ref();
-                self.retire_if_idle();
+                self.flush_data_and_reset_timeout(turn.live);
+                self.update_poll_ref(turn.live);
+                self.retire_if_idle(turn);
             }
             QueryStatus::Preparing
             | QueryStatus::Binding
@@ -1483,7 +1521,12 @@ impl PostgresSQLConnection {
     }
 
     /// `asked`: the CancelRequest for `request` went out, and the server has dealt with it.
-    fn on_cancel_connection_closed(&self, request: &PostgresSQLQuery, asked: bool) {
+    fn on_cancel_connection_closed(
+        &self,
+        request: &PostgresSQLQuery,
+        asked: bool,
+        turn: JsTurn<'_>,
+    ) {
         self.update_flags(|f| f.remove(ConnectionFlags::CANCEL_IN_FLIGHT));
         if self.status.get() != Status::Connected {
             return;
@@ -1495,10 +1538,10 @@ impl PostgresSQLConnection {
             );
         }
         self.stop_cancelled_head();
-        self.drain_internal();
-        self.reset_connection_timeout();
-        self.update_poll_ref();
-        self.retire_if_idle();
+        self.drain_internal(turn);
+        self.reset_connection_timeout(turn.live);
+        self.update_poll_ref(turn.live);
+        self.retire_if_idle(turn);
     }
 
     #[inline]
@@ -1845,6 +1888,7 @@ impl PostgresSQLConnection {
         &self,
         message_type: MessageType,
         reader: &protocol::NewReader<'_>,
+        turn: JsTurn<'_>,
     ) -> Result<(), AnyPostgresError> {
         #[inline(always)]
         fn pg_err(e: crate::Error) -> AnyPostgresError {
@@ -1959,7 +2003,7 @@ impl PostgresSQLConnection {
 
                 self.transaction_status
                     .set(ready_for_query.transaction_status);
-                self.set_status(Status::Connected);
+                self.set_status(Status::Connected, turn.live);
                 self.update_flags(|f| f.remove(ConnectionFlags::WAITING_TO_PREPARE));
 
                 if let Some(request) = self.current() {
@@ -1979,7 +2023,7 @@ impl PostgresSQLConnection {
                     }
                 }
                 self.advance();
-                self.retire_if_idle();
+                self.retire_if_idle(turn);
 
                 self.register_auto_flusher();
                 self.update_has_pending_activity();
@@ -2126,7 +2170,7 @@ impl PostgresSQLConnection {
                                 .authentication_state
                                 .set(AuthenticationState::Sasl(Box::new(sasl))),
                             Err(refusal) => {
-                                self.refuse_authentication(refusal);
+                                self.refuse_authentication(refusal, turn);
                                 return Ok(());
                             }
                         }
@@ -2362,7 +2406,7 @@ impl PostgresSQLConnection {
                                 }
                             )
                         {
-                            self.refuse_authentication(Refusal::NOT_BOUND);
+                            self.refuse_authentication(Refusal::NOT_BOUND, turn);
                             return Ok(());
                         }
                         debug!("Authentication OK");
@@ -2385,7 +2429,7 @@ impl PostgresSQLConnection {
                             return Err(AnyPostgresError::UnexpectedMessage);
                         }
                         if self.channel_binding == ChannelBinding::Require {
-                            self.refuse_authentication(Refusal::NOT_A_SASL_REQUEST);
+                            self.refuse_authentication(Refusal::NOT_A_SASL_REQUEST, turn);
                             return Ok(());
                         }
                         debug!("ClearTextPassword");
@@ -2408,7 +2452,7 @@ impl PostgresSQLConnection {
                             return Err(AnyPostgresError::UnexpectedMessage);
                         }
                         if self.channel_binding == ChannelBinding::Require {
-                            self.refuse_authentication(Refusal::NOT_A_SASL_REQUEST);
+                            self.refuse_authentication(Refusal::NOT_A_SASL_REQUEST, turn);
                             return Ok(());
                         }
                         debug!("MD5Password");
@@ -2503,7 +2547,7 @@ impl PostgresSQLConnection {
                     let v =
                         crate::postgres::protocol::error_response_jsc::to_js(&err, self.global());
                     drop(err);
-                    self.fail_with_js_value(v);
+                    self.fail_with_js_value(v, turn);
                     return Ok(());
                 };
                 let js_err =
@@ -2564,7 +2608,7 @@ impl PostgresSQLConnection {
             MessageType::CopyInResponse => {
                 reader.skip_message()?;
                 let request = self.current().ok_or(AnyPostgresError::ExpectedRequest)?;
-                self.on_copy_in_response(&request)?;
+                self.on_copy_in_response(&request, turn)?;
             }
             MessageType::NoticeResponse => {
                 debug!("UNSUPPORTED NoticeResponse");
@@ -2582,11 +2626,11 @@ impl PostgresSQLConnection {
             MessageType::CopyOutResponse => {
                 reader.skip_message()?;
                 let request = self.current().ok_or(AnyPostgresError::ExpectedRequest)?;
-                self.on_copy_out_response(&request);
+                self.on_copy_out_response(&request, turn);
             }
             MessageType::CopyDone => {
                 reader.skip_message()?;
-                self.on_copy_done();
+                self.on_copy_done(turn);
             }
             MessageType::CopyBothResponse => {
                 reader.skip_message()?;

@@ -1,3 +1,5 @@
+use bun_core::LoopTurn;
+
 use crate::shell::ExitCode;
 use crate::shell::ast;
 use crate::shell::interpreter::{Interpreter, Node, NodeId, ShellExecEnv, log};
@@ -35,12 +37,12 @@ impl Binary {
         }))
     }
 
-    pub(crate) fn start(_interp: &Interpreter, this: NodeId) -> Yield {
+    pub(crate) fn start(_interp: &Interpreter, this: NodeId, _turn: LoopTurn<'_>) -> Yield {
         log!("Binary {} start", this);
         Yield::Next(this)
     }
 
-    pub(crate) fn next(interp: &Interpreter, this: NodeId) -> Yield {
+    pub(crate) fn next(interp: &Interpreter, this: NodeId, turn: LoopTurn<'_>) -> Yield {
         let (left_exit, right_exit, parent, shell, node) = {
             let me = interp.as_binary(this);
             (me.left, me.right, me.base.parent, me.shell, me.node)
@@ -48,7 +50,7 @@ impl Binary {
         let n = node.get();
 
         if let Some(right) = right_exit {
-            return interp.child_done(parent, this, right);
+            return interp.child_done(parent, this, right, turn);
         }
 
         if let Some(left) = left_exit {
@@ -58,16 +60,16 @@ impl Binary {
                 ast::BinaryOp::Or => left == 0,
             };
             if short {
-                return interp.child_done(parent, this, left);
+                return interp.child_done(parent, this, left, turn);
             }
             let io = interp.as_binary(this).io.clone();
-            let (child, y) = interp.spawn_expr(shell, &n.right, this, io);
+            let (child, y) = interp.spawn_expr(shell, &n.right, this, io, turn);
             interp.as_binary_mut(this).currently_executing = child;
             return y;
         }
 
         let io = interp.as_binary(this).io.clone();
-        let (child, y) = interp.spawn_expr(shell, &n.left, this, io);
+        let (child, y) = interp.spawn_expr(shell, &n.left, this, io, turn);
         interp.as_binary_mut(this).currently_executing = child;
         y
     }
@@ -77,9 +79,10 @@ impl Binary {
         this: NodeId,
         child: NodeId,
         exit_code: ExitCode,
+        turn: LoopTurn<'_>,
     ) -> Yield {
         interp.deinit_node(child);
-        let stop = interp.interrupted(this);
+        let stop = interp.interrupted(this, turn.live);
         {
             let me = interp.as_binary_mut(this);
             me.currently_executing = None;

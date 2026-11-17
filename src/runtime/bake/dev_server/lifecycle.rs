@@ -3,9 +3,11 @@
 use super::*;
 use std::sync::Arc;
 
+use bun_core::JsTurn;
+
 /// DevServer is stored on the heap, storing its allocator.
 #[inline(never)]
-pub(crate) fn init(options: Options) -> JsResult<Box<DevServer>> {
+pub(crate) fn init(options: Options, turn: JsTurn<'_>) -> JsResult<Box<DevServer>> {
     bun_removable_features::removable_definition!(Bundler, init);
     // Note: `Features.dev_server +|= 1` (saturating add). AtomicUsize has
     // no `saturating_inc`; on a 64-bit counter overflow is unreachable, so a
@@ -20,7 +22,7 @@ pub(crate) fn init(options: Options) -> JsResult<Box<DevServer>> {
         .unwrap_or(false);
 
     let root = paths::string_paths::without_trailing_slash_windows_path(options.root.as_bytes());
-    let global = options.vm.global();
+    let global = options.vm.global(turn);
 
     let generic_action = "while initializing development server";
     // FileSystem is a process-lifetime singleton; `init` interns the path into
@@ -302,7 +304,7 @@ pub(crate) fn init(options: Options) -> JsResult<Box<DevServer>> {
     }
 
     if !dev.frontend_only {
-        dev.init_server_runtime()?;
+        dev.init_server_runtime(turn)?;
     }
 
     // Initialize FrameworkRouter
@@ -460,16 +462,21 @@ impl Drop for DevServer {
 
         // The map's `Drop` runs `SerializedFailure::drop` for each value.
 
+        let scope = ();
+        // SAFETY: only a `ServerHandler` uses the turn. It counts as a pending request, and the server is drained,
+        // or has failed to listen, when it drops this.
+        let turn = unsafe { JsTurn::assume(&scope) };
+
         if let Some(current_bundle) = &mut self.current_bundle {
             debug_assert!(false); // impossible to de-initialize this state correctly.
-            super::finalize::drain_current_bundle_requests(current_bundle);
+            super::finalize::drain_current_bundle_requests(current_bundle, turn);
         }
 
         {
             while let Some(r) = self.next_bundle.requests.pop_first() {
                 let handler = r.take_handler();
                 debug_assert!(!matches!(handler, Handler::ServerHandler(_)));
-                handler.fail();
+                handler.fail(turn);
             }
         }
 
@@ -502,16 +509,14 @@ impl DevServer {
             .chain(&mut self.ssr_transpiler)
     }
 
-    fn init_server_runtime(&mut self) -> JsResult<()> {
+    fn init_server_runtime(&mut self, turn: JsTurn<'_>) -> JsResult<()> {
         let runtime = BunString::create_static_external(
             crate::bake::get_hmr_runtime(crate::bake::Side::Server)
                 .code
                 .as_bytes(),
         );
 
-        // `self.global()` returns `&'static`, decoupled from `&self` — it's
-        // held across the `&mut self` field assignments below.
-        let global = self.global();
+        let global = self.global(turn);
         let interface = match server_hmr_ffi::bake_load_initial_server_code(
             global,
             runtime,
@@ -531,7 +536,7 @@ impl DevServer {
             }
             Err(err) => {
                 self.vm()
-                    .print_error_like_object_to_console(global.take_exception(err));
+                    .print_error_like_object_to_console(global.take_exception(err), turn);
                 panic!("Server runtime failed to start. The above error is always a bug in Bun");
             }
         };

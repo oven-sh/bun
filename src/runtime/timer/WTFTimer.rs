@@ -15,7 +15,7 @@ use bun_core::{Timespec, TimespecMockMode};
 use crate::jsc::virtual_machine::VirtualMachine;
 use crate::webcore::script_execution_context::Identifier as ScriptExecutionContextIdentifier;
 
-use super::{ElTimespec, EventLoopTimer, EventLoopTimerState, EventLoopTimerTag};
+use super::{ElTimespec, EventLoopTimer, EventLoopTimerState, EventLoopTimerTag, OffThreadTimers};
 
 const NS_PER_S: i64 = bun_core::time::NS_PER_S as i64;
 
@@ -64,9 +64,14 @@ impl WTFTimer {
     /// `this` was published by [`WTFTimer::update`] into
     /// `imminent_gc_timer` and remains live; `vm` owns this timer.
     pub(crate) unsafe fn run(this: *mut Self, vm: &VirtualMachine) {
-        // SAFETY: per fn contract — `this` is live.
-        let t = unsafe { bun_ptr::ThisPtr::new(this) };
-        crate::jsc_hooks::timer_all_of(vm).wtf_disarm(&t.event_loop_timer);
+        // SAFETY: per fn contract — `this` is live. The timers are borrowed from `vm`.
+        let (t, timers) = unsafe {
+            (
+                bun_ptr::ThisPtr::new(this),
+                OffThreadTimers::from_ptr(crate::jsc_hooks::timer_all_of(vm)),
+            )
+        };
+        timers.wtf_disarm(&t.event_loop_timer);
         t.run_without_removing();
     }
 
@@ -143,11 +148,10 @@ impl WTFTimer {
             interval.nsec -= NS_PER_S;
         }
 
-        // SAFETY: `t.vm` owns this timer's heap; `wtf_arm` is safe from any thread.
+        // SAFETY: `t.vm` owns this timer's heap.
         unsafe {
             let state = crate::jsc_hooks::runtime_state_ptr_of(t.vm.as_ptr());
-            (*state)
-                .timer
+            OffThreadTimers::from_ptr(&raw const (*state).timer)
                 .wtf_arm(ptr::addr_of_mut!((*this).event_loop_timer), &interval);
         }
     }
@@ -172,11 +176,12 @@ impl WTFTimer {
                 Ordering::SeqCst,
             );
 
-            // SAFETY: `t.vm` owns this timer's heap; `wtf_disarm` is safe from
-            // any thread and is a no-op for a node that is no longer linked.
+            // SAFETY: `t.vm` owns this timer's heap; `wtf_disarm` is a no-op for
+            // a node that is no longer linked.
             unsafe {
                 let state = crate::jsc_hooks::runtime_state_ptr_of(t.vm.as_ptr());
-                (*state).timer.wtf_disarm(&t.event_loop_timer);
+                OffThreadTimers::from_ptr(&raw const (*state).timer)
+                    .wtf_disarm(&t.event_loop_timer);
             }
         }
     }
@@ -224,7 +229,8 @@ impl WTFTimer {
 /// by the caller for the lifetime of the returned `WTFTimer`.
 #[unsafe(no_mangle)]
 unsafe extern "C" fn WTFTimer__create(run_loop_timer: *mut RunLoopTimer) -> *mut c_void {
-    let Some(vm) = VirtualMachine::get_or_null() else {
+    // SAFETY: a VM's thread makes these from the creation of its global object to the end of `~VM`.
+    let Some(vm) = (unsafe { VirtualMachine::get_if_loaded(&run_loop_timer) }) else {
         return ptr::null_mut();
     };
 

@@ -40,13 +40,9 @@ use core::ffi::c_void;
 use core::ptr::NonNull;
 
 use bun_collections::ArrayHashMap;
+use bun_core::JsTurn;
 
-// Declared `extern "C"` so the
-// same fn-pointer type can flow across the FFI boundary (e.g.
-// `Bun__VM__postDeferredTask`) without an ABI-crossing fn-ptr cast. All in-tree
-// producers go through monomorphic `extern "C"` trampolines (see
-// `AutoFlusher::erase_flush_callback`).
-pub type DeferredRepeatingTask = unsafe extern "C" fn(*mut c_void) -> bool;
+pub type DeferredRepeatingTask = unsafe fn(*mut c_void, JsTurn<'_>) -> bool;
 
 #[derive(Default)]
 pub struct DeferredTaskQueue {
@@ -76,7 +72,7 @@ impl DeferredTaskQueue {
         unsafe { &mut *self.map.get() }.swap_remove(&ctx)
     }
 
-    pub fn run(&self) {
+    pub fn run(&self, turn: JsTurn<'_>) {
         // Callbacks may re-entrantly mutate `self.map` (see the re-entrancy
         // note in the file doc), so re-read `len()` every iteration and
         // re-check slot `i` after each callback. `remaining` is a livelock bound.
@@ -97,7 +93,7 @@ impl DeferredTaskQueue {
             // callback contract (`HasAutoFlusher::on_auto_flush`) is that
             // `task` may be invoked with exactly that pointer until it returns
             // `false` or is explicitly unregistered.
-            let keep = unsafe { task(nn.as_ptr()) };
+            let keep = unsafe { task(nn.as_ptr(), turn) };
             // SAFETY: the callback has returned; the borrow ends before the next one.
             map = unsafe { &mut *self.map.get() };
             if !keep {
@@ -123,13 +119,13 @@ mod tests {
         calls: Box<[Cell<u32>; 32]>,
     }
 
-    unsafe extern "C" fn count(ctx: *mut c_void) -> bool {
+    unsafe fn count(ctx: *mut c_void, _turn: JsTurn<'_>) -> bool {
         // SAFETY: posted with an element of `Fixture::calls`, which outlives `run`.
         unsafe { &*ctx.cast::<Cell<u32>>() }.update(|n| n + 1);
         false
     }
 
-    unsafe extern "C" fn grow(ctx: *mut c_void) -> bool {
+    unsafe fn grow(ctx: *mut c_void, _turn: JsTurn<'_>) -> bool {
         // SAFETY: posted with the `Fixture`, which outlives `run`.
         let fixture = unsafe { &*ctx.cast::<Fixture>() };
         fixture.grow_calls.update(|n| n + 1);
@@ -146,7 +142,8 @@ mod tests {
         let queue = &fixture.queue;
         queue.post_task(Some(NonNull::from(&fixture).cast()), grow);
         queue.post_task(Some(NonNull::from(&fixture.calls[0]).cast()), count);
-        queue.run();
+        // SAFETY: neither task uses it.
+        queue.run(unsafe { JsTurn::assume(queue) });
         assert_eq!((fixture.grow_calls.get(), fixture.calls[0].get()), (1, 1));
     }
 }

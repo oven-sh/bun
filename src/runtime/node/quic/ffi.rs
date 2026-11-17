@@ -30,6 +30,7 @@ pub(crate) unsafe fn ctx_ref<'a, T>(ctx: *mut c_void) -> Option<&'a T> {
     Some(unsafe { &*ctx.cast::<T>() })
 }
 
+/// `; turn` after the parameters binds a `JsTurn`.
 macro_rules! lsquic_callback {
     () => {};
 
@@ -56,7 +57,7 @@ macro_rules! lsquic_callback {
     (
         $(#[$meta:meta])*
         $vis:vis fn $name:ident(
-            $r:ident: &$ty:ty $(, $arg:ident: $argty:ty)* $(,)?
+            $r:ident: &$ty:ty $(, $arg:ident: $argty:ty)* $(,)? $(; $turn:ident)?
         ) $body:block
         $($rest:tt)*
     ) => {
@@ -66,6 +67,11 @@ macro_rules! lsquic_callback {
             let Some($r) = (unsafe { $crate::node::quic::ffi::ctx_ref::<$ty>(ctx) }) else {
                 return;
             };
+            $(
+                // SAFETY: the engine runs on its endpoint's thread. `lsquic_engine_destroy` also calls back below
+                // a finalizer: `release_native` has set `closed`, which `schedule_process` tests first.
+                let $turn = unsafe { ::bun_core::JsTurn::assume(&ctx) };
+            )?
             $body
         }
         lsquic_callback! { $($rest)* }

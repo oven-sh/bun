@@ -8,8 +8,8 @@ export const onInternalMessageChild = b.fn({
   capability: "js",
   throws: true,
 });
-export const setRef = b.fn({ args: { enabled: b.bool } });
-export const channelIgnoreOneDisconnectEventListener = b.fn({});
+export const setRef = b.fn({ passVm: true, args: { enabled: b.bool } });
+export const channelIgnoreOneDisconnectEventListener = b.fn({ passVm: true });
 /** `"udp4"` or `"udp6"`, or 4, 6 or -1 (a path). Node compares it with `===`, so anything else is IPv4. */
 export const BindAddressType = b.union({ udp: b.string.utf8, family: b.f64, ignored: b.any });
 /** Anything but a string is the wildcard address. */

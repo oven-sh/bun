@@ -2,6 +2,7 @@
 
 use bstr::BStr;
 use bun_collections::VecExt;
+use bun_core::LoopTurn;
 use bun_jsc::PinnedArrayBuffer;
 use bun_ptr::BackRef;
 use core::fmt;
@@ -75,16 +76,16 @@ macro_rules! shell_builtins {
         }
 
         impl Builtin {
-            pub(crate) fn start(interp: &Interpreter, cmd: NodeId) -> Yield {
-                match Self::of(interp, cmd).kind { $( Kind::$kind => $start(interp, cmd), )* }
+            pub(crate) fn start(interp: &Interpreter, cmd: NodeId, turn: bun_core::LoopTurn<'_>) -> Yield {
+                match Self::of(interp, cmd).kind { $( Kind::$kind => $start(interp, cmd, turn), )* }
             }
         }
     };
 }
 
 shell_builtins! {
-    True     "true"     |interp, cmd| Builtin::done(interp, cmd, 0),
-    False    "false"    |interp, cmd| Builtin::done(interp, cmd, 1),
+    True     "true"     |interp, cmd, _turn| Builtin::done(interp, cmd, 0),
+    False    "false"    |interp, cmd, _turn| Builtin::done(interp, cmd, 1),
     Pwd      "pwd"      pwd::start,
     Exit     "exit"     exit::start,
     Basename "basename" basename::start,
@@ -236,8 +237,8 @@ pub(crate) struct FdSink<'a> {
 }
 
 impl FdSink<'_> {
-    pub(crate) fn enqueue(self, buf: &[u8]) -> Yield {
-        self.writer.enqueue(self.child, self.captured, buf)
+    pub(crate) fn enqueue(self, buf: &[u8], turn: LoopTurn<'_>) -> Yield {
+        self.writer.enqueue(self.child, self.captured, buf, turn)
     }
 
     pub(crate) fn cancel_queued(self) {
@@ -322,7 +323,12 @@ impl Builtin {
     /// `None` (meaning: caller should now call `Builtin::start`). A
     /// `Some(yield)` return means setup wrote a failing error (or threw) and
     /// the caller should propagate that yield instead.
-    pub(crate) fn init(interp: &Interpreter, cmd: NodeId, kind: Kind) -> Option<Yield> {
+    pub(crate) fn init(
+        interp: &Interpreter,
+        cmd: NodeId,
+        kind: Kind,
+        turn: LoopTurn<'_>,
+    ) -> Option<Yield> {
         let me = interp.as_cmd(cmd);
         let args = me.args.iter().skip(1);
         let args = args.map(|arg| BackRef::new(bun_core::ffi::slice_to_nul(arg)));
@@ -338,12 +344,17 @@ impl Builtin {
         });
         interp.as_cmd_mut(cmd).exec = Exec::Builtin(builtin);
 
-        Self::init_redirections(interp, cmd, kind)
+        Self::init_redirections(interp, cmd, kind, turn)
     }
 
     /// Opens redirect files / wires ArrayBuffer & Blob targets / handles
     /// `2>&1` (`duplicate_out`).
-    fn init_redirections(interp: &Interpreter, cmd: NodeId, kind: Kind) -> Option<Yield> {
+    fn init_redirections(
+        interp: &Interpreter,
+        cmd: NodeId,
+        kind: Kind,
+        turn: LoopTurn<'_>,
+    ) -> Option<Yield> {
         // `node` points into the AST arena which outlives every state node (see Cmd::next).
         let node: &ast::Cmd = &*interp.as_cmd(cmd).node;
         let redirect = node.redirect;
@@ -356,6 +367,7 @@ impl Builtin {
                         interp,
                         cmd,
                         format_args!("bun: ambiguous redirect: at `{}`\n", kind.as_str()),
+                        turn,
                     ));
                 }
 
@@ -391,6 +403,7 @@ impl Builtin {
                                     bstr::BStr::new(sys.message.byte_slice()),
                                     bstr::BStr::new(path.as_bytes()),
                                 ),
+                                turn,
                             ));
                         }
                         Ok(f) => f,
@@ -425,6 +438,7 @@ impl Builtin {
                                     bstr::BStr::new(sys.message.byte_slice()),
                                     bstr::BStr::new(path.as_bytes()),
                                 ),
+                                turn,
                             ));
                         }
                         Ok(f) => {
@@ -532,7 +546,7 @@ impl Builtin {
                         ));
                         return Some(Yield::Failed(cmd));
                     }
-                    let original_blob = body.use_();
+                    let original_blob = body.use_(global.turn());
                     if !redirect.stdin() && !redirect.stdout() && !redirect.stderr() {
                         drop(original_blob);
                         return None;
@@ -603,6 +617,7 @@ impl Builtin {
         interp: &Interpreter,
         cmd: NodeId,
         args: core::fmt::Arguments<'_>,
+        turn: LoopTurn<'_>,
     ) -> Yield {
         use std::io::Write as _;
         let mut buf = Vec::new();
@@ -611,7 +626,7 @@ impl Builtin {
         if let OutKind::Fd(fd) = &me.io.stderr {
             me.state = CmdState::WaitingWriteErr;
             let child = io_writer::ChildPtr::new(cmd, io_writer::WriterTag::Cmd);
-            return fd.writer.enqueue(child, fd.captured, &buf);
+            return fd.writer.enqueue(child, fd.captured, &buf, turn);
         }
         // No-IO path: append to the shell env's captured stderr and finish
         // synchronously with exit 1 (Cmd::on_io_writer_chunk's behaviour).
@@ -622,7 +637,7 @@ impl Builtin {
             stderr.append_slice(&buf);
         }
         let parent = interp.as_cmd(cmd).base.parent;
-        interp.child_done(parent, cmd, 1)
+        interp.child_done(parent, cmd, 1, turn)
     }
 
     pub(crate) fn done(interp: &Interpreter, cmd: NodeId, exit_code: ExitCode) -> Yield {
@@ -696,10 +711,11 @@ impl Builtin {
         to: IoKind,
         buf: &[u8],
         exit_code: ExitCode,
+        turn: LoopTurn<'_>,
     ) -> Yield {
         Self::of_mut(interp, cmd).state = State::Exiting(exit_code);
         match Self::sink(interp, cmd, to) {
-            Sink::Fd(fd) => fd.enqueue(buf),
+            Sink::Fd(fd) => fd.enqueue(buf, turn),
             Sink::Memory(memory) => {
                 let _ = memory.write(buf);
                 Self::done(interp, cmd, exit_code)
@@ -708,38 +724,56 @@ impl Builtin {
     }
 
     /// [`Self::finish`] with `"{kind}: {args}"` on stderr and exit code 1.
-    pub(crate) fn fail(interp: &Interpreter, cmd: NodeId, args: fmt::Arguments<'_>) -> Yield {
+    pub(crate) fn fail(
+        interp: &Interpreter,
+        cmd: NodeId,
+        args: fmt::Arguments<'_>,
+        turn: LoopTurn<'_>,
+    ) -> Yield {
         let message = Self::of(interp, cmd).kind.message(args);
-        Self::finish(interp, cmd, IoKind::Stderr, &message, 1)
+        Self::finish(interp, cmd, IoKind::Stderr, &message, 1, turn)
     }
 
-    pub(crate) fn fail_usage(interp: &Interpreter, cmd: NodeId, usage: &[u8]) -> Yield {
-        Self::finish(interp, cmd, IoKind::Stderr, usage, 1)
+    pub(crate) fn fail_usage(
+        interp: &Interpreter,
+        cmd: NodeId,
+        usage: &[u8],
+        turn: LoopTurn<'_>,
+    ) -> Yield {
+        Self::finish(interp, cmd, IoKind::Stderr, usage, 1, turn)
     }
 
-    pub(crate) fn fail_flag(interp: &Interpreter, cmd: NodeId, flag: BadFlag<'_>) -> Yield {
+    pub(crate) fn fail_flag(
+        interp: &Interpreter,
+        cmd: NodeId,
+        flag: BadFlag<'_>,
+        turn: LoopTurn<'_>,
+    ) -> Yield {
         let (problem, flag) = match flag {
             BadFlag::Illegal(flag) => ("illegal option", flag),
             BadFlag::Unsupported(flag) => ("unsupported option, please open a GitHub issue", flag),
         };
         let flag = BStr::new(flag);
-        Self::fail(interp, cmd, format_args!("{problem} -- {flag}\n"))
+        Self::fail(interp, cmd, format_args!("{problem} -- {flag}\n"), turn)
     }
 
     pub(crate) fn on_io_writer_chunk(
         interp: &Interpreter,
         cmd: NodeId,
         err: Option<bun_sys::SystemError>,
+        turn: LoopTurn<'_>,
     ) -> Yield {
         let me = Self::of(interp, cmd);
         let failed = err.map(|err| me.kind.exit_code_of_failed_write(&err));
         match (&me.state, failed) {
-            (State::Batch(_), _) => Batch::on_write(interp, cmd),
-            (State::Cat(_), _) => cat::Cat::on_write(interp, cmd, failed),
+            (State::Batch(_), _) => Batch::on_write(interp, cmd, turn),
+            (State::Cat(_), _) => cat::Cat::on_write(interp, cmd, failed, turn),
             (State::Exiting(_) | State::Which { .. } | State::Yes(_), Some(code))
             | (&State::Exiting(code), None) => Self::done(interp, cmd, code),
-            (&State::Which { next, missing }, None) => which::print(interp, cmd, next, missing),
-            (State::Yes(_), None) => yes::Yes::write(interp, cmd),
+            (&State::Which { next, missing }, None) => {
+                which::print(interp, cmd, next, missing, turn)
+            }
+            (State::Yes(_), None) => yes::Yes::write(interp, cmd, turn),
             (State::Idle | State::Mv(_), _) => Yield::suspended(),
         }
     }

@@ -12,7 +12,7 @@ use crate::resolution::{append_without_url_credentials, append_without_url_useri
 use bun_collections::ArrayHashMap;
 use bun_core::fmt::{escape_control_chars, escape_control_chars_multiline};
 use bun_core::strings;
-use bun_core::{self, Output, ZStr, zstr};
+use bun_core::{self, LoopTurn, Output, ZStr, zstr};
 use bun_event_loop::EventLoopHandle;
 use bun_install::resolution::Tag as ResolutionTag;
 use bun_install::{
@@ -773,7 +773,7 @@ pub struct SecurityScanSubprocess<'a> {
 
 bun_spawn::link_impl_ProcessExit! {
     SecurityScan for SecurityScanSubprocess<'static> => |this| {
-        on_process_exit(status, rusage) => (*this).on_process_exit(status, rusage),
+        on_process_exit(status, rusage, _turn) => (*this).on_process_exit(status, rusage),
     }
 }
 
@@ -936,6 +936,8 @@ impl<'a> SecurityScanSubprocess<'a> {
         // ipc_reader (fd 3) + json_writer (fd 4)
         self.remaining_fds = 2;
         let event_loop = self.event_loop_handle;
+        // SAFETY: auto-install does not scan. A command gets here from `main`, on its thread and within its turn.
+        let turn = unsafe { LoopTurn::assume(&event_loop) };
         let result = self
             .ipc_reader
             .start(event_loop.as_event_loop_ctx(), ipc_read.into_raw(), true)
@@ -954,7 +956,7 @@ impl<'a> SecurityScanSubprocess<'a> {
         );
         // SAFETY: `owner` points to the heap allocation that holds this writer from the next line on.
         let writer = unsafe { StaticPipeWriter::create(owner, json_stdio, json_source) };
-        match self.json_writer.insert(writer).start(event_loop) {
+        match self.json_writer.insert(writer).start(event_loop, turn) {
             Ok(state) => self.on_writer_state(state),
             Err(e) => {
                 Output::err_generic(
@@ -971,16 +973,16 @@ impl<'a> SecurityScanSubprocess<'a> {
         process.set_exit_handler(handler);
 
         // May re-enter `on_process_exit` synchronously (already-exited child).
-        if Process::watch_or_reap(process).is_err() {
+        if Process::watch_or_reap(process, turn).is_err() {
             return Err(crate::Error::ProcessWatchFailed);
         }
 
         Ok(())
     }
 
-    pub fn on_writer_io(&mut self, event: IoEvent) {
+    pub fn on_writer_io(&mut self, event: IoEvent, turn: LoopTurn<'_>) {
         if let Some(writer) = &self.json_writer {
-            self.on_writer_state(writer.on_io(event));
+            self.on_writer_state(writer.on_io(event, turn));
         }
     }
 

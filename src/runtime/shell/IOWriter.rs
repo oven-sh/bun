@@ -17,6 +17,7 @@ use bun_collections::VecExt;
 use core::cell::Cell;
 use core::cell::UnsafeCell;
 
+use bun_core::LoopTurn;
 use bun_io::{
     BufferedWriteHandler, BufferedWriter, IoEvent, Owner, PollTag, WriteHandler, WriteStatus,
 };
@@ -288,10 +289,12 @@ impl IOWriter {
 
     // ── start ────────────────────────────────────────────────────────────
 
-    fn __start(&self) -> sys::Result<()> {
+    fn __start(&self, turn: LoopTurn<'_>) -> sys::Result<()> {
         let (fd, pollable) = (self.fd(), self.state().flags.pollable);
         crate::shell_log!("IOWriter(fd={}) __start()", fd);
-        let started = self.writer.start(self, self.io_evtloop(), fd, pollable);
+        let started = self
+            .writer
+            .start(self, self.io_evtloop(), fd, pollable, turn);
         let s = self.state();
         if let Err(e) = started {
             #[cfg(not(windows))]
@@ -309,7 +312,7 @@ impl IOWriter {
                     s.flags.pollable = false;
                     s.flags.nonblock = false;
                     s.flags.is_socket = false;
-                    return self.__start();
+                    return self.__start(turn);
                 }
                 #[cfg(any(target_os = "linux", target_os = "android"))]
                 {
@@ -319,7 +322,7 @@ impl IOWriter {
                         s.flags.pollable = false;
                         s.flags.nonblock = false;
                         s.flags.is_socket = false;
-                        return self.__start();
+                        return self.__start(turn);
                     }
                 }
             }
@@ -334,7 +337,8 @@ impl IOWriter {
                     s.flags.pollable = false;
                     s.flags.nonblock = false;
                     s.flags.is_socket = false;
-                    self.writer.start_with_file(self, self.io_evtloop(), fd);
+                    self.writer
+                        .start_with_file(self, self.io_evtloop(), fd, turn);
                     return Ok(());
                 }
             }
@@ -370,7 +374,7 @@ impl IOWriter {
     /// here: the caller sits inside the enqueuing child's trampoline, so the
     /// error completion has to bounce off it (`on_sync_error`) instead of
     /// re-entering `Yield::run` (see `DbgDepthGuard`).
-    fn write(&self) -> WriteOutcome {
+    fn write(&self, turn: LoopTurn<'_>) -> WriteOutcome {
         let s = self.state();
         #[cfg(not(windows))]
         debug_assert!(s.flags.pollable);
@@ -383,7 +387,7 @@ impl IOWriter {
             // A first write that libuv refuses runs the children, which may drop every other `Rc`.
             #[cfg(windows)]
             let _keepalive = self.keepalive();
-            if let Err(e) = self.__start() {
+            if let Err(e) = self.__start(turn) {
                 return WriteOutcome::Failed(e);
             }
             #[cfg(not(windows))]
@@ -407,7 +411,7 @@ impl IOWriter {
                 return WriteOutcome::Suspended;
             }
             s.is_writing = true;
-            self.writer.start_with_current_pipe(self);
+            self.writer.start_with_current_pipe(self, turn);
             return WriteOutcome::Suspended;
         }
 
@@ -419,7 +423,10 @@ impl IOWriter {
                 return WriteOutcome::Suspended;
             }
             let (fd, pollable) = (s.fd, s.flags.pollable);
-            if let Err(e) = self.writer.start(self, self.io_evtloop(), fd, pollable) {
+            if let Err(e) = self
+                .writer
+                .start(self, self.io_evtloop(), fd, pollable, turn)
+            {
                 return WriteOutcome::Failed(e);
             }
             WriteOutcome::Suspended
@@ -571,7 +578,7 @@ impl IOWriter {
 
     /// POSIX-only. `child` is the writer being enqueued (see `on_sync_error`).
     #[cfg(not(windows))]
-    fn do_file_write(&self, child: ChildPtr) -> Yield {
+    fn do_file_write(&self, child: ChildPtr, turn: LoopTurn<'_>) -> Yield {
         {
             let s = self.state();
             debug_assert!(!s.flags.pollable);
@@ -601,16 +608,19 @@ impl IOWriter {
                 s.flags.pollable = true;
                 s.flags.nonblock = true;
                 s.started = false;
-                return match self.write() {
+                return match self.write(turn) {
                     WriteOutcome::Suspended => Yield::suspended(),
-                    WriteOutcome::IsActuallyFile => self
-                        .on_sync_error(child, &sys::Error::from_code(E::EAGAIN, sys::Tag::write)),
-                    WriteOutcome::Failed(e) => self.on_sync_error(child, &e),
+                    WriteOutcome::IsActuallyFile => self.on_sync_error(
+                        child,
+                        &sys::Error::from_code(E::EAGAIN, sys::Tag::write),
+                        turn,
+                    ),
+                    WriteOutcome::Failed(e) => self.on_sync_error(child, &e, turn),
                 };
             }
             // The caller is inside the enqueuing child's trampoline, so the
             // error completion is returned, not `Yield::run` from here.
-            bun_io::WriteResult::Err(e) => return self.on_sync_error(child, &e),
+            bun_io::WriteResult::Err(e) => return self.on_sync_error(child, &e, turn),
         };
         self.record_write_progress(idx, amt);
         if !self.state().writers[idx].wrote_everything() {
@@ -625,13 +635,13 @@ impl IOWriter {
 
     // ── poll callback ───────────────────────────────────────────────────
 
-    pub(crate) fn on_io(&self, event: IoEvent) {
-        self.writer.on_io(self, event);
+    pub(crate) fn on_io(&self, event: IoEvent, turn: LoopTurn<'_>) {
+        self.writer.on_io(self, event, turn);
     }
 
     /// The `BufferedWriter.onWrite` hook. Runs on the event loop when the fd
     /// is writable.
-    fn on_write_pollable(&self, amount: usize, status: WriteStatus) {
+    fn on_write_pollable(&self, amount: usize, status: WriteStatus, turn: LoopTurn<'_>) {
         // NOTE: `set_writing` re-derives `state()` on Windows, which would
         // invalidate `s` under Stacked Borrows; do it before binding `s`
         // (matches the ordering in `on_error`).
@@ -645,7 +655,7 @@ impl IOWriter {
         }
         let idx = s.writer_idx;
         if s.writers[idx].is_dead() {
-            self.run_yield(self.bump(idx));
+            self.run_yield(self.bump(idx), turn);
         } else {
             let lo = s.total_bytes_written;
             s.writers[idx].tee(&s.buf[lo..lo + amount]);
@@ -665,11 +675,15 @@ impl IOWriter {
                     return;
                 }
                 // The other end of the socket/pipe closed (e.g. `ls | echo`).
-                self.fail_pending_writers(&sys::Error::from_code(E::EPIPE, sys::Tag::write), None);
+                self.fail_pending_writers(
+                    &sys::Error::from_code(E::EPIPE, sys::Tag::write),
+                    None,
+                    turn,
+                );
                 return;
             }
             if s.writers[idx].written >= s.writers[idx].len {
-                self.run_yield(self.bump(idx));
+                self.run_yield(self.bump(idx), turn);
             }
         }
 
@@ -683,12 +697,12 @@ impl IOWriter {
                 // which is two simultaneous `&mut State` (UB under Stacked
                 // Borrows). Same discipline as the top of this fn.
                 s.is_writing = true;
-                self.writer.write(self);
+                self.writer.write(self, turn);
             }
             #[cfg(not(windows))]
             {
                 debug_assert!(self.writer.has_poll());
-                self.writer.register_poll(self);
+                self.writer.register_poll(self, turn);
             }
         }
     }
@@ -698,7 +712,12 @@ impl IOWriter {
     /// completion per chunk. A child that finishes at its first error has to
     /// `cancel_chunks` there. The first chunk of `withhold` is returned
     /// instead of run (see `on_sync_error`).
-    fn fail_pending_writers(&self, err: &sys::Error, withhold: Option<ChildPtr>) -> Option<Yield> {
+    fn fail_pending_writers(
+        &self,
+        err: &sys::Error,
+        withhold: Option<ChildPtr>,
+        turn: LoopTurn<'_>,
+    ) -> Option<Yield> {
         // A completion may drop the last external `Rc` to this writer.
         let _keepalive = self.keepalive();
         self.set_writing(false);
@@ -733,7 +752,7 @@ impl IOWriter {
                 withheld = Some(idx - 1);
                 continue;
             }
-            self.run_yield(completion(child));
+            self.run_yield(completion(child), turn);
         }
         let s = self.state();
         let withheld = withheld
@@ -756,15 +775,15 @@ impl IOWriter {
     /// synchronous failure is the first write attempt of a batch); if a poll
     /// re-registration fails while other chunks are still queued, those are
     /// dispatched the way the async path dispatches them.
-    fn on_sync_error(&self, child: ChildPtr, err: &sys::Error) -> Yield {
+    fn on_sync_error(&self, child: ChildPtr, err: &sys::Error, turn: LoopTurn<'_>) -> Yield {
         // `None`: an inline completion made `child` cancel its chunks, so it has finished.
-        self.fail_pending_writers(err, Some(child))
+        self.fail_pending_writers(err, Some(child), turn)
             .unwrap_or_else(Yield::done)
     }
 
     /// Drive a `Yield` from inside an async poll callback. Requires `interp`
     /// to have been set; if not, the chunk-complete is dropped (debug-asserts).
-    fn run_yield(&self, y: Yield) {
+    fn run_yield(&self, y: Yield, turn: LoopTurn<'_>) {
         let Some(interp) = self.state().interp else {
             debug_assert!(
                 matches!(y, Yield::Done),
@@ -776,7 +795,7 @@ impl IOWriter {
         // holds the Rc). Single-threaded; R-2: `Interpreter::run` takes
         // `&self` now — `ParentRef: Deref<Target=Interpreter>` yields the
         // shared borrow without `assume_mut()`.
-        y.run(&interp);
+        y.run(&interp, turn);
     }
 
     // ── enqueue ─────────────────────────────────────────────────────────
@@ -812,7 +831,7 @@ impl IOWriter {
     }
 
     #[cfg(not(windows))]
-    fn enqueue_file(&self, child: ChildPtr) -> Yield {
+    fn enqueue_file(&self, child: ChildPtr, turn: LoopTurn<'_>) -> Yield {
         let s = self.state();
         if s.is_writing {
             return Yield::suspended();
@@ -821,23 +840,23 @@ impl IOWriter {
         // path bypasses write() entirely, so set it here.
         s.started = true;
         self.set_writing(true);
-        self.do_file_write(child)
+        self.do_file_write(child, turn)
     }
 
     /// You MUST have already added the data to `self.buf`!
     /// `child` is the writer that was just pushed (see `on_sync_error`).
-    fn enqueue_internal(&self, child: ChildPtr) -> Yield {
+    fn enqueue_internal(&self, child: ChildPtr, turn: LoopTurn<'_>) -> Yield {
         debug_assert!(!self.state().flags.broken_pipe);
         debug_assert!(self.state().err.is_none());
         #[cfg(not(windows))]
         if !self.state().flags.pollable {
-            return self.enqueue_file(child);
+            return self.enqueue_file(child, turn);
         }
-        match self.write() {
+        match self.write(turn) {
             WriteOutcome::Suspended => Yield::suspended(),
             #[cfg(not(windows))]
-            WriteOutcome::IsActuallyFile => self.enqueue_file(child),
-            WriteOutcome::Failed(e) => self.on_sync_error(child, &e),
+            WriteOutcome::IsActuallyFile => self.enqueue_file(child, turn),
+            WriteOutcome::Failed(e) => self.on_sync_error(child, &e, turn),
         }
     }
 
@@ -848,6 +867,7 @@ impl IOWriter {
         child: ChildPtr,
         bytelist: Option<*mut Vec<u8>>,
         buf: &[u8],
+        turn: LoopTurn<'_>,
     ) -> Yield {
         if let Some(y) = self.handle_dead_writer(child) {
             return y;
@@ -867,7 +887,7 @@ impl IOWriter {
             written: 0,
             bytelist,
         });
-        self.enqueue_internal(child)
+        self.enqueue_internal(child, turn)
     }
 }
 
@@ -887,16 +907,16 @@ impl BufferedWriteHandler for IOWriter {
 }
 
 impl WriteHandler for IOWriter {
-    fn on_write(&self, amount: usize, status: WriteStatus) {
-        self.on_write_pollable(amount, status);
+    fn on_write(&self, amount: usize, status: WriteStatus, turn: LoopTurn<'_>) {
+        self.on_write_pollable(amount, status, turn);
     }
 
     /// On Windows also from under `write()`, which cannot turn it into a `WriteOutcome::Failed`.
-    fn on_error(&self, err: sys::Error) {
-        self.fail_pending_writers(&err, None);
+    fn on_error(&self, err: sys::Error, turn: LoopTurn<'_>) {
+        self.fail_pending_writers(&err, None, turn);
     }
 
-    fn on_close(&self) {
+    fn on_close(&self, _turn: LoopTurn<'_>) {
         self.set_writing(false);
     }
 
@@ -999,14 +1019,15 @@ pub(crate) fn on_io_writer_chunk(
     child: ChildPtr,
     written: usize,
     err: Option<sys::SystemError>,
+    turn: LoopTurn<'_>,
 ) -> Yield {
     use crate::shell::builtin::Builtin;
     use crate::shell::states::{cmd, cond_expr, pipeline};
     match child.tag {
-        WriterTag::Builtin => Builtin::on_io_writer_chunk(interp, child.node, err),
-        WriterTag::Cmd => cmd::Cmd::on_io_writer_chunk(interp, child.node, written, err),
+        WriterTag::Builtin => Builtin::on_io_writer_chunk(interp, child.node, err, turn),
+        WriterTag::Cmd => cmd::Cmd::on_io_writer_chunk(interp, child.node, written, err, turn),
         WriterTag::CondExpr => {
-            cond_expr::CondExpr::on_io_writer_chunk(interp, child.node, written, err)
+            cond_expr::CondExpr::on_io_writer_chunk(interp, child.node, written, err, turn)
         }
         WriterTag::Pipeline => {
             pipeline::Pipeline::on_io_writer_chunk(interp, child.node, written, err)

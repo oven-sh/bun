@@ -66,7 +66,7 @@ impl JsCallbackArgs {
 bun_opaque::opaque_ffi! { struct NodeCryptoJob; }
 
 unsafe extern "C" {
-    safe fn Bun__NodeCryptoJob__runTask(job: &NodeCryptoJob, global: &JSGlobalObject);
+    fn Bun__NodeCryptoJob__runTask(job: &NodeCryptoJob, global: *mut JSGlobalObject);
     safe fn Bun__NodeCryptoJob__runFromJS(
         job: &NodeCryptoJob,
         global: &JSGlobalObject,
@@ -101,9 +101,9 @@ impl JobContext for ExternJob {
         boringssl::c::ERR_clear_error();
         // SAFETY: the creating global, alive under the job's ticket; C++
         // only threads it through to error reporting state.
-        Bun__NodeCryptoJob__runTask(NodeCryptoJob::opaque_ref(this.ctx.0), unsafe {
-            this.global.under_ticket(done.ticket())
-        });
+        unsafe {
+            Bun__NodeCryptoJob__runTask(NodeCryptoJob::opaque_ref(this.ctx.0), this.global.as_ptr())
+        };
         boringssl::c::ERR_clear_error();
         Some(done)
     }
@@ -385,9 +385,8 @@ pub(crate) fn random_uuid(heap: &JsHeap<'_>, options: &RandomUUIDOptions) -> Bun
     let uuid = if options.disable_entropy_cache {
         UUID::init()
     } else {
-        // SAFETY: it only leads to the VM's entropy cache.
-        let global = unsafe { heap.global() };
-        global.bun_vm().rare_data().next_uuid()
+        let vm = bun_jsc::virtual_machine::VirtualMachine::get(heap.live());
+        vm.rare_data().next_uuid()
     };
 
     uuid.print(

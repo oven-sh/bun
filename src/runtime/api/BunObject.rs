@@ -13,6 +13,7 @@ pub(crate) fn get_public_path_with_asset_prefix(
     asset_prefix: &[u8],
     out: &mut Vec<u8>,
     platform: bun_paths::Platform,
+    live: VmLive<'_>,
 ) {
     use bun_core::strings;
     use bun_paths::{Platform, resolve_path};
@@ -43,7 +44,7 @@ pub(crate) fn get_public_path_with_asset_prefix(
         let abs_path = if bun_paths::is_absolute(to) {
             to
         } else {
-            VirtualMachine::get().fs().abs(&[to])
+            VirtualMachine::get(live).fs().abs(&[to])
         };
         out.reserve(origin.origin.len() + b"/abs:".len() + abs_path.len());
         out.extend_from_slice(origin.origin);
@@ -69,7 +70,7 @@ use bun_jsc::{
 };
 // `bun_jsc::VirtualMachine` is the *module* re-export; the struct lives one level deeper.
 use crate::cli::open::Editor;
-use bun_core::{EncodedSlice, String as BunString, StringView, strings};
+use bun_core::{EncodedSlice, String as BunString, StringView, VmLive, strings};
 use bun_jsc::virtual_machine::{ResolveMode, VirtualMachine};
 use bun_paths::MAX_PATH_BYTES;
 use bun_shell_parser::braces as Braces;
@@ -294,7 +295,7 @@ pub(crate) fn which<'a>(
         return Err(heap.error(format_args!("bin path is too long")));
     }
 
-    let vm = VirtualMachine::get();
+    let vm = VirtualMachine::get(heap.live());
     let path = options
         .path
         .unwrap_or_else(|| vm.env_loader().get(b"PATH").unwrap_or(b""));
@@ -523,8 +524,10 @@ pub(crate) fn register_macro<'a>(
     if callback.as_callable().is_none() {
         return Err(heap.error(format_args!("Macro must be a function")));
     }
-    let vm = VirtualMachine::get();
-    let callback = jsc::Strong::create(callback.to_js(), vm.global());
+    let vm = VirtualMachine::get(heap.live());
+    // SAFETY: `Strong::create` only allocates a handle.
+    let global = vm.global(unsafe { heap.global() }.turn());
+    let callback = jsc::Strong::create(callback.to_js(), global);
     vm.macros.with_mut(|macros| macros.insert(id, callback));
 
     Ok(())
@@ -535,7 +538,8 @@ fn get_cwd(global_this: &JSGlobalObject, _: &JSObject) -> JSValue {
 }
 
 fn get_origin(global_this: &JSGlobalObject, _: &JSObject) -> JSValue {
-    EncodedSlice::from_bytes(VirtualMachine::get().origin.origin).to_js(global_this)
+    EncodedSlice::from_bytes(VirtualMachine::get(global_this.live()).origin.origin)
+        .to_js(global_this)
 }
 
 fn enable_ansi_colors(_global_this: &JSGlobalObject, _: &JSObject) -> JSValue {
@@ -653,7 +657,7 @@ pub(crate) fn open_in_editor<'a>(
     path: &'a [u8],
     options: &EditorOptions<'a>,
 ) -> bindgen::Result<'a, ()> {
-    let vm = VirtualMachine::get();
+    let vm = VirtualMachine::get(heap.live());
     let editor_name = options.editor.filter(|name| !name.is_empty());
 
     EDITOR_CONTEXT.with(|cell| {
@@ -1047,7 +1051,13 @@ pub(crate) fn serve(cx: &mut JsScope<'_>, options: JsLocal<'_>) -> JsResult<JSVa
                         server.abort_handle.leave();
                         server.context.set(context.id());
                         // SAFETY: heap-allocated; leaves its context in `stop_listening` / `drop`.
-                        unsafe { bun_jsc::AbortHandle::arm_owner(entry.ptr.cast::<$T>(), context) };
+                        unsafe {
+                            bun_jsc::AbortHandle::arm_owner(
+                                entry.ptr.cast::<$T>(),
+                                context,
+                                global_object.live(),
+                            )
+                        };
                         return Ok(server.js_value.try_get().unwrap_or(JSValue::UNDEFINED));
                     }};
                 }
@@ -1129,7 +1139,7 @@ pub(crate) fn serve(cx: &mut JsScope<'_>, options: JsLocal<'_>) -> JsResult<JSVa
             server_ref.context.set(context.id());
             // SAFETY: `server` is heap-allocated and leaves its context in
             // `stop_listening` / `drop`.
-            unsafe { bun_jsc::AbortHandle::arm_owner(server.as_ptr(), context) };
+            unsafe { bun_jsc::AbortHandle::arm_owner(server.as_ptr(), context, vm.live()) };
 
             // `init` moved `config` into the server (`mem::take`), so the
             // local `config` is defaulted from here on — read `allow_hot`
@@ -1566,7 +1576,7 @@ pub(crate) mod environment_variables {
 
 #[unsafe(no_mangle)]
 extern "C" fn Bun__reportError(global_object: &JSGlobalObject, err: JSValue) {
-    let vm = jsc::virtual_machine::VirtualMachine::get();
+    let vm = jsc::virtual_machine::VirtualMachine::get(global_object.live());
     let _ = vm.uncaught_exception(global_object, err, false);
 }
 

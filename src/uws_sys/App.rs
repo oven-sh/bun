@@ -2,7 +2,7 @@ use core::ffi::{c_char, c_int, c_uint, c_void};
 use core::marker::{PhantomData, PhantomPinned};
 use core::ptr::NonNull;
 
-use bun_core::ZStr;
+use bun_core::{HasVm, JsTurn, ZStr};
 use bun_http_types::Method::Method;
 
 use crate::response::Response;
@@ -54,6 +54,8 @@ pub struct App<const SSL: bool> {
     _p: core::cell::UnsafeCell<[u8; 0]>,
     _m: PhantomData<(*mut u8, PhantomPinned)>,
 }
+// SAFETY: the body that `opaque_ffi!` emits.
+unsafe impl<const SSL: bool> bun_opaque::Opaque for App<SSL> {}
 
 /// Stamps one `pub fn $name(&mut self, pattern, handler, user_data)` per HTTP
 /// verb. Bodies are byte-identical modulo the C symbol — see `uws_app_get` &co
@@ -87,7 +89,7 @@ macro_rules! uws_app_route_methods {
 pub struct OwnedApp<const SSL: bool>(NonNull<App<SSL>>);
 
 impl<const SSL: bool> OwnedApp<SSL> {
-    pub fn new(opts: &BunSocketContextOptions) -> Option<Self> {
+    pub fn new(opts: &BunSocketContextOptions, _: HasVm) -> Option<Self> {
         // SAFETY: FFI call; uws_create_app returns null on failure.
         let app = unsafe { c::uws_create_app(App::<SSL>::SSL_FLAG, *opts) };
         NonNull::new(app.cast()).map(Self)
@@ -244,7 +246,7 @@ impl<const SSL: bool> App<SSL> {
         _handler: H,
         this: ThisPtr<U>,
     ) where
-        H: Fn(ThisPtr<U>, AnyRequest, AnyResponse) + Copy + 'static,
+        H: Fn(ThisPtr<U>, AnyRequest, AnyResponse, JsTurn<'_>) + Copy + 'static,
     {
         self.method(
             method_,
@@ -257,7 +259,7 @@ impl<const SSL: bool> App<SSL> {
     /// [`any`](Self::any) counterpart of [`method_this`](Self::method_this).
     pub fn any_this<U: 'static, H>(&mut self, pattern: &[u8], _handler: H, this: ThisPtr<U>)
     where
-        H: Fn(ThisPtr<U>, AnyRequest, AnyResponse) + Copy + 'static,
+        H: Fn(ThisPtr<U>, AnyRequest, AnyResponse, JsTurn<'_>) + Copy + 'static,
     {
         self.any(
             pattern,
@@ -271,12 +273,18 @@ impl<const SSL: bool> App<SSL> {
         req: *mut Request,
         user_data: *mut c_void,
     ) where
-        H: Fn(ThisPtr<U>, AnyRequest, AnyResponse) + Copy + 'static,
+        H: Fn(ThisPtr<U>, AnyRequest, AnyResponse, JsTurn<'_>) + Copy + 'static,
     {
         let resp = Response::<SSL>::res_to_any(resp);
-        // SAFETY: `user_data` is the `ThisPtr` registered with this thunk; the registrant holds a ref on it while the route is registered.
-        let this = unsafe { ThisPtr::new(user_data.cast::<U>()) };
-        thunk::zst::<H>()(this, AnyRequest::H1(req), resp)
+        // SAFETY: `user_data` is the `ThisPtr` registered with this thunk; the registrant holds a ref on it while the route is registered, and passed an `H`.
+        let (handler, this, turn) = unsafe {
+            (
+                thunk::zst::<H>(),
+                ThisPtr::new(user_data.cast::<U>()),
+                thunk::app_turn(&user_data),
+            )
+        };
+        handler(this, AnyRequest::H1(req), resp, turn)
     }
 
     pub fn on_client_error(
@@ -468,6 +476,8 @@ pub struct ListenSocket<const SSL: bool> {
     _p: core::cell::UnsafeCell<[u8; 0]>,
     _m: PhantomData<(*mut u8, PhantomPinned)>,
 }
+// SAFETY: the body that `opaque_ffi!` emits.
+unsafe impl<const SSL: bool> bun_opaque::Opaque for ListenSocket<SSL> {}
 
 pub struct OwnedListenSocket<const SSL: bool>(crate::OwnedListenSocket);
 
@@ -512,7 +522,7 @@ pub mod c {
 
     pub(crate) type uws_listen_handler = Option<extern "C" fn(*mut UwsListenSocket, *mut c_void)>;
     pub(crate) type uws_method_handler =
-        Option<extern "C" fn(*mut uws_res, *mut Request, *mut c_void)>;
+        Option<unsafe extern "C" fn(*mut uws_res, *mut Request, *mut c_void)>;
     // The C++ shim hands the filter the uws_res_t*, which for HTTP server
     // sockets is the raw us_socket_t* — typed as such so callers outside this
     // crate can name the handler signature.

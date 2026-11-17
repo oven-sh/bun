@@ -65,7 +65,7 @@ impl TimeoutObject {
     ) {
         let value = value.to_js();
         if let Some(ms) = value.get_number() {
-            this.internals.set_idle_start(ms);
+            this.internals.set_idle_start(ms, cx.live());
         }
         js::idle_start_set_cached(this_value.to_js(), cx.global(), value);
     }

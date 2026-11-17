@@ -26,7 +26,7 @@ pub(crate) fn check(
     socket: &AnySocket,
     hostname: &[u8],
 ) -> Result<(), JSValue> {
-    let _entered = VirtualMachine::get().enter_event_loop_scope();
+    let _entered = VirtualMachine::get(global.live()).enter_event_loop_scope(global.turn());
     match verdict(global, callback, socket, hostname) {
         Ok(None) => Ok(()),
         Ok(Some(reason)) => Err(reason),

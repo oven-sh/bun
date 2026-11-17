@@ -154,8 +154,12 @@ and `&mut self` for its object, because nothing can invalidate either while it
 runs.
 
 The compiler holds a body to its capability as far as this API goes. The older API has
-other ways to a `&JSGlobalObject` (`VirtualMachine::get().global()`, a field of the struct), and a
-body that takes one of those to run JavaScript has stepped around the check.
+another way to a `&JSGlobalObject`, a field of the struct, and a body that takes it to run
+JavaScript has stepped around the check.
+
+The native side of the VM (its timers, its event loop) takes a `VmLive<'a>`, and what can run JavaScript without
+a global object in sight takes a `JsTurn<'a>`. Both are zero-sized. `heap.live()` and `cx.live()` give the first,
+`cx.turn()` gives the second. `passVm: true` adds `live: VmLive<'a>` after the arguments of a function that has no capability.
 
 Much of the older API takes a `&JSGlobalObject` only to allocate or to throw. A `"heap"`
 function calls it with `heap.global()`, which is `unsafe`: nothing the global object is passed
@@ -633,6 +637,7 @@ impl Glob {
 | `heap: &JsHeap<'a>`, `cx: &mut JsScope<'a>` | [`capability`](#what-a-function-may-do-capability) `"heap"`, `"js"` |
 | `structure: JsStructure<'a, Self>`          | `construct` with `passStructure: true`                              |
 | one for each of `args`                      |                                                                     |
+| `live: VmLive<'a>`                          | `passVm: true`                                                      |
 
 Arguments, results, `capability` and `throws` are those of a function. The generated code is in
 `crate::generated_bindgen`, so a member is at least `pub(crate)`.
@@ -917,6 +922,7 @@ impl FetchSession {
 - `construct` returns a `RefPtr<Self>`, which the object takes over.
 - The pointer in the object never changes and is never null. A class with a closed or detached state tracks it in a
   field of its own.
+- `finalize: { passVm: true }` calls `fn finalize(&self, live: VmLive<'_>)`.
 - `finalize` runs before the object's ref is dropped. `Drop` runs when the last ref is dropped, which can be much later.
 - C++ reads the pointer to the struct with `wrapper->wrapped()`.
 - A heap snapshot reports the object's size plus `size_of` the struct.

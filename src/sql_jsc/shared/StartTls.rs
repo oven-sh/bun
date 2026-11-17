@@ -1,6 +1,7 @@
 use core::ptr::NonNull;
 
 use bun_boringssl_sys::OwnedSslCtx;
+use bun_core::JsTurn;
 use bun_jsc::rare_data::SocketGroups;
 use bun_sql::shared::SSLMode;
 use bun_uws::{self as uws, AnySocket, InternalSocket, SocketGroup, SocketKind, SocketTLS};
@@ -33,6 +34,7 @@ pub(crate) fn start_tls<T>(
     tls_config: &SSLConfig,
     ssl_mode: SSLMode,
     store: impl FnOnce(AnySocket),
+    turn: JsTurn<'_>,
 ) -> Result<(), StartTlsError> {
     let AnySocket::SocketTcp(tcp) = socket else {
         return Err(StartTlsError::NotPlain);
@@ -48,7 +50,7 @@ pub(crate) fn start_tls<T>(
     let ext_size = size_of::<Option<NonNull<T>>>() as i32;
     // SAFETY: `raw` is live. `adopt_tls` may move the socket.
     let Some(new_socket) = (unsafe { &mut *raw }).adopt_tls(
-        group(groups, VirtualMachine::get().uws_loop()),
+        group(groups, VirtualMachine::get(turn.live).uws_loop()),
         kind,
         ssl_ctx,
         tls_config.sni(),

@@ -1417,12 +1417,23 @@ pub trait JsClass: Sized {
 }
 
 /// Track whether an object should keep the event loop alive
-#[derive(Default)]
 pub struct Ref {
-    pub has: core::cell::Cell<bool>,
+    has: core::cell::Cell<bool>,
+    has_vm: bun_core::HasVm,
 }
 
 impl Ref {
+    pub fn new(has_vm: bun_core::HasVm) -> Self {
+        Self {
+            has: core::cell::Cell::new(false),
+            has_vm,
+        }
+    }
+
+    pub fn has(&self) -> bool {
+        self.has.get()
+    }
+
     pub fn unref(&self, vm: &virtual_machine::VirtualMachine) {
         if !self.has.get() {
             return;
@@ -1442,7 +1453,11 @@ impl Ref {
 
 impl Drop for Ref {
     fn drop(&mut self) {
-        self.unref(virtual_machine::VirtualMachine::get());
+        // SAFETY: not `Send`, and what holds one is freed with its JS wrapper at the latest, before the VM is.
+        let live = self
+            .has_vm
+            .live(unsafe { bun_core::ThreadLive::assume(self) });
+        self.unref(virtual_machine::VirtualMachine::get(live));
     }
 }
 

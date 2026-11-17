@@ -25,6 +25,7 @@
 //! `onDidChangeListeners` in `BunProcess.cpp`, matching how signal handlers
 //! are wired. The watcher does not keep the event loop alive.
 
+use bun_core::VmLive;
 use bun_event_loop::ConcurrentTask::task_tag;
 use bun_jsc::bindgen::{self, BufferSource, JsHeap, JsLocal, JsScope};
 use bun_jsc::virtual_machine::VirtualMachine;
@@ -59,7 +60,7 @@ pub(crate) struct MemoryPressureTask;
 impl bun_event_loop::Taskable for MemoryPressureTask {
     const TAG: bun_event_loop::TaskTag = task_tag::MemoryPressureTask;
     /// Nothing is owned (`this` is the packed level).
-    unsafe fn release_unrun(_: *mut Self) {}
+    unsafe fn release_unrun(_: *mut Self, _live: VmLive<'_>) {}
     /// The process's memory pressure: listeners of the realm.
     unsafe fn context(_: *const Self) -> bun_event_loop::ContextId {
         bun_event_loop::ContextId::NONE
@@ -85,6 +86,7 @@ fn slot(vm: &VirtualMachine) -> &WatcherSlot {
 
 #[cfg(not(windows))]
 mod posix {
+    use bun_core::VmLive;
     use bun_io::OwnedFilePoll;
     use bun_io::posix_event_loop::FlagsSet;
     #[cfg(any(target_os = "linux", target_os = "android", target_os = "macos"))]
@@ -221,7 +223,7 @@ mod posix {
         #[cfg(any(target_os = "linux", target_os = "android", target_os = "macos"))]
         {
             let owner = Owner::new(PollTag::MemoryPressure, core::ptr::null_mut());
-            // SAFETY: this tag has no pointee.
+            // SAFETY: this tag has no pointee, and the loop is that of the VM.
             let poll = unsafe { OwnedFilePoll::new(global.bun_vm().loop_ctx(), fd, owner) };
             poll.register(Flags::MemoryPressure, false).ok()?;
             Some(MemoryPressureWatcher {
@@ -256,8 +258,8 @@ mod posix {
 
     /// `__bun_run_io` dispatch target. `fflags` is the kqueue `fflags`
     /// on macOS (carrying the pressure level) and 0 on Linux.
-    pub(crate) fn on_poll(flags: FlagsSet, fflags: i64) {
-        let vm = VirtualMachine::get();
+    pub(crate) fn on_poll(flags: FlagsSet, fflags: i64, live: VmLive<'_>) {
+        let vm = VirtualMachine::get(live);
 
         // `EPOLLERR`/`EPOLLHUP` on a PSI fd means the trigger is dead (e.g.
         // the cgroup was removed). kernfs reports that permanently, so tear

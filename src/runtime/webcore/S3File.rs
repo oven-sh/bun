@@ -340,6 +340,7 @@ impl S3BlobStatTask {
             s3_store.path(),
             Box::new(move |result| this.on_resolved(result)),
             s3_store.request_payer,
+            cx.turn(),
         )?;
         Ok(promise)
     }

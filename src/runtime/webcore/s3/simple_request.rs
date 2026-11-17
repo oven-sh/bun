@@ -1,6 +1,7 @@
 use core::sync::atomic::Ordering;
 
 use bun_core::MutableString;
+use bun_core::{JsTurn, VmLive};
 use bun_event_loop::ConcurrentTask::ConcurrentTask;
 use bun_event_loop::{BoxedTask, TaskTag, Taskable, task_tag};
 use bun_http::async_http::Options as HttpOptions;
@@ -101,7 +102,7 @@ pub(crate) struct S3HttpSimpleTask {
     pub(crate) context: bun_jsc::ContextId,
 }
 
-bun_jsc::impl_abort_handle_owner!(S3HttpSimpleTask, abort_handle, |this, _cause| {
+bun_jsc::impl_abort_handle_owner!(S3HttpSimpleTask, abort_handle, |this, _cause, _turn| {
     // SAFETY: trait contract — `this` is live (armed ⇒ its response has not
     // run).
     unsafe {
@@ -115,8 +116,11 @@ impl Taskable for S3HttpSimpleTask {
     /// A response the HTTP thread handed back during teardown: its native
     /// completion is what finishes the caller's operation (and settles a promise
     /// nobody can observe — script is forbidden), so run it.
-    unsafe fn release_unrun(this: *mut Self) {
-        let _ = S3HttpSimpleTask::on_response(this);
+    unsafe fn release_unrun(this: *mut Self, _live: VmLive<'_>) {
+        // SAFETY: only posted under a ticket, so teardown's wait releases it: on the JS thread,
+        // outside a collection, before the global object goes.
+        let turn = unsafe { JsTurn::assume(&this) };
+        let _ = S3HttpSimpleTask::on_response(this, turn);
     }
     /// `on_response` enters the request's context itself, stopped or not: a multipart upload still
     /// sends its rollback for a graph that was disposed.
@@ -151,8 +155,10 @@ pub(crate) struct RefusedRequest {
 impl BoxedTask for RefusedRequest {
     const TAG: TaskTag = task_tag::S3RefusedRequest;
     /// As `S3HttpSimpleTask`.
-    fn release_unrun(self: Box<Self>) {
-        let _ = self.run();
+    fn release_unrun(self: Box<Self>, live: VmLive<'_>) {
+        // SAFETY: as `S3HttpSimpleTask`: only `refuse` makes one, and posts it under a ticket.
+        let turn = unsafe { JsTurn::assume(&live) };
+        let _ = self.run(turn);
     }
     /// As `S3HttpSimpleTask`.
     fn context(&self) -> bun_event_loop::ContextId {
@@ -161,9 +167,10 @@ impl BoxedTask for RefusedRequest {
 }
 
 impl RefusedRequest {
-    pub(crate) fn run(self) -> bun_jsc::JsResult<()> {
-        let _context = VirtualMachine::get().enter_context(self.context);
-        self.callback.fail(self.error.code, self.error.message)
+    pub(crate) fn run(self, turn: JsTurn<'_>) -> bun_jsc::JsResult<()> {
+        let _context = VirtualMachine::get(turn.live).enter_context(self.context);
+        self.callback
+            .fail(self.error.code, self.error.message, turn)
     }
 }
 
@@ -173,6 +180,7 @@ impl Callback {
         self,
         context: &bun_jsc::ScriptExecutionContext,
         error: S3Error<'static>,
+        turn: JsTurn<'_>,
     ) -> bun_jsc::JsResult<()> {
         match self {
             // Nobody waits for it, and a retry would be refused too.
@@ -186,18 +194,18 @@ impl Callback {
                 };
                 let task = ConcurrentTask::create_boxed(Box::new(refused));
                 // Not `enqueue_task`: it wakes no loop, and fails the request on arrival in teardown.
-                VirtualMachine::get().ticket().post(task);
+                VirtualMachine::get(turn.live).ticket().post(task);
                 Ok(())
             }
             Callback::Stat(_)
             | Callback::Download(_)
             | Callback::Upload(_)
             | Callback::Delete(_)
-            | Callback::ListObjects(_) => self.fail(error.code, error.message),
+            | Callback::ListObjects(_) => self.fail(error.code, error.message, turn),
         }
     }
 
-    fn fail(self, code: &[u8], message: &[u8]) -> bun_jsc::JsResult<()> {
+    fn fail(self, code: &[u8], message: &[u8], turn: JsTurn<'_>) -> bun_jsc::JsResult<()> {
         let err = S3Error { code, message };
         match self {
             Callback::Upload(callback) => callback(S3UploadResult::Failure(err)),
@@ -205,18 +213,18 @@ impl Callback {
             Callback::Stat(callback) => callback(S3StatResult::Failure(err)),
             Callback::Delete(callback) => callback(S3DeleteResult::Failure(err)),
             Callback::ListObjects(callback) => callback(S3ListObjectsResult::Failure(err)),
-            Callback::Sink(sink, request) => NetworkSink::on_reply(&sink, request, Err(err)),
+            Callback::Sink(sink, request) => NetworkSink::on_reply(&sink, request, Err(err), turn),
         }
     }
 
-    fn not_found(self, code: &[u8], message: &[u8]) -> bun_jsc::JsResult<()> {
+    fn not_found(self, code: &[u8], message: &[u8], turn: JsTurn<'_>) -> bun_jsc::JsResult<()> {
         let err = S3Error { code, message };
         match self {
             Callback::Download(callback) => callback(S3DownloadResult::NotFound(err)),
             Callback::Stat(callback) => callback(S3StatResult::NotFound(err)),
             Callback::Delete(callback) => callback(S3DeleteResult::NotFound(err)),
             Callback::ListObjects(callback) => callback(S3ListObjectsResult::NotFound(err)),
-            _ => self.fail(code, message),
+            _ => self.fail(code, message, turn),
         }
     }
 }
@@ -237,7 +245,12 @@ impl S3HttpSimpleTask {
         bun_core::heap::into_raw(Box::new(init))
     }
 
-    fn error_with_body(&self, callback: Callback, error_type: ErrorType) -> bun_jsc::JsResult<()> {
+    fn error_with_body(
+        &self,
+        callback: Callback,
+        error_type: ErrorType,
+        turn: JsTurn<'_>,
+    ) -> bun_jsc::JsResult<()> {
         let mut code: &[u8] = b"UnknownError";
         let mut message: &[u8] = b"an unexpected error has occurred";
         let mut has_error_code = false;
@@ -267,9 +280,9 @@ impl S3HttpSimpleTask {
                 code = b"NoSuchKey";
                 message = b"The specified key does not exist.";
             }
-            callback.not_found(code, message)
+            callback.not_found(code, message, turn)
         } else {
-            callback.fail(code, message)
+            callback.fail(code, message, turn)
         }
     }
 
@@ -303,11 +316,11 @@ impl S3HttpSimpleTask {
     //
     // ConcurrentTask dispatch entrypoint (see `runtime::dispatch`): `this` is the raw task
     // pointer the queue hands back, non-null by the `ConcurrentTask::from` contract.
-    pub(crate) fn on_response(this: *mut Self) -> bun_jsc::JsResult<()> {
+    pub(crate) fn on_response(this: *mut Self, turn: JsTurn<'_>) -> bun_jsc::JsResult<()> {
         // The next request of a multipart upload, a retry, and the script this calls continue
         // what the requesting script started.
         // (In a stopped context, whatever a retry arms is aborted at once.)
-        let vm = VirtualMachine::get();
+        let vm = VirtualMachine::get(turn.live);
         // SAFETY: fn contract — `this` is live.
         let _context = vm.enter_context(unsafe { (*this).context });
         // SAFETY: fn contract — `this` is live.
@@ -318,7 +331,7 @@ impl S3HttpSimpleTask {
 
         let callback = this.callback.take().expect("a request is answered once");
         if !this.result.is_success() {
-            return this.error_with_body(callback, ErrorType::Failure);
+            return this.error_with_body(callback, ErrorType::Failure, turn);
         }
         debug_assert!(this.result.metadata.is_some());
         let response = this.result.metadata.as_ref().unwrap();
@@ -353,17 +366,17 @@ impl S3HttpSimpleTask {
             // 404: the store no longer has the upload, which is what an abort is for.
             (Callback::Sink(sink, request @ Request::Put(_)), 200)
             | (Callback::Sink(sink, request @ Request::Abort(_)), 200 | 204 | 404) => {
-                NetworkSink::on_reply(&sink, request, Ok(b""))
+                NetworkSink::on_reply(&sink, request, Ok(b""), turn)
             }
             (Callback::Sink(sink, Request::Create), 200 | 204 | 206) => {
                 let id = xml_response::parse_upload_id(&this.response_buffer.list);
-                NetworkSink::on_reply(&sink, Request::Create, Ok(&id.unwrap_or_default()))
+                NetworkSink::on_reply(&sink, Request::Create, Ok(&id.unwrap_or_default()), turn)
             }
             (Callback::Sink(sink, Request::Create), 404)
                 if xml_response::parse_error(&this.response_buffer.list)
                     .is_none_or(|error| error.code.is_none()) =>
             {
-                NetworkSink::on_reply(&sink, Request::Create, Err(NO_UPLOAD_ID))
+                NetworkSink::on_reply(&sink, Request::Create, Err(NO_UPLOAD_ID), turn)
             }
             (Callback::Sink(sink, request @ (Request::Part(..) | Request::Commit(..))), status) => {
                 let parsed = xml_response::parse_error(&this.response_buffer.list);
@@ -372,15 +385,17 @@ impl S3HttpSimpleTask {
                     _ => Some(&b""[..]),
                 };
                 match (this.response_error(status, parsed.as_ref()), etag) {
-                    (Some(err), _) => NetworkSink::on_reply(&sink, request, Err(err)),
-                    (None, Some(etag)) => NetworkSink::on_reply(&sink, request, Ok(etag)),
-                    (None, None) => {
-                        this.error_with_body(Callback::Sink(sink, request), ErrorType::Failure)
-                    }
+                    (Some(err), _) => NetworkSink::on_reply(&sink, request, Err(err), turn),
+                    (None, Some(etag)) => NetworkSink::on_reply(&sink, request, Ok(etag), turn),
+                    (None, None) => this.error_with_body(
+                        Callback::Sink(sink, request),
+                        ErrorType::Failure,
+                        turn,
+                    ),
                 }
             }
             (callback @ (Callback::Upload(_) | Callback::Sink(..)), _) => {
-                this.error_with_body(callback, ErrorType::Failure)
+                this.error_with_body(callback, ErrorType::Failure, turn)
             }
             (
                 callback @ (Callback::Stat(_)
@@ -389,8 +404,8 @@ impl S3HttpSimpleTask {
                 | Callback::ListObjects(_)),
                 status,
             ) => match status {
-                404 => this.error_with_body(callback, ErrorType::NotFound),
-                _ => this.error_with_body(callback, ErrorType::Failure),
+                404 => this.error_with_body(callback, ErrorType::NotFound, turn),
+                _ => this.error_with_body(callback, ErrorType::Failure, turn),
             },
         }
     }
@@ -493,10 +508,10 @@ impl<'a> Default for Options<'a> {
 /// `proxy_url`, `None` reads the environment like `fetch()` does (the variable
 /// for `url`'s scheme, unless `NO_PROXY` exempts the host), `Some("")` connects
 /// directly, and `Some(href)` is that proxy. JS thread only.
-pub(crate) fn resolve_proxy(proxy_url: Option<&[u8]>, url: &[u8]) -> Box<[u8]> {
+pub(crate) fn resolve_proxy(proxy_url: Option<&[u8]>, url: &[u8], live: VmLive<'_>) -> Box<[u8]> {
     match proxy_url {
         Some(href) => Box::from(href),
-        None => VirtualMachine::get()
+        None => VirtualMachine::get(live)
             .env_loader()
             .get_http_proxy_for(&URL::parse(url))
             .map(|proxy| Box::from(proxy.href))
@@ -507,8 +522,11 @@ pub(crate) fn resolve_proxy(proxy_url: Option<&[u8]>, url: &[u8]) -> Box<[u8]> {
 /// What puts an S3 request on the HTTP thread asks first: this file's function and
 /// `client::download_stream` before anything else, the caller of `client::list_objects` before
 /// it allocates. (A `NetworkSink` asks its own abort handle first: see `send_ready`.)
-pub(crate) fn nothing_new_leaves(context: &bun_jsc::ScriptExecutionContext) -> bool {
-    !VirtualMachine::get().script_allowed() || context.is_stopped()
+pub(crate) fn nothing_new_leaves(
+    context: &bun_jsc::ScriptExecutionContext,
+    live: VmLive<'_>,
+) -> bool {
+    !VirtualMachine::get(live).script_allowed() || context.is_stopped()
 }
 
 /// What the completion of such a request is told.
@@ -523,15 +541,16 @@ pub(crate) fn execute_simple_s3_request(
     context: &bun_jsc::ScriptExecutionContext,
     options: Options<'_>,
     callback: Callback,
+    turn: JsTurn<'_>,
 ) -> bun_jsc::JsResult<()> {
     bun_removable_features::removable_definition!(S3Client, execute_simple_s3_request);
     // A multipart/retry continuation can reach here from teardown's queue
     // release; nothing new leaves a VM that is stopping. Nor for a context
     // that has stopped (a disposed `Bun.ModuleGraph`'s leftover script): the
     // completion is released as for a failure, which is reported to nobody.
-    if nothing_new_leaves(context) {
+    if nothing_new_leaves(context, turn.live) {
         drop(options.range);
-        return callback.refuse(context, NOTHING_NEW_LEAVES);
+        return callback.refuse(context, NOTHING_NEW_LEAVES, turn);
     }
     let result = match this.sign_request::<false>(
         &SignOptions {
@@ -555,13 +574,13 @@ pub(crate) fn execute_simple_s3_request(
             drop(options.range);
             let ErrorCodeAndMessage { code, message } =
                 get_sign_error_code_and_message(sign_err.into());
-            return callback.refuse(context, S3Error { code, message });
+            return callback.refuse(context, S3Error { code, message }, turn);
         }
     };
 
     let headers = result.headers(options.range.as_deref(), options.content_type);
 
-    let proxy_url = resolve_proxy(options.proxy_url, &result.url);
+    let proxy_url = resolve_proxy(options.proxy_url, &result.url, turn.live);
     let task_ptr = S3HttpSimpleTask::new(S3HttpSimpleTask {
         async_http_id: 0,
         sign_result: result,
@@ -573,7 +592,7 @@ pub(crate) fn execute_simple_s3_request(
         concurrent_task: ConcurrentTask::default(),
         proxy_url,
         body: Box::<[u8]>::from(options.body),
-        _keep_alive: JsKeepAlive::active(),
+        _keep_alive: JsKeepAlive::active(turn.live),
         signal_store: Default::default(),
         abort_handle: bun_jsc::AbortHandle::for_owner::<S3HttpSimpleTask>(),
         context: Default::default(),
@@ -595,7 +614,7 @@ pub(crate) fn execute_simple_s3_request(
     } else {
         None
     };
-    let vm = VirtualMachine::get();
+    let vm = VirtualMachine::get(turn.live);
     let verbose = vm.get_verbose_fetch();
     let reject_unauthorized = vm.get_tls_reject_unauthorized();
     let async_http = AsyncHTTP::init(
@@ -624,10 +643,10 @@ pub(crate) fn execute_simple_s3_request(
     bun_http::http_thread::init(&Default::default());
     // Out on the HTTP thread until its final callback: its context aborts it
     // when it stops, and the VM waits for it (the ticket).
-    task.http_ticket = Some(VirtualMachine::get().ticket());
+    task.http_ticket = Some(VirtualMachine::get(turn.live).ticket());
     task.context = context.id();
     // SAFETY: the task is heap-allocated and drops its handle with itself.
-    unsafe { bun_jsc::AbortHandle::arm_owner(task_ptr, context) };
+    unsafe { bun_jsc::AbortHandle::arm_owner(task_ptr, context, turn.live) };
     bun_http::HTTPThread::schedule([async_http]);
     Ok(())
 }

@@ -1,5 +1,6 @@
 use core::cell::Cell;
 
+use bun_core::JsTurn;
 use bun_core::Utf8Bytes;
 use bun_jsc::JsCell;
 use bun_jsc::bindgen::{self, Callable, JsHeap, JsLocal, JsPayload as _, JsScope, JsWrapper};
@@ -598,7 +599,7 @@ impl ServerWebSocket {
         let this_value = self.js_value().unwrap_or(JSValue::UNDEFINED);
         let args = [this_value];
 
-        let _loop_guard = vm.enter_event_loop_scope();
+        let _loop_guard = vm.enter_event_loop_scope(global_object.turn());
 
         if let Err(e) = call_corked(
             ws,
@@ -657,7 +658,7 @@ impl ServerWebSocket {
         // This is the start of a task.
         let vm = self.handler().vm();
 
-        let _loop_guard = vm.enter_event_loop_scope();
+        let _loop_guard = vm.enter_event_loop_scope(global_object.turn());
 
         let data = match opcode {
             Opcode::Text => bun_string_jsc::create_utf8_for_js(global_object, message),
@@ -748,7 +749,7 @@ impl ServerWebSocket {
             let global_object = handler.global_object();
 
             let args = [self.js_value().unwrap_or(JSValue::UNDEFINED)];
-            let _loop_guard = vm.enter_event_loop_scope();
+            let _loop_guard = vm.enter_event_loop_scope(global_object.turn());
             if let Err(e) = call_corked(
                 self.websocket(),
                 global_object,
@@ -802,7 +803,7 @@ impl ServerWebSocket {
         let global_this = handler.global_object();
 
         // This is the start of a task.
-        let _loop_guard = handler.vm().enter_event_loop_scope();
+        let _loop_guard = handler.vm().enter_event_loop_scope(global_this.turn());
 
         let data = self.binary_to_js(global_this, data)?;
         let args = [self.js_value().unwrap_or(JSValue::UNDEFINED), data];
@@ -817,7 +818,13 @@ impl ServerWebSocket {
     /// `&self` for the same noalias-reentry reason as `on_open` (R-2).
     /// Re-entrant `ws.close()` from the close handler routes through the same
     /// `Cell<Flags>` / `JsCell<JsRef>`, so no `noalias` view is invalidated.
-    pub(crate) fn on_close(&self, _ws: AnyWebSocket, code: i32, message: &[u8]) -> JsResult<()> {
+    pub(crate) fn on_close(
+        &self,
+        _ws: AnyWebSocket,
+        code: i32,
+        message: &[u8],
+        turn: JsTurn<'_>,
+    ) -> JsResult<()> {
         bun_output::scoped_log!(WebSocketServer, "onClose");
         // TODO: Can this called inside finalize?
         let handler = self.handler();
@@ -859,7 +866,7 @@ impl ServerWebSocket {
         if !on_close_handler.is_empty_or_undefined_or_null() {
             let global_object = handler.global_object();
 
-            let _loop_guard = vm.enter_event_loop_scope();
+            let _loop_guard = vm.enter_event_loop_scope(turn);
 
             if let Some(sig) = &signal {
                 if !sig.aborted() {
@@ -887,7 +894,7 @@ impl ServerWebSocket {
                 return handler.run_error_callback(on_error, global_object, cached_this, err);
             }
         } else if let Some(sig) = &signal {
-            let _loop_guard = vm.enter_event_loop_scope();
+            let _loop_guard = vm.enter_event_loop_scope(turn);
 
             if !sig.aborted() {
                 sig.signal(handler.global_object(), CommonAbortReason::ConnectionClosed);
@@ -1235,46 +1242,58 @@ impl WebSocketHandler for ServerWebSocket {
     // never stacks a `noalias` `&mut ServerWebSocket`. These are the uWS
     // callbacks' landing frames: what a handler left pending is folded here.
     #[inline(always)]
-    unsafe fn on_open(this: *mut Self, ws: AnyWebSocket) {
+    unsafe fn on_open(this: *mut Self, ws: AnyWebSocket, turn: JsTurn<'_>) {
         // SAFETY: per trait contract — `this` is the live user-data slot.
         let this = unsafe { &*this };
         let _context = this.enter_handlers_context();
-        crate::dispatch::fold(this.on_open(ws));
+        crate::dispatch::fold(this.on_open(ws), turn);
     }
     #[inline(always)]
-    unsafe fn on_message(this: *mut Self, ws: AnyWebSocket, message: &[u8], opcode: Opcode) {
+    unsafe fn on_message(
+        this: *mut Self,
+        ws: AnyWebSocket,
+        message: &[u8],
+        opcode: Opcode,
+        turn: JsTurn<'_>,
+    ) {
         // SAFETY: per trait contract.
         let this = unsafe { &*this };
         let _context = this.enter_handlers_context();
-        crate::dispatch::fold(this.on_message(ws, message, opcode));
+        crate::dispatch::fold(this.on_message(ws, message, opcode), turn);
     }
     #[inline(always)]
-    unsafe fn on_drain(this: *mut Self, ws: AnyWebSocket) {
+    unsafe fn on_drain(this: *mut Self, ws: AnyWebSocket, turn: JsTurn<'_>) {
         // SAFETY: per trait contract.
         let this = unsafe { &*this };
         let _context = this.enter_handlers_context();
-        crate::dispatch::fold(this.on_drain(ws));
+        crate::dispatch::fold(this.on_drain(ws), turn);
     }
     #[inline(always)]
-    unsafe fn on_ping(this: *mut Self, ws: AnyWebSocket, message: &[u8]) {
+    unsafe fn on_ping(this: *mut Self, ws: AnyWebSocket, message: &[u8], turn: JsTurn<'_>) {
         // SAFETY: per trait contract.
         let this = unsafe { &*this };
         let _context = this.enter_handlers_context();
-        crate::dispatch::fold(this.on_ping(ws, message));
+        crate::dispatch::fold(this.on_ping(ws, message), turn);
     }
     #[inline(always)]
-    unsafe fn on_pong(this: *mut Self, ws: AnyWebSocket, message: &[u8]) {
+    unsafe fn on_pong(this: *mut Self, ws: AnyWebSocket, message: &[u8], turn: JsTurn<'_>) {
         // SAFETY: per trait contract.
         let this = unsafe { &*this };
         let _context = this.enter_handlers_context();
-        crate::dispatch::fold(this.on_pong(ws, message));
+        crate::dispatch::fold(this.on_pong(ws, message), turn);
     }
     #[inline(always)]
-    unsafe fn on_close(this: *mut Self, ws: AnyWebSocket, code: i32, message: &[u8]) {
+    unsafe fn on_close(
+        this: *mut Self,
+        ws: AnyWebSocket,
+        code: i32,
+        message: &[u8],
+        turn: JsTurn<'_>,
+    ) {
         // SAFETY: per trait contract.
         let this = unsafe { &*this };
         let _context = this.enter_handlers_context();
-        crate::dispatch::fold(this.on_close(ws, code, message));
+        crate::dispatch::fold(this.on_close(ws, code, message, turn), turn);
     }
 }
 
@@ -1316,7 +1335,7 @@ impl WsPackageSocket {
         let global_object = handler.global_object();
 
         // This is the start of a task.
-        let _loop_guard = handler.vm().enter_event_loop_scope();
+        let _loop_guard = handler.vm().enter_event_loop_scope(global_object.turn());
 
         let args = args(global_object)?;
         let websocket = js::data_get_cached(this_value).unwrap_or(JSValue::UNDEFINED);
@@ -1379,7 +1398,11 @@ impl WsPackageSocket {
     /// # Safety
     /// `this` is the socket's live user-data slot.
     #[inline(always)]
-    unsafe fn dispatch(this: *mut Self, callback: impl FnOnce(&Self) -> JsResult<()>) {
+    unsafe fn dispatch(
+        this: *mut Self,
+        callback: impl FnOnce(&Self) -> JsResult<()>,
+        turn: JsTurn<'_>,
+    ) {
         // SAFETY: per this function's contract.
         let this = unsafe { &*this };
         let handler = this.0.handler();
@@ -1387,75 +1410,101 @@ impl WsPackageSocket {
         let _context = handler
             .server
             .map(|server| handler.vm().enter_context(server.context_id()));
-        crate::dispatch::fold(callback(this));
+        crate::dispatch::fold(callback(this), turn);
     }
 }
 
 impl WebSocketHandler for WsPackageSocket {
     #[inline(always)]
-    unsafe fn on_open(this: *mut Self, ws: AnyWebSocket) {
+    unsafe fn on_open(this: *mut Self, ws: AnyWebSocket, _turn: JsTurn<'_>) {
         // SAFETY: per trait contract — `this` is the live user-data slot.
         unsafe { &*this }.0.attach(ws);
     }
     #[inline(always)]
-    unsafe fn on_message(this: *mut Self, ws: AnyWebSocket, message: &[u8], opcode: Opcode) {
+    unsafe fn on_message(
+        this: *mut Self,
+        ws: AnyWebSocket,
+        message: &[u8],
+        opcode: Opcode,
+        turn: JsTurn<'_>,
+    ) {
         // SAFETY: per trait contract.
         unsafe {
-            Self::dispatch(this, |this| {
-                let global = this.0.handler().global_object();
-                let buffer = match ArrayBuffer::create_buffer(global, message) {
-                    Ok(buffer) => buffer,
-                    Err(e) => {
-                        // Same as `ServerWebSocket::on_message`. `ws.ts` turns the close into the
-                        // socket's 'error' event.
-                        if global.take_error(e).is_termination_exception() {
-                            return Err(e);
+            Self::dispatch(
+                this,
+                |this| {
+                    let global = this.0.handler().global_object();
+                    let buffer = match ArrayBuffer::create_buffer(global, message) {
+                        Ok(buffer) => buffer,
+                        Err(e) => {
+                            // Same as `ServerWebSocket::on_message`. `ws.ts` turns the close into the
+                            // socket's 'error' event.
+                            if global.take_error(e).is_termination_exception() {
+                                return Err(e);
+                            }
+                            ws.fail_out_of_memory();
+                            return Ok(());
                         }
-                        ws.fail_out_of_memory();
-                        return Ok(());
-                    }
-                };
-                this.call(this.0.handler().on_message, |_| {
-                    Ok([buffer, JSValue::js_boolean(opcode == Opcode::Binary)])
-                })
-            })
+                    };
+                    this.call(this.0.handler().on_message, |_| {
+                        Ok([buffer, JSValue::js_boolean(opcode == Opcode::Binary)])
+                    })
+                },
+                turn,
+            )
         };
     }
     #[inline(always)]
-    unsafe fn on_drain(this: *mut Self, _ws: AnyWebSocket) {
+    unsafe fn on_drain(this: *mut Self, _ws: AnyWebSocket, turn: JsTurn<'_>) {
         // SAFETY: per trait contract.
         unsafe {
-            Self::dispatch(this, |this| {
-                this.call(this.0.handler().on_drain, |_| Ok([]))
-            })
+            Self::dispatch(
+                this,
+                |this| this.call(this.0.handler().on_drain, |_| Ok([])),
+                turn,
+            )
         };
     }
     #[inline(always)]
-    unsafe fn on_ping(this: *mut Self, _ws: AnyWebSocket, message: &[u8]) {
+    unsafe fn on_ping(this: *mut Self, _ws: AnyWebSocket, message: &[u8], turn: JsTurn<'_>) {
         // SAFETY: per trait contract.
         unsafe {
-            Self::dispatch(this, |this| {
-                this.call(this.0.handler().on_ping, |global| {
-                    Ok([ArrayBuffer::create_buffer(global, message)?])
-                })
-            })
+            Self::dispatch(
+                this,
+                |this| {
+                    this.call(this.0.handler().on_ping, |global| {
+                        Ok([ArrayBuffer::create_buffer(global, message)?])
+                    })
+                },
+                turn,
+            )
         };
     }
     #[inline(always)]
-    unsafe fn on_pong(this: *mut Self, _ws: AnyWebSocket, message: &[u8]) {
+    unsafe fn on_pong(this: *mut Self, _ws: AnyWebSocket, message: &[u8], turn: JsTurn<'_>) {
         // SAFETY: per trait contract.
         unsafe {
-            Self::dispatch(this, |this| {
-                this.call(this.0.handler().on_pong, |global| {
-                    Ok([ArrayBuffer::create_buffer(global, message)?])
-                })
-            })
+            Self::dispatch(
+                this,
+                |this| {
+                    this.call(this.0.handler().on_pong, |global| {
+                        Ok([ArrayBuffer::create_buffer(global, message)?])
+                    })
+                },
+                turn,
+            )
         };
     }
     #[inline(always)]
-    unsafe fn on_close(this: *mut Self, _ws: AnyWebSocket, code: i32, message: &[u8]) {
+    unsafe fn on_close(
+        this: *mut Self,
+        _ws: AnyWebSocket,
+        code: i32,
+        message: &[u8],
+        turn: JsTurn<'_>,
+    ) {
         // SAFETY: per trait contract.
-        unsafe { Self::dispatch(this, |this| this.on_close(code, message)) };
+        unsafe { Self::dispatch(this, |this| this.on_close(code, message), turn) };
     }
 }
 

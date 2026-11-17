@@ -1,7 +1,7 @@
 use core::cell::Cell;
 use core::mem::size_of;
 
-use bun_core::{StringView, strings};
+use bun_core::{JsTurn, StringView, strings};
 use bun_http::{Headers, Method};
 use bun_http_types::ETag;
 use bun_http_types::ETag::StringPointer;
@@ -91,11 +91,11 @@ impl FileRoute {
             + self.blob.reported_estimated_size.get()
     }
 
-    pub(crate) fn last_modified_date(&self) -> JsResult<Option<u64>> {
+    pub(crate) fn last_modified_date(&self, turn: JsTurn<'_>) -> JsResult<Option<u64>> {
         if self.has_last_modified_header {
             if let Some(last_modified) = self.headers.get(b"last-modified") {
                 let string = StringView::borrow_utf8(last_modified);
-                let global = VirtualMachine::get().global();
+                let global = VirtualMachine::get(turn.live).global(turn);
                 let date_f64 = bun_string_jsc::parse_date(&string, global)?;
                 if !date_f64.is_nan() && date_f64.is_finite() {
                     return Ok(Some(date_f64 as u64));
@@ -169,7 +169,7 @@ impl FileRoute {
                     ));
                 }
 
-                let blob = body_value.use_();
+                let blob = body_value.use_(global.turn());
 
                 blob.global_this.set(std::ptr::from_ref(global));
                 debug_assert!(
@@ -237,13 +237,23 @@ impl FileRoute {
         }
     }
 
-    pub(crate) fn on_head_request(this: ThisPtr<FileRoute>, req: AnyRequest, resp: AnyResponse) {
-        Self::on(this, req, resp, Method::HEAD);
+    pub(crate) fn on_head_request(
+        this: ThisPtr<FileRoute>,
+        req: AnyRequest,
+        resp: AnyResponse,
+        turn: JsTurn<'_>,
+    ) {
+        Self::on(this, req, resp, Method::HEAD, turn);
     }
 
-    pub(crate) fn on_request(this: ThisPtr<FileRoute>, req: AnyRequest, resp: AnyResponse) {
+    pub(crate) fn on_request(
+        this: ThisPtr<FileRoute>,
+        req: AnyRequest,
+        resp: AnyResponse,
+        turn: JsTurn<'_>,
+    ) {
         let method = Method::find(req.method()).unwrap_or(Method::GET);
-        Self::on(this, req, resp, method);
+        Self::on(this, req, resp, method, turn);
     }
 
     pub(crate) fn on(
@@ -251,6 +261,7 @@ impl FileRoute {
         mut req: AnyRequest,
         resp: AnyResponse,
         method: Method,
+        turn: JsTurn<'_>,
     ) {
         debug_assert!(this.server.get().is_some());
         let route = PendingRequest::new(RefPtr::from_this(this));
@@ -288,7 +299,7 @@ impl FileRoute {
         };
         let fd = StreamFd::Owned(fd);
 
-        match this.serve(fd.get(), path, &mut req, resp, method) {
+        match this.serve(fd.get(), path, &mut req, resp, method, turn) {
             Serve::Done => {}
             Serve::Stream {
                 file_type,
@@ -297,17 +308,20 @@ impl FileRoute {
                 length,
             } => {
                 let server = this.server.get().unwrap();
-                FileResponseStream::start(FileResponseStreamOptions {
-                    fd,
-                    resp,
-                    vm: bun_ptr::BackRef::new(server.vm()),
-                    file_type,
-                    pollable,
-                    offset,
-                    length,
-                    idle_timeout: server.config().idle_timeout,
-                    owner: StreamOwner::FileRoute(route),
-                });
+                FileResponseStream::start(
+                    FileResponseStreamOptions {
+                        fd,
+                        resp,
+                        vm: bun_ptr::BackRef::new(server.vm()),
+                        file_type,
+                        pollable,
+                        offset,
+                        length,
+                        idle_timeout: server.config().idle_timeout,
+                        owner: StreamOwner::FileRoute(route),
+                    },
+                    turn,
+                );
             }
         }
     }
@@ -319,6 +333,7 @@ impl FileRoute {
         req: &mut AnyRequest,
         resp: AnyResponse,
         method: Method,
+        turn: JsTurn<'_>,
     ) -> Serve {
         let (can_serve_file, offset, size, file_type, pollable) = 'brk: {
             let stat = match bun_sys::fstat(fd) {
@@ -363,7 +378,7 @@ impl FileRoute {
             || req.header(b"if-unmodified-since").is_some()
             || req.header(b"if-range").is_some()
         {
-            let Ok(lmd) = self.last_modified_date() else {
+            let Ok(lmd) = self.last_modified_date(turn) else {
                 return Serve::Done;
             };
             lmd
@@ -381,13 +396,20 @@ impl FileRoute {
             && self.status_code == 200
             && !self.has_content_range_header
         {
-            RangeRequest::from_request(req, size, etag, last_modified_ms)
+            RangeRequest::from_request(req, size, etag, last_modified_ms, turn)
         } else {
             RangeRequest::Result::None
         };
 
-        let status_code =
-            status_for_preconditions(req, method, self.status_code, etag, last_modified_ms, range);
+        let status_code = status_for_preconditions(
+            req,
+            method,
+            self.status_code,
+            etag,
+            last_modified_ms,
+            range,
+            turn,
+        );
 
         req.set_yield(false);
 
@@ -475,6 +497,7 @@ pub(crate) fn status_for_preconditions(
     etag: Option<&[u8]>,
     last_modified_ms: Option<u64>,
     range: RangeRequest::Result,
+    turn: JsTurn<'_>,
 ) -> u16 {
     if (method == Method::HEAD || method == Method::GET) && base_status == 200 {
         if let Some(im) = req.header(b"if-match").filter(|v| !v.is_empty()) {
@@ -483,7 +506,7 @@ pub(crate) fn status_for_preconditions(
             }
         } else if let Some(ius) = req
             .header(b"if-unmodified-since")
-            .and_then(crate::jsc_hooks::parse_http_date)
+            .and_then(move |it| crate::jsc_hooks::parse_http_date(it, turn))
         {
             if let Some(lm) = last_modified_ms {
                 if lm / 1000 > ius / 1000 {
@@ -504,7 +527,7 @@ pub(crate) fn status_for_preconditions(
             // Did not match: fall through to Range/200 without consulting IMS.
         } else if let Some(ims) = req
             .header(b"if-modified-since")
-            .and_then(crate::jsc_hooks::parse_http_date)
+            .and_then(move |it| crate::jsc_hooks::parse_http_date(it, turn))
         {
             // Compare at second precision: the Last-Modified we emit is
             // second-granular (HTTP-date), so a sub-second mtime would never

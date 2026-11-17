@@ -27,6 +27,9 @@ use std::io::Write as _;
 #[cfg(any(target_os = "linux", target_os = "android"))]
 use bun_core::ZStr;
 use bun_core::{self, CStrList, CStrRef, ZBox, env_var, getenv_z, strings, zstr};
+use bun_core::{HasVm, JsTurn, VmLive};
+#[cfg(windows)]
+use bun_core::{LoopTurn, ThreadLive};
 use bun_jsc::JSGlobalObject;
 use bun_jsc::virtual_machine::VirtualMachine;
 #[cfg(windows)]
@@ -57,6 +60,7 @@ pub(crate) struct ChromeProcess {
     pipes: WindowsPipes,
     #[cfg(windows)]
     generation: u32,
+    has_vm: HasVm,
 }
 
 /// Our ends of the two pipes (`None` once closed) and the read scratch.
@@ -70,8 +74,8 @@ struct WindowsPipes {
 }
 
 /// Empty in a Worker.
-fn unreaped() -> &'static super::Unreaped<ChromeProcess> {
-    &crate::jsc_hooks::runtime_state().browsers.chrome
+fn unreaped(live: VmLive<'_>) -> &super::Unreaped<ChromeProcess> {
+    &crate::jsc_hooks::runtime_state(live).browsers.chrome
 }
 
 /// Of the Chrome that C++ talks to, which is the newest of the main thread. 0: none.
@@ -91,8 +95,11 @@ static GENERATION: AtomicU32 = AtomicU32::new(0);
 /// dies. SIGKILL here takes the browser process, the zygote tree follows.
 /// The C++ side doesn't touch JS state; EVFILT_PROC → Bun__Chrome__died →
 /// rejectAllAndMarkDead handles promise rejection on the next loop tick.
+///
+/// # Safety
+/// Called on the thread of a VM, ahead of `~VM`.
 #[unsafe(no_mangle)]
-extern "C" fn Bun__Chrome__kill() {
+unsafe extern "C" fn Bun__Chrome__kill() {
     let pid = PID.load(Ordering::Relaxed);
     if pid == 0 {
         return;
@@ -101,7 +108,9 @@ extern "C" fn Bun__Chrome__kill() {
     bun_spawn::ffi::kill(pid, libc::SIGKILL);
     #[cfg(windows)]
     {
-        if let Some(state) = crate::jsc_hooks::try_runtime_state() {
+        // SAFETY: caller contract.
+        let live = unsafe { ThreadLive::assume(&pid) };
+        if let Some(state) = crate::jsc_hooks::try_runtime_state(live) {
             let unreaped = state.browsers.chrome.take();
             let killed = unreaped.last().map(|chrome| chrome.process.kill(9));
             state.browsers.chrome.put_back(unreaped);
@@ -116,9 +125,14 @@ extern "C" fn Bun__Chrome__kill() {
 }
 
 /// Transport::retireGlobal (`bun test --isolate`): unpublish and kill this Chrome so the next file can spawn its own at once.
+///
+/// # Safety
+/// Called on the thread of a VM, ahead of `~VM`.
 #[unsafe(no_mangle)]
-extern "C" fn Bun__Chrome__retire() {
-    unreaped().with_taken(|unreaped| {
+unsafe extern "C" fn Bun__Chrome__retire() {
+    let scope = ();
+    // SAFETY: caller contract.
+    unreaped(unsafe { VmLive::assume(&scope) }).with_taken(|unreaped| {
         let Some(chrome) = unreaped.last_mut().filter(|chrome| !chrome.retired) else {
             return;
         };
@@ -193,14 +207,14 @@ unsafe extern "C" fn Bun__Chrome__ensure(
 
 bun_spawn::link_impl_ProcessExit! {
     ChromeProcess for ChromeProcess => |this| {
-        on_process_exit(status, _rusage) => ChromeProcess::on_exit(this, &status),
+        on_process_exit(status, _rusage, turn) => ChromeProcess::on_exit(this, &status, (*this).has_vm.turn(turn)),
     }
 }
 
 impl ChromeProcess {
-    fn on_exit(this: *mut ChromeProcess, status: &Status) {
+    fn on_exit(this: *mut ChromeProcess, status: &Status, turn: JsTurn<'_>) {
         scoped_log!(Chrome, "chrome exited: {}", status);
-        let Some(chrome) = super::remove(unreaped(), this) else {
+        let Some(chrome) = super::remove(unreaped(turn.live), this) else {
             return;
         };
         if chrome.retired {
@@ -212,7 +226,7 @@ impl ChromeProcess {
         {
             let was_terminated = TERMINATED_PID.swap(0, Ordering::Relaxed) == chrome.process.pid;
             let signo = if was_terminated { 9 } else { signo };
-            PipeEvent::Exited { signo }.post(chrome.generation);
+            PipeEvent::Exited { signo }.post(chrome.generation, turn.live);
         }
         #[cfg(not(windows))]
         {
@@ -609,7 +623,7 @@ fn spawn(
         // Keeping our copies of the child's ends would mask Chrome's death (no EOF).
         endpoints.close_child_ends();
 
-        endpoints.attach(spawned.to_process_handle(event_loop))
+        endpoints.attach(spawned.to_process_handle(event_loop), vm.live())
     }
 }
 
@@ -656,10 +670,11 @@ impl Endpoints {
     }
 
     /// Publishes the singleton and returns our fd for C++ to adopt.
-    fn attach(self, process: ProcessHandle) -> crate::Result<i32> {
+    fn attach(self, process: ProcessHandle, live: VmLive<'_>) -> crate::Result<i32> {
         let chrome = AliasableBox::new(ChromeProcess {
             process,
             retired: false,
+            has_vm: live.has_vm,
         });
         let process = &chrome.process;
         // SAFETY: `chrome` owns `process`, whose `Drop` detaches the handler.
@@ -674,7 +689,7 @@ impl Endpoints {
         // also SIGKILLs via Bun__Chrome__kill.
         process.disable_keeping_event_loop_alive();
         PID.store(process.pid, Ordering::Relaxed);
-        unreaped().with_taken(|unreaped| unreaped.push(chrome));
+        unreaped(live).with_taken(|unreaped| unreaped.push(chrome));
 
         debug_assert!(self.child.is_none());
         // usockets owns the fd from here on; this module only owns the process.
@@ -738,7 +753,7 @@ impl Endpoints {
     }
 
     /// Moves our ends into a [`ChromeProcess`], starts reading replies, and publishes it.
-    fn attach(self, process: ProcessHandle) -> crate::Result<i32> {
+    fn attach(self, process: ProcessHandle, live: VmLive<'_>) -> crate::Result<i32> {
         let reply = self.reply.as_ptr();
         let pipes = WindowsPipes {
             reply: Some(self.reply),
@@ -751,6 +766,7 @@ impl Endpoints {
             retired: false,
             pipes,
             generation,
+            has_vm: live.has_vm,
         });
         let self_ptr = chrome.as_ptr();
         let process = &chrome.process;
@@ -776,7 +792,7 @@ impl Endpoints {
         Process::set_exit_handler(process, handler);
         process.disable_keeping_event_loop_alive();
         PID.store(process.pid, Ordering::Relaxed);
-        unreaped().with_taken(|unreaped| unreaped.push(chrome));
+        unreaped(live).with_taken(|unreaped| unreaped.push(chrome));
         GENERATION.store(generation, Ordering::Relaxed);
         Ok(0)
     }
@@ -798,18 +814,19 @@ unsafe impl uv::StreamReader for ChromeProcess {
         this.pipes.read_buf.with_mut(|buf| &raw mut **buf)
     }
 
-    fn on_read_error(this: &Self, err: core::ffi::c_int) {
+    fn on_read_error(this: &Self, err: core::ffi::c_int, turn: LoopTurn<'_>) {
         scoped_log!(
             Chrome,
             "reply pipe closed: {:?}",
             bun_sys::windows::translate_uv_error_to_e(err)
         );
-        PipeEvent::Closed.post(this.generation);
+        PipeEvent::Closed.post(this.generation, this.has_vm.live(turn.live));
     }
 
-    unsafe fn on_read(this: &Self, nread: usize) {
+    unsafe fn on_read(this: &Self, nread: usize, turn: LoopTurn<'_>) {
         scoped_log!(Chrome, "read {} bytes", nread);
-        PipeEvent::Data(Box::from(&this.pipes.read_buf.get()[..nread])).post(this.generation);
+        PipeEvent::Data(Box::from(&this.pipes.read_buf.get()[..nread]))
+            .post(this.generation, this.has_vm.live(turn.live));
     }
 }
 
@@ -829,9 +846,9 @@ pub(crate) struct QueuedEvent {
 
 #[cfg(windows)]
 impl PipeEvent {
-    fn post(self, generation: u32) {
+    fn post(self, generation: u32, live: VmLive<'_>) {
         // Not dispatched from the read callback: C++ runs JS that may spin a nested event loop (bun:test does), and libuv re-arms the read only after the callback returns.
-        VirtualMachine::get().enqueue_task(bun_jsc::Task::from_boxed(Box::new(QueuedEvent {
+        VirtualMachine::get(live).enqueue_task(bun_jsc::Task::from_boxed(Box::new(QueuedEvent {
             generation,
             event: self,
         })));
@@ -841,7 +858,7 @@ impl PipeEvent {
 #[cfg(windows)]
 impl bun_event_loop::BoxedTask for QueuedEvent {
     const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::ChromePipeEvent;
-    fn release_unrun(self: Box<Self>) {}
+    fn release_unrun(self: Box<Self>, _live: VmLive<'_>) {}
     /// Enters no context.
     fn context(&self) -> bun_event_loop::ContextId {
         bun_event_loop::ContextId::NONE
@@ -880,17 +897,19 @@ struct WriteReq {
     buf: uv::uv_buf_t,
     bytes: Box<[u8]>,
     generation: u32,
+    has_vm: HasVm,
 }
 
 #[cfg(windows)]
 impl WriteReq {
     /// Safety: `pipe` is the live command pipe of the Chrome with `generation`.
-    unsafe fn submit(pipe: *mut uv::Pipe, chunk: &[u8], generation: u32) -> bool {
+    unsafe fn submit(pipe: *mut uv::Pipe, chunk: &[u8], generation: u32, has_vm: HasVm) -> bool {
         let mut req = Box::new(WriteReq {
             req: bun_core::ffi::zeroed::<uv::uv_write_t>(),
             buf: uv::uv_buf_t::init(b""), // re-init below, once `bytes` has stopped moving
             bytes: Box::from(chunk),
             generation,
+            has_vm,
         });
         req.buf = uv::uv_buf_t::init(&req.bytes);
         let owned = bun_ptr::AliasableBox::from(req);
@@ -909,26 +928,26 @@ impl WriteReq {
         true
     }
 
-    fn on_write(this: *mut WriteReq, status: uv::ReturnCode) {
+    fn on_write(this: *mut WriteReq, status: uv::ReturnCode, turn: LoopTurn<'_>) {
         // SAFETY: the Box leaked by `submit`; libuv hands it back exactly once.
         let req = unsafe { bun_core::heap::take(this) };
         if let Some(err) = status.to_error(bun_sys::Tag::write) {
             scoped_log!(Chrome, "command pipe write failed: {}", err);
             // ECANCELED is `WindowsPipes::close` draining the queue; the death is already being reported.
             if status.int() != uv::UV_ECANCELED {
-                PipeEvent::Closed.post(req.generation);
+                PipeEvent::Closed.post(req.generation, req.has_vm.live(turn.live));
             }
         }
     }
 }
 
-/// Transport::writeRaw on Windows. A write that fails surfaces as a Closed event, like any other loss of the transport. Safety: `data` points to `len` readable bytes.
+/// Transport::writeRaw on Windows. A write that fails surfaces as a Closed event, like any other loss of the transport. Safety: `data` points to `len` readable bytes, and this is the thread of a VM, ahead of `~VM`.
 #[cfg(windows)]
 #[unsafe(no_mangle)]
 unsafe extern "C" fn Bun__Chrome__writePipe(data: *const u8, len: usize) {
     // SAFETY: caller contract.
-    let bytes = unsafe { bun_core::ffi::slice(data, len) };
-    unreaped().with_taken(|unreaped| {
+    let (bytes, live) = unsafe { (bun_core::ffi::slice(data, len), VmLive::assume(&data)) };
+    unreaped(live).with_taken(move |unreaped| {
         let Some(chrome) = unreaped.last().filter(|chrome| !chrome.retired) else {
             return; // Chrome already exited; the Exited event is on its way to C++
         };
@@ -936,8 +955,8 @@ unsafe extern "C" fn Bun__Chrome__writePipe(data: *const u8, len: usize) {
         scoped_log!(Chrome, "write {} bytes", len);
         for chunk in bytes.chunks(u32::MAX as usize) {
             // SAFETY: `pipe` belongs to `chrome`.
-            if !unsafe { WriteReq::submit(pipe.as_ptr(), chunk, chrome.generation) } {
-                PipeEvent::Closed.post(chrome.generation);
+            if !unsafe { WriteReq::submit(pipe.as_ptr(), chunk, chrome.generation, live.has_vm) } {
+                PipeEvent::Closed.post(chrome.generation, live);
                 return;
             }
         }

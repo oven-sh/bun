@@ -15,6 +15,7 @@
 //!   - `Bun__Chrome__autoDetect` / `Bun__Chrome__ensure`
 //!       → `src/runtime/webview/ChromeProcess.rs`
 
+use bun_core::{JsTurn, VmLive};
 use bun_jsc::bindgen::{JsLocal, JsScope};
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{JSGlobalObject, JSInternalPromise, JSValue, StringJsc as _, ZigStackFrame};
@@ -28,8 +29,8 @@ use bun_jsc::{JSGlobalObject, JSInternalPromise, JSValue, StringJsc as _, ZigSta
 
 /// `export fn Bun__isMainThreadVM() callconv(.c) bool { return get().is_main_thread; }`
 // HOST_EXPORT(Bun__isMainThreadVM, c)
-pub(crate) fn is_main_thread_vm() -> bool {
-    VirtualMachine::get().is_main_thread.get()
+pub(crate) fn is_main_thread_vm(live: VmLive<'_>) -> bool {
+    VirtualMachine::get(live).is_main_thread.get()
 }
 
 pub(crate) fn drain_microtasks(cx: &mut JsScope<'_>) {
@@ -37,15 +38,15 @@ pub(crate) fn drain_microtasks(cx: &mut JsScope<'_>) {
     // Hot path (~2×/request via cork callback chain): pass the incoming
     // `global` straight through instead of re-deriving it via
     // TLS→vm→event_loop→vm→global (4 dependent loads — perf root-cause #1).
-    let vm = VirtualMachine::get();
+    let vm = VirtualMachine::get(global.live());
     let jsc_vm = global.vm();
     let _ = vm.event_loop().drain_microtasks_with_global(global, jsc_vm);
 }
 
 /// `export fn Bun__logUnhandledException(exception: JSValue) void { get().runErrorHandler(exception, null); }`
 // HOST_EXPORT(Bun__logUnhandledException, c)
-pub(crate) fn log_unhandled_exception(exception: JSValue) {
-    VirtualMachine::get().run_error_handler(exception, None);
+pub(crate) fn log_unhandled_exception(exception: JSValue, turn: JsTurn<'_>) {
+    VirtualMachine::get(turn.live).run_error_handler(exception, None, turn);
 }
 
 /// `export fn Bun__remapStackFramePositions(vm, frames, frames_count)` —
@@ -56,7 +57,7 @@ pub(crate) fn log_unhandled_exception(exception: JSValue) {
 /// `frames` must point to a live array of `frames_count` `ZigStackFrame`s.
 // HOST_EXPORT(Bun__remapStackFramePositions, c)
 pub(crate) fn remap_stack_frame_positions(
-    vm: &VirtualMachine,
+    vm: &bun_jsc::virtual_machine::OffThreadVm,
     frames: *mut ZigStackFrame<'_>,
     frames_count: usize,
 ) {
@@ -93,10 +94,14 @@ pub(crate) fn set_override_module_run_main_promise(
 
 /// Exported as `Bun__VM__setEntryPointEvalResultESM`.
 // HOST_EXPORT(Bun__VM__setEntryPointEvalResultESM, c)
-pub(crate) fn set_entry_point_eval_result_esm(this: &VirtualMachine, result: JSValue) {
+pub(crate) fn set_entry_point_eval_result_esm(
+    this: &VirtualMachine,
+    result: JSValue,
+    turn: JsTurn<'_>,
+) {
     // allow esm evaluate to set value multiple times
     if !this.entry_point_result.cjs_set_value.get() {
-        let global = this.global();
+        let global = this.global(turn);
         this.entry_point_result
             .value
             .with_mut(|strong| strong.set(global, result));
@@ -105,9 +110,13 @@ pub(crate) fn set_entry_point_eval_result_esm(this: &VirtualMachine, result: JSV
 
 /// Exported as `Bun__VM__setEntryPointEvalResultCJS`.
 // HOST_EXPORT(Bun__VM__setEntryPointEvalResultCJS, c)
-pub(crate) fn set_entry_point_eval_result_cjs(this: &VirtualMachine, value: JSValue) {
+pub(crate) fn set_entry_point_eval_result_cjs(
+    this: &VirtualMachine,
+    value: JSValue,
+    turn: JsTurn<'_>,
+) {
     if !this.entry_point_result.value.get().has() {
-        let global = this.global();
+        let global = this.global(turn);
         this.entry_point_result
             .value
             .with_mut(|strong| strong.set(global, value));
@@ -117,9 +126,13 @@ pub(crate) fn set_entry_point_eval_result_cjs(this: &VirtualMachine, value: JSVa
 
 /// Exported as `Bun__VM__specifierIsEvalEntryPoint`.
 // HOST_EXPORT(Bun__VM__specifierIsEvalEntryPoint, c)
-pub(crate) fn specifier_is_eval_entry_point(this: &VirtualMachine, specifier: JSValue) -> bool {
+pub(crate) fn specifier_is_eval_entry_point(
+    this: &VirtualMachine,
+    specifier: JSValue,
+    turn: JsTurn<'_>,
+) -> bool {
     if let Some(eval_source) = this.module_loader.eval_source.get() {
-        let global = this.global();
+        let global = this.global(turn);
         let specifier_str =
             bun_core::String::from_js(specifier, global).expect("unexpected exception");
         return specifier_str.eql_utf8(eval_source.path.text);
@@ -130,14 +143,18 @@ pub(crate) fn specifier_is_eval_entry_point(this: &VirtualMachine, specifier: JS
 /// Called once by JSCommonJSModule.cpp for the root CJS module so the run command reports
 /// origin `uncaughtException`. `main()` compare filters out an ESM entry that `import`s CJS.
 // HOST_EXPORT(Bun__VM__noteCommonJSEvaluation, c)
-pub(crate) fn note_commonjs_evaluation(this: &VirtualMachine, specifier: JSValue) {
+pub(crate) fn note_commonjs_evaluation(
+    this: &VirtualMachine,
+    specifier: JSValue,
+    turn: JsTurn<'_>,
+) {
     if this.entry_point_result.evaluated_as_cjs.get() {
         return;
     }
     let Some(main) = this.main() else {
         return;
     };
-    let global = this.global();
+    let global = this.global(turn);
     // A failed conversion just skips the note; must never panic at an FFI
     // boundary.
     let Ok(specifier_str) = bun_core::String::from_js(specifier, global) else {
@@ -153,8 +170,8 @@ pub(crate) fn note_commonjs_evaluation(this: &VirtualMachine, specifier: JSValue
 // HOST_EXPORT(Bun__closeChildIPC, c)
 pub(crate) fn close_child_ipc(global: &JSGlobalObject) {
     let vm = global.bun_vm();
-    if let Some(current_ipc) = crate::ipc_host::get_ipc_instance(vm) {
-        current_ipc.data().disconnect();
+    if let Some(current_ipc) = crate::ipc_host::get_ipc_instance(vm, global.turn()) {
+        current_ipc.data().disconnect(global.turn());
     }
 }
 
@@ -175,15 +192,16 @@ mod sql_hooks {
     fn ssl_ctx_get_or_create(
         opts: &bun_uws::us_bun_socket_context_options_t,
         err: &mut bun_uws::create_bun_socket_error_t,
+        live: VmLive<'_>,
     ) -> Option<bun_boringssl_sys::OwnedSslCtx> {
-        crate::jsc_hooks::ssl_ctx_cache().get_or_create_opts(opts, err)
+        crate::jsc_hooks::ssl_ctx_cache(live).get_or_create_opts(opts, err)
     }
     fn ssl_config_from_js(
         global: &JSGlobalObject,
         value: JSValue,
     ) -> Option<Box<crate::socket::SSLConfig>> {
         use crate::socket::SSLConfigFromJs;
-        match crate::socket::SSLConfig::from_js(global.bun_vm_ref(), global, value, false) {
+        match crate::socket::SSLConfig::from_js(global.bun_vm(), global, value, false) {
             Ok(config) => config.map(Box::new),
             Err(bun_jsc::JsError::OutOfMemory) => {
                 let _ = global.throw_out_of_memory();

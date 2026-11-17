@@ -3,6 +3,8 @@
 use core::sync::atomic::Ordering;
 use std::collections::VecDeque;
 
+use bun_core::LoopTurn;
+
 use crate::shell::ExitCode;
 use crate::shell::builtin::{Builtin, IoKind, Sink, State};
 use crate::shell::interpreter::{Interpreter, NodeId};
@@ -36,16 +38,23 @@ impl Batch {
         cmd: NodeId,
         err: Option<Vec<u8>>,
         out: Vec<u8>,
+        turn: LoopTurn<'_>,
     ) -> Yield {
         let me = Builtin::of_mut(interp, cmd);
         if let State::Batch(batch) = &mut me.state {
             me.running.fetch_sub(1, Ordering::SeqCst);
             batch.failed |= err.is_some();
         }
-        Self::print(interp, cmd, err, out)
+        Self::print(interp, cmd, err, out, turn)
     }
 
-    fn print(interp: &Interpreter, cmd: NodeId, err: Option<Vec<u8>>, out: Vec<u8>) -> Yield {
+    fn print(
+        interp: &Interpreter,
+        cmd: NodeId,
+        err: Option<Vec<u8>>,
+        out: Vec<u8>,
+        turn: LoopTurn<'_>,
+    ) -> Yield {
         if let Some(err) = err {
             match Builtin::sink(interp, cmd, IoKind::Stderr) {
                 Sink::Fd(fd) => {
@@ -53,7 +62,7 @@ impl Batch {
                         return Yield::suspended();
                     };
                     batch.writes.push_back(Some(out));
-                    return fd.enqueue(&err);
+                    return fd.enqueue(&err, turn);
                 }
                 Sink::Memory(memory) => drop(memory.write(&err)),
             }
@@ -65,23 +74,25 @@ impl Batch {
                     && (!out.is_empty() || !batch.writes.is_empty())
                 {
                     batch.writes.push_back(None);
-                    return fd.enqueue(&out);
+                    return fd.enqueue(&out, turn);
                 }
             }
             Sink::Memory(memory) => drop(memory.write(&out)),
         }
-        Self::settle(interp, cmd)
+        Self::settle(interp, cmd, turn)
     }
 
     /// Whether the write failed makes no difference.
-    pub(crate) fn on_write(interp: &Interpreter, cmd: NodeId) -> Yield {
+    pub(crate) fn on_write(interp: &Interpreter, cmd: NodeId, turn: LoopTurn<'_>) -> Yield {
         match Self::of(interp, cmd).and_then(|batch| batch.writes.pop_front().flatten()) {
-            Some(out) => Self::print(interp, cmd, None, out),
-            None => Self::settle(interp, cmd),
+            Some(out) => Self::print(interp, cmd, None, out, turn),
+            None => Self::settle(interp, cmd, turn),
         }
     }
 
-    pub(crate) fn settle(interp: &Interpreter, cmd: NodeId) -> Yield {
+    pub(crate) fn settle(interp: &Interpreter, cmd: NodeId, turn: LoopTurn<'_>) -> Yield {
+        #[cfg(not(windows))]
+        let _ = turn;
         let me = Builtin::of_mut(interp, cmd);
         let State::Batch(batch) = &mut me.state else {
             return Yield::suspended();
@@ -92,7 +103,7 @@ impl Batch {
         // These errors do not change the exit code.
         #[cfg(windows)]
         if let Some((err, out)) = batch.ebusy.as_mut().and_then(|it| it.next_failure()) {
-            return Self::print(interp, cmd, err, out);
+            return Self::print(interp, cmd, err, out, turn);
         }
         Builtin::done(interp, cmd, ExitCode::from(batch.failed))
     }

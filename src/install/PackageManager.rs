@@ -15,7 +15,7 @@ use bun_collections::{
     ArrayHashMap, HashMap, HiveArrayFallback, LinearFifo, StringArrayHashMap, index_sort,
 };
 use bun_core::ZBox;
-use bun_core::{Global, Output};
+use bun_core::{Global, Output, VmLive};
 use bun_core::{ZStr, strings};
 use bun_dotenv as dot_env;
 use bun_event_loop::{self, EventLoopHandle};
@@ -1465,7 +1465,8 @@ fn allocate_package_manager(
         wr!(
             event_loop,
             if runtime_auto_install {
-                EventLoopHandle::js_current()
+                // SAFETY: only a running VM, on its thread, asks its resolver to auto-install.
+                EventLoopHandle::js_current(VmLive::assume(&runtime_auto_install))
             } else {
                 EventLoopHandle::leak_mini()
             }

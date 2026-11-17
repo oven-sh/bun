@@ -2,7 +2,7 @@ use core::cell::Cell;
 use core::fmt::Arguments;
 
 use bun_core::fmt::{ConnTimeoutKind, fmt_conn_timeout};
-use bun_core::{Timespec, TimespecMockMode};
+use bun_core::{JsTurn, Timespec, TimespecMockMode, VmLive};
 
 use crate::jsc::{EventLoopTimerState, EventLoopTimerTag, OwnedTimer, VirtualMachine};
 
@@ -48,13 +48,13 @@ impl ConnectionTimers {
     }
 }
 
-fn start(timer: &OwnedTimer, ms: u32) {
+fn start(timer: &OwnedTimer, ms: u32, live: VmLive<'_>) {
     timer.next.set(Timespec::ms_from_now(
         TimespecMockMode::ForceRealTime,
         ms.into(),
     ));
     // SAFETY: an unlinked field (both callers see to it) of a boxed connection.
-    unsafe { VirtualMachine::get().timer_insert(OwnedTimer::node(timer)) };
+    unsafe { VirtualMachine::get(live).timer_insert(OwnedTimer::node(timer)) };
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -71,7 +71,7 @@ pub trait TimedConnection {
     /// In flight or queued.
     fn has_requests(&self) -> bool;
     fn is_processing_data(&self) -> bool;
-    fn fail_timeout(&self, kind: ConnTimeoutKind, message: Arguments<'_>);
+    fn fail_timeout(&self, kind: ConnTimeoutKind, message: Arguments<'_>, turn: JsTurn<'_>);
     /// Tells the pool to give this connection no more work.
     fn notify_retiring(&self);
 
@@ -95,7 +95,7 @@ pub trait TimedConnection {
         }
     }
 
-    fn reset_connection_timeout(&self) {
+    fn reset_connection_timeout(&self, live: VmLive<'_>) {
         // A read resets the idle timeout at its end, and leaves the connection timeout running.
         if self.is_processing_data() {
             return;
@@ -104,28 +104,32 @@ pub trait TimedConnection {
         timer.disarm();
         let (_, ms, _) = self.timeout();
         if ms != 0 {
-            start(timer, ms);
+            start(timer, ms, live);
         }
     }
 
-    fn on_connection_timeout(&self) {
+    fn on_connection_timeout(&self, turn: JsTurn<'_>) {
         self.timers().timer.state.set(EventLoopTimerState::FIRED);
         let (kind, ms, stage) = self.timeout();
         if ms != 0 && !self.is_processing_data() {
-            self.fail_timeout(kind, format_args!("{}", fmt_conn_timeout(kind, ms, stage)));
+            self.fail_timeout(
+                kind,
+                format_args!("{}", fmt_conn_timeout(kind, ms, stage)),
+                turn,
+            );
         }
     }
 
-    fn start_max_lifetime_timer(&self) {
+    fn start_max_lifetime_timer(&self, live: VmLive<'_>) {
         let timers = self.timers();
         if timers.max_lifetime_ms != 0
             && timers.max_lifetime_timer.state.get() != EventLoopTimerState::ACTIVE
         {
-            start(&timers.max_lifetime_timer, timers.max_lifetime_ms);
+            start(&timers.max_lifetime_timer, timers.max_lifetime_ms, live);
         }
     }
 
-    fn on_max_lifetime_timeout(&self) {
+    fn on_max_lifetime_timeout(&self, turn: JsTurn<'_>) {
         let timers = self.timers();
         timers
             .max_lifetime_timer
@@ -137,23 +141,27 @@ pub trait TimedConnection {
                 timers.lifetime_exceeded.set(true);
                 self.notify_retiring();
             }
-            _ => self.fail_lifetime_timeout(),
+            _ => self.fail_lifetime_timeout(turn),
         }
     }
 
     /// Called wherever the connection can stop being busy. Returns whether it closed.
-    fn retire_if_idle(&self) -> bool {
+    fn retire_if_idle(&self, turn: JsTurn<'_>) -> bool {
         let is_due = self.timers().lifetime_exceeded.get()
             && self.phase() == Phase::Connected
             && !self.is_busy();
         if is_due {
-            self.fail_lifetime_timeout();
+            self.fail_lifetime_timeout(turn);
         }
         is_due
     }
 
-    fn fail_lifetime_timeout(&self) {
+    fn fail_lifetime_timeout(&self, turn: JsTurn<'_>) {
         let (kind, ms) = (ConnTimeoutKind::MaxLifetime, self.timers().max_lifetime_ms);
-        self.fail_timeout(kind, format_args!("{}", fmt_conn_timeout(kind, ms, "")));
+        self.fail_timeout(
+            kind,
+            format_args!("{}", fmt_conn_timeout(kind, ms, "")),
+            turn,
+        );
     }
 }

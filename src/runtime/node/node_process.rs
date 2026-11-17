@@ -101,8 +101,8 @@ pub(crate) extern "C" fn exit(global_object: &JSGlobalObject, code: u8) {
             });
         }
         vm.exit_handler.requested.set(true);
-        vm.on_exit();
-        vm.global_exit();
+        vm.on_exit(global_object.turn());
+        vm.global_exit(global_object.turn());
     }
 }
 
@@ -256,7 +256,6 @@ mod _impl {
     }
 
     fn create_exec_argv(global_object: &JSGlobalObject) -> JsResult<JSValue> {
-        // SAFETY: `bun_vm()` returns the live per-thread VM for this global.
         let vm = global_object.bun_vm();
 
         if let Some(worker) = vm.worker_ref() {
@@ -406,7 +405,6 @@ mod _impl {
 
     #[unsafe(export_name = "Bun__Process__createArgv")]
     extern "C" fn create_argv(global_object: &JSGlobalObject) -> JSValue {
-        // SAFETY: `bun_vm()` returns the live per-thread VM for this global.
         let vm = global_object.bun_vm();
 
         let worker: Option<&WebWorker> = vm.worker_ref();
@@ -476,7 +474,6 @@ mod _impl {
 
     #[unsafe(export_name = "Bun__Process__getEval")]
     extern "C" fn get_eval(global_object: &JSGlobalObject) -> JSValue {
-        // SAFETY: `bun_vm()` returns the live per-thread VM for this global.
         let vm = global_object.bun_vm();
         // `--interactive` boots the bootstrap through `eval_source`, so read
         // the user's real `-e` bytes from `interactive_eval_script` instead

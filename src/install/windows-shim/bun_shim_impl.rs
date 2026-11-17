@@ -625,7 +625,7 @@ fn launcher(#[cfg(not(feature = "shim_standalone"))] bun_ctx: FromBunRunContext<
         else {
             fail_and_exit_with_reason(FailReason::InvalidShimBounds);
         };
-        (bun_ctx.direct_launch_with_bun_js)(path, bun_ctx.cli_context);
+        (bun_ctx.direct_launch_with_bun_js)(path, bun_ctx.cli_context, bun_ctx.turn);
         fail_and_exit_with_reason(FailReason::CouldNotDirectLaunch);
     }
 
@@ -864,11 +864,12 @@ pub struct FromBunRunContext<'a> {
     /// Was --bun passed?
     pub force_use_bun: bool,
     /// A pointer to a function that can launch `Run.boot`
-    pub direct_launch_with_bun_js: fn(&mut [u16], CommandContext<'_>),
+    pub direct_launch_with_bun_js: fn(&mut [u16], CommandContext<'_>, bun_core::LoopTurn<'_>),
     /// Command.Context
     pub cli_context: CommandContext<'a>,
     /// Passed directly to CreateProcessW's lpEnvironment with CREATE_UNICODE_ENVIRONMENT
     pub environment: &'a [u16],
+    pub turn: bun_core::LoopTurn<'a>,
 }
 
 /// This is called from run_command.rs in bun.exe which allows us to skip the CreateProcessW

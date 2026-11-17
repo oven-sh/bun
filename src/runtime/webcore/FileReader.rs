@@ -1,6 +1,7 @@
 use core::cell::Cell;
 
 use bun_collections::VecExt;
+use bun_core::{JsTurn, LoopTurn, VmLive};
 #[cfg(not(windows))]
 use bun_io::FileType;
 use bun_io::pipe_reader::ReaderFlags;
@@ -248,25 +249,25 @@ impl FileReader {
     }
 
     /// `this` pins the JS wrapper too: a consumer (JS, or a native sink such as HTMLRewriter) can drop the stream's last GC root.
-    pub(crate) fn read(this: &RefPtr<Source>, event: Option<IoEvent>) {
+    pub(crate) fn read(this: &RefPtr<Source>, event: Option<IoEvent>, turn: JsTurn<'_>) {
         let this = &this.context;
         let result = this
             .reader
-            .read_chunks(this.event_loop_ctx(), event, |chunk, state| {
-                this.on_read_chunk(chunk, state)
+            .read_chunks(this.event_loop_ctx(), event, move |chunk, state| {
+                this.on_read_chunk(chunk, state, turn)
             });
-        this.on_read_result(result);
+        this.on_read_result(result, turn);
     }
 
-    fn on_read_result(&self, result: ReadResult) {
+    fn on_read_result(&self, result: ReadResult, turn: JsTurn<'_>) {
         match result {
             ReadResult::Pending => {}
-            ReadResult::Done => self.on_reader_done(),
-            ReadResult::Err(err) => self.on_reader_error(err),
+            ReadResult::Done => self.on_reader_done(turn),
+            ReadResult::Err(err) => self.on_reader_error(err, turn),
         }
     }
 
-    pub(crate) fn on_start(&self) -> streams::Start {
+    pub(crate) fn on_start(&self, turn: JsTurn<'_>) -> streams::Start {
         self.set_reader_owner();
         let was_lazy = !matches!(self.lazy.get(), Lazy::None);
         let mut pollable = false;
@@ -348,7 +349,7 @@ impl FileReader {
                 self.reader.start(event_loop, fd, pollable)
             };
             match start_result {
-                Ok(result) => self.on_read_result(result),
+                Ok(result) => self.on_read_result(result, turn),
                 Err(e) => {
                     self.io_ref.set(None);
                     return streams::Start::Err(e);
@@ -398,8 +399,8 @@ impl FileReader {
                 if !was_lazy && self.reader.has_flag(ReaderFlags::POLLABLE) {
                     // A from_pipe() reader may arrive with IS_PAUSED set (lazy
                     // subprocess stdio); clear it so read() does not no-op.
-                    self.on_read_result(self.reader.unpause());
-                    Self::read(&self.ref_guard(), None);
+                    self.on_read_result(self.reader.unpause(), turn);
+                    Self::read(&self.ref_guard(), None, turn);
                 }
             }
         }
@@ -419,7 +420,7 @@ impl FileReader {
         self.parent_const()
             .global_this
             .set(Some(bun_ptr::BackRef::new(global)));
-        match self.on_start() {
+        match self.on_start(global.turn()) {
             streams::Start::Ready | streams::Start::Empty | streams::Start::ChunkSize(_) => None,
             other => Some(other),
         }
@@ -440,7 +441,7 @@ impl FileReader {
     }
 
     /// Sink's drain ack: unpause, push any buffered bytes, then resume reading.
-    pub(crate) fn pull_into_sink(&self) {
+    pub(crate) fn pull_into_sink(&self, turn: JsTurn<'_>) {
         if !self.sink_paused.replace(false) {
             return;
         }
@@ -456,7 +457,7 @@ impl FileReader {
             } else {
                 streams::Result::Owned(buffered)
             };
-            match sink.write(&chunk) {
+            match sink.write(&chunk, turn) {
                 streams::Writable::Backpressure(_) => {
                     self.sink_paused.set(true);
                     self.reader.pause();
@@ -464,12 +465,12 @@ impl FileReader {
                 }
                 streams::Writable::Err(e) => {
                     self.detach_sink(None);
-                    sink.end(Some(streams::StreamError::Error(e)));
+                    sink.end(Some(streams::StreamError::Error(e)), turn);
                     return;
                 }
                 streams::Writable::Done => {
                     self.detach_sink(None);
-                    sink.end(None);
+                    sink.end(None, turn);
                     return;
                 }
                 _ => {}
@@ -482,13 +483,13 @@ impl FileReader {
                 .replace(None)
                 .map(streams::StreamError::Error);
             self.detach_sink(err.as_ref());
-            sink.end(err);
+            sink.end(err, turn);
             return;
         }
         if !self.reader.has_pending_read() {
             let this = self.ref_guard();
-            self.on_read_result(self.reader.unpause());
-            Self::read(&this, None);
+            self.on_read_result(self.reader.unpause(), turn);
+            Self::read(&this, None, turn);
         }
     }
 
@@ -500,20 +501,23 @@ impl FileReader {
         let sink = *self.sink.get();
         if sink.is_some() {
             self.detach_sink(Some(&err));
-            sink.end(Some(err));
+            sink.end(Some(err), global.turn());
         } else {
             self.pending.run(streams::Result::Err(err));
         }
     }
 
-    pub(crate) fn on_cancel(&self) {
+    pub(crate) fn on_cancel(&self, turn: JsTurn<'_>) {
         // A sink still wired here must fail, not see an EOF and commit a truncated body.
         let sink = *self.sink.get();
         self.unpipe_without_deref();
         if sink.is_some() {
-            sink.end(Some(streams::StreamError::AbortReason(
-                jsc::CommonAbortReason::UserAbort,
-            )));
+            sink.end(
+                Some(streams::StreamError::AbortReason(
+                    jsc::CommonAbortReason::UserAbort,
+                )),
+                turn,
+            );
         }
         if self.done.get() {
             return;
@@ -524,11 +528,11 @@ impl FileReader {
             .with_mut(|p| p.clear_without_deallocation());
         self.reader.update_ref(false);
         if !self.reader.is_done() {
-            self.on_read_result(self.reader.close());
+            self.on_read_result(self.reader.close(), turn);
         }
     }
 
-    fn on_read_chunk(&self, chunk: Chunk<'_>, state: ReadState) -> bool {
+    fn on_read_chunk(&self, chunk: Chunk<'_>, state: ReadState, turn: JsTurn<'_>) -> bool {
         bun_core::scoped_log!(
             FileReader,
             "onReadChunk() = {} ({})",
@@ -537,14 +541,14 @@ impl FileReader {
         );
 
         if self.done.get() {
-            self.on_read_result(self.reader.close());
+            self.on_read_result(self.reader.close(), turn);
             return false;
         }
         let has_more = state != ReadState::Eof;
 
         let sink = *self.sink.get();
         if sink.is_some() {
-            self.write_chunk_to_sink(sink, &chunk, has_more)
+            self.write_chunk_to_sink(sink, &chunk, has_more, turn)
         } else if self.pending.is_pending() {
             // Pipes may return 0-byte reads short of EOF; keep reading.
             if chunk.is_empty() && state == ReadState::Drained {
@@ -569,13 +573,22 @@ impl FileReader {
         }
     }
 
-    fn write_chunk_to_sink(&self, sink: SinkHandle, chunk: &[u8], has_more: bool) -> bool {
+    fn write_chunk_to_sink(
+        &self,
+        sink: SinkHandle,
+        chunk: &[u8],
+        has_more: bool,
+        turn: JsTurn<'_>,
+    ) -> bool {
         if !chunk.is_empty() {
-            let wrote = sink.write(&if has_more {
-                streams::Result::Temporary(chunk)
-            } else {
-                streams::Result::TemporaryAndDone(chunk)
-            });
+            let wrote = sink.write(
+                &if has_more {
+                    streams::Result::Temporary(chunk)
+                } else {
+                    streams::Result::TemporaryAndDone(chunk)
+                },
+                turn,
+            );
             match wrote {
                 streams::Writable::Backpressure(_) => {
                     // Returning `false` ends a synchronous read loop; an event-driven reader (Windows, pollable fds) has to be paused or its next completion piles into the sink. `pull_into_sink` unpauses.
@@ -585,12 +598,12 @@ impl FileReader {
                 }
                 streams::Writable::Err(e) => {
                     self.detach_sink(None);
-                    sink.end(Some(streams::StreamError::Error(e)));
+                    sink.end(Some(streams::StreamError::Error(e)), turn);
                     return false;
                 }
                 streams::Writable::Done => {
                     self.detach_sink(None);
-                    sink.end(None);
+                    sink.end(None, turn);
                     return false;
                 }
                 _ => {}
@@ -598,7 +611,7 @@ impl FileReader {
         }
         if !has_more && self.sink.get().is_some() {
             self.detach_sink(None);
-            sink.end(None);
+            sink.end(None, turn);
         }
         has_more
     }
@@ -677,7 +690,7 @@ impl FileReader {
         }
     }
 
-    fn on_reader_done(&self) {
+    fn on_reader_done(&self, turn: JsTurn<'_>) {
         bun_core::scoped_log!(FileReader, "onReaderDone()");
         // `pending.run()` and `on_close()` can run user JS, and the `self.buffered` /
         // `io_ref` reads below must not land on a freed box.
@@ -689,9 +702,9 @@ impl FileReader {
                 self.detach_sink(None);
                 let buffered = self.buffered.replace(Vec::new());
                 if !buffered.is_empty() {
-                    let _ = sink.write(&streams::Result::OwnedAndDone(buffered));
+                    let _ = sink.write(&streams::Result::OwnedAndDone(buffered), turn);
                 }
-                sink.end(None);
+                sink.end(None, turn);
             }
         } else {
             self.consume_reader_buffer();
@@ -714,7 +727,7 @@ impl FileReader {
         self.io_ref.set(None);
     }
 
-    fn on_reader_error(&self, err: sys::Error) {
+    fn on_reader_error(&self, err: sys::Error, turn: JsTurn<'_>) {
         self.consume_reader_buffer();
         if self.buffered.get().capacity() > 0 && self.buffered.get().is_empty() {
             self.buffered.set(Vec::new());
@@ -728,7 +741,7 @@ impl FileReader {
         if sink.is_some() {
             let err = streams::StreamError::Error(err);
             self.detach_sink(Some(&err));
-            sink.end(Some(err));
+            sink.end(Some(err), turn);
         } else if self.pending.is_pending() {
             self.pending
                 .run(streams::Result::Err(streams::StreamError::Error(err)));
@@ -780,7 +793,7 @@ impl FileReader {
         }
     }
 
-    pub(crate) fn set_flowing(&self, flag: bool) {
+    pub(crate) fn set_flowing(&self, flag: bool, turn: JsTurn<'_>) {
         bun_core::scoped_log!(
             FileReader,
             "setFlowing({}) was={}",
@@ -795,10 +808,10 @@ impl FileReader {
         self.flowing.set(flag);
 
         if flag {
-            self.on_read_result(self.reader.unpause());
+            self.on_read_result(self.reader.unpause(), turn);
             if !self.reader.is_done() && !self.reader.has_pending_read() {
                 // Kick off a new read if needed
-                Self::read(&self.ref_guard(), None);
+                Self::read(&self.ref_guard(), None, turn);
             }
         } else {
             self.reader.pause();
@@ -815,11 +828,11 @@ bun_core::impl_field_parent! { FileReader => Source.context; pub fn raw parent; 
 impl readable_stream::SourceContext for FileReader {
     crate::source_context_codegen!(js_FileInternalReadableStreamSource);
 
-    fn on_start(&self) -> streams::Start {
-        Self::on_start(self)
+    fn on_start(&self, turn: JsTurn<'_>) -> streams::Start {
+        Self::on_start(self, turn)
     }
 
-    fn on_pull(&self, buffer: &mut [u8], array: JSValue) -> streams::Result<'_> {
+    fn on_pull(&self, buffer: &mut [u8], array: JSValue, turn: JsTurn<'_>) -> streams::Result<'_> {
         // `buffer` borrows a JS typed array kept alive by `array`.
         array.ensure_still_alive();
         let _keep = EnsureStillAlive(array);
@@ -866,9 +879,9 @@ impl readable_stream::SourceContext for FileReader {
 
         if !self.reader.has_pending_read() && self.flowing.get() {
             // A consumer is pulling again: undo the highwater pause from `on_read_chunk`.
-            self.on_read_result(self.reader.unpause());
+            self.on_read_result(self.reader.unpause(), turn);
             let (amount_read, state, result) = self.reader.read_into(self.event_loop_ctx(), buffer);
-            self.on_read_result(result);
+            self.on_read_result(result, turn);
             bun_core::scoped_log!(FileReader, "onPull({}) = {}", buffer.len(), amount_read);
             let done = state == ReadState::Eof || self.reader_finished();
             if amount_read > 0 {
@@ -901,7 +914,7 @@ impl readable_stream::SourceContext for FileReader {
         self.pending_value.with_mut(|p| p.set(global, array));
         #[cfg(windows)]
         if self.flowing.get() {
-            self.on_read_result(self.reader.unpause());
+            self.on_read_result(self.reader.unpause(), turn);
         }
 
         bun_core::scoped_log!(FileReader, "onPull({}) = pending", buffer_len);
@@ -909,15 +922,15 @@ impl readable_stream::SourceContext for FileReader {
         streams::Result::Pending(&self.pending)
     }
 
-    fn on_cancel(&self) {
-        Self::on_cancel(self);
+    fn on_cancel(&self, turn: JsTurn<'_>) {
+        Self::on_cancel(self, turn);
     }
 
-    fn deinit_fn(&self) {
+    fn deinit_fn(&self, _live: VmLive<'_>) {
         self.reader.update_ref(false);
     }
 
-    fn wrapper_finalized(&self) {
+    fn wrapper_finalized(&self, _live: VmLive<'_>) {
         debug_assert!(!(self.done.get() && self.io_ref.get().is_some()));
         if self.done.get() || self.io_ref.get().is_none() {
             return;
@@ -933,7 +946,7 @@ impl readable_stream::SourceContext for FileReader {
         self.reader.update_ref(enable);
     }
 
-    fn drain_internal_buffer(&self) -> Vec<u8> {
+    fn drain_internal_buffer(&self, _turn: LoopTurn<'_>) -> Vec<u8> {
         Self::drain(self)
     }
 
@@ -953,10 +966,10 @@ impl Source {
         }
     }
 
-    pub fn set_flowing(&self, _: &mut JsScope<'_>, flag: JsLocal<'_>) {
+    pub fn set_flowing(&self, cx: &mut JsScope<'_>, flag: JsLocal<'_>) {
         let flag = flag.to_js();
         debug_assert!(flag.is_boolean());
-        self.context.set_flowing(flag == JSValue::TRUE);
+        self.context.set_flowing(flag == JSValue::TRUE, cx.turn());
     }
 }
 

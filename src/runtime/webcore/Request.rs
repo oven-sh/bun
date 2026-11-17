@@ -899,7 +899,7 @@ impl Request {
         url_or_object: JSValue,
         init: JSValue,
     ) -> JsResult<Request> {
-        let body = body::hive_alloc(BodyValue::Null);
+        let body = body::hive_alloc(BodyValue::Null, cx.live());
         let mut req = Request {
             url: JsCell::new(BunString::EMPTY),
             headers: JsCell::new(None),
@@ -1274,7 +1274,7 @@ impl Request {
         url: Option<BunString>,
     ) -> JsResult<Request> {
         let _ = self.ensure_url();
-        let body = body::hive_alloc(self.clone_body_value_via_cached_stream(cx)?);
+        let body = body::hive_alloc(self.clone_body_value_via_cached_stream(cx)?, cx.live());
         let headers = self.clone_headers(cx.global())?;
         Ok(Request {
             url: JsCell::new(url.unwrap_or_else(|| self.url.get().clone())),

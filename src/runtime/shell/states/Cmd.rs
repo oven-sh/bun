@@ -17,6 +17,7 @@ use crate::shell::subproc::{ShellIO, SpawnArgs};
 use crate::shell::util::{OutKind, Stdio};
 use crate::shell::yield_::Yield;
 use bun_collections::VecExt;
+use bun_core::LoopTurn;
 
 pub(crate) struct Cmd {
     pub(crate) base: Base,
@@ -170,11 +171,11 @@ impl Cmd {
         }))
     }
 
-    pub(crate) fn start(_interp: &Interpreter, this: NodeId) -> Yield {
+    pub(crate) fn start(_interp: &Interpreter, this: NodeId, _turn: LoopTurn<'_>) -> Yield {
         Yield::Next(this)
     }
 
-    pub(crate) fn next(interp: &Interpreter, this: NodeId) -> Yield {
+    pub(crate) fn next(interp: &Interpreter, this: NodeId, turn: LoopTurn<'_>) -> Yield {
         loop {
             let (shell, node) = {
                 let me = interp.as_cmd(this);
@@ -203,7 +204,7 @@ impl Cmd {
                     if !n.assigns.is_empty() {
                         interp.as_cmd_mut(this).state = CmdState::ExpandingAssigns;
                         let child = Assigns::init(interp, shell, n.assigns, this, AssignCtx::Cmd);
-                        return Assigns::start(interp, child);
+                        return Assigns::start(interp, child, turn);
                     }
                     interp.as_cmd_mut(this).state = CmdState::ExpandingRedirect { idx: 0 };
                     continue;
@@ -216,7 +217,7 @@ impl Cmd {
                     match &n.redirect_file {
                         Some(ast::Redirect::Atom(atom)) if idx == 0 => {
                             let child = Expansion::init(interp, shell, atom, this, false);
-                            return Expansion::start(interp, child);
+                            return Expansion::start(interp, child, turn);
                         }
                         // JsBuf redirects don't need expansion; nor does the
                         // "already expanded" re-entry (`idx > 0`).
@@ -236,16 +237,16 @@ impl Cmd {
                         && is_assignment_word(&args[idx as usize]);
                     let atom = &args[idx as usize];
                     let child = Expansion::init(interp, shell, atom, this, assign_ctx);
-                    return Expansion::start(interp, child);
+                    return Expansion::start(interp, child, turn);
                 }
                 CmdState::Exec => {
-                    return Self::transition_to_exec(interp, this);
+                    return Self::transition_to_exec(interp, this, turn);
                 }
                 CmdState::WaitingWriteErr => return Yield::suspended(),
                 CmdState::Done => {
                     let exit = interp.as_cmd(this).exit_code.unwrap_or(0);
                     let parent = interp.as_cmd(this).base.parent;
-                    return interp.child_done(parent, this, exit);
+                    return interp.child_done(parent, this, exit, turn);
                 }
             }
         }
@@ -259,6 +260,7 @@ impl Cmd {
         this: NodeId,
         _written: usize,
         e: Option<bun_sys::SystemError>,
+        turn: LoopTurn<'_>,
     ) -> Yield {
         if let Some(err) = e {
             interp.throw(crate::shell::ShellErr::from_system(err));
@@ -269,7 +271,7 @@ impl Cmd {
             CmdState::WaitingWriteErr
         ));
         let parent = interp.as_cmd(this).base.parent;
-        interp.child_done(parent, this, 1)
+        interp.child_done(parent, this, 1, turn)
     }
 
     pub(crate) fn child_done(
@@ -277,6 +279,7 @@ impl Cmd {
         this: NodeId,
         child: NodeId,
         exit_code: ExitCode,
+        turn: LoopTurn<'_>,
     ) -> Yield {
         let child_kind = interp.node(child).kind();
         // A nonzero exit from an
@@ -293,7 +296,12 @@ impl Cmd {
             };
             interp.deinit_node(child);
             if let Some(err) = err {
-                return Builtin::cmd_write_failing_error(interp, this, format_args!("{}\n", err));
+                return Builtin::cmd_write_failing_error(
+                    interp,
+                    this,
+                    format_args!("{}\n", err),
+                    turn,
+                );
             }
             let me = interp.as_cmd_mut(this);
             me.exit_code = Some(1);
@@ -373,7 +381,7 @@ impl Cmd {
 
     /// Resolves argv[0] to a builtin or falls through to subprocess spawn
     /// (still gated).
-    fn transition_to_exec(interp: &Interpreter, this: NodeId) -> Yield {
+    fn transition_to_exec(interp: &Interpreter, this: NodeId, turn: LoopTurn<'_>) -> Yield {
         // NUL-terminate every arg for the argv of a subprocess.
         for a in &mut interp.as_cmd_mut(this).args {
             if a.last() != Some(&0) {
@@ -394,18 +402,18 @@ impl Cmd {
                 _ => {
                     let exit = me.exit_code.unwrap_or(0);
                     let parent = me.base.parent;
-                    return interp.child_done(parent, this, exit);
+                    return interp.child_done(parent, this, exit, turn);
                 }
             }
         };
 
         if let Some(kind) = BuiltinKind::from_argv0(&first_arg) {
             log!("Cmd {} exec builtin={:?}", this, kind);
-            if let Some(y) = Builtin::init(interp, this, kind) {
+            if let Some(y) = Builtin::init(interp, this, kind, turn) {
                 return y;
             }
             debug_assert!(matches!(interp.as_cmd(this).exec, Exec::Builtin(_)));
-            return Builtin::start(interp, this);
+            return Builtin::start(interp, this, turn);
         }
 
         // ── Subprocess path ─────────────────────────────────────────────────
@@ -447,6 +455,7 @@ impl Cmd {
                 interp,
                 this,
                 format_args!("bun: command not found: {}\n", bstr::BStr::new(&first_arg)),
+                turn,
             );
         };
         // CreateProcessW runs `.bat`/`.cmd` files through `cmd.exe`, which
@@ -470,6 +479,7 @@ impl Cmd {
                         "bun: refusing to pass argument with cmd.exe special characters to a batch file: {}\n",
                         bstr::BStr::new(&arg)
                     ),
+                    turn,
                 );
             }
         }
@@ -495,6 +505,7 @@ impl Cmd {
             &mut spawn_args.redirect_stdout,
             &mut spawn_args.redirect_stderr,
             &mut redirection_fd,
+            turn,
         ) {
             Ok(None) => {}
             Ok(Some(y)) => {
@@ -572,6 +583,7 @@ impl Cmd {
             cmd_parent,
             child_out,
             &mut did_exit_immediately,
+            turn,
         );
         drop((shellio, redirection_fd));
 
@@ -579,7 +591,7 @@ impl Cmd {
             drop(arena);
             // Revert exec so `deinit` doesn't free a null `child`.
             interp.as_cmd_mut(this).exec = Exec::None;
-            return Builtin::cmd_write_failing_error(interp, this, format_args!("{}\n", e));
+            return Builtin::cmd_write_failing_error(interp, this, format_args!("{}\n", e), turn);
         }
 
         // Read the subprocess back via the arena instead of holding `child_out`
@@ -600,9 +612,9 @@ impl Cmd {
             let process = subproc.proc().this_ptr();
             if let Some(status) = process.status() {
                 let rusage = crate::api::bun::process::rusage_zeroed();
-                bun_spawn::Process::on_exit(process, status.clone(), &rusage);
+                bun_spawn::Process::on_exit(process, status.clone(), &rusage, turn);
             } else {
-                bun_spawn::Process::wait(process, false);
+                bun_spawn::Process::wait(process, false, turn);
             }
         }
 
@@ -632,6 +644,7 @@ impl Cmd {
         redirect_stdout: &mut Option<crate::jsc::PinnedArrayBuffer>,
         redirect_stderr: &mut Option<crate::jsc::PinnedArrayBuffer>,
         redirection_fd: &mut Option<OwnedFd>,
+        turn: LoopTurn<'_>,
     ) -> crate::jsc::JsResult<Option<Yield>> {
         const STDIN_NO: usize = 0;
         const STDOUT_NO: usize = 1;
@@ -752,6 +765,7 @@ impl Cmd {
                             "bun: ambiguous redirect: at `{}`\n",
                             bstr::BStr::new(&argv0)
                         ),
+                        turn,
                     )));
                 }
                 let raw = &interp.as_cmd(this).redirection_file;
@@ -786,6 +800,7 @@ impl Cmd {
                                 sys_err.message,
                                 bstr::BStr::new(path.as_bytes())
                             ),
+                            turn,
                         )));
                     }
                 };

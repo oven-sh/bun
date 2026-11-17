@@ -77,6 +77,7 @@ impl ConnectionCtorArgs {
             secure = crate::jsc::ssl_ctx_get_or_create(
                 &tls_config.as_usockets_for_client_verification(),
                 &mut err,
+                global_object.live(),
             );
             if secure.is_none() {
                 drop(tls_config);

@@ -4,6 +4,8 @@
 //! is not found, exit code becomes 1, but continues execution until all args
 //! are processed.
 
+use bun_core::LoopTurn;
+
 use bstr::BStr;
 
 use crate::shell::ExitCode;
@@ -11,15 +13,21 @@ use crate::shell::builtin::{Builtin, IoKind, Sink, State};
 use crate::shell::interpreter::{Interpreter, NodeId};
 use crate::shell::yield_::Yield;
 
-pub(crate) fn start(interp: &Interpreter, cmd: NodeId) -> Yield {
+pub(crate) fn start(interp: &Interpreter, cmd: NodeId, turn: LoopTurn<'_>) -> Yield {
     if Builtin::of(interp, cmd).args().is_empty() {
-        return Builtin::finish(interp, cmd, IoKind::Stdout, b"\n", 1);
+        return Builtin::finish(interp, cmd, IoKind::Stdout, b"\n", 1, turn);
     }
-    print(interp, cmd, 0, false)
+    print(interp, cmd, 0, false, turn)
 }
 
 /// One write per argument, from `first` on.
-pub(crate) fn print(interp: &Interpreter, cmd: NodeId, first: usize, mut missing: bool) -> Yield {
+pub(crate) fn print(
+    interp: &Interpreter,
+    cmd: NodeId,
+    first: usize,
+    mut missing: bool,
+    turn: LoopTurn<'_>,
+) -> Yield {
     let shell = Builtin::shell(interp, cmd);
     let (path_env, cwd) = (shell.export_env.get(b"PATH"), shell.cwd());
     let mut path_buf = bun_paths::path_buffer_pool::get();
@@ -39,7 +47,7 @@ pub(crate) fn print(interp: &Interpreter, cmd: NodeId, first: usize, mut missing
             Sink::Fd(fd) => {
                 let next = i + 1;
                 Builtin::of_mut(interp, cmd).state = State::Which { next, missing };
-                return fd.enqueue(format!("{name}{suffix}\n").as_bytes());
+                return fd.enqueue(format!("{name}{suffix}\n").as_bytes(), turn);
             }
             // Only captured output has the prefix.
             Sink::Memory(memory) => {

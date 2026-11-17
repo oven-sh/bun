@@ -1074,7 +1074,7 @@ impl PathLikeExt for PathLike<'_> {
                 from_string(str)?
             }
             _ => {
-                if let Some(domurl) = jsc::DOMURL::cast(&arg) {
+                if let Some(domurl) = jsc::DOMURL::cast(&arg, ctx.turn()) {
                     use jsc::dom_url::ToFileSystemPathError;
                     let str = match domurl.file_system_path() {
                         Ok(s) => s,

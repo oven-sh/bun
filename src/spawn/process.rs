@@ -14,7 +14,9 @@ use core::sync::atomic::Ordering;
 
 #[cfg(any(target_os = "linux", target_os = "android", target_os = "macos"))]
 use bun_core::Global;
-use bun_core::{CStrList, CStrRef, CStringList, Output};
+#[cfg(not(windows))]
+use bun_core::VmLive;
+use bun_core::{CStrList, CStrRef, CStringList, LoopTurn, Output};
 use bun_event_loop::EventLoopHandle;
 #[cfg(unix)]
 use bun_io::ParentDeathWatchdog;
@@ -101,12 +103,12 @@ bun_opaque::opaque_ffi! {
 }
 
 #[inline]
-fn call_exit_handler(h: ProcessExitHandler, status: Status, rusage: &Rusage) {
+fn call_exit_handler(h: ProcessExitHandler, status: Status, rusage: &Rusage, turn: LoopTurn<'_>) {
     let Some(h) = h else { return };
     if h.owner().is_null() {
         return;
     }
-    h.on_process_exit(status, rusage);
+    h.on_process_exit(status, rusage, turn);
 }
 
 /// Shared borrows only. What may free the process, or hands out its address, takes a `ThisPtr`.
@@ -179,14 +181,14 @@ impl ProcessHandle {
     /// See [`Process::watch_or_reap`]; may synchronously run the exit handler,
     /// so call this on a handle the handler does not re-borrow (a local, not
     /// the owner's slot).
-    pub fn watch_or_reap(&self) -> bun_sys::Result<bool> {
-        Process::watch_or_reap(self.this_ptr())
+    pub fn watch_or_reap(&self, turn: LoopTurn<'_>) -> bun_sys::Result<bool> {
+        Process::watch_or_reap(self.this_ptr(), turn)
     }
 
     /// See [`Process::on_exit`]; runs the exit handler (same rule as
     /// [`watch_or_reap`](Self::watch_or_reap)).
-    pub fn on_exit(&self, status: Status, rusage: &Rusage) {
-        Process::on_exit(self.this_ptr(), status, rusage)
+    pub fn on_exit(&self, status: Status, rusage: &Rusage, turn: LoopTurn<'_>) {
+        Process::on_exit(self.this_ptr(), status, rusage, turn)
     }
 
     /// For a call that may run an exit handler which drops or overwrites this handle.
@@ -255,32 +257,32 @@ impl Process {
     // has_exited / has_killed live in the always-on impl above.
 
     /// May free `this`.
-    pub fn on_exit(this: ThisPtr<Self>, status: Status, rusage: &Rusage) {
+    pub fn on_exit(this: ThisPtr<Self>, status: Status, rusage: &Rusage, turn: LoopTurn<'_>) {
         debug_assert!(!matches!(status, Status::Running));
         let exit_handler = this.exit_handler.get();
         let _ = this.status.set(status.clone());
         this.detach();
-        call_exit_handler(exit_handler, status, rusage);
+        call_exit_handler(exit_handler, status, rusage, turn);
     }
 
     /// May free `this`. Returns whether it has exited.
     #[cfg(unix)]
-    fn wait_posix(this: ThisPtr<Self>, sync_: bool) -> bool {
+    fn wait_posix(this: ThisPtr<Self>, sync_: bool, turn: LoopTurn<'_>) -> bool {
         let mut rusage = rusage_zeroed();
         let waitpid_result = posix_spawn::wait4(
             this.pid,
             if sync_ { 0 } else { libc::WNOHANG as u32 },
             Some(&mut rusage),
         );
-        Self::on_wait_pid(this, &waitpid_result, &rusage)
+        Self::on_wait_pid(this, &waitpid_result, &rusage, turn)
     }
 
     /// May free `this`.
-    pub fn wait(this: ThisPtr<Self>, sync_: bool) {
+    pub fn wait(this: ThisPtr<Self>, sync_: bool, turn: LoopTurn<'_>) {
         #[cfg(unix)]
-        Self::wait_posix(this, sync_);
+        Self::wait_posix(this, sync_, turn);
         #[cfg(windows)]
-        let _ = (this, sync_);
+        let _ = (this, sync_, turn);
     }
 
     /// May free `this`. Returns whether it has exited.
@@ -289,6 +291,7 @@ impl Process {
         this: ThisPtr<Self>,
         waitpid_result: &bun_sys::Result<WaitPidResult>,
         rusage: &Rusage,
+        turn: LoopTurn<'_>,
     ) -> bool {
         // `kill_and_reap` leaves the reaping to a thread on macOS, and its caller has reported the exit by now.
         if this.has_exited() {
@@ -322,7 +325,7 @@ impl Process {
         });
 
         let Some(status) = status else { return false };
-        Self::on_exit(this, status, &rusage_result);
+        Self::on_exit(this, status, &rusage_result, turn);
         true
     }
 
@@ -341,10 +344,10 @@ impl Process {
     }
 
     /// May free `this`, if it returns `Ok(true)`.
-    pub fn watch_or_reap(this: ThisPtr<Self>) -> bun_sys::Result<bool> {
+    pub fn watch_or_reap(this: ThisPtr<Self>, turn: LoopTurn<'_>) -> bun_sys::Result<bool> {
         if let Some(status) = this.status() {
             let zeroed = rusage_zeroed();
-            Self::on_exit(this, status.clone(), &zeroed);
+            Self::on_exit(this, status.clone(), &zeroed, turn);
             return Ok(true);
         }
 
@@ -354,11 +357,11 @@ impl Process {
                 {
                     if err.get_errno() == bun_sys::E::ESRCH {
                         // Not blocking on macOS, so a child that is still exiting goes to `reap_on_thread`.
-                        return Ok(Self::wait_posix(this, cfg!(not(target_os = "macos"))));
+                        return Ok(Self::wait_posix(this, cfg!(not(target_os = "macos")), turn));
                     }
                     let mut rusage = rusage_zeroed();
                     if let Some(status) = Self::kill_and_reap(this, &mut rusage) {
-                        Self::on_exit(this, status, &rusage);
+                        Self::on_exit(this, status, &rusage, turn);
                         return Ok(true);
                     }
                     // The pid may be another process's from here on, and `kill` leaves alone what is not watched.
@@ -443,8 +446,14 @@ impl Process {
         // SAFETY: raw read of POD `pid` field on the live handle.
         let _pid = unsafe { (*process).pid };
         // SAFETY: `data` was set to the owning `*mut Process` before
-        // `uv_spawn`; libuv never overwrites it.
-        let this = unsafe { ThisPtr::new((*process).data.cast::<Process>()) };
+        // `uv_spawn`; libuv never overwrites it. It calls this from `uv_run` on the loop's
+        // thread, and not after `uv_close`, which teardown issues before `~VM`.
+        let (this, turn) = unsafe {
+            (
+                ThisPtr::new((*process).data.cast::<Process>()),
+                LoopTurn::assume(&process),
+            )
+        };
         let exit_code: u8 = if exit_status >= 0 {
             (exit_status as u64) as u8
         } else {
@@ -461,7 +470,7 @@ impl Process {
 
         if let Some(sig) = signal_code {
             this.close();
-            Self::on_exit(this, Status::Signaled(sig), &rusage);
+            Self::on_exit(this, Status::Signaled(sig), &rusage, turn);
         } else if exit_status >= 0 {
             // The check is on the signed libuv `exit_status`, so a negative
             // `-UV_E*` reaches the Err arm.
@@ -474,6 +483,7 @@ impl Process {
                     raw: exit_status as u32,
                 }),
                 &rusage,
+                turn,
             );
         } else {
             Self::on_exit(
@@ -483,6 +493,7 @@ impl Process {
                     bun_sys::Tag::waitpid,
                 )),
                 &rusage,
+                turn,
             );
         }
     }
@@ -859,7 +870,7 @@ pub mod waiter_thread_posix {
         const TAG: TaskTag = T::TASK_TAG;
         /// An exit status the waiter thread posted whose delivery will not run:
         /// drop it and the strong ref it carried for the JS thread.
-        fn release_unrun(self: Box<Self>) {}
+        fn release_unrun(self: Box<Self>, _live: VmLive<'_>) {}
         /// A child's exit is delivered to its `Process` whatever became of the script that spawned it
         /// (the child is reaped); what reaches script is the exit handler's to decide.
         fn context(&self) -> bun_event_loop::ContextId {
@@ -868,12 +879,12 @@ pub mod waiter_thread_posix {
     }
 
     impl<T: ProcessLike> ResultTask<T> {
-        pub fn run_from_js_thread(self) {
-            self.run_from_main_thread();
+        pub fn run_from_js_thread(self, turn: LoopTurn<'_>) {
+            self.run_from_main_thread(turn);
         }
 
-        pub(crate) fn run_from_main_thread(self) {
-            T::on_wait_pid_from_waiter_thread(self.subprocess, &self.result, &self.rusage);
+        pub(crate) fn run_from_main_thread(self, turn: LoopTurn<'_>) {
+            T::on_wait_pid_from_waiter_thread(self.subprocess, &self.result, &self.rusage, turn);
         }
     }
 
@@ -892,16 +903,21 @@ pub mod waiter_thread_posix {
             bun_core::heap::into_raw(Box::new(v))
         }
 
-        pub(crate) fn run_from_main_thread(self) {
-            T::on_wait_pid_from_waiter_thread(self.subprocess, &self.result, &rusage_zeroed());
+        pub(crate) fn run_from_main_thread(self, turn: LoopTurn<'_>) {
+            T::on_wait_pid_from_waiter_thread(
+                self.subprocess,
+                &self.result,
+                &rusage_zeroed(),
+                turn,
+            );
         }
 
         /// Stored thunk for `AnyTaskWithExtraContext` (`fn(*mut T, *mut C)`
         /// shape — `C = ()`). Default Rust ABI.
-        fn run_from_main_thread_mini(this: *mut Self, _: *mut ()) {
+        fn run_from_main_thread_mini(this: *mut Self, _: *mut (), turn: LoopTurn<'_>) {
             // SAFETY: `this` was heap-allocated in `loop_()` below; the mini
             // event loop hands ownership back here exactly once.
-            unsafe { bun_core::heap::take(this) }.run_from_main_thread();
+            unsafe { bun_core::heap::take(this) }.run_from_main_thread(turn);
         }
     }
 
@@ -919,6 +935,7 @@ pub mod waiter_thread_posix {
             this: RefPtr<Self>,
             result: &bun_sys::Result<WaitPidResult>,
             rusage: &Rusage,
+            turn: LoopTurn<'_>,
         );
     }
 
@@ -940,11 +957,12 @@ pub mod waiter_thread_posix {
             this: RefPtr<Self>,
             result: &bun_sys::Result<WaitPidResult>,
             rusage: &Rusage,
+            turn: LoopTurn<'_>,
         ) {
             if this.is_on_waiter_thread() {
                 this.detach_poller();
             }
-            Process::on_wait_pid(this.this_ptr(), result, rusage);
+            Process::on_wait_pid(this.this_ptr(), result, rusage, turn);
         }
     }
 
@@ -1706,7 +1724,7 @@ mod spawn_process_body {
         // The process handle is open on this thread's loop until `close()`; a
         // thread teardown closes it through us (the child keeps running, as with
         // Node's ProcessWrap), so no exit callback can fire after the VM is gone.
-        unsafe fn stop_for_vm_teardown(p: *mut c_void) {
+        unsafe fn stop_for_vm_teardown(p: *mut c_void, _turn: bun_core::JsTurn<'_>) {
             // SAFETY: recorded for this live Process; the handle leaves the list
             // when `close()` issues its uv_close.
             unsafe { (*p.cast::<Process>()).close() };

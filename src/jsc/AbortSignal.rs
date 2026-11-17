@@ -6,6 +6,7 @@ use core::sync::atomic::Ordering;
 use crate::{
     CommonAbortReason, JSGlobalObject, JSValue, VirtualMachineRef as VirtualMachine, WrapperGuard,
 };
+use bun_core::{JsTurn, VmLive};
 use bun_event_loop::EventLoopTimer::{
     OwnedTimer, State as TimerState, Tag as TimerTag, TimerFlags,
 };
@@ -288,8 +289,9 @@ bun_event_loop::impl_timer_owner!(Timeout; from_timer_ptr => event_loop_timer);
 
 impl Timeout {
     fn init(vm: &VirtualMachine, signal_: *mut AbortSignal, milliseconds: u64) -> *mut Timeout {
-        let milliseconds = milliseconds.max(u64::from(VirtualMachine::timer_min_delay_ms()));
-        let deadline = bun_core::Timespec::now(VirtualMachine::abort_signal_timeout_clock())
+        let live = vm.live().thread;
+        let milliseconds = milliseconds.max(u64::from(VirtualMachine::timer_min_delay_ms(live)));
+        let deadline = bun_core::Timespec::now(VirtualMachine::abort_signal_timeout_clock(live))
             .add_ms(i64::try_from(milliseconds).expect("AbortSignal.timeout(ms) overflows i64"));
 
         // `AbortSignal.timeout()`, a C++ host function, calls this.
@@ -306,7 +308,7 @@ impl Timeout {
             hot_reload_counter: vm.hot_reload_counter.get(),
         }));
         if let Some(context) = graph_context {
-            context.track_timer(this.cast(), crate::ContextTimer::AbortSignal);
+            context.track_timer(this.cast(), crate::ContextTimer::AbortSignal, vm.live());
         }
 
         #[cfg(debug_assertions)]
@@ -359,7 +361,7 @@ impl Timeout {
     ///
     /// # Safety
     /// `this` is a live boxed `Timeout`.
-    pub unsafe fn run(this: *mut Timeout, vm: &VirtualMachine) {
+    pub unsafe fn run(this: *mut Timeout, vm: &VirtualMachine, turn: JsTurn<'_>) {
         // SAFETY: caller passes a live Timeout; we stop touching `this` before
         // `dispatch`, which may free it.
         unsafe {
@@ -381,25 +383,28 @@ impl Timeout {
             // capture the pointer first.
             let signal_ptr: *mut AbortSignal = (*this).signal;
             debug_assert!(!signal_ptr.is_null());
-            Self::dispatch(vm, signal_ptr);
+            Self::dispatch(vm, signal_ptr, turn);
         }
     }
 
-    fn dispatch(vm: &VirtualMachine, signal_ptr: *mut AbortSignal) {
-        let _guard = vm.enter_event_loop_scope();
+    fn dispatch(vm: &VirtualMachine, signal_ptr: *mut AbortSignal, turn: JsTurn<'_>) {
+        let _guard = vm.enter_event_loop_scope(turn);
         // `AbortSignal` is an `opaque_ffi!` ZST handle; `opaque_ref` is the
         // centralised non-null deref proof. `signalAbort()` takes
         // `Ref protectedThis` internally so `signal_ptr` stays valid for the
         // whole dispatch even though abort listeners can trigger GC.
-        AbortSignal::opaque_ref(signal_ptr).signal(vm.global(), CommonAbortReason::Timeout);
+        AbortSignal::opaque_ref(signal_ptr).signal(vm.global(turn), CommonAbortReason::Timeout);
     }
 }
 
 impl Drop for Timeout {
     fn drop(&mut self) {
+        let this = core::ptr::from_mut(self);
+        // SAFETY: its signal frees it on the JS thread, and teardown discards what is left in step B.
+        let live = unsafe { VmLive::assume(&this) };
         // Not through the signal: its context may be a dead global under --isolate.
-        if let Some(context) = VirtualMachine::get().timer_context(self.context) {
-            context.untrack_timer(core::ptr::from_mut(self).cast());
+        if let Some(context) = VirtualMachine::get(live).timer_context(self.context) {
+            context.untrack_timer(this.cast());
         }
     }
 }

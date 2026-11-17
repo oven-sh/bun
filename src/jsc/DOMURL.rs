@@ -2,6 +2,7 @@ use core::ffi::c_int;
 
 use crate::{JSValue, VM, WrapperGuard};
 use bun_core as bstr;
+use bun_core::JsTurn;
 
 bun_opaque::opaque_ffi! {
     /// Opaque FFI handle for WebCore::DOMURL (C++ side).
@@ -32,10 +33,12 @@ impl DOMURL {
         unsafe { WrapperGuard::new(value, WebCore__DOMURL__cast_(*value, vm)) }
     }
 
-    pub fn cast(value: &JSValue) -> Option<WrapperGuard<'_, DOMURL>> {
+    pub fn cast<'a>(value: &'a JSValue, turn: JsTurn<'_>) -> Option<WrapperGuard<'a, DOMURL>> {
         Self::cast_(
             value,
-            crate::virtual_machine::VirtualMachine::get().global().vm(),
+            crate::virtual_machine::VirtualMachine::get(turn.live)
+                .global(turn)
+                .vm(),
         )
     }
 

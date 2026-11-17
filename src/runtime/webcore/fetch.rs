@@ -212,6 +212,7 @@ fn data_url_response(url: BunString, global_this: &JSGlobalObject) -> JSValue {
 // ──────────────────────────────────────────────────────────────────────────
 
 pub(crate) fn preconnect(cx: &mut JsScope<'_>, url: &BunString) -> JsResult<()> {
+    let live = cx.live();
     let global_object = cx.global();
 
     let url_str = bun_url::href_from_string(url);
@@ -257,7 +258,7 @@ pub(crate) fn preconnect(cx: &mut JsScope<'_>, url: &BunString) -> JsResult<()> 
     }
 
     // A request to an origin the environment proxies never dials it. One after `tls.DEFAULT_CIPHERS` was assigned does not use the default context.
-    let vm = VirtualMachine::get();
+    let vm = VirtualMachine::get(live);
     if vm.env_loader().get_http_proxy_for(&url).is_some() || vm.tls_default_ciphers().is_some() {
         return Ok(());
     }
@@ -359,7 +360,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
     jsc::mark_binding();
     let global_this = ctx;
     bun_core::analytics::Features::FETCH.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
-    let vm = VirtualMachine::get();
+    let vm = VirtualMachine::get(ctx.live());
 
     let mut upgraded_connection = false;
     let mut forced_protocol: Option<http::Protocol> = None;
@@ -1063,7 +1064,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                     options.fast_get(global_this, jsc::BuiltinName::Headers)?
                 {
                     if !headers_value.is_undefined() {
-                        if let Some(headers__) = FetchHeaders::cast(headers_value) {
+                        if let Some(headers__) = FetchHeaders::cast(headers_value, ctx.turn()) {
                             // `FetchHeaders` is an opaque ZST FFI handle (S008) — safe deref.
                             if bun_opaque::opaque_deref_mut(headers__.as_ptr()).is_empty() {
                                 break 'brk None;
@@ -1092,7 +1093,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                     options.fast_get(global_this, jsc::BuiltinName::Headers)?
                 {
                     if !headers_value.is_undefined() {
-                        if let Some(headers__) = FetchHeaders::cast(headers_value) {
+                        if let Some(headers__) = FetchHeaders::cast(headers_value, ctx.turn()) {
                             // `FetchHeaders` is an opaque ZST FFI handle (S008) — safe deref.
                             if bun_opaque::opaque_deref_mut(headers__.as_ptr()).is_empty() {
                                 break 'brk None;
@@ -1542,7 +1543,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                 max_size: Some(blob_size),
                 ..Default::default()
             };
-            let res = node_fs.read_file(&rf_args, node::fs::Flavor::Sync);
+            let res = node_fs.read_file(&rf_args, node::fs::JsFlavor::Sync(global_this.turn()));
 
             // Eagerly close before constructing the (potentially large) JS result.
             drop(opened_file);

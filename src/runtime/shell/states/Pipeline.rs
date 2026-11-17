@@ -1,3 +1,4 @@
+use bun_core::LoopTurn;
 use bun_sys::File;
 
 use crate::shell::ExitCode;
@@ -66,7 +67,7 @@ impl Pipeline {
         }))
     }
 
-    pub(crate) fn start(_interp: &Interpreter, this: NodeId) -> Yield {
+    pub(crate) fn start(_interp: &Interpreter, this: NodeId, _turn: LoopTurn<'_>) -> Yield {
         Yield::Next(this)
     }
 
@@ -84,20 +85,20 @@ impl Pipeline {
         )
     }
 
-    pub(crate) fn next(interp: &Interpreter, this: NodeId) -> Yield {
+    pub(crate) fn next(interp: &Interpreter, this: NodeId, turn: LoopTurn<'_>) -> Yield {
         match interp.as_pipeline(this).state {
-            PipelineState::StartingCmds { idx } => Self::next_starting(interp, this, idx),
+            PipelineState::StartingCmds { idx } => Self::next_starting(interp, this, idx, turn),
             PipelineState::Pending | PipelineState::WaitingWriteErr => Yield::suspended(),
             PipelineState::Done { exit_code } => {
                 let parent = interp.as_pipeline(this).base.parent;
-                interp.child_done(parent, this, exit_code)
+                interp.child_done(parent, this, exit_code, turn)
             }
         }
     }
 
     /// Starts ONE child per call; `drain_pipelines` (Yield.rs) re-enters
     /// `Pipeline::next` for the next one once the current child suspends.
-    fn next_starting(interp: &Interpreter, this: NodeId, idx: u32) -> Yield {
+    fn next_starting(interp: &Interpreter, this: NodeId, idx: u32, turn: LoopTurn<'_>) -> Yield {
         if interp.failed() {
             // A nested pipeline's member failed while this one was still starting.
             if interp.as_pipeline(this).cmds.is_none() {
@@ -108,7 +109,7 @@ impl Pipeline {
         }
         if interp.as_pipeline(this).cmds.is_none() {
             debug_assert_eq!(idx, 0);
-            if let Some(y) = Self::setup_commands(interp, this) {
+            if let Some(y) = Self::setup_commands(interp, this, turn) {
                 return y;
             }
         }
@@ -129,13 +130,13 @@ impl Pipeline {
             return Yield::suspended();
         };
         interp.as_pipeline_mut(this).state = PipelineState::StartingCmds { idx: idx + 1 };
-        interp.start_node(child)
+        interp.start_node(child, turn)
     }
 
     /// Creates the pipes and inits every child without starting any, so a
     /// failed pipe or dup finishes the pipeline (`Some(yield)`) while no child
     /// runs a subtree that `deinit` cannot reach.
-    fn setup_commands(interp: &Interpreter, this: NodeId) -> Option<Yield> {
+    fn setup_commands(interp: &Interpreter, this: NodeId, turn: LoopTurn<'_>) -> Option<Yield> {
         let (node, evtloop) = (interp.as_pipeline(this).node, interp.event_loop);
         let items: &[ast::PipelineItem] = node.items;
         let cmd_count = items
@@ -169,6 +170,7 @@ impl Pipeline {
                         interp,
                         this,
                         format_args!("bun: {}\n", sys_err.message),
+                        turn,
                     ));
                 }
             }
@@ -232,6 +234,7 @@ impl Pipeline {
                         interp,
                         this,
                         format_args!("bun: {}\n", sys_err.message),
+                        turn,
                     ));
                 }
             };
@@ -268,6 +271,7 @@ impl Pipeline {
         interp: &Interpreter,
         this: NodeId,
         args: core::fmt::Arguments<'_>,
+        turn: LoopTurn<'_>,
     ) -> Yield {
         use std::io::Write as _;
         let mut buf = Vec::new();
@@ -280,7 +284,7 @@ impl Pipeline {
             // Only the fd arm transitions state.
             interp.as_pipeline_mut(this).state = PipelineState::WaitingWriteErr;
             let child = io_writer::ChildPtr::new(this, io_writer::WriterTag::Pipeline);
-            return writer.enqueue(child, captured, &buf);
+            return writer.enqueue(child, captured, &buf, turn);
         }
         if let OutKind::Pipe = &interp.as_pipeline(this).io.stderr {
             // SAFETY: single trampoline frame; no other borrow of the env's
@@ -313,6 +317,7 @@ impl Pipeline {
         this: NodeId,
         child: NodeId,
         exit_code: ExitCode,
+        _turn: LoopTurn<'_>,
     ) -> Yield {
         log!(
             "Pipeline {} childDone (child={} exit={})",

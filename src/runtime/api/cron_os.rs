@@ -4,7 +4,7 @@ use core::cell::Cell;
 use core::mem::ManuallyDrop;
 
 use bstr::BStr;
-use bun_core::{CStringList, EncodedSlice, ZBox, strings};
+use bun_core::{CStringList, EncodedSlice, JsTurn, LoopTurn, VmLive, ZBox, strings};
 use bun_cron::{Registration, Title};
 use bun_io::{BufferedReader, IoEvent, JsKeepAlive, Owner, PollTag, ReadResult};
 use bun_jsc::bindgen::JsScope;
@@ -180,7 +180,8 @@ pub(crate) struct OsJob {
 bun_spawn::link_impl_ProcessExit! {
     Cron for OsJob => |this| {
         // SAFETY: a live job installed the handler, and its handle detaches it.
-        on_process_exit(status, _rusage) => OsJob::on_process_exit(ThisPtr::new(this), status),
+        on_process_exit(status, _rusage, turn) =>
+            OsJob::on_process_exit(ThisPtr::new(this), status, turn),
     }
 }
 
@@ -190,7 +191,7 @@ impl OsJob {
             ref_count: Cell::new(1),
             promise: JsCell::new(JSPromiseStrong::init(global)),
             global: GlobalRef::from(global),
-            _keep_alive: JsKeepAlive::active(),
+            _keep_alive: JsKeepAlive::active(global.live()),
             step: Cell::new(None),
             process: Cell::new(None),
             output: BufferedReader::init(),
@@ -199,32 +200,37 @@ impl OsJob {
         // SAFETY: `owner` points to the heap allocation that holds this reader.
         unsafe { job.output.set_owner(owner) };
         let (this, promise) = (job.this_ptr(), job.promise.get().value());
-        (runtime_state().cron_os_jobs.0).with_mut(|jobs| jobs.push(job));
-        Self::run(this, first.map(Some));
+        (runtime_state(global.live()).cron_os_jobs.0).with_mut(|jobs| jobs.push(job));
+        Self::run(this, first.map(Some), global.turn());
         promise
     }
 
-    fn run(this: ThisPtr<Self>, next: Next) {
-        let process = match next.and_then(|next| next.map(|c| this.spawn(c)).transpose()) {
+    fn run(this: ThisPtr<Self>, next: Next, turn: JsTurn<'_>) {
+        let process = match next.and_then(|next| next.map(|c| this.spawn(c, turn.live)).transpose())
+        {
             Ok(Some(process)) => process,
-            Ok(None) => return Self::finish(this, Ok(())),
-            Err(failure) => return Self::finish(this, Err(failure)),
+            Ok(None) => return Self::finish(this, Ok(()), turn),
+            Err(failure) => return Self::finish(this, Err(failure), turn),
         };
         process.set_exit_handler(this);
         // `this` may be freed on every path but `Ok(false)`.
-        match process.watch_or_reap() {
+        match process.watch_or_reap(turn.loop_) {
             Ok(false) => this.process.set(Some(process)),
             Ok(true) => {}
             Err(err) => {
                 if !process.has_exited() {
-                    process.on_exit(Status::Err(err), &bun_core::ffi::zeroed());
+                    process.on_exit(Status::Err(err), &bun_core::ffi::zeroed(), turn.loop_);
                 }
             }
         }
     }
 
-    fn spawn(&self, Command { argv, stdout, step }: Command) -> Result<ProcessHandle, Failure> {
-        let vm = VirtualMachine::get();
+    fn spawn(
+        &self,
+        Command { argv, stdout, step }: Command,
+        live: VmLive<'_>,
+    ) -> Result<ProcessHandle, Failure> {
+        let vm = VirtualMachine::get(live);
         let event_loop = EventLoopHandle::init(vm.event_loop_ptr());
         #[cfg(windows)]
         let (mut path_buf, envp) = (
@@ -266,7 +272,7 @@ impl OsJob {
         if let Some(stdout) = spawned.stdout.take().map(File::into_raw) {
             use bun_io::PosixFlags;
             (self.output).update_flags(|f| f.insert(PosixFlags::NONBLOCKING | PosixFlags::SOCKET));
-            let read = (self.output.start(bun_io::js_vm_ctx(), stdout, true))
+            let read = (self.output.start(bun_io::js_vm_ctx(live), stdout, true))
                 .map_err(|_| "Failed to start reading stdout")?;
             child = (self.take_output(read)).map_or(Child::Running, Child::OutputEnded);
         }
@@ -292,14 +298,15 @@ impl OsJob {
         }
     }
 
-    pub(crate) fn on_io(this: ThisPtr<Self>, event: IoEvent) {
-        let read = this.output.read(bun_io::js_vm_ctx(), Some(event));
+    pub(crate) fn on_io(this: ThisPtr<Self>, event: IoEvent, turn: LoopTurn<'_>) {
+        let turn = this.global.has_vm().turn(turn);
+        let read = this.output.read(bun_io::js_vm_ctx(turn.live), Some(event));
         let Some(output) = this.take_output(read) else {
             return;
         };
         match this.step.take() {
             Some((step, Child::Running)) => this.step.set(Some((step, Child::OutputEnded(output)))),
-            Some((step, Child::Exited(exit))) => Self::end_step(this, step, exit, output),
+            Some((step, Child::Exited(exit))) => Self::end_step(this, step, exit, output, turn),
             other @ (Some((_, Child::OutputEnded(_))) | None) => {
                 debug_assert!(false, "the output ended twice");
                 this.step.set(other);
@@ -307,7 +314,8 @@ impl OsJob {
         }
     }
 
-    fn on_process_exit(this: ThisPtr<Self>, status: Status) {
+    fn on_process_exit(this: ThisPtr<Self>, status: Status, turn: LoopTurn<'_>) {
+        let turn = this.global.has_vm().turn(turn);
         let exit = match status {
             Status::Running => return,
             Status::Exited(exited) if exited.code == 0 => Ok(()),
@@ -317,7 +325,9 @@ impl OsJob {
         };
         match this.step.take() {
             Some((step, Child::Running)) => this.step.set(Some((step, Child::Exited(exit)))),
-            Some((step, Child::OutputEnded(output))) => Self::end_step(this, step, exit, output),
+            Some((step, Child::OutputEnded(output))) => {
+                Self::end_step(this, step, exit, output, turn)
+            }
             other @ (Some((_, Child::Exited(_))) | None) => {
                 debug_assert!(false, "the child exited twice");
                 this.step.set(other);
@@ -330,15 +340,16 @@ impl OsJob {
         step: Step,
         exit: Result<(), Failure>,
         output: sys::Result<Vec<u8>>,
+        turn: JsTurn<'_>,
     ) {
         this.process.set(None);
-        Self::run(this, after(step, exit, output));
+        Self::run(this, after(step, exit, output), turn);
     }
 
-    fn finish(this: ThisPtr<Self>, result: Result<(), Failure>) {
-        let _entered = VirtualMachine::get().enter_event_loop_scope();
+    fn finish(this: ThisPtr<Self>, result: Result<(), Failure>, turn: JsTurn<'_>) {
+        let _entered = VirtualMachine::get(turn.live).enter_event_loop_scope(turn);
         // Dropped before the scope ends, which is where the reactions run.
-        let Some(job) = runtime_state().cron_os_jobs.0.with_mut(|jobs| {
+        let Some(job) = runtime_state(turn.live).cron_os_jobs.0.with_mut(|jobs| {
             let i = jobs.iter().position(|job| job.as_ptr() == this.as_ptr())?;
             Some(jobs.swap_remove(i))
         }) else {

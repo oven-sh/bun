@@ -37,7 +37,7 @@ use bun_core::ZBox;
 use bun_core::strings;
 #[cfg(any(target_os = "linux", target_os = "android", target_os = "freebsd"))]
 use bun_core::{Output, zstr};
-use bun_core::{ZStr, handle_oom};
+use bun_core::{VmLive, ZStr, handle_oom};
 use bun_paths as path;
 #[cfg(any(target_os = "linux", target_os = "android"))]
 use bun_paths::platform;
@@ -285,7 +285,7 @@ impl PathWatcher {
 
     /// JS-thread entry point from `FSWatcher.detach()`. Removes one handler; if it was
     /// the last, tears down the OS watch and frees.
-    pub(crate) fn detach(Handle(id): Handle, ctx: *mut c_void) {
+    pub(crate) fn detach(Handle(id): Handle, ctx: *mut c_void, _live: VmLive<'_>) {
         let mut locked = DEFAULT_MANAGER.wait().lock();
         let manager = &mut *locked;
 

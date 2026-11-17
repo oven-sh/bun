@@ -6,6 +6,7 @@ use ::bstr::BStr;
 use bun_cares_sys::c_ares_draft as c_ares;
 use bun_core as bstr;
 use bun_core::CStrRef;
+use bun_core::VmLive;
 use bun_jsc::bindgen::{JsLocal, JsScope};
 use bun_jsc::{
     JSGlobalObject, JSPromiseStrong, JSValue, JsResult, StringJsc, SystemError, bun_string_jsc,
@@ -207,7 +208,7 @@ impl ErrorDeferredTask {
 
 impl bun_event_loop::BoxedTask for ErrorDeferredTask {
     const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::DnsErrorDeferred;
-    fn release_unrun(self: Box<Self>) {}
+    fn release_unrun(self: Box<Self>, _live: VmLive<'_>) {}
     /// `run` enters the asking script's context itself.
     fn context(&self) -> bun_event_loop::ContextId {
         bun_event_loop::ContextId::NONE

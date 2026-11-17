@@ -7,7 +7,7 @@ use bun_archive::tar;
 use bun_ast::{E, Expr, G};
 use bun_core::MutableString;
 use bun_core::fmt as bun_fmt;
-use bun_core::{Environment, Global, Output};
+use bun_core::{Environment, Global, LoopTurn, Output};
 use bun_core::{ZStr, strings};
 use bun_http as http;
 use bun_install::package_manager::options::PublishTarget;
@@ -342,6 +342,7 @@ impl Context {
         ctx: Command::Context<'_>,
         manager: &mut PackageManager,
         abs_package_json_path: &ZStr,
+        turn: LoopTurn<'_>,
     ) -> Context {
         let pack_ctx = pack::Context {
             manager,
@@ -350,7 +351,7 @@ impl Context {
             stats: pack::Stats::default(),
         };
 
-        match pack::pack(pack_ctx, abs_package_json_path, true) {
+        match pack::pack(pack_ctx, abs_package_json_path, true, turn) {
             Ok(context) => context.expect("pack for a publish always yields a publish context"),
             Err(err) => PublishCommand::report_pack_error_and_crash(err),
         }
@@ -397,7 +398,7 @@ impl PublishCommand {
         }
     }
 
-    pub(crate) fn exec(ctx: Command::Context) -> Result<(), Error> {
+    pub(crate) fn exec(ctx: Command::Context, turn: LoopTurn<'_>) -> Result<(), Error> {
         bun_core::prettyln!(
             "<r><b>bun publish <r><d>v{}<r>",
             Global::package_json_version_with_sha,
@@ -462,15 +463,15 @@ impl PublishCommand {
         }
 
         if Self::is_workspace_publish(manager) {
-            return Self::exec_workspaces(ctx, manager, &original_cwd);
+            return Self::exec_workspaces(ctx, manager, &original_cwd, turn);
         }
 
         let abs_package_json_path =
             bun_core::ZBox::from_bytes(manager.original_package_json_path.as_bytes());
-        let context = Context::from_workspace(&mut *ctx, manager, &abs_package_json_path);
+        let context = Context::from_workspace(&mut *ctx, manager, &abs_package_json_path, turn);
 
         if bun_core::handle_oom(Self::publish(manager, &context)) {
-            Self::finish_directory_publish(ctx, manager, &context, &abs_package_json_path)?;
+            Self::finish_directory_publish(ctx, manager, &context, &abs_package_json_path, turn)?;
         }
         Ok(())
     }
@@ -503,6 +504,7 @@ impl PublishCommand {
         ctx: Command::Context<'_>,
         manager: &mut PackageManager,
         original_cwd: &[u8],
+        turn: LoopTurn<'_>,
     ) -> Result<(), Error> {
         let bump = bun_alloc::Arena::new();
         // Each with the options as its `publishConfig` left them.
@@ -554,7 +556,7 @@ impl PublishCommand {
             }
 
             bun_core::prettyln!("\n<b><magenta>{}<r>", bun_fmt::escape_control_chars(&name));
-            let context = Context::from_workspace(&mut *ctx, manager, &abs_package_json_path);
+            let context = Context::from_workspace(&mut *ctx, manager, &abs_package_json_path, turn);
             let target = manager.options.publish_target(&name);
             bun_core::handle_oom(manager.options.set_publish_target(&cli_target));
             packed.push((abs_package_json_path, target, context));
@@ -567,7 +569,13 @@ impl PublishCommand {
                 bun_fmt::escape_control_chars(&context.package_name)
             );
             if bun_core::handle_oom(Self::publish(manager, context)) {
-                Self::finish_directory_publish(&mut *ctx, manager, context, abs_package_json_path)?;
+                Self::finish_directory_publish(
+                    &mut *ctx,
+                    manager,
+                    context,
+                    abs_package_json_path,
+                    turn,
+                )?;
             }
         }
 
@@ -593,6 +601,7 @@ impl PublishCommand {
         manager: &PackageManager,
         context: &Context,
         abs_package_json_path: &ZStr,
+        turn: LoopTurn<'_>,
     ) -> Result<(), Error> {
         Self::print_published(manager, context);
 
@@ -635,6 +644,7 @@ impl PublishCommand {
                 abs_workspace_path,
                 script_env,
                 manager.options.log_level == LogLevel::Silent,
+                turn,
             ) {
                 if matches!(e, crate::Error::MissingShell) {
                     Output::err_generic(

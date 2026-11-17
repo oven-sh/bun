@@ -13,7 +13,7 @@ use core::ptr::NonNull;
 
 use crate::dns_jsc::Order as DnsOrder;
 use bun_core::EncodedSlice;
-use bun_core::{Global, Output};
+use bun_core::{Global, JsTurn, LoopTurn, Output};
 use bun_jsc as jsc;
 use bun_jsc::virtual_machine::VirtualMachine;
 
@@ -30,18 +30,19 @@ pub(crate) struct ReplCommand;
 
 impl ReplCommand {
     #[cold]
-    pub(crate) fn exec(ctx: Command::Context<'_>) -> Result<(), crate::Error> {
+    pub(crate) fn exec(ctx: Command::Context<'_>, turn: LoopTurn<'_>) -> Result<(), crate::Error> {
         // Initialize the REPL
         let mut repl = Repl::init();
         // `defer repl.deinit()` → handled by Drop
 
         // Boot the JavaScript VM for the REPL
-        Self::boot_repl_vm(ctx, &mut repl)
+        Self::boot_repl_vm(ctx, &mut repl, turn)
     }
 
     fn boot_repl_vm<'r>(
         ctx: Command::Context<'_>,
         repl: &mut Repl<'r>,
+        turn: LoopTurn<'r>,
     ) -> Result<(), crate::Error> {
         // Load bunfig if not already loaded
         if !ctx.debug.loaded_bunfig {
@@ -78,7 +79,9 @@ impl ReplCommand {
             is_main_thread: true,
             ..Default::default()
         };
-        let vm = VirtualMachine::init(ctx.log, options)?;
+        // SAFETY: the main thread runs one command, whose one VM this is. `ctx.log` is never freed.
+        let vm = unsafe { VirtualMachine::init(ctx.log, options, turn.live) }?;
+        let turn = vm.turn(turn);
 
         vm.preload.set(core::mem::take(&mut ctx.preloads));
         vm.dns_result_order.set(dns_order as u8);
@@ -113,7 +116,7 @@ impl ReplCommand {
 
         // Store VM reference in REPL (safe - no JS allocation)
         repl.vm = Some(vm);
-        let global = vm.global();
+        let global = vm.global(turn);
         repl.global = Some(global);
 
         // Create the ReplRunner and execute within the API lock
@@ -126,7 +129,7 @@ impl ReplCommand {
         };
 
         let _api_lock = global.vm().get_api_lock();
-        ReplRunner::start(&mut runner)
+        ReplRunner::start(&mut runner, turn)
     }
 
     fn dump_build_error(vm: &VirtualMachine) {
@@ -152,18 +155,18 @@ struct ReplRunner<'a, 'r> {
 }
 
 impl<'a, 'r> ReplRunner<'a, 'r> {
-    fn start(this: &mut ReplRunner<'a, 'r>) -> ! {
-        let vm = VirtualMachine::get();
+    fn start(this: &mut ReplRunner<'a, 'r>, turn: JsTurn<'r>) -> ! {
+        let vm = VirtualMachine::get(turn.live);
 
         // Set up the REPL environment (now inside API lock)
-        if this.setup_repl_environment().is_err() {
+        if this.setup_repl_environment(turn).is_err() {
             // setupGlobalRequire threw a JS exception — surface it and exit
-            if let Some(exception) = vm.global().try_take_exception() {
-                vm.print_error_like_object_to_console(exception);
+            if let Some(exception) = vm.global(turn).try_take_exception() {
+                vm.print_error_like_object_to_console(exception, turn);
             }
             vm.exit_handler.exit_code.set(1);
-            vm.on_exit();
-            vm.global_exit();
+            vm.on_exit(turn);
+            vm.global_exit(turn);
         }
 
         if !this.eval_script.is_empty() || this.eval_and_print {
@@ -178,23 +181,26 @@ impl<'a, 'r> ReplRunner<'a, 'r> {
             } else {
                 // Fire process.on("beforeExit") and re-drain as needed
                 // (matches bun -e / Node.js semantics).
-                vm.on_before_exit();
+                vm.on_before_exit(turn);
             }
         } else {
             // Interactive: run the REPL loop
-            if let Err(err) = this.repl.run_with_vm(Some(VirtualMachine::get())) {
+            if let Err(err) = this
+                .repl
+                .run_with_vm(Some(VirtualMachine::get(turn.live)), turn)
+            {
                 bun_core::pretty_errorln!("<r><red>REPL error: {}<r>", err.name());
             }
         }
 
         // Clean up
-        vm.on_exit();
-        vm.global_exit()
+        vm.on_exit(turn);
+        vm.global_exit(turn)
     }
 
-    fn setup_repl_environment(&mut self) -> bun_jsc::JsResult<()> {
-        let vm = VirtualMachine::get();
-        let global = vm.global();
+    fn setup_repl_environment(&mut self, turn: JsTurn<'_>) -> bun_jsc::JsResult<()> {
+        let vm = VirtualMachine::get(turn.live);
+        let global = vm.global(turn);
 
         // Expose Node.js module globals (__dirname, __filename, require, etc.)
         // This must be done inside the API lock as it allocates JS objects

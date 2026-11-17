@@ -7,7 +7,7 @@ use bun_collections::StringHashMap;
 use bun_collections::StringSet;
 #[cfg(not(windows))]
 use bun_core::ZStr;
-use bun_core::{Output, ZBox};
+use bun_core::{JsTurn, Output, VmLive, ZBox};
 #[cfg(not(windows))]
 use bun_paths::SEP;
 #[cfg(not(windows))]
@@ -175,7 +175,7 @@ pub struct HotReloadTask;
 
 impl bun_event_loop::BoxedTask for HotReloadTask {
     const TAG: bun_event_loop::TaskTag = task_tag::HotReloadTask;
-    fn release_unrun(self: Box<Self>) {}
+    fn release_unrun(self: Box<Self>, _live: VmLive<'_>) {}
     /// Reloads the realm.
     fn context(&self) -> bun_event_loop::ContextId {
         bun_event_loop::ContextId::NONE
@@ -183,7 +183,7 @@ impl bun_event_loop::BoxedTask for HotReloadTask {
 }
 
 impl HotReloadTask {
-    pub fn run(vm: &VirtualMachine) {
+    pub fn run(vm: &VirtualMachine, turn: JsTurn<'_>) {
         // Since we rely on the event loop for hot reloads, there can be
         // a delay before the next reload begins. In the time between the
         // last reload and the next one, we shouldn't schedule any more
@@ -194,7 +194,7 @@ impl HotReloadTask {
         // get another hot reload request while we're reloading, we'll
         // still enqueue it.
         while PENDING_RELOADS.swap(0, Ordering::Relaxed) > 0 {
-            vm.reload();
+            vm.reload(turn);
         }
     }
 }

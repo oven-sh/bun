@@ -10,7 +10,7 @@ use std::io::Write as _;
 use bun_ast::Loader;
 use bun_bundler::Transpiler;
 use bun_collections::{ArrayHashMap, StringHashMap};
-use bun_core::{self as core, Global, Output, ZStr};
+use bun_core::{self as core, Global, JsTurn, LoopTurn, Output, VmLive, ZStr};
 use bun_core::{pretty, pretty_errorln, prettyln};
 use bun_dotenv as DotEnv;
 use bun_jsc::js_promise::Status as PromiseStatus;
@@ -240,6 +240,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         passthrough: &[Box<[u8]>],
         silent: bool,
         use_system_shell: bool,
+        turn: LoopTurn<'_>,
     ) -> crate::Result<()> {
         Self::run_package_script_foreground_with_shell_path(
             ctx,
@@ -251,6 +252,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
             silent,
             use_system_shell,
             None,
+            turn,
         )
     }
 
@@ -263,6 +265,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         cwd: &[u8],
         env: &mut DotEnv::Loader,
         silent: bool,
+        turn: LoopTurn<'_>,
     ) -> crate::Result<()> {
         let mut original_path: Vec<u8> = Vec::new();
         let path = Self::path_for_run(
@@ -284,6 +287,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
             silent,
             use_system_shell,
             Some(original_path.as_slice()),
+            turn,
         );
         env.map.put(b"PATH", &original_path)?;
         result
@@ -301,6 +305,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         silent: bool,
         use_system_shell: bool,
         shell_path: Option<&[u8]>,
+        turn: LoopTurn<'_>,
     ) -> crate::Result<()> {
         let shell_search_path = shell_path.unwrap_or_else(|| env.get(b"PATH").unwrap_or(b""));
         let shell_bin =
@@ -363,6 +368,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
                 name,
                 &copy_script,
                 Some(cwd),
+                turn,
             ) {
                 Ok(c) => c,
                 Err(err) => {
@@ -851,12 +857,12 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
 
     /// Kick off TCP preconnects for
     /// `--preconnect <url>` before the entry module loads.
-    fn do_preconnect(preconnect: &[&'static [u8]]) {
+    fn do_preconnect(preconnect: &[&'static [u8]], live: VmLive<'_>) {
         if preconnect.is_empty() {
             return;
         }
         // `--fetch-preconnect` is refused at start where `--trim` removed `fetch`.
-        bun_removable_features::removable_body!(Fetch, Abort, {
+        bun_removable_features::removable_body!(Fetch, Abort, live, {
             bun_http::http_thread::init(&Default::default());
 
             for &url_str in preconnect {
@@ -885,7 +891,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
                 }
 
                 // A request to an origin the environment proxies never dials it.
-                if VirtualMachine::get()
+                if VirtualMachine::get(live)
                     .env_loader()
                     .get_http_proxy_for(&url)
                     .is_some()
@@ -909,6 +915,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
     fn boot_bun_shell(
         ctx: &mut ContextData,
         entry_path: &[u8],
+        turn: LoopTurn<'_>,
     ) -> crate::Result<crate::shell::ExitCode> {
         // Dummy transpiler so we can load .env.
         let mut args = ctx.args.clone();
@@ -926,7 +933,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         // `initAndRunFromFile`: read source then hand off to the interpreter.
         let src = sys::File::read_from(Fd::cwd(), entry_path)?;
 
-        crate::shell::Interpreter::init_and_run_from_file(ctx, mini, entry_path, &src)
+        crate::shell::Interpreter::init_and_run_from_file(ctx, mini, entry_path, &src, turn)
     }
 
     /// `VirtualMachine::init`,
@@ -935,6 +942,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         ctx: &mut ContextData,
         entry_path: Box<[u8]>,
         loader: Option<Loader>,
+        turn: LoopTurn<'_>,
     ) -> crate::Result<()> {
         Self::boot_main(
             ctx,
@@ -942,10 +950,11 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
                 path: entry_path,
                 loader,
             },
+            turn,
         )
     }
 
-    fn boot_main(ctx: &mut ContextData, main: BootMain) -> crate::Result<()> {
+    fn boot_main(ctx: &mut ContextData, main: BootMain, turn: LoopTurn<'_>) -> crate::Result<()> {
         if !ctx.debug.loaded_bunfig {
             arguments::load_config_path(
                 CommandTag::RunCommand,
@@ -969,7 +978,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
             if ctx.runtime_options.check && !crate::cli::check_command::check_project_before(None) {
                 Global::exit(1);
             }
-            let exit_code = Self::boot_bun_shell(ctx, entry_path)?;
+            let exit_code = Self::boot_bun_shell(ctx, entry_path, turn)?;
             Global::exit(exit_code as u32);
         }
 
@@ -1030,7 +1039,9 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
             graph: crate::cli::run_compiled::graph(),
             ..Default::default()
         };
-        let vm = VirtualMachine::init(ctx.log, options)?;
+        // SAFETY: the main thread runs one command, whose one VM this is. `ctx.log` is never freed.
+        let vm = unsafe { VirtualMachine::init(ctx.log, options, turn.live) }?;
+        let turn = vm.turn(turn);
         crate::cli::run_compiled::decode_requested_crash_report();
 
         vm.preload.set(std::mem::take(&mut ctx.preloads));
@@ -1113,7 +1124,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
             crate::run_main::fail_with_build_error(vm);
         }
 
-        Self::set_time_zone_from_env(vm);
+        Self::set_time_zone_from_env(vm, turn);
 
         // SAFETY: `vm.log` set in `init`; `b.env` is the long-lived
         // `DotEnv::Loader` allocated/retained for the VM (never null after
@@ -1131,7 +1142,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
             ctx.runtime_options.experimental_http3_fetch,
             ::core::sync::atomic::Ordering::Relaxed,
         );
-        Self::do_preconnect(&ctx.runtime_options.preconnect);
+        Self::do_preconnect(&ctx.runtime_options.preconnect, turn.live);
 
         // Only `bun bake` boots with no entry module.
         vm.main_entry_point.set(match entry {
@@ -1160,18 +1171,18 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
                 None => Unchecked::Project,
             }),
         }
-        .start()
+        .start(turn)
     }
 
     /// Allow setting a custom timezone. Without `$TZ`, JSC/ICU lazily
     /// auto-detects the host zone the first time a `Date` is constructed —
     /// matching upstream Bun. `.env` files are loaded by
     /// `configure_defines`, so `$TZ` set in one is honored.
-    fn set_time_zone_from_env(vm: &VirtualMachine) {
+    fn set_time_zone_from_env(vm: &VirtualMachine, turn: JsTurn<'_>) {
         if let Some(tz) = vm.env_loader().get(b"TZ") {
             if !tz.is_empty() {
                 let _ = vm
-                    .global()
+                    .global(turn)
                     .set_time_zone(&bun_core::EncodedSlice::from_bytes(tz));
             }
         }
@@ -1185,6 +1196,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         ctx: &mut ContextData,
         entry_path: Box<[u8]>,
         graph: &'static bun_standalone_graph::Graph,
+        turn: LoopTurn<'_>,
     ) -> crate::Result<()> {
         use bun_standalone_graph::StandaloneModuleGraph::Flags as GraphFlags;
 
@@ -1228,7 +1240,9 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
             ) as u8,
             ..Default::default()
         };
-        let vm = VirtualMachine::init_with_module_graph(ctx.log, options)?;
+        // SAFETY: the main thread runs one command, whose one VM this is. `ctx.log` is never freed.
+        let vm = unsafe { VirtualMachine::init_with_module_graph(ctx.log, options, turn.live) }?;
+        let turn = vm.turn(turn);
         crate::cli::run_compiled::decode_requested_crash_report();
         if graph.runtime_options.jit_policy > 1.0 {
             vm.jsc_vm()
@@ -1259,7 +1273,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         }
 
         if runs_compiled_code {
-            Self::set_time_zone_from_env(vm);
+            Self::set_time_zone_from_env(vm, turn);
         }
 
         // SAFETY: `vm.log` set in `init`; `b.env` is the long-lived
@@ -1278,7 +1292,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
             ctx.runtime_options.experimental_http3_fetch,
             ::core::sync::atomic::Ordering::Relaxed,
         );
-        Self::do_preconnect(&ctx.runtime_options.preconnect);
+        Self::do_preconnect(&ctx.runtime_options.preconnect, turn.live);
 
         Run {
             ctx,
@@ -1286,7 +1300,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
             entry_path: Some(entry),
             unchecked: None,
         }
-        .start()
+        .start(turn)
     }
 }
 
@@ -1360,7 +1374,7 @@ impl Run<'_> {
     /// default error printer.
     fn on_unhandled_rejection_before_close(
         this: &VirtualMachine,
-        _global: &JSGlobalObject,
+        global: &JSGlobalObject,
         value: JSValue,
     ) {
         // SAFETY: BORROW_PARAM ptr set by caller, outlives this call.
@@ -1368,7 +1382,7 @@ impl Run<'_> {
             .on_unhandled_rejection_exception_list
             .get()
             .map(|p| unsafe { &mut *p.as_ptr() });
-        this.run_error_handler(value, list);
+        this.run_error_handler(value, list, global.turn());
         ANY_UNHANDLED.store(true, Ordering::Relaxed);
     }
 
@@ -1391,14 +1405,14 @@ impl Run<'_> {
     /// `Run.start`: take the JSC API lock, load the entry point, run the event
     /// loop until idle, fire `beforeExit`/`exit`, then `globalExit`. The lock
     /// guard is never dropped because this never returns.
-    fn start(self) -> ! {
+    fn start(self, turn: JsTurn<'_>) -> ! {
         let Run {
             ctx,
             vm,
             entry_path: mut entry,
             unchecked,
         } = self;
-        let global = vm.global();
+        let global = vm.global(turn);
         let _api_lock = global.vm().get_api_lock();
 
         vm.hot_reload.set(ctx.debug.hot_reload);
@@ -1434,7 +1448,7 @@ impl Run<'_> {
             };
             // The process entry is the outermost frame: a preconnect that threw
             // is reported here, before the entry point loads.
-            crate::dispatch::fold(preconnect());
+            crate::dispatch::fold(preconnect(), turn);
         }
 
         // ── postgres/sql preconnect ───────────────────────────────────────
@@ -1463,7 +1477,7 @@ impl Run<'_> {
                 }
                 Ok(())
             };
-            crate::dispatch::fold(preconnect());
+            crate::dispatch::fold(preconnect(), turn);
         }
 
         // ── hot-reloader enable ─────────────────────────────────────────────
@@ -1516,7 +1530,7 @@ impl Run<'_> {
                 !crate::cli::check_command::check_project_before(watching)
             }
         };
-        let loaded = (!has_type_errors).then(|| vm.load_entry_point(entry));
+        let loaded = (!has_type_errors).then(|| vm.load_entry_point(entry, turn));
         match loaded {
             None => {}
             Some(Ok(promise)) => {
@@ -1539,9 +1553,9 @@ impl Run<'_> {
                     // The core run-loop below does the actual waiting.
                     if vm.hot_reload.get() != cli::command::HotReload::None || handled {
                         vm.add_main_to_watcher_if_needed();
-                        vm.event_loop().tick();
+                        vm.event_loop().tick(turn);
                     } else {
-                        exit_with_unhandled_note(vm);
+                        exit_with_unhandled_note(vm, turn);
                     }
                 }
 
@@ -1552,20 +1566,20 @@ impl Run<'_> {
                     log_clear_msgs(vm);
                 }
             }
-            Some(Err(err)) => entry_point_load_failed(vm, &err.into()),
+            Some(Err(err)) => entry_point_load_failed(vm, &err.into(), turn),
         }
 
         // Drop what transpiling and linking the entry graph left behind before settling into the event loop. A
         // standalone executable has no transpiler garbage, and its unlinked code blocks came from the embedded bytecode
         // cache — deleting them here only means decoding them again on first call — so leave its heap to the collector.
         if vm.standalone_module_graph.is_none()
-            && (vm.is_event_loop_alive() || vm.event_loop().tick_concurrent_with_count() > 0)
+            && (vm.is_event_loop_alive() || vm.event_loop().tick_concurrent_with_count(turn) > 0)
         {
             global.vm().release_weak_refs();
             // `bun_alloc::Arena` has no per-heap collect to run alongside this
             // GC; it would only be a memory-usage hint, not correctness.
             let _ = global.vm().run_gc(false);
-            vm.tick();
+            vm.tick(turn);
         }
 
         // Initial synchronous evaluation of the entrypoint is done (TLA may
@@ -1578,25 +1592,25 @@ impl Run<'_> {
 
         // ── core run-loop ──────────────────────────────────────────────────
         if vm.is_watcher_enabled() {
-            vm.report_exception_in_hot_reloaded_module_if_needed();
+            vm.report_exception_in_hot_reloaded_module_if_needed(turn);
             loop {
                 while vm.is_event_loop_alive() {
                     // After an unhandled error, only immediates keep the loop alive.
                     vm.timers_ran_after_error
                         .update(|ran| ran | (vm.unhandled_error_counter.get() > 0));
-                    vm.tick();
-                    vm.report_exception_in_hot_reloaded_module_if_needed();
-                    vm.auto_tick_active();
+                    vm.tick(turn);
+                    vm.report_exception_in_hot_reloaded_module_if_needed(turn);
+                    vm.auto_tick_active(turn);
                 }
-                vm.on_before_exit();
-                vm.report_exception_in_hot_reloaded_module_if_needed();
+                vm.on_before_exit(turn);
+                vm.report_exception_in_hot_reloaded_module_if_needed(turn);
                 // Watcher arm keeps the process alive across reloads.
-                vm.event_loop().tick_possibly_forever();
+                vm.event_loop().tick_possibly_forever(turn);
             }
         } else {
             while vm.is_event_loop_alive() {
-                vm.tick();
-                vm.auto_tick_active();
+                vm.tick(turn);
+                vm.auto_tick_active(turn);
             }
 
             if ctx.runtime_options.eval.eval_and_print {
@@ -1616,11 +1630,11 @@ impl Run<'_> {
                                     crate::generated_bindgen::hw_exports::Bun__onResolveEntryPointResult,
                                     crate::generated_bindgen::hw_exports::Bun__onRejectEntryPointResult,
                                 );
-                                vm.tick();
-                                vm.auto_tick_active();
+                                vm.tick(turn);
+                                vm.auto_tick_active(turn);
                                 while vm.is_event_loop_alive() {
-                                    vm.tick();
-                                    vm.auto_tick_active();
+                                    vm.tick(turn);
+                                    vm.auto_tick_active(turn);
                                 }
                                 break 'brk result;
                             }
@@ -1637,7 +1651,7 @@ impl Run<'_> {
                 );
             }
 
-            vm.on_before_exit();
+            vm.on_before_exit(turn);
         }
 
         if log_has_msgs(vm) {
@@ -1652,7 +1666,7 @@ impl Run<'_> {
         if vm.unhandled_error_counter.get() > 0 {
             vm.exit_handler.requested.set(true);
         }
-        vm.on_exit();
+        vm.on_exit(turn);
 
         if ANY_UNHANDLED.load(Ordering::Relaxed) {
             print_unhandled_version_note(vm);
@@ -1671,7 +1685,7 @@ impl Run<'_> {
             crate::napi::fix_dead_code_elimination
         );
         bun_crash_handler::fix_dead_code_elimination();
-        vm.global_exit();
+        vm.global_exit(turn);
     }
 }
 
@@ -1720,15 +1734,15 @@ fn dump_build_error(vm: &VirtualMachine) {
     any(target_os = "linux", target_os = "android"),
     unsafe(link_section = ".text.unlikely.exit_with_unhandled_note")
 )]
-fn exit_with_unhandled_note(vm: &VirtualMachine) -> ! {
+fn exit_with_unhandled_note(vm: &VirtualMachine, turn: JsTurn<'_>) -> ! {
     vm.exit_handler.exit_code.set(1);
     vm.exit_handler.requested.set(true);
-    vm.on_exit();
+    vm.on_exit(turn);
     if ANY_UNHANDLED.load(Ordering::Relaxed) {
         bun_sourcemap::SavedSourceMap::MissingSourceMapNoteInfo::print();
         pretty_errorln!("<r>\n<d>{}<r>", Global::unhandled_error_bun_version_string,);
     }
-    vm.global_exit();
+    vm.global_exit(turn);
 }
 
 /// Cold `Err(err)` arm of `vm.load_entry_point` in `Run::start`.
@@ -1738,7 +1752,7 @@ fn exit_with_unhandled_note(vm: &VirtualMachine) -> ! {
     any(target_os = "linux", target_os = "android"),
     unsafe(link_section = ".text.unlikely.entry_point_load_failed")
 )]
-fn entry_point_load_failed(vm: &VirtualMachine, err: &crate::Error) -> ! {
+fn entry_point_load_failed(vm: &VirtualMachine, err: &crate::Error, turn: JsTurn<'_>) -> ! {
     if log_has_msgs(vm) {
         dump_build_error(vm);
         log_clear_msgs(vm);
@@ -1749,7 +1763,7 @@ fn entry_point_load_failed(vm: &VirtualMachine, err: &crate::Error) -> ! {
         );
         Output::flush();
     }
-    exit_with_unhandled_note(vm);
+    exit_with_unhandled_note(vm, turn);
 }
 
 /// Cold tail of `Run::start` when `ANY_UNHANDLED` tripped on an otherwise-clean
@@ -1769,7 +1783,12 @@ fn print_unhandled_version_note(vm: &VirtualMachine) {
 impl RunCommand {
     /// Duplicate `path` to a process-lifetime buffer, boot the VM, and on
     /// failure print the formatted error + `exit(1)`.
-    fn boot_and_handle_error(ctx: &mut ContextData, path: &[u8], loader: Option<Loader>) -> bool {
+    fn boot_and_handle_error(
+        ctx: &mut ContextData,
+        path: &[u8],
+        loader: Option<Loader>,
+        turn: LoopTurn<'_>,
+    ) -> bool {
         if matches!(
             loader.or_else(|| Self::default_loader_for(path)),
             Some(Loader::Md)
@@ -1786,7 +1805,7 @@ impl RunCommand {
         // owned copy by value.
         let owned: Box<[u8]> = path.to_vec().into_boxed_slice();
 
-        if let Err(err) = Self::boot(ctx, owned, loader) {
+        if let Err(err) = Self::boot(ctx, owned, loader, turn) {
             Self::boot_failed_exit(ctx, paths::basename(path), &err);
         }
         true
@@ -2061,7 +2080,10 @@ impl RunCommand {
         env: &mut DotEnv::Loader,
         passthrough: &[Box<[u8]>],
         original_script_for_bun_run: Option<&[u8]>,
+        turn: LoopTurn<'_>,
     ) -> crate::Result<::core::convert::Infallible> {
+        #[cfg(not(windows))]
+        let _ = turn;
         // Attempt to find a ".bunx" file on disk, and run it, skipping the
         // wrapper exe.  we build the full exe path even though we could do
         // a relative lookup, because in the case we do find it, we have to
@@ -2079,7 +2101,7 @@ impl RunCommand {
             buf[new_len - bunx.len()..new_len].copy_from_slice(bunx);
             buf[new_len] = 0;
 
-            BunXFastPath::try_launch(ctx, &mut buf, new_len, env, passthrough);
+            BunXFastPath::try_launch(ctx, &mut buf, new_len, env, passthrough, turn);
         }
 
         Self::run_binary_without_bunx_path(
@@ -2335,7 +2357,11 @@ impl RunCommand {
     }
 
     /// Dispatch `bun run <target>`: classify as file path vs. package.json
-    pub(crate) fn exec_with_cfg(ctx: &mut ContextData, cfg: ExecCfg) -> crate::Result<bool> {
+    pub(crate) fn exec_with_cfg(
+        ctx: &mut ContextData,
+        cfg: ExecCfg,
+        turn: LoopTurn<'_>,
+    ) -> crate::Result<bool> {
         crate::cli::run_compiled::read_no_environment_file_again(ctx);
         let bin_dirs_only = cfg.bin_dirs_only;
         let log_errors = cfg.log_errors;
@@ -2383,7 +2409,7 @@ impl RunCommand {
         }
 
         // ── try fast run (file exists & not a dir → boot VM) ────────────────
-        if try_fast_run && Self::maybe_open_with_bun_js(ctx, target_name) {
+        if try_fast_run && Self::maybe_open_with_bun_js(ctx, target_name, turn) {
             return Ok(true);
         }
 
@@ -2438,7 +2464,7 @@ impl RunCommand {
 
         // ── stdin (`bun run -`) ─────────────────────────────────────────────
         if target_name.len() == 1 && target_name[0] == b'-' {
-            return Self::exec_stdin(ctx);
+            return Self::exec_stdin(ctx, turn);
         }
 
         // ── package.json script lookup ──────────────────────────────────────
@@ -2511,6 +2537,7 @@ impl RunCommand {
                                 silent,
                                 use_system_shell,
                                 Some(original_path.as_slice()),
+                                turn,
                             )?;
                         }
 
@@ -2524,6 +2551,7 @@ impl RunCommand {
                             silent,
                             use_system_shell,
                             Some(original_path.as_slice()),
+                            turn,
                         )?;
 
                         temp_script_buffer[..b"post".len()].copy_from_slice(b"post");
@@ -2539,6 +2567,7 @@ impl RunCommand {
                                 silent,
                                 use_system_shell,
                                 Some(original_path.as_slice()),
+                                turn,
                             )?;
                         }
 
@@ -2613,7 +2642,7 @@ impl RunCommand {
                     // borrowck — `boot_and_handle_error` takes
                     // `&mut ctx`; copy `path.text` out of the resolver borrow.
                     let text: Box<[u8]> = path.text.to_vec().into_boxed_slice();
-                    return Ok(Self::boot_and_handle_error(ctx, &text, Some(loader)));
+                    return Ok(Self::boot_and_handle_error(ctx, &text, Some(loader), turn));
                 } else {
                     bun_core::scoped_log!(
                         RUN_LOG,
@@ -2634,6 +2663,7 @@ impl RunCommand {
                         ctx,
                         target_name,
                         Some(Loader::Html),
+                        turn,
                     ));
                 }
             }
@@ -2665,7 +2695,7 @@ impl RunCommand {
                 buf[ptr] = 0;
 
                 let passthrough: Vec<Box<[u8]>> = ctx.passthrough.clone();
-                BunXFastPath::try_launch(ctx, &mut buf, ptr, env_loader, &passthrough);
+                BunXFastPath::try_launch(ctx, &mut buf, ptr, env_loader, &passthrough, turn);
             }
         }
 
@@ -2776,7 +2806,7 @@ impl RunCommand {
                 long_running: true,
                 ..Default::default()
             });
-            if let Err(err) = Self::boot_main(ctx, BootMain::Bake) {
+            if let Err(err) = Self::boot_main(ctx, BootMain::Bake, turn) {
                 Self::boot_failed_exit(ctx, b"bake", &err);
             }
             return Ok(true);
@@ -2834,7 +2864,7 @@ impl RunCommand {
     ///
     /// `Arguments::parse` does not populate `entry_points` yet, so we
     /// take the target slice explicitly.
-    fn maybe_open_with_bun_js(ctx: &mut ContextData, target: &[u8]) -> bool {
+    fn maybe_open_with_bun_js(ctx: &mut ContextData, target: &[u8], turn: LoopTurn<'_>) -> bool {
         if target.is_empty() {
             return false;
         }
@@ -2933,12 +2963,12 @@ impl RunCommand {
             resolved.into()
         };
 
-        Self::boot_and_handle_error(ctx, &absolute_script_path, None)
+        Self::boot_and_handle_error(ctx, &absolute_script_path, None, turn)
     }
 
     /// `bun run -` — read script from stdin into `ctx.runtime_options.eval`
     /// and boot the VM with the synthetic `[stdin]` path.
-    fn exec_stdin(ctx: &mut ContextData) -> crate::Result<bool> {
+    fn exec_stdin(ctx: &mut ContextData, turn: LoopTurn<'_>) -> crate::Result<bool> {
         bun_core::scoped_log!(RUN_LOG, "Executing from stdin");
 
         // read from stdin
@@ -2982,7 +3012,7 @@ impl RunCommand {
         // `basename(target_name)` (= "-"), not `basename(entry_path)`
         // (= "[stdin]"), in the error message.
         let owned: Box<[u8]> = entry_path.to_vec().into_boxed_slice();
-        if let Err(err) = Self::boot(ctx, owned, None) {
+        if let Err(err) = Self::boot(ctx, owned, None, turn) {
             Self::boot_failed_exit(ctx, b"-", &err);
         }
         Ok(true)
@@ -2991,7 +3021,7 @@ impl RunCommand {
     /// `bun --interactive` — boots the embedded `eval/node-repl.ts` script,
     /// the Node.js-compatible REPL (node:repl). Distinct from `bun repl`,
     /// which is Bun's own native REPL.
-    pub(crate) fn exec_node_repl(ctx: &mut ContextData) -> crate::Result<()> {
+    pub(crate) fn exec_node_repl(ctx: &mut ContextData, turn: LoopTurn<'_>) -> crate::Result<()> {
         // Every caller has already established there's no user script target;
         // any remaining positionals are dispatch artifacts (e.g. RunCommand's
         // leading "run"), not user data — keep them out of `process.argv`.
@@ -3002,7 +3032,7 @@ impl RunCommand {
         // internal/main/repl.js — no source splicing.
         ctx.runtime_options.eval.interactive_script = Some(ctx.runtime_options.eval.script);
         ctx.runtime_options.eval.script = bootstrap;
-        Self::exec_eval(ctx)
+        Self::exec_eval(ctx, turn)
     }
 
     /// Synthetic `cwd/[eval]`
@@ -3010,7 +3040,7 @@ impl RunCommand {
     /// in `ctx.runtime_options.eval.script`. Public so `Command::start` can
     /// route the `-e`/`-p` AutoCommand path here without re-implementing the
     /// path-buffer dance.
-    pub(crate) fn exec_eval(ctx: &mut ContextData) -> crate::Result<()> {
+    pub(crate) fn exec_eval(ctx: &mut ContextData, turn: LoopTurn<'_>) -> crate::Result<()> {
         // prepend positionals into the existing passthrough vec
         // (cold path, single allocation).
         if !ctx.positionals.is_empty() {
@@ -3031,11 +3061,11 @@ impl RunCommand {
         let entry: Box<[u8]> = entry_point_buf[..cwd_len + EVAL_TRIGGER.len()]
             .to_vec()
             .into_boxed_slice();
-        Self::boot(ctx, entry, None)
+        Self::boot(ctx, entry, None, turn)
     }
 
     /// `node` argv0 emulation. Port of `execAsIfNode`.
-    pub(crate) fn exec_as_if_node(ctx: &mut ContextData) -> crate::Result<()> {
+    pub(crate) fn exec_as_if_node(ctx: &mut ContextData, turn: LoopTurn<'_>) -> crate::Result<()> {
         // SAFETY: single-threaded CLI startup; `PRETEND_TO_BE_NODE` is set in
         // `Command::which()` before dispatch.
         debug_assert!(crate::cli::PRETEND_TO_BE_NODE.load(::core::sync::atomic::Ordering::Relaxed));
@@ -3051,7 +3081,7 @@ impl RunCommand {
             && !ctx.runtime_options.eval.eval_and_print
             && ctx.positionals.is_empty()
         {
-            return Self::exec_node_repl(ctx);
+            return Self::exec_node_repl(ctx, turn);
         }
 
         if !ctx.runtime_options.eval.script.is_empty() {
@@ -3066,7 +3096,7 @@ impl RunCommand {
             let entry: Box<[u8]> = entry_point_buf[..cwd_len + EVAL_TRIGGER.len()]
                 .to_vec()
                 .into_boxed_slice();
-            return Self::boot(ctx, entry, None);
+            return Self::boot(ctx, entry, None, turn);
         }
 
         if ctx.positionals.is_empty() {
@@ -3075,7 +3105,7 @@ impl RunCommand {
             // Output's cached stdio flag (set at startup via libuv's handle
             // probe), which is the same check `bun update --interactive` uses.
             if Output::is_stdin_tty() {
-                return Self::exec_node_repl(ctx);
+                return Self::exec_node_repl(ctx, turn);
             }
             Self::exec_as_if_node_missing_script();
         }
@@ -3107,7 +3137,7 @@ impl RunCommand {
         // `Global::configure_allocator` and (b) uses the
         // `Output.err(err, "Failed to run script \"...\"")` form.
         let basename: Box<[u8]> = paths::basename(&normalized).to_vec().into_boxed_slice();
-        if let Err(err) = Self::boot(ctx, normalized, None) {
+        if let Err(err) = Self::boot(ctx, normalized, None, turn) {
             Self::exec_as_if_node_boot_failed(ctx, &basename, err);
         }
         Ok(())
@@ -3851,6 +3881,7 @@ impl BunXFastPath {
         path_len: usize,
         env: &mut DotEnv::Loader,
         passthrough: &[Box<[u8]>],
+        turn: LoopTurn<'_>,
     ) {
         use bun_install::windows_shim::bun_shim_impl;
 
@@ -3899,6 +3930,7 @@ impl BunXFastPath {
             direct_launch_with_bun_js: Self::direct_launch_callback,
             cli_context: ctx,
             environment: &env_block,
+            turn,
         };
 
         bun_core::scoped_log!(
@@ -3912,9 +3944,13 @@ impl BunXFastPath {
         bun_core::scoped_log!(BUNX_FAST_PATH_LOG, "did not start via shim");
     }
 
-    fn direct_launch_callback(wpath: &mut [u16], ctx: bun_options_types::context::Context<'_>) {
+    fn direct_launch_callback(
+        wpath: &mut [u16],
+        ctx: bun_options_types::context::Context<'_>,
+        turn: LoopTurn<'_>,
+    ) {
         let utf8 = strings::to_utf8_alloc(wpath).into_boxed_slice();
-        if let Err(err) = RunCommand::boot(ctx, utf8, None) {
+        if let Err(err) = RunCommand::boot(ctx, utf8, None, turn) {
             // SAFETY: `ctx.log` was set in `create_context_data`.
             let _ = unsafe { &mut *ctx.log }.print(Output::error_writer());
             Output::err(

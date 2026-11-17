@@ -20,11 +20,12 @@
 
 use super::*;
 
+use bun_core::JsTurn;
 use core::cell::RefCell;
 use std::collections::HashMap;
 
-/// How a teardown closes a handle that has an owner: `close(owner)`.
-pub type CloseViaOwner = unsafe fn(owner: *mut c_void);
+/// How a teardown closes a handle that has an owner: `close(owner, turn)`.
+pub type CloseViaOwner = unsafe fn(owner: *mut c_void, turn: JsTurn<'_>);
 
 struct Entry {
     kind: Kind,
@@ -162,7 +163,7 @@ fn take_next() -> Option<Next> {
 /// Thread teardown's stop phase (VM alive, script forbidden): close every open pipe /
 /// tty / process handle and every reader mid file-read — through its owner when
 /// it has one, directly when nothing adopted it.
-pub fn stop_all_for_vm_teardown() {
+pub fn stop_all_for_vm_teardown(turn: JsTurn<'_>) {
     while let Some(next) = take_next() {
         let (handle, e) = match next {
             Next::File(
@@ -182,7 +183,7 @@ pub fn stop_all_for_vm_teardown() {
                 let close = close_via_owner.expect("file listed without its reader");
                 // SAFETY: the reader unlists the file before handing it off or
                 // dropping it, and re-records itself whenever it moves.
-                unsafe { close(owner) };
+                unsafe { close(owner, turn) };
                 continue;
             }
             Next::Handle(handle, e) => (handle, e),
@@ -200,7 +201,7 @@ pub fn stop_all_for_vm_teardown() {
         match e.close_via_owner {
             // SAFETY: the owner recorded itself for this live handle and clears
             // or replaces the slot before it goes away (set_owner contract).
-            Some(close) => unsafe { close(e.owner) },
+            Some(close) => unsafe { close(e.owner, turn) },
             // SAFETY: listed ⇒ initialised on this loop and not closing. Its holder frees it.
             None => unsafe { uv_close(handle, None) },
         }

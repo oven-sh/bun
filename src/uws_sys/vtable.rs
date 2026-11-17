@@ -27,14 +27,39 @@
 
 use core::ffi::{c_int, c_void};
 
+use bun_core::JsTurn;
+
 use crate::socket_group::VTable;
 use crate::thunk;
 use crate::{ConnectingSocket, us_bun_verify_error_t, us_socket_t};
 
+/// What the handlers of a socket are given.
+pub trait SocketTurn<'a> {
+    /// # Safety
+    /// That of the token.
+    unsafe fn assume<T>(scope: &'a T) -> Self;
+}
+
+impl<'a> SocketTurn<'a> for JsTurn<'a> {
+    #[inline(always)]
+    unsafe fn assume<T>(scope: &'a T) -> Self {
+        // SAFETY: the caller's.
+        unsafe { JsTurn::assume(scope) }
+    }
+}
+
+impl<'a> SocketTurn<'a> for () {
+    #[inline(always)]
+    unsafe fn assume<T>(_scope: &'a T) {}
+}
+
 // Handlers implement this trait and set the `HAS_ON_*` associated consts for
 // each method they actually provide. Default impls are `unreachable!()` and
 // the corresponding vtable slot is left `None` when the const is `false`.
-pub trait Handler: 'static {
+/// # Safety
+/// `Turn` holds wherever uSockets dispatches to a socket of this handler's kind.
+pub unsafe trait Handler: 'static {
+    type Turn<'a>: SocketTurn<'a>;
     /// What `us_socket_ext` holds. Ignored when `HAS_EXT == false`.
     type Ext;
     /// When false, handlers take `(s, …)` instead
@@ -53,16 +78,22 @@ pub trait Handler: 'static {
     const HAS_ON_CONNECTING_ERROR: bool = false;
     const HAS_ON_HANDSHAKE: bool = false;
 
-    fn on_open(_ext: &mut Self::Ext, _s: *mut us_socket_t, _is_client: bool, _ip: &[u8]) {
+    fn on_open(
+        _ext: &mut Self::Ext,
+        _s: *mut us_socket_t,
+        _is_client: bool,
+        _ip: &[u8],
+        _turn: Self::Turn<'_>,
+    ) {
         unreachable!()
     }
-    fn on_data(_ext: &mut Self::Ext, _s: *mut us_socket_t, _data: &[u8]) {
+    fn on_data(_ext: &mut Self::Ext, _s: *mut us_socket_t, _data: &[u8], _turn: Self::Turn<'_>) {
         unreachable!()
     }
     fn on_fd(_ext: &mut Self::Ext, _s: *mut us_socket_t, _fd: c_int) {
         unreachable!()
     }
-    fn on_writable(_ext: &mut Self::Ext, _s: *mut us_socket_t) {
+    fn on_writable(_ext: &mut Self::Ext, _s: *mut us_socket_t, _turn: Self::Turn<'_>) {
         unreachable!()
     }
     fn on_close(
@@ -70,22 +101,28 @@ pub trait Handler: 'static {
         _s: *mut us_socket_t,
         _code: i32,
         _reason: Option<*mut c_void>,
+        _turn: Self::Turn<'_>,
     ) {
         unreachable!()
     }
-    fn on_timeout(_ext: &mut Self::Ext, _s: *mut us_socket_t) {
+    fn on_timeout(_ext: &mut Self::Ext, _s: *mut us_socket_t, _turn: Self::Turn<'_>) {
         unreachable!()
     }
-    fn on_long_timeout(_ext: &mut Self::Ext, _s: *mut us_socket_t) {
+    fn on_long_timeout(_ext: &mut Self::Ext, _s: *mut us_socket_t, _turn: Self::Turn<'_>) {
         unreachable!()
     }
-    fn on_end(_ext: &mut Self::Ext, _s: *mut us_socket_t) {
+    fn on_end(_ext: &mut Self::Ext, _s: *mut us_socket_t, _turn: Self::Turn<'_>) {
         unreachable!()
     }
-    fn on_connect_error(_ext: &mut Self::Ext, _s: *mut us_socket_t, _code: i32) {
+    fn on_connect_error(
+        _ext: &mut Self::Ext,
+        _s: *mut us_socket_t,
+        _code: i32,
+        _turn: Self::Turn<'_>,
+    ) {
         unreachable!()
     }
-    fn on_connecting_error(_cs: *mut ConnectingSocket, _code: i32) {
+    fn on_connecting_error(_cs: *mut ConnectingSocket, _code: i32, _turn: Self::Turn<'_>) {
         unreachable!()
     }
     fn on_handshake(
@@ -93,6 +130,7 @@ pub trait Handler: 'static {
         _s: *mut us_socket_t,
         _ok: bool,
         _err: us_bun_verify_error_t,
+        _turn: Self::Turn<'_>,
     ) {
         unreachable!()
     }
@@ -100,34 +138,44 @@ pub trait Handler: 'static {
     // When `HAS_EXT == false`, handlers take `(s, …)`. Rust can't change a
     // trait method's arity by a const, so the no-ext variants are separate
     // methods. Only called when `HAS_EXT == false`.
-    fn on_open_no_ext(_s: *mut us_socket_t, _is_client: bool, _ip: &[u8]) {
+    fn on_open_no_ext(_s: *mut us_socket_t, _is_client: bool, _ip: &[u8], _turn: Self::Turn<'_>) {
         unreachable!()
     }
-    fn on_data_no_ext(_s: *mut us_socket_t, _data: &[u8]) {
+    fn on_data_no_ext(_s: *mut us_socket_t, _data: &[u8], _turn: Self::Turn<'_>) {
         unreachable!()
     }
     fn on_fd_no_ext(_s: *mut us_socket_t, _fd: c_int) {
         unreachable!()
     }
-    fn on_writable_no_ext(_s: *mut us_socket_t) {
+    fn on_writable_no_ext(_s: *mut us_socket_t, _turn: Self::Turn<'_>) {
         unreachable!()
     }
-    fn on_close_no_ext(_s: *mut us_socket_t, _code: i32, _reason: Option<*mut c_void>) {
+    fn on_close_no_ext(
+        _s: *mut us_socket_t,
+        _code: i32,
+        _reason: Option<*mut c_void>,
+        _turn: Self::Turn<'_>,
+    ) {
         unreachable!()
     }
-    fn on_timeout_no_ext(_s: *mut us_socket_t) {
+    fn on_timeout_no_ext(_s: *mut us_socket_t, _turn: Self::Turn<'_>) {
         unreachable!()
     }
     fn on_long_timeout_no_ext(_s: *mut us_socket_t) {
         unreachable!()
     }
-    fn on_end_no_ext(_s: *mut us_socket_t) {
+    fn on_end_no_ext(_s: *mut us_socket_t, _turn: Self::Turn<'_>) {
         unreachable!()
     }
-    fn on_connect_error_no_ext(_s: *mut us_socket_t, _code: i32) {
+    fn on_connect_error_no_ext(_s: *mut us_socket_t, _code: i32, _turn: Self::Turn<'_>) {
         unreachable!()
     }
-    fn on_handshake_no_ext(_s: *mut us_socket_t, _ok: bool, _err: us_bun_verify_error_t) {
+    fn on_handshake_no_ext(
+        _s: *mut us_socket_t,
+        _ok: bool,
+        _err: us_bun_verify_error_t,
+        _turn: Self::Turn<'_>,
+    ) {
         unreachable!()
     }
 }
@@ -200,6 +248,19 @@ impl<H: Handler> Make<H> {
     };
 }
 
+/// Binds `$turn` in the body of each trampoline.
+macro_rules! with_turn {
+    ($turn:ident => $(
+        extern "C" fn $name:ident($s:ident: $S:ty $(, $a:ident: $t:ty)* $(,)?) $(-> $ret:ty)? $body:block
+    )*) => {$(
+        extern "C" fn $name($s: $S $(, $a: $t)*) $(-> $ret)? {
+            // SAFETY: `H` vouches for it.
+            let $turn = unsafe { SocketTurn::assume(&$s) };
+            $body
+        }
+    )*};
+}
+
 /// The trampolines themselves, exposed so `dispatch.rs` can direct-call them
 /// per-kind without going through the vtable pointer at all.
 struct Trampolines<H>(core::marker::PhantomData<H>);
@@ -223,24 +284,29 @@ impl<H: Handler> Trampolines<H> {
         ip: *mut u8,
         ip_len: c_int,
     ) -> *mut us_socket_t {
-        // SAFETY: usockets guarantees `ip[0..ip_len]` is valid when non-null.
-        let ip_slice: &[u8] =
-            unsafe { thunk::c_slice(ip, usize::try_from(ip_len).expect("int cast")) };
+        // SAFETY: usockets guarantees `ip[0..ip_len]` is valid when non-null. `H` vouches for the turn.
+        let (ip_slice, turn) = unsafe {
+            let ip_slice = thunk::c_slice(ip, usize::try_from(ip_len).expect("int cast"));
+            (ip_slice, SocketTurn::assume(&s))
+        };
         if H::HAS_EXT {
-            H::on_open(Self::ext(s), s, is_client != 0, ip_slice);
+            H::on_open(Self::ext(s), s, is_client != 0, ip_slice, turn);
         } else {
-            H::on_open_no_ext(s, is_client != 0, ip_slice);
+            H::on_open_no_ext(s, is_client != 0, ip_slice, turn);
         }
         s
     }
 
     extern "C" fn on_data(s: *mut us_socket_t, data: *mut u8, len: c_int) -> *mut us_socket_t {
-        // SAFETY: usockets guarantees `data[0..len]` is valid.
-        let data_slice = unsafe { thunk::c_slice(data, usize::try_from(len).expect("int cast")) };
+        // SAFETY: usockets guarantees `data[0..len]` is valid. `H` vouches for the turn.
+        let (data_slice, turn) = unsafe {
+            let data_slice = thunk::c_slice(data, usize::try_from(len).expect("int cast"));
+            (data_slice, SocketTurn::assume(&s))
+        };
         if H::HAS_EXT {
-            H::on_data(Self::ext(s), s, data_slice);
+            H::on_data(Self::ext(s), s, data_slice, turn);
         } else {
-            H::on_data_no_ext(s, data_slice);
+            H::on_data_no_ext(s, data_slice, turn);
         }
         s
     }
@@ -254,83 +320,85 @@ impl<H: Handler> Trampolines<H> {
         s
     }
 
-    extern "C" fn on_writable(s: *mut us_socket_t) -> *mut us_socket_t {
-        if H::HAS_EXT {
-            H::on_writable(Self::ext(s), s);
-        } else {
-            H::on_writable_no_ext(s);
+    with_turn! { turn =>
+        extern "C" fn on_writable(s: *mut us_socket_t) -> *mut us_socket_t {
+            if H::HAS_EXT {
+                H::on_writable(Self::ext(s), s, turn);
+            } else {
+                H::on_writable_no_ext(s, turn);
+            }
+            s
         }
-        s
-    }
 
-    extern "C" fn on_close(
-        s: *mut us_socket_t,
-        code: c_int,
-        reason: *mut c_void,
-    ) -> *mut us_socket_t {
-        let reason = if reason.is_null() { None } else { Some(reason) };
-        if H::HAS_EXT {
-            H::on_close(Self::ext(s), s, code, reason);
-        } else {
-            H::on_close_no_ext(s, code, reason);
+        extern "C" fn on_close(
+            s: *mut us_socket_t,
+            code: c_int,
+            reason: *mut c_void,
+        ) -> *mut us_socket_t {
+            let reason = if reason.is_null() { None } else { Some(reason) };
+            if H::HAS_EXT {
+                H::on_close(Self::ext(s), s, code, reason, turn);
+            } else {
+                H::on_close_no_ext(s, code, reason, turn);
+            }
+            s
         }
-        s
-    }
 
-    extern "C" fn on_timeout(s: *mut us_socket_t) -> *mut us_socket_t {
-        if H::HAS_EXT {
-            H::on_timeout(Self::ext(s), s);
-        } else {
-            H::on_timeout_no_ext(s);
+        extern "C" fn on_timeout(s: *mut us_socket_t) -> *mut us_socket_t {
+            if H::HAS_EXT {
+                H::on_timeout(Self::ext(s), s, turn);
+            } else {
+                H::on_timeout_no_ext(s, turn);
+            }
+            s
         }
-        s
-    }
 
-    extern "C" fn on_long_timeout(s: *mut us_socket_t) -> *mut us_socket_t {
-        if H::HAS_EXT {
-            H::on_long_timeout(Self::ext(s), s);
-        } else {
-            H::on_long_timeout_no_ext(s);
+        extern "C" fn on_long_timeout(s: *mut us_socket_t) -> *mut us_socket_t {
+            if H::HAS_EXT {
+                H::on_long_timeout(Self::ext(s), s, turn);
+            } else {
+                H::on_long_timeout_no_ext(s);
+            }
+            s
         }
-        s
-    }
 
-    extern "C" fn on_end(s: *mut us_socket_t) -> *mut us_socket_t {
-        if H::HAS_EXT {
-            H::on_end(Self::ext(s), s);
-        } else {
-            H::on_end_no_ext(s);
+        extern "C" fn on_end(s: *mut us_socket_t) -> *mut us_socket_t {
+            if H::HAS_EXT {
+                H::on_end(Self::ext(s), s, turn);
+            } else {
+                H::on_end_no_ext(s, turn);
+            }
+            s
         }
-        s
-    }
 
-    extern "C" fn on_connect_error(s: *mut us_socket_t, code: c_int) -> *mut us_socket_t {
-        if H::HAS_EXT {
-            H::on_connect_error(Self::ext(s), s, code);
-        } else {
-            H::on_connect_error_no_ext(s, code);
+        extern "C" fn on_connect_error(s: *mut us_socket_t, code: c_int) -> *mut us_socket_t {
+            if H::HAS_EXT {
+                H::on_connect_error(Self::ext(s), s, code, turn);
+            } else {
+                H::on_connect_error_no_ext(s, code, turn);
+            }
+            s
         }
-        s
-    }
 
-    extern "C" fn on_connecting_error(
-        cs: *mut ConnectingSocket,
-        code: c_int,
-    ) -> *mut ConnectingSocket {
-        H::on_connecting_error(cs, code);
-        cs
-    }
+        extern "C" fn on_connecting_error(
+            cs: *mut ConnectingSocket,
+            code: c_int,
+        ) -> *mut ConnectingSocket {
+            H::on_connecting_error(cs, code, turn);
+            cs
+        }
 
-    extern "C" fn on_handshake(
-        s: *mut us_socket_t,
-        ok: c_int,
-        err: us_bun_verify_error_t,
-        _user: *mut c_void,
-    ) {
-        if H::HAS_EXT {
-            H::on_handshake(Self::ext(s), s, ok != 0, err);
-        } else {
-            H::on_handshake_no_ext(s, ok != 0, err);
+        extern "C" fn on_handshake(
+            s: *mut us_socket_t,
+            ok: c_int,
+            err: us_bun_verify_error_t,
+            _user: *mut c_void,
+        ) {
+            if H::HAS_EXT {
+                H::on_handshake(Self::ext(s), s, ok != 0, err, turn);
+            } else {
+                H::on_handshake_no_ext(s, ok != 0, err, turn);
+            }
         }
     }
 }

@@ -493,6 +493,7 @@ impl BlobExt for Blob {
                     len,
                     callback,
                     s3.request_payer,
+                    cx.turn(),
                 )?;
             } else {
                 crate::webcore::__s3_client::download(
@@ -501,6 +502,7 @@ impl BlobExt for Blob {
                     s3.path(),
                     callback,
                     s3.request_payer,
+                    cx.turn(),
                 )?;
             }
             return Ok(());
@@ -1251,7 +1253,7 @@ impl BlobExt for Blob {
                     ),
                 );
                 let owns_fd = !matches!(pathlike, PathOrFileDescriptor::Fd(_));
-                let started = sink.start_writer(owns_fd, is_stdout_or_stderr);
+                let started = sink.start_writer(owns_fd, is_stdout_or_stderr, cx.turn().loop_);
                 if let bun_sys::Result::Err(err) = started {
                     return Ok(
                         JSPromise::rejected_promise(cx.global(), err.to_js(cx.global())).to_js(),
@@ -1289,7 +1291,9 @@ impl BlobExt for Blob {
                     ..Default::default()
                 });
 
-                if let bun_sys::Result::Err(err) = sink.start(&stream_start, cx.context()) {
+                if let bun_sys::Result::Err(err) =
+                    sink.start(&stream_start, cx.context(), cx.turn().loop_)
+                {
                     return Ok(
                         JSPromise::rejected_promise(cx.global(), err.to_js(cx.global())).to_js(),
                     );
@@ -1429,7 +1433,8 @@ impl BlobExt for Blob {
             );
             // `to_js` gives init's ref to the wrapper; an early return drops it.
             let owns_fd = !matches!(pathlike, PathOrFileDescriptor::Fd(_));
-            let start_result = sink.start_writer(owns_fd, is_stdout_or_stderr);
+            let start_result =
+                sink.start_writer(owns_fd, is_stdout_or_stderr, global_this.turn().loop_);
             if let bun_sys::Result::Err(err) = start_result {
                 return Err(global_this.throw_value(err.to_js(global_this)));
             }
@@ -1477,7 +1482,9 @@ impl BlobExt for Blob {
                 opts.input_path = input_path;
             }
 
-            if let bun_sys::Result::Err(err) = sink.start(&stream_start, context) {
+            if let bun_sys::Result::Err(err) =
+                sink.start(&stream_start, context, global_this.turn().loop_)
+            {
                 return Err(global_this.throw_value(err.to_js(global_this)));
             }
 
@@ -2994,7 +3001,8 @@ impl<'a> FormDataContext<'a> {
                                 max_size: Some(blob.size.get()),
                                 ..Default::default()
                             };
-                            let res = node_fs.read_file(&rf_args, crate::node::fs::Flavor::Sync);
+                            let flavor = crate::node::fs::JsFlavor::Sync(global_this.turn());
+                            let res = node_fs.read_file(&rf_args, flavor);
                             match res {
                                 Err(err) => {
                                     self.failed = true;
@@ -3543,6 +3551,7 @@ fn write_file_with_empty_source_to_destination(
                         promise.reject(&global, Ok(err_js))
                     }
                 }),
+                global.turn(),
             )?;
             return Ok(promise_value);
         }
@@ -3591,7 +3600,7 @@ pub(crate) fn write_file_with_source_destination(
             let mut promise = jsc::JSPromiseStrong::default();
             promise.set(cx.global(), promise_value);
             write_file::WriteFileWindows::start(
-                cx.global().bun_vm().event_loop(),
+                jsc::event_loop::EventLoopRef::current(cx.global().bun_vm()),
                 cx.context(),
                 destination_blob.borrowed_view(),
                 source_blob.borrowed_view(),
@@ -3625,11 +3634,12 @@ pub(crate) fn write_file_with_source_destination(
             return Ok(copy_file::CopyFileWindows::init(
                 destination_store,
                 source_store,
-                cx.global().bun_vm().event_loop(),
+                jsc::event_loop::EventLoopRef::current(cx.global().bun_vm()),
                 cx.context(),
                 options.mkdirp_if_not_exists.unwrap_or(true),
                 destination_blob.size.get(),
                 options.mode,
+                cx.turn(),
             ));
         }
         #[cfg(not(windows))]
@@ -3757,6 +3767,7 @@ pub(crate) fn write_file_with_source_destination(
                                 promise.reject(&global, Ok(err_js))
                             }
                         }),
+                        global.turn(),
                     )?;
                     return Ok(promise_value);
                 }
@@ -4022,7 +4033,9 @@ pub(crate) fn write_file_internal(
             match tag {
                 BodyTag::Use => {
                     // SAFETY: exclusive borrow scoped to the call; `use_()` runs no JS.
-                    Ok(ControlFlow::Continue(unsafe { (*body_value).use_() }))
+                    Ok(ControlFlow::Continue(unsafe {
+                        (*body_value).use_(cx.turn())
+                    }))
                 }
                 BodyTag::Error => {
                     let err_js = {
@@ -4034,7 +4047,7 @@ pub(crate) fn write_file_internal(
                     };
                     // SAFETY: exclusive borrow scoped to the call; no other
                     // borrow of the body value is live.
-                    let _ = unsafe { (*body_value).use_() };
+                    let _ = unsafe { (*body_value).use_(cx.turn()) };
                     Ok(ControlFlow::Break(
                         JSPromise::rejected_promise(cx.global(), err_js).to_js(),
                     ))
@@ -4131,13 +4144,17 @@ pub(crate) fn write_file_internal(
                                 let err_js = err.to_js(cx.global());
                                 // SAFETY: `err` is not used after `to_js`, so this is the only
                                 // live borrow of the value.
-                                let _ = unsafe { (*body_value).use_() };
+                                let _ = unsafe { (*body_value).use_(cx.turn()) };
                                 return Ok(ControlFlow::Break(
                                     JSPromise::rejected_promise(cx.global(), err_js).to_js(),
                                 ));
                             }
-                            // SAFETY: the match borrow ended with the pattern; no other borrow is live.
-                            _ => return Ok(ControlFlow::Continue(unsafe { (*body_value).use_() })),
+                            _ => {
+                                // SAFETY: the match borrow ended with the pattern; no other borrow is live.
+                                return Ok(ControlFlow::Continue(unsafe {
+                                    (*body_value).use_(cx.turn())
+                                }));
+                            }
                         }
                     }
                     let task = Box::new(WriteFileWaitFromLockedValueTask {
@@ -4162,7 +4179,7 @@ pub(crate) fn write_file_internal(
                     // Signalled last (see `PendingValue::on_start_buffering`):
                     // `then_wrap` may run and `*body_value` be replaced inside.
                     if let Some((on_start_buffering, producer_task)) = producer_hook {
-                        on_start_buffering(producer_task);
+                        on_start_buffering(producer_task, cx.turn());
                     }
                     Ok(ControlFlow::Break(promise))
                 }
@@ -4795,6 +4812,7 @@ impl S3BlobDownloadTask {
                 len,
                 callback,
                 s3_store.request_payer,
+                cx.turn(),
             )?;
         } else if blob.size.get() == MAX_SIZE {
             crate::webcore::__s3_client::download(
@@ -4803,6 +4821,7 @@ impl S3BlobDownloadTask {
                 path,
                 callback,
                 s3_store.request_payer,
+                cx.turn(),
             )?;
         } else {
             let len: usize = usize::try_from(blob.size.get()).expect("int cast");
@@ -4815,6 +4834,7 @@ impl S3BlobDownloadTask {
                 Some(len),
                 callback,
                 s3_store.request_payer,
+                cx.turn(),
             )?;
         }
         Ok(promise)

@@ -71,7 +71,7 @@ function socket<SSL extends boolean>(ssl: SSL) {
       localPort: { getter: b.u16.optional, cache: true },
       pause: { capability: "js" },
       readyState: { getter: b.i32 },
-      ref: { rustName: "js_ref" },
+      ref: { rustName: "js_ref", passVm: true },
       reload: { ...js, args: { options: b.any } },
       remoteAddress: cached,
       remoteFamily: { getter: textIfOpen, cache: true, capability: "js" },

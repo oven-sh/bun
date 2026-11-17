@@ -1,3 +1,4 @@
+use bun_core::LoopTurn;
 use bun_ptr::AliasableBox;
 
 use crate::shell::ExitCode;
@@ -66,11 +67,11 @@ impl Subshell {
         Ok(Self::init(interp, env, node, parent, io))
     }
 
-    pub(crate) fn start(_interp: &Interpreter, this: NodeId) -> Yield {
+    pub(crate) fn start(_interp: &Interpreter, this: NodeId, _turn: LoopTurn<'_>) -> Yield {
         Yield::Next(this)
     }
 
-    pub(crate) fn next(interp: &Interpreter, this: NodeId) -> Yield {
+    pub(crate) fn next(interp: &Interpreter, this: NodeId, turn: LoopTurn<'_>) -> Yield {
         let (state_tag, parent) = {
             let me = interp.as_subshell(this);
             (<&'static str>::from(&me.state), me.base.parent)
@@ -91,12 +92,12 @@ impl Subshell {
                 // subshells with redirections ("Subshells with redirections
                 // are currently not supported", shell_parser/parse.rs).
                 let script = Script::init(interp, Env::inherited(shell), &node.script, this, io);
-                Script::start(interp, script)
+                Script::start(interp, script, turn)
             }
             SubshellState::Exec => Yield::suspended(),
             SubshellState::Done => {
                 let exit = interp.as_subshell(this).exit_code;
-                interp.child_done(parent, this, exit)
+                interp.child_done(parent, this, exit, turn)
             }
         }
     }
@@ -106,6 +107,7 @@ impl Subshell {
         this: NodeId,
         child: NodeId,
         exit_code: ExitCode,
+        _turn: LoopTurn<'_>,
     ) -> Yield {
         interp.deinit_node(child);
         {

@@ -3,6 +3,7 @@ use core::ffi::{c_int, c_void};
 use core::ptr::null_mut;
 use std::collections::VecDeque;
 
+use bun_core::JsTurn;
 use bun_jsc::bindgen::{JsLocal, JsPayload as _, JsScope, JsWrapper};
 use bun_jsc::{
     ArrayBuffer, JSGlobalObject, JSType, JSValue, JsCell, JsRef, JsResult, StringJsc, Strong,
@@ -570,12 +571,12 @@ impl QuicStream {
         }
     }
 
-    fn kick_write(&self) {
+    fn kick_write(&self, turn: JsTurn<'_>) {
         if let Some(s) = self.ls() {
             s.want_write(true);
         }
         if let Some(session) = self.session_ref() {
-            session.schedule_process();
+            session.schedule_process(turn);
         }
     }
 
@@ -725,7 +726,7 @@ impl QuicStream {
             o.end = PendingEnd::Fin;
         });
         self.with_state(|s| s.has_outbound = 1);
-        self.kick_write();
+        self.kick_write(global.turn());
         Ok(())
     }
 
@@ -768,11 +769,11 @@ impl QuicStream {
         if let Some(session) = self.session_ref() {
             session.note_stream_write();
         }
-        self.kick_write();
+        self.kick_write(global.turn());
         Ok(JSValue::js_number(queued as f64))
     }
 
-    pub(crate) fn end_write(&self, _: &mut JsScope<'_>) {
+    pub(crate) fn end_write(&self, cx: &mut JsScope<'_>) {
         if self.destroyed.get() {
             return;
         }
@@ -788,7 +789,7 @@ impl QuicStream {
         if let Some(session) = self.session_ref() {
             session.note_stream_write();
         }
-        self.kick_write();
+        self.kick_write(cx.turn());
     }
 
     pub(crate) fn destroy(&self, cx: &mut JsScope<'_>, error: JsLocal<'_>) -> JsResult<()> {
@@ -837,12 +838,12 @@ impl QuicStream {
             // SAFETY: the session outlives its streams -- it stays registered
             // on the endpoint while any stream exists, so it cannot have been
             // finalized between teardown and here.
-            unsafe { (*session).schedule_process() };
+            unsafe { (*session).schedule_process(global.turn()) };
         }
         Ok(())
     }
 
-    pub(crate) fn reset_stream(&self, _: &mut JsScope<'_>, code: JsLocal<'_>) {
+    pub(crate) fn reset_stream(&self, cx: &mut JsScope<'_>, code: JsLocal<'_>) {
         if self.destroyed.get() {
             return;
         }
@@ -859,10 +860,10 @@ impl QuicStream {
         if let Some(s) = self.ls() {
             s.reset(code);
         }
-        self.kick_write();
+        self.kick_write(cx.turn());
     }
 
-    pub(crate) fn stop_sending(&self, _: &mut JsScope<'_>, code: JsLocal<'_>) {
+    pub(crate) fn stop_sending(&self, cx: &mut JsScope<'_>, code: JsLocal<'_>) {
         if self.destroyed.get() {
             return;
         }
@@ -878,13 +879,13 @@ impl QuicStream {
                 s.reset_code = code;
             }
         });
-        self.kick_write();
+        self.kick_write(cx.turn());
     }
 
     /// Node parity for streams created and abandoned in one turn.
     pub(crate) fn abort_for_destroy(
         &self,
-        _: &mut JsScope<'_>,
+        cx: &mut JsScope<'_>,
         stop_sending_code: JsLocal<'_>,
         reset_code: JsLocal<'_>,
     ) {
@@ -927,10 +928,10 @@ impl QuicStream {
                 }
             } else if let Some(session) = self.session_ref() {
                 session.defer_stream_abort(s, reset, stop);
-                session.schedule_process();
+                session.schedule_process(cx.turn());
             }
         }
-        self.kick_write();
+        self.kick_write(cx.turn());
     }
 
     pub(crate) fn set_priority(&self, cx: &mut JsScope<'_>, priority: JsLocal<'_>) -> JsResult<()> {
@@ -997,10 +998,10 @@ impl QuicStream {
                 });
                 s.shutdown(1);
                 if let Some(session) = self.session_ref() {
-                    session.schedule_process();
+                    session.schedule_process(global.turn());
                 }
             } else {
-                self.kick_write();
+                self.kick_write(global.turn());
             }
             Ok(JSValue::js_boolean(true))
         } else {

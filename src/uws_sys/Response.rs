@@ -16,7 +16,7 @@ use core::marker::{PhantomData, PhantomPinned};
 use crate::thunk;
 use crate::thunk::OpaqueHandle;
 use crate::us_socket_t;
-use bun_core::{BoundedArray, Fd};
+use bun_core::{BoundedArray, Fd, JsTurn};
 use bun_ptr::ThisPtr;
 
 // ─── Forward-declared opaques (cycle-break: were `bun_uws::*`, tier > 0) ───
@@ -87,6 +87,8 @@ pub struct Response<const SSL: bool> {
     _p: core::cell::UnsafeCell<[u8; 0]>,
     _m: PhantomData<(*mut u8, PhantomPinned)>,
 }
+// SAFETY: the body that `opaque_ffi!` emits.
+unsafe impl<const SSL: bool> bun_opaque::Opaque for Response<SSL> {}
 
 impl<const SSL: bool> Response<SSL> {
     #[inline(always)]
@@ -431,7 +433,7 @@ impl<const SSL: bool> Response<SSL> {
     /// handler is baked in with no runtime storage.
     pub(crate) fn on_writable<U, H>(&mut self, _handler: H, user_data: *mut U)
     where
-        H: Fn(*mut U, u64, &mut Response<SSL>) -> bool + Copy + 'static,
+        H: Fn(*mut U, u64, &mut Response<SSL>, JsTurn<'_>) -> bool + Copy + 'static,
     {
         // Safe fn item: nested local thunk, only coerced to the C-ABI
         // fn-pointer type passed to C; body wraps its raw-ptr ops explicitly.
@@ -441,19 +443,20 @@ impl<const SSL: bool> Response<SSL> {
             data: *mut c_void,
         ) -> bool
         where
-            H: Fn(*mut U, u64, &mut Response<SSL>) -> bool + Copy + 'static,
+            H: Fn(*mut U, u64, &mut Response<SSL>, JsTurn<'_>) -> bool + Copy + 'static,
         {
             // null user-data is always a no-op.
             if data.is_null() {
                 return true;
             }
             // SAFETY: uWS callback contract — `this` is live for the call, `H`
-            // is a ZST handler (asserted in `thunk::zst`).
+            // is the type of `_handler`.
             unsafe {
                 thunk::zst::<H>()(
                     data.cast::<U>(),
                     amount,
                     thunk::handle_mut(Response::<SSL>::cast_res(this)),
+                    thunk::app_turn(&this),
                 )
             }
         }
@@ -478,24 +481,25 @@ impl<const SSL: bool> Response<SSL> {
 
     pub(crate) fn on_aborted<U, H>(&mut self, _handler: H, optional_data: *mut U)
     where
-        H: Fn(*mut U, &mut Response<SSL>) + Copy + 'static,
+        H: Fn(*mut U, &mut Response<SSL>, JsTurn<'_>) + Copy + 'static,
     {
         // Safe fn item: nested local thunk, only coerced to the C-ABI
         // fn-pointer type passed to C; body wraps its raw-ptr ops explicitly.
         extern "C" fn handle<U, H, const SSL: bool>(this: *mut c::uws_res, user_data: *mut c_void)
         where
-            H: Fn(*mut U, &mut Response<SSL>) + Copy + 'static,
+            H: Fn(*mut U, &mut Response<SSL>, JsTurn<'_>) + Copy + 'static,
         {
             // null user-data is always a no-op.
             if user_data.is_null() {
                 return;
             }
             // SAFETY: uWS callback contract — `this` is live for the call, `H`
-            // is a ZST handler (asserted in `thunk::zst`).
+            // is the type of `_handler`.
             unsafe {
                 thunk::zst::<H>()(
                     user_data.cast::<U>(),
                     thunk::handle_mut(Response::<SSL>::cast_res(this)),
+                    thunk::app_turn(&this),
                 )
             }
         }
@@ -513,24 +517,25 @@ impl<const SSL: bool> Response<SSL> {
 
     pub fn on_timeout<U, H>(&mut self, _handler: H, optional_data: *mut U)
     where
-        H: Fn(*mut U, &mut Response<SSL>) + Copy + 'static,
+        H: Fn(*mut U, &mut Response<SSL>, JsTurn<'_>) + Copy + 'static,
     {
         // Safe fn item: nested local thunk, only coerced to the C-ABI
         // fn-pointer type passed to C; body wraps its raw-ptr ops explicitly.
         extern "C" fn handle<U, H, const SSL: bool>(this: *mut c::uws_res, user_data: *mut c_void)
         where
-            H: Fn(*mut U, &mut Response<SSL>) + Copy + 'static,
+            H: Fn(*mut U, &mut Response<SSL>, JsTurn<'_>) + Copy + 'static,
         {
             // null user-data is always a no-op.
             if user_data.is_null() {
                 return;
             }
             // SAFETY: uWS callback contract — `this` is live for the call, `H`
-            // is a ZST handler (asserted in `thunk::zst`).
+            // is the type of `_handler`.
             unsafe {
                 thunk::zst::<H>()(
                     user_data.cast::<U>(),
                     thunk::handle_mut(Response::<SSL>::cast_res(this)),
+                    thunk::app_turn(&this),
                 )
             }
         }
@@ -552,7 +557,7 @@ impl<const SSL: bool> Response<SSL> {
 
     pub fn on_data<U, H>(&mut self, _handler: H, optional_data: *mut U)
     where
-        H: Fn(*mut U, &mut Response<SSL>, &[u8], bool) + Copy + 'static,
+        H: Fn(*mut U, &mut Response<SSL>, &[u8], bool, JsTurn<'_>) + Copy + 'static,
     {
         // Safe fn item: nested local thunk, only coerced to the C-ABI
         // fn-pointer type passed to C; body wraps its raw-ptr ops explicitly.
@@ -563,20 +568,21 @@ impl<const SSL: bool> Response<SSL> {
             last: bool,
             user_data: *mut c_void,
         ) where
-            H: Fn(*mut U, &mut Response<SSL>, &[u8], bool) + Copy + 'static,
+            H: Fn(*mut U, &mut Response<SSL>, &[u8], bool, JsTurn<'_>) + Copy + 'static,
         {
             // null user-data is always a no-op.
             if user_data.is_null() {
                 return;
             }
             // SAFETY: uWS callback contract — `this` live, `chunk_ptr[..len]`
-            // valid for the call, `H` is a ZST handler (asserted in `thunk::zst`).
+            // valid for the call, `H` is the type of `_handler`.
             unsafe {
                 thunk::zst::<H>()(
                     user_data.cast::<U>(),
                     thunk::handle_mut(Response::<SSL>::cast_res(this)),
                     thunk::c_slice(chunk_ptr, len),
                     last,
+                    thunk::app_turn(&this),
                 )
             }
         }
@@ -611,18 +617,23 @@ impl<const SSL: bool> Response<SSL> {
         );
     }
 
-    pub(crate) fn run_corked_with_type<U>(&mut self, handler: fn(&U), data: &U) {
+    pub(crate) fn run_corked_with_type<U>(
+        &mut self,
+        handler: fn(&U, JsTurn<'_>),
+        data: &U,
+        turn: JsTurn<'_>,
+    ) {
         // cork is synchronous, so we can stack-allocate the (handler, data) pair
         // and recover it inside the trampoline.
-        type Ctx<'a, U> = (fn(&U), &'a U);
+        type Ctx<'a, U> = (fn(&U, JsTurn<'_>), &'a U, JsTurn<'a>);
         // Safe fn item: nested local thunk, only coerced to the C-ABI
         // fn-pointer type passed to C; body wraps its raw-ptr op explicitly.
         extern "C" fn handle<U>(user_data: *mut c_void) {
             // SAFETY: user_data points at a stack Ctx<U> valid for this synchronous call.
             let ctx = unsafe { &*user_data.cast::<Ctx<'_, U>>() };
-            (ctx.0)(ctx.1);
+            (ctx.0)(ctx.1, ctx.2);
         }
-        let mut ctx: Ctx<'_, U> = (handler, data);
+        let mut ctx: Ctx<'_, U> = (handler, data, turn);
         // cork is synchronous so the stack-allocated ctx outlives the FFI call.
         c::uws_res_cork(
             Self::ssl_flag(),
@@ -732,15 +743,15 @@ macro_rules! any_dispatch {
 
 /// Stamp the per-variant ZST adapter triplet and register it via the matching
 /// `Response<SSL>` / `H3Response` `$method`.
-/// Each arm is a generic fn *item* monomorphized over `<U, H>`,
-/// so it is itself a ZST satisfying both the `Response<SSL>` bound
+/// Each arm is a closure that holds only the handler, so it is itself a ZST
+/// satisfying both the `Response<SSL>` bound
 /// (`Fn(*mut U, …)`) and the `H3Response` bound (`Fn(&mut U, …)`). The H3 arm
 /// bridges its `&mut U` to the body's uniform `*mut U` via `ptr::from_mut`.
 ///
 /// Syntax:
 ///   any_response_register_cb! {
 ///       self, $method, $opt_data;
-///       <U, H: [bounds…]>
+///       <U>
 ///       |u $(, pre: PreTy)* ; r, any $(, post: PostTy)*| -> Ret { body }
 ///   }
 /// - `u` is bound as `*mut U` in the body (H3's `&mut U` is rebound).
@@ -749,34 +760,33 @@ macro_rules! any_dispatch {
 macro_rules! any_response_register_cb {
     (
         $self:expr, $method:ident, $opt_data:expr;
-        <$U:ident, $H:ident : [$($bound:tt)*]>
+        <$U:ident>
         |$u:ident $(, $pre:ident : $pre_ty:ty)* ; $r:ident, $any:ident $(, $post:ident : $post_ty:ty)*| -> $ret:ty
         { $($body:tt)* }
     ) => {{
-        const { assert!(core::mem::size_of::<$H>() == 0, "handler must be a fn item or capture-less closure") };
-        fn ssl<$U, $H: $($bound)*>($u: *mut $U $(, $pre: $pre_ty)*, $r: &mut TLSResponse $(, $post: $post_ty)*) -> $ret {
+        let ssl = move |$u: *mut $U $(, $pre: $pre_ty)*, $r: &mut TLSResponse $(, $post: $post_ty)*| -> $ret {
             let $any = AnyResponse::SSL(std::ptr::from_mut($r));
             $($body)*
-        }
-        fn tcp<$U, $H: $($bound)*>($u: *mut $U $(, $pre: $pre_ty)*, $r: &mut TCPResponse $(, $post: $post_ty)*) -> $ret {
+        };
+        let tcp = move |$u: *mut $U $(, $pre: $pre_ty)*, $r: &mut TCPResponse $(, $post: $post_ty)*| -> $ret {
             let $any = AnyResponse::TCP(std::ptr::from_mut($r));
             $($body)*
-        }
-        fn h3<$U, $H: $($bound)*>($u: &mut $U $(, $pre: $pre_ty)*, $r: &mut H3Response $(, $post: $post_ty)*) -> $ret {
+        };
+        let h3 = move |$u: &mut $U $(, $pre: $pre_ty)*, $r: &mut H3Response $(, $post: $post_ty)*| -> $ret {
             let $u = std::ptr::from_mut::<$U>($u);
             let $any = AnyResponse::H3(std::ptr::from_mut($r));
             $($body)*
-        }
-        fn h2<$U, $H: $($bound)*>($u: &mut $U $(, $pre: $pre_ty)*, $r: &mut H2Response $(, $post: $post_ty)*) -> $ret {
+        };
+        let h2 = move |$u: &mut $U $(, $pre: $pre_ty)*, $r: &mut H2Response $(, $post: $post_ty)*| -> $ret {
             let $u = std::ptr::from_mut::<$U>($u);
             let $any = AnyResponse::H2(std::ptr::from_mut($r));
             $($body)*
-        }
+        };
         match $self {
-            AnyResponse::SSL(ptr) => TLSResponse::as_handle(ptr).$method(ssl::<$U, $H>, $opt_data),
-            AnyResponse::TCP(ptr) => TCPResponse::as_handle(ptr).$method(tcp::<$U, $H>, $opt_data),
-            AnyResponse::H3(ptr) => H3Response::as_handle(ptr).$method(h3::<$U, $H>, $opt_data),
-            AnyResponse::H2(ptr) => H2Response::as_handle(ptr).$method(h2::<$U, $H>, $opt_data),
+            AnyResponse::SSL(ptr) => TLSResponse::as_handle(ptr).$method(ssl, $opt_data),
+            AnyResponse::TCP(ptr) => TCPResponse::as_handle(ptr).$method(tcp, $opt_data),
+            AnyResponse::H3(ptr) => H3Response::as_handle(ptr).$method(h3, $opt_data),
+            AnyResponse::H2(ptr) => H2Response::as_handle(ptr).$method(h2, $opt_data),
         }
     }};
 }
@@ -898,14 +908,14 @@ impl AnyResponse {
         any_dispatch!(self, |r| r.timeout(seconds))
     }
 
-    pub fn on_data<U: 'static, H>(self, _handler: H, optional_data: *mut U)
+    pub fn on_data<U: 'static, H>(self, handler: H, optional_data: *mut U)
     where
-        H: Fn(*mut U, &[u8], bool) + Copy + 'static,
+        H: Fn(*mut U, &[u8], bool, JsTurn<'_>) + Copy + 'static,
     {
         any_response_register_cb! {
             self, on_data, optional_data;
-            <U, H: [Fn(*mut U, &[u8], bool) + Copy + 'static]>
-            |u; _r, _any, d: &[u8], l: bool| -> () { thunk::zst::<H>()(u, d, l) }
+            <U>
+            |u; _r, _any, d: &[u8], l: bool, turn: JsTurn<'_>| -> () { handler(u, d, l, turn) }
         }
     }
 
@@ -1018,36 +1028,36 @@ impl AnyResponse {
         any_dispatch!(self, |r| r.prepare_for_sendfile())
     }
 
-    pub fn on_writable<U: 'static, H>(self, _handler: H, optional_data: *mut U)
+    pub fn on_writable<U: 'static, H>(self, handler: H, optional_data: *mut U)
     where
-        H: Fn(*mut U, u64, AnyResponse) -> bool + Copy + 'static,
+        H: Fn(*mut U, u64, AnyResponse, JsTurn<'_>) -> bool + Copy + 'static,
     {
         any_response_register_cb! {
             self, on_writable, optional_data;
-            <U, H: [Fn(*mut U, u64, AnyResponse) -> bool + Copy + 'static]>
-            |u, off: u64; r, any| -> bool { thunk::zst::<H>()(u, off, any) }
+            <U>
+            |u, off: u64; r, any, turn: JsTurn<'_>| -> bool { handler(u, off, any, turn) }
         }
     }
 
-    pub fn on_timeout<U: 'static, H>(self, _handler: H, optional_data: *mut U)
+    pub fn on_timeout<U: 'static, H>(self, handler: H, optional_data: *mut U)
     where
-        H: Fn(*mut U, AnyResponse) + Copy + 'static,
+        H: Fn(*mut U, AnyResponse, JsTurn<'_>) + Copy + 'static,
     {
         any_response_register_cb! {
             self, on_timeout, optional_data;
-            <U, H: [Fn(*mut U, AnyResponse) + Copy + 'static]>
-            |u; r, any| -> () { thunk::zst::<H>()(u, any) }
+            <U>
+            |u; r, any, turn: JsTurn<'_>| -> () { handler(u, any, turn) }
         }
     }
 
-    pub fn on_aborted<U: 'static, H>(self, _handler: H, optional_data: *mut U)
+    pub fn on_aborted<U: 'static, H>(self, handler: H, optional_data: *mut U)
     where
-        H: Fn(*mut U, AnyResponse) + Copy + 'static,
+        H: Fn(*mut U, AnyResponse, JsTurn<'_>) + Copy + 'static,
     {
         any_response_register_cb! {
             self, on_aborted, optional_data;
-            <U, H: [Fn(*mut U, AnyResponse) + Copy + 'static]>
-            |u; r, any| -> () { thunk::zst::<H>()(u, any) }
+            <U>
+            |u; r, any, turn: JsTurn<'_>| -> () { handler(u, any, turn) }
         }
     }
 
@@ -1055,14 +1065,14 @@ impl AnyResponse {
     /// intrusively-refcounted `U`: the registrant passes the `ThisPtr` it was
     /// dispatched with and keeps a ref on `U` until it clears the handler, so
     /// the trampoline can hand the handler a `ThisPtr` again.
-    pub fn on_writable_this<U: 'static, H>(self, _handler: H, this: ThisPtr<U>)
+    pub fn on_writable_this<U: 'static, H>(self, handler: H, this: ThisPtr<U>)
     where
-        H: Fn(ThisPtr<U>, u64, AnyResponse) -> bool + Copy + 'static,
+        H: Fn(ThisPtr<U>, u64, AnyResponse, JsTurn<'_>) -> bool + Copy + 'static,
     {
         self.on_writable(
-            |u: *mut U, off, any| {
+            move |u: *mut U, off, any, turn| {
                 // SAFETY: `u` is the `ThisPtr` registered below; the registrant holds a ref on it until the handler is cleared.
-                thunk::zst::<H>()(unsafe { ThisPtr::new(u) }, off, any)
+                handler(unsafe { ThisPtr::new(u) }, off, any, turn)
             },
             this.as_ptr(),
         )
@@ -1070,14 +1080,14 @@ impl AnyResponse {
 
     /// [`on_aborted`](Self::on_aborted) counterpart of
     /// [`on_writable_this`](Self::on_writable_this).
-    pub fn on_aborted_this<U: 'static, H>(self, _handler: H, this: ThisPtr<U>)
+    pub fn on_aborted_this<U: 'static, H>(self, handler: H, this: ThisPtr<U>)
     where
-        H: Fn(ThisPtr<U>, AnyResponse) + Copy + 'static,
+        H: Fn(ThisPtr<U>, AnyResponse, JsTurn<'_>) + Copy + 'static,
     {
         self.on_aborted(
-            |u: *mut U, any| {
+            move |u: *mut U, any, turn| {
                 // SAFETY: `u` is the `ThisPtr` registered below; the registrant holds a ref on it until the handler is cleared.
-                thunk::zst::<H>()(unsafe { ThisPtr::new(u) }, any)
+                handler(unsafe { ThisPtr::new(u) }, any, turn)
             },
             this.as_ptr(),
         )
@@ -1119,8 +1129,8 @@ impl AnyResponse {
         any_dispatch!(self, |r| r.corked(f))
     }
 
-    pub fn run_corked_with_type<U>(self, handler: fn(&U), data: &U) {
-        any_dispatch!(self, |r| r.run_corked_with_type(handler, data))
+    pub fn run_corked_with_type<U>(self, handler: fn(&U, JsTurn<'_>), data: &U, turn: JsTurn<'_>) {
+        any_dispatch!(self, |r| r.run_corked_with_type(handler, data, turn))
     }
 
     /// See `Response::can_upgrade`.

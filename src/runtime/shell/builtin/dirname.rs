@@ -1,11 +1,13 @@
+use bun_core::LoopTurn;
+
 use crate::shell::builtin::{Builtin, IoKind};
 use crate::shell::interpreter::{Interpreter, NodeId};
 use crate::shell::yield_::Yield;
 
-pub(crate) fn start(interp: &Interpreter, cmd: NodeId) -> Yield {
+pub(crate) fn start(interp: &Interpreter, cmd: NodeId, turn: LoopTurn<'_>) -> Yield {
     let args = Builtin::of(interp, cmd).args();
     if args.is_empty() {
-        return Builtin::fail_usage(interp, cmd, b"usage: dirname string\n");
+        return Builtin::fail_usage(interp, cmd, b"usage: dirname string\n", turn);
     }
     let mut out = Vec::new();
     for path in args {
@@ -13,5 +15,5 @@ pub(crate) fn start(interp: &Interpreter, cmd: NodeId) -> Yield {
         out.extend_from_slice(if dir.is_empty() { b"." } else { dir });
         out.push(b'\n');
     }
-    Builtin::finish(interp, cmd, IoKind::Stdout, &out, 0)
+    Builtin::finish(interp, cmd, IoKind::Stdout, &out, 0, turn)
 }

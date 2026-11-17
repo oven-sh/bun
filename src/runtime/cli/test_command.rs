@@ -9,7 +9,7 @@ use crate::cli::test::parallel_runner as ParallelRunner;
 use crate::cli::test::scanner::{self, Scanner};
 use crate::cli::test::timings::Timings;
 use bun_collections::BoundedArray;
-use bun_core::{self as bun, Global, Output, env_var, fmt as bun_fmt};
+use bun_core::{self as bun, Global, JsTurn, LoopTurn, Output, VmLive, env_var, fmt as bun_fmt};
 use bun_core::{EncodedSlice, strings};
 use bun_core::{pretty_error, pretty_errorln};
 use bun_dotenv as DotEnv;
@@ -2126,6 +2126,7 @@ impl CommandLineReporter {
         sequence: &bun_test::Execution::ExecutionSequence,
         test_entry: &bun_test::ExecutionEntry,
         elapsed_ns: u64,
+        turn: JsTurn<'_>,
     ) {
         let this = buntest.reporter;
         let mut output_buf: Vec<u8> = Vec::new();
@@ -2246,7 +2247,7 @@ impl CommandLineReporter {
                 this.update_summary(|summary| summary.fail += 1);
 
                 if this.summary().fail == this.jest.bail {
-                    this.bail_out(VirtualMachine::get());
+                    this.bail_out(VirtualMachine::get(turn.live), turn);
                 }
             }
         }
@@ -2274,7 +2275,7 @@ impl CommandLineReporter {
 
     /// Prints that `--bail` hit its failure count, then exits with code 1. Tears down the VM the same way `exec` does.
     /// A `--parallel` worker never gets here: its `jest.bail` is 0, and the coordinator counts the failures.
-    pub(crate) fn bail_out(&self, vm: &VirtualMachine) -> ! {
+    pub(crate) fn bail_out(&self, vm: &VirtualMachine, turn: JsTurn<'_>) -> ! {
         self.print_summary();
         pretty_error!(
             "\nBailed out after {} failure{}<r>\n",
@@ -2290,10 +2291,10 @@ impl CommandLineReporter {
             .skip_exit_listeners
             .set(skip_exit_listeners(self));
         vm.exit_handler.requested.set(true);
-        vm.run_with_api_lock(|| vm.on_exit());
+        vm.run_with_api_lock(move || vm.on_exit(turn));
         // Exit listeners need the runner, so release the `bun:test` GC roots after they run.
         self.jest.bun_test_root.deinit_for_exit();
-        vm.run_with_api_lock(|| vm.global_exit())
+        vm.run_with_api_lock(move || vm.global_exit(turn))
     }
 
     /// Like the JUnit report, called before every exit path (including bail) so measured durations aren't lost.
@@ -2319,10 +2320,10 @@ impl CommandLineReporter {
     }
 
     /// `bun test --aot --coverage`: the files that ran as compiled code join those that JSC has counted.
-    pub(crate) fn add_compiled_files_to_coverage(vm: &VirtualMachine) {
+    pub(crate) fn add_compiled_files_to_coverage(vm: &VirtualMachine, turn: JsTurn<'_>) {
         let mut files: Vec<(Vec<u8>, Vec<u64>)> = Vec::new();
         bun_jsc::compiled_program::for_each_counted_file(
-            vm.global(),
+            vm.global(turn),
             &mut |description, counts| {
                 files.push((description.to_vec(), counts.to_vec()));
             },
@@ -2332,13 +2333,14 @@ impl CommandLineReporter {
                 continue;
             };
             let (path, ranges) = (&description[..end_of_path], &description[end_of_path + 1..]);
-            if !BunTest__shouldGenerateCodeCoverage(&bun_core::StringView::from_bytes(path)) {
+            if !should_generate_code_coverage(&bun_core::StringView::from_bytes(path), turn.live) {
                 continue;
             }
             let Ok(text) = File::read_from(Fd::cwd(), path) else {
                 continue;
             };
-            let Some(transpiled) = crate::jsc_hooks::transpile_as_loaded(vm.global(), path, &text)
+            let Some(transpiled) =
+                crate::jsc_hooks::transpile_as_loaded(vm.global(turn), path, &text)
             else {
                 continue;
             };
@@ -2349,6 +2351,7 @@ impl CommandLineReporter {
                 transpiled.already_bundled,
                 ranges,
                 counts,
+                turn.live,
             );
         }
     }
@@ -2359,6 +2362,7 @@ impl CommandLineReporter {
         vm: &VirtualMachine,
         opts: &CodeCoverageOptions,
         mut each: impl FnMut(CodeCoverageReport<'_>),
+        turn: JsTurn<'_>,
     ) {
         let Some(map) = ByteRangeMapping::map() else {
             return;
@@ -2382,7 +2386,7 @@ impl CommandLineReporter {
 
         for entry in byte_ranges {
             if let Some(report) =
-                CodeCoverageReport::generate(vm.global(), entry, opts.ignore_sourcemap)
+                CodeCoverageReport::generate(vm.global(turn), entry, opts.ignore_sourcemap)
             {
                 each(report);
             }
@@ -2394,9 +2398,10 @@ impl CommandLineReporter {
         &self,
         vm: &VirtualMachine,
         opts: &mut CodeCoverageOptions,
+        turn: JsTurn<'_>,
     ) -> bool {
         let _trace = bun::perf::trace("TestCommand.printCodeCoverage");
-        Self::add_compiled_files_to_coverage(vm);
+        Self::add_compiled_files_to_coverage(vm, turn);
         if ByteRangeMapping::map().is_none_or(|m| {
             // SAFETY: see `for_each_coverage_report`.
             unsafe { m.as_ref() }.is_empty()
@@ -2404,7 +2409,7 @@ impl CommandLineReporter {
             return true;
         }
         let mut reports: Vec<CodeCoverageReport<'static>> = Vec::new();
-        Self::for_each_coverage_report(vm, opts, |report| reports.push(report.into_owned()));
+        Self::for_each_coverage_report(vm, opts, |report| reports.push(report.into_owned()), turn);
         if let Err(err) = print_coverage_reports(opts, &reports) {
             Output::err(err, "Failed to write lcov.info", ());
             return false;
@@ -2598,8 +2603,16 @@ fn write_lcov_report(
     moved
 }
 
+/// # Safety
+/// On the thread of the VM that loads the source.
 #[unsafe(no_mangle)]
-extern "C" fn BunTest__shouldGenerateCodeCoverage(test_name_str: &bun_core::String) -> bool {
+unsafe extern "C" fn BunTest__shouldGenerateCodeCoverage(test_name_str: &bun_core::String) -> bool {
+    // SAFETY: fn contract.
+    let live = unsafe { VmLive::assume(test_name_str) };
+    should_generate_code_coverage(test_name_str, live)
+}
+
+fn should_generate_code_coverage(test_name_str: &bun_core::String, live: VmLive<'_>) -> bool {
     let zig_slice = test_name_str.to_utf8();
     // In this particular case, we don't actually care about non-ascii latin1 characters.
     // so we skip the ascii check
@@ -2611,7 +2624,7 @@ extern "C" fn BunTest__shouldGenerateCodeCoverage(test_name_str: &bun_core::Stri
         return false;
     }
 
-    let options = &VirtualMachine::get().transpiler.get().options;
+    let options = &VirtualMachine::get(live).transpiler.get().options;
 
     // Skip the wrapper modules Bun generates for these suffixes. Other queries (a plugin's `./a.vue?x`) are user code.
     if let Some(query) = strings::index_of_char_usize(slice, b'?') {
@@ -2654,7 +2667,7 @@ impl TestCommand {
     // Re-exports moved to top-level `use` per crate map.
 
     #[optimize(size)]
-    pub(crate) fn exec(ctx: Command::Context) -> crate::Result<()> {
+    pub(crate) fn exec(ctx: Command::Context, turn: LoopTurn<'_>) -> crate::Result<()> {
         Output::IS_GITHUB_ACTION.store(
             Output::is_github_action(),
             core::sync::atomic::Ordering::Relaxed,
@@ -2824,7 +2837,9 @@ impl TestCommand {
             graph: run_compiled::graph(),
             ..Default::default()
         };
-        let vm = VirtualMachine::init(ctx.log, options)?;
+        // SAFETY: the main thread runs one command, whose one VM this is. `ctx.log` is never freed.
+        let vm = unsafe { VirtualMachine::init(ctx.log, options, turn.live) }?;
+        let turn = vm.turn(turn);
         crate::jsc_hooks::runtime_state_of(vm)
             .test_runner
             .set(Some(&reporter.jest));
@@ -2878,7 +2893,7 @@ impl TestCommand {
         vm.test_isolation_state
             .shares_global
             .set(run_compiled::test_files_share_global(ctx));
-        crate::jsc_hooks::timer_all()
+        crate::jsc_hooks::timer_all(vm.live())
             .zero_delay_is_due_when_idle
             .set(true);
 
@@ -2890,7 +2905,7 @@ impl TestCommand {
                 t.options.minify_whitespace = false;
                 t.options.dead_code_elimination = false;
             });
-            vm.global().vm().enable_control_flow_profiler();
+            vm.global(turn).vm().enable_control_flow_profiler();
         }
 
         // For tests, we default to UTC time zone
@@ -2906,7 +2921,7 @@ impl TestCommand {
 
         if !tz_name.is_empty() {
             _ = vm
-                .global()
+                .global(turn)
                 .set_time_zone(&EncodedSlice::from_bytes(tz_name));
         }
         let _ = vm.test_isolation_state.time_zone.set(Box::from(tz_name));
@@ -2923,12 +2938,12 @@ impl TestCommand {
             // Worker mode: skip discovery; files arrive over stdin and
             // results go out over fd 3. Never returns.
             crate::run_command::start_profilers(vm, ctx);
-            ParallelRunner::run_as_worker(reporter, vm, ctx);
+            ParallelRunner::run_as_worker(reporter, vm, ctx, turn);
         }
 
         // Start the debugger before we scan for files
         // But, don't block the main thread waiting if they used --inspect-wait.
-        vm.ensure_debugger(false)?;
+        vm.ensure_debugger(false, turn)?;
 
         // `scanner` borrows these, so they are declared before it.
         let path_ignore_patterns: Vec<bun_glob::Prepared<&[u8]>> = ctx
@@ -2982,7 +2997,7 @@ impl TestCommand {
                             }
                             vm.exit_handler.exit_code.set(1);
                             vm.is_shutting_down.set(true);
-                            vm.run_with_api_lock(|| vm.global_exit());
+                            vm.run_with_api_lock(move || vm.global_exit(turn));
                         }
                     }
                 }
@@ -3049,7 +3064,7 @@ impl TestCommand {
                     }
                     vm.exit_handler.exit_code.set(1);
                     vm.is_shutting_down.set(true);
-                    vm.run_with_api_lock(|| vm.global_exit());
+                    vm.run_with_api_lock(move || vm.global_exit(turn));
                 }
             }
         }
@@ -3234,7 +3249,7 @@ impl TestCommand {
             if !vm.is_watcher_enabled() {
                 Global::exit(1);
             }
-            vm.run_with_api_lock(|| Self::run_event_loop_for_watch(vm));
+            vm.run_with_api_lock(move || Self::run_event_loop_for_watch(vm, turn));
         }
 
         let mut coverage_options: CodeCoverageOptions = ctx.test_options.coverage.clone();
@@ -3267,6 +3282,7 @@ impl TestCommand {
                     test_files,
                     &mut *ctx,
                     &mut coverage_options,
+                    turn,
                 )?;
             } else {
                 // SAFETY: `vm.transpiler.env` is the process-lifetime DotEnv loader pointer.
@@ -3274,7 +3290,7 @@ impl TestCommand {
             }
             if !ran_parallel {
                 crate::run_command::start_profilers(vm, ctx);
-                Self::run_all_tests(reporter, vm, test_files);
+                Self::run_all_tests(reporter, vm, test_files, turn);
             }
         }
 
@@ -3301,7 +3317,7 @@ impl TestCommand {
         }
 
         let runner = &reporter.jest;
-        let write_snapshots_success = runner.with_snapshots(Snapshots::write_inline_snapshots)?;
+        let write_snapshots_success = runner.write_inline_snapshots(turn.live)?;
         runner.with_snapshots(Snapshots::write_snapshot_file)?;
         let mut write_coverage_success = true;
         if reporter.summary().pass > 20
@@ -3419,7 +3435,8 @@ impl TestCommand {
             pretty_error!("\n");
 
             if coverage_options.enabled && !ran_parallel {
-                write_coverage_success = reporter.generate_code_coverage(vm, &mut coverage_options);
+                write_coverage_success =
+                    reporter.generate_code_coverage(vm, &mut coverage_options, turn);
             }
 
             let summary: Summary = reporter.summary();
@@ -3679,7 +3696,7 @@ impl TestCommand {
         }
 
         if vm.hot_reload.get() == jsc::virtual_machine::HotReload::Watch {
-            vm.run_with_api_lock(|| Self::run_event_loop_for_watch(vm));
+            vm.run_with_api_lock(move || Self::run_event_loop_for_watch(vm, turn));
         }
         let summary = reporter.summary();
 
@@ -3701,7 +3718,7 @@ impl TestCommand {
             .set(skip_exit_listeners(reporter));
         vm.exit_handler.requested.set(exit_is_requested());
         // Must precede the GC-root release below: exit listeners are user JS and may touch still-live state.
-        vm.run_with_api_lock(|| vm.on_exit());
+        vm.run_with_api_lock(move || vm.on_exit(turn));
         // on_exit() already set is_shutting_down; global_exit() asserts it.
         // Release `bun:test` GC roots before `global_exit()` so
         // `Zig__GlobalObject__destructOnExit()`'s `collectNow()` can reach the closures they pin
@@ -3709,20 +3726,20 @@ impl TestCommand {
         reporter.jest.bun_test_root.deinit_for_exit();
         // `global_exit()` does not return, so nothing is dropped after it.
         drop(all_test_files);
-        vm.run_with_api_lock(|| vm.global_exit());
+        vm.run_with_api_lock(move || vm.global_exit(turn));
         Ok(())
     }
 
-    fn run_event_loop_for_watch(vm: &VirtualMachine) {
-        vm.event_loop().tick_possibly_forever();
+    fn run_event_loop_for_watch(vm: &VirtualMachine, turn: JsTurn<'_>) {
+        vm.event_loop().tick_possibly_forever(turn);
 
         loop {
             while vm.is_event_loop_alive() {
-                vm.tick();
-                vm.event_loop().auto_tick_active();
+                vm.tick(turn);
+                vm.event_loop().auto_tick_active(turn);
             }
 
-            vm.event_loop().tick_possibly_forever();
+            vm.event_loop().tick_possibly_forever(turn);
         }
     }
 
@@ -3730,6 +3747,7 @@ impl TestCommand {
         reporter_: &'static CommandLineReporter,
         vm_: &VirtualMachine,
         files_: &[Interned],
+        turn: JsTurn<'_>,
     ) {
         struct Context<'a> {
             reporter: &'static CommandLineReporter,
@@ -3737,7 +3755,7 @@ impl TestCommand {
             files: &'a [Interned],
         }
         impl<'a> Context<'a> {
-            fn begin(&self) {
+            fn begin(&self, turn: JsTurn<'_>) {
                 let reporter = self.reporter;
                 let vm = self.vm;
                 let files = self.files;
@@ -3756,6 +3774,7 @@ impl TestCommand {
                                 first: isolate || i == 0,
                                 last: isolate,
                             },
+                            turn,
                         ) {
                             handle_top_level_test_error_before_javascript_start(&err);
                         }
@@ -3763,13 +3782,14 @@ impl TestCommand {
                         reporter.jest.default_timeout_override.set(u32::MAX);
                         Global::mimalloc_cleanup(false);
                         if isolate {
-                            crate::jsc_hooks::stop_active_handles_for_test_isolation(vm);
-                            vm.swap_global_for_test_isolation();
+                            crate::jsc_hooks::stop_active_handles_for_test_isolation(vm, turn);
+                            // SAFETY: between two files; what follows asks the VM for its global object again.
+                            unsafe { vm.swap_global_for_test_isolation(turn) };
                             reporter
                                 .jest
                                 .bun_test_root
                                 .reset_preload_for_test_isolation();
-                            crate::test_runner::Expect::reset_for_test_isolation(vm.global());
+                            crate::test_runner::Expect::reset_for_test_isolation(vm.global(turn));
                         }
                     }
                 }
@@ -3784,6 +3804,7 @@ impl TestCommand {
                         first: isolate || files.len() == 1,
                         last: true,
                     },
+                    turn,
                 ) {
                     handle_top_level_test_error_before_javascript_start(&err);
                 }
@@ -3792,13 +3813,14 @@ impl TestCommand {
         }
 
         vm_.event_loop().ensure_waker();
-        vm_.run_with_api_lock(|| {
+        let reporter_ = &reporter_;
+        vm_.run_with_api_lock(move || {
             Context {
-                reporter: reporter_,
+                reporter: *reporter_,
                 vm: vm_,
                 files: files_,
             }
-            .begin()
+            .begin(turn)
         });
     }
 
@@ -3862,10 +3884,13 @@ impl TestCommand {
         let timeout = jest::Jest::runner().map_or(0, |runner| runner.default_timeout_ms);
         let real_time = bun::TimespecMockMode::ForceRealTime;
         let deadline = bun::Timespec::ms_from_now(real_time, timeout.into());
-        let waited = vm.event_loop().wait_at_top_level(|| {
-            !bun_jsc::cpp::JSMock__hasModulesToEvict(global)
-                || (timeout != 0 && bun::Timespec::now(real_time).greater(&deadline))
-        });
+        let waited = vm.event_loop().wait_at_top_level(
+            || {
+                !bun_jsc::cpp::JSMock__hasModulesToEvict(global)
+                    || (timeout != 0 && bun::Timespec::now(real_time).greater(&deadline))
+            },
+            global.turn(),
+        );
         if waited != Err(TopLevelWaitError::Stopped)
             && bun_jsc::cpp::JSMock__hasModulesToEvict(global)
         {
@@ -3899,12 +3924,13 @@ impl TestCommand {
         vm: &VirtualMachine,
         file_name: &[u8],
         first_last: bun_test::FirstLast,
+        turn: JsTurn<'_>,
     ) -> crate::Result<()> {
         let _print_log = PrintLogAfterFile(vm.log.get());
 
         let file_path = Self::resolve_test_file(vm, file_name)?;
-        vm.clear_entry_point()?;
-        vm.enter_module_graph_for_test_isolation()?;
+        vm.clear_entry_point(turn)?;
+        vm.enter_module_graph_for_test_isolation(turn)?;
 
         run_compiled::will_run_test_file(resolve_path::relative(
             FileSystem::get().top_level_dir(),
@@ -3932,11 +3958,11 @@ impl TestCommand {
         while repeat_index < repeat_count {
             // Clear the module cache before re-running (except for the first run)
             if repeat_index > 0 {
-                vm.clear_entry_point()?;
+                vm.clear_entry_point(turn)?;
                 let key = jsc::compiled_program::entry_module_key(file_path);
-                vm.global()
+                vm.global(turn)
                     .delete_module_registry_entry(&EncodedSlice::from_bytes(key))?;
-                jsc::compiled_program::will_run_entry_point_again(vm.global(), key);
+                jsc::compiled_program::will_run_entry_point_again(vm.global(turn), key);
             }
             if repeat_index > 0 {
                 // Reset per-test snapshot counters so rerun N matches the same
@@ -3948,7 +3974,7 @@ impl TestCommand {
             // Determine if this file should run tests concurrently based on glob pattern
             let should_run_concurrent = reporter.jest.should_file_run_concurrently(file_path);
             bun_test_root.enter_file(file, reporter, should_run_concurrent, first_last);
-            let global = vm.global();
+            let global = vm.global(turn);
             // `--isolate` swaps the global after the last repeat.
             let next_load_shares_global = !vm.test_isolation_enabled.get()
                 || vm.test_isolation_state.shares_global.get()
@@ -3983,7 +4009,7 @@ impl TestCommand {
             });
             // need to wake up so autoTick() doesn't wait for 16-100ms after loading the entrypoint
             vm.wakeup();
-            let mut promise = environment.load_entry_point(vm, file_path)?;
+            let mut promise = environment.load_entry_point(vm, file_path, turn)?;
             // Only count the file once, not once per repeat
             if repeat_index == 0 {
                 reporter.update_summary(|summary| summary.files += 1);
@@ -3992,12 +4018,13 @@ impl TestCommand {
             if jsc::JSInternalPromise::opaque_mut(promise).status()
                 != jsc::js_promise::Status::Rejected
             {
-                vm.event_loop().tick();
+                vm.event_loop().tick(turn);
 
                 // Tests start after top-level mock.module() calls with a pending factory have patched their module.
-                let patched = vm
-                    .event_loop()
-                    .wait_at_top_level(|| !bun_jsc::cpp::JSMock__hasPendingModulePatches(global));
+                let patched = vm.event_loop().wait_at_top_level(
+                    || !bun_jsc::cpp::JSMock__hasPendingModulePatches(global),
+                    turn,
+                );
                 if patched == Err(TopLevelWaitError::NothingLeft) {
                     // As in Vitest, a vi.mock() or vi.doMock() factory may wait for something a test does.
                     bun_jsc::cpp::JSMock__clearPendingVitestPatches(global);
@@ -4011,9 +4038,7 @@ impl TestCommand {
             let failed_to_load = jsc::JSInternalPromise::opaque_mut(promise).status()
                 == jsc::js_promise::Status::Rejected;
             if failed_to_load {
-                // `vm.global()` returns `&'static`, decoupled from `vm`'s borrow so
-                // `unhandled_rejection(&mut self, ...)` can reborrow.
-                let global = vm.global();
+                let global = vm.global(turn);
                 let p = jsc::JSInternalPromise::opaque_mut(promise);
                 let (result, promise_js) = (p.result(global.vm()), p.to_js());
                 vm.unhandled_rejection(global, result, promise_js);
@@ -4035,10 +4060,10 @@ impl TestCommand {
                 if !buntest.has_queued_results() {
                     buntest.add_result(bun_test::ResultMsg::Start);
                 }
-                bun_test::BunTest::run(&buntest, vm.global())?;
+                bun_test::BunTest::run(&buntest, vm.global(turn))?;
 
                 // Process event loop while bun_test tests are running
-                vm.event_loop().tick();
+                vm.event_loop().tick(turn);
 
                 let mut prev_unhandled_count = vm.unhandled_error_counter.get();
                 while buntest.phase.get() != bun_test::Phase::Done {
@@ -4061,7 +4086,7 @@ impl TestCommand {
                             global, what, file_path,
                         ));
                         vm.unhandled_rejection(global, p.result(global.vm()), p.to_js());
-                        vm.event_loop().tick();
+                        vm.event_loop().tick(turn);
                         // The error ends a describe() or a test. Anything else stays stuck, so abandon the file.
                         if waits_for.is_none()
                             || waits_for == Self::what_runner_waits_for(&buntest).1
@@ -4070,14 +4095,14 @@ impl TestCommand {
                         }
                         continue;
                     }
-                    vm.event_loop().auto_tick_asleep();
+                    vm.event_loop().auto_tick_asleep(turn);
                     if buntest.phase.get() == bun_test::Phase::Done {
                         break;
                     }
-                    vm.event_loop().tick();
+                    vm.event_loop().tick(turn);
 
                     while prev_unhandled_count < vm.unhandled_error_counter.get() {
-                        let _ = vm.global().handle_rejected_promises();
+                        let _ = vm.global(turn).handle_rejected_promises();
                         prev_unhandled_count = vm.unhandled_error_counter.get();
                     }
                 }
@@ -4088,21 +4113,21 @@ impl TestCommand {
                     bun_jsc::cpp::JSMock__releaseHeldImports(global);
                     let _ = vm
                         .event_loop()
-                        .wait_at_top_level(|| !bun_jsc::cpp::JSMock__hasHeldImports(global));
+                        .wait_at_top_level(|| !bun_jsc::cpp::JSMock__hasHeldImports(global), turn);
                     while prev_unhandled_count < vm.unhandled_error_counter.get() {
-                        let _ = vm.global().handle_rejected_promises();
+                        let _ = vm.global(turn).handle_rejected_promises();
                         prev_unhandled_count = vm.unhandled_error_counter.get();
                     }
                 }
 
-                vm.event_loop().tick_immediate_tasks();
+                vm.event_loop().tick_immediate_tasks(turn);
 
                 // Node parity: a node test file exits only when its loop drains.
                 // on_before_exit() drains and dispatches 'beforeExit' like `bun run`;
                 // it early-returns when unhandled_error_counter > 0, which is fine
                 // here since such a file already failed. Opt-in; one file per process.
                 if should_drain_event_loop() {
-                    vm.on_before_exit();
+                    vm.on_before_exit(turn);
                 }
                 (reporter.jest).with_snapshots(|snapshots| snapshots.remove_obsolete(&buntest));
             }
@@ -4124,13 +4149,16 @@ impl TestCommand {
 
                 if reporter.jest.bail == reporter.summary().fail {
                     // This never returns, so `EnteredFile`'s `Drop` doesn't run.
-                    reporter.bail_out(vm);
+                    reporter.bail_out(vm, turn);
                 }
             }
 
-            crate::test_runner::vi_utils::on_test_file_end(vm.global(), next_load_shares_global);
+            crate::test_runner::vi_utils::on_test_file_end(
+                vm.global(turn),
+                next_load_shares_global,
+            );
             if next_load_shares_global {
-                crate::test_runner::timers::fake_timers::on_test_file_end(vm.global());
+                crate::test_runner::timers::fake_timers::on_test_file_end(vm.global(turn));
             }
             Self::undo_module_mocks(
                 vm,
@@ -4140,7 +4168,7 @@ impl TestCommand {
                 !failed_to_load && repeat_index + 1 < repeat_count,
             );
             // Must run after the cleanup above, so rejections from JS it runs are reported in this file.
-            let _ = vm.global().handle_rejected_promises();
+            let _ = vm.global(turn).handle_rejected_promises();
 
             if Output::is_github_action() && reporter.worker.get().is_none() {
                 pretty_errorln!("<r>\n::endgroup::\n");
@@ -4162,7 +4190,7 @@ impl TestCommand {
             };
             // Tear down before `EnteredFile` drops, so an error it throws is reported in this file.
             if repeat_index == repeat_count {
-                environment.teardown(vm);
+                environment.teardown(vm, turn);
             }
         }
         reporter.with_junit(|junit| {

@@ -120,23 +120,33 @@ function headersFromRequestOptions(inputHeaders) {
   return new Headers(inputHeaders || kEmptyObject);
 }
 
-// Pins `url` to the address from connect.lookup. `host` is the original
-// authority, sent as the Host header, and `serverName` the bare hostname for
-// tls.serverName, so HTTPS still presents SNI and verifies the certificate
-// against the real hostname rather than the pinned IP.
+// The connector's work for one hop, or undefined when it has none. `url` is
+// pinned to the address from connect.lookup unless the host is already an IP
+// literal. `host` (pinned hops only) is the original authority, sent as the
+// Host header, and `serverName` the bare hostname for tls.serverName, so HTTPS
+// still presents SNI and verifies the certificate against the real hostname.
 async function applyConnect(url, connect, signal) {
   const { protocol } = url;
-  // Only http(s) opens a socket; data:, blob:, file: never consult the connector.
-  if (protocol !== "http:" && protocol !== "https:") return undefined;
+  // data:, blob: and file: never open a socket, so the connector does not apply.
+  if (protocol === "data:" || protocol === "blob:" || protocol === "file:") return undefined;
+  if (protocol !== "http:" && protocol !== "https:") {
+    // Native fetch reads "host:port/path" as an http URL; a URL object reads
+    // the host as the scheme. The hook cannot see that hostname, so fail closed.
+    throw new TypeError(`URL scheme must be http or https (received ${protocol})`);
+  }
   if (typeof connect === "function") {
     throw new NotSupportedError("custom connect functions are not supported in Bun's undici compatibility layer");
   }
   const lookup = connect.lookup;
   if (typeof lookup !== "function") return undefined;
+  const https = protocol === "https:";
   const { hostname } = url;
   // URL#hostname keeps the brackets on IPv6 literals.
   const bare = hostname.charCodeAt(0) === 0x5b /* [ */ ? hostname.slice(1, -1) : hostname;
-  if (isIP(bare) !== 0) return undefined;
+  if (isIP(bare) !== 0) {
+    // No lookup to run; the connector's TLS options still apply over HTTPS.
+    return https && connectTls(connect) !== undefined ? { url, https } : undefined;
+  }
   const address = await runLookup(lookup, bare, connect, signal);
   const host = url.host;
   const pinned = new URL(url);
@@ -146,7 +156,7 @@ async function applyConnect(url, connect, signal) {
   if (pinned.hostname === hostname) {
     throw new TypeError(`lookup returned an address a URL cannot carry for "${hostname}" (received ${address})`);
   }
-  return { url: pinned, host, serverName: protocol === "https:" ? bare : undefined };
+  return { url: pinned, host, https, serverName: https ? bare : undefined };
 }
 
 // The connect options undici's connector hands to tls.connect.
@@ -172,22 +182,26 @@ function connectTls(connect) {
   return out;
 }
 
-// Per-hop options for a pinned connection. The connector's TLS options apply
-// first, then the request's own tls, then the original hostname as serverName
-// unless either set one. A pinned hop is a direct connection, like undici's
-// Agent, so the environment proxy is off unless the caller set proxy.
-function pinnedInit(init, pin, connect) {
+// Per-hop options for a connection the connector shapes. Over HTTPS the
+// connector's TLS options apply first, then the request's own tls, then the
+// original hostname as serverName unless either set one. A pinned hop is a
+// direct connection, like undici's Agent, so the environment proxy is off
+// unless the caller set proxy.
+function connectInit(init, hop, connect) {
   const out = { ...init };
-  if (init?.proxy === undefined) out.proxy = false;
-  if (pin.serverName !== undefined) {
-    if (init?.session != null && init?.tls == null) {
-      throw new NotSupportedError(
-        "a Bun.FetchSession cannot be combined with a connect.lookup hook over HTTPS; pass the TLS options as the request's tls option instead",
-      );
-    }
+  const { host, serverName } = hop;
+  if (host !== undefined && init?.proxy === undefined) out.proxy = false;
+  if (hop.https) {
     const fromConnect = connectTls(connect);
-    const tls = fromConnect === undefined ? init?.tls : { ...fromConnect, ...init?.tls };
-    out.tls = pinnedTls(tls, pin);
+    if (fromConnect !== undefined || serverName !== undefined) {
+      if (init?.session != null && init?.tls == null) {
+        throw new NotSupportedError(
+          "a Bun.FetchSession cannot be combined with a connect.lookup hook over HTTPS; pass the TLS options as the request's tls option instead",
+        );
+      }
+      const tls = fromConnect === undefined ? init?.tls : { ...fromConnect, ...init?.tls };
+      out.tls = serverName === undefined ? tls : pinnedTls(tls, serverName);
+    }
   }
   return out;
 }
@@ -208,11 +222,10 @@ function isStreamingBody(body) {
 
 // The `tls` option for a pinned hop: the caller's own tls options, plus the
 // original hostname as serverName unless they set one themselves.
-function pinnedTls(tls, pin) {
-  if (pin.serverName === undefined) return tls;
-  if (tls == null || typeof tls !== "object") return { serverName: pin.serverName };
+function pinnedTls(tls, serverName) {
+  if (tls == null || typeof tls !== "object") return { serverName };
   if (tls.serverName != null || tls.servername != null) return tls;
-  return { ...tls, serverName: pin.serverName };
+  return { ...tls, serverName };
 }
 
 function fetchFailed(cause) {
@@ -254,8 +267,9 @@ async function followRedirectsWithConnect(url, init, connect, opts) {
     let hopInit = init;
     if (pin !== undefined) {
       target = pin.url.href;
-      if (!hopHeaders.has("host")) hopHeaders.set("host", pin.host);
-      hopInit = pinnedInit(init, pin, connect);
+      const { host } = pin;
+      if (host !== undefined && !hopHeaders.has("host")) hopHeaders.set("host", host);
+      hopInit = connectInit(init, pin, connect);
     }
     const resp = await nativeFetch(target, { ...hopInit, method, headers: hopHeaders, body, redirect: "manual" });
     const { status } = resp;
@@ -278,12 +292,13 @@ async function followRedirectsWithConnect(url, init, connect, opts) {
       throw hopError(`cannot follow the ${status} redirect to ${next.href}: URL scheme must be http or https`);
     }
     if (next.origin !== url.origin) {
+      // The headers native following strips on a cross-origin hop; a
+      // user-supplied Host only applies to the original authority.
       headers.delete("authorization");
       headers.delete("proxy-authorization");
       headers.delete("cookie");
+      headers.delete("host");
     }
-    // A user-supplied Host header only applies to the original authority.
-    headers.delete("host");
     if (
       (status === 303 && method !== "GET" && method !== "HEAD") ||
       ((status === 301 || status === 302) && method === "POST")
@@ -325,6 +340,9 @@ async function fetchWithConnect(input, init, connect) {
   if (redirectMode !== "follow") {
     // "manual" returns the 3xx and "error" rejects natively; neither follows
     // a redirect, so only the first hop needs pinning.
+    // Snapshot before the await: a header change during the lookup must not
+    // reach the request.
+    const headers = new Headers(init?.headers ?? (isRequest ? input.headers : undefined));
     let pin;
     try {
       pin = await applyConnect(url, connect, signal);
@@ -332,10 +350,10 @@ async function fetchWithConnect(input, init, connect) {
       if (signal?.aborted && err === signal.reason) throw err;
       throw fetchLookupError(err);
     }
-    if (pin === undefined) return nativeFetch(input, init);
-    const headers = new Headers(init?.headers ?? (isRequest ? input.headers : undefined));
-    if (!headers.has("host")) headers.set("host", pin.host);
-    const hopInit = { ...pinnedInit(init, pin, connect), headers, redirect: redirectMode };
+    if (pin === undefined) return nativeFetch(input, init == null ? undefined : { ...init, headers });
+    const { host } = pin;
+    if (host !== undefined && !headers.has("host")) headers.set("host", host);
+    const hopInit = { ...connectInit(init, pin, connect), headers, redirect: redirectMode };
     if (isRequest) {
       // Taken from the Request directly; a second Request would tee a stream body.
       if (hopInit.method === undefined) hopInit.method = input.method;
@@ -351,20 +369,24 @@ async function fetchWithConnect(input, init, connect) {
   let body = init?.body;
   const requestBody = body === undefined && isRequest ? input.body : null;
   if (requestBody != null) {
-    // A Request body held in memory (string, bytes, Blob) streams from a native
-    // blob source; take it back as a Blob so a 307/308 can replay it. Any other
-    // stream (a user stream, a file, a live response body) is sent once.
+    // A Request body held in memory (string, bytes, Blob) or in a file streams
+    // from a native source; take it back as a Blob (a lazy one for a file) so
+    // it is sent with Content-Length and a 307/308 can replay it. Any other
+    // stream (a user stream, a live response body) is sent once.
     const source = requestBody.$bunNativePtr;
+    const tag = source == null ? "" : ObjectPrototypeToString.$call(source);
     body =
-      source != null && ObjectPrototypeToString.$call(source) === "[object BlobInternalReadableStreamSource]"
+      tag === "[object BlobInternalReadableStreamSource]" || tag === "[object FileInternalReadableStreamSource]"
         ? await input.blob()
         : requestBody;
   }
+  // Bun's own maxRedirects option bounds the chain as it does natively.
+  const maxRedirects = init?.maxRedirects;
   return followRedirectsWithConnect(url, { ...init, signal }, connect, {
     method,
     body,
     headers,
-    limit: 20,
+    limit: Number.isInteger(maxRedirects) && maxRedirects >= 0 ? maxRedirects : 20,
     redirectError: () => fetchFailed(new Error("redirect count exceeded")),
     hopError: message => fetchFailed(new Error(message)),
     lookupError: fetchLookupError,
@@ -613,14 +635,16 @@ async function request(
       keepalive: !reset,
     };
     if (hasLookup) {
-      // Snapshot before the await: the caller keeps its own URL object.
+      // Snapshot before the await: the caller keeps its own URL and headers.
       url = new URL(url);
+      const headers = new Headers(requestHeaders);
+      init = { ...init, headers };
       const pin = await applyConnect(url, connect, signal);
       if (pin !== undefined) {
         url = pin.url;
-        const headers = new Headers(requestHeaders);
-        if (!headers.has("host")) headers.set("host", pin.host);
-        init = { ...pinnedInit(init, pin, connect), headers };
+        const { host } = pin;
+        if (host !== undefined && !headers.has("host")) headers.set("host", host);
+        init = connectInit(init, pin, connect);
       }
     }
     resp = await nativeFetch(url, init);

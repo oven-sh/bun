@@ -1,7 +1,8 @@
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, tls as tlsCert } from "harness";
+import { bunEnv, bunExe, tempDir, tls as tlsCert } from "harness";
 import diagnosticsChannel from "node:diagnostics_channel";
 import { Readable } from "node:stream";
+import { join } from "node:path";
 // @ts-ignore undici 5's types don't declare ping()
 import {
   Agent,
@@ -1293,6 +1294,162 @@ describe("undici dispatcher connect.lookup", () => {
     const res = await undiciFetch(`http://127.0.0.1:${origin.port}/`, { dispatcher: agent });
     expect(await res.text()).toBe("followed");
     expect(res.redirected).toBe(true);
+  });
+
+  it("a caller's Host header survives a same-origin hop and is dropped cross-origin", async () => {
+    const hosts: string[] = [];
+    await using other = Bun.serve({
+      port: 0,
+      fetch: req => {
+        hosts.push(`other:${req.headers.get("host")}`);
+        return new Response("done");
+      },
+    });
+    await using origin = Bun.serve({
+      port: 0,
+      fetch: req => {
+        hosts.push(`origin:${req.headers.get("host")}`);
+        const { pathname } = new URL(req.url);
+        if (pathname === "/a") return Response.redirect("/b", 302);
+        return Response.redirect(`http://cross.invalid:${other.port}/`, 302);
+      },
+    });
+    const { agent } = pinningAgent();
+    const res = await undiciFetch(`http://same.invalid:${origin.port}/a`, {
+      dispatcher: agent,
+      headers: { host: "vhost.example" },
+    });
+    expect(await res.text()).toBe("done");
+    expect(hosts).toEqual(["origin:vhost.example", "origin:vhost.example", `other:cross.invalid:${other.port}`]);
+  });
+
+  it("a file-backed Request body is sent with Content-Length and replayed on a 307", async () => {
+    using dir = tempDir("undici-file-body", { "upload.txt": "file payload" });
+    const seen: string[] = [];
+    await using target = Bun.serve({
+      port: 0,
+      fetch: async req => {
+        seen.push(`${req.headers.get("transfer-encoding")} ${req.headers.get("content-length")} ${await req.text()}`);
+        return new Response("stored");
+      },
+    });
+    await using origin = Bun.serve({
+      port: 0,
+      fetch: async req => {
+        seen.push(`${req.headers.get("transfer-encoding")} ${req.headers.get("content-length")} ${await req.text()}`);
+        return new Response(null, { status: 307, headers: { location: `http://store.invalid:${target.port}/` } });
+      },
+    });
+    const { agent } = pinningAgent();
+    const res = await undiciFetch(
+      new Request(`http://first.invalid:${origin.port}/`, {
+        method: "PUT",
+        body: Bun.file(join(String(dir), "upload.txt")),
+      }),
+      { dispatcher: agent },
+    );
+    expect(await res.text()).toBe("stored");
+    expect(seen).toEqual(["null 12 file payload", "null 12 file payload"]);
+  });
+
+  it("fetch honors Bun's maxRedirects option on the pinned path", async () => {
+    await using server = Bun.serve({
+      port: 0,
+      fetch: req => {
+        const { pathname } = new URL(req.url);
+        if (pathname === "/a") return Response.redirect("/b", 302);
+        if (pathname === "/b") return Response.redirect("/c", 302);
+        return new Response("c");
+      },
+    });
+    const { agent } = pinningAgent();
+    const url = `http://hops.invalid:${server.port}/a`;
+    const outcome = (n: number) =>
+      // @ts-expect-error Bun-specific fetch option
+      undiciFetch(url, { dispatcher: agent, maxRedirects: n }).then(
+        res => res.status,
+        (err: TypeError) => (err.cause as Error).message,
+      );
+    expect(await outcome(2)).toBe(200);
+    expect(await outcome(1)).toBe("redirect count exceeded");
+    expect(await outcome(0)).toBe("redirect count exceeded");
+  });
+
+  it("a URL whose scheme is really a hostname fails closed instead of skipping the hook", async () => {
+    let hits = 0;
+    await using server = Bun.serve({
+      port: 0,
+      fetch: () => {
+        hits++;
+        return new Response("reached");
+      },
+    });
+    const { agent, seen } = pinningAgent();
+    const url = `localhost:${server.port}/admin`;
+    // Without a dispatcher native fetch reads this as http://localhost:PORT/admin.
+    expect((await undiciFetch(url)).status).toBe(200);
+    expect(
+      await undiciFetch(url, { dispatcher: agent }).then(
+        () => "resolved",
+        (err: TypeError) => `${err.message}: ${(err.cause as Error).message}`,
+      ),
+    ).toBe("fetch failed: URL scheme must be http or https (received localhost:)");
+    expect(
+      await request(url, { dispatcher: agent }).then(
+        () => "resolved",
+        (err: Error) => err.message,
+      ),
+    ).toBe("URL scheme must be http or https (received localhost:)");
+    expect(seen).toEqual([]);
+    expect(hits).toBe(1);
+  });
+
+  it("https: the Agent's connect TLS options apply to IP-literal hops too", async () => {
+    await using target = Bun.serve({ port: 0, tls: tlsCert, fetch: () => new Response("ip-hop") });
+    await using origin = Bun.serve({
+      port: 0,
+      tls: tlsCert,
+      fetch: () => Response.redirect(`https://127.0.0.1:${target.port}/`, 302),
+    });
+    const seen: string[] = [];
+    const agent = new Agent({
+      connect: {
+        ca: tlsCert.cert,
+        // The cert is for localhost; accept the IP-literal hop and record it.
+        checkServerIdentity: (hostname: string) => {
+          seen.push(`verify:${hostname}`);
+          return undefined;
+        },
+        lookup: (hostname, _o, cb) => {
+          seen.push(`lookup:${hostname}`);
+          cb(null, "127.0.0.1", 4);
+        },
+      },
+    });
+    const res = await undiciFetch(`https://localhost:${origin.port}/`, { dispatcher: agent });
+    expect(await res.text()).toBe("ip-hop");
+    expect(seen).toEqual(["lookup:localhost", "verify:localhost", "verify:127.0.0.1"]);
+    // The same applies to a first hop that is already an IP literal.
+    const direct = await undiciFetch(`https://127.0.0.1:${target.port}/`, { dispatcher: agent });
+    expect(await direct.text()).toBe("ip-hop");
+  });
+
+  it("request() snapshots the headers before the lookup runs", async () => {
+    await using server = Bun.serve({
+      port: 0,
+      fetch: req => new Response(req.headers.get("authorization") ?? "none"),
+    });
+    const headers = { authorization: "token-A" };
+    const agent = new Agent({
+      connect: {
+        lookup: (_h, _o, cb) => {
+          headers.authorization = "token-B";
+          cb(null, "127.0.0.1", 4);
+        },
+      },
+    });
+    const { body } = await request(`http://snap.invalid:${server.port}/`, { dispatcher: agent, headers });
+    expect(await body!.text()).toBe("token-A");
   });
 
   it("an Agent without connect options leaves requests untouched", async () => {

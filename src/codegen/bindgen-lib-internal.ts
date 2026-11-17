@@ -1606,6 +1606,16 @@ export const callableType = new LocalType(
   null,
   { type: "Function" },
 );
+/** Like a class, it is its own kind. */
+export const urlType = new (class extends LocalType {
+  readonly cpp = "WebCore::JSDOMURL";
+  get valueKinds(): ValueKinds {
+    return [this];
+  }
+  getHeaders(out: Set<string>): void {
+    out.add("Bindgen/IDLConvertURL.h");
+  }
+})("Bun::Bindgen::IDLRawURL", "URL", "bun_jsc::DOMURL", [], null, instanceType("URL"));
 
 export class AnyType extends Type {
   readonly idlType = "Bun::Bindgen::IDLRawAny";

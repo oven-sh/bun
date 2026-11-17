@@ -164,6 +164,7 @@ pub const MOVEFILE_WRITE_THROUGH: DWORD = 0x8;
 pub const FSCTL_SET_SPARSE: DWORD = 0x0009_00C4;
 pub use bun_windows_sys::FILETIME;
 
+pub use bun_core::windows_sys::STD_ERROR_HANDLE;
 pub use bun_windows_sys::DUPLICATE_SAME_ACCESS;
 pub use bun_windows_sys::FILE_ALL_INFORMATION;
 pub use bun_windows_sys::FILE_ATTRIBUTE_DIRECTORY;
@@ -203,11 +204,6 @@ pub use bun_windows_sys::{
     SYMBOLIC_LINK_FLAG_DIRECTORY,
 };
 pub use bun_windows_sys::{FILE_READ_ATTRIBUTES, FILE_READ_DATA, FILE_READ_EA, FILE_TRAVERSE};
-// Stdio handle helpers (live in `bun_core::windows_sys` so the no-dep core can
-// resolve PEB stdio at startup; re-export here for the `sys::windows::*` path).
-pub use bun_core::windows_sys::{
-    GetStdHandle, STD_ERROR_HANDLE, STD_INPUT_HANDLE, STD_OUTPUT_HANDLE,
-};
 
 /// 1601-01-01 → 1970-01-01 offset in 100-ns ticks.
 pub(crate) const EPOCH_DIFFERENCE_100NS: i64 = 11_644_473_600 * 10_000_000;

@@ -310,19 +310,7 @@ impl CopyFile {
                 TryWith::Sendfile => {
                     linux::sendfile(dest_fd.native(), src_fd.native(), None, remain)
                 }
-                TryWith::Splice => {
-                    // SAFETY: raw splice(2); both fds owned by caller, null offsets.
-                    unsafe {
-                        libc::splice(
-                            src_fd.native(),
-                            core::ptr::null_mut(),
-                            dest_fd.native(),
-                            core::ptr::null_mut(),
-                            remain,
-                            0,
-                        )
-                    }
-                }
+                TryWith::Splice => linux::splice(src_fd.native(), dest_fd.native(), remain),
             };
 
             match bun_sys::get_errno(written) {
@@ -573,17 +561,13 @@ impl CopyFile {
                             && self.max_length < SizeType::try_from(stat_size).expect("int cast")
                         {
                             // If this fails...well, there's not much we can do about it.
-                            // SAFETY: NUL-terminated path in path_buf; libc truncate(2).
-                            let _ = unsafe {
-                                bun_sys::c::truncate(
-                                    self.destination_file_store
-                                        .pathlike
-                                        .path()
-                                        .slice_z(&mut path_buf)
-                                        .as_ptr(),
-                                    i64::try_from(self.max_length).expect("int cast"),
-                                )
-                            };
+                            let _ = bun_sys::truncate(
+                                self.destination_file_store
+                                    .pathlike
+                                    .path()
+                                    .slice_z(&mut path_buf),
+                                i64::try_from(self.max_length).expect("int cast"),
+                            );
                             self.read_len = SizeType::try_from(self.max_length).expect("int cast");
                         } else {
                             self.read_len = SizeType::try_from(stat_size).expect("int cast");

@@ -1136,9 +1136,7 @@ pub mod waiter_thread_posix {
             #[cfg(any(target_os = "linux", target_os = "android"))]
             {
                 let one: [u8; 8] = (1usize).to_ne_bytes();
-                // SAFETY: write(2) is async-signal-safe; eventfd valid after start().
-                let n = unsafe { libc::write(INSTANCE.eventfd().native(), one.as_ptr().cast(), 8) };
-                if n < 0 {
+                if bun_sys::write(INSTANCE.eventfd(), &one).is_err() {
                     panic!("Failed to write to eventfd");
                 }
             }

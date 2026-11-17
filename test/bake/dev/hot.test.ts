@@ -6,7 +6,11 @@ import path from "node:path";
 import { devTest, emptyHtmlFile, minimalFramework, WAIT_MULTIPLIER } from "../bake-harness";
 
 const pendingBatchControls = tempDir("bake-pending-watch-events", {});
-afterAll(() => pendingBatchControls[Symbol.dispose]());
+try {
+  afterAll(() => pendingBatchControls[Symbol.dispose]());
+} catch {
+  // Direct-script runs use the harness's interactive fallback.
+}
 
 for (const atomicWatchFile of [false, true]) {
   const traceName = atomicWatchFile ? "atomic-events.jsonl" : "events.jsonl";
@@ -64,7 +68,7 @@ for (const atomicWatchFile of [false, true]) {
             unlinkSync(trace + suffix);
           }
         }
-        let blockedRequest: Promise<string> | undefined;
+        let blockedRequest: Promise<{ status: number; body: string }> | undefined;
         async function waitForControl(condition: () => boolean) {
           const deadline = Date.now() + 2000 * WAIT_MULTIPLIER;
           while (!condition()) {
@@ -97,7 +101,10 @@ for (const atomicWatchFile of [false, true]) {
         }
         await dev.fetch("/").expect.toBe("A0|B0|C0");
         try {
-          blockedRequest = dev.fetch("/?block=1").text();
+          blockedRequest = dev.fetch("/?block=1").then(async response => ({
+            status: response.status,
+            body: await response.text(),
+          }));
           // The finally block awaits request failures after releasing the server.
           void blockedRequest.catch(() => {});
           await waitForControl(() => existsSync(trace + ".blocked"));
@@ -113,7 +120,7 @@ for (const atomicWatchFile of [false, true]) {
           }
         } finally {
           writeFileSync(trace + ".release", "release");
-          await blockedRequest;
+          expect(await blockedRequest).toEqual({ status: 200, body: "A0|B0|C0" });
         }
         await expectCurrentValues("A1|B1|C1");
         if (atomicWatchFile) {

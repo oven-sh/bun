@@ -342,7 +342,7 @@ export default b.declarations(
   // PostgresSQLConnection.rs on_notification: the channel and the payload.
   handlerOf("%PostgresSQLConnection%.prototype.onnotification", { this: b.undefined, args: [b.string, b.string] }),
   // js_valkey.rs: a job calls onconnect with the client and what the server has answered to HELLO. onclose gets the error that native code has made.
-  handlerOf("Bun.RedisClient.prototype.onconnect", { this: b.undefined, args: [b.operand("this"), b.any] }),
+  handlerOf("Bun.RedisClient.prototype.onconnect", { this: b.operand("this"), args: [b.operand("this"), b.any] }),
   handlerOf("Bun.RedisClient.prototype.onclose", { this: b.operand("this"), args: [b.any] }),
   // It also answers the callback of a write that has not gone out whole, which was handed over like any operand.
   responseHandler("onwritable", { this: b.undefined, args: [b.f64] }),

@@ -3953,6 +3953,13 @@ void GlobalObject::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     thisObject->visitAdditionalChildrenInGCThread<Visitor>(visitor);
 }
 
+// Undefined until something reads `process.env`.
+extern "C" [[ZIG_EXPORT(nothrow)]] JSC::EncodedJSValue Bun__Process__envObjectIfMade(JSC::JSGlobalObject* globalObject)
+{
+    JSObject* env = defaultGlobalObject(globalObject)->m_processEnvObject.get();
+    return JSValue::encode(env ? JSValue(env) : jsUndefined());
+}
+
 extern "C" bool JSGlobalObject__setTimeZone(JSC::JSGlobalObject* globalObject, const EncodedSlice* timeZone)
 {
     auto& vm = JSC::getVM(globalObject);

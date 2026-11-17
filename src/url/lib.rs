@@ -120,9 +120,11 @@ pub mod whatwg {
         pub fn href(&self) -> String {
             URL__href(self)
         }
+        /// Percent-encoded.
         pub fn username(&self) -> String {
             URL__username(self)
         }
+        /// Percent-encoded.
         pub fn password(&self) -> String {
             URL__password(self)
         }

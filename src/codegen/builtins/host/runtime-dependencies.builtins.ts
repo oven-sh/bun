@@ -758,7 +758,7 @@ const nativeCalls = [
       { file: inBindings("JSEnvironmentVariableMap.cpp") },
       { file: inBindings("JSEnvironmentVariableMap.h") },
       { file: inBindings("JSPropertyIterator.cpp") },
-      { file: inBindings("ZigGlobalObject.cpp"), times: 4 },
+      { file: inBindings("ZigGlobalObject.cpp"), times: 5 },
       { file: inBindings("ZigGlobalObject.h") },
     ],
     callers: [

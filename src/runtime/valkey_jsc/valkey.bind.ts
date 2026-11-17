@@ -217,6 +217,14 @@ const promise = b.any.returning("Promise");
 
 const eventHandler = { getter: b.any, setter: { capability: "js" }, passThis: true } as const;
 
+export const callOnconnect = b.fn({
+  export: "Bun__Valkey__callOnconnect",
+  rustPath: "crate::valkey_jsc::js_valkey::call_onconnect",
+  args: { handler: b.any, client: b.any },
+  capability: "js",
+  throws: true,
+});
+
 export const RedisClient = b.class({
   rustPath: "crate::valkey_jsc::JSValkeyClient",
   refCounted: true,
@@ -226,9 +234,17 @@ export const RedisClient = b.class({
     args: { url: b.any, options: b.any },
     capability: "js",
     throws: true,
+    passStructure: true,
     length: 0,
   },
-  internalFields: ["onconnect", "onclose", "connectionPromise", "hello", "subscriptionCallbackMap"],
+  internalFields: [
+    "onconnect",
+    "onclose",
+    "connectionPromise",
+    "hello",
+    "subscriptionCallbackMap",
+    "checkServerIdentity",
+  ],
   /** Every member needs a declaration in packages/bun-types/redis.d.ts: redis-client-types.test.ts compares the two. */
   proto: Object.fromEntries(
     [
@@ -250,7 +266,7 @@ export const RedisClient = b.class({
       ["bufferedAmount", { getter: b.usize }] as const,
       ["close", { capability: "js", throws: true, passThis: true }] as const,
       ["connected", { getter: b.bool, pure: true }] as const,
-      ["duplicate", { returns: promise, capability: "js", throws: true }] as const,
+      ["duplicate", { returns: promise, capability: "js", throws: true, passThis: true }] as const,
       ["onclose", eventHandler] as const,
       ["onconnect", eventHandler] as const,
     ].sort(([x], [y]) => x.localeCompare(y)),

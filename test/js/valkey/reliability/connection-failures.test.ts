@@ -1007,9 +1007,7 @@ describe("Valkey: Recovering After fail()", () => {
         () => "resolved",
         (err: Error & { code: string }) => `${err.code}: ${err.message}`,
       );
-      // connect() settles on the accepted HELLO, before the SELECT reply is
-      // read, so it resolves; the failure that follows is reported by onclose.
-      await client.connect();
+      await expect(client.connect()).rejects.toMatchObject({ code: "ERR_REDIS_INVALID_COMMAND" });
       expect(await queued).toBe("ERR_REDIS_INVALID_COMMAND: ERR DB index is out of range");
       // The rejection is a failure the client detected, so there is no retry
       // even with autoReconnect on: onclose fires once and the only second
@@ -2149,6 +2147,31 @@ describe("Valkey: Recovering After fail()", () => {
     },
   );
 
+  test.concurrent.each([
+    { program: `console.log("done")`, server: "drops every connection", stdout: "done\n" },
+    { program: `Bun.redis.onconnect = () => console.log("connected")`, server: "accepts", stdout: "connected\n" },
+    { program: `Bun.redis.onclose = e => console.log(e.message)`, server: "refuses", stdout: "WRONGPASS\n" },
+  ] as const)("--redis-preconnect: $program exits when the server $server", async ({ program, server, stdout }) => {
+    const fake = helloServer({
+      HELLO: (_, socket) => {
+        if (server === "drops every connection") socket.destroy();
+        return server === "accepts" ? "+OK\r\n" : server === "refuses" ? "-WRONGPASS\r\n" : null;
+      },
+    });
+    const port = await fake.listen();
+    try {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "--redis-preconnect", "-e", program],
+        env: { ...bunEnv, REDIS_URL: `redis://127.0.0.1:${port}` },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      expect(await exitOutcome(proc)).toEqual({ stdout, stderr: "", exitCode: 0 });
+    } finally {
+      fake.server.close();
+    }
+  });
+
   // A TLS stub run under Node in its own process, so it can read while this
   // loop is blocked, and so that what it reports about the peer's close does
   // not come from the socket code under test. It pauses connection 1 after
@@ -2582,6 +2605,238 @@ describe("Valkey: Recovering After fail()", () => {
         fake.server.close();
       }
     });
+  });
+});
+
+describe.concurrent("Valkey: Handshake", () => {
+  type Reply = (command: string[], connection: number, socket: net.Socket) => string | null | undefined;
+
+  // Answers each command with `reply`'s line, `+OK` for undefined and nothing for null. DROP closes the connection.
+  async function commandServer(reply: Reply = () => undefined) {
+    const seen: string[][] = [];
+    const server = net.createServer(socket => {
+      const commands: string[] = [];
+      const connection = seen.push(commands);
+      const state = { buffer: Buffer.alloc(0) };
+      socket.on("error", () => {});
+      socket.on("data", chunk => {
+        state.buffer = Buffer.concat([state.buffer, chunk]);
+        for (const command of readCommands(state)) {
+          commands.push(command.join(" "));
+          if (command[0] === "DROP") return void socket.destroy();
+          const line = reply(command, connection, socket);
+          if (line !== null) socket.write(`${line ?? "+OK"}\r\n`);
+        }
+      });
+    });
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+    const host = `127.0.0.1:${(server.address() as net.AddressInfo).port}`;
+    return { server, seen, host, [Symbol.dispose]: () => void server.close() };
+  }
+  const outcome = (promise: Promise<unknown>) =>
+    promise.then(
+      value => value,
+      e => `${e.code}: ${e.message}`,
+    );
+  const drop = (client: RedisClient) => outcome(client.send("DROP", []));
+
+  async function run(program: string, env: Record<string, string | undefined>) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", program],
+      env: { ...bunEnv, REDIS_URL: undefined, VALKEY_URL: undefined, ...env },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+
+  test("a refused database rejects connect(), and neither onconnect nor a write gets ahead of it", async () => {
+    using fake = await commandServer(([name]) => (name === "SELECT" ? "-ERR DB index is out of range" : undefined));
+    const closed = once(fake.server, "connection").then(([socket]) => new Promise(done => socket.once("close", done)));
+    const client = new RedisClient(`redis://${fake.host}/99`);
+    const onconnect = mock(() => void outcome(client.set("key", "value")));
+    client.onconnect = onconnect;
+    expect(await outcome(client.connect())).toBe("ERR_REDIS_INVALID_COMMAND: ERR DB index is out of range");
+    await closed;
+    expect(onconnect).not.toHaveBeenCalled();
+    expect(fake.seen).toEqual([["HELLO 3", "SELECT 99"]]);
+  });
+
+  test("connectionTimeout covers the reply to SELECT", async () => {
+    using fake = await commandServer(([name]) => (name === "SELECT" ? null : undefined));
+    const client = new RedisClient(`redis://${fake.host}/1`, { connectionTimeout: 100 });
+    expect(await outcome(client.connect())).toBe(
+      "ERR_REDIS_CONNECTION_TIMEOUT: Connection timeout reached after 100ms",
+    );
+  });
+
+  test.each<[string, (client: RedisClient) => Promise<unknown>, string[]]>([
+    ["select(5), a drop", async c => (await c.select(5), drop(c)), ["HELLO 3", "SELECT 5", "PING"]],
+    ["select(0), a drop", async c => (await c.select(0), drop(c)), ["HELLO 3", "PING"]],
+    [
+      "a refused select(99), a drop",
+      async c => (await outcome(c.select(99)), drop(c)),
+      ["HELLO 3", "SELECT 2", "PING"],
+    ],
+    [
+      "select(5), close(), connect()",
+      async c => (await c.select(5), c.close(), c.connect()),
+      ["HELLO 3", "SELECT 2", "PING"],
+    ],
+    ["select(5), duplicate()", async c => (await c.select(5), (await c.duplicate()).close()), ["HELLO 3", "SELECT 2"]],
+  ])("with database 2 in the URL, the connection after %s", async (_, steps, second) => {
+    using fake = await commandServer(([name, db]) => (name === "SELECT" && db === "99" ? "-ERR range" : undefined));
+    const client = new RedisClient(`redis://${fake.host}/2`);
+    try {
+      await steps(client);
+      await client.ping();
+      expect(fake.seen[1]).toEqual(second);
+    } finally {
+      client.close();
+    }
+  });
+
+  test.each([
+    { refused: "HELLO", reply: "-ERR max number of clients reached", ping: "OK", connections: 3 },
+    { refused: "HELLO", reply: "-LOADING Redis is loading the dataset in memory", ping: "OK", connections: 3 },
+    { refused: "SELECT", reply: "-BUSY Redis is busy running a script", ping: "OK", connections: 3 },
+    { refused: "HELLO", reply: null, ping: "OK", connections: 3 },
+    { refused: "HELLO", reply: "-WRONGPASS", ping: "ERR_REDIS_AUTHENTICATION_FAILED: WRONGPASS", connections: 2 },
+    { refused: "SELECT", reply: "-NOPERM", ping: "ERR_REDIS_INVALID_COMMAND: NOPERM", connections: 2 },
+  ])("a reconnect that gets $reply to $refused ends in $ping", async ({ refused, reply, ping, connections }) => {
+    using fake = await commandServer(([name], connection) =>
+      connection === 2 && (name === refused || name === "SELECT") ? reply : undefined,
+    );
+    const client = new RedisClient(`redis://${fake.host}/1`, { connectionTimeout: 1000 });
+    try {
+      await drop(client);
+      expect({ ping: await outcome(client.ping()), connections: fake.seen.length }).toEqual({ ping, connections });
+    } finally {
+      client.close();
+    }
+  });
+
+  test("a server that stays busy uses up the retries", async () => {
+    using fake = await commandServer(([name], connection) =>
+      name === "SELECT" && connection > 1 ? "-BUSY script" : undefined,
+    );
+    const client = new RedisClient(`redis://${fake.host}/1`, { maxRetries: 2 });
+    await drop(client);
+    const error = await client.ping().catch(e => e);
+    expect({ message: error.message, cause: error.cause?.message, connections: fake.seen.length }).toEqual({
+      message: "Max reconnection attempts reached",
+      cause: "BUSY script",
+      connections: 3,
+    });
+  });
+
+  // One character is one byte on the wire.
+  test.each([
+    ["jos%C3%A9:pw", "HELLO 3 AUTH jos\xc3\xa9 pw"],
+    ["jos%E9:pw", "HELLO 3 AUTH jos\xe9 pw"],
+    ["user:p%E9ss", "HELLO 3 AUTH user p\xe9ss"],
+    [":%ff%fe", "HELLO 3 AUTH default \xff\xfe"],
+    ["us%00er:p%00w", "HELLO 3 AUTH us\0er p\0w"],
+    ["a@b:%zz%4", "HELLO 3 AUTH a@b %zz%4"],
+  ])("redis://%s@host sends %j", async (credentials, hello) => {
+    using fake = await commandServer();
+    const client = new RedisClient(`redis://${credentials}@${fake.host}`);
+    await client.connect();
+    client.close();
+    expect(fake.seen).toEqual([[hello]]);
+  });
+
+  test.each([
+    { launch: {}, program: `process.env.REDIS_URL = process.env.A`, user: "a" },
+    { launch: {}, program: `process.env.VALKEY_URL = process.env.A`, user: "a" },
+    { launch: { REDIS_URL: "b" }, program: `process.env.REDIS_URL = process.env.A`, user: "a" },
+    { launch: { REDIS_URL: "b", VALKEY_URL: "a" }, program: `delete process.env.REDIS_URL`, user: "a" },
+    { launch: { REDIS_URL: "b", VALKEY_URL: "a" }, program: `process.env.REDIS_URL = ""`, user: "a" },
+    { launch: { REDIS_URL: "", VALKEY_URL: "a" }, program: ``, user: "a" },
+    { launch: { REDIS_URL: "b", VALKEY_URL: "a" }, program: ``, user: "b" },
+  ])("launched with $launch, `$program` makes $user the default", async ({ launch, program, user }) => {
+    using fake = await commandServer();
+    const url = (user: string) => user && `redis://${user}:pw@${fake.host}`;
+    const env = Object.fromEntries(Object.entries({ ...launch, A: "a" }).map(([name, user]) => [name, url(user)]));
+    const options = `{ autoReconnect: false }`;
+    const result = await run(
+      `${program}; await new Bun.RedisClient(undefined, ${options}).ping(); await Bun.redis.ping();`,
+      env,
+    );
+    expect({ ...result, seen: fake.seen }).toEqual({
+      stdout: "",
+      stderr: "",
+      exitCode: 0,
+      seen: [
+        [`HELLO 3 AUTH ${user} pw`, "PING"],
+        [`HELLO 3 AUTH ${user} pw`, "PING"],
+      ],
+    });
+  });
+
+  test("a Worker reads REDIS_URL from its own env", async () => {
+    using fake = await commandServer();
+    const program = `
+      const { Worker } = require("node:worker_threads");
+      new Worker("Bun.redis.ping()", { eval: true, env: { REDIS_URL: "redis://worker:pw@${fake.host}" } });
+    `;
+    expect(await run(program, { REDIS_URL: `redis://main:pw@${fake.host}` })).toMatchObject({
+      stderr: "",
+      exitCode: 0,
+    });
+    expect(fake.seen).toEqual([["HELLO 3 AUTH worker pw", "PING"]]);
+  });
+
+  // A command that is not batched is on the socket when the call returns.
+  test.each([
+    { flag: "1", options: "undefined", seen: ["HELLO 3", "GET key"] },
+    { flag: "1", options: "{}", seen: ["HELLO 3", "GET key"] },
+    { flag: "1", options: "{ enableAutoPipelining: true }", seen: ["HELLO 3"] },
+    { flag: undefined, options: "undefined", seen: ["HELLO 3"] },
+  ])("DISABLE_REDIS_AUTO_PIPELINING=$flag with options $options", async ({ flag, options, seen }) => {
+    using fake = await commandServer();
+    const closed = once(fake.server, "connection").then(([socket]) => new Promise(done => socket.once("close", done)));
+    const program = `
+      const client = new Bun.RedisClient("redis://${fake.host}", ${options});
+      await client.connect();
+      client.get("key");
+      process.kill(process.pid, "SIGKILL");
+    `;
+    await run(program, { BUN_FEATURE_FLAG_DISABLE_REDIS_AUTO_PIPELINING: flag });
+    await closed;
+    expect(fake.seen).toEqual([seen]);
+  });
+
+  test.each(["onconnect", "onclose"] as const)("%s keeps a function and is null otherwise", name => {
+    const client = new RedisClient("redis://127.0.0.1:1");
+    expect(client[name]).toBeNull();
+    const handler = () => {};
+    for (const value of [undefined, null, 42, "text", {}]) {
+      client[name] = handler;
+      expect(client[name]).toBe(handler);
+      client[name] = value as any;
+      expect(client[name]).toBeNull();
+    }
+  });
+
+  test("onconnect gets the client as this, before connect() continues", async () => {
+    using fake = await commandServer();
+    const client = new RedisClient(`redis://${fake.host}`);
+    const calls: unknown[][] = [];
+    client.onconnect = function (...args: unknown[]) {
+      calls.push([this === client, args[0] === client, args[1]]);
+    };
+    await client.connect();
+    client.close();
+    expect(calls).toEqual([[true, true, "OK"]]);
+  });
+
+  test("the error for an unknown scheme names every scheme", () => {
+    expect(() => new RedisClient("http://localhost")).toThrow(
+      "Expected url protocol to be one of redis, valkey, rediss, valkeys, redis+tls, valkey+tls, redis+unix, valkey+unix, redis+tls+unix, valkey+tls+unix",
+    );
   });
 });
 

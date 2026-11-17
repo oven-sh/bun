@@ -6551,6 +6551,55 @@ export declare class PgArrayBuilder<T extends PgArrayColumnBuilderBaseConfig, TB
       expect(exitCode).toBe(0);
     });
 
+    // Reduced from yup 0.31 with @types/yup 0.29, where `array().of(step)` infers the element type. The walk from
+    // `ObjectSchema<{ title: string }, object>` to `Schema<U, object>` reaches `ObjectSchema<object, object>`, the
+    // parameter of the base signature of the second `concat`. tsgo creates that instantiation during the walk, so it's
+    // the newer one, the walk stops there as deeply nested, and `object` is no candidate for `U`. Ordering the two by
+    // height took it for the older one and inferred `object`. The assignments to `p` fail on purpose: the messages
+    // print `U`.
+    const schemas = `
+interface Schema<T, C = object> {
+    concat(schema: this): this;
+    validateSync(value: any): T;
+}
+interface ObjectSchema<T extends object | null | undefined = object | undefined, C = object> extends Schema<T, C> {
+    defined(): ObjectSchema<Exclude<T, undefined>, C>;
+    concat(schema: this): this;
+    concat<U extends object>(schema: ObjectSchema<U, C>): ObjectSchema<T & U, C>;
+}
+declare function of<U>(type: Schema<U, object>): U;
+declare function object<T extends object>(x: T): ObjectSchema<T, object>;
+`;
+    // The second call creates its own `ObjectSchema<{ title: string }, object>`, from its own object literal. By then
+    // `ObjectSchema<object, object>` is the older one, so tsc infers `object` and reports TS2339.
+    test("stops an inference at an instantiation that the inference itself created", async () => {
+      using dir = project({
+        "a.ts": `${schemas}export const p: { p: 1 } = of(object({ title: "" }));
+export const titles: string[] = [of(object({ title: "" }))].map(({ title }) => title);
+`,
+      });
+      const { stdout } = await check(dir);
+      expect(stdout).toMatchInlineSnapshot(`
+        "a.ts(13,14): error TS2741: Property 'p' is missing in type '{ title: string; }' but required in type '{ p: 1; }'.
+        a.ts(14,68): error TS2339: Property 'title' does not exist on type '{}'."
+      `);
+    });
+
+    // tsc infers `object` here: the type node of `pre` created `ObjectSchema<object, object>` before the call.
+    test("continues an inference into an instantiation that a type node created first", async () => {
+      using dir = project({
+        "a.ts": `${schemas}declare const pre: ObjectSchema<object, object>;
+export const q = pre;
+export const p: { p: 1 } = of(object({ title: "" }));
+`,
+      });
+      const { stdout } = await check(dir);
+      expect(stdout).toMatchInlineSnapshot(`
+        "a.ts(15,14): error TS2322: Type 'object' is not assignable to type '{ p: 1; }'.
+          Property 'p' is missing in type '{}' but required in type '{ p: 1; }'."
+      `);
+    });
+
     // The argument is wrong: without the cycle through `keyof typeof shapes`, TypeScript reports TS2345. Inside the initializer
     // that the type refers back to, the comparison re-enters itself, and TypeScript 7.0 and 7.1 keep the inner result.
     test("keeps the first result of a comparison that re-enters itself through a variable's initializer", async () => {

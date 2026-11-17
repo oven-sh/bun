@@ -18959,5 +18959,29 @@
       "decls.d.ts": "type Box<T> = { v: T };\ninterface I0 { next: Box<number> }\ninterface I1 { next: Box<[I0]> }\ninterface I2 { next: Box<[[I1]]> }\ninterface I3 { next: Box<[[[I2]]]> }\ninterface I4 { next: Box<[[[[I3]]]]> }\n",
       "tsconfig.json": "{ \"compilerOptions\": { \"strict\": true, \"noEmit\": true, \"types\": [], \"lib\": [\"es2022\"] } }\n"
     }
+  },
+  "yup-schema-inferred-through-an-instantiation-the-inference-created": {
+    "files": {
+      "a.ts": "interface Schema<T, C = object> {\n    concat(schema: this): this;\n    validateSync(value: any): T;\n}\ninterface ObjectSchema<T extends object | null | undefined = object | undefined, C = object> extends Schema<T, C> {\n    defined(): ObjectSchema<Exclude<T, undefined>, C>;\n    concat(schema: this): this;\n    concat<U extends object>(schema: ObjectSchema<U, C>): ObjectSchema<T & U, C>;\n}\ndeclare function of<U>(type: Schema<U, object>): U;\ndeclare function object<T extends object>(x: T): ObjectSchema<T, object>;\nconst o = object({ title: \"\" });\nexport const p: { p: 1 } = of(o);\nexport const titles: string[] = [of(o)].map(({ title }) => title);\n",
+      "tsconfig.json": "{ \"compilerOptions\": { \"strict\": true, \"noEmit\": true, \"types\": [], \"lib\": [\"es2022\"] } }\n"
+    }
+  },
+  "yup-schema-inferred-through-an-instantiation-a-type-node-created": {
+    "files": {
+      "a.ts": "interface Schema<T, C = object> {\n    concat(schema: this): this;\n    validateSync(value: any): T;\n}\ninterface ObjectSchema<T extends object | null | undefined = object | undefined, C = object> extends Schema<T, C> {\n    defined(): ObjectSchema<Exclude<T, undefined>, C>;\n    concat(schema: this): this;\n    concat<U extends object>(schema: ObjectSchema<U, C>): ObjectSchema<T & U, C>;\n}\ndeclare function of<U>(type: Schema<U, object>): U;\ndeclare function object<T extends object>(x: T): ObjectSchema<T, object>;\ndeclare const pre: ObjectSchema<object, object>;\nexport const q = pre;\nexport const p: { p: 1 } = of(object({ title: \"\" }));\n",
+      "tsconfig.json": "{ \"compilerOptions\": { \"strict\": true, \"noEmit\": true, \"types\": [], \"lib\": [\"es2022\"] } }\n"
+    }
+  },
+  "yup-schema-inferred-from-a-mapped-shape": {
+    "files": {
+      "a.ts": "interface Schema<T, C = object> {\n    concat(schema: this): this;\n    validateSync(value: any): T;\n}\ninterface ObjectSchema<T extends object | null | undefined = object | undefined, C = object> extends Schema<T, C> {\n    defined(): ObjectSchema<Exclude<T, undefined>, C>;\n    concat(schema: this): this;\n    concat<U extends object>(schema: ObjectSchema<U, C>): ObjectSchema<T & U, C>;\n}\ndeclare function of<U>(type: Schema<U, object>): U;\ndeclare function object<T extends object>(shape: { [field in keyof T]: Schema<T[field], object> }): ObjectSchema<T | undefined, object>;\ndeclare function string(): Schema<string, object>;\nconst step = object({ title: string() }).defined();\nexport const p: { p: 1 } = of(step);\nexport const titles: string[] = [of(step)].map(({ title }) => title);\n",
+      "tsconfig.json": "{ \"compilerOptions\": { \"strict\": true, \"noEmit\": true, \"types\": [], \"lib\": [\"es2022\"] } }\n"
+    }
+  },
+  "yup-schema-inferred-as-an-intersection-with-object": {
+    "files": {
+      "a.ts": "interface Schema<T, C = object> {\n    concat(schema: this): this;\n    validateSync(value: any): T;\n}\ninterface ObjectSchema<T extends object | null | undefined = object | undefined, C = object> extends Schema<T, C> {\n    defined(): ObjectSchema<Exclude<T, undefined>, C>;\n    concat(schema: this): this;\n    concat<U extends object>(schema: ObjectSchema<U, C>): ObjectSchema<T & U, C>;\n}\ndeclare function of<U>(type: Schema<U, object>): U;\ndeclare function object<T>(x: T): ObjectSchema<T & object, object>;\ndeclare const x: { title: string };\nexport const p: { p: 1 } = of(object(x));\n",
+      "tsconfig.json": "{ \"compilerOptions\": { \"strict\": true, \"noEmit\": true, \"types\": [], \"lib\": [\"es2022\"] } }\n"
+    }
   }
 }

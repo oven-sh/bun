@@ -9107,6 +9107,8 @@ declare module "bun" {
      * - **Windows headless/CI:** registration fails if the current user's SID can't be
      *   resolved (typical under service accounts). Run as a regular user or create the
      *   task manually with `schtasks /create /ru SYSTEM`.
+     * - **macOS:** an expression that expands to more than 10,000 launchd calendar intervals
+     *   (e.g. `1-59 1-23 2-31 * *`) is rejected.
      * - **macOS:** stdout/stderr are written to `~/Library/Logs/bun/cron/bun.cron.<title>.{stdout,stderr}.log`.
      *
      * ### Idempotency & removal
@@ -9121,7 +9123,7 @@ declare module "bun" {
      *   used directly in crontab markers, launchd service labels, and schtasks task names.
      * @returns Promise that resolves once the OS scheduler has accepted the job.
      * @throws If the cron expression is invalid, `title` contains illegal characters,
-     *   the expression exceeds Windows' trigger limit, or the underlying scheduler command fails
+     *   the expression exceeds the Windows or macOS limit, or the underlying scheduler command fails
      *   (the error message includes the scheduler's stderr output).
      *
      * @example

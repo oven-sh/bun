@@ -921,6 +921,16 @@ describe.concurrent.skipIf(!isMacOS && !isWindows)("on any account (macOS, Windo
     });
   });
 
+  test.skipIf(!isMacOS)("too many calendar intervals reject before anything is written", async () => {
+    const result = await run(`
+      console.log(await Bun.cron("./job.ts", "0-28 0-22 1-15 * *", "bun-test-cap").catch(e => e.message));
+      console.log(require("node:fs").existsSync("home/Library/LaunchAgents"));
+      await Bun.cron.remove("bun-test-cap");
+    `);
+    expect(result.stdout).toMatch(/too many calendar intervals for launchd \(max 10000\).*\nfalse\n$/);
+    expect(result.exitCode).toBe(0);
+  });
+
   test.each(["process.exit(0)", `postMessage("terminate")`])("a Worker ends with a call in flight: %s", async end => {
     const result = await run(`
       if (Bun.isMainThread) {
@@ -1441,6 +1451,7 @@ describe.skipIf(!hasLaunchctl)("cron end-to-end (macOS)", () => {
   test.each([
     { title: "test-mac-log", schedule: "@yearly", logDirectory: "kept" },
     { title: "test-mac-log-deleted", schedule: "@yearly", logDirectory: "deleted" },
+    { title: "test-mac-10000-dicts", schedule: "0-49 0-19 1-10 1 *", logDirectory: "kept" },
   ])("$schedule runs and logs, log directory $logDirectory", { timeout: 30_000 }, async job => {
     using home = tempDir("bun-cron-test", {
       "job.ts": `export default { scheduled() { console.log("ran"); } };`,

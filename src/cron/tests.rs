@@ -257,7 +257,7 @@ fn crontab_without_entry() {
 fn plist() {
     let escaped = job("30 2 * * 1", b"/a&b/<bun>", b"/\"it's\"/\xff.ts");
     assert_eq!(
-        launchd::plist(&escaped, b"/Users/a&b"),
+        launchd::plist(&escaped, b"/Users/a&b").unwrap(),
         include_str!("tests/job.plist")
     );
     let dict = |keys: &[(&str, u8)]| {
@@ -299,9 +299,26 @@ fn plist() {
             ]),
         ),
     ] {
-        let plist = launchd::plist(&job(text, b"", b""), b"");
+        let plist = launchd::plist(&job(text, b"", b""), b"").unwrap();
         let (after, before) = ("<key>StartCalendarInterval</key>\n", "<key>StandardOutPath");
         assert_eq!(between(&plist, after, before), interval, "{text}");
+    }
+}
+
+#[test]
+fn plist_cap() {
+    for (text, intervals) in [
+        ("*/5 9-17 * * 1-5", Ok(540)),
+        ("1-59 1-23 * * 1-6", Ok(8142)),
+        ("0-49 0-19 1-10 * *", Ok(10_000)),
+        ("0-49 0-19 1-5 * 1-5", Ok(5000 + 5000)),
+        ("0-28 0-22 1-15 * *", Err(launchd::TooManyIntervals)), // 10,005
+        ("0-49 0-19 1-6 * 1-5", Err(launchd::TooManyIntervals)), // 6000 + 5000
+        ("1-59 1-23 2-31 2-12 1-6", Err(launchd::TooManyIntervals)), // 537,372
+    ] {
+        let plist = launchd::plist(&job(text, b"", b""), b"");
+        let dicts = plist.map(|xml| strings::split(xml.as_bytes(), b"    <dict>").count() - 1);
+        assert_eq!(dicts, intervals, "{text}");
     }
 }
 

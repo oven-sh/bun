@@ -431,6 +431,23 @@ describe.concurrent("a legacy HTML comment in a file that another file loads", (
     });
   });
 
+  test("fails the test file that imports it, and no other, in a compiled test run", async () => {
+    using dir = tempDir("aot-early-errors", {
+      "uses.test.mjs": `import { expect, test } from "bun:test";\nimport "./helper.mjs";\ntest("uses the helper", () => expect(globalThis.helped).toBe(true));\n`,
+      "helper.mjs": `globalThis.helped = true;\n--> c\n`,
+      "alone.test.mjs": `import { expect, test } from "bun:test";\ntest("stands alone", () => expect(1).toBe(1));\n`,
+    });
+    const cwd = String(dir);
+    const counted = ({ stderr, exitCode }: { stderr: string; exitCode: number }) => ({
+      counts: ["pass", "fail", "error"].map(word => stderr.match(new RegExp(`^ (\\d+) ${word}`, "m"))?.[1]),
+      names: /helper\.mjs:[12]:1/.test(stderr),
+      exitCode,
+    });
+    const expected = { counts: ["1", "1", "1"], names: true, exitCode: 1 };
+    expect(counted(await run(cwd, "test"))).toEqual(expected);
+    expect(counted(await run(cwd, "test", "--aot"))).toEqual(expected);
+  });
+
   // A file with no extension is read as TypeScript, where `<!--` is three operators: the program would print "false 4". The build
   // reports that reading and compiles nothing.
   test("stops the build in a file with no extension, where bun run reads a comment", async () => {

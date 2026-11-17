@@ -1850,6 +1850,77 @@ export class Derived extends Base { override run() { return 1; } }
 export class Alone { override run() { return 1; } }
 //// diagnostic-class/rules-that-say-nothing-about-a-type/tsconfig.json
 { "compilerOptions": { "target": "esnext", "module": "preserve", "moduleResolution": "bundler", "types": [], "strict": true, "noEmit": true } }
+//// diagnostic-class/sloppy-mode-forms-sloppy.cjs
+// A function as the body of `if` or of a label, an initializer in a `for`-`in` loop and two functions of one name are EarlyError where the parser of `bun run` reads strict mode code. A file with no `import` or `export` that only runs as a module is sloppy mode code to it.
+if (1) function a() {}
+label: function b() {}
+for (var c = 1 in {}) {}
+{ function d() {} function d() {} }
+function e() {} function e() {}
+var f = 1 <!-- a comment
+--> another comment
+module.exports = {};
+//// diagnostic-class/sloppy-mode-forms-strict.mjs
+// A function as the body of `if` or of a label, an initializer in a `for`-`in` loop and two functions of one name are EarlyError where the parser of `bun run` reads strict mode code. A file with no `import` or `export` that only runs as a module is sloppy mode code to it.
+if (1) function a() {}
+label: function b() {}
+for (var c = 1 in {}) {}
+{ function d() {} function d() {} }
+function e() {} function e() {}
+export {};
+//// diagnostic-class/sloppy-mode-forms-unproved.mjs
+// A function as the body of `if` or of a label, an initializer in a `for`-`in` loop and two functions of one name are EarlyError where the parser of `bun run` reads strict mode code. A file with no `import` or `export` that only runs as a module is sloppy mode code to it.
+if (1) function a() {}
+label: function b() {}
+for (var c = 1 in {}) {}
+{ function d() {} function d() {} }
+function e() {} function e() {}
+--> a comment
+//// diagnostic-class/sloppy-mode-forms.queries.txt
+# A function as the body of `if` or of a label, an initializer in a `for`-`in` loop and two functions of one name are EarlyError where the parser of `bun run` reads strict mode code. A file with no `import` or `export` that only runs as a module is sloppy mode code to it.
+sloppy-mode-forms-strict.mjs:2 diagnostic TS1156 = EarlyError StopsBuild
+sloppy-mode-forms-strict.mjs:3 diagnostic TS1156 = EarlyError StopsBuild
+sloppy-mode-forms-strict.mjs:4 diagnostic TS1189 = EarlyError StopsBuild
+sloppy-mode-forms-strict.mjs:5 diagnostic TS2300 = EarlyError StopsBuild
+sloppy-mode-forms-strict.mjs:6 diagnostic TS2300 = EarlyError StopsBuild
+
+absent: sloppy-mode-forms-sloppy.cjs:2 diagnostic TS1156 = EarlyError StopsBuild
+absent: sloppy-mode-forms-sloppy.cjs:3 diagnostic TS1156 = EarlyError StopsBuild
+absent: sloppy-mode-forms-sloppy.cjs:4 diagnostic TS1189 = EarlyError StopsBuild
+absent: sloppy-mode-forms-sloppy.cjs:4 diagnostic TS1189 = TypeScriptGrammar StopsBuild
+absent: sloppy-mode-forms-sloppy.cjs:5 diagnostic TS2300 = EarlyError StopsBuild
+absent: sloppy-mode-forms-sloppy.cjs:6 diagnostic TS2300 = EarlyError StopsBuild
+absent: sloppy-mode-forms-unproved.mjs:2 diagnostic TS1156 = EarlyError StopsBuild
+absent: sloppy-mode-forms-unproved.mjs:3 diagnostic TS1156 = EarlyError StopsBuild
+absent: sloppy-mode-forms-unproved.mjs:4 diagnostic TS1189 = EarlyError StopsBuild
+absent: sloppy-mode-forms-unproved.mjs:5 diagnostic TS2300 = EarlyError StopsBuild
+absent: sloppy-mode-forms-unproved.mjs:6 diagnostic TS2300 = EarlyError StopsBuild
+
+# A legacy HTML comment is EarlyError in a module, which the `.mjs` file is by its name. It is a comment in a file that its own syntax makes CommonJS.
+sloppy-mode-forms-unproved.mjs:7 diagnostic TS1127 = EarlyError StopsBuild
+absent: sloppy-mode-forms-sloppy.cjs:7 diagnostic TS1127 = EarlyError StopsBuild
+absent: sloppy-mode-forms-sloppy.cjs:8 diagnostic TS1127 = EarlyError StopsBuild
+
+# TypeScript is read by the same parser. Its own rules for a labeled function and for two implementations of a function stay beside the early errors.
+sloppy-mode-forms.ts:5 diagnostic TS1156 = EarlyError StopsBuild
+sloppy-mode-forms.ts:6 diagnostic TS1156 = EarlyError StopsBuild
+sloppy-mode-forms.ts:6 diagnostic TS1344 = TypeScriptGrammar StopsBuild
+sloppy-mode-forms.ts:7 diagnostic TS1189 = EarlyError StopsBuild
+sloppy-mode-forms.ts:8 diagnostic TS2300 = EarlyError StopsBuild
+sloppy-mode-forms.ts:8 diagnostic TS2393 = Semantic StopsBuild
+sloppy-mode-forms.ts:9 diagnostic TS2300 = EarlyError StopsBuild
+sloppy-mode-forms.ts:9 diagnostic TS2393 = Semantic StopsBuild
+absent: sloppy-mode-forms.ts:6 diagnostic TS1344 = EarlyError StopsBuild
+//// diagnostic-class/sloppy-mode-forms.ts
+// A function as the body of `if` or of a label, an initializer in a `for`-`in` loop and two functions of one name are EarlyError where the parser of `bun run` reads strict mode code. A file with no `import` or `export` that only runs as a module is sloppy mode code to it.
+import "./sloppy-mode-forms-sloppy.cjs";
+import "./sloppy-mode-forms-strict.mjs";
+import "./sloppy-mode-forms-unproved.mjs";
+if (1) function a() {}
+label: function b() {}
+for (var c = 1 in {}) {}
+{ function d() {} function d() {} }
+function e() {} function e() {}
 //// diagnostic-class/statement-style-sites/main.queries.txt
 # Implicit `any` in a mapped type, in a captured variable and in a field assigned `[]`, a fallthrough and an unused label are Style.
 main.ts:1 diagnostic TS7039 = Style StopsBuild
@@ -1938,15 +2009,11 @@ valid-javascript-sites.ts:8 diagnostic TS2392 = Semantic StopsBuild
 absent: valid-javascript-sites.ts:7 diagnostic TS2392 = EarlyError StopsBuild
 absent: valid-javascript-sites.ts:8 diagnostic TS2392 = EarlyError StopsBuild
 
-# A labeled function is an early error of strict mode code, and `bun run` reports it there. The build does not report it in JavaScript yet: this rule is TypeScript's own.
-valid-javascript-sites.ts:10 diagnostic TS1344 = TypeScriptGrammar StopsBuild
-absent: valid-javascript-sites.ts:10 diagnostic TS1344 = EarlyError StopsBuild
-
 # `export type` is erased, and in TypeScript `bun run` drops the specifier of a name without a local binding.
+valid-javascript-sites.ts:10 diagnostic TS2661 = Semantic StopsBuild
 valid-javascript-sites.ts:11 diagnostic TS2661 = Semantic StopsBuild
-valid-javascript-sites.ts:12 diagnostic TS2661 = Semantic StopsBuild
+absent: valid-javascript-sites.ts:10 diagnostic TS2661 = EarlyError StopsBuild
 absent: valid-javascript-sites.ts:11 diagnostic TS2661 = EarlyError StopsBuild
-absent: valid-javascript-sites.ts:12 diagnostic TS2661 = EarlyError StopsBuild
 //// diagnostic-class/valid-javascript-sites.ts
 // TypeScript's own rules on text that is valid JavaScript, that `bun run` rewrites or that TypeScript erases. None is an EarlyError.
 class A {
@@ -1957,7 +2024,6 @@ class B {
   static constructor() {}
   static constructor() {}
 }
-label: function f() {}
 export type { Request };
 export { Array };
 //// diagnostic-class/walk-sites.queries.txt
@@ -2196,7 +2262,7 @@ if (1) var a;
 if (1) { function f() {} }
 if (1) var a;
 label: { class C {} }
-// ECMAScript rejects the next four in strict mode code. bun run starts them: its transpiler turns the function into a let declaration in a block.
+// ECMAScript rejects the next four in strict mode code, and each file runs as a module. bun run starts them: a file with no import or export is sloppy mode code to its parser, which turns the function into a let declaration in a block.
 if (1) function f() {}
 if (1) ; else function f() {}
 label: function f() {}
@@ -2211,6 +2277,12 @@ if (1) function* g() {}
 if (1) class C {}
 label: async function f() {}
 with ({}) function f() {}
+// A plain function as the body of if, else or a label in strict mode code: under a directive and in a class.
+"use strict"; if (1) function f() {}
+"use strict"; label: function f() {}
+function g() { "use strict"; if (1) ; else function f() {} }
+class C { m() { a: b: function f() {} } }
+class C extends (function () { if (1) function f() {} }) {}
 //// early-errors/declaration-as-body.rejected.js
 // A declaration as the body of if, a loop or a label, where only a statement is allowed.
 if (1) let a;
@@ -2222,6 +2294,11 @@ do function f() {} while (0);
 if (1) async function f() {}
 if (1) function* g() {}
 label: class C {}
+// A plain function as the body of if, else or a label in a module that import, export or a top-level await proves.
+if (1) function f() {}⏎export {};
+import "node:fs";⏎if (1) ; else function f() {}
+await 0;⏎label: function f() {}
+export function g() { a: b: function f() {} }
 //// early-errors/declare-as-a-name.accepted.ts
 // No declaration follows declare, and what follows may follow a name: the rest of the head of a loop, a line break, the end of a block.
 var declare: any; for (declare of []) {}
@@ -2463,6 +2540,37 @@ export { Array };
 export { missing };
 export { missing as a };
 export { Array };
+//// early-errors/html-comments.accepted.cjs
+// A legacy HTML comment in a file that is no module: `<!--`, and `-->` where only blanks and comments precede it on its line.
+var a = 1 <!-- c
+var a = 1;⏎--> c
+<!-- c⏎var a = 1; /*⏎*/ --> c
+"use strict"; var a = 1 <!-- c
+class C { m() { return 1 <!-- c⏎; } }
+//// early-errors/html-comments.accepted.js
+// A legacy HTML comment in a file that no name and no syntax makes a module, text that is no such comment, and a file that its own syntax makes CommonJS.
+var a = 1 <!-- c
+var a = 1;⏎--> c
+--> c
+var a = 2, b = 1; a --> b;
+var a = "<!--" + `-->` + /<!--/.source; /* --> */
+module.exports = 1 <!-- c
+exports.a = 1;⏎--> c
+import.meta.url; require("node:fs");⏎var a = 1 <!-- c
+//// early-errors/html-comments.rejected.cjs
+// A legacy HTML comment in a CommonJS file by its name that import, export or a top-level await makes a module.
+var a = 1 <!-- c⏎;⏎export {};
+import "node:fs";⏎--> c
+//// early-errors/html-comments.rejected.js
+// A legacy HTML comment in a file that import, export, a top-level await or import.meta makes a module.
+var a = 1 <!-- c⏎;⏎export {};
+import "node:fs";⏎--> c
+await 0;⏎var a = 1 <!-- c
+import.meta.url;⏎var a = 1 <!-- c
+//// early-errors/html-comments.rejected.mjs
+// A legacy HTML comment in a module: each file is one by its name.
+var a = 1 <!-- c
+var a = 1;⏎--> c
 //// early-errors/import-attributes.accepted.js
 // The value of an import attribute that is a string literal.
 import a from "node:fs" with { type: "json" };
@@ -2514,6 +2622,7 @@ a: while (0) { class C { static { continue a; } } }
 //// early-errors/loop-heads.accepted.cjs
 // Annex B: in sloppy mode code the var of a for-in loop can have an initializer.
 for (var a = 1 in {}) {}
+function f() { "use strict"; } for (var a = 1 in {}) {}
 //// early-errors/loop-heads.accepted.js
 // Valid loop heads that look like the rejected ones.
 for (let a of []) {}
@@ -2525,8 +2634,13 @@ async function f() { for await (const a of []) {} }
 for ((async) of []) {}
 var async; for await (async of []) {}
 for (let a = 1, b;;) { break; }
-// ECMAScript rejects the next one in strict mode code. bun run starts it: its transpiler moves the initializer in front of the loop.
+// ECMAScript rejects the next one in strict mode code, and the file runs as a module. bun run starts it: a file with no import or export is sloppy mode code to its parser, which moves the initializer in front of the loop.
 for (var a = 1 in {}) {}
+//// early-errors/loop-heads.rejected.cjs
+// The initializer of the var of a for-in loop in strict mode code: under a directive and in a class.
+"use strict"; for (var a = 1 in {}) {}
+function f() { "use strict"; for (var a = 1 in {}) {} }
+class C { m() { for (var a = 1 in {}) {} } }
 //// early-errors/loop-heads.rejected.js
 // Declarations that the head of a for, for-in or for-of loop does not allow, for (async of, and for await outside of async code.
 for (let a, b of []) {}
@@ -2539,6 +2653,9 @@ for (let let of []) {}
 for (const a;;) {}
 function f() { for await (const a of []) {} }
 for (using a in {}) {}
+// The initializer of the var of a for-in loop in a module that import, export or a top-level await proves.
+for (var a = 1 in {}) {}⏎export {};
+import "node:fs";⏎function f() { for (var a = 1 in {}) {} }
 //// early-errors/loop-targets.accepted.js
 // Names, member accesses and patterns before in or of.
 var a; for (a of []) {}
@@ -2731,6 +2848,11 @@ class C extends (o.#a) { #a }
 var f; function f() {}
 function f() {} function f() {}
 { function f() {} function f() {} }
+// Strict mode code: the body of a function, the top of a CommonJS file and a static block hold var and function declarations alike.
+"use strict"; function f() {} function f() {}
+"use strict"; function g() { function f() {} function f() {} }
+class C { static { function f() {} function f() {} } }
+"use strict"; { function f() {} { function f() {} } }
 // Not listed: function f(a, a) {} ECMAScript allows it in sloppy mode code and bun run's parser rejects it.
 //// early-errors/redeclarations.accepted.js
 // A name declared twice where that is allowed: var, a nested scope, a getter with its setter, public class members, one binding exported under two names.
@@ -2743,7 +2865,7 @@ class C { get #a() { return 1; } set #a(v) {} }
 class C { a; a; m() {} m() {} }
 switch (0) { case 0: { let a; } case 1: { let a; } }
 const a = 1; export { a, a as b };
-// ECMAScript rejects the next three. bun run starts them: its transpiler removes a function declaration that a later one of the same name overwrites.
+// ECMAScript rejects the next three in a module. bun run starts them: a file with no import or export is sloppy mode code to its parser, which removes a function declaration that a later one of the same name overwrites.
 function f() {} function f() {}
 function* f() {} function* f() {}
 { function f() {} function f() {} }
@@ -2753,6 +2875,11 @@ function f(a, a) { "use strict"; }
 (a, a) => 1;
 function f(a, a = 1) {}
 let a; var a;
+// Two functions of one name in a block of strict mode code: under a directive and in a class.
+"use strict"; { function f() {} function f() {} }
+"use strict"; switch (0) { case 0: function f() {} break; case 1: function f() {} }
+function g() { "use strict"; try { function f() {} function f() {} } catch {} }
+class C { m() { { function f() {} function f() {} } } }
 //// early-errors/redeclarations.rejected.js
 // A second declaration of a name that its scope, parameter list, class body or export list allows only once.
 let a; let a;
@@ -2783,6 +2910,12 @@ class C { static get #a() {} set #a(v) {} }
 export const a = 1; export { a };
 const a = 1, b = 2; export { a as c, b as c };
 export default 1; export default 2;
+// Two functions of one name at the top or in a block of a module that import, export or a top-level await proves.
+function f() {} function f() {}⏎export {};
+function f() {} var f; function f() {}⏎export {};
+export function f() {}⏎async function f() {}
+import "node:fs";⏎{ function f() {} function f() {} }
+await 0;⏎function g() { { function f() {} function f() {} } }
 //// early-errors/rest-elements.accepted.js
 // Rest elements in last position. In an array pattern the rest element can be a pattern.
 let [a, ...b] = [];
@@ -2855,7 +2988,6 @@ function f() { "use strict"; var public; }
 class C { m() { with ({}) {} } }
 class C { m() { var let; } }
 class C extends (function () { with ({}) {} }) {}
-// bun run starts the next two: its transpiler removes the "use strict" directive of a function, so JavaScriptCore reads sloppy mode code.
 function f(eval) { "use strict"; }
 function f() { "use strict"; delete f; }
 //// early-errors/strict-mode.rejected.js

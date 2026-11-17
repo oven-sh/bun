@@ -1,11 +1,11 @@
 // RUN: lower
 // OPTIONS: builtin-modules
+// DIAGNOSTIC: TS1156 7
 
-// A plain function declaration as the body of a label or of `if`, in strict code. ECMAScript rejects it there, and so does plain Bun. The build does not: it turns the function into a `let` in a block of its own. So the program builds, the name ends with the statement, and a binding of the same name around it is left alone. This CommonJS file is strict only inside the class.
+// A plain function declaration as the body of a label or of `if`, in strict code. ECMAScript rejects it there, and so does plain Bun. The build stops at each of the seven. This CommonJS file is strict only inside the class: the function below the class is sloppy code, where both forms are valid.
 module.exports = {};
-function row(label, f) { let said; try { said = String(f()); } catch (e) { said = "threw " + e.name; } console.log(label + ": " + said); }
+console.log("never printed");
 class Strict {
-  static mode() { return (function () { return this === undefined ? "strict" : "sloppy"; })(); }
   static labeled() { const before = typeof inner; again: function inner() { return 1; } return before + " " + typeof inner; }
   static twoLabels() { outer: again: function inner() { return 1; } return typeof inner; }
   static labeledInBlock() { { again: function inner() { return 1; } } return typeof inner; }
@@ -14,19 +14,5 @@ class Strict {
   static besideConst() { const inner = "const"; again: function inner() { return 1; } return inner; }
   static besideParameter(inner) { if (inner) function inner() { return 1; } return inner; }
 }
-row("control: which mode the file is in", () => (function () { return this === undefined ? "strict" : "sloppy"; })());
-row("control: which mode the class is in", () => Strict.mode());
-row("under a label", () => Strict.labeled());
-row("under two labels", () => Strict.twoLabels());
-row("under a label in a block", () => Strict.labeledInBlock());
-row("under if, taken", () => Strict.underIf(true));
-row("under if, not taken", () => Strict.underIf(false));
-row("under else, taken", () => Strict.underElse(false));
-row("under else, not taken", () => Strict.underElse(true));
-row("under a label, beside a const of the name", () => Strict.besideConst());
-row("under if, beside a parameter of the name", () => Strict.besideParameter("parameter"));
-
-// CHECK-LABEL: function {{*}}name="row"
-// CHECK-LABEL: function {{*}}name="Strict"
-// CHECK-LABEL: function {{*}}name="mode"
-// CHECK-LABEL: function {{*}}name="underIf"
+function sloppy(flag) { again: function inner() { return 1; } if (flag) function other() { return 2; } return typeof inner + " " + typeof other; }
+console.log(sloppy(true), Strict);

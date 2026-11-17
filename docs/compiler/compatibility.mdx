@@ -332,16 +332,6 @@ If you import such a package for what it does when it loads, like a polyfill or 
 | `fn.caller` and `fn.arguments`, outside strict mode                            | The calling function and the arguments      | `null`. The build warns (`TS100302`)    |
 | `` `\033[1m` ``, an octal escape in a template                                 | The character                               | The build stops (`TS1487`)              |
 
-In a few places it is `bun run` that follows the language, and the build doesn't yet.
-
-| In your program                                                                       | `bun run`      | An executable              |
-| ------------------------------------------------------------------------------------- | -------------- | -------------------------- |
-| `if (x) function f() {}` or `label: function f() {}`, in strict mode code             | A syntax error | Runs                       |
-| `for (var i = 0 in object)`, in strict mode code                                      | A syntax error | Runs                       |
-| Two functions with one name in a block in strict mode code, or at the top of a module | A syntax error | Runs. The second one wins  |
-| `--> comment` at the start of a line in a module                                      | A syntax error | A comment                  |
-| `<!-- comment` in a CommonJS file that isn't in strict mode                           | A comment      | The build stops (`TS1127`) |
-
 `process.env.NODE_ENV`, `process.platform` and `process.arch`, written out like that, are replaced by their values when you build, as in `bun build --compile`. `NODE_ENV=production ./app` still reads `"development"` unless you built with `NODE_ENV=production` or `--production`.
 
 An executable can collect an object earlier or later than `bun run` does. Only a `WeakRef`, a `FinalizationRegistry` or the size of the heap can tell. Keep a `FinalizationRegistry` at module level, so that it isn't collected before its callback runs.

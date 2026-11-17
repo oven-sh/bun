@@ -14,7 +14,7 @@ const seeded64 = { args: { data, seed }, returns: b.u64.asBigInt, length: 1 };
 export const hash = b.namespace(
   {
     wyhash: seeded64,
-    adler32: unseeded32,
+    adler32: { ...unseeded32, args: { data: atomicData } },
     crc32: seeded32,
     cityHash32: unseeded32,
     cityHash64: seeded64,

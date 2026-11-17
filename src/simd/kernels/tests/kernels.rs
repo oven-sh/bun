@@ -1,7 +1,7 @@
 //! Every kernel on every target, against a plain loop or the portable target.
 #![forbid(unsafe_code)]
 mod common;
-use bun_simd::{Out, SharedOutU8, SharedU8, Target, limit_to};
+use bun_simd::{Out, SharedOutU8, SharedU8, Target, limit_to, limit_to_with};
 use bun_simd_kernels::{self as kernels, Filter, MappingsState};
 use common::{check, check_against_portable, random, sample, targets};
 use core::f64::consts::PI;
@@ -1474,6 +1474,56 @@ fn xxhash() {
                 let mut state = kernels::XxHash64State::new(7);
                 t.chunks(size).for_each(|part| state.update(part));
                 state.digest()
+            });
+        }
+    }
+}
+
+fn crc32_by_bits(crc: u32, bytes: &[u8]) -> u32 {
+    let step = |crc: u32, _| crc >> 1 ^ if crc & 1 != 0 { 0xEDB8_8320 } else { 0 };
+    !(bytes.iter()).fold(!crc, |crc, &byte| (0..8).fold(crc ^ u32::from(byte), step))
+}
+
+fn adler32_by_bytes(bytes: &[u8]) -> u32 {
+    let (mut low, mut high) = (1, 0);
+    for &byte in bytes {
+        low = (low + u32::from(byte)) % 65521;
+        high = (high + low) % 65521;
+    }
+    high << 16 | low
+}
+
+#[test]
+fn checksums() {
+    fn check(want: u32, kernel: impl Fn() -> u32) {
+        let more = ["pclmulqdq", "vpclmulqdq", "crc", "aes+sha3+dotprod"];
+        for target in targets() {
+            assert_eq!(kernel(), want, "{target:?}");
+            for more in more.iter().filter(|_| target.arch().is_some()) {
+                limit_to_with(target, more.split('+'));
+                assert_eq!(kernel(), want, "{target:?}+{more}");
+            }
+        }
+    }
+    assert_eq!(crc32_by_bits(0, b"123456789"), 0xCBF4_3926);
+    assert_eq!(adler32_by_bytes(b"Wikipedia"), 0x11E6_0398);
+    let lengths: Vec<usize> = match cfg!(miri) {
+        true => vec![3, 40, 700],
+        false => (0..2400)
+            .chain([4095, 4096, 4097, 5375, 5376, 5377, 5503, 5504, 5505])
+            .chain([5552, 11_100, 65_536, 65_537, 70_001])
+            .collect(),
+    };
+    let mut below = random();
+    for len in lengths {
+        let any = (0..len).map(|_| below(256) as u8).collect();
+        for bytes in [any, vec![255; len]] {
+            let bytes = &bytes[below(64).min(len / 4096)..];
+            let crc = [0, below(1 << 31) as u32 * 2 + 1][len % 2];
+            check(crc32_by_bits(crc, bytes), || kernels::crc32(crc, bytes));
+            check(adler32_by_bytes(bytes), || kernels::adler32(bytes));
+            from_shared(bytes, |t| {
+                check(adler32_by_bytes(bytes), || kernels::adler32_shared(t));
             });
         }
     }

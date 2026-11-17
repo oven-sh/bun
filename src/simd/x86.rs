@@ -201,6 +201,18 @@ impl<I: Xmm> Vector<u64, 2, I> {
     pub fn sums_of_8(bytes: Vector<u8, 16, I>) -> Self {
         Self::new(_mm_sad_epu8(bytes.0.into(), _mm_setzero_si128()))
     }
+
+    #[inline]
+    #[target_feature(enable = "pclmulqdq")]
+    pub fn carryless_mul_lower(self, other: Self) -> Self {
+        Self::new(_mm_clmulepi64_si128::<0x00>(self.0.into(), other.0.into()))
+    }
+
+    #[inline]
+    #[target_feature(enable = "pclmulqdq")]
+    pub fn carryless_mul_upper(self, other: Self) -> Self {
+        Self::new(_mm_clmulepi64_si128::<0x11>(self.0.into(), other.0.into()))
+    }
 }
 
 impl<I: Xmm> Vector<f32, 4, I> {
@@ -305,6 +317,24 @@ impl<I: Ymm> Vector<u64, 4, I> {
     pub fn sums_of_8(bytes: Vector<u8, 32, I>) -> Self {
         Self::new(_mm256_sad_epu8(bytes.0.into(), _mm256_setzero_si256()))
     }
+
+    #[inline]
+    #[target_feature(enable = "vpclmulqdq")]
+    pub fn carryless_mul_lower(self, other: Self) -> Self {
+        Self::new(_mm256_clmulepi64_epi128::<0x00>(
+            self.0.into(),
+            other.0.into(),
+        ))
+    }
+
+    #[inline]
+    #[target_feature(enable = "vpclmulqdq")]
+    pub fn carryless_mul_upper(self, other: Self) -> Self {
+        Self::new(_mm256_clmulepi64_epi128::<0x11>(
+            self.0.into(),
+            other.0.into(),
+        ))
+    }
 }
 
 impl<I: Ymm> Vector<f32, 8, I> {
@@ -404,6 +434,12 @@ impl<I: Zmm> Vector<i32, 16, I> {
     pub fn pairwise_dot(a: Vector<i16, 32, I>, b: Vector<i16, 32, I>) -> Self {
         Self::new(_mm512_madd_epi16(a.0.into(), b.0.into()))
     }
+
+    #[inline]
+    #[target_feature(enable = "avx512vnni")]
+    pub fn add_dot(self, a: Vector<u8, 64, I>, b: Vector<i8, 64, I>) -> Self {
+        Self::new(_mm512_dpbusd_epi32(self.0.into(), a.0.into(), b.0.into()))
+    }
 }
 
 impl<I: Zmm> Vector<u64, 8, I> {
@@ -411,6 +447,24 @@ impl<I: Zmm> Vector<u64, 8, I> {
     #[target_feature(enable = "avx512bw")]
     pub fn sums_of_8(bytes: Vector<u8, 64, I>) -> Self {
         Self::new(_mm512_sad_epu8(bytes.0.into(), _mm512_setzero_si512()))
+    }
+
+    #[inline]
+    #[target_feature(enable = "vpclmulqdq,avx512f")]
+    pub fn carryless_mul_lower(self, other: Self) -> Self {
+        Self::new(_mm512_clmulepi64_epi128::<0x00>(
+            self.0.into(),
+            other.0.into(),
+        ))
+    }
+
+    #[inline]
+    #[target_feature(enable = "vpclmulqdq,avx512f")]
+    pub fn carryless_mul_upper(self, other: Self) -> Self {
+        Self::new(_mm512_clmulepi64_epi128::<0x11>(
+            self.0.into(),
+            other.0.into(),
+        ))
     }
 }
 

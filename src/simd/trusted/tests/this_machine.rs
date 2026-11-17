@@ -17,7 +17,6 @@ fn target_is_supported_if_its_features_are() {
         let is_for_this_arch = target.arch().is_none_or(|it| it == std::env::consts::ARCH);
         let has_features = || detected().contains(Features::named(target.features()));
         assert_eq!(target.is_supported(), is_for_this_arch && has_features());
-        assert!(target.is_supported() || !target.is_in_build());
     }
 }
 

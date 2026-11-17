@@ -31,27 +31,6 @@ pub(crate) fn adler32(bytes: &[u8]) -> u32 {
     (high << 16) | low
 }
 
-// These stand in for Highway kernels, which tests in test/js cover.
-
-#[unsafe(no_mangle)]
-unsafe extern "C" fn highway_crc32(crc: u32, bytes: *const u8, len: usize) -> u32 {
-    // SAFETY: the caller passes a slice, as a pointer and a length.
-    crc32(crc, unsafe { core::slice::from_raw_parts(bytes, len) })
-}
-
-#[unsafe(no_mangle)]
-unsafe extern "C" fn highway_adler32(bytes: *const u8, len: usize) -> u32 {
-    // SAFETY: the caller passes a slice, as a pointer and a length.
-    adler32(unsafe { core::slice::from_raw_parts(bytes, len) })
-}
-
-#[unsafe(no_mangle)]
-unsafe extern "C" fn highway_index_of_char(bytes: *const u8, len: usize, byte: u8) -> usize {
-    // SAFETY: the caller passes a slice, as a pointer and a length.
-    let bytes = unsafe { core::slice::from_raw_parts(bytes, len) };
-    bytes.iter().take_while(|&&other| other != byte).count()
-}
-
 thread_local! {
     static ALLOCATIONS: Cell<usize> = const { Cell::new(0) };
     static BYTES: Cell<usize> = const { Cell::new(0) };

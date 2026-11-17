@@ -830,15 +830,6 @@ _ZN3bun9N_AVX3_DLL7Adler32EjPKhm        [AVX, AVX2, AVX512BW, AVX512F, AVX512VL,
 
 
 # ----------------------------------------------------------------------------
-# Bun DEFLATE (src/deflate).
-# Gate: with_bmi2! (src/highway/lib.rs) via is_x86_feature_detected!("bmi2"). (3 symbols)
-# ----------------------------------------------------------------------------
-_RNvNvNt<rust-hash>11bun_deflate5block10write_body4bmi2              [BMI2]
-_RNvNvNt<rust-hash>11bun_deflate12decompressor13decode_blocks4bmi2   [BMI2]
-_RNvNvNt<rust-hash>11bun_deflate12decompressor14decode_dynamic4bmi2  [BMI2]
-
-
-# ----------------------------------------------------------------------------
 # Bun byte sets (src/jsc/bindings/highway_byte_set.cpp).
 # Gate: BUN_HWY_DISPATCH (highway_dispatch.h) via hwy::SupportedTargets. (1 symbol)
 # ----------------------------------------------------------------------------
@@ -1224,12 +1215,18 @@ _ZN3JSC3AOT17InstructionCounts15ofCurrentThreadEv  [RDPMC]
 
 
 # ----------------------------------------------------------------------------
-# The copies of a `mod simd` with #[bun_simd::foreach_target]. Gate: if_supported! in
+# The copies of a module with #[bun_simd::foreach_target]. Gate: if_supported! in
 # src/simd/trusted/gate.rs. src/simd/trusted/target.rs lists the features of each target.
 # ----------------------------------------------------------------------------
 _R*4simd4avx2*         [AVX, AVX2, BMI1, BMI2, F16C, FMA, LZCNT, PCLMULQDQ]
 _R*4simd10avx512_skx*  [AVX, AVX2, AVX512BW, AVX512CD, AVX512DQ, AVX512F, AVX512VL, BMI1, BMI2, F16C, FMA, LZCNT, PCLMULQDQ]
-_R*4simd10avx512_icl*  [AVX, AVX2, AVX512BW, AVX512CD, AVX512DQ, AVX512F, AVX512VL, AVX512_BITALG, AVX512_VBMI, AVX512_VBMI2, AVX512_VNNI, AVX512_VPOPCNTDQ, BMI1, BMI2, F16C, FMA, GFNI, LZCNT, PCLMULQDQ]
+_R*4simd10avx512_icl*  [AVX, AVX2, AVX512BW, AVX512CD, AVX512DQ, AVX512F, AVX512VL, AVX512_BITALG, AVX512_VBMI, AVX512_VBMI2, AVX512_VNNI, AVX512_VPOPCNTDQ, BMI1, BMI2, F16C, FMA, GFNI, LZCNT, PCLMULQDQ, VPCLMULQDQ]
+_R*8dot_simd10avx512_icl*               [AVX, AVX2, AVX512BW, AVX512CD, AVX512DQ, AVX512F, AVX512VL, AVX512_BITALG, AVX512_VBMI, AVX512_VBMI2, AVX512_VNNI, AVX512_VPOPCNTDQ, BMI1, BMI2, F16C, FMA, GFNI, LZCNT, PCLMULQDQ, VPCLMULQDQ]
+_R*12folding_simd10avx512_icl*          [AVX, AVX2, AVX512BW, AVX512CD, AVX512DQ, AVX512F, AVX512VL, AVX512_BITALG, AVX512_VBMI, AVX512_VBMI2, AVX512_VNNI, AVX512_VPOPCNTDQ, BMI1, BMI2, F16C, FMA, GFNI, LZCNT, PCLMULQDQ, VPCLMULQDQ]
+_R*12folding_simd15avx2_vpclmulqdq*     [AVX, AVX2, BMI1, BMI2, F16C, FMA, LZCNT, PCLMULQDQ, VPCLMULQDQ]
+_R*12folding_simd18sse4_pclmulqdq_avx*  [AVX, PCLMULQDQ]
+_R*12folding_simd14sse4_pclmulqdq*      [PCLMULQDQ]
+_R*4simd9sse4_bmi2*                     [BMI2]
 
 
 # ----------------------------------------------------------------------------

@@ -560,3 +560,56 @@ fn more_random_inputs() {
 fn all_dots() {
     on_each_target(simd::all_dots);
 }
+
+#[bun_simd::foreach_target(
+    avx512_icl,
+    avx2 + "vpclmulqdq",
+    sse4 + "pclmulqdq",
+    neon + "aes",
+    portable
+)]
+mod carryless_simd {
+    use isa::U64;
+
+    #[export]
+    pub fn products() {
+        let product = |a: u64, b: u64| {
+            let shifted = (0..64).map(|bit| u128::from(a * (b >> bit & 1)) << bit);
+            shifted.fold(0, |all, it| all ^ it).to_le_bytes()
+        };
+        let random = &mut Random(1);
+        for _ in 0..if cfg!(miri) { 2 } else { 1000 } {
+            let [a, b]: [[u64; U64::LEN]; 2] = [random.lanes(), random.lanes()];
+            let (x, y) = (U64::from_array(a), U64::from_array(b));
+            for (at, got) in [(0, x.carryless_mul_lower(y)), (1, x.carryless_mul_upper(y))] {
+                let want: [_; U64::LEN / 2] = from_fn(|i| product(a[2 * i + at], b[2 * i + at]));
+                assert_eq!(got.bitcast::<isa::U8>().to_array(), want.as_flattened());
+            }
+        }
+    }
+}
+
+#[bun_simd::foreach_target(avx512_icl, neon + "dotprod", portable)]
+mod dot_simd {
+    use isa::{I8, I32, U8};
+
+    #[export]
+    pub fn sums() {
+        let random = &mut Random(1);
+        for _ in 0..if cfg!(miri) { 2 } else { 1000 } {
+            let (sums, a): ([i32; I32::LEN], [u8; U8::LEN]) = (random.lanes(), random.lanes());
+            let b: [i8; I8::LEN] = random.lanes();
+            let b = b.map(|it| if I8::LEN == 16 { it & 127 } else { it });
+            let product = |i: usize| i32::from(a[i]) * i32::from(b[i]);
+            let want = from_fn(|i| sums[i].wrapping_add((4 * i..4 * i + 4).map(product).sum()));
+            let got = I32::from_array(sums).add_dot(U8::from_array(a), I8::from_array(b));
+            assert_eq!(got.to_array(), want);
+        }
+    }
+}
+
+#[test]
+fn ops_with_further_features() {
+    on_each_target(carryless_simd::products);
+    on_each_target(dot_simd::sums);
+}

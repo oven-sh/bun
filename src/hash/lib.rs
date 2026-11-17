@@ -7,7 +7,7 @@
 //!
 //! | JS name        | Rust entry point                              | seed → output |
 //! |----------------|-----------------------------------------------|---------------|
-//! | `adler32`      | `bun_highway::adler32` (no seed)              | — → u32       |
+//! | `adler32`      | `bun_simd_kernels::adler32` (no seed)         | — → u32       |
 //! | `cityHash32`   | [`CityHash32::hash`] (no seed)                | — → u32       |
 //! | `cityHash64`   | [`CityHash64::hash_with_seed`]                | u64 → u64     |
 //! | `xxHash32`     | `bun_simd_kernels::xxhash32_shared`           | u32 → u32     |

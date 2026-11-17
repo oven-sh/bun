@@ -25,6 +25,14 @@ it(`Bun.hash.adler32() of known inputs`, () => {
     1, 0x620062, 0xbc002ed, 0x06780401, 0x0a7a0402, 0x707f15b2, 0x5af38d6e,
   ]);
 });
+it(`Bun.hash.adler32() of shared buffers`, () => {
+  const shared = new Uint8Array(new SharedArrayBuffer(6000));
+  shared.forEach((_, i) => (shared[i] = i));
+  expect(Bun.hash.adler32(shared)).toBe(0x5af38d6e);
+  expect([1024, 1025, 5553].map(len => Bun.hash.adler32(shared.fill(1).subarray(3, 3 + len)))).toEqual([
+    0x06780401, 0x0a7a0402, 0x707f15b2,
+  ]);
+});
 // The kernel takes rows of 64, 128 or 256 bytes, reduces after 5376 or 5504, and aligns inputs of more than 65536.
 it.each([
   ["varied", Buffer.from(Uint8Array.from({ length: 251 }, (_, i) => (i * 7919) >> 5))],

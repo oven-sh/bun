@@ -146,8 +146,49 @@ fn enable_features(stream: TokenStream, features: &[&str]) -> TokenStream {
     out.into_iter().collect()
 }
 
+/// A target, and the features that this copy needs beyond it.
+struct Version<'a>(Target, Vec<&'a str>);
+
+impl<'a> Version<'a> {
+    /// From `target + "feature" + .., ..`, where `portable` stands for all its widths.
+    fn all_in(list: &'a str) -> Vec<Self> {
+        if list.is_empty() {
+            return Target::ALL.map(|it| Self(it, Vec::new())).into();
+        }
+        let mut all = Vec::new();
+        for (name, more) in list
+            .split_terminator(',')
+            .map(|it| it.split_once('+').unwrap_or((it, "")))
+        {
+            let has_name = |it: &Target| it.arch().map_or("portable", |_| it.name()) == name;
+            assert!(Target::ALL.iter().any(has_name), "`{name}` is no target");
+            let more = more.split_terminator('+').map(|it| it.trim_matches('"'));
+            let targets = Target::ALL.into_iter().filter(has_name);
+            all.extend(targets.map(|it| Self(it, more.clone().collect())));
+        }
+        let needs_more = |a: &Self, b: &Self| a.1.iter().any(|it| !b.1.contains(it));
+        let is_better =
+            |a: &Self, b: &Self| (a.0 as u8) < b.0 as u8 || a.0 == b.0 && needs_more(a, b);
+        assert!(all.is_sorted_by(is_better), "expected the best copy first");
+        all
+    }
+
+    fn module(&self) -> String {
+        [&[self.0.name()], &self.1[..]]
+            .concat()
+            .join("_")
+            .replace(['.', '-'], "_")
+    }
+
+    fn features(&self) -> Vec<&'a str> {
+        [self.0.features(), &self.1].concat()
+    }
+}
+
 /// The arguments of `export!` that precede the signature.
-fn targets_to_export(arguments: &str) -> TokenStream {
+fn targets_to_export(arguments: &str, versions: &[Version<'_>]) -> TokenStream {
+    let (arguments, otherwise) = arguments.split_once("or=").unwrap_or((arguments, ""));
+    let arguments = arguments.trim_end_matches(',');
     let has = |argument: &str| arguments.split(',').any(|it| it == argument);
     let top_of = |argument: &str| {
         let name = argument.strip_prefix("up_to=");
@@ -163,32 +204,42 @@ fn targets_to_export(arguments: &str) -> TokenStream {
     };
     assert!(
         is_valid,
-        "expected `baseline`, or for each architecture `long_running` or `up_to = <target>`"
+        "expected `baseline`, or for each architecture `long_running` or `up_to = <target>`, then `or = <function>`"
     );
-    let is_top = |target: &Target| arguments.split(',').any(|it| top_of(it) == Some(*target));
+    let is_above =
+        |it: &Version<'_>, top: Target| it.0.arch() == top.arch() && (it.0 as u8) < top as u8;
+    let is_cut = |it| {
+        arguments
+            .split(',')
+            .filter_map(top_of)
+            .any(|top| is_above(it, top))
+    };
     let [mut native, mut portable] = [const { String::new() }; 2];
-    for family in Target::ALL.chunk_by(|a, b| a.arch() == b.arch()) {
-        if family[0].arch().is_none() {
+    for family in versions.chunk_by(|a, b| a.0.arch() == b.0.arch()) {
+        if family[0].0.arch().is_none() {
+            if IS_FOR_TESTS {
+                portable += "Portable64 portable64 Portable32 portable32";
+            }
             continue;
         }
         let top = match has("baseline") {
             true => family.len() - 1,
-            false => family.iter().position(is_top).unwrap_or(0),
+            false => family.iter().take_while(|&it| is_cut(it)).count(),
         };
-        for &target in &family[top..] {
+        for version in &family[top..] {
+            let target = version.0;
             let is_wanted = match target != LONG_RUNNING_ONLY || has("long_running") {
                 true => "is_allowed",
                 false if IS_FOR_TESTS => "is_asked_for",
                 false => continue,
             };
-            let (cfg, name, features) = (target.cfg(), target.name(), target.features());
+            let (cfg, name, features) = (target.cfg(), version.module(), version.features());
             native += &format!("{is_wanted} ({cfg}) {target:?} {name} {features:?} ");
         }
     }
-    if IS_FOR_TESTS {
-        portable += "Portable64 portable64 Portable32 portable32";
-    }
-    parse(&format!("native[{native}] portable_for_tests[{portable}]"))
+    parse(&format!(
+        "native[{native}] portable_for_tests[{portable}] or[{otherwise}]"
+    ))
 }
 
 fn without_inline(signature: &[TokenTree]) -> impl Iterator<Item = &TokenTree> {
@@ -211,7 +262,7 @@ fn signature_to_export(signature: &[TokenTree]) -> impl Iterator<Item = TokenTre
 }
 
 /// Returns the module without `#[export]`, and the functions that dispatch.
-fn take_exports(module: TokenStream) -> (TokenStream, TokenStream) {
+fn take_exports(module: TokenStream, versions: &[Version<'_>]) -> (TokenStream, TokenStream) {
     let (mut body, mut exports) = (Vec::new(), TokenStream::new());
     let mut rest = module.into_iter().peekable();
     while let Some(token) = rest.next() {
@@ -234,7 +285,7 @@ fn take_exports(module: TokenStream) -> (TokenStream, TokenStream) {
         rest.next();
         let count = body.rchunks(2).take_while(|it| is(it.first(), "#")).count();
         let earlier = body[body.len() - 2 * count..].chunks(2);
-        let mut export = targets_to_export(&arguments);
+        let mut export = targets_to_export(&arguments, versions);
         export.extend(
             earlier
                 .filter(|it| is_cfg_or_doc(&it[1]))
@@ -266,15 +317,24 @@ pub fn force_inline(_: TokenStream, item: TokenStream) -> TokenStream {
 
 /// Compiles the module once per target, with the types of that target as `isa`. See the README.
 #[proc_macro_attribute]
-pub fn foreach_target(_: TokenStream, item: TokenStream) -> TokenStream {
+pub fn foreach_target(list: TokenStream, item: TokenStream) -> TokenStream {
+    let list = list.to_string().replace([' ', '\n'], "");
+    let versions = Version::all_in(&list);
     map_module(item, &|module| {
-        let (body, exports) = take_exports(module);
+        let (body, exports) = take_exports(module, &versions);
         let mut out = parse("#![allow(unreachable_pub)] #[allow(unused_imports)] use super::*;");
-        for target in Target::ALL {
-            let name = target.name();
+        for (i, version) in versions.iter().enumerate() {
+            let (target, name) = (version.0, version.0.name());
             let mut copy = TokenStream::new();
-            // Every export refers to the portable copy, so that one reports the dead code.
-            if target != Target::Portable {
+            // The dead code is reported by copies that all exports refer to.
+            let reports = match list.is_empty() {
+                true => target == Target::Portable,
+                false => {
+                    target.arch().is_some()
+                        && target.arch() != versions.get(i + 1).and_then(|it| it.0.arch())
+                }
+            };
+            if !reports {
                 copy.extend(parse("#![allow(dead_code)]"));
             }
             // The other copies need `|v| f(v)`: a function with features is no `impl Fn`.
@@ -286,7 +346,7 @@ pub fn foreach_target(_: TokenStream, item: TokenStream) -> TokenStream {
             )));
             let with_name = |ident: Ident| TokenTree::from(Ident::new(name, ident.span())).into();
             let body = replace_ident(body.clone(), "this_target", &with_name);
-            copy.extend(enable_features(body, target.features()));
+            copy.extend(enable_features(body, &version.features()));
             let cfg = match target {
                 // Elsewhere, nothing else checks that the module compiles for these widths.
                 Target::Portable64 | Target::Portable32 if !IS_FOR_TESTS => {
@@ -294,7 +354,7 @@ pub fn foreach_target(_: TokenStream, item: TokenStream) -> TokenStream {
                 }
                 _ => target.cfg(),
             };
-            let head = format!("#[cfg({cfg})] pub mod {name}");
+            let head = format!("#[cfg({cfg})] pub mod {}", version.module());
             out.extend(block(&head, copy));
         }
         out.extend(exports);

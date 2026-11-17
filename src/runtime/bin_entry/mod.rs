@@ -242,11 +242,7 @@ fn limit_simd_target() {
         return;
     }
     // SAFETY: not null, so a value of the environment.
-    let name = unsafe { bun_core::ffi::cstr(name) }.to_bytes();
-    let mut targets = bun_simd::Target::ALL.into_iter();
-    if let Some(target) = targets.find(|it| it.name().as_bytes() == name) {
-        bun_simd::limit_to(target);
-    }
+    bun_simd::limit_to_named(unsafe { bun_core::ffi::cstr(name) }.to_bytes());
 }
 
 /// Linux's `expand_fdtable()` waits for an RCU grace period (tens of ms on a

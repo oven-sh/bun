@@ -50,6 +50,16 @@ describe.skipIf(!hasRunner)("bun_simd", () => {
     expect(exitCode).toBe(0);
   });
 
+  // The checksums have copies for these.
+  const further = isArm64 ? ["neon+dotprod", "neon+aes+sha3"] : ["sse4+pclmulqdq", "avx2+vpclmulqdq"];
+  test.concurrent.each(further)("%s matches Highway", async limit => {
+    const rounds = isDebug || isASAN ? 20 : 2_000;
+    const { values, exitCode } = await run(limit, "check", 4, rounds);
+    expect(values("rounds")).toEqual([`${rounds}`]);
+    expect(values("chosen")[0]).toBeOneOf([limit.split("+")[0], baseline].map(target => `${target} ${target}`));
+    expect(exitCode).toBe(0);
+  });
+
   test.concurrent.each(["avx512_icl", "", "AVX2"])("%j is no limit", async target => {
     const { values, exitCode } = await run(target, "check", 2, 1);
     expect(values("chosen")).toEqual([`${targets.find(target => target !== "avx512_skx")} ${targets[0]}`]);
@@ -100,7 +110,7 @@ describe.skipIf(!hasRunner || !process.env.BUN_SIMD_BENCHMARK)("benchmark", () =
       print(
         `${target}, ns`,
         ["Highway", "Rust"],
-        await times(target, "bench", js, json, join(String(dir), "mappings")),
+        await times(isArm64 ? `${target}+aes+sha3+dotprod` : target, "bench", js, json, join(String(dir), "mappings")),
       );
       print(`${target}, ns`, ["mid page", "end of page"], await times(target, "edges"));
     },

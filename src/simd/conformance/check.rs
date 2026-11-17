@@ -242,6 +242,11 @@ impl Round<'_> {
         let is_same =
             highway::xxhash3_64(seed, text) == rust::xxhash3_64_shared(seed, shared(fenced));
         self.failures.unless(is_same, "xxhash3_64_shared");
+        let is_same = highway::crc32(seed as u32, text) == rust::crc32(seed as u32, fenced);
+        self.failures.unless(is_same, "crc32");
+        let got = [rust::adler32(fenced), rust::adler32_shared(shared(fenced))];
+        self.failures
+            .unless([highway::adler32(text); 2] == got, "adler32");
         let got = [
             rust::xxhash32(seed as u32, fenced),
             rust::xxhash32_shared(seed as u32, shared(fenced)),

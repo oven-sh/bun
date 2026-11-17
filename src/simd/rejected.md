@@ -1009,7 +1009,7 @@ mod portable {
     pub fn f() {}
 }
 bun_simd::export! {
-    native[is_allowed (all()) Sse4 portable ["sse2"]] portable_for_tests[]
+    native[is_allowed (all()) Sse4 portable ["sse2"]] portable_for_tests[] or[]
     #[unsafe(export_name = "g")]
     fn f()
 }
@@ -1098,4 +1098,56 @@ Features that are decoded from a lie:
 let before = bun_simd::detected().names().count();
 bun_simd_trusted::x86_64::decode(|_, _| [!0; 4], !0);
 assert_eq!(bun_simd::detected().names().count(), before);
+```
+
+## Further features
+
+An op needs its feature in the list of the module:
+
+```rust,compile_fail,E0133
+#[bun_simd::foreach_target(sse4, neon)]
+mod simd {
+    pub fn f(v: isa::U64) -> isa::U64 {
+        v.carryless_mul_lower(v)
+    }
+}
+# fn main() {}
+```
+
+```rust,no_run
+#[bun_simd::foreach_target(sse4 + "pclmulqdq", neon + "aes")]
+mod simd {
+    pub fn f(v: isa::U64) -> isa::U64 {
+        v.carryless_mul_lower(v)
+    }
+}
+# fn main() {}
+```
+
+What runs otherwise cannot need one:
+
+```rust,compile_fail,E0308
+#[bun_simd::foreach_target(sse4 + "pclmulqdq", neon + "aes")]
+mod simd {
+    #[export(or = g)]
+    pub fn f() {}
+}
+#[cfg_attr(target_arch = "x86_64", target_feature(enable = "avx2"))]
+#[cfg_attr(target_arch = "aarch64", target_feature(enable = "sve2"))]
+fn g() {}
+# fn main() {}
+```
+
+The best copy comes first:
+
+```rust,compile_fail
+#[bun_simd::foreach_target(sse4, avx2)]
+mod simd {}
+# fn main() {}
+```
+
+```rust,compile_fail
+#[bun_simd::foreach_target(sse4, sse4 + "bmi2")]
+mod simd {}
+# fn main() {}
 ```

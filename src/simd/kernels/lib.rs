@@ -7,8 +7,10 @@
 // The copies for the targets look alike.
 #![cfg_attr(mordant, allow(reimplemented_helper))]
 
+mod adler32;
 mod byte_set;
 mod convert;
+mod crc32;
 mod hex;
 mod image;
 mod jpeg;
@@ -27,9 +29,10 @@ mod words;
 mod xml;
 mod xxhash;
 
-use bun_simd::SharedU8;
+use bun_simd::{SharedU8, Source};
 use memmem::index_with;
 
+pub use adler32::{adler32, adler32_shared};
 pub use byte_set::ByteSet;
 pub use convert::simd::{
     bswap16_shared, bswap32_shared, bswap64_shared, copy_ascii_prefix_to_shared,
@@ -37,6 +40,7 @@ pub use convert::simd::{
     copy_u16_to_u8, fill_with_mask, fill_with_mask_from_shared, lower_ascii, lower_ascii16,
     mask_in_place,
 };
+pub use crc32::crc32;
 pub use hex::simd::{
     decode_hex, decode_hex_to_shared, decode_hex16, decode_hex16_to_shared, encode_hex_lower,
     encode_hex_lower_shared,
@@ -186,4 +190,16 @@ pub fn line_starts(text: &[u8]) -> Vec<u32> {
         scanner::simd::line_starts(text, out)
     });
     starts
+}
+
+trait Byte = Source<Lane = u8>;
+
+/// In a long input, it is worth a call to have no load cross a cache line.
+#[inline(always)]
+fn in_aligned_parts<B>(mut state: u32, mut bytes: &[B], update: impl Fn(u32, &[B]) -> u32) -> u32 {
+    if bytes.len() > 65536 {
+        let (head, rest) = bytes.split_at(bytes.as_ptr().addr().wrapping_neg() % 64);
+        (state, bytes) = (update(state, head), rest);
+    }
+    update(state, bytes)
 }

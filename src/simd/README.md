@@ -180,6 +180,23 @@ In Bun, lints keep `core::simd` and `core::arch` out of the kernels. Add the op 
 | `#[export(up_to = avx2, up_to = neon)]` | `avx2`, `sse4` and `neon`    |
 | `#[export(baseline)]`                   | The lowest of each family    |
 
+A module that needs more than a target has lists its copies, best first. `or` names what runs on a CPU that can run none of them, in place of the portable copy, which the list can then leave out.
+
+```rust
+#[bun_simd::foreach_target(avx2 + "vpclmulqdq", sse4 + "pclmulqdq", neon + "aes")]
+mod folding_simd {
+    #[export(or = with_tables)]
+    pub fn first_product(a: &[u64], b: &[u64]) -> u64 {
+        isa::U64::from_slice(a).carryless_mul_lower(isa::U64::from_slice(b))[0]
+    }
+}
+
+fn with_tables(a: &[u64], b: &[u64]) -> u64 {
+    todo!()
+}
+# fn main() {}
+```
+
 Before Ice Lake, a core can lower its clock for about 0.7 ms after any 512-bit instruction. On a busy Cascade Lake server, one short search every 0.5 ms takes the clock from 3.1 to 2.7 GHz for all the code around it. So a kernel has to ask for `avx512_skx`. Ask only if one call runs long enough to make up for that.
 
 A Cascade Lake core does the same once 46 multiplications of 256 bits fall into about 64 cycles, and each change of the clock stalls it for about 10 µs. A tight loop does not show that, so also time a kernel with many multiplications after a pause of 1 ms.
@@ -227,4 +244,4 @@ LLVM can still pick such an instruction for plain code in a kernel. Read the dis
 | The same with `BUN_SIMD_BENCHMARK=1`, on a release build | Prints times                                                                             |
 | `bun scripts/verify-baseline.ts --simd-cpus`             | The same on emulated CPUs, and the instructions of each copy against its target          |
 
-With the feature `test_support`, `limit_to` picks a target for the thread and nothing is cached. `portable32` and `portable64` then run a kernel at those widths on any machine. `Memory` is exported, for a `Source` that counts its reads.
+With the feature `test_support`, `limit_to` and `limit_to_with` pick a target, and features beyond it, for the thread and nothing is cached. `portable32` and `portable64` then run a kernel at those widths on any machine. `Memory` is exported, for a `Source` that counts its reads.

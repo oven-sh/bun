@@ -1,6 +1,24 @@
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe, isLinux, isWindows, tempDir } from "harness";
-import { join } from "path";
+import { existsSync } from "fs";
+import { dirname, join } from "path";
+import { parseSymbolMap } from "../../../../scripts/orderfile/windows-symbols";
+
+let listing: ReturnType<typeof parseSymbolMap> | undefined;
+/** In CI the names for a Windows executable are in the archive that it came from. */
+async function withNames(report: string) {
+  const archive = dirname(bunExe()) + ".zip";
+  if (!report.includes("exe+0x") || !existsSync(archive)) return report;
+  const tar = join(process.env.SystemRoot!, "System32", "tar.exe");
+  listing ??= parseSymbolMap(await Bun.$`${tar} -xOf ${archive} ${"*/bun-profile.map"}`.text());
+  const { imageBase, symbols } = listing;
+  return report.replace(/exe\+0x([0-9a-f]+)/g, (place, offset) => {
+    const address = imageBase + parseInt(offset, 16);
+    let nearest = symbols[0];
+    for (const symbol of symbols) if (symbol[0] <= address && symbol[0] > nearest[0]) nearest = symbol;
+    return `${place} ${nearest[1].slice(0, 160)}+0x${(address - nearest[0]).toString(16)}`;
+  });
+}
 
 // The program of a-failed-stream-is-collected.test.ts. Where the stream is still alive after ten turns, the run says what holds it:
 // what-keeps-it-alive.fixture.js. The stale word lies where the frames of one build on one platform put it, so only that build can say.
@@ -54,7 +72,7 @@ test.skipIf(!isLinux && !isWindows).each([
         stderr: "pipe",
       });
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-      if (stderr) console.error(`${when}, ${JSON.stringify(env)}:\n${stderr}`);
+      if (stderr) console.error(`${when}, ${JSON.stringify(env)}:\n${await withNames(stderr)}`);
       return exitCode ? `exit code ${exitCode}` : stdout.trim();
     };
     const environments: Record<string, string>[] = [{ BUN_JSC_useJIT: "0" }, {}];

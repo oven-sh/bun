@@ -59,24 +59,9 @@ function placesOnWindows(wanted) {
   while (start > limits[0] && isReadable(start - 4096n)) start -= 4096n;
   const words = new BigUint64Array(toArrayBuffer(Number(start), 0, Number(end - start)).slice(0));
 
-  const { symbols: debug } = dlopen("dbghelp.dll", {
-    SymInitializeW: { args: ["i64", "ptr", "i32"], returns: "i32" },
-    SymFromAddr: { args: ["i64", "u64", "ptr", "ptr"], returns: "i32" },
-  });
-  debug.SymInitializeW(-1n, null, 1);
   const base = kernel.GetModuleHandleW(null);
   const size = read.u32(base, read.u32(base, 0x3c) + 0x50);
-  const symbol = Buffer.alloc(88 + 200);
-  symbol.writeUInt32LE(88, 0);
-  symbol.writeUInt32LE(200, 80);
-  const displacement = new BigUint64Array(1);
-  const place = word => {
-    const offset = word - BigInt(base);
-    if (offset < 0n || offset >= size) return;
-    const found = debug.SymFromAddr(-1n, word, ptr(displacement), ptr(symbol));
-    const name = found ? symbol.toString("latin1", 84, 84 + Math.min(symbol.readUInt32LE(76), 199)) : "";
-    return `exe+0x${offset.toString(16)} ${name}${found ? `+0x${displacement[0].toString(16)}` : ""}`;
-  };
+  const place = word => word >= base && word - BigInt(base) < size && `exe+0x${(word - BigInt(base)).toString(16)}`;
   // What `deref()` returns is held until the end of the turn.
   const cells = [...wanted].filter(([, way]) => !way.includes("WeakRef"));
   // An address in a cell, or right behind it, holds it too. The snapshot only has estimates of sizes.
@@ -97,7 +82,10 @@ function placesOnWindows(wanted) {
 function whatKeepsAlive(className) {
   const { listed, reaching: wanted } = cellsThatReach(className);
   const lines = [`${wanted.size} cells reach a ${className}`, ...listed];
-  if (process.platform === "win32") return [...lines, ...placesOnWindows(wanted)].join("\n");
+  if (process.platform === "win32") {
+    const hasFFI = process.env.BUN_JSC_useJIT !== "0";
+    return [...lines, ...(hasFFI ? placesOnWindows(wanted) : [])].join("\n");
+  }
   const mappings = readFileSync("/proc/self/maps", "utf8")
     .split("\n")
     .filter(line => line)

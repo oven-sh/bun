@@ -1332,18 +1332,31 @@ impl PostgresSQLConnection {
                 let _ = self.write(|out| frontend::close_statement(out, &evicted.name));
             }
         }
-        // User code that `bind_and_execute` runs can flush what is ahead, but no part of this.
-        let mut batch = self.write(|ahead| match ahead.is_empty() {
-            true => core::mem::take(ahead),
-            false => Vec::with_capacity(256),
-        });
-        let result = self.encode(&mut batch, &request, &statement, values, step);
+        // An accessor can wait for the reply to a request that is still in the write buffer.
+        let leave_buffer = match step {
+            Step::Bind if !self.write_buffer.get().is_empty() => {
+                PostgresRequest::may_have_accessors(self.global(), values)
+            }
+            _ => Ok(false),
+        };
+        // Out of reach of user code, which must not flush a part of a message.
+        let mut batch = match leave_buffer {
+            Ok(true) => OffsetByteList {
+                head: 0,
+                byte_list: Vec::with_capacity(256),
+            },
+            Ok(false) => self.write_buffer.take(),
+            Err(err) => return self.fail_write(err),
+        };
+        let out = &mut batch.byte_list;
+        let start = out.len();
+        let result = self.encode(out, &request, &statement, values, step);
         if result.is_ok() && !self.pipeline.with_mut(|it| it.wrote(&request, step)) {
-            batch.clear();
+            out.truncate(start);
         }
-        self.write(|ahead| match ahead.is_empty() {
+        self.write_buffer.with_mut(|ahead| match ahead.is_empty() {
             true => *ahead = batch,
-            false => ahead.extend_from_slice(&batch),
+            false => ahead.byte_list.extend_from_slice(batch.remaining()),
         });
         match result {
             Ok(()) => true,

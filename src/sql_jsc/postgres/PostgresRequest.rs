@@ -161,7 +161,15 @@ fn array_literal(global: &JSGlobalObject, list: JSValue, tag: types::Tag) -> JsR
     Ok(literal)
 }
 
-/// An accessor behind a hole of `values` still runs user code.
+pub(crate) fn may_have_accessors(
+    global: &JSGlobalObject,
+    values: JSValue,
+) -> Result<bool, AnyPostgresError> {
+    let iter = JSArrayIterator::init(values, global).map_err(js_error_to_postgres)?;
+    Ok(!iter.is_fast() && iter.len > 0)
+}
+
+/// An accessor of `values` still runs user code, and so does the `toString()` of bytes that a retry sends as text.
 pub(crate) fn bind_and_execute(
     out: &mut Vec<u8>,
     global: &JSGlobalObject,

@@ -52,10 +52,7 @@ impl HeapNode for EventLoopTimer {
         if (self.tag == Tag::ImmediateObject) != (other.tag == Tag::ImmediateObject) {
             return self.tag == Tag::ImmediateObject;
         }
-        a_is_js && b_is_js && {
-            const U24_MAX: u32 = (1 << 24) - 1;
-            (other.epoch.get().wrapping_sub(self.epoch.get()) & U24_MAX) < U24_MAX / 2
-        }
+        a_is_js && b_is_js && other.epoch.get().wrapping_sub(self.epoch.get()) < u32::MAX / 2
     }
 }
 
@@ -288,7 +285,7 @@ mod tests {
             assert_before(&node(Tag::ImmediateObject, 0, 5, 2), &node(tag, 0, 0, 1));
         }
         for epoch in [0, u32::MAX] {
-            for distance in [1, (1 << 23) - 2] {
+            for distance in [1, 1 << 23, 1 << 24, (1 << 31) - 2] {
                 assert_before(
                     &node(Tag::TimeoutObject, 0, 5, epoch),
                     &node(Tag::AbortSignalTimeout, 0, 0, epoch.wrapping_add(distance)),

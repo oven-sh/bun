@@ -2,7 +2,7 @@ import { RedisClient, SQL } from "bun";
 import { timerInternals } from "bun:internal-for-testing";
 import { heapStats } from "bun:jsc";
 import { vi as bunVi, jest, setSystemTime } from "bun:test";
-import { bunEnv, bunExe, isDebug, isLinux, tempDir } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, isLinux, tempDir } from "harness";
 import { spawnSync as childProcessSpawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { once } from "node:events";
@@ -983,6 +983,18 @@ describe("timer controls called from inside a timer callback", () => {
       if (t.hasRef()) process.exit(1);`;
     expect(await run(["-e", script])).toEqual({ stdout: "true false\n", stderr: "", exitCode: 0, signalCode: null });
   });
+});
+
+// 35 s in a debug build. The order itself is also a unit test in EventLoopTimer.rs.
+test.skipIf(isDebug || isASAN)("equal deadlines keep their order across 2 ** 23 timers armed in between", () => {
+  vi.useFakeTimers();
+  const order: string[] = [];
+  setTimeout(() => order.push("first"), 1000);
+  const other = setTimeout(() => {}, 5000);
+  for (let i = 0; i < 2 ** 23; i++) other.refresh();
+  setTimeout(() => order.push("second"), 1000);
+  vi.advanceTimersByTime(1000);
+  expect(order).toEqual(["first", "second"]);
 });
 
 test("useRealTimers() called from a timer callback isn't undone when the advance completes", () => {

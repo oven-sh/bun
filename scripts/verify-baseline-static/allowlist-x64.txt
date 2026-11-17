@@ -844,6 +844,29 @@ _ZN3bun6N_AVX224WebpReconstructSubblocksEPKhS2_S2_S2_PKsPh                     [
 
 
 # ----------------------------------------------------------------------------
+# Bun zlib kernels (src/jsc/bindings/highway_zlib.cpp).
+# Gate: BUN_HWY_DISPATCH (highway_dispatch.h) via hwy::SupportedTargets. (17 symbols)
+# ----------------------------------------------------------------------------
+_ZN3bun6N_AVX212CopyAndCrc32EjPKhPhm                                           [AVX, AVX2, BMI2, PCLMULQDQ]
+_ZN3bun6N_AVX214CopyAndAdler32EjPKhPhm                                         [AVX, AVX2, BMI2]
+_ZN3bun6N_AVX218SubtractSaturatingEPtmt                                        [AVX, AVX2]
+_ZN3bun6N_AVX25Crc32EjPKhm                                                     [AVX, AVX2, BMI2, PCLMULQDQ]
+_ZN3bun6N_AVX27Adler32EjPKhm                                                   [AVX, AVX2, BMI2]
+_ZN3bun6N_AVX312CopyAndCrc32EjPKhPhm                                           [AVX, AVX2, AVX512BW, AVX512F, AVX512VL, BMI2, PCLMULQDQ]
+_ZN3bun6N_AVX314CopyAndAdler32EjPKhPhm                                         [AVX, AVX2, AVX512BW, AVX512F, AVX512VL, BMI2]
+_ZN3bun6N_AVX318SubtractSaturatingEPtmt                                        [AVX, AVX512BW, AVX512F]
+_ZN3bun6N_AVX35Crc32EjPKhm                                                     [AVX, AVX2, AVX512BW, AVX512F, AVX512VL, BMI2, PCLMULQDQ]
+_ZN3bun6N_AVX37Adler32EjPKhm                                                   [AVX, AVX2, AVX512BW, AVX512F, AVX512VL, BMI2]
+_ZN3bun6N_SSE412CopyAndCrc32EjPKhPhm                                           [PCLMULQDQ]
+_ZN3bun6N_SSE45Crc32EjPKhm                                                     [PCLMULQDQ]
+_ZN3bun9N_AVX3_DL12CopyAndCrc32EjPKhPhm                                        [AVX, AVX2, AVX512BW, AVX512F, AVX512VL, AVX512_VBMI, BMI2, PCLMULQDQ, VPCLMULQDQ]
+_ZN3bun9N_AVX3_DL14CopyAndAdler32EjPKhPhm                                      [AVX, AVX2, AVX512BW, AVX512F, AVX512VL, AVX512_VNNI, BMI2]
+_ZN3bun9N_AVX3_DL18SubtractSaturatingEPtmt                                     [AVX, AVX512BW, AVX512F]
+_ZN3bun9N_AVX3_DL5Crc32EjPKhm                                                  [AVX, AVX2, AVX512BW, AVX512F, AVX512VL, AVX512_VBMI, BMI2, PCLMULQDQ, VPCLMULQDQ]
+_ZN3bun9N_AVX3_DL7Adler32EjPKhm                                                [AVX, AVX2, AVX512BW, AVX512F, AVX512VL, AVX512_VNNI, BMI2]
+
+
+# ----------------------------------------------------------------------------
 # Bun xxHash3 (src/jsc/bindings/xxhash3.cpp). Gate: BUN_HWY_DISPATCH (highway_dispatch.h) via hwy::SupportedTargets. (6 symbols)
 # ----------------------------------------------------------------------------
 _ZN3bun4xxh36N_AVX28HashLongEPKhmS3_                                          [AVX, AVX2, BMI2]

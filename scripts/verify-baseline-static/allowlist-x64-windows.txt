@@ -818,6 +818,29 @@ bun::N_AVX2::WebpYuvToRgba                                           [AVX, AVX2]
 
 
 # ----------------------------------------------------------------------------
+# Bun zlib kernels (src/jsc/bindings/highway_zlib.cpp).
+# Gate: BUN_HWY_DISPATCH (highway_dispatch.h) via hwy::SupportedTargets. (17 symbols)
+# ----------------------------------------------------------------------------
+bun::N_AVX2::Adler32                                                 [AVX, AVX2, BMI2]
+bun::N_AVX2::CopyAndAdler32                                          [AVX, AVX2, BMI2]
+bun::N_AVX2::CopyAndCrc32                                            [AVX, AVX2, BMI2, PCLMULQDQ]
+bun::N_AVX2::Crc32                                                   [AVX, AVX2, BMI2, PCLMULQDQ]
+bun::N_AVX2::SubtractSaturating                                      [AVX, AVX2]
+bun::N_AVX3::Adler32                                                 [AVX, AVX2, AVX512BW, AVX512F, AVX512VL, BMI2]
+bun::N_AVX3::CopyAndAdler32                                          [AVX, AVX2, AVX512BW, AVX512F, AVX512VL, BMI2]
+bun::N_AVX3::CopyAndCrc32                                            [AVX, AVX2, AVX512BW, AVX512F, AVX512VL, BMI2, PCLMULQDQ]
+bun::N_AVX3::Crc32                                                   [AVX, AVX2, AVX512BW, AVX512F, AVX512VL, BMI2, PCLMULQDQ]
+bun::N_AVX3::SubtractSaturating                                      [AVX, AVX512BW, AVX512F]
+bun::N_AVX3_DL::Adler32                                              [AVX, AVX2, AVX512BW, AVX512F, AVX512VL, AVX512_VNNI, BMI2]
+bun::N_AVX3_DL::CopyAndAdler32                                       [AVX, AVX2, AVX512BW, AVX512F, AVX512VL, AVX512_VNNI, BMI2]
+bun::N_AVX3_DL::CopyAndCrc32                                         [AVX, AVX2, AVX512BW, AVX512F, AVX512VL, AVX512_VBMI, BMI2, PCLMULQDQ, VPCLMULQDQ]
+bun::N_AVX3_DL::Crc32                                                [AVX, AVX2, AVX512BW, AVX512F, AVX512VL, AVX512_VBMI, BMI2, PCLMULQDQ, VPCLMULQDQ]
+bun::N_AVX3_DL::SubtractSaturating                                   [AVX, AVX512BW, AVX512F]
+bun::N_SSE4::CopyAndCrc32                                            [PCLMULQDQ]
+bun::N_SSE4::Crc32                                                   [PCLMULQDQ]
+
+
+# ----------------------------------------------------------------------------
 # BoringSSL AES.
 # (15 symbols)
 # ----------------------------------------------------------------------------

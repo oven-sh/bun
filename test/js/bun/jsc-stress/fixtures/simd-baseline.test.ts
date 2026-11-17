@@ -6,7 +6,7 @@
 // to catch both SIGILL and miscompilation from wrong instruction lowering.
 
 import { describe, expect, test } from "bun:test";
-import { deflateSync, inflateSync } from "node:zlib";
+import { crc32, deflateSync, gunzipSync, gzipSync, inflateSync } from "node:zlib";
 import { decodeDifferences, encodeDifferences, inParts, loadCases } from "../../image/webp-golden/observe";
 
 // Use Buffer.alloc instead of "x".repeat() — repeat is slow in debug JSC builds.
@@ -481,5 +481,107 @@ describe("WebP codec: Highway runtime dispatch", () => {
     .filter(c => Object.keys(c.results).length > 0);
   test.each(inParts(lossy, ["layers", "stored"], 20))("encode, part %#", async some => {
     expect(await encodeDifferences(some)).toBe("");
+  });
+});
+
+describe("zlib: Highway runtime dispatch", () => {
+  // src/jsc/bindings/highway_zlib.cpp is compiled five times over on x64 and up to three times on arm64. An emulated
+  // Nehalem cannot multiply polynomials, and gets its CRC-32 from src/highway/zlib.rs.
+  const crcTable = new Uint32Array(256);
+  for (let byte = 0; byte < 256; byte++) {
+    let state = byte;
+    for (let bit = 0; bit < 8; bit++) state = (state >>> 1) ^ (state & 1 ? 0xedb88320 : 0);
+    crcTable[byte] = state;
+  }
+
+  /** The checksums of the first `length` bytes, for each of `lengths`, which ascend. */
+  function expectedChecksums(bytes: Uint8Array, lengths: number[], seed = 0) {
+    const crcs: number[] = [];
+    const adlers: number[] = [];
+    let state = ~seed;
+    let a = 1;
+    let b = 0;
+    let at = 0;
+    for (const length of lengths) {
+      for (; at < length; at++) {
+        state = crcTable[(state ^ bytes[at]) & 255] ^ (state >>> 8);
+        a = (a + bytes[at]) % 65521;
+        b = (b + a) % 65521;
+      }
+      crcs.push(~state >>> 0);
+      adlers.push(((b << 16) | a) >>> 0);
+    }
+    return { crcs, adlers };
+  }
+
+  function noise(length: number, mask = 255) {
+    const bytes = Buffer.alloc(length);
+    let state = 1;
+    for (let i = 0; i < length; i++) {
+      state = (Math.imul(state, 1664525) + 1013904223) >>> 0;
+      bytes[i] = (state >>> 24) & mask;
+    }
+    return bytes;
+  }
+
+  const range = (from: number, to: number) => Array.from({ length: to - from }, (_, i) => from + i);
+  const around = (...lengths: number[]) => lengths.flatMap(length => range(length - 17, length + 18));
+  // Every way through the kernels begins or ends at one of these.
+  const short = range(0, 700);
+  const medium = around(896, 1248, 1344, 2400, 4096);
+  const long = [16383, 16384, 16385, 16399, 16400, 65535, 65536, 65537, 65551, 65552, 131072, 140001];
+
+  describe.each([
+    { name: "noise", bytes: noise(140064) },
+    // The sums of Adler-32 get as large as they can.
+    { name: "0xff", bytes: Buffer.alloc(140064, 0xff) },
+  ])("$name", ({ bytes }) => {
+    describe.each([
+      { name: "short", lengths: short },
+      { name: "medium", lengths: medium },
+      { name: "long", lengths: long },
+    ])("$name", ({ lengths }) => {
+      test.each([0, 13])("checksums from byte %i on", offset => {
+        const input = bytes.subarray(offset);
+        const seed = offset * 0x13579bdf;
+        const { crcs, adlers } = expectedChecksums(input, lengths, seed);
+        expect(lengths.map(length => crc32(input.subarray(0, length), seed))).toEqual(crcs);
+        expect(lengths.map(length => Bun.hash.crc32(input.subarray(0, length), seed))).toEqual(crcs);
+        expect(lengths.map(length => Bun.hash.adler32(input.subarray(0, length)))).toEqual(adlers);
+      });
+
+      test("stored blocks are copied and get their checksum", () => {
+        const some = lengths.filter((_, i) => lengths === long || i % 5 === 0);
+        const { crcs, adlers } = expectedChecksums(bytes, some);
+        const gzipped = some.map(length => gzipSync(bytes.subarray(0, length), { level: 0 }));
+        const deflated = some.map(length => deflateSync(bytes.subarray(0, length), { level: 0 }));
+        expect(gzipped.map(file => file.readUInt32LE(file.length - 8))).toEqual(crcs);
+        expect(deflated.map(file => file.readUInt32BE(file.length - 4))).toEqual(adlers);
+        const differs = (output: Buffer, i: number) => !output.equals(bytes.subarray(0, some[i]));
+        expect(some.filter((_, i) => differs(gunzipSync(gzipped[i]), i))).toEqual([]);
+        expect(some.filter((_, i) => differs(inflateSync(deflated[i]), i))).toEqual([]);
+      });
+    });
+  });
+
+  test("weights of either sign alone", () => {
+    // One half of every 128 or 256 bytes is zero, so that nothing cancels out.
+    for (const period of [128, 256]) {
+      for (const half of [0, 1]) {
+        const bytes = Buffer.alloc(65536);
+        for (let at = (half * period) / 2; at < bytes.length; at += period) bytes.fill(0xff, at, at + period / 2);
+        expect([Bun.hash.adler32(bytes)]).toEqual(expectedChecksums(bytes, [bytes.length]).adlers);
+      }
+    }
+  });
+
+  test.each([
+    { windowBits: 9, expected: [810, 1753982364] },
+    { windowBits: 15, expected: [48000, 1076502908] },
+  ])("matches are found after a window of $windowBits bits has slid", ({ windowBits, expected }) => {
+    const input = noise(5 << windowBits, 0x03);
+    const deflated = deflateSync(input, { windowBits });
+    expect([deflated.length, crc32(deflated)]).toEqual(expected);
+    expect(inflateSync(deflated).equals(input)).toBe(true);
   });
 });

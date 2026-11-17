@@ -208,6 +208,14 @@ _ZN3bun10N_SVE2_12817ParseMappingsImplEPKhmPiS3_S3_S3_miS3_Pm                 [S
 
 
 # ----------------------------------------------------------------------------
+# Bun zlib kernels (src/jsc/bindings/highway_zlib.cpp).
+# Gate: BUN_HWY_DISPATCH (highway_dispatch.h) via hwy::SupportedTargets. (2 symbols)
+# ----------------------------------------------------------------------------
+_ZN3bun11N_NEON_BF1614CopyAndAdler32EjPKhPhm                                   [DotProd]
+_ZN3bun11N_NEON_BF167Adler32EjPKhm                                             [DotProd]
+
+
+# ----------------------------------------------------------------------------
 # Highway SVE detector.
 # (1 symbols)
 # ----------------------------------------------------------------------------

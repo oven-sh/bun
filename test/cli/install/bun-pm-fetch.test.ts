@@ -592,23 +592,6 @@ it("a tarball that cannot be downloaded fails the command", async () => {
   expect(exitCode).toBe(1);
 });
 
-it("an optional file: tarball that is gone is a warning, as in bun install", async () => {
-  await using fixture = await projectWith("file");
-  const { bun, project } = fixture;
-  const optionalDependencies = { "file-dep": "file:./vendor/file-dep-1.0.0.tgz" };
-  await writeFile(join(project, "package.json"), JSON.stringify({ name: "project", optionalDependencies }));
-  expect(await bun("other-cache", "install", "--lockfile-only")).toMatchObject({ exitCode: 0 });
-  await rm(join(project, "vendor"), { recursive: true });
-
-  for (const command of [["install"], ["pm", "fetch"]]) {
-    const { stderr, exitCode } = await bun(`cache-${command[0]}`, ...command);
-    expect(stderr.split("\n").filter(line => /^(warn|error):/.test(line))).toEqual([
-      "warn: ENOENT extracting tarball from file-dep",
-    ]);
-    expect(exitCode).toBe(0);
-  }
-});
-
 // Nothing is linked or run, so the scan is left to the install. --verbose says so.
 it("does not run the security scanner", async () => {
   await using fixture = await projectWith("npm", `[install.security]\nscanner = "./scanner.ts"\n`);

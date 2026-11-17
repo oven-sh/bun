@@ -548,6 +548,7 @@ impl PackageManager {
         let Some((row, task_id, arrived)) = self.fetches.take_next(turn) else {
             return false;
         };
+        let (arrived, waiters) = &*arrived;
 
         let mut package_id = INVALID_PACKAGE_ID;
         let log_level = self.options.log_level;
@@ -560,9 +561,13 @@ impl PackageManager {
             return true;
         };
         let install_peer = self.look_ahead.in_peer_pass;
-        if let Err(err) =
-            run_tasks::resolve_waiters_of_appended_package(self, task_id, &package, install_peer)
-        {
+        if let Err(err) = run_tasks::resolve_waiters_of_appended_package(
+            self,
+            task_id,
+            waiters,
+            &package,
+            install_peer,
+        ) {
             let dependency = self.lockfile.buffers.dependencies[row as usize].clone();
             enqueue::add_dependency_error(self, &dependency, err);
         }

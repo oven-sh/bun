@@ -1299,10 +1299,9 @@ fn spawn_maybe_sync(
     }
     // existing_terminal: don't close slave_fd - user manages lifecycle and can reuse
 
-    // SAFETY: `subprocess_ptr` is live, and `finalize()` detaches the handler before it is freed.
-    subprocess.process().set_exit_handler(unsafe {
-        bun_spawn::ProcessExit::new(bun_spawn::ProcessExitKind::Subprocess, subprocess_ptr)
-    });
+    subprocess
+        .process
+        .set_exit_handler(subprocess_ref.this_ptr());
 
     promise_for_stream.ensure_still_alive();
     subprocess.update_flags(|f| {

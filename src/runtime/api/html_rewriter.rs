@@ -3085,9 +3085,6 @@ impl Element {
     }
 }
 
-// `Element` is the one wrapper whose `detach` has to do more than null out the
-// raw pointer: it also ends the `AttributeIterator`s it handed to JS, which
-// hold a backref to it and read through it (see `invalidate`).
 impl WrapperLike for Element {
     type Raw = RawElement;
     fn init(v: *mut Self::Raw, pipe: BackRef<RewriterPipe>) -> RefPtr<Self> {

@@ -448,7 +448,7 @@ impl RespLike for uws_sys::h2::Response {
     }
 }
 
-/// Answer a request that arrived after `finalize()` set the wrapper's
+/// Answer a request that arrived after the finalizer set the wrapper's
 /// `JsRef` to `Finalized` (idle keep-alive sockets aren't counted in
 /// `pending_requests`, so `self` can outlive the wrapper between the
 /// finalizer and the next-tick `schedule_deinit`). 503 instead of

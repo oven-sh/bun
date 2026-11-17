@@ -560,7 +560,7 @@ unsafe impl<T: ?Sized + Sync, P> Sync for BackRef<T, P> {}
 // of one synchronous call; the handler needs to expose `X` to re-entrant code
 // (JS host-fns) that can only reach it through `&self` on a long-lived wrapper.
 // The handler erases the lifetime and parks the pointer with [`set`]; host-fns
-// read it via [`get_mut`]; a scopeguard calls [`detach`] before the closure
+// read it via [`get_mut`]; a guard calls [`detach`] before the closure
 // returns the borrow to the library. A detached slot reads as `None`, so a
 // wrapper retained past its handler scope never reaches a dangling pointer.
 //

@@ -214,6 +214,236 @@ describe("Writable", () => {
     expect(s._events).toHaveProperty("finish");
     expect(s._events).toHaveProperty("drain");
   });
+
+  describe.each(["before it returns", "later"])("_writev that calls back %s", when => {
+    // `nested` runs inside the first _writev, and can return an error or the next `nested`.
+    // `settle` completes what is in flight.
+    function create(nested, options) {
+      const log = [];
+      const inFlight = [];
+      const complete = callback => (when === "later" ? inFlight.push(callback) : callback());
+      const stream = new Writable({
+        decodeStrings: false,
+        write(chunk, encoding, callback) {
+          log.push(`write ${chunk}`);
+          complete(callback);
+        },
+        writev(chunks, callback) {
+          const result = nested?.(stream);
+          nested = typeof result === "function" ? result : undefined;
+          log.push(`writev ${chunks.map(({ chunk }) => chunk)}${chunks.allBuffers ? " (buffers)" : ""}`);
+          complete(() => callback(result instanceof Error ? result : null));
+        },
+        final(callback) {
+          log.push("final");
+          callback();
+        },
+        ...options,
+      });
+      const settle = () => {
+        while (inFlight.length) inFlight.shift()();
+      };
+      const called = name => error => log.push(`${name} ${error?.code ?? "done"}`);
+      return { stream, log, settle, called };
+    }
+    const failure = Object.assign(new Error("failed"), { code: "FAILED" });
+    function writeCorked(stream, ...callbacks) {
+      stream.cork();
+      stream.write("a", callbacks[0]);
+      stream.write("b", callbacks[1]);
+      stream.uncork();
+    }
+
+    it.each([false, true])("is followed by a write() that it made, objectMode: %p", async objectMode => {
+      const { stream, log, settle } = create(stream => stream.write("c"), { objectMode });
+      writeCorked(stream);
+      settle();
+      expect({ log, length: stream.writableLength }).toEqual({ log: ["writev a,b", "write c"], length: 0 });
+      stream.write("d");
+      stream.end();
+      settle();
+      await finishedP(stream);
+      expect(log).toEqual(["writev a,b", "write c", "write d", "final"]);
+    });
+
+    it("is followed by a write() that it made, after the write in front of it", () => {
+      let release;
+      const { stream, log, settle } = create(stream => stream.write("c"));
+      const write = stream._write;
+      stream._write = (chunk, encoding, callback) => {
+        stream._write = write;
+        release = callback;
+      };
+      for (const chunk of ["first", "a", "b"]) stream.write(chunk);
+      release();
+      settle();
+      expect({ log, length: stream.writableLength }).toEqual({ log: ["writev a,b", "write c"], length: 0 });
+    });
+
+    it("is followed by a write() that it made, when _write buffered its chunks", () => {
+      let release;
+      const { stream, log, settle } = create(stream => stream.write("c"));
+      const write = stream._write;
+      stream._write = (chunk, encoding, callback) => {
+        stream._write = write;
+        release = callback;
+        stream.write("a");
+        stream.write("b");
+      };
+      stream.cork();
+      stream.write("first");
+      stream.uncork();
+      release();
+      settle();
+      expect({ log, length: stream.writableLength }).toEqual({ log: ["writev a,b", "write c"], length: 0 });
+    });
+
+    it("is followed by a write() that it made, after _construct", async () => {
+      const { stream, log, settle } = create(stream => stream.write("c"), { construct: callback => callback() });
+      stream.write("a");
+      stream.write("b");
+      await new Promise(setImmediate);
+      settle();
+      expect({ log, length: stream.writableLength }).toEqual({ log: ["writev a,b", "write c"], length: 0 });
+    });
+
+    it("is followed by a write() that it made, inside end()", async () => {
+      const { stream, log, settle } = create(stream => stream.write("c"));
+      stream.cork();
+      stream.write("a");
+      stream.end("b");
+      settle();
+      expect(log).toEqual(["writev a,b", "write c", "final"]);
+      await finishedP(stream);
+    });
+
+    it.each([
+      ["buffers", Buffer.from("c"), "writev c,c (buffers)"],
+      ["strings", "c", "writev c,c"],
+    ])("runs again for two %s that it wrote", (_, nested, expected) => {
+      const { stream, log, settle } = create(stream => {
+        stream.write(nested);
+        stream.write(nested);
+      });
+      stream.cork();
+      stream.write(Buffer.from("a"));
+      stream.write(Buffer.from("b"));
+      stream.uncork();
+      settle();
+      expect({ log, length: stream.writableLength }).toEqual({ log: ["writev a,b (buffers)", expected], length: 0 });
+    });
+
+    it("runs as many times as it writes, without growing the stack", () => {
+      const depths = [];
+      const { stream, settle } = create(function again(stream) {
+        if (depths.push(new Error().stack.split("\n").length) === 20) return;
+        stream.write("c");
+        stream.write("d");
+        return again;
+      });
+      const { stackTraceLimit } = Error;
+      Error.stackTraceLimit = Infinity;
+      try {
+        writeCorked(stream);
+        settle();
+      } finally {
+        Error.stackTraceLimit = stackTraceLimit;
+      }
+      expect(depths.slice(1)).toEqual(Array(19).fill(depths[1]));
+      expect(stream.writableLength).toBe(0);
+    });
+
+    it.each([false, true])("leaves the callback of that write for later, own callbacks: %p", async own => {
+      const { stream, log, settle, called } = create(stream => stream.write("c", called("c")));
+      writeCorked(stream, ...(own ? [called("a"), called("b")] : []));
+      expect(log).toEqual(when === "later" ? ["writev a,b"] : ["writev a,b", "write c"]);
+      settle();
+      expect(log.slice(0, 2)).toEqual(["writev a,b", "write c"]);
+      stream.end();
+      await finishedP(stream);
+      expect(log.filter(line => line.endsWith("done"))).toEqual(own ? ["a done", "b done", "c done"] : ["c done"]);
+    });
+
+    it("emits 'drain' once that write is done", async () => {
+      const { stream, log, settle } = create(stream => log.push(`accepted ${stream.write("c")}`), { highWaterMark: 3 });
+      stream.on("drain", () => log.push(`drain ${stream.writableLength}`));
+      writeCorked(stream);
+      settle();
+      await new Promise(process.nextTick);
+      expect(log).toEqual(["accepted false", "writev a,b", "write c", "drain 0"]);
+    });
+
+    it("keeps that write until uncork() when it also corked", () => {
+      const { stream, log, settle } = create(stream => {
+        stream.cork();
+        stream.write("c");
+      });
+      writeCorked(stream);
+      settle();
+      expect({ log, length: stream.writableLength }).toEqual({ log: ["writev a,b"], length: 1 });
+      stream.uncork();
+      settle();
+      expect({ log, length: stream.writableLength }).toEqual({ log: ["writev a,b", "write c"], length: 0 });
+    });
+
+    it.each([
+      ["fails", () => failure, "FAILED"],
+      ["destroys the stream", stream => void stream.destroy(), "ERR_STREAM_DESTROYED"],
+      ["destroys the stream with an error", stream => void stream.destroy(failure), "FAILED"],
+    ])("fails that write when it %s", async (_, stop, code) => {
+      const { stream, log, settle, called } = create(stream => {
+        stream.write("c", called("c"));
+        return stop(stream);
+      });
+      const closed = new Promise(resolve => stream.on("error", () => {}).on("close", resolve));
+      writeCorked(stream);
+      settle();
+      await closed;
+      expect({ log, length: stream.writableLength }).toEqual({ log: ["writev a,b", `c ${code}`], length: 0 });
+    });
+
+    it("calls back what it wrote when the callback of a failed write has uncorked, as in Node", async () => {
+      let release;
+      const { stream, log, settle, called } = create(
+        stream => {
+          stream.write("c", called("c"));
+          stream.write("d", called("d"));
+        },
+        { write: (chunk, encoding, callback) => (release = callback) },
+      );
+      stream.on("error", () => {});
+      stream.write("first");
+      stream.write("a", () => {
+        stream.cork();
+        stream.uncork();
+      });
+      stream.write("b");
+      release(failure);
+      settle();
+      await new Promise(process.nextTick);
+      expect(log).toEqual(["writev a,b", "c done", "d done"]);
+    });
+
+    it("finds its chunks in writableBuffer, as in Node", () => {
+      const { stream, log } = create(stream => log.push(stream.writableBuffer.map(({ chunk }) => chunk)));
+      writeCorked(stream);
+      expect(log).toEqual([["a", "b"], "writev a,b"]);
+    });
+
+    it("does not reach _final ahead of the callback of the write in front of it, as in Node", async () => {
+      let release;
+      const { stream, log, settle, called } = create(undefined, {
+        write: (chunk, encoding, callback) => (release = callback),
+      });
+      stream.write("first", called("first"));
+      stream.write("a");
+      stream.end("b");
+      release();
+      settle();
+      await finishedP(stream);
+      expect(log).toEqual(["writev a,b", "first done", "final"]);
+    });
+  });
 });
 
 describe("Duplex", () => {

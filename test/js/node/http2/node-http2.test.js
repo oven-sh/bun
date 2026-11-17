@@ -6449,6 +6449,50 @@ it("packs END_STREAM onto the DATA frame produced by end(chunk)", async () => {
   }
 });
 
+it.each([
+  ["_write", 10, 1],
+  ["_write", 70000, 2],
+  ["_writev", 10, 2],
+  ["_writev", 70000, 1],
+])(
+  "write() from inside end(chunk) fails, but not the session (%s, %d bytes, %d times)",
+  async (method, size, times) => {
+    const server = http2.createServer();
+    server.on("stream", stream => {
+      stream.on("error", () => {}).resume();
+      if (stream.endAfterHeaders) stream.respond({}, { endStream: true });
+    });
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    const client = http2.connect(`http://127.0.0.1:${server.address().port}`);
+    const channel = dc.channel("http2.client.stream.bodyChunkSent");
+    const written = Promise.withResolvers();
+    let req;
+    const subscriber = () => {
+      channel.unsubscribe(subscriber);
+      for (let i = 0; i < times; i++) req.write("late", written.resolve);
+    };
+    try {
+      await once(client, "localSettings");
+      client.on("error", written.reject);
+      req = client.request({ ":method": "POST" });
+      const failed = once(req, "error");
+      // request() corks the stream for its turn.
+      if (method === "_write") await new Promise(setImmediate);
+      else req.write("a");
+      channel.subscribe(subscriber);
+      req.end(Buffer.alloc(size));
+      expect((await written.promise)?.code).toBe("ERR_STREAM_WRITE_AFTER_END");
+      expect((await failed)[0].code).toBe("ERR_STREAM_WRITE_AFTER_END");
+      const [headers] = await once(client.request().resume(), "response");
+      expect(headers[":status"]).toBe(200);
+    } finally {
+      channel.unsubscribe(subscriber);
+      client.destroy();
+      server.close();
+    }
+  },
+);
+
 it("end(chunk) on a HALF_CLOSED_REMOTE stream still emits 'finish'", async () => {
   // _write carries END_STREAM on the final chunk; when the peer's END_STREAM has already
   // arrived that transitions the native stream to CLOSED and re-enters streamEnd(7) before
@@ -7296,6 +7340,48 @@ describe("frames issued from inside a user-supplied Duplex transport's _write", 
       }
     },
   );
+
+  it("nested settings() issued during the transport's _writev", async () => {
+    const chunks = [];
+    const lastPing = Buffer.from("LASTPING");
+    const [idle, issued, receivedAll, failed] = Array.from({ length: 4 }, () => Promise.withResolvers());
+    const until = ({ promise }) => Promise.race([promise, failed.promise]);
+    let issue = () => issued.resolve(Promise.try(nested.settings.issue, sess));
+    const transport = new Duplex({
+      read() {},
+      writev(buffered, cb) {
+        chunks.push(Buffer.concat(buffered.map(({ chunk }) => chunk)));
+        if (buffered.length > 1) {
+          const run = issue;
+          issue = undefined;
+          run?.();
+        }
+        if (chunks.at(-1).includes(lastPing)) receivedAll.resolve();
+        setImmediate(() => {
+          cb();
+          idle.resolve();
+        });
+      },
+    });
+    const sess = http2.connect("http://localhost:1", { createConnection: () => transport });
+    sess.on("error", failed.reject).on("close", () => failed.reject(new Error("closed")));
+    try {
+      await until(idle);
+      // settings() writes at once: the first is in flight, and the others wait for _writev.
+      for (let i = 0; i < 3; i++) sess.settings({ maxConcurrentStreams: 100 + i });
+      await until(issued);
+      sess.ping(lastPing, () => {});
+      await until(receivedAll);
+
+      const { frames, complete } = parseFrames(Buffer.concat(chunks));
+      expect({ types: frames.map(f => f.type), complete }).toEqual({
+        types: [...Array(5).fill(FRAME.SETTINGS), FRAME.PING],
+        complete: true,
+      });
+    } finally {
+      sess.destroy();
+    }
+  });
 
   // The same transport under a TLS socket. tls.connect({ socket: duplex }) is a native socket to
   // the session, but every write to it hands a TLS record to the Duplex, so it runs _write just

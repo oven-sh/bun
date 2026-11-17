@@ -688,11 +688,16 @@ function errorBuffer(state) {
 
 // If there's something in the buffer waiting, then process it.
 function clearBuffer(stream, state) {
+  while (writeBuffered(stream, state));
+}
+
+// Returns true if it left something that no write in flight will come back for.
+function writeBuffered(stream, state) {
   if (
     (state[kState] & (kDestroyed | kBufferProcessing | kCorked | kBuffered | kConstructed)) !==
     (kBuffered | kConstructed)
   ) {
-    return;
+    return false;
   }
 
   const objectMode = (state[kState] & kObjectMode) !== 0;
@@ -700,10 +705,11 @@ function clearBuffer(stream, state) {
   const bufferedLength = buffered.length - bufferedIndex;
 
   if (!bufferedLength) {
-    return;
+    return false;
   }
 
   let i = bufferedIndex;
+  let again = false;
 
   state[kState] |= kBufferProcessing;
   if (bufferedLength > 1 && stream._writev) {
@@ -717,14 +723,25 @@ function clearBuffer(stream, state) {
               buffered[n].callback(err);
             }
           };
-    // Make a copy of `buffered` if it's going to be used by `callback` above,
-    // since `doWrite` will mutate the array.
-    const chunks = (state[kState] & kAllNoop) !== 0 && i === 0 ? buffered : ArrayPrototypeSlice.$call(buffered, i);
+    // Always a copy: `doWrite` will mutate the array, and must not find in it what is kept below.
+    const chunks = ArrayPrototypeSlice.$call(buffered, i);
     chunks.allBuffers = (state[kState] & kAllBuffers) !== 0;
+
+    // After an error, `errorBuffer` can be walking `buffered`.
+    const batchEnd = (state[kState] & kErrored) === 0 ? buffered.length : Infinity;
 
     doWrite(stream, state, true, state.length, chunks, "", callback);
 
-    resetBuffer(state);
+    if (buffered.length > batchEnd) {
+      // Node resets the buffer over a write() made by _writev. An http2 session can make one on its transport.
+      // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/streams/writable.js#L775-L777
+      state[kBufferedValue] = ArrayPrototypeSlice.$call(buffered, batchEnd);
+      state.bufferedIndex = 0;
+      buffered.length = batchEnd;
+      again = (state[kState] & (kWriting | kErrored)) === 0;
+    } else {
+      resetBuffer(state);
+    }
   } else {
     do {
       const { chunk, encoding, callback } = buffered[i];
@@ -743,6 +760,7 @@ function clearBuffer(stream, state) {
     }
   }
   state[kState] &= ~kBufferProcessing;
+  return again;
 }
 
 Writable.prototype._write = function (chunk, encoding, cb) {

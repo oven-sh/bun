@@ -17,7 +17,7 @@ import fs from "node:fs";
 import http2 from "node:http2";
 import net from "node:net";
 import path from "node:path";
-import { Duplex } from "node:stream";
+import { Duplex, type DuplexOptions } from "node:stream";
 import { afterEach, describe, test } from "node:test";
 import tls from "node:tls";
 import { fileURLToPath } from "node:url";
@@ -812,6 +812,98 @@ describe("HTTP/2 upgrade — fatal TLS error after the handshake", () => {
       netServer.close();
     }
   });
+});
+
+describe("HTTP/2 upgrade — a session inside a CONNECT stream", () => {
+  type Sessions = Record<"client" | "server", http2.Http2Session>;
+
+  function wrap(stream: Duplex, options: DuplexOptions) {
+    const duplex = new Duplex({ read: () => stream.resume(), ...options });
+    stream.on("data", chunk => duplex.push(chunk) || stream.pause()).on("close", () => duplex.destroy());
+    return duplex;
+  }
+  const transports = {
+    "the stream": (stream: Duplex) => stream,
+    "a Duplex with writev": (stream: Duplex) =>
+      wrap(stream, {
+        writev: (chunks, callback) => stream.write(Buffer.concat(chunks.map(({ chunk }) => chunk)), callback),
+      }),
+    "a Duplex that does not wait for the stream": (stream: Duplex) =>
+      wrap(stream, {
+        write(chunk, _, callback) {
+          stream.write(chunk);
+          callback();
+        },
+      }),
+  };
+
+  async function withTunnel(
+    secure: boolean,
+    transport: (stream: Duplex) => Duplex,
+    run: (inner: Sessions, outer: Sessions) => Promise<void>,
+  ) {
+    const origin = secure ? http2.createSecureServer(TLS) : http2.createServer();
+    const proxy = http2.createServer();
+    const sessions: http2.Http2Session[] = [];
+    const failed = Promise.withResolvers<never>();
+    const track = (session: http2.Http2Session) =>
+      sessions.push(session.on("error", failed.reject).on("close", () => failed.reject(new Error("closed"))));
+    origin.on("session", track).on("tlsClientError", failed.reject);
+    proxy.on("session", track).on("stream", stream => {
+      stream.on("error", () => {}).respond();
+      origin.emit("connection", transport(stream));
+    });
+    async function established(client: http2.ClientHttp2Session, accepted: Promise<unknown[]>) {
+      track(client);
+      await once(client, "localSettings");
+      return { client, server: (await accepted)[0] as http2.Http2Session };
+    }
+    async function start() {
+      const accepted = once(origin, "session");
+      await once(proxy.listen(0, "127.0.0.1"), "listening");
+      const { port } = proxy.address() as net.AddressInfo;
+      const outer = await established(http2.connect(`http://127.0.0.1:${port}`), once(proxy, "session"));
+      const tunnel = outer.client.request({ ":method": "CONNECT", ":authority": "origin:443" });
+      tunnel.on("close", () => failed.reject(new Error("closed")));
+      await once(tunnel, "response");
+      let socket = transport(tunnel.on("error", () => {}));
+      if (secure) {
+        socket = tls.connect({ socket, ALPNProtocols: ["h2"], rejectUnauthorized: false });
+        await once(socket, "secureConnect");
+      }
+      await run(await established(http2.connect("http://origin", { createConnection: () => socket }), accepted), outer);
+    }
+    try {
+      await Promise.race([start(), failed.promise]);
+    } finally {
+      for (const session of sessions.reverse()) session.destroy();
+      proxy.close();
+    }
+  }
+
+  for (const [name, transport] of Object.entries(transports)) {
+    for (const secure of [false, true]) {
+      for (const sender of ["client", "server"] as const) {
+        test(`the ${sender} sends every frame of a turn that it shares, over ${secure ? "TLS over " : ""}${name}`, () =>
+          withTunnel(secure, transport, async (inner, outer) => {
+            const received: number[] = [];
+            const last = Promise.withResolvers<void>();
+            inner[sender === "client" ? "server" : "client"].on("ping", (payload: Buffer) => {
+              received.push(payload[0]);
+              if (payload[0] === 5) last.resolve();
+            });
+            for (let i = 1; i <= 4; i++) {
+              outer[sender].ping(() => {});
+              inner[sender].ping(Buffer.alloc(8, i), () => {});
+            }
+            await new Promise(setImmediate);
+            inner[sender].ping(Buffer.alloc(8, 5), () => {});
+            await last.promise;
+            assert.deepStrictEqual(received, [1, 2, 3, 4, 5]);
+          }));
+      }
+    }
+  }
 });
 
 if (typeof Bun !== "undefined") {

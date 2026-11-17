@@ -1,5 +1,5 @@
 // What the compiler reads in place of src/js/node/http2.ts, which `bun run` evaluates. The two do the same.
-// Written against that file with the SHA-256 af60e27fc7471035d7ab111c49f3e3c62f10731b978b9d79183754a01f0abf12.
+// Written against that file with the SHA-256 423b901b146e93a65f9d543e6b77fa673f79371b070c9c04ad5de83940461c61.
 // When that file changes, bring the change here and write the new hash: test/internal/second-texts-of-modules.test.ts.
 
 // Hardcoded module "node:http2"
@@ -2977,6 +2977,11 @@ class Http2Stream extends (Duplex as $Node.DuplexConstructor) {
       this.once("ready", this._writev.bind(this, data, callback));
       return;
     }
+    if ((this[bunHTTP2StreamStatus] & StreamState.EndStreamSent) !== 0) {
+      // Written from inside end(chunk), which sends its chunk before the writable counts as ending.
+      callback($ERR_STREAM_WRITE_AFTER_END());
+      return;
+    }
     const writevPerf = this[kPerfState];
     if (writevPerf !== undefined) {
       if (writevPerf.firstByteSent === 0) writevPerf.firstByteSent = performance.now() - writevPerf.start;
@@ -3043,6 +3048,11 @@ class Http2Stream extends (Duplex as $Node.DuplexConstructor) {
     if (this.pending) {
       // Not submitted yet (queued behind the peer's concurrency limit): wait for the id.
       this.once("ready", this._write.bind(this, chunk, encoding, callback));
+      return;
+    }
+    if ((this[bunHTTP2StreamStatus] & StreamState.EndStreamSent) !== 0) {
+      // Written from inside end(chunk), which sends its chunk before the writable counts as ending.
+      callback($ERR_STREAM_WRITE_AFTER_END());
       return;
     }
     const writePerf = this[kPerfState];

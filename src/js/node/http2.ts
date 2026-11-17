@@ -2901,6 +2901,11 @@ class Http2Stream extends (Duplex as Http2StreamBase) {
       this.once("ready", this._writev.bind(this, data, callback));
       return;
     }
+    if ((this[bunHTTP2StreamStatus] & StreamState.EndStreamSent) !== 0) {
+      // Written from inside end(chunk), which sends its chunk before the writable counts as ending.
+      callback($ERR_STREAM_WRITE_AFTER_END());
+      return;
+    }
     const writevPerf = this[kPerfState];
     if (writevPerf !== undefined) {
       if (writevPerf.firstByteSent === 0) writevPerf.firstByteSent = performance.now() - writevPerf.start;
@@ -2967,6 +2972,11 @@ class Http2Stream extends (Duplex as Http2StreamBase) {
     if (this.pending) {
       // Not submitted yet (queued behind the peer's concurrency limit): wait for the id.
       this.once("ready", this._write.bind(this, chunk, encoding, callback));
+      return;
+    }
+    if ((this[bunHTTP2StreamStatus] & StreamState.EndStreamSent) !== 0) {
+      // Written from inside end(chunk), which sends its chunk before the writable counts as ending.
+      callback($ERR_STREAM_WRITE_AFTER_END());
       return;
     }
     const writePerf = this[kPerfState];

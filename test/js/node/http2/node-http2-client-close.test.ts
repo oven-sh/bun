@@ -314,8 +314,11 @@ describe("RST_STREAM(NO_ERROR) on a stream whose data has not been read", () => 
   test("a response can still be read after session.close()", async () => {
     const server = net.createServer(socket => {
       socket.on("error", () => {}).write(settings);
-      socket.on("data", chunk => {
-        if (!chunk.includes(frame(1, 4, 1).subarray(3))) return;
+      let received = Buffer.alloc(0);
+      socket.on("data", function onData(chunk) {
+        received = Buffer.concat([received, chunk]);
+        if (!received.includes(frame(1, 4, 1).subarray(3))) return;
+        socket.off("data", onData);
         socket.write(Buffer.concat([frame(1, 4, 1, 0x88), frame(0, 0, 1, 0x2e), frame(3, 0, 1, 0, 0, 0, 0)]));
       });
     });

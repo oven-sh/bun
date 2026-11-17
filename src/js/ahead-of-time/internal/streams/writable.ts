@@ -1,5 +1,5 @@
 // What the compiler reads in place of src/js/internal/streams/writable.ts, which `bun run` evaluates. The two do the same.
-// Written against that file with the SHA-256 c4f69041e727ea49f8d66fa3f8f67afdeb35bed13010cbc51b1284fa631e851b.
+// Written against that file with the SHA-256 6c3926e32d7d788aae381cacf6c7fcc12f04c209c1fc3707dd29684f711d085e.
 // When that file changes, bring the change here and write the new hash: test/internal/second-texts-of-modules.test.ts.
 
 // A bit simpler than readable streams.
@@ -560,11 +560,16 @@ function errorBuffer(state: WritableState): void {
 
 // If there's something in the buffer waiting, then process it.
 function clearBuffer(stream: $Node.Writable, state: WritableState): void {
+  while (writeBuffered(stream, state));
+}
+
+// Returns true if it left something that no write in flight will come back for.
+function writeBuffered(stream: $Node.Writable, state: WritableState): boolean {
   if (
     (state[kState] & (Flag.Destroyed | Flag.BufferProcessing | Flag.Corked | Flag.Buffered | Flag.Constructed)) !==
     (Flag.Buffered | Flag.Constructed)
   ) {
-    return;
+    return false;
   }
 
   const objectMode = (state[kState] & Flag.ObjectMode) !== 0;
@@ -573,10 +578,11 @@ function clearBuffer(stream: $Node.Writable, state: WritableState): void {
   const bufferedLength = buffered.length - bufferedIndex;
 
   if (!bufferedLength) {
-    return;
+    return false;
   }
 
   let i = bufferedIndex;
+  let again = false;
 
   state[kState] |= Flag.BufferProcessing;
   if (bufferedLength > 1 && stream._writev) {
@@ -590,14 +596,25 @@ function clearBuffer(stream: $Node.Writable, state: WritableState): void {
               buffered[n]!.callback(err);
             }
           };
-    // Make a copy of `buffered` if it's going to be used by `callback` above,
-    // since `doWrite` will mutate the array.
-    const chunks = (state[kState] & Flag.AllNoop) !== 0 && i === 0 ? buffered : ArrayPrototypeSlice.$call(buffered, i);
+    // Always a copy: `doWrite` will mutate the array, and must not find in it what is kept below.
+    const chunks = ArrayPrototypeSlice.$call(buffered, i);
     (chunks as any).allBuffers = (state[kState] & Flag.AllBuffers) !== 0;
+
+    // After an error, `errorBuffer` can be walking `buffered`.
+    const batchEnd = (state[kState] & Flag.Errored) === 0 ? buffered.length : Infinity;
 
     doWrite(stream, state, true, state.length, chunks, "", callback);
 
-    resetBuffer(state);
+    if (buffered.length > batchEnd) {
+      // Node resets the buffer over a write() made by _writev. An http2 session can make one on its transport.
+      // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/streams/writable.js#L775-L777
+      state[kBufferedValue] = ArrayPrototypeSlice.$call(buffered, batchEnd);
+      state.bufferedIndex = 0;
+      buffered.length = batchEnd;
+      again = (state[kState] & (Flag.Writing | Flag.Errored)) === 0;
+    } else {
+      resetBuffer(state);
+    }
   } else {
     do {
       const { chunk, encoding, callback } = buffered[i]!;
@@ -616,6 +633,7 @@ function clearBuffer(stream: $Node.Writable, state: WritableState): void {
     }
   }
   state[kState] &= ~Flag.BufferProcessing;
+  return again;
 }
 
 Writable.prototype._write = function (this: $Node.Writable, chunk: unknown, encoding: string, cb: WriteCallback) {

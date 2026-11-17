@@ -963,7 +963,9 @@ const SocketHandlers = {
   },
   end(socket) {
     const self = socket.data;
-    if (self && !isOfEarlierConnection(self, socket)) onReadEnd(self);
+    if (!self || isOfEarlierConnection(self, socket)) return;
+    if (self[kDestroyOnRead]) self.destroy();
+    else onReadEnd(self);
   },
   close(socket, err?: NativeSocketError) {
     const self = socket.data;

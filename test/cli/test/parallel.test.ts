@@ -1503,6 +1503,30 @@ test("--parallel forwards --use-openssl-ca to workers", async () => {
   expect(exitCode).toBe(0);
 });
 
+test.skipIf(!isLinux)("--parallel forwards the flags of the transpiler to workers, in order", async () => {
+  using dir = tempDir("parallel-worker-argv", {
+    "a.test.js": `import {test} from "bun:test"; import {readFileSync} from "fs";
+      test("a", () => process.stdout.write("ARGV " + readFileSync("/proc/self/cmdline", "utf8").replaceAll("\\0", " ") + "\\n"));`,
+    "b.test.js": `import {test} from "bun:test"; test("b", () => {});`,
+  });
+  const values =
+    "--define A=1 --loader .a:text --loader .b:json5 --loader .c:base64 --conditions c --drop debugger --feature F";
+  const jsx =
+    "--no-macros --jsx-factory=h --jsx-fragment=F --jsx-import-source=p --jsx-runtime=classic --jsx-side-effects";
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "test", "--parallel=2", ...jsx.split(" "), ...values.split(" ")],
+    env: bunEnv,
+    cwd: String(dir),
+    stderr: "pipe",
+    stdout: "ignore",
+  });
+  const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+  const argv = /^ARGV .*/m.exec(stderr)?.[0];
+  expect(argv).toContain(` ${values} `);
+  expect(argv).toContain(` ${jsx} `);
+  expect(exitCode).toBe(0);
+});
+
 test("--parallel forwards --conditions to workers", async () => {
   using dir = tempDir("parallel-conditions", {
     "node_modules/condpkg/package.json": JSON.stringify({

@@ -151,7 +151,8 @@ function shapesSource() {
 // embedders): a hashbang line, CRLF line endings, U+2028/U+2029 both as line terminators and inside literals, U+FEFF as
 // whitespace, \u{...} escapes in identifiers, strings, templates and regular expressions (an identifier spelled with
 // escapes and spelled literally is one binding), line continuations, HTML-like comments, and the sloppy-only lexical
-// forms Bun's transpiler refuses: duplicate parameter names, legacy octal literals and octal string escapes. Also the
+// forms: duplicate parameter names, and the legacy octal literals and octal string escapes that Bun's transpiler prints
+// in another form. Also the
 // strict-mode contrast to records.js's sloppy section (block-scoped function declarations, unmapped arguments,
 // undefined this, eval's own scope), here rather than there because the bundler drops function-level "use strict"
 // directives. Line and column bookkeeping for all of these ends up in the cached functions' positions.

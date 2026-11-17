@@ -1,5 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
+import { writeFileSync } from "node:fs";
+import { join } from "node:path";
+import vm from "node:vm";
 
 // Strict-mode early errors. The cases follow esbuild's TestStrictMode corpus:
 // sloppy code must parse, and the same code must be rejected once it is strict
@@ -29,11 +32,16 @@ function parseErrors(code: string, t: Bun.Transpiler = transpiler): ParseMessage
   return [];
 }
 
+// Each input of the two functions below, and if the parser rejects it.
+const verdicts = new Map<string, boolean>();
+
 function expectParseError(code: string, ...messages: string[]) {
+  verdicts.set(code, messages.length > 0);
   expect(parseErrors(code).map(e => e.message)).toEqual(messages);
 }
 
 function expectNoParseError(code: string) {
+  verdicts.set(code, false);
   expect(parseErrors(code)).toEqual([]);
 }
 
@@ -51,64 +59,66 @@ const importNote = 'This file is considered to be an ECMAScript module because o
 const awaitNote = 'This file is considered to be an ECMAScript module because of the top-level "await" keyword here:';
 const classNote = "All code inside a class is implicitly in strict mode";
 
+// Each of these is valid sloppy mode code. All but `let x = '\\0'` and `var x; var x` are an error in strict mode code.
+const sloppy = [
+  "with (x) y",
+  "delete x",
+  "for (var x = y in z) ;",
+  "if (0) function f() {}",
+  "if (0) ; else function f() {}",
+  "x: function f() {}",
+  "function f(a, a) {}",
+  "(function(a, a) {})",
+  "({ f: function(a, a) {} })",
+  "({ f: function*(a, a) {} })",
+  "({ f: async function(a, a) {} })",
+  "eval++",
+  "eval = 0",
+  "eval += 0",
+  "[eval] = 0",
+  "arguments++",
+  "arguments = 0",
+  "arguments += 0",
+  "[arguments] = 0",
+  "function eval() {}",
+  "function arguments() {}",
+  "function f(eval) {}",
+  "function f(arguments) {}",
+  "({ f(eval) {} })",
+  "({ f(arguments) {} })",
+  "let protected",
+  "let protecte\\u0064",
+  "let x = protected",
+  "let x = protecte\\u0064",
+  "protected: 0",
+  "var static, implements, interface, package, private, public, yield",
+  "0123",
+  "08",
+  "({0123: 4})",
+  "let {0123: x} = y",
+  "let x = '\\0'",
+  "let x = '\\00'",
+  "let x = '\\1'",
+  "let x = '\\01'",
+  "let x = 'a\\7'",
+  "let x = '\\08'",
+  "let x = '\\09'",
+  "let x = '\\008'",
+  "let x = '\\012'",
+  "let x = '\\8'",
+  "let x = '\\9'",
+  "'\\00'",
+  "'\\08'",
+  "require('\\1')",
+  "function f() {} function f() {}",
+  "function f() {} function *f() {}",
+  "async function f() {} function f() {}",
+  "{ function f() {} function f() {} }",
+  "var x; var x",
+];
+
 describe("strict mode early errors", () => {
   describe("sloppy mode accepts legacy syntax", () => {
-    const sloppy = [
-      "with (x) y",
-      "delete x",
-      "for (var x = y in z) ;",
-      "if (0) function f() {}",
-      "if (0) ; else function f() {}",
-      "x: function f() {}",
-      "function f(a, a) {}",
-      "(function(a, a) {})",
-      "({ f: function(a, a) {} })",
-      "({ f: function*(a, a) {} })",
-      "({ f: async function(a, a) {} })",
-      "eval++",
-      "eval = 0",
-      "eval += 0",
-      "[eval] = 0",
-      "arguments++",
-      "arguments = 0",
-      "arguments += 0",
-      "[arguments] = 0",
-      "function eval() {}",
-      "function arguments() {}",
-      "function f(eval) {}",
-      "function f(arguments) {}",
-      "({ f(eval) {} })",
-      "({ f(arguments) {} })",
-      "let protected",
-      "let protecte\\u0064",
-      "let x = protected",
-      "let x = protecte\\u0064",
-      "protected: 0",
-      "var static, implements, interface, package, private, public, yield",
-      "0123",
-      "08",
-      "({0123: 4})",
-      "let {0123: x} = y",
-      "let x = '\\0'",
-      "let x = '\\00'",
-      "let x = '\\1'",
-      "let x = '\\01'",
-      "let x = 'a\\7'",
-      "let x = '\\08'",
-      "let x = '\\09'",
-      "let x = '\\008'",
-      "let x = '\\012'",
-      "let x = '\\8'",
-      "let x = '\\9'",
-      "'\\00'",
-      "'\\08'",
-      "require('\\1')",
-      "function f() {} function f() {}",
-      "function f() {} function *f() {}",
-      "async function f() {} function f() {}",
-      "{ function f() {} function f() {} }",
-      "var x; var x",
-    ];
     test.each(sloppy)("%j", code => expectNoParseError(code));
 
     const htmlComments = ["-->", "x\n--> a comment", "<!-- a comment\nx", "x <!-- a comment\ny"];
@@ -672,6 +682,22 @@ describe("strict mode early errors", () => {
         },
       ]);
     });
+
+    // These are reported when the class is no longer the one that the parser visits.
+    test.each([
+      "return 010",
+      "return '\\01'",
+      "{ function f() {} function f() {} }",
+      "return class { y() { return 010 } }",
+    ])("the note of %j points at the class keyword", body => {
+      const errors = parseErrors(`var a;\n  class f {\n  x() { ${body} }\n}\n(class { z() {} });`);
+      expect(errors.map(error => error.notes.at(-1))).toEqual([
+        {
+          message: expect.stringContaining(classNote),
+          position: body.includes("class") ? { line: 3, column: 16 } : { line: 2, column: 3 },
+        },
+      ]);
+    });
   });
 
   describe("legacy octal escapes in template literals", () => {
@@ -687,6 +713,27 @@ describe("strict mode early errors", () => {
       expectNoParseError("tag`\\8`");
       expectNoParseError("tag`\\01${x}\\8`");
     });
+  });
+
+  // `<div {"a"} />` is the short form of `<div a="a" />` in Bun. Its string is a string literal of JavaScript.
+  test("a legacy octal escape in a string that is a JSX attribute", () => {
+    const jsx = new Bun.Transpiler({ loader: "jsx" });
+    const errors = (code: string) => parseErrors(code, jsx).map(error => error.message);
+    expect(errors('export const a = <div {"\\1"} />;')).toEqual([
+      "Legacy octal escape sequences cannot be used in an ECMAScript module",
+    ]);
+    expect(errors('"use strict"; <div {"\\1"} />;')).toEqual([
+      "Legacy octal escape sequences cannot be used in strict mode",
+    ]);
+    expect(errors('<div {"\\1"} />;')).toEqual([]);
+    // The value of a JSX attribute and the text of a JSX child have no escapes.
+    expect(errors('export const a = <div a="\\1">\\1</div>;')).toEqual([]);
+  });
+
+  // Node parses a call as the target of an assignment in sloppy mode code, and throws a ReferenceError
+  // when the assignment runs. Bun does not parse it in any mode, as esbuild.
+  test.each(["f() = 1", "f()++", "f() += 1", "for (f() in o) ;"])("%j is not an assignment target", code => {
+    expectParseError(code, "Invalid assignment target");
   });
 
   describe("duplicate function declarations", () => {
@@ -785,12 +832,33 @@ describe("strict mode early errors", () => {
     });
   });
 
-  // `scan` and `scanImports` only run the parse pass. Most early errors need the visit pass, which knows
-  // what is strict mode code.
-  test("scanImports reads the imports of a file that has a strict mode early error", () => {
-    expect(transpiler.scanImports('"use strict"; var static = 1; with (x) y; import "x"')).toEqual([
-      { kind: "import-statement", path: "x" },
-    ]);
+  // `scanImports` runs a parser that only reads the imports. The other three methods run the whole
+  // parser, and its visit pass is what knows the strict mode code.
+  test("scanImports reads the imports of a file that has a strict mode early error", async () => {
+    const code = '"use strict"; var static = 1; with (x) y; import "x"';
+    const messages = [
+      '"static" is a reserved word and cannot be used in strict mode',
+      "With statements cannot be used in strict mode",
+    ];
+    const thrown = (error: any) => (error instanceof AggregateError ? error.errors : [error]).map(e => e.message);
+    const run = (method: () => unknown) => {
+      try {
+        return method();
+      } catch (error) {
+        return thrown(error);
+      }
+    };
+    expect({
+      scanImports: run(() => transpiler.scanImports(code)),
+      scan: run(() => transpiler.scan(code)),
+      transformSync: run(() => transpiler.transformSync(code)),
+      transform: await transpiler.transform(code).catch(thrown),
+    }).toEqual({
+      scanImports: [{ kind: "import-statement", path: "x" }],
+      scan: messages,
+      transformSync: messages,
+      transform: messages,
+    });
   });
 
   describe("legacy HTML comments", () => {
@@ -807,13 +875,71 @@ describe("strict mode early errors", () => {
       expect(quietTranspiler.transformSync("x <!-- commented out\ny")).toBe("x;\ny;\n");
     });
     test("are a warning in a script", () => {
-      expectParseError("x <!-- commented out\ny", 'Treating "<!--" as the start of a legacy HTML single-line comment');
-      expectParseError("x\n--> commented out\ny", 'Treating "-->" as the start of a legacy HTML single-line comment');
+      const warnings = (code: string) => parseErrors(code).map(warning => warning.message);
+      expect(warnings("x <!-- commented out\ny")).toEqual([
+        'Treating "<!--" as the start of a legacy HTML single-line comment',
+      ]);
+      expect(warnings("x\n--> commented out\ny")).toEqual([
+        'Treating "-->" as the start of a legacy HTML single-line comment',
+      ]);
     });
     test("--> without a newline before it is a decrement", () => {
       expect(transpiler.transformSync("x-->y")).toBe("x-- > y;\n");
     });
+
+    // A type-only import and `import.meta` prove no module. Such a file is a module for this
+    // error when it also runs as one.
+    describe.each(["ts", "tsx"] as const)("in a %s file", loader => {
+      const typescript = new Bun.Transpiler({ loader, logLevel: "error" });
+      const notes = (code: string) =>
+        parseErrors(code, typescript).map(error => [error.message, ...error.notes.map(note => note.message)]);
+      const because = "This file is considered to be an ECMAScript module because";
+      test("are an error beside a type-only import or import.meta", () => {
+        expect(notes("import type { T } from 'x';\nvar r = a <!--b\n;")).toEqual([
+          [message, `${because} it has a type-only import.`],
+        ]);
+        expect(notes("var dir = import.meta.dir;\nvar r = a <!--b\n;")).toEqual([
+          [message, `${because} it uses "import.meta".`],
+        ]);
+      });
+      test("are comments beside CommonJS syntax", () => {
+        expect(notes("import type { T } from 'x';\nmodule.exports = a <!--b\n;")).toEqual([]);
+        expect(notes("var dir = import.meta.dir;\nexports.r = a <!--b\n;")).toEqual([]);
+      });
+      // Node runs a TypeScript file with no module syntax as CommonJS.
+      test("are comments in a file with no module syntax", () => {
+        expect(notes("var r: number = a <!--b\n;")).toEqual([]);
+        expect(notes("var r: number = a\n--> b\n;")).toEqual([]);
+      });
+    });
   });
+});
+
+// The engine reads the same text with no transpiler in between: `new vm.Script` reads a script, and
+// `new vm.SourceTextModule` a module. This test has to stay below the tests that fill `verdicts`.
+test("the parser rejects what the engine rejects", () => {
+  const engineAccepts = (code: string) =>
+    [vm.Script, vm.SourceTextModule].some(Goal => {
+      try {
+        new Goal(code);
+        return true;
+      } catch {
+        return false;
+      }
+    });
+  const differs = [...verdicts].filter(([code, rejects]) => engineAccepts(code) === rejects).map(([code]) => code);
+  const known = [
+    // Bun has `import.meta` in CommonJS. For the engine it makes the text a module.
+    "import.meta; with (y) z",
+    "module.exports = import.meta.dir; var n = 010, s = '\\1'; delete n; eval = 1",
+    "import.meta; function f(a, a) {} function g() {} function g() {}",
+    // The engine throws a ReferenceError when the assignment runs.
+    "f() = 1",
+    "f()++",
+    "f() += 1",
+    "for (f() in o) ;",
+  ];
+  expect(differs).toEqual(known.filter(code => verdicts.has(code)));
 });
 
 describe("sloppy CommonJS runs as written", () => {
@@ -892,38 +1018,200 @@ describe("sloppy CommonJS runs as written", () => {
     ]);
   });
 
-  // Such a file is a module in Node, with no `import` or `export` in it.
+  const run = async (cwd: string, file: string, env: Record<string, string | undefined> = bunEnv) => {
+    await using proc = Bun.spawn({ cmd: [bunExe(), file], env, cwd, stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  };
+  const htmlCommentError = "Legacy HTML single-line comments are not allowed in ECMAScript modules";
+  const because = "This file is considered to be an ECMAScript module because";
+  const withHtmlComment = `var a = 1, b = 0;\nglobalThis.value = a <!--b\n;\n`;
+  // Each of these has no `import` and no `export` in it. Node decides by the extension and by the package.
+  const filesWithHtmlComments = {
+    "by-extension.mjs": withHtmlComment,
+    "commonjs-by-extension.cjs": withHtmlComment,
+    "package/package.json": JSON.stringify({ type: "module" }),
+    "package/by-package.js": withHtmlComment,
+    "package/commonjs-by-extension.cjs": withHtmlComment,
+    // `module` makes a file CommonJS in Bun, whatever its extension is.
+    "commonjs-by-syntax.mjs": `module.exports = 1;\n--> a comment\nglobalThis.value = typeof module;\n`,
+    "types.ts": `export type T = number;\n`,
+    "type-only-import.ts": `import type { T } from "./types";\n${withHtmlComment}`,
+    "import-meta.ts": `var dir = import.meta.dir;\n${withHtmlComment}`,
+    "no-module-syntax.ts": withHtmlComment,
+    "no-module-syntax.js": withHtmlComment,
+  };
+  const answersForHtmlComments = {
+    "by-extension.mjs": `${htmlCommentError}: ${because} of its file extension.`,
+    "commonjs-by-extension.cjs": "runs",
+    "package/by-package.js": `${htmlCommentError}: ${because} the "package.json" file of its package has "type": "module".`,
+    "package/commonjs-by-extension.cjs": "runs",
+    "commonjs-by-syntax.mjs": "runs",
+    "type-only-import.ts": `${htmlCommentError}: ${because} it has a type-only import.`,
+    "import-meta.ts": `${htmlCommentError}: ${because} it uses "import.meta".`,
+    "no-module-syntax.ts": "runs",
+    "no-module-syntax.js": "runs",
+  };
+
   test.concurrent(
-    "a file that is a module by its extension or by its package rejects a legacy HTML comment",
+    "a legacy HTML comment in an entry point that is a module by its extension or by its package",
     async () => {
-      const code = `var a = 1, b = 0;\nconsole.log(a <!--b\n);\n`;
-      using dir = tempDir("strict-mode-module-by-type", {
-        "by-extension.mjs": code,
-        "package/package.json": JSON.stringify({ type: "module" }),
-        "package/by-package.js": code,
-        "commonjs.mjs": `module.exports = 1;\n--> a comment\nconsole.log(typeof module);\n`,
+      using dir = tempDir("strict-mode-module-by-type", filesWithHtmlComments);
+      const files = Object.keys(answersForHtmlComments);
+      const results = await Promise.all(files.map(file => run(String(dir), file)));
+      const answers = results.map(({ stdout, stderr, exitCode }) => {
+        const error = stderr.match(/^error: (.*)$/m)?.[1];
+        const note = stderr.match(/^note: (.*)$/m)?.[1];
+        return exitCode === 0 && stdout === "" && stderr === "" ? "runs" : `${error}: ${note}`;
       });
-      const run = async (file: string) => {
-        await using proc = Bun.spawn({ cmd: [bunExe(), file], env: bunEnv, cwd: String(dir), stderr: "pipe" });
-        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-        return { stdout, stderr, exitCode };
-      };
-      const [byExtension, byPackage, commonjs] = await Promise.all([
-        run("by-extension.mjs"),
-        run("package/by-package.js"),
-        run("commonjs.mjs"),
-      ]);
-      // `module` makes a file CommonJS in Bun, whatever its extension is.
-      expect(commonjs).toEqual({ stdout: "object\n", stderr: "", exitCode: 0 });
-      const error = "error: Legacy HTML single-line comments are not allowed in ECMAScript modules";
-      const because = "note: This file is considered to be an ECMAScript module because";
-      expect(byExtension.stderr).toContain(error);
-      expect(byExtension.stderr).toContain(`${because} of its file extension.`);
-      expect(byPackage.stderr).toContain(error);
-      expect(byPackage.stderr).toContain(`${because} the "package.json" file of its package has "type": "module".`);
-      expect([byExtension.stdout, byExtension.exitCode, byPackage.stdout, byPackage.exitCode]).toEqual(["", 1, "", 1]);
+      expect(Object.fromEntries(files.map((file, i) => [file, answers[i]]))).toEqual(answersForHtmlComments);
     },
   );
+
+  // `import` hands a file to another thread with the type of its package, and without the type that its
+  // extension gives. The answer has to be the same as for `require()`.
+  test.concurrent("a legacy HTML comment in a file that is imported or required", async () => {
+    const copy = (folder: string) =>
+      Object.fromEntries(Object.entries(filesWithHtmlComments).map(([file, code]) => [`${folder}/${file}`, code]));
+    using dir = tempDir("strict-mode-module-by-type-loaded", {
+      ...copy("required"),
+      ...copy("imported"),
+      "load.cjs": `
+        (async () => {
+          const answers = {};
+          for (const file of ${JSON.stringify(Object.keys(answersForHtmlComments))}) {
+            for (const how of ["required", "imported"]) {
+              const path = "./" + how + "/" + file;
+              try {
+                how === "required" ? require(path) : await import(path);
+                (answers[how] ??= {})[file] = "runs";
+              } catch (thrown) {
+                // The warning about the comment comes with the error.
+                const error = thrown.errors?.find(message => message.level === "error") ?? thrown;
+                (answers[how] ??= {})[file] = error.message + ": " + error.notes?.[0]?.message;
+              }
+            }
+          }
+          console.log(JSON.stringify(answers));
+        })();
+      `,
+    });
+    const { stdout, stderr, exitCode } = await run(String(dir), "load.cjs");
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({ required: answersForHtmlComments, imported: answersForHtmlComments });
+    expect(exitCode).toBe(0);
+  });
+
+  // The key of the transpiler cache is the text of the file. The type of the package is not in it.
+  test.concurrent("a legacy HTML comment is judged again when the type of the package changes", async () => {
+    const padding = `// ${Buffer.alloc(8 * 1024, "-").toString()}\n`;
+    using dir = tempDir("strict-mode-module-by-type-cache", {
+      "package.json": JSON.stringify({ name: "cache" }),
+      "cached.js": `${padding}var a = 1;\n--> a comment\nconsole.log("ran", a);\n`,
+    });
+    const env = { ...bunEnv, BUN_RUNTIME_TRANSPILER_CACHE_PATH: join(String(dir), "cache") };
+    expect(await run(String(dir), "cached.js", env)).toEqual({ stdout: "ran 1\n", stderr: "", exitCode: 0 });
+    expect(await run(String(dir), "cached.js", env)).toEqual({ stdout: "ran 1\n", stderr: "", exitCode: 0 });
+    writeFileSync(join(String(dir), "package.json"), JSON.stringify({ name: "cache", type: "module" }));
+    const asModule = await run(String(dir), "cached.js", env);
+    expect(asModule.stderr).toContain(`error: ${htmlCommentError}`);
+    expect({ stdout: asModule.stdout, exitCode: asModule.exitCode }).toEqual({ stdout: "", exitCode: 1 });
+  });
+
+  // What happens to valid sloppy mode code in a file that has no `import`, `export`, `require` or `module`.
+  // Node decides by the file: a `.cjs` file and a `.js` file run it. A `.mjs` file and a `.js` file of a
+  // "type": "module" package reject what strict mode code cannot hold.
+  // Bun runs each of these files as a module, except a `.cjs` file that `require()` loads, and its parser
+  // has no early error for a module that has no `import` and no `export`. So the file runs if the
+  // transpiler prints the syntax in another form or leaves it out, and the engine rejects it if not.
+  test.concurrent("sloppy mode code in a file with no module syntax and no CommonJS syntax", async () => {
+    const theEngineRejects = new Set([
+      "delete x",
+      "function f(a, a) {}",
+      "eval++",
+      "eval = 0",
+      "eval += 0",
+      "[eval] = 0",
+      "arguments++",
+      "arguments = 0",
+      "arguments += 0",
+      "[arguments] = 0",
+      "function eval() {}",
+      "function arguments() {}",
+      "function f(eval) {}",
+      "function f(arguments) {}",
+      "let protected",
+      "let protecte\\u0064",
+      "let x = protected",
+      "let x = protecte\\u0064",
+      "protected: 0",
+      "var static, implements, interface, package, private, public, yield",
+    ]);
+    const validInStrictMode = new Set(["let x = '\\0'", "var x; var x"]);
+    const kinds = [
+      { kind: ".cjs", folder: "plain", extension: "cjs", nodeRuns: true },
+      { kind: ".mjs", folder: "plain", extension: "mjs", nodeRuns: false },
+      { kind: ".js", folder: "plain", extension: "js", nodeRuns: true },
+      { kind: '.js of a "type": "module" package', folder: "module", extension: "js", nodeRuns: false },
+    ];
+    const files: Record<string, string> = { "module/package.json": JSON.stringify({ type: "module" }) };
+    const loads: { input: string; kind: string; how: string; path: string }[] = [];
+    sloppy.forEach((input, i) => {
+      for (const { kind, folder, extension } of kinds) {
+        for (const how of ["require", "import"]) {
+          const path = `${folder}/${how}${i}.${extension}`;
+          // The first statement tells a file that runs from a file that the parser or the engine rejects.
+          files[path] = `globalThis.started = true;\n${input}\n`;
+          loads.push({ input, kind, how, path });
+        }
+      }
+    });
+    using dir = tempDir("strict-mode-sloppy-by-file", {
+      ...files,
+      "load.cjs": `
+        (async () => {
+          const answers = [];
+          for (const { how, path } of ${JSON.stringify(loads)}) {
+            globalThis.started = false;
+            let error = "";
+            try {
+              how === "require" ? require("./" + path) : await import("./" + path);
+            } catch (e) {
+              error = e?.constructor?.name;
+            }
+            answers.push(globalThis.started ? "runs" : error);
+          }
+          console.log(JSON.stringify(answers));
+        })();
+      `,
+    });
+    const { stdout, stderr, exitCode } = await run(String(dir), "load.cjs");
+    expect(stderr).toBe("");
+    const answers: string[] = JSON.parse(stdout);
+    const table = (answer: (load: (typeof loads)[number]) => string) =>
+      Object.fromEntries(loads.map(load => [`${load.how} of a ${load.kind} file: ${load.input}`, answer(load)]));
+    expect(table(load => answers[loads.indexOf(load)])).toEqual(
+      table(({ input, kind, how }) =>
+        theEngineRejects.has(input) && !(kind === ".cjs" && how === "require") ? "SyntaxError" : "runs",
+      ),
+    );
+    expect(exitCode).toBe(0);
+
+    // Where that is not the answer of Node, and what tracks it.
+    const differsFromNode = { ".cjs through import(): #40940": 0, ".js: #44802": 0, ".mjs and type module: #32175": 0 };
+    loads.forEach(({ input, kind, how }, i) => {
+      const node = validInStrictMode.has(input) || kinds.find(k => k.kind === kind)!.nodeRuns ? "runs" : "SyntaxError";
+      if (answers[i] === node) return;
+      if (kind === ".cjs") differsFromNode[".cjs through import(): #40940"] += +(how === "import");
+      else if (kind === ".js") differsFromNode[".js: #44802"]++;
+      else differsFromNode[".mjs and type module: #32175"]++;
+    });
+    expect(differsFromNode).toEqual({
+      ".cjs through import(): #40940": 20,
+      ".js: #44802": 40,
+      ".mjs and type module: #32175": 128,
+    });
+  });
 
   // Node runs a `.js` file with no module syntax as CommonJS, which is sloppy mode code. Bun runs such
   // a file as an ES module, so the engine rejects this code: https://github.com/oven-sh/bun/issues/44802

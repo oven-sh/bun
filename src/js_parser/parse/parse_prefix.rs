@@ -286,8 +286,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
     fn pfx_t_template_head(p: &mut Self) -> PResult<Expr> {
         let loc = p.lexer.loc();
-        let head = p.lexer.to_e_string()?;
-        p.check_for_legacy_octal_escape(loc, LegacyOctalKind::TemplateEscape);
+        let head = p.decode_string(LegacyOctalKind::TemplateEscape)?;
 
         let (parts, _tail_loc) = p.parse_template_parts(false)?;
 

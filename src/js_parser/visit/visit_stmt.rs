@@ -1418,7 +1418,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         p.push_scope_for_visit_pass(js_ast::scope::Kind::Label, stmt.loc)
             .expect("unreachable");
         let name = p.load_name_from_ref(data.name.ref_);
-        if js_lexer::is_strict_mode_reserved_word(name) {
+        // In sloppy code a label keeps its name in the output, unless the minifier names it.
+        if js_lexer::is_strict_mode_reserved_word(name)
+            && (p.is_strict_mode() || !p.options.features.minify_identifiers)
+        {
             p.mark_strict_mode_feature(
                 StrictModeFeature::ReservedWord,
                 js_lexer::range_of_identifier(p.source, data.name.loc),

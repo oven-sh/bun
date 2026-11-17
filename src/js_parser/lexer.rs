@@ -156,7 +156,6 @@ pub struct LexerSnapshot<'a> {
     pub(crate) has_react_hooks_block_suppression: bool,
     pub(crate) preserve_all_comments_before: bool,
     pub(crate) is_legacy_octal_literal: bool,
-    pub(crate) legacy_octal_loc: Loc,
     pub(crate) legacy_html_comment_range: Range,
     pub(crate) is_log_disabled: bool,
     pub(crate) code_point: CodePoint,
@@ -226,8 +225,6 @@ pub struct Lexer<'a> {
     pub(crate) has_react_hooks_block_suppression: bool,
     pub(crate) preserve_all_comments_before: bool,
     pub(crate) is_legacy_octal_literal: bool,
-    /// Backslash of the most recent legacy octal escape decoded by `to_e_string`.
-    pub(crate) legacy_octal_loc: Loc,
     /// The first `-->` or `<!--` marker; an error once the file is known to be an ES module.
     pub(crate) legacy_html_comment_range: Range,
     pub(crate) is_log_disabled: bool,
@@ -347,7 +344,6 @@ impl<'a> Lexer<'a> {
             has_react_hooks_block_suppression: self.has_react_hooks_block_suppression,
             preserve_all_comments_before: self.preserve_all_comments_before,
             is_legacy_octal_literal: self.is_legacy_octal_literal,
-            legacy_octal_loc: self.legacy_octal_loc,
             legacy_html_comment_range: self.legacy_html_comment_range,
             is_log_disabled: self.is_log_disabled,
             code_point: self.code_point,
@@ -386,7 +382,6 @@ impl<'a> Lexer<'a> {
         self.has_react_hooks_block_suppression = original.has_react_hooks_block_suppression;
         self.preserve_all_comments_before = original.preserve_all_comments_before;
         self.is_legacy_octal_literal = original.is_legacy_octal_literal;
-        self.legacy_octal_loc = original.legacy_octal_loc;
         self.legacy_html_comment_range = original.legacy_html_comment_range;
         self.is_log_disabled = original.is_log_disabled;
         self.code_point = original.code_point;
@@ -429,11 +424,13 @@ impl<'a> Lexer<'a> {
 
     // deinit → Drop (see impl Drop below)
 
+    /// `legacy_octal` gets the backslash of the last legacy octal escape of `text`, which is an error only in strict code.
     fn decode_escape_sequences(
         &mut self,
         start: usize,
         text: &[u8],
         buf: &mut Vec<u16>,
+        legacy_octal: &mut Loc,
     ) -> Result<(), Error> {
         let iterator = CodepointIterator::init(text);
         let mut iter = strings::Cursor::default();
@@ -545,7 +542,7 @@ impl<'a> Lexer<'a> {
                             // Forbid the use of octal escapes other than "\0"
                             let octal_end = iter.i as usize + iter.width as usize;
                             if is_bad || &text[octal_start..octal_end] != b"\\0" {
-                                self.legacy_octal_loc = Loc {
+                                *legacy_octal = Loc {
                                     start: i32::try_from(start + octal_start).expect("int cast"),
                                 };
                             }
@@ -554,7 +551,7 @@ impl<'a> Lexer<'a> {
                             iter.c = c2;
 
                             // Forbid the invalid octal escapes "\8" and "\9"
-                            self.legacy_octal_loc = Loc {
+                            *legacy_octal = Loc {
                                 start: i32::try_from(start + (iter.i as usize).saturating_sub(1))
                                     .expect("int cast"),
                             };
@@ -1046,7 +1043,10 @@ impl<'a> Lexer<'a> {
         // clear and put it back (mirrors `defer clearRetainingCapacity()`).
         let mut tmp = core::mem::take(&mut self.temp_buffer_u16);
         tmp.reserve(original_text.len());
-        let decode_res = self.decode_escape_sequences(self.start, original_text, &mut tmp);
+        // An identifier has no octal escape.
+        let mut legacy_octal = Loc::EMPTY;
+        let decode_res =
+            self.decode_escape_sequences(self.start, original_text, &mut tmp, &mut legacy_octal);
         if let Err(e) = decode_res {
             tmp.clear();
             self.temp_buffer_u16 = tmp;
@@ -2274,7 +2274,6 @@ impl<'a> Lexer<'a> {
             has_react_hooks_block_suppression: false,
             preserve_all_comments_before: false,
             is_legacy_octal_literal: false,
-            legacy_octal_loc: Loc::EMPTY,
             legacy_html_comment_range: Range::NONE,
             is_log_disabled: false,
             comments_to_preserve_before: Vec::new(),
@@ -2299,10 +2298,13 @@ impl<'a> Lexer<'a> {
         }
     }
 
-    pub(crate) fn to_e_string(&mut self) -> Result<js_ast::E::String, Error> {
+    /// Also returns the backslash of the last legacy octal escape of the string, or `Loc::EMPTY`. Only `P::decode_string` calls this.
+    pub(crate) fn to_e_string(&mut self) -> Result<(js_ast::E::String, Loc), Error> {
         match self.string_literal_raw {
-            StringLiteralRaw::Ascii(raw) => Ok(js_ast::E::String::init(raw)),
-            StringLiteralRaw::Utf16(utf16) => Ok(js_ast::E::String::init_utf16(utf16)),
+            StringLiteralRaw::Ascii(raw) => Ok((js_ast::E::String::init(raw), Loc::EMPTY)),
+            StringLiteralRaw::Utf16(utf16) => {
+                Ok((js_ast::E::String::init_utf16(utf16), Loc::EMPTY))
+            }
             StringLiteralRaw::NeedsDecode(raw) => {
                 // escape parsing may cause a syntax error.
                 debug_assert!(self.temp_buffer_u16.is_empty());
@@ -2312,8 +2314,13 @@ impl<'a> Lexer<'a> {
                 // quote/backtick (see `base` in `parse_string_literal`); pass the
                 // content-start offset so `start + iter.i` inside the decoder
                 // lines up with absolute positions in the source.
-                let res =
-                    self.decode_escape_sequences(self.string_literal_start + 1, raw, &mut tmp);
+                let mut legacy_octal = Loc::EMPTY;
+                let res = self.decode_escape_sequences(
+                    self.string_literal_start + 1,
+                    raw,
+                    &mut tmp,
+                    &mut legacy_octal,
+                );
                 if let Err(e) = res {
                     tmp.clear();
                     self.temp_buffer_u16 = tmp;
@@ -2331,15 +2338,9 @@ impl<'a> Lexer<'a> {
                 };
                 tmp.clear();
                 self.temp_buffer_u16 = tmp;
-                Ok(out)
+                Ok((out, legacy_octal))
             }
         }
-    }
-
-    pub(crate) fn to_utf8_e_string(&mut self) -> Result<js_ast::E::String, Error> {
-        let mut res = self.to_e_string()?;
-        res.to_utf8(self.arena)?;
-        Ok(res)
     }
 
     pub(crate) fn scan_reg_exp(&mut self) -> Result<(), Error> {

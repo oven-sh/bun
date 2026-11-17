@@ -76,6 +76,13 @@ impl<'a> ParsedOnly<'_, 'a> {
             top_level_await: self.p.top_level_await_keyword.len > 0,
         }
     }
+    /// Whether a "use strict" directive makes the block statement that starts at `at` strict mode code.
+    pub fn is_strict_block(&self, at: js_ast::Loc) -> bool {
+        self.p.scopes_in_order.iter().flatten().any(|order| {
+            order.loc == at
+                && order.scope_ref().strict_mode == js_ast::StrictModeKind::ExplicitStrictMode
+        })
+    }
 }
 
 /// Module record flags found while parsing.
@@ -250,7 +257,7 @@ impl<'a> Options<'a> {
                 remove_cjs_module_wrapper: f.remove_cjs_module_wrapper,
                 lower_using: f.lower_using,
                 ascii_only: f.ascii_only,
-                legacy_octal_in_templates: f.legacy_octal_in_templates,
+                allow_legacy_octals: f.allow_legacy_octals,
                 bundler_feature_flags: None,
                 define_hash: f.define_hash,
                 repl_mode: f.repl_mode,
@@ -1927,13 +1934,18 @@ impl<'a> Parser<'a> {
         // Checked after `to_ast`, which marks TypeScript type-only imports unused.
         let mut reject_import_statements = false;
 
+        // False where only `options.module_type` or a guess below makes the file CommonJS.
+        let mut is_commonjs_by_syntax = false;
+
         if p.is_deoptimized_commonjs() {
             exports_kind = js_ast::ExportsKind::Cjs;
+            is_commonjs_by_syntax = true;
         } else if p.esm_export_keyword.len > 0 || p.top_level_await_keyword.len > 0 {
             exports_kind = js_ast::ExportsKind::Esm;
         } else if uses_exports_ref || uses_module_ref || p.has_top_level_return || p.has_with_scope
         {
             exports_kind = js_ast::ExportsKind::Cjs;
+            is_commonjs_by_syntax = true;
             if p.options.features.commonjs_at_runtime {
                 wrap_mode = WrapMode::BunCommonjs;
                 reject_import_statements = true;
@@ -2012,13 +2024,23 @@ impl<'a> Parser<'a> {
             }
         }
 
-        // A file that is a module by its extension or its package, and not CommonJS by its own syntax.
-        if exports_kind != js_ast::ExportsKind::Cjs
-            && p.options.module_type == options::ModuleType::Esm
-            && p.lexer.legacy_html_comment_range.len > 0
+        // `prepare_for_visit_pass` reported the file that `import`, `export` or a top-level `await` makes a module.
+        if p.lexer.legacy_html_comment_range.len > 0
+            && !is_commonjs_by_syntax
             && !p.options.repl_mode
         {
-            p.report_legacy_html_comment();
+            let is_module = match p.module_type_by_extension_or_package() {
+                options::ModuleType::Esm => true,
+                options::ModuleType::Cjs => false,
+                // `import.meta` and a type-only import prove no module: `exports_kind` says how the file runs.
+                options::ModuleType::Unknown => {
+                    (p.has_import_meta || p.has_type_only_import)
+                        && exports_kind != js_ast::ExportsKind::Cjs
+                }
+            };
+            if is_module {
+                p.report_legacy_html_comment();
+            }
         }
 
         if reject_import_statements {
@@ -2572,7 +2594,10 @@ impl<'a> Parser<'a> {
         #[cfg(not(target_arch = "wasm32"))]
         if bun_core::feature_flags::RUNTIME_TRANSPILER_CACHE {
             if let Some(parsed) = parsed_for_cache {
-                *parsed = (!p.depends_on_more_than_source()).then_some(ParsedForCache {
+                // The path and the package decide if a legacy HTML comment is an error, and the key of the cache has neither.
+                let is_decided_by_source =
+                    !p.depends_on_more_than_source() && p.lexer.legacy_html_comment_range.len == 0;
+                *parsed = is_decided_by_source.then_some(ParsedForCache {
                     exports_kind,
                     uses_test_api,
                     imports_vitest,

@@ -18,7 +18,7 @@ use crate::defines::{Define, DefineData};
 use crate::lexer as js_lexer;
 use crate::lower::hoist_test_mocks::{MockApi, is_test_module};
 use crate::parse::parse_entry::Options as ParserOptions;
-use crate::parser::LegacyOctalKind;
+use crate::parser::{Enclosing, LegacyOctalKind};
 use crate::renamer;
 use crate::{
     ARGUMENTS_STR as arguments_str, DeferredArrowArgErrors, DeferredErrors,
@@ -293,14 +293,10 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     pub(crate) hoisted_ref_for_sloppy_mode_block_fn: RefRefMap,
 
     /// Each legacy octal number (`010`) or escape (`"\1"`), with the scope that the parser was in.
-    pub(crate) legacy_octals: Vec<(js_ast::StoreRef<Scope>, bun_ast::Range, LegacyOctalKind)>,
+    pub(crate) legacy_octals: Vec<(Enclosing, bun_ast::Range, LegacyOctalKind)>,
 
     /// Each function declaration that a later declaration in the same scope replaced, with that scope and that later declaration.
-    pub(crate) replaced_functions: Vec<(
-        js_ast::StoreRef<Scope>,
-        js_ast::scope::Member,
-        js_ast::scope::Member,
-    )>,
+    pub(crate) replaced_functions: Vec<(Enclosing, js_ast::scope::Member, js_ast::scope::Member)>,
 
     /// See `Ast::sloppy_only_syntax`.
     pub(crate) sloppy_only_syntax: Vec<js_ast::SloppyOnlySyntax>,
@@ -510,6 +506,7 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     // These are for handling ES6 imports and exports
     pub(crate) esm_import_keyword: bun_ast::Range,
     pub(crate) esm_export_keyword: bun_ast::Range,
+    /// The class that `parse_class` parses, and later the class that `visit_class` visits.
     pub(crate) enclosing_class_keyword: bun_ast::Range,
     pub(crate) import_items_for_namespace: HashMap<Ref, ImportItemForNamespaceMap>,
     pub(crate) is_import_item: RefMap,
@@ -3497,7 +3494,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     /// Runs after hoisting: only then is the strict mode of every scope final.
     fn report_duplicate_function_declarations(&mut self) {
         let mut why_module: Option<bun_ast::Data> = None;
-        for (scope, replaced, replacing) in core::mem::take(&mut self.replaced_functions) {
+        for (enclosing, replaced, replacing) in core::mem::take(&mut self.replaced_functions) {
+            let scope = enclosing.scope;
             let is_module_top_level = scope.parent.is_none() && self.is_file_considered_esm();
             let is_strict_block =
                 scope.strict_mode.has_early_errors() && scope.kind == js_ast::scope::Kind::Block;
@@ -3524,15 +3522,15 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             let why = if is_module_top_level {
                 why_module
                     .get_or_insert_with(|| {
-                        Self::why_duplicate_function(
+                        why_duplicate_function(
                             "Duplicate top-level function declarations are not allowed in an ECMAScript module.",
                             self.why_es_module(),
                         )
                     })
                     .clone()
             } else {
-                let (where_, notes) = self.why_strict_mode(scope);
-                Self::why_duplicate_function(
+                let (where_, notes) = self.why_strict_mode(enclosing);
+                why_duplicate_function(
                     &format!(
                         "Duplicate function declarations are not allowed in nested blocks {}.",
                         bstr::BStr::new(where_)
@@ -3548,21 +3546,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 replaced.loc,
                 Some(why),
             );
-        }
-    }
-
-    /// One note: `rule`, and behind it the reason that the code is strict, with its location.
-    fn why_duplicate_function(rule: &str, reason: Box<[bun_ast::Data]>) -> bun_ast::Data {
-        let mut text = rule.as_bytes().to_vec();
-        let mut location = None;
-        if let Some(note) = reason.into_vec().pop() {
-            text.push(b' ');
-            text.extend_from_slice(&note.text);
-            location = note.location;
-        }
-        bun_ast::Data {
-            text: text.into(),
-            location,
         }
     }
 
@@ -4944,20 +4927,20 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         r: bun_ast::Range,
         detail: &[u8],
     ) -> Result<(), crate::Error> {
-        self.mark_strict_mode_feature_in(self.current_scope, feature, r, detail);
+        self.mark_strict_mode_feature_in(self.enclosing(), feature, r, detail);
         Ok(())
     }
 
-    /// `scope` is the scope of the code at `r`.
+    /// `enclosing` is what is around the code at `r`.
     fn mark_strict_mode_feature_in(
         &mut self,
-        scope: js_ast::StoreRef<Scope>,
+        enclosing: Enclosing,
         feature: StrictModeFeature,
         r: bun_ast::Range,
         detail: &[u8],
     ) {
-        let is_strict = scope.strict_mode.has_early_errors();
-        // Sloppy code matters to a bundle only: see `sloppy_only_syntax`.
+        let is_strict = enclosing.scope.strict_mode.has_early_errors();
+        // Sloppy code matters to a bundle only: see `record_sloppy_only_syntax`.
         if !is_strict && !self.options.bundle {
             return;
         }
@@ -4997,7 +4980,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         };
 
         if is_strict {
-            let (where_, notes) = self.why_strict_mode(scope);
+            let (where_, notes) = self.why_strict_mode(enclosing);
             self.log().add_range_error_fmt_with_notes(
                 Some(self.source),
                 r,
@@ -5009,12 +4992,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 ),
             );
         } else if !can_be_transformed {
-            self.sloppy_only_syntax(r, text);
+            self.record_sloppy_only_syntax(r, text);
         }
     }
 
     /// `text` names syntax at `r` of sloppy code that strict code cannot hold: an error if the output is strict, which for a bundle the linker knows.
-    pub(crate) fn sloppy_only_syntax(&mut self, r: bun_ast::Range, text: &'a [u8]) {
+    pub(crate) fn record_sloppy_only_syntax(&mut self, r: bun_ast::Range, text: &'a [u8]) {
         if self.options.strict_output {
             let why: Box<[bun_ast::Data]> = Box::new([bun_ast::range_data(
                 Some(self.source),
@@ -5037,16 +5020,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     }
 
     /// The phrase that completes "... cannot be used {}" and the note that points at the trigger.
-    pub(crate) fn why_strict_mode(
-        &self,
-        scope: js_ast::StoreRef<Scope>,
-    ) -> (&'static [u8], Box<[bun_ast::Data]>) {
-        match scope.strict_mode {
+    fn why_strict_mode(&self, enclosing: Enclosing) -> (&'static [u8], Box<[bun_ast::Data]>) {
+        match enclosing.scope.strict_mode {
             js_ast::StrictModeKind::ImplicitStrictModeClass => (
                 b"in strict mode",
                 Box::new([bun_ast::range_data(
                     Some(self.source),
-                    self.enclosing_class_keyword,
+                    enclosing.class_keyword,
                     b"All code inside a class is implicitly in strict mode".as_slice(),
                 )]),
             ),
@@ -5072,31 +5052,36 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
     /// The note that says what made this file an ECMAScript module.
     pub(crate) fn why_es_module(&self) -> Box<[bun_ast::Data]> {
-        const BECAUSE: &str = "This file is considered to be an ECMAScript module because";
         let what = match self.es_module_kind {
             js_ast::StrictModeKind::ImplicitStrictModeExport => "of the \"export\" keyword here:",
             js_ast::StrictModeKind::ImplicitStrictModeTopLevelAwait => {
                 "of the top-level \"await\" keyword here:"
             }
             js_ast::StrictModeKind::ImplicitStrictModeImport => "of the \"import\" keyword here:",
-            _ if self.options.module_type == options::ModuleType::Esm => {
-                let what = match self.source.path.name().ext {
-                    b".mjs" | b".mts" => "of its file extension.",
-                    _ => "the \"package.json\" file of its package has \"type\": \"module\".",
-                };
-                return Box::new([bun_ast::range_data(
-                    Some(self.source),
-                    bun_ast::Range::NONE,
-                    format!("{BECAUSE} {what}").into_bytes(),
-                )]);
-            }
-            _ => return Box::new([]),
+            _ => match (
+                self.module_type_by_extension_or_package(),
+                self.source.path.name().ext,
+            ) {
+                (options::ModuleType::Esm, b".mjs" | b".mts") => "of its file extension.",
+                (options::ModuleType::Esm, _) => {
+                    "the \"package.json\" file of its package has \"type\": \"module\"."
+                }
+                _ if self.has_import_meta => "it uses \"import.meta\".",
+                _ if self.has_type_only_import => "it has a type-only import.",
+                _ => return Box::new([]),
+            },
         };
-        Box::new([bun_ast::range_data(
-            Some(self.source),
-            self.es_module_keyword,
-            format!("{BECAUSE} {what}").into_bytes(),
-        )])
+        why_es_module(self.source, self.es_module_keyword, what)
+    }
+
+    /// `options.module_type`, but from the path for an extension that decides: one caller takes the option from "package.json" alone.
+    pub(crate) fn module_type_by_extension_or_package(&self) -> options::ModuleType {
+        match self.source.path.name().ext {
+            b".mjs" | b".mts" => options::ModuleType::Esm,
+            b".cjs" | b".cts" => options::ModuleType::Cjs,
+            b".js" | b".ts" => self.options.module_type,
+            _ => options::ModuleType::Unknown,
+        }
     }
 
     /// Strict code whose early errors the parser reports: see `StrictModeKind::has_early_errors`.
@@ -5307,7 +5292,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     if existing_kind.is_function() {
                         let replacing = js_ast::scope::Member { ref_, loc };
                         self.replaced_functions
-                            .push((self.current_scope, existing, replacing));
+                            .push((self.enclosing(), existing, replacing));
                     }
                     // If these are both functions, remove the overwritten declaration
                     if kind.is_function() && existing_kind.is_function() {
@@ -5344,47 +5329,67 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
-    /// Call after `to_e_string` on the string or template part that starts at `loc`.
+    /// The string or template part that the lexer is on. Every decode goes through here, so none misses a legacy octal escape.
     #[inline]
-    pub(crate) fn check_for_legacy_octal_escape(
+    pub(crate) fn decode_string(
         &mut self,
-        loc: bun_ast::Loc,
         kind: LegacyOctalKind,
-    ) {
-        let escape = self.lexer.legacy_octal_loc;
-        if escape.start > loc.start {
-            self.record_legacy_octal(self.source.range_of_legacy_octal_escape(escape), kind);
+    ) -> Result<E::String, crate::Error> {
+        let (string, legacy_octal) = self.lexer.to_e_string()?;
+        if legacy_octal.start >= 0 {
+            self.record_legacy_octal(self.source.range_of_legacy_octal_escape(legacy_octal), kind);
         }
+        Ok(string)
+    }
+
+    pub(crate) fn decode_utf8_string(
+        &mut self,
+        kind: LegacyOctalKind,
+    ) -> Result<E::String, crate::Error> {
+        let mut string = self.decode_string(kind)?;
+        string.to_utf8(self.arena)?;
+        Ok(string)
     }
 
     #[cold]
     #[inline(never)]
     fn record_legacy_octal(&mut self, range: bun_ast::Range, kind: LegacyOctalKind) {
-        self.legacy_octals.push((self.current_scope, range, kind));
+        self.legacy_octals.push((self.enclosing(), range, kind));
     }
 
-    /// Call after the visit pass: it makes the scopes of a class body strict, which are the last.
+    /// What is around the code that the parser is on, in the parse pass and in the visit pass.
+    #[inline]
+    fn enclosing(&self) -> Enclosing {
+        Enclosing {
+            scope: self.current_scope,
+            class_keyword: self.enclosing_class_keyword,
+        }
+    }
+
+    /// Call after `prepare_for_visit_pass`: the scopes of a class are the last to become strict, in `hoist_symbols`.
     pub(crate) fn report_legacy_octals(&mut self) {
-        for (scope, range, kind) in core::mem::take(&mut self.legacy_octals) {
+        if self.options.features.allow_legacy_octals {
+            return;
+        }
+        for (enclosing, range, kind) in core::mem::take(&mut self.legacy_octals) {
             let feature = match kind {
                 LegacyOctalKind::Number => StrictModeFeature::LegacyOctalLiteral,
                 LegacyOctalKind::Escape => StrictModeFeature::LegacyOctalEscape,
                 LegacyOctalKind::TemplateEscape => {
-                    if !self.options.features.legacy_octal_in_templates {
-                        self.log().add_range_error(
-                            Some(self.source),
-                            range,
-                            b"Legacy octal escape sequences cannot be used in template literals",
-                        );
-                    }
+                    self.log().add_range_error(
+                        Some(self.source),
+                        range,
+                        b"Legacy octal escape sequences cannot be used in template literals",
+                    );
                     continue;
                 }
             };
             // A scope that the parser discarded (the one of `("\1")`) is as strict as the scope around it.
-            let mut strict_scope = Some(scope);
+            let mut strict_scope = Some(enclosing.scope);
             while let Some(scope) = strict_scope {
                 if scope.strict_mode.has_early_errors() {
-                    self.mark_strict_mode_feature_in(scope, feature, range, b"");
+                    let enclosing = Enclosing { scope, ..enclosing };
+                    self.mark_strict_mode_feature_in(enclosing, feature, range, b"");
                     break;
                 }
                 strict_scope = scope.parent;
@@ -5403,9 +5408,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
+    /// For a binding of an `S::Import`. One that the parser made (the namespace of an unwrapped `require()`) is not `Kind::Import`: the renamer names it.
     pub(crate) fn validate_import_name(&mut self, loc: bun_ast::Loc, ref_: Ref) {
-        let name = self.load_name_from_ref(ref_);
-        self.validate_declared_symbol_name(loc, name);
+        if self.symbols[ref_.inner_index() as usize].kind == js_ast::symbol::Kind::Import {
+            let name = self.load_name_from_ref(ref_);
+            self.validate_declared_symbol_name(loc, name);
+        }
     }
 
     #[cold]
@@ -5455,8 +5463,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 {
                     reported.push(member.ref_);
                     let range = js_lexer::range_of_identifier(self.source, member.loc);
-                    self.mark_strict_mode_feature_in(
+                    // A sloppy scope: its error has no note about a class.
+                    let enclosing = Enclosing {
                         scope,
+                        class_keyword: bun_ast::Range::NONE,
+                    };
+                    self.mark_strict_mode_feature_in(
+                        enclosing,
                         StrictModeFeature::ReservedWord,
                         range,
                         name,
@@ -7561,6 +7574,33 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             _ => {}
         }
         false
+    }
+}
+
+fn why_es_module(
+    source: &bun_ast::Source,
+    keyword: bun_ast::Range,
+    what: &str,
+) -> Box<[bun_ast::Data]> {
+    Box::new([bun_ast::range_data(
+        Some(source),
+        keyword,
+        format!("This file is considered to be an ECMAScript module because {what}").into_bytes(),
+    )])
+}
+
+/// One note: `rule`, and behind it the reason that the code is strict, with its location.
+fn why_duplicate_function(rule: &str, reason: Box<[bun_ast::Data]>) -> bun_ast::Data {
+    let mut text = rule.as_bytes().to_vec();
+    let mut location = None;
+    if let Some(note) = reason.into_vec().pop() {
+        text.push(b' ');
+        text.extend_from_slice(&note.text);
+        location = note.location;
+    }
+    bun_ast::Data {
+        text: text.into(),
+        location,
     }
 }
 

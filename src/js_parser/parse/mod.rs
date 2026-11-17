@@ -143,6 +143,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         class_opts: &ParseClassOptions<'a>,
     ) -> Result<G::Class, Error> {
         let p = self;
+        let old_enclosing_class_keyword =
+            core::mem::replace(&mut p.enclosing_class_keyword, class_keyword);
         let mut extends: Option<Expr> = None;
         let mut has_decorators: bool = false;
         let mut has_auto_accessor: bool = false;
@@ -270,6 +272,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         p.allow_in = old_allow_in;
         p.allow_private_identifiers = old_allow_private_identifiers;
+        p.enclosing_class_keyword = old_enclosing_class_keyword;
         let close_brace_loc = p.lexer.loc();
         p.lexer.expect(T::TCloseBrace)?;
 
@@ -313,9 +316,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             p.lexer.rescan_close_brace_as_template_token()?;
 
             let tail: E::TemplateContents = if !include_raw {
-                let cooked = p.lexer.to_e_string()?;
-                p.check_for_legacy_octal_escape(tail_loc, LegacyOctalKind::TemplateEscape);
-                E::TemplateContents::Cooked(cooked)
+                E::TemplateContents::Cooked(p.decode_string(LegacyOctalKind::TemplateEscape)?)
             } else {
                 E::TemplateContents::Raw(p.lexer.raw_template_contents().into())
             };
@@ -344,14 +345,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     pub(crate) fn parse_string_literal(&mut self) -> Result<Expr, Error> {
         let p = self;
         let loc = p.lexer.loc();
-        let mut str_ = p.lexer.to_e_string()?;
-        str_.prefer_template = p.lexer.token == T::TNoSubstitutionTemplateLiteral;
-        let kind = if str_.prefer_template {
+        let prefer_template = p.lexer.token == T::TNoSubstitutionTemplateLiteral;
+        let mut str_ = p.decode_string(if prefer_template {
             LegacyOctalKind::TemplateEscape
         } else {
             LegacyOctalKind::Escape
-        };
-        p.check_for_legacy_octal_escape(loc, kind);
+        })?;
+        str_.prefer_template = prefer_template;
 
         let expr = p.new_expr(str_, loc);
         p.lexer.next()?;
@@ -410,7 +410,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 .loc()
                 .start
                 .max(p.lexer.previous_backslash_quote_in_jsx.loc.start);
-            let estr = p.lexer.to_e_string()?;
+            let estr = p.decode_string(LegacyOctalKind::Escape)?;
             let expr = p.new_expr(estr, *previous_string_with_backslash_loc);
 
             p.lexer.next_inside_jsx_element()?;
@@ -785,8 +785,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         // The alias may now be a utf-16 (not wtf-16) string (see https://github.com/tc39/ecma262/pull/2154)
         if p.lexer.token == T::TStringLiteral {
-            let estr = p.lexer.to_e_string()?;
-            p.check_for_legacy_octal_escape(loc, LegacyOctalKind::Escape);
+            let estr = p.decode_string(LegacyOctalKind::Escape)?;
             if estr.is_utf8() {
                 // SAFETY: E::String slices are arena-owned for 'a.
                 return Ok(unsafe { bun_collections::detach_lifetime(estr.slice8()) });
@@ -1352,7 +1351,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
     pub(crate) fn parse_path(&mut self) -> Result<ParsedPath<'a>, Error> {
         let p = self;
-        let path_text = p.lexer.to_utf8_e_string()?;
+        let path_text = p.decode_utf8_string(LegacyOctalKind::Escape)?;
         let mut path = ParsedPath {
             loc: p.lexer.loc(),
             // SAFETY: E::String slice8() is arena-owned for 'a.
@@ -1361,8 +1360,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             import_tag: bun_ast::ImportRecordTag::None,
             loader: None,
         };
-
-        p.check_for_legacy_octal_escape(path.loc, LegacyOctalKind::Escape);
 
         if p.lexer.token == T::TNoSubstitutionTemplateLiteral {
             p.lexer.next()?;
@@ -1406,8 +1403,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             break 'brk Some(SupportedAttribute::BunBakeGraph);
                         }
                     } else if p.lexer.token == T::TStringLiteral {
-                        let estr = p.lexer.to_utf8_e_string()?;
-                        p.check_for_legacy_octal_escape(p.lexer.loc(), LegacyOctalKind::Escape);
+                        let estr = p.decode_utf8_string(LegacyOctalKind::Escape)?;
                         let string_literal_text = estr.slice8();
                         if string_literal_text == b"type" {
                             break 'brk Some(SupportedAttribute::Type);
@@ -1428,10 +1424,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 p.lexer.next()?;
                 p.lexer.expect(T::TColon)?;
 
-                let value_loc = p.lexer.loc();
                 p.lexer.expect(T::TStringLiteral)?;
-                let estr = p.lexer.to_utf8_e_string()?;
-                p.check_for_legacy_octal_escape(value_loc, LegacyOctalKind::Escape);
+                let estr = p.decode_utf8_string(LegacyOctalKind::Escape)?;
                 let string_literal_text = estr.slice8();
                 if let Some(attr) = supported_attribute {
                     match attr {

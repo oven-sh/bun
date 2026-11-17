@@ -404,7 +404,7 @@ describe.concurrent("bun test --changed", () => {
     using dir = tempDir("test-changed-sloppy", {
       "package.json": JSON.stringify({ name: "sloppy" }),
       "value.cjs": `module.exports = 1;\n`,
-      "helper.cjs": `var scope = { value: require("./value.cjs") };\nwith (scope) module.exports = value;\n`,
+      "helper.cjs": `var arguments = [require("./value.cjs")];\nwith (arguments) module.exports = arguments[0];\n`,
       "helper.test.js": `const { test, expect } = require("bun:test");\nconst value = require("./helper.cjs");\ntest("helper", () => expect(value).toBe(1));\n`,
     });
     initRepo(String(dir));
@@ -415,6 +415,26 @@ describe.concurrent("bun test --changed", () => {
     expect(stderr).toContain("1 pass");
     expect(exitCode).toBe(0);
   });
+
+  // A file that does not parse is not in the module graph, so a test that reaches a changed file only
+  // through it is not run, and the exit code is 0. The test has to run and fail: #46695 has that change.
+  test.failing(
+    "a dependency with a syntax error does not hide the tests that reach a changed file through it",
+    async () => {
+      using dir = tempDir("test-changed-syntax-error", {
+        "package.json": JSON.stringify({ name: "octal" }),
+        "value.mjs": `export default 1;\n`,
+        "helper.mjs": `import value from "./value.mjs";\nexport default value + 010;\n`,
+        "helper.test.js": `import { test, expect } from "bun:test";\nimport value from "./helper.mjs";\ntest("helper", () => expect(value).toBe(9));\n`,
+      });
+      initRepo(String(dir));
+      appendFileSync(join(String(dir), "value.mjs"), "// touched\n");
+
+      const { stderr, exitCode } = await runTestChanged(String(dir));
+      expect(stderr).toContain("Legacy octal literals cannot be used in an ECMAScript module");
+      expect(exitCode).toBe(1);
+    },
+  );
 
   // https://github.com/oven-sh/bun/issues/29590: a tsconfig `paths` alias
   // like "@/*" must be followed when building the module graph.

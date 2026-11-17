@@ -512,13 +512,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         if name == b"require" && p.lexer.token == T::TOpenParen {
             // "import ns = require('x')"
             p.lexer.next()?;
-            let path_estr = p.lexer.to_e_string()?;
+            let path_estr = p.decode_string(LegacyOctalKind::Escape)?;
             let path_loc = p.lexer.loc();
             let path = p.new_expr(path_estr, path_loc);
             p.lexer.expect(T::TStringLiteral)?;
             p.lexer.expect(T::TCloseParen)?;
             if !opts.is_typescript_declare {
-                p.check_for_legacy_octal_escape(path_loc, LegacyOctalKind::Escape);
                 let args = ExprNodeList::init_one(path);
                 let close_paren_loc = p.lexer.loc();
                 value = p.new_expr(
@@ -640,9 +639,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             // Parse the name
             let needs_symbol: bool = if p.lexer.token == T::TStringLiteral {
                 // `slice8()` is currently duplicated in E.rs (two impl blocks);
-                // read `.data` directly — `to_utf8_e_string` guarantees `is_utf16 == false`.
-                let estr = p.lexer.to_utf8_e_string()?;
-                p.check_for_legacy_octal_escape(p.lexer.loc(), LegacyOctalKind::Escape);
+                // read `.data` directly: `decode_utf8_string` guarantees `is_utf16 == false`.
+                let estr = p.decode_utf8_string(LegacyOctalKind::Escape)?;
                 debug_assert!(!estr.is_utf16);
                 value.name = estr.data;
                 js_lexer::is_identifier(value.name.slice())

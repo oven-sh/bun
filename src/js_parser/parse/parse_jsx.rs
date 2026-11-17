@@ -1,7 +1,7 @@
 #![warn(unused_must_use)]
 use crate::lexer::T;
 use crate::p::P;
-use crate::parser::{JSXTag, options};
+use crate::parser::{JSXTag, LegacyOctalKind, options};
 use bun_ast::expr::Data as ExprData;
 use bun_ast::flags;
 use bun_ast::op::Level;
@@ -190,7 +190,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             // note: template literals are not supported, operations on strings are not supported either
                             T::TStringLiteral => {
                                 let key_loc = p.lexer.loc();
-                                let key_str = p.lexer.to_e_string()?;
+                                let key_str = p.decode_string(LegacyOctalKind::Escape)?;
                                 let key = p.new_expr(key_str, key_loc);
                                 p.lexer.next()?;
                                 props.push(G::Property {
@@ -291,7 +291,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         loop {
             match p.lexer.token {
                 T::TStringLiteral => {
-                    let e_string = p.lexer.to_e_string()?;
+                    let e_string = p.decode_string(LegacyOctalKind::Escape)?;
                     children.push(p.new_expr(e_string, loc));
                     p.lexer.next_jsx_element_child()?;
                 }

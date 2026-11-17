@@ -1,6 +1,6 @@
 # answer	plain	minified	difference	configuration	extension	source
 # answer: + `Removable` says that the statement with MARK in it can be left out when nothing uses it, - that it cannot. Of a statement with several declarations, the one with MARK answers.
-# plain, minified: + `bun build` and `bun build --minify-syntax` leave the statement out, - they keep it, . not asked: nothing of the statement would show in the output, or `bun build` rejects the statement because its output is an ECMAScript module.
+# plain, minified: + `bun build` and `bun build --minify-syntax` leave the statement out, - they keep it, . not asked: nothing of the statement would show in the output.
 # difference: why answer and plain differ. The answer removes more: folded (the folder has a constant or dead code there), table (the table of built-ins knows the value that is read), inert (the statement compiles to nothing), minified (`bun run` leaves it out, as `bun build --minify-syntax` does). The bundler removes more: read (a variable, a field or an export takes a member that its holder lists from its first read on, and `bun run` reads it), missed (all else).
 # literals and functions
 +	+	+	-	-	ts	const MARK = 1;
@@ -960,7 +960,7 @@
 -	-	-	-	-	cjs	module.exports = { MARK: 1 };
 -	+	+	missed	-	cjs	module.exports.MARK = 1;
 -	-	-	-	-	cjs	Object.defineProperty(exports, "MARK", { value: 1 });
--	.	.	-	-	cjs	var o = {}; with (o) { sideEffect("MARK"); }
+-	-	-	-	-	cjs	var o = {}; with (o) { sideEffect("MARK"); }
 +	+	+	-	-	cjs	const MARK = 1;
 +	+	+	-	-	cjs	function MARK() {}
 -	.	.	-	-	cjs	/* MARK */ return;

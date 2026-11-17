@@ -1189,6 +1189,60 @@ describe.concurrent("bun lint --lsp", () => {
     timeout,
   );
 
+  // As above, with requests about sub/d.js in the queue of the outer folder when sub becomes a folder: the thread of
+  // sub answers them, with its bunfig.toml.
+  test.skipIf(isWindows)(
+    "answers the requests about a document with the folder that it is in now, after a folder inside another is added",
+    async () => {
+      using dir = tempDir("bun-lint-lsp", {
+        ".oxlintrc.json": oxlintrc({
+          jsPlugins: ["./plugin.mjs"],
+          rules: { "demo/hold": "error", "no-var": "error" },
+        }),
+        "plugin.mjs": holdsSecondLint,
+        "e.js": "",
+        "sub/bunfig.toml": '[fmt]\nsemi = false\n\n[lint.rules]\n"no-var" = "off"\n',
+        "sub/d.js": "",
+      });
+      await using client = new Client(command, String(dir));
+      expect((await initialize(client, [String(dir)])).error).toBeUndefined();
+      client.notify("initialized");
+      const [outer, inner] = [join(String(dir), "e.js"), join(String(dir), "sub", "d.js")];
+      open(client, outer, "export const e = 1;\n");
+      expect((await client.diagnostics(outer)).params.diagnostics).toEqual([]);
+      client.notify("textDocument/didChange", {
+        textDocument: { uri: uriOf(outer), version: 2 },
+        contentChanges: [{ text: "export const e = 2;\n" }],
+      });
+      const held = join(String(dir), "held");
+      while (!existsSync(held)) await Bun.sleep(5);
+      const text = 'var  d  =  "d";\nconsole.log(d);\n';
+      open(client, inner, text);
+      const formatted = format(client, inner);
+      const actions = client.request("textDocument/codeAction", {
+        textDocument: { uri: uriOf(inner) },
+        range: { start: { line: 0, character: 0 }, end: { line: 0, character: 3 } },
+        context: { diagnostics: [] },
+      });
+      client.notify("workspace/didChangeWorkspaceFolders", {
+        event: { added: [{ uri: uriOf(String(dir), "sub"), name: "sub" }], removed: [] },
+      });
+      writeFileSync(join(String(dir), "release"), "");
+      const { error, result } = await formatted;
+      expect(error).toBeUndefined();
+      expect(applyEdits(text, result)).toBe('var d = "d"\nconsole.log(d)\n');
+      const offered = await actions;
+      expect(offered.error).toBeUndefined();
+      expect(offered.result.filter((it: any) => it.title.includes("no-var"))).toEqual([]);
+      expect((await client.request("shutdown")).result).toBeNull();
+      client.notify("exit");
+      const { exitCode, garbage, rest } = await client.end();
+      expect([garbage, rest]).toEqual([[], ""]);
+      expect(exitCode).toBe(0);
+    },
+    timeout,
+  );
+
   // `bun lint` reports what is wrong with a tsconfig.json as a problem of that file, and exits with 1.
   test(
     "shows the error of a tsconfig.json that cannot be used, once",

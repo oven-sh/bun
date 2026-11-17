@@ -120,13 +120,13 @@ impl<Args> Command<Args> {
         &self,
         global: &JSGlobalObject,
         value: JSValue,
-        name: &'static str,
+        field: &'static str,
         expected: &'static str,
     ) -> JsResult<JSArgument> {
         // Not `?`, which compiles to one more copy of the argument.
         match from_js(global, value) {
             Ok(Some(arg)) => Ok(arg),
-            Ok(None) => Err(global.throw_invalid_argument_type(self.method, name, expected)),
+            Ok(None) => Err(global.throw_invalid_argument_type(self.method, field, expected)),
             Err(err) => Err(err),
         }
     }
@@ -956,13 +956,13 @@ impl JSValkeyClient {
 
         let mut args: Vec<JSArgument> = Vec::with_capacity(2);
 
-        for (value, name) in [(channel.to_js(), "channel"), (message.to_js(), "message")] {
+        for (value, field) in [(channel.to_js(), "channel"), (message.to_js(), "message")] {
             if value.is_string()
                 && let Some(arg) = from_js(global, value)?
             {
                 args.push(arg);
             } else {
-                return Err(global.throw_invalid_argument_type("publish", name, "string"));
+                return Err(global.throw_invalid_argument_type("publish", field, "string"));
             }
         }
         Ok(self.send(this, global, b"PUBLISH", &args, Reply::Value))

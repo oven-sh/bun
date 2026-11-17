@@ -2131,7 +2131,6 @@ impl<'a> Repl<'a> {
             vm.transpiler.get().options.jsx.clone(),
             bun_ast::Loader::Tsx,
         );
-        opts.jsx_preserve_restriction = bun_js_parser::JsxPreserveRestriction::Runtime;
         opts.repl_mode = true;
         opts.features.dead_code_elimination = false; // REPL needs all code
         opts.features.top_level_await = true; // Enable top-level await in REPL

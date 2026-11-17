@@ -424,6 +424,12 @@ fn framing() {
         assert_eq!(bytes.len(), end);
     }
 
+    let mut upgrading = Peer::new("pw", SSLMode::Require);
+    upgrading.feed(&greeting(MODERN | SSL, CACHING), None);
+    for end in 1..=whole.len() {
+        assert!(upgrading.session.next_packet(&mut &whole[..end]).is_err());
+    }
+
     let mut split = Vec::new();
     execute_query(&vec![b'q'; MAX - 1], &mut split);
     assert_eq!(split[..5], [0xff, 0xff, 0xff, 0, 3]);

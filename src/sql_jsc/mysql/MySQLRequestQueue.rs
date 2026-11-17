@@ -10,7 +10,7 @@ use crate::mysql::js_my_sql_query::JSMySQLQuery;
 
 type Queue = VecDeque<RefPtr<JSMySQLQuery>>;
 
-/// Requests in the order they go on the wire. The server answers in that order: its next packet is for the head.
+/// Requests in the order they go on the wire. The server answers in that order: its next packet is for the oldest one that has not ended.
 pub struct MySQLRequestQueue {
     // `advance()` and `clean()` run JS, which comes back to the queue through `&self`.
     requests: JsCell<Queue>,

@@ -62,7 +62,7 @@ impl<'a> PacketWriter<'a> {
     }
 
     pub(crate) fn int4(&mut self, value: MySQLInt32) {
-        self.write(&value.to_ne_bytes());
+        self.write(&value.to_le_bytes());
     }
 
     pub(crate) fn int1(&mut self, value: u8) {

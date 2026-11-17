@@ -430,7 +430,7 @@ impl JSMySQLQuery {
         })
     }
 
-    /// The one step of a request that runs user JS.
+    /// The one step of `run` that runs user JS.
     fn bind<'a>(
         global_object: &'a JSGlobalObject,
         binding_value: JSValue,

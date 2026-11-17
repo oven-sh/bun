@@ -1153,12 +1153,7 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
         // 'upgrade' listener is installed) and otherwise dispatches the
         // request normally.
         let is_upgrade = false;
-        if (
-          (dispatchBits & DISPATCH_HAS_UPGRADE) !== 0 &&
-          (dispatchBits & DISPATCH_CONN_UPGRADE) !== 0 &&
-          // The connection would have to leave HTTP behind the body, with responses still owed. A server may ignore Upgrade (RFC 9110 7.8).
-          !(hasBody && pipeline !== undefined)
-        ) {
+        if ((dispatchBits & DISPATCH_HAS_UPGRADE) !== 0 && (dispatchBits & DISPATCH_CONN_UPGRADE) !== 0) {
           // Like Node.js, shouldUpgradeCallback sees req.upgrade === true.
           http_req.upgrade = true;
           is_upgrade = !!server.shouldUpgradeCallback(http_req);
@@ -1216,6 +1211,11 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
             socketHandle.leaveHttpAfterBody();
             handle.ondata = onUpgradeBodyData.bind(http_req);
             handle.notifyWhenReadParsed();
+            if (pipeline !== undefined) {
+              pipeline.outgoing.pop();
+              pipeline.upgrade = handle;
+              startNextResponse(socket);
+            }
             return;
           }
           http_req.complete = true;
@@ -2075,7 +2075,7 @@ const kConnectionState = Symbol("kConnectionState");
 function connectionState(socket) {
   let state = socket[kConnectionState];
   if (state === undefined) {
-    state = socket[kConnectionState] = { outgoing: [], outgoingData: 0, onPendingData: undefined };
+    state = socket[kConnectionState] = { outgoing: [], outgoingData: 0, onPendingData: undefined, upgrade: undefined };
     state.onPendingData = updateOutgoingData.bind(undefined, socket, state);
     socket.on("drain", socketOnDrain.bind(undefined, socket, state));
   }
@@ -2097,7 +2097,9 @@ function startNextResponse(socket) {
   if (socket[kHandle] === undefined) return;
   const res = state.outgoing[0];
   if (res === undefined) {
-    if (socket[kHandedOff]) leaveHttp(socket);
+    // An Upgrade request whose body still arrives gets the connection, like one that waited for nothing.
+    if (state.upgrade !== undefined) state.upgrade.start();
+    else if (socket[kHandedOff]) leaveHttp(socket);
   } else if (res !== null && !res.destroyed && res[kHandle]?.start()) {
     state.outgoing.shift();
     res._onPendingData(-res.outputSize);
@@ -2461,7 +2463,9 @@ function onConnectionClosed(this: any, tracked, left) {
   if (left === undefined) socket[kHandle] = undefined;
   else if (http.closed) leftHttp(socket);
   if (left !== undefined) {
-    // Not closed: the body of an accepted Upgrade request has ended, and the connection is the socket's from here on.
+    // Not closed: the body of an accepted Upgrade request has ended. The connection is the socket's from here on, or behind the responses ahead of that request.
+    const state = socket[kConnectionState];
+    if (state !== undefined) state.upgrade = undefined;
     socket.removeListener("end", socket.end);
     const req = socket[kUpgradeRequest];
     if (req !== undefined) {
@@ -3026,7 +3030,7 @@ function onResponseFinishHandleSocket(server, socket, res) {
   }
   // Nor while responses, or the listener of a 'connect' or an 'upgrade', wait behind this one.
   const state = socket[kConnectionState];
-  if (state !== undefined && (state.outgoing.length !== 0 || socket[kHandedOff])) {
+  if (state !== undefined && (state.outgoing.length !== 0 || state.upgrade !== undefined || socket[kHandedOff])) {
     return;
   }
   const total = keepAliveIdleTimeout(server);

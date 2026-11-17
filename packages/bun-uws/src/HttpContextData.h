@@ -123,7 +123,7 @@ public:
 
     /* An owner outside uWS adopted s after HttpResponse::leaveHttp(). If s is being parsed, the parser stops here. */
     void socketLeft(struct us_socket_t *s, bool restOfReadTaken) {
-        if (isParsing(s)) {
+        if (isParsing(s) && upgradedWebSocket != s) {
             upgradedWebSocket = s;
             flags.restOfReadTaken = restOfReadTaken;
         }

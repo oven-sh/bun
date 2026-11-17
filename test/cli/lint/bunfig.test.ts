@@ -722,8 +722,9 @@ rules = { "no-console" = "off" }
       expect(await read()).toEqual(["packages/app/a.js"]);
       expect(await lintAt(String(dir), ".", ["--suppress-all"])).toMatchObject({ found: [], exitCode: 0 });
       expect(await read()).toEqual(["packages/app/a.js", "packages/lib/b.js"]);
-      for (const cwd of [".", "packages", "packages/app", "packages/lib"]) {
-        expect(await lintAt(String(dir), cwd, [])).toMatchObject({ found: [], exitCode: 0 });
+      const directories = [".", "packages", "packages/app", "packages/lib"];
+      for (const result of await Promise.all(directories.map(cwd => lintAt(String(dir), cwd, [])))) {
+        expect(result).toMatchObject({ found: [], exitCode: 0 });
       }
       // Another directory's entries don't count as unused.
       expect(await lintAt(String(dir), "packages/app", ["--prune-suppressions"])).toMatchObject({ exitCode: 0 });
@@ -837,13 +838,14 @@ rules = { "import/no-unassigned-import" = ["error", { allow = ["src/client/*.css
     // oxlint matches `allow` against the import specifier as written.
     const expected = ["src/client/c.js:3 import/no-restricted-paths"];
     if (name === ".oxlintrc.json") expected.unshift("src/client/c.js:1 import/no-unassigned-import");
-    for (const [cwd, args] of [
+    const runs = [
       [".", ["src"]],
       ["src", []],
       ["src/client", []],
       ["src/server", ["../client"]],
-    ] as const) {
-      expect(await lintIn(cwd, files, [...args])).toMatchObject({ found: expected, exitCode: 1 });
+    ] as const;
+    for (const result of await Promise.all(runs.map(([cwd, args]) => lintIn(cwd, files, [...args])))) {
+      expect(result).toMatchObject({ found: expected, exitCode: 1 });
     }
   });
 
@@ -994,15 +996,12 @@ rules = { "import/no-unassigned-import" = ["error", { allow = ["src/client/*.css
       "src/b/entry.js": "export const entry = 1;\n",
       "src/b/main.js": `import { used } from "../a/lib.js";\nconsole.log(used);\n`,
     });
-    for (const options of ["", `, src = ["src"]`, `, src = ["src"], ignoreExports = ["**/entry.js"]`]) {
-      for (const [cwd, args] of [
-        [".", ["src/a"]],
-        ["src/a", []],
-      ] as const) {
-        expect(await lintIn(cwd, files(options), [...args])).toMatchObject({
-          found: ["src/a/dead.js:1 import/no-unused-modules"],
-        });
-      }
+    const runs = ["", `, src = ["src"]`, `, src = ["src"], ignoreExports = ["**/entry.js"]`].flatMap(options => [
+      lintIn(".", files(options), ["src/a"]),
+      lintIn("src/a", files(options), []),
+    ]);
+    for (const result of await Promise.all(runs)) {
+      expect(result).toMatchObject({ found: ["src/a/dead.js:1 import/no-unused-modules"] });
     }
   });
 

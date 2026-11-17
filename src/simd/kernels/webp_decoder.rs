@@ -226,6 +226,7 @@ pub(crate) mod simd {
             [a + d, b + c, b - c, a - d]
         }
 
+        /// All sums wrap, as in `Transform_SSE2` of libwebp.
         #[inline(always)]
         pub fn inverse_dct(coefficients: &mut [[i16; 64]; 6], mut non_zero: u32) {
             const BLOCKS: usize = I16::LEN / 4;
@@ -240,7 +241,7 @@ pub(crate) mod simd {
                 let rows = coefficients[y].as_chunks_mut::<16>().0;
                 let mut v = inverse_dct_pass(from_fn(|i| I16::from_slice(&rows[i][x..])));
                 rotate(&mut v, 3);
-                v[0] = v[0].saturating_add(4);
+                v[0] += 4;
                 v = inverse_dct_pass(v);
                 rotate(&mut v, 2);
                 for i in 0..4 {

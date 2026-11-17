@@ -54,7 +54,7 @@ fn inverse_dct() {
                 from_fn(|column| inverse_dct_pass(from_fn(|row| given[y][at(row, column)])));
             for row in 0..4 {
                 let [first, b, c, d] = columns.map(|it| it[row]);
-                let result = inverse_dct_pass([first.saturating_add(4), b, c, d]);
+                let result = inverse_dct_pass([first.wrapping_add(4), b, c, d]);
                 want[y][at(row, 0)..][..4].copy_from_slice(&result.map(|it| it >> 3));
             }
         }

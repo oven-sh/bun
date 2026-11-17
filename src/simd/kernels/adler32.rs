@@ -63,7 +63,7 @@ mod simd {
     const WEIGHTS: &Aligned<[i8; ROW + U8::LEN]> = &Aligned(from_fn(const |i| {
         (ROW as isize - BIAS as isize - i as isize) as i8 & -((i < ROW) as i8)
     }));
-    const _: () = assert!(ROW - BIAS <= 127 && BIAS <= 129);
+    const _: () = assert!(ROW - BIAS < 128 && BIAS < 130);
 
     #[inline(always)]
     fn add_vector(bytes: U8, weights: I8, plain: &mut I32, weighted: &mut I32) {

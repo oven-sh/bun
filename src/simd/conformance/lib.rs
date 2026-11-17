@@ -2,12 +2,14 @@
 #![feature(stmt_expr_attributes)]
 #![cfg_attr(target_arch = "aarch64", feature(aarch64_unstable_target_feature))]
 
+#[macro_use]
 mod bench;
 mod check;
 mod highway;
 mod pairs;
 mod probe;
 mod room;
+mod webp_encoder;
 
 use bun_simd::SharedU8;
 use bun_simd_kernels::Columns;

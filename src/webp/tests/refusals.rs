@@ -5,7 +5,6 @@ use std::alloc::{GlobalAlloc, Layout, System};
 use std::cell::Cell;
 use std::fmt::Debug;
 
-use bun_highway::webp::{LumaCandidates, Macroblock};
 use bun_webp::{Compression, Decoder, Error, Result, encode};
 
 thread_local! {
@@ -35,58 +34,6 @@ unsafe impl GlobalAlloc for Refusing {
 
 #[global_allocator]
 static ALLOCATOR: Refusing = Refusing;
-
-/// The encoder's kernels ask for no memory, and are not linked.
-mod native_test_shims {
-    use super::{LumaCandidates, Macroblock};
-
-    type P = *const u8;
-
-    macro_rules! do_nothing {
-        ($(fn $name:ident($($argument:ty),*) $(-> $result:ty)?;)*) => {$(
-            #[unsafe(no_mangle)]
-            extern "C" fn $name($(_: $argument),*) $(-> $result)? {
-                Default::default()
-            }
-        )*};
-    }
-
-    do_nothing! {
-        fn highway_webp_analyze(P, P, P, P);
-        fn highway_webp_try_straight_modes(u64, u64, u8, usize, P, P, i32, P) -> u8;
-        fn highway_webp_try_diagonal_modes(u64, u64, u8, usize, P, P, i32, P) -> u8;
-        fn highway_webp_try_chroma_modes(P, P, u64, P, P, P) -> bool;
-    }
-
-    #[unsafe(no_mangle)]
-    extern "C" fn highway_webp_convert(
-        &[&[[red, ..], ..], ..]: &[&[[u8; 4]; 16]; 16],
-        _: P,
-        _: P,
-        out: &mut Macroblock,
-    ) {
-        out.luma[0][0][0] = red;
-    }
-
-    /// A macroblock that starts with red gets subblock modes. The others get many tokens, which make no sense, and some
-    /// levels of 1, whose signs make the frame outgrow its room.
-    #[unsafe(no_mangle)]
-    extern "C" fn highway_webp_try_luma_modes(
-        samples: &Macroblock,
-        _: P,
-        _: u64,
-        _: u8,
-        _: P,
-        _: P,
-        _: P,
-        out: &mut LumaCandidates,
-    ) -> u8 {
-        out.squared_errors = [(i32::from(samples.luma[0][0][0]) - 1) << 20; 4];
-        out.ends = [[[[4 * 16; _]; _]; _]; _];
-        out.blocks[0].symbols = [[[0x0101; _]; _]; _];
-        0
-    }
-}
 
 /// Once for each allocation. One that cannot be refused ends the process.
 fn refuse_each_allocation<T: PartialEq + Debug>(run: impl Fn() -> Result<T>) -> T {
@@ -168,6 +115,8 @@ fn refused_memory_is_an_error_when_lossy() {
     let lossy = Compression::Lossy { quality: 80 };
     let pictures: [Paint; _] = [
         |_, _, _| [1, 0, 0, 255],
+        // Subblock modes, and several pages of tokens.
+        |_, _, [r, g, b, _]| [r, g, b, 255],
         // Alpha that does not compress, with a palette, and with a filter.
         |_, _, [n, ..]| [1, 0, 0, n.max(1)],
         |x, _, _| [1, 0, 0, 1 + x as u8 % 3],
@@ -177,7 +126,7 @@ fn refused_memory_is_an_error_when_lossy() {
         back(&there(60, 33, lossy, paint));
         back(&there(33, 60, lossy, paint));
     }
-    // Some of these frames end just where their room does, and some have several pages of tokens.
+    // Some of these frames end just where their room does.
     for macroblocks in 1..12 {
         there(16 * macroblocks, 16, lossy, |_, _, _| [0, 0, 0, 255]);
     }

@@ -313,6 +313,8 @@ mod simd {
             let dots = from_fn(|i| saturating_dot(a.as_chunks().0[i], b.as_chunks().0[i]));
             assert_eq!(I16::saturating_pairwise_dot(x, y).to_array(), dots);
             assert_eq!(U16::widen_lower(x).to_array(), from_fn(|i| a[i].into()));
+            assert_eq!(Some(x.reduce_max()), a.into_iter().max());
+            assert_eq!(Some(y.reduce_max()), b.into_iter().max());
             let repeated = U8::repeat::<16>(*a.first_chunk().unwrap());
             assert_eq!(repeated.to_array(), from_fn(|i| a[i % 16]));
             assert_eq!(U8::repeat([a[0], a[1]]).to_array(), from_fn(|i| a[i % 2]));
@@ -340,6 +342,10 @@ mod simd {
             assert_eq!(x.saturating_add(y).to_array(), each(i16::saturating_add));
             assert_eq!(x.saturating_sub(y).to_array(), each(i16::saturating_sub));
             let (p, q): (U16, U16) = (x.bitcast(), y.bitcast());
+            let got = y.simd_eq(0).select(0, x).mul_sign(y);
+            assert_eq!(got.to_array(), each(|a, b| a.wrapping_mul(b.signum())));
+            assert_eq!(Some(x.reduce_max()), a.into_iter().max());
+            assert_eq!(Some(p.reduce_max()), p.to_array().into_iter().max());
             let each = |f: fn(u16, u16) -> u16| from_fn(|i| f(a[i] as u16, b[i] as u16));
             assert_eq!(p.saturating_add(q).to_array(), each(u16::saturating_add));
             assert_eq!(p.saturating_sub(q).to_array(), each(u16::saturating_sub));
@@ -368,6 +374,7 @@ mod simd {
             let clamped = a.map(|a: i32| a.clamp(0, 255) as u8);
             assert_eq!(I32::load(&a).saturating_cast_u8().to_array(), clamped);
             assert_eq!(Some(I32::load(&a).reduce_min()), a.into_iter().min());
+            assert_eq!(I32::load(&a).abs().to_array(), a.map(i32::wrapping_abs));
 
             let (a, b) = (a.map(|a| a >> 12), random.lanes().map(|b: i32| b >> 20));
             let (x, y): (F32, F32) = (I32::load(&a).cast(), I32::load(&b).cast());

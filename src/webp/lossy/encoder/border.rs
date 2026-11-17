@@ -1,6 +1,6 @@
 //! What a macroblock is predicted from.
 
-use bun_highway::webp::Edges;
+use bun_simd_kernels::webp::Edges;
 
 /// The samples along the bottom of a macroblock from the left, or along its right from the bottom: Y, or U and then V.
 /// `None` is outside of the picture.

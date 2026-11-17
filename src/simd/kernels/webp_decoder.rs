@@ -61,7 +61,7 @@ fn cut<'a, const H: usize>(all: &'a mut Rows<'_, H>, size: usize, x: usize) -> O
 
 /// With the index of the vector above that of the lane in 16 bytes, rotates the bits of both `times`.
 #[inline(always)]
-fn rotate<T: Lane, const N: usize, I: Isa, const K: usize>(
+pub(crate) fn rotate<T: Lane, const N: usize, I: Isa, const K: usize>(
     v: &mut [Vector<T, N, I>; K],
     times: usize,
 ) {

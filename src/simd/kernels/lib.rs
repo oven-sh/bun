@@ -21,6 +21,7 @@ mod scanner;
 mod search;
 mod sourcemap;
 mod webp_decoder;
+mod webp_encoder;
 mod width;
 mod words;
 mod xml;
@@ -89,6 +90,14 @@ pub mod webp {
         undo_prediction, upsample,
     };
     pub use crate::webp_decoder::{FilterStrength, Plane, ROW_SLACK, ROW_STEP, yuv_to_rgba};
+    pub use crate::webp_encoder::simd::{
+        analyze, convert, try_chroma_modes, try_diagonal_modes, try_luma_modes, try_straight_modes,
+    };
+    pub use crate::webp_encoder::{
+        Block, Candidates, ChromaCandidates, Edges, GammaTable, Histograms, IS_FLAT, LinearColors,
+        LumaCandidates, LumaSaturation, LumaSource, MAX_SYMBOL, Macroblock, Quantizer, Scratch,
+        SubblockCandidates,
+    };
 }
 
 #[inline(always)]

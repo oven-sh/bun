@@ -2,7 +2,7 @@
 #![allow(clippy::useless_conversion)] // to `Out` for Rust, and to the same type for Highway
 use crate::pairs::{self, Pairs};
 use crate::room::Room;
-use crate::{Random, columns, highway, shared, write_line};
+use crate::{Random, columns, highway, shared, webp_encoder, write_line};
 use bun_simd::{Out, SharedOutU8};
 use bun_simd_kernels::{self as rust, Filter};
 use core::fmt::Arguments;
@@ -16,7 +16,7 @@ use std::time::{Duration, Instant};
 pub(crate) static ONLY: OnceLock<Vec<u8>> = OnceLock::new();
 
 /// `dyn FnMut` has a second copy of the code, for `FnOnce`.
-trait Run {
+pub(crate) trait Run {
     fn run(&mut self, is_second: bool, times: u32);
 }
 
@@ -28,7 +28,7 @@ impl<F: FnMut(bool, u32)> Run for F {
 
 /// Prints the best of many short runs.
 #[optimize(size)]
-fn compare(name: Arguments<'_>, both: &mut dyn Run) {
+pub(crate) fn compare(name: Arguments<'_>, both: &mut dyn Run) {
     let name = name.to_string();
     if ONLY
         .get()
@@ -60,11 +60,11 @@ fn compare(name: Arguments<'_>, both: &mut dyn Run) {
 
 /// M2 waits for a result if the store of it touches the place of the next arguments.
 #[repr(C)]
-struct Apart<T>(MaybeUninit<u64>, T, MaybeUninit<u64>);
+pub(crate) struct Apart<T>(MaybeUninit<u64>, T, MaybeUninit<u64>);
 
 impl<T> Apart<T> {
     #[inline(always)]
-    fn new(result: T) -> Self {
+    pub(crate) fn new(result: T) -> Self {
         Self(MaybeUninit::uninit(), result, MaybeUninit::uninit())
     }
 }
@@ -1264,6 +1264,7 @@ pub(crate) fn against_highway(js: &[u8], json: &[u8], map: &[u8]) {
     images();
     jpeg();
     webp_decoder();
+    webp_encoder::bench();
     from_shared(js);
     to_shared();
 }

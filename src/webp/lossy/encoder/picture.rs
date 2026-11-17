@@ -1,6 +1,6 @@
 //! RGBA to YUV 4:2:0, cut into macroblocks.
 
-use bun_highway::webp::{self, Block, GammaTable, LinearColors, Macroblock};
+use bun_simd_kernels::webp::{self, Block, GammaTable, LinearColors, Macroblock};
 
 use crate::array::At;
 use crate::error::Result;

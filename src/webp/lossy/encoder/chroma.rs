@@ -1,6 +1,6 @@
 //! Picks the prediction mode for the chroma of a macroblock that gets the least distortion for its rate.
 
-use bun_highway::webp::{self, ChromaCandidates, Macroblock};
+use bun_simd_kernels::webp::{self, ChromaCandidates, Macroblock};
 
 use super::border::{self, Border};
 use super::candidates::{MACROBLOCK_MODES, add_costs, bottom, residual, right};

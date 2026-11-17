@@ -589,7 +589,7 @@ mod carryless_simd {
     }
 }
 
-#[bun_simd::foreach_target(avx512_icl, neon + "dotprod", portable)]
+#[bun_simd::foreach_target(avx512_icl, avx2, sse4, neon + "dotprod", portable)]
 mod dot_simd {
     use isa::{I8, I32, U8};
 

@@ -1,5 +1,5 @@
 //! Bun's kernels on `bun_simd`, checked against those on Highway.
-#![feature(loop_hints, trait_alias)]
+#![feature(hint_prefetch, loop_hints, trait_alias)]
 #![feature(const_array, const_closures, const_trait_impl)]
 #![forbid(unsafe_code)]
 // For `#[inline(always)]` in the copies.
@@ -193,6 +193,10 @@ pub fn line_starts(text: &[u8]) -> Vec<u32> {
 }
 
 trait Byte = Source<Lane = u8>;
+
+/// Starts a cache line.
+#[repr(align(64))]
+struct Aligned<T>(T);
 
 /// In a long input, it is worth a call to have no load cross a cache line.
 #[inline(always)]

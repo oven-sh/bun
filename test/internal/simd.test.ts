@@ -32,7 +32,7 @@ describe.skipIf(!hasRunner)("bun_simd", () => {
   });
 
   test.skipIf(!isCI)("detects what every CI machine has", () => {
-    const features = isArm64 ? ["lse", "aes", "dotprod"] : ["avx2", "bmi2", "aes"];
+    const features = isArm64 ? ["lse", "aes", "dotprod"] : ["avx2", "bmi2", "aes", "pclmulqdq"];
     expect(probe!.values("feature")).toEqual(expect.arrayContaining(features));
   });
 
@@ -51,14 +51,16 @@ describe.skipIf(!hasRunner)("bun_simd", () => {
   });
 
   // The checksums have copies for these.
-  const further = isArm64 ? ["neon+dotprod", "neon+aes+sha3"] : ["sse4+pclmulqdq", "avx2+vpclmulqdq"];
-  test.concurrent.each(further)("%s matches Highway", async limit => {
-    const rounds = isDebug || isASAN ? 20 : 2_000;
-    const { values, exitCode } = await run(limit, "check", 4, rounds);
-    expect(values("rounds")).toEqual([`${rounds}`]);
-    expect(values("chosen")[0]).toBeOneOf([limit.split("+")[0], baseline].map(target => `${target} ${target}`));
-    expect(exitCode).toBe(0);
-  });
+  for (const limit of isArm64 ? ["neon+aes+sha3", "neon+dotprod"] : ["avx2+vpclmulqdq", "sse4+pclmulqdq"]) {
+    const [target, ...features] = limit.split("+");
+    const isSupported = targets.includes(target) && features.every(it => probe!.values("feature").includes(it));
+    test.concurrent.skipIf(!isSupported)(`${limit} matches Highway`, async () => {
+      const rounds = isDebug || isASAN ? 20 : 2_000;
+      const { lines, exitCode } = await run(limit, "check", 4, rounds);
+      expect(lines).toEqual([`chosen: ${target} ${target}`, `rounds: ${rounds}`]);
+      expect(exitCode).toBe(0);
+    });
+  }
 
   test.concurrent.each(["avx512_icl", "", "AVX2"])("%j is no limit", async target => {
     const { values, exitCode } = await run(target, "check", 2, 1);
@@ -98,6 +100,13 @@ describe.skipIf(!hasRunner || !process.env.BUN_SIMD_BENCHMARK)("benchmark", () =
     console.log(`${availableParallelism()} x ${cpus()[0].model}\n${probe!.values("feature").join(" ")}\n`);
   });
 
+  const furtherFeatures: Record<string, string> = {
+    avx2: "vpclmulqdq",
+    sse4: "pclmulqdq",
+    sve2: "aes+sha3+dotprod",
+    neon: "aes+sha3+dotprod",
+  };
+
   // Few kernels have a copy for avx512_skx.
   test.each(targets.filter(target => target !== "avx512_skx"))(
     "kernels on %s",
@@ -110,7 +119,7 @@ describe.skipIf(!hasRunner || !process.env.BUN_SIMD_BENCHMARK)("benchmark", () =
       print(
         `${target}, ns`,
         ["Highway", "Rust"],
-        await times(isArm64 ? `${target}+aes+sha3+dotprod` : target, "bench", js, json, join(String(dir), "mappings")),
+        await times(`${target}+${furtherFeatures[target] ?? ""}`, "bench", js, json, join(String(dir), "mappings")),
       );
       print(`${target}, ns`, ["mid page", "end of page"], await times(target, "edges"));
     },

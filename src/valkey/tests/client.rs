@@ -1,4 +1,4 @@
-use bun_valkey::client::{Acked, Client, Close, Config, Event, Lost, Sent};
+use bun_valkey::client::{Acked, Attempt, Client, Close, Config, Event, Lost, Sent};
 use bun_valkey::command::Reply;
 use bun_valkey::valkey_protocol::RESPValue;
 
@@ -34,6 +34,7 @@ fn push(kind: &str, name: &str) -> String {
 /// Does what the runtime does with each result, and writes it down.
 struct Driver {
     client: Client<u32>,
+    attempt: Option<Attempt>,
     sent: u32,
     /// How much the socket still takes.
     window: usize,
@@ -46,6 +47,7 @@ impl Driver {
     fn new(config: Config) -> Self {
         Driver {
             client: Client::new(config),
+            attempt: None,
             sent: 0,
             window: usize::MAX,
             batch_is_due: false,
@@ -60,8 +62,13 @@ impl Driver {
         this
     }
 
+    fn dial(&mut self) {
+        let attempt = self.client.first_dial().or_else(|| self.client.redial());
+        self.attempt = Some(attempt.unwrap());
+    }
+
     fn handshake(&mut self) {
-        self.client.dial();
+        self.dial();
         self.start();
         self.read(HELLO);
         assert!(self.client.is_connected());
@@ -172,9 +179,14 @@ impl Driver {
         self.log.push(format!("fail {pending:?}"));
     }
 
+    fn lose(&mut self, owner_is_gone: bool) -> Lost<u32> {
+        let attempt = self.attempt.take().unwrap();
+        self.client.lost(attempt, owner_is_gone)
+    }
+
     fn lost(&mut self) {
         self.batch_is_due = false;
-        let line = match self.client.lost(false) {
+        let line = match self.lose(false) {
             Lost::ForGood { reason, pending } => format!("closed {pending:?} {reason}"),
             Lost::Retry {
                 delay_ms,
@@ -228,7 +240,7 @@ mod lifecycle {
     fn reach(state: State) -> Driver {
         let mut it = Driver::new(database(1));
         if state != Idle {
-            it.client.dial();
+            it.dial();
             it.send("WATCH a");
             it.send("WATCH b");
         }
@@ -260,9 +272,9 @@ mod lifecycle {
     /// The core keeps its state private, so this tells them apart through what they do.
     fn state_of(mut it: Driver) -> State {
         it.log.clear();
-        if it.client.never_dialed() {
+        if it.client.first_dial().is_some() {
             Idle
-        } else if it.client.awaits_retry() {
+        } else if it.client.redial().is_some() {
             Backoff
         } else if it.client.is_connected() {
             it.read(":1\r\n");
@@ -276,7 +288,7 @@ mod lifecycle {
         } else if it.client.is_ending() && it.client.rejection().is_some() {
             EndingFailed
         } else if it.client.is_ending() {
-            match it.client.lost(false) {
+            match it.lose(false) {
                 Lost::ForGood { .. } => EndingFinal,
                 Lost::Retry { .. } => EndingPolicy,
             }
@@ -307,6 +319,18 @@ mod lifecycle {
     }
 
     #[test]
+    fn dial() {
+        check(
+            |it| it.attempt = it.client.first_dial().or(it.attempt.take()),
+            &[(Idle, "", Dialing)],
+        );
+        check(
+            |it| it.attempt = it.client.redial().or(it.attempt.take()),
+            &[(Backoff, "", Dialing)],
+        );
+    }
+
+    #[test]
     fn connect() {
         check(
             |it| it.client.connect(),
@@ -323,7 +347,10 @@ mod lifecycle {
         let close = |it: &mut Driver| match it.client.close() {
             Close::Nothing => {}
             Close::Socket => it.log.push("close the socket".into()),
-            Close::Retry => it.log.push("disarm the retry".into()),
+            Close::Retry(attempt) => {
+                it.attempt = Some(attempt);
+                it.log.push("disarm the retry".into());
+            }
         };
         check(
             close,
@@ -360,7 +387,7 @@ mod lifecycle {
     #[test]
     fn lost() {
         let lost = |it: &mut Driver| {
-            if it.client.is_active() && !it.client.awaits_retry() {
+            if it.attempt.is_some() {
                 it.lost();
             }
         };
@@ -449,7 +476,7 @@ mod lifecycle {
             ..Config::default()
         });
         for _ in 0..9 {
-            it.client.dial();
+            it.dial();
             it.lost();
         }
         let mut expected = [50, 100, 200, 400, 800, 1600, 2000, 2000]
@@ -459,7 +486,7 @@ mod lifecycle {
         assert_eq!(it.take(), expected);
 
         it.client.connect();
-        it.client.dial();
+        it.dial();
         it.lost();
         assert_eq!(it.take(), ["retry in 50 []"]);
     }
@@ -468,7 +495,7 @@ mod lifecycle {
     fn retries_start_over_when_hello_is_accepted() {
         let mut it = Driver::new(database(1));
         for replies in ["", "", HELLO] {
-            it.client.dial();
+            it.dial();
             it.start();
             it.read(replies);
             it.log.clear();
@@ -480,12 +507,12 @@ mod lifecycle {
     #[test]
     fn no_retry() {
         let mut it = Driver::connected(Config::default());
-        assert!(matches!(it.client.lost(true), Lost::ForGood { .. }));
+        assert!(matches!(it.lose(true), Lost::ForGood { .. }));
         let mut it = Driver::connected(Config {
             enable_auto_reconnect: false,
             ..Config::default()
         });
-        assert!(matches!(it.client.lost(false), Lost::ForGood { .. }));
+        assert!(matches!(it.lose(false), Lost::ForGood { .. }));
     }
 
     #[test]
@@ -494,7 +521,7 @@ mod lifecycle {
             enable_offline_queue: false,
             ..database(1)
         });
-        it.client.dial();
+        it.dial();
         it.start();
         it.send("GET k");
         it.read(HELLO);
@@ -515,7 +542,7 @@ mod lifecycle {
     #[test]
     fn a_batch_does_not_wait_for_select() {
         let mut it = Driver::new(database(1));
-        it.client.dial();
+        it.dial();
         it.start();
         it.read(HELLO);
         it.send("GET k");
@@ -540,7 +567,7 @@ mod handshake {
                 password: password.as_bytes().into(),
                 ..Config::default()
             });
-            it.client.dial();
+            it.dial();
             it.client.start();
             assert!(it.client.output().starts_with(count));
             it.flush();
@@ -586,7 +613,7 @@ mod handshake {
             ),
         ] {
             let mut it = Driver::new(database(db));
-            it.client.dial();
+            it.dial();
             it.start();
             it.read(replies);
             assert_eq!(it.log[1 + db as usize], expected);
@@ -751,7 +778,7 @@ mod pipeline {
         it.lost();
         assert_eq!(it.take(), ["write MULTI", "retry in 50 [1]"]);
         assert_eq!(it.client.buffered_amount(), 0);
-        it.client.dial();
+        it.dial();
         it.start();
         it.read(HELLO);
         assert_eq!(it.log.last().unwrap(), "write WATCH a");

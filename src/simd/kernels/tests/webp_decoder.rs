@@ -54,7 +54,7 @@ fn inverse_dct() {
                 from_fn(|column| inverse_dct_pass(from_fn(|row| given[y][at(row, column)])));
             for row in 0..4 {
                 let [first, b, c, d] = columns.map(|it| it[row]);
-                let result = inverse_dct_pass([first.saturating_add(4), b, c, d]);
+                let result = inverse_dct_pass([first.wrapping_add(4), b, c, d]);
                 want[y][at(row, 0)..][..4].copy_from_slice(&result.map(|it| it >> 3));
             }
         }
@@ -67,9 +67,9 @@ fn inverse_dct() {
 }
 
 #[test]
-fn inverse_dct_saturates_when_it_rounds() {
-    for first in [32763, 32764, 32767] {
-        check([[4095; 64]; 6], || {
+fn inverse_dct_wraps_when_it_rounds() {
+    for (first, want) in [(32763, 4095), (32764, -4096), (32767, -4096)] {
+        check([[want; 64]; 6], || {
             let mut got = [from_fn(|i| if i < 16 && i % 4 == 0 { first } else { 0 }); 6];
             webp::inverse_dct(&mut got, u32::MAX);
             got

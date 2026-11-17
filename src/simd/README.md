@@ -43,11 +43,11 @@ In a module with `#[foreach_target]`:
 - `isa` has the types of the target: `U8`, `I16`, `F32` and so on fill a register. `Vector<T, N>` has up to 64 bytes.
 - `isa::x128` and `isa::x256` have the same types for 128 and 256 bits. The latter can take two registers. A nested module with `#[foreach_width]` is compiled as `full` and as `x128`. `#[foreach_width(x128, x256)]` and `#[foreach_width(full, x128, x256)]` name others.
 - `#[export]` adds a function of the same name to the module itself, which dispatches. It can be generic only over lifetimes. It gets the attributes after `#[export]`, and `cfg` and comments before it. With `#[inline]`, LLVM can inline a direct call unless debug assertions are on.
-- `this_target` is the name of the copy: `use other::simd::this_target::helper;`
+- `this_target` is the name of the target: `use other::simd::this_target::helper;`
 - Trait methods, `const fn` and functions from a macro outside the module do not get the features of the target. They can use only the ops that need no intrinsic, and run baseline code unless they are inlined.
 - `#[inline(always)]` becomes `#[rustc_force_inline]`. Use it only on functions that no other crate calls. If rustc reports a recursion limit, raise `#![recursion_limit]`. A closure with the attribute loses the features until it is inlined, and cannot call such a function.
 - These do not compile: `async`, `unsafe` and `extern` functions, and a fragment of several tokens from a macro around the module.
-- Name the module `simd`. The allowlists in `scripts/verify-baseline-static` match that name.
+- Name the module `simd`. The allowlists in `scripts/verify-baseline-static` match that name. Other names, and copies with further features, need lines of their own.
 
 An op has the name that `core::simd` gives it, where there is one.
 

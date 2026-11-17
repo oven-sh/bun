@@ -180,6 +180,7 @@ impl CopyFile {
         let stat = match known_stat.map_or_else(|| bun_sys::fstat(source.get()), Ok) {
             Ok(stat) => stat,
             Err(err) => {
+                // The destination may exist already, and fstat() has the error to report.
                 let _ = set_mode();
                 return Err(err.into());
             }
@@ -191,11 +192,10 @@ impl CopyFile {
 
     #[cfg(target_os = "macos")]
     fn finish_clone(&self, to: &bun_core::ZStr, stat: &Stat) -> bun_sys::Result<SizeType> {
-        let size = SizeType::try_from(stat.st_size).expect("int cast");
+        let size = stat.st_size.max(0) as SizeType;
         let copied = if self.max_length < size {
-            let len = i64::try_from(self.max_length).expect("int cast");
             // SAFETY: `to` is NUL-terminated.
-            let _ = unsafe { bun_sys::c::truncate(to.as_ptr(), len) };
+            let _ = unsafe { bun_sys::c::truncate(to.as_ptr(), self.max_length as i64) };
             self.max_length
         } else {
             size
@@ -213,11 +213,11 @@ impl CopyFile {
             return Err(unsupported_directory_error());
         }
 
+        let size = stat.st_size.max(0) as SizeType;
         let mut max_length = self.max_length;
         // BSD fstat on a pipe reports bytes currently buffered in st_size;
         // only a regular-file st_size is a length.
-        if stat.st_size != 0 && bun_sys::S::ISREG(mode) {
-            let size = SizeType::try_from(stat.st_size).expect("int cast");
+        if size != 0 && bun_sys::S::ISREG(mode) {
             max_length = size.min(max_length).saturating_sub(self.offset);
             if max_length == 0 {
                 return Ok(0);
@@ -264,7 +264,7 @@ impl CopyFile {
                     ..Default::default()
                 };
                 match bun_sys::fcopyfile(src, dest, data.bits()) {
-                    Ok(()) => copied = u64::try_from(stat.st_size).expect("int cast"),
+                    Ok(()) => copied = size,
                     // The file cannot seek: `bun test bun-write.test | xargs echo`
                     Err(err) if err.get_errno() == bun_sys::E::EBADF => {
                         read_write_loop(src, dest, 0, &mut copied)?
@@ -275,9 +275,8 @@ impl CopyFile {
             #[cfg(target_os = "freebsd")]
             read_write_loop(src, dest, 0, &mut copied)?;
 
-            if stat.st_size != 0 && SizeType::try_from(stat.st_size).expect("int cast") > max_length
-            {
-                let _ = bun_sys::ftruncate(dest, i64::try_from(max_length).expect("int cast"));
+            if size > max_length {
+                let _ = bun_sys::ftruncate(dest, max_length as i64);
                 copied = copied.min(max_length);
             }
             Ok(copied)
@@ -341,7 +340,7 @@ impl CopyFile {
         if self.opens_destination() {
             let size = if unknown_size { 0 } else { remain };
             read_write_loop(src, dest, size, &mut copied)?;
-            let _ = bun_sys::ftruncate(dest, i64::try_from(copied).expect("int cast"));
+            let _ = bun_sys::ftruncate(dest, copied as i64);
         } else {
             let cap = if unknown_size {
                 MAX_SIZE

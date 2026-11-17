@@ -88,7 +88,8 @@ impl FdOp for WriteFile {
     }
 
     fn step(&mut self, fd: Fd, mut ready: bool) -> Result<Step, Box<SystemError>> {
-        let bytes = &self.source.shared_view()[self.range.clone()];
+        let bytes = self.source.shared_view().get(self.range.clone());
+        let bytes = bytes.unwrap_or_default();
         while self.written < bytes.len() {
             if self.could_block
                 && !core::mem::take(&mut ready)
@@ -343,7 +344,9 @@ mod windows_impl {
             let result = if let Some(err) = self.to_system_error() {
                 Err(Box::new(err))
             } else {
-                note_written(self.file_blob.store().expect("infallible: store present"));
+                if let Some(store) = self.file_blob.store() {
+                    note_written(store);
+                }
                 Ok(self.total_written as SizeType)
             };
             drop(self);
@@ -459,7 +462,9 @@ pub(super) fn settle(
 // ──────────────────────────────────────────────────────────────────────────
 
 pub(super) fn note_written(destination: &blob::Store) {
-    if let PathOrFileDescriptor::Path(path) = &destination.data.as_file().pathlike {
+    if let blob::store::Data::File(file) = &destination.data
+        && let PathOrFileDescriptor::Path(path) = &file.pathlike
+    {
         crate::node::fs::note_opened_for_write(path.slice(), true);
     }
 }

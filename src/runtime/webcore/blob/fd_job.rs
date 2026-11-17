@@ -88,7 +88,9 @@ impl<Op: FdOp> FdJob<Op> {
             Ok(false) => Ok(()),
             Err(err) => Err(err),
         };
-        self.done.take().expect("finished once").finish();
+        if let Some(done) = self.done.take() {
+            done.finish();
+        }
     }
 
     /// `false`: done.
@@ -98,7 +100,7 @@ impl<Op: FdOp> FdJob<Op> {
                 Step::Done => return Ok(false),
                 Step::Again => self.wait.check_cancelled()?,
                 Step::Wait => {
-                    // SAFETY: this thread has the boxed job, and every frame returns without touching it. A borrowed `fd` is the script's to keep open.
+                    // SAFETY: this thread has the boxed job, and every frame returns without touching it. Not upheld if the script closes a borrowed `fd` that has a duplicate.
                     unsafe { FdWait::park(&raw mut self.wait, fd)? };
                     return Ok(true);
                 }
@@ -123,7 +125,7 @@ pub(super) fn open(
         File::open(path_z, flags, node_fs::DEFAULT_PERMISSION)
     });
     opened.map(JobFd::opened).map_err(|err| {
-        // A compiled program shows the path that it tried when mkdir failed, not the one that was written.
+        // mkdir failed: a compiled program reports the resolved path, not the one in the script.
         if mkdirp && err.get_errno() == E::ENOENT {
             return err.with_path(path.slice()).into();
         }

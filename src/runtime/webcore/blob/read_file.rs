@@ -487,7 +487,7 @@ impl ReadFileUV {
 
         let stat = this.req.statbuf;
 
-        // keep in sync with resolveSizeAndLastModified
+        // keep in sync with ReadFile::open
         if let Data::File(file) = Store::data_mut(&this.store) {
             // `uv_timespec_t` fields are `c_long` (i32 on Windows); widen to the
             // platform-width `isize` `to_js_time` expects.

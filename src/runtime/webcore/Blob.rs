@@ -3293,10 +3293,6 @@ pub(crate) fn write_format_for_size<W: core::fmt::Write, const ENABLE_ANSI_COLOR
     )
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// mkdirp
-// ──────────────────────────────────────────────────────────────────────────
-
 /// Create the parent directories of `path`.
 #[inline(never)]
 pub(crate) fn mkdirp_parent(path: &[u8]) -> bun_sys::Result<()> {
@@ -5582,10 +5578,6 @@ impl Internal {
         b"application/octet-stream" // MimeType::OTHER
     }
 }
-
-// ──────────────────────────────────────────────────────────────────────────
-// JSDOMFile__hasInstance
-// ──────────────────────────────────────────────────────────────────────────
 
 // C++ side declares `extern "C" SYSV_ABI bool JSDOMFile__hasInstance(...)` (JSDOMFile.cpp).
 bun_jsc::jsc_host_abi! {

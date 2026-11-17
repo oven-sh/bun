@@ -5,7 +5,9 @@ use core::marker::PhantomPinned;
 use core::ptr::NonNull;
 use core::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 
-use bun_sys::{self as sys, E, Fd};
+#[cfg(any(target_os = "linux", target_os = "android"))]
+use bun_sys::linux::EPOLL;
+use bun_sys::{self as sys, E, Fd, FdExt as _};
 use bun_threading::{Link, UnboundedQueue, WorkPool, WorkPoolTask};
 
 use crate::Waker;
@@ -30,8 +32,7 @@ impl Interest {
 /// What a job reads or writes.
 pub struct JobFd {
     fd: Fd,
-    /// `None`: the caller's.
-    _opened: Option<sys::File>,
+    owned: bool,
     registered: bool,
 }
 
@@ -40,7 +41,7 @@ impl JobFd {
     pub fn borrowed(fd: Fd) -> Self {
         Self {
             fd,
-            _opened: None,
+            owned: false,
             registered: false,
         }
     }
@@ -48,8 +49,8 @@ impl JobFd {
     #[inline]
     pub fn opened(file: sys::File) -> Self {
         Self {
-            fd: file.fd(),
-            _opened: Some(file),
+            fd: file.into_raw(),
+            owned: true,
             registered: false,
         }
     }
@@ -60,13 +61,18 @@ impl JobFd {
     }
 }
 
-/// epoll keeps a one-shot entry that has fired.
-#[cfg(any(target_os = "linux", target_os = "android"))]
 impl Drop for JobFd {
     #[inline]
     fn drop(&mut self) {
-        if self.registered {
-            Watcher::get().remove(self.fd);
+        // epoll keeps a one-shot entry that has fired.
+        #[cfg(any(target_os = "linux", target_os = "android"))]
+        if self.registered
+            && let Some(watcher) = WATCHER.get()
+        {
+            watcher.remove(self.fd);
+        }
+        if self.owned {
+            let _ = self.fd.close_allowing_bad_file_descriptor(None);
         }
     }
 }
@@ -118,8 +124,8 @@ pub struct FdWait {
     task: WorkPoolTask,
     owner: Owner,
     interest: Interest,
-    /// From `park` to `unpark`.
-    parked: Option<JobFd>,
+    /// From `park` to `unpark`. Otherwise `Fd::INVALID`, which the kernel refuses.
+    parked: JobFd,
     /// Why the wait ended without `parked` being ready.
     failed: Option<sys::Error>,
     /// Other threads use the job, and free it, while the frames that parked it return.
@@ -148,13 +154,13 @@ impl FdWait {
             },
             owner: Owner::new(),
             interest,
-            parked: None,
+            parked: JobFd::borrowed(Fd::INVALID),
             failed: None,
             _pin: PhantomPinned,
         }
     }
 
-    /// SAFETY: the caller has the job. After `Ok` nothing uses or moves it, or closes `fd`, until `resume`.
+    /// SAFETY: the caller has the job. After `Ok` nothing uses or moves it until `resume`, or closes `fd` while another descriptor shares its description: epoll could not remove the entry.
     pub unsafe fn park(this: *mut Self, fd: JobFd) -> sys::Result<()> {
         let watcher = Watcher::start()?;
         // SAFETY: fn contract. The IO thread gets the job from the queue, `cancel` keeps to `owner` until it is armed.
@@ -162,7 +168,7 @@ impl FdWait {
             if !(*this).owner.pass(State::Running, State::Queued) {
                 return Err((*this).cancelled());
             }
-            (*this).parked = Some(fd);
+            (*this).parked = fd;
             watcher.submit(this);
         }
         Ok(())
@@ -170,7 +176,7 @@ impl FdWait {
 
     /// Pool thread, in `resume`.
     pub fn unpark(&mut self) -> sys::Result<JobFd> {
-        let fd = self.parked.take().expect("parked");
+        let fd = core::mem::replace(&mut self.parked, JobFd::borrowed(Fd::INVALID));
         self.failed.take().map_or(Ok(fd), Err)
     }
 
@@ -191,19 +197,20 @@ impl FdWait {
     pub unsafe fn cancel(this: *mut Self) {
         // SAFETY: fn contract. An armed job is in no queue, and once cancelled only the queue ends it.
         unsafe {
-            if (*this).owner.cancel() {
-                Watcher::get().submit(this);
+            if (*this).owner.cancel()
+                && let Some(watcher) = WATCHER.get()
+            {
+                watcher.submit(this);
             }
         }
     }
 
     /// SAFETY: IO thread. It armed `this` and has not given it back since.
-    unsafe fn wake(this: *mut Self, failed: impl FnOnce(Fd, Interest) -> Option<sys::Error>) {
+    unsafe fn wake(this: *mut Self, failed: Option<sys::Error>) {
         // SAFETY: fn contract. A cancelled job is queued again, and `tick` ends it from there.
         unsafe {
             if (*this).owner.pass(State::Armed, State::Running) {
-                let fd = (*this).parked.as_ref().expect("parked").fd;
-                (*this).failed = failed(fd, (*this).interest);
+                (*this).failed = failed;
                 WorkPool::schedule(&raw mut (*this).task);
             }
         }
@@ -225,8 +232,10 @@ static INIT_LOCK: bun_threading::Mutex = bun_threading::Mutex::new();
 impl Watcher {
     /// Starts the IO thread on first use. If that fails, the next call retries.
     fn start() -> sys::Result<&'static Self> {
-        if IS_RUNNING.load(Ordering::Acquire) {
-            return Ok(Self::get());
+        if IS_RUNNING.load(Ordering::Acquire)
+            && let Some(this) = WATCHER.get()
+        {
+            return Ok(this);
         }
         let _guard = INIT_LOCK.lock_guard();
         let this = match WATCHER.get() {
@@ -249,10 +258,6 @@ impl Watcher {
             IS_RUNNING.store(true, Ordering::Release);
         }
         Ok(this)
-    }
-
-    fn get() -> &'static Self {
-        WATCHER.get().expect("a job has parked")
     }
 
     fn init() -> sys::Result<Self> {
@@ -285,14 +290,14 @@ impl Watcher {
             let mut changes = Changes::new();
             let mut pending = self.pending.pop_batch().iterator();
             while let Some(wait) = NonNull::new(pending.next()).map(NonNull::as_ptr) {
-                // SAFETY: only this thread gives a parked job to the pool. `remove` works because `park` requires an open descriptor.
+                // SAFETY: only this thread gives a parked job to the pool, and `park` requires what `remove` needs.
                 unsafe {
                     let interest = (*wait).interest;
-                    let fd = (*wait).parked.as_mut().expect("parked");
+                    let fd = &mut (*wait).parked;
                     if (*wait).owner.pass(State::Queued, State::Armed) {
                         match changes.add(self, fd, interest, wait) {
                             Ok(()) => fd.registered = true,
-                            Err(err) => FdWait::wake(wait, |_, _| Some(err)),
+                            Err(err) => FdWait::wake(wait, Some(err)),
                         }
                     } else {
                         if core::mem::take(&mut fd.registered) {
@@ -317,7 +322,6 @@ struct Changes;
 #[cfg(any(target_os = "linux", target_os = "android"))]
 impl Watcher {
     fn create_poller(waker: &Waker) -> sys::Result<sys::File> {
-        use sys::linux::{self, EPOLL};
         let raw = crate::safe_c::epoll_create1(libc::EPOLL_CLOEXEC);
         if raw < 0 {
             return Err(sys::Error::from_code(
@@ -326,23 +330,34 @@ impl Watcher {
             ));
         }
         let poller = sys::File::from_fd(Fd::from_native(raw));
-        let event = linux::epoll_event {
-            events: EPOLL::IN | EPOLL::ET | EPOLL::ERR | EPOLL::HUP,
-            u64: 0,
-        };
-        // SAFETY: `Changes::wait` skips an event without data.
-        let rc =
-            unsafe { linux::epoll_ctl(raw, EPOLL::CTL_ADD, waker.get_fd().native(), Some(&event)) };
-        match sys::get_errno(rc) {
-            E::SUCCESS => Ok(poller),
-            err => Err(sys::Error::from_code(err, sys::Tag::epoll_ctl)),
-        }
+        let events = EPOLL::IN | EPOLL::ET | EPOLL::ERR | EPOLL::HUP;
+        let no_job = core::ptr::null_mut();
+        epoll_ctl(&poller, EPOLL::CTL_ADD, waker.get_fd(), events, no_job)?;
+        Ok(poller)
     }
 
     fn remove(&self, fd: Fd) {
-        use sys::linux::{self, EPOLL};
-        // SAFETY: registers nothing.
-        unsafe { linux::epoll_ctl(self.poller.fd().native(), EPOLL::CTL_DEL, fd.native(), None) };
+        let _ = epoll_ctl(&self.poller, EPOLL::CTL_DEL, fd, 0, core::ptr::null_mut());
+    }
+}
+
+#[cfg(any(target_os = "linux", target_os = "android"))]
+fn epoll_ctl(
+    poller: &sys::File,
+    op: c_int,
+    fd: Fd,
+    events: u32,
+    wait: *mut FdWait,
+) -> sys::Result<()> {
+    let mut event = libc::epoll_event {
+        events,
+        u64: wait as u64,
+    };
+    // SAFETY: the kernel copies `event` and does not follow `wait`.
+    let rc = unsafe { libc::epoll_ctl(poller.fd().native(), op, fd.native(), &raw mut event) };
+    match sys::get_errno(rc) {
+        E::SUCCESS => Ok(()),
+        err => Err(sys::Error::from_code(err, sys::Tag::epoll_ctl)),
     }
 }
 
@@ -360,27 +375,18 @@ impl Changes {
         interest: Interest,
         wait: *mut FdWait,
     ) -> sys::Result<()> {
-        use sys::linux::{self, EPOLL};
         log!("register({})", fd.fd);
         let interest = match interest {
             Interest::Readable => EPOLL::IN,
             Interest::Writable => EPOLL::OUT,
         };
-        let event = linux::epoll_event {
-            events: interest | EPOLL::HUP | EPOLL::ERR | EPOLL::ONESHOT,
-            u64: wait as u64,
-        };
+        let events = interest | EPOLL::HUP | EPOLL::ERR | EPOLL::ONESHOT;
         let op = if fd.registered {
             EPOLL::CTL_MOD
         } else {
             EPOLL::CTL_ADD
         };
-        let (poller, fd) = (watcher.poller.fd().native(), fd.fd.native());
-        // SAFETY: fn contract.
-        match sys::get_errno(unsafe { linux::epoll_ctl(poller, op, fd, Some(&event)) }) {
-            E::SUCCESS => Ok(()),
-            err => Err(sys::Error::from_code(err, sys::Tag::epoll_ctl)),
-        }
+        epoll_ctl(&watcher.poller, op, fd.fd, events, wait)
     }
 
     fn remove(&mut self, watcher: &Watcher, fd: Fd, _: Interest) {
@@ -406,10 +412,13 @@ impl Changes {
 
         // The waker is edge-triggered: no need to read its counter.
         for event in events[..rc as usize].iter().filter(|it| it.u64 != 0) {
-            let failed = event.events & sys::linux::EPOLL::ERR != 0;
-            let error = |fd, interest| failed.then(|| pending_error(fd, interest));
-            // SAFETY: one-shot, and a job that left had its entry removed: `park` requires `fd` to stay open.
-            unsafe { FdWait::wake(event.u64 as *mut FdWait, error) };
+            let wait = event.u64 as *mut FdWait;
+            // SAFETY: one-shot, and `park` requires what it takes to remove the entry of a job that left.
+            unsafe {
+                let failed = (event.events & EPOLL::ERR != 0)
+                    .then(|| pending_error((*wait).parked.fd, (*wait).interest));
+                FdWait::wake(wait, failed);
+            }
         }
     }
 }
@@ -546,8 +555,8 @@ impl Changes {
             // A change that failed: xnu adds EV_ERROR to its flags, FreeBSD replaces them.
             let failed = (event.flags & libc::EV_ERROR != 0)
                 .then(|| sys::Error::from_code_int(event.data as c_int, sys::Tag::kevent));
-            // SAFETY: one-shot, and a job that left had its entry removed: `park` requires `fd` to stay open.
-            unsafe { FdWait::wake(wait, |_, _| failed) };
+            // SAFETY: one-shot, and EV_DELETE or close() removed the entry of a job that left.
+            unsafe { FdWait::wake(wait, failed) };
         }
     }
 }

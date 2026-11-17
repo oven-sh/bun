@@ -1,6 +1,6 @@
 import { dlopen, ptr } from "bun:ffi";
 import { describe, expect, test } from "bun:test";
-import { closeSync, openSync, writeSync } from "fs";
+import { closeSync, openSync, readSync, writeSync } from "fs";
 import { bunEnv, bunExe, isLinux, isWindows, libcPathForDlopen, tempDir } from "harness";
 import { constants } from "os";
 import { join } from "path";
@@ -61,34 +61,47 @@ test.skipIf(isWindows)("an empty slice of a pipe that nobody writes to resolves"
 });
 
 describe.skipIf(!isLinux)("EPOLLERR while Bun.file(fd).text() waits for a socket", () => {
-  const read = (fd: number) =>
-    Bun.file(fd)
-      .text()
-      .catch(({ syscall }) => ({ syscall }));
-
-  // read() has nothing to report here, and epoll never stops reporting it.
-  test("rejects when it stands for a message in the error queue", async () => {
-    const { socket, setsockopt, connect } = dlopen(libcPathForDlopen(), {
+  const [AF_INET, SOCK_STREAM, SOCK_DGRAM, SOL_SOCKET, SO_TIMESTAMPING] = [2, 1, 2, 1, 37];
+  const libc = () =>
+    dlopen(libcPathForDlopen(), {
       socket: { args: ["i32", "i32", "i32"], returns: "i32" },
       setsockopt: { args: ["i32", "i32", "i32", "ptr", "u32"], returns: "i32" },
       connect: { args: ["i32", "ptr", "u32"], returns: "i32" },
     }).symbols;
-    const [AF_INET, SOCK_DGRAM, SOCK_NONBLOCK, SOL_SOCKET, SO_TIMESTAMPING] = [2, 2, 0o4000, 1, 37];
-    const timestampWhatIsSent = new Int32Array([(1 << 1) | (1 << 4)]);
+
+  /** A socket that the event loop does not know. */
+  function connectTo(port: number, type: number) {
+    const fd = libc().socket(AF_INET, type, 0);
+    const address = new Uint8Array([AF_INET, 0, port >> 8, port & 255, 127, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0]);
+    expect(libc().connect(fd, ptr(address), address.length)).toBe(0);
+    return { fd, [Symbol.dispose]: () => closeSync(fd) };
+  }
+
+  // read() has nothing to report here, and epoll never stops reporting it.
+  test("rejects when it stands for a message in the error queue", async () => {
     const peer = await Bun.udpSocket({ hostname: "127.0.0.1", port: 0 });
-    const address = new Uint8Array([AF_INET, 0, peer.port >> 8, peer.port & 255, 127, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0]);
-    const fd = socket(AF_INET, SOCK_DGRAM | SOCK_NONBLOCK, 0);
     try {
-      expect(setsockopt(fd, SOL_SOCKET, SO_TIMESTAMPING, ptr(timestampWhatIsSent), 4)).toBe(0);
-      expect(connect(fd, ptr(address), address.length)).toBe(0);
-      const result = read(fd);
-      await untilWatched(fd);
-      writeSync(fd, "x");
-      expect(await result).toEqual({ syscall: "epoll_ctl" });
+      using socket = connectTo(peer.port, SOCK_DGRAM);
+      const timestampWhatIsSent = new Int32Array([(1 << 1) | (1 << 4)]);
+      expect(libc().setsockopt(socket.fd, SOL_SOCKET, SO_TIMESTAMPING, ptr(timestampWhatIsSent), 4)).toBe(0);
+      const text = Bun.file(socket.fd).text();
+      await untilWatched(socket.fd);
+      writeSync(socket.fd, "x");
+      await expect(text).rejects.toMatchObject({ syscall: "epoll_ctl" });
     } finally {
-      closeSync(fd);
       peer.close();
     }
+  });
+
+  test("leaves the pending error on the socket", async () => {
+    const accepted = Promise.withResolvers<Bun.Socket>();
+    using server = Bun.listen({ hostname: "127.0.0.1", port: 0, socket: { open: accepted.resolve, data() {} } });
+    using socket = connectTo(server.port, SOCK_STREAM);
+    const text = Bun.file(socket.fd).text();
+    await untilWatched(socket.fd);
+    (await accepted.promise).terminate();
+    await expect(text).rejects.toMatchObject({ syscall: "epoll_ctl" });
+    expect(() => readSync(socket.fd, Buffer.alloc(1))).toThrow(expect.objectContaining({ code: "ECONNRESET" }));
   });
 });
 

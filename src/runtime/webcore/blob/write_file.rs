@@ -102,7 +102,7 @@ impl FdOp for WriteFile {
                 Ok(wrote) => self.written += wrote,
                 Err(err) if err.get_errno() != sys::E::EAGAIN => return Err(err.into()),
                 Err(_) if self.could_block => return Ok(Step::Wait),
-                // epoll refuses a regular file.
+                // Spins: https://github.com/oven-sh/bun/pull/35953
                 Err(_) => {}
             }
         }

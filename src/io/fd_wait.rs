@@ -96,19 +96,19 @@ impl Owner {
     fn pass(&self, from: State, to: State) -> bool {
         let seen =
             self.0
-                .compare_exchange(from as u8, to as u8, Ordering::AcqRel, Ordering::Acquire);
+                .compare_exchange(from as u8, to as u8, Ordering::SeqCst, Ordering::SeqCst);
         debug_assert!(seen.is_ok() || seen == Err(State::Cancelled as u8));
         seen.is_ok()
     }
 
     /// `true`: it was armed, so nothing else will make the IO thread look at the job.
     fn cancel(&self) -> bool {
-        self.0.swap(State::Cancelled as u8, Ordering::AcqRel) == State::Armed as u8
+        self.0.swap(State::Cancelled as u8, Ordering::SeqCst) == State::Armed as u8
     }
 
     #[inline]
     fn is_cancelled(&self) -> bool {
-        self.0.load(Ordering::Relaxed) == State::Cancelled as u8
+        self.0.load(Ordering::SeqCst) == State::Cancelled as u8
     }
 }
 
@@ -154,7 +154,7 @@ impl FdWait {
         }
     }
 
-    /// SAFETY: the caller has the job. After `Ok` nothing uses or moves it until `resume`.
+    /// SAFETY: the caller has the job. After `Ok` nothing uses or moves it, or closes `fd`, until `resume`.
     pub unsafe fn park(this: *mut Self, fd: JobFd) -> sys::Result<()> {
         let watcher = Watcher::start()?;
         // SAFETY: fn contract. The IO thread gets the job from the queue, `cancel` keeps to `owner` until it is armed.
@@ -285,7 +285,7 @@ impl Watcher {
             let mut changes = Changes::new();
             let mut pending = self.pending.pop_batch().iterator();
             while let Some(wait) = NonNull::new(pending.next()).map(NonNull::as_ptr) {
-                // SAFETY: only this thread gives a parked job to the pool, once the kernel has reported it or is told to forget it.
+                // SAFETY: only this thread gives a parked job to the pool. `remove` works because `park` requires an open descriptor.
                 unsafe {
                     let interest = (*wait).interest;
                     let fd = (*wait).parked.as_mut().expect("parked");
@@ -408,24 +408,17 @@ impl Changes {
         for event in events[..rc as usize].iter().filter(|it| it.u64 != 0) {
             let failed = event.events & sys::linux::EPOLL::ERR != 0;
             let error = |fd, interest| failed.then(|| pending_error(fd, interest));
-            // SAFETY: `add` registered it, and reports it once.
+            // SAFETY: one-shot, and a job that left had its entry removed: `park` requires `fd` to stay open.
             unsafe { FdWait::wake(event.u64 as *mut FdWait, error) };
         }
     }
 }
 
-/// EPOLLERR carries no errno.
+/// EPOLLERR carries no errno, and reading SO_ERROR would clear it on the caller's socket.
 #[cfg(any(target_os = "linux", target_os = "android"))]
 #[cold]
 fn pending_error(fd: Fd, interest: Interest) -> sys::Error {
-    let mut errno: c_int = 0;
-    let mut len = size_of::<c_int>() as libc::socklen_t;
-    let (value, len) = ((&raw mut errno).cast(), &raw mut len);
-    // SAFETY: `value` is writable for `len` bytes.
-    unsafe { libc::getsockopt(fd.native(), libc::SOL_SOCKET, libc::SO_ERROR, value, len) };
-    if errno != 0 {
-        sys::Error::from_code_int(errno, interest.syscall())
-    } else if matches!(interest, Interest::Writable)
+    if matches!(interest, Interest::Writable)
         && sys::fstat(fd).is_ok_and(|stat| sys::S::ISFIFO(stat.st_mode as _))
     {
         sys::Error::from_code(E::EPIPE, sys::Tag::write)
@@ -553,7 +546,7 @@ impl Changes {
             // A change that failed: xnu adds EV_ERROR to its flags, FreeBSD replaces them.
             let failed = (event.flags & libc::EV_ERROR != 0)
                 .then(|| sys::Error::from_code_int(event.data as c_int, sys::Tag::kevent));
-            // SAFETY: `add` registered it, and reports it once.
+            // SAFETY: one-shot, and a job that left had its entry removed: `park` requires `fd` to stay open.
             unsafe { FdWait::wake(wait, |_, _| failed) };
         }
     }

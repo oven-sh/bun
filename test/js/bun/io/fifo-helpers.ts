@@ -40,7 +40,8 @@ export function drain(reader: number) {
 /** Linux: resolves when this process has asked epoll to tell it when `fd` is readable or writable. */
 export async function untilWatched(fd: number) {
   const inode = fs.fstatSync(fd).ino;
-  for (;;) {
+  const deadline = Date.now() + 30_000;
+  while (Date.now() < deadline) {
     for (const name of fs.readdirSync("/proc/self/fdinfo")) {
       let info = "";
       try {
@@ -53,4 +54,5 @@ export async function untilWatched(fd: number) {
     }
     await Bun.sleep(1);
   }
+  throw new Error(`nothing waits for fd ${fd}`);
 }

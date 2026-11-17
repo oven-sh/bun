@@ -98,7 +98,7 @@ impl<Op: FdOp> FdJob<Op> {
                 Step::Done => return Ok(false),
                 Step::Again => self.wait.check_cancelled()?,
                 Step::Wait => {
-                    // SAFETY: this thread has the boxed job, and every frame returns without touching it.
+                    // SAFETY: this thread has the boxed job, and every frame returns without touching it. A borrowed `fd` is the script's to keep open.
                     unsafe { FdWait::park(&raw mut self.wait, fd)? };
                     return Ok(true);
                 }

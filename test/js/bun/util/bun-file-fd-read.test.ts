@@ -64,17 +64,7 @@ describe.skipIf(!isLinux)("EPOLLERR while Bun.file(fd).text() waits for a socket
   const read = (fd: number) =>
     Bun.file(fd)
       .text()
-      .catch(({ errno, syscall }) => ({ errno, syscall }));
-
-  test("rejects with the error of the socket", async () => {
-    await using peer = Bun.spawn({ cmd: ["sleep", "60"], env: bunEnv, stdio: ["ignore", "ignore", "inherit", "pipe"] });
-    const socket = peer.stdio[3] as number;
-    writeSync(socket, "unread");
-    const result = read(socket);
-    await untilWatched(socket);
-    peer.kill();
-    expect(await result).toEqual({ errno: -constants.errno.ECONNRESET, syscall: "read" });
-  });
+      .catch(({ syscall }) => ({ syscall }));
 
   // read() has nothing to report here, and epoll never stops reporting it.
   test("rejects when it stands for a message in the error queue", async () => {
@@ -94,7 +84,7 @@ describe.skipIf(!isLinux)("EPOLLERR while Bun.file(fd).text() waits for a socket
       const result = read(fd);
       await untilWatched(fd);
       writeSync(fd, "x");
-      expect(await result).toEqual({ errno: 0, syscall: "epoll_ctl" });
+      expect(await result).toEqual({ syscall: "epoll_ctl" });
     } finally {
       closeSync(fd);
       peer.close();

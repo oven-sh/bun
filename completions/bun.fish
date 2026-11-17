@@ -180,7 +180,7 @@ complete -c bun \
 	-n "__fish_seen_subcommand_from add" -d 'History' -a '(__history_completions)'
 
 complete -c bun \
-	-n "__fish_seen_subcommand_from pm; and not __fish_seen_subcommand_from (__fish__get_bun_bins) (__fish__get_bun_scripts) cache;" -a 'bin ls licenses cache hash hash-print hash-string' -f
+	-n "__fish_seen_subcommand_from pm; and not __fish_seen_subcommand_from (__fish__get_bun_bins) (__fish__get_bun_scripts) cache;" -a 'bin ls licenses sbom cache hash hash-print hash-string' -f
 
 complete -c bun \
 	-n "__fish_seen_subcommand_from pm; and __fish_seen_subcommand_from cache; and not __fish_seen_subcommand_from (__fish__get_bun_bins) (__fish__get_bun_scripts);" -a 'rm prune pack unpack' -f
@@ -202,6 +202,15 @@ complete -c bun \
 
 complete -c bun \
 	-n "__fish_seen_subcommand_from pm; and __fish_seen_subcommand_from licenses" -l 'filter' -s 'F' -d 'List only the matching workspaces' -r
+
+complete -c bun \
+	-n "__fish_seen_subcommand_from pm; and __fish_seen_subcommand_from sbom" -l 'sbom-format' -r -a 'cyclonedx spdx' -d 'Format of the document (required)' -f
+
+complete -c bun \
+	-n "__fish_seen_subcommand_from pm; and __fish_seen_subcommand_from sbom" -l 'prod' -d 'Omit devDependencies' -f
+
+complete -c bun \
+	-n "__fish_seen_subcommand_from pm; and __fish_seen_subcommand_from sbom" -l 'production' -d 'Omit devDependencies' -f
 
 # Add built-in subcommands with descriptions.
 complete -c bun -n "__fish_use_subcommand" -a "create" -f -d "Create a new project from a template"

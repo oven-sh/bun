@@ -1,4 +1,4 @@
-//! Port of highway_json.cpp: stage 1 in the manner of simdjson.
+//! Stage 1 in the manner of simdjson.
 use crate::ByteSet;
 use bun_simd::{Out, blocks};
 use class::{STRUCTURAL, WHITESPACE};
@@ -18,7 +18,9 @@ pub mod class {
     pub const STRUCTURAL: u8 = 0x07;
     pub const WHITESPACE: u8 = 0x18;
 }
+/// `/` and `'`
 const ODDITY: u8 = 0x20;
+/// Below 0x20
 const CONTROL: u8 = 0x40;
 /// The scalar indexer has to take over: there is an oddity, or no more room.
 const GIVES_UP: u32 = 1 << 3;

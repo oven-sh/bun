@@ -409,13 +409,6 @@ export interface CargoBuild {
    * unit-separator (\x1f) encoding so multi-word flags work.
    */
   rustflags?: string[];
-  /**
-   * Tier 3 targets (e.g. aarch64-unknown-freebsd) have no prebuilt std, so
-   * `rustup target add` (dep_cargo_cross rule) won't help. When true, passes
-   * `-Zbuild-std=std,panic_abort` so cargo builds std from source. Requires
-   * nightly cargo + `rustup component add rust-src`.
-   */
-  buildStd?: boolean;
 }
 
 /**
@@ -463,7 +456,6 @@ export type DepName =
   | "highway"
   | "libdeflate"
   | "libuv"
-  | "libwebp"
   | "lolhtml"
   | "lshpack"
   | "lsqpack"
@@ -636,8 +628,7 @@ export function registerDepRules(n: Ninja, cfg: Config): void {
     // "the dir exists" — also repairs a partially auto-installed pinned
     // toolchain (no distributable manifest, which would otherwise error with
     // `Missing manifest in toolchain '<channel>-<host>'` before cargo even
-    // ran). ~70ms no-op when complete. Same pattern as `rust_build_cross` in
-    // rust.ts — see the longer comment there.
+    // ran). ~70ms no-op when complete.
     const rustup = q(join(dirname(cfg.cargo), `rustup${cfg.host.exeSuffix}`));
     const cargoCrossEnsure =
       cfg.rustToolchain !== undefined
@@ -645,7 +636,7 @@ export function registerDepRules(n: Ninja, cfg: Config): void {
         : `${stream} $env ${rustup} -q target add $rust_target`;
     // Windows: ninja runs commands via CreateProcess (no shell) — wrap in
     // `cmd /c "..."` so `&&` is interpreted as a chain operator instead of
-    // being passed as a literal arg. See rust.ts `rust_build_cross`.
+    // being passed as a literal arg.
     const cargoCrossChain = `${cargoCrossEnsure} && ${stream} --cwd=$manifestdir $env ${q(cfg.cargo)} build $args`;
     n.rule("dep_cargo_cross", {
       command: hostWin ? `cmd /c "${cargoCrossChain}"` : cargoCrossChain,
@@ -1115,7 +1106,6 @@ function emitCargo(n: Ninja, cfg: Config, name: DepName, spec: CargoBuild, input
   const args: string[] = ["--locked", "--target-dir", targetDir];
   if (cfg.release) args.push("--release");
   if (spec.rustTarget) args.push("--target", spec.rustTarget);
-  if (spec.buildStd) args.push("-Zbuild-std=std,panic_abort");
 
   // ─── Environment ───
   // CARGO_ENCODED_RUSTFLAGS: the separator is U+001F (unit separator), not
@@ -1177,10 +1167,8 @@ function emitCargo(n: Ninja, cfg: Config, name: DepName, spec: CargoBuild, input
   }
 
   // ─── Emit build node ───
-  // dep_cargo_cross prepends `rustup target add` for Tier 2 cross targets.
-  // Tier 3 targets (buildStd=true) have no prebuilt std, so target-add would
-  // fail — they use plain dep_cargo with -Zbuild-std instead.
-  const cross = cfg.crossTarget !== undefined && spec.rustTarget !== undefined && !spec.buildStd;
+  // dep_cargo_cross prepends `rustup target add` for cross targets.
+  const cross = cfg.crossTarget !== undefined && spec.rustTarget !== undefined;
   const node = {
     outputs: [lib],
     inputs: [],

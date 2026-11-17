@@ -473,8 +473,6 @@ pub mod comptime_string_map_jsc;
 pub(crate) mod declared_results_testing;
 #[path = "EventLoopHandle.rs"]
 pub mod event_loop_handle;
-#[path = "FFI.rs"]
-pub mod ffi;
 #[path = "JSCScheduler.rs"]
 pub mod jsc_scheduler;
 #[path = "ProcessAutoKiller.rs"]
@@ -946,11 +944,18 @@ impl<'a, T> WrapperGuard<'a, T> {
     /// `native` is null, or points to the struct that `wrapper` holds or to a part of it, valid and only shared until `wrapper` is collected.
     #[doc(hidden)]
     pub unsafe fn new(wrapper: &'a JSValue, native: *mut T) -> Option<Self> {
-        Some(Self {
-            native: core::ptr::NonNull::new(native)?,
-            wrapper: EnsureStillAlive(*wrapper),
+        // SAFETY: forwarded.
+        Some(unsafe { Self::from_parts(*wrapper, core::ptr::NonNull::new(native)?) })
+    }
+
+    /// SAFETY: as [`new`](Self::new).
+    #[doc(hidden)]
+    pub unsafe fn from_parts(wrapper: JSValue, native: core::ptr::NonNull<T>) -> Self {
+        Self {
+            native,
+            wrapper: EnsureStillAlive(wrapper),
             _value: core::marker::PhantomData,
-        })
+        }
     }
 
     /// As [`core::cell::Ref::map`].
@@ -1215,7 +1220,6 @@ pub type ErrorableString = Errorable<bun_core::String>;
 
 #[path = "hot_reloader.rs"]
 pub mod hot_reloader;
-pub use self::hot_reloader::{HotReloader, ImportWatcher, NewHotReloader, WatchReloader};
 
 #[path = "RuntimeTranspilerCache.rs"]
 pub mod runtime_transpiler_cache;
@@ -1243,9 +1247,9 @@ pub mod event_loop;
 pub use self::event_loop as EventLoop;
 pub mod job;
 pub use self::event_loop::{
-    AnyEventLoop, AnyTaskWithExtraContext, ConcurrentCppTask, ConcurrentTask, CppTask,
-    DeferredTaskQueue, EventLoopHandle, EventLoopTask, GarbageCollectionController, MiniEventLoop,
-    PosixSignalTask, Stopped, Task, WorkPool, WorkPoolTask,
+    AnyTaskWithExtraContext, ConcurrentCppTask, ConcurrentTask, CppTask, DeferredTaskQueue,
+    EventLoopHandle, EventLoopTask, GarbageCollectionController, MiniEventLoop, PosixSignalTask,
+    Stopped, Task, WorkPool, WorkPoolTask,
 };
 pub use self::job::{Completion, Job, JobContext, JsPtr, JsThread};
 #[cfg(unix)]

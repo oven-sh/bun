@@ -19,7 +19,7 @@ import type { DepName } from "./source.ts";
 import { loadFeatures } from "./trim/features.ts";
 import { ucrtServicingLibDir } from "./winsysroot.ts";
 
-export const safeStackDependencies: readonly DepName[] = ["libdeflate", "libwebp", "lshpack", "zlib", "zstd"];
+export const safeStackDependencies: readonly DepName[] = ["libdeflate", "lshpack", "zlib", "zstd"];
 
 export function usesSafeStack(c: Pick<Config, "hardened" | "x64" | "abi" | "asan">): boolean {
   return c.hardened && c.x64 && c.abi === "gnu" && !c.asan;
@@ -1985,6 +1985,12 @@ export const fileOverrides: FileOverride[] = [
     desc: "Defines the C functions that trimming cuts to remove TLS",
   },
   {
+    file: "packages/bun-usockets/src/quic.cpp",
+    extraFlags: keepTrimmedFunctions,
+    when: c => c.trimmable && c.lto,
+    desc: "Defines the C functions that trimming cuts to remove HTTP/3",
+  },
+  {
     file: "src/jsc/bindings/windows/rescle.cpp",
     extraFlags: "/EHsc",
     when: c => c.windows,
@@ -2013,6 +2019,18 @@ export const fileOverrides: FileOverride[] = [
     extraFlags: ["-O2"],
     when: c => c.debug,
     desc: "Same as highway_json.cpp below: the kernels run over every byte of a PNG image.",
+  },
+  {
+    file: "src/jsc/bindings/highway_webp_decoder.cpp",
+    extraFlags: ["-O2"],
+    when: c => c.debug,
+    desc: "Same as highway_json.cpp below: the kernels run over every pixel of a WebP image.",
+  },
+  {
+    file: "src/jsc/bindings/highway_webp_encoder.cpp",
+    extraFlags: ["-O2"],
+    when: c => c.debug,
+    desc: "Same as highway_json.cpp below: the kernels run over every pixel of a WebP image.",
   },
   {
     file: "src/jsc/bindings/highway_xml.cpp",

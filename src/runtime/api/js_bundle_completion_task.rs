@@ -13,7 +13,7 @@ use bun_bundler::output_file::Value as OutputFileValue;
 use bun_bundler::transpiler::Transpiler;
 use bun_core::env::OperatingSystem;
 use bun_event_loop::BoxedTask;
-use bun_io::KeepAlive;
+use bun_io::JsKeepAlive;
 use bun_jsc::ConcurrentTask::ConcurrentTask;
 use bun_jsc::WorkPool;
 use bun_jsc::bun_string_jsc;
@@ -67,7 +67,7 @@ pub(crate) struct JSBundleCompletionTask {
 struct BundleJs {
     global_this: BackRef<JSGlobalObject>,
     owner: BuildOwner,
-    poll_ref: KeepAlive,
+    _keep_alive: JsKeepAlive,
     /// Set when the realm stops: `finish` does not deliver.
     cancelled: Cell<bool>,
     /// Armed from `schedule` until `finish`: the realm gives up on the result when it stops.
@@ -151,8 +151,6 @@ impl JSBundleCompletionTask {
         owner: BuildOwner,
     ) {
         let vm = global_this.bun_vm();
-        let poll_ref = KeepAlive::init();
-        poll_ref.ref_(vm.loop_ctx());
         let plugins = match &owner {
             BuildOwner::Promise { plugins, .. } => plugins.as_ref().map(OwnedPlugin::as_non_null),
             BuildOwner::Route { plugins, .. } => *plugins,
@@ -163,7 +161,7 @@ impl JSBundleCompletionTask {
         let js = bun_core::heap::alloc_nn(BundleJs {
             global_this: BackRef::new(global_this),
             owner,
-            poll_ref,
+            _keep_alive: JsKeepAlive::active(),
             cancelled: Cell::new(false),
             abort_handle: jsc::AbortHandle::for_owner::<BundleJs>(),
             caller: CallerOfTheBuild {
@@ -678,7 +676,6 @@ impl JSBundleCompletionTask {
         js.abort_handle.leave();
         js.caller.handle.leave();
         let global_this = js.global_this;
-        js.poll_ref.unref(global_this.bun_vm().loop_ctx());
 
         let deliver = delivery == Delivery::Deliver && !js.cancelled.get();
         match &mut js.owner {
@@ -1244,7 +1241,7 @@ impl JSBundleCompletionTask {
             return compile_ahead_of_time::finish_compilation(config, compiled, log);
         }
 
-        let mut bv2 = BundleV2::init(transpiler, None, heap, event_loop, false, worker_pool, heap);
+        let mut bv2 = BundleV2::init(transpiler, None, heap, event_loop, worker_pool, heap);
         bv2.plugins = plugins;
         bv2.plugin_context = self.context;
         bv2.completion = Some(completion);

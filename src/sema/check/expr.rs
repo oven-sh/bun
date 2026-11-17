@@ -5452,7 +5452,14 @@ impl<'p, 's> Checker<'p, 's> {
         let ExprKind::Object(props) = hir[e].kind else {
             return Shape::new_in(self.arena);
         };
-        let context = self.object_literal_context_in(file, e, in_const_context);
+        let context = match props.is_empty() {
+            true => ObjectLiteralContext {
+                in_destructuring_pattern: false,
+                implied: None,
+                in_const_context,
+            },
+            false => self.object_literal_context_in(file, e, in_const_context),
+        };
         let mut shape = Shape::new_in(self.arena);
         shape.props.reserve_exact(props.len());
         // The names in `shape.props`, tracked only for a literal with many members.

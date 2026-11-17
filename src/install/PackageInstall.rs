@@ -885,24 +885,21 @@ impl HardLinkWindowsInstallTask {
     }
 
     fn link(&mut self) -> Option<crate::Error> {
-        use bun_sys::windows;
+        use bun_core::WStr;
+        use bun_sys::windows::{self, Win32ErrorExt as _};
         // Read scalar fields before borrowing `bytes` so no `&mut self` reborrow
         // overlaps the slice borrows below.
         let src_len = self.src_len;
         let basename = usize::from(self.basename);
         // Disjoint borrows into the single backing buffer: `src` is read-only,
         // `dest` is mutated in place (temporary NUL for the dirpath).
-        let (src, dest) = self.bytes.split_at_mut(src_len + 1);
-        let src: &[u16] = &src[..src_len];
-        let dest_len = dest.len() - 1;
-        debug_assert_eq!(dest[dest_len], 0);
+        let (src, dest_buf) = self.bytes.split_at_mut(src_len + 1);
+        let src = WStr::from_slice_with_nul(src);
+        let dest = WStr::from_slice_with_nul(dest_buf);
 
-        // `windows::CreateHardLinkW` is the safe wrapper (logs + Option<&mut SA>).
-        if windows::CreateHardLinkW(dest.as_ptr(), src.as_ptr(), None) != 0 {
-            return None;
-        }
+        let err = windows::CreateHardLinkW(dest, src).err()?;
 
-        match windows::Win32Error::get() {
+        match err {
             windows::Win32Error::ALREADY_EXISTS
             | windows::Win32Error::FILE_EXISTS
             | windows::Win32Error::CANNOT_MAKE => {
@@ -911,25 +908,25 @@ impl HardLinkWindowsInstallTask {
                     bun_output::scoped_log!(
                         install,
                         "CreateHardLinkW returned EEXIST, this shouldn't happen: {}",
-                        bun_core::fmt::fmt_path_u16(&dest[..dest_len], Default::default())
+                        bun_core::fmt::fmt_path_u16(dest, Default::default())
                     );
                 }
-                // SAFETY: FFI — dest is a valid NUL-terminated u16 buffer.
-                unsafe { windows::DeleteFileW(dest.as_ptr()) };
-                if windows::CreateHardLinkW(dest.as_ptr(), src.as_ptr(), None) != 0 {
+                let _ = sys::unlink_w(dest);
+                if windows::CreateHardLinkW(dest, src).is_ok() {
                     return None;
                 }
             }
             _ => {}
         }
 
-        let dirpath_len = dest_len - basename - 1;
-        dest[dirpath_len] = 0;
-        let dirpath = bun_core::WStr::from_buf(dest, dirpath_len);
+        let dirpath_len = dest.len() - basename - 1;
+        dest_buf[dirpath_len] = 0;
+        let dirpath = WStr::from_buf(dest_buf, dirpath_len);
         let _ = mkdir_recursive_os_path(dirpath);
-        dest[dirpath_len] = bun_paths::SEP_WINDOWS as u16;
+        dest_buf[dirpath_len] = bun_paths::SEP_WINDOWS as u16;
 
-        if windows::CreateHardLinkW(dest.as_ptr(), src.as_ptr(), None) != 0 {
+        let dest = WStr::from_slice_with_nul(dest_buf);
+        if windows::CreateHardLinkW(dest, src).is_ok() {
             return None;
         }
 
@@ -938,17 +935,13 @@ impl HardLinkWindowsInstallTask {
                 bun_core::warn!(
                     "CreateHardLinkW failed, falling back to CopyFileW: {} -> {}\n",
                     bun_core::fmt::fmt_os_path(src, Default::default()),
-                    bun_core::fmt::fmt_os_path(&dest[..dest_len], Default::default()),
+                    bun_core::fmt::fmt_os_path(dest, Default::default()),
                 );
             }}
         }
 
-        // SAFETY: FFI — src/dest are valid NUL-terminated u16 buffers.
-        if unsafe { windows::CopyFileW(src.as_ptr(), dest.as_ptr(), 0) } != 0 {
-            return None;
-        }
-
-        Some(windows::last_system_errno().into())
+        let err = windows::CopyFileW(src, dest, false).err()?;
+        Some(err.to_system_errno().into())
     }
 }
 
@@ -1385,7 +1378,6 @@ impl PackageFiles<'_> {
         walker_.resolve_unknown_entry_types = true;
 
         fn copy(destination_dir_: &Dir, walker: &mut Walker) -> crate::Result<()> {
-            let mut stackpath = [0u8; path::MAX_PATH_BYTES];
             while let Some(entry) = walker.next()? {
                 match entry.kind {
                     EntryKind::Directory => {
@@ -1396,26 +1388,21 @@ impl PackageFiles<'_> {
                         }
                     }
                     EntryKind::File => {
-                        let path_len = entry.path.len();
-                        let base_len = entry.basename.len();
-                        if path_len >= stackpath.len() {
+                        if entry.path.len() >= path::MAX_PATH_BYTES {
                             return Err(crate::Error::Sys(bun_errno::SystemErrno::ENAMETOOLONG));
                         }
-                        stackpath[..path_len].copy_from_slice(entry.path.as_bytes());
-                        stackpath[path_len] = 0;
-                        // `stackpath[path_len] == 0` written above; both views are
-                        // shared-only (used for `.as_ptr()` into FFI), so the
-                        // overlapping borrows of `stackpath` are sound — replaces
-                        // two raw `from_raw_mut` reconstructions over the same
-                        // buffer (which were UB-adjacent as aliased `&mut`s).
-                        let path_ = ZStr::from_buf(&stackpath, path_len);
-                        let basename = ZStr::from_buf(&stackpath[path_len - base_len..], base_len);
-                        let clone =
-                            || sys::clonefileat(entry.dir, basename, destination_dir_.fd(), path_);
+                        let clone = || {
+                            sys::clonefileat(
+                                entry.dir,
+                                entry.basename,
+                                destination_dir_.fd(),
+                                entry.path,
+                            )
+                        };
                         // The existing file may belong to a different version.
                         let cloned = match clone() {
                             Err(e) if e.get_errno() == sys::Errno::EEXIST => {
-                                let _ = sys::unlinkat(destination_dir_, path_);
+                                let _ = sys::unlinkat(destination_dir_, entry.path);
                                 clone()
                             }
                             result => result,
@@ -1543,31 +1530,15 @@ impl PackageFiles<'_> {
 
         #[cfg(windows)]
         {
-            use bun_sys::windows;
+            use bun_sys::windows::{self, Win32ErrorExt as _};
 
             let mut buf = bun_paths::w_path_buffer_pool::get();
             let mut buf2 = bun_paths::w_path_buffer_pool::get();
 
-            // SAFETY: FFI — destbase.fd() is an open handle; buf is a valid writable
-            // WPathBuffer of the passed length.
-            let dest_path_length = unsafe {
-                windows::GetFinalPathNameByHandleW(
-                    destbase.fd().native(),
-                    buf.as_mut_ptr(),
-                    u32::try_from(buf.len()).expect("int cast"),
-                    0,
-                )
-            } as usize;
-            if dest_path_length == 0 || dest_path_length >= buf.len() {
-                let err = crate::Error::Sys(if dest_path_length == 0 {
-                    windows::last_system_errno()
-                } else {
-                    bun_errno::SystemErrno::ENAMETOOLONG
-                });
-                return Err(Failure::boxed(err, Step::OpeningDestDir));
-            }
-
-            let mut i: usize = dest_path_length;
+            let mut i = windows::GetFinalPathNameByHandleW(destbase.fd().native(), &mut buf[..], 0)
+                .map_err(|err| {
+                    Failure::boxed(err.to_system_errno().into(), Step::OpeningDestDir)
+                })?;
             if buf[i] != u16::from(b'\\') {
                 buf[i] = u16::from(b'\\');
                 i += 1;
@@ -1592,24 +1563,11 @@ impl PackageFiles<'_> {
             }
             let to_copy_buf_off = fullpath.len();
 
-            // SAFETY: FFI — the walker's root is the open cache directory; buf2 is a
-            // valid writable WPathBuffer of the passed length.
-            let cache_path_length = unsafe {
-                windows::GetFinalPathNameByHandleW(
-                    walker.root().native(),
-                    buf2.as_mut_ptr(),
-                    u32::try_from(buf2.len()).expect("int cast"),
-                    0,
-                )
-            } as usize;
-            if cache_path_length == 0 || cache_path_length >= buf2.len() {
-                let err = crate::Error::Sys(if cache_path_length == 0 {
-                    windows::last_system_errno()
-                } else {
-                    bun_errno::SystemErrno::ENAMETOOLONG
-                });
-                return Err(Failure::boxed(err, Step::CopyingFiles));
-            }
+            let cache_path_length =
+                windows::GetFinalPathNameByHandleW(walker.root().native(), &mut buf2[..], 0)
+                    .map_err(|err| {
+                        Failure::boxed(err.to_system_errno().into(), Step::CopyingFiles)
+                    })?;
             // borrowck — index by `cache_path_length` directly so no shared borrow is live.
             let to_copy_buf2_off = if buf2[cache_path_length - 1] != u16::from(b'\\') {
                 buf2[cache_path_length] = u16::from(b'\\');
@@ -1726,28 +1684,18 @@ impl PackageFiles<'_> {
 
         #[cfg(windows)]
         let result = walk_install_dir_windows(&mut state, &mut |dest, src, entry_path| {
-            use bun_sys::windows;
+            use bun_sys::windows::{self, Win32ErrorExt as _};
             // `dest` can be a hardlink of `src`, which CopyFileW cannot overwrite.
-            // SAFETY: FFI — src/dest are valid NUL-terminated WStr buffers.
-            let copy_file = || unsafe { windows::CopyFileW(src.as_ptr(), dest.as_ptr(), 1) } != 0;
-            if copy_file() {
-                return Ok(());
+            let mut result = windows::CopyFileW(src, dest, true);
+            if let Err(windows::Win32Error::FILE_EXISTS | windows::Win32Error::ALREADY_EXISTS) =
+                result
+            {
+                let _ = sys::unlink_w(dest);
+                result = windows::CopyFileW(src, dest, true);
             }
-            if matches!(
-                windows::Win32Error::get(),
-                windows::Win32Error::FILE_EXISTS | windows::Win32Error::ALREADY_EXISTS
-            ) {
-                // SAFETY: FFI — dest is a valid NUL-terminated WStr buffer.
-                unsafe { windows::DeleteFileW(dest.as_ptr()) };
-                if copy_file() {
-                    return Ok(());
-                }
-            }
-            Err(copy_failed(
-                windows::last_system_errno().into(),
-                entry_path,
-                &mut failed_file,
-            ))
+            result.map_err(|err| {
+                copy_failed(err.to_system_errno().into(), entry_path, &mut failed_file)
+            })
         });
         #[cfg(not(windows))]
         let result = copy(&state.subdir, &mut state.walker, &mut failed_file);
@@ -1962,8 +1910,7 @@ impl PackageFiles<'_> {
                         let target_len = to_copy_into2_offset + entry.path.len();
                         head2[to_copy_into2_offset..target_len]
                             .copy_from_slice(entry.path.as_bytes());
-                        head2[target_len] = 0;
-                        let target = ZStr::from_buf(head2, target_len);
+                        let target = ZStr::nul_terminate(head2, target_len);
 
                         if let Err(err) = sys::symlinkat(target, destination_dir.fd(), entry.path) {
                             if err.get_errno() != sys::E::EEXIST {
@@ -2164,35 +2111,21 @@ impl<'a> PackageInstall<'a> {
             }
         };
         // The entry name is the NUL-terminated tail of `dest_path`.
-        let dest: &ZStr = ZStr::from_slice_with_nul(
-            &dest_path.as_bytes_with_nul()[subdir.map_or(0, |dir| dir.len() + 1)..],
-        );
+        let dest: &ZStr = dest_path.substring(subdir.map_or(0, |dir| dir.len() + 1));
         debug_assert_eq!(dest.as_bytes(), bun_paths::basename(dest_path.as_bytes()));
         // When we're linking on Windows, we want to avoid keeping the source directory handle open
         #[cfg(windows)]
         {
-            use bun_sys::windows;
+            use bun_sys::windows::{self, Win32ErrorExt as _};
             let mut wbuf = bun_paths::w_path_buffer_pool::get();
-            // SAFETY: FFI — destination_dir.fd() is an open handle; wbuf is a valid writable
-            // WPathBuffer of the passed length.
-            let dest_path_length = unsafe {
-                windows::GetFinalPathNameByHandleW(
-                    destination_dir.fd().native(),
-                    wbuf.as_mut_ptr(),
-                    u32::try_from(wbuf.len()).expect("int cast"),
-                    0,
-                )
-            } as usize;
-            if dest_path_length == 0 || dest_path_length >= wbuf.len() {
-                let err = crate::Error::Sys(if dest_path_length == 0 {
-                    windows::last_system_errno()
-                } else {
-                    bun_errno::SystemErrno::ENAMETOOLONG
-                });
-                return InstallResult::fail(err, Step::LinkingDependency);
-            }
-
-            let mut i: usize = dest_path_length;
+            let handle = destination_dir.fd().native();
+            let mut i = match windows::GetFinalPathNameByHandleW(handle, &mut wbuf[..], 0) {
+                Ok(len) => len,
+                Err(err) => {
+                    let err = err.to_system_errno().into();
+                    return InstallResult::fail(err, Step::LinkingDependency);
+                }
+            };
             if wbuf[i] != u16::from(b'\\') {
                 wbuf[i] = u16::from(b'\\');
                 i += 1;
@@ -2223,15 +2156,11 @@ impl<'a> PackageInstall<'a> {
             }
             dest_buf[offset..offset + dest.len()].copy_from_slice(dest.as_bytes());
             offset += dest.len();
-            dest_buf[offset] = 0;
 
-            // SAFETY: NUL written at [offset].
-            let dest_z = ZStr::from_buf(&dest_buf, offset);
+            let dest_z = ZStr::nul_terminate(&mut dest_buf, offset);
 
             let to_len = to_path.len();
-            to_buf[to_len] = 0;
-            // SAFETY: NUL written at [to_len].
-            let target_z = ZStr::from_buf(&to_buf, to_len);
+            let target_z = ZStr::nul_terminate(&mut to_buf, to_len);
 
             // https://github.com/npm/cli/blob/162c82e845d410ede643466f9f8af78a312296cc/workspaces/arborist/lib/arborist/reify.js#L738
             // https://github.com/npm/cli/commit/0e58e6f6b8f0cd62294642a502c17561aaf46553
@@ -2620,11 +2549,7 @@ fn walk_install_dir_windows(
             per_file(dest, src, entry.path.as_slice())?;
             continue;
         }
-        // SAFETY: FFI — src/dest are the NUL-terminated buffers built above.
-        if unsafe {
-            windows::CreateDirectoryExW(src.as_ptr(), dest.as_ptr(), core::ptr::null_mut())
-        } == 0
-        {
+        if windows::CreateDirectoryExW(src, dest).is_err() {
             mkdir_recursive_os_path(dest)?;
         }
     }

@@ -7,14 +7,16 @@ use bun_core::Output;
 use bun_core::strings;
 #[cfg(not(windows))]
 use bun_event_loop::ConcurrentTask::ConcurrentTask;
-use bun_event_loop::{BoxedTask, Task, TaskTag, task_tag};
+use bun_event_loop::{BoxedTask, TaskTag, task_tag};
 use bun_io::KeepAlive;
+#[cfg(not(target_os = "macos"))]
+use bun_jsc::SysErrorJsc as _;
 use bun_jsc::bindgen::JsScope;
 use bun_jsc::bun_string_jsc;
 use bun_jsc::node::PathLike;
 use bun_jsc::{
     self as jsc, AbortSignal, AbortSignalRef, ArgumentsSlice, CommonAbortReason,
-    CommonAbortReasonExt as _, GlobalRef, JSGlobalObject, JSValue, JsRef, JsResult, SysErrorJsc,
+    CommonAbortReasonExt as _, GlobalRef, JSGlobalObject, JSValue, JsRef, JsResult,
     VirtualMachineRef as VirtualMachine,
 };
 use bun_jsc::{JsCell, JsCellRefExt as _};
@@ -59,7 +61,7 @@ pub(crate) struct FSWatcher {
     mutex: Mutex,
     signal: JsCell<Option<AbortSignalRef>>,
     persistent: Cell<bool>,
-    path_watcher: Cell<Option<*mut path_watcher::PathWatcher>>,
+    path_watcher: Cell<Option<path_watcher::Handle>>,
     poll_ref: KeepAlive,
     global_this: GlobalRef,
     /// The JS wrapper, held strong while the watcher is open so that the listener stays callable.
@@ -72,7 +74,7 @@ pub(crate) struct FSWatcher {
 
     /// The JS wrapper holds one ref, and so does each task queued for the JS thread.
     ref_count: ThreadSafeRefCount<FSWatcher>,
-    /// What the next task delivers. Under `PathWatcherManager::mutex`.
+    /// What the next task delivers. Under the lock of `PathWatcherManager`.
     #[cfg(not(windows))]
     pending_events: JsCell<Events>,
 
@@ -90,17 +92,6 @@ bun_jsc::impl_abort_handle_owner!(FSWatcher, abort_handle, |this, cause| {
 });
 
 impl FSWatcher {
-    /// Watcher thread → JS thread. `task` is the intrusive node of a heap batch
-    /// task; the queue takes ownership unless the VM has been torn down, in
-    /// which case it stays the caller's.
-    #[cfg(not(windows))]
-    pub(crate) fn post_intrusive(
-        &self,
-        task: core::ptr::NonNull<ConcurrentTask>,
-    ) -> bun_jsc::vm_handle::Posted<()> {
-        self.handle.post_intrusive(self.loop_kind, task)
-    }
-
     /// `self`'s address as `*mut Self` for path-watcher / abort-signal /
     /// rare-data ctx slots. Callbacks deref it as `&*const` (shared) — all
     /// mutation goes through `Cell`/`JsCell` — so no write provenance is
@@ -135,8 +126,7 @@ pub(crate) struct FSWatchTaskPosix {
 #[cfg(not(windows))]
 impl BoxedTask for FSWatchTaskPosix {
     const TAG: TaskTag = task_tag::FSWatchTask;
-    /// A batch of events the watcher thread posted that nobody will emit:
-    /// same as the refused-post path in `enqueue_events`.
+    /// A batch of events the watcher thread posted that nobody will emit.
     fn release_unrun(self: Box<Self>) {}
     /// The watcher closes with the context that started it (`abort_handle`); a batch that arrives
     /// afterwards finds it closed.
@@ -156,6 +146,7 @@ impl FSWatchTaskPosix {
             let emitted = match event {
                 Event::Rename(file_path) => self.ctx.emit::<{ EventType::Rename }>(file_path),
                 Event::Change(file_path) => self.ctx.emit::<{ EventType::Change }>(file_path),
+                #[cfg(not(target_os = "macos"))]
                 Event::Error { err, close } => {
                     self.ctx.emit_error(err, *close);
                     Ok(())
@@ -201,22 +192,13 @@ impl FSWatcher {
             this.pending_events.with_mut(Events::clear);
             return;
         };
-        let task = Task::from_boxed(Box::new(FSWatchTaskPosix {
+        let batch = Box::new(FSWatchTaskPosix {
             events: this.pending_events.take(),
             concurrent_task: ConcurrentTask::default(),
             ctx,
-        }));
-        let batch = task.ptr().cast::<FSWatchTaskPosix>();
-        // SAFETY: `batch` is the box that `task` owns. Its node carries `task` until the JS
-        // thread takes it out, or until the post is refused.
-        unsafe {
-            (*batch).concurrent_task.task = task;
-            let node = core::ptr::NonNull::new_unchecked(&raw mut (*batch).concurrent_task);
-            if let bun_jsc::vm_handle::Posted::Refused(()) = this.post_intrusive(node) {
-                // VM torn down: nobody will emit these events.
-                drop(bun_core::heap::take(batch));
-            }
-        }
+        });
+        let _ =
+            (this.handle).post_intrusive(this.loop_kind, batch, |batch| &mut batch.concurrent_task);
     }
 }
 
@@ -248,6 +230,7 @@ impl WatchEventKind {
 pub(crate) enum Event {
     Rename(EventPathString),
     Change(EventPathString),
+    #[cfg(not(target_os = "macos"))]
     Error {
         err: bun_sys::Error,
         close: bool,
@@ -382,7 +365,7 @@ impl FSWatcher {
     fn enqueue_event(this: ThisPtr<Self>, event: Event) {
         if let Some(ctx) = Self::ref_task(this) {
             let task = Box::new(FSWatchTaskWindows { event, ctx });
-            this.ctx.event_loop().enqueue_task(Task::from_boxed(task));
+            (this.ctx.event_loop()).enqueue_task(bun_event_loop::Task::from_boxed(task));
         }
     }
 }
@@ -596,16 +579,13 @@ impl<'a> Arguments<'a> {
 impl FSWatcher {
     /// The GC wrapper takes over `this`.
     fn init_js(this: RefPtr<Self>, listener: JSValue) {
-        let this_ref = this.into_this_ptr();
-        let this = this_ref.as_ptr();
+        let this_ref = this.this_ptr();
         if this_ref.persistent.get() {
             let vm_ctx = this_ref.ctx.loop_ctx();
             this_ref.poll_ref.ref_(vm_ctx);
         }
 
-        // SAFETY: the GC wrapper takes over the ref `this` was created with.
-        let js_this = unsafe { Self::to_js_ptr(this, &this_ref.global_this) };
-        js_this.ensure_still_alive();
+        let js_this = js::to_js(this, &this_ref.global_this);
         this_ref
             .js_this
             .set(JsRef::init_strong(js_this, &this_ref.global_this));
@@ -617,8 +597,8 @@ impl FSWatcher {
                 // safely abort next tick
                 Self::enqueue_abort(this_ref);
             } else {
-                // SAFETY: `this` is the live boxed FSWatcher; `detach()` disarms the handle.
-                unsafe { bun_jsc::AbortHandle::follow_owner(this, s.clone()) };
+                // SAFETY: this is the live boxed FSWatcher; `detach()` disarms the handle.
+                unsafe { bun_jsc::AbortHandle::follow_owner(this_ref.as_ptr(), s.clone()) };
             }
         }
     }
@@ -683,6 +663,7 @@ impl FSWatcher {
 
     /// R-2: see `emit_abort` — `&self` + `Cell` so the trailing `close()`
     /// observes a re-entrant `watcher.close()` from inside the listener.
+    #[cfg(not(target_os = "macos"))]
     pub(crate) fn emit_error(&self, err: &bun_sys::Error, close: bool) {
         if self.closed.get() {
             return;
@@ -852,10 +833,6 @@ impl FSWatcher {
         self.abort_handle.leave();
 
         if let Some(watcher) = self.path_watcher.take() {
-            // Both backends expose `detach` as an associated fn over `*mut PathWatcher`
-            // (it self-destroys via `heap::take` on the last handler, so it cannot
-            // soundly take `&mut self`). `watcher` is the live pointer returned by
-            // `path_watcher::watch`.
             path_watcher::PathWatcher::detach(watcher, ctx_ptr);
         }
 
@@ -887,12 +864,9 @@ impl FSWatcher {
             s
         };
         let cwd = bun_resolver::fs::FileSystem::get().top_level_dir();
-        let joined_buf_len = joined_buf.len();
-        let Some(joined) = Path::join_abs_string_buf_checked::<platform::Auto>(
-            cwd,
-            &mut joined_buf[..joined_buf_len - 1],
-            &[slice],
-        ) else {
+        let Some(file_path) =
+            Path::join_abs_string_buf_z_checked::<platform::Auto>(cwd, &mut joined_buf, &[slice])
+        else {
             return Err(bun_sys::Error {
                 errno: SystemErrno::ENAMETOOLONG as _,
                 syscall: bun_sys::Tag::watch,
@@ -900,9 +874,6 @@ impl FSWatcher {
                 ..Default::default()
             });
         };
-        let joined_len = joined.len();
-        joined_buf[joined_len] = 0;
-        let file_path: &bun_core::ZStr = bun_core::ZStr::from_buf(&joined_buf[..], joined_len);
 
         let vm_ref = args.global_this.bun_vm();
         let is_aborted = args.signal.as_ref().is_some_and(|s| s.aborted());

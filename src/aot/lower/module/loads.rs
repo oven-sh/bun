@@ -317,13 +317,30 @@ pub(crate) fn lower_import_call(
     lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
     call: ExprId,
 ) -> ValueId {
+    let replaced = lowering.file.hir.replaced_evaluation(call);
+    match replaced.filter(|_| lowering.file.inputs.may_replace_evaluators) {
+        Some(replaced) => lowering.lower_in_place_of_evaluation(replaced, &mut |lowering| {
+            lower_written_import(lowering, call)
+        }),
+        None => lower_written_import(lowering, call),
+    }
+}
+
+fn lower_written_import(
+    lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
+    call: ExprId,
+) -> ValueId {
     let hir = lowering.file.hir;
     let ExprKind::ImportCall { args } = hir[call].kind else {
         unreachable!("lower_import_call takes an ImportCall");
     };
     let position = hir[call].pos;
     if hir.replaces_evaluation(position) {
-        lowering.set_position(hir.replaced_callee_position(position));
+        let callee = hir.replaced_callee_position(position);
+        lowering.set_position(callee);
+        if hir.text[callee as usize..].starts_with(b"eval") {
+            lowering.emit_test_of_replaced_callee(known::eval, BuiltinId::Eval);
+        }
         lowering.builder.check_evaluation(false);
     }
     let modules = lowering.file.inputs.modules;
@@ -1578,10 +1595,17 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             false => None,
         };
         let from_created_require = plan.is_from_created_require;
+        let requirer = match plan.records {
+            true => {
+                let file = ModuleRef::File(self.file.file);
+                self.file.fragment.declare_module(file)
+            }
+            false => referrer,
+        };
         if plan.records {
             self.builder.record_require(
                 module,
-                referrer,
+                requirer,
                 requirer_object,
                 from_created_require,
                 false,
@@ -1595,7 +1619,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             let names_run = requirer_object.is_some();
             self.builder.record_require(
                 module,
-                referrer,
+                requirer,
                 requirer_object,
                 from_created_require,
                 names_run,

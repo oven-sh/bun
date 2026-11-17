@@ -189,9 +189,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
             ];
             for shell in HARDCODED_POPULAR_ONES {
                 path_buf[..shell.len()].copy_from_slice(shell);
-                path_buf[shell.len()] = 0;
-                // SAFETY: NUL-terminated above.
-                let z = ZStr::from_buf(&path_buf[..], shell.len());
+                let z = ZStr::nul_terminate(path_buf, shell.len());
                 if bun_sys::is_executable_file_path(z) {
                     return Some(shell.len());
                 }
@@ -1122,7 +1120,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         // `Transpiler::init`).
         bun_http::async_http::load_env(unsafe { vm.log.get().unwrap().as_mut() }, vm.env_loader());
 
-        vm.load_extra_env_and_source_code_printer();
+        vm.load_extra_env();
         bun_jsc::virtual_machine::IS_MAIN_THREAD_VM.set(true);
 
         bun_http::EXPERIMENTAL_HTTP2_CLIENT_FROM_CLI.store(
@@ -1269,7 +1267,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         // `Transpiler::init`).
         bun_http::async_http::load_env(unsafe { vm.log.get().unwrap().as_mut() }, vm.env_loader());
 
-        vm.load_extra_env_and_source_code_printer();
+        vm.load_extra_env();
         bun_jsc::virtual_machine::IS_MAIN_THREAD_VM.set(true);
 
         bun_http::EXPERIMENTAL_HTTP2_CLIENT_FROM_CLI.store(
@@ -1475,14 +1473,7 @@ impl Run<'_> {
         match ctx.debug.hot_reload {
             cli::command::HotReload::Hot => {
                 bun_removable_features::removable_body!(HotReload, Abort, {
-                    // SAFETY: `vm` is the boxed-and-leaked main-thread VM
-                    // (process-lifetime); it outlives the leaked reloader.
-                    unsafe {
-                        bun_jsc::hot_reloader::HotReloader::enable_hot_module_reloading(
-                            std::ptr::from_ref(vm).cast_mut(),
-                            entry,
-                        )
-                    }
+                    bun_jsc::hot_reloader::enable_hot_module_reloading(vm, entry, None);
                     // `bun bake` (no entry module) starts again when `bake.config.ts` changes: the kill signal's JS handlers run first, as in watch mode.
                     if entry.is_none() {
                         bun_jsc::posix_signal_handle::set_watch_kill_signal(
@@ -1493,14 +1484,7 @@ impl Run<'_> {
             }
             cli::command::HotReload::Watch => {
                 bun_removable_features::removable_body!(HotReload, Abort, {
-                    // SAFETY: `vm` is the boxed-and-leaked main-thread VM
-                    // (process-lifetime); it outlives the leaked reloader.
-                    unsafe {
-                        bun_jsc::hot_reloader::WatchReloader::enable_hot_module_reloading(
-                            std::ptr::from_ref(vm).cast_mut(),
-                            entry,
-                        )
-                    }
+                    bun_jsc::hot_reloader::enable_hot_module_reloading(vm, entry, None);
                     bun_jsc::posix_signal_handle::enable_watch_mode_signals(
                         ctx.debug.watch_kill_signal,
                     );
@@ -1867,9 +1851,7 @@ impl RunCommand {
             // bytes in the per-process `cli_arena()` instead of leaking
             // (PORTING.md §Forbidden bars per-call leaks).
             let stored: &'static [u8] = cli_arena().alloc_slice_copy(&target_path_buffer[..=total]);
-            // SAFETY: `stored[total] == 0` (written above before the copy);
-            // arena-backed slice lives for process lifetime.
-            Ok(ZStr::from_buf(&stored[..], total))
+            Ok(ZStr::from_slice_with_nul(stored))
         }
     }
 
@@ -2671,16 +2653,7 @@ impl RunCommand {
             // `\\?\` — `try_launch` hands this to NtCreateFile.
             let root = bun_core::w!("\\??\\");
             buf[..root.len()].copy_from_slice(root);
-            let cwd_len = unsafe {
-                sys::windows::kernel32::GetCurrentDirectoryW(
-                    (buf.len() - 4) as u32,
-                    buf.as_mut_ptr().add(root.len()),
-                )
-            } as usize;
-            'try_bunx_file: {
-                if cwd_len == 0 {
-                    break 'try_bunx_file;
-                }
+            if let Ok(cwd_len) = sys::windows::GetCurrentDirectoryW(&mut buf[root.len()..]) {
                 let mut ptr = root.len() + cwd_len;
                 let prefix = bun_core::w!("\\node_modules\\.bin\\");
                 buf[ptr..ptr + prefix.len()].copy_from_slice(prefix);
@@ -2935,10 +2908,7 @@ impl RunCommand {
             }
             joined.len()
         };
-        script_name_buf[open_len] = 0;
-        // SAFETY: `script_name_buf[open_len] == 0` written above;
-        // `script_name_buf[..open_len]` is init.
-        let open_z = bun_core::ZStr::from_buf(&script_name_buf[..], open_len);
+        let open_z = bun_core::ZStr::nul_terminate(&mut script_name_buf, open_len);
 
         let absolute_script_path: Box<[u8]> = {
             let Ok(file) = bun_sys::open(open_z, bun_sys::O::RDONLY, 0)
@@ -3224,9 +3194,7 @@ impl RunCommand {
             return;
         }
         zbuf[..path.len()].copy_from_slice(path);
-        zbuf[path.len()] = 0;
-        // SAFETY: NUL-terminated above.
-        let z = ZStr::from_buf(&zbuf[..], path.len());
+        let z = ZStr::nul_terminate(&mut zbuf, path.len());
         let _ = sys::unlink(z);
     }
 
@@ -3623,10 +3591,8 @@ impl RunCommand {
                                 let base = value.base();
                                 path_buf[dir_slice_len..dir_slice_len + base.len()]
                                     .copy_from_slice(base);
-                                path_buf[dir_slice_len + base.len()] = 0;
-                                // SAFETY: NUL terminator written above
                                 let slice =
-                                    ZStr::from_buf(&path_buf[..], dir_slice_len + base.len());
+                                    ZStr::nul_terminate(&mut path_buf, dir_slice_len + base.len());
                                 if !sys::is_executable_file_path(slice) {
                                     continue;
                                 }
@@ -3912,6 +3878,8 @@ impl BunXFastPath {
         env: &mut DotEnv::Loader,
         passthrough: &[Box<[u8]>],
     ) {
+        use bun_install::windows_shim::bun_shim_impl;
+
         if !bun_core::FeatureFlags::WINDOWS_BUNX_FAST_PATH {
             return;
         }
@@ -3925,22 +3893,8 @@ impl BunXFastPath {
         );
         debug_assert!(paths::is_absolute_windows_wtf16(path_to_use));
 
-        let handle = match sys::open_file_at_windows(
-            Fd::INVALID, // absolute path is given
-            path_to_use,
-            sys::NtCreateFileOptions {
-                access_mask: sys::windows::STANDARD_RIGHTS_READ
-                    | sys::windows::FILE_READ_DATA
-                    | sys::windows::FILE_READ_ATTRIBUTES
-                    | sys::windows::FILE_READ_EA
-                    | sys::windows::SYNCHRONIZE,
-                disposition: sys::windows::FILE_OPEN,
-                options: sys::windows::FILE_NON_DIRECTORY_FILE
-                    | sys::windows::FILE_SYNCHRONOUS_IO_NONALERT,
-                ..Default::default()
-            },
-        ) {
-            Ok(fd) => fd.native(),
+        let metadata_file = match bun_shim_impl::MetadataFile::open(path_to_use) {
+            Ok(file) => file,
             Err(err) => {
                 bun_core::scoped_log!(BUNX_FAST_PATH_LOG, "Failed to open bunx file: '{}'", err);
                 return;
@@ -3963,16 +3917,14 @@ impl BunXFastPath {
 
         let env_block = env.map.write_windows_env_block();
 
-        let run_ctx = bun_install::windows_shim::bun_shim_impl::FromBunRunContext {
-            handle,
-            base_path: path_to_use[4..].as_mut_ptr(),
-            base_path_len: path_to_use.len() - 4,
-            arguments: command_line.as_mut_ptr(),
-            arguments_len: i,
+        let run_ctx = bun_shim_impl::FromBunRunContext {
+            metadata_file,
+            base_path: &path_to_use[4..],
+            arguments: &command_line[..i],
             force_use_bun: ctx.debug.run_in_bun,
             direct_launch_with_bun_js: Self::direct_launch_callback,
-            cli_context: ::core::ptr::from_mut(ctx),
-            environment: Some(env_block.as_ptr()),
+            cli_context: ctx,
+            environment: &env_block,
         };
 
         bun_core::scoped_log!(
@@ -3981,7 +3933,7 @@ impl BunXFastPath {
             run_ctx.force_use_bun
         );
 
-        bun_install::windows_shim::bun_shim_impl::try_startup_from_bun_js(run_ctx);
+        bun_shim_impl::try_startup_from_bun_js(run_ctx);
 
         bun_core::scoped_log!(BUNX_FAST_PATH_LOG, "did not start via shim");
     }

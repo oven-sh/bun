@@ -12,7 +12,7 @@ use bun_options_types::schema::api::DotEnvBehavior;
 use bun_standalone_graph::Graph;
 use bun_sys::{Fd, File, Maybe, O};
 use bun_threading::Guarded;
-use bun_watcher::{ChangedFilePath, WatchEvent, WatchList, Watcher, WatcherContext};
+use bun_watcher::{Evictions, OwnedWatcher, WatchEvent, WatchList, Watcher, WatcherContext};
 
 use super::compile_command::{
     CompileFailure, CompileProduct, RequestOrigin, compile_from_context, exit_with_failure,
@@ -417,19 +417,21 @@ fn hand_over(
 }
 
 struct WatchedFiles {
-    watcher: Guarded<SharedWatcher>,
+    watcher: OwnedWatcher,
     working_directory: Vec<u8>,
     paths: Guarded<Vec<Vec<u8>>>,
 }
 
-struct SharedWatcher(*mut Watcher);
-// SAFETY: the watcher is never freed, and one thread at a time has the pointer.
-unsafe impl Send for SharedWatcher {}
-
 struct RestartOnChange;
 
 impl WatcherContext for RestartOnChange {
-    fn on_file_update(&mut self, events: &mut [WatchEvent], _: &[ChangedFilePath], _: &WatchList) {
+    fn on_file_update(
+        &mut self,
+        events: &[WatchEvent],
+        _: &[&[u8]],
+        _: &WatchList,
+        _: &mut Evictions,
+    ) {
         if events.is_empty() {
             return;
         }
@@ -455,13 +457,10 @@ impl WatchedFiles {
         decide_whether_to_clear_terminal();
         let working_directory = super::check_command::working_directory();
         let directory: &'static [u8] = Box::leak(working_directory.clone().into_boxed_slice());
-        let context = Box::leak(Box::new(RestartOnChange));
-        let started = Watcher::init(context, directory)
-            .map(Box::leak)
-            .and_then(|watcher| {
-                watcher.start()?;
-                Ok(watcher)
-            });
+        let started = Watcher::init(Box::new(RestartOnChange), directory).and_then(|watcher| {
+            watcher.start()?;
+            Ok(watcher)
+        });
         let watcher = match started {
             Ok(watcher) => watcher,
             Err(error) => {
@@ -470,7 +469,7 @@ impl WatchedFiles {
             }
         };
         let watched: &'static WatchedFiles = Box::leak(Box::new(WatchedFiles {
-            watcher: Guarded::new(SharedWatcher(watcher)),
+            watcher,
             working_directory,
             paths: Guarded::new(Vec::new()),
         }));
@@ -493,11 +492,7 @@ impl WatchedFiles {
     fn add(&self, path: &[u8]) {
         use bun_paths::{platform::Auto, resolve_path::join_abs_string};
         let path = join_abs_string::<Auto>(&self.working_directory, &[path]);
-        let shared = self.watcher.lock();
-        let watcher = shared.0;
-        // SAFETY: see `SharedWatcher`.
-        let _ = unsafe { (*watcher).add_file_by_path_slow(path) };
-        drop(shared);
+        let _ = self.watcher.add_file_by_path_slow(path);
         self.paths.lock().push(path.to_vec());
     }
 }
@@ -664,9 +659,10 @@ fn create_shared_memory() -> Option<File> {
 fn create_unnamed_file(first: ProgramFile) -> Maybe<(File, ProgramFile)> {
     #[cfg(any(target_os = "linux", target_os = "android"))]
     if first == ProgramFile::Memfd && bun_sys::can_use_memfd() {
-        if let Ok(descriptor) =
-            bun_sys::memfd_create(c"bun-compiled-program", bun_sys::MemfdFlags::Executable)
-        {
+        if let Ok(descriptor) = bun_sys::memfd_create(
+            c"bun-compiled-program".into(),
+            bun_sys::MemfdFlags::Executable,
+        ) {
             return Ok((File::from_fd(descriptor), ProgramFile::Memfd));
         }
     }
@@ -1192,8 +1188,8 @@ pub(crate) fn load_program_file() -> bun_standalone_graph::Result<Option<*mut Gr
         Err(_) => path.to_vec(),
     };
     argv[0] = Box::leak(Box::new(ZBox::from_bytes(typed.unwrap_or(&file)))).as_zstr();
-    // SAFETY: no other thread has started.
-    unsafe { bun_core::set_argv(Vec::leak(argv)) };
+    static ARGV: bun_core::Once<&[&bun_core::ZStr]> = bun_core::Once::new();
+    bun_core::set_argv(ARGV.get_or_init(|| argv.leak()));
     // The program finds the environment that the launcher found.
     #[cfg(unix)]
     if has_launcher {

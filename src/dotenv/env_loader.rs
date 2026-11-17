@@ -238,8 +238,7 @@ impl Loader {
             .filter(|n| !n.is_empty() && n.len() < MAX_PATH_BYTES)
         {
             buf[..node.len()].copy_from_slice(node);
-            buf[node.len()] = 0;
-            let node = ZStr::from_buf(&buf[..], node.len());
+            let node = ZStr::nul_terminate(buf, node.len());
             if bun_sys::is_executable_file_path(node) {
                 return Some(node);
             }

@@ -68,8 +68,6 @@ pub(crate) fn encode(
     quality: u8,
     progressive: bool,
     icc_profile: Option<&[u8]>,
-) -> Result<codecs::Encoded, codecs::Error> {
-    bun_jpeg::encode(rgba, w, h, quality, progressive, icc_profile)
-        .map(codecs::Encoded::from_owned)
-        .map_err(encode_error)
+) -> Result<Vec<u8>, codecs::Error> {
+    bun_jpeg::encode(rgba, w, h, quality, progressive, icc_profile).map_err(encode_error)
 }

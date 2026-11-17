@@ -6,6 +6,7 @@ import {
   chmodSync,
   copyFileSync,
   existsSync,
+  linkSync,
   lstatSync,
   lutimesSync,
   mkdirSync,
@@ -13748,6 +13749,56 @@ describe.concurrent("windows bin linking shim should work", async () => {
       target: "bunx-bins\\bin-bun.ts",
       isAbsoluteTarget: false,
       versionBits: BUNX_VERSION_BITS,
+    });
+  });
+
+  test("a .bunx file with an odd number of bytes is corrupt", async () => {
+    const binDir = join(packageDir, "node_modules", ".bin");
+    using dir = tempDir("odd-bunx", {
+      "odd.exe": readFileSync(join(binDir, "native.exe")),
+      "odd.bunx": Buffer.concat([Buffer.from("a"), readFileSync(join(binDir, "native.bunx"))]),
+    });
+
+    await using proc = spawn({
+      cmd: [join(String(dir), "odd.exe"), "中"],
+      stdout: "pipe",
+      stderr: "pipe",
+      env: shimEnv,
+    });
+    const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(err).toStartWith("error: bin metadata is corrupt (validate)");
+    expect(out).toBe("");
+    expect(exitCode).toBe(255);
+  });
+
+  const onlyBunDir = join(packageDir, "only-bun");
+  mkdirSync(onlyBunDir);
+  linkSync(join(temp_bin_dir, "a.exe"), join(onlyBunDir, "bun.exe"));
+  async function runWithOnlyBunInPath(bin: string) {
+    await using proc = spawn({
+      cmd: [join(packageDir, "node_modules", ".bin", bin + ".exe"), "arg1", "arg2"],
+      cwd: packageDir,
+      stdout: "pipe",
+      stderr: "pipe",
+      env: mergeWindowEnvs([bunEnv, { PATH: onlyBunDir }]),
+    });
+    const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { out: out.trim(), firstErrorLine: err.split("\n")[0], exitCode };
+  }
+
+  test("a missing interpreter is named", async () => {
+    expect(await runWithOnlyBunInPath("bin3")).toEqual({
+      out: "",
+      firstErrorLine: 'error: interpreter executable "aaa" not found in %PATH%',
+      exitCode: 255,
+    });
+  });
+
+  test("bun runs the bin if node is missing", async () => {
+    expect(await runWithOnlyBunInPath("bin-node")).toEqual({
+      out: "i am bin-node arg1 arg2",
+      firstErrorLine: "",
+      exitCode: 0,
     });
   });
 

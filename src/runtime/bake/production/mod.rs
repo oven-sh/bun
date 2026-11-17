@@ -174,7 +174,7 @@ pub(crate) fn build_command(ctx: Context) -> crate::Result<()> {
     // `vm.log` was set from `ctx.log` above (non-null, process-lifetime);
     // `log_mut()` is the safe accessor encapsulating the NonNull deref.
     bun_http::async_http::load_env(vm.log_mut().unwrap(), vm.env_loader());
-    vm.load_extra_env_and_source_code_printer();
+    vm.load_extra_env();
     vm.is_main_thread.set(true);
     jsc::virtual_machine::IS_MAIN_THREAD_VM.set(true);
 

@@ -256,7 +256,7 @@ describe("transportParams.maxIdleTimeout", () => {
 // accepting: each new session re-filled `sessions`, so the
 // `closing && sessions.is_empty()` finish gate never tripped and `closed`
 // never resolved. Bun's own HTTP/3 listener refuses in on_new_conn while
-// closing (packages/bun-usockets/src/quic.c us_quic_on_new_conn).
+// closing (packages/bun-usockets/src/quic.cpp us_quic_on_new_conn).
 describe("endpoint.close() while a session is live", () => {
   test("stops accepting new sessions so closed can resolve", async () => {
     const tp = { maxIdleTimeout: 30 };

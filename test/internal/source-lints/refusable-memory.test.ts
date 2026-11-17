@@ -3,7 +3,7 @@ import { expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 
-const crates = ["brotli", "jpeg", "png"];
+const crates = ["brotli", "jpeg", "png", "webp"];
 
 // How much memory these crates ask for is up to a file or a caller, so a refusal is an error there and not the end of
 // the process, which is what the calls named below make of it. Ask with `try_reserve()` or `try_reserve_exact()`.
@@ -30,6 +30,7 @@ test.each(crates)("bun_%s does not ask for memory in a way that aborts when it i
   const found: string[] = [];
   let scanned = 0;
   for await (const file of new Glob("**/*.rs").scan({ cwd: crate })) {
+    if (file.startsWith("tests" + path.sep)) continue;
     scanned++;
     readFileSync(path.join(crate, file), "utf8")
       .split("\n")

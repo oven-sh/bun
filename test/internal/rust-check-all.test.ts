@@ -2,10 +2,9 @@
  * `bun run rust:check-all` (scripts/rust-check-all.ts) runs `cargo check` for
  * every triple in allRustTargets. It only asks `rustup` what is installed and
  * runs `cargo`, so both are replaced by shell scripts on PATH here: rustup
- * answers from FAKE_TARGETS / FAKE_COMPONENTS (or is broken when
- * FAKE_RUSTUP_MISSING is set), cargo echoes its argv and fails for
- * FAKE_FAILING_TARGET. Shell-script fakes don't resolve as executables on
- * Windows, hence the skip.
+ * answers from FAKE_TARGETS (or is broken when FAKE_RUSTUP_MISSING is set),
+ * cargo echoes its argv and fails for FAKE_FAILING_TARGET. Shell-script fakes
+ * don't resolve as executables on Windows, hence the skip.
  *
  * Each run loads the build scripts' module graph in a fresh process, which
  * takes a few seconds in a debug build, so the scenarios are packed into as
@@ -16,7 +15,7 @@ import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { chmodSync } from "node:fs";
 import { join } from "node:path";
 
-import { allRustTargets, cargoBuildStdArg, rustTargetIsTier3 } from "../../scripts/build/rust.ts";
+import { allRustTargets } from "../../scripts/build/rust.ts";
 
 const script = join(import.meta.dir, "..", "..", "scripts", "rust-check-all.ts");
 
@@ -25,7 +24,6 @@ const fakeRustup = [
   '[ -n "$FAKE_RUSTUP_MISSING" ] && exit 127',
   'case "$1 $2 $3" in',
   "  \"target list --installed\") printf '%s\\n' $FAKE_TARGETS ;;",
-  "  \"component list --installed\") printf '%s\\n' $FAKE_COMPONENTS ;;",
   "  *) exit 1 ;;",
   "esac",
   "",
@@ -41,7 +39,6 @@ const fakeCargo = [
 
 interface Fakes {
   targets?: string[];
-  components?: string[];
   failingTarget?: string;
   rustupMissing?: boolean;
 }
@@ -58,7 +55,6 @@ async function runCheckAll(args: string[], fakes: Fakes) {
       ...bunEnv,
       PATH: `${bin}:${bunEnv.PATH}`,
       FAKE_TARGETS: (fakes.targets ?? []).join(" "),
-      FAKE_COMPONENTS: (fakes.components ?? []).join(" "),
       FAKE_FAILING_TARGET: fakes.failingTarget ?? "",
       FAKE_RUSTUP_MISSING: fakes.rustupMissing ? "1" : "",
     },
@@ -76,9 +72,8 @@ async function runCheckAll(args: string[], fakes: Fakes) {
   return { lines, stderr, exitCode };
 }
 
-const checkLine = (triple: string) => `[check] ${triple}${rustTargetIsTier3(triple) ? `  (${cargoBuildStdArg})` : ""}`;
-const cargoLine = (triple: string) =>
-  `cargo check --workspace --keep-going --target ${triple} --message-format=short${rustTargetIsTier3(triple) ? ` ${cargoBuildStdArg}` : ""}`;
+const checkLine = (triple: string) => `[check] ${triple}`;
+const cargoLine = (triple: string) => `cargo check --workspace --keep-going --target ${triple} --message-format=short`;
 
 describe.skipIf(isWindows)("rust:check-all", () => {
   test.concurrent(
@@ -88,7 +83,6 @@ describe.skipIf(isWindows)("rust:check-all", () => {
         ["x86_64-unknown-linux-gnu", "aarch64-unknown-linux-gnu", "aarch64-apple-darwin", "aarch64-unknown-freebsd"],
         {
           targets: ["x86_64-unknown-linux-gnu", "aarch64-unknown-linux-gnu"],
-          components: ["rustc-x86_64-unknown-linux-gnu", "rust-std-x86_64-unknown-linux-gnu"],
           failingTarget: "x86_64-unknown-linux-gnu",
         },
       );
@@ -101,8 +95,7 @@ describe.skipIf(isWindows)("rust:check-all", () => {
           checkLine("aarch64-unknown-linux-gnu"),
           cargoLine("aarch64-unknown-linux-gnu"),
           "[skip] aarch64-apple-darwin  (rustup target add aarch64-apple-darwin)",
-          // Tier 3: there is no rust-std to add; -Zbuild-std wants rust-src instead.
-          "[skip] aarch64-unknown-freebsd  (rustup component add rust-src)",
+          "[skip] aarch64-unknown-freebsd  (rustup target add aarch64-unknown-freebsd)",
           "1 ok, 1 failed, 2 skipped (of 4)",
         ].sort(),
       );
@@ -112,12 +105,9 @@ describe.skipIf(isWindows)("rust:check-all", () => {
   );
 
   test.concurrent(
-    "with everything installed and no arguments, checks every triple, Tier 3 ones with -Zbuild-std",
+    "with everything installed and no arguments, checks every triple",
     async () => {
-      const { lines, stderr, exitCode } = await runCheckAll([], {
-        targets: allRustTargets.filter(triple => !rustTargetIsTier3(triple)),
-        components: ["rust-src"],
-      });
+      const { lines, stderr, exitCode } = await runCheckAll([], { targets: [...allRustTargets] });
       expect(stderr).toBe("");
       expect(lines).toEqual(
         [
@@ -126,9 +116,6 @@ describe.skipIf(isWindows)("rust:check-all", () => {
           `${allRustTargets.length} ok, 0 failed, 0 skipped (of ${allRustTargets.length})`,
         ].sort(),
       );
-      expect(lines.filter(line => line.startsWith("cargo ") && line.endsWith(cargoBuildStdArg))).toEqual([
-        cargoLine("aarch64-unknown-freebsd"),
-      ]);
       expect(exitCode).toBe(0);
     },
     30_000,

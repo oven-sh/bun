@@ -1,6 +1,7 @@
 //! bun_collections — crate root. Thin re-export hub.
 
 #![feature(
+    allocator_ext,
     type_info,
     adt_const_params,
     unsized_const_params,
@@ -37,11 +38,9 @@ pub use multi_array_list::MultiArrayList;
 pub use once_map::OnceMap;
 #[doc(hidden)]
 pub use paste::paste as __mal_paste;
-pub use vec_ext::{ByteVecExt, OffsetByteList, VecExt};
+pub use vec_ext::{ByteVecExt, OffsetByteList, VecExt, recycle_vec};
 
-pub use bit_set::{
-    AutoBitSet, ByteSet, DynamicBitSet, DynamicBitSetList, DynamicBitSetUnmanaged, IntegerBitSet,
-};
+pub use bit_set::{AutoBitSet, ByteSet, DynamicBitSet, DynamicBitSetList, IntegerBitSet};
 
 // `multi_array_list` imports from here; canonical impl lives in
 // `bun_core::strings`.

@@ -1,6 +1,7 @@
 #![allow(nonstandard_style)]
 #![feature(adt_const_params)]
 #![feature(core_io_borrowed_buf)]
+#![cfg_attr(windows, feature(core_io))]
 
 // ──────────────────────────────────────────────────────────────────────────
 // Crate aliases — Phase-A drafts use the porting-doc crate names; map them
@@ -468,10 +469,7 @@ impl RunCommand {
     ) -> Option<&'a ZStr> {
         for shell in Self::SHELLS_TO_SEARCH {
             if let Some(found) = bun_which::which(buf, path, cwd, shell) {
-                // `which()` writes a NUL-terminated path into `buf` and
-                // returns a borrow of it; reborrow as `&ZStr`.
-                let len = found.len();
-                return Some(ZStr::from_buf(buf, len));
+                return Some(found);
             }
         }
 
@@ -489,8 +487,7 @@ impl RunCommand {
             if bun_sys::is_executable_file_path(shell) {
                 let body = shell.as_bytes();
                 buf[..body.len()].copy_from_slice(body);
-                buf[body.len()] = 0;
-                return Some(ZStr::from_buf(buf, body.len()));
+                return Some(ZStr::nul_terminate(buf, body.len()));
             }
         }
 
@@ -682,13 +679,11 @@ impl RunCommand {
                 let mut made_dir = false;
                 let mut replaced = false;
                 loop {
-                    // `as_ptr()` stays inline: the buffer is mutated below (Stacked Borrows).
-                    if win::CreateHardLinkW(target_path_buffer.as_ptr(), image_path.as_ptr(), None)
-                        != 0
-                    {
+                    let link_path = bun_core::WStr::from_buf(&target_path_buffer[..], link_len);
+                    let Err(err) = win::CreateHardLinkW(link_path, image_path) else {
                         break;
-                    }
-                    match win::Win32Error::get() {
+                    };
+                    match err {
                         win::Win32Error::ALREADY_EXISTS => {
                             // As in the POSIX EEXIST branch: a rebuilt bun is a different file.
                             let keep = image_stat.as_ref().is_none_or(|image| {

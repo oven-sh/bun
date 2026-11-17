@@ -192,9 +192,13 @@ pub(crate) fn bind_and_execute(
             i += 1;
             continue;
         }
-        let tag = parameter_tag(statement, i);
+        // User code can have read another ParameterDescription since `len`.
+        let tag = match i < len {
+            true => parameter_tag(statement, i),
+            false => types::Tag::text,
+        };
         let value_length = Length::reserve(out);
-        if i < len && write_binary_parameter(out, global, tag, value) {
+        if write_binary_parameter(out, global, tag, value) {
             out[format_codes + i * 2 + 1] = 1;
         } else if value.is_date() {
             date::write_text(out, global, value, tag);

@@ -140,9 +140,11 @@ bun_event_loop::impl_timer_owner!(PostgresSQLConnection;
 
 impl Drop for PostgresSQLConnection {
     fn drop(&mut self) {
-        debug_assert!(!self.is_ready(), "the socket still points here");
         self.timers.stop();
         self.unregister_auto_flusher();
+        if self.is_ready() {
+            self.close_socket();
+        }
     }
 }
 
@@ -392,7 +394,7 @@ impl PostgresSQLConnection {
     }
 
     fn release_wrapper(&self) {
-        if self.pipeline.get().is_empty() && self.socket.get().is_closed() {
+        if self.is_closed() && self.pipeline.get().is_empty() && self.socket.get().is_closed() {
             self.js_value.with_mut(|r| r.downgrade());
         }
     }
@@ -973,7 +975,7 @@ impl<const SSL: bool> SocketHandler<SSL> {
         _: Option<*mut c_void>,
     ) {
         // usockets frees this socket at end-of-tick; drop the stored pointer
-        // now so nothing (timer callbacks, close()) dereferences it
+        // now so nothing (timer callbacks, ref()) dereferences it
         // after the free.
         this.socket
             .set(Socket::SocketTcp(uws::SocketTCP::detached()));
@@ -1006,6 +1008,7 @@ impl PostgresSQLConnection {
     pub fn r#ref(&self) {
         self.update_flags(|f| f.insert(ConnectionFlags::KEEP_ALIVE_REQUESTED));
         self.poll_ref.ref_(self.vm_ctx());
+        self.release_wrapper();
     }
 
     pub fn flush(&self) {
@@ -1038,7 +1041,8 @@ impl PostgresSQLConnection {
     pub fn do_close(&self, _: &mut JsScope<'_>) {
         match self.state() {
             // `on_close` fails it before this returns.
-            Phase::Ready { .. } | Phase::Closed { .. } => self.close_socket(),
+            Phase::Ready { .. } => self.close_socket(),
+            Phase::Closed { .. } => {}
             _ => self.fail(b"Connection closed", AnyPostgresError::ConnectionClosed),
         }
         self.unregister_auto_flusher();
@@ -1322,26 +1326,25 @@ impl PostgresSQLConnection {
             return true;
         }
 
-        // Out of reach of user code that `bind_and_execute` runs.
-        let mut buffer = self.write_buffer.take();
-        let out = &mut buffer.byte_list;
         if let Step::Parse { .. } = step {
             // The Sync that follows the Parse covers the Close.
             while let Some(evicted) = self.statements.with_mut(StatementCache::evict) {
-                let _ = frontend::close_statement(out, &evicted.name);
+                let _ = self.write(|out| frontend::close_statement(out, &evicted.name));
             }
         }
-        let start = out.len();
-        let result = self.encode(out, &request, &statement, values, step);
+        // User code that `bind_and_execute` runs can flush what is ahead, but no part of this.
+        let mut batch = self.write(|ahead| match ahead.is_empty() {
+            true => core::mem::take(ahead),
+            false => Vec::with_capacity(256),
+        });
+        let result = self.encode(&mut batch, &request, &statement, values, step);
         if result.is_ok() && !self.pipeline.with_mut(|it| it.wrote(&request, step)) {
-            out.truncate(start);
+            batch.clear();
         }
-        // It goes first: a flush can have sent a part of it.
-        let written_meanwhile = self.write_buffer.replace(buffer);
-        if !written_meanwhile.is_empty() {
-            let buffer = self.write_buffer.replace(written_meanwhile);
-            self.write(|out| out.extend_from_slice(buffer.remaining()));
-        }
+        self.write(|ahead| match ahead.is_empty() {
+            true => *ahead = batch,
+            false => ahead.extend_from_slice(&batch),
+        });
         match result {
             Ok(()) => true,
             Err(err) => self.fail_write(err),
@@ -1437,7 +1440,8 @@ impl PostgresSQLConnection {
             // libpq: "message contents do not agree with length in message".
             if reader.peek().len() != after && !self.is_closed() {
                 debug!(
-                    "length {} left {} of {}",
+                    "'{}' of length {} left {} of {}",
+                    c as char,
                     length,
                     reader.peek().len(),
                     after
@@ -1465,12 +1469,12 @@ impl PostgresSQLConnection {
                     return reader.skip_message();
                 };
                 let cmd = protocol::CommandComplete::decode_internal(reader)?;
-                self.on_result(&request, &statement, cmd.command_tag);
+                self.on_result(&request, &statement, cmd.command_tag)?;
             }
             b'I' => {
                 reader.eat_message(&protocol::EMPTY_QUERY_RESPONSE)?;
                 if let Some((request, statement)) = self.executed()? {
-                    self.on_result(&request, &statement, b"");
+                    self.on_result(&request, &statement, b"")?;
                 }
             }
             b'1' => {
@@ -1552,20 +1556,6 @@ impl PostgresSQLConnection {
             return reader.skip_message();
         };
         let global = self.global();
-        if statement.has_lost_columns() {
-            let error = match statement.failure() {
-                Some(StatementError::Thrown(error)) => error.get(),
-                _ => postgres_error_to_js_with_hint(
-                    global,
-                    Some(b"Failed to read data"),
-                    Some(b"The query may have run on the server. The server did not describe the columns of its result."),
-                    AnyPostgresError::ExpectedStatement,
-                ),
-            };
-            self.reject_in_flight(&request, error);
-            return reader.skip_message();
-        }
-
         let result_mode = request.result_mode.get();
         let objects = match result_mode {
             SQLQueryResultMode::Objects => true,
@@ -1631,11 +1621,17 @@ impl PostgresSQLConnection {
         Ok(())
     }
 
-    fn on_result(&self, request: &PostgresSQLQuery, statement: &PostgresSQLStatement, tag: &[u8]) {
-        self.pipeline.with_mut(Pipeline::on_result);
+    fn on_result(
+        &self,
+        request: &PostgresSQLQuery,
+        statement: &PostgresSQLStatement,
+        tag: &[u8],
+    ) -> Result<(), AnyPostgresError> {
+        self.pipeline.with_mut(Pipeline::on_result)?;
         if let Err(err) = request.on_result(tag, self.global(), Some(statement)) {
             self.reject_in_flight(request, self.global().take_exception(err));
         }
+        Ok(())
     }
 
     fn on_ready_for_query(&self, reader: &protocol::NewReader<'_>) -> Result<(), AnyPostgresError> {
@@ -1711,19 +1707,22 @@ impl PostgresSQLConnection {
         if !self.is_ready() || err.is_fatal() {
             return self.fail_with_js_value(js_err);
         }
-        let Ok(head) = self.pipeline.get().head() else {
+        let (kind, err) = (err.kind(), StatementError::Protocol(err));
+        let replace = |head: &Entry| {
+            let query = head.request.query.to_utf8();
+            self.statements
+                .with_mut(|cache| cache.replace(query.slice(), &head.statement))
+        };
+        let Some((request, statement, outcome)) = self.pipeline.with_mut(|it| {
+            let (head, outcome) = it.on_error(kind, err, replace)?;
+            Some((head.request.clone(), head.statement.clone(), outcome))
+        }) else {
             return self.fail_with_js_value(js_err);
         };
-        let (request, statement) = (head.request.clone(), head.statement.clone());
-        let (kind, err) = (err.kind(), StatementError::Protocol(err));
-        match self.pipeline.with_mut(|it| it.on_error(kind, err)) {
-            OnError::Retry => {
-                let replacement = self
-                    .statements
-                    .with_mut(|cache| cache.replace(request.query.to_utf8().slice(), &statement));
-                if self.pipeline.with_mut(|it| it.retry(replacement)) {
-                    self.reject_in_flight(&request, self.cancelled_error(None));
-                }
+        match outcome {
+            OnError::Retry { cancelled: false } => {}
+            OnError::Retry { cancelled: true } => {
+                self.reject_in_flight(&request, self.cancelled_error(None))
             }
             OnError::Fail { keep_error, cached } => {
                 self.statements.with_mut(|cache| match cached {

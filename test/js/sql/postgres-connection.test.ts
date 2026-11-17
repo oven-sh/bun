@@ -215,9 +215,9 @@ test("the native query handle throws when run() misses an argument", async () =>
 
 // An empty string gets a default. What only converts to one does not.
 test.each([
-  ["database", { username: "u", database: [] }, { user: "u", database: "u" }],
-  ["user", { username: [], database: "d" }, { user: "", database: "d" }],
-])("the StartupMessage with an empty %s is well formed", async (_, options, expected) => {
+  { empty: "database", options: { username: "u", database: [] }, expected: { user: "u", database: "u" } },
+  { empty: "user", options: { username: [], database: "d" }, expected: { user: "", database: "d" } },
+])("the StartupMessage is well formed with an empty $empty", async ({ options, expected }) => {
   const sent = Promise.withResolvers<Buffer>();
   const { port, server } = await listeningServer(socket => {
     socket.on("error", () => {});
@@ -413,11 +413,11 @@ describe.concurrent("a Bind that finds its prepared statement lost", () => {
 
 // A timeout or a CancelRequest can land between two messages of a batch.
 test.concurrent.each([
-  ["57014", "no parameter", ["P P0", "C P0", "P P0"]],
-  ["57014", "a parameter", ["P P0", "C P0", "P P0"]],
-  ["53200", "no parameter", ["P P0", "C P0", "P P1"]],
-  ["53200", "a parameter", ["P P0", "C P0", "P P1"]],
-])("%s between ParseComplete and the description of a statement with %s", async (errno, kind, expected) => {
+  { errno: "57014", parameters: 0, sent: ["Parse P0", "Close P0", "Parse P0"] },
+  { errno: "57014", parameters: 1, sent: ["Parse P0", "Close P0", "Parse P0"] },
+  { errno: "53200", parameters: 0, sent: ["Parse P0", "Close P0", "Parse P1"] },
+  { errno: "53200", parameters: 1, sent: ["Parse P0", "Close P0", "Parse P1"] },
+])("$errno between ParseComplete and the description, $parameters parameters", async ({ errno, parameters, sent }) => {
   const wire: string[] = [];
   const stored = new Set<string>();
   let failed = false;
@@ -427,19 +427,17 @@ test.concurrent.each([
     if (type === "S") return ((failed = false), pgReadyForQuery());
     if (failed) return;
     const name = body.toString("latin1", type === "C" ? 1 : 0, body.indexOf(0));
-    if (type === "P" || type === "C") wire.push(`${type} ${name}`);
     switch (type) {
       case "P":
+        wire.push(`Parse ${name}`);
         return stored.size === stored.add(name).size ? fail("42P05") : pgParseComplete();
       case "C":
+        wire.push(`Close ${name}`);
         stored.delete(name);
         return pgCloseComplete();
       case "D":
         if (describes++ === 0) return fail(errno);
-        return [
-          pgParameterDescription(kind === "a parameter" ? [25] : []),
-          pgRowDescription([{ name: "v", typeOid: 25 }]),
-        ];
+        return [pgParameterDescription(parameters ? [25] : []), pgRowDescription([{ name: "v", typeOid: 25 }])];
       case "B":
         return pgBindComplete();
       case "E":
@@ -448,13 +446,13 @@ test.concurrent.each([
   });
   try {
     await using sql = new SQL(`postgres://u@127.0.0.1:${port}/db`, { max: 1 });
-    const run = () => settled(kind === "a parameter" ? sql`select ${"ok"} as v` : sql`select 'ok' as v`);
+    const run = () => settled(parameters ? sql`select ${"ok"} as v` : sql`select 'ok' as v`);
     expect([await run(), await run(), await run()]).toEqual([
       { code: "ERR_POSTGRES_SERVER_ERROR", errno, message: "failed" },
       [{ v: "ok" }],
       [{ v: "ok" }],
     ]);
-    expect(wire).toEqual(expected);
+    expect(wire).toEqual(sent);
   } finally {
     server.close();
   }
@@ -1007,31 +1005,6 @@ describe.concurrent("cancel()", () => {
     expect(await rejection(query)).toEqual(cancelledUnsent);
     expect(await sql`select 'next'`.simple()).toEqual([{ v: "ok" }]);
     expect(server.messages).toBe("PDBESBESQ");
-  });
-
-  test("that stops the Describe of a statement rejects the query that is bound to it by then", async () => {
-    await using server = await cancelServer();
-    await using sql = new SQL(server.url, { max: 1 });
-    const first = settled(sql`select 'shared'`.execute());
-    await server.batch(1);
-    server.reply(pgParseComplete());
-    await server.fence();
-    const second = rejection(sql`select 'shared'`.execute());
-    await server.batch(2);
-    stop(server);
-    server.reply(...bound("no columns"));
-    expect([await first, await second]).toEqual([
-      canceledError,
-      {
-        code: "ERR_POSTGRES_EXPECTED_STATEMENT",
-        message: "Failed to read data",
-        hint: "The query may have run on the server. The server did not describe the columns of its result.",
-      },
-    ]);
-
-    server.auto = true;
-    expect(await sql`select 'shared'`).toEqual([{ v: "ok" }]);
-    expect(server.messages).toBe("PDBESBESCPDBES");
   });
 
   test("holds a query back, and one that an error rejects meanwhile is never written", async () => {

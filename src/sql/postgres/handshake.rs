@@ -201,13 +201,18 @@ impl Handshake {
         }
     }
 
-    fn has_started(&self) -> bool {
-        use Phase::*;
-        !matches!(self.phase, Dialing | SslRequest { .. } | TlsHandshake)
+    fn may_start(&self) -> bool {
+        use SSLMode::{Disable, Prefer};
+        matches!(
+            (&self.phase, self.ssl_mode),
+            (Phase::Dialing, Disable)
+                | (Phase::SslRequest { .. }, Disable | Prefer)
+                | (Phase::TlsHandshake, _)
+        )
     }
 
     pub fn send_startup(&mut self, out: &mut Vec<u8>) -> Result<(), AnyPostgresError> {
-        if self.has_started() {
+        if !self.may_start() {
             return Ok(());
         }
         self.phase = Phase::Startup(Auth::Pending);
@@ -234,7 +239,7 @@ impl Handshake {
     }
 
     pub fn send_cancel(&mut self, packet: &[u8; 16], out: &mut Vec<u8>) {
-        if !self.has_started() {
+        if self.may_start() {
             self.phase = Phase::CancelSent;
             out.extend_from_slice(packet);
         }
@@ -523,10 +528,10 @@ impl ClientFirst {
 
         let server_key = hmac(&salted, b"Server Key").ok_or(InvalidServerKey)?;
         let signature = hmac(&server_key, auth_message.as_bytes()).ok_or(InvalidServerSignature)?;
-        let mut proof = hmac(&salted, b"Client Key").unwrap();
+        let mut proof = hmac(&salted, b"Client Key").ok_or(OutOfMemory)?;
         let mut stored_key = [0; SHA256::DIGEST];
         SHA256::hash(&proof, &mut stored_key);
-        let client_signature = hmac(&stored_key, auth_message.as_bytes()).unwrap();
+        let client_signature = hmac(&stored_key, auth_message.as_bytes()).ok_or(OutOfMemory)?;
         for (key, signature) in proof.iter_mut().zip(client_signature) {
             *key ^= signature;
         }

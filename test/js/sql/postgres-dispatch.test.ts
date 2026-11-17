@@ -284,7 +284,7 @@ test.concurrent("wire order equals queue order", async () => {
   });
 });
 
-// An accessor behind a hole of the values is read once more while the Bind is written.
+// User code that runs while the client writes a request or resolves one.
 test.concurrent.each(
   Object.entries({
     "cancel() in the middle of a Bind": {
@@ -292,7 +292,7 @@ test.concurrent.each(
       next: ok({ v: "next" }),
       frames: ["B(next,y,1)", "E", "S"],
     },
-    "the event loop runs in the middle of a Bind": {
+    "a Bind waits for the query ahead": {
       ahead: ok({ v: "ahead" }),
       result: ok({ v: "x" }),
       frames: ["B(ahead,y,1)", "E", "S", "B(x,y,1)", "E", "S"],

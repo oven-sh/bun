@@ -57,11 +57,6 @@ impl<E, C> Statement<E, C> {
         matches!(self.state.get(), State::Unparsed { .. })
     }
 
-    /// For a request that is written: the Describe in front of it came to nothing.
-    pub fn has_lost_columns(&self) -> bool {
-        matches!(self.state.get(), State::Unparsed { .. } | State::Failed(_))
-    }
-
     pub fn failure(&self) -> Option<&E> {
         match self.state.get() {
             State::Failed(error) => Some(error),
@@ -77,12 +72,10 @@ impl<E, C> Statement<E, C> {
     /// Each type is the one Parse declared, or the one the server chose where Parse declared none.
     pub fn accepts(&self, types: &[Option<u32>]) -> bool {
         types.len() == self.declared.len()
-            && types.iter().enumerate().all(|(i, wanted)| match *wanted {
-                None => true,
-                Some(oid) => {
-                    oid == self.declared[i]
-                        || (self.declared[i] == 0 && self.described().get(i) == Some(&oid))
-                }
+            && (types.iter().zip(&self.declared).enumerate()).all(|(i, (wanted, &declared))| {
+                wanted.is_none_or(|oid| {
+                    oid == declared || (declared == 0 && self.described().get(i) == Some(&oid))
+                })
             })
     }
 
@@ -151,7 +144,7 @@ pub struct Entry<R, E, C> {
     protocol: Protocol,
     stage: Stage,
     reply: Reply,
-    /// The server refused its Bind because the statement was lost or stale.
+    /// The server refused its Bind because the named statement was lost or stale.
     retried: bool,
 }
 
@@ -210,8 +203,10 @@ pub enum ErrorKind {
 }
 
 pub enum OnError {
-    /// With the statement that `retry` is given.
-    Retry,
+    /// The head keeps its place: nothing is written until its ReadyForQuery, then it.
+    Retry {
+        cancelled: bool,
+    },
     Fail {
         keep_error: bool,
         cached: Cached,
@@ -219,6 +214,7 @@ pub enum OnError {
 }
 
 /// What becomes of a statement in the host's cache.
+#[derive(Debug, PartialEq, Eq)]
 pub enum Cached {
     Keep,
     Forget,
@@ -288,10 +284,6 @@ impl<R: Deref, E, C> Pipeline<R, E, C> {
         head.ok_or(AnyPostgresError::ExpectedRequest)
     }
 
-    fn position(&self, request: &R::Target) -> Option<usize> {
-        self.queue.iter().position(|entry| entry.is(request))
-    }
-
     pub fn is_empty(&self) -> bool {
         self.queue.is_empty()
     }
@@ -306,8 +298,8 @@ impl<R: Deref, E, C> Pipeline<R, E, C> {
     }
 
     pub fn is_live(&self, request: &R::Target) -> bool {
-        let position = self.position(request);
-        position.is_some_and(|i| !self.queue[i].is_rejected())
+        let entry = self.queue.iter().find(|entry| entry.is(request));
+        entry.is_some_and(|entry| !entry.is_rejected())
     }
 
     /// What the backend is at work on.
@@ -318,8 +310,9 @@ impl<R: Deref, E, C> Pipeline<R, E, C> {
 
     /// `None` too while a CancelRequest that is owed or on its way could stop it by mistake.
     fn unwritten(&self) -> Option<&Entry<R, E, C>> {
-        if self.cancel_in_flight || (self.written > 0 && self.queue[self.written - 1].owes_cancel())
-        {
+        let last = self.written.checked_sub(1);
+        let last = last.and_then(|last| self.queue.get(last));
+        if self.cancel_in_flight || last.is_some_and(Entry::owes_cancel) {
             return None;
         }
         let next = self.queue.get(self.written)?;
@@ -349,15 +342,15 @@ impl<R: Deref, E, C> Pipeline<R, E, C> {
         self.pipelining
             && !self.parsing
             && buffered < MAX_PIPELINE_SIZE
-            && !self.queue[0].is_simple()
+            && !self.head().is_ok_and(Entry::is_simple)
     }
 
     /// `false`: user code ran meanwhile and it is not its turn any more. What was written has to go.
     pub fn wrote(&mut self, request: &R::Target, step: Step) -> bool {
-        if !self.unwritten().is_some_and(|next| next.is(request)) {
+        let its_turn = self.unwritten().is_some_and(|next| next.is(request));
+        let Some(entry) = self.queue.get_mut(self.written).filter(|_| its_turn) else {
             return false;
-        }
-        let entry = &mut self.queue[self.written];
+        };
         if let Step::Parse { close: stored, .. } = step {
             entry.statement.state.set(State::Parsing { stored });
             self.parsing = true;
@@ -373,18 +366,17 @@ impl<R: Deref, E, C> Pipeline<R, E, C> {
     }
 
     pub fn unqueue(&mut self, request: &R::Target) -> Option<Entry<R, E, C>> {
-        let mut unwritten = self.queue.range(self.written..);
+        let mut unwritten = self.queue.iter().skip(self.written);
         let position = unwritten.position(|entry| entry.is(request))?;
         self.queue.remove(self.written + position)
     }
 
     /// `true`: the host rejects it now. It keeps its place until its ReadyForQuery.
     pub fn reject(&mut self, request: &R::Target) -> bool {
-        let Some(position) = self.position(request) else {
+        let Some(entry) = self.queue.iter_mut().find(|entry| entry.is(request)) else {
             return false;
         };
-        let reply = &mut self.queue[position].reply;
-        *reply = match *reply {
+        entry.reply = match entry.reply {
             Reply::Deliver | Reply::Cancelling => Reply::Skip,
             Reply::OwesCancel { rejected: false } => Reply::OwesCancel { rejected: true },
             Reply::OwesCancel { rejected: true } | Reply::FailAtReady | Reply::Skip => {
@@ -403,8 +395,9 @@ impl<R: Deref, E, C> Pipeline<R, E, C> {
         Ok((!head.is_rejected()).then_some(head))
     }
 
-    pub fn on_result(&mut self) {
-        self.queue[0].stage = Stage::Answered;
+    pub fn on_result(&mut self) -> Result<(), AnyPostgresError> {
+        self.head_mut()?.stage = Stage::Answered;
+        Ok(())
     }
 
     pub fn on_parse_complete(&mut self) -> Result<(), AnyPostgresError> {
@@ -466,8 +459,14 @@ impl<R: Deref, E, C> Pipeline<R, E, C> {
         }
     }
 
-    pub fn on_error(&mut self, kind: ErrorKind, error: E) -> OnError {
-        let head = &mut self.queue[0];
+    /// With the request that it belongs to. `replace`: gives the statement of a retry.
+    pub fn on_error(
+        &mut self,
+        kind: ErrorKind,
+        error: E,
+        replace: impl FnOnce(&Entry<R, E, C>) -> RefPtr<Statement<E, C>>,
+    ) -> Option<(&Entry<R, E, C>, OnError)> {
+        let head = self.queue.front_mut()?;
         let statement = &*head.statement;
         let lost = |stored| {
             if kind == ErrorKind::Canceled {
@@ -490,7 +489,12 @@ impl<R: Deref, E, C> Pipeline<R, E, C> {
             {
                 // A retry would run after what is written behind it, or get 25P02 in a transaction block.
                 if self.written == 1 && self.transaction_status == b'I' && !head.retried {
-                    return OnError::Retry;
+                    head.statement = replace(head);
+                    head.stage = Stage::Preparing { describing: false };
+                    head.retried = true;
+                    self.written = 0;
+                    let cancelled = head.is_cancelling();
+                    return Some((head, OnError::Retry { cancelled }));
                 }
                 Cached::Close
             }
@@ -504,29 +508,22 @@ impl<R: Deref, E, C> Pipeline<R, E, C> {
         if keep_error {
             head.reply = Reply::FailAtReady;
         }
-        OnError::Fail { keep_error, cached }
-    }
-
-    /// The head keeps its place: nothing is written until its ReadyForQuery, then it. `true`: it was cancelled.
-    pub fn retry(&mut self, statement: RefPtr<Statement<E, C>>) -> bool {
-        let head = &mut self.queue[0];
-        head.statement = statement;
-        head.stage = Stage::Preparing { describing: false };
-        head.retried = true;
-        self.written = 0;
-        head.is_cancelling()
+        Some((head, OnError::Fail { keep_error, cached }))
     }
 
     pub fn cancel(&mut self, request: &R::Target) -> Option<OnCancel<Entry<R, E, C>>> {
-        let position = self.position(request)?;
-        let entry = &mut self.queue[position];
-        if entry.keeps_error() {
-            return None;
-        }
+        let mut entries = self.queue.iter_mut().enumerate();
+        let (position, entry) = entries.find(|(_, entry)| entry.is(request))?;
+        let rejected = match entry.reply {
+            Reply::Deliver | Reply::Cancelling => false,
+            Reply::OwesCancel { rejected } => rejected,
+            Reply::FailAtReady => return None,
+            // The host rejects a COPY TO STDOUT first.
+            Reply::Skip => true,
+        };
         if let Stage::Queued = entry.stage {
             return self.queue.remove(position).map(OnCancel::Unqueued);
         }
-        let rejected = entry.is_rejected();
         entry.reply = Reply::OwesCancel { rejected };
         let may_run = position < self.written;
         Some(OnCancel::InFlight { may_run })
@@ -543,11 +540,12 @@ impl<R: Deref, E, C> Pipeline<R, E, C> {
 
     pub fn on_cancel_dialed(&mut self) {
         self.cancel_in_flight = true;
-        let head = &mut self.queue[0];
-        head.reply = match head.is_rejected() {
-            true => Reply::Skip,
-            false => Reply::Cancelling,
-        };
+        if let Some(head) = self.queue.front_mut() {
+            head.reply = match head.is_rejected() {
+                true => Reply::Skip,
+                false => Reply::Cancelling,
+            };
+        }
     }
 
     pub fn on_cancel_ended(&mut self) {

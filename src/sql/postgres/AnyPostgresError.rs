@@ -15,7 +15,6 @@ pub enum AnyPostgresError {
     ConnectionRefused,
     CopyNotSupported,
     ExpectedRequest,
-    ExpectedStatement,
     InvalidBackendKeyData,
     InvalidBinaryData,
     InvalidByteSequence,

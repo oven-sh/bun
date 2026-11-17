@@ -100,12 +100,13 @@ async function run(options: { prepare?: boolean }, warmOuter: boolean, kind: Nes
 const connect = () => new SQL({ url: `postgres://u@127.0.0.1:${mock.port}/db`, max: 1 });
 
 /** Bun.build() runs the event loop until an async setup() settles. */
-function runEventLoop() {
-  Bun.build({ entrypoints: ["/a.js"], files: { "/a.js": "" }, plugins: [{ name: "wait", setup: loopbackFence }] });
+function runEventLoop(until: Promise<unknown> = loopbackFence()) {
+  const plugins = [{ name: "wait", setup: async () => void (await until) }];
+  Bun.build({ entrypoints: ["/a.js"], files: { "/a.js": "" }, plugins });
 }
 
 /** `act` runs at the third read of the hole: for the types, for the conversion, for the Bind. */
-async function withHole(act: (query: SQL.Query<any>) => void, ahead = false) {
+async function withHole(act: (query: SQL.Query<any>, buffered?: Promise<unknown>) => void, ahead = false) {
   await using sql = connect();
   const statement = (values: unknown[]) => sql.unsafe("select $1 as v, $2, $3", values);
   await statement(["warm", "y", "1"]);
@@ -116,7 +117,7 @@ async function withHole(act: (query: SQL.Query<any>) => void, ahead = false) {
   Object.defineProperty(Array.prototype, "1", {
     configurable: true,
     get() {
-      if (this.length === 3 && this[0] === "x" && ++reads === 3) act(query);
+      if (this.length === 3 && this[0] === "x" && ++reads === 3) act(query, buffered);
       return "y";
     },
     set(value) {
@@ -137,7 +138,7 @@ const scenarios: Record<string, () => Promise<unknown>> = {
   "first execution": () => run({}, false),
   "prepare: false": () => run({ prepare: false }, false),
   "cancel() in the middle of a Bind": () => withHole(query => query.cancel()),
-  "the event loop runs in the middle of a Bind": () => withHole(runEventLoop, true),
+  "a Bind waits for the query ahead": () => withHole((_, buffered) => runEventLoop(buffered), true),
   async "a ParameterDescription comes in during the conversion"() {
     await using sql = connect();
     await sql`select ${text("warm")} as v, ${text("y")}`;

@@ -306,6 +306,7 @@ macro_rules! cmd_key_members {
     };
 }
 
+/// A missing count arrives as `undefined`, so these never get the "requires at least" error.
 macro_rules! cmd_key_count {
     ($fn_name:ident, $name:literal, $command:literal, $state:ident) => {
         method!(

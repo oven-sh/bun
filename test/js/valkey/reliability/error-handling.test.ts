@@ -1,6 +1,6 @@
 import { randomUUIDv7, RedisClient } from "bun";
 import { beforeEach, describe, expect, test } from "bun:test";
-import { ConnectionType, createClient, ctx, isEnabled } from "../test-utils";
+import { ConnectionType, createClient, ctx, isEnabled, readCommands } from "../test-utils";
 
 /**
  * Test suite for error handling, protocol failures, and edge cases
@@ -285,12 +285,14 @@ describe.skipIf(!isEnabled)("Valkey: Error Handling", () => {
 
 describe("Valkey: Command Arguments", () => {
   type Call = [method: string, ...args: unknown[]];
-  const title = ([method, ...args]: Call) => `${method}(${args.map(arg => Bun.inspect(arg)).join(", ")})`;
+  const show = (arg: unknown) => (arg instanceof String ? `new String("${arg}")` : Bun.inspect(arg));
+  const title = ([method, ...args]: Call) => `${method}(${args.map(show).join(", ")})`;
   const run = (client: RedisClient, [method, ...args]: Call) => (client as any)[method](...args);
 
   /** A client of a server that acknowledges SUBSCRIBE, answers GET with "v" and anything else with 1. */
   async function connect() {
-    const received: string[] = [];
+    const received: string[][] = [];
+    const state = { buffer: Buffer.alloc(0) };
     const replies: Record<string, string> = {
       HELLO: "+OK\r\n",
       SUBSCRIBE: ">3\r\n$9\r\nsubscribe\r\n$2\r\nch\r\n:1\r\n",
@@ -301,12 +303,11 @@ describe("Valkey: Command Arguments", () => {
       port: 0,
       socket: {
         data(socket, data) {
-          const words = data
-            .toString()
-            .split("\r\n")
-            .filter(line => line && !/^[*$]/.test(line));
-          received.push(words.join(" "));
-          socket.write(replies[words[0]] ?? ":1\r\n");
+          state.buffer = Buffer.concat([state.buffer, data]);
+          for (const command of readCommands(state)) {
+            received.push(command);
+            socket.write(replies[command[0]] ?? ":1\r\n");
+          }
         },
       },
     });
@@ -322,35 +323,36 @@ describe("Valkey: Command Arguments", () => {
     };
   }
 
-  const sent: { call: Call; sends: string; resolves: unknown }[] = [
-    { call: ["dbsize", "ignored"], sends: "DBSIZE", resolves: 1 },
-    { call: ["get", "k"], sends: "GET k", resolves: "v" },
-    { call: ["getBuffer", "k"], sends: "GET k", resolves: Buffer.from("v") },
-    { call: ["incr", "k"], sends: "INCR k", resolves: 1 },
-    { call: ["decr", "k"], sends: "DECR k", resolves: 1 },
-    { call: ["ttl", "k"], sends: "TTL k", resolves: 1 },
-    { call: ["smembers", "k"], sends: "SMEMBERS k", resolves: 1 },
-    { call: ["exists", "k"], sends: "EXISTS k", resolves: true },
-    { call: ["sismember", "k", "m"], sends: "SISMEMBER k m", resolves: true },
-    { call: ["hexists", "k", "f"], sends: "HEXISTS k f", resolves: true },
-    { call: ["hsetnx", "k", "f", 2], sends: "HSETNX k f 2", resolves: true },
-    { call: ["smove", "a", "b", "m"], sends: "SMOVE a b m", resolves: true },
-    { call: ["mset", "a", 1, "b", 2], sends: "MSET a 1 b 2", resolves: 1 },
-    { call: ["lpush", null, "a", undefined, "b"], sends: "LPUSH a b", resolves: 1 },
-    { call: ["del", "a", null, "b"], sends: "DEL a b", resolves: 1 },
-    { call: ["sadd", "k", "a", null, "b"], sends: "SADD k a", resolves: 1 },
-    { call: ["srem", "k", "a", "b"], sends: "SREM k a b", resolves: 1 },
-    { call: ["spop", "k"], sends: "SPOP k", resolves: 1 },
-    { call: ["srandmember", "k", 2, 3], sends: "SRANDMEMBER k 2", resolves: 1 },
-    { call: ["hincrby", "k", null, true], sends: "HINCRBY k null true", resolves: 1 },
-    { call: ["hincrbyfloat", "k", "f", 1.5], sends: "HINCRBYFLOAT k f 1.5", resolves: 1 },
-    { call: ["publish", new String("ch"), "m"], sends: "PUBLISH ch m", resolves: 1 },
+  const sent: { call: Call; sends: string[]; resolves: unknown }[] = [
+    { call: ["dbsize", "ignored"], sends: ["DBSIZE"], resolves: 1 },
+    { call: ["get", "k"], sends: ["GET", "k"], resolves: "v" },
+    { call: ["getBuffer", "k"], sends: ["GET", "k"], resolves: Buffer.from("v") },
+    { call: ["incr", "k"], sends: ["INCR", "k"], resolves: 1 },
+    { call: ["decr", "k"], sends: ["DECR", "k"], resolves: 1 },
+    { call: ["ttl", "k"], sends: ["TTL", "k"], resolves: 1 },
+    { call: ["smembers", "k"], sends: ["SMEMBERS", "k"], resolves: 1 },
+    { call: ["exists", "k"], sends: ["EXISTS", "k"], resolves: true },
+    { call: ["sismember", "k", "m"], sends: ["SISMEMBER", "k", "m"], resolves: true },
+    { call: ["hexists", "k", "f"], sends: ["HEXISTS", "k", "f"], resolves: true },
+    { call: ["hsetnx", "k", "f", 2], sends: ["HSETNX", "k", "f", "2"], resolves: true },
+    { call: ["smove", "a", "b", "m"], sends: ["SMOVE", "a", "b", "m"], resolves: true },
+    { call: ["lrange", "k", 0, -1], sends: ["LRANGE", "k", "0", "-1"], resolves: 1 },
+    { call: ["mset", "a", "", "b", 2], sends: ["MSET", "a", "", "b", "2"], resolves: 1 },
+    { call: ["lpush", null, "a", undefined, "b"], sends: ["LPUSH", "a", "b"], resolves: 1 },
+    { call: ["del", "a", null, "b"], sends: ["DEL", "a", "b"], resolves: 1 },
+    { call: ["sadd", "k", "a", null, "b"], sends: ["SADD", "k", "a"], resolves: 1 },
+    { call: ["srem", "k", "a", "b"], sends: ["SREM", "k", "a", "b"], resolves: 1 },
+    { call: ["spop", "k"], sends: ["SPOP", "k"], resolves: 1 },
+    { call: ["srandmember", "k", 2, 3], sends: ["SRANDMEMBER", "k", "2"], resolves: 1 },
+    { call: ["hincrby", "k", null, true], sends: ["HINCRBY", "k", "null", "true"], resolves: 1 },
+    { call: ["hincrbyfloat", "k", "f", 1.5], sends: ["HINCRBYFLOAT", "k", "f", "1.5"], resolves: 1 },
+    { call: ["publish", new String("ch"), "m"], sends: ["PUBLISH", "ch", "m"], resolves: 1 },
   ];
   for (const { call, sends, resolves } of sent) {
-    test(`${title(call)} sends ${sends}`, async () => {
+    test(`${title(call)} sends ${JSON.stringify(sends)}`, async () => {
       using server = await connect();
       expect(await run(server.client, call)).toEqual(resolves);
-      expect(server.lastReceived()).toBe(sends);
+      expect(server.lastReceived()).toEqual(sends);
     });
   }
 
@@ -379,7 +381,7 @@ describe("Valkey: Command Arguments", () => {
   }
 
   // No arguments: the mode is checked before they are.
-  for (const method of ["dbsize", "getBuffer", "lrange", "mset", "lpush", "del", "sadd", "spop", "hincrby"]) {
+  for (const [method] of sent.map(row => row.call)) {
     test(`${method}() throws in subscriber mode`, async () => {
       using server = await connect();
       await server.client.subscribe("ch", () => {});
@@ -393,7 +395,7 @@ describe("Valkey: Command Arguments", () => {
     using server = await connect();
     await server.client.subscribe("ch", () => {});
     expect(await run(server.client, ["pubsub", "NUMPAT"])).toBe(1);
-    expect(server.lastReceived()).toBe("PUBSUB NUMPAT");
+    expect(server.lastReceived()).toEqual(["PUBSUB", "NUMPAT"]);
   });
 
   test("arguments convert in order and stop at the first that is refused", async () => {

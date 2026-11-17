@@ -79,8 +79,6 @@ declare module "bun" {
     /**
      * Flush the internal buffer, committing the data to the network.
      *
-     * If the upload failed while nothing was waiting for it, the next `flush()` or `end()` rejects with the error.
-     *
      * @returns Number of bytes flushed or a Promise resolving to the number of bytes
      */
     flush(): number | Promise<number>;

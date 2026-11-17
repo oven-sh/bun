@@ -15,6 +15,12 @@ use crate::error::S3Error;
 /// A longer string is encoded in pieces, so that it is never held twice.
 const TEXT_PIECE: usize = 1 << 20;
 
+/// `Create` was answered with neither an upload id nor an error code.
+pub const NO_UPLOAD_ID: S3Error<'static> = S3Error {
+    code: b"UnknownError",
+    message: b"Failed to initiate multipart upload",
+};
+
 pub struct Upload {
     phase: Phase,
     /// No more bytes come.
@@ -49,15 +55,19 @@ struct Sending {
 
 /// Safe to put in a query string as it is.
 #[derive(Clone)]
+#[cfg_attr(test, derive(Debug, PartialEq))]
 pub struct UploadId(Rc<[u8]>);
 
+#[cfg_attr(test, derive(Debug, PartialEq))]
 pub struct Part {
-    number: u32,
+    /// In `Sending::etags`.
+    index: u32,
     retries: u8,
     data: Vec<u8>,
 }
 
 /// Owns its body, and comes back with its reply: a retry sends the same allocation.
+#[cfg_attr(test, derive(Debug, PartialEq))]
 pub enum Request {
     Put(Vec<u8>),
     Create,
@@ -67,6 +77,7 @@ pub enum Request {
 }
 
 #[must_use]
+#[cfg_attr(test, derive(Debug, PartialEq))]
 pub enum Step<'a> {
     Nothing,
     Send(Request),
@@ -105,22 +116,17 @@ impl Request {
         }
     }
 
-    pub fn query<'a>(&self, buf: &'a mut [u8; 2048]) -> Option<&'a [u8]> {
-        let mut rest = &mut buf[..];
-        match self {
+    pub fn query(&self) -> Option<String> {
+        Some(match self {
             Self::Put(_) => return None,
-            Self::Create => return Some(b"?uploads="),
-            Self::Part(id, part) => write!(
-                rest,
+            Self::Create => "?uploads=".into(),
+            Self::Part(id, part) => format!(
                 "?partNumber={}&uploadId={}&x-id=UploadPart",
-                part.number,
+                part.index + 1,
                 BStr::new(&id.0)
             ),
-            Self::Commit(id, _) | Self::Abort(id) => write!(rest, "?uploadId={}", BStr::new(&id.0)),
-        }
-        .expect("UploadId::MAX_LEN leaves room");
-        let len = 2048 - rest.len();
-        Some(&buf[..len])
+            Self::Commit(id, _) | Self::Abort(id) => format!("?uploadId={}", BStr::new(&id.0)),
+        })
     }
 }
 
@@ -128,11 +134,10 @@ fn commit_body(etags: &[Box<[u8]>]) -> Vec<u8> {
     let mut xml = b"<?xml version=\"1.0\" encoding=\"UTF-8\"?><CompleteMultipartUpload xmlns=\"http://s3.amazonaws.com/doc/2006-03-01/\">".to_vec();
     for (number, etag) in (1..).zip(etags) {
         let etag = BStr::new(etag);
-        write!(
+        let _ = write!(
             xml,
             "<Part><PartNumber>{number}</PartNumber><ETag>{etag}</ETag></Part>"
-        )
-        .expect("infallible: in-memory write");
+        );
     }
     xml.extend_from_slice(b"</CompleteMultipartUpload>");
     xml
@@ -157,13 +162,19 @@ impl Upload {
         matches!(self.phase, Phase::Buffering) && self.waiting.is_empty()
     }
 
-    /// An upload that filled a part is likely to fill more: those get their whole allocation at once.
+    /// `tail` has to grow, and twice its capacity is more than a part.
     #[inline]
-    fn tail(&mut self) -> &mut Vec<u8> {
-        if self.tail.capacity() == 0 && !self.fits_one_put() {
-            let _ = self.tail.try_reserve_exact(self.part_size);
+    fn would_outgrow_a_part(&self, additional: usize) -> bool {
+        let capacity = self.tail.capacity();
+        additional > capacity - self.tail.len() && capacity > self.part_size / 2
+    }
+
+    #[inline]
+    fn extend_tail(&mut self, bytes: &[u8]) {
+        if self.would_outgrow_a_part(bytes.len()) {
+            self.tail.reserve_exact(self.part_size - self.tail.len());
         }
-        &mut self.tail
+        self.tail.extend_from_slice(bytes);
     }
 
     /// `true`: it filled a part.
@@ -173,13 +184,11 @@ impl Upload {
         self.accepted += bytes.len() as u64;
         let mut filled = false;
         while let Some((last, rest)) = bytes.split_at_checked(self.part_size - self.tail.len()) {
-            self.tail().extend_from_slice(last);
+            self.extend_tail(last);
             self.waiting.push_back(take(&mut self.tail));
             (bytes, filled) = (rest, true);
         }
-        if !bytes.is_empty() {
-            self.tail().extend_from_slice(bytes);
-        }
+        self.extend_tail(bytes);
         filled
     }
 
@@ -200,13 +209,11 @@ impl Upload {
     pub fn write_utf16(&mut self, mut text: &[u16]) -> bool {
         let mut filled = false;
         while !text.is_empty() {
-            let mut len = text.len().min(TEXT_PIECE);
-            if len < text.len() && strings::u16_is_lead(text[len - 1]) {
-                len -= 1;
-            }
+            let last = text.get(TEXT_PIECE - 1).copied();
+            let len = TEXT_PIECE - usize::from(last.is_some_and(strings::u16_is_lead));
             let piece;
-            (piece, text) = text.split_at(len);
-            filled |= self.write_encoded(3 * len, |out| {
+            (piece, text) = text.split_at_checked(len).unwrap_or((text, &[]));
+            filled |= self.write_encoded(3 * piece.len(), |out| {
                 strings::convert_utf16_to_utf8_append(out, piece);
             });
         }
@@ -217,12 +224,12 @@ impl Upload {
     fn write_encoded(&mut self, max_len: usize, append: impl FnOnce(&mut Vec<u8>)) -> bool {
         debug_assert!(!self.ended);
         let before = self.tail.len();
-        if max_len >= self.part_size - before {
+        if max_len >= self.part_size - before || self.would_outgrow_a_part(max_len) {
             let mut bytes = Vec::new();
             append(&mut bytes);
             return self.write(&bytes);
         }
-        append(self.tail());
+        append(&mut self.tail);
         self.accepted += (self.tail.len() - before) as u64;
         false
     }
@@ -241,13 +248,13 @@ impl Upload {
             Phase::Buffering if self.ended => (Request::Put(take(&mut self.tail)), Phase::Putting),
             Phase::Sending(sending) if sending.in_flight < self.queue_size => {
                 if let Some(data) = self.waiting.pop_front() {
-                    sending.in_flight += 1;
-                    sending.etags.push(Box::default());
                     let part = Part {
-                        number: sending.etags.len() as u32,
+                        index: sending.etags.len() as u32,
                         retries: self.retries,
                         data,
                     };
+                    sending.in_flight += 1;
+                    sending.etags.push(Box::default());
                     return Some(Request::Part(sending.id.clone(), part));
                 }
                 if !self.ended || sending.in_flight > 0 {
@@ -269,13 +276,9 @@ impl Upload {
             (Request::Create, Phase::Finished) => {
                 UploadId::parse(text).map_or(Step::Nothing, |id| Step::Send(Request::Abort(id)))
             }
-            (_, Phase::Finished) => Step::Nothing,
             (Request::Create, Phase::Creating) => {
                 let Some(id) = UploadId::parse(text) else {
-                    return self.fail(S3Error {
-                        code: b"UnknownError",
-                        message: b"Failed to initiate multipart upload",
-                    });
+                    return self.fail(NO_UPLOAD_ID);
                 };
                 self.phase = Phase::Sending(Sending {
                     id,
@@ -286,14 +289,17 @@ impl Upload {
             }
             (Request::Part(_, part), Phase::Sending(sending)) => {
                 sending.in_flight -= 1;
-                sending.etags[part.number as usize - 1] = text.into();
+                if let Some(etag) = sending.etags.get_mut(part.index as usize) {
+                    *etag = text.into();
+                }
                 Step::Drained(part.data.len())
             }
             (Request::Put(_), Phase::Putting) | (Request::Commit(..), Phase::Committing) => {
                 self.phase = Phase::Finished;
                 Step::Succeeded
             }
-            _ => unreachable!("not a request of this phase"),
+            // The upload does not wait for this reply any more.
+            _ => Step::Nothing,
         }
     }
 

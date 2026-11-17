@@ -18,7 +18,7 @@ function fixture(opts: {
   gateCreate?: boolean;
   retry?: number;
   abortStatus?: number;
-  answer?: { create?: string; part?: string; complete?: string; put?: string };
+  answer?: { create?: string; part?: string; complete?: string };
 }) {
   const answer = (kind: keyof NonNullable<typeof opts.answer>) =>
     opts.answer?.[kind] ? `return ${opts.answer[kind]};` : "";
@@ -49,7 +49,6 @@ function fixture(opts: {
             return new Response("", { headers: { ETag: '"etag"' } });
           }
           reqs.put++;
-          ${answer("put")}
           return new Response("");
         }
         if (req.method === "DELETE") {
@@ -358,143 +357,129 @@ test.concurrent("a stream upload whose graph is disposed during the commit lets 
     exited: 0,
   });
 });
-//B1
-// `pull` keeps what its controller returns in `got`. All of it has settled by the time the upload has.
-const direct = (pull: string) => `
-  const got = {};
-  const show = p => Bun.peek.status(p) === "pending" ? "pending" : p.then(String, e => "rejected: " + (e.code ?? e.message));
-  const upload = client.file("key").write(new ReadableStream({ type: "direct", ${pull} }), { ...opts, queueSize: 1 });
-  got.upload = upload;
-  await upload.catch(() => {});
-  for (const key of Object.keys(got).sort()) console.log(key, await show(got[key]));
-`;
-test.concurrent.each([
-  {
-    name: "end(), one request",
-    pull: `async pull(c) { await 0; c.write("hello"); got.end = c.end(); }`,
-    stdout: `end 5\nupload 5\n{"create":0,"part":0,"complete":0,"abort":0,"put":1}\n`,
-  },
-  {
-    name: "end(), the request is refused",
-    pull: `pull(c) { c.write("hello"); got.end = c.end(); }`,
-    answer: { put: `error(403, "AccessDenied")` },
-    stdout: `end rejected: AccessDenied\nupload rejected: AccessDenied\n{"create":0,"part":0,"complete":0,"abort":0,"put":1}\n`,
-  },
-  {
-    name: "flush() and end(), in parts",
-    pull: `pull(c) { c.write(new Uint8Array(partSize + 1)); got.flush = c.flush(); got.end = c.end(); }`,
-    stdout: `end 5242881\nflush 0\nupload 5242881\n{"create":1,"part":2,"complete":1,"abort":0,"put":0}\n`,
-  },
-  {
-    name: "flush() and close()",
-    pull: `async pull(c) { await 0; c.write(new Uint8Array(partSize)); got.flush = c.flush(); c.close(); }`,
-    stdout: `flush 0\nupload 5242880\n{"create":1,"part":1,"complete":1,"abort":0,"put":0}\n`,
-  },
-  {
-    name: "write() and flush(), pull() throws",
-    pull: `pull(c) { got.write = c.write(new Uint8Array(partSize)); got.flush = c.flush(); throw new Error("thrown"); }`,
-    stdout: `flush rejected: thrown\nupload rejected: thrown\nwrite false\n{"create":1,"part":0,"complete":0,"abort":1,"put":0}\n`,
-  },
-])("a direct stream's promises settle: $name", async ({ pull, answer, stdout }) => {
-  expect(await run({ body: direct(pull), waitFor: `true`, answer })).toEqual({ stdout, stderr: "", exited: 0 });
-});
 
-test.concurrent("a direct stream's promises that nobody kept are not unhandled rejections", async () => {
-  const body = direct(`pull(c) { c.write(new Uint8Array(partSize)); c.flush(); c.end(); }`);
-  expect(await run({ body, waitFor: `true`, answer: { create: `error(403, "AccessDenied")` } })).toEqual({
-    stdout: `upload rejected: AccessDenied\n{"create":1,"part":0,"complete":0,"abort":0,"put":0}\n`,
-    stderr: "",
-    exited: 0,
-  });
-});
-
-test.concurrent.each([
-  ["succeeds", undefined],
-  ["fails", `error(403, "AccessDenied")`],
-])("an async iterator is closed after its upload %s", async (_, put) => {
-  const body = `
-    let returned = false;
-    const chunks = ["hello"];
-    const iterator = {
-      next: async () => ({ done: chunks.length === 0, value: chunks.pop() }),
-      return: async () => ((returned = true), {}),
-    };
-    await client.write("key", new Response({ [Symbol.asyncIterator]: () => iterator }), opts).catch(() => {});
-  `;
-  expect(await run({ body, waitFor: `returned`, answer: { put } })).toEqual({
-    stdout: `{"create":0,"part":0,"complete":0,"abort":0,"put":1}\n`,
-    stderr: "",
-    exited: 0,
-  });
-});
-//B5
-// The HEAD request starts after the refusal was sent, so the writer has handled it when HEAD is answered.
-const refused = {
-  create: { waitFor: `reqs.create === 1`, reqs: `{"create":1,"part":0,"complete":0,"abort":0,"put":0}` },
-  part: { waitFor: `reqs.abort === 1`, reqs: `{"create":1,"part":1,"complete":0,"abort":1,"put":0}` },
-};
-test.concurrent.each([
-  ["create", "end"],
-  ["create", "flush"],
-  ["part", "end"],
-  ["part", "flush"],
-] as const)("a writer() whose %s request failed with nothing pending rejects the next %s()", async (kind, method) => {
-  const then = `
-    await client.exists("key");
-    const show = p => Promise.resolve(p).then(String, e => [e.name, e.code, e.message, e.path].join());
-    console.log(w.write("hello"), await show(w.${method}()), await show(w.flush()), await show(w.end()));
-  `;
+// A loop that advances by what write() returns has to reach its end().
+test.concurrent("a writer() that failed with nothing pending takes writes until end()", async () => {
   expect(
     await run({
       body: `const w = client.file("key").writer(opts); w.write(new Uint8Array(partSize));`,
-      waitFor: refused[kind].waitFor,
-      then,
-      answer: { [kind]: `error(403, "AccessDenied")` },
+      waitFor: `reqs.abort === 1`,
+      then: `
+        console.log("after the failure", w.write("hello"));
+        await w.flush();
+        console.log("after flush()", w.write("hello"));
+        await w.end();
+        console.log("after end()", w.write("hello"));
+      `,
+      answer: { part: `error(403, "AccessDenied")` },
     }),
   ).toEqual({
-    stdout: `0 S3Error,AccessDenied,message,key 0 0\n${refused[kind].reqs}\n`,
+    stdout: `after the failure 5\nafter flush() 5\nafter end() 0\n{"create":1,"part":1,"complete":0,"abort":1,"put":0}\n`,
     stderr: "",
     exited: 0,
   });
 });
-//B2
+
+test.concurrent("a promise chained to a direct stream's end() is not an unhandled rejection", async () => {
+  const body = `
+    const stream = new ReadableStream({ type: "direct", pull(c) { c.write(new Uint8Array(partSize)); c.end().then(() => {}); } });
+    console.log(await client.write("key", stream, opts).catch(e => e.code));
+  `;
+  expect(await run({ body, waitFor: `true`, answer: { create: `error(403, "AccessDenied")` } })).toEqual({
+    stdout: `AccessDenied\n{"create":1,"part":0,"complete":0,"abort":0,"put":0}\n`,
+    stderr: "",
+    exited: 0,
+  });
+});
+
+// The pump adopts the promise of end(), which looks `then` up after the commit went out.
+test.concurrent("a pump that rejects while the commit is out rejects the upload at once", async () => {
+  const body = `
+    let controller;
+    const stream = new ReadableStream({ start(c) { (controller = c).enqueue(new Uint8Array(partSize)); } });
+    const upload = client.write("key", stream, opts).catch(e => e.message);
+  `;
+  const then = `
+    // The HEAD request starts after the part was answered, so the upload is idle when HEAD is answered.
+    await client.exists("key");
+    const { then } = Promise.prototype;
+    Promise.prototype.then = () => {
+      Promise.prototype.then = then;
+      throw new Error("thrown");
+    };
+    controller.close();
+    await new Promise(resolve => setImmediate(resolve));
+    console.log(Bun.peek.status(upload), await upload);
+  `;
+  expect(
+    await run({
+      body,
+      waitFor: `reqs.part === 1`,
+      then,
+      answer: { complete: `createGate.promise.then(() => new Response(""))` },
+    }),
+  ).toEqual({
+    stdout: `fulfilled thrown\n{"create":1,"part":1,"complete":1,"abort":0,"put":0}\n`,
+    stderr: "",
+    exited: 0,
+  });
+});
+
 test.concurrent.each([
-  ["its code", `error(404, "NoSuchBucket")`, "NoSuchBucket message"],
-  ["no body", `new Response("", { status: 404 })`, "UnknownError Failed to initiate multipart upload"],
-])("CreateMultipartUpload answered 404 with %s", async (_, create, expected) => {
+  { create: `error(404, "NoSuchBucket")`, rejects: "NoSuchBucket message" },
+  { create: `new Response("", { status: 404 })`, rejects: "UnknownError Failed to initiate multipart upload" },
+])("CreateMultipartUpload answered 404 rejects with $rejects", async ({ create, rejects }) => {
   const body = `
     const w = client.file("key").writer(opts);
     w.write(new Uint8Array(partSize));
     console.log(await w.end().then(String, e => e.code + " " + e.message));
   `;
   expect(await run({ body, waitFor: `true`, answer: { create } })).toEqual({
-    stdout: `${expected}\n{"create":1,"part":0,"complete":0,"abort":0,"put":0}\n`,
+    stdout: `${rejects}\n{"create":1,"part":0,"complete":0,"abort":0,"put":0}\n`,
     stderr: "",
     exited: 0,
   });
 });
-//B12
+
 // What the stream wrote before its script was terminated is not the whole object.
 test.concurrent.each([
-  ["a direct stream", `new ReadableStream({ type: "direct", pull(c) { c.write("hello"); for (;;); } })`],
-  ["a part of a direct stream", `new ReadableStream({ type: "direct", pull(c) { c.write(part); for (;;); } })`],
-  ["an async iterator", `new Response({ async *[Symbol.asyncIterator]() { for (;;); } })`],
-])("a node:vm timeout while %s is read stores nothing", async (_, source) => {
+  {
+    name: "a direct stream",
+    source: `new ReadableStream({ type: "direct", pull(c) { c.write("hello"); spin(); } })`,
+    opensMultipart: false,
+  },
+  {
+    name: "a part of a direct stream",
+    source: `new ReadableStream({ type: "direct", pull(c) { c.write(part); spin(); } })`,
+    opensMultipart: true,
+  },
+  {
+    name: "an async iterator",
+    source: `new Response({ async *[Symbol.asyncIterator]() { spin(); } })`,
+    opensMultipart: false,
+  },
+])("a node:vm timeout while $name is read stores nothing", async ({ source, opensMultipart }) => {
   const body = `
     const part = new Uint8Array(partSize + 1);
+    let spun = false;
+    const spin = () => { for (spun = true; ; ); };
     globalThis.upload = () => client.write("key", ${source});
-    try {
-      require("node:vm").runInThisContext("upload()", { timeout: 100 });
-    } catch (e) {
-      console.log(e.code);
+    // On a slow machine the timeout comes before the source is read.
+    for (let timeout = 100; !spun; timeout *= 2) {
+      try {
+        require("node:vm").runInThisContext("upload()", { timeout });
+      } catch (e) {
+        if (spun) console.log(e.code);
+      }
     }
   `;
   const { stdout, stderr, exited } = await run({ body, waitFor: `true` });
   const [code, reqs] = stdout.trim().split("\n");
   const { create, abort, ...stored } = JSON.parse(reqs);
-  expect({ code, stored, leftOpen: create - abort, stderr, exited }).toEqual({
+  expect({ code, stored, opensMultipart: create > 0, leftOpen: create - abort, stderr, exited }).toEqual({
     code: "ERR_SCRIPT_EXECUTION_TIMEOUT",
     stored: { part: 0, complete: 0, put: 0 },
+    opensMultipart,
     leftOpen: 0,
     stderr: "",
     exited: 0,

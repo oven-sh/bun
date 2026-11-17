@@ -1,6 +1,6 @@
 // Hardcoded module "node:_http_client"
 // This is a port of Node.js's lib/_http_client.js built on top of node:net /
-// node:tls sockets and the llhttp HTTPParser binding, matching the upstream
+// node:tls sockets and the HTTPParser binding, matching the upstream
 // implementation as closely as possible.
 // https://github.com/nodejs/node/blob/v26.3.0/lib/_http_client.js
 const { kEmptyObject, once, ConnResetException, hasObserver, startPerf, stopPerf } = require("internal/shared");

@@ -9,7 +9,7 @@ use bun_ptr::{AliasableBox, RefPtr};
 
 // Re-exports (thin aliases)
 pub(crate) use crate::webcore::s3::download_stream::S3HttpDownloadStreamingTask;
-pub(crate) use crate::webcore::s3::multipart_options::MultiPartUploadOptions;
+pub(crate) use bun_s3_signing::MultiPartUploadOptions;
 pub(crate) use bun_s3_signing::acl::ACL;
 pub(crate) use bun_s3_signing::storage_class::StorageClass;
 
@@ -44,6 +44,7 @@ use crate::generated_bindgen::s3_upload_stream::{
 };
 use crate::webcore::ByteStream;
 use crate::webcore::ReadableStream;
+use crate::webcore::readable_stream::Source as ReadableStreamPtr;
 use crate::webcore::readable_stream::Strong as ReadableStreamStrong;
 use crate::webcore::s3::multipart::{NetworkSink, NetworkSinkWrapperRef, Owed, Target};
 use crate::webcore::sink::{JSSink, ReadableSinkController};
@@ -459,6 +460,20 @@ pub(crate) fn upload_stream(
                 .create_error_instance(format_args!("ReadableStream is already disturbed")),
         )
         .to_js());
+    }
+    if let ReadableStreamPtr::Invalid = readable_stream.ptr {
+        return Ok(bun_jsc::JSPromise::rejected_promise(
+            cx.global(),
+            cx.global()
+                .create_error_instance(format_args!("ReadableStream is invalid")),
+        )
+        .to_js());
+    }
+    if let Some(stream) = readable_stream.ptr.bytes()
+        && let Some(err) = stream.take_pending_error()
+    {
+        let js_err = err.to_js(cx.global());
+        return Ok(bun_jsc::JSPromise::rejected_promise(cx.global(), js_err).to_js());
     }
 
     let target = Target {

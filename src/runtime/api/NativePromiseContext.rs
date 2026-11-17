@@ -292,6 +292,8 @@ impl DeferredDerefTask {
                 Tag::HTMLRewriterPipeFree => unsafe {
                     drop(RefPtr::from_raw(ctx.cast::<html_rewriter::RewriterPipe>()))
                 },
+                // SAFETY: the pump's ref. It is the last one only once the upload has finished and holds no JS value.
+                Tag::S3UploadStream => unsafe { drop(RefPtr::from_raw(ctx.cast::<NetworkSink>())) },
                 _ => {}
             }
             return;
@@ -383,6 +385,9 @@ const _: () = assert!(
 );
 const _: () =
     assert!(core::mem::align_of::<html_rewriter::RewriterPipe>() > DeferredDerefTask::TAG_MASK);
-const _: () = assert!(core::mem::align_of::<NetworkSink>() > DeferredDerefTask::TAG_MASK);
+const _: () = assert!(
+    core::mem::align_of::<crate::webcore::s3::multipart::NetworkSink>()
+        > DeferredDerefTask::TAG_MASK
+);
 const _: () =
     assert!(core::mem::align_of::<crate::api::cron::CronJob>() > DeferredDerefTask::TAG_MASK);

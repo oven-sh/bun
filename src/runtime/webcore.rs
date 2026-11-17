@@ -261,10 +261,6 @@ pub(crate) mod form_data;
 #[path = "webcore/ScriptExecutionContext.rs"]
 pub(crate) mod script_execution_context;
 
-#[doc(hidden)]
-pub(crate) mod multipart_options_impl {
-    pub(crate) use bun_s3_signing::MultiPartUploadOptions;
-}
 // Note: inner `#[path]` inside an inline `mod s3 { }` resolves relative to
 // `<this-file's-dir>/s3/`, which would point at `src/runtime/s3/...` (does not
 // exist). Declare the file mods at this level (where `#[path]` is relative to
@@ -291,8 +287,7 @@ pub(crate) mod __s3_simple_request;
 #[path = "webcore/s3/xml_response.rs"]
 pub(crate) mod __s3_xml_response;
 pub(crate) mod s3 {
-    pub(crate) use super::multipart_options_impl as multipart_options;
-    pub(crate) use super::multipart_options_impl::MultiPartUploadOptions;
+    pub(crate) use bun_s3_signing::MultiPartUploadOptions;
 
     // Note: `client` is the umbrella re-export hub. It pulls in `simple_request`
     // / `download_stream` / `list_objects` / `multipart` transitively.

@@ -582,6 +582,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "bun_deflate"
+version = "0.0.0"
+dependencies = [
+ "bun_alloc",
+ "bun_highway",
+ "bun_pod",
+ "bun_removable_features",
+ "thiserror",
+]
+
+[[package]]
 name = "bun_dispatch"
 version = "0.0.0"
 dependencies = [
@@ -732,6 +743,14 @@ name = "bun_histogram"
 version = "0.0.0"
 
 [[package]]
+name = "bun_hpack"
+version = "0.0.0"
+dependencies = [
+ "bun_wyhash",
+ "thiserror",
+]
+
+[[package]]
 name = "bun_http"
 version = "0.0.0"
 dependencies = [
@@ -745,13 +764,14 @@ dependencies = [
  "bun_brotli",
  "bun_collections",
  "bun_core",
+ "bun_deflate",
  "bun_dotenv",
  "bun_errno",
  "bun_event_loop",
+ "bun_hpack",
  "bun_http1",
  "bun_http_types",
  "bun_io",
- "bun_libdeflate_sys",
  "bun_ptr",
  "bun_removable_features",
  "bun_sys",
@@ -770,6 +790,7 @@ dependencies = [
 name = "bun_http1"
 version = "0.0.0"
 dependencies = [
+ "bitflags",
  "bun_core",
  "bun_http_types",
  "thiserror",
@@ -786,6 +807,7 @@ dependencies = [
  "bun_boringssl",
  "bun_collections",
  "bun_core",
+ "bun_deflate",
  "bun_errno",
  "bun_highway",
  "bun_http",
@@ -793,7 +815,6 @@ dependencies = [
  "bun_http_types",
  "bun_io",
  "bun_jsc",
- "bun_libdeflate_sys",
  "bun_opaque",
  "bun_ptr",
  "bun_sha_hmac",
@@ -852,6 +873,7 @@ dependencies = [
  "bun_collections",
  "bun_core",
  "bun_crash_handler",
+ "bun_deflate",
  "bun_dns",
  "bun_dotenv",
  "bun_errno",
@@ -863,7 +885,6 @@ dependencies = [
  "bun_io",
  "bun_js_parser",
  "bun_js_printer",
- "bun_libdeflate_sys",
  "bun_options_types",
  "bun_parsers",
  "bun_patch",
@@ -1052,7 +1073,6 @@ dependencies = [
  "bun_js_parser",
  "bun_js_printer",
  "bun_jsc_macros",
- "bun_libdeflate_sys",
  "bun_opaque",
  "bun_options_types",
  "bun_patch",
@@ -1085,15 +1105,6 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn",
-]
-
-[[package]]
-name = "bun_libdeflate_sys"
-version = "0.0.0"
-dependencies = [
- "bun_alloc",
- "bun_core",
- "bun_opaque",
 ]
 
 [[package]]
@@ -1615,6 +1626,7 @@ dependencies = [
  "bun_csrf",
  "bun_css",
  "bun_css_jsc",
+ "bun_deflate",
  "bun_dns",
  "bun_dotenv",
  "bun_errno",
@@ -1625,7 +1637,9 @@ dependencies = [
  "bun_hash",
  "bun_highway",
  "bun_histogram",
+ "bun_hpack",
  "bun_http",
+ "bun_http1",
  "bun_http_jsc",
  "bun_http_types",
  "bun_install",
@@ -1637,7 +1651,6 @@ dependencies = [
  "bun_js_parser_jsc",
  "bun_js_printer",
  "bun_jsc",
- "bun_libdeflate_sys",
  "bun_libuv_sys",
  "bun_lint",
  "bun_lint_driver",
@@ -1941,7 +1954,6 @@ dependencies = [
  "bun_core",
  "bun_libuv_sys",
  "bun_sys",
- "bun_windows_sys",
  "enumset",
  "libc",
  "strum",
@@ -2155,6 +2167,7 @@ dependencies = [
  "bun_boringssl_sys",
  "bun_core",
  "bun_errno",
+ "bun_hpack",
  "bun_http_types",
  "bun_libuv_sys",
  "bun_opaque",
@@ -2170,7 +2183,7 @@ dependencies = [
 name = "bun_valkey"
 version = "0.0.0"
 dependencies = [
- "bstr",
+ "bun_collections",
  "bun_core",
  "strum",
 ]

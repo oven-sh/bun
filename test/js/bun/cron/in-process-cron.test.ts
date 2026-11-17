@@ -1,5 +1,5 @@
 import { describe, expect, jest, test } from "bun:test";
-import { bunEnv, bunExe, normalizeBunSnapshot, tempDir } from "harness";
+import { bunEnv, bunExe, isASAN, normalizeBunSnapshot, tempDir } from "harness";
 import { join } from "node:path";
 
 describe("Bun.cron (in-process)", () => {
@@ -494,4 +494,143 @@ describe.concurrent("Bun.cron (in-process) — firing", () => {
     expect(await Bun.file(m("result")).text()).toBe("ok");
     expect(await Bun.file(m("ghost.fired")).exists()).toBe(false);
   }, 130_000);
+});
+
+describe.concurrent("Bun.cron (in-process): a job that stops while its tick is pending", () => {
+  async function run(cmd: string[], files: Record<string, string>, env: Record<string, string> = {}) {
+    using dir = tempDir("cron-pending-tick", files);
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), ...cmd],
+      env: { ...bunEnv, ...env },
+      cwd: String(dir),
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+  const rooted = `"CronJob" in require("bun:jsc").heapStats().protectedObjectTypeCounts`;
+
+  test.each([
+    ["stop()", "", "job.stop();"],
+    ["stop() in the tick", "this.stop();", ""],
+  ])("%s lets go of it", async (_, inTick, afterTick) => {
+    const { stdout, exitCode } = await run(["main.js"], {
+      "main.js": `
+        const { jest } = Bun.jest();
+        jest.useFakeTimers();
+        const job = Bun.cron("* * * * *", function () {
+          ${inTick}
+          return new Promise(() => {});
+        });
+        console.log(${rooted});
+        jest.advanceTimersByTime(60_000);
+        ${afterTick}
+        console.log(${rooted});
+      `,
+    });
+    expect({ stdout, exitCode }).toEqual({ stdout: "true\nfalse\n", exitCode: 0 });
+  });
+
+  test("a --hot reload lets go of it", async () => {
+    using dir = tempDir("cron-pending-tick-hot", {
+      "main.js": `
+        const { jest } = Bun.jest();
+        jest.useFakeTimers();
+        Bun.cron("* * * * *", () => new Promise(() => {}));
+        jest.advanceTimersByTime(60_000);
+        jest.useRealTimers();
+        console.log(${rooted});
+        const next = ${JSON.stringify(`clearInterval(globalThis.timer); console.log(${rooted});`)};
+        // Until the watcher, which may not have the file yet, sees a write.
+        globalThis.timer = setInterval(() => require("node:fs").writeFileSync("main.js", next), 20);
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "--hot", "--no-clear-screen", "main.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      stderr: "inherit",
+    });
+    let stdout = "";
+    for await (const chunk of proc.stdout) {
+      stdout += Buffer.from(chunk).toString();
+      if (stdout.split("\n").length > 2) break;
+    }
+    expect(stdout.split("\n").slice(0, 2)).toEqual(["true", "false"]);
+  });
+
+  test("bun test does not wait for it", async () => {
+    const { stderr, exitCode } = await run(["test", "./never.test.js"], {
+      "never.test.js": `
+        import { jest, test } from "bun:test";
+        test("never settles", async () => {
+          jest.useFakeTimers();
+          const job = Bun.cron("* * * * *", () => new Promise(() => {}));
+          jest.advanceTimersByTime(60_000);
+          job.stop();
+          jest.useRealTimers();
+          await new Promise(() => {});
+        }, 0);
+      `,
+    });
+    expect(stderr).toContain("A test or hook with no timeout never settled");
+    expect(exitCode).toBe(1);
+  });
+
+  test("unhandledRejection gets the promise after its graph was disposed and the heap collected", async () => {
+    const { stdout, exitCode } = await run(["main.js"], {
+      "main.js": `
+        const { jest } = Bun.jest();
+        jest.useFakeTimers();
+        const held = Promise.withResolvers();
+        process.on("unhandledRejection", (error, promise) => console.log(error.message, promise === held.promise));
+        const graph = new Bun.ModuleGraph();
+        graph.run(() => void Bun.cron("* * * * *", () => held.promise));
+        jest.advanceTimersByTime(60_000);
+        graph.dispose();
+        jest.useRealTimers();
+        setImmediate(() => {
+          Bun.gc(true);
+          held.reject(new Error("late"));
+        });
+      `,
+    });
+    expect({ stdout, exitCode }).toEqual({ stdout: "late true\n", exitCode: 0 });
+  });
+
+  test.skipIf(!isASAN).each([
+    ["after the tick", "", "graph.dispose();"],
+    ["in the tick", "graph.dispose();", ""],
+  ])("is freed with the VM when its graph was disposed %s", async (_, inTick, afterTick) => {
+    const result = await run(
+      ["main.js"],
+      {
+        // In a callback: test/leaksan.supp hides what a module body allocates.
+        "main.js": `
+          setImmediate(() => {
+            const { jest } = Bun.jest();
+            jest.useFakeTimers();
+            globalThis.held = new Promise(() => {});
+            const graph = new Bun.ModuleGraph();
+            graph.run(() =>
+              Bun.cron("* * * * *", () => {
+                ${inTick}
+                return held;
+              }),
+            );
+            jest.advanceTimersByTime(60_000);
+            ${afterTick}
+            jest.useRealTimers();
+            console.log("done");
+          });
+        `,
+      },
+      {
+        BUN_DESTRUCT_VM_ON_EXIT: "1",
+        ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "detect_leaks=1"].filter(Boolean).join(":"),
+        LSAN_OPTIONS: `print_suppressions=0:suppressions=${join(import.meta.dirname, "../../../leaksan.supp")}`,
+      },
+    );
+    expect(result).toEqual({ stdout: "done\n", stderr: "", exitCode: 0 });
+  });
 });

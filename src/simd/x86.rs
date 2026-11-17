@@ -108,6 +108,12 @@ impl<I: Xmm> Vector<u8, 16, I> {
     }
 
     #[inline]
+    #[target_feature(enable = "ssse3")]
+    pub fn lookup2(self, upper: Self, indices: Self) -> Self {
+        self.lookup(indices + 0x70) | upper.lookup(indices - 16)
+    }
+
+    #[inline]
     #[target_feature(enable = "sse2")]
     pub fn saturating_narrow(first: Vector<i16, 8, I>, second: Vector<i16, 8, I>) -> Self {
         Self::new(_mm_packus_epi16(first.0.into(), second.0.into()))
@@ -155,6 +161,18 @@ impl<I: Xmm> Vector<i16, 8, I> {
     }
 
     #[inline]
+    #[target_feature(enable = "sse2")]
+    pub fn mul_high(self, other: Self) -> Self {
+        Self::new(_mm_mulhi_epi16(self.0.into(), other.0.into()))
+    }
+
+    #[inline]
+    #[target_feature(enable = "ssse3")]
+    pub fn mul_sign(self, sign: Self) -> Self {
+        Self::new(_mm_sign_epi16(self.0.into(), sign.0.into()))
+    }
+
+    #[inline]
     #[target_feature(enable = "ssse3")]
     pub fn saturating_pairwise_dot(a: Vector<u8, 16, I>, b: Vector<i8, 16, I>) -> Self {
         Self::new(_mm_maddubs_epi16(a.0.into(), b.0.into()))
@@ -199,6 +217,12 @@ impl<I: Ymm> Vector<u8, 32, I> {
 
     #[inline]
     #[target_feature(enable = "avx2")]
+    pub fn lookup2(self, upper: Self, indices: Self) -> Self {
+        self.lookup(indices + 0x70) | upper.lookup(indices - 16)
+    }
+
+    #[inline]
+    #[target_feature(enable = "avx2")]
     pub fn saturating_narrow(first: Vector<i16, 16, I>, second: Vector<i16, 16, I>) -> Self {
         let packed = _mm256_packus_epi16(first.0.into(), second.0.into());
         Self::new(_mm256_permute4x64_epi64::<0b11_01_10_00>(packed))
@@ -238,6 +262,18 @@ impl<I: Ymm> Vector<i16, 16, I> {
     #[target_feature(enable = "avx2")]
     pub fn mul_q15(self, other: Self) -> Self {
         Self::new(_mm256_mulhrs_epi16(self.0.into(), other.0.into()))
+    }
+
+    #[inline]
+    #[target_feature(enable = "avx2")]
+    pub fn mul_high(self, other: Self) -> Self {
+        Self::new(_mm256_mulhi_epi16(self.0.into(), other.0.into()))
+    }
+
+    #[inline]
+    #[target_feature(enable = "avx2")]
+    pub fn mul_sign(self, sign: Self) -> Self {
+        Self::new(_mm256_sign_epi16(self.0.into(), sign.0.into()))
     }
 
     #[inline]
@@ -286,6 +322,12 @@ impl<I: Zmm> Vector<u8, 64, I> {
 
     #[inline]
     #[target_feature(enable = "avx512bw")]
+    pub fn lookup2(self, upper: Self, indices: Self) -> Self {
+        self.lookup(indices + 0x70) | upper.lookup(indices - 16)
+    }
+
+    #[inline]
+    #[target_feature(enable = "avx512bw")]
     pub fn saturating_narrow(first: Vector<i16, 32, I>, second: Vector<i16, 32, I>) -> Self {
         let packed = _mm512_packus_epi16(first.0.into(), second.0.into());
         Self::new(_mm512_permutexvar_epi64(
@@ -328,6 +370,17 @@ impl<I: Zmm> Vector<i16, 32, I> {
     #[target_feature(enable = "avx512bw")]
     pub fn mul_q15(self, other: Self) -> Self {
         Self::new(_mm512_mulhrs_epi16(self.0.into(), other.0.into()))
+    }
+
+    #[inline]
+    #[target_feature(enable = "avx512bw")]
+    pub fn mul_high(self, other: Self) -> Self {
+        Self::new(_mm512_mulhi_epi16(self.0.into(), other.0.into()))
+    }
+
+    #[inline(always)]
+    pub fn mul_sign(self, sign: Self) -> Self {
+        sign.simd_lt(0).select(self.wrapping_neg(), self)
     }
 
     #[inline]

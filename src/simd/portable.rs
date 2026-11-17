@@ -32,6 +32,16 @@ impl<const N: usize, const B: usize> Lanes<u8, N, B> {
         }))
     }
 
+    /// The same for indices below 32. Those from 16 on are into `upper`.
+    #[inline]
+    pub fn lookup2(self, upper: Self, indices: Self) -> Self {
+        Self::from_array(array::from_fn(|i| {
+            let index = usize::from(indices[i]);
+            debug_assert!(index < 32);
+            [self, upper][index / 16 % 2][i / 16 * 16 + index % 16]
+        }))
+    }
+
     /// The lanes of `first`, then of `second`, clamped to `0..=255`.
     #[inline]
     pub fn saturating_narrow<const M: usize>(
@@ -110,6 +120,21 @@ impl<const N: usize, const B: usize> Lanes<i16, N, B> {
         let product = self.0.cast::<i32>() * other.0.cast();
         debug_assert!(product.simd_ne(Simd::splat(1 << 30)).all());
         Self::new(((product + Simd::splat(1 << 14)) >> 15).cast())
+    }
+
+    /// `(a * b) >> 16`. They must not both be `i16::MIN`.
+    #[inline]
+    pub fn mul_high(self, other: Self) -> Self {
+        let product = self.0.cast::<i32>() * other.0.cast();
+        debug_assert!(product.simd_ne(Simd::splat(1 << 30)).all());
+        Self::new((product >> 16).cast())
+    }
+
+    /// Negated where `sign` is negative. It must be zero where `sign` is.
+    #[inline]
+    pub fn mul_sign(self, sign: Self) -> Self {
+        debug_assert!((0..N).all(|i| sign[i] != 0 || self[i] == 0));
+        Self::new(self.0 * sign.0.signum())
     }
 }
 

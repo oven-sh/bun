@@ -1,7 +1,7 @@
 //! Gives both the same random input. The slices for Rust are next to inaccessible pages.
 use crate::pairs::{self, Pairs};
 use crate::room::Room;
-use crate::{Random, columns, highway, shared, write_line};
+use crate::{Random, columns, highway, shared, webp_encoder, write_line};
 use bun_simd::{Out, SharedOutU8};
 use bun_simd_kernels::{self as rust, ColumnsFilled, Filter, MappingsState};
 use core::array::from_fn;
@@ -861,6 +861,7 @@ pub(crate) fn run(seed: u64, rounds: u64) -> bool {
         round.png();
         round.jpeg_transforms();
         round.jpeg_colors();
+        round.failures.0.extend(webp_encoder::check(round.random));
         round.mappings();
         if number % 20 == 0 {
             round.resize();

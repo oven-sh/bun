@@ -134,6 +134,13 @@ impl<const S: bool> Lanes<u8, 16, S> {
 
     #[inline]
     #[target_feature(enable = "neon")]
+    pub fn lookup2(self, upper: Self, indices: Self) -> Self {
+        let table = uint8x16x2_t(self.0.into(), upper.0.into());
+        Self::new(vqtbl2q_u8(table, indices.0.into()))
+    }
+
+    #[inline]
+    #[target_feature(enable = "neon")]
     pub fn saturating_narrow(first: Lanes<i16, 8, S>, second: Lanes<i16, 8, S>) -> Self {
         Self::new(vqmovun_high_s16(
             vqmovun_s16(first.0.into()),
@@ -183,6 +190,17 @@ impl<const S: bool> Lanes<i16, 8, S> {
     #[target_feature(enable = "neon")]
     pub fn mul_q15(self, other: Self) -> Self {
         Self::new(vqrdmulhq_s16(self.0.into(), other.0.into()))
+    }
+
+    #[inline]
+    #[target_feature(enable = "neon")]
+    pub fn mul_high(self, other: Self) -> Self {
+        Self::new(vqdmulhq_s16(self.0.into(), other.0.into())) >> 1
+    }
+
+    #[inline(always)]
+    pub fn mul_sign(self, sign: Self) -> Self {
+        (self ^ sign >> 15) - (sign >> 15)
     }
 
     #[inline(always)]

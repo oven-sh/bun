@@ -20,6 +20,7 @@ mod png;
 mod scanner;
 mod search;
 mod sourcemap;
+mod webp_encoder;
 mod width;
 mod words;
 mod xml;
@@ -80,6 +81,17 @@ pub use xml::simd::{
 };
 pub use xxhash::XxHash64State;
 pub use xxhash::simd::{xxhash3_64_shared, xxhash32, xxhash32_shared, xxhash64, xxhash64_shared};
+
+pub mod webp {
+    pub use crate::webp_encoder::simd::{
+        analyze, convert, try_chroma_modes, try_diagonal_modes, try_luma_modes, try_straight_modes,
+    };
+    pub use crate::webp_encoder::{
+        Block, Candidates, ChromaCandidates, Edges, GammaTable, Histograms, IS_FLAT, LinearColors,
+        LumaCandidates, LumaSaturation, LumaSource, MAX_SYMBOL, Macroblock, Quantizer, Scratch,
+        SubblockCandidates,
+    };
+}
 
 #[inline(always)]
 pub fn memmem(haystack: &[u8], needle: &[u8]) -> Option<usize> {

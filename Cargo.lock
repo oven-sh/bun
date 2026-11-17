@@ -532,6 +532,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "bun_cron"
+version = "0.0.0"
+dependencies = [
+ "bstr",
+ "bun_core",
+ "thiserror",
+]
+
+[[package]]
 name = "bun_csrf"
 version = "0.0.0"
 dependencies = [
@@ -1624,6 +1633,7 @@ dependencies = [
  "bun_collections",
  "bun_core",
  "bun_crash_handler",
+ "bun_cron",
  "bun_csrf",
  "bun_css",
  "bun_css_jsc",

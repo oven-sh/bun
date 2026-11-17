@@ -598,6 +598,9 @@ describe("bundler", () => {
     },
     cjs2esm: true,
     minifySyntax: true,
+    bundleWarnings: {
+      "/entry.js": ['Import "default" will always be undefined because there is no matching export in "reexport.js"'],
+    },
     run: {
       stdout: "side effect\nversion undefined function",
     },

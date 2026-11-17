@@ -2979,6 +2979,26 @@ describe.concurrent("global directories from the environment", () => {
     },
   );
 
+  test.skipIf(isWindows).each(["../link/../x", "..\\link\\..\\x"])(
+    "cache rm -g refuses to delete real/x when BUN_INSTALL is %s",
+    async BUN_INSTALL => {
+      using side = tempDir("pm-bun-install-link-relative", {
+        ...sideFiles,
+        ...projectFiles,
+        "real/dir/.keep": "",
+        "real/x/bin/bun": "",
+      });
+      symlinkSync("real/dir", join(String(side), "link"));
+      const cacheDir = join(String(side), "real/x");
+      const spawnEnv = cacheEnv(String(side), { BUN_INSTALL, BUN_INSTALL_CACHE_DIR: cacheDir });
+
+      expect(await pmCache(["rm", "-g"], join(String(side), "proj"), spawnEnv)).toEqual(
+        refused(cacheDir, "$BUN_INSTALL"),
+      );
+      expect(await readdirSorted(cacheDir)).toEqual(["bin"]);
+    },
+  );
+
   test("a relative BUN_INSTALL resolves against the project, or the cwd with -g", async () => {
     using side = tempDir("pm-relative-bun-install-side", sideFiles);
     using root = tempDir("pm-relative-bun-install", { "package.json": JSON.stringify({ name: "a" }), "src/.keep": "" });

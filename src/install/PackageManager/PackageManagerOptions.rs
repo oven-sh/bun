@@ -652,9 +652,15 @@ pub(crate) fn resolve_env_dir(
 
 /// The two differ when a symlink comes before a `..`.
 pub fn env_dir_resolved_and_as_written(base_dir: &[u8], dir: &[u8]) -> [Box<[u8]>; 2] {
-    let as_written = expand_home(dir);
-    let resolved = Path::resolve_any_sep(&[base_dir_for(base_dir, dir), &as_written]);
-    [resolved.as_bytes().into(), as_written]
+    let base_dir = base_dir_for(base_dir, dir);
+    let dir = expand_home(dir);
+    let resolved = Path::resolve_any_sep(&[base_dir, &dir]);
+    if cfg!(windows) || bun_paths::is_absolute(&dir) {
+        return [resolved.as_bytes().into(), dir];
+    }
+    let mut as_written = Path::from(base_dir);
+    as_written.push_any_sep(&dir);
+    [resolved, as_written].map(|path| path.as_bytes().into())
 }
 
 /// Unlike [`resolve_env_dir`], opens a fully qualified `dir` as it is written.

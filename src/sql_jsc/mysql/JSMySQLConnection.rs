@@ -188,6 +188,7 @@ impl AutoFlush for JSMySQLConnection {
     }
 
     fn on_auto_flush(&self) -> bool {
+        let _guard = self.ref_guard();
         // With backpressure, onWritable drains.
         if !self.has_backpressure.get() {
             self.drain_internal();
@@ -300,9 +301,9 @@ impl JSMySQLConnection {
         self.register_auto_flusher();
     }
 
+    /// The caller holds a ref.
     fn drain_internal(&self) {
         bun_core::scoped_log!(MySQLConnection, "drainInternal");
-        let _guard = self.ref_guard();
         {
             let _loop_guard = self.event_loop().enter_scope();
             self.ensure_js_value_is_alive();
@@ -1022,6 +1023,7 @@ impl<const SSL: bool> SocketHandler<SSL> {
     }
 
     pub fn on_writable(this: &JSMySQLConnection, _: NewSocketHandler<SSL>) {
+        let _guard = this.ref_guard();
         this.has_backpressure.set(false);
         this.drain_internal();
     }

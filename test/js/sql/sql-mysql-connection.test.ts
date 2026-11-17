@@ -1314,6 +1314,33 @@ describe("scripted server", () => {
     });
   });
 
+  test.concurrent.skipIf(!isASAN)("a parameter that the end-of-turn flush reads can free the connection", async () => {
+    const result = await runWithServer(/* js */ `
+      let sql = new SQL({ url: await serve(() => {}), max: 1 });
+      await sql.connect();
+      const read = Promise.withResolvers();
+      const parameter = {
+        toJSON() {
+          sql.close({ timeout: 0 });
+          sql = null;
+          Bun.gc(true);
+          read.resolve();
+          return 1;
+        },
+      };
+      setImmediate(() => {
+        // It fills the write buffer, so the next one waits for the flush.
+        sql.unsafe(Buffer.alloc(70_000, "a").toString()).simple().catch(() => {});
+        sql\`SELECT \${parameter}\`.catch(() => {});
+      });
+      await read.promise;
+      await new Promise(setImmediate);
+      console.log("ok");
+      process.exit(0);
+    `);
+    expect(result).toEqual({ stdout: "ok\n", stderr: expect.any(String), exitCode: 0 });
+  });
+
   test.skipIf(isWindows)("a unix socket that is not there rejects with its path", async () => {
     const path = "/nonexistent/dir/mysql.sock";
     await using sql = new SQL({ adapter: "mysql", path, username: "root", database: "db", max: 1 });

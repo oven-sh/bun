@@ -404,6 +404,7 @@ let priorityWeightDeprecationWarned = false;
 // Marks a client stream created from a received PUSH_PROMISE: its response HEADERS fire 'push'.
 const kPush = Symbol("pushStream");
 const kOpenPushes = Symbol("openPushes");
+const kPendingWrite = Symbol("pendingWrite");
 const kAwaitedUnreadStreams = Symbol("awaitedUnreadStreams");
 // Set on a client request while it waits in its session's queue: the arguments it's submitted with.
 const kQueuedRequest = Symbol("queuedRequest");
@@ -2290,6 +2291,11 @@ function sendRstOnReady(this: Http2Stream, session: Http2Session, code: number) 
 function uncorkNT(stream: Http2Stream) {
   stream.uncork();
 }
+function runPendingWrite(this: Http2Stream) {
+  const write = this[kPendingWrite];
+  this[kPendingWrite] = undefined;
+  write?.();
+}
 function readNothing(this: Http2Stream) {
   this.read(0);
 }
@@ -2383,6 +2389,7 @@ class Http2Stream extends (Duplex as Http2StreamBase) {
   [kSendingTrailers]: boolean = false;
   [kAborted]: boolean = false;
   [kHeadRequest]: boolean = false;
+  [kPendingWrite]: (() => void) | undefined = undefined;
   constructor(streamId, session, headers, writable = true) {
     super({
       decodeStrings: false,
@@ -2720,6 +2727,8 @@ class Http2Stream extends (Duplex as Http2StreamBase) {
 
     session[kAwaitedUnreadStreams]?.delete(this);
     this[bunHTTP2Session] = null;
+    // No 'ready' may follow, and every later callback of the writable side waits behind this one.
+    if (this[kPendingWrite] !== undefined) process.nextTick(FunctionPrototypeBind.$call(runPendingWrite, this));
     // This notifies the session that this stream has been destroyed and
     // gives the session the opportunity to clean itself up. The session
     // will destroy if it has been closed and there are no other open or
@@ -2918,9 +2927,10 @@ class Http2Stream extends (Duplex as Http2StreamBase) {
   }
 
   _writev(data, callback) {
-    if (this.pending) {
+    if (this.pending && !this.destroyed) {
       // Not submitted yet (queued behind the peer's concurrency limit): wait for the id.
-      this.once("ready", this._writev.bind(this, data, callback));
+      this[kPendingWrite] = this._writev.bind(this, data, callback);
+      this.once("ready", runPendingWrite);
       return;
     }
     const writevPerf = this[kPerfState];
@@ -2989,9 +2999,10 @@ class Http2Stream extends (Duplex as Http2StreamBase) {
     }
   }
   _write(chunk, encoding, callback) {
-    if (this.pending) {
+    if (this.pending && !this.destroyed) {
       // Not submitted yet (queued behind the peer's concurrency limit): wait for the id.
-      this.once("ready", this._write.bind(this, chunk, encoding, callback));
+      this[kPendingWrite] = this._write.bind(this, chunk, encoding, callback);
+      this.once("ready", runPendingWrite);
       return;
     }
     const writePerf = this[kPerfState];

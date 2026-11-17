@@ -600,6 +600,37 @@ describe("a transport written in JS whose write() returned false", () => {
   });
 });
 
+describe.each(["a stream slot", "the socket"])("a request that waits for %s", waitsFor => {
+  test.each<[string, (req: http2.ClientHttp2Stream, client: http2.ClientHttp2Session) => void]>([
+    ["close(code)", req => req.close(ErrorCode.CANCEL)],
+    ["destroy()", req => req.destroy()],
+    ["destroy(err)", req => req.destroy(new Error("mine"))],
+    ["session.destroy()", (_, client) => client.destroy()],
+  ])("calls back its writes after %s", async (_, end) => {
+    const full = http2.createServer({ settings: { maxConcurrentStreams: 0 } });
+    await once(full.listen(0, "127.0.0.1"), "listening");
+    const client = http2.connect(`http://127.0.0.1:${(full.address() as net.AddressInfo).port}`);
+    try {
+      if (waitsFor === "a stream slot") await once(client, "remoteSettings");
+      const req = client.request({ ":method": "POST" }).on("error", () => {});
+      const called: string[] = [];
+      req.write("a", () => called.push("first"));
+      // The request is corked until then.
+      await new Promise(process.nextTick);
+      req.write("b", () => called.push("second"));
+      req.end(() => called.push("end"));
+      expect(req.pending).toBe(true);
+      const closed = new Promise(resolve => req.on("close", resolve));
+      end(req, client);
+      await closed;
+      expect(called).toEqual(["first", "second", "end"]);
+    } finally {
+      client.destroy();
+      full.close();
+    }
+  });
+});
+
 test.each<[string, string[]]>([
   ["request()", ["HEADERS 1", "RST_STREAM 1"]],
   ["a queued request", ["HEADERS 1"]],

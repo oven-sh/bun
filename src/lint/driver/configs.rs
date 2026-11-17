@@ -591,13 +591,14 @@ fn wildcards_of(wildcards: &[Wildcard]) -> Json {
     Json::Array(ids.collect())
 }
 
-/// The overrides that [`Loader::rc`] puts after an oxlint config's own: one for every file with `[lint.rules]` and the
-/// `--rule` values, then `[[lint.overrides]]`, then the command line's.
+/// The overrides that [`Loader::rc`] puts after an oxlint config's own. `[[lint.overrides]]` are in the middle.
 #[derive(Copy, Clone)]
 struct Added {
     /// How many overrides the file has itself.
     own: usize,
+    /// True if the first one is for every file. It has `[lint.rules]` and the `--rule` values.
     for_every_file: bool,
+    /// True if the last one is the command line's.
     has_command_line: bool,
 }
 
@@ -1361,9 +1362,7 @@ impl<'l> Loader<'l> {
         }
     }
 
-    /// Builds the config from an `.oxlintrc.json` in `directory`, plus what bunfig.toml and the command line add.
-    /// `file` is its path, or `None` for oxlint's defaults. An error names the source of the mistake: the file,
-    /// bunfig.toml or `--rule`.
+    /// Builds the config from the `.oxlintrc.json` at `file` plus what bunfig.toml and the command line add.
     fn rc(&self, directory: &[u8], file: Option<&[u8]>, mut json: Json) -> Result<Config, Fatal> {
         let options = self.options;
         let mut added = None;
@@ -1544,11 +1543,7 @@ impl<'l> Loader<'l> {
         Ok(config)
     }
 
-    /// The error for an oxlint config that the reader refuses, with a first line that says where the mistake is. `why`
-    /// is the reader's message about `json`, which ends with the overrides that [`Loader::rc`] `added`. The reader
-    /// doesn't know where a rule came from, so `mistake_in` reads `json` again with fewer of those rules: first
-    /// without bunfig.toml's and the `--rule` ones, then without the `--rule` ones. The mistake is in the first source
-    /// that makes it fail. `-A`, `-W` and `-D` count as the file, which they already change in [`apply_filters`].
+    /// The error for a `json` that the reader refuses because of `why`. It starts with the source of the mistake.
     fn blame(
         &self,
         file: Option<&[u8]>,
@@ -1597,6 +1592,7 @@ impl<'l> Loader<'l> {
             }
             mistake_in(&json)
         };
+        // `-A`, `-W` and `-D` stay. [`apply_filters`] already writes them into the file's own rules.
         if let Some(why) = mistake_with([&own[..], &of_flags[..]].concat()) {
             return in_file(&why);
         }
@@ -1622,7 +1618,6 @@ impl<'l> Loader<'l> {
     }
 
     /// bunfig.toml or `--rule`, if one of them turns on the rule that a config of the given `flavor` knows as `id`.
-    /// Their settings come after the file's.
     fn added_rule_source(&self, id: &[u8], flavor: Flavor) -> Option<&[u8]> {
         let options = self.options;
         let turns_on = |it: &(Vec<u8>, Json)| {

@@ -31,6 +31,7 @@
 
 #include "BufferSource.h"
 #include "CryptoAlgorithm.h"
+#include "CryptoAlgorithmParameters.h"
 #include "CryptoAlgorithmRegistry.h"
 #include "JSCryptoKey.h"
 #include "JSDOMConvert.h"
@@ -41,6 +42,7 @@
 #include "CryptoKeyAKP.h"
 #include "CryptoKeyEC.h"
 #include "CryptoKeyOKP.h"
+#include "CryptoKeyPair.h"
 #include "CryptoKeyRSA.h"
 #include "BunString.h"
 #include "ErrorCode.h"
@@ -54,6 +56,9 @@
 #include <JavaScriptCore/ObjectConstructor.h>
 #include <JavaScriptCore/Uint8Array.h>
 #include <functional>
+#include <utility>
+#include <variant>
+#include <wtf/text/MakeString.h>
 #include <JavaScriptCore/JSONObject.h>
 
 namespace WebCore {
@@ -166,6 +171,7 @@ static bool fitsInVector(const BufferSource& data)
     return WTF::isValidCapacityForVector<uint8_t>(data.length());
 }
 
+// Readers call it last, after `hash` ran its getters. The size checks run before them, so their error wins.
 [[nodiscard]] static bool tryCopy(Vector<uint8_t>& to, const BufferSource& from)
 {
     return to.tryAppend(std::span { from.data(), from.length() });
@@ -191,7 +197,6 @@ static ExceptionOr<CryptoAlgorithmIdentifier> toHashIdentifier(JSGlobalObject& s
     return digestParams.returnValue().identifier;
 }
 
-// Every reader copies the bytes last, after `hash` ran its getters. An oversized member fails before them.
 static ExceptionOr<Dictionary> readAeadParams(JSGlobalObject& state, JSObject& object, ASCIILiteral dictionaryName)
 {
     constexpr uint8_t defaultTagLength = 128;
@@ -204,6 +209,8 @@ static ExceptionOr<Dictionary> readAeadParams(JSGlobalObject& state, JSObject& o
     RETURN_IF_EXCEPTION(scope, Exception { ExistingExceptionError });
     auto tagLength = reader.optional<IDLEnforcedOctet>("tagLength"_s);
     RETURN_IF_EXCEPTION(scope, Exception { ExistingExceptionError });
+    if (!fitsInVector(iv) || !fitsInVector(additionalData))
+        return inputTooLarge();
     CryptoAlgorithmAeadParams params { {}, {}, tagLength.value_or(defaultTagLength) };
     if (!tryCopy(params.iv, iv) || !tryCopy(params.additionalData, additionalData))
         return inputTooLarge();
@@ -591,7 +598,7 @@ static ExceptionOr<Dictionary> readDictionary(JSGlobalObject& state, JSObject& o
         }
     }
 
-    RELEASE_ASSERT_NOT_REACHED();
+    return unrecognizedAlgorithm();
 }
 
 // https://w3c.github.io/webcrypto/#algorithm-normalization-normalize-an-algorithm
@@ -634,14 +641,14 @@ static std::optional<CryptoAlgorithmParameters> normalizeOrReject(JSGlobalObject
     return result.releaseReturnValue();
 }
 
-// `operation` accepts AES-KW only; every other algorithm wraps through `fallback`.
-static std::optional<CryptoAlgorithmParameters> normalizeWrapAlgorithmOrReject(JSGlobalObject& state, const SubtleCrypto::AlgorithmIdentifier& algorithmIdentifier, Operations operation, Operations fallback, DeferredPromise& promise)
+// AES-KW, or else any algorithm that encrypts. Unwrapping takes the same dictionaries.
+static std::optional<CryptoAlgorithmParameters> normalizeWrapAlgorithmOrReject(JSGlobalObject& state, const SubtleCrypto::AlgorithmIdentifier& algorithmIdentifier, DeferredPromise& promise)
 {
     auto scope = DECLARE_THROW_SCOPE(state.vm());
-    auto result = normalizeCryptoAlgorithmParameters(state, algorithmIdentifier, operation);
+    auto result = normalizeCryptoAlgorithmParameters(state, algorithmIdentifier, Operations::WrapKey);
     RETURN_IF_EXCEPTION(scope, std::nullopt);
     if (result.hasException())
-        RELEASE_AND_RETURN(scope, normalizeOrReject(state, algorithmIdentifier, fallback, promise));
+        RELEASE_AND_RETURN(scope, normalizeOrReject(state, algorithmIdentifier, Operations::Encrypt, promise));
     return result.releaseReturnValue();
 }
 
@@ -757,7 +764,7 @@ static std::optional<KeyData> toKeyData(SubtleCrypto::KeyFormat format, SubtleCr
                 },
                 [&promise](auto& bufferSource) -> std::optional<KeyData> {
                     if (!WTF::isValidCapacityForVector<uint8_t>(bufferSource->byteLength())) {
-                        promise->reject(OperationError, "Input data is too large"_s);
+                        promise->reject(inputTooLarge());
                         return std::nullopt;
                     }
                     return KeyData { Vector(std::span { static_cast<const uint8_t*>(bufferSource->data()), bufferSource->byteLength() }) };
@@ -783,11 +790,12 @@ static std::optional<KeyData> toKeyData(SubtleCrypto::KeyFormat format, SubtleCr
 // nullopt: the promise was rejected.
 static std::optional<Vector<uint8_t>> copyToVector(BufferSource&& data, Ref<DeferredPromise>& promise)
 {
-    if (!fitsInVector(data)) {
-        promise->reject(OperationError, "Input data is too large"_s);
+    Vector<uint8_t> copy;
+    if (!tryCopy(copy, data)) {
+        promise->reject(inputTooLarge());
         return std::nullopt;
     }
-    return Vector<uint8_t> { std::span { data.data(), data.length() } };
+    return copy;
 }
 
 static bool isSupportedExportKey(CryptoAlgorithmIdentifier identifier)
@@ -881,17 +889,31 @@ RefPtr<DeferredPromise> getPromise(DeferredPromise* index, WeakPtr<SubtleCrypto>
     return nullptr;
 }
 
+// For the callback of a job, which can be destroyed on the work pool. nullopt: the promise was rejected.
+static std::optional<CryptoAlgorithmParameters> isolateOrReject(CryptoAlgorithmParameters&& importParams, DeferredPromise& promise)
+{
+    if (auto* ecParams = std::get_if<CryptoAlgorithmEcKeyParams>(&importParams.dictionary)) {
+        ecParams->namedCurve = tryMakeString(ecParams->namedCurve);
+        if (ecParams->namedCurve.isNull()) {
+            promise.reject(inputTooLarge());
+            return std::nullopt;
+        }
+    }
+    return WTF::move(importParams);
+}
+
 static JSObject* convertDictionaryToJS(JSGlobalObject& lexicalGlobalObject, JSDOMGlobalObject& globalObject, const CryptoKeyPair& keyPair)
 {
     auto& vm = lexicalGlobalObject.vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* result = constructEmptyObject(&lexicalGlobalObject, globalObject.objectPrototype());
-    auto privateKey = toJS(&lexicalGlobalObject, &globalObject, *keyPair.privateKey);
-    RETURN_IF_EXCEPTION(scope, {});
-    Bun::putDirectNamed(vm, result, "privateKey"_s, privateKey);
-    auto publicKey = toJS(&lexicalGlobalObject, &globalObject, *keyPair.publicKey);
-    RETURN_IF_EXCEPTION(scope, {});
-    Bun::putDirectNamed(vm, result, "publicKey"_s, publicKey);
+    for (auto [name, key] : { std::pair { "privateKey"_s, keyPair.privateKey.get() }, std::pair { "publicKey"_s, keyPair.publicKey.get() } }) {
+        if (!key)
+            continue;
+        auto value = toJS(&lexicalGlobalObject, &globalObject, *key);
+        RETURN_IF_EXCEPTION(scope, {});
+        Bun::putDirectNamed(vm, result, name, value);
+    }
     return result;
 }
 
@@ -1192,10 +1214,14 @@ void SubtleCrypto::deriveKey(JSC::JSGlobalObject& state, AlgorithmIdentifier&& a
     auto importAlgorithm = CryptoAlgorithmRegistry::singleton().create(importParams->identifier);
     auto algorithm = CryptoAlgorithmRegistry::singleton().create(params->identifier);
 
+    auto isolatedParams = isolateOrReject(WTF::move(*importParams), promise);
+    if (!isolatedParams)
+        return;
+
     auto index = promise.ptr();
     m_pendingPromises.add(index, WTF::move(promise));
     WeakPtr weakThis { *this };
-    auto callback = [index, weakThis, importAlgorithm = WTF::move(importAlgorithm), importParams = WTF::move(*importParams), extractable, keyUsagesBitmap](const Vector<uint8_t>& derivedKey) mutable {
+    auto callback = [index, weakThis, importAlgorithm = WTF::move(importAlgorithm), importParams = WTF::move(*isolatedParams), extractable, keyUsagesBitmap](const Vector<uint8_t>& derivedKey) mutable {
         // FIXME: https://bugs.webkit.org/show_bug.cgi?id=169395
         KeyData data = derivedKey;
         auto callback = [index, weakThis](CryptoKey& key) mutable {
@@ -1453,7 +1479,7 @@ void SubtleCrypto::wrapKey(JSC::JSGlobalObject& state, KeyFormat format, CryptoK
     auto& vm = state.vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    auto wrapParams = normalizeWrapAlgorithmOrReject(state, wrapAlgorithmIdentifier, Operations::WrapKey, Operations::Encrypt, promise);
+    auto wrapParams = normalizeWrapAlgorithmOrReject(state, wrapAlgorithmIdentifier, promise);
     RETURN_IF_EXCEPTION(scope, void());
     if (!wrapParams)
         return;
@@ -1533,7 +1559,7 @@ void SubtleCrypto::wrapKey(JSC::JSGlobalObject& state, KeyFormat format, CryptoK
                         paddedSize = roundUpToMultipleOf(8, paddedSize);
                     if (!jwkUTF8 || paddedSize > Bun::maxVectorSize<uint8_t>() || !bytes.tryReserveInitialCapacity(paddedSize)) [[unlikely]] {
                         weakThis->m_pendingPromises.remove(index);
-                        promise->reject(OperationError, "Input data is too large"_s);
+                        promise->reject(inputTooLarge());
                         return;
                     }
                     bytes.append(jwkUTF8->bytes());
@@ -1580,7 +1606,7 @@ void SubtleCrypto::unwrapKey(JSC::JSGlobalObject& state, KeyFormat format, Buffe
     if (!wrappedKey)
         return;
 
-    auto unwrapParams = normalizeWrapAlgorithmOrReject(state, unwrapAlgorithmIdentifier, Operations::UnwrapKey, Operations::Decrypt, promise);
+    auto unwrapParams = normalizeWrapAlgorithmOrReject(state, unwrapAlgorithmIdentifier, promise);
     RETURN_IF_EXCEPTION(scope, void());
     if (!unwrapParams)
         return;
@@ -1619,10 +1645,14 @@ void SubtleCrypto::unwrapKey(JSC::JSGlobalObject& state, KeyFormat format, Buffe
         return;
     }
 
+    auto isolatedParams = isolateOrReject(WTF::move(*unwrappedKeyAlgorithm), promise);
+    if (!isolatedParams)
+        return;
+
     auto index = promise.ptr();
     m_pendingPromises.add(index, WTF::move(promise));
     WeakPtr weakThis { *this };
-    auto callback = [index, weakThis, format, importAlgorithm, unwrappedKeyAlgorithm = WTF::move(*unwrappedKeyAlgorithm), extractable, keyUsagesBitmap](const Vector<uint8_t>& bytes) mutable {
+    auto callback = [index, weakThis, format, importAlgorithm, unwrappedKeyAlgorithm = WTF::move(*isolatedParams), extractable, keyUsagesBitmap](const Vector<uint8_t>& bytes) mutable {
         if (weakThis) {
             if (RefPtr promise = weakThis->m_pendingPromises.get(index)) {
                 auto& state = *(promise->globalObject());
@@ -1864,10 +1894,14 @@ void SubtleCrypto::encapsulateKey(JSC::JSGlobalObject& state, AlgorithmIdentifie
     auto algorithm = CryptoAlgorithmRegistry::singleton().create(params->identifier);
     auto importAlgorithm = CryptoAlgorithmRegistry::singleton().create(importParams->identifier);
 
+    auto isolatedParams = isolateOrReject(WTF::move(*importParams), promise);
+    if (!isolatedParams)
+        return;
+
     auto index = promise.ptr();
     m_pendingPromises.add(index, WTF::move(promise));
     WeakPtr weakThis { *this };
-    auto callback = [index, weakThis, importAlgorithm = WTF::move(importAlgorithm), importParams = WTF::move(*importParams), extractable, keyUsagesBitmap](Vector<uint8_t>&& sharedKeyBytes, Vector<uint8_t>&& ciphertext) mutable {
+    auto callback = [index, weakThis, importAlgorithm = WTF::move(importAlgorithm), importParams = WTF::move(*isolatedParams), extractable, keyUsagesBitmap](Vector<uint8_t>&& sharedKeyBytes, Vector<uint8_t>&& ciphertext) mutable {
         KeyData data = WTF::move(sharedKeyBytes);
         auto keyCallback = [index, weakThis, ciphertext = WTF::move(ciphertext)](CryptoKey& sharedKey) mutable {
             if (auto promise = getPromise(index, weakThis)) {
@@ -1980,10 +2014,14 @@ void SubtleCrypto::decapsulateKey(JSC::JSGlobalObject& state, AlgorithmIdentifie
     auto algorithm = CryptoAlgorithmRegistry::singleton().create(params->identifier);
     auto importAlgorithm = CryptoAlgorithmRegistry::singleton().create(importParams->identifier);
 
+    auto isolatedParams = isolateOrReject(WTF::move(*importParams), promise);
+    if (!isolatedParams)
+        return;
+
     auto index = promise.ptr();
     m_pendingPromises.add(index, WTF::move(promise));
     WeakPtr weakThis { *this };
-    auto callback = [index, weakThis, importAlgorithm = WTF::move(importAlgorithm), importParams = WTF::move(*importParams), extractable, keyUsagesBitmap](const Vector<uint8_t>& sharedKeyBytes) mutable {
+    auto callback = [index, weakThis, importAlgorithm = WTF::move(importAlgorithm), importParams = WTF::move(*isolatedParams), extractable, keyUsagesBitmap](const Vector<uint8_t>& sharedKeyBytes) mutable {
         KeyData data = sharedKeyBytes;
         auto keyCallback = [index, weakThis](CryptoKey& sharedKey) mutable {
             if (auto promise = getPromise(index, weakThis)) {

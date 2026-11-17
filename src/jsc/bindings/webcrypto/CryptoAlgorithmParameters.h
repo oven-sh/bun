@@ -56,16 +56,8 @@ struct CryptoAlgorithmAesKeyParams {
     unsigned short length;
 };
 
-// Isolated and never shared: callbacks that hold it can be destroyed on the work pool.
 struct CryptoAlgorithmEcKeyParams {
-    explicit CryptoAlgorithmEcKeyParams(String&& curve)
-        : namedCurve(WTF::move(curve).isolatedCopy())
-    {
-    }
-    CryptoAlgorithmEcKeyParams(CryptoAlgorithmEcKeyParams&&) = default;
-    CryptoAlgorithmEcKeyParams& operator=(CryptoAlgorithmEcKeyParams&&) = default;
-
-    String namedCurve;
+    String namedCurve; // Shared with the JS string: only a copy can leave the thread.
 };
 
 struct CryptoAlgorithmEcdhKeyDeriveParams {

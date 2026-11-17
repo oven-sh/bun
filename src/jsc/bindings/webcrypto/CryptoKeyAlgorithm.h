@@ -26,6 +26,7 @@
 #pragma once
 
 #include <JavaScriptCore/Uint8Array.h>
+#include <wtf/RefPtr.h>
 #include <wtf/text/WTFString.h>
 
 namespace WebCore {

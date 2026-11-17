@@ -1,5 +1,5 @@
 // What the compiler reads in place of src/js/node/_http_server.ts, which `bun run` evaluates. The two do the same.
-// Written against that file with the SHA-256 e6efb277d40b5fc62ce4786b8c01518d9a0786e294256f104b8ded62fb1839eb.
+// Written against that file with the SHA-256 ca894616ff2642c5810bb5e8503e7cd75f20336c367ca16665a5fcd1c001ba05.
 // When that file changes, bring the change here and write the new hash: test/internal/second-texts-of-modules.test.ts.
 
 // Hardcoded module "node:_http_server"
@@ -403,7 +403,7 @@ const onServerResponseClose = function onServerResponseClose(this: $Node.HttpSoc
   // where the ServerResponse object has already been deconstructed.
   // Fortunately, that requires only a single if check. :-)
   const httpMessage: $Node.ServerResponse | null | undefined = this._httpMessage as any;
-  if (httpMessage) {
+  if (httpMessage && httpMessage !== (this as $Node.HttpServerSocket)[kFinishedAtClose]) {
     emitCloseNT(httpMessage);
   }
 };
@@ -3383,9 +3383,11 @@ function nativeSocketOnClose(this: $Node.HttpServerSocket) {
   const pending = socket[kDetachedWhileClosing];
   socket[kDetachedWhileClosing] = undefined;
   const message = socket._httpMessage ?? (pending?.destroyed ? pending : undefined);
-  const req = message != null && socket[kFinishedAtClose] !== message ? message.req : undefined;
-  abortRequest(req);
-  if (message && !message._closed) emitCloseNT(message);
+  // One that finished at the close emits 'close' behind its 'finish'.
+  if (message != null && socket[kFinishedAtClose] !== message) {
+    abortRequest(message.req);
+    emitCloseNT(message);
+  }
   abortWaitingResponses(socket);
 }
 function abortWaitingResponses(socket: $Node.HttpServerSocket) {

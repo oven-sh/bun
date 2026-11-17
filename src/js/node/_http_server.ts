@@ -242,7 +242,7 @@ function onServerResponseClose() {
   // where the ServerResponse object has already been deconstructed.
   // Fortunately, that requires only a single if check. :-)
   const httpMessage = this._httpMessage;
-  if (httpMessage) {
+  if (httpMessage && httpMessage !== this[kFinishedAtClose]) {
     emitCloseNT(httpMessage);
   }
 }
@@ -2559,9 +2559,11 @@ function nativeSocketOnClose(this: any) {
   const pending = socket[kDetachedWhileClosing];
   socket[kDetachedWhileClosing] = undefined;
   const message = socket._httpMessage ?? (pending?.destroyed ? pending : undefined);
-  const req = message != null && socket[kFinishedAtClose] !== message ? message.req : undefined;
-  abortRequest(req);
-  if (message && !message._closed) emitCloseNT(message);
+  // One that finished at the close emits 'close' behind its 'finish'.
+  if (message != null && socket[kFinishedAtClose] !== message) {
+    abortRequest(message.req);
+    emitCloseNT(message);
+  }
   abortWaitingResponses(socket);
 }
 function abortWaitingResponses(socket) {

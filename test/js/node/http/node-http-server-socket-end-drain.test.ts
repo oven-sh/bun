@@ -233,6 +233,23 @@ describe.skipIf(isWindows).each(["http", "https"] as const)(
     });
 
     test.concurrent.each([
+      ["socket.destroy()", (req: IncomingMessage) => void req.socket.destroy()],
+      ["res.destroy()", (req: IncomingMessage) => void (req.socket as any)._httpMessage.destroy()],
+      ["closeAllConnections()", (req: IncomingMessage) => (req.socket as any).server.closeAllConnections()],
+    ])("%s: the response finishes before it closes", async (_name, close) => {
+      const order: string[] = [];
+      const { promise: both, resolve } = Promise.withResolvers<void>();
+      using _exchange = await respond(req => {
+        for (const event of ["finish", "close"]) {
+          (req.socket as any)._httpMessage.on(event, () => order.push(event) === 2 && resolve());
+        }
+        close(req);
+      });
+      await both;
+      expect(order).toEqual(["finish", "close"]);
+    });
+
+    test.concurrent.each([
       ["end()", (socket: net.Socket) => void socket.end()],
       ["destroySoon()", (socket: net.Socket) => socket.destroySoon()],
     ])("destroy() after %s closes the connection", async (_name, end) => {

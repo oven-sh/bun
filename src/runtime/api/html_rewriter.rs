@@ -836,6 +836,13 @@ impl RewriterPipe {
         Writable::Owned(len)
     }
 
+    /// For a chunk that script holds: a handler can shrink or transfer its buffer while lol-html reads it.
+    #[inline(never)]
+    pub(crate) fn write_copy(&self, bytes: &[u8]) -> Writable {
+        let copy = SmallVec::<[u8; 1024]>::from_slice(bytes);
+        self.write(&StreamResult::Temporary(&copy))
+    }
+
     /// The input ended or failed.
     pub fn end_from_stream(&self, err: Option<StreamError>) {
         let _pin = self.pin();
@@ -1308,10 +1315,8 @@ impl crate::webcore::sink::JsSinkType for RewriterPipe {
     fn memory_cost(&self) -> usize {
         self.pending_input.get().capacity() + self.output_buffer.get().capacity()
     }
-    /// A handler can shrink or transfer the buffer of the chunk while lol-html reads it.
     fn write_bytes(this: &mut Self::Entered<'_>, data: &StreamResult<'_>) -> Writable {
-        let copy = SmallVec::<[u8; 1024]>::from_slice(data.slice());
-        RewriterPipe::write(this, &StreamResult::Temporary(&copy))
+        this.write_copy(data.slice())
     }
     fn write_utf16(this: &mut Self::Entered<'_>, text: &[u16]) -> Writable {
         let mut buf = Vec::new();

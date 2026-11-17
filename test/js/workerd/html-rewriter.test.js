@@ -2845,15 +2845,19 @@ describe.each(Object.entries(wholeBody))("input that arrives while the parser ru
 });
 
 it.concurrent.each([
-  { buffer: "resizable", make: "new Uint8Array(new ArrayBuffer(n, { maxByteLength: n }))", free: "resize(0)" },
-  { buffer: "fixed", make: "new Uint8Array(new ArrayBuffer(n))", free: "transfer(8)" },
-  { buffer: "not yet made", make: "new Uint8Array(n)", free: "transfer(8)" },
-])("a handler calls $free on the $buffer buffer of the chunk that is being parsed", async ({ make, free }) => {
-  const script = `
+  { put: "enqueue", make: "new Uint8Array(new ArrayBuffer(n, { maxByteLength: n }))", free: "resize(0)" },
+  { put: "enqueue", make: "new Uint8Array(new ArrayBuffer(n))", free: "transfer(8)" },
+  { put: "enqueue", make: "new Uint8Array(n)", free: "transfer(8)" },
+  { put: "write", make: "new Uint8Array(n)", free: "transfer(8)" },
+])(
+  "a handler calls $free on the buffer of the chunk that is being parsed: $put($make)",
+  async ({ put, make, free }) => {
+    const script = `
     const html = "<p>1</p>" + Buffer.alloc(300_000, "<i>abcdefgh</i>").toString(), n = html.length;
     const chunk = ${make};
     new TextEncoder().encodeInto(html, chunk);
-    const input = new ReadableStream({ async pull(c) { await null; c.enqueue(chunk); c.close(); } });
+    const type = ${put === "write" ? '"direct"' : undefined};
+    const input = new ReadableStream({ type, async pull(c) { await null; c.${put}(chunk); c.close(); } });
     const element = () => {
       chunk.buffer.${free};
       Bun.gc(true);
@@ -2861,10 +2865,11 @@ it.concurrent.each([
     };
     console.log((await new HTMLRewriter().on("p", { element }).transform(new Response(input)).text()) === html);
   `;
-  await using proc = Bun.spawn({ cmd: [bunExe(), "-e", script], env: bunEnv, stderr: "inherit" });
-  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
-  expect({ stdout, exitCode }).toEqual({ stdout: "true\n", exitCode: 0 });
-});
+    await using proc = Bun.spawn({ cmd: [bunExe(), "-e", script], env: bunEnv, stderr: "inherit" });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    expect({ stdout, exitCode }).toEqual({ stdout: "true\n", exitCode: 0 });
+  },
+);
 
 it("input that a handler writes or closes is not processed inside the outer write()", async () => {
   const order = [];

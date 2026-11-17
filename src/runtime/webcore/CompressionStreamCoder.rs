@@ -714,9 +714,7 @@ pub(crate) unsafe extern "C" fn CompressionStreamCoder__transformInto(
                     break 'write JSValue::UNDEFINED;
                 }
                 handle
-                    .write(&crate::webcore::streams::Result::Temporary(
-                        bun_ptr::RawSlice::new(&out),
-                    ))
+                    .write(&crate::webcore::streams::Result::Temporary(&out))
                     .to_js(&global.js_thread_of_caller())
             }
         }

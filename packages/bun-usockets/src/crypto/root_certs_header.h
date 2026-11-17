@@ -6,6 +6,9 @@
 #include <openssl/x509.h>
 
 #ifdef __cplusplus
+#include "../libusockets.h"
+
+#include <cstdlib>
 #include <memory>
 
 #define CPPDECL extern "C"
@@ -15,6 +18,15 @@ template <auto free_fn> struct us_deleter {
   void operator()(auto *ptr) const { free_fn(ptr); }
 };
 template <typename T, auto free_fn> using us_unique_ptr = std::unique_ptr<T, us_deleter<free_fn>>;
+
+// Leaves `buffer` as it was when there is no memory.
+template <typename T> bool us_grow(us_unique_ptr<T, us_free> &buffer, size_t size) {
+  auto *grown = (decltype(buffer.get()))us_realloc(buffer.get(), size);
+  if (!grown) return false;
+  buffer.release();
+  buffer.reset(grown);
+  return true;
+}
 
 using us_ssl_ctx_ptr = us_unique_ptr<SSL_CTX, SSL_CTX_free>;
 

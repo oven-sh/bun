@@ -23,6 +23,7 @@ use bun_jsc::bun_string_jsc;
 use bun_jsc::js_promise::Status as PromiseStatus;
 use bun_jsc::module_loader::{ArenaResetGuard, FetchFlags, TranspileArgs, TranspileExtra};
 use bun_jsc::resolved_source::Bytecode;
+use bun_jsc::runtime_transpiler_cache::RuntimeTranspilerCache;
 use bun_jsc::virtual_machine::{
     CancelHotRunTimers, InitOptions, MainEntryPoint, RuntimeHooks,
     RuntimeState as OpaqueRuntimeState, SweepResult, TimersLeft, VirtualMachine,
@@ -100,6 +101,7 @@ pub(crate) struct RuntimeState {
     node_fs: JsCell<Option<crate::node::fs::NodeFS>>,
     /// Installed while `process.on("memoryPressure", ...)` has a listener.
     pub(crate) memory_pressure_watcher: crate::node::memory_pressure::WatcherSlot,
+    pub(crate) browsers: crate::webview::Browsers,
     /// `bun lint`: what runs the rules of JavaScript plugins in this VM.
     pub(crate) lint: core::cell::OnceCell<Box<crate::cli::lint_js::LintVm>>,
     /// The `uv_loop_t` that addons get for this VM. Stored inline because addons
@@ -320,6 +322,7 @@ fn init_runtime_state(vm: &VirtualMachine, opts: &InitOptions) -> OpaqueRuntimeS
         matcher_pass: Cell::new(ptr::null()),
         node_fs: JsCell::new(None),
         memory_pressure_watcher: Default::default(),
+        browsers: Default::default(),
         lint: core::cell::OnceCell::new(),
         #[cfg(unix)]
         uv_loop: crate::napi::uv_posix::UvLoop::new(vm.handle()),
@@ -511,18 +514,6 @@ fn configure_debugger(vm: &VirtualMachine, cli_flag: &bun_options_types::context
 /// this thread (or null), and must not be used again after this call.
 unsafe fn deinit_runtime_state(state: OpaqueRuntimeState) {
     RUNTIME_STATE.set(ptr::null_mut());
-    // Free the per-thread `TRANSPILE_PRINTER`. Workers lazy-init their own
-    // copy in `Bun__transpileFile` / `Bun__transpileVirtualModule`; without this
-    // each worker thread strands a `Box<BufferPrinter>` (mirrors the
-    // `drop_source_code_printer()` in `VirtualMachine::drop`).
-    let printer = TRANSPILE_PRINTER.with(|c| c.replace(ptr::null_mut()));
-    if !printer.is_null() {
-        // SAFETY: `printer` was produced by `heap::into_raw` in
-        // `Bun__transpileFile`/`Bun__transpileVirtualModule` and is exclusively
-        // owned by this thread; the TLS slot was just nulled so no other
-        // alias exists.
-        drop(unsafe { bun_core::heap::take(printer) });
-    }
     if !state.is_null() {
         // SAFETY: per fn contract — `state` is the unique `heap::alloc` result
         // from `init_runtime_state`; the TLS was just cleared so no other live
@@ -1305,6 +1296,7 @@ fn stop_watches_for_vm_teardown(vm: &VirtualMachine) {
     if let Some(state) = try_runtime_state() {
         // Its poll is a slot of `RareData`, which is freed before the runtime state.
         state.memory_pressure_watcher.set(None);
+        state.browsers.release_for_vm_teardown();
     }
 }
 
@@ -1770,7 +1762,7 @@ fn note_compile_cache_parse_failure(
 /// → `js_printer::print` → `ResolvedSource`.
 ///
 /// # Safety
-/// The pointers in `args` are live for the call.
+/// `args.log` is live for the call.
 #[unsafe(no_mangle)]
 unsafe fn __bun_transpile_source_code(
     jsc_vm: &VirtualMachine,
@@ -1966,11 +1958,7 @@ fn transpile_source_code_of_any_provenance<const DATA_ONLY: bool>(
             // guard can reset that heap.
             let _ast_alloc_scope = bun_alloc::ast_alloc::ScopedAstAlloc::with_spill(arena_heap);
 
-            // ── RuntimeTranspilerCache ──────────────────────────────────────
-            let mut cache = bun_ast::RuntimeTranspilerCache {
-                r#impl: Some(bun_ast::TranspilerCacheImplKind::Jsc),
-                ..Default::default()
-            };
+            let mut cache = RuntimeTranspilerCache::default();
 
             // ── Swap `vm.transpiler.log` (and linker/resolver/pm logs) ──────
             // `parse_maybe_return_file_only` writes diagnostics
@@ -2070,7 +2058,6 @@ fn transpile_source_code_of_any_provenance<const DATA_ONLY: bool>(
             // `virtual_source` is `None`).
             // ════════════════════════════════════════════════════════════════
             {
-                use bun_ast::RuntimeTranspilerCache;
                 use bun_bundler::transpiler::{AlreadyBundled, ParseOptions, ParseResult};
                 use bun_jsc::resolved_source::Tag as ResolvedSourceTag;
 
@@ -2104,14 +2091,13 @@ fn transpile_source_code_of_any_provenance<const DATA_ONLY: bool>(
                     allow_commonjs: true,
                     module_type: module_type_only_for_wrappables,
                     inject_jest_globals: options.rewrite_jest_for_tests,
-                    is_test_entry_point: (is_main || is_preload)
-                        && options.rewrite_jest_for_tests,
+                    is_test_entry_point: (is_main || is_preload) && options.rewrite_jest_for_tests,
                     keep_json_and_toml_as_one_statement: true,
                     allow_bytecode_cache: true,
                     set_breakpoint_on_first_line,
                     runtime_transpiler_cache: if !DATA_ONLY
                         && !disable_transpilying
-                        && !<RuntimeTranspilerCache as bun_bundler::RuntimeTranspilerCacheExt>::disabled()
+                        && !RuntimeTranspilerCache::is_disabled_by_env()
                     {
                         Some(&mut cache)
                     } else {
@@ -2177,7 +2163,6 @@ fn transpile_source_code_of_any_provenance<const DATA_ONLY: bool>(
                         path: *path,
                         loader: Cell::new(L::Wasm),
                         module_type: Cell::new(ModuleType::Unknown),
-                        source_code_printer: extra.source_code_printer,
                     };
                     // Re-enter with `&parse_result.source` as `virtual_source`.
                     return transpile_source_code_inner::<DATA_ONLY>(
@@ -2218,7 +2203,7 @@ fn transpile_source_code_of_any_provenance<const DATA_ONLY: bool>(
                 }
                 let is_bun_test = jsc_vm.transpiler.get().options.rewrite_jest_for_tests;
                 if (is_main || is_preload) && !disable_transpilying && is_bun_test {
-                    let imports_vitest = cache.imports_vitest
+                    let imports_vitest = cache.imports_vitest()
                         || parse_result
                             .ast
                             .import_records
@@ -2363,18 +2348,8 @@ fn transpile_source_code_of_any_provenance<const DATA_ONLY: bool>(
                 }
 
                 // RuntimeTranspilerCache hit: skip print.
-                // `cache.entry` is `Option<*mut ()>` (type-erased in T2
-                // `bun_js_parser`); the concrete payload is the T6
-                // `bun_jsc::runtime_transpiler_cache::Entry` boxed by
-                // `JSC_PARSER_CACHE_VTABLE.get`.
-                if let Some(entry_ptr) = cache.entry.take() {
-                    use bun_jsc::runtime_transpiler_cache::{
-                        Entry as CacheEntry, ModuleType as CacheModuleType,
-                    };
-                    // SAFETY: `entry_ptr` was produced by `heap::into_raw(Box<CacheEntry>)`
-                    // in `JSC_PARSER_CACHE_VTABLE.get`; sole owner.
-                    let mut entry: Box<CacheEntry> =
-                        unsafe { bun_core::heap::take(entry_ptr.cast::<CacheEntry>()) };
+                if let Some(mut entry) = cache.entry.take() {
+                    use bun_jsc::runtime_transpiler_cache::ModuleType as CacheModuleType;
                     // Register the cached sourcemap so error
                     // stacks remap to original positions even on a cache hit.
                     let _ = jsc_vm.source_mappings.put_mappings(
@@ -2489,46 +2464,23 @@ fn transpile_source_code_of_any_provenance<const DATA_ONLY: bool>(
                 }
 
                 // ── js_printer::print ───────────────────────────────────────
-                // SAFETY: `extra.source_code_printer` is non-null per `TranspileExtra`
-                // contract.
-                // Note: do NOT bind a long-lived `&mut BufferPrinter`
-                // here — the `source_map_handler` / `print_with_source_map`
-                // calls below each rederive `&mut *extra.source_code_printer`
-                // from the raw pointer, which would invalidate any earlier
-                // Unique tag under Stacked Borrows. Rederive at each use-site
-                // instead (reset, mapper, print, get_written).
-                unsafe { (*extra.source_code_printer).ctx.reset() };
-                // Install the VM's sourcemap handler on the printer, then
-                // print the parse result (ESM, ASCII) with sourcemaps.
-                //
-                // Note (Stacked Borrows): the printer is passed to the
-                // getter as the RAW `*mut BufferPrinter` (`source_map_handler`
-                // takes `*mut`, not `&mut`). When a debugger is attached
-                // (`mode != Connect`), `SourceMapHandlerGetter::
-                // on_source_map_chunk` reborrows `&mut *self.printer` from that
-                // raw pointer to append the inline-sourcemap trailer; doing so
-                // through a stashed `&'a mut` would alias the
-                // `writer: &mut BufferPrinter` live inside `print_ast`. After
-                // this block returns, the `printer` binding is rederived from
-                // the raw pointer below — any earlier Unique tag is dead.
+                let printer_slot = &jsc_vm.module_loader.source_code_printer;
+                let mut printer =
+                    scopeguard::guard(printer_slot.take().unwrap_or_default(), |printer| {
+                        printer_slot.set(Some(printer))
+                    });
+                printer.ctx.reset();
                 {
-                    let mapper = jsc_vm.source_map_handler(extra.source_code_printer);
-                    // SAFETY: `extra.source_code_printer` is live per `TranspileExtra`
-                    // contract; the printer borrow is scoped to this call.
-                    let print_result = unsafe {
-                        jsc_vm.transpiler.get().print_with_source_map(
-                            // Same per-call arena that `parse_options.arena`
-                            // built `parse_result.ast` from — the printer's
-                            // rope-flattening scratch belongs in it, not in
-                            // the arena of the VM's transpiler.
-                            &arena_guard.1,
-                            parse_result,
-                            &mut *extra.source_code_printer,
-                            bun_js_printer::Format::EsmAscii,
-                            mapper.get(),
-                            module_info.as_deref_mut(),
-                        )
-                    };
+                    let mapper = jsc_vm.source_map_handler(&cache);
+                    let print_result = jsc_vm.transpiler.get().print_with_source_map(
+                        // The arena of the AST, not that of the VM's transpiler.
+                        &arena_guard.1,
+                        parse_result,
+                        &mut printer,
+                        bun_js_printer::Format::EsmAscii,
+                        &mapper,
+                        module_info.as_deref_mut(),
+                    );
                     // The printer never took ownership of `module_info`;
                     // drop it here mirroring the async-path error arm.
                     if print_result.is_err() {
@@ -2546,11 +2498,6 @@ fn transpile_source_code_of_any_provenance<const DATA_ONLY: bool>(
 
                 // Watcher path uses ref-counted source.
                 if jsc_vm.is_watcher_enabled() {
-                    // SAFETY: `extra.source_code_printer` is non-null per
-                    // `TranspileExtra` contract; rederive after the print block
-                    // (Stacked Borrows — see the matching note below).
-                    let printer: &mut bun_js_printer::BufferPrinter =
-                        unsafe { &mut *extra.source_code_printer };
                     let written = printer.ctx.get_written();
                     let node_compile_cache_blob = if bun_jsc::node_compile_cache::is_enabled()
                         && path.is_file()
@@ -2602,15 +2549,6 @@ fn transpile_source_code_of_any_provenance<const DATA_ONLY: bool>(
                     _ => ResolvedSourceTag::Javascript,
                 };
 
-                // SAFETY: `extra.source_code_printer` is non-null per
-                // `TranspileExtra` contract. Rederive from the raw pointer
-                // AFTER the print block — both the `writer: &mut BufferPrinter`
-                // passed into `print_with_source_map` and the
-                // `on_source_map_chunk` reborrow inside it invalidated any
-                // earlier Unique tag under Stacked Borrows, so reading through
-                // a pre-print binding here would be UB.
-                let printer: &mut bun_js_printer::BufferPrinter =
-                    unsafe { &mut *extra.source_code_printer };
                 let written = printer.ctx.get_written();
                 // Node compile cache hook (sync transpile path). `fetch` copies
                 // `written`; the printer may be replaced below.
@@ -2622,11 +2560,6 @@ fn transpile_source_code_of_any_provenance<const DATA_ONLY: bool>(
                 } else {
                     None
                 };
-                // The `Jsc` vtable bridge `put()` does not write
-                // `cache.output_code` (only the `r#impl == None` fallback
-                // does, and `r#impl` is `Some(Jsc)` here), so it is always
-                // `None`.
-                debug_assert!(cache.output_code.is_none());
                 let written_len = written.len();
                 let source_code = bun_core::String::clone_latin1(written);
                 // `printer.ctx.buffer.deinit()`: release the
@@ -2634,7 +2567,7 @@ fn transpile_source_code_of_any_provenance<const DATA_ONLY: bool>(
                 // next transpile. Replacing the printer drops the old buffer
                 // (same shape as RuntimeTranspilerStore).
                 if written_len > 1024 * 1024 * 2 || jsc_vm.smol {
-                    *printer =
+                    **printer =
                         bun_js_printer::BufferPrinter::init(bun_js_printer::BufferWriter::init());
                 }
 
@@ -3568,12 +3501,6 @@ pub(crate) extern "C" fn Bun__isESModuleByExtensionOrPackageType(
 }
 
 thread_local! {
-    /// Per-thread shared `BufferPrinter`. Lazy-init in [`Bun__transpileFile`];
-    /// never freed (process-lifetime singleton —
-    /// PORTING.md §Forbidden permits the leak for true thread-local singletons).
-    static TRANSPILE_PRINTER: Cell<*mut bun_js_printer::BufferPrinter> =
-        const { Cell::new(ptr::null_mut()) };
-
     /// Dedup cache for [`intern_transpile_path`].
     /// `&'static [u8]` keys point into the `FilenameStore` BSS singleton, so
     /// the set itself owns nothing beyond its bucket array.
@@ -4037,26 +3964,11 @@ fn transpile_file<const DATA_ONLY: bool>(
     // Reset the module loader's arena on scope exit.
     let _reset_arena = ArenaResetGuard::new(jsc_vm);
 
-    // Lazy-init the per-thread shared printer.
-    // `load_extra_env_and_source_code_printer` calls `ensure_source_code_printer`
-    // (VirtualMachine.rs), but prime defensively here on first use too.
-    let printer_ptr: *mut bun_js_printer::BufferPrinter = TRANSPILE_PRINTER.with(|cell| {
-        let mut p = cell.get();
-        if p.is_null() {
-            let writer = bun_js_printer::BufferWriter::init();
-            let bp = Box::new(bun_js_printer::BufferPrinter::init(writer));
-            p = bun_core::heap::into_raw(bp);
-            cell.set(p);
-        }
-        p
-    });
-
     // ── `ModuleLoader.transpileSourceCode(...)` ─────────────────────────────
     let extra = TranspileExtra {
         path: lr.path,
         loader: Cell::new(synchronous_loader),
         module_type: Cell::new(module_type),
-        source_code_printer: printer_ptr,
     };
     let args = TranspileArgs {
         specifier: lr.specifier,
@@ -4127,21 +4039,10 @@ pub(crate) fn transpile_as_loaded(
         return None;
     }
     let _reset_arena = ArenaResetGuard::new(jsc_vm);
-    let printer_ptr: *mut bun_js_printer::BufferPrinter = TRANSPILE_PRINTER.with(|cell| {
-        let mut p = cell.get();
-        if p.is_null() {
-            let writer = bun_js_printer::BufferWriter::init();
-            let bp = Box::new(bun_js_printer::BufferPrinter::init(writer));
-            p = bun_core::heap::into_raw(bp);
-            cell.set(p);
-        }
-        p
-    });
     let extra = TranspileExtra {
         path: fs_path,
         loader: Cell::new(loader),
         module_type: Cell::new(ModuleType::Unknown),
-        source_code_printer: printer_ptr,
     };
     let specifier = bun_core::StringView::from_bytes(path);
     let args = TranspileArgs {
@@ -4217,8 +4118,7 @@ pub(crate) extern "C" fn Bun__compiledProgramDataFileIsPrintedAsJavaScript(
     )
 }
 
-/// Transpiles plugin-provided source through the per-thread
-/// `TRANSPILE_PRINTER`, writing the result into `ret`.
+/// Transpiles plugin-provided source, writing the result into `ret`.
 #[unsafe(no_mangle)]
 pub(crate) extern "C" fn Bun__transpileVirtualModule(
     global: &JSGlobalObject,
@@ -4267,18 +4167,6 @@ pub(crate) extern "C" fn Bun__transpileVirtualModule(
     // Reset the module loader's arena on scope exit.
     let _reset_arena = ArenaResetGuard::new(jsc_vm);
 
-    // Lazy-init the per-thread shared printer (same path as `Bun__transpileFile`).
-    let printer_ptr: *mut bun_js_printer::BufferPrinter = TRANSPILE_PRINTER.with(|cell| {
-        let mut p = cell.get();
-        if p.is_null() {
-            let writer = bun_js_printer::BufferWriter::init();
-            let bp = Box::new(bun_js_printer::BufferPrinter::init(writer));
-            p = bun_core::heap::into_raw(bp);
-            cell.set(p);
-        }
-        p
-    });
-
     let module_type = if loader.is_java_script_like() {
         module_type_of(&path, package_json_of(jsc_vm, &path))
     } else {
@@ -4290,7 +4178,6 @@ pub(crate) extern "C" fn Bun__transpileVirtualModule(
         path,
         loader: Cell::new(loader),
         module_type: Cell::new(module_type),
-        source_code_printer: printer_ptr,
     };
     let args = TranspileArgs {
         specifier,
@@ -4384,8 +4271,7 @@ pub(crate) fn resolve_embedded_file_to_buf(
 
     // Write to a unique scratch name, then atomically rename it into place.
     let mut scratch_buf = bun_paths::path_buffer_pool::get();
-    let scratch_name =
-        &*Fs::FileSystem::tmpname(extname, &mut scratch_buf[..], content_hash).ok()?;
+    let scratch_name = Fs::FileSystem::tmpname(extname, &mut scratch_buf[..], content_hash).ok()?;
 
     // 0600: the file persists, only the owning euid ever dlopens it, and the
     // embedded bytes may come from a binary that is not world-readable.

@@ -173,18 +173,19 @@ const EV_EOF: u16 = 0x8000;
 pub enum PollTag {
     Null = 0,
     FileSink,
-    StaticPipeWriter,
-    ShellStaticPipeWriter,
-    SecurityScanStaticPipeWriter,
+    SubprocessStdinWriter,
+    ShellStdinWriter,
+    SecurityScanWriter,
     #[cfg(not(windows))]
     DnsResolver,
     #[cfg(target_os = "macos")]
     GetAddrInfoRequest,
     #[cfg(not(windows))]
     Process,
-    ShellBufferedWriter,
-    #[cfg(not(windows))]
-    TerminalPoll,
+    ShellIoWriter,
+    TerminalWriter,
+    #[cfg(windows)]
+    WindowsNamedPipe,
     #[cfg(target_os = "macos")]
     ParentDeathWatchdog,
     #[cfg(not(windows))]
@@ -241,6 +242,7 @@ impl Owner {
 #[cfg(windows)]
 pub enum IoEvent {
     Read(crate::pipe_reader::ReadEvent),
+    Write(crate::pipe_writer::WriteEvent),
 }
 
 /// What a poll that fired tells its owner.

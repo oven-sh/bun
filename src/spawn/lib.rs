@@ -23,7 +23,7 @@ pub mod ctrl_c;
 #[path = "process.rs"]
 pub mod process;
 
-/// Generic `StaticPipeWriter<P>`.
+/// Generic `StaticPipeWriter<S>`.
 #[path = "static_pipe_writer.rs"]
 pub mod static_pipe_writer;
 
@@ -44,7 +44,7 @@ pub use bun_spawn_sys::RusageFields;
 pub use bun_spawn_sys::posix_spawn::posix_spawn::LARGEST_REAPED_CHILD;
 pub use process::{
     Dup2, Exited, ExtraPipe, PidT, Process, ProcessHandle, Rusage, SpawnOptions,
-    SpawnProcessResult, SpawnResultExt, Status, StdioKind, spawn_process, spawn_process_cstr,
+    SpawnProcessResult, SpawnResultExt, Status, StdioKind, spawn_process, spawn_process_z,
 };
 
 // Variant types live in `bun_runtime`/`bun_install`; each provides its body
@@ -113,15 +113,14 @@ pub mod sync {
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// `bun.jsc.Subprocess` cross-tier shapes — `StdioResult`, `StaticPipeWriter<P>`.
+// `bun.jsc.Subprocess` cross-tier shapes — `StdioResult`, `StaticPipeWriter<S>`.
 //
 // MOVE_DOWN from `bun_runtime::api::bun::subprocess`: `bun_install::
-// security_scanner` constructs a `StaticPipeWriter<SecurityScanSubprocess>` to
-// stream a JSON blob to the scanner's stdin.
+// security_scanner` constructs a `StaticPipeWriter<Box<[u8]>>` to
+// stream a JSON blob to the scanner's fd 4.
 // ──────────────────────────────────────────────────────────────────────────
 pub mod subprocess {
-    pub use crate::process::StdioKind;
-    pub use crate::static_pipe_writer::{StaticPipeWriter, StaticPipeWriterProcess};
+    pub use crate::static_pipe_writer::{PipeState, StaticPipeWriter};
 
     #[cfg(not(windows))]
     pub type StdioResult = Option<bun_sys::File>;

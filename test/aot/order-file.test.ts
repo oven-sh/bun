@@ -350,9 +350,10 @@ test.skipIf(!isSupported)(
       "program.ts": program,
       "helper.ts": helper,
       "build.ts": `const [entry, outfile, ...names] = process.argv.slice(2);
-const aotOrder = names.length > 1 ? names : (names[0] ?? false);
-const { success } = await Bun.build({ entrypoints: [entry], compile: { aot: true, outfile, aotOrder } });
-if (!success) process.exit(1);
+let reads = 0;
+const compile = { aot: true, outfile, get aotOrder() { reads++; return names.length > 1 ? names : (names[0] ?? false); } };
+const { success } = await Bun.build({ entrypoints: [entry], compile });
+if (!success || reads !== 1) process.exit(1);
 `,
     });
     const { executable } = await build(String(dir), "program");

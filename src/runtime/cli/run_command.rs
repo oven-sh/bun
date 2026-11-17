@@ -189,9 +189,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
             ];
             for shell in HARDCODED_POPULAR_ONES {
                 path_buf[..shell.len()].copy_from_slice(shell);
-                path_buf[shell.len()] = 0;
-                // SAFETY: NUL-terminated above.
-                let z = ZStr::from_buf(&path_buf[..], shell.len());
+                let z = ZStr::nul_terminate(path_buf, shell.len());
                 if bun_sys::is_executable_file_path(z) {
                     return Some(shell.len());
                 }
@@ -1122,7 +1120,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         // `Transpiler::init`).
         bun_http::async_http::load_env(unsafe { vm.log.get().unwrap().as_mut() }, vm.env_loader());
 
-        vm.load_extra_env_and_source_code_printer();
+        vm.load_extra_env();
         bun_jsc::virtual_machine::IS_MAIN_THREAD_VM.set(true);
 
         bun_http::EXPERIMENTAL_HTTP2_CLIENT_FROM_CLI.store(
@@ -1269,7 +1267,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         // `Transpiler::init`).
         bun_http::async_http::load_env(unsafe { vm.log.get().unwrap().as_mut() }, vm.env_loader());
 
-        vm.load_extra_env_and_source_code_printer();
+        vm.load_extra_env();
         bun_jsc::virtual_machine::IS_MAIN_THREAD_VM.set(true);
 
         bun_http::EXPERIMENTAL_HTTP2_CLIENT_FROM_CLI.store(
@@ -1853,9 +1851,7 @@ impl RunCommand {
             // bytes in the per-process `cli_arena()` instead of leaking
             // (PORTING.md §Forbidden bars per-call leaks).
             let stored: &'static [u8] = cli_arena().alloc_slice_copy(&target_path_buffer[..=total]);
-            // SAFETY: `stored[total] == 0` (written above before the copy);
-            // arena-backed slice lives for process lifetime.
-            Ok(ZStr::from_buf(&stored[..], total))
+            Ok(ZStr::from_slice_with_nul(stored))
         }
     }
 
@@ -2657,16 +2653,7 @@ impl RunCommand {
             // `\\?\` — `try_launch` hands this to NtCreateFile.
             let root = bun_core::w!("\\??\\");
             buf[..root.len()].copy_from_slice(root);
-            let cwd_len = unsafe {
-                sys::windows::kernel32::GetCurrentDirectoryW(
-                    (buf.len() - 4) as u32,
-                    buf.as_mut_ptr().add(root.len()),
-                )
-            } as usize;
-            'try_bunx_file: {
-                if cwd_len == 0 {
-                    break 'try_bunx_file;
-                }
+            if let Ok(cwd_len) = sys::windows::GetCurrentDirectoryW(&mut buf[root.len()..]) {
                 let mut ptr = root.len() + cwd_len;
                 let prefix = bun_core::w!("\\node_modules\\.bin\\");
                 buf[ptr..ptr + prefix.len()].copy_from_slice(prefix);
@@ -2921,10 +2908,7 @@ impl RunCommand {
             }
             joined.len()
         };
-        script_name_buf[open_len] = 0;
-        // SAFETY: `script_name_buf[open_len] == 0` written above;
-        // `script_name_buf[..open_len]` is init.
-        let open_z = bun_core::ZStr::from_buf(&script_name_buf[..], open_len);
+        let open_z = bun_core::ZStr::nul_terminate(&mut script_name_buf, open_len);
 
         let absolute_script_path: Box<[u8]> = {
             let Ok(file) = bun_sys::open(open_z, bun_sys::O::RDONLY, 0)
@@ -3210,9 +3194,7 @@ impl RunCommand {
             return;
         }
         zbuf[..path.len()].copy_from_slice(path);
-        zbuf[path.len()] = 0;
-        // SAFETY: NUL-terminated above.
-        let z = ZStr::from_buf(&zbuf[..], path.len());
+        let z = ZStr::nul_terminate(&mut zbuf, path.len());
         let _ = sys::unlink(z);
     }
 
@@ -3609,10 +3591,8 @@ impl RunCommand {
                                 let base = value.base();
                                 path_buf[dir_slice_len..dir_slice_len + base.len()]
                                     .copy_from_slice(base);
-                                path_buf[dir_slice_len + base.len()] = 0;
-                                // SAFETY: NUL terminator written above
                                 let slice =
-                                    ZStr::from_buf(&path_buf[..], dir_slice_len + base.len());
+                                    ZStr::nul_terminate(&mut path_buf, dir_slice_len + base.len());
                                 if !sys::is_executable_file_path(slice) {
                                     continue;
                                 }

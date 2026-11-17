@@ -137,7 +137,6 @@ checksum = "5d20789868f4b01b2f2caec9f5c4e0213b41e3e5702a50157d699ae31ced2fcb"
 name = "bun_alloc"
 version = "0.0.0"
 dependencies = [
- "allocator-api2",
  "bun_mimalloc_sys",
  "bun_opaque",
  "bun_wyhash",
@@ -255,7 +254,6 @@ dependencies = [
  "bun_alloc",
  "bun_collections",
  "bun_core",
- "bun_dispatch",
  "bun_paths",
  "bun_perf",
  "bun_ptr",
@@ -1685,6 +1683,7 @@ dependencies = [
  "bun_uws_sys",
  "bun_valkey",
  "bun_watcher",
+ "bun_webp",
  "bun_which",
  "bun_wyhash",
  "bun_zlib",
@@ -2046,7 +2045,6 @@ dependencies = [
  "enum-map",
  "libc",
  "rustix",
- "scopeguard",
  "strum",
  "thiserror",
 ]
@@ -2142,6 +2140,7 @@ dependencies = [
  "bun_boringssl",
  "bun_core",
  "bun_jsc_macros",
+ "bun_ptr",
  "bun_uws_sys",
  "strum",
 ]
@@ -2192,6 +2191,15 @@ dependencies = [
  "libc",
  "scopeguard",
  "strum",
+ "thiserror",
+]
+
+[[package]]
+name = "bun_webp"
+version = "0.0.0"
+dependencies = [
+ "bun_alloc",
+ "bun_highway",
  "thiserror",
 ]
 

@@ -49,8 +49,7 @@ fn is_valid(buf: &mut PathBuffer, cwd: &[u8], segment: &[u8], bin: &[u8]) -> Opt
         buf[cwd_prefix_len + segment.len()] = SEP;
     }
     buf[prefix_len..prefix_len + bin.len()].copy_from_slice(bin);
-    buf[len] = 0;
-    let filepath = ZStr::from_buf(&buf[..], len);
+    let filepath = ZStr::nul_terminate(buf, len);
     if !bun_sys::is_executable_file_path(filepath) {
         return None;
     }
@@ -128,9 +127,8 @@ fn utf16_result_into<'a>(buf: &'a mut PathBuffer, result: &[u16]) -> &'a ZStr {
     // Capture len/ptr before re-borrowing buf (borrowck).
     let result_converted_len = result_converted.len();
     let result_converted_ptr = result_converted.as_ptr();
-    buf[result_converted_len] = 0;
     debug_assert!(result_converted_ptr == buf.as_ptr());
-    ZStr::from_buf(&buf[..], result_converted_len)
+    ZStr::nul_terminate(buf, result_converted_len)
 }
 
 // Like /usr/bin/which but without needing to exec a child process
@@ -163,8 +161,7 @@ pub fn which<'a>(buf: &'a mut PathBuffer, path: &[u8], cwd: &[u8], bin: &[u8]) -
         // handle absolute paths
         if is_absolute(bin) {
             buf[..bin.len()].copy_from_slice(bin);
-            buf[bin.len()] = 0;
-            let bin_z = ZStr::from_buf(&buf[..], bin.len());
+            let bin_z = ZStr::nul_terminate(buf, bin.len());
             if bun_sys::is_executable_file_path(bin_z) {
                 return Some(bin_z);
             }

@@ -13,7 +13,7 @@ use bun_uws::quic::context::ConnectResult;
 use super::callbacks;
 use super::client_session::{ClientSession, quic_socket_mut, session_mut};
 use super::pending_connect::PendingConnect;
-use crate::HTTPClient;
+use crate::InFlightRequest;
 use crate::http_thread::WriteMessageType;
 
 use crate::h3_client::h3_client;
@@ -60,7 +60,7 @@ impl ClientContext {
     /// INVARIANT: `this` is the leaked-`Box` process-lifetime singleton stored
     /// in `INSTANCE`; all access is HTTP-thread-only, so the returned `&mut`
     /// is the sole live borrow for its (caller-chosen) lifetime. Mirrors the
-    /// `client_mut`/`stream_mut` backref-upgrade helpers in `client_session`.
+    /// `stream_mut` backref-upgrade helper in `client_session`.
     #[inline]
     pub(crate) fn as_mut<'a>(this: NonNull<Self>) -> &'a mut Self {
         // SAFETY: see INVARIANT above — leaked Box, process-lifetime,
@@ -91,9 +91,13 @@ impl ClientContext {
         Some(self_)
     }
 
-    /// Find or open a connection to `hostname:port` and queue `client` on it.
-    /// `false` leaves `client` on no session, for the caller to fail.
-    pub(crate) fn connect(&mut self, client: &mut HTTPClient, hostname: &[u8], port: u16) -> bool {
+    /// Find or open a connection to `port` on the host of `client` and queue `client` on it.
+    pub(crate) fn connect(
+        &mut self,
+        client: InFlightRequest,
+        port: u16,
+    ) -> Result<(), InFlightRequest> {
+        let hostname = bun_url::strip_ipv6_brackets(client.url.hostname);
         let reject = client.flags.reject_unauthorized;
         for s in self.sessions.iter().map(RefPtr::as_ptr) {
             // sessions vec holds live ClientSession pointers; removed via
@@ -108,7 +112,7 @@ impl ClientContext {
                     port,
                 );
                 s.enqueue(client);
-                return true;
+                return Ok(());
             }
         }
 
@@ -116,9 +120,9 @@ impl ClientContext {
         // verbatim (interior NUL allowed) then append a sentinel; lsquic reads
         // it as a C string so an interior NUL truncates on the C side. This is
         // deliberately not `CString::new`, which would reject interior NUL
-        // and diverge by returning `false`.
+        // and diverge by returning `Err`.
         // Resolution and certificate verification name an IPv6 literal without its brackets.
-        let mut host_buf = bun_url::strip_ipv6_brackets(hostname).to_vec();
+        let mut host_buf = hostname.to_vec();
         host_buf.push(0);
         let host_z = std::ffi::CStr::from_bytes_until_nul(&host_buf).expect("nul appended above");
         let registry_ref = ClientSession::new(hostname.to_vec(), port, reject, client.pool.id);
@@ -163,17 +167,15 @@ impl ClientContext {
                     bstr::BStr::new(hostname),
                     port,
                 );
-                // `fail_session` fails what is queued, and that dispatch frees
-                // the `AsyncHTTP` the caller still holds. Queue nothing.
-                if let Some(stream) = client.h3 {
-                    session_mut(session).detach(stream.as_ptr());
-                }
-                let _registry_ref = self.unregister(session_mut(session));
+                let s = session_mut(session);
+                let client = s.pending[0].client.take().expect("enqueued above");
+                s.detach(s.pending[0].as_ptr());
+                let _registry_ref = self.unregister(s);
                 PendingConnect::fail_session(session, crate::Error::ConnectionRefused);
-                return false;
+                return Err(client);
             }
         }
-        true
+        Ok(())
     }
 
     /// Returns the registry's ref, which the caller holds while it empties `pending`.

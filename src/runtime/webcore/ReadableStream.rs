@@ -9,7 +9,7 @@ use crate::webcore::jsc::{
 };
 // `bun_jsc` not yet a dep; alias to local shim so `bun_jsc::Strong` etc. resolve.
 use crate::webcore::jsc as bun_jsc;
-use bun_collections::VecExt;
+use bun_ptr::RefPtr;
 use bun_sys as syscall;
 
 use crate::webcore::streams;
@@ -529,16 +529,15 @@ impl ReadableStream {
         };
         match &store.data {
             webcore::blob::store::Data::Bytes(_) => {
-                let reader = NewSource::<ByteBlobLoader>::new_mut(NewSource {
+                let reader = RefPtr::new(NewSource {
                     global_this: Cell::new(Some(bun_ptr::BackRef::new(cx.global()))),
-                    context: ByteBlobLoader::default(),
+                    context: ByteBlobLoader::new(blob, recommended_chunk_size),
                     ..Default::default()
                 });
-                reader.context.setup(blob, recommended_chunk_size);
-                reader.to_readable_stream(cx)
+                NewSource::into_readable_stream(reader, cx)
             }
             webcore::blob::store::Data::File(_) => {
-                let reader = NewSource::<FileReader>::new_mut(NewSource {
+                let reader = RefPtr::new(NewSource {
                     global_this: Cell::new(Some(bun_ptr::BackRef::new(cx.global()))),
                     context: FileReader {
                         event_loop: core::cell::Cell::new(jsc::EventLoopHandle::init(
@@ -555,7 +554,7 @@ impl ReadableStream {
                     },
                     ..Default::default()
                 });
-                reader.to_readable_stream(cx)
+                NewSource::into_readable_stream(reader, cx)
             }
             webcore::blob::store::Data::S3(s3) => {
                 let credentials = s3.get_credentials();
@@ -580,7 +579,7 @@ impl ReadableStream {
         cx: &bun_jsc::JsThread<'_>,
         buffered_reader: &bun_io::BufferedReader,
     ) -> JsResult<JSValue> {
-        let source = NewSource::<FileReader>::new_mut(NewSource {
+        let source = RefPtr::new(NewSource {
             global_this: Cell::new(Some(bun_ptr::BackRef::new(cx.global()))),
             context: FileReader {
                 event_loop: core::cell::Cell::new(jsc::EventLoopHandle::init(
@@ -593,7 +592,8 @@ impl ReadableStream {
         source.context.set_reader_owner();
         source.context.reader.from(buffered_reader);
 
-        let stream = source.to_readable_stream(cx)?;
+        let source = NewSource::wrap(source, cx);
+        let stream = ReadableStream::from_native(cx.global(), source.to_js())?;
 
         // The transferred poll's owner now points into this box; root the
         // wrapper before JS can GC it. `on_start` skips a second ref via the
@@ -611,7 +611,7 @@ impl ReadableStream {
         bytes: Vec<u8>,
         err: syscall::Error,
     ) -> JsResult<JSValue> {
-        let source = NewSource::<FileReader>::new_mut(NewSource {
+        let source = RefPtr::new(NewSource {
             global_this: Cell::new(Some(bun_ptr::BackRef::new(cx.global()))),
             context: FileReader {
                 event_loop: core::cell::Cell::new(jsc::EventLoopHandle::init(
@@ -625,7 +625,7 @@ impl ReadableStream {
             },
             ..Default::default()
         });
-        source.to_readable_stream(cx)
+        NewSource::into_readable_stream(source, cx)
     }
 
     pub fn empty(global_this: &JSGlobalObject) -> JsResult<JSValue> {
@@ -767,9 +767,11 @@ impl Source {
 pub trait SourceContext: Sized {
     // ─── codegen accessors (`ReadableStream.bind.ts`) ───────────
     // Each context binds its per-type codegen module via `source_context_codegen!`.
-    /// `js_${NAME}InternalReadableStreamSource::to_js` — `ptr` is the
-    /// type-erased `*mut NewSource<Self>` (cast inside the macro impl).
-    fn js_create(ptr: *mut c_void, global: &JSGlobalObject) -> JSValue;
+    /// `js_${NAME}InternalReadableStreamSource::wrap`
+    fn js_wrap(
+        source: RefPtr<NewSource<Self>>,
+        global: &JSGlobalObject,
+    ) -> jsc::WrapperGuard<'_, NewSource<Self>>;
     /// `js_${NAME}InternalReadableStreamSource::pending_promise_set_cached`
     fn js_pending_promise_set_cached(this: JSValue, global: &JSGlobalObject, value: JSValue);
     /// `js_${NAME}InternalReadableStreamSource::close_adapter_set_cached`
@@ -782,7 +784,7 @@ pub trait SourceContext: Sized {
     fn js_sink_owner_set_cached(this: JSValue, global: &JSGlobalObject, value: JSValue);
 
     fn on_start(&self) -> streams::Start;
-    fn on_pull(&self, buf: &mut [u8], view: JSValue) -> streams::Result;
+    fn on_pull(&self, buf: &mut [u8], view: JSValue) -> streams::Result<'_>;
     fn on_cancel(&self);
     /// Per-context teardown side-effects (unref pollers, flush pending callbacks,
     /// release handles). **Must NOT free the enclosing `NewSource<Self>` allocation** —
@@ -909,11 +911,11 @@ impl<C: SourceContext + Default> Default for NewSource<C> {
 macro_rules! source_context_codegen {
     ($gen:ident) => {
         #[inline]
-        fn js_create(
-            ptr: *mut ::core::ffi::c_void,
+        fn js_wrap(
+            source: ::bun_ptr::RefPtr<$crate::webcore::readable_stream::NewSource<Self>>,
             global: &$crate::webcore::jsc::JSGlobalObject,
-        ) -> $crate::webcore::jsc::JSValue {
-            $crate::generated_bindgen::readable_stream::$gen::to_js(ptr.cast(), global)
+        ) -> ::bun_jsc::WrapperGuard<'_, $crate::webcore::readable_stream::NewSource<Self>> {
+            $crate::generated_bindgen::readable_stream::$gen::wrap(source, global)
         }
         #[inline]
         fn js_pending_promise_set_cached(
@@ -1027,15 +1029,6 @@ impl<C: SourceContext> NewSource<C> {
         unsafe { bun_core::from_field_ptr!(Self, context, ctx) }
     }
 
-    /// Heap-allocate and hand back the leaked allocation as an unbounded `&mut`.
-    ///
-    /// The GC finalizer frees it via [`Self::decrement_count`]: do not use the borrow once the
-    /// wrapper from [`Self::to_readable_stream`] can be collected.
-    #[inline]
-    pub fn new_mut<'a>(init: Self) -> &'a mut Self {
-        bun_core::heap::release(Box::new(init))
-    }
-
     pub fn update_ref(&self, enable: bool) {
         self.context.set_ref_unref(enable);
     }
@@ -1135,7 +1128,7 @@ impl<C: SourceContext> NewSource<C> {
     /// a dangling-reference UAF (Stacked Borrows: protected tag on freed memory).
     ///
     /// SAFETY: `this` must point at a live `NewSource<C>` produced by
-    /// [`Self::new_mut`] (i.e. `Box::leak`). Caller must not dereference `this`
+    /// [`RefPtr::new`]. Caller must not dereference `this`
     /// — nor any interior pointer such as `&context` — after this returns.
     pub unsafe fn decrement_count(this: *mut Self) {
         // SAFETY: caller contract — `this` is live for the duration of this block.
@@ -1159,45 +1152,30 @@ impl<C: SourceContext> NewSource<C> {
             unsafe {
                 (*this).context.deinit_fn();
             }
-            // SAFETY: `this` originated from `Box::leak` in `Self::new_mut`. No
+            // SAFETY: `this` originated from `RefPtr::new`. No
             // `&mut` borrow of `*this` is live at this point — reclaim and drop,
             // which runs `Drop` on `context` and all other fields, then frees.
             drop(unsafe { bun_core::heap::take(this) });
         }
     }
 
-    fn to_readable_stream_with(
-        &mut self,
-        cx: &bun_jsc::JsThread<'_>,
-        from_native: fn(&JSGlobalObject, JSValue) -> JsResult<JSValue>,
-    ) -> JsResult<JSValue> {
-        let out_value = if let Some(v) = self.this_jsvalue.try_get() {
-            v
-        } else {
-            // The wrapper adopts the ref [`Self::new_mut`] left on this allocation.
-            C::js_create(core::ptr::from_mut(self).cast::<c_void>(), cx.global())
-        };
-        out_value.ensure_still_alive();
-        if self.this_jsvalue.get().is_empty() {
-            self.this_jsvalue.set(jsc::JsRef::init_weak(out_value));
-            if let Some(context) = cx.vm().as_context_that_stops_early(cx.context()) {
-                // SAFETY: the wrapper just made owns this heap allocation; the handle leaves its
-                // context when this is dropped.
-                unsafe { jsc::AbortHandle::arm_owner(core::ptr::from_mut(self), context) };
-            }
+    /// The object to give [`ReadableStream::from_native`].
+    pub(crate) fn wrap<'a>(
+        this: RefPtr<Self>,
+        cx: &'a bun_jsc::JsThread<'_>,
+    ) -> jsc::WrapperGuard<'a, Self> {
+        let this = C::js_wrap(this, cx.global());
+        this.this_jsvalue.set(jsc::JsRef::init_weak(this.to_js()));
+        if let Some(context) = cx.vm().as_context_that_stops_early(cx.context()) {
+            // SAFETY: the wrapper just made owns this heap allocation; the handle leaves its
+            // context when this is dropped.
+            unsafe { jsc::AbortHandle::arm_owner(this.as_ptr(), context) };
         }
-        from_native(cx.global(), out_value)
+        this
     }
 
-    pub(crate) fn to_readable_stream(&mut self, cx: &bun_jsc::JsThread<'_>) -> JsResult<JSValue> {
-        self.to_readable_stream_with(cx, ReadableStream::from_native)
-    }
-
-    pub(crate) fn to_text_readable_stream(
-        &mut self,
-        cx: &bun_jsc::JsThread<'_>,
-    ) -> JsResult<JSValue> {
-        self.to_readable_stream_with(cx, ReadableStream::from_native_text)
+    fn into_readable_stream(this: RefPtr<Self>, cx: &bun_jsc::JsThread<'_>) -> JsResult<JSValue> {
+        ReadableStream::from_native(cx.global(), Self::wrap(this, cx).to_js())
     }
 
     pub fn memory_cost(&self) -> usize {
@@ -1258,7 +1236,7 @@ impl<C: SourceContext> NewSource<C> {
         this_jsvalue: JSValue,
         cx: &bun_jsc::JsThread<'_>,
         flags: JSValue,
-        mut result: streams::Result,
+        result: streams::Result<'_>,
     ) -> JsResult<JSValue> {
         match &result {
             streams::Result::Err(err) => {
@@ -1297,15 +1275,13 @@ impl<C: SourceContext> NewSource<C> {
     }
 
     pub fn drain(&self, cx: &mut JsScope<'_>) -> JsResult<JSValue> {
-        let mut list = self.context.drain_internal_buffer();
+        let list = self.context.drain_internal_buffer();
         if list.len() > 0 {
-            // Ownership of the buffer transfers to JSC: `to_js` installs
-            // `MarkedArrayBuffer_deallocator` which `mi_free`s on GC. Suppress
-            // `Vec::Drop` so the same allocation isn't freed twice (once
-            // here on scope exit, once by the GC). Mirrors `streams::Start::to_js`.
-            let ab = jsc::ArrayBuffer::from_bytes(list.slice_mut(), jsc::JSType::Uint8Array);
-            let _ = core::mem::ManuallyDrop::new(list);
-            return ab.to_js(cx.global());
+            return jsc::ArrayBuffer::from_default_allocator(
+                cx.global(),
+                jsc::JSType::Uint8Array,
+                list,
+            );
         }
         Ok(JSValue::UNDEFINED)
     }

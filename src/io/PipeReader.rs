@@ -1317,6 +1317,7 @@ impl WindowsBufferedReader {
         let (amount, mut state, read_file_again) = match event {
             // we cannot sync read pipes on Windows so we just check if we are paused to resume the reading
             None => return Err(self.unpause()),
+            Some(IoEvent::Write(_)) => unreachable!("a write was passed to a reader"),
             Some(IoEvent::Read(ReadEvent(Completion::Ended(result)))) => return Err(result),
             Some(IoEvent::Read(ReadEvent(Completion::Read {
                 amount,

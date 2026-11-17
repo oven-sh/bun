@@ -979,7 +979,7 @@ pub(super) struct Repl<'a> {
 
     // Windows: saved console mode for restoration
     #[cfg(windows)]
-    original_windows_mode: Option<bun_sys::windows::DWORD>,
+    stdin_mode_guard: Option<bun_sys::windows::StdinModeGuard>,
 
     // POSIX: the REPL's own stdin raw-mode state
     #[cfg(unix)]
@@ -1007,7 +1007,7 @@ impl<'a> Repl<'a> {
             last_result: JSValue::UNDEFINED.protected(),
             last_error: JSValue::UNDEFINED.protected(),
             #[cfg(windows)]
-            original_windows_mode: None,
+            stdin_mode_guard: None,
             #[cfg(unix)]
             tty_state: tty::State::new(),
         }
@@ -1046,16 +1046,14 @@ impl<'a> Repl<'a> {
         }
         #[cfg(windows)]
         {
-            self.original_windows_mode = bun_sys::windows::update_stdio_mode_flags(
-                bun_sys::Stdio::StdIn,
+            self.stdin_mode_guard = Some(bun_sys::windows::StdinModeGuard::set(
                 bun_sys::windows::UpdateStdioModeFlagsOpts {
                     set: bun_sys::windows::ENABLE_VIRTUAL_TERMINAL_INPUT
                         | bun_sys::windows::ENABLE_PROCESSED_INPUT,
                     unset: bun_sys::windows::ENABLE_LINE_INPUT
                         | bun_sys::windows::ENABLE_ECHO_INPUT,
                 },
-            )
-            .ok();
+            ));
         }
     }
 
@@ -1068,13 +1066,7 @@ impl<'a> Repl<'a> {
         }
         #[cfg(windows)]
         {
-            if let Some(mode) = self.original_windows_mode {
-                // SAFETY: stdin handle is valid console handle
-                unsafe {
-                    let _ = bun_sys::windows::SetConsoleMode(Fd::stdin().native(), mode);
-                }
-                self.original_windows_mode = None;
-            }
+            self.stdin_mode_guard = None;
         }
     }
 
@@ -2202,7 +2194,6 @@ impl<'a> Repl<'a> {
         );
 
         if bun_js_printer::print_ast::<
-            _,
             /* ASCII_ONLY */ true,
             /* GENERATE_SOURCE_MAP */ false,
         >(

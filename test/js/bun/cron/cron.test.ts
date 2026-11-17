@@ -790,7 +790,7 @@ describe.concurrent.skipIf(!isLinux)("against a stub crontab (Linux)", () => {
 
     test("a Worker that ends during `crontab <file>` closes the process handle, and leaves the file to the child", async () => {
       const main = `
-        await until(() => fs.existsSync("started"));
+        await until(() => fs.existsSync("started") && open() > before);
         console.log("opened", open() > before);
         worker.terminate();
         await closed;

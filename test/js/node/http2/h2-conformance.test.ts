@@ -319,6 +319,55 @@ test("a PING sent from the transport of another session goes out", async () => {
   }
 });
 
+describe.concurrent("what a promise job of the transport's write() sends", () => {
+  async function run(body: string) {
+    const script = /* js */ `
+      const http2 = require("node:http2");
+      const { Duplex } = require("node:stream");
+      let onWrite = () => {};
+      const transport = new Duplex({ read() {}, write(chunk, _, done) { onWrite(chunk); done(); } });
+      const client = http2.connect("http://localhost", { createConnection: () => transport });
+      let id = -1;
+      function request() {
+        const headers = Buffer.from([1, 4, 0, 0, 0, (id += 2)]);
+        client.request({ ":method": "POST" }).on("error", () => {});
+        return new Promise(resolve => (onWrite = chunk => chunk.includes(headers) && resolve()));
+      }
+      ${body}
+    `;
+    await using proc = Bun.spawn({ cmd: [bunExe(), "-e", script], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+
+  test.each(["(run => run())", "setImmediate", "setTimeout"])(
+    "goes out before the process exits, from %s",
+    async start => {
+      const result = await run(/* js */ `
+      ${start}(async () => {
+        for (let i = 0; i < 6; i++) await request();
+        console.log(id);
+      });
+    `);
+      expect(result).toEqual({ stdout: "11\n", stderr: "", exitCode: 0 });
+    },
+  );
+
+  test("leaves the event loop its turn", async () => {
+    const result = await run(/* js */ `
+      (async () => {
+        await request();
+        let turns = 0;
+        (function count() { turns++; globalThis.counting = setImmediate(count); })();
+        for (let i = 0; i < 20; i++) await request();
+        clearImmediate(counting);
+        console.log(turns > 5);
+      })();
+    `);
+    expect(result).toEqual({ stdout: "true\n", stderr: "", exitCode: 0 });
+  });
+});
+
 test.each<[string, string[]]>([
   ["request()", ["HEADERS 1", "RST_STREAM 1"]],
   ["a queued request", ["HEADERS 1"]],

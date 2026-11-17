@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, isLinux, isWindows, tempDir } from "harness";
 import { existsSync } from "fs";
+import { bunEnv, bunExe, isLinux, isWindows, tempDir } from "harness";
 import { dirname, join } from "path";
 import { parseSymbolMap } from "../../../../scripts/orderfile/windows-symbols";
 

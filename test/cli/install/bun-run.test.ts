@@ -536,7 +536,79 @@ describe.concurrent("bun run", () => {
       expect(JSON.parse(stdout)).toEqual({ pwd: join(link, "subdir"), cwd: join(real, "subdir") });
       expect(exitCode).toBe(0);
     });
+
+    // A parent that chdir'd without updating PWD (or a bogus PWD) must not
+    // leak into the child: when $PWD + arg names a different directory, fall
+    // back to the physical path.
+    it.skipIf(isWindows)(`${label} ignores a stale inherited PWD`, async () => {
+      using dir = tempDir(`bun-run-cwd-pwd-stale-${withRun ? "run" : "bare"}`, {
+        "a/subdir/test.js": `console.log(JSON.stringify({ pwd: process.env.PWD, cwd: process.cwd() }));`,
+        "b/subdir/.keep": "",
+      });
+
+      await using proc = Bun.spawn({
+        cmd: buildCmd("test.js"),
+        cwd: join(String(dir), "a"),
+        stdin: "ignore",
+        stdout: "pipe",
+        stderr: "pipe",
+        env: { ...bunEnv, PWD: join(String(dir), "b") },
+      });
+
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      expect(stderr).toBe("");
+      const expected = join(String(dir), "a", "subdir");
+      expect(JSON.parse(stdout)).toEqual({ pwd: expected, cwd: expected });
+      expect(exitCode).toBe(0);
+    });
+
+    // Tab completion appends a slash; bash's cd strips it from PWD.
+    it(`${label} strips a trailing slash from PWD`, async () => {
+      using dir = tempDir(`bun-run-cwd-pwd-slash-${withRun ? "run" : "bare"}`, {
+        "subdir/test.js": `console.log(JSON.stringify({ pwd: process.env.PWD, cwd: process.cwd() }));`,
+      });
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "--cwd=subdir/", ...(withRun ? ["run"] : []), "test.js"],
+        cwd: String(dir),
+        stdin: "ignore",
+        stdout: "pipe",
+        stderr: "pipe",
+        env: { ...bunEnv, PWD: String(dir) },
+      });
+
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      expect(stderr).toBe("");
+      const { pwd, cwd } = JSON.parse(stdout);
+      expect(samePath(pwd, cwd)).toBe(true);
+      expect(exitCode).toBe(0);
+    });
   }
+
+  // bunx parses --cwd itself and must publish PWD through the same helper.
+  it.skipIf(isWindows)("bunx --cwd updates PWD for the tool it runs", async () => {
+    using dir = tempDir("bunx-cwd-pwd", {
+      "subdir/node_modules/.bin/showpwd": "#!/bin/sh\necho \"$PWD\"\n",
+    });
+    chmodSync(join(String(dir), "subdir/node_modules/.bin/showpwd"), 0o755);
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "x", "--cwd=subdir", "showpwd"],
+      cwd: String(dir),
+      stdin: "ignore",
+      stdout: "pipe",
+      stderr: "pipe",
+      env: { ...bunEnv, PWD: String(dir) },
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stderr).toBe("");
+    expect(stdout.trim()).toBe(join(String(dir), "subdir"));
+    expect(exitCode).toBe(0);
+  });
 
   it("DCE annotations are respected", async () => {
     using dir = tempDir("test", {

@@ -2121,16 +2121,26 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
 /// Publish `PWD` after a successful `--cwd` chdir, with bash's logical-path rule.
 pub(crate) fn publish_pwd_after_chdir(requested: &[u8]) {
     let mut buf = bun_paths::path_buffer_pool::get();
-    let Ok(physical) = bun_core::getcwd(&mut buf) else {
-        return;
+    let physical = bun_core::getcwd(&mut buf)
+        .ok()
+        .map(|p| bun_core::ZBox::from_bytes(p.as_bytes()));
+    let pwd = match (lexical_pwd(requested), physical) {
+        (Some(lexical), Some(physical)) => {
+            if same_directory(&lexical, &physical) {
+                lexical
+            } else {
+                physical
+            }
+        }
+        (None, Some(physical)) | (Some(physical), None) => physical,
+        (None, None) => return,
     };
-    let physical = bun_core::ZBox::from_bytes(physical.as_bytes());
-    let pwd = logical_pwd(requested, &physical).unwrap_or(physical);
     set_pwd_env(&pwd);
 }
 
+/// `$PWD` joined with the argument: the spelling the user typed, symlinks intact.
 #[cfg(unix)]
-fn logical_pwd(requested: &[u8], physical: &bun_core::ZBox) -> Option<bun_core::ZBox> {
+fn lexical_pwd(requested: &[u8]) -> Option<bun_core::ZBox> {
     let base: &[u8] = if bun_paths::is_absolute(requested) {
         b"/"
     } else {
@@ -2143,18 +2153,33 @@ fn logical_pwd(requested: &[u8], physical: &bun_core::ZBox) -> Option<bun_core::
     let mut spill = Vec::new();
     let joined =
         resolve_path::join_abs_string_spill::<platform::Loose>(base, &mut spill, &[requested]);
-    if joined == physical.as_bytes() {
-        return None;
+    let trimmed = strings::without_trailing_slash(joined);
+    Some(bun_core::ZBox::from_bytes(if trimmed.is_empty() {
+        b"/"
+    } else {
+        trimmed
+    }))
+}
+
+#[cfg(unix)]
+fn same_directory(a: &bun_core::ZBox, b: &bun_core::ZBox) -> bool {
+    if a.as_bytes() == b.as_bytes() {
+        return true;
     }
-    let candidate = bun_core::ZBox::from_bytes(joined);
-    let there = bun_sys::stat(&candidate).ok()?;
-    let here = bun_sys::stat(physical).ok()?;
-    (there.st_dev == here.st_dev && there.st_ino == here.st_ino).then_some(candidate)
+    let (Ok(there), Ok(here)) = (bun_sys::stat(a), bun_sys::stat(b)) else {
+        return false;
+    };
+    there.st_dev == here.st_dev && there.st_ino == here.st_ino
 }
 
 #[cfg(not(unix))]
-fn logical_pwd(_requested: &[u8], _physical: &bun_core::ZBox) -> Option<bun_core::ZBox> {
+fn lexical_pwd(_requested: &[u8]) -> Option<bun_core::ZBox> {
     None
+}
+
+#[cfg(not(unix))]
+fn same_directory(_a: &bun_core::ZBox, _b: &bun_core::ZBox) -> bool {
+    false
 }
 
 fn set_pwd_env(cwd: &bun_core::ZBox) {

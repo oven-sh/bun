@@ -284,9 +284,11 @@ function fetchLookupError(err) {
 }
 
 async function fetchWithConnect(input, init, connect) {
-  // Native fetch also takes a plain { url, ...init } object as input.
+  // Native fetch also takes a plain { url, ...init } object as input; its
+  // fields (Bun-specific ones like tls and proxy included) act as init.
   if (input !== null && typeof input === "object" && !(input instanceof Request) && !(input instanceof URL)) {
-    input = new Request(input.url, input);
+    init = { ...input, ...init };
+    input = input.url;
   }
   const isRequest = input instanceof Request;
   const url = new URL(isRequest ? input.url : input);
@@ -566,7 +568,7 @@ async function request(
       keepalive: !reset,
     };
     if (hasLookup) {
-      const pin = await applyConnect(typeof url === "string" ? new URL(url) : url, connect, signal);
+      const pin = await applyConnect(new URL(url), connect, signal);
       if (pin !== undefined) {
         url = pin.url;
         const headers = new Headers(requestHeaders);

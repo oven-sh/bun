@@ -949,6 +949,27 @@ describe("undici dispatcher connect.lookup", () => {
     expect(seen).toEqual([UNRESOLVABLE]);
   });
 
+  it("a plain { url } input keeps its Bun-specific options such as tls", async () => {
+    await using server = Bun.serve({ port: 0, tls: tlsCert, fetch: () => new Response("tls-ok") });
+    const { agent } = pinningAgent();
+    const verified: string[] = [];
+    const res = await undiciFetch(
+      {
+        url: `https://${UNRESOLVABLE}:${server.port}/`,
+        tls: {
+          ca: tlsCert.cert,
+          checkServerIdentity: (hostname: string) => {
+            verified.push(hostname);
+            return undefined;
+          },
+        },
+      } as any,
+      { dispatcher: agent },
+    );
+    expect(await res.text()).toBe("tls-ok");
+    expect(verified).toEqual([UNRESOLVABLE]);
+  });
+
   it("request() accepts flat-array headers on the unpinned path too", async () => {
     await using server = Bun.serve({ port: 0, fetch: req => new Response(req.headers.get("x-a") ?? "none") });
     const { body } = await request(`http://127.0.0.1:${server.port}/`, { headers: ["x-a", "1"] });

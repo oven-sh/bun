@@ -31,6 +31,7 @@ function fixture(opts: {
       port: 0,
       async fetch(req) {
         const url = new URL(req.url);
+        if (req.method === "HEAD") return new Response("");
         if (req.method === "POST" && url.searchParams.has("uploads")) {
           reqs.create++;
           ${opts.gateCreate ? "await createGate.promise;" : ""}
@@ -425,4 +426,50 @@ test.concurrent.each([
     stderr: "",
     exited: 0,
   });
+});
+
+// The HEAD request starts after the refusal was sent, so the writer has handled it when HEAD is answered.
+const refused = {
+  create: { waitFor: `reqs.create === 1`, reqs: `{"create":1,"part":0,"complete":0,"abort":0,"put":0}` },
+  part: { waitFor: `reqs.abort === 1`, reqs: `{"create":1,"part":1,"complete":0,"abort":1,"put":0}` },
+};
+test.concurrent.each([
+  ["create", "end"],
+  ["create", "flush"],
+  ["part", "end"],
+  ["part", "flush"],
+] as const)("a writer() whose %s request failed with nothing pending rejects the next %s()", async (kind, method) => {
+  const then = `
+    await client.exists("key");
+    const show = p => Promise.resolve(p).then(String, e => [e.name, e.code, e.message, e.path].join());
+    console.log(w.write("hello"), await show(w.${method}()), await show(w.flush()), await show(w.end()));
+  `;
+  expect(
+    await run({
+      body: `const w = client.file("key").writer(opts); w.write(new Uint8Array(partSize));`,
+      waitFor: refused[kind].waitFor,
+      then,
+      answer: { [kind]: `error(403, "AccessDenied")` },
+    }),
+  ).toEqual({
+    stdout: `0 S3Error,AccessDenied,message,key 0 0\n${refused[kind].reqs}\n`,
+    stderr: "",
+    exited: 0,
+  });
+});
+
+test.concurrent("a writer()'s failure is not reported once its graph is disposed", async () => {
+  const body = `
+    const graph = new Bun.ModuleGraph();
+    const w = graph.run(() => client.file("key").writer(opts));
+    w.write(new Uint8Array(partSize));
+  `;
+  expect(
+    await run({
+      body,
+      waitFor: refused.part.waitFor,
+      then: `graph.dispose(); console.log(w.end());`,
+      answer: { part: `error(403, "AccessDenied")` },
+    }),
+  ).toEqual({ stdout: `0\n${refused.part.reqs}\n`, stderr: "", exited: 0 });
 });

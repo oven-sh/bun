@@ -1,12 +1,12 @@
 use bun_jsc::bindgen::{JsScope, JsWrapper};
 use bun_jsc::virtual_machine::VirtualMachine;
-use bun_jsc::{JSValue, JsCell, JsThread, ScriptTimer, Strong, WrapperGuard};
+use bun_jsc::{JSValue, JsCell, JsThread, ScriptTimer, WrapperGuard};
 use bun_ptr::{RefCount, RefPtr};
 
 use crate::generated_bindgen::timer::js_Immediate as js;
 use crate::jsc_hooks::timer_all_of;
 
-use super::js_timer::{self, LoopHold, WaitsIn};
+use super::js_timer::{self, Armed, WaitsIn};
 use super::{Clock, EventLoopTimer, EventLoopTimerTag};
 
 /// `Immediate`, declared in `Timer.bind.ts`. The JS object holds a ref, and so does the loop's queue.
@@ -21,10 +21,7 @@ pub(crate) struct ImmediateObject {
 
 enum Phase {
     /// In the loop's queue. On the fake clock: linked, or in its callback.
-    Live {
-        root: Strong,
-        hold: Option<LoopHold>,
-    },
+    Live(Armed),
     /// Out of the loop's queue: in its callback, or dropped without running.
     Dequeued,
     Done,
@@ -48,40 +45,40 @@ impl ImmediateObject {
             id,
             phase: JsCell::new(Phase::Done),
         });
-        let wrapper = js::wrap(immediate.clone(), global);
+        let queued = (clock == Clock::Real).then(|| immediate.clone());
+        let wrapper = js::wrap(immediate, global);
         let this = wrapper.to_js();
         let timer = &raw const wrapper.event_loop_timer;
         ScriptTimer::track(timer, vm, cx.context());
         js::arguments_set_cached(this, global, arguments);
         js::callback_set_cached(this, global, callback);
-        wrapper.phase.set(Phase::Live {
-            root: Strong::create(this, global),
-            hold: Some(wrapper.hold_loop(vm)),
-        });
 
-        match clock {
-            Clock::Real => vm.enqueue_immediate_task(immediate.into_raw().cast()),
-            Clock::Fake => {
+        let mut armed = Armed::new(this, vm);
+        match queued {
+            Some(queued) => vm.enqueue_immediate_task(queued.into_raw().cast()),
+            None => {
                 let timers = timer_all_of(vm);
                 let min_delay = i64::from(timers.fake_timers.min_delay_ms());
                 let deadline = timers.fake_timers.now().add_ms(min_delay);
                 timers.update(ScriptTimer::node(timer), &deadline);
             }
         }
+        armed.hold_loop(vm, wrapper.waits_in());
+        wrapper.phase.set(Phase::Live(armed));
         js_timer::did_schedule(cx, id, true);
         this
     }
 
-    fn hold_loop(&self, vm: &VirtualMachine) -> LoopHold {
+    fn waits_in(&self) -> WaitsIn {
         match self.event_loop_timer.clock.get() {
-            Clock::Real => LoopHold::new(vm, WaitsIn::ImmediateQueue),
-            Clock::Fake => LoopHold::new(vm, WaitsIn::Heap),
+            Clock::Real => WaitsIn::ImmediateQueue,
+            Clock::Fake => WaitsIn::Heap,
         }
     }
 
-    fn dequeue(&self) -> Option<(Strong, Option<LoopHold>)> {
+    fn dequeue(&self) -> Option<Armed> {
         match self.phase.replace(Phase::Dequeued) {
-            Phase::Live { root, hold } => Some((root, hold)),
+            Phase::Live(armed) => Some(armed),
             cleared => {
                 self.phase.set(cleared);
                 None
@@ -90,25 +87,26 @@ impl ImmediateObject {
     }
 
     fn call(&self, vm: &VirtualMachine, this: JSValue, thrown: Option<&mut JSValue>) -> bool {
-        let callback = js::callback_get_cached(this).expect("Immediate callback slot");
-        let arguments = js::arguments_get_cached(this).expect("Immediate arguments slot");
-        let threw = js_timer::call(vm, self.id, this, callback, arguments, thrown);
+        let threw = js::callback_get_cached(this).is_some_and(|callback| {
+            let arguments = js::arguments_get_cached(this);
+            js_timer::call(vm, self.id, this, callback, arguments, thrown)
+        });
         self.phase.set(Phase::Done);
         threw
     }
 
     /// `queued` is the queue's ref. Returns whether the microtask checkpoint is still owed.
     pub(crate) fn run(queued: RefPtr<Self>, vm: &VirtualMachine) -> bool {
-        let Some((root, hold)) = queued.dequeue() else {
+        let Some(armed) = queued.dequeue() else {
             return false;
         };
         if !js_timer::may_run(&queued.event_loop_timer, vm)
-            || (hold.is_none() && !vm.is_event_loop_alive_excluding_immediates())
+            || (!armed.holds_loop() && !vm.is_event_loop_alive_excluding_immediates())
         {
             return false;
         }
-        let this = root.get();
-        drop((root, hold));
+        let this = armed.this();
+        drop(armed);
 
         vm.event_loop().enter();
         let threw = queued.call(vm, this, None);
@@ -121,29 +119,29 @@ impl ImmediateObject {
         drop(self.dequeue());
     }
 
-    /// SAFETY: the fake heap has just popped `node`, which is an `ImmediateObject`'s.
+    /// SAFETY: a heap has just popped `node`, which is an `ImmediateObject`'s.
     pub(crate) unsafe fn fire(
         node: *mut EventLoopTimer,
         vm: &VirtualMachine,
-        thrown: &mut JSValue,
+        thrown: Option<&mut JSValue>,
     ) {
         // Dropped last: the microtask checkpoint does not keep the object alive.
         let _entered;
         // SAFETY: fn contract. It was linked, so its root holds the JS object, which holds a ref.
         let immediate = unsafe {
             let native = Self::from_timer_ptr(node);
-            let Phase::Live { root, .. } = (*native).phase.get() else {
+            let Phase::Live(armed) = (*native).phase.get() else {
                 debug_assert!(false, "a linked immediate is live");
                 return;
             };
-            WrapperGuard::from_parts(root.get(), core::ptr::NonNull::new_unchecked(native))
+            WrapperGuard::from_parts(armed.this(), core::ptr::NonNull::new_unchecked(native))
         };
         if !js_timer::may_run(&immediate.event_loop_timer, vm) {
             js_timer::did_cancel(vm, immediate.id);
             return immediate.cancel();
         }
         _entered = vm.enter_event_loop_scope();
-        immediate.call(vm, immediate.to_js(), Some(thrown));
+        immediate.call(vm, immediate.to_js(), thrown);
     }
 
     /// It stays in the loop's queue, which skips it.
@@ -154,8 +152,8 @@ impl ImmediateObject {
 
     pub(crate) fn do_ref(&self, this_value: JsWrapper<'_, Self>) -> JSValue {
         self.phase.with_mut(|phase| {
-            if let Phase::Live { hold, .. } = phase {
-                hold.get_or_insert_with(|| self.hold_loop(VirtualMachine::get()));
+            if let Phase::Live(armed) = phase {
+                armed.hold_loop(VirtualMachine::get(), self.waits_in());
             }
         });
         this_value.to_js()
@@ -163,15 +161,15 @@ impl ImmediateObject {
 
     pub(crate) fn do_unref(&self, this_value: JsWrapper<'_, Self>) -> JSValue {
         self.phase.with_mut(|phase| {
-            if let Phase::Live { hold, .. } = phase {
-                *hold = None;
+            if let Phase::Live(armed) = phase {
+                armed.release_loop();
             }
         });
         this_value.to_js()
     }
 
     pub(crate) fn has_ref(&self) -> bool {
-        matches!(self.phase.get(), Phase::Live { hold: Some(_), .. })
+        matches!(self.phase.get(), Phase::Live(armed) if armed.holds_loop())
     }
 
     pub(crate) fn get_destroyed(&self) -> bool {

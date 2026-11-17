@@ -3,13 +3,13 @@ use core::cell::Cell;
 use bun_core::{Timespec, TimespecMockMode};
 use bun_jsc::bindgen::{JsLocal, JsScope, JsWrapper};
 use bun_jsc::virtual_machine::VirtualMachine;
-use bun_jsc::{JSValue, JsCell, JsResult, JsThread, ScriptTimer, Strong, WrapperGuard};
+use bun_jsc::{JSValue, JsCell, JsResult, JsThread, ScriptTimer, WrapperGuard};
 use bun_ptr::{RefCount, RefPtr};
 
 use crate::generated_bindgen::timer::js_Timeout as js;
 use crate::jsc_hooks::{timer_all, timer_all_of};
 
-use super::js_timer::{self, LoopHold, WaitsIn};
+use super::js_timer::{self, Armed, WaitsIn};
 use super::{Clock, EventLoopTimer, EventLoopTimerState, EventLoopTimerTag};
 
 /// `Timeout`, declared in `Timer.bind.ts`. The JS object holds the only ref.
@@ -22,7 +22,10 @@ pub(crate) struct TimeoutObject {
     phase: JsCell<Phase>,
     interval: Cell<u32>,
     kind: Cell<Kind>,
-    in_id_map: Cell<bool>,
+    /// The last of `ref()` and `unref()`, for the next time it is armed.
+    refd: Cell<bool>,
+    /// An id enters `All::ids` once.
+    id_was_read: Cell<bool>,
 }
 
 #[cfg(not(debug_assertions))]
@@ -30,13 +33,10 @@ const _: () = assert!(size_of::<TimeoutObject>() == 96);
 
 enum Phase {
     /// Linked, or in its callback: the node's `state` says which.
-    Live {
-        root: Strong,
-        hold: Option<LoopHold>,
-    },
+    Live(Armed),
     /// New or fired. `refresh()` arms it.
-    Idle { refd: bool },
-    /// For good.
+    Idle,
+    /// Only `promote_to_interval` arms it again.
     Cleared,
 }
 
@@ -49,9 +49,11 @@ pub(super) enum Kind {
 bun_event_loop::impl_timer_owner!(TimeoutObject; from_timer_ptr => event_loop_timer);
 
 fn idle_timeout(this: JSValue) -> Option<f64> {
-    js::idle_timeout_get_cached(this)
-        .expect("Timeout idleTimeout slot")
-        .get_number()
+    js::idle_timeout_get_cached(this)?.get_number()
+}
+
+fn repeat(this: JSValue) -> Option<JSValue> {
+    js::repeat_get_cached(this).filter(|repeat| !repeat.is_null())
 }
 
 impl TimeoutObject {
@@ -70,10 +72,11 @@ impl TimeoutObject {
             ref_count: RefCount::init(),
             event_loop_timer: ScriptTimer::new(tag, clock, vm, cx.context()),
             id,
-            phase: JsCell::new(Phase::Idle { refd: true }),
+            phase: JsCell::new(Phase::Idle),
             interval: Cell::new(interval),
             kind: Cell::new(kind),
-            in_id_map: Cell::new(false),
+            refd: Cell::new(true),
+            id_was_read: Cell::new(false),
         });
         let timer = js::wrap(timer, global);
         let this = timer.to_js();
@@ -114,16 +117,38 @@ impl TimeoutObject {
     }
 
     fn arm(&self, this: JSValue, vm: &VirtualMachine, deadline: &Timespec) {
-        match *self.phase.get() {
-            Phase::Live { .. } => timer_all_of(vm).update(self.node(), deadline),
-            Phase::Idle { refd } => {
-                let root = Strong::create(this, vm.global());
-                timer_all_of(vm).update(self.node(), deadline);
-                let hold = refd.then(|| LoopHold::new(vm, WaitsIn::Heap));
-                self.phase.set(Phase::Live { root, hold });
-            }
-            Phase::Cleared => {}
+        if !matches!(self.phase.get(), Phase::Live(_)) {
+            self.phase.set(Phase::Live(Armed::new(this, vm)));
         }
+        timer_all_of(vm).update(self.node(), deadline);
+        if self.refd.get() {
+            self.hold_loop(vm);
+        }
+    }
+
+    fn hold_loop(&self, vm: &VirtualMachine) {
+        self.phase.with_mut(|phase| {
+            if let Phase::Live(armed) = phase {
+                armed.hold_loop(vm, WaitsIn::Heap);
+            }
+        });
+    }
+
+    fn release_loop(&self) {
+        self.phase.with_mut(|phase| {
+            if let Phase::Live(armed) = phase {
+                armed.release_loop();
+            }
+        });
+    }
+
+    fn is_cleared(&self) -> bool {
+        matches!(self.phase.get(), Phase::Cleared)
+    }
+
+    /// Script stops a timer with `_idleTimeout = -1`, and an interval with `_repeat = null`.
+    fn may_arm(&self, this: JSValue) -> bool {
+        !(self.repeats() && repeat(this).is_none()) && idle_timeout(this) != Some(-1.0)
     }
 
     /// Arms it for one interval from now.
@@ -156,7 +181,6 @@ impl TimeoutObject {
             Some(timer)
         });
         if let Some(timer) = timer {
-            timer.in_id_map.set(false);
             timer.cancel();
         }
     }
@@ -172,19 +196,20 @@ impl TimeoutObject {
         // SAFETY: fn contract. It was linked, so its root holds the JS object, which holds a ref.
         let timer = unsafe {
             let native = Self::from_timer_ptr(node);
-            let Phase::Live { root, .. } = (*native).phase.get() else {
+            let Phase::Live(armed) = (*native).phase.get() else {
                 debug_assert!(false, "a linked timer is live");
                 return;
             };
-            WrapperGuard::from_parts(root.get(), core::ptr::NonNull::new_unchecked(native))
+            WrapperGuard::from_parts(armed.this(), core::ptr::NonNull::new_unchecked(native))
         };
         let this = timer.to_js();
-        let callback = js::callback_get_cached(this).expect("Timeout callback slot");
-        let arguments = js::arguments_get_cached(this).expect("Timeout arguments slot");
-        if !js_timer::may_run(&timer.event_loop_timer, vm) || !callback.to_boolean() {
+        let Some(callback) = js::callback_get_cached(this).filter(|callback| {
+            js_timer::may_run(&timer.event_loop_timer, vm) && callback.to_boolean()
+        }) else {
             js_timer::did_cancel(vm, timer.id);
             return timer.cancel();
-        }
+        };
+        let arguments = js::arguments_get_cached(this);
 
         let next_round = timer
             .repeats()
@@ -199,31 +224,28 @@ impl TimeoutObject {
         if timer.event_loop_timer.clock.get() == Clock::Fake && fake_timers.installs() != installs {
             timer.cancel();
         }
-        if matches!(timer.phase.get(), Phase::Cleared) {
-            return;
-        }
 
         // https://github.com/nodejs/node/blob/a7cbb904745591c9a9d047a364c2c188e5470047/lib/internal/timers.js#L612
-        let repeat = js::repeat_get_cached(this).expect("Timeout repeat slot");
-        if repeat.to_boolean() {
-            match (next_round, idle_timeout(this)) {
-                (_, Some(-1.0)) | (None, None) => {}
-                (Some(deadline), _) => timer.arm(this, vm, &deadline),
-                (None, Some(_)) => timer.promote_to_interval(this, vm, repeat),
-            }
+        match next_round {
+            None => timer.promote_to_interval(this, vm),
+            Some(_) if timer.is_cleared() => {}
+            Some(deadline) if timer.may_arm(this) => timer.arm(this, vm, &deadline),
+            Some(_) => timer.release_loop(),
         }
 
-        if !timer.is_linked()
-            && let Phase::Live { hold, .. } = timer.phase.get()
-        {
-            let refd = hold.is_some();
-            timer.phase.set(Phase::Idle { refd });
+        if !timer.is_linked() && !timer.is_cleared() {
+            timer.phase.set(Phase::Idle);
         }
     }
 
-    fn promote_to_interval(&self, this: JSValue, vm: &VirtualMachine, repeat: JSValue) {
+    /// A timeout repeats once script has set `_repeat`.
+    fn promote_to_interval(&self, this: JSValue, vm: &VirtualMachine) {
+        let Some(repeat) = repeat(this) else { return };
+        if idle_timeout(this).is_none_or(|ms| ms == -1.0) {
+            return;
+        }
         let ms = repeat.get_number();
-        let interval = ms.filter(|ms| (1.0..=f64::from(i32::MAX)).contains(ms));
+        let interval = ms.filter(|&ms| !(ms < 1.0 || ms > f64::from(i32::MAX)));
         js::idle_timeout_set_cached(this, vm.global(), repeat);
         self.kind.set(Kind::SetInterval);
         self.interval.set(interval.map_or(1, |ms| ms as u32));
@@ -237,50 +259,37 @@ impl TimeoutObject {
         let (this, vm) = (this_value.to_js(), cx.global().bun_vm());
         let has_clock = self.event_loop_timer.clock.get() == Clock::Real
             || timer_all_of(vm).fake_timers.is_active();
-        if has_clock
-            && !matches!(self.phase.get(), Phase::Cleared)
-            && idle_timeout(this) != Some(-1.0)
-        {
+        if has_clock && !self.is_cleared() && self.may_arm(this) {
             self.start(this, vm);
         }
         this
     }
 
     pub(crate) fn do_ref(&self, this_value: JsWrapper<'_, Self>) -> JSValue {
-        self.phase.with_mut(|phase| match phase {
-            Phase::Live { hold, .. } => {
-                hold.get_or_insert_with(|| LoopHold::new(VirtualMachine::get(), WaitsIn::Heap));
-            }
-            Phase::Idle { refd } => *refd = true,
-            Phase::Cleared => {}
-        });
+        if !self.refd.replace(true) {
+            self.hold_loop(VirtualMachine::get());
+        }
         this_value.to_js()
     }
 
     pub(crate) fn do_unref(&self, this_value: JsWrapper<'_, Self>) -> JSValue {
-        self.phase.with_mut(|phase| match phase {
-            Phase::Live { hold, .. } => *hold = None,
-            Phase::Idle { refd } => *refd = false,
-            Phase::Cleared => {}
-        });
+        self.refd.set(false);
+        self.release_loop();
         this_value.to_js()
     }
 
     pub(crate) fn has_ref(&self) -> bool {
-        matches!(self.phase.get(), Phase::Live { hold: Some(_), .. })
+        matches!(self.phase.get(), Phase::Live(armed) if armed.holds_loop())
     }
 
     pub(crate) fn get_destroyed(&self) -> bool {
-        !matches!(self.phase.get(), Phase::Live { .. })
+        !matches!(self.phase.get(), Phase::Live(_))
     }
 
     pub(crate) fn to_primitive(&self) -> JsResult<u64> {
-        if !self.in_id_map.get() && !matches!(self.phase.get(), Phase::Cleared) {
-            let timers = timer_all();
-            timers
-                .ids
-                .with_mut(|ids| ids.put_no_clobber(self.id, self))?;
-            self.in_id_map.set(true);
+        if !self.id_was_read.replace(true) {
+            let ids = &timer_all().ids;
+            ids.with_mut(|ids| ids.put_no_clobber(self.id, self))?;
         }
         Ok(self.id)
     }
@@ -300,8 +309,7 @@ impl TimeoutObject {
 
     pub(crate) fn get_on_timeout(&self, this_value: JsWrapper<'_, Self>) -> JSValue {
         js::callback_get_cached(this_value.to_js())
-            .unwrap()
-            .without_async_context()
+            .map_or(JSValue::UNDEFINED, JSValue::without_async_context)
     }
 
     pub(crate) fn set_on_timeout(
@@ -314,7 +322,7 @@ impl TimeoutObject {
     }
 
     pub(crate) fn get_idle_start(&self, this_value: JsWrapper<'_, Self>) -> JSValue {
-        js::idle_start_get_cached(this_value.to_js()).unwrap()
+        js::idle_start_get_cached(this_value.to_js()).unwrap_or(JSValue::UNDEFINED)
     }
 
     /// Node's deadline is `_idleStart + _idleTimeout`.
@@ -338,10 +346,9 @@ impl TimeoutObject {
 impl Drop for TimeoutObject {
     fn drop(&mut self) {
         const MAX_SLACK: usize = 256 * 1024 / size_of::<(u64, *const TimeoutObject)>();
-        if self.in_id_map.get() {
+        if self.id_was_read.get() {
             timer_all().ids.with_mut(|ids| {
-                ids.swap_remove(&self.id);
-                if ids.capacity() - ids.count() > MAX_SLACK {
+                if ids.swap_remove(&self.id) && ids.capacity() - ids.count() > MAX_SLACK {
                     ids.shrink_and_free(ids.count() + 8);
                 }
             });

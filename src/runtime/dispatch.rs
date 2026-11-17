@@ -1257,7 +1257,7 @@ pub(crate) unsafe fn fire_timer(
     now: &Timespec,
     vm: &VirtualMachine,
 ) -> bun_event_loop::JsResult<()> {
-    use crate::timer::{TimeoutObject, WTFTimer};
+    use crate::timer::{ImmediateObject, TimeoutObject, WTFTimer};
 
     /// Recover the embedding container from `t` (the popped timer slot).
     macro_rules! owner {
@@ -1309,7 +1309,8 @@ pub(crate) unsafe fn fire_timer(
             Ok(())
         }
         EventLoopTimerTag::ImmediateObject => {
-            debug_assert!(false, "`FakeTimers::pop_and_fire` fires it");
+            // SAFETY: per fn contract.
+            unsafe { ImmediateObject::fire(t, vm, None) };
             Ok(())
         }
         EventLoopTimerTag::WTFTimer => {

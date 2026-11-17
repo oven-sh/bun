@@ -7,7 +7,7 @@ export const timerClockMs = b.fn({ returns: b.f64 });
 export const monotonicNowMs = b.fn({ returns: b.f64 });
 export const setNextTimerId = b.fn({ args: { id: b.u64.optional }, length: 1, capability: "heap", throws: true });
 
-// These change flags of the native timer and its place among the timers that wait. None of them keeps the wrapper or hands it to anybody but the caller.
+// These change the state of the native timer and its place among the timers that wait. None of them keeps the wrapper or hands it to anybody but the caller.
 const inspectsTimer = { this: table.inspected };
 const answersTimer = { this: [table.returned] };
 // The handle of the native timer holds the wrapper again. Only the firing takes it out, as `this` of the callback of that timer, which the entry that stored the callback says.

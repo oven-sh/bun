@@ -259,8 +259,8 @@ unsafe extern "Rust" {
         counter: &mut u32,
     ) -> Result<(), Stopped>;
     /// `ImmediateObject::run` — `task` is an erased
-    /// `*mut bun_runtime::timer::ImmediateObject`; returns whether the callback
-    /// threw. Defined in `bun_runtime::dispatch`. Link-time resolved.
+    /// `*mut bun_runtime::timer::ImmediateObject`; returns whether the microtask
+    /// checkpoint is still owed. Defined in `bun_runtime::dispatch`. Link-time resolved.
     fn __bun_run_immediate_task(task: *mut (), vm: &VirtualMachine) -> bool;
     /// Release the event loop's `+1` ref on a still-queued `ImmediateObject`
     /// without running it. Defined in `bun_runtime::dispatch`.

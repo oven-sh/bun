@@ -284,6 +284,26 @@ test.concurrent("wire order equals queue order", async () => {
   });
 });
 
+// An accessor behind a hole of the values is read once more while the Bind is written.
+test.concurrent.each(
+  Object.entries({
+    "cancel() in the middle of a Bind": {
+      result: { err: "ERR_POSTGRES_QUERY_CANCELLED" },
+      next: ok({ v: "next" }),
+      frames: ["B(next,y,1)", "E", "S"],
+    },
+    "the event loop runs in the middle of a Bind": {
+      ahead: ok({ v: "ahead" }),
+      result: ok({ v: "x" }),
+      frames: ["B(ahead,y,1)", "E", "S", "B(x,y,1)", "E", "S"],
+    },
+    "a ParameterDescription comes in during the conversion": { result: ok({ v: "x" }) },
+    "a reply comes in while the query ahead resolves": { results: [ok({ v: "first" }), ok({ v: "second" })] },
+  }),
+)("%s", async (name, expected) => {
+  await run(wireFixture, { [name]: expected });
+});
+
 // A reply has no name on it: it goes to the request at the head of the queue. A broken server or proxy can send a
 // message that cannot belong to that request. Whatever the client makes of it, every query settles and the next one runs.
 describe("a message that is out of place", () => {
@@ -341,6 +361,16 @@ describe("a message that is out of place", () => {
     await using sql = new SQL(server.url, { max: 1 });
     expect([await settled(sql`select ${"a"} as v`), await settled(sql`select ${"b"} as v`)]).toEqual([
       first,
+      [{ v: "b" }],
+    ]);
+  });
+
+  test("a statement keeps its columns when the transform cancels the query, behind a ReadyForQuery too many", async () => {
+    using server = await strayAfterParse([pgReadyForQuery()]);
+    await using sql = new SQL(server.url, { max: 1, transform: { column: name => (first.cancel(), name) } });
+    const first: SQL.Query<any> = sql`select ${"a"} as v`;
+    expect([await settled(first), await settled(sql`select ${"b"} as v`)]).toEqual([
+      "ERR_POSTGRES_QUERY_CANCELLED",
       [{ v: "b" }],
     ]);
   });

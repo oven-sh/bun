@@ -109,16 +109,15 @@ pub mod postgres {
     pub mod any_postgres_error;
     #[path = "CommandTag.rs"]
     pub mod command_tag;
+    pub mod frontend;
+    pub mod handshake;
+    pub mod pipeline;
     #[path = "PostgresProtocol.rs"]
     pub mod postgres_protocol;
     #[path = "PostgresTypes.rs"]
     pub mod postgres_types;
     #[path = "SocketMonitor.rs"]
     pub mod socket_monitor;
-    #[path = "Status.rs"]
-    pub mod status;
-    #[path = "TLSStatus.rs"]
-    pub mod tls_status;
 
     pub mod types {
         #[path = "int_types.rs"]
@@ -130,35 +129,21 @@ pub mod postgres {
     pub mod protocol {
         #[path = "FieldType.rs"]
         pub mod field_type;
-        #[path = "PortalOrPreparedStatement.rs"]
-        pub mod portal_or_prepared_statement;
-        #[path = "zHelpers.rs"]
-        pub(crate) mod z_helpers;
 
-        #[path = "Authentication.rs"]
-        pub mod authentication;
         #[path = "BackendKeyData.rs"]
         pub mod backend_key_data;
         #[path = "CommandComplete.rs"]
         pub mod command_complete;
-        #[path = "CopyData.rs"]
-        pub mod copy_data;
         #[path = "DataRow.rs"]
         pub mod data_row;
-        #[path = "Describe.rs"]
-        pub mod describe;
         #[path = "ErrorResponse.rs"]
         pub mod error_response;
-        #[path = "Execute.rs"]
-        pub mod execute;
         #[path = "FieldDescription.rs"]
         pub mod field_description;
         #[path = "FieldMessage.rs"]
         pub mod field_message;
         #[path = "NewReader.rs"]
         pub mod new_reader;
-        #[path = "NewWriter.rs"]
-        pub mod new_writer;
         pub mod notice_response {
             /// Same wire format as `ErrorResponse` (length-prefixed list of
             /// field messages), so it reuses the same decoder.
@@ -170,27 +155,12 @@ pub mod postgres {
         pub mod parameter_description;
         #[path = "ParameterStatus.rs"]
         pub mod parameter_status;
-        #[path = "Parse.rs"]
-        pub mod parse;
-        #[path = "PasswordMessage.rs"]
-        pub mod password_message;
         #[path = "ReadyForQuery.rs"]
         pub mod ready_for_query;
         #[path = "RowDescription.rs"]
         pub mod row_description;
-        #[path = "SASLInitialResponse.rs"]
-        pub mod sasl_initial_response;
-        #[path = "SASLResponse.rs"]
-        pub mod sasl_response;
-        #[path = "StartupMessage.rs"]
-        pub mod startup_message;
-
-        // ── flat re-exports for `bun_sql_jsc` (Write trait surface) ──
-        pub use new_writer::WriterContext;
     }
 
     pub use any_postgres_error::{AnyPostgresError, PostgresErrorOptions};
     pub use command_tag::CommandTag;
-    pub use status::Status;
-    pub use tls_status::TLSStatus;
 }

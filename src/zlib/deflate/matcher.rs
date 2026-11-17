@@ -108,9 +108,9 @@ pub(super) struct Matcher<'a> {
 }
 
 macro_rules! follow_chain_or_return {
-    ($index:expr, $candidate:ident, $steps:ident, $limit:ident, $best:ident) => {
+    ($links:ident, $candidate:ident, $steps:ident, $limit:ident, $best:ident) => {
         $steps -= 1;
-        $candidate = $index.link($candidate);
+        $candidate = $links.follow($candidate);
         if $steps == 0 || $candidate <= $limit {
             return $best;
         }
@@ -204,6 +204,9 @@ impl<'a> Matcher<'a> {
         if best.len >= WORD {
             return self.search_long(target.position, target.lookahead, candidate, best, steps);
         }
+        let Some(links) = self.index.links() else {
+            return best;
+        };
         let limit = target.position.saturating_sub(self.max_distance);
         let (first, mut mask) = (target.first_word(), mask_for(best.len));
         while candidate < target.position {
@@ -214,7 +217,7 @@ impl<'a> Matcher<'a> {
                 if (other ^ first) & mask == 0 {
                     break;
                 }
-                follow_chain_or_return!(self.index, candidate, steps, limit, best);
+                follow_chain_or_return!(links, candidate, steps, limit, best);
             }
             let Some(bytes) = chunk(self.index.window, candidate) else {
                 return best;
@@ -227,7 +230,7 @@ impl<'a> Matcher<'a> {
             if len >= enough {
                 return best;
             }
-            follow_chain_or_return!(self.index, candidate, steps, limit, best);
+            follow_chain_or_return!(links, candidate, steps, limit, best);
             if len >= WORD {
                 return self.search_long(target.position, target.lookahead, candidate, best, steps);
             }
@@ -246,7 +249,8 @@ impl<'a> Matcher<'a> {
         mut best: Match,
         mut steps: u32,
     ) -> Match {
-        let Some(target) = self.target(position, lookahead) else {
+        let (Some(target), Some(links)) = (self.target(position, lookahead), self.index.links())
+        else {
             return best;
         };
         let limit = position.saturating_sub(self.max_distance);
@@ -261,7 +265,7 @@ impl<'a> Matcher<'a> {
                 {
                     break;
                 }
-                follow_chain_or_return!(self.index, candidate, steps, limit, best);
+                follow_chain_or_return!(links, candidate, steps, limit, best);
             }
             let Some(bytes) = chunk(self.index.window, candidate) else {
                 return best;
@@ -278,7 +282,7 @@ impl<'a> Matcher<'a> {
             } else if self.effort.gives_up_early {
                 return best;
             }
-            follow_chain_or_return!(self.index, candidate, steps, limit, best);
+            follow_chain_or_return!(links, candidate, steps, limit, best);
         }
         best
     }
@@ -287,13 +291,15 @@ impl<'a> Matcher<'a> {
     #[inline(always)]
     fn search_rolling(&self, target: Target<'_>, mut candidate: u32, best: Match) -> Match {
         let mut steps = self.effort.steps(best.len);
-        if best.len < MIN_MATCH_LEN as u32 {
+        if best.len < MIN_MATCH_LEN as u32
+            && let Some(links) = self.index.links()
+        {
             let limit = target.position.saturating_sub(self.max_distance);
             let (first, mask) = (target.first_word(), mask_for(best.len));
             while word(self.index.window, candidate)
                 .is_some_and(|it| (it ^ first) & mask != 0 || candidate >= target.position)
             {
-                follow_chain_or_return!(self.index, candidate, steps, limit, best);
+                follow_chain_or_return!(links, candidate, steps, limit, best);
             }
         }
         self.search_any_chain(target.position, target.lookahead, candidate, best, steps)
@@ -310,7 +316,8 @@ impl<'a> Matcher<'a> {
         mut steps: u32,
     ) -> Match {
         // https://github.com/zlib-ng/zlib-ng/blob/12731092979c6d07f42da27da673a9f6c7b13586/match_tpl.h#L84
-        let Some(target) = self.target(position, lookahead) else {
+        let (Some(target), Some(links)) = (self.target(position, lookahead), self.index.links())
+        else {
             return best;
         };
         let (window, scan) = (self.index.window, target.scan);
@@ -349,7 +356,7 @@ impl<'a> Matcher<'a> {
                 {
                     break start;
                 }
-                follow_chain_or_return!(self.index, candidate, steps, limit, best);
+                follow_chain_or_return!(links, candidate, steps, limit, best);
             };
             let Some(bytes) = chunk(window, start) else {
                 return best;
@@ -366,7 +373,7 @@ impl<'a> Matcher<'a> {
                 if len > MIN_MATCH_LEN as u32 && start + len < position {
                     (offset, candidate) = (0, start);
                     for at in 0..=len - MIN_MATCH_LEN as u32 {
-                        let previous = self.index.link(start + at);
+                        let previous = links.follow(start + at);
                         if previous < candidate {
                             if previous <= base_limit + at {
                                 return best;
@@ -387,7 +394,7 @@ impl<'a> Matcher<'a> {
                     continue;
                 }
             }
-            follow_chain_or_return!(self.index, candidate, steps, limit, best);
+            follow_chain_or_return!(links, candidate, steps, limit, best);
         }
         best
     }

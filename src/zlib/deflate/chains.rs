@@ -71,7 +71,7 @@ impl Chains {
         Index {
             window,
             heads: &mut self.heads,
-            link_mask: link_index(&self.links, usize::MAX),
+            link_mask: (link_index(&self.links, usize::MAX) as u16).into(),
             links: &mut self.links,
             rolling_hash: &mut self.rolling_hash,
         }
@@ -102,12 +102,28 @@ fn links_from(links: &mut [u16], position: usize, len: usize) -> Option<&mut [u1
     links.get_mut(first..first + len)
 }
 
+/// `mask + 1` of them, so that following one takes no check of the index.
+#[derive(Clone, Copy)]
+pub(super) struct Links<'a> {
+    links: &'a [u16],
+    mask: u32,
+}
+
+impl Links<'_> {
+    #[inline(always)]
+    pub(super) fn follow(self, position: u32) -> u32 {
+        let link = self.links.get((position & self.mask) as usize);
+        link.copied().map_or(0, u32::from)
+    }
+}
+
 /// The chains and what they point into.
 pub(super) struct Index<'a> {
     pub(super) window: &'a [u8],
     heads: &'a mut Heads,
     links: &'a mut [u16],
-    link_mask: usize,
+    /// So narrow that it takes no step to get from a link to the index of the next.
+    link_mask: u32,
     rolling_hash: &'a mut u32,
 }
 
@@ -118,9 +134,14 @@ impl<'a> Index<'a> {
     }
 
     #[inline(always)]
-    pub(super) fn link(&self, position: u32) -> u32 {
-        let link = self.links.get(link_index(self.links, position as usize));
-        link.copied().map_or(0, u32::from)
+    pub(super) fn links(&self) -> Option<Links<'_>> {
+        let mask = self.link_mask;
+        let links = self.links.get(..=mask as usize);
+        debug_assert!(links.is_some_and(|links| links.len() == self.links.len()));
+        Some(Links {
+            links: links?,
+            mask,
+        })
     }
 
     #[inline(always)]
@@ -129,7 +150,8 @@ impl<'a> Index<'a> {
         let previous = *head;
         if u32::from(previous) != position {
             *head = position as u16;
-            if let Some(link) = self.links.get_mut(position as usize & self.link_mask) {
+            let index = link_index(self.links, position as usize);
+            if let Some(link) = self.links.get_mut(index) {
                 *link = previous;
             }
         }

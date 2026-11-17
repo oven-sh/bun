@@ -110,6 +110,25 @@ describe("tsconfig compilerOptions.jsx", () => {
     },
   );
 
+  test.concurrent.each([false, true])("CLI JSX options keep production defaults with empty bunfig=%s", async bunfig => {
+    using dir = tempDir("jsx-cli-default", {
+      "m.jsx": "console.log(<div/>);",
+      ...(bunfig ? { "bunfig.toml": "" } : {}),
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build", "m.jsx", "--jsx-import-source=shim", "--external=shim*"],
+      cwd: String(dir),
+      env: { ...bunEnv, NODE_ENV: undefined, BUN_ENV: undefined },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout).toContain('"shim/jsx-runtime"');
+    expect(stdout).not.toContain("jsx-dev-runtime");
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+  });
+
   // "preserve" is selected with --jsx-runtime, Bun.build or bunfig, never from
   // tsconfig: `bun run` executes the output, and tsconfigs written for other
   // toolchains (Next.js) ask for it.

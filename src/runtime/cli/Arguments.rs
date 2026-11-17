@@ -2049,7 +2049,7 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
                     .unwrap_or(prev.runtime),
                 development: runtime_pair
                     .and_then(|runtime| runtime.development)
-                    .unwrap_or(prev.development),
+                    .unwrap_or(false),
                 side_effects: jsx_side_effects || prev.side_effects,
             });
         }

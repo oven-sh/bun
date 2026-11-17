@@ -35,8 +35,7 @@ pub(crate) struct ServerConfig {
 
     pub(crate) ssl_config: Option<SSLConfig>,
     pub(crate) sni: Option<Vec<SSLConfig>>,
-    /// `tls.clientHello`: keep each connection's ClientHello for `server.clientHello(request)`.
-    /// Read here and not in `SSLConfig`, which `Bun.listen`, `Bun.connect` and `fetch` share.
+    /// `tls.clientHello`. Not in `SSLConfig`, which `Bun.listen`, `Bun.connect` and `fetch` share.
     pub(crate) capture_client_hello: bool,
     pub(crate) max_request_body_size: usize,
     pub(crate) development: DevelopmentOption,
@@ -581,9 +580,7 @@ enum TlsObject {
     ServerName,
 }
 
-/// `clientHello` of one `tls` object. The listener keeps the ClientHello before
-/// it knows the server name, so the option belongs to the server and only the
-/// `TlsObject::Default` object can set it.
+/// The listener keeps the ClientHello before it knows the server name: only `Default` sets it.
 fn client_hello_option(global: &JSGlobalObject, tls: JSValue, object: TlsObject) -> JsResult<bool> {
     if !tls.is_object() {
         return Ok(false);

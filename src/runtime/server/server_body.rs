@@ -1354,9 +1354,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
     }
 }
 
-/// `server.clientHello(request)`. Like `request_ip`, this reads what the connection
-/// carries: `null` once the response ended, and for a connection whose listener
-/// keeps no ClientHello.
+/// `server.clientHello(request)`: `null` once the response ended, as for `request_ip`.
 fn request_client_hello(global: &JSGlobalObject, request: JsLocal<'_>) -> JsResult<JSValue> {
     let request = request
         .as_class_ref::<Request>()

@@ -393,8 +393,7 @@ impl<const SSL: bool> Response<SSL> {
         }
     }
 
-    /// The ClientHello of this connection's TLS handshake, when its listener
-    /// keeps it (`App::capture_client_hello`).
+    /// The ClientHello of this connection, when `App::capture_client_hello` ran for its listener.
     pub fn client_hello(&mut self) -> Option<&[u8]> {
         let mut len: u32 = 0;
         let ptr = c::uws_res_get_client_hello(self.as_raw(), &mut len);
@@ -808,8 +807,7 @@ impl AnyResponse {
         any_dispatch!(self, |r| r.get_remote_socket_info())
     }
 
-    /// Runs `f` on the ClientHello of this connection's TLS handshake. `None`
-    /// when the connection is not TLS or its listener does not keep it.
+    /// `None` when the connection is not TLS or its listener keeps no ClientHello.
     pub fn with_client_hello<R>(self, f: impl FnOnce(&[u8]) -> R) -> Option<R> {
         any_dispatch!(self, |r| r.client_hello().map(f))
     }

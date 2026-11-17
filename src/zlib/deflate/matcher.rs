@@ -130,34 +130,61 @@ impl<'a> Matcher<'a> {
     }
 
     #[inline(always)]
-    pub(super) fn reaches(&self, position: u32, candidate: u32) -> bool {
+    fn reaches(&self, position: u32, candidate: u32) -> bool {
         let distance = position.wrapping_sub(candidate);
         distance.wrapping_sub(1) < self.max_distance.min(position.wrapping_sub(1))
     }
 
     /// Inserts the position, and looks for a match from scratch.
     #[inline(always)]
-    pub(super) fn insert_and_match(&mut self, target: Target<'_>) -> Match {
+    pub(super) fn insert_and_match<const ROLLING: bool>(&mut self, target: Target<'_>) -> Match {
+        self.insert_and_beat::<ROLLING>(target, Match::NONE, false)
+    }
+
+    /// The same for one that is longer than `best`. Out of line, or too few registers are left for the other.
+    #[inline(never)]
+    pub(super) fn insert_and_improve<const ROLLING: bool>(
+        &mut self,
+        position: u32,
+        lookahead: u32,
+        best: Match,
+        is_good_enough: bool,
+    ) -> Match {
+        match self.target(position, lookahead) {
+            Some(target) => self.insert_and_beat::<ROLLING>(target, best, is_good_enough),
+            None => best,
+        }
+    }
+
+    #[inline(always)]
+    fn insert_and_beat<const ROLLING: bool>(
+        &mut self,
+        target: Target<'_>,
+        best: Match,
+        is_good_enough: bool,
+    ) -> Match {
         if target.lookahead < HASHED_LEN {
-            return Match::NONE;
+            return best;
         }
-        let candidate = self.index.insert::<false>(target.position, target.hashed());
-        if !self.reaches(target.position, candidate) {
-            return Match::NONE;
+        let candidate = self
+            .index
+            .insert::<ROLLING>(target.position, target.hashed());
+        if !self.reaches(target.position, candidate) || is_good_enough {
+            return best;
         }
-        self.longest_match::<false>(target, candidate, Match::NONE)
+        self.longest_match::<ROLLING>(target, candidate, best)
     }
 
     /// The longest match that is longer than `best`, or that. `candidate` is within reach.
     #[inline(always)]
-    pub(super) fn longest_match<const ROLLING: bool>(
+    fn longest_match<const ROLLING: bool>(
         &self,
         target: Target<'_>,
         candidate: u32,
         best: Match,
     ) -> Match {
         let found = if ROLLING {
-            self.search_any_chain(target.position, target.lookahead, candidate, best)
+            self.search_rolling(target, candidate, best)
         } else {
             self.search(target, candidate, best)
         };
@@ -256,6 +283,22 @@ impl<'a> Matcher<'a> {
         best
     }
 
+    /// Spares a call if no candidate starts like the target.
+    #[inline(always)]
+    fn search_rolling(&self, target: Target<'_>, mut candidate: u32, best: Match) -> Match {
+        let mut steps = self.effort.steps(best.len);
+        if best.len < MIN_MATCH_LEN as u32 {
+            let limit = target.position.saturating_sub(self.max_distance);
+            let (first, mask) = (target.first_word(), mask_for(best.len));
+            while word(self.index.window, candidate)
+                .is_some_and(|it| (it ^ first) & mask != 0 || candidate >= target.position)
+            {
+                follow_chain_or_return!(self.index, candidate, steps, limit, best);
+            }
+        }
+        self.search_any_chain(target.position, target.lookahead, candidate, best, steps)
+    }
+
     /// Follows the chain of that position in the best match that goes back the furthest. For the rolling hash.
     #[inline(never)]
     fn search_any_chain(
@@ -264,6 +307,7 @@ impl<'a> Matcher<'a> {
         lookahead: u32,
         mut candidate: u32,
         mut best: Match,
+        mut steps: u32,
     ) -> Match {
         // https://github.com/zlib-ng/zlib-ng/blob/12731092979c6d07f42da27da673a9f6c7b13586/match_tpl.h#L84
         let Some(target) = self.target(position, lookahead) else {
@@ -271,7 +315,6 @@ impl<'a> Matcher<'a> {
         };
         let (window, scan) = (self.index.window, target.scan);
         let base_limit = position.saturating_sub(self.max_distance);
-        let mut steps = self.effort.steps(best.len);
         // How far into the match the position is whose chain `candidate` is on.
         let mut offset = 0;
         if best.len >= MIN_MATCH_LEN as u32 {

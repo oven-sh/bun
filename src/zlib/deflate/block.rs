@@ -128,6 +128,12 @@ impl Block {
         let bytes = bytes.get(..room).unwrap_or(bytes);
         self.symbols
             .extend(bytes.iter().copied().map(Symbol::for_literal));
+        if bytes.len() < 64 {
+            for &byte in bytes {
+                *self.literal_length_frequencies.at_mut(byte.into()) += 1;
+            }
+            return bytes.len();
+        }
         // Or each of a run of equal bytes would wait for the one before it.
         let mut counts = [[0u16; 256]; 4];
         let (groups, rest) = bytes.as_chunks::<4>();

@@ -21,7 +21,7 @@ use crate::format::{
     ZLIB_PRESET_DICTIONARY,
 };
 use bits::{BitReader, HeldBits};
-use codes::{FAST_INPUT, FAST_ROOM, LongestMatch, Reach, Step, Stop};
+use codes::{FAST_INPUT, FAST_ROOM, LongestMatch, NoMatch, Reach, Step, Stop};
 use dynamic::{Counts, DynamicCodes};
 use tables::Tables;
 use window::{MAX_DISTANCE, Window};
@@ -225,14 +225,14 @@ impl Inflater {
             State::Header if self.container == Container::Raw => {}
             _ => return Err(Error::InvalidState),
         }
-        self.add_to_history(dictionary.len());
-        let recorded = self.window.record(dictionary);
+        self.history = (self.history + dictionary.len()).min(self.window_size());
+        let recorded = self.window.record(dictionary, self.window_size());
         recorded.inspect_err(|&error| self.state = State::Failed(error))
     }
 
     /// Goes as far as it can, and advances `input` past what it has consumed. After an error only `reset()` helps.
     pub fn inflate(&mut self, input: &mut &[u8], out: BorrowedCursor<'_, u8>) -> Result<Status> {
-        self.step(input, out, false)
+        self.step(input, out, false, self.window_size())
     }
 
     /// The same, but stops behind the header and behind each block, like zlib's `Z_BLOCK`.
@@ -241,10 +241,10 @@ impl Inflater {
         input: &mut &[u8],
         out: BorrowedCursor<'_, u8>,
     ) -> Result<Status> {
-        self.step(input, out, true)
+        self.step(input, out, true, self.window_size())
     }
 
-    /// Like `inflate()`. Appends at most `max` bytes to `out`, which grows as needed.
+    /// Like `inflate()` with room for `max` bytes behind the end of `out`, which grows as needed.
     pub fn inflate_to_vec(
         &mut self,
         input: &mut &[u8],
@@ -258,28 +258,39 @@ impl Inflater {
             if out.len() == out.capacity() && out.try_reserve(left.min(MIN_GROWTH)).is_err() {
                 out.try_reserve_exact(left.min(MIN_GROWTH + out.len() / 8))?;
             }
-            let status = append_with(out, left, |out| self.inflate(input, out))?;
+            let status = append_with(out, left, |out| self.step(input, out, false, MAX_DISTANCE))?;
             if status != Status::NeedsOutput || out.len() == end {
+                self.history = self.history.min(self.window_size());
                 return Ok(status);
             }
         }
     }
 
+    fn window_size(&self) -> usize {
+        1 << self.window_bits
+    }
+
+    /// If the output is full, the next step may copy from `kept_if_full` bytes in front of its own.
     fn step(
         &mut self,
         input: &mut &[u8],
         mut out: BorrowedCursor<'_, u8>,
         stops_at_block: bool,
+        kept_if_full: usize,
     ) -> Result<Status> {
         let mut bits = BitReader::resume(self.held, input);
         let result = out.with_unfilled_buf(|buf| {
             let mut out = Output { buf, unrecorded: 0 };
             let result = self.run(&mut bits, &mut out, stops_at_block);
             self.hand_out(&mut out);
-            self.add_to_history(out.buf.len());
             let status = result?;
+            let kept = match status {
+                Status::NeedsOutput => kept_if_full,
+                _ => self.window_size(),
+            };
+            self.history = self.history.saturating_add(out.buf.len()).min(kept);
             if !matches!(self.state, State::Checksum | State::Length | State::Done) {
-                self.record(&mut out)?;
+                self.record(&mut out, kept)?;
             }
             Ok(status)
         });
@@ -290,10 +301,6 @@ impl Inflater {
         }
         (self.held, *input) = bits.suspend();
         result
-    }
-
-    fn add_to_history(&mut self, len: usize) {
-        self.history = self.history.saturating_add(len).min(1 << self.window_bits);
     }
 
     #[inline(always)]
@@ -309,13 +316,13 @@ impl Inflater {
     }
 
     #[inline]
-    fn record(&mut self, out: &mut Output<'_, '_>) -> Result<()> {
+    fn record(&mut self, out: &mut Output<'_, '_>, max: usize) -> Result<()> {
         if out.unrecorded == 0 {
             return Ok(());
         }
         let start = out.buf.len() - core::mem::take(&mut out.unrecorded);
         self.window
-            .record(out.buf.filled().get(start..).unwrap_or_default())
+            .record(out.buf.filled().get(start..).unwrap_or_default(), max)
     }
 
     fn add_to_header_crc(&mut self, bytes: &[u8]) {
@@ -581,7 +588,7 @@ impl Inflater {
     fn start_run(&self, bits: &mut BitReader<'_>, fixed: bool) -> Option<Run> {
         let repeated = LongestMatch::peek(current_tables(&self.dynamic, fixed)?, bits)?;
         // A lap is longer than any window, so this holds in later calls, too.
-        let is_in_reach = repeated.distance <= self.max_distance.min(1 << self.window_bits);
+        let is_in_reach = repeated.distance <= self.max_distance.min(self.window_size());
         (is_in_reach && self.window.has_period(repeated.distance)).then_some(Run {
             repeated,
             left: 0,
@@ -629,6 +636,26 @@ impl Inflater {
         Ok(true)
     }
 
+    /// What follows stored blocks at the end of the input is often too little to need them. Whether it has ended.
+    fn end_block_without_window(
+        &mut self,
+        bits: &mut BitReader<'_>,
+        out: &mut Output<'_, '_>,
+        fixed: bool,
+    ) -> bool {
+        while bits.rest.len() < FAST_INPUT
+            && let Some(tables) = current_tables(&self.dynamic, fixed)
+            && let Some(taken) = codes::take_unless_match(tables, bits, out.room())
+        {
+            let NoMatch::Literal(literal) = taken else {
+                return true;
+            };
+            self.checksum.copy(&[literal], out.buf.unfilled());
+            out.unrecorded += 1;
+        }
+        false
+    }
+
     /// As in zlib, a full output does not keep it from reading up to the first symbol that there is no room for.
     fn decode_codes(
         &mut self,
@@ -636,7 +663,12 @@ impl Inflater {
         out: &mut Output<'_, '_>,
         fixed: bool,
     ) -> Result<Status> {
-        self.record(out)?;
+        if out.unrecorded != 0 {
+            if self.end_block_without_window(bits, out, fixed) {
+                return Ok(Status::BlockEnd);
+            }
+            self.record(out, MAX_DISTANCE)?;
+        }
         loop {
             if self.window.is_lap_over() && !self.start_lap(bits, out, fixed)? {
                 return Ok(Status::NeedsOutput);

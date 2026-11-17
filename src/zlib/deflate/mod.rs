@@ -307,7 +307,6 @@ impl Deflater {
         };
         self.has_started = false;
         self.last_flush = None;
-        self.checksum = Checksum::None;
         self.forget_history();
         self.chains.reset_rolling_hash();
         self.missed_slides = 0;
@@ -329,8 +328,8 @@ impl Deflater {
             dictionary_id: (self.container == Container::Zlib).then(|| adler32(dictionary)),
         };
         let start = dictionary.len().saturating_sub(self.window.size as usize);
-        self.window
-            .append(dictionary.get(start..).unwrap_or_default());
+        let used = dictionary.get(start..).unwrap_or_default();
+        self.window.append(used, &mut Checksum::None);
         let end = self.window.end;
         self.chains.grow(end);
         self.window.position = end;
@@ -609,8 +608,7 @@ impl Deflater {
 
     fn read_into_window(&mut self, io: &mut Io<'_, '_>) {
         let input = io.take_input(self.window.room());
-        self.window
-            .append_with(input.len(), |room| self.checksum.copy(input, room));
+        self.window.append(input, &mut self.checksum);
     }
 
     /// There is `MIN_LOOKAHEAD` afterwards, or no more input.
@@ -644,8 +642,10 @@ impl Deflater {
                 index.insert_at(start - 1);
             }
             let len = unhashed - u32::from(lookahead == 1);
-            self.hash_all(start, len);
-            self.window.unhashed -= len;
+            if len != 0 {
+                self.hash_all(start, len);
+                self.window.unhashed -= len;
+            }
         }
     }
 

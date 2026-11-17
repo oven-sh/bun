@@ -1,6 +1,7 @@
 //! Level 0.
 
 use super::{Deflater, Flush, Io, Progress};
+use crate::checksum::Checksum;
 use crate::format::MAX_STORED_LEN;
 
 impl Deflater {
@@ -40,14 +41,15 @@ impl Deflater {
         if let Some(start) = copied.len().checked_sub(size) {
             self.missed_slides = 2;
             self.window.rewind();
-            self.window.append(copied.split_at(start).1);
+            self.window
+                .append(copied.split_at(start).1, &mut Checksum::None);
             self.add_unhashed();
             self.window.start_block();
         } else if !copied.is_empty() {
             if self.window.room() <= copied.len() {
                 self.slide_window_only();
             }
-            self.window.append(copied);
+            self.window.append(copied, &mut Checksum::None);
             self.add_unhashed();
             self.window.start_block();
         }

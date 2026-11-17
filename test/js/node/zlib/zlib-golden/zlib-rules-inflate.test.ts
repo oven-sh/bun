@@ -775,6 +775,12 @@ describe("Bun.inflateSync() and Bun.gunzipSync() take the container from windowB
     }
   });
 
+  test.each([-9, -10, 25, 41])("and let a stream refer to all of its own output, with windowBits %d", windowBits => {
+    const data = input("prose", 4000);
+    const compressed = windowBits < 0 ? Bun.deflateSync(data) : Bun.gzipSync(data);
+    expect(Buffer.from(Bun.inflateSync(compressed, { windowBits: windowBits as 25 }))).toEqual(data);
+  });
+
   test("and pass on the message", () => {
     expect(() => Bun.inflateSync(Buffer.from([7]))).toThrow("invalid block type");
     expect(() => Bun.gunzipSync(streams.zlib)).toThrow("incorrect header check");

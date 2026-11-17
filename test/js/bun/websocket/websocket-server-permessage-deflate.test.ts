@@ -2,7 +2,7 @@
 // `perMessageDeflate`. The client is a raw TCP socket that does its own framing.
 import { serve } from "bun";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, tempDir } from "harness";
+import { bunEnv, bunExe, forEachLine, isASAN, tempDir } from "harness";
 import path from "node:path";
 import { constants, createInflateRaw, deflateRawSync, inflateRawSync } from "node:zlib";
 import { Engine } from "../../node/zlib/zlib-golden/engine";
@@ -185,6 +185,38 @@ describe.concurrent("Bun.serve perMessageDeflate", () => {
         }
       },
     );
+
+    // In a process of its own, as what a message is inflated into is shared, and as large as it has had to be.
+    test('decompress: "4KB" lets the first message refer to its own start', async () => {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `const server = Bun.serve({
+            port: 0,
+            fetch: (req, server) => void server.upgrade(req),
+            websocket: {
+              perMessageDeflate: { compress: "shared", decompress: "4KB" },
+              message: (ws, message) => void ws.send(String(Bun.hash.crc32(message))),
+            },
+          });
+          console.log(server.port);`,
+        ],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "inherit",
+      });
+      const { value: port } = await forEachLine(proc.stdout).next();
+      using client = await RawClient.upgrade(Number(port), {
+        headers: { "Sec-WebSocket-Extensions": "permessage-deflate; client_max_window_bits" },
+      });
+      expect(client.header("sec-websocket-extensions")).toBe(
+        "permessage-deflate; client_max_window_bits=12; server_no_context_takeover",
+      );
+      const twice = pseudoRandomText(5000) + pseudoRandomText(5000);
+      client.text(deflateRawSync(twice, { finishFlush: constants.Z_SYNC_FLUSH }).subarray(0, -4), { rsv1: true });
+      expect(showFrame((await client.nextFrame())!)).toBe(`text "${Bun.hash.crc32(twice)}"`);
+    });
 
     test('compress: "3KB" keeps context takeover in both directions with a dedicated decompressor', async () => {
       await using server = startServer({ compress: "3KB", decompress: "dedicated" });

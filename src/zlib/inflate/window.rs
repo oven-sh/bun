@@ -4,8 +4,8 @@ use crate::error::{Error, Result};
 use crate::format::MAX_WINDOW_BITS;
 
 pub(super) const MAX_DISTANCE: usize = 1 << MAX_WINDOW_BITS;
-/// How far past `end` a few literals and a match may write, as matches are copied in whole chunks.
-pub(super) const SLACK: usize = 352;
+/// How far past `end` a few literals and a match may write, and more, so that a lap has whole cache lines.
+pub(super) const SLACK: usize = 384;
 /// By how much `end` goes back when it starts over. What is written in the slack replaces only what is out of reach.
 pub(super) const LAP: usize = MAX_DISTANCE + SLACK;
 /// So many bytes are taken along to the start, so that no match is copied from both ends.
@@ -22,6 +22,8 @@ pub(super) struct Window {
     pub(super) end: usize,
     /// What is between it and `end` has not been handed out.
     handed_out: usize,
+    /// What `grow()` has added so far.
+    grown: usize,
 }
 
 impl Window {
@@ -72,7 +74,6 @@ impl Window {
 
     /// Adds the first `len` bytes of another period, which have been handed out. At the start of a lap.
     pub(super) fn record_part_of_period(&mut self, period: usize, len: usize) -> Result<()> {
-        self.bytes.resize(FULL_LEN, 0);
         let start = self.end + LAP - period;
         let lap = self
             .bytes
@@ -87,6 +88,7 @@ impl Window {
     /// The last one is over, and nothing is pending.
     pub(super) fn start_lap(&mut self) -> Result<()> {
         debug_assert_eq!(self.pending(), 0);
+        self.bytes.resize(FULL_LEN, 0);
         let written = self.bytes.get_mut(..self.end).ok_or(Error::Internal)?;
         written.copy_within(LAP.., 0);
         self.end -= LAP;
@@ -98,30 +100,32 @@ impl Window {
     #[cold]
     pub(super) fn grow(&mut self, wanted: usize) -> Result<()> {
         self.bytes.try_reserve_exact(FULL_LEN - self.bytes.len())?;
-        let growth = wanted.clamp(MIN_GROWTH, LAP).max(self.end);
+        let growth = wanted.max(self.grown).clamp(MIN_GROWTH, LAP);
+        self.grown += growth;
         self.bytes
             .resize((self.end + growth + SLACK).min(FULL_LEN), 0);
         Ok(())
     }
 
-    /// Adds what has been handed out some other way. Nothing may be pending.
-    pub(super) fn record(&mut self, mut bytes: &[u8]) -> Result<()> {
-        if let Some(start) = bytes.len().checked_sub(MAX_DISTANCE) {
-            bytes = bytes.get(start..).unwrap_or_default();
-            self.end = 0;
+    /// Adds what has been handed out some other way, or its last `max` bytes. Nothing may be pending.
+    pub(super) fn record(&mut self, bytes: &[u8], max: usize) -> Result<()> {
+        let mut bytes = bytes.split_at(bytes.len().saturating_sub(max)).1;
+        if bytes.len() == max {
+            self.clear();
         }
-        self.handed_out = self.end;
         while !bytes.is_empty() {
             if self.is_lap_over() {
                 self.start_lap()?;
-            } else if self.end + bytes.len() > self.limit() && self.bytes.len() < FULL_LEN {
-                self.grow(bytes.len())?;
             }
-            let limit = self.limit();
-            let room = self.bytes.get_mut(self.end..limit).unwrap_or_default();
             let piece;
-            (piece, bytes) = bytes.split_at(room.len().min(bytes.len()));
-            room.split_at_mut(piece.len()).0.copy_from_slice(piece);
+            (piece, bytes) = bytes.split_at(bytes.len().min(LAP_END - self.end));
+            if let Some(room) = self.bytes.get_mut(self.end..self.end + piece.len()) {
+                room.copy_from_slice(piece);
+            } else {
+                self.bytes.try_reserve_exact(FULL_LEN - self.bytes.len())?;
+                self.bytes.truncate(self.end);
+                self.bytes.extend_from_slice(piece);
+            }
             self.end += piece.len();
             self.handed_out = self.end;
         }

@@ -2,7 +2,6 @@
 
 use bun_deflate::format::MIN_MATCH_LEN;
 
-use super::chains::HASHED_LEN;
 use super::matcher::Match;
 use super::window::{MIN_LOOKAHEAD, byte};
 use super::{Deflater, Flush, Io, Progress, Strategy, Tuning};
@@ -43,7 +42,11 @@ impl Deflater {
         flush: Flush,
         tuning: Tuning,
     ) -> Progress {
-        let is_filtered = self.strategy == Strategy::Filtered;
+        let max_unwanted_len = if self.strategy == Strategy::Filtered {
+            MAX_FILTERED_LEN
+        } else {
+            0
+        };
         let is_done = self.in_stretches(io, flush, MIN_LOOKAHEAD, |this, io, stop| {
             let mut matcher = tuning.matcher(&mut this.chains, &this.window);
             let window = matcher.index.window;
@@ -56,26 +59,31 @@ impl Deflater {
                     && !block.is_full()
                     && let Some(target) = matcher.target(position, end - position)
                 {
-                    let (lookahead, mut found) = (target.lookahead, Match::NONE);
-                    if lookahead >= HASHED_LEN {
-                        let candidate = matcher.index.insert::<ROLLING>(position, target.hashed());
-                        if matcher.reaches(position, candidate) && previous.len < tuning.max_lazy {
-                            found = matcher.longest_match::<ROLLING>(target, candidate, previous);
-                            if is_filtered && found.len <= MAX_FILTERED_LEN {
-                                found = Match::NONE;
-                            }
+                    let mut found;
+                    if previous.len < MIN_MATCH_LEN as u32 {
+                        found = matcher.insert_and_match::<ROLLING>(target);
+                    } else {
+                        let is_good_enough = previous.len >= tuning.max_lazy;
+                        found = matcher.insert_and_improve::<ROLLING>(
+                            position,
+                            target.lookahead,
+                            previous,
+                            is_good_enough,
+                        );
+                        if found.len <= previous.len {
+                            block.push_match(previous.distance(window, position - 1), previous.len);
+                            let hashable = target.lookahead.saturating_sub(MIN_MATCH_LEN as u32);
+                            matcher.index.insert_all::<ROLLING>(
+                                position + 1,
+                                hashable.min(previous.len - 2),
+                            );
+                            position += previous.len - 1;
+                            (previous, is_undecided) = (Match::NONE, false);
+                            continue;
                         }
                     }
-
-                    if previous.len >= MIN_MATCH_LEN as u32 && found.len <= previous.len {
-                        block.push_match(previous.distance(window, position - 1), previous.len);
-                        let hashable = lookahead.saturating_sub(MIN_MATCH_LEN as u32);
-                        matcher
-                            .index
-                            .insert_all::<ROLLING>(position + 1, hashable.min(previous.len - 2));
-                        position += previous.len - 1;
-                        (previous, is_undecided) = (Match::NONE, false);
-                        continue;
+                    if found.len <= max_unwanted_len {
+                        found = Match::NONE;
                     }
                     let was_undecided = core::mem::replace(&mut is_undecided, true);
                     previous = found;

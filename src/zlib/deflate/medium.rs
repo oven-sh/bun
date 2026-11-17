@@ -18,7 +18,7 @@ struct Step {
 #[inline(always)]
 fn find(matcher: &mut Matcher<'_>, position: u32, lookahead: u32) -> Step {
     let found = match matcher.target(position, lookahead) {
-        Some(target) => matcher.insert_and_match(target),
+        Some(target) => matcher.insert_and_match::<false>(target),
         None => Match::NONE,
     };
     Step {

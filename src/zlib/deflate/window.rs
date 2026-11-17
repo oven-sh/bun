@@ -1,9 +1,9 @@
 //! The input that is being compressed, behind what matches are looked for in.
 
-use bun_core::vec::BorrowedCursor;
 use bun_deflate::format::{MAX_MATCH_LEN, MIN_MATCH_LEN};
 use bun_highway::common_prefix_length;
 
+use crate::checksum::Checksum;
 use crate::error::Result;
 use crate::vec;
 
@@ -75,19 +75,15 @@ impl Window {
     }
 
     /// There is `room()` for it.
-    pub(super) fn append(&mut self, input: &[u8]) {
-        self.append_with(input.len(), |mut room| room.append(input));
-    }
-
-    /// The `len` bytes that `write` fills its argument with.
-    #[inline]
-    pub(super) fn append_with(&mut self, len: usize, write: impl FnOnce(BorrowedCursor<'_, u8>)) {
-        debug_assert!(len <= self.room());
+    pub(super) fn append(&mut self, input: &[u8], checksum: &mut Checksum) {
+        debug_assert!(input.len() <= self.room());
         let start = self.end as usize;
-        self.end += len as u32;
-        vec::write_with(&mut self.bytes, start, len, write);
-        if self.bytes.len() < start + len + PADDING {
-            self.bytes.resize(start + len + PADDING, 0);
+        self.end += input.len() as u32;
+        vec::write_with(&mut self.bytes, start, input.len(), |room| {
+            checksum.copy(input, room);
+        });
+        if self.bytes.len() < self.end as usize + PADDING {
+            self.bytes.resize(self.end as usize + PADDING, 0);
         }
     }
 

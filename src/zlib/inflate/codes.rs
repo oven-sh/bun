@@ -399,6 +399,26 @@ pub(super) fn decode_one(
     }
 }
 
+pub(super) enum NoMatch {
+    Literal(u8),
+    EndOfBlock,
+}
+
+/// Takes nothing else, nor a literal that there is no room for.
+pub(super) fn take_unless_match(
+    tables: &Tables,
+    bits: &mut BitReader<'_>,
+    room: usize,
+) -> Option<NoMatch> {
+    let (taken, used) = match peek(tables, bits) {
+        Ok(Some((Symbol::Literal(byte), used))) if room != 0 => (NoMatch::Literal(byte), used),
+        Ok(Some((Symbol::EndOfBlock, used))) => (NoMatch::EndOfBlock, used),
+        _ => return None,
+    };
+    bits.skip(used);
+    Some(taken)
+}
+
 /// A match of the greatest length.
 #[derive(Clone, Copy)]
 pub(super) struct LongestMatch {

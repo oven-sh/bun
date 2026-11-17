@@ -20,14 +20,14 @@
 #define BUN_ZLIB_TABLES
 namespace bun {
 
-// For each period below 16, where in it each of 32 bytes is, and how many bytes the whole periods take.
+// For each period up to 16, where in it each of 32 bytes is, and how many bytes the whole periods take.
 struct Periods {
-    alignas(16) uint8_t indices[16][32];
-    uint8_t steps[16];
+    alignas(16) uint8_t indices[17][32];
+    uint8_t steps[17];
 };
 [[maybe_unused]] static constexpr Periods periods = [] {
     Periods table {};
-    for (size_t period = 1; period < 16; period++) {
+    for (size_t period = 1; period <= 16; period++) {
         for (size_t i = 0; i < 32; i++)
             table.indices[period][i] = i % period;
         table.steps[period] = 32 - 32 % period;
@@ -64,7 +64,7 @@ static HWY_INLINE void Repeat(const uint8_t* from, uint8_t* to, size_t period, s
         // A byte is sure to come from one store, and so without delay.
         first = second = hn::Set(d, *from);
         step = 32;
-    } else if (period < 16) {
+    } else if (period <= 16) {
         const auto bytes = hn::LoadU(d, from);
         first = hn::TableLookupBytes(bytes, hn::Load(d, periods.indices[period]));
         second = hn::TableLookupBytes(bytes, hn::Load(d, periods.indices[period] + 16));

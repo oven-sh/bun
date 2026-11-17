@@ -33,6 +33,7 @@ fn change_directory(cwd: &[u8]) {
         );
         Global::exit(1);
     }
+    super::arguments::publish_pwd_after_chdir(cwd);
 }
 
 /// Returns `--cwd` from `bun`'s own flags, which precede `command`.

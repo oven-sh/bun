@@ -1268,15 +1268,14 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
             );
             Global::exit(1);
         }
+        publish_pwd_after_chdir(cwd_arg);
         // Store the post-chdir physical path (mirrors process.chdir) so
         // process.cwd(), path.resolve, and the resolver agree on one form.
         let mut phys = bun_paths::path_buffer_pool::get();
-        let resolved = match bun_core::getcwd(&mut phys) {
-            Ok(p) => bun_core::ZBox::from_bytes(p.as_bytes()),
-            Err(_) => out_z,
-        };
-        set_pwd_env(&resolved);
-        Box::<[u8]>::from(resolved.as_bytes())
+        match bun_core::getcwd(&mut phys) {
+            Ok(p) => Box::<[u8]>::from(p.as_bytes()),
+            Err(_) => Box::<[u8]>::from(out_z.as_bytes()),
+        }
     } else if matches!(
         cmd,
         CommandTag::AutoCommand | CommandTag::RunCommand | CommandTag::RunAsNodeCommand
@@ -2119,7 +2118,44 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
     Ok(opts)
 }
 
-/// Publish `cwd` as `PWD` after a successful `--cwd` chdir, like bash's `cd`.
+/// Publish `PWD` after a successful `--cwd` chdir. Like bash's `cd`, keep the
+/// logical spelling (`$PWD` joined with the argument) when it names the new
+/// cwd, so symlinks the user walked through survive; else the physical path.
+pub(crate) fn publish_pwd_after_chdir(requested: &[u8]) {
+    let mut buf = bun_paths::path_buffer_pool::get();
+    let Ok(physical) = bun_core::getcwd(&mut buf) else { return };
+    let physical = bun_core::ZBox::from_bytes(physical.as_bytes());
+    let pwd = logical_pwd(requested, &physical).unwrap_or(physical);
+    set_pwd_env(&pwd);
+}
+
+#[cfg(unix)]
+fn logical_pwd(requested: &[u8], physical: &bun_core::ZBox) -> Option<bun_core::ZBox> {
+    let base: &[u8] = if bun_paths::is_absolute(requested) {
+        b"/"
+    } else {
+        // Read uncached: `env_var::PWD` would pin the pre-chdir value for later readers.
+        bun_core::getenv_z(bun_core::zstr!("PWD"))?
+    };
+    if !bun_paths::is_absolute(base) {
+        return None;
+    }
+    let mut spill = Vec::new();
+    let joined = resolve_path::join_abs_string_spill::<platform::Loose>(base, &mut spill, &[requested]);
+    if joined == physical.as_bytes() {
+        return None;
+    }
+    let candidate = bun_core::ZBox::from_bytes(joined);
+    let there = bun_sys::stat(&candidate).ok()?;
+    let here = bun_sys::stat(physical).ok()?;
+    (there.st_dev == here.st_dev && there.st_ino == here.st_ino).then_some(candidate)
+}
+
+#[cfg(not(unix))]
+fn logical_pwd(_requested: &[u8], _physical: &bun_core::ZBox) -> Option<bun_core::ZBox> {
+    None
+}
+
 fn set_pwd_env(cwd: &bun_core::ZBox) {
     #[cfg(windows)]
     {

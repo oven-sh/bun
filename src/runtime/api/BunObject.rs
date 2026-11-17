@@ -804,17 +804,15 @@ fn resolve_with_args<const IS_FILE_PATH: bool>(
         Err(err) => return Err(ctx.throw_value(err)),
     };
 
-    Ok(Resolved::Found(with_query(result_value, &query_string)))
-}
+    if !query_string.is_empty() {
+        let mut arraylist: Vec<u8> = Vec::with_capacity(1024);
+        // Vec<u8> writes are infallible.
+        let _ = write!(&mut arraylist, "{}{}", result_value, query_string);
 
-fn with_query(path: BunString, query_string: &BunString) -> BunString {
-    if query_string.is_empty() {
-        return path;
+        return Ok(Resolved::Found(BunString::clone_utf8(&arraylist)));
     }
-    let mut arraylist: Vec<u8> = Vec::with_capacity(1024);
-    // Vec<u8> writes are infallible.
-    let _ = write!(&mut arraylist, "{}{}", path, query_string);
-    BunString::clone_utf8(&arraylist)
+
+    Ok(Resolved::Found(result_value))
 }
 
 pub(crate) fn resolve_sync(
@@ -992,9 +990,16 @@ pub(crate) fn bun_resolve_as_require_if_exists(
     };
     jsc::to_js_host_call(global, || {
         let mut query_string = BunString::EMPTY;
-        match VirtualMachine::resolve_as_require(global, &specifier_str, source, &mut query_string)?
-        {
-            Ok(Some(path)) => with_query(path, &query_string).into_js(global),
+        let resolved =
+            VirtualMachine::resolve_as_require(global, &specifier_str, source, &mut query_string)?;
+        match resolved {
+            Ok(Some(path)) if query_string.is_empty() => path.into_js(global),
+            Ok(Some(path)) => {
+                let mut with_query: Vec<u8> = Vec::new();
+                // Vec<u8> writes are infallible.
+                let _ = write!(&mut with_query, "{}{}", path, query_string);
+                BunString::clone_utf8(&with_query).into_js(global)
+            }
             Ok(None) => Ok(JSValue::UNDEFINED),
             Err(err) if err.is::<jsc::ResolveMessage>() => Ok(JSValue::UNDEFINED),
             // e.g. an onResolve plugin returned an invalid result

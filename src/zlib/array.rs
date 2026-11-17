@@ -32,3 +32,14 @@ impl<T, const N: usize> At<T> for [T; N] {
         &mut self[in_range::<N>(index)]
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn every_index_gets_an_element() {
+        assert_eq!([0, 1, 2, 3].map(in_range::<2>), [0, 1, 0, 1]);
+        assert_eq!([0, 1, 2, 3].map(in_range::<3>), [0, 1, 2, 2]);
+    }
+}

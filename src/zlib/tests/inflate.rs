@@ -610,12 +610,12 @@ fn a_zlib_stream_keeps_to_the_window_in_its_header() {
 
 #[test]
 fn what_a_header_says_holds_for_its_stream_only() {
-    let plain = [7; 900];
+    let plain = vec![7; WINDOW_SIZE + 100];
     let mut raw = Writer::default();
     let raw = raw
-        .stored(false, &plain[..800])
+        .stored(false, &plain[..WINDOW_SIZE])
         .fixed(true)
-        .copy(100, 500)
+        .copy(100, WINDOW_SIZE)
         .end_block()
         .finish();
     let mut inflater = Inflater::new(Container::ZlibOrGzip);
@@ -646,6 +646,54 @@ fn without_a_code_for_code_lengths_each_takes_a_bit() {
             || (99, 99),
         );
         assert_eq!(result.end, end);
+    }
+}
+
+#[test]
+fn what_was_read_ahead_and_put_back_is_forgotten() {
+    let mut stream = Writer::default();
+    let stream = stream
+        .fixed(false)
+        .literals(b"abc")
+        .end_block()
+        .stored(true, b"def")
+        .finish();
+    for stop in 0..3 {
+        let (mut inflater, mut input) = (Inflater::new(Container::Raw), &stream[..]);
+        let (mut bytes, _) = step(&mut inflater, &mut input, stop, false);
+        let read = stream.len() - input.len();
+        // Other bytes than were there before.
+        let changed: Vec<_> = stream[..read].iter().copied().chain([0; 20]).collect();
+        let result = run(&mut inflater, &changed[read..], false, || (99, 99));
+        bytes.extend(result.bytes);
+        assert_eq!(bytes, plain::inflate(&changed, &[]).bytes);
+    }
+}
+
+#[test]
+fn damage_has_the_messages_of_zlib() {
+    use Damage::*;
+    for (damage, message) in [
+        (HeaderCheck, "incorrect header check"),
+        (UnknownMethod, "unknown compression method"),
+        (WindowSize, "invalid window size"),
+        (UnknownHeaderFlags, "unknown header flags set"),
+        (HeaderCrc, "header crc mismatch"),
+        (BlockType, "invalid block type"),
+        (StoredLengths, "invalid stored block lengths"),
+        (TooManySymbols, "too many length or distance symbols"),
+        (CodeLengthsSet, "invalid code lengths set"),
+        (BitLengthRepeat, "invalid bit length repeat"),
+        (MissingEndOfBlock, "invalid code -- missing end-of-block"),
+        (LiteralLengthsSet, "invalid literal/lengths set"),
+        (DistancesSet, "invalid distances set"),
+        (LiteralLengthCode, "invalid literal/length code"),
+        (DistanceCode, "invalid distance code"),
+        (DistanceTooFarBack, "invalid distance too far back"),
+        (DataCheck, "incorrect data check"),
+        (LengthCheck, "incorrect length check"),
+    ] {
+        assert_eq!(Error::from(damage).to_string(), message);
     }
 }
 

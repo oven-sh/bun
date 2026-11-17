@@ -103,12 +103,12 @@ fn session(level: i32, mut strategy: i32, seed: u64) -> u32 {
         if !dictionary.is_empty() {
             deflater.set_dictionary(dictionary).unwrap();
         }
-        let input = &rest[..random.pick(&[rest.len(), rest.len(), rest.len().div_ceil(3)])];
+        let input = &rest[..random.pick(&[rest.len(), rest.len().div_ceil(3), rest.len().min(90)])];
         rest = &rest[input.len()..];
-        let given_up_at = random.pick(&[input.len(), input.len(), input.len() / 2]);
+        let in_pieces = random.pick(&[input.len(), input.len(), input.len() / 2, 0]);
         let (mut read, mut out) = (0, Vec::new());
         for _ in 0..1_000_000 {
-            if read >= given_up_at {
+            if read >= in_pieces {
                 break;
             }
             let flush = if random.below(flushes) == 0 {
@@ -129,7 +129,11 @@ fn session(level: i32, mut strategy: i32, seed: u64) -> u32 {
             }
             if random.below(changes) == 0 {
                 let other = random.below(5) as i32;
-                let new = (random.below(10) as i32, random.pick(&[strategy, other]));
+                let any = random.below(10) as i32;
+                let new = (
+                    random.pick(&[any, any, 0, level]),
+                    random.pick(&[strategy, other]),
+                );
                 let is_set = deflater
                     .set_params(new.0.try_into().unwrap(), new.1.try_into().unwrap())
                     .unwrap();
@@ -140,7 +144,7 @@ fn session(level: i32, mut strategy: i32, seed: u64) -> u32 {
             }
         }
         let mut piece = &input[read..];
-        if given_up_at < input.len() {
+        if random.below(4) == 0 {
             step(&mut deflater, &mut piece, &mut out, 200_000, Flush::Block).unwrap();
         } else {
             for _ in 0..1_000_000 {
@@ -165,16 +169,16 @@ fn calls_in_any_order_give_what_zlib_ng_gives() {
     /// From zlib-ng 2.3.3, by the level and the strategy at the start.
     #[rustfmt::skip]
     const EXPECTED: [[u32; 5]; 10] = [
-        [0xe969_54c2, 0x53cb_c4a4, 0xa4fe_03eb, 0x2ce1_9d89, 0x26a8_75ac],
-        [0x4cdd_3380, 0x44c5_cb5e, 0x2105_e5c1, 0x38e9_0937, 0x0ace_49ce],
-        [0xd763_2408, 0xa6b0_2956, 0xdf73_d3ba, 0xe86e_2922, 0x0bcd_6a26],
-        [0x19a6_2241, 0x1273_9cda, 0x8c5f_68d7, 0xef06_92b8, 0xc3bf_6aa7],
-        [0xe87b_9f2b, 0x4219_a3da, 0x49ac_db48, 0x4883_8e2a, 0x938c_9539],
-        [0xb1d9_bbb8, 0x3a53_3439, 0x7155_0130, 0xac82_a261, 0xcf63_d7bb],
-        [0x6ff0_5e4a, 0x2f91_f4fb, 0xdd8c_4b58, 0x31ec_bdfe, 0x42c4_527f],
-        [0x17d6_21e7, 0xcd71_c27b, 0xd5e8_47b2, 0x4025_5bb5, 0xe50e_2072],
-        [0x7881_9644, 0x9b45_d819, 0x2503_a2ea, 0xb87d_75c3, 0xcf7f_d25a],
-        [0x616e_3ab9, 0xc5b9_389e, 0xc3d4_8c83, 0xa043_62c9, 0x35ca_8639],
+        [0x158a_3599, 0x31ed_386b, 0x07a0_3ff8, 0x7f31_cb39, 0x7fc2_3f47],
+        [0xf820_4b6d, 0xd5b9_597f, 0x4827_ee6b, 0xa7cb_534a, 0x931c_8bdd],
+        [0xbfae_d565, 0x95e7_f74f, 0x144f_23a9, 0xefd2_59e4, 0x6fe6_7bb3],
+        [0x61ff_786a, 0x20d4_f44e, 0x7494_5ea2, 0x6602_b8a8, 0x62bd_ffa0],
+        [0x0bbb_ad22, 0x29ce_27f7, 0xc87c_ebe0, 0x9a15_5488, 0x38f9_f59c],
+        [0xbe6b_6f5d, 0xa47f_46fe, 0xc150_86f1, 0x5e3d_bea5, 0x4c1b_2c3d],
+        [0xcd26_7063, 0xefe9_d1da, 0x6ef9_dc62, 0x1c22_f737, 0x19c9_4d7a],
+        [0x7680_8aec, 0x62d2_d0e6, 0x93cb_dc79, 0xc9db_d83a, 0xb531_10cd],
+        [0x9af1_8c74, 0x2ba6_4091, 0x3647_86ec, 0xfb04_7891, 0x7837_2fdf],
+        [0xb4bc_a60a, 0x568e_f177, 0x03a6_fcb2, 0x2459_2fa7, 0x3b64_928d],
     ];
     let found: [[u32; 5]; 10] = std::array::from_fn(|level| {
         std::array::from_fn(|strategy| {
@@ -184,6 +188,21 @@ fn calls_in_any_order_give_what_zlib_ng_gives() {
         })
     });
     assert_eq!(found, EXPECTED, "{found:x?}");
+}
+
+#[test]
+fn and_so_do_some_that_few_sequences_are_like() {
+    /// The arguments of `session()`, and the result with zlib-ng 2.3.3.
+    #[rustfmt::skip]
+    const RARE: &[(i32, i32, u64, u32)] = &[
+    ];
+    for &(level, strategy, seed, expected) in RARE {
+        assert_eq!(
+            session(level, strategy, seed),
+            expected,
+            "{level} {strategy} {seed}"
+        );
+    }
 }
 
 #[test]

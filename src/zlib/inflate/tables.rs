@@ -576,3 +576,35 @@ impl<const N: usize> List<N> {
         self.ends.of_length(bits, &self.items)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_fixed_tables_are_what_the_fixed_lengths_make() {
+        let bits = [(8, 144), (9, 112), (7, 24), (8, 8)].map(|(bits, count)| vec![bits; count]);
+        let coded = |bits: Vec<u8>| -> Vec<_> {
+            let coded = (0..)
+                .zip(bits)
+                .map(|(symbol, bits)| Coded::new(symbol, bits));
+            coded.collect()
+        };
+        let mut built = Tables::EMPTY;
+        assert!(built.build_literal_length(&coded(bits.concat()), false));
+        assert!(built.build_distance(&coded(vec![5; 32]), 0));
+        for (index, fixed) in (0..).zip(FIXED.literal_length.root) {
+            let mut entry = built
+                .literal_length
+                .look_up(index & built.literal_length_mask);
+            if entry.fits_with_extra_bits() {
+                entry = entry.with_extra_bits(index >> entry.bits());
+            }
+            assert_eq!(fixed.0, entry.0, "{index}");
+        }
+        assert_eq!(
+            FIXED.distance.root.map(|it| it.0),
+            built.distance.root.map(|it| it.0)
+        );
+    }
+}

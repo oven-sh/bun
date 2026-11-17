@@ -51,3 +51,14 @@ pub(crate) const REPEAT_MANY_ZEROS: Repeat = Repeat::new(18);
 pub(crate) const fn reversed(code: u16, bits: u32) -> u16 {
     code.reverse_bits().wrapping_shr(u16::BITS - bits)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn repeats_are_those_of_rfc_1951() {
+        let runs = [16, 17, 18].map(Repeat::new).map(|it| it.min..=it.max());
+        assert_eq!(runs, [3..=6, 3..=10, 11..=138]);
+    }
+}

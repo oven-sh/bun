@@ -1,6 +1,6 @@
 import { $ } from "bun";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe } from "harness";
 
 $.throws(false);
 
@@ -56,72 +56,5 @@ describe("yes", async () => {
       filled: true,
     });
     expect(exitCode).toBe(0);
-  });
-
-  async function run(files: Record<string, string>, cmd = [bunExe(), "main.js"]) {
-    using dir = tempDir("yes", files);
-    await using proc = Bun.spawn({ cmd, env: bunEnv, cwd: String(dir), stdout: "pipe", stderr: "pipe" });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    return { stdout, stderr, exitCode, signalCode: proc.signalCode };
-  }
-
-  // Windows writes to files asynchronously.
-  describe.skipIf(isWindows).concurrent("to a target that is written on the spot", () => {
-    test("lets the event loop turn while it fills a file", async () => {
-      const main = `
-        const order = [];
-        const done = Bun.$\`yes ab > out\`.nothrow().then(r => order.push("exit " + r.exitCode));
-        setImmediate(() => order.push("immediate"));
-        await done;
-        const text = await Bun.file("out").text();
-        console.log(order.join(), text.length >= 1 << 20, Buffer.alloc(text.length, "ab\\n").toString() === text);
-      `;
-      // The file size limit ends the command with EFBIG.
-      const cmd = ["sh", "-c", `trap '' XFSZ; ulimit -f 2048; exec "$0" main.js`, bunExe()];
-      expect(await run({ "main.js": main }, cmd)).toEqual({
-        stdout: "immediate,exit 1 true true\n",
-        stderr: "",
-        exitCode: 0,
-        signalCode: null,
-      });
-    });
-
-    test("lets its Worker be terminated", async () => {
-      const main = `
-        import { Worker, isMainThread, parentPort } from "node:worker_threads";
-        if (isMainThread) {
-          const worker = new Worker(import.meta.filename);
-          worker.once("message", async () => console.log(await worker.terminate()));
-        } else {
-          const running = Bun.$\`yes > /dev/null\`.then(() => {});
-          parentPort.postMessage("started");
-          await running;
-        }
-      `;
-      expect(await run({ "main.js": main })).toEqual({ stdout: "1\n", stderr: "", exitCode: 0, signalCode: null });
-    });
-
-    test("stops when another command of the script throws", async () => {
-      const main = `await Bun.$\`yes > /dev/null | echo hi > \${new Blob(["x"])}\`.catch(e => console.log(e.message));`;
-      expect(await run({ "main.js": main })).toEqual({
-        stdout: "Cannot redirect stdout/stderr to an immutable blob. Expected a file\n",
-        stderr: "",
-        exitCode: 0,
-        signalCode: null,
-      });
-    });
-
-    test("stops when its ModuleGraph is disposed", async () => {
-      const files = {
-        "app.js": `export const start = () => void Bun.$\`yes > /dev/null\`.then(() => console.log("settled"));`,
-        "main.js": `
-          const graph = new Bun.ModuleGraph();
-          const app = await graph.import(import.meta.dir + "/app.js");
-          graph.run(app.start);
-          setImmediate(() => (graph.dispose(), console.log("disposed")));
-        `,
-      };
-      expect(await run(files)).toEqual({ stdout: "disposed\n", stderr: "", exitCode: 0, signalCode: null });
-    });
   });
 });

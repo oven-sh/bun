@@ -12,7 +12,7 @@ pub(crate) fn start(interp: &Interpreter, cmd: NodeId) -> Yield {
     let mut separator: &[u8] = b"\n";
     let mut terminator: &[u8] = b"";
     while let [flag, rest @ ..] = args {
-        args = match (flag.as_bytes(), rest) {
+        args = match (flag.get(), rest) {
             (b"-s" | b"--separator", []) => return fail("option requires an argument -- s"),
             (b"-t" | b"--terminator", []) => return fail("option requires an argument -- t"),
             (b"-s" | b"--separator", [value, rest @ ..]) => {

@@ -20,10 +20,9 @@ pub(crate) fn start(interp: &Interpreter, cmd: NodeId) -> Yield {
     if let Err(flag) = flags.iter().try_for_each(|flag| opts.parse(flag)) {
         return Builtin::fail_flag(interp, cmd, flag);
     }
-    let [_, .., tgt] = operands else {
+    let Some((tgt, sources @ [_, ..])) = operands.split_last() else {
         return Builtin::fail_usage(interp, cmd, USAGE);
     };
-    let sources = &operands[..operands.len() - 1];
     Batch::start(interp, cmd, sources.len());
     for src in sources {
         ShellCpTask::schedule(interp, cmd, opts, operands.len(), src, tgt);
@@ -134,9 +133,10 @@ impl ShellCpTask {
         let err = self.err.as_ref().map(|err| match err {
             ShellErr::Sys(sys) => {
                 let words = BStr::new(sys.message.byte_slice());
-                match sys.path.is_empty() {
-                    true => Kind::Cp.message(format_args!("{words}\n")),
-                    false => Kind::Cp.message(format_args!("{words}: {}\n", sys.path)),
+                if sys.path.is_empty() {
+                    Kind::Cp.message(format_args!("{words}\n"))
+                } else {
+                    Kind::Cp.message(format_args!("{words}: {}\n", sys.path))
                 }
             }
             ShellErr::Custom(words) => Kind::Cp.message(format_args!("{}\n", BStr::new(words))),
@@ -487,12 +487,12 @@ impl ShellTaskCtx for ShellCpTask {
         let task = unsafe { bun_core::heap::take(this) };
         let cmd = task.cmd;
         #[cfg(windows)]
-        let Some(task) = Batch::of(interp, cmd)
-            .ebusy
-            .get_or_insert_default()
-            .admit(task)
-        else {
-            let running = &Batch::of(interp, cmd).running;
+        let Some(batch) = Batch::of(interp, cmd) else {
+            return;
+        };
+        #[cfg(windows)]
+        let Some(task) = batch.ebusy.get_or_insert_default().admit(task) else {
+            let running = &batch.running;
             running.fetch_sub(1, core::sync::atomic::Ordering::SeqCst);
             return Batch::settle(interp, cmd).run(interp);
         };
@@ -521,8 +521,8 @@ impl Opts {
                 return Err(BadFlag::Unsupported(&flag[..2]));
             }
             [_, b'p', ..] => return Err(BadFlag::Unsupported(b"-P")),
-            b"-" => return Err(BadFlag::Illegal(flag)),
-            _ => return Err(BadFlag::Illegal(&flag[1..])),
+            [] | [_] => return Err(BadFlag::Illegal(flag)),
+            [_, letters @ ..] => return Err(BadFlag::Illegal(letters)),
         }
         for ch in flag {
             match ch {

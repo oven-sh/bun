@@ -22,8 +22,8 @@ pub(crate) fn start(interp: &Interpreter, cmd: NodeId) -> Yield {
             (shell.change_cwd(&home), &home[..])
         }
         // Still the one that was tried if this fails.
-        [dir] if dir.as_bytes() == b"-" => (shell.change_prev_cwd(), shell.prev_cwd()),
-        [dir] => (shell.change_cwd(dir), dir.as_bytes()),
+        [dir] if dir.get() == b"-" => (shell.change_prev_cwd(), shell.prev_cwd()),
+        [dir] => (shell.change_cwd(dir), dir.get()),
         _ => return Builtin::fail(interp, cmd, format_args!("too many arguments\n")),
     };
     let Err(err) = result else {

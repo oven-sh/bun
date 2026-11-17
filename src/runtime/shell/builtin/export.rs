@@ -15,7 +15,7 @@ pub(crate) fn start(interp: &Interpreter, cmd: NodeId) -> Yield {
         }
         let (name, value) = match bun_core::strings::index_of_char_usize(s, b'=') {
             Some(eq) => (&s[..eq], &s[eq + 1..]),
-            None => (s.as_bytes(), &b""[..]),
+            None => (s.get(), &b""[..]),
         };
         // Copied: argv is freed with the Cmd.
         let label = EnvStr::init_ref_counted(name.into());

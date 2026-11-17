@@ -23,20 +23,25 @@ pub(crate) fn print(interp: &Interpreter, cmd: NodeId, first: usize, mut missing
     let shell = Builtin::shell(interp, cmd);
     let (path_env, cwd) = (shell.export_env.get(b"PATH"), shell.cwd());
     let mut path_buf = bun_paths::path_buffer_pool::get();
-    for (i, arg) in Builtin::of(interp, cmd).args()[first..].iter().enumerate() {
+    for (i, arg) in Builtin::of(interp, cmd)
+        .args()
+        .iter()
+        .enumerate()
+        .skip(first)
+    {
         let found = bun_which::which(&mut path_buf, path_env.unwrap_or_default(), cwd, arg);
         missing |= found.is_none();
         let (prefix, name, suffix) = match found {
             Some(path) => ("", BStr::new(path.as_bytes()), ""),
-            None => ("which: ", BStr::new(arg.as_bytes()), " not found"),
+            None => ("which: ", BStr::new(arg.get()), " not found"),
         };
         match Builtin::sink(interp, cmd, IoKind::Stdout) {
             Sink::Fd(fd) => {
-                let next = first + i + 1;
+                let next = i + 1;
                 Builtin::of_mut(interp, cmd).state = State::Which { next, missing };
-                return fd.enqueue_fmt(format_args!("{name}{suffix}\n"));
+                return fd.enqueue(format!("{name}{suffix}\n").as_bytes());
             }
-            // Kept for compatibility: only captured output has the prefix.
+            // Only captured output has the prefix.
             Sink::Memory(memory) => {
                 let _ = memory.write(format!("{prefix}{name}{suffix}\n").as_bytes());
             }

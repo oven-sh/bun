@@ -24,17 +24,21 @@ pub(crate) struct Batch {
 impl Batch {
     /// Stays in place until every task has reported.
     pub(crate) fn start(interp: &Interpreter, cmd: NodeId, tasks: usize) -> &Batch {
-        Builtin::of_mut(interp, cmd).state = State::Batch(Batch {
+        let state = &mut Builtin::of_mut(interp, cmd).state;
+        *state = State::Batch(Batch {
             running: AtomicUsize::new(tasks),
             ..Default::default()
         });
-        Self::of(interp, cmd)
-    }
-
-    pub(crate) fn of(interp: &Interpreter, cmd: NodeId) -> &mut Batch {
-        match &mut Builtin::of_mut(interp, cmd).state {
+        match state {
             State::Batch(batch) => batch,
             _ => unreachable!(),
+        }
+    }
+
+    pub(crate) fn of(interp: &Interpreter, cmd: NodeId) -> Option<&mut Batch> {
+        match &mut Builtin::of_mut(interp, cmd).state {
+            State::Batch(batch) => Some(batch),
+            _ => None,
         }
     }
 
@@ -44,9 +48,10 @@ impl Batch {
         err: Option<Vec<u8>>,
         out: Vec<u8>,
     ) -> Yield {
-        let batch = Self::of(interp, cmd);
-        batch.running.fetch_sub(1, Ordering::SeqCst);
-        batch.failed |= err.is_some();
+        if let Some(batch) = Self::of(interp, cmd) {
+            batch.running.fetch_sub(1, Ordering::SeqCst);
+            batch.failed |= err.is_some();
+        }
         Self::print(interp, cmd, err, out)
     }
 
@@ -54,7 +59,10 @@ impl Batch {
         if let Some(err) = err {
             match Builtin::sink(interp, cmd, IoKind::Stderr) {
                 Sink::Fd(fd) => {
-                    Self::of(interp, cmd).writes.push_back(Some(out));
+                    let Some(batch) = Self::of(interp, cmd) else {
+                        return Yield::suspended();
+                    };
+                    batch.writes.push_back(Some(out));
                     return fd.enqueue(&err);
                 }
                 Sink::Memory(memory) => drop(memory.write(&err)),
@@ -62,10 +70,11 @@ impl Batch {
         }
         match Builtin::sink(interp, cmd, IoKind::Stdout) {
             Sink::Fd(fd) => {
-                let writes = &mut Self::of(interp, cmd).writes;
                 // An empty write completes at once, which releases what the oldest entry holds back.
-                if !out.is_empty() || !writes.is_empty() {
-                    writes.push_back(None);
+                if let Some(batch) = Self::of(interp, cmd)
+                    && (!out.is_empty() || !batch.writes.is_empty())
+                {
+                    batch.writes.push_back(None);
                     return fd.enqueue(&out);
                 }
             }
@@ -76,14 +85,16 @@ impl Batch {
 
     /// Whether the write failed makes no difference.
     pub(crate) fn on_write(interp: &Interpreter, cmd: NodeId) -> Yield {
-        match Self::of(interp, cmd).writes.pop_front().flatten() {
+        match Self::of(interp, cmd).and_then(|batch| batch.writes.pop_front().flatten()) {
             Some(out) => Self::print(interp, cmd, None, out),
             None => Self::settle(interp, cmd),
         }
     }
 
     pub(crate) fn settle(interp: &Interpreter, cmd: NodeId) -> Yield {
-        let batch = Self::of(interp, cmd);
+        let Some(batch) = Self::of(interp, cmd) else {
+            return Yield::suspended();
+        };
         if batch.running.load(Ordering::SeqCst) > 0 || !batch.writes.is_empty() {
             return Yield::suspended();
         }

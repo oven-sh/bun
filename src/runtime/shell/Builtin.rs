@@ -2,7 +2,6 @@
 
 use bstr::BStr;
 use bun_collections::VecExt;
-use bun_core::ZStr;
 use bun_jsc::PinnedArrayBuffer;
 use bun_ptr::BackRef;
 use core::fmt;
@@ -24,7 +23,7 @@ use crate::shell::states::cmd::{Cmd, CmdState, Exec};
 use crate::shell::yield_::Yield;
 
 /// Points into the `args` of the Cmd, which outlive the builtin.
-pub(crate) type Arg = BackRef<ZStr>;
+pub(crate) type Arg = BackRef<[u8]>;
 
 pub(crate) struct Builtin {
     kind: Kind,
@@ -236,11 +235,6 @@ impl FdSink<'_> {
         self.writer.enqueue(self.child, self.captured, buf)
     }
 
-    pub(crate) fn enqueue_fmt(self, args: fmt::Arguments<'_>) -> Yield {
-        self.writer
-            .enqueue_fmt_bltn(self.child, self.captured, None, args)
-    }
-
     pub(crate) fn cancel_queued(self) {
         self.writer.cancel_chunks(self.child);
     }
@@ -325,10 +319,8 @@ impl Builtin {
     /// the caller should propagate that yield instead.
     pub(crate) fn init(interp: &Interpreter, cmd: NodeId, kind: Kind) -> Option<Yield> {
         let me = interp.as_cmd(cmd);
-        let args = me.args[1..].iter().map(|arg| {
-            let arg = ZStr::from_slice_until_nul(arg);
-            BackRef::new(arg.expect("terminated by Cmd::transition_to_exec"))
-        });
+        let args = me.args.iter().skip(1);
+        let args = args.map(|arg| BackRef::new(bun_core::ffi::slice_to_nul(arg)));
         let builtin = Box::new(Builtin {
             kind,
             args: args.collect(),
@@ -608,15 +600,11 @@ impl Builtin {
         use std::io::Write as _;
         let mut buf = Vec::new();
         let _ = buf.write_fmt(args);
-        if let Some(_safeguard) = interp.as_cmd(cmd).io.stderr.needs_io() {
-            // Only the `Fd` arm transitions state.
-            interp.as_cmd_mut(cmd).state = CmdState::WaitingWriteErr;
+        let me = interp.as_cmd_mut(cmd);
+        if let OutKind::Fd(fd) = &me.io.stderr {
+            me.state = CmdState::WaitingWriteErr;
             let child = io_writer::ChildPtr::new(cmd, io_writer::WriterTag::Cmd);
-            // SAFETY: `OutKind::Fd` guaranteed by `needs_io()`.
-            if let OutKind::Fd(fd) = &interp.as_cmd(cmd).io.stderr {
-                return fd.writer.enqueue(child, fd.captured, &buf);
-            }
-            unreachable!()
+            return fd.writer.enqueue(child, fd.captured, &buf);
         }
         // No-IO path: append to the shell env's captured stderr and finish
         // synchronously with exit 1 (Cmd::on_io_writer_chunk's behaviour).
@@ -734,7 +722,6 @@ impl Builtin {
     pub(crate) fn on_io_writer_chunk(
         interp: &Interpreter,
         cmd: NodeId,
-        _written: usize,
         err: Option<bun_sys::SystemError>,
     ) -> Yield {
         let me = Self::of(interp, cmd);
@@ -746,7 +733,7 @@ impl Builtin {
             | (&State::Exiting(code), None) => Self::done(interp, cmd, code),
             (&State::Which { next, missing }, None) => which::print(interp, cmd, next, missing),
             (State::Yes(_), None) => yes::Yes::write(interp, cmd),
-            (State::Idle | State::Mv(_), _) => unreachable!("no write is in flight"),
+            (State::Idle | State::Mv(_), _) => Yield::suspended(),
         }
     }
 }

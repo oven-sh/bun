@@ -381,10 +381,10 @@ pub(crate) struct Opts {
 
 impl Opts {
     fn parse<'a>(&mut self, flag: &'a [u8]) -> Result<(), BadFlag<'a>> {
-        if flag == b"-" {
+        let [_, first, ..] = flag else {
             return Err(BadFlag::Illegal(flag));
-        }
-        for &ch in &flag[1..] {
+        };
+        for &ch in flag.iter().skip(1) {
             match ch {
                 b'a' => self.dotfiles = DotfileMode::All,
                 b'A' => self.dotfiles = DotfileMode::AlmostAll,
@@ -396,7 +396,7 @@ impl Opts {
                 | b'h' | b'H' | b'i' | b'I' | b'k' | b'L' | b'm' | b'n' | b'N' | b'o' | b'p'
                 | b'q' | b'Q' | b's' | b'S' | b't' | b'T' | b'u' | b'U' | b'v' | b'w' | b'x'
                 | b'X' | b'Z' => {}
-                _ => return Err(BadFlag::Illegal(&flag[1..2])),
+                _ => return Err(BadFlag::Illegal(core::slice::from_ref(first))),
             }
         }
         Ok(())

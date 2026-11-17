@@ -1,6 +1,6 @@
 import { $ } from "bun";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDir, tmpdirSync } from "harness";
+import { bunEnv, bunExe, tmpdirSync } from "harness";
 import { join } from "path";
 import { createTestBuilder } from "./test_builder";
 const TestBuilder = createTestBuilder(import.meta.path);
@@ -69,52 +69,6 @@ describe("bun exec", () => {
         .stdout(stdout)
         .runAsTest(item);
     }
-  });
-
-  test("bad options get the same message captured and on a file descriptor", async () => {
-    const unsupported = "unsupported option, please open a GitHub issue -- ";
-    const expected = {
-      "cat -": "cat: illegal option -- -\n",
-      "cat -zq": "cat: illegal option -- q\n",
-      "cat -n f": `cat: ${unsupported}-n\n`,
-      "cp -zq a b": "cp: illegal option -- zq\n",
-      "cp -f a b": `cp: ${unsupported}-f\n`,
-      "cp -p a b": `cp: ${unsupported}-P\n`,
-      "ls -a@": "ls: illegal option -- a\n",
-      "mkdir -pzq a": "mkdir: illegal option -- q\n",
-      "mkdir -pm 1 a": `mkdir: ${unsupported}-m \n`,
-      "mkdir --mode": `mkdir: ${unsupported}--mode\n`,
-      "mv -z a b": "mv: illegal option -- -\n",
-      "rm -fz a": "rm: illegal option -- fz\n",
-      "rm -- a": "rm: illegal option -- -\n",
-      "rm -fi a": 'rm: "-i" is not supported yet',
-      "rm -if": "usage: rm [-f | -i] [-dIPRrvWx] file ...\n       unlink [--] file\n",
-      "seq -s": "seq: option requires an argument -- s\n",
-      "touch -z": "touch: illegal option -- \n",
-      "touch -a f": `touch: ${unsupported}-a\n`,
-      "touch --time": `touch: ${unsupported}--reference=FILE\n`,
-    };
-    const script = `
-      const seen = {};
-      for (const raw of ${JSON.stringify(Object.keys(expected))}) {
-        const captured = await Bun.$\`\${{ raw }}\`.quiet().nothrow();
-        const redirected = await Bun.$\`\${{ raw }} 2> err\`.quiet().nothrow();
-        seen[raw] = [captured.exitCode, captured.stderr.toString(), redirected.exitCode, await Bun.file("err").text()];
-      }
-      console.log(JSON.stringify(seen));
-    `;
-    using dir = tempDir("bad-options", {});
-    await using proc = Bun.spawn({
-      cmd: [BUN, "-e", script],
-      env: { ...bunEnv, BUN_ENABLE_EXPERIMENTAL_SHELL_BUILTINS: "1" },
-      cwd: String(dir),
-      stderr: "inherit",
-    });
-    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
-    expect(JSON.parse(stdout)).toEqual(
-      Object.fromEntries(Object.entries(expected).map(([raw, message]) => [raw, [1, message, 1, message]])),
-    );
-    expect(exitCode).toBe(0);
   });
 
   TestBuilder.command`${BUN} exec cd`

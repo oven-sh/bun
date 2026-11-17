@@ -1,5 +1,7 @@
 use std::rc::Rc;
 
+use bun_core::ZBox;
+
 use crate::shell::ExitCode;
 use crate::shell::builtin::{BadFlag, Builtin, BuiltinInput, IoKind, Kind, Sink, State};
 use crate::shell::interpreter::{Interpreter, NodeId, shell_openat};
@@ -37,9 +39,9 @@ pub(crate) fn start(interp: &Interpreter, cmd: NodeId) -> Yield {
 
 fn reject(flag: &[u8]) -> BadFlag<'_> {
     match flag {
-        b"-" => BadFlag::Illegal(flag),
+        [] | [_] => BadFlag::Illegal(flag),
         [_, b'b' | b'e' | b'n' | b's' | b't' | b'u' | b'v', ..] => BadFlag::Unsupported(&flag[..2]),
-        _ => BadFlag::Illegal(&flag[2..]),
+        [_, _, rest @ ..] => BadFlag::Illegal(rest),
     }
 }
 
@@ -51,10 +53,10 @@ fn listener(cmd: NodeId) -> ReaderChildPtr {
 }
 
 impl Cat {
-    fn of(interp: &Interpreter, cmd: NodeId) -> &mut Cat {
+    fn of(interp: &Interpreter, cmd: NodeId) -> Option<&mut Cat> {
         match &mut Builtin::of_mut(interp, cmd).state {
-            State::Cat(cat) => cat,
-            _ => unreachable!(),
+            State::Cat(cat) => Some(cat),
+            _ => None,
         }
     }
 
@@ -64,7 +66,8 @@ impl Cat {
         let Some(path) = Builtin::of(interp, cmd).args().get(idx) else {
             return Builtin::done(interp, cmd, 0);
         };
-        match shell_openat(Builtin::cwd(interp, cmd), path, bun_sys::O::RDONLY, 0) {
+        let path = ZBox::from_bytes(path.get());
+        match shell_openat(Builtin::cwd(interp, cmd), &path, bun_sys::O::RDONLY, 0) {
             Ok(fd) => Self::read(interp, cmd, &IOReader::init(fd, interp.event_loop), idx + 1),
             Err(e) => Builtin::finish(interp, cmd, IoKind::Stderr, &Kind::Cat.task_error(&e), 1),
         }
@@ -84,7 +87,9 @@ impl Cat {
     }
 
     fn step(interp: &Interpreter, cmd: NodeId) -> Yield {
-        let cat = Self::of(interp, cmd);
+        let Some(cat) = Self::of(interp, cmd) else {
+            return Yield::suspended();
+        };
         match cat.ended {
             _ if cat.pending > 0 => Yield::suspended(),
             None => Rc::clone(&cat.reader).resume(),
@@ -95,19 +100,23 @@ impl Cat {
 
     pub(crate) fn on_write(interp: &Interpreter, cmd: NodeId, failed: Option<ExitCode>) -> Yield {
         let Some(exit_code) = failed else {
-            Self::of(interp, cmd).pending -= 1;
+            if let Some(cat) = Self::of(interp, cmd) {
+                cat.pending = cat.pending.saturating_sub(1);
+            }
             return Self::step(interp, cmd);
         };
         if let Sink::Fd(fd) = Builtin::sink(interp, cmd, IoKind::Stdout) {
             fd.cancel_queued();
         }
-        Self::of(interp, cmd).reader.remove_reader(listener(cmd));
+        if let Some(cat) = Self::of(interp, cmd) {
+            cat.reader.remove_reader(listener(cmd));
+        }
         Builtin::done(interp, cmd, exit_code)
     }
 
     /// The reader pauses while every `cat` on it still writes.
     pub(crate) fn awaits_write(interp: &Interpreter, cmd: NodeId) -> bool {
-        Self::of(interp, cmd).pending > 0
+        Self::of(interp, cmd).is_some_and(|cat| cat.pending > 0)
     }
 
     pub(crate) fn on_io_reader_chunk(
@@ -119,7 +128,10 @@ impl Cat {
         *remove = false;
         match Builtin::sink(interp, cmd, IoKind::Stdout) {
             Sink::Fd(fd) => {
-                Self::of(interp, cmd).pending += 1;
+                let Some(cat) = Self::of(interp, cmd) else {
+                    return Yield::done();
+                };
+                cat.pending += 1;
                 fd.enqueue(chunk)
             }
             Sink::Memory(memory) => {
@@ -135,7 +147,9 @@ impl Cat {
         err: Option<bun_sys::SystemError>,
     ) -> Yield {
         // A read error ends the input like EOF does: the chunks already queued are still written.
-        Self::of(interp, cmd).ended = Some(err.map_or(0, |e| e.get_errno() as ExitCode));
+        if let Some(cat) = Self::of(interp, cmd) {
+            cat.ended = Some(err.map_or(0, |e| e.get_errno() as ExitCode));
+        }
         Self::step(interp, cmd)
     }
 }

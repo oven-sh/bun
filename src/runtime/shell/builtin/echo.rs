@@ -8,7 +8,7 @@ pub(crate) fn start(interp: &Interpreter, cmd: NodeId) -> Yield {
     let mut escape_sequences = false;
     // An argument with any other character in it is text.
     while let [arg, rest @ ..] = args
-        && let [b'-', flags @ ..] = arg.as_bytes()
+        && let [b'-', flags @ ..] = arg.get()
         && !flags.is_empty()
         && flags.iter().all(|c| matches!(c, b'n' | b'e' | b'E'))
     {

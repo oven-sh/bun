@@ -26,19 +26,10 @@ pub(crate) struct Mv {
     err: Option<bun_sys::Error>,
 }
 
-impl Mv {
-    fn of(interp: &Interpreter, cmd: NodeId) -> &mut Mv {
-        match &mut Builtin::of_mut(interp, cmd).state {
-            State::Mv(mv) => mv,
-            _ => unreachable!(),
-        }
-    }
-}
-
 pub(crate) fn start(interp: &Interpreter, cmd: NodeId) -> Yield {
     let (flags, operands) = Builtin::of(interp, cmd).split_flags();
     let mut no_clobber = false;
-    for ch in flags.iter().flat_map(|flag| &flag[1..]) {
+    for ch in flags.iter().flat_map(|flag| flag.iter().skip(1)) {
         match ch {
             // The last of `-f` and `-n` wins.
             b'n' => no_clobber = true,
@@ -53,7 +44,7 @@ pub(crate) fn start(interp: &Interpreter, cmd: NodeId) -> Yield {
     let task = ShellMvCheckTargetTask {
         cmd,
         cwd: Builtin::cwd(interp, cmd),
-        target: ZBox::from_bytes(target.as_bytes()),
+        target: ZBox::from_bytes(target.get()),
         no_clobber,
         result: Ok(None),
     };
@@ -86,8 +77,9 @@ impl ShellWork for ShellMvCheckTargetTask {
     }
     fn run_from_main_thread(&mut self, interp: &Interpreter) -> Yield {
         let cmd = self.cmd;
-        let operands = Builtin::of(interp, cmd).split_flags().1;
-        let sources = &operands[..operands.len() - 1];
+        let [sources @ .., _] = Builtin::of(interp, cmd).split_flags().1 else {
+            return Builtin::fail_usage(interp, cmd, USAGE);
+        };
         let target = BStr::new(self.target.as_bytes());
         let target_fd = match core::mem::replace(&mut self.result, Ok(None)) {
             Ok(None) if sources.len() > 1 => {
@@ -108,22 +100,23 @@ impl ShellWork for ShellMvCheckTargetTask {
         let batches = sources.chunks(ShellMvBatchedTask::BATCH_SIZE);
         let cwd = Builtin::cwd(interp, cmd);
         let fd = target_fd.as_ref().map(OwnedFd::fd);
-        Builtin::of_mut(interp, cmd).state = State::Mv(Mv {
+        let state = &mut Builtin::of_mut(interp, cmd).state;
+        *state = State::Mv(Mv {
             _target_fd: target_fd,
             running: batches.len(),
             error_signal: AtomicBool::new(false),
             err: None,
         });
-        let error_signal = BackRef::new(&Mv::of(interp, cmd).error_signal);
+        let State::Mv(mv) = state else {
+            return Yield::suspended();
+        };
+        let error_signal = BackRef::new(&mv.error_signal);
         // `was_on_disk` is read before anything moves.
         let mut tasks = Vec::with_capacity(batches.len());
         for batch in batches {
             tasks.push(ShellMvBatchedTask {
                 cmd,
-                sources: batch
-                    .iter()
-                    .map(|it| ZBox::from_bytes(it.as_bytes()))
-                    .collect(),
+                sources: batch.iter().map(|it| ZBox::from_bytes(it.get())).collect(),
                 was_on_disk: batch.iter().map(|it| is_on_disk_at(cwd, it)).collect(),
                 target: self.target.clone(),
                 target_fd: fd,
@@ -196,8 +189,10 @@ impl ShellWork for ShellMvBatchedTask {
 
     fn run_from_main_thread(&mut self, interp: &Interpreter) -> Yield {
         let cmd = self.cmd;
-        let mv = Mv::of(interp, cmd);
-        mv.running -= 1;
+        let State::Mv(mv) = &mut Builtin::of_mut(interp, cmd).state else {
+            return Yield::suspended();
+        };
+        mv.running = mv.running.saturating_sub(1);
         if let Some(e) = self.err.take() {
             mv.error_signal.store(true, Ordering::SeqCst);
             mv.err.get_or_insert(e);

@@ -150,11 +150,14 @@ foo/
     const captured = await $`rm -dv captured`.cwd(String(dir)).quiet();
     const redirected = await $`rm -dv redirected > out`.cwd(String(dir)).quiet();
     expect({
-      captured: captured.stdout.toString(),
-      redirected: await Bun.file(path.join(String(dir), "out")).text(),
+      captured: { output: captured.stdout.toString(), exitCode: captured.exitCode },
+      redirected: { output: await Bun.file(path.join(String(dir), "out")).text(), exitCode: redirected.exitCode },
       left: readdirSync(String(dir)),
-      exitCodes: [captured.exitCode, redirected.exitCode],
-    }).toEqual({ captured: "captured\n", redirected: "redirected\n", left: ["out"], exitCodes: [0, 0] });
+    }).toEqual({
+      captured: { output: "captured\n", exitCode: 0 },
+      redirected: { output: "redirected\n", exitCode: 0 },
+      left: ["out"],
+    });
   });
 
   // The DirTask parent/child hand-off had a lost-wakeup window between

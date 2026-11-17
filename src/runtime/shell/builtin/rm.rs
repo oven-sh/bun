@@ -41,15 +41,16 @@ impl Opts {
             b"--interactive=never" => self.interactive = false,
             b"--interactive=once" | b"--interactive=always" => self.interactive = true,
             [_, b'-', ..] => return Err(BadFlag::Illegal(b"-")),
-            _ => {
-                for ch in &flag[1..] {
+            [] => {}
+            [_, letters @ ..] => {
+                for ch in letters {
                     match ch {
                         b'f' => (self.force, self.interactive) = (true, false),
                         b'r' | b'R' => self.recursive = true,
                         b'v' => self.verbose = true,
                         b'd' => self.remove_empty_dirs = true,
                         b'i' | b'I' => self.interactive = true,
-                        _ => return Err(BadFlag::Illegal(&flag[1..])),
+                        _ => return Err(BadFlag::Illegal(letters)),
                     }
                 }
             }
@@ -160,6 +161,8 @@ impl JoinStyle {
 enum Unlinked {
     Done,
     IsDir,
+    #[cfg(not(any(target_os = "linux", target_os = "android")))]
+    NotEmpty,
 }
 
 /// Who finishes a [`DirTask`].
@@ -444,9 +447,7 @@ impl ShellRmTask {
             let file_path = self.buf_join(&mut buf, &mut join_spill, &[path, name]);
             match self.remove_entry_file(dir_task, file_path) {
                 Ok(Unlinked::Done) => {}
-                Ok(Unlinked::IsDir) => {
-                    self.enqueue(dir_task, ZBox::from_bytes(file_path.as_bytes()))
-                }
+                Ok(_) => self.enqueue(dir_task, ZBox::from_bytes(file_path.as_bytes())),
                 Err(e) => break Err(e),
             }
         };
@@ -481,20 +482,27 @@ impl ShellRmTask {
         Ok(Owner::ThisThread)
     }
 
-    fn remove_entry_dir_after_children(&self, dir_task: *mut DirTask) -> Maybe<()> {
+    fn remove_entry_dir_after_children(&self, dir_task: *mut DirTask) -> Maybe<Owner> {
         // SAFETY: `dir_task` is live; this thread owns it.
         let path = unsafe { (*dir_task).path.as_zstr() };
         loop {
             match bun_sys::rmdirat(self.cwd, path) {
                 Ok(()) => {
                     self.verbose_deleted(dir_task, path);
-                    return Ok(());
+                    return Ok(Owner::ThisThread);
                 }
                 Err(e) if e.get_errno() == E::ENOTDIR => {}
-                Err(e) => return self.forgive(dir_task, path, &e),
+                Err(e) => return self.forgive(dir_task, path, &e).map(|()| Owner::ThisThread),
             }
-            if let Unlinked::Done = self.remove_entry_file(dir_task, path)? {
-                return Ok(());
+            match self.remove_entry_file(dir_task, path)? {
+                Unlinked::Done => return Ok(Owner::ThisThread),
+                Unlinked::IsDir => {}
+                // TODO: nothing releases this task's own count, so the command never finishes.
+                #[cfg(not(any(target_os = "linux", target_os = "android")))]
+                Unlinked::NotEmpty => {
+                    self.enqueue(dir_task, ZBox::from_bytes(path.as_bytes()));
+                    return Ok(Owner::LastChild);
+                }
             }
         }
     }
@@ -517,7 +525,7 @@ impl ShellRmTask {
                     return Ok(Unlinked::Done);
                 };
                 match as_dir.get_errno() {
-                    E::ENOTEMPTY => Ok(Unlinked::IsDir),
+                    E::ENOTEMPTY => Ok(Unlinked::NotEmpty),
                     E::ENOTDIR => Err(e.with_path(path)),
                     _ => Err(as_dir.with_path(path)),
                 }
@@ -640,11 +648,12 @@ impl DirTask {
             // The caller took it to 0. Restore the count that `post_run` releases.
             (*this).subtask_count.store(1, Ordering::SeqCst);
             let tm = &*(*this).task_manager;
-            let result = match tm.is_stopped() {
-                true => Ok(()),
-                false => tm.remove_entry_dir_after_children(this),
+            let result = if tm.is_stopped() {
+                Ok(Owner::ThisThread)
+            } else {
+                tm.remove_entry_dir_after_children(this)
             };
-            Self::post_run(this, result.map(|()| Owner::ThisThread));
+            Self::post_run(this, result);
         }
     }
 

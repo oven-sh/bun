@@ -1001,7 +1001,7 @@ rules = { "import/no-unassigned-import" = ["error", { allow = ["src/client/*.css
       lintIn("src/a", files(options), []),
     ]);
     for (const result of await Promise.all(runs)) {
-      expect(result).toMatchObject({ found: ["src/a/dead.js:1 import/no-unused-modules"] });
+      expect(result).toMatchObject({ found: ["src/a/dead.js:1 import/no-unused-modules"], exitCode: 1 });
     }
   });
 

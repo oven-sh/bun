@@ -7,6 +7,7 @@
 
 import { describe, expect, test } from "bun:test";
 import { deflateSync, inflateSync } from "node:zlib";
+import { decodeDifferences, encodeDifferences, inParts, loadCases } from "../../image/webp-golden/observe";
 
 // Use Buffer.alloc instead of "x".repeat() — repeat is slow in debug JSC builds.
 const ascii256 = Buffer.alloc(256, "a").toString();
@@ -153,7 +154,7 @@ describe("JSON — JS lexer SIMD string scanning", () => {
   });
 });
 
-describe("HTTP parsing — llhttp SSE4.2 PCMPESTRI", () => {
+describe("HTTP request head", () => {
   test("long headers", async () => {
     const longHeaderValue = Buffer.alloc(512, "v").toString();
     using server = Bun.serve({
@@ -461,5 +462,24 @@ describe("PNG codec: Highway runtime dispatch", () => {
       expect(linesOf(await new Bun.Image(file).png({ compressionLevel: 0 }).bytes())).toEqual(asTheyAre);
       expect(linesOf(await new Bun.Image(file).png().bytes())).toEqual(nearestToZero);
     });
+  });
+});
+
+const webp = await loadCases();
+
+describe("WebP codec: Highway runtime dispatch", () => {
+  // src/jsc/bindings/highway_webp_*.cpp are compiled for SSSE3 and AVX2 on x64, and webp-golden.test.ts gets to see
+  // the one that suits the machine. In small parts, for the sake of Intel SDE.
+  const kinds = ["encoded", "random", "handmade", "changed", "extreme"];
+  test.each(inParts(webp.decode, kinds, 20))("decode, part %#", async some => {
+    expect(await decodeDifferences(some)).toBe("");
+  });
+
+  // The lossless encoder has no kernels.
+  const lossy = webp.encode
+    .map(({ results: { lossless, ...results }, ...c }) => ({ ...c, results }))
+    .filter(c => Object.keys(c.results).length > 0);
+  test.each(inParts(lossy, ["layers", "stored"], 20))("encode, part %#", async some => {
+    expect(await encodeDifferences(some)).toBe("");
   });
 });

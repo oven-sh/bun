@@ -11,10 +11,12 @@ export const idat = (...rows: number[][]) =>
 /** The pixels as `rrggbbaa`, and the color profile. */
 export async function decodeToHex(file: Uint8Array, options: { maxPixels?: number } = {}) {
   const { width, lines, profile } = await decoded(file, options.maxPixels);
+  const bytes = Buffer.from(lines);
   const rows: string[] = [];
-  for (let at = 0; at < lines.length; at += 1 + width * 4) {
-    expect(lines[at]).toBe(0);
-    rows.push(Buffer.from(lines).toString("hex", at + 1, at + 1 + width * 4));
+  for (let at = 0; at < bytes.length; at += 1 + width * 4) {
+    // Not expect(): CI collects garbage after each, and there are tens of thousands of rows.
+    if (bytes[at] !== 0) throw new Error(`The row at ${at} has a filter`);
+    rows.push(bytes.toString("hex", at + 1, at + 1 + width * 4));
   }
   return { hex: rows.join(""), profile: profile ? Buffer.from(profile).toString("latin1") : null };
 }

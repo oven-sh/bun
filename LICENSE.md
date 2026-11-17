@@ -23,8 +23,9 @@ Bun statically links these libraries:
 | [`boringssl`](https://boringssl.googlesource.com/boringssl/) | [several licenses](https://boringssl.googlesource.com/boringssl/+/refs/heads/master/LICENSE) |
 | [`brotli`](https://github.com/google/brotli) | MIT |
 | [`libarchive`](https://github.com/libarchive/libarchive) (not linked: `src/tar` is derived from parts of it) | [several licenses](https://github.com/libarchive/libarchive/blob/master/COPYING) |
+| [`llhttp`](https://github.com/nodejs/llhttp) (not linked: `src/http1` is derived from parts of it) | MIT |
 | [`lol-html`](https://github.com/cloudflare/lol-html/tree/master/c-api) | BSD 3-Clause |
-| [`ls-hpack`](https://github.com/litespeedtech/ls-hpack) | MIT |
+| [`ls-hpack`](https://github.com/litespeedtech/ls-hpack) (not linked: `src/hpack` is derived from parts of it) | MIT |
 | [`ls-qpack`](https://github.com/litespeedtech/ls-qpack) | MIT |
 | [`lsquic`](https://github.com/litespeedtech/lsquic) | MIT (portions derived from [Chromium proto-quic](https://github.com/litespeedtech/lsquic/blob/master/LICENSE.chrome), BSD 3-Clause) |
 | [`mimalloc`](https://github.com/microsoft/mimalloc) | MIT |
@@ -42,7 +43,7 @@ Bun statically links these libraries:
 | [`libjpeg-turbo`](https://github.com/libjpeg-turbo/libjpeg-turbo) (not linked: the JPEG codec is derived from parts of it, and so based in part on the work of the Independent JPEG Group) | [BSD 3-Clause / IJG / zlib](https://github.com/libjpeg-turbo/libjpeg-turbo/blob/main/LICENSE.md) |
 | [`libspng`](https://github.com/randy408/libspng) (not linked: `src/png` is derived from parts of it) | BSD 2-Clause |
 | [`stb_image`](https://github.com/nothings/stb) (not linked: the PNG codec finds the Paeth predictor its way) | MIT or public domain |
-| [`libwebp`](https://github.com/webmproject/libwebp) | BSD 3-Clause |
+| [`libwebp`](https://github.com/webmproject/libwebp) (not linked: `src/webp` is derived from parts of it) | BSD 3-Clause |
 | [`highway`](https://github.com/google/highway) | Apache 2.0 |
 | [`uucode`](https://github.com/jacobsandlund/uucode) | MIT |
 | A fork of [`uWebsockets`](https://github.com/jarred-sumner/uwebsockets) | Apache 2.0 licensed |

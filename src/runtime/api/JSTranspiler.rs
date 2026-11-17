@@ -872,7 +872,7 @@ impl JSTranspiler {
     pub(crate) fn constructor(
         cx: &mut JsScope<'_>,
         config_arg: Option<&TranspilerOptions<'_>>,
-    ) -> JsResult<*mut JSTranspiler> {
+    ) -> JsResult<bun_ptr::RefPtr<JSTranspiler>> {
         let global = cx.global();
         // NOTE: a non-POD field cannot be left uninitialized in a live Box
         // (zeroed()/assume_init() on Transpiler is UB), so build `config` + `transpiler` on the
@@ -989,7 +989,7 @@ impl JSTranspiler {
         transpiler.options.react_fast_refresh = false;
         transpiler.options.repl_mode = config.repl_mode;
 
-        Ok(bun_core::heap::into_raw(this))
+        Ok(this.into())
     }
 }
 

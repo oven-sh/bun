@@ -1539,8 +1539,7 @@ impl Example {
                 home_dir_buf[..entry_name.len()].copy_from_slice(entry_name);
                 home_dir_buf[entry_name.len()] = bun_paths::SEP;
                 home_dir_buf[entry_name.len() + 1..len].copy_from_slice(b"package.json");
-                home_dir_buf[len] = 0;
-                let path = bun_core::ZStr::from_buf(&home_dir_buf[..], len);
+                let path = bun_core::ZStr::nul_terminate(&mut home_dir_buf, len);
 
                 if bun_sys::faccessat(folder, path).unwrap_or(false) {
                     examples.push(Example {

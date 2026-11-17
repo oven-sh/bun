@@ -66,8 +66,6 @@ pub fn implement_deep_clone<'bump, T: DeepClone<'bump>>(this: &T, bump: &'bump A
 // Alias: structural dispatch lives in the blanket impls below and the
 // field-reflection lives in `#[derive(DeepClone)]`; both collapse to
 // `T::deep_clone`.
-// Kept as a re-export so generated code (`properties_generated.rs`) and
-// hand-written callers can use either name.
 pub(crate) use implement_deep_clone as deep_clone;
 
 // Blanket impls covering the structural cases.
@@ -779,7 +777,7 @@ mod inherent_bridge {
         InsetInline,
     );
 
-    // ── properties/properties_generated ──
+    // ── properties/property_table ──
     use crate::properties::PropertyId;
     bridge_deep_clone_copy!(PropertyId<'bump>);
     bridge_eql_partialeq!(PropertyId<'_>);

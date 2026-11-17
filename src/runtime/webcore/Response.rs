@@ -439,13 +439,11 @@ impl Response {
     /// The wrapper adopts the ref.
     pub(crate) fn to_js(this: RefPtr<Self>, global_object: &JSGlobalObject) -> JSValue {
         this.calculate_estimated_byte_size();
-        let js_value = js::to_js(this.as_ptr(), global_object);
-        this.js_ref.set(JsRef::init_weak(js_value));
+        let this = js::wrap(this, global_object);
+        this.js_ref.set(JsRef::init_weak(this.to_js()));
 
         this.check_body_stream_ref(global_object);
-        // The wrapper has held this ref since `js::to_js`.
-        let _ = this.into_raw();
-        js_value
+        this.to_js()
     }
 
     #[inline]

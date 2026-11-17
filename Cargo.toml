@@ -69,6 +69,7 @@ members = [
   "src/trim/removable_features",
   "src/highway",
   "src/histogram",
+  "src/hpack",
   "src/http1",
   "src/http_jsc",
   "src/http_types",
@@ -84,6 +85,7 @@ members = [
   "src/ast_jsc",
   "src/png",
   "src/jpeg",
+  "src/webp",
   "src/s3_signing",
   "src/sql_jsc",
   "src/zlib",
@@ -445,6 +447,7 @@ bun_trim = { path = "src/trim" }
 bun_removable_features = { path = "src/trim/removable_features" }
 bun_highway = { path = "src/highway" }
 bun_histogram = { path = "src/histogram" }
+bun_hpack = { path = "src/hpack" }
 bun_http1 = { path = "src/http1" }
 bun_http_jsc = { path = "src/http_jsc" }
 bun_http_types = { path = "src/http_types" }
@@ -508,17 +511,25 @@ bun_options_types = { path = "src/options_types" }
 bun_bunfig = { path = "src/bunfig" }
 bun_output = { path = "src/output" }
 bun_simdutf_sys = { path = "src/simdutf_sys" }
+bun_webp = { path = "src/webp" }
 bun_which = { path = "src/which" }
 
 # Loops over every byte of an image: unoptimized, a debug build takes seconds per megapixel. Assertions and overflow
-# checks stay on. scripts/build/flags.ts does the same for highway_png.cpp and highway_jpeg.cpp.
+# checks stay on. scripts/build/flags.ts does the same for highway_png.cpp, highway_jpeg.cpp and highway_webp_*.cpp.
 [profile.dev.package.bun_png]
 opt-level = 3
 [profile.dev.package.bun_jpeg]
 opt-level = 3
 
+[profile.dev.package.bun_webp]
+opt-level = 3
+
 # Runs for every line of a response head and every chunk of a body.
 [profile.dev.package.bun_http1]
+opt-level = 3
+
+# Runs for every field of an HTTP/2 header block.
+[profile.dev.package.bun_hpack]
 opt-level = 3
 
 # It stands in for vector code that every test program runs over each byte it parses.

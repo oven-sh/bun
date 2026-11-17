@@ -16,7 +16,7 @@ const FULL_LEN: usize = LAP_END + SLACK;
 const MIN_GROWTH: usize = 256;
 /// In front of what is within reach, before that is moved to the start.
 const MAX_WASTED: usize = 4096;
-/// With the slack, so that it adds up to sizes that mimalloc has.
+/// With the slack.
 const SHORT_MESSAGE_ROOM: usize = 2048;
 
 pub(super) struct Window {
@@ -34,7 +34,8 @@ pub(super) struct Window {
 
 impl Window {
     pub(super) fn new(size: usize) -> Self {
-        let for_short_messages = size + size.min(MAX_WASTED) + SHORT_MESSAGE_ROOM;
+        // Sizes that mimalloc has, but for the largest window.
+        let for_short_messages = size + size.min(MAX_WASTED) + SHORT_MESSAGE_ROOM.max(size / 4);
         Self {
             bytes: Vec::new(),
             end: 0,
@@ -47,11 +48,6 @@ impl Window {
     pub(super) fn clear(&mut self) {
         self.end = 0;
         self.handed_out = 0;
-    }
-
-    pub(super) fn clear_and_free_memory(&mut self) {
-        self.clear();
-        self.bytes = Vec::new();
     }
 
     #[inline]

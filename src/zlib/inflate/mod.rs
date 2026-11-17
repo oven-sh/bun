@@ -219,7 +219,7 @@ impl Inflater {
     /// The same, if that is going to take a while.
     pub fn reset_and_wait(&mut self) {
         self.reset();
-        self.window.clear_and_free_memory();
+        self.window = Window::new(self.window_size());
         self.dynamic.free_memory();
     }
 
@@ -274,6 +274,20 @@ impl Inflater {
         }
     }
 
+    /// The same, if more input is going to take a while.
+    pub fn inflate_to_vec_and_wait(
+        &mut self,
+        input: &mut &[u8],
+        out: &mut Vec<u8>,
+        max: usize,
+    ) -> Result<Status> {
+        let status = self.inflate_to_vec(input, out, max)?;
+        if status == Status::NeedsInput {
+            self.wait_for_input();
+        }
+        Ok(status)
+    }
+
     fn window_size(&self) -> usize {
         1 << self.window_bits
     }
@@ -307,8 +321,7 @@ impl Inflater {
             }
             // A server has many streams that wait between blocks.
             if let (Status::NeedsInput, State::BlockHeader) = (status, self.state) {
-                self.window.shrink(self.reach());
-                self.dynamic.free_memory();
+                self.wait_for_input();
             }
             Ok(status)
         });
@@ -319,6 +332,14 @@ impl Inflater {
         }
         (self.held, *input) = bits.suspend();
         result
+    }
+
+    #[inline]
+    fn wait_for_input(&mut self) {
+        self.window.shrink(self.reach());
+        if let State::BlockHeader | State::Stored(_) | State::Codes { fixed: true } = self.state {
+            self.dynamic.free_memory();
+        }
     }
 
     #[inline(always)]

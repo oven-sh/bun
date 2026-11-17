@@ -55,16 +55,17 @@ pub(super) struct DynamicCodes {
     coded: Vec<Coded>,
     read: u16,
     last: u8,
-    /// How many bytes the tables have been good for, if there are any.
+    /// How many bytes have been decoded since tables were last built, if ever.
     decoded: Option<usize>,
 }
 
 impl DynamicCodes {
-    /// Between blocks.
+    /// Outside of a dynamic block.
     #[inline]
     pub(super) fn free_memory(&mut self) {
-        if self.tables.take().is_some() {
-            self.coded = Vec::new();
+        // It is allocated first.
+        if self.coded.capacity() != 0 {
+            (self.tables, self.coded) = (None, Vec::new());
         }
     }
 

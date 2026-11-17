@@ -33,28 +33,26 @@ pub(crate) fn deflate_message(
 /// Appends to `out`.
 pub(crate) fn inflate_message(
     inflater: &mut Inflater,
-    payload: &[u8],
+    mut payload: &[u8],
     out: &mut Vec<u8>,
     max_len: usize,
 ) -> Result<(), InflateError> {
     let too_long = out.len().saturating_add(max_len).saturating_add(1);
-    for mut input in [payload, &TAIL] {
-        let status = inflater.inflate_to_vec(&mut input, out, too_long - out.len());
-        if out.len() == too_long {
-            return Err(InflateError::TooLarge);
-        }
-        match status {
-            Ok(inflate::Status::NeedsInput) => {}
-            // RFC 7692 §7.2.3.4: a message may end with a final block. The next one starts another stream.
-            Ok(inflate::Status::StreamEnd) => {
-                inflater.reset_and_wait();
-                break;
-            }
-            Err(bun_zlib::Error::Alloc(_)) => return Err(InflateError::OutOfMemory),
-            _ => return Err(InflateError::Corrupt),
-        }
+    let mut status = inflater.inflate_to_vec(&mut payload, out, too_long - out.len());
+    if status == Ok(inflate::Status::NeedsInput) && out.len() < too_long {
+        status = inflater.inflate_to_vec_and_wait(&mut &TAIL[..], out, too_long - out.len());
     }
-    Ok(())
+    match status {
+        _ if out.len() == too_long => Err(InflateError::TooLarge),
+        Ok(inflate::Status::NeedsInput) => Ok(()),
+        // RFC 7692 §7.2.3.4: a message may end with a final block. The next one starts another stream.
+        Ok(inflate::Status::StreamEnd) => {
+            inflater.reset_and_wait();
+            Ok(())
+        }
+        Err(bun_zlib::Error::Alloc(_)) => Err(InflateError::OutOfMemory),
+        _ => Err(InflateError::Corrupt),
+    }
 }
 
 /// Only without context takeover. `None` if it fails, or takes more than `limit` bytes.
@@ -87,7 +85,9 @@ impl DeflateBuffer {
     ) -> Result<(), InflateError> {
         const AT_ONCE: usize = 16 * 1024;
         if !reset {
-            return inflate_message(inflater, payload, &mut self.0, max_len);
+            // After an error the connection reads no more.
+            return inflate_message(inflater, payload, &mut self.0, max_len)
+                .inspect_err(|_| inflater.reset_and_wait());
         }
         self.0
             .try_reserve(AT_ONCE)

@@ -344,7 +344,9 @@ impl DevServer {
         );
 
         let mut watch_for_route_file = false;
-        if matches!(err.name(), "ENOENT" | "FileNotFound" | "ModuleNotFound") {
+        // A module outside the `file` namespace that does not load is not a deleted file: the error is its own.
+        let in_namespace = matches!(failed, FailureOwner::Module(path) if !path.is_file());
+        if !in_namespace && matches!(err.name(), "ENOENT" | "FileNotFound" | "ModuleNotFound") {
             // Special-case files being deleted: the importers report them.
             match graph {
                 bake::Graph::Server | bake::Graph::Ssr => {

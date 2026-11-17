@@ -1,5 +1,7 @@
 // Plugin tests concern plugins in development mode.
-import { expect } from "bun:test";
+import { expect, test } from "bun:test";
+import { tempDir } from "harness";
+import path from "node:path";
 import { devTest, emptyHtmlFile, minimalFramework } from "../bake-harness";
 
 // Note: more in depth testing of plugins is done in test/bundler/bundler_plugin.test.ts
@@ -393,6 +395,17 @@ const notAFileErrors: Record<
     onLoad: `() => { throw new Error("onLoad throws for this module"); }`,
     error: /onLoad throws for this module/,
   },
+  "an onLoad that declines a virtual stylesheet": {
+    importer: "css",
+    text: `@import "NAME.css";`,
+    onLoad: `() => undefined`,
+    error: /Module not found "virtual:same\.\d+\.css" in namespace "virtual"/,
+  },
+  "a virtual stylesheet that no onLoad takes": {
+    importer: "css",
+    text: `@import "NAME.unloaded.css";`,
+    error: /File not found "same\.\d+\.unloaded\.css"/,
+  },
   "a syntax error in a data: stylesheet": {
     importer: "css",
     text: `@import "data:text/css,.data { width: 1px; }}}";`,
@@ -698,6 +711,69 @@ devTest("a stylesheet of a plugin is not a script of the page when a script has 
     await c.expectMessage("real");
     await c.style("body").color.expect.toBe("red");
   },
+});
+devTest("a module of a plugin namespace that does not load is a build error of that module", {
+  files: {
+    "bunfig.toml": `
+      [serve.static]
+      plugins = ["./plugin.ts"]
+    `,
+    "plugin.ts": `
+      export default {
+        name: "virtual-modules",
+        setup(build) {
+          build.onResolve({ filter: /^virtual:/ }, args => ({ path: args.path.slice("virtual:".length), namespace: "virtual" }));
+          build.onLoad({ filter: /^declined\\./, namespace: "virtual" }, () => undefined);
+        },
+      };
+    `,
+    "index.html": emptyHtmlFile({ scripts: ["./entry.ts"] }),
+    "entry.ts": `
+      import "virtual:declined.ts";
+      import "virtual:no-onload.ts";
+    `,
+  },
+  async test(dev) {
+    // previously: no build error. The browser threw: Failed to load bundled module 'virtual:declined.ts'.
+    await using c = await dev.client("/", {
+      errors: [
+        `virtual:declined.ts: error: Module not found "virtual:declined.ts" in namespace "virtual"`,
+        `virtual:no-onload.ts: error: File not found "no-onload.ts"`,
+      ],
+    });
+  },
+});
+// The bundler has one place for an onLoad that returns nothing. `Bun.build` reports that error in its build log.
+test("Bun.build fails when onLoad returns nothing for a module of its namespace", async () => {
+  using dir = tempDir("plugin-onload-declines-namespace-module", {
+    "entry.ts": `import value from "virtual-dep"; console.log(value);`,
+  });
+  const loads: string[] = [];
+  const result = await Bun.build({
+    entrypoints: [path.join(String(dir), "entry.ts")],
+    throw: false,
+    plugins: [
+      {
+        name: "declines",
+        setup(build) {
+          build.onResolve({ filter: /^virtual-dep$/ }, args => ({ path: args.path, namespace: "virtual" }));
+          build.onLoad({ filter: /.*/, namespace: "virtual" }, args => {
+            loads.push(args.path);
+            return undefined;
+          });
+        },
+      },
+    ],
+  });
+  expect({
+    success: result.success,
+    logs: result.logs.map(log => `${log.level}: ${log.message}`),
+    loads,
+  }).toEqual({
+    success: false,
+    logs: ['error: Module not found "virtual:virtual-dep" in namespace "virtual"'],
+    loads: ["virtual-dep"],
+  });
 });
 // devTest("onLoad with watchFile", {
 //   framework: minimalFramework,

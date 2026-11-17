@@ -4340,7 +4340,8 @@ pub mod bv2_impl {
 
                     // When it's not a file, this is a build error and we should report it.
                     // we have no way of loading non-files.
-                    let _ = log.add_error_fmt(
+                    let mut module_log = bun_ast::Log::init();
+                    let _ = module_log.add_error_fmt(
                         Some(source),
                         bun_ast::Loc::EMPTY,
                         format_args!(
@@ -4349,6 +4350,19 @@ pub mod bv2_impl {
                             bun_core::fmt::quote(source.path.namespace),
                         ),
                     );
+                    if let Some(dev) = this.dev_server {
+                        let path = source.path;
+                        dev.handle_parse_task_failure(
+                            crate::Error::ModuleNotFound,
+                            parse_task.known_target.bake_graph(),
+                            bake::FailureOwner::Module(&path),
+                            &raw const module_log,
+                            this,
+                        )
+                        .expect("oom");
+                    } else {
+                        module_log.append_to(log);
+                    }
 
                     // An error occurred, prevent spinning the event loop forever
                     this.decrement_scan_counter();

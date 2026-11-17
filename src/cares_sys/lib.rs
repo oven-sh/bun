@@ -58,3 +58,8 @@ pub fn pton<const N: usize>(text: &bun_core::ZStr) -> Option<[u8; N]> {
     let rc = unsafe { c_ares::ares_inet_pton(af, text.as_ptr(), octets.as_mut_ptr().cast()) };
     (rc == 1).then_some(octets)
 }
+
+pub fn parse_ip(text: &bun_core::ZStr) -> Option<core::net::IpAddr> {
+    let v4 = pton::<4>(text).map(Into::into);
+    v4.or_else(|| pton::<16>(text).map(Into::into))
+}

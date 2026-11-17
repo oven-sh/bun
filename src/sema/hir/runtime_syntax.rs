@@ -297,26 +297,26 @@ impl File<'_> {
         }
     }
 
-    /// For a text that is compiled, when it is parsed and nothing has changed its tree: notes whether the parser of `bun run` reads the file as a module, and reports the legacy HTML comment of such a module. `text` is the text of the file.
+    /// For a text that is compiled, when it is parsed and nothing has changed its tree: a top-level `await` makes the file a module for the parser of
+    /// `bun run` too, and the legacy HTML comment of such a module is reported. `text` is the text of the file.
+    #[inline]
     pub fn judge_as_parsed_by_bun_run(&mut self, text: &[u8]) {
-        let is_module_statement = |statement: StmtId| {
-            let Some(&Stmt { kind, start, .. }) = self.stmts.get(statement.idx()) else {
-                return false;
-            };
-            let is_written = match kind {
-                StmtKind::Import(import) => !self.is_type_only_import(import),
-                _ => self.is_export_declaration(statement),
-            };
-            is_written && !self.is_in_jsdoc(start)
-        };
-        let has_module_statement =
-            self.has_module_syntax && self.ids(self.body).any(is_module_statement);
-        self.is_proved_module = has_module_statement || has_written_top_level_await(self);
-        let end = self.html_comment_end;
-        if end == 0 || !self.is_proved_module || find_transpiled_mark(text).is_some() {
+        if !self.is_proved_module && self.has_top_level_await() {
+            self.is_proved_module = has_written_top_level_await(self);
+        }
+        if self.html_comment_end != 0 {
+            self.report_html_comment_of_proved_module(text);
+        }
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn report_html_comment_of_proved_module(&mut self, text: &[u8]) {
+        if !self.is_proved_module || find_transpiled_mark(text).is_some() {
             return;
         }
         // A parse error, as the mark was when the lexer reported it.
+        let end = self.html_comment_end;
         let at = (find_html_comment_mark(text, end), end);
         let error = Diagnostic::new(DiagnosticKind::Parse, at, INVALID_CHARACTER, &[]);
         self.diagnostics.to_mut().push(error);

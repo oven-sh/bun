@@ -865,6 +865,9 @@ impl<'a, const GENERAL: bool, const COMMENTS: bool> Parser<'a, GENERAL, COMMENTS
             if is_an_external_module_indicator(&self.f, statement) {
                 self.f.has_module_syntax = true;
                 self.module_statements.1 += 1;
+                if self.options.compiles && !self.f.is_proved_module {
+                    self.f.is_proved_module = self.f.proves_module_to_bun_run(statement);
+                }
             }
             if self.reads_jsdoc() {
                 self.statement_jsdoc(statement);

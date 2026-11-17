@@ -4,13 +4,12 @@ use crate::module_format::{DeclaredModuleType, ModuleFormat};
 use crate::program::FileId;
 
 impl Checker<'_, '_> {
-    /// A legacy HTML comment is an error in a module. The parser has reported it in a file that `import`, `export` or a top-level `await` makes one for
-    /// `bun run`. Of the others a file is none if its own syntax makes it CommonJS. After that its name decides, however the file is loaded.
-    pub(super) fn check_legacy_html_comment(&mut self, file: FileId) {
+    /// The legacy HTML comment at `start..end` of `file` is an error in a module. The parser has reported it in a file that `import`, `export` or a
+    /// top-level `await` makes one for `bun run`. Of the others a file is none if its own syntax makes it CommonJS. After that its name decides, however
+    /// the file is loaded.
+    #[cold]
+    pub(super) fn check_legacy_html_comment(&mut self, file: FileId, (start, end): (u32, u32)) {
         let hir = self.hir(file);
-        let Some((start, end)) = hir.legacy_html_comment() else {
-            return;
-        };
         let Some(compiled) = self.files.compiled(file) else {
             return;
         };

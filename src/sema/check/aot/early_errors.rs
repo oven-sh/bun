@@ -40,6 +40,8 @@ impl Checker<'_, '_> {
         self.check_eval_or_arguments_early_errors(file);
         self.check_expression_early_errors(file);
         self.check_typescript_syntax_early_errors(file);
-        self.check_legacy_html_comment(file);
+        if let Some(mark) = hir.legacy_html_comment() {
+            self.check_legacy_html_comment(file, mark);
+        }
     }
 }

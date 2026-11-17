@@ -107,6 +107,16 @@ impl<S: Storage> FileIn<S> {
         flags.contains(Flags::EXPORT)
     }
 
+    /// True if the statement `stmt` at the top of the file makes the file a module for the parser of `bun run`: an `import` that is not only of types, or
+    /// an `export`. See `is_proved_module`.
+    pub fn proves_module_to_bun_run(&self, stmt: StmtId) -> bool {
+        match self.stmts.get(stmt.idx()).map(|statement| statement.kind) {
+            Some(StmtKind::Import(import)) => !self.is_type_only_import(import),
+            Some(_) => self.is_export_declaration(stmt),
+            None => false,
+        }
+    }
+
     pub fn is_type_only_import(&self, import: ImportId) -> bool {
         let import = &self[import];
         import.type_only

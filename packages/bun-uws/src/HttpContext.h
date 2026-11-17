@@ -206,11 +206,11 @@ private:
          * so a client that connects and never sends anything still expires. */
         if constexpr (IsNodeHttp) {
             ((HttpResponseData<SSL, true> *) us_socket_ext(s))->lastMessageStartMs = nodeCompatMonotonicMs();
-
-            /* The pause for backed-up pipelined responses lifts when their bytes drain, and after
-             * a hangup they never do. Node.js destroys the socket on the failed write. */
-            s->hangup_closes_unsent = 1;
         }
+
+        /* A pause for backed-up responses, parked requests or an unread body lifts when response bytes
+         * drain, and after a hangup they never do. Node.js destroys the socket on the failed write. */
+        s->hangup_closes_unsent = 1;
 
         /* A peer FIN must not tear the connection down at the loop level:
          * onEnd() below decides whether to close right away (idle, or a
@@ -848,8 +848,6 @@ private:
                         if (isResponseUndetermined(httpResponseData->state)) {
                             return closeOverUnfinishedResponse(s);
                         }
-                        /* This pause lifts when the response ahead has drained, and after a hangup it never does. */
-                        s->hangup_closes_unsent = 1;
                         ((HttpResponse<SSL> *) s)->pauseReads(HttpResponseData<SSL>::READ_PAUSE_PARKED);
                     }
                     if ((httpResponseData->state & HttpResponseData<SSL>::HTTP_RESPONSE_PENDING) == 0) {

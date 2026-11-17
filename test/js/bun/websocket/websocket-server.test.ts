@@ -2,7 +2,17 @@ import type { Server, ServerWebSocket, Subprocess, WebSocketHandler } from "bun"
 import { serve, spawn } from "bun";
 import { estimateShallowMemoryUsageOf } from "bun:jsc";
 import { afterEach, describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, forceGuardMalloc, isASAN, isDebug, isWindows, tempDir, tls as tlsCert } from "harness";
+import {
+  bunEnv,
+  bunExe,
+  forceGuardMalloc,
+  isASAN,
+  isDebug,
+  isLinux,
+  isWindows,
+  tempDir,
+  tls as tlsCert,
+} from "harness";
 import { once } from "node:events";
 import net, { isIP } from "node:net";
 import path from "node:path";
@@ -3943,6 +3953,44 @@ describe.concurrent.each([
     client.socket.end(client.frame(OP.close, closePayload(4001)));
     await client.closed;
   });
+});
+
+it.skipIf(!isLinux)("a paused socket gets the messages ahead of a hangup that fails its send()", async () => {
+  using dir = tempDir("ws-paused-hangup", {});
+  const unix = path.join(String(dir), "ws.sock");
+  const events: string[] = [];
+  const opened = Promise.withResolvers<ServerWebSocket>();
+  const closed = Promise.withResolvers<void>();
+  using _server = serve({
+    unix,
+    fetch: (request, server) => (server.upgrade(request) ? undefined : new Response("fence")),
+    websocket: {
+      open(ws) {
+        ws.pause();
+        opened.resolve(ws);
+      },
+      message: (_, message) => void events.push(String(message)),
+      close(_, code) {
+        events.push("close " + code);
+        closed.resolve();
+      },
+    },
+  });
+  const client = net.connect(unix);
+  client.write(
+    "GET / HTTP/1.1\r\nHost: a\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nSec-WebSocket-Version: 13\r\n\r\n",
+  );
+  await once(client, "data");
+  await new Promise(resolve => client.write("\x81\x81\0\0\0\0a\x88\x82\0\0\0\0\x03\xe8", "latin1", resolve));
+  const ws = await opened.promise;
+  client.destroy();
+  ws.send("lost");
+  // The server polls its sockets.
+  await (await fetch("http://a/", { unix })).text();
+  events.push("resume");
+  ws.resume();
+  await closed.promise;
+  expect(events).toEqual(["resume", "a", "close 1000"]);
 });
 
 // Bun.build() waits for an async plugin setup() by running the event loop, here from inside a handler.

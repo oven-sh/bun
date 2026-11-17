@@ -5312,6 +5312,37 @@ describe.concurrent("request body backpressure", () => {
       sock.destroy();
     }
   });
+
+  // The failed send takes the socket's error, so epoll reports a hangup alone.
+  it.skipIf(!isLinux).each(["bytes", "stream"])(
+    "aborts a request with a paused body whose %s response finds the connection reset",
+    async kind => {
+      const gate = Promise.withResolvers<void>();
+      const aborted = Promise.withResolvers<string>();
+      const server = serve({
+        port: 0,
+        idleTimeout: 0,
+        async fetch(req) {
+          req.signal.addEventListener("abort", () => aborted.resolve(req.signal.reason.name));
+          await gate.promise;
+          return new Response(
+            kind === "bytes"
+              ? Buffer.alloc(1024 * 1024)
+              : new ReadableStream({ start: controller => controller.enqueue("first") }),
+          );
+        },
+      });
+      try {
+        const { sock } = await pumpUploadUntilPlateau(server.port!, 32 * 1024 * 1024, 7);
+        sock.resetAndDestroy();
+        gate.resolve();
+        expect(await aborted.promise).toBe("AbortError");
+        await server.stop();
+      } finally {
+        server.stop(true);
+      }
+    },
+  );
 });
 
 // https://github.com/oven-sh/bun/issues/32469

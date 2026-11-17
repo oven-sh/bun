@@ -636,6 +636,8 @@ public:
             ((HttpResponseData<SSL, true> *) responseData)->~HttpResponseData();
         } else {
             responseData->~HttpResponseData();
+            /* A paused ServerWebSocket gets the messages ahead of a hangup when it resumes. */
+            ((struct us_socket_t *) this)->hangup_closes_unsent = 0;
         }
         return left;
     }

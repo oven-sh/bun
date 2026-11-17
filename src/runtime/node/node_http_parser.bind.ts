@@ -21,7 +21,7 @@ export const HTTPParser = b.class({
     finish: runsCallbacks,
     initialize: {
       args: {
-        type: b.i32.wrap,
+        type: b.i32.wrap.withValue,
         resource: b.any,
         maxHeaderSize: b.f64.otherAsNull,
         lenientFlags: b.f64.otherAsNull,

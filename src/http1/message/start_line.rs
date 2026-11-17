@@ -2,7 +2,7 @@ use bun_core::strings;
 
 use super::method::{self, METHODS};
 use super::{Cursor, Flags, Lenient, MessageParser, ParseError, State, Step, Stop, fail};
-use crate::byte_sets::{AUTHORITY, LINE, TOKEN, VISIBLE};
+use crate::byte_sets::{AUTHORITY, CONTENT, LINE, TOKEN, VISIBLE};
 
 /// What the next byte belongs to.
 #[derive(Clone, Copy)]
@@ -222,7 +222,11 @@ impl MessageParser {
                     cursor.bump();
                     RequestLineLf
                 }
-                b'\n' => return self.skip_lone_lf(cursor, ParseError::NoCrAfterVersion),
+                // It stands for the CR: https://github.com/nodejs/llhttp/blob/v9.4.4/src/llhttp/http.ts#L526-L532
+                b'\n' => {
+                    self.skip_lone_lf(cursor, ParseError::NoCrAfterVersion)?;
+                    RequestLineLf
+                }
                 _ => return fail(ParseError::NoCrAfterVersion),
             },
             RequestLineLf => {
@@ -257,7 +261,7 @@ impl MessageParser {
                 b'\n' => return self.skip_lone_lf(cursor, ParseError::StatusLineByte),
                 _ => return fail(ParseError::StatusLineByte),
             },
-            StatusText => match cursor.skip(self.value_bytes)? {
+            StatusText => match cursor.skip(&CONTENT)? {
                 b'\r' => {
                     self.keep_text(cursor, 1)?;
                     StatusLineLf
@@ -268,7 +272,9 @@ impl MessageParser {
                     return self.tolerate(Lenient::OPTIONAL_CR_BEFORE_LF, error);
                 }
                 _ => {
-                    self.flags |= Flags::MALFORMED_STATUS_TEXT;
+                    if !self.allows(Lenient::HEADERS) {
+                        self.flags |= Flags::MALFORMED_STATUS_TEXT;
+                    }
                     cursor.skip(&LINE)?;
                     StatusText
                 }

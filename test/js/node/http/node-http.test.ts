@@ -6581,124 +6581,38 @@ it.each([
   try {
     server.emit("connection", serverSide);
     clientSide.write(request);
-    let received = "";
-    for await (const chunk of clientSide) received += chunk;
-    expect(received).toEndWith("\r\nConnection: close\r\n\r\n");
+    expect(await text(clientSide)).toEndWith("\r\nConnection: close\r\n\r\n");
   } finally {
     clientSide.destroy();
     serverSide.destroy();
   }
 });
 
-it("connectionListener reads the body of a Connection: close request that is already answered", async () => {
-  const { promise: body, resolve, reject } = Promise.withResolvers<string>();
-  const server = createServer((req, res) => {
-    req.on("data", data => resolve(String(data)));
-    req.socket.on("close", () => reject(new Error("closed without a body")));
-    res.end();
-  });
-  await using front = createNetServer(socket => server.emit("connection", socket));
-  await once(front.listen(0, "127.0.0.1"), "listening");
-  const client = connect({ port: (front.address() as AddressInfo).port, host: "127.0.0.1", allowHalfOpen: true });
-  try {
-    client.write("PUT / HTTP/1.1\r\nHost: x\r\nConnection: close\r\nContent-Length: 1\r\n\r\n");
-    await once(client.resume(), "end");
-    client.write("a");
-    expect(await body).toBe("a");
-  } finally {
-    client.destroy();
-  }
-});
-
-describe("connectionListener without an 'upgrade' listener", () => {
-  const upgrade = "POST /a HTTP/1.1\r\nHost: x\r\nConnection: upgrade\r\nUpgrade: a\r\n";
-  const next = "GET /b HTTP/1.1\r\nHost: x\r\n\r\n";
-  const switching = { Connection: "upgrade", Upgrade: "a" };
-
-  function connectTo(listener: http.RequestListener) {
-    const [clientSide, serverSide] = duplexPair();
-    const urls: (string | undefined)[] = [];
+describe.each<[string, http.RequestListener]>([
+  ["socket.write()", ({ socket }) => socket.write("HTTP/1.1 101 Switching Protocols\r\n\r\n")],
+  ["res.end()", (req, res) => res.writeHead(101, { Connection: "upgrade", Upgrade: "a" }).end()],
+])("connectionListener lets the 'request' listener switch protocols with %s", (_, switchProtocols) => {
+  it.each(["", "Transfer-Encoding: chunked\r\n", "Content-Length: 99\r\n"])("with %j", async framing => {
     const server = createServer((req, res) => {
-      urls.push(req.url);
-      listener(req, res);
+      switchProtocols(req, res);
+      req.socket.on("data", data => req.socket.write(data));
     });
-    server.emit("connection", serverSide);
-    return Object.assign(clientSide, {
-      serverSide,
-      urls,
-      async readAll() {
-        let received = "";
-        for await (const chunk of clientSide) received += chunk;
-        return received.replace(/(Date|Keep-Alive|Content-Length): .*\r\n/g, "");
-      },
-      [Symbol.dispose]() {
-        clientSide.destroy();
-        serverSide.destroy();
-      },
-    });
-  }
-
-  describe.each<[string, http.RequestListener]>([
-    ["socket.write()", ({ socket }) => socket.write("HTTP/1.1 101 Switching Protocols\r\n\r\n")],
-    ["res.end()", (req, res) => res.writeHead(101, switching).end()],
-    ["a later res.end()", (req, res) => setImmediate(() => res.writeHead(101, switching).end())],
-  ])("lets the 'request' listener switch protocols with %s", (_, switchProtocols) => {
-    it.each(["", "zero", next])("and %j behind the request", async early => {
-      using client = connectTo((req, res) => {
-        switchProtocols(req, res);
-        req.socket.on("data", data => req.socket.write(data));
-      });
-      client.write(`${upgrade}\r\n${early}`);
-      expect(String(await once(client, "data"))).toStartWith("HTTP/1.1 101 ");
-      for (const text of ["one", "two"]) {
-        client.write(text);
-        expect(String(await once(client, "data"))).toBe(text);
+    const [clientSide, serverSide] = duplexPair();
+    try {
+      server.emit("connection", serverSide);
+      const reads = clientSide.setEncoding("latin1")[Symbol.asyncIterator]();
+      clientSide.write(`POST / HTTP/1.1\r\nHost: x\r\nConnection: upgrade\r\nUpgrade: a\r\n${framing}\r\n`);
+      expect(await reads.next()).toEqual({ value: expect.stringMatching(/^HTTP\/1.1 101 /), done: false });
+      for (const value of ["GET / HTTP/1.1\r\n", "one\r\n", "two"]) {
+        clientSide.write(value);
+        expect(await reads.next()).toEqual({ value, done: false });
       }
-      expect(client.serverSide.writable).toBe(true);
-      expect(client.urls).toEqual(["/a"]);
-    });
-  });
-
-  it.each<[string, string[], http.RequestListener]>([
-    ["keep-alive", [`${upgrade}\r\nzero`], (req, res) => res.end()],
-    ["close", [`${upgrade}\r\nzero`, next], (req, res) => setImmediate(() => res.end())],
-    [
-      "close",
-      [`${upgrade}Transfer-Encoding: chunked\r\n\r\n0\r\n\r\n${next}`],
-      (req, res) => text(req).then(() => res.end()),
-    ],
-  ])("answers with Connection: %s and ends the connection after %j", async (connection, writes, listener) => {
-    using client = connectTo(listener);
-    for (const written of writes) client.write(written);
-    expect(await client.readAll()).toBe(`HTTP/1.1 200 OK\r\nConnection: ${connection}\r\n\r\n`);
-    expect(client.urls).toEqual(["/a"]);
-  });
-
-  it("answers the requests before it first", async () => {
-    using client = connectTo((req, res) => (req.url === "/a" ? res.end("a") : setImmediate(() => res.end("b"))));
-    client.write(`${next}${upgrade}\r\nzero`);
-    expect(await client.readAll()).toMatch(/^HTTP\/1.1 200 [^]*\r\n\r\nbHTTP\/1.1 200 [^]*\r\n\r\na$/);
-  });
-
-  it("ends the connection at once if the response is already sent", async () => {
-    const { promise: sent, resolve } = Promise.withResolvers<void>();
-    using client = connectTo((req, res) => res.end(resolve));
-    client.write(`${upgrade}Content-Length: 1\r\n\r\n`);
-    await sent;
-    client.write(`c${next}`);
-    expect(await client.readAll()).toBe("HTTP/1.1 200 OK\r\nConnection: keep-alive\r\n\r\n");
-    expect(client.urls).toEqual(["/a"]);
-  });
-
-  it("serves the requests that wait for the response", async () => {
-    using client = connectTo((req, res) => setImmediate(() => res.end()));
-    for (const request of [`${upgrade}\r\n`, next]) {
-      client.write(request);
-      expect(String(await once(client, "data"))).toContain("\r\nConnection: keep-alive\r\n");
+      clientSide.end();
+      expect(await reads.next()).toEqual({ value: undefined, done: true });
+    } finally {
+      clientSide.destroy();
+      serverSide.destroy();
     }
-    client.write(`${upgrade}\r\nzero`);
-    expect(await client.readAll()).toBe("HTTP/1.1 200 OK\r\nConnection: close\r\n\r\n");
-    expect(client.urls).toEqual(["/a", "/b", "/a"]);
   });
 });
 

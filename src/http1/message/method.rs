@@ -7,6 +7,7 @@ pub(super) const PRI: u8 = 34;
 pub(super) const DESCRIBE: u8 = 35;
 pub(super) const FLUSH: u8 = 45;
 
+// Keep in sync with `binding(m: "http_parser")` in packages/bun-types/overrides.d.ts.
 bun_core::comptime_string_map! {
     pub(super) static METHODS: u8 = {
         "DELETE" => 0,

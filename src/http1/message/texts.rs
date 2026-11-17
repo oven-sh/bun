@@ -34,7 +34,10 @@ impl Texts {
     #[inline]
     pub(super) fn clear_fields(&mut self) {
         self.names_and_values.clear();
-        self.saved_count = self.saved_count.min(1);
+        if self.saved_count > 1 {
+            self.saved_count = 1;
+            self.saved.truncate(self.first.end);
+        }
     }
 
     #[inline]
@@ -132,5 +135,16 @@ mod tests {
         assert_eq!(texts.first(b""), b"a");
         texts.clear();
         assert_eq!(texts.saved.capacity(), 0);
+    }
+
+    #[test]
+    fn clear_fields_drops_their_copies() {
+        let mut texts = Texts::default();
+        texts.extend(b"ab", (0..1).into());
+        assert!(texts.push((1..2).into()));
+        texts.save(b"ab");
+        texts.clear_fields();
+        assert_eq!(texts.saved, b"a");
+        assert_eq!(texts.first(b""), b"a");
     }
 }

@@ -32,7 +32,7 @@ enum Callback {
     Timeout,
 }
 
-/// What `kOnHeadersComplete` can return.
+/// What `kOnHeadersComplete` can return: <https://github.com/nodejs/llhttp/blob/v9.4.4/src/llhttp/http.ts#L1164-L1171>
 mod after_head {
     pub(super) const BODY: i32 = 0;
     pub(super) const NO_BODY: i32 = 1;
@@ -91,7 +91,7 @@ impl HTTPParser {
         &self,
         this_value: JsWrapper<'a, Self>,
         cx: &mut JsScope<'a>,
-        r#type: i32,
+        (r#type, type_value): (i32, JsLocal<'a>),
         _resource: JsLocal<'a>,
         max_header_size: Option<f64>,
         lenient_flags: Option<f64>,
@@ -104,10 +104,7 @@ impl HTTPParser {
         let kind = match r#type {
             REQUEST => MessageKind::Request,
             RESPONSE => MessageKind::Response,
-            _ => {
-                return Err(global
-                    .throw_invalid_argument_value(b"type", JSValue::js_number_from_int32(r#type)));
-            }
+            _ => return Err(global.throw_invalid_argument_value(b"type", type_value.to_js())),
         };
         let (this_value, connections) = (this_value.to_js(), connections.to_js());
         if !js::set_connections(this_value, global, connections).as_boolean() {
@@ -146,7 +143,7 @@ impl HTTPParser {
         matches!(self.state.get(), State::Closed)
     }
 
-    /// `f` runs no JavaScript.
+    /// `f` runs no JavaScript and does not throw.
     fn with_parser<R>(&self, f: impl FnOnce(&mut MessageParser) -> R) -> Option<R> {
         self.state.with_mut(|state| match state {
             State::Initialized(parser) => Some(f(parser)),
@@ -183,7 +180,7 @@ impl HTTPParser {
             );
         }
         if let Some(error) = lasting_error {
-            return Ok(create_error(global, error, input.byte_len));
+            return Ok(self.report(global, error, input.byte_len));
         }
 
         js::input_set_cached(this_value, global, input.value);
@@ -204,6 +201,7 @@ impl HTTPParser {
         let eof = self.with_parser(MessageParser::finish);
         match eof.unwrap_or(Eof::Ignored) {
             Eof::Ignored => Ok(JSValue::UNDEFINED),
+            Eof::CutsMessageShort if self.is_upgrade() => Ok(JSValue::UNDEFINED),
             Eof::CutsMessageShort => Ok(create_error(global, ParseError::UnexpectedEof, 0)),
             Eof::CompletesMessage => {
                 let driver = self.driver(this_value.to_js(), global);
@@ -213,6 +211,18 @@ impl HTTPParser {
                 }
             }
         }
+    }
+
+    fn is_upgrade(&self) -> bool {
+        matches!(self.state.get(), State::Initialized(parser) if parser.is_upgrade())
+    }
+
+    /// No error where another protocol may have started: <https://github.com/nodejs/node/blob/v26.12.1/src/node_http_parser.cc#L909>
+    fn report(&self, global: &JSGlobalObject, error: ParseError, bytes_parsed: usize) -> JSValue {
+        if self.is_upgrade() {
+            return JSValue::js_number_from_uint64(bytes_parsed as u64);
+        }
+        create_error(global, error, bytes_parsed)
     }
 
     fn driver<'a>(&'a self, this_value: JSValue, global: &'a JSGlobalObject) -> Driver<'a> {
@@ -377,7 +387,7 @@ impl Driver<'_> {
                 return Ok(Some(JSValue::js_number_from_uint64(input.byte_len as u64)));
             }
             Event::Failed(error, consumed) => {
-                return Ok(Some(create_error(self.global, error, consumed)));
+                return Ok(Some(self.this.report(self.global, error, consumed)));
             }
         }
         Ok(None)
@@ -405,10 +415,19 @@ impl Driver<'_> {
         Ok(())
     }
 
-    /// `f` runs no JavaScript.
+    /// `f` runs no JavaScript and does not throw.
     fn with_parser<R>(&self, f: impl FnOnce(&mut MessageParser) -> R) -> Result<R, Interrupt> {
         self.check_generation()?;
         self.this.with_parser(f).ok_or(Interrupt::Replaced)
+    }
+
+    /// Not to be read once JavaScript has run, which a throw can cause.
+    fn parser(&self) -> Result<&MessageParser, Interrupt> {
+        self.check_generation()?;
+        match self.this.state.get() {
+            State::Initialized(parser) => Ok(parser),
+            _ => Err(Interrupt::Replaced),
+        }
     }
 
     fn check_generation(&self) -> Result<(), Interrupt> {
@@ -425,7 +444,7 @@ impl Driver<'_> {
     }
 
     fn call(&self, callback: JSValue, arguments: &[JSValue]) -> Result<JSValue, Interrupt> {
-        let result = callback.call(self.global, self.this_value, arguments)?;
+        let result = callback.call_for_running_script(self.global, self.this_value, arguments)?;
         self.check_generation()?;
         Ok(result)
     }
@@ -441,6 +460,7 @@ impl Driver<'_> {
         Ok(())
     }
 
+    /// For requests. `node:_http_common` truncates a response: <https://github.com/nodejs/node/blob/v26.12.1/src/node_http_parser.cc#L1072-L1101>
     #[inline(never)]
     fn read_field_limit(&self) -> Result<(), Interrupt> {
         let names_and_values = self
@@ -455,7 +475,7 @@ impl Driver<'_> {
         }
     }
 
-    /// Returns the error for `execute()` to return.
+    /// Returns what `execute()` returns, if the callback ends the read.
     #[inline(never)]
     fn on_head_complete(&self, input: &ArrayBuffer) -> Result<Option<JSValue>, Interrupt> {
         self.this.is_head_complete.set(true);
@@ -514,7 +534,7 @@ impl Driver<'_> {
             _ => ParseError::HeadCompleteCallback,
         };
         let consumed = self.with_parser(|parser| parser.abort(input.slice(), error))?;
-        Ok(Some(create_error(self.global, error, consumed)))
+        Ok(Some(self.this.report(self.global, error, consumed)))
     }
 
     #[inline(never)]
@@ -529,7 +549,7 @@ impl Driver<'_> {
     fn on_message_complete(&self, input: &ArrayBuffer) -> Result<(), Interrupt> {
         self.this.start_time.set(0);
         self.this.update_connections(self.this_value, self.global)?;
-        if self.with_parser(|parser| parser.fields(input.slice()).len())? > 0 {
+        if self.parser()?.fields(input.slice()).len() > 0 {
             self.flush(input)?;
         }
         if let Some(callback) = self.callback(Callback::MessageComplete)? {
@@ -554,20 +574,18 @@ impl Driver<'_> {
         input: &ArrayBuffer,
         url_of_response: JSValue,
     ) -> Result<(JSValue, JSValue), Interrupt> {
-        let input = input.slice();
-        self.with_parser(|parser| {
-            let fields = parser.fields(input);
-            let headers = JSValue::create_empty_array(self.global, 2 * fields.len())?;
-            for (index, (name, value)) in (0..).step_by(2).zip(fields) {
-                headers.put_index(self.global, index, self.create_string(name))?;
-                headers.put_index(self.global, index + 1, self.create_string(value))?;
-            }
-            let url = match parser.kind() {
-                MessageKind::Request => self.create_string(parser.start_line_text(input)),
-                MessageKind::Response => url_of_response,
-            };
-            Ok((headers, url))
-        })?
+        let (parser, input) = (self.parser()?, input.slice());
+        let fields = parser.fields(input);
+        let headers = JSValue::create_empty_array(self.global, 2 * fields.len())?;
+        for (index, (name, value)) in (0..).step_by(2).zip(fields) {
+            headers.put_index(self.global, index, self.create_string(name))?;
+            headers.put_index(self.global, index + 1, self.create_string(value))?;
+        }
+        let url = match parser.kind() {
+            MessageKind::Request => self.create_string(parser.start_line_text(input)),
+            MessageKind::Response => url_of_response,
+        };
+        Ok((headers, url))
     }
 
     fn create_buffer(&self, bytes: Option<&[u8]>) -> JsResult<JSValue> {

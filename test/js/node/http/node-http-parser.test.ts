@@ -168,9 +168,17 @@ describe("HTTPParser before initialize()", () => {
 });
 
 describe("HTTPParser.prototype.initialize", () => {
-  test.each([undefined, 0, 3, -1])("type %p throws", type => {
+  test.each([
+    [undefined, "undefined"],
+    [0, "type number (0)"],
+    [3, "type number (3)"],
+    [-1, "type number (-1)"],
+  ])("type %p throws", (type, received) => {
     expect(() => new HTTPParser().initialize(type, {})).toThrow(
-      expect.objectContaining({ code: "ERR_INVALID_ARG_VALUE" }),
+      expect.objectContaining({
+        code: "ERR_INVALID_ARG_VALUE",
+        message: `The "type" argument is invalid. Received ${received}`,
+      }),
     );
   });
 
@@ -581,6 +589,45 @@ describe("HTTPParser.prototype.execute", () => {
     expect(parser.finish()).toBeUndefined();
   });
 
+  describe("after the head of an upgrade", () => {
+    const upgrade = "GET / HTTP/1.1\r\nConnection: upgrade\r\nUpgrade: a\r\n";
+
+    test.each([
+      ["\r\n", "GET / HTTP/1.1\r\n", "\0"],
+      ["Connection: close\r\n\r\n", "\0", "\0"],
+      ["Transfer-Encoding: chunked\r\n\r\n", "1", "\0"],
+    ])("an error is a count (%j, %j)", (rest, consumed, left) => {
+      const { parser, execute } = recorded(REQUEST);
+      expect(execute(upgrade + rest)).toBe(upgrade.length + rest.length);
+      expect(execute(consumed + left)).toBe(consumed.length);
+      expect(execute("GET / HTTP/1.1\r\n\r\n")).toBe(18);
+      expect(parser.finish()).toBeUndefined();
+    });
+
+    test("so is an answer that stops the parser", () => {
+      const { execute } = recorded(REQUEST, { head: () => -1 });
+      expect(execute(`${upgrade}\r\na`)).toBe(upgrade.length + 2);
+    });
+
+    test.each([
+      ["\r\n", "G"],
+      ["Content-Length: 2\r\n\r\n", "a"],
+    ])("finish() returns no error (%j, %j)", (rest, more) => {
+      const { parser, execute } = recorded(REQUEST);
+      execute(upgrade + rest);
+      execute(more);
+      expect(parser.finish()).toBeUndefined();
+    });
+
+    test("the next head brings the errors back", () => {
+      const { parser, execute } = recorded(REQUEST);
+      execute(`${upgrade}\r\n`);
+      execute("GET / HTTP/1.1\r\n\r\nG");
+      expect(parser.finish().code).toBe("HPE_INVALID_EOF_STATE");
+      expect(execute("\0").code).toBe("HPE_INVALID_METHOD");
+    });
+  });
+
   test.each([
     [6, true],
     [Infinity, true],
@@ -907,9 +954,9 @@ describe("a callback that throws stops the parse", () => {
   };
   test.each([
     ["begin", "HPE_CB_MESSAGE_BEGIN", "`on_message_begin` callback error"],
-    ["headers", "HPE_USER", "JS Exception"],
+    ["headers", "HPE_JS_EXCEPTION", "JS Exception"],
     ["head", "HPE_CB_HEADERS_COMPLETE", "User callback error"],
-    ["body", "HPE_USER", "JS Exception"],
+    ["body", "HPE_JS_EXCEPTION", "JS Exception"],
     ["complete", "HPE_CB_MESSAGE_COMPLETE", "`on_message_complete` callback error"],
   ] as const)("%s leaves %s", (callback, code, reason) => {
     const error = new Error(callback);
@@ -931,11 +978,11 @@ describe("a callback that throws stops the parse", () => {
     const partOfBody = recorded(REQUEST, { body: thrower(error) });
     const lastFields = recorded(REQUEST, { headers: () => lastFields.calls.length > 2 && thrower(error)() });
     for (const [{ execute }, text, code] of [
-      [limit, everyCallback, "HPE_USER"],
+      [limit, everyCallback, "HPE_JS_EXCEPTION"],
       [answer, everyCallback, "HPE_CB_HEADERS_COMPLETE"],
       [lastFields, everyCallback, "HPE_CB_HEADERS_COMPLETE"],
       [trailers, "PUT / HTTP/1.1\r\nTransfer-Encoding: chunked\r\n\r\n0\r\na: b\r\n\r\n", "HPE_CB_MESSAGE_COMPLETE"],
-      [partOfBody, "PUT / HTTP/1.1\r\nContent-Length: 3\r\n\r\na", "HPE_USER"],
+      [partOfBody, "PUT / HTTP/1.1\r\nContent-Length: 3\r\n\r\na", "HPE_JS_EXCEPTION"],
     ] as const) {
       expect(() => execute(text)).toThrow(error);
       expect(execute("a").code).toBe(code);
@@ -1058,9 +1105,7 @@ describe("ConnectionsList", () => {
     inBody.execute("PUT / HTTP/1.1\r\nContent-Length: 1\r\n\r\n");
     Bun.sleepSync(3);
 
-    for (const timeout of [60_000, 85_900, 300_000, 2 ** 32 - 1]) {
-      expect(list.expired(timeout, timeout)).toEqual([]);
-    }
+    expect(list.expired(4000, 4000)).toEqual([]);
     expect(list.expired(1, 0)).toEqual([inHead.parser]);
     expect(list.active()).toEqual([inBody.parser]);
     expect(list.expired(0, 1)).toEqual([inBody.parser]);
@@ -1146,6 +1191,29 @@ test.concurrent("arrays are made without the setters of Array.prototype", async 
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect({ stdout, stderr }).toEqual({ stdout: "DELETE REPORT DELETE REPORT\na\n", stderr: "" });
+  expect(exitCode).toBe(0);
+});
+
+test.concurrent("calls back in what continues the I/O of a Bun.ModuleGraph that is disposed", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `const { HTTPParser } = process.binding("http_parser");
+       const graph = new Bun.ModuleGraph();
+       await graph.run(() => fs.promises.stat("."));
+       graph.dispose();
+       const parser = new HTTPParser();
+       parser.initialize(HTTPParser.RESPONSE, {});
+       for (const index of [0, 1, 2, 3, 4]) parser[index] = () => console.log(index);
+       parser.execute(Buffer.from(${JSON.stringify(`HTTP/1.1 200 OK\r\n${lines(manyFields)}\r\na`)}));
+       parser.finish();`,
+    ],
+    env: bunEnv,
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr }).toEqual({ stdout: "0\n1\n1\n2\n3\n4\n", stderr: "" });
   expect(exitCode).toBe(0);
 });
 

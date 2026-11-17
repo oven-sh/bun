@@ -120,7 +120,7 @@ impl Setup {
                             write!(log, " {}", show_fields(&parser, read)).unwrap();
                         }
                         log.push(')');
-                        is_upgrade = parser.is_upgrade();
+                        is_upgrade = parser.is_upgrade() || parser.status_code() == 101;
                     }
                     Event::Done(consumed) => break consumed,
                     Event::Failed(error, consumed) => {
@@ -338,11 +338,11 @@ mod start_line {
             ),
             (
                 LONE_LF,
-                b"GET / HTTP/1.1\na: b\r\n\r\n",
+                b"GET / HTTP/1.1\n\na: b\r\n\r\n",
                 "(GET / 1.1 [a=b])",
             ),
             (LONE_LF, b"GET /\na: b\r\n\r\n", "(GET / 0.9 [a=b] close)"),
-            (ALL, b"GET / HTTP/1.1\n\n", "(GET / 1.1 [])"),
+            (ALL, b"GET / HTTP/1.1\na: b\n\n", "(GET / 1.1 [a=b])"),
             (ALL, b"GET / HTTP/1.1\n\r\n", "(GET / 1.1 [])"),
         ] {
             REQUEST.with(lenient).check(bytes, expected);
@@ -585,7 +585,7 @@ mod start_line {
     fn status_text_bytes() {
         for (lenient, is_kept) in [
             (STRICT, is_content as fn(_) -> _),
-            (RELAXED, |byte| byte != 0),
+            (RELAXED, is_content),
             (HEADERS, |_| true),
         ] {
             for byte in (0..=u8::MAX).filter(|byte| !matches!(byte, b'\r' | b'\n')) {
@@ -710,11 +710,16 @@ mod fields {
             ),
             (HEADERS, b"a:\r\n b\r\nc: \r\n \r\n\t\r\n\r\n", "a=b c="),
             (STRICT, b"Upgrade: a,close\r\n\r\n", "Upgrade=a,close"),
-            (HEADERS, b"Upgrade  : a\r\n\r\n", "Upgrade=a"),
+            (HEADERS, b"Upgrade  : a\r\n\r\n", "Upgrade  =a"),
+            (
+                HEADERS,
+                b"Content-Length  a: b\r\n\r\n",
+                "Content-Length  a=b",
+            ),
             (
                 HEADERS,
                 b"Content-Length :0\r\nUpgrade :\r\n\r\n",
-                "Content-Length=0 Upgrade=",
+                "Content-Length =0 Upgrade =",
             ),
             (
                 HEADERS,
@@ -764,7 +769,7 @@ mod fields {
             (ALL, b" ", b" a", NAME),
             (ALL, b"a", b" :", NAME),
             (ALL, b"Upgrade ", b"\t:", NAME),
-            (ALL, b"Upgrade  ", b"a:", NAME),
+            (ALL, b"Upgrade  a", b" :", NAME),
             (STRICT, b"\n", b"", NAME_SPACE),
             (STRICT, b"a: b\r\n\n", b"", NAME_SPACE),
             (STRICT, b"Connection ", b":", NAME_SPACE),
@@ -917,7 +922,7 @@ mod fields {
                 let log = REQUEST.with(HEADERS).feed(&[&bytes]);
                 let expected = match is_content(byte) {
                     true => "] upgrade) +",
-                    false => "] close)",
+                    false => "])",
                 };
                 assert!(log.ends_with(expected), "{log}");
             }
@@ -943,9 +948,9 @@ mod fields {
                 false,
                 false,
             ),
-            (RELAXED, b"close\x01", false, true, false),
-            (RELAXED, b"a\x01, upgrade", false, true, false),
-            (RELAXED, b"upgrade, \x01", false, true, true),
+            (RELAXED, b"close\x01", false, false, false),
+            (RELAXED, b"a\x01, upgrade", false, false, false),
+            (RELAXED, b"upgrade, \x01", false, false, true),
             (HEADERS, b"\r\n close", false, true, false),
             (HEADERS, b"a,\r\n upgrade, ,keep-alive", true, false, true),
             (HEADERS, b"keep-alive, \r\n\tupgrade", true, false, true),
@@ -957,7 +962,7 @@ mod fields {
         ] {
             for name in ["Connection", "proxy-connection"] {
                 for (version, is_persistent) in [
-                    ("0.9", false),
+                    ("0.9", keeps_alive),
                     ("1.0", keeps_alive),
                     ("1.1", true),
                     ("2.0", keeps_alive),
@@ -1126,7 +1131,7 @@ mod bodies {
             (
                 Lenient::CHUNKED_LENGTH,
                 b"PUT / HTTP/1.1\r\nContent-Length: 9\r\nTransfer-Encoding: chunked\r\n\r\n1\r\na\r\n0\r\n\r\n",
-                "(PUT / 1.1 [Content-Length=9 Transfer-Encoding=chunked] close {a})",
+                "(PUT / 1.1 [Content-Length=9 Transfer-Encoding=chunked] {a})",
             ),
             (
                 Lenient::CHUNKED_LENGTH,
@@ -1189,25 +1194,19 @@ mod bodies {
 
     #[test]
     fn interim_responses() {
-        for (first, close) in [
-            ("HTTP/1.1 100 \r\n", ""),
-            ("HTTP/1.1 100 \r\nConnection: close\r\n", " close"),
-            ("HTTP/1.0 102 \r\n", " close"),
-            ("HTTP/1.0 199 \r\n\r\nHTTP/1.1 103 \r\n", " close"),
-            ("HTTP/1.1 199 \r\n\r\nHTTP/1.1 304 \r\n", ""),
-        ] {
-            for status_text in ["", "\0"] {
-                let bytes = format!("{first}\r\nHTTP/1.1 204 {status_text}\r\n\r\n");
-                let log = RESPONSE.parse(bytes.as_bytes());
-                let expected = format!(")(204 \"\" 1.1 []{close})");
-                assert!(log.ends_with(&expected), "{log}");
-            }
-        }
-        RESPONSE.with(HEADERS).check_error(
-            b"HTTP/1.0 099 \r\nContent-Length: 0\r\n\r\nH",
-            b"",
-            AFTER_CLOSE,
+        RESPONSE.check(
+            b"HTTP/1.1 100 \0\r\n\r\nHTTP/1.1 199 a\r\n\r\nHTTP/1.1 204 \r\n\r\n",
+            r#"(100 "" 1.1 [])(199 "a" 1.1 [])(204 "" 1.1 [])"#,
         );
+        for status_code in [100, 199] {
+            let fields = "Connection: keep-alive\r\nTransfer-Encoding: chunked";
+            let bytes = format!("HTTP/1.0 {status_code} \r\n{fields}\r\n\r\nH");
+            RESPONSE.check_end(bytes.as_bytes(), "])( ..");
+        }
+        for head in ["HTTP/1.1 100 \r\nConnection: close", "HTTP/1.0 102 "] {
+            let bytes = format!("{head}\r\n\r\nH");
+            RESPONSE.check_error(bytes.as_bytes(), b"", AFTER_CLOSE);
+        }
     }
 
     #[test]
@@ -1282,7 +1281,6 @@ mod bodies {
         for (setup, line, rest) in [
             (REQUEST, "PUT / HTTP/1.0", "0\r\n\r\n"),
             (REQUEST, "PUT / HTTP/0.9", "0\r\n\r\n"),
-            (REQUEST, "PUT / HTTP/1.1\r\nContent-Length: 0", "0\r\n\r\n"),
             (RESPONSE, "HTTP/1.0 200 ", "0\r\n\r\n"),
             (RESPONSE, "HTTP/1.0 304 ", ""),
             (RESPONSE, "HTTP/1.1 204 ", ""),
@@ -1296,6 +1294,10 @@ mod bodies {
             }
             setup.with(ALL).check_end(last.as_bytes(), " close)");
         }
+        RESPONSE.with(ALL).check_end(
+            b"HTTP/1.0 099 \r\nTransfer-Encoding: chunked\r\n\r\n0\r\n\r\na",
+            " close)",
+        );
         RESPONSE.with(Lenient::CHUNKED_LENGTH).check_end(
             b"HTTP/1.1 200 \r\nContent-Length: 0\r\nTransfer-Encoding: chunked\r\n\r\n0\r\n\r\nH",
             "])( ..",
@@ -1305,9 +1307,23 @@ mod bodies {
     #[test]
     fn after_an_upgrade() {
         let mut parser = REQUEST.parser();
+        advance_to(&mut parser, UPGRADE, Event::HeadComplete);
+        parser.pause();
         advance_to(&mut parser, UPGRADE, Event::Done(UPGRADE.len()));
+        assert_eq!(parser.error(), None);
+        let next = b"GET / HTTP/1.1\r\n\r\n";
+        assert_eq!(parser.advance(next), Event::MessageBegin);
+        assert!(parser.is_upgrade());
+        assert_eq!(parser.advance(next), Event::HeadComplete);
         assert!(!parser.is_upgrade());
-        assert_eq!(parser.advance(b"G"), Event::MessageBegin);
+
+        let mut parser = RESPONSE.parser();
+        let read = b"HTTP/1.1 204 \r\n\r\n";
+        advance_to(&mut parser, read, Event::HeadComplete);
+        parser.switch_protocol();
+        advance_to(&mut parser, read, Event::Done(read.len()));
+        advance_to(&mut parser, b"HTTP/1.1 204 \0", Event::Done(14));
+        assert!(parser.is_upgrade());
 
         for (setup, read) in [
             (REQUEST, &b"GET / HTTP/1.1\r\nConnection: close\r\n\r\n"[..]),
@@ -1317,49 +1333,8 @@ mod bodies {
             advance_to(&mut parser, read, Event::HeadComplete);
             parser.switch_protocol();
             advance_to(&mut parser, read, Event::Done(read.len()));
-            assert_eq!(parser.advance(b"G"), Event::Done(1));
-        }
-    }
-
-    #[test]
-    fn another_protocol() {
-        let upgraded = || {
-            let mut parser = REQUEST.parser();
-            advance_to(&mut parser, UPGRADE, Event::Done(UPGRADE.len()));
-            parser
-        };
-        for read in [
-            &b"\x81\x80"[..],
-            b"GET a\r\n",
-            b"GET / HTTP/1.1\n",
-            b"PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n\0",
-        ] {
-            let mut parser = upgraded();
-            assert_eq!(parser.advance(read), Event::MessageBegin);
-            assert_eq!(parser.advance(read), Event::Done(read.len()));
-            assert_eq!(parser.advance(b"GET /\r\n\r\n"), Event::Done(9));
-            assert_eq!(parser.finish(), Eof::Ignored);
-        }
-        for (read, eof) in [
-            (&b"GET / HTTP/1.1\r"[..], Eof::Ignored),
-            (b"GET / HTTP/1.1\r\n", Eof::CutsMessageShort),
-        ] {
-            let mut parser = upgraded();
-            advance_to(&mut parser, read, Event::Done(read.len()));
-            assert_eq!(parser.finish(), eof);
-        }
-        for (read, last) in [
-            (
-                &b"GET / HTTP/1.1\r\n:"[..],
-                Event::Failed(ParseError::NameByte, 16),
-            ),
-            (
-                b"GET / HTTP/1.1\r\n\r\n\0",
-                Event::Failed(ParseError::Method, 18),
-            ),
-        ] {
-            let mut parser = upgraded();
-            advance_to(&mut parser, read, last);
+            let failure = Event::Failed(ParseError::DataAfterClose, 1);
+            assert_eq!(parser.advance(b"G"), failure);
         }
     }
 }
@@ -1415,10 +1390,10 @@ mod chunks {
             (LONE_CR, b"1\ra\r\n1;b\rc\r\n0\r\rG", " {ac})( .."),
             (
                 LONE_LF,
-                b"1\na\n1;b\nc\n1;d=e\nf\n1;g=\"h\"\ni\n1;\nj\n0\nk: l\n\n",
+                b"1\n\na\n1;b\nc\n1;d=e\nf\n1;g=\"h\"\ni\n1;\nj\n0\r\nk: l\n\n",
                 " {acfij} [k=l])",
             ),
-            (ALL, b"1\n\n\n0\n\n", r" {\n})"),
+            (ALL, b"1\na\n0\nb: c\n\n", " {a} [b=c])"),
             (
                 ALL,
                 b"0\r\nContent-Length: 1\r\nTransfer-Encoding: a\r\n\r\nG",
@@ -1696,7 +1671,7 @@ mod limits {
             (REQUEST, b"GET / HTTP/1.1\r\nConnection: a, close \r\n\r\n", 20),
             (REQUEST, b"GET / HTTP/1.1\r\nContent-Length: 00 \r\n\r\n", 18),
             (REQUEST, b"GET / HTTP/1.1\r\n\r\nGET /a HTTP/1.1\r\n\r\nGET / HTTP/1.1\r\n\r\n", 2),
-            (REQUEST.with(ALL), b"GET / HTTP/1.1\nUpgrade  : a\n b\n\n", 11),
+            (REQUEST.with(ALL), b"GET / HTTP/1.1\nUpgrade  : a\n b\n\n", 13),
             (RESPONSE, b"HTTP/1.1 204 ab\r\nc: d\r\n\r\n", 4),
             (RESPONSE, b"HTTP/1.1 204 \0\0\0\r\n\r\n", 3),
             (
@@ -2040,7 +2015,7 @@ mod control {
     #[test]
     fn errors_of_the_caller() {
         for (error, expected) in [
-            (ParseError::Callback, "HPE_USER: JS Exception"),
+            (ParseError::Callback, "HPE_JS_EXCEPTION: JS Exception"),
             (
                 ParseError::HeadCompleteCallback,
                 "HPE_CB_HEADERS_COMPLETE: User callback error",

@@ -73,11 +73,10 @@ bitflags::bitflags! {
         const CHUNKED = 1 << 6;
         const IN_TRAILERS = 1 << 7;
         const SKIP_BODY = 1 << 8;
+        /// Lasts until the next head is complete.
         const SWITCHES_PROTOCOL = 1 << 9;
         const IS_LAST = 1 << 10;
-        /// What is not the start of a message belongs to whoever took the connection over.
-        const FOLLOWS_SWITCH = 1 << 11;
-        const MALFORMED_STATUS_TEXT = 1 << 12;
+        const MALFORMED_STATUS_TEXT = 1 << 11;
     }
 }
 
@@ -225,7 +224,7 @@ impl<'a> Cursor<'a> {
 pub struct MessageParser {
     kind: MessageKind,
     lenient: Lenient,
-    /// What the value of a field and the status text are made of.
+    /// What the value of a field is made of.
     value_bytes: &'static ByteSet,
     max_section_len: u64,
 
@@ -317,11 +316,10 @@ impl MessageParser {
                     self.skip_newlines(input)?;
                     return Ok(self.begin_message());
                 }
-                State::StartLine(part) => match self.parse_start_line(input, part) {
-                    Ok(()) => State::Fields(FieldPart::SectionStart),
-                    Err(Stop::Failed(_)) if self.follows_switch() => State::Closed,
-                    Err(stop) => return Err(stop),
-                },
+                State::StartLine(part) => {
+                    self.parse_start_line(input, part)?;
+                    State::Fields(FieldPart::SectionStart)
+                }
                 State::Fields(part) => {
                     self.parse_fields(input, part)?;
                     if !self.flags.contains(Flags::IN_TRAILERS) {
@@ -393,7 +391,7 @@ impl MessageParser {
         self.error
     }
 
-    /// Takes effect with the next read.
+    /// Takes effect with the next read, unless this one ends with a switch of protocols.
     pub fn pause(&mut self) {
         self.error.get_or_insert(ParseError::Paused);
     }
@@ -408,7 +406,6 @@ impl MessageParser {
         match self.state {
             _ if self.error.is_some() => Eof::Ignored,
             State::Start | State::Closed => Eof::Ignored,
-            State::StartLine(_) if self.follows_switch() => Eof::Ignored,
             State::BodyUntilEof => {
                 self.state = State::Closed;
                 Eof::CompletesMessage
@@ -477,7 +474,7 @@ impl MessageParser {
         self.fields_left = Some(max_fields);
     }
 
-    /// Whether another protocol follows the message.
+    /// Whether another protocol follows the message of the last complete head.
     pub fn is_upgrade(&self) -> bool {
         self.flags.contains(Flags::SWITCHES_PROTOCOL)
     }
@@ -490,11 +487,11 @@ impl MessageParser {
     #[inline]
     fn is_persistent(&self) -> bool {
         !self.flags.contains(Flags::CONNECTION_CLOSE)
-            && match self.version() {
-                (0, _) => false,
-                (_, 0) => self.flags.contains(Flags::CONNECTION_KEEP_ALIVE),
-                _ => true,
-            }
+            && (self.is_http_1_1() || self.flags.contains(Flags::CONNECTION_KEEP_ALIVE))
+    }
+
+    fn is_http_1_1(&self) -> bool {
+        self.major_version > 0 && self.minor_version > 0
     }
 
     /// RFC 9110 §8.6 and RFC 9112 §6.1
@@ -504,10 +501,9 @@ impl MessageParser {
         !self.ends_with_connection()
             && match self.status_code {
                 101 => false,
+                100..=199 => true,
                 204 => !has_codings && self.remaining == 0,
-                _ if !has_codings => true,
-                _ if self.is_request() && self.flags.contains(Flags::CONTENT_LENGTH) => false,
-                _ => self.major_version > 0 && self.minor_version > 0,
+                _ => !has_codings || self.is_http_1_1(),
             }
     }
 
@@ -561,9 +557,6 @@ impl MessageParser {
         let is_persistent = self.is_persistent() || self.allows(Lenient::KEEP_ALIVE);
         self.flags
             .set(Flags::IS_LAST, !(is_persistent && self.can_be_followed()));
-        if self.status_code == 101 {
-            self.flags |= Flags::SWITCHES_PROTOCOL;
-        }
 
         let is_chunked = self.flags.contains(Flags::CHUNKED);
         let has_length = is_chunked || self.remaining > 0;
@@ -625,22 +618,18 @@ impl MessageParser {
 
     #[inline(always)]
     fn end_message(&mut self) -> Step<State> {
-        let switches_protocol = self.is_upgrade();
-        let is_last = self.flags.contains(Flags::IS_LAST);
-        let is_interim = matches!(self.status_code, 100 | 102..=199);
-        let next = match is_last && !is_interim {
+        let switches_protocol = self.is_upgrade() || self.status_code == 101;
+        let next = match self.flags.contains(Flags::IS_LAST) {
             true => State::Closed,
             false => State::Start,
         };
-        self.flags = Flags::empty();
-        // RFC 9110 §15.2
-        self.flags
-            .set(Flags::CONNECTION_CLOSE, is_last && is_interim);
-        self.flags.set(Flags::FOLLOWS_SWITCH, switches_protocol);
+        self.flags &= Flags::SWITCHES_PROTOCOL;
         self.remaining = 0;
         self.texts.clear();
         if switches_protocol {
+            self.resume();
             self.state = next;
+            // The rest of the input is not HTTP.
             return Err(Stop::Short);
         }
         Ok(next)
@@ -648,16 +637,12 @@ impl MessageParser {
 
     #[inline(always)]
     fn skip_after_close(&mut self, input: &[u8]) -> Step<Event> {
-        if self.allows(Lenient::DATA_AFTER_CLOSE) || self.follows_switch() {
+        if self.allows(Lenient::DATA_AFTER_CLOSE) {
             self.consumed = input.len();
         }
         self.skip_newlines(input)?;
         self.consumed += 1;
         fail(ParseError::DataAfterClose)
-    }
-
-    fn follows_switch(&self) -> bool {
-        self.flags.contains(Flags::FOLLOWS_SWITCH)
     }
 
     fn is_request(&self) -> bool {

@@ -138,7 +138,7 @@ parse_errors! {
     "HPE_UNEXPECTED_SPACE" {
         SpaceAfterStartLine => "Unexpected space after start line",
     }
-    "HPE_USER" {
+    "HPE_JS_EXCEPTION" {
         Callback => "JS Exception",
     }
 }

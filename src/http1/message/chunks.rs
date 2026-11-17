@@ -84,7 +84,11 @@ impl MessageParser {
                     cursor.bump();
                     SizeLf
                 }
-                b'\n' => return self.skip_lone_lf(cursor, ParseError::NoCrAfterChunkSize),
+                // It stands for the CR: https://github.com/nodejs/llhttp/blob/v9.4.4/src/llhttp/http.ts#L969-L975
+                b'\n' => {
+                    self.skip_lone_lf(cursor, ParseError::NoCrAfterChunkSize)?;
+                    SizeLf
+                }
                 b';' => {
                     cursor.bump();
                     ExtensionStart
@@ -211,5 +215,5 @@ impl MessageParser {
 
 #[inline(always)]
 fn hex_digit(byte: u8) -> Option<u64> {
-    char::from(byte).to_digit(16).map(u64::from)
+    bun_core::fmt::hex_digit_value(byte).map(u64::from)
 }

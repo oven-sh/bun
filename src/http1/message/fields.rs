@@ -10,7 +10,7 @@ pub(super) enum FieldPart {
     SectionStart,
     LineStart,
     Name,
-    SpacesAfterName,
+    SpacesInName,
     BeforeValue,
     EmptyValueLf,
     AfterEmptyValue,
@@ -72,7 +72,7 @@ impl MessageParser {
         let mut step = self.parse_field_parts(&mut cursor, &mut part);
         if let Err(Stop::Short) = step {
             step = match part {
-                Name => self.keep_name(&mut cursor, 0),
+                Name | SpacesInName => self.keep_name(&mut cursor, 0),
                 Length | AfterLength | ElementStart | Word | AfterWord | OtherElement | Value => {
                     self.keep_value(&mut cursor, 0)
                 }
@@ -124,19 +124,21 @@ impl MessageParser {
                     if self.field == Field::Other {
                         return fail(ParseError::NameByte);
                     }
-                    self.keep_name(cursor, 1)?;
-                    self.tolerate(Lenient::HEADERS, ParseError::WhitespaceInName)?;
-                    SpacesAfterName
+                    if !self.allows(Lenient::HEADERS) {
+                        self.keep_name(cursor, 1)?;
+                        return fail(ParseError::WhitespaceInName);
+                    }
+                    SpacesInName
                 }
                 _ => return fail(ParseError::NameByte),
             },
-            SpacesAfterName => match cursor.skip_while(|byte| byte == b' ')? {
+            SpacesInName => match cursor.skip_while(|byte| byte == b' ')? {
                 b':' => {
-                    cursor.bump();
+                    self.keep_name(cursor, 1)?;
                     self.check_name()?;
                     BeforeValue
                 }
-                _ => return fail(ParseError::NameByte),
+                _ => Name,
             },
             BeforeValue => match cursor.skip_while(is_blank)? {
                 b'\r' => {
@@ -275,12 +277,7 @@ impl MessageParser {
                     cursor.bump();
                     ElementStart
                 }
-                b'\r' | b'\n' => Value,
-                _ => {
-                    // The rest of the list is not read.
-                    self.flags |= Flags::CONNECTION_CLOSE;
-                    Value
-                }
+                _ => Value,
             },
             Value => match cursor.skip(self.value_bytes)? {
                 b'\r' => {

@@ -89,21 +89,22 @@ const NO_BMI2: bool = false;
 #[inline(always)]
 fn bits_in(bits: u64, start: u32, end: u32, has_bmi2: bool) -> u32 {
     #[allow(clippy::indexing_slicing)] // Runs at compile time.
-    static BELOW: [u64; 256] = {
-        let mut masks = [u64::MAX; 256];
+    static BELOW: [u64; u64::BITS as usize] = {
+        let mut masks = [0; u64::BITS as usize];
         let mut i = 0;
-        while i < 64 {
+        while i < masks.len() {
             masks[i] = (1 << i) - 1;
             i += 1;
         }
         masks
     };
     debug_assert!(end < u64::BITS);
-    #[allow(clippy::indexing_slicing)] // A `u8` into 256 entries.
+    let end = end % u64::BITS;
+    #[allow(clippy::indexing_slicing)] // Reduced to the size of the table.
     let below_end = if cfg!(target_arch = "x86_64") && !has_bmi2 {
-        BELOW[usize::from(end as u8)]
+        BELOW[end as usize]
     } else {
-        (1 << (end % u64::BITS)) - 1
+        (1 << end) - 1
     };
     ((bits & below_end) >> (start % u64::BITS)) as u32
 }

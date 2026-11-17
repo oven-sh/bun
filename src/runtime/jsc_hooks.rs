@@ -101,6 +101,7 @@ pub(crate) struct RuntimeState {
     node_fs: JsCell<Option<crate::node::fs::NodeFS>>,
     /// Installed while `process.on("memoryPressure", ...)` has a listener.
     pub(crate) memory_pressure_watcher: crate::node::memory_pressure::WatcherSlot,
+    pub(crate) browsers: crate::webview::Browsers,
     /// `bun lint`: what runs the rules of JavaScript plugins in this VM.
     pub(crate) lint: core::cell::OnceCell<Box<crate::cli::lint_js::LintVm>>,
     /// The `uv_loop_t` that addons get for this VM. Stored inline because addons
@@ -157,7 +158,7 @@ fn try_timer_all() -> Option<&'static timer::All> {
     try_runtime_state().map(|state| &state.timer)
 }
 
-/// Per-VM lazy DNS resolver storage. Shared borrow only — c-ares callbacks
+/// Per-VM lazy DNS resolver storage. Shared borrow only — script can
 /// re-enter [`crate::dns_jsc::global_resolver`] while a `&Resolver` derived
 /// from this cell is live, so a `&mut` accessor would alias.
 #[inline]
@@ -321,6 +322,7 @@ fn init_runtime_state(vm: &VirtualMachine, opts: &InitOptions) -> OpaqueRuntimeS
         matcher_pass: Cell::new(ptr::null()),
         node_fs: JsCell::new(None),
         memory_pressure_watcher: Default::default(),
+        browsers: Default::default(),
         lint: core::cell::OnceCell::new(),
         #[cfg(unix)]
         uv_loop: crate::napi::uv_posix::UvLoop::new(vm.handle()),
@@ -1294,6 +1296,7 @@ fn stop_watches_for_vm_teardown(vm: &VirtualMachine) {
     if let Some(state) = try_runtime_state() {
         // Its poll is a slot of `RareData`, which is freed before the runtime state.
         state.memory_pressure_watcher.set(None);
+        state.browsers.release_for_vm_teardown();
     }
 }
 
@@ -1408,7 +1411,7 @@ unsafe fn disarm_all_timers_for_vm_teardown(_vm: *mut VirtualMachine) {
 /// `RuntimeHooks::stop_dns_for_vm_teardown` — destroy the per-VM global DNS
 /// resolver's c-ares channel now so its `ARES_EDESTRUCTION` and socket-state
 /// callbacks run while the JSC VM, `RareData.file_polls`, and `runtime_state`
-/// are all still live. See `Resolver::close_channel_for_terminate`.
+/// are all still live.
 fn stop_dns_for_vm_teardown() -> SweepResult {
     let Some(state) = try_runtime_state() else {
         return SweepResult::Idle;
@@ -4268,8 +4271,7 @@ pub(crate) fn resolve_embedded_file_to_buf(
 
     // Write to a unique scratch name, then atomically rename it into place.
     let mut scratch_buf = bun_paths::path_buffer_pool::get();
-    let scratch_name =
-        &*Fs::FileSystem::tmpname(extname, &mut scratch_buf[..], content_hash).ok()?;
+    let scratch_name = Fs::FileSystem::tmpname(extname, &mut scratch_buf[..], content_hash).ok()?;
 
     // 0600: the file persists, only the owning euid ever dlopens it, and the
     // embedded bytes may come from a binary that is not world-readable.

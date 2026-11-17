@@ -919,7 +919,7 @@ impl CronJob {
 
 - The struct is intrusively refcounted: `bun_ptr::CellRefCounted`, `RefCounted` or `ThreadSafeRefCounted`.
 - `mutates: true` is an error.
-- `construct` returns a `*mut Self`, whose ref the object takes over.
+- `construct` returns a `RefPtr<Self>`, which the object takes over.
 - The pointer in the object never changes and is never null. A class with a closed or detached state tracks it in a
   field of its own.
 - `finalize` runs before the object's ref is dropped. `Drop` runs when the last ref is dropped, which can be much later.
@@ -928,14 +928,14 @@ impl CronJob {
 
 Native callbacks have no capability. What they need to reach the JS object takes the global object:
 
-| Function                         | What it does                                        |
-| -------------------------------- | --------------------------------------------------- |
-| `js_CronJob::to_js(ptr, global)` | makes the object, which takes over the caller's ref |
-| `js_CronJob::from_js(&value)`    | the struct, if `value` is an instance               |
-| `js_CronJob::ref_from_js(value)` | the same, as a new `RefPtr`                         |
+| Function                         | What it does                                       |
+| -------------------------------- | -------------------------------------------------- |
+| `js_CronJob::to_js(job, global)` | makes the object, which takes over the `RefPtr`    |
+| `js_CronJob::wrap(job, global)`  | the same, as a `WrapperGuard`, to go on using both |
+| `js_CronJob::from_js(&value)`    | the struct, if `value` is an instance              |
+| `js_CronJob::ref_from_js(value)` | the same, as a new `RefPtr`                        |
 
-`CronJob::to_js_ptr(ptr, global)` is `to_js` as an `unsafe fn`, and `CronJob::to_js_nonnull(ptr, global)` takes a
-`NonNull`. The struct also implements `bun_jsc::JsClass`, so `value.as_class_ref::<CronJob>()` works. To get
+The struct also implements `bun_jsc::JsClass`, so `value.as_class_ref::<CronJob>()` works. To get
 back to its JS object the struct stores a `JsRef`, and calls `finalize()` on it from the class's `finalize`.
 
 ### Memory

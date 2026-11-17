@@ -87,9 +87,8 @@ pub fn z<'a>(input: &[u8], output: &'a mut PathBuffer) -> &'a ZStr {
     }
 
     output[..input.len()].copy_from_slice(input);
-    output[input.len()] = 0;
 
-    ZStr::from_buf(output, input.len())
+    ZStr::nul_terminate(output, input.len())
 }
 
 type IsSeparatorFunc = fn(char: u8) -> bool;
@@ -680,10 +679,7 @@ pub fn relative(from: &[u8], to: &[u8]) -> &'static [u8] {
 pub fn relative_buf_z<'a>(buf: &'a mut [u8], from: &[u8], to: &[u8]) -> &'a ZStr {
     let rel = relative_platform_buf::<platform::Auto, true>(buf, from, to);
     let len = rel.len();
-    // reshaped for borrowck — drop `rel` borrow before mutating buf
-    buf[len] = 0;
-    // SAFETY: buf[len] == 0 written above
-    ZStr::from_buf(&buf[..], len)
+    ZStr::nul_terminate(buf, len)
 }
 
 pub fn relative_platform_buf<'a, P: PlatformT, const ALWAYS_COPY: bool>(
@@ -1416,12 +1412,10 @@ pub fn normalize_buf<'a, P: PlatformT>(str: &[u8], buf: &'a mut [u8]) -> &'a mut
     normalize_buf_t::<u8, P>(str, buf)
 }
 
-pub fn normalize_buf_z<'a, P: PlatformT>(str: &[u8], buf: &'a mut [u8]) -> &'a mut ZStr {
+pub fn normalize_buf_z<'a, P: PlatformT>(str: &[u8], buf: &'a mut [u8]) -> &'a ZStr {
     let norm = normalize_buf_t::<u8, P>(str, buf);
     let len = norm.len();
-    buf[len] = 0;
-    // SAFETY: buf[len] == 0 written above
-    unsafe { ZStr::from_raw_mut(buf.as_mut_ptr(), len) }
+    ZStr::nul_terminate(buf, len)
 }
 
 /// [`normalize_buf`], `None` when the result does not fit `buf`.
@@ -1687,8 +1681,7 @@ pub fn join_z_buf<'a, P: PlatformT>(buf: &'a mut [u8], parts: &[&[u8]]) -> &'a Z
         let joined = join_string_buf::<P>(&mut buf[..buf_len - 1], parts);
         (joined.as_ptr() as usize - buf_base, joined.len())
     };
-    buf[start_offset + len] = 0;
-    ZStr::from_slice_with_nul(&buf[start_offset..=start_offset + len])
+    ZStr::nul_terminate(&mut buf[start_offset..], len)
 }
 
 pub fn join_string_buf<'a, P: PlatformT>(buf: &'a mut [u8], parts: &[&[u8]]) -> &'a [u8] {
@@ -1860,7 +1853,7 @@ pub fn join_abs_string_buf<'a, P: PlatformT>(
     buf: &'a mut [u8],
     parts: &[&[u8]],
 ) -> &'a [u8] {
-    _join_abs_string_buf::<false, P>(cwd, buf, parts)
+    _join_abs_string_buf::<P>(cwd, buf, parts)
 }
 
 /// Like `join_abs_string_buf`, but returns null when the *normalized* result is
@@ -1903,46 +1896,38 @@ pub fn join_abs_string_buf_z_checked<'a, P: PlatformT>(
     debug_assert!(!parts.is_empty());
     let cap = buf.len() - 1;
     let len = join_abs_string_buf_checked::<P>(cwd, &mut buf[..cap], parts)?.len();
-    buf[len] = 0;
-    Some(ZStr::from_buf(buf, len))
+    Some(ZStr::nul_terminate(buf, len))
 }
 
 pub fn join_abs_string_buf_z<'a, P: PlatformT>(
-    cwd: &'a [u8],
+    cwd: &[u8],
     buf: &'a mut [u8],
     parts: &[&[u8]],
 ) -> &'a ZStr {
-    let r = _join_abs_string_buf::<true, P>(cwd, buf, parts);
-    // SAFETY: IS_SENTINEL=true wrote NUL at r.len()
-    unsafe { ZStr::from_raw(r.as_ptr(), r.len()) }
+    // Without parts the result is `cwd`, which is not in `buf`.
+    assert!(!parts.is_empty());
+    let len = _join_abs_string_buf::<P>(cwd, buf, parts).len();
+    ZStr::nul_terminate(buf, len)
 }
 
-// We always return `&[u8]`; when `IS_SENTINEL` a NUL is written
-// at `result.len()` and callers (e.g. `join_abs_string_buf_z`) re-wrap as `ZStr`.
-fn _join_abs_string_buf<'a, const IS_SENTINEL: bool, P: PlatformT>(
+fn _join_abs_string_buf<'a, P: PlatformT>(
     _cwd: &'a [u8],
     buf: &'a mut [u8],
     _parts: &[&[u8]],
 ) -> &'a [u8] {
     if P::P == Platform::Windows || (cfg!(windows) && P::P == Platform::Loose) {
-        return join_abs_string_buf_windows::<IS_SENTINEL>(_cwd, buf, _parts);
+        return join_abs_string_buf_windows(_cwd, buf, _parts);
     }
 
     if P::P == Platform::Nt {
-        let end_path = join_abs_string_buf_windows::<IS_SENTINEL>(_cwd, &mut buf[4..], _parts);
+        let end_path = join_abs_string_buf_windows(_cwd, &mut buf[4..], _parts);
         let end_len = end_path.len();
         buf[0..4].copy_from_slice(b"\\\\?\\");
-        if IS_SENTINEL {
-            buf[end_len + 4] = 0;
-        }
         return &buf[0..end_len + 4];
     }
 
     let mut parts: &[&[u8]] = _parts;
     if parts.is_empty() {
-        if IS_SENTINEL {
-            unreachable!();
-        }
         return _cwd;
     }
 
@@ -1951,13 +1936,8 @@ fn _join_abs_string_buf<'a, const IS_SENTINEL: bool, P: PlatformT>(
         && parts[0].len() == 1
         && parts[0][0] == SEP_POSIX
     {
-        // A bare `b"/"` literal is NOT NUL-terminated and not in `buf`, breaking callers
-        // that assume buf-backing (`ZStr::from_raw`, trailing-slash check).
-        // Write into `buf` so the result is always buf-backed and sentinel-safe.
+        // Not a literal: callers expect the result at the start of `buf`.
         buf[0] = b'/';
-        if IS_SENTINEL {
-            buf[1] = 0;
-        }
         return &buf[0..1];
     }
 
@@ -2032,23 +2012,13 @@ fn _join_abs_string_buf<'a, const IS_SENTINEL: bool, P: PlatformT>(
     );
     let result_len = result.len();
 
-    if IS_SENTINEL {
-        buf[result_len + leading_len] = 0;
-    }
     &buf[0..result_len + leading_len]
 }
 
-fn join_abs_string_buf_windows<'a, const IS_SENTINEL: bool>(
-    cwd: &'a [u8],
-    buf: &'a mut [u8],
-    parts: &[&[u8]],
-) -> &'a [u8] {
+fn join_abs_string_buf_windows<'a>(cwd: &'a [u8], buf: &'a mut [u8], parts: &[&[u8]]) -> &'a [u8] {
     debug_assert!(crate::is_absolute_windows(cwd));
 
     if parts.is_empty() {
-        if IS_SENTINEL {
-            unreachable!();
-        }
         return cwd;
     }
 
@@ -2140,9 +2110,6 @@ fn join_abs_string_buf_windows<'a, const IS_SENTINEL: bool>(
     let result = normalize_string_buf::<false, platform::Windows, true>(&temp_buf[0..out], buf);
     let result_len = result.len();
 
-    if IS_SENTINEL {
-        buf[result_len] = 0;
-    }
     &buf[0..result_len]
 }
 
@@ -2456,10 +2423,8 @@ impl PosixToWinNormalizer {
                     buf[0..source_root.len()].copy_from_slice(source_root);
                     buf[source_root.len()..source_root.len() + mp.len() - 1]
                         .copy_from_slice(&mp[1..]);
-                    buf[source_root.len() + mp.len() - 1] = 0;
                     let len = source_root.len() + mp.len() - 1;
-                    // SAFETY: NUL written at buf[len]
-                    let res = ZStr::from_buf(&buf[..], len);
+                    let res = ZStr::nul_terminate(buf, len);
                     debug_assert!(
                         !strings::is_windows_absolute_path_missing_drive_letter::<u8>(
                             res.as_bytes()
@@ -2526,7 +2491,7 @@ impl PosixToWinNormalizer {
     pub fn resolve_cwd_with_external_buf_z<'a>(
         buf: &'a mut PathBuffer,
         maybe_posix_path: &[u8],
-    ) -> crate::Result<&'a mut ZStr> {
+    ) -> crate::Result<&'a ZStr> {
         debug_assert!(crate::is_absolute_windows(maybe_posix_path));
 
         #[cfg(windows)]
@@ -2549,10 +2514,8 @@ impl PosixToWinNormalizer {
                     }
                     buf[sr_len..sr_len + maybe_posix_path.len() - 1]
                         .copy_from_slice(&maybe_posix_path[1..]);
-                    buf[sr_len + maybe_posix_path.len() - 1] = 0;
                     let len = sr_len + maybe_posix_path.len() - 1;
-                    // SAFETY: NUL at buf[len]
-                    let res = unsafe { ZStr::from_raw_mut(buf.as_mut_ptr(), len) };
+                    let res = ZStr::nul_terminate(buf, len);
                     debug_assert!(
                         !strings::is_windows_absolute_path_missing_drive_letter::<u8>(
                             res.as_bytes()
@@ -2571,9 +2534,7 @@ impl PosixToWinNormalizer {
             return Err(crate::Error::Sys(bun_errno::SystemErrno::ENAMETOOLONG));
         }
         buf[..maybe_posix_path.len()].copy_from_slice(maybe_posix_path);
-        buf[maybe_posix_path.len()] = 0;
-        // SAFETY: NUL at buf[maybe_posix_path.len()]
-        Ok(unsafe { ZStr::from_raw_mut(buf.as_mut_ptr(), maybe_posix_path.len()) })
+        Ok(ZStr::nul_terminate(buf, maybe_posix_path.len()))
     }
 }
 

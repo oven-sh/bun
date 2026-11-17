@@ -783,7 +783,7 @@ fn diff_against_cache(
         &from_cwd(cwd.as_bytes(), old_folder),
         &from_cwd(cwd.as_bytes(), new_folder),
     );
-    let spawned = bun_patch::spawn_git_diff(&paths[0], &paths[1], cwd, git, &manager.event_loop);
+    let spawned = bun_patch::spawn_git_diff(&paths[0], &paths[1], cwd, git, manager.event_loop);
     let mut spawn_result = match spawned {
         Err(e) => {
             bun_core::pretty_error!("<r><red>error<r>: failed to make diff {}<r>\n", e.name(),);

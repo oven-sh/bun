@@ -1123,8 +1123,7 @@ fn absolute_key<'a>(name: &[u8], buffer: &'a mut PathBuffer) -> Option<&'a ZStr>
     if cfg!(not(windows)) && name.len() < buffer.len() && is_normalized_posix_path(name) {
         let length = name.strip_suffix(b"/").unwrap_or(name).len();
         buffer[..length].copy_from_slice(&name[..length]);
-        buffer[length] = 0;
-        return Some(ZStr::from_buf(&buffer[..], length));
+        return Some(ZStr::nul_terminate(buffer, length));
     }
     let mut working_directory = path_buffer_pool::get();
     // On Windows an absolute name can still take its drive from the working directory.
@@ -1136,8 +1135,7 @@ fn absolute_key<'a>(name: &[u8], buffer: &'a mut PathBuffer) -> Option<&'a ZStr>
     };
     if cfg!(not(windows)) {
         let length = join_posix_key(base, name, buffer)?;
-        buffer[length] = 0;
-        return Some(ZStr::from_buf(&buffer[..], length));
+        return Some(ZStr::nul_terminate(buffer, length));
     }
     let joined = resolve_path::join_abs_string_buf_z_checked::<platform::Auto>(
         base,
@@ -1149,8 +1147,7 @@ fn absolute_key<'a>(name: &[u8], buffer: &'a mut PathBuffer) -> Option<&'a ZStr>
     while length > 0 && buffer[length - 1] == b'/' {
         length -= 1;
     }
-    buffer[length] = 0;
-    Some(ZStr::from_buf(&buffer[..], length))
+    Some(ZStr::nul_terminate(buffer, length))
 }
 
 fn is_shared_library_name(name: &[u8]) -> bool {
@@ -1170,31 +1167,22 @@ fn is_shared_library_name(name: &[u8]) -> bool {
 const ALIGNMENT_OF_PROGRAMS: usize = 64 * 1024;
 
 #[cfg(unix)]
-fn reserve_range_of_programs(size: usize) -> Option<usize> {
-    let size = size + ALIGNMENT_OF_PROGRAMS;
-    // SAFETY: a new mapping, which nothing else refers to.
-    let range = unsafe {
-        libc::mmap(
-            core::ptr::null_mut(),
-            size,
-            libc::PROT_NONE,
-            libc::MAP_PRIVATE | libc::MAP_ANON,
-            -1,
-            0,
-        )
-    };
-    (range != libc::MAP_FAILED).then(|| (range as usize).next_multiple_of(ALIGNMENT_OF_PROGRAMS))
-}
-
-#[cfg(unix)]
 fn load_graph_file_at_its_address(descriptor: Fd, offset: usize, size: usize) -> Option<*mut u8> {
-    let address = reserve_range_of_programs(size)?;
+    let reserved = bun_sys::Mmap::new(
+        size + ALIGNMENT_OF_PROGRAMS,
+        libc::PROT_NONE,
+        libc::MAP_PRIVATE | libc::MAP_ANON,
+        Fd::from_native(-1),
+        0,
+    );
+    let reserved: *mut u8 = reserved.ok()?.into_raw().as_ptr().cast();
+    let address = reserved.map_addr(|it| it.next_multiple_of(ALIGNMENT_OF_PROGRAMS));
     let (access, flags) = (
         libc::PROT_READ | libc::PROT_WRITE,
         libc::MAP_PRIVATE | libc::MAP_FIXED,
     );
-    let address = address as *mut u8;
-    bun_sys::mmap(address, size, access, flags, descriptor, offset as _).ok()
+    // SAFETY: the pages of the `size` bytes at `address` lie in what was reserved, to which nothing else refers.
+    unsafe { bun_sys::mmap(address, size, access, flags, descriptor, offset as _) }.ok()
 }
 
 #[cfg(windows)]
@@ -1331,25 +1319,7 @@ fn reopen_at(fd: Fd, path: &ZStr, is_meant: impl FnOnce() -> bool) -> Maybe<bool
         return Ok(false);
     }
     // With FD_CLOEXEC from the start, so that a child of that moment has it no longer than it would have.
-    #[cfg(any(target_os = "linux", target_os = "android"))]
-    {
-        // For Android, libc has the number of the call alone.
-        let (from, to) = (opened.native(), fd.native());
-        // SAFETY: both are descriptors of this process.
-        let moved = unsafe { libc::syscall(libc::SYS_dup3, from, to, libc::O_CLOEXEC) };
-        match moved {
-            -1 => Err(bun_sys::Error::from_code(
-                bun_sys::E::EIO,
-                bun_sys::Tag::dup,
-            )),
-            _ => Ok(true),
-        }
-    }
-    #[cfg(not(any(target_os = "linux", target_os = "android")))]
-    {
-        bun_sys::dup2(opened, fd)?;
-        bun_sys::set_close_on_exec(fd).map(|()| true)
-    }
+    bun_sys::dup2_close_on_exec(opened, fd).map(|()| true)
 }
 
 impl StandaloneModuleGraph {

@@ -14,8 +14,10 @@ use crate::array_buffer::MarkedArrayBuffer_deallocator;
 use crate::{
     AnyPromise, ArrayBuffer, BuiltinName, JSArrayIterator, JSGlobalObject, JSInternalPromise,
     JSObject, JSPromise, JSString, JSStringView, JSType, JsClass, JsError, JsResult,
-    StringJsc as _, WrapperGuard, ZigException, bun_string_jsc, ffi, host_fn,
+    StringJsc as _, WrapperGuard, ZigException, bun_string_jsc, host_fn,
 };
+
+const DOUBLE_ENCODE_OFFSET: i64 = 1 << 49;
 
 /// ABI-compatible with `EncodedJSValue` (`#[repr(transparent)]` over the
 /// encoded 64-bit word, `Copy`, `!Send`).
@@ -474,7 +476,6 @@ impl JSValue {
     /// must see the original bit pattern (e.g. [`from_ptr_address`]).
     #[inline]
     pub fn js_double_number(n: f64) -> JSValue {
-        const DOUBLE_ENCODE_OFFSET: i64 = 1i64 << 49;
         JSValue::from_raw((n.to_bits() as i64).wrapping_add(DOUBLE_ENCODE_OFFSET))
     }
     pub fn js_empty_string(global: &JSGlobalObject) -> JSValue {
@@ -541,52 +542,27 @@ impl JSValue {
         crate::mark_binding!();
         host_fn::from_js_host_call(global, || JSBuffer__bufferFromLength(global, len as i64))
     }
-    /// Wraps `slice` (mimalloc-owned; ownership moves to JSC, freed via
-    /// `MarkedArrayBuffer_deallocator`) in a Node `Buffer`. Fails like any JS
-    /// allocation: OOM, or a termination request landing in it.
-    pub fn create_buffer(global: &JSGlobalObject, slice: &mut [u8]) -> JsResult<JSValue> {
-        // SAFETY: `global` is live; slice ptr/len describe a valid range whose
-        // ownership is transferred to JSC (freed via the deallocator).
+    /// A Node `Buffer` that owns `bytes`. Fails like any JS allocation: OOM, or a termination.
+    pub fn create_buffer(global: &JSGlobalObject, bytes: Vec<u8>) -> JsResult<JSValue> {
+        let is_allocated = bytes.capacity() > 0;
+        let bytes = bytes.leak();
+        // SAFETY: a block of the default allocator, which the deallocator frees, or nothing at all.
         host_fn::from_js_host_call(global, || unsafe {
             JSBuffer__bufferFromPointerAndLengthAndDeinit(
                 global,
-                slice.as_mut_ptr(),
-                slice.len(),
+                bytes.as_mut_ptr(),
+                bytes.len(),
                 core::ptr::null_mut(),
-                if slice.is_empty() {
-                    None
-                } else {
+                if is_allocated {
                     Some(MarkedArrayBuffer_deallocator)
+                } else {
+                    None
                 },
             )
         })
     }
-    /// Take ownership of a mimalloc-backed `Box<[u8]>` and wrap it in a Node
-    /// `Buffer` without copying. Ownership transfers to JSC; freed via
-    /// `MarkedArrayBuffer_deallocator` on GC. Prefer this over `Box::leak` +
-    /// [`JSValue::create_buffer`] so the FFI hand-off is explicit at call sites.
     pub fn create_buffer_from_box(global: &JSGlobalObject, bytes: Box<[u8]>) -> JsResult<JSValue> {
-        let len = bytes.len();
-        // `into_raw` (not `leak`) — this is an FFI ownership transfer, paired
-        // with `mi_free` in `MarkedArrayBuffer_deallocator`. An empty
-        // `Box<[u8]>` has no backing allocation, so the `None` arm leaks
-        // nothing.
-        let ptr = bun_core::heap::into_raw(bytes).cast::<u8>();
-        // SAFETY: `global` is live; `ptr`/`len` describe the just-released
-        // mimalloc allocation whose ownership is transferred to JSC.
-        host_fn::from_js_host_call(global, || unsafe {
-            JSBuffer__bufferFromPointerAndLengthAndDeinit(
-                global,
-                ptr,
-                len,
-                core::ptr::null_mut(),
-                if len == 0 {
-                    None
-                } else {
-                    Some(MarkedArrayBuffer_deallocator)
-                },
-            )
-        })
+        Self::create_buffer(global, bytes.into_vec())
     }
     /// `JSValue.createBufferWithCtx` — wrap a foreign-owned byte
     /// range in a Node `Buffer`, transferring ownership to JS. `free(ptr, ctx)`
@@ -668,7 +644,7 @@ impl JSValue {
     pub fn as_double(self) -> f64 {
         debug_assert!(self.is_double());
         // Subtract DoubleEncodeOffset, bitcast to f64.
-        f64::from_bits((self.0 as i64).wrapping_sub(ffi::DOUBLE_ENCODE_OFFSET) as u64)
+        f64::from_bits((self.0 as i64).wrapping_sub(DOUBLE_ENCODE_OFFSET) as u64)
     }
     /// Asserts this is a number, undefined, null, or a boolean.
     pub fn as_number(self) -> f64 {
@@ -1605,6 +1581,18 @@ impl JSValue {
         if self.has_nobody_to_call(global) {
             return Ok(JSValue::UNDEFINED);
         }
+        self.call_for_running_script(global, this_value, args)
+    }
+
+    /// As [`call`](Self::call), for a host function that calls back before it returns: its caller is listening.
+    #[inline]
+    #[track_caller]
+    pub fn call_for_running_script(
+        self,
+        global: &JSGlobalObject,
+        this_value: JSValue,
+        args: &[JSValue],
+    ) -> JsResult<JSValue> {
         host_fn::from_js_host_call(global, || {
             // SAFETY: `global` is live; `args` is a contiguous slice of valid
             // JSValues for the duration of the call.

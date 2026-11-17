@@ -15,7 +15,7 @@ use core::ffi::{c_int, c_uint, c_void};
 use core::mem::size_of;
 use core::ptr::NonNull;
 
-use bun_core::{Fd, ZStr};
+use bun_core::{Fd, ZBox, ZStr};
 
 #[cfg(windows)]
 use crate::WindowsNamedPipe;
@@ -797,19 +797,13 @@ impl<const IS_SSL: bool> NewSocketHandler<IS_SSL> {
         let host = bun_core::ip_address::strip_ipv6_brackets(raw_host);
         // SocketGroup.connect needs a NUL-terminated host.
         let mut stack = [0u8; 256];
-        let heap: Vec<u8>;
-        let host_z: &core::ffi::CStr = if host.len() < stack.len() {
+        let heap: ZBox;
+        let host_z: &ZStr = if host.len() < stack.len() {
             stack[..host.len()].copy_from_slice(host);
-            stack[host.len()] = 0;
-            ZStr::from_buf(&stack, host.len()).as_cstr()
+            ZStr::nul_terminate(&mut stack, host.len())
         } else {
-            heap = {
-                let mut v = Vec::with_capacity(host.len() + 1);
-                v.extend_from_slice(host);
-                v.push(0);
-                v
-            };
-            ZStr::from_slice_with_nul(&heap).as_cstr()
+            heap = ZBox::from_bytes(host);
+            &heap
         };
 
         // The dispatch trampolines read the ext slot as `Option<NonNull<_>>`
@@ -972,6 +966,5 @@ impl AnySocket {
         fn shutdown(&self);
         fn shutdown_read(&self);
         fn local_port(&self) -> Option<u16>;
-        fn get_native_handle(&self) -> Option<*mut c_void>;
     }
 }

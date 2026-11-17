@@ -102,6 +102,7 @@ const classesWithConstructor = [
   "%FrameworkFileSystemRouter%",
   "%H2FrameParser%",
   "%HTMLRewriter%",
+  "%HTTPParser%",
   "%Histogram%",
   "%Image%",
   "%Immediate%",

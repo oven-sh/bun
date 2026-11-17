@@ -144,17 +144,6 @@ impl uv_buf_t {
             base: input.as_ptr().cast_mut(),
         }
     }
-    #[inline]
-    pub fn slice(&self) -> &[u8] {
-        // `from_raw_parts` requires non-null, aligned even for len==0.
-        // libuv routinely hands back `{len:0, base:NULL}` (declined alloc_cb,
-        // `uv_buf_init(NULL,0)`), so guard the empty/null case explicitly.
-        if self.len == 0 || self.base.is_null() {
-            return &[];
-        }
-        // SAFETY: caller-supplied (base, len); valid for the buffer's lifetime.
-        unsafe { core::slice::from_raw_parts(self.base, self.len as usize) }
-    }
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -1673,6 +1662,12 @@ impl Process {
     }
 }
 
+/// `TerminateProcess` from any thread. 0 is this process.
+pub fn terminate(pid: uv_pid_t) -> ReturnCode {
+    // SAFETY: integers only. Only `SIGQUIT` enters DbgHelp, which is for one thread at a time.
+    unsafe { uv_kill(pid, 9) }
+}
+
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub union uv_stdio_container_data {
@@ -2804,6 +2799,7 @@ unsafe extern "C" {
         options: *const uv_process_options_t,
     ) -> ReturnCode;
     pub fn uv_process_kill(handle: *mut Process, signum: c_int) -> ReturnCode;
+    fn uv_kill(pid: uv_pid_t, signum: c_int) -> ReturnCode;
 
     // misc
     pub fn uv_uptime(uptime: *mut f64) -> c_int;

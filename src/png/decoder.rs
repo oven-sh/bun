@@ -526,6 +526,16 @@ fn read_pixels<'a>(
     Ok(image)
 }
 
+/// Inlined, the loop is short of registers.
+#[inline(never)]
+fn scatter(pixels: &[Rgba], places: &mut [Rgba], step: usize) {
+    for (place, from) in places.chunks_mut(step).zip(pixels) {
+        if let Some(to) = place.first_mut() {
+            *to = *from;
+        }
+    }
+}
+
 fn read_any_layout(
     header: Header,
     expander: &Expander,
@@ -591,13 +601,9 @@ fn read_any_layout(
                 expander.expand_row(row, image_row);
             } else {
                 expander.expand_row(row, &mut pass_rgba);
-                let places = image_row.as_chunks_mut::<4>().0.get_mut(pass.x_start..);
-                let places = places.unwrap_or_default().chunks_mut(pass.x_step);
-                for (place, from) in places.zip(pass_rgba.as_chunks().0) {
-                    if let Some(to) = place.first_mut() {
-                        *to = *from;
-                    }
-                }
+                let places = image_row.as_chunks_mut().0.get_mut(pass.x_start..);
+                let places = places.unwrap_or_default();
+                scatter(pass_rgba.as_chunks().0, places, pass.x_step);
             }
             core::mem::swap(&mut line, &mut line_above);
         }

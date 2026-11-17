@@ -116,6 +116,9 @@ mod handshake {
         requests: &[&[u8]],
     ) -> (Handshake, Result<bool, Error>) {
         let mut handshake = dialing(mode, binding);
+        if mode != SSLMode::Disable {
+            handshake.request_tls(<[u8]>::len);
+        }
         handshake.send_startup(&mut Vec::new()).unwrap();
         let mut last = Ok(false);
         for request in requests {
@@ -153,7 +156,7 @@ mod handshake {
     }
 
     #[test]
-    fn what_a_server_cannot_get_away_with() {
+    fn a_bad_server_first_message_is_refused() {
         let server_first = |text: &str| [b"\0\0\0\x0b", text.as_bytes()].concat();
         let nonce = "r=AAAAAAAAAAAAAAAAAAserver";
         for (text, error) in [
@@ -179,14 +182,26 @@ mod handshake {
             assert_eq!(result, Err(error), "{text}");
             assert!(handshake.in_sasl());
         }
+    }
+
+    #[test]
+    fn a_short_signature_is_a_mismatch() {
         for signature in [&FINAL[..5], &FINAL[..6], &FINAL[..FINAL.len() - 1]] {
             let (_, result) = login(SSLMode::Disable, Prefer, &[SASL, CONTINUE, signature]);
             assert_eq!(result, Err(Error::SASL_SIGNATURE_MISMATCH));
         }
+    }
+
+    #[test]
+    fn required_binding_refuses_every_method_without_tls() {
         for request in [OK, CLEARTEXT, MD5, SASL, SASL_PLUS] {
             let (_, result) = login(SSLMode::Disable, Require, &[request]);
             assert_eq!(result, Err(Error::ChannelBindingRequired));
         }
+    }
+
+    #[test]
+    fn plus_without_tls_is_refused_where_tls_was_asked_for() {
         for (mode, binding, result) in [
             (SSLMode::Prefer, Prefer, Err(Error::ChannelBindingFailed)),
             (SSLMode::Prefer, Disable, Ok(true)),
@@ -194,6 +209,10 @@ mod handshake {
         ] {
             assert_eq!(login(mode, binding, &[SASL_PLUS]).1, result);
         }
+    }
+
+    #[test]
+    fn a_request_of_the_wrong_length_is_refused() {
         for request in [&OK[..3], b"\0\0\0\0x", &MD5[..7], &SASL[..4], &FINAL[..4]] {
             let (_, result) = login(SSLMode::Disable, Prefer, &[request]);
             assert_eq!(result, Err(Error::InvalidMessageLength));
@@ -226,11 +245,19 @@ mod handshake {
         use SSLMode::*;
         for mode in [Prefer, Require, VerifyCa, VerifyFull] {
             let mut handshake = dialing(mode, ChannelBinding::Prefer);
+            let mut out = Vec::new();
+            handshake.send_startup(&mut out).unwrap();
+            handshake.send_cancel(&[0; 16], &mut out);
+            assert!(out.is_empty());
+            handshake.request_tls(<[u8]>::len);
             let reply = handshake.on_ssl_reply(b'N').map_err(|it| it.error);
             let refused = (mode != Prefer).then_some(Error::TLSNotAvailable);
             assert_eq!(reply.err(), refused);
             let reply = handshake.on_ssl_reply(b'E').map_err(|it| it.error);
             assert_eq!(reply, Err(Error::UnexpectedMessage));
+            handshake.send_startup(&mut out).unwrap();
+            handshake.send_cancel(&[0; 16], &mut out);
+            assert_eq!(out.is_empty(), mode != Prefer);
         }
     }
 
@@ -244,7 +271,11 @@ mod handshake {
 
         let (mut handshake, _) = login(SSLMode::Disable, Prefer, &[SASL]);
         handshake.close();
+        let mut out = Vec::new();
         handshake.request_tls(|_| unreachable!());
+        handshake.send_startup(&mut out).unwrap();
+        handshake.send_cancel(&[0; 16], &mut out);
+        assert!(out.is_empty() && handshake.on_ssl_reply(b'S').is_err());
         assert!(handshake.on_ready_for_query().is_err());
         assert!(matches!(handshake.phase(), Phase::Closed { in_sasl: true }));
     }
@@ -252,9 +283,37 @@ mod handshake {
 
 mod requests {
     use super::*;
+    use ErrorKind::{Canceled, Other, StaleStatement};
+    use Read::*;
+    use Wrote::*;
 
     type Statement = RefPtr<pipeline::Statement<(), ()>>;
     type Pipeline = pipeline::Pipeline<Rc<char>, (), ()>;
+
+    #[derive(Clone, Copy, Debug)]
+    enum Read {
+        ParseComplete,
+        Parameters,
+        Columns,
+        NoData,
+        BindComplete,
+        CommandComplete,
+    }
+
+    #[derive(Debug, PartialEq)]
+    enum Wrote {
+        Query,
+        Bind,
+        Parse,
+        ParseBind,
+        CloseParse,
+        CloseParseBind,
+        /// It is rejected in the place of being written.
+        Never,
+    }
+
+    const DESCRIBED: &[Read] = &[ParseComplete, Parameters, Columns];
+    const EXECUTED: &[Read] = &[BindComplete, CommandComplete];
 
     fn named(parameters: usize) -> Statement {
         pipeline::Statement::new(Some(0), vec![0; parameters].into(), ())
@@ -264,7 +323,6 @@ mod requests {
         let request = Rc::new(name);
         let protocol = Protocol::Extended {
             describe_first: !statement.declared.is_empty(),
-            retried: false,
         };
         pipeline.push(Rc::clone(&request), statement.clone(), protocol);
         request
@@ -277,85 +335,100 @@ mod requests {
         request
     }
 
-    /// `a:PB` for each request that is written, `a:-` for one that is dropped.
-    fn advance(pipeline: &mut Pipeline) -> String {
+    fn advance(pipeline: &mut Pipeline) -> Vec<(char, Wrote)> {
         let mut wire = Vec::new();
         while let Some((next, step)) = pipeline.next(0) {
             let request = Rc::clone(&next.request);
-            let messages = match step {
-                None => "-",
-                Some(Step::Query) => "Q",
-                Some(Step::Bind) => "B",
-                Some(Step::Parse { close, bind }) => {
-                    ["P", "PB", "CP", "CPB"][usize::from(close) * 2 + usize::from(bind)]
-                }
+            let wrote = match step {
+                None => Never,
+                Some(Step::Query) => Query,
+                Some(Step::Bind) => Bind,
+                Some(Step::Parse { close, bind }) => match (close, bind) {
+                    (false, false) => Parse,
+                    (false, true) => ParseBind,
+                    (true, false) => CloseParse,
+                    (true, true) => CloseParseBind,
+                },
             };
-            wire.push(format!("{request}:{messages}"));
+            wire.push((*request, wrote));
             match step {
                 Some(step) => assert!(pipeline.wrote(&request, step)),
                 None => assert!(pipeline.unqueue(&request).is_some()),
             }
         }
-        wire.join(" ")
+        wire
     }
 
-    /// The requests that the messages end.
-    fn read(pipeline: &mut Pipeline, messages: &str) -> String {
-        let mut ended = String::new();
-        for message in messages.chars() {
+    fn read(pipeline: &mut Pipeline, messages: &[Read]) {
+        for message in messages {
             match message {
-                '1' => pipeline.on_parse_complete().unwrap(),
-                't' => pipeline.on_parameter_description([25].into()).unwrap(),
-                'T' => pipeline.on_row_description().unwrap(),
-                '2' | 'n' => pipeline.on_bind_complete().unwrap(),
-                'C' => {
-                    pipeline.executed().unwrap().unwrap();
-                    pipeline.on_result();
-                }
-                'Z' => ended.extend(pipeline.on_ready_for_query(b'I').map(|it| *it.request)),
-                _ => unreachable!(),
+                ParseComplete => pipeline.on_parse_complete(),
+                Parameters => pipeline.on_parameter_description([25].into()),
+                Columns => pipeline.on_row_description(),
+                NoData | BindComplete => pipeline.on_bind_complete(),
+                CommandComplete => pipeline.on_result(),
             }
+            .unwrap();
         }
-        ended
+    }
+
+    /// The request that a ReadyForQuery ends.
+    fn ready(pipeline: &mut Pipeline) -> Option<char> {
+        pipeline.on_ready_for_query(b'I').map(|it| *it.request)
+    }
+
+    fn error(pipeline: &mut Pipeline, kind: ErrorKind) -> OnError {
+        pipeline.on_error(kind, (), |_| named(0)).unwrap().1
     }
 
     fn prepared(pipelining: bool) -> (Pipeline, Statement) {
         let (mut pipeline, statement) = (Pipeline::new(pipelining), named(0));
         push(&mut pipeline, '_', &statement);
         advance(&mut pipeline);
-        read(&mut pipeline, "1tT2CZ");
+        read(&mut pipeline, &[DESCRIBED, EXECUTED].concat());
+        ready(&mut pipeline);
         (pipeline, statement)
     }
 
     #[test]
     fn what_is_written_behind_what() {
-        let (mut pipeline, statement) = (Pipeline::new(true), named(1));
-        for name in ['a', 'b'] {
-            push(&mut pipeline, name, &statement);
-        }
-        push_simple(&mut pipeline, 'c');
-        push(&mut pipeline, 'd', &statement);
-        assert_eq!(advance(&mut pipeline), "a:P");
-        assert!(pipeline.executed().is_err());
-        for (messages, ended, written) in [
-            ("1tT", "", ""),
-            ("Z", "", "a:B b:B"),
-            ("2CZ", "a", ""),
-            ("2CZ", "b", "c:Q"),
-            ("TCTC", "", ""),
-            ("Z", "c", "d:B"),
-            ("Z", "", ""),
-            ("2CZ", "d", ""),
-        ] {
-            assert_eq!(read(&mut pipeline, messages), ended);
-            assert_eq!(advance(&mut pipeline), written);
-        }
-        assert!(!pipeline.is_busy());
+        let (pipeline, statement) = (&mut Pipeline::new(true), named(1));
+        push(pipeline, 'a', &statement);
+        push(pipeline, 'b', &statement);
+        push_simple(pipeline, 'c');
+        push(pipeline, 'd', &statement);
 
+        assert_eq!(advance(pipeline), [('a', Parse)]);
+        assert!(pipeline.executed().is_err());
+        read(pipeline, DESCRIBED);
+        assert_eq!(advance(pipeline), []);
+        assert_eq!(ready(pipeline), None);
+        assert_eq!(advance(pipeline), [('a', Bind), ('b', Bind)]);
+
+        read(pipeline, EXECUTED);
+        assert_eq!(ready(pipeline), Some('a'));
+        assert_eq!(advance(pipeline), []);
+        read(pipeline, EXECUTED);
+        assert_eq!(ready(pipeline), Some('b'));
+        assert_eq!(advance(pipeline), [('c', Query)]);
+
+        read(pipeline, &[Columns, CommandComplete]);
+        assert_eq!(advance(pipeline), []);
+        assert_eq!(ready(pipeline), Some('c'));
+        assert_eq!(advance(pipeline), [('d', Bind)]);
+
+        assert_eq!(ready(pipeline), None, "it answers nothing");
+        read(pipeline, EXECUTED);
+        assert_eq!(ready(pipeline), Some('d'));
+        assert!(!pipeline.is_busy());
+    }
+
+    #[test]
+    fn a_bind_waits_without_pipelining_or_without_room() {
         let (mut pipeline, statement) = prepared(false);
         push(&mut pipeline, 'a', &statement);
         push(&mut pipeline, 'b', &statement);
-        assert_eq!(advance(&mut pipeline), "a:B");
+        assert_eq!(advance(&mut pipeline), [('a', Bind)]);
 
         let (mut pipeline, statement) = prepared(true);
         push(&mut pipeline, 'a', &statement);
@@ -364,72 +437,88 @@ mod requests {
         assert!(pipeline.next(MAX_PIPELINE_SIZE).is_none());
     }
 
+    /// What the cache does with `statement`, and what the next request that runs it writes.
+    fn after_error(statement: &Statement, before: &[Read], kind: ErrorKind) -> (Cached, Wrote) {
+        let pipeline = &mut Pipeline::new(true);
+        push(pipeline, 'a', statement);
+        advance(pipeline);
+        read(pipeline, before);
+        let OnError::Fail { keep_error, cached } = error(pipeline, kind) else {
+            panic!("retried");
+        };
+        assert!(keep_error && pipeline.in_transaction());
+        push(pipeline, 'b', statement);
+        assert_eq!(ready(pipeline), Some('a'));
+        (cached, advance(pipeline).remove(0).1)
+    }
+
     #[test]
-    fn what_an_error_makes_of_the_statement() {
-        use ErrorKind::{Canceled, Other};
-        for (parameters, before, kind, expected, next) in [
-            (0, "", Canceled, "Keep", "b:PB"),
-            (0, "", Other, "Forget", "b:-"),
-            (0, "1", Canceled, "Keep", "b:CPB"),
-            (0, "1t", Other, "Close", "b:-"),
-            (0, "1tT", Other, "Keep", "b:B"),
-            (0, "1tn", Canceled, "Keep", "b:B"),
-            (1, "", Canceled, "Keep", "b:P"),
-            (1, "1", Canceled, "Keep", "b:CP"),
-            (1, "1", Other, "Close", "b:-"),
-            (1, "1t", Canceled, "Keep", "b:CP"),
-            (1, "1tT", Canceled, "Keep", "b:B"),
+    fn what_an_error_makes_of_a_statement_without_parameters() {
+        use Cached::{Close, Forget, Keep};
+        for (before, kind, expected) in [
+            (&[][..], Canceled, (Keep, ParseBind)),
+            (&[], Other, (Forget, Never)),
+            (&[ParseComplete], Canceled, (Keep, CloseParseBind)),
+            (&[ParseComplete, Parameters], Other, (Close, Never)),
+            (&[ParseComplete, Parameters, Columns], Other, (Keep, Bind)),
+            (&[ParseComplete, Parameters, NoData], Canceled, (Keep, Bind)),
         ] {
-            let (mut pipeline, statement) = (Pipeline::new(true), named(parameters));
-            push(&mut pipeline, 'a', &statement);
-            advance(&mut pipeline);
-            read(&mut pipeline, before);
-            let OnError::Fail { keep_error, cached } = pipeline.on_error(kind, ()) else {
-                panic!("retried after {before}");
-            };
-            let cached = match cached {
-                Cached::Keep => "Keep",
-                Cached::Forget => "Forget",
-                Cached::Close => "Close",
-            };
-            assert!(keep_error && pipeline.in_transaction());
-            push(&mut pipeline, 'b', &statement);
-            assert_eq!(read(&mut pipeline, "Z"), "a");
-            assert_eq!(
-                (cached, &*advance(&mut pipeline)),
-                (expected, next),
-                "{parameters} {before}"
-            );
+            assert_eq!(after_error(&named(0), before, kind), expected, "{before:?}");
         }
     }
 
     #[test]
-    fn a_stale_statement_is_retried_once_unless_it_was_cancelled() {
-        let is_retried = |pipeline: &mut Pipeline| {
-            let outcome = pipeline.on_error(ErrorKind::StaleStatement, ());
-            matches!(outcome, OnError::Retry)
-        };
+    fn what_an_error_makes_of_a_statement_with_a_parameter() {
+        use Cached::{Close, Keep};
+        for (before, kind, expected) in [
+            (&[][..], Canceled, (Keep, Parse)),
+            (&[ParseComplete], Canceled, (Keep, CloseParse)),
+            (&[ParseComplete], Other, (Close, Never)),
+            (&[ParseComplete, Parameters], Canceled, (Keep, CloseParse)),
+            (
+                &[ParseComplete, Parameters, Columns],
+                Canceled,
+                (Keep, Bind),
+            ),
+        ] {
+            assert_eq!(after_error(&named(1), before, kind), expected, "{before:?}");
+        }
+    }
+
+    #[test]
+    fn a_stale_statement_is_retried_once() {
         let (mut pipeline, statement) = prepared(true);
         push(&mut pipeline, 'a', &statement);
         advance(&mut pipeline);
-        assert!(is_retried(&mut pipeline) && !pipeline.retry(named(0)));
-        assert_eq!(advance(&mut pipeline) + &read(&mut pipeline, "Z"), "");
-        assert_eq!(advance(&mut pipeline), "a:PB");
-        read(&mut pipeline, "1tT");
-        assert!(!is_retried(&mut pipeline));
+        let outcome = error(&mut pipeline, StaleStatement);
+        assert!(matches!(outcome, OnError::Retry { cancelled: false }));
+        assert_eq!(advance(&mut pipeline), []);
+        assert_eq!(ready(&mut pipeline), None);
+        assert_eq!(advance(&mut pipeline), [('a', ParseBind)]);
+        read(&mut pipeline, DESCRIBED);
+        let outcome = error(&mut pipeline, StaleStatement);
+        assert!(matches!(outcome, OnError::Fail { .. }));
+    }
 
+    #[test]
+    fn a_stale_statement_is_not_retried_with_a_request_behind_it() {
         let (mut pipeline, statement) = prepared(true);
         push(&mut pipeline, 'a', &statement);
         push(&mut pipeline, 'b', &statement);
         advance(&mut pipeline);
-        assert!(!is_retried(&mut pipeline));
+        let outcome = error(&mut pipeline, StaleStatement);
+        assert!(matches!(outcome, OnError::Fail { .. }));
+    }
 
+    #[test]
+    fn a_retry_says_that_the_request_was_cancelled() {
         let (mut pipeline, statement) = prepared(true);
         let request = push(&mut pipeline, 'a', &statement);
         advance(&mut pipeline);
         pipeline.cancel(&request);
         pipeline.on_cancel_dialed();
-        assert!(is_retried(&mut pipeline) && pipeline.retry(named(0)));
+        let outcome = error(&mut pipeline, StaleStatement);
+        assert!(matches!(outcome, OnError::Retry { cancelled: true }));
     }
 
     #[test]
@@ -451,12 +540,46 @@ mod requests {
         for name in ['a', 'b'] {
             assert_eq!(pipeline.to_stop().map(|it| **it), Some(name));
             pipeline.on_cancel_dialed();
-            assert_eq!(read(&mut pipeline, "Z"), name.to_string());
+            assert_eq!(ready(&mut pipeline), Some(name));
             assert!(pipeline.to_stop().is_none());
-            assert_eq!(advance(&mut pipeline), "");
+            assert_eq!(advance(&mut pipeline), []);
             pipeline.on_cancel_ended();
         }
-        assert_eq!(advance(&mut pipeline), "c:B");
+        assert_eq!(advance(&mut pipeline), [('c', Bind)]);
+    }
+
+    fn running() -> (Pipeline, Rc<char>) {
+        let mut pipeline = Pipeline::new(true);
+        let request = push_simple(&mut pipeline, 'a');
+        advance(&mut pipeline);
+        (pipeline, request)
+    }
+
+    #[test]
+    fn cancel_leaves_a_kept_error_alone() {
+        let (mut pipeline, request) = running();
+        error(&mut pipeline, Other);
+        assert!(pipeline.cancel(&request).is_none());
+        assert!(pipeline.on_ready_for_query(b'I').unwrap().keeps_error());
+    }
+
+    #[test]
+    fn cancel_stops_a_copy_that_the_host_has_just_rejected() {
+        let (mut pipeline, request) = running();
+        pipeline.reject(&request);
+        pipeline.cancel(&request);
+        assert!(pipeline.to_stop().is_some());
+    }
+
+    #[test]
+    fn a_second_cancel_waits_for_the_first() {
+        let (mut pipeline, request) = running();
+        pipeline.cancel(&request);
+        pipeline.on_cancel_dialed();
+        pipeline.cancel(&request);
+        assert!(pipeline.is_live(&request) && pipeline.to_stop().is_none());
+        pipeline.on_cancel_ended();
+        assert!(pipeline.to_stop().is_some());
     }
 
     #[test]
@@ -467,7 +590,16 @@ mod requests {
         assert!(!pipeline.wrote(&request, Step::Query));
 
         push_simple(&mut pipeline, 'b');
-        pipeline.on_error(ErrorKind::Canceled, ());
-        assert_eq!(advance(&mut pipeline), "b:-");
+        error(&mut pipeline, Canceled);
+        assert_eq!(advance(&mut pipeline), [('b', Never)]);
+    }
+
+    #[test]
+    fn a_reply_to_nothing_is_an_error() {
+        let mut pipeline = Pipeline::new(true);
+        assert_eq!(pipeline.on_result(), Err(Error::ExpectedRequest));
+        assert!(pipeline.on_error(Other, (), |_| named(0)).is_none());
+        pipeline.on_cancel_dialed();
+        assert_eq!(ready(&mut pipeline), None);
     }
 }

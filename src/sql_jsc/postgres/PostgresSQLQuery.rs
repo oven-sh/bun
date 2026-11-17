@@ -334,7 +334,6 @@ impl PostgresSQLQuery {
             } else {
                 protocol = Protocol::Extended {
                     describe_first: describe_first && !declared.is_empty(),
-                    retried: false,
                 };
             }
         }
@@ -345,7 +344,7 @@ impl PostgresSQLQuery {
                 AnyPostgresError::TooManyParameters,
             )));
         }
-        // That code can have called `cancel()`.
+        // That code can have called `cancel()` or `run()`.
         if !matches!(self.place.get(), Place::New) {
             return Err(global_object.throw_value(connection.cancelled_error(None)));
         }

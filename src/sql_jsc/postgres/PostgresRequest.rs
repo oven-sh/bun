@@ -10,8 +10,8 @@ use bun_sql::postgres::postgres_types as types;
 use bun_sql::postgres::postgres_types::{AnyPostgresError, Int4};
 
 use crate::jsc::js_error_to_postgres;
-use crate::postgres::PostgresSQLStatement;
 use crate::postgres::types::{date, tag_jsc};
+use crate::postgres::{PostgresSQLConnection, PostgresSQLStatement};
 
 bun_core::declare_scope!(Postgres, visible);
 
@@ -161,9 +161,9 @@ fn array_literal(global: &JSGlobalObject, list: JSValue, tag: types::Tag) -> JsR
     Ok(literal)
 }
 
-/// An accessor behind a hole of `values` still runs user code.
+/// An accessor of `values` still runs user code, and so does the `toString()` of bytes that a retry sends as text.
 pub(crate) fn bind_and_execute(
-    out: &mut Vec<u8>,
+    connection: &PostgresSQLConnection,
     global: &JSGlobalObject,
     statement: &PostgresSQLStatement,
     values: JSValue,
@@ -173,55 +173,71 @@ pub(crate) fn bind_and_execute(
     let name = &statement.name;
     bun_core::scoped_log!(Postgres, "Bind: {} ({} args)", bun_fmt::quote(name), len);
 
-    let length = frontend::begin(out, b'B');
-    // The unnamed portal.
-    out.push(0);
-    out.extend_from_slice(name);
-    out.push(0);
+    let (length, format_codes) = connection.encode_more(|out| {
+        let length = frontend::begin(out, b'B');
+        // The unnamed portal.
+        out.push(0);
+        out.extend_from_slice(name);
+        out.push(0);
 
-    frontend::count(out, len)?;
-    let format_codes = out.len();
-    out.resize(format_codes + len * 2, 0);
-    frontend::count(out, len)?;
+        frontend::count(out, len)?;
+        let format_codes = out.len();
+        out.resize(format_codes + len * 2, 0);
+        frontend::count(out, len)?;
+        Ok((length, format_codes))
+    })?;
 
     let mut iter = JSArrayIterator::init(values, global).map_err(js_error_to_postgres)?;
     let mut i: usize = 0;
     while let Some(value) = iter.next().map_err(js_error_to_postgres)? {
-        if value.is_empty_or_undefined_or_null() {
-            out.extend_from_slice(&(-1i32).to_be_bytes());
-            i += 1;
-            continue;
-        }
-        let tag = parameter_tag(statement, i);
-        let value_length = Length::reserve(out);
-        if write_binary_parameter(out, global, tag, value) {
-            out[format_codes + i * 2 + 1] = 1;
-        } else if value.is_date() {
-            date::write_text(out, global, value, tag);
-        } else {
+        // User code can have read another ParameterDescription since `len`.
+        let tag = match i < len {
+            true => parameter_tag(statement, i),
+            false => types::Tag::text,
+        };
+        let awaits_text = connection.encode_more(|out| {
+            if value.is_empty_or_undefined_or_null() {
+                out.extend_from_slice(&(-1i32).to_be_bytes());
+                return Ok(None);
+            }
+            let value_length = Length::reserve(out);
+            if write_binary_parameter(out, global, tag, value) {
+                out[format_codes + i * 2 + 1] = 1;
+            } else if value.is_date() {
+                date::write_text(out, global, value, tag);
+            } else {
+                return Ok(Some(value_length));
+            }
+            value_length.end_value(out).map(|()| None)
+        })?;
+        if let Some(value_length) = awaits_text {
             let str = BunString::from_js(value, global).map_err(js_error_to_postgres)?;
-            out.extend_from_slice(str.to_utf8().slice());
+            connection.encode_more(|out| {
+                out.extend_from_slice(str.to_utf8().slice());
+                value_length.end_value(out)
+            })?;
         }
-        value_length.end_value(out)?;
         i += 1;
     }
 
-    let fields = &statement.columns.get().fields;
-    if fields
-        .iter()
-        .any(|field| field.type_tag().is_binary_in(formats))
-    {
-        frontend::count(out, fields.len())?;
-        for field in fields {
-            out.extend_from_slice(&field.type_tag().format_code(formats).to_be_bytes());
+    connection.encode_more(|out| {
+        let fields = &statement.columns.get().fields;
+        if fields
+            .iter()
+            .any(|field| field.type_tag().is_binary_in(formats))
+        {
+            frontend::count(out, fields.len())?;
+            for field in fields {
+                out.extend_from_slice(&field.type_tag().format_code(formats).to_be_bytes());
+            }
+        } else {
+            out.extend_from_slice(&[0, 0]);
         }
-    } else {
-        out.extend_from_slice(&[0, 0]);
-    }
 
-    length.end_message(out)?;
-    out.extend_from_slice(&frontend::EXECUTE_AND_SYNC);
-    Ok(())
+        length.end_message(out)?;
+        out.extend_from_slice(&frontend::EXECUTE_AND_SYNC);
+        Ok(())
+    })
 }
 
 fn write_binary_parameter(

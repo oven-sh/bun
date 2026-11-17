@@ -12,6 +12,20 @@ use super::AnyPostgresError::{self, *};
 use super::frontend::{self, Length, SSL_REQUEST};
 use crate::shared::SSLMode;
 
+const PROTOCOL_3_0: u32 = 3 << 16;
+
+// libpq's `AUTH_REQ_*`.
+const OK: u32 = 0;
+const KERBEROS_V5: u32 = 2;
+const CLEARTEXT: u32 = 3;
+const MD5_HASH: u32 = 5;
+const GSS: u32 = 7;
+const GSS_CONTINUE: u32 = 8;
+const SSPI: u32 = 9;
+const SASL: u32 = 10;
+const SASL_CONTINUE: u32 = 11;
+const SASL_FINAL: u32 = 12;
+
 /// libpq's `channel_binding`.
 #[derive(Copy, Clone, Eq, PartialEq)]
 pub enum ChannelBinding {
@@ -176,6 +190,7 @@ impl Handshake {
     /// `true`: the TLS handshake comes next, `false`: the first message.
     pub fn on_ssl_reply(&mut self, reply: u8) -> Result<bool, Refusal> {
         match (reply, self.ssl_mode) {
+            _ if !matches!(self.phase, Phase::SslRequest { .. }) => Err(UnexpectedMessage.into()),
             (b'S', _) => {
                 self.phase = Phase::TlsHandshake;
                 Ok(true)
@@ -186,7 +201,20 @@ impl Handshake {
         }
     }
 
+    fn may_start(&self) -> bool {
+        use SSLMode::{Disable, Prefer};
+        matches!(
+            (&self.phase, self.ssl_mode),
+            (Phase::Dialing, Disable)
+                | (Phase::SslRequest { .. }, Disable | Prefer)
+                | (Phase::TlsHandshake, _)
+        )
+    }
+
     pub fn send_startup(&mut self, out: &mut Vec<u8>) -> Result<(), AnyPostgresError> {
+        if !self.may_start() {
+            return Ok(());
+        }
         self.phase = Phase::Startup(Auth::Pending);
         let strings = &self.strings;
         let database = match strings.database() {
@@ -195,7 +223,7 @@ impl Handshake {
         };
         let length = Length::reserve(out);
         for part in [
-            &196608u32.to_be_bytes(),
+            &PROTOCOL_3_0.to_be_bytes(),
             &b"user\0"[..],
             strings.user(),
             b"\0database\0",
@@ -211,8 +239,10 @@ impl Handshake {
     }
 
     pub fn send_cancel(&mut self, packet: &[u8; 16], out: &mut Vec<u8>) {
-        self.phase = Phase::CancelSent;
-        out.extend_from_slice(packet);
+        if self.may_start() {
+            self.phase = Phase::CancelSent;
+            out.extend_from_slice(packet);
+        }
     }
 
     /// `true`: it is the first one.
@@ -259,45 +289,46 @@ impl Handshake {
         let required = self.channel_binding == ChannelBinding::Require;
         let before = out.len();
         let next = match (u32::from_be_bytes(*method), data, auth) {
-            (0 | 2 | 3 | 7 | 9, [_, ..], _) | (8 | 10 | 11 | 12, [], _) => {
+            (OK | KERBEROS_V5 | CLEARTEXT | GSS | SSPI, [_, ..], _)
+            | (GSS_CONTINUE | SASL | SASL_CONTINUE | SASL_FINAL, [], _) => {
                 Err(InvalidMessageLength)?
             }
-            (5, salt, _) if salt.len() != 4 => Err(InvalidMessageLength)?,
+            (MD5_HASH, salt, _) if salt.len() != 4 => Err(InvalidMessageLength)?,
             // RFC 5802 §5: the server proves itself first.
-            (0, _, Auth::ScramFirst(_) | Auth::ScramFinal { .. }) => Err(UnexpectedMessage)?,
-            (0, _, Auth::ScramVerified { bound: true }) => Auth::Ok,
-            (0, ..) if required => refuse(
+            (OK, _, Auth::ScramFirst(_) | Auth::ScramFinal { .. }) => Err(UnexpectedMessage)?,
+            (OK, _, Auth::ScramVerified { bound: true }) => Auth::Ok,
+            (OK, ..) if required => refuse(
                 ChannelBindingRequired,
                 "channel binding required, but server authenticated client without channel binding",
             )?,
-            (0, ..) => Auth::Ok,
-            (3 | 5, _, Auth::Pending) if required => refuse(
+            (OK, ..) => Auth::Ok,
+            (CLEARTEXT | MD5_HASH, _, Auth::Pending) if required => refuse(
                 ChannelBindingRequired,
                 "channel binding required but not supported by server's authentication request",
             )?,
-            (3, _, Auth::Pending) => {
+            (CLEARTEXT, _, Auth::Pending) => {
                 frontend::message(out, b'p', &[self.strings.password(), b"\0"])?;
                 Auth::PasswordSent
             }
-            (5, salt, Auth::Pending) => {
+            (MD5_HASH, salt, Auth::Pending) => {
                 let inner = md5_hex(self.strings.password(), self.strings.user());
                 let outer = md5_hex(inner.as_bytes(), salt);
                 frontend::message(out, b'p', &[b"md5", outer.as_bytes(), b"\0"])?;
                 Auth::PasswordSent
             }
-            (10, mechanisms, Auth::Pending) => {
+            (SASL, mechanisms, Auth::Pending) => {
                 let asked_for_tls = self.ssl_mode != SSLMode::Disable;
                 let binding = Gs2::choose(mechanisms, self.channel_binding, tls, asked_for_tls)?;
                 Auth::ScramFirst(Box::new(ClientFirst::send(binding, out)?))
             }
-            (11, server_first, auth) => {
+            (SASL_CONTINUE, server_first, auth) => {
                 let server_first = ServerFirst::parse(server_first)?;
                 let Auth::ScramFirst(client_first) = auth else {
                     Err(UnexpectedMessage)?
                 };
                 client_first.prove(&server_first, self.strings.scram_password(), out)?
             }
-            (12, server_final, Auth::ScramFinal { signature, bound }) => {
+            (SASL_FINAL, server_final, Auth::ScramFinal { signature, bound }) => {
                 let expected = bun_base64::encode_alloc(signature);
                 // After `v=`.
                 match server_final.get(2..) {
@@ -310,10 +341,10 @@ impl Handshake {
                     )?,
                 }
             }
-            (3 | 5 | 10 | 12, ..) => Err(UnexpectedMessage)?,
-            (2, ..) => unsupported("Kerberos V5")?,
-            (7 | 8, ..) => unsupported("GSSAPI")?,
-            (9, ..) => unsupported("SSPI")?,
+            (CLEARTEXT | MD5_HASH | SASL | SASL_FINAL, ..) => Err(UnexpectedMessage)?,
+            (KERBEROS_V5, ..) => unsupported("Kerberos V5")?,
+            (GSS | GSS_CONTINUE, ..) => unsupported("GSSAPI")?,
+            (SSPI, ..) => unsupported("SSPI")?,
             _ => refuse(
                 UNKNOWN_AUTHENTICATION_METHOD,
                 "Unknown authentication method",
@@ -497,10 +528,10 @@ impl ClientFirst {
 
         let server_key = hmac(&salted, b"Server Key").ok_or(InvalidServerKey)?;
         let signature = hmac(&server_key, auth_message.as_bytes()).ok_or(InvalidServerSignature)?;
-        let mut proof = hmac(&salted, b"Client Key").unwrap();
+        let mut proof = hmac(&salted, b"Client Key").ok_or(OutOfMemory)?;
         let mut stored_key = [0; SHA256::DIGEST];
         SHA256::hash(&proof, &mut stored_key);
-        let client_signature = hmac(&stored_key, auth_message.as_bytes()).unwrap();
+        let client_signature = hmac(&stored_key, auth_message.as_bytes()).ok_or(OutOfMemory)?;
         for (key, signature) in proof.iter_mut().zip(client_signature) {
             *key ^= signature;
         }

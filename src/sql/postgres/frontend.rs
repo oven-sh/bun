@@ -5,6 +5,7 @@ use crate::postgres::AnyPostgresError;
 type Result = core::result::Result<(), AnyPostgresError>;
 
 pub const SYNC: [u8; 5] = *b"S\0\0\0\x04";
+pub const TERMINATE: [u8; 5] = *b"X\0\0\0\x04";
 /// The unnamed portal, with no limit on the rows.
 pub const EXECUTE_AND_SYNC: [u8; 15] = *b"E\0\0\0\x09\0\0\0\0\0S\0\0\0\x04";
 pub(crate) const SSL_REQUEST: [u8; 8] = [0, 0, 0, 8, 0x04, 0xd2, 0x16, 0x2f];

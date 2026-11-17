@@ -19,7 +19,9 @@ const wireFrames = path.join(import.meta.dir, "wire-frames.ts");
 const drivers = [
   {
     name: "postgres",
-    touch: "nativeConnection.ref(); nativeConnection.close();",
+    // .ref() calls release_wrapper() which reads
+    // self.socket.is_closed() when the connection is in a terminal state.
+    touch: "nativeConnection.ref();",
     server: /* js */ `
       import { pgAuthenticationOk, pgReadyForQuery } from ${JSON.stringify(wireFrames)};
       export const url = port => \`postgres://postgres@127.0.0.1:\${port}/db\`;

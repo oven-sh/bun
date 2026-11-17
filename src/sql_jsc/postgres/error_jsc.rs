@@ -65,7 +65,6 @@ pub(crate) fn postgres_error_to_js_with_hint(
         ConnectionRefused => b"ERR_POSTGRES_CONNECTION_REFUSED",
         CopyNotSupported => b"ERR_POSTGRES_COPY_NOT_SUPPORTED",
         ExpectedRequest => b"ERR_POSTGRES_EXPECTED_REQUEST",
-        ExpectedStatement => b"ERR_POSTGRES_EXPECTED_STATEMENT",
         InvalidBackendKeyData => b"ERR_POSTGRES_INVALID_BACKEND_KEY_DATA",
         InvalidBinaryData => b"ERR_POSTGRES_INVALID_BINARY_DATA",
         InvalidByteSequence => b"ERR_POSTGRES_INVALID_BYTE_SEQUENCE",

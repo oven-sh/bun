@@ -59,8 +59,8 @@ impl From<Damage> for End {
 pub(crate) struct Inflated {
     pub(crate) bytes: Vec<u8>,
     pub(crate) end: End,
-    /// Of the code length and the literal/length codes of all dynamic blocks.
-    pub(crate) longest_codes: [u8; 2],
+    /// Of the code length, literal/length and distance codes of all dynamic blocks.
+    pub(crate) longest_codes: [u8; 3],
     pub(crate) max_distance: usize,
 }
 
@@ -146,7 +146,7 @@ impl Inflated {
             return Err(Damage::MissingEndOfBlock.into());
         }
         let distances = lengths.split_off(literals);
-        let all = [&of_lengths[..], &lengths];
+        let all = [&of_lengths[..], &lengths, &distances];
         for (longest, lengths) in self.longest_codes.iter_mut().zip(all) {
             *longest = lengths.iter().copied().fold(*longest, u8::max);
         }
@@ -216,7 +216,7 @@ pub(crate) fn inflate(input: &[u8], dictionary: &[u8]) -> Inflated {
     let mut inflated = Inflated {
         bytes: dictionary.to_vec(),
         end: End::CutShort,
-        longest_codes: [0; 2],
+        longest_codes: [0; 3],
         max_distance: 0,
     };
     inflated.end = match inflated.read_blocks(&mut Bits { input, at: 0 }) {

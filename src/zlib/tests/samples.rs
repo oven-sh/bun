@@ -1,5 +1,8 @@
 //! Made-up data. The same arguments always give the same bytes.
 
+use std::collections::BTreeMap;
+use std::ops::Range;
+
 pub(crate) struct Random(u64);
 
 impl Random {
@@ -66,5 +69,53 @@ impl Random {
         }
         self.shuffle(&mut all);
         all
+    }
+}
+
+/// Has no matches but those that are put in.
+pub(crate) struct Planned {
+    pub(crate) bytes: Vec<u8>,
+    /// How often each three bytes occur.
+    seen: BTreeMap<[u8; 3], u32>,
+    random: Random,
+}
+
+impl Planned {
+    /// They take 9 bits in a fixed block.
+    pub(crate) fn with_literals(len: usize) -> Self {
+        let mut planned = Self {
+            bytes: vec![144, 145],
+            seen: BTreeMap::new(),
+            random: Random::new(1),
+        };
+        while planned.bytes.len() < len {
+            let byte = 144 + planned.random.below(112) as u8;
+            planned.append_if_new_at_the_joint(&[byte]);
+        }
+        planned
+    }
+
+    pub(crate) fn copy(&mut self, len: usize, distances: Range<usize>) {
+        loop {
+            let start = self.bytes.len() - distances.start - self.random.below(distances.len());
+            let copy = self.bytes[start..start + len].to_vec();
+            if self.seen[&copy[..3]] == 1 && self.append_if_new_at_the_joint(&copy) {
+                return;
+            }
+        }
+    }
+
+    fn append_if_new_at_the_joint(&mut self, more: &[u8]) -> bool {
+        let joined = [&self.bytes[self.bytes.len() - 2..], more].concat();
+        let triples = joined.array_windows::<3>();
+        let is_new = triples
+            .clone()
+            .take(2)
+            .all(|it| !self.seen.contains_key(it));
+        if is_new {
+            triples.for_each(|&it| *self.seen.entry(it).or_default() += 1);
+            self.bytes.extend(more);
+        }
+        is_new
     }
 }

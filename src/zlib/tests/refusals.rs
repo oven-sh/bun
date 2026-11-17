@@ -108,6 +108,7 @@ fn refused_memory_is_an_error_when_inflating() {
     long_period.fixed(true).literals(b"abcde");
     (0..300).for_each(|_| _ = long_period.copy(258, 5));
     for stream in [
+        raw(&input, 0, 8),
         raw(&input, 1, 8),
         raw(&input, 6, 8),
         stored(false),

@@ -1,10 +1,8 @@
-use std::collections::BTreeMap;
-
 use bun_zlib::deflate::{Container, Flush, Level, Options, Status, Strategy, compress};
 use bun_zlib::{Deflater, Error, Result};
 
 use crate::plain::{self, End, adler32, crc32};
-use crate::samples::Random;
+use crate::samples::{Planned, Random};
 
 const FLUSHES: [Flush; 5] = [
     Flush::None,
@@ -245,6 +243,68 @@ fn the_rolling_hash_starts_over_after_reset() {
 }
 
 #[test]
+fn the_rolling_hash_goes_on_behind_a_dictionary() {
+    // One of two bytes is too short for a hash.
+    for (dictionary, input) in [
+        (&b"xy"[..], &b"1\0abcd2\0abcd345"[..]),
+        (b"wxy", b"xyabcd2xyabcd345"),
+    ] {
+        let through = |level: i32| {
+            let mut deflater = Deflater::new(Container::Raw, options(9, 0, 15, 8)).unwrap();
+            let mut out = Vec::new();
+            deflater.set_dictionary(dictionary).unwrap();
+            for (level, input, flush) in [(level, input, Flush::None), (9, b"", Flush::Finish)] {
+                let is_set = deflater.set_params(level.try_into().unwrap(), Strategy::Default);
+                assert_eq!(is_set, Ok(true));
+                deflater.deflate_to_vec(input, &mut out, flush).unwrap();
+            }
+            out
+        };
+        assert_eq!(through(8), through(9));
+    }
+}
+
+#[test]
+fn a_full_flush_does_away_with_the_dictionary() {
+    let input = Random::new(1).mixed(600, 512);
+    for level in 0..=9 {
+        let mut deflater = Deflater::new(Container::Raw, options(level, 0, 15, 8)).unwrap();
+        let mut out = Vec::new();
+        deflater.set_dictionary(&input).unwrap();
+        deflater.deflate_to_vec(b"", &mut out, Flush::Full).unwrap();
+        deflater
+            .deflate_to_vec(&input[200..], &mut out, Flush::Finish)
+            .unwrap();
+        deflater.reset();
+        assert_eq!(
+            out,
+            [&[0, 0, 0, 0xff, 0xff], &raw(&input[200..], level, 8)[..]].concat()
+        );
+    }
+}
+
+#[test]
+fn the_window_may_slide_any_number_of_times_at_level_0() {
+    let input = Random::new(1).mixed(140_000, 512);
+    let (stored, compressed) = input.split_at(138_000);
+    let mut deflater = Deflater::new(Container::Zlib, options(0, 0, 9, 8)).unwrap();
+    let mut out = Vec::new();
+    for piece in stored.chunks(300) {
+        deflater
+            .deflate_to_vec(piece, &mut out, Flush::Block)
+            .unwrap();
+    }
+    assert_eq!(
+        deflater.set_params(Level::DEFAULT, Strategy::Default),
+        Ok(true)
+    );
+    deflater
+        .deflate_to_vec(compressed, &mut out, Flush::Finish)
+        .unwrap();
+    check_stream(Container::Zlib, &mut out, &[], &input);
+}
+
+#[test]
 fn nothing_is_left_after_reset() {
     let mut random = Random::new(1);
     let (first, second) = (random.mixed(5000, 512), random.mixed(700, 512));
@@ -310,6 +370,25 @@ fn codes_for_literals_have_at_most_15_bits() {
 }
 
 #[test]
+fn codes_for_distances_have_at_most_15_bits() {
+    let found = [15, 16, 17].map(|count| {
+        let mut input = Planned::with_literals(13_000);
+        for symbol in Random::new(1).uneven(count) {
+            let (base, extra_bits) = plain::DISTANCES[10 + usize::from(symbol)];
+            input.copy(3, base..base + (1 << extra_bits));
+        }
+        let out = raw(&input.bytes, 9, 9);
+        let inflated = plain::inflate(&out, &[]);
+        assert!(inflated.bytes == input.bytes);
+        (inflated.longest_codes[2], crc32(0, &out))
+    });
+    assert_eq!(
+        found,
+        [(14, 0x7a56_5012), (15, 0xe5b7_f5ba), (15, 0x9248_949a)]
+    );
+}
+
+#[test]
 fn codes_for_code_lengths_have_at_most_7_bits() {
     // How many bytes get a code of each length. In this order no length comes often enough in a row for a repeat code.
     let lengths = [
@@ -364,25 +443,11 @@ fn level_9_looks_at_4096_candidates() {
 #[test]
 fn a_block_that_does_not_compress_is_stored_however_long_it_is() {
     // As many symbols as fit in a block: literals of 9 bits, matches of 3 bytes in 25 bits, and one of 258 bytes.
-    let (mut random, mut input, mut seen) = (Random::new(1), vec![144, 145], BTreeMap::new());
-    while input.len() < 16_513 + 3 * 16_253 + 258 {
-        let start = input
-            .len()
-            .saturating_sub(16_385 + random.below(16_000))
-            .max(1);
-        let more = match input.len() {
-            ..16_513 => vec![144 + random.below(112) as u8],
-            65_272 => input[start..start + 258].to_vec(),
-            _ if seen.get(&input[start..start + 3]) == Some(&1) => input[start..start + 3].to_vec(),
-            _ => continue,
-        };
-        let joined = [&input[input.len() - 2..], &more].concat();
-        let triples = joined.array_windows::<3>();
-        if triples.clone().take(2).all(|it| !seen.contains_key(it)) {
-            triples.for_each(|&it| *seen.entry(it).or_insert(0) += 1);
-            input.extend(more);
-        }
+    let mut input = Planned::with_literals(16_513);
+    for len in [vec![3; 16_253], vec![258]].concat() {
+        input.copy(len, 16_385..input.bytes.len().min(32_000));
     }
+    let mut input = input.bytes;
     input.extend([0; 300]);
     let mut out = Vec::new();
     compress(&input, &mut out, Container::Raw, options(9, 4, 15, 9)).unwrap();

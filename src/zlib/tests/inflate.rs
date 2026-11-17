@@ -221,6 +221,23 @@ fn only_a_code_for_one_symbol_or_none_may_be_incomplete() {
 }
 
 #[test]
+fn it_takes_a_bit_to_miss_the_distance_code() {
+    let mut lengths = vec![0; 258];
+    (lengths[0], lengths[256], lengths[257]) = (1, 2, 2);
+    let ends = [0, 1, 2, 3, 4, 5, 6, 7].map(|literals| {
+        let mut stream = Writer::default();
+        stream
+            .dynamic(true, &lengths, &[0])
+            .literals(&vec![0; literals])
+            .symbol(257);
+        let stream = stream.finish();
+        check(&stream, &[], &mut Random::new(1));
+        plain::inflate(&stream, &[]).end
+    });
+    assert_eq!(ends.iter().filter(|&&it| it == End::CutShort).count(), 1);
+}
+
+#[test]
 fn there_is_room_for_the_largest_tables() {
     // For 9 to 12 bits in the first table, and 7 to 10.
     let literals = [
@@ -291,8 +308,9 @@ fn a_long_period_may_be_broken_anywhere() {
             ),
         };
         for _ in 0..random.below(4) {
+            let len = random.pick(&[258, 258, 258, 257]);
             for _ in 0..100 + random.below(300) {
-                stream.copy(258, period);
+                stream.copy(len, period);
             }
             match random.below(5) {
                 0 => stream.literals(b"x"),
@@ -306,7 +324,7 @@ fn a_long_period_may_be_broken_anywhere() {
         stream.truncate(stream.len() - random.pick(&[0, 0, 0, 50]).min(stream.len()));
         calls ^ check(&stream, &[], &mut random)
     });
-    assert_eq!(calls, 0xef4f_5174, "zlib-ng 2.3.3 stops elsewhere");
+    assert_eq!(calls, 0xd5e8_5c8d, "zlib-ng 2.3.3 stops elsewhere");
 }
 
 #[test]
@@ -862,6 +880,24 @@ fn a_vec_is_like_one_buffer_however_it_grows() {
             }
         }
     }
+}
+
+#[test]
+fn a_vec_that_grows_has_the_largest_window_behind_it() {
+    let start = Random::new(1).bytes(40_000);
+    let mut stream = Writer::default();
+    let stream = stream
+        .stored(false, &start)
+        .fixed(true)
+        .copy(9, WINDOW_SIZE)
+        .end_block()
+        .finish();
+    let (mut inflater, mut out) = (
+        Inflater::new(Container::Raw),
+        Vec::with_capacity(start.len()),
+    );
+    let status = inflater.inflate_to_vec(&mut &stream[..], &mut out, usize::MAX);
+    assert!(status == Ok(Status::StreamEnd) && out == plain::inflate(&stream, &[]).bytes);
 }
 
 #[test]

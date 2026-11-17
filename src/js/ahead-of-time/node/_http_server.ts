@@ -1,5 +1,5 @@
 // What the compiler reads in place of src/js/node/_http_server.ts, which `bun run` evaluates. The two do the same.
-// Written against that file with the SHA-256 d26fb5466bf27a290968d75e9bf372975e894d82b068e407daca3792128a6c29.
+// Written against that file with the SHA-256 f093e09b98cf32d6bb0b2d277b0658c775cf1dc229b81a7a0079e7bcab142826.
 // When that file changes, bring the change here and write the new hash: test/internal/second-texts-of-modules.test.ts.
 
 // Hardcoded module "node:_http_server"
@@ -1113,16 +1113,21 @@ Server.prototype.getConnections = function (
   return this;
 };
 
+// Behind the response that has the connection.
+function lastRequestWaits(socket: $Node.HttpServerSocket) {
+  const parser = socket.parser;
+  const res = socket._httpMessage;
+  return parser != null && res != null && parser.incoming !== null && parser.incoming !== res.req;
+}
+
 function closeIdleParsedConnections(server: $Node.HttpServer) {
   const parsed = server[kConnections];
   if (parsed === undefined) return;
   const connections = parsed.idle();
   for (let i = 0, l = connections.length; i < l; i++) {
     const socket = connections[i].socket!;
-    const res = socket._httpMessage;
-    const { incoming } = connections[i];
-    // Nor one whose last request waits behind the response that ended.
-    if (res && (!res.finished || (incoming && incoming !== (res as $Node.ServerResponse).req))) continue;
+    if (socket._httpMessage && !socket._httpMessage.finished) continue;
+    if (lastRequestWaits(socket as $Node.HttpServerSocket)) continue;
     socket.destroy();
   }
 }

@@ -684,16 +684,21 @@ Server.prototype.getConnections = function (callback) {
   return this;
 };
 
+// Behind the response that has the connection.
+function lastRequestWaits(socket) {
+  const parser = socket.parser;
+  const res = socket._httpMessage;
+  return parser != null && res != null && parser.incoming !== null && parser.incoming !== res.req;
+}
+
 function closeIdleParsedConnections(server) {
   const parsed = server[kConnections];
   if (parsed === undefined) return;
   const connections = parsed.idle();
   for (let i = 0, l = connections.length; i < l; i++) {
     const socket = connections[i].socket;
-    const res = socket._httpMessage;
-    const { incoming } = connections[i];
-    // Nor one whose last request waits behind the response that ended.
-    if (res && (!res.finished || (incoming && incoming !== res.req))) continue;
+    if (socket._httpMessage && !socket._httpMessage.finished) continue;
+    if (lastRequestWaits(socket)) continue;
     socket.destroy();
   }
 }

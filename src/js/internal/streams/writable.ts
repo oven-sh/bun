@@ -65,6 +65,7 @@ const kAfterWriteTickInfo = 1 << 27;
 const kAfterWritePending = 1 << 28;
 const kBuffered = 1 << 29;
 const kEnded = 1 << 30;
+const kWritingBatch = 1 << 31;
 
 // TODO(benjamingr) it is likely slower to do it this way than with free functions
 function makeBitMapDescriptor(bit) {
@@ -500,7 +501,12 @@ function writeOrBuffer(stream, state, chunk, encoding, callback) {
 
   state.length += len;
 
-  if ((state[kState] & (kWriting | kErrored | kCorked | kConstructed)) !== kConstructed) {
+  const flags = state[kState];
+  if (
+    (flags & (kWriting | kErrored | kCorked | kConstructed)) !== kConstructed ||
+    // Not in Node: _writev has called back, and bytes that it wrote before that are waiting. See `writeBuffered`.
+    ((flags & kWritingBatch) !== 0 && state.length > len)
+  ) {
     if ((state[kState] & kBuffered) === 0) {
       state[kState] |= kBuffered;
       state[kBufferedValue] = [];
@@ -730,9 +736,15 @@ function writeBuffered(stream, state) {
     // After an error, `errorBuffer` can be walking `buffered`.
     const batchEnd = (state[kState] & kErrored) === 0 ? buffered.length : Infinity;
 
-    doWrite(stream, state, true, state.length, chunks, "", callback);
+    state[kState] |= kWritingBatch;
+    try {
+      doWrite(stream, state, true, state.length, chunks, "", callback);
+    } finally {
+      state[kState] &= ~kWritingBatch;
+    }
 
-    if (buffered.length > batchEnd && state.length > state.writelen) {
+    const written = buffered.length - batchEnd;
+    if (written > 0 && state.length > state.writelen) {
       // Node resets the buffer over a write() made by _writev, and loses what is not empty. An http2 session
       // can make one on its transport.
       // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/streams/writable.js#L775-L777
@@ -741,6 +753,8 @@ function writeBuffered(stream, state) {
       buffered.length = batchEnd;
       again = (state[kState] & (kWriting | kErrored)) === 0;
     } else {
+      // Node goes on counting the empty ones, and then finishes only through _final.
+      if (written > 0) state.pendingcb -= written;
       resetBuffer(state);
     }
   } else {

@@ -421,7 +421,10 @@ describe("Writable", () => {
       release(failure);
       settle();
       await new Promise(process.nextTick);
-      expect(log).toEqual(["writev a,b", "c done", "d done"]);
+      expect({ log, pendingcb: stream._writableState.pendingcb }).toEqual({
+        log: ["writev a,b", "c done", "d done"],
+        pendingcb: 2,
+      });
     });
 
     it("is not followed by an empty write() that it made, as in Node", async () => {
@@ -441,6 +444,73 @@ describe("Writable", () => {
       writeCorked(stream);
       settle();
       expect({ log, length: stream.writableLength }).toEqual({ log: ["writev a,b", "writev ,c"], length: 0 });
+    });
+
+    it.each([
+      ["first", ["writev a,b", "empty done", "finish"]],
+      ["second", ["writev a,b", "writev c,d", "empty done", "finish"]],
+    ])("finishes without _final after empty writes in the %s batch", async (batch, expected) => {
+      const empty = stream => {
+        stream.write("");
+        stream.write("", called("empty"));
+      };
+      const two = stream => {
+        stream.write("c", () => {});
+        stream.write("d");
+        return empty;
+      };
+      const { stream, log, settle, called } = create(batch === "first" ? empty : two, { final: undefined });
+      stream.on("finish", () => log.push("finish"));
+      writeCorked(stream, () => {});
+      settle();
+      stream.end();
+      await finishedP(stream);
+      expect({ log, pendingcb: stream._writableState.pendingcb }).toEqual({ log: expected, pendingcb: 0 });
+    });
+
+    // `after` runs at the end of the first _writev.
+    function createWithAfter(nested, after) {
+      const created = create(nested);
+      const { stream } = created;
+      const writev = stream._writev;
+      stream._writev = (chunks, callback) => {
+        stream._writev = writev;
+        stream._writev(chunks, callback);
+        after(created);
+      };
+      return created;
+    }
+
+    it("is followed, in order, by what it wrote on each side of its callback", () => {
+      const { stream, log, settle } = createWithAfter(
+        stream => stream.write("c"),
+        ({ stream }) => stream.write("d"),
+      );
+      writeCorked(stream);
+      settle();
+      expect({ log, length: stream.writableLength }).toEqual({ log: ["writev a,b", "writev c,d"], length: 0 });
+    });
+
+    it("does not hold back a write() that nothing is waiting in front of", () => {
+      const { stream, log, settle } = createWithAfter(undefined, ({ stream, log }) => {
+        stream.write("c");
+        log.push("returns");
+      });
+      writeCorked(stream);
+      settle();
+      expect(log).toEqual(["writev a,b", ...(when === "later" ? ["returns", "write c"] : ["write c", "returns"])]);
+    });
+
+    it("does not hold back a write() after it has thrown, as in Node", () => {
+      const { stream, log, settle } = createWithAfter(undefined, () => {
+        throw failure;
+      });
+      expect(() => writeCorked(stream)).toThrow(failure);
+      settle();
+      // The buffer is not processed again.
+      writeCorked(stream);
+      stream.write("c");
+      expect(log).toEqual(["writev a,b", "write c"]);
     });
 
     it("finds its chunks in writableBuffer, as in Node", () => {

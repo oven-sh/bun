@@ -1,5 +1,5 @@
 // What the compiler reads in place of src/js/internal/streams/writable.ts, which `bun run` evaluates. The two do the same.
-// Written against that file with the SHA-256 6f78c76f838a1ba0421f4092fd4efb8a9014d972721edc7db6841ba004eb476d.
+// Written against that file with the SHA-256 e5d0089944e11f7588b8ddc2415573beee478f397e6ba544a7d0a745834772de.
 // When that file changes, bring the change here and write the new hash: test/internal/second-texts-of-modules.test.ts.
 
 // A bit simpler than readable streams.
@@ -70,6 +70,7 @@ const enum Flag {
   AfterWritePending = 1 << 28,
   Buffered = 1 << 29,
   Ended = 1 << 30,
+  WritingBatch = 1 << 31,
   WritingErroredCorkedOrConstructed = Writing | Errored | Corked | Constructed,
   WritingSync = Writing | Sync | ExpectWriteCb,
   WritingSyncWithCallback = Writing | Sync | ExpectWriteCb | WriteCb,
@@ -345,7 +346,11 @@ function writeOrBuffer(
   state.length += len;
 
   const flags = state[kState];
-  if ((flags & Flag.WritingErroredCorkedOrConstructed) !== Flag.Constructed) {
+  if (
+    (flags & Flag.WritingErroredCorkedOrConstructed) !== Flag.Constructed ||
+    // Not in Node: _writev has called back, and bytes that it wrote before that are waiting. See `writeBuffered`.
+    ((flags & Flag.WritingBatch) !== 0 && state.length > len)
+  ) {
     bufferWrite(state, chunk, encoding, callback);
   } else {
     state.writelen = len;
@@ -603,9 +608,15 @@ function writeBuffered(stream: $Node.Writable, state: WritableState): boolean {
     // After an error, `errorBuffer` can be walking `buffered`.
     const batchEnd = (state[kState] & Flag.Errored) === 0 ? buffered.length : Infinity;
 
-    doWrite(stream, state, true, state.length, chunks, "", callback);
+    state[kState] |= Flag.WritingBatch;
+    try {
+      doWrite(stream, state, true, state.length, chunks, "", callback);
+    } finally {
+      state[kState] &= ~Flag.WritingBatch;
+    }
 
-    if (buffered.length > batchEnd && state.length > state.writelen) {
+    const written = buffered.length - batchEnd;
+    if (written > 0 && state.length > state.writelen) {
       // Node resets the buffer over a write() made by _writev, and loses what is not empty. An http2 session
       // can make one on its transport.
       // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/streams/writable.js#L775-L777
@@ -614,6 +625,8 @@ function writeBuffered(stream: $Node.Writable, state: WritableState): boolean {
       buffered.length = batchEnd;
       again = (state[kState] & (Flag.Writing | Flag.Errored)) === 0;
     } else {
+      // Node goes on counting the empty ones, and then finishes only through _final.
+      if (written > 0) state.pendingcb! -= written;
       resetBuffer(state);
     }
   } else {

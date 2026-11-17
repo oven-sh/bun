@@ -3908,7 +3908,13 @@ function onClusterConnection(err, clientHandle) {
     socket[kSetKeepAlive] = true;
     socket[kSetKeepAliveInitialDelay] = keepAliveDelayOf(self);
   }
-  socket.connect({ fd: clientHandle.fd, fdIsRawSocket: true, pauseOnConnect: self.pauseOnConnect });
+  try {
+    socket.connect({ fd: clientHandle.fd, fdIsRawSocket: true, pauseOnConnect: self.pauseOnConnect });
+  } catch {
+    // The event loop refused the descriptor. A listener drops such a connection too.
+    clientHandle.close();
+    return;
+  }
   const blockList = self.blockList;
   if (blockList) {
     const remote = socket.remoteAddress;

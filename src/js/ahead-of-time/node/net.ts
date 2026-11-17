@@ -1177,10 +1177,15 @@ function readStart(self: $Node.Socket, handle: SocketHandle | null) {
   if (!self[kUserUnrefed]) handle?.ref?.();
 }
 
+// libuv has a uv_write_t for such a write, which holds the loop whatever unref() says. It has none for one that waits for the handshake or for a stream.
+function waitsForKernel(self: $Node.Socket) {
+  return self[kWriteReq] !== undefined && !self.secureConnecting && unadoptedTransport(self) === undefined;
+}
+
 // The write that was holding the loop (_write) just drained; a socket whose
 // reads are over (peer FIN) or stopped is back at rest and lets go again.
 function unrefAfterDrain(self: $Node.Socket, handle: SocketHandle) {
-  if ((self[kended] || self[kPausedUnref]) && !self[kUserUnrefed] && handle === self._handle) handle.unref?.();
+  if ((self[kended] || self[kPausedUnref] || self[kUserUnrefed]) && handle === self._handle) handle.unref?.();
 }
 
 function finishSocketEnd(self: $Node.Socket) {
@@ -2983,7 +2988,9 @@ Socket.prototype.unref = function unref(this: $Node.Socket) {
     this.once("connect", this.unref);
     return this;
   }
-  ((socket[kAdoptedTLSRaw] as $Node.Socket | undefined) ?? socket).unref();
+  const tlsSocket = socket[kAdoptedTLSRaw] as $Node.Socket | undefined;
+  if (tlsSocket) tlsSocket.unref();
+  else if (!waitsForKernel(this)) socket.unref();
   return this;
 };
 
@@ -3063,9 +3070,9 @@ Socket.prototype._write = function _write(
   const status = socket.$write(chunk, encoding);
   if (status === false) {
     this[kWriteReq] = { writeHandle: socket, writeCallback: callback, writeFrame: AsyncContextFrame.current() };
-    // A pending write holds the loop even on a handle whose FIN/pause dropped
+    // A pending write holds the loop even on a handle whose FIN/pause/unref() dropped
     // its hold (libuv: the uv_write_t is active); unrefAfterDrain lets go again.
-    if ((this[kended] || this[kPausedUnref]) && !this[kUserUnrefed]) socket.ref?.();
+    if (this[kUserUnrefed] ? waitsForKernel(this) : this[kended] || this[kPausedUnref]) socket.ref?.();
   } else if (status !== true) {
     // https://github.com/nodejs/node/blob/v26.5.0/lib/internal/stream_base_commons.js#L158-L159
     // Node still holds the descriptor of a peer that hung up, so its write fails with EPIPE.

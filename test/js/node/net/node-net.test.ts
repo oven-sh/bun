@@ -969,6 +969,43 @@ describe.concurrent("unref()/pause() around connect()", () => {
   });
 });
 
+describe.concurrent.each([
+  ["an accepted socket", `require("node:net").createServer(socket => socket.once("data", () => send(socket)))`],
+  ["an 'upgrade' socket", `require("node:http").createServer().on("upgrade", (req, socket) => send(socket))`],
+])("%s", (_, createServer) => {
+  it.each(["socket.unref().end(bytes)", "socket.end(bytes).unref()"])("%s sends all of the bytes", async call => {
+    const size = 16 << 20;
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          function send(socket) {
+            const bytes = Buffer.alloc(${size});
+            server.close();
+            ${call};
+            console.log("called");
+          }
+          const server = ${createServer};
+          server.listen(0, "127.0.0.1", () => console.log(server.address().port));
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "inherit",
+    });
+    const stdout = proc.stdout.getReader();
+    const port = Number(Buffer.from((await stdout.read()).value!).toString());
+    const client = connect({ port, host: "127.0.0.1", allowHalfOpen: true });
+    client.write("GET / HTTP/1.1\r\nHost: x\r\nConnection: Upgrade\r\nUpgrade: x\r\n\r\n");
+    await stdout.read();
+    let received = 0;
+    for await (const chunk of client) received += chunk.length;
+    expect(received).toBe(size);
+    expect(await proc.exited).toBe(0);
+  });
+});
+
 it.concurrent("socket should keep process alive if unref is not called", async () => {
   using server = replyingTLSServer();
   const { stdout, stderr, exitCode } = await bunRun(join(import.meta.dir, "node-ref-default-fixture.js"), {

@@ -220,15 +220,18 @@ pub(crate) mod simd {
         sums + a.widening_mul(first.into()) + b.widening_mul(second.into())
     }
 
-    /// The same for the rows 0 and 4.
+    /// The same, without products if it `may_shift` and the weights are multiples of 8192.
     #[inline(always)]
-    fn weigh_04(rows: I16, weights: [i16; 2]) -> I32 {
-        let [a, b] = rows.halves().map(|row| row.cast::<i32>());
-        match weights {
-            [8192, 8192] if IS_PLANAR => (a + b) << 13,
-            [8192, -8192] if IS_PLANAR => (a - b) << 13,
-            _ => weigh(rows, weights, I32::zero()),
+    fn weigh_or_shift(rows: I16, weights: [i16; 2], sums: I32, may_shift: bool) -> I32 {
+        if !may_shift || (weights[0] | weights[1]) % 8192 != 0 {
+            return weigh(rows, weights, sums);
         }
+        let both: I32 = rows.bitcast();
+        let [a, b] = match IS_PLANAR {
+            true => rows.halves().map(|row| row.cast::<i32>() << 13),
+            false => [both << 16 >> 3, (both & !0xFFFF) >> 3],
+        };
+        sums + a * i32::from(weights[0] / 8192) + b * i32::from(weights[1] / 8192)
     }
 
     /// The sums have to fit in 16 bits after the shift.
@@ -377,6 +380,8 @@ pub(crate) mod simd {
             1 << (shift - 1),
         );
         let left_to_right = |a, b| U8::pack(a, b).shuffle::<Basis<N>>(U8::zero());
+        // Two more products of 32 bytes in a block, and Cascade Lake lowers its clock rate.
+        let saves_products = matches!(N, 6 | 8) && !IS_PLANAR && isa::U8::LEN > 16;
 
         for block in blocks {
             let window = out.get_mut(..span)?;
@@ -408,7 +413,8 @@ pub(crate) mod simd {
             for y in 0..half {
                 let (basis, other) = (Basis::<N>::PADDED, half - 1 - y);
                 let of = |y, a, b| [weights.of(y, a), weights.of(y, b)];
-                let from_04 = weigh_04(rows_04, [basis[y][0], basis[y][4]]);
+                let for_04 = [basis[y][0], basis[y][4]];
+                let from_04 = weigh_or_shift(rows_04, for_04, zero, IS_PLANAR || saves_products);
                 let even = (from_04 << u32::from(N == 2)) + bias;
                 // The products are there already.
                 let even =
@@ -416,7 +422,8 @@ pub(crate) mod simd {
                         true => even - weigh(rows_26, of(other, 2, 6), zero),
                         false => even + weigh(rows_26, of(y, 2, 6), zero),
                     };
-                let odd = weigh(rows_57, of(y, 5, 7), weigh(rows_13, of(y, 1, 3), zero));
+                let odd = weigh_or_shift(rows_13, of(y, 1, 3), zero, saves_products);
+                let odd = weigh_or_shift(rows_57, of(y, 5, 7), odd, saves_products);
                 rows[y] = I16::saturating_narrow((even + odd) >> shift, (even - odd) >> shift);
             }
 
@@ -583,7 +590,8 @@ pub(crate) mod simd {
             let of = |a, b, k| [weights.of(a, k), weights.of(b, k)];
             let even = |k| weigh(for_26, of(0, 1, k), zero);
             let odd = |k| weigh(less_32, of(3, 2, k), weigh(less_01, of(0, 1, k), zero));
-            let [row_0, row_4] = [8192, -8192].map(|it| weigh_04(for_04, [8192, it]));
+            let [row_0, row_4] =
+                [8192, -8192].map(|it| weigh_or_shift(for_04, [8192, it], zero, IS_PLANAR));
             rows = [
                 round_and_pair_up(row_0 + centering, row_4, 15),
                 round_and_pair_up(even(2), even(6), 15),

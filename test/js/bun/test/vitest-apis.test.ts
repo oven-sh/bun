@@ -1090,6 +1090,185 @@ describe("expect.addEqualityTesters", () => {
     );
   });
 
+  const refused = (returned: string) =>
+    `An equality tester returned ${returned}. It has to return its answer synchronously`;
+  function thrownBy(fn: () => unknown): unknown {
+    try {
+      fn();
+    } catch (error) {
+      return error;
+    }
+    throw new Error("expected the function to throw");
+  }
+
+  test("a tester that returns a promise or another thenable throws, whatever the promise holds", () => {
+    let answer: unknown;
+    const sentinel = "vitest-apis-promise";
+    expect.addEqualityTesters([(a, b) => (a === sentinel || b === sentinel ? (answer as boolean) : undefined)]);
+    const fn = mock();
+    fn(sentinel);
+    const assertions = [
+      () => expect(sentinel).toEqual("x"),
+      () => expect(sentinel).not.toEqual("x"),
+      () => expect(sentinel).toEqual(sentinel),
+      () => expect({ deep: [sentinel] }).toStrictEqual({ deep: ["x"] }),
+      () => expect({ deep: sentinel, extra: 1 }).toMatchObject({ deep: "x" }),
+      () => expect([sentinel]).toContainEqual("x"),
+      () => expect(fn).toHaveBeenCalledWith("x"),
+      () => expect({ deep: sentinel }).toEqual(expect.objectContaining({ deep: "x" })),
+    ];
+    // The matcher leaves a promise to its owner, so this test handles the rejection.
+    const rejected = Promise.reject(new Error("rejected before the tester returned it"));
+    rejected.catch(() => {});
+    class InheritsThen {
+      then() {}
+    }
+    const answers: [unknown, string][] = [
+      [Promise.resolve(true), "a promise"],
+      [Promise.resolve(false), "a promise"],
+      [Promise.resolve(undefined), "a promise"],
+      [(async () => false)(), "a promise"],
+      [rejected, "a promise"],
+      [new Promise(() => {}), "a promise"],
+      [{ then() {} }, "a thenable"],
+      [new InheritsThen(), "a thenable"],
+      [Object.assign(() => {}, { then() {} }), "a thenable"],
+    ];
+    for (const [returned, described] of answers) {
+      answer = returned;
+      for (const assertion of assertions) {
+        const error = thrownBy(assertion) as Error;
+        expect(error).toBeInstanceOf(TypeError);
+        expect(error.message).toBe(refused(described));
+      }
+    }
+  });
+
+  test("an object that a tester returns is an answer unless its `then` is a function, and `then` is read once", () => {
+    let answer: unknown;
+    const sentinel = "vitest-apis-then";
+    expect.addEqualityTesters([(a, b) => (a === sentinel || b === sentinel ? (answer as boolean) : undefined)]);
+
+    for (answer of [{}, { then: true }, [], () => {}]) {
+      expect(sentinel).toEqual("x");
+      expect(() => expect(sentinel).not.toEqual("x")).toThrow("toEqual");
+    }
+
+    const then = mock(() => undefined);
+    answer = Object.defineProperty({}, "then", { get: then });
+    expect(sentinel).toEqual("x");
+    expect(then).toHaveBeenCalledTimes(1);
+
+    const reason = new RangeError("then was read");
+    const throwingGetter = {
+      get then() {
+        throw reason;
+      },
+    };
+    const throwingTrap = new Proxy(
+      {},
+      {
+        get() {
+          throw reason;
+        },
+      },
+    );
+    for (answer of [throwingGetter, throwingTrap]) {
+      expect(thrownBy(() => expect(sentinel).toEqual("x"))).toBe(reason);
+      expect(thrownBy(() => expect({ deep: sentinel }).not.toMatchObject({ deep: "x" }))).toBe(reason);
+    }
+  });
+
+  test("the error names a tester that has a name", () => {
+    const sentinel = "vitest-apis-named";
+    function returnsAPromise(a: unknown, b: unknown) {
+      return a === sentinel || b === sentinel ? (Promise.resolve(true) as any) : undefined;
+    }
+    expect.addEqualityTesters([returnsAPromise]);
+    const error = thrownBy(() => expect(sentinel).toEqual("x")) as Error;
+    expect(error).toBeInstanceOf(TypeError);
+    expect(error.message).toBe(
+      "An equality tester, `returnsAPromise`, returned a promise. It has to return its answer synchronously",
+    );
+  });
+
+  test("this.equals refuses a promise from the testers it is given", () => {
+    const messages: string[] = [];
+    expect.extend({
+      toProbeAsyncTesters(received, expected) {
+        for (const tester of [async () => false, async () => true, () => new Promise(() => {})]) {
+          messages.push(messageOf(() => this.equals(received, expected, [tester as any])));
+        }
+        return { pass: true, message: () => "" };
+      },
+    });
+    (expect(1) as any).toProbeAsyncTesters(1);
+    expect(messages).toEqual(Array(3).fill(refused("a promise")));
+  });
+
+  test("a promise from a tester is refused on the re-run of a matcher that waited", async () => {
+    expect.extend({
+      async toPassLater() {
+        await 0;
+        return { pass: true, message: () => "" };
+      },
+    });
+    const sentinel = "vitest-apis-rerun";
+    let calls = 0;
+    expect.addEqualityTesters([
+      (a, b) => (a === sentinel || b === sentinel ? (calls++, Promise.resolve(true) as any) : undefined),
+    ]);
+
+    const matcher = expect([1, sentinel]).toEqual([(expect as any).toPassLater(), "x"]) as unknown as Promise<void>;
+    expect(calls).toBe(0);
+    const error = await matcher.then(
+      () => undefined,
+      (error: Error) => error,
+    );
+    expect(error).toBeInstanceOf(TypeError);
+    expect(error!.message).toBe(refused("a promise"));
+    expect(calls).toBe(1);
+  });
+
+  test.concurrent.each(["bun:test", "vitest"])(
+    "a registered async tester fails each comparison in %s",
+    async module => {
+      const { results, stderr, exitCode } = await runTests({
+        "answers.test.ts": `
+          import { expect, test } from "${module}";
+          expect.addEqualityTesters([async () => false]);
+          test("toEqual", () => { expect({ a: 1 }).toEqual({ a: 2 }); });
+          test("not.toEqual", () => { expect({ a: 1 }).not.toEqual({ a: 2 }); });
+          test("resolves.toEqual", async () => { await expect(Promise.resolve({ a: 1 })).resolves.toEqual({ a: 1 }); });
+          test("toBe passes without a comparison by the testers", () => { expect(1).toBe(1); });
+        `,
+        "rejects.test.ts": `
+          import { expect, test } from "${module}";
+          const shared = Promise.withResolvers();
+          expect.addEqualityTesters([() => shared.promise]);
+          test("the matcher refuses a promise that it does not own", () => {
+            expect(() => expect(1).toEqual(1)).toThrow(TypeError);
+          });
+          test("a later rejection of that promise is still reported", async () => {
+            shared.reject(new Error("rejected later"));
+            await new Promise(resolve => setImmediate(resolve));
+          });
+        `,
+      });
+      expect(results).toEqual([
+        "(fail) toEqual",
+        "(fail) not.toEqual",
+        "(fail) resolves.toEqual",
+        "(pass) toBe passes without a comparison by the testers",
+        "(pass) the matcher refuses a promise that it does not own",
+        "(fail) a later rejection of that promise is still reported",
+      ]);
+      expect(stderr.split("TypeError: " + refused("a promise")).length - 1).toBe(3);
+      expect(stderr).toContain("error: rejected later");
+      expect(exitCode).toBe(1);
+    },
+  );
+
   test("this.equals uses only the testers it is given", () => {
     class Box {
       constructor(public content: unknown) {}

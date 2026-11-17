@@ -665,6 +665,8 @@ A tester registered in a test file applies until that file ends. A tester regist
 
 To compare nested values inside a tester, call `this.equals(a, b, customTesters)`. `customTesters` is the third argument the tester receives.
 
+A tester returns its answer synchronously. If a tester returns a promise or another thenable, the matcher throws a `TypeError`.
+
 ## Test State
 
 `expect.getState()` returns information about the running test. Custom matchers can read the properties below from `this`.
@@ -872,6 +874,8 @@ test("the callback is a function", () => {
   expect({ callback: () => {} }).toEqual({ callback: anyFunction });
 });
 ```
+
+The `predicate` of `expect.toSatisfy()` and an `asymmetricMatch()` method return their answer synchronously, like an [equality tester](#custom-equality). If one of them returns a promise or another thenable, the matcher throws a `TypeError`.
 
 ## Best Practices
 

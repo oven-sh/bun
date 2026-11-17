@@ -2773,6 +2773,54 @@ describe.concurrent("behavior depends on the module a function is imported from"
     });
   });
 
+  test("toContain() on a DOM node throws if contains() returns a promise or another thenable", async () => {
+    const { log, exitCode } = await runTests({
+      "a.test.js": `
+        import { expect, test } from "vitest";
+        globalThis.Node = class Node {
+          constructor(answer) {
+            this.answer = answer;
+          }
+          contains() {
+            return this.answer;
+          }
+        };
+        const outcome = fn => {
+          try { fn(); return "passes"; } catch (error) {
+            return error instanceof TypeError ? error.message : "fails";
+          }
+        };
+        test("answers", () => {
+          // The matcher leaves a promise to its owner, so this test handles the rejection.
+          const rejected = Promise.reject(new Error("rejected before it was returned"));
+          rejected.catch(() => {});
+          const answers = {
+            "a fulfilled promise": Promise.resolve(false),
+            "a rejected promise": rejected,
+            "a pending promise": new Promise(() => {}),
+            "a thenable": { then() {} },
+            "an object": { then: true },
+          };
+          for (const [what, answer] of Object.entries(answers)) {
+            const node = new Node(answer);
+            console.log(what, "|", outcome(() => expect(node).toContain(node)), "|", outcome(() => expect(node).not.toContain(node)));
+          }
+        });
+      `,
+    });
+    const refused = (returned: string) => `contains() returned ${returned}. It has to return its answer synchronously`;
+    expect({ log, exitCode }).toEqual({
+      log: [
+        ...["a fulfilled promise", "a rejected promise", "a pending promise"].map(
+          what => `${what} | ${refused("a promise")} | ${refused("a promise")}`,
+        ),
+        `a thenable | ${refused("a thenable")} | ${refused("a thenable")}`,
+        "an object | passes | fails",
+      ],
+      exitCode: 0,
+    });
+  });
+
   test(".resolves.toThrow() on a promise that resolved to an error", async () => {
     const { log, exitCode } = await runTests({
       "a.test.js": `

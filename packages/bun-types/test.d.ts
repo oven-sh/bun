@@ -1659,6 +1659,9 @@ declare module "bun:test" {
      * to the next tester, and then to the built-in rules. Testers registered by a test file last
      * until that file ends. Testers registered by a preload script apply to every file.
      *
+     * A tester returns its answer synchronously. If it returns a promise or another thenable, the
+     * matcher throws a `TypeError`.
+     *
      * @example
      * expect.addEqualityTesters([
      *   (a, b) => (a instanceof Volume && b instanceof Volume ? a.equals(b) : undefined),
@@ -1838,6 +1841,9 @@ declare module "bun:test" {
      *
      * `message` describes the predicate. It has no effect on the match. It is printed after the
      * predicate wherever the matcher is printed, such as in a failure message or a snapshot.
+     *
+     * `predicate` returns its answer synchronously. If it returns a promise or another thenable,
+     * the matcher throws a `TypeError`.
      *
      * @example
      * const isOdd = (n: number) => n % 2 === 1;

@@ -4,6 +4,7 @@ use bun_jsc::{JSGlobalObject, JSValue, JsClass as _, JsResult};
 use super::super::bun_test;
 use super::super::jest::Jest;
 use crate::generated_bindgen::expect::js_ExpectMatcherUtils as js;
+use super::expect_deferred::Answerer;
 use super::{Expect, ExpectMatcherContext, ExpectMatcherUtils, Flags};
 
 impl Expect {
@@ -126,7 +127,7 @@ impl Expect {
                     tester,
                 ));
             }
-            let verdict = tester.call(global, context, &[a, b, testers])?;
+            let verdict = Answerer::EqualityTester.ask(global, tester, context, &[a, b, testers])?;
             if !verdict.is_undefined() {
                 return Ok(Some(verdict.to_boolean()));
             }

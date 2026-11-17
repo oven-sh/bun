@@ -41,14 +41,10 @@ impl WriteFile {
         cx: &bun_jsc::JsThread<'_>,
     ) -> JSValue {
         let start = (source_blob.offset.get() as usize).min(source.shared_view().len());
-        let file = destination.data.as_file();
         let write = WriteFile {
             range: start..start + source_blob.shared_view().len(),
             written: 0,
-            // Only what the store knows already: fstat() is expensive, and a path is opened with O_NONBLOCK.
-            could_block: file.pathlike.is_fd()
-                && file.seekable.is_some()
-                && !sys::is_regular_file(file.mode),
+            could_block: false,
             mkdirp,
             destination,
             source,
@@ -67,12 +63,17 @@ impl FdOp for WriteFile {
     type Js = (jsc::JSPromiseStrong, bun_ptr::BackRef<JSGlobalObject>);
 
     fn open(&mut self) -> Result<JobFd, Box<SystemError>> {
-        let pathlike = &self.destination.data.as_file().pathlike;
+        let file = self.destination.data.as_file();
+        let pathlike = &file.pathlike;
         let fd = fd_job::open(
             pathlike,
             sys::O::WRONLY | sys::O::CREAT | sys::O::TRUNC,
             self.mkdirp,
         )?;
+
+        // Only what the store knows by now: fstat() is expensive, and a path is opened with O_NONBLOCK.
+        self.could_block =
+            pathlike.is_fd() && file.seekable.is_some() && !sys::is_regular_file(file.mode);
 
         #[cfg(any(target_os = "linux", target_os = "android"))]
         if !self.could_block && self.range.len() > 1024 {
@@ -90,24 +91,30 @@ impl FdOp for WriteFile {
     fn step(&mut self, fd: Fd, mut ready: bool) -> Result<Step, Box<SystemError>> {
         let bytes = self.source.shared_view().get(self.range.clone());
         let bytes = bytes.unwrap_or_default();
-        while self.written < bytes.len() {
+        let mut eof = false;
+        loop {
+            // After the last write too: scripts count on room in the pipe when the promise resolves.
             if self.could_block
                 && !core::mem::take(&mut ready)
                 && bun_core::is_writable(fd) == bun_core::Pollable::NotReady
             {
                 return Ok(Step::Wait);
             }
+            if eof || self.written >= bytes.len() {
+                return Ok(Step::Done);
+            }
             // Not pwrite(): the destination may not be seekable.
             match sys::write(fd, &bytes[self.written..]) {
-                Ok(0) => break,
-                Ok(wrote) => self.written += wrote,
+                Ok(wrote) => {
+                    self.written += wrote;
+                    eof = wrote == 0;
+                }
                 Err(err) if err.get_errno() != sys::E::EAGAIN => return Err(err.into()),
                 Err(_) if self.could_block => return Ok(Step::Wait),
                 // Spins: https://github.com/oven-sh/bun/pull/35953
                 Err(_) => {}
             }
         }
-        Ok(Step::Done)
     }
 
     fn then(

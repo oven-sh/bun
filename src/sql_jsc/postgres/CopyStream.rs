@@ -1,11 +1,10 @@
 //! The query's one callback, `copy(chunk)`, is called when the server enters copy mode, then with
 //! each chunk (out) or each time the socket has drained (in).
 
-use super::{MAX_PIPELINE_SIZE, PostgresSQLConnection, Socket};
+use super::{PostgresSQLConnection, Socket};
 use crate::jsc::{AutoFlush as _, JSValue, JsResult, js_error_to_postgres};
 use crate::postgres::PostgresSQLQuery;
 use crate::postgres::error_jsc::postgres_error_to_js;
-use crate::postgres::postgres_request as PostgresRequest;
 use crate::postgres::postgres_sql_query::{CopyStream, js};
 use bun_core::String as BunString;
 use bun_core::strings;
@@ -13,23 +12,13 @@ use bun_jsc::JSUint8Array;
 use bun_jsc::bindgen::{JsLocal, JsScope, JsWrapper};
 use bun_ptr::{ParentRef, RefPtr};
 use bun_sql::postgres::AnyPostgresError;
-use bun_sql::postgres::postgres_protocol as protocol;
+use bun_sql::postgres::frontend;
+use bun_sql::postgres::pipeline::MAX_PIPELINE_SIZE;
 use bun_sql::shared::ConnectionFlags;
-
-const COPY_DONE: [u8; 5] = [b'c', 0, 0, 0, 4];
 
 // The server ends the session for a longer message.
 const MAX_COPY_DATA_LENGTH: usize = 0x3fff_fffe - 4;
 const MAX_COPY_FAIL_LENGTH: usize = 10_000 - 4 - 1;
-
-fn write_copy_data<Context: protocol::WriterContext>(
-    data: &[u8],
-    writer: protocol::NewWriter<Context>,
-) -> Result<(), AnyPostgresError> {
-    writer.write(b"d")?;
-    writer.int4((data.len() + 4) as u32)?;
-    writer.write(data)
-}
 
 fn copy_fail_message(message: &[u8]) -> &[u8] {
     let mut end = message.len().min(MAX_COPY_FAIL_LENGTH);
@@ -84,7 +73,9 @@ fn starts_with_copy(text: &BunString) -> bool {
 
 impl PostgresSQLConnection {
     fn copying(&self, state: CopyStream) -> Option<ParentRef<PostgresSQLQuery>> {
-        self.current().filter(|head| head.is_copy(state))
+        let head = self.pipeline.get().head().ok()?;
+        (head.request.copy.get() == state && !head.is_rejected())
+            .then(|| ParentRef::from(head.request.as_non_null()))
     }
 
     fn call_copy(&self, request: &PostgresSQLQuery, chunk: JSValue) -> JSValue {
@@ -105,48 +96,44 @@ impl PostgresSQLConnection {
         )
     }
 
-    /// `false`: `request` has no stream for that direction.
-    fn open_copy(&self, request: &PostgresSQLQuery, waiting: CopyStream, open: CopyStream) -> bool {
-        if !request.is_copy(waiting) || !request.flags.get().simple {
+    /// `false`: the head has no stream for that direction.
+    fn open_copy(&self, simple: bool, waiting: CopyStream, open: CopyStream) -> bool {
+        let Some(request) = self.copying(waiting).filter(|_| simple) else {
             return false;
-        }
-        request.update_flags(|f| f.copy = open);
-        self.call_copy(request, JSValue::UNDEFINED);
+        };
+        request.copy.set(open);
+        self.call_copy(&request, JSValue::UNDEFINED);
         true
     }
 
-    fn reject_copy(&self, request: &PostgresSQLQuery) {
-        request.reject_in_flight(
+    pub(super) fn on_copy_response(&self, writable: bool) -> Result<(), AnyPostgresError> {
+        let head = self.pipeline.get().head()?;
+        let (request, simple) = (head.request.clone(), head.is_simple());
+        if writable {
+            if self.open_copy(simple, CopyStream::Writable, CopyStream::WritableOpen) {
+                return Ok(());
+            }
+            self.write(|out| {
+                frontend::copy_fail(out, b"no source stream")?;
+                // In copy-in mode the server ignored the Sync of the batch.
+                if !simple {
+                    out.extend_from_slice(&frontend::SYNC);
+                }
+                Ok(())
+            })?;
+            self.flush_data();
+        } else if self.open_copy(simple, CopyStream::Readable, CopyStream::ReadableOpen) {
+            return Ok(());
+        }
+        self.reject_in_flight(
+            &request,
             postgres_error_to_js(
                 self.global(),
                 Some(b"COPY ... FROM STDIN needs query.writable() and COPY ... TO STDOUT needs query.readable()"),
                 AnyPostgresError::CopyNotSupported,
             ),
-            self.global(),
         );
-    }
-
-    pub(super) fn on_copy_in_response(
-        &self,
-        request: &PostgresSQLQuery,
-    ) -> Result<(), AnyPostgresError> {
-        if self.open_copy(request, CopyStream::Writable, CopyStream::WritableOpen) {
-            return Ok(());
-        }
-        PostgresRequest::write_copy_fail(b"no source stream", self.writer())?;
-        // In copy-in mode the server ignored the Sync of the batch.
-        if !request.flags.get().simple {
-            self.writer().write(&protocol::SYNC)?;
-        }
-        self.flush_data();
-        self.reject_copy(request);
         Ok(())
-    }
-
-    pub(super) fn on_copy_out_response(&self, request: &PostgresSQLQuery) {
-        if !self.open_copy(request, CopyStream::Readable, CopyStream::ReadableOpen) {
-            self.reject_copy(request);
-        }
     }
 
     /// `upcoming`: how many bytes the read still holds, `data` included.
@@ -184,7 +171,7 @@ impl PostgresSQLConnection {
     pub(super) fn on_copy_done(&self) {
         self.deliver_copy_out();
         if let Some(request) = self.copying(CopyStream::ReadableOpen) {
-            request.update_flags(|f| f.copy = CopyStream::Readable);
+            request.copy.set(CopyStream::Readable);
         }
     }
 
@@ -220,7 +207,7 @@ impl PostgresSQLConnection {
     /// `false`: the socket is full, and the callback says when it has drained.
     fn write_copy_chunk(&self, bytes: &[u8]) -> bool {
         for data in bytes.chunks(MAX_COPY_DATA_LENGTH) {
-            if let Err(err) = write_copy_data(data, self.writer()) {
+            if let Err(err) = self.write(|out| frontend::copy_data(out, data)) {
                 return self.fail_write(err);
             }
         }
@@ -233,10 +220,10 @@ impl PostgresSQLConnection {
     }
 
     fn write_copy_end(&self, failure: Option<&[u8]>) {
-        if let Err(err) = match failure {
-            Some(message) => PostgresRequest::write_copy_fail(message, self.writer()),
-            None => self.writer().write(&COPY_DONE),
-        } {
+        if let Err(err) = self.write(|out| match failure {
+            Some(message) => frontend::copy_fail(out, message),
+            None => frontend::message(out, b'c', &[]),
+        }) {
             self.fail_write(err);
             return;
         }
@@ -249,21 +236,16 @@ impl PostgresSQLQuery {
         starts_with_copy(&self.query)
     }
 
-    fn is_copy(&self, state: CopyStream) -> bool {
-        self.flags.get().copy == state && !self.is_rejected()
-    }
-
     fn copy_connection(&self, open: CopyStream) -> Option<RefPtr<PostgresSQLConnection>> {
-        if self.is_copy(open) {
-            self.connection()
-        } else {
-            None
-        }
+        self.connection().filter(|connection| {
+            let copying = connection.copying(open);
+            copying.is_some_and(|head| core::ptr::eq(&raw const *head, self))
+        })
     }
 
     fn end_copy_in(&self, failure: Option<&[u8]>) {
         if let Some(connection) = self.copy_connection(CopyStream::WritableOpen) {
-            self.update_flags(|f| f.copy = CopyStream::None);
+            self.copy.set(CopyStream::None);
             connection.write_copy_end(failure);
         }
     }
@@ -272,7 +254,7 @@ impl PostgresSQLQuery {
     pub(super) fn cancel_copy(&self) {
         if let Some(connection) = self.copy_connection(CopyStream::ReadableOpen) {
             connection.set_reading(true);
-            self.reject_in_flight(connection.cancelled_error(None), connection.global());
+            connection.reject_in_flight(self, connection.cancelled_error(None));
         }
     }
 
@@ -292,7 +274,7 @@ impl PostgresSQLQuery {
             (CopyStream::Readable, callback)
         };
         js::copy_set_cached(this_value.to_js(), cx.global(), callback);
-        self.update_flags(|f| f.copy = copy);
+        self.copy.set(copy);
     }
 
     pub fn copy_write(&self, cx: &mut JsScope<'_>, chunk: JsLocal<'_>) -> JsResult<bool> {

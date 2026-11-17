@@ -4926,8 +4926,10 @@ pub(crate) unsafe extern "C" fn Blob__fromMmapWithType(
     {
         // SAFETY: caller (C++ WebKit screenshot path) guarantees `[ptr, ptr+len)`
         // is a valid page-aligned mmap'd region we now own.
-        let bytes =
-            unsafe { store::Bytes::from_mapping(core::ptr::slice_from_raw_parts_mut(ptr, len)) };
+        let bytes = unsafe {
+            let bytes = NonNull::slice_from_raw_parts(NonNull::new_unchecked(ptr), len);
+            store::Bytes::from_mapping(bun_sys::Mmap::from_raw(bytes))
+        };
         let store = RefPtr::new(Store::new(
             store::Data::Bytes(bytes),
             bun_http_types::MimeType::NONE,

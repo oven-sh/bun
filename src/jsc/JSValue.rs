@@ -1581,6 +1581,18 @@ impl JSValue {
         if self.has_nobody_to_call(global) {
             return Ok(JSValue::UNDEFINED);
         }
+        self.call_for_running_script(global, this_value, args)
+    }
+
+    /// As [`call`](Self::call), for a host function that calls back before it returns: its caller is listening.
+    #[inline]
+    #[track_caller]
+    pub fn call_for_running_script(
+        self,
+        global: &JSGlobalObject,
+        this_value: JSValue,
+        args: &[JSValue],
+    ) -> JsResult<JSValue> {
         host_fn::from_js_host_call(global, || {
             // SAFETY: `global` is live; `args` is a contiguous slice of valid
             // JSValues for the duration of the call.
@@ -2161,7 +2173,7 @@ impl JSValue {
     // ── Object / cell views. ───────────────
     /// Statically cast to a `JSCell*`; `None` for non-cells.
     #[inline]
-    pub(crate) fn to_cell(self) -> Option<*mut crate::JSCell> {
+    pub fn to_cell(self) -> Option<*mut crate::JSCell> {
         if self.is_cell() {
             Some(self.0 as *mut crate::JSCell)
         } else {
@@ -2312,33 +2324,33 @@ impl JSValue {
             JSC__JSValue__forEach(self, global, ctx, callback)
         })
     }
-    /// `for (const item of self) each(item)`, up to the first `Err`.
-    pub fn try_for_each(
+    /// `for (const item of self) each(item)`. Returns the first `Err`, but only a pending exception ends the loop.
+    pub fn try_for_each<F: FnMut(JSValue) -> JsResult<()>>(
         self,
         global: &JSGlobalObject,
-        each: &mut dyn FnMut(JSValue) -> JsResult<()>,
+        each: F,
     ) -> JsResult<()> {
-        struct Iteration<'a> {
-            each: &'a mut dyn FnMut(JSValue) -> JsResult<()>,
+        struct Iteration<F> {
+            each: F,
             result: JsResult<()>,
         }
-        extern "C" fn next(
+        extern "C" fn next<F: FnMut(JSValue) -> JsResult<()>>(
             _: *mut crate::VM,
             _: &JSGlobalObject,
             iteration: *mut c_void,
             item: JSValue,
         ) {
             // SAFETY: `iteration` is the `Iteration` below, which outlives the `for_each` call.
-            let iteration = unsafe { &mut *iteration.cast::<Iteration<'_>>() };
-            if iteration.result.is_ok() {
-                iteration.result = (iteration.each)(item);
+            let iteration = unsafe { &mut *iteration.cast::<Iteration<F>>() };
+            if let Err(error) = (iteration.each)(item) {
+                iteration.result = iteration.result.and(Err(error));
             }
         }
         let mut iteration = Iteration {
             each,
             result: Ok(()),
         };
-        self.for_each(global, (&raw mut iteration).cast(), next)?;
+        self.for_each(global, (&raw mut iteration).cast(), next::<F>)?;
         iteration.result
     }
     /// `JSValue.forEachWithContext` — typed-ctx wrapper (callers pass

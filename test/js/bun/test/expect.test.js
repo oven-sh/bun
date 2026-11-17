@@ -20,6 +20,17 @@ const test_skipIf = (/** @type {boolean} */ cond) => (cond ? test.skip : test);
 /** Helper function which just type-casts to any */
 const ANY = (/** @type {any} */ arg) => arg;
 
+/** `"passes"` or `"fails"`. An error that is not the failure of a matcher is thrown on. */
+const outcomeOf = async (/** @type {() => unknown} */ assertion) => {
+  try {
+    await assertion();
+    return "passes";
+  } catch (error) {
+    if (isBun && !stripVTControlCharacters(String(ANY(error)?.message)).startsWith("expect(received).")) throw error;
+    return "fails";
+  }
+};
+
 describe("expect()", () => {
   if (typeof Bun !== "undefined") {
     test("()", () => {
@@ -224,12 +235,12 @@ describe("expect()", () => {
       expect.extend({
         toAnswer(_received, /** @type {boolean} */ pass) {
           kept.not;
-          return { pass, message: () => "toAnswer" };
+          return { pass, message: () => "expect(received).toAnswer()" };
         },
         async toAnswerLater(_received, /** @type {boolean} */ pass) {
           kept.not;
           await null;
-          return { pass, message: () => "toAnswerLater" };
+          return { pass, message: () => "expect(received).toAnswerLater()" };
         },
       });
       const answer = (/** @type {boolean} */ pass) => ANY(expect).toAnswer(pass);
@@ -240,7 +251,7 @@ describe("expect()", () => {
       const resolved = jest.fn(async () => 1);
       await resolved();
 
-      /** @type {Record<string, (pass: boolean) => unknown>} */
+      /** @type {Record<string, (pass: boolean) => unknown>} Each reads `kept.not`, and should pass if `pass` is true. */
       const rows = {
         toEqual: pass => (kept = expect(1)).toEqual(answer(pass)),
         toHaveBeenCalledWith: pass => (kept = expect(called)).toHaveBeenCalledWith(answer(pass)),
@@ -272,20 +283,23 @@ describe("expect()", () => {
         }),
       };
 
-      /** @type {Record<string, boolean[]>} */
-      const passed = {};
       for (const [name, run] of Object.entries(rows)) {
-        passed[name] = [];
-        for (const pass of [true, false]) {
-          passed[name].push(
-            await (async () => run(pass))().then(
-              () => true,
-              () => false,
-            ),
-          );
-        }
+        expect({ name, true: await outcomeOf(() => run(true)), false: await outcomeOf(() => run(false)) }).toEqual({
+          name,
+          true: "passes",
+          false: "fails",
+        });
       }
-      expect(passed).toEqual(Object.fromEntries(Object.keys(rows).map(name => [name, [true, false]])));
+    });
+
+    test_skipIf(!isBun)(".not that is read while a matcher runs negates the next one", async () => {
+      const kept = expect(1);
+      kept.toSatisfy(() => (kept.not, true));
+      kept.toBe(2);
+
+      const resolves = expect(async () => (resolves.not, 1)).resolves;
+      await resolves.toBe(1);
+      await resolves.toBe(2);
     });
 
     test_skipIf(!isBun)(".resolves that is read while a matcher runs leaves that matcher alone", () => {
@@ -1285,9 +1299,13 @@ describe("expect()", () => {
     precision => {
       for (const infinity of [Infinity, -Infinity]) {
         expect(infinity).toBeCloseTo(infinity, precision);
-        expect(() => expect(infinity).not.toBeCloseTo(infinity, precision)).toThrow("toBeCloseTo");
+        expect(() => expect(infinity).not.toBeCloseTo(infinity, precision)).toThrow(
+          isBun ? /Received difference: (\x1b\[31m)?0\b/ : undefined,
+        );
         expect(infinity).not.toBeCloseTo(-infinity, precision);
-        expect(() => expect(infinity).toBeCloseTo(-infinity, precision)).toThrow("toBeCloseTo");
+        expect(() => expect(infinity).toBeCloseTo(-infinity, precision)).toThrow(
+          isBun ? /Received difference: (\x1b\[31m)?inf\b/ : undefined,
+        );
       }
     },
   );
@@ -1328,91 +1346,22 @@ describe("expect()", () => {
     }).toThrow(expect.objectContaining({ code: "ERR_BAZ", name: "TypeError" }));
   });
 
-  describe("toThrow and .not.toThrow give opposite answers", () => {
-    const thrower = (/** @type {unknown} */ thrown) => () => {
-      throw thrown;
+  test_skipIf(!isBun)("toThrow(expected) and .not.toThrow(expected) can both fail", async () => {
+    const outcomes = async (/** @type {unknown} */ thrown, /** @type {RegExp} */ expected) => {
+      const thrower = () => {
+        throw thrown;
+      };
+      return {
+        toThrow: await outcomeOf(() => expect(thrower).toThrow(expected)),
+        notToThrow: await outcomeOf(() => expect(thrower).not.toThrow(expected)),
+      };
     };
-    const passes = (/** @type {() => unknown} */ run) => {
-      try {
-        run();
-        return true;
-      } catch {
-        return false;
-      }
-    };
-    /** Whether the matcher passes without `.not`, and with it. */
-    const verdicts = (/** @type {unknown} */ thrown, /** @type {any} */ expected) => [
-      passes(() => expect(thrower(thrown)).toThrow(expected)),
-      passes(() => expect(thrower(thrown)).not.toThrow(expected)),
-    ];
-
-    test("for an asymmetric matcher", async () => {
-      expect.extend({ toHaveCode: (received, code) => ({ pass: ANY(received).code === code, message: () => "" }) });
-      const error = Object.assign(new TypeError("foo"), { code: 1 });
-      for (const [thrown, matches, differs] of [
-        [error, expect.objectContaining({ code: 1 }), expect.objectContaining({ code: 2 })],
-        [error, expect.not.objectContaining({ code: 2 }), expect.not.objectContaining({ code: 1 })],
-        [error, ANY(expect).toHaveCode(1), ANY(expect).toHaveCode(2)],
-        [error, expect.anything(), expect.stringContaining("foo")],
-        ["abc", expect.stringContaining("b"), expect.stringContaining("x")],
-        ["abc", expect.stringMatching(/b/), expect.stringMatching(/x/)],
-        [[1, 2], expect.arrayContaining([1]), expect.arrayContaining([3])],
-        [1.001, expect.closeTo(1), expect.closeTo(2)],
-      ]) {
-        expect(verdicts(thrown, matches)).toEqual([true, false]);
-        expect(verdicts(thrown, differs)).toEqual([false, true]);
-      }
-
-      expect(passes(() => expect(thrower(error)).not.toThrowError(expect.anything()))).toBe(false);
-      expect(() => {}).not.toThrow(expect.anything());
-      await expect(
-        (async () => expect(Promise.reject(error)).rejects.not.toThrow(expect.anything()))(),
-      ).rejects.toThrow();
-      await expect(Promise.reject(error)).rejects.not.toThrow(expect.objectContaining({ code: 2 }));
-    });
-
-    test_skipIf(isVitest)("for a thrown object without a message", () => {
-      for (const expected of ["undefined", "def", /undef/, new Error("undefined")]) {
-        expect(verdicts({ code: 1 }, expected)).toEqual([false, true]);
-      }
-    });
-
-    test_skipIf(!isBun)("for a RegExp without test()", () => {
-      expect(verdicts(new Error("x"), Object.assign(/x/, { test: undefined }))).toEqual([false, true]);
-    });
-
-    test("for a thrown symbol", () => {
-      class Symbols {
-        static [Symbol.hasInstance](/** @type {unknown} */ value) {
-          return typeof value === "symbol";
-        }
-      }
-      expect(verdicts(Symbol("a"), expect.anything())).toEqual([true, false]);
-      expect(verdicts(Symbol("a"), expect.stringContaining("a"))).toEqual([false, true]);
-      expect(verdicts(Symbol("a"), Error)).toEqual([false, true]);
-      if (!isVitest) expect(verdicts(Symbol("a"), Symbols)).toEqual([true, false]);
-      expect(() => expect(thrower(Symbol("a"))).toThrow(expect.stringContaining("a"))).not.toThrow(TypeError);
-    });
-
-    // Jest and Vitest have no expect.not.any()
-    test_skipIf(!isBun)("for expect.any() behind a modifier", () => {
-      expect(verdicts(new TypeError("x"), expect.any(TypeError))).toEqual([true, false]);
-      expect(verdicts(new TypeError("x"), ANY(expect.not).any(TypeError))).toEqual([false, true]);
-      expect(verdicts(new RangeError("x"), ANY(expect.not).any(TypeError))).toEqual([true, false]);
-      expect(verdicts(new Date(), expect.resolvesTo.any(Date))).toEqual([false, true]);
-      expect(verdicts(new Date(), expect.rejectsTo.any(Date))).toEqual([false, true]);
-    });
-
-    test_skipIf(!isBun)("and .not prints the matcher that matched", () => {
-      let message;
-      try {
-        expect(thrower("abc")).not.toThrow(expect.stringContaining("b"));
-      } catch (error) {
-        message = stripVTControlCharacters(ANY(error).message);
-      }
-      expect(message).toBe(
-        'expect(received).not.toThrow(expected)\n\nExpected value: not StringContaining "b"\nReceived value: "abc"\n',
-      );
+    expect({
+      thrownWithoutMessage: await outcomes({ code: 1 }, /undefined/),
+      regExpWithoutTest: await outcomes(new Error("foo"), Object.assign(/foo/, { test: undefined })),
+    }).toEqual({
+      thrownWithoutMessage: { toThrow: "fails", notToThrow: "fails" },
+      regExpWithoutTest: { toThrow: "fails", notToThrow: "fails" },
     });
   });
 

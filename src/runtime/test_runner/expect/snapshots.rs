@@ -13,16 +13,16 @@ use crate::test_runner::snapshot::{FileOutcome, Format};
 const PROPERTIES_HINT: Params = params!("<green>properties<r><d>, <r>hint");
 
 #[cold]
-pub(super) fn fail_outside_of_a_test<T>(m: &Matcher<'_>, signed_not: bool) -> JsResult<T> {
+pub(super) fn fail_outside_of_a_test(m: &Matcher<'_>, signed_not: bool) -> Verdict {
     fail!(
         m.with_params(NO_PARAMS).signed_not(signed_not),
         "<b>Matcher error<r>: Snapshot matchers cannot be used outside of a test\n"
     )
 }
 
-fn properties_argument(m: &Matcher<'_>, properties: JSValue) -> JsResult<Option<JSValue>> {
+fn properties_argument(m: &Matcher<'_>, properties: JSValue) -> JsResult<JSValue> {
     if properties.is_object() {
-        return Ok(Some(properties));
+        return Ok(properties);
     }
     fail!(m, "Matcher error: Expected <green>properties<r> must be an object\n")
 }
@@ -38,25 +38,24 @@ fn utf8<'a>(text: &'a Option<JSStringView<'_>>) -> Option<Utf8Bytes<'a>> {
     text.as_ref().map(|text| text.to_utf8())
 }
 
-impl Expect {
-    #[optimize(size)]
-    fn begin_snapshot<'a>(
-        &'a self,
-        this: This<'_>,
-        cx: &'a mut JsScope<'_>,
-        name: &'static str,
-        params: Params,
-    ) -> JsResult<Matcher<'a>> {
-        let m = self.begin(this, cx, name, params).count();
-        if m.not() {
-            return fail!(
-                m.with_params(NO_PARAMS),
-                "<b>Matcher error<r>: Snapshot matchers cannot be used with <b>not<r>\n"
-            );
-        }
-        Ok(m)
+#[optimize(size)]
+fn begin_snapshot<'a>(
+    this: This<'a>,
+    cx: &'a mut JsScope<'_>,
+    name: &'static str,
+    params: Params,
+) -> JsResult<Matcher<'a>> {
+    let m = this.begin(cx, name, params).count();
+    if m.not() {
+        return fail!(
+            m.with_params(NO_PARAMS),
+            "<b>Matcher error<r>: Snapshot matchers cannot be used with <b>not<r>\n"
+        );
     }
+    Ok(m)
+}
 
+impl Expect {
     #[optimize(size)]
     pub(crate) fn to_match_snapshot(
         &self,
@@ -65,7 +64,7 @@ impl Expect {
         first: JsLocal<'_>,
         second: JsLocal<'_>,
     ) -> Verdict {
-        let m = self.begin_snapshot(this, cx, "toMatchSnapshot", PROPERTIES_HINT)?;
+        let m = begin_snapshot(this, cx, "toMatchSnapshot", PROPERTIES_HINT)?;
         let Some(_file) = self.bun_test() else { return fail_outside_of_a_test(&m, true) };
         let (first, second) = (first.to_js(), second.to_js());
         let (properties, hint) = if !second.is_undefined() {
@@ -73,7 +72,7 @@ impl Expect {
             if !second.is_string() {
                 return Err(m.fail_unsigned("Expected second argument to be a string"));
             }
-            (properties, Some(second.to_js_string_view(m.global)?))
+            (Some(properties), Some(second.to_js_string_view(m.global)?))
         } else if first.is_string() {
             (None, Some(first.to_js_string_view(m.global)?))
         } else if first.is_object() {
@@ -93,14 +92,14 @@ impl Expect {
         cx: &mut JsScope<'_>,
         args: &[JsLocal<'_>],
     ) -> Verdict {
-        let m = self.begin_snapshot(this, cx, "toMatchInlineSnapshot", PROPERTIES_HINT)?;
+        let m = begin_snapshot(this, cx, "toMatchInlineSnapshot", PROPERTIES_HINT)?;
         let (properties, saved) = match *JsLocal::to_js_slice(args) {
             [] => (None, None),
             [saved] if saved.is_string() => (None, Some(saved.to_js_string_view(m.global)?)),
             [properties] if properties.is_object() => (Some(properties), None),
             [_] => return Err(m.fail_unsigned("Expected first argument to be a string or object")),
             [properties, saved, ..] => (
-                properties_argument(&m, properties)?,
+                Some(properties_argument(&m, properties)?),
                 if saved.is_string() { Some(saved.to_js_string_view(m.global)?) } else { None },
             ),
         };
@@ -114,7 +113,7 @@ impl Expect {
         cx: &mut JsScope<'_>,
         hint: JsLocal<'_>,
     ) -> Verdict {
-        let m = self.begin_snapshot(this, cx, "toThrowErrorMatchingSnapshot", PROPERTIES_HINT)?;
+        let m = begin_snapshot(this, cx, "toThrowErrorMatchingSnapshot", PROPERTIES_HINT)?;
         let Some(_file) = self.bun_test() else { return fail_outside_of_a_test(&m, true) };
         let hint = match hint.to_js() {
             hint if hint.is_string() => Some(hint.to_js_string_view(m.global)?),
@@ -132,7 +131,7 @@ impl Expect {
         cx: &mut JsScope<'_>,
         args: &[JsLocal<'_>],
     ) -> Verdict {
-        let m = self.begin_snapshot(this, cx, "toThrowErrorMatchingInlineSnapshot", PROPERTIES_HINT)?;
+        let m = begin_snapshot(this, cx, "toThrowErrorMatchingInlineSnapshot", PROPERTIES_HINT)?;
         let saved = match *JsLocal::to_js_slice(args) {
             [] => None,
             [saved] if saved.is_string() => Some(saved.to_js_string_view(m.global)?),
@@ -151,7 +150,7 @@ impl Expect {
         path: JsLocal<'_>,
         hint: JsLocal<'_>,
     ) -> Verdict {
-        let m = self.begin_snapshot(this, cx, "toMatchFileSnapshot", params!("<green>path<r><d>, <r>hint"))?;
+        let m = begin_snapshot(this, cx, "toMatchFileSnapshot", params!("<green>path<r><d>, <r>hint"))?;
         let global = m.global;
         let (Some(_), Some(runner)) = (self.bun_test(), Jest::runner()) else {
             return fail_outside_of_a_test(&m, true);

@@ -7,14 +7,14 @@ use core::ffi::c_uint;
 use bun_core::{Timespec, TimespecMockMode};
 use bun_jsc::bindgen::{JsLocal, JsScope, JsWrapper};
 use bun_jsc::call_frame::CallerSrcLoc;
-use bun_jsc::js_promise::{Status, UnwrapMode, Unwrapped};
+use bun_jsc::js_promise::{UnwrapMode, Unwrapped};
 use bun_jsc::{
     AnyPromise, JSFunction, JSGlobalObject, JSHostFn, JSPromise, JSValue,
     JsClass as _, JsError, JsResult, Strong,
 };
 use bun_ptr::CellExt as _;
 
-use super::matcher::{Passed, Verdict};
+use super::matcher::{Passed, This, Verdict};
 use super::{Expect, Flags, Promise};
 use crate::generated_bindgen::expect_deferred as generated;
 use crate::test_runner::bun_test::{
@@ -24,15 +24,64 @@ use crate::test_runner::execution::ExecutionSequence;
 use crate::test_runner::expect::js as expect_js;
 use crate::test_runner::vi_wait::ViWait;
 
-type Matcher<'m, 'a> = &'m dyn Fn(&mut JsScope<'a>) -> JsResult<JSValue>;
+type Matcher<'m, 'a> = &'m dyn Fn(&mut JsScope<'a>, This<'_>) -> JsResult<JSValue>;
 
 /// Enough of a matcher call to repeat it.
 pub(crate) struct MatcherCall<'a> {
+    pub(crate) expect: &'a Expect,
     pub(crate) this: JSValue,
     pub(crate) callee: JSValue,
     pub(crate) arguments: &'a [JSValue],
     /// As they were on entry: script that the call runs can read `.not` on the same `expect()`.
     pub(crate) flags: Flags,
+    /// What `.resolves` / `.rejects` look at.
+    pub(crate) settled: Settled,
+}
+
+#[derive(Clone, Copy)]
+pub(crate) enum Settled {
+    NotAPromise,
+    Fulfilled(JSValue),
+    Rejected(JSValue),
+}
+
+impl Settled {
+    /// `Err` is the promise to wait for.
+    fn of(global: &JSGlobalObject, promise: Option<AnyPromise>) -> Result<Self, AnyPromise> {
+        let Some(promise) = promise else {
+            return Ok(Self::NotAPromise);
+        };
+        match promise.unwrap(global.vm(), UnwrapMode::LeaveUnhandled) {
+            Unwrapped::Pending => Err(promise),
+            Unwrapped::Fulfilled(value) => Ok(Self::Fulfilled(value)),
+            Unwrapped::Rejected(reason) => Ok(Self::Rejected(reason)),
+        }
+    }
+}
+
+impl<'a> MatcherCall<'a> {
+    #[inline]
+    pub(crate) fn new(
+        expect: &'a Expect,
+        this: JSValue,
+        callee: JSValue,
+        arguments: &'a [JSValue],
+    ) -> Self {
+        Self {
+            expect,
+            this,
+            callee,
+            arguments,
+            flags: expect.flags.get(),
+            settled: Settled::NotAPromise,
+        }
+    }
+
+    /// The generated thunk of a matcher gets its `self` from this.
+    #[inline]
+    pub(crate) fn payload_ref(&self) -> &'a Expect {
+        self.expect
+    }
 }
 
 unsafe extern "C" {
@@ -513,14 +562,9 @@ impl Pass {
         global: &JSGlobalObject,
         question: Question,
         ask: &mut dyn FnMut() -> JsResult<JSValue>,
-    ) -> JsResult<Option<AnyPromise>> {
-        let Some(promise) = Self::once(global, question, ask)?.as_any_promise() else {
-            return Ok(None);
-        };
-        if promise.status() == Status::Pending {
-            return Err(Self::wait_for(global, promise));
-        }
-        Ok(Some(promise))
+    ) -> JsResult<Settled> {
+        let promise = Self::once(global, question, ask)?.as_any_promise();
+        Settled::of(global, promise).map_err(|pending| Self::wait_for(global, pending))
     }
 
     /// Throws an `ExpectDeferred`, which makes the running matcher return a promise and re-run once `promise` settles.
@@ -595,7 +639,6 @@ impl ExpectDeferred {
     /// Schedules `call` to re-run once `thrown`'s awaited promise settles. Returns the call's promise.
     fn defer(
         thrown: JSValue,
-        expect: &Expect,
         global: &JSGlobalObject,
         call: &MatcherCall<'_>,
     ) -> JsResult<JSValue> {
@@ -609,7 +652,7 @@ impl ExpectDeferred {
         }
 
         let promise = JSPromise::create(global).to_js();
-        let copy = expect.private_copy(global, call);
+        let copy = call.expect.private_copy(global, call);
         js::expect_set_cached(thrown, global, copy);
         js::call_set_cached(
             thrown,
@@ -627,7 +670,7 @@ impl ExpectDeferred {
         ExpectDeferred__callWhenSettled(global, awaited, when_settled, thrown);
         if let Some(this) = Self::from_js(&thrown) {
             this.held
-                .set(RunningEntry::of(expect).map(|entry| entry.hold(global, thrown)));
+                .set(RunningEntry::of(call.expect).map(|entry| entry.hold(global, thrown)));
         }
         Ok(promise)
     }
@@ -915,16 +958,16 @@ impl Expect {
         cx: &mut JsScope<'a>,
         callee: JsLocal<'a>,
         arguments: &'a [JsLocal<'a>],
-        matcher: fn(JsWrapper<'a, Self>, &mut JsScope<'a>, &'a [JsLocal<'a>]) -> Verdict,
+        matcher: fn(This<'_>, &mut JsScope<'a>, &'a [JsLocal<'a>]) -> Verdict,
     ) -> JsResult<JSValue> {
-        let call = MatcherCall {
-            this: this_value.to_js(),
-            callee: callee.to_js(),
-            arguments: JsLocal::to_js_slice(arguments),
-            flags: self.flags.get(),
-        };
-        self.run_matcher(cx, &call, |cx| {
-            let result = matcher(this_value, cx, arguments);
+        let call = MatcherCall::new(
+            self,
+            this_value.to_js(),
+            callee.to_js(),
+            JsLocal::to_js_slice(arguments),
+        );
+        self.run_matcher(cx, &call, |cx, call| {
+            let result = matcher(call, cx, arguments);
             cx.global().bun_vm().auto_garbage_collect();
             result.map(Passed::into_js)
         })
@@ -936,7 +979,7 @@ impl Expect {
         &self,
         cx: &mut JsScope<'a>,
         call: &MatcherCall<'_>,
-        matcher: impl Fn(&mut JsScope<'a>) -> JsResult<JSValue>,
+        matcher: impl Fn(&mut JsScope<'a>, This<'_>) -> JsResult<JSValue>,
     ) -> JsResult<JSValue> {
         self.matcher_ran.set(true);
         if !call.flags.is_plain() {
@@ -944,7 +987,7 @@ impl Expect {
         }
         let pass = Pass::of_matcher();
         let _entered = pass.enter();
-        match matcher(cx) {
+        match matcher(cx, call) {
             Ok(value) => Ok(value),
             Err(error) => self.matcher_failed(cx.global(), call, error),
         }
@@ -979,7 +1022,7 @@ impl Expect {
             let result = if flags.poll() {
                 self.poll_matcher(cx.global(), call)
             } else {
-                matcher(cx)
+                matcher(cx, call)
             };
             match result {
                 Err(JsError::Thrown) => self.matcher_threw(cx.global(), call),
@@ -1104,8 +1147,6 @@ impl Expect {
                 let received =
                     expect_js::captured_value_get_cached(this_value).unwrap_or(JSValue::UNDEFINED);
                 let promise = Self::received_promise(global, received)?;
-                // That ran script, which can read `.not`, and the matcher has yet to copy the flags.
-                self.flags.set(call.flags);
                 expect_js::result_value_set_cached(
                     this_value,
                     global,
@@ -1116,13 +1157,17 @@ impl Expect {
         };
         // bun:test checks a settled promise right away and throws, as it always has. Vitest always returns a promise.
         let always_defer = first_call && self.is_vitest();
-        let result = match promise.filter(|promise| always_defer || promise.status() == Status::Pending) {
-            Some(promise) => {
+        let settled = match promise {
+            Some(promise) if always_defer => Err(promise),
+            promise => Settled::of(global, promise),
+        };
+        let result = match settled {
+            Err(promise) => {
                 let deferred = ExpectDeferred::waiting(global);
                 js::awaited_set_cached(deferred, global, promise.as_value());
-                ExpectDeferred::defer(deferred, self, global, call)
+                ExpectDeferred::defer(deferred, global, call)
             }
-            None => match matcher(cx) {
+            Ok(settled) => match matcher(cx, &MatcherCall { settled, ..*call }) {
                 Ok(_) => Ok(JSPromise::resolved_promise_value(
                     cx.global(),
                     JSValue::UNDEFINED,
@@ -1145,7 +1190,7 @@ impl Expect {
         }
         // The replay counts this call again.
         self.add_to_expect_call_counter(-1);
-        ExpectDeferred::defer(thrown, self, global, call)
+        ExpectDeferred::defer(thrown, global, call)
     }
 
     /// The deferred matcher's own Expect, so later chaining can't change its flags.

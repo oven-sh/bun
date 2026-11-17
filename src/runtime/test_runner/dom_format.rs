@@ -289,7 +289,11 @@ fn for_each_item(
         return Ok(());
     }
     if list.is_iterable(global)? {
-        return list.try_for_each(global, each);
+        let mut result = Ok(());
+        return list.try_for_each(global, |item| {
+            result = result.and_then(|()| each(item));
+            result
+        });
     }
     for i in 0..length_of(global, list)? {
         let item = list.get_index(global, i)?;

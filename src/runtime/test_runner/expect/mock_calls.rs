@@ -28,23 +28,29 @@ fn calls(m: &Matcher<'_>, mock: JSValue) -> JsResult<(JSValue, u32)> {
     Ok((calls, calls.get_length(m.global)? as u32))
 }
 
-/// `None` if script put something else than an array in `mock.calls`.
-fn has_arguments(global: &JSGlobalObject, call: JSValue, expected: &[JSValue]) -> JsResult<Option<bool>> {
+/// `not_a_call`: script put something else than an array in `mock.calls`.
+fn has_arguments(
+    global: &JSGlobalObject,
+    call: Option<JSValue>,
+    expected: &[JSValue],
+    not_a_call: &dyn Fn() -> JsError,
+) -> JsResult<bool> {
+    let Some(call) = call else { return Ok(false) };
     if !call.is_array() {
-        return Ok(None);
+        return Err(not_a_call());
     }
     let mut arguments = call.array_iterator(global)?;
     if arguments.len as usize != expected.len() {
-        return Ok(Some(false));
+        return Ok(false);
     }
     for &expected in expected {
         if let Some(argument) = arguments.next()?
             && !argument.jest_deep_equals(expected, global)?
         {
-            return Ok(Some(false));
+            return Ok(false);
         }
     }
-    Ok(Some(true))
+    Ok(true)
 }
 
 #[cold]
@@ -64,39 +70,34 @@ fn list_calls(global: &JSGlobalObject, calls: JSValue) -> impl fmt::Display {
     })
 }
 
-fn called_times(m: &Matcher<'_>, count: u64, times: u32) -> Verdict {
-    if m.passes(count == u64::from(times)) {
-        return m.pass();
-    }
+#[cold]
+fn fail_number_of_calls(m: &Matcher<'_>, relation: &str, expected: u32, count: u64) -> Verdict {
     fail!(
         m,
         "Expected number of calls: {}<green>{}<r>\nReceived number of calls: <red>{}<r>\n",
-        m.not_word(),
-        times,
+        relation,
+        expected,
         count
     )
 }
 
+fn called_times(m: &Matcher<'_>, count: u64, times: u32) -> Verdict {
+    if m.passes(count == u64::from(times)) { m.pass() } else { fail_number_of_calls(m, m.not_word(), times, count) }
+}
+
 impl Expect {
     pub(crate) fn to_have_been_called(&self, this: This<'_>, cx: &mut JsScope<'_>, expected: JsLocal<'_>) -> Verdict {
-        let (m, mock) = self.start(this, cx, "toHaveBeenCalled", NO_PARAMS)?;
+        let (m, mock) = this.start(cx, "toHaveBeenCalled", NO_PARAMS)?;
         let count = number_of_calls(&m, mock)?;
         mock::no_argument(&m, expected.to_js())?;
         if m.passes(count > 0) {
             return m.pass();
         }
-        let (relation, bound) = if m.not() { ("", 0) } else { (">= ", 1) };
-        fail!(
-            m,
-            "Expected number of calls: {}<green>{}<r>\nReceived number of calls: <red>{}<r>\n",
-            relation,
-            bound,
-            count
-        )
+        if m.not() { fail_number_of_calls(&m, "", 0, count) } else { fail_number_of_calls(&m, ">= ", 1, count) }
     }
 
     pub(crate) fn to_have_been_called_once(&self, this: This<'_>, cx: &mut JsScope<'_>) -> Verdict {
-        let (m, mock) = self.start(this, cx, "toHaveBeenCalledOnce", EXPECTED)?;
+        let (m, mock) = this.start(cx, "toHaveBeenCalledOnce", EXPECTED)?;
         called_times(&m, number_of_calls(&m, mock)?, 1)
     }
 
@@ -106,7 +107,7 @@ impl Expect {
         cx: &mut JsScope<'_>,
         expected: JsLocal<'_>,
     ) -> Verdict {
-        let (m, mock) = self.start(this, cx, "toHaveBeenCalledTimes", EXPECTED)?;
+        let (m, mock) = this.start(cx, "toHaveBeenCalledTimes", EXPECTED)?;
         let count = number_of_calls(&m, mock)?;
         called_times(&m, count, mock::times_argument(&m, expected.to_js())?)
     }
@@ -117,14 +118,14 @@ impl Expect {
         cx: &mut JsScope<'_>,
         expected: &[JsLocal<'_>],
     ) -> Verdict {
-        let (m, mock) = self.start(this, cx, "toHaveBeenCalledWith", ARGUMENTS)?;
+        let (m, mock) = this.start(cx, "toHaveBeenCalledWith", ARGUMENTS)?;
         let global = m.global;
         let expected = JsLocal::to_js_slice(expected);
         let (calls, count) = calls(&m, mock)?;
         let mut matched = false;
         let mut items = calls.array_iterator(global)?;
         while !matched && let Some(call) = items.next()? {
-            matched = has_arguments(global, call, expected)?.ok_or_else(|| throw_not_a_call(global))?;
+            matched = has_arguments(global, Some(call), expected, &|| throw_not_a_call(global))?;
         }
         if m.passes(matched) {
             return m.pass();
@@ -156,15 +157,12 @@ impl Expect {
         cx: &mut JsScope<'_>,
         expected: &[JsLocal<'_>],
     ) -> Verdict {
-        let (m, mock) = self.start(this, cx, "toHaveBeenCalledExactlyOnceWith", ARGUMENTS)?;
+        let (m, mock) = this.start(cx, "toHaveBeenCalledExactlyOnceWith", ARGUMENTS)?;
         let global = m.global;
         let expected = JsLocal::to_js_slice(expected);
         let (calls, count) = calls(&m, mock)?;
         let call = if count == 1 { Some(calls.get_index(global, 0)?) } else { None };
-        let matched = match call {
-            Some(call) => has_arguments(global, call, expected)?.ok_or_else(|| throw_not_a_call(global))?,
-            None => false,
-        };
+        let matched = has_arguments(global, call, expected, &|| throw_not_a_call(global))?;
         if m.passes(matched) {
             return m.pass();
         }
@@ -198,16 +196,12 @@ impl Expect {
         cx: &mut JsScope<'_>,
         expected: &[JsLocal<'_>],
     ) -> Verdict {
-        let (m, mock) = self.start(this, cx, "toHaveBeenLastCalledWith", ARGUMENTS)?;
+        let (m, mock) = this.start(cx, "toHaveBeenLastCalledWith", ARGUMENTS)?;
         let global = m.global;
         let expected = JsLocal::to_js_slice(expected);
         let (calls, count) = calls(&m, mock)?;
         let call = if count > 0 { Some(calls.get_index(global, count - 1)?) } else { None };
-        let matched = match call {
-            Some(call) => has_arguments(global, call, expected)?
-                .ok_or_else(|| mock::throw_not_a_mock(global, " with calls", mock))?,
-            None => false,
-        };
+        let matched = has_arguments(global, call, expected, &|| mock::throw_not_a_mock(global, " with calls", mock))?;
         if m.passes(matched) {
             return m.pass();
         }
@@ -229,7 +223,7 @@ impl Expect {
         expected: &[JsLocal<'_>],
     ) -> Verdict {
         let (m, mock) =
-            self.start(this, cx, "toHaveBeenNthCalledWith", params!("<green>n<r>, <green>...expected<r>"))?;
+            this.start(cx, "toHaveBeenNthCalledWith", params!("<green>n<r>, <green>...expected<r>"))?;
         let global = m.global;
         let expected = JsLocal::to_js_slice(expected);
         let (calls, count) = calls(&m, mock)?;
@@ -240,10 +234,7 @@ impl Expect {
             "first argument must be a positive integer",
         )?;
         let call = if nth <= count { Some(calls.get_index(global, nth - 1)?) } else { None };
-        let matched = match call {
-            Some(call) => has_arguments(global, call, expected)?.ok_or_else(|| throw_not_a_call(global))?,
-            None => false,
-        };
+        let matched = has_arguments(global, call, expected, &|| throw_not_a_call(global))?;
         if m.passes(matched) {
             return m.pass();
         }
@@ -268,7 +259,7 @@ impl Expect {
         other: JsLocal<'_>,
         must_be_called: JsLocal<'_>,
     ) -> Verdict {
-        let (m, mock) = self.start(this, cx, "toHaveBeenCalledBefore", EXPECTED)?;
+        let (m, mock) = this.start(cx, "toHaveBeenCalledBefore", EXPECTED)?;
         called_in_order(&m, mock, other.to_js(), must_be_called.to_js(), Order::Before)
     }
 
@@ -279,7 +270,7 @@ impl Expect {
         other: JsLocal<'_>,
         must_be_called: JsLocal<'_>,
     ) -> Verdict {
-        let (m, mock) = self.start(this, cx, "toHaveBeenCalledAfter", EXPECTED)?;
+        let (m, mock) = this.start(cx, "toHaveBeenCalledAfter", EXPECTED)?;
         called_in_order(&m, mock, other.to_js(), must_be_called.to_js(), Order::After)
     }
 }

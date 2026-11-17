@@ -84,6 +84,26 @@ const turn = (i: number) => down(8 + (i & 1));`),
 const turn = (i: number) => JSON.parse(JSON.stringify(rows))[i % 50].id;`),
   },
   {
+    name: "whole/regular-expressions",
+    text: loop(`const lines = Array.from({ length: 20 }, (_, id) => "2026-01-" + (10 + id) + " GET /a/" + id + "?b=c 200 " + id / 7);
+function turn(i: number) { let sum = 0; for (const line of lines) sum += /^(\\d+)-(\\d+)-(\\d+) (\\w+) (\\S+?)(?:\\?(\\S*))? (\\d+)/.exec(line)![5].length + line.replace(/\\d+/g, "#").length; return sum + i; }`),
+  },
+  {
+    name: "whole/maps-with-text-keys",
+    text: loop(`const keys = Array.from({ length: 64 }, (_, id) => "key" + id);
+function turn(i: number) { const map = new Map<string, number>(); for (const key of keys) map.set(key + (i & 1), i); let sum = 0; for (const key of keys) sum += map.get(key + "0") ?? 1; return sum; }`),
+  },
+  {
+    name: "whole/evaluated-calls",
+    text: loop(`const fib = new Function("return function fib(n) { return n < 2 ? n : fib(n - 1) + fib(n - 2); } // " + process.pid)();
+const turn = (i: number): number => fib(10 + (i & 1));`),
+  },
+  {
+    name: "whole/evaluated-tail-calls",
+    text: loop(`const down = new Function("'use strict'; return function down(n, sum) { return n ? down(n - 1, sum + n) : sum; } // " + process.pid)();
+const turn = (i: number): number => down(100 + (i & 1), 0);`),
+  },
+  {
     name: "whole/serve-and-fetch",
     text:
       loop(

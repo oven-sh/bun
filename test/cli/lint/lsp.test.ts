@@ -267,7 +267,7 @@ describe.concurrent("bun lint --lsp", () => {
   );
 
   test(
-    "cancels the requests of a workspace folder that is removed, and formats its files with the defaults afterwards",
+    "answers the requests of a workspace folder that is removed, and formats its files with the defaults afterwards",
     async () => {
       using dir = tempDir("bun-lint-lsp", {
         "a/bunfig.toml": "[fmt]\nsemi = false\n",
@@ -281,7 +281,7 @@ describe.concurrent("bun lint --lsp", () => {
       client.notify("initialized");
       const ugly = 'const  value  =  "text"\n';
       open(client, join(a, "x.js"), ugly);
-      // The folder's thread may be on the first request when the reader takes the second and the removal of the folder.
+      // The folder's thread may answer either request before the reader takes the removal of the folder.
       let first!: Promise<Message>, second!: Promise<Message>;
       client.together(() => {
         first = format(client, join(a, "x.js"));
@@ -290,14 +290,16 @@ describe.concurrent("bun lint --lsp", () => {
           event: { added: [], removed: [{ uri: uriOf(a), name: a }] },
         });
       });
-      const before = await first;
-      expect([undefined, -32800]).toContain(before.error?.code);
-      if (before.error === undefined) expect(applyEdits(ugly, before.result)).toBe('const value = "text"\n');
-      expect((await second).error).toEqual({ code: -32800, message: expect.any(String) });
-      // Out of every folder, the file is formatted without a/bunfig.toml.
+      // Out of every folder, the file is formatted without a/bunfig.toml. The root that it is in then answers what
+      // the thread of the folder has not answered.
+      const [inFolder, inNone] = ['const value = "text"\n', 'const value = "text";\n'];
+      for (const answer of [await first, await second]) {
+        expect(answer.error).toBeUndefined();
+        expect([inFolder, inNone]).toContain(applyEdits(ugly, answer.result));
+      }
       const after = await format(client, join(a, "x.js"));
       expect(after.error).toBeUndefined();
-      expect(applyEdits(ugly, after.result)).toBe('const value = "text";\n');
+      expect(applyEdits(ugly, after.result)).toBe(inNone);
       expect((await client.request("shutdown")).result).toBeNull();
       client.notify("exit");
       const { exitCode, garbage, rest } = await client.end();
@@ -1227,6 +1229,8 @@ describe.concurrent("bun lint --lsp", () => {
       client.notify("workspace/didChangeWorkspaceFolders", {
         event: { added: [{ uri: uriOf(String(dir), "sub"), name: "sub" }], removed: [] },
       });
+      // The thread of sub lints d.js once the folders have changed: the outer one is let go after that.
+      await client.diagnostics(inner);
       writeFileSync(join(String(dir), "release"), "");
       const { error, result } = await formatted;
       expect(error).toBeUndefined();
@@ -1234,6 +1238,106 @@ describe.concurrent("bun lint --lsp", () => {
       const offered = await actions;
       expect(offered.error).toBeUndefined();
       expect(offered.result.filter((it: any) => it.title.includes("no-var"))).toEqual([]);
+      expect((await client.request("shutdown")).result).toBeNull();
+      client.notify("exit");
+      const { exitCode, garbage, rest } = await client.end();
+      expect([garbage, rest]).toEqual([[], ""]);
+      expect(exitCode).toBe(0);
+    },
+    timeout,
+  );
+
+  // A plugin holds the thread of the folder in the second lint of x.js, so the requests about x.js stay queued there
+  // while the folder is removed. The file is in no folder then, and is formatted without a/bunfig.toml.
+  test.skipIf(isWindows)(
+    "answers the queued requests about a document with the root that it is in now, after its folder is removed",
+    async () => {
+      using dir = tempDir("bun-lint-lsp", {
+        "a/.oxlintrc.json": oxlintrc({ jsPlugins: ["./plugin.mjs"], rules: { "demo/hold": "error" } }),
+        "a/plugin.mjs": holdsSecondLint,
+        "a/bunfig.toml": "[fmt]\nsemi = false\n",
+        "a/x.js": "",
+      });
+      const a = join(String(dir), "a");
+      await using client = new Client(command, String(dir));
+      expect((await initialize(client, [a])).error).toBeUndefined();
+      client.notify("initialized");
+      const path = join(a, "x.js");
+      open(client, path, "export const x = 1;\n");
+      expect((await client.diagnostics(path)).params.diagnostics).toEqual([]);
+      const text = 'export const  x  =  "x"\n';
+      client.notify("textDocument/didChange", {
+        textDocument: { uri: uriOf(path), version: 2 },
+        contentChanges: [{ text }],
+      });
+      while (!existsSync(join(a, "held"))) await Bun.sleep(5);
+      try {
+        const formatted = format(client, path);
+        const actions = client.request("textDocument/codeAction", {
+          textDocument: { uri: uriOf(path) },
+          range: { start: { line: 0, character: 0 }, end: { line: 0, character: 0 } },
+          context: { diagnostics: [] },
+        });
+        client.notify("workspace/didChangeWorkspaceFolders", {
+          event: { added: [], removed: [{ uri: uriOf(a), name: "a" }] },
+        });
+        const { error, result } = await formatted;
+        expect(error).toBeUndefined();
+        expect(applyEdits(text, result)).toBe('export const x = "x";\n');
+        expect((await actions).error).toBeUndefined();
+      } finally {
+        writeFileSync(join(a, "release"), "");
+      }
+      expect((await client.request("shutdown")).result).toBeNull();
+      client.notify("exit");
+      const { exitCode, garbage, rest } = await client.end();
+      expect([garbage, rest]).toEqual([[], ""]);
+      expect(exitCode).toBe(0);
+    },
+    timeout,
+  );
+
+  // As above, with a request for source.fixAll that waits for the lint with types, which the plugin holds.
+  test.skipIf(isWindows)(
+    "answers source.fixAll that waits for a lint with types with the root that the document is in now, after its folder is removed",
+    async () => {
+      using dir = tempDir("bun-lint-lsp", {
+        "a/.oxlintrc.json": oxlintrc({
+          jsPlugins: ["./plugin.mjs"],
+          rules: { "demo/hold": "error", "typescript/no-unnecessary-type-assertion": "error" },
+        }),
+        "a/plugin.mjs": holdsSecondLint,
+        "a/tsconfig.json": `{ "compilerOptions": { "strict": true, "types": [] } }`,
+        "a/x.ts": "",
+      });
+      const a = join(String(dir), "a");
+      await using client = new Client([...command, "--type-aware"], String(dir));
+      expect((await initialize(client, [a])).error).toBeUndefined();
+      client.notify("initialized");
+      const path = join(a, "x.ts");
+      const uri = uriOf(path);
+      const text = "const n: number = 1;\nexport const m = n as number;\n";
+      open(client, path, text);
+      expect((await client.diagnostics(path)).params.diagnostics).toEqual([]);
+      while (!existsSync(join(a, "held"))) await Bun.sleep(5);
+      try {
+        const waiting = client.request("textDocument/codeAction", {
+          textDocument: { uri },
+          range: { start: { line: 0, character: 0 }, end: { line: 0, character: 0 } },
+          context: { diagnostics: [], only: ["source.fixAll"] },
+        });
+        client.notify("workspace/didChangeWorkspaceFolders", {
+          event: { added: [], removed: [{ uri: uriOf(a), name: "a" }] },
+        });
+        const all = await waiting;
+        expect(all.error).toBeUndefined();
+        const editsOf = (action: any): TextEdit[] =>
+          action.edit.changes?.[uri] ??
+          action.edit.documentChanges.find((it: any) => it.textDocument.uri === uri).edits;
+        expect(applyEdits(text, editsOf(all.result[0]))).toBe("const n: number = 1;\nexport const m = n;\n");
+      } finally {
+        writeFileSync(join(a, "release"), "");
+      }
       expect((await client.request("shutdown")).result).toBeNull();
       client.notify("exit");
       const { exitCode, garbage, rest } = await client.end();

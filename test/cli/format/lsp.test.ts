@@ -709,7 +709,7 @@ exports.format = async (text, options) => {
   );
 
   test(
-    "cancels the requests of a workspace folder that is removed, and formats its files with the defaults afterwards",
+    "answers the requests of a workspace folder that is removed, and formats its files with the defaults afterwards",
     async () => {
       using dir = tempDir("bun-fmt-lsp", {
         "a/bunfig.toml": "[fmt]\nsemi = false\n",
@@ -723,7 +723,7 @@ exports.format = async (text, options) => {
       client.notify("initialized");
       const ugly = 'const  value  =  "text"\n';
       open(client, join(a, "x.js"), ugly);
-      // The folder's thread may be on the first request when the reader takes the second and the removal of the folder.
+      // The folder's thread may answer either request before the reader takes the removal of the folder.
       let first!: Promise<Message>, second!: Promise<Message>;
       client.together(() => {
         first = format(client, join(a, "x.js"));
@@ -732,14 +732,16 @@ exports.format = async (text, options) => {
           event: { added: [], removed: [{ uri: uriOf(a), name: a }] },
         });
       });
-      const before = await first;
-      expect([undefined, -32800]).toContain(before.error?.code);
-      if (before.error === undefined) expect(applyEdits(ugly, before.result)).toBe('const value = "text"\n');
-      expect((await second).error).toEqual({ code: -32800, message: expect.any(String) });
-      // Out of every folder, the file is formatted without a/bunfig.toml.
+      // Out of every folder, the file is formatted without a/bunfig.toml. The root that it is in then answers what
+      // the thread of the folder has not answered.
+      const [inFolder, inNone] = ['const value = "text"\n', 'const value = "text";\n'];
+      for (const answer of [await first, await second]) {
+        expect(answer.error).toBeUndefined();
+        expect([inFolder, inNone]).toContain(applyEdits(ugly, answer.result));
+      }
       const after = await format(client, join(a, "x.js"));
       expect(after.error).toBeUndefined();
-      expect(applyEdits(ugly, after.result)).toBe('const value = "text";\n');
+      expect(applyEdits(ugly, after.result)).toBe(inNone);
       expect((await client.request("shutdown")).result).toBeNull();
       client.notify("exit");
       const { exitCode, garbage, rest } = await client.end();

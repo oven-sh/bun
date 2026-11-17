@@ -361,7 +361,8 @@ struct Server<'s> {
     pending: Guarded<Vec<(Json, bool)>>,
     /// The engines of the folders, while their threads use them: to end before the process does.
     realms: Guarded<Vec<Arc<dyn Realms + 's>>>,
-    /// The roots that have a thread.
+    /// The roots that have a thread. It is held while `folders` changes, until each open document has the thread of
+    /// its root: whoever holds it sees the folders and their roots agree.
     roots: Guarded<Vec<Arc<Root>>>,
     /// The client has said `exit`, or is gone: the threads of the roots end after the job they are at.
     is_ending: AtomicBool,
@@ -530,22 +531,25 @@ impl<'s> Server<'s> {
 
     /// The root that `document` belongs to in place of `root`, since the folders changed.
     fn heir_of(&self, root: &Root, document: &Document) -> Option<Arc<Root>> {
+        let roots = self.roots.lock();
         let place = self.place_of(&document.path);
         if root.is_at(&place) {
             return None;
         }
-        let roots = self.roots.lock();
         roots.iter().find(|it| it.is_at(&place)).cloned()
     }
 
-    /// Hands `job`, a request, to the thread of `root`, which answers it with its configuration. A root that is
-    /// closed answers nothing: the request is cancelled.
-    fn pass_on(&self, root: &Root, job: Job) {
+    /// Hands `job`, a request, to the thread of `heir`, which answers it with its configuration. Without an heir, or
+    /// with one that is closed, nothing answers it: the request is cancelled.
+    fn pass_on(&self, heir: Option<&Root>, job: Job) {
         let mut refused = None;
-        root.change(|queue| match queue.is_closed {
-            true => refused = Some(job),
-            false => queue.requests.push_back(job),
-        });
+        match heir {
+            Some(heir) => heir.change(|queue| match queue.is_closed {
+                true => refused = Some(job),
+                false => queue.requests.push_back(job),
+            }),
+            None => refused = Some(job),
+        }
         if let Some(Job::Actions(Actions { id, .. }) | Job::Format { id, .. }) = refused {
             self.cancel(&id);
         }
@@ -883,20 +887,21 @@ impl Worker<'_, '_> {
     }
 
     /// The requests that still wait go to the next generation, which lints their documents with its configurations.
-    /// A root that is closed has none: they are cancelled.
+    /// A root that is closed has none: they go to the roots that their documents are in now.
     fn leave_waiting(&mut self) {
         let waiting = std::mem::take(&mut self.waiting);
         if waiting.is_empty() {
             return;
         }
-        let mut cancelled = Vec::new();
+        let mut homeless = Vec::new();
         self.root.change(|queue| match queue.is_closed {
-            true => cancelled = waiting,
+            true => homeless = waiting,
             false => (waiting.into_iter().rev())
                 .for_each(|it| queue.requests.push_front(Job::Actions(it))),
         });
-        for actions in &cancelled {
-            self.server.cancel(&actions.id);
+        for actions in homeless {
+            let heir = self.server.heir_of(self.root, &actions.document);
+            (self.server).pass_on(heir.as_deref(), Job::Actions(actions));
         }
     }
 
@@ -1153,7 +1158,7 @@ impl Worker<'_, '_> {
                         document,
                         range,
                     };
-                    return server.pass_on(&heir, job);
+                    return server.pass_on(Some(&heir), job);
                 }
                 if server.is_wanted(&id, &document) {
                     let edits = self.format(&document, range);
@@ -1173,9 +1178,10 @@ impl Worker<'_, '_> {
         shows: bool,
         linted: Option<Linted>,
     ) {
-        let server = self.server;
+        let (server, root) = (self.server, self.root);
+        // A lint that was under way when the folders changed says nothing of a document that is in another root now.
         let show = |diagnostics: Vec<Json>| {
-            if shows {
+            if shows && root.is_at(&server.place_of(&document.path)) {
                 server.publish(document, diagnostics);
             }
         };
@@ -1219,7 +1225,7 @@ impl Worker<'_, '_> {
     fn answer(&mut self, session: Option<&Session>, actions: Actions, may_wait: bool) {
         let server = self.server;
         if let Some(heir) = server.heir_of(self.root, &actions.document) {
-            return server.pass_on(&heir, Job::Actions(actions));
+            return server.pass_on(Some(&heir), Job::Actions(actions));
         }
         let (id, document) = (&actions.id, &actions.document);
         if !server.is_wanted(id, document) {
@@ -1366,8 +1372,12 @@ fn uri_in(params: &Json) -> Option<&[u8]> {
 impl<'d> Desk<'d, '_, '_> {
     /// The root of the file at `path`: the innermost folder that it is in. Its thread is started when it is first asked for.
     fn root_of(&mut self, path: &[u8]) -> Option<Arc<Root>> {
+        self.root_in(&mut self.server.roots.lock(), path)
+    }
+
+    /// [`Desk::root_of`] for whoever holds [`Server::roots`].
+    fn root_in(&self, roots: &mut Vec<Arc<Root>>, path: &[u8]) -> Option<Arc<Root>> {
         let place = self.server.place_of(path);
-        let mut roots = self.server.roots.lock();
         if let Some(root) = roots.iter().find(|it| it.is_at(&place)) {
             return Some(Arc::clone(root));
         }
@@ -1448,6 +1458,7 @@ impl<'d> Desk<'d, '_, '_> {
     fn set_folders(&mut self, added: &[Json], removed: &[Json]) {
         let path = |it: &Json| path_of(it.get(b"uri")?.as_str()?).map(|it| paths::normalize(&it));
         let removed: Vec<Vec<u8>> = removed.iter().filter_map(path).collect();
+        let mut roots = self.server.roots.lock();
         let mut folders = self.server.folders.lock();
         folders.retain(|it| !removed.contains(it));
         for folder in added.iter().filter_map(path) {
@@ -1457,20 +1468,28 @@ impl<'d> Desk<'d, '_, '_> {
         }
         drop(folders);
         let is_gone = |it: &Arc<Root>| it.is_folder && removed.contains(&it.path);
-        let mut roots = self.server.roots.lock();
-        for root in roots.iter().filter(|it| is_gone(it)) {
+        let (gone, kept): (Vec<_>, Vec<_>) =
+            std::mem::take(&mut *roots).into_iter().partition(is_gone);
+        *roots = kept;
+        // For the requests that the thread of another root passes on.
+        let documents: Vec<Arc<Document>> = self.documents.values().cloned().collect();
+        for document in &documents {
+            self.root_in(&mut roots, &document.path);
+        }
+        for root in gone {
             let mut unanswered = VecDeque::new();
             root.change(|queue| {
                 queue.is_closed = true;
                 unanswered = std::mem::take(&mut queue.requests);
             });
             for job in unanswered {
-                if let Job::Actions(Actions { id, .. }) | Job::Format { id, .. } = job {
-                    self.server.cancel(&id);
+                if let Job::Actions(Actions { document, .. }) | Job::Format { document, .. } = &job
+                {
+                    let heir = self.root_in(&mut roots, &document.path);
+                    self.server.pass_on(heir.as_deref(), job);
                 }
             }
         }
-        roots.retain(|it| !is_gone(it));
     }
 
     fn initialize(&mut self, params: &Json) -> Json {
@@ -1773,12 +1792,6 @@ impl<'d> Desk<'d, '_, '_> {
                         .unwrap_or_default()
                 };
                 self.set_folders(list("added"), list("removed"));
-                // A document that is in another root now has the thread of that root, for the requests that the old
-                // one passes on.
-                let documents: Vec<Arc<Document>> = self.documents.values().cloned().collect();
-                for document in &documents {
-                    self.root_of(&document.path);
-                }
                 self.look_again();
             }
             b"$/cancelRequest" => {

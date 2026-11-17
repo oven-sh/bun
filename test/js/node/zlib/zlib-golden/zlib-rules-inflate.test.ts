@@ -628,6 +628,46 @@ describe("a gzip stream", () => {
   });
 });
 
+describe("Unzip goes by the first two bytes", () => {
+  const [member, other] = [inGzip(body, plain), inZlib(body, plain)];
+  const members = concat(member, member);
+
+  test.each([[[0]], [[1]], [[0, 0, 1, 1]], [[2]]])("of a gzip stream, in writes that end at %j", ends => {
+    const pieces = [...ends, members.length].map((end, i) => members.subarray(ends[i - 1] ?? 0, end));
+    expect(inflate("Unzip", pieces)).toEqual({ output: concat(plain, plain), read: members.length, error: undefined });
+  });
+
+  test("and not by those of a later write", () => {
+    const whole = inZlib(stored(new Bits(), member, true).end(), member);
+    const start = whole.indexOf(member);
+    const pieces = [whole.subarray(0, start), concat(whole.subarray(start), member)];
+    expect(inflate("Unzip", pieces)).toEqual({ output: member, read: whole.length, error: undefined });
+  });
+
+  test.each([
+    ["one byte of a zlib stream", other.subarray(0, 1), concat(other, member), 1],
+    ["two bytes of a gzip stream", member.subarray(0, 2), members, 2],
+    // As in Node.js 24.
+    ["one byte of a gzip stream, which it keeps", member.subarray(0, 1), members.subarray(1), 2],
+  ])("reset() behind %s", (_, before, after, count) => {
+    using engine = new Engine("Unzip");
+    engine.write(before);
+    engine.reset();
+    engine.write(after, Z_FINISH);
+    expect([engine.error, `${engine.output}`]).toEqual([undefined, times(count, `${plain}`)]);
+  });
+
+  test.each([1, 2])("and it takes both for gzip, %d at a time", size => {
+    using engine = new Engine("Unzip");
+    for (const piece of piecesOf(Buffer.from([0x1f, 0x8c]), size)) engine.write(piece);
+    expect(engine.error).toBe(damaged("incorrect header check"));
+    engine.error = undefined;
+    engine.reset();
+    engine.write(concat(other, member), Z_FINISH);
+    expect([engine.error, `${engine.output}`]).toEqual([undefined, `${plain}`]);
+  });
+});
+
 describe("what follows the end of a stream is not read", () => {
   test.each([0, 1, 2, 7, 8, 9, 15, 16, 17, 100])("%d bytes", count => {
     for (let literals = 0; literals < 8; literals++) {
@@ -714,14 +754,20 @@ describe("flush values", () => {
   });
 });
 
-test.each(["InflateRaw", "Inflate", "Gunzip"] as const)("reset() in any place starts over: %s", mode => {
+test.each([
+  ["InflateRaw", "raw"],
+  ["Inflate", "zlib"],
+  ["Gunzip", "gzip"],
+  ["Unzip", "zlib"],
+  ["Unzip", "gzip"],
+] as const)("reset() in any place starts over: %s, %s", (mode, container) => {
   const literals = lengths(266, { [A]: 2, [B]: 2, [END]: 2, 265: 2 });
   const bits = dynamic(stored(new Bits(), plain, false), literals, [1, 1], [A, B, { length: 12, distance: 2 }], false);
   const runs = [A, ...Array(2).fill({ length: 258, distance: 1 })];
   const expected = concat(plain, text(times(7, "AB") + times(517, "A")));
   const data = fixed(bits, runs, true).end();
   const fields = { extra: Buffer.from("ex"), name: "n", comment: "c", headerCrc: true };
-  const whole = { InflateRaw: data, Inflate: inZlib(data, expected), Gunzip: inGzip(data, expected, fields) }[mode];
+  const whole = { raw: data, zlib: inZlib(data, expected), gzip: inGzip(data, expected, fields) }[container];
   using engine = new Engine(mode, { chunkSize: 100 });
   for (let length = 0; length <= whole.length; length += length < 45 || length > whole.length - 30 ? 1 : 9) {
     engine.write(whole.subarray(0, length));

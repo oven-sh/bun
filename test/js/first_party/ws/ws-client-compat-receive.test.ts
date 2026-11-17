@@ -702,6 +702,14 @@ describe.each(implementations)("ws client receive ($name)", ({ ws: implementatio
         peer: withoutTakeover,
         ...payloadTooBig,
       },
+      ...[withDeflate, withoutTakeover].map(peer => ({
+        label: `a compressed message that the four appended bytes take over maxPayload (${peer.headers})`,
+        // They are the contents of a stored block.
+        sent: [binary(Buffer.concat([deflate(repeatA(99)), bytes(4, 0, 0xfb, 0xff)]), { rsv1: true })],
+        options: max100,
+        peer,
+        ...payloadTooBig,
+      })),
       // The default maxPayload is 100 MiB.
       { label: "a length of 256 MiB", sent: [bytes(0x82, 127, 0, 0, 0, 0, 0x10, 0, 0, 0)], ...payloadTooBig },
       { label: "a length of 2^53", sent: [bytes(0x82, 127, 0, 0x20, 0, 0, 0, 0, 0, 0)], ...lengthOver53Bits },

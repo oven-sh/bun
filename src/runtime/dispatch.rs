@@ -152,6 +152,7 @@ use crate::api::bun_subprocess::Subprocess;
 use crate::api::bun_subprocess::subprocess_pipe_reader::PipeReader as SubprocessPipeReader;
 use crate::api::bun_terminal_body::Terminal;
 use crate::api::cron::CronJob;
+use crate::api::cron_os::OsJob;
 use crate::api::js_bundle_completion_task::JSBundleCompletionTask;
 use crate::api::native_promise_context::DeferredDerefTask as NativePromiseContextDeferredDerefTask;
 
@@ -722,7 +723,7 @@ pub(crate) fn run_task(
         }
         // One feature for each kind of context a `NativePromiseContext` cell holds.
         task_tag::NativePromiseContextDeferredDerefTask => in_features!(
-            [Serve, HtmlRewriter, S3Client, Cron],
+            [Serve, HtmlRewriter, S3Client],
             (packed: usize = task.ptr() as usize) {
                 // `ptr` packs an int, not a pointer.
                 NativePromiseContextDeferredDerefTask::run_from_js_thread(packed);
@@ -938,8 +939,6 @@ unsafe fn __bun_run_io(owner: Owner, event: IoEvent) {
                 readable: bool = event.flags.contains(PollFlag::Readable),
                 writable: bool = event.flags.contains(PollFlag::Writable),
             ) {
-                // R-2: deref as shared (`&*const`) — `on_dns_poll` takes `&self` and
-                // `Channel::process` re-enters the resolver via c-ares callbacks.
                 // SAFETY: tag set with this pointee type at `OwnedFilePoll::new`.
                 let resolver = unsafe { &*resolver };
                 resolver.on_dns_poll(fd, readable, writable);
@@ -1086,12 +1085,9 @@ unsafe fn __bun_run_io(owner: Owner, event: IoEvent) {
                 unsafe { LifecycleScriptSubprocess::on_io(owner.ptr().cast(), owner.kind(), event) };
             })
         }
-        PollTag::CronRegister | PollTag::CronRemove => {
-            in_features!([Cron], (owner: Owner = owner, event: IoEvent = event) {
-                // SAFETY: the contract of `__bun_run_io`.
-                unsafe { crate::api::cron::on_io(owner, event) };
-            })
-        }
+        PollTag::Cron => io_arm!([Cron], bun_ptr::ThisPtr::new, OsJob, |this, _, event| {
+            OsJob::on_io(this, event)
+        }),
 
         PollTag::Null => debug_assert!(false, "a poll with no owner fired"),
     }
@@ -1372,7 +1368,7 @@ pub(crate) unsafe fn fire_timer(
                 Ok(())
             }
         }
-        // R-2: shared deref — `check_timeouts` re-enters via `ares_process_fd`.
+        // R-2: shared deref — `check_timeouts` runs script, which re-enters the resolver.
         EventLoopTimerTag::DNSResolver => {
             feature_timer_arm!([Dns], DNSResolver, event_loop_timer, |c, now, vm| {
                 (&*c.cast_const()).check_timeouts(now, vm)
@@ -1486,8 +1482,10 @@ pub(crate) unsafe fn fire_timer(
         EventLoopTimerTag::CronJob => in_features!(
             [Cron],
             (c: *mut CronJob = owner!(CronJob, event_loop_timer)) -> JsResult<()> {
-                // SAFETY: a scheduled job's JS wrapper keeps it alive; `t` was just popped.
-                CronJob::on_timer_fire(unsafe { bun_ptr::ThisPtr::new(c) }, VirtualMachine::get());
+                // SAFETY: an armed job roots its JS wrapper, which owns `c`, and this call runs no script.
+                if let Some(root) = unsafe { (*c).timer_fired() } {
+                    CronJob::tick(&root, VirtualMachine::get());
+                }
                 Ok(())
             }
         ),
@@ -1737,7 +1735,7 @@ fn __bun_release_task_unrun(task: bun_event_loop::Task) {
         task_tag::NapiFinalizerTask => release_boxed_in!([NativeAddons], NapiFinalizerTask),
         task_tag::NativePromiseContextDeferredDerefTask => {
             release_in!(
-                [Serve, HtmlRewriter, S3Client, Cron],
+                [Serve, HtmlRewriter, S3Client],
                 NativePromiseContextDeferredDerefTask
             )
         }

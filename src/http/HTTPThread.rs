@@ -203,28 +203,11 @@ struct CertCheckResumeMessage {
 pub(crate) const LIBDEFLATE_SHARED_BUFFER_LEN: usize = 512 * 1024;
 
 pub struct LibdeflateState {
-    pub(crate) decompressor: Option<bun_libdeflate_sys::libdeflate::OwnedDecompressor>,
-    pub(crate) compressor: Option<bun_libdeflate_sys::libdeflate::OwnedCompressor>,
-    pub(crate) shared_buffer: [u8; LIBDEFLATE_SHARED_BUFFER_LEN],
+    pub(crate) compressor: bun_deflate::Compressor,
+    pub(crate) shared_buffer: Box<[u8; LIBDEFLATE_SHARED_BUFFER_LEN]>,
 }
 
-// SAFETY: `Option<Owned{De,}Compressor>` is `#[repr(transparent)]` over
-// `NonNull`, so all-zero = `None`; `[u8; N]` is valid at the all-zero bit
-// pattern.
-unsafe impl bun_core::Zeroable for LibdeflateState {}
-
 impl LibdeflateState {
-    /// The libdeflate decompressor handle.
-    ///
-    /// `decompressor` is set once in [`Self::get`] (panics on OOM)
-    /// and is never `None` after that, so the unwrap is infallible.
-    #[inline]
-    pub(crate) fn decompressor(&self) -> &bun_libdeflate_sys::libdeflate::OwnedDecompressor {
-        self.decompressor
-            .as_ref()
-            .expect("set in LibdeflateState::get()")
-    }
-
     /// This thread's, until the guard is dropped. `HTTPClient::compress_body_for_send` keeps a cursor into it.
     pub(crate) fn get() -> impl DerefMut<Target = ManuallyDrop<AliasableBox<Self>>> {
         thread_local! {
@@ -232,11 +215,10 @@ impl LibdeflateState {
                 const { Cell::new(None) };
         }
         let state = STATE.take().unwrap_or_else(|| {
-            let decompressor = bun_libdeflate_sys::libdeflate::OwnedDecompressor::new()
-                .unwrap_or_else(|| bun_core::out_of_memory());
-            let mut state: Box<LibdeflateState> = bun_core::boxed_zeroed();
-            state.decompressor = Some(decompressor);
-            ManuallyDrop::new(state.into())
+            ManuallyDrop::new(AliasableBox::new(LibdeflateState {
+                compressor: Default::default(),
+                shared_buffer: bun_core::boxed_zeroed(),
+            }))
         });
         scopeguard::guard(state, |state| STATE.set(Some(state)))
     }

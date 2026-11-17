@@ -6,7 +6,7 @@
 // to catch both SIGILL and miscompilation from wrong instruction lowering.
 
 import { describe, expect, test } from "bun:test";
-import { deflateSync, inflateSync } from "node:zlib";
+import { crc32, deflateSync, gzipSync, inflateSync } from "node:zlib";
 import { decodeDifferences, encodeDifferences, inParts, loadCases } from "../../image/webp-golden/observe";
 
 // Use Buffer.alloc instead of "x".repeat() — repeat is slow in debug JSC builds.
@@ -481,5 +481,49 @@ describe("WebP codec: Highway runtime dispatch", () => {
     .filter(c => Object.keys(c.results).length > 0);
   test.each(inParts(lossy, ["layers", "stored"], 20))("encode, part %#", async some => {
     expect(await encodeDifferences(some)).toBe("");
+  });
+});
+
+describe("DEFLATE: Highway runtime dispatch", () => {
+  // src/jsc/bindings/highway_checksums.cpp has code for each width of vector, for what is left after it, and for the
+  // start of a long input. Parts of src/deflate/{decompressor,block}.rs are compiled with BMI2 and without.
+  const library = "libdeflate";
+  const bytes = Buffer.alloc(140_000);
+  for (let i = 0, state = 1; i < bytes.length; i++) {
+    state = (Math.imul(state, 1664525) + 1013904223) >>> 0;
+    bytes[i] = state >>> 24;
+  }
+
+  const lengths = Array.from({ length: 150 }, (_, i) => i);
+  for (let power = 128; power <= 4096; power *= 2) {
+    for (const more of [-1, 0, 1, 15, 16, 17, 48, 100, 127]) lengths.push(power + more, 3 * power + more);
+  }
+  lengths.push(65_536, 65_537, 139_000);
+  const parts = (bytes: Buffer) => lengths.map((length, i) => bytes.subarray(i % 67, (i % 67) + length));
+
+  test("CRC-32", () => {
+    const inputs = parts(bytes);
+    const trailers = inputs.map(input => Buffer.from(Bun.gzipSync(input, { library, level: 0 })).subarray(-8));
+    expect(trailers.map(trailer => trailer.readUInt32LE())).toEqual(inputs.map(input => crc32(input)));
+  });
+
+  test("Adler-32", () => {
+    // What a buffer can still grow into is not readable.
+    const last = new Uint8Array(new ArrayBuffer(65_536, { maxByteLength: 131_072 }));
+    last.set(bytes.subarray(0, last.length));
+    const ends = [0, 5376, 5504].flatMap(chunk => Array.from({ length: 70 }, (_, i) => last.subarray(-chunk - i - 1)));
+    const inputs = [...parts(bytes), ...parts(Buffer.alloc(bytes.length, 255)), ...ends];
+    const trailers = inputs.map(input => deflateSync(input, { level: 0 }).subarray(-4));
+    expect(inputs.map(input => Bun.hash.adler32(input))).toEqual(trailers.map(trailer => trailer.readUInt32BE()));
+  });
+
+  test.each([0, 4])("round trip with strategy %i of zlib", strategy => {
+    const input = Buffer.from(bytes.subarray(0, 6000).toString("base64").replaceAll("A", ascii256));
+    expect(input.equals(Bun.gunzipSync(gzipSync(input, { strategy }), { library }))).toBe(true);
+  });
+
+  test.each([1, 4, 6, 9, 12])("round trip at level %i", level => {
+    const input = Buffer.from(bytes.subarray(0, 6000).toString("hex").replaceAll("0", "zero "));
+    expect(input.equals(Bun.gunzipSync(Bun.gzipSync(input, { library, level })))).toBe(true);
   });
 });

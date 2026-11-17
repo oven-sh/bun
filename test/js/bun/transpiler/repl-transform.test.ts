@@ -294,11 +294,11 @@ describe("Bun.Transpiler replMode", () => {
     });
 
     test("strict mode code keeps its errors", () => {
-      expect(() => transpiler.transformSync("await 1; class A { m() { return 010 } }")).toThrow(
-        "Legacy octal literals cannot be used in strict mode",
+      expect(() => transpiler.transformSync("await 1; class A { m() { with (x) y } }")).toThrow(
+        "With statements cannot be used in strict mode",
       );
-      expect(() => transpiler.transformSync("'use strict'; await 1; 010")).toThrow(
-        "Legacy octal literals cannot be used in strict mode",
+      expect(() => transpiler.transformSync("'use strict'; await 1; with (x) y")).toThrow(
+        "With statements cannot be used in strict mode",
       );
     });
   });

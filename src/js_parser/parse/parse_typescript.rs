@@ -4,9 +4,7 @@ use bun_collections::VecExt;
 use crate::Error;
 use crate::lexer::{self as js_lexer, T};
 use crate::p::P;
-use crate::parser::{
-    FnOrArrowDataParse, LegacyOctalKind, ParseStatementOptions, Ref, ScopeOrder, StatementScope,
-};
+use crate::parser::{FnOrArrowDataParse, ParseStatementOptions, Ref, ScopeOrder, StatementScope};
 use bun_alloc::{ArenaVec as BumpVec, ArenaVecExt as _};
 use bun_ast::expr::EFlags;
 use bun_ast::flags;
@@ -512,7 +510,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         if name == b"require" && p.lexer.token == T::TOpenParen {
             // "import ns = require('x')"
             p.lexer.next()?;
-            let path_estr = p.decode_string(LegacyOctalKind::Escape)?;
+            let path_estr = p.lexer.to_e_string()?;
             let path_loc = p.lexer.loc();
             let path = p.new_expr(path_estr, path_loc);
             p.lexer.expect(T::TStringLiteral)?;
@@ -639,8 +637,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             // Parse the name
             let needs_symbol: bool = if p.lexer.token == T::TStringLiteral {
                 // `slice8()` is currently duplicated in E.rs (two impl blocks);
-                // read `.data` directly: `decode_utf8_string` guarantees `is_utf16 == false`.
-                let estr = p.decode_utf8_string(LegacyOctalKind::Escape)?;
+                // read `.data` directly — `to_utf8_e_string` guarantees `is_utf16 == false`.
+                let estr = p.lexer.to_utf8_e_string()?;
                 debug_assert!(!estr.is_utf16);
                 value.name = estr.data;
                 js_lexer::is_identifier(value.name.slice())

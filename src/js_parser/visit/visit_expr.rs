@@ -99,11 +99,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     }
 
     fn e_string(_: &mut Self, _e: &mut Expr, _: ExprIn) {
-        // The parse pass records a legacy octal escape, and `P::report_legacy_octals` reports it.
+        // If you're using this, you're probably not using 0-prefixed legacy octal notation
+        // if e.LegacyOctalLoc.Start > 0 {
     }
 
     fn e_number(_: &mut Self, _e: &mut Expr, _: ExprIn) {
-        // The parse pass records a legacy octal number, and `P::report_legacy_octals` reports it.
+        // idc about legacy octal loc
     }
 
     /// The renamer leaves an unbound reserved word as written; a strict chunk would not parse.

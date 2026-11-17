@@ -272,7 +272,6 @@ impl<'a> Options<'a> {
                 remove_cjs_module_wrapper: f.remove_cjs_module_wrapper,
                 lower_using: f.lower_using,
                 ascii_only: f.ascii_only,
-                allow_legacy_octals: f.allow_legacy_octals,
                 bundler_feature_flags: None,
                 define_hash: f.define_hash,
                 repl_mode: f.repl_mode,
@@ -1300,7 +1299,6 @@ impl<'a> Parser<'a> {
             }
         }
 
-        p.report_legacy_octals();
         visit_tracer.end();
 
         // If there were errors while visiting, also halt here

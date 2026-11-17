@@ -247,9 +247,6 @@ pub mod Runtime {
         /// The printer escapes everything that is not ASCII.
         pub ascii_only: bool,
 
-        /// No legacy octal number or escape is an error. For a snapshot file: Bun 1.1.36 and older wrote raw `\1` to `\9` into its templates.
-        pub allow_legacy_octals: bool,
-
         /// Feature flags for dead-code elimination via `import { feature } from "bun:bundle"`
         /// When `feature("FLAG_NAME")` is called, it returns true if FLAG_NAME is in this set.
         ///
@@ -313,7 +310,6 @@ pub mod Runtime {
                 remove_cjs_module_wrapper: false,
                 lower_using: true,
                 ascii_only: false,
-                allow_legacy_octals: false,
                 bundler_feature_flags: None,
                 define_hash: None,
                 repl_mode: false,
@@ -1040,14 +1036,6 @@ pub struct ExprIn {
     pub(crate) is_object_keys_argument: bool,
 }
 
-/// `TemplateEscape` is an escape in an untagged template, which no mode allows.
-#[derive(Clone, Copy)]
-pub(crate) enum LegacyOctalKind {
-    Number,
-    Escape,
-    TemplateEscape,
-}
-
 /// What is around some code: its scope, and the keyword of its class for the note of a strict mode error.
 #[derive(Clone, Copy)]
 pub(crate) struct Enclosing {
@@ -1110,8 +1098,6 @@ pub enum StrictModeFeature {
     ForInVarInit,
     IfElseFunctionStmt,
     LabelFunctionStmt,
-    LegacyOctalEscape,
-    LegacyOctalLiteral,
     ReservedWord,
     WithStatement,
 }

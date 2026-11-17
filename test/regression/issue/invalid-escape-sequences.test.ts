@@ -246,13 +246,9 @@ test("Valid unicode escapes in identifiers should work", async () => {
 // Invalid escape-sequence diagnostics in `decode_escape_sequences` reported
 // caret locations at text-relative offsets instead of absolute source
 // positions, landing the caret several columns left of the backslash (or on
-// an unrelated earlier line/character). Two kinds of bugs fed into this:
-//   1. `hex_start` in the `\u{...}` branch over-subtracted by the width of
-//      `{`, and the string-path caller passed the opening-quote offset
-//      where the decoder expects the content-start offset.
-//   2. The legacy-octal `\0`..`\7` + `8`/`9` branch built `Range.loc.start`
-//      from `octal_start` alone, ignoring the absolute `start` argument that
-//      every sibling error path adds.
+// an unrelated earlier line/character): `hex_start` in the `\u{...}` branch
+// over-subtracted by the width of `{`, and the string-path caller passed the
+// opening-quote offset where the decoder expects the content-start offset.
 // Pin the caret under the `\` for every affected escape and quote style.
 describe("invalid-escape caret points at the backslash (#31134)", () => {
   const cases = [
@@ -299,38 +295,12 @@ describe("invalid-escape caret points at the backslash (#31134)", () => {
       pattern: "\\u{110000}",
       expectCol: 7,
     },
-    // Legacy-octal `\08`/`\09`. Sloppy mode allows them, so the error needs
-    // strict mode. There the file still runs, and `bun build` reports them:
-    {
-      name: "\\08 double-quote with prefix",
-      source: '"use strict"; var a = "aaaaa\\08";',
-      msg: "Legacy octal escape sequences cannot be used in strict mode",
-      pattern: "\\08",
-      expectCol: 29,
-      args: ["build", "--no-bundle"],
-    },
-    {
-      name: "\\08 double-quote without prefix",
-      source: '"use strict"; var a = "\\08";',
-      msg: "Legacy octal escape sequences cannot be used in strict mode",
-      pattern: "\\08",
-      expectCol: 24,
-      args: ["build", "--no-bundle"],
-    },
-    {
-      name: "\\09 single-quote with prefix",
-      source: "\"use strict\"; var a = 'aaaaa\\09';",
-      msg: "Legacy octal escape sequences cannot be used in strict mode",
-      pattern: "\\09",
-      expectCol: 29,
-      args: ["build", "--no-bundle"],
-    },
   ];
 
-  test.each(cases)("$name → column $expectCol", ({ source, msg, pattern, expectCol, args = [] }) => {
+  test.each(cases)("$name → column $expectCol", ({ source, msg, pattern, expectCol }) => {
     using dir = tempDir("caret-pos", { "test.js": source });
     const { stderr, exitCode } = Bun.spawnSync({
-      cmd: [bunExe(), ...args, join(dir, "test.js")],
+      cmd: [bunExe(), join(dir, "test.js")],
       env: bunEnv,
       stderr: "pipe",
       stdout: "pipe",

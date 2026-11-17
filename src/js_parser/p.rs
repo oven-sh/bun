@@ -18,7 +18,7 @@ use crate::defines::{Define, DefineData};
 use crate::lexer as js_lexer;
 use crate::lower::hoist_test_mocks::{MockApi, is_test_module};
 use crate::parse::parse_entry::Options as ParserOptions;
-use crate::parser::{Enclosing, LegacyOctalKind};
+use crate::parser::Enclosing;
 use crate::renamer;
 use crate::{
     ARGUMENTS_STR as arguments_str, DeferredArrowArgErrors, DeferredErrors,
@@ -178,7 +178,6 @@ pub(crate) struct ParserSnapshot<'a> {
     scopes_in_order_for_enum_len: usize,
     symbols_len: usize,
     replaced_functions_len: usize,
-    legacy_octals_len: usize,
     allocated_names_len: usize,
     import_records_len: usize,
 }
@@ -291,9 +290,6 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     pub(crate) macro_call_count: MacroCallCountType,
 
     pub(crate) hoisted_ref_for_sloppy_mode_block_fn: RefRefMap,
-
-    /// Each legacy octal number (`010`) or escape (`"\1"`), with the scope that the parser was in.
-    pub(crate) legacy_octals: Vec<(Enclosing, bun_ast::Range, LegacyOctalKind)>,
 
     /// Each function declaration that a later declaration in the same scope replaced, with that scope and that later declaration.
     pub(crate) replaced_functions: Vec<(Enclosing, js_ast::scope::Member, js_ast::scope::Member)>,
@@ -4988,8 +4984,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 .into_bump_str()
                 .as_bytes(),
             ),
-            StrictModeFeature::LegacyOctalLiteral => (None, b"Legacy octal literals"),
-            StrictModeFeature::LegacyOctalEscape => (None, b"Legacy octal escape sequences"),
             StrictModeFeature::IfElseFunctionStmt => {
                 (None, b"Function declarations inside if statements")
             }
@@ -5355,79 +5349,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Ok(ref_)
     }
 
-    /// Call while the lexer is on a `TNumericLiteral`.
-    #[inline]
-    pub(crate) fn check_for_legacy_octal_literal(&mut self) {
-        if self.lexer.is_legacy_octal_literal {
-            self.record_legacy_octal(self.lexer.range(), LegacyOctalKind::Number);
-        }
-    }
-
-    /// The string or template part that the lexer is on. Every decode goes through here, so none misses a legacy octal escape.
-    #[inline]
-    pub(crate) fn decode_string(
-        &mut self,
-        kind: LegacyOctalKind,
-    ) -> Result<E::String, crate::Error> {
-        let (string, legacy_octal) = self.lexer.to_e_string()?;
-        if legacy_octal.start >= 0 {
-            self.record_legacy_octal(self.source.range_of_legacy_octal_escape(legacy_octal), kind);
-        }
-        Ok(string)
-    }
-
-    pub(crate) fn decode_utf8_string(
-        &mut self,
-        kind: LegacyOctalKind,
-    ) -> Result<E::String, crate::Error> {
-        let mut string = self.decode_string(kind)?;
-        string.to_utf8(self.arena)?;
-        Ok(string)
-    }
-
-    #[cold]
-    #[inline(never)]
-    fn record_legacy_octal(&mut self, range: bun_ast::Range, kind: LegacyOctalKind) {
-        self.legacy_octals.push((self.enclosing(), range, kind));
-    }
-
     /// What is around the code that the parser is on, in the parse pass and in the visit pass.
     #[inline]
     fn enclosing(&self) -> Enclosing {
         Enclosing {
             scope: self.current_scope,
             class_keyword: self.enclosing_class_keyword,
-        }
-    }
-
-    /// Call after `prepare_for_visit_pass`: the scopes of a class are the last to become strict, in `hoist_symbols`.
-    pub(crate) fn report_legacy_octals(&mut self) {
-        if self.options.features.allow_legacy_octals {
-            return;
-        }
-        for (enclosing, range, kind) in core::mem::take(&mut self.legacy_octals) {
-            let feature = match kind {
-                LegacyOctalKind::Number => StrictModeFeature::LegacyOctalLiteral,
-                LegacyOctalKind::Escape => StrictModeFeature::LegacyOctalEscape,
-                LegacyOctalKind::TemplateEscape => {
-                    self.log().add_range_error(
-                        Some(self.source),
-                        range,
-                        b"Legacy octal escape sequences cannot be used in template literals",
-                    );
-                    continue;
-                }
-            };
-            // A scope that the parser discarded (the one of `("\1")`) is as strict as the scope around it.
-            let mut strict_scope = Some(enclosing.scope);
-            while let Some(scope) = strict_scope {
-                if scope.strict_mode.has_early_errors() {
-                    let enclosing = Enclosing { scope, ..enclosing };
-                    self.mark_strict_mode_feature_in(enclosing, feature, range, b"");
-                    break;
-                }
-                strict_scope = scope.parent;
-            }
         }
     }
 
@@ -8701,7 +8628,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             scopes_in_order_for_enum_len: self.scopes_in_order_for_enum.len(),
             symbols_len: self.symbols.len(),
             replaced_functions_len: self.replaced_functions.len(),
-            legacy_octals_len: self.legacy_octals.len(),
             allocated_names_len: self.allocated_names.len(),
             import_records_len: self.import_records.len(),
         }
@@ -8761,7 +8687,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
         self.replaced_functions
             .truncate(snapshot.replaced_functions_len);
-        self.legacy_octals.truncate(snapshot.legacy_octals_len);
         self.allocated_names.truncate(snapshot.allocated_names_len);
         self.import_records.truncate(snapshot.import_records_len);
     }
@@ -10118,7 +10043,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             has_classic_runtime_warned: false,
             macro_call_count: 0,
             hoisted_ref_for_sloppy_mode_block_fn: Default::default(),
-            legacy_octals: Vec::new(),
             replaced_functions: Vec::new(),
             sloppy_only_syntax: Vec::new(),
             has_with_scope: false,

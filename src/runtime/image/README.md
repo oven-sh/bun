@@ -21,7 +21,7 @@ compiles away. On macOS/Windows the backend is tried first; it returns
 a `BackendUnavailable` error for anything it can't do (palette PNG, lossless
 WebP, dlopen miss) and the static path takes over.
 
-JPEG, PNG and WebP are `src/jpeg`, `src/png` and `src/webp`, in Rust, on the kernels in `src/simd/kernels/{jpeg,jpeg_colors,png,webp_decoder}.rs` and `src/jsc/bindings/highway_webp_encoder.cpp`.
+JPEG, PNG and WebP are `src/jpeg`, `src/png` and `src/webp`, in Rust, on the kernels in `src/simd/kernels/{jpeg,jpeg_colors,png,webp_decoder,webp_encoder}.rs`.
 
 ## Adding a chainable op
 
@@ -36,7 +36,7 @@ JPEG, PNG and WebP are `src/jpeg`, `src/png` and `src/webp`, in Rust, on the ker
 
 ## Adding a format
 
-1. New `scripts/build/deps/<lib>.ts` (copy `libdeflate.ts` for the simple case).
+1. New `scripts/build/deps/<lib>.ts` (copy `brotli.ts` for the simple case).
 2. Extend `Format` + `sniff()` + `mime()` in `codecs.rs`, add a `<fmt>` module with
    `decode`/`encode` functions alongside the others.
 3. If the format carries EXIF, extend `exif.rs`.

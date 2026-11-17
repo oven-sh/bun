@@ -130,6 +130,13 @@ impl<const N: usize, const B: usize> Lanes<i16, N, B> {
         debug_assert!(product.simd_ne(Simd::splat(1 << 30)).all());
         Self::new((product >> 16).cast())
     }
+
+    /// Negated where `sign` is negative. It must be zero where `sign` is.
+    #[inline]
+    pub fn mul_sign(self, sign: Self) -> Self {
+        debug_assert!((0..N).all(|i| sign[i] != 0 || self[i] == 0));
+        Self::new(self.0 * sign.0.signum())
+    }
 }
 
 impl<const B: usize> Lanes<i16, 8, B> {

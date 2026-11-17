@@ -1,7 +1,7 @@
 //! Gives both the same random input. The slices for Rust are next to inaccessible pages.
 use crate::pairs::{self, Pairs};
 use crate::room::Room;
-use crate::{Random, columns, highway, shared, write_line};
+use crate::{Random, columns, highway, shared, webp_encoder, write_line};
 use bun_simd::{Out, SharedOutU8};
 use bun_simd_kernels::{self as rust, ColumnsFilled, Filter, MappingsState};
 use core::array::from_fn;
@@ -750,7 +750,9 @@ impl Round<'_> {
         let shift = random.below(6);
         for (kept, is_simple) in [(4, false), (2, true)] {
             let strides = [16, 8, 8].map(|size| size * count + 8 + gap);
-            let lens = [(16, 0), (8, 1), (8, 2)].map(|(size, i)| (size + kept) * strides[i] + 4);
+            // QEMU reads 32 bytes for a `vinserti128`, which takes 16.
+            let lens = [(16, 4), (8, 16), (8, 16)].map(|(size, more)| (size + kept, more));
+            let lens: [_; 3] = from_fn(|i| lens[i].0 * strides[i] + lens[i].1);
             let mut want = lens.map(|len| random.bytes(len, alphabet));
             let mut got =
                 [(&mut *a, 0), (b, 1), (c, 2)].map(|(it, i)| it.copy_of(&want[i], offset));
@@ -794,16 +796,17 @@ impl Round<'_> {
         let padded = width.next_multiple_of(rust::webp::ROW_STEP);
         let rows = [(); 4].map(|()| random.bytes(padded + 1, alphabet));
         let mut want = [(); 2].map(|()| vec![7; 2 * padded]);
-        let [a, b, c, d, e, f] = &mut *self.rooms;
-        let mut got = [e, f].map(|room| room.copy_of(&want[0], offset));
-        highway::webp::upsample(
-            [&rows[0], &rows[1]],
-            want.each_mut().map(|it| &mut it[..]),
-            width,
+        let [a, b, c, d, ..] = &mut *self.rooms;
+        let got = b.copy_of(&want.concat(), offset);
+        let [upper, lower] = &mut want;
+        let (both, distance) = (
+            rows[..2].concat(),
+            random.below(2) * random.below(padded + 2),
         );
-        let from = [&*a.copy_of(&rows[0], offset), b.copy_of(&rows[1], offset)];
-        let fits = rust::webp::upsample(from, got.each_mut().map(|it| &mut **it), width).is_some();
-        let is_same = (0..2).all(|i| want[i][..2 * width] == got[i][..2 * width]);
+        let from = a.copy_of(&both[..distance + padded + 1], offset);
+        highway::webp::upsample([&both, &both[distance..]], [upper, lower], width);
+        let fits = rust::webp::upsample(from, distance, got, width).is_some();
+        let is_same = (0..2).all(|i| want[i][..2 * width] == got[i * 2 * padded..][..2 * width]);
         self.failures.unless(fits && is_same, "webp::upsample");
 
         let (start, more) = (random.below(9), random.below(2 * width + 1));
@@ -998,6 +1001,7 @@ pub(crate) fn run(seed: u64, rounds: u64) -> bool {
         round.jpeg_colors();
         round.webp_macroblocks();
         round.webp_rows();
+        round.failures.0.extend(webp_encoder::check(round.random));
         round.mappings();
         if number % 20 == 0 {
             round.resize();

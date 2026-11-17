@@ -6,7 +6,7 @@ use core::ptr;
 pub(crate) trait Unit = Source<Lane: Ord + From<u8> + Into<u32>>;
 type SharedU16 = [SharedU8; 2];
 
-/// After so many bytes or false candidates, it pays to look for better units than the ends.
+/// After so many bytes or false candidates, it can pay to look for better units than the ends.
 const BYTES_BEFORE_LEARNING: usize = 4096;
 const MISSES_BEFORE_LEARNING: usize = 16;
 const MOST_MISSES: usize = 128;
@@ -346,7 +346,7 @@ pub(crate) mod simd {
     fn cross<'a, S, const N: usize, const M: usize, const FORWARD: bool>(
         haystack: &'a [S],
         needle: &[S],
-        halves: Halves,
+        halves: (Halves, u64),
         (places, [x, y]): ([&[S]; 2], [Vector<S::Lane, N>; 2]),
         [mut seen, mut must, may]: [usize; 3],
     ) -> ControlFlow<Option<&'a S>, usize>
@@ -442,7 +442,7 @@ pub(crate) mod simd {
             cost += misses.compared / COMPARED_PER_STEP;
             turn = [seen - began, cost];
             if let Some(far) = budget.pay_for(turn) {
-                let halves = *halves.get_or_insert_with(|| halves_of::<S, FORWARD>(needle));
+                let halves = *halves.get_or_insert_with(|| halves_and_bits::<S, FORWARD>(needle));
                 let [must, may] = far.map(|it| seen.saturating_add(it));
                 let (usual, far) = (of(plan.usual)?, [seen, must, may]);
                 match cross::<S, N, M, FORWARD>(haystack, needle, halves, usual, far) {
@@ -523,7 +523,10 @@ pub(crate) mod simd {
             };
             seen = Vector::skip::<S, FORWARD>(place, seen, |x| [x.simd_eq(unit); 2]);
         }
-        let range = seen..seen + BYTES_BEFORE_LEARNING / size_of::<S>();
+        let stretch = BYTES_BEFORE_LEARNING / size_of::<S>();
+        // Close to the end, it would not pay.
+        let is_close = seen + 4 * stretch >= starts;
+        let range = seen..if is_close { starts } else { seen + stretch };
         let mut left = MISSES_BEFORE_LEARNING;
         for mut matches in Vector::matches_in::<S, 2, FORWARD>(places, range.clone(), test) {
             while !matches.is_empty() {
@@ -638,10 +641,16 @@ fn rarest_two<S: Unit>(needle: &[S], sample: &[S]) -> [usize; 2] {
     for unit in sample {
         counts[low_byte(unit)] = counts[low_byte(unit)].wrapping_add(1);
     }
-    let (places, count) = (0..needle.len(), |&i: &usize| counts[low_byte(&needle[i])]);
-    let first = places.clone().min_by_key(count).unwrap_or(0);
-    let second = places.rev().filter(|&i| i != first).min_by_key(count);
-    [first, second.unwrap_or(0)]
+    let [mut rarest, mut second] = [(u32::MAX, 0); 2];
+    for (i, unit) in needle.iter().enumerate() {
+        let it = (counts[low_byte(unit)], i);
+        if it.0 < rarest.0 {
+            (rarest, second) = (it, rarest);
+        } else if it.0 <= second.0 {
+            second = it;
+        }
+    }
+    [rarest.1, second.1]
 }
 
 #[inline(always)]
@@ -682,6 +691,12 @@ fn maximal_suffix<S: Unit, const FORWARD: bool>(needle: &[S], is_ascending: bool
 /// Where to split the needle. If only the right half matches: how far to move, and what matches then.
 type Halves = (usize, (usize, usize));
 
+/// Units that differ may have the same bit.
+#[inline(always)]
+fn bit_of(unit: impl Into<u32>) -> u64 {
+    1 << (unit.into() % 64)
+}
+
 fn halves(len: usize, [split, period]: [usize; 2], is_periodic: bool) -> Halves {
     match is_periodic && split < period {
         true => (split, (period, len - period)),
@@ -690,12 +705,16 @@ fn halves(len: usize, [split, period]: [usize; 2], is_periodic: bool) -> Halves 
 }
 
 #[inline(never)]
-fn halves_of<S: Unit, const FORWARD: bool>(needle: &[S]) -> Halves {
+fn halves_and_bits<S: Unit, const FORWARD: bool>(needle: &[S]) -> (Halves, u64) {
     let nth = nth::<S, FORWARD>;
     let [ascending, descending] = [true, false].map(|it| maximal_suffix::<S, FORWARD>(needle, it));
     let [split, period] = ascending.max(descending);
     let is_periodic = (0..split).all(|i| nth(needle, i) == nth(needle, period + i));
-    halves(needle.len(), [split, period], is_periodic)
+    let (mut bits, mut units) = (0, needle.iter());
+    while let Some(unit) = units.next().filter(|_| bits != u64::MAX) {
+        bits |= bit_of(unit.get());
+    }
+    (halves(needle.len(), [split, period], is_periodic), bits)
 }
 
 /// The algorithm of Crochemore and Perrin, in linear time even if `needle` has changed since.
@@ -707,16 +726,16 @@ fn two_way<'a, S: Unit, const FORWARD: bool>(
         start: mut seen,
         end,
     }: Range<usize>,
-    (split, after_right_half): Halves,
+    ((split, after_right_half), bits): (Halves, u64),
     difference: Difference<S>,
 ) -> ControlFlow<Option<&'a S>, usize> {
     let (len, mut known, mut step) = (needle.len(), 0, needle.len());
     // What is known has been paid for.
     while seen < end || known > 0 {
-        let Some(left) = haystack.len().checked_sub(seen + len) else {
+        let back = haystack.len().wrapping_sub(len).wrapping_sub(seen);
+        let Some(window) = window(haystack, if FORWARD { seen } else { back }, len) else {
             return Break(None);
         };
-        let window = &haystack[if FORWARD { seen } else { left }..][..len];
         // The first `n` for which `nth` differs.
         let mismatch = |start: usize, end: usize| {
             let part = if FORWARD {
@@ -732,6 +751,15 @@ fn two_way<'a, S: Unit, const FORWARD: bool>(
             };
             Some(if FORWARD { start + at } else { end - 1 - at })
         };
+        let far = if FORWARD {
+            window.last()
+        } else {
+            window.first()
+        };
+        if far.is_some_and(|it| bits & bit_of(it.get()) == 0) {
+            (seen, known) = (seen + len, 0);
+            continue;
+        }
         (step, known) = match mismatch(split.max(known), len) {
             Some(n) => (n - split + 1, 0),
             None if mismatch(known.min(split), split).is_some() => after_right_half,
@@ -753,13 +781,17 @@ mod tests {
         (0..3u32.pow(len)).map(text)
     }
 
-    fn with<'a, const FORWARD: bool>(a: &'a [u8], b: &[u8], halves: Halves) -> Option<&'a u8> {
+    fn with<'a, const FORWARD: bool>(
+        a: &'a [u8],
+        b: &[u8],
+        halves: (Halves, u64),
+    ) -> Option<&'a u8> {
         let difference = difference_by_units::<_, FORWARD>;
         two_way::<_, FORWARD>(a, b, 0..usize::MAX, halves, difference).break_value()?
     }
 
     fn find<const FORWARD: bool>(text: &[u8], needle: &[u8]) -> Option<usize> {
-        let halves = halves_of::<_, FORWARD>(needle);
+        let halves = halves_and_bits::<_, FORWARD>(needle);
         index_with::<_, FORWARD>(text, needle, |a, b| with::<FORWARD>(a, b, halves))
     }
 
@@ -798,7 +830,7 @@ mod tests {
             needle[changed] = b'c';
             let (text, needle) = (turn(text.clone()), turn(needle));
             assert_eq!(find::<FORWARD>(&text, &needle), None);
-            let before = halves(len, [split, period], true);
+            let before = (halves(len, [split, period], true), u64::MAX);
             black_box(with::<FORWARD>(&text, &needle, before));
         }
         let text_in_steps = turn((0..64).cycle().take(len).collect());
@@ -809,7 +841,7 @@ mod tests {
                 .collect(),
         );
         let (mut seen, difference) = (0, difference_by_units::<_, FORWARD>);
-        let before = halves(needle.len(), [63, 64], true);
+        let before = (halves(needle.len(), [63, 64], true), u64::MAX);
         while let Continue(next) =
             two_way::<_, FORWARD>(&text_in_steps, &needle, seen..seen + 64, before, difference)
         {
@@ -819,7 +851,10 @@ mod tests {
         let needle = turn([b"c", &text[..len]].concat());
         assert_eq!(find::<FORWARD>(&turn(almost.repeat(3)), &needle), None);
         let needle = turn([b"a", &almost[..], &almost].concat());
-        assert_eq!(halves_of::<_, FORWARD>(&needle), (len, (len + 2, 0)));
+        assert_eq!(
+            halves_and_bits::<_, FORWARD>(&needle).0,
+            (len, (len + 2, 0))
+        );
     }
 
     /// Does not end unless the time is linear.
@@ -897,6 +932,7 @@ mod tests {
         assert_eq!(rarest_two(b"abc", b"aabbbc"), [2, 0]);
         assert_eq!(rarest_two(b"abab", b"b"), [0, 2]);
         assert_eq!(rarest_two(b"aaaa", b"a"), [0, 3]);
+        assert_eq!(rarest_two(b"aab", b"aab"), [2, 0]);
         for bit in (0..8).map(|it| 1 << it) {
             let needle = [255, 255, !bit, 255];
             assert_eq!(rarest_two(&needle, &needle), [2, 3]);

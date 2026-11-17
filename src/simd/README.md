@@ -182,6 +182,8 @@ In Bun, lints keep `core::simd` and `core::arch` out of the kernels. Add the op 
 
 Before Ice Lake, a core can lower its clock for about 0.7 ms after any 512-bit instruction. On a busy Cascade Lake server, one short search every 0.5 ms takes the clock from 3.1 to 2.7 GHz for all the code around it. So a kernel has to ask for `avx512_skx`. Ask only if one call runs long enough to make up for that.
 
+A Cascade Lake core does the same once 46 multiplications of 256 bits fall into about 64 cycles, and each change of the clock stalls it for about 10 µs. A tight loop does not show that, so also time a kernel with many multiplications after a pause of 1 ms.
+
 With AVX-512, a slice that is shorter than a vector takes one masked access. That can fetch a cache line that the slice does not reach, and waits for stores to its neighbors. A branch on the length costs more, because lengths are hard to predict.
 
 ## Why it is safe

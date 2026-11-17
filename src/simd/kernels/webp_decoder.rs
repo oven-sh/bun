@@ -1,4 +1,4 @@
-//! The kernels of the WebP decoder, in the arithmetic of libwebp (LICENSE.md).
+//! The arithmetic is that of libwebp (LICENSE.md): <https://github.com/webmproject/libwebp/tree/4fa21912338357f89e4fd51cf2368325b59e9bd9/src>
 use bun_simd::{Int, Isa, Lane, Out, Shuffle, Vector};
 use core::array::from_fn;
 use core::slice::{from_mut, from_ref};
@@ -61,7 +61,7 @@ fn cut<'a, const H: usize>(all: &'a mut Rows<'_, H>, size: usize, x: usize) -> O
 
 /// With the index of the vector above that of the lane in 16 bytes, rotates the bits of both `times`.
 #[inline(always)]
-fn rotate<T: Lane, const N: usize, I: Isa, const K: usize>(
+pub(crate) fn rotate<T: Lane, const N: usize, I: Isa, const K: usize>(
     v: &mut [Vector<T, N, I>; K],
     times: usize,
 ) {
@@ -444,13 +444,12 @@ pub(crate) mod simd {
 
         /// 9, 3, 3 and 1 sixteenths of the four samples around a pixel, from averages of two bytes.
         #[inline(always)]
-        pub fn upsample(
-            from: [&[u8]; 2],
-            [to_upper, to_lower]: [&mut [u8]; 2],
-            count: usize,
-        ) -> Option<()> {
+        pub fn upsample(from: &[u8], distance: usize, to: &mut [u8], count: usize) -> Option<()> {
             let len = count.checked_add(ROW_STEP - 1)? / ROW_STEP * ROW_STEP;
-            let [upper, lower] = [from[0].get(..len + 1)?, from[1].get(..len + 1)?];
+            // Unlike `div_ceil`, LLVM takes it for `len / N` if it is.
+            let steps = count.wrapping_add(N - 1) / N;
+            let lower = from.get(distance..)?.get(..len + 1)?;
+            let upper = &from[..len + 1];
             let upper = upper[..len]
                 .as_chunks()
                 .0
@@ -461,11 +460,12 @@ pub(crate) mod simd {
                 .0
                 .iter()
                 .zip(lower[1..].as_chunks().0);
+            let (to_upper, to_lower) = to.split_at_mut(to.len() / 2);
             let to_upper = to_upper.as_chunks_mut().0.get_mut(..len)?.as_chunks_mut().0;
             let to_lower = to_lower.as_chunks_mut().0.get_mut(..len)?.as_chunks_mut().0;
             let to = to_upper.iter_mut().zip(to_lower);
             #[rustc_unroll(never)]
-            for ((((a, b), (c, d)), to), _) in upper.zip(lower).zip(to).zip(0..count.div_ceil(N)) {
+            for ((((a, b), (c, d)), to), _) in upper.zip(lower).zip(to).zip(0..steps) {
                 let [a, b, c, d] = [U8::load(a), U8::load(b), U8::load(c), U8::load(d)];
                 let (s, t) = (a.average_round(d), b.average_round(c));
                 let (st, ad, bc) = (s ^ t, a ^ d, b ^ c);
@@ -680,13 +680,13 @@ pub(crate) mod simd {
         Some(())
     }
 
-    /// Two samples in each row of `to` for each of `count` pairs of neighbors, in whole steps.
+    /// From two rows to both halves of `to`: two samples for each of `count` pairs, in whole steps.
     #[export(up_to = avx2, up_to = neon)]
     #[must_use]
-    pub fn upsample(from: [&[u8]; 2], to: [&mut [u8]; 2], count: usize) -> Option<()> {
+    pub fn upsample(from: &[u8], distance: usize, to: &mut [u8], count: usize) -> Option<()> {
         match IS_NARROW {
-            true => width::x128::upsample(from, to, count),
-            false => width::x256::upsample(from, to, count),
+            true => width::x128::upsample(from, distance, to, count),
+            false => width::x256::upsample(from, distance, to, count),
         }
     }
 
@@ -737,9 +737,7 @@ pub(crate) mod simd {
     #[inline(always)]
     fn add_above<const MODE: u8>(mut row: &mut [u8], [tl, t, tr]: [&[Rgba]; 3]) {
         let above = &mut [tl.as_flattened(), t.as_flattened(), tr.as_flattened()];
-        if !IS_NARROW {
-            add_steps::<32, MODE>(&mut row, above);
-        }
+        add_steps::<32, MODE>(&mut row, above);
         add_steps::<16, MODE>(&mut row, above);
         add_steps::<4, MODE>(&mut row, above);
     }

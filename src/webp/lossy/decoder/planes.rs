@@ -82,22 +82,22 @@ impl Plane<'_> {
 
 /// The chroma of the two rows of pixels between two rows of a `Plane`.
 struct Upsampled<'a> {
-    rows: [&'a mut [u8]; 2],
+    /// One in each half.
+    rows: &'a mut [u8],
     pairs: usize,
 }
 
 impl Upsampled<'_> {
     #[inline(always)]
-    fn fill(&mut self, plane: &Plane, rows: [usize; 2]) {
-        let to = self.rows.each_mut().map(|row| &mut **row);
-        let from = rows.map(|row| plane.row(row, 1));
-        known(kernels::upsample(from, to, self.pairs));
+    fn fill(&mut self, plane: &Plane, [upper, lower]: [usize; 2]) {
+        let (from, distance) = (plane.row(upper, 1), (lower - upper) * plane.stride);
+        known(kernels::upsample(from, distance, self.rows, self.pairs));
     }
 
     /// The first sample is outside of the picture.
     fn row(&self, is_lower: bool) -> &[u8] {
-        let row = self.rows.at(usize::from(is_lower));
-        row.get(1..).unwrap_or_default()
+        let start = if is_lower { self.rows.len() / 2 } else { 0 };
+        self.rows.get(start + 1..).unwrap_or_default()
     }
 }
 
@@ -144,12 +144,10 @@ impl<'a> Planes<'a> {
         let uv_len = (kept_chroma_rows + 8) * uv_stride + MARGIN;
         let pairs = width / 2 + 1;
         let row_len = 2 * pairs.next_multiple_of(ROW_STEP) + MARGIN;
-        let lens = [
-            y_len, uv_len, uv_len, row_len, row_len, row_len, row_len, padded,
-        ];
+        let lens = [y_len, uv_len, uv_len, 2 * row_len, 2 * row_len, padded];
         *memory = vec::filled(0, lens.iter().sum())?;
         let mut rest = memory.as_mut_slice();
-        let [y, u, v, upper_u, lower_u, upper_v, lower_v, opaque] =
+        let [y, u, v, upsampled_u, upsampled_v, opaque] =
             lens.map(|len| rest.split_off_mut(..len).unwrap_or_default());
         opaque.fill(255);
         let plane = |samples, stride, kept_rows| Plane {
@@ -162,8 +160,8 @@ impl<'a> Planes<'a> {
             y: plane(y, y_stride, 2 * kept_chroma_rows),
             u: plane(u, uv_stride, kept_chroma_rows),
             v: plane(v, uv_stride, kept_chroma_rows),
-            upsampled_u: upsampled([upper_u, lower_u]),
-            upsampled_v: upsampled([upper_v, lower_v]),
+            upsampled_u: upsampled(upsampled_u),
+            upsampled_v: upsampled(upsampled_v),
             filter_type,
             width,
             height,

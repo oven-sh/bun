@@ -337,6 +337,11 @@ macro_rules! impl_narrow {
             pub fn saturating_sub(self, other: impl Into<Self>) -> Self {
                 Self::new(self.0.saturating_sub(other.into().0))
             }
+
+            #[inline(always)]
+            pub fn reduce_max(self) -> $T {
+                self.0.reduce_max()
+            }
         }
     )*};
 }
@@ -411,6 +416,11 @@ impl<const N: usize, I: Isa> Vector<i16, N, I> {
 }
 
 impl<const N: usize, I: Isa> Vector<i32, N, I> {
+    #[inline(always)]
+    pub fn abs(self) -> Self {
+        Self::new(self.0.abs())
+    }
+
     #[inline(always)]
     pub fn reduce_min(self) -> i32 {
         self.0.reduce_min()

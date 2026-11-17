@@ -201,6 +201,11 @@ impl<const S: bool> Lanes<i16, 8, S> {
     }
 
     #[inline(always)]
+    pub fn mul_sign(self, sign: Self) -> Self {
+        (self ^ sign >> 15) - (sign >> 15)
+    }
+
+    #[inline(always)]
     pub fn saturating_pairwise_dot(a: Lanes<u8, 16, S>, b: Lanes<i8, 16, S>) -> Self {
         let (a, b) = (
             a.bitcast::<Lanes<u16, 8, S>>(),

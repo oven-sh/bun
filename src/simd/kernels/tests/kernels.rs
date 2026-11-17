@@ -324,6 +324,15 @@ fn check_memmem<T: PartialEq>(widen: fn(u8) -> T, [forward, back]: Searches<T>) 
             check_both(&text, b"zyx");
         }
     }
+    // It does so only if much follows.
+    for (at, other) in (0..2).flat_map(|i| (1990 << i..2100 << i).map(move |at| (at, 6500 << i))) {
+        for other in [other - at % 600, other] {
+            let mut text = [&vec![b'x'; at][..], b"xyz", &vec![b'x'; other]].concat();
+            check_both(&text, b"xyz");
+            text.reverse();
+            check_both(&text, b"zyx");
+        }
+    }
     // One unit is rare, wherever it is.
     for (letters, len) in [
         (&b"ab"[..], 33),
@@ -499,6 +508,7 @@ fn memmem() {
 #[cfg_attr(miri, ignore = "reads only a slice")]
 fn memmem16() {
     check_memmem(|b| u16::from(b) << 7, SEARCHES16);
+    check_memmem(|b| u16::from(b) | 0x8000, SEARCHES16);
 }
 
 /// Does not end unless the time is linear.

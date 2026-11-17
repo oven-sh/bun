@@ -223,7 +223,9 @@ impl Session<'_> {
             }
         })();
         // A file that was not checked in full says so, as it does for `bun lint` with its files.
-        let results = linted.as_mut().map_or(&mut [][..], |it| &mut it.results[..]);
+        let results = linted
+            .as_mut()
+            .map_or(&mut [][..], |it| &mut it.results[..]);
         typed::report_not_type_checked(&context, results);
         let not_type_checked = typed::warnings_about_not_type_checked(&context, results);
         // Told the way the one-shot tells them, through the loader, which `notes` reads.

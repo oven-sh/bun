@@ -825,6 +825,7 @@ describe.concurrent.skipIf(!isLinux)("against a stub crontab (Linux)", () => {
     });
   });
 
+  const sharedDirectory = "Working directory must not be a shared directory such as /tmp";
   test.each([
     { name: `"a'b"`, message: "Working directory must not contain single quotes" },
     { name: `"a%b"`, message: "Working directory must not contain percent signs" },
@@ -832,6 +833,8 @@ describe.concurrent.skipIf(!isLinux)("against a stub crontab (Linux)", () => {
     { name: `"a\\rb"`, message: "Working directory must not contain line breaks" },
     { name: `Buffer.from([0xff])`, message: "Working directory must be valid UTF-8" },
     { name: `"gone"`, afterChdir: `fs.rmdirSync("../gone");`, message: "Failed to get the working directory" },
+    { name: `"sticky, world-writable"`, afterChdir: `fs.chmodSync(".", 0o1707);`, message: sharedDirectory },
+    { name: `"sticky, group-writable"`, afterChdir: `fs.chmodSync(".", 0o1770);`, message: sharedDirectory },
   ])("throws in the directory $name", async ({ name, afterChdir = "", message }) => {
     const result = await run(`
       const fs = require("node:fs");
@@ -1013,7 +1016,7 @@ describe.concurrent.skipIf(!isMacOS && !isWindows)("on any account (macOS, Windo
 
   test.each([
     { directory: "a'b", escaped: "a&apos;b", title: "bun-test-cwd-quote" },
-    ...(isMacOS ? [{ directory: "100%", escaped: "100%", title: "bun-test-cwd-percent" }] : []),
+    { directory: "100%", escaped: "100%", title: "bun-test-cwd-percent" },
   ])("the working directory $directory is written as $escaped", async ({ directory, escaped, title }) => {
     const element = isMacOS
       ? `<key>WorkingDirectory</key>\\n<string>/.*/${escaped}</string>`
@@ -1025,10 +1028,10 @@ describe.concurrent.skipIf(!isMacOS && !isWindows)("on any account (macOS, Windo
     });
   });
 
-  test.skipIf(!isWindows)("throws in the directory 100% (Windows)", async () => {
-    expect(await register(`"./job.ts"`, "bun-test-cwd-percent", "100%")).toEqual({
+  test.skipIf(!isWindows)("throws in the directory %a% (Windows)", async () => {
+    expect(await register(`"./job.ts"`, "bun-test-cwd-variable", "%a%")).toEqual({
       stdout: "",
-      stderr: expect.stringContaining("Working directory must not contain percent signs"),
+      stderr: expect.stringContaining("Working directory must not contain more than one percent sign"),
       exitCode: 1,
     });
   });

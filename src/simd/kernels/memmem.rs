@@ -548,7 +548,7 @@ pub(crate) mod simd {
     }
 
     #[inline(always)]
-    fn find<'a, S, const N: usize, const M: usize, const FORWARD: bool>(
+    pub(crate) fn find<'a, S, const N: usize, const M: usize, const FORWARD: bool>(
         haystack: &'a [S],
         needle: &[S],
     ) -> Option<&'a S>
@@ -773,6 +773,18 @@ mod tests {
         }
     }
 
+    #[test]
+    fn greatest_suffixes() {
+        for needle in (1..=9).flat_map(texts) {
+            let start = (0..needle.len()).max_by_key(|&at| &needle[at..]).unwrap();
+            let suffix = &needle[start..];
+            let period = (1..).find(|&it| suffix.starts_with(&suffix[it..])).unwrap();
+            assert_eq!(maximal_suffix::<_, true>(&needle, true), [start, period]);
+            let other: Vec<_> = needle.iter().rev().map(|it| 2 - it).collect();
+            assert_eq!(maximal_suffix::<_, false>(&other, false), [start, period]);
+        }
+    }
+
     fn long_needles<const FORWARD: bool>() {
         let turn = |mut it: Vec<u8>| {
             if !FORWARD {
@@ -827,6 +839,13 @@ mod tests {
         assert_eq!(budget.pay_for([10, 200]), None);
         assert_eq!(budget.pay_for([0, 0]), Some([62, 1600]));
         assert_eq!(budget.until_ranking[0], 0);
+        assert_eq!(budget.pay_for([1 << 20, 0]), None);
+        assert_eq!(budget.until_fallback, 800);
+        budget.pay_for_ranking();
+        assert_eq!(budget.until_ranking, [1132, 2264]);
+        budget.pay_for_ranking();
+        assert_eq!(budget.until_ranking, [3288, 6576]);
+        assert_eq!(Budget::new(9, true, 48).until_ranking, [976, 1024]);
     }
 
     #[test]
@@ -843,4 +862,49 @@ mod tests {
         assert_eq!(next([16, 48], Some([5, 6])), (16, [5, 6]));
         assert_eq!(next([999, 48], None), (128, [5, 6]));
     }
+
+    #[test]
+    fn tries_other_pairs() {
+        let mut plan = Plan::new([9, 0], [100, 48], true);
+        let mut next = |turn, telling| (plan.next_turn(turn, telling, None), plan.pair);
+        assert_eq!(next([100, 48], [3, 4]), (16, [3, 9]));
+        assert_eq!(next([50, 48], [3, 4]), (16, [9, 0]));
+        assert_eq!(next([400, 96], [5, 5]), (16, [5, 9]));
+        // Not as far ahead, but cheaper by the unit.
+        assert_eq!(next([250, 48], [5, 5]), (32, [5, 9]));
+        assert_eq!(next([48, 48], [6, 7]), (16, [9, 0]));
+        assert_eq!(next([48, 48], [6, 7]), (64, [5, 9]));
+        assert_eq!(next([99, 48], [5, 7]), (16, [5, 9]));
+        assert_eq!(next([99, 48], [5, 7]), (128, [5, 9]));
+        assert_eq!(next([99, 48], [6, 7]), (16, [6, 7]));
+        assert_eq!(next([99, 48], [6, 7]), (128, [5, 9]));
+
+        for (turn, want) in [([48, 48], [3, 9]), ([47, 48], [9, 0])] {
+            let mut plan = Plan::new([9, 0], turn, false);
+            plan.next_turn(turn, [3, 4], None);
+            plan.trials = 5;
+            plan.next_turn(turn, [3, 4], None);
+            assert_eq!(plan.pair, want);
+            assert_eq!(plan.next_turn([999, 48], [3, 4], Some([1, 2])), 16);
+        }
+    }
+
+    #[test]
+    fn ranks_units_by_their_low_byte() {
+        let rarest_two = rarest_two::<u8>;
+        assert_eq!(rarest_two(b"abc", b"bbbcc"), [0, 2]);
+        assert_eq!(rarest_two(b"abc", b"aaabcc"), [1, 2]);
+        assert_eq!(rarest_two(b"abc", b"aabbbc"), [2, 0]);
+        assert_eq!(rarest_two(b"abab", b"b"), [0, 2]);
+        assert_eq!(rarest_two(b"aaaa", b"a"), [0, 3]);
+        for bit in (0..8).map(|it| 1 << it) {
+            let needle = [255, 255, !bit, 255];
+            assert_eq!(rarest_two(&needle, &needle), [2, 3]);
+        }
+        let needle = [0x161u16, 0x62, 0x163, 0x61];
+        assert_eq!(super::rarest_two(&needle, &needle), [1, 2]);
+    }
 }
+
+#[cfg(all(test, not(miri)))]
+mod reads;

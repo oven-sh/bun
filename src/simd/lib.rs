@@ -56,6 +56,8 @@ pub use partial::Padded;
 #[cfg(any(feature = "test_support", not(target_arch = "x86_64")))]
 pub use portable::{portable32, portable64};
 pub use sink::{SharedWriter, Sink};
+#[cfg(feature = "test_support")]
+pub use source::Memory;
 pub use source::Source;
 pub use swizzle::Shuffle;
 pub use vector::{Int, Lane, Vector};

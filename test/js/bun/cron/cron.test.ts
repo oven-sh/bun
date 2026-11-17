@@ -751,13 +751,14 @@ describe.concurrent.skipIf(!isLinux)("against a stub crontab (Linux)", () => {
     { call: `Bun.cron.remove("t")`, added: "" },
   ])("$call", ({ call, added }) => {
     const settle = (env: Record<string, string>) => run(`console.log(await ${call}.catch(e => e.message));`, env);
+    const untilBunClosesItsEnd = `while ls -l /proc/$PPID/fd | grep -qE " ([3-9]|[0-9]{2,}) -> socket:"; do sleep 0.01; done`;
+    const untilReaped = "while kill -0 $$ 2>/dev/null; do sleep 0.01; done";
 
     test.each([
       { when: "both steps succeed", AFTER_LIST: "", table: kept },
       { when: "`crontab -l` exits with 1", AFTER_LIST: "exit 1", table: kept },
-      // The stub cannot see what bun has handled, so it sleeps to force an order.
-      { when: "the output ends before the exit", AFTER_LIST: "exec >&-; sleep 0.05", table: kept },
-      { when: "the output ends after the exit", AFTER_LIST: "(sleep 0.05; echo late) &", table: kept + "late\n" },
+      { when: "the output ends before the exit", AFTER_LIST: `exec >/dev/null; ${untilBunClosesItsEnd}`, table: kept },
+      { when: "the output ends after the exit", AFTER_LIST: `(${untilReaped}; echo late) &`, table: kept + "late\n" },
     ])("resolves with undefined when $when", async ({ AFTER_LIST, table }) => {
       expect(await settle({ AFTER_LIST })).toEqual({
         stdout: "undefined\n",

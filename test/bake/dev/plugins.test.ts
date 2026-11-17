@@ -794,6 +794,49 @@ test("Bun.build fails when onLoad returns nothing for a module of its namespace"
     loads: ["virtual-dep"],
   });
 });
+devTest("a stylesheet of a plugin that moves from a script to an @import clears its build error", {
+  files: {
+    ...wrappedFiles(`async () => ({
+      contents: await Bun.file(path.join(import.meta.dir, "stylesheet.txt")).text(),
+      loader: "css",
+    })`),
+    "index.html": emptyHtmlFile({ styles: ["./entry.css"], scripts: ["./entry.ts"] }),
+    "entry.ts": `import "wrapped:styles.css";`,
+    "entry.css": `.entry { width: 1px; }`,
+    "stylesheet.txt": `.wrapped { width: 1px; }`,
+  },
+  async test(dev) {
+    // The status of the page, and the width that its stylesheets give to ".wrapped".
+    const load = async () => {
+      const page = await dev.fetch("/");
+      const hrefs = Array.from(
+        (await page.text()).matchAll(/<link rel="stylesheet"[^>]*href="([^"]+)"/g),
+        match => match[1],
+      );
+      const stylesheets = await Promise.all(hrefs.map(href => dev.fetch(href).text()));
+      return { status: page.status, width: stylesheets.join("\n").match(/\.wrapped\s*\{\s*width:\s*(\w+)/)?.[1] };
+    };
+    expect(await load()).toEqual({ status: 200, width: "1px" });
+    {
+      // The stylesheet had a chunk of its own for the script. From here on it is a part of the chunk of "entry.css".
+      await using batch = await dev.batchChanges();
+      await dev.write("entry.ts", `console.log("no import");`);
+      await dev.write("entry.css", `@import "wrapped:styles.css";\n.entry { width: 2px; }`);
+    }
+    expect(await load()).toEqual({ status: 200, width: "1px" });
+    // The dev server does not know that the plugin reads this file. The save of the importer bundles the stylesheet again.
+    await Bun.write(dev.join("stylesheet.txt"), `.wrapped { width: 3px; }}`);
+    await dev.write("entry.css", `@import "wrapped:styles.css";\n.entry { width: 3px; }`, { errors: null });
+    expect([await load(), await load()]).toEqual([
+      { status: 500, width: undefined },
+      { status: 500, width: undefined },
+    ]);
+    // No script imports the stylesheet now, so it needs no chunk of its own: the bundle of "entry.css" clears the error.
+    await Bun.write(dev.join("stylesheet.txt"), `.wrapped { width: 4px; }`);
+    await dev.write("entry.css", `@import "wrapped:styles.css";\n.entry { width: 4px; }`, { errors: null });
+    expect(await load()).toEqual({ status: 200, width: "4px" });
+  },
+});
 // devTest("onLoad with watchFile", {
 //   framework: minimalFramework,
 //   pluginFile: `

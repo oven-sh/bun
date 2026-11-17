@@ -5,6 +5,7 @@ use crate::{CronExpression, Registration, XmlText};
 
 pub fn plist(job: &Registration<'_>) -> String {
     let (title, schedule) = (&job.title, &job.schedule);
+    let cwd = XmlText(job.cwd.as_bytes());
     let (exe, script) = (XmlText(job.exe), XmlText(job.script));
     let interval = calendar_interval(schedule);
     format!(
@@ -22,6 +23,8 @@ pub fn plist(job: &Registration<'_>) -> String {
 <string>--cron-period={schedule}</string>
 <string>{script}</string>
 </array>
+<key>WorkingDirectory</key>
+<string>{cwd}</string>
 <key>StartCalendarInterval</key>
 {interval}
 <key>StandardOutPath</key>

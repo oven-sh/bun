@@ -31,6 +31,15 @@ use crate::node::PathLike;
 use crate::node::types::PathLikeExt as _;
 use backend::Step;
 
+/// XML reads `\r` as `\n`, Task Scheduler expands `%NAME%`, and a crontab line cannot quote any of the four.
+const REFUSED_IN_CWD: &[u8] = if cfg!(target_os = "macos") {
+    b"\n\r"
+} else if cfg!(windows) {
+    b"%"
+} else {
+    b"'%\n\r"
+};
+
 pub(crate) fn register(
     cx: &mut JsScope<'_>,
     path: CronPath<'_>,
@@ -59,6 +68,19 @@ pub(crate) fn register(
             _ => "Path must not contain line breaks",
         }));
     }
+    let mut cwd_buf = bun_paths::path_buffer_pool::get();
+    let Ok(cwd) = bun_core::getcwd(&mut cwd_buf).map(|cwd| cwd.as_bytes()) else {
+        return Err(global.throw(format_args!("Failed to get the working directory")));
+    };
+    if let Some(byte) = strings::index_of_any(cwd, REFUSED_IN_CWD).and_then(|i| cwd.get(i)) {
+        return Err(invalid(match byte {
+            b'\'' => "Working directory must not contain single quotes",
+            b'%' => "Working directory must not contain percent signs",
+            _ => "Working directory must not contain line breaks",
+        }));
+    }
+    let cwd =
+        core::str::from_utf8(cwd).map_err(|_| invalid("Working directory must be valid UTF-8"))?;
     let Ok(exe) = bun_core::self_exe_path() else {
         return Err(global.throw(format_args!("Failed to get bun executable path")));
     };
@@ -75,6 +97,7 @@ pub(crate) fn register(
         schedule,
         exe,
         script: &script,
+        cwd,
     });
     Ok(OsJob::start(global, first))
 }

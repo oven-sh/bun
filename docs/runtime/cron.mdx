@@ -251,6 +251,17 @@ await Bun.cron("./worker.ts", "0 * * * *", "my-job"); // every hour
 await Bun.cron("./worker.ts", "*/15 * * * *", "my-job"); // replaces: every 15 min
 ```
 
+### Working directory
+
+The job runs in the working directory of the process that registered it. It loads the `.env` and `bunfig.toml` of that directory, and relative paths start there. To choose another directory, call `process.chdir()` before `Bun.cron()`.
+
+Bun resolves symlinks in the directory when it registers the job. The script does not run if the directory is deleted or renamed later, or if the scheduler cannot enter it (a [mapped drive](#user-context) on Windows, a privacy-protected folder on macOS). Register the job again from another directory.
+
+<Warning>
+  A `preload` in `bunfig.toml` runs code. Whoever can write to the directory, or create it again after it is deleted,
+  can run code as you. Do not register a job from a shared or temporary directory such as `/tmp`.
+</Warning>
+
 ### The `scheduled()` handler
 
 The registered script must export a default object with a `scheduled()` method, following the [Cloudflare Workers Cron Triggers API](https://developers.cloudflare.com/workers/runtime-apis/handlers/scheduled/):
@@ -278,7 +289,7 @@ Bun uses [crontab](https://man7.org/linux/man-pages/man5/crontab.5.html) to regi
 The crontab entry looks like:
 
 ```
-<schedule> '<bun-path>' run --cron-title=<title> --cron-period='<schedule>' '<script-path>'
+<schedule> cd '<working-dir>' && '<bun-path>' run --cron-title=<title> --cron-period='<schedule>' '<script-path>'
 ```
 
 When the cron daemon fires the job, Bun imports your module and calls the `scheduled()` handler.

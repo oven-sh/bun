@@ -5,10 +5,11 @@ use crate::{Registration, Title};
 
 /// The marker line and the job's line. The paths are not escaped: the caller refuses `'` and `%` in them.
 pub fn entry(job: &Registration<'_>) -> String {
-    let (title, schedule) = (&job.title, &job.schedule);
+    let (title, schedule, cwd) = (&job.title, &job.schedule, job.cwd);
     let (exe, script) = (BStr::new(job.exe), BStr::new(job.script));
+    // Not `--cwd`: it reads `\` as `/`, and `fork()` hands it on in `process.execArgv`.
     format!(
-        "# bun-cron: {title}\n{schedule} '{exe}' run --cron-title={title} --cron-period='{schedule}' '{script}'\n"
+        "# bun-cron: {title}\n{schedule} cd '{cwd}' && '{exe}' run --cron-title={title} --cron-period='{schedule}' '{script}'\n"
     )
 }
 

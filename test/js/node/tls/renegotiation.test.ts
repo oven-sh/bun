@@ -947,15 +947,22 @@ const sqlServerPrelude = /* js */ `
     },
   );
   secure.listen(0, "127.0.0.1");
-  // Hands the connection to the TLS server. "rest" is what the client sent behind its request for TLS.
-  const secureFrom = (plain, rest, accept) => {
-    plain.pause();
-    const inner = net.connect(secure.address().port, "127.0.0.1", () => {
-      if (accept) plain.write(accept);
-      inner.write(rest);
-      plain.pipe(inner).pipe(plain);
+  // Reads the client's request for TLS, which is requestLength(pending) bytes long, in however many reads it
+  // arrives. Then hands the connection to the TLS server, with what the client sent behind the request.
+  const secureAfter = (plain, requestLength, accept) => {
+    let pending = Buffer.alloc(0);
+    plain.on("data", function onData(chunk) {
+      pending = Buffer.concat([pending, chunk]);
+      if (requestLength(pending) > pending.length) return;
+      plain.off("data", onData);
+      plain.pause();
+      const inner = net.connect(secure.address().port, "127.0.0.1", () => {
+        if (accept) plain.write(accept);
+        inner.write(pending.subarray(requestLength(pending)));
+        plain.pipe(inner).pipe(plain);
+      });
+      inner.on("error", () => {});
     });
-    inner.on("error", () => {});
   };
   const listen = onPlain => {
     const server = net.createServer(plain => {
@@ -978,7 +985,7 @@ const renegotiatingMySQLServer = /* js */ `
   };
   listen(plain => {
     plain.write(Buffer.from(replies.greeting, "hex"));
-    plain.once("data", first => secureFrom(plain, first.subarray(messageLength(first))));
+    secureAfter(plain, messageLength);
   });
 `;
 
@@ -994,7 +1001,7 @@ const renegotiatingPostgresServer = /* js */ `
     if (message[0] === 0x51) return message.toString("latin1", 5, message.length - 1);
     return message[0] === 0x58 ? "" : "not a query";
   };
-  listen(plain => plain.once("data", first => secureFrom(plain, first.subarray(8), "S")));
+  listen(plain => secureAfter(plain, () => 8, "S"));
 `;
 
 const words = ["first", "second", "third", "fourth"];

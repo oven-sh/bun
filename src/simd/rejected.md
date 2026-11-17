@@ -1126,6 +1126,37 @@ mod bun_simd_trusted {}
 bun_simd::if_supported!(["popcnt", "sse4.2"], fn(), simd::sse4::kernel);
 ```
 
+Other macros with the names of those in `core`:
+
+```rust
+macro_rules! matches { ($($it:tt)*) => { compile_error!("") } }
+macro_rules! unreachable { ($($it:tt)*) => { compile_error!("") } }
+#[bun_simd::foreach_target]
+mod simd {
+    #[export]
+    pub fn f() {}
+}
+# fn main() {}
+```
+
+A function to fall back on with a name that the dispatch uses:
+
+```rust
+#[bun_simd::foreach_target(neon + "aes")]
+mod simd {
+    #[export(or = is_any)]
+    pub fn f(list: &[bool]) -> bool {
+        false
+    }
+}
+fn is_any(list: &[bool]) -> bool {
+    false
+}
+fn main() {
+    assert!(!simd::f(&[true]));
+}
+```
+
 Another `pick`:
 
 ```rust

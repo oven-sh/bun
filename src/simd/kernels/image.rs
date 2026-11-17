@@ -146,15 +146,17 @@ pub(crate) mod simd {
             dst.append(|to| {
                 let mut to = to.take(width).into_writer();
                 to.push_first(reversed(last), overlap);
-                // Unlike with `rev`, the loop has one condition.
-                let from_end = |i: usize| &chunks[chunks.len() - 1 - i];
+                // `rev` would add a condition to the loop.
                 to.extend_with(0..chunks.len(), |i| {
-                    // Neoverse does not foresee the jump to the end of the next row.
-                    if N == 16 && cfg!(all(target_arch = "aarch64", not(target_vendor = "apple"))) {
-                        let ahead = width.min(below.len());
-                        prefetch_read(from_end(i).as_ptr().wrapping_add(ahead), Locality::L2);
+                    let from = &chunks[chunks.len() - 1 - i];
+                    // Neoverse does not foresee the jump to the next row. This gets its last 4 KiB.
+                    if N == 16
+                        && cfg!(all(target_arch = "aarch64", not(target_vendor = "apple")))
+                        && i < below.len().min(1024) / N
+                    {
+                        prefetch_read(from.as_ptr().wrapping_add(width), Locality::L2);
                     }
-                    Some(reversed(from_end(i)))
+                    Some(reversed(from))
                 });
                 to.finish()
             });

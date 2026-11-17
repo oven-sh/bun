@@ -23,7 +23,7 @@ interface ChildCluster extends InstanceType<typeof EventEmitter> {
   Worker: typeof Worker;
   _setupWorker(): void;
   _getServer(obj: ListeningObject, options, cb: GetServerCallback): void;
-  _trackServer(server): void;
+  _trackServer(server): TrackedServerHandle;
 }
 
 /** A `net.Server` or a `dgram.Socket`. */
@@ -59,6 +59,7 @@ interface RoundRobinFauxHandle {
 /** Stands in `handles`, as its own key, for a server that bound its own socket. */
 interface TrackedServerHandle {
   [owner_symbol]: Pick<HandleOwner, "close">;
+  close(): void;
 }
 
 const cluster = new EventEmitter() as ChildCluster;
@@ -210,9 +211,9 @@ cluster._getServer = function (obj, options, cb) {
 
 // For a server that bound its own socket, so that worker.disconnect() closes it too.
 cluster._trackServer = function (server) {
-  const handle = { [owner_symbol]: server };
+  const handle = { [owner_symbol]: server, close: () => void handles.delete(handle) };
   handles.set(handle, handle);
-  server.once("close", () => handles.delete(handle));
+  return handle;
 };
 
 function removeIndexesKey(indexesKey: string, index: number) {

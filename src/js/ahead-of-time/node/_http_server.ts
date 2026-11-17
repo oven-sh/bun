@@ -1,5 +1,5 @@
 // What the compiler reads in place of src/js/node/_http_server.ts, which `bun run` evaluates. The two do the same.
-// Written against that file with the SHA-256 6b1066e202f9815e6a8b3c9f3c42b10b7980fb9962ad76fa5cf94b93d0d530b6.
+// Written against that file with the SHA-256 28025254e5fa4302b39a5e5538aa45f1e027fbe57089f95728f9cdc44985ebec.
 // When that file changes, bring the change here and write the new hash: test/internal/second-texts-of-modules.test.ts.
 
 // Hardcoded module "node:_http_server"
@@ -1337,7 +1337,7 @@ Server.prototype.listen = function (this: $Node.HttpServer) {
       });
 
       server[kRealListen](tls, port as number | undefined, host, socketPath, true, ipv6Only, fd);
-      if (!exclusive) cluster!._trackServer(server);
+      if (!exclusive) server[kClusterHandle] = cluster!._trackServer(server);
     }
   } catch (err) {
     emitListenError(server, err, port as number | undefined, host, socketPath, fd);

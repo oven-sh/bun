@@ -2388,6 +2388,42 @@ test.skipIf(isWindows).concurrent.each(["a unix socket", "port 0", "a fixed port
   30_000,
 );
 
+test
+  .skipIf(isWindows)
+  .concurrent("disconnect() closes an http server that listened again before its 'close'", async () => {
+    using dir = tempDir("cluster-http-relisten", {
+      "fixture.js": `
+      const cluster = require("node:cluster");
+      const http = require("node:http");
+      if (cluster.isPrimary) {
+        const holder = http.createServer().listen({ port: 0, host: "127.0.0.1", reusePort: true });
+        const worker = cluster.fork({ HELD: holder.address().port });
+        worker.on("message", () => worker.disconnect());
+        worker.on("exit", code => (console.log("exit", code), holder.close()));
+      } else {
+        const server = http.createServer();
+        server.listen(+process.env.HELD, "127.0.0.1", () => {
+          server.close(() => process.send("closed"));
+          server.listen(+process.env.HELD, "127.0.0.1");
+        });
+        process.on("disconnect", () => {
+          console.log("listening", server.listening);
+          server.unref();
+        });
+      }
+    `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "fixture.js"],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "listening false\nexit 0\n", stderr: "", exitCode: 0 });
+  });
+
 test.skipIf(!isIPv6()).concurrent.each([
   ["the primary binds for it", {}],
   ["it binds for itself", { exclusive: true }],

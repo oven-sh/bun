@@ -898,7 +898,7 @@ Server.prototype.listen = function () {
     });
 
     server[kRealListen](tls, port, host, socketPath, true, ipv6Only, fd);
-    if (!exclusive) cluster._trackServer(server);
+    if (!exclusive) server[kClusterHandle] = cluster._trackServer(server);
   } catch (err) {
     emitListenError(server, err, port, host, socketPath, fd);
   }

@@ -334,11 +334,11 @@ fn samples_change_at_the_right_sums() {
 
 #[test]
 fn analyze() {
-    for (Case { samples, edges, .. }, _) in cases() {
-        let histogram = |blocks: &[Block], width, mode| {
+    for ((Case { samples, edges, .. }, _), (other, _)) in cases().zip(cases().skip(7)) {
+        let histogram = |blocks: &[Block], edges, width, mode| {
             let mut bins = [0; 32];
             for (i, block) in blocks.iter().enumerate() {
-                let coefficients = forward_dct(square(block), predict(&edges, mode, i, width));
+                let coefficients = forward_dct(square(block), predict(edges, mode, i, width));
                 for it in coefficients.as_flattened() {
                     bins[(it.unsigned_abs() as usize >> 3).min(31)] += 1;
                 }
@@ -346,12 +346,14 @@ fn analyze() {
             let last = bins.iter().rposition(|&it| it != 0).unwrap();
             [bins.into_iter().max().unwrap(), last as u32]
         };
-        let planes = [(&samples.luma[..], 4), (&samples.chroma[..], 2)];
-        let want = planes.map(|(it, width)| [0, 1].map(|mode| histogram(it, width, mode)));
-        check(want, || {
-            let got = webp::analyze(&samples, &edges, &edges);
-            got.map(|it| from_fn(|mode| [it.highest_count[mode], it.last_bin[mode]]))
-        });
+        for chroma_edges in [&edges, &other.edges] {
+            let luma = [0, 1].map(|mode| histogram(&samples.luma, &edges, 4, mode));
+            let chroma = [0, 1].map(|mode| histogram(&samples.chroma, chroma_edges, 2, mode));
+            check([luma, chroma], || {
+                let got = webp::analyze(&samples, &edges, chroma_edges);
+                got.map(|it| from_fn(|mode| [it.highest_count[mode], it.last_bin[mode]]))
+            });
+        }
     }
 }
 
@@ -413,9 +415,10 @@ fn luma_modes() {
 #[test]
 fn subblock_modes() {
     for (case, mut next) in cases() {
-        let (steps, context) = (Steps(case.steps, [96, 110], SHARPENING), case.context);
-        let (block, lambda) = (usize::from(next() % 16), (50 * steps.step(1, 1)) >> 5);
-        let (original, edge) = (square(&case.samples.luma[block]), from_fn(|_| next()));
+        let sharpening = [SHARPENING, [SHARPENING[0]; 4]][usize::from(case.around[0][0])];
+        let (steps, context) = (Steps(case.steps, [96, 110], sharpening), case.context);
+        let (block, lambda) = (usize::from(next()), (50 * steps.step(1, 1)) >> 5);
+        let (original, edge) = (square(&case.samples.luma[block % 16]), from_fn(|_| next()));
         let modes: [_; 10] = from_fn(|mode| {
             let prediction = predict_subblock(edge, mode);
             let levels = steps.levels(forward_dct(original, prediction));
@@ -538,7 +541,7 @@ fn chroma_modes() {
 #[test]
 fn levels_change_at_the_right_magnitudes() {
     let (flat, _) = cases().next().unwrap();
-    for (step, bias) in (4..=440).flat_map(|step| [96, 108, 110, 115].map(|bias| (step, bias))) {
+    for (step, bias) in (4..=440).flat_map(|step| [5, 96, 108, 110, 115].map(|bias| (step, bias))) {
         let steps = Steps([step; 2], [bias; 2], [[0; 4]; 4]);
         for level in [1, 2040 / i32::from(step)] {
             let at = (0..).find(|&it| steps.level(it, 0, 0) == level).unwrap() as i16;

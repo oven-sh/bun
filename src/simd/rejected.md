@@ -1016,6 +1016,79 @@ bun_simd::export! {
 # fn main() {}
 ```
 
+In a macro whose path ends with a token of `foreach_width`:
+
+```rust,no_run
+#![expect(unsafe_code)]
+mod isa {
+    pub use core::arch::global_asm as x128;
+}
+macro_rules! isa {
+    ($text:literal) => {};
+}
+#[bun_simd::foreach_width]
+mod width {
+    isa!("nop");
+}
+# fn main() {}
+```
+
+In a macro that has the name of an added attribute:
+
+```rust,no_run
+#![expect(unsafe_code)]
+use core::arch::global_asm as inline;
+macro_rules! take {
+    (then $($call:tt)*) => { $($call)* };
+    (portable #[$name:tt] fn f $($rest:tt)*) => { take! { then $name $($rest)* } };
+    ($($other:tt)*) => {};
+}
+#[bun_simd::foreach_target]
+mod simd {
+    take! { this_target fn f !("nop"); }
+}
+# fn main() {}
+```
+
+Or that of what replaces `#[inline(never)]`:
+
+```rust,no_run
+#![expect(unsafe_code)]
+use core::arch::global_asm as inline;
+macro_rules! take {
+    (then $($call:tt)*) => { $($call)* };
+    (portable #[$name:tt] fn f $($rest:tt)*) => { take! { then $name $($rest)* } };
+    ($($other:tt)*) => {};
+}
+#[bun_simd::foreach_target]
+mod simd {
+    take! { this_target #[inline(never)] fn f !("nop"); }
+}
+# fn main() {}
+```
+
+Or that of an argument of `export!`:
+
+```rust,no_run
+#![expect(unsafe_code)]
+extern crate bun_simd as real;
+extern crate self as bun_simd;
+use {core::arch::global_asm as native, export::export, real::*};
+mod export {
+    macro_rules! export {
+        (then $($name:tt)*) => { $($name)*!("nop"); };
+        ($name:tt $($more:tt)*) => { export! { then $name } };
+    }
+    pub(crate) use export;
+}
+#[real::foreach_target]
+mod simd {
+    #[export]
+    fn f() {}
+}
+# fn main() {}
+```
+
 In the arguments of an attribute, which are only compared:
 
 ```rust,compile_fail

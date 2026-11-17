@@ -4,13 +4,28 @@
 #![forbid(unsafe_code)]
 #![allow(clippy::disallowed_methods)] // proc-macro: compile-time input
 use bun_simd_trusted::Target;
-use proc_macro::{Delimiter, Group, Ident, TokenStream, TokenTree};
+use proc_macro::{Delimiter, Group, Ident, Span, TokenStream, TokenTree};
 
 const LONG_RUNNING_ONLY: Target = Target::Avx512Skx;
 const IS_FOR_TESTS: bool = cfg!(feature = "test_support");
 
 fn parse(source: &str) -> TokenStream {
     source.parse().unwrap()
+}
+
+/// For tokens that a macro of the caller can get: what it makes of them is linted as the caller's code.
+fn parse_at(source: &str, span: Span) -> TokenStream {
+    fn with_span(stream: TokenStream, span: Span) -> TokenStream {
+        let set_span = |mut token| {
+            if let TokenTree::Group(group) = token {
+                token = Group::new(group.delimiter(), with_span(group.stream(), span)).into();
+            }
+            token.set_span(span);
+            token
+        };
+        stream.into_iter().map(set_span).collect()
+    }
+    with_span(parse(source), span)
 }
 
 fn is(token: Option<&TokenTree>, text: &str) -> bool {
@@ -81,7 +96,7 @@ fn replace_ident(
 }
 
 /// `before` has the tokens up to the `fn` of a function.
-fn add_attributes(before: &mut Vec<TokenTree>, features: &[&str]) {
+fn add_attributes(before: &mut Vec<TokenTree>, features: &[&str], span: Span) {
     let start = match &before[..] {
         [.., a, b] if is(Some(a), "pub") && is_group(b, Delimiter::Parenthesis) => before.len() - 2,
         [.., a, _] if is(Some(a), "$") => before.len() - 2,
@@ -108,13 +123,13 @@ fn add_attributes(before: &mut Vec<TokenTree>, features: &[&str]) {
         _ => (None, ""),
     };
     if let Some((at, replacement)) = inline.zip(replacement) {
-        before[at] = Group::new(Delimiter::Bracket, parse(replacement)).into();
+        before.splice(at..=at, parse_at(&format!("[{replacement}]"), span));
     }
     let mut attributes = String::from(addition);
     for feature in features {
         attributes += &format!("#[target_feature(enable = {feature:?})]");
     }
-    before.splice(start..start, parse(&attributes));
+    before.splice(start..start, parse_at(&attributes, span));
 }
 
 /// On every `fn` except `const fn` and trait methods, which cannot have them.
@@ -129,7 +144,7 @@ fn enable_features(stream: TokenStream, features: &[&str]) -> TokenStream {
         is_impl = !is_function && (is_impl || at("impl"));
         is_of_trait |= at("trait") || is_impl && at("for") && !is(rest.peek(), "<");
         if is_function && !is(out.last(), "const") {
-            add_attributes(&mut out, features);
+            add_attributes(&mut out, features, token.span());
         }
         let is_argument = is(rest.peek(), ">") || is(rest.peek(), ",");
         let ends_item = is_group(&token, Delimiter::Brace) && !is_argument || at(";");
@@ -186,7 +201,7 @@ impl<'a> Version<'a> {
 }
 
 /// The arguments of `export!` that precede the signature.
-fn targets_to_export(arguments: &str, versions: &[Version<'_>]) -> TokenStream {
+fn targets_to_export(arguments: &str, versions: &[Version<'_>]) -> String {
     let (arguments, otherwise) = arguments.split_once("or=").unwrap_or((arguments, ""));
     let arguments = arguments.trim_end_matches(',');
     let has = |argument: &str| arguments.split(',').any(|it| it == argument);
@@ -237,9 +252,7 @@ fn targets_to_export(arguments: &str, versions: &[Version<'_>]) -> TokenStream {
             native += &format!("{is_wanted} ({cfg}) {target:?} {name} {features:?} ");
         }
     }
-    parse(&format!(
-        "native[{native}] portable_for_tests[{portable}] or[{otherwise}]"
-    ))
+    format!("native[{native}] portable_for_tests[{portable}] or[{otherwise}]")
 }
 
 fn without_inline(signature: &[TokenTree]) -> impl Iterator<Item = &TokenTree> {
@@ -285,7 +298,7 @@ fn take_exports(module: TokenStream, versions: &[Version<'_>]) -> (TokenStream, 
         rest.next();
         let count = body.rchunks(2).take_while(|it| is(it.first(), "#")).count();
         let earlier = body[body.len() - 2 * count..].chunks(2);
-        let mut export = targets_to_export(&arguments, versions);
+        let mut export = parse_at(&targets_to_export(&arguments, versions), token.span());
         export.extend(
             earlier
                 .filter(|it| is_cfg_or_doc(&it[1]))
@@ -296,11 +309,12 @@ fn take_exports(module: TokenStream, versions: &[Version<'_>]) -> (TokenStream, 
         let signature = std::iter::from_fn(|| rest.next_if(|t| !is_group(t, Delimiter::Brace)));
         let signature: Vec<TokenTree> = signature.collect();
         let inline = signature.iter().find(|it| is_inline(it));
-        body.extend(parse(match inline.map(|it| it.to_string()).as_deref() {
+        let inline = match inline.map(|it| it.to_string()).as_deref() {
             None => "#[inline(never)]",
             Some("[inline]") => "#[inline(exported)]",
             Some(other) => panic!("expected `#[inline]` on an export, not `#{other}`"),
-        }));
+        };
+        body.extend(parse_at(inline, token.span()));
         body.extend(without_inline(&signature).cloned());
         export.extend(signature_to_export(&signature));
         exports.extend(block("::bun_simd::export!", export));
@@ -374,8 +388,7 @@ pub fn foreach_width(widths: TokenStream, item: TokenStream) -> TokenStream {
     map_module(item, &|module| {
         let copy = |&name| {
             let mut copy = parse("#[allow(unused_imports)] use super::super::*;");
-            let path = parse(&format!("::{name}"));
-            let longer = |isa| TokenStream::from_iter([TokenTree::from(isa).into(), path.clone()]);
+            let longer = |isa: Ident| parse_at(&format!("isa::{name}"), isa.span());
             copy.extend(match name {
                 "full" => module.clone(),
                 _ => replace_ident(module.clone(), "isa", &longer),

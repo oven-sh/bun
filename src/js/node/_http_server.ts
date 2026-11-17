@@ -2117,8 +2117,13 @@ function waitForSocket(res, socket, state) {
 
 function startNextResponse(socket) {
   const state = socket?.[kConnectionState];
-  if (state === undefined || socket._httpMessage != null || socket.writableEnded || socket.destroyed) return;
+  if (state === undefined || socket._httpMessage != null || socket.destroyed) return;
   if (socket[kHandle] === undefined) return;
+  if (socket.writableEnded) {
+    // No response can follow the FIN. The close aborts those that wait.
+    if (state.outgoing.length !== 0 && !socket[kHandedOff]) socket.destroySoon();
+    return;
+  }
   const res = state.outgoing[0];
   if (res === undefined) {
     if (socket[kHandedOff]) leaveHttp(socket);

@@ -249,6 +249,17 @@ describe.skipIf(isWindows).each(["http", "https"] as const)(
       expect(order).toEqual(["finish", "close"]);
     });
 
+    test.concurrent("end(): the connection closes on the responses that wait behind it", async () => {
+      using exchange = await respond(async (req, client) => {
+        client.write("GET /2 HTTP/1.1\r\nHost: x\r\n\r\n");
+        await once((req.socket as any).server, "request");
+        req.socket.end();
+        client.resume();
+        await once(client, "end");
+      });
+      await new Promise(resolve => exchange.server.close(resolve));
+    });
+
     test.concurrent.each([
       ["end()", (socket: net.Socket) => void socket.end()],
       ["destroySoon()", (socket: net.Socket) => socket.destroySoon()],

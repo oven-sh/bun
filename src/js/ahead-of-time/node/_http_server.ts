@@ -1,5 +1,5 @@
 // What the compiler reads in place of src/js/node/_http_server.ts, which `bun run` evaluates. The two do the same.
-// Written against that file with the SHA-256 ca894616ff2642c5810bb5e8503e7cd75f20336c367ca16665a5fcd1c001ba05.
+// Written against that file with the SHA-256 61b136e556fafe40ec98c2155328b808924046f2cc31df71cc6928c0b7c15d31.
 // When that file changes, bring the change here and write the new hash: test/internal/second-texts-of-modules.test.ts.
 
 // Hardcoded module "node:_http_server"
@@ -2868,8 +2868,13 @@ function waitForSocket(res: $Node.ServerResponse, socket: $Node.HttpServerSocket
 
 function startNextResponse(socket: $Node.HttpServerSocket | null | undefined) {
   const state = socket?.[kConnectionState];
-  if (state === undefined || socket!._httpMessage != null || socket!.writableEnded || socket!.destroyed) return;
+  if (state === undefined || socket!._httpMessage != null || socket!.destroyed) return;
   if (socket![kHandle] === undefined) return;
+  if (socket!.writableEnded) {
+    // No response can follow the FIN. The close aborts those that wait.
+    if (state.outgoing.length !== 0 && !socket![kHandedOff]) socket!.destroySoon();
+    return;
+  }
   const res = state.outgoing[0] as $Node.ServerResponse | null | undefined;
   if (res === undefined) {
     if (socket![kHandedOff]) leaveHttp(socket!);

@@ -1,5 +1,5 @@
 // What the compiler reads in place of src/js/node/_http_server.ts, which `bun run` evaluates. The two do the same.
-// Written against that file with the SHA-256 3a4dfb72b6cd2fe66ab4da8794428db8c77d1a27cd81744fffb556b5f128dc41.
+// Written against that file with the SHA-256 09323ddfae8f727113ef3e03faa27d425e4ca4f897da4eb15d83c94cb49c1a69.
 // When that file changes, bring the change here and write the new hash: test/internal/second-texts-of-modules.test.ts.
 
 // Hardcoded module "node:_http_server"
@@ -1372,7 +1372,7 @@ function listenInCluster(
     const flags = ipv6Only ? 1 : 0;
     const serverQuery = { address, port: queryPort, addressType, fd, flags, sharedOnly: true, isHttp: true };
     cluster!._getServer(server, serverQuery, (errno, handle, reply) => {
-      if (listeningId !== server[kClusterListeningId] || cluster!.worker!.exitedAfterDisconnect) {
+      if (listeningId !== server[kClusterListeningId]) {
         handle?.close();
         return;
       }

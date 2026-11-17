@@ -924,7 +924,7 @@ function listenInCluster(server, tls, port, host, socketPath, ipv6Only, fd) {
     const flags = ipv6Only ? 1 : 0;
     const serverQuery = { address, port: queryPort, addressType, fd, flags, sharedOnly: true, isHttp: true };
     cluster._getServer(server, serverQuery, (errno, handle, reply) => {
-      if (listeningId !== server[kClusterListeningId] || cluster.worker.exitedAfterDisconnect) {
+      if (listeningId !== server[kClusterListeningId]) {
         handle?.close();
         return;
       }

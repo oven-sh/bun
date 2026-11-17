@@ -186,6 +186,9 @@ cluster._getServer = function (obj, options, cb) {
   send(message, (reply, handle: number | SharedHandle | null | undefined) => {
     if (typeof obj._setServerData === "function") obj._setServerData(reply.data);
 
+    // disconnect() has closed the handles it knew of, and nothing would close this one.
+    if (cluster.worker!.exitedAfterDisconnect) cb = closeUnwantedHandle;
+
     if (typeof handle === "number" && handle >= 0) {
       handle = makeSharedHandle(handle);
     }
@@ -211,6 +214,10 @@ cluster._getServer = function (obj, options, cb) {
     send(message);
   });
 };
+
+function closeUnwantedHandle(_errno: unknown, handle?: { close(): void } | null) {
+  handle?.close();
+}
 
 // For a server that binds its own socket. `track` makes worker.disconnect() close it too.
 cluster._trackServer = function (server, bind) {

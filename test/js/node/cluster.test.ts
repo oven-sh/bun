@@ -2466,6 +2466,40 @@ test.concurrent.each(["http", "net"])(
   },
 );
 
+test.skipIf(isWindows).concurrent.each([
+  ["net, SCHED_RR", "SCHED_RR", `require("node:net").createServer().listen(0, "127.0.0.1", onListening)`],
+  ["net, SCHED_NONE", "SCHED_NONE", `require("node:net").createServer().listen(0, "127.0.0.1", onListening)`],
+  ["http", "SCHED_RR", `require("node:http").createServer().listen(0, "127.0.0.1", onListening)`],
+  ["dgram", "SCHED_RR", `require("node:dgram").createSocket("udp4").bind(0, "127.0.0.1", onListening)`],
+])("a worker that disconnects before the primary answered its listen() exits (%s)", async (_, policy, listen) => {
+  using dir = tempDir("cluster-disconnect-pending-listen", {
+    "fixture.js": `
+      const cluster = require("node:cluster");
+      if (cluster.isPrimary) {
+        cluster.schedulingPolicy = cluster.${policy};
+        cluster.fork().on("exit", code => console.log("exit", code));
+      } else {
+        const onListening = () => process.exit(1);
+        const { send } = process;
+        process.send = function (message) {
+          if (message.act === "queryServer") process.nextTick(() => cluster.worker.disconnect());
+          return send.apply(this, arguments);
+        };
+        ${listen};
+      }
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "fixture.js"],
+    cwd: String(dir),
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr, exitCode }).toEqual({ stdout: "exit 0\n", stderr: "", exitCode: 0 });
+});
+
 test.skipIf(!isIPv6()).concurrent.each([
   ["the primary binds for it", {}],
   ["it binds for itself", { exclusive: true }],

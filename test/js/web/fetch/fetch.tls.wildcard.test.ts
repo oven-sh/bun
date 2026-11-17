@@ -1092,6 +1092,30 @@ describe("TLS certificate name matching: fetch() / checkServerIdentity / checkHo
     });
   });
 
+  it.concurrent("fetch() over HTTP/3 accepts the names that checkServerIdentity accepts", async () => {
+    async function accepted(material: { cert: string; key: string }, hosts: string[]) {
+      await using s = Bun.serve({ port: 0, tls: material, http3: true, http1: false, fetch: () => new Response("ok") });
+      const answers = await Promise.all(
+        hosts.map(serverName =>
+          fetch(`https://127.0.0.1:${s.port}/`, { protocol: "http3", tls: { ca: material.cert, serverName } }).then(
+            r => r.text(),
+            e => e.code,
+          ),
+        ),
+      );
+      return hosts.filter((_, i) => answers[i] === "ok");
+    }
+    expect({
+      wild: await accepted(wild, ["foo.wild.test", "foo.wild.test.", "foo.partial.test", "*.wild.test", "wild.test"]),
+      emptyLabel: await accepted(makeCert("x", [["dns", ".a.test"]]), [".a.test", "a.test"]),
+      commonName: await accepted(makeCert("cn.a.test", [["ip", "10.0.0.1"]]), ["cn.a.test", "10.0.0.1", "10.0.0.2"]),
+    }).toEqual({
+      wild: ["foo.wild.test", "foo.wild.test.", "foo.partial.test"],
+      emptyLabel: [],
+      commonName: ["cn.a.test", "10.0.0.1"],
+    });
+  });
+
   // X509Certificate#checkHost options. Every expected value was taken from
   // Node.js v26.3.0 (OpenSSL X509_check_host semantics).
   describe("checkHost options", () => {

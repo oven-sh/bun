@@ -46,6 +46,8 @@ extern SSL_CTX *us_ssl_ctx_build_raw(
     enum create_bun_socket_error_t *err);
 extern int us_x509_verify_cert(X509_STORE_CTX *ctx, int purpose);
 extern struct us_bun_verify_error_t us_ssl_socket_verify_error_from_ssl(SSL *ssl);
+/* src/boringssl/lib.rs: the name check of every other TLS client. */
+extern bool Bun__X509__checkServerIdentity(X509 *leaf, const char *host, size_t host_len);
 
 extern size_t BUN_DEFAULT_MAX_HTTP_HEADER_SIZE;
 
@@ -1531,16 +1533,7 @@ static enum ssl_verify_result_t us_quic_client_verify(SSL *ssl, uint8_t *out_ale
     X509_STORE_CTX_set_default(vctx.get(), "ssl_server");
     if (us_x509_verify_cert(vctx.get(), X509_PURPOSE_SSL_SERVER) != 1) return ssl_verify_invalid;
     const char *hostname = qs->hostname.get();
-    if (hostname && hostname[0]) {
-        unsigned char addr[16];
-        int matched = (inet_pton(AF_INET, hostname, addr) == 1 ||
-                       inet_pton(AF_INET6, hostname, addr) == 1)
-            ? X509_check_ip_asc(leaf, hostname, 0)
-            : X509_check_host(leaf, hostname, strlen(hostname),
-                  X509_CHECK_FLAG_NO_PARTIAL_WILDCARDS, NULL);
-        if (matched != 1) return ssl_verify_invalid;
-    }
-    return ssl_verify_ok;
+    return hostname && Bun__X509__checkServerIdentity(leaf, hostname, strlen(hostname)) ? ssl_verify_ok : ssl_verify_invalid;
 }
 
 void us_quic_prepare_client_ssl_ctx(SSL_CTX *ssl) {

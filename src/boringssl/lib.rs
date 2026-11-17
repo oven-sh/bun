@@ -472,6 +472,22 @@ pub fn check_x509_server_identity(x509: &mut boring::X509, hostname: &[u8]) -> b
     false
 }
 
+/// [`check_x509_server_identity`] for the HTTP/3 client in quic.cpp.
+///
+/// # Safety
+/// `host_ptr[..host_len]` must be readable.
+#[unsafe(no_mangle)]
+unsafe extern "C" fn Bun__X509__checkServerIdentity(
+    x509: &mut boring::X509,
+    host_ptr: *const u8,
+    host_len: usize,
+) -> bool {
+    // SAFETY: caller contract.
+    check_x509_server_identity(x509, unsafe {
+        core::slice::from_raw_parts(host_ptr, host_len)
+    })
+}
+
 /// OpenSSL `X509_CHECK_FLAG_*` values. BoringSSL defines four of these as `0`
 /// (the behaviour was removed), so `X509Certificate#checkHost` keeps its own
 /// copy and calls [`Bun__X509__checkHost`] instead of `X509_check_host`.

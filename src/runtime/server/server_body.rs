@@ -1562,7 +1562,7 @@ where
             Some(0),
             None,
         )?;
-        let Some(listener) = self.listener.get() else {
+        let Some(listener) = self.listener() else {
             // The server owns `fd` once adopt() is called, so close it rather than leak it.
             #[cfg(not(windows))]
             let _ = bun_sys::FdExt::close_allowing_bad_file_descriptor(

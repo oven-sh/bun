@@ -9,13 +9,13 @@ use crate::api::bun::process::SpawnResultExt as _;
 use crate::api::bun::process::WindowsOptions;
 use crate::api::bun::process::{self as bun_process, Process, SpawnOptions, Status};
 use crate::api::bun::subprocess as JscSubprocess;
-use crate::shell::interpreter::{Interpreter, NodeId};
+use crate::shell::interpreter::{Interpreter, Loop, NodeId};
 use crate::shell::io_writer::{self, IOWriter};
 use crate::shell::{self as sh, Yield};
 use crate::webcore::{self, FileSink};
 use bun_alloc::Arena;
 use bun_collections::VecExt;
-use bun_core::{CStrList, CStrRef, Loop};
+use bun_core::{CStrList, CStrRef};
 use bun_io::{BufferedReader, IoEvent, Owner, PollTag, ReadResult, ReadState};
 use bun_jsc::{self as jsc, EventLoopHandle};
 use bun_ptr::RefPtr;
@@ -175,10 +175,10 @@ impl Drop for ShellSubprocess {
 // };
 
 bun_spawn::link_impl_ProcessExit! {
-    Shell for Loop<'_, ShellSubprocess> => |this| {
+    Shell for ShellSubprocess => |this| {
         // Forwarded raw, not autoref'd: the callee may free `*this`.
-        on_process_exit(status, _rusage) =>
-            ShellSubprocess::on_process_exit(this.cast(), &status, (*this).as_loop()),
+        on_process_exit(status, _rusage, loop_) =>
+            ShellSubprocess::on_process_exit(this, &status, loop_),
     }
 }
 

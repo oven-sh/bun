@@ -106,7 +106,7 @@ fn call_exit_handler(h: ProcessExitHandler, status: Status, rusage: &Rusage, loo
     if h.owner().is_null() {
         return;
     }
-    loop_.on(&h).on_process_exit(status, rusage);
+    h.on_process_exit(status, rusage, loop_);
 }
 
 /// Shared borrows only. What may free the process, or hands out its address, takes a `ThisPtr`.
@@ -179,14 +179,14 @@ impl ProcessHandle {
     /// See [`Process::watch_or_reap`]; may synchronously run the exit handler,
     /// so call this on a handle the handler does not re-borrow (a local, not
     /// the owner's slot).
-    pub fn watch_or_reap(self: &Loop<Self>) -> bun_sys::Result<bool> {
-        Process::watch_or_reap(self.on(self.this_ptr()))
+    pub fn watch_or_reap(&self, loop_: Loop) -> bun_sys::Result<bool> {
+        Process::watch_or_reap(loop_.on(self.this_ptr()))
     }
 
     /// See [`Process::on_exit`]; runs the exit handler (same rule as
     /// [`watch_or_reap`](Self::watch_or_reap)).
-    pub fn on_exit(self: &Loop<Self>, status: Status, rusage: &Rusage) {
-        Process::on_exit(self.on(self.this_ptr()), status, rusage)
+    pub fn on_exit(&self, status: Status, rusage: &Rusage, loop_: Loop) {
+        Process::on_exit(loop_.on(self.this_ptr()), status, rusage)
     }
 
     /// For a call that may run an exit handler which drops or overwrites this handle.
@@ -903,7 +903,7 @@ pub mod waiter_thread_posix {
             );
         }
 
-        /// Stored thunk for `AnyTaskWithExtraContext` (`fn(*mut T, *mut C)`
+        /// Stored thunk for `AnyTaskWithExtraContext` (`fn(*mut T, *mut C, Loop)`
         /// shape — `C = ()`). Default Rust ABI.
         fn run_from_main_thread_mini(this: *mut Self, _: *mut (), loop_: Loop) {
             // SAFETY: `this` was heap-allocated in `loop_()` below; the mini

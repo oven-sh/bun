@@ -1,6 +1,8 @@
 use crate::shell::ExitCode;
 use crate::shell::ast;
-use crate::shell::interpreter::{EventLoopHandle, Interpreter, Node, NodeId, ShellExecEnv, log};
+use crate::shell::interpreter::{
+    EventLoopHandle, Interpreter, Loop, Node, NodeId, ShellExecEnv, log,
+};
 use crate::shell::io::IO;
 use crate::shell::states::base::{Base, Env};
 use crate::shell::states::cmd::Cmd;
@@ -8,7 +10,6 @@ use crate::shell::states::cond_expr::CondExpr;
 use crate::shell::states::r#if::If;
 use crate::shell::states::pipeline::Pipeline;
 use crate::shell::yield_::Yield;
-use bun_core::Loop;
 
 pub(crate) struct Async {
     pub(crate) base: Base,

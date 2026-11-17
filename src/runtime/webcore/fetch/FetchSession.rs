@@ -140,7 +140,7 @@ pub(crate) fn parse_proxy(global: &JSGlobalObject, proxy_arg: JSValue) -> JsResu
     let mut headers = None;
     if let Some(headers_value) = proxy_arg.get(global, "headers")? {
         if !headers_value.is_undefined_or_null() {
-            if let Some(fetch_headers) = FetchHeaders::cast(headers_value, global.js()) {
+            if let Some(fetch_headers) = FetchHeaders::cast_(headers_value, global.vm()) {
                 let fetch_headers = bun_ptr::BackRef::from(fetch_headers);
                 headers = Some(from_fetch_headers(global, Some(&*fetch_headers), None)?);
             } else if let Some(fetch_headers) = HeadersRef::create_from_js(global, headers_value)? {

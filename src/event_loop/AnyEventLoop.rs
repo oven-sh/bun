@@ -21,7 +21,7 @@ use crate::{JsEventLoop, JsEventLoopKind};
 // calls.
 unsafe extern "Rust" {
     /// Erased `*mut jsc::EventLoop` of the current thread, which has a VM. Kept as a bare extern (no owner).
-    pub(crate) fn __bun_js_event_loop_current() -> *mut ();
+    fn __bun_js_event_loop_current() -> *mut ();
 }
 
 /// Wrap an erased `*mut jsc::EventLoop` in a
@@ -165,10 +165,8 @@ impl EventLoopHandle {
     /// # Safety
     /// This thread has a VM.
     pub unsafe fn js_current() -> EventLoopHandle {
-        EventLoopHandle::Js {
-            // SAFETY: the caller's.
-            owner: unsafe { JsEventLoop::current() },
-        }
+        // SAFETY: the caller's.
+        Self::init(unsafe { __bun_js_event_loop_current() })
     }
 
     /// A new mini loop, which is never freed.

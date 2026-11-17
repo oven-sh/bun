@@ -1,5 +1,4 @@
 use bstr::BStr;
-use bun_core::Loop;
 use bun_jsc::ThreadIsolated;
 use bun_paths::resolve_path;
 
@@ -9,7 +8,7 @@ use crate::shell::ShellErr;
 use crate::shell::builtin::{BadFlag, Builtin, Kind};
 use crate::shell::builtins::batch::Batch;
 use crate::shell::interpreter::{
-    Interpreter, NodeId, ShellTask, ShellTaskCtx, shell_join_path, shell_resolve_operand,
+    Interpreter, Loop, NodeId, ShellTask, ShellTaskCtx, shell_join_path, shell_resolve_operand,
 };
 use crate::shell::yield_::Yield;
 

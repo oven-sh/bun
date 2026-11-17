@@ -792,12 +792,7 @@ impl ServerWebSocket {
     }
 
     /// `&self` for the same noalias-reentry reason as `on_open` (R-2).
-    fn on_ping_or_pong(
-        self: &Js<Self>,
-        name: &'static str,
-        cb: JSValue,
-        data: &[u8],
-    ) -> JsResult<()> {
+    fn on_ping_or_pong(self: &Js<Self>, name: &str, cb: JSValue, data: &[u8]) -> JsResult<()> {
         bun_output::scoped_log!(WebSocketServer, "{}: {}", name, bstr::BStr::new(data));
         let handler = self.handler();
         let on_error = handler.on_error;

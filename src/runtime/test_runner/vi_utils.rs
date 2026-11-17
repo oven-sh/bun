@@ -42,7 +42,8 @@ pub(crate) struct Config {
 
 /// Reports a thrown error as uncaught, so only call this with no JS on the stack.
 fn run(global: &JSGlobalObject, reset: Reset) {
-    crate::dispatch::fold(global.js(), bun_jsc::from_js_host_call_generic(global, || reset(global)));
+    let result = bun_jsc::from_js_host_call_generic(global, || reset(global));
+    crate::dispatch::fold(global.js(), result);
 }
 
 pub(crate) fn before_each_attempt(global: &JSGlobalObject, is_vitest: bool) {

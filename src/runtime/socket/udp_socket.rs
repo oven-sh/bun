@@ -5,10 +5,9 @@ use bun_core::{String as BunString, Utf8Bytes};
 use bun_jsc::array_buffer::BinaryType;
 use bun_jsc::bindgen::{self, IntoError as _, JsHeap, JsLocal, JsPayload as _, JsScope, JsWrapper};
 use bun_jsc::{
-    JSGlobalObject, JSValue, JsRef, JsResult, MarkedArgumentBuffer, StringJsc, SysErrorJsc,
-    SystemError,
+    JSGlobalObject, JSValue, JsCell, JsKeepAlive, JsRef, JsResult, MarkedArgumentBuffer, StringJsc,
+    SysErrorJsc, SystemError, Vm,
 };
-use bun_jsc::{JsCell, JsKeepAlive, Vm};
 use bun_ptr::BackRef;
 
 use crate::node::validators;

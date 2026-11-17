@@ -4,12 +4,11 @@ use crate::node::fs::stat_embedded_shell_operand;
 use crate::shell::ExitCode;
 use crate::shell::ast;
 use crate::shell::dispatch_tasks::ShellCondExprStatTask;
-use crate::shell::interpreter::{Interpreter, Node, NodeId, PoolTask, ShellTask, ShellWork};
+use crate::shell::interpreter::{Interpreter, Loop, Node, NodeId, PoolTask, ShellTask, ShellWork};
 use crate::shell::io::IO;
 use crate::shell::states::base::{Base, Env};
 use crate::shell::states::expansion::Expansion;
 use crate::shell::yield_::Yield;
-use bun_core::Loop;
 
 pub(crate) struct CondExpr {
     pub(crate) base: Base,

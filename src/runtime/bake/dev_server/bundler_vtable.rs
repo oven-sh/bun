@@ -16,7 +16,7 @@ bun_bundler::link_impl_DevServerHandle! {
             }
         },
         finalize_bundle(bv2, result, loop_) => {
-            let js = loop_.on((*this).vm()).in_js().js();
+            let js = (*this).vm().in_js(loop_).js();
             // `bv2` borrows the `Transpiler`s stored inline in `DevServer`
             // (stable heap address); the `'static` is a stand-in for the
             // DevServer-self lifetime — see the comment on `CurrentBundle.bv2`.

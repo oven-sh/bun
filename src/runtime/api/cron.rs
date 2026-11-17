@@ -199,28 +199,19 @@ impl CronJob {
         }
     }
 
-    pub(crate) fn stop<'a>(
-        self: &Vm<Self>,
-        this_value: JsWrapper<'a, Self>,
-    ) -> JsWrapper<'a, Self> {
+    pub(crate) fn stop<'a>(self: &Vm<Self>, this: JsWrapper<'a, Self>) -> JsWrapper<'a, Self> {
         self.stop_now();
-        this_value
+        this
     }
 
-    pub(crate) fn r#ref<'a>(
-        self: &Vm<Self>,
-        this_value: JsWrapper<'a, Self>,
-    ) -> JsWrapper<'a, Self> {
+    pub(crate) fn r#ref<'a>(self: &Vm<Self>, this: JsWrapper<'a, Self>) -> JsWrapper<'a, Self> {
         self.poll_ref.ref_(self.bun_vm().loop_ctx());
-        this_value
+        this
     }
 
-    pub(crate) fn unref<'a>(
-        self: &Vm<Self>,
-        this_value: JsWrapper<'a, Self>,
-    ) -> JsWrapper<'a, Self> {
+    pub(crate) fn unref<'a>(self: &Vm<Self>, this: JsWrapper<'a, Self>) -> JsWrapper<'a, Self> {
         self.poll_ref.unref(self.bun_vm().loop_ctx());
-        this_value
+        this
     }
 
     /// The schedule is on the wall clock and the timer heap on the monotonic one. Fake timers mock both or neither.

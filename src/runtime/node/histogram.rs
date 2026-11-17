@@ -382,14 +382,13 @@ impl Histogram {
         if enabled.replace(enable) == enable {
             return false;
         }
+        let monitor = || self.on(&timer_all(self.bun_vm()).event_loop_delay);
         if enable {
             // The time it was disabled for is not a delay of the event loop.
             self.with(|state| state.previous_ns = 0);
-            self.on(&timer_all(self.bun_vm()).event_loop_delay)
-                .enable(interval);
+            monitor().enable(interval);
         } else {
-            self.on(&timer_all(self.bun_vm()).event_loop_delay)
-                .disable(interval);
+            monitor().disable(interval);
         }
         true
     }

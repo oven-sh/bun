@@ -773,7 +773,7 @@ pub struct SecurityScanSubprocess<'a> {
 
 bun_spawn::link_impl_ProcessExit! {
     SecurityScan for SecurityScanSubprocess<'static> => |this| {
-        on_process_exit(status, rusage) => (*this).on_process_exit(status, rusage),
+        on_process_exit(status, rusage, _loop) => (*this).on_process_exit(status, rusage),
     }
 }
 
@@ -971,9 +971,9 @@ impl<'a> SecurityScanSubprocess<'a> {
         process.set_exit_handler(handler);
 
         // SAFETY: auto-install does not scan. A command gets here from `main`, on its thread.
-        let loop_ = unsafe { bun_core::Loop::assume(&event_loop) };
+        let process = unsafe { bun_core::Loop::assume(&event_loop) }.on(process);
         // May re-enter `on_process_exit` synchronously (already-exited child).
-        if Process::watch_or_reap(loop_.on(process)).is_err() {
+        if Process::watch_or_reap(process).is_err() {
             return Err(crate::Error::ProcessWatchFailed);
         }
 

@@ -77,7 +77,7 @@ impl DeferredTaskQueue {
         unsafe { &mut *self.map.get() }.swap_remove(&ctx)
     }
 
-    pub fn run(self: &Loop<Self>) {
+    pub fn run(&self, _: Loop) {
         // Callbacks may re-entrantly mutate `self.map` (see the re-entrancy
         // note in the file doc), so re-read `len()` every iteration and
         // re-check slot `i` after each callback. `remaining` is a livelock bound.
@@ -148,7 +148,7 @@ mod tests {
         queue.post_task(Some(NonNull::from(&fixture).cast()), grow);
         queue.post_task(Some(NonNull::from(&fixture.calls[0]).cast()), count);
         // SAFETY: neither task reaches anything through it.
-        unsafe { Loop::assume(queue) }.on(queue).run();
+        queue.run(unsafe { Loop::assume(queue) });
         assert_eq!((fixture.grow_calls.get(), fixture.calls[0].get()), (1, 1));
     }
 }

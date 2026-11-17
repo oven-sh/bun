@@ -239,7 +239,7 @@ impl FileReader {
 
     pub(crate) fn set_reader_owner(&self) {
         let owner = Owner::new(PollTag::FileReader, self.parent().cast());
-        // SAFETY: see `parent()`. The reader is a field of `self`.
+        // SAFETY: see `parent()`. The reader is a field of `self`, which was made on a thread with a VM and stays there.
         unsafe { self.reader.set_owner(owner) };
     }
 
@@ -248,8 +248,8 @@ impl FileReader {
     }
 
     /// `this` pins the JS wrapper too: a consumer (JS, or a native sink such as HTMLRewriter) can drop the stream's last GC root.
-    pub(crate) fn read(this: &RefPtr<Source>, event: Option<IoEvent>, js: Js) {
-        let this = js.on(&this.context);
+    pub(crate) fn read(this: &Js<RefPtr<Source>>, event: Option<IoEvent>) {
+        let this = this.on(&this.context);
         let result = this
             .reader
             .read_chunks(this.event_loop_ctx(), event, |chunk, state| {
@@ -399,7 +399,7 @@ impl FileReader {
                     // A from_pipe() reader may arrive with IS_PAUSED set (lazy
                     // subprocess stdio); clear it so read() does not no-op.
                     self.on_read_result(self.reader.unpause());
-                    Self::read(&self.ref_guard(), None, self.js());
+                    Self::read(self.on(&self.ref_guard()), None);
                 }
             }
         }
@@ -489,7 +489,7 @@ impl FileReader {
         if !self.reader.has_pending_read() {
             let this = self.ref_guard();
             self.on_read_result(self.reader.unpause());
-            Self::read(&this, None, self.js());
+            Self::read(self.on(&this), None);
         }
     }
 
@@ -545,7 +545,7 @@ impl FileReader {
 
         let sink = *self.sink.get();
         if sink.is_some() {
-            self.write_chunk_to_sink(sink, &chunk, has_more)
+            self.write_chunk_to_sink(sink, &chunk, has_more, self.js())
         } else if self.pending.is_pending() {
             // Pipes may return 0-byte reads short of EOF; keep reading.
             if chunk.is_empty() && state == ReadState::Drained {
@@ -570,13 +570,8 @@ impl FileReader {
         }
     }
 
-    fn write_chunk_to_sink(
-        self: &Js<Self>,
-        sink: SinkHandle,
-        chunk: &[u8],
-        has_more: bool,
-    ) -> bool {
-        let sink = self.on(&sink);
+    fn write_chunk_to_sink(&self, sink: SinkHandle, chunk: &[u8], has_more: bool, js: Js) -> bool {
+        let sink = js.on(&sink);
         if !chunk.is_empty() {
             let wrote = sink.write(&if has_more {
                 streams::Result::Temporary(chunk)
@@ -806,7 +801,7 @@ impl FileReader {
             self.on_read_result(self.reader.unpause());
             if !self.reader.is_done() && !self.reader.has_pending_read() {
                 // Kick off a new read if needed
-                Self::read(&self.ref_guard(), None, self.js());
+                Self::read(self.on(&self.ref_guard()), None);
             }
         } else {
             self.reader.pause();

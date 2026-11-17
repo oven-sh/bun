@@ -10,6 +10,7 @@ use bun_libuv_sys::UvHandle as _;
 #[cfg(windows)]
 use bun_sys::windows::libuv as uv;
 use bun_threading::Guarded;
+use bun_uws_sys::Loop as UwsLoop;
 use core::cell::{Cell, UnsafeCell};
 use std::rc::Rc;
 
@@ -541,9 +542,7 @@ pub(crate) struct All {
 }
 
 impl All {
-    /// # Safety
-    /// It goes into this thread's `RuntimeState`, and is used only while that is installed.
-    pub(crate) unsafe fn init() -> Self {
+    pub(crate) fn init() -> Self {
         Self {
             last_id: Cell::new(1),
             first_id_of_hot_run: Cell::new(0),
@@ -583,7 +582,7 @@ impl All {
         );
     }
 
-    pub(crate) fn insert(&self, timer: *const EventLoopTimer) {
+    pub(crate) fn insert(self: &Vm<Self>, timer: *const EventLoopTimer) {
         self.assert_js_thread();
         // SAFETY: caller guarantees `timer` is a valid live EventLoopTimer.
         let (node, flags) = unsafe { (&*timer, js_timer_flags(timer)) };
@@ -617,7 +616,7 @@ impl All {
             unsafe { self.fake_timers.timers.insert(timer) };
             node.state.set(EventLoopTimerState::ACTIVE);
             node.in_heap.set(InHeap::Fake);
-            self.fake_timers.post_auto_step();
+            self.on(&self.fake_timers).post_auto_step();
         } else {
             // SAFETY: see fn contract
             unsafe { self.timers.insert(timer) };
@@ -654,7 +653,7 @@ impl All {
     /// across both heaps. On Windows there is no epoll/kqueue fallback; this
     /// `uv_timer_t` is the ONLY thing that wakes `uv_run` for JS timers.
     #[cfg(windows)]
-    fn ensure_uv_timer(&self) {
+    fn ensure_uv_timer(self: &Vm<Self>) {
         // `vm` here means the OWNING VM (the one this timer is embedded in),
         // not the calling thread's. Guard the TLS fallback so a cross-thread
         // caller fails loudly instead of silently arming a fresh `uv_loop_t`
@@ -667,9 +666,7 @@ impl All {
         let uv_timer = unsafe { &mut *self.uv_timer.get() };
         if uv_timer.data.is_null() {
             uv_timer.init(uv::Loop::get());
-            // SAFETY: the contract of `init`, on its thread.
-            uv_timer.data = VirtualMachine::get_mut_ptr(unsafe { Vm::assume(self) })
-                .cast::<core::ffi::c_void>();
+            uv_timer.data = VirtualMachine::get_mut_ptr(self.as_vm()).cast::<core::ffi::c_void>();
             uv_timer.unref();
         }
         debug_assert!(
@@ -731,7 +728,7 @@ impl All {
         // closes the handle before it turns the loop without a heap.
         let vm = unsafe { &*(*uv_timer_t).data.cast::<Js<VirtualMachine>>() };
         all.drain_timers(vm);
-        all.ensure_uv_timer();
+        vm.on(all).ensure_uv_timer();
     }
 
     /// `timer` is linked. `in_heap` does not say so: a fired node keeps it.
@@ -756,7 +753,7 @@ impl All {
     /// # Safety
     /// `timer` must point to a live `EventLoopTimer` with whole-container
     /// provenance for its tag (see [`js_timer_flags`]).
-    pub(crate) fn update(&self, timer: *const EventLoopTimer, time: &Timespec) {
+    pub(crate) fn update(self: &Vm<Self>, timer: *const EventLoopTimer, time: &Timespec) {
         self.assert_js_thread();
         // SAFETY: caller guarantees `timer` is a valid live EventLoopTimer.
         let node = unsafe { &*timer };
@@ -788,7 +785,8 @@ impl All {
         }
         #[cfg(windows)]
         if self.thread_id == std::thread::current().id() {
-            self.ensure_uv_timer();
+            // SAFETY: this thread made `self`, for the `RuntimeState` of its VM.
+            unsafe { Vm::assume(self) }.on(self).ensure_uv_timer();
         }
     }
 
@@ -959,7 +957,7 @@ impl All {
     }
 
     /// `uws_loop` is the calling VM's uws loop.
-    pub(crate) fn increment_immediate_ref(&self, delta: i32, uws_loop: &bun_uws_sys::Loop) {
+    pub(crate) fn increment_immediate_ref(self: &Vm<Self>, delta: i32, uws_loop: &UwsLoop) {
         let old = self.immediate_ref_count.get();
         let new = old + delta;
         self.immediate_ref_count.set(new);
@@ -978,9 +976,8 @@ impl All {
                     uv_idle.init(uv::Loop::get());
                     // Note: `data` is only used as a
                     // non-null "initialized" sentinel — never dereferenced.
-                    // SAFETY: as in `ensure_uv_timer`.
-                    uv_idle.data = VirtualMachine::get_mut_ptr(unsafe { Vm::assume(self) })
-                        .cast::<core::ffi::c_void>();
+                    uv_idle.data =
+                        VirtualMachine::get_mut_ptr(self.as_vm()).cast::<core::ffi::c_void>();
                 }
                 uv_idle.start(Some(Self::on_uv_idle_noop));
             }
@@ -1006,7 +1003,7 @@ impl All {
     }
 
     /// `uws_loop` is the calling VM's uws loop.
-    pub(crate) fn increment_timer_ref(&self, delta: i32, uws_loop: &bun_uws_sys::Loop) {
+    pub(crate) fn increment_timer_ref(&self, delta: i32, uws_loop: &UwsLoop) {
         let old = self.active_timer_count.get();
         let new = old + delta;
         debug_assert!(new >= 0);

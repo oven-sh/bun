@@ -1,6 +1,6 @@
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
-use bun_core::{Loop, ZBox, ZStr, strings};
+use bun_core::{ZBox, ZStr, strings};
 use bun_paths::resolve_path::{self, Platform, platform};
 use bun_ptr::{AliasableBox, BackRef, RefPtr};
 use bun_sys::{E, File, Maybe, dir_iterator};
@@ -11,7 +11,7 @@ use crate::node::fs::{
 use crate::shell::builtin::{BadFlag, Builtin, Kind};
 use crate::shell::builtins::batch::Batch;
 use crate::shell::interpreter::{
-    EventLoopHandle, Interpreter, NodeId, ShellTask, WorkPoolTask, shell_openat,
+    EventLoopHandle, Interpreter, Loop, NodeId, ShellTask, WorkPoolTask, shell_openat,
 };
 use crate::shell::yield_::Yield;
 

@@ -173,11 +173,10 @@ mod sql_hooks {
     use bun_sql_jsc::jsc::SqlRuntimeHooks;
 
     fn ssl_ctx_get_or_create(
-        opts: &bun_uws::us_bun_socket_context_options_t,
+        opts: &Vm<bun_uws::us_bun_socket_context_options_t>,
         err: &mut bun_uws::create_bun_socket_error_t,
-        vm: Vm,
     ) -> Option<bun_boringssl_sys::OwnedSslCtx> {
-        crate::jsc_hooks::ssl_ctx_cache(vm.bun_vm()).get_or_create_opts(opts, err)
+        crate::jsc_hooks::ssl_ctx_cache(opts.bun_vm()).get_or_create_opts(opts, err)
     }
     fn ssl_config_from_js(
         global: &JSGlobalObject,

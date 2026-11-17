@@ -455,7 +455,7 @@ impl EventLoop {
         }
 
         vm.is_inside_deferred_task_queue.set(true);
-        global_object.js().as_loop().on(&self.deferred_tasks).run();
+        self.deferred_tasks.run(global_object.js().as_loop());
         vm.is_inside_deferred_task_queue.set(false);
 
         // Guard on `event_loop_handle` being set, but drain via `uws_loop()`:
@@ -734,9 +734,8 @@ impl EventLoop {
     }
 
     #[inline]
-    pub fn process_gc_timer(&self) {
-        let vm = self.vm_ref();
-        vm.as_vm().on(&vm.gc_controller).process_gc_timer();
+    pub fn process_gc_timer(self: &Vm<Self>) {
+        self.on(&self.vm_ref().gc_controller).process_gc_timer();
     }
 
     /// How many times one `tick()` refills the task queue from the concurrent
@@ -957,7 +956,7 @@ impl EventLoop {
     /// enqueued from here on. Teardown phase B (JS thread, script forbidden,
     /// JSC heap alive, children joined): called on every turn of the wait, and
     /// once more after `Closed`. What is only posted is released here, and may reach native handlers.
-    pub fn release_queued_tasks(&self, _: Js) {
+    pub fn release_queued_tasks(self: &Js<Self>) {
         self.closed_for_tasks.set(true);
         loop {
             // SAFETY: both borrows end before `promote_yield_tasks` borrows `tasks` again.

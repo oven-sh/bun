@@ -86,51 +86,35 @@ macro_rules! removed_feature_stub {
 #[macro_export]
 macro_rules! removable_body {
     // A `Cell` is not `Copy`, so the closure captures it by value and a zero-sized `$proof` adds nothing to it.
-    ($feature:ident, $stub:ident, $proof:ident, $body:block) => {{
-        let proof = ::core::cell::Cell::new($proof);
-        $crate::removable_body!($feature, $stub, {
-            let $proof = proof.into_inner();
-            $body
-        })
-    }};
-    ($feature:ident, $stub:ident, $body:block) => {
+    ($feature:ident, $stub:ident, $($proof:ident,)? $body:block) => {{
+        $(let $proof = ::core::cell::Cell::new($proof);)?
         $crate::entry_point::run_removable_body::<
             { $crate::Feature::$feature.index() },
             { $crate::StubKind::$stub as u8 },
             _,
             _,
             _,
-        >(|| $body, || $crate::removed_feature_stub!($feature, $stub))
-    };
+        >(
+            || { $(let $proof = $proof.into_inner();)? $body },
+            || $crate::removed_feature_stub!($feature, $stub),
+        )
+    }};
 }
 
 /// A body that is reached only with a value that the feature's own code makes: an arm of a `match` on such a value.
 /// Its own definition writes the record, so the code around it does not need the feature.
 #[macro_export]
 macro_rules! removable_body_behind_value {
-    ($feature:ident, $proof:ident, $body:block) => {{
-        let proof = ::core::cell::Cell::new($proof);
-        $crate::removable_body_behind_value!($feature, {
-            let $proof = proof.into_inner();
-            $body
-        })
-    }};
-    ($feature:ident, $body:block) => {
+    ($feature:ident, $($proof:ident,)? $body:block) => {{
+        $(let $proof = ::core::cell::Cell::new($proof);)?
         $crate::entry_point::removable_body_definition::<{ $crate::Feature::$feature.index() }, _, _>(
-            || $body,
+            || { $(let $proof = $proof.into_inner();)? $body },
         )
-    };
+    }};
 }
 
 #[macro_export]
 macro_rules! removable_body_of_either {
-    ($first:ident, $second:ident, $proof:ident, $body:block) => {{
-        let proof = ::core::cell::Cell::new($proof);
-        $crate::removable_body_of_either!($first, $second, {
-            let $proof = proof.into_inner();
-            $body
-        })
-    }};
     ($first:ident, $second:ident, $body:block) => {
         $crate::entry_point::run_body_of_either::<
             { $crate::Feature::$first.index() },

@@ -78,7 +78,7 @@ fn write_to_stdout(bytes: &[u8]) {
 /// Where both readers of a script deliver.
 struct ScriptOutput<'a> {
     shared: &'a Shared,
-    config: &'a Loop<'a, ScriptConfig>,
+    config: &'a ScriptConfig,
     buffer: Vec<u8>,
 }
 
@@ -224,7 +224,8 @@ impl<'a> ProcessHandle<'a> {
         let handle_ptr = std::ptr::from_mut::<ProcessHandle<'a>>(handle);
         // Not a borrow of the slot, which the exit handler borrows again.
         let process = handle.process.as_ref().unwrap().process.this_ptr();
-        let process = handle.output.config.on(process);
+        // SAFETY: a command gets here from `main`, on its thread.
+        let process = unsafe { Loop::assume(&()) }.on(process);
         // SAFETY: `handle` is the live `ProcessHandle` slot in `State.handles`;
         // it owns `process` and outlives it.
         process.set_exit_handler(unsafe {
@@ -282,7 +283,7 @@ impl<'a> ProcessHandle<'a> {
 bun_spawn::link_impl_ProcessExit! {
     FilterRunHandle for ProcessHandle<'static> => |this| {
         // The Process is never freed; the program exits when all scripts finish.
-        on_process_exit(status, _rusage) => {
+        on_process_exit(status, _rusage, _loop) => {
             let info = (*this).process.as_mut().unwrap();
             info.status = status;
             info.end_time = Some(Instant::now());
@@ -750,7 +751,6 @@ fn windows_is_terminal() -> bool {
 
 pub(crate) fn run_scripts_with_filter(
     ctx: Command::Context,
-    loop_: Loop,
 ) -> crate::Result<core::convert::Infallible> {
     // Never returns normally; Result<Infallible, _> keeps `?` support.
     // Own the slice — `ctx` is reborrowed `&mut` for
@@ -924,7 +924,7 @@ pub(crate) fn run_scripts_with_filter(
             stderr: BufferedReader::init(),
             output: ScriptOutput {
                 shared: &shared,
-                config: loop_.on(script),
+                config: script,
                 buffer: Vec::new(),
             },
             finished: false,

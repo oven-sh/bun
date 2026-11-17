@@ -2,12 +2,11 @@
 //! no effect on the environment of the shell, so we can skip them.
 
 use crate::shell::ast;
-use crate::shell::interpreter::{Interpreter, Node, NodeId, ShellExecEnv};
+use crate::shell::interpreter::{Interpreter, Loop, Node, NodeId, ShellExecEnv};
 use crate::shell::states::base::{Base, InheritedEnv};
 use crate::shell::states::expansion::Expansion;
 use crate::shell::yield_::Yield;
 use crate::shell::{EnvStr, ExitCode};
-use bun_core::Loop;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) enum AssignCtx {

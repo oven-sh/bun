@@ -1,9 +1,8 @@
 use std::io::Write as _;
 
 use crate::shell::builtin::{Arg, Builtin, IoKind};
-use crate::shell::interpreter::{Interpreter, NodeId};
+use crate::shell::interpreter::{Interpreter, Loop, NodeId};
 use crate::shell::yield_::Yield;
-use bun_core::Loop;
 
 const USAGE: &[u8] = b"usage: seq [-w] [-f format] [-s string] [-t string] [first [incr]] last\n";
 

@@ -130,11 +130,10 @@ pub(crate) fn parse(header: &[u8], total: u64) -> Result {
 // `bun_uws::AnyRequest::header` borrows `&self` and returns `&[u8]` tied to
 // it, so take `&AnyRequest` here.
 pub(crate) fn from_request(
-    req: &AnyRequest,
+    req: &Js<AnyRequest>,
     total: u64,
     etag: Option<&[u8]>,
     last_modified_ms: Option<u64>,
-    js: Js,
 ) -> Result {
     let Some(h) = req.header(b"range") else {
         return Result::None;
@@ -142,7 +141,7 @@ pub(crate) fn from_request(
     let range = parse(h, total);
     if range != Result::None
         && let Some(if_range) = req.header(b"if-range")
-        && !if_range_matches(if_range, etag, last_modified_ms, js)
+        && !if_range_matches(if_range, etag, last_modified_ms, req.js())
     {
         return Result::None;
     }

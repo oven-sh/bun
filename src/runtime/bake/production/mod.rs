@@ -20,7 +20,7 @@ use bun_bundler::options::{self as bundler_options, OutputFile};
 use bun_bundler::output_file::Index as OutputFileIndex;
 
 use bun_collections::{AutoBitSet, StringArrayHashMap};
-use bun_core::{Global, Loop, Output};
+use bun_core::{Global, Output};
 use bun_core::{String as BunString, StringView};
 use bun_dotenv as dotenv;
 use bun_jsc::bun_string_jsc;
@@ -115,7 +115,7 @@ pub(crate) fn build_command(ctx: Context) -> crate::Result<()> {
         ..Default::default()
     };
     // SAFETY: the main thread runs one command, whose one VM this is. `ctx.log` is never freed.
-    let vm = unsafe { VirtualMachine::init_bake(ctx.log, vm_options, Loop::assume(&())) }?;
+    let vm = unsafe { VirtualMachine::init_bake(ctx.log, vm_options) }?;
 
     vm.event_loop().ensure_waker();
     vm.preload.set(ctx.preloads.clone());
@@ -189,7 +189,7 @@ pub(crate) fn build_command(ctx: Context) -> crate::Result<()> {
     // LIFO order — under the API lock.
     let mut pt = PerThread::placeholder(vm);
 
-    match build_with_vm(ctx, &cwd, &mut pt, vm.js()) {
+    match build_with_vm(ctx, &cwd, &mut pt) {
         Err(crate::Error::JSError) => {
             let err_value = vm.global().take_exception(jsc::JsError::Thrown);
             vm.print_error_like_object_to_console(err_value.to_error().unwrap_or(err_value));
@@ -243,8 +243,8 @@ fn write_sourcemap_to_disk(
     Ok(())
 }
 
-fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread, js: Js) -> crate::Result<()> {
-    let vm = js.on(pt.vm);
+fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<()> {
+    let vm = pt.vm;
     let global = vm.global();
     // allocator = bun.default_allocator — dropped per §Allocators
 
@@ -740,14 +740,14 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread, js: Js) -> crate:
     }
 
     *pt = PerThread::init(
-        js.on(pt.vm),
+        pt.vm,
         entry_points,
         bundled_outputs_list,
         module_keys,
         &output_module_map,
         source_maps,
     )?;
-    pt.attach(js);
+    pt.attach();
 
     // Static site generator
     let server_render_funcs =
@@ -776,7 +776,7 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread, js: Js) -> crate:
         }
 
         let server_file = router_type.server_file;
-        let server_entry_point = js.on(&*pt).load_bundled_module(server_file)?;
+        let server_entry_point = pt.load_bundled_module(server_file)?;
         let server_render_func =
             bake_get_on_module_namespace(global, server_entry_point, b"prerender")
                 .map_err(js_err)?;
@@ -933,7 +933,7 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread, js: Js) -> crate:
             .put_index(
                 global,
                 0,
-                pt.preload_bundled_module(main_file_route_index, js)
+                pt.preload_bundled_module(main_file_route_index)
                     .map_err(js_err)?,
             )
             .map_err(js_err)?;
@@ -956,7 +956,7 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread, js: Js) -> crate:
                 .put_index(
                     global,
                     file_count,
-                    pt.preload_bundled_module(file, js).map_err(js_err)?,
+                    pt.preload_bundled_module(file).map_err(js_err)?,
                 )
                 .map_err(js_err)?;
             for r#ref in pt.output_file(file).referenced_css_chunks.iter() {
@@ -979,7 +979,7 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread, js: Js) -> crate:
                     .put_index(
                         global,
                         file_count,
-                        pt.preload_bundled_module(file, js).map_err(js_err)?,
+                        pt.preload_bundled_module(file).map_err(js_err)?,
                     )
                     .map_err(js_err)?;
                 for r#ref in pt.output_file(file).referenced_css_chunks.iter() {

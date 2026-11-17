@@ -448,8 +448,8 @@ pub(crate) type BodyHiveHandle = bun_collections::HiveRefHandle<Value, POOL_SIZE
 
 /// Moves `value` into a pooled `HiveRef` slot and returns an owning handle
 /// (ref_count = 1).
-pub(crate) fn hive_alloc(value: Value, vm: Vm) -> BodyHiveHandle {
-    let pool: &HiveAllocator = &crate::jsc_hooks::runtime_state(vm.bun_vm()).body_value_pool;
+pub(crate) fn hive_alloc(value: Value, js: Js) -> BodyHiveHandle {
+    let pool: &HiveAllocator = &crate::jsc_hooks::runtime_state(js.bun_vm()).body_value_pool;
     // SAFETY: `pool` outlives every handle (process lifetime).
     unsafe { BodyHiveHandle::new(value, pool) }
 }

@@ -861,8 +861,7 @@ impl ReadFileUV {
     }
 
     extern "C" fn on_open(req: *mut libuv::fs_t) {
-        // SAFETY: `req` is that of the box that `open` left to libuv,
-        // which calls back from the VM's loop: a worker drains it before its VM goes.
+        // SAFETY: `req` is that of the box that `open` left to the VM's loop, which a worker drains before its VM goes.
         let (mut this, js) = unsafe { (Self::take_from_uv_fs(req), Js::assume(&req)) };
 
         let result = this.req.result;
@@ -949,8 +948,7 @@ impl ReadFileUV {
 
     extern "C" fn on_file_initial_stat(req: *mut libuv::fs_t) {
         log!("ReadFileUV.onFileInitialStat");
-        // SAFETY: `req` is that of the box that `queue_stat` left to libuv,
-        // which calls back from the VM's loop: a worker drains it before its VM goes.
+        // SAFETY: `req` is that of the box that `queue_stat` left to the VM's loop, which a worker drains before its VM goes.
         let (mut this, js) = unsafe { (Self::take_from_uv_fs(req), Js::assume(&req)) };
 
         if let Some(errno) = this.req.result.errno() {
@@ -1102,8 +1100,7 @@ impl ReadFileUV {
     }
 
     extern "C" fn on_read(req: *mut libuv::fs_t) {
-        // SAFETY: `req` is that of the box that `queue_read` left to libuv,
-        // which calls back from the VM's loop: a worker drains it before its VM goes.
+        // SAFETY: `req` is that of the box that `queue_read` left to the VM's loop, which a worker drains before its VM goes.
         let (mut this, js) = unsafe { (Self::take_from_uv_fs(req), Js::assume(&req)) };
 
         let result = this.req.result;

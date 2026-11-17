@@ -1971,7 +1971,7 @@ impl Resolver {
             let parent: *mut Resolver = (*poll).parent;
             let vm = (*parent).vm.get();
             // An error counts as both: https://github.com/nodejs/node/blob/8a41d9b636be86350cd32847c3f89d327c4f6ff7/src/cares_wrap.cc#L93
-            (*parent.cast::<bun_core::Loop<Resolver>>()).on_dns_poll(
+            (*parent.cast::<Js<Resolver>>()).on_dns_poll(
                 (*poll).socket,
                 status < 0 || events & libuv::UV_READABLE != 0,
                 status < 0 || events & libuv::UV_WRITABLE != 0,
@@ -2001,12 +2001,12 @@ impl Resolver {
     }
 
     pub(crate) fn on_dns_poll(
-        self: &bun_core::Loop<Self>,
+        self: &Js<Self>,
         fd: c_ares::ares_socket_t,
         readable: bool,
         writable: bool,
     ) {
-        let _exit = self.on(self.vm()).in_js().enter_event_loop_scope();
+        let _exit = self.on(self.vm()).enter_event_loop_scope();
         let _guard = self.ref_guard();
         self.request_completed(self.channel.process(fd, readable, writable));
     }
@@ -2042,9 +2042,8 @@ impl c_ares::ChannelContainer for Resolver {
             let poll = polls.entry(fd).or_insert_with(|| {
                 let owner =
                     bun_io::Owner::new(bun_io::PollTag::DnsResolver, self.as_ctx_ptr().cast());
-                let vm = self.vm.as_vm().bun_vm();
                 // SAFETY: `polls` is a field of the owner.
-                unsafe { PollType::new(vm.loop_ctx(), sys::Fd::from_native(fd), owner) }
+                unsafe { PollType::new(self.vm().loop_ctx(), sys::Fd::from_native(fd), owner) }
             });
 
             // c-ares reports the full desired (readable, writable) set for this
@@ -2315,7 +2314,7 @@ impl Resolver {
         lib_uv_backend::start(self, &query, pending);
         #[cfg(target_os = "macos")]
         let pending = match opts.backend {
-            GetAddrInfoBackend::System => match dns_sd::start(&query, pending, global_this.js()) {
+            GetAddrInfoBackend::System => match dns_sd::start(&query, pending) {
                 Ok(()) => return Ok(promise),
                 Err(refused) => refused,
             },

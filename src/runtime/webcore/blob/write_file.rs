@@ -558,14 +558,13 @@ mod windows_impl {
 
     impl WriteFileWindows {
         pub(crate) fn start(
-            event_loop: VmRef<EventLoop>,
-            script_context: &bun_jsc::ScriptExecutionContext,
+            cx: &bun_jsc::JsThread<'_>,
             file_blob: Blob,
             bytes_blob: Blob,
             promise: jsc::JSPromiseStrong,
-            global_this: &JSGlobalObject,
             mkdirp_if_not_exists: bool,
         ) -> jsc::JsResult<()> {
+            let event_loop = VmRef::event_loop(cx.vm());
             let mkdirp = mkdirp_if_not_exists
                 && file_blob
                     .store
@@ -580,26 +579,26 @@ mod windows_impl {
                 file_blob,
                 bytes_blob,
                 promise,
-                global_this: bun_ptr::BackRef::new(global_this),
-                context: script_context.id(),
+                global_this: bun_ptr::BackRef::new(cx.global()),
+                context: cx.context().id(),
                 mkdirp_if_not_exists: mkdirp,
                 io_request: bun_core::ffi::zeroed::<uv::fs_t>(),
                 event_loop,
                 fd: -1,
                 err: None,
                 total_written: 0,
-                _keep_alive: JsKeepAlive::active(global_this.bun_vm()),
+                _keep_alive: JsKeepAlive::active(cx.vm()),
                 owned_fd: false,
             });
-            write_file.io_request.loop_ = global_this.on(event_loop).uv_loop();
+            write_file.io_request.loop_ = cx.on(event_loop).uv_loop();
 
             let store = write_file.file_blob.store.get().as_ref().unwrap();
             let PathOrFileDescriptor::Fd(fd) = &store.data.as_file().pathlike else {
-                return write_file.open(global_this.js());
+                return write_file.open(cx.js());
             };
             write_file.fd = fd.uv();
 
-            write_file.do_write_loop(global_this.js())
+            write_file.do_write_loop(cx.js())
         }
 
         fn path(&self) -> &[u8] {
@@ -609,14 +608,12 @@ mod windows_impl {
 
         fn open(mut self: Box<Self>, js: Js) -> jsc::JsResult<()> {
             let Ok(posix_path) = sys::to_posix_path(self.path()) else {
-                return self.throw(
-                    sys::Error {
-                        errno: sys::E::NAMETOOLONG as _,
-                        syscall: sys::Tag::open,
-                        ..Default::default()
-                    },
-                    js,
-                );
+                let err = sys::Error {
+                    errno: sys::E::NAMETOOLONG as _,
+                    syscall: sys::Tag::open,
+                    ..Default::default()
+                };
+                return self.throw(err, js);
             };
             self.owned_fd = true;
             let loop_ = js.on(self.event_loop).uv_loop();
@@ -648,10 +645,8 @@ mod windows_impl {
         }
 
         extern "C" fn on_open(req: *mut uv::fs_t) {
-            // SAFETY: `req` is the `io_request` of the box that `open` left to libuv,
-            // which calls back from the VM's loop: a worker drains it before its VM goes.
-            let (mut this, js) =
-                unsafe { (WriteFileWindows::take_from_uv_fs(req), Js::assume(&req)) };
+            // SAFETY: `req` is the `io_request` of the box that `open` left to the VM's loop, which a worker drains before its VM goes.
+            let (mut this, js) = unsafe { (Self::take_from_uv_fs(req), Js::assume(&req)) };
             let rc = this.io_request.result;
             #[cfg(debug_assertions)]
             bun_output::scoped_log!(
@@ -671,10 +666,8 @@ mod windows_impl {
                     return;
                 }
 
-                fold(
-                    js,
-                    this.throw(sys::Error::from_code(err, sys::Tag::open), js),
-                );
+                let err = sys::Error::from_code(err, sys::Tag::open);
+                fold(js, this.throw(err, js));
                 return;
             }
 
@@ -690,20 +683,16 @@ mod windows_impl {
         }
 
         pub(crate) fn on_mkdirp_complete(mut self: Box<Self>, js: Js) {
-            fold(
-                js,
-                match self.err.take() {
-                    Some(err) => self.throw(err, js),
-                    None => self.open(js),
-                },
-            );
+            let result = match self.err.take() {
+                Some(err) => self.throw(err, js),
+                None => self.open(js),
+            };
+            fold(js, result);
         }
 
         extern "C" fn on_write_complete(req: *mut uv::fs_t) {
-            // SAFETY: `req` is the `io_request` of the box that `do_write_loop` left to libuv,
-            // which calls back from the VM's loop: a worker drains it before its VM goes.
-            let (mut this, js) =
-                unsafe { (WriteFileWindows::take_from_uv_fs(req), Js::assume(&req)) };
+            // SAFETY: `req` is the `io_request` of the box that `do_write_loop` left to the VM's loop, which a worker drains before its VM goes.
+            let (mut this, js) = unsafe { (Self::take_from_uv_fs(req), Js::assume(&req)) };
             let rc = this.io_request.result;
             if let Some(err) = rc.to_error(sys::Tag::write) {
                 fold(js, this.throw(err, js));

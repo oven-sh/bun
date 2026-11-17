@@ -82,11 +82,7 @@ impl<T, C> New<T, C> {
     pub fn init(ctx: *mut T, callback: fn(*mut T, *mut C, Loop)) -> AnyTaskWithExtraContext {
         AnyTaskWithExtraContext {
             // SAFETY: the two types have identical ABI: two thin pointers, then the same proof.
-            callback: unsafe {
-                bun_ptr::cast_fn_ptr::<fn(*mut T, *mut C, Loop), fn(*mut (), *mut (), Loop)>(
-                    callback,
-                )
-            },
+            callback: unsafe { bun_ptr::cast_fn_ptr::<_, fn(*mut (), *mut (), Loop)>(callback) },
             ctx: NonNull::new(ctx.cast::<()>()),
             next: bun_threading::Link::new(),
         }

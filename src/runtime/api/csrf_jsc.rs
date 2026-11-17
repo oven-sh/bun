@@ -2,8 +2,8 @@
 
 use bun_boringssl_sys as boring;
 use bun_csrf as csrf;
+use bun_jsc::JSValue;
 use bun_jsc::bindgen::{self, JsHeap, JsScope};
-use bun_jsc::{JSValue, Vm};
 
 use crate::api::crypto::evp::Algorithm as EvpAlgorithm;
 use crate::crypto::evp;
@@ -56,10 +56,6 @@ fn algorithm<'a>(heap: &JsHeap<'a>, name: Option<&[u8]>) -> bindgen::Result<'a, 
     }
 }
 
-fn default_secret(vm: Vm<'_>) -> &[u8] {
-    vm.bun_vm().rare_data().default_csrf_secret()
-}
-
 pub(crate) fn generate<'a>(
     cx: &mut JsScope<'a>,
     secret: Option<&'a [u8]>,
@@ -80,7 +76,7 @@ pub(crate) fn generate<'a>(
     let mut token_buffer: [u8; 512] = [0u8; 512];
     let token_bytes = match csrf::generate(
         &csrf::GenerateOptions {
-            secret: secret.unwrap_or_else(|| default_secret(heap.as_vm())),
+            secret: secret.unwrap_or_else(|| heap.bun_vm().rare_data().default_csrf_secret()),
             session_id: session_id.unwrap_or_default(),
             expires_in_ms: options.expires_in,
             algorithm,
@@ -126,7 +122,7 @@ pub(crate) fn verify<'a>(
 
     Ok(csrf::verify(&csrf::VerifyOptions {
         token,
-        secret: secret.unwrap_or_else(|| default_secret(heap.as_vm())),
+        secret: secret.unwrap_or_else(|| heap.bun_vm().rare_data().default_csrf_secret()),
         session_id: session_id.unwrap_or_default(),
         max_age_ms: options.max_age,
         encoding: token_format(heap, options.encoding)?,

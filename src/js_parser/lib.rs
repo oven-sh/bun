@@ -134,6 +134,7 @@ pub mod Macro {
         /// # Safety
         /// `transpiler` is a `bun_bundler::Transpiler` that is live for `'a`, and nothing else
         /// uses its resolver, or writes to its options, at the time the parser calls a macro.
+        /// Only macro calls of this thread have filled `macro_load_states`.
         pub unsafe fn new(
             transpiler: *mut (),
             macro_load_states: &'a MacroLoadStates,

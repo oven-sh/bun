@@ -11,7 +11,7 @@ use core::cell::Cell;
 use core::ffi::{c_int, c_void};
 use core::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 
-use bun_core::{Loop, String as BunString, StringView};
+use bun_core::{String as BunString, StringView};
 use bun_io::KeepAlive;
 
 use crate::virtual_machine::{VirtualMachine, runtime_hooks};
@@ -413,7 +413,7 @@ impl Debugger {
             ..Default::default()
         };
         // SAFETY: the top of this thread, and its only VM. The frame that holds `log` never returns.
-        let vm = unsafe { VirtualMachine::init(&raw mut log, options, Loop::assume(&log)) }
+        let vm = unsafe { VirtualMachine::init(&raw mut log, options) }
             .unwrap_or_else(|_| panic!("Failed to create Debugger VM"));
         vm.event_loop().ensure_waker();
 

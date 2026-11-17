@@ -434,7 +434,8 @@ impl Drop for Channel {
 // -- platform callbacks ------------------------------------------------------
 
 #[cfg(not(windows))]
-impl uws::vtable::Handler for Channel {
+// SAFETY: `adopt` fills the slot of each socket of the group.
+unsafe impl uws::vtable::Handler for Channel {
     type Ext = ExtSlot<Self>;
 
     const HAS_ON_DATA: bool = true;

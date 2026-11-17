@@ -7,9 +7,8 @@
 
 use core::cell::Cell;
 
-use crate::shell::interpreter::{Interpreter, NodeId, StateKind, log};
+use crate::shell::interpreter::{Interpreter, Loop, NodeId, StateKind, log};
 use crate::shell::states::pipeline::Pipeline;
-use bun_core::Loop;
 
 /// A "continuation" of the shell interpreter. Shell state-machine functions
 /// return a `Yield`; `Yield::run(&Interpreter)` is the trampoline that

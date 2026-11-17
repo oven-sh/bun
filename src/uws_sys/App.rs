@@ -280,8 +280,8 @@ impl<const SSL: bool> App<SSL> {
     {
         let resp = Response::<SSL>::res_to_any(resp);
         // SAFETY: uWS callback contract; `user_data` is the `ThisPtr` registered with this thunk; the registrant holds a ref on it while the route is registered.
-        let this = unsafe { ThisPtr::new(user_data.cast::<U>()) };
-        thunk::zst::<H>()(this, AnyRequest::H1(req), resp)
+        let (this, handler) = unsafe { (ThisPtr::new(user_data.cast::<U>()), thunk::zst::<H>()) };
+        handler(this, AnyRequest::H1(req), resp)
     }
 
     pub fn on_client_error(

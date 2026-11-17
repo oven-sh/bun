@@ -1,8 +1,8 @@
-use crate::Vm;
 use core::cell::Cell;
 use core::ffi::c_void;
 use core::ptr::NonNull;
 
+use crate::Vm;
 use bun_core::{String as BunString, StringView};
 
 pub struct HTTPServerAgent {
@@ -158,15 +158,9 @@ impl InspectorHTTPServerAgent {
 
 // #region C++ entry points
 
-/// # Safety
-/// The thread of the inspected VM, until its `JSC::VM` is destroyed.
-#[unsafe(no_mangle)]
-pub(crate) unsafe extern "C" fn Bun__HTTPServerAgent__setEnabled(
-    agent: *mut InspectorHTTPServerAgent,
-) {
-    // SAFETY: fn contract.
-    let vm = unsafe { Vm::assume(&agent) }.bun_vm();
-    if let Some(debugger) = vm.debugger.get() {
+// HOST_EXPORT(Bun__HTTPServerAgent__setEnabled, c)
+pub fn set_enabled(agent: *mut crate::http_server_agent::InspectorHTTPServerAgent, vm: Vm) {
+    if let Some(debugger) = vm.bun_vm().debugger.get() {
         debugger.http_server_agent.agent.set(NonNull::new(agent));
     }
 }

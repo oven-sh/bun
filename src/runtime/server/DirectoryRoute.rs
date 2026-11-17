@@ -157,21 +157,15 @@ impl DirectoryRoute {
         let etag = format_weak_etag(&mut etag_buf, size, last_modified_ms);
         let last_modified_ms = (last_modified_ms > 0).then_some(last_modified_ms);
 
+        let request = this.on(&req);
         let range = if method == Method::GET || method == Method::HEAD {
-            RangeRequest::from_request(&req, size, Some(etag), last_modified_ms, this.proof())
+            RangeRequest::from_request(request, size, Some(etag), last_modified_ms)
         } else {
             RangeRequest::Result::None
         };
 
-        let status_code = status_for_preconditions(
-            &req,
-            method,
-            200,
-            Some(etag),
-            last_modified_ms,
-            range,
-            this.proof(),
-        );
+        let status_code =
+            status_for_preconditions(request, method, 200, Some(etag), last_modified_ms, range);
 
         req.set_yield(false);
         write_any_status(resp, status_code);

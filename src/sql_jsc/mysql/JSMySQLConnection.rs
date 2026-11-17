@@ -121,11 +121,6 @@ impl JSMySQLConnection {
         // SAFETY: `self` is the live heap allocation.
         unsafe { RefPtr::init_ref(self.as_ctx_ptr()) }
     }
-
-    #[inline]
-    fn event_loop(self: &Js<Self>) -> &Js<'_, crate::jsc::EventLoop> {
-        self.bun_vm().event_loop()
-    }
 }
 
 impl TimedConnection for JSMySQLConnection {
@@ -259,19 +254,18 @@ impl JSMySQLConnection {
             return;
         }
         // Under backpressure too: the next reply is for the request behind the one that just ended.
-        self.on(&self.queue).advance(self);
+        self.queue.advance(self);
         self.flush_data();
     }
 
     fn upgrade_to_tls(self: &Js<Self>) {
         let started = start_tls(
-            self.as_ctx_ptr(),
+            self,
             self.socket.get(),
             (uws::SocketKind::MysqlTls, SocketGroups::mysql_group::<true>),
             self.secure.as_ref(),
             &self.tls_config,
             self.session.get().ssl_mode(),
-            self.js(),
             |socket| self.socket.set(socket),
         );
         // `NotPlain`: the handshake is under way.
@@ -284,7 +278,7 @@ impl JSMySQLConnection {
         bun_core::scoped_log!(MySQLConnection, "enqueueRequest");
         let _entered = self.entered_from_js();
         self.queue.add(item);
-        self.on(&self.queue).advance(self);
+        self.queue.advance(self);
         self.on_queue_changed();
     }
 
@@ -308,7 +302,7 @@ impl JSMySQLConnection {
     fn drain_internal(self: &Js<Self>) {
         bun_core::scoped_log!(MySQLConnection, "drainInternal");
         {
-            let _loop_guard = self.event_loop().enter_scope();
+            let _loop_guard = self.bun_vm().enter_event_loop_scope();
             self.ensure_js_value_is_alive();
             self.flush_queue();
             self.retire_if_idle();
@@ -727,7 +721,7 @@ impl JSMySQLConnection {
         if let Some(request) = self.queue.current()
             && let Some((command, statement)) = request.written_command()
         {
-            return self.handle_reply(packet, &request, command, &statement);
+            return self.handle_reply(packet, self.on(&*request), command, &statement);
         }
         let event = self.write(|out| self.session.with_mut(|s| s.on_packet(packet, out)))?;
         match event {
@@ -735,7 +729,7 @@ impl JSMySQLConnection {
             Event::Flush => self.flush_queue(),
             Event::Connected => {
                 self.on_connect_pending.set(true);
-                self.on(&self.queue).advance(self);
+                self.queue.advance(self);
             }
         }
         Ok(())
@@ -744,7 +738,7 @@ impl JSMySQLConnection {
     fn handle_reply<'p>(
         self: &Js<Self>,
         packet: &'p Packet<'_>,
-        request: &JSMySQLQuery,
+        request: &Js<JSMySQLQuery>,
         command: Command,
         statement: &MySQLStatement,
     ) -> Result<(), Failure<'p>> {
@@ -763,7 +757,7 @@ impl JSMySQLConnection {
                 self.on_column_name(request, statement, index)?;
             }
             ReplyEvent::Result(result) => {
-                self.on(request).resolve(&result);
+                request.resolve(&result);
                 // Not only `advance()`: what it writes has to be sent, and the auto flusher may not be registered.
                 self.flush_queue();
             }
@@ -774,15 +768,14 @@ impl JSMySQLConnection {
                     self.write(|out| mysql_request::close_statement(statement.wire.get().id, out));
                 }
                 request.prepared();
-                self.on(&self.queue).advance(self);
+                self.queue.advance(self);
             }
             ReplyEvent::Refused(err) => {
                 // The cache holds handles the server has. The next use of the text prepares again.
                 if command == Command::Prepare {
                     self.statements.with_mut(|cache| cache.remove(statement));
                 }
-                self.on(request)
-                    .reject_with_js_value(self.server_error(&err));
+                request.reject_with_js_value(self.server_error(&err));
                 if err.ends_session() {
                     return Err(AnyMySQLErrorT::ConnectionClosed.into());
                 }
@@ -794,21 +787,21 @@ impl JSMySQLConnection {
 
     /// The packet is skipped whole, so the stream is in step: only a VM that is stopping fails the connection.
     fn on_undecodable_row(
-        self: &Js<Self>,
-        request: &JSMySQLQuery,
+        &self,
+        request: &Js<JSMySQLQuery>,
         err: AnyMySQLErrorT,
     ) -> Result<(), AnyMySQLErrorT> {
         if self.global_object.has_pending_termination_exception() {
             return Err(AnyMySQLErrorT::JSError);
         }
-        self.on(request).reject_undecodable_row(err);
+        request.reject_undecodable_row(err);
         Ok(())
     }
 
     /// Runs `transform.column.from`, which is user code.
     fn on_column_name(
-        self: &Js<Self>,
-        request: &JSMySQLQuery,
+        &self,
+        request: &Js<JSMySQLQuery>,
         statement: &MySQLStatement,
         index: usize,
     ) -> Result<(), AnyMySQLErrorT> {
@@ -845,8 +838,8 @@ impl JSMySQLConnection {
     /// Inlined into `handle_reply`, the row decoder loses its own inlining.
     #[inline(never)]
     fn on_result_row(
-        self: &Js<Self>,
-        request: &JSMySQLQuery,
+        &self,
+        request: &Js<JSMySQLQuery>,
         statement: &MySQLStatement,
         reader: PacketReader<'_>,
     ) -> Result<(), AnyMySQLErrorT> {
@@ -1000,7 +993,7 @@ impl<const SSL: bool> SocketHandler<SSL> {
         }
     }
 
-    pub fn on_end(_: &Js<JSMySQLConnection>, socket: NewSocketHandler<SSL>) {
+    pub fn on_end(_: &JSMySQLConnection, socket: NewSocketHandler<SSL>) {
         // no half closed sockets
         socket.close(uws::CloseKind::Normal);
     }
@@ -1016,7 +1009,7 @@ impl<const SSL: bool> SocketHandler<SSL> {
     pub fn on_data(this: &Js<JSMySQLConnection>, _: NewSocketHandler<SSL>, data: &[u8]) {
         let _guard = this.ref_guard();
         {
-            let _loop_guard = this.event_loop().enter_scope();
+            let _loop_guard = this.bun_vm().enter_event_loop_scope();
             this.ensure_js_value_is_alive();
 
             this.read(data);

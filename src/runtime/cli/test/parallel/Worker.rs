@@ -318,6 +318,6 @@ impl Worker {
 
 bun_spawn::link_impl_ProcessExit! {
     TestParallelWorker for Worker => |this| {
-        on_process_exit(_status, rusage) => (*this).on_process_exit(rusage),
+        on_process_exit(_status, rusage, _loop) => (*this).on_process_exit(rusage),
     }
 }

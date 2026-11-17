@@ -72,7 +72,7 @@ pub(crate) trait HasAutoFlusher: Sized {
     /// `this` must be the same pointer that was registered via
     /// [`AutoFlusher::erased_ctx`] (i.e. a valid, live `*mut Self`), and the
     /// call must occur on the JS thread with no aliasing `&mut Self`.
-    unsafe fn on_auto_flush(this: *mut Js<Self>) -> bool;
+    unsafe fn on_auto_flush(this: *mut Self, js: Js) -> bool;
 }
 
 impl AutoFlusher {
@@ -95,7 +95,7 @@ impl AutoFlusher {
             // SAFETY: `ctx` is exactly the `*mut T` registered via
             // `erased_ctx` below; `DeferredTaskQueue::run` feeds it back
             // unchanged, from the event loop of the VM that it was registered with.
-            unsafe { <T as HasAutoFlusher>::on_auto_flush(ctx.cast::<Js<T>>()) }
+            unsafe { <T as HasAutoFlusher>::on_auto_flush(ctx.cast::<T>(), Js::assume(&ctx)) }
         }
         trampoline::<T>
     }
@@ -162,10 +162,11 @@ impl HasAutoFlusher for file_sink::FileSink {
     }
     /// # Safety
     /// See [`HasAutoFlusher::on_auto_flush`].
-    unsafe fn on_auto_flush(this: *mut Js<Self>) -> bool {
+    unsafe fn on_auto_flush(this: *mut Self, js: Js) -> bool {
         // SAFETY: fn contract.
-        let this = unsafe { &*this };
-        !this.end_unneeded_auto_flush() && this.on(&*this.ref_guard()).on_auto_flush()
+        unsafe {
+            !(*this).end_unneeded_auto_flush() && js.on(&*(*this).ref_guard()).on_auto_flush()
+        }
     }
 }
 
@@ -176,12 +177,9 @@ impl<const SSL: bool> HasAutoFlusher for streams::HTTPServerWritable<SSL> {
     }
     /// # Safety
     /// See [`HasAutoFlusher::on_auto_flush`].
-    unsafe fn on_auto_flush(this: *mut Js<Self>) -> bool {
+    unsafe fn on_auto_flush(this: *mut Self, js: Js) -> bool {
         // SAFETY: fn contract.
-        unsafe {
-            let js = (*this).js();
-            (*this.cast::<Self>()).on_auto_flush(js)
-        }
+        unsafe { (*this).on_auto_flush(js) }
     }
 }
 
@@ -350,9 +348,9 @@ impl SinkHandle {
             SinkHandle::ServerResponse(any) => {
                 removable_body!(Serve, Abort, js, { any.write_chunk(data, js) })
             }
-            SinkHandle::FetchRequestBody(mut p) => removable_body!(Fetch, Abort, js, {
+            SinkHandle::FetchRequestBody(mut p) => removable_body!(Fetch, Abort, {
                 // SAFETY: live backref; ByteStream clears sink before free.
-                unsafe { p.get_mut() }.write(data, js)
+                unsafe { p.get_mut() }.write(data)
             }),
             SinkHandle::S3Upload(p) => {
                 removable_body!(S3Client, Abort, js, { js.on(p).write(data) })
@@ -361,13 +359,13 @@ impl SinkHandle {
             SinkHandle::HTMLRewriter(p) => {
                 removable_body!(HtmlRewriter, Abort, js, { js.on(p).write(data) })
             }
-            SinkHandle::HttpResponse(mut p) => removable_body_of_either!(Serve, WebStreams, js, {
+            SinkHandle::HttpResponse(mut p) => removable_body_of_either!(Serve, WebStreams, {
                 // SAFETY: live backref; transform detaches before the JSSink is finalized.
-                unsafe { p.get_mut() }.write(data, js)
+                unsafe { p.get_mut() }.write(data)
             }),
-            SinkHandle::HttpsResponse(mut p) => removable_body_of_either!(Serve, WebStreams, js, {
+            SinkHandle::HttpsResponse(mut p) => removable_body_of_either!(Serve, WebStreams, {
                 // SAFETY: live backref; transform detaches before the JSSink is finalized.
-                unsafe { p.get_mut() }.write(data, js)
+                unsafe { p.get_mut() }.write(data)
             }),
         }
     }
@@ -388,7 +386,7 @@ impl SinkHandle {
             }),
             SinkHandle::S3Upload(p) => removable_body!(S3Client, Abort, js, {
                 if let Some(sink) = p.ref_guard() {
-                    s3::multipart::NetworkSink::end_from_stream(&sink, err, js)
+                    s3::multipart::NetworkSink::end_from_stream(js.on(&sink), err)
                 }
             }),
             SinkHandle::FileSink(p) => js.on(&*p.ref_guard()).end_from_stream(err),

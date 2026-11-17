@@ -362,24 +362,23 @@ fn check_route_failures(
 impl DevServer {
     pub(crate) fn respond_for_html_bundle(
         &mut self,
-        html: bun_ptr::ThisPtr<HTMLBundleRoute>,
+        html: bun_ptr::ThisPtr<Js<HTMLBundleRoute>>,
         req: &mut Request,
         resp: AnyResponse,
-        js: Js,
     ) -> Result<(), AllocError> {
         if !is_allowed_dev_host(self, req) {
             host_forbidden(resp);
             return Ok(());
         }
         let route_bundle_index = self
-            .get_or_put_route_bundle(route_bundle::UnresolvedIndex::Html(html))
+            .get_or_put_route_bundle(route_bundle::UnresolvedIndex::Html(html.plain()))
             .map_err(|_| AllocError)?;
         let mut ctx = RequestEnsureRouteBundledCtx {
             req: ReqOrSaved::Req(req),
             resp,
             kind: deferred_request::HandlerKind::BundledHtmlPage,
             route_bundle_index,
-            js,
+            js: html.proof(),
         };
         let rbi = ctx.route_bundle_index;
         match ensure_route_is_bundled(self, rbi, &mut ctx) {
@@ -388,7 +387,7 @@ impl DevServer {
             // trampoline (`StaticRouteLike`, which otherwise never enters
             // JS): what bundling left pending is folded at this boundary.
             Err(err @ (jsc::JsError::Thrown | jsc::JsError::Terminated)) => {
-                crate::dispatch::fold(js, Err(err))
+                crate::dispatch::fold(html.proof(), Err(err))
             }
             Err(jsc::JsError::OutOfMemory) => return Err(AllocError),
         }

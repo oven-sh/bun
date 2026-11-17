@@ -1134,6 +1134,7 @@ impl SendQueue {
         }
         // SAFETY: the root of the live allocation that holds `self`.
         let queue = unsafe { RefPtr::init_ref(self.root_ptr()) };
+        self.owner_ref().expect("SendQueue used after detach");
         self.bun_vm()
             .event_loop()
             .enqueue_task(Task::from_ref::<Self>(queue));
@@ -1389,9 +1390,6 @@ impl SendQueue {
     }
 
     pub(crate) fn update_ref(&self, global: &JSGlobalObject) {
-        let _ = global;
-        // Note: KeepAlive::{ref_,unref} take an `EventLoopCtx` (aio cycle-
-        // break vtable), not `&VirtualMachine`.
         let ctx = global.bun_vm().loop_ctx();
         let should_ref = self.should_ref();
         if should_ref {

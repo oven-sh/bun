@@ -491,23 +491,17 @@ impl StaticRoute {
         resp: AnyResponse,
     ) -> bool {
         let etag = this.headers.get(b"etag").filter(|v| !v.is_empty());
+        let parse_date = |date: &[u8]| crate::jsc_hooks::parse_http_date(date, this.proof());
         // Deferred: `parse_http_date` allocates + calls into WTF; only run it
         // when the client actually sent a date-based conditional header.
-        let last_modified = || {
-            this.headers
-                .get(b"last-modified")
-                .and_then(|date| crate::jsc_hooks::parse_http_date(date, this.proof()))
-        };
+        let last_modified = || this.headers.get(b"last-modified").and_then(parse_date);
 
         // Step 1: If-Match (strong comparison); step 2: If-Unmodified-Since
         // (only when If-Match is absent).
         let precondition_failed =
             if let Some(im) = req.header(b"if-match").filter(|v| !v.is_empty()) {
                 !ETag::if_match(etag, im)
-            } else if let Some(ius) = req
-                .header(b"if-unmodified-since")
-                .and_then(|date| crate::jsc_hooks::parse_http_date(date, this.proof()))
-            {
+            } else if let Some(ius) = req.header(b"if-unmodified-since").and_then(parse_date) {
                 matches!(last_modified(), Some(lm) if lm / 1000 > ius / 1000)
             } else {
                 false
@@ -523,10 +517,7 @@ impl StaticRoute {
                 _ => false,
             }
         // Step 4: If-Modified-Since (only when If-None-Match is absent).
-        } else if let Some(ims) = req
-            .header(b"if-modified-since")
-            .and_then(|date| crate::jsc_hooks::parse_http_date(date, this.proof()))
-        {
+        } else if let Some(ims) = req.header(b"if-modified-since").and_then(parse_date) {
             // §13.1.3: 304 when Last-Modified <= If-Modified-Since. HTTP-date
             // is second-granular, so compare at second precision.
             match last_modified() {

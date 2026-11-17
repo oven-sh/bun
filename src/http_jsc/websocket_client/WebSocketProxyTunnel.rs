@@ -67,45 +67,40 @@ impl IntoUpgradeClientRef for HttpsUpgradeClient {
 impl UpgradeClientRef {
     fn dispatch(
         self,
-        js: Js,
-        http: impl FnOnce(ThisPtr<Js<HttpUpgradeClient>>),
-        https: impl FnOnce(ThisPtr<Js<HttpsUpgradeClient>>),
+        http: impl FnOnce(ThisPtr<HttpUpgradeClient>),
+        https: impl FnOnce(ThisPtr<HttpsUpgradeClient>),
     ) {
         match self {
-            UpgradeClientRef::Http(client) => http(js.on(client.this_ptr())),
-            UpgradeClientRef::Https(client) => https(js.on(client.this_ptr())),
+            UpgradeClientRef::Http(client) => http(client.this_ptr()),
+            UpgradeClientRef::Https(client) => https(client.this_ptr()),
         }
     }
 
     fn handle_decrypted_data(self, data: &[u8], js: Js) {
         self.dispatch(
-            js,
-            |c| HttpUpgradeClient::handle_decrypted_data(c, data),
-            |c| HttpsUpgradeClient::handle_decrypted_data(c, data),
+            |c| HttpUpgradeClient::handle_decrypted_data(js.on(c), data),
+            |c| HttpsUpgradeClient::handle_decrypted_data(js.on(c), data),
         );
     }
 
     fn terminate(self, code: ErrorCode, js: Js) {
         self.dispatch(
-            js,
-            |c| HttpUpgradeClient::terminate(c, code),
-            |c| HttpsUpgradeClient::terminate(c, code),
+            |c| HttpUpgradeClient::terminate(js.on(c), code),
+            |c| HttpsUpgradeClient::terminate(js.on(c), code),
         );
     }
 
     fn fail_tls(self, ssl_error: us_bun_verify_error_t, completed: bool, js: Js) {
         self.dispatch(
-            js,
-            |c| HttpUpgradeClient::fail_tls(c, ssl_error, completed),
-            |c| HttpsUpgradeClient::fail_tls(c, ssl_error, completed),
+            |c| HttpUpgradeClient::fail_tls(js.on(c), ssl_error, completed),
+            |c| HttpsUpgradeClient::fail_tls(js.on(c), ssl_error, completed),
         );
     }
 
     fn on_proxy_tls_handshake_complete(self, js: Js) {
         self.dispatch(
-            js,
-            HttpUpgradeClient::on_proxy_tls_handshake_complete,
-            HttpsUpgradeClient::on_proxy_tls_handshake_complete,
+            |c| HttpUpgradeClient::on_proxy_tls_handshake_complete(js.on(c)),
+            |c| HttpsUpgradeClient::on_proxy_tls_handshake_complete(js.on(c)),
         );
     }
 
@@ -205,11 +200,10 @@ impl WebSocketProxyTunnel {
     /// Start TLS handshake inside the tunnel
     /// The ssl_options should contain all TLS configuration including CA certificates.
     pub(crate) fn start(
-        this: &RefPtr<Self>,
+        mut this: &Js<Self>,
         ssl_options: &SslConfig,
         reject_unauthorized: bool,
         initial_data: &[u8],
-        js: Js,
     ) -> crate::Result<()> {
         // Allow handshake to complete so we can access peer certificate for manual
         // hostname verification in onHandshake(). The actual reject_unauthorized
@@ -260,9 +254,9 @@ impl WebSocketProxyTunnel {
         }
 
         if !initial_data.is_empty() {
-            wrapper.start_with_payload(&mut js.on(&**this), initial_data);
+            wrapper.start_with_payload(&mut this, initial_data);
         } else {
-            wrapper.start(&mut js.on(&**this));
+            wrapper.start(&mut this);
         }
         Ok(())
     }

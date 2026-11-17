@@ -265,10 +265,7 @@ pub(crate) type FileMap = ArrayHashMap<&'static [u8], FileId>;
 pub(crate) mod Jest {
     use super::*;
 
-    /// `None` outside `bun test` and on other threads: the runner belongs to the VM that runs the test files.
-    pub(crate) fn runner() -> Option<&'static TestRunner> {
-        crate::jsc_hooks::test_runner()
-    }
+    pub(crate) use crate::jsc_hooks::test_runner as runner;
 
     /// Computes `RuntimeFeatures::own_test_globals`. Call before the test file is loaded.
     pub(crate) fn own_globals(global: &JSGlobalObject) -> JsResult<u32> {

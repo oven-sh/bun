@@ -10,7 +10,7 @@ use crate::virtual_machine::VirtualMachine;
 
 bun_core::proof! {
     /// This thread has a VM, which stays allocated.
-    Vm, as_vm => T;
+    Vm, as_vm => unsafe T;
     /// `VirtualMachine::init` has installed a VM and its `RuntimeState` on this thread. What is reached through the
     /// proof is allocated. While `scope` is borrowed, only a call after which no proof of the thread is used frees it.
     /// This may be inside an allocation, a sweep or `~VM`. After `~VM`, teardown frees the loop, then the
@@ -19,7 +19,7 @@ bun_core::proof! {
 
 bun_core::proof! {
     /// Script may run here.
-    Js, js => Vm<'a, T>;
+    Js, js => unsafe Vm<'a, T>;
     /// As [`Vm::assume`] and [`Loop::assume`].
 }
 

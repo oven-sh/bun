@@ -1410,12 +1410,16 @@ impl RewriterPipe {
         // or a downstream rewriter's `write`. Still under `driving`, so the
         // stream's re-entrant drain signal defers as it did per fragment.
         self.flush_output();
+        self.stop_driving();
+        cell.ensure_still_alive();
+        res
+    }
+
+    fn stop_driving(&self) {
         self.driving.set(false);
         if self.phase.get() == RewritePhase::Done {
             self.release_handlers();
         }
-        cell.ensure_still_alive();
-        res
     }
 
     /// Points the suspended handler's wrapper at the unit lol-html parked.
@@ -3162,24 +3166,19 @@ impl WrapperLike for Element {
 // `RewriterPipe::wire_input`'s `.then_with_value()`; the cell (and thus the
 // pipe) stays alive as long as the pump promise's reaction is rooted.
 
-pub(crate) fn on_resolve_input_stream(
-    cx: &mut JsScope<'_>,
-    _: JsLocal<'_>,
-    context: &RewriterPipe,
-) {
-    context.js_pump_reaction_pending.set(false);
-    cx.on(context).end_from_stream(None);
+pub(crate) fn on_resolve_input_stream(cx: &mut JsScope<'_>, _: JsLocal<'_>, pipe: &RewriterPipe) {
+    pipe.js_pump_reaction_pending.set(false);
+    cx.on(pipe).end_from_stream(None);
 }
 
 pub(crate) fn on_reject_input_stream(
     cx: &mut JsScope<'_>,
     reason: JsLocal<'_>,
-    context: &RewriterPipe,
+    pipe: &RewriterPipe,
 ) {
-    context.js_pump_reaction_pending.set(false);
+    pipe.js_pump_reaction_pending.set(false);
     let global = cx.global();
-    let context = global.on(context);
-    context.end_from_stream(Some(crate::webcore::streams::StreamError::JSValue(
+    (global.on(pipe)).end_from_stream(Some(crate::webcore::streams::StreamError::JSValue(
         jsc::strong::Optional::create(reason.to_js(), global),
     )));
 }

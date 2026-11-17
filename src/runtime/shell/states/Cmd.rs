@@ -7,7 +7,7 @@ use crate::node::fs::{note_shell_redirect, open_embedded_shell_operand, refuse_s
 use crate::shell::ExitCode;
 use crate::shell::ast;
 use crate::shell::builtin::{Builtin, Kind as BuiltinKind};
-use crate::shell::interpreter::{Interpreter, Node, NodeId, OwnedFd, StateKind, log};
+use crate::shell::interpreter::{Interpreter, Loop, Node, NodeId, OwnedFd, StateKind, log};
 use crate::shell::io::{IO, OutKind as IoOutKind};
 use crate::shell::shell_body::subproc::{Readable, ShellSubprocess, StdioKind};
 use crate::shell::states::assigns::{AssignCtx, Assigns};
@@ -17,7 +17,6 @@ use crate::shell::subproc::{ShellIO, SpawnArgs};
 use crate::shell::util::{OutKind, Stdio};
 use crate::shell::yield_::Yield;
 use bun_collections::VecExt;
-use bun_core::Loop;
 
 pub(crate) struct Cmd {
     pub(crate) base: Base,

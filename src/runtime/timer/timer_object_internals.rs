@@ -707,9 +707,8 @@ impl TimerObjectInternals {
 
 impl Drop for TimerObjectInternals {
     fn drop(&mut self) {
-        let scope = ();
         // SAFETY: the heaps and the queue of immediates give up their refs in step B of teardown, the wrapper in step C.
-        let vm = unsafe { Vm::assume(&scope) }.bun_vm();
+        let vm = unsafe { Vm::assume(&()) }.bun_vm();
         let kind = self.flags.get().kind();
 
         let timers = timer_all(vm);

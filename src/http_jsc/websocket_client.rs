@@ -252,8 +252,8 @@ impl<const SSL: bool> WebSocket<SSL> {
     }
 
     /// C++'s back-reference, while it still holds one.
-    fn cpp_websocket(&self) -> Option<BackRef<CppWebSocket>> {
-        self.outgoing_websocket.get().as_ref().map(|(ws, _)| *ws)
+    fn cpp_websocket(self: &Js<Self>) -> Option<BackRef<Js<'_, CppWebSocket>>> {
+        self.on(self.outgoing_websocket.get().as_ref().map(|(ws, _)| *ws))
     }
 
     /// C++ let go of `m_connectedWebSocket`: forget the back-reference and
@@ -402,7 +402,7 @@ impl<const SSL: bool> WebSocket<SSL> {
             return self.finish(Outcome::Failed(code, detail));
         }
         self.stop_reading();
-        self.on(ws).did_error(code, detail);
+        ws.did_error(code, detail);
         self.send_fin_if_done();
     }
 
@@ -421,7 +421,7 @@ impl<const SSL: bool> WebSocket<SSL> {
         let Some(ws) = self.cpp_websocket() else {
             return;
         };
-        if !self.on(ws).accepts_tls_peer(
+        if !ws.accepts_tls_peer(
             TlsHandshake::Renegotiation,
             socket.ssl_mut(),
             success == 1 && ssl_error.error_no == 0,
@@ -504,7 +504,7 @@ impl<const SSL: bool> WebSocket<SSL> {
 
     /// Data will be cloned in C++.
     fn dispatch_data(self: &Js<Self>, data: &[u8], kind: Opcode) {
-        let Some(out) = self.on(self.cpp_websocket()) else {
+        let Some(out) = self.cpp_websocket() else {
             self.clear_data();
             return;
         };
@@ -1090,7 +1090,7 @@ impl<const SSL: bool> WebSocket<SSL> {
         self.stop_reading();
         self.send_close(payload);
         if let Some(ws) = self.cpp_websocket() {
-            self.on(ws).did_start_closing_handshake(code, reason);
+            ws.did_start_closing_handshake(code, reason);
         }
         self.send_fin_if_done();
         Step::Terminated
@@ -1126,7 +1126,7 @@ impl<const SSL: bool> WebSocket<SSL> {
                 Err(_) => Some(0),
             },
             Io::Stream => {
-                self.on(self.cpp_websocket())?.stream_write(bytes);
+                self.cpp_websocket()?.stream_write(bytes);
                 Some(bytes.len())
             }
         }
@@ -1321,7 +1321,7 @@ impl<const SSL: bool> WebSocket<SSL> {
             Io::Socket => self.tcp.get().shutdown(),
             Io::Tunnel(tunnel) => WebSocketProxyTunnel::end(self.on(tunnel)),
             Io::Stream => {
-                if let Some(ws) = self.on(self.cpp_websocket()) {
+                if let Some(ws) = self.cpp_websocket() {
                     ws.stream_end();
                 }
             }
@@ -1348,7 +1348,7 @@ impl<const SSL: bool> WebSocket<SSL> {
         }
         if self.options.ws_mode {
             if let Some(ws) = self.cpp_websocket() {
-                self.on(ws).did_drain();
+                ws.did_drain();
             }
         }
         self.send_fin_if_done();
@@ -1383,7 +1383,7 @@ impl<const SSL: bool> WebSocket<SSL> {
     /// Set whether this connection keeps the process alive. Nothing re-refs it automatically.
     pub(crate) fn set_ref(&self, keep_alive: bool) {
         // A JS stream keeps the process alive on its own.
-        if self.cpp_websocket().is_none() || matches!(self.io(), Io::Stream) {
+        if self.outgoing_websocket.get().is_none() || matches!(self.io(), Io::Stream) {
             return;
         }
         let ctx = Self::vm_loop_ctx(&self.global_this);

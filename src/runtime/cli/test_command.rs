@@ -9,7 +9,7 @@ use crate::cli::test::parallel::runner as ParallelRunner;
 use crate::cli::test::scanner::{self, Scanner};
 use crate::cli::test::timings::Timings;
 use bun_collections::BoundedArray;
-use bun_core::{self as bun, Global, Loop, Output, env_var, fmt as bun_fmt};
+use bun_core::{self as bun, Global, Output, env_var, fmt as bun_fmt};
 use bun_core::{EncodedSlice, strings};
 use bun_core::{pretty_error, pretty_errorln};
 use bun_dotenv as DotEnv;
@@ -2346,11 +2346,10 @@ impl CommandLineReporter {
             ByteRangeMapping::add_compiled_file(
                 path,
                 &text,
-                &transpiled.source_code,
+                vm.on(&transpiled.source_code),
                 transpiled.already_bundled,
                 ranges,
                 counts,
-                vm.as_vm(),
             );
         }
     }
@@ -2827,7 +2826,7 @@ impl TestCommand {
             ..Default::default()
         };
         // SAFETY: the main thread runs one command, whose one VM this is until `exit`. `ctx.log` is never freed.
-        let vm = unsafe { VirtualMachine::init(ctx.log, options, Loop::assume(&reporter)) }?;
+        let vm = unsafe { VirtualMachine::init(ctx.log, options) }?;
         crate::jsc_hooks::runtime_state_of(vm)
             .test_runner
             .set(Some(&reporter.jest));

@@ -218,7 +218,7 @@ fn start_program(vm: &Js<VirtualMachine>) -> Result<LintVm, Vec<u8>> {
 }
 
 /// Creates a VM for this thread. `log` outlives it.
-fn start_vm(log: *mut bun_ast::Log, loop_: Loop<'_>) -> Result<Js<'_>, Vec<u8>> {
+fn start_vm(log: *mut bun_ast::Log, _: Loop<'_>) -> Result<Js<'_>, Vec<u8>> {
     bun_core::scoped_log!(lint_js, "a VM begins");
     let failed = |what: &str| {
         [
@@ -236,8 +236,7 @@ fn start_vm(log: *mut bun_ast::Log, loop_: Loop<'_>) -> Result<Js<'_>, Vec<u8>> 
         ..Default::default()
     };
     // SAFETY: once, at the start of `run_member`'s thread, whose frame holds `log`.
-    let vm = unsafe { VirtualMachine::init(log, options, loop_) }
-        .map_err(|error| failed(error.name()))?;
+    let vm = unsafe { VirtualMachine::init(log, options) }.map_err(|error| failed(error.name()))?;
     // Transpile on this thread. It would only wait for the result anyway.
     vm.transpiler_store.enabled.set(false);
     vm.transpiler
@@ -412,7 +411,7 @@ unsafe fn end_vm(frees: bool, loop_: Loop) {
     // SAFETY: fn contract.
     drop(unsafe { crate::jsc_hooks::take_lint_vm() });
     // SAFETY: `start_vm` created it on this thread, which holds its lock. No other thread has a pointer to it.
-    unsafe { VirtualMachine::exit_and_free(VirtualMachine::get_mut_ptr(vm.as_vm()), vm.js()) };
+    unsafe { VirtualMachine::exit_and_free(VirtualMachine::get_mut_ptr(vm.as_vm())) };
 }
 
 /// Startup state that all VMs share.
@@ -431,7 +430,7 @@ impl Start {
     }
 
     /// As [`start_vm`].
-    fn start_vm<'a>(self: &Loop<'a, Self>, log: *mut bun_ast::Log) -> Result<Js<'a>, Vec<u8>> {
+    fn start_vm(self: &Loop<Self>, log: *mut bun_ast::Log) -> Result<(), Vec<u8>> {
         let mut first = None;
         self.initialize.call_once(|| {
             // A no-op if a regular expression in a config has already started JSC (`bun_yarr`).
@@ -443,10 +442,10 @@ impl Start {
             // several threads at once. So the others wait here until it's up.
             first = Some(start_vm(log, self.as_loop()).and_then(|js| {
                 let vm = js.bun_vm();
-                vm.run_with_api_lock(|| program_of(vm).map(|_| vm.js()))
+                vm.run_with_api_lock(|| program_of(vm).map(|_| ()))
             }));
         });
-        first.unwrap_or_else(|| start_vm(log, self.as_loop()))
+        first.unwrap_or_else(|| start_vm(log, self.as_loop()).map(|_| ()))
     }
 
     /// [`Engine::expect`]

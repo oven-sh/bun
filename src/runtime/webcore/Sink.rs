@@ -47,7 +47,7 @@ macro_rules! impl_js_sink_forwarders {
         }
     };
     () => {
-        $crate::impl_js_sink_forwarders!(@common |this, js| this; js);
+        $crate::impl_js_sink_forwarders!(@common |this, _js| this; _js);
         type Entered<'a> = &'a mut Self;
         unsafe fn enter<'a>(mut this: ::core::ptr::NonNull<Self>) -> &'a mut Self {
             // SAFETY: trait contract.
@@ -70,7 +70,7 @@ macro_rules! impl_js_sink_forwarders {
             data: &$crate::webcore::streams::Result<'_>,
             $js: ::bun_jsc::Js,
         ) -> $crate::webcore::streams::result::Writable {
-            Self::write($sink, data, $($last)?)
+            Self::write($sink, data)
         }
         fn write_utf16(
             $this: &mut Self::Entered<'_>,
@@ -126,14 +126,13 @@ pub(crate) trait JsSinkType: Sized + 'static {
         this: &mut Self::Entered<'_>,
         data: &streams::Result<'_>,
         js: Js,
-    ) -> streams::result::Writable;
-    fn write_utf16(this: &mut Self::Entered<'_>, text: &[u16], js: Js)
-    -> streams::result::Writable;
+    ) -> streams::Writable;
+    fn write_utf16(this: &mut Self::Entered<'_>, text: &[u16], js: Js) -> streams::Writable;
     fn write_latin1(
         this: &mut Self::Entered<'_>,
         data: &streams::Result<'_>,
         js: Js,
-    ) -> streams::result::Writable;
+    ) -> streams::Writable;
     fn end(this: &mut Self::Entered<'_>, err: Option<SysError>, js: Js) -> sys::Result<()>;
     fn end_from_js(this: &mut Self::Entered<'_>, cx: &JsThread<'_>) -> sys::Result<JSValue>;
     fn flush_from_js(
@@ -396,12 +395,9 @@ impl<T: WrappedSink> JSSink<T> {
         let Some(sink) = self.sink.take() else {
             return Ok(());
         };
+        let ptr = T::as_non_null(&sink);
         // SAFETY: `sink` keeps it alive.
-        let ended = T::end(
-            &mut unsafe { T::enter(T::as_non_null(&sink)) },
-            None,
-            cx.js(),
-        );
+        let ended = T::end(&mut unsafe { T::enter(ptr) }, None, cx.js());
         let result = pending_exception_or(cx.global(), ended);
         // Before `sink` drops: the subprocess clears `weak_file_sink_stdin_ptr`.
         self.notify_subprocess();
@@ -985,10 +981,8 @@ fn start_pump(global: &JSGlobalObject, stream: JSValue, controller: JSValue) -> 
     // end()/close() the controller, and its `Drop` would otherwise finalize
     // the sink after its owner has freed it. Detach it while the sink is live.
     if result.to_error().is_some() {
-        crate::dispatch::fold(
-            global.js(),
-            ReadableSinkController::detach(controller, global),
-        );
+        let detached = ReadableSinkController::detach(controller, global);
+        crate::dispatch::fold(global.js(), detached);
     }
     result
 }

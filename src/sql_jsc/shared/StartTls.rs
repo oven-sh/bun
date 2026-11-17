@@ -23,7 +23,7 @@ pub(crate) fn verifies_certificate(tls_config: &SSLConfig, ssl_mode: SSLMode) ->
 /// Turns the plain `socket` of `owner` into a TLS client socket and starts the handshake.
 /// `store` puts the new socket in `owner` first: the handshake can call back into `owner`.
 pub(crate) fn start_tls<T>(
-    owner: *mut T,
+    owner: &Js<T>,
     socket: AnySocket,
     (kind, group): (
         SocketKind,
@@ -32,7 +32,6 @@ pub(crate) fn start_tls<T>(
     secure: Option<&OwnedSslCtx>,
     tls_config: &SSLConfig,
     ssl_mode: SSLMode,
-    js: Js,
     store: impl FnOnce(AnySocket),
 ) -> Result<(), StartTlsError> {
     let AnySocket::SocketTcp(tcp) = socket else {
@@ -49,7 +48,7 @@ pub(crate) fn start_tls<T>(
     let ext_size = size_of::<Option<NonNull<T>>>() as i32;
     // SAFETY: `raw` is live. `adopt_tls` may move the socket.
     let Some(new_socket) = (unsafe { &mut *raw }).adopt_tls(
-        group(groups, js.bun_vm().uws_loop()),
+        group(groups, owner.bun_vm().uws_loop()),
         kind,
         ssl_ctx,
         tls_config.sni(),
@@ -64,7 +63,7 @@ pub(crate) fn start_tls<T>(
     let new_socket = new_socket.as_ptr();
     // SAFETY: live, just returned by `adopt_tls` with an ext slot of `ext_size`.
     let sock = unsafe { &mut *new_socket };
-    *sock.ext::<Option<NonNull<T>>>() = NonNull::new(owner);
+    *sock.ext::<Option<NonNull<T>>>() = Some(NonNull::from_ref(owner));
     if verifies_certificate(tls_config, ssl_mode) {
         sock.set_inline_reject();
     }

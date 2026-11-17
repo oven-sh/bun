@@ -11,8 +11,6 @@
 //! (`ThreadSafeRefCount`), `bun_io` (`BufferedWriter`), `bun_event_loop`,
 //! and `bun_threading` — none of which depend back on this crate, so no cycle.
 
-#![feature(arbitrary_self_types)]
-
 // ──────────────────────────────────────────────────────────────────────────
 // Module layout
 // ──────────────────────────────────────────────────────────────────────────
@@ -67,7 +65,7 @@ bun_dispatch::link_interface! {
         HostProcess,
         SyncWindows,
     ] {
-        fn on_process_exit(self: &bun_core::Loop<Self>, status: Status, rusage: &Rusage);
+        fn on_process_exit(status: Status, rusage: &Rusage, loop_: bun_core::Loop<'_>);
     }
 }
 
@@ -82,14 +80,14 @@ pub type ProcessExitHandler = Option<ProcessExit>;
 #[cfg(windows)]
 link_impl_ProcessExit! {
     SyncWindows for process::sync::SyncWindowsProcess => |this| {
-        on_process_exit(status, _rusage) =>
+        on_process_exit(status, _rusage, _loop) =>
             process::sync::SyncWindowsProcess::on_process_exit(this, status),
     }
 }
 #[cfg(not(windows))]
 link_impl_ProcessExit! {
     SyncWindows for process::SyncProcessPosix => |_this| {
-        on_process_exit(_status, _rusage) =>
+        on_process_exit(_status, _rusage, _loop) =>
             unreachable!("SyncWindows exit handler is Windows-only"),
     }
 }

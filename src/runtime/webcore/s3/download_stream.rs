@@ -55,8 +55,7 @@ impl Taskable for S3HttpDownloadStreamingTask {
     unsafe fn release_unrun(this: *mut Self) {
         // SAFETY: only posted under a ticket, so teardown's wait releases it: on the JS thread,
         // outside a collection, before the global object goes.
-        let js = unsafe { Js::assume(&this) };
-        S3HttpDownloadStreamingTask::on_response(this, js);
+        S3HttpDownloadStreamingTask::on_response(this, unsafe { Js::assume(&this) });
     }
     /// The completion frees the request; the stream it feeds was aborted with its context
     /// (`abort_handle`).

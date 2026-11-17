@@ -6,7 +6,7 @@ use crate::api::bun_process::sync as spawn_sync;
 use bun_archive::{Archiver, archiver};
 use bun_clap as clap;
 use bun_core::Progress::{NodeId, Progress};
-use bun_core::{Global, Loop, Output, pretty_error, pretty_errorln};
+use bun_core::{Global, Output, pretty_error, pretty_errorln};
 use bun_core::{MutableString, strings};
 use bun_dotenv as DotEnv;
 use bun_http as HTTP;
@@ -56,7 +56,6 @@ fn exec_task(
     name: &[u8],
     cwd: &[u8],
     env_loader: &mut DotEnv::Loader,
-    loop_: Loop,
 ) -> crate::Result<()> {
     let task = strings::trim(task, b" \n\r\t");
     if task.is_empty() {
@@ -75,7 +74,6 @@ fn exec_task(
         &[],
         false,
         use_system_shell,
-        loop_,
     )
 }
 
@@ -300,7 +298,6 @@ impl CreateCommand {
         ctx: Command::Context<'_>,
         example_tag: ExampleTag,
         template: &[u8],
-        loop_: Loop,
     ) -> crate::Result<()> {
         Global::configure_allocator(Global::AllocatorConfiguration {
             long_running: false,
@@ -1030,7 +1027,7 @@ impl CreateCommand {
                 .put(b"npm_package_name", bun_paths::basename(destination))?;
 
             for task in &preinstall_tasks {
-                exec_task(ctx, task, b"preinstall", destination, env_loader, loop_)?;
+                exec_task(ctx, task, b"preinstall", destination, env_loader)?;
             }
         }
 
@@ -1092,7 +1089,7 @@ impl CreateCommand {
 
         if run_tasks {
             for task in &postinstall_tasks {
-                exec_task(ctx, task, b"postinstall", destination, env_loader, loop_)?;
+                exec_task(ctx, task, b"postinstall", destination, env_loader)?;
             }
         }
 

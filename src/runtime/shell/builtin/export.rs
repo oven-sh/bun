@@ -1,9 +1,8 @@
 use crate::shell::EnvStr;
 use crate::shell::builtin::{Builtin, IoKind};
-use crate::shell::interpreter::{Interpreter, NodeId};
+use crate::shell::interpreter::{Interpreter, Loop, NodeId};
 use crate::shell::yield_::Yield;
 use bun_collections::index_sort;
-use bun_core::Loop;
 
 pub(crate) fn start(interp: &Loop<Interpreter>, cmd: NodeId) -> Yield {
     let args = Builtin::of(interp, cmd).args();

@@ -13,7 +13,6 @@
 //! the file descriptor.
 
 use bun_collections::VecExt;
-use bun_core::Loop;
 #[cfg(windows)]
 use core::cell::Cell;
 use core::cell::UnsafeCell;
@@ -23,7 +22,7 @@ use bun_io::{
 };
 use bun_sys::{self as sys, E, Fd};
 
-use crate::shell::interpreter::{EventLoopHandle, Interpreter, NodeId};
+use crate::shell::interpreter::{EventLoopHandle, Interpreter, Loop, NodeId};
 use crate::shell::yield_::Yield;
 
 // ──────────────────────────────────────────────────────────────────────────

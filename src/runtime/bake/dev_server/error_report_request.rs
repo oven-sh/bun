@@ -261,7 +261,7 @@ impl ErrorReportRequest {
             // `print_externally_remapped_zig_exception` takes a runtime
             // `allow_ansi_color` flag.
             let ansi_colors = Output::enable_ansi_colors_stderr();
-            let vm = loop_.on(dev.vm()).in_js();
+            let vm = dev.vm().in_js(loop_);
             let _ = vm.print_externally_remapped_zig_exception(
                 &mut exception,
                 None,

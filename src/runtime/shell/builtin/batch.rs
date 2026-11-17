@@ -5,9 +5,8 @@ use std::collections::VecDeque;
 
 use crate::shell::ExitCode;
 use crate::shell::builtin::{Builtin, IoKind, Sink, State};
-use crate::shell::interpreter::{Interpreter, NodeId};
+use crate::shell::interpreter::{Interpreter, Loop, NodeId};
 use crate::shell::yield_::Yield;
-use bun_core::Loop;
 
 #[derive(Default)]
 pub(crate) struct Batch {

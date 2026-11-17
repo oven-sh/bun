@@ -15,7 +15,7 @@
 
 use bun_core::WTFStringImplExt as _;
 use bun_options_types::LoaderExt as _;
-use core::cell::Cell;
+use core::cell::{Cell, OnceCell};
 use core::ffi::c_void;
 use core::ptr;
 
@@ -141,14 +141,14 @@ pub(crate) fn runtime_state_of(vm: &VirtualMachine) -> &RuntimeState {
 
 /// This thread's timers.
 #[inline]
-pub(crate) fn timer_all(vm: &VirtualMachine) -> &timer::All {
-    &runtime_state(vm).timer
+pub(crate) fn timer_all(vm: &VirtualMachine) -> &Vm<'_, timer::All> {
+    vm.as_vm().on(&runtime_state(vm).timer)
 }
 
 /// [`timer_all`] without the thread-local.
 #[inline]
-pub(crate) fn timer_all_of(vm: &VirtualMachine) -> &timer::All {
-    &runtime_state_of(vm).timer
+pub(crate) fn timer_all_of(vm: &VirtualMachine) -> &Vm<'_, timer::All> {
+    vm.as_vm().on(&runtime_state_of(vm).timer)
 }
 
 /// [`timer_all`] for hooks that also run without a `RuntimeState`.
@@ -161,9 +161,7 @@ fn try_timer_all(vm: &VirtualMachine) -> Option<&timer::All> {
 /// re-enter [`crate::dns_jsc::global_resolver`] while a `&Resolver` derived
 /// from this cell is live, so a `&mut` accessor would alias.
 #[inline]
-pub(crate) fn global_dns_data(
-    vm: &VirtualMachine,
-) -> &core::cell::OnceCell<Box<crate::dns_jsc::GlobalData>> {
+pub(crate) fn global_dns_data(vm: &VirtualMachine) -> &OnceCell<Box<crate::dns_jsc::GlobalData>> {
     &runtime_state(vm).global_dns_data
 }
 
@@ -200,17 +198,15 @@ pub(crate) fn request_pools(vm: &VirtualMachine) -> &crate::server::RequestPools
 
 /// [`RuntimeState::lint`] of this thread's VM.
 #[inline]
-pub(crate) fn lint_vm(
-    vm: &VirtualMachine,
-) -> &core::cell::OnceCell<Box<crate::cli::lint_js::LintVm>> {
+pub(crate) fn lint_vm(vm: &VirtualMachine) -> &OnceCell<Box<crate::cli::lint_js::LintVm>> {
     &runtime_state(vm).lint
 }
 
-/// [`RuntimeState::test_runner`], on any thread.
-#[inline]
+/// `None` outside `bun test` and on other threads: the runner belongs to the VM that runs the test files.
 pub(crate) fn test_runner() -> Option<&'static crate::test_runner::jest::TestRunner> {
     // SAFETY: cleared before the box is freed, and only a copy leaves.
-    unsafe { RUNTIME_STATE.get().as_ref() }?.test_runner.get()
+    let state = (!RUNTIME_STATE.get().is_null()).then(|| unsafe { &*RUNTIME_STATE.get() });
+    state?.test_runner.get()
 }
 
 /// Takes [`RuntimeState::lint`] out of this thread's VM, which is about to end.
@@ -306,8 +302,7 @@ fn ssl_ctx_cache_get_or_create(
 /// VM init does that names a `bun_runtime` type.
 fn init_runtime_state(vm: &VirtualMachine, opts: &InitOptions) -> OpaqueRuntimeState {
     let state = bun_core::heap::into_raw(Box::new(RuntimeState {
-        // SAFETY: installed below.
-        timer: unsafe { timer::All::init() },
+        timer: timer::All::init(),
         sql_rare: Default::default(),
         ssl_ctx_cache: Default::default(),
         global_dns_data: core::cell::OnceCell::new(),
@@ -1039,16 +1034,9 @@ pub(crate) fn with_node_fs<R>(
     vm: &VirtualMachine,
     f: impl FnOnce(&mut crate::node::fs::NodeFS) -> R,
 ) -> R {
-    runtime_state_of(vm).node_fs.with_mut(|node_fs| {
-        f(node_fs.get_or_insert_with(|| crate::node::fs::NodeFS {
-            sync_error_buf: bun_paths::path_buffer_pool::get(),
-            // `vm` gates the embedded-file lookups inside `node:fs`.
-            vm: vm
-                .standalone_module_graph
-                .is_some()
-                .then_some(bun_jsc::virtual_machine::VmRef::new(vm)),
-        }))
-    })
+    runtime_state_of(vm)
+        .node_fs
+        .with_mut(|node_fs| f(node_fs.get_or_insert_default()))
 }
 
 /// `WebCore.ObjectURLRegistry.singleton().has(specifier["blob:".len..])`.
@@ -1225,7 +1213,7 @@ static __BUN_RUNTIME_HOOKS: RuntimeHooks = RuntimeHooks {
     cancel_timers,
     end_hot_run_timers,
     stop_dns_for_vm_teardown,
-    stop_active_handles_for_vm_teardown: stop_active_handles_for_vm_teardown_hook,
+    stop_active_handles_for_vm_teardown,
     disarm_all_timers_for_vm_teardown,
     close_timer_loop_handles_after_vm_destroyed,
 };
@@ -1397,15 +1385,6 @@ fn end_hot_run_timers(vm: &VirtualMachine, cancel: CancelHotRunTimers) {
 unsafe fn close_timer_loop_handles_after_vm_destroyed(_vm: &VirtualMachine) {
     #[cfg(windows)]
     timer_all(_vm).close_loop_handles_for_vm_teardown();
-}
-
-/// `RuntimeHooks::stop_active_handles_for_vm_teardown` — see [`stop_active_handles_for_vm_teardown`].
-///
-/// # Safety
-/// `vm` is the live per-thread VM on the JS thread; the JSC heap is alive.
-unsafe fn stop_active_handles_for_vm_teardown_hook(vm: *mut VirtualMachine, js: Js) -> SweepResult {
-    // SAFETY: per the contract above.
-    stop_active_handles_for_vm_teardown(unsafe { js.on(&*vm) })
 }
 
 /// `RuntimeHooks::disarm_all_timers_for_vm_teardown`.

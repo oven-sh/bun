@@ -78,7 +78,7 @@ fn read_from_blob(
     };
     let maybe = fs.read_file_with_options(
         &read_args,
-        Some(global.js()),
+        None,
         node_fs::ReadFileStringType::NullTerminated,
     );
     let result = match maybe {

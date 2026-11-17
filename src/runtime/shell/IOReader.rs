@@ -4,11 +4,10 @@
 
 use core::cell::UnsafeCell;
 
-use bun_core::Loop;
 use bun_io::{BufferedReader, IoEvent, Owner, PollTag, ReadResult};
 use bun_sys::{self as sys, Fd};
 
-use crate::shell::interpreter::{EventLoopHandle, Interpreter, NodeId};
+use crate::shell::interpreter::{EventLoopHandle, Interpreter, Loop, NodeId};
 use crate::shell::yield_::Yield;
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -223,7 +222,7 @@ impl IOReader {
         }
     }
 
-    /// A listener may drop every other `Rc`.
+    /// The caller holds an `Rc`: a listener may drop every other.
     pub(crate) fn on_io(self: &Loop<Self>, event: IoEvent) {
         let result = self
             .reader

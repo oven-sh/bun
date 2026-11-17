@@ -194,10 +194,9 @@ impl Route {
                     AnyRequest::H1(h1) => {
                         // S008: `uws::Request` is an `opaque_ffi!` ZST — safe deref.
                         bun_core::handle_oom(dev.respond_for_html_bundle(
-                            this,
+                            js.on(this),
                             bun_opaque::opaque_deref_mut(h1),
                             resp,
-                            js,
                         ));
                     }
                     AnyRequest::H3(_) => {

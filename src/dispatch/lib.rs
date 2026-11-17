@@ -61,7 +61,6 @@ struct Interface {
 struct Method {
     attrs: Vec<Attribute>,
     name: Ident,
-    receiver: Option<syn::Receiver>,
     args: Vec<(Ident, Type)>,
     ret: ReturnType,
 }
@@ -84,12 +83,6 @@ impl Parse for Interface {
             let mname: Ident = body.parse()?;
             let argp;
             parenthesized!(argp in body);
-            let receiver = if argp.peek(Token![self]) {
-                Some(argp.parse()?)
-            } else {
-                None
-            };
-            argp.parse::<Option<Token![,]>>()?;
             let mut args = Vec::new();
             while !argp.is_empty() {
                 let an: Ident = argp.parse()?;
@@ -105,7 +98,6 @@ impl Parse for Interface {
             methods.push(Method {
                 attrs,
                 name: mname,
-                receiver,
                 args,
                 ret,
             });
@@ -209,10 +201,6 @@ pub fn link_interface(input: TokenStream) -> TokenStream {
         let at = m.args.iter().map(|(_, t)| t);
         let ret = &m.ret;
         let attrs = &m.attrs;
-        let receiver = m
-            .receiver
-            .as_ref()
-            .map_or_else(|| quote!(&self), |r| quote!(#r));
         let arms = variants.iter().map(|v| {
             let s = sym(name, v, mn);
             quote! {
@@ -226,7 +214,7 @@ pub fn link_interface(input: TokenStream) -> TokenStream {
             #(#attrs)*
             #[inline]
             #[allow(clippy::not_unsafe_ptr_arg_deref)]
-            pub fn #mn(#receiver #(, #an: #at)*) #ret {
+            pub fn #mn(&self #(, #an: #at)*) #ret {
                 match self.kind { #(#arms),* }
             }
         }
@@ -357,8 +345,7 @@ pub fn link_interface(input: TokenStream) -> TokenStream {
             /// [`new`](Self::new) with the variant taken from `T`'s
             /// `link_impl_*!` registration.
             ///
-            /// SAFETY: `owner` must be live for every dispatch through the
-            /// returned handle.
+            /// SAFETY: as for `new`.
             #[inline]
             pub unsafe fn of<T: #owner_trait>(owner: *mut T) -> Self {
                 Self { kind: T::KIND, owner: owner as *mut () }
@@ -366,7 +353,7 @@ pub fn link_interface(input: TokenStream) -> TokenStream {
             /// SAFETY: `owner` must be a live `*mut T` where `T` is the
             /// concrete type the `kind` variant's `link_impl_*!` was written
             /// for, and must remain live for every dispatch through the
-            /// returned handle. This is the only place the caller writes
+            /// returned handle. If `T` is a proof, it holds at each of them. This is the only place the caller writes
             /// `unsafe` for this interface — the dispatch methods are safe
             /// given this precondition.
             #[inline]

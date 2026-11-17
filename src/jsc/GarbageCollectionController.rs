@@ -3,11 +3,11 @@
 use core::cell::Cell;
 use core::ffi::c_int;
 
-use crate::Vm;
 use bun_core::{Timespec, TimespecMockMode, env_var};
 use bun_event_loop::EventLoopTimer::{EventLoopTimer, State as TimerState, Tag as TimerTag};
 use bun_uws as uws;
 
+use crate::Vm;
 use crate::virtual_machine::VirtualMachine;
 
 const SLOW_REPEAT_INTERVAL_MS: i32 = 30_000;

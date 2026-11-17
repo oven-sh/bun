@@ -908,7 +908,8 @@ impl AnyResponse {
         any_response_register_cb! {
             self, on_data, optional_data;
             <U, H: [Fn(*mut U, &[u8], bool) + Copy + 'static]>
-            |u; _r, _any, d: &[u8], l: bool| -> () { thunk::zst::<H>()(u, d, l) }
+            // SAFETY: `_handler`.
+            |u; _r, _any, d: &[u8], l: bool| -> () { unsafe { thunk::zst::<H>()(u, d, l) } }
         }
     }
 
@@ -1028,7 +1029,8 @@ impl AnyResponse {
         any_response_register_cb! {
             self, on_writable, optional_data;
             <U, H: [Fn(*mut U, u64, AnyResponse) -> bool + Copy + 'static]>
-            |u, off: u64; r, any| -> bool { thunk::zst::<H>()(u, off, any) }
+            // SAFETY: `_handler`.
+            |u, off: u64; r, any| -> bool { unsafe { thunk::zst::<H>()(u, off, any) } }
         }
     }
 
@@ -1039,7 +1041,8 @@ impl AnyResponse {
         any_response_register_cb! {
             self, on_timeout, optional_data;
             <U, H: [Fn(*mut U, AnyResponse) + Copy + 'static]>
-            |u; r, any| -> () { thunk::zst::<H>()(u, any) }
+            // SAFETY: `_handler`.
+            |u; r, any| -> () { unsafe { thunk::zst::<H>()(u, any) } }
         }
     }
 
@@ -1050,7 +1053,8 @@ impl AnyResponse {
         any_response_register_cb! {
             self, on_aborted, optional_data;
             <U, H: [Fn(*mut U, AnyResponse) + Copy + 'static]>
-            |u; r, any| -> () { thunk::zst::<H>()(u, any) }
+            // SAFETY: `_handler`.
+            |u; r, any| -> () { unsafe { thunk::zst::<H>()(u, any) } }
         }
     }
 
@@ -1065,7 +1069,7 @@ impl AnyResponse {
         self.on_writable(
             |u: *mut U, off, any| {
                 // SAFETY: `u` is the `ThisPtr` registered below; the registrant holds a ref on it until the handler is cleared.
-                thunk::zst::<H>()(unsafe { ThisPtr::new(u) }, off, any)
+                unsafe { thunk::zst::<H>()(ThisPtr::new(u), off, any) }
             },
             this.as_ptr(),
         )
@@ -1080,7 +1084,7 @@ impl AnyResponse {
         self.on_aborted(
             |u: *mut U, any| {
                 // SAFETY: `u` is the `ThisPtr` registered below; the registrant holds a ref on it until the handler is cleared.
-                thunk::zst::<H>()(unsafe { ThisPtr::new(u) }, any)
+                unsafe { thunk::zst::<H>()(ThisPtr::new(u), any) }
             },
             this.as_ptr(),
         )

@@ -428,8 +428,8 @@ impl App {
             H: Fn(ThisPtr<U>, AnyRequest, AnyResponse) + Copy + 'static,
         {
             // SAFETY: uWS callback contract; `p` is the `ThisPtr` registered with this thunk; the registrant holds a ref on it while the route is registered.
-            let this = unsafe { ThisPtr::new(p.cast::<U>()) };
-            thunk::zst::<H>()(this, AnyRequest::H3(req), AnyResponse::H2(res));
+            let (this, handler) = unsafe { (ThisPtr::new(p.cast::<U>()), thunk::zst::<H>()) };
+            handler(this, AnyRequest::H3(req), AnyResponse::H2(res));
         }
         Self::route_raw(which, this, pattern, Some(cb::<U, H>), ud.as_ptr().cast());
     }

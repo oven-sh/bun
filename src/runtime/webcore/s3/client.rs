@@ -306,7 +306,6 @@ pub(crate) fn list_objects(
     } else {
         None
     };
-    // JS thread (request setup): read options from the current VM.
     let vm = context.bun_vm();
 
     let http = bun_http::AsyncHTTP::init(
@@ -429,7 +428,7 @@ pub(crate) fn on_reject_upload_stream(
     context: Option<RefPtr<NetworkSink>>,
 ) {
     if let Some(sink) = context {
-        NetworkSink::on_pump_rejected(&sink, err.to_js(), cx.js());
+        NetworkSink::on_pump_rejected(cx.on(&sink), err.to_js());
     }
 }
 
@@ -509,7 +508,7 @@ pub(crate) fn upload_stream(
 
             if let Some(err) = byte_stream.take_pending_error() {
                 byte_stream.detach_sink(Some(&err));
-                NetworkSink::on_pump_rejected(&sink, err.to_js(cx.global()), cx.js());
+                NetworkSink::on_pump_rejected(cx.on(&sink), err.to_js(cx.global()));
                 return Ok(end_promise_value);
             }
 
@@ -539,12 +538,12 @@ pub(crate) fn upload_stream(
         sink.as_non_null(),
     );
     if let Some(err) = pump.to_error() {
-        NetworkSink::on_pump_rejected(&sink, err, cx.js());
+        NetworkSink::on_pump_rejected(cx.on(&sink), err);
         return Ok(end_promise_value);
     }
     let Some(promise) = pump.as_any_promise() else {
         if pump.is_termination_exception() {
-            NetworkSink::on_pump_terminated(&sink, cx.js());
+            NetworkSink::on_pump_terminated(cx.on(&sink));
         } else {
             // A direct stream closed inside `pull()`.
             cx.on(&*sink).finish_input();
@@ -563,7 +562,7 @@ pub(crate) fn upload_stream(
         bun_jsc::js_promise::Status::Fulfilled => sink.on_pump_done(),
         bun_jsc::js_promise::Status::Rejected => {
             promise.set_handled(cx.global().vm());
-            NetworkSink::on_pump_rejected(&sink, promise.result(cx.global().vm()), cx.js());
+            NetworkSink::on_pump_rejected(cx.on(&sink), promise.result(cx.global().vm()));
         }
     }
     Ok(end_promise_value)

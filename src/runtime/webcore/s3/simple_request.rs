@@ -118,8 +118,7 @@ impl Taskable for S3HttpSimpleTask {
     unsafe fn release_unrun(this: *mut Self) {
         // SAFETY: only posted under a ticket, so teardown's wait releases it: on the JS thread,
         // outside a collection, before the global object goes.
-        let js = unsafe { Js::assume(&this) };
-        let _ = S3HttpSimpleTask::on_response(this, js);
+        let _ = S3HttpSimpleTask::on_response(this, unsafe { Js::assume(&this) });
     }
     /// `on_response` enters the request's context itself, stopped or not: a multipart upload still
     /// sends its rollback for a graph that was disposed.
@@ -209,7 +208,7 @@ impl Callback {
             Callback::Stat(callback) => callback(S3StatResult::Failure(err)),
             Callback::Delete(callback) => callback(S3DeleteResult::Failure(err)),
             Callback::ListObjects(callback) => callback(S3ListObjectsResult::Failure(err)),
-            Callback::Sink(sink, request) => NetworkSink::on_reply(&sink, request, Err(err), js),
+            Callback::Sink(sink, request) => NetworkSink::on_reply(js.on(&sink), request, Err(err)),
         }
     }
 
@@ -362,17 +361,17 @@ impl S3HttpSimpleTask {
             // 404: the store no longer has the upload, which is what an abort is for.
             (Callback::Sink(sink, request @ Request::Put(_)), 200)
             | (Callback::Sink(sink, request @ Request::Abort(_)), 200 | 204 | 404) => {
-                NetworkSink::on_reply(&sink, request, Ok(b""), js)
+                NetworkSink::on_reply(js.on(&sink), request, Ok(b""))
             }
             (Callback::Sink(sink, Request::Create), 200 | 204 | 206) => {
                 let id = xml_response::parse_upload_id(&this.response_buffer.list);
-                NetworkSink::on_reply(&sink, Request::Create, Ok(&id.unwrap_or_default()), js)
+                NetworkSink::on_reply(js.on(&sink), Request::Create, Ok(&id.unwrap_or_default()))
             }
             (Callback::Sink(sink, Request::Create), 404)
                 if xml_response::parse_error(&this.response_buffer.list)
                     .is_none_or(|error| error.code.is_none()) =>
             {
-                NetworkSink::on_reply(&sink, Request::Create, Err(NO_UPLOAD_ID), js)
+                NetworkSink::on_reply(js.on(&sink), Request::Create, Err(NO_UPLOAD_ID))
             }
             (Callback::Sink(sink, request @ (Request::Part(..) | Request::Commit(..))), status) => {
                 let parsed = xml_response::parse_error(&this.response_buffer.list);
@@ -381,8 +380,8 @@ impl S3HttpSimpleTask {
                     _ => Some(&b""[..]),
                 };
                 match (this.response_error(status, parsed.as_ref()), etag) {
-                    (Some(err), _) => NetworkSink::on_reply(&sink, request, Err(err), js),
-                    (None, Some(etag)) => NetworkSink::on_reply(&sink, request, Ok(etag), js),
+                    (Some(err), _) => NetworkSink::on_reply(js.on(&sink), request, Err(err)),
+                    (None, Some(etag)) => NetworkSink::on_reply(js.on(&sink), request, Ok(etag)),
                     (None, None) => {
                         this.error_with_body(Callback::Sink(sink, request), ErrorType::Failure, js)
                     }
@@ -501,7 +500,7 @@ impl<'a> Default for Options<'a> {
 /// The proxy for a request to `url`, owned for the task's lifetime. For
 /// `proxy_url`, `None` reads the environment like `fetch()` does (the variable
 /// for `url`'s scheme, unless `NO_PROXY` exempts the host), `Some("")` connects
-/// directly, and `Some(href)` is that proxy. JS thread only.
+/// directly, and `Some(href)` is that proxy.
 pub(crate) fn resolve_proxy(proxy_url: Option<&[u8]>, url: &[u8], vm: Vm) -> Box<[u8]> {
     match proxy_url {
         Some(href) => Box::from(href),

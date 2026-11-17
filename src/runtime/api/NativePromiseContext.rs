@@ -348,7 +348,7 @@ impl DeferredDerefTask {
                     // The pump's promise was collected unsettled (the script running it is gone):
                     // as a rejection with no reason.
                     let sink = RefPtr::from_raw(ctx.cast::<NetworkSink>());
-                    NetworkSink::on_pump_rejected(&sink, JSValue::ZERO, js);
+                    NetworkSink::on_pump_rejected(js.on(&sink), JSValue::ZERO);
                 }
             }
         }

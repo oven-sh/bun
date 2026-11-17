@@ -1,10 +1,10 @@
 use std::rc::Rc;
 
-use bun_core::{Loop, ZStr};
+use bun_core::ZStr;
 
 use crate::shell::ExitCode;
 use crate::shell::builtin::{BadFlag, Builtin, BuiltinInput, IoKind, Kind, Sink, State};
-use crate::shell::interpreter::{Interpreter, NodeId, shell_openat};
+use crate::shell::interpreter::{Interpreter, Loop, NodeId, shell_openat};
 use crate::shell::io_reader::{ChildPtr as ReaderChildPtr, IOReader, ReaderTag};
 use crate::shell::yield_::Yield;
 

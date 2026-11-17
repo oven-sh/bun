@@ -97,23 +97,24 @@ impl Flags {
     }
 }
 
+type Ctx = *mut WindowsNamedPipeContext;
+
 pub(crate) struct Handlers {
-    pub ctx: *mut c_void,
-    pub(crate) on_open: fn(*mut c_void, Js),
-    pub(crate) on_handshake: fn(*mut c_void, bool, us_bun_verify_error_t, Js),
-    pub(crate) on_data: fn(*mut c_void, &[u8], Js),
-    pub on_close: fn(*mut c_void, Js),
-    pub(crate) on_end: fn(*mut c_void, Js),
-    pub(crate) on_writable: fn(*mut c_void, Js),
-    pub(crate) on_error: fn(*mut c_void, bun_sys::Error, Js),
-    pub(crate) on_timeout: fn(*mut c_void, Js),
+    pub ctx: Ctx,
+    pub(crate) on_open: fn(Ctx, Js),
+    pub(crate) on_handshake: fn(Ctx, bool, us_bun_verify_error_t, Js),
+    pub(crate) on_data: fn(Ctx, &[u8], Js),
+    pub on_close: fn(Ctx, Js),
+    pub(crate) on_end: fn(Ctx, Js),
+    pub(crate) on_writable: fn(Ctx, Js),
+    pub(crate) on_error: fn(Ctx, bun_sys::Error, Js),
+    pub(crate) on_timeout: fn(Ctx, Js),
     /// A new resumable TLS session (serialized SSL_SESSION) - node's
     /// `'session'` event on the wrapping TLSSocket.
-    pub(crate) on_session: fn(*mut c_void, &[u8], Js),
+    pub(crate) on_session: fn(Ctx, &[u8], Js),
     /// An NSS key-log line - node's `'keylog'` event.
-    pub(crate) on_keylog: fn(*mut c_void, &[u8], Js),
-    pub(crate) server_identity:
-        fn(*mut c_void, &mut boringssl::SSL) -> bun_boringssl::ServerIdentity,
+    pub(crate) on_keylog: fn(Ctx, &[u8], Js),
+    pub(crate) server_identity: fn(Ctx, &mut boringssl::SSL) -> bun_boringssl::ServerIdentity,
 }
 
 impl WindowsNamedPipe {
@@ -184,7 +185,7 @@ impl WindowsNamedPipe {
     /// [`on_close`]: Self::on_close
     fn keep_alive(&self) -> RefPtr<WindowsNamedPipeContext> {
         // SAFETY: the context that `self` is a field of.
-        unsafe { RefPtr::init_ref(self.handlers.ctx.cast()) }
+        unsafe { RefPtr::init_ref(self.handlers.ctx) }
     }
 
     pub(crate) fn on_writer_io(self: &Js<Self>, event: IoEvent) {

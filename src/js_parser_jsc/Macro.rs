@@ -43,7 +43,6 @@ fn call_macro(
     import_range: Range,
     caller: Expr,
     function_name: &[u8],
-    loop_: Loop,
 ) -> crate::Result<Expr> {
     if bun_jsc::compiled_program::compiled_program()
         .is_some_and(|program| !bun_jsc::compiled_program::admits_unknown_javascript(program))
@@ -132,15 +131,15 @@ fn call_macro(
         &mut specifier_buf_len,
     );
 
+    // SAFETY: called where this thread has a VM, as it has once `Loaded` is set. No finalizer parses.
+    let loaded_vm = || unsafe { Js::assume(bump) }.bun_vm();
     let vm = match ctx.macro_load_states.get(hash) {
-        // SAFETY: set below, where this thread has a VM.
-        Some(MacroLoadState::Loaded) => unsafe { Js::assume(bump) }.bun_vm(),
+        Some(MacroLoadState::Loaded) => loaded_vm(),
         Some(MacroLoadState::Disabled) => return Ok(caller),
         None => {
             ctx.macro_load_states.set(hash, MacroLoadState::Disabled);
-            let (vm, is_new_vm) = if let Some(vm) = VirtualMachine::get_or_null(loop_) {
-                (vm, false)
-            } else {
+            let is_new_vm = !VirtualMachine::is_loaded();
+            let vm = if is_new_vm {
                 // SAFETY: the contract of `MacroContext::new`. `env` is the build's loader: it
                 // outlives the build and nothing writes to it while parse tasks run.
                 let (options, env) = unsafe {
@@ -149,7 +148,9 @@ fn call_macro(
                         (*transpiler).env.as_ref(),
                     )
                 };
-                (init_macro_vm(log, env, options, loop_)?, true)
+                init_macro_vm(log, env, options)?
+            } else {
+                loaded_vm()
             };
             load_macro(
                 vm,
@@ -210,8 +211,6 @@ fn __bun_macro_context_call(
     caller: Expr,
     function_name: &[u8],
 ) -> Result<Expr, bun_js_parser::Error> {
-    // SAFETY: the parser runs a macro from whatever called it, on any thread. No finalizer parses.
-    let loop_ = unsafe { Loop::assume(&bump) };
     // ABI: the `extern "Rust"` declaration in bun_js_parser names
     // `bun_js_parser::Error`; keep both sides byte-identical.
     let caller_loc = caller.loc;
@@ -225,7 +224,6 @@ fn __bun_macro_context_call(
         import_range,
         caller,
         function_name,
-        loop_,
     )
     .map_err(|e| {
         // visit_expr only prints a fallback "macro threw exception" when
@@ -246,8 +244,7 @@ fn __bun_macro_context_call(
 fn init_macro_vm<'a>(
     log: &mut Log,
     env: Option<&DotEnvLoader>,
-    transform_options: &TransformOptions,
-    loop_: Loop<'a>,
+    transform_options: &'a TransformOptions,
 ) -> crate::Result<&'a Js<'a, VirtualMachine>> {
     let mut transform_options = transform_options.clone();
     // Build-only flags about the output bundle. The macro module's own
@@ -271,8 +268,8 @@ fn init_macro_vm<'a>(
         is_main_thread: false,
         ..Default::default()
     };
-    // SAFETY: the one caller has seen that none is loaded, and a thread whose VM has ended parses nothing.
-    let vm = unsafe { VirtualMachine::init(log, options, loop_) }?;
+    // SAFETY: the one caller has seen that none is loaded. No finalizer parses, nor a thread whose VM has ended.
+    let vm = unsafe { VirtualMachine::init(log, options) }?;
     // This VM stays until the process exits.
     let _ = env_loader.map(AliasableBox::into_raw);
     Ok(vm)

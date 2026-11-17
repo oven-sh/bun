@@ -550,8 +550,8 @@ const AUTO_STEP: u32 = 0;
 /// and `performance.timeOrigin` go back to real as well.
 #[unsafe(no_mangle)]
 extern "C" fn Bun__FakeTimers__setSystemTime(global: &JSGlobalObject, ms: f64) {
-    let this = &timer_all(global.bun_vm()).fake_timers;
     let vm = global.bun_vm();
+    let this = &timer_all(vm).fake_timers;
     if !this.active.get() {
         this.from_preload.set(vm.is_in_preload.get());
         return;
@@ -748,7 +748,9 @@ impl FakeTimers {
                     EventLoopTimerTag::AbortSignalTimeout => {
                         AbortSignalTimeout::discard(AbortSignalTimeout::from_timer_ptr(timer));
                     }
-                    EventLoopTimerTag::CronJob => vm.as_vm().on(&*CronJob::from_timer_ptr(timer)).stop_now(),
+                    EventLoopTimerTag::CronJob => {
+                        vm.as_vm().on(&*CronJob::from_timer_ptr(timer)).stop_now()
+                    }
                     tag => debug_assert!(
                         false,
                         "{} timer in the fake heap has no release path",
@@ -1260,7 +1262,7 @@ impl FakeTimers {
                 if let Some(finished) = finished {
                     finished.settle(global)?;
                 }
-                this.post_auto_step();
+                global.on(this).post_auto_step();
             }
         }
         Ok(())
@@ -1275,7 +1277,7 @@ impl FakeTimers {
         this.tick_mode.set(mode);
         this.tick_timer.disarm();
         Self::arm_tick_timer(js);
-        this.post_auto_step();
+        js.on(this).post_auto_step();
     }
 
     fn arm_tick_timer(js: Js) {
@@ -1321,17 +1323,14 @@ impl FakeTimers {
         self.drives.with_taken(|drives| !drives.is_empty())
     }
 
-    pub(crate) fn post_auto_step(&self) {
+    pub(crate) fn post_auto_step(self: &Vm<Self>) {
         if self.tick_mode.get() == TickMode::NextAsync
             && !self.auto_step_posted.get()
             && !self.is_auto_step_paused()
             && !self.is_empty()
         {
             self.auto_step_posted.set(true);
-            // SAFETY: only the timers of this thread's VM get into `NextAsync`, which `forget_realm` ends before the global
-            // object goes. This only posts a task.
-            let js = unsafe { Js::assume(self) };
-            bun_jsc::cpp::Bun__FakeTimers__postStep(js.bun_vm().global(), AUTO_STEP);
+            self.bun_vm().post_fake_timers_step(AUTO_STEP);
         }
     }
 
@@ -1356,7 +1355,7 @@ impl FakeTimers {
                 .bun_vm()
                 .uncaught_exception(global, thrown, false);
         }
-        this.post_auto_step();
+        global.on(this).post_auto_step();
         Ok(())
     }
 
@@ -1372,7 +1371,7 @@ impl FakeTimers {
             arguments: Strong::create(arguments, global),
         };
         self.ticks.with_taken(|ticks| ticks.push_back(tick));
-        self.post_auto_step();
+        global.on(self).post_auto_step();
     }
 }
 
@@ -1406,7 +1405,7 @@ fn loop_limit_error(global: &JSGlobalObject, limit: u32) -> JsResult<JSValue> {
 // ===
 
 fn error_unless_fake_timers(global: &JSGlobalObject) -> JsResult<()> {
-    if is_active(global.js().as_vm()) {
+    if is_active(global.bun_vm()) {
         return Ok(());
     }
     Err(global.throw(format_args!(
@@ -1473,7 +1472,7 @@ fn date_now_of_script(global: &JSGlobalObject) -> JsResult<f64> {
     let builtin = || bun_jsc::cpp::JSC__JSGlobalObject__jsDateNow(global);
     let date = Api::Date.owner(global);
     if !date.is_object()
-        || (!is_active(global.js().as_vm()) && !bun_jsc::cpp::Bun__FakeTimers__overriddenDateNow(global).is_nan())
+        || (!is_active(global.bun_vm()) && !bun_jsc::cpp::Bun__FakeTimers__overriddenDateNow(global).is_nan())
     {
         return Ok(builtin());
     }
@@ -1594,13 +1593,13 @@ pub(crate) fn on_test_file_end(global: &JSGlobalObject) {
     FakeTimers::take_off_stale_fakes(global);
 }
 
-pub(crate) fn is_active(vm: Vm) -> bool {
-    timer_all(vm.bun_vm()).fake_timers.is_active()
+pub(crate) fn is_active(vm: &VirtualMachine) -> bool {
+    timer_all(vm).fake_timers.is_active()
 }
 
 /// `ms` must be finite and in `0..=u32::MAX`. Returns the exception a timer threw, or empty.
 pub(crate) fn advance_by_ms(global: &JSGlobalObject, ms: f64) -> Result<JSValue, Stop> {
-    if !is_active(global.js().as_vm()) {
+    if !is_active(global.bun_vm()) {
         return Ok(JSValue::ZERO);
     }
     advance(global, ms)
@@ -1788,7 +1787,7 @@ pub(crate) fn clear_all_timers(cx: &mut JsScope<'_>, this_value: JsLocal<'_>) ->
 }
 
 pub(crate) fn is_fake_timers(vm: Vm) -> bool {
-    is_active(vm)
+    is_active(vm.bun_vm())
 }
 
 pub(crate) fn get_mocked_system_time(heap: &JsHeap<'_>) -> Option<f64> {

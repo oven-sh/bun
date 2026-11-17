@@ -168,16 +168,6 @@ impl PostgresSQLConnection {
     }
 
     #[inline]
-    fn event_loop(self: &Js<Self>) -> &Js<'_, crate::jsc::EventLoop> {
-        self.bun_vm().event_loop()
-    }
-
-    #[inline]
-    fn vm_ctx(self: &Vm<Self>) -> bun_io::EventLoopCtx {
-        self.bun_vm().loop_ctx()
-    }
-
-    #[inline]
     fn state(&self) -> &Phase {
         self.handshake.get().phase()
     }
@@ -313,7 +303,7 @@ impl PostgresSQLConnection {
     /// `on_handshake` sends the StartupMessage.
     fn setup_tls(self: &Js<Self>) {
         let started = start_tls(
-            self.as_ctx_ptr(),
+            self,
             *self.socket.get(),
             (
                 uws::SocketKind::PostgresTls,
@@ -322,7 +312,6 @@ impl PostgresSQLConnection {
             self.secure.as_ref(),
             &self.tls_config,
             self.handshake.get().ssl_mode,
-            self.js(),
             |socket| self.socket.set(socket),
         );
         if started.is_err() {
@@ -382,9 +371,9 @@ impl PostgresSQLConnection {
             && (flags.contains(ConnectionFlags::COPY_OUT_PAUSED)
                 || (!self.has_requests() && self.write_buffer.get().is_empty()));
         if idle {
-            self.poll_ref.unref(self.vm_ctx());
+            self.poll_ref.unref(self.bun_vm().loop_ctx());
         } else {
-            self.poll_ref.r#ref(self.vm_ctx());
+            self.poll_ref.r#ref(self.bun_vm().loop_ctx());
         }
     }
 
@@ -505,8 +494,8 @@ impl PostgresSQLConnection {
 
     fn handle_socket_failure(self: &Js<Self>, fail: impl FnOnce(&Js<Self>)) {
         self.unregister_auto_flusher();
-        let _entered = self.event_loop().enter_scope();
-        self.poll_ref.unref(self.vm_ctx());
+        let _entered = self.bun_vm().enter_event_loop_scope();
+        self.poll_ref.unref(self.bun_vm().loop_ctx());
         fail(self);
     }
 
@@ -526,7 +515,7 @@ impl PostgresSQLConnection {
             };
         }
 
-        self.poll_ref.r#ref(self.vm_ctx());
+        self.poll_ref.r#ref(self.bun_vm().loop_ctx());
 
         if self.handshake.get().ssl_mode == SSLMode::Disable {
             self.start();
@@ -616,7 +605,7 @@ impl PostgresSQLConnection {
 
     fn drain_internal(self: &Js<Self>) {
         debug!("drainInternal");
-        let _entered = self.event_loop().enter_scope();
+        let _entered = self.bun_vm().enter_event_loop_scope();
         let had_requests = self.has_requests();
 
         self.flush_data();
@@ -650,7 +639,7 @@ impl PostgresSQLConnection {
         }
         self.update_flags(|f| f.insert(ConnectionFlags::IS_PROCESSING_DATA));
 
-        let entered = self.event_loop().enter_scope();
+        let entered = self.bun_vm().enter_event_loop_scope();
 
         let mut result = self.parse(data);
         while let Ok(Some(pending)) = result {
@@ -1039,7 +1028,7 @@ impl<const SSL: bool> SocketHandler<SSL> {
 impl PostgresSQLConnection {
     pub fn r#ref(self: &Vm<Self>) {
         self.update_flags(|f| f.insert(ConnectionFlags::KEEP_ALIVE_REQUESTED));
-        self.poll_ref.ref_(self.vm_ctx());
+        self.poll_ref.ref_(self.bun_vm().loop_ctx());
         self.release_wrapper();
     }
 
@@ -1054,12 +1043,12 @@ impl PostgresSQLConnection {
         }
     }
 
-    pub fn unhold(self: &Vm<Self>, cx: &mut JsScope<'_>) {
+    pub fn unhold(&self, cx: &mut JsScope<'_>) {
         self.timers.set_checked_out(false);
         if self.is_ready() {
-            self.reset_connection_timeout();
+            cx.on(self).reset_connection_timeout();
         }
-        cx.on(&**self).retire_if_idle();
+        cx.on(self).retire_if_idle();
     }
 
     pub fn get_in_transaction(&self) -> bool {
@@ -1094,7 +1083,7 @@ impl PostgresSQLConnection {
         let socket = *self.socket.get();
         if !socket.is_closed() {
             // event loop need to be alive to close the socket
-            self.poll_ref.ref_(self.vm_ctx());
+            self.poll_ref.ref_(self.bun_vm().loop_ctx());
             // will unref on socket close
             socket.close_now();
         }
@@ -1685,7 +1674,7 @@ impl PostgresSQLConnection {
     ) -> Result<(), AnyPostgresError> {
         let status = protocol::ReadyForQuery::decode_internal(reader)?.transaction_status;
         if self.handshake.with_mut(Handshake::on_ready_for_query)? {
-            self.poll_ref.unref(self.vm_ctx());
+            self.poll_ref.unref(self.bun_vm().loop_ctx());
         }
         match self.pipeline.with_mut(|it| it.on_ready_for_query(status)) {
             Some(entry) if entry.is_rejected() => self.end_rejected(entry, None),

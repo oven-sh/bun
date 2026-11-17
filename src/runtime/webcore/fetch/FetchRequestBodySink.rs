@@ -103,7 +103,7 @@ impl FetchRequestBodySink {
         Writable::Pending(core::ptr::from_mut(&mut self.pending))
     }
 
-    pub fn write(&mut self, data: &StreamResult<'_>, _: Js) -> Writable {
+    pub fn write(&mut self, data: &StreamResult<'_>) -> Writable {
         bun_core::scoped_log!(FetchRequestBodySinkLog, "write({})", data.slice().len());
         self.write_chunk(EncodedChunk::Bytes(data.slice()))
     }

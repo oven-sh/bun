@@ -4,7 +4,7 @@ use std::io::Write as _;
 use bun_collections::DynamicBitSet;
 use bun_core::fmt::PathSep;
 use bun_core::strings;
-use bun_core::{Global, Loop, Output, env_var, fmt as bun_fmt};
+use bun_core::{Global, Output, env_var, fmt as bun_fmt};
 use bun_install::lockfile::{LoadResult, Lockfile, package::PackageColumns as _, reachable, tree};
 use bun_install::npm as Npm;
 use bun_install::package_manager_real::{
@@ -239,7 +239,7 @@ impl PackageManagerCommand {
         subcommand
     }
 
-    pub(crate) fn exec(ctx: Command::Context, loop_: Loop) -> crate::Result<()> {
+    pub(crate) fn exec(ctx: Command::Context) -> crate::Result<()> {
         // "bun whoami" instead of "bun pm whoami"
         let is_direct_whoami = bun_core::argv()
             .get(1)
@@ -306,7 +306,7 @@ impl PackageManagerCommand {
             ScanCommand::exec_with_manager(pm, &cwd)?;
             Global::exit(0);
         } else if strings::eql_comptime(subcommand, b"pack") {
-            PackCommand::exec_with_manager(ctx, pm, &cwd, loop_)?;
+            PackCommand::exec_with_manager(ctx, pm, &cwd)?;
             Global::exit(0);
         } else if strings::eql_comptime(subcommand, b"whoami") {
             let username = match Npm::whoami(pm) {
@@ -813,7 +813,7 @@ impl PackageManagerCommand {
             pm.lockfile.save_to_disk(&load_lockfile, &pm.options);
             Global::exit(0);
         } else if strings::eql_comptime(subcommand, b"version") {
-            PmVersionCommand::exec(ctx, pm, positionals, &cwd, loop_)?;
+            PmVersionCommand::exec(ctx, pm, positionals, &cwd)?;
             Global::exit(0);
         } else if strings::eql_comptime(subcommand, b"why") {
             WhyCommand::exec_from_pm(pm, positionals)?;

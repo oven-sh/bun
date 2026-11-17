@@ -11,7 +11,7 @@ use crate::cli::run_command::RunCommand;
 use bun_alloc::Arena;
 use bun_ast::ExprData;
 use bun_core::strings;
-use bun_core::{Global, Loop, Output, env_var};
+use bun_core::{Global, Output, env_var};
 use bun_install::LogLevel;
 use bun_install::PackageManager;
 use bun_js_printer as JSPrinter;
@@ -189,7 +189,6 @@ impl PmVersionCommand {
         pm: &mut PackageManager,
         positionals: &[&[u8]],
         original_cwd: &[u8],
-        loop_: Loop,
     ) -> Result<(), crate::Error> {
         let package_json_dir = Self::find_package_dir(original_cwd);
 
@@ -259,7 +258,7 @@ impl PmVersionCommand {
 
         let silent = pm.options.log_level == LogLevel::Silent;
 
-        let mut run_script = |name: &[u8], loop_: Loop| -> Result<(), crate::Error> {
+        let mut run_script = |name: &[u8]| -> Result<(), crate::Error> {
             let script = scripts_obj.and_then(|scripts| scripts.get(name));
             let Some(script_command) = script.and_then(|script| script.as_string(&json_bump))
             else {
@@ -272,7 +271,6 @@ impl PmVersionCommand {
                 &package_json_dir,
                 pm.env_mut(),
                 silent,
-                loop_,
             )
         };
 
@@ -323,7 +321,7 @@ impl PmVersionCommand {
             }
         }
 
-        run_script(b"preversion", loop_)?;
+        run_script(b"preversion")?;
 
         json.data
             .e_object_mut()
@@ -360,13 +358,13 @@ impl PmVersionCommand {
         pm.env_mut()
             .map
             .put(b"npm_package_version", &new_version_str)?;
-        run_script(b"version", loop_)?;
+        run_script(b"version")?;
 
         if pm.options.git_tag_version {
             Self::git_commit_and_tag(&new_version_str, pm.options.message, &package_json_dir);
         }
 
-        run_script(b"postversion", loop_)?;
+        run_script(b"postversion")?;
 
         Output::print(format_args!("v{}\n", BStr::new(&new_version_str)));
         Output::flush();

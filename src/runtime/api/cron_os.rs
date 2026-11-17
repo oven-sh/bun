@@ -179,7 +179,7 @@ pub(crate) struct OsJob {
 bun_spawn::link_impl_ProcessExit! {
     Cron for Js<'_, OsJob> => |this| {
         // SAFETY: a live job installed the handler, and its handle detaches it.
-        on_process_exit(status, _rusage) => OsJob::on_process_exit(ThisPtr::new(this), status),
+        on_process_exit(status, _rusage, _loop) => OsJob::on_process_exit(ThisPtr::new(this), status),
     }
 }
 
@@ -211,13 +211,13 @@ impl OsJob {
         };
         process.set_exit_handler(this);
         // `this` may be freed on every path but `Ok(false)`.
-        let watched = this.proof().as_loop().on(&process);
-        match watched.watch_or_reap() {
+        let loop_ = this.proof().as_loop();
+        match process.watch_or_reap(loop_) {
             Ok(false) => this.process.set(Some(process)),
             Ok(true) => {}
             Err(err) => {
                 if !process.has_exited() {
-                    watched.on_exit(Status::Err(err), &bun_core::ffi::zeroed());
+                    process.on_exit(Status::Err(err), &bun_core::ffi::zeroed(), loop_);
                 }
             }
         }

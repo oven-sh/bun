@@ -2994,7 +2994,7 @@ impl<'a> FormDataContext<'a> {
                                 max_size: Some(blob.size.get()),
                                 ..Default::default()
                             };
-                            let res = node_fs.read_file(&rf_args, Some(global_this.js()));
+                            let res = node_fs.read_file(&rf_args, None);
                             match res {
                                 Err(err) => {
                                     self.failed = true;
@@ -3591,12 +3591,10 @@ pub(crate) fn write_file_with_source_destination(
             let mut promise = jsc::JSPromiseStrong::default();
             promise.set(cx.global(), promise_value);
             write_file::WriteFileWindows::start(
-                jsc::virtual_machine::VmRef::event_loop(cx.global().bun_vm()),
-                cx.context(),
+                cx,
                 destination_blob.borrowed_view(),
                 source_blob.borrowed_view(),
                 promise,
-                cx.global(),
                 options.mkdirp_if_not_exists.unwrap_or(true),
             )?;
             return Ok(promise_value);
@@ -3625,8 +3623,7 @@ pub(crate) fn write_file_with_source_destination(
             return Ok(copy_file::CopyFileWindows::init(
                 destination_store,
                 source_store,
-                jsc::virtual_machine::VmRef::event_loop(cx.global().bun_vm()),
-                cx.context(),
+                cx,
                 options.mkdirp_if_not_exists.unwrap_or(true),
                 destination_blob.size.get(),
                 options.mode,
@@ -4022,9 +4019,8 @@ pub(crate) fn write_file_internal(
             match tag {
                 BodyTag::Use => {
                     // SAFETY: exclusive borrow scoped to the call; `use_()` runs no JS.
-                    Ok(ControlFlow::Continue(unsafe {
-                        (*body_value).use_(cx.js())
-                    }))
+                    let blob = unsafe { (*body_value).use_(cx.js()) };
+                    Ok(ControlFlow::Continue(blob))
                 }
                 BodyTag::Error => {
                     let err_js = {

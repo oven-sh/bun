@@ -1,10 +1,9 @@
 use crate::shell::ExitCode;
 use crate::shell::ast;
-use crate::shell::interpreter::{Interpreter, Node, NodeId, ShellExecEnv, log};
+use crate::shell::interpreter::{Interpreter, Loop, Node, NodeId, ShellExecEnv, log};
 use crate::shell::io::IO;
 use crate::shell::states::base::Base;
 use crate::shell::yield_::Yield;
-use bun_core::Loop;
 
 pub(crate) struct Binary {
     pub(crate) base: Base,

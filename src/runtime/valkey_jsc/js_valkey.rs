@@ -296,9 +296,9 @@ impl HasAutoFlusher for JSValkeyClient {
     fn auto_flusher(&self) -> &AutoFlusher {
         &self.auto_flusher
     }
-    unsafe fn on_auto_flush(this: *mut Js<Self>) -> bool {
+    unsafe fn on_auto_flush(this: *mut Self, js: Js) -> bool {
         // SAFETY: unregistered before `this` is freed.
-        let this = unsafe { &*this };
+        let this = js.on(unsafe { &*this });
         let _guard = this.ref_guard();
         let has_more = this.client.with_mut(Client::batch);
         this.flush();
@@ -1141,8 +1141,7 @@ impl<const SSL: bool> SocketHandler<SSL> {
         this: &JSValkeyClient,
         ssl: &mut boringssl::c::SSL,
     ) -> boringssl::ServerIdentity {
-        let vm = this.global_object.on(this.vm);
-        let rejects = this.tls.reject_unauthorized(vm);
+        let rejects = this.tls.reject_unauthorized(this.global_object.on(this.vm));
         let hostname = rejects.then(|| Self::configured_hostname(this));
         boringssl::server_identity(ssl, hostname)
     }

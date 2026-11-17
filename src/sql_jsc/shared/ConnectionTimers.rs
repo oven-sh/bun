@@ -54,12 +54,9 @@ fn start(timer: &Vm<OwnedTimer>, ms: u32) {
         TimespecMockMode::ForceRealTime,
         ms.into(),
     ));
+    let vm = timer.bun_vm();
     // SAFETY: an unlinked field (both callers see to it) of a boxed connection.
-    unsafe {
-        timer
-            .bun_vm()
-            .timer_insert(OwnedTimer::node(&raw const **timer))
-    };
+    unsafe { vm.timer_insert(OwnedTimer::node(&raw const **timer)) };
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]

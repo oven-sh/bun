@@ -1,7 +1,6 @@
 use crate::shell::builtin::{Builtin, IoKind, Sink, State};
-use crate::shell::interpreter::{EventLoopHandle, Interpreter, NodeId};
+use crate::shell::interpreter::{EventLoopHandle, Interpreter, Loop, NodeId};
 use crate::shell::yield_::Yield;
-use bun_core::Loop;
 
 use bun_event_loop::{EventLoopTask, TaskTag, Taskable, task_tag};
 

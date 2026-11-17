@@ -1,8 +1,7 @@
 use crate::shell::ExitCode;
 use crate::shell::builtin::Builtin;
-use crate::shell::interpreter::{Interpreter, NodeId};
+use crate::shell::interpreter::{Interpreter, Loop, NodeId};
 use crate::shell::yield_::Yield;
-use bun_core::Loop;
 
 /// Unlike in bash, this completes only the current Cmd.
 pub(crate) fn start(interp: &Loop<Interpreter>, cmd: NodeId) -> Yield {

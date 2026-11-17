@@ -1688,9 +1688,7 @@ pub(crate) fn on_reject(
         this.on_request_complete();
     }
 
-    let _ = global_object
-        .bun_vm()
-        .uncaught_exception(global_object, err.to_js(), true);
+    let _ = (global_object.bun_vm()).uncaught_exception(global_object, err.to_js(), true);
 }
 
 impl NodeHTTPResponse {
@@ -1747,9 +1745,7 @@ impl NodeHTTPResponse {
             Ok(b) => b,
             Err(err) => {
                 let exc = global_this.take_exception(err);
-                let _ = global_this
-                    .bun_vm()
-                    .uncaught_exception(global_this, exc, false);
+                let _ = (global_this.bun_vm()).uncaught_exception(global_this, exc, false);
                 JSValue::UNDEFINED
             }
         }
@@ -2340,11 +2336,7 @@ impl NodeHTTPResponse {
         self.flags.get().contains(Flags::UPGRADED)
     }
 
-    fn clear_on_data_callback(
-        self: &Vm<Self>,
-        this_value: JSValue,
-        global_object: &JSGlobalObject,
-    ) {
+    fn clear_on_data_callback(&self, this_value: JSValue, global_object: &JSGlobalObject) {
         scoped_log!(NodeHTTPResponse, "clearOnDataCallback");
         // Clear on the wrapper that armed ondata (see on_data): the parameter may
         // be the socket-current wrapper, which is a different pipelined response.
@@ -2355,7 +2347,7 @@ impl NodeHTTPResponse {
                 js::on_data_set_cached(this_value, global_object, JSValue::UNDEFINED);
             }
             let flags = self.flags.get();
-            self.leave_pending(if flags.contains(Flags::SOCKET_CLOSED) {
+            (global_object.on(self)).leave_pending(if flags.contains(Flags::SOCKET_CLOSED) {
                 BodyReadState::Aborted
             } else if flags.contains(Flags::UPGRADED) {
                 BodyReadState::Upgraded
@@ -2439,11 +2431,8 @@ impl NodeHTTPResponse {
         }
         self.auto_flush_ref.set(Some(self.ref_guard()));
         let ctx = ptr::NonNull::new(self.as_ctx_ptr().cast::<c_void>());
-        let found_existing = self
-            .bun_vm()
-            .event_loop()
-            .deferred_tasks
-            .post_task(ctx, on_auto_flush_trampoline);
+        let found_existing =
+            (self.bun_vm().event_loop().deferred_tasks).post_task(ctx, on_auto_flush_trampoline);
         debug_assert!(!found_existing);
     }
 
@@ -2452,11 +2441,7 @@ impl NodeHTTPResponse {
             return;
         };
         let ctx = ptr::NonNull::new(self.as_ctx_ptr().cast::<c_void>());
-        let removed = self
-            .bun_vm()
-            .event_loop()
-            .deferred_tasks
-            .unregister_task(ctx);
+        let removed = (self.bun_vm().event_loop().deferred_tasks).unregister_task(ctx);
         debug_assert!(removed);
     }
 

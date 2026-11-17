@@ -109,9 +109,7 @@ impl Handler {
             return Ok(());
         }
 
-        let _ = global_object
-            .bun_vm()
-            .uncaught_exception(global_object, error_value, false);
+        let _ = (global_object.bun_vm()).uncaught_exception(global_object, error_value, false);
         Ok(())
     }
 

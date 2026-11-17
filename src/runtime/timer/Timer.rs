@@ -35,7 +35,7 @@ impl All {
             // `is_date_timer_active()` is private to mod.rs; inline.
             if self.date_header_timer.event_loop_timer.state.get() != EventLoopTimerState::ACTIVE {
                 self.date_header_timer.enable(
-                    self,
+                    vm.as_vm().on(self),
                     vm,
                     // Be careful to avoid adding extra calls to bun.timespec.now()
                     // when it's not needed.
@@ -465,7 +465,7 @@ impl DateHeaderTimer {
     /// 1. If the timer was recently updated (< 1 second ago), just reschedule it
     /// 2. If the timer is stale (> 1 second since last update), update the date
     ///    immediately and reschedule
-    fn enable(&self, timers: &All, vm: &VirtualMachine, now: &Timespec) {
+    fn enable(&self, timers: &Vm<All>, vm: &VirtualMachine, now: &Timespec) {
         debug_assert!(self.event_loop_timer.state.get() != EventLoopTimerState::ACTIVE);
 
         let last_update = self.event_loop_timer.next.get();

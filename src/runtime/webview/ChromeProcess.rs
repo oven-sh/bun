@@ -51,7 +51,7 @@ declare_scope!(Chrome, hidden);
 
 pub(crate) struct ChromeProcess {
     process: ProcessHandle,
-    /// Set by [`Bun__Chrome__retire`]: the exit is reaped but not reported to C++.
+    /// Set by [`retire`]: the exit is reaped but not reported to C++.
     retired: bool,
     #[cfg(windows)]
     pipes: WindowsPipes,
@@ -91,11 +91,8 @@ static GENERATION: AtomicU32 = AtomicU32::new(0);
 /// dies. SIGKILL here takes the browser process, the zygote tree follows.
 /// The C++ side doesn't touch JS state; EVFILT_PROC → Bun__Chrome__died →
 /// rejectAllAndMarkDead handles promise rejection on the next loop tick.
-///
-/// # Safety
-/// Called on the thread of a VM, ahead of `~VM`.
-#[unsafe(no_mangle)]
-unsafe extern "C" fn Bun__Chrome__kill() {
+// HOST_EXPORT(Bun__Chrome__kill, c)
+pub(crate) fn kill(_vm: Vm) {
     let pid = PID.load(Ordering::Relaxed);
     if pid == 0 {
         return;
@@ -104,9 +101,7 @@ unsafe extern "C" fn Bun__Chrome__kill() {
     bun_spawn::ffi::kill(pid, libc::SIGKILL);
     #[cfg(windows)]
     {
-        // SAFETY: caller contract.
-        let vm = unsafe { Vm::assume(&pid) };
-        if let Some(state) = crate::jsc_hooks::try_runtime_state(vm.bun_vm()) {
+        if let Some(state) = crate::jsc_hooks::try_runtime_state(_vm.bun_vm()) {
             let unreaped = state.browsers.chrome.take();
             let killed = unreaped.last().map(|chrome| chrome.process.kill(9));
             state.browsers.chrome.put_back(unreaped);
@@ -121,13 +116,9 @@ unsafe extern "C" fn Bun__Chrome__kill() {
 }
 
 /// Transport::retireGlobal (`bun test --isolate`): unpublish and kill this Chrome so the next file can spawn its own at once.
-///
-/// # Safety
-/// Called on the thread of a VM, ahead of `~VM`.
-#[unsafe(no_mangle)]
-unsafe extern "C" fn Bun__Chrome__retire() {
-    // SAFETY: caller contract.
-    unreaped(unsafe { Vm::assume(&()) }).with_taken(|unreaped| {
+// HOST_EXPORT(Bun__Chrome__retire, c)
+pub(crate) fn retire(vm: Vm) {
+    unreaped(vm).with_taken(|unreaped| {
         let Some(chrome) = unreaped.last_mut().filter(|chrome| !chrome.retired) else {
             return;
         };
@@ -202,7 +193,8 @@ unsafe extern "C" fn Bun__Chrome__ensure(
 
 bun_spawn::link_impl_ProcessExit! {
     ChromeProcess for Js<'_, ChromeProcess> => |this| {
-        on_process_exit(status, _rusage) => ChromeProcess::on_exit(this.cast(), &status, (*this).js()),
+        // SAFETY: the contract of `ProcessExit::new`.
+        on_process_exit(status, _rusage, _loop) => ChromeProcess::on_exit(this.cast(), &status, (*this).js()),
     }
 }
 
@@ -841,8 +833,7 @@ pub(crate) struct QueuedEvent {
 impl PipeEvent {
     fn post(self, generation: u32, vm: Vm) {
         // Not dispatched from the read callback: C++ runs JS that may spin a nested event loop (bun:test does), and libuv re-arms the read only after the callback returns.
-        let vm = vm.bun_vm();
-        vm.enqueue_task(bun_jsc::Task::from_boxed(Box::new(QueuedEvent {
+        (vm.bun_vm()).enqueue_task(bun_jsc::Task::from_boxed(Box::new(QueuedEvent {
             generation,
             event: self,
         })));

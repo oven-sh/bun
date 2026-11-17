@@ -598,7 +598,8 @@ impl Listener {
 
     #[cfg(windows)]
     pub(crate) fn on_name_pipe_created<const SSL: bool>(
-        listener: &Vm<Listener>,
+        listener: &Listener,
+        vm: Vm,
     ) -> RefPtr<NewSocket<SSL>> {
         debug_assert!(SSL == listener.ssl);
 
@@ -625,7 +626,7 @@ impl Listener {
         });
         // See `on_create`: each accepted named-pipe connection holds the loop
         // on its own so `conn.unref()` is meaningful.
-        s.poll_ref.ref_(listener.bun_vm());
+        s.poll_ref.ref_(vm.bun_vm());
         if let Some(default_data) = listener.strong_data.get().get() {
             let global = listener.handlers.global_object;
             NewSocket::<SSL>::data_set_cached(s.get_this_value(&global), &global, default_data);
@@ -724,10 +725,7 @@ impl Listener {
         // The dict branch is defensive for the internal binding's raw form.
         let sni_ctx = if let Some(sc) = tls.as_class_ref::<SecureContext>() {
             sc.ctx.clone()
-        } else if let Some(ssl_config) = {
-            let vm = global.bun_vm();
-            SSLConfig::from_js(vm, global, tls, true)?
-        } {
+        } else if let Some(ssl_config) = SSLConfig::from_js(global.bun_vm(), global, tls, true)? {
             // Note: `cfg` cleanup handled by Drop on SSLConfig
             let mut create_err = uws::create_bun_socket_error_t::none;
             let cache = crate::jsc_hooks::ssl_ctx_cache(global.bun_vm());
@@ -1206,8 +1204,8 @@ impl Listener {
                 // `requires_custom_request_ctx` gate is gone; the cache makes the
                 // default-vs-custom distinction by content.
                 let mut create_err = uws::create_bun_socket_error_t::none;
-                owned_ssl_ctx = crate::jsc_hooks::ssl_ctx_cache(cx.vm())
-                    .get_or_create(ssl_cfg, &mut create_err);
+                owned_ssl_ctx =
+                    crate::jsc_hooks::ssl_ctx_cache(vm).get_or_create(ssl_cfg, &mut create_err);
                 if owned_ssl_ctx.is_none() {
                     return Err(cx.global().throw_value(
                         crate::socket::uws_jsc::create_bun_socket_error_to_js(
@@ -1426,7 +1424,7 @@ fn connect_finish<const IS_SSL: bool>(
     socket_ref.poll_ref.ref_(cx.vm());
     // An already-open fd socket runs `on_open` synchronously; what settling
     // the connect promise there left pending is not a connect failure.
-    let opened_err = match NewSocket::do_connect(&socket_ref, cx.context(), cx.js()) {
+    let opened_err = match NewSocket::do_connect(&socket_ref, cx.context()) {
         Ok(()) => None,
         Err(crate::Error::Js(err)) => Some(err),
         Err(_) => {
@@ -1601,16 +1599,17 @@ impl WindowsNamedPipeListeningContext {
         }
         // `BackRef` deref — owner `Listener` outlives this context (see field doc).
         let listener_ref = this_ref.listener.unwrap();
-        let listener = this_ref.on(listener_ref.get());
+        let listener: &Listener = listener_ref.get();
         // An accepted pipe is the listening script's.
         let entered = this_ref.on(this_ref.vm).enter_context(listener.context);
         use crate::socket::windows_named_pipe_context::OwnedSocket;
         // Owned for the whole accept: JS below can replace the slot through setSecureContext().
         let ssl_ctx = this_ref.ctx.get().clone();
+        let vm = this_ref.as_vm();
         let socket: OwnedSocket = if ssl_ctx.is_some() {
-            OwnedSocket::Tls(Listener::on_name_pipe_created::<true>(listener))
+            OwnedSocket::Tls(Listener::on_name_pipe_created::<true>(listener, vm))
         } else {
-            OwnedSocket::Tcp(Listener::on_name_pipe_created::<false>(listener))
+            OwnedSocket::Tcp(Listener::on_name_pipe_created::<false>(listener, vm))
         };
 
         let client = WindowsNamedPipeContext::create(
@@ -1662,23 +1661,21 @@ impl WindowsNamedPipeListeningContext {
             None => None,
         };
 
+        let vm = global_this.bun_vm();
         // Heap-allocate at the final address so libuv can
         // store a pointer back into `uv_pipe`.
         let owned = bun_ptr::AliasableBox::new(WindowsNamedPipeListeningContext {
             uv_pipe: bun_core::ffi::zeroed(),
             listener: NonNull::new(listener).map(bun_ptr::BackRef::from),
             global_this: GlobalRef::from(global_this),
-            vm: VmRef::new(global_this.bun_vm()),
+            vm: VmRef::new(vm),
             ctx: JsCell::new(ctx),
         });
         let this = owned.as_ptr();
 
         // SAFETY: `this` was just allocated above; `&mut uv_pipe` is scoped to
         // this call.
-        let init_result = unsafe {
-            let vm = global_this.on((*this).vm);
-            (*this).uv_pipe.init(vm.uv_loop().cast(), false)
-        };
+        let init_result = unsafe { (*this).uv_pipe.init(vm.uv_loop().cast(), false) };
         if init_result.is_err() {
             return Err(ListenPipeError::Other(crate::Error::FailedToInitPipe));
         }

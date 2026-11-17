@@ -200,7 +200,7 @@ impl NapiEnv {
         context: bun_jsc::ContextId,
         completion: impl FnOnce(),
     ) {
-        let vm = self.to_js().bun_vm();
+        let vm: &VirtualMachine = self.to_js().bun_vm();
         let stopped = !vm.is_context_live(context);
         let _context = vm.enter_context(context);
         // SAFETY: `self` is a live C++-owned napi_env; JS thread.
@@ -2592,7 +2592,7 @@ impl Finalizer {
 ///
 /// # Safety
 /// `fun` takes `data` and `hint`, once. This is `env`'s JS thread, no later than `~VM`, or the collector's while
-/// that thread is stopped.
+/// that thread is stopped. Nothing runs through the proof: it finds the VM that the finalizer is queued on.
 #[unsafe(no_mangle)]
 unsafe extern "C" fn Bun__napi_enqueue_finalizer(
     env: Option<&Loop<NapiEnv>>,
@@ -2681,11 +2681,11 @@ struct TsfnJsSide {
 }
 
 impl TsfnJsSide {
-    fn set_referenced(self: &Vm<Self>, referenced: bool) {
+    fn set_referenced(&self, referenced: bool, vm: &VirtualMachine) {
         if referenced {
-            self.poll_ref.ref_(self.bun_vm().loop_ctx());
+            self.poll_ref.ref_(vm.loop_ctx());
         } else {
-            self.poll_ref.unref(self.bun_vm().loop_ctx());
+            self.poll_ref.unref(vm.loop_ctx());
         }
     }
 }
@@ -2699,7 +2699,7 @@ impl TsfnRefRequest {
         let requested = self.0.shared.lock().requested_ref.take();
         match requested {
             Some(true) if js.abort_handle.context_stopped() => {}
-            Some(referenced) => self.on(js).set_referenced(referenced),
+            Some(referenced) => js.set_referenced(referenced, self.bun_vm()),
             None => {}
         }
     }
@@ -2800,11 +2800,7 @@ impl ThreadSafeFunction {
     /// The threadsafe function's queue drain is a dispatcher: each queued call
     /// is a JS entry of its own, so what one leaves pending is folded per call
     /// (`call`) and the drain goes on; the VM's termination ends it.
-    pub(crate) fn on_dispatch(
-        mut this: Arc<Self>,
-        event_loop: &EventLoop,
-        vm: &Js<VirtualMachine>,
-    ) {
+    pub(crate) fn on_dispatch(mut this: Arc<Self>, el: &EventLoop, vm: &Js<VirtualMachine>) {
         let mut is_first = true;
         let mut is_stopped = false;
 
@@ -2829,14 +2825,14 @@ impl ThreadSafeFunction {
             match step {
                 DispatchStep::Call { item } => {
                     // One call's microtasks are drained before the next call (https://github.com/nodejs/node/pull/38506).
-                    is_stopped = (!is_first && vm.on(event_loop).drain_microtasks().is_err())
+                    is_stopped = (!is_first && vm.on(el).drain_microtasks().is_err())
                         || this.call(js, item).is_err();
                     is_first = false;
                 }
                 DispatchStep::QueueFinalizer { leftovers } => {
                     this.hand_back(leftovers);
                     js.poll_ref.disable(vm.loop_ctx());
-                    event_loop.enqueue_task(Task::from_ref::<Self>(this));
+                    el.enqueue_task(Task::from_ref::<Self>(this));
                     break;
                 }
                 DispatchStep::Finalize => {
@@ -3110,7 +3106,7 @@ impl ThreadSafeFunction {
             return;
         }
         self.shared.lock().requested_ref = None;
-        vm.on(js).set_referenced(referenced);
+        js.set_referenced(referenced, vm);
     }
 
     /// Does not wake the loop, like `uv_unref`, so that it does not exit before a call that follows.
@@ -3260,8 +3256,7 @@ unsafe extern "C" fn napi_create_threadsafe_function(
     drop(shared);
 
     // nodejs by default keeps the event loop alive until the thread-safe function is unref'd
-    vm.on(js)
-        .set_referenced(!vm.context_of_caller().is_stopped());
+    js.set_referenced(!vm.context_of_caller().is_stopped(), vm);
     // (Unless the context whose script is creating it stops first.)
     // SAFETY: `threads_ref` keeps the allocation until `run_finalizer_and_release` has left the context.
     unsafe {
@@ -3322,6 +3317,7 @@ unsafe extern "C" fn napi_release_threadsafe_function(
     }
 }
 
+// SAFETY (the proof, here and below): any thread, a finalizer too. If the thread has a VM, its loop is alive. No script runs.
 #[unsafe(no_mangle)]
 extern "C" fn napi_unref_threadsafe_function(
     _env: napi_env,

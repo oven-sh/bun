@@ -1063,7 +1063,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                     options.fast_get(global_this, jsc::BuiltinName::Headers)?
                 {
                     if !headers_value.is_undefined() {
-                        if let Some(headers__) = FetchHeaders::cast(headers_value, ctx.js()) {
+                        if let Some(headers__) = FetchHeaders::cast_(headers_value, ctx.vm()) {
                             // `FetchHeaders` is an opaque ZST FFI handle (S008) — safe deref.
                             if bun_opaque::opaque_deref_mut(headers__.as_ptr()).is_empty() {
                                 break 'brk None;
@@ -1092,7 +1092,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                     options.fast_get(global_this, jsc::BuiltinName::Headers)?
                 {
                     if !headers_value.is_undefined() {
-                        if let Some(headers__) = FetchHeaders::cast(headers_value, ctx.js()) {
+                        if let Some(headers__) = FetchHeaders::cast_(headers_value, ctx.vm()) {
                             // `FetchHeaders` is an opaque ZST FFI handle (S008) — safe deref.
                             if bun_opaque::opaque_deref_mut(headers__.as_ptr()).is_empty() {
                                 break 'brk None;
@@ -1542,7 +1542,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                 max_size: Some(blob_size),
                 ..Default::default()
             };
-            let res = node_fs.read_file(&rf_args, Some(global_this.js()));
+            let res = node_fs.read_file(&rf_args, None);
 
             // Eagerly close before constructing the (potentially large) JS result.
             drop(opened_file);

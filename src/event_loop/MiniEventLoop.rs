@@ -217,11 +217,8 @@ impl MiniEventLoop {
                 };
                 ((*task).callback, (*task).ctx)
             };
-            callback(
-                ctx.expect("ctx is non-null").as_ptr(),
-                context.cast(),
-                loop_,
-            );
+            let ctx = ctx.expect("ctx is non-null").as_ptr();
+            callback(ctx, context.cast(), loop_);
         }
     }
 

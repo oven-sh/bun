@@ -25,7 +25,7 @@ impl MySQLRequestQueue {
             .unwrap_or(false)
     }
 
-    pub(crate) fn advance(self: &Js<Self>, connection: &MySQLConnection) {
+    pub(crate) fn advance(&self, connection: &Js<MySQLConnection>) {
         loop {
             let written = self.written.get();
             if written > 0 && self.requests.get()[0].is_completed() {
@@ -48,7 +48,7 @@ impl MySQLRequestQueue {
                 return;
             }
             if let Err(err) = request.run(connection) {
-                self.on(&*request).reject(err);
+                connection.on(&*request).reject(err);
             }
         }
     }

@@ -217,7 +217,7 @@ bun_jsc::impl_abort_handle_owner!(Subprocess<'static>, abort_handle, |this, caus
 bun_spawn::link_impl_ProcessExit! {
     Subprocess for Subprocess<'static> => |this| {
         // The ref outlasts a wrapper that script lets go of while the exit is reported.
-        on_process_exit(status, rusage) => RefPtr::init_ref(this).on_process_exit(&status, rusage),
+        on_process_exit(status, rusage, _loop) => RefPtr::init_ref(this).on_process_exit(&status, rusage),
     }
 }
 

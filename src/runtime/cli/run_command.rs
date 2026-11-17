@@ -10,7 +10,7 @@ use std::io::Write as _;
 use bun_ast::Loader;
 use bun_bundler::Transpiler;
 use bun_collections::{ArrayHashMap, StringHashMap};
-use bun_core::{self as core, Global, Loop, Output, ZStr};
+use bun_core::{self as core, Global, Output, ZStr};
 use bun_core::{pretty, pretty_errorln, prettyln};
 use bun_dotenv as DotEnv;
 use bun_jsc::js_promise::Status as PromiseStatus;
@@ -240,7 +240,6 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         passthrough: &[Box<[u8]>],
         silent: bool,
         use_system_shell: bool,
-        loop_: Loop,
     ) -> crate::Result<()> {
         Self::run_package_script_foreground_with_shell_path(
             ctx,
@@ -252,7 +251,6 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
             silent,
             use_system_shell,
             None,
-            loop_,
         )
     }
 
@@ -265,7 +263,6 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         cwd: &[u8],
         env: &mut DotEnv::Loader,
         silent: bool,
-        loop_: Loop,
     ) -> crate::Result<()> {
         let mut original_path: Vec<u8> = Vec::new();
         let path = Self::path_for_run(
@@ -287,7 +284,6 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
             silent,
             use_system_shell,
             Some(original_path.as_slice()),
-            loop_,
         );
         env.map.put(b"PATH", &original_path)?;
         result
@@ -305,7 +301,6 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         silent: bool,
         use_system_shell: bool,
         shell_path: Option<&[u8]>,
-        loop_: Loop,
     ) -> crate::Result<()> {
         let shell_search_path = shell_path.unwrap_or_else(|| env.get(b"PATH").unwrap_or(b""));
         let shell_bin =
@@ -368,7 +363,6 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
                 name,
                 &copy_script,
                 Some(cwd),
-                loop_,
             ) {
                 Ok(c) => c,
                 Err(err) => {
@@ -911,7 +905,6 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
     fn boot_bun_shell(
         ctx: &mut ContextData,
         entry_path: &[u8],
-        loop_: Loop,
     ) -> crate::Result<crate::shell::ExitCode> {
         // Dummy transpiler so we can load .env.
         let mut args = ctx.args.clone();
@@ -929,7 +922,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         // `initAndRunFromFile`: read source then hand off to the interpreter.
         let src = sys::File::read_from(Fd::cwd(), entry_path)?;
 
-        crate::shell::Interpreter::init_and_run_from_file(ctx, mini, entry_path, &src, loop_)
+        crate::shell::Interpreter::init_and_run_from_file(ctx, mini, entry_path, &src)
     }
 
     /// `VirtualMachine::init`,
@@ -949,8 +942,6 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
     }
 
     fn boot_main(ctx: &mut ContextData, main: BootMain) -> crate::Result<()> {
-        // SAFETY: the main thread, which has no VM yet and only tears it down on the way to `exit`.
-        let loop_ = unsafe { Loop::assume(&()) };
         if !ctx.debug.loaded_bunfig {
             arguments::load_config_path(
                 CommandTag::RunCommand,
@@ -974,7 +965,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
             if ctx.runtime_options.check && !crate::cli::check_command::check_project_before(None) {
                 Global::exit(1);
             }
-            let exit_code = Self::boot_bun_shell(ctx, entry_path, loop_)?;
+            let exit_code = Self::boot_bun_shell(ctx, entry_path)?;
             Global::exit(exit_code as u32);
         }
 
@@ -1035,8 +1026,8 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
             graph: crate::cli::run_compiled::graph(),
             ..Default::default()
         };
-        // SAFETY: the main thread runs one command, whose one VM this is. `ctx.log` is never freed.
-        let vm = unsafe { VirtualMachine::init(ctx.log, options, loop_) }?;
+        // SAFETY: the main thread runs one command, whose one VM this is until `exit`. `ctx.log` is never freed.
+        let vm = unsafe { VirtualMachine::init(ctx.log, options) }?;
         crate::cli::run_compiled::decode_requested_crash_report();
 
         vm.preload.set(std::mem::take(&mut ctx.preloads));
@@ -1235,9 +1226,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
             ..Default::default()
         };
         // SAFETY: the main thread runs one command, whose one VM this is until `exit`. `ctx.log` is never freed.
-        let vm = unsafe {
-            VirtualMachine::init_with_module_graph(ctx.log, options, Loop::assume(&graph))
-        }?;
+        let vm = unsafe { VirtualMachine::init_with_module_graph(ctx.log, options) }?;
         crate::cli::run_compiled::decode_requested_crash_report();
         if graph.runtime_options.jit_policy > 1.0 {
             vm.jsc_vm()
@@ -2344,11 +2333,7 @@ impl RunCommand {
     }
 
     /// Dispatch `bun run <target>`: classify as file path vs. package.json
-    pub(crate) fn exec_with_cfg(
-        ctx: &mut ContextData,
-        cfg: ExecCfg,
-        loop_: Loop,
-    ) -> crate::Result<bool> {
+    pub(crate) fn exec_with_cfg(ctx: &mut ContextData, cfg: ExecCfg) -> crate::Result<bool> {
         crate::cli::run_compiled::read_no_environment_file_again(ctx);
         let bin_dirs_only = cfg.bin_dirs_only;
         let log_errors = cfg.log_errors;
@@ -2524,7 +2509,6 @@ impl RunCommand {
                                 silent,
                                 use_system_shell,
                                 Some(original_path.as_slice()),
-                                loop_,
                             )?;
                         }
 
@@ -2538,7 +2522,6 @@ impl RunCommand {
                             silent,
                             use_system_shell,
                             Some(original_path.as_slice()),
-                            loop_,
                         )?;
 
                         temp_script_buffer[..b"post".len()].copy_from_slice(b"post");
@@ -2554,7 +2537,6 @@ impl RunCommand {
                                 silent,
                                 use_system_shell,
                                 Some(original_path.as_slice()),
-                                loop_,
                             )?;
                         }
 

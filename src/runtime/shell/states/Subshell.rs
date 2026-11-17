@@ -1,9 +1,10 @@
-use bun_core::Loop;
 use bun_ptr::AliasableBox;
 
 use crate::shell::ExitCode;
 use crate::shell::ast;
-use crate::shell::interpreter::{Interpreter, Node, NodeId, ShellExecEnv, ShellExecEnvKind, log};
+use crate::shell::interpreter::{
+    Interpreter, Loop, Node, NodeId, ShellExecEnv, ShellExecEnvKind, log,
+};
 use crate::shell::io::IO;
 use crate::shell::states::base::{Base, Env};
 use crate::shell::states::script::Script;

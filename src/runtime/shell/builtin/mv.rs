@@ -1,7 +1,7 @@
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use bstr::BStr;
-use bun_core::{Loop, ZBox, ZStr, strings};
+use bun_core::{ZBox, ZStr, strings};
 use bun_paths::{PathBuffer, resolve_path};
 use bun_ptr::BackRef;
 
@@ -9,8 +9,8 @@ use crate::node::fs::{is_on_disk_at, note_moved_shell_operand, refuse_move};
 use crate::shell::ExitCode;
 use crate::shell::builtin::{BadFlag, Builtin, IoKind, Kind, State};
 use crate::shell::interpreter::{
-    Interpreter, NodeId, OwnedFd, PoolTask, ShellTask, ShellWork, shell_lstatat, shell_openat,
-    shell_statat,
+    Interpreter, Loop, NodeId, OwnedFd, PoolTask, ShellTask, ShellWork, shell_lstatat,
+    shell_openat, shell_statat,
 };
 use crate::shell::yield_::Yield;
 

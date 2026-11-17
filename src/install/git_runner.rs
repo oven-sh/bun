@@ -1258,14 +1258,12 @@ impl GitSubprocess {
         let loop_ = unsafe { bun_core::Loop::assume(&this) };
         // The exit handler may run inside `watch_or_reap` / `on_exit` and free
         // `this`; after those only the local handle is touched.
-        match loop_.on(&process).watch_or_reap() {
+        match process.watch_or_reap(loop_) {
             Ok(false) => this.process.set(Some(process)),
             Ok(true) => {}
             Err(err) => {
                 if !process.has_exited() {
-                    loop_
-                        .on(&process)
-                        .on_exit(Status::Err(err), &bun_core::ffi::zeroed::<Rusage>());
+                    process.on_exit(Status::Err(err), &bun_core::ffi::zeroed::<Rusage>(), loop_);
                 }
             }
         }
@@ -1544,7 +1542,7 @@ impl GitSubprocess {
 bun_spawn::link_impl_ProcessExit! {
     InstallGit for GitSubprocess => |this| {
         // SAFETY: `this` is the live runner installed via `set_exit_handler`.
-        on_process_exit(status, rusage) =>
+        on_process_exit(status, rusage, _loop) =>
             GitSubprocess::on_process_exit(ThisPtr::new(this), status, rusage),
     }
 }

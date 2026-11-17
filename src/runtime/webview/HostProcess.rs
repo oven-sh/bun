@@ -113,7 +113,8 @@ bun_spawn::link_impl_ProcessExit! {
         // Child died (EVFILT_PROC). Socket onClose may or may not have fired
         // already (clean FIN vs SIGKILL/SIGSEGV). Tell C++ to reject any
         // pending promises and mark the host dead.
-        on_process_exit(status, _rusage) => HostProcess::on_exit(this.cast(), &status, (*this).js()),
+        // SAFETY: the contract of `ProcessExit::new`.
+        on_process_exit(status, _rusage, _loop) => HostProcess::on_exit(this.cast(), &status, (*this).js()),
     }
 }
 

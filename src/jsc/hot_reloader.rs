@@ -1,7 +1,6 @@
 use core::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Arc;
 
-use crate::Js;
 use bun_bundler::Transpiler;
 #[cfg(not(windows))]
 use bun_collections::StringHashMap;
@@ -23,6 +22,7 @@ use bun_sys::Fd;
 use bun_watcher::WatchItemColumns as _;
 use bun_watcher::{Op as WatchOp, OwnedWatcher, Watcher};
 
+use crate::Js;
 use crate::virtual_machine::{HotReload, VirtualMachine};
 use bun_event_loop::task_tag;
 

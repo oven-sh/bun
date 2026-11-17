@@ -1,7 +1,7 @@
 use core::ffi::c_void;
 use core::ptr::NonNull;
 
-use crate::{JSGlobalObject, JSValue, Js, JsResult, VM, host_fn};
+use crate::{JSGlobalObject, JSValue, JsResult, VM, host_fn};
 use bun_core::ffi::FfiSlice;
 use bun_core::{EncodedSlice, String as BunString, StringPointer};
 use bun_http_types::ETag::{HeaderEntryColumns as _, Headers};
@@ -231,11 +231,6 @@ impl FetchHeaders {
 
     pub fn cast_(value: JSValue, vm: &VM) -> Option<NonNull<FetchHeaders>> {
         NonNull::new(WebCore__FetchHeaders__cast_(value, vm))
-    }
-
-    pub fn cast(value: JSValue, js: Js) -> Option<NonNull<FetchHeaders>> {
-        let global = js.bun_vm().global();
-        Self::cast_(value, global.vm())
     }
 
     pub fn to_js(&mut self, global_this: &JSGlobalObject) -> JSValue {

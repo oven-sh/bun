@@ -1,9 +1,10 @@
-use bun_core::Loop;
 use bun_sys::File;
 
 use crate::shell::ExitCode;
 use crate::shell::ast;
-use crate::shell::interpreter::{Interpreter, Node, NodeId, ShellExecEnv, ShellExecEnvKind, log};
+use crate::shell::interpreter::{
+    Interpreter, Loop, Node, NodeId, ShellExecEnv, ShellExecEnvKind, log,
+};
 use crate::shell::io::{IO, InKind, OutKind};
 use crate::shell::io_reader::IOReader;
 use crate::shell::io_writer::{self, IOWriter};

@@ -39,7 +39,6 @@ mod c_abi_exports;
 use bun_platform as _;
 
 use bun_core::Global;
-use bun_core::Loop;
 use bun_core::StackCheck;
 use bun_core::output;
 
@@ -224,8 +223,7 @@ pub(crate) unsafe extern "C" fn main(argc: c_int, argv: *const *const c_char) ->
     bun_io::ParentDeathWatchdog::install();
 
     // 7. CLI dispatch.
-    // SAFETY: the start of the main thread, whose VM is only torn down on the way to `exit`.
-    crate::cli::Cli::start(unsafe { Loop::assume(&argc) });
+    crate::cli::Cli::start();
     // `Global::exit` is `-> !`; it coerces to the `c_int` return type.
     Global::exit(0)
 }

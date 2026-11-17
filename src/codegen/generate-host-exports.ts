@@ -103,14 +103,12 @@ interface Param {
   name: string;
   /** safe-side type as written */
   ty: string;
-  /** thunk-side (C ABI) type */
+  /** thunk-side (C ABI) type; empty if C passes nothing */
   cTy: string;
   /** expression to pass into the impl from the thunk param `name` */
   callExpr: string;
   /** `&[T]` param: the C signature carries a trailing `name_len: usize` */
   extraLen?: boolean;
-  /** made by the thunk, absent from the C signature */
-  isProof?: boolean;
 }
 
 interface Export {
@@ -131,14 +129,13 @@ const markerRe = /^\s*\/\/\s*HOST_EXPORT\(\s*([A-Za-z_][A-Za-z0-9_]*)\s*(?:,\s*(
 // a small balanced-paren scanner because params routinely span lines.
 const fnHeadRe = /^\s*pub(?:\([^)]*\))?\s+(unsafe\s+)?fn\s+([A-Za-z_][A-Za-z0-9_]*)\s*\(/;
 
-function ptrify(ty: string): { cTy: string; deref: (n: string) => string; extraLen?: boolean; isProof?: boolean } {
+function ptrify(ty: string): { cTy: string; deref: (n: string) => string; extraLen?: boolean } {
   ty = ty.trim();
-  if (/^(?:\w+::)*(Js|Vm)(?:<'_>)?$/.test(ty)) {
+  if (ty === "Js" || ty === "Vm") {
     return {
-      cTy: ty,
-      isProof: true,
+      cTy: "",
       deref: () =>
-        `{\n        // SAFETY: C++ calls this only where it holds.\n        unsafe { ::bun_jsc::${/Js|Vm/.exec(ty)}::assume(&()) }\n    }`,
+        `{\n        // SAFETY: C++ calls this only where it holds.\n        unsafe { ${ty}::assume(&()) }\n    }`,
     };
   }
   // `&[T]` — C passes `(const T* name, size_t name_len)`; the thunk rebuilds
@@ -206,8 +203,8 @@ function parseParams(list: string, where: string): Param[] {
       // and intentionally documentary — keep it.
       if (name === "_") name = `_a${i}`;
       const ty = raw.slice(colon + 1).trim();
-      const { cTy, deref, extraLen, isProof } = ptrify(ty);
-      return { raw, name, ty, cTy, callExpr: deref(name), extraLen, isProof };
+      const { cTy, deref, extraLen } = ptrify(ty);
+      return { raw, name, ty, cTy, callExpr: deref(name), extraLen };
     });
 }
 
@@ -373,11 +370,11 @@ const externTotal = Object.values(externBlocks).reduce((a, b) => a + b, 0);
 /// elsewhere) — same expansion as `#[bun_jsc::host_call]` /
 /// `bun_jsc::jsc_host_abi!`. Rust forbids macros in ABI position, so we emit
 /// both arms verbatim; the inactive one is compiled out.
-function emitNoMangle(abi: Export["abi"], symbol: string, sig: string, ret: string, body: string, safety = ""): string {
+function emitNoMangle(abi: Export["abi"], symbol: string, sig: string, ret: string, body: string): string {
   const item = (abiStr: string, cfg: string) =>
     `${cfg}#[allow(dead_code, unreachable_pub, unused)]
 #[unsafe(no_mangle)]
-pub ${safety}extern "${abiStr}" fn ${symbol}(${sig}) -> ${ret} {
+pub unsafe extern "${abiStr}" fn ${symbol}(${sig}) -> ${ret} {
 ${body}
 }`;
   if (abi === "jsc") {
@@ -446,9 +443,8 @@ pub extern "Rust" fn ${e.symbol}(${sig}) -> ${e.ret} {
           throw new Error(
             `${loc}: slice param \`${p.name}\` needs a synthesized \`${p.name}_len\`, which collides with an existing param`,
           );
-      const makesProof = e.params.some(p => p.isProof || /^\*mut (?:\w+::)*(?:Js|Vm|Loop)</.test(p.cTy));
       const sig = e.params
-        .filter(p => !p.isProof)
+        .filter(p => p.cTy)
         .map(p => (p.extraLen ? `${p.name}: ${p.cTy}, ${p.name}_len: usize` : `${p.name}: ${p.cTy}`))
         .join(", ");
       // Bind each ref-deref once so the call site is clean (and so a
@@ -474,7 +470,7 @@ pub extern "Rust" fn ${e.symbol}(${sig}) -> ${e.ret} {
       const body = retIsJsResult && globalParam ? `host_fn::to_js_host_call(${globalParam.name}, || ${inner})` : inner;
       return `
 // ${loc}
-${emitNoMangle(e.abi, e.symbol, sig, cRet, `${binds}    ${body}`, makesProof ? "unsafe " : "")}`;
+${emitNoMangle(e.abi, e.symbol, sig, cRet, `${binds}    ${body}`)}`;
     }
   }
 }

@@ -26,7 +26,7 @@
 //! own data up via `interp.as_<state>(this)` / `interp.as_<state>_mut(this)`.
 
 use bun_collections::VecExt;
-use bun_core::Loop;
+pub(crate) use bun_core::Loop;
 use bun_jsc::bindgen::{JsLocal, JsPayload as _, JsScope, JsWrapper};
 use bun_jsc::{JsCell, JsCellRefExt as _, JsRef, Vm};
 use bun_ptr::AliasableBox;
@@ -569,17 +569,8 @@ impl Interpreter {
         mini: &'static bun_event_loop::MiniEventLoop::MiniEventLoop,
         path: &[u8],
         src: &[u8],
-        loop_: Loop,
     ) -> crate::Result<ExitCode> {
-        Self::init_and_run_impl(
-            ctx,
-            mini,
-            bun_paths::basename(path),
-            src,
-            None,
-            false,
-            loop_,
-        )
+        Self::init_and_run_impl(ctx, mini, bun_paths::basename(path), src, None, false)
     }
 
     /// Standalone-shell entrypoint for `bun run <script>` / `bun exec` when
@@ -596,9 +587,8 @@ impl Interpreter {
         path_for_errors: &[u8],
         src: &[u8],
         cwd: Option<&[u8]>,
-        loop_: Loop,
     ) -> crate::Result<ExitCode> {
-        Self::init_and_run_impl(ctx, mini, path_for_errors, src, cwd, true, loop_)
+        Self::init_and_run_impl(ctx, mini, path_for_errors, src, cwd, true)
     }
 
     /// Shared body for `init_and_run_from_file` / `init_and_run_from_source`.
@@ -612,7 +602,6 @@ impl Interpreter {
         src: &[u8],
         cwd: Option<&[u8]>,
         from_source: bool,
-        loop_: Loop,
     ) -> crate::Result<ExitCode> {
         if from_source {
             bun_analytics::features::standalone_shell.fetch_add(1, Ordering::Relaxed);
@@ -666,7 +655,8 @@ impl Interpreter {
 
         // ── run ────────────────────────────────────────────────────────────
         interp.exit_code.set(Some(1));
-        if let Err(e) = loop_.on(&*interp).run() {
+        // SAFETY: a command gets here from `main`, on its thread.
+        if let Err(e) = unsafe { Loop::assume(mini) }.on(&*interp).run() {
             let name = e.name();
             drop(interp);
             bun_core::output::err(
@@ -2505,7 +2495,7 @@ unsafe fn shell_task_trampoline<C: ShellTaskCtx>(task: *mut WorkPoolTask) {
     }
 }
 
-/// Mini-loop `AnyTaskWithExtraContext` callback shape (`fn(*mut T, *mut ())`).
+/// Mini-loop `AnyTaskWithExtraContext` callback shape.
 fn shell_task_run_from_main_thread_mini<C: ShellTaskCtx>(
     this: *mut ShellTask,
     _: *mut (),
@@ -2514,10 +2504,7 @@ fn shell_task_run_from_main_thread_mini<C: ShellTaskCtx>(
     // SAFETY: `this` is the `ShellTask` embedded in a live `C` at `TASK_OFFSET`;
     // mini-loop dispatch runs on the main thread.
     unsafe {
-        ShellTask::run_from_main_thread::<C>(
-            bun_core::container_of::<C, _>(this, C::TASK_OFFSET),
-            loop_,
-        )
+        ShellTask::run_from_main_thread(bun_core::container_of::<C, _>(this, C::TASK_OFFSET), loop_)
     };
 }
 

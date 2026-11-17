@@ -1088,6 +1088,6 @@ impl Drop for LifecycleScriptSubprocess<'_> {
 
 bun_spawn::link_impl_ProcessExit! {
     LifecycleScript for LifecycleScriptSubprocess<'static> => |this| {
-        on_process_exit(_status, _rusage) => LifecycleScriptSubprocess::maybe_finished(this),
+        on_process_exit(_status, _rusage, _loop) => LifecycleScriptSubprocess::maybe_finished(this),
     }
 }

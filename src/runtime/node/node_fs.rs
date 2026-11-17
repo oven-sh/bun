@@ -16,7 +16,7 @@ use bun_core::{Loop, String as BunString, Utf8WithString, ZBox, ZStr};
 use bun_event_loop::AnyTaskWithExtraContext::AnyTaskWithExtraContext;
 use bun_jsc::AbortSignal;
 use bun_jsc::debugger::AsyncTaskTracker;
-use bun_jsc::virtual_machine::{VirtualMachine, VmRef};
+use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{
     ArrayBuffer, EventLoopHandle, JSGlobalObject, JSValue, Js, JsKeepAlive, JsResult,
     PinnedArrayBuffer, StringJsc as _,
@@ -5132,14 +5132,12 @@ pub(crate) mod ret {
 pub(crate) struct NodeFS {
     /// Scratch for a temporary file path that might appear in a returned error message.
     pub(crate) sync_error_buf: bun_paths::path_buffer_pool::Guard,
-    pub(crate) vm: Option<VmRef>,
 }
 
 impl Default for NodeFS {
     fn default() -> Self {
         Self {
             sync_error_buf: bun_paths::path_buffer_pool::get(),
-            vm: None,
         }
     }
 }
@@ -7355,9 +7353,9 @@ impl NodeFS {
     pub(crate) fn read_file(
         &mut self,
         args: &args::ReadFile,
-        sync: Option<Js>,
+        vm: Option<&Js<VirtualMachine>>,
     ) -> Maybe<ret::ReadFile> {
-        let result = self.read_file_with_options(args, sync, ReadFileStringType::Default);
+        let result = self.read_file_with_options(args, vm, ReadFileStringType::Default);
         match result {
             Err(err) => Err(err),
             Ok(result) => match result {
@@ -7396,7 +7394,7 @@ impl NodeFS {
     pub(crate) fn read_file_with_options(
         &mut self,
         args: &args::ReadFile,
-        sync: Option<Js>,
+        vm: Option<&Js<VirtualMachine>>,
         string_type: ReadFileStringType,
     ) -> Maybe<ret::ReadFileWithOptions> {
         let (lent, opened);
@@ -7459,10 +7457,7 @@ impl NodeFS {
         // The sync case claims the per-VM pipe-read scratch when it is free;
         // otherwise (async, no VM, or a read further up the stack holds it)
         // a heap buffer stands in.
-        let mut scratch = match (self.vm, sync) {
-            (Some(vm), Some(js)) => js.on(vm).rare_data().pipe_read_scratch.claim(),
-            _ => None,
-        };
+        let mut scratch = vm.and_then(|vm| vm.rare_data().pipe_read_scratch.claim());
         let mut heap_buffer: Vec<u8> = Vec::new();
         let pre_stat_max = args.max_size.map_or(usize::MAX, |v| v as usize);
         let mut pre_stat_buf = match &mut scratch {
@@ -7489,13 +7484,11 @@ impl NodeFS {
         if did_succeed {
             return match args.encoding {
                 Encoding::Buffer => {
-                    if let Some(js) = sync
-                        && string_type == ReadFileStringType::Default
-                    {
-                        if let Some(vm) = self.vm {
+                    if string_type == ReadFileStringType::Default {
+                        if let Some(vm) = vm {
                             // Attempt to create the buffer in JSC's heap.
                             // This avoids creating a WastefulTypedArray.
-                            let global = js.on(vm).global();
+                            let global = vm.global();
                             let Ok(array_buffer) = bun_jsc::ArrayBuffer::create_buffer(
                                 global,
                                 temporary_read_buffer_before_stat_call,
@@ -9416,12 +9409,12 @@ impl NodeFS {
     pub(crate) fn dispatch<R, A: FsArgument, const F: NodeFSFunctionEnum>(
         &mut self,
         args: &A,
-        sync: Option<Js>,
+        vm: Option<&Js<VirtualMachine>>,
     ) -> Maybe<R>
     where
         Op<{ F }>: NodeFSDispatch<R, A>,
     {
-        <Op<{ F }> as NodeFSDispatch<R, A>>::run(self, args, sync)
+        <Op<{ F }> as NodeFSDispatch<R, A>>::run(self, args, vm)
             .map_err(|err| error_for_caller(args.paths(), err))
     }
 
@@ -9468,7 +9461,7 @@ pub(crate) struct Op<const F: NodeFSFunctionEnum>;
 /// `async_::*` has exactly one impl, so the `where Op<{F}>: NodeFSDispatch<R, A>`
 /// bound is always satisfied at every monomorphised call site.
 pub(crate) trait NodeFSDispatch<R, A> {
-    fn run(fs: &mut NodeFS, args: &A, sync: Option<Js>) -> Maybe<R>;
+    fn run(fs: &mut NodeFS, args: &A, vm: Option<&Js<VirtualMachine>>) -> Maybe<R>;
     #[cfg(windows)]
     fn run_uv(_fs: &mut NodeFS, _args: &A, _rc: uv::ReturnCodeI64) -> Maybe<R> {
         unreachable!("uv_dispatch: not a UVFSRequest variant")
@@ -9493,8 +9486,8 @@ macro_rules! node_fs_ops {
         $(
             impl NodeFSDispatch<$Ret, $Args> for Op<{ NodeFSFunctionEnum::$Variant }> {
                 #[inline]
-                fn run(fs: &mut NodeFS, args: &$Args, sync: Option<Js>) -> Maybe<$Ret> {
-                    fs.$method(args, sync.into())
+                fn run(fs: &mut NodeFS, args: &$Args, vm: Option<&Js<VirtualMachine>>) -> Maybe<$Ret> {
+                    fs.$method(args, vm.into())
                 }
                 $(
                     #[cfg(windows)]

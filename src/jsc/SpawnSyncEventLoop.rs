@@ -19,7 +19,6 @@
 use core::cell::Cell;
 use core::ptr::NonNull;
 
-use crate::Js;
 use bun_core::{Timespec, TimespecMockMode};
 #[cfg(windows)]
 use bun_sys::windows::libuv;
@@ -27,6 +26,7 @@ use bun_sys::windows::libuv;
 use bun_sys::windows::libuv::UvHandle as _;
 use bun_uws as uws;
 
+use crate::Js;
 use crate::event_loop::EventLoop;
 use crate::virtual_machine::VirtualMachine;
 use crate::vm_handle::IsolatedPoster;

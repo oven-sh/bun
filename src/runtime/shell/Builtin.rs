@@ -2,7 +2,6 @@
 
 use bstr::BStr;
 use bun_collections::VecExt;
-use bun_core::Loop;
 use bun_jsc::PinnedArrayBuffer;
 use bun_ptr::BackRef;
 use core::fmt;
@@ -17,7 +16,7 @@ use crate::shell::builtins::{
     basename, cat, cd, cp, dirname, echo, exit, export, ls, mkdir, mv, pwd, rm, seq, touch, which,
     yes,
 };
-use crate::shell::interpreter::{Interpreter, NodeId, is_pollable_from_mode, shell_openat};
+use crate::shell::interpreter::{Interpreter, Loop, NodeId, is_pollable_from_mode, shell_openat};
 use crate::shell::io::{InKind, OutFd, OutKind};
 use crate::shell::io_reader::IOReader;
 use crate::shell::io_writer::{self, IOWriter};

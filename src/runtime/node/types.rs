@@ -74,10 +74,10 @@ pub(crate) enum Flavor {
     Async,
 }
 
-/// For an operation that uses the VM when script waits for it.
-impl From<Option<jsc::Js<'_>>> for Flavor {
-    fn from(sync: Option<jsc::Js>) -> Self {
-        sync.map_or(Flavor::Async, |_| Flavor::Sync)
+/// An operation gets the VM when script waits for it.
+impl<T> From<Option<&jsc::Js<'_, T>>> for Flavor {
+    fn from(vm: Option<&jsc::Js<T>>) -> Self {
+        vm.map_or(Flavor::Async, |_| Flavor::Sync)
     }
 }
 
@@ -1081,7 +1081,7 @@ impl PathLikeExt for PathLike<'_> {
                 from_string(str)?
             }
             _ => {
-                if let Some(domurl) = jsc::DOMURL::cast(&arg, ctx.js()) {
+                if let Some(domurl) = jsc::DOMURL::cast_(&arg, ctx.vm()) {
                     use jsc::dom_url::ToFileSystemPathError;
                     let str = match domurl.file_system_path() {
                         Ok(s) => s,

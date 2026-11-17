@@ -64,8 +64,8 @@ impl<H: BodyReaderHandler> BodyReaderMixin<H> {
 
     fn on_data<R: BodyResponse>(this: *mut Self, r: &mut R, chunk: &[u8], last: bool) {
         let resp = r.to_any();
-        // SAFETY: the box from `read_body`. `read` disarms both callbacks before it answers. uWS calls from the loop.
-        let result = unsafe { (*this).read(resp, chunk, last, Loop::assume(&this)) };
+        // SAFETY: the box from `read_body`. `read` disarms both callbacks before it answers.
+        let result = unsafe { (*this).read(resp, chunk, last) };
         if let Err(err) = &result {
             resp.clear_aborted();
             resp.clear_on_data();
@@ -87,13 +87,9 @@ impl<H: BodyReaderHandler> BodyReaderMixin<H> {
         unsafe { bun_core::heap::destroy(this) };
     }
 
-    fn read(
-        &mut self,
-        resp: AnyResponse,
-        chunk: &[u8],
-        last: bool,
-        loop_: Loop,
-    ) -> crate::Result<()> {
+    fn read(&mut self, resp: AnyResponse, chunk: &[u8], last: bool) -> crate::Result<()> {
+        // SAFETY: only `on_data` calls this, and uWS calls that from the loop.
+        let loop_ = unsafe { Loop::assume(chunk) };
         if last {
             // Clears the user data, which `on_aborted` shares.
             resp.clear_on_data();

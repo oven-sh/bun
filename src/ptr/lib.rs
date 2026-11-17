@@ -539,7 +539,7 @@ impl<'a, T: 'a> Pointer<'a> for ThisPtr<T> {
 }
 
 /// None touches the pointee, which may be gone.
-impl<W: Proof> ThisPtr<W> {
+impl<W: Proof<On<()>: Copy>> ThisPtr<W> {
     #[inline(always)]
     pub fn plain(self) -> ThisPtr<W::Of> {
         ThisPtr(self.0.cast())
@@ -547,8 +547,7 @@ impl<W: Proof> ThisPtr<W> {
 
     #[inline(always)]
     pub fn proof(self) -> W::On<()> {
-        // SAFETY: what a pointer to a `W` says.
-        unsafe { W::proof() }
+        *self.on(&())
     }
 
     #[inline(always)]
@@ -556,7 +555,7 @@ impl<W: Proof> ThisPtr<W> {
     where
         W::On<P::Of>: 'b,
     {
-        // SAFETY: as in `proof`.
+        // SAFETY: what a pointer to a `W` says.
         unsafe { p.cast() }
     }
 }

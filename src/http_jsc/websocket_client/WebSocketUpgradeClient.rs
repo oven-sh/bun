@@ -941,7 +941,7 @@ where
         let Some(ws) = this.on(this.cpp_websocket()) else {
             return Self::terminate(this, ErrorCode::Cancel);
         };
-        let vm = this.proof().bun_vm();
+        let vm = this.bun_vm();
         let is_101 = response.status_code == 101;
         let should_read_body = this.ws_mode && !is_upgrade(response);
         if should_read_body {
@@ -1147,7 +1147,7 @@ where
                 let mut c = SSLConfig::default();
                 c.reject_unauthorized = 0; // We verify manually
                 c.request_cert = 1;
-                let vm = this.proof().bun_vm();
+                let vm = this.bun_vm();
                 if let Some(ciphers) = vm.tls_default_ciphers() {
                     c.set_default_ciphers(ciphers);
                 }
@@ -1156,14 +1156,9 @@ where
         };
 
         // Start TLS handshake
-        if WebSocketProxyTunnel::start(
-            &tunnel,
-            &ssl_options,
-            reject_unauthorized,
-            initial_data,
-            this.proof(),
-        )
-        .is_err()
+        let handler = this.on(&*tunnel);
+        if WebSocketProxyTunnel::start(handler, &ssl_options, reject_unauthorized, initial_data)
+            .is_err()
         {
             drop(tunnel);
             Self::terminate(this, ErrorCode::ProxyTunnelFailed);
@@ -1956,6 +1951,7 @@ pub fn bun__websockethttpclient__connect(
     .unwrap_or(ptr::null_mut())
 }
 
+// SAFETY (the proof, for TLS too): `~WebSocket` is a caller. What `cancel` closes has lost the C++ object by then.
 // HOST_EXPORT(Bun__WebSocketHTTPClient__cancel, c)
 pub fn bun__websockethttpclient__cancel(
     this: ThisPtr<Js<crate::websocket_client::websocket_upgrade_client::HttpUpgradeClient>>,

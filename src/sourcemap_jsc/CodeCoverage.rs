@@ -1137,11 +1137,10 @@ impl ByteRangeMapping {
     pub fn add_compiled_file(
         path: &[u8],
         text: &[u8],
-        transpiled: &bun_core::String,
+        transpiled: &Vm<bun_core::String>,
         already_bundled: bool,
         ranges: &[u8],
         counts: &[u64],
-        vm: Vm,
     ) {
         let Some(compiled) = CompiledCounts::parse(ranges, counts, text) else {
             return;
@@ -1151,7 +1150,6 @@ impl ByteRangeMapping {
             transpiled,
             None,
             already_bundled,
-            vm,
         );
         this.compiled = Some(compiled);
     }
@@ -1347,34 +1345,23 @@ impl LineCounts {
     }
 }
 
-/// # Safety
-/// The JS thread.
 #[unsafe(no_mangle)]
-unsafe extern "C" fn ByteRangeMapping__generate(
+extern "C" fn ByteRangeMapping__generate(
     str_: &bun_core::String,
-    source_contents_str: &bun_core::String,
+    source_contents_str: &Vm<bun_core::String>,
     source_id: i32,
     already_bundled: bool,
 ) {
-    // SAFETY: fn contract.
-    let vm = unsafe { Vm::assume(str_) };
-    find_or_insert(
-        str_,
-        source_contents_str,
-        Some(source_id),
-        already_bundled,
-        vm,
-    );
+    find_or_insert(str_, source_contents_str, Some(source_id), already_bundled);
 }
 
 /// The entry of the file with that text, which JSC knows under `source_id` too.
-fn find_or_insert<'a>(
+fn find_or_insert(
     str_: &bun_core::String,
-    source_contents_str: &bun_core::String,
+    source_contents_str: &Vm<bun_core::String>,
     source_id: Option<i32>,
     already_bundled: bool,
-    vm: Vm<'a>,
-) -> &'a mut ByteRangeMapping {
+) -> &'static mut ByteRangeMapping {
     // SAFETY: thread_map() returns a pointer into this thread's owned Box<HashMap>;
     // valid for the lifetime of the thread, and we are the only mutable accessor on
     // this thread for the duration of this call.
@@ -1398,6 +1385,7 @@ fn find_or_insert<'a>(
     let mut new_value = ByteRangeMapping::compute(source_contents_str, source_hash, 0, source_url);
     new_value.source_ids.clear();
     new_value.source_ids.extend(source_id);
+    let vm = source_contents_str.as_vm();
     // `node:inspector` turns the profiler on too. Nothing is marked for it.
     if vm.bun_vm().transpiler.get().options.code_coverage {
         new_value.set_object_braces_executable(source_contents.slice(), already_bundled, vm);

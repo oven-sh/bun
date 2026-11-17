@@ -629,10 +629,8 @@ where
             let _keep = jsc::EnsureStillAlive(stream.value);
             response.detach_readable_stream(global_this);
             // Not `cancel()`: it skips a stream with no reader, which an unattached body is.
-            crate::dispatch::fold(
-                global_this.js(),
-                stream.cancel_with_reason(global_this, JSValue::UNDEFINED),
-            );
+            let cancelled = stream.cancel_with_reason(global_this, JSValue::UNDEFINED);
+            crate::dispatch::fold(global_this.js(), cancelled);
         }
         *response.get_body_value() = Body::Value::Used;
     }
@@ -879,7 +877,7 @@ where
             // SAFETY: deinit runs once, after `detach_response()` removed the uWS callbacks;
             // the context is the sink's sole owner (see the `sink` field's doc comment).
             let sink = unsafe { &mut *owned_sink.as_ptr() };
-            sink.finalize(self.js());
+            sink.finalize();
             sink.source.detach(&sink.global_this);
         }
 
@@ -906,9 +904,9 @@ where
         self.ref_count.set(ref_count + 1);
     }
 
-    pub(super) fn ref_guard(&self) -> RefPtr<Self> {
+    pub(super) fn ref_guard(self: &Js<Self>) -> RefPtr<Self> {
         // SAFETY: `self` is the live pool slot.
-        unsafe { RefPtr::init_ref(self.root.get()) }
+        unsafe { RefPtr::init_ref(self.as_ctx_ptr().cast::<Self>()) }
     }
 
     /// Takes one ref as the cell's claim on this context and remembers the
@@ -916,7 +914,7 @@ where
     /// clear), `on_abort`, or the cell's destructor release the claim.
     fn create_promise_cell(&self, global: &JSGlobalObject) -> JSValue {
         debug_assert!(self.promise_cell.get().is_empty());
-        let claim = self.ref_guard();
+        let claim = global.on(self).ref_guard();
         // `server.upgrade()` reclaims the cell while the handler is still running. If the handler
         // rejects after that, `on_reject` reports the error through this.
         let held = match self.upgrade_context.get() {
@@ -1967,8 +1965,7 @@ where
     fn do_render_with_body_locked(this: NonNull<c_void>, value: &mut Body::Value, js: Js) {
         // SAFETY: the +1 taken at the `on_receive_value` registration site.
         let this = unsafe { RefPtr::from_raw(this.cast::<Self>().as_ptr()) };
-        js.on(&*this)
-            .do_render_with_body(std::ptr::from_mut(value), None);
+        Self::do_render_with_body(js.on(&*this), std::ptr::from_mut(value), None);
     }
 
     fn render_with_blob_from_body_value(self: &Js<Self>) {
@@ -1997,12 +1994,12 @@ where
     }
 
     /// C-ABI thunk for `HTTPServerWritable::on_first_write` (`fn(?*anyopaque)`).
-    fn handle_first_stream_write_thunk(ctx: Option<*mut c_void>, js: Js) {
+    fn handle_first_stream_write_thunk(ctx: Option<*mut c_void>) {
         let Some(ctx) = ctx else { return };
         // SAFETY: ctx is the `*mut Self` stashed in `sink.ctx` by
         // do_render_stream; the sink (and so this context) is live for the
-        // synchronous write that fires this.
-        Self::handle_first_stream_write(js.on(unsafe { &*ctx.cast::<Self>() }));
+        // synchronous write that fires this, which finds the status written and so runs nothing.
+        Self::handle_first_stream_write(unsafe { &*ctx.cast::<Js<Self>>() });
     }
 
     /// `on_abort` ran from inside the user code `do_render_stream` invoked
@@ -2025,7 +2022,7 @@ where
             crate::dispatch::fold(global_this.js(), stream.cancel(global_this));
             sink.mark_done();
             sink.on_first_write = None;
-            sink.finalize(global_this.js());
+            sink.finalize();
         }
     }
 
@@ -2040,10 +2037,8 @@ where
         this.set_abort_handler();
         if this.is_aborted_or_ended() {
             // No reader yet: `cancel()` would skip the stream.
-            crate::dispatch::fold(
-                this.js(),
-                stream.cancel_with_reason(global_this, JSValue::UNDEFINED),
-            );
+            let cancelled = stream.cancel_with_reason(global_this, JSValue::UNDEFINED);
+            crate::dispatch::fold(global_this.js(), cancelled);
             this.response_body_readable_stream_ref
                 .set(readable_stream::Strong::Empty);
             return;
@@ -2200,7 +2195,7 @@ where
                         }
                         let _readable_ref = this.response_body_readable_stream_ref.take();
                         this.handle_reject_stream(global_this, err);
-                        crate::dispatch::fold(stream.js(), stream.cancel(global_this));
+                        crate::dispatch::fold(global_this.js(), stream.cancel(global_this));
                     }
                 }
                 return;
@@ -2227,7 +2222,7 @@ where
                     response_stream.ctx = None;
                     response_stream.source.detach(global_this);
                     response_stream.mark_done();
-                    response_stream.finalize(this.js());
+                    response_stream.finalize();
                     this.sink.set(None);
                     drop(readable_ref);
                     this.render_missing();
@@ -2240,9 +2235,9 @@ where
         response_stream.on_first_write = None;
         response_stream.ctx = None;
         response_stream.source.detach(global_this);
-        crate::dispatch::fold(stream.js(), stream.cancel(global_this));
+        crate::dispatch::fold(global_this.js(), stream.cancel(global_this));
         response_stream.mark_done();
-        response_stream.finalize(this.js());
+        response_stream.finalize();
         this.sink.set(None);
         drop(readable_ref);
         this.render_missing();
@@ -2754,7 +2749,7 @@ where
                 self.detach_request_body_producer();
             }
 
-            sink.finalize(self.js());
+            sink.finalize();
             sink.source.detach(&sink.global_this);
         }
 
@@ -2819,11 +2814,7 @@ where
         global.on(&*req).handle_reject_stream(global, err.to_js());
     }
 
-    pub(crate) fn handle_reject_stream(
-        self: &Js<Self>,
-        global_this: &JSGlobalObject,
-        err: JSValue,
-    ) {
+    fn handle_reject_stream(self: &Js<Self>, global_this: &JSGlobalObject, err: JSValue) {
         stream_log!("handleRejectStream");
 
         let mut ended_response = false;
@@ -2841,7 +2832,7 @@ where
             sink.set_done();
             let aborted = self.flags.aborted() || sink.is_aborted();
             self.flags.set_aborted(aborted);
-            sink.finalize(self.js());
+            sink.finalize();
             sink.source.detach(&sink.global_this);
         }
 
@@ -3133,8 +3124,7 @@ where
                 // `do_render_with_body_locked`.
                 this.ref_();
                 this.flags.set_has_marked_pending(true);
-                lock.on_receive_value =
-                    Some(|ctx, value, js| Self::do_render_with_body_locked(ctx, value, js));
+                lock.on_receive_value = Some(Self::do_render_with_body_locked);
                 lock.task = Some(NonNull::new(this.as_ctx_ptr().cast::<c_void>()).unwrap());
 
                 return;
@@ -3966,11 +3956,10 @@ where
                     return;
                 };
                 // BACKREF: `readable` keeps its `ByteStream` alive for this call.
-                let bytes = bun_ptr::BackRef::from(
+                let bytes = this.on(bun_ptr::BackRef::from(
                     NonNull::new(bytes_ptr).expect("Source::Bytes payload is non-null"),
-                );
-                this.on(bytes)
-                    .on_data(WebCore::streams::Result::Temporary(chunk));
+                ));
+                bytes.on_data(WebCore::streams::Result::Temporary(chunk));
 
                 // What `on_data` buffered; `on_stream_drained` resumes once it empties.
                 let buffered = bytes.buffered_len();
@@ -3996,13 +3985,12 @@ where
                     return;
                 };
                 // BACKREF: `readable` keeps its `ByteStream` alive for this call.
-                let bytes = bun_ptr::BackRef::from(
+                let bytes = this.on(bun_ptr::BackRef::from(
                     NonNull::new(bytes_ptr).expect("Source::Bytes payload is non-null"),
-                );
+                ));
                 let source = bytes.parent_const();
                 source.producer.set(WebCore::streams::SourceHandle::None);
-                this.on(bytes)
-                    .on_data(WebCore::streams::Result::TemporaryAndDone(chunk));
+                bytes.on_data(WebCore::streams::Result::TemporaryAndDone(chunk));
             }
 
             return;

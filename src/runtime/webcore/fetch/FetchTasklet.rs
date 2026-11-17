@@ -827,7 +827,7 @@ impl FetchTasklet {
         if is_done {
             // The HTTP layer will not drain the request body again.
             self.cancel_request_body_sink(JSValue::UNDEFINED, vm.js());
-            self.poll_ref.unref(vm.loop_ctx());
+            self.poll_ref.unref(vm.bun_vm().loop_ctx());
         }
         result
     }

@@ -770,7 +770,7 @@ pub mod bv2_impl {
         }
     }
     use self::api as jsc_api;
-    use self::api::JSBundler::{LoadAnswered, ResolveAnswered};
+    use self::api::JSBundler::{Load, LoadAnswered, Resolve, ResolveAnswered};
 
     /// CYCLEBREAK(b0) TYPE_ONLY: data-only halves of `jsc::api::JSBundler` and
     /// `jsc::api::BuildArtifact` that the bundler reads/constructs without touching
@@ -786,8 +786,7 @@ pub mod bv2_impl {
             use crate::options::{Loader, Target};
             use crate::parse_task::ParseTask;
             use bun_ast::ImportKind;
-            use bun_core::Loop;
-            use bun_core::String as BunString;
+            use bun_core::{Loop, String as BunString};
             use bun_resolver::fs::PathResolverExt as _;
             use core::mem::transmute;
 
@@ -4234,11 +4233,7 @@ pub mod bv2_impl {
         }
     }
 
-    fn on_load_mini(
-        load: *mut jsc_api::JSBundler::Load,
-        this: *mut BundleV2<'static>,
-        loop_: Loop,
-    ) {
+    fn on_load_mini(load: *mut Load, this: *mut BundleV2<'static>, loop_: Loop) {
         // SAFETY: callback contract — `load` is the box passed to
         // `enqueue_task_concurrent_with_extra_ctx`; `this` is the BundleV2 the
         // mini loop's `tick` supplies as ParentContext.
@@ -4246,11 +4241,7 @@ pub mod bv2_impl {
         BundleV2::on_load(*load, this, loop_);
     }
 
-    fn on_resolve_mini(
-        resolve: *mut jsc_api::JSBundler::Resolve,
-        this: *mut BundleV2<'static>,
-        loop_: Loop,
-    ) {
+    fn on_resolve_mini(resolve: *mut Resolve, this: *mut BundleV2<'static>, loop_: Loop) {
         // SAFETY: see `on_load_mini`.
         let (resolve, this) = unsafe { (bun_core::heap::take(resolve), &mut *this) };
         BundleV2::on_resolve(*resolve, this, loop_);
@@ -4258,7 +4249,7 @@ pub mod bv2_impl {
 
     impl<'a> BundleV2<'a> {
         #[inline(never)]
-        pub(crate) fn on_load(load: jsc_api::JSBundler::Load, this: &mut BundleV2, loop_: Loop) {
+        pub(crate) fn on_load(load: Load, this: &mut BundleV2, loop_: Loop) {
             bun_removable_features::removable_definition!(Bundler, Self::on_load);
             let jsc_api::JSBundler::LoadOwner::Bundle(mut parse_task) = load.owner else {
                 unreachable!("`on_load_async` answers a waiter");
@@ -4493,11 +4484,7 @@ pub mod bv2_impl {
         }
 
         #[inline(never)]
-        pub(crate) fn on_resolve(
-            resolve: jsc_api::JSBundler::Resolve,
-            this: &mut BundleV2,
-            loop_: Loop,
-        ) {
+        pub(crate) fn on_resolve(resolve: Resolve, this: &mut BundleV2, loop_: Loop) {
             bun_removable_features::removable_definition!(Bundler, Self::on_resolve);
             debug_assert!(matches!(
                 resolve.owner,
@@ -6962,11 +6949,7 @@ pub mod bv2_impl {
     impl<'a> BundleV2<'a> {
         /// A load handed to the plugins called `.defer()`: its scan-counter unit is parked in
         /// `deferred_pending` until the deferred batch runs or its answer arrives. Bundle thread.
-        pub fn on_notify_defer(
-            load: &mut jsc_api::JSBundler::Load,
-            this: &mut BundleV2,
-            loop_: Loop,
-        ) {
+        pub fn on_notify_defer(load: &mut Load, this: &mut BundleV2, loop_: Loop) {
             debug_assert!(matches!(
                 load.owner,
                 jsc_api::JSBundler::LoadOwner::Bundle(_)

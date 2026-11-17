@@ -381,20 +381,15 @@ impl FileRoute {
             && self.status_code == 200
             && !self.has_content_range_header
         {
-            RangeRequest::from_request(req, size, etag, last_modified_ms, self.js())
+            RangeRequest::from_request(self.on(&*req), size, etag, last_modified_ms)
         } else {
             RangeRequest::Result::None
         };
 
-        let status_code = status_for_preconditions(
-            req,
-            method,
-            self.status_code,
-            etag,
-            last_modified_ms,
-            range,
-            self.js(),
-        );
+        let status_code = {
+            let req = self.on(&*req);
+            status_for_preconditions(req, method, self.status_code, etag, last_modified_ms, range)
+        };
 
         req.set_yield(false);
 
@@ -476,23 +471,20 @@ impl Served for RefPtr<FileRoute> {
 /// representation would otherwise be 200 (§13.1.1).
 /// Step 5, If-Range, is already applied to `range` by `RangeRequest::from_request`.
 pub(crate) fn status_for_preconditions(
-    req: &AnyRequest,
+    req: &Js<AnyRequest>,
     method: Method,
     base_status: u16,
     etag: Option<&[u8]>,
     last_modified_ms: Option<u64>,
     range: RangeRequest::Result,
-    js: Js,
 ) -> u16 {
+    let parse_date = |date: &[u8]| crate::jsc_hooks::parse_http_date(date, req.js());
     if (method == Method::HEAD || method == Method::GET) && base_status == 200 {
         if let Some(im) = req.header(b"if-match").filter(|v| !v.is_empty()) {
             if !ETag::if_match(etag, im) {
                 return 412;
             }
-        } else if let Some(ius) = req
-            .header(b"if-unmodified-since")
-            .and_then(|date| crate::jsc_hooks::parse_http_date(date, js))
-        {
+        } else if let Some(ius) = req.header(b"if-unmodified-since").and_then(parse_date) {
             if let Some(lm) = last_modified_ms {
                 if lm / 1000 > ius / 1000 {
                     return 412;
@@ -510,10 +502,7 @@ pub(crate) fn status_for_preconditions(
                 return 304;
             }
             // Did not match: fall through to Range/200 without consulting IMS.
-        } else if let Some(ims) = req
-            .header(b"if-modified-since")
-            .and_then(|date| crate::jsc_hooks::parse_http_date(date, js))
-        {
+        } else if let Some(ims) = req.header(b"if-modified-since").and_then(parse_date) {
             // Compare at second precision: the Last-Modified we emit is
             // second-granular (HTTP-date), so a sub-second mtime would never
             // satisfy `<=` against the client's echoed value otherwise.

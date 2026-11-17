@@ -87,7 +87,7 @@ impl PostgresSQLConnection {
         else {
             return JSValue::ZERO;
         };
-        self.event_loop().run_callback_with_result(
+        self.bun_vm().event_loop().run_callback_with_result(
             bun_event_loop::ContextId::NONE,
             callback,
             self.global(),

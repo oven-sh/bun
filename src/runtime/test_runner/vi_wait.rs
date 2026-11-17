@@ -384,11 +384,7 @@ impl ViWait {
         self.settle(global, this_value, Err(error))
     }
 
-    pub(crate) fn on_timer_fire(
-        self: &Vm<Self>,
-        now: &Timespec,
-        vm: &Js<VirtualMachine>,
-    ) -> JsResult<()> {
+    pub(crate) fn on_timer_fire(&self, now: &Timespec, vm: &Js<VirtualMachine>) -> JsResult<()> {
         self.timer.state.set(EventLoopTimerState::FIRED);
         let Some(this_value) = self.root.get() else {
             return Ok(());
@@ -396,7 +392,7 @@ impl ViWait {
         if self.test_file != running_test_file()
             || self.test.as_ref().is_some_and(|test| !test.is_running())
         {
-            self.finish();
+            vm.on(self).finish();
             return Ok(());
         }
 
@@ -412,7 +408,7 @@ impl ViWait {
             self.time_out(global, this_value)
         };
         if self.is_pending() {
-            self.arm(now);
+            vm.on(self).arm(now);
         }
         this_value.ensure_still_alive();
         result

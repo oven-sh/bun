@@ -1320,17 +1320,10 @@ where
         id: usize,
     ) {
         // S008: `Response<SSL>` is a ZST opaque — safe `*mut → &mut` deref.
+        let res = bun_opaque::opaque_deref_mut(res);
         // SAFETY: forwarded raw — `this` is only dereferenced after the `id`
         // dispatch inside `on_web_socket_upgrade`.
-        unsafe {
-            NewServer::on_web_socket_upgrade(
-                this,
-                bun_opaque::opaque_deref_mut(res),
-                req,
-                context,
-                id,
-            )
-        };
+        unsafe { NewServer::on_web_socket_upgrade(this, res, req, context, id) };
     }
 }
 
@@ -1641,7 +1634,7 @@ where
         // Keep the upgrader alive across option getters below, which run
         // arbitrary user JS. A re-entrant server.upgrade(req) from a getter
         // would otherwise be able to deref this context out from under us.
-        let _upgrader_ref = upgrader.ref_guard();
+        let _upgrader_ref = global.on(upgrader).ref_guard();
 
         // Validate the handshake against `request.headers`, never the raw uWS request.
         // Copy the values, because the option getters below can modify the headers.
@@ -2039,7 +2032,7 @@ where
                 BunString::clone_utf8(url.href),
                 headers,
                 // Moves `body` into the per-VM hive pool (ref_count = 1).
-                crate::webcore::body::hive_alloc(body, global.js().as_vm()),
+                crate::webcore::body::hive_alloc(body, global.js()),
                 method,
             )
         } else if let Some(request_) = input
@@ -2568,7 +2561,7 @@ where
             .deprecated_report_extra_memory(core::mem::size_of::<Ctx>());
 
         // Pooled body slot, ref_count = 1.
-        let body_hive = crate::webcore::body::hive_alloc(BodyValue::Null, self.as_vm());
+        let body_hive = crate::webcore::body::hive_alloc(BodyValue::Null, self.js());
         // The ctx and Request each own a +1 on the same slot.
         ctx.set_request_body(Some(body_hive.clone()));
 
@@ -2785,7 +2778,7 @@ where
         let ctx = Dispatch::new(this.on(unsafe { ctx_slot.assume_init().as_ref() }));
 
         // Pooled body slot, ref_count = 1.
-        let body_hive = crate::webcore::body::hive_alloc(BodyValue::Null, this.as_vm());
+        let body_hive = crate::webcore::body::hive_alloc(BodyValue::Null, this.js());
         // The ctx and Request each own a +1 on the same slot.
         ctx.request_body.set(Some(body_hive.clone()));
 
@@ -3038,13 +3031,10 @@ fn server_set_on_client_error(
                             &[]
                         };
                         // S008: `us_socket_t` is an `opaque_ffi!` ZST — safe deref.
+                        let socket = bun_opaque::opaque_deref_mut(socket);
                         crate::dispatch::fold(
                             this.js(),
-                            this.on_client_error_callback(
-                                bun_opaque::opaque_deref_mut(socket),
-                                error_code,
-                                packet,
-                            ),
+                            this.on_client_error_callback(socket, error_code, packet),
                         );
                     }
                     // S008: `NewApp<SSL>` is a ZST opaque — safe `*mut → &mut` deref.

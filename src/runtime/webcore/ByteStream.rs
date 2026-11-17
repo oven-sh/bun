@@ -329,10 +329,8 @@ impl readable_stream::SourceContext for ByteStream {
     }
 
     fn wrapper_finalized(self: &Vm<Self>) {
-        self.parent_const()
-            .producer
-            .get()
-            .consumer_collected(self.as_vm());
+        let producer = self.parent_const().producer.get();
+        producer.consumer_collected(self.as_vm());
     }
 
     fn drain_internal_buffer(self: &Js<Self>) -> Vec<u8> {
@@ -506,10 +504,8 @@ impl ByteStream {
 
     #[inline]
     pub(crate) fn signal_drained(self: &Js<Self>) {
-        self.parent_const()
-            .producer
-            .get()
-            .ready(None, None, self.js());
+        let mut producer = self.parent_const().producer.get();
+        producer.ready(None, None, self.js());
     }
 
     /// Take the untaken bytes. The caller calls [`Self::signal_drained`] after it writes them.

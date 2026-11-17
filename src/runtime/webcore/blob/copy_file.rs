@@ -1015,8 +1015,7 @@ impl CopyFileWindows {
 
 #[cfg(windows)]
 extern "C" fn on_read(req: *mut libuv::fs_t) {
-    // SAFETY: `req` is the `io_request` of the box that `read_write_loop_read` left to libuv,
-    // which calls back from the VM's loop: a worker drains it before its VM goes.
+    // SAFETY: `req` is the `io_request` of the box that `read_write_loop_read` left to the VM's loop, which a worker drains before its VM goes.
     let (mut this, js) = unsafe { (CopyFileWindows::take_from_uv_fs(req), Js::assume(&req)) };
 
     let source_fd = this.read_write_loop.source_fd.get();
@@ -1052,8 +1051,7 @@ extern "C" fn on_read(req: *mut libuv::fs_t) {
 
 #[cfg(windows)]
 extern "C" fn on_write(req: *mut libuv::fs_t) {
-    // SAFETY: `req` is the `io_request` of the box that `read_write_loop_write` left to libuv,
-    // which calls back from the VM's loop: a worker drains it before its VM goes.
+    // SAFETY: `req` is the `io_request` of the box that `read_write_loop_write` left to the VM's loop, which a worker drains before its VM goes.
     let (mut this, js) = unsafe { (CopyFileWindows::take_from_uv_fs(req), Js::assume(&req)) };
     let buf_len = this.read_write_loop.read_buf.len();
 
@@ -1110,14 +1108,14 @@ impl CopyFileWindows {
     pub(crate) fn init(
         destination_file_store: RefPtr<Store>,
         source_file_store: RefPtr<Store>,
-        event_loop: VmRef<jsc::event_loop::EventLoop>,
-        context: &Js<jsc::ScriptExecutionContext>,
+        cx: &jsc::JsThread<'_>,
         mkdirp_if_not_exists: bool,
         size_: SizeType,
         destination_mode: Option<Mode>,
     ) -> JSValue {
+        let event_loop = VmRef::event_loop(cx.vm());
         // destination_file_store.ref() / source_file_store.ref() — Arc clone
-        let global = context.on(event_loop).global_ref();
+        let global = cx.on(event_loop).global_ref();
         let result = Box::new(CopyFileWindows {
             destination_file_store,
             source_file_store,
@@ -1125,8 +1123,8 @@ impl CopyFileWindows {
             // SAFETY: all-zero is a valid libuv::fs_t
             io_request: bun_core::ffi::zeroed::<libuv::fs_t>(),
             event_loop,
-            _keep_alive: jsc::JsKeepAlive::active(context.bun_vm()),
-            context: context.id(),
+            _keep_alive: jsc::JsKeepAlive::active(cx.vm()),
+            context: cx.context().id(),
             mkdirp_if_not_exists,
             destination_mode,
             size: size_,
@@ -1136,7 +1134,7 @@ impl CopyFileWindows {
         });
         let promise = result.promise.value();
 
-        result.copyfile(context.js());
+        result.copyfile(cx.js());
 
         promise
     }
@@ -1395,14 +1393,12 @@ impl CopyFileWindows {
         self.mkdirp_if_not_exists = false;
         let destination = self.destination_file_store.data.as_file();
         if !matches!(destination.pathlike, PathOrFileDescriptor::Path(_)) {
-            self.throw(
-                bun_sys::Error {
-                    errno: bun_sys::SystemErrno::EINVAL as u16,
-                    syscall: bun_sys::Tag::mkdir,
-                    ..Default::default()
-                },
-                js,
-            );
+            let err = bun_sys::Error {
+                errno: bun_sys::SystemErrno::EINVAL as u16,
+                syscall: bun_sys::Tag::mkdir,
+                ..Default::default()
+            };
+            self.throw(err, js);
             return;
         }
 
@@ -1423,8 +1419,7 @@ impl CopyFileWindows {
 
 #[cfg(windows)]
 extern "C" fn on_copy_file(req: *mut libuv::fs_t) {
-    // SAFETY: `req` is the `io_request` of the box that `copyfile` left to libuv,
-    // which calls back from the VM's loop: a worker drains it before its VM goes.
+    // SAFETY: `req` is the `io_request` of the box that `copyfile` left to the VM's loop, which a worker drains before its VM goes.
     let (mut this, js) = unsafe { (CopyFileWindows::take_from_uv_fs(req), Js::assume(&req)) };
 
     let rc = this.io_request.result;
@@ -1501,8 +1496,7 @@ extern "C" fn on_copy_file(req: *mut libuv::fs_t) {
 
 #[cfg(windows)]
 extern "C" fn on_chmod(req: *mut libuv::fs_t) {
-    // SAFETY: `req` is the `io_request` of the box that `on_complete` left to libuv,
-    // which calls back from the VM's loop: a worker drains it before its VM goes.
+    // SAFETY: `req` is the `io_request` of the box that `on_complete` left to the VM's loop, which a worker drains before its VM goes.
     let (this, js) = unsafe { (CopyFileWindows::take_from_uv_fs(req), Js::assume(&req)) };
 
     let rc = this.io_request.result;

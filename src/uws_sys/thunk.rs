@@ -79,19 +79,17 @@ pub unsafe trait OpaqueHandle: Sized {
 
 /// Conjure a value of a zero-sized handler type.
 ///
-/// Replaces `// SAFETY: H is a ZST → core::mem::zeroed()` repeated at every
-/// trampoline site. The ZST invariant is enforced at compile time via the
-/// inline `const { assert!() }`, so a non-ZST `H` is a *compile* error at the
-/// monomorphisation site — which is what lets this be a *safe* fn (S016).
+/// # Safety
+/// A value of `H` was handed over when the callback was registered.
 #[inline(always)]
-pub(crate) fn zst<H>() -> H {
+pub(crate) unsafe fn zst<H: Copy>() -> H {
     const {
         assert!(
             core::mem::size_of::<H>() == 0,
             "zst: H must be a ZST (fn item or capture-less closure)"
         )
     };
-    // SAFETY: no bytes. Each caller bounds `H: Fn*` and was handed a value of it.
+    // SAFETY: a copy of that value, which has no bytes.
     unsafe { bun_core::ffi::zeroed_unchecked() }
 }
 

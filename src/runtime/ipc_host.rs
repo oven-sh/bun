@@ -231,10 +231,8 @@ pub(crate) fn do_send(
             if target.is_object() {
                 if let Some(f) = target.get(global_object, name)? {
                     if f.is_callable() {
-                        crate::dispatch::fold(
-                            global_object.js(),
-                            f.call(global_object, target, &[]).map(drop),
-                        );
+                        let called = f.call(global_object, target, &[]).map(drop);
+                        crate::dispatch::fold(global_object.js(), called);
                     }
                 }
             }

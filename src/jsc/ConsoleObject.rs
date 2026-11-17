@@ -1053,9 +1053,8 @@ pub fn write_trace(writer: &mut dyn bun_io::Write, global: &JSGlobalObject) {
 
     let _ = VirtualMachine::print_stack_trace(
         writer,
-        &holder.zig_exception().stack,
+        vm.on(&holder.zig_exception().stack),
         Output::enable_ansi_colors_stderr(),
-        global.js().as_vm(),
     );
 }
 

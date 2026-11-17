@@ -46,15 +46,15 @@ static TABLES: std::sync::LazyLock<[Option<&'static VTable>; SOCKET_KIND_COUNT]>
         // Bun.connect / Bun.listen
         removable_body!(Sockets, ReturnDefault, {
             t[SocketKind::BunSocketTcp as usize] =
-                Some(vtable::make::<Js<handlers::BunSocket<false>>>());
+                Some(vtable::make::<handlers::BunSocket<false>>());
             t[SocketKind::BunListenerTcp as usize] =
-                Some(vtable::make::<Js<handlers::BunListener<false>>>());
+                Some(vtable::make::<handlers::BunListener<false>>());
         });
         removable_body!(TlsSockets, ReturnDefault, {
             t[SocketKind::BunSocketTls as usize] =
-                Some(vtable::make::<Js<handlers::BunSocket<true>>>());
+                Some(vtable::make::<handlers::BunSocket<true>>());
             t[SocketKind::BunListenerTls as usize] =
-                Some(vtable::make::<Js<handlers::BunListener<true>>>());
+                Some(vtable::make::<handlers::BunListener<true>>());
         });
 
         // HTTP client thread
@@ -68,35 +68,31 @@ static TABLES: std::sync::LazyLock<[Option<&'static VTable>; SOCKET_KIND_COUNT]>
         // WebSocket client
         removable_body!(WebSocket, ReturnDefault, {
             t[SocketKind::WsClientUpgrade as usize] =
-                Some(vtable::make::<Js<handlers::WSUpgrade<false>>>());
+                Some(vtable::make::<handlers::WSUpgrade<false>>());
             t[SocketKind::WsClientUpgradeTls as usize] =
-                Some(vtable::make::<Js<handlers::WSUpgrade<true>>>());
-            t[SocketKind::WsClient as usize] =
-                Some(vtable::make::<Js<handlers::WSClient<false>>>());
-            t[SocketKind::WsClientTls as usize] =
-                Some(vtable::make::<Js<handlers::WSClient<true>>>());
+                Some(vtable::make::<handlers::WSUpgrade<true>>());
+            t[SocketKind::WsClient as usize] = Some(vtable::make::<handlers::WSClient<false>>());
+            t[SocketKind::WsClientTls as usize] = Some(vtable::make::<handlers::WSClient<true>>());
         });
 
         // SQL drivers
         removable_body!(Sql, ReturnDefault, {
-            t[SocketKind::Postgres as usize] =
-                Some(vtable::make::<Js<handlers::Postgres<false>>>());
-            t[SocketKind::PostgresTls as usize] =
-                Some(vtable::make::<Js<handlers::Postgres<true>>>());
-            t[SocketKind::Mysql as usize] = Some(vtable::make::<Js<handlers::MySQL<false>>>());
-            t[SocketKind::MysqlTls as usize] = Some(vtable::make::<Js<handlers::MySQL<true>>>());
+            t[SocketKind::Postgres as usize] = Some(vtable::make::<handlers::Postgres<false>>());
+            t[SocketKind::PostgresTls as usize] = Some(vtable::make::<handlers::Postgres<true>>());
+            t[SocketKind::Mysql as usize] = Some(vtable::make::<handlers::MySQL<false>>());
+            t[SocketKind::MysqlTls as usize] = Some(vtable::make::<handlers::MySQL<true>>());
         });
         removable_body!(Valkey, ReturnDefault, {
-            t[SocketKind::Valkey as usize] = Some(vtable::make::<Js<handlers::Valkey<false>>>());
-            t[SocketKind::ValkeyTls as usize] = Some(vtable::make::<Js<handlers::Valkey<true>>>());
+            t[SocketKind::Valkey as usize] = Some(vtable::make::<handlers::Valkey<false>>());
+            t[SocketKind::ValkeyTls as usize] = Some(vtable::make::<handlers::Valkey<true>>());
         });
 
         // IPC
         removable_body!(Ipc, ReturnDefault, {
-            t[SocketKind::SpawnIpc as usize] = Some(vtable::make::<Js<handlers::SpawnIPC>>());
+            t[SocketKind::SpawnIpc as usize] = Some(vtable::make::<handlers::SpawnIPC>());
         });
         removable_body!(Spawn, ReturnDefault, {
-            t[SocketKind::SpawnIpc as usize] = Some(vtable::make::<Js<handlers::SpawnIPC>>());
+            t[SocketKind::SpawnIpc as usize] = Some(vtable::make::<handlers::SpawnIPC>());
         });
 
         t
@@ -165,7 +161,7 @@ macro_rules! us_dispatch_shims {
                     // SAFETY: `f` is the vtable callback for this socket kind; loop.c
                     // guarantees `$recv` and any data/len buffers are live for the call,
                     // and the vtable entry's signature matches this shim's C ABI exactly.
-                    // `Js`: the groups of those kinds belong to a VM. An open socket keeps its wrapper strong,
+                    // A `Js` in `Ext`: the group belongs to a VM. An open socket keeps its wrapper strong,
                     // and teardown closes it before `~VM`. What a finalizer does close is cut off from script
                     // first: the WebSocket client from its C++ object, IPC by `close_event_sent`.
                     unsafe { f($($call),*) }

@@ -714,11 +714,7 @@ fn event_loop_scope(loop_: Loop<'_>) -> Option<bun_jsc::event_loop::EventLoopEnt
 }
 
 /// Gives `pending` back if mDNSResponder cannot answer it.
-pub(crate) fn start(
-    query: &GetAddrInfo,
-    pending: PendingQuery,
-    js: Js,
-) -> Result<(), PendingQuery> {
+pub(crate) fn start(query: &GetAddrInfo, pending: PendingQuery) -> Result<(), PendingQuery> {
     bun_core::Environment::only_mac();
 
     // mDNSResponder answers names; numeric hosts are a parse and AI_V4MAPPED/AI_ALL need getaddrinfo's semantics.
@@ -728,7 +724,7 @@ pub(crate) fn start(
         return Err(pending);
     }
 
-    let Some(mut shared) = SharedConnection::get(js.bun_vm().loop_ctx()) else {
+    let Some(mut shared) = SharedConnection::get(pending.resolver.vm().loop_ctx()) else {
         return Err(pending);
     };
 

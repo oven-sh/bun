@@ -1,14 +1,15 @@
 use core::sync::atomic::{AtomicUsize, Ordering};
 use std::io::Write as _;
 
-use bun_core::{Loop, ZBox};
+use bun_core::ZBox;
 use bun_ptr::BackRef;
 use bun_sys::{E, O, S, dir_iterator};
 
 use crate::shell::builtin::{BadFlag, Builtin, Kind};
 use crate::shell::builtins::batch::Batch;
 use crate::shell::interpreter::{
-    Interpreter, NodeId, PoolTask, ShellTask, ShellWork, shell_lstatat, shell_openat, shell_statat,
+    Interpreter, Loop, NodeId, PoolTask, ShellTask, ShellWork, shell_lstatat, shell_openat,
+    shell_statat,
 };
 use crate::shell::yield_::Yield;
 

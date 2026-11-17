@@ -147,15 +147,10 @@ fn expand_uws_callback(args: &UwsCallbackArgs, func: &ItemFn) -> syn::Result<Tok
             quote! { &mut *__ctx.cast::<Self>() },
         )
     } else {
+        let ty = &recv.ty;
         (
             quote! { *const ::core::ffi::c_void },
-            match &*recv.ty {
-                syn::Type::Reference(r) => {
-                    let pointee = &r.elem;
-                    quote! { &*__ctx.cast::<#pointee>() }
-                }
-                ty => return Err(syn::Error::new(ty.span(), "expected a reference")),
-            },
+            quote! { &*__ctx.cast::<<#ty as ::core::ops::Deref>::Target>() },
         )
     };
 
@@ -244,7 +239,7 @@ fn expand_uws_callback(args: &UwsCallbackArgs, func: &ItemFn) -> syn::Result<Tok
         #(#prelude)*
         // SAFETY: `__ctx` is the `*Self` registered with the C side; uWS / the
         // caller guarantees it is live and exclusively accessed for the
-        // duration of the callback.
+        // duration of the callback, and that the proof in the receiver's type holds.
         let __this = unsafe { #recv_expr };
         Self::#fn_name(__this, #(#call_args),*)
     };

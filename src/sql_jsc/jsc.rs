@@ -178,9 +178,8 @@ pub struct SqlRuntimeHooks {
     pub sql_rare: fn(&VirtualMachine) -> &RareData,
     /// `SSLContextCache::getOrCreateOpts` — digest-keyed weak `SSL_CTX*` cache.
     pub ssl_ctx_get_or_create: fn(
-        opts: &bun_uws::us_bun_socket_context_options_t,
+        opts: &Vm<bun_uws::us_bun_socket_context_options_t>,
         err: &mut bun_uws::create_bun_socket_error_t,
-        vm: Vm,
     ) -> Option<OwnedSslCtx>,
     /// `SSLConfig::fromJS` — parse a JS TLS-options object. `None` if it held no TLS config, or threw.
     pub ssl_config_from_js: fn(&JSGlobalObject, JSValue) -> Option<Box<bun_http::SSLConfig>>,
@@ -383,9 +382,8 @@ use bun_jsc::{Js, Vm};
 
 /// The `SSL_CTX` for `opts` from the `SSLContextCache` of this thread's VM.
 pub(crate) fn ssl_ctx_get_or_create(
-    opts: &bun_uws::us_bun_socket_context_options_t,
+    opts: &Vm<bun_uws::us_bun_socket_context_options_t>,
     err: &mut bun_uws::create_bun_socket_error_t,
-    vm: Vm,
 ) -> Option<OwnedSslCtx> {
-    (hooks().ssl_ctx_get_or_create)(opts, err, vm)
+    (hooks().ssl_ctx_get_or_create)(opts, err)
 }

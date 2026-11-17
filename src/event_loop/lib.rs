@@ -1,4 +1,3 @@
-#![feature(arbitrary_self_types)]
 #![allow(non_snake_case)]
 #![warn(unused_must_use)]
 pub mod AnyTaskWithExtraContext;
@@ -60,22 +59,5 @@ bun_dispatch::link_interface! {
         fn enqueue_task_after_yield(task: Task);
         fn js_poster() -> any_event_loop::JsPoster;
         fn env() -> *mut bun_dotenv::Loader;
-    }
-}
-
-impl JsEventLoop {
-    /// # Safety
-    /// This thread has a VM.
-    #[inline]
-    pub(crate) unsafe fn current() -> Self {
-        // SAFETY: `__bun_js_event_loop_current` returns the live per-thread
-        // `jsc::EventLoop`, so the `link_interface!` owner
-        // invariant for `Self::new` is upheld for every dispatch on this handle.
-        unsafe {
-            Self::new(
-                JsEventLoopKind::Jsc,
-                any_event_loop::__bun_js_event_loop_current(),
-            )
-        }
     }
 }

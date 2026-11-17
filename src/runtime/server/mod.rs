@@ -876,7 +876,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
 
         // Allocate the pooled body slot (ref_count = 1).
         let body_hive =
-            crate::webcore::body::hive_alloc(crate::webcore::body::Value::Null, self.as_vm());
+            crate::webcore::body::hive_alloc(crate::webcore::body::Value::Null, self.js());
         // Raw payload pointer for the deferred Locked write below.
         // SAFETY: slot stays live — both `ctx.request_body` and `Request.body` hold a +1.
         let body_value: *mut crate::webcore::body::Value =
@@ -1183,7 +1183,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         resp.timeout(self.config.get().idle_timeout);
 
         let global = self.global_this();
-        let js = global.js();
+        let vm = global.on(vm);
         let this_object = self.js_value.try_get().unwrap_or(JSValue::UNDEFINED);
 
         // Compute the JS method-name string up front so the FFI closure
@@ -1244,7 +1244,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             // before the response object existed. Nothing adopted the response;
             // answer it natively as above.
             if !result.is_empty() && !result.is_termination_exception() {
-                let _ = js.on(self.vm()).uncaught_exception(global, result, false);
+                let _ = vm.on(self.vm()).uncaught_exception(global, result, false);
             }
             server_body::respond_stopped_503(resp);
             return;
@@ -1271,7 +1271,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                 if status == jsc::js_promise::Status::Pending {
                     strong_promise.set(global, result);
                     needs_to_drain = false;
-                    js.on(vm).drain_microtasks();
+                    vm.drain_microtasks();
                     // The drain ran script: an exception it left (a termination
                     // request landing in it) ends this dispatch like a throw
                     // from the handler; nothing below may enter script over it.
@@ -1326,10 +1326,10 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             HttpResult::Success
         };
 
-        let nhr = js.on(&*nhr);
+        let nhr = vm.on(&*nhr);
         match &http_result {
             HttpResult::Exception(err) | HttpResult::Rejection(err) => {
-                let _ = js.on(self.vm()).uncaught_exception(
+                let _ = vm.on(self.vm()).uncaught_exception(
                     global,
                     *err,
                     matches!(http_result, HttpResult::Rejection(_)),
@@ -1404,7 +1404,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
 
         drop(strong_promise);
         if needs_to_drain {
-            js.on(vm).drain_microtasks();
+            vm.drain_microtasks();
         }
     }
 
@@ -2804,10 +2804,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                                 }
                             }
                             if !tcp {
-                                global
-                                    .bun_vm()
-                                    .event_loop_handle
-                                    .set(Some(bun_io::Loop::get()));
+                                (global.bun_vm().event_loop_handle).set(Some(bun_io::Loop::get()));
                             }
                         }
                     }
@@ -3116,7 +3113,7 @@ mod trampoline {
             bun_opaque::opaque_deref_mut(req).set_yield(true);
             return;
         }
-        // SAFETY: user_data is the `*mut NewServer<..>` registered in set_routes.
+        // SAFETY: as in `on_request`.
         // S008: `Request` / `Response<SSL>` are ZST opaques — safe deref.
         unsafe {
             (*user_data.cast::<Vm<NewServer<SSL, DEBUG>>>()).on_bun_info_request(

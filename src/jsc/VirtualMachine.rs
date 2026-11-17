@@ -748,16 +748,13 @@ impl VMHolder {
     /// (the compile cache is written again at a real exit; a bytecode order
     /// recording is written once and ends there). The recording is the main
     /// thread's to write: a Worker that sends the signal leaves none.
-    ///
-    /// # Safety
-    /// Below script.
     #[unsafe(no_mangle)]
-    pub(crate) unsafe extern "C" fn Bun__writeProfilesBeforeSelfKill(signal_ends_process: bool) {
-        if !VirtualMachine::is_loaded() {
+    pub(crate) extern "C" fn Bun__writeProfilesBeforeSelfKill(signal_ends_process: bool) {
+        let Some(vm) = VM.get() else {
             return;
-        }
-        // SAFETY: fn contract.
-        let vm = unsafe { Vm::assume(&signal_ends_process) }.bun_vm();
+        };
+        // SAFETY: allocated while the slot is set.
+        let vm = unsafe { &*vm };
         vm.write_profiles();
         // Node runs RunAtExit (incl. compile cache) on self-directed fatal signals. Non-latching:
         // the signal may prove non-fatal, and latching here would no-op the real exit's persist.
@@ -971,11 +968,11 @@ impl<'a, T: 'a> Pointer<'a> for VmRef<T> {
     #[inline(always)]
     unsafe fn cast<W: 'a>(self) -> &'a W {
         // SAFETY: the one VM of this thread, which `self` cannot leave. The proof says that it is allocated.
-        unsafe { self.0.cast().as_ref() }
+        unsafe { self.0.cast::<W>().as_ref() }
     }
 }
 
-impl<'a> Js<'a, VirtualMachine> {
+impl Js<'_, VirtualMachine> {
     #[inline(always)]
     pub fn event_loop(&self) -> &Js<'_, EventLoop> {
         self.on(VirtualMachine::event_loop(self))
@@ -985,16 +982,17 @@ impl<'a> Js<'a, VirtualMachine> {
 impl VirtualMachine {
     #[inline(always)]
     pub fn as_vm(&self) -> Vm<'_> {
-        // SAFETY: not `Sync`. Only `global_exit`, `teardown` and `drop` free under a borrow of it, and then reach only
+        // SAFETY: not `Sync`, and the exports that C++ calls on the collector's thread do not get here. `init` installs
+        // it before it lends it. Only `global_exit`, `teardown` and `drop` free under a borrow of it, and then reach only
         // what is left.
         unsafe { Vm::assume(self) }
     }
 
     /// Where handlers may run and there is a VM, script may run.
     #[inline(always)]
-    pub fn in_js<'a>(self: &'a Loop<Self>) -> &'a Js<'a, Self> {
-        // SAFETY: `self` proves the one, and is the other.
-        unsafe { Js::assume(self) }.on::<&Self>(self)
+    pub fn in_js<'a>(&'a self, _: Loop<'a>) -> &'a Js<'a, Self> {
+        // SAFETY: the `Loop` proves the one, `self` is the other.
+        unsafe { Js::assume(self) }.on(self)
     }
 
     /// The pointer [`Self::init`] allocated: a reference cannot free the VM.
@@ -1004,10 +1002,7 @@ impl VirtualMachine {
     /// `unwrap_unchecked` collapses to one TLS load.
     #[inline(always)]
     pub fn get_mut_ptr(_: Vm) -> *mut VirtualMachine {
-        debug_assert!(
-            Self::is_loaded(),
-            "VirtualMachine.get() called with no VM on this thread",
-        );
+        debug_assert!(Self::is_loaded(), "no VM on this thread");
         // SAFETY: the slot is set from `init` until the VM is freed.
         unsafe { VM.get().unwrap_unchecked() }
     }
@@ -1015,7 +1010,7 @@ impl VirtualMachine {
     #[inline(always)]
     pub fn get_or_null(loop_: Loop<'_>) -> Option<&Js<'_, VirtualMachine>> {
         // SAFETY: allocated, as `loop_` says.
-        VM.get().map(|vm| loop_.on(unsafe { &*vm }).in_js())
+        VM.get().map(|vm| unsafe { &*vm }.in_js(loop_))
     }
 
     /// Returns the main thread's VM. Callable from any thread. The VM is never freed, but other
@@ -2228,7 +2223,7 @@ impl VirtualMachine {
         // process.exit() never reaches drain_microtasks; flush AutoFlusher sinks here.
         if !self.is_inside_deferred_task_queue.get() {
             self.is_inside_deferred_task_queue.set(true);
-            self.as_loop().on(&self.event_loop().deferred_tasks).run();
+            self.event_loop().deferred_tasks.run(self.as_loop());
             self.is_inside_deferred_task_queue.set(false);
         }
 
@@ -2301,7 +2296,7 @@ impl VirtualMachine {
         }
         let this = Self::get_mut_ptr(self.as_vm());
         // SAFETY: main-thread VM on the main thread; exit handlers have run; this never returns.
-        let can_drop = unsafe { Self::teardown(this, Teardown::MainThreadExit, self.js()) };
+        let can_drop = unsafe { Self::teardown(self.on(&*this), Teardown::MainThreadExit) };
         let exit_code = self.exit_handler.exit_code.get();
         if can_drop {
             // SAFETY: no frame of this thread resumes. The allocation stays for signal handlers.
@@ -2316,16 +2311,16 @@ impl VirtualMachine {
     ///
     /// # Safety
     /// `this` is this thread's VM, which nothing else can reach; this thread abandons its API lock.
-    /// No proof of this thread is used afterwards.
-    pub unsafe fn exit_and_free(this: *mut Self, js: Js) -> u8 {
+    /// As [`Js::assume`], and no proof of this thread is used afterwards.
+    pub unsafe fn exit_and_free(this: *mut Self) -> u8 {
         // SAFETY: fn contract.
-        let vm = js.on(unsafe { &*this });
+        let vm = unsafe { Js::assume(&this).on(&*this) };
         vm.is_shutting_down.set(true);
         vm.on_exit();
         let exit_code = vm.exit_handler.exit_code.get();
         // SAFETY: fn contract; `init` boxed it.
         unsafe {
-            Self::teardown(this, Teardown::Worker, js);
+            Self::teardown(vm, Teardown::Worker);
             bun_core::heap::destroy(this);
         }
         VMHolder::set_vm(None);
@@ -2378,12 +2373,10 @@ impl VirtualMachine {
     /// Returns whether the VM can be dropped, which a worker's always can.
     ///
     /// # Safety
-    /// `this` is this thread's VM and no other thread can reach it any more
+    /// No other thread can reach `vm` any more
     /// (worker: its handle unpublished); `is_shutting_down` is set and
     /// the exit handlers have run. No proof of this thread is used afterwards.
-    unsafe fn teardown(this: *mut Self, kind: Teardown, js: Js) -> bool {
-        // SAFETY: per fn contract — sole owner on the owning thread.
-        let vm = js.on(unsafe { &*this });
+    unsafe fn teardown(vm: &Js<Self>, kind: Teardown) -> bool {
         let hooks = runtime_hooks();
 
         // ---- A. no more script; stop phase ------------------------------------
@@ -2392,13 +2385,12 @@ impl VirtualMachine {
         // Node runs its environment cleanup under a DisallowJavascriptExecution
         // scope, WebCore's ActiveDOMObject::stop() runs no script — so no
         // 'close'/'error' handler runs after 'exit', and nothing can reopen what
-        // a sweep just closed. `js` is for the native handlers of A and B.
+        // a sweep just closed. The `Js` is for the native handlers of A and B.
         vm.forbid_script();
         Zig__GlobalObject__prepareForDestruction(vm.global());
-        // SAFETY: fn contract.
-        let sweep = move || unsafe {
-            let _ = Self::stop_phase_sweep(this, kind, js);
-            let second = Self::stop_phase_sweep(this, kind, js);
+        let sweep = || {
+            let _ = Self::stop_phase_sweep(vm, kind);
+            let second = Self::stop_phase_sweep(vm, kind);
             debug_assert!(
                 second == SweepResult::Idle,
                 "a native close path registered a stoppable resource during teardown"
@@ -2428,7 +2420,7 @@ impl VirtualMachine {
             unsafe { uws::Timer::close::<true>(t.as_ptr()) };
         }
         if let Some(hooks) = hooks {
-            (hooks.stop_watches_for_vm_teardown)(js.as_vm());
+            (hooks.stop_watches_for_vm_teardown)(vm.as_vm());
             // Drop every TimeoutObject/ImmediateObject's heap node, JS pin and
             // +1 while runtime state and the JSC heap are alive. The heap itself
             // (and the loop handle it embeds) stays up: JSC's own RunLoop timers
@@ -2461,8 +2453,7 @@ impl VirtualMachine {
         // cancelled rather than waited out.
         vm.handle.close_and_wait(|| {
             vm.release_queued_work();
-            // SAFETY: fn contract.
-            let _ = unsafe { Self::stop_phase_sweep(this, kind, vm.js()) };
+            let _ = Self::stop_phase_sweep(vm, kind);
         });
         // Node-API finalizers that `NapiEnv::cleanup` held back for an `execute()` on the pool.
         if let Some(rare) = vm.rare_data.get() {
@@ -2554,20 +2545,14 @@ impl VirtualMachine {
     /// duplex/named-pipe sockets, resolvers), a worker's uv stream/process
     /// handles, every socket group, the VM-global dns channel. Reports whether
     /// it found anything.
-    ///
-    /// # Safety
-    /// As [`teardown`](Self::teardown): sole owner on the owning thread, heap alive.
-    unsafe fn stop_phase_sweep(this: *mut Self, kind: Teardown, js: Js) -> SweepResult {
-        // SAFETY: fn contract.
-        let vm = js.on(unsafe { &*this });
+    fn stop_phase_sweep(vm: &Js<Self>, kind: Teardown) -> SweepResult {
         let hooks = runtime_hooks();
         let mut result = SweepResult::Idle;
         // Pool jobs parked on something external (a pipe that never becomes
         // readable): their completions then arrive through the wait.
         vm.jobs.get().cancel_all();
         result = result.and(match hooks {
-            // SAFETY: fn contract.
-            Some(hooks) => unsafe { (hooks.stop_active_handles_for_vm_teardown)(this, js) },
+            Some(hooks) => (hooks.stop_active_handles_for_vm_teardown)(vm),
             None => vm.stop_context_handles(crate::StopReason::VmTeardown),
         });
         // A worker's uv loop is closed in D, so every pipe / tty / child-process
@@ -2579,14 +2564,14 @@ impl VirtualMachine {
         // them there only re-enters stream owners under still-running script.
         #[cfg(windows)]
         if matches!(kind, Teardown::Worker) {
-            bun_sys::windows::libuv::open_handles::stop_all_for_vm_teardown(js.as_loop());
+            bun_sys::windows::libuv::open_handles::stop_all_for_vm_teardown(vm.as_loop());
         }
         let _ = kind;
         if vm.rare_data.get().is_some() {
             result = result.and(RareData::close_all_socket_groups(vm));
         }
         if let Some(hooks) = hooks {
-            result = result.and((hooks.stop_dns_for_vm_teardown)(js));
+            result = result.and((hooks.stop_dns_for_vm_teardown)(vm.js()));
         }
         result
     }
@@ -2597,8 +2582,8 @@ impl VirtualMachine {
     /// macro loop is only ever ticked explicitly, so whatever a macro queued on
     /// it is still there. Teardown phase B.
     fn release_queued_work(self: &Js<Self>) {
-        self.regular_event_loop.release_queued_tasks(self.js());
-        self.macro_event_loop.release_queued_tasks(self.js());
+        self.on(&self.regular_event_loop).release_queued_tasks();
+        self.on(&self.macro_event_loop).release_queued_tasks();
         self.transpiler_store.release_queued_jobs_for_teardown();
     }
 }
@@ -2902,11 +2887,7 @@ pub struct RuntimeHooks {
     /// Stop every registered native handle behind a JS object (servers,
     /// listeners, fs watchers) — the stop phase for Rust-side JS classes, run
     /// with the VM alive right after the WebCore stop phase.
-    ///
-    /// # Safety
-    /// `vm` is the live per-thread VM on the JS thread; the JSC heap is alive.
-    pub stop_active_handles_for_vm_teardown:
-        unsafe fn(vm: *mut VirtualMachine, js: Js) -> SweepResult,
+    pub stop_active_handles_for_vm_teardown: fn(vm: &Js<VirtualMachine>) -> SweepResult,
     /// Teardown only (never on a live VM): unlink every remaining EventLoopTimer.
     pub disarm_all_timers_for_vm_teardown: unsafe fn(vm: &VirtualMachine),
     /// Teardown-only, after ~VM (JSC's RunLoop timers use the heap until then):
@@ -2982,6 +2963,11 @@ impl VirtualMachine {
         let hooks = runtime_hooks().expect("RuntimeHooks not installed");
         // SAFETY: per fn contract.
         unsafe { (hooks.timer_insert)(self, timer) }
+    }
+
+    #[inline]
+    pub fn post_fake_timers_step(&self, id: u32) {
+        crate::cpp::Bun__FakeTimers__postStep(self.global_for_engine(), id);
     }
 
     /// The shortest delay, in milliseconds, a timer armed now can have: 1 while `jest.useFakeTimers()` runs a timer's callback.
@@ -3067,12 +3053,11 @@ impl VirtualMachine {
     /// not name those types directly. `log` outlives what the VM runs.
     ///
     /// # Safety
-    /// This thread has never had a VM.
-    pub unsafe fn init(
+    /// This thread has never had a VM. As [`Loop::assume`], for `'a`.
+    pub unsafe fn init<'a>(
         log: *mut bun_ast::Log,
         mut opts: InitOptions,
-        loop_: Loop<'_>,
-    ) -> crate::CrateResult<&Js<'_, VirtualMachine>> {
+    ) -> crate::CrateResult<&'a Js<'a, VirtualMachine>> {
         jsc::mark_binding();
 
         let origin_timer = std::time::Instant::now();
@@ -3234,7 +3219,7 @@ impl VirtualMachine {
             test_isolation_state: Default::default(),
             _pin: core::marker::PhantomPinned,
         };
-        // SAFETY: a fresh allocation for a `VirtualMachine`, which lasts as `loop_` says.
+        // SAFETY: a fresh allocation for a `VirtualMachine`, which lasts for `'a`.
         let vm: &VirtualMachine = unsafe {
             this.write(vm);
             this.as_ref()
@@ -3308,7 +3293,8 @@ impl VirtualMachine {
             crate::bytecode_order_recorder::init_vm(vm, graph);
         }
 
-        Ok(loop_.on(vm).in_js())
+        // SAFETY: fn contract.
+        Ok(vm.in_js(unsafe { Loop::assume(vm) }))
     }
 
     /// The path of the entry module, `None` when there is none (see `main` field doc).
@@ -4535,11 +4521,10 @@ impl VirtualMachine {
     ///
     /// # Safety
     /// As [`Self::init`].
-    pub unsafe fn init_with_module_graph(
+    pub unsafe fn init_with_module_graph<'a>(
         log: *mut bun_ast::Log,
         opts: Options,
-        loop_: Loop<'_>,
-    ) -> crate::CrateResult<&Js<'_, VirtualMachine>> {
+    ) -> crate::CrateResult<&'a Js<'a, VirtualMachine>> {
         let graph = opts.graph.expect("init_with_module_graph requires graph");
         let init_opts = InitOptions {
             transform_options: opts.args,
@@ -4553,7 +4538,7 @@ impl VirtualMachine {
             ..Default::default()
         };
         // SAFETY: fn contract.
-        let vm = unsafe { Self::init(log, init_opts, loop_) }?;
+        let vm = unsafe { Self::init(log, init_opts) }?;
         vm.transpiler
             .with_mut(|t| t.resolver.standalone_module_graph = Some(graph));
         vm.let_heap_take_initial_module_graph(graph);
@@ -4571,11 +4556,11 @@ impl VirtualMachine {
     ///
     /// # Safety
     /// As [`Self::init`], and `worker` outlives the VM.
-    pub(crate) unsafe fn init_worker<'a>(
-        worker: &'a Loop<crate::web_worker::WebWorker>,
+    pub(crate) unsafe fn init_worker(
+        worker: &crate::web_worker::WebWorker,
         log: *mut bun_ast::Log,
         opts: Options,
-    ) -> crate::CrateResult<&'a Js<'a, VirtualMachine>> {
+    ) -> crate::CrateResult<&Js<'_, VirtualMachine>> {
         let init_opts = InitOptions {
             transform_options: opts.args,
             graph: opts.graph,
@@ -4594,7 +4579,7 @@ impl VirtualMachine {
         // [`init`] (which already wires console / event-loop / global / jsc_vm
         // / RuntimeHooks) and then patch the worker-specific fields.
         // SAFETY: fn contract.
-        let vm = unsafe { Self::init(log, init_opts, worker.as_loop()) }?;
+        let vm = unsafe { Self::init(log, init_opts) }?;
         vm.worker.set(Some(
             std::ptr::from_ref::<crate::web_worker::WebWorker>(worker).cast(),
         ));
@@ -4618,11 +4603,10 @@ impl VirtualMachine {
     ///
     /// # Safety
     /// As [`Self::init`].
-    pub unsafe fn init_bake(
+    pub unsafe fn init_bake<'a>(
         log: *mut bun_ast::Log,
         opts: Options,
-        loop_: Loop<'_>,
-    ) -> crate::CrateResult<&Js<'_, VirtualMachine>> {
+    ) -> crate::CrateResult<&'a Js<'a, VirtualMachine>> {
         let init_opts = InitOptions {
             transform_options: opts.args,
             env_loader: opts.env_loader,
@@ -4638,7 +4622,7 @@ impl VirtualMachine {
         // instead of `ZigGlobalObject__create`. Route through `init` then
         // swap the global.
         // SAFETY: fn contract.
-        let vm = unsafe { Self::init(log, init_opts, loop_) }?;
+        let vm = unsafe { Self::init(log, init_opts) }?;
         let new_global = BakeCreateProdGlobal();
         vm.global.set(new_global);
         VMHolder::set_cached_global_object(Some(new_global));
@@ -6009,12 +5993,8 @@ impl VirtualMachine {
                 let zig_exception: &mut ZigException<'_> = holder.zig_exception();
                 exception_.get_stack_trace(global_ref, &mut zig_exception.stack);
                 if zig_exception.stack.frames_len > 0 {
-                    let _ = Self::print_stack_trace(
-                        writer,
-                        &zig_exception.stack,
-                        allow_ansi_color,
-                        self.as_vm(),
-                    );
+                    let stack = self.on(&zig_exception.stack);
+                    let _ = Self::print_stack_trace(writer, stack, allow_ansi_color);
                 }
                 if let Some(list) = exception_list {
                     let origin = self.is_from_devserver.then_some(&self.origin);
@@ -6113,16 +6093,15 @@ impl VirtualMachine {
 
     pub(crate) fn print_stack_trace(
         writer: &mut dyn bun_io::Write,
-        trace: &crate::ZigStackTrace<'_>,
+        trace: &Vm<crate::ZigStackTrace<'_>>,
         allow_ansi_colors: bool,
-        vm: Vm,
     ) -> crate::CrateResult<()> {
         use crate::zig_stack_frame::LineColumn;
         let stack = trace.frames();
         if stack.is_empty() {
             return Ok(());
         }
-        let vm = vm.bun_vm();
+        let vm = trace.bun_vm();
         let origin = if vm.is_from_devserver {
             Some(&vm.origin)
         } else {
@@ -6710,20 +6689,18 @@ impl VirtualMachine {
         // Defer the GitHub-annotation print to scope exit.
         struct DeferGhAnnotation<'e, 'a> {
             run: bool,
-            exception: &'e ZigException<'a>,
-            vm: Vm<'e>,
+            exception: &'e Vm<'e, ZigException<'a>>,
         }
         impl Drop for DeferGhAnnotation<'_, '_> {
             fn drop(&mut self) {
                 if self.run {
-                    VirtualMachine::print_github_annotation(self.exception, self.vm);
+                    VirtualMachine::print_github_annotation(self.exception);
                 }
             }
         }
         let _defer_gh = DeferGhAnnotation {
             run: allow_side_effects && bun_core::Output::is_github_action(),
-            exception: &*exception,
-            vm: self.as_vm(),
+            exception: self.on(&*exception),
         };
 
         // `pretty_fmt!` takes a `const` color parameter, so route the runtime
@@ -7130,7 +7107,7 @@ impl VirtualMachine {
             }
         }
 
-        Self::print_stack_trace(writer, &exception.stack, allow_ansi_color, self.as_vm())?;
+        Self::print_stack_trace(writer, self.on(&exception.stack), allow_ansi_color)?;
 
         if !exception.browser_url.is_empty() {
             pretty_write!(
@@ -7268,7 +7245,7 @@ impl VirtualMachine {
     /// Emits a GitHub Actions `::error` annotation for the exception when running in CI.
     #[cold]
     #[inline(never)]
-    pub(crate) fn print_github_annotation(exception: &ZigException<'_>, vm: Vm) {
+    pub(crate) fn print_github_annotation(exception: &Vm<ZigException<'_>>) {
         use crate::zig_stack_frame::LineColumn;
         let name = &exception.name;
         let message = &exception.message;
@@ -7340,8 +7317,7 @@ impl VirtualMachine {
         }
 
         if top_frame.is_some() {
-            // SAFETY: per-thread VM.
-            let vm = vm.bun_vm();
+            let vm = exception.bun_vm();
             let origin = if vm.is_from_devserver {
                 Some(&vm.origin)
             } else {

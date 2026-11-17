@@ -51,9 +51,7 @@ use core::ptr::NonNull;
 use core::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::thread::JoinHandle;
 
-use bun_core::{
-    EncodedSlice, Loop, String as BunString, Timespec, TimespecMockMode, WTFStringImpl,
-};
+use bun_core::{EncodedSlice, String as BunString, Timespec, TimespecMockMode, WTFStringImpl};
 use bun_event_loop::EventLoopTimer::{EventLoopTimer, State as TimerState, Tag as TimerTag};
 use bun_io::KeepAlive;
 
@@ -920,9 +918,7 @@ impl WebWorker {
                 graph: crate::virtual_machine::standalone_module_graph(),
                 ..Default::default()
             };
-            // SAFETY: the top of this thread. `shutdown`, which frees the VM, comes after this block.
-            let this = unsafe { Loop::assume(&dot_slash) }.on(self);
-            let vm = match this.start_vm(&raw mut log, options, proxy_env_slots) {
+            let vm = match self.start_vm(&raw mut log, options, proxy_env_slots) {
                 Ok(vm) => vm,
                 Err(err) => {
                     bun_core::output::panic(format_args!(
@@ -940,7 +936,7 @@ impl WebWorker {
 
     /// Phase 1: build the worker's VirtualMachine and publish `vm`.
     fn start_vm(
-        self: &Loop<Self>,
+        &self,
         log: *mut bun_ast::Log,
         options: virtual_machine::Options,
         proxy_env_slots: jsc::rare_data::ProxyEnvSlots,
@@ -953,7 +949,8 @@ impl WebWorker {
         if self.runs_apart_from_compiled_program {
             crate::compiled_program::use_no_image_on_this_thread(&self.unresolved_specifier);
         }
-        // SAFETY: once, at the start of this thread, which holds a ref on `self`. `run` owns `log`.
+        // SAFETY: once, at the top of this thread, which holds a ref on `self`. `run` owns `log`, and is done with
+        // the VM before `shutdown` frees it.
         let vm = unsafe { VirtualMachine::init_worker(self, log, options) }?;
         *vm.proxy_env_storage.lock() = proxy_env_slots;
         VirtualMachine::set_is_main_thread_vm(false);
@@ -1238,8 +1235,7 @@ impl WebWorker {
             // SAFETY: this thread's VM, whose API lock `run` took; no other
             // thread holds a pointer to it (they only ever held its handle). The top of
             // this thread, whose other proofs have ended.
-            exit_code =
-                i32::from(unsafe { VirtualMachine::exit_and_free(vm_ptr, Js::assume(&vm_ptr)) });
+            exit_code = i32::from(unsafe { VirtualMachine::exit_and_free(vm_ptr) });
         }
         log!(
             "[{}] shutdown: VirtualMachine destroyed",

@@ -13,7 +13,7 @@ use core::ptr::NonNull;
 
 use crate::dns_jsc::Order as DnsOrder;
 use bun_core::EncodedSlice;
-use bun_core::{Global, Loop, Output};
+use bun_core::{Global, Output};
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{self as jsc, Js};
 
@@ -79,7 +79,7 @@ impl ReplCommand {
             ..Default::default()
         };
         // SAFETY: the main thread runs one command, whose one VM this is until `exit`. `ctx.log` is never freed.
-        let vm = unsafe { VirtualMachine::init(ctx.log, options, Loop::assume(&())) }?;
+        let vm = unsafe { VirtualMachine::init(ctx.log, options) }?;
 
         vm.preload.set(core::mem::take(&mut ctx.preloads));
         vm.dns_result_order.set(dns_order as u8);

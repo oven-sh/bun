@@ -891,7 +891,7 @@ impl FileSink {
     pub(crate) fn init(fd: Fd, event_loop_handle: impl Into<EventLoopHandle>) -> RefPtr<FileSink> {
         let this = RefPtr::new(FileSink::new(event_loop_handle.into(), fd));
         let owner = Owner::new(PollTag::FileSink, this.as_ptr().cast());
-        // SAFETY: `owner` points to the heap allocation that holds this writer.
+        // SAFETY: `owner` points to the heap allocation that holds this writer. Starting it takes the handler, a `Js`.
         unsafe { this.writer.set_owner(owner) };
         this
     }
@@ -1440,10 +1440,8 @@ impl FileSink {
     fn detach_js_controller(&self, global_this: &JSGlobalObject) {
         if let streams::SourceHandle::JSController(cell) = self.source.get() {
             self.source.set(streams::SourceHandle::None);
-            crate::dispatch::fold(
-                global_this.js(),
-                ReadableSinkController::detach(cell, global_this),
-            );
+            let detached = ReadableSinkController::detach(cell, global_this);
+            crate::dispatch::fold(global_this.js(), detached);
         }
     }
 }
@@ -1621,10 +1619,8 @@ impl FileSink {
             bun_jsc::js_promise::Status::Rejected => {
                 // These don't ref().
                 let result = promise.result(global_this.vm());
-                crate::dispatch::fold(
-                    global_this.js(),
-                    this.handle_reject_stream(global_this, result),
-                );
+                let handled = this.handle_reject_stream(global_this, result);
+                crate::dispatch::fold(global_this.js(), handled);
             }
         }
 

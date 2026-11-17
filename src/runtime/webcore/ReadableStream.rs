@@ -325,7 +325,6 @@ impl ReadableStream {
         set_source: impl FnOnce(streams::SourceHandle),
     ) -> NativeWireResult {
         use streams::{SourceHandle, Start, StreamError, StreamResult, Writable};
-        let js = global.js();
 
         if let Some(byte_stream) = self.ptr.bytes() {
             if byte_stream.sink.get().is_none() {
@@ -336,7 +335,7 @@ impl ReadableStream {
                 byte_stream.parent_const().set_sink_owner(owner_cell);
                 byte_stream.sink.set(sink);
                 byte_stream.sink_paused.set(false);
-                js.on(byte_stream).signal_consumer_attached();
+                global.on(byte_stream).signal_consumer_attached();
 
                 if let Some(err) = byte_stream.take_pending_error() {
                     byte_stream.detach_sink(Some(&err));
@@ -351,7 +350,7 @@ impl ReadableStream {
                     } else {
                         StreamResult::Owned(buffered)
                     };
-                    match js.on(&sink).write(&chunk) {
+                    match global.on(&sink).write(&chunk) {
                         Writable::Backpressure(_) => byte_stream.sink_paused.set(true),
                         Writable::Done | Writable::Err(_) => {
                             byte_stream.detach_sink(None);
@@ -367,7 +366,7 @@ impl ReadableStream {
                 // Wake the producer after the older bytes are in the sink;
                 // any synchronous output routes through `on_data`.
                 if !byte_stream.sink_paused.get() {
-                    js.on(byte_stream).signal_drained();
+                    global.on(byte_stream).signal_drained();
                 }
                 return NativeWireResult::Wired;
             }
@@ -389,7 +388,7 @@ impl ReadableStream {
                         return NativeWireResult::EndedInline(Some(err));
                     }
                     Some(Start::OwnedAndDone(bytes)) => {
-                        let _ = js.on(&sink).write(&StreamResult::OwnedAndDone(bytes));
+                        let _ = global.on(&sink).write(&StreamResult::OwnedAndDone(bytes));
                         file_reader.parent_const().end_locked_stream(None);
                         return NativeWireResult::EndedInline(None);
                     }
@@ -399,7 +398,7 @@ impl ReadableStream {
                 file_reader.parent_const().set_sink_owner(owner_cell);
                 file_reader.sink.set(sink);
                 file_reader.sink_paused.set(true);
-                js.on(file_reader).pull_into_sink();
+                global.on(file_reader).pull_into_sink();
                 return NativeWireResult::Wired;
             }
         }
@@ -1081,14 +1080,12 @@ impl<C: SourceContext> NewSource<C> {
         };
         let global_this = self.global_this();
         let reason = err.map_or(JSValue::ZERO, |err| err.to_js(global_this));
-        crate::dispatch::fold(
-            global_this.js(),
-            bun_jsc::cpp::Bun__NativeStreamSource__endLockedStream(
-                this_jsvalue,
-                global_this,
-                reason,
-            ),
+        let ended = bun_jsc::cpp::Bun__NativeStreamSource__endLockedStream(
+            this_jsvalue,
+            global_this,
+            reason,
         );
+        crate::dispatch::fold(global_this.js(), ended);
     }
 
     pub fn increment_count(&self) {
@@ -1215,9 +1212,7 @@ impl<C: SourceContext> NewSource<C> {
         let Some(mut buffer) = view.as_array_buffer(global_this) else {
             return Ok(JSValue::UNDEFINED);
         };
-        let result = global_this
-            .on(&self.context)
-            .on_pull(buffer.slice_mut(), view);
+        let result = cx.on(&self.context).on_pull(buffer.slice_mut(), view);
         Self::process_result(this_value.to_js(), &cx, flags.to_js(), result)
     }
 
@@ -1227,7 +1222,7 @@ impl<C: SourceContext> NewSource<C> {
         self.global_this
             .set(Some(bun_ptr::BackRef::new(global_this)));
         self.reader_context.set(Some(cx.context().id()));
-        match global_this.on(&self.context).on_start() {
+        match cx.on(&self.context).on_start() {
             streams::Start::Empty => Ok(JSValue::js_number(0.0)),
             streams::Start::Ready => Ok(JSValue::js_number(16384.0)),
             streams::Start::ChunkSize(size) => Ok(JSValue::js_number(size as f64)),

@@ -1,5 +1,4 @@
 use core::cell::Cell;
-use core::ffi::c_void;
 use core::ptr;
 use core::sync::atomic::{AtomicUsize, Ordering};
 
@@ -329,24 +328,19 @@ impl WindowsNamedPipeContext {
         .cast();
 
         // named_pipe owns the pipe (PipeWriter owns the pipe and will close and deinit it)
-        // Non-capturing closures coerce to `fn(*mut c_void, …)`; each casts the
-        // erased ctx ptr back to `*mut Self` and forwards it RAW — the callee
-        // must not form `&mut Self` (see the doc-comment on the `on_*` block
-        // above for the Stacked-Borrows constraint vs the caller's
-        // `&mut WindowsNamedPipe`).
         let handlers = NamedPipeHandlers {
-            ctx: this.cast::<c_void>(),
-            on_open: |p, js| Self::on_open(p.cast::<Self>(), js),
-            on_data: |p, d, js| Self::on_data(p.cast::<Self>(), d, js),
-            on_handshake: |p, ok, err, js| Self::on_handshake(p.cast::<Self>(), ok, err, js),
-            on_end: |p, js| Self::on_end(p.cast::<Self>(), js),
-            on_writable: |p, js| Self::on_writable(p.cast::<Self>(), js),
-            on_error: |p, e, js| Self::on_error(p.cast::<Self>(), &e, js),
-            on_timeout: |p, js| Self::on_timeout(p.cast::<Self>(), js),
-            on_close: |p, js| Self::on_close(p.cast::<Self>(), js),
-            on_session: |p, d, js| Self::on_session(p.cast::<Self>(), d, js),
-            on_keylog: |p, d, js| Self::on_keylog(p.cast::<Self>(), d, js),
-            server_identity: |p, ssl| Self::server_identity(p.cast::<Self>(), ssl),
+            ctx: this,
+            on_open: Self::on_open,
+            on_data: Self::on_data,
+            on_handshake: Self::on_handshake,
+            on_end: Self::on_end,
+            on_writable: Self::on_writable,
+            on_error: |p, e, js| Self::on_error(p, &e, js),
+            on_timeout: Self::on_timeout,
+            on_close: Self::on_close,
+            on_session: Self::on_session,
+            on_keylog: Self::on_keylog,
+            server_identity: Self::server_identity,
         };
         let named_pipe = WindowsNamedPipe::new(handlers, vm);
         // SAFETY: `this` is freshly allocated uninit storage exclusively owned here; we write
@@ -429,7 +423,7 @@ impl WindowsNamedPipeContext {
             let slice_z = ZStr::nul_terminate(&mut path_buf, len);
             named_pipe.connect(slice_z, ssl_config, owned_ctx)
         }
-        .inspect_err(|_| Self::fail_open(this, named_pipe.js()))?;
+        .inspect_err(|_| Self::fail_open(this, cx.js()))?;
 
         Ok(this.named_pipe.root.get())
     }

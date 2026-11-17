@@ -3,11 +3,10 @@
 //! - `cd -` will put the user in the previous directory
 
 use bstr::BStr;
-use bun_core::Loop;
 use bun_sys::E;
 
 use crate::shell::builtin::Builtin;
-use crate::shell::interpreter::{Interpreter, NodeId};
+use crate::shell::interpreter::{Interpreter, Loop, NodeId};
 use crate::shell::yield_::Yield;
 
 pub(crate) fn start(interp: &Loop<Interpreter>, cmd: NodeId) -> Yield {

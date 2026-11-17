@@ -1394,7 +1394,7 @@ fn get_valkey_default_client(global_this: &JSGlobalObject, _: &JSObject) -> JSVa
         }
     };
 
-    JSValkeyClient::wrap(valkey, global_this).to_js()
+    crate::valkey_jsc::js_valkey::js::to_js(valkey, global_this)
 }
 
 fn get_is_standalone_executable(global_this: &JSGlobalObject, _: &JSObject) -> JSValue {

@@ -200,7 +200,7 @@ impl ClientSession {
 
     /// The JS thread can pause a body after the timer was armed. `resume_receive` arms it again.
     pub(crate) fn outlives_timeout(&self) -> bool {
-        !self.ping_cap_armed && !self.streams.is_empty() && !self.waits_for_origin()
+        !self.awaiting_ping_ack && !self.streams.is_empty() && !self.waits_for_origin()
     }
 
     /// Socket onTimeout entry point; see [`Self::on_close`]. When the wait for

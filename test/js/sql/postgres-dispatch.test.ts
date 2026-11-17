@@ -177,6 +177,19 @@ const groups: Record<string, Record<string, object>> = {
       sameBackend: true,
     },
   },
+  // A flush that finds a part of a message in the buffer ends the connection, after the replies to what is ahead.
+  "the Bind runs the event loop": {
+    "a Bind waits for another connection": { outer: ok({ a: "late", b: "y" }), sameBackend: true },
+    "a Bind waits for a query that it starts": { outer: closed, nested: closed, afterwards },
+    "the Bind of a retry waits for a query that it starts": { outer: closed, nested: closed, afterwards },
+    "a Bind waits for the retry of the query ahead": { ahead: closed, outer: closed, afterwards },
+    "a Bind waits for the query ahead": { ahead: ok({ a: "p", b: "q" }), outer: closed, afterwards },
+    "a Bind waits for the first of two queries ahead": {
+      ahead: [ok({ a: "p", b: "q" }), ok({ pg_advisory_xact_lock: "", x: "blocked" })],
+      outer: closed,
+      afterwards,
+    },
+  },
   "the conversion closes the connection": {
     "close() from a conversion, first execution": { outer: closed, afterwards },
     "close() from a conversion, prepared statement": { outer: closed, afterwards },
@@ -284,6 +297,14 @@ test.concurrent("wire order equals queue order", async () => {
   });
 });
 
+// No part of the Bind goes out. The mock does not hang up at the Terminate. The next query gets a new connection.
+const bindDropped = (result: object) => ({
+  ahead: ok({ v: "ahead" }),
+  result,
+  next: ok({ v: "next" }),
+  frames: ["B(ahead,y,1)", "E", "S", "X", "P", "D", "S", "B(next,y,1)", "E", "S"],
+});
+
 // User code that runs while the client writes a request or resolves one.
 test.concurrent.each(
   Object.entries({
@@ -292,11 +313,9 @@ test.concurrent.each(
       next: ok({ v: "next" }),
       frames: ["B(next,y,1)", "E", "S"],
     },
-    "a Bind waits for the query ahead": {
-      ahead: ok({ v: "ahead" }),
-      result: ok({ v: "x" }),
-      frames: ["B(ahead,y,1)", "E", "S", "B(x,y,1)", "E", "S"],
-    },
+    "a Bind waits for the query ahead": bindDropped(closed),
+    "a Bind waits for the query ahead, then cancels its own": bindDropped({ err: "ERR_POSTGRES_QUERY_CANCELLED" }),
+    "a Bind waits for the query ahead, then throws": bindDropped({ err: "boom" }),
     "a ParameterDescription comes in during the conversion": { result: ok({ v: "x" }) },
     "a reply comes in while the query ahead resolves": { results: [ok({ v: "first" }), ok({ v: "second" })] },
   }),

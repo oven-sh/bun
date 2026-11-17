@@ -292,6 +292,10 @@ impl<R: Deref, E, C> Pipeline<R, E, C> {
         !self.is_empty() || self.cancel_in_flight
     }
 
+    pub fn has_written(&self) -> bool {
+        self.written != 0
+    }
+
     /// Also while a request that user code has seen rejected can still change it.
     pub fn in_transaction(&self) -> bool {
         self.transaction_status != b'I' || self.head().is_ok_and(Entry::is_rejected)

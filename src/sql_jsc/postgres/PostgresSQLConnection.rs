@@ -88,7 +88,7 @@ pub struct PostgresSQLConnection {
     read_buffer: JsCell<OffsetByteList>,
     /// While set, a read from a nested event loop tick only appends to `read_buffer`.
     defer_reads: Cell<bool>,
-    advancing: Cell<bool>,
+    writer: Cell<Writer>,
 
     pub(crate) poll_ref: KeepAlive,
     global_object: BackRef<JSGlobalObject>,
@@ -123,14 +123,17 @@ struct InternedChannel {
     js: Strong,
 }
 
-/// While it lives, `advance()` returns at once: converting a parameter runs user code, and a query
-/// which that code starts here is written by the `advance()` that is running.
-struct Advancing<'a>(&'a PostgresSQLConnection);
-
-impl Drop for Advancing<'_> {
-    fn drop(&mut self) {
-        self.0.advancing.set(false);
-    }
+#[derive(Clone, Copy)]
+enum Writer {
+    Idle,
+    /// A query that user code starts now is written by the `advance()` that is running.
+    Advancing,
+    /// The request at the end of the write buffer is not complete.
+    Encoding {
+        start: usize,
+    },
+    /// That request was dropped. The server answers those ahead of it and hangs up.
+    Terminated,
 }
 
 bun_event_loop::impl_timer_owner!(PostgresSQLConnection;
@@ -196,6 +199,29 @@ impl PostgresSQLConnection {
     fn write<T>(&self, f: impl FnOnce(&mut Vec<u8>) -> T) -> T {
         self.write_buffer
             .with_mut(|buffer| f(&mut buffer.byte_list))
+    }
+
+    /// Adds to the request that `write_next` began. `ConnectionClosed`: it is not in the buffer any more.
+    #[inline]
+    pub(crate) fn encode_more<T>(
+        &self,
+        f: impl FnOnce(&mut Vec<u8>) -> Result<T, AnyPostgresError>,
+    ) -> Result<T, AnyPostgresError> {
+        match self.writer.get() {
+            Writer::Encoding { .. } => self.write(f),
+            _ => Err(AnyPostgresError::ConnectionClosed),
+        }
+    }
+
+    /// User code inside a Bind runs the event loop. It may wait for a request that cannot be written before it returns.
+    fn abandon_incomplete_request(&self) {
+        if let Writer::Encoding { start } = self.writer.get() {
+            self.writer.set(Writer::Terminated);
+            self.write(|out| {
+                out.truncate(start);
+                out.extend_from_slice(&frontend::TERMINATE);
+            });
+        }
     }
 }
 
@@ -366,6 +392,7 @@ impl PostgresSQLConnection {
     }
 
     fn flush_data(&self) {
+        self.abandon_incomplete_request();
         // we know we still have backpressure so just return we will flush later
         if self.flags.get().contains(ConnectionFlags::HAS_BACKPRESSURE) {
             debug!("flushData: has backpressure");
@@ -857,7 +884,7 @@ fn open(
         write_buffer: JsCell::new(OffsetByteList::default()),
         read_buffer: JsCell::new(OffsetByteList::default()),
         defer_reads: Cell::new(false),
-        advancing: Cell::new(false),
+        writer: Cell::new(Writer::Idle),
         poll_ref: KeepAlive::default(),
         global_object: BackRef::new(global_object),
         vm: BackRef::new(VirtualMachine::get()),
@@ -1046,6 +1073,7 @@ impl PostgresSQLConnection {
             _ => self.fail(b"Connection closed", AnyPostgresError::ConnectionClosed),
         }
         self.unregister_auto_flusher();
+        self.abandon_incomplete_request();
         self.write_buffer.with_mut(|b| b.clear_and_free());
     }
 
@@ -1295,14 +1323,17 @@ impl PostgresSQLConnection {
 
     /// The only place that writes a request.
     pub(crate) fn advance(&self) {
-        if self.advancing.replace(true) {
+        let Writer::Idle = self.writer.get() else {
             return;
-        }
-        let _advancing = Advancing(self);
+        };
+        self.writer.set(Writer::Advancing);
         while self.is_ready()
             && !self.flags.get().contains(ConnectionFlags::HAS_BACKPRESSURE)
             && self.write_next()
         {}
+        if let Writer::Advancing = self.writer.get() {
+            self.writer.set(Writer::Idle);
+        }
     }
 
     /// `false`: the first unwritten request has to wait.
@@ -1332,41 +1363,28 @@ impl PostgresSQLConnection {
                 let _ = self.write(|out| frontend::close_statement(out, &evicted.name));
             }
         }
-        // An accessor can wait for the reply to a request that is still in the write buffer.
-        let leave_buffer = match step {
-            Step::Bind if !self.write_buffer.get().is_empty() => {
-                PostgresRequest::may_have_accessors(self.global(), values)
+        let start = self.write(|out| out.len());
+        self.writer.set(Writer::Encoding { start });
+        match self.encode(&request, &statement, values, step) {
+            Ok(()) => {
+                self.writer.set(Writer::Advancing);
+                if !self.pipeline.with_mut(|it| it.wrote(&request, step)) {
+                    self.write(|out| out.truncate(start));
+                }
+                true
             }
-            _ => Ok(false),
-        };
-        // Out of reach of user code, which must not flush a part of a message.
-        let mut batch = match leave_buffer {
-            Ok(true) => OffsetByteList {
-                head: 0,
-                byte_list: Vec::with_capacity(256),
-            },
-            Ok(false) => self.write_buffer.take(),
-            Err(err) => return self.fail_write(err),
-        };
-        let out = &mut batch.byte_list;
-        let start = out.len();
-        let result = self.encode(out, &request, &statement, values, step);
-        if result.is_ok() && !self.pipeline.with_mut(|it| it.wrote(&request, step)) {
-            out.truncate(start);
-        }
-        self.write_buffer.with_mut(|ahead| match ahead.is_empty() {
-            true => *ahead = batch,
-            false => ahead.byte_list.extend_from_slice(batch.remaining()),
-        });
-        match result {
-            Ok(()) => true,
+            Err(err @ AnyPostgresError::ConnectionClosed) => {
+                if !self.pipeline.get().has_written() {
+                    self.fail(b"Connection closed", err);
+                }
+                false
+            }
             Err(err) => self.fail_write(err),
         }
     }
 
     fn encode(
         &self,
-        out: &mut Vec<u8>,
         request: &PostgresSQLQuery,
         statement: &PostgresSQLStatement,
         values: JSValue,
@@ -1383,22 +1401,26 @@ impl PostgresSQLConnection {
         };
         let formats = match step {
             // Alone: a Sync elicits a second ReadyForQuery, a Flush stops the server's idle timers.
-            Step::Query => return frontend::query(out, request.query.to_utf8().slice()),
+            Step::Query => {
+                return self.write(|out| frontend::query(out, request.query.to_utf8().slice()));
+            }
             Step::Parse { close, bind } => {
-                if close {
-                    frontend::close_statement(out, &statement.name)?;
-                }
-                parse(out)?;
-                frontend::describe_statement(out, &statement.name)?;
+                self.write(|out| {
+                    if close {
+                        frontend::close_statement(out, &statement.name)?;
+                    }
+                    parse(out)?;
+                    frontend::describe_statement(out, &statement.name)
+                })?;
                 if !bind {
-                    out.extend_from_slice(&frontend::SYNC);
+                    self.write(|out| out.extend_from_slice(&frontend::SYNC));
                     return Ok(());
                 }
                 ResultFormats::Text
             }
             // PgBouncer in transaction mode may give this batch to another backend.
             Step::Bind if !statement.is_named() => {
-                parse(out)?;
+                self.write(parse)?;
                 ResultFormats::Text
             }
             // A statement without parameters is prepared before its RowDescription arrives.
@@ -1409,7 +1431,7 @@ impl PostgresSQLConnection {
             },
         };
         request.formats.set(formats);
-        PostgresRequest::bind_and_execute(out, self.global(), statement, values, formats)
+        PostgresRequest::bind_and_execute(self, self.global(), statement, values, formats)
     }
 
     /// Stops after a notification: a listener can run the event loop, which reuses the receive buffer.

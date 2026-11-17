@@ -127,7 +127,7 @@ async function withHole(act: (query: SQL.Query<any>, buffered?: Promise<unknown>
   const buffered = ahead ? settle(statement(["ahead", "y", "1"]).execute()) : undefined;
   const result = await settle(query);
   delete (Array.prototype as any)[1];
-  const next = ahead ? undefined : await settle(statement(["next", "y", "1"]));
+  const next = await settle(statement(["next", "y", "1"]));
   return { ahead: await buffered, result, next, frames };
 }
 
@@ -139,6 +139,13 @@ const scenarios: Record<string, () => Promise<unknown>> = {
   "prepare: false": () => run({ prepare: false }, false),
   "cancel() in the middle of a Bind": () => withHole(query => query.cancel()),
   "a Bind waits for the query ahead": () => withHole((_, buffered) => runEventLoop(buffered), true),
+  "a Bind waits for the query ahead, then cancels its own": () =>
+    withHole((query, buffered) => (runEventLoop(buffered), query.cancel()), true),
+  "a Bind waits for the query ahead, then throws": () =>
+    withHole((_, buffered) => {
+      runEventLoop(buffered);
+      throw new RangeError("boom");
+    }, true),
   async "a ParameterDescription comes in during the conversion"() {
     await using sql = connect();
     await sql`select ${text("warm")} as v, ${text("y")}`;

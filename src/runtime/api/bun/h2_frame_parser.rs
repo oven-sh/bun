@@ -3984,6 +3984,7 @@ impl H2FrameParser {
         // Before the write: a synchronous JS transport handles the peer's answer inside it.
         let _ = self.engine.streams.apply(&stream, StreamEvent::SendHeaders);
         stream.sent_final_headers.set(!informational);
+        stream.final_headers_end_stream.set(end_stream);
         if !self.engine.is_server.get() {
             self.hold_answers_until_caller_returns();
         }

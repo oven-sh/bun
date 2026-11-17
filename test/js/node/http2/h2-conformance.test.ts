@@ -631,6 +631,42 @@ describe.each(["a stream slot", "the socket"])("a request that waits for %s", wa
   });
 });
 
+/** A server session on a `Transport`, and the stream of a GET that it has read. */
+async function acceptGet() {
+  const written: Buffer[] = [];
+  const transport = new Transport(chunk => written.push(chunk));
+  const session = http2.performServerHandshake(transport);
+  const opened = once(session, "stream");
+  transport.push(
+    Buffer.concat([
+      PREFACE,
+      encodeFrame(FrameType.SETTINGS, 0, 0),
+      encodeFrame(FrameType.HEADERS, 0x5, 1, requestHeaderBlock("GET")),
+    ]),
+  );
+  const stream: http2.ServerHttp2Stream = (await opened)[0];
+  await new Promise(setImmediate);
+  return { transport, session, stream, written, [Symbol.dispose]: () => session.destroy() };
+}
+
+test.each<[string, (stream: http2.ServerHttp2Stream) => void]>([
+  ["write()", stream => stream.write("late")],
+  ["end(data)", stream => stream.end("late")],
+  ["respond()", stream => stream.respond({}, { endStream: true })],
+])("%s from the write of headers that end the stream sends no DATA", async (_, again) => {
+  using ctx = await acceptGet();
+  ctx.transport.onNextWrite = () => again(ctx.stream);
+  ctx.stream.respond({ long: Buffer.alloc(30_000, "~").toString() }, { endStream: true });
+  expect(ctx.transport.onNextWrite).toBeUndefined();
+  await once(ctx.stream, "close");
+  await new Promise(setImmediate);
+  const types: number[] = [];
+  for (let rest = Buffer.concat(ctx.written); rest.length; rest = rest.subarray(9 + rest.readUIntBE(0, 3))) {
+    if (rest.readUInt32BE(5) === 1 && rest[3] !== FrameType.CONTINUATION) types.push(rest[3]);
+  }
+  expect(types).toEqual([FrameType.HEADERS]);
+});
+
 test.each<[string, string[]]>([
   ["request()", ["HEADERS 1", "RST_STREAM 1"]],
   ["a queued request", ["HEADERS 1"]],

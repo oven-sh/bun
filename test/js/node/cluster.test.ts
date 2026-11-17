@@ -2424,6 +2424,48 @@ test
     expect({ stdout, stderr, exitCode }).toEqual({ stdout: "listening false\nexit 0\n", stderr: "", exitCode: 0 });
   });
 
+test.concurrent.each(["http", "net"])(
+  "an http worker listens on the port that its %s server got for port 0 and closed",
+  async first => {
+    using dir = tempDir("cluster-http-free-port", {
+      "fixture.js": `
+        const cluster = require("node:cluster");
+        const fs = require("node:fs");
+        if (cluster.isPrimary) {
+          const worker = cluster.fork();
+          worker.once("message", () => {
+            worker.send("busy");
+            // Reads no message until the worker has called close() and listen().
+            while (!fs.existsSync("called"));
+            worker.once("message", message => (console.log(message), worker.disconnect()));
+          });
+        } else {
+          const probe = require("node:${first}").createServer().listen(0, "127.0.0.1", () => process.send("ready"));
+          process.once("message", () => {
+            const { port } = probe.address();
+            probe.close(() => {
+              require("node:http")
+                .createServer()
+                .on("error", error => process.send(error.code))
+                .listen(port, "127.0.0.1", () => process.send("listening"));
+              fs.writeFileSync("called", "");
+            });
+          });
+        }
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "fixture.js"],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "listening\n", stderr: "", exitCode: 0 });
+  },
+);
+
 test.skipIf(!isIPv6()).concurrent.each([
   ["the primary binds for it", {}],
   ["it binds for itself", { exclusive: true }],

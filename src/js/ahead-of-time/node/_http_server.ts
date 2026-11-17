@@ -1,5 +1,5 @@
 // What the compiler reads in place of src/js/node/_http_server.ts, which `bun run` evaluates. The two do the same.
-// Written against that file with the SHA-256 28025254e5fa4302b39a5e5538aa45f1e027fbe57089f95728f9cdc44985ebec.
+// Written against that file with the SHA-256 3a4dfb72b6cd2fe66ab4da8794428db8c77d1a27cd81744fffb556b5f128dc41.
 // When that file changes, bring the change here and write the new hash: test/internal/second-texts-of-modules.test.ts.
 
 // Hardcoded module "node:_http_server"
@@ -1317,7 +1317,7 @@ Server.prototype.listen = function (this: $Node.HttpServer) {
         return this;
       }
 
-      server[kClusterListeningId]++;
+      const listeningId = ++server[kClusterListeningId];
       server.once("listening", () => {
         // No channel (NODE_UNIQUE_ID inherited by a plain child, or already disconnected): nothing to notify.
         if (!process.connected) return;
@@ -1336,8 +1336,19 @@ Server.prototype.listen = function (this: $Node.HttpServer) {
         process.send!(message, undefined, kInternalSendOptions);
       });
 
-      server[kRealListen](tls, port as number | undefined, host, socketPath, true, ipv6Only, fd);
-      if (!exclusive) server[kClusterHandle] = cluster!._trackServer(server);
+      if (exclusive) {
+        server[kRealListen](tls, port as number | undefined, host, socketPath, true, ipv6Only, fd);
+        return this;
+      }
+      cluster!._trackServer(server, track => {
+        if (listeningId !== server[kClusterListeningId] || cluster!.worker?.exitedAfterDisconnect) return;
+        try {
+          server[kRealListen](tls, port as number | undefined, host, socketPath, true, ipv6Only, fd);
+          server[kClusterHandle] = track();
+        } catch (err) {
+          emitListenError(server, err, port as number | undefined, host, socketPath, fd);
+        }
+      });
     }
   } catch (err) {
     emitListenError(server, err, port as number | undefined, host, socketPath, fd);

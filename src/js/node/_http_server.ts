@@ -878,7 +878,7 @@ Server.prototype.listen = function () {
       return this;
     }
 
-    server[kClusterListeningId]++;
+    const listeningId = ++server[kClusterListeningId];
     server.once("listening", () => {
       // No channel (NODE_UNIQUE_ID inherited by a plain child, or already disconnected): nothing to notify.
       if (!process.connected) return;
@@ -897,8 +897,19 @@ Server.prototype.listen = function () {
       process.send!(message, undefined, kInternalSendOptions);
     });
 
-    server[kRealListen](tls, port, host, socketPath, true, ipv6Only, fd);
-    if (!exclusive) server[kClusterHandle] = cluster._trackServer(server);
+    if (exclusive) {
+      server[kRealListen](tls, port, host, socketPath, true, ipv6Only, fd);
+      return this;
+    }
+    cluster._trackServer(server, track => {
+      if (listeningId !== server[kClusterListeningId] || cluster.worker?.exitedAfterDisconnect) return;
+      try {
+        server[kRealListen](tls, port, host, socketPath, true, ipv6Only, fd);
+        server[kClusterHandle] = track();
+      } catch (err) {
+        emitListenError(server, err, port, host, socketPath, fd);
+      }
+    });
   } catch (err) {
     emitListenError(server, err, port, host, socketPath, fd);
   }

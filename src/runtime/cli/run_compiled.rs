@@ -649,10 +649,7 @@ fn create_shared_memory() -> Option<File> {
 
 #[cfg(target_os = "freebsd")]
 fn create_shared_memory() -> Option<File> {
-    // SAFETY: `SHM_ANON` stands in for a name and is not read.
-    let descriptor =
-        unsafe { libc::shm_open(libc::SHM_ANON, libc::O_RDWR | libc::O_CLOEXEC, 0o600) };
-    (descriptor >= 0).then(|| File::from_fd(Fd::from_native(descriptor)))
+    bun_sys::freebsd::create_shared_memory().map(File::from_fd)
 }
 
 #[cfg(unix)]
@@ -752,8 +749,7 @@ fn copy_into_mapping_of_empty_file(descriptor: Fd, parts: &[&[u8]]) -> bool {
         return false;
     }
     // A store to a page that there is no room for ends the process. With the room taken first, it is an error of this call.
-    // SAFETY: the system checks the descriptor and the range.
-    if unsafe { libc::fallocate(descriptor.native(), 0, 0, length as libc::off_t) } != 0 {
+    if !bun_sys::linux::fallocate(descriptor.native(), 0, length as i64) {
         return false;
     }
     let (access, flags) = (libc::PROT_READ | libc::PROT_WRITE, libc::MAP_SHARED);

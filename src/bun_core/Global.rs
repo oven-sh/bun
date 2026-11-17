@@ -751,18 +751,12 @@ pub fn raise_ignoring_panic_handler_raw(sig: c_int) -> ! {
     if CRASH_HANDLER_INSTALLED.load(Ordering::Relaxed) && !crate::env::ENABLE_ASAN {
         let handle = WINDOWS_SEGFAULT_HANDLE.swap(core::ptr::null_mut(), Ordering::Relaxed);
         if !handle.is_null() {
-            // `Handle` is an opaque cookie returned by
-            // `AddVectoredExceptionHandler`; the kernel validates it and
-            // returns 0 on a stale/garbage value — no memory-safety
-            // preconditions, so `safe fn` discharges the link-time proof.
-            unsafe extern "system" {
-                safe fn RemoveVectoredExceptionHandler(Handle: *mut core::ffi::c_void) -> u32;
-                safe fn SetUnhandledExceptionFilter(
-                    f: Option<unsafe extern "system" fn(*mut core::ffi::c_void) -> i32>,
-                ) -> Option<unsafe extern "system" fn(*mut core::ffi::c_void) -> i32>;
+            use crate::windows_sys::kernel32;
+            // SAFETY: the handlers are the crash handler's, and nothing relies on them to resume.
+            unsafe {
+                let _ = kernel32::RemoveVectoredExceptionHandler(handle);
+                let _ = kernel32::SetUnhandledExceptionFilter(None);
             }
-            let _ = RemoveVectoredExceptionHandler(handle);
-            let _ = SetUnhandledExceptionFilter(None);
         }
     }
 

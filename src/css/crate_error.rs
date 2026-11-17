@@ -8,21 +8,4 @@ pub enum Error {
     UnsupportedCSSTarget,
 }
 
-impl Error {
-    #[allow(clippy::trivially_copy_pass_by_ref)]
-    pub fn name(&self) -> &'static str {
-        match self {
-            Self::Overflow => "Overflow",
-            Self::InvalidCharacter => "InvalidCharacter",
-            Self::UnsupportedCSSTarget => "UnsupportedCSSTarget",
-        }
-    }
-}
-
-impl bun_core::output::ErrName for Error {
-    fn name(&self) -> &[u8] {
-        (*self).name().as_bytes()
-    }
-}
-
 pub type Result<T, E = Error> = core::result::Result<T, E>;

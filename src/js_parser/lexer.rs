@@ -76,11 +76,9 @@ impl JSXPragma {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, strum::IntoStaticStr)]
 pub enum Error {
-    UTF8Fail,
     OutOfMemory,
     SyntaxError,
     UnexpectedSyntax,
-    ParserError,
     Backtrack,
 }
 bun_core::impl_tag_error!(Error);

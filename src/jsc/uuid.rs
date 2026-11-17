@@ -211,17 +211,6 @@ impl UUID7 {
     pub fn print(self, buf: &mut [u8; 36]) {
         print_bytes(&self.to_bytes(), buf);
     }
-
-    pub(crate) fn to_uuid(self) -> UUID {
-        let bytes: [u8; 16] = self.to_bytes();
-        UUID { bytes }
-    }
-}
-
-impl fmt::Display for UUID7 {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        self.to_uuid().fmt(f)
-    }
 }
 
 /// UUID v5 implementation using SHA-1 hashing
@@ -297,16 +286,5 @@ impl UUID5 {
 
     pub fn print(self, buf: &mut [u8; 36]) {
         print_bytes(&self.to_bytes(), buf);
-    }
-
-    pub(crate) fn to_uuid(self) -> UUID {
-        let bytes: [u8; 16] = self.to_bytes();
-        UUID { bytes }
-    }
-}
-
-impl fmt::Display for UUID5 {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        self.to_uuid().fmt(f)
     }
 }

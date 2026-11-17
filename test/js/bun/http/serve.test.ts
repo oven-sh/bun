@@ -1,4 +1,3 @@
-import { spawn } from "node:child_process";
 import { file, gc, Serve, serve, Server } from "bun";
 import { afterAll, afterEach, describe, expect, it, mock } from "bun:test";
 import { readFileSync, writeFileSync } from "fs";

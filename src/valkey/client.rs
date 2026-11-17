@@ -194,10 +194,6 @@ impl<P> Client<P> {
         &self.config
     }
 
-    pub fn disable_auto_reconnect(&mut self) {
-        self.config.enable_auto_reconnect = false;
-    }
-
     pub fn never_dialed(&self) -> bool {
         matches!(self.state, State::Idle)
     }
@@ -265,7 +261,9 @@ impl<P> Client<P> {
                 self.retries = 0;
                 self.state = State::Backoff;
             }
-            State::Ending(End::Failed | End::Final) => self.state = State::Ending(End::Policy),
+            // The close of a dial without a TLS context is still due, and no retry can build one.
+            State::Ending(End::Failed) => self.state = State::Ending(End::Final),
+            State::Ending(End::Final) => self.state = State::Ending(End::Policy),
             State::Idle
             | State::Dialing
             | State::Hello

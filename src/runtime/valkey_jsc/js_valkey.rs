@@ -755,7 +755,6 @@ impl JSValkeyClient {
                     self._secure.set(cache.get_or_create(custom, &mut err));
                 }
                 let Some(secure) = self._secure.get() else {
-                    self.client.with_mut(Client::disable_auto_reconnect);
                     // Only the VM's termination fails a rejection, and that stays pending.
                     let _ = self.fail(valkey_error_to_js(
                         &self.global_object,

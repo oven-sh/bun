@@ -1627,6 +1627,33 @@ describe("Valkey: Recovering After fail()", () => {
     });
   });
 
+  test.each(["the client", "its duplicate"])(
+    "a dial whose TLS context cannot be built leaves autoReconnect on for %s",
+    async who => {
+      using dir = tempDir("valkey-tls-context", { "ca.pem": "not a certificate" });
+      const caFile = path.join(String(dir), "ca.pem");
+      const fake = helloServer({}, { secure: true });
+      const port = await fake.listen();
+      const original = new RedisClient(`rediss://127.0.0.1:${port}`, { tls: { caFile } as Bun.TLSOptions });
+      let client = original;
+      try {
+        await expect(original.connect()).rejects.toMatchObject({ code: "ERR_REDIS_CONNECTION_CLOSED" });
+        writeFileSync(caFile, tlsCert.cert);
+        if (who === "its duplicate") client = await original.duplicate();
+        await client.connect();
+        const next = Promise.withResolvers<string>();
+        client.onconnect = () => next.resolve("onconnect");
+        client.onclose = () => next.resolve("onclose");
+        fake.sockets[0].end();
+        expect(await next.promise).toBe("onconnect");
+        expect(await client.ping()).toBe("PONG");
+      } finally {
+        client.close();
+        fake.server.close();
+      }
+    },
+  );
+
   test("close() discards a half-received reply instead of letting it keep the process alive", async () => {
     // Announces a 4 byte bulk string and stops halfway through it.
     const fake = helloServer({ PING: () => "$4\r\nPO" });

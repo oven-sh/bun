@@ -887,6 +887,40 @@ describe.concurrent.skipIf(!isMacOS && !isWindows)("on any account (macOS, Windo
     expect(result).toEqual({ stdout, stderr: "", exitCode: 0 });
   });
 
+  test.skipIf(!isMacOS)("the logs go to a directory that only the user can open", async () => {
+    const result = await run(`
+      const fs = require("node:fs");
+      await Bun.cron("./job.ts", "@yearly", "bun-test-logs").catch(() => {});
+      const plist = fs.readFileSync("home/Library/LaunchAgents/bun.cron.bun-test-logs.plist", "utf8");
+      await Bun.cron.remove("bun-test-logs");
+      console.log(plist.replaceAll(process.env.HOME, "~").match(/[^>]*\\.log/g).join("\\n"));
+      console.log((fs.statSync("home/Library/Logs/bun/cron").mode & 0o777).toString(8));
+    `);
+    const log = "~/Library/Logs/bun/cron/bun.cron.bun-test-logs";
+    expect(result).toEqual({ stdout: `${log}.stdout.log\n${log}.stderr.log\n700\n`, stderr: "", exitCode: 0 });
+  });
+
+  test.skipIf(!isMacOS || process.getuid!() === 0).each([
+    { what: "an executable file", make: `fs.writeFileSync(logs, "", { mode: 0o755 })`, code: "ENOTDIR" },
+    { what: "a dangling link", make: `fs.symlinkSync("gone", logs)`, code: "ENOENT" },
+    { what: "a read-only directory", make: `fs.mkdirSync(logs, 0o500)`, code: "EACCES" },
+  ])("$what in place of the log directory rejects with $code", async ({ make, code }) => {
+    const result = await run(`
+      const fs = require("node:fs");
+      const logs = "home/Library/Logs/bun/cron";
+      fs.mkdirSync("home/Library/Logs/bun", { recursive: true });
+      ${make};
+      console.log(await Bun.cron("./job.ts", "@yearly", "bun-test-${code}").catch(e => e.message));
+      console.log(fs.readdirSync("home/Library/LaunchAgents").length);
+      await Bun.cron.remove("bun-test-${code}");
+    `);
+    expect(result).toEqual({
+      stdout: `Cannot write to ~/Library/Logs/bun/cron: ${code}\n0\n`,
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
   test.each(["process.exit(0)", `postMessage("terminate")`])("a Worker ends with a call in flight: %s", async end => {
     const result = await run(`
       if (Bun.isMainThread) {
@@ -1068,6 +1102,7 @@ describe.skipIf(!hasSchtasks)("cron removal (Windows)", () => {
 // ==========================================================================
 
 const plistDir = `${process.env.HOME}/Library/LaunchAgents`;
+const logDir = `${process.env.HOME}/Library/Logs/bun/cron`;
 
 function plistPath(title: string): string {
   return `${plistDir}/bun.cron.${title}.plist`;
@@ -1265,9 +1300,9 @@ describe.skipIf(!hasLaunchctl)("cron registration (macOS)", () => {
       await Bun.cron(`${dir}/job.ts`, "0 0 * * *", "test-mac-logpaths");
       const plist = await Bun.file(plistPath("test-mac-logpaths")).text();
       expect(plist).toContain("<key>StandardOutPath</key>");
-      expect(plist).toContain("<string>/tmp/bun.cron.test-mac-logpaths.stdout.log</string>");
+      expect(plist).toContain(`<string>${logDir}/bun.cron.test-mac-logpaths.stdout.log</string>`);
       expect(plist).toContain("<key>StandardErrorPath</key>");
-      expect(plist).toContain("<string>/tmp/bun.cron.test-mac-logpaths.stderr.log</string>");
+      expect(plist).toContain(`<string>${logDir}/bun.cron.test-mac-logpaths.stderr.log</string>`);
     } finally {
       removeLaunchdJob("test-mac-logpaths");
     }
@@ -1395,11 +1430,34 @@ describe.skipIf(!hasLaunchctl)("cron end-to-end (macOS)", () => {
         unlinkSync(markerPath);
       } catch {}
       try {
-        unlinkSync("/tmp/bun.cron.test-mac-e2e.stdout.log");
+        unlinkSync(`${logDir}/bun.cron.test-mac-e2e.stdout.log`);
       } catch {}
       try {
-        unlinkSync("/tmp/bun.cron.test-mac-e2e.stderr.log");
+        unlinkSync(`${logDir}/bun.cron.test-mac-e2e.stderr.log`);
       } catch {}
+    }
+  });
+
+  test.each([
+    { title: "test-mac-log", schedule: "@yearly", logDirectory: "kept" },
+    { title: "test-mac-log-deleted", schedule: "@yearly", logDirectory: "deleted" },
+  ])("$schedule runs and logs, log directory $logDirectory", { timeout: 30_000 }, async job => {
+    using home = tempDir("bun-cron-test", {
+      "job.ts": `export default { scheduled() { console.log("ran"); } };`,
+      "register.ts": `await Bun.cron("./job.ts", "${job.schedule}", "${job.title}");`,
+    });
+    const service = `gui/${process.getuid!()}/bun.cron.${job.title}`;
+    const log = `${home}/Library/Logs/bun/cron/bun.cron.${job.title}.stdout.log`;
+    const logged = () => (existsSync(log) ? readFileSync(log, "utf8") : "");
+    try {
+      await Bun.$`${bunExe()} register.ts`.cwd(String(home)).env({ ...bunEnv, HOME: String(home) });
+      if (job.logDirectory === "deleted") await Bun.$`rm -r Library/Logs`.cwd(String(home));
+      await Bun.$`/bin/launchctl kickstart ${service}`;
+      const deadline = Date.now() + 20_000;
+      while (!logged().includes("ran\n") && Date.now() < deadline) await Bun.sleep(10);
+      expect(logged(), await Bun.$`/bin/launchctl print ${service}`.text()).toContain("ran\n");
+    } finally {
+      removeLaunchdJob(job.title);
     }
   });
 });

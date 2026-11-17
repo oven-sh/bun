@@ -126,6 +126,9 @@ enum Failure {
     #[cfg(windows)]
     #[error(transparent)]
     TooManyTriggers(#[from] bun_cron::schtasks::TooManyTriggers),
+    #[cfg(target_os = "macos")]
+    #[error("Cannot write to ~/Library/Logs/bun/cron: {}", BStr::new(.0.name()))]
+    LogDir(sys::Error),
 }
 
 impl From<&'static str> for Failure {
@@ -474,7 +477,9 @@ mod backend {
 mod backend {
     use super::*;
     use bun_core::env_var::HOME;
+    use bun_cron::launchd;
     use bun_sys::FdDirExt as _;
+    use bun_sys::posix::{W_OK, X_OK};
 
     pub(super) enum Step {
         /// `launchctl bootout` of what the title named before, to load the new plist.
@@ -490,10 +495,15 @@ mod backend {
         let dir = format!("{}/Library/LaunchAgents", BStr::new(home));
         (Fd::cwd().make_path(dir.as_bytes()))
             .map_err(|_| "Failed to create ~/Library/LaunchAgents directory")?;
+        // mkdir accepts whatever has the name, and launchd is silent about a log it cannot open.
+        let logs = launchd::log_dir(home);
+        sys::mkdir_recursive_at_mode(Fd::cwd(), logs.as_bytes(), 0o700)
+            .and_then(|()| sys::access(&ZBox::from_bytes(logs + "/."), W_OK | X_OK))
+            .map_err(Failure::LogDir)?;
         let plist = write_file(
             plist_path(home, &job.title).as_bytes(),
             (sys::O::TRUNC, 0o644),
-            bun_cron::launchd::plist(job).as_bytes(),
+            launchd::plist(job, home).as_bytes(),
             ["Failed to create plist file", "Failed to write plist"],
         )?;
         Ok(bootout(&job.title, Step::BootoutOld(plist)))

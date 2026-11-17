@@ -351,6 +351,7 @@ pub fn apply_jsx_settings(pragma: &mut jsx::Pragma, settings: &JsxSettings) {
     pragma.runtime = match settings.runtime {
         JsxRuntime::Classic => jsx::Runtime::Classic,
         JsxRuntime::Automatic => jsx::Runtime::Automatic,
+        JsxRuntime::Preserve => jsx::Runtime::Preserve,
     };
     pragma.development = settings.is_development;
     if !settings.factory.is_empty() {
@@ -397,6 +398,7 @@ fn parse_without_bundler(
     let mut pragma = jsx::Pragma::default();
     apply_jsx_settings(&mut pragma, &file.settings.jsx);
     let mut options = ParserOptions::init(pragma, file.loader);
+    options.jsx_preserve_restriction = bun_js_parser::JsxPreserveRestriction::Executable;
     options.bundle = true;
     options.warn_about_unbundled_modules = false;
     options.tree_shaking = true;

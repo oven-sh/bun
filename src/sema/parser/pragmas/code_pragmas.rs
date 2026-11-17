@@ -84,6 +84,7 @@ pub(super) fn code_jsx_pragmas(
     };
     JsxPragmas {
         classic,
+        preserve: runtime == b"preserve",
         is_development,
         factory: atom_of(code_factory(factory)),
         fragment_factory: atom_of(code_factory(fragment_factory)),

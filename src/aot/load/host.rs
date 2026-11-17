@@ -1808,6 +1808,19 @@ impl CodeHost for LoadHost<'_> {
         };
         let parsed_text = body_of_bundle.as_deref().unwrap_or(text);
         let mut hir = parse_for_compile(arena, &compile_options, parsed_text, atoms);
+        let preserves_jsx = hir.jsx_pragmas.preserve
+            || (self.input.options.code.jsx.runtime == bun_sema::resolve::JsxRuntime::Preserve
+                && hir.jsx_pragmas.classic.is_none());
+        let mut diagnostics = Vec::new();
+        if preserves_jsx && !hir.jsx.is_empty() {
+            diagnostics.push(FileDiagnostic::new(
+                Code::UnsupportedOption,
+                (0, 0),
+                &[b"preserved JSX"],
+            ));
+            // Rejecting before import scanning; preserved JSX must not acquire automatic runtime imports.
+            hir = parse_for_compile(arena, &compile_options, EMPTY_MODULE, atoms);
+        }
         let is_entry_text = self.plugins.loader_of_entry_text(path).is_some();
         let is_language_assumed = is_entry_text
             || (matches!(served_by, ServedBy::Disk)
@@ -1847,6 +1860,7 @@ impl CodeHost for LoadHost<'_> {
                 plugin_module,
                 file_with_query: self.file_with_query(path),
                 parse_failure,
+                diagnostics,
                 is_language_assumed,
                 byte_count: text.len(),
                 ..ParsedSource::new(SourceKind::Program, loader)

@@ -13,6 +13,7 @@ const CONFIG_FILE_NAMES: [&[u8]; 2] = [b"tsconfig.json", b"jsconfig.json"];
 pub enum JsxRuntime {
     Automatic,
     Classic,
+    Preserve,
 }
 
 #[derive(Clone, PartialEq, Eq, Hash, Debug)]
@@ -50,10 +51,14 @@ impl JsxSettings {
             return None;
         }
         let text = |atom: Atom| atom.is_some().then(|| atoms.bytes(atom));
-        let runtime = pragmas.classic.map(|is_classic| match is_classic {
-            true => JsxRuntime::Classic,
-            false => JsxRuntime::Automatic,
-        });
+        let runtime = if pragmas.preserve {
+            Some(JsxRuntime::Preserve)
+        } else {
+            pragmas.classic.map(|is_classic| match is_classic {
+                true => JsxRuntime::Classic,
+                false => JsxRuntime::Automatic,
+            })
+        };
         let fields = JsxFields {
             runtime,
             is_development: pragmas.is_development,
@@ -446,9 +451,13 @@ impl<'h> Resolver<'h> {
     fn create_settings(&self, config: &ParsedConfig) -> &'h TranspileSettings {
         let session: &'h Session = self.session;
         session.keep(TranspileSettings {
-            jsx: JsxSettings {
-                is_development: self.is_jsx_development(),
-                ..config.jsx.apply_to(&self.code_options().jsx)
+            jsx: {
+                let mut jsx = config.jsx.apply_to(&self.code_options().jsx);
+                if self.code_options().jsx.runtime == JsxRuntime::Preserve {
+                    jsx.runtime = JsxRuntime::Preserve;
+                }
+                jsx.is_development = self.is_jsx_development();
+                jsx
             },
             experimental_decorators: config.experimental_decorators,
             emits_decorator_metadata: config.emits_decorator_metadata,

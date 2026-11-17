@@ -617,6 +617,7 @@ fn pragmas_override_one_member_each() {
         });
         let pragmas = JsxPragmas {
             classic,
+            preserve: false,
             is_development: None,
             factory,
             fragment_factory,

@@ -806,6 +806,7 @@ fn write_configuration(settings: &TranspileSettings) -> Vec<u8> {
     let jsx = &settings.jsx;
     let jsx_emit: &[u8] = match (jsx.runtime, jsx.is_development) {
         (JsxRuntime::Classic, _) => b"react",
+        (JsxRuntime::Preserve, _) => b"preserve",
         (JsxRuntime::Automatic, true) => b"react-jsxdev",
         (JsxRuntime::Automatic, false) => b"react-jsx",
     };
@@ -827,7 +828,9 @@ fn write_configuration(settings: &TranspileSettings) -> Vec<u8> {
             options.push(("jsxFactory", dotted_name(&jsx.factory)));
             options.push(("jsxFragmentFactory", dotted_name(&jsx.fragment)));
         }
-        JsxRuntime::Automatic => options.push(("jsxImportSource", string(&jsx.import_source))),
+        JsxRuntime::Automatic | JsxRuntime::Preserve => {
+            options.push(("jsxImportSource", string(&jsx.import_source)))
+        }
     }
     options.extend([
         (

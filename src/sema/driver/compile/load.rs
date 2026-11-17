@@ -734,6 +734,7 @@ fn options_of_jsx(settings: &JsxSettings) -> Vec<(Vec<u8>, Json)> {
                 options.push(text(b"jsxImportSource", settings.import_source.clone()));
             }
         }
+        JsxRuntime::Preserve => options.push(text(b"jsx", b"preserve".to_vec())),
         JsxRuntime::Classic => {
             options.push(text(b"jsx", b"react".to_vec()));
             if settings.factory != default.factory || settings.fragment != default.fragment {

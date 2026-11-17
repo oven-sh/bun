@@ -736,19 +736,69 @@ describe("bundler", () => {
       });
     }
 
-    itBundled("jsx/PreserveStandaloneHtmlRejected", {
-      files: {
-        "/index.html": '<html><body><script src="./in.jsx"></script></body></html>',
-        "/in.jsx": "document.body.innerHTML = <div />;",
-      },
-      entryPoints: ["/index.html"],
-      outfile: "/out.html",
+    for (const backend of ["cli", "api"] as const) {
+      itBundled(`jsx/PreserveStandaloneHtmlRejected-${backend}`, {
+        files: {
+          "/index.html": '<html><body><script src="./in.jsx"></script></body></html>',
+          "/in.jsx": "document.body.innerHTML = <div />;",
+        },
+        entryPoints: ["/index.html"],
+        outfile: "/out.html",
+        backend,
+        target: "browser",
+        compile: true,
+        skipOnEsbuild: true,
+        jsx: { runtime: "preserve" },
+        bundleErrors: { "/in.jsx": ["Cannot preserve JSX when compiling standalone HTML"] },
+      });
+    }
+
+    for (const backend of ["cli", "api"] as const) {
+      for (const source of ["option", "pragma"] as const) {
+        itBundled(`jsx/PreserveAotCompileRejected-${backend}-${source}`, {
+          files: {
+            "/in.jsx": `${source === "pragma" ? "/** @jsxRuntime preserve */" : ""}console.log(<div/>);`,
+            "/tsconfig.json": JSON.stringify({ compilerOptions: { jsx: "react-jsx" } }),
+          },
+          backend,
+          target: "bun",
+          compile: { aot: true },
+          skipOnEsbuild: true,
+          ...(source === "option" ? { jsx: { runtime: "preserve" } } : {}),
+          bundleErrors: { "/in.jsx": ["--aot does not support preserved JSX"] },
+        });
+      }
+    }
+
+    itBundled("jsx/PreserveAotCompilePlain", {
+      files: { "/in.jsx": 'console.log("<div/>");' },
       backend: "cli",
-      target: "browser",
-      compile: true,
+      target: "bun",
+      compile: { aot: true },
       skipOnEsbuild: true,
       jsx: { runtime: "preserve" },
-      bundleErrors: { "/in.jsx": ["Cannot preserve JSX when compiling standalone HTML"] },
+      run: { stdout: "<div/>" },
+    });
+
+    itBundled("jsx/PreserveAotClassicPragmaOverridesOption", {
+      files: {
+        "/in.jsx": "/** @jsxRuntime classic */ const React = { createElement: type => type }; console.log(<div/>);",
+      },
+      backend: "cli",
+      target: "bun",
+      compile: { aot: true },
+      skipOnEsbuild: true,
+      jsx: { runtime: "preserve" },
+      run: { stdout: "div" },
+    });
+
+    itBundled("jsx/PreserveAotDependencyPragmaRejected", {
+      files: { "/in.js": 'import "./dep.jsx";', "/dep.jsx": "/** @jsxRuntime preserve */ console.log(<div/>);" },
+      backend: "cli",
+      target: "bun",
+      compile: { aot: true },
+      skipOnEsbuild: true,
+      bundleErrors: { "/dep.jsx": ["--aot does not support preserved JSX"] },
     });
 
     itBundled("jsx/PreserveCliRuntimeFlag", {

@@ -433,7 +433,7 @@ fn subblock_modes() {
             let end = |it: Coded| if it.is_saturated() { 255 } else { it.end as u8 };
             of.iter().map(|it| end(it.0)).max().unwrap()
         };
-        let edge = edge.iter().rfold(0, |all, &it| all << 8 | u128::from(it));
+        let edge = (edge.iter()).rfold(next().into(), |all, &it| all << 8 | u128::from(it));
         let by = &steps.quantizer();
         check((modes, last(&modes[..4]), last(&modes[4..])), || {
             let it = &mut Scratch::default();

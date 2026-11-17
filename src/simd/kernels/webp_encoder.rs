@@ -1,5 +1,4 @@
-//! The arithmetic of the VP8 encoder in `bun_webp`, which is that of libwebp (LICENSE.md):
-//! <https://github.com/webmproject/libwebp/tree/4fa21912338357f89e4fd51cf2368325b59e9bd9/src>
+//! The arithmetic is that of libwebp (LICENSE.md): <https://github.com/webmproject/libwebp/tree/4fa21912338357f89e4fd51cf2368325b59e9bd9/src>
 #![allow(clippy::large_types_passed_by_value)] // vectors live in registers
 use crate::webp_decoder::rotate;
 use bun_simd::{Isa, Shuffle};
@@ -48,21 +47,21 @@ pub struct Quantizer {
     reciprocals: [[i16; 8]; 2],
     /// The lower 16 bits.
     doubled_reciprocals: [[i16; 8]; 2],
-    /// By row: the sharpening, and the multiple of the reciprocal that is nearest to the bias.
+    /// By row: the sharpening, which only luma has, plus the bias in reciprocals, rounded.
     offsets: [[i16; 8]; 4],
-    /// Twice as much as that multiple is above the bias.
+    /// Twice as much as so many reciprocals are above the bias.
     excesses: [[i16; 8]; 2],
 }
 
 impl Quantizer {
-    /// For DC and AC. `biases` are in 256ths of a step, `sharpening` is in 2048ths of that for AC.
-    /// `ExpandMatrix` of libwebp.
+    /// `ExpandMatrix`. For DC and AC. `biases`: 256ths of a step, `sharpening`: 2048ths of that for AC.
     pub fn new(steps: [u16; 2], biases: [u8; 2], sharpening: [[u8; 4]; 4]) -> Self {
         let rows = |[dc, ac]: [i32; 2]| {
             [dc, ac].map(|first| from_fn(|i| (if i < 2 { first } else { ac }) as i16))
         };
         // Then it makes no difference that the reciprocal of 4 is one less than it should be.
         debug_assert!((0..2).all(|i| steps[i] > 4 || steps[i] == 4 && biases[i] % 64 > 4));
+        debug_assert!(steps.iter().all(|&it| it <= 512));
         let (steps, biases) = (steps.map(i32::from), biases.map(|it| i32::from(it) << 9));
         let reciprocals = steps.map(|it| ((1 << 17) / it.max(4)).min(0x7FFF));
         let multiples = [0, 1].map(|i| (biases[i] + reciprocals[i] / 2) / reciprocals[i]);
@@ -91,6 +90,9 @@ impl Quantizer {
     }
 }
 
+/// How many of the two blocks above and to the left have levels other than zero.
+pub type Context = u8;
+
 /// The highest magnitude that `Candidates::symbols` tells from the others.
 pub const MAX_SYMBOL: u8 = 67;
 /// The mode of a subblock is not DC, and no more than 3 levels behind the first are other than zero.
@@ -101,8 +103,7 @@ pub const IS_FLAT: u8 = 128;
 pub struct Candidates<const PAIRS: usize> {
     /// By row, pair and column.
     pub levels: [[[u32; 4]; PAIRS]; 4],
-    /// By half of the zigzag order, pair and position in the half: the magnitude of the level, up
-    /// to `MAX_SYMBOL`, plus `MAX_SYMBOL + 1` times the context that it is coded in.
+    /// By half of the zigzag, pair and place: `min(|level|, MAX_SYMBOL) + context * (MAX_SYMBOL + 1)`
     pub symbols: [[[u16; 8]; PAIRS]; 2],
     /// Of the decoded block: the bottom row from the left, then up the rest of the right column.
     pub edges: [[[u8; 8]; 2]; PAIRS],
@@ -118,7 +119,7 @@ impl<const PAIRS: usize> Default for Candidates<PAIRS> {
     }
 }
 
-/// The rows or the columns of a block, by pair.
+/// The rows or the columns of a block, for one or two pairs.
 #[derive(Default)]
 #[repr(align(32))]
 struct Kept([[[i16; 8]; 2]; 4]);
@@ -139,8 +140,7 @@ pub struct LumaCandidates {
     pub blocks: [Candidates<2>; 16],
     /// Without edges.
     pub y2: Candidates<2>,
-    /// By half of the blocks, pair, block in the half and mode in the pair: 4 times the position
-    /// behind the last level other than zero, plus the context there.
+    /// By half, pair, block and mode: `4 * (place behind the last level other than zero) + context`
     pub ends: [[[[u8; 2]; 8]; 2]; 2],
     /// By pair, 8 times the same.
     pub y2_ends: [[[u8; 2]; 8]; 2],
@@ -198,8 +198,7 @@ const Z: u16 = 128;
 
 const ZIGZAG: [[u16; 8]; 2] = [[0, 1, 4, 8, 5, 2, 3, 6], [9, 12, 13, 10, 7, 11, 14, 15]];
 
-/// The blocks above and to the left of the upper 8 of luma, of the lower 8 and of those of chroma.
-/// From 16 on they are among others.
+/// Above and to the left of the upper 8 of luma, the lower 8 and chroma. From 16 on: other blocks.
 const NEIGHBORS: [[[u8; 16]; 2]; 3] = [
     [
         [16, 16, 17, 17, 18, 18, 19, 19, 0, 1, 2, 3, 4, 5, 6, 7],
@@ -215,8 +214,7 @@ const NEIGHBORS: [[[u8; 16]; 2]; 3] = [
     ],
 ];
 
-/// RFC 6386 section 12.3, by mode, row and column: `i` for the average of three samples around
-/// position `i` of the edge, `16 + i` for that of two which end there. The first two differ.
+/// RFC 6386, 12.3, from mode 2 on: the average of 3 samples around `i`, or of 2 up to `i - 16`.
 #[rustfmt::skip]
 const SUBBLOCK_SOURCES: [[[u16; 4]; 4]; 10] = [
     [[Z; 4]; 4],
@@ -300,14 +298,14 @@ pub(crate) mod simd {
     }
 
     #[inline(always)]
-    fn load(from: &Kept, group: usize) -> Quad {
-        from_fn(|i| I16::load(lanes(&from.0[i], group)))
+    fn load(from: &Kept) -> Quad {
+        from_fn(|i| I16::load(lanes(&from.0[i], 0)))
     }
 
     #[inline(always)]
-    fn store(quad: Quad, to: &mut Kept, group: usize) {
+    fn store(quad: Quad, to: &mut Kept) {
         for i in 0..4 {
-            quad[i].store(room(&mut to.0[i], group));
+            quad[i].store(room(&mut to.0[i], 0));
         }
     }
 
@@ -367,20 +365,19 @@ pub(crate) mod simd {
         [c0, c1, c2, c3]
     }
 
-    /// `(a * factors[0] + b * factors[1] + rounding) >> shift`, which fits 16 bits. For a shift
-    /// below 16, so does twice a factor, and `a` and `b` are below `1 << shift`.
+    /// `(a * x + b * y + rounding) >> shift`. The sum, and `a`, `b` `<< (15 - shift)`, must not overflow.
     #[inline(always)]
-    fn mixed(a: I16, b: I16, factors: [i16; 2], rounding: i32, shift: u32) -> I16 {
+    fn mixed(a: I16, b: I16, [x, y]: [i16; 2], rounding: i32, shift: u32) -> I16 {
         if HAS_WIDENING_MUL {
             // Adding and taking the upper halves is one instruction.
             let (up, times) = if shift < 16 { (15 - shift, 2) } else { (0, 1) };
-            let [x, y] = factors.map(|it| I16::splat(it * times));
+            let [x, y] = [I16::splat(x * times), I16::splat(y * times)];
             let sums = widening_mul(a << up, x) + widening_mul(b << up, y);
             let upper_halves = ((sums + (rounding << up) * i32::from(times)) >> 16).cast();
             return I16::repeat(upper_halves.to_array()) >> shift.saturating_sub(16);
         }
         let (lower, upper) = a.interleave_in_blocks(b);
-        let sums = |ab| (I32::pairwise_dot(ab, I16::repeat(factors)) + rounding) >> shift;
+        let sums = |ab| (I32::pairwise_dot(ab, I16::repeat([x, y])) + rounding) >> shift;
         I16::pack(sums(lower), sums(upper))
     }
 
@@ -453,9 +450,14 @@ pub(crate) mod simd {
     /// In two lanes for each block. `TTransform` of libwebp.
     #[inline(always)]
     fn textures_of(spectrum: Quad) -> I32 {
-        let weights = [[38, 20, 32, 9], [32, 17, 28, 7], [20, 10, 17, 4]];
-        let weights = [weights[0], weights[1], weights[2], [9, 4, 7, 2]].map(I16::repeat);
-        sums_of_products(spectrum.map(|it| it.abs()), weights.map(|it| opaque(it)))
+        let weights = [
+            [38, 20, 32, 9],
+            [32, 17, 28, 7],
+            [20, 10, 17, 4],
+            [9, 4, 7, 2],
+        ];
+        let weights = weights.map(|it| opaque(I16::repeat(it)));
+        sums_of_products(spectrum.map(|it| it.abs()), weights)
     }
 
     /// 16 times the squared error, the transform being orthogonal, and the change in texture.
@@ -497,7 +499,7 @@ pub(crate) mod simd {
     fn quantize<const ALL: usize>(
         coefficients: Quad,
         quantizer: &Quantizer,
-        context: u8,
+        context: Context,
         out: &mut Candidates<ALL>,
         group: usize,
     ) -> Quantized {
@@ -543,8 +545,7 @@ pub(crate) mod simd {
         merged(merged(two(0), two(2)), merged(two(1), two(3)))
     }
 
-    /// Adds the contexts of 8 blocks to their first symbols, and to the ends of empty ones. `others`
-    /// has a zero or a one for each of the other `NEIGHBORS`. Returns the same for these blocks.
+    /// Adds them to first symbols and empty ends. `others`, like the result: 1 for `end >= 4`, else 0.
     #[inline(always)]
     fn set_contexts(
         ends: [U8; 8],
@@ -608,8 +609,7 @@ pub(crate) mod simd {
         /// With this added, 255 is the highest number there is.
         const BIAS: i16 = i16::MAX - 255;
 
-        /// The pairs are DC and TrueMotion, vertical and horizontal, the first again, and once more
-        /// for the block to the right.
+        /// Pairs: DC and TrueMotion, vertical and horizontal, the first again, and one block further.
         #[inline(always)]
         fn new(edges: &Edges, group: usize) -> Self {
             const ABOVE: [[[u16; 2]; 4]; 4] = [[[Z, 0]; 4], [[0, Z]; 4], [[Z, 0]; 4], [[Z, 4]; 4]];
@@ -677,14 +677,13 @@ pub(crate) mod simd {
         U32::repeat(flags.map(|it| u32::from_le_bytes(it.map(u8::from)))).bitcast()
     }
 
-    /// DC, TrueMotion, vertical and horizontal. Fills `source`. `non_zero_around` is for the blocks
-    /// above and those to the left. `PickBestIntra16` of libwebp.
+    /// `PickBestIntra16`: DC, TrueMotion, vertical, horizontal. Fills `source`. Around: above, left.
     #[export(up_to = avx2, up_to = neon)]
     pub fn try_luma_modes(
         samples: &Macroblock,
         edges: &Edges,
         non_zero_around: [[bool; 4]; 2],
-        y2_context: u8,
+        y2_context: Context,
         quantizer: &Quantizer,
         y2: &Quantizer,
         source: &mut LumaSource,
@@ -696,10 +695,10 @@ pub(crate) mod simd {
             let predictor = Predictor::<false>::new(edges, group);
             let blocks: [_; 16] = from_fn(|i| {
                 let prediction = predictor.predict(i);
-                store(prediction, &mut source.kept[i][0], group);
+                store(prediction, &mut source.kept[i][0]);
                 let coefficients = forward_dct(difference(original(source, i), prediction));
                 let it = quantize(coefficients, ac, 0, &mut out.blocks[i], group);
-                store(it.coefficients, &mut source.kept[i][1], group);
+                store(it.coefficients, &mut source.kept[i][1]);
                 magnitudes = magnitudes.simd_max(it.magnitudes);
                 (coefficients[0], it.ends)
             });
@@ -727,7 +726,7 @@ pub(crate) mod simd {
                 let mut measured = [[I32::zero(); 2]; 2];
                 #[rustc_unroll(full)]
                 for i in [2 * two, 2 * two + 1] {
-                    let [before, mut rows] = source.kept[i].each_ref().map(|it| load(it, group));
+                    let [before, mut rows] = source.kept[i].each_ref().map(|it| load(it));
                     rows[0] += as_dc(dcs[i % 4], i / 4);
                     let decoded = decode(rows, before, &mut out.blocks[i], group);
                     measured[i % 2] = measure(columns_of_pair(decoded), source, i);
@@ -754,8 +753,7 @@ pub(crate) mod simd {
         [quantized - dcs, (corrected - quantized) >> 1]
     }
 
-    /// `errors_around`, from above and from the left, are passed on from one DC to the next. They
-    /// are by block and plane, each twice. Returns whether any magnitude is `MAX_SYMBOL` or more.
+    /// Around: above, left. Errors: by block and plane, twice. True if a level reaches `MAX_SYMBOL`.
     #[export(up_to = avx2, up_to = neon)]
     pub fn try_chroma_modes(
         samples: &Macroblock,
@@ -771,9 +769,9 @@ pub(crate) mod simd {
             let predictor = Predictor::<true>::new(edges, group);
             let first_rows: [_; 8] = from_fn(|i| {
                 let prediction = predictor.predict(i);
-                store(prediction, &mut out.kept[i][0], group);
+                store(prediction, &mut out.kept[i][0]);
                 let coefficients = forward_dct(difference(columns_of(original(i)), prediction));
-                store(coefficients, &mut out.kept[i][1], group);
+                store(coefficients, &mut out.kept[i][1]);
                 coefficients[0]
             });
 
@@ -792,13 +790,13 @@ pub(crate) mod simd {
                 for i in 0..8 {
                     let (change, nth) = [(to0, 0), (to12, 0), (to12, 2), (to3, 0)][i % 4];
                     let row = first_rows[i] + as_dc(change, nth + i / 4);
-                    row.store(room(&mut out.kept[i][1].0[0], group));
+                    row.store(room(&mut out.kept[i][1].0[0], 0));
                 }
             }
 
             let (mut errors, mut ac_counts) = ([I32::zero(); 2], U8::zero());
             let ends = from_fn(|i| {
-                let [prediction, rows] = out.kept[i].each_ref().map(|it| load(it, group));
+                let [prediction, rows] = out.kept[i].each_ref().map(|it| load(it));
                 let it = quantize(rows, quantizer, 0, &mut out.blocks[i], group);
                 magnitudes = magnitudes.simd_max(it.magnitudes);
                 ac_counts += it.ac_counts;
@@ -821,15 +819,15 @@ pub(crate) mod simd {
         magnitudes.simd_eq(MAX_SYMBOL).any()
     }
 
-    /// For so many `GROUPS` from `FIRST` on. `PickBestIntra4` of libwebp.
+    /// `PickBestIntra4`. Returns the highest end, or 255 if a level reaches `MAX_SYMBOL`.
     #[inline(always)]
     fn try_modes<const FIRST: usize, const GROUPS: usize>(
         edge: u128,
-        context: u8,
+        context: Context,
         block: usize,
         source: &LumaSource,
         quantizer: &Quantizer,
-        lambda: i32,
+        texture_weight: i32,
         out: &mut SubblockCandidates,
     ) -> u8 {
         let (block, edge) = (block % 16, U8::repeat(edge.to_le_bytes()));
@@ -898,7 +896,7 @@ pub(crate) mod simd {
             let (a, b) = (measured[2 * i], measured[(2 * i + 1).min(GROUPS - 1)]);
             // Both fit 15 bits.
             let difference: I16 = (pairwise_sums(a[1], b[1]).abs() >> 5).bitcast();
-            let weighted = I32::pairwise_dot(difference, I32::splat(lambda).bitcast());
+            let weighted = I32::pairwise_dot(difference, I32::splat(texture_weight).bitcast());
             let distortions = ((pairwise_sums(a[0], b[0]) << 4) + 128 + weighted) & -256;
             let to = &mut out.distortions[2 * PAIRS * (FIRST + 2 * i)..];
             in_order(distortions).copy_to_slice(to);
@@ -906,36 +904,41 @@ pub(crate) mod simd {
         last_end
     }
 
-    /// The first 4 modes, numbered as in libwebp. `edge` has 13 samples, from the lowest byte: up
-    /// along the left, around the corner and to the right. `context` counts the blocks above and to
-    /// the left that have levels other than zero. `lambda` weighs the texture. Returns the highest
-    /// of the ends, or `u8::MAX` if any magnitude is `MAX_SYMBOL` or more.
+    /// The first 4 modes. `edge`, from the lowest byte: 4 up the left, the corner, 8 to the right.
     #[export(up_to = avx2, up_to = neon)]
     pub fn try_straight_modes(
         edge: u128,
-        context: u8,
+        context: Context,
         block: usize,
         source: &LumaSource,
         quantizer: &Quantizer,
-        lambda: i32,
+        texture_weight: i32,
         out: &mut SubblockCandidates,
     ) -> u8 {
-        try_modes::<0, { 2 / PAIRS }>(edge, context, block, source, quantizer, lambda, out)
+        try_modes::<0, { 2 / PAIRS }>(edge, context, block, source, quantizer, texture_weight, out)
     }
 
     /// The same for the other 6 modes. What `out` has for the first 4 stays.
     #[export(up_to = avx2, up_to = neon)]
     pub fn try_diagonal_modes(
         edge: u128,
-        context: u8,
+        context: Context,
         block: usize,
         source: &LumaSource,
         quantizer: &Quantizer,
-        lambda: i32,
+        texture_weight: i32,
         out: &mut SubblockCandidates,
     ) -> u8 {
         const FIRST: usize = 2 / PAIRS;
-        try_modes::<FIRST, { 4 - PAIRS }>(edge, context, block, source, quantizer, lambda, out)
+        try_modes::<FIRST, { 4 - PAIRS }>(
+            edge,
+            context,
+            block,
+            source,
+            quantizer,
+            texture_weight,
+            out,
+        )
     }
 
     /// U and V of one row. For each, the factors of red, green and blue add up to zero.

@@ -1,4 +1,4 @@
-//! The kernels of the WebP decoder, in the arithmetic of libwebp (LICENSE.md).
+//! The arithmetic is that of libwebp (LICENSE.md): <https://github.com/webmproject/libwebp/tree/4fa21912338357f89e4fd51cf2368325b59e9bd9/src>
 use bun_simd::{Int, Isa, Lane, Out, Shuffle, Vector};
 use core::array::from_fn;
 use core::slice::{from_mut, from_ref};

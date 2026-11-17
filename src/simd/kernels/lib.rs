@@ -94,9 +94,9 @@ pub mod webp {
         analyze, convert, try_chroma_modes, try_diagonal_modes, try_luma_modes, try_straight_modes,
     };
     pub use crate::webp_encoder::{
-        Block, Candidates, ChromaCandidates, Edges, GammaTable, Histograms, IS_FLAT, LinearColors,
-        LumaCandidates, LumaSaturation, LumaSource, MAX_SYMBOL, Macroblock, Quantizer, Scratch,
-        SubblockCandidates,
+        Block, Candidates, ChromaCandidates, Context, Edges, GammaTable, Histograms, IS_FLAT,
+        LinearColors, LumaCandidates, LumaSaturation, LumaSource, MAX_SYMBOL, Macroblock,
+        Quantizer, Scratch, SubblockCandidates,
     };
 }
 

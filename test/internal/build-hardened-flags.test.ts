@@ -313,7 +313,7 @@ test("the libraries that never call back into JavaScript keep their arrays on a 
   using dir = tempDir("build-hardened-flags-safe-stack", {});
   const on = linuxConfig({ hardened: true }, String(dir));
   const off = linuxConfig({}, String(dir));
-  expect(safeStackDependencies).toContain("zlib");
+  expect(safeStackDependencies).toContain("zstd");
   for (const name of safeStackDependencies) {
     expect(safeStackFlags(on, name)).toEqual(["-fsanitize=safe-stack"]);
     expect(safeStackFlags(off, name)).toEqual([]);
@@ -324,6 +324,6 @@ test("the libraries that never call back into JavaScript keep their arrays on a 
   expect(everyFlagOf(on).dependencyC).not.toContain("-fsanitize=safe-stack");
   expect(Object.values(everyFlagOf(off)).flat()).not.toContain("-DBUN_SAFE_STACK=1");
   const withAddressSanitizer = linuxConfig({ hardened: true, asan: true }, String(dir));
-  expect(safeStackFlags(withAddressSanitizer, "zlib")).toEqual([]);
+  expect(safeStackFlags(withAddressSanitizer, "zstd")).toEqual([]);
   expect(everyFlagOf(withAddressSanitizer).cxx).not.toContain("-DBUN_SAFE_STACK=1");
 });

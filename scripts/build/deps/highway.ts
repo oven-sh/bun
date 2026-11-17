@@ -4,7 +4,7 @@
  * chunk hashing.
  *
  * Highway compiles every function for multiple targets (SSE2/AVX2/NEON/etc.)
- * and picks at runtime. Unlike zlib-ng it needs NO per-file `-m` flags or
+ * and picks at runtime. It needs NO per-file `-m` flags or
  * generated config — `hwy/foreach_target.h` re-includes each TU body once
  * per ISA wrapped in `#pragma clang attribute push(target("..."))`, so a
  * single baseline compile per .cc emits all variants.

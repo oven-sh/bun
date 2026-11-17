@@ -3822,10 +3822,14 @@ function takeMethodAndVersion(res: $Node.ServerResponse, req: $Node.IncomingMess
   }
 }
 
-// The native response of a request that 'upgrade' or 'connect' handed over is done. This one writes to the socket it's assigned, like in Node.
+// The native response of a request that 'upgrade' or 'connect' got goes when the connection leaves HTTP. This one writes to the socket it's assigned, like in Node.
 function handleFor(req: $Node.IncomingMessage, options: $Node.ServerResponseOptions | undefined) {
   let handle = options?.[kHandle];
-  if (handle === undefined && (handle = req[kHandle]) && handle.flags & NodeHTTPResponseFlags.closed_or_completed) {
+  if (
+    handle === undefined &&
+    (handle = req[kHandle]) &&
+    (req.upgrade || handle.flags & NodeHTTPResponseFlags.closed_or_completed)
+  ) {
     handle = undefined;
   }
   return handle;

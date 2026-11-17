@@ -314,4 +314,21 @@ describe.each(["http", "https"])("%s: an Upgrade request with a body", scheme =>
     await Promise.all([written, closed]);
     expect(errors).toEqual([]);
   });
+
+  test.concurrent("a ServerResponse made in the listener finishes when the body ends while it drains", async () => {
+    const size = 8 * 1024 * 1024;
+    using connection = await open();
+    const { server, client } = connection;
+    client.write(upgrade("Content-Length: 4") + "BO");
+    const [req, stream] = await once(server, "upgrade");
+    const res = new http.ServerResponse(req);
+    res.assignSocket(stream);
+    res.on("finish", () => stream.end("<end>"));
+    res.end(Buffer.alloc(size, "a"));
+    client.write("DY");
+    await once(req.resume(), "end");
+    connection.read();
+    await connection.closed;
+    expect(connection.marks()).toEqual(["<end>"]);
+  });
 });

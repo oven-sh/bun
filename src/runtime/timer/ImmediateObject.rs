@@ -117,9 +117,8 @@ impl ImmediateObject {
         stopped || threw
     }
 
-    /// `queued` is the queue's ref.
-    pub(crate) fn release_unrun(queued: RefPtr<Self>) {
-        drop(queued.dequeue());
+    pub(crate) fn release_unrun(&self) {
+        drop(self.dequeue());
     }
 
     /// SAFETY: the fake heap has just popped `node`, which is an `ImmediateObject`'s.

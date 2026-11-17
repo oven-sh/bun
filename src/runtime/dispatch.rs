@@ -1216,7 +1216,7 @@ unsafe fn __bun_cancel_pending_immediate(task: *mut ()) {
     // SAFETY: per fn contract — the only producer (`ImmediateObject::init`)
     // stores a `*mut crate::timer::ImmediateObject`, so the cast is the identity.
     let queued = unsafe { bun_ptr::RefPtr::from_raw(task.cast::<crate::timer::ImmediateObject>()) };
-    crate::timer::ImmediateObject::release_unrun(queued);
+    queued.release_unrun();
 }
 
 /// `__bun_run_wtf_timer` body — cast the low-tier erased `*mut ()` to the real

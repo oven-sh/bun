@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, normalizeBunSnapshot, tempDir } from "harness";
+import { bunEnv, bunExe, isASAN, normalizeBunSnapshot, tempDir } from "harness";
 
 // https://github.com/oven-sh/bun/issues/26360
 // Bun.build called from a macro that runs during another Bun.build used to deadlock.
@@ -31,21 +31,41 @@ console.log("ERROR_MSG:", getErrorMessage());
 `,
 };
 
-// Debug builds print "[macro] call <name>" to stdout when a macro runs.
-function withoutMacroDebugLines(stdout: string) {
-  return stdout
-    .split("\n")
-    .filter(line => !line.startsWith("[macro]"))
-    .join("\n");
+// What index.ts bundles to: the macro call is replaced by the message that the macro caught.
+const bundle = `// index.ts
+console.log("ERROR_MSG:", \`CAUGHT: Bun.build cannot be called from within a macro during bundling.
+
+This would cause a deadlock because the bundler is waiting for the macro to complete,
+but the macro's Bun.build call is waiting for the bundler.
+
+To bundle code at compile time in a macro, use Bun.spawnSync to invoke the CLI:
+  const result = Bun.spawnSync(["bun", "build", entrypoint, "--format=esm"]);\`);`;
+
+// Runs bun in `cwd` and returns its output with how it ended, for one combined assertion.
+async function run(cwd: string, ...args: string[]) {
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), ...args],
+    cwd,
+    // The bundler's macro VM is never destroyed, so on the ASAN lane LeakSanitizer reports
+    // the native box that the macro's `file` import owns in that VM and aborts the child.
+    env: isASAN
+      ? { ...bunEnv, ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "detect_leaks=0"].filter(Boolean).join(":") }
+      : bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+    // Kill switch: a deadlock hangs the child forever. A signalCode of "SIGKILL" in the
+    // result means that the child hung.
+    timeout: 60_000,
+    killSignal: "SIGKILL",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  // Debug builds print "[macro] call <name>" to stdout when a macro runs.
+  const lines = stdout.split("\n").filter(line => !line.startsWith("[macro]"));
+  return { stdout: normalizeBunSnapshot(lines.join("\n"), cwd), stderr, exitCode, signalCode: proc.signalCode };
 }
 
-// Kill switch for the child processes: a deadlock hangs the child forever. Kill it so the
-// assertions fail with a clear message instead of the whole file hanging.
-const killSwitch = { timeout: 60_000, killSignal: "SIGKILL" } as const;
-const hungMessage = "the child hung and was killed after 60s";
-
-// The outer Bun.build runs in a child process: before the fix it deadlocked the bundler
-// thread, and an in-process deadlock would take the test runner down with it.
+// The outer Bun.build runs in a child process: before the fix it deadlocked the singleton
+// bundler thread, and an in-process test cannot recover from that.
 test.concurrent("Bun.build from macro during bundling throws instead of hanging", async () => {
   using dir = tempDir("issue-26360", {
     ...fixture,
@@ -65,59 +85,24 @@ if (!result.success) {
 `,
   });
 
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), "build_script.ts"],
-    cwd: String(dir),
-    env: bunEnv,
-    stdout: "pipe",
-    stderr: "pipe",
-    ...killSwitch,
+  expect(await run(String(dir), "build_script.ts")).toEqual({
+    stdout: `BUILD_SUCCESS\n${bundle}`,
+    stderr: "",
+    exitCode: 0,
+    signalCode: null,
   });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-
-  expect(proc.signalCode, hungMessage).toBeNull();
-  expect(normalizeBunSnapshot(withoutMacroDebugLines(stdout), String(dir))).toMatchInlineSnapshot(`
-    "BUILD_SUCCESS
-    // index.ts
-    console.log("ERROR_MSG:", \`CAUGHT: Bun.build cannot be called from within a macro during bundling.
-
-    This would cause a deadlock because the bundler is waiting for the macro to complete,
-    but the macro's Bun.build call is waiting for the bundler.
-
-    To bundle code at compile time in a macro, use Bun.spawnSync to invoke the CLI:
-      const result = Bun.spawnSync(["bun", "build", entrypoint, "--format=esm"]);\`);"
-  `);
-  expect(stderr).toBe("");
-  expect(exitCode).toBe(0);
 });
 
 test.concurrent("CLI bun build with macro that calls Bun.build also throws", async () => {
   using dir = tempDir("issue-26360-cli", fixture);
 
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), "build", "index.ts", "--target=node"],
-    cwd: String(dir),
-    env: bunEnv,
-    stdout: "pipe",
-    stderr: "pipe",
-    ...killSwitch,
-  });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-
-  expect(proc.signalCode, hungMessage).toBeNull();
   // With no --outdir the CLI writes the bundle to stdout and prints no summary.
-  expect(normalizeBunSnapshot(withoutMacroDebugLines(stdout), String(dir))).toMatchInlineSnapshot(`
-    "// index.ts
-    console.log("ERROR_MSG:", \`CAUGHT: Bun.build cannot be called from within a macro during bundling.
-
-    This would cause a deadlock because the bundler is waiting for the macro to complete,
-    but the macro's Bun.build call is waiting for the bundler.
-
-    To bundle code at compile time in a macro, use Bun.spawnSync to invoke the CLI:
-      const result = Bun.spawnSync(["bun", "build", entrypoint, "--format=esm"]);\`);"
-  `);
-  expect(stderr).toBe("");
-  expect(exitCode).toBe(0);
+  expect(await run(String(dir), "build", "index.ts", "--target=node")).toEqual({
+    stdout: bundle,
+    stderr: "",
+    exitCode: 0,
+    signalCode: null,
+  });
 });
 
 test.concurrent("regular Bun.build (not in macro) still works", async () => {

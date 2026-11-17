@@ -1745,6 +1745,9 @@ function createReceiverError(code: ReceiverErrorCode, detail: string | undefined
 function receiverOnError(websocket: WebSocket, err: Error): void {
   websocket._closeFrameSent = true;
 
+  // A paused socket would never read the peer's FIN. An 'error' listener can pause it too.
+  process.nextTick(resumeSocket, websocket);
+
   if (websocket._readyState === OPEN) {
     websocket._readyState = CLOSING;
     setCloseTimer(websocket);

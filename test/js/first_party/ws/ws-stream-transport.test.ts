@@ -1078,6 +1078,25 @@ describe.each(implementations)("ws over a JS stream ($name)", ({ ws: implementat
       ]);
     });
 
+    // Without a resume 'close' waits for the 30 s close timer, which is longer than this test's timeout.
+    test.each(["message", "error"])(
+      "a protocol error resumes a stream that was paused in a %j listener",
+      async name => {
+        await using connection = await open(implementation, role);
+        const { ws, peer, events, closed } = connection;
+        ws.on(name, () => ws.pause());
+        peer.write(Buffer.concat([peer.frame(OP.text, "hello"), peer.frame(3, "reserved")]));
+        await peer.echoClose();
+        expect(await closed).toBe(false);
+        expect(events).toEqual([
+          'message Buffer("hello") text rs=1',
+          `error ${invalidFrame("invalid opcode 3", "WS_ERR_INVALID_OPCODE")} rs=2`,
+          abnormalClose,
+        ]);
+      },
+      15_000,
+    );
+
     test.each([{ left: "a frame" }, { left: "half a frame" }])(
       "a chunk that arrives in a listener waits for $left that is left of the chunk being parsed, after resume() too",
       async ({ left }) => {

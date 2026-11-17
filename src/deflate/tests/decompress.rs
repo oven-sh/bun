@@ -1,4 +1,4 @@
-use crate::support::{Random, copy, crc32, with_failing};
+use crate::support::{Random, copy, crc32, with_failing, with_text_overwritten};
 use bun_deflate::{Decompressed, Error, Output, Result, gunzip, inflate, inflate_message};
 use core::mem::MaybeUninit;
 
@@ -851,6 +851,19 @@ fn gzip_headers() {
     let stream = final_sample();
     accepts(gunzip, &gzip(0, 0, &stream), &stream.data);
     refuses(gunzip, &gzip(0, 0, sample().start(true, 0)), 1000);
+}
+
+#[test]
+fn gzip_fields_overwritten_while_searched() {
+    let stream = Stream::default()
+        .fixed(true)
+        .literals(b"gzip")
+        .end()
+        .clone();
+    for flags in [8, 16, 24] {
+        let file = gzip(flags, 300, &stream);
+        with_text_overwritten(|| refuses(gunzip, &file, 100));
+    }
 }
 
 #[test]

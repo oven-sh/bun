@@ -44,7 +44,8 @@ pub(crate) fn skip_header(input: &[u8]) -> Result<&[u8]> {
     }
     for flag in [HAS_NAME, HAS_COMMENT] {
         if flags & flag != 0 {
-            let len = bun_highway::index_of_char(rest, 0).ok_or(Error::BadData)?;
+            // Another thread can write a mapped input, and `index_of_char` asserts that the byte it found is still there.
+            let len = bun_highway::index_of_char_raw(rest, 0).ok_or(Error::BadData)?;
             rest = rest.get(len + 1..).unwrap_or_default();
         }
     }

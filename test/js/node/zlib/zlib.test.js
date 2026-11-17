@@ -1,6 +1,6 @@
 import { deflateSync, gunzipSync, gzipSync, inflateSync } from "bun";
 import { describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, isASAN, isDebug, tempDir, tmpdirSync } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, isWindows, tempDir, tmpdirSync } from "harness";
 import * as buffer from "node:buffer";
 import { randomFillSync } from "node:crypto";
 import * as fs from "node:fs";
@@ -1431,6 +1431,35 @@ it.skipIf(!isASAN)(
     expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({ stdout: "done", stderr: "", exitCode: 0 });
   },
   20_000,
+);
+
+// The byte that ends the name can be gone by the time the search for it returns. `Bun.mmap` is not supported on Windows.
+it.skipIf(isWindows)(
+  "gunzipSync with libdeflate doesn't crash when another thread rewrites the end of the name in a mapped input",
+  async () => {
+    const data = "hello hello hello";
+    const gzipped = Buffer.from(gzipSync(data));
+    const name = Buffer.alloc(40, "A");
+    const named = Buffer.concat([gzipped.subarray(0, 10), name, Buffer.alloc(1), gzipped.subarray(10)]);
+    named[3] |= 1 << 3; // FNAME
+    expect(Buffer.from(gunzipSync(named, { library: "libdeflate" })).toString()).toBe(data);
+
+    using dir = tempDir("gunzip-race", { "named.gz": named });
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        resolve(import.meta.dir, "gunzip-racing-input-fixture.ts"),
+        resolve(String(dir), "named.gz"),
+        String(10 + name.length),
+        data,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({ stdout: "done", stderr: "", exitCode: 0 });
+  },
 );
 
 // `grow()` detaches a `WebAssembly.Memory`'s buffer and frees the old block even if the buffer is pinned.

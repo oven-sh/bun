@@ -103,7 +103,8 @@ pub(crate) fn read_jpeg(bytes: &[u8]) -> Orientation {
     while i + 4 <= bytes.len() {
         if bytes[i] != 0xFF {
             // The decoder skips to the next 0xFF, so it accepts this junk too.
-            let Some(skip) = bun_core::strings::index_of_char_usize(&bytes[i..], 0xFF) else {
+            // JavaScript can still write a borrowed input, and `index_of_char` asserts that the byte it found is still there.
+            let Some(skip) = bun_highway::index_of_char_raw(&bytes[i..], 0xFF) else {
                 return Orientation::Normal;
             };
             i += skip;

@@ -521,6 +521,28 @@ describe.each(["http", "https"] as const)("%s: the request body behind the FIN o
     }
   });
 
+  test.concurrent("a reader that comes late gets the rest of a body that had paused the socket", async () => {
+    await using server = createServer(() => {});
+    const client = await connectTo(server);
+    try {
+      const size = (server as any).highWaterMark + 1000;
+      client.write(requestHead(`Content-Length: ${size}`));
+      const [req] = (await once(server, "request")) as [IncomingMessage];
+      client.write(Buffer.alloc(size - 1000));
+      await once(req.socket, "pause");
+      await new Promise(resolve => client.write(Buffer.alloc(1000), resolve));
+      req.socket.end();
+      await once(client, "end");
+      const seen = observe(req);
+      req.once("end", () => client.end());
+      const { body, events } = await seen;
+      expect({ received: body.length, events }).toEqual({ received: size, events: ["end", "close"] });
+    } finally {
+      client.destroy();
+      server.closeAllConnections();
+    }
+  });
+
   test.concurrent("a body that the client cuts short aborts a request with no response", async () => {
     const { promise, resolve } = Promise.withResolvers<ReturnType<typeof observe>>();
     await using server = createServer(req => {

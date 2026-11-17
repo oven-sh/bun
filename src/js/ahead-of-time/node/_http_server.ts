@@ -1,5 +1,5 @@
 // What the compiler reads in place of src/js/node/_http_server.ts, which `bun run` evaluates. The two do the same.
-// Written against that file with the SHA-256 9eafb3394e7fe230e5ffa70199206447593bb871d91c0cd5e45aada38575a0cb.
+// Written against that file with the SHA-256 3034d7cdb3eb9ca0f8be80959cde627950fb2389545fe0200a560b697f89010f.
 // When that file changes, bring the change here and write the new hash: test/internal/second-texts-of-modules.test.ts.
 
 // Hardcoded module "node:_http_server"
@@ -3260,12 +3260,12 @@ function nativeSocketFinal(this: $Node.HttpServerSocket, callback: $Node.ErrorCa
     return;
   }
   this._handle?.shutdown();
-  // A pause would hide the peer's FIN. As in onDataIncomingMessage(), uWS drops the body that nothing reads.
-  if (this.isPaused() && this.parser?._consumed && !this.parser.incoming?._consuming) {
-    this[kHandle]?.stopParsing();
-    this._handle?.resume();
-  }
-  finishBehindResponses(this, callback);
+  finishBehindResponses(this, finishAndReadToFin.bind(undefined, this, callback));
+}
+// A pause would hide the peer's FIN. onDataIncomingMessage() decides what becomes of a body that nothing reads.
+function finishAndReadToFin(socket: $Node.HttpServerSocket, callback: $Node.ErrorCallback) {
+  if (socket.isPaused() && socket.parser?._consumed && !socket.parser.incoming?._consuming) socket._handle?.resume();
+  callback();
 }
 // The FIN waits for the response bytes that uWS still holds. An empty write completes behind them, or at the close, which reports what failed.
 function finishBehindResponses(socket: $Node.HttpServerSocket, callback: $Node.ErrorCallback) {

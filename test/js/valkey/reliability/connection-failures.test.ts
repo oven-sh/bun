@@ -2078,13 +2078,7 @@ describe("Valkey: Recovering After fail()", () => {
     }
   });
 
-  // subscribe() before connect() with the default offline queue stores the
-  // listener and queues the SUBSCRIBE; when the dial then fails for good the
-  // queued SUBSCRIBE is rejected but the listener stays, so the process is
-  // held alive. #33290 registers the listener on the server's subscribe
-  // confirmation instead, which closes this route; a -ERR reply to SUBSCRIBE
-  // (an ACL NOPERM, say) leaves the same orphan and is closed the same way.
-  test.todo("the process exits after a queued subscribe() is rejected by a dial that fails for good", async () => {
+  test("the process exits after a queued subscribe() is rejected by a dial that fails for good", async () => {
     await using proc = Bun.spawn({
       cmd: [
         bunExe(),
@@ -2102,6 +2096,139 @@ describe("Valkey: Recovering After fail()", () => {
       stdout: "subscribe rejected ERR_REDIS_CONNECTION_CLOSED\n",
       stderr: "",
       exitCode: 0,
+    });
+  });
+
+  describe("a subscribe() that fails leaves no listener", () => {
+    type Fate = "refused" | "dropped" | "accepted";
+    // Acknowledges each SUBSCRIBE and publishes "hi" to its channels, except that the first one for "ch" meets `fate`.
+    async function pubsubServer(fate: Fate) {
+      const fake = helloServer({ HELLO: () => null, PING: () => null });
+      fake.server.on("connection", socket => {
+        const state = { buffer: Buffer.alloc(0) };
+        socket.on("data", chunk => {
+          state.buffer = Buffer.concat([state.buffer, chunk]);
+          for (const [command, ...channels] of readCommands(state)) {
+            if (command === "SUBSCRIBE" && channels.includes("ch") && fate !== "accepted") {
+              if (fate === "refused") socket.write("-NOPERM no permissions to access the channel\r\n");
+              else socket.destroy();
+              fate = "accepted";
+            } else if (command === "SUBSCRIBE") {
+              socket.write(channels.map(it => push("subscribe", it, 1) + push("message", it, "hi")).join(""));
+            } else if (command === "UNSUBSCRIBE" || command === "PSUBSCRIBE") {
+              socket.write(channels.map(it => push(command.toLowerCase(), it, 1)).join(""));
+            } else {
+              socket.write("+OK\r\n");
+            }
+          }
+        });
+      });
+      return { url: `redis://127.0.0.1:${await fake.listen()}`, [Symbol.dispose]: () => fake.server.close() };
+    }
+
+    type Listener = (message: string, channel: string) => void;
+    type Case = { when: string; fate: Fate; code: string; fail(client: RedisClient, listener: Listener): unknown };
+    test.each<Case>([
+      {
+        when: "the server refuses it",
+        fate: "refused",
+        code: "ERR_REDIS_SERVER_ERROR",
+        fail: (client, listener) => client.subscribe("ch", listener),
+      },
+      {
+        when: "the server refuses several channels",
+        fate: "refused",
+        code: "ERR_REDIS_SERVER_ERROR",
+        fail: (client, listener) => client.subscribe(["a", "ch", "ch"], listener),
+      },
+      {
+        when: "the server refuses it to a subscriber, which closes the connection",
+        fate: "refused",
+        code: "ERR_REDIS_SERVER_ERROR",
+        fail: (client, listener) => client.send("PSUBSCRIBE", ["a*"]).then(() => client.subscribe("ch", listener)),
+      },
+      {
+        when: "the connection drops under it",
+        fate: "dropped",
+        code: "ERR_REDIS_CONNECTION_CLOSED",
+        fail: (client, listener) => client.subscribe("ch", listener),
+      },
+      {
+        when: "close() rejects it in the queue",
+        fate: "accepted",
+        code: "ERR_REDIS_CONNECTION_CLOSED",
+        fail: (client, listener) => Promise.all([client.subscribe("ch", listener), client.close()]),
+      },
+      {
+        when: "a later channel has the wrong type",
+        fate: "accepted",
+        code: "ERR_INVALID_ARG_TYPE",
+        fail: (client, listener) => client.subscribe(["ch", null!], listener),
+      },
+    ])("when $when", async ({ fate, code, fail }) => {
+      using server = await pubsubServer(fate);
+      const client = new RedisClient(server.url);
+      try {
+        const listener = mock<Listener>();
+        await expect(Promise.try(fail, client, listener)).rejects.toMatchObject({ code });
+
+        await client.connect();
+        const channels = await client.subscribe("ch", listener);
+        // Its reply comes after the message.
+        await client.ping();
+        expect({ channels, delivered: listener.mock.calls }).toEqual({ channels: 1, delivered: [["hi", "ch"]] });
+      } finally {
+        client.close();
+      }
+    });
+
+    test("so the last unsubscribe() leaves subscriber mode", async () => {
+      using server = await pubsubServer("refused");
+      const client = new RedisClient(server.url);
+      try {
+        await expect(client.subscribe("ch", () => {})).rejects.toThrow("NOPERM");
+        await client.subscribe("other", () => {});
+        await client.unsubscribe("other");
+        expect(await client.get("key")).toBe("OK");
+      } finally {
+        client.close();
+      }
+    });
+
+    test("so the process exits", async () => {
+      using server = await pubsubServer("refused");
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `await new Bun.RedisClient("${server.url}").subscribe("ch", () => {}).catch(err => console.log(err.code));`,
+        ],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      expect(await exitOutcome(proc)).toEqual({ stdout: "ERR_REDIS_SERVER_ERROR\n", stderr: "", exitCode: 0 });
+    });
+
+    test("and does not take the same listener from a later subscribe()", async () => {
+      using server = await pubsubServer("dropped");
+      const client = new RedisClient(server.url);
+      try {
+        await client.subscribe("other", () => {});
+        const listener = mock<Listener>();
+        const outcomes = await Promise.allSettled([
+          client.subscribe("ch", listener),
+          client.unsubscribe("ch", listener),
+          client.subscribe("ch", listener),
+        ]);
+        await client.ping();
+        expect({ outcomes: outcomes.map(it => it.status), delivered: listener.mock.calls }).toEqual({
+          outcomes: ["rejected", "fulfilled", "fulfilled"],
+          delivered: [["hi", "ch"]],
+        });
+      } finally {
+        client.close();
+      }
     });
   });
 

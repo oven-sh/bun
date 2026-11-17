@@ -80,14 +80,24 @@ impl<'a> Object<'a> {
         let Some(map) = self.subscription_callback_map() else {
             return Ok(None);
         };
+        Self::remove_entries(map, global_object, channel_name, |entry| {
+            Ok(entry.get_index(global_object, 0)? == callback)
+        })
+    }
 
+    fn remove_entries(
+        map: &mut JSMap,
+        global_object: &JSGlobalObject,
+        channel_name: JSValue,
+        matches: impl Fn(JSValue) -> JsResult<bool>,
+    ) -> JsResult<Option<usize>> {
         let existing = map.get(global_object, channel_name)?;
         if existing.is_undefined_or_null() {
             // Nothing to remove.
             return Ok(None);
         }
 
-        // Existing is guaranteed to be an array of callbacks.
+        // Existing is guaranteed to be an array of entries.
         debug_assert!(existing.is_array());
 
         // TODO(markovejnovic): I can't find a better way to do this... I generate a new array,
@@ -95,11 +105,14 @@ impl<'a> Object<'a> {
         // sets (and surprisingly fast for small sets of callbacks).
         let mut array_it = existing.array_iterator(global_object)?;
         let updated_array = JSArray::create_empty(global_object, 0)?;
+        let mut new_length = 0;
         while let Some(iter) = array_it.next()? {
-            if iter == callback {
+            if matches(iter)? {
                 continue;
             }
-            updated_array.push(global_object, iter)?;
+            // `push` would run a setter on `Array.prototype` in the middle of a close.
+            updated_array.put_index(global_object, new_length, iter)?;
+            new_length += 1;
         }
 
         // Otherwise, we have ourselves an array of callbacks. We need to remove the element in the
@@ -107,8 +120,6 @@ impl<'a> Object<'a> {
         let _ = map.remove(global_object, channel_name)?;
 
         // Only populate the map if we have remaining callbacks for this channel.
-        let new_length = updated_array.get_length(global_object)?;
-
         if new_length != 0 {
             map.set(global_object, channel_name, updated_array)?;
         }
@@ -117,15 +128,52 @@ impl<'a> Object<'a> {
     }
 }
 
+/// What one `subscribe()` stored ahead of the server's answer.
+pub(crate) struct Subscription {
+    map: jsc::Strong,
+    /// `[listener, ...channels]`, listed under each channel. Its identity tells two calls with one listener apart.
+    entry: jsc::Strong,
+}
+
+impl Subscription {
+    fn remove(&self, global_object: &JSGlobalObject) -> JsResult<()> {
+        let Some(map) = JSMap::from_js(self.map.get()) else {
+            return Ok(());
+        };
+        let (map, entry) = (JSMap::opaque_mut(map.as_ptr()), self.entry.get());
+        let mut channels = entry.array_iterator(global_object)?;
+        channels.i = 1;
+        while let Some(channel) = channels.next()? {
+            Object::remove_entries(map, global_object, channel, |it| Ok(it == entry))?;
+        }
+        Ok(())
+    }
+}
+
+/// Whoever waits for a command.
+struct Waiter {
+    promise: JSPromiseStrong,
+    subscription: Option<Box<Subscription>>,
+}
+
+impl Waiter {
+    fn reject(mut self, global_object: &JSGlobalObject, error: JSValue) -> JsResult<()> {
+        let removed = match self.subscription {
+            Some(it) if !global_object.has_exception() => it.remove(global_object),
+            _ => Ok(()),
+        };
+        self.promise.reject(global_object, removed.map(|()| error))
+    }
+}
+
 impl JSValkeyClient {
-    /// Add a handler for receiving messages on a specific channel
-    pub(crate) fn upsert_receive_handler(
+    /// Lists `entry`, which is `[listener, ...channels]`, under each of its channels.
+    pub(crate) fn add_receive_handler(
         &self,
         object: Object<'_>,
         global_object: &JSGlobalObject,
-        channel_name: JSValue,
-        callback: JSValue,
-    ) -> JsResult<()> {
+        entry: JSValue,
+    ) -> JsResult<Option<Box<Subscription>>> {
         let _guard = scopeguard::guard(self, |this| {
             this.send_next_command();
             this.update_poll_ref(object);
@@ -135,14 +183,23 @@ impl JSValkeyClient {
             js::subscription_callback_map_set_cached(object.to_js(), global_object, map);
         }
         let Some(map) = object.subscription_callback_map() else {
-            return Ok(());
+            return Ok(None);
         };
-        let mut handlers = map.get(global_object, channel_name)?;
-        if handlers.is_undefined() {
-            handlers = JSArray::create_empty(global_object, 0)?;
+        let mut channels = entry.array_iterator(global_object)?;
+        channels.i = 1;
+        while let Some(channel_name) = channels.next()? {
+            let mut handlers = map.get(global_object, channel_name)?;
+            if handlers.is_undefined() {
+                handlers = JSArray::create_empty(global_object, 0)?;
+            }
+            let len = handlers.get_length(global_object)? as u32;
+            handlers.put_index(global_object, len, entry)?;
+            map.set(global_object, channel_name, handlers)?;
         }
-        handlers.push(global_object, callback)?;
-        map.set(global_object, channel_name, handlers)
+        Ok(Some(Box::new(Subscription {
+            map: jsc::Strong::create(JSValue::from_cell(map), global_object),
+            entry: jsc::Strong::create(entry, global_object),
+        })))
     }
 
     fn on_message(&self, object: Object<'_>, data: &mut [RESPValue]) -> JsResult<()> {
@@ -159,10 +216,10 @@ impl JSValkeyClient {
         };
         if !handlers.is_undefined() {
             let mut iter = handlers.array_iterator(global_object)?;
-            while let Some(callback) = iter.next()? {
+            while let Some(entry) = iter.next()? {
                 self.vm.event_loop().run_callback(
                     self.context,
-                    callback,
+                    entry.get_index(global_object, 0)?,
                     global_object,
                     JSValue::UNDEFINED,
                     &[message, channel],
@@ -183,7 +240,7 @@ impl JSValkeyClient {
 #[derive(bun_ptr::RefCounted)]
 pub(crate) struct JSValkeyClient {
     /// Borrowed mutably for one method of its own at a time, and none of them can reach script.
-    client: JsCell<Client<JSPromiseStrong>>,
+    client: JsCell<Client<Waiter>>,
     socket: Cell<Socket>,
     // TODO(markovejnovic): a connected client that nothing refers to stays alive until it is closed.
     dial: SocketDial,
@@ -824,18 +881,35 @@ impl JSValkeyClient {
         args: &[A],
         reply: Reply,
     ) -> JSValue {
+        self.send_for(this, global, name, args, reply, None)
+    }
+
+    /// A rejection removes `subscription` again.
+    pub(crate) fn send_for<A: AsRef<[u8]>>(
+        &self,
+        this: JsWrapper<'_, Self>,
+        global: &JSGlobalObject,
+        name: &[u8],
+        args: &[A],
+        reply: Reply,
+        subscription: Option<Box<Subscription>>,
+    ) -> JSValue {
         let _guard = self.ref_guard();
         let object = Object::from(this);
         self.ensure_dialing(object);
 
-        let mut promise = JSPromiseStrong::init(global);
+        let promise = JSPromiseStrong::init(global);
         let js_promise = promise.value();
+        let waiter = Waiter {
+            promise,
+            subscription,
+        };
         if let Some(error) = self.rejection(global) {
-            let _ = promise.reject(global, Ok(error));
+            let _ = waiter.reject(global, error);
         } else {
             match self
                 .client
-                .with_mut(|client| client.send(name, args, reply, promise))
+                .with_mut(|client| client.send(name, args, reply, waiter))
             {
                 Sent::Buffered => self.flush(),
                 Sent::Batched => AutoFlusher::register_deferred_microtask_with_type(self, self.vm),
@@ -863,7 +937,7 @@ impl JSValkeyClient {
         }
     }
 
-    fn dispatch(&self, object: Object<'_>, event: Event<JSPromiseStrong>) -> JsResult<()> {
+    fn dispatch(&self, object: Object<'_>, event: Event<Waiter>) -> JsResult<()> {
         let global = &self.global_object;
         let _exit = match event {
             Event::Ignored | Event::Broken { .. } => None,
@@ -877,7 +951,7 @@ impl JSValkeyClient {
             }
             Event::Connected(mut hello) => self.on_connected(object, &mut hello),
             Event::Resolved {
-                mut promise,
+                promise: Waiter { mut promise, .. },
                 mut value,
                 as_buffer: return_as_buffer,
             } => {
@@ -885,12 +959,9 @@ impl JSValkeyClient {
                 let value = resp_value_to_js_with_options(&mut value, global, options);
                 promise.settle(global, value)
             }
-            Event::Rejected {
-                mut promise,
-                message,
-            } => {
+            Event::Rejected { promise, message } => {
                 let error = valkey_error_to_js(global, &message, RedisError::ServerError);
-                promise.reject(global, Ok(error))
+                promise.reject(global, error)
             }
             Event::Message(mut data) => self.on_message(object, &mut data),
             Event::Subscribed(acked) => {
@@ -906,14 +977,14 @@ impl JSValkeyClient {
         }
     }
 
-    fn on_acked(&self, acked: Acked<JSPromiseStrong>, for_channel: JSValue) -> JsResult<()> {
+    fn on_acked(&self, acked: Acked<Waiter>, for_channel: JSValue) -> JsResult<()> {
         let global = &self.global_object;
         // Ahead of the microtasks that the caller's scope drains.
         self.send_next_command();
         match acked {
             Acked::Nobody => Ok(()),
-            Acked::Channel(mut promise) => promise.resolve(global, for_channel),
-            Acked::Raw(mut promise, mut push) => {
+            Acked::Channel(Waiter { mut promise, .. }) => promise.resolve(global, for_channel),
+            Acked::Raw(Waiter { mut promise, .. }, mut push) => {
                 promise.settle(global, resp_value_to_js(&mut push, global))
             }
         }
@@ -957,16 +1028,16 @@ impl JSValkeyClient {
     }
 
     /// A rejection fails once the VM's termination is pending; the rest still has to go.
-    fn reject_all(&self, promises: Vec<JSPromiseStrong>, error: JSValue) -> JsResult<()> {
+    fn reject_all(&self, promises: Vec<Waiter>, error: JSValue) -> JsResult<()> {
         let mut result = Ok(());
-        for mut promise in promises {
-            let rejected = promise.reject(&self.global_object, Ok(error));
+        for promise in promises {
+            let rejected = promise.reject(&self.global_object, error);
             result = result.and(rejected);
         }
         result
     }
 
-    fn reject_all_as_closed(&self, promises: Vec<JSPromiseStrong>, reason: &str) -> JsResult<()> {
+    fn reject_all_as_closed(&self, promises: Vec<Waiter>, reason: &str) -> JsResult<()> {
         if promises.is_empty() {
             return Ok(());
         }

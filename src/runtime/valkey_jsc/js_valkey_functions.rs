@@ -1296,18 +1296,13 @@ impl JSValkeyClient {
             ));
         }
 
-        // The walk below stores each listener as it goes. A client that would
-        // reject the SUBSCRIBE outright must not keep the listeners either: a
-        // listener with no subscription behind it pins the event loop and the
-        // client, and cannot be removed with unsubscribe(). The dial comes
-        // after the argument checks, as for every other command, and before
-        // the state check, as in `send()`, so a fresh client with the offline
-        // queue off is rejected the way get() is: connecting, not never
-        // connected.
+        // In the order of `send()`: a fresh client with the offline queue off is connecting when it rejects.
         self.ensure_dialing(this.into());
         if let Some(error) = self.rejection(global) {
             return Ok(JSPromise::rejected_promise(global, error).to_js());
         }
+
+        let entry = JSValue::create_array_from_slice(global, &[handler_callback])?;
 
         // The first argument given is the channel or may be an array of channels.
         if channel_or_many.is_array() {
@@ -1328,14 +1323,7 @@ impl JSValkeyClient {
                     ));
                 };
                 redis_channels.push(channel);
-
-                // What we do here is add our receive handler. Notice that this doesn't really do anything until the
-                // "SUBSCRIBE" command is sent to redis and we get a response.
-                //
-                // This is less-than-ideal, still, because this assumes a happy path. What happens if
-                // the SUBSCRIBE command fails? We have no way to roll back the addition of the
-                // handler.
-                self.upsert_receive_handler(this.into(), global, channel_arg, handler_callback)?;
+                entry.put_index(global, redis_channels.len() as u32, channel_arg)?;
             }
         } else {
             // It is a single string channel
@@ -1343,11 +1331,18 @@ impl JSValkeyClient {
                 return Err(global.throw_invalid_argument_type("subscribe", "channel", "string"));
             };
             redis_channels.push(channel);
-
-            self.upsert_receive_handler(this.into(), global, channel_or_many, handler_callback)?;
+            entry.put_index(global, 1, channel_or_many)?;
         }
 
-        Ok(self.send(this, global, b"SUBSCRIBE", &redis_channels, Reply::Value))
+        let subscription = self.add_receive_handler(this.into(), global, entry)?;
+        Ok(self.send_for(
+            this,
+            global,
+            b"SUBSCRIBE",
+            &redis_channels,
+            Reply::Value,
+            subscription,
+        ))
     }
 
     pub(crate) fn unsubscribe(
